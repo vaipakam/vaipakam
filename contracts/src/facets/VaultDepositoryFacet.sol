@@ -165,6 +165,9 @@ contract VaultDepositoryFacet is DiamondReentrancyGuard, DiamondPausable {
         whenNotPaused
     {
         LibVaipakam._assertNotSanctioned(msg.sender);
+        // A retired wallet funds nothing: what it deposited would be its
+        // controller's to withdraw, never its own.
+        LibProtectedAccount.requireManager(msg.sender);
         IVaultRoutes routes = IVaultRoutes(address(this));
         LibProtectedAccount.setDepositoryContext(true);
         if (kind == uint8(LibVaipakam.AssetType.ERC20)) {

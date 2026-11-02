@@ -264,6 +264,9 @@ contract VPFIDiscountFacet is
         private
         returns (address vpfi, address vault)
     {
+        // Protected account mode: a retired wallet funds nothing; its
+        // account is managed by the controller from now on.
+        LibProtectedAccount.requireManager(msg.sender);
         if (amount == 0) revert InvalidAmount();
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         vpfi = s.vpfiToken;

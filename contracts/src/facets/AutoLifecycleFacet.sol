@@ -448,7 +448,7 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
         if (loan.status != LibVaipakam.LoanStatus.Active) revert LoanNotActive();
-        LibAuth.requireBorrowerNftOwner(loan);
+        LibAuth.requirePositionManager(loan.borrowerTokenId);
 
         _validateExtendCaps(enabled, minRateBps, maxRateBps, maxNewExpiry);
 
@@ -489,7 +489,7 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
         if (loan.status != LibVaipakam.LoanStatus.Active) revert LoanNotActive();
-        LibAuth.requireLenderNftOwner(loan);
+        LibAuth.requirePositionManager(loan.lenderTokenId);
 
         _validateExtendCaps(enabled, minRateBps, maxRateBps, maxNewExpiry);
 
@@ -597,6 +597,7 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
         whenNotPaused
     {
         LibVaipakam._assertNotSanctioned(msg.sender);
+        LibProtectedAccount.requireManager(msg.sender); // a retired wallet funds nothing
         if (amount == 0) revert ExtendReserveZeroAmount();
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
@@ -863,10 +864,12 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
             s.autoExtendBorrowerCaps[loanId];
         LibVaipakam.AutoExtendCaps storage lenderCaps =
             s.autoExtendLenderCaps[loanId];
+        // A consent is fresh only while its setter still manages the holder,
+        // so a replacement voids the caps the retired wallet set.
         bool borrowerFresh = borrowerCaps.setter == address(0) ||
-            borrowerCaps.setter == borrowerNftOwner;
+            borrowerCaps.setter == LibProtectedAccount.manager(borrowerNftOwner);
         bool lenderFresh = lenderCaps.setter == address(0) ||
-            lenderCaps.setter == lenderNftOwner;
+            lenderCaps.setter == LibProtectedAccount.manager(lenderNftOwner);
         if (
             !borrowerCaps.enabled || !lenderCaps.enabled ||
             !borrowerFresh || !lenderFresh
@@ -1251,7 +1254,7 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
         // NFT). Read the storage slot directly so the reader returns
         // disabled-caps cleanly instead of bubbling a revert.
         address current = LibERC721._ownerOfRaw(loan.borrowerTokenId);
-        return current != address(0) && current == setter;
+        return current != address(0) && LibProtectedAccount.manager(current) == setter;
     }
 
     function _isCurrentLenderNft(
@@ -1260,6 +1263,6 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
     ) internal view returns (bool) {
         if (setter == address(0)) return true;
         address current = LibERC721._ownerOfRaw(loan.lenderTokenId);
-        return current != address(0) && current == setter;
+        return current != address(0) && LibProtectedAccount.manager(current) == setter;
     }
 }

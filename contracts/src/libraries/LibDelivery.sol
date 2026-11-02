@@ -152,7 +152,20 @@ library LibDelivery {
     ///      liquidator's payment in a forced flow included), and the books
     ///      around the pull are set at the requested figure. A zero amount
     ///      still runs the transfer, as the unmeasured call it replaces did.
+    ///      A wallet in protected account mode is never paid directly, here
+    ///      as in {pushExact}: the payment is pulled into the Diamond and
+    ///      credited to the wallet's vault ({creditIfProtected}), refused
+    ///      unless all of it arrived at both hops.
     function pullExact(address token, address from, address to, uint256 amount) internal {
+        if (amount != 0 && LibVaipakam.storageSlot().protectedAccount[to].enabled) {
+            uint256 held = IERC20(token).balanceOf(address(this));
+            // slither-disable-next-line arbitrary-send-erc20
+            IERC20(token).safeTransferFrom(from, address(this), amount);
+            requireFull(token, amount, measured(token, from, address(this), held, amount));
+            (, uint256 received) = creditIfProtected(token, to, amount);
+            requireFull(token, amount, received);
+            return;
+        }
         uint256 before = IERC20(token).balanceOf(to);
         // Every caller pulls from a party that approved the Diamond for this
         // move (the payer named by the calling flow). Not an arbitrary send.
