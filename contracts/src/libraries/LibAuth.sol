@@ -70,6 +70,15 @@ library LibAuth {
             revert IVaipakamErrors.NotNFTOwner();
     }
 
+    /// @dev Caller must MANAGE the `tokenId` position NFT's holder: the holder
+    ///      itself, or its controller once a protected-account replacement
+    ///      retired it. The rule for a holder's standing CONSENT (auto-extend
+    ///      caps), which a retired wallet must not be able to give.
+    function requirePositionManager(uint256 tokenId) internal view {
+        if (msg.sender != LibProtectedAccount.manager(IERC721(address(this)).ownerOf(tokenId)))
+            revert IVaipakamErrors.NotNFTOwner();
+    }
+
     /// @dev Canonical keeper-authorization helper (Phase 6).
     ///
     ///      Permits three callers for a keeper-accessible function:
@@ -105,7 +114,11 @@ library LibAuth {
         if (msg.sender == address(this)) return false;
         uint256 tokenId = lenderSide ? loan.lenderTokenId : loan.borrowerTokenId;
         address nftOwner = IERC721(address(this)).ownerOf(tokenId);
-        if (msg.sender == nftOwner) return false;
+        // Protected account mode: the holder acts through its manager. Once
+        // a replacement retired the holder, its controller acts on the
+        // position and the old wallet is no longer the owner here; no keeper
+        // grant it made survives ({keeperMayActFor}).
+        if (msg.sender == LibProtectedAccount.manager(nftOwner)) return false;
         if (!keeperMayActFor(msg.sender, action, loan.id, nftOwner)) {
             revert IVaipakamErrors.KeeperAccessRequired();
         }
@@ -126,6 +139,8 @@ library LibAuth {
         address nftOwner
     ) internal view returns (bool) {
         if (LibVaipakam.cfgKeepersPaused()) return false;
+        // A replacement voids every keeper grant the retired holder made.
+        if (LibProtectedAccount.manager(nftOwner) != nftOwner) return false;
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         return s.keeperAccessEnabled[nftOwner] &&
             s.loanKeeperEnabled[loanId][keeper] &&
