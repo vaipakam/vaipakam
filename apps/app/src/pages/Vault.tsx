@@ -15,6 +15,7 @@ import { EmptyState, UnavailableState } from '../components/EmptyState';
 import { formatTokenAmount, shortAddress } from '../lib/format';
 import { LIST_WINDOW_PAGE, WindowedRowList } from '../lib/visibleWindow';
 import { CopyAddress } from '../components/CopyAddress';
+import { DepositoryCard } from '../components/DepositoryCard';
 
 export function Vault() {
   const { isConnected, address, readChain } = useActiveChain();
@@ -104,7 +105,19 @@ export function Vault() {
               </span>
             </div>
           ) : null}
-          {vault.data.assets.length === 0 && vault.data.moreTokens === 0 ? (
+          {vault.data.nftCollections.length > 0 ? (
+            // Deposited NFTs are not listed as token rows; name their
+            // collections so the vault never reads as empty while it
+            // holds them.
+            <div className="banner banner-info" role="status">
+              <span className="banner-body">
+                {copy.vault.nftCollectionsNote(
+                  vault.data.nftCollections.map((t) => shortAddress(t)).join(', '),
+                )}
+              </span>
+            </div>
+          ) : null}
+          {vault.data.assets.length === 0 && vault.data.moreTokens === 0 && vault.data.nftCollections.length > 0 ? null : vault.data.assets.length === 0 && vault.data.moreTokens === 0 ? (
             vault.data.unreadable.length > 0 ? (
               <UnavailableState body={copy.vault.unavailable} />
             ) : (
@@ -179,6 +192,28 @@ export function Vault() {
           )}
         </div>
       )}
+
+      {/* One card for every vault state, outside the branches above: a first
+          deposit creates the vault and flips this page to the vault view,
+          and a card inside either branch would be remounted by that flip,
+          losing its result. It is also a way IN, so it shows before a vault
+          exists and while the asset list is loading or unavailable. */}
+      {isConnected ? (
+        <div className="stack" style={{ marginTop: 16 }}>
+          {/* Protection is reached from every vault state, so a recovery
+              signer or the controller of a moved account, neither of whom
+              needs a vault of their own, can always find it. */}
+          <section className="card">
+            <p style={{ margin: 0 }}>
+              <Link to="/vault/protection">
+                <strong>{copy.protection.vaultLink}</strong>
+              </Link>{' '}
+              <span className="muted">{copy.protection.vaultCardBody}</span>
+            </p>
+          </section>
+          <DepositoryCard />
+        </div>
+      ) : null}
     </div>
   );
 }

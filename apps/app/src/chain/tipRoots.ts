@@ -59,6 +59,18 @@ export const TIP_ROOTS = [
   // Shared-book ghost-strip (§4.1.2a): block-driven so a just-ended offer
   // never outlives the throttle window on the book.
   'bookGhostStrip',
+  // Protected account mode: the account record, its payout queue, the
+  // replacement in progress and the retired account a wallet now manages
+  // all move with the account's recovery signers acting from their own
+  // wallets (an approval, a lock, a replacement completed by anyone), and
+  // they gate what the page offers (complete the move, release a payout,
+  // withdraw recovered assets). One root carries every such read, so a read
+  // added later rides the same rails without its own refresh.
+  'protectedAccount',
+  // The depository card's free balance: a payment from someone else (a
+  // repayment, a claim settled to a protected account) raises what can be
+  // withdrawn with no action of the owner's.
+  'depository',
 ] as const;
 
 export type TipRoot = (typeof TIP_ROOTS)[number];

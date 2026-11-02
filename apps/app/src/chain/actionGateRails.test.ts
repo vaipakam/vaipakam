@@ -56,3 +56,16 @@ describe('sellerClaims rides every rail its stretch relies on', () => {
     expect(RECEIPT_FLOOR_ROOTS).toContain('sellerClaims');
   });
 });
+
+// Protected account mode (Codex #3091 r14): every read under the root moves
+// with the recovery signers' actions and with payments from others, so the
+// root rides the block-driven fallback blanket as well as the tip rail, and
+// a later read under it needs no refresh of its own.
+describe.each(['protectedAccount', 'depository'])('%s, beyond the tip rail', (root) => {
+  it('rides the block-driven fallback blanket', () => {
+    expect(LIVE_KEYS.has(root)).toBe(true);
+  });
+  it('is refreshed in every tab after an own write', () => {
+    expect(RECEIPT_FLOOR_ROOTS).toContain(root);
+  });
+});

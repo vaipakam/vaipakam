@@ -25,6 +25,7 @@ import {
   ContractFunctionRevertedError,
   ContractFunctionZeroDataError,
   formatUnits,
+  type Log,
 } from 'viem';
 import { copy } from '../content/copy';
 import { useScrollToFragment } from '../lib/useScrollToFragment';
@@ -94,6 +95,8 @@ import {
 import { useForcedCloseReads } from '../data/useForcedClose';
 import { probeClaim, useLoanClaim } from '../data/claimables';
 import { receiptPayout, useClaimPayoutText } from '../data/useClaimPayout';
+import { payoutOutcomes, useOwnPayoutRoute, useProtectedAccount, vaultManagerLookup } from '../data/protectedAccount';
+import { payoutOutcomesText, payoutRouteText } from '../lib/payoutRouteText';
 import { initiatedPrincipal, lockedCollateralLine } from '../lib/positionAmounts';
 import {
   classifyMaxWithdrawable,
@@ -239,6 +242,27 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   const { data: walletClient } = useWalletClient();
   const publicClient = usePublicClient({ chainId: walletChain?.chainId });
   const { write } = useDiamondWrite();
+  // Protected account mode: where a payment to this wallet lands (a claim,
+  // a collateral release). The confirmation states it instead of promising
+  // the wallet, and the result reads it from the receipt.
+  const { address: payeeAddress } = useActiveChain();
+  const ownProtection = useProtectedAccount(payeeAddress ?? undefined);
+  // A claim pays out of the RECORDED party's vault, which is not the
+  // claimant's own for a transferred position, so each route is read
+  // against its source.
+  const lenderPayoutRouteNote = payoutRouteText(useOwnPayoutRoute(loan.data?.lender));
+  const borrowerPayoutRouteNote = payoutRouteText(useOwnPayoutRoute(loan.data?.borrower));
+  // A collateral release first consolidates the position to its holder
+  // (the caller), so it pays out of the caller's own vault and its own gate.
+  const collateralPayoutRouteNote = payoutRouteText(useOwnPayoutRoute());
+  const withPayoutOutcome = (done: string, logs: readonly Log[], source: string | undefined) => {
+    const note = payoutOutcomesText(
+      payoutOutcomes(logs, payeeAddress, source),
+      payeeAddress,
+      vaultManagerLookup([{ address: payeeAddress, snap: ownProtection.data, readFailed: ownProtection.isError }], payeeAddress),
+    );
+    return note ? `${done} ${note}` : done;
+  };
   const queryClient = useQueryClient();
 
   const { isAdvanced, setMode } = useMode();
@@ -2244,9 +2268,11 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           }
         }
         setPhase('submitting');
-        await write('claimAsBorrower', [BigInt(row.loanId)]);
+        const { receipt: claimReceipt } = await write('claimAsBorrower', [BigInt(row.loanId)]);
         setClaimed((c) => ({ ...c, borrower: true }));
-        setDoneMessage(copy.claims.claimed);
+        // Where the payment landed, read from the receipt (protection may
+        // have queued it or kept it in the vault), never assumed.
+        setDoneMessage(withPayoutOutcome(copy.claims.claimed, claimReceipt.logs, loan.data?.borrower));
       } else {
         await assertWalletNotSanctionedLive(
           publicClient,
@@ -2254,9 +2280,9 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           address,
         );
         setPhase('submitting');
-        await write('claimAsLender', [BigInt(row.loanId)]);
+        const { receipt: claimReceipt } = await write('claimAsLender', [BigInt(row.loanId)]);
         setClaimed((c) => ({ ...c, lender: true }));
-        setDoneMessage(copy.claims.claimed);
+        setDoneMessage(withPayoutOutcome(copy.claims.claimed, claimReceipt.logs, loan.data?.lender));
       }
       setConfirmingSurface(null);
       void queryClient.invalidateQueries({ queryKey: ['loan'] });
@@ -2505,8 +2531,8 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         return;
       }
       setPhase('submitting');
-      await write('partialWithdrawCollateral', [BigInt(row.loanId), wei]);
-      setDoneMessage(copy.positions.details.done.collateralWithdrawn);
+      const { receipt: releaseReceipt } = await write('partialWithdrawCollateral', [BigInt(row.loanId), wei]);
+      setDoneMessage(withPayoutOutcome(copy.positions.details.done.collateralWithdrawn, releaseReceipt.logs, undefined));
       setWithdrawInput('');
       setConfirmingSurface(null);
       void queryClient.invalidateQueries({ queryKey: ['loan'] });
@@ -2997,7 +3023,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
             youMayOwe: copy.positions.details.receipt.nothing,
             youCanLose: copy.positions.details.receipt.nothing,
             fees: copy.positions.details.receipt.feesNone,
-            whenThisEnds: copy.positions.details.receipt.endsClaim,
+            whenThisEnds: borrowerPayoutRouteNote ?? copy.positions.details.receipt.endsClaim,
           }
         : action === 'claim-lender'
           ? {
@@ -3027,7 +3053,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                 : isRental
                   ? copy.positions.details.receipt.feesRental
                   : copy.positions.details.receipt.feesNone,
-              whenThisEnds: copy.positions.details.receipt.endsClaim,
+              whenThisEnds: lenderPayoutRouteNote ?? copy.positions.details.receipt.endsClaim,
             }
           : null;
 
@@ -3822,7 +3848,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                       youMayOwe: copy.positions.details.withdrawCollateral.oweNothingMore,
                       youCanLose: copy.positions.details.withdrawCollateral.lose,
                       fees: copy.positions.details.receipt.feesNone,
-                      whenThisEnds: copy.positions.details.withdrawCollateral.ends,
+                      whenThisEnds: collateralPayoutRouteNote ?? copy.positions.details.withdrawCollateral.ends,
                     }}
                   />
                 </div>

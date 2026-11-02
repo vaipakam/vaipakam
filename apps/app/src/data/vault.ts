@@ -2,11 +2,14 @@
  * "Your Vaipakam Vault" reads. Per asset the displayed numbers are:
  *   total  = min(raw ERC-20 balanceOf(vault), protocol-tracked)
  *            — unsolicited transfers never inflate anything (T-051)
- *   locked = getEncumbered(user, asset, 0)
- *   free   = total - locked (floored at 0)
+ *   free   = min(freeHolding(user, ERC-20, asset, 0), total) — the
+ *            contract's own figure: tracked minus liens minus what
+ *            protected account mode holds back for queued payouts
+ *   locked = total - free
  *
- * The asset list is best-effort: canonical per-chain tokens plus every
- * ERC-20 leg of the wallet's loans and open offers.
+ * The asset list: canonical per-chain tokens, every ERC-20 leg of the
+ * wallet's loans and open offers, VPFI, and every asset the contract lists
+ * as credited to the wallet's depository holding (a standalone deposit).
  */
 import { useQuery } from '@tanstack/react-query';
 import {
@@ -44,6 +47,10 @@ export interface VaultSnapshot {
   /** Candidate tokens beyond the scanned window (#1247 PAG-001 rider)
    *  — the page offers "check more" to widen the scan. */
   moreTokens: number;
+  /** NFT collections on the wallet's depository list. The token rows above
+   *  are ERC-20 balances only, so these are named separately and the page
+   *  never calls a vault holding deposited NFTs empty. */
+  nftCollections: `0x${string}`[];
 }
 
 export function useVaultAssets(scanWindow: number) {
@@ -106,7 +113,7 @@ export function useVaultAssets(scanWindow: number) {
         args: [address!],
       })) as `0x${string}`;
       if (vault.toLowerCase() === ZERO_ADDRESS) {
-        return { vaultAddress: null, assets: [], unreadable: [], moreTokens: 0 };
+        return { vaultAddress: null, assets: [], unreadable: [], moreTokens: 0, nftCollections: [] };
       }
 
       // VPFI deposits arrive via the VPFI page, not via any loan or
@@ -141,18 +148,51 @@ export function useVaultAssets(scanWindow: number) {
             err.walk((e) => e instanceof ContractFunctionZeroDataError) !== null);
         if (!isRevert) throw err;
       }
+      // Assets the wallet deposited (or was paid into the vault) that no
+      // loan or offer names: the contract lists every asset ever credited
+      // to the depository ledger, in first-credit order, so a standalone
+      // deposit is found after a reload. Read inside the same window as
+      // the candidates; the rest counts toward "check more". An NFT
+      // collection on that list is skipped only when it SAYS it is one
+      // (ERC-165); a token that does not answer is read as an ERC-20, so a
+      // failed read still lands in `unreadable` rather than vanishing.
+      let depositoryMore = 0;
+      const nftCollections: `0x${string}`[] = [];
+      try {
+        const [listed, listedTotal] = (await publicClient!.readContract({
+          address: readChain.diamondAddress,
+          abi: DIAMOND_ABI_VIEM,
+          functionName: 'getDepositoryAssets',
+          args: [address!, 0n, BigInt(scanWindow)],
+        })) as readonly [readonly `0x${string}`[], bigint];
+        depositoryMore = Math.max(0, Number(listedTotal) - listed.length);
+        const fresh = listed.map((a) => a.toLowerCase()).filter((a) => !scanTokens.includes(a));
+        const nftFlags = await Promise.all(fresh.map((a) => saysItIsAnNft(publicClient!, a as `0x${string}`)));
+        fresh.forEach((a, i) => {
+          if (nftFlags[i]) nftCollections.push(a as `0x${string}`);
+          else scanTokens.push(a);
+        });
+      } catch (err) {
+        // Same rule as VPFI: only a revert / zero data means the Diamond
+        // predates the depository list; a transport failure is rethrown.
+        const isRevert =
+          err instanceof BaseError &&
+          (err.walk((e) => e instanceof ContractFunctionRevertedError) !== null ||
+            err.walk((e) => e instanceof ContractFunctionZeroDataError) !== null);
+        if (!isRevert) throw err;
+      }
       // Counted AFTER the VPFI append (Codex #1265 r3): a VPFI token
       // that sat past the slice but was appended above IS scanned —
       // it must not leave a phantom "Check 1 more token" button.
       const scannedSet = new Set(scanTokens);
-      const moreTokens = tokenList.filter((t) => !scannedSet.has(t)).length;
+      const moreTokens = tokenList.filter((t) => !scannedSet.has(t)).length + depositoryMore;
 
       const unreadable: `0x${string}`[] = [];
       const rows = await Promise.all(
         scanTokens.map(async (tokenLower): Promise<VaultAssetRow | null> => {
           const token = tokenLower as `0x${string}`;
           try {
-            const [raw, tracked, locked, symbol, decimals] = await Promise.all([
+            const [raw, tracked, contractFree, symbol, decimals] = await Promise.all([
               publicClient!.readContract({
                 address: token,
                 abi: erc20Abi,
@@ -168,8 +208,8 @@ export function useVaultAssets(scanWindow: number) {
               publicClient!.readContract({
                 address: readChain.diamondAddress,
                 abi: DIAMOND_ABI_VIEM,
-                functionName: 'getEncumbered',
-                args: [address!, token, 0n],
+                functionName: 'freeHolding',
+                args: [address!, 0, token, 0n],
               }) as Promise<bigint>,
               publicClient!.readContract({
                 address: token,
@@ -183,7 +223,10 @@ export function useVaultAssets(scanWindow: number) {
               }),
             ]);
             const total = raw < tracked ? raw : tracked;
-            const free = total > locked ? total - locked : 0n;
+            // The contract's free figure (liens and queued payouts out),
+            // never more than the vault actually holds; the rest is locked.
+            const free = contractFree < total ? contractFree : total;
+            const locked = total - free;
             if (total === 0n && locked === 0n) return null; // hide empty rows
             return { token, symbol, decimals, total, locked, free };
           } catch {
@@ -200,9 +243,35 @@ export function useVaultAssets(scanWindow: number) {
       const assets = rows
         .filter((r): r is VaultAssetRow => r !== null)
         .sort((a, b) => (b.total > a.total ? 1 : b.total < a.total ? -1 : 0));
-      return { vaultAddress: vault, assets, unreadable, moreTokens };
+      return { vaultAddress: vault, assets, unreadable, moreTokens, nftCollections };
     },
   });
 
   return { ...query, depsUnavailable, depsLoading, depsCaveats };
+}
+
+const ERC721_INTERFACE_ID = '0x80ac58cd' as const;
+const ERC1155_INTERFACE_ID = '0xd9b67a26' as const;
+const ERC165_ABI = [
+  {
+    type: 'function',
+    name: 'supportsInterface',
+    stateMutability: 'view',
+    inputs: [{ name: 'interfaceId', type: 'bytes4' }],
+    outputs: [{ name: '', type: 'bool' }],
+  },
+] as const;
+
+/** True only when `token` answers ERC-165 for ERC-721 or ERC-1155. A
+ *  revert or failed read is "not known to be an NFT". */
+async function saysItIsAnNft(
+  client: NonNullable<ReturnType<typeof usePublicClient>>,
+  token: `0x${string}`,
+): Promise<boolean> {
+  const ask = (id: `0x${string}`) =>
+    client
+      .readContract({ address: token, abi: ERC165_ABI, functionName: 'supportsInterface', args: [id] })
+      .catch(() => false);
+  const [is721, is1155] = await Promise.all([ask(ERC721_INTERFACE_ID), ask(ERC1155_INTERFACE_ID)]);
+  return is721 === true || is1155 === true;
 }

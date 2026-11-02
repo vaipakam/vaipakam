@@ -48,6 +48,11 @@ export const RECEIPT_FLOOR_ROOTS: readonly string[] = [
   'activeOffers',
   'claimables',
   'vaultAssets',
+  // The depository card's withdrawable figure and the protected account's
+  // queue and settings: an own deposit, withdrawal, release or setting change
+  // moves them, and the card re-enables its controls on the fresh read.
+  'depository',
+  'protectedAccount',
   'tokenBalance',
   'standingApprovals',
   'vpfi',

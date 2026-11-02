@@ -42,6 +42,18 @@ import {
 import { useActiveChain } from '../chain/useActiveChain';
 import { useDiamondWrite } from '../contracts/diamond';
 import { captureTxError } from '../lib/errors';
+import {
+  ownPayoutRoute,
+  ownWithdrawalVerdict,
+  gateAccount,
+  payoutOutcomes,
+  payoutRoute as routeOf,
+  useProtectedAccount,
+  useProtectedAccounts,
+  vaultManagerLookup,
+  type RouteAccount,
+} from '../data/protectedAccount';
+import { payoutOutcomesText, payoutRouteText } from '../lib/payoutRouteText';
 import { AssetType } from '../lib/types';
 import {
   useVisibleWindow,
@@ -64,8 +76,32 @@ export function ClaimAllCard({ loans }: { loans: ClaimableLoan[] }) {
   const sanctions = useRewardBarCheck();
   const sanctionsClear = sanctions.ready && !sanctions.barred;
 
+  // Protected account mode: where what this batch pays lands, and whether
+  // its vault-VPFI leg (a withdrawal) can be sent at all; the contract
+  // refuses that leg for a locked account or a full queue, which would
+  // revert the whole batch.
+  const protection = useProtectedAccount(address ?? undefined);
+  const payoutRoute = ownPayoutRoute(protection.data, protection.isError);
+  // A loan claim pays out of the RECORDED party's vault, so each distinct
+  // other source is read too: its gate catches a payment to its controller.
+  const claimSource = (loan: ClaimableLoan) => (loan.role === 'lender' ? loan.lender : loan.borrower);
+  const otherSources = [
+    ...new Set(
+      loans
+        .map((l) => claimSource(l).toLowerCase())
+        .filter((a) => !address || a !== address.toLowerCase()),
+    ),
+  ] as `0x${string}`[];
+  const sourceReads = useProtectedAccounts(otherSources);
+  const me: RouteAccount = { address: address ?? undefined, snap: protection.data, readFailed: protection.isError };
+  const sourceAccount = (source: string | undefined): RouteAccount | undefined => {
+    const i = source ? otherSources.indexOf(source.toLowerCase() as `0x${string}`) : -1;
+    return i < 0 ? undefined : { address: source, snap: sourceReads[i]?.data, readFailed: Boolean(sourceReads[i]?.isError) };
+  };
+  const vpfiWithdrawal = ownWithdrawalVerdict(protection.data, protection.isError);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [outcomeNote, setOutcomeNote] = useState<string | null>(null);
   // User's EXPLICIT checkbox choices, keyed by item key. Anything not
   // here follows the item's default — so a manual uncheck survives a
   // background balance/candidate refresh (the reset-to-defaults shape
@@ -83,12 +119,23 @@ export function ClaimAllCard({ loans }: { loans: ClaimableLoan[] }) {
   if (prevIdentity !== identity) {
     setPrevIdentity(identity);
     setOverrides({});
+    setOutcomeNote(null);
   }
 
   // Wait for rewards + vault VPFI to SETTLE before offering the batch:
   // a still-loading read defaults its amount to 0n, which would silently
   // drop that leg from a batch the user thinks is complete.
-  if (rewards.isPending || vpfi.isPending) return null;
+  // The last batch's outcome stays on screen even once its claims leave the
+  // list and no further batch is on offer: it may be the only place a
+  // payment kept in the vault is explained.
+  const outcomeOnly = outcomeNote ? (
+    <section className="card" style={{ marginBottom: 16 }}>
+      <div className="banner banner-info" role="status">
+        <span className="banner-body">{outcomeNote}</span>
+      </div>
+    </section>
+  ) : null;
+  if (rewards.isPending || vpfi.isPending) return outcomeOnly;
 
   const items = buildClaimAllItems({
     loans,
@@ -101,7 +148,7 @@ export function ClaimAllCard({ loans }: { loans: ClaimableLoan[] }) {
   // already has its own button/row. (Claims.tsx suppresses the "no
   // claims yet" empty state when there ARE non-loan payouts, so a pure
   // rewards+vault batch no longer contradicts it — Codex #1291 r1.)
-  if (items.length < 2) return null;
+  if (items.length < 2) return outcomeOnly;
 
   // Pre-check defaults only up to the FIRST window page: seeding up to
   // MAX_CLAIM_ALL (30) while the checklist initially renders one page
@@ -117,13 +164,50 @@ export function ClaimAllCard({ loans }: { loans: ClaimableLoan[] }) {
   const selectedCount = selectedKeys.length;
 
   const hasVpfiVault = items.some((i) => i.kind === 'vpfi-vault');
+  // Where the batch pays, per leg. A loan claim pays out of the RECORDED
+  // party's vault (another account's for a transferred position, which the
+  // vault layer credits to a protected claimant's vault instead of queueing);
+  // the vault-VPFI withdrawal follows the account's own route; a protected
+  // account's interaction rewards are always credited to its vault (the
+  // reward claim's own rule), so they never queue. One note per distinct
+  // route among the selected legs.
+  const selectedItems = items.filter((i) => isSelected(i.key));
+  const selectedKinds = new Set(selectedItems.map((i) => i.kind));
+  const legRouteNotes = new Set<string>();
+  // Legs run in order inside one transaction, so each queued leg takes a row
+  // the next one cannot: count them per queue (one row per leg, the least a
+  // leg can take), so a leg past the cap reads as kept in the vault.
+  const rowsTaken = new Map<string, number>();
+  for (const i of selectedItems) {
+    if (i.kind === 'rewards') continue;
+    const source = sourceAccount(i.loan ? claimSource(i.loan) : undefined);
+    const route = routeOf(me, source, (a) => rowsTaken.get(a?.toLowerCase() ?? '') ?? 0);
+    const gate = gateAccount(me, source);
+    if (route.kind === 'queued' && gate && gate !== 'unread' && gate.address) {
+      const key = gate.address.toLowerCase();
+      rowsTaken.set(key, (rowsTaken.get(key) ?? 0) + 1);
+    }
+    const note = payoutRouteText(route);
+    if (note) legRouteNotes.add(note);
+  }
+  if (payoutRoute.kind === 'unread' && selectedItems.length > 0) {
+    const note = payoutRouteText(payoutRoute);
+    if (note) legRouteNotes.add(note);
+  }
+  const rewardsToVaultNote =
+    selectedKinds.has('rewards') && (payoutRoute.kind === 'queued' || payoutRoute.kind === 'vault')
+      ? copy.protection.payoutRouteRewardsToVault
+      : null;
   const tooMany = selectedCount > MAX_CLAIM_ALL;
+  const vpfiLegBlocked = selectedKeys.some((k) => items.find((i) => i.key === k)?.kind === 'vpfi-vault') &&
+    vpfiWithdrawal.kind !== 'open';
   const canSubmit =
     !busy &&
     onSupportedChain &&
     sanctionsClear &&
     selectedCount > 0 &&
-    !tooMany;
+    !tooMany &&
+    !vpfiLegBlocked;
 
   function toggle(key: string) {
     const now = isSelected(key);
@@ -133,6 +217,7 @@ export function ClaimAllCard({ loans }: { loans: ClaimableLoan[] }) {
   async function submit() {
     setBusy(true);
     setError(null);
+    setOutcomeNote(null);
     try {
       if (!address || !walletChain || !publicClient) {
         throw new Error(copy.wallet.connectFirst);
@@ -148,7 +233,16 @@ export function ClaimAllCard({ loans }: { loans: ClaimableLoan[] }) {
       const chosen = items.filter((i) => isSelected(i.key));
       if (chosen.length === 0) return;
       const calls = encodeClaimAllCalls(chosen);
-      await write('multicall', [calls]);
+      const { receipt } = await write('multicall', [calls]);
+      // Where each payment landed, read from the receipt, never assumed: a
+      // leg may have been queued, or kept in the vault once a queue filled.
+      // Every leg's outcomes, gathered across the whole receipt and each
+      // stated once: a batch can both queue and hold.
+      const outcomes = chosen
+        .filter((leg) => leg.kind !== 'rewards')
+        .flatMap((leg) => payoutOutcomes(receipt.logs, address, leg.loan ? claimSource(leg.loan) : undefined));
+      const outcomeText = payoutOutcomesText(outcomes, address, vaultManagerLookup([me], address));
+      setOutcomeNote(outcomeText);
       // Post-receipt re-derivation surfaces per-item outcome: claimed
       // items disappear from these lists; skipped items remain.
       void queryClient.invalidateQueries({ queryKey: ['claimables'] });
@@ -196,12 +290,36 @@ export function ClaimAllCard({ loans }: { loans: ClaimableLoan[] }) {
       <p className="muted" style={{ marginTop: 0, fontSize: 13 }}>
         {copy.claims.allResidualNote}
       </p>
+      {[...legRouteNotes].map((note) => (
+        <p key={note} className="muted" style={{ marginTop: 0, fontSize: 13 }}>
+          {note}
+        </p>
+      ))}
+      {rewardsToVaultNote ? (
+        <p className="muted" style={{ marginTop: 0, fontSize: 13 }}>
+          {rewardsToVaultNote}
+        </p>
+      ) : null}
+      {vpfiLegBlocked ? (
+        <p className="muted" role="status" style={{ marginTop: 0, fontSize: 13 }}>
+          {vpfiWithdrawal.kind === 'queueFull'
+            ? copy.vpfi.withdrawQueueFull
+            : vpfiWithdrawal.kind === 'unread'
+              ? copy.vpfi.withdrawProtectionUnknown
+              : copy.vpfi.withdrawProtectionBlocked}
+        </p>
+      ) : null}
 
       {tooMany ? (
         <div className="banner banner-warning" role="alert">
           <span className="banner-body">
             {copy.claims.allTooMany(MAX_CLAIM_ALL)}
           </span>
+        </div>
+      ) : null}
+      {outcomeNote ? (
+        <div className="banner banner-info" role="status">
+          <span className="banner-body">{outcomeNote}</span>
         </div>
       ) : null}
       {error ? (

@@ -151,6 +151,7 @@ function metaForPath(rawPathname: string): RouteMeta {
   if (inSection(pathname, '/positions')) return { ...seo.positions, index: false };
   if (pathname === '/claims') return { ...seo.claims, index: false };
   if (pathname === '/vault') return { ...seo.vault, index: false };
+  if (pathname === '/vault/protection') return { ...seo.protection, index: false };
   if (pathname === '/activity') return { ...seo.activity, index: false };
   if (pathname === '/settings') return { ...seo.settings, index: false };
   if (pathname === '/risk-access') return { ...seo.riskAccess, index: false };

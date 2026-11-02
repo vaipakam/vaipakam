@@ -175,24 +175,9 @@ export function useChargeableVpfi() {
       if (token.toLowerCase() === '0x0000000000000000000000000000000000000000') {
         return 0n;
       }
-      const tracked = await read<bigint>('getTrackedHolding', [
-        address!,
-        token,
-        0n,
-      ]);
-      const encumbered = await read<bigint>('getEncumbered', [
-        address!,
-        token,
-        0n,
-      ]).catch((err) => {
-        const isRevert =
-          err instanceof BaseError &&
-          (err.walk((e) => e instanceof ContractFunctionRevertedError) !== null ||
-            err.walk((e) => e instanceof ContractFunctionZeroDataError) !== null);
-        if (isRevert) return 0n;
-        throw err;
-      });
-      return tracked > encumbered ? tracked - encumbered : 0n;
+      // The contract's own free figure: tracked minus liens minus what
+      // protected account mode holds back for queued payouts.
+      return read<bigint>('freeHolding', [address!, 0, token, 0n]);
     },
   });
 }
