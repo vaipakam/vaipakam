@@ -873,6 +873,17 @@
   },
   {
     "type": "error",
+    "name": "CosignRequired",
+    "inputs": [
+      {
+        "name": "id",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "ERC721AlreadyInitialized",
     "inputs": []
   },

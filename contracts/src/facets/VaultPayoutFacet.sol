@@ -58,6 +58,8 @@ contract VaultPayoutFacet is DiamondReentrancyGuard {
     /// @notice A secondary signer co-signed queued payout `id`.
     /// @custom:event-category state-change/vault-mutation
     event PayoutCosigned(address indexed account, uint256 indexed id, address indexed signer);
+    /// @notice A secondary signer co-signed queued position transfer `id`.
+    event PositionTransferCosigned(address indexed account, uint256 indexed id, address indexed signer);
 
     function _requireLiveOrEscape() private view {
         if (LibPausable.paused() && !_escapeOpen()) revert LibPausable.EnforcedPause();
@@ -161,6 +163,17 @@ contract VaultPayoutFacet is DiamondReentrancyGuard {
         if (!LibProtectedAccount.isSigner(p.user, msg.sender)) revert LibProtectedAccount.NotSigner(p.user, msg.sender);
         p.cosigned = true;
         emit PayoutCosigned(p.user, id, msg.sender);
+    }
+
+    /// @notice Co-sign queued position transfer `id`. Caller: one of the
+    ///         account's secondary signers. Needed before release while the
+    ///         account requires co-signing, exactly as for a payout.
+    function cosignPositionTransfer(uint256 id) external nonReentrant {
+        LibVaipakam.PendingPositionTransfer storage t = LibVaipakam.storageSlot().pendingPositionTransfers[id];
+        if (t.state != LibProtectedAccount.ROW_QUEUED) revert LibProtectedAccount.RowNotQueued(id);
+        if (!LibProtectedAccount.isSigner(t.from, msg.sender)) revert LibProtectedAccount.NotSigner(t.from, msg.sender);
+        t.cosigned = true;
+        emit PositionTransferCosigned(t.from, id, msg.sender);
     }
 
     /// @notice Cancel queued payout `id`; the asset stays in the vault. Works

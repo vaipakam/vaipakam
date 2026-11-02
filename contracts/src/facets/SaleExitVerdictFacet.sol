@@ -192,6 +192,19 @@ contract SaleExitVerdictFacet {
                 0
             );
             if (_full(r)) return _trim(r);
+        } else if (LibProtectedAccount.protectsNfts(holder)) {
+            // With NFT protection on, a position leaves the account only by a
+            // queued, cancellable transfer (allowlist, co-sign, delay). A sale
+            // moves it to the buyer at once, and its shortfall pays the buyer
+            // from the seller's principal, so it would route value past every
+            // one of those checks. The owner may switch NFT protection off
+            // (after the delay) to sell.
+            _add(
+                r,
+                abi.encodeWithSelector(LibProtectedAccount.PositionMovesOnlyByQueuedTransfer.selector, holder),
+                0
+            );
+            if (_full(r)) return _trim(r);
         }
 
         // Who may submit. The direct sale settles to its caller, so only the

@@ -648,6 +648,18 @@ contract ProtectedAccountFacet is DiamondReentrancyGuard, DiamondPausable {
         // can be requested again only after an unlock.
         _dropPendingChanges(account, a);
         LibProtectedAccount.cancelAllRows(account, by);
+        // A replacement the manager proposed is a change the (possibly
+        // compromised) primary asked for: a lock voids it like any other, so
+        // it cannot complete after the lock and take the lock away. A
+        // signer-majority proposal is the recovery itself and survives.
+        LibVaipakam.ReplacementProposal storage p = s.replacementProposal[account];
+        if (p.nominee != address(0) && p.proposedBy == (a.retired ? a.controller : account)) {
+            address nominee = p.nominee;
+            p.nominee = address(0);
+            p.proposedBy = address(0);
+            p.readyAt = 0;
+            emit ReplacementCancelled(account, nominee, by);
+        }
         emit VaultLocked(account, by);
     }
 

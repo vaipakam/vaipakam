@@ -117,6 +117,7 @@ library LibProtectedAccount {
     error AlreadyApproved();
     error AmountExceedsFree(uint256 requested, uint256 free);
     error EscapeClosed();
+    error PositionMovesOnlyByQueuedTransfer(address account);
 
     // ─── Events (state-change/vault-mutation) ────────────────────────────
 
@@ -475,6 +476,7 @@ library LibProtectedAccount {
         s.pendingPositionTransfers[id] = LibVaipakam.PendingPositionTransfer({
             from: account,
             state: ROW_QUEUED,
+            cosigned: false,
             releaseAt: releaseAt,
             to: to,
             tokenId: tokenId
@@ -505,7 +507,13 @@ library LibProtectedAccount {
         t = s.pendingPositionTransfers[id];
         if (t.state != ROW_QUEUED) revert RowNotQueued(id);
         if (block.timestamp < t.releaseAt) revert PayoutNotDue(id, t.releaseAt);
-        if (s.protectedAccount[t.from].locked) revert ProtectedVaultLocked(t.from);
+        LibVaipakam.ProtectedAccount storage a = s.protectedAccount[t.from];
+        if (a.locked) revert ProtectedVaultLocked(t.from);
+        // A position transfer is a payout of the position: it follows the
+        // same destination rule and the same co-sign requirement as a
+        // payout, read again at release.
+        if (a.requireCosign && !t.cosigned) revert CosignRequired(id);
+        if (!isAllowed(t.from, t.to)) revert RecipientNotAllowlisted(t.from, t.to);
         t.state = ROW_RELEASED;
         s.pendingTransferIds[t.from].remove(id);
         delete s.pendingTransferByToken[t.tokenId];
@@ -532,6 +540,13 @@ library LibProtectedAccount {
             --i;
             uint256 id = payouts.at(i);
             if (s.pendingPayouts[id].recipient == recipient) cancelPayout(id, by);
+        }
+        EnumerableSet.UintSet storage transfers = s.pendingTransferIds[account];
+        i = transfers.length();
+        while (i != 0) {
+            --i;
+            uint256 id = transfers.at(i);
+            if (s.pendingPositionTransfers[id].to == recipient) cancelTransfer(id, by);
         }
     }
 }
