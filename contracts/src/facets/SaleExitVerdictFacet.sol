@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibProtectedAccount} from "../libraries/LibProtectedAccount.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibERC721} from "../libraries/LibERC721.sol";
 import {LibInterestLedger} from "../libraries/LibInterestLedger.sol";
@@ -176,6 +177,21 @@ contract SaleExitVerdictFacet {
         if (loan.status != LibVaipakam.LoanStatus.Active || holder == address(0)) {
             _add(r, abi.encodeWithSelector(IVaipakamErrors.LoanNotActive.selector), 0);
             return _trim(r);
+        }
+
+        // Protected account mode — a locked or retired holder's position does
+        // not leave it by sale; the lock lifts only by its delayed unlock (no
+        // known reopening time), and a retired account never reopens.
+        LibVaipakam.ProtectedAccount storage pa = s.protectedAccount[holder];
+        if (pa.enabled && (pa.locked || pa.retired)) {
+            _add(
+                r,
+                pa.retired
+                    ? abi.encodeWithSelector(LibProtectedAccount.AccountRetired.selector, holder)
+                    : abi.encodeWithSelector(LibProtectedAccount.ProtectedVaultLocked.selector, holder),
+                0
+            );
+            if (_full(r)) return _trim(r);
         }
 
         // Who may submit. The direct sale settles to its caller, so only the

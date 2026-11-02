@@ -1228,7 +1228,7 @@ contract PrecloseFacet is
             // or liquidate it.
             uint256 rawBal = IERC20(loan.collateralAsset).balanceOf(newBorrowerVault);
             uint256 trackedBal =
-                s.protocolTrackedVaultBalance[newBorrower][loan.collateralAsset];
+                LibVaipakam.trackedHolding(newBorrower, loan.collateralAsset, 0);
             if (trackedBal < rawBal) {
                 rawBal = trackedBal;
             }

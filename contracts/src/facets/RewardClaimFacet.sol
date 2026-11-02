@@ -2,6 +2,8 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibProtectedAccount} from "../libraries/LibProtectedAccount.sol";
+import {LibDelivery} from "../libraries/LibDelivery.sol";
 import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
 import {LibVpfiRecycle} from "../libraries/LibVpfiRecycle.sol";
 import {LibRewardCustody} from "../libraries/LibRewardCustody.sol";
@@ -802,8 +804,10 @@ contract RewardClaimFacet is
     ///      claimant (`LibAccountShape.isEoaStyle`: no code, or only an
     ///      EIP-7702 delegation designator, #2617); a contract caller keeps the
     ///      raw transfer every pre-RL-1 integration observed.
+    ///      A wallet in protected account mode is always paid into its vault.
     function _toVault(address user, LibVaipakam.RewardDelivery deliverTo) private view returns (bool) {
         return deliverTo == LibVaipakam.RewardDelivery.Vault
+            || LibProtectedAccount.isEnabled(user)
             || (deliverTo == LibVaipakam.RewardDelivery.Default && LibAccountShape.isEoaStyle(user));
     }
 
@@ -833,7 +837,9 @@ contract RewardClaimFacet is
                 return;
             }
         }
-        IERC20(vpfi).safeTransfer(user, amount);
+        // A protected wallet is credited in its vault here too
+        // (`LibDelivery.creditIfProtected`), so the fallback never pays it.
+        LibDelivery.pushOut(vpfi, user, amount);
     }
 
     /**

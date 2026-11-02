@@ -1235,6 +1235,16 @@ contract RewardCustodyFacet is DiamondAccessControl {
         LibRewardCustody.debit(s, LibVaipakam.RewardCustodyRow.LiveFresh, fresh, user);
         LibRewardCustody.debit(s, LibVaipakam.RewardCustodyRow.Recycled, recycled, user);
         LibRewardCustody.debit(s, LibVaipakam.RewardCustodyRow.Unclassified, epoch, user);
+        // Protected account mode: a protected wallet is never paid directly,
+        // so when its vault could not take the credit above (a mandatory
+        // vault upgrade it has not made), the delivery goes to its vault
+        // anyway, recorded as tracked, and leaves only through the delay.
+        if (s.protectedAccount[user].enabled) {
+            address proxy = s.userVaipakamVaults[user];
+            LibRewardCustody.releaseMeasured(token, holder, proxy, fresh + recycled + epoch);
+            LibVaipakam.recordVaultDeposit(user, token, fresh + recycled + epoch);
+            return true;
+        }
         LibRewardCustody.releaseMeasured(token, holder, user, fresh + recycled + epoch);
     }
 

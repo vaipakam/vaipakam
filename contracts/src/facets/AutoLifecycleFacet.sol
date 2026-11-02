@@ -686,7 +686,7 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
         address vault = s.userVaipakamVaults[holder];
         if (erc20 && vault != address(0) && asset != address(0)) {
             uint256 raw = IERC20(asset).balanceOf(vault);
-            uint256 tracked = s.protocolTrackedVaultBalance[holder][asset];
+            uint256 tracked = LibVaipakam.trackedHolding(holder, asset, 0);
             otherFree = LibEncumbrance.freeBalance(holder, asset, 0, tracked < raw ? tracked : raw);
         }
         if (

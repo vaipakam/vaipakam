@@ -130,7 +130,7 @@ contract MeasuredDeliveryTest is SetupTest {
     }
 
     function _tracked(address user, address token) internal view returns (uint256) {
-        return VaultFactoryFacet(address(diamond)).getProtocolTrackedVaultBalance(user, token);
+        return VaultFactoryFacet(address(diamond)).getTrackedHolding(user, token, 0);
     }
 
     function _vault(address user) internal returns (address) {

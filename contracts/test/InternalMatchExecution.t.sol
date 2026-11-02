@@ -219,7 +219,7 @@ contract InternalMatchExecutionTest is SetupTest {
         // user's as A's lender; only the incentive left.
         assertEq(IERC20(mockERC20).balanceOf(uVault), 990, "the lender share stayed in the vault");
         assertEq(
-            VaultFactoryFacet(address(diamond)).getProtocolTrackedVaultBalance(lender, mockERC20),
+            VaultFactoryFacet(address(diamond)).getTrackedHolding(lender, mockERC20, 0),
             990,
             "and is tracked as the user's"
         );

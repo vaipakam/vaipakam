@@ -107,7 +107,10 @@ abstract contract DiamondFacetNames {
     ///      payoff permit on a refinance request, which RefinanceFacet uses).
     ///      105 → 106 with `RiskDiscountedLiquidationFacet` (the discounted
     ///      liquidation route, moved whole off RiskFacet for EIP-170 headroom).
-    function cutFacetNames() internal pure returns (string[106] memory) {
+    ///      106 → 109 with `ProtectedAccountFacet`, `VaultPayoutFacet` and
+    ///      `VaultDepositoryFacet` (protected account mode and the depository
+    ///      vault).
+    function cutFacetNames() internal pure returns (string[109] memory) {
         return [
             "AccessControlFacet",
             "AddCollateralFacet",
@@ -249,6 +252,10 @@ abstract contract DiamondFacetNames {
             "RiskSplitLiquidationFacet",
             // The discounted liquidation route, moved off RiskFacet (EIP-170).
             "RiskDiscountedLiquidationFacet",
+            // Protected account mode and the depository vault.
+            "ProtectedAccountFacet",
+            "VaultPayoutFacet",
+            "VaultDepositoryFacet",
             "SwapToRepayFacet",
             "SwapToRepayPartialFacet",
             "SwapToRepayIntentFacet",

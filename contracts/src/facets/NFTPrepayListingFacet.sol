@@ -502,7 +502,7 @@ contract NFTPrepayListingFacet is
         if (existing != bytes32(0)) {
             revert PrepayListingAlreadyExists(loanId, existing);
         }
-        LibERC721.LockReason currentLock = LibERC721.lockOf(loan.borrowerTokenId);
+        LibERC721.LockReason currentLock = LibERC721.storedLockOf(loan.borrowerTokenId);
         if (currentLock != LibERC721.LockReason.None) {
             revert BorrowerNFTAlreadyLocked(loan.borrowerTokenId, currentLock);
         }

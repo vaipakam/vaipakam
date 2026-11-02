@@ -820,6 +820,17 @@
   },
   {
     "type": "error",
+    "name": "AccountRetired",
+    "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "AssetPaused",
     "inputs": [
       {
@@ -1012,6 +1023,17 @@
         "name": "max",
         "type": "uint256",
         "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ProtectedVaultLocked",
+    "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "internalType": "address"
       }
     ]
   },

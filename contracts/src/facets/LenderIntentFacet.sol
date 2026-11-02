@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibProtectedAccount} from "../libraries/LibProtectedAccount.sol";
 import {LibCloseoutFreeze} from "../libraries/LibCloseoutFreeze.sol";
 import {LibPriorityRouting} from "../libraries/LibPriorityRouting.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
@@ -206,6 +207,7 @@ contract LenderIntentFacet is
         bool riskAndTermsConsent
     ) external nonReentrant whenNotPaused {
         LibVaipakam._assertNotSanctioned(msg.sender);
+        LibProtectedAccount.requireCanOpen(msg.sender);
 
         // Mandatory risk/terms consent — same gate as every offer-create path
         // (`RiskAndTermsConsentRequired`), captured once for the standing intent.
@@ -381,6 +383,7 @@ contract LenderIntentFacet is
         uint256 amount
     ) external nonReentrant whenNotPaused {
         LibVaipakam._assertNotSanctioned(msg.sender);
+        LibProtectedAccount.requireCanOpen(msg.sender);
         if (amount == 0) revert LenderIntentInvalidBounds();
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         if (!s.lenderIntent[msg.sender][lendingAsset][collateralAsset].active) {
@@ -727,7 +730,7 @@ contract LenderIntentFacet is
         // claim path rather than mint UNBACKED intent capital (which could never
         // be matched or withdrawn) and strand the real proceeds.
         uint256 rawBal =
-            s.protocolTrackedVaultBalance[io.owner][io.lendingAsset];
+            LibVaipakam.trackedHolding(io.owner, io.lendingAsset, 0);
         if (
             LibEncumbrance.freeBalance(io.owner, io.lendingAsset, 0, rawBal)
                 < rolledAmount

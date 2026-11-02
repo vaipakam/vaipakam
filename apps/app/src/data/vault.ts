@@ -162,8 +162,8 @@ export function useVaultAssets(scanWindow: number) {
               publicClient!.readContract({
                 address: readChain.diamondAddress,
                 abi: DIAMOND_ABI_VIEM,
-                functionName: 'getProtocolTrackedVaultBalance',
-                args: [address!, token],
+                functionName: 'getTrackedHolding',
+                args: [address!, token, 0n],
               }) as Promise<bigint>,
               publicClient!.readContract({
                 address: readChain.diamondAddress,

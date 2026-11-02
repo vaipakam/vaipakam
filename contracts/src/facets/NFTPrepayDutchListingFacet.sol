@@ -185,7 +185,7 @@ contract NFTPrepayDutchListingFacet is
         if (s.prepayListingOrderHash[loanId] != bytes32(0)) {
             revert PrepayListingAlreadyExists(loanId, s.prepayListingOrderHash[loanId]);
         }
-        LibERC721.LockReason currentLock = LibERC721.lockOf(loan.borrowerTokenId);
+        LibERC721.LockReason currentLock = LibERC721.storedLockOf(loan.borrowerTokenId);
         if (currentLock != LibERC721.LockReason.None) {
             revert BorrowerNFTAlreadyLocked(loan.borrowerTokenId, currentLock);
         }

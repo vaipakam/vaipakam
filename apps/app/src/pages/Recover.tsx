@@ -1,20 +1,22 @@
 /**
- * Stuck-token recovery (T-054 PR-4, defi /recover ported onto
- * app's UI/UX) — returns ERC-20s that landed in the user's vault
- * proxy OUTSIDE the protocol deposit flow (mistaken direct transfer,
- * third-party dust) to the connected wallet.
+ * Adopting untracked tokens (formerly stuck-token recovery, T-054 PR-4)
+ * — credits ERC-20s that landed in the user's vault proxy OUTSIDE the
+ * protocol deposit flow (a direct transfer, third-party dust) to the
+ * vault's tracked holding. Nothing moves: once adopted, the tokens
+ * leave only through an ordinary vault withdrawal, so protected
+ * account mode's delay covers them like any other payout.
  *
  * DELIBERATELY UNLISTED — no nav or Settings entry; noindex,nofollow
  * in SeoMeta + _headers. The only in-app path here is the Help page's
  * stuck-token explainer. That discoverability gate is part of the
- * security design (as in the defi original): a user dust-poisoned by
- * a stranger must read WHY recovering unknown dust is dangerous
- * before they can find the button — declaring a sanctions-listed
- * source LOCKS recovery for their vault, and `recoverStuckERC20`
- * deliberately does NOT revert on that path (the ban-state writes
- * must persist), so the outcome is read from the receipt's events:
- *   StuckERC20Recovered            → success
- *   VaultBannedFromRecoveryAttempt → ban-as-outcome
+ * security design: a user dust-poisoned by a stranger must read WHY
+ * adopting unknown dust is dangerous before they can find the button —
+ * declaring a sanctions-listed source LOCKS the vault, and
+ * `adoptUntracked` deliberately does NOT revert on that path (the
+ * ban-state writes must persist), so the outcome is read from the
+ * receipt's events:
+ *   UntrackedAdopted        → success
+ *   VaultBannedFromAdoption → ban-as-outcome
  *
  * Flow (app in-page steps, no modal): form → review card with the
  * typed-CONFIRM friction → EIP-712 acknowledgement signature → tx →
@@ -75,13 +77,15 @@ import { ADVANCED_USER_GUIDE_STUCK_TOKENS_URL } from '../lib/externalLinks';
 import { exactAmountString, exactUnitsOrNull, shortAddress } from '../lib/format';
 import { makePendingMarkerStore } from '../lib/pendingMarker';
 
-/** EIP-712 shape — must match VaultFactoryFacet's RECOVERY_TYPEHASH
+/** EIP-712 shape — must match VaultDepositoryFacet's ADOPTION_TYPEHASH
  *  exactly, or the recovered signer won't equal msg.sender and the
  *  contract reverts RecoverySignatureInvalid. */
 const RECOVERY_TYPES = {
-  RecoveryAcknowledgment: [
+  AdoptionAcknowledgment: [
     { name: 'user', type: 'address' },
-    { name: 'token', type: 'address' },
+    { name: 'asset', type: 'address' },
+    { name: 'kind', type: 'uint8' },
+    { name: 'tokenId', type: 'uint256' },
     { name: 'declaredSource', type: 'address' },
     { name: 'amount', type: 'uint256' },
     { name: 'nonce', type: 'uint256' },
@@ -91,6 +95,9 @@ const RECOVERY_TYPES = {
 } as const;
 
 const RECOVERY_DEADLINE_SECONDS = 30 * 60;
+
+/** `AssetType.ERC20` — this page adopts ERC-20 balances only. */
+const ERC20_KIND = 0;
 
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 
@@ -629,7 +636,7 @@ function isTransactionNotFound(err: unknown): boolean {
  * rejection as ambiguous locks the flow behind a pending card until the
  * 30-minute deadline expires, over a transaction that does not exist.
  *
- * The signature alone cannot execute anything: `recoverStuckERC20`
+ * The signature alone cannot execute anything: `adoptUntracked`
  * requires the recovered signer to EQUAL msg.sender, so nobody else can
  * relay it. Clearing the record on this branch is safe.
  *
@@ -940,7 +947,7 @@ interface DecodedRecoveryOutcome {
   kind: 'recovered' | 'banned';
   /** The event's OWN arguments (Codex #1547 r10), each present only
    *  when that event carries it — the admin-triggered
-   *  `StuckERC20Recovered` overload has no `declaredSource`, and a
+   *  `UntrackedAdopted` event names the asset as `asset`, and a
    *  future shape may carry neither. */
   token?: string;
   amount?: bigint;
@@ -968,9 +975,9 @@ function decodeRecoveryOutcome(
         topics: log.topics as [Hex, ...Hex[]],
       });
       const kind =
-        decoded.eventName === 'StuckERC20Recovered'
+        decoded.eventName === 'UntrackedAdopted'
           ? ('recovered' as const)
-          : decoded.eventName === 'VaultBannedFromRecoveryAttempt'
+          : decoded.eventName === 'VaultBannedFromAdoption'
             ? ('banned' as const)
             : null;
       if (kind === null) continue;
@@ -978,7 +985,7 @@ function decodeRecoveryOutcome(
       // them meant a card for a REPLACED transaction was built from the
       // original submission — the wrong amount and the wrong declared
       // source, next to an explorer link showing different values.
-      const token = eventArg(decoded.args, 'token');
+      const token = eventArg(decoded.args, 'asset');
       const amount = eventArg(decoded.args, 'amount');
       const declaredSource = eventArg(decoded.args, 'declaredSource');
       return {
@@ -1481,7 +1488,7 @@ export function Recover() {
     return () => window.removeEventListener('storage', onStorage);
   }, [address, walletChain?.chainId, clearToFreshForm]);
 
-  // Fail-safe availability probe: `recoverStuckERC20` HARD-REQUIRES
+  // Fail-safe availability probe: `adoptUntracked` HARD-REQUIRES
   // the sanctions oracle (it reverts SanctionsOracleUnavailable when
   // unset — the outcome can't be adjudicated without screening the
   // declared source). Never let the user sign into that: with the
@@ -1574,7 +1581,7 @@ export function Recover() {
     };
   }, [publicClient, walletChain, oracleAttempt, oracleKey]);
 
-  // Contract-account gate (Codex #1547 r6): `recoverStuckERC20`
+  // Contract-account gate (Codex #1547 r6): `adoptUntracked`
   // authorises with ECDSA.recover and requires the recovered signer to
   // EQUAL msg.sender, so a smart-contract account (Safe & co.) can
   // never satisfy it — its "signature" is a contract-side validation
@@ -1811,8 +1818,8 @@ export function Recover() {
             publicClient.readContract({
               address: walletChain.diamondAddress,
               abi: DIAMOND_ABI_VIEM,
-              functionName: 'getProtocolTrackedVaultBalance',
-              args: [address, token],
+              functionName: 'getTrackedHolding',
+              args: [address, token, 0n],
               blockNumber,
             }) as Promise<bigint>,
           ]);
@@ -2023,8 +2030,8 @@ export function Recover() {
           publicClient.readContract({
             address: diamond,
             abi: DIAMOND_ABI_VIEM,
-            functionName: 'getProtocolTrackedVaultBalance',
-            args: [address, token],
+            functionName: 'getTrackedHolding',
+            args: [address, token, 0n],
             blockNumber,
           }) as Promise<bigint>,
         ]);
@@ -2054,18 +2061,18 @@ export function Recover() {
         publicClient.readContract({
           address: diamond,
           abi: DIAMOND_ABI_VIEM,
-          functionName: 'recoveryNonce',
+          functionName: 'adoptionNonce',
           args: [address],
         }) as Promise<bigint>,
         publicClient.readContract({
           address: diamond,
           abi: DIAMOND_ABI_VIEM,
-          functionName: 'recoveryAckTextHash',
+          functionName: 'adoptionAckTextHash',
         }) as Promise<Hex>,
         publicClient.readContract({
           address: diamond,
           abi: DIAMOND_ABI_VIEM,
-          functionName: 'recoveryDomainSeparator',
+          functionName: 'adoptionDomainSeparator',
         }) as Promise<Hex>,
       ]);
 
@@ -2081,7 +2088,7 @@ export function Recover() {
       }
 
       const domain = {
-        name: 'Vaipakam Recovery',
+        name: 'Vaipakam Vault Adoption',
         version: '1',
         chainId: walletChain.chainId,
         verifyingContract: diamond,
@@ -2195,10 +2202,12 @@ export function Recover() {
           account: address,
           domain,
           types: RECOVERY_TYPES,
-          primaryType: 'RecoveryAcknowledgment',
+          primaryType: 'AdoptionAcknowledgment',
           message: {
             user: address,
-            token,
+            asset: token,
+            kind: ERC20_KIND,
+            tokenId: 0n,
             declaredSource,
             amount,
             nonce,
@@ -2245,8 +2254,8 @@ export function Recover() {
       const txHash = await walletClient.writeContract({
         address: diamond,
         abi: DIAMOND_ABI_VIEM,
-        functionName: 'recoverStuckERC20',
-        args: [token, declaredSource, amount, deadline, signature],
+        functionName: 'adoptUntracked',
+        args: [ERC20_KIND, token, 0n, amount, declaredSource, deadline, signature],
         chain: walletClient.chain,
         account: address,
       });
@@ -2395,7 +2404,7 @@ export function Recover() {
         //                 IS this recovery, so an event-less success
         //                 receipt is an unreadable OUTCOME.
         //   'replaced'  — means only that destination, value or input
-        //                 DIFFER. Another `recoverStuckERC20` with
+        //                 DIFFER. Another `adoptUntracked` with
         //                 different parameters satisfies that exactly,
         //                 so it is NOT proof no recovery happened.
         // Everything but 'cancelled' therefore falls through to the
@@ -2426,7 +2435,7 @@ export function Recover() {
       // was never made — and treating it as ambiguous stranded the flow
       // on a pending card until the signed 30-minute deadline expired,
       // over a transaction that does not exist. The signature alone
-      // can't execute anything (`recoverStuckERC20` requires the
+      // can't execute anything (`adoptUntracked` requires the
       // recovered signer to equal msg.sender, so nobody can relay it),
       // so drop this attempt's record — identity-matched, never a newer
       // one — and go back to review with the normal rejection message.
@@ -2634,7 +2643,7 @@ export function Recover() {
    * replacement.
    *
    * The authority is the account's own on-chain recovery counter,
-   * which `recoverStuckERC20` increments EXACTLY ONCE per processed
+   * which `adoptUntracked` increments EXACTLY ONCE per processed
    * attempt — on the successful path AND on the sanctioned-source ban
    * path (VaultFactoryFacet.sol ~892/908), and never on a revert. So:
    *
@@ -2710,7 +2719,7 @@ export function Recover() {
     const liveNonce = (await publicClient.readContract({
       address: walletChain.diamondAddress,
       abi: DIAMOND_ABI_VIEM,
-      functionName: 'recoveryNonce',
+      functionName: 'adoptionNonce',
       args: [account],
     })) as bigint;
     if (liveNonce > ctx.recoveryNonce) {
@@ -2991,7 +3000,7 @@ export function Recover() {
         // DELIBERATELY no start-over action here (Codex #1547 r15).
         // The success card above gets one, but a flagged wallet is
         // blocked protocol-wide until the declared address is
-        // de-listed: `recoverStuckERC20` is a Tier-1 entry point, so a
+        // de-listed: `adoptUntracked` is a Tier-1 entry point, so a
         // fresh form here could only walk the user into another doomed
         // signature. Withholding the action leaves the standing
         // verdict — and the auto-unlock note — as the last word.

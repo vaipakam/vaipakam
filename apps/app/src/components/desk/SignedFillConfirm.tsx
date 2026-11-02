@@ -212,8 +212,8 @@ export function SignedFillConfirm({
         publicClient.readContract({
           address: walletChain.diamondAddress,
           abi: DIAMOND_ABI_VIEM,
-          functionName: 'getProtocolTrackedVaultBalance',
-          args: [signed.signer as `0x${string}`, stakeToken],
+          functionName: 'getTrackedHolding',
+          args: [signed.signer as `0x${string}`, stakeToken, 0n],
         }) as Promise<bigint>,
         publicClient.readContract({
           address: walletChain.diamondAddress,
@@ -372,8 +372,8 @@ export function SignedFillConfirm({
         publicClient.readContract({
           address: walletChain.diamondAddress,
           abi: DIAMOND_ABI_VIEM,
-          functionName: 'getProtocolTrackedVaultBalance',
-          args: [signed.signer as `0x${string}`, stakeToken],
+          functionName: 'getTrackedHolding',
+          args: [signed.signer as `0x${string}`, stakeToken, 0n],
         }) as Promise<bigint>,
         publicClient.readContract({
           address: walletChain.diamondAddress,

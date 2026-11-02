@@ -62,7 +62,7 @@ contract PositiveFlowsOperatorAdmin is PositiveFlowsBase {
     /// @dev Retail policy (per project memory + ProfileFacet
     ///      `_assertNotSanctioned` placement): Tier-1 entry points
     ///      (createOffer, acceptOffer, getOrCreateUserVault,
-    ///      recoverStuckERC20, etc.) revert SanctionedAddress for
+    ///      adoptUntracked, etc.) revert SanctionedAddress for
     ///      flagged callers. Tier-2 close-out paths (repayLoan,
     ///      claimAsBorrower, markDefaulted) STAY OPEN so the
     ///      unflagged counterparty can be made whole.

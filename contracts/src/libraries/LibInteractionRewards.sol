@@ -311,7 +311,7 @@ library LibInteractionRewards {
     ///         subsequent days' claims on the same mirror. Any true terminal
     ///         excess (a mirror that winds down with unclaimed surplus) is
     ///         recoverable only by governance/upgrade — there is NO Diamond-
-    ///         balance ERC20 rescue today (`recoverStuckERC20` withdraws a USER's
+    ///         balance ERC20 rescue today (`adoptUntracked` credits a USER's
     ///         vault proxy, not the Diamond's own VPFI), so this does NOT rely on
     ///         a permissionless sweep. Capping the slice exactly here is
     ///         infeasible: the per-user cap binds per reward-ENTRY over that

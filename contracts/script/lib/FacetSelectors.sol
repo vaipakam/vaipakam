@@ -77,7 +77,7 @@ library FacetSelectors {
     ///         `getDiamondAddress` and `vaultSetNFTUser1155` (the exact drift
     ///         #778 warns about). The parity test keeps this list == the ABI.
     function vaultFactory() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](34);
+        s = new bytes4[](28);
         s[0] = VaultFactoryFacet.initializeVaultImplementation.selector;
         s[1] = VaultFactoryFacet.getOrCreateUserVault.selector;
         s[2] = VaultFactoryFacet.upgradeVaultImplementation.selector;
@@ -105,21 +105,15 @@ library FacetSelectors {
         s[20] = VaultFactoryFacet.getUserVaultAddress.selector;
         s[21] = VaultFactoryFacet.vaultDepositERC20From.selector;
         s[22] = VaultFactoryFacet.recordVaultDepositERC20.selector;
-        s[23] = VaultFactoryFacet.getProtocolTrackedVaultBalance.selector;
-        s[24] = VaultFactoryFacet.recoverStuckERC20.selector;
-        s[25] = VaultFactoryFacet.disown.selector;
-        s[26] = VaultFactoryFacet.recoveryDomainSeparator.selector;
-        s[27] = VaultFactoryFacet.recoveryAckTextHash.selector;
-        s[28] = VaultFactoryFacet.recoveryNonce.selector;
-        s[29] = VaultFactoryFacet.vaultBannedSource.selector;
-        s[30] = VaultFactoryFacet.getVaultVersionInfo.selector;
+        s[23] = VaultFactoryFacet.getTrackedHolding.selector;
+        s[24] = VaultFactoryFacet.getVaultVersionInfo.selector;
         // RL-1 — Diamond-funded vault credit primitive (reward
         // claim-to-vault delivery).
-        s[31] = VaultFactoryFacet.vaultCreditFromDiamondERC20.selector;
+        s[25] = VaultFactoryFacet.vaultCreditFromDiamondERC20.selector;
         // #1566 slice 4 PR B — the holder-sourced reward payout into a vault.
-        s[32] = bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256,uint256)"));
+        s[26] = bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256,uint256)"));
         // The four-argument credit stays as a compatibility entry (Codex #2276 r14 P2).
-        s[33] = bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256)"));
+        s[27] = bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256)"));
     }
 
     /// @notice Full external selector surface of {ProfileFacet} (32).
@@ -163,7 +157,7 @@ library FacetSelectors {
         s[31] = ProfileFacet.sanctionsStatus.selector;
     }
 
-    /// @notice Full external selector surface of {VaipakamNFTFacet} (22) — mirrors
+    /// @notice Full external selector surface of {VaipakamNFTFacet} (26) — mirrors
     ///         `DeployDiamond._getNftSelectors`. #1123 wires the fail-closed
     ///         movement gate INLINE into `transferFrom`/`safeTransferFrom`, so a
     ///         curated redeploy MUST re-cut this facet or raw transfers stay on the
@@ -171,7 +165,7 @@ library FacetSelectors {
     ///         VaipakamNFTMetadataFacet (#2957); `RedeployFacets` refuses a
     ///         Diamond from before that split.
     function vaipakamNFT() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](23);
+        s = new bytes4[](26);
         s[0] = VaipakamNFTFacet.mintNFT.selector;
         s[1] = VaipakamNFTFacet.updateNFTStatus.selector;
         s[2] = VaipakamNFTFacet.burnNFT.selector;
@@ -195,6 +189,11 @@ library FacetSelectors {
         s[20] = bytes4(keccak256("tokenOfOwnerByIndex(address,uint256)"));
         s[21] = VaipakamNFTFacet.nftStatusOf.selector;
         s[22] = VaipakamNFTFacet.highestTokenId.selector;
+        // Protected account mode: a protected owner's position moves only
+        // through a delayed transfer.
+        s[23] = VaipakamNFTFacet.queuePositionTransfer.selector;
+        s[24] = VaipakamNFTFacet.cancelPositionTransfer.selector;
+        s[25] = VaipakamNFTFacet.releasePositionTransfer.selector;
     }
 
     /// @notice Full external selector surface of {RiskPreviewFacet} (10) —

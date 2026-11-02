@@ -2256,7 +2256,7 @@ contract RewardSanctionsForfeitTest is RewardSanctionsTestBase {
         assertTrue(_entry(idA).processed);
         uint256 vaultBal = vpfi.balanceOf(vault);
         uint256 walletBal = vpfi.balanceOf(alice);
-        uint256 tracked = VaultFactoryFacet(address(diamond)).getProtocolTrackedVaultBalance(alice, address(vpfi));
+        uint256 tracked = VaultFactoryFacet(address(diamond)).getTrackedHolding(alice, address(vpfi), 0);
         assertEq(vaultBal + walletBal, paid, "fixture: the reward was delivered");
 
         uint256 idB = _seed(alice, LOAN_B);
@@ -2268,7 +2268,7 @@ contract RewardSanctionsForfeitTest is RewardSanctionsTestBase {
         assertEq(vpfi.balanceOf(vault), vaultBal, "the vault's VPFI is untouched");
         assertEq(vpfi.balanceOf(alice), walletBal, "the wallet's VPFI is untouched");
         assertEq(
-            VaultFactoryFacet(address(diamond)).getProtocolTrackedVaultBalance(alice, address(vpfi)),
+            VaultFactoryFacet(address(diamond)).getTrackedHolding(alice, address(vpfi), 0),
             tracked,
             "the tracked balance is untouched"
         );

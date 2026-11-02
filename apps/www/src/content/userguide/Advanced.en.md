@@ -2032,7 +2032,9 @@ from, etc.).
 
 Two outcomes:
 
-- **Source clean** → tokens return to your EOA.
+- **Source clean** → the tokens are added to your vault's
+  tracked balance. Withdraw them from your vault as usual; if
+  protected account mode is on, its payout delay applies.
 - **Source flagged** → tokens stay in the vault, your vault
   gets locked under the protocol's sanctions policy. The
   lock auto-lifts if the address is later removed from the
@@ -2044,8 +2046,8 @@ Two outcomes:
 
 If you want a public on-chain record asserting that some
 token balance in your vault is NOT yours, the protocol
-provides a `disown(token)` function. It emits an event
-(`TokenDisowned`) and changes nothing else — tokens stay in
+provides a `disownUntracked(kind, asset, tokenId)` function. It emits an event
+(`UntrackedDisowned`) and changes nothing else — tokens stay in
 vault as before. Useful in compliance disputes if a CEX or
 regulator asks "did you receive these funds?": you can point
 to the on-chain event.

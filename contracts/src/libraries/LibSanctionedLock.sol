@@ -35,7 +35,7 @@ import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
  *         proceeds when the flag is lifted.
  *
  *         The LOCK itself is enforced elsewhere and needs no new storage: the
- *         deposit is protocol-tracked (so `recoverStuckERC20` can't reach it)
+ *         deposit is protocol-tracked (so `adoptUntracked` cannot take it)
  *         and `claimAsLender` / `claimAsBorrower` screen the stored vault owner,
  *         so nothing leaves the vault while the owner is flagged.
  *

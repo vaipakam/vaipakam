@@ -306,7 +306,7 @@ contract VPFIDiscountFacet is
         uint256 prevBal = IERC20(vpfi).balanceOf(vault);
         if (prevBal < amount) revert VPFIVaultBalanceInsufficient();
 
-        uint256 prevTracked = s.protocolTrackedVaultBalance[msg.sender][vpfi];
+        uint256 prevTracked = LibVaipakam.trackedHolding(msg.sender, vpfi, 0);
 
         // #569 §6 F-1 (2026-06-13) — explicit encumbrance consult. VPFI
         // is collateral-eligible (triaged code-wrong: safe under P2P +

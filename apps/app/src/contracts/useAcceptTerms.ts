@@ -454,8 +454,8 @@ export function useAcceptTermsSigning() {
             const tracked = (await publicClient.readContract({
               address: diamondAddr,
               abi: DIAMOND_ABI_VIEM,
-              functionName: 'getProtocolTrackedVaultBalance',
-              args: [o.creator as Address, vpfiToken],
+              functionName: 'getTrackedHolding',
+              args: [o.creator as Address, vpfiToken, 0n],
             })) as bigint;
             const encumbered = (await publicClient.readContract({
               address: diamondAddr,

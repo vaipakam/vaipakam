@@ -1308,7 +1308,7 @@ contract FallbackCustodyTest is CustodyInvariantBase {
     }
 
     function _fcTracked(address who, address token) internal view returns (uint256) {
-        return VaultFactoryFacet(address(diamond)).getProtocolTrackedVaultBalance(who, token);
+        return VaultFactoryFacet(address(diamond)).getTrackedHolding(who, token, 0);
     }
 
     function _fcVault(address who) internal view returns (address) {

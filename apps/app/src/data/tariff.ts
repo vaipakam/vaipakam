@@ -175,9 +175,10 @@ export function useChargeableVpfi() {
       if (token.toLowerCase() === '0x0000000000000000000000000000000000000000') {
         return 0n;
       }
-      const tracked = await read<bigint>('getProtocolTrackedVaultBalance', [
+      const tracked = await read<bigint>('getTrackedHolding', [
         address!,
         token,
+        0n,
       ]);
       const encumbered = await read<bigint>('getEncumbered', [
         address!,

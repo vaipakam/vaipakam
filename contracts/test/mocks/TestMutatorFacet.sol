@@ -431,7 +431,21 @@ contract TestMutatorFacet {
         address token,
         uint256 amount
     ) external {
-        LibVaipakam.storageSlot().protocolTrackedVaultBalance[user][token] = amount;
+        LibVaipakam.storageSlot().protocolTrackedVaultHolding[user][token][0] = amount;
+    }
+
+    /// @notice Write one row of the per-token tracked ledger directly:
+    ///         `protocolTrackedVaultHolding[user][asset][tokenId]`. The NFT
+    ///         twin of `setProtocolTrackedVaultBalanceRaw`, for fixtures that
+    ///         mint an NFT straight into a vault instead of depositing it
+    ///         through the chokepoint.
+    function setTrackedHoldingRaw(
+        address user,
+        address asset,
+        uint256 tokenId,
+        uint256 amount
+    ) external {
+        LibVaipakam.storageSlot().protocolTrackedVaultHolding[user][asset][tokenId] = amount;
     }
 
     /// @notice Write all three per-tier liquidation-LTV slots in

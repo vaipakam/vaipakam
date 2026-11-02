@@ -911,16 +911,21 @@ library LibEncumbrance {
     ///         balance minus the active liens on `(user, asset,
     ///         tokenId)`, and minus any ERC-20 amount parked for a refinance
     ///         payoff in this transaction ({LibRefinanceNetting.parkedOf},
-    ///         #3042: promised to an old lender, so not free). Used by
-    ///         `VaultFactoryFacet.vaultWithdrawERC20`'s withdraw guard and by
-    ///         every free-balance read.
+    ///         #3042: promised to an old lender, so not free), and minus
+    ///         what protected account mode holds back for the owner's queued
+    ///         payouts (`pendingPayoutEarmark`, same key). Used by every vault
+    ///         withdraw guard on `VaultFactoryFacet` and by every free-balance
+    ///         read, so an earmarked amount can be neither paid twice, lent,
+    ///         nor pledged.
     function freeBalance(
         address user,
         address asset,
         uint256 tokenId,
         uint256 rawBalance
     ) internal view returns (uint256) {
-        uint256 enc = LibVaipakam.storageSlot().encumbered[user][asset][tokenId];
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        uint256 enc = s.encumbered[user][asset][tokenId]
+            + s.pendingPayoutEarmark[user][asset][tokenId];
         if (tokenId == 0) enc += LibRefinanceNetting.parkedOf(user, asset);
         return rawBalance > enc ? rawBalance - enc : 0;
     }

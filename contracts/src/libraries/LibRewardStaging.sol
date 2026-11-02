@@ -7,6 +7,8 @@ import {LibInteractionRewards} from "./LibInteractionRewards.sol";
 import {LibVpfiRecycle} from "./LibVpfiRecycle.sol";
 import {LibRewardSanctions} from "./LibRewardSanctions.sol";
 import {LibAccountShape} from "./LibAccountShape.sol";
+import {LibProtectedAccount} from "./LibProtectedAccount.sol";
+import {LibDelivery} from "./LibDelivery.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -787,8 +789,10 @@ library LibRewardStaging {
             venue = dom.venueSet ? dom.venue : LibVaipakam.RewardDelivery.Default;
         }
         // The RL-1 rule, as a direct claim resolves it: `Default` is the vault
-        // for an EOA, a 7702-delegated one included (#2617).
+        // for an EOA, a 7702-delegated one included (#2617). A wallet in
+        // protected account mode is always paid into its vault.
         bool toVault = venue == LibVaipakam.RewardDelivery.Vault
+            || LibProtectedAccount.isEnabled(user)
             || (venue == LibVaipakam.RewardDelivery.Default && LibAccountShape.isEoaStyle(user));
         setApart = setApart || venue == LibVaipakam.RewardDelivery.SanctionsHeld;
         bool vaulted;
@@ -1100,7 +1104,9 @@ library LibRewardStaging {
             );
             if (ok) return true;
         }
-        SafeERC20.safeTransfer(IERC20(vpfi), user, amount);
+        // A protected wallet is credited in its vault here too
+        // (`LibDelivery.creditIfProtected`), so the fallback never pays it.
+        LibDelivery.pushOut(vpfi, user, amount);
     }
 
     /// @dev The close is BOUNDED (Codex #2308 r12, r13): the record's staged
