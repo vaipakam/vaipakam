@@ -243,8 +243,10 @@ export type PayoutOutcome =
   // `recipient` is who the queued row will pay: the account's wallet, or the
   // controller of a retired account (the gate redirects its payouts there).
   | { kind: 'queued'; recipient: string }
-  | { kind: 'held' }
-  | { kind: 'inVault' };
+  // `account` is whose vault holds it; only that account's manager (its
+  // controller once it is retired) can withdraw it.
+  | { kind: 'held'; account: string }
+  | { kind: 'inVault'; account: string };
 
 /**
  * EVERY outcome the receipt shows for payments to `account` (out of
@@ -275,8 +277,10 @@ export function payoutOutcomes(
     ),
   );
   for (const recipient of recipients) out.push({ kind: 'queued', recipient });
-  if (mine('PayoutHeldInVault').length > 0) out.push({ kind: 'held' });
-  if (mine('PaymentCreditedToVault').length > 0) out.push({ kind: 'inVault' });
+  const holders = (eventName: 'PayoutHeldInVault' | 'PaymentCreditedToVault') =>
+    new Set(mine(eventName).map((e) => String((e.args as { account?: string }).account ?? '').toLowerCase()));
+  for (const a of holders('PayoutHeldInVault')) out.push({ kind: 'held', account: a });
+  for (const a of holders('PaymentCreditedToVault')) out.push({ kind: 'inVault', account: a });
   return out;
 }
 
@@ -303,12 +307,15 @@ export type OwnPayoutRoute =
   // `to` is set when the account was moved to a new wallet: the gate then
   // pays every queued payout to that controller, not to this wallet.
   | { kind: 'queued'; delaySeconds: number; cosign: boolean; to: string | null }
-  | { kind: 'vault' }
+  // `manager` is set when someone other than the recipient manages the
+  // vault it stays in (a retired account's controller): only they can
+  // withdraw it.
+  | { kind: 'vault'; manager: string | null }
   // Paid out of ANOTHER account's vault (a transferred position whose
   // assets sit in the recorded party's vault): the vault layer credits a
   // protected recipient's own vault instead and queues nothing, so the
   // owner withdraws it separately.
-  | { kind: 'creditedToVault' };
+  | { kind: 'creditedToVault'; manager: string | null };
 
 type RouteSnap = Pick<ProtectedAccountSnapshot, 'supported' | 'recordFailed' | 'record' | 'payouts' | 'transfers'>;
 
@@ -317,6 +324,12 @@ export interface RouteAccount {
   address?: string;
   snap: RouteSnap | undefined;
   readFailed: boolean;
+}
+
+/** The controller of a retired account, when it is not `wallet`: the one
+ *  who manages (and alone withdraws from) that account's vault. */
+function managerOther(r: { retired: boolean; controller: string }, wallet: string | undefined): string | null {
+  return r.retired && !sameAddress(r.controller, wallet) ? r.controller : null;
 }
 
 const sameAddress = (a?: string, b?: string) => Boolean(a && b && a.toLowerCase() === b.toLowerCase());
@@ -331,10 +344,10 @@ function gateRoute(account: RouteAccount, recipient: string | undefined, rowsAhe
   if (snap.recordFailed || snap.record === null) return { kind: 'unread' };
   const r = snap.record;
   if (!r.enabled) return { kind: 'wallet' };
-  if (r.locked) return { kind: 'vault' };
+  const to = managerOther(r, recipient);
+  if (r.locked) return { kind: 'vault', manager: to };
   if (snap.payouts === null || snap.transfers === null) return { kind: 'unread' };
-  if (snap.payouts.length + snap.transfers.length + rowsAhead >= MAX_OPEN_ROWS) return { kind: 'vault' };
-  const to = r.retired && !sameAddress(r.controller, recipient) ? r.controller : null;
+  if (snap.payouts.length + snap.transfers.length + rowsAhead >= MAX_OPEN_ROWS) return { kind: 'vault', manager: to };
   return { kind: 'queued', delaySeconds: r.delaySeconds, cosign: r.requireCosign, to };
 }
 
@@ -363,7 +376,8 @@ export function payoutRoute(
   if (!r || recipient.readFailed) return { kind: 'unread' };
   if (!r.supported) return { kind: 'wallet' };
   if (r.recordFailed || r.record === null) return { kind: 'unread' };
-  return r.record.enabled ? { kind: 'creditedToVault' } : { kind: 'wallet' };
+  if (!r.record.enabled) return { kind: 'wallet' };
+  return { kind: 'creditedToVault', manager: managerOther(r.record, recipient.address) };
 }
 
 /**
@@ -382,6 +396,16 @@ export function gateAccount(recipient: RouteAccount, source?: RouteAccount): Rou
   if (s.supported && (s.recordFailed || s.record === null)) return 'unread';
   if (s.supported && s.record?.enabled && sameAddress(s.record.controller, recipient.address)) return source;
   return null;
+}
+
+/** Who manages each read account's vault, for `wallet`'s outcome text: the
+ *  controller of a retired account when it is not `wallet`, else null. */
+export function vaultManagerLookup(accounts: readonly RouteAccount[], wallet: string | undefined) {
+  return (account: string): string | null => {
+    const a = accounts.find((x) => sameAddress(x.address, account));
+    const r = a?.snap?.record;
+    return r ? managerOther(r, wallet) : null;
+  };
 }
 
 /** A payment out of the account's own vault (or by the protocol) to its own

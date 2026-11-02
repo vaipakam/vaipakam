@@ -20,9 +20,11 @@ export function payoutRouteText(route: OwnPayoutRoute): string | null {
           : p.payoutRouteQueued(formatExactSpan(route.delaySeconds))
       }${route.cosign ? ` ${p.payoutRouteCosign}` : ''}`;
     case 'vault':
-      return p.payoutRouteVault;
+      return route.manager ? p.payoutRouteVaultManaged(shortAddress(route.manager)) : p.payoutRouteVault;
     case 'creditedToVault':
-      return p.payoutRouteCreditedToVault;
+      return route.manager
+        ? p.payoutRouteCreditedManaged(shortAddress(route.manager))
+        : p.payoutRouteCreditedToVault;
     case 'unread':
       return p.payoutRouteUnknown;
   }
@@ -30,18 +32,28 @@ export function payoutRouteText(route: OwnPayoutRoute): string | null {
 
 /** After the transaction, from its receipt: null when the wallet was paid.
  *  A queued row names its recipient when that is not `wallet` (the
- *  controller of an account moved to a new wallet). */
-export function payoutOutcomeText(outcome: PayoutOutcome, wallet: string | undefined): string | null {
+ *  controller of an account moved to a new wallet), and a payment kept in a
+ *  vault names who manages that vault when it is not `wallet`
+ *  (`managerOf`: the account's controller once it is retired). */
+export function payoutOutcomeText(
+  outcome: PayoutOutcome,
+  wallet: string | undefined,
+  managerOf: (account: string) => string | null = () => null,
+): string | null {
   const p = copy.protection;
   switch (outcome.kind) {
     case 'queued':
       return wallet && outcome.recipient.toLowerCase() !== wallet.toLowerCase()
         ? p.payoutOutcomeQueuedTo(shortAddress(outcome.recipient))
         : p.payoutOutcomeQueued;
-    case 'held':
-      return p.payoutOutcomeHeld;
-    case 'inVault':
-      return p.payoutOutcomeInVault;
+    case 'held': {
+      const m = managerOf(outcome.account);
+      return m ? p.payoutOutcomeHeldManaged(shortAddress(m)) : p.payoutOutcomeHeld;
+    }
+    case 'inVault': {
+      const m = managerOf(outcome.account);
+      return m ? p.payoutOutcomeHeldManaged(shortAddress(m)) : p.payoutOutcomeInVault;
+    }
     case 'paid':
       return null;
   }
@@ -49,7 +61,11 @@ export function payoutOutcomeText(outcome: PayoutOutcome, wallet: string | undef
 
 /** Every outcome a receipt shows, each stated once, joined; null when the
  *  wallet was paid. */
-export function payoutOutcomesText(outcomes: readonly PayoutOutcome[], wallet: string | undefined): string | null {
-  const notes = [...new Set(outcomes.map((o) => payoutOutcomeText(o, wallet)).filter((n): n is string => Boolean(n)))];
+export function payoutOutcomesText(
+  outcomes: readonly PayoutOutcome[],
+  wallet: string | undefined,
+  managerOf?: (account: string) => string | null,
+): string | null {
+  const notes = [...new Set(outcomes.map((o) => payoutOutcomeText(o, wallet, managerOf)).filter((n): n is string => Boolean(n)))];
   return notes.length > 0 ? notes.join(' ') : null;
 }

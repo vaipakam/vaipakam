@@ -95,7 +95,7 @@ import {
 import { useForcedCloseReads } from '../data/useForcedClose';
 import { probeClaim, useLoanClaim } from '../data/claimables';
 import { receiptPayout, useClaimPayoutText } from '../data/useClaimPayout';
-import { payoutOutcomes, useOwnPayoutRoute } from '../data/protectedAccount';
+import { payoutOutcomes, useOwnPayoutRoute, useProtectedAccount, vaultManagerLookup } from '../data/protectedAccount';
 import { payoutOutcomesText, payoutRouteText } from '../lib/payoutRouteText';
 import { initiatedPrincipal, lockedCollateralLine } from '../lib/positionAmounts';
 import {
@@ -246,6 +246,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   // a collateral release). The confirmation states it instead of promising
   // the wallet, and the result reads it from the receipt.
   const { address: payeeAddress } = useActiveChain();
+  const ownProtection = useProtectedAccount(payeeAddress ?? undefined);
   // A claim pays out of the RECORDED party's vault, which is not the
   // claimant's own for a transferred position, so each route is read
   // against its source.
@@ -255,7 +256,11 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   // (the caller), so it pays out of the caller's own vault and its own gate.
   const collateralPayoutRouteNote = payoutRouteText(useOwnPayoutRoute());
   const withPayoutOutcome = (done: string, logs: readonly Log[], source: string | undefined) => {
-    const note = payoutOutcomesText(payoutOutcomes(logs, payeeAddress, source), payeeAddress);
+    const note = payoutOutcomesText(
+      payoutOutcomes(logs, payeeAddress, source),
+      payeeAddress,
+      vaultManagerLookup([{ address: payeeAddress, snap: ownProtection.data, readFailed: ownProtection.isError }], payeeAddress),
+    );
     return note ? `${done} ${note}` : done;
   };
   const queryClient = useQueryClient();

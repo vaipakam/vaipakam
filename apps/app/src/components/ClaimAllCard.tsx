@@ -50,6 +50,7 @@ import {
   payoutRoute as routeOf,
   useProtectedAccount,
   useProtectedAccounts,
+  vaultManagerLookup,
   type RouteAccount,
 } from '../data/protectedAccount';
 import { payoutOutcomesText, payoutRouteText } from '../lib/payoutRouteText';
@@ -240,7 +241,7 @@ export function ClaimAllCard({ loans }: { loans: ClaimableLoan[] }) {
       const outcomes = chosen
         .filter((leg) => leg.kind !== 'rewards')
         .flatMap((leg) => payoutOutcomes(receipt.logs, address, leg.loan ? claimSource(leg.loan) : undefined));
-      const outcomeText = payoutOutcomesText(outcomes, address);
+      const outcomeText = payoutOutcomesText(outcomes, address, vaultManagerLookup([me], address));
       setOutcomeNote(outcomeText);
       // Post-receipt re-derivation surfaces per-item outcome: claimed
       // items disappear from these lists; skipped items remain.

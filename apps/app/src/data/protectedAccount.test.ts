@@ -233,6 +233,14 @@ describe('ownPayoutRoute', () => {
       expect(payoutRoute(own).kind).toBe('queued');
       expect(payoutRoute(own, undefined, () => 1).kind).toBe('vault');
     });
+    it('names the controller as the only one who can withdraw a retired account\'s held payout', () => {
+      const ctl = '0x00000000000000000000000000000000000000c0';
+      expect(ownPayoutRoute(snap({ retired: true, controller: ctl, locked: true }), false)).toEqual({ kind: 'vault', manager: ctl });
+      expect(payoutRoute({ address: me, snap: snap({ retired: true, controller: ctl }), readFailed: false }, { address: old, snap: off, readFailed: false })).toEqual({
+        kind: 'creditedToVault',
+        manager: ctl,
+      });
+    });
     it('is unread when the source account is unread', () => {
       expect(payoutRoute({ address: me, snap: off, readFailed: false }, { address: old, snap: undefined, readFailed: true }).kind).toBe('unread');
     });
@@ -274,7 +282,10 @@ describe('payoutOutcomes', () => {
   const queued = log('PayoutQueued', { account: me, id: 1n, asset: token, kind: 0, tokenId: 0n, amount: 5n, recipient: me, releaseAt: 9n });
   const held = log('PayoutHeldInVault', { account: me, asset: token, tokenId: 0n, amount: 5n });
   it('states every outcome of a batch that both queues and holds', () => {
-    expect(payoutOutcomes([queued, held], me).map((o) => o.kind)).toEqual(['queued', 'held']);
+    expect(payoutOutcomes([queued, held], me)).toEqual([
+      { kind: 'queued', recipient: me },
+      { kind: 'held', account: me },
+    ]);
   });
   it('is empty when the wallet was paid, and ignores another account\'s events', () => {
     expect(payoutOutcomes([], me)).toEqual([]);

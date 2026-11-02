@@ -1857,3 +1857,5 @@ its row in the matrix and, where the reasoning grows, its section here.
 **Codex round 25 on the app PR.** The batch's outcome stays on screen after its claims leave the list, even when no further batch is on offer, because it may be the only place a payment kept in the vault is explained. It clears when the wallet or the chain changes. NOT covered: the rendered pages.
 
 **Codex round 26 on the app PR.** A receipt can carry several outcomes, for example a batch whose queue fills part-way, so `payoutOutcomes` returns every one, each once: queued rows by recipient, payments held, payments credited (unit-tested from encoded events). The claim and the batch result state them all. An owner's single-row withdrawal still reads one outcome. NOT covered: the rendered pages.
+
+**Codex round 27 on the app PR.** A payment kept in a retired account's vault, whether held there or credited there, now names the account's controller as the only one who can withdraw it, in the route (unit-tested) and in the receipt outcome. The outcome records whose vault holds the payment, and a lookup over the read snapshots names that vault's manager. NOT covered: the rendered pages.
