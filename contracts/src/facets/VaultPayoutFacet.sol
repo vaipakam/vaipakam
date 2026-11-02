@@ -196,6 +196,8 @@ contract VaultPayoutFacet is DiamondReentrancyGuard {
     function escapeWithdraw(uint8 kind, address asset, uint256 tokenId, uint256 amount) external nonReentrant {
         if (!_escapeOpen()) revert LibProtectedAccount.EscapeClosed();
         if (LibProtectedAccount.isEnabled(msg.sender)) revert EscapeNotForProtected(msg.sender);
+        // Funds out: a barred wallet does not escape with them either.
+        LibVaipakam.assertRecipientNotBarred(msg.sender);
         if (kind == uint8(LibVaipakam.AssetType.ERC20)) tokenId = 0;
         if (kind == uint8(LibVaipakam.AssetType.ERC721)) amount = 1;
         // The route below enforces the free holding; this bounds the escape by

@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibProtectedAccount} from "../libraries/LibProtectedAccount.sol";
 import {LibScanPage} from "../libraries/LibScanPage.sol";
 // #195 — `LibAuth.requireOfferCreator` is replaced by an inline access
 // gate that admits the creator OR any caller against an expired offer;
@@ -136,8 +137,14 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         // Note: an `expiresAt == 0` (GTC) offer can be cancelled only
         // by its creator — `isOfferExpired` returns false on the GTC
         // sentinel, so the second branch evaluates `false`.
+        // The creator's side is acted on by its account manager: the
+        // creator's own wallet, or its controller once a protected-account
+        // replacement retired it (the old wallet then loses the right), so
+        // a recovered account's open offers can still be withdrawn. The
+        // refund still goes to `offer.creator`, whose protected payout gate
+        // queues it to the controller.
         address creator = offer.creator;
-        if (creator != msg.sender && !LibVaipakam.isOfferExpired(offer)) {
+        if (LibProtectedAccount.manager(creator) != msg.sender && !LibVaipakam.isOfferExpired(offer)) {
             revert NotCreatorOrNotExpired(creator, offer.expiresAt);
         }
         if (offer.accepted) revert OfferAlreadyAccepted();

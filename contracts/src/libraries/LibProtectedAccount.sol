@@ -237,6 +237,23 @@ library LibProtectedAccount {
         return _s().protectedAllowlist[account].contains(recipient);
     }
 
+    /// @notice The ONE rule for a payment a seller's own listing makes
+    ///         straight to `recipient` (a marketplace fee leg the seller
+    ///         authored, which the marketplace pays at fill without passing
+    ///         through the Diamond, and the seller's own position). It passes
+    ///         when protected mode is off; otherwise only while the account
+    ///         is neither locked nor retired AND `recipient` is the manager
+    ///         wallet or an active allowlisted destination. Read when the
+    ///         listing is posted and again at every fill, so a lock, a
+    ///         replacement or an allowlist removal after posting stops the
+    ///         fill instead of paying a leg the payout queue never saw.
+    function listingLegAllowed(address seller, address recipient) internal view returns (bool) {
+        LibVaipakam.ProtectedAccount storage a = _s().protectedAccount[seller];
+        if (!a.enabled) return true;
+        if (a.retired || a.locked) return false;
+        return isAllowed(seller, recipient);
+    }
+
     /// @notice Refuse a NEW position (an offer, an accept, a match, a lender
     ///         intent, a signed fill, a sale or offset listing) for a locked
     ///         or retired account. Loan servicing is never refused.

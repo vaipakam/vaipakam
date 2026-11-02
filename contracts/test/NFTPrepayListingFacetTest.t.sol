@@ -8,6 +8,8 @@ import {LibERC721} from "../src/libraries/LibERC721.sol";
 import {NFTPrepayListingFacet} from "../src/facets/NFTPrepayListingFacet.sol";
 import {NFTPrepayDutchListingFacet} from "../src/facets/NFTPrepayDutchListingFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
+import {ProtectedAccountFacet} from "../src/facets/ProtectedAccountFacet.sol";
+import {LibProtectedAccount} from "../src/libraries/LibProtectedAccount.sol";
 import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
 import {
     FeeLeg,
@@ -470,6 +472,60 @@ contract NFTPrepayListingFacetTest is SetupTest {
         NFTPrepayListingFacet(address(diamond)).postPrepayListing(
             LOAN_ID, ask, TEST_SALT_A, conduitKey, feeLegs
         );
+    }
+
+    /// @notice Protected account mode — a fee leg is paid straight from the
+    ///         sale, outside the payout queue, so a protected holder may
+    ///         name only its own wallet or an allowlisted destination.
+    function test_postPrepayListing_protectedHolderRefusesAnUnlistedFeeLeg() public {
+        _scaffoldActiveLoan({allowsPrepay: true});
+        uint256 ask = _floorPlusBuffer();
+        vm.prank(borrowerHolder);
+        ProtectedAccountFacet(address(diamond)).enableProtectedMode(2 days, false);
+
+        address feeTo = makeAddr("unlistedFeeRecipient");
+        FeeLeg[] memory feeLegs = new FeeLeg[](1);
+        feeLegs[0] = FeeLeg({recipient: feeTo, startAmount: 1, endAmount: 1});
+
+        vm.prank(borrowerHolder);
+        vm.expectRevert(
+            abi.encodeWithSelector(LibProtectedAccount.RecipientNotAllowlisted.selector, borrowerHolder, feeTo)
+        );
+        NFTPrepayListingFacet(address(diamond)).postPrepayListing(
+            LOAN_ID, ask, TEST_SALT_A, conduitKey, feeLegs
+        );
+    }
+
+    /// @notice Protected account mode — a locked holder cannot post a listing.
+    function test_postPrepayListing_lockedHolderIsRefused() public {
+        _scaffoldActiveLoan({allowsPrepay: true});
+        uint256 ask = _floorPlusBuffer();
+        vm.startPrank(borrowerHolder);
+        ProtectedAccountFacet(address(diamond)).enableProtectedMode(2 days, false);
+        ProtectedAccountFacet(address(diamond)).lockVault(borrowerHolder);
+        vm.expectRevert(
+            abi.encodeWithSelector(LibProtectedAccount.ProtectedVaultLocked.selector, borrowerHolder)
+        );
+        NFTPrepayListingFacet(address(diamond)).postPrepayListing(
+            LOAN_ID, ask, TEST_SALT_A, conduitKey, _emptyFeeLegs()
+        );
+        vm.stopPrank();
+    }
+
+    /// @notice Protected account mode — the fill-time rule the executor reads:
+    ///         an allowlisted leg passes, a lock refuses every leg and the
+    ///         seller itself.
+    function test_isListingLegAllowed_followsTheProtectionSettings() public {
+        ProtectedAccountFacet pa = ProtectedAccountFacet(address(diamond));
+        address feeTo = makeAddr("feeRecipientRule");
+        assertTrue(pa.isListingLegAllowed(borrowerHolder, feeTo), "protection off: any leg");
+        vm.prank(borrowerHolder);
+        pa.enableProtectedMode(2 days, false);
+        assertFalse(pa.isListingLegAllowed(borrowerHolder, feeTo), "unlisted leg refused");
+        assertTrue(pa.isListingLegAllowed(borrowerHolder, borrowerHolder), "own wallet allowed");
+        vm.prank(borrowerHolder);
+        pa.lockVault(borrowerHolder);
+        assertFalse(pa.isListingLegAllowed(borrowerHolder, borrowerHolder), "locked seller refused");
     }
 
     // ─── 3. updatePrepayListing ─────────────────────────────────────────

@@ -900,6 +900,15 @@ contract ProtectedAccountFacet is DiamondReentrancyGuard, DiamondPausable {
         (approvals, threshold) = _tally(account);
     }
 
+    /// @notice Whether a listing `seller` authored may pay `recipient`
+    ///         directly at fill ({LibProtectedAccount.listingLegAllowed}).
+    ///         The collateral-listing executor reads it at every fill, for
+    ///         each fee leg and for the seller itself (`recipient == seller`
+    ///         answers whether a locked or retired account is selling).
+    function isListingLegAllowed(address seller, address recipient) external view returns (bool) {
+        return LibProtectedAccount.listingLegAllowed(seller, recipient);
+    }
+
     /// @notice The retired account `controller` manages; zero if none.
     function getRetiredAccountOf(address controller) external view returns (address) {
         return LibVaipakam.storageSlot().protectedRetiredAccountOf[controller];
