@@ -3760,7 +3760,7 @@
       "transfersTitle": "Transferencias de NFT de posición en cola",
       "transfersEmpty": "No hay transferencias de NFT de posición en espera.",
       "transferQueueRetired": "Mueva a su billetera un NFT de posición que tenga esta cuenta. Espera el plazo y puede cancelarse mientras tanto.",
-      "transferQueueOwner": "Mueva a otra dirección un NFT de posición que tenga esta cuenta. Espera el plazo y usted o un firmante pueden cancelarlo mientras tanto.",
+      "transferQueueOwner": "Mueva un NFT de posición de esta cuenta a su billetera o a una de sus direcciones de pago. Espera el plazo, necesita la cofirma de un firmante mientras la cofirma esté activa, y usted o un firmante pueden cancelarlo mientras tanto.",
       "transferTokenId": "ID del NFT de posición",
       "transferQueue": "Programar transferencia",
       "cooldownNote": "Esta billetera tomó la cuenta hace poco. Hasta el {{at}} no puede pedir ningún cambio que relaje la protección: desbloqueo, plazo más corto, desactivar la cofirma o la protección de NFT, nueva dirección de pago o firmante, quitar un firmante o desactivar la protección. Después, cada uno espera el plazo como siempre.",

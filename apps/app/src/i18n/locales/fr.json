@@ -3760,7 +3760,7 @@
       "transfersTitle": "Transferts de NFT de position en attente",
       "transfersEmpty": "Aucun transfert de NFT de position n’est en attente.",
       "transferQueueRetired": "Déplacez vers votre portefeuille un NFT de position détenu par ce compte. Le transfert attend le délai et peut être annulé entre-temps.",
-      "transferQueueOwner": "Déplacez vers une autre adresse un NFT de position détenu par ce compte. Le transfert attend le délai et peut être annulé entre-temps par vous ou un signataire.",
+      "transferQueueOwner": "Déplacez un NFT de position détenu par ce compte vers votre portefeuille ou l’une de ses adresses de paiement. Le transfert attend le délai, exige la cosignature d’un signataire tant que la cosignature est active, et peut être annulé entre-temps par vous ou un signataire.",
       "transferTokenId": "Identifiant du NFT de position",
       "transferQueue": "Programmer le transfert",
       "cooldownNote": "Ce portefeuille a repris le compte récemment. Jusqu’au {{at}}, il ne peut demander aucun changement qui assouplit la protection : déverrouillage, délai plus court, cosignature ou protection des NFT désactivée, nouvelle adresse de paiement ou nouveau signataire, retrait d’un signataire, ou désactivation. Chacun attend ensuite le délai habituel.",

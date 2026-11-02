@@ -3760,7 +3760,7 @@
       "transfersTitle": "排队中的仓位 NFT 转移",
       "transfersEmpty": "没有等待中的仓位 NFT 转移。",
       "transferQueueRetired": "将此账户持有的仓位 NFT 转到您的钱包。转移需等待延迟期，期间可以取消。",
-      "transferQueueOwner": "将此账户持有的仓位 NFT 转到其他地址。转移需等待延迟期，期间您或签名人可以取消。",
+      "transferQueueOwner": "将此账户持有的仓位 NFT 转到您的钱包或其付款地址之一。转移需等待延迟期，联署开启时需要签名人联署，期间您或签名人可以取消。",
       "transferTokenId": "仓位 NFT 编号",
       "transferQueue": "排队转移",
       "cooldownNote": "此钱包最近接管了该账户。在 {{at}} 之前，它不能申请任何放松保护的更改：解锁、缩短延迟、关闭联署或 NFT 保护、添加付款地址或签名人、移除签名人或关闭保护。之后每项更改照常等待延迟期。",

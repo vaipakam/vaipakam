@@ -2934,7 +2934,7 @@ const copySource = {
     transfersTitle: 'Queued position NFT transfers',
     transfersEmpty: 'No position NFT transfers are waiting.',
     transferQueueRetired: 'Move a position NFT this account holds to your wallet. It waits the delay and can be cancelled meanwhile.',
-    transferQueueOwner: 'Move a position NFT this account holds to another address. It waits the delay and can be cancelled meanwhile by you or a signer.',
+    transferQueueOwner: 'Move a position NFT this account holds to your wallet or one of its payout addresses. It waits the delay, needs a signer’s co-signature while co-signing is on, and can be cancelled meanwhile by you or a signer.',
     transferTokenId: 'Position NFT id',
     transferQueue: 'Queue transfer',
     cooldownNote: tmpl(

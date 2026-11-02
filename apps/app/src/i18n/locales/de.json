@@ -3760,7 +3760,7 @@
       "transfersTitle": "Wartende Übertragungen von Positions-NFTs",
       "transfersEmpty": "Keine Übertragungen von Positions-NFTs warten.",
       "transferQueueRetired": "Verschieben Sie ein Positions-NFT dieses Kontos in Ihre Wallet. Die Übertragung wartet die Verzögerung ab und kann bis dahin abgebrochen werden.",
-      "transferQueueOwner": "Verschieben Sie ein Positions-NFT dieses Kontos an eine andere Adresse. Die Übertragung wartet die Verzögerung ab und kann bis dahin von Ihnen oder einem Unterzeichner abgebrochen werden.",
+      "transferQueueOwner": "Verschieben Sie ein Positions-NFT dieses Kontos in Ihre Wallet oder an eine seiner Auszahlungsadressen. Die Übertragung wartet die Verzögerung ab, braucht bei aktiver Mitzeichnung die Mitzeichnung eines Unterzeichners und kann bis dahin von Ihnen oder einem Unterzeichner abgebrochen werden.",
       "transferTokenId": "ID des Positions-NFT",
       "transferQueue": "Übertragung einreihen",
       "cooldownNote": "Diese Wallet hat das Konto kürzlich übernommen. Bis {{at}} kann sie keine Änderung beantragen, die den Schutz lockert: Entsperren, kürzere Verzögerung, Mitzeichnung oder NFT-Schutz aus, neue Auszahlungsadresse oder neuer Unterzeichner, Entfernen eines Unterzeichners oder Abschalten. Danach wartet jede davon wie üblich die Verzögerung ab.",
