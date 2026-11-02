@@ -27,6 +27,11 @@
 #       in `script/measured-delivery-allowlist.json`. Read from the
 #       compiler's AST, not the source text.
 #
+#   1e. Permissionless-steps ledger (#2984) — every entry point anyone may
+#       call, on the Diamond and the contracts beside it, has a row in
+#       `permissionless-steps.json` (keeper-backed, user-driven, a recorded
+#       gap, ...), read from the same AST artifacts as 1c.
+#
 #   2. Forge test suite:
 #        • default            — the deploy-sanity suite (test/deploy/*),
 #            in chunks of DEPLOY_CHUNK_SIZE suites (default 16, #2712) so
@@ -200,6 +205,24 @@ elif node "$SCRIPT_DIR/check-loan-terms-writer.mjs"; then
 else
   echo "  ✗ loan-terms writer guard failed — write principal and rate through" >&2
   echo "    LibInterestLedger, or list the site with its reason (see above)" >&2
+  FAIL=1
+fi
+
+# ── 1e. Permissionless-steps ledger ───────────────────────────────────
+# Every entry point anyone may call has a row in permissionless-steps.json
+# saying what backs it, and every keeper-backed row names a pass, flag and
+# sending file that exist (#2984). Caller gates are read from the same AST
+# artifacts as 1d, so a new open step cannot ship unrecorded.
+echo
+echo "[predeploy 1e/4] permissionless-steps ledger (#2984)"
+if [ "$BUILD_OK" -ne 1 ] || [ ! -d "$SCRIPT_DIR/../out-measured-delivery" ]; then
+  echo "  ✗ skipped — no AST artifacts to read (step 1 or 1c failed)" >&2
+  FAIL=1
+elif node "$SCRIPT_DIR/check-permissionless-steps.mjs"; then
+  : # the script prints its own lines
+else
+  echo "  ✗ permissionless-steps ledger failed — classify each open entry point" >&2
+  echo "    in contracts/permissionless-steps.json (see above)" >&2
   FAIL=1
 fi
 

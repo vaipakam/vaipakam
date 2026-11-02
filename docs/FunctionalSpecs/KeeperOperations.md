@@ -766,6 +766,34 @@ evidence that the migration has completed.
   rotate, so a busy chain can take several runs to reach a loan; a minute's
   schedule is not a promise that every eligible NFT is listed that minute.
 
+## Recording what backs each permissionless step
+
+Every permissionless step that keeps the protocol moving has the keeper as
+its backstop: anyone may call it, and if nobody does, the keeper does (owner
+direction, October 27). To keep that true as the protocol grows, every entry
+point anyone may call, on the Diamond and on the contracts shipped beside it,
+is recorded with what backs it:
+
+- a keeper duty, named with the duty and the switch that arms it;
+- a keeper duty still under review, named with its change;
+- another committed service, such as the sanctions delister;
+- another route to a step that is already backed;
+- the party it serves, with the reason no keeper is owed;
+- a one-time initializer the deployment runs, or a caller restriction the
+  automatic reading cannot see, stated in words for review; or
+- a recorded gap: a step nothing drives yet, with the issue that decides
+  whether the keeper takes it or the party it serves does.
+
+Whether an entry point is open is read from the compiled contracts, not
+claimed. The pre-deployment checks refuse a new open entry point with no
+record, a record for a function that has become restricted or no longer
+exists, and a keeper record whose duty, switch or sending code is missing.
+The keeper's own checks run the keeper half, so a keeper change that stops
+sending a recorded step fails there too. A recorded gap passes: what this
+prevents is an unrecorded one. A deployed switch being off still means the
+step is not being driven on that deployment, as the activation rules below
+state.
+
 ## Activation and operator visibility
 
 The master keeper switch and each duty's own arming choice are separate.
@@ -816,3 +844,5 @@ dependency is never turned into an empty queue or a successful run.
 - [October 28](../ReleaseNotes/ReleaseNotes-2026-10-28.md): both lane ends,
   retained owed days, reward and protocol upkeep, tier-push retries, grace
   auto-listing, resumable entry reads, bounded stage reads, and gas margins.
+- Issue #2984 and the owner's October 27 direction: every permissionless step
+  recorded with what backs it.

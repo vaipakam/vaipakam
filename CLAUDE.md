@@ -694,6 +694,15 @@ authorizes nothing. Do not reintroduce an exclusion list.
 `_get<Facet>Selectors()` in `DeployDiamond.s.sol` (and `HelperTest.sol`) —
 `SelectorCoverageTest` fails otherwise.
 
+**When that function is one anyone may call** (state-changing, no caller
+gate), it also needs a row in `contracts/permissionless-steps.json` (#2984):
+the keeper pass and flag that back it, or why none is owed, or a recorded gap
+with its issue. `check-permissionless-steps.mjs` (predeploy step 1e) reads the
+caller gates from the AST and refuses an open function with no row. The same
+holds for a standalone contract in `diamond-facets.json`'s `standalone` list.
+A keeper PR that adds or retires a pass updates the rows it backs; the
+keeper's typecheck runs the ledger's keeper half.
+
 There is a **third** registration site, and only for some facets, which is why
 it is easy to miss: `contracts/script/lib/FacetSelectors.sol` carries the FULL
 external surface of the facets the curated redeploy scripts cut — the library's
