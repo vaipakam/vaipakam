@@ -11,6 +11,7 @@ import {VaultDepositoryFacet} from "../src/facets/VaultDepositoryFacet.sol";
 import {ProtectedAccountFacet} from "../src/facets/ProtectedAccountFacet.sol";
 import {VaultPayoutFacet} from "../src/facets/VaultPayoutFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
+import {LibProtectedAccount} from "../src/libraries/LibProtectedAccount.sol";
 
 /// @title ProtectedVaultVpfiTest
 /// @notice Staked VPFI is the owner's own deposit, so it is part of the
@@ -94,11 +95,21 @@ contract ProtectedVaultVpfiTest is SetupTest {
         _addSigner(s2);
         _addSigner(s3);
         vm.prank(s1);
+        vm.expectRevert(abi.encodeWithSelector(LibProtectedAccount.InvalidNominee.selector, s2));
+        _prot().proposeReplacement(alice, s2);
+        vm.prank(s1);
         _prot().proposeReplacement(alice, nominee);
         vm.prank(s2);
         _prot().approveReplacement(alice);
         vm.warp(block.timestamp + DELAY);
         _prot().finalizeReplacement(alice);
+
+        // The retired wallet cannot unstake (it lost every right over the
+        // account), and a signer cannot be the nominee (no wallet both
+        // manages and co-signs).
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(LibProtectedAccount.NotAccountManager.selector, alice, alice));
+        _f().withdrawVPFIFromVault(1 ether);
 
         vm.prank(nominee);
         uint256 id = _depo().withdrawFromVault(alice, K20, address(vpfi), 0, 100 ether, nominee);

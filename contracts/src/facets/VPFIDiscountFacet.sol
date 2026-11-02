@@ -3,6 +3,7 @@ pragma solidity ^0.8.29;
 
 import {LibDepositoryLedger} from "../libraries/LibDepositoryLedger.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibProtectedAccount} from "../libraries/LibProtectedAccount.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
@@ -303,6 +304,9 @@ contract VPFIDiscountFacet is
     {
         // Tier-1 sanctions gate. Funds OUT to msg.sender — block.
         LibVaipakam._assertNotSanctioned(msg.sender);
+        // Protected account mode: a wallet a replacement retired lost every
+        // right over its account, spending its vault included.
+        LibProtectedAccount.requireManager(msg.sender);
         if (amount == 0) revert InvalidAmount();
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         address vpfi = s.vpfiToken;
