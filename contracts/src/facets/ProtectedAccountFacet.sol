@@ -160,6 +160,35 @@ contract ProtectedAccountFacet is DiamondReentrancyGuard, DiamondPausable {
         return uint64(block.timestamp) + a.delaySeconds;
     }
 
+    /// @dev `account`'s change epoch. A lock and a switch-off advance it,
+    ///      voiding every allowlist and signer change requested before.
+    function _epoch(address account) private view returns (uint64) {
+        return LibVaipakam.storageSlot().protectedChangeEpoch[account];
+    }
+
+    /// @dev Void every pending allowlist addition and signer change of
+    ///      `account` at once (they are mappings, so they are voided by
+    ///      epoch, not swept).
+    function _voidPendingChanges(address account) private {
+        ++LibVaipakam.storageSlot().protectedChangeEpoch[account];
+    }
+
+    /// @dev `at` if the change was requested in the current epoch, else 0
+    ///      (a voided change reads as none).
+    function _live(address account, uint64 at, uint64 epoch) private view returns (uint64) {
+        return epoch == _epoch(account) ? at : 0;
+    }
+
+    /// @dev Refuse a matured change once its finalize window, one further
+    ///      delay, has passed. Every delayed change that a nominee or anyone
+    ///      finalizes has the same window, so a stale addition cannot be
+    ///      activated long after the account last looked at it.
+    function _withinWindow(LibVaipakam.ProtectedAccount storage a, uint64 at) private view {
+        if (block.timestamp > uint256(at) + a.delaySeconds) {
+            revert LibProtectedAccount.ChangeExpired(uint256(at) + a.delaySeconds);
+        }
+    }
+
     function _checkDelay(uint32 delay) private pure {
         if (delay < LibProtectedAccount.MIN_DELAY || delay > LibProtectedAccount.MAX_DELAY) {
             revert LibProtectedAccount.DelayOutOfBounds(LibProtectedAccount.MIN_DELAY, LibProtectedAccount.MAX_DELAY);
@@ -281,13 +310,18 @@ contract ProtectedAccountFacet is DiamondReentrancyGuard, DiamondPausable {
      * @notice Apply every pending loosening change of `account` whose delay
      *         has passed. Permissionless (the keeper backs it); applies
      *         nothing that is not due.
-     * @dev    Switching off is refused while any row is still queued, and
-     *         clears the whole account (signers and allowlist included).
+     * @dev    A due switch-off waits while any row is still queued, without
+     *         holding back the other due changes (an unlock included); it
+     *         reverts only when it was the one change due. Switching off
+     *         clears the whole account (signers and allowlist included) and
+     *         voids every pending allowlist and signer change.
      */
     function finalizeSettingChanges(address account) external nonReentrant whenNotPaused {
         LibVaipakam.ProtectedAccount storage a = _acct(account);
         uint256 nowTs = block.timestamp;
+        bool applied;
         if (a.pendingDelayAt != 0 && nowTs >= a.pendingDelayAt) {
+            applied = true;
             emit ProtectedDelaySet(account, a.delaySeconds, a.pendingDelay);
             a.delaySeconds = a.pendingDelay;
             a.pendingDelay = 0;
@@ -295,18 +329,21 @@ contract ProtectedAccountFacet is DiamondReentrancyGuard, DiamondPausable {
             emit SettingChangeApplied(account, CHANGE_LOWER_DELAY);
         }
         if (a.pendingNftOffAt != 0 && nowTs >= a.pendingNftOffAt) {
+            applied = true;
             a.protectNfts = false;
             a.pendingNftOffAt = 0;
             emit ProtectNftsSet(account, false);
             emit SettingChangeApplied(account, CHANGE_NFT_OFF);
         }
         if (a.pendingCosignOffAt != 0 && nowTs >= a.pendingCosignOffAt) {
+            applied = true;
             a.requireCosign = false;
             a.pendingCosignOffAt = 0;
             emit CosignRequirementSet(account, false);
             emit SettingChangeApplied(account, CHANGE_COSIGN_OFF);
         }
         if (a.pendingUnlockAt != 0 && nowTs >= a.pendingUnlockAt) {
+            applied = true;
             a.locked = false;
             a.lockedBy = address(0);
             a.lockedAt = 0;
@@ -315,14 +352,20 @@ contract ProtectedAccountFacet is DiamondReentrancyGuard, DiamondPausable {
             emit SettingChangeApplied(account, CHANGE_UNLOCK);
         }
         if (a.pendingUnpinAt != 0 && nowTs >= a.pendingUnpinAt) {
+            applied = true;
             a.pendingUnpinAt = 0;
             delete LibVaipakam.storageSlot().vaultPinnedImplementation[account];
             emit SettingChangeApplied(account, CHANGE_UNPIN);
         }
         if (a.pendingDisableAt != 0 && nowTs >= a.pendingDisableAt) {
-            if (LibProtectedAccount.openRows(account) != 0) revert LibProtectedAccount.PendingRowsExist();
-            _clearAccount(account);
-            emit ProtectedModeDisabled(account);
+            if (LibProtectedAccount.openRows(account) == 0) {
+                _clearAccount(account);
+                emit ProtectedModeDisabled(account);
+            } else if (!applied) {
+                // The switch-off was the only change due, and it waits for
+                // the open rows: say so rather than succeed doing nothing.
+                revert LibProtectedAccount.PendingRowsExist();
+            }
         }
     }
 
@@ -337,7 +380,20 @@ contract ProtectedAccountFacet is DiamondReentrancyGuard, DiamondPausable {
         }
         EnumerableSet.AddressSet storage allow = s.protectedAllowlist[account];
         while (allow.length() != 0) allow.remove(allow.at(allow.length() - 1));
-        delete s.replacementProposal[account];
+        // Pending allowlist additions and the changes of nominees who are not
+        // signers live in mappings the sweeps above cannot reach: void them,
+        // so a later re-enable starts with nothing matured.
+        _voidPendingChanges(account);
+        // The proposal ROUND survives the reset: approvals are keyed by round,
+        // and those of a cancelled round stay recorded, so restarting the
+        // count at zero would let a later proposal reuse an old round and
+        // count approvals given to a different nominee. Every other field of
+        // the proposal is cleared.
+        LibVaipakam.ReplacementProposal storage p = s.replacementProposal[account];
+        p.nominee = address(0);
+        p.proposedBy = address(0);
+        p.readyAt = 0;
+        p.approvals = 0;
         delete s.protectedAccount[account];
     }
 
@@ -358,7 +414,8 @@ contract ProtectedAccountFacet is DiamondReentrancyGuard, DiamondPausable {
         }
         LibVaipakam._assertNotSanctioned(destination);
         uint64 at = _later(a);
-        s.protectedAllowlistPendingAt[account][destination] = at;
+        s.protectedAllowlistChange[account][destination] =
+            LibVaipakam.ProtectedAllowlistChange({at: at, epoch: _epoch(account)});
         emit AllowlistAddRequested(account, destination, at);
     }
 
@@ -366,22 +423,29 @@ contract ProtectedAccountFacet is DiamondReentrancyGuard, DiamondPausable {
     function cancelAddAllowlisted(address account, address destination) external nonReentrant {
         _requireManagerOrSigner(account);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        if (s.protectedAllowlistPendingAt[account][destination] == 0) revert LibProtectedAccount.ChangeNotRequested();
-        delete s.protectedAllowlistPendingAt[account][destination];
+        LibVaipakam.ProtectedAllowlistChange storage c = s.protectedAllowlistChange[account][destination];
+        if (_live(account, c.at, c.epoch) == 0) revert LibProtectedAccount.ChangeNotRequested();
+        delete s.protectedAllowlistChange[account][destination];
         emit AllowlistAddCancelled(account, destination, msg.sender);
     }
 
     /// @notice Activate a matured allowlist addition. Permissionless.
+    ///         Only within one further delay after it matures (then it
+    ///         expires, as a signer addition does), and only if no lock or
+    ///         switch-off came after it was requested.
     function finalizeAddAllowlisted(address account, address destination) external nonReentrant whenNotPaused {
         LibVaipakam.ProtectedAccount storage a = _acct(account);
         if (a.locked) revert LibProtectedAccount.ProtectedVaultLocked(account);
         if (a.retired) revert LibProtectedAccount.AccountRetired(account);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        _matured(s.protectedAllowlistPendingAt[account][destination]);
+        LibVaipakam.ProtectedAllowlistChange storage c = s.protectedAllowlistChange[account][destination];
+        uint64 at = _live(account, c.at, c.epoch);
+        _matured(at);
+        _withinWindow(a, at);
         if (s.protectedAllowlist[account].length() >= LibProtectedAccount.MAX_ALLOWLIST) {
             revert LibProtectedAccount.TooManyAllowlisted();
         }
-        delete s.protectedAllowlistPendingAt[account][destination];
+        delete s.protectedAllowlistChange[account][destination];
         s.protectedAllowlist[account].add(destination);
         emit AllowlistAdded(account, destination);
     }
@@ -413,13 +477,15 @@ contract ProtectedAccountFacet is DiamondReentrancyGuard, DiamondPausable {
         LibVaipakam.ProtectedSignerChange storage c = s.protectedSignerChange[account][signer];
         if (
             signer == address(0) || signer == account || signer == a.controller
-                || s.protectedSigners[account].contains(signer) || c.addAt != 0
+                || s.protectedSigners[account].contains(signer) || _live(account, c.addAt, c.epoch) != 0
         ) revert LibProtectedAccount.InvalidSigner(signer);
         if (s.protectedSigners[account].length() >= LibProtectedAccount.MAX_SIGNERS) {
             revert LibProtectedAccount.TooManySigners();
         }
         c.addAt = _later(a);
         c.accepted = false;
+        c.removeAt = 0;
+        c.epoch = _epoch(account);
         emit SignerAddRequested(account, signer, c.addAt);
     }
 
@@ -428,7 +494,7 @@ contract ProtectedAccountFacet is DiamondReentrancyGuard, DiamondPausable {
         _acct(account);
         LibVaipakam.ProtectedSignerChange storage c =
             LibVaipakam.storageSlot().protectedSignerChange[account][msg.sender];
-        if (c.addAt == 0) revert LibProtectedAccount.ChangeNotRequested();
+        if (_live(account, c.addAt, c.epoch) == 0) revert LibProtectedAccount.ChangeNotRequested();
         c.accepted = true;
         emit SignerAccepted(account, msg.sender);
     }
@@ -438,7 +504,7 @@ contract ProtectedAccountFacet is DiamondReentrancyGuard, DiamondPausable {
     function cancelAddSigner(address account, address signer) external nonReentrant {
         if (msg.sender != signer) _requireManagerOrSigner(account);
         LibVaipakam.ProtectedSignerChange storage c = LibVaipakam.storageSlot().protectedSignerChange[account][signer];
-        if (c.addAt == 0) revert LibProtectedAccount.ChangeNotRequested();
+        if (_live(account, c.addAt, c.epoch) == 0) revert LibProtectedAccount.ChangeNotRequested();
         c.addAt = 0;
         c.accepted = false;
         emit SignerAddCancelled(account, signer, msg.sender);
@@ -450,10 +516,9 @@ contract ProtectedAccountFacet is DiamondReentrancyGuard, DiamondPausable {
         if (a.locked) revert LibProtectedAccount.ProtectedVaultLocked(account);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.ProtectedSignerChange storage c = s.protectedSignerChange[account][signer];
-        _matured(c.addAt);
-        if (block.timestamp > uint256(c.addAt) + a.delaySeconds) {
-            revert LibProtectedAccount.ChangeExpired(uint256(c.addAt) + a.delaySeconds);
-        }
+        uint64 at = _live(account, c.addAt, c.epoch);
+        _matured(at);
+        _withinWindow(a, at);
         if (!c.accepted) revert LibProtectedAccount.SignerNotAccepted(signer);
         if (s.protectedSigners[account].length() >= LibProtectedAccount.MAX_SIGNERS) {
             revert LibProtectedAccount.TooManySigners();
@@ -473,6 +538,7 @@ contract ProtectedAccountFacet is DiamondReentrancyGuard, DiamondPausable {
         if (!s.protectedSigners[account].contains(signer)) revert LibProtectedAccount.NotSigner(account, signer);
         LibVaipakam.ProtectedSignerChange storage c = s.protectedSignerChange[account][signer];
         c.removeAt = _later(a);
+        c.epoch = _epoch(account);
         emit SignerRemoveRequested(account, signer, c.removeAt);
     }
 
@@ -482,7 +548,7 @@ contract ProtectedAccountFacet is DiamondReentrancyGuard, DiamondPausable {
         _requireManagerOrSigner(account);
         if (msg.sender == signer) revert LibProtectedAccount.NotManagerOrSigner(account, msg.sender);
         LibVaipakam.ProtectedSignerChange storage c = LibVaipakam.storageSlot().protectedSignerChange[account][signer];
-        if (c.removeAt == 0) revert LibProtectedAccount.ChangeNotRequested();
+        if (_live(account, c.removeAt, c.epoch) == 0) revert LibProtectedAccount.ChangeNotRequested();
         c.removeAt = 0;
         emit SignerRemoveCancelled(account, signer, msg.sender);
     }
@@ -494,7 +560,7 @@ contract ProtectedAccountFacet is DiamondReentrancyGuard, DiamondPausable {
         if (a.locked) revert LibProtectedAccount.ProtectedVaultLocked(account);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.ProtectedSignerChange storage c = s.protectedSignerChange[account][signer];
-        _matured(c.removeAt);
+        _matured(_live(account, c.removeAt, c.epoch));
         delete s.protectedSignerChange[account][signer];
         s.protectedSigners[account].remove(signer);
         emit SignerRemoved(account, signer);
@@ -533,13 +599,25 @@ contract ProtectedAccountFacet is DiamondReentrancyGuard, DiamondPausable {
 
     function _lock(address account, address by) private {
         LibVaipakam.ProtectedAccount storage a = LibVaipakam.storageSlot().protectedAccount[account];
-        if (!a.locked) {
+        bool wasLocked = a.locked;
+        if (!wasLocked) {
             a.locked = true;
             a.lockedAt = uint64(block.timestamp);
         }
-        a.lockedBy = by;
+        // A lock a secondary signer holds keeps its signer origin when the
+        // manager (or its keeper) locks again: that origin is what bars the
+        // manager from cancelling or redirecting a replacement, so a repeat
+        // lock by a compromised primary must not be able to wash it out. A
+        // signer locking over the manager's lock does take the origin.
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (!wasLocked || !s.protectedSigners[account].contains(a.lockedBy)) {
+            a.lockedBy = by;
+        }
         // A lock is an emergency: it also drops every pending loosening
-        // change, which can be requested again only after an unlock.
+        // change, which can be requested again only after an unlock. That
+        // includes the allowlist additions and signer changes, voided by
+        // epoch, so one a thief requested cannot mature through the lock.
+        _voidPendingChanges(account);
         a.pendingUnlockAt = 0;
         a.pendingDisableAt = 0;
         a.pendingDelay = 0;
@@ -729,9 +807,11 @@ contract ProtectedAccountFacet is DiamondReentrancyGuard, DiamondPausable {
     function getSignerChange(address account, address signer)
         external
         view
-        returns (LibVaipakam.ProtectedSignerChange memory)
+        returns (LibVaipakam.ProtectedSignerChange memory c)
     {
-        return LibVaipakam.storageSlot().protectedSignerChange[account][signer];
+        // A change voided by a later lock or switch-off reads as none.
+        c = LibVaipakam.storageSlot().protectedSignerChange[account][signer];
+        if (c.epoch != _epoch(account)) c = LibVaipakam.ProtectedSignerChange(0, false, 0, 0);
     }
 
     /// @notice `account`'s active extra payout destinations (its manager
@@ -740,9 +820,13 @@ contract ProtectedAccountFacet is DiamondReentrancyGuard, DiamondPausable {
         return LibVaipakam.storageSlot().protectedAllowlist[account].values();
     }
 
-    /// @notice When a pending addition of `destination` matures; zero if none.
+    /// @notice When a pending addition of `destination` matures; zero if
+    ///         none (one voided by a later lock or switch-off reads as none).
+    ///         It can be activated until one further delay after that.
     function getAllowlistPendingAt(address account, address destination) external view returns (uint256) {
-        return LibVaipakam.storageSlot().protectedAllowlistPendingAt[account][destination];
+        LibVaipakam.ProtectedAllowlistChange storage c =
+            LibVaipakam.storageSlot().protectedAllowlistChange[account][destination];
+        return _live(account, c.at, c.epoch);
     }
 
     /// @notice The open replacement proposal, its approvals by active

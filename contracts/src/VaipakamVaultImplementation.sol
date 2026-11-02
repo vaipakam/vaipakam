@@ -12,6 +12,12 @@ import {IERC721Receiver} from "@openzeppelin/contracts/token/ERC721/IERC721Recei
 import {IERC1155} from "@openzeppelin/contracts/token/ERC1155/IERC1155.sol";
 import {IERC1155Receiver} from "@openzeppelin/contracts/token/ERC1155/IERC1155Receiver.sol";
 import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
+
+/// @dev The one Diamond read a vault makes: whether an address is a Vaipakam
+///      vault (`VaultDepositoryFacet.getVaultOwner`, zero if not).
+interface IVaultRegistryView {
+    function getVaultOwner(address vault) external view returns (address user);
+}
 import {IERC4907} from "./interfaces/IERC4907.sol";
 import {VaultFactoryFacet} from "./facets/VaultFactoryFacet.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
@@ -748,11 +754,28 @@ contract VaipakamVaultImplementation is
     }
 
     // Receiver hooks for safe transfers — accept ONLY when the operator
-    // is the Diamond or a self-call. Any other operator means the NFT was
-    // pushed in directly by a user / third-party; we revert so the
-    // transfer fails atomically (no orphan asset, no off-ledger balance).
-    // ERC-20 cannot be gated this way (no callback) — frontend warning +
-    // operational sweep are the controls there.
+    // is the Diamond, a self-call, or another Vaipakam vault. A vault moves
+    // nothing except at the Diamond's call, so a delivery from another
+    // vault is always a protocol move between two users' vaults (a default
+    // to the lender, a payment credited to a protected account's vault);
+    // the Diamond's vault registry says which addresses are vaults. Any
+    // other operator means the NFT was pushed in directly by a user /
+    // third-party; we revert so the transfer fails atomically (no orphan
+    // asset, no off-ledger balance). ERC-20 cannot be gated this way (no
+    // callback) — frontend warning + operational sweep are the controls
+    // there.
+
+    /// @dev Whether `operator` may deliver an NFT into this vault.
+    function _acceptsNftFrom(address operator) private view returns (bool) {
+        if (operator == diamond || operator == address(this)) return true;
+        // Fail closed: a Diamond that cannot answer (no registry route)
+        // accepts nothing beyond its own and the vault's own deliveries.
+        try IVaultRegistryView(diamond).getVaultOwner(operator) returns (address user) {
+            return user != address(0);
+        } catch {
+            return false;
+        }
+    }
     // forge-lint: disable-next-line(mixed-case-function)
     function onERC721Received(
         address operator,
@@ -760,9 +783,7 @@ contract VaipakamVaultImplementation is
         uint256,
         bytes calldata
     ) external view returns (bytes4) {
-        if (operator != diamond && operator != address(this)) {
-            revert UnauthorizedNFTSender();
-        }
+        if (!_acceptsNftFrom(operator)) revert UnauthorizedNFTSender();
         return IERC721Receiver.onERC721Received.selector;
     }
 
@@ -774,9 +795,7 @@ contract VaipakamVaultImplementation is
         uint256,
         bytes calldata
     ) external view returns (bytes4) {
-        if (operator != diamond && operator != address(this)) {
-            revert UnauthorizedNFTSender();
-        }
+        if (!_acceptsNftFrom(operator)) revert UnauthorizedNFTSender();
         return IERC1155Receiver.onERC1155Received.selector;
     }
 
@@ -788,9 +807,7 @@ contract VaipakamVaultImplementation is
         uint256[] calldata,
         bytes calldata
     ) external view returns (bytes4) {
-        if (operator != diamond && operator != address(this)) {
-            revert UnauthorizedNFTSender();
-        }
+        if (!_acceptsNftFrom(operator)) revert UnauthorizedNFTSender();
         return IERC1155Receiver.onERC1155BatchReceived.selector;
     }
 

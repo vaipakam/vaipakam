@@ -122,6 +122,22 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
         return IPayoutGate(address(this)).applyPayoutGate(user, kind, asset, tokenId, amount, recipient);
     }
 
+    /// @dev Protected account mode, the RECIPIENT side: where a payout from
+    ///      `user`'s vault to `recipient` must land instead of `recipient`'s
+    ///      wallet. A payment the protocol makes to a protected account's
+    ///      wallet from anywhere but that account's own vault is credited to
+    ///      its vault, so it leaves only through the delay; the source side
+    ///      ({_payoutHeld}) covers the account's own vault. Zero when the
+    ///      payout goes where it was addressed: `recipient` is `user`, or has
+    ///      the mode off. An account with the mode on always has a vault
+    ///      (enabling creates it).
+    function _protectedRecipientVault(address user, address recipient) private view returns (address) {
+        if (recipient == user) return address(0);
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (!s.protectedAccount[recipient].enabled) return address(0);
+        return s.userVaipakamVaults[recipient];
+    }
+
     /// @notice Emitted when a new user vault proxy is created.
     /// @param user The address of the user for whom the vault is created.
     /// @param proxy The address of the newly deployed proxy.
@@ -317,6 +333,7 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
             );
             proxy = address(newProxy);
             s.userVaipakamVaults[user] = proxy;
+            s.vaultUserOf[proxy] = user;
             s.vaultVersion[user] = s.currentVaultVersion;
             emit UserVaultCreated(user, proxy);
         } else {
@@ -379,12 +396,16 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
 
     /// @dev Points `user`'s vault `proxy` at the current shared template and
     ///      stamps the current version. The one upgrade step, shared by
-    ///      {upgradeUserVault} and the rental route's catch-up.
+    ///      {upgradeUserVault} and the rental route's catch-up. It refuses a
+    ///      PINNED vault, so no path reaching it can move a vault its owner
+    ///      pinned: the owner's own upgrade clears the pin before calling it,
+    ///      and the rental catch-up skips a pinned vault instead.
     function _upgradeVault(
         LibVaipakam.Storage storage s,
         address user,
         address proxy
     ) private {
+        if (s.vaultPinnedImplementation[user] != address(0)) revert VaultPinned(user);
         // Call UUPS upgradeToAndCall on the proxy
         (bool success, ) = proxy.call(
             abi.encodeWithSelector(
@@ -784,12 +805,15 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
         if (_payoutHeld(user, uint8(LibVaipakam.AssetType.ERC20), token, 0, amount, recipient)) {
             return amount;
         }
-        uint256 recipientBefore = IERC20(token).balanceOf(recipient);
+        // A protected recipient's wallet is paid into its vault instead.
+        address creditTo = _protectedRecipientVault(user, recipient);
+        address dest = creditTo == address(0) ? recipient : creditTo;
+        uint256 recipientBefore = IERC20(token).balanceOf(dest);
         (bool success, ) = proxy.call(
             abi.encodeWithSelector(
                 VaipakamVaultImplementation.withdrawERC20.selector,
                 token,
-                recipient,
+                dest,
                 amount
             )
         );
@@ -798,8 +822,11 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
         // balance below falls by exactly that, and a token charging its sender
         // on top would take the excess from the holder's other positions.
         LibDelivery.requireNoOverDebit(token, proxy, proxyBefore, amount);
-        delivered = LibDelivery.measured(token, proxy, recipient, recipientBefore, amount);
+        delivered = LibDelivery.measured(token, proxy, dest, recipientBefore, amount);
         LibVaipakam.recordVaultWithdraw(user, token, amount);
+        if (creditTo != address(0)) {
+            LibProtectedAccount.creditPayment(recipient, token, 0, amount, delivered);
+        }
         // RL-2 — VPFI outflow observability for the reward-retention
         // ledger. This and {recordVaultOutflowERC20} are the two
         // recordVaultWithdraw callers and both emit it, so every tracked
@@ -929,16 +956,20 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
         if (_payoutHeld(user, uint8(LibVaipakam.AssetType.ERC721), nftContract, tokenId, 1, recipient)) {
             return;
         }
+        address creditTo = _protectedRecipientVault(user, recipient);
         (bool success, ) = proxy.call(
             abi.encodeWithSelector(
                 VaipakamVaultImplementation.withdrawERC721.selector,
                 nftContract,
                 tokenId,
-                recipient
+                creditTo == address(0) ? recipient : creditTo
             )
         );
         if (!success) revert ProxyCallFailed("Withdraw ERC721 failed");
         LibVaipakam.recordVaultWithdraw(user, nftContract, tokenId, 1);
+        if (creditTo != address(0)) {
+            LibProtectedAccount.creditPayment(recipient, nftContract, tokenId, 1, 1);
+        }
     }
 
     /**
@@ -1002,17 +1033,21 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
         if (_payoutHeld(user, uint8(LibVaipakam.AssetType.ERC1155), nftContract, tokenId, amount, recipient)) {
             return;
         }
+        address creditTo = _protectedRecipientVault(user, recipient);
         (bool success, ) = proxy.call(
             abi.encodeWithSelector(
                 VaipakamVaultImplementation.withdrawERC1155.selector,
                 nftContract,
                 tokenId,
                 amount,
-                recipient
+                creditTo == address(0) ? recipient : creditTo
             )
         );
         if (!success) revert ProxyCallFailed("Withdraw ERC1155 failed");
         LibVaipakam.recordVaultWithdraw(user, nftContract, tokenId, amount);
+        if (creditTo != address(0)) {
+            LibProtectedAccount.creditPayment(recipient, nftContract, tokenId, amount, amount);
+        }
     }
 
     /**
@@ -1082,8 +1117,13 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
         if (proxy == address(0)) revert NoVault();
         // A vault on an older implementation is brought to the current one
         // first, so no rental step (a close included) depends on its lender
-        // having upgraded since the facets were refreshed.
-        if (s.vaultVersion[lender] < s.currentVaultVersion) {
+        // having upgraded since the facets were refreshed. A vault its owner
+        // PINNED is left on the implementation the owner chose: only the
+        // owner upgrades a pinned vault, and the rental step runs on it.
+        if (
+            s.vaultVersion[lender] < s.currentVaultVersion
+                && s.vaultPinnedImplementation[lender] == address(0)
+        ) {
             _upgradeVault(s, lender, proxy);
         }
         address nftContract = loan.principalAsset;

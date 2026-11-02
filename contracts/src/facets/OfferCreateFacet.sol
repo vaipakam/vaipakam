@@ -32,6 +32,7 @@ import {LibUserVault} from "../libraries/LibUserVault.sol";
 import {LibAutoRefinanceCheck} from "../libraries/LibAutoRefinanceCheck.sol";
 import {LibRiskAccess} from "../libraries/LibRiskAccess.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
+import {LibDepositoryLedger} from "../libraries/LibDepositoryLedger.sol";
 import {LibSignedOffer} from "../libraries/LibSignedOffer.sol";
 
 /**
@@ -610,6 +611,9 @@ contract OfferCreateFacet is
             if (free < amount) {
                 revert SignedOfferInsufficientFreeBalance(fundedAsset, free, amount);
             }
+            // The signer spends free vault balance: the depository ledger
+            // (what of it the signer may withdraw) pays first.
+            LibDepositoryLedger.spend(creator, fundedAsset, 0, amount);
         } else {
             // Wallet-witness: one Permit2 signature binds the pull + the terms.
             LibPermit2.pullWithWitness(

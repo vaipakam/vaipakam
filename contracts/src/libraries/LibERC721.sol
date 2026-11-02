@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 
 import {IERC721Receiver} from "@openzeppelin/contracts/token/ERC721/IERC721Receiver.sol";
 import {LibVaipakam} from "./LibVaipakam.sol";
+import {LibProtectedAccount} from "./LibProtectedAccount.sol";
 
 /**
  * @title LibERC721
@@ -275,10 +276,11 @@ library LibERC721 {
         if (r != LockReason.None) revert ERC721Locked(tokenId, r);
     }
 
-    /// @dev Protected account mode with NFT protection on for `owner`.
+    /// @dev Whether `owner`'s position NFTs carry the owner-level lock —
+    ///      {LibProtectedAccount.protectsNfts}, the one rule (NFT protection
+    ///      chosen, or the account retired by a replacement).
     function _protectsNfts(address owner) private view returns (bool) {
-        LibVaipakam.ProtectedAccount storage a = LibVaipakam.storageSlot().protectedAccount[owner];
-        return a.enabled && a.protectNfts;
+        return LibProtectedAccount.protectsNfts(owner);
     }
 
     /// @dev Initialize the ERC721 surface for a fresh diamond. Only

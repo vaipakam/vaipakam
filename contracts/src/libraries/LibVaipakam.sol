@@ -8220,10 +8220,18 @@ library LibVaipakam {
         ///      may be sent to (at most `LibProtectedAccount.MAX_ALLOWLIST`).
         ///      Written only by `LibProtectedAccount`. Appended — append-only.
         mapping(address => EnumerableSet.AddressSet) protectedAllowlist;
-        /// @dev Protected account mode — per owner and destination, when a
-        ///      pending allowlist addition matures; zero means none. Written
-        ///      only by `LibProtectedAccount`. Appended — append-only.
-        mapping(address => mapping(address => uint64)) protectedAllowlistPendingAt;
+        /// @dev Protected account mode — per owner and destination, a
+        ///      pending allowlist addition: when it matures (zero means none)
+        ///      and the change epoch it was requested in. Written only by
+        ///      `ProtectedAccountFacet`. Appended — append-only.
+        mapping(address => mapping(address => ProtectedAllowlistChange)) protectedAllowlistChange;
+        /// @dev Protected account mode — per owner, the change epoch. A lock
+        ///      and a switch-off each advance it, which voids every pending
+        ///      allowlist addition and signer addition or removal requested
+        ///      before (they are mappings, so they are voided by epoch, not
+        ///      swept). Survives a switch-off. Written only by
+        ///      `ProtectedAccountFacet`. Appended — append-only.
+        mapping(address => uint64) protectedChangeEpoch;
         /// @dev Protected account mode — every pending payout row by id.
         ///      Written only by `LibProtectedAccount`. Appended — append-only.
         mapping(uint256 => PendingPayout) pendingPayouts;
@@ -8282,6 +8290,38 @@ library LibVaipakam {
         ///      ERC-20-only `retiredProtocolTrackedVaultBalance`. Appended —
         ///      append-only.
         mapping(address => mapping(address => mapping(uint256 => uint256))) protocolTrackedVaultHolding;
+        /// @dev Depository vault — the depository ledger: per owner, asset
+        ///      and token id (zero for an ERC-20), what is the owner's to take
+        ///      out through `VaultDepositoryFacet.withdrawFromVault`: what the
+        ///      owner deposited or adopted, what the protocol credited to the
+        ///      owner's vault as a payment to the owner, and payouts to the
+        ///      owner that were kept in the vault or cancelled; less what the
+        ///      owner withdrew or spent from the vault. A loan, offer, claim or
+        ///      reserve balance is never in it, so the depository withdraw can
+        ///      reach none of them whether or not they are liened. Same key as
+        ///      `encumbered`. Written only by `LibDepositoryLedger`. Appended —
+        ///      append-only.
+        mapping(address => mapping(address => mapping(uint256 => uint256))) depositoryHolding;
+        /// @dev Depository vault — every asset contract that has ever had a
+        ///      depository-ledger credit for the owner, in first-credit order,
+        ///      so the app can find a deposited asset no loan or offer names.
+        ///      Never shrinks: an asset stays listed after its holding returns
+        ///      to zero (the holding view says what is there now). Written only
+        ///      by `LibDepositoryLedger.credit`. Appended — append-only.
+        mapping(address => address[]) depositoryAssets;
+        /// @dev Whether `asset` is already in `depositoryAssets[owner]`.
+        ///      Written only by `LibDepositoryLedger.credit`. Appended —
+        ///      append-only.
+        mapping(address => mapping(address => bool)) depositoryAssetListed;
+        /// @dev Per vault proxy, the user it was created for (the reverse
+        ///      of `userVaipakamVaults`); zero for any address that is not a
+        ///      Vaipakam vault. Lets a vault accept an NFT another Vaipakam
+        ///      vault delivers to it (a protocol move between two users'
+        ///      vaults: a default to the lender, a payment credited to a
+        ///      protected account's vault). Written only by
+        ///      `VaultFactoryFacet.getOrCreateUserVault`. Appended —
+        ///      append-only.
+        mapping(address => address) vaultUserOf;
     }
 
     /// @notice Protected account mode — one owner wallet's settings.
@@ -8314,11 +8354,22 @@ library LibVaipakam {
     /// @notice Protected account mode — a pending change to one signer.
     /// @dev    `addAt` matures an addition (which also needs `accepted`,
     ///         set only by the nominee's own key); `removeAt` matures a
-    ///         removal. Zero means none pending.
+    ///         removal. Zero means none pending. `epoch` is the account's
+    ///         change epoch when the change was requested: a change from an
+    ///         earlier epoch (before a lock or a switch-off) is void.
     struct ProtectedSignerChange {
         uint64 addAt;
         bool accepted;
         uint64 removeAt;
+        uint64 epoch;
+    }
+
+    /// @notice Protected account mode — a pending allowlist addition.
+    /// @dev    `at` is when it matures (zero means none); `epoch` as in
+    ///         `ProtectedSignerChange`.
+    struct ProtectedAllowlistChange {
+        uint64 at;
+        uint64 epoch;
     }
 
     /// @notice Protected account mode — a payout held back in its owner's

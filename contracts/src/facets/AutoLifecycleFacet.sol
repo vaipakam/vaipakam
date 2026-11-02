@@ -9,6 +9,7 @@ import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibServiceCapacity} from "../libraries/LibServiceCapacity.sol";
 import {LibERC721} from "../libraries/LibERC721.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
+import {LibDepositoryLedger} from "../libraries/LibDepositoryLedger.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
 import {LibInterestLedger} from "../libraries/LibInterestLedger.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
@@ -1168,6 +1169,9 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
             uint256 reserved = s.extendReserve[loan.id][borrowerNftOwner];
             uint256 fromReserve = reserved < charge ? reserved : charge;
             LibEncumbrance.unlienExtendReserve(loan.id, borrowerNftOwner, principalAsset, fromReserve);
+            // The rest is the holder's other free vault balance: the depository
+            // ledger (what of it they may withdraw) pays first.
+            LibDepositoryLedger.spend(borrowerNftOwner, principalAsset, 0, charge - fromReserve);
             emit ExtendChargeDrawn(
                 loan.id, borrowerNftOwner, principalAsset, fromReserve, charge - fromReserve, reserved - fromReserve
             );
@@ -1194,6 +1198,9 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
             // arrival is refused like step 1's withdrawal.
             LibDelivery.pushExact(principalAsset, lenderVault, holderShare);
             LibVaipakam.recordVaultDeposit(lenderNftOwner, principalAsset, holderShare);
+            // Paid outright to the holder (no claim row follows), so it is
+            // theirs to withdraw.
+            LibDepositoryLedger.credit(lenderNftOwner, principalAsset, 0, holderShare);
         }
         LibInterestLedger.holderPaid(s, loan, interestGross - sellersGross);
     }

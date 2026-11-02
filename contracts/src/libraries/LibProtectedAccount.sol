@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 
 import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 import {LibVaipakam} from "./LibVaipakam.sol";
+import {LibDepositoryLedger} from "./LibDepositoryLedger.sol";
 
 /**
  * @title LibProtectedAccount
@@ -153,13 +154,16 @@ library LibProtectedAccount {
         uint256 tokenId,
         uint256 amount
     );
-    /// @notice A payment the Diamond made to a protected account's wallet was
-    ///         credited to that account's vault instead (`received` is what
-    ///         the vault measurably got).
+    /// @notice A payment the protocol made to a protected account's wallet
+    ///         was credited to that account's vault instead: one the Diamond
+    ///         paid from its own balance, or one another user's vault paid
+    ///         (`tokenId` zero for an ERC-20; `received` is what the vault
+    ///         measurably got, the unit count for an NFT).
     /// @custom:event-category state-change/vault-mutation
     event PaymentCreditedToVault(
         address indexed account,
         address indexed asset,
+        uint256 tokenId,
         uint256 amount,
         uint256 received
     );
@@ -192,10 +196,15 @@ library LibProtectedAccount {
         return _s().protectedAccount[account].enabled;
     }
 
-    /// @notice Whether `account`'s position NFTs carry the owner-level lock.
+    /// @notice Whether `account`'s position NFTs carry the owner-level lock:
+    ///         the owner chose NFT protection, OR the account was retired by
+    ///         a replacement. A retired account's old wallet has lost every
+    ///         right over it, so its positions move only through the queued
+    ///         transfer its controller requests, whatever the optional NFT
+    ///         setting says. The ONE rule: {LibERC721} reads it too.
     function protectsNfts(address account) internal view returns (bool) {
         LibVaipakam.ProtectedAccount storage a = _s().protectedAccount[account];
-        return a.enabled && a.protectNfts;
+        return a.enabled && (a.protectNfts || a.retired);
     }
 
     /// @notice The wallet that manages `account`: its controller once
@@ -290,6 +299,22 @@ library LibProtectedAccount {
         }
     }
 
+    // ─── Payments credited to a protected vault ──────────────────────────
+
+    /// @notice Book a payment to protected wallet `account` that was paid
+    ///         into its vault instead (`received` is what the vault got): the
+    ///         tracked ledger and the depository ledger both rise by it, so
+    ///         it leaves only through the owner's own withdrawal and its
+    ///         delay. The one writer for every such credit (the vault
+    ///         withdraw routes' recipient side and the Diamond's own payments).
+    function creditPayment(address account, address asset, uint256 tokenId, uint256 amount, uint256 received)
+        internal
+    {
+        LibVaipakam.recordVaultDeposit(account, asset, tokenId, received);
+        LibDepositoryLedger.credit(account, asset, tokenId, received);
+        emit PaymentCreditedToVault(account, asset, tokenId, amount, received);
+    }
+
     // ─── The payout gate ─────────────────────────────────────────────────
 
     /// @notice The gate every vault withdraw route runs after its lien
@@ -319,8 +344,10 @@ library LibProtectedAccount {
         if (recipient != account && recipient != a.controller) return false;
         // Held, never refused: a protocol settlement must not revert because
         // the payee's account is locked or its queue is full. The asset stays
-        // in the vault, tracked, for the owner to withdraw later.
+        // in the vault, tracked and credited to the depository ledger, for the
+        // owner to withdraw later.
         if (a.locked || openRows(account) >= MAX_OPEN_ROWS) {
+            LibDepositoryLedger.credit(account, asset, tokenId, amount);
             emit PayoutHeldInVault(account, asset, tokenId, amount);
             return true;
         }
@@ -364,7 +391,10 @@ library LibProtectedAccount {
         emit PayoutQueued(account, id, asset, kind, tokenId, amount, recipient, releaseAt);
     }
     /// @notice Cancel queued payout `id`, releasing its earmark. The asset
-    ///         never left the vault, so nothing moves.
+    ///         never left the vault, so nothing moves. It is the owner's
+    ///         (their own withdrawal, debited from the depository ledger when
+    ///         queued, or a protocol payout to them), so it is credited to the
+    ///         depository ledger for a later withdrawal.
     function cancelPayout(uint256 id, address by) internal {
         LibVaipakam.Storage storage s = _s();
         LibVaipakam.PendingPayout storage p = s.pendingPayouts[id];
@@ -372,6 +402,7 @@ library LibProtectedAccount {
         p.state = ROW_CANCELLED;
         s.pendingPayoutIds[p.user].remove(id);
         s.pendingPayoutEarmark[p.user][p.asset][p.tokenId] -= p.amount;
+        LibDepositoryLedger.credit(p.user, p.asset, p.tokenId, p.amount);
         emit PayoutCancelled(p.user, id, by);
     }
 

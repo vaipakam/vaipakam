@@ -1538,7 +1538,7 @@ contract HelperTest {
 
     /// @dev Selectors for `VaultDepositoryFacet` — the depository vault: deposit, withdraw, adopt, disown and the upgrade pin.
     function getVaultDepositoryFacetSelectors() public pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](14);
+        selectors = new bytes4[](18);
         selectors[0] = VaultDepositoryFacet.adoptUntracked.selector;
         selectors[1] = VaultDepositoryFacet.adoptionAckTextHash.selector;
         selectors[2] = VaultDepositoryFacet.adoptionDigest.selector;
@@ -1553,6 +1553,10 @@ contract HelperTest {
         selectors[11] = VaultDepositoryFacet.untrackedHolding.selector;
         selectors[12] = VaultDepositoryFacet.vaultBannedSource.selector;
         selectors[13] = VaultDepositoryFacet.withdrawFromVault.selector;
+        selectors[14] = VaultDepositoryFacet.withdrawableNow.selector;
+        selectors[15] = VaultDepositoryFacet.getDepositoryHolding.selector;
+        selectors[16] = VaultDepositoryFacet.getDepositoryAssets.selector;
+        selectors[17] = VaultDepositoryFacet.getVaultOwner.selector;
     }
 
     function getClaimFacetSelectors()

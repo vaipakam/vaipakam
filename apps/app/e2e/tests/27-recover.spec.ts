@@ -287,7 +287,7 @@ test('a processed-but-unreadable recovery stays locked across a reload', async (
 
   // Two-step way out: acknowledge having checked the wallet, THEN the
   // explicit "this is a separate recovery" action.
-  await page.getByRole('button', { name: /checked my wallet/i }).click();
+  await page.getByRole('button', { name: /checked my vault/i }).click();
   await page.getByRole('button', { name: /start a new recovery/i }).click();
   await expect(
     page.getByText(/your recovery attempt went through/i),

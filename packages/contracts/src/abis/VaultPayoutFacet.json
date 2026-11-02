@@ -409,6 +409,12 @@
         "internalType": "address"
       },
       {
+        "name": "tokenId",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
         "name": "amount",
         "type": "uint256",
         "indexed": false,
@@ -604,10 +610,42 @@
   },
   {
     "type": "error",
+    "name": "AmountExceedsFree",
+    "inputs": [
+      {
+        "name": "requested",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "free",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "CosignRequired",
     "inputs": [
       {
         "name": "id",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "DepositoryHoldingExceeded",
+    "inputs": [
+      {
+        "name": "requested",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "holding",
         "type": "uint256",
         "internalType": "uint256"
       }
