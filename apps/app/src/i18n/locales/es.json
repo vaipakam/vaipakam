@@ -3794,6 +3794,7 @@
       "proposeReplacement": "Proponer un traslado",
       "approveReplacement": "Aprobar el traslado",
       "notSigner": "Tu billetera no es firmante de recuperación de esta cuenta.",
+      "nomineeBody": "Esta cuenta ha invitado a tu billetera a ser uno de sus firmantes de recuperación. Acepta desde esta billetera para asumir el rol, o retírate de la invitación. Se activa cuando pasa la espera y se aplica la invitación.",
       "signerRoleUnknown": "No pudimos leer los firmantes de esta cuenta ahora mismo, así que aún no podemos saber si tu billetera es uno de ellos.",
       "invalidAddress": "Introduce una dirección válida.",
       "working": "Procesando…",

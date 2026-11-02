@@ -3794,6 +3794,7 @@
       "proposeReplacement": "Einen Umzug vorschlagen",
       "approveReplacement": "Dem Umzug zustimmen",
       "notSigner": "Deine Wallet ist kein Wiederherstellungs-Unterzeichner dieses Kontos.",
+      "nomineeBody": "Dieses Konto hat Ihre Wallet als einen seiner Wiederherstellungs-Unterzeichner eingeladen. Nehmen Sie die Rolle von dieser Wallet aus an oder ziehen Sie sich von der Einladung zurück. Sie wird aktiv, sobald die Wartezeit vorbei ist und die Einladung angewendet wurde.",
       "signerRoleUnknown": "Wir konnten die Unterzeichner dieses Kontos gerade nicht lesen und können daher noch nicht sagen, ob Ihre Wallet dazugehört.",
       "invalidAddress": "Gib eine gültige Adresse ein.",
       "working": "Wird ausgeführt …",

@@ -768,9 +768,13 @@ function SignerEntryCard() {
   const { write } = useDiamondWrite();
   const { busy, error, done, run } = useRunner();
   const data = snap.data;
+  const nowSec = useNowSec();
   const isSigner = Boolean(
     address && data?.signers?.some((s) => s.signer.toLowerCase() === address.toLowerCase()),
   );
+  const nomination = address
+    ? data?.pendingSigners?.find((r) => r.address.toLowerCase() === address.toLowerCase())
+    : undefined;
   return (
     <section className="card">
       <h2 className="card-title">{p.signerViewTitle}</h2>
@@ -778,14 +782,6 @@ function SignerEntryCard() {
       <AddressAction placeholder={p.accountPlaceholder} label={p.loadAccount} disabled={false} onSubmit={setAccount} />
       {account && walletChain ? (
         <>
-          <button
-            type="button"
-            className="btn btn-secondary"
-            disabled={busy}
-            onClick={() => run(() => write('acceptSignerRole', [account]))}
-          >
-            {p.acceptRole}
-          </button>
           <Feedback error={error} done={done} />
           {snap.isLoading ? (
             <p className="muted">{p.loading}</p>
@@ -795,12 +791,42 @@ function SignerEntryCard() {
             <UnavailableState body={p.unsupported} />
           ) : data.signers === null ? (
             <UnavailableState body={p.signerRoleUnknown} />
-          ) : !isSigner ? (
-            <p className="muted">{p.notSigner}</p>
-          ) : data.record?.enabled ? (
-            <AccountView account={account} snap={data} asSigner />
+          ) : isSigner ? (
+            data.record?.enabled ? (
+              <AccountView account={account} snap={data} asSigner />
+            ) : (
+              <p className="muted">{p.statusOff}</p>
+            )
+          ) : data.pendingSigners === null ? (
+            <UnavailableState body={p.signerRoleUnknown} />
+          ) : nomination && data.record ? (
+            // An invited wallet that is not yet a signer: its own nomination,
+            // with acceptance (only while not yet given), withdrawal and, once
+            // matured and accepted, the permissionless activation.
+            <div className="stack">
+              <p>{p.nomineeBody}</p>
+              <PendingAdditions
+                rows={[nomination]}
+                delaySeconds={data.record.delaySeconds}
+                now={chainNowOf(data, nowSec)}
+                busy={busy}
+                canCancel={() => true}
+                onCancel={(a) => run(() => write('cancelAddSigner', [account, a]))}
+                onActivate={(a) => run(() => write('finalizeAddSigner', [account, a]))}
+              />
+              {nomination.accepted === false ? (
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  disabled={busy}
+                  onClick={() => run(() => write('acceptSignerRole', [account]))}
+                >
+                  {p.acceptRole}
+                </button>
+              ) : null}
+            </div>
           ) : (
-            <p className="muted">{p.statusOff}</p>
+            <p className="muted">{p.notSigner}</p>
           )}
         </>
       ) : null}

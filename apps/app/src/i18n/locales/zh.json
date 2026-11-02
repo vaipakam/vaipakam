@@ -3794,6 +3794,7 @@
       "proposeReplacement": "提议迁移",
       "approveReplacement": "批准迁移",
       "notSigner": "你的钱包不是此账户的恢复签名人。",
+      "nomineeBody": "该账户已邀请您的钱包成为其恢复签署人之一。请从此钱包接受该角色，或退出邀请。等待期结束且邀请被应用后，角色即生效。",
       "signerRoleUnknown": "暂时无法读取该账户的签署人，因此还无法判断您的钱包是否是其中之一。",
       "invalidAddress": "请输入有效地址。",
       "working": "处理中…",

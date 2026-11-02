@@ -1446,6 +1446,7 @@
       "proposeReplacement": "Propose a move",
       "approveReplacement": "Approve the move",
       "notSigner": "Your wallet is not a recovery signer of this account.",
+      "nomineeBody": "This account has invited your wallet to be one of its recovery signers. Accept from this wallet to take the role, or withdraw from the invitation. It becomes active once the delay has passed and the invitation is applied.",
       "signerRoleUnknown": "We couldn’t read this account’s signers just now, so we can’t yet tell whether your wallet is one of them.",
       "invalidAddress": "Enter a valid address.",
       "working": "Working…",

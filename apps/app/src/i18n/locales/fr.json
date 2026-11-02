@@ -3794,6 +3794,7 @@
       "proposeReplacement": "Proposer un déplacement",
       "approveReplacement": "Approuver le déplacement",
       "notSigner": "Votre portefeuille n’est pas signataire de récupération de ce compte.",
+      "nomineeBody": "Ce compte a invité votre portefeuille à devenir l’un de ses signataires de récupération. Acceptez depuis ce portefeuille pour prendre le rôle, ou retirez-vous de l’invitation. Le rôle devient actif une fois le délai écoulé et l’invitation appliquée.",
       "signerRoleUnknown": "Nous n’avons pas pu lire les signataires de ce compte pour l’instant, nous ne pouvons donc pas encore dire si votre portefeuille en fait partie.",
       "invalidAddress": "Saisissez une adresse valide.",
       "working": "En cours…",
