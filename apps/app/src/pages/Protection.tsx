@@ -104,9 +104,9 @@ function PayoutAmount({ row }: { row: PendingPayoutRow }) {
         {formatTokenAmount(row.amount, meta.data.decimals)} {meta.data.symbol}
       </>
     ) : (
-      <>
-        {row.amount.toString()} ({shortAddress(row.asset)})
-      </>
+      // The token's symbol or decimals could not be read (or are still
+      // loading): the figure is in raw base units, and the label says so.
+      <>{copy.protection.payoutRawUnits(row.amount.toString(), shortAddress(row.asset))}</>
     );
   }
   return (

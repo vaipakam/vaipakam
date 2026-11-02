@@ -181,8 +181,14 @@ export function DepositoryCard({ account }: { account?: `0x${string}` } = {}) {
   // withdrawal keeps queueing through the ordinary route.
   const escape = !managed && protectionKnown && !protectedOn && protection.data?.escapeOpen === true;
   const ready = Boolean(address && tokenAddr && idOk && amt !== null && !busy);
+  // One verdict for whether a withdrawal can succeed now, from FRESH reads
+  // only: a balance whose last refresh failed is not offered (React Query
+  // keeps the old figure beside the error), and a locked account queues
+  // nothing, so neither is a withdrawal the card may start.
+  const balanceFresh = free.data !== undefined && !free.isError;
+  const locked = record?.locked === true;
   const canWithdraw =
-    ready && protectionKnown && free.data !== undefined && amt !== null && amt <= free.data.free;
+    ready && protectionKnown && !locked && balanceFresh && amt !== null && amt <= free.data!.free;
 
   async function run(fn: () => Promise<string>) {
     setBusy(true);
@@ -290,7 +296,7 @@ export function DepositoryCard({ account }: { account?: `0x${string}` } = {}) {
   }
 
   const freeText =
-    free.data && (kind !== ASSET_KIND.ERC20 || dec !== undefined)
+    balanceFresh && free.data && (kind !== ASSET_KIND.ERC20 || dec !== undefined)
       ? kind === ASSET_KIND.ERC20
         ? formatTokenAmount(free.data.free, dec!)
         : free.data.free.toString()
@@ -360,6 +366,8 @@ export function DepositoryCard({ account }: { account?: `0x${string}` } = {}) {
       ) : null}
       {escape ? <p className="banner banner-warn">{d.escapeNote}</p> : null}
       {protectedOn ? <p>{d.queuedNote(copy.protection.delayDays(Math.round(delaySec / 86_400)))}</p> : null}
+      {protectedOn && record?.requireCosign ? <p>{d.cosignNote}</p> : null}
+      {locked ? <p className="banner banner-warn">{d.lockedNote}</p> : null}
       {!protectionKnown && !protection.isLoading ? <p className="muted">{d.protectionUnknown}</p> : null}
       <div className="cluster">
         {!managed ? (
