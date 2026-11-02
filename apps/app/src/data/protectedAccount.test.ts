@@ -226,6 +226,11 @@ describe('ownPayoutRoute', () => {
       });
       expect(payoutRoute({ address: me, snap: snap({}), readFailed: false }, { address: old, snap: retired({ locked: true }), readFailed: false }).kind).toBe('vault');
     });
+    it('counts the rows earlier legs of a batch take', () => {
+      const own = { address: me, snap: snap({}, MAX_OPEN_ROWS - 1), readFailed: false };
+      expect(payoutRoute(own).kind).toBe('queued');
+      expect(payoutRoute(own, undefined, () => 1).kind).toBe('vault');
+    });
     it('is unread when the source account is unread', () => {
       expect(payoutRoute({ address: me, snap: off, readFailed: false }, { address: old, snap: undefined, readFailed: true }).kind).toBe('unread');
     });

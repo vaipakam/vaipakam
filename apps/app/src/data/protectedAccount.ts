@@ -302,7 +302,7 @@ const sameAddress = (a?: string, b?: string) => Boolean(a && b && a.toLowerCase(
 /** The payout gate of `account` for a payment it makes to its own wallet or
  *  to its controller: wallet (mode off), held in the vault (locked or full),
  *  or queued, paid to the controller once the account is retired. */
-function gateRoute(account: RouteAccount, recipient: string | undefined): OwnPayoutRoute {
+function gateRoute(account: RouteAccount, recipient: string | undefined, rowsAhead = 0): OwnPayoutRoute {
   const { snap, readFailed } = account;
   if (!snap || readFailed) return { kind: 'unread' };
   if (!snap.supported) return { kind: 'wallet' };
@@ -311,7 +311,7 @@ function gateRoute(account: RouteAccount, recipient: string | undefined): OwnPay
   if (!r.enabled) return { kind: 'wallet' };
   if (r.locked) return { kind: 'vault' };
   if (snap.payouts === null || snap.transfers === null) return { kind: 'unread' };
-  if (snap.payouts.length + snap.transfers.length >= MAX_OPEN_ROWS) return { kind: 'vault' };
+  if (snap.payouts.length + snap.transfers.length + rowsAhead >= MAX_OPEN_ROWS) return { kind: 'vault' };
   const to = r.retired && !sameAddress(r.controller, recipient) ? r.controller : null;
   return { kind: 'queued', delaySeconds: r.delaySeconds, cosign: r.requireCosign, to };
 }
@@ -329,21 +329,37 @@ function gateRoute(account: RouteAccount, recipient: string | undefined): OwnPay
  *     queueing nothing.
  *  3. Otherwise the wallet is paid.
  */
-export function payoutRoute(recipient: RouteAccount, source?: RouteAccount): OwnPayoutRoute {
-  if (!source || !source.address || !recipient.address || sameAddress(source.address, recipient.address)) {
-    return gateRoute(recipient, recipient.address);
-  }
-  const s = source.snap;
-  if (!s || source.readFailed) return { kind: 'unread' };
-  if (s.supported && (s.recordFailed || s.record === null)) return { kind: 'unread' };
-  if (s.supported && s.record?.enabled && sameAddress(s.record.controller, recipient.address)) {
-    return gateRoute(source, recipient.address);
-  }
+export function payoutRoute(
+  recipient: RouteAccount,
+  source?: RouteAccount,
+  rowsAhead: (account: string | undefined) => number = () => 0,
+): OwnPayoutRoute {
+  const gate = gateAccount(recipient, source);
+  if (gate === 'unread') return { kind: 'unread' };
+  if (gate) return gateRoute(gate, recipient.address, rowsAhead(gate.address));
   const r = recipient.snap;
   if (!r || recipient.readFailed) return { kind: 'unread' };
   if (!r.supported) return { kind: 'wallet' };
   if (r.recordFailed || r.record === null) return { kind: 'unread' };
   return r.record.enabled ? { kind: 'creditedToVault' } : { kind: 'wallet' };
+}
+
+/**
+ * Whose payout gate a payment out of `source`'s vault to `recipient` passes
+ * through: the recipient's own when it pays itself, the source's when the
+ * recipient is its controller, none when the payment is cross-account (the
+ * vault layer then decides), or 'unread' when the source cannot be read.
+ * The batch preview uses it to count the queue rows its earlier legs take.
+ */
+export function gateAccount(recipient: RouteAccount, source?: RouteAccount): RouteAccount | null | 'unread' {
+  if (!source || !source.address || !recipient.address || sameAddress(source.address, recipient.address)) {
+    return recipient;
+  }
+  const s = source.snap;
+  if (!s || source.readFailed) return 'unread';
+  if (s.supported && (s.recordFailed || s.record === null)) return 'unread';
+  if (s.supported && s.record?.enabled && sameAddress(s.record.controller, recipient.address)) return source;
+  return null;
 }
 
 /** A payment out of the account's own vault (or by the protocol) to its own

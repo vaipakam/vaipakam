@@ -45,13 +45,14 @@ import { captureTxError } from '../lib/errors';
 import {
   ownPayoutRoute,
   ownWithdrawalVerdict,
+  gateAccount,
+  payoutOutcome,
   payoutRoute as routeOf,
   useProtectedAccount,
   useProtectedAccounts,
-  type OwnPayoutRoute,
   type RouteAccount,
 } from '../data/protectedAccount';
-import { payoutRouteText } from '../lib/payoutRouteText';
+import { payoutOutcomeText, payoutRouteText } from '../lib/payoutRouteText';
 import { AssetType } from '../lib/types';
 import {
   useVisibleWindow,
@@ -91,15 +92,15 @@ export function ClaimAllCard({ loans }: { loans: ClaimableLoan[] }) {
     ),
   ] as `0x${string}`[];
   const sourceReads = useProtectedAccounts(otherSources);
-  const routeFor = (source: string | undefined): OwnPayoutRoute => {
-    const me: RouteAccount = { address: address ?? undefined, snap: protection.data, readFailed: protection.isError };
+  const me: RouteAccount = { address: address ?? undefined, snap: protection.data, readFailed: protection.isError };
+  const sourceAccount = (source: string | undefined): RouteAccount | undefined => {
     const i = source ? otherSources.indexOf(source.toLowerCase() as `0x${string}`) : -1;
-    if (i < 0) return routeOf(me);
-    return routeOf(me, { address: source, snap: sourceReads[i]?.data, readFailed: Boolean(sourceReads[i]?.isError) });
+    return i < 0 ? undefined : { address: source, snap: sourceReads[i]?.data, readFailed: Boolean(sourceReads[i]?.isError) };
   };
   const vpfiWithdrawal = ownWithdrawalVerdict(protection.data, protection.isError);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [outcomeNote, setOutcomeNote] = useState<string | null>(null);
   // User's EXPLICIT checkbox choices, keyed by item key. Anything not
   // here follows the item's default — so a manual uncheck survives a
   // background balance/candidate refresh (the reset-to-defaults shape
@@ -161,9 +162,20 @@ export function ClaimAllCard({ loans }: { loans: ClaimableLoan[] }) {
   const selectedItems = items.filter((i) => isSelected(i.key));
   const selectedKinds = new Set(selectedItems.map((i) => i.kind));
   const legRouteNotes = new Set<string>();
+  // Legs run in order inside one transaction, so each queued leg takes a row
+  // the next one cannot: count them per queue (one row per leg, the least a
+  // leg can take), so a leg past the cap reads as kept in the vault.
+  const rowsTaken = new Map<string, number>();
   for (const i of selectedItems) {
     if (i.kind === 'rewards') continue;
-    const note = payoutRouteText(routeFor(i.loan ? claimSource(i.loan) : undefined));
+    const source = sourceAccount(i.loan ? claimSource(i.loan) : undefined);
+    const route = routeOf(me, source, (a) => rowsTaken.get(a?.toLowerCase() ?? '') ?? 0);
+    const gate = gateAccount(me, source);
+    if (route.kind === 'queued' && gate && gate !== 'unread' && gate.address) {
+      const key = gate.address.toLowerCase();
+      rowsTaken.set(key, (rowsTaken.get(key) ?? 0) + 1);
+    }
+    const note = payoutRouteText(route);
     if (note) legRouteNotes.add(note);
   }
   if (payoutRoute.kind === 'unread' && selectedItems.length > 0) {
@@ -193,6 +205,7 @@ export function ClaimAllCard({ loans }: { loans: ClaimableLoan[] }) {
   async function submit() {
     setBusy(true);
     setError(null);
+    setOutcomeNote(null);
     try {
       if (!address || !walletChain || !publicClient) {
         throw new Error(copy.wallet.connectFirst);
@@ -208,7 +221,19 @@ export function ClaimAllCard({ loans }: { loans: ClaimableLoan[] }) {
       const chosen = items.filter((i) => isSelected(i.key));
       if (chosen.length === 0) return;
       const calls = encodeClaimAllCalls(chosen);
-      await write('multicall', [calls]);
+      const { receipt } = await write('multicall', [calls]);
+      // Where each payment landed, read from the receipt, never assumed: a
+      // leg may have been queued, or kept in the vault once a queue filled.
+      const notes = new Set<string>();
+      for (const leg of chosen) {
+        if (leg.kind === 'rewards') continue;
+        const note = payoutOutcomeText(
+          payoutOutcome(receipt.logs, address, leg.loan ? claimSource(leg.loan) : undefined),
+          address,
+        );
+        if (note) notes.add(note);
+      }
+      setOutcomeNote(notes.size > 0 ? [...notes].join(' ') : null);
       // Post-receipt re-derivation surfaces per-item outcome: claimed
       // items disappear from these lists; skipped items remain.
       void queryClient.invalidateQueries({ queryKey: ['claimables'] });
@@ -281,6 +306,11 @@ export function ClaimAllCard({ loans }: { loans: ClaimableLoan[] }) {
           <span className="banner-body">
             {copy.claims.allTooMany(MAX_CLAIM_ALL)}
           </span>
+        </div>
+      ) : null}
+      {outcomeNote ? (
+        <div className="banner banner-info" role="status">
+          <span className="banner-body">{outcomeNote}</span>
         </div>
       ) : null}
       {error ? (

@@ -251,6 +251,9 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   // against its source.
   const lenderPayoutRouteNote = payoutRouteText(useOwnPayoutRoute(loan.data?.lender));
   const borrowerPayoutRouteNote = payoutRouteText(useOwnPayoutRoute(loan.data?.borrower));
+  // A collateral release first consolidates the position to its holder
+  // (the caller), so it pays out of the caller's own vault and its own gate.
+  const collateralPayoutRouteNote = payoutRouteText(useOwnPayoutRoute());
   const withPayoutOutcome = (done: string, logs: readonly Log[], source: string | undefined) => {
     const note = payoutOutcomeText(payoutOutcome(logs, payeeAddress, source), payeeAddress);
     return note ? `${done} ${note}` : done;
@@ -2524,7 +2527,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       }
       setPhase('submitting');
       const { receipt: releaseReceipt } = await write('partialWithdrawCollateral', [BigInt(row.loanId), wei]);
-      setDoneMessage(withPayoutOutcome(copy.positions.details.done.collateralWithdrawn, releaseReceipt.logs, loan.data?.borrower));
+      setDoneMessage(withPayoutOutcome(copy.positions.details.done.collateralWithdrawn, releaseReceipt.logs, undefined));
       setWithdrawInput('');
       setConfirmingSurface(null);
       void queryClient.invalidateQueries({ queryKey: ['loan'] });
@@ -3840,7 +3843,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                       youMayOwe: copy.positions.details.withdrawCollateral.oweNothingMore,
                       youCanLose: copy.positions.details.withdrawCollateral.lose,
                       fees: copy.positions.details.receipt.feesNone,
-                      whenThisEnds: borrowerPayoutRouteNote ?? copy.positions.details.withdrawCollateral.ends,
+                      whenThisEnds: collateralPayoutRouteNote ?? copy.positions.details.withdrawCollateral.ends,
                     }}
                   />
                 </div>
