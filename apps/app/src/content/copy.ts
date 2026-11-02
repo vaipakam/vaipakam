@@ -2861,6 +2861,7 @@ const copySource = {
     escapeUnknown: 'We couldn’t check whether the emergency exit is open, so withdrawing is off until we can tell which route pays you.',
     untrackedNote: 'Part of this asset reached your vault outside the app, so it can’t be withdrawn yet.',
     untrackedLink: 'Add it to your vault',
+    untrackedNftNote: 'Part of this asset reached your vault outside the app, so it can’t be withdrawn yet. The app can add only ERC-20 tokens to your vault so far, so this NFT stays in the vault untouched until it can.',
     queuedNote: tmpl('Protection is on, so a withdrawal waits {{delay}} before it is paid to your wallet. You or your recovery signers can cancel it meanwhile.', ['delay']),
     cosignNote: 'This account also needs a recovery signer to co-sign each payout: after the delay, it is paid only once a signer has co-signed it.',
     lockedNote: 'This account is locked, so nothing can be withdrawn until it is unlocked.',

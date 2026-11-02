@@ -3687,6 +3687,7 @@
       "escapeUnknown": "No pudimos comprobar si la salida de emergencia está abierta, así que retirar está desactivado hasta saber por qué vía se le paga.",
       "untrackedNote": "Parte de este activo llegó a tu bóveda fuera de la app, así que todavía no se puede retirar.",
       "untrackedLink": "Añadirlo a tu bóveda",
+      "untrackedNftNote": "Parte de este activo llegó a tu bóveda fuera de la app, así que aún no se puede retirar. Por ahora la app solo puede añadir tokens ERC-20 a tu bóveda, así que este NFT queda intacto en la bóveda hasta que pueda.",
       "queuedNote": "La protección está activada, así que un retiro espera {{delay}} antes de pagarse a tu billetera. Tú o tus firmantes de recuperación pueden cancelarlo mientras tanto.",
       "lockedNote": "Esta cuenta está bloqueada, así que no se puede retirar nada hasta que se desbloquee.",
       "cosignNote": "Esta cuenta también exige que un firmante de recuperación cofirme cada pago: tras la espera, solo se paga cuando un firmante lo ha cofirmado.",

@@ -3687,6 +3687,7 @@
       "escapeUnknown": "Nous n’avons pas pu vérifier si la sortie d’urgence est ouverte : le retrait reste désactivé tant que nous ne savons pas quelle voie vous paie.",
       "untrackedNote": "Une partie de cet actif est arrivée dans votre coffre en dehors de l’application ; elle ne peut donc pas encore être retirée.",
       "untrackedLink": "L’ajouter à votre coffre",
+      "untrackedNftNote": "Une partie de cet actif est arrivée dans votre coffre en dehors de l’app : il ne peut pas encore être retiré. L’app ne peut ajouter pour l’instant que des jetons ERC-20 à votre coffre ; ce NFT reste donc intact dans le coffre en attendant.",
       "queuedNote": "La protection est active : un retrait attend donc {{delay}} avant d’être versé à votre portefeuille. Vous ou vos signataires de récupération pouvez l’annuler entre-temps.",
       "lockedNote": "Ce compte est verrouillé : rien ne peut être retiré tant qu’il n’est pas déverrouillé.",
       "cosignNote": "Ce compte exige aussi qu’un signataire de récupération cosigne chaque paiement : après le délai, il n’est versé qu’une fois cosigné par un signataire.",

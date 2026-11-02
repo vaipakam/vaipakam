@@ -41,6 +41,7 @@ import {
   type PublicClient,
 } from 'viem';
 import { SECOND_READ_DELAY_MS } from '../chain/receiptSync';
+import { assertSettled } from '../contracts/ownReceipt';
 import { copy } from '../content/copy';
 import { useActiveChain } from '../chain/useActiveChain';
 import { DIAMOND_ABI_VIEM, useDiamondWrite, useTermsBlockNonExitWrites } from '../contracts/diamond';
@@ -328,7 +329,8 @@ export function DepositoryCard({ account }: { account?: `0x${string}` } = {}) {
           account: address,
           chain: walletClient.chain,
         });
-        await publicClient.waitForTransactionReceipt({ hash });
+        // Only a successful run of this approval lets the deposit go on.
+        await assertSettled(publicClient, hash, 'The NFT approval');
       }
     } else {
       const all = await publicClient.readContract({
@@ -346,7 +348,8 @@ export function DepositoryCard({ account }: { account?: `0x${string}` } = {}) {
           account: address,
           chain: walletClient.chain,
         });
-        await publicClient.waitForTransactionReceipt({ hash });
+        // Only a successful run of this approval lets the deposit go on.
+        await assertSettled(publicClient, hash, 'The NFT approval');
       }
     }
     await write('depositToVault', [kind, tokenAddr, id, amt]);
@@ -447,9 +450,15 @@ export function DepositoryCard({ account }: { account?: `0x${string}` } = {}) {
       {freeText !== null ? <p className="muted">{d.freeNow(freeText)}</p> : null}
       {free.isError ? <p className="muted">{d.freeUnknown}</p> : null}
       {free.data && free.data.untracked > 0n ? (
-        <p className="muted">
-          {d.untrackedNote} <Link to="/recover">{d.untrackedLink}</Link>
-        </p>
+        kind === ASSET_KIND.ERC20 ? (
+          <p className="muted">
+            {d.untrackedNote} <Link to="/recover">{d.untrackedLink}</Link>
+          </p>
+        ) : (
+          // The recovery page adopts ERC-20 balances only so far (#3096);
+          // an NFT is not linked to a form that cannot take it.
+          <p className="muted">{d.untrackedNftNote}</p>
+        )
       ) : null}
       {escape ? <p className="banner banner-warn">{d.escapeNote}</p> : null}
       {protectedOn ? <p>{d.queuedNote(formatExactSpan(delaySec))}</p> : null}
