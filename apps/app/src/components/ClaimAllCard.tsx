@@ -46,13 +46,13 @@ import {
   ownPayoutRoute,
   ownWithdrawalVerdict,
   gateAccount,
-  payoutOutcome,
+  payoutOutcomes,
   payoutRoute as routeOf,
   useProtectedAccount,
   useProtectedAccounts,
   type RouteAccount,
 } from '../data/protectedAccount';
-import { payoutOutcomeText, payoutRouteText } from '../lib/payoutRouteText';
+import { payoutOutcomesText, payoutRouteText } from '../lib/payoutRouteText';
 import { AssetType } from '../lib/types';
 import {
   useVisibleWindow,
@@ -235,16 +235,13 @@ export function ClaimAllCard({ loans }: { loans: ClaimableLoan[] }) {
       const { receipt } = await write('multicall', [calls]);
       // Where each payment landed, read from the receipt, never assumed: a
       // leg may have been queued, or kept in the vault once a queue filled.
-      const notes = new Set<string>();
-      for (const leg of chosen) {
-        if (leg.kind === 'rewards') continue;
-        const note = payoutOutcomeText(
-          payoutOutcome(receipt.logs, address, leg.loan ? claimSource(leg.loan) : undefined),
-          address,
-        );
-        if (note) notes.add(note);
-      }
-      setOutcomeNote(notes.size > 0 ? [...notes].join(' ') : null);
+      // Every leg's outcomes, gathered across the whole receipt and each
+      // stated once: a batch can both queue and hold.
+      const outcomes = chosen
+        .filter((leg) => leg.kind !== 'rewards')
+        .flatMap((leg) => payoutOutcomes(receipt.logs, address, leg.loan ? claimSource(leg.loan) : undefined));
+      const outcomeText = payoutOutcomesText(outcomes, address);
+      setOutcomeNote(outcomeText);
       // Post-receipt re-derivation surfaces per-item outcome: claimed
       // items disappear from these lists; skipped items remain.
       void queryClient.invalidateQueries({ queryKey: ['claimables'] });

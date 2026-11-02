@@ -46,3 +46,10 @@ export function payoutOutcomeText(outcome: PayoutOutcome, wallet: string | undef
       return null;
   }
 }
+
+/** Every outcome a receipt shows, each stated once, joined; null when the
+ *  wallet was paid. */
+export function payoutOutcomesText(outcomes: readonly PayoutOutcome[], wallet: string | undefined): string | null {
+  const notes = [...new Set(outcomes.map((o) => payoutOutcomeText(o, wallet)).filter((n): n is string => Boolean(n)))];
+  return notes.length > 0 ? notes.join(' ') : null;
+}

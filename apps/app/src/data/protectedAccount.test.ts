@@ -5,7 +5,9 @@
  * the FIRST thing that would refuse its release.
  */
 import { describe, expect, it } from 'vitest';
-import { additionStatus, ownFundingVerdict, ownPayoutRoute, ownWithdrawalVerdict, payoutRoute, MAX_OPEN_ROWS, chainNowOf, hasReplacement, isDue, isManager, payoutStatus, replacementStage, type ProtectedAccountRecord } from './protectedAccount';
+import { encodeEventTopics, encodeAbiParameters, getAbiItem, type Log } from 'viem';
+import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
+import { additionStatus, ownFundingVerdict, ownPayoutRoute, ownWithdrawalVerdict, payoutRoute, payoutOutcome, payoutOutcomes, MAX_OPEN_ROWS, chainNowOf, hasReplacement, isDue, isManager, payoutStatus, replacementStage, type ProtectedAccountRecord } from './protectedAccount';
 
 const ACCOUNT = '0x00000000000000000000000000000000000000a1';
 const CONTROLLER = '0x00000000000000000000000000000000000000c2';
@@ -251,5 +253,32 @@ describe('ownPayoutRoute', () => {
   it('is unread when the record or the queue is unread', () => {
     expect(ownPayoutRoute(undefined, false).kind).toBe('unread');
     expect(ownPayoutRoute({ ...snap({}), transfers: null }, false).kind).toBe('unread');
+  });
+});
+
+describe('payoutOutcomes', () => {
+  const me = '0x00000000000000000000000000000000000000a1';
+  const token = '0x00000000000000000000000000000000000000e2';
+  const log = (eventName: 'PayoutQueued' | 'PayoutHeldInVault', args: Record<string, unknown>): Log => {
+    const item = getAbiItem({ abi: DIAMOND_ABI_VIEM, name: eventName }) as {
+      inputs: readonly { name: string; type: string; indexed?: boolean }[];
+    };
+    const data = item.inputs.filter((i) => !i.indexed);
+    return {
+      address: '0x0000000000000000000000000000000000000d00',
+      topics: encodeEventTopics({ abi: DIAMOND_ABI_VIEM, eventName, args } as never) as Log['topics'],
+      data: encodeAbiParameters(data as never, data.map((i) => args[i.name]) as never),
+      blockHash: null, blockNumber: null, logIndex: null, transactionHash: null, transactionIndex: null, removed: false,
+    } as Log;
+  };
+  const queued = log('PayoutQueued', { account: me, id: 1n, asset: token, kind: 0, tokenId: 0n, amount: 5n, recipient: me, releaseAt: 9n });
+  const held = log('PayoutHeldInVault', { account: me, asset: token, tokenId: 0n, amount: 5n });
+  it('states every outcome of a batch that both queues and holds', () => {
+    expect(payoutOutcomes([queued, held], me).map((o) => o.kind)).toEqual(['queued', 'held']);
+  });
+  it('is empty when the wallet was paid, and ignores another account\'s events', () => {
+    expect(payoutOutcomes([], me)).toEqual([]);
+    expect(payoutOutcomes([held], '0x00000000000000000000000000000000000000ff')).toEqual([]);
+    expect(payoutOutcome([], me).kind).toBe('paid');
   });
 });

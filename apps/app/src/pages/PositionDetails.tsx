@@ -95,8 +95,8 @@ import {
 import { useForcedCloseReads } from '../data/useForcedClose';
 import { probeClaim, useLoanClaim } from '../data/claimables';
 import { receiptPayout, useClaimPayoutText } from '../data/useClaimPayout';
-import { payoutOutcome, useOwnPayoutRoute } from '../data/protectedAccount';
-import { payoutOutcomeText, payoutRouteText } from '../lib/payoutRouteText';
+import { payoutOutcomes, useOwnPayoutRoute } from '../data/protectedAccount';
+import { payoutOutcomesText, payoutRouteText } from '../lib/payoutRouteText';
 import { initiatedPrincipal, lockedCollateralLine } from '../lib/positionAmounts';
 import {
   classifyMaxWithdrawable,
@@ -255,7 +255,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   // (the caller), so it pays out of the caller's own vault and its own gate.
   const collateralPayoutRouteNote = payoutRouteText(useOwnPayoutRoute());
   const withPayoutOutcome = (done: string, logs: readonly Log[], source: string | undefined) => {
-    const note = payoutOutcomeText(payoutOutcome(logs, payeeAddress, source), payeeAddress);
+    const note = payoutOutcomesText(payoutOutcomes(logs, payeeAddress, source), payeeAddress);
     return note ? `${done} ${note}` : done;
   };
   const queryClient = useQueryClient();

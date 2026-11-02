@@ -246,11 +246,19 @@ export type PayoutOutcome =
   | { kind: 'held' }
   | { kind: 'inVault' };
 
-export function payoutOutcome(
+/**
+ * EVERY outcome the receipt shows for payments to `account` (out of
+ * `source`'s vault, the account's own when omitted), distinct and in a fixed
+ * order: queued rows (one per recipient), payments held in the vault,
+ * payments credited to the vault. Empty means the wallet was paid. A
+ * transaction can carry several (a claim batch whose queue fills part-way,
+ * or a claim paying more than one asset), and each needs saying.
+ */
+export function payoutOutcomes(
   logs: readonly Log[],
   account: string | undefined,
   source?: string,
-): PayoutOutcome {
+): PayoutOutcome[] {
   // The gate's events name the PAYING account (`source`, the recipient's own
   // when omitted); a vault credit names the recipient.
   const accounts = [account, source].filter((a): a is string => Boolean(a)).map((a) => a.toLowerCase());
@@ -260,13 +268,27 @@ export function payoutOutcome(
         accounts.length === 0 ||
         accounts.includes(String((e.args as { account?: string }).account ?? '').toLowerCase()),
     );
-  if (mine('PayoutHeldInVault').length > 0) return { kind: 'held' };
-  const queued = mine('PayoutQueued');
-  if (queued.length > 0) {
-    return { kind: 'queued', recipient: String((queued[0].args as { recipient?: string }).recipient ?? account ?? '') };
-  }
-  if (mine('PaymentCreditedToVault').length > 0) return { kind: 'inVault' };
-  return { kind: 'paid' };
+  const out: PayoutOutcome[] = [];
+  const recipients = new Set(
+    mine('PayoutQueued').map((e) =>
+      String((e.args as { recipient?: string }).recipient ?? account ?? '').toLowerCase(),
+    ),
+  );
+  for (const recipient of recipients) out.push({ kind: 'queued', recipient });
+  if (mine('PayoutHeldInVault').length > 0) out.push({ kind: 'held' });
+  if (mine('PaymentCreditedToVault').length > 0) out.push({ kind: 'inVault' });
+  return out;
+}
+
+/** One outcome for a transaction that pays a single row (an owner's own
+ *  withdrawal): held, else queued, else credited, else paid. */
+export function payoutOutcome(
+  logs: readonly Log[],
+  account: string | undefined,
+  source?: string,
+): PayoutOutcome {
+  const all = payoutOutcomes(logs, account, source);
+  return all.find((o) => o.kind === 'held') ?? all.find((o) => o.kind === 'queued') ?? all[0] ?? { kind: 'paid' };
 }
 
 /**
