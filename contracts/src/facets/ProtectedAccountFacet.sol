@@ -704,6 +704,10 @@ contract ProtectedAccountFacet is DiamondReentrancyGuard, DiamondPausable {
         if (
             nominee == address(0) || nominee == account || nominee == mgr
                 || s.protectedRetiredAccountOf[nominee] != address(0)
+                // The manager is never also a secondary signer (as `addSigner`
+                // refuses the controller), or one wallet could request a payout
+                // and co-sign it, removing the independent second key.
+                || s.protectedSigners[account].contains(nominee)
         ) revert LibProtectedAccount.InvalidNominee(nominee);
         LibVaipakam.ReplacementProposal storage p = s.replacementProposal[account];
         p.nominee = nominee;
@@ -793,7 +797,11 @@ contract ProtectedAccountFacet is DiamondReentrancyGuard, DiamondPausable {
             }
         }
         address nominee = p.nominee;
-        if (s.protectedRetiredAccountOf[nominee] != address(0)) revert LibProtectedAccount.InvalidNominee(nominee);
+        // Checked again here: the nominee may have become a signer, or
+        // another account's controller, since the proposal.
+        if (s.protectedRetiredAccountOf[nominee] != address(0) || s.protectedSigners[account].contains(nominee)) {
+            revert LibProtectedAccount.InvalidNominee(nominee);
+        }
         LibProtectedAccount.cancelAllRows(account, address(this));
         if (a.controller != address(0)) delete s.protectedRetiredAccountOf[a.controller];
         s.protectedRetiredAccountOf[nominee] = account;
