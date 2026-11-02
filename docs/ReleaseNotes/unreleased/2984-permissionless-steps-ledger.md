@@ -1,4 +1,4 @@
-## Contracts — every permissionless step is recorded with what backs it (PR #TBD)
+## Contracts — every permissionless step is recorded with what backs it (PR #3098)
 
 The owner's rule is that every permissionless step that keeps the protocol moving has the platform keeper as its backstop. Until now nothing recorded which open entry point was which, so a new step could ship with no caller and stall silently. The new ledger, `contracts/permissionless-steps.json`, lists every state-changing entry point anyone may call on the Diamond and on the contracts shipped beside it, and says what backs each one: a keeper pass and its arming flag, a keeper pass still in review, another committed service (the sanctions delister), another route to a step already backed, the party it serves, a one-time initializer, a caller restriction stated in words for review, or a recorded gap with the issue that decides it.
 
