@@ -265,6 +265,7 @@ library LibProtectedAccount {
         if (a.locked) revert ProtectedVaultLocked(account);
     }
 
+<<<<<<< HEAD
     /// @notice Refuse an owner's OWN withdrawal that the payout gate would
     ///         hold in the vault: a locked account, or one whose queue is
     ///         full. The gate holds a payout rather than refuse it because a
@@ -280,6 +281,8 @@ library LibProtectedAccount {
         if (openRows(account) >= MAX_OPEN_ROWS) revert TooManyPendingRows();
     }
 
+=======
+>>>>>>> origin/claude/project-thread-wlunh0
     /// @notice Open rows (payouts plus position transfers) of `account`.
     function openRows(address account) internal view returns (uint256) {
         return _s().pendingPayoutIds[account].length() + _s().pendingTransferIds[account].length();

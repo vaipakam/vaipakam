@@ -118,6 +118,7 @@ contract ProtectedVaultVpfiTest is SetupTest {
         VaultPayoutFacet(address(diamond)).releasePayout(id);
         assertEq(vpfi.balanceOf(nominee), 100 ether);
     }
+<<<<<<< HEAD
 
     /// A withdrawal the owner asks for ends paid, queued or refused, never
     /// held in the vault as a success that moved nothing: with the queue
@@ -147,4 +148,6 @@ contract ProtectedVaultVpfiTest is SetupTest {
         assertEq(vpfi.balanceOf(alice), walletBefore, "queued behind the delay");
         assertEq(_depo().getDepositoryHolding(alice, address(vpfi), 0), 100 ether - 17 ether, "debited when asked");
     }
+=======
+>>>>>>> origin/claude/project-thread-wlunh0
 }
