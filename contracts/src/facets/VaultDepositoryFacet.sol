@@ -66,6 +66,9 @@ contract VaultDepositoryFacet is DiamondReentrancyGuard, DiamondPausable {
     error AmountZero();
     error InvalidAssetKind(uint8 kind);
     error NotUntracked(address asset, uint256 tokenId);
+    /// @notice A pin records the implementation the vault runs, so a vault
+    ///         behind the current template is upgraded before it is pinned.
+    error VaultNotCurrent(uint256 version, uint256 current);
 
     /// @notice `amount` of `asset` / `tokenId` entered `account`'s vault from
     ///         the account's own wallet.
@@ -361,6 +364,15 @@ contract VaultDepositoryFacet is DiamondReentrancyGuard, DiamondPausable {
         LibProtectedAccount.requireManager(msg.sender);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         IVaultRoutes(address(this)).getOrCreateUserVault(msg.sender);
+        // Already pinned: the record names the implementation the vault runs
+        // (a pinned vault is never upgraded), so it is left as it is.
+        if (s.vaultPinnedImplementation[msg.sender] != address(0)) return;
+        // The record must name the code the vault actually runs. The vault
+        // runs the current template only when its version stamp is current,
+        // so an older vault is upgraded first (`upgradeUserVault`).
+        if (s.vaultVersion[msg.sender] != s.currentVaultVersion) {
+            revert VaultNotCurrent(s.vaultVersion[msg.sender], s.currentVaultVersion);
+        }
         s.vaultPinnedImplementation[msg.sender] = s.vaipakamVaultTemplate;
         emit VaultPinned(msg.sender, s.vaipakamVaultTemplate);
     }
