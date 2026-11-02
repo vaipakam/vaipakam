@@ -2886,6 +2886,7 @@ const copySource = {
     payoutRouteCosign: 'A recovery signer must also co-sign it.',
     payoutRouteVault: 'Your account is locked or its queue is full, so what this pays you stays in your vault. Withdraw it from there once the account can queue a payout.',
     payoutRouteRewardsToVault: 'Protection is on, so interaction rewards in this batch are credited to your vault rather than your wallet. They do not queue.',
+    payoutRouteCreditedToVault: 'Protection is on, and this is paid out of another account’s vault, so it is credited to your vault rather than your wallet. Nothing is queued: withdraw it from your vault yourself, which waits the delay.',
     payoutRouteUnknown: 'We couldn’t read your protection settings, so we can’t say whether this pays your wallet now, queues the payment or keeps it in your vault.',
     payoutRouteQueuedTo: tmpl('This account was moved to a new wallet, so what this pays waits {{delay}} in the account’s queue and is then paid to {{controller}}, not to this wallet.', ['delay', 'controller']),
     payoutOutcomeQueuedTo: tmpl('The payment is queued in the account and, because the account was moved to a new wallet, is paid to {{controller}} after the delay, not to this wallet.', ['controller']),

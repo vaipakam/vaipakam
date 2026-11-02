@@ -272,17 +272,32 @@ export type OwnPayoutRoute =
   // `to` is set when the account was moved to a new wallet: the gate then
   // pays every queued payout to that controller, not to this wallet.
   | { kind: 'queued'; delaySeconds: number; cosign: boolean; to: string | null }
-  | { kind: 'vault' };
+  | { kind: 'vault' }
+  // Paid out of ANOTHER account's vault (a transferred position whose
+  // assets sit in the recorded party's vault): the vault layer credits a
+  // protected recipient's own vault instead and queues nothing, so the
+  // owner withdraws it separately.
+  | { kind: 'creditedToVault' };
 
+/**
+ * `account` is the wallet being paid and `source` the account whose vault
+ * pays it (a loan claim pays from the recorded lender's or borrower's
+ * vault). When the two differ, the vault layer credits a protected
+ * recipient's vault rather than queueing; when either is unknown the
+ * payment is taken as the account's own.
+ */
 export function ownPayoutRoute(
   snap: Pick<ProtectedAccountSnapshot, 'supported' | 'recordFailed' | 'record' | 'payouts' | 'transfers'> | undefined,
   readFailed: boolean,
+  account?: string,
+  source?: string,
 ): OwnPayoutRoute {
   if (!snap || readFailed) return { kind: 'unread' };
   if (!snap.supported) return { kind: 'wallet' };
   if (snap.recordFailed || snap.record === null) return { kind: 'unread' };
   const r = snap.record;
   if (!r.enabled) return { kind: 'wallet' };
+  if (account && source && account.toLowerCase() !== source.toLowerCase()) return { kind: 'creditedToVault' };
   if (r.locked) return { kind: 'vault' };
   if (snap.payouts === null || snap.transfers === null) return { kind: 'unread' };
   if (snap.payouts.length + snap.transfers.length >= MAX_OPEN_ROWS) return { kind: 'vault' };
@@ -294,11 +309,12 @@ export function ownPayoutRoute(
   };
 }
 
-/** The connected wallet's payout route, read live. */
-export function useOwnPayoutRoute(): OwnPayoutRoute {
+/** The connected wallet's payout route, read live, for a payment out of
+ *  `source`'s vault (the wallet's own when omitted). */
+export function useOwnPayoutRoute(source?: string): OwnPayoutRoute {
   const { address } = useActiveChain();
   const q = useProtectedAccount(address ?? undefined);
-  return ownPayoutRoute(q.data, q.isError);
+  return ownPayoutRoute(q.data, q.isError, address ?? undefined, source);
 }
 
 export function hasReplacement(r: ReplacementState | null): boolean {

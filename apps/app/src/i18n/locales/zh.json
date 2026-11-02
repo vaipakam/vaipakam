@@ -3711,6 +3711,7 @@
       "payoutRouteCosign": "还需要一位恢复签名人共同签名。",
       "payoutRouteVault": "你的账户已锁定或队列已满，因此这笔付款会留在你的金库中。待账户可以排队付款后，再从金库提取。",
       "payoutRouteRewardsToVault": "保护已开启，因此本批中的互动奖励会记入你的金库，而不是钱包。它们不会排队。",
+      "payoutRouteCreditedToVault": "保护已开启，且这笔款项从另一个账户的金库支付，因此会记入你的金库而不是钱包。不会排队：请自行从金库提取，提取需等待延迟。",
       "payoutRouteUnknown": "我们无法读取你的保护设置，因此无法判断这笔付款是立即到达钱包、排入队列，还是留在金库中。",
       "payoutRouteQueuedTo": "此账户已迁移到新钱包，因此这笔付款会在账户队列中等待{{delay}}，然后支付给{{controller}}，而不是这个钱包。",
       "payoutOutcomeQueuedTo": "付款已在账户中排队；由于账户已迁移到新钱包，延迟结束后会支付给{{controller}}，而不是这个钱包。",

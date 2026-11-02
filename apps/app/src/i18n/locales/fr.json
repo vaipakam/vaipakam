@@ -3711,6 +3711,7 @@
       "payoutRouteCosign": "Un signataire de récupération doit aussi le cosigner.",
       "payoutRouteVault": "Votre compte est verrouillé ou sa file est pleine : ce que cela vous paie reste dans votre coffre. Retirez-le de là dès que le compte peut mettre un paiement en file.",
       "payoutRouteRewardsToVault": "La protection est active : les récompenses d’interaction de ce lot sont créditées dans votre coffre plutôt que sur votre portefeuille. Elles ne passent pas par la file.",
+      "payoutRouteCreditedToVault": "La protection est active et ce paiement provient du coffre d’un autre compte : il est donc crédité dans votre coffre plutôt que sur votre portefeuille. Rien n’est mis en file : retirez-le vous-même de votre coffre, ce qui attend le délai.",
       "payoutRouteUnknown": "Nous n’avons pas pu lire vos paramètres de protection : impossible de dire si cela paie votre portefeuille tout de suite, met le paiement en file ou le garde dans votre coffre.",
       "payoutRouteQueuedTo": "Ce compte a été transféré vers un nouveau portefeuille : ce paiement attend {{delay}} dans la file du compte, puis est versé à {{controller}}, et non à ce portefeuille.",
       "payoutOutcomeQueuedTo": "Le paiement est en file dans le compte et, le compte ayant été transféré vers un nouveau portefeuille, il est versé à {{controller}} après le délai, et non à ce portefeuille.",

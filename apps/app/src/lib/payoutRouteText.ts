@@ -21,6 +21,8 @@ export function payoutRouteText(route: OwnPayoutRoute): string | null {
       }${route.cosign ? ` ${p.payoutRouteCosign}` : ''}`;
     case 'vault':
       return p.payoutRouteVault;
+    case 'creditedToVault':
+      return p.payoutRouteCreditedToVault;
     case 'unread':
       return p.payoutRouteUnknown;
   }

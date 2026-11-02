@@ -246,7 +246,11 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   // a collateral release). The confirmation states it instead of promising
   // the wallet, and the result reads it from the receipt.
   const { address: payeeAddress } = useActiveChain();
-  const payoutRouteNote = payoutRouteText(useOwnPayoutRoute());
+  // A claim pays out of the RECORDED party's vault, which is not the
+  // claimant's own for a transferred position, so each route is read
+  // against its source.
+  const lenderPayoutRouteNote = payoutRouteText(useOwnPayoutRoute(loan.data?.lender));
+  const borrowerPayoutRouteNote = payoutRouteText(useOwnPayoutRoute(loan.data?.borrower));
   const withPayoutOutcome = (done: string, logs: readonly Log[]) => {
     const note = payoutOutcomeText(payoutOutcome(logs, payeeAddress), payeeAddress);
     return note ? `${done} ${note}` : done;
@@ -3011,7 +3015,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
             youMayOwe: copy.positions.details.receipt.nothing,
             youCanLose: copy.positions.details.receipt.nothing,
             fees: copy.positions.details.receipt.feesNone,
-            whenThisEnds: payoutRouteNote ?? copy.positions.details.receipt.endsClaim,
+            whenThisEnds: borrowerPayoutRouteNote ?? copy.positions.details.receipt.endsClaim,
           }
         : action === 'claim-lender'
           ? {
@@ -3041,7 +3045,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                 : isRental
                   ? copy.positions.details.receipt.feesRental
                   : copy.positions.details.receipt.feesNone,
-              whenThisEnds: payoutRouteNote ?? copy.positions.details.receipt.endsClaim,
+              whenThisEnds: lenderPayoutRouteNote ?? copy.positions.details.receipt.endsClaim,
             }
           : null;
 
@@ -3836,7 +3840,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                       youMayOwe: copy.positions.details.withdrawCollateral.oweNothingMore,
                       youCanLose: copy.positions.details.withdrawCollateral.lose,
                       fees: copy.positions.details.receipt.feesNone,
-                      whenThisEnds: payoutRouteNote ?? copy.positions.details.withdrawCollateral.ends,
+                      whenThisEnds: borrowerPayoutRouteNote ?? copy.positions.details.withdrawCollateral.ends,
                     }}
                   />
                 </div>

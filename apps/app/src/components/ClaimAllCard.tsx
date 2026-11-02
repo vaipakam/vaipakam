@@ -126,17 +126,26 @@ export function ClaimAllCard({ loans }: { loans: ClaimableLoan[] }) {
   const selectedCount = selectedKeys.length;
 
   const hasVpfiVault = items.some((i) => i.kind === 'vpfi-vault');
-  // Where the batch pays, per leg: the loan claims and the vault-VPFI
-  // withdrawal follow the account's payout route, while a protected
+  // Where the batch pays, per leg. A loan claim pays out of the RECORDED
+  // party's vault (another account's for a transferred position, which the
+  // vault layer credits to a protected claimant's vault instead of queueing);
+  // the vault-VPFI withdrawal follows the account's own route; a protected
   // account's interaction rewards are always credited to its vault (the
-  // reward claim's own rule), so they never queue. Each note shows only
-  // when a selected leg takes that route.
-  const selectedKinds = new Set(selectedKeys.map((k) => items.find((i) => i.key === k)?.kind));
-  const routedLegSelected =
-    selectedKinds.has('loan-lender') || selectedKinds.has('loan-borrower') || selectedKinds.has('vpfi-vault');
-  const payoutRouteNote =
-    payoutRoute.kind === 'unread' ? (selectedCount > 0 ? payoutRouteText(payoutRoute) : null)
-      : routedLegSelected ? payoutRouteText(payoutRoute) : null;
+  // reward claim's own rule), so they never queue. One note per distinct
+  // route among the selected legs.
+  const selectedItems = items.filter((i) => isSelected(i.key));
+  const selectedKinds = new Set(selectedItems.map((i) => i.kind));
+  const legRouteNotes = new Set<string>();
+  for (const i of selectedItems) {
+    if (i.kind === 'rewards') continue;
+    const source = i.kind === 'loan-lender' ? i.loan?.lender : i.kind === 'loan-borrower' ? i.loan?.borrower : undefined;
+    const note = payoutRouteText(ownPayoutRoute(protection.data, protection.isError, address ?? undefined, source));
+    if (note) legRouteNotes.add(note);
+  }
+  if (payoutRoute.kind === 'unread' && selectedItems.length > 0) {
+    const note = payoutRouteText(payoutRoute);
+    if (note) legRouteNotes.add(note);
+  }
   const rewardsToVaultNote =
     selectedKinds.has('rewards') && (payoutRoute.kind === 'queued' || payoutRoute.kind === 'vault')
       ? copy.protection.payoutRouteRewardsToVault
@@ -223,11 +232,11 @@ export function ClaimAllCard({ loans }: { loans: ClaimableLoan[] }) {
       <p className="muted" style={{ marginTop: 0, fontSize: 13 }}>
         {copy.claims.allResidualNote}
       </p>
-      {payoutRouteNote ? (
-        <p className="muted" style={{ marginTop: 0, fontSize: 13 }}>
-          {payoutRouteNote}
+      {[...legRouteNotes].map((note) => (
+        <p key={note} className="muted" style={{ marginTop: 0, fontSize: 13 }}>
+          {note}
         </p>
-      ) : null}
+      ))}
       {rewardsToVaultNote ? (
         <p className="muted" style={{ marginTop: 0, fontSize: 13 }}>
           {rewardsToVaultNote}

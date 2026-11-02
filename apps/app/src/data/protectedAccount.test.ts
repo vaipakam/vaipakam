@@ -207,6 +207,13 @@ describe('ownPayoutRoute', () => {
   it('queues with protection on, naming the delay and the co-signature', () => {
     expect(ownPayoutRoute(snap({ requireCosign: true }), false)).toEqual({ kind: 'queued', delaySeconds: 172800, cosign: true, to: null });
   });
+  it('is credited to the vault when another account\'s vault pays a protected wallet', () => {
+    const me = '0x00000000000000000000000000000000000000a1';
+    const recordedLender = '0x00000000000000000000000000000000000000b2';
+    expect(ownPayoutRoute(snap({}), false, me, recordedLender).kind).toBe('creditedToVault');
+    expect(ownPayoutRoute(snap({}), false, me, me.toUpperCase().replace('0X', '0x')).kind).toBe('queued');
+    expect(ownPayoutRoute(snap({ enabled: false }), false, me, recordedLender).kind).toBe('wallet');
+  });
   it('names the controller of a retired account, which the gate pays instead of this wallet', () => {
     const controller = '0x00000000000000000000000000000000000000c0';
     expect(ownPayoutRoute(snap({ retired: true, controller }), false)).toEqual({

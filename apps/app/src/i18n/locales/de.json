@@ -3711,6 +3711,7 @@
       "payoutRouteCosign": "Ein Wiederherstellungs-Unterzeichner muss sie außerdem mitsignieren.",
       "payoutRouteVault": "Dein Konto ist gesperrt oder seine Warteschlange ist voll, daher bleibt die Zahlung in deinem Vault. Hebe sie dort ab, sobald das Konto eine Auszahlung einreihen kann.",
       "payoutRouteRewardsToVault": "Der Schutz ist aktiv, daher werden Interaktions-Belohnungen in diesem Stapel deinem Vault statt deiner Wallet gutgeschrieben. Sie werden nicht eingereiht.",
+      "payoutRouteCreditedToVault": "Der Schutz ist aktiv, und dies wird aus dem Vault eines anderen Kontos gezahlt. Es wird daher deinem Vault statt deiner Wallet gutgeschrieben. Nichts wird eingereiht: Hebe es selbst aus deinem Vault ab; das wartet die Verzögerung ab.",
       "payoutRouteUnknown": "Wir konnten deine Schutzeinstellungen nicht lesen und können daher nicht sagen, ob dies sofort an deine Wallet zahlt, die Zahlung einreiht oder sie in deinem Vault behält.",
       "payoutRouteQueuedTo": "Dieses Konto wurde auf eine neue Wallet übertragen. Was dies auszahlt, wartet daher {{delay}} in der Warteschlange des Kontos und wird dann an {{controller}} gezahlt, nicht an diese Wallet.",
       "payoutOutcomeQueuedTo": "Die Zahlung ist im Konto eingereiht und wird, da das Konto auf eine neue Wallet übertragen wurde, nach der Verzögerung an {{controller}} gezahlt, nicht an diese Wallet.",

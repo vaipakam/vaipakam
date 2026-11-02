@@ -3711,6 +3711,7 @@
       "payoutRouteCosign": "Un firmante de recuperación también debe cofirmarlo.",
       "payoutRouteVault": "Tu cuenta está bloqueada o su cola está llena, así que lo que esto te paga se queda en tu bóveda. Retíralo de allí cuando la cuenta pueda poner un pago en cola.",
       "payoutRouteRewardsToVault": "La protección está activa, así que las recompensas por interacción de este lote se acreditan en tu bóveda en lugar de tu billetera. No entran en la cola.",
+      "payoutRouteCreditedToVault": "La protección está activa y esto se paga desde la bóveda de otra cuenta, así que se acredita en tu bóveda en lugar de tu billetera. No se pone nada en cola: retíralo tú mismo de tu bóveda, lo que espera el retraso.",
       "payoutRouteUnknown": "No pudimos leer tu configuración de protección, así que no podemos decir si esto paga a tu billetera ya, pone el pago en cola o lo deja en tu bóveda.",
       "payoutRouteQueuedTo": "Esta cuenta se trasladó a una nueva billetera, así que lo que esto paga espera {{delay}} en la cola de la cuenta y luego se paga a {{controller}}, no a esta billetera.",
       "payoutOutcomeQueuedTo": "El pago está en cola en la cuenta y, como la cuenta se trasladó a una nueva billetera, se paga a {{controller}} tras el retraso, no a esta billetera.",
