@@ -2731,6 +2731,7 @@
         "PositionTransferCancelled": "포지션 NFT 이전 취소됨",
         "EscapeWithdrawal": "프로토콜 일시 중지 중 출금",
         "PayoutCosigned": "지급 공동 서명됨",
+        "PositionTransferCosigned": "포지션 이전 공동 서명됨",
         "ProtectedModeEnabled": "보호 모드 켜짐",
         "ProtectedModeDisabled": "보호 모드 꺼짐",
         "SettingChangeRequested": "보호 설정 변경 요청됨",

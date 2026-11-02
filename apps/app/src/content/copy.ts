@@ -6392,6 +6392,7 @@ const copySource = {
       PositionTransferCancelled: 'Position NFT transfer cancelled',
       EscapeWithdrawal: 'Withdrawal during protocol pause',
       PayoutCosigned: 'Payout co-signed',
+      PositionTransferCosigned: 'Position transfer co-signed',
       ProtectedModeEnabled: 'Protected mode turned on',
       ProtectedModeDisabled: 'Protected mode turned off',
       SettingChangeRequested: 'Protected setting change requested',

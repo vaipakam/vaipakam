@@ -2731,6 +2731,7 @@
         "PositionTransferCancelled": "持仓 NFT 转移已取消",
         "EscapeWithdrawal": "协议暂停期间的提取",
         "PayoutCosigned": "付款已联署",
+        "PositionTransferCosigned": "仓位转移已联署",
         "ProtectedModeEnabled": "保护模式已开启",
         "ProtectedModeDisabled": "保护模式已关闭",
         "SettingChangeRequested": "已申请更改受保护设置",

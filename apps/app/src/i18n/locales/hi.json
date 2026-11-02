@@ -2731,6 +2731,7 @@
         "PositionTransferCancelled": "पोज़िशन NFT हस्तांतरण रद्द किया गया",
         "EscapeWithdrawal": "प्रोटोकॉल विराम के दौरान निकासी",
         "PayoutCosigned": "भुगतान पर सह-हस्ताक्षर किए गए",
+        "PositionTransferCosigned": "पोज़िशन ट्रांसफ़र पर सह-हस्ताक्षर किए गए",
         "ProtectedModeEnabled": "संरक्षित मोड चालू किया गया",
         "ProtectedModeDisabled": "संरक्षित मोड बंद किया गया",
         "SettingChangeRequested": "संरक्षित सेटिंग में बदलाव का अनुरोध किया गया",

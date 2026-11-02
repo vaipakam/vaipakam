@@ -2731,6 +2731,7 @@
         "PositionTransferCancelled": "Transferencia del NFT de posición cancelada",
         "EscapeWithdrawal": "Retiro durante una pausa del protocolo",
         "PayoutCosigned": "Pago cofirmado",
+        "PositionTransferCosigned": "Transferencia de posición cofirmada",
         "ProtectedModeEnabled": "Modo protegido activado",
         "ProtectedModeDisabled": "Modo protegido desactivado",
         "SettingChangeRequested": "Cambio de ajuste protegido solicitado",

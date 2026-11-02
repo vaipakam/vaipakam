@@ -2731,6 +2731,7 @@
         "PositionTransferCancelled": "நிலை NFT பரிமாற்றம் ரத்து செய்யப்பட்டது",
         "EscapeWithdrawal": "நெறிமுறை இடைநிறுத்தத்தின் போது எடுப்பு",
         "PayoutCosigned": "பணம் செலுத்துதலுக்கு இணை கையொப்பம் இடப்பட்டது",
+        "PositionTransferCosigned": "நிலை மாற்றத்துக்கு இணை கையொப்பம் இடப்பட்டது",
         "ProtectedModeEnabled": "பாதுகாப்பு முறை இயக்கப்பட்டது",
         "ProtectedModeDisabled": "பாதுகாப்பு முறை அணைக்கப்பட்டது",
         "SettingChangeRequested": "பாதுகாக்கப்பட்ட அமைப்பு மாற்றம் கோரப்பட்டது",
