@@ -23,16 +23,16 @@
     "@vaipakam/contracts": "workspace:*",
     "@vaipakam/lib": "workspace:*",
     "@vaipakam/push": "workspace:*",
-    "viem": "^2.48.4"
+    "viem": "^2.57.13"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.0.0",
     "@types/node": "^22",
     "@vaipakam/anvil-harness": "workspace:*",
-    "esbuild": "^0.27.7",
-    "tsx": "^4.19.2",
+    "esbuild": "^0.28.2",
+    "tsx": "^4.23.15",
     "typescript": "^6.0.0",
     "vitest": "^4.1.4",
-    "wrangler": "^4.0.0"
+    "wrangler": "^4.156.0"
   }
 }

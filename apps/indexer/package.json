@@ -22,12 +22,12 @@
   "dependencies": {
     "@vaipakam/contracts": "workspace:*",
     "@vaipakam/lib": "workspace:*",
-    "viem": "^2.48.4"
+    "viem": "^2.57.13"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.0.0",
     "typescript": "^6.0.0",
     "vitest": "^4.1.4",
-    "wrangler": "^4.0.0"
+    "wrangler": "^4.156.0"
   }
 }
