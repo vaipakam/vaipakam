@@ -2887,6 +2887,8 @@ const copySource = {
     payoutRouteVault: 'Your account is locked or its queue is full, so what this pays you stays in your vault. Withdraw it from there once the account can queue a payout.',
     payoutRouteRewardsToVault: 'Protection is on, so interaction rewards in this batch are credited to your vault rather than your wallet. They do not queue.',
     payoutRouteUnknown: 'We couldn’t read your protection settings, so we can’t say whether this pays your wallet now, queues the payment or keeps it in your vault.',
+    payoutRouteQueuedTo: tmpl('This account was moved to a new wallet, so what this pays waits {{delay}} in the account’s queue and is then paid to {{controller}}, not to this wallet.', ['delay', 'controller']),
+    payoutOutcomeQueuedTo: tmpl('The payment is queued in the account and, because the account was moved to a new wallet, is paid to {{controller}} after the delay, not to this wallet.', ['controller']),
     payoutOutcomeQueued: 'The payment is queued in your account and reaches your wallet after the delay. Follow it on the Vault protection page.',
     payoutOutcomeHeld: 'Your account is locked or its queue is full, so the payment stayed in your vault. Withdraw it from there once the account can queue a payout.',
     payoutOutcomeInVault: 'Protection is on, so the payment went into your vault, not your wallet. Withdraw it through the delay.',

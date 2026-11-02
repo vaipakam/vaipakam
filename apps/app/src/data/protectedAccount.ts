@@ -238,17 +238,26 @@ export function ownWithdrawalVerdict(
  * wallet to a protected account). Only `account`'s own events count, so a
  * counterparty's payout in the same transaction never colours the answer.
  */
-export type PayoutOutcome = 'paid' | 'queued' | 'held' | 'inVault';
+export type PayoutOutcome =
+  | { kind: 'paid' }
+  // `recipient` is who the queued row will pay: the account's wallet, or the
+  // controller of a retired account (the gate redirects its payouts there).
+  | { kind: 'queued'; recipient: string }
+  | { kind: 'held' }
+  | { kind: 'inVault' };
 
 export function payoutOutcome(logs: readonly Log[], account: string | undefined): PayoutOutcome {
   const mine = (eventName: 'PayoutHeldInVault' | 'PayoutQueued' | 'PaymentCreditedToVault') =>
-    parseEventLogs({ abi: DIAMOND_ABI_VIEM, eventName, logs: logs as Log[] }).some(
+    parseEventLogs({ abi: DIAMOND_ABI_VIEM, eventName, logs: logs as Log[] }).filter(
       (e) => !account || String((e.args as { account?: string }).account ?? '').toLowerCase() === account.toLowerCase(),
     );
-  if (mine('PayoutHeldInVault')) return 'held';
-  if (mine('PayoutQueued')) return 'queued';
-  if (mine('PaymentCreditedToVault')) return 'inVault';
-  return 'paid';
+  if (mine('PayoutHeldInVault').length > 0) return { kind: 'held' };
+  const queued = mine('PayoutQueued');
+  if (queued.length > 0) {
+    return { kind: 'queued', recipient: String((queued[0].args as { recipient?: string }).recipient ?? account ?? '') };
+  }
+  if (mine('PaymentCreditedToVault').length > 0) return { kind: 'inVault' };
+  return { kind: 'paid' };
 }
 
 /**
@@ -260,7 +269,9 @@ export function payoutOutcome(logs: readonly Log[], account: string | undefined)
 export type OwnPayoutRoute =
   | { kind: 'unread' }
   | { kind: 'wallet' }
-  | { kind: 'queued'; delaySeconds: number; cosign: boolean }
+  // `to` is set when the account was moved to a new wallet: the gate then
+  // pays every queued payout to that controller, not to this wallet.
+  | { kind: 'queued'; delaySeconds: number; cosign: boolean; to: string | null }
   | { kind: 'vault' };
 
 export function ownPayoutRoute(
@@ -275,7 +286,12 @@ export function ownPayoutRoute(
   if (r.locked) return { kind: 'vault' };
   if (snap.payouts === null || snap.transfers === null) return { kind: 'unread' };
   if (snap.payouts.length + snap.transfers.length >= MAX_OPEN_ROWS) return { kind: 'vault' };
-  return { kind: 'queued', delaySeconds: r.delaySeconds, cosign: r.requireCosign };
+  return {
+    kind: 'queued',
+    delaySeconds: r.delaySeconds,
+    cosign: r.requireCosign,
+    to: r.retired ? r.controller : null,
+  };
 }
 
 /** The connected wallet's payout route, read live. */

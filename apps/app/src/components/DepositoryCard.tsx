@@ -36,6 +36,7 @@ import {
   ContractFunctionRevertedError,
   ContractFunctionZeroDataError,
   erc20Abi,
+  formatUnits,
   isAddress,
   type PublicClient,
 } from 'viem';
@@ -45,7 +46,7 @@ import { useActiveChain } from '../chain/useActiveChain';
 import { DIAMOND_ABI_VIEM, useDiamondWrite, useTermsBlockNonExitWrites } from '../contracts/diamond';
 import { ensureAllowance } from '../contracts/erc20';
 import { captureTxError } from '../lib/errors';
-import { formatExactSpan, formatTokenAmount, parseExactUnits, shortAddress } from '../lib/format';
+import { formatExactSpan, parseExactUnits, shortAddress } from '../lib/format';
 import { assertWalletNotSanctionedLive } from '../data/sanctions';
 import { assertErc20BalanceLive } from '../contracts/preflights';
 import { ASSET_KIND, ownFundingVerdict, ownWithdrawalVerdict, payoutOutcome, useProtectedAccount, type AssetKind } from '../data/protectedAccount';
@@ -363,14 +364,17 @@ export function DepositoryCard({ account }: { account?: `0x${string}` } = {}) {
     const { receipt } = await write('withdrawFromVault', [owner, kind, tokenAddr, id, amt, address]);
     // The receipt says what happened: paid now, queued behind the delay, or
     // held in the vault. One reading for every withdrawal surface.
-    const outcome = payoutOutcome(receipt.logs, owner);
+    const outcome = payoutOutcome(receipt.logs, owner).kind;
     return outcome === 'held' ? d.withdrawHeld : outcome === 'queued' ? d.withdrawQueued : d.withdrawDone;
   }
 
   const freeText =
     balanceFresh && free.data && (kind !== ASSET_KIND.ERC20 || dec !== undefined)
       ? kind === ASSET_KIND.ERC20
-        ? formatTokenAmount(free.data.free, dec!)
+        ? // The exact figure, never a rounded one: it is the limit the
+          // Withdraw button checks the typed amount against, so a rounded
+          // display could read above what the account may take out.
+          formatUnits(free.data.free, dec!)
         : free.data.free.toString()
       : null;
 

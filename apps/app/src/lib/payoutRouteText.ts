@@ -3,7 +3,7 @@
  * (protected account mode), shared by every surface that pays it.
  */
 import { copy } from '../content/copy';
-import { formatExactSpan } from './format';
+import { formatExactSpan, shortAddress } from './format';
 import type { OwnPayoutRoute, PayoutOutcome } from '../data/protectedAccount';
 
 /** Before the transaction: null when the payment goes straight to the
@@ -14,7 +14,11 @@ export function payoutRouteText(route: OwnPayoutRoute): string | null {
     case 'wallet':
       return null;
     case 'queued':
-      return `${p.payoutRouteQueued(formatExactSpan(route.delaySeconds))}${route.cosign ? ` ${p.payoutRouteCosign}` : ''}`;
+      return `${
+        route.to
+          ? p.payoutRouteQueuedTo(formatExactSpan(route.delaySeconds), shortAddress(route.to))
+          : p.payoutRouteQueued(formatExactSpan(route.delaySeconds))
+      }${route.cosign ? ` ${p.payoutRouteCosign}` : ''}`;
     case 'vault':
       return p.payoutRouteVault;
     case 'unread':
@@ -22,14 +26,21 @@ export function payoutRouteText(route: OwnPayoutRoute): string | null {
   }
 }
 
-/** After the transaction, from its receipt: null when the wallet was paid. */
-export function payoutOutcomeText(outcome: PayoutOutcome): string | null {
+/** After the transaction, from its receipt: null when the wallet was paid.
+ *  A queued row names its recipient when that is not `wallet` (the
+ *  controller of an account moved to a new wallet). */
+export function payoutOutcomeText(outcome: PayoutOutcome, wallet: string | undefined): string | null {
   const p = copy.protection;
-  return outcome === 'queued'
-    ? p.payoutOutcomeQueued
-    : outcome === 'held'
-      ? p.payoutOutcomeHeld
-      : outcome === 'inVault'
-        ? p.payoutOutcomeInVault
-        : null;
+  switch (outcome.kind) {
+    case 'queued':
+      return wallet && outcome.recipient.toLowerCase() !== wallet.toLowerCase()
+        ? p.payoutOutcomeQueuedTo(shortAddress(outcome.recipient))
+        : p.payoutOutcomeQueued;
+    case 'held':
+      return p.payoutOutcomeHeld;
+    case 'inVault':
+      return p.payoutOutcomeInVault;
+    case 'paid':
+      return null;
+  }
 }

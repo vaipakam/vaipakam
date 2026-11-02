@@ -248,7 +248,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   const { address: payeeAddress } = useActiveChain();
   const payoutRouteNote = payoutRouteText(useOwnPayoutRoute());
   const withPayoutOutcome = (done: string, logs: readonly Log[]) => {
-    const note = payoutOutcomeText(payoutOutcome(logs, payeeAddress));
+    const note = payoutOutcomeText(payoutOutcome(logs, payeeAddress), payeeAddress);
     return note ? `${done} ${note}` : done;
   };
   const queryClient = useQueryClient();

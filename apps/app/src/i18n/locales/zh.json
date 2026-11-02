@@ -3712,6 +3712,8 @@
       "payoutRouteVault": "你的账户已锁定或队列已满，因此这笔付款会留在你的金库中。待账户可以排队付款后，再从金库提取。",
       "payoutRouteRewardsToVault": "保护已开启，因此本批中的互动奖励会记入你的金库，而不是钱包。它们不会排队。",
       "payoutRouteUnknown": "我们无法读取你的保护设置，因此无法判断这笔付款是立即到达钱包、排入队列，还是留在金库中。",
+      "payoutRouteQueuedTo": "此账户已迁移到新钱包，因此这笔付款会在账户队列中等待{{delay}}，然后支付给{{controller}}，而不是这个钱包。",
+      "payoutOutcomeQueuedTo": "付款已在账户中排队；由于账户已迁移到新钱包，延迟结束后会支付给{{controller}}，而不是这个钱包。",
       "payoutOutcomeQueued": "付款已排入你的账户队列，等待期过后到达你的钱包。可在金库保护页面跟踪。",
       "payoutOutcomeHeld": "你的账户已锁定或队列已满，因此付款留在了你的金库中。待账户可以排队付款后，再从金库提取。",
       "payoutOutcomeInVault": "保护已开启，因此付款进入了你的金库而不是钱包。请通过等待期提取。",
