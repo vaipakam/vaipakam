@@ -41,7 +41,10 @@
  *     block that gates.
  *
  * "Sender" is `msg.sender`, `_msgSender()`, a parameter the caller bound to
- * either, or a local initialized from one. A "check local" is a `bool` local
+ * either, or a local initialized from one. A comparison of the sender with a
+ * value the CALLER chose (a parameter of the entry point, passed on to a
+ * helper or modifier, or a `cond ? x : param` with such a branch) is no gate:
+ * every caller can pass its own address. A "check local" is a `bool` local
  * initialized to a check of the sender, or a mapping read keyed by it
  * (`channelOf[msg.sender]`, non-zero only for registered senders). No
  * statement before the gate may `return`, so every path that completes
@@ -64,8 +67,10 @@
  *                           pass in apps/keeper/src/passSchedule.ts, `flag`
  *                           the arming flag it reads (apps/keeper/src/env.ts),
  *                           and `evidence` the keeper-side file that sends the
- *                           call; that file must contain the function's name
- *                           as a quoted literal.
+ *                           call; that file must carry the function's name as
+ *                           a string literal in code (`sendsCall`): a comment,
+ *                           a backticked mention or an ABI fragment's `name:`
+ *                           does not count.
  *   class "keeper-pending"  the same, with the pass still in an open PR
  *                           (`pr`). Refused once the keeper already sends it:
  *                           the row then becomes "keeper".
@@ -226,13 +231,40 @@ function isZero(e) {
 /** `local == 0` (or `0 == local`) for a check local: true for every caller but the allowed ones. */
 const checkLocalIsZero = (l, r, bound) => (isCheckLocal(l, bound) && isZero(r)) || (isCheckLocal(r, bound) && isZero(l));
 
+/**
+ * A value the caller chose: a parameter of the entry point, or a callee or
+ * modifier parameter bound to one. `bound` holds it as `free:<id>`. Comparing
+ * the sender with such a value restricts no one, since every caller can pass
+ * its own address (`renounceRole(role, account)`'s confirmation is the case).
+ */
+const freeKey = (id) => `free:${id}`;
+const isFree = (e, bound) => {
+  e = unwrap(e);
+  // `retired ? controller : account` lets the caller pick `account` whenever that branch runs.
+  if (e?.nodeType === 'Conditional') return isFree(e.trueExpression, bound) || isFree(e.falseExpression, bound);
+  return e?.nodeType === 'Identifier' && bound.has(freeKey(e.referencedDeclaration));
+};
+
+/** `sender` on one side, and on the other a value the caller did not choose. */
+const senderVsFixed = (l, r, bound) => (isSender(l, bound) && !isFree(r, bound)) || (isSender(r, bound) && !isFree(l, bound));
+
+/** Bind each parameter of a callee or modifier: to the sender, or as caller-chosen. */
+function bindParams(params, args, bound) {
+  const inner = new Set();
+  params.forEach((p, i) => {
+    if (isSender(args[i], bound)) inner.add(p.id);
+    else if (isFree(args[i], bound)) inner.add(freeKey(p.id));
+  });
+  return inner;
+}
+
 /** True when `cond` is true for every caller except the allowed ones (an `if (cond) revert` gate). */
 export function rejectsOthers(cond, bound) {
   cond = unwrap(cond);
   if (!cond) return false;
   if (cond.nodeType === 'BinaryOperation') {
     if (cond.operator === '==') return checkLocalIsZero(cond.leftExpression, cond.rightExpression, bound);
-    if (cond.operator === '!=') return isSender(cond.leftExpression, bound) || isSender(cond.rightExpression, bound);
+    if (cond.operator === '!=') return senderVsFixed(cond.leftExpression, cond.rightExpression, bound);
     if (cond.operator === '||') return rejectsOthers(cond.leftExpression, bound) || rejectsOthers(cond.rightExpression, bound);
     if (cond.operator === '&&') return rejectsOthers(cond.leftExpression, bound) && rejectsOthers(cond.rightExpression, bound);
     return false;
@@ -246,7 +278,7 @@ export function admitsOnly(cond, bound) {
   cond = unwrap(cond);
   if (!cond) return false;
   if (cond.nodeType === 'BinaryOperation') {
-    if (cond.operator === '==') return isSender(cond.leftExpression, bound) || isSender(cond.rightExpression, bound);
+    if (cond.operator === '==') return senderVsFixed(cond.leftExpression, cond.rightExpression, bound);
     if (cond.operator === '!=') return checkLocalIsZero(cond.leftExpression, cond.rightExpression, bound);
     if (cond.operator === '&&') return admitsOnly(cond.leftExpression, bound) || admitsOnly(cond.rightExpression, bound);
     if (cond.operator === '||') return admitsOnly(cond.leftExpression, bound) && admitsOnly(cond.rightExpression, bound);
@@ -397,8 +429,7 @@ function calleeGate(callee, call, bound, ctx, depth, seen) {
   // A bound receiver (`using L for address` → `msg.sender.f()`) is the first parameter.
   const args = [...(call.arguments ?? [])];
   if (call.expression?.nodeType === 'MemberAccess' && params.length === args.length + 1) args.unshift(call.expression.expression);
-  const inner = new Set();
-  params.forEach((p, i) => { if (isSender(args[i], bound)) inner.add(p.id); });
+  const inner = bindParams(params, args, bound);
   const key = `${callee.id}:${[...inner].sort().join(',')}`;
   if (seen.has(key)) return undefined;
   seen.add(key);
@@ -413,8 +444,7 @@ function functionGate(fn, bound, ctx, depth, seen) {
   for (const m of fn.modifiers ?? []) {
     const def = mostDerived(ctx.byId.get(m.modifierName?.referencedDeclaration), ctx);
     if (def?.nodeType !== 'ModifierDefinition' || !def.body) continue;
-    const inner = new Set();
-    (def.parameters?.parameters ?? []).forEach((p, i) => { if (isSender(m.arguments?.[i], bound)) inner.add(p.id); });
+    const inner = bindParams(def.parameters?.parameters ?? [], m.arguments ?? [], bound);
     const g = gateIn(def.body.statements, inner, ctx, depth + 1, seen);
     if (g) return `modifier ${def.name} → ${g}`;
   }
@@ -423,7 +453,8 @@ function functionGate(fn, bound, ctx, depth, seen) {
 
 /** The gate a function carries, from its modifiers or its own body, or undefined when it is open. */
 export function gateOf(fn, byId, lineage) {
-  return functionGate(fn, new Set(), { byId, lineage }, 0, new Set());
+  const free = new Set((fn.parameters?.parameters ?? []).map((p) => freeKey(p.id)));
+  return functionGate(fn, free, { byId, lineage }, 0, new Set());
 }
 
 function typeList(fn) {
@@ -545,12 +576,54 @@ export function envKeys(text) {
   return new Set([...block[1].matchAll(/'([A-Z0-9_]+)'/g)].map((m) => m[1]));
 }
 
-const quoted = (name) => new RegExp(`['"\`]${name}['"\`]`);
+/**
+ * TypeScript / JavaScript source with its comments blanked out. String and
+ * template literals are kept (a comment marker inside one is not a comment).
+ */
+export function stripComments(text) {
+  let out = '';
+  for (let i = 0; i < text.length; ) {
+    const c = text[i];
+    const d = text[i + 1];
+    if (c === '/' && d === '/') {
+      while (i < text.length && text[i] !== '\n') i++;
+    } else if (c === '/' && d === '*') {
+      const end = text.indexOf('*/', i + 2);
+      const stop = end < 0 ? text.length : end + 2;
+      out += text.slice(i, stop).replace(/[^\n]/g, ' ');
+      i = stop;
+    } else if (c === "'" || c === '"' || c === '`') {
+      let j = i + 1;
+      while (j < text.length && text[j] !== c) j += text[j] === '\\' ? 2 : 1;
+      out += text.slice(i, j + 1);
+      i = j + 1;
+    } else {
+      out += c;
+      i++;
+    }
+  }
+  return out;
+}
 
-/** Every keeper-sent literal of `name` in the keeper's sources. */
+/**
+ * Does the source send `name`? It must appear as a plain string literal in
+ * CODE: not in a comment, not as a backticked mention, and not as the `name:`
+ * of an ABI fragment (which declares a function without calling it). The
+ * keeper's senders take the function name as such a literal
+ * (`functionName: 'x'`, `sender.call(label, subject, 'x', args)`).
+ */
+export function sendsCall(name, text) {
+  const code = stripComments(text);
+  const re = new RegExp(`(['"])${name}\\1`, 'g');
+  for (const m of code.matchAll(re)) {
+    if (!/\bname\s*:\s*$/.test(code.slice(Math.max(0, m.index - 40), m.index))) return true;
+  }
+  return false;
+}
+
+/** Does any keeper source send `name`? */
 function keeperSendsAnywhere(name, files) {
-  const re = quoted(name);
-  return files.some((f) => re.test(f.text));
+  return files.some((f) => sendsCall(name, f.text));
 }
 
 function sourceFiles(dir) {
@@ -583,7 +656,7 @@ export function keeperProblems(steps, { passes, flags, keeperFiles, read }) {
       }
       const text = read(join(REPO_ROOT, row.evidence));
       if (text === undefined) problems.push(`${key}: evidence ${row.evidence} does not exist`);
-      else if (!quoted(name).test(text)) problems.push(`${key}: evidence ${row.evidence} does not name ${name} — point it at the file that sends the call`);
+      else if (!sendsCall(name, text)) problems.push(`${key}: evidence ${row.evidence} does not send ${name} (a string literal in code, not a comment or an ABI \`name:\`) — point it at the file that sends the call`);
     } else if (row.class === 'keeper-pending' && keeperSendsAnywhere(name, keeperFiles)) {
       problems.push(`${key}: the keeper now names ${name} — if its pass has merged, make the row "keeper" with its pass, flag and evidence`);
     }

@@ -19,6 +19,7 @@ import {
   passNames,
   readLedger,
   rowProblems,
+  sendsCall,
 } from '../../../contracts/script/check-permissionless-steps.mjs';
 
 // ─── AST builders ────────────────────────────────────────────────────────
@@ -204,6 +205,24 @@ test('a local holding a check of the sender gates; a number computed from the se
   );
 });
 
+test('comparing the sender with a value the caller chose restricts no one', () => {
+  const account = param('account');
+  const who = param('who');
+  const helper = fnDef('_confirm', [ifRevert(bin('!=', ident('who', who.id), msgSender()))], { visibility: 'internal', params: [who] });
+  const either = { nodeType: 'Conditional', condition: ident('retired'), trueExpression: ident('controller'), falseExpression: ident('account', account.id) };
+  const account2 = param('account');
+  const either2 = { ...either, falseExpression: ident('account', account2.id) };
+  assert.deepEqual(
+    isGated([
+      helper,
+      fnDef('renounce', [exprStmt(call(ident('_confirm', helper.id), [ident('account', account.id)]))], { params: [account] }),
+      fnDef('pinned', [exprStmt(call(ident('_confirm', helper.id), [owner()]))]),
+      fnDef('picked', [ifRevert(bin('!=', msgSender(), either2))], { params: [account2] }),
+    ]),
+    { renounce: false, pinned: true, picked: false },
+  );
+});
+
 test('a KYC screen is not a caller gate: it admits everyone while enforcement is off', () => {
   const kyc = { nodeType: 'FunctionCall', expression: { nodeType: 'MemberAccess', memberName: 'meetsKYCRequirement', expression: ident('profile') }, arguments: [msgSender(), ident('v')] };
   assert.deepEqual(isGated([fnDef('a', [ifRevert(not(kyc))])]), { a: false });
@@ -271,12 +290,21 @@ test('keeper rows name a real pass, flag and sending file; pending rows are refu
   const expected = [
     /^C\.stepB\(\): pass "q" is not in/,
     /^C\.stepB\(\): flag G is not a keeper configuration key/,
-    /^C\.stepB\(\): evidence x\.ts does not name stepB/,
+    /^C\.stepB\(\): evidence x\.ts does not send stepB/,
     /^C\.stepC\(\): the keeper now names stepC/,
     /^C\.badAlt\(\): `of` must name a keeper/,
   ];
   assert.equal(problems.length, expected.length, problems.join('\n'));
   problems.forEach((p, i) => assert.match(p, expected[i]));
+});
+
+test('a step is sent only by a string literal in code, never by a comment, a mention or an ABI name', () => {
+  assert.equal(sendsCall('stepA', "await sender.call('label', d, 'stepA', [d]);"), true);
+  assert.equal(sendsCall('stepA', "encodeFunctionData({ abi, functionName: \"stepA\", args })"), true);
+  assert.equal(sendsCall('stepA', "// sends 'stepA' later\n/* or 'stepA' */ const x = 1;"), false);
+  assert.equal(sendsCall('stepA', 'the pass calls `stepA` once a day'), false);
+  assert.equal(sendsCall('stepA', "const ABI = [{ type: 'function', name: 'stepA', inputs: [] }];"), false);
+  assert.equal(sendsCall('stepA', "const url = 'https://x/*'; sender.call('l', s, 'stepA', []);"), true);
 });
 
 test('pass names and configuration keys are read from the keeper sources', () => {

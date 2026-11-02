@@ -5,6 +5,10 @@
     "An open entry point with no row fails the check, and so does a row for a function that is gated or gone. Add a row with the function that adds the entry point."
   ],
   "steps": {
+    "AccessControlFacet.renounceRole(bytes32,address)": {
+      "class": "user",
+      "why": "a holder gives up its own role; the confirmation argument must be the caller"
+    },
     "AggregatorAdapterFactoryFacet.upgradeAggregatorAdapter(address)": {
       "class": "user",
       "why": "the adapter principal's upgrade; once a version is mandatory anyone may apply it, and the adapter refuses withdrawals until then, so its principal is the one waiting"
@@ -12,6 +16,10 @@
     "AggregatorAdapterImplementation.approve(address,uint256)": {
       "class": "user",
       "why": "the holder's own ERC-20 approval"
+    },
+    "AggregatorAdapterImplementation.initialize(address,address,address,address,uint16,address,string,string,uint256,uint256,uint16,uint32,uint256)": {
+      "class": "init",
+      "why": "the deployment, or the Diamond's factory, initializes each proxy once in the transaction that creates it"
     },
     "AggregatorAdapterImplementation.transfer(address,uint256)": {
       "class": "user",
@@ -38,9 +46,13 @@
       "issue": "#3097",
       "why": "fills from the backstop vault; nothing drives it"
     },
+    "BackstopVaultImplementation.initialize(address)": {
+      "class": "init",
+      "why": "the deployment, or the Diamond's factory, initializes each proxy once in the transaction that creates it"
+    },
     "CcipMessenger.initialize(address)": {
       "class": "init",
-      "why": "the deploy initializes the proxy once, in the same transaction that creates it"
+      "why": "the deployment, or the Diamond's factory, initializes each proxy once in the transaction that creates it"
     },
     "ConsolidationFacet.consolidateCollateralToHolder(uint256)": {
       "class": "gap",
@@ -56,7 +68,7 @@
       "class": "keeper",
       "pass": "graceDefault",
       "flag": "GRACE_DEFAULT_ENABLED",
-      "evidence": "apps/keeper/src/graceDefault.ts"
+      "evidence": "packages/lib/src/routeBuilder.ts"
     },
     "EarlyWithdrawalDirectFacet.sellLoanViaBuyOffer(uint256,uint256)": {
       "class": "user",
@@ -127,10 +139,9 @@
       "evidence": "apps/keeper/src/prepayAutoList.ts"
     },
     "NFTPrepayListingFacet.cancelExpiredPrepayListing(uint256)": {
-      "class": "keeper",
-      "pass": "prepayAutoList",
-      "flag": "PREPAY_AUTO_LIST_ENABLED",
-      "evidence": "apps/keeper/src/prepayAutoList.ts"
+      "class": "gap",
+      "issue": "#3097",
+      "why": "clears an expired prepay listing; the auto-list pass leaves it as an open owner question"
     },
     "NFTPrepayListingFacet.syncPrepaySaleListing(uint256)": {
       "class": "keeper",
@@ -247,9 +258,33 @@
       "class": "user",
       "why": "the nominee accepts its own nomination"
     },
+    "ProtectedAccountFacet.addAllowlisted(address,address)": {
+      "class": "user",
+      "why": "the account manager's own protected-account setting (called with its own account; a caller naming another account is refused unless it manages it)"
+    },
+    "ProtectedAccountFacet.addSigner(address,address)": {
+      "class": "user",
+      "why": "the account manager's own protected-account setting (called with its own account; a caller naming another account is refused unless it manages it)"
+    },
+    "ProtectedAccountFacet.cancelAddAllowlisted(address,address)": {
+      "class": "user",
+      "why": "the account manager's own protected-account setting (called with its own account; a caller naming another account is refused unless it manages it)"
+    },
     "ProtectedAccountFacet.cancelAddSigner(address,address)": {
       "class": "user",
       "why": "the account manager cancels its own nomination"
+    },
+    "ProtectedAccountFacet.cancelRemoveSigner(address,address)": {
+      "class": "user",
+      "why": "the account manager's own protected-account setting (called with its own account; a caller naming another account is refused unless it manages it)"
+    },
+    "ProtectedAccountFacet.cancelReplacement(address)": {
+      "class": "user",
+      "why": "the account manager's own protected-account setting (called with its own account; a caller naming another account is refused unless it manages it)"
+    },
+    "ProtectedAccountFacet.cancelSettingChange(address,uint8)": {
+      "class": "user",
+      "why": "the account manager's own protected-account setting (called with its own account; a caller naming another account is refused unless it manages it)"
     },
     "ProtectedAccountFacet.enableProtectedMode(uint32,bool)": {
       "class": "user",
@@ -285,9 +320,37 @@
       "flag": "PROTECTED_ACCOUNT_ENABLED",
       "pr": "#3090"
     },
+    "ProtectedAccountFacet.lockVault(address)": {
+      "class": "user",
+      "why": "the account manager or one of its signers locks its own account"
+    },
     "ProtectedAccountFacet.proposeReplacement(address,address)": {
       "class": "user",
       "why": "a signer or the manager proposes; approvals and the delay follow"
+    },
+    "ProtectedAccountFacet.removeAllowlisted(address,address)": {
+      "class": "user",
+      "why": "the account manager's own protected-account setting (called with its own account; a caller naming another account is refused unless it manages it)"
+    },
+    "ProtectedAccountFacet.requestRemoveSigner(address,address)": {
+      "class": "user",
+      "why": "the account manager's own protected-account setting (called with its own account; a caller naming another account is refused unless it manages it)"
+    },
+    "ProtectedAccountFacet.requestUnlock(address)": {
+      "class": "user",
+      "why": "the account manager's own protected-account setting (called with its own account; a caller naming another account is refused unless it manages it)"
+    },
+    "ProtectedAccountFacet.setProtectNfts(address,bool)": {
+      "class": "user",
+      "why": "the account manager's own protected-account setting (called with its own account; a caller naming another account is refused unless it manages it)"
+    },
+    "ProtectedAccountFacet.setProtectedDelay(address,uint32)": {
+      "class": "user",
+      "why": "the account manager's own protected-account setting (called with its own account; a caller naming another account is refused unless it manages it)"
+    },
+    "ProtectedAccountFacet.setRequireCosign(address,bool)": {
+      "class": "user",
+      "why": "the account manager's own protected-account setting (called with its own account; a caller naming another account is refused unless it manages it)"
     },
     "ProtocolBroadcastFacet.deliverTierPush(address)": {
       "class": "keeper",
@@ -612,17 +675,15 @@
       "gate": "an EIP-712 signature by the vault owner; anyone may relay it, and it sets only what the owner signed"
     },
     "RiskDiscountedLiquidationFacet.triggerLiquidationDiscounted(uint256,address,bytes)": {
-      "class": "keeper",
-      "pass": "liquidator",
-      "flag": "DISCOUNT_PATH_CHAIN_IDS",
-      "evidence": "apps/keeper/src/flashLoanProviders.ts",
-      "note": "the flash-loan discount branch runs only on chains DISCOUNT_PATH_CHAIN_IDS lists, and it ships empty (#2697); the plain route is triggerLiquidation"
+      "class": "alternative",
+      "of": "RiskFacet.triggerLiquidation(uint256,uint256,struct:LibSwap.AdapterCall[])",
+      "why": "the flash-loan discount route; the keeper reaches it only through its own FlashLoanLiquidator (liquidateViaAaveV3 / liquidateViaBalancerV2), on the chains DISCOUNT_PATH_CHAIN_IDS lists, which ships empty (#2697)"
     },
     "RiskFacet.triggerLiquidation(uint256,uint256,struct:LibSwap.AdapterCall[])": {
       "class": "keeper",
       "pass": "liquidator",
       "flag": "KEEPER_ENABLED",
-      "evidence": "apps/keeper/src/liquidator.ts"
+      "evidence": "packages/lib/src/routeBuilder.ts"
     },
     "RiskFacet.triggerPartialLiquidation(uint256,uint256,struct:LibSwap.AdapterCall[])": {
       "class": "keeper",
@@ -732,7 +793,7 @@
     },
     "VaipakamRewardMessenger.initialize(address,address,address,bool,uint256,uint256)": {
       "class": "init",
-      "why": "the deploy initializes the proxy once, in the same transaction that creates it"
+      "why": "the deployment, or the Diamond's factory, initializes each proxy once in the transaction that creates it"
     },
     "VaipakamTimelock.execute(address,uint256,bytes,bytes32,bytes32)": {
       "class": "gated",
@@ -753,6 +814,10 @@
     "VaipakamTimelock.onERC721Received(address,address,uint256,bytes)": {
       "class": "user",
       "why": "a token-receipt callback; it accepts the token and changes no protocol state"
+    },
+    "VaipakamTimelock.renounceRole(bytes32,address)": {
+      "class": "user",
+      "why": "a holder gives up its own role; the confirmation argument must be the caller"
     },
     "VaultDepositoryFacet.disownUntracked(uint8,address,uint256)": {
       "class": "user",
@@ -778,11 +843,11 @@
     },
     "VpfiReturnReceiver.initialize(address,address,address)": {
       "class": "init",
-      "why": "the deploy initializes the proxy once, in the same transaction that creates it"
+      "why": "the deployment, or the Diamond's factory, initializes each proxy once in the transaction that creates it"
     },
     "VpfiReturnSender.initialize(address,address,address,address,uint256)": {
       "class": "init",
-      "why": "the deploy initializes the proxy once, in the same transaction that creates it"
+      "why": "the deployment, or the Diamond's factory, initializes each proxy once in the transaction that creates it"
     }
   }
 }
