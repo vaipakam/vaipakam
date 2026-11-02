@@ -231,18 +231,58 @@ export function ownWithdrawalVerdict(
 }
 
 /**
- * What a confirmed withdrawal actually did, read from its receipt and never
- * assumed: paid now, queued behind the delay, or held in the vault (the
- * payout gate holds a payment for a locked account or a full queue).
+ * What a confirmed transaction did with a payment to `account`, read from its
+ * receipt and never assumed: paid to the wallet, queued behind the delay,
+ * held in the vault (the payout gate holds a payment for a locked account or
+ * a full queue), or credited to the vault (a payment from someone else's
+ * wallet to a protected account). Only `account`'s own events count, so a
+ * counterparty's payout in the same transaction never colours the answer.
  */
-export type PayoutOutcome = 'paid' | 'queued' | 'held';
+export type PayoutOutcome = 'paid' | 'queued' | 'held' | 'inVault';
 
-export function payoutOutcome(logs: readonly Log[]): PayoutOutcome {
-  const named = (eventName: 'PayoutHeldInVault' | 'PayoutQueued') =>
-    parseEventLogs({ abi: DIAMOND_ABI_VIEM, eventName, logs: logs as Log[] }).length > 0;
-  if (named('PayoutHeldInVault')) return 'held';
-  if (named('PayoutQueued')) return 'queued';
+export function payoutOutcome(logs: readonly Log[], account: string | undefined): PayoutOutcome {
+  const mine = (eventName: 'PayoutHeldInVault' | 'PayoutQueued' | 'PaymentCreditedToVault') =>
+    parseEventLogs({ abi: DIAMOND_ABI_VIEM, eventName, logs: logs as Log[] }).some(
+      (e) => !account || String((e.args as { account?: string }).account ?? '').toLowerCase() === account.toLowerCase(),
+    );
+  if (mine('PayoutHeldInVault')) return 'held';
+  if (mine('PayoutQueued')) return 'queued';
+  if (mine('PaymentCreditedToVault')) return 'inVault';
   return 'paid';
+}
+
+/**
+ * Where a payment the protocol makes to the connected wallet will land, for
+ * every surface that pays it (a loan claim, a collateral release, the claim
+ * batch), so none promises the wallet a payment protection will queue or keep
+ * in the vault. It mirrors the payout gate.
+ */
+export type OwnPayoutRoute =
+  | { kind: 'unread' }
+  | { kind: 'wallet' }
+  | { kind: 'queued'; delaySeconds: number; cosign: boolean }
+  | { kind: 'vault' };
+
+export function ownPayoutRoute(
+  snap: Pick<ProtectedAccountSnapshot, 'supported' | 'recordFailed' | 'record' | 'payouts' | 'transfers'> | undefined,
+  readFailed: boolean,
+): OwnPayoutRoute {
+  if (!snap || readFailed) return { kind: 'unread' };
+  if (!snap.supported) return { kind: 'wallet' };
+  if (snap.recordFailed || snap.record === null) return { kind: 'unread' };
+  const r = snap.record;
+  if (!r.enabled) return { kind: 'wallet' };
+  if (r.locked) return { kind: 'vault' };
+  if (snap.payouts === null || snap.transfers === null) return { kind: 'unread' };
+  if (snap.payouts.length + snap.transfers.length >= MAX_OPEN_ROWS) return { kind: 'vault' };
+  return { kind: 'queued', delaySeconds: r.delaySeconds, cosign: r.requireCosign };
+}
+
+/** The connected wallet's payout route, read live. */
+export function useOwnPayoutRoute(): OwnPayoutRoute {
+  const { address } = useActiveChain();
+  const q = useProtectedAccount(address ?? undefined);
+  return ownPayoutRoute(q.data, q.isError);
 }
 
 export function hasReplacement(r: ReplacementState | null): boolean {

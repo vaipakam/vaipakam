@@ -42,6 +42,8 @@ import {
 import { useActiveChain } from '../chain/useActiveChain';
 import { useDiamondWrite } from '../contracts/diamond';
 import { captureTxError } from '../lib/errors';
+import { ownPayoutRoute, ownWithdrawalVerdict, useProtectedAccount } from '../data/protectedAccount';
+import { payoutRouteText } from '../lib/payoutRouteText';
 import { AssetType } from '../lib/types';
 import {
   useVisibleWindow,
@@ -64,6 +66,13 @@ export function ClaimAllCard({ loans }: { loans: ClaimableLoan[] }) {
   const sanctions = useRewardBarCheck();
   const sanctionsClear = sanctions.ready && !sanctions.barred;
 
+  // Protected account mode: where what this batch pays lands, and whether
+  // its vault-VPFI leg (a withdrawal) can be sent at all; the contract
+  // refuses that leg for a locked account or a full queue, which would
+  // revert the whole batch.
+  const protection = useProtectedAccount(address ?? undefined);
+  const payoutRouteNote = payoutRouteText(ownPayoutRoute(protection.data, protection.isError));
+  const vpfiWithdrawal = ownWithdrawalVerdict(protection.data, protection.isError);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // User's EXPLICIT checkbox choices, keyed by item key. Anything not
@@ -118,12 +127,15 @@ export function ClaimAllCard({ loans }: { loans: ClaimableLoan[] }) {
 
   const hasVpfiVault = items.some((i) => i.kind === 'vpfi-vault');
   const tooMany = selectedCount > MAX_CLAIM_ALL;
+  const vpfiLegBlocked = selectedKeys.some((k) => items.find((i) => i.key === k)?.kind === 'vpfi-vault') &&
+    vpfiWithdrawal.kind !== 'open';
   const canSubmit =
     !busy &&
     onSupportedChain &&
     sanctionsClear &&
     selectedCount > 0 &&
-    !tooMany;
+    !tooMany &&
+    !vpfiLegBlocked;
 
   function toggle(key: string) {
     const now = isSelected(key);
@@ -196,6 +208,20 @@ export function ClaimAllCard({ loans }: { loans: ClaimableLoan[] }) {
       <p className="muted" style={{ marginTop: 0, fontSize: 13 }}>
         {copy.claims.allResidualNote}
       </p>
+      {payoutRouteNote ? (
+        <p className="muted" style={{ marginTop: 0, fontSize: 13 }}>
+          {payoutRouteNote}
+        </p>
+      ) : null}
+      {vpfiLegBlocked ? (
+        <p className="muted" role="status" style={{ marginTop: 0, fontSize: 13 }}>
+          {vpfiWithdrawal.kind === 'queueFull'
+            ? copy.vpfi.withdrawQueueFull
+            : vpfiWithdrawal.kind === 'unread'
+              ? copy.vpfi.withdrawProtectionUnknown
+              : copy.vpfi.withdrawProtectionBlocked}
+        </p>
+      ) : null}
 
       {tooMany ? (
         <div className="banner banner-warning" role="alert">

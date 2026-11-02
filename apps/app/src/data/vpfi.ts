@@ -28,6 +28,7 @@ import { signalAware } from '../chain/railHealth';
 import { fetchFreshConfigValues } from './indexer';
 import { readConfigBundleLive } from './protocol';
 import { copy } from '../content/copy';
+import { isMissingSelectorError } from '../contracts/preflights';
 
 export const VPFI_DECIMALS = 18;
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
@@ -290,9 +291,14 @@ export function useVpfi() {
             throw err;
           }),
           // What protected account mode holds back for the owner's queued
-          // payouts: not withdrawable either. A transport failure is not
-          // knowledge, so it rethrows like the lien read above.
-          read<bigint>('getPayoutEarmark', [address, token, 0n]),
+          // payouts: not withdrawable either. A Diamond without protected
+          // account mode (a confirmed missing selector) holds nothing back;
+          // a transport failure is not knowledge, so it rethrows like the
+          // lien read above.
+          read<bigint>('getPayoutEarmark', [address, token, 0n]).catch((err) => {
+            if (isMissingSelectorError(err)) return 0n;
+            throw err;
+          }),
         ]);
       const [effTier, effBps] = effective;
       const [trackedTier, trackedBal] = tracked;

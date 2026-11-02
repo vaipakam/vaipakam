@@ -25,6 +25,7 @@ import {
   ContractFunctionRevertedError,
   ContractFunctionZeroDataError,
   formatUnits,
+  type Log,
 } from 'viem';
 import { copy } from '../content/copy';
 import { useScrollToFragment } from '../lib/useScrollToFragment';
@@ -94,6 +95,8 @@ import {
 import { useForcedCloseReads } from '../data/useForcedClose';
 import { probeClaim, useLoanClaim } from '../data/claimables';
 import { receiptPayout, useClaimPayoutText } from '../data/useClaimPayout';
+import { payoutOutcome, useOwnPayoutRoute } from '../data/protectedAccount';
+import { payoutOutcomeText, payoutRouteText } from '../lib/payoutRouteText';
 import { initiatedPrincipal, lockedCollateralLine } from '../lib/positionAmounts';
 import {
   classifyMaxWithdrawable,
@@ -239,6 +242,15 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   const { data: walletClient } = useWalletClient();
   const publicClient = usePublicClient({ chainId: walletChain?.chainId });
   const { write } = useDiamondWrite();
+  // Protected account mode: where a payment to this wallet lands (a claim,
+  // a collateral release). The confirmation states it instead of promising
+  // the wallet, and the result reads it from the receipt.
+  const { address: payeeAddress } = useActiveChain();
+  const payoutRouteNote = payoutRouteText(useOwnPayoutRoute());
+  const withPayoutOutcome = (done: string, logs: readonly Log[]) => {
+    const note = payoutOutcomeText(payoutOutcome(logs, payeeAddress));
+    return note ? `${done} ${note}` : done;
+  };
   const queryClient = useQueryClient();
 
   const { isAdvanced, setMode } = useMode();
@@ -2244,9 +2256,11 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           }
         }
         setPhase('submitting');
-        await write('claimAsBorrower', [BigInt(row.loanId)]);
+        const { receipt: claimReceipt } = await write('claimAsBorrower', [BigInt(row.loanId)]);
         setClaimed((c) => ({ ...c, borrower: true }));
-        setDoneMessage(copy.claims.claimed);
+        // Where the payment landed, read from the receipt (protection may
+        // have queued it or kept it in the vault), never assumed.
+        setDoneMessage(withPayoutOutcome(copy.claims.claimed, claimReceipt.logs));
       } else {
         await assertWalletNotSanctionedLive(
           publicClient,
@@ -2254,9 +2268,9 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           address,
         );
         setPhase('submitting');
-        await write('claimAsLender', [BigInt(row.loanId)]);
+        const { receipt: claimReceipt } = await write('claimAsLender', [BigInt(row.loanId)]);
         setClaimed((c) => ({ ...c, lender: true }));
-        setDoneMessage(copy.claims.claimed);
+        setDoneMessage(withPayoutOutcome(copy.claims.claimed, claimReceipt.logs));
       }
       setConfirmingSurface(null);
       void queryClient.invalidateQueries({ queryKey: ['loan'] });
@@ -2505,8 +2519,8 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         return;
       }
       setPhase('submitting');
-      await write('partialWithdrawCollateral', [BigInt(row.loanId), wei]);
-      setDoneMessage(copy.positions.details.done.collateralWithdrawn);
+      const { receipt: releaseReceipt } = await write('partialWithdrawCollateral', [BigInt(row.loanId), wei]);
+      setDoneMessage(withPayoutOutcome(copy.positions.details.done.collateralWithdrawn, releaseReceipt.logs));
       setWithdrawInput('');
       setConfirmingSurface(null);
       void queryClient.invalidateQueries({ queryKey: ['loan'] });
@@ -2997,7 +3011,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
             youMayOwe: copy.positions.details.receipt.nothing,
             youCanLose: copy.positions.details.receipt.nothing,
             fees: copy.positions.details.receipt.feesNone,
-            whenThisEnds: copy.positions.details.receipt.endsClaim,
+            whenThisEnds: payoutRouteNote ?? copy.positions.details.receipt.endsClaim,
           }
         : action === 'claim-lender'
           ? {
@@ -3027,7 +3041,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                 : isRental
                   ? copy.positions.details.receipt.feesRental
                   : copy.positions.details.receipt.feesNone,
-              whenThisEnds: copy.positions.details.receipt.endsClaim,
+              whenThisEnds: payoutRouteNote ?? copy.positions.details.receipt.endsClaim,
             }
           : null;
 
@@ -3822,7 +3836,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                       youMayOwe: copy.positions.details.withdrawCollateral.oweNothingMore,
                       youCanLose: copy.positions.details.withdrawCollateral.lose,
                       fees: copy.positions.details.receipt.feesNone,
-                      whenThisEnds: copy.positions.details.withdrawCollateral.ends,
+                      whenThisEnds: payoutRouteNote ?? copy.positions.details.withdrawCollateral.ends,
                     }}
                   />
                 </div>

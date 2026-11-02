@@ -361,7 +361,7 @@ export function Vpfi() {
         const { receipt: txReceipt } = await write('withdrawVPFIFromVault', [amountWei]);
         // The receipt says what happened: paid now, queued behind the delay,
         // or held in the vault; never assume the wallet was paid.
-        const outcome = payoutOutcome(txReceipt.logs);
+        const outcome = payoutOutcome(txReceipt.logs, address);
         setDone(
           outcome === 'held'
             ? copy.vpfi.withdrawHeldDone

@@ -5,7 +5,7 @@
  * the FIRST thing that would refuse its release.
  */
 import { describe, expect, it } from 'vitest';
-import { additionStatus, ownFundingVerdict, ownWithdrawalVerdict, MAX_OPEN_ROWS, chainNowOf, hasReplacement, isDue, isManager, payoutStatus, replacementStage, type ProtectedAccountRecord } from './protectedAccount';
+import { additionStatus, ownFundingVerdict, ownPayoutRoute, ownWithdrawalVerdict, MAX_OPEN_ROWS, chainNowOf, hasReplacement, isDue, isManager, payoutStatus, replacementStage, type ProtectedAccountRecord } from './protectedAccount';
 
 const ACCOUNT = '0x00000000000000000000000000000000000000a1';
 const CONTROLLER = '0x00000000000000000000000000000000000000c2';
@@ -189,5 +189,30 @@ describe('ownWithdrawalVerdict', () => {
   it('is unread while the queue is unread, and pays now with protection off', () => {
     expect(ownWithdrawalVerdict({ ...snap({}), payouts: null }, false).kind).toBe('unread');
     expect(ownWithdrawalVerdict(snap({ enabled: false }), false)).toEqual({ kind: 'open', queued: false });
+  });
+});
+
+describe('ownPayoutRoute', () => {
+  const snap = (over: Partial<ProtectedAccountRecord>, rows = 0) => ({
+    supported: true,
+    recordFailed: false,
+    record: record({ enabled: true, delaySeconds: 172800, ...over }),
+    payouts: Array.from({ length: rows }) as never[],
+    transfers: [] as never[],
+  });
+  it('pays the wallet with protection off or absent', () => {
+    expect(ownPayoutRoute(snap({ enabled: false }), false).kind).toBe('wallet');
+    expect(ownPayoutRoute({ supported: false, recordFailed: false, record: null, payouts: null, transfers: null }, false).kind).toBe('wallet');
+  });
+  it('queues with protection on, naming the delay and the co-signature', () => {
+    expect(ownPayoutRoute(snap({ requireCosign: true }), false)).toEqual({ kind: 'queued', delaySeconds: 172800, cosign: true });
+  });
+  it('keeps the payment in the vault when locked or full, as the payout gate does', () => {
+    expect(ownPayoutRoute(snap({ locked: true }), false).kind).toBe('vault');
+    expect(ownPayoutRoute(snap({}, MAX_OPEN_ROWS), false).kind).toBe('vault');
+  });
+  it('is unread when the record or the queue is unread', () => {
+    expect(ownPayoutRoute(undefined, false).kind).toBe('unread');
+    expect(ownPayoutRoute({ ...snap({}), transfers: null }, false).kind).toBe('unread');
   });
 });

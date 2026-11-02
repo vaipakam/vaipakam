@@ -363,7 +363,7 @@ export function DepositoryCard({ account }: { account?: `0x${string}` } = {}) {
     const { receipt } = await write('withdrawFromVault', [owner, kind, tokenAddr, id, amt, address]);
     // The receipt says what happened: paid now, queued behind the delay, or
     // held in the vault. One reading for every withdrawal surface.
-    const outcome = payoutOutcome(receipt.logs);
+    const outcome = payoutOutcome(receipt.logs, owner);
     return outcome === 'held' ? d.withdrawHeld : outcome === 'queued' ? d.withdrawQueued : d.withdrawDone;
   }
 
