@@ -163,6 +163,7 @@ const PARTIES: ReadonlyMap<string, readonly string[]> = new Map<string, readonly
   ['EscapeWithdrawal', ['account']],
   // A co-signature names the signer who gave it.
   ['PayoutCosigned', ['account', 'signer']],
+  ['PositionTransferCosigned', ['account', 'signer']],
   // Protected account mode: the account's own settings and its lock.
   ['ProtectedModeEnabled', ['account']],
   ['ProtectedModeDisabled', ['account']],
