@@ -239,6 +239,13 @@ function AccountView({
     address && snap.signers?.some((s) => s.signer.toLowerCase() === address.toLowerCase()),
   );
   const canGuard = manager || signer;
+  // A lock a signer holds bars the owner's wallet from cancelling or
+  // redirecting a replacement; a lock by the owner's wallet (or its keeper)
+  // does not, so a signer may lock over it.
+  const lockedBySigner = Boolean(
+    snap.signers?.some((s) => s.signer.toLowerCase() === record.lockedBy.toLowerCase()),
+  );
+  const signerMayLockOver = signer && record.locked && !lockedBySigner;
   const [delayChoice, setDelayChoice] = useState(Math.round(record.delaySeconds / DAY) || 3);
   const bounds = snap.delayBounds ?? { min: 2 * DAY, max: 5 * DAY };
   const dayOptions: number[] = [];
@@ -329,10 +336,10 @@ function AccountView({
         </section>
       ) : null}
 
-      {canGuard && !record.locked ? (
+      {(canGuard && !record.locked) || signerMayLockOver ? (
         <section className="card">
           <h2 className="card-title">{p.lockTitle}</h2>
-          <p>{p.lockBody}</p>
+          <p>{signerMayLockOver ? p.lockOverBody : p.lockBody}</p>
           <button type="button" className="btn btn-danger" disabled={busy} onClick={() => tx('lockVault', [account])}>
             {asSigner ? p.lockAccount : p.lockNow}
           </button>
@@ -514,7 +521,10 @@ function AccountView({
             >
               {record.requireCosign ? p.cosignOff : p.cosignOn}
             </button>
-            {record.pendingDisableAt === 0n ? (
+            {record.pendingDisableAt === 0n && !record.retired ? (
+              // The switch-off acts on the caller's own account, and a
+              // replaced account cannot be switched off, so a controller
+              // viewing it is never offered one.
               <button
                 type="button"
                 className="btn btn-secondary"
@@ -783,6 +793,8 @@ function SignerEntryCard() {
             <UnavailableState body={p.unavailable} />
           ) : !data.supported ? (
             <UnavailableState body={p.unsupported} />
+          ) : data.signers === null ? (
+            <UnavailableState body={p.signerRoleUnknown} />
           ) : !isSigner ? (
             <p className="muted">{p.notSigner}</p>
           ) : data.record?.enabled ? (

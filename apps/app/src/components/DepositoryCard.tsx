@@ -154,6 +154,11 @@ export function DepositoryCard({ account }: { account?: `0x${string}` } = {}) {
   const protectionKnown = record !== undefined && record !== null;
   const protectedOn = record?.enabled === true;
   const delaySec = record?.delaySeconds ?? 0;
+  // The escape route: after a long admin pause an unprotected owner takes
+  // what is theirs to their own wallet through its own entry point (the
+  // ordinary withdrawal stays paused for them). A protected account's
+  // withdrawal keeps queueing through the ordinary route.
+  const escape = !managed && protectionKnown && !protectedOn && protection.data?.escapeOpen === true;
   const ready = Boolean(address && tokenAddr && idOk && amt !== null && !busy);
   const canWithdraw =
     ready && protectionKnown && free.data !== undefined && amt !== null && amt <= free.data.free;
@@ -245,6 +250,10 @@ export function DepositoryCard({ account }: { account?: `0x${string}` } = {}) {
 
   async function withdraw(): Promise<string> {
     if (!address || !owner || !tokenAddr || amt === null) throw new Error(copy.errors.walletConnectFirst);
+    if (escape) {
+      await write('escapeWithdraw', [kind, tokenAddr, id, amt]);
+      return d.withdrawDone;
+    }
     // Paid to the connected wallet: the owner, or the controller of a
     // retired account (always an allowed recipient).
     const { receipt } = await write('withdrawFromVault', [owner, kind, tokenAddr, id, amt, address]);
@@ -327,6 +336,7 @@ export function DepositoryCard({ account }: { account?: `0x${string}` } = {}) {
           {d.untrackedNote} <Link to="/recover">{d.untrackedLink}</Link>
         </p>
       ) : null}
+      {escape ? <p className="banner banner-warn">{d.escapeNote}</p> : null}
       {protectedOn ? <p>{d.queuedNote(copy.protection.delayDays(Math.round(delaySec / 86_400)))}</p> : null}
       {!protectionKnown && !protection.isLoading ? <p className="muted">{d.protectionUnknown}</p> : null}
       <div className="cluster">
