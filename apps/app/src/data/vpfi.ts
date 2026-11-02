@@ -267,7 +267,7 @@ export function useVpfi() {
         };
       }
 
-      const [walletBalance, effective, tracked, consent, encumbered] =
+      const [walletBalance, effective, tracked, consent, encumbered, earmark] =
         await Promise.all([
           read<bigint>('getVPFIBalanceOf', [address]),
           read<readonly [number, number]>('getEffectiveDiscount', [address]),
@@ -289,10 +289,15 @@ export function useVpfi() {
             if (isRevert) return 0n;
             throw err;
           }),
+          // What protected account mode holds back for the owner's queued
+          // payouts: not withdrawable either. A transport failure is not
+          // knowledge, so it rethrows like the lien read above.
+          read<bigint>('getPayoutEarmark', [address, token, 0n]),
         ]);
       const [effTier, effBps] = effective;
       const [trackedTier, trackedBal] = tracked;
-      const freeBalance = trackedBal > encumbered ? trackedBal - encumbered : 0n;
+      const heldBack = encumbered + earmark;
+      const freeBalance = trackedBal > heldBack ? trackedBal - heldBack : 0n;
 
       return {
         registered,

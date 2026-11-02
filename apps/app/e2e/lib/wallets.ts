@@ -14,8 +14,11 @@ import { setBalance } from './anvil';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
-export type Role = 'lender' | 'borrower' | 'newLender' | 'newBorrower';
-export const ROLES: Role[] = ['lender', 'borrower', 'newLender', 'newBorrower'];
+/** `vaultOwner` is a wallet no loan scenario touches: the protected-account
+ *  spec turns protection ON for it, which would delay every payout of a
+ *  shared role and so change what every later spec saw. */
+export type Role = 'lender' | 'borrower' | 'newLender' | 'newBorrower' | 'vaultOwner';
+export const ROLES: Role[] = ['lender', 'borrower', 'newLender', 'newBorrower', 'vaultOwner'];
 
 const STATE_FILE = path.join(HERE, '..', '.state', 'wallets.json');
 

@@ -1807,3 +1807,15 @@ its row in the matrix and, where the reasoning grows, its section here.
 **Where.** Unit: `src/hooks/useReviewConsent.test.ts` (jsdom, commit-logged: a change clears in the SAME commit — an effect-based clear fails it — a return to the old values stays cleared, `clear()` is not reported as a change, re-ticking clears the note, bigint and undefined fingerprint apart). CI-Anvil: every spec that ticks one of these boxes and signs (`02-post-offer`, `17-rate-desk`, `19-rate-desk-phase3`, `24-full-tariff`, `37-desk-maker-full`, `40-lender-sale-listing`, `44-lender-sale-accept`, `46-accept-token-screen`) drives the migrated gate end to end, and `46` asserts a token-screen verdict arriving after the tick unticks it.
 
 **Live-only reason.** No spec asserts the shared note's text on each surface: it renders only after a change the user did not make lands while ticked, which the specs do not stage.
+
+<a id="cov-depository-vault-and-protected-account"></a>
+
+## Depository vault and protected account mode (protected-vault app)
+
+**Why a new role.** Protection, once on, delays every payout to the account's wallet and can only be switched off after the delay. Turning it on for a shared role would change what every later spec saw (their withdrawals and settlements would queue), and warping chain time to switch it off again would move every open loan's deadline. So the spec runs on `vaultOwner`, which `lib/wallets.ts` funds and seeds like the others and no loan scenario uses.
+
+**Verdicts come from the chain.** Each step reads the contract: `freeHolding` for the deposit, the earmark and the cancellation; `getProtectedAccount` for the delay and the lock; the wallet's token balance to prove a queued withdrawal paid nothing; `getPendingPayout` to prove the cancelled row is Cancelled and not Released. The request code the spec looks for on the page is derived from `requestCode(id)` through the same shared formatter the app uses, so a page that rendered a code of its own would fail.
+
+**What is unit-only.** The read-trust rules (a failed account read shows no controls; a partly read queue counts as unread) live in `useProtectedAccount` and the page; the pure parts (`payoutStatus` order, `isDue`, `chainNowOf`, `isManager`, `hasReplacement`) are pinned in `src/data/protectedAccount.test.ts`. Recovery-signer flows (invite, accept, co-sign, replacement) need several wallets acting over the delay and are left to the live drive owed after the all-waves fresh deploy.
+
+**Terms gate.** `tosWriteGate.test.ts` pins both directions: every write that frees the user's own assets, releases what they asked for, asks to unlock or protects the account is an exit, and every write that adds exposure or reach (deposit, payout address, signer, replacement) is not.

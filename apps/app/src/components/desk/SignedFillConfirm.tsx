@@ -208,21 +208,13 @@ export function SignedFillConfirm({
       const stakeAmount = isLenderOrder
         ? BigInt(o.amountMax)
         : BigInt(o.collateralAmountMax);
-      const [tracked, encumbered] = await Promise.all([
-        publicClient.readContract({
-          address: walletChain.diamondAddress,
-          abi: DIAMOND_ABI_VIEM,
-          functionName: 'getTrackedHolding',
-          args: [signed.signer as `0x${string}`, stakeToken, 0n],
-        }) as Promise<bigint>,
-        publicClient.readContract({
-          address: walletChain.diamondAddress,
-          abi: DIAMOND_ABI_VIEM,
-          functionName: 'getEncumbered',
-          args: [signed.signer as `0x${string}`, stakeToken, 0n],
-        }) as Promise<bigint>,
-      ]);
-      const makerFree = tracked > encumbered ? tracked - encumbered : 0n;
+      // The contract's own free figure (liens and queued payouts out).
+      const makerFree = (await publicClient.readContract({
+        address: walletChain.diamondAddress,
+        abi: DIAMOND_ABI_VIEM,
+        functionName: 'freeHolding',
+        args: [signed.signer as `0x${string}`, 0, stakeToken, 0n],
+      })) as bigint;
       if (makerFree < stakeAmount) {
         throw new Error(text.makerNotFunded);
       }
@@ -353,8 +345,7 @@ export function SignedFillConfirm({
         { timestamp: chainNowPreWrite },
         filledPreWrite,
         nonceUsedPreWrite,
-        trackedPreWrite,
-        encumberedPreWrite,
+        makerFreePreWrite,
       ] = await Promise.all([
         publicClient.getBlock({ blockTag: 'latest' }),
         publicClient.readContract({
@@ -372,14 +363,8 @@ export function SignedFillConfirm({
         publicClient.readContract({
           address: walletChain.diamondAddress,
           abi: DIAMOND_ABI_VIEM,
-          functionName: 'getTrackedHolding',
-          args: [signed.signer as `0x${string}`, stakeToken, 0n],
-        }) as Promise<bigint>,
-        publicClient.readContract({
-          address: walletChain.diamondAddress,
-          abi: DIAMOND_ABI_VIEM,
-          functionName: 'getEncumbered',
-          args: [signed.signer as `0x${string}`, stakeToken, 0n],
+          functionName: 'freeHolding',
+          args: [signed.signer as `0x${string}`, 0, stakeToken, 0n],
         }) as Promise<bigint>,
       ]);
       if (filledPreWrite !== 0n || nonceUsedPreWrite) {
@@ -388,10 +373,6 @@ export function SignedFillConfirm({
       if (!signedOrderTimeWindowsOpen(o, chainNowPreWrite)) {
         throw new Error(text.gone);
       }
-      const makerFreePreWrite =
-        trackedPreWrite > encumberedPreWrite
-          ? trackedPreWrite - encumberedPreWrite
-          : 0n;
       if (makerFreePreWrite < stakeAmount) {
         throw new Error(text.makerNotFunded);
       }

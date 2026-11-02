@@ -15,6 +15,7 @@ import { EmptyState, UnavailableState } from '../components/EmptyState';
 import { formatTokenAmount, shortAddress } from '../lib/format';
 import { LIST_WINDOW_PAGE, WindowedRowList } from '../lib/visibleWindow';
 import { CopyAddress } from '../components/CopyAddress';
+import { DepositoryCard } from '../components/DepositoryCard';
 
 export function Vault() {
   const { isConnected, address, readChain } = useActiveChain();
@@ -82,6 +83,17 @@ export function Vault() {
               {copy.vault.onChain(readChain.name)}
             </p>
           </section>
+
+          <section className="card">
+            <p style={{ margin: 0 }}>
+              <Link to="/vault/protection">
+                <strong>{copy.protection.vaultLink}</strong>
+              </Link>{' '}
+              <span className="muted">{copy.protection.vaultCardBody}</span>
+            </p>
+          </section>
+
+          <DepositoryCard />
 
           {vault.depsCaveats.map((c) => (
             // #2536 — the asset list is built from the wallet's positions;

@@ -5068,6 +5068,43 @@ Its intended behaviour, as the test oracle for this surface:
   answered, and an asset behind any held offer may be missing when part
   of the offer list could not be read at all, stating both when both
   apply. It never presents the list as complete in either case.
+- The vault page lets a wallet deposit any token or NFT into its own
+  vault and withdraw a free part of it, with no loan involved. The amount
+  it calls free is the contract's own free figure (tracked holding less
+  everything loans, offers, intents and queued payouts hold), never one
+  the app works out, so the page never offers more than the contract will
+  release. The locked and withdrawable figures elsewhere in the app, and
+  the trading desk's and the accept flow's own-balance checks, use the
+  same figure, so a queued payout is never shown or spent as free. An
+  asset that reached the vault outside the app is named as not yet
+  withdrawable, with a link to adopt it. With protected mode on, the
+  withdraw button says the withdrawal is queued, and for how long, before
+  the user signs, and the result names where to find it.
+- A vault protection page shows the account's protected mode state from
+  one block, so every figure and every "ready" verdict describe the same
+  moment. A Diamond without the feature reads as unavailable, never as
+  "protection off". When the account's settings cannot be read the page
+  shows no controls at all, because "off" drawn over a failed read would
+  invite turning protection on twice or hide a lock. When the payout
+  queue, the transfer queue, the payout addresses or the signers cannot
+  be read, each says so and says not to assume it is empty; a partly read
+  list counts as unread, since the one missing row could be the one an
+  attacker queued. Each queued payout shows its request code (the same
+  six characters every alert carries), what it waits on in the order the
+  contract checks (the lock, then the time, then a co-signature) and the
+  actions that apply to it. Every change waiting the delay is listed with
+  its time and can be cancelled; due ones can be applied. The page also
+  states the escape route when it is open, names the wallet that now
+  manages a moved account, and lets a recovery signer open another
+  account to accept the role, cancel, co-sign, lock, and propose or
+  approve a move. When the app cannot check whether the wallet manages a
+  moved account it says so, rather than implying it manages none.
+- The Terms gate never blocks a protected-account write that takes the
+  user's own free assets out, releases a payout they already asked for,
+  asks to unlock, or protects the account (a lock, a cancellation, a
+  co-signature, removing a payout address, turning protection on).
+  Depositing, adding a payout address or a signer, and moving the account
+  stay behind it.
 - Advanced mode surfaces keeper permissions as the protocol's
   three-switch opt-in: a master switch, per-keeper action grants,
   and a per-loan switch on each loan's page — all off by default,

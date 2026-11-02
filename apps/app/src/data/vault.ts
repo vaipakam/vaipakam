@@ -2,8 +2,10 @@
  * "Your Vaipakam Vault" reads. Per asset the displayed numbers are:
  *   total  = min(raw ERC-20 balanceOf(vault), protocol-tracked)
  *            — unsolicited transfers never inflate anything (T-051)
- *   locked = getEncumbered(user, asset, 0)
- *   free   = total - locked (floored at 0)
+ *   free   = min(freeHolding(user, ERC-20, asset, 0), total) — the
+ *            contract's own figure: tracked minus liens minus what
+ *            protected account mode holds back for queued payouts
+ *   locked = total - free
  *
  * The asset list is best-effort: canonical per-chain tokens plus every
  * ERC-20 leg of the wallet's loans and open offers.
@@ -152,7 +154,7 @@ export function useVaultAssets(scanWindow: number) {
         scanTokens.map(async (tokenLower): Promise<VaultAssetRow | null> => {
           const token = tokenLower as `0x${string}`;
           try {
-            const [raw, tracked, locked, symbol, decimals] = await Promise.all([
+            const [raw, tracked, contractFree, symbol, decimals] = await Promise.all([
               publicClient!.readContract({
                 address: token,
                 abi: erc20Abi,
@@ -168,8 +170,8 @@ export function useVaultAssets(scanWindow: number) {
               publicClient!.readContract({
                 address: readChain.diamondAddress,
                 abi: DIAMOND_ABI_VIEM,
-                functionName: 'getEncumbered',
-                args: [address!, token, 0n],
+                functionName: 'freeHolding',
+                args: [address!, 0, token, 0n],
               }) as Promise<bigint>,
               publicClient!.readContract({
                 address: token,
@@ -183,7 +185,10 @@ export function useVaultAssets(scanWindow: number) {
               }),
             ]);
             const total = raw < tracked ? raw : tracked;
-            const free = total > locked ? total - locked : 0n;
+            // The contract's free figure (liens and queued payouts out),
+            // never more than the vault actually holds; the rest is locked.
+            const free = contractFree < total ? contractFree : total;
+            const locked = total - free;
             if (total === 0n && locked === 0n) return null; // hide empty rows
             return { token, symbol, decimals, total, locked, free };
           } catch {
