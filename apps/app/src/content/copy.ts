@@ -6046,7 +6046,7 @@ const copySource = {
   vault: {
     unreadableCount: tmpl('{{count}} assets', ['count'], { one: 'one asset' }),
     nftCollectionsNote: tmpl(
-      'Your vault also holds NFTs you deposited from {{list}}. Enter a collection and token id in the deposit card to see what you can withdraw.',
+      'Your vault has received NFT deposits from {{list}}. That list stays after a token is withdrawn, so the app cannot tell from it what you hold now: enter a collection and token id in the deposit card to check.',
       ['list'],
     ),
     unreadableWarn: tmpl(

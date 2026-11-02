@@ -2874,7 +2874,7 @@
       "unreadableCount_many": "{{count}} assets",
       "unreadableCount_other": "{{count}} assets",
       "unreadableWarn": "We couldn’t read {{assets}} just now ({{list}}) — the list below may be missing balances. This usually clears on the next refresh.",
-      "nftCollectionsNote": "Your vault also holds NFTs you deposited from {{list}}. Enter a collection and token id in the deposit card to see what you can withdraw.",
+      "nftCollectionsNote": "Your vault has received NFT deposits from {{list}}. That list stays after a token is withdrawn, so the app cannot tell from it what you hold now: enter a collection and token id in the deposit card to check.",
       "sourcesDegraded": "Your loan or offer list was read from the backup source just now, which can trail the chain by a minute or two, so an asset behind a position opened or received very recently may be missing below. It appears once the backup source catches up.",
       "sourcesPartial": "Part of your offer list could not be read just now, so an asset behind an offer you hold may be missing below, however old that offer is. Try again in a moment.",
       "noBalancesInWindow": "No balances among the first {{count}} tokens checked — widen the scan below to keep looking.",

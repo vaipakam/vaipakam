@@ -2486,7 +2486,7 @@
       "unreadableCount_many": "{{count}} activos",
       "unreadableCount_other": "{{count}} activos",
       "unreadableWarn": "No pudimos leer {{assets}} ahora ({{list}}) — la lista de abajo puede omitir saldos. Esto suele corregirse en el siguiente refresco.",
-      "nftCollectionsNote": "Tu bóveda también guarda NFT que depositaste de {{list}}. Introduce una colección y un ID de token en la tarjeta de depósito para ver qué puedes retirar.",
+      "nftCollectionsNote": "Tu bóveda ha recibido depósitos de NFT de {{list}}. Esa lista se mantiene después de retirar un token, así que la app no puede saber por ella lo que tienes ahora: introduce una colección y un ID de token en la tarjeta de depósito para comprobarlo.",
       "sourcesDegraded": "Tu lista de préstamos u ofertas se leyó ahora mismo desde la fuente de respaldo, que puede ir uno o dos minutos por detrás de la cadena, así que puede faltar abajo un activo de una posición abierta o recibida muy recientemente. Aparecerá cuando la fuente de respaldo se ponga al día.",
       "sourcesPartial": "No se pudo leer parte de tu lista de ofertas ahora mismo, así que puede faltar abajo un activo de una oferta que tienes, sin importar su antigüedad. Inténtalo de nuevo en un momento.",
       "noBalancesInWindow": "Sin saldos entre los primeros {{count}} tokens revisados — amplía el escaneo abajo para seguir buscando.",

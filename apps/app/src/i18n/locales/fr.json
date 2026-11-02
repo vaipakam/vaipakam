@@ -2486,7 +2486,7 @@
       "unreadableCount_many": "{{count}} actifs",
       "unreadableCount_other": "{{count}} actifs",
       "unreadableWarn": "Nous n’avons pas pu lire {{assets}} pour l’instant ({{list}}) — la liste ci-dessous peut omettre des soldes. Cela se corrige généralement au prochain rafraîchissement.",
-      "nftCollectionsNote": "Votre coffre contient aussi des NFT que vous avez déposés depuis {{list}}. Saisissez une collection et un identifiant de jeton dans la carte de dépôt pour voir ce que vous pouvez retirer.",
+      "nftCollectionsNote": "Votre coffre a reçu des dépôts de NFT depuis {{list}}. Cette liste reste après le retrait d’un jeton, l’application ne peut donc pas en déduire ce que vous détenez aujourd’hui : saisissez une collection et un identifiant de jeton dans la carte de dépôt pour vérifier.",
       "sourcesDegraded": "Votre liste de prêts ou d’offres vient d’être lue depuis la source de secours, qui peut avoir une ou deux minutes de retard sur la chaîne, donc un actif lié à une position ouverte ou reçue très récemment peut manquer ci-dessous. Il apparaîtra une fois la source de secours à jour.",
       "sourcesPartial": "Une partie de votre liste d’offres n’a pas pu être lue pour l’instant, donc un actif lié à une offre que vous détenez peut manquer ci-dessous, quelle que soit son ancienneté. Réessayez dans un instant.",
       "noBalancesInWindow": "Aucun solde parmi les {{count}} premiers tokens vérifiés — élargissez l’analyse ci-dessous pour continuer à chercher.",

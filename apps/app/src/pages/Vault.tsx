@@ -65,17 +65,12 @@ export function Vault() {
       ) : vault.depsUnavailable || vault.isError || !vault.data ? (
         <UnavailableState body={copy.vault.unavailable} />
       ) : vault.data.vaultAddress === null ? (
-        // A first deposit creates the vault, so the depository card is
-        // offered here too: it is a way IN, not only a view of a vault.
-        <div className="stack">
-          <EmptyState
-            icon={Landmark}
-            title={copy.vault.noVaultTitle}
-            body={copy.vault.noVaultYet}
-            action={forwardCta}
-          />
-          <DepositoryCard />
-        </div>
+        <EmptyState
+          icon={Landmark}
+          title={copy.vault.noVaultTitle}
+          body={copy.vault.noVaultYet}
+          action={forwardCta}
+        />
       ) : (
         <div className="stack">
           <section className="card">
@@ -97,8 +92,6 @@ export function Vault() {
               <span className="muted">{copy.protection.vaultCardBody}</span>
             </p>
           </section>
-
-          <DepositoryCard />
 
           {vault.depsCaveats.map((c) => (
             // #2536 — the asset list is built from the wallet's positions;
@@ -208,6 +201,17 @@ export function Vault() {
           )}
         </div>
       )}
+
+      {/* One card for every vault state, outside the branches above: a first
+          deposit creates the vault and flips this page to the vault view,
+          and a card inside either branch would be remounted by that flip,
+          losing its result. It is also a way IN, so it shows before a vault
+          exists and while the asset list is loading or unavailable. */}
+      {isConnected ? (
+        <div style={{ marginTop: 16 }}>
+          <DepositoryCard />
+        </div>
+      ) : null}
     </div>
   );
 }

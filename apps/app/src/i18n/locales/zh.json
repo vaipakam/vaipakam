@@ -2486,7 +2486,7 @@
       "unreadableCount_many": "{{count}} 个资产",
       "unreadableCount_other": "{{count}} 个资产",
       "unreadableWarn": "我们刚才无法读取 {{assets}}（{{list}}）— 下方列表可能缺少余额。通常下次刷新会恢复。",
-      "nftCollectionsNote": "您的金库还持有您从 {{list}} 存入的 NFT。在存入卡片中输入合集和代币 ID，即可查看可以提取的内容。",
+      "nftCollectionsNote": "您的金库曾收到来自 {{list}} 的 NFT 存入。代币提取后该列表仍会保留，因此应用无法据此判断您当前持有什么：请在存入卡片中输入合集和代币 ID 进行查询。",
       "sourcesDegraded": "你的贷款或报价列表刚刚是从备用数据源读取的，该数据源可能比链上落后一两分钟，因此下方可能缺少最近开立或收到的仓位所涉及的资产。备用数据源跟上后即会显示。",
       "sourcesPartial": "暂时无法读取你的部分报价列表，因此下方可能缺少你持有的报价所涉及的资产，无论该报价多久之前创建。请稍后再试。",
       "noBalancesInWindow": "前 {{count}} 个已检查 token 中没有余额 — 可在下方扩大扫描继续寻找。",

@@ -789,7 +789,7 @@ function SignerEntryCard() {
           <Feedback error={error} done={done} />
           {snap.isLoading ? (
             <p className="muted">{p.loading}</p>
-          ) : !data || data.recordFailed ? (
+          ) : snap.isError || !data || data.recordFailed ? (
             <UnavailableState body={p.unavailable} />
           ) : !data.supported ? (
             <UnavailableState body={p.unsupported} />
