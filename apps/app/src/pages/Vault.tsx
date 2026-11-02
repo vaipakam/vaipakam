@@ -84,15 +84,6 @@ export function Vault() {
             </p>
           </section>
 
-          <section className="card">
-            <p style={{ margin: 0 }}>
-              <Link to="/vault/protection">
-                <strong>{copy.protection.vaultLink}</strong>
-              </Link>{' '}
-              <span className="muted">{copy.protection.vaultCardBody}</span>
-            </p>
-          </section>
-
           {vault.depsCaveats.map((c) => (
             // #2536 — the asset list is built from the wallet's positions;
             // one note per gap in those lists, both when both apply.
@@ -208,7 +199,18 @@ export function Vault() {
           losing its result. It is also a way IN, so it shows before a vault
           exists and while the asset list is loading or unavailable. */}
       {isConnected ? (
-        <div style={{ marginTop: 16 }}>
+        <div className="stack" style={{ marginTop: 16 }}>
+          {/* Protection is reached from every vault state, so a recovery
+              signer or the controller of a moved account, neither of whom
+              needs a vault of their own, can always find it. */}
+          <section className="card">
+            <p style={{ margin: 0 }}>
+              <Link to="/vault/protection">
+                <strong>{copy.protection.vaultLink}</strong>
+              </Link>{' '}
+              <span className="muted">{copy.protection.vaultCardBody}</span>
+            </p>
+          </section>
           <DepositoryCard />
         </div>
       ) : null}

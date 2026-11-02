@@ -3769,6 +3769,7 @@
       "transferQueue": "Programar transferencia",
       "cooldownNote": "Esta billetera tomó la cuenta hace poco. Hasta el {{at}} no puede pedir ningún cambio que relaje la protección: desbloqueo, plazo más corto, desactivar la cofirma o la protección de NFT, nueva dirección de pago o firmante, quitar un firmante o desactivar la protección. Después, cada uno espera el plazo como siempre.",
       "lockedLoosenNote": "Mientras la cuenta esté bloqueada, no se puede pedir ningún cambio que afloje la protección. Pide primero el desbloqueo; los cambios que la refuerzan se aplican al instante.",
+      "signerLockHoldsMove": "Un firmante de recuperación ha bloqueado esta cuenta, así que esta billetera no puede cancelar el traspaso propuesto ni proponer otro. Los firmantes de recuperación pueden cancelarlo.",
       "transfersUnknown": "No pudimos leer la cola de transferencias en este momento. No supongas que está vacía.",
       "transferLine": "NFT de posición n.º {{tokenId}} a {{to}}",
       "allowlistTitle": "Direcciones de pago",

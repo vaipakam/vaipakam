@@ -310,6 +310,11 @@ function AccountView({
     snap.signers?.some((s) => s.signer.toLowerCase() === record.lockedBy.toLowerCase()),
   );
   const signerMayLockOver = signer && record.locked && !lockedBySigner;
+  // The one rule for stopping or redirecting a replacement (the contract's
+  // cancelReplacement and proposeReplacement): a recovery signer always may;
+  // the manager may unless a signer holds a lock on the account.
+  const managerHeldBySignerLock = manager && !signer && record.locked && lockedBySigner;
+  const mayStopOrRedirectMove = signer || (manager && !managerHeldBySignerLock);
   const [delayChoice, setDelayChoice] = useState(Math.round(record.delaySeconds / DAY) || 3);
   const bounds = snap.delayBounds ?? { min: 2 * DAY, max: 5 * DAY };
   const dayOptions: number[] = [];
@@ -786,7 +791,10 @@ function AccountView({
                 {p.approveReplacement}
               </button>
             ) : null}
-            {canGuard ? (
+            {managerHeldBySignerLock ? (
+              <p className="muted" role="status">{p.signerLockHoldsMove}</p>
+            ) : null}
+            {mayStopOrRedirectMove ? (
               <button
                 type="button"
                 className="btn btn-secondary"
@@ -811,7 +819,7 @@ function AccountView({
         {/* A secondary signer proposes (approved by a signer majority); the
             manager may also propose its own move, which waits the delay, but
             not while a signer holds a lock on the account. */}
-        {(signer || (manager && !(record.locked && lockedBySigner))) && repl !== null && !hasReplacement(repl) ? (
+        {mayStopOrRedirectMove && repl !== null && !hasReplacement(repl) ? (
           <AddressAction
             placeholder={p.nomineePlaceholder}
             label={p.proposeReplacement}

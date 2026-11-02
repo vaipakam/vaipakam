@@ -3769,6 +3769,7 @@
       "transferQueue": "Programmer le transfert",
       "cooldownNote": "Ce portefeuille a repris le compte récemment. Jusqu’au {{at}}, il ne peut demander aucun changement qui assouplit la protection : déverrouillage, délai plus court, cosignature ou protection des NFT désactivée, nouvelle adresse de paiement ou nouveau signataire, retrait d’un signataire, ou désactivation. Chacun attend ensuite le délai habituel.",
       "lockedLoosenNote": "Tant que le compte est verrouillé, aucune modification qui assouplit la protection ne peut être demandée. Demandez d’abord le déverrouillage ; les modifications qui la renforcent s’appliquent toujours immédiatement.",
+      "signerLockHoldsMove": "Un signataire de récupération a verrouillé ce compte : ce portefeuille ne peut donc ni annuler le transfert proposé ni en proposer un autre. Les signataires de récupération peuvent l’annuler.",
       "transfersUnknown": "Nous n’avons pas pu lire la file des transferts pour le moment. Ne supposez pas qu’elle est vide.",
       "transferLine": "NFT de position n° {{tokenId}} vers {{to}}",
       "allowlistTitle": "Adresses de paiement",

@@ -2949,6 +2949,8 @@ const copySource = {
     ),
     lockedLoosenNote:
       'While the account is locked, no change that loosens protection can be asked for. Request the unlock first; tightening changes still apply at once.',
+    signerLockHoldsMove:
+      'A recovery signer has locked this account, so this wallet cannot cancel the proposed move or propose another. The recovery signers can cancel it.',
     transfersUnknown: 'We couldn’t read the transfer queue just now. Don’t assume it is empty.',
     transferLine: tmpl('Position NFT #{{tokenId}} to {{to}}', ['tokenId', 'to']),
     allowlistTitle: 'Payout addresses',

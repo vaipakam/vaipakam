@@ -3769,6 +3769,7 @@
       "transferQueue": "Übertragung einreihen",
       "cooldownNote": "Diese Wallet hat das Konto kürzlich übernommen. Bis {{at}} kann sie keine Änderung beantragen, die den Schutz lockert: Entsperren, kürzere Verzögerung, Mitzeichnung oder NFT-Schutz aus, neue Auszahlungsadresse oder neuer Unterzeichner, Entfernen eines Unterzeichners oder Abschalten. Danach wartet jede davon wie üblich die Verzögerung ab.",
       "lockedLoosenNote": "Solange das Konto gesperrt ist, kann keine Änderung beantragt werden, die den Schutz lockert. Beantrage zuerst die Entsperrung; verschärfende Änderungen gelten weiterhin sofort.",
+      "signerLockHoldsMove": "Ein Wiederherstellungs-Unterzeichner hat dieses Konto gesperrt, daher kann diese Wallet den vorgeschlagenen Wechsel weder abbrechen noch einen anderen vorschlagen. Die Wiederherstellungs-Unterzeichner können ihn abbrechen.",
       "transfersUnknown": "Wir konnten die Übertragungswarteschlange gerade nicht lesen. Geh nicht davon aus, dass sie leer ist.",
       "transferLine": "Positions-NFT #{{tokenId}} an {{to}}",
       "allowlistTitle": "Auszahlungsadressen",
