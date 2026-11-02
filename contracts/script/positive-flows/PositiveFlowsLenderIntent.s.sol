@@ -115,7 +115,7 @@ contract PositiveFlowsLenderIntent is PositiveFlowsBase {
         uint256 walletBefore = usdc.balanceOf(lender);
         vm.startBroadcast(lenderKey);
         LenderIntentFacet(diamond).withdrawLenderIntentCapital(
-            address(usdc), address(weth), MAX_EXPOSURE - LOAN_AMOUNT
+            lender, address(usdc), address(weth), MAX_EXPOSURE - LOAN_AMOUNT
         );
         vm.stopBroadcast();
         require(
@@ -168,7 +168,7 @@ contract PositiveFlowsLenderIntent is PositiveFlowsBase {
         // Wind down: pause, withdraw everything, and the borrower claims.
         vm.startBroadcast(lenderKey);
         LenderIntentFacet(diamond).cancelLenderIntent(address(usdc), address(weth));
-        LenderIntentFacet(diamond).withdrawLenderIntentCapital(address(usdc), address(weth), proceeds);
+        LenderIntentFacet(diamond).withdrawLenderIntentCapital(lender, address(usdc), address(weth), proceeds);
         vm.stopBroadcast();
         require(usdc.balanceOf(lender) - walletBefore == proceeds, "PF-074: the rolled capital should be withdrawable");
         vm.startBroadcast(borrowerKey);

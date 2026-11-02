@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibProtectedAccount} from "./LibProtectedAccount.sol";
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
@@ -170,7 +171,12 @@ library LibAuth {
         address principal
     ) internal view returns (bool) {
         if (solver == address(this)) return true; // diamond-internal
-        if (solver == principal) return true; // self
+        // Protected account mode: a replaced (retired) account acts only
+        // through its controller. Its old wallet is no longer "self", and no
+        // keeper grant it made survives the replacement.
+        address mgr = LibProtectedAccount.manager(principal);
+        if (solver == mgr) return true; // self, or the controller
+        if (mgr != principal) return false;
         // #633 — global delegated-keeper pause (principal can still self-act).
         if (LibVaipakam.cfgKeepersPaused()) return false;
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();

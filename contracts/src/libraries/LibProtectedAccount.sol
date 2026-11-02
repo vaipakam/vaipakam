@@ -215,6 +215,15 @@ library LibProtectedAccount {
         return a.retired ? a.controller : account;
     }
 
+    /// @notice The one authority rule for an owner action on `account`: the
+    ///         caller must be its manager (the account's own wallet, or its
+    ///         controller once a replacement retired it). Called with
+    ///         `msg.sender` as the account, it refuses a retired wallet acting
+    ///         as itself, which lost every right over the account.
+    function requireManager(address account) internal view {
+        if (msg.sender != manager(account)) revert NotAccountManager(account, msg.sender);
+    }
+
     /// @notice Whether `account` is an active secondary signer's account.
     function isSigner(address account, address who) internal view returns (bool) {
         return _s().protectedSigners[account].contains(who);
