@@ -2147,6 +2147,68 @@ is the borrower's own money.
   drop. When the app cannot tell whether the collateral is VPFI, it says that
   and gives the same caution, rather than treating unknown as "not VPFI".
 
+### Automatic extension of a loan (#2814)
+
+- A party to an active loan that is not an NFT rental can see, on the loan
+  page, whether the loan can be extended automatically, and set their side's
+  consent. An extension rolls the loan forward in place: it settles the
+  interest so far and any late fee from the borrower position's vault, then
+  restarts the loan at a new rate and term, with no new loan and no new
+  position tokens.
+- The page states, from the protocol's own reads: whether the protocol's
+  automatic-extension switch is on, whether the protocol is paused, and the
+  loan's extension window (when it opens, when it closes, and that once it
+  has closed the loan can no longer be extended and may be defaulted). It
+  also says that an extension is refused while a refinance request for the
+  loan is open or a swap-to-repay order holds its collateral. A loan that
+  pays interest on a schedule is said not to be extendable in place.
+- Each side's consent is shown as the protocol holds it: the borrower's
+  highest acceptable rate and latest new end, and the lender's lowest
+  acceptable rate and latest new end. Limits an earlier holder of a position
+  set do not count for the current holder, and the page says so rather than
+  showing them as in force. From both sides' limits the page states the terms
+  an extension may use (the lender's lowest rate up to the lower of the two
+  highest rates, ending no later than the earlier of the two latest ends), or
+  that the two sides' limits leave no rate both accept, or that no extension
+  runs until both sides have limits in force. It says that whoever sends the
+  extension chooses the exact rate and term within those limits.
+- A party sets or clears their own side's limits from the page. Turning one's
+  own consent off is always possible, including while the feature is switched
+  off and before the current Terms are accepted. Setting limits is refused
+  while the protocol is paused.
+- The borrower-position holder is told whether a keeper they allow can send
+  the extension for them, and what to change if not; when delegated keepers
+  are paused protocol-wide, the page says that instead.
+- The borrower-position holder sees the extension reserve: what they have
+  reserved for the loan, their other free balance of the loan's asset in
+  their vault, what an extension would charge now, and what it would charge
+  at the end of the window, which is the most an extension of the current
+  term can charge. The page says whether the reserve and other free balance
+  together cover an extension now and at the end of the window, and by how
+  much they fall short if not. It says that the reserve is drawn first and
+  the other free balance second, that an extension that is not covered is
+  refused and takes nothing, that the wallet is never drawn on, and that each
+  extension charges again.
+- Adding to the reserve deposits the loan's asset from the wallet into the
+  holder's own vault, earmarked for the loan. It is offered only while the
+  switch is on and the protocol is not paused, and the loan is checked again
+  just before any approval, so no approval is left standing for a deposit the
+  protocol would refuse. An approval granted for a deposit that then fails is
+  put back.
+- The reserve belongs to whoever deposited it. Its unused part can be
+  withdrawn at any time, whatever the loan's state and whether or not the
+  wallet still holds the borrower position, and the withdrawal reads the
+  reserve again just before signing, since an extension may have drawn it.
+  The withdrawal is a way out, so it is never held behind the Terms of
+  Service acceptance. Where a protected account's payout is delayed or kept
+  in the vault, the page says so before and after. A wallet that holds a
+  reserve on a loan it is no longer a party to, or on a loan that has ended,
+  sees that reserve and its withdrawal on the loan page, with the reason
+  nothing will draw it.
+- The lender is told that the borrower pays each extension's charge from
+  their vault, and that the lender receives it as interest less the
+  protocol's usual cut, as at repayment.
+
 ### Loan status and what is owed, as the page states them (#2466, #2470)
 
 - An internally matched loan is closed but not settled until its claims are
@@ -2813,6 +2875,17 @@ is the borrower's own money.
   a way out, like any claim of settled funds, so it is never held behind the
   Terms of Service acceptance, and a row whose payment was just withdrawn
   offers the next one as soon as it arrives.
+- Extension reserves (#2814) are listed on their own Claims card: money a
+  wallet set aside in its vault for a loan's automatic extensions, which is
+  its own and withdrawable at any time. The loans are found from the history
+  service's record of the wallet's reserve deposits, and each is read from the
+  chain: what is still reserved, and whether the loan's extensions can still
+  draw it (the loan is active and the wallet holds its borrower position), or
+  nothing will (the loan has ended, or the position has passed to someone
+  else). A loan with nothing reserved is not listed. The same unavailable,
+  unread and cut-short statements as the seller-claims card apply, and the
+  page does not describe the wallet's claims as empty while this card lists
+  anything, was cut short, or could not check.
 - When two or more payouts are ready at once, the user may collect them all in a
   single wallet signature instead of one transaction per claim. The batch spans
   lender and borrower loan proceeds, pending interaction rewards, and free

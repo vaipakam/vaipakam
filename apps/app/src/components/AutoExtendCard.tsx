@@ -1,0 +1,564 @@
+/**
+ * #2814 — the loan page's automatic-extension card.
+ *
+ * For a party to an active ERC-20 loan it states the protocol switch, the
+ * extension window, both sides' limits and the terms they leave open, and
+ * lets the viewer set or clear their own side's limits. The borrower-position
+ * holder also sees the extension reserve: what is set aside, what the next
+ * extension would charge now and at the end of the window, whether that is
+ * covered, and the deposit and withdrawal. Anyone else holding an unused
+ * reserve on the loan (a closed loan, or a position since passed on) is shown
+ * just that reserve and its withdrawal.
+ *
+ * Every figure is read from the chain; the card adds no rule of its own.
+ */
+import { useState } from 'react';
+import { CalendarClock } from 'lucide-react';
+import { usePublicClient, useWalletClient } from 'wagmi';
+import { useQueryClient } from '@tanstack/react-query';
+import type { Address, Log, PublicClient } from 'viem';
+import { copy } from '../content/copy';
+import { useActiveChain } from '../chain/useActiveChain';
+import { useDiamondWrite } from '../contracts/diamond';
+import { ensureAllowance, trackApproval, useTokenMeta } from '../contracts/erc20';
+import { assertErc20BalanceLive, assertAssetNotPausedLive, assertPositionNftHeldLive } from '../contracts/preflights';
+import { readLoanLive } from '../contracts/loanLive';
+import { assertWalletNotSanctionedLive } from '../data/sanctions';
+import { useKeeperConfig, useLoanKeeperEnables } from '../data/keepers';
+import { payoutOutcome, useOwnPayoutRoute } from '../data/protectedAccount';
+import { payoutOutcomesText, payoutRouteText } from '../lib/payoutRouteText';
+import { captureTxError } from '../lib/errors';
+import { formatBpsAsPercent, formatDateTime, formatTokenAmount, parseExactUnits } from '../lib/format';
+import { MAX_INTEREST_BPS, percentToBps } from '../lib/offerSchema';
+import {
+  capsArgs,
+  consentBand,
+  fundingCover,
+  readAutoExtendState,
+  setByEarlierHolder,
+  useAutoExtendState,
+  useExtendFunding,
+  windowPhase,
+  withdrawWholeReserve,
+  type AutoExtendState,
+  type ExtendCaps,
+  type ExtendFunding,
+} from '../data/autoExtend';
+
+/** `LibVaipakam.KEEPER_ACTION_EXTEND`. */
+const KEEPER_ACTION_EXTEND = 0x20;
+
+type Meta = { decimals: number; symbol: string } | undefined;
+
+function amountText(amount: bigint, meta: Meta): string {
+  return meta
+    ? `${formatTokenAmount(amount, meta.decimals)} ${meta.symbol}`
+    : copy.claims.row.amountLoadingInline;
+}
+
+/** A date input's value ("2026-11-20") as the end of that local day. */
+function endOfLocalDay(value: string): number | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!m) return null;
+  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), 23, 59, 59);
+  return Number.isNaN(d.getTime()) ? null : Math.floor(d.getTime() / 1000);
+}
+
+function dateInputOf(unix: number): string {
+  const d = new Date(unix * 1000);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+/** One side's limits, worded. */
+function capsLine(side: 'borrower' | 'lender', caps: ExtendCaps): string {
+  if (!caps.enabled) return copy.autoExtend.off;
+  const end = formatDateTime(caps.maxNewExpiry);
+  return side === 'borrower'
+    ? copy.autoExtend.borrowerOn(formatBpsAsPercent(caps.maxRateBps), end)
+    : copy.autoExtend.lenderOn(formatBpsAsPercent(caps.minRateBps), end);
+}
+
+function Banner({ kind, children }: { kind: 'info' | 'warn' | 'danger'; children: React.ReactNode }) {
+  return (
+    <div className={`banner banner-${kind}`} role={kind === 'danger' ? 'alert' : 'status'} style={{ marginTop: 12 }}>
+      <span className="banner-body">{children}</span>
+    </div>
+  );
+}
+
+/** Withdraw the whole unused reserve, and say where the payment went. */
+export function ReserveWithdraw({
+  loanId,
+  busy,
+  setBusy,
+}: {
+  loanId: number;
+  busy: boolean;
+  setBusy: (b: boolean) => void;
+}) {
+  const { address, walletChain, onSupportedChain } = useActiveChain();
+  const client = usePublicClient({ chainId: walletChain?.chainId });
+  const { write } = useDiamondWrite();
+  const queryClient = useQueryClient();
+  const route = payoutRouteText(useOwnPayoutRoute());
+  const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState<string | null>(null);
+
+  async function run() {
+    if (!address || !walletChain || !client) return;
+    setBusy(true);
+    setError(null);
+    setDone(null);
+    try {
+      const diamond = walletChain.diamondAddress as Address;
+      const logs = await withdrawWholeReserve({
+        client: client as PublicClient,
+        diamond,
+        account: address as Address,
+        loanId,
+        write: (fn, args) => write(fn, args),
+        screen: () => assertWalletNotSanctionedLive(client as PublicClient, diamond, address as Address),
+      });
+      if (logs === null) {
+        setError(copy.autoExtend.reserve.nothingLeft);
+        return;
+      }
+      const note = payoutOutcomesText([payoutOutcome(logs as Log[], address)], address);
+      setDone(note ? `${copy.autoExtend.reserve.withdrawn} ${note}` : copy.autoExtend.reserve.withdrawn);
+    } catch (err) {
+      setError(captureTxError(err));
+    } finally {
+      setBusy(false);
+      void queryClient.invalidateQueries({ queryKey: ['extendReserve'] });
+    }
+  }
+
+  return (
+    <>
+      {route ? <p className="muted">{route}</p> : null}
+      <button
+        type="button"
+        className="btn btn-secondary btn-sm"
+        disabled={busy || !onSupportedChain}
+        onClick={() => void run()}
+      >
+        {busy ? copy.autoExtend.reserve.withdrawing : copy.autoExtend.reserve.withdraw}
+      </button>
+      {done ? <Banner kind="info">{done}</Banner> : null}
+      {error ? <Banner kind="danger">{error}</Banner> : null}
+    </>
+  );
+}
+
+/** The reserve as the borrower-position holder of an active loan sees it. */
+function ReservePanel({
+  loanId,
+  funding,
+  meta,
+  canFund,
+  busy,
+  setBusy,
+}: {
+  loanId: number;
+  funding: ExtendFunding;
+  meta: Meta;
+  /** The switch is on and the protocol not paused (the loan's own state is
+   *  re-read live before the deposit). */
+  canFund: boolean;
+  busy: boolean;
+  setBusy: (b: boolean) => void;
+}) {
+  const r = copy.autoExtend.reserve;
+  const { address, walletChain, onSupportedChain } = useActiveChain();
+  const publicClient = usePublicClient({ chainId: walletChain?.chainId });
+  const { data: walletClient } = useWalletClient();
+  const { write } = useDiamondWrite();
+  const queryClient = useQueryClient();
+  const [input, setInput] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState<string | null>(null);
+  const cover = fundingCover(funding);
+  const parsed = meta ? parseExactUnits(input, meta.decimals) : 'invalid';
+  const amount = typeof parsed === 'bigint' && parsed > 0n ? parsed : null;
+
+  async function fund() {
+    if (!address || !walletChain || !publicClient || !walletClient || amount === null) return;
+    const owner = address as Address;
+    const diamond = walletChain.diamondAddress as Address;
+    const approval = trackApproval();
+    setBusy(true);
+    setError(null);
+    setDone(null);
+    let approved = false;
+    try {
+      await assertWalletNotSanctionedLive(publicClient, diamond, owner);
+      // The deposit is refused unless the loan could be extended now:
+      // check before any approval, so none is left standing for a refusal.
+      const [live, loan] = await Promise.all([
+        readAutoExtendState({ client: publicClient, diamond }, loanId),
+        readLoanLive(publicClient, diamond, loanId),
+      ]);
+      if (live.paused || !live.switchOn || live.window === null || Number(loan.periodicInterestCadence) !== 0) {
+        setError(r.fundClosed);
+        return;
+      }
+      // Only the current borrower-position holder may fund.
+      await assertPositionNftHeldLive({
+        publicClient,
+        diamondAddress: diamond,
+        tokenId: String(loan.borrowerTokenId),
+        expectedOwner: owner,
+      });
+      await assertAssetNotPausedLive({ publicClient, diamondAddress: diamond, asset: funding.asset });
+      await assertErc20BalanceLive({ publicClient, token: funding.asset, owner, amount, symbol: meta?.symbol });
+      await ensureAllowance({
+        publicClient,
+        walletClient,
+        token: funding.asset,
+        owner,
+        spender: diamond,
+        amount,
+        ...approval.hooks(funding.asset),
+      });
+      approved = true;
+      await write('fundExtendReserve', [BigInt(loanId), amount]);
+      approved = false;
+      setInput('');
+      setDone(r.added);
+    } catch (err) {
+      let message = captureTxError(err);
+      // An approval this attempt granted for a deposit that did not happen
+      // is put back rather than left standing.
+      if (approved) {
+        const ok = await approval.unwind({ publicClient, walletClient, owner, spender: diamond });
+        if (!ok) message = `${message} ${copy.errors.approvalCleanupFailed}`;
+      }
+      setError(message);
+    } finally {
+      setBusy(false);
+      void queryClient.invalidateQueries({ queryKey: ['extendReserve'] });
+    }
+  }
+
+  return (
+    <div style={{ marginTop: 16 }} data-testid="extend-reserve">
+      <h4 style={{ margin: '0 0 4px' }}>{r.title}</h4>
+      <p className="muted">{r.lede(meta?.symbol ?? '')}</p>
+      <ul style={{ margin: '8px 0', paddingLeft: 18 }}>
+        <li>{r.reserved(amountText(funding.reserved, meta))}</li>
+        <li>{r.otherFree(amountText(funding.otherFree, meta))}</li>
+        <li>{r.chargeNow(amountText(funding.chargeNow, meta))}</li>
+        <li>{r.chargeAtEnd(amountText(funding.chargeAtGraceEnd, meta))}</li>
+      </ul>
+      <p>
+        {cover.coversWindow
+          ? r.coversBoth
+          : cover.coversNow
+            ? r.coversNowOnly(amountText(cover.shortWindow, meta))
+            : r.short(amountText(cover.shortWindow, meta))}
+      </p>
+      <p className="muted">{r.eachTime}</p>
+      <p className="muted">{r.ownership}</p>
+      {canFund ? (
+        <div className="cluster" style={{ alignItems: 'flex-end', gap: 8 }}>
+          <label className="stack" style={{ gap: 4 }}>
+            <span>{r.amount(meta?.symbol ?? '')}</span>
+            <input
+              className="input"
+              inputMode="decimal"
+              value={input}
+              disabled={busy}
+              onChange={(e) => setInput(e.target.value)}
+            />
+          </label>
+          <button
+            type="button"
+            className="btn btn-primary btn-sm"
+            disabled={busy || !onSupportedChain || amount === null}
+            onClick={() => void fund()}
+          >
+            {busy ? r.adding : r.add}
+          </button>
+        </div>
+      ) : (
+        <p className="muted">{r.fundClosed}</p>
+      )}
+      {done ? <Banner kind="info">{done}</Banner> : null}
+      {error ? <Banner kind="danger">{error}</Banner> : null}
+      {funding.reserved > 0n ? (
+        <div style={{ marginTop: 12 }}>
+          <ReserveWithdraw loanId={loanId} busy={busy} setBusy={setBusy} />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/** The viewer's own side's limits, with set and clear. */
+function LimitsEditor({
+  loanId,
+  side,
+  state,
+  busy,
+  setBusy,
+}: {
+  loanId: number;
+  side: 'borrower' | 'lender';
+  state: AutoExtendState;
+  busy: boolean;
+  setBusy: (b: boolean) => void;
+}) {
+  const a = copy.autoExtend;
+  const { address, walletChain, onSupportedChain } = useActiveChain();
+  const publicClient = usePublicClient({ chainId: walletChain?.chainId });
+  const { write } = useDiamondWrite();
+  const queryClient = useQueryClient();
+  const own = side === 'borrower' ? state.borrower : state.lender;
+  const ownRate = side === 'borrower' ? own.maxRateBps : own.minRateBps;
+  const [rate, setRate] = useState(own.enabled ? String(ownRate / 100) : '');
+  const [end, setEnd] = useState(own.enabled ? dateInputOf(own.maxNewExpiry) : '');
+  const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState<string | null>(null);
+  const rateBps = rate === '' ? null : percentToBps(rate);
+  const rateOk = rateBps !== null && rateBps >= 0 && rateBps <= MAX_INTEREST_BPS;
+  const endAt = endOfLocalDay(end);
+  const endOk = endAt !== null && endAt > state.now;
+
+  async function save(enabled: boolean) {
+    if (!address || !walletChain || !publicClient) return;
+    setBusy(true);
+    setError(null);
+    setDone(null);
+    try {
+      await assertWalletNotSanctionedLive(publicClient, walletChain.diamondAddress, address);
+      const args = capsArgs(
+        side,
+        loanId,
+        { enabled, rateBps: rateBps ?? 0, latestEnd: endAt ?? 0 },
+        MAX_INTEREST_BPS,
+      );
+      await write(side === 'borrower' ? 'setAutoExtendBorrowerCaps' : 'setAutoExtendLenderCaps', args);
+      setDone(enabled ? a.saved : a.turnedOff);
+    } catch (err) {
+      setError(captureTxError(err));
+    } finally {
+      setBusy(false);
+      void queryClient.invalidateQueries({ queryKey: ['autoExtend'] });
+    }
+  }
+
+  return (
+    <div className="stack" style={{ gap: 8, marginTop: 12 }}>
+      <div className="cluster" style={{ alignItems: 'flex-end', gap: 8 }}>
+        <label className="stack" style={{ gap: 4 }}>
+          <span>{side === 'borrower' ? a.rateBorrower : a.rateLender}</span>
+          <input
+            className="input"
+            inputMode="decimal"
+            value={rate}
+            disabled={busy || state.paused}
+            onChange={(e) => setRate(e.target.value)}
+          />
+        </label>
+        <label className="stack" style={{ gap: 4 }}>
+          <span>{a.latestEnd}</span>
+          <input
+            className="input"
+            type="date"
+            value={end}
+            disabled={busy || state.paused}
+            onChange={(e) => setEnd(e.target.value)}
+          />
+        </label>
+      </div>
+      {rate !== '' && !rateOk ? (
+        <p className="muted">{a.invalidRate(formatBpsAsPercent(MAX_INTEREST_BPS))}</p>
+      ) : null}
+      {endAt !== null ? (
+        <p className="muted">{endOk ? a.latestEndHint(formatDateTime(endAt)) : a.invalidEnd}</p>
+      ) : null}
+      <div className="cluster" style={{ gap: 8 }}>
+        <button
+          type="button"
+          className="btn btn-primary btn-sm"
+          disabled={busy || state.paused || !onSupportedChain || !rateOk || !endOk}
+          onClick={() => void save(true)}
+        >
+          {busy ? a.saving : a.save}
+        </button>
+        {own.enabled ? (
+          <button
+            type="button"
+            className="btn btn-secondary btn-sm"
+            disabled={busy || state.paused || !onSupportedChain}
+            onClick={() => void save(false)}
+          >
+            {a.turnOff}
+          </button>
+        ) : null}
+      </div>
+      {done ? <Banner kind="info">{done}</Banner> : null}
+      {error ? <Banner kind="danger">{error}</Banner> : null}
+    </div>
+  );
+}
+
+/** Whether a keeper the borrower allows can send the extension. */
+function KeeperLine({ loanId, keepersPaused }: { loanId: number; keepersPaused: boolean }) {
+  const config = useKeeperConfig();
+  const keepers = (config.data?.keepers ?? []).map((k) => k.keeper);
+  const enables = useLoanKeeperEnables(loanId, keepers, keepers.length > 0);
+  const a = copy.autoExtend;
+  if (keepersPaused) return <p className="muted">{a.keeperPaused}</p>;
+  if (config.isError || enables.isError) return <p className="muted">{a.keeperUnknown}</p>;
+  if (!config.data || (keepers.length > 0 && !enables.data)) return null;
+  const ready =
+    config.data.enabled &&
+    config.data.keepers.some(
+      (k) => ((k.actions ?? 0) & KEEPER_ACTION_EXTEND) !== 0 && enables.data?.[k.keeper.toLowerCase()] === true,
+    );
+  return <p className="muted">{ready ? a.keeperReady : a.keeperNone}</p>;
+}
+
+export function AutoExtendCard({
+  loanId,
+  role,
+  active,
+  isRental,
+  cadence,
+  principalAsset,
+  busy,
+  setBusy,
+}: {
+  loanId: number;
+  role: 'borrower' | 'lender' | 'viewer';
+  /** The loan is active, by the page's reconciled status. */
+  active: boolean;
+  isRental: boolean;
+  /** The loan's interest schedule; `undefined` while unknown. */
+  cadence: number | undefined;
+  principalAsset: Address;
+  /** The page's shared write lock. */
+  busy: boolean;
+  setBusy: (b: boolean) => void;
+}) {
+  const a = copy.autoExtend;
+  const { address } = useActiveChain();
+  const party = active && !isRental && (role === 'borrower' || role === 'lender');
+  const funding = useExtendFunding(loanId);
+  const state = useAutoExtendState(loanId, party);
+  const metaQuery = useTokenMeta(principalAsset);
+  const meta = metaQuery.data;
+  const reserved = funding.data?.reserved ?? 0n;
+
+  // Not a party to an extendable loan: show only a reserve left behind.
+  if (!party) {
+    if (reserved === 0n || !funding.data) return null;
+    return (
+      <section className="card" data-testid="extend-reserve-leftover">
+        <div className="card-title">
+          <CalendarClock aria-hidden />
+          <h3 style={{ margin: 0 }}>{a.reserve.leftoverTitle}</h3>
+        </div>
+        <p>{a.reserve.leftover(amountText(reserved, meta))}</p>
+        <p className="muted">{active && !isRental ? a.reserve.notHolder : a.reserve.ended}</p>
+        <ReserveWithdraw loanId={loanId} busy={busy} setBusy={setBusy} />
+      </section>
+    );
+  }
+
+  const header = (
+    <div className="card-title">
+      <CalendarClock aria-hidden />
+      <h3 style={{ margin: 0 }}>{a.title}</h3>
+    </div>
+  );
+
+  if (cadence === undefined || cadence !== 0) {
+    return (
+      <section className="card" data-testid="auto-extend">
+        {header}
+        <p className="muted">{cadence === undefined ? a.scheduleUnknown : a.scheduled}</p>
+        {reserved > 0n ? (
+          <>
+            <p>{a.reserve.leftover(amountText(reserved, meta))}</p>
+            <ReserveWithdraw loanId={loanId} busy={busy} setBusy={setBusy} />
+          </>
+        ) : null}
+      </section>
+    );
+  }
+
+  if (!state.data) {
+    return (
+      <section className="card" data-testid="auto-extend">
+        {header}
+        <p className="muted">{state.isError ? a.unavailable : a.loading}</p>
+      </section>
+    );
+  }
+
+  const s = state.data;
+  const side = role as 'borrower' | 'lender';
+  const own = side === 'borrower' ? s.borrower : s.lender;
+  const other = side === 'borrower' ? s.lender : s.borrower;
+  const band = consentBand(s.borrower, s.lender);
+  const phase = s.window ? windowPhase(s.now, s.window) : null;
+
+  return (
+    <section className="card" data-testid="auto-extend">
+      {header}
+      <p className="muted">{a.lede}</p>
+      {s.paused ? <Banner kind="warn">{a.paused}</Banner> : null}
+      {!s.switchOn ? <Banner kind="warn">{a.switchOff}</Banner> : null}
+      {s.window && phase ? (
+        <p>
+          {phase === 'before'
+            ? a.windowBefore(formatDateTime(s.window.opensAt), formatDateTime(s.window.closesAt))
+            : phase === 'open'
+              ? a.windowOpen(formatDateTime(s.window.closesAt))
+              : a.windowClosed(formatDateTime(s.window.closesAt))}
+        </p>
+      ) : null}
+      <p className="muted">{a.blockers}</p>
+      <dl className="kv">
+        <div>
+          <dt>{a.yourLimits}</dt>
+          <dd>{!own.enabled && setByEarlierHolder(own, address) ? a.earlierHolder : capsLine(side, own)}</dd>
+        </div>
+        <div>
+          <dt>{a.otherLimits}</dt>
+          <dd>{other.enabled ? capsLine(side === 'borrower' ? 'lender' : 'borrower', other) : a.otherOff}</dd>
+        </div>
+      </dl>
+      <p>
+        {band.kind === 'both'
+          ? a.bandBoth(formatBpsAsPercent(band.minRateBps), formatBpsAsPercent(band.maxRateBps), formatDateTime(band.latestEnd))
+          : band.kind === 'noOverlap'
+            ? a.bandNoOverlap
+            : a.bandMissing}
+      </p>
+      <LimitsEditor loanId={loanId} side={side} state={s} busy={busy} setBusy={setBusy} />
+      {side === 'borrower' ? (
+        <>
+          <KeeperLine loanId={loanId} keepersPaused={s.keepersPaused} />
+          {funding.data ? (
+            <ReservePanel
+              loanId={loanId}
+              funding={funding.data}
+              meta={meta}
+              canFund={s.switchOn && !s.paused}
+              busy={busy}
+              setBusy={setBusy}
+            />
+          ) : (
+            <p className="muted">{funding.isError ? a.unavailable : a.loading}</p>
+          )}
+        </>
+      ) : (
+        <p className="muted">{a.lenderFunding}</p>
+      )}
+    </section>
+  );
+}

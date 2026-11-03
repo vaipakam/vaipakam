@@ -4692,6 +4692,108 @@ const copySource = {
       'Only the loans named by your most recent seller-claim records are checked here, so a claim from an older sale may not be listed.',
   },
 
+  autoExtend: {
+    title: 'Automatic extension',
+    lede:
+      'Before this loan is due, it can be rolled forward in place, at terms both of you agreed to in advance. An extension first settles the interest so far, and any late fee, from the borrower’s vault, then restarts the loan at the new rate and term. No new loan is opened and both positions carry on.',
+    loading: 'Checking automatic extension for this loan…',
+    unavailable: 'We couldn’t read this loan’s automatic extension right now. Try again shortly.',
+    paused: 'The protocol is paused: no extension can run and no limits can be set until it resumes.',
+    switchOff:
+      'The protocol’s automatic extension is switched off. No extension can run and a reserve can’t be funded. You can still set or clear your limits, and withdraw a reserve.',
+    scheduled:
+      'This loan pays interest on a schedule, and a loan on a schedule can’t be extended in place.',
+    scheduleUnknown: 'Checking whether this loan pays interest on a schedule…',
+    windowBefore: tmpl(
+      'Extensions can run from {{opens}} until {{closes}}.',
+      ['opens', 'closes'],
+    ),
+    windowOpen: tmpl('The extension window is open until {{closes}}.', ['closes']),
+    windowClosed: tmpl(
+      'The extension window closed at {{closes}}. The loan can no longer be extended, and can be defaulted.',
+      ['closes'],
+    ),
+    blockers:
+      'An extension is also refused while a refinance request for this loan is open, or while a swap-to-repay order holds its collateral.',
+    yourLimits: 'Your limits',
+    otherLimits: 'The other side',
+    borrowerOn: tmpl('On: a rate up to {{rate}}, and a new end no later than {{end}}.', ['rate', 'end']),
+    lenderOn: tmpl('On: a rate of at least {{rate}}, and a new end no later than {{end}}.', ['rate', 'end']),
+    off: 'Off.',
+    earlierHolder: 'Limits an earlier holder of your position set do not apply to you. Set your own to turn it on.',
+    otherOff: 'Not in force. Either they have not set limits, or an earlier holder of that position set them.',
+    bandBoth: tmpl(
+      'An extension can run at a rate from {{min}} to {{max}}, with a new end no later than {{end}}. Whoever sends it chooses the exact rate and term within those limits.',
+      ['min', 'max', 'end'],
+    ),
+    bandNoOverlap:
+      'Both sides have limits in force, but no rate fits both, so no extension can run. The lender’s lowest rate is above the borrower’s highest.',
+    bandMissing: 'No extension runs until both sides have limits in force.',
+    rateBorrower: 'Highest rate you accept (% a year)',
+    rateLender: 'Lowest rate you accept (% a year)',
+    latestEnd: 'Latest new end date',
+    latestEndHint: tmpl('Counted to the end of that day: {{at}}.', ['at']),
+    save: 'Save limits',
+    turnOff: 'Turn off',
+    saving: 'Saving…',
+    saved: 'Your limits are saved.',
+    turnedOff: 'Automatic extension is off for your side.',
+    invalidRate: tmpl('Enter a rate from 0 to {{max}}.', ['max']),
+    invalidEnd: 'Choose a date after today.',
+    keeperReady: 'A keeper you allow may send the extension for you.',
+    keeperNone:
+      'No keeper is allowed to extend this loan for you yet. In Settings, turn keeper access on and give a keeper the extend permission; then, with advanced mode on, switch that keeper on for this loan on this page.',
+    keeperPaused: 'Delegated keepers are paused protocol-wide, so no keeper can send an extension right now.',
+    keeperUnknown: 'We couldn’t check your keeper permissions for this loan.',
+    lenderFunding:
+      'The borrower pays each extension’s charge from their vault. You receive it as interest, less the protocol’s usual cut, as at repayment.',
+    reserve: {
+      title: 'Extension reserve',
+      lede: tmpl(
+        'Each extension charges the borrower position’s vault: your reserve for this loan first, then any other free {{symbol}} in your vault. If the two do not cover the charge, the extension is refused and takes nothing. It never draws on your wallet.',
+        ['symbol'],
+      ),
+      reserved: tmpl('Reserved for this loan: {{amount}}', ['amount']),
+      otherFree: tmpl('Other free balance in your vault: {{amount}}', ['amount']),
+      chargeNow: tmpl('An extension now would charge: {{amount}}', ['amount']),
+      chargeAtEnd: tmpl('At the end of the window it would charge: {{amount}}', ['amount']),
+      coversBoth: 'That covers an extension at any time in the window.',
+      coversNowOnly: tmpl(
+        'That covers an extension now, but by the end of the window it would be short by {{amount}}.',
+        ['amount'],
+      ),
+      short: tmpl('That does not cover an extension now. By the end of the window it would be short by {{amount}}.', ['amount']),
+      eachTime:
+        'Each extension charges again, for the interest of the term it closes, so a reserve that covers this one may not cover the next.',
+      ownership:
+        'The reserve is yours. Only an extension’s charge and your own withdrawal take it out; repayment, default and liquidation leave it in place. If the borrower position moves to someone else, it no longer pays their extensions, and you can withdraw it.',
+      amount: tmpl('Amount to add ({{symbol}})', ['symbol']),
+      add: 'Add to reserve',
+      adding: 'Adding…',
+      added: 'Added to your reserve.',
+      withdraw: 'Withdraw unused reserve',
+      withdrawing: 'Withdrawing…',
+      withdrawn: 'Your unused reserve was withdrawn.',
+      nothingLeft: 'Nothing is reserved any more: an extension may have just drawn it.',
+      fundClosed: 'A reserve can be added only while this loan could be extended.',
+      leftoverTitle: 'Unused extension reserve',
+      leftover: tmpl('You have {{amount}} reserved for this loan’s extensions.', ['amount']),
+      ended: 'The loan has ended, so nothing will draw it.',
+      notHolder: 'You no longer hold the borrower position, and an extension draws only the current holder’s reserve.',
+      kept: 'It pays this loan’s extensions while you hold the borrower position.',
+    },
+    claims: {
+      title: 'Extension reserves',
+      lede: 'Money you set aside in your vault for a loan’s automatic extensions. It is yours and you can withdraw it at any time.',
+      rowTitle: tmpl('Loan #{{id}}', ['id']),
+      unavailable:
+        'We couldn’t check for extension reserves, because the activity index is unavailable right now. Try again shortly.',
+      unread: tmpl('We couldn’t read your reserve on loan #{{id}} right now.', ['id']),
+      truncated:
+        'Only the loans named by your most recent reserve deposits are checked here, so a reserve on an older loan may not be listed.',
+    },
+  },
+
   claims: {
     checking: 'Checking for claims…',
     row: {

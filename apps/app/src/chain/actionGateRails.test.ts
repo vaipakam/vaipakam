@@ -57,6 +57,24 @@ describe('sellerClaims rides every rail its stretch relies on', () => {
   });
 });
 
+// #2814 — a loan's automatic extension and its reserve are stretched polls;
+// the other side's limits and an extension's draw move them with no action
+// of this wallet's.
+describe.each(['autoExtend', 'extendReserve'])('%s rides every rail its stretch relies on', (root) => {
+  it('is dirtied by the activity frame that carries its rows', () => {
+    expect(KEY_MAP['activity.appended']).toContain(root);
+  });
+  it('is refetched when a hidden tab returns', () => {
+    expect(STRETCHED_ROOTS).toContain(root);
+  });
+  it('rides the block-driven fallback blanket', () => {
+    expect(LIVE_KEYS.has(root)).toBe(true);
+  });
+  it('is refreshed in every tab after an own write', () => {
+    expect(RECEIPT_FLOOR_ROOTS).toContain(root);
+  });
+});
+
 // Protected account mode (Codex #3091 r14): every read under the root moves
 // with the recovery signers' actions and with payments from others, so the
 // root rides the block-driven fallback blanket as well as the tip rail, and

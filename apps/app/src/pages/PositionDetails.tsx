@@ -119,6 +119,7 @@ import { EarlyExitFlow } from '../components/EarlyExitFlow';
 import { loanSaleListingEnabled, LoanSaleFlow } from '../components/LoanSaleFlow';
 import { LoanSalePendingCard } from '../components/LoanSalePendingCard';
 import { LoanKeeperCard } from '../components/LoanKeeperCard';
+import { AutoExtendCard } from '../components/AutoExtendCard';
 import { PeriodicInterestCard } from '../components/PeriodicInterestCard';
 import { LOCK_EARLY_WITHDRAWAL_SALE, useLoanSalePending } from '../data/loanSalePending';
 import { useSaleExitVerdict } from '../data/saleExitVerdict';
@@ -4838,6 +4839,25 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
               : copy.refinance.leftoversFailed}
           </span>
         </div>
+      ) : null}
+
+      {/* #2814 — automatic extension: the switch, the window, both sides'
+          limits and, for the borrower-position holder, the extension
+          reserve. Mounted for any connected wallet whose role is known, so a
+          reserve left on an ended loan, or on a position since passed on,
+          can be withdrawn here; the card shows nothing when there is nothing
+          to say. */}
+      {address && role !== 'checking' && role !== 'unverified' ? (
+        <AutoExtendCard
+          loanId={row.loanId}
+          role={role}
+          active={row.status === 'active' && !closedThisSession && !soldThisSession}
+          isRental={isRental}
+          cadence={pageCadence}
+          principalAsset={row.lendingAsset as `0x${string}`}
+          busy={busy}
+          setBusy={setBusy}
+        />
       ) : null}
 
       {/* Per-loan keeper enables — third leg of the keeper trio
