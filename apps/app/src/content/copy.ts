@@ -4782,7 +4782,7 @@ const copySource = {
       'Both sides have limits in force, but no rate fits both, so no extension can run. The lender’s lowest rate is above the borrower’s highest.',
     bandMissing: 'No extension runs until both sides have limits in force.',
     bandEndTooEarly: tmpl(
-      'The rates overlap, but no new end both sides accept falls after the loan’s current end, {{end}}, so no extension can run. A side must set a later latest end date.',
+      'The rates overlap, but no new end both sides accept can still be reached: a new end must fall after the loan’s current end, {{end}}, and at least a day after the extension is sent. So no extension can run. A side must set a later latest end date.',
       ['end'],
     ),
     editBorrower: 'Your limits as borrower',

@@ -89,6 +89,13 @@ describe('consentBand', () => {
     });
     // Run out with time: under a day left to the latest end.
     expect(consentBand(b, l, { now: 9 * DAY + 1, currentEnd: 9 * DAY }).kind).toBe('endTooEarly');
+    // No whole-day term fits at this second, but one will later the same
+    // window (maturity 14:00 day 3, both caps 23:59 day 3, read 13:00 day 0):
+    // not a verdict, since the send time decides it.
+    const maturity = 3 * DAY + 14 * 3600;
+    const cap = on({ maxNewExpiry: 3 * DAY + 23 * 3600 + 59 * 60 });
+    const capL = on({ minRateBps: 500, maxNewExpiry: 3 * DAY + 23 * 3600 + 59 * 60 });
+    expect(consentBand(cap, capL, { now: 13 * 3600, currentEnd: maturity }).kind).toBe('overlap');
     // Not active: no end test.
     expect(consentBand(b, l, { now: 20 * DAY, currentEnd: null }).kind).toBe('overlap');
   });

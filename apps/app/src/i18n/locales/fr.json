@@ -3890,7 +3890,7 @@
       "bandOverlap": "Les limites des deux parties laissent un taux de {{min}} à {{max}}, avec une nouvelle échéance au plus tard le {{end}}. Celui qui envoie une prolongation choisit le taux et la durée exacts dans ces limites. Le protocole vérifie le reste à l’envoi : la nouvelle échéance doit tomber après l’échéance actuelle du prêt, et le prêt doit garder au moins le délai de grâce qu’il a aujourd’hui. Une durée que ces limites autorisent peut donc encore être refusée.",
       "bandNoOverlap": "Les deux parties ont des limites en vigueur, mais aucun taux ne convient aux deux, donc aucune prolongation ne peut s’exécuter. Le taux minimum du prêteur dépasse le taux maximum de l’emprunteur.",
       "bandMissing": "Aucune prolongation ne s’exécute tant que les deux parties n’ont pas de limites en vigueur.",
-      "bandEndTooEarly": "Les taux se recoupent, mais aucune nouvelle échéance acceptée par les deux parties ne tombe après l’échéance actuelle du prêt, {{end}}, donc aucune prolongation ne peut avoir lieu. Une partie doit fixer une date de fin maximale plus tardive.",
+      "bandEndTooEarly": "Les taux se recoupent, mais aucune nouvelle échéance acceptée par les deux parties ne peut plus être atteinte : une nouvelle échéance doit tomber après l’échéance actuelle du prêt, {{end}}, et au moins un jour après l’envoi de la prolongation. Aucune prolongation ne peut donc avoir lieu. Une partie doit fixer une date d’échéance maximale plus tardive.",
       "editBorrower": "Vos limites en tant qu’emprunteur",
       "editLender": "Vos limites en tant que prêteur",
       "rateBorrower": "Taux le plus élevé que vous acceptez (% par an)",

@@ -89,19 +89,27 @@ export type ConsentBand =
   | { kind: 'overlap'; minRateBps: number; maxRateBps: number; latestEnd: number }
   /** Both sides have limits in force, and they admit no rate. */
   | { kind: 'noOverlap'; minRateBps: number; maxRateBps: number; latestEnd: number }
-  /** The rates overlap, but no new end both accept is after the loan's
-   *  current end: limits still "in force" by their getters can have run
-   *  out, after an earlier extension or simply with time. */
+  /** The rates overlap, but no new end both accept can ever be after the
+   *  loan's current end: limits still "in force" by their getters can have
+   *  run out, after an earlier extension or simply with time. Only this
+   *  permanent case is a verdict; a term that does not fit at the read's
+   *  instant but may later in the day is `overlap`, which promises nothing. */
   | { kind: 'endTooEarly'; latestEnd: number; currentEnd: number }
   | { kind: 'missing'; borrower: boolean; lender: boolean };
 
 const DAY = 86_400;
 
 /** The executor's rule: lender's minimum ≤ rate ≤ the lower of both
- *  maximums, and a new end — `now` plus a whole number of days, at least
- *  one — after the loan's current end and no later than the earlier of
+ *  maximums, and a new end — the send time plus a whole number of days, at
+ *  least one — after the loan's current end and no later than the earlier of
  *  both latest ends. `now` and `currentEnd` are the read block's; with no
- *  current end (the loan is not active) the end test is not made. */
+ *  current end (the loan is not active) the end test is not made.
+ *
+ *  The end test reports only what no later send can change. Time only moves
+ *  forward, so once the earlier latest end is at or before the current end,
+ *  or less than a day after `now`, no new end can ever satisfy both bounds.
+ *  Short of that, whether a whole-day term fits depends on the second the
+ *  extension is sent, which this read cannot know, so it is not a verdict. */
 export function consentBand(
   borrower: ExtendCaps,
   lender: ExtendCaps,
@@ -115,8 +123,7 @@ export function consentBand(
   const latestEnd = Math.min(lender.maxNewExpiry, borrower.maxNewExpiry);
   if (minRateBps > maxRateBps) return { kind: 'noOverlap', minRateBps, maxRateBps, latestEnd };
   if (at.currentEnd !== null) {
-    const days = Math.floor((latestEnd - at.now) / DAY);
-    if (days < 1 || at.now + days * DAY <= at.currentEnd) {
+    if (latestEnd <= at.currentEnd || latestEnd - at.now < DAY) {
       return { kind: 'endTooEarly', latestEnd, currentEnd: at.currentEnd };
     }
   }

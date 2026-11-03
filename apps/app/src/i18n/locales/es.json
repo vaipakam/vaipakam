@@ -3890,7 +3890,7 @@
       "bandOverlap": "Los límites de ambas partes dejan una tasa de {{min}} a {{max}}, con un nuevo fin no posterior a {{end}}. Quien envía una extensión elige la tasa y el plazo exactos dentro de ellos. El protocolo comprueba el resto al enviarla: el nuevo fin debe ser posterior al fin actual del préstamo, y el préstamo debe conservar al menos el período de gracia que tiene ahora. Así que un plazo que estos límites permiten aún puede ser rechazado.",
       "bandNoOverlap": "Ambas partes tienen límites vigentes, pero ninguna tasa encaja con los dos, así que no puede ejecutarse ninguna extensión. La tasa mínima del prestamista está por encima de la máxima del prestatario.",
       "bandMissing": "No se ejecuta ninguna extensión hasta que ambas partes tengan límites vigentes.",
-      "bandEndTooEarly": "Las tasas se solapan, pero ningún nuevo fin que ambas partes acepten cae después del fin actual del préstamo, {{end}}, así que no puede ejecutarse ninguna extensión. Una de las partes debe fijar una fecha de fin máxima posterior.",
+      "bandEndTooEarly": "Las tasas se solapan, pero ningún nuevo fin que ambas partes acepten puede alcanzarse ya: un nuevo fin debe caer después del fin actual del préstamo, {{end}}, y al menos un día después de enviar la extensión. Así que no puede ejecutarse ninguna extensión. Una de las partes debe fijar una fecha de fin máxima posterior.",
       "editBorrower": "Tus límites como prestatario",
       "editLender": "Tus límites como prestamista",
       "rateBorrower": "Tasa más alta que aceptas (% anual)",

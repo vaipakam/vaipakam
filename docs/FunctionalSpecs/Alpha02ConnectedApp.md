@@ -2174,10 +2174,14 @@ is the borrower's own money.
   a term the limits allow can still be refused: overlapping limits are never
   presented as an extension that will succeed. Otherwise it states
   that the two sides' limits leave no rate both accept, or that no new end
-  both accept falls after the loan's current end (limits can run out with
-  time or after an earlier extension, and the page names the current end and
-  asks for a later date), or that no extension runs until both sides have
-  limits in force. It says that whoever sends the
+  both accept can still be reached (limits can run out with time or after an
+  earlier extension: the earlier latest end is no later than the loan's
+  current end, or less than a day away, and the page names the current end
+  and asks for a later date), or that no extension runs until both sides have
+  limits in force. Whether a whole-day term fits can depend on the moment an
+  extension is sent, so a term that does not fit at the moment of reading but
+  may fit later in the window is never stated as impossible, and a holder is
+  never asked to widen limits that still admit a later extension. It says that whoever sends the
   extension chooses the exact rate and term within those limits.
 - A party sets or clears their own side's limits from the page. A wallet
   that holds both positions holds both consents, and sets and clears each
