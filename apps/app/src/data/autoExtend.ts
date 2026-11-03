@@ -75,9 +75,18 @@ export interface ExtendFunding {
   chargeAtGraceEnd: bigint;
 }
 
-/** The terms both sides' limits leave open, or why there are none. */
+/**
+ * What both sides' limits leave open, or why they leave nothing.
+ *
+ * Only a NEGATIVE here is a verdict. `overlap` says the limits admit some
+ * terms, never that an extension will succeed: the executor applies further
+ * rules when it runs (the new grace end may not fall before today's, among
+ * others) that this module does not restate, so the page words it as limits,
+ * not as a promise. `noOverlap` and `endTooEarly` are proven from the limits
+ * and the loan's current end alone.
+ */
 export type ConsentBand =
-  | { kind: 'both'; minRateBps: number; maxRateBps: number; latestEnd: number }
+  | { kind: 'overlap'; minRateBps: number; maxRateBps: number; latestEnd: number }
   /** Both sides have limits in force, and they admit no rate. */
   | { kind: 'noOverlap'; minRateBps: number; maxRateBps: number; latestEnd: number }
   /** The rates overlap, but no new end both accept is after the loan's
@@ -111,7 +120,7 @@ export function consentBand(
       return { kind: 'endTooEarly', latestEnd, currentEnd: at.currentEnd };
     }
   }
-  return { kind: 'both', minRateBps, maxRateBps, latestEnd };
+  return { kind: 'overlap', minRateBps, maxRateBps, latestEnd };
 }
 
 /** Whether limits a wallet sees for its own side were set by someone else

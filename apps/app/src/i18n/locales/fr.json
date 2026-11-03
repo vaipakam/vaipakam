@@ -3868,7 +3868,7 @@
       "off": "Désactivé.",
       "earlierHolder": "Les limites fixées par un précédent détenteur de votre position ne s’appliquent pas à vous. Fixez les vôtres pour l’activer.",
       "otherOff": "Non en vigueur. Soit aucune limite n’a été fixée, soit un précédent détenteur de cette position les a fixées.",
-      "bandBoth": "Une prolongation peut s’exécuter à un taux de {{min}} à {{max}}, avec une nouvelle échéance au plus tard le {{end}}. Celui qui l’envoie choisit le taux et la durée exacts dans ces limites.",
+      "bandOverlap": "Les limites des deux parties laissent un taux de {{min}} à {{max}}, avec une nouvelle échéance au plus tard le {{end}}. Celui qui envoie une prolongation choisit le taux et la durée exacts dans ces limites. Le protocole vérifie le reste à l’envoi : la nouvelle échéance doit tomber après l’échéance actuelle du prêt, et le prêt doit garder au moins le délai de grâce qu’il a aujourd’hui. Une durée que ces limites autorisent peut donc encore être refusée.",
       "bandNoOverlap": "Les deux parties ont des limites en vigueur, mais aucun taux ne convient aux deux, donc aucune prolongation ne peut s’exécuter. Le taux minimum du prêteur dépasse le taux maximum de l’emprunteur.",
       "bandMissing": "Aucune prolongation ne s’exécute tant que les deux parties n’ont pas de limites en vigueur.",
       "bandEndTooEarly": "Les taux se recoupent, mais aucune nouvelle échéance acceptée par les deux parties ne tombe après l’échéance actuelle du prêt, {{end}}, donc aucune prolongation ne peut avoir lieu. Une partie doit fixer une date de fin maximale plus tardive.",

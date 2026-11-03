@@ -69,7 +69,7 @@ describe('consentBand', () => {
   it('is the lender’s minimum to the lower maximum, ending at the earlier latest end', () => {
     expect(
       consentBand(on({ maxRateBps: 900, maxNewExpiry: 300 }), on({ minRateBps: 500, maxRateBps: 10_000, maxNewExpiry: 200 })),
-    ).toEqual({ kind: 'both', minRateBps: 500, maxRateBps: 900, latestEnd: 200 });
+    ).toEqual({ kind: 'overlap', minRateBps: 500, maxRateBps: 900, latestEnd: 200 });
   });
 
   it('says when both are in force but admit no rate', () => {
@@ -81,7 +81,7 @@ describe('consentBand', () => {
     const b = on({ maxNewExpiry: 10 * DAY });
     const l = on({ minRateBps: 500, maxNewExpiry: 10 * DAY });
     // A whole number of days from now must land after the current end.
-    expect(consentBand(b, l, { now: 0, currentEnd: 9 * DAY }).kind).toBe('both');
+    expect(consentBand(b, l, { now: 0, currentEnd: 9 * DAY }).kind).toBe('overlap');
     expect(consentBand(b, l, { now: 0, currentEnd: 10 * DAY })).toEqual({
       kind: 'endTooEarly',
       latestEnd: 10 * DAY,
@@ -90,7 +90,7 @@ describe('consentBand', () => {
     // Run out with time: under a day left to the latest end.
     expect(consentBand(b, l, { now: 9 * DAY + 1, currentEnd: 9 * DAY }).kind).toBe('endTooEarly');
     // Not active: no end test.
-    expect(consentBand(b, l, { now: 20 * DAY, currentEnd: null }).kind).toBe('both');
+    expect(consentBand(b, l, { now: 20 * DAY, currentEnd: null }).kind).toBe('overlap');
   });
 
   it('names the side whose limits are not in force', () => {

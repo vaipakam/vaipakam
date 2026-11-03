@@ -571,8 +571,8 @@ export function AutoExtendCard({
         })}
       </dl>
       <p>
-        {band.kind === 'both'
-          ? a.bandBoth(formatBpsAsPercent(band.minRateBps), formatBpsAsPercent(band.maxRateBps), formatDateTime(band.latestEnd))
+        {band.kind === 'overlap'
+          ? a.bandOverlap(formatBpsAsPercent(band.minRateBps), formatBpsAsPercent(band.maxRateBps), formatDateTime(band.latestEnd))
           : band.kind === 'noOverlap'
             ? a.bandNoOverlap
             : band.kind === 'endTooEarly'

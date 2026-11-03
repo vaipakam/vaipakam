@@ -3868,7 +3868,7 @@
       "off": "Aus.",
       "earlierHolder": "Grenzen, die ein früherer Inhaber Ihrer Position gesetzt hat, gelten nicht für Sie. Setzen Sie Ihre eigenen, um sie einzuschalten.",
       "otherOff": "Nicht in Kraft. Entweder wurden keine Grenzen gesetzt, oder ein früherer Inhaber dieser Position hat sie gesetzt.",
-      "bandBoth": "Eine Verlängerung kann zu einem Zinssatz von {{min}} bis {{max}} laufen, mit einem neuen Ende spätestens am {{end}}. Wer sie sendet, wählt den genauen Zinssatz und die Laufzeit innerhalb dieser Grenzen.",
+      "bandOverlap": "Die Grenzen beider Seiten lassen einen Zinssatz von {{min}} bis {{max}} zu, mit einem neuen Ende spätestens am {{end}}. Wer eine Verlängerung sendet, wählt den genauen Zinssatz und die Laufzeit innerhalb dieser Grenzen. Den Rest prüft das Protokoll beim Senden: Das neue Ende muss nach dem aktuellen Ende des Kredits liegen, und der Kredit muss mindestens die Kulanzfrist behalten, die er jetzt hat. Eine Laufzeit, die diese Grenzen zulassen, kann also trotzdem abgelehnt werden.",
       "bandNoOverlap": "Beide Seiten haben Grenzen in Kraft, aber kein Zinssatz passt zu beiden, daher kann keine Verlängerung laufen. Der niedrigste Zinssatz des Kreditgebers liegt über dem höchsten des Kreditnehmers.",
       "bandMissing": "Keine Verlängerung läuft, bis beide Seiten Grenzen in Kraft haben.",
       "bandEndTooEarly": "Die Zinssätze überschneiden sich, aber kein neues Ende, das beide Seiten akzeptieren, liegt nach dem aktuellen Ende des Kredits, {{end}}, daher kann keine Verlängerung laufen. Eine Seite muss ein späteres letztes Enddatum festlegen.",

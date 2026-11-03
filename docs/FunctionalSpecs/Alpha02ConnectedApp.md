@@ -2167,8 +2167,12 @@ is the borrower's own money.
   acceptable rate and latest new end. Limits an earlier holder of a position
   set do not count for the current holder, and the page says so rather than
   showing them as in force. From both sides' limits the page states the terms
-  an extension may use (the lender's lowest rate up to the lower of the two
-  highest rates, ending no later than the earlier of the two latest ends), or
+  those limits leave (the lender's lowest rate up to the lower of the two
+  highest rates, ending no later than the earlier of the two latest ends),
+  and says that the protocol applies further checks when an extension is
+  sent (the new end after the loan's current end, the grace period kept), so
+  a term the limits allow can still be refused: overlapping limits are never
+  presented as an extension that will succeed. Otherwise it states
   that the two sides' limits leave no rate both accept, or that no new end
   both accept falls after the loan's current end (limits can run out with
   time or after an earlier extension, and the page names the current end and

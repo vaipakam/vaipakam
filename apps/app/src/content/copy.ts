@@ -4723,8 +4723,8 @@ const copySource = {
     off: 'Off.',
     earlierHolder: 'Limits an earlier holder of your position set do not apply to you. Set your own to turn it on.',
     otherOff: 'Not in force. Either they have not set limits, or an earlier holder of that position set them.',
-    bandBoth: tmpl(
-      'An extension can run at a rate from {{min}} to {{max}}, with a new end no later than {{end}}. Whoever sends it chooses the exact rate and term within those limits.',
+    bandOverlap: tmpl(
+      'Both sides’ limits leave a rate from {{min}} to {{max}}, with a new end no later than {{end}}. Whoever sends an extension chooses the exact rate and term within them. The protocol checks the rest when it is sent: the new end must be after the loan’s current end, and the loan must keep at least the grace period it has now. So a term these limits allow can still be refused.',
       ['min', 'max', 'end'],
     ),
     bandNoOverlap:
