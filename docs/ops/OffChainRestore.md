@@ -558,6 +558,8 @@ then deploy.
       | `TIER_PUSH_RETRY_ENABLED` | the upkeep pass's tier-push retry step skips — a tier push a broadcast lane could not take stays owed, so that mirror keeps the user's previous tier (bounded by its maximum age) until the user's tier changes again or someone calls the permissionless `deliverTierPush` by hand | delivering owed tier pushes from the protocol broadcast budget (#2984); needs `PROTOCOL_UPKEEP_ENABLED` too |
       | `PREPAY_AUTO_LIST_ENABLED` | grace auto-list pass skips — an NFT-collateral loan in its grace window is not put up for sale at the protocol floor, so the grace window can pass unsold and the lender takes the NFT in kind at default, unless someone makes the permissionless `autoListAtFloorOnGrace` call by hand | listing NFT collateral at the floor during grace (#2984) |
       | `PROTECTED_ACCOUNT_ENABLED` | protected account pass skips — a protected payout or position transfer past its delay stays queued, and a matured protected-mode change (an unlock, a lowered delay, an allowlist or signer addition, a signer removal, a scheduled replacement) stays pending, until the owner, a signer or someone else makes the permissionless release or finalize call by hand | releasing protected payouts and applying matured protected-mode changes (#3088) |
+      | `PROTECTED_LOCK_ENABLED` | the protected account pass's Telegram LOCK step skips — a `LOCK` an owner sends to the user bot is recorded by the agent but no lock is made, and the request expires unanswered after an hour, so the owner must lock from the app (or have a signer do it) | locking a protected vault from Telegram (#3088) |
+      | `PROTECTED_ALERTS_ENABLED` | the protected account pass's owner alerts skip — an owner hears nothing on Telegram or Push when their vault is locked, a payout is queued or a replacement is proposed, and learns of it only from the app | protected-mode owner alerts (#3088) |
 
       The keeper's ops alert channel, `TG_OPS_BOT_TOKEN` + `TG_OPS_CHAT_ID`, is
       captured the same way: while unset the observer's operator alerts reach
@@ -1634,6 +1636,8 @@ DELETE FROM keeper_runner_lease; \
 DELETE FROM prenotify_pass; \
 DELETE FROM push_rail_status; \
 DELETE FROM signed_request_use; \
+DELETE FROM protected_lock_requests; \
+DELETE FROM protected_lock_readiness; \
 DELETE FROM indexer_deployment; \
 DELETE FROM indexer_cursor"
 ```
@@ -1658,6 +1662,24 @@ has one stated cost: a request a wallet signed in the last eleven minutes
 before the clear could be presented once more until its signature ages out.
 Every such request is one its wallet did sign, for the action it names, and
 the agent's per-IP write limit still applies.
+
+`protected_lock_requests` (#3088) holds the Telegram `LOCK` requests the
+agent recorded for the keeper. The keeper acts on a request within an hour
+or answers it as expired, and drops one older than a day without a message,
+so an archived copy holds nothing it would still act on. The keeper keeps its
+progress on each row (`handled_at`), not in a cursor of its own, so a cleared
+table cannot leave new requests below a stale position. Clearing it has one
+stated cost: a `LOCK` sent in the last minute or so before the clear, not yet
+handled, is lost, and the owner gets no answer for it; the owner can send it
+again or lock from the app.
+
+`protected_lock_readiness` (#3088) is the keeper's heartbeat for the
+Telegram `LOCK` step: it says, per chain, when a keeper able to sign last
+worked the requests, and the agent records a `LOCK` only while that is
+recent. Like `push_rail_status`, the keeper rewrites it every run, so
+clearing it costs at most a minute in which the agent tells an owner to lock
+from the app instead. Keeping it would let a restored row promise a lock that
+no keeper may now make.
 
 What the pre-notify lane has examined in its current pass (#2230) lives on
 the `loans` rows themselves, in the `prenotify_examined_*` columns, so
@@ -1948,7 +1970,7 @@ restored on its machine in step 3; its Worker keeps `"crons": []` for good
    `GRACE_DEFAULT_ENABLED`, `PERIODIC_SETTLE_ENABLED`,
    `REWARD_SANCTIONS_KEEPER_ENABLED`,
    `REWARD_HORIZON_HEARTBEAT_ENABLED`, `REWARD_DAY_CLOSE_ENABLED`,
-   `REWARD_CLOSE_OUT_ENABLED`, `REWARD_ZEROED_DAY_ENABLED`, `REWARD_RETURN_TRANSPORT_ENABLED`, `REWARD_ENTRY_SETTLE_ENABLED`, `PROTOCOL_UPKEEP_ENABLED`, `PREPAY_SALE_SANCTIONS_SYNC_ENABLED`, `TIER_PUSH_RETRY_ENABLED`, `PREPAY_AUTO_LIST_ENABLED`, `PROTECTED_ACCOUNT_ENABLED`, `DISCOUNT_PATH_CHAIN_IDS`) empty — by editing the
+   `REWARD_CLOSE_OUT_ENABLED`, `REWARD_ZEROED_DAY_ENABLED`, `REWARD_RETURN_TRANSPORT_ENABLED`, `REWARD_ENTRY_SETTLE_ENABLED`, `PROTOCOL_UPKEEP_ENABLED`, `PREPAY_SALE_SANCTIONS_SYNC_ENABLED`, `TIER_PUSH_RETRY_ENABLED`, `PREPAY_AUTO_LIST_ENABLED`, `PROTECTED_ACCOUNT_ENABLED`, `PROTECTED_LOCK_ENABLED`, `PROTECTED_ALERTS_ENABLED`, `DISCOUNT_PATH_CHAIN_IDS`) empty — by editing the
    file (`sudo -e /etc/vaipakam/keeper.env`), never by assuming what it held.
    Never paste a value from that file anywhere.
 

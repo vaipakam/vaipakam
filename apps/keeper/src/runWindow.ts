@@ -24,7 +24,8 @@
  *      read, such as a fee quote ahead of a send). A read stage that feeds a
  *      LATER read stage leaves that stage a reserve the same way
  *      ({@link priorStageCutoffMs}), so a stage that runs to its cutoff never
- *      leaves the one after it no time at all.
+ *      leaves the one after it no time at all; and a stage run ahead of
+ *      others takes only a share of the window ({@link leadStageCutoffMs}).
  *
  * Leaf module: no keeper imports, so any pass (and the schedule) can use it.
  */
@@ -49,6 +50,17 @@ export const STAGE_RESERVE_MS = 5_000;
  *  `nextStageCutoffMs`, must stop. Pure. */
 export function priorStageCutoffMs(nextStageCutoffMs: number): number {
   return nextStageCutoffMs - STAGE_RESERVE_MS;
+}
+
+/**
+ * When a stage that runs AHEAD of others in the same read window must stop:
+ * at most `share` of the time left before `cutoffMs`, measured from `nowMs`.
+ * A stage that goes first so nothing can hold it back (a pass's owner
+ * alerts) must not in turn use the window the stages after it need, so it
+ * takes a share of it and leaves the rest. Pure.
+ */
+export function leadStageCutoffMs(nowMs: number, cutoffMs: number, share: number): number {
+  return nowMs + Math.max(0, Math.floor((cutoffMs - nowMs) * share));
 }
 
 /** Which run of a pass this is, counting `stepMs` steps from the tick's

@@ -60,6 +60,30 @@ export async function publishRailStatus(
   }
 }
 
+/**
+ * What one channel did with an alert: `sent` (accepted), `retry` (refused for
+ * now, or a Push send that may not have gone), `refused` (refused for good, or
+ * a Push rail that cannot send at all), or `off` (the subscriber has no such
+ * channel, or this keeper no bot token).
+ */
+export type ChannelResult = 'sent' | 'retry' | 'refused' | 'off';
+
+/** What `deliver` did on each channel. */
+export interface DeliveryOutcome {
+  telegram: ChannelResult;
+  push: ChannelResult;
+}
+
+/** At least one channel accepted the alert. */
+export function delivered(o: DeliveryOutcome): boolean {
+  return o.telegram === 'sent' || o.push === 'sent';
+}
+
+/** No channel accepted it, and one may on another try. */
+export function worthRetrying(o: DeliveryOutcome): boolean {
+  return !delivered(o) && (o.telegram === 'retry' || o.push === 'retry');
+}
+
 /** One pass's alerts: deliver each, then `disclose` once. */
 export class AlertDelivery {
   private readonly push: PushRailConfig;
@@ -70,11 +94,14 @@ export class AlertDelivery {
     this.push = pushRailConfigOf(env);
   }
 
-  /** Deliver `alert` on every channel the subscriber has; the fence first. */
-  async deliver(alert: Alert): Promise<void> {
+  /** Deliver `alert` on every channel the subscriber has; the fence first.
+   *  Says what each channel did, for a caller that must know whether the
+   *  alert arrived (most callers ignore it). */
+  async deliver(alert: Alert): Promise<DeliveryOutcome> {
     await assertEpochsHold();
+    const outcome: DeliveryOutcome = { telegram: 'off', push: 'off' };
     if (alert.tgChatId && this.env.TG_BOT_TOKEN) {
-      await sendTelegramMessage(this.env.TG_BOT_TOKEN, alert.tgChatId, alert.text);
+      outcome.telegram = await sendTelegramMessage(this.env.TG_BOT_TOKEN, alert.tgChatId, alert.text);
     }
     if (alert.pushSubscriber) {
       const attempt = await sendPush(this.push, {
@@ -85,7 +112,9 @@ export class AlertDelivery {
       });
       if (attempt === 'not-requested') this.notRequested += 1;
       else if (attempt === 'failed') this.failed += 1;
+      outcome.push = attempt === 'accepted' ? 'sent' : attempt === 'failed' ? 'retry' : 'refused';
     }
+    return outcome;
   }
 
   /**

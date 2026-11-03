@@ -204,6 +204,17 @@ interface BaseEnv {
    *  and the finalize calls of matured protected-mode changes. It pays only
    *  gas and moves no value to the keeper. */
   PROTECTED_ACCOUNT_ENABLED?: string;
+  /** 'true' adds the Telegram LOCK step to the armed protected account pass:
+   *  `lockVaultFor` for the LOCK requests the agent recorded, answered in
+   *  the owner's chat. Needs the owner's KEEPER_ACTION_LOCK_VAULT grant on
+   *  chain; pays only gas. Read only while PROTECTED_ACCOUNT_ENABLED arms
+   *  the pass. */
+  PROTECTED_LOCK_ENABLED?: string;
+  /** 'true' adds the owner alerts to the armed protected account pass: a
+   *  lock, a queued payout and a proposed replacement, on Telegram and
+   *  Push. Sends nothing on chain. Read only while PROTECTED_ACCOUNT_ENABLED
+   *  arms the pass. */
+  PROTECTED_ALERTS_ENABLED?: string;
 
   // Protocol upkeep pass (#2984). `secret_text` like the flags above.
   /** 'true' arms the protocol upkeep pass (in addition to KEEPER_ENABLED):
@@ -420,6 +431,8 @@ export const PLAIN_VAR_KEYS = [
   'TIER_PUSH_RETRY_ENABLED',
   'PREPAY_AUTO_LIST_ENABLED',
   'PROTECTED_ACCOUNT_ENABLED',
+  'PROTECTED_LOCK_ENABLED',
+  'PROTECTED_ALERTS_ENABLED',
   'TIER_LTV_REFRESH_AFTER_SEC',
   'REWARD_ZEROED_DAY_ENABLED',
   'REWARD_ZEROED_DAY_WINDOW_DAYS',
@@ -604,6 +617,8 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     TIER_PUSH_RETRY_ENABLED: raw.TIER_PUSH_RETRY_ENABLED,
     PREPAY_AUTO_LIST_ENABLED: raw.PREPAY_AUTO_LIST_ENABLED,
     PROTECTED_ACCOUNT_ENABLED: raw.PROTECTED_ACCOUNT_ENABLED,
+    PROTECTED_LOCK_ENABLED: raw.PROTECTED_LOCK_ENABLED,
+    PROTECTED_ALERTS_ENABLED: raw.PROTECTED_ALERTS_ENABLED,
     TIER_LTV_REFRESH_AFTER_SEC: raw.TIER_LTV_REFRESH_AFTER_SEC,
     REWARD_ZEROED_DAY_ENABLED: raw.REWARD_ZEROED_DAY_ENABLED,
     REWARD_ZEROED_DAY_WINDOW_DAYS: raw.REWARD_ZEROED_DAY_WINDOW_DAYS,

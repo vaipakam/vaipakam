@@ -11,7 +11,7 @@ export async function sendMessage(
   token: string,
   chatId: string,
   text: string,
-): Promise<void> {
+): Promise<TelegramResult> {
   const res = await fetch(`${TELEGRAM_API}/bot${token}/sendMessage`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -29,8 +29,16 @@ export async function sendMessage(
     console.error(
       `Telegram sendMessage failed: chat=${chatId} status=${res.status} body=${body.slice(0, 200)}`,
     );
+    // A rate limit or a server fault may pass; any other refusal (a chat
+    // that blocked the bot, an id that does not exist) will not.
+    return res.status === 429 || res.status >= 500 ? 'retry' : 'refused';
   }
+  return 'sent';
 }
+
+/** What one Telegram send did: accepted, refused for now (worth another
+ *  try), or refused for good. */
+export type TelegramResult = 'sent' | 'retry' | 'refused';
 
 export interface TelegramUpdate {
   update_id?: number;

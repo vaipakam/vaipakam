@@ -810,8 +810,8 @@ state.
   does not try an expired one and reports it as expired. A scheduled replacement of the
   primary wallet is applied only while it still has the approvals it needs.
   Every change left waiting is reported with the protocol's reason.
-- Each kind of work (releases, position transfers, applied changes) has its
-  own share of the calls the keeper makes in a run, so a long queue of one
+- Each kind of work (Telegram locks, releases, position transfers, applied
+  changes) has its own share of the calls the keeper makes in a run, so a long queue of one
   kind never holds back another: an unlock, a replacement or a signer
   addition that would expire is not left waiting behind payouts. The kinds
   also take turns going first, one run in three each, because each call
@@ -828,6 +828,79 @@ state.
 - The keeper pays only gas and moves no value to itself: a release pays the
   account's own recipient from the account's own vault. It needs no
   permission from the owner.
+
+## Locking a protected vault from Telegram, and owner alerts
+
+- An owner who has linked their wallet to the user bot in a private chat can
+  lock their protected vault by sending `LOCK` there, without opening the
+  app. The bot records the request for every wallet linked to that chat, on
+  every chain on which a keeper able to make the lock is working these
+  requests now, and replies that it has been recorded; it signs nothing. For
+  a chain where no such keeper is working (the duty switched off, no signing
+  key, the keeper stopped), the bot records nothing and says so, telling the
+  owner to lock from the app: an owner is never told a lock is coming when
+  nothing will make it. A
+  `LOCK` sent from a group is refused with a reply saying to use the private
+  chat, and a `LOCK` from a chat with no linked wallet is answered saying so.
+  Only the wallet's holder can link a chat, because linking needs the
+  wallet's signature.
+- The keeper then makes the lock on the owner's behalf, oldest request first.
+  An owner who sends `LOCK` again before it answers asks for the same thing:
+  one lock answers all of that wallet's open requests, so no owner's repeated
+  requests can use the locks another owner is waiting for. It answers in the
+  chat the wallet is linked to at that moment with what it found: locked; locked again, when the vault was locked before the request
+  (a lock also cancels any unlock or other loosening change asked for since,
+  so one cannot take effect after the owner asked to lock); already locked,
+  when a lock set since the request has done all it asked (nothing is sent,
+  and a change asked for after that lock is left alone); protected mode not
+  on; no lock permission granted; or refused with the protocol's reason. A
+  request is recorded as handled before it is answered, and a lock whose
+  confirmation arrives late in a run is still recorded, so a slow
+  confirmation never leads to a second lock for the same request. It can lock only for an owner who has granted the keeper
+  permission to lock their vault; without that grant the protocol refuses
+  and the owner is told so. A lock is a safety action and works while the
+  protocol is paused. Locking cancels every queued payout and position
+  transfer, so the lock is made before any release in the same run. A
+  request the keeper could not reach in a run (its share of calls used, the
+  run's time spent) still holds back that account's payouts and position
+  transfers until it is handled: an owner's lock is never overtaken by the
+  payout it was sent to stop. When the keeper cannot tell which requests are
+  still open, it releases nothing that run.
+- A request the keeper reaches more than an hour after it was made is not
+  acted on, and the owner is told it expired and should lock from the app.
+  One more than a day old is dropped without a message, so a backlog found
+  late never messages owners about old requests. Each request records when it
+  was handled and how, so it is answered once, and a rebuilt database cannot
+  leave new requests unread behind an old position. A request keeps no chat
+  of its own: an owner who unlinks Telegram gets no further message about
+  it, even about a request still waiting, while the lock they asked for is
+  still made. The record says what the
+  keeper did even when its answer did not reach the chat, and the run's
+  report names an answer that did not arrive.
+- The keeper also alerts the owner of a protected account, on every channel
+  they subscribed (Telegram and Push), when their vault is locked (naming
+  who locked it when it was not the owner), when a payout from it is queued,
+  and when a replacement of the primary wallet is proposed. A payout alert
+  names the asset, the amount, the destination, the release time and the
+  payout's request code, the same code the app shows for that payout, so the
+  owner can tell a payout they asked for from one they did not and lock in
+  time. An alert waits until the request code can be read; it is never sent
+  without one.
+- An event more than an hour old when the keeper first reads it is not
+  alerted, because late news is no longer a warning; the keeper counts those.
+  An alert is counted as sent only when a channel accepted it. One that no
+  channel accepted but one may on another try (a rate limit, a server fault,
+  a Push send that may not have gone) is tried again on the next run, and the
+  alerts after it wait behind it rather than overtake it, until it is an hour
+  old. The alerts take only a share of a run's time, so a slow channel
+  cannot hold back the lock step; what they did not reach waits for the next
+  run, and where they stopped is saved after each alert sent, so a run cut
+  short never sends the same alert twice. One every channel refused for good (a chat that blocked the bot) is
+  counted undelivered and passed over. The alerts send nothing on chain, and
+  run before the lock and every release in a run, so no wait for a
+  transaction to confirm can hold a warning back.
+- Each of the two duties ships switched off behind its own flag, and runs
+  only while the protected account duty is switched on too.
 
 ## Activation and operator visibility
 

@@ -133,6 +133,7 @@ import {
 import {
   consumeTelegramLinkCode,
   getTelegramChatId,
+  recordLockRequests,
   issueTelegramLinkCode,
   linkTelegram,
   OptOutStorageUnavailableError,
@@ -143,8 +144,8 @@ import {
   hasStoredPushOptIn,
   upsertThresholds,
 } from './db';
-import { extractLinkCode, isTelegramDelivery, sendMessage, type TelegramUpdate } from './telegram';
-import { handshakeExpired, handshakeLinked, testAlert } from './i18n';
+import { extractLinkCode, extractLockCommand, isTelegramDelivery, sendMessage, type TelegramUpdate } from './telegram';
+import { handshakeExpired, handshakeLinked, lockNotLinked, lockNotRecorded, lockNotRunning, lockPrivateOnly, lockRecorded, testAlert } from './i18n';
 import {
   authoriseAlertRequest,
   parseSignedLinkRequest,
@@ -922,6 +923,41 @@ async function handleTelegramWebhook(
   const read = await readJsonBody(req, MAX_TELEGRAM_UPDATE_BYTES);
   if (!read.ok) return new Response(read.error, { status: read.status });
   const update = read.value as TelegramUpdate;
+
+  // #3088 — the emergency LOCK command, before the handshake: a LOCK is
+  // never a link code. Recorded for the keeper, which locks and answers.
+  const lock = extractLockCommand(update);
+  if (lock) {
+    if (!lock.isPrivate) {
+      await sendMessage(env.TG_BOT_TOKEN, lock.chatId, lockPrivateOnly('en'));
+      return new Response('ok', { status: 200 });
+    }
+    // Every HTTP handler must tolerate the previous schema (the shared D1
+    // migrations land before this code, but a handler cannot assume so): a
+    // request that could not be recorded is said to be so, and acked, so
+    // Telegram does not redeliver it as a lock long after it was asked.
+    let links: Awaited<ReturnType<typeof recordLockRequests>>;
+    try {
+      links = await recordLockRequests(env.DB, lock.chatId, lock.updateId);
+    } catch (err) {
+      console.error(`[agent] LOCK not recorded: ${err instanceof Error ? err.message.slice(0, 200) : 'unknown error'}`);
+      await sendMessage(env.TG_BOT_TOKEN, lock.chatId, lockNotRecorded('en'));
+      return new Response('ok', { status: 200 });
+    }
+    const locale = links[0]?.locale ?? 'en';
+    const entry = (l: (typeof links)[number]) => ({ walletShort: `${l.wallet.slice(0, 8)}…${l.wallet.slice(-6)}`, chainId: l.chainId });
+    const recorded = links.filter((l) => l.recorded).map(entry);
+    const notRunning = links.filter((l) => !l.recorded).map(entry);
+    const parts =
+      links.length === 0
+        ? [lockNotLinked(locale)]
+        : [
+            ...(recorded.length > 0 ? [lockRecorded(locale, recorded)] : []),
+            ...(notRunning.length > 0 ? [lockNotRunning(locale, notRunning)] : []),
+          ];
+    await sendMessage(env.TG_BOT_TOKEN, lock.chatId, parts.join('\n\n'));
+    return new Response('ok', { status: 200 });
+  }
 
   const extracted = extractLinkCode(update);
   if (!extracted) {

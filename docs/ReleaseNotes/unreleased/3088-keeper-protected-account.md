@@ -10,4 +10,4 @@ A matured change is applied only while the protocol still holds the change its a
 
 > Caveat: ships disarmed. Arming it on any chain is a separate owner decision, and the protected account contracts reach a testnet only with the fresh deploy.
 > Caveat: at most four calls per kind of work (releases, position transfers, applied changes) per chain are sent each run, so on a busy chain a due item can wait a few runs; each kind keeps its own share, so a long queue of payouts never holds back an unlock or a signer addition; the kinds also take turns going first each run, so on a slow chain none can use the whole run's time every run.
-> Caveat: the Telegram lock command and the owner alerts on a lock, a queued payout and a proposed replacement are not part of this change; they follow separately.
+> Caveat: the Telegram lock command and the owner alerts on a lock, a queued payout and a proposed replacement have their own note.

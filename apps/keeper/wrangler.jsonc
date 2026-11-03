@@ -393,6 +393,14 @@
   //     changes, every minute. Permissionless; it pays only gas and moves
   //     nothing to the keeper. Ships unset. Needs no on-chain role. Arming it
   //     is an owner decision.
+  //   - PROTECTED_LOCK_ENABLED — 'true' adds the #3088 Telegram LOCK step to
+  //     the armed protected account pass: lockVaultFor for the LOCK requests
+  //     the agent recorded, answered in the owner's chat. Works only for an
+  //     owner who granted the keeper KEEPER_ACTION_LOCK_VAULT. Pays only gas.
+  //     Ships unset.
+  //   - PROTECTED_ALERTS_ENABLED — 'true' adds the #3088 owner alerts (a lock,
+  //     a queued payout, a proposed replacement) to the armed pass, on
+  //     Telegram and Push. Sends nothing on chain. Ships unset.
   //
   // (b) GENUINE PLAIN VARS. `keep_vars: true` preserves the ones this config
   //     does NOT declare — it suppresses the delete of bindings absent from

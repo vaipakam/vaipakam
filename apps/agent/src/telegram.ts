@@ -79,7 +79,7 @@ export interface TelegramUpdate {
   update_id?: number;
   message?: {
     message_id?: number;
-    chat?: { id?: number; username?: string };
+    chat?: { id?: number; username?: string; type?: string };
     from?: { id?: number; username?: string };
     text?: string;
   };
@@ -137,6 +137,30 @@ export function extractLinkCode(update: TelegramUpdate): {
   const match = text.match(LINK_CODE_RE);
   if (!match) return null;
   return { chatId: String(chatId), code: match[1]!.toUpperCase() };
+}
+
+const LOCK_RE = /^\/?lock(?:@\w+)?$/i;
+
+/**
+ * #3088 — the emergency LOCK command for protected account mode: `LOCK`,
+ * `/lock` or `/lock@BotName`, read case-blind. Returns the chat, Telegram's
+ * id for the update (so a redelivery records nothing new) and whether the
+ * chat is a private one; null for anything else. A LOCK from a group or
+ * channel is still returned, so the caller can answer that it works only in
+ * the owner's private chat: a group's other members must not be able to lock
+ * an owner's vault.
+ */
+export function extractLockCommand(update: TelegramUpdate): {
+  chatId: string;
+  updateId: number;
+  isPrivate: boolean;
+} | null {
+  const chatId = update?.message?.chat?.id;
+  const updateId = update?.update_id;
+  const text = update?.message?.text?.trim() ?? '';
+  if (!chatId || typeof updateId !== 'number' || !Number.isSafeInteger(updateId)) return null;
+  if (!LOCK_RE.test(text)) return null;
+  return { chatId: String(chatId), updateId, isPrivate: update.message?.chat?.type === 'private' };
 }
 
 /**

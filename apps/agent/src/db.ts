@@ -597,3 +597,51 @@ export async function insertSupportTicket(
     )
     .run();
 }
+
+/** A keeper heartbeat older than this means no keeper is working LOCK
+ *  requests on that chain now: the request is not recorded, and the owner is
+ *  told to lock from the app instead. The keeper refreshes it every run. */
+export const LOCK_READINESS_FRESH_SEC = 5 * 60;
+
+/**
+ * #3088 — record a Telegram LOCK from `chatId` for every wallet and chain the
+ * chat is linked to on which a keeper is working LOCK requests now (its
+ * heartbeat in `protected_lock_readiness` is fresh), and return every link
+ * with whether it was recorded. The keeper reads the unhandled rows and makes
+ * the lock call; the agent signs nothing. A link on a chain with no fresh
+ * heartbeat records nothing, so the owner is never told a lock is coming
+ * when nothing will act on it. A redelivered update records nothing new: a
+ * row is unique on (update, chain, wallet). One batch, so the links returned
+ * are the ones the rows were written for.
+ */
+export async function recordLockRequests(
+  db: D1Database,
+  chatId: string,
+  updateId: number,
+  nowSec: number = Math.floor(Date.now() / 1000),
+): Promise<{ wallet: string; chainId: number; locale: string; recorded: boolean }[]> {
+  const freshFrom = nowSec - LOCK_READINESS_FRESH_SEC;
+  const [, links] = await db.batch<{ wallet: string; chain_id: number; locale: string | null; running: number | null }>([
+    db
+      .prepare(
+        `INSERT OR IGNORE INTO protected_lock_requests (chain_id, wallet, update_id, requested_at)
+         SELECT t.chain_id, t.wallet, ?, ? FROM user_thresholds t
+           JOIN protected_lock_readiness r ON r.chain_id = t.chain_id AND r.seen_at >= ?
+          WHERE t.tg_chat_id = ?`,
+      )
+      .bind(updateId, nowSec, freshFrom, chatId),
+    db
+      .prepare(
+        `SELECT t.wallet, t.chain_id, t.locale, (r.seen_at >= ?) AS running FROM user_thresholds t
+           LEFT JOIN protected_lock_readiness r ON r.chain_id = t.chain_id
+          WHERE t.tg_chat_id = ? ORDER BY t.chain_id, t.wallet`,
+      )
+      .bind(freshFrom, chatId),
+  ]);
+  return (links?.results ?? []).map((r) => ({
+    wallet: r.wallet,
+    chainId: Number(r.chain_id),
+    locale: r.locale ?? 'en',
+    recorded: Number(r.running ?? 0) === 1,
+  }));
+}
