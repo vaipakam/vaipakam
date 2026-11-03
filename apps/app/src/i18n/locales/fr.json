@@ -3928,6 +3928,8 @@
         "withdrawn": "Votre réserve inutilisée a été retirée.",
         "nothingLeft": "Plus rien n’est réservé : une prolongation vient peut-être de l’utiliser.",
         "fundClosed": "Une réserve ne peut être ajoutée que tant que ce prêt pourrait être prolongé.",
+        "fundUnknown": "Nous n’avons pas pu lire si ce prêt peut être prolongé en ce moment, donc l’ajout à la réserve est désactivé jusqu’à ce que nous le puissions. Son retrait n’est pas concerné.",
+        "amountUnread": "Nous n’avons pas pu lire les informations de ce jeton, donc le montant ne peut pas être indiqué exactement et le retrait est désactivé jusqu’à ce que nous le puissions.",
         "review": "Vérifier le dépôt",
         "receiptAdd": {
           "youReceive": "Rien pour l’instant. {{amount}} est mis de côté dans votre vault pour les prolongations de ce prêt.",

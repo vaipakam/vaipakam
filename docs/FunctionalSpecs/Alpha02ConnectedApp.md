@@ -2230,7 +2230,12 @@ is the borrower's own money.
   reserve, and is never asked for an approval; while the account's
   protection cannot be read, neither is offered. What a withdrawal did,
   including a protected account's queued or held payout, stays in view after
-  the reserve it emptied disappears from the page and from Claims. A
+  the reserve it emptied disappears from the page and from Claims. The
+  withdrawal is offered only once the token's details are read, so its
+  amount can be stated exactly. The reserve's figures and its withdrawal do
+  not depend on reading the extension settings: when those cannot be read,
+  the borrower-position holder still sees the reserve and can withdraw it,
+  and is told that adding to it is off until they can. A
   wallet whose reserve on the loan could not be read is told so, rather than
   shown no reserve.
 - The lender is told that the borrower pays each extension's charge from

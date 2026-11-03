@@ -3928,6 +3928,8 @@
         "withdrawn": "Ihre ungenutzte Reserve wurde abgehoben.",
         "nothingLeft": "Es ist nichts mehr reserviert: Eine Verlängerung hat sie vielleicht gerade verbraucht.",
         "fundClosed": "Eine Reserve kann nur hinzugefügt werden, solange dieser Kredit verlängert werden könnte.",
+        "fundUnknown": "Wir konnten nicht lesen, ob dieser Kredit gerade verlängert werden kann, daher ist das Aufstocken der Reserve aus, bis wir es können. Das Abheben ist davon nicht betroffen.",
+        "amountUnread": "Wir konnten die Angaben zu diesem Token nicht lesen, daher lässt sich der Betrag nicht genau angeben und die Abhebung ist aus, bis wir es können.",
         "review": "Einzahlung prüfen",
         "receiptAdd": {
           "youReceive": "Vorerst nichts. {{amount}} wird in Ihrem Vault für die Verlängerungen dieses Kredits zurückgelegt.",

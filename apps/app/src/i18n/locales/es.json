@@ -3928,6 +3928,8 @@
         "withdrawn": "Se retiró tu reserva no usada.",
         "nothingLeft": "Ya no queda nada reservado: puede que una extensión acabe de usarlo.",
         "fundClosed": "Solo se puede añadir una reserva mientras este préstamo pueda extenderse.",
+        "fundUnknown": "No pudimos leer si este préstamo puede extenderse ahora, así que añadir a la reserva queda desactivado hasta que podamos. Retirarla no se ve afectado.",
+        "amountUnread": "No pudimos leer los datos de este token, así que el importe no puede indicarse con exactitud y el retiro queda desactivado hasta que podamos.",
         "review": "Revisar depósito",
         "receiptAdd": {
           "youReceive": "Nada por ahora. {{amount}} se aparta en tu vault para las extensiones de este préstamo.",

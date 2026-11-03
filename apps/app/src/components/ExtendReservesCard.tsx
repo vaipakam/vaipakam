@@ -12,7 +12,7 @@ import { copy } from '../content/copy';
 import { useTokenMeta } from '../contracts/erc20';
 import { formatTokenAmount } from '../lib/format';
 import { useMyExtendReserves, useReserveOutcomes, type ReserveRow } from '../data/autoExtend';
-import { exactAmountText, ReserveWithdraw } from './AutoExtendCard';
+import { ReserveWithdraw } from './AutoExtendCard';
 
 function ReserveItem({ row }: { row: ReserveRow }) {
   const meta = useTokenMeta(row.asset as Address);
@@ -36,7 +36,14 @@ function ReserveItem({ row }: { row: ReserveRow }) {
           {row.use === 'kept' ? r.kept : row.use === 'ended' ? r.ended : r.notHolder}
         </span>
         <span style={{ display: 'block', marginTop: 8 }}>
-          <ReserveWithdraw loanId={row.loanId} amount={exactAmountText(row.reserved, meta.data)} busy={busy} setBusy={setBusy} />
+          <ReserveWithdraw
+            loanId={row.loanId}
+            reserved={row.reserved}
+            meta={meta.data}
+            metaFailed={meta.isError}
+            busy={busy}
+            setBusy={setBusy}
+          />
         </span>
       </span>
     </li>

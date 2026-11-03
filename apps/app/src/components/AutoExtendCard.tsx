@@ -100,14 +100,20 @@ function Banner({ kind, children }: { kind: 'info' | 'warn' | 'danger'; children
 /** Withdraw the whole unused reserve, and say where the payment went. */
 export function ReserveWithdraw({
   loanId,
-  amount,
+  reserved,
+  meta,
+  metaFailed,
   busy,
   setBusy,
 }: {
   loanId: number;
-  /** The reserve as last read, worded, for the review receipt. The
-   *  withdrawal itself re-reads it just before signing. */
-  amount: string;
+  /** The reserve as last read, for the review receipt. The withdrawal itself
+   *  re-reads it just before signing. */
+  reserved: bigint;
+  /** The asset's metadata. Without it the receipt cannot state the amount,
+   *  so nothing is offered. */
+  meta: Meta;
+  metaFailed: boolean;
   busy: boolean;
   setBusy: (b: boolean) => void;
 }) {
@@ -126,6 +132,7 @@ export function ReserveWithdraw({
   const [error, setError] = useState<string | null>(null);
   const r = copy.autoExtend.reserve;
   const rw = r.receiptWithdraw;
+  const amount = meta ? exactAmountText(reserved, meta) : null;
 
   async function run() {
     if (!address || !walletChain || !client) return;
@@ -165,6 +172,8 @@ export function ReserveWithdraw({
         <p className="muted">{r.retired(shortAddress(verdict.controller))}</p>
       ) : verdict.kind === 'unread' ? (
         <p className="muted">{protection.isLoading ? copy.autoExtend.loading : r.protectionUnknown}</p>
+      ) : amount === null ? (
+        <p className="muted">{metaFailed ? r.amountUnread : copy.autoExtend.loading}</p>
       ) : confirming ? (
         <ConfirmReceipt
           busy={busy}
@@ -202,15 +211,18 @@ function ReservePanel({
   funding,
   meta,
   canFund,
+  metaFailed,
   busy,
   setBusy,
 }: {
   loanId: number;
   funding: ExtendFunding;
   meta: Meta;
-  /** The switch is on and the protocol not paused (the loan's own state is
-   *  re-read live before the deposit). */
-  canFund: boolean;
+  metaFailed: boolean;
+  /** `open` when the switch is on and the protocol not paused (the loan's
+   *  own state is re-read live before the deposit); `unknown` when that
+   *  could not be read. The withdrawal never depends on it. */
+  canFund: 'open' | 'closed' | 'unknown';
   busy: boolean;
   setBusy: (b: boolean) => void;
 }) {
@@ -331,7 +343,7 @@ function ReservePanel({
         <p className="muted">{r.retired(shortAddress(fundingVerdict.controller))}</p>
       ) : fundingVerdict.kind === 'unread' ? (
         <p className="muted">{protection.isLoading ? copy.autoExtend.loading : r.protectionUnknown}</p>
-      ) : canFund && confirming && amount !== null ? (
+      ) : canFund === 'open' && confirming && amount !== null ? (
         <ConfirmReceipt
           busy={busy}
           confirmLabel={r.add}
@@ -347,7 +359,7 @@ function ReservePanel({
             whenThisEnds: r.receiptAdd.whenThisEnds,
           }}
         />
-      ) : canFund ? (
+      ) : canFund === 'open' ? (
         <div className="cluster" style={{ alignItems: 'flex-end', gap: 8 }}>
           <label className="stack" style={{ gap: 4 }}>
             <span>{r.amount(meta?.symbol ?? '')}</span>
@@ -369,13 +381,20 @@ function ReservePanel({
           </button>
         </div>
       ) : (
-        <p className="muted">{r.fundClosed}</p>
+        <p className="muted">{canFund === 'unknown' ? r.fundUnknown : r.fundClosed}</p>
       )}
       {done ? <Banner kind="info">{done}</Banner> : null}
       {error ? <Banner kind="danger">{error}</Banner> : null}
       {funding.reserved > 0n ? (
         <div style={{ marginTop: 12 }}>
-          <ReserveWithdraw loanId={loanId} amount={exactAmountText(funding.reserved, meta)} busy={busy} setBusy={setBusy} />
+          <ReserveWithdraw
+            loanId={loanId}
+            reserved={funding.reserved}
+            meta={meta}
+            metaFailed={metaFailed}
+            busy={busy}
+            setBusy={setBusy}
+          />
         </div>
       ) : null}
     </div>
@@ -602,7 +621,7 @@ export function AutoExtendCard({
       {party ? <h4 style={{ margin: '0 0 4px' }}>{a.reserve.leftoverTitle}</h4> : null}
       <p>{a.reserve.leftover(amountText(reserved, meta))}</p>
       <p className="muted">{extendable ? a.reserve.notHolder : a.reserve.ended}</p>
-      <ReserveWithdraw loanId={loanId} amount={exactAmountText(reserved, meta)} busy={busy} setBusy={setBusy} />
+      <ReserveWithdraw loanId={loanId} reserved={reserved} meta={meta} metaFailed={metaQuery.isError} busy={busy} setBusy={setBusy} />
     </div>
   ) : null;
 
@@ -636,7 +655,7 @@ export function AutoExtendCard({
         {reserved > 0n ? (
           <>
             <p>{a.reserve.leftover(amountText(reserved, meta))}</p>
-            <ReserveWithdraw loanId={loanId} amount={exactAmountText(reserved, meta)} busy={busy} setBusy={setBusy} />
+            <ReserveWithdraw loanId={loanId} reserved={reserved} meta={meta} metaFailed={metaQuery.isError} busy={busy} setBusy={setBusy} />
           </>
         ) : null}
         {outcomeBanner}
@@ -644,12 +663,29 @@ export function AutoExtendCard({
     );
   }
 
+  // The borrower-position holder's reserve, read on its own: its figures
+  // and withdrawal never wait on, or fall with, the extension-state read.
+  const reservePanel = (canFund: 'open' | 'closed' | 'unknown') =>
+    funding.data ? (
+      <ReservePanel
+        loanId={loanId}
+        funding={funding.data}
+        meta={meta}
+        metaFailed={metaQuery.isError}
+        canFund={canFund}
+        busy={busy}
+        setBusy={setBusy}
+      />
+    ) : (
+      <p className="muted">{funding.isError ? a.reserve.unavailable : a.loading}</p>
+    );
+
   if (!state.data) {
     return (
       <section className="card" data-testid="auto-extend">
         {header}
         <p className="muted">{state.isError ? a.unavailable : a.loading}</p>
-        {leftover}
+        {holdsBorrower ? reservePanel('unknown') : leftover}
         {outcomeBanner}
       </section>
     );
@@ -720,18 +756,7 @@ export function AutoExtendCard({
       {holdsBorrower ? (
         <>
           <KeeperLine loanId={loanId} keepersPaused={s.keepersPaused} />
-          {funding.data ? (
-            <ReservePanel
-              loanId={loanId}
-              funding={funding.data}
-              meta={meta}
-              canFund={s.switchOn && !s.paused}
-              busy={busy}
-              setBusy={setBusy}
-            />
-          ) : (
-            <p className="muted">{funding.isError ? a.reserve.unavailable : a.loading}</p>
-          )}
+          {reservePanel(s.switchOn && !s.paused ? 'open' : 'closed')}
         </>
       ) : (
         <>
