@@ -1347,6 +1347,7 @@
       "disownDoneUnread": "The transaction went through, but we couldn’t read the disowning record from it. Open your wallet’s activity to check what was recorded for {{asset}}. Nothing moved.",
       "disownViewTx": "View the transaction",
       "disownFailed": "We can’t show the disowning as recorded: your wallet didn’t report sending it. If you approved it, check your wallet’s activity before trying again. A second disowning only adds a second record.",
+      "disownNotTaken": "The disowning didn’t take effect: the transaction reverted, or was cancelled or replaced in your wallet, so nothing was recorded. You can try again.",
       "disownUnconfirmed": "The disowning was sent, but we couldn’t read its result. It may already be recorded, or may still be. Check the transaction before disowning again; a second disowning only adds a second record.",
       "queuedNote": "Protection is on, so a withdrawal waits {{delay}} before it is paid to your wallet. You or your recovery signers can cancel it meanwhile.",
       "cosignNote": "This account also needs a recovery signer to co-sign each payout: after the delay, it is paid only once a signer has co-signed it.",

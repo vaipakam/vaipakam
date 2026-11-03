@@ -2907,6 +2907,9 @@ const copySource = {
     // (a wallet's reply can be lost); a second disowning is harmless.
     disownFailed:
       'We can’t show the disowning as recorded: your wallet didn’t report sending it. If you approved it, check your wallet’s activity before trying again. A second disowning only adds a second record.',
+    // Settled as not run: the chain says nothing was recorded.
+    disownNotTaken:
+      'The disowning didn’t take effect: the transaction reverted, or was cancelled or replaced in your wallet, so nothing was recorded. You can try again.',
     // Sent, but the receipt could not be read: it may be recorded already.
     disownUnconfirmed:
       'The disowning was sent, but we couldn’t read its result. It may already be recorded, or may still be. Check the transaction before disowning again; a second disowning only adds a second record.',

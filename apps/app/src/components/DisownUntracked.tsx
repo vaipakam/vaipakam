@@ -13,16 +13,23 @@
  * is read from the receipt's `UntrackedDisowned` event. A transaction that
  * was sent but whose receipt could not be read is reported as unconfirmed,
  * with its link, never as failed: it may have mined or may still mine.
+ * One the chain positively settled as not run (reverted, or cancelled or
+ * replaced in the wallet) is reported as not taken, with the button back.
  * One that never returned a hash is not claimed as unsent either (a
  * wallet's reply can be lost after it sent); the card says it cannot show
  * it as recorded and where to look. A repeat only adds a second record.
+ *
+ * Which of those a thrown write was is decided by the app's one rule for
+ * it, `settleFailedSend`, never re-derived here.
  */
 import { useState } from 'react';
-import { parseEventLogs } from 'viem';
+import { parseEventLogs, type Log } from 'viem';
+import { usePublicClient } from 'wagmi';
 import { copy } from '../content/copy';
 import { getSupportedChain } from '../chain/chains';
 import { useActiveChain } from '../chain/useActiveChain';
 import { DIAMOND_ABI_VIEM, useDiamondWrite } from '../contracts/diamond';
+import { settleFailedSend } from '../contracts/ownReceipt';
 import { captureTxError } from '../lib/errors';
 import { exactAmountString } from '../lib/format';
 import type { AssetKind } from '../data/protectedAccount';
@@ -43,13 +50,27 @@ type DisownState =
   | { kind: 'done'; observed: bigint | null }
   /** Sent, but its outcome could not be read. */
   | { kind: 'unconfirmed'; hash: `0x${string}` }
+  /** Settled as not run: reverted, or cancelled or replaced in the wallet. */
+  | { kind: 'notTaken'; message: string }
   /** No hash came back: refused, failed, or a reply that was lost. */
   | { kind: 'failed'; message: string };
+
+/** The amount the contract saw at that block, from its own event. */
+function observedFrom(logs: readonly Log[]): bigint | null {
+  const [event] = parseEventLogs({
+    abi: DIAMOND_ABI_VIEM,
+    eventName: 'UntrackedDisowned',
+    logs: [...logs],
+  });
+  const args = event?.args as { observedAmount?: unknown } | undefined;
+  return typeof args?.observedAmount === 'bigint' ? args.observedAmount : null;
+}
 
 export function DisownUntracked({ kind, asset, tokenId, label, decimals }: Props) {
   const r = copy.depository;
   const { walletChain } = useActiveChain();
   const { write, ready } = useDiamondWrite();
+  const publicClient = usePublicClient({ chainId: walletChain?.chainId });
   const [state, setState] = useState<DisownState>({ kind: 'idle' });
 
   async function disown() {
@@ -63,25 +84,23 @@ export function DisownUntracked({ kind, asset, tokenId, label, decimals }: Props
           sent.hash = hash;
         },
       });
-      // The amount the contract saw at that block, from its own event.
-      const [event] = parseEventLogs({
-        abi: DIAMOND_ABI_VIEM,
-        eventName: 'UntrackedDisowned',
-        logs: receipt.logs,
-      });
-      const args = event?.args as { observedAmount?: unknown } | undefined;
-      setState({
-        kind: 'done',
-        observed: typeof args?.observedAmount === 'bigint' ? args.observedAmount : null,
-      });
+      setState({ kind: 'done', observed: observedFrom(receipt.logs) });
     } catch (err) {
-      // Once the wallet returned a hash, a failure is a failure to READ
-      // the outcome, not proof that nothing was recorded.
-      setState(
-        sent.hash !== null
-          ? { kind: 'unconfirmed', hash: sent.hash }
-          : { kind: 'failed', message: captureTxError(err) },
-      );
+      // No hash: never claimed as sent or unsent. A hash: the shared rule
+      // tells a settled not-run (reverted, cancelled, replaced) from a
+      // send that mined after all, from one whose outcome is unknown.
+      if (sent.hash === null || !publicClient) {
+        setState(
+          sent.hash === null
+            ? { kind: 'failed', message: captureTxError(err) }
+            : { kind: 'unconfirmed', hash: sent.hash },
+        );
+        return;
+      }
+      const mined = await settleFailedSend(publicClient, sent.hash, err);
+      if ('logs' in mined) setState({ kind: 'done', observed: observedFrom(mined.logs) });
+      else if ('failure' in mined) setState({ kind: 'notTaken', message: mined.failure });
+      else setState({ kind: 'unconfirmed', hash: sent.hash });
     }
   }
 
@@ -122,10 +141,10 @@ export function DisownUntracked({ kind, asset, tokenId, label, decimals }: Props
           </button>
         </div>
       )}
-      {state.kind === 'failed' ? (
+      {state.kind === 'failed' || state.kind === 'notTaken' ? (
         <p className="banner banner-danger" role="alert" style={{ margin: 0 }}>
           <span className="banner-body">
-            {r.disownFailed} {state.message}
+            {state.kind === 'failed' ? r.disownFailed : r.disownNotTaken} {state.message}
           </span>
         </p>
       ) : null}

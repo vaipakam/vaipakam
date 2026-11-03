@@ -3705,6 +3705,7 @@
       "disownDoneUnread": "Die Transaktion ist durchgegangen, aber wir konnten den Ablehnungsnachweis darin nicht lesen. Prüfe in der Aktivität deiner Wallet, was für {{asset}} festgehalten wurde. Nichts wurde bewegt.",
       "disownViewTx": "Transaktion ansehen",
       "disownFailed": "Wir können die Ablehnung nicht als festgehalten anzeigen: Deine Wallet hat nicht gemeldet, sie gesendet zu haben. Wenn du sie bestätigt hast, prüfe die Aktivität deiner Wallet, bevor du es erneut versuchst. Eine zweite Ablehnung fügt nur einen zweiten Eintrag hinzu.",
+      "disownNotTaken": "Die Ablehnung hat nicht gegriffen: Die Transaktion ist fehlgeschlagen oder wurde in deiner Wallet abgebrochen oder ersetzt, daher wurde nichts festgehalten. Du kannst es erneut versuchen.",
       "disownUnconfirmed": "Die Ablehnung wurde gesendet, aber wir konnten ihr Ergebnis nicht lesen. Sie ist vielleicht schon festgehalten oder wird es noch. Prüfe die Transaktion, bevor du erneut ablehnst; eine zweite Ablehnung fügt nur einen zweiten Eintrag hinzu.",
       "queuedNote": "Der Schutz ist aktiv, daher wartet eine Abhebung {{delay}}, bevor sie an deine Wallet ausgezahlt wird. Du oder deine Wiederherstellungs-Unterzeichner können sie in der Zwischenzeit abbrechen.",
       "lockedNote": "Dieses Konto ist gesperrt, daher kann nichts abgehoben werden, bis es entsperrt ist.",

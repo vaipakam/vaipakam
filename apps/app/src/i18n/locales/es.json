@@ -3705,6 +3705,7 @@
       "disownDoneUnread": "La transacción se completó, pero no pudimos leer en ella el registro del rechazo. Abre la actividad de tu billetera para comprobar qué quedó registrado para {{asset}}. Nada se movió.",
       "disownViewTx": "Ver la transacción",
       "disownFailed": "No podemos mostrar el rechazo como registrado: tu billetera no informó de que lo enviara. Si lo aprobaste, revisa la actividad de tu billetera antes de volver a intentarlo. Un segundo rechazo solo añade un segundo registro.",
+      "disownNotTaken": "El rechazo no se aplicó: la transacción falló, o se canceló o se reemplazó en tu billetera, así que no se registró nada. Puedes volver a intentarlo.",
       "disownUnconfirmed": "El rechazo se envió, pero no pudimos leer su resultado. Puede que ya esté registrado o que aún se registre. Revisa la transacción antes de rechazar de nuevo; un segundo rechazo solo añade un segundo registro.",
       "queuedNote": "La protección está activada, así que un retiro espera {{delay}} antes de pagarse a tu billetera. Tú o tus firmantes de recuperación pueden cancelarlo mientras tanto.",
       "lockedNote": "Esta cuenta está bloqueada, así que no se puede retirar nada hasta que se desbloquee.",

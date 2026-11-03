@@ -3705,6 +3705,7 @@
       "disownDoneUnread": "La transaction est passée, mais nous n’avons pas pu y lire l’inscription du désaveu. Ouvrez l’activité de votre portefeuille pour vérifier ce qui a été inscrit pour {{asset}}. Rien n’a bougé.",
       "disownViewTx": "Voir la transaction",
       "disownFailed": "Nous ne pouvons pas afficher le désaveu comme inscrit : votre portefeuille n’a pas signalé l’avoir envoyé. Si vous l’avez approuvé, vérifiez l’activité de votre portefeuille avant de réessayer. Un second désaveu ne fait qu’ajouter une seconde inscription.",
+      "disownNotTaken": "Le désaveu n’a pas pris effet : la transaction a échoué, ou a été annulée ou remplacée dans votre portefeuille, donc rien n’a été inscrit. Vous pouvez réessayer.",
       "disownUnconfirmed": "Le désaveu a été envoyé, mais nous n’avons pas pu en lire le résultat. Il est peut-être déjà inscrit, ou le sera. Vérifiez la transaction avant de désavouer à nouveau ; un second désaveu ne fait qu’ajouter une seconde inscription.",
       "queuedNote": "La protection est active : un retrait attend donc {{delay}} avant d’être versé à votre portefeuille. Vous ou vos signataires de récupération pouvez l’annuler entre-temps.",
       "lockedNote": "Ce compte est verrouillé : rien ne peut être retiré tant qu’il n’est pas déverrouillé.",

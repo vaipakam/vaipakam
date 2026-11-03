@@ -5087,8 +5087,10 @@ Its intended behaviour, as the test oracle for this surface:
   wallet, a network whose screening is not set up). Its result comes from
   the transaction's own record; a transaction that was sent but whose
   result cannot be read is reported as unconfirmed with its link, never as
-  failed, and one the wallet never reported sending is not claimed as
-  unsent. With protected mode on, the
+  failed; one the chain settled as not run (reverted, or cancelled or
+  replaced in the wallet) is reported as not taken, with nothing
+  recorded, and can be tried again; and one the wallet never reported
+  sending is not claimed as unsent. With protected mode on, the
   withdraw button says the withdrawal is queued, and for how long, before
   the user signs, and the result names where to find it.
 - The adoption page takes every kind of asset the vault can hold: a
