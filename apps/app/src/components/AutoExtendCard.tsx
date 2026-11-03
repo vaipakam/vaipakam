@@ -19,7 +19,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import type { Address, Log, PublicClient } from 'viem';
 import { copy } from '../content/copy';
 import { useActiveChain } from '../chain/useActiveChain';
-import { useDiamondWrite } from '../contracts/diamond';
+import { useDiamondWrite, useTermsBlockNonExitWrites } from '../contracts/diamond';
 import { ensureAllowance, trackApproval, useTokenMeta } from '../contracts/erc20';
 import { assertErc20BalanceLive, assertAssetNotPausedLive, assertPositionNftHeldLive } from '../contracts/preflights';
 import { readLoanLive } from '../contracts/loanLive';
@@ -173,6 +173,7 @@ function ReservePanel({
   const publicClient = usePublicClient({ chainId: walletChain?.chainId });
   const { data: walletClient } = useWalletClient();
   const { write } = useDiamondWrite();
+  const termsVerdict = useTermsBlockNonExitWrites();
   const queryClient = useQueryClient();
   const [input, setInput] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -195,6 +196,12 @@ function ReservePanel({
     // only what the hooks saw change, so calling it is always safe.
     let approving = false;
     try {
+      // The deposit is not a Terms-gate exit: refuse it here, before any
+      // approval, rather than after one has been paid for.
+      const terms = termsVerdict();
+      if (terms !== 'ok') {
+        throw new Error(terms === 'unknown' ? copy.errors.termsCheckUnavailable : copy.errors.termsNotAccepted);
+      }
       await assertWalletNotSanctionedLive(publicClient, diamond, owner);
       // The deposit is refused unless the loan could be extended now:
       // check before any approval, so none is left standing for a refusal.
@@ -523,7 +530,7 @@ export function AutoExtendCard({
   }
 
   const s = state.data;
-  const band = consentBand(s.borrower, s.lender);
+  const band = consentBand(s.borrower, s.lender, s);
   const phase = s.window ? windowPhase(s.now, s.window) : null;
   const held = { borrower: holdsBorrower, lender: holdsLender };
   const sides = (['borrower', 'lender'] as const).filter((side) => held[side]);
@@ -568,7 +575,9 @@ export function AutoExtendCard({
           ? a.bandBoth(formatBpsAsPercent(band.minRateBps), formatBpsAsPercent(band.maxRateBps), formatDateTime(band.latestEnd))
           : band.kind === 'noOverlap'
             ? a.bandNoOverlap
-            : a.bandMissing}
+            : band.kind === 'endTooEarly'
+              ? a.bandEndTooEarly(formatDateTime(band.currentEnd))
+              : a.bandMissing}
       </p>
       {sides.map((side) => (
         // Keyed by who is editing which side: a draft typed for one wallet

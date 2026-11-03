@@ -2180,6 +2180,7 @@
       "bandBoth": "An extension can run at a rate from {{min}} to {{max}}, with a new end no later than {{end}}. Whoever sends it chooses the exact rate and term within those limits.",
       "bandNoOverlap": "Both sides have limits in force, but no rate fits both, so no extension can run. The lender’s lowest rate is above the borrower’s highest.",
       "bandMissing": "No extension runs until both sides have limits in force.",
+      "bandEndTooEarly": "The rates overlap, but no new end both sides accept falls after the loan’s current end, {{end}}, so no extension can run. A side must set a later latest end date.",
       "editBorrower": "Your limits as borrower",
       "editLender": "Your limits as lender",
       "rateBorrower": "Highest rate you accept (% a year)",

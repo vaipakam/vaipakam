@@ -25,6 +25,7 @@ import { signalAware } from '../chain/railHealth';
 import { fetchActivity } from './indexer';
 import { isRevert } from './liveLoanRow';
 import { freshData } from '../lib/freshData';
+import { loanEndTimeOf, readLoanLive } from '../contracts/loanLive';
 
 const REFRESH_MS = 60_000;
 
@@ -51,6 +52,10 @@ export interface AutoExtendState {
   lender: ExtendCaps;
   /** The extension window; null when the loan is not active. */
   window: { opensAt: number; closesAt: number } | null;
+  /** The loan's current end (its effective maturity, a pause included) at
+   *  the read block; null when the loan is not active. An extension's new
+   *  end must fall after it. */
+  currentEnd: number | null;
   /** The timestamp of the block these were read at. */
   now: number;
 }
@@ -75,18 +80,38 @@ export type ConsentBand =
   | { kind: 'both'; minRateBps: number; maxRateBps: number; latestEnd: number }
   /** Both sides have limits in force, and they admit no rate. */
   | { kind: 'noOverlap'; minRateBps: number; maxRateBps: number; latestEnd: number }
+  /** The rates overlap, but no new end both accept is after the loan's
+   *  current end: limits still "in force" by their getters can have run
+   *  out, after an earlier extension or simply with time. */
+  | { kind: 'endTooEarly'; latestEnd: number; currentEnd: number }
   | { kind: 'missing'; borrower: boolean; lender: boolean };
 
+const DAY = 86_400;
+
 /** The executor's rule: lender's minimum ≤ rate ≤ the lower of both
- *  maximums, and new end ≤ the earlier of both latest ends. */
-export function consentBand(borrower: ExtendCaps, lender: ExtendCaps): ConsentBand {
+ *  maximums, and a new end — `now` plus a whole number of days, at least
+ *  one — after the loan's current end and no later than the earlier of
+ *  both latest ends. `now` and `currentEnd` are the read block's; with no
+ *  current end (the loan is not active) the end test is not made. */
+export function consentBand(
+  borrower: ExtendCaps,
+  lender: ExtendCaps,
+  at: { now: number; currentEnd: number | null } = { now: 0, currentEnd: null },
+): ConsentBand {
   if (!borrower.enabled || !lender.enabled) {
     return { kind: 'missing', borrower: !borrower.enabled, lender: !lender.enabled };
   }
   const minRateBps = lender.minRateBps;
   const maxRateBps = Math.min(lender.maxRateBps, borrower.maxRateBps);
   const latestEnd = Math.min(lender.maxNewExpiry, borrower.maxNewExpiry);
-  return { kind: minRateBps > maxRateBps ? 'noOverlap' : 'both', minRateBps, maxRateBps, latestEnd };
+  if (minRateBps > maxRateBps) return { kind: 'noOverlap', minRateBps, maxRateBps, latestEnd };
+  if (at.currentEnd !== null) {
+    const days = Math.floor((latestEnd - at.now) / DAY);
+    if (days < 1 || at.now + days * DAY <= at.currentEnd) {
+      return { kind: 'endTooEarly', latestEnd, currentEnd: at.currentEnd };
+    }
+  }
+  return { kind: 'both', minRateBps, maxRateBps, latestEnd };
 }
 
 /** Whether limits a wallet sees for its own side were set by someone else
@@ -171,7 +196,7 @@ export async function readAutoExtendState(ctx: Ctx, loanId: number): Promise<Aut
       blockNumber: block.number,
     });
   const id = BigInt(loanId);
-  const [paused, switchOn, keepersPaused, borrower, lender, window] = await Promise.all([
+  const [paused, switchOn, keepersPaused, borrower, lender, window, live] = await Promise.all([
     read('paused') as Promise<boolean>,
     read('getAutoExtendEnabled') as Promise<boolean>,
     read('keepersPaused') as Promise<boolean>,
@@ -185,6 +210,7 @@ export async function readAutoExtendState(ctx: Ctx, loanId: number): Promise<Aut
         throw err;
       },
     ),
+    readLoanLive(client, diamond, id, block.number),
   ]);
   return {
     paused,
@@ -193,6 +219,7 @@ export async function readAutoExtendState(ctx: Ctx, loanId: number): Promise<Aut
     borrower: caps(borrower),
     lender: caps(lender),
     window,
+    currentEnd: window ? Number(loanEndTimeOf(live)) : null,
     now: Number(block.timestamp),
   };
 }

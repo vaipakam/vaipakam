@@ -4853,7 +4853,10 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           loanId={row.loanId}
           holdsBorrower={isBorrowerHolder}
           holdsLender={isLenderHolder}
-          active={row.status === 'active' && !closedThisSession && !soldThisSession}
+          // Not `soldThisSession`: a lender sale moves only the lender
+          // position, the loan stays active, and the fresh ownership reads
+          // already say what the wallet still holds.
+          active={row.status === 'active' && !closedThisSession}
           isRental={isRental}
           cadence={pageCadence}
           principalAsset={row.lendingAsset as `0x${string}`}

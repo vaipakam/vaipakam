@@ -3871,6 +3871,7 @@
       "bandBoth": "Eine Verlängerung kann zu einem Zinssatz von {{min}} bis {{max}} laufen, mit einem neuen Ende spätestens am {{end}}. Wer sie sendet, wählt den genauen Zinssatz und die Laufzeit innerhalb dieser Grenzen.",
       "bandNoOverlap": "Beide Seiten haben Grenzen in Kraft, aber kein Zinssatz passt zu beiden, daher kann keine Verlängerung laufen. Der niedrigste Zinssatz des Kreditgebers liegt über dem höchsten des Kreditnehmers.",
       "bandMissing": "Keine Verlängerung läuft, bis beide Seiten Grenzen in Kraft haben.",
+      "bandEndTooEarly": "Die Zinssätze überschneiden sich, aber kein neues Ende, das beide Seiten akzeptieren, liegt nach dem aktuellen Ende des Kredits, {{end}}, daher kann keine Verlängerung laufen. Eine Seite muss ein späteres letztes Enddatum festlegen.",
       "editBorrower": "Ihre Grenzen als Kreditnehmer",
       "editLender": "Ihre Grenzen als Kreditgeber",
       "rateBorrower": "Höchster Zinssatz, den Sie akzeptieren (% pro Jahr)",

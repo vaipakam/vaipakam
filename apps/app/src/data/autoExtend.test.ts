@@ -20,6 +20,15 @@ vi.mock('./indexer', () => ({
   ),
 }));
 
+const loanLive = vi.hoisted(() => ({ blocks: [] as unknown[], end: 1_500n }));
+vi.mock('../contracts/loanLive', () => ({
+  readLoanLive: vi.fn(async (_c: unknown, _d: unknown, _id: unknown, blockNumber?: bigint) => {
+    loanLive.blocks.push(blockNumber);
+    return { end: loanLive.end };
+  }),
+  loanEndTimeOf: (live: { end: bigint }) => live.end,
+}));
+
 import {
   capsArgs,
   consentBand,
@@ -65,6 +74,23 @@ describe('consentBand', () => {
 
   it('says when both are in force but admit no rate', () => {
     expect(consentBand(on({ maxRateBps: 400 }), on({ minRateBps: 500 })).kind).toBe('noOverlap');
+  });
+
+  it('refuses limits whose latest end leaves no new end after the loan’s current end', () => {
+    const DAY = 86_400;
+    const b = on({ maxNewExpiry: 10 * DAY });
+    const l = on({ minRateBps: 500, maxNewExpiry: 10 * DAY });
+    // A whole number of days from now must land after the current end.
+    expect(consentBand(b, l, { now: 0, currentEnd: 9 * DAY }).kind).toBe('both');
+    expect(consentBand(b, l, { now: 0, currentEnd: 10 * DAY })).toEqual({
+      kind: 'endTooEarly',
+      latestEnd: 10 * DAY,
+      currentEnd: 10 * DAY,
+    });
+    // Run out with time: under a day left to the latest end.
+    expect(consentBand(b, l, { now: 9 * DAY + 1, currentEnd: 9 * DAY }).kind).toBe('endTooEarly');
+    // Not active: no end test.
+    expect(consentBand(b, l, { now: 20 * DAY, currentEnd: null }).kind).toBe('both');
   });
 
   it('names the side whose limits are not in force', () => {
@@ -185,12 +211,16 @@ describe('readAutoExtendState', () => {
       now: 1_000,
       borrower: { enabled: true, maxRateBps: 900, maxNewExpiry: 5_000 },
       lender: { enabled: false, setter: OTHER },
+      currentEnd: 1_500,
     });
     expect(blocks.every((b) => b === 42n)).toBe(true);
+    expect(loanLive.blocks.at(-1)).toBe(42n);
   });
 
   it('has no window once the loan is not active, and fails on any other error', async () => {
-    expect((await readAutoExtendState({ client: clientFor({ window: revert() }).client, diamond: DIAMOND }, 3)).window).toBeNull();
+    const ended = await readAutoExtendState({ client: clientFor({ window: revert() }).client, diamond: DIAMOND }, 3);
+    expect(ended.window).toBeNull();
+    expect(ended.currentEnd).toBeNull();
     await expect(
       readAutoExtendState({ client: clientFor({ window: new Error('rpc down') }).client, diamond: DIAMOND }, 3),
     ).rejects.toThrow('rpc down');

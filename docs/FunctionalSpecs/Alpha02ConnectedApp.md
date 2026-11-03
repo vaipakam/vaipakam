@@ -2169,8 +2169,11 @@ is the borrower's own money.
   showing them as in force. From both sides' limits the page states the terms
   an extension may use (the lender's lowest rate up to the lower of the two
   highest rates, ending no later than the earlier of the two latest ends), or
-  that the two sides' limits leave no rate both accept, or that no extension
-  runs until both sides have limits in force. It says that whoever sends the
+  that the two sides' limits leave no rate both accept, or that no new end
+  both accept falls after the loan's current end (limits can run out with
+  time or after an earlier extension, and the page names the current end and
+  asks for a later date), or that no extension runs until both sides have
+  limits in force. It says that whoever sends the
   extension chooses the exact rate and term within those limits.
 - A party sets or clears their own side's limits from the page. A wallet
   that holds both positions holds both consents, and sets and clears each
@@ -2198,8 +2201,10 @@ is the borrower's own money.
   for both sides' limits and for the reserve list on the Claims page.
 - Adding to the reserve deposits the loan's asset from the wallet into the
   holder's own vault, earmarked for the loan. It is offered only while the
-  switch is on and the protocol is not paused, and the loan is checked again
-  just before any approval, so no approval is left standing for a deposit the
+  switch is on and the protocol is not paused. The deposit is not a way out,
+  so a wallet that has not accepted the current Terms (or whose acceptance
+  cannot be checked) is refused before any approval is asked for. The loan
+  is checked again just before any approval, so no approval is left standing for a deposit the
   protocol would refuse. An approval granted for a deposit that then fails is
   put back, including when the approval step itself fails part-way.
 - The reserve belongs to whoever deposited it. Its unused part can be

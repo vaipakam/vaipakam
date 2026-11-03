@@ -3871,6 +3871,7 @@
       "bandBoth": "Une prolongation peut s’exécuter à un taux de {{min}} à {{max}}, avec une nouvelle échéance au plus tard le {{end}}. Celui qui l’envoie choisit le taux et la durée exacts dans ces limites.",
       "bandNoOverlap": "Les deux parties ont des limites en vigueur, mais aucun taux ne convient aux deux, donc aucune prolongation ne peut s’exécuter. Le taux minimum du prêteur dépasse le taux maximum de l’emprunteur.",
       "bandMissing": "Aucune prolongation ne s’exécute tant que les deux parties n’ont pas de limites en vigueur.",
+      "bandEndTooEarly": "Les taux se recoupent, mais aucune nouvelle échéance acceptée par les deux parties ne tombe après l’échéance actuelle du prêt, {{end}}, donc aucune prolongation ne peut avoir lieu. Une partie doit fixer une date de fin maximale plus tardive.",
       "editBorrower": "Vos limites en tant qu’emprunteur",
       "editLender": "Vos limites en tant que prêteur",
       "rateBorrower": "Taux le plus élevé que vous acceptez (% par an)",
