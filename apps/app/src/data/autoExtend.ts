@@ -16,7 +16,7 @@
  * (`getExtendFunding`). This module adds no rule of its own beyond reading
  * those together, at one block, and saying what they mean.
  */
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { usePublicClient } from 'wagmi';
 import type { Address, PublicClient } from 'viem';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
@@ -307,6 +307,41 @@ export function keeperVerdict(
   if (onForLoan.some((k) => k.actions !== null && (k.actions & KEEPER_ACTION_EXTEND) !== 0)) return 'ready';
   if (onForLoan.some((k) => k.actions === null)) return 'unknown';
   return 'none';
+}
+
+// ─── Withdrawal outcomes ───────────────────────────────────────────────
+
+const OUTCOME_ROOT = 'extendReserveOutcome';
+
+/**
+ * What each of this wallet's reserve withdrawals did, by loan, for this
+ * session. Kept in the query cache under its own root, never fetched and never
+ * invalidated by the reserve rails, so the outcome (including a protected
+ * account's queued or held payout) outlives the surface that sent it: a whole
+ * withdrawal clears the reserve, and every reserve surface unmounts when it
+ * reads zero.
+ */
+export function useReserveOutcomes(): Readonly<Record<number, string>> {
+  const { readChain, address } = useActiveChain();
+  const q = useQuery({
+    queryKey: [OUTCOME_ROOT, readChain.chainId, address?.toLowerCase()],
+    queryFn: () => ({}) as Record<number, string>,
+    enabled: false,
+    staleTime: Infinity,
+    gcTime: Infinity,
+  });
+  return q.data ?? {};
+}
+
+/** Records a withdrawal's outcome where {@link useReserveOutcomes} reads it. */
+export function useRecordReserveOutcome(): (loanId: number, text: string) => void {
+  const { readChain, address } = useActiveChain();
+  const queryClient = useQueryClient();
+  return (loanId, text) =>
+    queryClient.setQueryData<Record<number, string>>(
+      [OUTCOME_ROOT, readChain.chainId, address?.toLowerCase()],
+      (prev) => ({ ...(prev ?? {}), [loanId]: text }),
+    );
 }
 
 // ─── Unused reserves, for the Claims page ────────────────────────────────

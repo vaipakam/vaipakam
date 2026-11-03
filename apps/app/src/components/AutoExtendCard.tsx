@@ -26,10 +26,10 @@ import { assertErc20BalanceLive, assertAssetNotPausedLive, assertPositionNftHeld
 import { readLoanLive } from '../contracts/loanLive';
 import { assertWalletNotSanctionedLive } from '../data/sanctions';
 import { useKeeperConfig, useLoanKeeperEnables } from '../data/keepers';
-import { payoutOutcome, useOwnPayoutRoute } from '../data/protectedAccount';
+import { ownFundingVerdict, ownWithdrawalVerdict, payoutOutcome, useOwnPayoutRoute, useProtectedAccount } from '../data/protectedAccount';
 import { payoutOutcomesText, payoutRouteText } from '../lib/payoutRouteText';
 import { captureTxError } from '../lib/errors';
-import { formatBpsAsPercent, formatDateTime, formatTokenAmount, parseExactUnits } from '../lib/format';
+import { formatBpsAsPercent, formatDateTime, formatTokenAmount, formatTokenAmountExact, parseExactUnits, shortAddress } from '../lib/format';
 import { MAX_INTEREST_BPS, percentToBps } from '../lib/offerSchema';
 import { freshData } from '../lib/freshData';
 import {
@@ -41,6 +41,8 @@ import {
   setByEarlierHolder,
   useAutoExtendState,
   useExtendFunding,
+  useRecordReserveOutcome,
+  useReserveOutcomes,
   windowPhase,
   withdrawWholeReserve,
   type AutoExtendState,
@@ -53,6 +55,14 @@ type Meta = { decimals: number; symbol: string } | undefined;
 function amountText(amount: bigint, meta: Meta): string {
   return meta
     ? `${formatTokenAmount(amount, meta.decimals)} ${meta.symbol}`
+    : copy.claims.row.amountLoadingInline;
+}
+
+/** An amount to the token's last unit, for a review receipt: the receipt
+ *  states exactly what the transaction carries. */
+export function exactAmountText(amount: bigint, meta: Meta): string {
+  return meta
+    ? `${formatTokenAmountExact(amount, meta.decimals)} ${meta.symbol}`
     : copy.claims.row.amountLoadingInline;
 }
 
@@ -106,17 +116,22 @@ export function ReserveWithdraw({
   const { write } = useDiamondWrite();
   const queryClient = useQueryClient();
   const route = payoutRouteText(useOwnPayoutRoute());
+  const protection = useProtectedAccount();
+  // The contract refuses a withdrawal from a wallet whose account a
+  // replacement retired; a locked account or a full queue only holds the
+  // payment in the vault, which the outcome then says.
+  const verdict = ownWithdrawalVerdict(protection.data, protection.isError);
+  const record = useRecordReserveOutcome();
   const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [done, setDone] = useState<string | null>(null);
-  const rw = copy.autoExtend.reserve.receiptWithdraw;
+  const r = copy.autoExtend.reserve;
+  const rw = r.receiptWithdraw;
 
   async function run() {
     if (!address || !walletChain || !client) return;
     setConfirming(false);
     setBusy(true);
     setError(null);
-    setDone(null);
     try {
       const diamond = walletChain.diamondAddress as Address;
       const logs = await withdrawWholeReserve({
@@ -132,7 +147,9 @@ export function ReserveWithdraw({
         return;
       }
       const note = payoutOutcomesText([payoutOutcome(logs as Log[], address)], address);
-      setDone(note ? `${copy.autoExtend.reserve.withdrawn} ${note}` : copy.autoExtend.reserve.withdrawn);
+      // Recorded outside this component: the refreshed reserve reads zero and
+      // unmounts it, and the outcome must stay in view.
+      record(loanId, note ? `${r.withdrawn} ${note}` : r.withdrawn);
     } catch (err) {
       setError(captureTxError(err));
     } finally {
@@ -144,7 +161,11 @@ export function ReserveWithdraw({
   return (
     <>
       {route ? <p className="muted">{route}</p> : null}
-      {confirming ? (
+      {verdict.kind === 'retired' ? (
+        <p className="muted">{r.retired(shortAddress(verdict.controller))}</p>
+      ) : verdict.kind === 'unread' ? (
+        <p className="muted">{protection.isLoading ? copy.autoExtend.loading : r.protectionUnknown}</p>
+      ) : confirming ? (
         <ConfirmReceipt
           busy={busy}
           confirmLabel={copy.autoExtend.reserve.withdraw}
@@ -167,10 +188,9 @@ export function ReserveWithdraw({
           disabled={busy || !onSupportedChain}
           onClick={() => setConfirming(true)}
         >
-          {busy ? copy.autoExtend.reserve.withdrawing : copy.autoExtend.reserve.reviewWithdraw}
+          {busy ? r.withdrawing : r.reviewWithdraw}
         </button>
       )}
-      {done ? <Banner kind="info">{done}</Banner> : null}
       {error ? <Banner kind="danger">{error}</Banner> : null}
     </>
   );
@@ -200,6 +220,10 @@ function ReservePanel({
   const { data: walletClient } = useWalletClient();
   const { write } = useDiamondWrite();
   const termsVerdict = useTermsBlockNonExitWrites();
+  const protection = useProtectedAccount();
+  // The contract refuses a deposit from a wallet whose account a replacement
+  // retired: refuse it here, and before any approval.
+  const fundingVerdict = ownFundingVerdict(protection.data, protection.isError);
   const queryClient = useQueryClient();
   const [input, setInput] = useState('');
   const [confirming, setConfirming] = useState(false);
@@ -229,6 +253,11 @@ function ReservePanel({
       const terms = termsVerdict();
       if (terms !== 'ok') {
         throw new Error(terms === 'unknown' ? copy.errors.termsCheckUnavailable : copy.errors.termsNotAccepted);
+      }
+      if (fundingVerdict.kind !== 'open') {
+        throw new Error(
+          fundingVerdict.kind === 'retired' ? r.retired(shortAddress(fundingVerdict.controller)) : r.protectionUnknown,
+        );
       }
       await assertWalletNotSanctionedLive(publicClient, diamond, owner);
       // The deposit is refused unless the loan could be extended now:
@@ -298,7 +327,11 @@ function ReservePanel({
       </p>
       <p className="muted">{r.eachTime}</p>
       <p className="muted">{r.ownership}</p>
-      {canFund && confirming && amount !== null ? (
+      {fundingVerdict.kind === 'retired' ? (
+        <p className="muted">{r.retired(shortAddress(fundingVerdict.controller))}</p>
+      ) : fundingVerdict.kind === 'unread' ? (
+        <p className="muted">{protection.isLoading ? copy.autoExtend.loading : r.protectionUnknown}</p>
+      ) : canFund && confirming && amount !== null ? (
         <ConfirmReceipt
           busy={busy}
           confirmLabel={r.add}
@@ -306,11 +339,11 @@ function ReservePanel({
           onConfirm={() => void fund()}
           disabled={!onSupportedChain}
           data={{
-            youReceive: r.receiptAdd.youReceive(amountText(amount, meta)),
-            youLock: r.receiptAdd.youLock(amountText(amount, meta)),
+            youReceive: r.receiptAdd.youReceive(exactAmountText(amount, meta)),
+            youLock: r.receiptAdd.youLock(exactAmountText(amount, meta)),
             youMayOwe: r.receiptAdd.youMayOwe(meta?.symbol ?? ''),
             youCanLose: r.receiptAdd.youCanLose,
-            fees: r.receiptAdd.fees(amountText(amount, meta)),
+            fees: r.receiptAdd.fees(exactAmountText(amount, meta)),
             whenThisEnds: r.receiptAdd.whenThisEnds,
           }}
         />
@@ -342,7 +375,7 @@ function ReservePanel({
       {error ? <Banner kind="danger">{error}</Banner> : null}
       {funding.reserved > 0n ? (
         <div style={{ marginTop: 12 }}>
-          <ReserveWithdraw loanId={loanId} amount={amountText(funding.reserved, meta)} busy={busy} setBusy={setBusy} />
+          <ReserveWithdraw loanId={loanId} amount={exactAmountText(funding.reserved, meta)} busy={busy} setBusy={setBusy} />
         </div>
       ) : null}
     </div>
@@ -551,6 +584,10 @@ export function AutoExtendCard({
   const metaQuery = useTokenMeta(principalAsset);
   const meta = metaQuery.data;
   const reserved = funding.data?.reserved ?? 0n;
+  // What a withdrawal this session did, kept outside every reserve surface
+  // (each one unmounts once the reserve reads zero).
+  const outcome = useReserveOutcomes()[loanId];
+  const outcomeBanner = outcome ? <Banner kind="info">{outcome}</Banner> : null;
 
   // A reserve this wallet left on the loan that the loan can no longer draw:
   // the loan ended, or the borrower position is held by someone else.
@@ -565,13 +602,13 @@ export function AutoExtendCard({
       {party ? <h4 style={{ margin: '0 0 4px' }}>{a.reserve.leftoverTitle}</h4> : null}
       <p>{a.reserve.leftover(amountText(reserved, meta))}</p>
       <p className="muted">{extendable ? a.reserve.notHolder : a.reserve.ended}</p>
-      <ReserveWithdraw loanId={loanId} amount={amountText(reserved, meta)} busy={busy} setBusy={setBusy} />
+      <ReserveWithdraw loanId={loanId} amount={exactAmountText(reserved, meta)} busy={busy} setBusy={setBusy} />
     </div>
   ) : null;
 
   // Not a party to an extendable loan: show only a reserve left behind.
   if (!party) {
-    if (!leftover) return null;
+    if (!leftover && !outcome) return null;
     return (
       <section className="card">
         <div className="card-title">
@@ -579,6 +616,7 @@ export function AutoExtendCard({
           <h3 style={{ margin: 0 }}>{a.reserve.leftoverTitle}</h3>
         </div>
         {leftover}
+        {outcomeBanner}
       </section>
     );
   }
@@ -598,9 +636,10 @@ export function AutoExtendCard({
         {reserved > 0n ? (
           <>
             <p>{a.reserve.leftover(amountText(reserved, meta))}</p>
-            <ReserveWithdraw loanId={loanId} amount={amountText(reserved, meta)} busy={busy} setBusy={setBusy} />
+            <ReserveWithdraw loanId={loanId} amount={exactAmountText(reserved, meta)} busy={busy} setBusy={setBusy} />
           </>
         ) : null}
+        {outcomeBanner}
       </section>
     );
   }
@@ -611,6 +650,7 @@ export function AutoExtendCard({
         {header}
         <p className="muted">{state.isError ? a.unavailable : a.loading}</p>
         {leftover}
+        {outcomeBanner}
       </section>
     );
   }
@@ -699,6 +739,7 @@ export function AutoExtendCard({
           {leftover}
         </>
       )}
+      {outcomeBanner}
     </section>
   );
 }

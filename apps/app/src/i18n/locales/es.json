@@ -3947,6 +3947,8 @@
           "whenThisEnds": "Una vez retirada, no queda nada reservado para este préstamo."
         },
         "unreadLeftover": "No pudimos comprobar si tienes una reserva de extensión sin usar en este préstamo. Inténtalo de nuevo en breve.",
+        "retired": "Esta cuenta se trasladó a un nuevo monedero, ahora gestionado por {{controller}}, así que este monedero ya no puede añadir a una reserva ni retirarla.",
+        "protectionUnknown": "No pudimos leer la configuración de protección de esta cuenta, así que añadir a una reserva o retirarla queda desactivado hasta que podamos.",
         "unavailable": "No pudimos leer tu reserva de extensión ahora mismo, así que no podemos decir si una extensión quedaría cubierta. Inténtalo de nuevo en breve.",
         "leftoverTitle": "Reserva de extensión no usada",
         "leftover": "Tienes {{amount}} reservado para las extensiones de este préstamo.",

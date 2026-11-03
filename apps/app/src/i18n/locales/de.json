@@ -3947,6 +3947,8 @@
           "whenThisEnds": "Nach der Abhebung ist für diesen Kredit nichts mehr reserviert."
         },
         "unreadLeftover": "Wir konnten nicht prüfen, ob Sie eine ungenutzte Verlängerungsreserve für diesen Kredit haben. Versuchen Sie es gleich noch einmal.",
+        "retired": "Dieses Konto wurde auf eine neue Wallet übertragen, die jetzt von {{controller}} verwaltet wird, daher kann diese Wallet keine Reserve mehr aufstocken oder abheben.",
+        "protectionUnknown": "Wir konnten die Schutzeinstellungen dieses Kontos nicht lesen, daher sind Einzahlung und Abhebung einer Reserve aus, bis wir es können.",
         "unavailable": "Wir konnten Ihre Verlängerungsreserve gerade nicht lesen und können daher nicht sagen, ob eine Verlängerung gedeckt wäre. Versuchen Sie es gleich noch einmal.",
         "leftoverTitle": "Ungenutzte Verlängerungsreserve",
         "leftover": "Sie haben {{amount}} für die Verlängerungen dieses Kredits reserviert.",

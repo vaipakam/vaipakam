@@ -3947,6 +3947,8 @@
           "whenThisEnds": "Une fois retirée, plus rien n’est réservé pour ce prêt."
         },
         "unreadLeftover": "Nous n’avons pas pu vérifier si vous avez une réserve de prolongation inutilisée sur ce prêt. Réessayez dans un instant.",
+        "retired": "Ce compte a été transféré vers un nouveau portefeuille, désormais géré par {{controller}}, donc ce portefeuille ne peut plus alimenter ni retirer une réserve.",
+        "protectionUnknown": "Nous n’avons pas pu lire les réglages de protection de ce compte, donc l’ajout à une réserve et son retrait sont désactivés jusqu’à ce que nous le puissions.",
         "unavailable": "Nous n’avons pas pu lire votre réserve de prolongation pour le moment, nous ne pouvons donc pas dire si une prolongation serait couverte. Réessayez dans un instant.",
         "leftoverTitle": "Réserve de prolongation inutilisée",
         "leftover": "Vous avez {{amount}} réservé pour les prolongations de ce prêt.",

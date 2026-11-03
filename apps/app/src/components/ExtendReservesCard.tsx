@@ -11,8 +11,8 @@ import type { Address } from 'viem';
 import { copy } from '../content/copy';
 import { useTokenMeta } from '../contracts/erc20';
 import { formatTokenAmount } from '../lib/format';
-import { useMyExtendReserves, type ReserveRow } from '../data/autoExtend';
-import { ReserveWithdraw } from './AutoExtendCard';
+import { useMyExtendReserves, useReserveOutcomes, type ReserveRow } from '../data/autoExtend';
+import { exactAmountText, ReserveWithdraw } from './AutoExtendCard';
 
 function ReserveItem({ row }: { row: ReserveRow }) {
   const meta = useTokenMeta(row.asset as Address);
@@ -36,7 +36,7 @@ function ReserveItem({ row }: { row: ReserveRow }) {
           {row.use === 'kept' ? r.kept : row.use === 'ended' ? r.ended : r.notHolder}
         </span>
         <span style={{ display: 'block', marginTop: 8 }}>
-          <ReserveWithdraw loanId={row.loanId} amount={amount} busy={busy} setBusy={setBusy} />
+          <ReserveWithdraw loanId={row.loanId} amount={exactAmountText(row.reserved, meta.data)} busy={busy} setBusy={setBusy} />
         </span>
       </span>
     </li>
@@ -46,7 +46,20 @@ function ReserveItem({ row }: { row: ReserveRow }) {
 /** Renders nothing for a wallet with no extension reserve. */
 export function ExtendReservesCard() {
   const reserves = useMyExtendReserves();
+  const outcomes = useReserveOutcomes();
   const c = copy.autoExtend.claims;
+  // A withdrawal this session clears its row, so its outcome is listed here
+  // on its own rather than with the row.
+  const outcomeList = Object.entries(outcomes).map(([id, text]) => (
+    <div key={id} className="banner banner-info" role="status" style={{ marginTop: 12 }}>
+      <span className="banner-body">
+        <Link to={`/positions/${id}`} style={{ display: 'block' }}>
+          {copy.autoExtend.claims.rowTitle(id)}
+        </Link>
+        {text}
+      </span>
+    </div>
+  ));
   // A failed read (or refresh: the hook drops a cached list behind one, as
   // it may already have been withdrawn or drawn) says it could not check.
   const data = reserves.isError ? null : reserves.data;
@@ -62,12 +75,13 @@ export function ExtendReservesCard() {
       <section className="card" style={{ marginBottom: 16 }}>
         {header}
         <p className="muted">{c.unavailable}</p>
+        {outcomeList}
       </section>
     );
   }
   const { rows, unread, truncated } = data;
   // A cut-short list with nothing in it has not shown there is nothing.
-  if (rows.length === 0 && unread.length === 0 && !truncated) return null;
+  if (rows.length === 0 && unread.length === 0 && !truncated && outcomeList.length === 0) return null;
   return (
     <section className="card" style={{ marginBottom: 16 }} data-testid="extend-reserves">
       {header}
@@ -83,6 +97,7 @@ export function ExtendReservesCard() {
         </p>
       ))}
       {truncated ? <p className="muted">{c.truncated}</p> : null}
+      {outcomeList}
     </section>
   );
 }

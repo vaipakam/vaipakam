@@ -2256,6 +2256,8 @@
           "whenThisEnds": "Once it is withdrawn, nothing is reserved for this loan."
         },
         "unreadLeftover": "We couldn’t check whether you have an unused extension reserve on this loan. Try again shortly.",
+        "retired": "This account was moved to a new wallet, now managed by {{controller}}, so this wallet can no longer add to or withdraw a reserve.",
+        "protectionUnknown": "We couldn’t read this account’s protection settings, so adding to or withdrawing a reserve is off until we can.",
         "unavailable": "We couldn’t read your extension reserve right now, so we can’t say whether an extension would be covered. Try again shortly.",
         "leftoverTitle": "Unused extension reserve",
         "leftover": "You have {{amount}} reserved for this loan’s extensions.",

@@ -2224,7 +2224,13 @@ is the borrower's own money.
 - Saving limits, adding to the reserve and withdrawing it each show the
   review receipt before signing: what the wallet consents to or sets aside,
   what an extension may charge or what the withdrawal pays, the fees, and
-  when it ends. Turning limits off removes consent and needs no receipt. A
+  when it ends, with every amount stated to the token's last unit. Turning
+  limits off removes consent and needs no receipt. A wallet whose account a
+  replacement retired is told that it can no longer add to or withdraw a
+  reserve, and is never asked for an approval; while the account's
+  protection cannot be read, neither is offered. What a withdrawal did,
+  including a protected account's queued or held payout, stays in view after
+  the reserve it emptied disappears from the page and from Claims. A
   wallet whose reserve on the loan could not be read is told so, rather than
   shown no reserve.
 - The lender is told that the borrower pays each extension's charge from
