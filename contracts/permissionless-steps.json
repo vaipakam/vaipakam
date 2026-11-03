@@ -495,23 +495,11 @@
       "flag": "REWARD_CLOSE_OUT_ENABLED",
       "evidence": "apps/keeper/src/rewardCloseOut/index.ts"
     },
-    "RewardEpochFacet.materializeTransportBatchChunk(bytes32,uint256,uint256[],bytes32[],bytes32[],bytes32[])": {
-      "class": "keeper",
-      "pass": "deliveryProof",
-      "flag": "REWARD_DELIVERY_PROOF_ENABLED",
-      "evidence": "apps/keeper/src/deliveryProof.ts"
-    },
     "RewardEpochFacet.parkTransportBatchRemainder(bytes32)": {
       "class": "keeper",
       "pass": "rewardCloseOut",
       "flag": "REWARD_CLOSE_OUT_ENABLED",
       "evidence": "apps/keeper/src/rewardCloseOut/index.ts"
-    },
-    "RewardEpochFacet.proveDeliveryDayChunk(bytes32,uint256,uint256[],bytes32[])": {
-      "class": "keeper",
-      "pass": "deliveryProof",
-      "flag": "REWARD_DELIVERY_PROOF_ENABLED",
-      "evidence": "apps/keeper/src/deliveryProof.ts"
     },
     "RewardEpochFacet.recycleSkippedDayValue(uint256)": {
       "class": "keeper-pending",

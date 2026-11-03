@@ -196,7 +196,7 @@ contract RewardAggregatorFacet is
 
     /// @notice #1566 PR C revision — a reporting chain's live custody era,
     ///         recorded (highest wins) before anything else in its report, so
-    ///         a rooted remittance to that chain is stamped with the era it
+    ///         a reward remittance to that chain is stamped with the era it
     ///         will land in.
     /// @custom:event-category state-change/reward-custody
     event ChainCustodyEraReported(uint32 indexed chainId, uint64 era);
@@ -315,7 +315,7 @@ contract RewardAggregatorFacet is
     }
 
     /// @notice The highest custody era `chainId` has reported — the era the
-    ///         canonical chain stamps its rooted remittances to that chain with.
+    ///         canonical chain stamps its reward remittances to that chain with.
     function getChainCustodyEraReported(uint32 chainId) external view returns (uint64) {
         return LibVaipakam.storageSlot().chainCustodyEraReported[chainId];
     }

@@ -15,7 +15,7 @@ import {InteractionRewardsLensFacet} from "../src/facets/InteractionRewardsLensF
 import {VPFIToken} from "../src/token/VPFIToken.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
-import {LibD6Delivery} from "./helpers/LibD6Delivery.sol";
+import {LibD8Delivery} from "./helpers/LibD8Delivery.sol";
 
 /**
  * @title RewardRemitLedgerPreActivationTest — a mirror's typed ledgers at
@@ -66,13 +66,6 @@ contract RewardRemitLedgerPreActivationTest is SetupTest {
         a[0] = d;
     }
 
-    /// @dev Two-day batch, for the cutover-straddling case.
-    function _days2(uint256 a, uint256 b) internal pure returns (uint256[] memory out) {
-        out = new uint256[](2);
-        out[0] = a;
-        out[1] = b;
-    }
-
     /// @dev Current interaction-schedule day (arming must be strictly future).
     function _today() internal view returns (uint256 d) {
         (d, ) = InteractionRewardsLensFacet(address(diamond)).getInteractionCurrentDay();
@@ -102,10 +95,10 @@ contract RewardRemitLedgerPreActivationTest is SetupTest {
     }
 
     /// @dev A budget delivery on the rooted (d6) wire, filed in the live era.
-    function _d6(
+    function _d8(
         address token,
         uint256 amount,
-        uint256[] memory dayIds,
+        uint256 dayId,
         uint256 sourceChainId,
         uint256 remitId,
         address remitter,
@@ -113,12 +106,12 @@ contract RewardRemitLedgerPreActivationTest is SetupTest {
         uint256 fresh,
         bytes32 messageId
     ) internal returns (bytes32 h) {
-        (h, ) = LibD6Delivery.deliver(
+        h = LibD8Delivery.deliver(
             address(diamond),
-            LibD6Delivery.Delivery({
+            LibD8Delivery.Delivery({
                 token: token,
                 amount: amount,
-                dayIds: dayIds,
+                dayId: dayId,
                 sourceChainId: sourceChainId,
                 remitId: remitId,
                 remitter: remitter,
@@ -195,7 +188,7 @@ contract RewardRemitLedgerPreActivationTest is SetupTest {
         assertEq(reportedBefore, 40e18, "precondition: genuine absorption");
 
         // Base tops up 23 recycled inside a 30-token delivery.
-        _d6(address(vpfiTok), 30e18, _days(3), CHAIN_BASE, 42, address(0xBA5E), 23e18, 7e18, bytes32(0));
+        _d8(address(vpfiTok), 30e18, 3, CHAIN_BASE, 42, address(0xBA5E), 23e18, 7e18, bytes32(0));
 
         // Bucket grew by exactly the recycled share — the claim path is backed.
         assertEq(cfg.getRecycleBucket(), 63e18, "bucket takes the top-up");
@@ -238,7 +231,7 @@ contract RewardRemitLedgerPreActivationTest is SetupTest {
         mutator.setRecycleBucketRaw(40e18);
         mutator.setRecycleCreditedCumulativeRaw(40e18);
 
-        _d6(address(vpfiTok), 23e18, _days(3), CHAIN_BASE, 42, address(0xBA5E), 23e18, 0, bytes32(0));
+        _d8(address(vpfiTok), 23e18, 3, CHAIN_BASE, 42, address(0xBA5E), 23e18, 0, bytes32(0));
         assertEq(cfg.getRecycleBucket(), 63e18, "backed");
 
         // The mirror's claims now consume the WHOLE recycled payout — the
@@ -268,7 +261,7 @@ contract RewardRemitLedgerPreActivationTest is SetupTest {
                 7e18
             )
         );
-        _d6(address(vpfiTok), 7e18, _days(3), CHAIN_BASE, 42, address(0xBA5E), 8e18, 0, bytes32(0));
+        _d8(address(vpfiTok), 7e18, 3, CHAIN_BASE, 42, address(0xBA5E), 8e18, 0, bytes32(0));
     }
 
     /// @dev An all-fresh delivery relocates NO custody: the bucket is
@@ -278,7 +271,7 @@ contract RewardRemitLedgerPreActivationTest is SetupTest {
         ConfigFacet cfg = ConfigFacet(address(diamond));
         mutator.setRecycleBucketRaw(40e18);
 
-        _d6(address(vpfiTok), 7e18, _days(3), CHAIN_BASE, 0, address(0xBA5E), 0, 7e18, bytes32(0));
+        _d8(address(vpfiTok), 7e18, 3, CHAIN_BASE, 0, address(0xBA5E), 0, 7e18, bytes32(0));
 
         assertEq(cfg.getRecycleBucket(), 40e18, "bucket unchanged");
         (uint256 relocated, , ) = RewardAggregatorFacet(address(diamond))
@@ -301,7 +294,7 @@ contract RewardRemitLedgerPreActivationTest is SetupTest {
         _assertDerivation("mirror genesis");
 
         // Base tops up 23 recycled inside a 30-token delivery.
-        _d6(address(vpfiTok), 30e18, _days(3), CHAIN_BASE, 42, address(0xBA5E), 23e18, 7e18, bytes32(0));
+        _d8(address(vpfiTok), 30e18, 3, CHAIN_BASE, 42, address(0xBA5E), 23e18, 7e18, bytes32(0));
         (uint256 raw, , uint256 relocated, uint256 bucket, , , ) =
             _composition();
         assertEq(relocated, 23e18, "fixture: custody relocated");
@@ -354,7 +347,7 @@ contract RewardRemitLedgerPreActivationTest is SetupTest {
         uint256 dStar = _today() + 5;
         _armFrom(dStar);
 
-        _d6(address(vpfiTok), 7e18, _days(dStar), CHAIN_BASE, 42, address(0xBA5E), 0, 7e18, bytes32(0));
+        _d8(address(vpfiTok), 7e18, dStar, CHAIN_BASE, 42, address(0xBA5E), 0, 7e18, bytes32(0));
 
         (uint256 counted, uint256 uncounted) = rlens.getDeliveredFreshPosition();
         assertEq(counted, 7e18, "armed-day delivery counts in full");
@@ -378,7 +371,7 @@ contract RewardRemitLedgerPreActivationTest is SetupTest {
         _armFrom(dStar);
 
         vm.expectPartialRevert(IVaipakamErrors.TransportSplitNotWhole.selector);
-        _d6(address(vpfiTok), 7e18, _days(dStar), CHAIN_BASE, 42, address(0xBA5E), 0, 0, bytes32(0));
+        _d8(address(vpfiTok), 7e18, dStar, CHAIN_BASE, 42, address(0xBA5E), 0, 0, bytes32(0));
 
         (uint256 counted, uint256 uncounted) = rlens.getDeliveredFreshPosition();
         assertEq(counted, 0, "nothing counted");
@@ -400,32 +393,14 @@ contract RewardRemitLedgerPreActivationTest is SetupTest {
         _configureMirror();
         uint256 dStar = _today() + 5;
         _armFrom(dStar);
-        _d6(address(vpfiTok), 3e18, _days(dStar), CHAIN_BASE, 42, address(0xBA5E), 0, 3e18, bytes32(0));
+        _d8(address(vpfiTok), 3e18, dStar, CHAIN_BASE, 42, address(0xBA5E), 0, 3e18, bytes32(0));
         (uint256 counted, ) = rlens.getDeliveredFreshPosition();
         assertEq(counted, 3e18, "armed-day delivery counts as before");
-        _d6(address(vpfiTok), 100e18, _days(dStar - 1), CHAIN_BASE, 43, address(0xBA5E), 0, 100e18, bytes32(0));
+        _d8(address(vpfiTok), 100e18, dStar - 1, CHAIN_BASE, 43, address(0xBA5E), 0, 100e18, bytes32(0));
         uint256 uncounted;
         (counted, uncounted) = rlens.getDeliveredFreshPosition();
         assertEq(counted, 103e18, "pre-arming funding enters the same ledger");
         assertEq(uncounted, 0, "nothing is parked when the composition is stated");
-    }
-
-    /// @dev A batch straddling the cutover no longer needs apportioning:
-    ///      under the vintage-blind rule (#1566 closure 2) the summed fresh
-    ///      share counts whichever side of `D*` each day sits on, so there is
-    ///      nothing to guess and nothing to refuse whole. The all-armed pair
-    ///      runs beside it so the straddle is shown to be treated identically.
-    function test_DeliveredFresh_BatchStraddlingCutoverIsCounted() public {
-        _configureMirror();
-        uint256 dStar = _today() + 5;
-        _armFrom(dStar);
-        _d6(address(vpfiTok), 8e18, _days2(dStar - 1, dStar), CHAIN_BASE, 42, address(0xBA5E), 0, 8e18, bytes32(0));
-        (uint256 counted, uint256 uncounted) = rlens.getDeliveredFreshPosition();
-        assertEq(counted, 8e18, "a straddling batch counts its fresh share");
-        assertEq(uncounted, 0, "nothing refused");
-        _d6(address(vpfiTok), 8e18, _days2(dStar, dStar + 1), CHAIN_BASE, 43, address(0xBA5E), 0, 8e18, bytes32(0));
-        (counted, ) = rlens.getDeliveredFreshPosition();
-        assertEq(counted, 16e18, "an all-armed batch counts the same way");
     }
 
     /// @dev An UNARMED mirror counts too (#1566 closure 2): the ledger is live
@@ -439,7 +414,7 @@ contract RewardRemitLedgerPreActivationTest is SetupTest {
     function test_DeliveredFresh_UnarmedChainCounts() public {
         _configureMirror();
         (uint256 baseline, ) = rlens.getDeliveredFreshPosition();
-        _d6(address(vpfiTok), 5e18, _days(9), CHAIN_BASE, 42, address(0xBA5E), 0, 5e18, bytes32(0));
+        _d8(address(vpfiTok), 5e18, 9, CHAIN_BASE, 42, address(0xBA5E), 0, 5e18, bytes32(0));
         (uint256 counted, uint256 uncounted) = rlens.getDeliveredFreshPosition();
         assertEq(counted - baseline, 5e18, "an unarmed chain counts its fresh share");
         assertEq(uncounted, 0, "nothing refused");
@@ -457,7 +432,7 @@ contract RewardRemitLedgerPreActivationTest is SetupTest {
         // `balance >= bucket + share`, so the tokens must really be here.
         vpfiTok.transfer(address(diamond), 10e18);
 
-        _d6(address(vpfiTok), 10e18, _days(dStar), CHAIN_BASE, 43, address(0xBA5E), 4e18, 6e18, bytes32(0));
+        _d8(address(vpfiTok), 10e18, dStar, CHAIN_BASE, 43, address(0xBA5E), 4e18, 6e18, bytes32(0));
 
         (uint256 counted, uint256 uncounted) = rlens.getDeliveredFreshPosition();
         assertEq(counted, 6e18, "10 delivered, 4 recycled -> 6 fresh");
@@ -478,9 +453,9 @@ contract RewardRemitLedgerPreActivationTest is SetupTest {
         _armFrom(dStar);
         vpfiTok.transfer(address(diamond), 4e18);
 
-        _d6(address(vpfiTok), 7e18, _days(dStar), CHAIN_BASE, 42, address(0xBA5E), 0, 7e18, bytes32(0));
-        _d6(address(vpfiTok), 5e18, _days(dStar - 2), CHAIN_BASE, 43, address(0xBA5E), 0, 5e18, bytes32(0));
-        _d6(address(vpfiTok), 9e18, _days(dStar), CHAIN_BASE, 44, address(0xBA5E), 4e18, 5e18, bytes32(0));
+        _d8(address(vpfiTok), 7e18, dStar, CHAIN_BASE, 42, address(0xBA5E), 0, 7e18, bytes32(0));
+        _d8(address(vpfiTok), 5e18, dStar - 2, CHAIN_BASE, 43, address(0xBA5E), 0, 5e18, bytes32(0));
+        _d8(address(vpfiTok), 9e18, dStar, CHAIN_BASE, 44, address(0xBA5E), 4e18, 5e18, bytes32(0));
 
         (uint256 counted, uint256 uncounted) = rlens.getDeliveredFreshPosition();
         // 7 + 5 + 5 = 17 counted, 0 uncounted (vintage-blind); the 4e18
@@ -510,6 +485,6 @@ contract RewardRemitLedgerPreActivationTest is SetupTest {
                 IVaipakamErrors.FreshShareExceedsDelivery.selector, 7e18, 6e18
             )
         );
-        _d6(address(vpfiTok), 10e18, _days(dStar), CHAIN_BASE, 45, address(0xBA5E), 4e18, 7e18, bytes32(0));
+        _d8(address(vpfiTok), 10e18, dStar, CHAIN_BASE, 45, address(0xBA5E), 4e18, 7e18, bytes32(0));
     }
 }

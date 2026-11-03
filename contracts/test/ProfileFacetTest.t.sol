@@ -424,14 +424,15 @@ contract ProfileFacetTest is Test {
         vm.prank(user1);
         vm.expectRevert(IVaipakamErrors.InvalidKeeperActions.selector);
         ProfileFacet(address(diamond)).approveKeeper(k2, 0x00);
-        // Bit 8 (0x100) — now EXPRESSIBLE in the uint16 param but NOT in
+        // Bit 9 (0x200) — EXPRESSIBLE in the uint16 param but NOT in
         // KEEPER_ACTION_ALL — must be rejected as an undefined action. Before
-        // the widening this value couldn't even be passed (uint8 capped at
+        // the widening a high bit couldn't even be passed (uint8 capped at
         // 0xFF); the validator's `~KEEPER_ACTION_ALL` mask now catches it.
+        // (Bit 8, 0x100, is DEFINED since #3088: KEEPER_ACTION_LOCK_VAULT.)
         address k3 = makeAddr("keeperC");
         vm.prank(user1);
         vm.expectRevert(IVaipakamErrors.InvalidKeeperActions.selector);
-        ProfileFacet(address(diamond)).approveKeeper(k3, 0x100);
+        ProfileFacet(address(diamond)).approveKeeper(k3, 0x200);
         // #3042 — the retired REFINANCE bit (0x10) is undefined now and must be
         // rejected, alone or mixed with a defined bit: a refinance is accepted
         // by a lender on the borrower's own offer, never driven by a keeper.
@@ -442,7 +443,11 @@ contract ProfileFacetTest is Test {
         vm.prank(user1);
         vm.expectRevert(IVaipakamErrors.InvalidKeeperActions.selector);
         ProfileFacet(address(diamond)).approveKeeper(k5, LibVaipakam.KEEPER_ACTION_INIT_PRECLOSE | 0x10);
-        assertEq(LibVaipakam.KEEPER_ACTION_ALL, 0xEF, "ALL is every defined bit, 0x10 excluded");
+        assertEq(
+            LibVaipakam.KEEPER_ACTION_ALL,
+            0x1EF,
+            "ALL is every defined bit: 0x10 excluded, LOCK_VAULT 0x100 included"
+        );
         // A mix of a defined low bit and an undefined high bit is also rejected
         // (partial-validity must not slip through).
         address k4 = makeAddr("keeperD");

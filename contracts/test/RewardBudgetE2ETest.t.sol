@@ -152,16 +152,11 @@ contract RewardBudgetE2ETest is SetupTest, IVaipakamErrors {
         (, , room, , , , , ) = _lens().getRecycleBackingSnapshot();
     }
 
-    function _days1() internal pure returns (uint256[] memory d) {
-        d = new uint256[](1);
-        d[0] = 1;
-    }
-
     /// @dev Deliver `amount` VPFI as a reward-budget remittance through the real
     ///      receiver: the CCIP adapter transfers the tokens to the receiver
     ///      first, then invokes the callback — so pre-fund the receiver. The
-    ///      payload is the rooted (d7) wire, the only budget shape the receiver
-    ///      accepts, carrying day 1 as a whole-fresh delivery.
+    ///      payload is the d8 wire, the only budget shape the receiver accepts,
+    ///      carrying day 1 inline as a whole-fresh delivery.
     function _fundViaReceiver(uint256 amount) internal {
         vpfi.mint(address(receiver), amount);
         ICrossChainMessenger.TokenAmount[] memory tokens =
@@ -171,11 +166,9 @@ contract RewardBudgetE2ETest is SetupTest, IVaipakamErrors {
             receiver,
             SRC_BASE,
             address(0xBA5E),
-            RemitWire.encodeD7(
-                RemitWire.D7({
-                    dayListRoot: RemitWire.d6Root(RemitWire.d6Chunks(_days1())),
-                    elementCount: 1,
-                    chunkCount: 1,
+            RemitWire.encodeD8(
+                RemitWire.D8({
+                    dayId: 1,
                     total: amount,
                     remitId: 1,
                     remitter: address(0xBA5E),

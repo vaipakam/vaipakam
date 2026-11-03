@@ -19,7 +19,7 @@ import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibRewardCustody} from "../src/libraries/LibRewardCustody.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
-import {LibD6Delivery} from "./helpers/LibD6Delivery.sol";
+import {LibD8Delivery} from "./helpers/LibD8Delivery.sol";
 
 /// @title RewardLegacySliceDomainTest
 /// @notice 3b-ii-A2-ii (c) — an entry's pre-arming LEGACY SLICE, priced whole-
@@ -89,22 +89,16 @@ contract RewardLegacySliceDomainTest is SetupTest, IVaipakamErrors {
         );
     }
 
-    function _one(uint256 d) internal pure returns (uint256[] memory a) {
-        a = new uint256[](1);
-        a[0] = d;
-    }
-
     /// @dev An attested, fully fresh epoch listing day `d` (a pre-arming day).
     function _epochOn(uint256 d, uint256 amount, uint256 remitId) internal returns (bytes32 h) {
         bytes32 id = keccak256(abi.encode("legacy-epoch", d, remitId));
-        LibD6Delivery.deliverUnattested(address(diamond), address(vpfi), amount, _one(d), CHAIN_BASE, remitId, REMITTER, id);
+        LibD8Delivery.deliverUnattested(address(diamond), address(vpfi), amount, d, CHAIN_BASE, remitId, REMITTER, id);
         h = keccak256(abi.encode(uint256(CHAIN_BASE), id));
-        LibD6Delivery.indexAllDays(address(diamond), h, _one(d));
-        LibD6Delivery.attest(address(diamond), REMITTER, remitId, amount, 0);
+        LibD8Delivery.attest(address(diamond), REMITTER, remitId, amount, 0);
     }
 
     function _liveFresh(uint256 amount) internal {
-        LibD6Delivery.liveFresh(address(diamond), address(vpfi), amount, _one(1), CHAIN_BASE, 1000 + amount / 1e17, REMITTER, keccak256(abi.encode("live", amount)));
+        LibD8Delivery.liveFresh(address(diamond), address(vpfi), amount, 1, CHAIN_BASE, 1000 + amount / 1e17, REMITTER, keccak256(abi.encode("live", amount)));
         _mut().setArmedFreshLedgerRaw(amount, 0);
     }
 
@@ -265,8 +259,7 @@ contract RewardLegacySliceDomainTest is SetupTest, IVaipakamErrors {
         for (uint256 i; i < 140; ++i) { // untyped: pending, more than one tracked page of them
             vm.warp(vm.getBlockTimestamp() + 10);
             bytes32 pid = keccak256(abi.encode("legacy-pending", i));
-            LibD6Delivery.deliverUnattested(address(diamond), address(vpfi), 1e12, _one(1), CHAIN_BASE, 500 + i, REMITTER, pid);
-            LibD6Delivery.indexAllDays(address(diamond), keccak256(abi.encode(uint256(CHAIN_BASE), pid)), _one(1));
+            LibD8Delivery.deliverUnattested(address(diamond), address(vpfi), 1e12, 1, CHAIN_BASE, 500 + i, REMITTER, pid);
         }
         _liveFresh(total + 1e18);
         bytes32 key = LibRewardCustody.legacyRecordKey(LibRewardCustody.legacyDomainKey(id), 1);

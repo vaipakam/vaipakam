@@ -5,8 +5,8 @@
  * The cycle is the real one (`rewardCycle.ts`): a mirror loan accrues over
  * days 0 and 1 and is repaid on day 1; the keeper's day-close pass closes,
  * finalizes and broadcasts both days; the keeper's remit pass funds day 1 on
- * the mirror and its delivery-proof pass indexes the delivery. No chain state
- * is doctored. What it proves, in order:
+ * the mirror, whose ingress admits the delivery's epoch under its one day
+ * (#2828). No chain state is doctored. What it proves, in order:
  *
  *   1. Before anyone claims, the pass proves closed every elapsed day with
  *      nothing outstanding (both days on Base, day 0 on the mirror) and leaves
@@ -24,7 +24,6 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Hex } from 'viem';
 import { openLoan, repayInFull } from '@vaipakam/anvil-harness/lending';
 import type { Party } from '@vaipakam/anvil-harness/scenarioChain';
-import { runDeliveryProof } from '../../../src/deliveryProof';
 import { runRewardBudgetRemit } from '../../../src/rewardBudgetRemit';
 import { PASS_CADENCE_SEC, runRewardCloseOut } from '../../../src/rewardCloseOut';
 import { keeperEnvFor, tickNow, type KeeperHarness } from '../../harness/keeperEnv';
@@ -46,7 +45,7 @@ let batchId: Hex;
 
 beforeAll(async () => {
   m = await openMeshScenario();
-  k = await keeperEnvFor([m.base, m.mirror], ['REWARD_DAY_CLOSE_ENABLED', 'REWARD_REMIT_ENABLED', 'REWARD_DELIVERY_PROOF_ENABLED', 'REWARD_CLOSE_OUT_ENABLED'], { indexer: true });
+  k = await keeperEnvFor([m.base, m.mirror], ['REWARD_DAY_CLOSE_ENABLED', 'REWARD_REMIT_ENABLED', 'REWARD_CLOSE_OUT_ENABLED'], { indexer: true });
   alerts = collectOpsAlerts();
 });
 
@@ -83,7 +82,7 @@ function expectKeeperOnly(txs: { from: string; to: string | null }[], sc: MeshCh
 }
 
 describe('the close-out pass on a Base/mirror pair', () => {
-  it('runs the real cycle: a repaid mirror loan, days closed and finalized, day 1 delivered and indexed', async () => {
+  it('runs the real cycle: a repaid mirror loan, days closed and finalized, day 1 delivered and admitted under its day', async () => {
     const loan = await openLoan(m.mirror, { lender: 'lender', borrower: 'borrower', principalWeth: '1', collateralTliq: '5', rateBps: 1000, days: 30 });
     await warpToDay(1, 20);
     await repayInFull(m.mirror, 'borrower', loan.loanId);
@@ -101,12 +100,12 @@ describe('the close-out pass on a Base/mirror pair', () => {
     const admitted = m.mirror.decodeDiamondLogs(receipt.logs).filter((e) => e.eventName === 'TransportBatchAdmitted');
     expect(admitted).toHaveLength(1);
     batchId = admitted[0].args.batchId as Hex;
+    // The ingress names the epoch's one day; nothing is left to index.
+    expect(admitted[0].args.dayId).toBe(1n);
+    const [, , , dayId] = await m.mirror.read<readonly [Hex, bigint, bigint, bigint, boolean]>('getTransportBatch', [batchId]);
+    expect(dayId).toBe(1n);
     await m.warp(60);
     await k.indexer!.index();
-    await m.syncClock();
-    await runDeliveryProof(k.env, tickNow(FIVE_MIN_MS));
-    const [, , , dayCount, indexedDays] = await m.mirror.read<readonly [Hex, bigint, bigint, number, number, boolean]>('getTransportBatch', [batchId]);
-    expect(Number(indexedDays)).toBe(Number(dayCount));
     expect(alerts.texts).toEqual([]);
   });
 
@@ -125,8 +124,8 @@ describe('the close-out pass on a Base/mirror pair', () => {
     expect(txs.mirror).toHaveLength(1);
     expectKeeperOnly(txs.base, m.base);
     expectKeeperOnly(txs.mirror, m.mirror);
-    const [, parkedDays] = await m.mirror.read<readonly [bigint, number, boolean, bigint]>('getTransportRemainder', [batchId]);
-    expect(Number(parkedDays), 'nothing is parked while day 1 is open').toBe(0);
+    const [parked] = await m.mirror.read<readonly [boolean, bigint, bigint, boolean, bigint]>('getTransportRemainder', [batchId]);
+    expect(parked, 'nothing is parked while day 1 is open').toBe(false);
     expect(alerts.texts).toEqual([]);
   });
 
@@ -140,8 +139,8 @@ describe('the close-out pass on a Base/mirror pair', () => {
     expectKeeperOnly(txs.mirror, m.mirror);
     // A start, a page per side, then the park.
     expect(txs.mirror).toHaveLength(4);
-    const [, parkedDays] = await m.mirror.read<readonly [bigint, number, boolean, bigint]>('getTransportRemainder', [batchId]);
-    expect(Number(parkedDays)).toBeGreaterThan(0);
+    const [parked] = await m.mirror.read<readonly [boolean, bigint, bigint, boolean, bigint]>('getTransportRemainder', [batchId]);
+    expect(parked).toBe(true);
     expect(alerts.texts).toEqual([]);
   });
 
