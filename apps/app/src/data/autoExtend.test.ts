@@ -24,6 +24,7 @@ import {
   capsArgs,
   consentBand,
   fundingCover,
+  keeperVerdict,
   readAutoExtendState,
   readReserveRow,
   reserveLoanIds,
@@ -106,6 +107,29 @@ describe('fundingCover', () => {
     expect(fundingCover(f)).toEqual({ available: 40n, coversNow: true, coversWindow: false, shortWindow: 10n });
     expect(fundingCover({ ...f, chargeAtGraceEnd: 40n }).coversWindow).toBe(true);
     expect(fundingCover({ ...f, chargeNow: 41n }).coversNow).toBe(false);
+  });
+});
+
+describe('keeperVerdict', () => {
+  const K1 = '0x00000000000000000000000000000000000000C1';
+  const K2 = '0x00000000000000000000000000000000000000C2';
+  const on = { [K1.toLowerCase()]: true, [K2.toLowerCase()]: true };
+
+  it('is ready when a keeper switched on for the loan has the extend permission', () => {
+    expect(keeperVerdict({ enabled: true, keepers: [{ keeper: K1, actions: 0x20 }] }, on)).toBe('ready');
+    expect(keeperVerdict({ enabled: true, keepers: [{ keeper: K1, actions: null }, { keeper: K2, actions: 0x21 }] }, on)).toBe('ready');
+  });
+
+  it('is unknown, never none, while a keeper switched on for the loan has an unread permission', () => {
+    expect(keeperVerdict({ enabled: true, keepers: [{ keeper: K1, actions: null }, { keeper: K2, actions: 0x01 }] }, on)).toBe('unknown');
+  });
+
+  it('is none when access is off, or no keeper on for the loan may extend', () => {
+    expect(keeperVerdict({ enabled: false, keepers: [{ keeper: K1, actions: 0x20 }] }, on)).toBe('none');
+    expect(keeperVerdict({ enabled: true, keepers: [{ keeper: K1, actions: 0x20 }] }, {})).toBe('none');
+    expect(keeperVerdict({ enabled: true, keepers: [{ keeper: K1, actions: 0x01 }] }, on)).toBe('none');
+    // An unread keeper that is not on for this loan cannot send it either.
+    expect(keeperVerdict({ enabled: true, keepers: [{ keeper: K1, actions: null }] }, {})).toBe('none');
   });
 });
 

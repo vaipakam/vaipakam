@@ -4715,8 +4715,9 @@ const copySource = {
     ),
     blockers:
       'An extension is also refused while a refinance request for this loan is open, or while a swap-to-repay order holds its collateral.',
-    yourLimits: 'Your limits',
-    otherLimits: 'The other side',
+    borrowerLimits: 'Borrower’s limits',
+    lenderLimits: 'Lender’s limits',
+    yours: tmpl('{{label}} (yours)', ['label']),
     borrowerOn: tmpl('On: a rate up to {{rate}}, and a new end no later than {{end}}.', ['rate', 'end']),
     lenderOn: tmpl('On: a rate of at least {{rate}}, and a new end no later than {{end}}.', ['rate', 'end']),
     off: 'Off.',
@@ -4729,6 +4730,8 @@ const copySource = {
     bandNoOverlap:
       'Both sides have limits in force, but no rate fits both, so no extension can run. The lender’s lowest rate is above the borrower’s highest.',
     bandMissing: 'No extension runs until both sides have limits in force.',
+    editBorrower: 'Your limits as borrower',
+    editLender: 'Your limits as lender',
     rateBorrower: 'Highest rate you accept (% a year)',
     rateLender: 'Lowest rate you accept (% a year)',
     latestEnd: 'Latest new end date',
@@ -4776,6 +4779,8 @@ const copySource = {
       withdrawn: 'Your unused reserve was withdrawn.',
       nothingLeft: 'Nothing is reserved any more: an extension may have just drawn it.',
       fundClosed: 'A reserve can be added only while this loan could be extended.',
+      unavailable:
+        'We couldn’t read your extension reserve right now, so we can’t say whether an extension would be covered. Try again shortly.',
       leftoverTitle: 'Unused extension reserve',
       leftover: tmpl('You have {{amount}} reserved for this loan’s extensions.', ['amount']),
       ended: 'The loan has ended, so nothing will draw it.',
@@ -4786,8 +4791,7 @@ const copySource = {
       title: 'Extension reserves',
       lede: 'Money you set aside in your vault for a loan’s automatic extensions. It is yours and you can withdraw it at any time.',
       rowTitle: tmpl('Loan #{{id}}', ['id']),
-      unavailable:
-        'We couldn’t check for extension reserves, because the activity index is unavailable right now. Try again shortly.',
+      unavailable: 'We couldn’t check for extension reserves right now. Try again shortly.',
       unread: tmpl('We couldn’t read your reserve on loan #{{id}} right now.', ['id']),
       truncated:
         'Only the loans named by your most recent reserve deposits are checked here, so a reserve on an older loan may not be listed.',

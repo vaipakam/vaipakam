@@ -4843,14 +4843,16 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
 
       {/* #2814 — automatic extension: the switch, the window, both sides'
           limits and, for the borrower-position holder, the extension
-          reserve. Mounted for any connected wallet whose role is known, so a
-          reserve left on an ended loan, or on a position since passed on,
-          can be withdrawn here; the card shows nothing when there is nothing
-          to say. */}
-      {address && role !== 'checking' && role !== 'unverified' ? (
+          reserve. Mounted for any connected wallet once a FRESH ownership
+          read says which positions it holds (both, for a dual holder, who
+          sets both sides' limits), so a reserve left on an ended loan, or on
+          a position since passed on, can be withdrawn here; the card shows
+          nothing when there is nothing to say. */}
+      {address && freshData(nftOwners) !== undefined ? (
         <AutoExtendCard
           loanId={row.loanId}
-          role={role}
+          holdsBorrower={isBorrowerHolder}
+          holdsLender={isLenderHolder}
           active={row.status === 'active' && !closedThisSession && !soldThisSession}
           isRental={isRental}
           cadence={pageCadence}

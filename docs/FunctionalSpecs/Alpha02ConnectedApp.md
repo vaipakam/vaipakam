@@ -2172,13 +2172,17 @@ is the borrower's own money.
   that the two sides' limits leave no rate both accept, or that no extension
   runs until both sides have limits in force. It says that whoever sends the
   extension chooses the exact rate and term within those limits.
-- A party sets or clears their own side's limits from the page. Turning one's
-  own consent off is always possible, including while the feature is switched
+- A party sets or clears their own side's limits from the page. A wallet
+  that holds both positions holds both consents, and sets and clears each
+  side's limits separately. What a wallet holds is decided from a fresh
+  ownership read, and a limit typed for one wallet or one side is never sent
+  as another's. Turning one's own consent off is always possible, including while the feature is switched
   off and before the current Terms are accepted. Setting limits is refused
   while the protocol is paused.
 - The borrower-position holder is told whether a keeper they allow can send
   the extension for them, and what to change if not; when delegated keepers
-  are paused protocol-wide, the page says that instead.
+  are paused protocol-wide, the page says that instead. A keeper permission
+  that could not be read is stated as unknown, never as missing.
 - The borrower-position holder sees the extension reserve: what they have
   reserved for the loan, their other free balance of the loan's asset in
   their vault, what an extension would charge now, and what it would charge
@@ -2188,13 +2192,16 @@ is the borrower's own money.
   much they fall short if not. It says that the reserve is drawn first and
   the other free balance second, that an extension that is not covered is
   refused and takes nothing, that the wallet is never drawn on, and that each
-  extension charges again.
+  extension charges again. When the latest read of these figures failed, the
+  page says it cannot tell whether an extension would be covered, rather than
+  repeating figures that may since have been drawn or spent; the same holds
+  for both sides' limits and for the reserve list on the Claims page.
 - Adding to the reserve deposits the loan's asset from the wallet into the
   holder's own vault, earmarked for the loan. It is offered only while the
   switch is on and the protocol is not paused, and the loan is checked again
   just before any approval, so no approval is left standing for a deposit the
   protocol would refuse. An approval granted for a deposit that then fails is
-  put back.
+  put back, including when the approval step itself fails part-way.
 - The reserve belongs to whoever deposited it. Its unused part can be
   withdrawn at any time, whatever the loan's state and whether or not the
   wallet still holds the borrower position, and the withdrawal reads the

@@ -24,6 +24,7 @@ import { useActiveChain } from '../chain/useActiveChain';
 import { signalAware } from '../chain/railHealth';
 import { fetchActivity } from './indexer';
 import { isRevert } from './liveLoanRow';
+import { freshData } from '../lib/freshData';
 
 const REFRESH_MS = 60_000;
 
@@ -218,20 +219,25 @@ export async function readExtendFunding(
 export function useAutoExtendState(loanId: number, enabled: boolean) {
   const { readChain } = useActiveChain();
   const client = usePublicClient({ chainId: readChain.chainId });
-  return useQuery({
+  // A failed refresh is an unknown, not the last answer (`freshData`): a
+  // cached "both sides consent" could outlive a side turning it off.
+  const q = useQuery({
     queryKey: ['autoExtend', readChain.chainId, loanId],
     enabled: enabled && Boolean(client),
     refetchInterval: signalAware(REFRESH_MS),
     queryFn: () =>
       readAutoExtendState({ client: client as PublicClient, diamond: readChain.diamondAddress as Address }, loanId),
   });
+  return { ...q, data: freshData(q) };
 }
 
 /** The connected wallet's funding for the loan's next extension. */
 export function useExtendFunding(loanId: number) {
   const { readChain, address } = useActiveChain();
   const client = usePublicClient({ chainId: readChain.chainId });
-  return useQuery({
+  // Same rule: a cached reserve or cover verdict behind a failed refresh
+  // may already have been drawn or spent.
+  const q = useQuery({
     queryKey: ['extendReserve', readChain.chainId, loanId, address?.toLowerCase()],
     enabled: Boolean(address) && Boolean(client),
     refetchInterval: signalAware(REFRESH_MS),
@@ -242,6 +248,29 @@ export function useExtendFunding(loanId: number) {
         address as Address,
       ),
   });
+  return { ...q, data: freshData(q) };
+}
+
+/** `LibVaipakam.KEEPER_ACTION_EXTEND`. */
+export const KEEPER_ACTION_EXTEND = 0x20;
+
+/**
+ * Whether a keeper the borrower allows could send the extension: keeper
+ * access on, and at least one approved keeper with the extend permission
+ * that is switched on for this loan. A keeper whose permission read failed
+ * (`actions: null`) is an unknown, never a "no": unless another keeper is
+ * already confirmed ready, the verdict is `unknown` while any keeper switched
+ * on for the loan has an unread permission.
+ */
+export function keeperVerdict(
+  config: { enabled: boolean; keepers: readonly { keeper: string; actions: number | null }[] },
+  loanEnables: Readonly<Record<string, boolean>>,
+): 'ready' | 'none' | 'unknown' {
+  if (!config.enabled) return 'none';
+  const onForLoan = config.keepers.filter((k) => loanEnables[k.keeper.toLowerCase()] === true);
+  if (onForLoan.some((k) => k.actions !== null && (k.actions & KEEPER_ACTION_EXTEND) !== 0)) return 'ready';
+  if (onForLoan.some((k) => k.actions === null)) return 'unknown';
+  return 'none';
 }
 
 // ─── Unused reserves, for the Claims page ────────────────────────────────
@@ -340,7 +369,7 @@ export function useMyExtendReserves() {
   const { readChain, address } = useActiveChain();
   const client = usePublicClient({ chainId: readChain.chainId });
   const diamond = readChain.diamondAddress as Address;
-  return useQuery({
+  const q = useQuery({
     queryKey: ['extendReserve', readChain.chainId, 'mine', address?.toLowerCase()],
     enabled: Boolean(address) && Boolean(client),
     refetchInterval: signalAware(REFRESH_MS),
@@ -366,6 +395,7 @@ export function useMyExtendReserves() {
       return { rows, unread, truncated: found.truncated };
     },
   });
+  return { ...q, data: freshData(q) };
 }
 
 /** Withdraw the whole of `account`'s unused reserve for the loan, read live

@@ -30,10 +30,12 @@ import { payoutOutcomesText, payoutRouteText } from '../lib/payoutRouteText';
 import { captureTxError } from '../lib/errors';
 import { formatBpsAsPercent, formatDateTime, formatTokenAmount, parseExactUnits } from '../lib/format';
 import { MAX_INTEREST_BPS, percentToBps } from '../lib/offerSchema';
+import { freshData } from '../lib/freshData';
 import {
   capsArgs,
   consentBand,
   fundingCover,
+  keeperVerdict,
   readAutoExtendState,
   setByEarlierHolder,
   useAutoExtendState,
@@ -44,9 +46,6 @@ import {
   type ExtendCaps,
   type ExtendFunding,
 } from '../data/autoExtend';
-
-/** `LibVaipakam.KEEPER_ACTION_EXTEND`. */
-const KEEPER_ACTION_EXTEND = 0x20;
 
 type Meta = { decimals: number; symbol: string } | undefined;
 
@@ -190,7 +189,11 @@ function ReservePanel({
     setBusy(true);
     setError(null);
     setDone(null);
-    let approved = false;
+    // Set before `ensureAllowance` runs, not after it returns: it can throw
+    // with an approval already sent (a failed receipt wait, or a zero-first
+    // token's second approve refused after its reset). `unwind` restores
+    // only what the hooks saw change, so calling it is always safe.
+    let approving = false;
     try {
       await assertWalletNotSanctionedLive(publicClient, diamond, owner);
       // The deposit is refused unless the loan could be extended now:
@@ -212,6 +215,7 @@ function ReservePanel({
       });
       await assertAssetNotPausedLive({ publicClient, diamondAddress: diamond, asset: funding.asset });
       await assertErc20BalanceLive({ publicClient, token: funding.asset, owner, amount, symbol: meta?.symbol });
+      approving = true;
       await ensureAllowance({
         publicClient,
         walletClient,
@@ -221,16 +225,15 @@ function ReservePanel({
         amount,
         ...approval.hooks(funding.asset),
       });
-      approved = true;
       await write('fundExtendReserve', [BigInt(loanId), amount]);
-      approved = false;
+      approving = false;
       setInput('');
       setDone(r.added);
     } catch (err) {
       let message = captureTxError(err);
       // An approval this attempt granted for a deposit that did not happen
       // is put back rather than left standing.
-      if (approved) {
+      if (approving) {
         const ok = await approval.unwind({ publicClient, walletClient, owner, spender: diamond });
         if (!ok) message = `${message} ${copy.errors.approvalCleanupFailed}`;
       }
@@ -350,6 +353,7 @@ function LimitsEditor({
 
   return (
     <div className="stack" style={{ gap: 8, marginTop: 12 }}>
+      <h4 style={{ margin: 0 }}>{side === 'borrower' ? a.editBorrower : a.editLender}</h4>
       <div className="cluster" style={{ alignItems: 'flex-end', gap: 8 }}>
         <label className="stack" style={{ gap: 4 }}>
           <span>{side === 'borrower' ? a.rateBorrower : a.rateLender}</span>
@@ -407,23 +411,26 @@ function LimitsEditor({
 /** Whether a keeper the borrower allows can send the extension. */
 function KeeperLine({ loanId, keepersPaused }: { loanId: number; keepersPaused: boolean }) {
   const config = useKeeperConfig();
-  const keepers = (config.data?.keepers ?? []).map((k) => k.keeper);
+  const cfg = freshData(config);
+  const keepers = (cfg?.keepers ?? []).map((k) => k.keeper);
   const enables = useLoanKeeperEnables(loanId, keepers, keepers.length > 0);
+  const loanEnables = freshData(enables);
   const a = copy.autoExtend;
   if (keepersPaused) return <p className="muted">{a.keeperPaused}</p>;
   if (config.isError || enables.isError) return <p className="muted">{a.keeperUnknown}</p>;
-  if (!config.data || (keepers.length > 0 && !enables.data)) return null;
-  const ready =
-    config.data.enabled &&
-    config.data.keepers.some(
-      (k) => ((k.actions ?? 0) & KEEPER_ACTION_EXTEND) !== 0 && enables.data?.[k.keeper.toLowerCase()] === true,
-    );
-  return <p className="muted">{ready ? a.keeperReady : a.keeperNone}</p>;
+  if (!cfg || (keepers.length > 0 && !loanEnables)) return null;
+  const verdict = keeperVerdict(cfg, loanEnables ?? {});
+  return (
+    <p className="muted">
+      {verdict === 'ready' ? a.keeperReady : verdict === 'unknown' ? a.keeperUnknown : a.keeperNone}
+    </p>
+  );
 }
 
 export function AutoExtendCard({
   loanId,
-  role,
+  holdsBorrower,
+  holdsLender,
   active,
   isRental,
   cadence,
@@ -432,7 +439,11 @@ export function AutoExtendCard({
   setBusy,
 }: {
   loanId: number;
-  role: 'borrower' | 'lender' | 'viewer';
+  /** The connected wallet holds the borrower position, by a fresh read. */
+  holdsBorrower: boolean;
+  /** The connected wallet holds the lender position, by a fresh read. A
+   *  wallet may hold both, and then sets both sides' limits. */
+  holdsLender: boolean;
   /** The loan is active, by the page's reconciled status. */
   active: boolean;
   isRental: boolean;
@@ -444,26 +455,37 @@ export function AutoExtendCard({
   setBusy: (b: boolean) => void;
 }) {
   const a = copy.autoExtend;
-  const { address } = useActiveChain();
-  const party = active && !isRental && (role === 'borrower' || role === 'lender');
+  const { address, readChain } = useActiveChain();
+  const extendable = active && !isRental;
+  const party = extendable && (holdsBorrower || holdsLender);
   const funding = useExtendFunding(loanId);
   const state = useAutoExtendState(loanId, party);
   const metaQuery = useTokenMeta(principalAsset);
   const meta = metaQuery.data;
   const reserved = funding.data?.reserved ?? 0n;
 
+  // A reserve this wallet left on the loan that the loan can no longer draw:
+  // the loan ended, or the borrower position is held by someone else.
+  const leftover =
+    reserved > 0n && !(extendable && holdsBorrower) ? (
+      <div data-testid="extend-reserve-leftover" style={{ marginTop: party ? 16 : 0 }}>
+        {party ? <h4 style={{ margin: '0 0 4px' }}>{a.reserve.leftoverTitle}</h4> : null}
+        <p>{a.reserve.leftover(amountText(reserved, meta))}</p>
+        <p className="muted">{extendable ? a.reserve.notHolder : a.reserve.ended}</p>
+        <ReserveWithdraw loanId={loanId} busy={busy} setBusy={setBusy} />
+      </div>
+    ) : null;
+
   // Not a party to an extendable loan: show only a reserve left behind.
   if (!party) {
-    if (reserved === 0n || !funding.data) return null;
+    if (!leftover) return null;
     return (
-      <section className="card" data-testid="extend-reserve-leftover">
+      <section className="card">
         <div className="card-title">
           <CalendarClock aria-hidden />
           <h3 style={{ margin: 0 }}>{a.reserve.leftoverTitle}</h3>
         </div>
-        <p>{a.reserve.leftover(amountText(reserved, meta))}</p>
-        <p className="muted">{active && !isRental ? a.reserve.notHolder : a.reserve.ended}</p>
-        <ReserveWithdraw loanId={loanId} busy={busy} setBusy={setBusy} />
+        {leftover}
       </section>
     );
   }
@@ -495,16 +517,24 @@ export function AutoExtendCard({
       <section className="card" data-testid="auto-extend">
         {header}
         <p className="muted">{state.isError ? a.unavailable : a.loading}</p>
+        {leftover}
       </section>
     );
   }
 
   const s = state.data;
-  const side = role as 'borrower' | 'lender';
-  const own = side === 'borrower' ? s.borrower : s.lender;
-  const other = side === 'borrower' ? s.lender : s.borrower;
   const band = consentBand(s.borrower, s.lender);
   const phase = s.window ? windowPhase(s.now, s.window) : null;
+  const held = { borrower: holdsBorrower, lender: holdsLender };
+  const sides = (['borrower', 'lender'] as const).filter((side) => held[side]);
+
+  /** One side's limits as this viewer reads them. */
+  function limitsText(side: 'borrower' | 'lender'): string {
+    const caps = side === 'borrower' ? s.borrower : s.lender;
+    if (caps.enabled) return capsLine(side, caps);
+    if (!held[side]) return a.otherOff;
+    return setByEarlierHolder(caps, address) ? a.earlierHolder : a.off;
+  }
 
   return (
     <section className="card" data-testid="auto-extend">
@@ -523,14 +553,15 @@ export function AutoExtendCard({
       ) : null}
       <p className="muted">{a.blockers}</p>
       <dl className="kv">
-        <div>
-          <dt>{a.yourLimits}</dt>
-          <dd>{!own.enabled && setByEarlierHolder(own, address) ? a.earlierHolder : capsLine(side, own)}</dd>
-        </div>
-        <div>
-          <dt>{a.otherLimits}</dt>
-          <dd>{other.enabled ? capsLine(side === 'borrower' ? 'lender' : 'borrower', other) : a.otherOff}</dd>
-        </div>
+        {(['borrower', 'lender'] as const).map((side) => {
+          const label = side === 'borrower' ? a.borrowerLimits : a.lenderLimits;
+          return (
+            <div key={side}>
+              <dt>{held[side] ? a.yours(label) : label}</dt>
+              <dd>{limitsText(side)}</dd>
+            </div>
+          );
+        })}
       </dl>
       <p>
         {band.kind === 'both'
@@ -539,8 +570,19 @@ export function AutoExtendCard({
             ? a.bandNoOverlap
             : a.bandMissing}
       </p>
-      <LimitsEditor loanId={loanId} side={side} state={s} busy={busy} setBusy={setBusy} />
-      {side === 'borrower' ? (
+      {sides.map((side) => (
+        // Keyed by who is editing which side: a draft typed for one wallet
+        // or one side must never be submitted as another's consent.
+        <LimitsEditor
+          key={`${readChain.chainId}:${address?.toLowerCase() ?? ''}:${side}`}
+          loanId={loanId}
+          side={side}
+          state={s}
+          busy={busy}
+          setBusy={setBusy}
+        />
+      ))}
+      {holdsBorrower ? (
         <>
           <KeeperLine loanId={loanId} keepersPaused={s.keepersPaused} />
           {funding.data ? (
@@ -553,11 +595,14 @@ export function AutoExtendCard({
               setBusy={setBusy}
             />
           ) : (
-            <p className="muted">{funding.isError ? a.unavailable : a.loading}</p>
+            <p className="muted">{funding.isError ? a.reserve.unavailable : a.loading}</p>
           )}
         </>
       ) : (
-        <p className="muted">{a.lenderFunding}</p>
+        <>
+          <p className="muted">{a.lenderFunding}</p>
+          {leftover}
+        </>
       )}
     </section>
   );

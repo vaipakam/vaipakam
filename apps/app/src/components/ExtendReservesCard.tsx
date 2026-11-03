@@ -47,14 +47,17 @@ function ReserveItem({ row }: { row: ReserveRow }) {
 export function ExtendReservesCard() {
   const reserves = useMyExtendReserves();
   const c = copy.autoExtend.claims;
-  if (reserves.isLoading || reserves.data === undefined) return null;
+  // A failed read (or refresh: the hook drops a cached list behind one, as
+  // it may already have been withdrawn or drawn) says it could not check.
+  const data = reserves.isError ? null : reserves.data;
+  if (data === undefined) return null;
   const header = (
     <div className="card-title">
       <CalendarClock aria-hidden />
       <h2 style={{ margin: 0 }}>{c.title}</h2>
     </div>
   );
-  if (reserves.data === null) {
+  if (data === null) {
     return (
       <section className="card" style={{ marginBottom: 16 }}>
         {header}
@@ -62,7 +65,7 @@ export function ExtendReservesCard() {
       </section>
     );
   }
-  const { rows, unread, truncated } = reserves.data;
+  const { rows, unread, truncated } = data;
   // A cut-short list with nothing in it has not shown there is nothing.
   if (rows.length === 0 && unread.length === 0 && !truncated) return null;
   return (
@@ -87,7 +90,8 @@ export function ExtendReservesCard() {
 /** Whether the card shows anything: "Nothing to claim" must not sit under a
  *  listed reserve, a cut-short list, or a check that could not be made. */
 export function useExtendReservesListed(): boolean {
-  const d = useMyExtendReserves().data;
+  const q = useMyExtendReserves();
+  const d = q.isError ? null : q.data;
   if (d === undefined) return false;
   if (d === null) return true;
   return d.rows.length > 0 || d.unread.length > 0 || d.truncated;
