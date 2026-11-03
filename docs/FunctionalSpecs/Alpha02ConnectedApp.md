@@ -2221,6 +2221,12 @@ is the borrower's own money.
   reserve on a loan it is no longer a party to, or on a loan that has ended,
   sees that reserve and its withdrawal on the loan page, with the reason
   nothing will draw it.
+- Saving limits, adding to the reserve and withdrawing it each show the
+  review receipt before signing: what the wallet consents to or sets aside,
+  what an extension may charge or what the withdrawal pays, the fees, and
+  when it ends. Turning limits off removes consent and needs no receipt. A
+  wallet whose reserve on the loan could not be read is told so, rather than
+  shown no reserve.
 - The lender is told that the borrower pays each extension's charge from
   their vault, and that the lender receives it as interest less the
   protocol's usual cut, as at repayment.

@@ -3885,6 +3885,23 @@
       "turnedOff": "您这一方的自动展期已关闭。",
       "invalidRate": "请输入 0 至 {{max}} 之间的利率。",
       "invalidEnd": "请选择今天之后的日期。",
+      "review": "检查限制",
+      "receiptBorrower": {
+        "youReceive": "您同意这笔贷款原地展期，利率最高 {{rate}}，新的到期日不晚于 {{end}}。",
+        "youLock": "目前无。",
+        "youMayOwe": "每次展期都会从借款人头寸的 vault 扣除截至目前的利息和任何滞纳金，然后以新的利率和期限重新开始贷款。",
+        "youCanLose": "发送展期的一方在 {{rate}} 以内选择利率，因此贷款成本可能高于当前利率。",
+        "fees": "设置限制不收取协议费用。",
+        "whenThisEnds": "当您关闭它们、借款人头寸转给他人或贷款结束时。"
+      },
+      "receiptLender": {
+        "youReceive": "您同意这笔贷款原地展期，利率至少 {{rate}}，新的到期日不晚于 {{end}}。每次展期都会向您支付截至目前的利息，扣除协议的常规分成。",
+        "youLock": "您的本金将一直出借至新的到期日，最晚至 {{end}}。",
+        "youMayOwe": "无。",
+        "youCanLose": "您获得还款的时间晚于贷款当前的到期日，且展期后借款人仍可能违约。",
+        "fees": "设置限制不收取协议费用。协议会从每次展期支付给您的利息中收取常规分成。",
+        "whenThisEnds": "当您关闭它们、出借人头寸转给他人或贷款结束时。"
+      },
       "keeperReady": "您允许的 keeper 可以代您发送展期。",
       "keeperNone": "目前还没有 keeper 可以代您展期这笔贷款。请在设置中开启 keeper 访问并授予某个 keeper 展期权限；然后在高级模式下，在本页为这笔贷款开启该 keeper。",
       "keeperPaused": "委托的 keeper 已在整个协议中暂停，因此目前没有 keeper 能发送展期。",
@@ -3911,6 +3928,25 @@
         "withdrawn": "您未使用的储备已提取。",
         "nothingLeft": "已经没有储备了：可能刚被一次展期用掉。",
         "fundClosed": "只有在这笔贷款可以展期时才能添加储备。",
+        "review": "检查存入",
+        "receiptAdd": {
+          "youReceive": "目前无。{{amount}} 将在您的 vault 中为这笔贷款的展期预留。",
+          "youLock": "{{amount}} 从您的钱包转入您的 vault，为这笔贷款预留。它仍归您所有，未使用的部分可随时提取。",
+          "youMayOwe": "无其他费用。每次展期先扣这笔储备，再扣您 vault 中其他可用的 {{symbol}}，从不动用您的钱包。",
+          "youCanLose": "展期收取的费用：其结束的每个期限的利息和任何滞纳金，在双方设定的限制之内。",
+          "fees": "存入不收取协议费用。您的钱包可能会先请您批准恰好 {{amount}}。",
+          "whenThisEnds": "当您提取它时。还款、违约和清算都不会动它。"
+        },
+        "reviewWithdraw": "检查提取",
+        "receiptWithdraw": {
+          "youReceive": "您为这笔贷款准备的全部未使用储备，在签名前会再次读取。上次读取时为 {{amount}}。款项去向见上文。",
+          "youLock": "无。",
+          "youMayOwe": "无。",
+          "youCanLose": "提取不会带来损失。如果您持有借款人头寸，之后的展期只能扣您 vault 中其他可用余额，不足时会被拒绝。",
+          "fees": "不收取协议费用。",
+          "whenThisEnds": "提取后，这笔贷款不再有任何预留。"
+        },
+        "unreadLeftover": "我们无法确认您在这笔贷款上是否有未使用的展期储备。请稍后再试。",
         "unavailable": "目前无法读取您的展期储备，因此我们无法判断一次展期是否足额覆盖。请稍后再试。",
         "leftoverTitle": "未使用的展期储备",
         "leftover": "您为这笔贷款的展期储备了 {{amount}}。",

@@ -18,6 +18,7 @@ import { usePublicClient, useWalletClient } from 'wagmi';
 import { useQueryClient } from '@tanstack/react-query';
 import type { Address, Log, PublicClient } from 'viem';
 import { copy } from '../content/copy';
+import { ConfirmReceipt } from './ConfirmReceipt';
 import { useActiveChain } from '../chain/useActiveChain';
 import { useDiamondWrite, useTermsBlockNonExitWrites } from '../contracts/diamond';
 import { ensureAllowance, trackApproval, useTokenMeta } from '../contracts/erc20';
@@ -89,10 +90,14 @@ function Banner({ kind, children }: { kind: 'info' | 'warn' | 'danger'; children
 /** Withdraw the whole unused reserve, and say where the payment went. */
 export function ReserveWithdraw({
   loanId,
+  amount,
   busy,
   setBusy,
 }: {
   loanId: number;
+  /** The reserve as last read, worded, for the review receipt. The
+   *  withdrawal itself re-reads it just before signing. */
+  amount: string;
   busy: boolean;
   setBusy: (b: boolean) => void;
 }) {
@@ -101,11 +106,14 @@ export function ReserveWithdraw({
   const { write } = useDiamondWrite();
   const queryClient = useQueryClient();
   const route = payoutRouteText(useOwnPayoutRoute());
+  const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
+  const rw = copy.autoExtend.reserve.receiptWithdraw;
 
   async function run() {
     if (!address || !walletChain || !client) return;
+    setConfirming(false);
     setBusy(true);
     setError(null);
     setDone(null);
@@ -136,14 +144,32 @@ export function ReserveWithdraw({
   return (
     <>
       {route ? <p className="muted">{route}</p> : null}
-      <button
-        type="button"
-        className="btn btn-secondary btn-sm"
-        disabled={busy || !onSupportedChain}
-        onClick={() => void run()}
-      >
-        {busy ? copy.autoExtend.reserve.withdrawing : copy.autoExtend.reserve.withdraw}
-      </button>
+      {confirming ? (
+        <ConfirmReceipt
+          busy={busy}
+          confirmLabel={copy.autoExtend.reserve.withdraw}
+          onBack={() => setConfirming(false)}
+          onConfirm={() => void run()}
+          disabled={!onSupportedChain}
+          data={{
+            youReceive: rw.youReceive(amount),
+            youLock: rw.youLock,
+            youMayOwe: rw.youMayOwe,
+            youCanLose: rw.youCanLose,
+            fees: rw.fees,
+            whenThisEnds: rw.whenThisEnds,
+          }}
+        />
+      ) : (
+        <button
+          type="button"
+          className="btn btn-secondary btn-sm"
+          disabled={busy || !onSupportedChain}
+          onClick={() => setConfirming(true)}
+        >
+          {busy ? copy.autoExtend.reserve.withdrawing : copy.autoExtend.reserve.reviewWithdraw}
+        </button>
+      )}
       {done ? <Banner kind="info">{done}</Banner> : null}
       {error ? <Banner kind="danger">{error}</Banner> : null}
     </>
@@ -176,6 +202,7 @@ function ReservePanel({
   const termsVerdict = useTermsBlockNonExitWrites();
   const queryClient = useQueryClient();
   const [input, setInput] = useState('');
+  const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
   const cover = fundingCover(funding);
@@ -187,6 +214,7 @@ function ReservePanel({
     const owner = address as Address;
     const diamond = walletChain.diamondAddress as Address;
     const approval = trackApproval();
+    setConfirming(false);
     setBusy(true);
     setError(null);
     setDone(null);
@@ -270,7 +298,23 @@ function ReservePanel({
       </p>
       <p className="muted">{r.eachTime}</p>
       <p className="muted">{r.ownership}</p>
-      {canFund ? (
+      {canFund && confirming && amount !== null ? (
+        <ConfirmReceipt
+          busy={busy}
+          confirmLabel={r.add}
+          onBack={() => setConfirming(false)}
+          onConfirm={() => void fund()}
+          disabled={!onSupportedChain}
+          data={{
+            youReceive: r.receiptAdd.youReceive(amountText(amount, meta)),
+            youLock: r.receiptAdd.youLock(amountText(amount, meta)),
+            youMayOwe: r.receiptAdd.youMayOwe(meta?.symbol ?? ''),
+            youCanLose: r.receiptAdd.youCanLose,
+            fees: r.receiptAdd.fees(amountText(amount, meta)),
+            whenThisEnds: r.receiptAdd.whenThisEnds,
+          }}
+        />
+      ) : canFund ? (
         <div className="cluster" style={{ alignItems: 'flex-end', gap: 8 }}>
           <label className="stack" style={{ gap: 4 }}>
             <span>{r.amount(meta?.symbol ?? '')}</span>
@@ -285,10 +329,10 @@ function ReservePanel({
           <button
             type="button"
             className="btn btn-primary btn-sm"
-            disabled={busy || !onSupportedChain || amount === null}
-            onClick={() => void fund()}
+            disabled={busy || !onSupportedChain || amount === null || !meta}
+            onClick={() => setConfirming(true)}
           >
-            {busy ? r.adding : r.add}
+            {busy ? r.adding : r.review}
           </button>
         </div>
       ) : (
@@ -298,11 +342,36 @@ function ReservePanel({
       {error ? <Banner kind="danger">{error}</Banner> : null}
       {funding.reserved > 0n ? (
         <div style={{ marginTop: 12 }}>
-          <ReserveWithdraw loanId={loanId} busy={busy} setBusy={setBusy} />
+          <ReserveWithdraw loanId={loanId} amount={amountText(funding.reserved, meta)} busy={busy} setBusy={setBusy} />
         </div>
       ) : null}
     </div>
   );
+}
+
+/** The review receipt for saving one side's limits. */
+function limitsReceipt(side: 'borrower' | 'lender', rate: string, end: string) {
+  const a = copy.autoExtend;
+  if (side === 'borrower') {
+    const r = a.receiptBorrower;
+    return {
+      youReceive: r.youReceive(rate, end),
+      youLock: r.youLock,
+      youMayOwe: r.youMayOwe,
+      youCanLose: r.youCanLose(rate),
+      fees: r.fees,
+      whenThisEnds: r.whenThisEnds,
+    };
+  }
+  const r = a.receiptLender;
+  return {
+    youReceive: r.youReceive(rate, end),
+    youLock: r.youLock(end),
+    youMayOwe: r.youMayOwe,
+    youCanLose: r.youCanLose,
+    fees: r.fees,
+    whenThisEnds: r.whenThisEnds,
+  };
 }
 
 /** The viewer's own side's limits, with set and clear. */
@@ -328,6 +397,7 @@ function LimitsEditor({
   const ownRate = side === 'borrower' ? own.maxRateBps : own.minRateBps;
   const [rate, setRate] = useState(own.enabled ? String(ownRate / 100) : '');
   const [end, setEnd] = useState(own.enabled ? dateInputOf(own.maxNewExpiry) : '');
+  const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
   const rateBps = rate === '' ? null : percentToBps(rate);
@@ -337,6 +407,7 @@ function LimitsEditor({
 
   async function save(enabled: boolean) {
     if (!address || !walletChain || !publicClient) return;
+    setConfirming(false);
     setBusy(true);
     setError(null);
     setDone(null);
@@ -389,14 +460,24 @@ function LimitsEditor({
       {endAt !== null ? (
         <p className="muted">{endOk ? a.latestEndHint(formatDateTime(endAt)) : a.invalidEnd}</p>
       ) : null}
+      {confirming && rateOk && endOk && rateBps !== null && endAt !== null ? (
+        <ConfirmReceipt
+          busy={busy}
+          confirmLabel={a.save}
+          onBack={() => setConfirming(false)}
+          onConfirm={() => void save(true)}
+          disabled={state.paused || !onSupportedChain}
+          data={limitsReceipt(side, formatBpsAsPercent(rateBps), formatDateTime(endAt))}
+        />
+      ) : null}
       <div className="cluster" style={{ gap: 8 }}>
         <button
           type="button"
           className="btn btn-primary btn-sm"
-          disabled={busy || state.paused || !onSupportedChain || !rateOk || !endOk}
-          onClick={() => void save(true)}
+          disabled={busy || confirming || state.paused || !onSupportedChain || !rateOk || !endOk}
+          onClick={() => setConfirming(true)}
         >
-          {busy ? a.saving : a.save}
+          {busy ? a.saving : a.review}
         </button>
         {own.enabled ? (
           <button
@@ -473,15 +554,20 @@ export function AutoExtendCard({
 
   // A reserve this wallet left on the loan that the loan can no longer draw:
   // the loan ended, or the borrower position is held by someone else.
-  const leftover =
-    reserved > 0n && !(extendable && holdsBorrower) ? (
-      <div data-testid="extend-reserve-leftover" style={{ marginTop: party ? 16 : 0 }}>
-        {party ? <h4 style={{ margin: '0 0 4px' }}>{a.reserve.leftoverTitle}</h4> : null}
-        <p>{a.reserve.leftover(amountText(reserved, meta))}</p>
-        <p className="muted">{extendable ? a.reserve.notHolder : a.reserve.ended}</p>
-        <ReserveWithdraw loanId={loanId} busy={busy} setBusy={setBusy} />
-      </div>
-    ) : null;
+  // A failed read is said, not shown as "no reserve" (the hook drops data
+  // behind a failed refresh, so `reserved` would read 0 here).
+  const leftover = extendable && holdsBorrower ? null : funding.isError ? (
+    <p className="muted" style={{ marginTop: party ? 16 : 0 }}>
+      {a.reserve.unreadLeftover}
+    </p>
+  ) : reserved > 0n ? (
+    <div data-testid="extend-reserve-leftover" style={{ marginTop: party ? 16 : 0 }}>
+      {party ? <h4 style={{ margin: '0 0 4px' }}>{a.reserve.leftoverTitle}</h4> : null}
+      <p>{a.reserve.leftover(amountText(reserved, meta))}</p>
+      <p className="muted">{extendable ? a.reserve.notHolder : a.reserve.ended}</p>
+      <ReserveWithdraw loanId={loanId} amount={amountText(reserved, meta)} busy={busy} setBusy={setBusy} />
+    </div>
+  ) : null;
 
   // Not a party to an extendable loan: show only a reserve left behind.
   if (!party) {
@@ -512,7 +598,7 @@ export function AutoExtendCard({
         {reserved > 0n ? (
           <>
             <p>{a.reserve.leftover(amountText(reserved, meta))}</p>
-            <ReserveWithdraw loanId={loanId} busy={busy} setBusy={setBusy} />
+            <ReserveWithdraw loanId={loanId} amount={amountText(reserved, meta)} busy={busy} setBusy={setBusy} />
           </>
         ) : null}
       </section>

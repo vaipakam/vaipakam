@@ -3885,6 +3885,23 @@
       "turnedOff": "La prolongation automatique est désactivée de votre côté.",
       "invalidRate": "Saisissez un taux de 0 à {{max}}.",
       "invalidEnd": "Choisissez une date postérieure à aujourd’hui.",
+      "review": "Vérifier les limites",
+      "receiptBorrower": {
+        "youReceive": "Votre accord pour que ce prêt soit prolongé sur place, à un taux d’au plus {{rate}} et avec une nouvelle échéance au plus tard le {{end}}.",
+        "youLock": "Rien pour l’instant.",
+        "youMayOwe": "Chaque prolongation prélève sur le vault de la position emprunteur les intérêts courus et d’éventuels frais de retard, puis relance le prêt au nouveau taux et pour la nouvelle durée.",
+        "youCanLose": "Celui qui envoie une prolongation choisit le taux, jusqu’à {{rate}}, donc le prêt peut coûter plus qu’à son taux actuel.",
+        "fees": "Aucuns frais de protocole pour fixer des limites.",
+        "whenThisEnds": "Quand vous les désactivez, que la position emprunteur passe à quelqu’un d’autre ou que le prêt prend fin."
+      },
+      "receiptLender": {
+        "youReceive": "Votre accord pour que ce prêt soit prolongé sur place, à un taux d’au moins {{rate}} et avec une nouvelle échéance au plus tard le {{end}}. Chaque prolongation vous verse les intérêts courus, moins la part habituelle du protocole.",
+        "youLock": "Votre principal reste prêté jusqu’à la nouvelle échéance, au plus tard le {{end}}.",
+        "youMayOwe": "Rien.",
+        "youCanLose": "Vous êtes remboursé plus tard que l’échéance actuelle du prêt, et l’emprunteur peut encore faire défaut après une prolongation.",
+        "fees": "Aucuns frais de protocole pour fixer des limites. Le protocole prend sa part habituelle des intérêts que vous verse chaque prolongation.",
+        "whenThisEnds": "Quand vous les désactivez, que la position prêteur passe à quelqu’un d’autre ou que le prêt prend fin."
+      },
       "keeperReady": "Un keeper que vous autorisez peut envoyer la prolongation pour vous.",
       "keeperNone": "Aucun keeper n’est encore autorisé à prolonger ce prêt pour vous. Dans Paramètres, activez l’accès des keepers et donnez à un keeper la permission de prolongation ; puis, en mode avancé, activez ce keeper pour ce prêt sur cette page.",
       "keeperPaused": "Les keepers délégués sont en pause dans tout le protocole, donc aucun keeper ne peut envoyer de prolongation pour le moment.",
@@ -3911,6 +3928,25 @@
         "withdrawn": "Votre réserve inutilisée a été retirée.",
         "nothingLeft": "Plus rien n’est réservé : une prolongation vient peut-être de l’utiliser.",
         "fundClosed": "Une réserve ne peut être ajoutée que tant que ce prêt pourrait être prolongé.",
+        "review": "Vérifier le dépôt",
+        "receiptAdd": {
+          "youReceive": "Rien pour l’instant. {{amount}} est mis de côté dans votre vault pour les prolongations de ce prêt.",
+          "youLock": "{{amount}} passe de votre portefeuille à votre vault, réservé à ce prêt. Il reste à vous, et vous pouvez retirer ce qui n’est pas utilisé à tout moment.",
+          "youMayOwe": "Rien de plus. Chaque prolongation prélève d’abord sur cette réserve, puis sur d’autres {{symbol}} libres de votre vault, jamais sur votre portefeuille.",
+          "youCanLose": "Ce que prélèvent les prolongations : les intérêts de chaque durée qu’elles clôturent et d’éventuels frais de retard, dans les limites fixées par les deux parties.",
+          "fees": "Aucuns frais de protocole pour le dépôt. Votre portefeuille peut d’abord vous demander d’approuver exactement {{amount}}.",
+          "whenThisEnds": "Quand vous la retirez. Le remboursement, le défaut et la liquidation la laissent en place."
+        },
+        "reviewWithdraw": "Vérifier le retrait",
+        "receiptWithdraw": {
+          "youReceive": "Toute votre réserve inutilisée pour ce prêt, relue juste avant la signature. Au dernier relevé, elle était de {{amount}}. La destination du paiement est indiquée ci-dessus.",
+          "youLock": "Rien.",
+          "youMayOwe": "Rien.",
+          "youCanLose": "Rien du fait du retrait. Si vous détenez la position emprunteur, une prolongation ultérieure ne pourra prélever que votre autre solde libre du vault, et sera refusée s’il ne suffit pas.",
+          "fees": "Aucuns frais de protocole.",
+          "whenThisEnds": "Une fois retirée, plus rien n’est réservé pour ce prêt."
+        },
+        "unreadLeftover": "Nous n’avons pas pu vérifier si vous avez une réserve de prolongation inutilisée sur ce prêt. Réessayez dans un instant.",
         "unavailable": "Nous n’avons pas pu lire votre réserve de prolongation pour le moment, nous ne pouvons donc pas dire si une prolongation serait couverte. Réessayez dans un instant.",
         "leftoverTitle": "Réserve de prolongation inutilisée",
         "leftover": "Vous avez {{amount}} réservé pour les prolongations de ce prêt.",

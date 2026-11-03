@@ -4747,6 +4747,36 @@ const copySource = {
     turnedOff: 'Automatic extension is off for your side.',
     invalidRate: tmpl('Enter a rate from 0 to {{max}}.', ['max']),
     invalidEnd: 'Choose a date after today.',
+    review: 'Review limits',
+    receiptBorrower: {
+      youReceive: tmpl(
+        'Your consent for this loan to be extended in place, at a rate up to {{rate}} and a new end no later than {{end}}.',
+        ['rate', 'end'],
+      ),
+      youLock: 'Nothing now.',
+      youMayOwe:
+        'Each extension charges the interest so far and any late fee from the borrower position’s vault, then restarts the loan at the new rate and term.',
+      youCanLose: tmpl(
+        'Whoever sends an extension chooses the rate, up to {{rate}}, so the loan may cost more than at its current rate.',
+        ['rate'],
+      ),
+      fees: 'No protocol fee to set limits.',
+      whenThisEnds:
+        'When you turn them off, the borrower position passes to someone else, or the loan ends.',
+    },
+    receiptLender: {
+      youReceive: tmpl(
+        'Your consent for this loan to be extended in place, at a rate of at least {{rate}} and a new end no later than {{end}}. Each extension pays you the interest so far, less the protocol’s usual cut.',
+        ['rate', 'end'],
+      ),
+      youLock: tmpl('Your principal stays lent until the new end, no later than {{end}}.', ['end']),
+      youMayOwe: 'Nothing.',
+      youCanLose:
+        'You are repaid later than the loan’s current end, and the borrower can still default after an extension.',
+      fees: 'No protocol fee to set limits. The protocol takes its usual cut of the interest each extension pays you.',
+      whenThisEnds:
+        'When you turn them off, the lender position passes to someone else, or the loan ends.',
+    },
     keeperReady: 'A keeper you allow may send the extension for you.',
     keeperNone:
       'No keeper is allowed to extend this loan for you yet. In Settings, turn keeper access on and give a keeper the extend permission; then, with advanced mode on, switch that keeper on for this loan on this page.',
@@ -4783,6 +4813,39 @@ const copySource = {
       withdrawn: 'Your unused reserve was withdrawn.',
       nothingLeft: 'Nothing is reserved any more: an extension may have just drawn it.',
       fundClosed: 'A reserve can be added only while this loan could be extended.',
+      review: 'Review deposit',
+      receiptAdd: {
+        youReceive: tmpl('Nothing now. {{amount}} is set aside in your vault for this loan’s extensions.', ['amount']),
+        youLock: tmpl(
+          '{{amount}} moves from your wallet into your vault, reserved for this loan. It stays yours, and you can withdraw what is unused at any time.',
+          ['amount'],
+        ),
+        youMayOwe: tmpl(
+          'Nothing more. Each extension charges this reserve first, then other free {{symbol}} in your vault, never your wallet.',
+          ['symbol'],
+        ),
+        youCanLose:
+          'What extensions charge: the interest of each term they close and any late fee, under the limits both sides set.',
+        fees: tmpl(
+          'No protocol fee for the deposit. Your wallet may first ask you to approve exactly {{amount}}.',
+          ['amount'],
+        ),
+        whenThisEnds: 'When you withdraw it. Repayment, default and liquidation leave it in place.',
+      },
+      reviewWithdraw: 'Review withdrawal',
+      receiptWithdraw: {
+        youReceive: tmpl(
+          'Your whole unused reserve for this loan, read again just before signing. At the last read it was {{amount}}. Where the payment goes is stated above.',
+          ['amount'],
+        ),
+        youLock: 'Nothing.',
+        youMayOwe: 'Nothing.',
+        youCanLose:
+          'Nothing from the withdrawal. If you hold the borrower position, a later extension can draw only your other free vault balance, and is refused if that does not cover it.',
+        fees: 'No protocol fee.',
+        whenThisEnds: 'Once it is withdrawn, nothing is reserved for this loan.',
+      },
+      unreadLeftover: 'We couldn’t check whether you have an unused extension reserve on this loan. Try again shortly.',
       unavailable:
         'We couldn’t read your extension reserve right now, so we can’t say whether an extension would be covered. Try again shortly.',
       leftoverTitle: 'Unused extension reserve',

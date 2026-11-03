@@ -3885,6 +3885,23 @@
       "turnedOff": "La extensión automática está desactivada para tu parte.",
       "invalidRate": "Introduce una tasa de 0 a {{max}}.",
       "invalidEnd": "Elige una fecha posterior a hoy.",
+      "review": "Revisar límites",
+      "receiptBorrower": {
+        "youReceive": "Tu consentimiento para que este préstamo se extienda en el sitio, a una tasa de hasta {{rate}} y con un nuevo fin no posterior a {{end}}.",
+        "youLock": "Nada por ahora.",
+        "youMayOwe": "Cada extensión cobra del vault de la posición del prestatario el interés hasta la fecha y cualquier recargo por demora, y luego reinicia el préstamo con la nueva tasa y el nuevo plazo.",
+        "youCanLose": "Quien envía una extensión elige la tasa, hasta {{rate}}, así que el préstamo puede costar más que a su tasa actual.",
+        "fees": "Sin comisión del protocolo por fijar límites.",
+        "whenThisEnds": "Cuando los desactives, la posición del prestatario pase a otra persona o el préstamo termine."
+      },
+      "receiptLender": {
+        "youReceive": "Tu consentimiento para que este préstamo se extienda en el sitio, a una tasa de al menos {{rate}} y con un nuevo fin no posterior a {{end}}. Cada extensión te paga el interés hasta la fecha, menos la parte habitual del protocolo.",
+        "youLock": "Tu principal sigue prestado hasta el nuevo fin, no después de {{end}}.",
+        "youMayOwe": "Nada.",
+        "youCanLose": "Se te devuelve más tarde que el fin actual del préstamo, y el prestatario aún puede incumplir tras una extensión.",
+        "fees": "Sin comisión del protocolo por fijar límites. El protocolo toma su parte habitual del interés que te paga cada extensión.",
+        "whenThisEnds": "Cuando los desactives, la posición del prestamista pase a otra persona o el préstamo termine."
+      },
       "keeperReady": "Un keeper que autorizas puede enviar la extensión por ti.",
       "keeperNone": "Todavía ningún keeper puede extender este préstamo por ti. En Ajustes, activa el acceso de keepers y da a un keeper el permiso de extensión; luego, con el modo avanzado activado, activa ese keeper para este préstamo en esta página.",
       "keeperPaused": "Los keepers delegados están en pausa en todo el protocolo, así que ningún keeper puede enviar una extensión ahora mismo.",
@@ -3911,6 +3928,25 @@
         "withdrawn": "Se retiró tu reserva no usada.",
         "nothingLeft": "Ya no queda nada reservado: puede que una extensión acabe de usarlo.",
         "fundClosed": "Solo se puede añadir una reserva mientras este préstamo pueda extenderse.",
+        "review": "Revisar depósito",
+        "receiptAdd": {
+          "youReceive": "Nada por ahora. {{amount}} se aparta en tu vault para las extensiones de este préstamo.",
+          "youLock": "{{amount}} pasa de tu monedero a tu vault, reservado para este préstamo. Sigue siendo tuyo y puedes retirar lo no usado en cualquier momento.",
+          "youMayOwe": "Nada más. Cada extensión cobra primero de esta reserva y luego de otro {{symbol}} libre en tu vault, nunca de tu monedero.",
+          "youCanLose": "Lo que cobran las extensiones: el interés de cada plazo que cierran y cualquier recargo por demora, dentro de los límites que ambas partes fijaron.",
+          "fees": "Sin comisión del protocolo por el depósito. Tu monedero puede pedirte antes que apruebes exactamente {{amount}}.",
+          "whenThisEnds": "Cuando la retires. El reembolso, el impago y la liquidación la dejan donde está."
+        },
+        "reviewWithdraw": "Revisar retiro",
+        "receiptWithdraw": {
+          "youReceive": "Toda tu reserva no usada para este préstamo, leída de nuevo justo antes de firmar. En la última lectura era {{amount}}. Adónde va el pago se indica arriba.",
+          "youLock": "Nada.",
+          "youMayOwe": "Nada.",
+          "youCanLose": "Nada por el retiro. Si tienes la posición del prestatario, una extensión posterior solo podrá cobrar de tu otro saldo libre en el vault, y se rechazará si no alcanza.",
+          "fees": "Sin comisión del protocolo.",
+          "whenThisEnds": "Una vez retirada, no queda nada reservado para este préstamo."
+        },
+        "unreadLeftover": "No pudimos comprobar si tienes una reserva de extensión sin usar en este préstamo. Inténtalo de nuevo en breve.",
         "unavailable": "No pudimos leer tu reserva de extensión ahora mismo, así que no podemos decir si una extensión quedaría cubierta. Inténtalo de nuevo en breve.",
         "leftoverTitle": "Reserva de extensión no usada",
         "leftover": "Tienes {{amount}} reservado para las extensiones de este préstamo.",

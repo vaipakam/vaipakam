@@ -3885,6 +3885,23 @@
       "turnedOff": "Die automatische Verlängerung ist für Ihre Seite ausgeschaltet.",
       "invalidRate": "Geben Sie einen Zinssatz von 0 bis {{max}} ein.",
       "invalidEnd": "Wählen Sie ein Datum nach heute.",
+      "review": "Grenzen prüfen",
+      "receiptBorrower": {
+        "youReceive": "Ihre Zustimmung, dass dieser Kredit an Ort und Stelle verlängert wird, zu einem Zinssatz bis {{rate}} und einem neuen Ende spätestens am {{end}}.",
+        "youLock": "Vorerst nichts.",
+        "youMayOwe": "Jede Verlängerung belastet den Vault der Kreditnehmerposition mit den bisherigen Zinsen und einer etwaigen Verspätungsgebühr und startet den Kredit dann mit dem neuen Zinssatz und der neuen Laufzeit neu.",
+        "youCanLose": "Wer eine Verlängerung sendet, wählt den Zinssatz bis {{rate}}, daher kann der Kredit mehr kosten als zum aktuellen Zinssatz.",
+        "fees": "Keine Protokollgebühr für das Festlegen von Grenzen.",
+        "whenThisEnds": "Wenn Sie sie ausschalten, die Kreditnehmerposition an jemand anderen übergeht oder der Kredit endet."
+      },
+      "receiptLender": {
+        "youReceive": "Ihre Zustimmung, dass dieser Kredit an Ort und Stelle verlängert wird, zu einem Zinssatz von mindestens {{rate}} und einem neuen Ende spätestens am {{end}}. Jede Verlängerung zahlt Ihnen die bisherigen Zinsen, abzüglich des üblichen Protokollanteils.",
+        "youLock": "Ihr Kapital bleibt bis zum neuen Ende verliehen, spätestens bis {{end}}.",
+        "youMayOwe": "Nichts.",
+        "youCanLose": "Sie werden später als zum aktuellen Ende des Kredits zurückgezahlt, und der Kreditnehmer kann auch nach einer Verlängerung ausfallen.",
+        "fees": "Keine Protokollgebühr für das Festlegen von Grenzen. Das Protokoll nimmt seinen üblichen Anteil an den Zinsen, die Ihnen jede Verlängerung zahlt.",
+        "whenThisEnds": "Wenn Sie sie ausschalten, die Kreditgeberposition an jemand anderen übergeht oder der Kredit endet."
+      },
       "keeperReady": "Ein Keeper, den Sie zulassen, darf die Verlängerung für Sie senden.",
       "keeperNone": "Noch darf kein Keeper diesen Kredit für Sie verlängern. Schalten Sie in den Einstellungen den Keeper-Zugriff ein und geben Sie einem Keeper die Verlängerungsberechtigung; schalten Sie dann im erweiterten Modus diesen Keeper auf dieser Seite für diesen Kredit ein.",
       "keeperPaused": "Delegierte Keeper sind protokollweit pausiert, daher kann gerade kein Keeper eine Verlängerung senden.",
@@ -3911,6 +3928,25 @@
         "withdrawn": "Ihre ungenutzte Reserve wurde abgehoben.",
         "nothingLeft": "Es ist nichts mehr reserviert: Eine Verlängerung hat sie vielleicht gerade verbraucht.",
         "fundClosed": "Eine Reserve kann nur hinzugefügt werden, solange dieser Kredit verlängert werden könnte.",
+        "review": "Einzahlung prüfen",
+        "receiptAdd": {
+          "youReceive": "Vorerst nichts. {{amount}} wird in Ihrem Vault für die Verlängerungen dieses Kredits zurückgelegt.",
+          "youLock": "{{amount}} wird aus Ihrer Wallet in Ihren Vault verschoben und für diesen Kredit reserviert. Es bleibt Ihres, und Sie können Ungenutztes jederzeit abheben.",
+          "youMayOwe": "Nichts weiter. Jede Verlängerung belastet zuerst diese Reserve, dann anderes freies {{symbol}} in Ihrem Vault, nie Ihre Wallet.",
+          "youCanLose": "Was Verlängerungen berechnen: die Zinsen jeder Laufzeit, die sie abschließen, und eine etwaige Verspätungsgebühr, innerhalb der Grenzen beider Seiten.",
+          "fees": "Keine Protokollgebühr für die Einzahlung. Ihre Wallet fragt Sie möglicherweise zuerst nach einer Freigabe über genau {{amount}}.",
+          "whenThisEnds": "Wenn Sie sie abheben. Rückzahlung, Ausfall und Liquidation lassen sie unberührt."
+        },
+        "reviewWithdraw": "Abhebung prüfen",
+        "receiptWithdraw": {
+          "youReceive": "Ihre gesamte ungenutzte Reserve für diesen Kredit, direkt vor dem Signieren erneut gelesen. Beim letzten Lesen waren es {{amount}}. Wohin die Zahlung geht, steht oben.",
+          "youLock": "Nichts.",
+          "youMayOwe": "Nichts.",
+          "youCanLose": "Nichts durch die Abhebung. Wenn Sie die Kreditnehmerposition halten, kann eine spätere Verlängerung nur Ihr anderes freies Vault-Guthaben belasten und wird abgelehnt, wenn es nicht reicht.",
+          "fees": "Keine Protokollgebühr.",
+          "whenThisEnds": "Nach der Abhebung ist für diesen Kredit nichts mehr reserviert."
+        },
+        "unreadLeftover": "Wir konnten nicht prüfen, ob Sie eine ungenutzte Verlängerungsreserve für diesen Kredit haben. Versuchen Sie es gleich noch einmal.",
         "unavailable": "Wir konnten Ihre Verlängerungsreserve gerade nicht lesen und können daher nicht sagen, ob eine Verlängerung gedeckt wäre. Versuchen Sie es gleich noch einmal.",
         "leftoverTitle": "Ungenutzte Verlängerungsreserve",
         "leftover": "Sie haben {{amount}} für die Verlängerungen dieses Kredits reserviert.",

@@ -36,7 +36,7 @@ function ReserveItem({ row }: { row: ReserveRow }) {
           {row.use === 'kept' ? r.kept : row.use === 'ended' ? r.ended : r.notHolder}
         </span>
         <span style={{ display: 'block', marginTop: 8 }}>
-          <ReserveWithdraw loanId={row.loanId} busy={busy} setBusy={setBusy} />
+          <ReserveWithdraw loanId={row.loanId} amount={amount} busy={busy} setBusy={setBusy} />
         </span>
       </span>
     </li>
