@@ -46,6 +46,9 @@ import { sendAsAdmin } from '../lib/admin';
 import { parseAbi, parseUnits, type Address } from 'viem';
 
 const MINT_ABI = parseAbi(['function mint(address to, uint256 amount)']);
+/** The rental mock is an ERC-721 whose `mint(to, tokenId)` skips the
+ *  receiver hook, so it lands in a vault the way an untracked NFT does. */
+const NFT_MINT_ABI = parseAbi(['function mint(address to, uint256 tokenId)']);
 
 /** A benign sanctions oracle, installed via anvil_setCode: its runtime
  *  bytecode returns one 32-byte zero word for ANY call — every
@@ -59,6 +62,31 @@ const ALWAYS_FALSE_CODE = '0x600060005260206000f3';
 async function setSanctionsOracle(target: Address): Promise<void> {
   // The setter is owner-gated — sent as the deployment admin.
   await sendAsAdmin('setSanctionsOracle', [target]);
+}
+
+/** The account's vault, created first if it has none: the chain is
+ *  fresh per run (#2334), so one exists only if an earlier spec happened
+ *  to create it. */
+async function ensureVault(account: Parameters<typeof walletFor>[0]): Promise<Address> {
+  const read = async () =>
+    (await pub.readContract({
+      address: DIAMOND,
+      abi: DIAMOND_ABI_VIEM,
+      functionName: 'getUserVaultAddress',
+      args: [account.address],
+    })) as Address;
+  const existing = await read();
+  if (existing !== '0x0000000000000000000000000000000000000000') return existing;
+  const hash = await walletFor(account).writeContract({
+    address: DIAMOND,
+    abi: DIAMOND_ABI_VIEM,
+    functionName: 'getOrCreateUserVault',
+    args: [account.address],
+    chain: forkChain,
+    account,
+  });
+  await confirm(hash, 'getOrCreateUserVault');
+  return read();
 }
 
 test('help explainer gates the flow; dusted vault is adopted into the vault balance', async ({
@@ -89,32 +117,7 @@ test('help explainer gates the flow; dusted vault is adopted into the vault bala
     '0x0000000000000000000000000000000000000000' as Address,
   );
 
-  // Ensure the borrower HAS a vault: the chain is fresh per run (#2334),
-  // so one exists only if an earlier spec happened to create it.
-  let vault = (await pub.readContract({
-    address: DIAMOND,
-    abi: DIAMOND_ABI_VIEM,
-    functionName: 'getUserVaultAddress',
-    args: [account.address],
-  })) as Address;
-  if (vault === '0x0000000000000000000000000000000000000000') {
-    const wallet = walletFor(account);
-    const hash = await wallet.writeContract({
-      address: DIAMOND,
-      abi: DIAMOND_ABI_VIEM,
-      functionName: 'getOrCreateUserVault',
-      args: [account.address],
-      chain: forkChain,
-      account,
-    });
-    await confirm(hash, 'getOrCreateUserVault');
-    vault = (await pub.readContract({
-      address: DIAMOND,
-      abi: DIAMOND_ABI_VIEM,
-      functionName: 'getUserVaultAddress',
-      args: [account.address],
-    })) as Address;
-  }
+  const vault = await ensureVault(account);
 
   // Seed UNSOLICITED dust: mint straight to the vault address, outside
   // any protocol flow — exactly the shape recovery exists for. The
@@ -230,6 +233,103 @@ test('help explainer gates the flow; dusted vault is adopted into the vault bala
     // Restore the EXACT pre-test oracle (Codex #1547 r4) — on the
     // retail fork that's the unset default, but a configured-oracle
     // deployment must get its own value back, not a forced zero.
+    await setSanctionsOracle(originalOracle);
+  }
+});
+
+/**
+ * #3096 — an NFT that reached the vault outside the app is adopted
+ * through the same flow, reached from the vault card's untracked note
+ * with the asset filled in; a second one is disowned from the vault card
+ * instead, which records it publicly and credits nothing.
+ */
+test('an untracked NFT is adopted from the vault card link, and another is disowned', async ({
+  launchWallet,
+}) => {
+  const { page, account } = await launchWallet('borrower');
+  const nft = MOCKS!.rentalNft as Address;
+  const originalOracle = (await pub.readContract({
+    address: DIAMOND,
+    abi: DIAMOND_ABI_VIEM,
+    functionName: 'getSanctionsOracle',
+  })) as Address;
+  try {
+    await anvilRpc('anvil_setCode', [MOCK_ORACLE, ALWAYS_FALSE_CODE]);
+    await setSanctionsOracle(MOCK_ORACLE);
+    const vault = await ensureVault(account);
+    // Token ids no other spec mints (the rental flows use small ids).
+    const adoptId = 3_096_001n;
+    const disownId = 3_096_002n;
+    for (const id of [adoptId, disownId]) {
+      const hash = await walletFor(account).writeContract({
+        address: nft,
+        abi: NFT_MINT_ABI,
+        functionName: 'mint',
+        args: [vault, id],
+        chain: forkChain,
+        account,
+      });
+      await confirm(hash, `mint NFT ${id} into the vault`);
+    }
+    const tracked = (id: bigint) =>
+      pub.readContract({
+        address: DIAMOND,
+        abi: DIAMOND_ABI_VIEM,
+        functionName: 'getTrackedHolding',
+        args: [account.address, nft, id],
+      }) as Promise<bigint>;
+    expect(await tracked(adoptId)).toBe(0n);
+
+    // The vault card names the untracked NFT and links the adoption page
+    // with the asset filled in.
+    await page.goto('/vault', { waitUntil: 'domcontentloaded' });
+    await connectWallet(page);
+    await page.getByLabel(/asset type/i).first().selectOption({ label: 'NFT (ERC-721)' });
+    await page.getByLabel(/^contract address$/i).fill(nft);
+    await page.getByLabel(/token id/i).first().fill(adoptId.toString());
+    const link = page.getByRole('link', { name: /add it to your vault/i });
+    await expect(link).toBeVisible({ timeout: 30_000 });
+    await link.click();
+    await expect(page).toHaveURL(/\/recover\?kind=1&asset=0x[0-9a-fA-F]{40}&tokenId=3096001$/);
+
+    // Prefilled: collection and token id. No amount to type for an
+    // ERC-721; the contract's own untracked figure is shown.
+    await expect(page.getByLabel(/collection contract address/i)).toHaveValue(
+      new RegExp(nft, 'i'),
+      { timeout: 30_000 },
+    );
+    await expect(page.getByLabel(/^token id$/i)).toHaveValue(adoptId.toString());
+    await expect(page.getByText(/recoverable: 1/i)).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByText(/always 1/i)).toBeVisible();
+    await expect(page.getByLabel(/amount to recover/i)).toHaveCount(0);
+    await page.getByLabel(/sender address/i).fill(account.address);
+    await page.getByRole('button', { name: /review recovery/i }).click();
+    await expect(page.locator('p').filter({ hasText: /^Kind:/ })).toContainText(
+      'NFT (ERC-721)',
+    );
+    await page.getByLabel(/type confirm/i).fill('CONFIRM');
+    await page.getByRole('button', { name: /sign & add to vault/i }).click();
+    await expect(page.getByText(/tokens added to your vault/i)).toBeVisible({
+      timeout: 90_000,
+    });
+    expect(await tracked(adoptId)).toBe(1n);
+
+    // Start over lands on a BLANK form (the arrival link's asset is done).
+    await page.getByRole('button', { name: /recover another token/i }).click();
+    await expect(page.getByLabel(/token contract address/i)).toHaveValue('');
+
+    // The second NFT is disowned from the vault card (outside the
+    // adoption page's gates): a public record, nothing credited.
+    await page.goto('/vault', { waitUntil: 'domcontentloaded' });
+    await page.getByLabel(/asset type/i).first().selectOption({ label: 'NFT (ERC-721)' });
+    await page.getByLabel(/^contract address$/i).fill(nft);
+    await page.getByLabel(/token id/i).first().fill(disownId.toString());
+    await page.getByRole('button', { name: /^disown it$/i }).click();
+    await expect(page.getByText(/recorded on-chain: you disowned 1 of/i)).toBeVisible({
+      timeout: 90_000,
+    });
+    expect(await tracked(disownId)).toBe(0n);
+  } finally {
     await setSanctionsOracle(originalOracle);
   }
 });

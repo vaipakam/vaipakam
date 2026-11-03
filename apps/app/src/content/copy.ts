@@ -2522,6 +2522,22 @@ const copySource = {
     maxRecoverable: tmpl('Recoverable surplus: {{amount}}', ['amount']),
     tokenLookupFailed:
       'We couldn’t read this token’s details — check the address and try again.',
+    // Asset kinds (#3096): the one flow adopts every kind the contract
+    // takes. An NFT is named by its collection and token id; an ERC-721
+    // is one of a kind, so it has no amount to type.
+    collectionLabel: 'Collection contract address',
+    tokenIdInvalid: 'Enter the token ID as a whole number.',
+    nftMeta: tmpl('{{label}} · Recoverable: {{amount}}', ['label', 'amount']),
+    // Both NFT standards require the contract to say which standard it
+    // follows; one that does not say so is not read under the kind the
+    // user picked.
+    wrongStandard: tmpl(
+      'This contract doesn’t report itself as {{standard}}, so nothing can be added under that kind. Check the kind and the address.',
+      ['standard'],
+    ),
+    nftAmountFixed: 'An ERC-721 token is one of a kind, so the amount is always 1.',
+    multiAmountNote: 'Enter a whole number of copies of this token ID.',
+    reviewKind: 'Kind',
     // The zero address passes a plain address check but is nobody's
     // wallet (Codex #1547 r9) — it is the burn / "not set" sentinel, and
     // declaring it would have the user sign an ownership statement about
@@ -2822,6 +2838,16 @@ const copySource = {
     },
   },
 
+  // The asset-kind picker, shared by every surface that names an asset by
+  // its standard (the vault card and the adoption page), so one asset has
+  // one name everywhere.
+  assetKind: {
+    label: 'Asset type',
+    token: 'Token (ERC-20)',
+    nft: 'NFT (ERC-721)',
+    multi: 'Multi-token (ERC-1155)',
+    tokenId: 'Token ID',
+  },
   // #671/#728 progressive risk access — the self-sovereign /risk-access
   // page. Every vault starts at the safest level and only opts UP with
   // explicit consent; wording stays plain-language (Basic-first) while
@@ -2839,12 +2865,7 @@ const copySource = {
     body: 'Keep any token or NFT in your vault without a loan. You can take out what you deposited or were paid into the vault, unless an offer or a queued payout is holding it. What the protocol keeps in your vault for a loan, an offer or a claim stays out of reach here.',
     managedTitle: 'Withdraw from the account you manage',
     managedBody: 'This account was moved to your wallet. You can withdraw what is its owner’s to take out. It is paid to your wallet after the account’s delay.',
-    kindLabel: 'Asset type',
-    kindToken: 'Token (ERC-20)',
-    kindNft: 'NFT (ERC-721)',
-    kindMulti: 'Multi-token (ERC-1155)',
     assetLabel: 'Contract address',
-    tokenIdLabel: 'Token ID',
     amountLabel: 'Amount',
     tooPrecise: 'This token doesn’t have that many decimal places.',
     freeNow: tmpl('Yours to withdraw now: {{amount}}', ['amount']),
@@ -2861,7 +2882,37 @@ const copySource = {
     escapeUnknown: 'We couldn’t check whether the emergency exit is open, so withdrawing is off until we can tell which route pays you.',
     untrackedNote: 'Part of this asset reached your vault outside the app, so it can’t be withdrawn yet.',
     untrackedLink: 'Add it to your vault',
-    untrackedNftNote: 'Part of this asset reached your vault outside the app, so it can’t be withdrawn yet. The app can add only ERC-20 tokens to your vault so far, so this NFT stays in the vault untouched until it can.',
+    untrackedRetiredNote:
+      'This account was replaced, so nothing can add it to the vault balance yet. It stays in the vault, untouched.',
+    // Disowning (#3096): the public "this is not mine" record the
+    // contract offers beside adoption. Event-only: nothing moves and
+    // nothing is credited, and it asks for no declaration.
+    disownTitle: 'Don’t recognise it? Disown it instead',
+    disownBody:
+      'Disowning records on-chain, publicly, that this asset reached your vault without your consent. Nothing moves and nothing is added to your vault balance: the asset stays where it is, out of your balance, and nothing about your loans or offers changes. It needs no declaration and no signature beyond the transaction.',
+    disownButton: 'Disown it',
+    disowning: 'Disowning…',
+    disownDone: tmpl(
+      'Recorded on-chain: you disowned {{amount}} of {{asset}} in your vault. Nothing moved.',
+      ['amount', 'asset'],
+    ),
+    // The receipt carried no readable disowning record (a replaced
+    // transaction can do that): say it went through without an amount.
+    disownDoneUnread: tmpl(
+      'The transaction went through, but we couldn’t read the disowning record from it. Open your wallet’s activity to check what was recorded for {{asset}}. Nothing moved.',
+      ['asset'],
+    ),
+    disownViewTx: 'View the transaction',
+    // No transaction hash came back, which is not proof nothing was sent
+    // (a wallet's reply can be lost); a second disowning is harmless.
+    disownFailed:
+      'We can’t show the disowning as recorded: your wallet didn’t report sending it. If you approved it, check your wallet’s activity before trying again. A second disowning only adds a second record.',
+    // Settled as not run: the chain says nothing was recorded.
+    disownNotTaken:
+      'The disowning didn’t take effect: the transaction reverted, or was cancelled or replaced in your wallet, so nothing was recorded. You can try again.',
+    // Sent, but the receipt could not be read: it may be recorded already.
+    disownUnconfirmed:
+      'The disowning was sent, but we couldn’t read its result. It may already be recorded, or may still be. Check the transaction before disowning again; a second disowning only adds a second record.',
     queuedNote: tmpl('Protection is on, so a withdrawal waits {{delay}} before it is paid to your wallet. You or your recovery signers can cancel it meanwhile.', ['delay']),
     cosignNote: 'This account also needs a recovery signer to co-sign each payout: after the delay, it is paid only once a signer has co-signed it.',
     lockedNote: 'This account is locked, so nothing can be withdrawn until it is unlocked.',
