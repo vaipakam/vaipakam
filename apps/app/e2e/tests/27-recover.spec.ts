@@ -240,8 +240,8 @@ test('help explainer gates the flow; dusted vault is adopted into the vault bala
 /**
  * #3096 — an NFT that reached the vault outside the app is adopted
  * through the same flow, reached from the vault card's untracked note
- * with the asset filled in; a second one is disowned instead, which
- * records it publicly and credits nothing.
+ * with the asset filled in; a second one is disowned from the vault card
+ * instead, which records it publicly and credits nothing.
  */
 test('an untracked NFT is adopted from the vault card link, and another is disowned', async ({
   launchWallet,
@@ -318,10 +318,12 @@ test('an untracked NFT is adopted from the vault card link, and another is disow
     await page.getByRole('button', { name: /recover another token/i }).click();
     await expect(page.getByLabel(/token contract address/i)).toHaveValue('');
 
-    // The second NFT is disowned: a public record, nothing credited.
-    await page.getByLabel(/asset type/i).selectOption({ label: 'NFT (ERC-721)' });
-    await page.getByLabel(/collection contract address/i).fill(nft);
-    await page.getByLabel(/^token id$/i).fill(disownId.toString());
+    // The second NFT is disowned from the vault card (outside the
+    // adoption page's gates): a public record, nothing credited.
+    await page.goto('/vault', { waitUntil: 'domcontentloaded' });
+    await page.getByLabel(/asset type/i).first().selectOption({ label: 'NFT (ERC-721)' });
+    await page.getByLabel(/^contract address$/i).fill(nft);
+    await page.getByLabel(/token id/i).first().fill(disownId.toString());
     await page.getByRole('button', { name: /^disown it$/i }).click();
     await expect(page.getByText(/recorded on-chain: you disowned 1 of/i)).toBeVisible({
       timeout: 90_000,

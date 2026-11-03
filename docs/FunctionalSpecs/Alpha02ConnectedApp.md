@@ -5080,7 +5080,15 @@ Its intended behaviour, as the test oracle for this surface:
   withdrawable, with a link to adopt it that already names the asset
   (its kind, contract and token id), for every kind of asset. A replaced
   account, which cannot adopt, is told so instead of being given the
-  link. With protected mode on, the
+  link. Beside it the card offers disowning: a public record that the
+  asset is not the user's, which moves nothing, credits nothing and asks
+  for no declaration, signature or sanctions check, so it stays available
+  where adoption is not (a flagged or replaced wallet, a smart-contract
+  wallet, a network whose screening is not set up). Its result comes from
+  the transaction's own record; a transaction that was sent but whose
+  result cannot be read is reported as unconfirmed with its link, never as
+  failed, and one the wallet never reported sending is not claimed as
+  unsent. With protected mode on, the
   withdraw button says the withdrawal is queued, and for how long, before
   the user signs, and the result names where to find it.
 - The adoption page takes every kind of asset the vault can hold: a
@@ -5093,10 +5101,7 @@ Its intended behaviour, as the test oracle for this surface:
   type. The signed acknowledgement, the saved attempt and the outcome all
   name the kind and token id, and an outcome that names a different
   token id or kind from the one the user asked for is reported as that
-  other asset, never as the one asked for. Beside adoption the page
-  offers disowning, which records publicly that the asset is not the
-  user's, moves nothing, credits nothing and asks for no declaration; its
-  result comes from the transaction's own record. A link to the page may
+  other asset, never as the one asked for. A link to the page may
   fill in the asset, never the declared source or the amount, and a
   malformed link opens a blank form.
 - A vault protection page shows the account's protected mode state from

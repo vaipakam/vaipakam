@@ -2538,25 +2538,6 @@ const copySource = {
     nftAmountFixed: 'An ERC-721 token is one of a kind, so the amount is always 1.',
     multiAmountNote: 'Enter a whole number of copies of this token ID.',
     reviewKind: 'Kind',
-    // Disowning (#3096): the public "this is not mine" record the
-    // contract offers beside adoption. Event-only: nothing moves and
-    // nothing is credited, and it asks for no declaration.
-    disownTitle: 'Don’t recognise it? Disown it instead',
-    disownBody:
-      'Disowning records on-chain, publicly, that this asset reached your vault without your consent. Nothing moves and nothing is added to your vault balance: the asset stays where it is, out of your balance, and nothing about your loans or offers changes. It needs no declaration and no signature beyond the transaction.',
-    disownButton: 'Disown it',
-    disowning: 'Disowning…',
-    disownDone: tmpl(
-      'Recorded on-chain: you disowned {{amount}} of {{asset}} in your vault. Nothing moved.',
-      ['amount', 'asset'],
-    ),
-    // The receipt carried no readable disowning record (a replaced
-    // transaction can do that): say it went through without an amount.
-    disownDoneUnread: tmpl(
-      'The transaction went through, but we couldn’t read the disowning record from it. Open your wallet’s activity to check what was recorded for {{asset}}. Nothing moved.',
-      ['asset'],
-    ),
-    disownFailed: 'The disowning didn’t go through, so nothing was recorded.',
     // The zero address passes a plain address check but is nobody's
     // wallet (Codex #1547 r9) — it is the burn / "not set" sentinel, and
     // declaring it would have the user sign an ownership statement about
@@ -2903,6 +2884,32 @@ const copySource = {
     untrackedLink: 'Add it to your vault',
     untrackedRetiredNote:
       'This account was replaced, so nothing can add it to the vault balance yet. It stays in the vault, untouched.',
+    // Disowning (#3096): the public "this is not mine" record the
+    // contract offers beside adoption. Event-only: nothing moves and
+    // nothing is credited, and it asks for no declaration.
+    disownTitle: 'Don’t recognise it? Disown it instead',
+    disownBody:
+      'Disowning records on-chain, publicly, that this asset reached your vault without your consent. Nothing moves and nothing is added to your vault balance: the asset stays where it is, out of your balance, and nothing about your loans or offers changes. It needs no declaration and no signature beyond the transaction.',
+    disownButton: 'Disown it',
+    disowning: 'Disowning…',
+    disownDone: tmpl(
+      'Recorded on-chain: you disowned {{amount}} of {{asset}} in your vault. Nothing moved.',
+      ['amount', 'asset'],
+    ),
+    // The receipt carried no readable disowning record (a replaced
+    // transaction can do that): say it went through without an amount.
+    disownDoneUnread: tmpl(
+      'The transaction went through, but we couldn’t read the disowning record from it. Open your wallet’s activity to check what was recorded for {{asset}}. Nothing moved.',
+      ['asset'],
+    ),
+    disownViewTx: 'View the transaction',
+    // No transaction hash came back, which is not proof nothing was sent
+    // (a wallet's reply can be lost); a second disowning is harmless.
+    disownFailed:
+      'We can’t show the disowning as recorded: your wallet didn’t report sending it. If you approved it, check your wallet’s activity before trying again. A second disowning only adds a second record.',
+    // Sent, but the receipt could not be read: it may be recorded already.
+    disownUnconfirmed:
+      'The disowning was sent, but we couldn’t read its result. It may already be recorded, or may still be. Check the transaction before disowning again; a second disowning only adds a second record.',
     queuedNote: tmpl('Protection is on, so a withdrawal waits {{delay}} before it is paid to your wallet. You or your recovery signers can cancel it meanwhile.', ['delay']),
     cosignNote: 'This account also needs a recovery signer to co-sign each payout: after the delay, it is paid only once a signer has co-signed it.',
     lockedNote: 'This account is locked, so nothing can be withdrawn until it is unlocked.',

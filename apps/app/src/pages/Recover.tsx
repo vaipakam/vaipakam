@@ -6,9 +6,8 @@
  * ERC-721 token or an ERC-1155 balance, the NFTs named by collection and
  * token id (#3096). Nothing moves: once adopted, the asset leaves only
  * through an ordinary vault withdrawal, so protected account mode's
- * delay covers it like any other payout. Beside adoption the page offers
- * disowning (`DisownUntracked`), the event-only public record that the
- * asset is not the user's.
+ * delay covers it like any other payout. Disowning is on the vault card
+ * (`DisownUntracked`), outside this page's adoption-only gates.
  *
  * What is adoptable is read from the contract's own `untrackedHolding`,
  * the cap `adoptUntracked` enforces, for every kind — never computed
@@ -87,7 +86,6 @@ import {
 import { ADVANCED_USER_GUIDE_STUCK_TOKENS_URL } from '../lib/externalLinks';
 import { exactAmountString, exactUnitsOrNull, shortAddress } from '../lib/format';
 import { makePendingMarkerStore } from '../lib/pendingMarker';
-import { DisownUntracked } from '../components/DisownUntracked';
 import { ASSET_KIND, type AssetKind } from '../data/protectedAccount';
 import { assetLabel, isAssetKind, MAX_UINT256, tokenIdOf } from '../lib/recoverAsset';
 import {
@@ -3744,21 +3742,6 @@ export function Recover() {
             >
               {copy.recover.review}
             </button>
-            {/* Disowning (#3096), offered for the asset the lookup
-                found untracked — keyed by the lookup so a different
-                asset starts with a fresh card. */}
-            {activeLookup &&
-            !activeLookup.wrongStandard &&
-            activeLookup.surplus > 0n ? (
-              <DisownUntracked
-                key={activeLookup.key}
-                kind={activeLookup.kind}
-                asset={activeLookup.token as `0x${string}`}
-                tokenId={activeLookup.tokenId}
-                label={activeLookup.symbol}
-                decimals={activeLookup.decimals}
-              />
-            ) : null}
           </div>
         </section>
       )}

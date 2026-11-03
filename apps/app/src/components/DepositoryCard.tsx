@@ -21,7 +21,10 @@
  *     withdrawable until adopted; the card links the adoption page, with
  *     the asset filled in, for every kind, instead of pretending the
  *     balance is free (a replaced account, which cannot adopt, gets the
- *     note without the link).
+ *     note without the link). Beside it the card offers disowning, the
+ *     event-only public record that the asset is not the owner's, which
+ *     the adoption page's gates (oracle, signature, clean wallet) would
+ *     otherwise hide where the contract allows it.
  *
  * Approvals: the Diamond pulls the deposit, so an ERC-20 needs an allowance
  * (the shared `ensureAllowance`), an ERC-721 an approval of that token and an
@@ -53,6 +56,8 @@ import { formatExactSpan, parseExactUnits, shortAddress } from '../lib/format';
 import { assertWalletNotSanctionedLive } from '../data/sanctions';
 import { assertErc20BalanceLive } from '../contracts/preflights';
 import { recoverHref } from '../lib/recoverPrefill';
+import { assetLabel } from '../lib/recoverAsset';
+import { DisownUntracked } from './DisownUntracked';
 import { ASSET_KIND, ownFundingVerdict, ownWithdrawalVerdict, payoutOutcome, useProtectedAccount, type AssetKind } from '../data/protectedAccount';
 
 const NFT_APPROVAL_ABI = [
@@ -467,6 +472,20 @@ export function DepositoryCard({ account }: { account?: `0x${string}` } = {}) {
             {d.untrackedNote} <Link to={recoverHref(kind, tokenAddr, id)}>{d.untrackedLink}</Link>
           </p>
         )
+      ) : null}
+      {free.data && free.data.untracked > 0n && tokenAddr && !managed && dec !== undefined ? (
+        // Disowning (#3096) acts on the caller's own vault and asks for no
+        // oracle, signature or clean wallet, so it is offered here, outside
+        // the adoption page's gates; a replaced wallet may still disown.
+        // Keyed by the asset so a different one starts with a fresh card.
+        <DisownUntracked
+          key={`${walletChain?.chainId ?? ''}|${owner ?? ''}|${kind}|${tokenAddr}|${id.toString()}`}
+          kind={kind}
+          asset={tokenAddr}
+          tokenId={id}
+          label={assetLabel(kind, shortAddress(tokenAddr), id)}
+          decimals={dec}
+        />
       ) : null}
       {escape ? <p className="banner banner-warn">{d.escapeNote}</p> : null}
       {protectedOn ? <p>{d.queuedNote(formatExactSpan(delaySec))}</p> : null}
