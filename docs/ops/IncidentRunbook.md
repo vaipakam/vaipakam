@@ -165,7 +165,9 @@ recoverable back-pressure — not a fund-loss event.
    #2821): the send refuses a list that would fund more with
    `TransportDayFanoutExceeded(funded, 1)`, and so does `quoteRemittanceFee`,
    the strict dry run. Days that only close (fund nothing) may ride along with
-   the funded one. To recover a backlog, send one funded day per transaction.
+   the funded one; they stay on Base, and the payload names only the funded
+   day (the d8 wire, #2828), which the mirror lands as soon as the message
+   executes. To recover a backlog, send one funded day per transaction.
    `quoteRewardBudget` stays tolerant for discovery — its
    non-zero per-day entries are the days a list would fund, so use it to pick
    the next day. All three read one plan, so a figure the budget quote shows

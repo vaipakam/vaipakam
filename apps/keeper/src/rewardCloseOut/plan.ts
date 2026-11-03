@@ -49,19 +49,17 @@ export function eraReadiness(era: EraRecord, nextBoundaryDay: bigint): 'ready' |
 export interface EpochState {
   exists: boolean;
   balance: bigint;
-  dayCount: number;
-  indexedDays: number;
   references: bigint;
 }
 
 /**
  * Whether the epoch after a day's cursor can be passed by a prune. Only the
- * case this pass can tell for certain counts: the epoch exists, is fully
- * indexed, has nothing left and no staging record references it. An epoch
+ * case this pass can tell for certain counts: the epoch exists, has nothing
+ * left and no staging record references it. An epoch
  * whose balance is not zero but whose rooms under its attested caps are (the
  * contract's other exhausted case) is NOT detected here and is left for the
  * next draw on the day, which prunes it in passing.
  */
 export function epochPrunable(e: EpochState): boolean {
-  return e.exists && e.indexedDays === e.dayCount && e.balance === 0n && e.references === 0n;
+  return e.exists && e.balance === 0n && e.references === 0n;
 }
