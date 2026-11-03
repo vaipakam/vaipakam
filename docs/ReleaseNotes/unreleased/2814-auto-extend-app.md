@@ -1,4 +1,4 @@
-## Thread — Automatic extension and extension reserves in the app (PR #<n>)
+## Thread — Automatic extension and extension reserves in the app (PR #3102)
 
 The contracts for the extension reserve (#3071) gave the borrower an explicit way to fund automatic extensions, but the app had no automatic-extension surface at all: neither side could set their consent, and nobody could see whether an extension would be funded. The loan page now has an automatic-extension card for both parties to an active loan.
 
