@@ -1862,6 +1862,20 @@ its row in the matrix and, where the reasoning grows, its section here.
 
 **Codex round 28 on the app PR.** The depository card's NFT approvals continue only after the approval itself ran (`assertSettled`): not after a reverted, cancelled or replaced one. The recovery page adopts ERC-20 balances only, so the card links an untracked ERC-20 there and says plainly that an untracked NFT cannot be added in the app yet. NFT adoption is deferred to #3096. NOT covered: the rendered pages.
 
+<a id="cov-untracked-nfts-on-the-adoption-page-3096"></a>
+
+## Untracked NFTs on the adoption page (#3096)
+
+**What changed.** The adoption page took ERC-20 balances only and signed every acknowledgement with kind 0 and token id 0. It now takes the kind and, for an NFT, the token id, and carries them through every stage: the lookup key, the signed acknowledgement, the `adoptUntracked` call, the saved attempt record (a record from the earlier build has neither field and reads as ERC-20 / 0, which is what that build could sign) and the outcome card, which compares the event's kind and token id as well as its contract before it names what was adopted.
+
+**One rule for the cap.** What is adoptable is read from the contract's `untrackedHolding` for every kind, at lookup and again just before signing. The page used to compute the ERC-20 surplus itself from the vault's balance and the tracked holding; that copy is gone. An NFT kind is read only when the contract reports that standard through ERC-165; otherwise the form says so and offers no review.
+
+**Disowning.** `disownUntracked` is offered on the vault card for an asset it reads as untracked, not on the adoption page: the contract asks no oracle, signature or clean wallet of it, and the page is gated on all three, so a control there would be missing where the contract allows it (Codex round 1). It is event-only, so it uses the ordinary Diamond write (an exit under the Terms gate) and reports the amount from the receipt's `UntrackedDisowned` event. A sent transaction whose receipt cannot be read is reported as unconfirmed with its link, and one the wallet never returned a hash for is not claimed as unsent; a second disowning only adds a second record. The gated contexts (flagged, contract wallet, unset oracle) and the unconfirmed state are not driven on Anvil.
+
+**The vault card.** Every kind now links to the adoption page with the kind, contract and token id in the query (`recoverPrefill`). The page reads them once on arrival, never carries a declared source or an amount, and a malformed link reads as the blank form. A replaced account cannot adopt (#3094), so its card shows the note without the link.
+
+**Not driven on Anvil.** The rig deploys no ERC-1155, and every ERC-721 it deploys reports its standard, so the multi-token path and the wrong-standard refusal are left to the live drive owed after the all-waves fresh deploy. Both are the same code path as the ERC-721 drive with a different kind value.
+
 <a id="cov-automatic-extension"></a>
 
 ## Automatic extension on the loan page and extension reserves on Claims (#2814 app half)

@@ -149,7 +149,7 @@
         "zh": "。"
       }
     },
-    "copy.depository.kindMulti": {
+    "copy.assetKind.multi": {
       "reason": "German \"Multi-Token\" and Spanish \"Multitoken\" are the settled terms for an ERC-1155 multi-token, built from the same loanwords as the English; ERC-1155 is a standard's name.",
       "source": "Multi-token (ERC-1155)",
       "locales": [
@@ -161,7 +161,7 @@
         "es": "Multitoken (ERC-1155)"
       }
     },
-    "copy.depository.kindNft": {
+    "copy.assetKind.nft": {
       "reason": "\"NFT\" is the term every one of these locales already uses untranslated across the app (the vault, offer and rental pages all render it as NFT), and ERC-721 is a standard's name. The siblings around it in the same picker are localized (Token / Multi-token labels and the field labels).",
       "source": "NFT (ERC-721)",
       "locales": [
@@ -180,7 +180,7 @@
         "zh": "NFT（ERC-721）"
       }
     },
-    "copy.depository.kindToken": {
+    "copy.assetKind.token": {
       "reason": "\"Token\" is the ordinary German and Spanish noun for a crypto token, spelled as the English one; ERC-20 is a standard's name. The surrounding labels in the same card are localized (Betrag/Cantidad, Vertragsadresse/Dirección del contrato).",
       "source": "Token (ERC-20)",
       "locales": [
@@ -188,7 +188,7 @@
         "es"
       ]
     },
-    "copy.depository.tokenIdLabel": {
+    "copy.assetKind.tokenId": {
       "reason": "German writes a token identifier as \"Token-ID\", the same loanword and abbreviation as the English, hyphenated per German compounding.",
       "source": "Token ID",
       "locales": [
