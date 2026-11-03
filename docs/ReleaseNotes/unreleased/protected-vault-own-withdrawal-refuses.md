@@ -1,4 +1,4 @@
-## Protected account mode — an owner's own withdrawal never ends held (PR #<n>)
+## Protected account mode — an owner's own withdrawal never ends held (PR #3095)
 
 With protected account mode on, every payout from a vault passes the payout gate. When the account is locked, or its queue of waiting payouts and transfers is full, the gate keeps the amount in the vault instead of queuing it. A settlement relies on that: it must never fail because of the payee's account state. Until now, though, two routes the owner starts went through the same gate: the VPFI withdrawal and the release of surplus loan collateral. On a locked account or a full queue, either one reported success while paying nothing and queuing nothing.
 
