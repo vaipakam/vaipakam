@@ -18,8 +18,10 @@
  *     (`account` prop), the card is withdraw-only: it reads that account
  *     and pays the connected wallet, its controller;
  *   - an asset sent to the vault outside this card is untracked and is not
- *     withdrawable until adopted; the card links the adoption page instead
- *     of pretending the balance is free.
+ *     withdrawable until adopted; the card links the adoption page, with
+ *     the asset filled in, for every kind, instead of pretending the
+ *     balance is free (a replaced account, which cannot adopt, gets the
+ *     note without the link).
  *
  * Approvals: the Diamond pulls the deposit, so an ERC-20 needs an allowance
  * (the shared `ensureAllowance`), an ERC-721 an approval of that token and an
@@ -50,6 +52,7 @@ import { captureTxError } from '../lib/errors';
 import { formatExactSpan, parseExactUnits, shortAddress } from '../lib/format';
 import { assertWalletNotSanctionedLive } from '../data/sanctions';
 import { assertErc20BalanceLive } from '../contracts/preflights';
+import { recoverHref } from '../lib/recoverPrefill';
 import { ASSET_KIND, ownFundingVerdict, ownWithdrawalVerdict, payoutOutcome, useProtectedAccount, type AssetKind } from '../data/protectedAccount';
 
 const NFT_APPROVAL_ABI = [
@@ -386,16 +389,16 @@ export function DepositoryCard({ account }: { account?: `0x${string}` } = {}) {
       <h2 className="card-title">{managed ? d.managedTitle : d.title}</h2>
       <p>{managed ? d.managedBody : d.body}</p>
       <div className="field">
-        <label htmlFor="dep-kind">{d.kindLabel}</label>
+        <label htmlFor="dep-kind">{copy.assetKind.label}</label>
         <select
           id="dep-kind"
           className="input"
           value={kind}
           onChange={(e) => setKind(Number(e.target.value) as AssetKind)}
         >
-          <option value={ASSET_KIND.ERC20}>{d.kindToken}</option>
-          <option value={ASSET_KIND.ERC721}>{d.kindNft}</option>
-          <option value={ASSET_KIND.ERC1155}>{d.kindMulti}</option>
+          <option value={ASSET_KIND.ERC20}>{copy.assetKind.token}</option>
+          <option value={ASSET_KIND.ERC721}>{copy.assetKind.nft}</option>
+          <option value={ASSET_KIND.ERC1155}>{copy.assetKind.multi}</option>
         </select>
       </div>
       <div className="field">
@@ -412,7 +415,7 @@ export function DepositoryCard({ account }: { account?: `0x${string}` } = {}) {
       </div>
       {kind !== ASSET_KIND.ERC20 ? (
         <div className="field">
-          <label htmlFor="dep-id">{d.tokenIdLabel}</label>
+          <label htmlFor="dep-id">{copy.assetKind.tokenId}</label>
           <input
             id="dep-id"
             className="input"
@@ -449,15 +452,20 @@ export function DepositoryCard({ account }: { account?: `0x${string}` } = {}) {
       {!managed && funding.kind === 'retired' ? <p className="banner banner-warn">{d.retiredNote(shortAddress(funding.controller))}</p> : null}
       {freeText !== null ? <p className="muted">{d.freeNow(freeText)}</p> : null}
       {free.isError ? <p className="muted">{d.freeUnknown}</p> : null}
-      {free.data && free.data.untracked > 0n ? (
-        kind === ASSET_KIND.ERC20 ? (
+      {free.data && free.data.untracked > 0n && tokenAddr ? (
+        managed || retiredSelf ? (
+          // Adoption is the account's own manager's act, and a replaced
+          // account has none (#3094), so no link is offered to a form
+          // that would refuse it.
           <p className="muted">
-            {d.untrackedNote} <Link to="/recover">{d.untrackedLink}</Link>
+            {d.untrackedNote} {d.untrackedRetiredNote}
           </p>
         ) : (
-          // The recovery page adopts ERC-20 balances only so far (#3096);
-          // an NFT is not linked to a form that cannot take it.
-          <p className="muted">{d.untrackedNftNote}</p>
+          // Every kind links to the one adoption flow (#3096), with this
+          // asset filled in.
+          <p className="muted">
+            {d.untrackedNote} <Link to={recoverHref(kind, tokenAddr, id)}>{d.untrackedLink}</Link>
+          </p>
         )
       ) : null}
       {escape ? <p className="banner banner-warn">{d.escapeNote}</p> : null}

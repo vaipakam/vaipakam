@@ -5077,9 +5077,28 @@ Its intended behaviour, as the test oracle for this surface:
   the trading desk's and the accept flow's own-balance checks, use the
   same figure, so a queued payout is never shown or spent as free. An
   asset that reached the vault outside the app is named as not yet
-  withdrawable, with a link to adopt it. With protected mode on, the
+  withdrawable, with a link to adopt it that already names the asset
+  (its kind, contract and token id), for every kind of asset. A replaced
+  account, which cannot adopt, is told so instead of being given the
+  link. With protected mode on, the
   withdraw button says the withdrawal is queued, and for how long, before
   the user signs, and the result names where to find it.
+- The adoption page takes every kind of asset the vault can hold: a
+  token, an NFT (by collection and token id) or a multi-token balance.
+  What it offers to adopt is the contract's own figure for the untracked
+  part of that exact asset, read again just before signing, never one the
+  app works out. An NFT kind is read only when the contract says it
+  follows that standard; otherwise the page says the contract is not of
+  that kind and offers nothing to sign. A single NFT has no amount to
+  type. The signed acknowledgement, the saved attempt and the outcome all
+  name the kind and token id, and an outcome that names a different
+  token id or kind from the one the user asked for is reported as that
+  other asset, never as the one asked for. Beside adoption the page
+  offers disowning, which records publicly that the asset is not the
+  user's, moves nothing, credits nothing and asks for no declaration; its
+  result comes from the transaction's own record. A link to the page may
+  fill in the asset, never the declared source or the amount, and a
+  malformed link opens a blank form.
 - A vault protection page shows the account's protected mode state from
   one block, so every figure and every "ready" verdict describe the same
   moment. A Diamond without the feature reads as unavailable, never as

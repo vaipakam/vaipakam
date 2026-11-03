@@ -1,14 +1,25 @@
 /**
- * Adopting untracked tokens (formerly stuck-token recovery, T-054 PR-4)
- * — credits ERC-20s that landed in the user's vault proxy OUTSIDE the
+ * Adopting untracked assets (formerly stuck-token recovery, T-054 PR-4)
+ * — credits an asset that landed in the user's vault proxy OUTSIDE the
  * protocol deposit flow (a direct transfer, third-party dust) to the
- * vault's tracked holding. Nothing moves: once adopted, the tokens
- * leave only through an ordinary vault withdrawal, so protected
- * account mode's delay covers them like any other payout.
+ * vault's tracked holding. Every kind the contract takes: an ERC-20, an
+ * ERC-721 token or an ERC-1155 balance, the NFTs named by collection and
+ * token id (#3096). Nothing moves: once adopted, the asset leaves only
+ * through an ordinary vault withdrawal, so protected account mode's
+ * delay covers it like any other payout. Beside adoption the page offers
+ * disowning (`DisownUntracked`), the event-only public record that the
+ * asset is not the user's.
+ *
+ * What is adoptable is read from the contract's own `untrackedHolding`,
+ * the cap `adoptUntracked` enforces, for every kind — never computed
+ * here from balances. An NFT kind is read only once the contract reports
+ * that standard (ERC-165).
  *
  * DELIBERATELY UNLISTED — no nav or Settings entry; noindex,nofollow
- * in SeoMeta + _headers. The only in-app path here is the Help page's
- * stuck-token explainer. That discoverability gate is part of the
+ * in SeoMeta + _headers. The in-app paths here are the Help page's
+ * stuck-token explainer and the vault card's untracked-asset note, which
+ * fills in the asset (`recoverPrefill`); the declared source and amount
+ * are never prefilled. That discoverability gate is part of the
  * security design: a user dust-poisoned by a stranger must read WHY
  * adopting unknown dust is dangerous before they can find the button —
  * declaring a sanctions-listed source LOCKS the vault, and
@@ -39,7 +50,7 @@ import {
   useRef,
   useState,
 } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { ownLocaleResource } from '../i18n/ownLocaleResource';
 import { CONFIRM_WORD, RECOVERY_ACK_TEXT } from '../lib/recoveryAck';
@@ -76,6 +87,14 @@ import {
 import { ADVANCED_USER_GUIDE_STUCK_TOKENS_URL } from '../lib/externalLinks';
 import { exactAmountString, exactUnitsOrNull, shortAddress } from '../lib/format';
 import { makePendingMarkerStore } from '../lib/pendingMarker';
+import { DisownUntracked } from '../components/DisownUntracked';
+import { ASSET_KIND, type AssetKind } from '../data/protectedAccount';
+import { assetLabel, isAssetKind, MAX_UINT256, tokenIdOf } from '../lib/recoverAsset';
+import {
+  EMPTY_RECOVER_PREFILL,
+  parseRecoverPrefill,
+  type RecoverPrefill,
+} from '../lib/recoverPrefill';
 
 /** EIP-712 shape — must match VaultDepositoryFacet's ADOPTION_TYPEHASH
  *  exactly, or the recovered signer won't equal msg.sender and the
@@ -96,8 +115,22 @@ const RECOVERY_TYPES = {
 
 const RECOVERY_DEADLINE_SECONDS = 30 * 60;
 
-/** `AssetType.ERC20` — this page adopts ERC-20 balances only. */
-const ERC20_KIND = 0;
+/** ERC-165 interface ids the NFT kinds must report (#3096). Both
+ *  standards REQUIRE ERC-165, so a contract that does not answer true is
+ *  not an asset of the kind the user picked, and the lookup says so
+ *  instead of reading a holding under the wrong standard. */
+const ERC165_ABI = [
+  {
+    type: 'function',
+    name: 'supportsInterface',
+    stateMutability: 'view',
+    inputs: [{ type: 'bytes4' }],
+    outputs: [{ type: 'bool' }],
+  },
+] as const;
+const ERC721_INTERFACE_ID = '0x80ac58cd';
+const ERC1155_INTERFACE_ID = '0xd9b67a26';
+
 
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 
@@ -115,13 +148,6 @@ const ERC20_META_ABI = [
     stateMutability: 'view',
     inputs: [],
     outputs: [{ type: 'uint8' }],
-  },
-  {
-    type: 'function',
-    name: 'balanceOf',
-    stateMutability: 'view',
-    inputs: [{ type: 'address' }],
-    outputs: [{ type: 'uint256' }],
   },
 ] as const;
 
@@ -220,6 +246,14 @@ interface PendingRecoveryRecord {
    *  outcome event it decoded describes the same token — a replaced
    *  transaction may not. OPTIONAL for the same legacy-record reason. */
   token?: string;
+  /** The asset kind and token id the attempt named (#3096). OPTIONAL on
+   *  read: a record written before NFTs reached this page has neither,
+   *  and every such attempt was an ERC-20 (that page could sign nothing
+   *  else), so an absent pair reads as ERC-20 / 0 — a fact about that
+   *  build, not a guess. Written as a pair or not at all. */
+  kind?: AssetKind;
+  /** Decimal string — JSON carries no bigint. */
+  tokenId?: string;
   declaredSource: string;
   /** Base units, decimal string — JSON carries no bigint. */
   amount: string;
@@ -333,6 +367,19 @@ function parsePendingRecovery(
     ) {
       return null;
     }
+    // The #3096 pair: both absent (an ERC-20 attempt from an earlier
+    // build) or both well-formed. A half pair is a malformed record —
+    // reading it as ERC-20 could name the wrong asset on a card.
+    if ((r.kind === undefined) !== (r.tokenId === undefined)) return null;
+    if (r.kind !== undefined && !isAssetKind(r.kind)) return null;
+    if (
+      r.tokenId !== undefined &&
+      (typeof r.tokenId !== 'string' ||
+        !DIGITS.test(r.tokenId) ||
+        BigInt(r.tokenId) > MAX_UINT256)
+    ) {
+      return null;
+    }
     if (typeof r.declaredSource !== 'string' || !isAddress(r.declaredSource)) {
       return null;
     }
@@ -363,6 +410,9 @@ function parsePendingRecovery(
       txHash: r.txHash === null ? null : (r.txHash as Hex),
       ...(r.attemptId === undefined ? {} : { attemptId: r.attemptId }),
       ...(r.token === undefined ? {} : { token: r.token }),
+      ...(r.kind === undefined
+        ? {}
+        : { kind: r.kind as AssetKind, tokenId: r.tokenId as string }),
       declaredSource: r.declaredSource,
       amount: r.amount,
       symbol: r.symbol,
@@ -733,11 +783,23 @@ interface TokenLookup {
   key: string;
   /** The token address itself — data the submit path signs over, not identity. */
   token: string;
+  /** The asset kind and token id the read was made for (#3096) — signed
+   *  over with the token. Zero for an ERC-20. */
+  kind: AssetKind;
+  tokenId: bigint;
+  /** How cards name the asset: the ERC-20 symbol, or the collection's
+   *  symbol with the token id (sanitized, see sanitizeTokenSymbol). */
   symbol: string;
   decimals: number;
-  /** decimals() unavailable → amounts are raw base units (integers). */
+  /** decimals() unavailable → amounts are raw base units (integers).
+   *  Always true for an NFT, whose amounts are whole units. */
   rawUnits: boolean;
+  /** What the contract's own `untrackedHolding` reports — the cap
+   *  `adoptUntracked` enforces. */
   surplus: bigint;
+  /** NFT kinds only: the contract did not report the standard the user
+   *  picked (ERC-165), so nothing may be signed for it. */
+  wrongStandard: boolean;
 }
 
 /**
@@ -756,6 +818,10 @@ interface SubmittedContext {
    *  and decimals for a different token. Absent only for a pre-r10
    *  record. */
   token?: string;
+  /** The asset kind and token id the signature committed to (#3096).
+   *  ERC-20 / 0 for a record from a build that could sign nothing else. */
+  kind: AssetKind;
+  tokenId: bigint;
   declaredSource: string;
   amount: bigint;
   symbol: string;
@@ -908,6 +974,8 @@ function stepFromRecord(
   const ctx: SubmittedContext = {
     ...(stored.attemptId === undefined ? {} : { attemptId: stored.attemptId }),
     ...(stored.token === undefined ? {} : { token: stored.token }),
+    kind: stored.kind ?? ASSET_KIND.ERC20,
+    tokenId: stored.tokenId === undefined ? 0n : BigInt(stored.tokenId),
     declaredSource: stored.declaredSource,
     amount: BigInt(stored.amount),
     symbol: stored.symbol,
@@ -950,6 +1018,10 @@ interface DecodedRecoveryOutcome {
    *  `UntrackedAdopted` event names the asset as `asset`, and a
    *  future shape may carry neither. */
   token?: string;
+  /** The event's kind and token id (#3096). `UntrackedAdopted` carries
+   *  both; `VaultBannedFromAdoption` carries the token id only. */
+  assetKind?: AssetKind;
+  tokenId?: bigint;
   amount?: bigint;
   declaredSource?: string;
 }
@@ -986,11 +1058,15 @@ function decodeRecoveryOutcome(
       // original submission — the wrong amount and the wrong declared
       // source, next to an explorer link showing different values.
       const token = eventArg(decoded.args, 'asset');
+      const assetKind = eventArg(decoded.args, 'kind');
+      const tokenId = eventArg(decoded.args, 'tokenId');
       const amount = eventArg(decoded.args, 'amount');
       const declaredSource = eventArg(decoded.args, 'declaredSource');
       return {
         kind,
         ...(typeof token === 'string' && isAddress(token) ? { token } : {}),
+        ...(isAssetKind(assetKind) ? { assetKind } : {}),
+        ...(typeof tokenId === 'bigint' ? { tokenId } : {}),
         ...(typeof amount === 'bigint' ? { amount } : {}),
         ...(typeof declaredSource === 'string' && isAddress(declaredSource)
           ? { declaredSource }
@@ -1040,12 +1116,21 @@ function outcomeStepFrom(
   }
   const amount = decoded.amount ?? ctx?.amount;
   if (amount === undefined) return null;
+  // The same ASSET, not only the same contract (#3096): one collection
+  // holds many token ids, and a replaced transaction may have adopted a
+  // different one. Each part is compared only where both sides know it.
   const sameToken =
-    decoded.token === undefined ||
-    ctx?.token === undefined ||
-    decoded.token.toLowerCase() === ctx.token.toLowerCase();
+    (decoded.token === undefined ||
+      ctx?.token === undefined ||
+      decoded.token.toLowerCase() === ctx.token.toLowerCase()) &&
+    (decoded.assetKind === undefined ||
+      ctx === undefined ||
+      decoded.assetKind === ctx.kind) &&
+    (decoded.tokenId === undefined ||
+      ctx === undefined ||
+      decoded.tokenId === ctx.tokenId);
   if (!sameToken || ctx === undefined) {
-    // No trustworthy metadata for the token the event names — say so
+    // No trustworthy metadata for the asset the event names — say so
     // rather than dress its amount in another token's decimals.
     return decoded.token === undefined
       ? null
@@ -1056,7 +1141,14 @@ function outcomeStepFrom(
           amount,
           symbol: shortAddress(decoded.token),
           decimals: 0,
-          unknownToken: decoded.token,
+          // The full address, with the token id when the event names an
+          // NFT — the card's only description of what was adopted.
+          unknownToken:
+            decoded.assetKind === undefined ||
+            decoded.assetKind === ASSET_KIND.ERC20 ||
+            decoded.tokenId === undefined
+              ? decoded.token
+              : assetLabel(decoded.assetKind, decoded.token, decoded.tokenId),
         };
   }
   return {
@@ -1100,7 +1192,18 @@ export function Recover() {
     copySource.recover.ackTextTranslationLabel,
   );
 
-  const [tokenInput, setTokenInput] = useState('');
+  // The asset a link from the vault card named (#3096), read ONCE on
+  // arrival. Held in a ref so the form resets back to it on an identity
+  // change (the reset runs on mount too, and would otherwise wipe it),
+  // while an explicit start-over drops it and lands on a blank form.
+  const location = useLocation();
+  const [arrivalPrefill] = useState<RecoverPrefill>(() =>
+    parseRecoverPrefill(location.search),
+  );
+  const prefillRef = useRef<RecoverPrefill>(arrivalPrefill);
+  const [kindInput, setKindInput] = useState<AssetKind>(arrivalPrefill.kind);
+  const [tokenInput, setTokenInput] = useState(arrivalPrefill.asset);
+  const [tokenIdInput, setTokenIdInput] = useState(arrivalPrefill.tokenId);
   const [sourceInput, setSourceInput] = useState('');
   const [amountInput, setAmountInput] = useState('');
   const [confirmInput, setConfirmInput] = useState('');
@@ -1207,7 +1310,9 @@ export function Recover() {
   // statement in the body is a setState call, so there is nothing to
   // capture and the callback never needs to change.
   const clearToFreshForm = useCallback(() => {
-    setTokenInput('');
+    setKindInput(prefillRef.current.kind);
+    setTokenInput(prefillRef.current.asset);
+    setTokenIdInput(prefillRef.current.tokenId);
     setSourceInput('');
     setAmountInput('');
     setConfirmInput('');
@@ -1360,7 +1465,6 @@ export function Recover() {
     // race window, and #1691's implementer should weigh that trade fresh rather
     // than inherit a ranking from here. It is certainly not a proof that this
     // screen has no races.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     clearToFreshForm();
     oracleAutoRetriesRef.current = 0;
     const chainId = walletChain?.chainId;
@@ -1670,6 +1774,9 @@ export function Recover() {
     isAddress(value) && value.toLowerCase() === ZERO_ADDRESS;
   const validToken = isAddress(tokenInput) && !isZeroAddressInput(tokenInput);
   const validSource = isAddress(sourceInput) && !isZeroAddressInput(sourceInput);
+  // The token id the form names (#3096): zero for an ERC-20, a uint256
+  // for an NFT, null while an NFT's id is blank or not a number.
+  const tokenId = tokenIdOf(kindInput, tokenIdInput);
 
   // The lookup only counts when it describes the CURRENT input. The key spans
   // every input that can change the answer — token, account, chain and client
@@ -1677,9 +1784,13 @@ export function Recover() {
   // result read for a different account or chain stayed current until the
   // effect's synchronous reset ran a commit later. Deriving both the result
   // and its failure marker from the key is what lets that reset go.
+  //
+  // The asset's kind and token id are part of the key (#3096): the same
+  // collection holds many ids, and one contract read under two standards
+  // answers two different questions.
   const lookupKey =
-    validToken && address && publicClient && walletChain
-      ? `${tokenInput}|${address}|${walletChain.chainId}|${publicClient.uid}`
+    validToken && tokenId !== null && address && publicClient && walletChain
+      ? `${kindInput}|${tokenInput}|${tokenId.toString()}|${address}|${walletChain.chainId}|${publicClient.uid}`
       : null;
   const activeLookup =
     lookup !== null && lookupKey !== null && lookup.key === lookupKey
@@ -1688,7 +1799,11 @@ export function Recover() {
   const lookupFailed = lookupKey !== null && lookupFailedFor === lookupKey;
 
   const amountWei = useMemo(() => {
-    if (!amountInput || !activeLookup) return null;
+    if (!activeLookup) return null;
+    // An ERC-721 token is one of a kind: the contract adopts exactly one,
+    // so the page offers no amount to type (#3096).
+    if (activeLookup.kind === ASSET_KIND.ERC721) return 1n;
+    if (!amountInput) return null;
     // Raw-units tokens (no decimals()): accept plain integers only —
     // parseUnits(x, 0) would ROUND a fractional input instead of
     // rejecting it, silently changing what the user signs.
@@ -1720,12 +1835,13 @@ export function Recover() {
 
   useEffect(() => {
     if (!validToken || !address || !publicClient || !walletChain) return;
-    if (lookupKey === null) return;
+    if (lookupKey === null || tokenId === null) return;
+    const kind = kindInput;
     let cancelled = false;
     (async () => {
       try {
-        // One pinned block for the balance/tracked pair — the surplus
-        // must not straddle a deposit landing mid-read.
+        // One pinned block for every read — the surplus must not
+        // straddle a deposit landing mid-read.
         const blockNumber = await publicClient.getBlockNumber();
         const token = tokenInput as `0x${string}`;
         // symbol()/decimals() are OPTIONAL in ERC-20 (Codex #1547 r1):
@@ -1778,57 +1894,90 @@ export function Recover() {
               .then((raw) => hexToString(raw as Hex, { size: 32 }))
               .catch(absentOrRethrow);
           });
-        const [symRes, decRes, vault] = await Promise.all([
+        // ERC-165 for the NFT kinds (#3096): the holding is read under
+        // the standard the user picked, so a contract that does not
+        // report it is refused by name instead of read as "nothing
+        // untracked". A contract that answers false or reverts is not
+        // that kind; a transport failure re-throws into the
+        // lookup-failed path like every other load-bearing read.
+        const wrongStandard =
+          kind === ASSET_KIND.ERC20
+            ? Promise.resolve(false)
+            : publicClient
+                .readContract({
+                  address: token,
+                  abi: ERC165_ABI,
+                  functionName: 'supportsInterface',
+                  args: [
+                    kind === ASSET_KIND.ERC721
+                      ? ERC721_INTERFACE_ID
+                      : ERC1155_INTERFACE_ID,
+                  ],
+                  blockNumber,
+                })
+                .then((ok) => ok !== true)
+                .catch((err: unknown) => {
+                  if (isOptionalMetadataUnavailable(err)) return true;
+                  throw err;
+                });
+        const [symRes, decRes, wrong] = await Promise.all([
           symbolWithBytes32Fallback,
-          publicClient
-            .readContract({
-              address: token,
-              abi: ERC20_META_ABI,
-              functionName: 'decimals',
-              blockNumber,
-            })
-            .catch(absentOrRethrow),
-          publicClient.readContract({
-            address: walletChain.diamondAddress,
-            abi: DIAMOND_ABI_VIEM,
-            functionName: 'getUserVaultAddress',
-            args: [address],
-            blockNumber,
-          }) as Promise<`0x${string}`>,
+          // decimals() is an ERC-20 question only: an NFT's amounts are
+          // whole units.
+          kind === ASSET_KIND.ERC20
+            ? publicClient
+                .readContract({
+                  address: token,
+                  abi: ERC20_META_ABI,
+                  functionName: 'decimals',
+                  blockNumber,
+                })
+                .catch(absentOrRethrow)
+            : Promise.resolve(null),
+          wrongStandard,
         ]);
         const rawUnits = decRes === null;
         const decimals = rawUnits ? 0 : Number(decRes);
         // Sanitized at the source (Codex #1547 r3) so every consumer —
         // form meta, review card, success card — gets the scrubbed
         // string. A symbol that sanitizes to NOTHING falls back to the
-        // shortened address, same as a missing symbol().
+        // shortened address, same as a missing symbol(). An NFT's label
+        // carries its token id (#3096).
         const sanitizedSymbol =
           symRes === null ? '' : sanitizeTokenSymbol(symRes as string);
-        const symbol = sanitizedSymbol === '' ? shortAddress(token) : sanitizedSymbol;
-        let surplus = 0n;
-        if (vault.toLowerCase() !== ZERO_ADDRESS) {
-          const [bal, tracked] = await Promise.all([
-            publicClient.readContract({
-              address: token,
-              abi: ERC20_META_ABI,
-              functionName: 'balanceOf',
-              args: [vault],
-              blockNumber,
-            }) as Promise<bigint>,
-            publicClient.readContract({
+        const symbol = assetLabel(
+          kind,
+          sanitizedSymbol === '' ? shortAddress(token) : sanitizedSymbol,
+          tokenId,
+        );
+        // The contract's OWN rule for what is adoptable (#3096): the same
+        // `untrackedHolding` view `adoptUntracked` caps against, for every
+        // kind. It answers zero for a wallet with no vault. Not read for
+        // a contract of the wrong standard, whose ERC-1155 balance read
+        // would revert.
+        const surplus = wrong
+          ? 0n
+          : ((await publicClient.readContract({
               address: walletChain.diamondAddress,
               abi: DIAMOND_ABI_VIEM,
-              functionName: 'getTrackedHolding',
-              args: [address, token, 0n],
+              functionName: 'untrackedHolding',
+              args: [address, kind, token, tokenId],
               blockNumber,
-            }) as Promise<bigint>,
-          ]);
-          surplus = bal > tracked ? bal - tracked : 0n;
-        }
+            })) as bigint);
         if (cancelled) return;
         // ONE atomic write, stamped with the token it was queried for
         // (Codex #1547 r1) — consumers gate on that stamp.
-        setLookup({ key: lookupKey, token: tokenInput, symbol, decimals, rawUnits, surplus });
+        setLookup({
+          key: lookupKey,
+          token: tokenInput,
+          kind,
+          tokenId,
+          symbol,
+          decimals,
+          rawUnits,
+          surplus,
+          wrongStandard: wrong,
+        });
         setLookupFailedFor(null);
       } catch {
         if (cancelled) return;
@@ -1839,13 +1988,23 @@ export function Recover() {
     return () => {
       cancelled = true;
     };
-  }, [validToken, tokenInput, address, publicClient, walletChain, lookupKey]);
+  }, [
+    validToken,
+    tokenInput,
+    kindInput,
+    tokenId,
+    address,
+    publicClient,
+    walletChain,
+    lookupKey,
+  ]);
 
   const canReview =
     validToken &&
     validSource &&
     amountWei !== null &&
     activeLookup !== null &&
+    !activeLookup.wrongStandard &&
     amountWei <= activeLookup.surplus;
 
   async function signAndSubmit() {
@@ -2006,37 +2165,16 @@ export function Recover() {
         return;
       }
 
-      // (c) The surplus cap, re-read at ONE fresh block (Codex #1547
-      // r1) — the reviewed amount may exceed what is recoverable NOW
-      // (a deposit reconciled, another recovery landed).
-      const blockNumber = await publicClient.getBlockNumber();
-      const vault = (await publicClient.readContract({
+      // (c) The surplus cap, re-read now (Codex #1547 r1) — the
+      // reviewed amount may exceed what is recoverable NOW (a deposit
+      // reconciled, another recovery landed). Read through the contract's own `untrackedHolding` (#3096), the
+      // cap `adoptUntracked` itself enforces, for every asset kind.
+      const liveSurplus = (await publicClient.readContract({
         address: diamond,
         abi: DIAMOND_ABI_VIEM,
-        functionName: 'getUserVaultAddress',
-        args: [address],
-        blockNumber,
-      })) as `0x${string}`;
-      let liveSurplus = 0n;
-      if (vault.toLowerCase() !== ZERO_ADDRESS) {
-        const [bal, tracked] = await Promise.all([
-          publicClient.readContract({
-            address: token,
-            abi: ERC20_META_ABI,
-            functionName: 'balanceOf',
-            args: [vault],
-            blockNumber,
-          }) as Promise<bigint>,
-          publicClient.readContract({
-            address: diamond,
-            abi: DIAMOND_ABI_VIEM,
-            functionName: 'getTrackedHolding',
-            args: [address, token, 0n],
-            blockNumber,
-          }) as Promise<bigint>,
-        ]);
-        liveSurplus = bal > tracked ? bal - tracked : 0n;
-      }
+        functionName: 'untrackedHolding',
+        args: [address, snapshot.kind, token, snapshot.tokenId],
+      })) as bigint;
       if (amount > liveSurplus) {
         // Refresh the keyed lookup with the LIVE surplus (Codex #1547
         // r2) — without this the stale cap keeps showing the old
@@ -2146,6 +2284,8 @@ export function Recover() {
         txHash: null,
         attemptId,
         token,
+        kind: snapshot.kind,
+        tokenId: snapshot.tokenId.toString(),
         declaredSource,
         amount: amount.toString(),
         symbol: snapshot.symbol,
@@ -2206,8 +2346,8 @@ export function Recover() {
           message: {
             user: address,
             asset: token,
-            kind: ERC20_KIND,
-            tokenId: 0n,
+            kind: snapshot.kind,
+            tokenId: snapshot.tokenId,
             declaredSource,
             amount,
             nonce,
@@ -2238,6 +2378,8 @@ export function Recover() {
       submittedCtx = {
         attemptId,
         token,
+        kind: snapshot.kind,
+        tokenId: snapshot.tokenId,
         declaredSource,
         amount,
         symbol: snapshot.symbol,
@@ -2255,7 +2397,15 @@ export function Recover() {
         address: diamond,
         abi: DIAMOND_ABI_VIEM,
         functionName: 'adoptUntracked',
-        args: [ERC20_KIND, token, 0n, amount, declaredSource, deadline, signature],
+        args: [
+          snapshot.kind,
+          token,
+          snapshot.tokenId,
+          amount,
+          declaredSource,
+          deadline,
+          signature,
+        ],
         chain: walletClient.chain,
         account: address,
       });
@@ -2751,6 +2901,8 @@ export function Recover() {
           txHash,
           ...(ctx.attemptId === undefined ? {} : { attemptId: ctx.attemptId }),
           ...(ctx.token === undefined ? {} : { token: ctx.token }),
+          kind: ctx.kind,
+          tokenId: ctx.tokenId.toString(),
           declaredSource: ctx.declaredSource,
           amount: ctx.amount.toString(),
           symbol: ctx.symbol,
@@ -2916,6 +3068,9 @@ export function Recover() {
         step.ctx?.attemptId,
       );
     }
+    // A deliberate start-over begins blank: the asset the arrival link
+    // named has been dealt with.
+    prefillRef.current = EMPTY_RECOVER_PREFILL;
     clearToFreshForm();
   };
 
@@ -3264,6 +3419,14 @@ export function Recover() {
                 could sign for MORE base units than the card shows.
                 The review must be lossless. */}
             <p style={{ margin: 0 }}>
+              <span className="muted">{copy.recover.reviewKind}:</span>{' '}
+              {activeLookup?.kind === ASSET_KIND.ERC721
+                ? copy.assetKind.nft
+                : activeLookup?.kind === ASSET_KIND.ERC1155
+                  ? copy.assetKind.multi
+                  : copy.assetKind.token}
+            </p>
+            <p style={{ margin: 0 }}>
               <span className="muted">{copy.recover.reviewToken}:</span>{' '}
               <span style={{ unicodeBidi: 'isolate', direction: 'ltr' }}>
                 {activeLookup?.symbol ?? ''}
@@ -3422,7 +3585,27 @@ export function Recover() {
           </div>
           <div className="stack" style={{ gap: 12 }}>
             <div className="field" style={{ margin: 0 }}>
-              <label htmlFor="recover-token">{copy.recover.tokenLabel}</label>
+              <label htmlFor="recover-kind">{copy.assetKind.label}</label>
+              <select
+                id="recover-kind"
+                className="input"
+                value={kindInput}
+                onChange={(e) => {
+                  const next = Number(e.target.value);
+                  if (isAssetKind(next)) setKindInput(next);
+                }}
+              >
+                <option value={ASSET_KIND.ERC20}>{copy.assetKind.token}</option>
+                <option value={ASSET_KIND.ERC721}>{copy.assetKind.nft}</option>
+                <option value={ASSET_KIND.ERC1155}>{copy.assetKind.multi}</option>
+              </select>
+            </div>
+            <div className="field" style={{ margin: 0 }}>
+              <label htmlFor="recover-token">
+                {kindInput === ASSET_KIND.ERC20
+                  ? copy.recover.tokenLabel
+                  : copy.recover.collectionLabel}
+              </label>
               <input
                 id="recover-token"
                 className="input"
@@ -3439,6 +3622,21 @@ export function Recover() {
               ) : lookupFailed ? (
                 <p className="muted" style={{ margin: '4px 0 0' }}>
                   {copy.recover.tokenLookupFailed}
+                </p>
+              ) : activeLookup?.wrongStandard ? (
+                <p className="muted" style={{ margin: '4px 0 0' }}>
+                  {copy.recover.wrongStandard(
+                    activeLookup.kind === ASSET_KIND.ERC721 ? 'ERC-721' : 'ERC-1155',
+                  )}
+                </p>
+              ) : activeLookup && activeLookup.kind !== ASSET_KIND.ERC20 ? (
+                <p className="muted" style={{ margin: '4px 0 0' }}>
+                  <span style={{ unicodeBidi: 'isolate', direction: 'ltr' }}>
+                    {copy.recover.nftMeta(
+                      activeLookup.symbol,
+                      activeLookup.surplus.toString(),
+                    )}
+                  </span>
                 </p>
               ) : activeLookup ? (
                 <p className="muted" style={{ margin: '4px 0 0' }}>
@@ -3457,6 +3655,25 @@ export function Recover() {
                 </p>
               ) : null}
             </div>
+            {kindInput !== ASSET_KIND.ERC20 ? (
+              <div className="field" style={{ margin: 0 }}>
+                <label htmlFor="recover-token-id">{copy.assetKind.tokenId}</label>
+                <input
+                  id="recover-token-id"
+                  className="input"
+                  inputMode="numeric"
+                  value={tokenIdInput}
+                  onChange={(e) => setTokenIdInput(e.target.value.trim())}
+                  spellCheck={false}
+                  autoComplete="off"
+                />
+                {tokenIdInput !== '' && tokenId === null ? (
+                  <p className="muted" style={{ margin: '4px 0 0' }}>
+                    {copy.recover.tokenIdInvalid}
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
             <div className="field" style={{ margin: 0 }}>
               <label htmlFor="recover-source">{copy.recover.sourceLabel}</label>
               <input
@@ -3474,18 +3691,27 @@ export function Recover() {
                   : copy.recover.sourceHint}
               </p>
             </div>
+            {kindInput === ASSET_KIND.ERC721 ? (
+              <p className="muted" style={{ margin: 0 }}>
+                {copy.recover.nftAmountFixed}
+              </p>
+            ) : (
             <div className="field" style={{ margin: 0 }}>
               <label htmlFor="recover-amount">{copy.recover.amountLabel}</label>
               <input
                 id="recover-amount"
                 className="input"
-                inputMode="decimal"
+                inputMode={kindInput === ASSET_KIND.ERC20 ? 'decimal' : 'numeric'}
                 placeholder={activeLookup?.rawUnits ? '0' : '0.0'}
                 value={amountInput}
                 onChange={(e) => setAmountInput(e.target.value.trim())}
                 autoComplete="off"
               />
-              {activeLookup?.rawUnits ? (
+              {kindInput === ASSET_KIND.ERC1155 ? (
+                <p className="muted" style={{ margin: '4px 0 0' }}>
+                  {copy.recover.multiAmountNote}
+                </p>
+              ) : activeLookup?.rawUnits ? (
                 <p className="muted" style={{ margin: '4px 0 0' }}>
                   {copy.recover.rawUnitsNote}
                 </p>
@@ -3505,6 +3731,7 @@ export function Recover() {
                 </p>
               ) : null}
             </div>
+            )}
             <button
               type="button"
               className="btn btn-primary"
@@ -3517,6 +3744,21 @@ export function Recover() {
             >
               {copy.recover.review}
             </button>
+            {/* Disowning (#3096), offered for the asset the lookup
+                found untracked — keyed by the lookup so a different
+                asset starts with a fresh card. */}
+            {activeLookup &&
+            !activeLookup.wrongStandard &&
+            activeLookup.surplus > 0n ? (
+              <DisownUntracked
+                key={activeLookup.key}
+                kind={activeLookup.kind}
+                asset={activeLookup.token as `0x${string}`}
+                tokenId={activeLookup.tokenId}
+                label={activeLookup.symbol}
+                decimals={activeLookup.decimals}
+              />
+            ) : null}
           </div>
         </section>
       )}
