@@ -3906,6 +3906,7 @@
       "keeperNone": "目前还没有 keeper 可以代您展期这笔贷款。请在设置中开启 keeper 访问并授予某个 keeper 展期权限；然后在高级模式下，在本页为这笔贷款开启该 keeper。",
       "keeperPaused": "委托的 keeper 已在整个协议中暂停，因此目前没有 keeper 能发送展期。",
       "keeperUnknown": "我们无法检查您在这笔贷款上的 keeper 权限。",
+      "keeperRetired": "该账户已被替换，因此它授予的 keeper 权限不再有效：任何 keeper 都无法为其发送延期。",
       "lenderFunding": "每次展期的费用由借款人从其 vault 支付。您按利息收取，扣除协议的常规分成，与还款时相同。",
       "reserve": {
         "title": "展期储备",
@@ -3956,6 +3957,7 @@
         "leftover": "您为这笔贷款的展期储备了 {{amount}}。",
         "ended": "贷款已结束，因此不会有任何东西动用它。",
         "notHolder": "您已不再持有借款人头寸，而展期只会动用当前持有人的储备。",
+        "ownershipUnknown": "我们无法确认你持有此贷款的哪些头寸，因此这里只提供提取这笔储备金。提取不需要任何头寸。",
         "kept": "在您持有借款人头寸期间，它用于支付这笔贷款的展期。"
       },
       "claims": {

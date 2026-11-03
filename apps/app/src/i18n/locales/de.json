@@ -3906,6 +3906,7 @@
       "keeperNone": "Noch darf kein Keeper diesen Kredit für Sie verlängern. Schalten Sie in den Einstellungen den Keeper-Zugriff ein und geben Sie einem Keeper die Verlängerungsberechtigung; schalten Sie dann im erweiterten Modus diesen Keeper auf dieser Seite für diesen Kredit ein.",
       "keeperPaused": "Delegierte Keeper sind protokollweit pausiert, daher kann gerade kein Keeper eine Verlängerung senden.",
       "keeperUnknown": "Wir konnten Ihre Keeper-Berechtigungen für diesen Kredit nicht prüfen.",
+      "keeperRetired": "Dieses Konto wurde ersetzt, daher gelten die von ihm erteilten Keeper-Berechtigungen nicht mehr: Kein Keeper kann eine Verlängerung dafür senden.",
       "lenderFunding": "Der Kreditnehmer zahlt die Gebühr jeder Verlängerung aus seinem Vault. Sie erhalten sie als Zinsen, abzüglich des üblichen Anteils des Protokolls, wie bei der Rückzahlung.",
       "reserve": {
         "title": "Verlängerungsreserve",
@@ -3956,6 +3957,7 @@
         "leftover": "Sie haben {{amount}} für die Verlängerungen dieses Kredits reserviert.",
         "ended": "Der Kredit ist beendet, daher wird nichts sie verbrauchen.",
         "notHolder": "Sie halten die Kreditnehmerposition nicht mehr, und eine Verlängerung greift nur auf die Reserve des aktuellen Inhabers zu.",
+        "ownershipUnknown": "Wir konnten nicht prüfen, welche Positionen dieses Kredits Sie halten, daher wird hier nur die Auszahlung dieser Reserve angeboten. Eine Auszahlung erfordert keine Position.",
         "kept": "Sie zahlt die Verlängerungen dieses Kredits, solange Sie die Kreditnehmerposition halten."
       },
       "claims": {

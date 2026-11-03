@@ -2215,6 +2215,7 @@
       "keeperNone": "No keeper is allowed to extend this loan for you yet. In Settings, turn keeper access on and give a keeper the extend permission; then, with advanced mode on, switch that keeper on for this loan on this page.",
       "keeperPaused": "Delegated keepers are paused protocol-wide, so no keeper can send an extension right now.",
       "keeperUnknown": "We couldn’t check your keeper permissions for this loan.",
+      "keeperRetired": "This account has been replaced, so the keeper permissions it gave no longer count: no keeper can send an extension for it.",
       "lenderFunding": "The borrower pays each extension’s charge from their vault. You receive it as interest, less the protocol’s usual cut, as at repayment.",
       "reserve": {
         "title": "Extension reserve",
@@ -2265,6 +2266,7 @@
         "leftover": "You have {{amount}} reserved for this loan’s extensions.",
         "ended": "The loan has ended, so nothing will draw it.",
         "notHolder": "You no longer hold the borrower position, and an extension draws only the current holder’s reserve.",
+        "ownershipUnknown": "We couldn’t check which positions on this loan you hold, so only withdrawing this reserve is offered here. A withdrawal needs no position.",
         "kept": "It pays this loan’s extensions while you hold the borrower position."
       },
       "claims": {

@@ -2188,8 +2188,12 @@ is the borrower's own money.
   while the protocol is paused.
 - The borrower-position holder is told whether a keeper they allow can send
   the extension for them, and what to change if not; when delegated keepers
-  are paused protocol-wide, the page says that instead. A keeper permission
-  that could not be read is stated as unknown, never as missing.
+  are paused protocol-wide, the page says that instead. A wallet whose
+  account a replacement retired is told that the keeper permissions it gave
+  no longer count, even though they are still stored, because no keeper may
+  act for a retired holder. A keeper permission, or an account protection
+  state, that could not be read is stated as unknown, never as missing or as
+  ready.
 - The borrower-position holder sees the extension reserve: what they have
   reserved for the loan, their other free balance of the loan's asset in
   their vault, what an extension would charge now, and what it would charge
@@ -2220,7 +2224,11 @@ is the borrower's own money.
   in the vault, the page says so before and after. A wallet that holds a
   reserve on a loan it is no longer a party to, or on a loan that has ended,
   sees that reserve and its withdrawal on the loan page, with the reason
-  nothing will draw it.
+  nothing will draw it. When which positions the wallet holds cannot be
+  read, the page still offers that withdrawal, says that it could not check
+  the wallet's positions, and offers nothing that needs one. Every reserve
+  that was deposited before the app filed reserve activity under its
+  depositor is filed under them too, so the Claims list includes it.
 - Saving limits, adding to the reserve and withdrawing it each show the
   review receipt before signing: what the wallet consents to or sets aside,
   what an extension may charge or what the withdrawal pays, the fees, and
@@ -2237,7 +2245,10 @@ is the borrower's own money.
   the borrower-position holder still sees the reserve and can withdraw it,
   and is told that adding to it is off until they can. A
   wallet whose reserve on the loan could not be read is told so, rather than
-  shown no reserve.
+  shown no reserve. A typed amount, a review receipt open for signing and a
+  local result belong to the network and wallet they were made with: any
+  change of network or wallet clears them, so nothing reviewed as one is
+  sent as another.
 - The lender is told that the borrower pays each extension's charge from
   their vault, and that the lender receives it as interest less the
   protocol's usual cut, as at repayment.

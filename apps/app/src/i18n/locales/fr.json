@@ -3906,6 +3906,7 @@
       "keeperNone": "Aucun keeper n’est encore autorisé à prolonger ce prêt pour vous. Dans Paramètres, activez l’accès des keepers et donnez à un keeper la permission de prolongation ; puis, en mode avancé, activez ce keeper pour ce prêt sur cette page.",
       "keeperPaused": "Les keepers délégués sont en pause dans tout le protocole, donc aucun keeper ne peut envoyer de prolongation pour le moment.",
       "keeperUnknown": "Nous n’avons pas pu vérifier vos permissions de keeper pour ce prêt.",
+      "keeperRetired": "Ce compte a été remplacé, donc les autorisations de keeper qu’il a accordées ne comptent plus : aucun keeper ne peut envoyer une prolongation pour lui.",
       "lenderFunding": "L’emprunteur paie les frais de chaque prolongation depuis son vault. Vous les recevez en intérêts, moins la part habituelle du protocole, comme au remboursement.",
       "reserve": {
         "title": "Réserve de prolongation",
@@ -3956,6 +3957,7 @@
         "leftover": "Vous avez {{amount}} réservé pour les prolongations de ce prêt.",
         "ended": "Le prêt est terminé, donc rien ne l’utilisera.",
         "notHolder": "Vous ne détenez plus la position emprunteur, et une prolongation n’utilise que la réserve du détenteur actuel.",
+        "ownershipUnknown": "Nous n’avons pas pu vérifier quelles positions de ce prêt vous détenez, donc seul le retrait de cette réserve est proposé ici. Un retrait ne nécessite aucune position.",
         "kept": "Elle paie les prolongations de ce prêt tant que vous détenez la position emprunteur."
       },
       "claims": {

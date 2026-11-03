@@ -97,15 +97,17 @@ function Banner({ kind, children }: { kind: 'info' | 'warn' | 'danger'; children
   );
 }
 
-/** Withdraw the whole unused reserve, and say where the payment went. */
-export function ReserveWithdraw({
-  loanId,
-  reserved,
-  meta,
-  metaFailed,
-  busy,
-  setBusy,
-}: {
+/** The connected identity a reserve control acts as: the network it reads,
+ *  the network the wallet signs on, the wallet and the loan. Every reserve
+ *  control is keyed by it, so a draft, a reviewed receipt or a local outcome
+ *  is dropped the moment any of them changes and never submitted as another
+ *  identity's write. */
+function useReserveIdentity(loanId: number): string {
+  const { address, readChain, walletChain } = useActiveChain();
+  return `${readChain.chainId}:${walletChain?.chainId ?? ''}:${address?.toLowerCase() ?? ''}:${loanId}`;
+}
+
+type ReserveWithdrawProps = {
   loanId: number;
   /** The reserve as last read, for the review receipt. The withdrawal itself
    *  re-reads it just before signing. */
@@ -116,7 +118,15 @@ export function ReserveWithdraw({
   metaFailed: boolean;
   busy: boolean;
   setBusy: (b: boolean) => void;
-}) {
+};
+
+/** Withdraw the whole unused reserve, and say where the payment went. Keyed
+ *  by the connected identity (see `useReserveIdentity`). */
+export function ReserveWithdraw(props: ReserveWithdrawProps) {
+  return <ReserveWithdrawBody key={useReserveIdentity(props.loanId)} {...props} />;
+}
+
+function ReserveWithdrawBody({ loanId, reserved, meta, metaFailed, busy, setBusy }: ReserveWithdrawProps) {
   const { address, walletChain, onSupportedChain } = useActiveChain();
   const client = usePublicClient({ chainId: walletChain?.chainId });
   const { write } = useDiamondWrite();
@@ -555,9 +565,18 @@ function KeeperLine({ loanId, keepersPaused }: { loanId: number; keepersPaused: 
   const keepers = (cfg?.keepers ?? []).map((k) => k.keeper);
   const enables = useLoanKeeperEnables(loanId, keepers, keepers.length > 0);
   const loanEnables = freshData(enables);
+  // A retired account's keeper grants stay stored but are void: the contract
+  // lets a keeper act only for a holder that is still its own manager.
+  const protection = useProtectedAccount();
+  const eligibility = ownFundingVerdict(protection.data, protection.isError);
   const a = copy.autoExtend;
   if (keepersPaused) return <p className="muted">{a.keeperPaused}</p>;
-  if (config.isError || enables.isError) return <p className="muted">{a.keeperUnknown}</p>;
+  if (eligibility.kind === 'retired') return <p className="muted">{a.keeperRetired}</p>;
+  // Unread while still loading says nothing yet; unread after a failed read
+  // (or a record that could not be read) says it could not check.
+  const eligibilityFailed = eligibility.kind === 'unread' && (protection.isError || protection.data !== undefined);
+  if (config.isError || enables.isError || eligibilityFailed) return <p className="muted">{a.keeperUnknown}</p>;
+  if (eligibility.kind === 'unread') return null;
   if (!cfg || (keepers.length > 0 && !loanEnables)) return null;
   const verdict = keeperVerdict(cfg, loanEnables ?? {});
   return (
@@ -567,18 +586,12 @@ function KeeperLine({ loanId, keepersPaused }: { loanId: number; keepersPaused: 
   );
 }
 
-export function AutoExtendCard({
-  loanId,
-  holdsBorrower,
-  holdsLender,
-  active,
-  isRental,
-  cadence,
-  principalAsset,
-  busy,
-  setBusy,
-}: {
+type AutoExtendCardProps = {
   loanId: number;
+  /** Whether a fresh read says which positions the wallet holds. When it
+   *  failed, the card offers only what needs no position: the withdrawal of
+   *  a reserve the wallet left on the loan. */
+  ownershipKnown: boolean;
   /** The connected wallet holds the borrower position, by a fresh read. */
   holdsBorrower: boolean;
   /** The connected wallet holds the lender position, by a fresh read. A
@@ -593,9 +606,31 @@ export function AutoExtendCard({
   /** The page's shared write lock. */
   busy: boolean;
   setBusy: (b: boolean) => void;
-}) {
+};
+
+/** The loan page's automatic-extension card. Keyed by the connected identity
+ *  (see `useReserveIdentity`), so no draft, reviewed receipt or local outcome
+ *  carries over to another network or wallet. */
+export function AutoExtendCard(props: AutoExtendCardProps) {
+  return <AutoExtendCardBody key={useReserveIdentity(props.loanId)} {...props} />;
+}
+
+function AutoExtendCardBody({
+  loanId,
+  ownershipKnown,
+  holdsBorrower: holdsBorrowerRead,
+  holdsLender: holdsLenderRead,
+  active,
+  isRental,
+  cadence,
+  principalAsset,
+  busy,
+  setBusy,
+}: AutoExtendCardProps) {
   const a = copy.autoExtend;
   const { address, readChain } = useActiveChain();
+  const holdsBorrower = ownershipKnown && holdsBorrowerRead;
+  const holdsLender = ownershipKnown && holdsLenderRead;
   const extendable = active && !isRental;
   const party = extendable && (holdsBorrower || holdsLender);
   const funding = useExtendFunding(loanId);
@@ -620,7 +655,9 @@ export function AutoExtendCard({
     <div data-testid="extend-reserve-leftover" style={{ marginTop: party ? 16 : 0 }}>
       {party ? <h4 style={{ margin: '0 0 4px' }}>{a.reserve.leftoverTitle}</h4> : null}
       <p>{a.reserve.leftover(amountText(reserved, meta))}</p>
-      <p className="muted">{extendable ? a.reserve.notHolder : a.reserve.ended}</p>
+      <p className="muted">
+        {!extendable ? a.reserve.ended : ownershipKnown ? a.reserve.notHolder : a.reserve.ownershipUnknown}
+      </p>
       <ReserveWithdraw loanId={loanId} reserved={reserved} meta={meta} metaFailed={metaQuery.isError} busy={busy} setBusy={setBusy} />
     </div>
   ) : null;

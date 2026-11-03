@@ -4843,14 +4843,17 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
 
       {/* #2814 — automatic extension: the switch, the window, both sides'
           limits and, for the borrower-position holder, the extension
-          reserve. Mounted for any connected wallet once a FRESH ownership
-          read says which positions it holds (both, for a dual holder, who
-          sets both sides' limits), so a reserve left on an ended loan, or on
-          a position since passed on, can be withdrawn here; the card shows
+          reserve. Mounted for any connected wallet once the ownership read
+          has settled: a FRESH read says which positions it holds (both, for
+          a dual holder, who sets both sides' limits); a failed one leaves
+          only the withdrawal of a reserve the wallet left here, which needs
+          no position. So a reserve left on an ended loan, or on a position
+          since passed on, can always be withdrawn here; the card shows
           nothing when there is nothing to say. */}
-      {address && freshData(nftOwners) !== undefined ? (
+      {address && (freshData(nftOwners) !== undefined || nftOwners.isError) ? (
         <AutoExtendCard
           loanId={row.loanId}
+          ownershipKnown={freshData(nftOwners) !== undefined}
           holdsBorrower={isBorrowerHolder}
           holdsLender={isLenderHolder}
           // Not `soldThisSession`: a lender sale moves only the lender
