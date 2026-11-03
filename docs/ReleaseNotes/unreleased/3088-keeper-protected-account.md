@@ -1,0 +1,13 @@
+## Thread — keeper backstop for protected account mode
+
+Protected account mode holds a payout from a vault, and a transfer of a position NFT, for the delay the owner chose, and makes the settings that loosen protection wait the same delay. Releasing a held item and applying a matured change are open to anyone, but nothing made those calls on a schedule. So a payout the owner had waited out could sit in the vault until someone made the call by hand.
+
+A new keeper duty, the protected account pass, now makes them every minute on every chain it serves. It ships switched off, behind its own arming flag. Every minute because each item is due the second its delay ends.
+
+A held payout or transfer goes only when the protocol's own record says it can: still held, past its release time by the chain's clock, the account not locked, and co-signed while the account requires a co-sign. A payout whose destination has left the account's allowed destinations is cancelled by the release itself, and the asset stays in the vault; the report says so apart from a paid one. A payout to a recipient the sanctions screen flags is refused and stays held, and the keeper tries again later. Each paid payout is reported with what the recipient actually received.
+
+A matured change is applied only while the protocol still holds the change its announcement named, at the time it named. That covers a lowered delay, NFT protection or the co-sign requirement switched off, an unlock, an unpin, switching the mode off (which waits while the account still has open payouts or transfers), a new allowed destination that has not expired, an accepted signer addition that has not expired, a signer removal, and a scheduled replacement of the primary wallet that still has its approvals. Every change left waiting is reported with the protocol's reason. The keeper pays only gas and moves no value to itself. Refs #3088, #2984.
+
+> Caveat: ships disarmed. Arming it on any chain is a separate owner decision, and the protected account contracts reach a testnet only with the fresh deploy.
+> Caveat: at most four calls per kind of work (releases, position transfers, applied changes) per chain are sent each run, so on a busy chain a due item can wait a few runs; each kind keeps its own share, so a long queue of payouts never holds back an unlock or a signer addition; the kinds also take turns going first each run, so on a slow chain none can use the whole run's time every run.
+> Caveat: the Telegram lock command and the owner alerts on a lock, a queued payout and a proposed replacement are not part of this change; they follow separately.

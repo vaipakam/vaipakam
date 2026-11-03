@@ -1,0 +1,880 @@
+// apps/keeper/src/protectedAccount.ts
+//
+// #3088 / #2984 — the PROTECTED ACCOUNT pass: the permissionless steps of
+// protected account mode that nothing else calls on a schedule. Each one is
+// open to anyone; without a keeper it waits until the owner, a signer or
+// someone else makes the call by hand.
+//
+// Per chain, per run (every minute), in this order:
+//
+//   1. RELEASE — pay each queued payout whose delay has passed
+//      (`VaultPayoutFacet.releasePayout`) and move each queued position-NFT
+//      transfer whose delay has passed (`VaipakamNFTFacet.
+//      releasePositionTransfer`). A row is sent only when the chain's own
+//      record says it can go: still queued, past its release time by the
+//      block's clock, its account not locked, and, while the account requires
+//      a co-sign, co-signed. A payout whose destination has left the account's
+//      allowlist is cancelled by the release itself (the asset stays in the
+//      vault); the run names it apart from a paid one. A recipient the
+//      sanctions screen flags makes the release revert and the row stays
+//      queued: the run names the refusal and tries again next run.
+//   2. FINALIZE — apply each pending change whose delay has passed: the
+//      account's setting changes (`finalizeSettingChanges`: a lowered delay,
+//      NFT protection or the co-sign requirement switched off, an unlock, an
+//      unpin, switching the mode off — which waits while the account has
+//      open rows, and is counted waiting when the chain says so), an
+//      allowlist addition that has not expired (`finalizeAddAllowlisted`),
+//      a signer addition the nominee has accepted and that has not expired
+//      (`finalizeAddSigner`); each addition expires one delay after it
+//      matures, as the chain refuses it then; a signer removal
+//      (`finalizeRemoveSigner`) and a scheduled replacement of the primary
+//      wallet that still has the approvals it needs (`finalizeReplacement`).
+//      Nothing that is not due is sent, and nothing is sent for a locked
+//      account except what an unlock itself needs.
+//
+// The work is nominated by the indexer's event ledger: `PayoutQueued` and
+// `PositionTransferQueued` for step 1, the `*Requested` / `Scheduled` events
+// for step 2. Each step reads its own page a run, from where the last run
+// stopped and wrapping round, above a floor every row before which is
+// finished (`ledgerRotation.ts`). A row is finished only when the chain shows
+// it so at the finalized block: a payout or transfer no longer queued, a
+// change whose pending time no longer equals the one its event announced
+// (applied, cancelled or replaced by a newer request). Every decision is the
+// chain's own record against the chain's own clock; a row only nominates.
+// A page's records and the settings of the accounts its events name are read
+// in one batch, so the settings never wait behind the records; and each run
+// tries the page from a different row (`ledgerRotation.attemptOrder`), so a
+// run of slow refusals at its top cannot keep a row below them unsent.
+//
+// Every call is simulated on the current state first and waits for its
+// receipt before the next (`stepSender.ts`). None carries value from the
+// keeper, and none moves value to it: a release pays the account's own
+// recipient from the account's own vault. Needs no on-chain role.
+//
+// Gated by KEEPER_ENABLED + PROTECTED_ACCOUNT_ENABLED. Ships disarmed.
+
+import { createPublicClient, decodeEventLog, http, type Abi, type Address, type Hex, type PublicClient } from 'viem';
+import { ProtectedAccountFacetABI, VaipakamDiamondABI, VaipakamNFTFacetABI, VaultDepositoryFacetABI, VaultPayoutFacetABI } from '@vaipakam/contracts/abis';
+import type { ChainConfig, Env } from './env';
+import { getChainConfigs } from './env';
+import { buildKeeperContext, passIsArmed, type KeeperContext } from './keeper';
+import type { PassTick } from './passSchedule';
+import { deadlineClient, PastRunDeadline } from './batchRead';
+import { shortErr } from './callErrors';
+import { d1EventLedger, type EventLedger, type LedgerRow } from './eventLedger';
+import { attemptOrder, readLedgerRotation, type LedgerRotation } from './ledgerRotation';
+import { d1ScanCursors, type FinalBlock, type ScanCursors } from './scanCursors';
+import { PassReader } from './passReader';
+import { StepSender } from './stepSender';
+import { runIndex } from './runWindow';
+
+/** Only the functions and events this pass names, plus every Diamond error. */
+const PICK: ReadonlySet<string> = new Set([
+  'releasePayout',
+  'getPendingPayout',
+  'getPendingPositionTransfer',
+  'releasePositionTransfer',
+  'getProtectedAccount',
+  'getSignerChange',
+  'getAllowlistPendingAt',
+  'getReplacement',
+  'finalizeSettingChanges',
+  'finalizeAddAllowlisted',
+  'finalizeAddSigner',
+  'finalizeRemoveSigner',
+  'finalizeReplacement',
+  'PayoutReleased',
+  'PayoutCancelled',
+]);
+const pick = (abi: unknown) => (abi as Abi).filter((x) => x.type === 'error' || ('name' in x && PICK.has(x.name)));
+export const ABI = dedupe([
+  ...pick(VaultPayoutFacetABI),
+  ...pick(VaipakamNFTFacetABI),
+  ...pick(ProtectedAccountFacetABI),
+  ...pick(VaultDepositoryFacetABI),
+  ...(VaipakamDiamondABI as Abi).filter((x) => x.type === 'error'),
+]);
+
+function dedupe(abi: Abi): Abi {
+  const seen = new Set<string>();
+  return abi.filter((x) => {
+    const k = JSON.stringify(x);
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  }) as Abi;
+}
+
+/** The pass's cadence, in seconds; the scheduler reads it from here. A
+ *  release is due to the second its delay ends, so a run every minute keeps
+ *  the wait the owner chose from growing by more than that. */
+export const PASS_CADENCE_SEC = 60;
+/** Sends per step per chain per run. Each step has its own share, so a
+ *  long payout queue cannot leave an unlock, a replacement or a signer
+ *  addition (which expires) unsent run after run (`StepSender.stepBudgets`). */
+export const STEP_SENDS: Readonly<Record<string, number>> = { release: 4, transfer: 4, finalize: 4 };
+/** The three steps, in the order of the run whose index is 0. */
+export const STEP_NAMES = ['release', 'transfer', 'finalize'] as const;
+export type StepName = (typeof STEP_NAMES)[number];
+
+/**
+ * The order the steps run in on run `visit`: rotated one place a run, so
+ * each step goes first one run in three. A share of sends (`STEP_SENDS`)
+ * bounds how many calls a step makes; it does not bound how long they take,
+ * since every send waits for its receipt. On a chain with slow blocks a step
+ * that always ran first could use the whole read window run after run and
+ * leave the later steps unread. Rotated, every step starts a run with the
+ * whole window at least every third run, so a due unlock, replacement or
+ * signer addition waits at most two runs behind a payout queue.
+ */
+export function stepOrder(visit: number): readonly StepName[] {
+  const k = ((Math.trunc(visit) % STEP_NAMES.length) + STEP_NAMES.length) % STEP_NAMES.length;
+  return [...STEP_NAMES.slice(k), ...STEP_NAMES.slice(0, k)];
+}
+
+/** Sends per chain per run: every step's share, and no more. */
+export const MAX_SENDS_PER_RUN = Object.values(STEP_SENDS).reduce((a, b) => a + b, 0);
+export const RECEIPT_TIMEOUT_MS = 30_000;
+/** Ledger rows read per step per run, rotating above the step's floor. */
+export const PAGE = 200;
+export const PAYOUT_FLOOR_ITEM = 'payout-floor';
+export const PAYOUT_NEXT_ITEM = 'payout-next';
+export const TRANSFER_FLOOR_ITEM = 'transfer-floor';
+export const TRANSFER_NEXT_ITEM = 'transfer-next';
+export const CHANGE_FLOOR_ITEM = 'change-floor';
+export const CHANGE_NEXT_ITEM = 'change-next';
+
+/** `LibProtectedAccount.ROW_*`. */
+const ROW_QUEUED = 1;
+/** A row the chain does not hold reads as state 0 (never queued). */
+const ROW_NONE = 0;
+
+/** `ProtectedAccountFacet.CHANGE_*` → the `ProtectedAccount` field that holds
+ *  when that change matures. */
+export const SETTING_FIELD: Readonly<Record<number, keyof ProtectedAccount>> = {
+  1: 'pendingDisableAt',
+  2: 'pendingDelayAt',
+  3: 'pendingNftOffAt',
+  4: 'pendingCosignOffAt',
+  5: 'pendingUnlockAt',
+  6: 'pendingUnpinAt',
+};
+const SETTING_NAME: Readonly<Record<number, string>> = {
+  1: 'switch-off',
+  2: 'lower-delay',
+  3: 'nft-protection-off',
+  4: 'cosign-off',
+  5: 'unlock',
+  6: 'unpin',
+};
+/** `VaultDepositoryFacet.unpinVaultImplementation` announces an unpin with its
+ *  own event; it matures in `pendingUnpinAt` like the other settings. */
+const CHANGE_UNPIN = 6;
+/** The switch-off, which waits for the account's open rows. */
+const CHANGE_DISABLE = 1;
+
+export const PAYOUT_EVENT = 'PayoutQueued';
+export const TRANSFER_EVENT = 'PositionTransferQueued';
+export const CHANGE_EVENTS = [
+  'SettingChangeRequested',
+  'VaultUnpinRequested',
+  'AllowlistAddRequested',
+  'SignerAddRequested',
+  'SignerRemoveRequested',
+  'ReplacementScheduled',
+] as const;
+
+/** Refusals that mean another caller got there first. */
+export const RACES = new Set(['RowNotQueued', 'ChangeNotRequested', 'NoReplacementProposed']);
+export const PAUSED_REFUSAL = 'EnforcedPause';
+/** `finalizeSettingChanges` when the only due change is a switch-off that
+ *  waits for open rows: a wait, not a refusal. */
+const SWITCH_OFF_WAITS = 'PendingRowsExist';
+
+/** `LibVaipakam.ProtectedAccount`, as the view returns it. */
+export interface ProtectedAccount {
+  enabled: boolean;
+  locked: boolean;
+  protectNfts: boolean;
+  requireCosign: boolean;
+  retired: boolean;
+  delaySeconds: number;
+  pendingDelay: number;
+  pendingDelayAt: bigint;
+  pendingDisableAt: bigint;
+  pendingUnlockAt: bigint;
+  pendingNftOffAt: bigint;
+  pendingCosignOffAt: bigint;
+  cooldownUntil: bigint;
+  lockedAt: bigint;
+  lockedBy: Address;
+  controller: Address;
+  pendingUnpinAt: bigint;
+}
+
+interface PendingPayout {
+  user: Address;
+  kind: number;
+  state: number;
+  cosigned: boolean;
+  releaseAt: bigint;
+  asset: Address;
+  recipient: Address;
+  tokenId: bigint;
+  amount: bigint;
+  delivered: bigint;
+}
+
+interface PendingTransfer {
+  from: Address;
+  state: number;
+  releaseAt: bigint;
+  to: Address;
+  tokenId: bigint;
+}
+
+interface SignerChange {
+  addAt: bigint;
+  accepted: boolean;
+  removeAt: bigint;
+}
+
+interface ReplacementProposal {
+  nominee: Address;
+  proposedBy: Address;
+  readyAt: bigint;
+  round: number;
+  approvals: number;
+}
+
+/** One pending change an event announced, keyed by what its event named. */
+export type Change =
+  | { t: 'setting'; account: Address; kind: number; at: bigint }
+  | { t: 'allow'; account: Address; other: Address; at: bigint }
+  | { t: 'signerAdd'; account: Address; other: Address; at: bigint }
+  | { t: 'signerRemove'; account: Address; other: Address; at: bigint }
+  | { t: 'replace'; account: Address; other: Address; at: bigint };
+
+/** What one chain's run reads and signs with. Injected so a run is testable. */
+export interface ProtectedDeps {
+  /** Deadline-bound client: single reads and the clock. */
+  client: PublicClient;
+  /** Plain client for the batched reads, which carry the deadline themselves. */
+  readClient: PublicClient;
+  context: () => KeeperContext | null;
+  sendDeadline: number;
+  cursors: ScanCursors;
+  ledger: EventLedger;
+  /** Which run this is (`runIndex`), for the rotated batched reads. */
+  visit?: number;
+}
+
+/** What a run did on one chain: its log line's figures, and what tests read. */
+export interface ProtectedReport {
+  chainId: number;
+  skipped?: string;
+  /** Payout ids paid this run, with what the recipient received. */
+  released: { id: bigint; delivered: bigint }[];
+  /** Payout ids the release cancelled (destination no longer allowed). */
+  cancelled: bigint[];
+  /** Position-transfer ids moved this run. */
+  transferred: bigint[];
+  /** Changes applied this run, as `kind:account[:other]`. */
+  finalized: string[];
+  /** Rows not sent this run for a reason the chain states, by reason. */
+  waiting: Map<string, number>;
+  refused: Map<string, string>;
+  unread: Map<string, string>;
+  /** Steps that used their whole share of sends this run; what they left
+   *  stays queued for the next run. */
+  budgetReached: Set<string>;
+  stopped: string | null;
+}
+
+export async function runProtectedAccount(env: Env, tick: PassTick): Promise<void> {
+  if (!passIsArmed(env, 'protectedAccount', 'PROTECTED_ACCOUNT_ENABLED')) return;
+  const sendDeadline = tick.deadlineMs;
+  const visit = runIndex(tick, PASS_CADENCE_SEC * 1000);
+  const ledger = d1EventLedger(env.DB);
+  const chains = getChainConfigs(env).filter((c) => c.diamond);
+  // Chains side by side (runWindow.ts, rule 1): each has its own nonce lane.
+  await Promise.all(
+    chains.map(async (chain: ChainConfig) => {
+      try {
+        const plain = createPublicClient({ transport: http(chain.rpc) }) as PublicClient;
+        const client = deadlineClient(plain, sendDeadline);
+        const report = await protectedOnce(chain.id, chain.diamond as Address, {
+          client,
+          readClient: plain,
+          context: () => buildKeeperContext(env, chain, client, { notAfterMs: sendDeadline }),
+          sendDeadline,
+          cursors: d1ScanCursors(env.KEEPER_DB, chain.id, chain.diamond as string, 'protectedAccount'),
+          ledger,
+          visit,
+        });
+        console.log(describeReport(report));
+      } catch (err) {
+        console.error(`[keeper] protectedAccount chain=${chain.id} failed: ${shortErr(err)}`);
+      }
+    }),
+  );
+}
+
+/** The run's one line for a chain. */
+export function describeReport(r: ProtectedReport): string {
+  if (r.skipped) return `[keeper] protectedAccount chain=${r.chainId}: not worked this run: ${r.skipped}`;
+  const parts = [
+    `[keeper] protectedAccount chain=${r.chainId}`,
+    `payouts-released=${r.released.map((x) => `${x.id}(delivered ${x.delivered})`).join(',') || 'none'}`,
+    ...(r.cancelled.length > 0 ? [`payouts-cancelled-by-release=${r.cancelled.join(',')} (destination no longer allowed; the asset stays in the vault)`] : []),
+    `transfers-released=${r.transferred.join(',') || 'none'}`,
+    `changes-finalized=${r.finalized.join(',') || 'none'}`,
+    ...(r.waiting.size > 0 ? [`waiting=${[...r.waiting].map(([k, v]) => `${k}(${v})`).join(',')}`] : []),
+    ...(r.refused.size > 0 ? [`refused=${[...r.refused].map(([k, v]) => `${k}(${v})`).join(',')}`] : []),
+    ...(r.unread.size > 0 ? [`unread=${[...r.unread].map(([k, v]) => `${k}(${v})`).join(',')}`] : []),
+    ...(r.budgetReached.size > 0 ? [`step-budget-reached=${[...r.budgetReached].join(',')} (the rest waits for the next run)`] : []),
+    ...(r.stopped ? [`stopped=${r.stopped}`] : []),
+  ];
+  return parts.join(' ');
+}
+
+/** One chain's run. Exported for tests. */
+export async function protectedOnce(chainId: number, diamond: Address, deps: ProtectedDeps): Promise<ProtectedReport> {
+  const sender = new StepSender(
+    {
+      pass: 'protectedAccount',
+      abi: ABI,
+      maxSends: MAX_SENDS_PER_RUN,
+      stepBudgets: STEP_SENDS,
+      receiptTimeoutMs: RECEIPT_TIMEOUT_MS,
+      races: RACES,
+      pausedRefusal: PAUSED_REFUSAL,
+      unrecorded: new Set([SWITCH_OFF_WAITS]),
+      describe: (s) => String(s),
+      spends: 'the gas',
+    },
+    { context: deps.context, sendDeadline: deps.sendDeadline },
+  );
+  const report: ProtectedReport = {
+    chainId,
+    released: [],
+    cancelled: [],
+    transferred: [],
+    finalized: [],
+    waiting: new Map(),
+    refused: sender.refused,
+    unread: sender.unread,
+    budgetReached: sender.budgetReached,
+    stopped: null,
+  };
+  const r = new Reader(deps, diamond);
+  try {
+    // The RPC must answer for this chain: a deterministic deployment can put
+    // a Diamond at the same address on another chain.
+    let served: number;
+    try {
+      served = await r.call('the chain id', (c) => c.getChainId());
+    } catch (err) {
+      if (err instanceof PastRunDeadline) throw err;
+      return { ...report, skipped: `the RPC's chain id could not be read (${shortErr(err)})` };
+    }
+    if (served !== chainId) return { ...report, skipped: `the RPC configured for chain ${chainId} serves chain ${served}` };
+    const step = new Step(r, sender, report, deps, chainId);
+    const work: Record<StepName, () => Promise<void>> = {
+      release: () => step.releasePayouts(),
+      transfer: () => step.releaseTransfers(),
+      finalize: () => step.finalizeChanges(),
+    };
+    // eslint-disable-next-line no-await-in-loop
+    for (const name of stepOrder(deps.visit ?? 0)) await work[name]();
+  } catch (err) {
+    if (!(err instanceof PastRunDeadline)) throw err;
+    sender.noteUnread('run', 'the run deadline passed during its reads');
+  }
+  report.stopped = sender.stopped ? sender.stopReason : null;
+  return report;
+}
+
+/** The pass's reads, each stopped at the run's read cutoff (`passReader.ts`). */
+class Reader extends PassReader {
+  constructor(deps: ProtectedDeps, diamond: Address) {
+    super(deps, deps.sendDeadline, diamond, ABI, 'protectedAccount');
+  }
+}
+
+// ─── Ledger rows ────────────────────────────────────────────────────────────
+
+const lower = (a: unknown): Address | null => {
+  const s = String(a ?? '').toLowerCase();
+  return /^0x[0-9a-f]{40}$/.test(s) ? (s as Address) : null;
+};
+const uint = (v: unknown): bigint | null => {
+  const s = String(v ?? '');
+  return /^\d+$/.test(s) ? BigInt(s) : null;
+};
+
+/** The row id a `PayoutQueued` / `PositionTransferQueued` row names. */
+export const rowId = (row: LedgerRow): bigint | null => uint(row.args.id);
+
+/** The pending change a step-2 row announces; null when it names none. */
+export function changeOf(row: LedgerRow): Change | null {
+  const account = lower(row.args.account);
+  if (account === null) return null;
+  switch (row.kind) {
+    case 'SettingChangeRequested': {
+      const kind = Number(row.args.kind);
+      const at = uint(row.args.effectiveAt);
+      return SETTING_FIELD[kind] !== undefined && at !== null ? { t: 'setting', account, kind, at } : null;
+    }
+    case 'VaultUnpinRequested': {
+      const at = uint(row.args.effectiveAt);
+      return at !== null ? { t: 'setting', account, kind: CHANGE_UNPIN, at } : null;
+    }
+    case 'AllowlistAddRequested':
+    case 'SignerAddRequested':
+    case 'SignerRemoveRequested': {
+      const other = lower(row.kind === 'AllowlistAddRequested' ? row.args.destination : row.args.signer);
+      const at = uint(row.args.effectiveAt);
+      if (other === null || at === null) return null;
+      const t = row.kind === 'AllowlistAddRequested' ? 'allow' : row.kind === 'SignerAddRequested' ? 'signerAdd' : 'signerRemove';
+      return { t, account, other, at };
+    }
+    case 'ReplacementScheduled': {
+      const other = lower(row.args.nominee);
+      const at = uint(row.args.readyAt);
+      return other !== null && at !== null ? { t: 'replace', account, other, at } : null;
+    }
+    default:
+      return null;
+  }
+}
+
+export const changeId = (c: Change): string =>
+  c.t === 'setting' ? `setting:${c.account}:${c.kind}:${c.at}` : `${c.t}:${c.account}:${c.other}:${c.at}`;
+
+/** How a change reads in the run's line. */
+const changeLabel = (c: Change): string =>
+  c.t === 'setting' ? `${SETTING_NAME[c.kind]}:${c.account.slice(0, 10)}` : `${c.t}:${c.account.slice(0, 10)}:${c.other.slice(0, 10)}`;
+
+// ─── The steps ──────────────────────────────────────────────────────────────
+
+class Step {
+  private now: bigint | null = null;
+  /** Accounts read this run, at the head. */
+  private readonly accounts = new Map<Address, ProtectedAccount | undefined>();
+
+  constructor(
+    private readonly r: Reader,
+    private readonly sender: StepSender,
+    private readonly report: ProtectedReport,
+    private readonly deps: ProtectedDeps,
+    private readonly chainId: number,
+  ) {}
+
+  private wait(why: string): void {
+    this.report.waiting.set(why, (this.report.waiting.get(why) ?? 0) + 1);
+  }
+
+  /** The chain's clock, read once a run; null (and said) when unread. */
+  private async clock(step: string): Promise<bigint | null> {
+    if (this.now !== null) return this.now;
+    try {
+      this.now = (await this.r.call("the chain's clock", (c) => c.getBlock())).timestamp;
+    } catch (err) {
+      if (err instanceof PastRunDeadline) throw err;
+      this.sender.noteUnread(step, `the chain's clock (${shortErr(err)})`);
+      return null;
+    }
+    return this.now;
+  }
+
+  /** The accounts' settings at the head, read once a run each. */
+  private async readAccounts(accounts: readonly Address[]): Promise<void> {
+    await this.readWithAccounts([], accounts, 'accounts');
+  }
+
+  /**
+   * `calls` and the settings of `accounts` (those not read yet this run) in
+   * ONE batch, returning `calls`' answers. A row's account is named by the
+   * event that queued it, so its settings need not wait for its record: read
+   * one after the other, the records could use the whole read window and
+   * leave every account unread, and nothing could be sent run after run.
+   */
+  private async readWithAccounts(calls: readonly { functionName: string; args: readonly unknown[] }[], accounts: readonly Address[], label: string): Promise<unknown[]> {
+    const want = [...new Set(accounts)].filter((a) => !this.accounts.has(a));
+    const got = await this.r.many([...calls, ...want.map((a) => ({ functionName: 'getProtectedAccount', args: [a] }))], label);
+    want.forEach((a, i) => this.accounts.set(a, got[calls.length + i] as ProtectedAccount | undefined));
+    return got.slice(0, calls.length);
+  }
+
+  /** The order this run tries the page's nominees in (`attemptOrder`). */
+  private order(n: number): number[] {
+    return attemptOrder(n, this.deps.visit ?? 0);
+  }
+
+  // 1a. Payouts.
+  async releasePayouts(): Promise<void> {
+    const page = await readLedgerRotation<bigint>({
+      ledger: this.deps.ledger,
+      cursors: this.deps.cursors,
+      chainId: this.chainId,
+      kinds: [PAYOUT_EVENT],
+      floorItem: PAYOUT_FLOOR_ITEM,
+      nextItem: PAYOUT_NEXT_ITEM,
+      limit: PAGE,
+      cutoff: this.r.cutoff,
+      nominee: rowId,
+      id: (id) => String(id),
+    });
+    if (page === null) {
+      this.sender.noteUnread('payout', 'the event ledger of queued payouts');
+      return;
+    }
+    const ids = page.nominees;
+    const read = (xs: readonly bigint[], label: string, block?: bigint) =>
+      this.r.many(xs.map((id) => ({ functionName: 'getPendingPayout', args: [id] })), label, block);
+    const settled = new Set<bigint>();
+    if (ids.length > 0) {
+      const now = await this.clock('payout');
+      if (now === null) return;
+      const rows = (await this.readWithAccounts(
+        ids.map((id) => ({ functionName: 'getPendingPayout', args: [id] })),
+        accountsNamed(page),
+        'payouts',
+      )) as (PendingPayout | undefined)[];
+      // A record naming an account its event did not (none should) has that
+      // account read now.
+      await this.readAccounts(rows.flatMap((x) => (x && Number(x.state) === ROW_QUEUED ? [lower(x.user)!] : [])));
+      for (const i of this.order(ids.length)) {
+        const id = ids[i];
+        const p = rows[i];
+        if (p === undefined) {
+          this.sender.noteUnread(`release:${id}`, 'its pending payout record');
+          continue;
+        }
+        if (Number(p.state) !== ROW_QUEUED) {
+          // Released or cancelled. A row never queued (state 0) is the
+          // ledger ahead of the head the read was made at: not finished.
+          if (Number(p.state) !== ROW_NONE) settled.add(id);
+          continue;
+        }
+        if (p.releaseAt > now) {
+          this.wait('payout-not-due');
+          continue;
+        }
+        const a = this.accounts.get(lower(p.user)!);
+        if (a === undefined) {
+          this.sender.noteUnread(`release:${id}`, "its account's settings");
+          continue;
+        }
+        if (a.locked) {
+          this.wait('payout-account-locked');
+          continue;
+        }
+        if (a.requireCosign && !p.cosigned) {
+          this.wait('payout-needs-cosign');
+          continue;
+        }
+        // eslint-disable-next-line no-await-in-loop
+        const res = await this.sender.call('release', String(id), 'releasePayout', [id]);
+        if (res !== 'landed') continue;
+        settled.add(id);
+        const receipt = this.sender.receipt;
+        const cancelled = receipt?.logs.some((l) => this.isEvent(l, 'PayoutCancelled', id)) ?? false;
+        if (cancelled) this.report.cancelled.push(id);
+        else this.report.released.push({ id, delivered: this.delivered(receipt, id) });
+      }
+    }
+    // A row is finished once its payout is no longer queued, at the finalized
+    // block as at the head (`ledgerRotation.ts`): a release a reorg undoes
+    // leaves its row above the floor, to be sent again.
+    await page.liftFloor(this.r.finalized, (id) => settled.has(id), async (xs, block: FinalBlock) => {
+      const at = (await read(xs, 'payouts-final', block.number)) as (PendingPayout | undefined)[];
+      const done = new Set(xs.filter((_, j) => at[j] !== undefined && ![ROW_NONE, ROW_QUEUED].includes(Number(at[j]!.state))));
+      return (id) => done.has(id);
+    });
+  }
+
+  // 1b. Position transfers.
+  async releaseTransfers(): Promise<void> {
+    const page = await readLedgerRotation<bigint>({
+      ledger: this.deps.ledger,
+      cursors: this.deps.cursors,
+      chainId: this.chainId,
+      kinds: [TRANSFER_EVENT],
+      floorItem: TRANSFER_FLOOR_ITEM,
+      nextItem: TRANSFER_NEXT_ITEM,
+      limit: PAGE,
+      cutoff: this.r.cutoff,
+      nominee: rowId,
+      id: (id) => String(id),
+    });
+    if (page === null) {
+      this.sender.noteUnread('transfer', 'the event ledger of queued position transfers');
+      return;
+    }
+    const ids = page.nominees;
+    const read = (xs: readonly bigint[], label: string, block?: bigint) =>
+      this.r.many(xs.map((id) => ({ functionName: 'getPendingPositionTransfer', args: [id] })), label, block);
+    const settled = new Set<bigint>();
+    if (ids.length > 0) {
+      const now = await this.clock('transfer');
+      if (now === null) return;
+      const rows = (await this.readWithAccounts(
+        ids.map((id) => ({ functionName: 'getPendingPositionTransfer', args: [id] })),
+        accountsNamed(page),
+        'transfers',
+      )) as (PendingTransfer | undefined)[];
+      // A record naming an account its event did not (none should) has that
+      // account read now.
+      await this.readAccounts(rows.flatMap((x) => (x && Number(x.state) === ROW_QUEUED ? [lower(x.from)!] : [])));
+      for (const i of this.order(ids.length)) {
+        const id = ids[i];
+        const t = rows[i];
+        if (t === undefined) {
+          this.sender.noteUnread(`transfer:${id}`, 'its pending position-transfer record');
+          continue;
+        }
+        if (Number(t.state) !== ROW_QUEUED) {
+          if (Number(t.state) !== ROW_NONE) settled.add(id);
+          continue;
+        }
+        if (t.releaseAt > now) {
+          this.wait('transfer-not-due');
+          continue;
+        }
+        const a = this.accounts.get(lower(t.from)!);
+        if (a === undefined) {
+          this.sender.noteUnread(`transfer:${id}`, "its account's settings");
+          continue;
+        }
+        if (a.locked) {
+          this.wait('transfer-account-locked');
+          continue;
+        }
+        // eslint-disable-next-line no-await-in-loop
+        const res = await this.sender.call('transfer', String(id), 'releasePositionTransfer', [id]);
+        if (res !== 'landed') continue;
+        settled.add(id);
+        this.report.transferred.push(id);
+      }
+    }
+    await page.liftFloor(this.r.finalized, (id) => settled.has(id), async (xs, block: FinalBlock) => {
+      const at = (await read(xs, 'transfers-final', block.number)) as (PendingTransfer | undefined)[];
+      const done = new Set(xs.filter((_, j) => at[j] !== undefined && ![ROW_NONE, ROW_QUEUED].includes(Number(at[j]!.state))));
+      return (id) => done.has(id);
+    });
+  }
+
+  // 2. Pending changes.
+  async finalizeChanges(): Promise<void> {
+    const page = await readLedgerRotation<Change>({
+      ledger: this.deps.ledger,
+      cursors: this.deps.cursors,
+      chainId: this.chainId,
+      kinds: CHANGE_EVENTS,
+      floorItem: CHANGE_FLOOR_ITEM,
+      nextItem: CHANGE_NEXT_ITEM,
+      limit: PAGE,
+      cutoff: this.r.cutoff,
+      nominee: changeOf,
+      id: changeId,
+    });
+    if (page === null) {
+      this.sender.noteUnread('change', 'the event ledger of pending changes');
+      return;
+    }
+    const changes = page.nominees;
+    const settled = new Set<string>();
+    if (changes.length > 0) {
+      const now = await this.clock('change');
+      if (now === null) return;
+      const st = (await this.readWithAccounts(changeCalls(changes), changes.map((c) => c.account), 'changes')) as (ChangeState | undefined)[];
+      // One `finalizeSettingChanges` per account applies every due setting.
+      const settingsSent = new Set<Address>();
+      for (const i of this.order(changes.length)) {
+        const c = changes[i];
+        const key = changeId(c);
+        const s = st[i];
+        const a = this.accounts.get(c.account);
+        if (s === undefined || a === undefined) {
+          this.sender.noteUnread(`finalize:${key}`, 'its pending change or its account');
+          continue;
+        }
+        if (pendingAt(c, s) !== c.at) {
+          settled.add(key);
+          continue;
+        }
+        if (c.at > now) {
+          this.wait('change-not-due');
+          continue;
+        }
+        const why = this.blocked(c, s, a, now);
+        if (why !== null) {
+          this.wait(why);
+          continue;
+        }
+        if (c.t === 'setting' && settingsSent.has(c.account)) continue;
+        // eslint-disable-next-line no-await-in-loop
+        const res = await this.finalize(c);
+        if (c.t === 'setting') settingsSent.add(c.account);
+        // A due switch-off waits while the account has open rows; the chain
+        // refuses the call only when nothing else was due.
+        if (res === SWITCH_OFF_WAITS) this.wait('switch-off-waits-for-open-rows');
+        if (res !== 'landed') continue;
+        // The call applies every other due setting, but a switch-off only
+        // once no row is open; the next run's read says whether it did.
+        if (c.t === 'setting' && c.kind === CHANGE_DISABLE) continue;
+        settled.add(key);
+        this.report.finalized.push(changeLabel(c));
+      }
+    }
+    await page.liftFloor(this.r.finalized, (c) => settled.has(changeId(c)), async (cs, block: FinalBlock) => {
+      const at = await this.readChanges(cs, block.number);
+      const done = new Set(cs.filter((c, j) => at[j] !== undefined && pendingAt(c, at[j]!) !== c.at).map(changeId));
+      return (c) => done.has(changeId(c));
+    });
+  }
+
+  /** Why a due change is not sent, in the chain's terms; null to send. */
+  private blocked(c: Change, s: ChangeState, a: ProtectedAccount, now: bigint): string | null {
+    if (!a.enabled) return 'change-mode-off';
+    switch (c.t) {
+      case 'setting':
+        // An unlock is how a locked account gets out; every other setting
+        // was dropped by the lock, so a due one here is the unlock's.
+        return null;
+      case 'allow':
+        if (a.locked) return 'change-account-locked';
+        if (a.retired) return 'allowlist-add-on-retired-account';
+        // Like a signer addition, it expires one delay after it matures.
+        if (now > c.at + BigInt(a.delaySeconds)) return 'allowlist-add-expired';
+        return null;
+      case 'signerAdd': {
+        if (a.locked) return 'change-account-locked';
+        const sc = s as SignerChange;
+        if (!sc.accepted) return 'signer-not-accepted';
+        // It expires one delay after it matures; only a cancel clears it.
+        if (now > sc.addAt + BigInt(a.delaySeconds)) return 'signer-add-expired';
+        return null;
+      }
+      case 'signerRemove':
+        return a.locked ? 'change-account-locked' : null;
+      case 'replace': {
+        const [p, approvals, threshold] = s as readonly [ReplacementProposal, bigint, bigint];
+        const manager = (a.retired ? lower(a.controller) : c.account) as Address;
+        // A proposal the manager made needs no approvals; any other still
+        // needs its majority among the signers active now.
+        if (lower(p.proposedBy) !== manager && approvals < threshold) return 'replacement-lacks-approvals';
+        return null;
+      }
+    }
+  }
+
+  private finalize(c: Change): Promise<string> {
+    switch (c.t) {
+      case 'setting':
+        return this.sender.call('finalize', `settings:${c.account}`, 'finalizeSettingChanges', [c.account]);
+      case 'allow':
+        return this.sender.call('finalize', `allow:${c.account}:${c.other}`, 'finalizeAddAllowlisted', [c.account, c.other]);
+      case 'signerAdd':
+        return this.sender.call('finalize', `signer-add:${c.account}:${c.other}`, 'finalizeAddSigner', [c.account, c.other]);
+      case 'signerRemove':
+        return this.sender.call('finalize', `signer-remove:${c.account}:${c.other}`, 'finalizeRemoveSigner', [c.account, c.other]);
+      case 'replace':
+        return this.sender.call('finalize', `replace:${c.account}`, 'finalizeReplacement', [c.account]);
+    }
+  }
+
+  /** Each change's own pending record at `block`, by position; undefined
+   *  where unread. */
+  private async readChanges(cs: readonly Change[], block: bigint): Promise<(ChangeState | undefined)[]> {
+    return (await this.r.many(changeCalls(cs), 'changes-final', block)) as (ChangeState | undefined)[];
+  }
+
+  private isEvent(log: { topics: readonly string[]; address: string }, name: string, id: bigint): boolean {
+    return log.address.toLowerCase() === this.r.diamond.toLowerCase() && eventIdOf(log, name) === id;
+  }
+
+  private delivered(receipt: StepSender['receipt'], id: bigint): bigint {
+    for (const log of receipt?.logs ?? []) {
+      if (log.address.toLowerCase() !== this.r.diamond.toLowerCase()) continue;
+      const d = payoutDelivered(log, id);
+      if (d !== null) return d;
+    }
+    return 0n;
+  }
+}
+
+/** The read of each change's own pending record. */
+function changeCalls(cs: readonly Change[]): { functionName: string; args: readonly unknown[] }[] {
+  return cs.map((c) => {
+    switch (c.t) {
+      case 'setting':
+        return { functionName: 'getProtectedAccount', args: [c.account] };
+      case 'allow':
+        return { functionName: 'getAllowlistPendingAt', args: [c.account, c.other] };
+      case 'signerAdd':
+      case 'signerRemove':
+        return { functionName: 'getSignerChange', args: [c.account, c.other] };
+      case 'replace':
+        return { functionName: 'getReplacement', args: [c.account] };
+    }
+  });
+}
+
+/** The accounts the page's events name (`PayoutQueued` and
+ *  `PositionTransferQueued` both carry it), so their settings are read with
+ *  the rows' own records. */
+function accountsNamed(page: LedgerRotation<bigint>): Address[] {
+  return page.rows.flatMap((row, i) => {
+    const a = page.named[i] === null ? null : lower(row.args.account);
+    return a === null ? [] : [a];
+  });
+}
+
+/** What a change's own record read returns. */
+type ChangeState = ProtectedAccount | bigint | SignerChange | readonly [ReplacementProposal, bigint, bigint];
+
+/** The pending time the chain holds now for the change a row announced. A
+ *  change is still the row's own only while this equals the row's time. */
+export function pendingAt(c: Change, s: ChangeState): bigint {
+  switch (c.t) {
+    case 'setting':
+      return BigInt((s as ProtectedAccount)[SETTING_FIELD[c.kind]] as bigint);
+    case 'allow':
+      return BigInt(s as bigint);
+    case 'signerAdd':
+      return BigInt((s as SignerChange).addAt);
+    case 'signerRemove':
+      return BigInt((s as SignerChange).removeAt);
+    case 'replace': {
+      const p = (s as readonly [ReplacementProposal, bigint, bigint])[0];
+      // A different nominee, or none, is no longer this row's proposal.
+      return lower(p.nominee) === c.other ? BigInt(p.readyAt) : -1n;
+    }
+  }
+}
+
+// ─── Receipt logs ───────────────────────────────────────────────────────────
+
+function eventIdOf(log: { topics: readonly string[]; data?: string }, name: string): bigint | null {
+  try {
+    const ev = decodeEventLog({ abi: ABI, data: (log.data ?? '0x') as Hex, topics: log.topics as [Hex, ...Hex[]] });
+    if (ev.eventName !== name) return null;
+    return BigInt((ev.args as unknown as { id: bigint }).id);
+  } catch {
+    return null;
+  }
+}
+
+function payoutDelivered(log: { topics: readonly string[]; data?: string }, id: bigint): bigint | null {
+  try {
+    const ev = decodeEventLog({ abi: ABI, data: (log.data ?? '0x') as Hex, topics: log.topics as [Hex, ...Hex[]] });
+    if (ev.eventName !== 'PayoutReleased') return null;
+    const a = ev.args as unknown as { id: bigint; delivered: bigint };
+    return BigInt(a.id) === id ? BigInt(a.delivered) : null;
+  } catch {
+    return null;
+  }
+}

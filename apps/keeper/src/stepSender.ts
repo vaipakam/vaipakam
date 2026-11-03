@@ -11,8 +11,10 @@
 // past it.
 //
 // Shared by the passes that work this way: the reward day-close pass
-// (`rewardDayClose/sender.ts` configures it) and the reward close-out pass
-// (`rewardCloseOut`). Each pass names its own ABI, the refusals that are
+// (`rewardDayClose/sender.ts` configures it), the reward close-out pass
+// (`rewardCloseOut`) and the #2984 passes (`protocolUpkeep`,
+// `prepayAutoList`, `protectedAccount`). A pass whose steps are independent
+// gives each its own share (`stepBudgets`) so none can starve another. Each pass names its own ABI, the refusals that are
 // races rather than faults, and the refusal a paused protocol gives.
 
 import type { Abi, Hex, PublicClient, TransactionReceipt } from 'viem';
@@ -39,6 +41,14 @@ export interface StepSenderConfig {
   abi: Abi;
   /** Sends per chain per run. */
   maxSends: number;
+  /** Sends per step per run, when the pass has several independent steps.
+   *  Their sum may not exceed `maxSends`, so every step keeps its own share
+   *  whatever the steps before it found to do: an early step with a long
+   *  queue cannot leave a later one with nothing, run after run. A step that
+   *  reaches its share is skipped for the rest of the run (`budgetReached`)
+   *  while the other steps go on. With this set, a call from a step it does
+   *  not name is a programming error and throws. */
+  stepBudgets?: Readonly<Record<string, number>>;
   /** How long a send's receipt is waited for. */
   receiptTimeoutMs: number;
   /** Refusals that mean another caller got there first: skipped, not refused. */
@@ -87,6 +97,9 @@ export class StepSender {
   readonly refused = new Map<string, string>();
   /** `step:subject` keys whose call landed this run. */
   readonly landed = new Set<string>();
+  /** Steps that used their whole `stepBudgets` share this run. */
+  readonly budgetReached = new Set<string>();
+  private readonly stepSends = new Map<string, number>();
   /** `step:subject` → what could not be read, for steps a failed read kept
    *  from being tried this run. Every step that skips on an unknown says so
    *  here, so nothing is held by a read silently. */
@@ -95,7 +108,13 @@ export class StepSender {
   constructor(
     private readonly config: StepSenderConfig,
     private readonly deps: StepSenderDeps,
-  ) {}
+  ) {
+    const shares = Object.values(config.stepBudgets ?? {});
+    const sum = shares.reduce((a, b) => a + b, 0);
+    if (shares.some((n) => !Number.isInteger(n) || n < 1) || sum > config.maxSends) {
+      throw new Error(`${config.pass}: step budgets must be positive whole numbers summing to at most maxSends (${config.maxSends})`);
+    }
+  }
 
   /** Record that `what` could not be read, keeping `step:subject` from being
    *  worked this run. Several reads for one step are all named. */
@@ -155,6 +174,14 @@ export class StepSender {
         return why;
       }
     }
+    const share = this.config.stepBudgets === undefined ? undefined : this.config.stepBudgets[step];
+    if (this.config.stepBudgets !== undefined && share === undefined) {
+      throw new Error(`${pass}: step '${step}' has no send budget`);
+    }
+    if (share !== undefined && (this.stepSends.get(step) ?? 0) >= share) {
+      this.budgetReached.add(step);
+      return 'skipped';
+    }
     if (this.sends >= this.config.maxSends) return this.stop('send-budget');
     if (Date.now() >= this.deps.sendDeadline) return this.stop('deadline');
     if (this.ctx === undefined) this.ctx = this.deps.context();
@@ -198,6 +225,7 @@ export class StepSender {
     }
     if (worth !== undefined && !worth(simulated)) return 'idle';
     this.sends += 1;
+    this.stepSends.set(step, (this.stepSends.get(step) ?? 0) + 1);
     const label = `[keeper] ${pass} chain=${ctx.chainId} ${functionName}(${subject})`;
     let hash: Hex;
     try {

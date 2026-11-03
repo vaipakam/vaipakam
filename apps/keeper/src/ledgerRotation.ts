@@ -116,3 +116,27 @@ export async function readLedgerRotation<K>(spec: RotationSpec<K>): Promise<Ledg
     },
   };
 }
+
+/** The golden ratio's fractional part, the stride of `attemptOrder`. */
+const GOLDEN = (Math.sqrt(5) - 1) / 2;
+
+/**
+ * The order to try a page's `n` nominees in on run `visit`: every position
+ * once, starting at a point that moves round the page from run to run.
+ *
+ * A page is read from where the last run stopped, but a short queue fits in
+ * one page, so every run reads the same page. A loop that tried it from the
+ * top each run would spend its time on the same leading rows (a send refused
+ * in simulation uses no share of sends, only time) and could never reach a
+ * row further down. Starting each run elsewhere shares the time out. The
+ * starts follow the golden-ratio sequence, which spreads successive starts
+ * evenly over the page however long it is, so a row behind k slow attempts
+ * gets an early turn within about n/k runs rather than n. Deterministic per
+ * run, and needs no stored state.
+ */
+export function attemptOrder(n: number, visit: number): number[] {
+  if (n <= 0) return [];
+  const v = Math.abs(Math.trunc(visit));
+  const start = Math.min(n - 1, Math.floor(((v * GOLDEN) % 1) * n));
+  return Array.from({ length: n }, (_, j) => (start + j) % n);
+}

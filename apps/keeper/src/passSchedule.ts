@@ -50,6 +50,7 @@ import { PASS_CADENCE_SEC as ZEROED_DAY_CADENCE_SEC, runRewardZeroedDay } from '
 import { PASS_CADENCE_SEC as RETURN_TRANSPORT_CADENCE_SEC, runRewardReturnTransport } from './rewardReturnTransport';
 import { PASS_CADENCE_SEC as PROTOCOL_UPKEEP_CADENCE_SEC, runProtocolUpkeep } from './protocolUpkeep';
 import { PASS_CADENCE_SEC as PREPAY_AUTO_LIST_CADENCE_SEC, runPrepayAutoList } from './prepayAutoList';
+import { PASS_CADENCE_SEC as PROTECTED_ACCOUNT_CADENCE_SEC, runProtectedAccount } from './protectedAccount';
 
 /** The UTC hour `dailyOracleSnapshot` acts in, and how long it stays
  *  open — mirroring the window that pass already self-checks against.
@@ -310,6 +311,12 @@ export const KEEPER_PASSES: readonly KeeperPass[] = [
     cadenceMinutes: PREPAY_AUTO_LIST_CADENCE_SEC / 60,
     why: 'lists NFT collateral at the floor during grace; the shortest grace is one hour, and every unlisted minute is one a buyer at the floor cannot take it (#2984)',
     run: runPrepayAutoList,
+  },
+  {
+    name: 'protectedAccount',
+    cadenceMinutes: PROTECTED_ACCOUNT_CADENCE_SEC / 60,
+    why: 'releases protected payouts and transfers and applies matured protected-mode changes; each is due the second its delay ends, and every staggered minute of the hour is already taken (#3088)',
+    run: runProtectedAccount,
   },
 ];
 
