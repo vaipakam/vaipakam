@@ -368,7 +368,7 @@ export async function retryTierPushes(chainId: number, diamond: Address, sender:
       out.waiting.push(`${user}: ${short.join(', ')}`);
       continue;
     }
-    if (sender.stopped) break;
+    if (sender.stopped || sender.budgetReached.has('tier-push')) break;
     // eslint-disable-next-line no-await-in-loop
     const res = await sender.call('tier-push', user, 'deliverTierPush', [user]);
     if (res !== 'landed') continue;

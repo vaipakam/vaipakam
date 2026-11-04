@@ -679,6 +679,15 @@ evidence that the migration has completed.
 - Neither step pays a fee or moves value to the keeper. The keeper works a
   chain only when its connection answers for that chain, and a value it
   could not read stops the affected step and is stated in the run's report.
+- The upkeep pass bounds its sends per chain per run, and each of its steps
+  (these two, and the sanctions, tier and reward-index steps below) has its
+  own share of that bound. A long backlog in one step therefore cannot take
+  the sends another step needs in the same run; a step that reaches its
+  share stops, the run's report says so, and the rest waits for the next
+  run.
+- Where a step works through a list of candidates and cannot send to all of
+  them in one run, it starts at a different place in the list each run, so
+  the candidates at the end of a long list are not skipped run after run.
 
 ## Committing flagged prepay-sale recipients
 

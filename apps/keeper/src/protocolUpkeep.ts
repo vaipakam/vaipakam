@@ -69,7 +69,7 @@ import type { PassTick } from './passSchedule';
 import { deadlineClient, PastRunDeadline } from './batchRead';
 import { shortErr } from './callErrors';
 import { d1EventLedger, type EventLedger } from './eventLedger';
-import { readLedgerRotation } from './ledgerRotation';
+import { attemptOrder, readLedgerRotation } from './ledgerRotation';
 import { d1ScanCursors, type ScanCursors } from './scanCursors';
 import { PassReader } from './passReader';
 import { StepSender } from './stepSender';
@@ -95,8 +95,25 @@ export const ABI = [
 /** The pass's cadence, in seconds; the scheduler reads it from here. Neither
  *  step is time-critical to the minute. */
 export const PASS_CADENCE_SEC = 60 * 60;
-/** Sends per chain per run. */
-export const MAX_SENDS_PER_RUN = 10;
+/**
+ * Sends per step per run (#3093). Each step keeps its own share, so a long
+ * queue in an early step (a backlog of expirable buyback intents, say) cannot
+ * hold the later steps back run after run: a step that reaches its share is
+ * skipped for the rest of the run while the others go on
+ * (`StepSender.stepBudgets`). The tier LTV refresh and the tier-exclusion
+ * refresh are one call a run each.
+ */
+export const STEP_SENDS = {
+  expire: 3,
+  refresh: 1,
+  'sanctions-sync': 2,
+  'tier-push': 2,
+  'tier-exclusion': 1,
+  'reward-index': 2,
+  'sanctions-flag': 2,
+} as const satisfies Record<string, number>;
+/** Sends per chain per run: the steps' shares together. */
+export const MAX_SENDS_PER_RUN = Object.values(STEP_SENDS).reduce((a, b) => a + b, 0);
 export const RECEIPT_TIMEOUT_MS = 30_000;
 /** Commit rows read per run from the ledger, rotating above the expiry floor. */
 export const BUYBACK_PAGE = 200;
@@ -171,6 +188,8 @@ export interface UpkeepReport {
   refused: Map<string, string>;
   unread: Map<string, string>;
   stopped: string | null;
+  /** Steps that used their whole share this run (`STEP_SENDS`). */
+  budgetReached: Set<string>;
 }
 
 export async function runProtocolUpkeep(env: Env, tick: PassTick): Promise<void> {
@@ -241,6 +260,7 @@ export function describeReport(r: UpkeepReport): string {
     ...(r.refused.size > 0 ? [`refused=${[...r.refused].map(([k, v]) => `${k}(${v})`).join(',')}`] : []),
     ...(r.unread.size > 0 ? [`unread=${[...r.unread].map(([k, v]) => `${k}(${v})`).join(',')}`] : []),
     ...(r.stopped ? [`stopped=${r.stopped}`] : []),
+    ...(r.budgetReached.size > 0 ? [`step-budget-reached=${[...r.budgetReached].join(',')} (the rest waits for the next run)`] : []),
   ];
   return parts.join(' ');
 }
@@ -252,6 +272,7 @@ export async function upkeepOnce(chainId: number, diamond: Address, deps: Upkeep
       pass: 'protocolUpkeep',
       abi: ABI,
       maxSends: MAX_SENDS_PER_RUN,
+      stepBudgets: STEP_SENDS,
       receiptTimeoutMs: RECEIPT_TIMEOUT_MS,
       races: RACES,
       pausedRefusal: PAUSED_REFUSAL,
@@ -276,6 +297,7 @@ export async function upkeepOnce(chainId: number, diamond: Address, deps: Upkeep
     refused: sender.refused,
     unread: sender.unread,
     stopped: null,
+    budgetReached: sender.budgetReached,
   };
   const r = new Reader(deps, diamond);
   try {
@@ -400,7 +422,11 @@ async function expireBuybacks(r: Reader, sender: StepSender, report: UpkeepRepor
       return;
     }
     const recs = await readOrders(orders, 'buyback orders');
-    for (let i = 0; i < orders.length; i++) {
+    // Each run starts elsewhere on the page (`attemptOrder`), so orders
+    // refused in simulation at the top cannot starve the ones below them.
+    // Every order is still read for the floor once the step's share is used:
+    // the call is then skipped without a simulation.
+    for (const i of attemptOrder(orders.length, deps.visit ?? 0)) {
       const h = orders[i];
       const rec = recs[i] as BuybackOrder | undefined;
       if (rec === undefined) {
