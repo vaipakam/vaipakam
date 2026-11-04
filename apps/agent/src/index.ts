@@ -942,7 +942,7 @@ async function handleTelegramWebhook(
     try {
       links = await recordLockRequests(env.DB, lock.chatId, lock.updateId, lock.sentAt, nowSec);
     } catch (err) {
-      console.error(`[agent] LOCK not recorded: ${err instanceof Error ? err.message.slice(0, 200) : 'unknown error'}`);
+      console.error('[agent] LOCK not recorded:', redactedError(err));
       await sendMessage(env.TG_BOT_TOKEN, lock.chatId, lockNotRecorded('en'));
       return new Response('ok', { status: 200 });
     }
