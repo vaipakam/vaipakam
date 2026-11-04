@@ -331,11 +331,10 @@ evidence that the migration has completed.
   incompatible reward clocks do not count toward Base's daily figures.
   Authenticated chain-wide accounting still applies to a late or mismatched
   report. A report received before Base's clock is set remains retryable.
-- Until fresh deployment replaces older testnets, the keeper may quote their
-  older B4 report only when the mirror's sender, its reporting route,
-  and Base's receiver are confirmed compatible. An unreadable or unsupported
-  channel holds every close and names the broken link. The new contracts
-  themselves retain no older-format fallback.
+- Every chain the keeper serves runs that one format; the keeper sends no
+  older-format report. A close goes out only when both ends of the reporting
+  channel are confirmed to carry the current format. An unreadable or
+  unsupported channel holds every close and names the broken link.
 - Every report or broadcast pays at most its configured per-chain send-fee
   ceiling, defaulting to 0.002 native token. An excessive quote holds the send
   and names both amounts; malformed fee settings hold all affected sends.
