@@ -555,12 +555,20 @@ account or chain set.
    ```bash
    npm run deploy
    set -o pipefail
+   failed=0
    for chain in 84532 421614 97; do
      curl -sS --fail-with-body -X POST \
        -H "Authorization: Bearer $WATCHER_RUN_TOKEN" \
-       "https://vaipakam-mesh-watcher.<subdomain>.workers.dev/run?chain=$chain" | jq
+       "https://vaipakam-mesh-watcher.<subdomain>.workers.dev/run?chain=$chain" | jq \
+       || { echo "chain $chain FAILED verification"; failed=1; }
    done
+   [ "$failed" -eq 0 ] && echo "all chains verified"
    ```
+
+   A loop returns the status of its LAST command only, so without the
+   `failed` flag a 503 on Base followed by a clean BNB run would read as a
+   pass. The final line is the verdict: it prints and succeeds only when
+   every chain did.
 
    One request per chain, because each run observes one chain, like a cron
    tick. Without `?chain=` it observes the chain the rotation is on now.
