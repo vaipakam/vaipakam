@@ -11,7 +11,7 @@
 
 import { isAuthorized } from './auth';
 import { statusFor } from './health';
-import type { Env } from './env';
+import { resolveEnv, type Env } from './env';
 import { runTick } from './runner';
 
 export default {
@@ -22,7 +22,7 @@ export default {
     ctx: ExecutionContext,
   ): Promise<void> {
     ctx.waitUntil(
-      runTick(env).then((summary) => {
+      resolveEnv(env).then(runTick).then((summary) => {
         console.log(`mesh-watcher tick: ${JSON.stringify(summary)}`);
       }),
     );
@@ -47,7 +47,7 @@ export default {
    * mismatched token is rejected, and a MISSING `WATCHER_RUN_TOKEN`
    * closes the endpoint rather than opening it.
    */
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request: Request, rawEnv: Env): Promise<Response> {
     const url = new URL(request.url);
 
     if (url.pathname === '/run') {
@@ -57,6 +57,7 @@ export default {
           { status: 405, headers: { allow: 'POST' } },
         );
       }
+      const env = await resolveEnv(rawEnv);
       if (!isAuthorized(request, env)) {
         return Response.json(
           { error: 'unauthorized' },

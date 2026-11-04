@@ -236,10 +236,11 @@ exactly the assumption that would leave the attacker authorized
 > remaining operator step, gated on a clean nightly backup.
 >
 > Its successor is `ops/mesh-watcher` (VPFI recycling mesh invariants),
-> built for its own D1 and the same `TG_OPS_BOT_TOKEN` ops bot. It is
-> code-complete but **not deployed** (`CloudflareCronSlots.md` records it
-> as holding no trigger), so nothing checks those mesh invariants today.
-> Its D1 creation, secrets and first deploy are operator steps in
+> deployed 2026-11-04 with its own D1. It reads the ops bot token, the ops
+> chat id and its RPC URLs from the account Secrets Store
+> `vaipakam-credentials`, so rotating `TG_OPS_BOT_TOKEN` there with
+> `wrangler secrets-store secret update` reaches it with no redeploy. Its
+> one per-Worker secret is `WATCHER_RUN_TOKEN`; see
 > `ops/mesh-watcher/README.md`.
 
 > **T-068 status:** The cross-chain layer migrated from LayerZero to
