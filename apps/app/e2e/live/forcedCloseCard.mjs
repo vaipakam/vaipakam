@@ -1093,6 +1093,7 @@ const KNOWN_STATES = new Set([
   'ready-rental',
   'blocked-no-consent',
   'blocked-paused',
+  'blocked-kyc',
   'unknown',
   'not-applicable',
 ]);

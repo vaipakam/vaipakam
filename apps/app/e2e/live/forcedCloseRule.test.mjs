@@ -42,7 +42,7 @@ describe('the drive mirrors decideForcedClose (#2133)', () => {
         expect(decideForcedClose(input), JSON.stringify(input)).toBe(appDecideForcedClose(input));
       }
     }
-    // 3^9 × 3: the whole space, not a sample.
+    // Three values per fact: the whole space, not a sample.
     expect(n).toBe(3 ** FORCED_CLOSE_FACTS.length);
   });
 });
@@ -91,6 +91,7 @@ describe('the drive mirrors the read plan and its mapping (#2133)', () => {
     defaultable: [true, false, 0n],
     sequencer: [true, false],
     paused: [true, false],
+    kyc: [[true, '0x'], [false, '0x5bfa8f2b'], 'nope'],
     match: [[true, 3n], [false, 0n], 'nope'],
     matchConfig: [[true, 0n, 0n], [false, 500n, 25n], [0n, 0n, 0n], 'nope'],
     liquidity: [0, 1, 2n],
@@ -135,6 +136,7 @@ const ALL_READ = {
   defaultable: true,
   sequencerHealthy: true,
   paused: false,
+  lenderKycAdmitted: true,
   internalMatchCandidate: false,
   collateralIlliquid: false,
   ltvCollapsed: false,
@@ -145,6 +147,7 @@ describe('statesReachable', () => {
     expect([...statesReachable(ALL_READ)]).toEqual(['ready-needs-route']);
     expect([...statesReachable({ ...ALL_READ, paused: true })]).toEqual(['blocked-paused']);
     expect([...statesReachable({ ...ALL_READ, defaultable: false })]).toEqual(['not-yet']);
+    expect([...statesReachable({ ...ALL_READ, lenderKycAdmitted: false })]).toEqual(['blocked-kyc']);
     expect([...statesReachable({ ...ALL_READ, sequencerHealthy: false })]).toEqual(['blocked-sequencer']);
     expect([...statesReachable({ ...ALL_READ, collateralIlliquid: true, consentFromBoth: false })]).toEqual([
       'blocked-no-consent',
@@ -156,7 +159,13 @@ describe('statesReachable', () => {
     // A paused protocol decides before every other gate.
     expect([...statesReachable({ paused: true, active: true })]).toEqual(['blocked-paused']);
     // A refused deadline decides before the sequencer and everything after it.
-    expect([...statesReachable({ active: true, paused: false, defaultable: false })]).toEqual(['not-yet']);
+    expect(
+      [...statesReachable({ active: true, paused: false, lenderKycAdmitted: true, defaultable: false })],
+    ).toEqual(['not-yet']);
+    // The KYC gate decides before the repayment window (#2083).
+    expect([...statesReachable({ active: true, paused: false, lenderKycAdmitted: false })]).toEqual([
+      'blocked-kyc',
+    ]);
   });
 
   it('widens over an unread fact the rule does reach', () => {

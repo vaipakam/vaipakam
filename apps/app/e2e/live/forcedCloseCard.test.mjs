@@ -65,6 +65,7 @@ const CHAIN_FACTS = Object.freeze({
   defaultable: true,
   sequencerHealthy: true,
   paused: false,
+  lenderKycAdmitted: true,
   internalMatchCandidate: false,
   collateralIlliquid: false,
   ltvCollapsed: false,
@@ -78,6 +79,7 @@ describe('declaredStateConsistent', () => {
   it('verifies each resolved state when the facts at the block resolve to it and nothing else', () => {
     const cases = [
       ['blocked-paused', { paused: true }],
+      ['blocked-kyc', { lenderKycAdmitted: false }],
       ['not-yet', { defaultable: false }],
       ['blocked-sequencer', { sequencerHealthy: false }],
       ['ready-internal-match', { internalMatchCandidate: true }],

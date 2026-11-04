@@ -795,6 +795,19 @@ export function ForcedCloseCard({
       receipt: 'standard',
       incentive: null,
     },
+    'blocked-kyc': {
+      body: copy.forcedClose.blockedKyc,
+      // Resolved BEFORE the repayment window, as the contract checks it,
+      // so the chain has not said the loan is overdue.
+      overdue: false,
+      // The gate refuses before the match dispatch, so no match can win.
+      matchRace: false,
+      actionBlock: false,
+      outcomeNote: null,
+      claimNote: null,
+      receipt: 'standard',
+      incentive: null,
+    },
     unknown: {
       body: copy.forcedClose.unknown,
       overdue: false,

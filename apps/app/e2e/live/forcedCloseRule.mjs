@@ -73,6 +73,7 @@ export function forcedCloseReadPlan(input) {
     { key: 'defaultable', contract: { ...d, functionName: 'isLoanDefaultable', args: [input.loanId] } },
     { key: 'sequencer', contract: { ...d, functionName: 'sequencerHealthy' } },
     { key: 'paused', contract: { ...d, functionName: 'paused' } },
+    { key: 'kyc', contract: { ...d, functionName: 'defaultKycAdmission', args: [input.loanId] } },
     { key: 'match', contract: { ...d, functionName: 'hasInternalMatchCandidate', args: [input.loanId] } },
     { key: 'matchConfig', contract: { ...d, functionName: 'getInternalMatchConfigBundle' } },
   ];
@@ -98,6 +99,7 @@ export const FORCED_CLOSE_FACTS = Object.freeze([
   'defaultable',
   'sequencerHealthy',
   'paused',
+  'lenderKycAdmitted',
   'internalMatchCandidate',
   'collateralIlliquid',
   'ltvCollapsed',
@@ -134,6 +136,7 @@ export function forcedCloseFacts(plan, slots) {
   }
   const bool = (key) => (ok.has(key) ? Boolean(ok.get(key)) : undefined);
   const loanRaw = ok.get('loan');
+  const kycRaw = ok.get('kyc');
   const matchRaw = ok.get('match');
   const matchConfigRaw = ok.get('matchConfig');
   const liquidityRaw = ok.get('liquidity');
@@ -160,6 +163,7 @@ export function forcedCloseFacts(plan, slots) {
     defaultable: bool('defaultable'),
     sequencerHealthy: bool('sequencer'),
     paused: bool('paused'),
+    lenderKycAdmitted: Array.isArray(kycRaw) && typeof kycRaw[0] === 'boolean' ? kycRaw[0] : undefined,
     internalMatchCandidate: Array.isArray(matchRaw) ? Boolean(matchRaw[0]) : undefined,
     internalMatchEnabled:
       Array.isArray(matchConfigRaw) && typeof matchConfigRaw[0] === 'boolean' ? matchConfigRaw[0] : undefined,
@@ -178,6 +182,8 @@ export function decideForcedClose(input) {
   if (!input.active) return 'not-applicable';
   if (input.paused === true) return 'blocked-paused';
   if (input.paused === undefined) return 'unknown';
+  if (input.lenderKycAdmitted === false) return 'blocked-kyc';
+  if (input.lenderKycAdmitted === undefined) return 'unknown';
   if (input.defaultable === undefined) return 'unknown';
   if (!input.defaultable) return 'not-yet';
   if (input.sequencerHealthy === false) return 'blocked-sequencer';
@@ -240,6 +246,7 @@ const VIEW_OF = Object.freeze({
   defaultable: 'isLoanDefaultable',
   sequencerHealthy: 'sequencerHealthy',
   paused: 'paused',
+  lenderKycAdmitted: 'defaultKycAdmission',
   internalMatchCandidate: 'hasInternalMatchCandidate',
   collateralIlliquid: 'checkLiquidityOnActiveNetwork',
   ltvCollapsed: 'calculateLTV / getRiskConfig',

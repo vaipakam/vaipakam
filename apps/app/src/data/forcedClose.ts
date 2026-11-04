@@ -39,25 +39,23 @@
  * promising an exclusive right would be describing a different
  * contract.
  *
- * ## One contract gate this module deliberately does not model
+ * ## The lender-KYC gate is asked, not modelled (#2083)
  *
  * Between `whenNotPaused` and the grace check, `triggerDefault` carries a
- * tiered KYC gate on the LENDER — `meetsKYCRequirement(loan.lender,
- * valueNumeraire)`, reverting `KYCRequired`. It is absent here on
- * purpose, not by oversight: the retail deploy leaves
- * `kycEnforcementEnabled` false, and while it is false
- * `ProfileFacet.meetsKYCRequirement` short-circuits to true, so the gate
- * cannot fire. Modelling it would mean issuing a read whose answer is
- * fixed, to describe a state no retail lender can reach.
+ * tiered KYC gate on the loan's LENDER, reverting `KYCRequired`. Until
+ * #2083 this module left it out, on the argument that the retail deploy
+ * keeps KYC enforcement off, so the gate cannot fire there — which left a
+ * deployment that turns it on (owner decision 2026-10-28: the gate is
+ * kept for one) offering a close-out the chain refuses, with nothing
+ * saying why.
  *
- * It is recorded rather than silently omitted because the ordering
- * comments below claim this resolver mirrors the contract's sequence,
- * and a reader checking that claim would otherwise find a gate missing
- * and not know whether it was deliberate. **On the industrial fork,
- * where KYC enforcement is enabled, this module is incomplete** — a
- * lender failing the tier would be told the position is ready and get a
- * revert. Anyone porting it there has to add that gate between the pause
- * check and the repayment window.
+ * The verdict now comes from the contract's own view,
+ * `DefaultedFacet.defaultKycAdmission`, which applies the same rule the
+ * transaction does (the loan's value, the lender's tier, and an
+ * unconditional pass while enforcement is off). Restating that valuation
+ * here would be a second copy of an oracle-priced rule; asking for it is
+ * one read in the aggregate the card already makes. It resolves in the
+ * contract's position, after the pause and before the repayment window.
  *
  */
 
@@ -119,6 +117,14 @@ export type ForcedCloseReadiness =
    *  any of the routing below is reached — no read further down can
    *  make it submittable (round 28 P2). */
   | 'blocked-paused'
+  /** The deployment enforces KYC and the loan's lender does not meet the
+   *  tier for this loan's value (#2083). `triggerDefault` checks it right
+   *  after `whenNotPaused` and before the repayment window, so the call
+   *  reverts `KYCRequired` for every caller, whatever else holds. Its own
+   *  state, because the reason is the deployment's configuration and the
+   *  lender's verification — neither a wait nor a missing route — and the
+   *  card has to say so. */
+  | 'blocked-kyc'
   /** Past grace, in-kind route, but the loan was opened without
    *  `riskAndTermsConsentFromBoth`.
    *
@@ -168,6 +174,10 @@ export interface ForcedCloseInput {
   sequencerHealthy: boolean | undefined;
   /** The Diamond's `paused()`. `undefined` = unread. */
   paused: boolean | undefined;
+  /** `DefaultedFacet.defaultKycAdmission(loanId).admitted` — the
+   *  contract's own verdict on its lender-KYC gate. Always true where the
+   *  deployment leaves KYC enforcement off. `undefined` = unread. */
+  lenderKycAdmitted: boolean | undefined;
   /** ERC-20 loan or NFT rental. NFT rentals never take the swap path.
    *  `undefined` = unread. */
   assetType: 'erc20' | 'rental' | undefined;
@@ -258,6 +268,12 @@ export function decideForcedClose(input: ForcedCloseInput): ForcedCloseReadiness
   // rather than picking one.
   if (input.paused === true) return 'blocked-paused';
   if (input.paused === undefined) return 'unknown';
+
+  // The lender-KYC gate is next in `triggerDefault`, ahead of the
+  // repayment window (#2083), so a lender below the tier is refused
+  // whether or not the loan is due yet.
+  if (input.lenderKycAdmitted === false) return 'blocked-kyc';
+  if (input.lenderKycAdmitted === undefined) return 'unknown';
 
   // THE REPAYMENT WINDOW COMES FIRST, and this order was inverted until
   // round 42 P2. `triggerDefault` rejects a pre-grace loan at line 249

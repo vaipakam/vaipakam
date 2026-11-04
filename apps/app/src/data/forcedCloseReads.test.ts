@@ -49,6 +49,8 @@ function allGood(plan: readonly ForcedCloseReadEntry[]): MulticallSlot[] {
         return ok(true);
       case 'paused':
         return ok(false);
+      case 'kyc':
+        return ok([true, '0x']);
       case 'match':
         return ok([false, 0n]);
       case 'matchConfig':
@@ -85,6 +87,7 @@ describe('forcedCloseReadPlan', () => {
     expect(byKey.loan.args).toEqual([7n]);
     expect(byKey.defaultable.args).toEqual([7n]);
     expect(byKey.match.args).toEqual([7n]);
+    expect(byKey.kyc.args).toEqual([7n]);
     expect(byKey.ltv.args).toEqual([7n]);
     expect(byKey.liquidity.args).toEqual([ASSET]);
   });
@@ -118,6 +121,7 @@ describe('forcedCloseFacts', () => {
       defaultable: true,
       sequencerHealthy: true,
       paused: false,
+      lenderKycAdmitted: true,
       internalMatchCandidate: false,
       internalMatchEnabled: true,
       collateralIlliquid: false,
@@ -132,6 +136,17 @@ describe('forcedCloseFacts', () => {
     expect(facts.ltvCollapsed).toBeUndefined();
     expect(facts.defaultable).toBe(true);
     expect(facts.block).toBe(46_725_021n);
+  });
+
+  // #2083 — the contract's own verdict on its lender-KYC gate.
+  it('reads the KYC admission verdict, and an unread or odd one as unread', () => {
+    const plan = planWith(ASSET);
+    const at = (slot: MulticallSlot) =>
+      forcedCloseFacts(plan, allGood(plan).map((s, i) => (plan[i].key === 'kyc' ? slot : s)));
+    expect(at(ok([false, '0x5bfa8f2b'])).lenderKycAdmitted).toBe(false);
+    expect(at(fail).lenderKycAdmitted).toBeUndefined();
+    expect(at(ok('true')).lenderKycAdmitted).toBeUndefined();
+    expect(at(fail).defaultable).toBe(true);
   });
 
   it('needs BOTH halves of the LTV comparison', () => {
