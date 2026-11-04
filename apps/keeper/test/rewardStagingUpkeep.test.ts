@@ -4,7 +4,16 @@
  * domains, legacy slices and priority windows.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ContractFunctionRevertedError, encodeErrorResult, type Address, type PublicClient } from 'viem';
+import {
+  ContractFunctionRevertedError,
+  decodeFunctionData,
+  encodeAbiParameters,
+  encodeErrorResult,
+  encodeEventTopics,
+  type AbiEvent,
+  type Address,
+  type PublicClient,
+} from 'viem';
 import {
   ABI,
   MAX_PAGES_PER_SUBJECT,
@@ -13,6 +22,8 @@ import {
   STAGING_RETRY_CADENCE,
   describeReport,
   domainKey,
+  legacyRecordKey,
+  pageEffect,
   recordMove,
   runRewardStagingUpkeep,
   stagingKey,
@@ -33,6 +44,17 @@ const ALICE: Address = '0x00000000000000000000000000000000000000a1';
 const BOB: Address = '0x00000000000000000000000000000000000000b2';
 const NOW = 10_000_000n;
 const ZERO32 = `0x${'0'.repeat(64)}`;
+
+/** A log the Diamond would emit, encoded as a node returns it. */
+function toLog(eventName: string, args: Record<string, unknown>, address: Address = DIAMOND) {
+  const ev = ABI.find((x) => x.type === 'event' && x.name === eventName) as AbiEvent;
+  const topics = encodeEventTopics({ abi: [ev], eventName, args } as never);
+  const plain = ev.inputs.filter((i) => !i.indexed);
+  const data = encodeAbiParameters(plain, plain.map((i) => args[i.name!]));
+  return { address, topics, data, blockNumber: null, logIndex: null, transactionHash: null, transactionIndex: null, blockHash: null, removed: false };
+}
+
+type Event = { name: string; args: Record<string, unknown> };
 
 function revert(errorName: string, args: readonly unknown[] = []): ContractFunctionRevertedError {
   return new ContractFunctionRevertedError({ abi: ABI, data: encodeErrorResult({ abi: ABI, errorName, args } as never), functionName: 'x' });
@@ -82,12 +104,19 @@ interface Dom {
   deadline: bigint;
   covered: boolean;
   unwindLeft: number;
+  /** Revalidation pages its reservation still takes (they move no field the
+   *  view carries). */
+  revalidateLeft?: number;
+  /** Its revalidation finds a day record stale. */
+  stale?: boolean;
 }
 
 interface Slice {
   phase: number;
   pagesLeft: number;
   consumeCursor: bigint;
+  /** Further preparation pages its current wide day's record takes. */
+  wideLeft?: number;
 }
 
 interface Window {
@@ -167,7 +196,7 @@ class FakeDiamond {
     );
 
   /** The contract's checks for `fn`; returns its effect and its result. */
-  private admit(fn: string, args: readonly any[]): { apply: () => void; result: unknown } {
+  private admit(fn: string, args: readonly any[]): { apply: () => void; result: unknown; events?: Event[] } {
     const noop = { apply: () => {}, result: undefined };
     if (this.paused && fn !== 'unwindStagedDayPage') throw revert('EnforcedPause');
     if (this.inert.has(fn)) return { ...noop, result: fn === 'prepareStagedDay' ? [0n, 0n] : false };
@@ -208,6 +237,17 @@ class FakeDiamond {
         if (r.domain !== undefined) throw revert('StagingRecordInDomain', [key, r.domain]);
         if (r.view.phase !== PHASE.reserved && r.view.phase !== PHASE.resolving) throw revert('StagingPhaseInvalid', [key, r.view.phase]);
         const v = r.view;
+        if (v.phase === PHASE.reserved && r.stale) {
+          // The first page revalidates and unwinds a stale record at once.
+          return {
+            result: r.unwindLeft <= 1,
+            events: [{ name: 'StagingRecordStale', args: { key, entryId: 7n } }],
+            apply: () => {
+              r.unwindLeft -= 1;
+              v.phase = r.unwindLeft <= 0 ? PHASE.none : PHASE.unwinding;
+            },
+          };
+        }
         if (BigInt(v.resolveCursor) < BigInt(v.batchCount) || v.phase === PHASE.reserved) {
           return {
             result: false,
@@ -259,7 +299,29 @@ class FakeDiamond {
         for (const [key, r] of this.records) {
           if (r.domain === dk && r.view.phase === PHASE.staging && !r.view.scanComplete) throw revert('StagingScanIncomplete', [key]);
         }
-        if (!d.covered) return { ...noop, result: false };
+        if ((d.revalidateLeft ?? 0) > 0) {
+          return {
+            result: false,
+            apply: () => {
+              d.phase = 2;
+              d.revalidateLeft! -= 1;
+            },
+          };
+        }
+        if (d.stale) {
+          return { result: false, events: [{ name: 'StagingDomainPhase', args: { domainKey: dk, phase: 4 } }], apply: () => void (d.phase = 4) };
+        }
+        if (!d.covered) {
+          const at = d.phase === 1 ? d.firstDay : d.reserveCursor;
+          return {
+            result: false,
+            events: [{ name: 'StagingDomainReserveStopped', args: { domainKey: dk, day: at } }],
+            apply: () => {
+              d.phase = 2;
+              d.reserveCursor = at;
+            },
+          };
+        }
         return {
           result: true,
           apply: () => {
@@ -298,6 +360,19 @@ class FakeDiamond {
         const id = args[0];
         const s = this.slices.get(id);
         if (s === undefined || s.phase !== 1) throw revert('LegacySliceNotPending', [id]);
+        if ((s.wideLeft ?? 0) > 0) {
+          // A wide day: one more preparation page of its record, and no field
+          // of the slice moves.
+          const rk = legacyRecordKey(`0x${'5'.repeat(64)}`, s.consumeCursor);
+          return {
+            result: false,
+            apply: () => {
+              s.wideLeft! -= 1;
+              const r = this.records.get(rk) ?? this.records.get(this.add(rk, { op: OP.legacySlice }))!;
+              r.view.listCountSeen = BigInt((r.view.listCountSeen as bigint | undefined) ?? 0n) + 1n;
+            },
+          };
+        }
         return {
           result: s.pagesLeft <= 1,
           apply: () => {
@@ -313,6 +388,21 @@ class FakeDiamond {
   }
 
   simulateContract = async ({ functionName, args }: { functionName: string; args: readonly unknown[] }) => ({ result: this.admit(functionName, args as any[]).result });
+
+  /** eth_simulateV1, as the previews read it: the page's logs. */
+  previews: string[] = [];
+  simulateCalls = async ({ calls }: { calls: { data: `0x${string}` }[] }) => ({
+    results: calls.map((c) => {
+      const { functionName, args = [] } = decodeFunctionData({ abi: ABI, data: c.data });
+      this.previews.push(functionName);
+      try {
+        const a = this.admit(functionName, args as any[]);
+        return { status: 'success' as const, logs: (a.events ?? []).map((e) => toLog(e.name, e.args)) };
+      } catch (error) {
+        return { status: 'failure' as const, error };
+      }
+    }),
+  });
 
   getChainId = async () => CHAIN;
   getBlockNumber = async () => 120n;
@@ -368,15 +458,26 @@ const K2 = stagingKey(BOB, 0, 6n);
 
 describe('recordMove', () => {
   it('reads the next step from the record alone', () => {
-    expect(recordMove(recordView(), false)).toEqual({ kind: 'prepare' });
-    expect(recordMove(recordView({ scanComplete: true }), false)).toEqual({ kind: 'reserve' });
-    expect(recordMove(recordView({ phase: PHASE.reserved }), false)).toEqual({ kind: 'resolve', payoutOnly: false });
-    expect(recordMove(recordView({ phase: PHASE.resolving, resolveCursor: 1n }), false)).toEqual({ kind: 'resolve', payoutOnly: true });
-    expect(recordMove(recordView({ phase: PHASE.unwinding }), false).kind).toBe('unwind');
-    expect(recordMove(recordView({ pendingOverflow: true }), false).kind).toBe('unwind');
-    expect(recordMove(recordView({ phase: PHASE.none }), false)).toEqual({ kind: 'gone' });
-    expect(recordMove(recordView({ op: OP.legacySlice }), false), "a slice's record is the slice's").toEqual({ kind: 'in-domain' });
-    expect(recordMove(recordView(), true), "a domain's record is the domain's").toEqual({ kind: 'in-domain' });
+    expect(recordMove(recordView())).toEqual({ kind: 'prepare' });
+    expect(recordMove(recordView({ scanComplete: true }))).toEqual({ kind: 'reserve' });
+    expect(recordMove(recordView({ phase: PHASE.reserved }))).toEqual({ kind: 'resolve', payoutOnly: false });
+    expect(recordMove(recordView({ phase: PHASE.resolving, resolveCursor: 1n }))).toEqual({ kind: 'resolve', payoutOnly: true });
+    expect(recordMove(recordView({ phase: PHASE.unwinding })).kind).toBe('unwind');
+    expect(recordMove(recordView({ pendingOverflow: true })).kind).toBe('unwind');
+    expect(recordMove(recordView({ phase: PHASE.none }))).toEqual({ kind: 'gone' });
+    expect(recordMove(recordView({ op: OP.legacySlice })), "a slice's record is the slice's").toEqual({ kind: 'in-domain' });
+  });
+});
+
+describe('pageEffect', () => {
+  const k = `0x${'1'.repeat(64)}`;
+  it("reads an unwind and a reservation stop from the Diamond's own logs about the subject", () => {
+    expect(pageEffect(DIAMOND, [toLog('StagingRecordStale', { key: k, entryId: 1n })] as never, k).unwinds).toBe(true);
+    expect(pageEffect(DIAMOND, [toLog('StagingDomainPhase', { domainKey: k, phase: 4 })] as never, k).unwinds).toBe(true);
+    expect(pageEffect(DIAMOND, [toLog('StagingDomainPhase', { domainKey: k, phase: 2 })] as never, k).unwinds, 'another phase').toBe(false);
+    expect(pageEffect(DIAMOND, [toLog('StagingDomainReserveStopped', { domainKey: k, day: 9n })] as never, k).reserveStoppedAt).toBe(9n);
+    expect(pageEffect(DIAMOND, [toLog('StagingRecordStale', { key: `0x${'2'.repeat(64)}`, entryId: 1n })] as never, k).unwinds, 'another subject').toBe(false);
+    expect(pageEffect(DIAMOND, [toLog('StagingRecordStale', { key: k, entryId: 1n }, BOB)] as never, k).unwinds, 'another contract').toBe(false);
   });
 });
 
@@ -463,6 +564,40 @@ describe('a run', () => {
       expect(d.records.get(K1)!.view.phase).toBe(PHASE.none);
     });
 
+    it("routes a reserved record's stale first page to the unwind step, behind its flag (Codex #3145 r1)", async () => {
+      d.add(K1, { phase: PHASE.reserved, scanComplete: true }, { stale: true });
+      src.record(K1);
+      let r = await run();
+      expect(d.sent, 'its resolution page would unwind it: not sent with the unwinds off').toEqual([]);
+      expect(r.unwindsHeld[0].what).toBe('the contract finds it stale');
+      r = await run({ unwind: true });
+      expect(d.sent).toEqual([`unwindStagedDayPage(${K1.slice(0, 6)})`]);
+      expect(r.landed.get('unwindStagedDayPage')).toBe(1);
+    });
+
+    it('works a record on a gap day of a domain that does not hold it (Codex #3145 r1)', async () => {
+      const DK = domainKey(ALICE, 0);
+      d.domains.set(DK, { user: ALICE, side: 0, phase: 1, firstDay: 4n, lastDay: 6n, preparedThrough: 5n, reserveCursor: 0n, resolveCursor: 0n, deadline: NOW + 86_400n, covered: true, unwindLeft: 1 });
+      d.add(K1, { day: 5n, batchCount: 0n });
+      src.domain(DK);
+      src.record(K1);
+      await run();
+      expect(d.sent).toEqual([`prepareStagedDay(${K1.slice(0, 6)})`, `reserveStagedDay(${K1.slice(0, 6)})`, `resolveStagedDayPage(${K1.slice(0, 6)})`]);
+    });
+
+    it("leaves a domain's own record to the domain on the contract's word, and asks again only when it moves", async () => {
+      const DK = domainKey(ALICE, 0);
+      d.add(K1, { day: 5n, scanComplete: true }, { domain: DK });
+      src.record(K1);
+      let r = await run();
+      expect(d.sent).toEqual([]);
+      expect(r.left[0].what).toMatch(/claim domain/);
+      const before = d.previews.length;
+      r = await run();
+      expect(r.waiting[0].what).toBe('recorded idle at this state');
+      expect(d.previews.length).toBe(before);
+    });
+
     it('continues an unwind under way, and never unwinds a resolving record', async () => {
       d.add(K1, { phase: PHASE.unwinding }, { unwindLeft: 1 });
       d.add(K2, { phase: PHASE.resolving, resolveCursor: 0n, batchCount: 2n, user: BOB });
@@ -542,16 +677,36 @@ describe('a run', () => {
       expect(r.closed).toEqual([`domain ${DK.slice(0, 10)}…`]);
     });
 
-    it('records a reservation that stops short idle before its deadline, and unwinds it after', async () => {
+    it("sends no reservation the contract would stop on its first day, and unwinds past the deadline only on that stop", async () => {
       domain({ covered: false });
       src.domain(DK);
       let r = await run({ unwind: true });
-      expect(d.sent).toEqual([`reserveDomainPage(${DK.slice(0, 6)})`]);
-      expect(r.idle).toEqual([`domain ${DK.slice(0, 10)}…`]);
-      d.now = NOW + 2n * STAGING_RETRY_CADENCE;
+      expect(d.sent).toEqual([]);
+      expect(r.waiting[0].what).toMatch(/day 5 is not covered yet/);
+      d.now = NOW + 2n * 86_400n;
       r = await run({ unwind: true });
-      expect(d.sent.slice(1)).toEqual([`reserveDomainPage(${DK.slice(0, 6)})`, `unwindDomainPage(${DK.slice(0, 6)})`]);
+      expect(d.sent).toEqual([`unwindDomainPage(${DK.slice(0, 6)})`]);
       expect(d.domains.has(DK)).toBe(false);
+    });
+
+    it('carries a revalidation through pages its view does not show, and never reads them as a stop (Codex #3145 r1)', async () => {
+      domain({ phase: 2, revalidateLeft: 2, deadline: NOW - 1n });
+      src.domain(DK);
+      const r = await run({ unwind: true });
+      expect(d.sent).toEqual([`reserveDomainPage(${DK.slice(0, 6)})`, `reserveDomainPage(${DK.slice(0, 6)})`, `reserveDomainPage(${DK.slice(0, 6)})`]);
+      expect(d.domains.get(DK)!.phase, 'revalidated and reserved, not unwound').toBe(3);
+      expect(r.idle).toEqual([]);
+    });
+
+    it("routes a reservation whose revalidation unwinds the domain to the unwind step, behind its flag", async () => {
+      domain({ stale: true });
+      src.domain(DK);
+      let r = await run();
+      expect(d.sent).toEqual([]);
+      expect(r.unwindsHeld[0].what).toBe('the contract finds a day record stale');
+      r = await run({ unwind: true });
+      expect(d.sent[0]).toBe(`reserveDomainPage(${DK.slice(0, 6)})`);
+      expect(d.domains.get(DK)?.phase ?? 0, 'unwinding or cleared').not.toBe(1);
     });
 
     it("leaves a resolving domain whose next payout is a flagged claimant's", async () => {
@@ -572,6 +727,15 @@ describe('a run', () => {
       src.sliceIds = [12n, 13n];
       const r = await run();
       expect(d.sent).toEqual(['stepLegacySlice(12)', 'stepLegacySlice(12)']);
+      expect(r.closed).toEqual(['slice 12']);
+    });
+
+    it("counts a wide day's record moving as progress, though the slice's own fields stand (Codex #3145 r1)", async () => {
+      d.slices.set(12n, { phase: 1, pagesLeft: 1, consumeCursor: 2n, wideLeft: 2 });
+      src.sliceIds = [12n];
+      const r = await run();
+      expect(d.sent).toEqual(['stepLegacySlice(12)', 'stepLegacySlice(12)', 'stepLegacySlice(12)']);
+      expect(r.idle).toEqual([]);
       expect(r.closed).toEqual(['slice 12']);
     });
   });

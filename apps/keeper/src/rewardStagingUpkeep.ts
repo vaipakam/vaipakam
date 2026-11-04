@@ -38,17 +38,38 @@
 // HOLD (the claimant is flagged): that page is the sanctions-hold pass's,
 // which observes the screen on it (`rewardSanctionsHold`).
 //
-// Every call is simulated first (`StepSender`). A page that lands is checked
-// by re-reading its subject: when nothing it reads changed, the subject is
+// Every call is simulated first (`StepSender`). Two pages can do more than
+// their name says, and for those the contract's own preview decides
+// (`pageEffect`, read from an eth_simulateV1 of the page): a Reserved
+// record's first resolution page and a domain's reservation page each
+// revalidate first and UNWIND on a stale finding, so a preview that shows the
+// unwind is routed to the unwind step and its flag; and a domain reservation
+// that would stop on an uncovered day with nothing reserved is not sent (the
+// stop is the contract's own `StagingDomainReserveStopped`, and only it ever
+// leads to a deadline unwind). Every other landed page is checked by
+// re-reading its subject: when nothing it reads changed, the subject is
 // recorded idle at that state and not tried again until its state changes or
 // a day has passed (`STAGING_RETRY_CADENCE`), since coverage depends on
-// sources outside the record. None of the seven entries returns a progress
-// flag, so the subject's own state is the measure.
+// sources outside the record. A record's membership of a claim domain is the
+// contract's to say (`StagingRecordInDomain`), never inferred from a
+// domain's extent.
 //
 // Gated by KEEPER_ENABLED + REWARD_STAGING_UPKEEP_ENABLED (the unwinds also
 // by REWARD_STAGING_UNWIND_ENABLED). Ships disarmed.
 
-import { createPublicClient, encodeAbiParameters, http, keccak256, stringToHex, type Abi, type Address, type PublicClient } from 'viem';
+import {
+  createPublicClient,
+  encodeAbiParameters,
+  encodeFunctionData,
+  http,
+  keccak256,
+  parseEventLogs,
+  stringToHex,
+  type Abi,
+  type Address,
+  type Log,
+  type PublicClient,
+} from 'viem';
 import {
   DIAMOND_ABI_VIEM,
   ProfileFacetABI,
@@ -85,6 +106,10 @@ export const ABI = [
     'getLegacySliceDomain',
     'getTransportBatchWindow',
     'isTransportBatchPriorityUsed',
+    // The events a page's preview is read for (`pageEffect`).
+    'StagingRecordStale',
+    'StagingDomainPhase',
+    'StagingDomainReserveStopped',
   ]),
   ...pick(ProfileFacetABI, ['isSanctionedAddress']),
   // Every error the Diamond can revert with, so a refusal from deep in a page
@@ -309,6 +334,36 @@ export function domainKey(user: Address, side: number): string {
   return keccak256(encodeAbiParameters([{ type: 'address' }, { type: 'uint8' }], [user, side]));
 }
 
+/** `LibRewardCustody.legacyRecordKey`: a legacy slice's record of one day. */
+export function legacyRecordKey(legacyDomain: string, day: bigint): string {
+  return keccak256(encodeAbiParameters([{ type: 'bytes32' }, { type: 'uint256' }], [legacyDomain as `0x${string}`, day]));
+}
+
+/** What a page would do, read from its preview's logs. Exported for tests. */
+export interface PageEffect {
+  /** The page unwinds `key`: a stale finding on a record's first
+   *  resolution page, or a domain sent to Unwinding by its revalidation. */
+  unwinds: boolean;
+  /** The day a domain's reservation stops on, not covered; null when it does
+   *  not stop. */
+  reserveStoppedAt: bigint | null;
+}
+
+export function pageEffect(diamond: Address, logs: readonly Log[], key: string): PageEffect {
+  const own = logs.filter((l) => l.address.toLowerCase() === diamond.toLowerCase());
+  const k = key.toLowerCase();
+  const out: PageEffect = { unwinds: false, reserveStoppedAt: null };
+  for (const e of parseEventLogs({ abi: ABI, logs: own as Log[] })) {
+    const a = e.args as Record<string, unknown>;
+    const of = String(a.key ?? a.domainKey ?? '').toLowerCase();
+    if (of !== k) continue;
+    if (e.eventName === 'StagingRecordStale') out.unwinds = true;
+    else if (e.eventName === 'StagingDomainPhase' && Number(a.phase) === DOMAIN_PHASE.unwinding) out.unwinds = true;
+    else if (e.eventName === 'StagingDomainReserveStopped') out.reserveStoppedAt = BigInt(a.day as bigint);
+  }
+  return out;
+}
+
 /** The measure a landed page is checked against: a digest of everything the
  *  subject's reads returned. Exported for tests. */
 export function stateDigest(...views: readonly unknown[]): string {
@@ -326,13 +381,14 @@ export type RecordMove =
   | { kind: 'resolve'; payoutOnly: boolean }
   | { kind: 'unwind'; why: string };
 
-/** A standalone record's next move, from its own state. A record whose
- *  op is a legacy slice is the slice's; one inside a claim domain is the
- *  domain's (`inDomain`). */
-export function recordMove(rec: StagingRecordView, inDomain: boolean): RecordMove {
+/** A record's next move, from its own state. A record whose op is a legacy
+ *  slice is the slice's. One inside a claim domain is not told apart here:
+ *  its view does not carry its domain, and the entries refuse it by name
+ *  (`StagingRecordInDomain`), which the run reads as the domain's. */
+export function recordMove(rec: StagingRecordView): RecordMove {
   const phase = Number(rec.phase);
   if (phase === PHASE.none) return { kind: 'gone' };
-  if (Number(rec.op) === OP.legacySlice || inDomain) return { kind: 'in-domain' };
+  if (Number(rec.op) === OP.legacySlice) return { kind: 'in-domain' };
   if (phase === PHASE.unwinding) return { kind: 'unwind', why: 'its unwind is under way' };
   if (phase === PHASE.reserved || phase === PHASE.resolving) {
     return { kind: 'resolve', payoutOnly: phase === PHASE.resolving && BigInt(rec.resolveCursor) >= BigInt(rec.batchCount) };
@@ -395,11 +451,12 @@ export async function stagingUpkeepOnce(chainId: number, diamond: Address, deps:
     report.named = { records: records.length, domains: domains.length, slices: slices.length, contests: contests.length };
     if (records.length + domains.length + slices.length === 0) return report;
     const now = (await r.call('the head block', (c) => c.getBlock())).timestamp;
-    const w = new Worker(r, sender, report, deps, now);
-    // Domains first: a claim domain's reservation and resolution carry its
-    // day records, so those are not worked as standalone records below.
-    const openDomains = await w.domains(domains);
-    await w.records(records, openDomains, domains);
+    const keeper = deps.context()?.wallet.account?.address ?? null;
+    const w = new Worker(r, sender, report, deps, now, keeper);
+    // Domains first: a domain's reservation can ask for one of its day
+    // records to be prepared, which it does in its own order.
+    await w.domains(domains);
+    await w.records(records);
     await w.contests(contests, records);
     await w.slices(slices);
   } catch (err) {
@@ -410,7 +467,7 @@ export async function stagingUpkeepOnce(chainId: number, diamond: Address, deps:
   return report;
 }
 
-/** A claim domain the run found open: its key, owner, side and extent. */
+/** A claim domain the run found open: its key, owner, side and state. */
 interface OpenDomain {
   key: string;
   user: Address;
@@ -425,7 +482,41 @@ class Worker {
     private readonly report: StagingUpkeepReport,
     private readonly deps: StagingUpkeepDeps,
     private readonly now: bigint,
+    /** The account previews run from; null when the run has no key. */
+    private readonly keeper: Address | null,
   ) {}
+
+  /** The page's preview (eth_simulateV1), for the logs it would emit. Null
+   *  when it could not be read, which leaves the subject for a later run:
+   *  a page whose effect is unknown is not sent. */
+  private async preview(subject: string, fn: string, args: readonly unknown[]): Promise<{ reverted: true } | { logs: Log[] } | null> {
+    if (this.keeper === null) {
+      this.sender.noteUnread(subject, `the preview of ${fn} (no keeper account to run it from)`);
+      return null;
+    }
+    const account = this.keeper;
+    let results: readonly { status: string; logs?: readonly unknown[] }[];
+    try {
+      ({ results } = await this.r.call(`the preview of ${fn}`, (c) =>
+        c.simulateCalls({
+          account,
+          calls: [{ to: this.r.diamond, data: encodeFunctionData({ abi: ABI, functionName: fn, args } as never) }],
+        }),
+      ));
+    } catch (err) {
+      if (err instanceof PastRunDeadline) throw err;
+      this.sender.noteUnread(subject, `the preview of ${fn} (eth_simulateV1: ${shortErr(err)})`);
+      return null;
+    }
+    const res = results[0];
+    // A reverted preview is the refusal the sender meets and names itself.
+    if (res?.status === 'failure') return { reverted: true };
+    if (res === undefined || res.status !== 'success' || res.logs === undefined) {
+      this.sender.noteUnread(subject, `the preview of ${fn} reported no logs`);
+      return null;
+    }
+    return { logs: res.logs as Log[] };
+  }
 
   private wait(subject: string, what: string) {
     this.report.waiting.push({ subject, what });
@@ -474,7 +565,12 @@ class Worker {
   }
 
   /** An unwind that is due: sent when the step is armed, reported otherwise. */
-  private async unwindDue(subject: string, why: string, fn: 'unwindStagedDayPage' | 'unwindDomainPage', key: string): Promise<CallResult | 'held'> {
+  private async unwindDue(
+    subject: string,
+    why: string,
+    fn: 'unwindStagedDayPage' | 'unwindDomainPage' | 'reserveDomainPage',
+    key: string,
+  ): Promise<CallResult | 'held'> {
     if (this.deps.unwind !== true) {
       this.report.unwindsHeld.push({ subject, what: why });
       return 'held';
@@ -484,7 +580,7 @@ class Worker {
 
   // ─── Claim domains ───────────────────────────────────────────────────────
 
-  async domains(domains: readonly OpenStaging[]): Promise<OpenDomain[]> {
+  async domains(domains: readonly OpenStaging[]): Promise<void> {
     const picked = this.batch(domains);
     // A domain is read by its owner and side; the side is the one whose key
     // the ledger named.
@@ -495,10 +591,9 @@ class Worker {
     } catch (err) {
       if (err instanceof PastRunDeadline) throw err;
       this.sender.noteUnread('domains', `the claim domains (${shortErr(err)})`);
-      return [];
+      return;
     }
     await this.loadIdle(keyed.map((d) => `domain ${short(d.key)}`));
-    const open: OpenDomain[] = [];
     for (let i = 0; i < keyed.length; i += 1) {
       const v = views[i] as StagingDomainView | undefined;
       const subject = `domain ${short(keyed[i].key)}`;
@@ -509,11 +604,9 @@ class Worker {
       const view = toDomainView(v);
       if (view.phase === DOMAIN_PHASE.none || view.domainKey.toLowerCase() !== keyed[i].key) continue;
       const d = { key: keyed[i].key, user: keyed[i].user as Address, side: keyed[i].side, view };
-      open.push(d);
       // eslint-disable-next-line no-await-in-loop
       await this.domain(d, subject);
     }
-    return open;
   }
 
   private async readDomain(d: OpenDomain): Promise<StagingDomainView> {
@@ -559,7 +652,30 @@ class Worker {
         res = await this.unwindDue(subject, 'past its deadline with its days not all prepared', 'unwindDomainPage', d.key);
       } else {
         fn = 'reserveDomainPage';
-        res = await this.page('advance', subject, fn, [d.key]);
+        const p = await this.preview(subject, fn, [d.key]);
+        if (p === null) return;
+        const effect = 'logs' in p ? pageEffect(this.r.diamond, p.logs, d.key) : null;
+        // Where the reservation stands before the page: a domain still in
+        // Staging starts at its first day.
+        const from = view.phase === DOMAIN_PHASE.staging ? view.firstDay : view.reserveCursor;
+        if (effect?.unwinds) {
+          // Its revalidation finds a day record stale and sends the whole
+          // domain to Unwinding in this same call: an unwind, behind its flag.
+          res = await this.unwindDue(subject, 'the contract finds a day record stale', 'reserveDomainPage', d.key);
+        } else if (effect !== null && effect.reserveStoppedAt !== null && effect.reserveStoppedAt <= from) {
+          // The contract's own stop on a day not covered, with nothing
+          // reserved before it: the page would change nothing that matters.
+          if (!pastDeadline) {
+            this.wait(subject, `day ${effect.reserveStoppedAt} is not covered yet; deadline ${view.deadline}`);
+            return;
+          }
+          fn = 'unwindDomainPage';
+          res = await this.unwindDue(subject, `past its deadline with day ${effect.reserveStoppedAt} not covered`, 'unwindDomainPage', d.key);
+        } else {
+          // It reserves, revalidates, or (a reverted preview) meets the
+          // refusal the sender names.
+          res = await this.page('advance', subject, fn, [d.key]);
+        }
         if (res === 'StagingScanIncomplete') {
           // The page names the day record whose scan it needs.
           const recordKey = this.sender.refusal?.args[0];
@@ -589,12 +705,9 @@ class Worker {
         return;
       }
       const after = await digestOf(view);
-      if (after === digest) {
-        // A reservation that stopped short on a day not yet covered.
-        if (fn === 'reserveDomainPage' && view.deadline !== 0n && this.now >= view.deadline) {
-          const u = await this.unwindDue(subject, 'past its deadline with a day not covered', 'unwindDomainPage', d.key);
-          if (u === 'landed') continue;
-        }
+      // A reservation page the preview showed doing work is never idle: a
+      // revalidation page moves a cursor the domain's view does not carry.
+      if (after === digest && fn !== 'reserveDomainPage') {
         await this.markIdle(subject, after);
         return;
       }
@@ -619,13 +732,10 @@ class Worker {
 
   // ─── Standalone records ──────────────────────────────────────────────────
 
-  async records(records: readonly OpenStaging[], domains: readonly OpenDomain[], ledgerDomains: readonly OpenStaging[]): Promise<void> {
-    // A record of a claimant and side with an open domain is the domain's
-    // when its day is in the domain's extent; a domain not read this run
-    // (rotation, an unread) keeps every such record out, so no day of a
-    // domain is ever worked outside the domain's own order.
-    const ledgerKeys = new Set(ledgerDomains.map((d) => d.key));
-    const read = new Map(domains.map((d) => [d.key, d]));
+  async records(records: readonly OpenStaging[]): Promise<void> {
+    // A record inside a claim domain is refused by the standalone entries by
+    // name (`StagingRecordInDomain`) and left to the domain; its own
+    // preparation is open to anyone, as the domain's reservation asks.
     const picked = this.batch(records);
     let views: unknown[];
     try {
@@ -643,15 +753,12 @@ class Worker {
         this.sender.noteUnread(subject, 'its state');
         continue;
       }
-      const dk = domainKey(v.user, Number(v.side));
-      const d = read.get(dk);
-      const inDomain = d !== undefined ? BigInt(v.day) >= d.view.firstDay && BigInt(v.day) <= d.view.lastDay : ledgerKeys.has(dk);
       // eslint-disable-next-line no-await-in-loop
-      await this.record(picked[i].key, subject, v, inDomain);
+      await this.record(picked[i].key, subject, v);
     }
   }
 
-  private async record(key: string, subject: string, first: StagingRecordView, inDomain: boolean): Promise<void> {
+  private async record(key: string, subject: string, first: StagingRecordView): Promise<void> {
     let rec = first;
     let digest = stateDigest(rec);
     if (this.isIdle(subject, digest)) {
@@ -659,7 +766,7 @@ class Worker {
       return;
     }
     for (let pageNo = 0; pageNo < MAX_PAGES_PER_SUBJECT; pageNo += 1) {
-      const move = recordMove(rec, inDomain);
+      const move = recordMove(rec);
       const pastDeadline = this.now >= BigInt(rec.deadline);
       let fn: string;
       let res: CallResult | 'held';
@@ -683,6 +790,17 @@ class Worker {
             return;
           }
           fn = 'resolveStagedDayPage';
+          if (Number(rec.phase) === PHASE.reserved) {
+            // The first resolution page revalidates the record and unwinds a
+            // stale one in the same call: the preview says which it will do.
+            const p = await this.preview(subject, fn, [key]);
+            if (p === null) return;
+            if ('logs' in p && pageEffect(this.r.diamond, p.logs, key).unwinds) {
+              fn = 'unwindStagedDayPage';
+              res = await this.unwindDue(subject, 'the contract finds it stale', 'unwindStagedDayPage', key);
+              break;
+            }
+          }
           res = await this.page('advance', subject, fn, [key]);
           break;
         case 'prepare':
@@ -711,8 +829,12 @@ class Worker {
       }
       if (res === 'held') return;
       if (res !== 'landed') {
-        if (res === 'StagingRecordInDomain') this.report.left.push({ subject, what: 'it belongs to a claim domain, whose pages carry it' });
-        else if (WAITS.has(res)) this.wait(subject, WAITS.get(res)!);
+        if (res === 'StagingRecordInDomain') {
+          // The contract's own word that the domain carries it; not asked
+          // again until the record moves or a day has passed.
+          this.report.left.push({ subject, what: 'it belongs to a claim domain, whose pages carry it' });
+          await this.markIdle(subject, digest);
+        } else if (WAITS.has(res)) this.wait(subject, WAITS.get(res)!);
         return;
       }
       try {
@@ -811,9 +933,24 @@ class Worker {
     }
   }
 
+  /** The record a consuming slice works next: a wide day's record can take
+   *  further preparation pages that move no field of the slice itself. */
+  private async sliceRecord(v: LegacySliceView): Promise<StagingRecordView | null> {
+    if (v.preparedThrough < v.lastDay || v.consumeCursor > v.lastDay) return null;
+    return this.r.one<StagingRecordView>('getStagingRecord', [legacyRecordKey(v.domainKey, v.consumeCursor)]);
+  }
+
   private async slice(entryId: bigint, subject: string, first: LegacySliceView): Promise<void> {
     let view = first;
-    let digest = stateDigest(view);
+    const digestOf = async (v: LegacySliceView) => stateDigest(v, await this.sliceRecord(v));
+    let digest: string;
+    try {
+      digest = await digestOf(view);
+    } catch (err) {
+      if (err instanceof PastRunDeadline) throw err;
+      this.sender.noteUnread(subject, `the record it consumes (${shortErr(err)})`);
+      return;
+    }
     if (this.isIdle(subject, digest)) {
       this.wait(subject, 'recorded idle at this state');
       return;
@@ -827,18 +964,19 @@ class Worker {
         if (WAITS.has(res)) this.wait(subject, WAITS.get(res)!);
         return;
       }
+      let after: string;
       try {
         view = toSliceView(await this.r.one<unknown>('getLegacySliceDomain', [entryId]));
+        if (view.phase !== DOMAIN_PHASE.staging) {
+          this.report.closed.push(subject);
+          return;
+        }
+        after = await digestOf(view);
       } catch (err) {
         if (err instanceof PastRunDeadline) throw err;
         this.sender.noteUnread(subject, `its state after stepLegacySlice (${shortErr(err)})`);
         return;
       }
-      if (view.phase !== DOMAIN_PHASE.staging) {
-        this.report.closed.push(subject);
-        return;
-      }
-      const after = stateDigest(view);
       if (after === digest) {
         await this.markIdle(subject, after);
         return;
