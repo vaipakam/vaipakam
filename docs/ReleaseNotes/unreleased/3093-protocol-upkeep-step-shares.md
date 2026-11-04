@@ -24,4 +24,4 @@ changed; only how many sends each step may make in one run and where it
 starts.
 
 Closes #3093. The close-out and return-transport release loops have the
-same start-of-list bias; that is tracked separately.
+same start-of-list bias; that is tracked in #3155.
