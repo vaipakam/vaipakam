@@ -1,4 +1,4 @@
-## Thread — Auto-extend card: honest cover line and one reserve result (PR #<n>)
+## Thread — Auto-extend card: honest cover line and one reserve result (PR #3122)
 
 The live run of the auto-extend card on Base Sepolia turned up two places where the loan page said more than it knew. Both are fixed here. This advances #2814.
 
