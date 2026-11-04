@@ -249,6 +249,7 @@ try {
     read('hasAcceptedCurrentTerms', [LENDER], at),
   ]);
   pre.protection = await read('getProtectedAccount', [BORROWER], at);
+  pre.deadlines = await read('getLoanDeadlines', [LOAN_ID], at);
   pre.asset = pre.funding[0];
   const tokenRead = (functionName, args = []) => pub.readContract({ address: pre.asset, abi: erc20Abi, functionName, args, blockNumber: at });
   [pre.decimals, pre.symbol, pre.assetBal, pre.allowance, pre.ethB, pre.ethL] = await Promise.all([
@@ -291,7 +292,10 @@ const RESERVE = (() => {
 if (!RESERVE || RESERVE <= 0n) preflightFailures.push(`RESERVE ${RESERVE_RAW} is not a positive amount of a ${pre.decimals}-decimal token`);
 else if (pre.assetBal < RESERVE) preflightFailures.push(`${BORROWER_ROLE} holds ${formatUnits(pre.assetBal, pre.decimals)} ${pre.symbol}, less than the reserve ${RESERVE_RAW}`);
 if (preflightFailures.length) await blocked(`loan ${LOAN_ID} is not the fixture this drive needs:\n  - ${preflightFailures.join('\n  - ')}`);
-const LOAN_END = Number(L0.startTime + L0.durationDays * 86_400n);
+// The loan's effective maturity (its original end plus any pause credit), the
+// end the app's band is judged against: the original end alone can sit before
+// it on a loan that lived through a pause.
+const LOAN_END = Number(pre.deadlines[2]);
 const WINDOW = { opensAt: Number(pre.window[0]), closesAt: Number(pre.window[1]) };
 console.log(
   `chain: loan ${LOAN_ID} Active, ERC-20 ${pre.symbol} principal, cadence 0; borrower ${BORROWER_ROLE}, lender ${LENDER_ROLE}; ` +
@@ -836,9 +840,13 @@ try {
   }
   B_END = await endOfDay(bp, B_END_DATE);
   L_END = await endOfDay(lp, L_END_DATE);
-  const startNow = Number((await pub.getBlock({ blockTag: 'latest' })).timestamp);
-  if (!(L_END < B_END && L_END > LOAN_END && L_END - startNow > 2 * 86_400)) {
-    await blocked(`the latest end dates do not land as planned (${L_END_DATE} → ${L_END}, ${B_END_DATE} → ${B_END}, loan end ${LOAN_END}, chain time ${startNow})`);
+  // Re-read just before the plan: a pause since the preflight would have
+  // moved the effective maturity.
+  const startHead = await pub.getBlock({ blockTag: 'latest' });
+  const startNow = Number(startHead.timestamp);
+  const endNow = Number((await readPinned(() => read('getLoanDeadlines', [LOAN_ID], startHead.number)))[2]);
+  if (!(L_END < B_END && L_END > endNow && L_END - startNow > 2 * 86_400)) {
+    await blocked(`the latest end dates do not land as planned (${L_END_DATE} → ${L_END}, ${B_END_DATE} → ${B_END}, effective loan end ${endNow}, chain time ${startNow})`);
   }
   PLAN = createWritePlan(
     autoExtendPlanSteps({
