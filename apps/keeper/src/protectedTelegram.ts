@@ -404,6 +404,9 @@ export async function alertOwners(d: TelegramStepDeps, writeCutoff: number = d.r
       // Unwritten, the next run sends from the last place written.
     }
   };
+  // Whom each account's alerts go to: its manager at the head, read once per
+  // account this step (see `managerOf`).
+  const managers = new Map<Address, Address>();
   try {
     for (const row of page.rows) {
       const account = lower(row.args.account);
@@ -414,10 +417,16 @@ export async function alertOwners(d: TelegramStepDeps, writeCutoff: number = d.r
       } else if (d.nowSec() - row.blockAt > ALERT_MAX_AGE_SEC) {
         report.stale += 1;
       } else {
+        // eslint-disable-next-line no-await-in-loop
+        const manager = await managerOf(d, managers, account);
+        if (manager === null) {
+          d.sender.noteUnread('alert', `whom ${account}'s alerts go to (its protected-account settings)`);
+          break;
+        }
         let sub: Subscriber | null;
         try {
           // eslint-disable-next-line no-await-in-loop
-          sub = await boundedCall(d.r.cutoff, 'the subscription', () => d.store.subscriber(d.chainId, account));
+          sub = await boundedCall(d.r.cutoff, 'the subscription', () => d.store.subscriber(d.chainId, manager));
         } catch (err) {
           if (err instanceof PastRunDeadline) throw err;
           d.sender.noteUnread('alert', `the owner's subscription (${shortErr(err)})`);
@@ -427,7 +436,7 @@ export async function alertOwners(d: TelegramStepDeps, writeCutoff: number = d.r
           report.unsubscribed += 1;
         } else {
           // eslint-disable-next-line no-await-in-loop
-          const text = await composeAlert(d, row.kind, row.args, account, sub.locale);
+          const text = await composeAlert(d, row.kind, row.args, account, manager, sub.locale);
           if (text === null) {
             finished = false;
           } else {
@@ -439,7 +448,7 @@ export async function alertOwners(d: TelegramStepDeps, writeCutoff: number = d.r
               // eslint-disable-next-line no-await-in-loop
               outcome = await d.notify({
                 tgChatId: sub.tgChatId,
-                pushSubscriber: sub.push ? account : null,
+                pushSubscriber: sub.push ? manager : null,
                 text,
                 pushTitle: protectedCopy(sub.locale).pushTitle,
                 deepLinkUrl: d.appOrigin,
@@ -479,14 +488,45 @@ export async function alertOwners(d: TelegramStepDeps, writeCutoff: number = d.r
   return report;
 }
 
-/** The alert's text, or null when a read it needs is not available yet. */
-async function composeAlert(d: TelegramStepDeps, kind: string, args: Record<string, unknown>, account: Address, locale: string | null): Promise<string | null> {
+/**
+ * The wallet that manages `account` now, which is whom its alerts go to: the
+ * account's own wallet, or its controller once a replacement retired it
+ * (`LibProtectedAccount.manager`). A retired account's events still name the
+ * old wallet, which lost every right over it, so alerting that wallet's
+ * channels would warn the wrong person and leave the owner unwarned (Codex
+ * #3092 r9). Read at the head, once per account a step; null when it could
+ * not be read, and the alert then waits.
+ */
+async function managerOf(d: TelegramStepDeps, seen: Map<Address, Address>, account: Address): Promise<Address | null> {
+  if (seen.has(account)) return seen.get(account)!;
+  let manager: Address | null;
+  try {
+    const a = await d.r.one<{ retired: boolean; controller: Address }>('getProtectedAccount', [account]);
+    manager = a.retired ? lower(a.controller) : account;
+  } catch (err) {
+    if (err instanceof PastRunDeadline) throw err;
+    return null;
+  }
+  if (manager !== null) seen.set(account, manager);
+  return manager;
+}
+
+/** The alert's text, or null when a read it needs is not available yet. The
+ *  text names the vault (`account`); `manager` is who receives it. */
+async function composeAlert(
+  d: TelegramStepDeps,
+  kind: string,
+  args: Record<string, unknown>,
+  account: Address,
+  manager: Address,
+  locale: string | null,
+): Promise<string | null> {
   const copy = protectedCopy(locale);
   const w = shortAddress(account);
   switch (kind) {
     case 'VaultLocked': {
       const by = lower(args.by);
-      return by === null || by === account ? copy.alertLockedByOwner(w, d.chainId) : copy.alertLockedBy(w, d.chainId, by);
+      return by === null || by === account || by === manager ? copy.alertLockedByOwner(w, d.chainId) : copy.alertLockedBy(w, d.chainId, by);
     }
     case 'ReplacementProposed':
       return copy.alertReplacement(w, d.chainId, String(lower(args.nominee) ?? args.nominee), String(lower(args.by) ?? args.by));

@@ -919,6 +919,11 @@ state.
   owner can tell a payout they asked for from one they did not and lock in
   time. An alert waits until the request code can be read; it is never sent
   without one.
+- The owner an alert goes to is whoever manages the account now: its own
+  wallet, or, once a replacement has retired that wallet, the wallet that
+  replaced it. The alert still names the vault by its original wallet. The
+  retired wallet lost every right over the vault, so its channels are not
+  alerted. A lock made by the managing wallet reads as the owner's own lock.
 - An event more than an hour old when the keeper first reads it is not
   alerted, because late news is no longer a warning; the keeper counts those.
   An alert is counted as sent only when a channel accepted it. One that no

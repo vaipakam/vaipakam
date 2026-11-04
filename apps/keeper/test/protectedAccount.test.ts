@@ -895,6 +895,21 @@ describe('the Telegram steps', () => {
     expect(sent).toEqual([]);
   });
 
+  it("sends a retired account's alerts to its controller, never to the old wallet (Codex #3092 r9)", async () => {
+    d.accounts.set(ALICE, account({ retired: true, controller: BOB }));
+    store.subs.set(`${CHAIN}:${ALICE}`, { tgChatId: '42', push: true, locale: 'en' }); // the old wallet's channels
+    store.subs.set(`${CHAIN}:${BOB}`, { tgChatId: '7', push: true, locale: 'en' });
+    const at = NOW_SEC - 30;
+    ledger.rows.push({ kind: 'VaultLocked', args: { account: ALICE, by: BOB }, blockAt: at, block: 1, log: 0, tx: '0x' });
+    ledger.rows.push({ kind: 'ReplacementProposed', args: { account: ALICE, nominee: DEST, by: SIGNER, round: '2' }, blockAt: at, block: 2, log: 0, tx: '0x' });
+    const r = await run(false, true);
+    expect(r.alerts.sent).toBe(2);
+    expect(sent.map((a) => [a.tgChatId, a.pushSubscriber])).toEqual([['7', BOB], ['7', BOB]]);
+    // The text still names the vault, and a lock by its controller is the owner's own.
+    expect(sent[0].text).toContain(ALICE.slice(0, 6));
+    expect(sent[0].text).not.toContain('a wallet allowed to lock it');
+  });
+
   it("waits for a payout alert's request code rather than alerting without it", async () => {
     store.subs.set(`${CHAIN}:${ALICE}`, { tgChatId: '42', push: false, locale: 'en' });
     d.codeFails = true;
