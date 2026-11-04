@@ -1362,12 +1362,18 @@ contract RewardDayDeliveryGateTest is RewardDayDeliveryGateBase {
         uint256 bucket = _cfg().getRecycleBucket();
         uint256 live = _payable();
 
-        assertEq(InteractionRewardsFacet(address(diamond)).sweepForfeitedInteractionRewards(LOAN), 0, "held: nothing settles");
+        {
+
+            (uint256 swept_, ) = InteractionRewardsFacet(address(diamond)).sweepForfeitedInteractionRewards(LOAN);
+
+            assertEq(swept_, 0, "held: nothing settles");
+
+        }
         assertEq(_cfg().getRecycleBucket(), bucket, "no credit to the bucket");
         assertEq(_payable(), live, "and custody is untouched");
 
         _liveOf(NEED, 1, 122, keccak256("gate-forfeit"));
-        uint256 swept = InteractionRewardsFacet(address(diamond)).sweepForfeitedInteractionRewards(LOAN);
+        (uint256 swept, ) = InteractionRewardsFacet(address(diamond)).sweepForfeitedInteractionRewards(LOAN);
         assertEq(swept, NEED, "delivered: the forfeit settles the capped share");
         assertEq(_cfg().getRecycleBucket() - bucket, swept, "recycled into the bucket");
     }

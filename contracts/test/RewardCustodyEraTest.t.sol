@@ -681,7 +681,7 @@ contract RewardCustodyEraTest is SetupTest, IVaipakamErrors {
         _mut().setLoanActiveLenderEntryId(LOAN, id); // the sweep enumerates the loan's active entries
         (, uint256 paidBefore) = _ledger();
         uint256 bucketBefore = ConfigFacet(address(diamond)).getRecycleBucket();
-        uint256 swept = InteractionRewardsFacet(address(diamond)).sweepForfeitedInteractionRewards(LOAN);
+        (uint256 swept, ) = InteractionRewardsFacet(address(diamond)).sweepForfeitedInteractionRewards(LOAN);
         assertGt(swept, 0, "swept");
         assertEq(ConfigFacet(address(diamond)).getRecycleBucket() - bucketBefore, swept, "the bucket grew by the sweep");
         assertEq(7e18 - _era().getCustodyEra(0).holderRow, swept, "era 0 funded it");

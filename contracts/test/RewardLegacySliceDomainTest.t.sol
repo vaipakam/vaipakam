@@ -14,6 +14,8 @@ import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
 import {RewardRemittanceFacet} from "../src/facets/RewardRemittanceFacet.sol";
 import {RewardStagingDomainFacet} from "../src/facets/RewardStagingDomainFacet.sol";
 import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol";
+import {InteractionRewardsLensFacet} from "../src/facets/InteractionRewardsLensFacet.sol";
+import {LibRewardEntryProgress} from "../src/libraries/LibRewardEntryProgress.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibRewardCustody} from "../src/libraries/LibRewardCustody.sol";
@@ -126,6 +128,13 @@ contract RewardLegacySliceDomainTest is SetupTest, IVaipakamErrors {
 
     function _legs(bytes32 h) internal view returns (uint256 f, uint256 r) {
         (f, r) = _epoch().getTransportBatchLegs(h);
+    }
+
+    /// @dev #3012 — entry `id`'s settlement progress, through the lens.
+    function _progress(uint256 id) internal view returns (LibRewardEntryProgress.EntryProgress memory) {
+        uint256[] memory ids = new uint256[](1);
+        ids[0] = id;
+        return InteractionRewardsLensFacet(address(diamond)).getRewardEntrySettlementProgress(ids)[0];
     }
 
     function _dom(uint256 id) internal view returns (uint8 phase, uint64 preparedThrough, uint32 live, uint256 epochFresh) {
@@ -297,6 +306,68 @@ contract RewardLegacySliceDomainTest is SetupTest, IVaipakamErrors {
         assertEq(_claim(), total, "and the claim pays at once");
     }
 
+    /// @dev #3012 (Codex #3136 r1) — a funding wait reads as NO progress on every
+    ///      retry, even with the slice's domain staging: the whole-window branch
+    ///      defers on the delivered allowance before it would step the domain, so
+    ///      no step runs and none is counted. Once the allowance is back the
+    ///      sweep steps and settles.
+    function test_TheForfeitSweep_ADeferredRetry_ReportsNoProgress_WithTheDomainStaging() public {
+        uint256 id = _legacyScene();
+        uint256 total = _legacyTotal();
+        _mut().setRewardEntryForfeitedRaw(id);
+        _mut().setLoanActiveLenderEntryId(LOAN, id);
+        _epochOn(1, EPOCH, 7);
+        _liveFresh(total + 1e18);
+        (, bool progressed) = InteractionRewardsFacet(address(diamond)).sweepForfeitedInteractionRewards(LOAN);
+        assertTrue(progressed, "the first sweep opens and prepares the domain");
+        assertEq(_progress(id).legacyPhase, uint8(LibVaipakam.DomainPhase.Staging), "fixture: the domain is staging");
+        _mut().setArmedFreshLedgerRaw(0, 0); // the delivered allowance is gone: the next chunk defers
+        for (uint256 i; i < 2; ++i) {
+            uint256 swept;
+            (swept, progressed) = InteractionRewardsFacet(address(diamond)).sweepForfeitedInteractionRewards(LOAN);
+            assertEq(swept, 0, "deferred");
+            assertFalse(progressed, "a funding wait is no progress, retry after retry");
+        }
+        _mut().setArmedFreshLedgerRaw(total + 1e18, 0);
+        (uint256 paid, bool moved) = InteractionRewardsFacet(address(diamond)).sweepForfeitedInteractionRewards(LOAN);
+        assertTrue(moved, "funded again, the sweep steps");
+        if (paid == 0) {
+            (paid, moved) = InteractionRewardsFacet(address(diamond)).sweepForfeitedInteractionRewards(LOAN);
+        }
+        assertEq(paid, total, "and settles the slice");
+    }
+
+    /// @dev #3012 (Codex #3136 r2) — a consumption page that RUNS and changes
+    ///      nothing (a record whose restoration window still blocks it, with a
+    ///      preparation that leaves the blocked restoration unread) reports no
+    ///      progress: the step measures the record around its page instead of
+    ///      counting the call. The page is stood in for by an inert answer of
+    ///      exactly that shape, so the sweep reaches it and nothing moves.
+    function test_TheForfeitSweep_AnInertConsumptionPage_ReportsNoProgress() public {
+        uint256 id = _legacyScene();
+        uint256 total = _legacyTotal();
+        _mut().setRewardEntryForfeitedRaw(id);
+        _mut().setLoanActiveLenderEntryId(LOAN, id);
+        _epochOn(1, EPOCH, 7);
+        _liveFresh(total + 1e18);
+        (, bool progressed) = InteractionRewardsFacet(address(diamond)).sweepForfeitedInteractionRewards(LOAN);
+        assertTrue(progressed, "fixture: the first sweep opens and prepares the domain");
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSignature("consumeRecordInLegacyInternal(bytes32)"),
+            abi.encode(uint256(0), false, true)
+        );
+        vm.mockCall(address(diamond), abi.encodeWithSignature("prepareRecordInDomainInternal(bytes32)"), "");
+        uint256 swept;
+        (swept, progressed) = InteractionRewardsFacet(address(diamond)).sweepForfeitedInteractionRewards(LOAN);
+        assertEq(swept, 0, "nothing consumed");
+        assertFalse(progressed, "a page that changed nothing is no progress");
+        vm.clearMockedCalls();
+        (swept, progressed) = InteractionRewardsFacet(address(diamond)).sweepForfeitedInteractionRewards(LOAN);
+        assertTrue(progressed, "the real page moves the record");
+        assertEq(swept, total, "and settles the slice");
+    }
+
     /// @dev The forfeit sweep's whole-window branch consumes the slice's epochs
     ///      too: the treasury's epoch part is absorbed in place, the live part
     ///      from the live sources, the bucket credited the whole.
@@ -308,8 +379,32 @@ contract RewardLegacySliceDomainTest is SetupTest, IVaipakamErrors {
         bytes32 h = _epochOn(1, EPOCH, 7);
         _liveFresh(total + 1e18); // the slice prices by the SCHEDULE (~1e22 a day): the live sources must bear the whole
         uint256 bucketBefore = _cfg().getRecycleBucket();
-        assertEq(InteractionRewardsFacet(address(diamond)).sweepForfeitedInteractionRewards(LOAN), 0, "the first sweep prepares");
-        assertEq(InteractionRewardsFacet(address(diamond)).sweepForfeitedInteractionRewards(LOAN), total, "the second consumes and settles");
+        {
+            (uint256 swept_, bool progressed_) =
+                InteractionRewardsFacet(address(diamond)).sweepForfeitedInteractionRewards(LOAN);
+            assertEq(swept_, 0, "the first sweep prepares");
+            // #3012 — it moved nothing and still progressed (it opened and
+            // prepared the slice's domain), and says so.
+            assertTrue(progressed_, "a zero-value preparing sweep reports progress");
+            LibRewardEntryProgress.EntryProgress memory p_ = _progress(id);
+            assertEq(p_.legacyPhase, uint8(LibVaipakam.DomainPhase.Staging), "the view: a step is pending");
+            assertTrue(p_.forfeited, "the view: forfeited");
+            assertFalse(p_.processed, "the view: not settled yet");
+        }
+        {
+            (uint256 swept_, bool progressed_) =
+                InteractionRewardsFacet(address(diamond)).sweepForfeitedInteractionRewards(LOAN);
+            assertEq(swept_, total, "the second consumes and settles");
+            assertTrue(progressed_);
+        }
+        {
+            // Settled: a further sweep does nothing, and says so.
+            (uint256 swept_, bool progressed_) =
+                InteractionRewardsFacet(address(diamond)).sweepForfeitedInteractionRewards(LOAN);
+            assertEq(swept_, 0);
+            assertFalse(progressed_, "a settled loan's sweep is a no-op");
+            assertTrue(_progress(id).processed, "the view: settled");
+        }
         assertEq(_cfg().getRecycleBucket() - bucketBefore, total, "the whole slice recycled");
         (uint256 lf, ) = _legs(h);
         assertEq(lf, EPOCH, "the epoch's leg recorded");

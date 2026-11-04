@@ -590,7 +590,7 @@ contract GovernorDualAccumulatorTest is SetupTest {
         // Chunk 1: the LEGACY leg settles and stamps the cursor, and charges
         // the bound by exactly what it credited (#1566 closure 2).
         vm.prank(makeAddr("keeper"));
-        uint256 legacySwept = _facet().sweepForfeitedInteractionRewards(77);
+        (uint256 legacySwept, ) = _facet().sweepForfeitedInteractionRewards(77);
         assertGt(legacySwept, 0, "LIVE: the legacy leg settles");
         uint256 paidAfterLegacy = _mut().getArmedFreshPaidRaw();
         assertEq(
@@ -606,7 +606,7 @@ contract GovernorDualAccumulatorTest is SetupTest {
         // Chunk 2: the ARMED day settles through the engine and charges the
         // bound by exactly what it credited.
         vm.prank(makeAddr("keeper"));
-        uint256 armedSwept = _facet().sweepForfeitedInteractionRewards(77);
+        (uint256 armedSwept, ) = _facet().sweepForfeitedInteractionRewards(77);
         assertGt(armedSwept, 0, "LIVE: the armed day settles");
         uint256 armedCharge = _mut().getArmedFreshPaidRaw() - paidAfterLegacy;
         assertGt(armedCharge, 0, "the armed chunk charges the bound");
@@ -649,7 +649,7 @@ contract GovernorDualAccumulatorTest is SetupTest {
         uint256 bucketBefore = _cfg().getRecycleBucket();
 
         vm.prank(makeAddr("keeper"));
-        uint256 swept0 = _facet().sweepForfeitedInteractionRewards(77);
+        (uint256 swept0, ) = _facet().sweepForfeitedInteractionRewards(77);
         assertEq(swept0, 0, "an unfunded armed day DEFERS - nothing settles");
         assertEq(
             _cfg().getRecycleBucket(),
@@ -668,7 +668,7 @@ contract GovernorDualAccumulatorTest is SetupTest {
         // the entry was genuinely left intact rather than consumed.
         _mut().setArmedFreshLedgerRaw(100_000 ether, 0);
         vm.prank(makeAddr("keeper"));
-        uint256 swept = _facet().sweepForfeitedInteractionRewards(77);
+        (uint256 swept, ) = _facet().sweepForfeitedInteractionRewards(77);
         assertGt(swept, 0, "the same sweep succeeds once funding lands");
         assertGt(
             _mut().getArmedFreshPaidRaw(),
@@ -705,7 +705,7 @@ contract GovernorDualAccumulatorTest is SetupTest {
         _facet().sweepForfeitedInteractionRewards(77);
         uint256 paidLegacyOnly = _mut().getArmedFreshPaidRaw();
         vm.prank(makeAddr("keeper"));
-        uint256 full = _facet().sweepForfeitedInteractionRewards(77);
+        (uint256 full, ) = _facet().sweepForfeitedInteractionRewards(77);
         uint256 nominalArmed = _mut().getArmedFreshPaidRaw() - paidLegacyOnly;
         vm.revertToState(snap);
         assertGt(full, 0, "LIVE: the armed day genuinely sweeps");
@@ -724,7 +724,7 @@ contract GovernorDualAccumulatorTest is SetupTest {
         // wedge — and charges the bound by the truncated figure only.
         uint256 paidBefore = _mut().getArmedFreshPaidRaw();
         vm.prank(makeAddr("keeper"));
-        uint256 swept = _facet().sweepForfeitedInteractionRewards(77);
+        (uint256 swept, ) = _facet().sweepForfeitedInteractionRewards(77);
         assertGt(swept, 0, "a cap-truncated forfeit still settles");
         uint256 armedCharge = _mut().getArmedFreshPaidRaw() - paidBefore;
         assertLt(
@@ -752,7 +752,7 @@ contract GovernorDualAccumulatorTest is SetupTest {
         (, , uint256 outRBefore, ) = _agg().getGovernorCommitState();
 
         vm.prank(makeAddr("keeper"));
-        uint256 swept = _facet().sweepForfeitedInteractionRewards(77);
+        (uint256 swept, ) = _facet().sweepForfeitedInteractionRewards(77);
 
         uint256 expectFresh = floor5 / 2;
         uint256 expectRecycled = recycled5 / 2;
@@ -1760,7 +1760,7 @@ contract GovernorDualAccumulatorTest is SetupTest {
         _mut().setRewardEntryForfeitedRaw(id);
         _mut().setArmedFreshLedgerRaw(cap, 0);
 
-        uint256 swept = _facet().sweepForfeitedInteractionRewards(loanId);
+        (uint256 swept, ) = _facet().sweepForfeitedInteractionRewards(loanId);
         assertGt(
             swept,
             0,
@@ -1792,7 +1792,7 @@ contract GovernorDualAccumulatorTest is SetupTest {
         // LIVE: measure the unclamped value.
         uint256 snap = vm.snapshotState();
         _mut().setInteractionPoolPaidOut(0);
-        uint256 full = _facet().sweepForfeitedInteractionRewards(108);
+        (uint256 full, ) = _facet().sweepForfeitedInteractionRewards(108);
         vm.revertToState(snap);
         assertGt(full, 0, "LIVE: the entry carries legacy value");
 
@@ -1802,7 +1802,7 @@ contract GovernorDualAccumulatorTest is SetupTest {
         _mut().setInteractionPoolPaidOut(
             LibVaipakam.VPFI_INTERACTION_POOL_CAP - headroom
         );
-        uint256 swept = _facet().sweepForfeitedInteractionRewards(108);
+        (uint256 swept, ) = _facet().sweepForfeitedInteractionRewards(108);
         assertEq(
             swept,
             headroom,
@@ -1834,7 +1834,7 @@ contract GovernorDualAccumulatorTest is SetupTest {
         // while the pool is wide open — the shortfall is backing-caused.
         uint256 bucketBefore = _mut().getRecycleBucketRaw();
         _mut().setRecycleBucketRaw(vpfi.balanceOf(address(diamond)));
-        uint256 dip = _facet().sweepForfeitedInteractionRewards(109);
+        (uint256 dip, ) = _facet().sweepForfeitedInteractionRewards(109);
         assertEq(dip, 0, "a backing-bound legacy leg defers");
         assertEq(
             _mut().getRewardEntryClaimNextDayRaw(id),
@@ -1844,7 +1844,7 @@ contract GovernorDualAccumulatorTest is SetupTest {
 
         // Backing recovers -> the SAME leg settles in full.
         _mut().setRecycleBucketRaw(bucketBefore);
-        uint256 settled = _facet().sweepForfeitedInteractionRewards(109);
+        (uint256 settled, ) = _facet().sweepForfeitedInteractionRewards(109);
         assertGt(settled, 0, "and settles fully once backing recovers");
         assertEq(
             _mut().getRewardEntryClaimNextDayRaw(id),
@@ -1877,7 +1877,7 @@ contract GovernorDualAccumulatorTest is SetupTest {
         // Call 1: preflight advances its bounded stretch but cannot price —
         // the sweep must DEFER, never let the settle's second advance
         // complete under the dip.
-        uint256 first = _facet().sweepForfeitedInteractionRewards(110);
+        (uint256 first, ) = _facet().sweepForfeitedInteractionRewards(110);
         assertEq(first, 0, "an unpriced preflight defers");
         assertFalse(
             _mut().getRewardEntryProcessedRaw(id),
@@ -1887,7 +1887,7 @@ contract GovernorDualAccumulatorTest is SetupTest {
         // Backing recovers -> a later sweep (advance now caught up) settles
         // the WHOLE value.
         _mut().setRecycleBucketRaw(bucketBefore);
-        uint256 second = _facet().sweepForfeitedInteractionRewards(110);
+        (uint256 second, ) = _facet().sweepForfeitedInteractionRewards(110);
         assertGt(second, 0, "and the full value settles once priced+backed");
         assertTrue(
             _mut().getRewardEntryProcessedRaw(id),
@@ -2957,7 +2957,7 @@ contract GovernorDualAccumulatorTest is SetupTest {
         // half while omitting or miscrediting the fresh one.
         MirrorLedger memory beforeForfeit = _snapMirror(today);
         vm.prank(makeAddr("mirror-keeper"));
-        uint256 sweptHere = _facet().sweepForfeitedInteractionRewards(94);
+        (uint256 sweptHere, ) = _facet().sweepForfeitedInteractionRewards(94);
         MirrorLedger memory afterForfeit = _snapMirror(today);
 
         uint256 outFinal = afterForfeit.outRecycled;
@@ -3043,7 +3043,7 @@ contract GovernorDualAccumulatorTest is SetupTest {
             _agg().getChainDayRecycledFunding(5, uint32(CHAIN_ARB));
 
         vm.prank(makeAddr("mirror-keeper"));
-        uint256 swept = _facet().sweepForfeitedInteractionRewards(91);
+        (uint256 swept, ) = _facet().sweepForfeitedInteractionRewards(91);
 
         (, , uint256 outAfter, uint256 paidAfter) =
             _agg().getGovernorCommitState();
@@ -3135,7 +3135,7 @@ contract GovernorDualAccumulatorTest is SetupTest {
         uint256 custodyMid = vpfi.balanceOf(address(diamond));
 
         vm.prank(makeAddr("mirror-keeper"));
-        uint256 swept2 = _facet().sweepForfeitedInteractionRewards(92);
+        (uint256 swept2, ) = _facet().sweepForfeitedInteractionRewards(92);
 
         (, , uint256 outEnd, uint256 paidEnd) = _agg().getGovernorCommitState();
         (uint256 retiredEnd, uint256 releasedEnd) =
@@ -3305,7 +3305,7 @@ contract GovernorDualAccumulatorTest is SetupTest {
         // ── the borrower FORFEIT (Codex #1907 r9) ───────────────────────────
         MirrorLedger memory beforeSweep = _snapMirror(today);
         vm.prank(makeAddr("mirror-keeper"));
-        uint256 swept = _facet().sweepForfeitedInteractionRewards(96);
+        (uint256 swept, ) = _facet().sweepForfeitedInteractionRewards(96);
         MirrorLedger memory afterSweep = _snapMirror(today);
 
         uint256 released = beforeSweep.outRecycled - afterSweep.outRecycled;

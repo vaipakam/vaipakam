@@ -10,6 +10,7 @@ import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {LibRewardCustody} from "../libraries/LibRewardCustody.sol";
 import {LibRewardSanctions} from "../libraries/LibRewardSanctions.sol";
+import {LibRewardEntryProgress} from "../libraries/LibRewardEntryProgress.sol";
 
 /**
  * @title  RewardHorizonSweepFacet
@@ -345,11 +346,18 @@ contract RewardHorizonSweepFacet is
     ///         that value, so it is retired, never recycled).
     /// @return retiredCount How many of `entryIds` this call moved.
     /// @return settledTotal The commitments the retired days released (fresh and recycled).
+    /// @return progressed   #3026 — whether the call changed any listed entry's
+    ///                      settlement state, measured by {LibRewardEntryProgress}
+    ///                      before and after each entry. Pricing an entry first
+    ///                      advances its side's cumulative cursor, bounded per
+    ///                      call; a call that only advances it retires nothing
+    ///                      (`retiredCount == 0`) yet is what lets a later call
+    ///                      retire, so it reports progress here.
     function retireZeroPricedRemainders(uint256[] calldata entryIds)
         external
         nonReentrant
         whenNotPaused
-        returns (uint256 retiredCount, uint256 settledTotal)
+        returns (uint256 retiredCount, uint256 settledTotal, bool progressed)
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         if (s.interactionLaunchTimestamp == 0) revert InteractionEmissionsNotStarted();
@@ -368,9 +376,13 @@ contract RewardHorizonSweepFacet is
         LibInteractionRewards.TransportLegs memory tp;
         for (uint256 i = 0; i < entryIds.length; ) {
             uint256 tBefore = tp.treasuryFresh + tp.userFresh + tp.treasuryEraFresh + tp.userEraFresh;
+            bytes32 markBefore = LibRewardEntryProgress.digest(s, entryIds[i]);
             (bool retired, LibInteractionRewards.EntrySplit memory ex, uint256 freshCredited, ) =
                 LibInteractionRewards.callRetireZeroPricedRemainderWalk(entryIds[i], headroom, allowance, tp);
             if (retired) ++retiredCount;
+            if (!progressed && (retired || LibRewardEntryProgress.digest(s, entryIds[i]) != markBefore)) {
+                progressed = true;
+            }
             // A retirement credits nothing (`freshCredited` is zero since the
             // #1566 PR 1 review), so the headroom and allowance the walk prices
             // the capped day against stay at their opening values.

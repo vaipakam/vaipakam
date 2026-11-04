@@ -114,10 +114,10 @@ contract RewardZeroPricedRetirementTest is SetupTest, IVaipakamErrors {
         emit RewardEntryRetiredEmpty(id);
         address anyone = makeAddr("anyone");
         vm.prank(anyone);
-        (uint256 n, uint256 total) = _sweeper().retireZeroPricedRemainders(_ids(id));
+        (uint256 n, uint256 total, ) = _sweeper().retireZeroPricedRemainders(_ids(id));
         assertEq(n, 1); assertEq(total, 0, "nothing moved");
         assertTrue(_clo().isEntryTerminatedOn(id, 3), "processed: the proof accepts it");
-        (n, ) = _sweeper().retireZeroPricedRemainders(_ids(id));
+        (n, , ) = _sweeper().retireZeroPricedRemainders(_ids(id));
         assertEq(n, 0, "retired once");
     }
 
@@ -136,7 +136,7 @@ contract RewardZeroPricedRetirementTest is SetupTest, IVaipakamErrors {
         _mut().setGovernorCommitArmedFromDayRaw(1);
         _loanSideCap(2, type(uint128).max);
         uint256 id = _closedEntry(1, 3);
-        (uint256 n, ) = _sweeper().retireZeroPricedRemainders(_ids(id));
+        (uint256 n, , ) = _sweeper().retireZeroPricedRemainders(_ids(id));
         assertEq(n, 1, "an empty-valued window retires");
         assertTrue(_clo().isEntryTerminatedOn(id, 1));
     }
@@ -163,7 +163,7 @@ contract RewardZeroPricedRetirementTest is SetupTest, IVaipakamErrors {
         (, uint256 ledgerPaidBefore) = RewardCustodyFacet(address(diamond)).armedFreshLedger();
         vm.expectEmit(true, true, false, false, address(diamond));
         emit RewardEntryCapRetired(id, 1, 0, 0);
-        (uint256 n, ) = _sweeper().retireZeroPricedRemainders(_ids(id));
+        (uint256 n, , ) = _sweeper().retireZeroPricedRemainders(_ids(id));
         assertEq(n, 1, "day 1 retired");
         assertEq(InteractionRewardsLensFacet(address(diamond)).getInteractionPoolPaidOut(), poolBefore, "the pool is not drawn");
         assertEq(ConfigFacet(address(diamond)).getRecycleBucket(), bucketBefore, "nothing credited to the bucket");
@@ -171,12 +171,12 @@ contract RewardZeroPricedRetirementTest is SetupTest, IVaipakamErrors {
         assertEq(ledgerPaidAfter, ledgerPaidBefore, "the delivered ledger is not charged");
         assertTrue(_clo().isEntryTerminatedOn(id, 1), "the cursor passed day 1");
         assertFalse(_clo().isEntryTerminatedOn(id, 2));
-        (n, ) = _sweeper().retireZeroPricedRemainders(_ids(id));
+        (n, , ) = _sweeper().retireZeroPricedRemainders(_ids(id));
         assertEq(n, 1, "day 2");
-        (n, ) = _sweeper().retireZeroPricedRemainders(_ids(id));
+        (n, , ) = _sweeper().retireZeroPricedRemainders(_ids(id));
         assertEq(n, 1, "day 3: the window is done");
         assertTrue(_clo().isEntryTerminatedOn(id, 3), "processed");
-        (n, ) = _sweeper().retireZeroPricedRemainders(_ids(id));
+        (n, , ) = _sweeper().retireZeroPricedRemainders(_ids(id));
         assertEq(n, 0, "nothing left");
     }
 
@@ -190,11 +190,11 @@ contract RewardZeroPricedRetirementTest is SetupTest, IVaipakamErrors {
         _mut().setArmedFreshLedgerRaw(10e18, 0);
         uint256 id = _closedEntry(1, 4);
         _mut().setRewardEntryExpiryBegunRaw(id, true);
-        (uint256 n, ) = _sweeper().retireZeroPricedRemainders(_ids(id));
+        (uint256 n, , ) = _sweeper().retireZeroPricedRemainders(_ids(id));
         assertEq(n, 0, "the sweep's, not the retirement's");
         assertFalse(_clo().isEntryTerminatedOn(id, 1), "nothing moved");
         _mut().setRewardEntryExpiryBegunRaw(id, false);
-        (n, ) = _sweeper().retireZeroPricedRemainders(_ids(id));
+        (n, , ) = _sweeper().retireZeroPricedRemainders(_ids(id));
         assertEq(n, 1, "straddle: not begun, it retires");
     }
 
@@ -206,9 +206,47 @@ contract RewardZeroPricedRetirementTest is SetupTest, IVaipakamErrors {
         _mut().setGovernorCommitArmedFromDayRaw(1);
         _loanSideCap(3, 0);
         uint256 id = _closedEntry(1, 4); // days 2 and 3 have no globals yet
-        (uint256 n, ) = _sweeper().retireZeroPricedRemainders(_ids(id));
+        (uint256 n, , bool progressed) = _sweeper().retireZeroPricedRemainders(_ids(id));
         assertEq(n, 0, "not priceable: not retired");
         assertFalse(_clo().isEntryTerminatedOn(id, 1));
+        // #3026 — the first call advanced the pricing cursor over day 1 (the
+        // only finalized day) and says so; the next one has nothing to advance.
+        assertTrue(progressed, "the cursor moved over day 1");
+        (n, , progressed) = _sweeper().retireZeroPricedRemainders(_ids(id));
+        assertEq(n, 0);
+        assertFalse(progressed, "a genuine no-op reports none");
+    }
+
+    /// @dev #3026 — a side's cumulative pricing cursor more than
+    ///      `MAX_CUM_ADVANCE_DAYS` (730) finalized days behind a closed entry's end:
+    ///      the first call only advances the cursor (bounded), retires nothing, and
+    ///      reports progress, so a caller that sends on progress sends it; the next
+    ///      call reaches the end and retires.
+    function test_ACursorOnlyAdvance_ReportsProgress() public {
+        uint256 end = 800;
+        for (uint256 d = 1; d < end; ++d) {
+            _mut().setDayPoolStampRaw(d, 0, 0);
+            _mut().setKnownGlobalDailyInterest(d, 1e18, 0, true);
+            _mut().setDayCapThreshold18(d, type(uint256).max);
+            _mut().setDayCapModeRaw(d, 1);
+            _mut().setDayUserSideCapRaw(d, type(uint256).max);
+        }
+        _mut().setGovernorCommitArmedFromDayRaw(1);
+        _loanSideCap(uint32(end - 1), type(uint128).max);
+        vm.warp(launch + (end + 2) * 1 days);
+        uint256 id = _closedEntry(1, uint32(end));
+        uint256[] memory ids = _ids(id);
+        InteractionRewardsLensFacet lens = InteractionRewardsLensFacet(address(diamond));
+        assertEq(lens.getRewardEntrySettlementProgress(ids)[0].sideCumCursor, 0, "fixture: the cursor is at the start");
+        (uint256 n, uint256 total, bool progressed) = _sweeper().retireZeroPricedRemainders(ids);
+        assertEq(n, 0, "the window is not priced yet: nothing retired");
+        assertEq(total, 0);
+        assertTrue(progressed, "the cursor-only advance is progress");
+        assertEq(lens.getRewardEntrySettlementProgress(ids)[0].sideCumCursor, 730, "advanced by the per-call bound");
+        (n, , progressed) = _sweeper().retireZeroPricedRemainders(ids);
+        assertEq(n, 1, "the cursor reaches the end: the zero-valued window retires");
+        assertTrue(progressed);
+        assertTrue(lens.getRewardEntrySettlementProgress(ids)[0].processed, "settled");
     }
 
     /// @dev Payable, open or forfeited remainders are the claimant's or the sweeps': left alone.
@@ -222,7 +260,7 @@ contract RewardZeroPricedRetirementTest is SetupTest, IVaipakamErrors {
         _mut().setRewardEntryForfeitedRaw(forfeited);
         uint256[] memory ids = new uint256[](3);
         ids[0] = payable_; ids[1] = open; ids[2] = forfeited;
-        (uint256 n, uint256 total) = _sweeper().retireZeroPricedRemainders(ids);
+        (uint256 n, uint256 total, ) = _sweeper().retireZeroPricedRemainders(ids);
         assertEq(n, 0); assertEq(total, 0);
         assertFalse(_clo().isEntryTerminatedOn(payable_, 1));
     }

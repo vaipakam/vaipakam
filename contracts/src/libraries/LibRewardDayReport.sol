@@ -50,8 +50,20 @@ library LibRewardDayReport {
     uint8 internal constant WAITING = 3;
     uint8 internal constant LIST_UNUSABLE = 4;
 
-    /// @dev The default grace window, in step with both facets' constant.
+    /// @dev The grace window that applies while governance never set one.
     uint64 internal constant DEFAULT_REWARD_GRACE_SECONDS = 4 hours;
+
+    /// @notice The day-close grace window IN FORCE: the stored value, or
+    ///         {DEFAULT_REWARD_GRACE_SECONDS} while governance never set one
+    ///         (the setter refuses zero, so a zero slot only ever means
+    ///         "never set"). #2681 — the ONE place the default is applied:
+    ///         finalization's readiness and every getter read it, so no
+    ///         getter can report the raw slot for a window that is in fact
+    ///         four hours.
+    function effectiveGraceSeconds(LibVaipakam.Storage storage s) internal view returns (uint64) {
+        uint64 v = s.rewardGraceSeconds;
+        return v == 0 ? DEFAULT_REWARD_GRACE_SECONDS : v;
+    }
 
     /// @notice Whether `chainId` is on the expected-source list. The list is
     ///         tiny (one entry per Phase-1 chain), so a scan is cheaper than a
@@ -111,7 +123,7 @@ library LibRewardDayReport {
         if (covered) return (true, READY);
         uint64 firstAt = s.dailyFirstReportAt[dayId];
         if (firstAt == 0) return (false, NO_LISTED_REPORT);
-        uint64 grace = s.rewardGraceSeconds == 0 ? DEFAULT_REWARD_GRACE_SECONDS : s.rewardGraceSeconds;
+        uint64 grace = effectiveGraceSeconds(s);
         if (block.timestamp >= uint256(firstAt) + uint256(grace)) return (true, READY);
         return (false, WAITING);
     }

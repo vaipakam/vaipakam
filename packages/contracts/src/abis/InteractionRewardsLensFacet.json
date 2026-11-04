@@ -552,6 +552,67 @@
   },
   {
     "type": "function",
+    "name": "getRewardEntrySettlementProgress",
+    "inputs": [
+      {
+        "name": "entryIds",
+        "type": "uint256[]",
+        "internalType": "uint256[]"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "progress",
+        "type": "tuple[]",
+        "internalType": "struct LibRewardEntryProgress.EntryProgress[]",
+        "components": [
+          {
+            "name": "processed",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "forfeited",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "claimNextDay",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "sideCumCursor",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "legacyPhase",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "legacyPreparedThrough",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "legacyConsumeCursor",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "legacyLiveRecords",
+            "type": "uint32",
+            "internalType": "uint32"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getRewardReservations",
     "inputs": [],
     "outputs": [
@@ -691,6 +752,25 @@
         "name": "heldTotal",
         "type": "uint256",
         "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getStagingRecordMark",
+    "inputs": [
+      {
+        "name": "key",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
       }
     ],
     "stateMutability": "view"

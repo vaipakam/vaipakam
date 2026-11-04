@@ -200,7 +200,7 @@ contract RecycleBucketTest is SetupTest, IVaipakamErrors {
 
         // Permissionless: a random keeper sweeps.
         vm.prank(makeAddr("keeper"));
-        uint256 swept = _facet().sweepForfeitedInteractionRewards(loanId);
+        (uint256 swept, ) = _facet().sweepForfeitedInteractionRewards(loanId);
 
         assertApproxEqAbs(swept, expected, 1e6, "sweep ~= forfeited accrual");
         assertEq(_cfg().getRecycleBucket(), swept, "bucket credited == swept");
@@ -237,7 +237,7 @@ contract RecycleBucketTest is SetupTest, IVaipakamErrors {
         vpfi.transfer(address(this), bal);
 
         vm.prank(makeAddr("keeper"));
-        uint256 deferred = _facet().sweepForfeitedInteractionRewards(loanId);
+        (uint256 deferred, ) = _facet().sweepForfeitedInteractionRewards(loanId);
         assertEq(deferred, 0, "an unbacked sweep DEFERS - zero progress");
 
         // Nothing moved: no credit, no pool spend, entry intact.
@@ -251,7 +251,7 @@ contract RecycleBucketTest is SetupTest, IVaipakamErrors {
         // Refund the Diamond -> the same sweep now succeeds.
         vpfi.transfer(address(diamond), bal);
         vm.prank(makeAddr("keeper"));
-        uint256 swept = _facet().sweepForfeitedInteractionRewards(loanId);
+        (uint256 swept, ) = _facet().sweepForfeitedInteractionRewards(loanId);
         assertGt(swept, 0, "sweep succeeds once backed");
         assertEq(_cfg().getRecycleBucket(), swept, "credit backed and recorded");
     }
