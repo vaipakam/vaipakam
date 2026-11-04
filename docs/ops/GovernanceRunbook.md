@@ -1312,8 +1312,12 @@ indexer's deploy applies it.
 The keeper checks this itself: every tick verifies that the private database
 records every keeper migration its build carries, and declines, naming the
 missing ones, until it does ([`KeeperMachine.md`](KeeperMachine.md) §4a). So
-the readback is one journal cycle with no `[keeper-host] tick declined:
-keeper-private migration(s) …` line.
+the readback needs positive evidence, not the absence of one error: one journal
+cycle that reaches `[keeper] chains resolved: …`, with no `tick declined` line of
+any kind before it. The host prints `chains resolved` only after both schema
+checks have passed. A cycle that declines for any reason has not checked the
+schema: an unreadable private database, a missing binding or a lease decline
+each stop the tick before that line.
 
 **3b. Grant `KEEPER_ROLE` to the keeper EOA on EVERY chain — every mirror AND
 canonical Base.** `submitCommitmentBatch` is mirror-only (`_assertMirror`) and
