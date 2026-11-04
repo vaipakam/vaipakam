@@ -4,10 +4,12 @@ Internal-only Cloudflare Worker that watches the **VPFI recycling mesh**
 — #1222 M3 B4-c of the
 [recycling completion programme](../../docs/DesignsAndPlans/VpfiRecyclingCompletionPlan.md).
 
-Every 15 minutes it reads the per-chain recycled ledger from the canonical
-reward chain, and each mirror's own bucket and reservation counters from
-that mirror's own Diamond, then checks the accounting relations that hold
-those two views together. Detection only — it moves no funds, pauses
+Every 5 minutes it reads the canonical reward chain and ONE chain of the
+mesh in rotation: Base's per-chain recycled ledger row for that chain, and
+that chain's own bucket and reservation counters from its own Diamond. It
+then checks the accounting relations that hold those two views together.
+With three chains, each chain comes round every 15 minutes (see
+*One chain per tick* below). Detection only — it moves no funds, pauses
 nothing, and holds no signing key.
 
 ---
@@ -223,8 +225,9 @@ against 6): these cumulatives travel only in the chain's **day-close
 report**, so between reports Base is legitimately behind and frozen for a
 whole day, and a window shorter than one report cycle would alarm daily on
 a perfectly healthy chain. The floor is one day (86400s) plus the
-finalization grace (14400s) plus CCIP delivery, divided by the cron
-interval — **retune it if you change the cron**. Trailing
+finalization grace (14400s) plus CCIP delivery, divided by the per-chain
+cycle (chains in the mesh × the 5-minute step) — **retune it if you change
+the cron or the number of chains**. Trailing
 alone is normal (reports are periodic); trailing while frozen means the
 report path stalled, which is what the B2-d2 zeroed-chain manual-budget
 path exists to reconcile.
@@ -456,17 +459,42 @@ contracts merge.
 
 ---
 
-### Known limitations
+### One chain per tick
 
-**It does not fit the Workers Free plan at three chains (measured
-2026-11-04).** One tick over Base Sepolia, Arbitrum Sepolia and BNB testnet
-made more than the free plan's 50 subrequests per invocation, so the last
-chain's reads and every Telegram send failed with "Too many subrequests",
-and it used 93 ms of CPU against the free plan's 10 ms. The tick reports
-this honestly (`ok: false`, coverage gaps, `deliveryVerified: false`); it
-does not pass silently. Batching RPC calls would cut the subrequests but not
-the CPU, which is viem's decoding. It needs the Workers Paid plan or a host
-outside Workers.
+A tick that read the whole mesh did not fit one Workers Free invocation.
+Measured on 2026-11-04 over Base Sepolia, Arbitrum Sepolia and BNB testnet,
+it made more than the 50 subrequests the free plan allows, so the last
+chain's reads and every Telegram send failed with "Too many subrequests".
+
+So each tick now reads Base (head, identity, the expected source set) plus
+one chain: Base's row for it, read at the same pinned Base block, and that
+chain's own books. Nothing is lost by this, because every check compares
+Base's row for one chain with that chain's own books, and none sums across
+chains. The rotation is the canonical chain first, then
+`getExpectedSourceChainIds()` in ascending order, and the slot comes from
+the cron's scheduled time (`src/rotation.ts`). It is never configured, so
+a newly wired mirror joins the rotation without a redeploy.
+
+Two consequences to know:
+
+- **The windows count observations of one chain.** A chain is observed
+  once per rotation, which is the number of chains times
+  `ROTATION_STEP_SECONDS` (3 × 5 minutes = 15 minutes today, the cadence
+  the defaults were sized for). A fourth chain makes it 20 minutes and
+  lengthens both windows by a third. Late is the safe direction, but
+  retune them then.
+- **An alert record is pruned only by a tick that observed its chain.**
+  Another chain's alerts were not evaluated on this tick, so their absence
+  says nothing about whether they cleared. Watcher-level findings (chain 0)
+  are owned by every tick.
+
+**CPU is still over the free plan's nominal 10 ms.** The all-chain tick used
+93 ms and Cloudflare let it finish (`outcome: ok`). A one-chain tick does
+roughly a third of the reads, but it is still above 10 ms, and nothing
+promises Cloudflare will keep allowing that. If ticks start ending in
+`exceededCpu`, the fix is the Workers Paid plan.
+
+### Known limitations
 
 **Endpoint identity — RESOLVED (#1445).** Every tick now calls
 `eth_chainId` per target and compares it against the id the
@@ -527,10 +555,16 @@ account or chain set.
    ```bash
    npm run deploy
    set -o pipefail
-   curl -sS --fail-with-body -X POST \
-     -H "Authorization: Bearer $WATCHER_RUN_TOKEN" \
-     https://vaipakam-mesh-watcher.<subdomain>.workers.dev/run | jq
+   for chain in 84532 421614 97; do
+     curl -sS --fail-with-body -X POST \
+       -H "Authorization: Bearer $WATCHER_RUN_TOKEN" \
+       "https://vaipakam-mesh-watcher.<subdomain>.workers.dev/run?chain=$chain" | jq
+   done
    ```
+
+   One request per chain, because each run observes one chain, like a cron
+   tick. Without `?chain=` it observes the chain the rotation is on now.
+   The response's `rotation` lists every chain in the mesh; verify each.
 
    `--fail-with-body` plus `pipefail` is deliberate: the endpoint returns
    **503** for an unhealthy tick and 500 for an internal failure, and a
@@ -539,8 +573,8 @@ account or chain set.
    failed.
 
    `POST /run` executes one tick synchronously and returns its summary —
-   `ok`, `deliveryConfigured`, `chainsObserved`, `critical`, `advisory`,
-   `coverageGaps`, `sent`.
+   `ok`, `deliveryConfigured`, `observedChainId`, `rotation`,
+   `chainsObserved`, `critical`, `advisory`, `coverageGaps`, `sent`.
 
    The manual path **reads the windowed state but never advances it** —
    those windows are denominated in cron observations, so repeated manual
@@ -554,14 +588,14 @@ account or chain set.
 
    `ok` requires all of: no critical findings, a configured destination,
    no rejected sends, a probe that succeeded, **and zero coverage gaps** —
-   a watcher not observing its full mesh is not healthy, however clean the
-   chains it can see happen to be. `coverageGaps > 0`
+   a watcher that cannot read the chain it is on is not healthy, however
+   clean the other chains happen to be. `coverageGaps > 0`
    means a chain is wired on-chain but not readable (no RPC binding, no
    deployment stanza, a store read that failed) or the source set is
    misconfigured — fix it before relying on the alerts, or the mesh is only
    partly watched.
 
-The 15-minute cron slot is the one freed by retiring
+The watcher's cron slot is the one freed by retiring
 `vaipakam-lz-watcher`, whose LayerZero surface the T-068 CCIP migration
 and the #687-A securities excision had between them made entirely dead.
 Retiring that Worker's *source tree* is tracked separately on **#1440**.

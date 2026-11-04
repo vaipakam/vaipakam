@@ -8,6 +8,7 @@
  * "all clear" for chains it never looked at.
  */
 
+import { pickChain, rotationOrder, type TickScope } from './rotation';
 import type { Abi, Address, PublicClient } from 'viem';
 import {
   REPATRIATION_ABI,
@@ -595,6 +596,7 @@ async function readLocalLedger(target: ChainTarget): Promise<LocalRead> {
 export async function observeMesh(
   env: Env,
   config: Config,
+  scope: TickScope,
 ): Promise<MeshObservation> {
   const canonical = resolveChain(env, config.canonicalChainId);
   if (isCoverageGap(canonical)) {
@@ -745,9 +747,23 @@ export async function observeMesh(
 
   // Base's own chain id is included on purpose: its per-chain books must
   // be inert, and `base-self-inert` is the check that proves it.
-  const chainIds = [
-    ...new Set<number>([config.canonicalChainId, ...expected.map(Number)]),
-  ];
+  const rotation = rotationOrder(config.canonicalChainId, expected.map(Number));
+  // ONE chain per tick — see `rotation.ts`. Base is still read every tick
+  // (head, identity, expected set), and Base's row for the observed chain
+  // is read at the same pinned block as above.
+  const observedChainId = pickChain(rotation, scope);
+  if (observedChainId === null) {
+    gaps.push({
+      chainId: scope.kind === 'chain' ? scope.chainId : config.canonicalChainId,
+      reason: 'no-deployment',
+      source: 'config',
+      detail:
+        scope.kind === 'chain'
+          ? `chain ${scope.chainId} is not in the mesh (canonical ${config.canonicalChainId} plus getExpectedSourceChainIds() = [${rotation.slice(1).join(', ')}]), so there is nothing to observe for it`
+          : 'the rotation is empty, so this tick observed no chain',
+    });
+  }
+  const chainIds = observedChainId === null ? [] : [observedChainId];
 
   // allSettled, not all: one chain's transient RPC error or revert would
   // otherwise discard every SUCCESSFUL chain's books and abort the whole
@@ -906,7 +922,9 @@ export async function observeMesh(
 
   return {
     canonicalChainId: config.canonicalChainId,
-    expectedChainIds: chainIds,
+    expectedChainIds: rotation,
+    observedChainId,
+    rotation,
     books,
     freshLocals,
     allLocals,

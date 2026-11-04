@@ -2033,7 +2033,7 @@ describe('AlertStore — storage that cannot throw', () => {
     // ops are data precisely so this happens inside the guard.
     const ops: StoreOp[] = [
       { kind: 'pruneStreaks', keepChainIds: [1, 2] },
-      { kind: 'retainAlerts', keepKeys: ['a'] },
+      { kind: 'retainAlerts', keepKeys: ['a'], ownedChainIds: [0] },
     ];
     const r = await new AlertStore(exploding).commit(ops);
     expect(r.ok).toBe(false);

@@ -86,3 +86,19 @@ describe('POST /run — authentication precedes the store reads', () => {
     expect(get).not.toHaveBeenCalled();
   });
 });
+
+describe('POST /run?chain= — one named chain', () => {
+  it('refuses a chain parameter that is not a chain id, before any store read', async () => {
+    const { default: worker } = await import('../src/index');
+    const get = vi.fn(async () => 'secret');
+    const res = await worker.fetch(
+      new Request('https://example.com/run?chain=base', {
+        method: 'POST',
+        headers: { authorization: 'Bearer run-token' },
+      }),
+      { WATCHER_RUN_TOKEN: 'run-token', RPC_84532: { get } } as unknown as Env,
+    );
+    expect(res.status).toBe(400);
+    expect(get).not.toHaveBeenCalled();
+  });
+});

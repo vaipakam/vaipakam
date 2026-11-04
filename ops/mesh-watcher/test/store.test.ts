@@ -160,7 +160,7 @@ describe('retainAlerts', () => {
     const { db, store } = harness();
     for (const k of ['a', 'b', 'c']) seedAlert(db, k);
 
-    await store.commit([{ kind: 'retainAlerts', keepKeys: ['b'] }]);
+    await store.commit([{ kind: 'retainAlerts', keepKeys: ['b'], ownedChainIds: [0] }]);
 
     expect(alertKeys(db)).toEqual(['b']);
   });
@@ -169,7 +169,7 @@ describe('retainAlerts', () => {
     const { db, store } = harness();
     for (const k of ['a', 'b']) seedAlert(db, k);
 
-    await store.commit([{ kind: 'retainAlerts', keepKeys: [] }]);
+    await store.commit([{ kind: 'retainAlerts', keepKeys: [], ownedChainIds: [0] }]);
 
     expect(alertKeys(db)).toEqual([]);
   });
@@ -179,12 +179,34 @@ describe('retainAlerts', () => {
     for (let i = 0; i < 300; i++) seedAlert(db, `k${String(i).padStart(3, '0')}`);
     const keep = Array.from({ length: 120 }, (_, i) => `k${String(i).padStart(3, '0')}`);
 
-    await store.commit([{ kind: 'retainAlerts', keepKeys: keep }]);
+    await store.commit([{ kind: 'retainAlerts', keepKeys: keep, ownedChainIds: [0] }]);
 
     expect(alertKeys(db)).toEqual(keep);
     const deletes = bound.filter((b) => /DELETE FROM alert_sent/.test(b.sql));
     expect(deletes.length).toBeGreaterThan(1);
     for (const d of deletes) expect(d.binds).toBeLessThanOrEqual(100);
+  });
+});
+
+describe('retainAlerts — scoped to the chains a tick observed', () => {
+  it("never prunes another chain's alerts, only the observed chain's and chain 0's", async () => {
+    const { db, store } = harness();
+    for (const k of [
+      'bucket-coverage/x:84532',
+      'bucket-coverage/x:97',
+      'coverage-gap/no-rpc/own-ledger:97',
+      'watcher-tick-failed/tick:0',
+    ]) seedAlert(db, k);
+
+    // A tick that observed chain 97 and found only the coverage gap.
+    await store.commit([
+      { kind: 'retainAlerts', keepKeys: ['coverage-gap/no-rpc/own-ledger:97'], ownedChainIds: [97, 0] },
+    ]);
+
+    // Base's alert is untouched: this tick never looked at Base's books.
+    expect(alertKeys(db).sort()).toEqual(
+      ['bucket-coverage/x:84532', 'coverage-gap/no-rpc/own-ledger:97'].sort(),
+    );
   });
 });
 
