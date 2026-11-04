@@ -26,6 +26,12 @@ interface IClearanceAttestorReads {
     function messenger() external view returns (address);
 }
 
+/// @dev The stand-in's refresher getter (#3113), named the same way: a
+///      stand-in built before the role does not answer it.
+interface IStandInRefresherRead {
+    function refresher() external view returns (address);
+}
+
 /**
  * @title  ConfigureSanctionsClearance
  * @notice Wires the delisting timelocks' CROSS-CHAIN clearance route on
@@ -46,10 +52,11 @@ interface IClearanceAttestorReads {
  *           RedStone's terms (#2443).
  *         - It does not make the stand-in RedStone. The stand-in flags only
  *           what its owner (the admin) flags, says so on-chain
- *           (`isTestnetStandIn`), and is only as fresh as the admin's last
- *           write to it (`markUpdated`); a stand-in left alone longer than a
- *           timelock's `oracleMaxAge` closes that timelock's automated route,
- *           as a frozen RedStone would.
+ *           (`isTestnetStandIn`), and is only as fresh as its last
+ *           publication (`markUpdated`, by the admin or the refresher the
+ *           admin names); a stand-in left alone longer than a timelock's
+ *           `oracleMaxAge` closes that timelock's automated route, as a
+ *           frozen RedStone would.
  *         - It changes no list, no proposer, no delay and no Safe power.
  *
  *         One script, run once per chain, each run doing that chain's half:
@@ -86,7 +93,11 @@ interface IClearanceAttestorReads {
  *         a messenger or timelock only while the admin alone controls it
  *         ({AdminControl}: owner, nothing pending), since a pending owner
  *         could take over whatever the run just wired;
- *         `DEPLOYER_PRIVATE_KEY` deploys. Topology:
+ *         `DEPLOYER_PRIVATE_KEY` deploys. `SANCTIONS_STANDIN_REFRESHER`
+ *         (optional, attestor chain only) is the keeper address the run names
+ *         as the stand-in's refresher (#3113), so the keeper re-publishes it
+ *         before it goes stale; it can flag nothing. Unset, the run leaves
+ *         the refresher as it finds it and says who it is. Topology:
  *         `SANCTIONS_CLEARANCE_ATTESTOR_CHAIN_ID` (the testnet rehearsal uses
  *         BNB testnet, 97) and `SANCTIONS_CLEARANCE_TIMELOCK_CHAIN_IDS`
  *         (comma-separated; 84532,421614).
@@ -111,9 +122,15 @@ contract ConfigureSanctionsClearance is Script, ArtifactRootBase {
     /// @notice The stand-in this run deployed or reused (attestor chain only).
     address public standIn;
 
+    /// @notice The refresher this run names on the stand-in (attestor chain
+    ///         only); address(0) leaves it as found. Set by {run} from
+    ///         `SANCTIONS_STANDIN_REFRESHER`, or by a test.
+    address public standInRefresher;
+
     function run() external {
         address admin = vm.rememberKey(vm.envUint("ADMIN_PRIVATE_KEY"));
         address deployer = vm.rememberKey(vm.envUint("DEPLOYER_PRIVATE_KEY"));
+        standInRefresher = vm.envOr("SANCTIONS_STANDIN_REFRESHER", address(0));
         runWith(
             admin,
             deployer,
@@ -169,6 +186,10 @@ contract ConfigureSanctionsClearance is Script, ArtifactRootBase {
         attestor = address(a);
 
         vm.startBroadcast(admin);
+        if (standInRefresher != address(0) && s.refresher() != standInRefresher) {
+            s.setRefresher(standInRefresher);
+            console.log("  stand-in: refresher named", standInRefresher);
+        }
         for (uint256 i; i < timelockChainIds.length; ++i) {
             _ensureLane(m, timelockChainIds[i]);
         }
@@ -192,8 +213,9 @@ contract ConfigureSanctionsClearance is Script, ArtifactRootBase {
         console.log("            ", address(s));
         console.log("  stand-in owner      :", s.owner());
         console.log("  stand-in last update:", s.getLastUpdateBlockTimestamp());
+        console.log("  stand-in refresher  :", s.refresher());
         console.log(
-            "    It goes stale once older than a timelock's oracleMaxAge; the admin refreshes it with markUpdated()."
+            "    It goes stale once older than a timelock's oracleMaxAge; its refresher (the keeper's sanctionsStandInRefresh pass) or the admin refreshes it with markUpdated()."
         );
         for (uint256 i; i < timelockChainIds.length; ++i) {
             uint256 cid = timelockChainIds[i];
@@ -225,12 +247,15 @@ contract ConfigureSanctionsClearance is Script, ArtifactRootBase {
     }
 
     /// @dev Whether `candidate` is a stand-in only the admin controls: it says
-    ///      it is one, and {AdminControl.aloneControls} holds. An attestor
-    ///      binds its oracle for good, so reusing a stand-in whose pending
-    ///      owner could accept it would hand the clearance answers — flags and
-    ///      freshness — to someone other than the admin.
+    ///      it is one, {AdminControl.aloneControls} holds, and it has the
+    ///      refresher role (#3113). An attestor binds its oracle for good, so
+    ///      reusing a stand-in whose pending owner could accept it would hand
+    ///      the clearance answers (flags and freshness) to someone other than
+    ///      the admin; and reusing one built before the refresher role would
+    ///      leave its freshness to the admin's hand for as long as it is used.
     function _reusableStandIn(address candidate, address admin) internal view returns (bool) {
-        return AdminControl.aloneControls(candidate, admin) && SanctionsClearanceReport.isStandIn(candidate);
+        (bool hasRefresher,) = TotalRead.addressOf(candidate, IStandInRefresherRead.refresher.selector);
+        return hasRefresher && AdminControl.aloneControls(candidate, admin) && SanctionsClearanceReport.isStandIn(candidate);
     }
 
     /// @dev The recorded attestor while it reads `standIn_` (a reused
