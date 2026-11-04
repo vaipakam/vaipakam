@@ -1,4 +1,4 @@
-## Keeper — one ops alert when the signing key cannot sign (PR #<n>)
+## Keeper — one ops alert when the signing key cannot sign (PR #3154)
 
 When the keeper machine's `KEEPER_PRIVATE_KEY` is unset or unusable, the pass
 gate disarms every pass: the liquidations and defaults, the reward passes, and
