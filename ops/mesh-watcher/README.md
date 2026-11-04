@@ -488,11 +488,44 @@ Two consequences to know:
   says nothing about whether they cleared. Watcher-level findings (chain 0)
   are owned by every tick.
 
-**CPU is still over the free plan's nominal 10 ms.** The all-chain tick used
-93 ms and Cloudflare let it finish (`outcome: ok`). A one-chain tick does
-roughly a third of the reads, but it is still above 10 ms, and nothing
-promises Cloudflare will keep allowing that. If ticks start ending in
-`exceededCpu`, the fix is the Workers Paid plan.
+### One request per Diamond
+
+A tick reads each Diamond's views in ONE `eth_call`, through Multicall3 at
+its canonical address (`0xcA11bde05977b3631167028862bE2a173976CA11`,
+deployed on every chain the mesh runs on), at the block the tick pinned
+(`readViews` in `src/mesh.ts`). Each view still fails on its own: a view
+that reverts or does not decode comes back as its own failure and costs
+only the checks that need it, exactly as when each view was its own
+request. Only a failure of the whole call (transport, or Multicall3 absent)
+makes the chain unreadable this tick. A chain wired into the mesh without
+Multicall3 therefore shows up as a coverage gap on every tick, never as a
+silent pass.
+
+Measured on 2026-11-04 against the live Base Sepolia, Arbitrum Sepolia and
+BNB testnet Diamonds, one tick per observed chain:
+
+| | requests per tick | CPU in Node (median) |
+|---|---|---|
+| one request per view | 17–18 (14 of them `eth_call`) | 37–51 ms |
+| one request per Diamond | 6–7 (3 `eth_call`) | 14–17 ms |
+
+The figures each version observed were identical on all three chains. The
+whole mesh in one tick would now be about 15 requests, so the rotation is
+no longer needed to stay under the 50-subrequest limit. It is kept anyway,
+because it holds a tick's cost flat as mirrors are added.
+
+Alerts are packed the same way (`packAlerts` in `src/deliver.ts`): one
+Telegram message carries as many findings as fit under Telegram's 4,096
+characters, so a burst of findings cannot use up the tick's requests.
+Criticals and advisories never share a message, so a critical always
+notifies and an advisory never does.
+
+**CPU may still be over the free plan's nominal 10 ms.** The all-chain tick
+used 93 ms on Cloudflare before these changes and was allowed to finish
+(`outcome: ok`). The Node figures above are only a guide to the Workers
+runtime, and they are still above 10 ms, so nothing here promises that
+Cloudflare will keep allowing it. If ticks start ending in `exceededCpu`,
+the fix is the Workers Paid plan.
 
 ### Known limitations
 

@@ -12,7 +12,7 @@
 
 import { stripUrlPaths } from './redact';
 
-const TELEGRAM_MAX_CHARS = 4096;
+export const TELEGRAM_MAX_CHARS = 4096;
 
 /** Per-message deadline. Well under the Worker's own tick budget, so a
  *  stalled endpoint costs one message rather than the whole tick. */

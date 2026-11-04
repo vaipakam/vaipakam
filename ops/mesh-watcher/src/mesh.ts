@@ -71,6 +71,76 @@ async function readView<T>(
 }
 
 /**
+ * Multicall3 at its canonical address, deployed on every chain the mesh runs
+ * on (checked on Base Sepolia, Arbitrum Sepolia and BNB testnet). A chain
+ * wired into the mesh without it makes that chain's view reads fail as one
+ * coverage gap, the same as an unreachable endpoint.
+ */
+export const MULTICALL3: Address = '0xcA11bde05977b3631167028862bE2a173976CA11';
+
+/** One view in a {@link readViews} batch. */
+interface ViewCall {
+  functionName: string;
+  args?: readonly unknown[];
+  abi?: Abi;
+}
+
+/** A batched view's outcome: its decoded value, or why it failed. */
+type ViewOutcome = { ok: true; value: unknown } | { ok: false; error: unknown };
+
+/**
+ * Read every view of one Diamond in ONE `eth_call`, through Multicall3, at
+ * one pinned block.
+ *
+ * Why batched: Workers Free allows 50 subrequests per invocation, and a tick
+ * that read each view as its own request spent most of that on view reads
+ * alone. One batch per Diamond keeps a tick to a handful of requests however
+ * many views the checks need.
+ *
+ * `allowFailure` keeps each view's failure its own: a view that reverts (a
+ * selector missing from the current cut) or does not decode comes back as a
+ * failed outcome carrying viem's error, which `classify` reads exactly as it
+ * read the error of a lone `readContract`. Only a failure of the whole call —
+ * transport, or Multicall3 absent — throws, and the caller treats that as the
+ * chain being unreadable.
+ *
+ * `batchSize: 0` stops viem from splitting the batch into several calls by
+ * calldata size, so the request count stays one. Every call is still pinned,
+ * so the snapshot is one block either way.
+ */
+async function readViews(
+  client: PublicClient,
+  address: Address,
+  calls: readonly ViewCall[],
+  blockNumber: bigint,
+): Promise<ViewOutcome[]> {
+  const results = await client.multicall({
+    contracts: calls.map((c) => ({
+      address,
+      abi: c.abi ?? REWARD_AGGREGATOR_ABI,
+      functionName: c.functionName,
+      args: (c.args ?? []) as never,
+    })),
+    allowFailure: true,
+    blockNumber,
+    multicallAddress: MULTICALL3,
+    batchSize: 0,
+  });
+  return results.map((r) =>
+    r.status === 'success' ? { ok: true, value: r.result } : { ok: false, error: r.error },
+  );
+}
+
+/**
+ * The value of a view the caller cannot do without: its failure is the
+ * failure of the whole read, as it was when these views were awaited together.
+ */
+function required<T>(outcome: ViewOutcome): T {
+  if (!outcome.ok) throw outcome.error;
+  return outcome.value as T;
+}
+
+/**
  * Whether a failed repatriation-view read reverted at the CONTRACT (the
  * selector does not exist in the current cut) as opposed to failing in
  * transport.
@@ -110,7 +180,7 @@ export function repatDrawUnavailableGap(
       `The draw is UNKNOWN this tick, so the availability-formula, repat-cap AND keeper-cap checks for this chain did NOT run (substituting zero would page a false CRITICAL on any chain with a live repatriation). keeper-cap is included because its remaining-capacity figure is measured AFTER the repatriation draw, so an unreadable repat draw disables it too — the keeper draw's own capacity bound is NOT monitored in this window either.\n\n` +
       (preC2
         ? `The selector does not exist in this Diamond's CURRENT CUT — either a pre-C2 deployment, or a partial facet refresh that dropped the RepatriationFacet while its storage (possibly nonzero) persists; selector absence cannot distinguish the two. Cut the facet (back) in to close this gap.`
-        : `The failure was in transport, not the contract — most likely transient; the next tick usually recovers it.`),
+        : `The view did not revert, so the cause is not the cut; the classification above names what failed. Inside a batched read that is usually an answer that does not decode against the compiled ABI, so re-export the facet ABIs if the Diamond changed. (A transport failure fails the whole batch and is reported as the chain being unreadable instead.)`),
   };
 }
 
@@ -139,7 +209,7 @@ export function keeperDrawUnavailableGap(
       `The draw is UNKNOWN this tick, so the availability-formula, keeper-cap AND (on the canonical chain) the base-self-inert keeper leg did NOT run (substituting zero would page a false CRITICAL on any chain with an armed keeper allocation, and the cap check has nothing to compare). Naming all three matters during an incident: the draw's capacity bound is NOT monitored in this window, and on Base the self-inertness leg is the ONLY check that would catch a keeper draw booked against the canonical id.\n\n` +
       (pre1569
         ? `The selector does not exist in this Diamond's CURRENT CUT — either a pre-#1569 deployment, or a partial facet refresh that dropped the RewardAggregatorFacet while its storage (possibly nonzero) persists; selector absence cannot distinguish the two. Cut the facet (back) in to close this gap.`
-        : `The failure was in transport, not the contract — most likely transient; the next tick usually recovers it.`),
+        : `The view did not revert, so the cause is not the cut; the classification above names what failed. Inside a batched read that is usually an answer that does not decode against the compiled ABI, so re-export the facet ABIs if the Diamond changed. (A transport failure fails the whole batch and is reported as the chain being unreadable instead.)`),
   };
 }
 
@@ -161,104 +231,68 @@ export function remittedRecycledUnavailableGap(chainId: number, err: unknown): C
       `The acknowledged recycled share is UNKNOWN this tick, so the relocated-custody leg of base-ahead-of-chain did NOT run for this chain: an arrival credited as absorption instead of relocated custody is NOT being watched in this window.\n\n` +
       (missing
         ? `The selector does not exist in this Diamond's CURRENT CUT — a pre-#1452 deployment, or a refresh that dropped the remittance lens. Cut it (back) in to close this gap.`
-        : `The failure was in transport, not the contract — most likely transient; the next tick usually recovers it.`),
+        : `The view did not revert, so the cause is not the cut; the classification above names what failed. Inside a batched read that is usually an answer that does not decode against the compiled ABI, so re-export the facet ABIs if the Diamond changed. (A transport failure fails the whole batch and is reported as the chain being unreadable instead.)`),
   };
 }
 
-/** Base's books for one chain — three views, read together. */
-async function readBaseBooks(
+/**
+ * Base's books for one chain: six views in one batch at the pinned Base block
+ * ({@link readViews}).
+ *
+ * The first three are required: without any of them the chain's books are
+ * unreadable this tick. The last three are a NEWER facet's selectors each, so
+ * a canonical Diamond missed during a refresh must cost only the checks that
+ * need them, not the whole chain's books. Each is UNKNOWN on any failure,
+ * missing selector included (Codex #1618 r5): storage persists across facet
+ * cuts, so a partial refresh that dropped a facet leaves a nonzero value
+ * behind a reverting view, and a zero substitute would page a false CRITICAL.
+ * The dependent checks skip, and the gap names which.
+ *
+ * Exported for direct testing with a fake client: it does I/O.
+ */
+export async function readBaseBooks(
   canonical: ChainTarget,
   chainId: number,
   blockNumber: bigint,
   gaps: CoverageGap[],
 ): Promise<BaseChainBooks> {
-  const [ledger, retirement, outstanding] = await Promise.all([
-    readView<readonly [bigint, bigint, bigint, bigint]>(
-      canonical.client,
-      canonical.diamond,
-      'getChainRecycledLedger',
-      [chainId],
-      blockNumber,
-    ),
-    readView<readonly [bigint, bigint]>(
-      canonical.client,
-      canonical.diamond,
-      'getChainRecycledCommitRetirement',
-      [chainId],
-      blockNumber,
-    ),
-    readView<bigint>(
-      canonical.client,
-      canonical.diamond,
-      'getChainOutstandingRecycledCommit',
-      [chainId],
-      blockNumber,
-    ),
-  ]);
+  const args = [chainId];
+  const [ledgerR, retirementR, outstandingR, repatR, keeperR, recycledR] = await readViews(
+    canonical.client,
+    canonical.diamond,
+    [
+      { functionName: 'getChainRecycledLedger', args },
+      { functionName: 'getChainRecycledCommitRetirement', args },
+      { functionName: 'getChainOutstandingRecycledCommit', args },
+      // #1568 C2 — the repatriation draw pair. The draw slot and the
+      // availability view move in one transaction, so it shares the block.
+      { functionName: 'getChainRepatriationDraw', args, abi: REPATRIATION_ABI },
+      // #1569 M4 C3 — the keeper-earmark draw.
+      { functionName: 'getChainKeeperDraw', args },
+      // #1452 — Base's acknowledged recycled share for this chain.
+      { functionName: 'getChainRemittedRecycled', args, abi: REWARD_REMITTANCE_LENS_ABI },
+    ],
+    blockNumber,
+  );
+  const ledger = required<readonly [bigint, bigint, bigint, bigint]>(ledgerR!);
+  const retirement = required<readonly [bigint, bigint]>(retirementR!);
+  const outstanding = required<bigint>(outstandingR!);
 
-  // #1568 C2 — the repatriation draw pair, OUTSIDE the `Promise.all` above
-  // for the same reason `getRecycleCompositionPosition` reads separately
-  // on the local side: this is a NEWER facet's selector, and a canonical
-  // Diamond missed during a refresh must cost only the checks that need
-  // it, not the whole chain's books. Same pinned block — the draw slot
-  // and the availability view move in one transaction.
   let repat: BaseChainBooks['repat'];
-  try {
-    const draw = await readView<readonly [bigint, bigint]>(
-      canonical.client,
-      canonical.diamond,
-      'getChainRepatriationDraw',
-      [chainId],
-      blockNumber,
-      REPATRIATION_ABI,
-    );
+  if (repatR!.ok) {
+    const draw = repatR!.value as readonly [bigint, bigint];
     repat = { netDraw: draw[0], lifetimeReleased: draw[1] };
-  } catch (err) {
-    // The draw is UNKNOWN on ANY failure — including a missing selector
-    // (Codex #1618 r5): storage persists across facet cuts, so a partial
-    // refresh that dropped the facet leaves a nonzero draw behind a
-    // reverting view, and a zero substitute would page a false CRITICAL.
-    // The dependent checks skip; the gap below names which, and whether
-    // the cause was the cut or transport.
-    repat = undefined;
-    gaps.push(repatDrawUnavailableGap(chainId, err));
+  } else {
+    gaps.push(repatDrawUnavailableGap(chainId, repatR!.error));
   }
 
-  // #1569 M4 C3 — the keeper-earmark draw, read separately for exactly the
-  // reasons the repatriation draw is: a newer selector, and a Diamond
-  // missed during a refresh must cost only the checks that need it.
   let keeperDraw: bigint | undefined;
-  try {
-    keeperDraw = await readView<bigint>(
-      canonical.client,
-      canonical.diamond,
-      'getChainKeeperDraw',
-      [chainId],
-      blockNumber,
-    );
-  } catch (err) {
-    keeperDraw = undefined;
-    gaps.push(keeperDrawUnavailableGap(chainId, err));
-  }
+  if (keeperR!.ok) keeperDraw = keeperR!.value as bigint;
+  else gaps.push(keeperDrawUnavailableGap(chainId, keeperR!.error));
 
-  // #1452 — Base's acknowledged recycled share for this chain, read separately
-  // for the reasons the draws are: a newer selector on another facet, and a
-  // Diamond missed during a refresh must cost only the check that needs it.
   let recycledAcked: bigint | undefined;
-  try {
-    const pair = await readView<readonly [bigint, bigint]>(
-      canonical.client,
-      canonical.diamond,
-      'getChainRemittedRecycled',
-      [chainId],
-      blockNumber,
-      REWARD_REMITTANCE_LENS_ABI,
-    );
-    recycledAcked = pair[0];
-  } catch (err) {
-    recycledAcked = undefined;
-    gaps.push(remittedRecycledUnavailableGap(chainId, err));
-  }
+  if (recycledR!.ok) recycledAcked = (recycledR!.value as readonly [bigint, bigint])[0];
+  else gaps.push(remittedRecycledUnavailableGap(chainId, recycledR!.error));
   return {
     chainId,
     keeperDraw,
@@ -316,7 +350,7 @@ export function repatPositionUnavailableGap(
       `The repatriated-out cumulative is UNKNOWN this tick, so bucket composition for this chain did NOT run (substituting zero would page a false CRITICAL after any real repatriation).\n\n` +
       (preC2
         ? `The selector does not exist in this Diamond's CURRENT CUT — either a pre-C2 deployment, or a partial facet refresh that dropped the RepatriationFacet while its storage (possibly nonzero) persists; selector absence cannot distinguish the two. Cut the facet (back) in to close this gap.`
-        : `The failure was in transport, not the contract — most likely transient; the next tick usually recovers it.`),
+        : `The view did not revert, so the cause is not the cut; the classification above names what failed. Inside a batched read that is usually an answer that does not decode against the compiled ABI, so re-export the facet ABIs if the Diamond changed. (A transport failure fails the whole batch and is reported as the chain being unreadable instead.)`),
   };
 }
 
@@ -341,7 +375,7 @@ export function reattributionUnavailableGap(
       `The two reattribution cumulatives are UNKNOWN this tick, so bucket composition for this chain did NOT run (substituting zero would page a false CRITICAL after any real correction of a classification).\n\n` +
       (missing
         ? `The selector does not exist in this Diamond's CURRENT CUT — either a deployment predating the reconciliation epoch, or a partial facet refresh that dropped the RewardReconciliationFacet while its storage (possibly nonzero) persists; selector absence cannot distinguish the two. Cut the facet (back) in to close this gap.`
-        : `The failure was in transport, not the contract — most likely transient; the next tick usually recovers it.`),
+        : `The view did not revert, so the cause is not the cut; the classification above names what failed. Inside a batched read that is usually an answer that does not decode against the compiled ABI, so re-export the facet ABIs if the Diamond changed. (A transport failure fails the whole batch and is reported as the chain being unreadable instead.)`),
   };
 }
 
@@ -366,7 +400,7 @@ export function backingSnapshotUnavailableGap(
       `The balance / arrival-reservation tuple AND the custody activation state are UNKNOWN this tick, so the recovery-reservation backing check did NOT run for this chain (substituting zero would page a false CRITICAL after any real quarantine, substituting the reservation as zero would silently stop alarming on spent recovery backing, and assuming non-activation would apply the Diamond-only relation to custody that may be on the holder).\n\n` +
       (missing
         ? `The versioned snapshot does not exist in this Diamond's CURRENT CUT — either a pre-slice-4 deployment, or a partial refresh that dropped the RewardCustodyFacet while its storage (possibly an ACTIVATED custody) persists; selector absence cannot distinguish the two. The legacy lens tuple cannot stand in: it carries no activation state, and the flag that does lives on the same facet as the versioned snapshot, so an activated chain that has lost the facet is indistinguishable from one that never had it. Cut the RewardCustodyFacet (back) in to close this gap.`
-        : `The failure was in transport, not the contract — most likely transient; the next tick usually recovers it.`),
+        : `The view did not revert, so the cause is not the cut; the classification above names what failed. Inside a batched read that is usually an answer that does not decode against the compiled ABI, so re-export the facet ABIs if the Diamond changed. (A transport failure fails the whole batch and is reported as the chain being unreadable instead.)`),
   };
 }
 
@@ -385,49 +419,47 @@ export function compositionUnavailableGap(
   };
 }
 
-async function readLocalLedger(target: ChainTarget): Promise<LocalRead> {
+/** Exported for direct testing with a fake client: it does I/O, like {@link readBaseBooks}. */
+export async function readLocalLedger(target: ChainTarget): Promise<LocalRead> {
   const viewGaps: CoverageGap[] = [];
   // One block for this chain's whole tuple, for the same reason as the
   // Base-side reads: bucket coverage compares a balance against a
   // reservation that a single claim moves together.
   const block = await target.client.getBlock();
   const blockNumber = block.number;
-  const [custody, retirement, governor] = await Promise.all([
-    readView<readonly [bigint, bigint, bigint]>(
+  // Seven views in ONE batch at that block ({@link readViews}). The first
+  // three are required; each of the other four is a NEWER facet's selector,
+  // so its own failure costs only the checks that need it (below).
+  const [custodyR, retirementR, governorR, compositionR, repatR, reconciliationR, backingR] =
+    await readViews(
       target.client,
       target.diamond,
-      'getRecycleCustodyPosition',
-      [],
+      [
+        { functionName: 'getRecycleCustodyPosition' },
+        { functionName: 'getLocalRecycledCommitRetirement' },
+        { functionName: 'getGovernorCommitState' },
+        { functionName: 'getRecycleCompositionPosition' },
+        { functionName: 'getRepatriationPosition', abi: REPATRIATION_ABI },
+        { functionName: 'getReconciliationTotals', abi: REWARD_RECONCILIATION_ABI },
+        { functionName: 'getRecycleBackingSnapshotV2', abi: REWARD_CUSTODY_ABI },
+      ],
       blockNumber,
-    ),
-    readView<readonly [bigint, bigint]>(
-      target.client,
-      target.diamond,
-      'getLocalRecycledCommitRetirement',
-      [],
-      blockNumber,
-    ),
-    readView<readonly [bigint, bigint, bigint, bigint]>(
-      target.client,
-      target.diamond,
-      'getGovernorCommitState',
-      [],
-      blockNumber,
-    ),
-  ]);
+    );
+  const custody = required<readonly [bigint, bigint, bigint]>(custodyR!);
+  const retirement = required<readonly [bigint, bigint]>(retirementR!);
+  const governor = required<readonly [bigint, bigint, bigint, bigint]>(governorR!);
 
-  // #1444 / #1446 — the raw slots, read SEPARATELY from the three above and
-  // at the same pinned block.
+  // #1444 / #1446 — the raw slots.
   //
-  // Separate because this is a NEWER facet selector (#1448 r2): a chain
-  // missed during a facet refresh answers the other three and reverts this
-  // one. Inside the `Promise.all` that single revert rejected the whole local
-  // read, so `observeMesh` discarded the custody, retirement and governor
-  // evidence it had successfully fetched — turning several working CRITICAL
-  // checks into one non-paging coverage gap. Its absence must cost only the
-  // checks that need it.
+  // Optional because this is a NEWER facet selector (#1448 r2): a chain
+  // missed during a facet refresh answers the three views above and reverts
+  // this one. When that single revert rejected the whole local read,
+  // `observeMesh` discarded the custody, retirement and governor evidence it
+  // had successfully fetched — turning several working CRITICAL checks into
+  // one non-paging coverage gap. Its absence must cost only the checks that
+  // need it.
   //
-  // Same pinned block is still load-bearing: the composition and coverage
+  // The shared pinned block is load-bearing: the composition and coverage
   // checks compare these counters against the bucket and payout figures, so
   // a mixed-block tuple would show a mid-transaction state as a violation.
   let composition:
@@ -438,77 +470,50 @@ async function readLocalLedger(target: ChainTarget): Promise<LocalRead> {
         releasedRemitResolved: bigint;
       }
     | undefined;
-  try {
-    const c = await readView<
-      readonly [bigint, bigint, boolean, bigint]
-    >(
-      target.client,
-      target.diamond,
-      'getRecycleCompositionPosition',
-      [],
-      blockNumber,
-    );
+  if (compositionR!.ok) {
+    const c = compositionR!.value as readonly [bigint, bigint, boolean, bigint];
     composition = {
       credited: c[0],
       releasedRemitStranded: c[1],
       isCanonicalRewardChain: c[2],
       releasedRemitResolved: c[3],
     };
-  } catch (err) {
-    composition = undefined;
-    viewGaps.push(compositionUnavailableGap(target.chainId, err));
+  } else {
+    viewGaps.push(compositionUnavailableGap(target.chainId, compositionR!.error));
   }
 
-  // #1568 C2 — the repatriated-outflow cumulative, separately for the same
-  // newer-facet reason as the composition read above, at the same pinned
-  // block. `undefined` (view unavailable) and `0n` (facet present, nothing
-  // repatriated) are deliberately distinct: the first reports a coverage
-  // gap, the second is just a healthy figure.
+  // #1568 C2 — the repatriated-outflow cumulative, optional for the same
+  // newer-facet reason as the composition view. `undefined` (view
+  // unavailable) and `0n` (facet present, nothing repatriated) are
+  // deliberately distinct: the first reports a coverage gap, the second is
+  // just a healthy figure. UNKNOWN on ANY failure, missing selector included
+  // — same partial-refresh reasoning as the Base-side draw (Codex #1618 r5).
+  // The composition check skips for this chain.
   let repatriatedOut: bigint | undefined;
-  try {
-    const pos = await readView<readonly [bigint, Address, Address, bigint]>(
-      target.client,
-      target.diamond,
-      'getRepatriationPosition',
-      [],
-      blockNumber,
-      REPATRIATION_ABI,
-    );
-    repatriatedOut = pos[0];
-  } catch (err) {
-    // UNKNOWN on ANY failure, missing selector included — same partial-
-    // refresh reasoning as the Base-side draw read (Codex #1618 r5). The
-    // composition check skips for this chain.
-    repatriatedOut = undefined;
-    viewGaps.push(repatPositionUnavailableGap(target.chainId, err));
+  if (repatR!.ok) {
+    repatriatedOut = (repatR!.value as readonly [bigint, Address, Address, bigint])[0];
+  } else {
+    viewGaps.push(repatPositionUnavailableGap(target.chainId, repatR!.error));
   }
 
   // #1566 closure 2 cutover PR 2 (Codex #2206 r9) — the two reattribution
-  // cumulatives, separately for the same newer-facet reason and at the same
-  // pinned block, with the same UNKNOWN-vs-zero rule as the repatriated-out
-  // term: a chain refreshed without the reconciliation facet reverts this
-  // read alone, and the checks that consume the pair skip rather than
-  // substitute a zero that would page after any real correction.
+  // cumulatives, optional for the same newer-facet reason, with the same
+  // UNKNOWN-vs-zero rule as the repatriated-out term: a chain refreshed
+  // without the reconciliation facet fails this view alone, and the checks
+  // that consume the pair skip rather than substitute a zero that would page
+  // after any real correction.
   let reattribution:
     | { reattributedIn: bigint; reattributedOut: bigint }
     | undefined;
-  try {
-    const totals = await readView<readonly [bigint, bigint, bigint]>(
-      target.client,
-      target.diamond,
-      'getReconciliationTotals',
-      [],
-      blockNumber,
-      REWARD_RECONCILIATION_ABI,
-    );
+  if (reconciliationR!.ok) {
+    const totals = reconciliationR!.value as readonly [bigint, bigint, bigint];
     reattribution = { reattributedIn: totals[1], reattributedOut: totals[2] };
-  } catch (err) {
-    reattribution = undefined;
-    viewGaps.push(reattributionUnavailableGap(target.chainId, err));
+  } else {
+    viewGaps.push(reattributionUnavailableGap(target.chainId, reconciliationR!.error));
   }
 
   // #1434 P2-w2 — the backing snapshot (balance + arrival reservation),
-  // separately for the same newer-facet reason, at the same pinned block.
+  // optional for the same newer-facet reason.
   //
   // #1566 slice 4 PR B — the VERSIONED snapshot, and ONLY it (Codex #2186
   // r3 P1): on a chain whose reward custody moved onto the holder, the
@@ -534,20 +539,11 @@ async function readLocalLedger(target: ChainTarget): Promise<LocalRead> {
         holderAttributed: bigint;
       }
     | undefined;
-  try {
-    const snap = await readView<
-      readonly [
-        bigint, bigint, bigint, bigint, bigint, bigint, bigint, bigint,
-        boolean, boolean, bigint, bigint,
-      ]
-    >(
-      target.client,
-      target.diamond,
-      'getRecycleBackingSnapshotV2',
-      [],
-      blockNumber,
-      REWARD_CUSTODY_ABI,
-    );
+  if (backingR!.ok) {
+    const snap = backingR!.value as readonly [
+      bigint, bigint, bigint, bigint, bigint, bigint, bigint, bigint,
+      boolean, boolean, bigint, bigint,
+    ];
     backing = {
       vpfiBalance: snap[0],
       strandedRecoveryReserved: snap[6],
@@ -557,9 +553,8 @@ async function readLocalLedger(target: ChainTarget): Promise<LocalRead> {
       holderBalance: snap[10],
       holderAttributed: snap[11],
     };
-  } catch (err) {
-    backing = undefined;
-    viewGaps.push(backingSnapshotUnavailableGap(target.chainId, err));
+  } else {
+    viewGaps.push(backingSnapshotUnavailableGap(target.chainId, backingR!.error));
   }
 
   return {

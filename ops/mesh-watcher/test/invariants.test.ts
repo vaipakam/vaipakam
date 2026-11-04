@@ -2974,7 +2974,8 @@ describe('recovery-reservation backing (#1434 P2-w2, §4.1)', () => {
 describe('repat gap builders + the pre-C2/unknown discrimination', () => {
   /** An error `classify` marks `contract-revert` — a missing selector. */
   const REVERT = () => new Error('execution reverted');
-  /** An error of no classifiable kind — a transient transport failure. */
+  /** An error that is not a revert. Inside a batched read that is a view whose
+   *  answer did not decode; a transport failure fails the whole batch instead. */
   const TRANSIENT = () => new Error('boom');
 
   // #1566 slice 4 PR B (Codex #2186 r3) — a missing V2 is a coverage gap
@@ -2991,7 +2992,7 @@ describe('repat gap builders + the pre-C2/unknown discrimination', () => {
     expect(gap.detail).toContain('activation state');
     expect(gap.detail).toContain('did NOT run');
     const transient = backingSnapshotUnavailableGap(97, TRANSIENT());
-    expect(transient.detail).toContain('transport');
+    expect(transient.detail).toContain('is not the cut');
     expect(transient.detail).not.toContain('Cut the RewardCustodyFacet');
   });
 
@@ -3085,7 +3086,7 @@ describe('reattributionUnavailableGap (#1566 closure 2 cutover PR 2, Codex #2206
     expect(gap.detail).toContain('bucket composition');
     expect(gap.detail).not.toContain('derivation');
     expect(gap.detail).toContain('did NOT run');
-    expect(gap.detail).toContain('transient');
+    expect(gap.detail).toContain('is not the cut');
   });
 });
 
