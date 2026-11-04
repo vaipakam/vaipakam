@@ -89,6 +89,7 @@ export const EXIT_WRITES: ReadonlySet<string> = new Set([
   // A past seller's interest claim (#1209): the interest they earned on a
   // position they sold, paid into their vault and withdrawn from there.
   'claimAsSeller',
+  'withdrawExtendReserve',
   'claimInteractionRewards',
   // The held-apart balance alone (#2489 r2) — the same settled funds as the
   // combined claim, taken on their own.
@@ -142,6 +143,8 @@ export const EXIT_WRITES: ReadonlySet<string> = new Set([
   // without it: it clears the mirror caches the flag leaves behind. An
   // exit that only half-completes is not an exit.
   'setVPFIDiscountConsent',
+  'setAutoExtendBorrowerCaps',
+  'setAutoExtendLenderCaps',
   'pokeMyTier',
   // Withdrawing the consent to be charged for paid Push alerts (#2723).
   // The same authority as the fee-deduction consent above — a standing
@@ -194,6 +197,10 @@ const DISABLE_ONLY: Readonly<Record<string, number>> = {
   setKeeperAccess: 0,
   setLoanKeeperEnabled: 2,
   setVPFIDiscountConsent: 0,
+  // #2814 — turning one's own auto-extend consent off is always open; `(loanId,
+  // bool enabled, …)`.
+  setAutoExtendBorrowerCaps: 1,
+  setAutoExtendLenderCaps: 1,
 };
 
 /**

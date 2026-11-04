@@ -200,7 +200,11 @@ export const KEY_MAP: Record<string, string[]> = {
   // claim recorded or closed for them is an activity row, so this frame is
   // the one that reaches them. Unscoped on purpose (not in OWN_SCOPED_ROOTS):
   // the frame's loan hints never name a past seller.
-  'activity.appended': ['activity', 'sellerClaims'],
+  // 'autoExtend' and 'extendReserve' (#2814): every change of either side's
+  // extension limits, every reserve deposit or withdrawal and every draw an
+  // extension makes on it is an activity row, and a reserve's depositor may
+  // no longer be a party to the loan. Unscoped for the same reason.
+  'activity.appended': ['activity', 'sellerClaims', 'autoExtend', 'extendReserve'],
   // NOT mapped on purpose: 'deskSymbols' (token metadata is immutable).
 };
 
@@ -232,6 +236,10 @@ export const STRETCHED_ROOTS: readonly string[] = [
   // A past seller's interest claims (#1209) — signalAware; a returning tab
   // must re-read them or a payment that arrived while hidden stays unshown.
   'sellerClaims',
+  // A loan's automatic extension (#2814): the limits, the switch and the
+  // reserve are all signalAware.
+  'autoExtend',
+  'extendReserve',
   'standingApprovals',
   'keeperConfig',
   'loanKeeperEnabled',

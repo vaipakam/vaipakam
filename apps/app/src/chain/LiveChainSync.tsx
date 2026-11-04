@@ -64,6 +64,10 @@ export const LIVE_KEYS: ReadonlySet<string> = new Set([
   // A past seller's interest claims (#1209): a borrower's payment moves them
   // with no action of the seller's.
   'sellerClaims',
+  // A loan's automatic extension (#2814): the other side sets its limits, and
+  // an extension draws the reserve, with no action of this wallet's.
+  'autoExtend',
+  'extendReserve',
   'vaultAssets',
   'loanSalePending',
   'refinancePending',
