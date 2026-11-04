@@ -941,6 +941,45 @@ serves. Each ships switched off behind its own flag.
   same listing. Each teardown is reported from the protocol's own record of
   it. The duty ships switched off behind its own flag and pays only gas.
 
+## Moving held reward claim days on to payment
+
+- A reward claim day that one call could not settle is held in a staging
+  record, alone or inside a claim domain that gathers a claimant's held days.
+  From then on only permissionless calls move it: preparing it, reserving
+  what it pays once its day is covered, resolving it page by page until it
+  pays and closes, and stepping a legacy slice until it is consumed. If
+  nobody makes those calls, the claimant waits indefinitely, and a record
+  that has started resolving has no deadline that would release it. The
+  keeper makes them (owner direction on #3097: every permissionless step gets
+  a keeper backstop).
+- Every hour, on every chain it serves, the keeper finds the open records,
+  domains and legacy slices from the indexer's record of staging events, and
+  decides each from its own on-chain state and the chain's own clock. It
+  takes a few pages per subject and a bounded number of subjects per run. A
+  page that changes nothing the keeper can read leaves that subject alone
+  until its state changes or a day has passed, because whether a day is
+  covered depends on sources outside the record.
+- When a released transport batch is contested, the protocol gives its
+  oldest registered record a priority window. The keeper registers a record
+  for that window only when doing so makes it the oldest registrant, and once
+  the window closes it uses that record's priority on the record's next
+  preparation, and only when that preparation would actually stage
+  something.
+- A record or domain past its deadline that cannot be covered, one the
+  protocol itself finds stale, and an unwind already under way, are unwound
+  page by page. An unwind returns exactly what the record held to where it
+  came from; it is a release, never a payout, and a record that has started
+  resolving is never unwound. Unwinding is armed by its own switch,
+  separately from the rest of the duty; while it is off, the keeper names
+  each unwind it would have made.
+- The keeper moves nothing of its own and receives nothing: every payout is
+  the record's own, made by the protocol from its own storage. A claim
+  payout the sanctions screen would hold is left to the sanctions-hold duty,
+  which observes the screen on it. Every call is simulated on the current
+  state first and sent only when the simulation succeeds; a refusal is
+  reported with the protocol's reason, and a paused protocol stops the run.
+  The duty ships switched off and pays only gas.
+
 ## Recording what backs each permissionless step
 
 Every permissionless step that keeps the protocol moving has the keeper as

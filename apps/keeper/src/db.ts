@@ -1237,6 +1237,90 @@ export async function listOpenStagingRecordKeysForUser(
     .filter((k): k is string => typeof k === 'string' && /^0x[0-9a-f]{64}$/.test(k));
 }
 
+/** One open staging record or claim domain on a chain (#3097). */
+export interface OpenStaging {
+  what: 'record' | 'domain';
+  key: string;
+  user: string;
+  /** Where its latest opening sits in the ledger (block × 1e6 + log index). */
+  pos: number;
+}
+
+/** Every open staging record and claim domain on `chainId`, oldest opening
+ *  first: the subjects of the staging upkeep pass. The same rule as
+ *  {@link listOpenStagingOwners}; each one's state is read on chain. */
+export async function listOpenStaging(db: D1Database, chainId: number, fromBlock: number): Promise<OpenStaging[]> {
+  const rows = await db
+    .prepare(`SELECT what, k, who, pos FROM (${openStagingSql('?2')}) ORDER BY pos`)
+    .bind(chainId, fromBlock)
+    .all<{ what: string; k: string | null; who: string | null; pos: number }>();
+  return (rows.results ?? []).flatMap((r) =>
+    (r.what === 'record' || r.what === 'domain') &&
+    typeof r.k === 'string' &&
+    /^0x[0-9a-f]{64}$/.test(r.k) &&
+    typeof r.who === 'string' &&
+    /^0x[0-9a-f]{40}$/.test(r.who)
+      ? [{ what: r.what, key: r.k, user: r.who, pos: Number(r.pos) }]
+      : [],
+  );
+}
+
+/** The reward entries of `chainId` whose legacy slice is open and not yet
+ *  consumed: a `LegacySliceDomainOpened` with no later `LegacySliceConsumed`
+ *  for the same entry, oldest opening first. A slice's settlement deletes
+ *  its domain without an event of its own, so a consumed slice is the last
+ *  thing the ledger can say about it; the domain's phase, read on chain,
+ *  decides whether a step is due. */
+export async function listOpenLegacySlices(db: D1Database, chainId: number, fromBlock: number): Promise<bigint[]> {
+  const rows = await db
+    .prepare(
+      `WITH ev AS (
+         SELECT kind, CAST(json_extract(args_json, '$.entryId') AS TEXT) AS id,
+                block_number * 1000000 + log_index AS pos
+           FROM activity_events
+          WHERE chain_id = ?1 AND block_number >= ?2
+            AND kind IN ('LegacySliceDomainOpened', 'LegacySliceConsumed')
+       ),
+       opened AS (SELECT id, MAX(pos) AS pos FROM ev WHERE kind = 'LegacySliceDomainOpened' GROUP BY id),
+       consumed AS (SELECT id, MAX(pos) AS pos FROM ev WHERE kind = 'LegacySliceConsumed' GROUP BY id)
+       SELECT o.id AS id FROM opened o LEFT JOIN consumed c ON c.id = o.id
+        WHERE c.pos IS NULL OR c.pos < o.pos
+        ORDER BY o.pos`,
+    )
+    .bind(chainId, fromBlock)
+    .all<{ id: string | null }>();
+  return (rows.results ?? []).flatMap((r) => (typeof r.id === 'string' && /^[0-9]+$/.test(r.id) ? [BigInt(r.id)] : []));
+}
+
+/** One `TransportBatchContested` finding: the record under `key` found
+ *  `batchId` contested at `pos`. */
+export interface BatchContest {
+  batchId: string;
+  key: string;
+  pos: number;
+}
+
+/** The latest contest finding of each (batch, record) pair on `chainId`. A
+ *  finding before the record's latest opening belongs to an earlier record
+ *  under the same key; the caller compares positions. */
+export async function listBatchContests(db: D1Database, chainId: number, fromBlock: number): Promise<BatchContest[]> {
+  const rows = await db
+    .prepare(
+      `SELECT lower(json_extract(args_json, '$.batchId')) AS b, lower(json_extract(args_json, '$.key')) AS k,
+              MAX(block_number * 1000000 + log_index) AS pos
+         FROM activity_events
+        WHERE chain_id = ?1 AND block_number >= ?2 AND kind = 'TransportBatchContested'
+        GROUP BY b, k
+        ORDER BY pos`,
+    )
+    .bind(chainId, fromBlock)
+    .all<{ b: string | null; k: string | null; pos: number }>();
+  const hex32 = /^0x[0-9a-f]{64}$/;
+  return (rows.results ?? []).flatMap((r) =>
+    typeof r.b === 'string' && hex32.test(r.b) && typeof r.k === 'string' && hex32.test(r.k) ? [{ batchId: r.b, key: r.k, pos: Number(r.pos) }] : [],
+  );
+}
+
 /**
  * The loan parties of `chainId` — every lender and borrower the indexer has
  * recorded, original or current holder, lowercased, in address order — after

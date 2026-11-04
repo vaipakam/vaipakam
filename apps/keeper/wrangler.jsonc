@@ -442,6 +442,19 @@
   //     its expiry or on a closed loan, hourly. Each is simulated
   //     first and sent only when it would succeed. Permissionless; moves no
   //     value and pays only gas. Ships unset.
+  //   - REWARD_STAGING_UPKEEP_ENABLED — 'true' arms the #3097 reward staging
+  //     upkeep pass, hourly: prepareStagedDay / reserveStagedDay /
+  //     resolveStagedDayPage for open staging records, reserveDomainPage /
+  //     resolveDomainPage for claim domains, stepLegacySlice for open legacy
+  //     slices, and registerForBatchWindow for a released batch's window.
+  //     Every value movement is the record's own; a claim payout the
+  //     sanctions screen would hold is left to rewardSanctionsHold. Pays
+  //     only gas. Ships unset.
+  //   - REWARD_STAGING_UNWIND_ENABLED — 'true' adds the unwinds to the armed
+  //     staging upkeep pass: unwindStagedDayPage / unwindDomainPage for a
+  //     record or domain past its deadline that cannot be covered, a stale
+  //     record, or an unwind under way. Returns what the record held. Pays
+  //     only gas. Ships unset.
   //
   // (b) GENUINE PLAIN VARS. `keep_vars: true` preserves the ones this config
   //     does NOT declare — it suppresses the delete of bindings absent from
