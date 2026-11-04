@@ -1024,6 +1024,65 @@ contract RepayFacetTest is Test {
         RepayPeriodicFacet(address(diamond)).autoDeductDaily(2);
     }
 
+    /// @dev #3132 — once every agreed day is paid (here by a rental partial
+    ///      covering the whole term), a deduction past maturity is refused:
+    ///      overdue time is the rental late fee, never an extra rental day.
+    function test_3132_autoDeductDaily_refusesPastTheAgreedDays() public {
+        helperOfferLoan();
+        LibVaipakam.Loan memory before = LoanFacet(address(diamond)).getLoanDetails(2);
+        vm.prank(borrower);
+        RepayFacet(address(diamond)).repayPartial(2, before.durationDays);
+
+        LibVaipakam.Loan memory paid = LoanFacet(address(diamond)).getLoanDetails(2);
+        assertEq(uint8(paid.status), uint8(LibVaipakam.LoanStatus.Active), "still open until closed");
+        assertEq(paid.lastDeductTime, uint256(paid.startTime) + uint256(paid.durationDays) * 1 days);
+
+        // Past maturity and a further day: before #3132 this charged day 31.
+        vm.warp(paid.lastDeductTime + 1 days);
+        vm.expectRevert(abi.encodeWithSelector(RepayPeriodicFacet.RentalTermFullyDeducted.selector, 2));
+        RepayPeriodicFacet(address(diamond)).autoDeductDaily(2);
+
+        LibVaipakam.Loan memory afterCall = LoanFacet(address(diamond)).getLoanDetails(2);
+        assertEq(afterCall.prepayAmount, paid.prepayAmount, "no extra day charged");
+    }
+
+    /// @dev #3132 — a record whose deduction clock is behind its start is
+    ///      refused: consumed days read 0 there, so a charged day would never
+    ///      be counted and every call would charge again.
+    function test_3132_autoDeductDaily_refusesClockBehindStart() public {
+        helperOfferLoan();
+        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(2);
+        loan.lastDeductTime = 0;
+        TestMutatorFacet(address(diamond)).setLoan(2, loan);
+
+        vm.warp(block.timestamp + 1 days);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                RepayPeriodicFacet.RentalClockBehindStart.selector,
+                2,
+                0,
+                uint256(loan.startTime)
+            )
+        );
+        RepayPeriodicFacet(address(diamond)).autoDeductDaily(2);
+    }
+
+    /// @dev #3132 — the last agreed day is still charged (the guard refuses
+    ///      only a day beyond the term).
+    function test_3132_autoDeductDaily_chargesTheLastAgreedDay() public {
+        helperOfferLoan();
+        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(2);
+        vm.prank(borrower);
+        RepayFacet(address(diamond)).repayPartial(2, loan.durationDays - 1);
+
+        LibVaipakam.Loan memory paid = LoanFacet(address(diamond)).getLoanDetails(2);
+        vm.warp(paid.lastDeductTime + 1 days);
+        RepayPeriodicFacet(address(diamond)).autoDeductDaily(2);
+
+        LibVaipakam.Loan memory done = LoanFacet(address(diamond)).getLoanDetails(2);
+        assertEq(uint8(done.status), uint8(LibVaipakam.LoanStatus.Repaid), "last day closes the rental");
+    }
+
     /// @dev Tests that repayNFT reverts with InsufficientPrepay when prepayAmount=0.
     function testRepayNFTRevertsInsufficientPrepay() public {
         helperOfferLoan();
