@@ -1,4 +1,4 @@
-## Keeper — announce the untyped return of a transport remainder (PR #<n>)
+## Keeper — announce the untyped return of a transport remainder (PR #3149)
 
 #2376 added an administrator-only mirror call that sends a released transport
 remainder home to its issuing Base, untyped, where Base books it recycled on
