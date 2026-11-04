@@ -147,13 +147,31 @@ describe('the app formatting, mirrored', () => {
 describe('reserveFigureMismatches', () => {
   const T = { reserved: 'Reserved: {{amount}}', otherFree: 'Other: {{amount}}', chargeNow: 'Now: {{amount}}', chargeAtEnd: 'End: {{amount}}' };
   const lines = ['Reserved: 0 WETH', 'Other: 0 WETH', 'Now: 0.0000008219 WETH', 'End: 0.000003322 WETH'];
-  it('passes when each line matches one bracketing chain value', () => {
-    const c = { reserved: [0n], otherFree: [0n], chargeNow: [821917808219n, 821990000000n], chargeAtEnd: [3321917808219n] };
-    expect(reserveFigureMismatches(lines, T, c, 18, 'WETH')).toEqual([]);
+  const ok = { reserved: [0n, 0n], otherFree: [0n, 0n], chargeNow: [821917808219n, 821990000000n], chargeAtEnd: [3321917808219n, 3321917808219n] };
+  it('passes when each line matches a bracketing chain value', () => {
+    expect(reserveFigureMismatches(lines, T, ok, 18, 'WETH')).toEqual([]);
   });
-  it('names a line that matches none', () => {
-    const c = { reserved: [10n ** 13n], otherFree: [0n], chargeNow: [821917808219n], chargeAtEnd: [3321917808219n] };
-    const bad = reserveFigureMismatches(lines, T, c, 18, 'WETH');
+  it('passes a charge the page read between the two chain reads', () => {
+    // The page polls on its own clock: its read can land strictly inside the
+    // bracket, so its rounded figure need equal neither end.
+    const inside = { ...ok, chargeNow: [821000000000n, 823000000000n] };
+    expect(reserveFigureMismatches(lines, T, inside, 18, 'WETH')).toEqual([]);
+  });
+  it('names a line outside its bracket', () => {
+    const bad = reserveFigureMismatches(lines, T, { ...ok, reserved: [10n ** 13n, 10n ** 13n] }, 18, 'WETH');
+    expect(bad).toHaveLength(1);
+    expect(bad[0]).toMatch(/^reserved:/);
+  });
+  it('requires a "now" charge to be absent when its bound is null, and names one that is listed', () => {
+    const noNow = lines.filter((l) => !l.startsWith('Now:'));
+    expect(reserveFigureMismatches(noNow, T, { ...ok, chargeNow: null }, 18, 'WETH')).toEqual([]);
+    const bad = reserveFigureMismatches(lines, T, { ...ok, chargeNow: null }, 18, 'WETH');
+    expect(bad).toHaveLength(1);
+    expect(bad[0]).toMatch(/^chargeNow: must not be listed/);
+  });
+  it('names a missing line', () => {
+    // not-a-source-region: drops the first ROW of a fixture array
+    const bad = reserveFigureMismatches(lines.slice(1), T, ok, 18, 'WETH');
     expect(bad).toHaveLength(1);
     expect(bad[0]).toMatch(/^reserved:/);
   });

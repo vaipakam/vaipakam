@@ -11,8 +11,8 @@
 //   0. Build check: SITE_URL serves the same `/assets/index-*.js` as
 //      REFERENCE_SITE_URL (a workers.dev host); alpha02 is refused.
 //      Chain preflight: the fixture's shape, the protocol switch on and not
-//      paused, both wallets' Terms, balances, nonces and the borrower's
-//      allowance baseline. Every past-grace Active loan on the Diamond is
+//      paused, both wallets' Terms, balances, nonces, and the borrower's
+//      allowance to the Diamond at 0. Every past-grace Active loan on the Diamond is
 //      listed for step 6.
 //   1. Borrower, /positions/LOAN_ID: the card (data-testid auto-extend)
 //      renders with the switch on, the window as the chain states it, and
@@ -23,8 +23,9 @@
 //   2. Lender, same page: saves overlapping limits the same way
 //      (setAutoExtendLenderCaps, getAutoExtendLenderCaps). Back as borrower,
 //      the band line states the overlap, worded as limits, not a promise.
-//   3. Borrower: the reserve panel (data-testid extend-reserve) shows the
-//      chain's figures, reserved 0. A small reserve is added through its
+//   3. Borrower: after a fresh page load bracketed by two chain reads, the
+//      reserve panel (data-testid extend-reserve) shows the chain's figures,
+//      reserved 0, naming a charge "now" only while the window is open. A small reserve is added through its
 //      six-row receipt (the exact amount stated): approve if needed, then
 //      fundExtendReserve(loanId, amount); getExtendFunding shows it reserved
 //      and the receipt carries ExtendReserveFunded.
@@ -270,6 +271,9 @@ const preflightFailures = [
   want(pre.switchOn === true, 'the protocol auto-extend switch is off'),
   want(pre.paused === false, 'the protocol is paused'),
   want(pre.funding[1] === 0n, `the borrower already holds a reserve of ${pre.funding[1]} on loan ${LOAN_ID} — withdraw it first`),
+  // Each deposit spends the allowance it uses, so only a zero start makes
+  // "nothing left standing" mean zero at the end, whatever approvals ran.
+  want(pre.allowance === 0n, `the borrower's ${pre.symbol} allowance to the Diamond is ${pre.allowance}, not 0 — revoke it first`),
   want(pre.tosB === true && pre.tosL === true, `both wallets must have accepted the current Terms (${pre.tosB} / ${pre.tosL})`),
   want(pre.ethB >= MIN_GAS_WEI && pre.ethL >= MIN_GAS_WEI, `each wallet needs ≥ ${formatUnits(MIN_GAS_WEI, 18)} ETH for gas`),
 ].filter(Boolean);
@@ -359,7 +363,7 @@ const MANIFEST = createManifest({
       id: 'reservePanel',
       claim: "the borrower's reserve panel states the chain's figures, with nothing reserved",
       checks: {
-        figures: 'reserved, other free balance, charge now and at the end of the window match getExtendFunding read either side of the page read',
+        figures: "reserved, other free balance and the charge at the end of the window lie between getExtendFunding read just before and just after a fresh page load; the charge now is listed, within the same bracket, only while the window is open",
       },
     },
     {
@@ -390,7 +394,7 @@ const MANIFEST = createManifest({
       claim: 'Claims lists the reserve for its depositor only, and withdraws it from there',
       checks: {
         fund: 'a second reserve is added through the loan page, read reserved at its block',
-        lenderNone: "the lender's /claims, after its reserve query answered, shows no Extension reserves section",
+        lenderNone: "the lender's /claims, after its reserve query answered, lists no reserve on the fixture loan",
         listed: "the borrower's /claims lists Loan #<id> under Extension reserves with the amount and that it pays this loan's extensions",
         withdrawn: 'the withdrawal from Claims is ExtendReserveWithdrawn, 0 reserved at its block, with the outcome shown on Claims',
       },
@@ -398,7 +402,7 @@ const MANIFEST = createManifest({
     {
       id: 'leftNothing',
       claim: 'the run leaves no reserve and no approval standing',
-      checks: { state: "getExtendFunding reads 0 reserved, and the borrower's allowance to the Diamond is back at its startup value" },
+      checks: { state: "getExtendFunding reads 0 reserved, and the borrower's allowance to the Diamond is back at 0, as it was at startup" },
     },
     ...(pastGrace.length
       ? [
@@ -650,8 +654,27 @@ function judgeReceipt(id, rows, youReceive, extra = []) {
   check(id, 'receipt', `${id}: six-row receipt stating what is signed`, labelled && first && extras.length === 0, labelled ? (first ? extras.join('; ') : `first row "${rows[0]?.[1]}" ≠ "${squash(youReceive)}"`) : `rows ${JSON.stringify(rows.map(([l]) => l))}`);
 }
 
+/**
+ * Navigate. Before anything is written this is `visit`, whose failure is a
+ * BLOCKED precondition. After a write it must not exit the process: a stop
+ * here has to reach the settlement below, which reports what is left
+ * standing and reconciles nonces.
+ */
+async function go(page, pathname) {
+  if (!wrote()) return visit(page, pathname);
+  let resp;
+  try {
+    resp = await page.goto(new URL(pathname, SITE_URL).toString(), { waitUntil: 'domcontentloaded', timeout: 60_000 });
+  } catch (err) {
+    stop(`opening ${pathname} failed: ${describeErr(err)}`);
+  }
+  const status = resp?.status();
+  if (typeof status === 'number' && status >= 400) stop(`opening ${pathname} answered HTTP ${status}`);
+  return resp;
+}
+
 async function openPosition(page, role) {
-  await visit(page, `/positions/${LOAN_ID}`);
+  await go(page, `/positions/${LOAN_ID}`);
   await connect(page, role === 'borrower' ? BORROWER : LENDER);
   const lang = await page.evaluate(() => document.documentElement.lang);
   if (!/^en\b/i.test(lang ?? '')) stop(`the ${role} page renders in "${lang}", not English`);
@@ -812,15 +835,33 @@ try {
   await shot('borrower', 'auto-extend-band');
 
   // ── 3. The reserve panel, then a deposit ──────────────────────────────
+  // The panel polls on its own clock, so its figures may predate any read
+  // taken now. A fresh page load between two chain reads puts the page's own
+  // read inside that bracket, and the figures are judged against it.
+  const beforeHead = await pub.getBlock({ blockTag: 'latest' });
+  const before = await read('getExtendFunding', [LOAN_ID, BORROWER], beforeHead.number);
+  card = await openPosition(bp, 'borrower');
+  if (!card) stop('the auto-extend card did not render again for the borrower');
   const panel = reservePanel(card);
   await panel.waitFor({ state: 'visible', timeout: 60_000 });
-  const before = await read('getExtendFunding', [LOAN_ID, BORROWER]);
   const lines = await panelLines(panel);
-  const after = await read('getExtendFunding', [LOAN_ID, BORROWER]);
+  const afterHead = await pub.getBlock({ blockTag: 'latest' });
+  const after = await read('getExtendFunding', [LOAN_ID, BORROWER], afterHead.number);
+  // The page names an extension "now" only while the window is open; the
+  // bracket must not straddle an edge of the window for that to be decided.
+  const openAt = (t) => Number(t) >= WINDOW.opensAt && Number(t) <= WINDOW.closesAt;
+  if (openAt(beforeHead.timestamp) !== openAt(afterHead.timestamp)) {
+    stop('the window opened or closed while the panel was read, so whether it should name a charge now is not decided');
+  }
   const figures = reserveFigureMismatches(
     lines,
     { reserved: R.reserved, otherFree: R.otherFree, chargeNow: R.chargeNow, chargeAtEnd: R.chargeAtEnd },
-    { reserved: [before[1], after[1]], otherFree: [before[2], after[2]], chargeNow: [before[3], after[3]], chargeAtEnd: [before[4], after[4]] },
+    {
+      reserved: [before[1], after[1]],
+      otherFree: [before[2], after[2]],
+      chargeNow: openAt(afterHead.timestamp) ? [before[3], after[3]] : null,
+      chargeAtEnd: [before[4], after[4]],
+    },
     pre.decimals,
     pre.symbol,
   );
@@ -853,17 +894,22 @@ try {
     (res) => res.url().includes('/activity?') && res.url().includes(`actor=${LENDER.toLowerCase()}`) && res.url().includes('ExtendReserveFunded'),
     { timeout: 90_000 },
   );
-  await visit(lp, '/claims');
+  await go(lp, '/claims');
   await connect(lp, LENDER);
   const lSurface = await awaitSurface(lp);
   const answered = await lenderQuery.then((r) => r.ok(), () => false);
   if (!lSurface.ready || !answered) {
     unsettled('claims', 'lenderNone', !lSurface.ready ? notReadyReason(lSurface) : "the lender's reserve query never answered, so an absent section proves nothing");
   } else {
+    // Only this loan's row is judged: the lender may hold reserves of its own
+    // on other loans, and Claims rightly lists those.
     await sleep(5_000);
-    const section = await lp.getByTestId('extend-reserves').count();
-    const heading = await lp.getByRole('heading', { name: AE.claims.title }).count();
-    check('claims', 'lenderNone', "the lender's Claims shows no extension reserve", section === 0 && heading === 0, `section ${section}, heading ${heading}`);
+    const lenderRow = lp
+      .getByTestId('extend-reserves')
+      .locator('li.item-row')
+      .filter({ has: lp.getByRole('link', { name: fill(AE.claims.rowTitle, { id: String(LOAN_ID) }), exact: true }) });
+    const rows = await lenderRow.count();
+    check('claims', 'lenderNone', `the lender's Claims lists no reserve on loan ${LOAN_ID}`, rows === 0, `${rows} row(s) for loan ${LOAN_ID}`);
   }
   await shot('lender', 'auto-extend-claims-lender');
 
@@ -878,7 +924,7 @@ try {
   let listed = false;
   let itemText = '';
   for (let attempt = 0; attempt < 3 && !itemText; attempt++) {
-    await visit(bp, '/claims');
+    await go(bp, '/claims');
     await connect(bp, BORROWER);
     const bSurface = await awaitSurface(bp);
     if (!bSurface.ready) stop(`the borrower's Claims: ${notReadyReason(bSurface)}`);
@@ -928,12 +974,32 @@ try {
 
   // ── 6. Read-only: the forced close-out card on a past-grace loan ──────
   if (pastGrace.length) {
-    await visit(bp, `/positions/${pastGrace[0]}`);
+    await go(bp, `/positions/${pastGrace[0]}`);
     const fc = bp.getByTestId('forced-close-card');
     const shown = await fc.waitFor({ state: 'visible', timeout: 90_000 }).then(() => true, () => false);
-    const state = shown ? await fc.getAttribute('data-forced-close-state') : null;
-    const text = shown ? squash(await fc.innerText()) : '';
-    check('forcedClose', 'card', `the forced-close card on loan ${pastGrace[0]} claims no KYC refusal`, shown && state !== 'blocked-kyc' && !text.includes(squash(EN.forcedClose.blockedKyc)), `state ${state}`);
+    // The card renders while its facts are still unread ("unknown"), and
+    // could become blocked-kyc once the admission read answers: judge only a
+    // resolved state.
+    const state = shown
+      ? await pollUntil(
+          'the forced-close facts resolve',
+          async () => {
+            // Resolved: a state other than "unknown", published with the
+            // block its facts were read at.
+            const s = await fc.getAttribute('data-forced-close-state');
+            const b = await fc.getAttribute('data-forced-close-block');
+            return s && s !== 'unknown' && b ? s : null;
+          },
+          { timeoutMs: 90_000, everyMs: 2_000 },
+        )
+      : null;
+    if (!shown) check('forcedClose', 'card', `the forced-close card renders on loan ${pastGrace[0]}`, false);
+    else if (!state) unsettled('forcedClose', 'card', `the forced-close card on loan ${pastGrace[0]} never resolved its facts within 90 s`);
+    else {
+      const block = await fc.getAttribute('data-forced-close-block');
+      const text = squash(await fc.innerText());
+      check('forcedClose', 'card', `the forced-close card on loan ${pastGrace[0]} claims no KYC refusal`, state !== 'blocked-kyc' && !text.includes(squash(EN.forcedClose.blockedKyc)), `state ${state}, read at block ${block}`);
+    }
   }
 } catch (err) {
   if (!(err instanceof Stop)) {
@@ -998,7 +1064,16 @@ if (standing && (standing.reserved !== 0n || standing.allowance !== pre.allowanc
       `(withdraw it from /claims as ${BORROWER_ROLE}); ${pre.symbol} allowance to the Diamond ${standing.allowance} (startup ${pre.allowance}).`,
   );
 }
-console.log(`\nlimits left in force on loan ${LOAN_ID}: borrower up to ${B_RATE_PCT}% until ${B_END_DATE}, lender at least ${L_RATE_PCT}% until ${L_END_DATE} (turn off from the card)`);
+// The limits as the chain holds them now, not as this run asked: a save that
+// failed or never ran leaves whatever stood before.
+try {
+  const [bc, lc] = await Promise.all([read('getAutoExtendBorrowerCaps', [LOAN_ID]), read('getAutoExtendLenderCaps', [LOAN_ID])]);
+  const capsLine = (c, bound) =>
+    c.enabled ? `${bound === 'max' ? 'up to' : 'at least'} ${formatBpsAsPercent(bound === 'max' ? c.maxRateBps : c.minRateBps)} until ${new Date(Number(c.maxNewExpiry) * 1000).toISOString()}` : 'off';
+  console.log(`\nlimits on loan ${LOAN_ID} now: borrower ${capsLine(bc, 'max')}; lender ${capsLine(lc, 'min')} (turn a side off from the card)`);
+} catch (err) {
+  console.log(`\nlimits on loan ${LOAN_ID} now: UNKNOWN — the caps reads failed (${describeErr(err)})`);
+}
 for (const line of MANIFEST.render()) console.log(line);
 const VERDICT = runVerdict({
   rows: MANIFEST.rows(),

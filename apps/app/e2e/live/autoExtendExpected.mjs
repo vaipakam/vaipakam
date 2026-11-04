@@ -175,20 +175,39 @@ export function fill(template, values = {}) {
 export const squash = (s) => String(s ?? '').replace(/\s+/g, ' ').trim();
 
 /**
- * The reserve panel's four figure lines, each against the template it is
- * built from. `candidates` maps a figure to EVERY value the chain gave it
- * across the reads that bracket the page read (an accruing charge can move
- * between two reads), and a line passes when it equals the template filled
- * with any one of them. Returns the lines that match none.
+ * The reserve panel's figure lines, each against the template it is built
+ * from. `bounds` maps a figure to the chain's value at the two reads that
+ * bracket the page's own read, `[first, last]`. The page read falls between
+ * them, and every figure only grows over time (an accruing charge) or holds
+ * still, so a line passes when its amount, as the page rounds it, lies
+ * between those two values rounded the same way. That holds wherever the
+ * page's read landed in the bracket, not only at its two ends.
+ *
+ * A figure whose bound is `null` must not be listed at all: the panel names
+ * the charge of an extension "now" only while the window is open.
+ * Returns what does not hold, one entry per figure.
  */
-export function reserveFigureMismatches(lines, templates, candidates, decimals, symbol) {
+export function reserveFigureMismatches(lines, templates, bounds, decimals, symbol) {
   const text = lines.map(squash);
   const out = [];
   for (const key of ['reserved', 'otherFree', 'chargeNow', 'chargeAtEnd']) {
-    const options = [...new Set((candidates[key] ?? []).map((v) => fill(templates[key], { amount: `${formatTokenAmount(v, decimals)} ${symbol}` })))];
-    if (!options.some((o) => text.includes(squash(o)))) {
-      out.push(`${key}: want one of ${options.map((o) => JSON.stringify(o)).join(' / ')}; the panel lists ${JSON.stringify(text)}`);
+    const [head, tail] = squash(templates[key]).split('{{amount}}');
+    const line = text.find((t) => t.startsWith(head) && t.endsWith(`${symbol}${tail ?? ''}`));
+    if (bounds[key] === null) {
+      if (line !== undefined) out.push(`${key}: must not be listed now; the panel lists ${JSON.stringify(line)}`);
+      continue;
     }
+    const shownNum = (v) => Number(formatTokenAmount(v, decimals).replace(/,/g, ''));
+    const [a, b] = bounds[key].map(shownNum);
+    const [lo, hi] = a <= b ? [a, b] : [b, a];
+    const want = `${fill(templates[key], { amount: `${formatTokenAmount(bounds[key][0], decimals)} ${symbol}` })} … ${formatTokenAmount(bounds[key][1], decimals)}`;
+    if (line === undefined) {
+      out.push(`${key}: want ${JSON.stringify(want)}; the panel lists ${JSON.stringify(text)}`);
+      continue;
+    }
+    const amount = line.slice(head.length, line.length - `${symbol}${tail ?? ''}`.length).trim();
+    const n = /^[0-9][0-9,]*(\.[0-9]+)?$/.test(amount) ? Number(amount.replace(/,/g, '')) : NaN;
+    if (!(n >= lo && n <= hi)) out.push(`${key}: want ${JSON.stringify(want)}; the panel lists ${JSON.stringify(line)}`);
   }
   return out;
 }
