@@ -268,6 +268,9 @@ type LockCatalogue = {
   lockPrivateOnly: string;
   /** The request could not be stored. */
   lockNotRecorded: string;
+  /** The LOCK was sent longer ago than the request age limit (or carries no
+   *  send time), so it was not recorded. */
+  lockStale: string;
   /** No keeper has shown, recently, that it works LOCK requests on the
    *  chains in `list`, so none was recorded for them. */
   lockNotRunning: (list: string) => string;
@@ -282,6 +285,7 @@ const LOCK_CAT: Record<Locale, LockCatalogue> = {
       'This chat is not linked to any wallet, so there is nothing to lock. Lock the vault from the Vaipakam app instead.',
     lockPrivateOnly: 'LOCK works only in your private chat with this bot. Nothing was locked.',
     lockNotRecorded: 'Your LOCK could not be recorded just now, so nothing will be locked from this message. Send LOCK again, or lock the vault from the Vaipakam app.',
+    lockStale: 'This LOCK was sent more than an hour ago and reached the bot only now, so it was not recorded and nothing will be locked from it. Send LOCK again, or lock the vault from the Vaipakam app.',
     lockNotRunning: (list) => `Locking from Telegram is not running right now for ${list}, so nothing was recorded for it and nothing will be locked from this message. Lock the vault from the Vaipakam app.`,
   },
   es: {
@@ -292,6 +296,7 @@ const LOCK_CAT: Record<Locale, LockCatalogue> = {
       'Este chat no está vinculado a ninguna billetera, así que no hay nada que bloquear. Bloquea la bóveda desde la app de Vaipakam.',
     lockPrivateOnly: 'LOCK solo funciona en tu chat privado con este bot. No se ha bloqueado nada.',
     lockNotRecorded: 'No se pudo registrar tu LOCK en este momento, así que este mensaje no bloqueará nada. Envía LOCK de nuevo o bloquea la bóveda desde la app de Vaipakam.',
+    lockStale: 'Este LOCK se envió hace más de una hora y ha llegado al bot ahora, así que no se registró y no bloqueará nada. Envía LOCK de nuevo o bloquea la bóveda desde la app de Vaipakam.',
     lockNotRunning: (list) => `El bloqueo desde Telegram no está funcionando ahora para ${list}, así que no se registró nada y este mensaje no bloqueará nada. Bloquea la bóveda desde la app de Vaipakam.`,
   },
   fr: {
@@ -302,6 +307,7 @@ const LOCK_CAT: Record<Locale, LockCatalogue> = {
       "Ce chat n'est lié à aucun portefeuille, il n'y a donc rien à verrouiller. Verrouillez le coffre depuis l'application Vaipakam.",
     lockPrivateOnly: 'LOCK ne fonctionne que dans votre conversation privée avec ce bot. Rien n’a été verrouillé.',
     lockNotRecorded: "Votre LOCK n'a pas pu être enregistré pour l'instant, ce message ne verrouillera donc rien. Envoyez LOCK à nouveau ou verrouillez le coffre depuis l'application Vaipakam.",
+    lockStale: 'Ce LOCK a été envoyé il y a plus d\'une heure et n\'a atteint le bot que maintenant : il n\'a pas été enregistré et ne verrouillera rien. Envoyez LOCK à nouveau, ou verrouillez le coffre depuis l\'application Vaipakam.',
     lockNotRunning: (list) => `Le verrouillage depuis Telegram ne fonctionne pas pour l'instant pour ${list} : rien n'a été enregistré et ce message ne verrouillera rien. Verrouillez le coffre depuis l'application Vaipakam.`,
   },
   de: {
@@ -312,6 +318,7 @@ const LOCK_CAT: Record<Locale, LockCatalogue> = {
       'Dieser Chat ist mit keiner Wallet verknüpft, daher gibt es nichts zu sperren. Sperren Sie den Tresor stattdessen in der Vaipakam-App.',
     lockPrivateOnly: 'LOCK funktioniert nur in Ihrem privaten Chat mit diesem Bot. Es wurde nichts gesperrt.',
     lockNotRecorded: 'Ihr LOCK konnte gerade nicht erfasst werden, daher wird durch diese Nachricht nichts gesperrt. Senden Sie LOCK erneut oder sperren Sie den Tresor in der Vaipakam-App.',
+    lockStale: 'Dieses LOCK wurde vor mehr als einer Stunde gesendet und hat den Bot erst jetzt erreicht. Es wurde daher nicht erfasst, und es wird dadurch nichts gesperrt. Sende LOCK erneut oder sperre den Tresor in der Vaipakam-App.',
     lockNotRunning: (list) => `Das Sperren über Telegram läuft gerade nicht für ${list}, daher wurde nichts erfasst und durch diese Nachricht wird nichts gesperrt. Sperren Sie den Tresor in der Vaipakam-App.`,
   },
   ja: {
@@ -322,6 +329,7 @@ const LOCK_CAT: Record<Locale, LockCatalogue> = {
       'このチャットはどのウォレットにも連携されていないため、ロックするものがありません。Vaipakam アプリからボールトをロックしてください。',
     lockPrivateOnly: 'LOCK はこのボットとのプライベートチャットでのみ使えます。何もロックされていません。',
     lockNotRecorded: '今は LOCK を記録できなかったため、このメッセージでは何もロックされません。もう一度 LOCK を送るか、Vaipakam アプリからボールトをロックしてください。',
+    lockStale: 'この LOCK は 1 時間以上前に送信され、今になってボットに届いたため、記録されず、何もロックされません。もう一度 LOCK を送信するか、Vaipakam アプリからボールトをロックしてください。',
     lockNotRunning: (list) => `${list} では現在 Telegram からのロックが動作していないため、何も記録されず、このメッセージでは何もロックされません。Vaipakam アプリからボールトをロックしてください。`,
   },
   zh: {
@@ -331,6 +339,7 @@ const LOCK_CAT: Record<Locale, LockCatalogue> = {
     lockNotLinked: '此聊天未关联任何钱包，因此没有可锁定的内容。请改在 Vaipakam 应用中锁定金库。',
     lockPrivateOnly: 'LOCK 只能在你与此机器人的私聊中使用。未锁定任何内容。',
     lockNotRecorded: '暂时无法记录你的 LOCK 请求，因此这条消息不会锁定任何内容。请再次发送 LOCK，或在 Vaipakam 应用中锁定金库。',
+    lockStale: '此 LOCK 发送于一小时以前，现在才送达机器人，因此未被记录，也不会锁定任何内容。请重新发送 LOCK，或在 Vaipakam 应用中锁定金库。',
     lockNotRunning: (list) => `${list} 目前无法通过 Telegram 锁定，因此没有记录任何内容，这条消息也不会锁定任何内容。请在 Vaipakam 应用中锁定金库。`,
   },
   ko: {
@@ -341,6 +350,7 @@ const LOCK_CAT: Record<Locale, LockCatalogue> = {
       '이 채팅은 어떤 지갑과도 연결되어 있지 않아 잠글 것이 없습니다. 대신 Vaipakam 앱에서 볼트를 잠그세요.',
     lockPrivateOnly: 'LOCK은 이 봇과의 개인 채팅에서만 작동합니다. 아무것도 잠기지 않았습니다.',
     lockNotRecorded: '지금은 LOCK을 기록할 수 없어 이 메시지로는 아무것도 잠기지 않습니다. LOCK을 다시 보내거나 Vaipakam 앱에서 볼트를 잠그세요.',
+    lockStale: '이 LOCK은 1시간 이상 전에 전송되어 이제야 봇에 도착했으므로 기록되지 않았고 아무것도 잠기지 않습니다. LOCK을 다시 보내거나 Vaipakam 앱에서 볼트를 잠그세요.',
     lockNotRunning: (list) => `${list}에 대해 지금은 Telegram 잠금이 작동하지 않아 아무것도 기록되지 않았고 이 메시지로는 아무것도 잠기지 않습니다. Vaipakam 앱에서 볼트를 잠그세요.`,
   },
   hi: {
@@ -351,6 +361,7 @@ const LOCK_CAT: Record<Locale, LockCatalogue> = {
       'यह चैट किसी वॉलेट से जुड़ी नहीं है, इसलिए लॉक करने को कुछ नहीं है। इसके बजाय Vaipakam ऐप से वॉल्ट लॉक करें।',
     lockPrivateOnly: 'LOCK केवल इस बॉट के साथ आपकी निजी चैट में काम करता है। कुछ भी लॉक नहीं हुआ।',
     lockNotRecorded: 'आपका LOCK अभी दर्ज नहीं हो सका, इसलिए इस संदेश से कुछ भी लॉक नहीं होगा। फिर से LOCK भेजें, या Vaipakam ऐप से वॉल्ट लॉक करें।',
+    lockStale: 'यह LOCK एक घंटे से भी पहले भेजा गया था और बॉट तक अभी पहुँचा है, इसलिए इसे दर्ज नहीं किया गया और इससे कुछ भी लॉक नहीं होगा। LOCK फिर से भेजें, या Vaipakam ऐप से वॉल्ट लॉक करें।',
     lockNotRunning: (list) => `${list} के लिए Telegram से लॉक करना अभी चालू नहीं है, इसलिए कुछ दर्ज नहीं हुआ और इस संदेश से कुछ भी लॉक नहीं होगा। Vaipakam ऐप से वॉल्ट लॉक करें।`,
   },
   ta: {
@@ -361,6 +372,7 @@ const LOCK_CAT: Record<Locale, LockCatalogue> = {
       'இந்த அரட்டை எந்த வாலெட்டுடனும் இணைக்கப்படவில்லை, எனவே பூட்ட எதுவும் இல்லை. அதற்குப் பதிலாக Vaipakam செயலியில் பெட்டகத்தைப் பூட்டுங்கள்.',
     lockPrivateOnly: 'LOCK இந்த பாட்டுடனான உங்கள் தனிப்பட்ட அரட்டையில் மட்டுமே வேலை செய்யும். எதுவும் பூட்டப்படவில்லை.',
     lockNotRecorded: 'உங்கள் LOCK ஐ இப்போது பதிவு செய்ய முடியவில்லை, எனவே இந்தச் செய்தியால் எதுவும் பூட்டப்படாது. மீண்டும் LOCK அனுப்புங்கள், அல்லது Vaipakam செயலியில் பெட்டகத்தைப் பூட்டுங்கள்.',
+    lockStale: 'இந்த LOCK ஒரு மணி நேரத்துக்கு முன்பே அனுப்பப்பட்டு இப்போதுதான் பாட்டை அடைந்தது, எனவே இது பதிவு செய்யப்படவில்லை, இதனால் எதுவும் பூட்டப்படாது. LOCK-ஐ மீண்டும் அனுப்புங்கள், அல்லது Vaipakam செயலியில் வால்ட்டைப் பூட்டுங்கள்.',
     lockNotRunning: (list) => `${list} க்கு Telegram மூலம் பூட்டுவது இப்போது இயங்கவில்லை, எனவே எதுவும் பதிவு செய்யப்படவில்லை, இந்தச் செய்தியால் எதுவும் பூட்டப்படாது. Vaipakam செயலியிலிருந்து பெட்டகத்தைப் பூட்டுங்கள்.`,
   },
   ar: {
@@ -370,6 +382,7 @@ const LOCK_CAT: Record<Locale, LockCatalogue> = {
     lockNotLinked: 'هذه المحادثة غير مرتبطة بأي محفظة، لذا لا يوجد ما يُقفل. أقفل الخزنة من تطبيق Vaipakam بدلاً من ذلك.',
     lockPrivateOnly: 'يعمل LOCK فقط في محادثتك الخاصة مع هذا البوت. لم يُقفل أي شيء.',
     lockNotRecorded: 'تعذّر تسجيل طلب LOCK الآن، لذا لن يُقفل أي شيء بهذه الرسالة. أرسل LOCK مرة أخرى، أو أقفل الخزنة من تطبيق Vaipakam.',
+    lockStale: 'أُرسل أمر LOCK هذا قبل أكثر من ساعة ولم يصل إلى البوت إلا الآن، لذا لم يُسجَّل ولن يُقفل شيئًا. أرسل LOCK مرة أخرى، أو اقفل الخزنة من تطبيق Vaipakam.',
     lockNotRunning: (list) => `القفل عبر Telegram لا يعمل الآن لـ ${list}، لذا لم يُسجَّل شيء ولن يُقفل أي شيء بهذه الرسالة. أقفل الخزنة من تطبيق Vaipakam.`,
   },
 };
@@ -406,4 +419,9 @@ export function lockNotRunning(
 /** #3088 — the reply to a LOCK the agent could not store. */
 export function lockNotRecorded(locale: string | null | undefined): string {
   return LOCK_CAT[resolveLocale(locale)].lockNotRecorded;
+}
+
+/** A LOCK sent longer ago than the age limit, not recorded (#3088). */
+export function lockStale(locale: string | null | undefined): string {
+  return LOCK_CAT[resolveLocale(locale)].lockStale;
 }

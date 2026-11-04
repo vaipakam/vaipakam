@@ -5,6 +5,7 @@
  */
 
 import type { PublishedRailRow } from '@vaipakam/push';
+import { lockRequestIsStale } from '@vaipakam/lib/protectedLock';
 import { newLinkCode } from './telegram';
 
 export type Band = 'healthy' | 'warn' | 'alert' | 'critical';
@@ -613,15 +614,43 @@ export const LOCK_READINESS_FRESH_SEC = 5 * 60;
  * when nothing will act on it. A redelivered update records nothing new: a
  * row is unique on (update, chain, wallet). One batch, so the links returned
  * are the ones the rows were written for.
+ *
+ * The row carries the time the owner SENT the LOCK (`sentAt`, the Telegram
+ * message's own date), never the time it reached the webhook, so the keeper's
+ * age limit measures the request the owner made. A LOCK already past that
+ * limit (`lockRequestIsStale`), or with no send time, records nothing: the
+ * links are returned unrecorded and the caller says why.
  */
 export async function recordLockRequests(
   db: D1Database,
   chatId: string,
   updateId: number,
+  sentAt: number | null,
   nowSec: number = Math.floor(Date.now() / 1000),
 ): Promise<{ wallet: string; chainId: number; locale: string; recorded: boolean }[]> {
   const freshFrom = nowSec - LOCK_READINESS_FRESH_SEC;
-  const [, links] = await db.batch<{ wallet: string; chain_id: number; locale: string | null; running: number | null }>([
+  const listLinks = db
+    .prepare(
+      `SELECT t.wallet, t.chain_id, t.locale, (r.seen_at >= ?) AS running FROM user_thresholds t
+         LEFT JOIN protected_lock_readiness r ON r.chain_id = t.chain_id
+        WHERE t.tg_chat_id = ? ORDER BY t.chain_id, t.wallet`,
+    )
+    .bind(freshFrom, chatId);
+  type LinkRow = { wallet: string; chain_id: number; locale: string | null; running: number | null };
+  const shape = (rows: LinkRow[], recordable: boolean) =>
+    rows.map((r) => ({
+      wallet: r.wallet,
+      chainId: Number(r.chain_id),
+      locale: r.locale ?? 'en',
+      recorded: recordable && Number(r.running ?? 0) === 1,
+    }));
+  if (lockRequestIsStale(sentAt, nowSec)) {
+    return shape((await listLinks.all<LinkRow>()).results ?? [], false);
+  }
+  // A send time a little ahead of this clock is recorded as now: the age
+  // limit is never extended by clock skew.
+  const requestedAt = Math.min(sentAt as number, nowSec);
+  const [, links] = await db.batch<LinkRow>([
     db
       .prepare(
         `INSERT OR IGNORE INTO protected_lock_requests (chain_id, wallet, update_id, requested_at)
@@ -629,19 +658,8 @@ export async function recordLockRequests(
            JOIN protected_lock_readiness r ON r.chain_id = t.chain_id AND r.seen_at >= ?
           WHERE t.tg_chat_id = ?`,
       )
-      .bind(updateId, nowSec, freshFrom, chatId),
-    db
-      .prepare(
-        `SELECT t.wallet, t.chain_id, t.locale, (r.seen_at >= ?) AS running FROM user_thresholds t
-           LEFT JOIN protected_lock_readiness r ON r.chain_id = t.chain_id
-          WHERE t.tg_chat_id = ? ORDER BY t.chain_id, t.wallet`,
-      )
-      .bind(freshFrom, chatId),
+      .bind(updateId, requestedAt, freshFrom, chatId),
+    listLinks,
   ]);
-  return (links?.results ?? []).map((r) => ({
-    wallet: r.wallet,
-    chainId: Number(r.chain_id),
-    locale: r.locale ?? 'en',
-    recorded: Number(r.running ?? 0) === 1,
-  }));
+  return shape(links?.results ?? [], true);
 }

@@ -112,6 +112,7 @@ import { decidePushOptIn, handlePushStatus, servicePushStatus } from './pushRail
 import { handle1inchQuote, handleQuoteReadiness } from './quoteProxy';
 import { slotRefusal, takeCallerSlot } from './rateLimit';
 import { parseOriginList } from '@vaipakam/lib/originAllowList';
+import { lockRequestIsStale } from '@vaipakam/lib/protectedLock';
 import { handleOpenSeaListingPost } from './openseaProxy';
 import { handleIntentFusionPost } from './intentFusionPost';
 import { handleOpenSeaCollection } from './openseaCollectionProxy';
@@ -145,7 +146,7 @@ import {
   upsertThresholds,
 } from './db';
 import { extractLinkCode, extractLockCommand, isTelegramDelivery, sendMessage, type TelegramUpdate } from './telegram';
-import { handshakeExpired, handshakeLinked, lockNotLinked, lockNotRecorded, lockNotRunning, lockPrivateOnly, lockRecorded, testAlert } from './i18n';
+import { handshakeExpired, handshakeLinked, lockNotLinked, lockNotRecorded, lockNotRunning, lockPrivateOnly, lockRecorded, lockStale, testAlert } from './i18n';
 import {
   authoriseAlertRequest,
   parseSignedLinkRequest,
@@ -936,15 +937,23 @@ async function handleTelegramWebhook(
     // migrations land before this code, but a handler cannot assume so): a
     // request that could not be recorded is said to be so, and acked, so
     // Telegram does not redeliver it as a lock long after it was asked.
+    const nowSec = Math.floor(Date.now() / 1000);
     let links: Awaited<ReturnType<typeof recordLockRequests>>;
     try {
-      links = await recordLockRequests(env.DB, lock.chatId, lock.updateId);
+      links = await recordLockRequests(env.DB, lock.chatId, lock.updateId, lock.sentAt, nowSec);
     } catch (err) {
       console.error(`[agent] LOCK not recorded: ${err instanceof Error ? err.message.slice(0, 200) : 'unknown error'}`);
       await sendMessage(env.TG_BOT_TOKEN, lock.chatId, lockNotRecorded('en'));
       return new Response('ok', { status: 200 });
     }
     const locale = links[0]?.locale ?? 'en';
+    // Judged on the clock the record step used: a LOCK sent longer ago than
+    // the keeper's age limit is answered and never recorded. One with no send
+    // time cannot be dated, and is answered as not recorded.
+    if (links.length > 0 && lockRequestIsStale(lock.sentAt, nowSec)) {
+      await sendMessage(env.TG_BOT_TOKEN, lock.chatId, lock.sentAt === null ? lockNotRecorded(locale) : lockStale(locale));
+      return new Response('ok', { status: 200 });
+    }
     const entry = (l: (typeof links)[number]) => ({ walletShort: `${l.wallet.slice(0, 8)}…${l.wallet.slice(-6)}`, chainId: l.chainId });
     const recorded = links.filter((l) => l.recorded).map(entry);
     const notRunning = links.filter((l) => !l.recorded).map(entry);

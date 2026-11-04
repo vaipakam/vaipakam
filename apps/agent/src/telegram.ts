@@ -81,6 +81,8 @@ export interface TelegramUpdate {
     message_id?: number;
     chat?: { id?: number; username?: string; type?: string };
     from?: { id?: number; username?: string };
+    /** When the message was sent, in Unix seconds (Telegram's own field). */
+    date?: number;
     text?: string;
   };
 }
@@ -144,8 +146,12 @@ const LOCK_RE = /^\/?lock(?:@\w+)?$/i;
 /**
  * #3088 — the emergency LOCK command for protected account mode: `LOCK`,
  * `/lock` or `/lock@BotName`, read case-blind. Returns the chat, Telegram's
- * id for the update (so a redelivery records nothing new) and whether the
- * chat is a private one; null for anything else. A LOCK from a group or
+ * id for the update (so a redelivery records nothing new), when the owner
+ * SENT it (the message's own `date`, in Unix seconds; null when absent or
+ * not a time, so its age cannot be known) and whether the chat is a private
+ * one; null for anything else. The send time, not the time it reached the
+ * webhook, is what a LOCK's age is measured from: a LOCK delivered late,
+ * after an outage, is as old as it was when the owner sent it. A LOCK from a group or
  * channel is still returned, so the caller can answer that it works only in
  * the owner's private chat: a group's other members must not be able to lock
  * an owner's vault.
@@ -153,6 +159,7 @@ const LOCK_RE = /^\/?lock(?:@\w+)?$/i;
 export function extractLockCommand(update: TelegramUpdate): {
   chatId: string;
   updateId: number;
+  sentAt: number | null;
   isPrivate: boolean;
 } | null {
   const chatId = update?.message?.chat?.id;
@@ -160,7 +167,9 @@ export function extractLockCommand(update: TelegramUpdate): {
   const text = update?.message?.text?.trim() ?? '';
   if (!chatId || typeof updateId !== 'number' || !Number.isSafeInteger(updateId)) return null;
   if (!LOCK_RE.test(text)) return null;
-  return { chatId: String(chatId), updateId, isPrivate: update.message?.chat?.type === 'private' };
+  const date = update.message?.date;
+  const sentAt = typeof date === 'number' && Number.isSafeInteger(date) && date > 0 ? date : null;
+  return { chatId: String(chatId), updateId, sentAt, isPrivate: update.message?.chat?.type === 'private' };
 }
 
 /**

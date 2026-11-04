@@ -855,6 +855,8 @@ describe('the Telegram steps', () => {
     expect(sent[1].text).toContain(`to ${DEST}`);
     expect(sent[1].text).toContain('Request code 0000123456');
     expect(sent[2].text).toContain(`naming ${BOB}`);
+    // The owner cannot cancel while a signer holds a lock, and is told so.
+    expect(sent[2].text).toContain('only a signer can cancel it');
     expect(cursors.rows.get(ALERT_NEXT_ITEM)).toBe(encodePos(ledger.rows[4]));
     // Read again: nothing is alerted twice.
     sent = [];

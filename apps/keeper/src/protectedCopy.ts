@@ -32,6 +32,10 @@ type Copy = {
   alertLockedBy: (w: string, c: number, by: string) => string;
   /** `what`: the asset and amount; `when`: the release time, UTC. */
   alertPayout: (w: string, c: number, what: string, to: string, when: string, code: string) => string;
+  /** A proposed replacement of the primary wallet. The contract refuses the
+   *  owner's cancel while a signer holds a lock (`OwnerCannotCancelWhileSignerLock`),
+   *  so the advice to cancel says so instead of offering an action that
+   *  would fail (Codex #3092). */
   alertReplacement: (w: string, c: number, nominee: string, by: string) => string;
   pushTitle: string;
 };
@@ -48,7 +52,7 @@ const COPY: Record<Locale, Copy> = {
     alertLockedByOwner: (w, c) => `The protected vault of wallet ${w} on chain ${c} was locked by its owner (from the app, or by the keeper on your LOCK). Every queued payout and position transfer was cancelled.`,
     alertLockedBy: (w, c, by) => `The protected vault of wallet ${w} on chain ${c} was locked by ${by}, one of its signers. Every queued payout and position transfer was cancelled. If you did not expect this, check your signers in the app.`,
     alertPayout: (w, c, what, to, when, code) => `A payout from the protected vault of wallet ${w} on chain ${c} was queued: ${what} to ${to}, released no earlier than ${when} UTC. Request code ${code}; the app shows the same code for this payout. If you did not ask for it, cancel it in the app or send LOCK.`,
-    alertReplacement: (w, c, n, by) => `A replacement of the primary wallet ${w} on chain ${c} was proposed by ${by}, naming ${n} as the new primary. If you did not ask for it, cancel it in the app.`,
+    alertReplacement: (w, c, n, by) => `A replacement of the primary wallet ${w} on chain ${c} was proposed by ${by}, naming ${n} as the new primary. If you did not ask for it, cancel it in the app. While one of your signers holds a lock on the vault, only a signer can cancel it, so ask one of them to.`,
     pushTitle: 'Vaipakam protected vault',
   },
   es: {
@@ -62,7 +66,7 @@ const COPY: Record<Locale, Copy> = {
     alertLockedByOwner: (w, c) => `La bóveda protegida de la billetera ${w} en la cadena ${c} fue bloqueada por su propietario (desde la app, o por el keeper tras tu LOCK). Se cancelaron todos los pagos y transferencias de posiciones en cola.`,
     alertLockedBy: (w, c, by) => `La bóveda protegida de la billetera ${w} en la cadena ${c} fue bloqueada por ${by}, uno de sus firmantes. Se cancelaron todos los pagos y transferencias de posiciones en cola. Si no lo esperabas, revisa tus firmantes en la app.`,
     alertPayout: (w, c, what, to, when, code) => `Se puso en cola un pago desde la bóveda protegida de la billetera ${w} en la cadena ${c}: ${what} a ${to}, liberado no antes de ${when} UTC. Código de solicitud ${code}; la app muestra el mismo código para este pago. Si no lo pediste, cancélalo en la app o envía LOCK.`,
-    alertReplacement: (w, c, n, by) => `${by} propuso reemplazar la billetera principal ${w} en la cadena ${c}, nombrando a ${n} como nueva principal. Si no lo pediste, cancélalo en la app.`,
+    alertReplacement: (w, c, n, by) => `${by} propuso reemplazar la billetera principal ${w} en la cadena ${c}, nombrando a ${n} como nueva principal. Si no lo pediste, cancélalo en la app. Mientras uno de tus firmantes mantenga un bloqueo sobre la bóveda, solo un firmante puede cancelarlo, así que pídeselo a uno de ellos.`,
     pushTitle: 'Bóveda protegida de Vaipakam',
   },
   fr: {
@@ -76,7 +80,7 @@ const COPY: Record<Locale, Copy> = {
     alertLockedByOwner: (w, c) => `Le coffre protégé du portefeuille ${w} sur la chaîne ${c} a été verrouillé par son propriétaire (depuis l'application, ou par le keeper sur votre LOCK). Tous les paiements et transferts de position en file d'attente ont été annulés.`,
     alertLockedBy: (w, c, by) => `Le coffre protégé du portefeuille ${w} sur la chaîne ${c} a été verrouillé par ${by}, l'un de ses signataires. Tous les paiements et transferts de position en file d'attente ont été annulés. Si vous ne vous y attendiez pas, vérifiez vos signataires dans l'application.`,
     alertPayout: (w, c, what, to, when, code) => `Un paiement depuis le coffre protégé du portefeuille ${w} sur la chaîne ${c} a été mis en file : ${what} vers ${to}, libéré au plus tôt le ${when} UTC. Code de demande ${code} ; l'application affiche le même code pour ce paiement. Si vous ne l'avez pas demandé, annulez-le dans l'application ou envoyez LOCK.`,
-    alertReplacement: (w, c, n, by) => `${by} a proposé de remplacer le portefeuille principal ${w} sur la chaîne ${c}, en désignant ${n} comme nouveau principal. Si vous ne l'avez pas demandé, annulez-le dans l'application.`,
+    alertReplacement: (w, c, n, by) => `${by} a proposé de remplacer le portefeuille principal ${w} sur la chaîne ${c}, en désignant ${n} comme nouveau principal. Si vous ne l'avez pas demandé, annulez-le dans l'application. Tant qu'un de vos signataires maintient un verrouillage sur le coffre, seul un signataire peut l'annuler : demandez-le à l'un d'eux.`,
     pushTitle: 'Coffre protégé Vaipakam',
   },
   de: {
@@ -90,7 +94,7 @@ const COPY: Record<Locale, Copy> = {
     alertLockedByOwner: (w, c) => `Der geschützte Tresor von Wallet ${w} auf Chain ${c} wurde von seinem Eigentümer gesperrt (in der App oder durch den Keeper auf Ihr LOCK). Alle wartenden Auszahlungen und Positionsübertragungen wurden storniert.`,
     alertLockedBy: (w, c, by) => `Der geschützte Tresor von Wallet ${w} auf Chain ${c} wurde von ${by}, einem seiner Unterzeichner, gesperrt. Alle wartenden Auszahlungen und Positionsübertragungen wurden storniert. Falls Sie das nicht erwartet haben, prüfen Sie Ihre Unterzeichner in der App.`,
     alertPayout: (w, c, what, to, when, code) => `Eine Auszahlung aus dem geschützten Tresor von Wallet ${w} auf Chain ${c} wurde eingereiht: ${what} an ${to}, frühestens freigegeben am ${when} UTC. Anfragecode ${code}; die App zeigt für diese Auszahlung denselben Code. Falls Sie sie nicht angefordert haben, stornieren Sie sie in der App oder senden Sie LOCK.`,
-    alertReplacement: (w, c, n, by) => `${by} hat vorgeschlagen, die primäre Wallet ${w} auf Chain ${c} zu ersetzen, mit ${n} als neuer primärer Wallet. Falls Sie das nicht angefordert haben, stornieren Sie es in der App.`,
+    alertReplacement: (w, c, n, by) => `${by} hat vorgeschlagen, die primäre Wallet ${w} auf Chain ${c} zu ersetzen, mit ${n} als neuer primärer Wallet. Falls Sie das nicht angefordert haben, stornieren Sie es in der App. Solange einer Ihrer Unterzeichner den Tresor gesperrt hält, kann nur ein Unterzeichner es stornieren; bitten Sie einen von ihnen darum.`,
     pushTitle: 'Geschützter Vaipakam-Tresor',
   },
   ja: {
@@ -104,7 +108,7 @@ const COPY: Record<Locale, Copy> = {
     alertLockedByOwner: (w, c) => `チェーン ${c} のウォレット ${w} の保護ボールトが所有者によってロックされました（アプリから、またはあなたの LOCK によりキーパーが実行）。キュー中の支払いとポジション移転はすべて取り消されました。`,
     alertLockedBy: (w, c, by) => `チェーン ${c} のウォレット ${w} の保護ボールトが、署名者の一人 ${by} によってロックされました。キュー中の支払いとポジション移転はすべて取り消されました。心当たりがない場合は、アプリで署名者を確認してください。`,
     alertPayout: (w, c, what, to, when, code) => `チェーン ${c} のウォレット ${w} の保護ボールトから支払いがキューに入りました：${what} を ${to} へ、${when} UTC 以降に解放。リクエストコード ${code}（アプリにもこの支払いの同じコードが表示されます）。心当たりがない場合は、アプリで取り消すか LOCK を送ってください。`,
-    alertReplacement: (w, c, n, by) => `${by} が、チェーン ${c} のプライマリウォレット ${w} を ${n} に置き換えることを提案しました。心当たりがない場合は、アプリで取り消してください。`,
+    alertReplacement: (w, c, n, by) => `${by} が、チェーン ${c} のプライマリウォレット ${w} を ${n} に置き換えることを提案しました。心当たりがない場合は、アプリで取り消してください。 署名者のいずれかがボールトをロックしている間は、署名者しか取り消せないため、署名者に依頼してください。`,
     pushTitle: 'Vaipakam 保護ボールト',
   },
   zh: {
@@ -118,7 +122,7 @@ const COPY: Record<Locale, Copy> = {
     alertLockedByOwner: (w, c) => `链 ${c} 上钱包 ${w} 的受保护金库已被其所有者锁定（通过应用，或由 keeper 根据你的 LOCK 执行）。所有排队中的付款和头寸转移均已取消。`,
     alertLockedBy: (w, c, by) => `链 ${c} 上钱包 ${w} 的受保护金库已被其签名人之一 ${by} 锁定。所有排队中的付款和头寸转移均已取消。如非预期，请在应用中检查你的签名人。`,
     alertPayout: (w, c, what, to, when, code) => `链 ${c} 上钱包 ${w} 的受保护金库有一笔付款已排队：${what} 付给 ${to}，最早于 ${when} UTC 放行。请求码 ${code}；应用中这笔付款显示相同的码。如果不是你发起的，请在应用中取消或发送 LOCK。`,
-    alertReplacement: (w, c, n, by) => `${by} 提议替换链 ${c} 上的主钱包 ${w}，新的主钱包为 ${n}。如果不是你发起的，请在应用中取消。`,
+    alertReplacement: (w, c, n, by) => `${by} 提议替换链 ${c} 上的主钱包 ${w}，新的主钱包为 ${n}。如果不是你发起的，请在应用中取消。 当你的某位签名人对金库设有锁定时，只有签名人可以取消，请让其中一位签名人取消。`,
     pushTitle: 'Vaipakam 受保护金库',
   },
   ko: {
@@ -132,7 +136,7 @@ const COPY: Record<Locale, Copy> = {
     alertLockedByOwner: (w, c) => `체인 ${c}의 지갑 ${w} 보호 볼트가 소유자에 의해 잠겼습니다(앱에서, 또는 LOCK에 따라 키퍼가 실행). 대기 중인 모든 지급과 포지션 이전이 취소되었습니다.`,
     alertLockedBy: (w, c, by) => `체인 ${c}의 지갑 ${w} 보호 볼트가 서명자 중 한 명인 ${by}에 의해 잠겼습니다. 대기 중인 모든 지급과 포지션 이전이 취소되었습니다. 예상하지 못했다면 앱에서 서명자를 확인하세요.`,
     alertPayout: (w, c, what, to, when, code) => `체인 ${c}의 지갑 ${w} 보호 볼트에서 지급이 대기열에 들어갔습니다: ${what}을(를) ${to}에게, ${when} UTC 이후 지급. 요청 코드 ${code}(앱에도 이 지급에 같은 코드가 표시됩니다). 요청하지 않았다면 앱에서 취소하거나 LOCK을 보내세요.`,
-    alertReplacement: (w, c, n, by) => `${by}이(가) 체인 ${c}의 기본 지갑 ${w}을(를) ${n}(으)로 교체할 것을 제안했습니다. 요청하지 않았다면 앱에서 취소하세요.`,
+    alertReplacement: (w, c, n, by) => `${by}이(가) 체인 ${c}의 기본 지갑 ${w}을(를) ${n}(으)로 교체할 것을 제안했습니다. 요청하지 않았다면 앱에서 취소하세요. 서명자 중 한 명이 볼트를 잠그고 있는 동안에는 서명자만 취소할 수 있으므로, 서명자에게 요청하세요.`,
     pushTitle: 'Vaipakam 보호 볼트',
   },
   hi: {
@@ -146,7 +150,7 @@ const COPY: Record<Locale, Copy> = {
     alertLockedByOwner: (w, c) => `चेन ${c} पर वॉलेट ${w} का सुरक्षित वॉल्ट उसके मालिक ने लॉक किया (ऐप से, या आपके LOCK पर keeper ने)। कतार में लगे सभी भुगतान और पोज़िशन ट्रांसफ़र रद्द कर दिए गए।`,
     alertLockedBy: (w, c, by) => `चेन ${c} पर वॉलेट ${w} का सुरक्षित वॉल्ट उसके एक हस्ताक्षरकर्ता ${by} ने लॉक किया। कतार में लगे सभी भुगतान और पोज़िशन ट्रांसफ़र रद्द कर दिए गए। अगर आपको इसकी उम्मीद नहीं थी, तो ऐप में अपने हस्ताक्षरकर्ता जाँचें।`,
     alertPayout: (w, c, what, to, when, code) => `चेन ${c} पर वॉलेट ${w} के सुरक्षित वॉल्ट से एक भुगतान कतार में लगा: ${what}, ${to} को, ${when} UTC से पहले जारी नहीं होगा। अनुरोध कोड ${code}; ऐप इस भुगतान के लिए यही कोड दिखाता है। अगर आपने यह नहीं माँगा, तो ऐप में इसे रद्द करें या LOCK भेजें।`,
-    alertReplacement: (w, c, n, by) => `${by} ने चेन ${c} पर प्राथमिक वॉलेट ${w} को ${n} से बदलने का प्रस्ताव रखा है। अगर आपने यह नहीं माँगा, तो ऐप में इसे रद्द करें।`,
+    alertReplacement: (w, c, n, by) => `${by} ने चेन ${c} पर प्राथमिक वॉलेट ${w} को ${n} से बदलने का प्रस्ताव रखा है। अगर आपने यह नहीं माँगा, तो ऐप में इसे रद्द करें। जब तक आपके किसी हस्ताक्षरकर्ता ने वॉल्ट पर लॉक लगा रखा है, केवल हस्ताक्षरकर्ता ही इसे रद्द कर सकता है, इसलिए उनमें से किसी से कहें।`,
     pushTitle: 'Vaipakam सुरक्षित वॉल्ट',
   },
   ta: {
@@ -160,7 +164,7 @@ const COPY: Record<Locale, Copy> = {
     alertLockedByOwner: (w, c) => `சங்கிலி ${c} இல் உள்ள வாலெட் ${w} இன் பாதுகாக்கப்பட்ட பெட்டகம் அதன் உரிமையாளரால் பூட்டப்பட்டது (செயலியில், அல்லது உங்கள் LOCK இன் பேரில் keeper ஆல்). வரிசையில் இருந்த அனைத்து பணம் செலுத்துதல்களும் நிலை மாற்றங்களும் ரத்து செய்யப்பட்டன.`,
     alertLockedBy: (w, c, by) => `சங்கிலி ${c} இல் உள்ள வாலெட் ${w} இன் பாதுகாக்கப்பட்ட பெட்டகம் அதன் கையொப்பமிடுபவர்களில் ஒருவரான ${by} ஆல் பூட்டப்பட்டது. வரிசையில் இருந்த அனைத்து பணம் செலுத்துதல்களும் நிலை மாற்றங்களும் ரத்து செய்யப்பட்டன. இதை நீங்கள் எதிர்பார்க்கவில்லை என்றால், செயலியில் உங்கள் கையொப்பமிடுபவர்களைச் சரிபாருங்கள்.`,
     alertPayout: (w, c, what, to, when, code) => `சங்கிலி ${c} இல் உள்ள வாலெட் ${w} இன் பாதுகாக்கப்பட்ட பெட்டகத்திலிருந்து ஒரு பணம் செலுத்துதல் வரிசையில் சேர்க்கப்பட்டது: ${what}, ${to} க்கு, ${when} UTC க்கு முன் விடுவிக்கப்படாது. கோரிக்கைக் குறியீடு ${code}; இந்தப் பணம் செலுத்துதலுக்குச் செயலியும் அதே குறியீட்டைக் காட்டும். நீங்கள் இதைக் கோரவில்லை என்றால், செயலியில் ரத்து செய்யுங்கள் அல்லது LOCK அனுப்புங்கள்.`,
-    alertReplacement: (w, c, n, by) => `சங்கிலி ${c} இல் உள்ள முதன்மை வாலெட் ${w} ஐ ${n} ஆல் மாற்ற ${by} முன்மொழிந்துள்ளார். நீங்கள் இதைக் கோரவில்லை என்றால், செயலியில் ரத்து செய்யுங்கள்.`,
+    alertReplacement: (w, c, n, by) => `சங்கிலி ${c} இல் உள்ள முதன்மை வாலெட் ${w} ஐ ${n} ஆல் மாற்ற ${by} முன்மொழிந்துள்ளார். நீங்கள் இதைக் கோரவில்லை என்றால், செயலியில் ரத்து செய்யுங்கள். உங்கள் கையொப்பமிடுபவர்களில் ஒருவர் வால்ட்டில் பூட்டு வைத்திருக்கும் வரை, கையொப்பமிடுபவர் மட்டுமே இதை ரத்து செய்ய முடியும், எனவே அவர்களில் ஒருவரிடம் கேளுங்கள்.`,
     pushTitle: 'Vaipakam பாதுகாக்கப்பட்ட பெட்டகம்',
   },
   ar: {
@@ -174,7 +178,7 @@ const COPY: Record<Locale, Copy> = {
     alertLockedByOwner: (w, c) => `أقفل مالكُ المحفظة ${w} على السلسلة ${c} خزنتها المحمية (من التطبيق، أو عبر الـ keeper بناءً على طلب LOCK). أُلغيت كل المدفوعات وعمليات نقل المراكز في قائمة الانتظار.`,
     alertLockedBy: (w, c, by) => `أُقفلت الخزنة المحمية للمحفظة ${w} على السلسلة ${c} بواسطة ${by}، أحد موقّعيها. أُلغيت كل المدفوعات وعمليات نقل المراكز في قائمة الانتظار. إن لم تكن تتوقع ذلك، فراجع موقّعيك في التطبيق.`,
     alertPayout: (w, c, what, to, when, code) => `أُضيفت دفعة من الخزنة المحمية للمحفظة ${w} على السلسلة ${c} إلى قائمة الانتظار: ${what} إلى ${to}، لا تُصرف قبل ${when} UTC. رمز الطلب ${code}؛ يعرض التطبيق الرمز نفسه لهذه الدفعة. إن لم تطلبها، فألغها في التطبيق أو أرسل LOCK.`,
-    alertReplacement: (w, c, n, by) => `اقترح ${by} استبدال المحفظة الرئيسية ${w} على السلسلة ${c} بالمحفظة ${n}. إن لم تطلب ذلك، فألغه في التطبيق.`,
+    alertReplacement: (w, c, n, by) => `اقترح ${by} استبدال المحفظة الرئيسية ${w} على السلسلة ${c} بالمحفظة ${n}. إن لم تطلب ذلك، فألغه في التطبيق. ما دام أحد الموقّعين لديك يُبقي الخزنة مقفلة، فلا يستطيع إلغاءه إلا موقّع، فاطلب ذلك من أحدهم.`,
     pushTitle: 'خزنة Vaipakam المحمية',
   },
 };

@@ -866,6 +866,11 @@ state.
   transfers until it is handled: an owner's lock is never overtaken by the
   payout it was sent to stop. When the keeper cannot tell which requests are
   still open, it releases nothing that run.
+- A request's age is measured from when the owner sent the LOCK, not from
+  when it reached Vaipakam, so a LOCK delivered late (after an outage) is
+  as old as it really is. One that arrives already more than an hour old is
+  not recorded, and the owner is told why and to send LOCK again or lock
+  from the app.
 - A request the keeper reaches more than an hour after it was made is not
   acted on, and the owner is told it expired and should lock from the app.
   One more than a day old is dropped without a message, so a backlog found
@@ -880,7 +885,10 @@ state.
 - The keeper also alerts the owner of a protected account, on every channel
   they subscribed (Telegram and Push), when their vault is locked (naming
   who locked it when it was not the owner), when a payout from it is queued,
-  and when a replacement of the primary wallet is proposed. A payout alert
+  and when a replacement of the primary wallet is proposed. The replacement
+  alert tells the owner to cancel it in the app if they did not ask for it,
+  and says that while one of their signers holds a lock on the vault only a
+  signer can cancel it, since the owner's own cancel is refused then. A payout alert
   names the asset, the amount, the destination, the release time and the
   payout's request code, the same code the app shows for that payout, so the
   owner can tell a payout they asked for from one they did not and lock in

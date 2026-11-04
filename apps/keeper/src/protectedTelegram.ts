@@ -52,8 +52,10 @@ import { RUN_DEADLINE_MARGIN_MS } from './runWindow';
 import type { ScanCursors } from './scanCursors';
 import type { StepSender } from './stepSender';
 
-/** A request dropped (and the chat told) when reached later than this. */
-export const LOCK_REQUEST_TTL_SEC = 60 * 60;
+/** A request dropped (and the chat told) when reached later than this after
+ *  it was sent: the one limit the agent also applies before recording it. */
+import { LOCK_REQUEST_TTL_SEC } from '@vaipakam/lib/protectedLock';
+export { LOCK_REQUEST_TTL_SEC };
 /** A request dropped without a message when older than this. */
 export const LOCK_REQUEST_SILENT_SEC = 24 * 60 * 60;
 /** Requests read per chain per run. */
