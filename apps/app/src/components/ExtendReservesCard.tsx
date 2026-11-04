@@ -24,7 +24,14 @@ function ReserveItem({ row }: { row: ReserveRow }) {
       ? copy.claims.row.amountUnreadableInline
       : copy.claims.row.amountLoadingInline;
   return (
-    <li className="item-row" style={{ alignItems: 'flex-start' }}>
+    // `data-amount` says whether the amount is in the token's units yet
+    // (loading, ready, or unavailable when the token could not be read); the
+    // live drive judges the row's amount only once it is ready.
+    <li
+      className="item-row"
+      style={{ alignItems: 'flex-start' }}
+      data-amount={meta.data ? 'ready' : meta.isError ? 'unavailable' : 'loading'}
+    >
       <span className="row-main">
         <Link to={`/positions/${row.loanId}`} className="row-title">
           {copy.autoExtend.claims.rowTitle(String(row.loanId))}

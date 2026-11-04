@@ -1029,6 +1029,10 @@ try {
   let listed = false;
   let itemText = '';
   let discovery = null;
+  // The row's amount as the row publishes it (`data-amount`): the token's
+  // units are a read of their own, so a row whose amount is still loading or
+  // could not be read says nothing about the amount.
+  let rowAmount = 'absent';
   for (let attempt = 0; attempt < 3 && !itemText; attempt++) {
     await go(bp, '/claims');
     await connect(bp, BORROWER);
@@ -1040,17 +1044,21 @@ try {
     if (!discovery || discovery.state === 'unavailable') continue;
     listed = await reserves.waitFor({ state: 'visible', timeout: 30_000 }).then(() => true, () => false);
     if (!listed) continue;
-    itemText =
-      (await pollUntil(
-        `${rowTitle} loaded on Claims`,
-        async () => {
-          if ((await item.count()) !== 1) return null;
-          const t = squash(await item.innerText());
-          return t.includes(squash(amountLine)) && (await item.getByRole('button', { name: R.reviewWithdraw }).count()) === 1 ? t : null;
-        },
-        { timeoutMs: 120_000, everyMs: 3_000 },
-      )) ?? ((await item.count()) === 1 ? squash(await item.innerText()) : '');
-    if (!itemText.includes(squash(amountLine))) itemText = '';
+    const seen = await pollUntil(
+      `${rowTitle} loaded on Claims`,
+      async () => {
+        if ((await item.count()) !== 1) return null;
+        const amt = await item.getAttribute('data-amount');
+        if (amt === 'unavailable') return { amt, text: '' };
+        if (amt !== 'ready' || (await item.getByRole('button', { name: R.reviewWithdraw }).count()) !== 1) return null;
+        return { amt, text: squash(await item.innerText()) };
+      },
+      { timeoutMs: 120_000, everyMs: 3_000 },
+    );
+    rowAmount = seen?.amt ?? ((await item.count()) === 1 ? ((await item.getAttribute('data-amount')) ?? 'loading') : 'absent');
+    // A row whose amount resolved is judged as it stands, right or wrong;
+    // one still loading or unreadable is opened again.
+    itemText = seen?.text || (rowAmount === 'ready' ? squash(await item.innerText()) : '');
   }
   // A missing row is judged only against a discovery that answered, read
   // this loan, and was not cut short; otherwise it is left undetermined and
@@ -1061,6 +1069,10 @@ try {
   if (!itemText && discoveryUnsure) {
     unsettled('claims', 'listed', `the borrower's reserve discovery is ${discovery ? `${discovery.state}${discovery.truncated ? ', cut short' : ''}${discovery.unread.length ? `, unread loans ${discovery.unread.join(', ')}` : ''}` : 'unanswered'} after 3 visits`);
     stop(`the borrower's Claims could not show ${rowTitle}: discovery did not answer for it`);
+  }
+  if (!itemText && (rowAmount === 'loading' || rowAmount === 'unavailable')) {
+    unsettled('claims', 'listed', `${rowTitle} is listed but its amount is ${rowAmount === 'loading' ? 'still loading' : "unreadable (the token's units could not be read)"} after 3 visits, so the amount was not judged`);
+    stop(`the borrower's Claims row for loan ${LOAN_ID} never resolved its amount`);
   }
   check(
     'claims',
