@@ -272,7 +272,8 @@ evidence that the migration has completed.
   still waiting for its packet's attestation keeps the day in its work until
   it can move. What was given up
   and what moved is reported from the chain's own records, never from the
-  keeper's estimate. A day that opened before its parts disagreed stays paid
+  keeper's estimate, and a transaction that landed is always reported, even
+  when a read after it fails; the day then stays in the keeper's work. A day that opened before its parts disagreed stays paid
   and is reported as a source fault. A day that cannot be skipped because a
   side whose claims may already have paid carries recycled funding is an
   incident for a person: the keeper reports it and never retries the skip.

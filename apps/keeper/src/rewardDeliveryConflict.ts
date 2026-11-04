@@ -273,43 +273,61 @@ export async function workConflictedDay(deps: ConflictDeps, day: bigint): Promis
   let recycled = 0n;
   let calls = 0;
   let waiting: string | null = null;
-  for (;;) {
-    // eslint-disable-next-line no-await-in-loop
-    const res: CallResult = await sender.call('recycle', String(day), 'recycleSkippedDayValue', [day], 0n, (moved) => moved !== 0n);
-    if (res === 'idle') {
+  // A read that fails after a transaction landed must not take that
+  // transaction's notice with it (Codex #2999): the next run sees the day
+  // already skipped and the value already moved, so a notice dropped here is
+  // never written. So the failure is held, the notices for what landed are
+  // written, and the day stays queued, to be read again next run. Only a
+  // failure before anything landed propagates.
+  let interrupted: unknown = null;
+  try {
+    for (;;) {
       // eslint-disable-next-line no-await-in-loop
-      const [, capHit, withheld] = await deps.readCoverage(day);
-      if (withheld !== 0n) {
-        waiting = `${vpfi(withheld)} of the day's landed value waits for its packet's attestation and moves once attested`;
-        break;
-      }
-      if (capHit) {
+      const res: CallResult = await sender.call('recycle', String(day), 'recycleSkippedDayValue', [day], 0n, (moved) => moved !== 0n);
+      if (res === 'idle') {
         // eslint-disable-next-line no-await-in-loop
-        const pruned = await sender.call('prune', String(day), 'epochPruneTransportDayCursor', [day]);
-        if (pruned === 'landed') continue;
-        if (pruned !== 'skipped') raise(rk, 'refused', `epochPruneTransportDayCursor was refused: ${pruned}. The day's value beyond its spent epochs has not moved.`);
+        const [, capHit, withheld] = await deps.readCoverage(day);
+        if (withheld !== 0n) {
+          waiting = `${vpfi(withheld)} of the day's landed value waits for its packet's attestation and moves once attested`;
+          break;
+        }
+        if (capHit) {
+          // eslint-disable-next-line no-await-in-loop
+          const pruned = await sender.call('prune', String(day), 'epochPruneTransportDayCursor', [day]);
+          if (pruned === 'landed') continue;
+          if (pruned !== 'skipped') raise(rk, 'refused', `epochPruneTransportDayCursor was refused: ${pruned}. The day's value beyond its spent epochs has not moved.`);
+          break;
+        }
+        out.finished = true;
+        out.cleared.push(ck, rk);
         break;
       }
-      out.finished = true;
-      out.cleared.push(ck, rk);
-      break;
+      if (res === 'skipped') break; // the rest moves next run
+      if (res !== 'landed') {
+        raise(rk, 'refused', `recycleSkippedDayValue was refused: ${res}. The value that landed for the skipped day has not moved.`);
+        break;
+      }
+      const moved = recycledBy(deps, day, sender.receipt?.logs ?? []);
+      calls += 1;
+      fresh += moved.fresh;
+      recycled += moved.recycled;
+      if (moved.fresh + moved.recycled === 0n) break; // landed, its event unread: read again next run rather than spin
     }
-    if (res === 'skipped') break; // the rest moves next run
-    if (res !== 'landed') {
-      raise(rk, 'refused', `recycleSkippedDayValue was refused: ${res}. The value that landed for the skipped day has not moved.`);
-      break;
-    }
-    const moved = recycledBy(deps, day, sender.receipt?.logs ?? []);
-    calls += 1;
-    fresh += moved.fresh;
-    recycled += moved.recycled;
-    if (moved.fresh + moved.recycled === 0n) break; // landed, its event unread: read again next run rather than spin
+  } catch (err) {
+    if (calls === 0 && out.notices.length === 0) throw err; // nothing landed: the queue logs it and the day keeps its turn
+    interrupted = err;
   }
+  const notRead =
+    interrupted === null
+      ? null
+      : `the rest was not worked this run, because a read failed (${interrupted instanceof PastRunDeadline ? shortErr(interrupted) : redactedError(interrupted, { stack: false })}), and is read again next run`;
   if (calls > 0) {
     out.notices.push(
       `day ${day}: ${vpfi(fresh)} fresh and ${vpfi(recycled)} recycled value moved to this mirror's recycle bucket in ${calls} call${calls === 1 ? '' : 's'}` +
-        `${out.finished ? '; nothing is left for the day' : waiting !== null ? `; ${waiting}` : '; more may be left, moved next run'}.`,
+        `${out.finished ? '; nothing is left for the day' : notRead !== null ? `; ${notRead}` : waiting !== null ? `; ${waiting}` : '; more may be left, moved next run'}.`,
     );
+  } else if (notRead !== null) {
+    out.notices.push(`day ${day}: ${notRead}.`);
   } else if (waiting !== null) {
     out.notices.push(`day ${day}: ${waiting}.`);
   }

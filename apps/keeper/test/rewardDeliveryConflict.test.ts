@@ -204,6 +204,41 @@ describe('workConflictedDay', () => {
     expect(out.notices[0]).toContain("5 VPFI of the day's landed value waits for its packet's attestation");
   });
 
+  it('a coverage read that fails after the skip and a recycle landed keeps both notices and the day queued (Codex #2999)', async () => {
+    const skipped = eventLog('DayDeliveryConflictSkipped', {
+      dayId: DAY,
+      conflictAt: 1_800_000_000n,
+      freshLenderHalf: 3n * E18,
+      freshBorrowerHalf: 4n * E18,
+      lenderHalfEquiv: 0n,
+      borrowerHalfEquiv: 0n,
+      recycleConsume: 1n * E18,
+    });
+    const moved = eventLog('DayDeliveryConflictValueRecycled', { dayId: DAY, fresh: 7n * E18, recycled: 0n });
+    const { deps, sender } = fake([conflicted()], {
+      skipConflictedDay: [{ logs: [skipped] }],
+      recycleSkippedDayValue: [{ result: 7n * E18, logs: [moved] }, { result: 0n }],
+    });
+    deps.readCoverage = async () => {
+      throw new Error('rpc down');
+    };
+    const out = await workConflictedDay(deps, DAY);
+    expect(sender.sent).toEqual(['skipConflictedDay', 'recycleSkippedDayValue']);
+    expect(out.finished).toBe(false);
+    expect(out.cleared).not.toContain(conflictKey(CHAIN, DAY));
+    expect(out.notices[0]).toContain('fresh lender half 3 VPFI');
+    expect(out.notices[1]).toContain('7 VPFI fresh and 0 VPFI recycled value moved');
+    expect(out.notices[1]).toContain('the rest was not worked this run, because a read failed');
+  });
+
+  it('a coverage read that fails before anything landed propagates, so the queue logs it', async () => {
+    const { deps } = fake([conflicted({ skippedAt: 1_800_090_000n })], { recycleSkippedDayValue: [{ result: 0n }] });
+    deps.readCoverage = async () => {
+      throw new Error('rpc down');
+    };
+    await expect(workConflictedDay(deps, DAY)).rejects.toThrow('rpc down');
+  });
+
   it('a prune the contract refuses is alerted, and the day stays queued', async () => {
     const { deps } = fake(
       [conflicted({ skippedAt: 1_800_090_000n })],
