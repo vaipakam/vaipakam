@@ -36,7 +36,9 @@ const MIRROR = 421614;
 
 function makeHarness() {
   const h: SqliteD1 = createSqliteD1(ALL_MIGRATIONS);
-  const env = { DB: h.d1 } as unknown as Env;
+  // The chain under test must be one this Worker is configured to scan, or
+  // the route refuses it as unserved (#2654).
+  const env = { DB: h.d1, RPC_BASE_SEPOLIA: 'http://127.0.0.1:9' } as unknown as Env;
   return { h, env };
 }
 

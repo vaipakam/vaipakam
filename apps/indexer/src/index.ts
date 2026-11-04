@@ -530,7 +530,9 @@ export default {
     // would reintroduce exactly the failure the recut removed: a degraded
     // secrets binding could push the response past the browser's abort and
     // discard a valid D1 series. It needs D1, the resolved ingest gate and
-    // the deployment artifact; none of those come from Secrets Store.
+    // the deployment artifact; none of those come from Secrets Store. A chain
+    // this Worker is not configured to scan is refused inside the handler
+    // with the pre-resolve guard (#2654, `servedChain.ts`).
     if (url.pathname === '/metrics/recycling') {
       if (req.method === 'OPTIONS') return handleOffersPreflight();
       if (req.method === 'GET') {
