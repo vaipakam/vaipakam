@@ -12,6 +12,9 @@ export declare function deployStamp(opts?: {
 
 export declare function deployStampArgs(stamp: DeployStamp): string[];
 
+/** The JavaScript entry of the wrangler the package at `cwd` declares (its `bin.wrangler`). */
+export declare function wranglerEntry(cwd: string): string;
+
 export declare function wranglerDeploy(
   args: string[],
   opts?: { cwd?: string; stamp?: DeployStamp; stdio?: StdioOptions },

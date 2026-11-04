@@ -28,8 +28,9 @@
  * missing stamp costs the check its precision, not the release.
  */
 import { execFileSync, spawnSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 const FULL_SHA = /^[0-9a-f]{40}$/;
 
@@ -82,6 +83,29 @@ export function deployStampArgs(stamp) {
 }
 
 /**
+ * The JavaScript entry of the wrangler the package at `cwd` declares.
+ *
+ * Read from the package's own `bin` field rather than resolved as the
+ * subpath `wrangler/bin/wrangler.js`: wrangler's `exports` map stopped
+ * exposing that subpath (4.114 lists only `.`, `./experimental-config` and
+ * `./package.json`), and Node refuses any subpath an `exports` map omits.
+ * `./package.json` is exported by every version, and `bin.wrangler` is the
+ * file the `wrangler` command itself runs.
+ *
+ * @param {string} cwd
+ * @returns {string}
+ */
+export function wranglerEntry(cwd) {
+  const manifest = createRequire(join(cwd, 'package.json')).resolve('wrangler/package.json');
+  const { bin } = JSON.parse(readFileSync(manifest, 'utf8'));
+  const rel = typeof bin === 'string' ? bin : bin?.wrangler;
+  if (typeof rel !== 'string' || rel.length === 0) {
+    throw new Error(`wrangler at ${dirname(manifest)} declares no "wrangler" bin`);
+  }
+  return join(dirname(manifest), rel);
+}
+
+/**
  * Run `wrangler deploy <args…> <stamp flags>` for the package at `cwd`.
  *
  * Wrangler is started as its own JavaScript entry under this Node, never
@@ -93,7 +117,7 @@ export function deployStampArgs(stamp) {
  * @returns {import('node:child_process').SpawnSyncReturns<Buffer>}
  */
 export function wranglerDeploy(args, { cwd = process.cwd(), stamp, stdio = 'inherit' } = {}) {
-  const entry = createRequire(join(cwd, 'package.json')).resolve('wrangler/bin/wrangler.js');
+  const entry = wranglerEntry(cwd);
   return spawnSync(process.execPath, [entry, 'deploy', ...args, ...deployStampArgs(stamp ?? { reason: 'none given' })], {
     cwd,
     stdio,

@@ -1,5 +1,8 @@
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { DEPLOY_TAG, deployStamp, deployStampArgs } from './deployStamp.mjs';
+import { DEPLOY_TAG, deployStamp, deployStampArgs, wranglerEntry } from './deployStamp.mjs';
 
 const SHA = '0123456789abcdef0123456789abcdef01234567';
 
@@ -44,5 +47,36 @@ describe('deployStamp (#2242)', () => {
       const s = deployStamp({ env: {}, git: fakeGit(status) });
       expect('tag' in s && DEPLOY_TAG.test(s.tag)).toBe(true);
     }
+  });
+});
+
+describe('wranglerEntry', () => {
+  /** A package dir whose node_modules/wrangler carries the given manifest. */
+  const pkgWith = (manifest: object) => {
+    const dir = mkdtempSync(join(tmpdir(), 'wrangler-entry-'));
+    writeFileSync(join(dir, 'package.json'), '{"name":"probe"}');
+    const w = join(dir, 'node_modules', 'wrangler');
+    mkdirSync(w, { recursive: true });
+    writeFileSync(join(w, 'package.json'), JSON.stringify({ name: 'wrangler', ...manifest }));
+    return { dir, w };
+  };
+
+  it('finds the entry through bin even when exports hides the bin subpath', () => {
+    // The shape wrangler 4.114 ships: no "./bin/wrangler.js" in exports.
+    const { dir, w } = pkgWith({
+      exports: { '.': './wrangler-dist/cli.js', './package.json': './package.json' },
+      bin: { wrangler: './bin/wrangler.js', wrangler2: './bin/wrangler.js' },
+    });
+    expect(wranglerEntry(dir)).toBe(join(w, 'bin', 'wrangler.js'));
+  });
+
+  it('accepts a string bin', () => {
+    const { dir, w } = pkgWith({ bin: './bin/wrangler.js' });
+    expect(wranglerEntry(dir)).toBe(join(w, 'bin', 'wrangler.js'));
+  });
+
+  it('refuses a wrangler that declares no wrangler bin', () => {
+    const { dir } = pkgWith({ bin: { other: './x.js' } });
+    expect(() => wranglerEntry(dir)).toThrow(/declares no "wrangler" bin/);
   });
 });
