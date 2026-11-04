@@ -433,6 +433,13 @@
   //     opted into the backstop and is past its eligibility time. Lends
   //     treasury capital from the backstop vault, so its arming is an owner
   //     decision of its own. Pays only gas. Ships unset.
+  //   - EXPIRED_TEARDOWN_ENABLED — 'true' arms the #3097 expired-teardown
+  //     pass: cancelExpiredIntent for a swap-to-repay intent past its cancel
+  //     grace, cancelExpiredPrepayListing for a prepay listing past its grace
+  //     window, and teardownStaleSaleListing for a lender-sale listing past
+  //     its expiry or on a closed loan, hourly. Each is simulated
+  //     first and sent only when it would succeed. Permissionless; moves no
+  //     value and pays only gas. Ships unset.
   //
   // (b) GENUINE PLAIN VARS. `keep_vars: true` preserves the ones this config
   //     does NOT declare — it suppresses the delete of bindings absent from

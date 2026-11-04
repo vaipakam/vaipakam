@@ -420,7 +420,8 @@ journalctl -u vaipakam-keeper -f
    `POSITION_UPKEEP_ENABLED` (`positionUpkeep`, hourly at :36: the daily
    NFT-rental deduction; its backstop fill step also needs
    `BACKSTOP_FILL_ENABLED`, which lends treasury capital from the backstop
-   vault and is an owner decision of its own), and
+   vault and is an owner decision of its own),
+   `EXPIRED_TEARDOWN_ENABLED` (`expiredTeardown`, hourly at :06), and
    `DISCOUNT_PATH_CHAIN_IDS` (a list of chain ids, not `true`: the flash-loan
    branch of the liquidator, armed per chain by
    [`FlashLoanLiquidatorRollout.md`](FlashLoanLiquidatorRollout.md) only; the

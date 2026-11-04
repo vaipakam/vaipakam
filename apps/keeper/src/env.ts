@@ -238,6 +238,13 @@ interface BaseEnv {
    *  own free-tier service capacity. Read only while POSITION_UPKEEP_ENABLED
    *  arms the pass. */
   BACKSTOP_FILL_ENABLED?: string;
+  // Expired-teardown pass (#3097). `secret_text` like the flags above.
+  /** 'true' arms the expired-teardown pass (in addition to KEEPER_ENABLED):
+   *  the permissionless teardowns of a swap-to-repay intent past its cancel
+   *  grace, a prepay listing past its grace window, and a lender-sale listing
+   *  past its expiry or on a closed loan. Each moves no value and pays only
+   *  gas. */
+  EXPIRED_TEARDOWN_ENABLED?: string;
 
   // Protocol upkeep pass (#2984). `secret_text` like the flags above.
   /** 'true' arms the protocol upkeep pass (in addition to KEEPER_ENABLED):
@@ -487,6 +494,7 @@ export const PLAIN_VAR_KEYS = [
   'STANDIN_REFRESH_ENABLED',
   'POSITION_UPKEEP_ENABLED',
   'BACKSTOP_FILL_ENABLED',
+  'EXPIRED_TEARDOWN_ENABLED',
   'TIER_LTV_REFRESH_AFTER_SEC',
   'REWARD_ZEROED_DAY_ENABLED',
   'REWARD_ZEROED_DAY_WINDOW_DAYS',
@@ -680,6 +688,7 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     STANDIN_REFRESH_ENABLED: raw.STANDIN_REFRESH_ENABLED,
     POSITION_UPKEEP_ENABLED: raw.POSITION_UPKEEP_ENABLED,
     BACKSTOP_FILL_ENABLED: raw.BACKSTOP_FILL_ENABLED,
+    EXPIRED_TEARDOWN_ENABLED: raw.EXPIRED_TEARDOWN_ENABLED,
     TIER_LTV_REFRESH_AFTER_SEC: raw.TIER_LTV_REFRESH_AFTER_SEC,
     REWARD_ZEROED_DAY_ENABLED: raw.REWARD_ZEROED_DAY_ENABLED,
     REWARD_ZEROED_DAY_WINDOW_DAYS: raw.REWARD_ZEROED_DAY_WINDOW_DAYS,
