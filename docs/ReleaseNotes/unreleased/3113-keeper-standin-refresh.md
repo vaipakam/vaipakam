@@ -1,4 +1,4 @@
-## Keeper — keeps the testnet sanctions stand-in fresh (PR #<n>)
+## Keeper — keeps the testnet sanctions stand-in fresh (PR #3118)
 
 On test networks, the delisting timelocks check a clearance answer from a stand-in for RedStone's Sanctions Oracle on BNB testnet. They refuse an answer whose list is older than seven days. Until now only the admin could refresh the stand-in, by hand, and on the 2026-11-04 deploy it had been stale for about fifteen days without anyone noticing. Automated delisting on the testnets had been closed the whole time.
 
