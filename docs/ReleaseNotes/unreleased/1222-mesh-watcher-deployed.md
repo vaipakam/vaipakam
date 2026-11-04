@@ -1,4 +1,4 @@
-## Thread — Mesh watcher deployed, credentials from the Secrets Store (PR #TBD)
+## Thread — Mesh watcher deployed, credentials from the Secrets Store (PR #3141)
 
 The recycling-mesh ledger watcher is now deployed as its own Worker with its
 own alerts database. It no longer keeps private copies of the ops Telegram bot
