@@ -681,6 +681,20 @@ try {
         'the indexer /offers/markets route regressed',
     );
   }
+  // Zero markets is a PRECONDITION on a chain where nothing has been posted
+  // yet (a fresh Diamond, 2026-11-04), not a regression: the page's honest
+  // empty copy is correct there. It is BLOCKED only when the indexer itself
+  // reports no markets, read directly; empty copy over a non-empty route is
+  // still a FAIL below.
+  if (await marketsEmptyCopy.isVisible().catch(() => false)) {
+    const marketsProbe = await indexerGet(`${INDEXER}/offers/markets?chainId=${CHAIN_ID}`);
+    if (marketsProbe.status === 200 && Array.isArray(marketsProbe.body?.markets) && marketsProbe.body.markets.length === 0) {
+      throw new LivePreconditionError(
+        `no live market on chain ${CHAIN_ID} yet: /offers/markets returned markets:[] and the desk ` +
+          'showed its empty state, so there is no pair to drive.\n  → post one offer on this chain, then re-run',
+      );
+    }
+  }
   if (
     (await marketsEmptyCopy.isVisible().catch(() => false)) ||
     pairButton === '' ||

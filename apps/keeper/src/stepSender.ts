@@ -17,7 +17,7 @@
 // gives each its own share (`stepBudgets`) so none can starve another. Each pass names its own ABI, the refusals that are
 // races rather than faults, and the refusal a paused protocol gives.
 
-import type { Abi, Hex, PublicClient, TransactionReceipt } from 'viem';
+import type { Abi, Address, Hex, PublicClient, TransactionReceipt } from 'viem';
 import { PastRunDeadline } from './batchRead';
 import { classify, revertArgs, shortErr } from './callErrors';
 import { keeperTxPending } from './keeperSend';
@@ -63,6 +63,8 @@ export interface StepSenderConfig {
   /** What this pass's sends spend, as a refused send names it (`the gas`,
    *  `the gas and CCIP fee`). */
   spends: string;
+  /** The contract every call goes to; the chain's Diamond when absent. */
+  target?: Address;
 }
 
 /** What one chain's run gives the sender. */
@@ -156,7 +158,7 @@ export class StepSender {
     const ctx = this.ctx;
     if (!ctx) return null;
     try {
-      await ctx.client.simulateContract({ address: ctx.diamond, abi: this.config.abi, functionName, args, account: ctx.wallet.account! });
+      await ctx.client.simulateContract({ address: this.config.target ?? ctx.diamond, abi: this.config.abi, functionName, args, account: ctx.wallet.account! });
       return true;
     } catch (err) {
       if (err instanceof PastRunDeadline) throw err;
@@ -230,7 +232,7 @@ export class StepSender {
     }
     let simulated: unknown;
     try {
-      ({ result: simulated } = await ctx.client.simulateContract({ address: ctx.diamond, abi, functionName, args, value, account: ctx.wallet.account! }));
+      ({ result: simulated } = await ctx.client.simulateContract({ address: this.config.target ?? ctx.diamond, abi, functionName, args, value, account: ctx.wallet.account! }));
     } catch (err) {
       if (err instanceof PastRunDeadline) return this.stop('deadline');
       const c = classify(err);
@@ -254,7 +256,7 @@ export class StepSender {
     const label = `[keeper] ${pass} chain=${ctx.chainId} ${functionName}(${subject})`;
     let hash: Hex;
     try {
-      hash = (await ctx.wallet.writeContract({ address: ctx.diamond, abi, functionName, args, value, chain: undefined, account: ctx.wallet.account ?? null } as never)) as Hex;
+      hash = (await ctx.wallet.writeContract({ address: this.config.target ?? ctx.diamond, abi, functionName, args, value, chain: undefined, account: ctx.wallet.account ?? null } as never)) as Hex;
     } catch (err) {
       // A deferral at the deadline sent nothing, and says so.
       if (reportSendError(label, err, `send failed: ${shortErr(err)}`)) return this.stop('deadline');

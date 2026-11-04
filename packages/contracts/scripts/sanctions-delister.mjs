@@ -97,7 +97,7 @@ import { mkdirSync, readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { decodeEventLog, encodeFunctionData, getAddress, keccak256, parseAbi, toFunctionSelector } from 'viem';
+import { decodeEventLog, encodeFunctionData, getAddress, keccak256, parseAbi, toFunctionSelector, zeroAddress } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { isEntryPoint } from './entry-point.mjs';
 import {
@@ -218,9 +218,40 @@ export function clearanceOracleName(snap) {
  * dropped because the other failed, so a known pending owner is named even
  * when the current owner could not be read. Nothing is inferred beyond them:
  * "nobody can re-publish it" is said only when the owner reads as renounced
- * AND no transfer reads as pending.
+ * AND no transfer reads as pending AND the refresher reads as unset (#3113).
  */
 export function standInControl(o) {
+  const control = standInOwnerControl(o);
+  // #3113 — a refresher the owner named may re-publish the list too (and
+  // nothing else), whatever the owner's state. A refresher READ as an address
+  // is named, and one read as zero adds nothing (a stand-in built before the
+  // role reads as zero: see {@link identifyOracle}). One NOT read (null or
+  // absent: an RPC that did not answer) is unknown, and matters only where
+  // the owner cannot re-publish it: there "nobody can" is not established.
+  const isZero = (a) => typeof a === 'string' && /^0x0{40}$/i.test(a);
+  if (typeof o.refresher !== 'string') {
+    if (control.refresh !== null) return control;
+    const owner = o.pendingOwner === null ? 'its ownership was given up and whether a transfer is pending could not be read' : 'its ownership was renounced';
+    return {
+      flags: control.flags,
+      stale: 'its owner cannot re-publish it and whether it has a refresher that can was not read this run, so once stale it may stay stale',
+      refresh: null,
+      blocked: `${owner}, and whether it has a refresher that can re-publish it was not read this run ; if nobody can, only a new clearance source on the timelock moves this on`,
+    };
+  }
+  const refresher = isZero(o.refresher) ? null : o.refresher;
+  if (refresher === null) return control;
+  const by = `its refresher ${refresher} re-publishes it with markUpdated`;
+  return {
+    flags: control.flags,
+    stale: control.refresh ? `${control.stale}, or its refresher ${refresher} does` : `it goes stale unless its refresher ${refresher} re-publishes it`,
+    refresh: control.refresh ? `${control.refresh}, or ${by}` : by,
+    blocked: null,
+  };
+}
+
+/** {@link standInControl} from the owner's side alone. */
+function standInOwnerControl(o) {
   const isZero = (a) => typeof a === 'string' && /^0x0{40}$/i.test(a);
   const pendingTo = typeof o.pendingOwner === 'string' && !isZero(o.pendingOwner) ? o.pendingOwner : null;
   const pending = pendingTo
@@ -345,8 +376,9 @@ export function fingerprint(snap) {
  * timelock could push a delisting through with only the Safe's veto in the
  * way, so a stolen copy would need nothing else.
  *
- * `controllers` is `[{ what, owner, pendingOwner, why }]`, the owner and
- * pending owner as read this run (null when unreadable or not read), and
+ * `controllers` is `[{ what, owner, pendingOwner, refresher?, why }]`, the
+ * owner and pending owner as read this run (null when unreadable or not
+ * read), the stand-in's refresher likewise (a stand-in entry only), and
  * `why` the reason a contract could not be read at all, when known. A
  * pending owner is control too: it takes the contract whenever it accepts.
  * `holds` names each such role the key has; `unknown` names each contract
@@ -363,9 +395,14 @@ export function keyControls(controllers, key) {
   const unknown = [];
   const reasons = [];
   for (const c of controllers) {
+    // #3113: a stand-in's refresher keeps the oracle fresh, so it is control
+    // too. Only a stand-in entry carries the role; for it, a refresher not
+    // read is unknown like an unread owner.
+    const refresherRole = 'refresher' in c;
     if (sameAddress(c.owner, key)) holds.push(`${c.what}'s owner`);
     if (sameAddress(c.pendingOwner, key)) holds.push(`${c.what}'s pending owner`);
-    if (c.owner == null || c.pendingOwner == null) {
+    if (refresherRole && sameAddress(c.refresher, key)) holds.push(`${c.what}'s refresher`);
+    if (c.owner == null || c.pendingOwner == null || (refresherRole && c.refresher == null)) {
       unknown.push(c.what);
       if (c.why && !reasons.includes(c.why)) reasons.push(c.why);
     }
@@ -388,7 +425,13 @@ export function keyControls(controllers, key) {
  * checked.
  */
 export function delistingControllers({ route, timelock, clearanceOracle, clearanceMessenger, relayPath }) {
-  const entry = (what, read, why) => ({ what, owner: read?.owner ?? null, pendingOwner: read?.pendingOwner ?? null, ...(read ? {} : { why }) });
+  const entry = (what, read, why) => ({
+    what,
+    owner: read?.owner ?? null,
+    pendingOwner: read?.pendingOwner ?? null,
+    ...(read?.identity === ORACLE_IDENTITY.STAND_IN && { refresher: read.refresher ?? null }),
+    ...(read ? {} : { why }),
+  });
   const controllers = [entry('the timelock', timelock)];
   if (route === LOCAL || route === CROSS_CHAIN) {
     const read = clearanceOracle?.address ? clearanceOracle : null;
@@ -1018,7 +1061,7 @@ function oracleReport(snap) {
     updatedAt: o.updatedAt === null || o.updatedAt === undefined ? null : Number.isSafeInteger(Number(o.updatedAt)) ? Number(o.updatedAt) : String(o.updatedAt),
     // The stand-in's owner and pending owner as read this run (null when
     // unreadable); absent for an oracle that is not the stand-in.
-    ...(o.identity === ORACLE_IDENTITY.STAND_IN && { owner: o.owner ?? null, pendingOwner: o.pendingOwner ?? null }),
+    ...(o.identity === ORACLE_IDENTITY.STAND_IN && { owner: o.owner ?? null, pendingOwner: o.pendingOwner ?? null, refresher: o.refresher ?? null }),
     ...(o.detail && { detail: o.detail }),
   };
 }
@@ -1289,12 +1332,13 @@ export function listRoleKeyVet({ listByChain, key, abi }) {
 export async function identifyOracle(client, address, abi) {
   const at = getAddress(address);
   const read = (functionName) => client.readContract({ address: at, abi, functionName }).then((value) => ({ value }), (error) => ({ error }));
-  const [marker, freshness, block, owner, pendingOwner] = await Promise.all([
+  const [marker, freshness, block, owner, pendingOwner, refresher] = await Promise.all([
     read('isTestnetStandIn'),
     read('getLastUpdateBlockTimestamp'),
     client.getBlock().then((b) => b, () => null),
     read('owner'),
     read('pendingOwner'),
+    read('refresher'),
   ]);
   const ts = freshness.error || freshness.value === undefined || freshness.value === null ? 0n : BigInt(freshness.value);
   const updatedAt = ts === 0n || !block || ts > BigInt(block.timestamp) ? null : ts;
@@ -1305,8 +1349,24 @@ export async function identifyOracle(client, address, abi) {
       return null;
     }
   };
+  // #3113: a stand-in built before the refresher role REVERTS `refresher()`
+  // (it has no such function): it has no refresher, which is the zero address.
+  // A call that got no answer (an RPC failure) is still unknown.
+  const reverted = (error) => {
+    for (let e = error; e; e = e.cause) if (e.name === 'ContractFunctionRevertedError') return true;
+    return false;
+  };
+  const refresherOf = (r) => ('error' in r && reverted(r.error) ? zeroAddress : addressOrNull(r));
   if (marker.value === true) {
-    return { address: at, identity: ORACLE_IDENTITY.STAND_IN, updatedAt, owner: addressOrNull(owner), pendingOwner: addressOrNull(pendingOwner) };
+    return {
+      address: at,
+      identity: ORACLE_IDENTITY.STAND_IN,
+      updatedAt,
+      owner: addressOrNull(owner),
+      pendingOwner: addressOrNull(pendingOwner),
+      // #3113: zero when it has none (or predates the role), null when unread.
+      refresher: refresherOf(refresher),
+    };
   }
   const detail =
     'error' in marker
