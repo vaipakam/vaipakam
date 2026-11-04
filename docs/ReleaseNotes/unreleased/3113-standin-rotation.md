@@ -1,4 +1,4 @@
-## Sanctions — replacing the testnet stand-in carries its flags over (PR #<n>)
+## Sanctions — replacing the testnet stand-in carries its flags over (PR #3125)
 
 The keeper can refresh only a stand-in that names it as refresher, and the one on BNB testnet was built before that role existed. An attestor reads one oracle for good, so replacing the stand-in also means a new attestor, and the clearance route on BNB, Base Sepolia and Arbitrum Sepolia has to move to it.
 
