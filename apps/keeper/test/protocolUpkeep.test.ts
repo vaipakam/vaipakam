@@ -21,6 +21,7 @@ import {
   BUYBACK_FLOOR_ITEM,
   DEFAULT_REFRESH_AFTER_SEC,
   describeReport,
+  STEP_SENDS,
   readRefreshLogs,
   upkeepOnce,
 } from '../src/protocolUpkeep';
@@ -382,6 +383,26 @@ describe('a run', () => {
     expect(Date.now() - t0).toBeLessThan(1_500);
     expect(r.unread.get('run')).toMatch(/deadline/);
     expect(fns()).toEqual([]);
+  });
+
+  it('gives each step its own share, so a long expiry backlog leaves the refreshes their sends (#3093)', async () => {
+    for (let i = 1; i <= 12; i++) {
+      ledger.add(hash(i));
+      d.orders.set(hash(i), { expiresAt: NOW - 1n, status: 1 });
+    }
+    d.tiers.get(2)!.candidate = 6200;
+    for (let id = 1n; id <= 3n; id++) d.loans.set(id, { stale: id === 2n });
+    const r = await run({ tierExclusion: true });
+    expect(fns()).toEqual([
+      ...Array(STEP_SENDS.expire).fill('expireBuybackIntent'),
+      'refreshTierLtvCache',
+      'refreshTierExclusion',
+    ]);
+    expect(r.expired).toHaveLength(STEP_SENDS.expire);
+    expect(describeReport(r)).toContain('step-budget-reached=expire (the rest waits for the next run)');
+    // The rest of the backlog goes on later runs, a share at a time.
+    d.sent = [];
+    expect((await run()).expired).toHaveLength(STEP_SENDS.expire);
   });
 
   describe('buyback expiry', () => {

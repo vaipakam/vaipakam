@@ -50,6 +50,7 @@ import { decodeEventLog, type Abi, type Address, type Hex, type PublicClient } f
 import { InteractionRewardsFacetABI, InteractionRewardsLensFacetABI } from '@vaipakam/contracts/abis';
 import { settledChunkedRead } from './batchRead';
 import { boundedCall } from './passReader';
+import { attemptOrder } from './ledgerRotation';
 import { shortErr } from './callErrors';
 import { priorStageCutoffMs, readCutoffMs } from './runWindow';
 import { nextScreenCursor } from './rewardSanctionsHold';
@@ -240,10 +241,15 @@ export async function compactRewardIndexes(diamond: Address, sender: StepSender,
   if (out.unread > 0) sender.noteUnread('reward-index', `the index length or compaction preview of ${out.unread} loan part${out.unread === 1 ? 'y' : 'ies'}`);
 
   // 4. Compact each due party, while its simulation still retires something.
+  // Each run starts elsewhere in the slice (`attemptOrder`), so a party
+  // refused at the top cannot starve the ones after it; the step stops at its
+  // share of sends (#3093). The stored address below is still worked out in
+  // slice order.
   const landed = new Set<string>();
-  for (const u of users) {
+  for (const i of attemptOrder(users.length, deps.visit)) {
+    const u = users[i]!;
     if (!due.has(u)) continue;
-    if (sender.stopped) break;
+    if (sender.stopped || sender.budgetReached.has('reward-index')) break;
     // eslint-disable-next-line no-await-in-loop
     const res = await sender.call('reward-index', u, 'compactRewardEntryIndex', [u, steps(u)], 0n, (sim) => (retiredOf(sim) ?? 0n) > 0n);
     if (res === 'idle') {

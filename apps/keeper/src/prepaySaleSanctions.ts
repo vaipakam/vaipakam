@@ -54,7 +54,7 @@ import { boundedCall, finalizedBy } from './passReader';
 import { shortErr } from './callErrors';
 import { readActiveWindow, type ScanWindow } from './activeLoanWindow';
 import type { EventLedger } from './eventLedger';
-import { readLedgerRotation } from './ledgerRotation';
+import { attemptOrder, readLedgerRotation } from './ledgerRotation';
 import { priorStageCutoffMs, readCutoffMs } from './runWindow';
 import type { FinalBlock, ScanCursors } from './scanCursors';
 import type { StepSender } from './stepSender';
@@ -256,9 +256,12 @@ export async function syncSaleListings(chainId: number, diamond: Address, sender
   }
   out.flagged = due.map(label);
 
-  // 4. The contract decides.
-  for (const l of due) {
-    if (sender.stopped) break;
+  // 4. The contract decides. Each run starts elsewhere among the flagged
+  // listings (`attemptOrder`), so a listing refused at the top cannot starve
+  // the ones after it; the step stops at its share of sends (#3093).
+  for (const i of attemptOrder(due.length, deps.visit)) {
+    if (sender.stopped || sender.budgetReached.has('sanctions-sync')) break;
+    const l = due[i]!;
     const fn = l.kind === 'loan' ? 'syncPrepaySaleListing' : 'syncPrepaySaleOffer';
     // eslint-disable-next-line no-await-in-loop
     const res = await sender.call('sanctions-sync', label(l), fn, [l.id]);

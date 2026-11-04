@@ -265,7 +265,7 @@ export async function refreshSanctionsFlags(chainId: number, diamond: Address, s
 
   // 3. Refresh each, from a point that moves each run.
   for (const i of attemptOrder(due.length, deps.visit)) {
-    if (sender.stopped) break;
+    if (sender.stopped || sender.budgetReached.has('sanctions-flag')) break;
     const w = due[i]!;
     // eslint-disable-next-line no-await-in-loop
     const res = await sender.call('sanctions-flag', w, 'refreshSanctionsFlag', [w]);
