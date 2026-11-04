@@ -580,53 +580,62 @@
       "evidence": "apps/keeper/src/rewardDayClose/close.ts"
     },
     "RewardStagingDomainFacet.reserveDomainPage(bytes32)": {
-      "class": "gap",
-      "issue": "#3097",
-      "why": "continues a staged domain page; nothing drives it"
+      "class": "keeper",
+      "pass": "rewardStagingUpkeep",
+      "flag": "REWARD_STAGING_UPKEEP_ENABLED",
+      "evidence": "apps/keeper/src/rewardStagingUpkeep.ts"
     },
     "RewardStagingDomainFacet.resolveDomainPage(bytes32)": {
       "class": "keeper",
-      "pass": "rewardSanctionsHold",
-      "flag": "REWARD_SANCTIONS_KEEPER_ENABLED",
-      "evidence": "apps/keeper/src/rewardSanctionsHold.ts",
-      "note": "covers only the sanctions-held case; the general case is part of #3097"
+      "pass": "rewardStagingUpkeep",
+      "flag": "REWARD_STAGING_UPKEEP_ENABLED",
+      "evidence": "apps/keeper/src/rewardStagingUpkeep.ts",
+      "note": "a claim payout the sanctions screen would hold is left to rewardSanctionsHold, which observes the screen on that page"
     },
     "RewardStagingDomainFacet.stepLegacySlice(uint256)": {
-      "class": "gap",
-      "issue": "#3097",
-      "why": "steps a legacy staging slice; nothing drives it"
+      "class": "keeper",
+      "pass": "rewardStagingUpkeep",
+      "flag": "REWARD_STAGING_UPKEEP_ENABLED",
+      "evidence": "apps/keeper/src/rewardStagingUpkeep.ts"
     },
     "RewardStagingDomainFacet.unwindDomainPage(bytes32)": {
-      "class": "gap",
-      "issue": "#3097",
-      "why": "unwinds a domain page after its deadline; nothing drives it"
+      "class": "keeper",
+      "pass": "rewardStagingUpkeep",
+      "flag": "REWARD_STAGING_UNWIND_ENABLED",
+      "evidence": "apps/keeper/src/rewardStagingUpkeep.ts",
+      "note": "a step of its own in the pass, under its own flag: past the deadline when the day cannot be covered, a stale record, or an unwind under way"
     },
     "RewardStagingFacet.prepareStagedDay(bytes32)": {
-      "class": "gap",
-      "issue": "#3097",
-      "why": "continues a staged reward day; nothing drives it"
+      "class": "keeper",
+      "pass": "rewardStagingUpkeep",
+      "flag": "REWARD_STAGING_UPKEEP_ENABLED",
+      "evidence": "apps/keeper/src/rewardStagingUpkeep.ts"
     },
     "RewardStagingFacet.reserveStagedDay(bytes32)": {
-      "class": "gap",
-      "issue": "#3097",
-      "why": "continues a staged reward day; nothing drives it"
+      "class": "keeper",
+      "pass": "rewardStagingUpkeep",
+      "flag": "REWARD_STAGING_UPKEEP_ENABLED",
+      "evidence": "apps/keeper/src/rewardStagingUpkeep.ts"
     },
     "RewardStagingSettleFacet.registerForBatchWindow(bytes32,bytes32)": {
-      "class": "gap",
-      "issue": "#3097",
-      "why": "continues a staged reward day; nothing drives it"
+      "class": "keeper",
+      "pass": "rewardStagingUpkeep",
+      "flag": "REWARD_STAGING_UPKEEP_ENABLED",
+      "evidence": "apps/keeper/src/rewardStagingUpkeep.ts"
     },
     "RewardStagingSettleFacet.resolveStagedDayPage(bytes32)": {
       "class": "keeper",
-      "pass": "rewardSanctionsHold",
-      "flag": "REWARD_SANCTIONS_KEEPER_ENABLED",
-      "evidence": "apps/keeper/src/rewardSanctionsHold.ts",
-      "note": "covers only the sanctions-held case; the general case is part of #3097"
+      "pass": "rewardStagingUpkeep",
+      "flag": "REWARD_STAGING_UPKEEP_ENABLED",
+      "evidence": "apps/keeper/src/rewardStagingUpkeep.ts",
+      "note": "a claim payout the sanctions screen would hold is left to rewardSanctionsHold, which observes the screen on that page"
     },
     "RewardStagingSettleFacet.unwindStagedDayPage(bytes32)": {
-      "class": "gap",
-      "issue": "#3097",
-      "why": "unwinds a staged page after its deadline; nothing drives it"
+      "class": "keeper",
+      "pass": "rewardStagingUpkeep",
+      "flag": "REWARD_STAGING_UNWIND_ENABLED",
+      "evidence": "apps/keeper/src/rewardStagingUpkeep.ts",
+      "note": "a step of its own in the pass, under its own flag: past the deadline when the day cannot be covered, a stale record, or an unwind under way"
     },
     "RiskAccessFacet.setIlliquidPairConsent(struct:LibRiskAccess.PairId,bool)": {
       "class": "user",

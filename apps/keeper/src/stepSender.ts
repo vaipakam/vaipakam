@@ -13,7 +13,8 @@
 // Shared by the passes that work this way: the reward day-close pass
 // (`rewardDayClose/sender.ts` configures it), the reward close-out pass
 // (`rewardCloseOut`), the #2984 passes (`protocolUpkeep`,
-// `prepayAutoList`, `protectedAccount`) and the #3097 `positionUpkeep`. A pass whose steps are independent
+// `prepayAutoList`, `protectedAccount`) and the #3097 `positionUpkeep` and
+// `rewardStagingUpkeep`. A pass whose steps are independent
 // gives each its own share (`stepBudgets`) so none can starve another. Each pass names its own ABI, the refusals that are
 // races rather than faults, and the refusal a paused protocol gives.
 

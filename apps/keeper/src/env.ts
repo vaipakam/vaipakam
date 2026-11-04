@@ -241,6 +241,22 @@ interface BaseEnv {
    *  own free-tier service capacity. Read only while POSITION_UPKEEP_ENABLED
    *  arms the pass. */
   BACKSTOP_FILL_ENABLED?: string;
+  // Reward staging upkeep pass (#3097). `secret_text` like the flags above.
+  /** 'true' arms the reward staging upkeep pass (in addition to
+   *  KEEPER_ENABLED): the permissionless staging steps that move a reward
+   *  staging record, claim domain or legacy slice on (prepare, reserve,
+   *  resolve, the legacy step) and the priority-window registration. Every
+   *  value movement is the record's own; the keeper pays only gas and
+   *  receives nothing. A claim payout the sanctions screen would hold is
+   *  left to the sanctions-hold pass. */
+  REWARD_STAGING_UPKEEP_ENABLED?: string;
+  /** 'true' adds the unwinds to the armed reward staging upkeep pass: a
+   *  record or claim domain past its deadline that cannot be covered, a
+   *  record the contract finds stale, and an unwind already under way. An
+   *  unwind returns exactly what the record held, so the claimant's day is
+   *  released rather than paid. Read only while REWARD_STAGING_UPKEEP_ENABLED
+   *  arms the pass. */
+  REWARD_STAGING_UNWIND_ENABLED?: string;
   // Expired-teardown pass (#3097). `secret_text` like the flags above.
   /** 'true' arms the expired-teardown pass (in addition to KEEPER_ENABLED):
    *  the permissionless teardowns of a swap-to-repay intent past its cancel
@@ -498,6 +514,8 @@ export const PLAIN_VAR_KEYS = [
   'STANDIN_REFRESH_ENABLED',
   'POSITION_UPKEEP_ENABLED',
   'BACKSTOP_FILL_ENABLED',
+  'REWARD_STAGING_UPKEEP_ENABLED',
+  'REWARD_STAGING_UNWIND_ENABLED',
   'EXPIRED_TEARDOWN_ENABLED',
   'TIER_LTV_REFRESH_AFTER_SEC',
   'REWARD_ZEROED_DAY_ENABLED',
@@ -693,6 +711,8 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     STANDIN_REFRESH_ENABLED: raw.STANDIN_REFRESH_ENABLED,
     POSITION_UPKEEP_ENABLED: raw.POSITION_UPKEEP_ENABLED,
     BACKSTOP_FILL_ENABLED: raw.BACKSTOP_FILL_ENABLED,
+    REWARD_STAGING_UPKEEP_ENABLED: raw.REWARD_STAGING_UPKEEP_ENABLED,
+    REWARD_STAGING_UNWIND_ENABLED: raw.REWARD_STAGING_UNWIND_ENABLED,
     EXPIRED_TEARDOWN_ENABLED: raw.EXPIRED_TEARDOWN_ENABLED,
     TIER_LTV_REFRESH_AFTER_SEC: raw.TIER_LTV_REFRESH_AFTER_SEC,
     REWARD_ZEROED_DAY_ENABLED: raw.REWARD_ZEROED_DAY_ENABLED,
