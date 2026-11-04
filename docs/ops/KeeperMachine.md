@@ -309,7 +309,10 @@ a commit. The template documents each line. In short:
   here as one digest post per chain per run, however many wallets they name
   (#2565), plus one post per run of one-off notices when its settlement moves
   reward value or a lapsed held chain restarts (#2515); and the horizon heartbeat its revert,
-  overdue-entry and paused-clock alerts. With either value unset,
+  overdue-entry and paused-clock alerts. The machine itself posts one alert
+  while `KEEPER_ENABLED` is on and `KEEPER_PRIVATE_KEY` is unset or cannot
+  sign, every six hours until the key signs again, since every pass is
+  disarmed until then (#3119). With either value unset,
   every such alert goes only to the journal,
   as `ops alert NOT delivered`. So set both, and confirm that line is absent,
   before arming any pass that alerts here: `REWARD_SANCTIONS_KEEPER_ENABLED`,

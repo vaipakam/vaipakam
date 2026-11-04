@@ -45,6 +45,12 @@ evidence that the migration has completed.
 
 ## One runner and safe deployment adoption
 
+- When the keeper is switched on but its signing key is missing or cannot
+  sign, every keeper action is held, the observers included. Operators are
+  told so once for the whole machine, and again every six hours until the key
+  works, rather than finding out from each action's log line. The alert names
+  only the kind of problem, never the key. Nothing is said while the keeper is
+  switched off.
 - Only one keeper runs for a signing key. A shared lease prevents another
   instance from starting ticks while the first owns the lease. A missing
   identity or unreadable lease holds the tick.
