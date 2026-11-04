@@ -411,6 +411,15 @@
   //     attestor reads, a day before the delisting timelocks' age limit,
   //     hourly. Needs the keeper named as the stand-in's refresher; it can
   //     flag nothing. Testnets only; pays only gas. Ships unset.
+  //   - POSITION_UPKEEP_ENABLED — 'true' arms the #3097 position upkeep pass,
+  //     hourly: autoDeductDaily for each NFT rental with an agreed day due,
+  //     paid from the renter's own prepayment to the lender and treasury.
+  //     Never past the agreed term. Pays only gas. Ships unset.
+  //   - BACKSTOP_FILL_ENABLED — 'true' adds the #3097 backstop fill to the
+  //     armed position upkeep pass: backstopFill for a borrower offer that
+  //     opted into the backstop and is past its eligibility time. Lends
+  //     treasury capital from the backstop vault, so its arming is an owner
+  //     decision of its own. Pays only gas. Ships unset.
   //
   // (b) GENUINE PLAIN VARS. `keep_vars: true` preserves the ones this config
   //     does NOT declare — it suppresses the delete of bindings absent from

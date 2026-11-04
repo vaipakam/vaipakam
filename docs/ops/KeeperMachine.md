@@ -412,7 +412,11 @@ journalctl -u vaipakam-keeper -f
    Telegram LOCK step also needs `PROTECTED_LOCK_ENABLED`, and its owner
    alerts `PROTECTED_ALERTS_ENABLED`),
    `STANDIN_REFRESH_ENABLED` (`sanctionsStandInRefresh`, hourly at :21; the
-   keeper must also be named the stand-in's refresher), and
+   keeper must also be named the stand-in's refresher),
+   `POSITION_UPKEEP_ENABLED` (`positionUpkeep`, hourly at :36: the daily
+   NFT-rental deduction; its backstop fill step also needs
+   `BACKSTOP_FILL_ENABLED`, which lends treasury capital from the backstop
+   vault and is an owner decision of its own), and
    `DISCOUNT_PATH_CHAIN_IDS` (a list of chain ids, not `true`: the flash-loan
    branch of the liquidator, armed per chain by
    [`FlashLoanLiquidatorRollout.md`](FlashLoanLiquidatorRollout.md) only; the

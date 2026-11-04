@@ -768,6 +768,64 @@ evidence that the migration has completed.
   rotate, so a busy chain can take several runs to reach a loan; a minute's
   schedule is not a promise that every eligible NFT is listed that minute.
 
+## Position upkeep: daily rental deductions and backstop fills
+
+Two permissionless steps on a single position have a keeper backstop (owner
+decision on #3097, November 4), checked every hour on every chain the keeper
+serves. Each ships switched off behind its own flag.
+
+- **Daily rental deduction.** An NFT rental is prepaid: the renter's vault
+  holds the whole rental plus a buffer from acceptance. Each elapsed rental
+  day is meant to move one day's fee out of that prepayment to the current
+  lender-position holder, less the treasury's share at the loan's own
+  snapshotted rate. The deduction that uses the last agreed day closes the
+  rental as repaid and leaves the buffer to the renter. Without a keeper the
+  lender is paid only when the renter repays, and a rental whose days are all
+  used is never closed. The keeper makes the call.
+- The keeper deducts a day only when the loan's own record shows one is due:
+  an active NFT rental, a whole day since its last deduction, an agreed day
+  still unused, and a prepayment that covers the day. It never charges a day
+  past the agreed term: rent past maturity is the late fee's concern, never an
+  extra rent day. It never touches a loan whose deduction clock is behind its
+  start, because there each deduction would charge a day without counting it.
+  It deducts at most one day per loan per run, so a rental several days behind
+  catches up a day an hour.
+- Each deduction is reported with the fee the chain recorded for it. When it
+  was the last agreed day, the report says from the loan's status afterwards
+  whether the rental closed. A rental held back on its own record is reported
+  with why. The renter, the lender and the treasury are the only parties
+  whose balances move; the keeper pays only gas and receives nothing.
+- **Backstop fill.** A borrower may opt an offer into the backstop with an
+  eligibility time. Once that time passes and the offer is still open and
+  unfilled, the protocol's backstop vault is meant to fill it from capital
+  the treasury staged under governance caps. Without a keeper nobody makes
+  the call, and the offer can expire unfilled. The keeper makes it.
+- The keeper finds opted-in offers from the indexer's record of opt-ins, but
+  decides each one from the offer's own on-chain record and the chain's own
+  clock: a borrower offer past its eligibility time, not accepted, not
+  expired, with principal left to fill. The protocol decides the rest: that
+  the backstop and its fill role are switched on, that the collateral is
+  liquid with the oracle coverage governance requires, that the borrower is
+  not sanctioned, and that the backstop's terms and caps admit the fill. An
+  offer filled, cancelled, expired or with its opt-in cleared is finished;
+  only what the chain's finalized state shows moves the record past it.
+- A fill lends treasury capital, so its switch is a separate owner decision
+  from the rental deduction's. The keeper attaches no value and receives
+  nothing: the matcher's share of the loan initiation fee goes to the
+  backstop vault, which is protocol custody. Each fill counts against the
+  keeper's own free-tier service capacity. Each fill is reported with the
+  loan it opened and the principal lent; when the backstop is switched off on
+  a chain, the report says so and the keeper tries no further fill there that
+  run.
+- Every call is simulated on the current state first and sent only when the
+  simulation succeeds; a refusal is reported with the protocol's reason. The
+  two steps have separate shares of each run's sends, so neither can starve
+  the other, and the rental step's reads leave the fill step time for its
+  own. A paused protocol stops the run.
+- The two holder consolidations are not keeper duties. The protocol accepts
+  them only from the current position holder, so a keeper call would always
+  be refused. Whether that should change is an open question on #3097.
+
 ## Recording what backs each permissionless step
 
 Every permissionless step that keeps the protocol moving has the keeper as
@@ -992,9 +1050,9 @@ The master keeper switch and each duty's own arming choice are separate.
 The periodic-interest settler and grace auto-list each have their own
 disabled-by-default activation.
 Late acknowledgements, sanctions observation, reward-day
-automation, reward-day close-out, zeroed-day recovery, the return transport, the reward heartbeat and its entry close-out, protocol upkeep, its prepay-sale sanctions sync and its tier-push retry must each
+automation, reward-day close-out, zeroed-day recovery, the return transport, the reward heartbeat and its entry close-out, protocol upkeep, its prepay-sale sanctions sync and its tier-push retry, and position upkeep and its backstop fill must each
 disclose whether they are armed on the selected deployment. Reward-day
-automation, close-out, zeroed-day recovery, the return transport, the heartbeat and its entry close-out, protocol upkeep, its sanctions sync and its tier-push retry ship disabled and require
+automation, close-out, zeroed-day recovery, the return transport, the heartbeat and its entry close-out, protocol upkeep, its sanctions sync and its tier-push retry, and position upkeep and its backstop fill ship disabled and require
 deliberate activation. Deploying their software does not prove they run, that rewards have launched, or that custody or the
 expiry horizon has been activated. The mirror's day-delivery protection is
 required by its reward role, as stated in the current tokenomics spec; it is

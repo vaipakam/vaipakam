@@ -42,9 +42,10 @@
       "why": "the user's own setting"
     },
     "BackstopFacet.backstopFill(uint256)": {
-      "class": "gap",
-      "issue": "#3097",
-      "why": "fills from the backstop vault; nothing drives it"
+      "class": "keeper",
+      "pass": "positionUpkeep",
+      "flag": "BACKSTOP_FILL_ENABLED",
+      "evidence": "apps/keeper/src/positionUpkeep.ts"
     },
     "BackstopVaultImplementation.initialize(address)": {
       "class": "init",
@@ -397,9 +398,10 @@
       "why": "the borrower (or anyone paying for it) repays; the borrower is the party it serves"
     },
     "RepayPeriodicFacet.autoDeductDaily(uint256)": {
-      "class": "gap",
-      "issue": "#3097",
-      "why": "the daily NFT-rental deduction; no keeper or app caller"
+      "class": "keeper",
+      "pass": "positionUpkeep",
+      "flag": "POSITION_UPKEEP_ENABLED",
+      "evidence": "apps/keeper/src/positionUpkeep.ts"
     },
     "RepayPeriodicFacet.settlePeriodicInterest(uint256,uint256,struct:LibSwap.AdapterCall[])": {
       "class": "keeper",
