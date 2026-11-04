@@ -375,7 +375,7 @@ contract RepatriationAccountingTest is SetupTest {
         vm.expectRevert(
             RepatriationFacet.RepatriationWrongChainRole.selector
         );
-        _repat().onRepatriationInstructionReceived(address(0xBA5E), 1, 5 ether);
+        _repat().onRepatriationInstructionReceived(CHAIN_BASE, address(0xBA5E), 1, 5 ether);
     }
 
     function test_Instruction_DarkWithoutSenderConfigured() public {
@@ -385,7 +385,7 @@ contract RepatriationAccountingTest is SetupTest {
         // recorded while the deployment was supposed to be dark.
         vm.prank(address(messenger));
         vm.expectRevert(RepatriationFacet.RepatriationNotConfigured.selector);
-        _repat().onRepatriationInstructionReceived(address(0xBA5E), 1, 5 ether);
+        _repat().onRepatriationInstructionReceived(CHAIN_BASE, address(0xBA5E), 1, 5 ether);
     }
 
     function test_Instruction_MessengerGatedAndIdempotent() public {
@@ -401,15 +401,15 @@ contract RepatriationAccountingTest is SetupTest {
                 address(this)
             )
         );
-        _repat().onRepatriationInstructionReceived(address(0xBA5E), 1, 5 ether);
+        _repat().onRepatriationInstructionReceived(CHAIN_BASE, address(0xBA5E), 1, 5 ether);
         // Messenger delivery records the pending instruction.
         vm.prank(address(messenger));
-        _repat().onRepatriationInstructionReceived(address(0xBA5E), 1, 5 ether);
+        _repat().onRepatriationInstructionReceived(CHAIN_BASE, address(0xBA5E), 1, 5 ether);
         // Re-delivery (CCIP re-execution) is a silent no-op — never a revert
         // (a revert would be re-executable into the same revert forever) and
         // never a state resurrection.
         vm.prank(address(messenger));
-        _repat().onRepatriationInstructionReceived(address(0xBA5E), 1, 7 ether);
+        _repat().onRepatriationInstructionReceived(CHAIN_BASE, address(0xBA5E), 1, 7 ether);
     }
 
     // ── The surplus-debit primitive (via the test-only Diamond wrapper) ─────

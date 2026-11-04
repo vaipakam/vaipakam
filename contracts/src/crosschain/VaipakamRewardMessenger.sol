@@ -46,19 +46,24 @@ interface IMirrorTierIngress {
 
 /// @dev #1568 C2 — mirror-side Diamond ingresses for the Base→mirror Mode-A
 ///      repatriation instruction kinds. The Diamond implementation lives in
-///      `RepatriationFacet`, which keys every record by
-///      `keccak256(issuingBase, authId)` — the era binding rides in the
+///      `RepatriationFacet`, which keys every record by its issuer,
+///      `(issuerChainId, issuingBase, authId)`. The era binding rides in the
 ///      payload as immutable message data (the same #1426 r4 rationale the
 ///      remit `remitter` field carries), so this messenger embeds the
-///      sending Diamond at dispatch and forwards it verbatim on delivery.
+///      sending Diamond at dispatch and forwards it verbatim on delivery;
+///      the issuer CHAIN is the CCIP-authenticated source chain, which this
+///      messenger forwards too (#3015), so the mirror pays out and
+///      acknowledges only toward the chain that issued the instruction.
 interface IRepatriationInstructionIngress {
     function onRepatriationInstructionReceived(
+        uint32 issuerChainId,
         address issuingBase,
         uint256 authId,
         uint256 amount
     ) external;
 
     function onRepatriationCancelInstructionReceived(
+        uint32 issuerChainId,
         address issuingBase,
         uint256 authId
     ) external;
@@ -1473,11 +1478,19 @@ contract VaipakamRewardMessenger is
                 revert PayloadSizeMismatch(len, REPAT_INSTRUCTION_PAYLOAD_SIZE);
             }
             if (isCanonical) revert RepatriationOnCanonical();
+            // #3015 — the authenticated source chain IS the issuer the
+            // mirror binds the record to; a wider id would truncate into
+            // another chain's identity, so it is refused, never narrowed.
+            if (sourceChainId > type(uint32).max) {
+                revert ChainIdTooLarge(sourceChainId);
+            }
             (, address issuingBase, uint256 authId, uint256 amount) =
                 abi.decode(payload, (uint8, address, uint256, uint256));
             emit RepatriationInstructionReceived(sourceChainId, authId, amount);
             IRepatriationInstructionIngress(diamond)
-                .onRepatriationInstructionReceived(issuingBase, authId, amount);
+                .onRepatriationInstructionReceived(
+                    SafeCast.toUint32(sourceChainId), issuingBase, authId, amount
+                );
         } else if (msgType == MSG_TYPE_REPAT_CANCEL) {
             // #1568 C2 — Base → mirror repatriation CANCEL. Mirror-only; the
             // same fail-closed posture as kind-8.
@@ -1485,11 +1498,16 @@ contract VaipakamRewardMessenger is
                 revert PayloadSizeMismatch(len, REPAT_CANCEL_PAYLOAD_SIZE);
             }
             if (isCanonical) revert RepatriationOnCanonical();
+            if (sourceChainId > type(uint32).max) {
+                revert ChainIdTooLarge(sourceChainId);
+            }
             (, address issuingBase, uint256 authId) =
                 abi.decode(payload, (uint8, address, uint256));
             emit RepatriationCancelReceived(sourceChainId, authId);
             IRepatriationInstructionIngress(diamond)
-                .onRepatriationCancelInstructionReceived(issuingBase, authId);
+                .onRepatriationCancelInstructionReceived(
+                    SafeCast.toUint32(sourceChainId), issuingBase, authId
+                );
         } else {
             revert UnknownMessageType(msgType);
         }

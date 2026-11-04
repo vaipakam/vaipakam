@@ -876,6 +876,51 @@ contract VaipakamRewardFlowTest is Test {
         , bytes32(0));
     }
 
+    // ─── Repatriation instructions carry their issuer chain (#3015) ─────────
+
+    /// The authenticated source chain reaches the mirror ingress as the
+    /// instruction's issuer, so the mirror can pay out only toward it.
+    function test_Receive_RepatInstruction_ForwardsTheIssuerChain() public {
+        address issuingBase = address(0xBA5E);
+        vm.mockCall(address(diamondMirror), abi.encodeWithSignature(
+            "onRepatriationInstructionReceived(uint32,address,uint256,uint256)"), "");
+        vm.expectCall(address(diamondMirror), abi.encodeWithSignature(
+            "onRepatriationInstructionReceived(uint32,address,uint256,uint256)",
+            uint32(BASE), issuingBase, uint256(7), uint256(5 ether)));
+        vm.prank(address(messengerMirror));
+        rewardMirror.onCrossChainMessage(
+            BASE, address(rewardBase),
+            abi.encode(uint8(8), issuingBase, uint256(7), uint256(5 ether)),
+            _empty(), bytes32(0));
+    }
+
+    function test_Receive_RepatCancel_ForwardsTheIssuerChain() public {
+        address issuingBase = address(0xBA5E);
+        vm.mockCall(address(diamondMirror), abi.encodeWithSignature(
+            "onRepatriationCancelInstructionReceived(uint32,address,uint256)"), "");
+        vm.expectCall(address(diamondMirror), abi.encodeWithSignature(
+            "onRepatriationCancelInstructionReceived(uint32,address,uint256)",
+            uint32(BASE), issuingBase, uint256(7)));
+        vm.prank(address(messengerMirror));
+        rewardMirror.onCrossChainMessage(
+            BASE, address(rewardBase),
+            abi.encode(uint8(9), issuingBase, uint256(7)),
+            _empty(), bytes32(0));
+    }
+
+    /// A source id wider than uint32 would truncate into another chain's
+    /// issuer identity, so it is refused before the ingress.
+    function test_Receive_RepatInstruction_RevertWhen_ChainIdTooLarge() public {
+        uint256 bigChain = uint256(type(uint32).max) + 1;
+        vm.prank(address(messengerMirror));
+        vm.expectRevert(abi.encodeWithSelector(
+            VaipakamRewardMessenger.ChainIdTooLarge.selector, bigChain));
+        rewardMirror.onCrossChainMessage(
+            bigChain, address(rewardBase),
+            abi.encode(uint8(8), address(0xBA5E), uint256(7), uint256(5 ether)),
+            _empty(), bytes32(0));
+    }
+
     // ─── Token-bearing message rejected (Codex review) ──────────────────────
 
     function test_Receive_RevertWhen_TokensAttached() public {

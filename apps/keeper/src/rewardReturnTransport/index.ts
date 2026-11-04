@@ -655,16 +655,16 @@ async function oneAuthorization(
     base.sender.noteUnread(`auth:${authId}`, `chain ${dst}, which this keeper has no RPC or Diamond for (or whose gate refused it)`);
     return;
   }
-  // The mirror executes and acknowledges toward its CURRENT Base: a mirror
-  // detached and reattached elsewhere would send this authorization's return
-  // or ACK to that other chain, leaving the issuing Base's authorization
-  // unsettled (Codex #3002). Nothing is sent for it; an operator decides.
+  // A mirror detached and reattached elsewhere is not driven for this
+  // authorization (Codex #3002); an operator decides. Since #3015 the mirror
+  // itself pays out and acknowledges only toward the issuing chain, so this
+  // stall is the keeper's own caution, not the only guard.
   if (mirror.role !== ROLE_MIRROR || mirror.baseChainId !== base.deps.chainId) {
     const now = mirror.role === ROLE_MIRROR ? `returns to chain ${mirror.baseChainId}` : `has reward role ${mirror.role}, not Mirror`;
     await stall(base, `auth:${authId}`, `${label}: chain ${dst} now ${now}, not to the issuing Base on chain ${base.deps.chainId}, so the keeper sends no instruction, return or ACK for it; cancelling the authorization is an operator decision`);
     return;
   }
-  const instr = await mirror.r.tryOne<readonly [number, bigint]>(mirror.sender, `auth:${authId}`, `its instruction record on chain ${dst}`, 'getRepatriationInstruction', [base.deps.diamond, authId]);
+  const instr = await mirror.r.tryOne<readonly [number, bigint]>(mirror.sender, `auth:${authId}`, `its instruction record on chain ${dst}`, 'getRepatriationInstruction', [base.deps.chainId, base.deps.diamond, authId]);
   if (instr === undefined) return;
   // The mirror's own record of this id's execution and ACK, asked for by id.
   const ml = await deps.ledger.matching(mirror.deps.chainId, ['RepatriationExecuted', 'RepatriationCancelAckDispatched'], 'authId', [String(authId)]);
@@ -676,6 +676,8 @@ async function oneAuthorization(
   let executedAt = 0;
   let ackAt = 0;
   for (const row of ml) {
+    // The mirror keys every record by its issuer, chain and Diamond (#3015).
+    if (String(row.args.issuerChainId) !== String(base.deps.chainId)) continue;
     if (asAddr(row.args.issuingBase) !== base.deps.diamond.toLowerCase()) continue;
     if (row.kind === 'RepatriationExecuted') executedAt = Math.max(executedAt, row.blockAt);
     else ackAt = Math.max(ackAt, row.blockAt);
@@ -718,15 +720,16 @@ async function oneAuthorization(
         return;
       }
       if (!(await returnMayGo(mirror, base, base.deps.chainId, base.deps.diamond, `auth:${key}`, label))) return;
-      const blocked = executeBlocked(amount, await mirror.r.bucket('getRemitLaneBucket', mirror.baseChainId));
+      // The return goes to the issuing chain (#3015), so that lane bounds it.
+      const blocked = executeBlocked(amount, await mirror.r.bucket('getRemitLaneBucket', base.deps.chainId));
       if (blocked !== null) {
         if (blocked.stalled) await stall(mirror, `auth:${key}`, `${label}: ${blocked.why}`);
         else mirror.report.waiting.push(`${label}: ${blocked.why}`);
         return;
       }
-      const fee = await mirror.r.tryOne<bigint>(mirror.sender, `auth:${authId}`, 'the return sender\'s fee', 'quoteRepatriationReturn', [BigInt(mirror.baseChainId), base.deps.diamond, authId, amount], mirror.returnSender, RETURN_SENDER_ABI);
+      const fee = await mirror.r.tryOne<bigint>(mirror.sender, `auth:${authId}`, 'the return sender\'s fee', 'quoteRepatriationReturn', [BigInt(base.deps.chainId), base.deps.diamond, authId, amount], mirror.returnSender, RETURN_SENDER_ABI);
       if (fee === undefined) return;
-      const res = await mirror.sender.call('execute', `authorization ${authId}`, 'executeRepatriation', [base.deps.diamond, authId, deps.keeper], fee);
+      const res = await mirror.sender.call('execute', `authorization ${authId}`, 'executeRepatriation', [base.deps.chainId, base.deps.diamond, authId, deps.keeper], fee);
       if (res === 'landed') {
         mirror.report.executed.push(String(authId));
       } else if (res.includes(FUNDABLE_WAIT)) {
@@ -740,10 +743,10 @@ async function oneAuthorization(
         return;
       }
       if (!(await returnMayGo(mirror, base, base.deps.chainId, base.deps.diamond, `auth:${key}`, label))) return;
-      const fee = await mirror.r.tryOne<bigint>(mirror.sender, `auth:${authId}`, 'the return sender\'s fee for the ACK', 'quoteRepatriationCancelAck', [BigInt(mirror.baseChainId), base.deps.diamond, authId], mirror.returnSender, RETURN_SENDER_ABI);
+      const fee = await mirror.r.tryOne<bigint>(mirror.sender, `auth:${authId}`, 'the return sender\'s fee for the ACK', 'quoteRepatriationCancelAck', [BigInt(base.deps.chainId), base.deps.diamond, authId], mirror.returnSender, RETURN_SENDER_ABI);
       if (fee === undefined) return;
       const res = await sendRecorded(mirror, deps, RECORD_ACK(base.deps.diamond, authId), () =>
-        mirror.sender.call('ack', `authorization ${authId}`, 'sendRepatriationCancelAck', [base.deps.diamond, authId, deps.keeper], fee),
+        mirror.sender.call('ack', `authorization ${authId}`, 'sendRepatriationCancelAck', [base.deps.chainId, base.deps.diamond, authId, deps.keeper], fee),
       );
       if (res === 'landed') mirror.report.acked.push(String(authId));
       return;

@@ -528,23 +528,25 @@ contract MockRewardMessenger is IRewardMessenger {
     /// @notice Simulate a Base repatriation instruction landing on the
     ///         mirror ingress (kind-8 CCIP delivery).
     function deliverRepatriationInstruction(
+        uint32 sourceChainId,
         address issuingBase,
         uint256 authId,
         uint256 amount
     ) external {
         RepatriationFacet(diamond).onRepatriationInstructionReceived(
-            issuingBase, authId, amount
+            sourceChainId, issuingBase, authId, amount
         );
     }
 
     /// @notice Simulate a Base repatriation CANCEL instruction landing on
     ///         the mirror ingress (kind-9 CCIP delivery).
     function deliverRepatriationCancel(
+        uint32 sourceChainId,
         address issuingBase,
         uint256 authId
     ) external {
         RepatriationFacet(diamond).onRepatriationCancelInstructionReceived(
-            issuingBase, authId
+            sourceChainId, issuingBase, authId
         );
     }
 

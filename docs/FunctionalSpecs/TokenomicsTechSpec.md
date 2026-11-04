@@ -1544,6 +1544,17 @@ of any implementation:
 - an authorization binds to the issuing deployment, its target chain and its
   exact amount: a return from any other chain, deployment era, or of any
   other declared amount is refused
+- on the mirror, an instruction binds to its **issuer** — the chain that
+  sent it, as the transport authenticated it, and the issuing deployment
+  there — and is paid out, or its cancellation confirmed, **only toward that
+  chain**, never toward whichever canonical chain the mirror follows when the
+  step runs (#3015). A mirror that detaches and binds to another canonical
+  chain therefore cannot redirect an instruction it accepted earlier. A new
+  instruction is taken only from the canonical chain the mirror is bound to
+  when it arrives; a cancellation is taken from any issuer, since it can only
+  stop a payment in that issuer's own records, which is how a canonical
+  chain the mirror has left still releases its authorization. Two issuing
+  deployments at one address on different chains are different issuers
 - a repatriation is tracked in its **own** ledger, never by the counters
   that track reward consumption or reward payout — repatriated value is
   neither a reward spent nor a reward paid
