@@ -1,4 +1,4 @@
-## Thread — www deploys prerender again on Workers Builds (PR #<n>)
+## Thread — www deploys prerender again on Workers Builds (PR #3130)
 
 The automatic marketing-site deploy was red. The earlier cause (the config
 gate could not read the live bundle) went away with the all-waves refresh,
