@@ -1,4 +1,4 @@
-## Keeper — each protocol upkeep step gets its own send share (PR #<n>)
+## Keeper — each protocol upkeep step gets its own send share (PR #3156)
 
 The keeper's protocol upkeep pass runs seven steps on every chain it serves
 (expiring buybacks, the loan-to-value tier refresh, the prepay-sale
