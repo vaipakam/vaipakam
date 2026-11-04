@@ -1,4 +1,4 @@
-## Keeper — repatriations already on a mirror go home after it moves (PR #<n>)
+## Keeper — repatriations already on a mirror go home after it moves (PR #3147)
 
 The return-transport pass used to stop driving an authorization as soon as
 its mirror was no longer bound to the Base that issued it. That stall was
