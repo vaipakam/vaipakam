@@ -164,5 +164,7 @@
     "oracle": "0x3Fc0BB1F030BA369Fd269d61BBf11c3057c343BD",
     "kind": "testnet-overlay"
   },
-  "serviceCapacityEscrow": "0xF7C098ddb2523A2c049692B3548eBd72DC421eAf"
+  "serviceCapacityEscrow": "0xF7C098ddb2523A2c049692B3548eBd72DC421eAf",
+  "sanctionsList": "0x0A6De512dEaa00d54677d513ea7AdbAf5Ec34DD3",
+  "sanctionsDelistingTimelock": "0xD8827C000cF49b0B40763ab9F2b2851B090aA394"
 }
