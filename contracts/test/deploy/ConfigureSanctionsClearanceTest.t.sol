@@ -2,6 +2,9 @@
 pragma solidity ^0.8.29;
 
 import {Test} from "forge-std/Test.sol";
+import {Vm} from "forge-std/Vm.sol";
+import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
+import {StandInFlagReplay} from "../../script/lib/StandInFlagReplay.sol";
 import {TestnetSanctionsOracleStandIn} from "../../src/compliance/TestnetSanctionsOracleStandIn.sol";
 import {SanctionsClearanceAttestor} from "../../src/compliance/SanctionsClearanceAttestor.sol";
 import {ICrossChainMessenger} from "../../src/crosschain/ICrossChainMessenger.sol";
@@ -19,6 +22,32 @@ contract ConfigureSanctionsClearanceHarness is ConfigureSanctionsClearance {
 
     function recordedAttestorToReuse(address standIn_, address messenger) external view returns (address) {
         return _recordedAttestorToReuse(standIn_, CcipMessenger(payable(messenger)));
+    }
+
+    function setReplace(address old, uint256 fromBlock) external {
+        replaceAttestor = old;
+        carryFromBlock = fromBlock;
+    }
+
+    function ensureHandler(address m, address handler) external {
+        _ensureHandler(CcipMessenger(payable(m)), handler);
+    }
+
+    function ensurePeer(address m, uint256 remote, address peer) external {
+        _ensurePeer(CcipMessenger(payable(m)), remote, peer);
+    }
+
+    function flagsToCarry(address m, address s, address a) external returns (address[] memory) {
+        return _flagsToCarry(
+            CcipMessenger(payable(m)), TestnetSanctionsOracleStandIn(s), SanctionsClearanceAttestor(payable(a))
+        );
+    }
+}
+
+/// @dev Exposes the flag replay.
+contract FlagReplayHarness {
+    function replay(Vm.EthGetLogs[] memory logs, address standIn) external pure returns (address[] memory) {
+        return StandInFlagReplay.flaggedNow(logs, standIn);
     }
 }
 
@@ -156,5 +185,136 @@ contract ConfigureSanctionsClearanceTest is Test {
             );
             script.runWith(admin, admin, 56, timelocks);
         }
+    }
+
+    // ── Rotation (#3113) ──────────────────────────────────────────────
+
+    bytes32 internal constant CH = keccak256("vaipakam.ccip.channel.sanctions-clearance");
+
+    /// @dev A messenger the harness owns, so its unbroadcast calls are the owner's.
+    function _messenger() internal returns (CcipMessenger) {
+        CcipMessenger impl = new CcipMessenger(address(0xC0FFEE));
+        return CcipMessenger(
+            payable(address(new ERC1967Proxy(address(impl), abi.encodeCall(CcipMessenger.initialize, (address(script))))))
+        );
+    }
+
+    function test_ReplacesOnlyTheNamedAttestorAsHandler() public {
+        CcipMessenger m = _messenger();
+        address oldA = makeAddr("oldAttestor");
+        address newA = makeAddr("newAttestor");
+        script.ensureHandler(address(m), oldA);
+        // Without the knob, an existing handler still stops the run.
+        vm.expectRevert(bytes("ConfigureSanctionsClearance: another contract handles the clearance channel here - rotating it needs a drain (CcipMessenger.registerChannel); clear it deliberately first"));
+        script.ensureHandler(address(m), newA);
+        // Naming some other attestor does not license it either.
+        script.setReplace(other, 0);
+        vm.expectRevert(bytes("ConfigureSanctionsClearance: another contract handles the clearance channel here - rotating it needs a drain (CcipMessenger.registerChannel); clear it deliberately first"));
+        script.ensureHandler(address(m), newA);
+        // Naming the current handler re-points it, and frees the old one.
+        script.setReplace(oldA, 0);
+        script.ensureHandler(address(m), newA);
+        assertEq(m.handlerOf(CH), newA);
+        assertEq(m.channelOf(oldA), bytes32(0));
+        assertEq(m.channelOf(newA), CH);
+    }
+
+    function test_ReplacesOnlyTheNamedAttestorAsPeer() public {
+        CcipMessenger m = _messenger();
+        address oldA = makeAddr("oldAttestor");
+        address newA = makeAddr("newAttestor");
+        script.ensurePeer(address(m), 97, oldA);
+        vm.expectRevert(bytes("ConfigureSanctionsClearance: the clearance channel already has another peer for that chain - rotating it needs a drain (CcipMessenger.setChannelPeer); clear it deliberately first"));
+        script.ensurePeer(address(m), 97, newA);
+        script.setReplace(oldA, 0);
+        script.ensurePeer(address(m), 97, newA);
+        assertEq(m.channelPeerOf(CH, 97), newA);
+    }
+
+    function test_CarriesNothingWithoutARotation() public {
+        CcipMessenger m = _messenger();
+        assertEq(script.flagsToCarry(address(m), address(standIn), makeAddr("a")).length, 0);
+    }
+
+    function test_RefusesARotationItCannotProve() public {
+        CcipMessenger m = _messenger();
+        TestnetSanctionsOracleStandIn fresh = new TestnetSanctionsOracleStandIn(admin);
+        SanctionsClearanceAttestor oldA = new SanctionsClearanceAttestor(ISanctionsList(address(standIn)), ICrossChainMessenger(address(m)));
+        SanctionsClearanceAttestor newA = new SanctionsClearanceAttestor(ISanctionsList(address(fresh)), ICrossChainMessenger(address(m)));
+        // Naming the attestor the run keeps.
+        script.setReplace(address(newA), 1);
+        vm.expectRevert(bytes("ConfigureSanctionsClearance: SANCTIONS_CLEARANCE_REPLACE_ATTESTOR names the attestor this run keeps"));
+        script.flagsToCarry(address(m), address(fresh), address(newA));
+        // Naming an attestor that does not handle the channel here.
+        script.setReplace(address(oldA), 1);
+        vm.expectRevert(bytes("ConfigureSanctionsClearance: SANCTIONS_CLEARANCE_REPLACE_ATTESTOR is not the clearance channel's handler here"));
+        script.flagsToCarry(address(m), address(fresh), address(newA));
+        // The handler, but no start block for the old stand-in's history.
+        script.ensureHandler(address(m), address(oldA));
+        script.setReplace(address(oldA), 0);
+        vm.expectRevert(bytes("ConfigureSanctionsClearance: set SANCTIONS_STANDIN_CARRY_FROM_BLOCK to the replaced stand-in's deployment block (or earlier) to carry its flags"));
+        script.flagsToCarry(address(m), address(fresh), address(newA));
+        // An old attestor whose oracle is not a stand-in.
+        SanctionsClearanceAttestor notStandIn = new SanctionsClearanceAttestor(ISanctionsList(address(script)), ICrossChainMessenger(address(m)));
+        CcipMessenger m2 = _messenger();
+        script.ensureHandler(address(m2), address(notStandIn));
+        script.setReplace(address(notStandIn), 1);
+        vm.expectRevert(bytes("ConfigureSanctionsClearance: the replaced attestor's oracle is not a testnet stand-in - its flags cannot be carried"));
+        script.flagsToCarry(address(m2), address(fresh), address(newA));
+    }
+
+    function _flagLog(address emitter, address account, bool on, uint64 blockNumber, uint256 logIndex)
+        internal
+        pure
+        returns (Vm.EthGetLogs memory l)
+    {
+        bytes32[] memory topics = new bytes32[](2);
+        topics[0] = StandInFlagReplay.FLAG_SET;
+        topics[1] = bytes32(uint256(uint160(account)));
+        l.emitter = emitter;
+        l.topics = topics;
+        l.data = abi.encode(on);
+        l.blockNumber = blockNumber;
+        l.logIndex = logIndex;
+    }
+
+    function test_ReplayKeepsEachAccountsLastSettingInChainOrder() public {
+        FlagReplayHarness h = new FlagReplayHarness();
+        address s = address(standIn);
+        address x = makeAddr("x");
+        address y = makeAddr("y");
+        address z = makeAddr("z");
+        Vm.EthGetLogs[] memory logs = new Vm.EthGetLogs[](5);
+        // Given out of order: x on, x off, x on again (last wins); y on then off; z on.
+        logs[0] = _flagLog(s, x, true, 30, 0);
+        logs[1] = _flagLog(s, y, false, 20, 1);
+        logs[2] = _flagLog(s, x, true, 10, 0);
+        logs[3] = _flagLog(s, x, false, 20, 0);
+        logs[4] = _flagLog(s, z, true, 5, 0);
+        Vm.EthGetLogs[] memory more = new Vm.EthGetLogs[](6);
+        for (uint256 i; i < 5; ++i) {
+            more[i] = logs[i];
+        }
+        more[5] = _flagLog(s, y, true, 15, 0);
+        address[] memory out = h.replay(more, s);
+        assertEq(out.length, 2);
+        assertEq(out[0], z);
+        assertEq(out[1], x);
+    }
+
+    function test_ReplayRefusesALogThatIsNotTheStandInsFlagSet() public {
+        FlagReplayHarness h = new FlagReplayHarness();
+        Vm.EthGetLogs[] memory logs = new Vm.EthGetLogs[](1);
+        logs[0] = _flagLog(other, makeAddr("x"), true, 1, 0);
+        vm.expectRevert(abi.encodeWithSelector(StandInFlagReplay.NotAFlagSet.selector, 0));
+        h.replay(logs, address(standIn));
+        logs[0] = _flagLog(address(standIn), makeAddr("x"), true, 1, 0);
+        logs[0].data = abi.encode(uint256(2));
+        vm.expectRevert(abi.encodeWithSelector(StandInFlagReplay.NotAFlagSet.selector, 0));
+        h.replay(logs, address(standIn));
+        logs[0] = _flagLog(address(standIn), makeAddr("x"), true, 1, 0);
+        logs[0].removed = true;
+        vm.expectRevert(abi.encodeWithSelector(StandInFlagReplay.NotAFlagSet.selector, 0));
+        h.replay(logs, address(standIn));
     }
 }
