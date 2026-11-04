@@ -248,6 +248,7 @@ try {
     read('hasAcceptedCurrentTerms', [BORROWER], at),
     read('hasAcceptedCurrentTerms', [LENDER], at),
   ]);
+  pre.protection = await read('getProtectedAccount', [BORROWER], at);
   pre.asset = pre.funding[0];
   const tokenRead = (functionName, args = []) => pub.readContract({ address: pre.asset, abi: erc20Abi, functionName, args, blockNumber: at });
   [pre.decimals, pre.symbol, pre.assetBal, pre.allowance, pre.ethB, pre.ethL] = await Promise.all([
@@ -275,6 +276,9 @@ const preflightFailures = [
   // Each deposit spends the allowance it uses, so only a zero start makes
   // "nothing left standing" mean zero at the end, whatever approvals ran.
   want(pre.allowance === 0n, `the borrower's ${pre.symbol} allowance to the Diamond is ${pre.allowance}, not 0 — revoke it first`),
+  // A protected account's vault payouts can be queued or held in its vault
+  // rather than paid to the wallet; this drive follows only the direct route.
+  want(!pre.protection.enabled && !pre.protection.locked, `${BORROWER_ROLE} runs protected account mode (enabled ${pre.protection.enabled}, locked ${pre.protection.locked}), so a withdrawal may be queued or held in its vault rather than returned to the wallet`),
   want(pre.tosB === true && pre.tosL === true, `both wallets must have accepted the current Terms (${pre.tosB} / ${pre.tosL})`),
   want(pre.ethB >= MIN_GAS_WEI && pre.ethL >= MIN_GAS_WEI, `each wallet needs ≥ ${formatUnits(MIN_GAS_WEI, 18)} ETH for gas`),
 ].filter(Boolean);
@@ -473,8 +477,13 @@ const dateOf = (sec) => {
   const p = (n) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 };
-const B_END_DATE = dateOf(LOAN_END + B_END_DAYS * 86_400);
-const L_END_DATE = dateOf(LOAN_END + L_END_DAYS * 86_400);
+// Counted from the loan's end, or from a day after the startup block when
+// the loan is already past its end: the app (and the executor) read a latest
+// end less than a day away as too early for any extension, so the overlap
+// this drive expects needs both ends well past that.
+const END_ANCHOR = Math.max(LOAN_END, Number(pre.head.timestamp) + 86_400);
+const B_END_DATE = dateOf(END_ANCHOR + B_END_DAYS * 86_400);
+const L_END_DATE = dateOf(END_ANCHOR + L_END_DAYS * 86_400);
 let PLAN = null;
 let HALT = null;
 const refusals = [];
@@ -639,6 +648,14 @@ async function minedReceipt(id) {
 }
 const diamondEvents = (receipt, eventName) =>
   parseEventLogs({ abi: DIAMOND_ABI, eventName, logs: receipt.logs.filter((l) => eq(l.address, DIAMOND)) }).filter((e) => e.args.loanId === LOAN_ID);
+/** Payouts to the borrower that a protected account's gate queued or kept in
+ *  its vault instead of paying (preflight refuses such a wallet; this catches
+ *  one switched on mid-run). Each is money the run did not return. */
+const diverted = [];
+const divertedPayouts = (receipt) =>
+  parseEventLogs({ abi: DIAMOND_ABI, eventName: ['PayoutQueued', 'PayoutHeldInVault'], logs: receipt.logs.filter((l) => eq(l.address, DIAMOND)) })
+    .filter((e) => eq(e.args.account, BORROWER))
+    .map((e) => `${e.eventName} ${e.args.amount} of ${e.args.asset}${e.eventName === 'PayoutQueued' ? ` (queue id ${e.args.id}, releases ${new Date(Number(e.args.releaseAt) * 1000).toISOString()})` : ' (kept in the vault)'} — ${receipt.transactionHash}`);
 const fundingAt = (blockNumber) => readPinned(() => read('getExtendFunding', [LOAN_ID, BORROWER], blockNumber));
 
 /** The six receipt rows inside `scope`, as [label, value] pairs. */
@@ -738,6 +755,22 @@ async function reserveDiscovery(page, timeoutMs = 120_000) {
     { timeoutMs, everyMs: 2_000 },
   );
 }
+/**
+ * The panel once its figures are resolved: the extension state has answered
+ * (`data-phase` is not `unread`) and the token's units are known
+ * (`data-amounts` is `ready`). Returns the published phase, or null if either
+ * is still unresolved after `timeoutMs`.
+ */
+async function panelResolved(panel, timeoutMs = 90_000) {
+  return pollUntil(
+    'the reserve panel resolves its figures',
+    async () => {
+      const phase = await panel.getAttribute('data-phase');
+      return phase && phase !== 'unread' && (await panel.getAttribute('data-amounts')) === 'ready' ? phase : null;
+    },
+    { timeoutMs, everyMs: 2_000 },
+  );
+}
 async function panelLines(panel) {
   return panel.locator('li').allInnerTexts();
 }
@@ -783,7 +816,13 @@ async function withdrawReserve(page, scope, done, label, id) {
   const ev = diamondEvents(receipt, 'ExtendReserveWithdrawn');
   const f = await fundingAt(receipt.blockNumber);
   const ok = ev.length === 1 && eq(ev[0].args.holder, BORROWER) && ev[0].args.amount === RESERVE && ev[0].args.reserved === 0n && f[1] === 0n;
-  return { receipt, ok, detail: `ExtendReserveWithdrawn ×${ev.length}${ev[0] ? ` amount ${ev[0].args.amount}` : ''}; reserved ${f[1]} — ${receipt.transactionHash}, block ${receipt.blockNumber}` };
+  const held = divertedPayouts(receipt);
+  diverted.push(...held);
+  return {
+    receipt,
+    ok,
+    detail: `ExtendReserveWithdrawn ×${ev.length}${ev[0] ? ` amount ${ev[0].args.amount}` : ''}; reserved ${f[1]}${held.length ? `; NOT paid to the wallet: ${held.join('; ')}` : ''} — ${receipt.transactionHash}, block ${receipt.blockNumber}`,
+  };
 }
 
 let B_END = null;
@@ -797,7 +836,10 @@ try {
   }
   B_END = await endOfDay(bp, B_END_DATE);
   L_END = await endOfDay(lp, L_END_DATE);
-  if (!(L_END < B_END && L_END > LOAN_END)) await blocked(`the latest end dates do not land as planned (${L_END_DATE} → ${L_END}, ${B_END_DATE} → ${B_END}, loan end ${LOAN_END})`);
+  const startNow = Number((await pub.getBlock({ blockTag: 'latest' })).timestamp);
+  if (!(L_END < B_END && L_END > LOAN_END && L_END - startNow > 2 * 86_400)) {
+    await blocked(`the latest end dates do not land as planned (${L_END_DATE} → ${L_END}, ${B_END_DATE} → ${B_END}, loan end ${LOAN_END}, chain time ${startNow})`);
+  }
   PLAN = createWritePlan(
     autoExtendPlanSteps({
       borrower: BORROWER,
@@ -870,6 +912,7 @@ try {
   if (!card) stop('the auto-extend card did not render again for the borrower');
   const panel = reservePanel(card);
   await panel.waitFor({ state: 'visible', timeout: 60_000 });
+  const pagePhase = await panelResolved(panel);
   const lines = await panelLines(panel);
   const afterHead = await pub.getBlock({ blockTag: 'latest' });
   const after = await read('getExtendFunding', [LOAN_ID, BORROWER], afterHead.number);
@@ -891,7 +934,14 @@ try {
     pre.decimals,
     pre.symbol,
   );
-  check('reservePanel', 'figures', "the panel states the chain's figures, nothing reserved", figures.length === 0 && before[1] === 0n, figures.join(' | ') || lines.map(squash).join(' | '));
+  // The page's own phase must agree with the chain's on whether the window
+  // is open, since that is what decides the charge-now line.
+  if (pagePhase && (pagePhase === 'open') !== openAt(afterHead.timestamp)) {
+    figures.push(`the page reads the window as ${pagePhase}, the chain as ${openAt(afterHead.timestamp) ? 'open' : 'not open'}`);
+  }
+  if (!pagePhase) {
+    unsettled('reservePanel', 'figures', `the panel never resolved its figures within 90 s (phase ${await panel.getAttribute('data-phase')}, amounts ${await panel.getAttribute('data-amounts')})`);
+  } else check('reservePanel', 'figures', "the panel states the chain's figures, nothing reserved", figures.length === 0 && before[1] === 0n, figures.join(' | ') || lines.map(squash).join(' | '));
   await fundReserve(bp, card, '');
   await shot('borrower', 'auto-extend-funded');
 
@@ -915,6 +965,25 @@ try {
   // ── 5. A second reserve; Claims for both wallets ──────────────────────
   await fundReserve(bp, card, '-2');
   await shot('borrower', 'auto-extend-funded-2');
+
+  // ── 5 (cont.). The indexer files the first deposit ───────────────────
+  // Claims finds a reserve only through the indexer's deposit events, so a
+  // Claims page read before the indexer has this loan's deposit says nothing
+  // about the card. The deposits are already mined; this waits out the lag.
+  const fundHash = PLAN.steps().find((s) => s.id === 'b-fund').record.hash;
+  const IDX = indexerOrigin();
+  const idxUrl = `${IDX}/activity?chainId=${CHAIN_ID}&actor=${BORROWER.toLowerCase()}&kind=ExtendReserveFunded`;
+  const row = await pollUntil(
+    'the indexer files the deposit',
+    async () => {
+      const res = await fetch(idxUrl);
+      if (!res.ok) return null;
+      return fundedRowFor((await res.json())?.events, { loanId: LOAN_ID, txHash: fundHash, holder: BORROWER });
+    },
+    { timeoutMs: 600_000, everyMs: 15_000 },
+  );
+  if (row) check('indexer', 'row', 'the indexer files the deposit under the borrower', true, `block ${row.blockNumber}, tx ${row.txHash}`);
+  else unsettled('indexer', 'row', `no ExtendReserveFunded row for ${fundHash} under the borrower within 600 s (${idxUrl}) — indexer lag cannot be told from a missing row`);
 
   const lenderQuery = lp.waitForResponse(
     (res) => res.url().includes('/activity?') && res.url().includes(`actor=${LENDER.toLowerCase()}`) && res.url().includes('ExtendReserveFunded'),
@@ -953,6 +1022,10 @@ try {
   // so the row is judged once its amount and withdrawal have loaded. A
   // Claims page that says the index is unavailable is opened again: that is
   // the indexer's outage, not this card's.
+  if (!row) {
+    unsettled('claims', 'listed', "the indexer has not filed this loan's deposit, so the borrower's Claims cannot list it yet and an absent row proves nothing");
+    stop(`the indexer did not file ${fundHash} within 600 s, so the borrower's Claims was not judged`);
+  }
   let listed = false;
   let itemText = '';
   let discovery = null;
@@ -1000,23 +1073,6 @@ try {
   const w2 = await withdrawReserve(bp, item, reserves.locator('.banner-info', { hasText: R.withdrawn }), 'from Claims', 'withdraw-2');
   check('claims', 'withdrawn', 'the reserve is withdrawn from Claims, with the outcome shown there', w2.ok, w2.detail);
   await shot('borrower', 'auto-extend-claims-withdrawn');
-
-  // ── 4 (cont.). The indexer files the first deposit ───────────────────
-  // Last, so the indexer's lag behind the head is spent on the steps above.
-  const fundHash = PLAN.steps().find((s) => s.id === 'b-fund').record.hash;
-  const IDX = indexerOrigin();
-  const idxUrl = `${IDX}/activity?chainId=${CHAIN_ID}&actor=${BORROWER.toLowerCase()}&kind=ExtendReserveFunded`;
-  const row = await pollUntil(
-    'the indexer files the deposit',
-    async () => {
-      const res = await fetch(idxUrl);
-      if (!res.ok) return null;
-      return fundedRowFor((await res.json())?.events, { loanId: LOAN_ID, txHash: fundHash, holder: BORROWER });
-    },
-    { timeoutMs: 600_000, everyMs: 15_000 },
-  );
-  if (row) check('indexer', 'row', 'the indexer files the deposit under the borrower', true, `block ${row.blockNumber}, tx ${row.txHash}`);
-  else unsettled('indexer', 'row', `no ExtendReserveFunded row for ${fundHash} under the borrower within 600 s (${idxUrl}) — indexer lag cannot be told from a missing row`);
 
   // ── 6. Read-only: the forced close-out card on a past-grace loan ──────
   if (pastGrace.length) {
@@ -1108,7 +1164,9 @@ try {
   // leave a reserve or an approval standing without any fault in the app, so
   // it is reported (LEFT STANDING below) and left undetermined.
   const cleanupRan = !HALT && ['b-withdraw', 'b-withdraw-2'].every((id) => PLAN?.steps().find((x) => x.id === id)?.status === 'consumed');
-  if (cleanupRan) check('leftNothing', 'state', 'no reserve and no approval left standing', f[1] === 0n && allowance === pre.allowance, detail);
+  if (cleanupRan && diverted.length) {
+    unsettled('leftNothing', 'state', `a withdrawal was queued or kept in the vault by protected account mode, so the reserve did not come back to the wallet — ${detail}; ${diverted.join('; ')}`);
+  } else if (cleanupRan) check('leftNothing', 'state', 'no reserve and no approval left standing', f[1] === 0n && allowance === pre.allowance, detail);
   else if (wrote()) unsettled('leftNothing', 'state', `the run stopped before its withdrawals all ran, so what it left is reported, not judged — ${detail}`);
 } catch (err) {
   console.log(`standing state unreadable: ${describeErr(err)}`);
@@ -1126,6 +1184,7 @@ if (standing && (standing.reserved !== 0n || standing.allowance !== pre.allowanc
       `(withdraw it from /claims as ${BORROWER_ROLE}); ${pre.symbol} allowance to the Diamond ${standing.allowance} (startup ${pre.allowance}).`,
   );
 }
+if (diverted.length) console.log(`\nLEFT STANDING: withdrawn but not paid to ${BORROWER_ROLE}'s wallet — ${diverted.join('; ')}`);
 // The limits as the chain holds them now, not as this run asked: a save that
 // failed or never ran leaves whatever stood before.
 try {

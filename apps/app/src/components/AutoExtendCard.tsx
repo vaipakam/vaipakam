@@ -341,7 +341,16 @@ function ReservePanel({
   }
 
   return (
-    <div style={{ marginTop: 16 }} data-testid="extend-reserve">
+    // `data-phase` (`unread` until the extension state answers) decides
+    // whether the charge-now line may render; `data-amounts` says whether the
+    // figures are in the token's units yet. Both are read by the live drive,
+    // which judges the figures only once neither is still loading.
+    <div
+      style={{ marginTop: 16 }}
+      data-testid="extend-reserve"
+      data-phase={phase ?? 'unread'}
+      data-amounts={meta ? 'ready' : metaFailed ? 'unavailable' : 'loading'}
+    >
       <h4 style={{ margin: '0 0 4px' }}>{r.title}</h4>
       <p className="muted">{r.lede(meta?.symbol ?? '')}</p>
       <ul style={{ margin: '8px 0', paddingLeft: 18 }}>
