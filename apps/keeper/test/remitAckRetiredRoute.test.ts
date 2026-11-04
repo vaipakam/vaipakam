@@ -374,7 +374,7 @@ async function tick(book: Book) {
         DB: shared.handle,
         KEEPER_DB: keeper.handle,
         KEEPER_ENABLED: 'true',
-        REWARD_REMIT_ENABLED: 'true',
+        REWARD_REMIT_ACK_ENABLED: 'true',
         KEEPER_PRIVATE_KEY: '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80',
         RPC_BASE_SEPOLIA: BASE_RPC,
         RPC_ARB_SEPOLIA: ARB_RPC,

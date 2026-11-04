@@ -1262,7 +1262,7 @@ artifacts and stay in their respective env / config:
   `RPC_*` URLs (carry API keys), `TG_BOT_TOKEN`,
   `PUSH_CHANNEL_PK`, aggregator API keys, `KEEPER_PRIVATE_KEY`.
 - apps/keeper Cloudflare secrets: `KEEPER_PRIVATE_KEY` +
-  `KEEPER_ENABLED`, `REWARD_REMIT_ENABLED`, `REWARD_COMMIT_ENABLED`,
+  `KEEPER_ENABLED`, `REWARD_REMIT_ENABLED`, `REWARD_REMIT_ACK_ENABLED`, `REWARD_COMMIT_ENABLED`,
   `REWARD_SANCTIONS_KEEPER_ENABLED`,
   `REWARD_HORIZON_HEARTBEAT_ENABLED`, `REWARD_DAY_CLOSE_ENABLED`,
   `REWARD_CLOSE_OUT_ENABLED`, `REWARD_ZEROED_DAY_ENABLED`, `REWARD_DELIVERY_CONFLICT_ENABLED`, `REWARD_RETURN_TRANSPORT_ENABLED`, `REWARD_ENTRY_SETTLE_ENABLED`, `PROTOCOL_UPKEEP_ENABLED`, `PREPAY_SALE_SANCTIONS_SYNC_ENABLED`, `TIER_PUSH_RETRY_ENABLED`, `PREPAY_AUTO_LIST_ENABLED`, `PROTECTED_ACCOUNT_ENABLED`, `PROTECTED_LOCK_ENABLED`, `PROTECTED_ALERTS_ENABLED`, `STANDIN_REFRESH_ENABLED`, `GRACE_DEFAULT_ENABLED`, `PERIODIC_SETTLE_ENABLED`, `RPC_*`,
@@ -1273,7 +1273,8 @@ artifacts and stay in their respective env / config:
   entry in `wrangler.jsonc`'s `vars`. At the 2026-07-30 readback the two
   `REWARD_*` flags then existing were **absent** on the live Worker,
   which left THREE scheduled passes dark — `rewardBudgetRemit` and
-  `remitAck` both gate on `REWARD_REMIT_ENABLED`, `commitmentReport` on
+  `remitAck` then both gated on `REWARD_REMIT_ENABLED` (`remitAck` has its
+  own `REWARD_REMIT_ACK_ENABLED` since #3100), `commitmentReport` on
   `REWARD_COMMIT_ENABLED`; `rewardSanctionsHold` (#2450) gates on
   `REWARD_SANCTIONS_KEEPER_ENABLED`, `rewardHorizonHeartbeat` (#2517) on
   `REWARD_HORIZON_HEARTBEAT_ENABLED` (its #2984 entry close-out step also

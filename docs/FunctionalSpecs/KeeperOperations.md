@@ -294,6 +294,11 @@ evidence that the migration has completed.
   a delivery that arrived after its reservation was released. Ordinary
   pending acknowledgements have first call on the send budget; late work and
   slow destinations cannot block them or other destinations.
+- Acknowledging is armed separately from sending new remittances. An
+  acknowledgement only completes a remittance already sent, so an operator
+  can stop new remittances, for example to drain them before a fresh
+  deployment, while the keeper keeps acknowledging the ones already in
+  flight until none is pending. Each switch stops only its own work.
 - A missing receipt behind a retired messenger is reported to operators.
   A pending remittance without a receipt after eight hours is reported even
   on an unchanged route. The cause may be manual-execution delay or a

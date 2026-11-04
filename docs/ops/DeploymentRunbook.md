@@ -770,11 +770,15 @@ So drain first, following the rule the #1566 design sets for every transition
 (`Vpfi1566CanonicalDeliveredBoundDesign.md`, "The cutover DRAINS AND REJECTS"):
 
 1. Stop new remittances from the canonical chain. Disarm the keeper's
-   `REWARD_REMIT_ENABLED`, so no `remitRewardBudget` is sent.
+   `REWARD_REMIT_ENABLED`, so no `remitRewardBudget` is sent. Leave
+   `REWARD_REMIT_ACK_ENABLED` armed: the acknowledgement pass has its own
+   flag (#3100), so it keeps acknowledging the remittances already in flight.
 2. On the canonical Diamond, read `getRemitReservationNonce` and every
    reservation below it. Wait until every one is acknowledged (status 2), or
    released (status 3) with its stranded share stamped and resolved. While
-   the keeper is still armed for acks, it does this on its own.
+   `REWARD_REMIT_ACK_ENABLED` stays armed, the keeper does this on its own.
+   Disarm it only after the last reservation has settled, just before the
+   redeploy.
 3. Only then redeploy. Record any reservation that will not settle, by id,
    in the deploy's release fragment, so the leftover is stated, not implied.
 
@@ -844,14 +848,15 @@ options, on the evidence:
    message through the same per-chain record it accepts acknowledgements from.
    Any remittance, reward broadcast or other message Base sends to that chain
    while the old values are in place goes to the retired deployment. So, in
-   this order: set the keeper's `REWARD_REMIT_ENABLED` to `false` and restart
-   it (this stops both remittance passes, including the new remittances), and
+   this order: set the keeper's `REWARD_REMIT_ENABLED` and
+   `REWARD_REMIT_ACK_ENABLED` to `false` and restart it (this stops the new
+   remittances and the keeper's own acknowledgements), and
    hold every other send from Base to that chain, manual remittances
    included; then restore the old values, send the acknowledgement, and put
    the redeploy's values back as soon as it executes on Base; then check
    Base's messenger for any message sent to that chain inside the window, and
    treat each one as sent to the retired adapter (it gets the retired-route
-   alert); and only then re-arm `REWARD_REMIT_ENABLED` and restart. Arming
+   alert); and only then re-arm both flags and restart. Arming
    flags need the owner's OK as usual. Or, only when the destination receipt shows the
    remittance CONSUMED, finalize it on Base with
    `finalizeRemitReservation(remitId)`. That is the operator's consumption
