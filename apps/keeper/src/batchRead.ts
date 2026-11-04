@@ -215,13 +215,46 @@ export async function settledChunkedRead<K>(
   /** Read every chunk at this block rather than the head (see {@link batchedRead}). */
   blockNumber?: bigint,
 ): Promise<Map<K, BatchResult>> {
-  const out = new Map<K, BatchResult>();
-  const order = walkFrom(keys, run);
-  for (let i = 0; i < order.length; i += chunk) {
-    const part = order.slice(i, i + chunk);
+  const grouped = await settledGroupedRead(client, keys, chunk, (k) => [call(k)], label, cutoff, run, blockNumber);
+  return new Map([...grouped].map(([k, res]) => [k, res[0]!]));
+}
+
+/**
+ * {@link settledChunkedRead} where each key needs SEVERAL calls that are only
+ * useful together (#3090 r7): a record and the settings that decide what to do
+ * with it. A key's calls always share one chunk, so a cutoff that ends the
+ * reads partway leaves whole keys read or unread, never a key with half its
+ * answers. Chunks are filled with whole keys up to `chunk` calls (a key with
+ * more calls than `chunk` gets a chunk of its own). Each key maps to its
+ * calls' results, in order.
+ */
+export async function settledGroupedRead<K>(
+  client: ReturnType<typeof createPublicClient>,
+  keys: readonly K[],
+  chunk: number,
+  calls: (key: K) => readonly unknown[],
+  label: string,
+  cutoff: number,
+  run: number,
+  /** Read every chunk at this block rather than the head (see {@link batchedRead}). */
+  blockNumber?: bigint,
+): Promise<Map<K, BatchResult[]>> {
+  const out = new Map<K, BatchResult[]>();
+  const order = walkFrom(keys, run).map((k) => ({ k, cs: calls(k) }));
+  for (let i = 0; i < order.length; ) {
+    const start = i;
+    const flat: unknown[] = [];
+    while (i < order.length && (i === start || flat.length + order[i].cs.length <= chunk)) {
+      flat.push(...order[i].cs);
+      i++;
+    }
     // eslint-disable-next-line no-await-in-loop
-    const res = await settledRead(client, part.map(call), `${label} ${i}/${order.length}`, cutoff, blockNumber);
-    part.forEach((k, j) => out.set(k, res[j]));
+    const res = await settledRead(client, flat, `${label} ${start}/${order.length}`, cutoff, blockNumber);
+    let at = 0;
+    for (const { k, cs } of order.slice(start, i)) {
+      out.set(k, res.slice(at, at + cs.length));
+      at += cs.length;
+    }
   }
   return out;
 }

@@ -384,7 +384,7 @@ describe('a run', () => {
       expect(d.batches.filter((b) => b.length === 1 && b[0] === 'getProtectedAccount'), 'no follow-up account read').toEqual([]);
     });
 
-    it('places each account read right after the first record naming it, so a part-read batch still yields whole pairs (Codex #3090)', async () => {
+    it('reads each record with its own account read beside it, so a part-read batch still yields whole pairs (Codex #3090)', async () => {
       queuePayout(1n);
       queuePayout(2n, { user: BOB, recipient: BOB });
       queuePayout(3n);
@@ -396,7 +396,37 @@ describe('a run', () => {
         ['getPendingPayout', '2'],
         ['getProtectedAccount', BOB],
         ['getPendingPayout', '3'],
+        ['getProtectedAccount', ALICE],
       ]);
+    });
+
+    it('keeps every record in the same chunk as its account read, even where an account names records far apart (Codex #3090 r7)', async () => {
+      // 200 payouts in two chunks: payouts 1 and 101 are ALICE's, the rest
+      // each a different account's and waiting on a co-sign. A run whose
+      // window completes only the chunk holding payout 101 must still send it.
+      const other = (i: number) => `0x${(0x1000 + i).toString(16).padStart(40, '0')}` as Address;
+      d.accounts.set(ALICE, account({ requireCosign: true }));
+      for (let i = 1; i <= 200; i++) {
+        const id = BigInt(i);
+        if (i === 1 || i === 101) queuePayout(id, { cosigned: i === 101 });
+        else {
+          d.accounts.set(other(i), account({ requireCosign: true }));
+          queuePayout(id, { user: other(i), recipient: other(i) });
+        }
+      }
+      const full = d.multicall;
+      d.multicall = async (q) =>
+        q.contracts.some((c) => c.functionName === 'getPendingPayout' && c.args?.[0] === 101n)
+          ? full(q)
+          : q.contracts.map(() => ({ status: 'failure' as const, error: new Error('still in flight') }));
+      await run();
+      expect(d.sent.map((s) => [s.fn, s.args[0]])).toEqual([['releasePayout', 101n]]);
+      for (const batch of d.calls.filter((b) => b.some((c) => c.functionName === 'getPendingPayout'))) {
+        const users = new Set(batch.filter((c) => c.functionName === 'getProtectedAccount').map((c) => c.args?.[0]));
+        for (const c of batch.filter((x) => x.functionName === 'getPendingPayout')) {
+          expect(users.has(d.payouts.get(c.args?.[0] as bigint)!.user), `payout ${c.args?.[0]} without its account`).toBe(true);
+        }
+      }
     });
 
     it('starts each run at a different row of the page, so slow refusals at its top cannot starve a row below them', async () => {

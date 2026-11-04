@@ -843,10 +843,12 @@ state.
   different item of its queue, spread evenly round it, so a run of items the
   protocol keeps refusing (each refusal costs time if not a call) cannot
   hold back an item behind them run after run. An item's own record and its
-  account's settings are read together, side by side, so a run whose
-  reading time covers only part of a long queue still reads whole items it
-  can send, and never spends that time on records whose settings it did
-  not reach.
+  account's settings are always read together, in the same request, and
+  each item carries its own read of the settings even when several items
+  belong to one account. So a run whose reading time covers only part of a
+  long queue still reads whole items it can send, every item it reached
+  can be sent, and no item is left waiting run after run because its
+  account's settings were read in some other part of the queue.
 - The keeper pays only gas and moves no value to itself: a release pays the
   account's own recipient from the account's own vault. It needs no
   permission from the owner.
