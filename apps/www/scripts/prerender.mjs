@@ -228,10 +228,13 @@ async function launchChromium() {
   try {
     const env = provideChromiumSystemLibs(managed);
     if (env) {
-      browser = await attempt('managed browser with fetched system libraries', {
-        ...MANAGED,
-        env: { ...process.env, ...env },
-      });
+      // Set on THIS process, not only as a launch option: before starting
+      // a managed browser Playwright may re-check its dependencies with
+      // ldd under process.env, and would otherwise report the libraries
+      // as still missing. Nothing else this script runs after this point
+      // loads them.
+      Object.assign(process.env, env);
+      browser = await attempt('managed browser with fetched system libraries', MANAGED);
       if (browser) return browser;
     }
   } catch (err) {

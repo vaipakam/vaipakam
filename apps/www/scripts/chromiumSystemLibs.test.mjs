@@ -27,12 +27,18 @@ test('maps libraries to packages, one fetch per package', () => {
   assert.deepEqual(packagesFor(['libnss3.so', 'libnssutil3.so', 'libnspr4.so']), ['libnss3', 'libnspr4']);
 });
 
+test('covers every library the launched browser needs, as measured', () => {
+  for (const so of ['libcups.so.2', 'libpango-1.0.so.0', 'libcairo.so.2', 'libnss3.so', 'libsmime3.so']) {
+    assert.ok(Object.hasOwn(SONAME_PACKAGES, so), so);
+  }
+});
+
 test('an unknown library is an error that names it', () => {
   assert.throws(() => packagesFor(['libnss3.so', 'libmystery.so.9']), /libmystery\.so\.9/);
 });
 
 test('glibc is deliberately not fetched', () => {
-  for (const so of ['libc.so.6', 'libm.so.6', 'libdl.so.2', 'libpthread.so.0']) {
+  for (const so of ['libc.so.6', 'libm.so.6', 'libdl.so.2', 'libpthread.so.0', 'libresolv.so.2']) {
     assert.equal(Object.hasOwn(SONAME_PACKAGES, so), false, so);
   }
 });

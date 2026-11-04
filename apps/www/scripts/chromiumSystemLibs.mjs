@@ -34,51 +34,86 @@ import { join } from 'node:path';
 
 /**
  * The Ubuntu 24.04 package that ships each shared library Playwright's
- * Chromium needs, measured with `ldd` and `dpkg -S` against
- * chrome-headless-shell 149 (Playwright 1.61.1) on Ubuntu 24.04, plus the
- * NSS libraries that only show up once libnss3 itself is found. A
- * library Chromium starts needing that is not listed here makes the fetch
- * fail and name it, so the table is extended deliberately rather than
- * guessed at. glibc itself (libc, libm, libdl, libpthread, the loader) is
- * absent on purpose: a host missing it has a different problem.
+ * Chromium needs, measured with `ldd` and `dpkg -S` on Ubuntu 24.04
+ * against the binary prerender launches — the full Chromium 149 build
+ * (Playwright 1.61.1), whose dependency set contains the headless shell's —
+ * plus the NSS libraries that only show up once libnss3 itself is found.
+ * A library Chromium starts needing that is not listed here makes the
+ * fetch fail and name it, so the table is extended deliberately rather
+ * than guessed at; re-measure it whenever Playwright's Chromium revision
+ * moves. glibc itself (libc, libm, libdl, libpthread, libresolv, the
+ * loader) is absent on purpose: a host missing it has a different problem.
  */
 export const SONAME_PACKAGES = Object.freeze({
   'libasound.so.2': 'libasound2t64',
   'libatk-1.0.so.0': 'libatk1.0-0t64',
   'libatk-bridge-2.0.so.0': 'libatk-bridge2.0-0t64',
   'libatspi.so.0': 'libatspi2.0-0t64',
+  'libavahi-client.so.3': 'libavahi-client3',
+  'libavahi-common.so.3': 'libavahi-common3',
   'libblkid.so.1': 'libblkid1',
+  'libbrotlicommon.so.1': 'libbrotli1',
+  'libbrotlidec.so.1': 'libbrotli1',
   'libbsd.so.0': 'libbsd0',
+  'libbz2.so.1.0': 'libbz2-1.0',
+  'libcairo.so.2': 'libcairo2',
   'libcap.so.2': 'libcap2',
+  'libcom_err.so.2': 'libcom-err2',
+  'libcups.so.2': 'libcups2t64',
+  'libdatrie.so.1': 'libdatrie1',
   'libdbus-1.so.3': 'libdbus-1-3',
   'libdrm.so.2': 'libdrm2',
   'libexpat.so.1': 'libexpat1',
   'libffi.so.8': 'libffi8',
+  'libfontconfig.so.1': 'libfontconfig1',
+  'libfreetype.so.6': 'libfreetype6',
+  'libfribidi.so.0': 'libfribidi0',
   'libgbm.so.1': 'libgbm1',
   'libgcc_s.so.1': 'libgcc-s1',
   'libgcrypt.so.20': 'libgcrypt20',
   'libgio-2.0.so.0': 'libglib2.0-0t64',
   'libglib-2.0.so.0': 'libglib2.0-0t64',
   'libgmodule-2.0.so.0': 'libglib2.0-0t64',
+  'libgmp.so.10': 'libgmp10',
+  'libgnutls.so.30': 'libgnutls30t64',
   'libgobject-2.0.so.0': 'libglib2.0-0t64',
   'libgpg-error.so.0': 'libgpg-error0',
+  'libgraphite2.so.3': 'libgraphite2-3',
+  'libgssapi_krb5.so.2': 'libgssapi-krb5-2',
+  'libharfbuzz.so.0': 'libharfbuzz0b',
+  'libhogweed.so.6': 'libhogweed6t64',
+  'libidn2.so.0': 'libidn2-0',
+  'libk5crypto.so.3': 'libk5crypto3',
+  'libkeyutils.so.1': 'libkeyutils1',
+  'libkrb5.so.3': 'libkrb5-3',
+  'libkrb5support.so.0': 'libkrb5support0',
   'liblz4.so.1': 'liblz4-1',
   'liblzma.so.5': 'liblzma5',
   'libmd.so.0': 'libmd0',
   'libmount.so.1': 'libmount1',
+  'libnettle.so.8': 'libnettle8t64',
   'libnspr4.so': 'libnspr4',
   'libnss3.so': 'libnss3',
   'libnssutil3.so': 'libnss3',
+  'libp11-kit.so.0': 'libp11-kit0',
+  'libpango-1.0.so.0': 'libpango-1.0-0',
   'libpcre2-8.so.0': 'libpcre2-8-0',
+  'libpixman-1.so.0': 'libpixman-1-0',
   'libplc4.so': 'libnspr4',
   'libplds4.so': 'libnspr4',
+  'libpng16.so.16': 'libpng16-16t64',
   'libselinux.so.1': 'libselinux1',
   'libsmime3.so': 'libnss3',
   'libssl3.so': 'libnss3',
   'libsystemd.so.0': 'libsystemd0',
+  'libtasn1.so.6': 'libtasn1-6',
+  'libthai.so.0': 'libthai0',
   'libudev.so.1': 'libudev1',
+  'libunistring.so.5': 'libunistring5',
   'libX11.so.6': 'libx11-6',
   'libXau.so.6': 'libxau6',
+  'libxcb-render.so.0': 'libxcb-render0',
+  'libxcb-shm.so.0': 'libxcb-shm0',
   'libxcb.so.1': 'libxcb1',
   'libXcomposite.so.1': 'libxcomposite1',
   'libXdamage.so.1': 'libxdamage1',
