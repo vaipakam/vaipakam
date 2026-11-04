@@ -226,6 +226,14 @@ interface BaseEnv {
    *  refresher; it can flag nothing and pays only gas. Testnets only. */
   STANDIN_REFRESH_ENABLED?: string;
 
+  // Expired-teardown pass (#3097). `secret_text` like the flags above.
+  /** 'true' arms the expired-teardown pass (in addition to KEEPER_ENABLED):
+   *  the permissionless teardowns of a swap-to-repay intent past its cancel
+   *  grace, a prepay listing past its grace window, and a lender-sale listing
+   *  past its expiry or on a closed loan. Each moves no value and pays only
+   *  gas. */
+  EXPIRED_TEARDOWN_ENABLED?: string;
+
   // Protocol upkeep pass (#2984). `secret_text` like the flags above.
   /** 'true' arms the protocol upkeep pass (in addition to KEEPER_ENABLED):
    *  the buyback-intent expiry and the tier LTV cache refresh. Both
@@ -473,6 +481,7 @@ export const PLAIN_VAR_KEYS = [
   'PROTECTED_LOCK_ENABLED',
   'PROTECTED_ALERTS_ENABLED',
   'STANDIN_REFRESH_ENABLED',
+  'EXPIRED_TEARDOWN_ENABLED',
   'TIER_LTV_REFRESH_AFTER_SEC',
   'REWARD_ZEROED_DAY_ENABLED',
   'REWARD_ZEROED_DAY_WINDOW_DAYS',
@@ -665,6 +674,7 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     PROTECTED_LOCK_ENABLED: raw.PROTECTED_LOCK_ENABLED,
     PROTECTED_ALERTS_ENABLED: raw.PROTECTED_ALERTS_ENABLED,
     STANDIN_REFRESH_ENABLED: raw.STANDIN_REFRESH_ENABLED,
+    EXPIRED_TEARDOWN_ENABLED: raw.EXPIRED_TEARDOWN_ENABLED,
     TIER_LTV_REFRESH_AFTER_SEC: raw.TIER_LTV_REFRESH_AFTER_SEC,
     REWARD_ZEROED_DAY_ENABLED: raw.REWARD_ZEROED_DAY_ENABLED,
     REWARD_ZEROED_DAY_WINDOW_DAYS: raw.REWARD_ZEROED_DAY_WINDOW_DAYS,
