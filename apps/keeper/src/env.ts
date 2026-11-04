@@ -226,6 +226,21 @@ interface BaseEnv {
    *  refresher; it can flag nothing and pays only gas. Testnets only. */
   STANDIN_REFRESH_ENABLED?: string;
 
+  // Position upkeep pass (#3097). `secret_text` like the flags above.
+  /** 'true' arms the position upkeep pass (in addition to KEEPER_ENABLED):
+   *  the daily NFT-rental deduction (`autoDeductDaily`) for a rental whose
+   *  next agreed day has elapsed. The day's fee comes out of the renter's
+   *  own prepayment and goes to the lender and the treasury under the
+   *  loan's own split; the keeper pays only gas and receives nothing. */
+  POSITION_UPKEEP_ENABLED?: string;
+  /** 'true' adds the backstop fill (`backstopFill`) to the armed position
+   *  upkeep pass: a borrower offer that opted into the backstop and is past
+   *  its eligibility time is filled from the treasury-seeded backstop vault.
+   *  It lends treasury capital, so it has its own flag; the keeper attaches
+   *  no value and receives nothing, and the fill counts against the keeper's
+   *  own free-tier service capacity. Read only while POSITION_UPKEEP_ENABLED
+   *  arms the pass. */
+  BACKSTOP_FILL_ENABLED?: string;
   // Expired-teardown pass (#3097). `secret_text` like the flags above.
   /** 'true' arms the expired-teardown pass (in addition to KEEPER_ENABLED):
    *  the permissionless teardowns of a swap-to-repay intent past its cancel
@@ -481,6 +496,8 @@ export const PLAIN_VAR_KEYS = [
   'PROTECTED_LOCK_ENABLED',
   'PROTECTED_ALERTS_ENABLED',
   'STANDIN_REFRESH_ENABLED',
+  'POSITION_UPKEEP_ENABLED',
+  'BACKSTOP_FILL_ENABLED',
   'EXPIRED_TEARDOWN_ENABLED',
   'TIER_LTV_REFRESH_AFTER_SEC',
   'REWARD_ZEROED_DAY_ENABLED',
@@ -674,6 +691,8 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     PROTECTED_LOCK_ENABLED: raw.PROTECTED_LOCK_ENABLED,
     PROTECTED_ALERTS_ENABLED: raw.PROTECTED_ALERTS_ENABLED,
     STANDIN_REFRESH_ENABLED: raw.STANDIN_REFRESH_ENABLED,
+    POSITION_UPKEEP_ENABLED: raw.POSITION_UPKEEP_ENABLED,
+    BACKSTOP_FILL_ENABLED: raw.BACKSTOP_FILL_ENABLED,
     EXPIRED_TEARDOWN_ENABLED: raw.EXPIRED_TEARDOWN_ENABLED,
     TIER_LTV_REFRESH_AFTER_SEC: raw.TIER_LTV_REFRESH_AFTER_SEC,
     REWARD_ZEROED_DAY_ENABLED: raw.REWARD_ZEROED_DAY_ENABLED,

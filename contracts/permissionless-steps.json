@@ -42,9 +42,10 @@
       "why": "the user's own setting"
     },
     "BackstopFacet.backstopFill(uint256)": {
-      "class": "gap",
-      "issue": "#3097",
-      "why": "fills from the backstop vault; nothing drives it"
+      "class": "keeper",
+      "pass": "positionUpkeep",
+      "flag": "BACKSTOP_FILL_ENABLED",
+      "evidence": "apps/keeper/src/positionUpkeep.ts"
     },
     "BackstopVaultImplementation.initialize(address)": {
       "class": "init",
@@ -55,14 +56,12 @@
       "why": "the deployment, or the Diamond's factory, initializes each proxy once in the transaction that creates it"
     },
     "ConsolidationFacet.consolidateCollateralToHolder(uint256)": {
-      "class": "gap",
-      "issue": "#3097",
-      "why": "moves collateral claims to the current holder; nothing drives it"
+      "class": "user",
+      "why": "the current position holder's own consolidation of its collateral claims; only that holder may call it, and nothing waits on it but the holder (owner decision 2026-11-04, #3097)"
     },
     "ConsolidationFacet.consolidatePrincipalToHolder(uint256)": {
-      "class": "gap",
-      "issue": "#3097",
-      "why": "moves principal claims to the current holder; nothing drives it"
+      "class": "user",
+      "why": "the current position holder's own consolidation of its principal claims; only that holder may call it, and nothing waits on it but the holder (owner decision 2026-11-04, #3097)"
     },
     "DefaultedFacet.triggerDefault(uint256,uint256,struct:LibSwap.AdapterCall[])": {
       "class": "keeper",
@@ -403,9 +402,10 @@
       "why": "the borrower (or anyone paying for it) repays; the borrower is the party it serves"
     },
     "RepayPeriodicFacet.autoDeductDaily(uint256)": {
-      "class": "gap",
-      "issue": "#3097",
-      "why": "the daily NFT-rental deduction; no keeper or app caller"
+      "class": "keeper",
+      "pass": "positionUpkeep",
+      "flag": "POSITION_UPKEEP_ENABLED",
+      "evidence": "apps/keeper/src/positionUpkeep.ts"
     },
     "RepayPeriodicFacet.settlePeriodicInterest(uint256,uint256,struct:LibSwap.AdapterCall[])": {
       "class": "keeper",
