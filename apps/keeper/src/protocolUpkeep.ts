@@ -35,6 +35,19 @@
 //   4. TIER-PUSH RETRY — deliver a tier push a broadcast lane is still owed,
 //      when the protocol budget can pay it (`tierPushRetry.ts`). Off unless
 //      TIER_PUSH_RETRY_ENABLED is also set.
+//   5. TIER-EXCLUSION REFRESH — re-derive the VPFI fee-tier exclusion of the
+//      loans whose record a simulated refresh shows would change
+//      (`tierExclusionRefresh.ts`). Off unless TIER_EXCLUSION_REFRESH_ENABLED
+//      is also set.
+//   6. REWARD-ENTRY INDEX COMPACTION — retire settled entries from a loan
+//      party's reward-entry index when a preview of the call shows it would
+//      retire any (`rewardIndexCompact.ts`). Off unless
+//      REWARD_INDEX_COMPACT_ENABLED is also set.
+//   7. SANCTIONS-FLAG REFRESH — bring the fail-closed sanctions registry in
+//      step with the oracle for each wallet the chain's events name whose
+//      entry disagrees with the oracle's authoritative read
+//      (`sanctionsFlagRefresh.ts`). Off unless SANCTIONS_FLAG_REFRESH_ENABLED
+//      is also set.
 //
 // Every call is simulated on the current state first and waits for its
 // receipt before the next (`stepSender.ts`). None carries value from the
@@ -42,8 +55,10 @@
 // budget's, under the facet's own rule.
 //
 // Gated by KEEPER_ENABLED + PROTOCOL_UPKEEP_ENABLED (step 3 also by
-// PREPAY_SALE_SANCTIONS_SYNC_ENABLED, step 4 by TIER_PUSH_RETRY_ENABLED).
-// Ships disarmed.
+// PREPAY_SALE_SANCTIONS_SYNC_ENABLED, step 4 by TIER_PUSH_RETRY_ENABLED, step 5
+// by TIER_EXCLUSION_REFRESH_ENABLED, step 6 by REWARD_INDEX_COMPACT_ENABLED,
+// step 7 by SANCTIONS_FLAG_REFRESH_ENABLED). No sub-step has a cadence of its
+// own, and every one shares the pass's sends. Ships disarmed.
 
 import { createPublicClient, decodeEventLog, encodeFunctionData, http, type Abi, type Address, type Hex, type PublicClient } from 'viem';
 import { AdminFacetABI, OracleFacetABI, TreasuryFacetABI, VaipakamDiamondABI } from '@vaipakam/contracts/abis';
@@ -60,6 +75,10 @@ import { PassReader } from './passReader';
 import { StepSender } from './stepSender';
 import { describeSales, emptySalesReport, SALE_RACES, SALES_ABI, syncSaleListings, type SalesSyncReport } from './prepaySaleSanctions';
 import { describeTierPush, emptyTierPushReport, retryTierPushes, TIER_PUSH_ABI, type TierPushReport } from './tierPushRetry';
+import { describeTierExclusion, emptyTierExclusionReport, refreshTierExclusions, TIER_EXCLUSION_ABI, type TierExclusionReport } from './tierExclusionRefresh';
+import { compactRewardIndexes, describeRewardIndex, emptyRewardIndexReport, REWARD_INDEX_ABI, type RewardIndexReport } from './rewardIndexCompact';
+import { describeSanctionsFlags, emptySanctionsFlagReport, refreshSanctionsFlags, type SanctionsFlagReport } from './sanctionsFlagRefresh';
+import { listLoanPartiesAfter } from './db';
 import { runIndex } from './runWindow';
 
 export const ABI = [
@@ -68,6 +87,8 @@ export const ABI = [
   ...(TreasuryFacetABI as Abi),
   ...SALES_ABI,
   ...TIER_PUSH_ABI,
+  ...TIER_EXCLUSION_ABI,
+  ...REWARD_INDEX_ABI,
   ...(VaipakamDiamondABI as Abi).filter((x) => x.type === 'error'),
 ] as Abi;
 
@@ -114,7 +135,16 @@ export interface UpkeepDeps {
   salesSync?: boolean;
   /** Step 4, the tier-push retry (TIER_PUSH_RETRY_ENABLED). Off when absent. */
   tierPush?: boolean;
-  /** Which run this is (`runIndex`), for the rotated reads of steps 3 and 4. */
+  /** Step 5, the tier-exclusion refresh (TIER_EXCLUSION_REFRESH_ENABLED). Off when absent. */
+  tierExclusion?: boolean;
+  /** Step 6, the reward-entry index compaction (REWARD_INDEX_COMPACT_ENABLED). Off when absent. */
+  rewardIndex?: boolean;
+  /** Step 7, the sanctions-flag refresh (SANCTIONS_FLAG_REFRESH_ENABLED). Off when absent. */
+  sanctionsFlags?: boolean;
+  /** Step 6's universe: the chain's loan parties after `after`, at most
+   *  `limit` (`db.ts` `listLoanPartiesAfter`). Required while step 6 is on. */
+  loanParties?: (after: string, limit: number) => Promise<string[]>;
+  /** Which run this is (`runIndex`), for the rotated reads of steps 3 to 7. */
   visit?: number;
 }
 
@@ -134,6 +164,10 @@ export interface UpkeepReport {
   sales: SalesSyncReport | null;
   /** Step 4's figures; null when the step is off. */
   tierPush: TierPushReport | null;
+  /** Steps 5, 6 and 7's figures; null when the step is off. */
+  tierExclusion: TierExclusionReport | null;
+  rewardIndex: RewardIndexReport | null;
+  sanctionsFlags: SanctionsFlagReport | null;
   refused: Map<string, string>;
   unread: Map<string, string>;
   stopped: string | null;
@@ -145,6 +179,9 @@ export async function runProtocolUpkeep(env: Env, tick: PassTick): Promise<void>
   const refreshAfterSec = readPositive(env.TIER_LTV_REFRESH_AFTER_SEC, DEFAULT_REFRESH_AFTER_SEC);
   const salesSync = subStepArmed(env, 'protocolUpkeep', 'step 3 (prepay-sale sanctions sync)', 'PREPAY_SALE_SANCTIONS_SYNC_ENABLED');
   const tierPush = subStepArmed(env, 'protocolUpkeep', 'step 4 (tier-push retry)', 'TIER_PUSH_RETRY_ENABLED');
+  const tierExclusion = subStepArmed(env, 'protocolUpkeep', 'step 5 (tier-exclusion refresh)', 'TIER_EXCLUSION_REFRESH_ENABLED');
+  const rewardIndex = subStepArmed(env, 'protocolUpkeep', 'step 6 (reward-entry index compaction)', 'REWARD_INDEX_COMPACT_ENABLED');
+  const sanctionsFlags = subStepArmed(env, 'protocolUpkeep', 'step 7 (sanctions-flag refresh)', 'SANCTIONS_FLAG_REFRESH_ENABLED');
   const visit = runIndex(tick, PASS_CADENCE_SEC * 1000);
   const resolved = env.KEEPER_PRIVATE_KEY ? resolveKeeperAccount(env.KEEPER_PRIVATE_KEY) : null;
   const keeper = resolved && 'account' in resolved ? resolved.account.address : null;
@@ -167,6 +204,10 @@ export async function runProtocolUpkeep(env: Env, tick: PassTick): Promise<void>
           ledger,
           salesSync,
           tierPush,
+          tierExclusion,
+          rewardIndex,
+          sanctionsFlags,
+          loanParties: (after, limit) => listLoanPartiesAfter(env.DB, chain.id, after, limit),
           visit,
         });
         console.log(describeReport(report));
@@ -194,6 +235,9 @@ export function describeReport(r: UpkeepReport): string {
     ...(r.tiersRejected.length > 0 ? [`tiers-rejected=${r.tiersRejected.join('; ')}`] : []),
     ...describeSales(r.sales),
     ...describeTierPush(r.tierPush),
+    ...describeTierExclusion(r.tierExclusion),
+    ...describeRewardIndex(r.rewardIndex),
+    ...describeSanctionsFlags(r.sanctionsFlags),
     ...(r.refused.size > 0 ? [`refused=${[...r.refused].map(([k, v]) => `${k}(${v})`).join(',')}`] : []),
     ...(r.unread.size > 0 ? [`unread=${[...r.unread].map(([k, v]) => `${k}(${v})`).join(',')}`] : []),
     ...(r.stopped ? [`stopped=${r.stopped}`] : []),
@@ -226,6 +270,9 @@ export async function upkeepOnce(chainId: number, diamond: Address, deps: Upkeep
     // is reached says so, never that the step is off.
     sales: deps.salesSync === true ? { ...emptySalesReport(), off: 'not reached this run' } : null,
     tierPush: deps.tierPush === true ? { ...emptyTierPushReport(), off: 'not reached this run' } : null,
+    tierExclusion: deps.tierExclusion === true ? { ...emptyTierExclusionReport(), off: 'not reached this run' } : null,
+    rewardIndex: deps.rewardIndex === true ? { ...emptyRewardIndexReport(), off: 'not reached this run' } : null,
+    sanctionsFlags: deps.sanctionsFlags === true ? { ...emptySanctionsFlagReport(), off: 'not reached this run' } : null,
     refused: sender.refused,
     unread: sender.unread,
     stopped: null,
@@ -262,6 +309,35 @@ export async function upkeepOnce(chainId: number, diamond: Address, deps: Upkeep
         cursors: deps.cursors,
         ledger: deps.ledger,
         finalized: r.finalized,
+      });
+    }
+    if (deps.tierExclusion === true) {
+      report.tierExclusion = await refreshTierExclusions(diamond, sender, {
+        readClient: deps.readClient,
+        keeper: deps.keeper,
+        sendDeadline: deps.sendDeadline,
+        cursors: deps.cursors,
+      });
+    }
+    if (deps.rewardIndex === true) {
+      const parties = deps.loanParties;
+      report.rewardIndex = parties === undefined
+        ? { ...emptyRewardIndexReport(), off: 'no source of loan parties was given' }
+        : await compactRewardIndexes(diamond, sender, {
+            readClient: deps.readClient,
+            sendDeadline: deps.sendDeadline,
+            visit: deps.visit ?? 0,
+            cursors: deps.cursors,
+            parties,
+          });
+    }
+    if (deps.sanctionsFlags === true) {
+      report.sanctionsFlags = await refreshSanctionsFlags(chainId, diamond, sender, {
+        readClient: deps.readClient,
+        sendDeadline: deps.sendDeadline,
+        visit: deps.visit ?? 0,
+        cursors: deps.cursors,
+        ledger: deps.ledger,
       });
     }
   } catch (err) {

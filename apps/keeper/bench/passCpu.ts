@@ -92,6 +92,9 @@ function makeEnv(): Env {
     PROTECTED_ACCOUNT_ENABLED: 'true',
     STANDIN_REFRESH_ENABLED: 'true',
     EXPIRED_TEARDOWN_ENABLED: 'true',
+    TIER_EXCLUSION_REFRESH_ENABLED: 'true',
+    REWARD_INDEX_COMPACT_ENABLED: 'true',
+    SANCTIONS_FLAG_REFRESH_ENABLED: 'true',
     KEEPER_PRIVATE_KEY:
       '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80',
     TG_BOT_TOKEN: 'test:token',

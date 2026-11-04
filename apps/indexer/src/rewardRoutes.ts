@@ -47,6 +47,7 @@
 
 import { redactedError } from '@vaipakam/lib/errorDescription';
 import type { Env } from './env';
+import { chainNotServed, requestedChainId } from './servedChain';
 import { jsonResponse } from './offerRoutes';
 import { INGESTED_BEFORE_TIME_KIND } from './rewardLoopLedger';
 
@@ -78,12 +79,6 @@ export function loopDayStatus(
 const DEFAULT_DAYS = 30;
 const MAX_DAYS = 90;
 
-function parseChainId(raw: string | null): number | null {
-  if (!raw) return null;
-  const n = Number.parseInt(raw, 10);
-  return Number.isFinite(n) && n > 0 ? n : null;
-}
-
 function parseDays(raw: string | null): number {
   if (!raw) return DEFAULT_DAYS;
   const n = Number.parseInt(raw, 10);
@@ -102,8 +97,12 @@ export async function handleLoopClosure(
   env: Env,
 ): Promise<Response> {
   const url = new URL(req.url);
-  const chainId = parseChainId(url.searchParams.get('chainId')) ?? 8453;
+  const chainId = requestedChainId(url);
   const days = parseDays(url.searchParams.get('days'));
+  // #2654 — a chain this Worker does not serve is refused, never answered
+  // from rows that would read as current (see `servedChain.ts`).
+  const refused = chainNotServed(env, chainId);
+  if (refused) return refused;
   const todayId = Math.floor(Date.now() / 86_400_000);
   const cutoff = todayId - days + 1;
 

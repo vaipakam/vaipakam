@@ -3,7 +3,10 @@
  * surfaces answers a chain this Worker does not index with a 503
  * `chain-not-configured`, never an empty 200.
  *
- * `/config/:chainId` is covered too. Two halves. The behavioural half calls each route for a chain no RPC is
+ * `/config/:chainId` is covered too, and so are the two reward metrics
+ * (#2654): `/metrics/loop-closure` through the same guard, and
+ * `/metrics/recycling`, dispatched before `resolveEnv`, through the
+ * pre-resolve one. Two halves. The behavioural half calls each route for a chain no RPC is
  * bound for. The structural half is what keeps the rule from being missed
  * again: every exported handler on those surfaces that reads a chain id must
  * ask `chainNotServed`, so a new route fails here until it does.
@@ -15,7 +18,9 @@ import * as loanRoutes from '../src/loanRoutes';
 import * as offerRoutes from '../src/offerRoutes';
 import { handleSignedOffersGet } from '../src/signedOfferRoutes';
 import { handleConfigSnapshot } from '../src/configSnapshot';
-import { chainNotServed, chainServed, requestedChainId } from '../src/servedChain';
+import { handleLoopClosure } from '../src/rewardRoutes';
+import { handleRecyclingSeries } from '../src/recycleRoutes';
+import { chainNotConfigured, chainNotServed, chainServed, requestedChainId } from '../src/servedChain';
 import { createSqliteD1 } from './helpers/sqliteD1';
 
 const MIGRATIONS_DIR = new URL('../migrations/', import.meta.url);
@@ -70,6 +75,9 @@ describe('an unserved chain is refused on every chain-keyed route (#1140)', () =
     ['/offers/recent', () => offerRoutes.handleOffersRecent(new Request(`https://x/offers/recent?${q}`), env())],
     ['/signed-offers', () => handleSignedOffersGet(new Request(`https://x/signed-offers?${q}`), env())],
     ['/config/:chainId', () => handleConfigSnapshot(SERVED, env())],
+    // #2654 — the reward metrics.
+    ['/metrics/loop-closure', () => handleLoopClosure(new Request(`https://x/metrics/loop-closure?${q}`), env())],
+    ['/metrics/recycling', () => handleRecyclingSeries(new Request(`https://x/metrics/recycling?${q}`), env())],
   ];
   for (const [name, call] of cases) {
     it(name, async () => {
@@ -80,6 +88,34 @@ describe('an unserved chain is refused on every chain-keyed route (#1140)', () =
   }
 });
 
+describe('the pre-resolve guard (#2654)', () => {
+  // `/metrics/recycling` runs before `resolveEnv`, so its env carries the RPC
+  // BINDING (a Secrets Store object on a deploy), never a resolved URL.
+  const binding = { get: async () => 'http://127.0.0.1:9' };
+
+  it('admits a chain whose deployment exists and whose RPC binding is present, unresolved', () => {
+    expect(chainNotConfigured({ RPC_BASE_SEPOLIA: binding }, SERVED)).toBeNull();
+  });
+
+  it('refuses a chain with no binding, an empty one, or no deployment', async () => {
+    for (const raw of [{}, { RPC_BASE_SEPOLIA: '' }, { RPC_BASE_SEPOLIA: null }]) {
+      const res = chainNotConfigured(raw, SERVED);
+      expect(res?.status).toBe(503);
+      expect(await res?.json()).toEqual({ error: 'chain-not-configured' });
+    }
+    expect(chainNotConfigured({ RPC_BASE_SEPOLIA: binding }, 999_999)?.status).toBe(503);
+  });
+
+  it('serves the recycling series for a configured chain without resolving its secret', async () => {
+    let resolved = 0;
+    const counting = { get: async () => (resolved++, 'http://127.0.0.1:9') };
+    const env = { DB: createSqliteD1(ALL_MIGRATIONS).d1, RPC_BASE_SEPOLIA: counting } as unknown as Env;
+    const res = await handleRecyclingSeries(new Request(`https://x/metrics/recycling?chainId=${SERVED}`), env);
+    expect(res.status).toBe(200);
+    expect(resolved).toBe(0);
+  });
+});
+
 describe('every handler that reads a chain id asks whether it is served', () => {
   // A handler that fails closed some other way, with the reason.
   const EXEMPT: Record<string, string> = {
@@ -87,21 +123,32 @@ describe('every handler that reads a chain id asks whether it is served', () => 
     // `chainConfig` and returns the same 503 itself.
     handleSignedOfferPost: 'fails closed through chainConfig',
   };
-  for (const file of ['loanRoutes.ts', 'offerRoutes.ts', 'signedOfferRoutes.ts']) {
+  // Each module's handlers and the guard they must ask. The recycling route
+  // runs before `resolveEnv`, so it asks the pre-resolve guard (#2654).
+  const MODULES: [string, string][] = [
+    ['loanRoutes.ts', 'chainNotServed(env, chainId)'],
+    ['offerRoutes.ts', 'chainNotServed(env, chainId)'],
+    ['signedOfferRoutes.ts', 'chainNotServed(env, chainId)'],
+    ['rewardRoutes.ts', 'chainNotServed(env, chainId)'],
+    ['recycleRoutes.ts', 'chainNotConfigured(env, chainId)'],
+  ];
+  for (const [file, guard] of MODULES) {
     const src = readFileSync(new URL(`../src/${file}`, import.meta.url), 'utf8');
     const starts = [...src.matchAll(/^export async function (\w+)\(/gm)];
     for (const [i, m] of starts.entries()) {
       const name = m[1];
       const body = src.slice(m.index, starts[i + 1]?.index ?? src.length);
-      if (!/chainId/.test(body) || name in EXEMPT) continue;
+      // Only request handlers: a scheduled pass (`captureBackingSnapshot`)
+      // reads a chain id but answers no request.
+      if (!/chainId/.test(body) || !/\(\s*req: Request/.test(body) || name in EXEMPT) continue;
       it(`${file} ${name}`, () => {
-        expect(body).toContain('chainNotServed(env, chainId)');
+        expect(body).toContain(guard);
       });
     }
   }
 
   it('no route module keeps a private copy of the guard or the parser', () => {
-    for (const file of ['loanRoutes.ts', 'offerRoutes.ts', 'signedOfferRoutes.ts']) {
+    for (const [file] of MODULES) {
       const src = readFileSync(new URL(`../src/${file}`, import.meta.url), 'utf8');
       expect(src, file).not.toMatch(/function chainConfigured\(/);
       expect(src, file).not.toMatch(/function parseChainId\(/);
