@@ -227,8 +227,11 @@ evidence that the migration has completed.
   from three days before effective maturity, never during the first day of
   the term, through the effective grace end. Its new maturity plus grace
   cannot precede the current grace end. An unreadable window holds the loan.
-  On older testnets without this read, the keeper applies the same window
-  and grace protections itself until the fresh deployment replaces them.
+- An extension is sent only when it is funded: the borrower-position
+  holder's reserve for the loan plus their other free balance of the
+  principal asset must cover what the extension would charge now. A loan
+  that falls short is skipped with the three figures named, and a loan whose
+  funding cannot be read waits for the next run.
 
 ### Compatibility with older deployments
 
