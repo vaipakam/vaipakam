@@ -68,7 +68,7 @@
       "class": "keeper",
       "pass": "graceDefault",
       "flag": "GRACE_DEFAULT_ENABLED",
-      "evidence": "packages/lib/src/routeBuilder.ts"
+      "evidence": "apps/keeper/src/closeOut.ts"
     },
     "EarlyWithdrawalDirectFacet.sellLoanViaBuyOffer(uint256,uint256)": {
       "class": "user",
@@ -502,16 +502,16 @@
       "evidence": "apps/keeper/src/rewardCloseOut/index.ts"
     },
     "RewardEpochFacet.recycleSkippedDayValue(uint256)": {
-      "class": "keeper-pending",
+      "class": "keeper",
       "pass": "rewardDeliveryConflict",
       "flag": "REWARD_DELIVERY_CONFLICT_ENABLED",
-      "pr": "#2999"
+      "evidence": "apps/keeper/src/rewardDeliveryConflict.ts"
     },
     "RewardEpochFacet.skipConflictedDay(uint256)": {
-      "class": "keeper-pending",
+      "class": "keeper",
       "pass": "rewardDeliveryConflict",
       "flag": "REWARD_DELIVERY_CONFLICT_ENABLED",
-      "pr": "#2999"
+      "evidence": "apps/keeper/src/rewardDeliveryConflict.ts"
     },
     "RewardEraFacet.drainPendingSurplus(uint256)": {
       "class": "keeper",
@@ -671,7 +671,7 @@
       "class": "keeper",
       "pass": "liquidator",
       "flag": "KEEPER_ENABLED",
-      "evidence": "packages/lib/src/routeBuilder.ts"
+      "evidence": "apps/keeper/src/keeper.ts"
     },
     "RiskFacet.triggerPartialLiquidation(uint256,uint256,struct:LibSwap.AdapterCall[])": {
       "class": "keeper",

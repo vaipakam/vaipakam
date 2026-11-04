@@ -110,7 +110,7 @@ describe('the open-work queue (#2497 r8) — keeper-private, per Diamond and pas
     await enqueueWork(k, 84532, '0xAB', 'late_ack', [w('4', 10), w('9', 12)]);
     await enqueueWork(k, 84532, '0xab', 'late_ack', [w('4', 10)]); // re-discovered: no-op
     await enqueueWork(k, 84532, '0xcd', 'late_ack', [w('4', 10)]);
-    await enqueueWork(k, 84532, '0xab', 'delivery_proof', [w('4', 10)]);
+    await enqueueWork(k, 84532, '0xab', 'delivery_conflict', [w('4', 10)]);
     expect((await listOpenWork(k, 84532, '0xab', 'late_ack', 10)).map((o) => o.item)).toEqual(['4', '9']);
     await touchOpenWork(k, 84532, '0xab', 'late_ack', ['4']);
     expect((await listOpenWork(k, 84532, '0xab', 'late_ack', 10)).map((o) => o.item), 'a checked item rotates to the back').toEqual(['9', '4']);
@@ -121,11 +121,11 @@ describe('the open-work queue (#2497 r8) — keeper-private, per Diamond and pas
     const k = db();
     await enqueueWork(k, 84532, '0xab', 'late_ack', [w('4', 10), w('9', 12)]);
     await enqueueWork(k, 84532, '0xcd', 'late_ack', [w('4', 10)]);
-    await enqueueWork(k, 84532, '0xab', 'delivery_proof', [w('4', 10)]);
+    await enqueueWork(k, 84532, '0xab', 'delivery_conflict', [w('4', 10)]);
     await finishWork(k, 84532, '0xAB', 'late_ack', ['4']);
     expect((await listOpenWork(k, 84532, '0xab', 'late_ack', 10)).map((o) => o.item)).toEqual(['9']);
     expect((await listOpenWork(k, 84532, '0xcd', 'late_ack', 10)).length, 'another Diamond').toBe(1);
-    expect((await listOpenWork(k, 84532, '0xab', 'delivery_proof', 10)).length, 'another pass').toBe(1);
+    expect((await listOpenWork(k, 84532, '0xab', 'delivery_conflict', 10)).length, 'another pass').toBe(1);
   });
 
   it('an item that never finishes holds back nothing: the rotation reaches every other one', async () => {

@@ -4,7 +4,7 @@
  * reads as unread, never one serial request per entry.
  */
 import { describe, expect, it } from 'vitest';
-import { PastRunDeadline, boundedRead, deadlineClient, deadlineFetch, readPhaseClient, settledChunkedRead, settledRead } from '../src/batchRead';
+import { PastRunDeadline, boundedRead, deadlineClient, deadlineFetch, readPhaseClient, settledChunkedRead, settledGroupedRead, settledRead } from '../src/batchRead';
 
 function client(behaviour: 'reject' | 'ok') {
   const calls = { multicall: 0, readContract: 0 };
@@ -86,6 +86,34 @@ describe('settledChunkedRead — a cutoff never strands the same tail (Codex #26
       for (const [k, r] of res) if (r.status === 'success') reached.add(k);
     }
     expect(reached.size).toBe(keys.length - 1);
+  });
+});
+
+describe('settledGroupedRead — a key\'s calls never straddle a chunk (#3090 r7)', () => {
+  it('fills chunks with whole keys, gives an oversized key a chunk of its own, and keeps each answer at its call', async () => {
+    const batches: number[][] = [];
+    const echo = {
+      multicall: async ({ contracts }: { contracts: { v: number }[] }) => (
+        batches.push(contracts.map((c) => c.v)), contracts.map((c) => ({ status: 'success', result: c.v }))
+      ),
+      readContract: async () => 0,
+    };
+    // Key k makes k calls, valued k*10 + j.
+    const keys = [1, 2, 5, 3];
+    const res = await settledGroupedRead(echo as never, keys, 4, (k) => Array.from({ length: k }, (_, j) => ({ v: k * 10 + j })), 'test', Date.now() + 60_000, 0);
+    expect(batches.map((b) => b.length)).toEqual([3, 5, 3]);
+    for (const k of keys) expect(res.get(k)!.map((r) => r.result)).toEqual(Array.from({ length: k }, (_, j) => k * 10 + j));
+  });
+
+  it('a chunk that does not come back leaves its keys wholly unread and the others wholly read', async () => {
+    const failing = {
+      multicall: async ({ contracts }: { contracts: { k: number }[] }) =>
+        contracts.map((c) => (c.k === 2 ? { status: 'failure', error: new Error('slow') } : { status: 'success', result: c.k })),
+      readContract: async () => 0,
+    };
+    const res = await settledGroupedRead(failing as never, [1, 2, 3], 2, (k) => [{ k }, { k }], 'test', Date.now() + 60_000, 0);
+    expect(res.get(2)!.every((r) => r.status === 'failure')).toBe(true);
+    expect([1, 3].every((k) => res.get(k)!.every((r) => r.status === 'success'))).toBe(true);
   });
 });
 

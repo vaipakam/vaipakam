@@ -601,40 +601,53 @@ class Step {
     return this.now;
   }
 
-  /** The accounts' settings at the head, read once a run each. */
+  /** An account's settings as read this run; undefined until a read of
+   *  them has come back. */
+  private known(a: Address): boolean {
+    return this.accounts.get(a) !== undefined;
+  }
+
+  /** Keep a settings answer that came back; an unread one changes nothing,
+   *  so a later read this run may still fill it. */
+  private learn(a: Address, got: unknown): void {
+    if (got !== undefined && !this.known(a)) this.accounts.set(a, got as ProtectedAccount);
+  }
+
+  /** The accounts' settings at the head, for those not read yet this run. */
   private async readAccounts(accounts: readonly Address[]): Promise<void> {
-    const want = [...new Set(accounts)].filter((a) => !this.accounts.has(a));
+    const want = [...new Set(accounts)].filter((a) => !this.known(a));
     const got = await this.r.many(want.map((a) => ({ functionName: 'getProtectedAccount', args: [a] })), 'accounts');
-    want.forEach((a, i) => this.accounts.set(a, got[i] as ProtectedAccount | undefined));
+    want.forEach((a, i) => this.learn(a, got[i]));
   }
 
   /**
-   * `calls` in ONE batch with the settings of the account each names (those
-   * not read yet this run), each settings read placed right after the first
-   * call naming its account; returns `calls`' answers. A row's account is
-   * named by the event that queued it, so its settings need not wait for its
-   * record. Placed side by side, a record and its settings fall in the same
-   * stretch of the batch: a read window that completes only part of a long
-   * batch still yields whole pairs, so something is sendable every run.
-   * Appending every settings read after every record would put each record
-   * a whole batch-length from its settings, and a window shorter than the
-   * batch would then complete no pair at all, run after run (Codex #3090).
+   * `calls`, each read TOGETHER with the settings of the account it names
+   * (when those are not read yet this run); returns `calls`' answers. A row's
+   * account is named by the event that queued it, so its settings need not
+   * wait for its record.
+   *
+   * Each record and its settings are one group of the reader
+   * (`PassReader.groups`), which never splits a group across chunks. A read
+   * window that completes only some chunks therefore still yields whole
+   * pairs, and a record the run reached always has the settings it needs to
+   * be acted on. The settings read is repeated for every record of the same
+   * account rather than shared: shared, it sits in one chunk, and a record of
+   * that account in another chunk can be read every run without its settings
+   * ever coming back with it (Codex #3090 r7). The repeat costs one read per
+   * extra record of an account and buys that guarantee.
    */
   private async readWithAccounts(calls: readonly AccountCall[], label: string): Promise<unknown[]> {
-    const list: { functionName: string; args: readonly unknown[] }[] = [];
-    const settingsAt = new Map<Address, number>();
-    const callAt: number[] = [];
-    for (const c of calls) {
-      callAt.push(list.length);
-      list.push({ functionName: c.functionName, args: c.args });
-      if (c.account !== null && !this.accounts.has(c.account) && !settingsAt.has(c.account)) {
-        settingsAt.set(c.account, list.length);
-        list.push({ functionName: 'getProtectedAccount', args: [c.account] });
-      }
-    }
-    const got = await this.r.many(list, label);
-    for (const [a, i] of settingsAt) this.accounts.set(a, got[i] as ProtectedAccount | undefined);
-    return callAt.map((i) => got[i]);
+    const groups = calls.map((c) => {
+      const record = { functionName: c.functionName, args: c.args };
+      return c.account !== null && !this.known(c.account)
+        ? [record, { functionName: 'getProtectedAccount', args: [c.account] }]
+        : [record];
+    });
+    const got = await this.r.groups(groups, label);
+    calls.forEach((c, i) => {
+      if (c.account !== null && got[i].length > 1) this.learn(c.account, got[i][1]);
+    });
+    return got.map((g) => g[0]);
   }
 
   /** The order this run tries the page's nominees in (`attemptOrder`). */

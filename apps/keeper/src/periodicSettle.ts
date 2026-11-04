@@ -82,7 +82,6 @@ import {
   forcedSaleQuoteAccepted,
   forcedSaleQuoteAmount,
   readForcedSalePlan,
-  readForcedSaleSurface,
   type ForcedSalePlan,
 } from '@vaipakam/lib/routeBuilder';
 import { describeFailure } from '@vaipakam/lib/errorDescription';
@@ -97,7 +96,7 @@ import { createSubrequestBudget } from './subrequestBudget';
 import { orchestrateServerQuotes, type ServerOrchestrationResult } from './serverQuotes';
 import type { PassTick } from './passSchedule';
 import { readActiveWindow, scanCutoffs, type ScanCutoffs, type ScanWindow } from './activeLoanWindow';
-import { hfStanding, LEFT_TO_LIQUIDATOR, readLoan, readsBy, surfaceSkipReason, type GraceLoan, type Skipped } from './closeOut';
+import { hfStanding, LEFT_TO_LIQUIDATOR, readLoan, readsBy, type GraceLoan, type Skipped } from './closeOut';
 import { attemptErrorReason, keeperTxPending, sendInSubmissionSlot } from './keeperSend';
 import { pickBatch } from './rotate';
 
@@ -389,17 +388,6 @@ async function judgePeriodicSettle(
 
   const early = await ownerVerdict(client, diamond, loanId);
   if (early !== null) return { kind: 'skipped', reason: early };
-
-  // A Diamond deployed before #2796 (the live testnets, until the
-  // all-waves fresh deploy) has no plan and no sized settlement, so this
-  // pass sends nothing there.
-  let surface;
-  try {
-    surface = await readForcedSaleSurface({ client, diamond });
-  } catch (err) {
-    return { kind: 'skipped', reason: surfaceSkipReason(err) };
-  }
-  if (surface !== 'sized') return { kind: 'skipped', reason: 'surface=whole (a pre-#2796 Diamond has no sized settlement)' };
 
   const loan = await readLoan(client, diamond, loanId);
   const plan = await readPlan(client, diamond, loanId);
