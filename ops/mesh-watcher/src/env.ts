@@ -3,8 +3,9 @@
  *
  * The split follows CLAUDE.md's "what still lives operator-side" rule —
  * addresses come from the committed deployment artifact (see `chains.ts`),
- * while RPC endpoints (they carry API keys) and the Telegram bot token are
- * Cloudflare secrets. Chat ids and tuning thresholds are plain vars.
+ * while RPC endpoints (they carry API keys), the ops bot token and the ops
+ * chat id are bound from the account Secrets Store and resolved once per
+ * invocation by {@link resolveEnv}. Tuning thresholds are plain vars.
  */
 
 /** Cloudflare bindings + configuration this Worker reads. */
@@ -15,9 +16,12 @@ export interface Env {
   DB: D1Database;
 
   // ── Telegram (ops-internal bot — never the user-facing TG_BOT_TOKEN) ──
-  /** Secret. Ops bot shared with `ops/offchain-data-warm`. */
+  /** Secrets Store (`TG_OPS_BOT_TOKEN`). The ops bot, never the
+   *  user-facing `TG_BOT_TOKEN`. A plain string once resolved. */
   TG_OPS_BOT_TOKEN?: string;
-  /** Var. Numeric chat id of the internal ops channel. */
+  /** Secrets Store (`TG_OPS_CHAT_ID`). Numeric chat id of the internal ops
+   *  channel. Not a credential, but kept beside the token so the pair has
+   *  one home. A plain string once resolved. */
   TG_OPS_CHAT_ID?: string;
 
   /** Secret. Bearer token for the manual `POST /run` trigger. While
@@ -77,9 +81,12 @@ export interface Env {
    *  it only for a chain that genuinely idles between blocks. */
   STALE_LOCAL_SECONDS?: string;
 
-  // ── Per-chain RPC endpoints (secrets — they carry API keys) ──────────
+  // ── Per-chain RPC endpoints (Secrets Store — they carry API keys) ───
   //
   // Keyed by EVM chain id: `RPC_8453`, `RPC_42161`, `RPC_84532`, ...
+  // Each is a Secrets Store binding to the store's slug-named secret
+  // (`RPC_84532` → `RPC_BASE_SEPOLIA`), resolved to a string by
+  // `resolveEnv`. A plain per-Worker secret of the same name also works.
   // Keying by chain id rather than a short name means a chain added to
   // `getExpectedSourceChainIds()` needs one secret and no code change.
   // A chain with no RPC configured is reported as a COVERAGE GAP rather
@@ -198,6 +205,71 @@ export function readConfig(env: Env): Config {
     staleLocalSeconds: intVar(env.STALE_LOCAL_SECONDS, 300, 'STALE_LOCAL_SECONDS'),
     telegram: readTelegramTarget(env),
   };
+}
+
+/** A Cloudflare Secrets Store secret binding — read with `.get()`. */
+export interface SecretBinding {
+  get(): Promise<string>;
+}
+
+/**
+ * The binding names that may arrive as account Secrets Store bindings
+ * (store `vaipakam-credentials`, declared under `secrets_store_secrets`
+ * in `wrangler.jsonc`): the ops bot pair and the per-chain RPC URLs. The
+ * RPC bindings keep the chain-id naming {@link rpcFor} reads, and point at
+ * the store's slug-named secrets (`RPC_84532` → `RPC_BASE_SEPOLIA`), so the
+ * watcher shares one copy of each credential with the keeper, indexer and
+ * agent instead of holding a second per-Worker copy that can drift.
+ *
+ * `WATCHER_RUN_TOKEN` is deliberately absent: it is this Worker's own
+ * per-Worker secret and arrives as a plain string.
+ */
+const STORE_BOUND = /^(RPC_\d+|TG_OPS_BOT_TOKEN|TG_OPS_CHAT_ID)$/;
+
+function isSecretBinding(v: unknown): v is SecretBinding {
+  return (
+    typeof v === 'object' &&
+    v !== null &&
+    typeof (v as { get?: unknown }).get === 'function'
+  );
+}
+
+/**
+ * Resolve the raw Worker bindings into the plain-string {@link Env} every
+ * other module reads — the "resolve at the boundary" pattern from
+ * `docs/DesignsAndPlans/SecretsStoreMigration.md` §6, used by the keeper,
+ * indexer and agent. Call it ONCE per invocation, at the entry point.
+ *
+ * Every other field (`DB`, the vars, a per-Worker secret) is copied
+ * through unchanged, so a deployment that still sets a name as a plain
+ * per-Worker secret keeps working.
+ *
+ * A store read that fails resolves to UNSET rather than throwing. That is
+ * the honest reading, and it is already reported: a missing RPC becomes a
+ * coverage gap (so the tick is not `ok`), and a missing ops-bot pair makes
+ * `deliveryConfigured` false. The error is logged by binding name only —
+ * never with the value.
+ */
+export async function resolveEnv(raw: Env): Promise<Env> {
+  const resolved: Env = { ...raw };
+  const reads: Promise<void>[] = [];
+  for (const key of Object.keys(raw)) {
+    const value = raw[key];
+    if (!STORE_BOUND.test(key) || !isSecretBinding(value)) continue;
+    reads.push(
+      value.get().then(
+        (secret) => {
+          resolved[key] = secret;
+        },
+        () => {
+          console.error(`[env] Secrets Store read failed for ${key}; treating it as unset`);
+          delete resolved[key];
+        },
+      ),
+    );
+  }
+  await Promise.all(reads);
+  return resolved;
 }
 
 /** RPC endpoint for `chainId`, or `null` when the operator has not

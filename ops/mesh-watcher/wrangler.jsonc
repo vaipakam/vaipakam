@@ -54,19 +54,27 @@
   // rule does not apply here — that rule owns the shared archive, and
   // `migrations/` in this directory owns this database.
   //
-  // OPERATOR STEP — not yet created. Run, from this directory:
-  //   wrangler d1 create vaipakam-mesh-alerts-db
-  //   # paste the returned id into `database_id` below
-  //   npm run db:migrate
+  // Created 2026-11-04 (`wrangler d1 create vaipakam-mesh-alerts-db`) and
+  // migrated with `npm run db:migrate`. A later migration applies the same way.
   "d1_databases": [
     {
       "binding": "DB",
       "database_name": "vaipakam-mesh-alerts-db",
-      "database_id": "",
+      "database_id": "b356a675-9739-4097-8705-47e01615c9f3",
       "remote": false,
     },
   ],
-  // Secrets (set via `wrangler secret put`, never committed):
+  // ── Credentials ──────────────────────────────────────────────────
+  //
+  // The ops bot pair and the RPC URLs are bound from the account Secrets
+  // Store `vaipakam-credentials` (below), the same copies the keeper,
+  // indexer and agent read, so nothing is held twice. `src/env.ts`
+  // `resolveEnv` reads them once per invocation. Set or rotate them with
+  // `wrangler secrets-store secret update`, NEVER `wrangler secret put`: a
+  // per-Worker secret of the same name cannot coexist with the binding.
+  //
+  // The one per-Worker secret (set via `wrangler secret put`, never
+  // committed):
   //   WATCHER_RUN_TOKEN — bearer token for the manual `POST /run`
   //                      trigger. REQUIRED to use that endpoint at all:
   //                      while it is unset the endpoint returns 401 and
@@ -75,25 +83,30 @@
   //                      the streak counters and sends Telegram) and a
   //                      workers.dev URL is public, so the endpoint is
   //                      fail-CLOSED. `openssl rand -hex 32`.
-  //   TG_OPS_BOT_TOKEN — the OPS-internal Telegram bot, shared with
-  //                      ops/offchain-data-warm. DELIBERATELY NOT
+  //
+  // Store-bound:
+  //   TG_OPS_BOT_TOKEN — the OPS-internal Telegram bot. DELIBERATELY NOT
   //                      `TG_BOT_TOKEN`, which is the user-facing bot
   //                      apps/keeper + apps/agent post with. See
   //                      CLAUDE.md, "Two Telegram bots".
-  //   RPC_<chainId>    — one per reward chain, keyed by EVM chain id
-  //                      (RPC_8453, RPC_42161, RPC_84532, ...). Keying
-  //                      by chain id means a mirror newly wired into
-  //                      `getExpectedSourceChainIds()` needs a secret
-  //                      and no code change. Use a dedicated provider —
-  //                      public RPCs rate-limit these read fan-outs into
-  //                      uselessness. A chain with no RPC configured is
-  //                      reported as a COVERAGE GAP, never silently
-  //                      skipped.
+  //   TG_OPS_CHAT_ID   — numeric chat id of the internal ops channel. Not
+  //                      a credential (a chat id grants nothing without
+  //                      the token), but it lives beside the token so the
+  //                      pair has one home.
+  //   RPC_<chainId>    — one per reward chain, keyed by EVM chain id and
+  //                      bound to the store's slug-named secret. A mirror
+  //                      newly wired into `getExpectedSourceChainIds()`
+  //                      needs one more binding here. A chain with no RPC
+  //                      bound is reported as a COVERAGE GAP, never
+  //                      silently skipped.
+  "secrets_store_secrets": [
+    { "binding": "TG_OPS_BOT_TOKEN", "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "TG_OPS_BOT_TOKEN" },
+    { "binding": "TG_OPS_CHAT_ID",   "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "TG_OPS_CHAT_ID" },
+    { "binding": "RPC_84532",        "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "RPC_BASE_SEPOLIA" },
+    { "binding": "RPC_421614",       "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "RPC_ARB_SEPOLIA" },
+    { "binding": "RPC_97",           "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "RPC_BNB_TESTNET" },
+  ],
   "vars": {
-    // Numeric chat id of the internal ops channel. Not a secret — a chat
-    // id alone grants nothing without the bot token.
-    "TG_OPS_CHAT_ID": "",
-
     // EVM chain id of the canonical REWARD chain (Base 8453 / Base
     // Sepolia 84532). The MIRROR set is deliberately NOT configured
     // here: it is read from the canonical Diamond's

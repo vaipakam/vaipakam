@@ -2815,10 +2815,9 @@ describing this; keep them in sync if you change the schema.
 > database the operator is in the middle of deleting — and, more to the
 > point, would DEPLOY the retired Worker, which is what consumes a cron
 > trigger. (Creating a D1 database consumes none.) `ops/mesh-watcher` is
-> the intended occupant of the trigger this one freed, and is
-> code-complete but undeployed — see that Worker's README for its setup,
-> and [`CloudflareCronSlots.md`](CloudflareCronSlots.md) for whether the
-> budget currently has room for it.
+> the occupant of the trigger this one freed (deployed 2026-11-04) — see
+> that Worker's README for its setup, and
+> [`CloudflareCronSlots.md`](CloudflareCronSlots.md) for the current count.
 >
 > **The source tree is GONE** — the lz-watcher directory was removed in #1440.
 > Review established that no config edit can make a source tree

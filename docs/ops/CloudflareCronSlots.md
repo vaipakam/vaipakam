@@ -37,7 +37,7 @@ acts — that is what `packages/lib/src/cronCadence.ts` is for.
 
 Read from the account, not from the tree.
 
-**Verified: 2026-10-28T06:50:17Z.** Re-verify with the command in
+**Verified: 2026-11-04T09:00:00Z.** Re-verify with the command in
 [Re-verifying](#re-verifying) below; update this table and this stamp in
 the same commit.
 
@@ -58,7 +58,7 @@ one expression), and splitting on it produced two nonsense fragments.
 | `vaipakam-agent` | `* * * * *` | `apps/agent` | live |
 | `vaipakam-indexer` | `* * * * *` | `apps/indexer` | live |
 | `vaipakam-offchain-data-warm` | `17 3 * * *` | `ops/offchain-data-warm` | live |
-| `vaipakam-mesh-watcher` | *(would be `*/15 * * * *`)* | `ops/mesh-watcher` | undeployed — code-complete, holds no trigger |
+| `vaipakam-mesh-watcher` | `*/15 * * * *` | `ops/mesh-watcher` | live — deployed 2026-11-04 |
 
 **The table above is the whole inventory.** A Worker not listed holds no
 trigger, and `--live` is what enforces that: any Worker armed on the account
@@ -81,9 +81,9 @@ paragraph still asserting it had none.
 
 ## What that adds up to
 
-- **Live right now:** 3 of 5
-- **Committed, live only:** 3 of 5
-- **Genuinely spare:** 2
+- **Live right now:** 4 of 5
+- **Committed, live only:** 4 of 5
+- **Genuinely spare:** 1
 
 These three lines are **derived from the inventory above, and checked against
 it** — `check-cron-slots.mjs` fails if "Live right now" disagrees with the

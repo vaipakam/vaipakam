@@ -11,7 +11,7 @@
 
 import { isAuthorized } from './auth';
 import { statusFor } from './health';
-import type { Env } from './env';
+import { resolveEnv, type Env } from './env';
 import { runTick } from './runner';
 
 export default {
@@ -22,7 +22,7 @@ export default {
     ctx: ExecutionContext,
   ): Promise<void> {
     ctx.waitUntil(
-      runTick(env).then((summary) => {
+      resolveEnv(env).then(runTick).then((summary) => {
         console.log(`mesh-watcher tick: ${JSON.stringify(summary)}`);
       }),
     );
@@ -47,7 +47,7 @@ export default {
    * mismatched token is rejected, and a MISSING `WATCHER_RUN_TOKEN`
    * closes the endpoint rather than opening it.
    */
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request: Request, rawEnv: Env): Promise<Response> {
     const url = new URL(request.url);
 
     if (url.pathname === '/run') {
@@ -57,12 +57,18 @@ export default {
           { status: 405, headers: { allow: 'POST' } },
         );
       }
-      if (!isAuthorized(request, env)) {
+      // Authenticate BEFORE resolving the store bindings. The run token is
+      // a plain per-Worker secret that `resolveEnv` never touches, so the
+      // raw env already holds it; resolving first would turn every
+      // unauthenticated request on this public URL into five Secrets
+      // Store reads, and make the 401 depend on the store being up.
+      if (!isAuthorized(request, rawEnv)) {
         return Response.json(
           { error: 'unauthorized' },
           { status: 401, headers: { 'www-authenticate': 'Bearer' } },
         );
       }
+      const env = await resolveEnv(rawEnv);
       // Probe delivery on the manual path: this is the documented
       // post-deploy verification, and certifying a pager without ever
       // exercising it is how a silent pager ships.

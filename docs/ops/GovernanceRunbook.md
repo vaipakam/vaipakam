@@ -1800,10 +1800,10 @@ lane, not a blocked one, and treating it as blocked would stall a ceremony over 
 healthy configuration.
 
 **3f. Deploy `ops/mesh-watcher` AND verify it runs clean.** It reads every
-reward chain's recycled ledger and alerts on the commitment invariants, and it is
-code-complete but **undeployed** — D1 creation, secrets and the first deploy are
-operator steps in its README. Do this before arming, not after: arming is when
-the invariants it watches start moving.
+reward chain's recycled ledger and alerts on the commitment invariants. It was
+first deployed on 2026-11-04 against the testnet mesh; its README's
+"Deploying" section carries the steps for a new account or chain set. Do this
+before arming, not after: arming is when the invariants it watches start moving.
 
 **Deploying is not verifying.** A Worker deploys successfully with a wrong RPC, a
 missing deployment stanza or a bad alert credential, and a cron that has not

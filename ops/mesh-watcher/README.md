@@ -458,6 +458,16 @@ contracts merge.
 
 ### Known limitations
 
+**It does not fit the Workers Free plan at three chains (measured
+2026-11-04).** One tick over Base Sepolia, Arbitrum Sepolia and BNB testnet
+made more than the free plan's 50 subrequests per invocation, so the last
+chain's reads and every Telegram send failed with "Too many subrequests",
+and it used 93 ms of CPU against the free plan's 10 ms. The tick reports
+this honestly (`ok: false`, coverage gaps, `deliveryVerified: false`); it
+does not pass silently. Batching RPC calls would cut the subrequests but not
+the CPU, which is viem's decoding. It needs the Workers Paid plan or a host
+outside Workers.
+
 **Endpoint identity — RESOLVED (#1445).** Every tick now calls
 `eth_chainId` per target and compares it against the id the
 `RPC_<chainId>` secret is named for, so a mis-set secret can no longer be
@@ -476,10 +486,11 @@ the raw stored slots at a pinned block.)*
 
 ## Deploying — operator steps
 
-Nothing below has been run yet; the Worker is code-complete and
-undeployed.
+First deployed 2026-11-04 against the testnet mesh (Base Sepolia canonical,
+Arbitrum Sepolia and BNB testnet mirrors). These are the steps for a fresh
+account or chain set.
 
-1. **Create the database** and paste its id into `wrangler.jsonc`:
+1. **Create the database** and put its id in `wrangler.jsonc`:
 
    ```bash
    cd ops/mesh-watcher
@@ -488,21 +499,28 @@ undeployed.
    npm run db:migrate
    ```
 
-2. **Set the secrets** — never commit these:
+2. **Credentials come from the account Secrets Store** `vaipakam-credentials`,
+   the same copies the keeper, indexer and agent read. `wrangler.jsonc`'s
+   `secrets_store_secrets` binds `TG_OPS_BOT_TOKEN` (the OPS bot, never
+   `TG_BOT_TOKEN`), `TG_OPS_CHAT_ID`, and one `RPC_<chainId>` per reward chain
+   to the store's slug-named secret (`RPC_84532` → `RPC_BASE_SEPOLIA`). Each
+   must exist in the store before the deploy; a chain added to
+   `getExpectedSourceChainIds()` needs one more binding. Create or rotate them
+   with `wrangler secrets-store secret create|update`, **never**
+   `wrangler secret put`: a per-Worker secret of a bound name cannot coexist
+   with the binding.
+
+   The one per-Worker secret is the bearer token for `POST /run`:
 
    ```bash
-   wrangler secret put TG_OPS_BOT_TOKEN     # the OPS bot, not TG_BOT_TOKEN
-   wrangler secret put WATCHER_RUN_TOKEN    # bearer token for POST /run
-   wrangler secret put RPC_84532            # canonical (Base Sepolia)
-   wrangler secret put RPC_421614           # each mirror, keyed by chain id
+   openssl rand -hex 32 | wrangler secret put WATCHER_RUN_TOKEN
    ```
 
-   `WATCHER_RUN_TOKEN` is **required** to use `POST /run` at all — while
-   it is unset the endpoint returns 401 and only the cron can drive a
-   tick. Generate one with `openssl rand -hex 32`.
+   While it is unset the endpoint returns 401 and only the cron can drive a
+   tick.
 
-3. **Set the vars** in `wrangler.jsonc`: `TG_OPS_CHAT_ID` and
-   `CANONICAL_CHAIN_ID` (84532 for Base Sepolia, 8453 for Base).
+3. **Set the vars** in `wrangler.jsonc`: `CANONICAL_CHAIN_ID` (84532 for Base
+   Sepolia, 8453 for Base).
 
 4. **Deploy and verify** before trusting the cron:
 
@@ -538,9 +556,10 @@ undeployed.
    no rejected sends, a probe that succeeded, **and zero coverage gaps** —
    a watcher not observing its full mesh is not healthy, however clean the
    chains it can see happen to be. `coverageGaps > 0`
-   means a chain is wired on-chain but not readable (no RPC secret, no
-   deployment stanza) or the source set is misconfigured — fix it before
-   relying on the alerts, or the mesh is only partly watched.
+   means a chain is wired on-chain but not readable (no RPC binding, no
+   deployment stanza, a store read that failed) or the source set is
+   misconfigured — fix it before relying on the alerts, or the mesh is only
+   partly watched.
 
 The 15-minute cron slot is the one freed by retiring
 `vaipakam-lz-watcher`, whose LayerZero surface the T-068 CCIP migration
