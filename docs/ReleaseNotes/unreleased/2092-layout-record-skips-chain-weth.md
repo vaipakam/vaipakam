@@ -1,4 +1,4 @@
-## Thread — Storage-layout record stops anchoring the chain's own WETH (PR #<n>)
+## Thread — Storage-layout record stops anchoring the chain's own WETH (PR #3161)
 
 An in-place facet refresh first checks each chain's storage-layout anchor, a fingerprint of all the code the chain's layout record governs. That set was built from every address in the chain's deployment file, which also records the chain's own WETH. On Arbitrum Sepolia (as on Arbitrum One) that WETH is an upgradeable proxy run by Arbitrum, so it counted as code the record governs. The testnet rig writes the WETH entry after the deploy has anchored, so the first refresh after the 2026-11-03 deploy was refused for a proxy the anchor did not list. A live readback showed every Vaipakam address on Arbitrum unchanged.
 
