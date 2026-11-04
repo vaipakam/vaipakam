@@ -9,7 +9,8 @@
  *
  * WHY A GATE AND NOT ONLY A DEPLOY ORDER. The indexer's deploy applies
  * migrations, verifies them and only then publishes; the keeper's and agent's
- * deploys verify before publishing (scripts/deploy-shared-d1.mjs). But the
+ * deploys read the record and publish either way (scripts/deploy-shared-d1.mjs,
+ * #3115), so for them this gate is the only guard. But the
  * indexer also auto-deploys on every merge through Cloudflare Workers Builds,
  * whose deploy command is dashboard configuration this repository cannot see
  * or pin. If that route publishes without migrating, the new code meets the
