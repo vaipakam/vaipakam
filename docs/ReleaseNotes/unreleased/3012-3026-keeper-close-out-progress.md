@@ -1,4 +1,4 @@
-## Keeper — the reward close-out sends a call only when it would progress (PR #<n>)
+## Keeper — the reward close-out sends a call only when it would progress (PR #3162)
 
 The reward heartbeat's close-out step retires closed reward entries whose
 remaining window is worth nothing, and sweeps the loans of forfeited entries
