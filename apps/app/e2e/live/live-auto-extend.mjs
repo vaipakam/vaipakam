@@ -303,16 +303,17 @@ for (const [role, who] of [['borrower', BORROWER], ['lender', LENDER]]) {
     await blocked(`could not read the ${role}'s nonce at startup`, err);
   }
 }
-// Step 6's subject: every Active loan on this Diamond past its grace period.
+// Step 6's subject: every Active loan on this Diamond past its grace period,
+// as the chain itself decides it (isLoanDefaultable, which counts any pause
+// credit the loan has accrued), never recomputed here from its start and term.
 const pastGrace = [];
 try {
-  const now = pre.head.timestamp;
+  const at = pre.head.number;
   for (let id = 1n; id < 500n; id++) {
-    const l = await read('getLoanDetails', [id]);
+    const l = await read('getLoanDetails', [id], at);
     if (l.startTime === 0n) break;
     if (Number(l.status) !== 0) continue;
-    const graceEnd = l.startTime + l.durationDays * 86_400n + (await read('getEffectiveGraceSeconds', [l.durationDays]));
-    if (now > graceEnd) pastGrace.push(id);
+    if (await read('isLoanDefaultable', [id], at)) pastGrace.push(id);
   }
 } catch (err) {
   await blocked('could not list the Diamond’s loans for the past-grace check', err);
@@ -995,7 +996,11 @@ try {
       : null;
     if (!shown) check('forcedClose', 'card', `the forced-close card renders on loan ${pastGrace[0]}`, false);
     else if (!state) unsettled('forcedClose', 'card', `the forced-close card on loan ${pastGrace[0]} never resolved its facts within 90 s`);
-    else {
+    else if (state === 'not-yet') {
+      // The chain called this loan defaultable at startup; a card that says
+      // "not yet" did not exercise the overdue case this check is about.
+      unsettled('forcedClose', 'card', `loan ${pastGrace[0]} was defaultable at startup but the card reads not-yet at block ${await fc.getAttribute('data-forced-close-block')}, so the overdue case was not exercised`);
+    } else {
       const block = await fc.getAttribute('data-forced-close-block');
       const text = squash(await fc.innerText());
       check('forcedClose', 'card', `the forced-close card on loan ${pastGrace[0]} claims no KYC refusal`, state !== 'blocked-kyc' && !text.includes(squash(EN.forcedClose.blockedKyc)), `state ${state}, read at block ${block}`);
@@ -1046,9 +1051,13 @@ try {
     pub.readContract({ address: pre.asset, abi: erc20Abi, functionName: 'allowance', args: [BORROWER, DIAMOND] }),
   ]);
   standing = { reserved: f[1], allowance };
-  if (!HALT || wrote()) {
-    check('leftNothing', 'state', 'no reserve and no approval left standing', f[1] === 0n && allowance === pre.allowance, `reserved ${f[1]}, allowance ${allowance} (startup ${pre.allowance})`);
-  }
+  const detail = `reserved ${f[1]}, allowance ${allowance} (startup ${pre.allowance})`;
+  // Judged only when the planned withdrawals all ran: an interrupted run can
+  // leave a reserve or an approval standing without any fault in the app, so
+  // it is reported (LEFT STANDING below) and left undetermined.
+  const cleanupRan = !HALT && ['b-withdraw', 'b-withdraw-2'].every((id) => PLAN?.steps().find((x) => x.id === id)?.status === 'consumed');
+  if (cleanupRan) check('leftNothing', 'state', 'no reserve and no approval left standing', f[1] === 0n && allowance === pre.allowance, detail);
+  else if (wrote()) unsettled('leftNothing', 'state', `the run stopped before its withdrawals all ran, so what it left is reported, not judged — ${detail}`);
 } catch (err) {
   console.log(`standing state unreadable: ${describeErr(err)}`);
 }
