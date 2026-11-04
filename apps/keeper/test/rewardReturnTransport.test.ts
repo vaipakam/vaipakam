@@ -608,6 +608,15 @@ describe('a run', () => {
     expect(describeReport(r[1])).toMatch(/sends-announced=0xab/);
   });
 
+  it('announces the administrator\'s untyped return of a released transport remainder (#2376)', async () => {
+    const packet = `0x${'ab'.repeat(32)}`;
+    ledger.add(MIRROR_ID, 'UntypedRemainderReturnDispatched', { packetHash: packet, dstChainId: String(BASE_ID), amount: '7', remainingAfter: '2', messageId: '0xm' }, NOW - 60, 3, '0xcd');
+    await run();
+    expect(sentNotices()).toEqual([
+      { key: `return-transport-sent:${MIRROR_ID}:0xcd:0`, text: `ℹ️ Return transport on chain ${MIRROR_ID}: returned 7 VPFI (wei) of budget packet ${packet}'s released transport remainder to chain ${BASE_ID}, untyped; 2 stays in the remainder (tx 0xcd, CCIP message 0xm).` },
+    ]);
+  });
+
   it(`announces at most ${NOTICE_PER_RUN} sends a run, oldest first, and the rest on the next`, async () => {
     for (let i = 0; i < NOTICE_PER_RUN + 3; i++) ledger.add(MIRROR_ID, 'StrandedReturnDispatched', { remitter: REMITTER, remitId: String(i), amount: '1' }, NOW - 60, i + 1, `0x${(i + 1).toString(16)}`);
     let r = await run();
