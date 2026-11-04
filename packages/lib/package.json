@@ -37,6 +37,10 @@
       "types": "./src/loanClockSnapshot.ts",
       "default": "./src/loanClockSnapshot.ts"
     },
+    "./protectedLock": {
+      "types": "./src/protectedLock.ts",
+      "default": "./src/protectedLock.ts"
+    },
     "./errorDescription": {
       "types": "./src/errorDescription.ts",
       "default": "./src/errorDescription.ts"

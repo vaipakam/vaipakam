@@ -5,15 +5,17 @@
 // open to anyone; without a keeper it waits until the owner, a signer or
 // someone else makes the call by hand.
 //
-// Per chain, per run (every minute), in this order:
+// Per chain, per run (every minute): the two Telegram steps when armed
+// (`protectedTelegram.ts`: owner alerts, then LOCK), then the steps below, in
+// an order rotated one place a run (`stepOrder`):
 //
 //   1. RELEASE — pay each queued payout whose delay has passed
 //      (`VaultPayoutFacet.releasePayout`) and move each queued position-NFT
 //      transfer whose delay has passed (`VaipakamNFTFacet.
 //      releasePositionTransfer`). A row is sent only when the chain's own
 //      record says it can go: still queued, past its release time by the
-//      block's clock, its account not locked, and, while the account requires
-//      a co-sign, co-signed. A payout whose destination has left the account's
+//      block's clock, its account not locked and with no open Telegram LOCK
+//      request, and, while the account requires a co-sign, co-signed. A payout whose destination has left the account's
 //      allowlist is cancelled by the release itself (the asset stays in the
 //      vault); the run names it apart from a paid one. A recipient the
 //      sanctions screen flags makes the release revert and the row stays
@@ -57,20 +59,24 @@ import { createPublicClient, decodeEventLog, http, type Abi, type Address, type 
 import { ProtectedAccountFacetABI, VaipakamDiamondABI, VaipakamNFTFacetABI, VaultDepositoryFacetABI, VaultPayoutFacetABI } from '@vaipakam/contracts/abis';
 import type { ChainConfig, Env } from './env';
 import { getChainConfigs } from './env';
-import { buildKeeperContext, passIsArmed, type KeeperContext } from './keeper';
+import { buildKeeperContext, passIsArmed, subStepArmed, type KeeperContext } from './keeper';
+import { AlertDelivery, type Alert, type DeliveryOutcome } from './alertDelivery';
+import { alertOwners, d1ProtectedStore, LOCK_REQUEST_TTL_SEC, lockFromTelegram, type AlertReport, type LockResult, type ProtectedStore } from './protectedTelegram';
 import type { PassTick } from './passSchedule';
 import { deadlineClient, PastRunDeadline } from './batchRead';
 import { shortErr } from './callErrors';
 import { d1EventLedger, type EventLedger, type LedgerRow } from './eventLedger';
 import { attemptOrder, readLedgerRotation, type LedgerRotation } from './ledgerRotation';
 import { d1ScanCursors, type FinalBlock, type ScanCursors } from './scanCursors';
-import { PassReader } from './passReader';
+import { boundedCall, PassReader } from './passReader';
 import { StepSender } from './stepSender';
-import { runIndex } from './runWindow';
+import { leadStageCutoffMs, runIndex } from './runWindow';
 
 /** Only the functions and events this pass names, plus every Diamond error. */
 const PICK: ReadonlySet<string> = new Set([
   'releasePayout',
+  'lockVaultFor',
+  'requestCode',
   'getPendingPayout',
   'getPendingPositionTransfer',
   'releasePositionTransfer',
@@ -118,8 +124,9 @@ function dedupe(abi: Abi): Abi {
 export const PASS_CADENCE_SEC = 60;
 /** Sends per step per chain per run. Each step has its own share, so a
  *  long payout queue cannot leave an unlock, a replacement or a signer
- *  addition (which expires) unsent run after run (`StepSender.stepBudgets`). */
-export const STEP_SENDS: Readonly<Record<string, number>> = { release: 4, transfer: 4, finalize: 4 };
+ *  addition (which expires) unsent run after run, and a burst of Telegram
+ *  LOCK requests cannot hold back the rest (`StepSender.stepBudgets`). */
+export const STEP_SENDS: Readonly<Record<string, number>> = { lock: 4, release: 4, transfer: 4, finalize: 4 };
 /** The three steps, in the order of the run whose index is 0. */
 export const STEP_NAMES = ['release', 'transfer', 'finalize'] as const;
 export type StepName = (typeof STEP_NAMES)[number];
@@ -138,6 +145,17 @@ export function stepOrder(visit: number): readonly StepName[] {
   const k = ((Math.trunc(visit) % STEP_NAMES.length) + STEP_NAMES.length) % STEP_NAMES.length;
   return [...STEP_NAMES.slice(k), ...STEP_NAMES.slice(0, k)];
 }
+
+/** The share of the read window the owner alerts may use. They run first,
+ *  so no receipt wait holds them back; the share keeps a slow channel from
+ *  using the time the LOCK step and the releases after them need. */
+export const ALERT_STAGE_SHARE = 1 / 3;
+/** The share of what is left of the read window the LOCK step may start
+ *  locks in. It runs before every release, so without a bound a stream of
+ *  LOCK requests with slow receipts would take the whole window each run and
+ *  no release or finalize would ever run (Codex #3092 r10). A lock started
+ *  inside the share may finish past it; the releases keep the rest. */
+export const LOCK_STAGE_SHARE = 1 / 2;
 
 /** Sends per chain per run: every step's share, and no more. */
 export const MAX_SENDS_PER_RUN = Object.values(STEP_SENDS).reduce((a, b) => a + b, 0);
@@ -274,6 +292,15 @@ export interface ProtectedDeps {
   ledger: EventLedger;
   /** Which run this is (`runIndex`), for the rotated batched reads. */
   visit?: number;
+  /** The Telegram steps (`protectedTelegram.ts`); each off when its flag is. */
+  telegram?: {
+    lock: boolean;
+    alerts: boolean;
+    store: ProtectedStore;
+    notify: (alert: Alert) => Promise<DeliveryOutcome>;
+    appOrigin: string;
+    nowSec?: () => number;
+  };
 }
 
 /** What a run did on one chain: its log line's figures, and what tests read. */
@@ -290,6 +317,11 @@ export interface ProtectedReport {
   finalized: string[];
   /** Rows not sent this run for a reason the chain states, by reason. */
   waiting: Map<string, number>;
+  /** Each LOCK request worked this run, with how it ended and whether its
+   *  answer reached the chat; null when the LOCK step is off. */
+  locks: LockResult[] | null;
+  /** The alert step's figures; null when it is off. */
+  alerts: AlertReport | null;
   refused: Map<string, string>;
   unread: Map<string, string>;
   /** Steps that used their whole share of sends this run; what they left
@@ -300,6 +332,11 @@ export interface ProtectedReport {
 
 export async function runProtectedAccount(env: Env, tick: PassTick): Promise<void> {
   if (!passIsArmed(env, 'protectedAccount', 'PROTECTED_ACCOUNT_ENABLED')) return;
+  const lock = subStepArmed(env, 'protectedAccount', 'Telegram LOCK', 'PROTECTED_LOCK_ENABLED');
+  const alertsOn = subStepArmed(env, 'protectedAccount', 'owner alerts', 'PROTECTED_ALERTS_ENABLED');
+  const delivery = new AlertDelivery(env);
+  const store = d1ProtectedStore(env.DB);
+  const appOrigin = env.FRONTEND_ORIGIN ?? '';
   const sendDeadline = tick.deadlineMs;
   const visit = runIndex(tick, PASS_CADENCE_SEC * 1000);
   const ledger = d1EventLedger(env.DB);
@@ -318,6 +355,7 @@ export async function runProtectedAccount(env: Env, tick: PassTick): Promise<voi
           cursors: d1ScanCursors(env.KEEPER_DB, chain.id, chain.diamond as string, 'protectedAccount'),
           ledger,
           visit,
+          telegram: { lock, alerts: alertsOn, store, notify: (a) => delivery.deliver(a), appOrigin },
         });
         console.log(describeReport(report));
       } catch (err) {
@@ -325,6 +363,7 @@ export async function runProtectedAccount(env: Env, tick: PassTick): Promise<voi
       }
     }),
   );
+  delivery.disclose('protectedAccount');
 }
 
 /** The run's one line for a chain. */
@@ -336,6 +375,14 @@ export function describeReport(r: ProtectedReport): string {
     ...(r.cancelled.length > 0 ? [`payouts-cancelled-by-release=${r.cancelled.join(',')} (destination no longer allowed; the asset stays in the vault)`] : []),
     `transfers-released=${r.transferred.join(',') || 'none'}`,
     `changes-finalized=${r.finalized.join(',') || 'none'}`,
+    ...(r.locks === null
+      ? []
+      : [`telegram-locks=${r.locks.map((l) => `${l.wallet.slice(0, 10)}(${l.outcome}${l.answered === false ? ', answer not delivered' : ''})`).join(',') || 'none'}`]),
+    ...(r.alerts === null
+      ? []
+      : [
+          `owner-alerts=sent ${r.alerts.sent}, retrying ${r.alerts.retrying}, undelivered ${r.alerts.undelivered}, stale ${r.alerts.stale}, unsubscribed ${r.alerts.unsubscribed}`,
+        ]),
     ...(r.waiting.size > 0 ? [`waiting=${[...r.waiting].map(([k, v]) => `${k}(${v})`).join(',')}`] : []),
     ...(r.refused.size > 0 ? [`refused=${[...r.refused].map(([k, v]) => `${k}(${v})`).join(',')}`] : []),
     ...(r.unread.size > 0 ? [`unread=${[...r.unread].map(([k, v]) => `${k}(${v})`).join(',')}`] : []),
@@ -369,6 +416,8 @@ export async function protectedOnce(chainId: number, diamond: Address, deps: Pro
     transferred: [],
     finalized: [],
     waiting: new Map(),
+    locks: deps.telegram?.lock === true ? [] : null,
+    alerts: deps.telegram?.alerts === true ? { sent: 0, undelivered: 0, retrying: 0, stale: 0, unsubscribed: 0 } : null,
     refused: sender.refused,
     unread: sender.unread,
     budgetReached: sender.budgetReached,
@@ -387,6 +436,45 @@ export async function protectedOnce(chainId: number, diamond: Address, deps: Pro
     }
     if (served !== chainId) return { ...report, skipped: `the RPC configured for chain ${chainId} serves chain ${served}` };
     const step = new Step(r, sender, report, deps, chainId);
+    // The alerts first: they send nothing on chain, so no receipt wait of
+    // any step can use up their time, and a warning about a queued payout is
+    // never held behind a lock or a queue of releases. They take only a
+    // share of the read window (`ALERT_STAGE_SHARE`), so a slow channel
+    // cannot in turn hold back the LOCK step. The LOCK next, before
+    // any release: a lock cancels every queued row, so nothing is released
+    // this run for an account its owner just asked to lock. And a request
+    // the LOCK step could not reach this run (its share of sends used, the
+    // read window spent) still holds back that account's releases: an owner's
+    // LOCK is never overtaken by the payout it was sent to stop. The LOCK
+    // step in turn starts locks only in a share of what is left
+    // (`LOCK_STAGE_SHARE`), so a run of LOCK requests cannot hold back every
+    // other owner's releases and matured changes run after run.
+    const tg = deps.telegram;
+    const tgDeps = tg
+      ? {
+          r,
+          sender,
+          cursors: deps.cursors,
+          store: tg.store,
+          ledger: deps.ledger,
+          chainId,
+          notify: tg.notify,
+          canSign: () => deps.context() !== null,
+          lockOn: tg.lock === true,
+          appOrigin: tg.appOrigin,
+          nowSec: tg.nowSec ?? (() => Math.floor(Date.now() / 1000)),
+          markLocked: (w: Address) => step.markLocked(w),
+          sendDeadline: deps.sendDeadline,
+        }
+      : null;
+    if (tgDeps && tg!.alerts) {
+      const stage = r.withCutoff(leadStageCutoffMs(Date.now(), r.cutoff, ALERT_STAGE_SHARE));
+      report.alerts = await alertOwners({ ...tgDeps, r: stage }, r.cutoff);
+    }
+    if (tgDeps && tg!.lock) {
+      report.locks = await lockFromTelegram(tgDeps, leadStageCutoffMs(Date.now(), r.cutoff, LOCK_STAGE_SHARE));
+      await step.holdForLockRequests(tg!.store, tgDeps.nowSec());
+    }
     const work: Record<StepName, () => Promise<void>> = {
       release: () => step.releasePayouts(),
       transfer: () => step.releaseTransfers(),
@@ -478,6 +566,34 @@ class Step {
     private readonly chainId: number,
   ) {}
 
+  /** Wallets with a LOCK request still open; null when they could not be
+   *  read, and then nothing is released this run (`holdForLockRequests`). */
+  private lockRequested: Set<Address> | null = new Set();
+
+  /**
+   * Read the wallets whose LOCK request is still open and young enough to be
+   * acted on, and hold their payouts and position transfers until the LOCK
+   * step reaches them. When the read fails, hold every release this run: a
+   * release cannot be undone, and an owner who sent LOCK sent it to stop one.
+   */
+  async holdForLockRequests(store: ProtectedStore, nowSec: number): Promise<void> {
+    try {
+      this.lockRequested = await boundedCall(this.r.cutoff, 'the open LOCK requests', () =>
+        store.pendingLockWallets(this.chainId, nowSec - LOCK_REQUEST_TTL_SEC),
+      );
+    } catch (err) {
+      if (err instanceof PastRunDeadline) throw err;
+      this.lockRequested = null;
+      this.sender.noteUnread('release', `the open LOCK requests (${shortErr(err)}); no payout or transfer is released this run`);
+    }
+  }
+
+  /** The lock step locked `wallet` this run: read it as locked from here on. */
+  markLocked(wallet: Address): void {
+    const a = this.accounts.get(wallet);
+    this.accounts.set(wallet, { ...(a ?? ({ enabled: true } as ProtectedAccount)), locked: true });
+  }
+
   private wait(why: string): void {
     this.report.waiting.set(why, (this.report.waiting.get(why) ?? 0) + 1);
   }
@@ -551,6 +667,7 @@ class Step {
 
   // 1a. Payouts.
   async releasePayouts(): Promise<void> {
+    if (this.lockRequested === null) return;
     const page = await readLedgerRotation<bigint>({
       ledger: this.deps.ledger,
       cursors: this.deps.cursors,
@@ -608,6 +725,10 @@ class Step {
           this.wait('payout-account-locked');
           continue;
         }
+        if (this.lockRequested.has(lower(p.user)!)) {
+          this.wait('payout-lock-requested');
+          continue;
+        }
         if (a.requireCosign && !p.cosigned) {
           this.wait('payout-needs-cosign');
           continue;
@@ -634,6 +755,7 @@ class Step {
 
   // 1b. Position transfers.
   async releaseTransfers(): Promise<void> {
+    if (this.lockRequested === null) return;
     const page = await readLedgerRotation<bigint>({
       ledger: this.deps.ledger,
       cursors: this.deps.cursors,
@@ -687,6 +809,10 @@ class Step {
         }
         if (a.locked) {
           this.wait('transfer-account-locked');
+          continue;
+        }
+        if (this.lockRequested.has(lower(t.from)!)) {
+          this.wait('transfer-lock-requested');
           continue;
         }
         // eslint-disable-next-line no-await-in-loop

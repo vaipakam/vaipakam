@@ -146,6 +146,25 @@ export class StepSender {
   }
 
   /**
+   * Whether the contract would take `functionName(args)` from this keeper on
+   * the current state, by simulation alone: nothing is sent, no budget is
+   * spent and nothing is recorded against a step. Null when that cannot be
+   * told: no signing key for the chain, or the RPC did not answer.
+   */
+  async wouldTake(functionName: string, args: readonly unknown[]): Promise<boolean | null> {
+    if (this.ctx === undefined) this.ctx = this.deps.context();
+    const ctx = this.ctx;
+    if (!ctx) return null;
+    try {
+      await ctx.client.simulateContract({ address: ctx.diamond, abi: this.config.abi, functionName, args, account: ctx.wallet.account! });
+      return true;
+    } catch (err) {
+      if (err instanceof PastRunDeadline) throw err;
+      return 'unread' in classify(err) ? null : false;
+    }
+  }
+
+  /**
    * Simulate `functionName` on the current state and, unless that refuses it,
    * send it and wait for its receipt. `worth`, when given, reads the
    * simulation's return value and says whether the call would do anything; a

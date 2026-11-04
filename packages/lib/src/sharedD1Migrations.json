@@ -78,5 +78,6 @@
   "0078_delete_legacy_signed_offers.sql",
   "0079_drop_recycle_day_backfill.sql",
   "0080_loan_lifecycle_guard.sql",
-  "0082_extend_reserve_actor_backfill.sql"
+  "0082_extend_reserve_actor_backfill.sql",
+  "0083_protected_lock_requests.sql"
 ]

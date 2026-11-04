@@ -158,7 +158,7 @@ describe('the write seam — the guard inside the statement', () => {
     }
     expect(bare, 'a write to a table the indexer resets, without the epoch guard in its statement').toEqual([]);
     // The seam is exercised, not vacuous: the keeper does write such tables.
-    expect([...written].sort()).toEqual(['liquidity_confidence', 'notifications', 'notify_state', 'oracle_snapshot_state', 'pre_grace_notify_state']);
+    expect([...written].sort()).toEqual(['liquidity_confidence', 'notifications', 'notify_state', 'oracle_snapshot_state', 'pre_grace_notify_state', 'protected_lock_readiness', 'protected_lock_requests']);
   });
 });
 

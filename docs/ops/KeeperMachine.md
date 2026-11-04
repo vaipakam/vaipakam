@@ -408,7 +408,9 @@ journalctl -u vaipakam-keeper -f
    `PREPAY_SALE_SANCTIONS_SYNC_ENABLED`, and its tier-push retry step
    `TIER_PUSH_RETRY_ENABLED`),
    `PREPAY_AUTO_LIST_ENABLED` (`prepayAutoList`, every minute),
-   `PROTECTED_ACCOUNT_ENABLED` (`protectedAccount`, every minute), and
+   `PROTECTED_ACCOUNT_ENABLED` (`protectedAccount`, every minute; its
+   Telegram LOCK step also needs `PROTECTED_LOCK_ENABLED`, and its owner
+   alerts `PROTECTED_ALERTS_ENABLED`), and
    `DISCOUNT_PATH_CHAIN_IDS` (a list of chain ids, not `true`: the flash-loan
    branch of the liquidator, armed per chain by
    [`FlashLoanLiquidatorRollout.md`](FlashLoanLiquidatorRollout.md) only; the

@@ -71,18 +71,28 @@ export class PassReader {
   private readonly visit: number;
 
   constructor(
-    clients: PassReadClients,
+    private readonly clients: PassReadClients,
     sendDeadline: number,
     readonly diamond: Address,
     private readonly abi: Abi,
     /** The pass's name, as a batched read's label carries it. */
     private readonly pass: string,
+    /** When reads stop, when not the send deadline less the send reserve
+     *  (`withCutoff`). */
+    cutoff: number = readCutoffMs(sendDeadline),
   ) {
     this.readClient = clients.readClient;
     this.visit = clients.visit ?? 0;
-    this.cutoff = readCutoffMs(sendDeadline);
+    this.cutoff = cutoff;
     this.finalized = finalizedBy(this.cutoff, finalizedBlockOnce(clients.client));
     this.bounded = deadlineClient(clients.client, this.cutoff);
+  }
+
+  /** The same reads, stopping at `cutoff` when that is earlier than this
+   *  reader's: for one stage of a pass that must leave the rest of the
+   *  window to the stages after it (`runWindow.leadStageCutoffMs`). */
+  withCutoff(cutoff: number): PassReader {
+    return new PassReader(this.clients, Number.POSITIVE_INFINITY, this.diamond, this.abi, this.pass, Math.min(cutoff, this.cutoff));
   }
 
   /** One read at the head, by the cutoff. */
