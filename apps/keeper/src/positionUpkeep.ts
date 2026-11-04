@@ -160,11 +160,13 @@ export interface Deduction {
   /** The fee the receipt's `AutoDailyDeducted` names; null when the receipt
    *  read held no such event. */
   fee: bigint | null;
-  /** Whether the rental closed as repaid, for the last agreed day: true or
-   *  false from the loan's status after the deduction, or 'unknown' when that
-   *  read could not finish (the run's unread list says why). Null for any
-   *  other day, whose deduction closes nothing. */
-  closed: boolean | 'unknown' | null;
+  /** Whether the rental closed as repaid: true or false from the loan's
+   *  status after the deduction, read for EVERY landed deduction, or
+   *  'unknown' when that read could not finish (the run's unread list says
+   *  why). Never inferred from the scanned day count: another caller may have
+   *  deducted a day between the scan and this call, so a deduction the scan
+   *  saw as an ordinary day can be the one that closes the rental. */
+  closed: boolean | 'unknown';
 }
 
 export interface Fill {
@@ -243,7 +245,7 @@ export async function runPositionUpkeep(env: Env, tick: PassTick): Promise<void>
 export function describeReport(r: PositionUpkeepReport): string {
   if (r.skipped) return `[keeper] positionUpkeep chain=${r.chainId}: not worked this run: ${r.skipped}`;
   const deducted = r.deducted
-    .map((d) => `${d.loanId}${d.fee === null ? '(fee unread)' : `(${d.fee})`}${d.closed === true ? ' closed' : d.closed === false ? ' open' : d.closed === 'unknown' ? ' closure-unknown' : ''}`)
+    .map((d) => `${d.loanId}${d.fee === null ? '(fee unread)' : `(${d.fee})`}${d.closed === true ? ' closed' : d.closed === false ? ' open' : ' closure-unknown'}`)
     .join(',');
   const f = r.fills;
   const fills =
@@ -433,7 +435,7 @@ async function deductRentals(r: PassReader, sender: StepSender, report: Position
   // visit to it takes the next batch however many windows the book has.
   const { picked, deferred } = pickBatch(due, scan.window.round, MAX_DEDUCTIONS_PER_RUN);
   report.deferred = deferred.length;
-  for (const { id, lastDay } of picked) {
+  for (const { id } of picked) {
     if (sender.stopped) break;
     // eslint-disable-next-line no-await-in-loop
     const res = await sender.call('deduct', String(id), 'autoDeductDaily', [id]);
@@ -441,19 +443,19 @@ async function deductRentals(r: PassReader, sender: StepSender, report: Position
       // A landed deduction is recorded from its receipt BEFORE any further
       // read, so a read that cannot finish never drops a charge that
       // happened from the run's report.
-      const d: Deduction = { loanId: id, fee: deductedFee(diamond, id, sender.receipt?.logs ?? []), closed: lastDay ? 'unknown' : null };
+      const d: Deduction = { loanId: id, fee: deductedFee(diamond, id, sender.receipt?.logs ?? []), closed: 'unknown' };
       report.deducted.push(d);
-      if (lastDay) {
-        // The last agreed day closes the rental: said from the loan's status
-        // after it, not assumed. Unread (the read cutoff passed, or the RPC
-        // did not answer), it stays 'unknown' and the run says why.
-        try {
-          // eslint-disable-next-line no-await-in-loop
-          const after = await r.one<RentalLoan>('getLoanDetails', [id]);
-          d.closed = Number(after.status) === LOAN_REPAID;
-        } catch (err) {
-          sender.noteUnread(`deduct:${id}`, `its status after the last deduction (${shortErr(err)})`);
-        }
+      // Whether it closed the rental is said from the loan's status after it,
+      // for every landed deduction: the scan's day count is not authoritative,
+      // because another caller may have deducted a day since. Unread (the read
+      // cutoff passed, or the RPC did not answer), it stays 'unknown' and the
+      // run says why.
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        const after = await r.one<RentalLoan>('getLoanDetails', [id]);
+        d.closed = Number(after.status) === LOAN_REPAID;
+      } catch (err) {
+        sender.noteUnread(`deduct:${id}`, `its status after the deduction (${shortErr(err)})`);
       }
       continue;
     }

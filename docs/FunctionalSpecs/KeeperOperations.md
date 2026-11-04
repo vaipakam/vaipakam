@@ -887,9 +887,11 @@ serves. Each ships switched off behind its own flag.
   start, because there each deduction would charge a day without counting it.
   It deducts at most one day per loan per run, so a rental several days behind
   catches up a day an hour.
-- Each deduction is reported with the fee the chain recorded for it. When it
-  was the last agreed day, the report says from the loan's status afterwards
-  whether the rental closed. A rental held back on its own record is reported
+- Each deduction is reported with the fee the chain recorded for it, and
+  with whether the rental closed, read from the loan's status afterwards for
+  every deduction (another caller may have taken a day in between, so the
+  keeper's own count of days is not what decides it), or as unknown when that
+  read could not be made. A rental held back on its own record is reported
   with why. The renter, the lender and the treasury are the only parties
   whose balances move; the keeper pays only gas and receives nothing.
 - **Backstop fill.** A borrower may opt an offer into the backstop with an

@@ -309,9 +309,9 @@ describe('a run', () => {
       expect(sent()).toEqual(['autoDeductDaily(1)']);
       expect(d.simulated.map((s) => s.id), 'nothing else is even simulated').toEqual([1n]);
       expect(r.rentalsDue).toBe(1);
-      expect(r.deducted).toEqual([{ loanId: 1n, fee: 100n, closed: null }]);
+      expect(r.deducted).toEqual([{ loanId: 1n, fee: 100n, closed: false }]);
       expect(r.rentalsHeld).toHaveLength(2);
-      expect(describeReport(r)).toContain('deducted=1(100)');
+      expect(describeReport(r)).toContain('deducted=1(100) open');
       expect(describeReport(r)).toContain('backstop-fill=off (BACKSTOP_FILL_ENABLED not armed)');
     });
 
@@ -319,6 +319,29 @@ describe('a run', () => {
       d.now = START + 5n * ONE_DAY;
       d.loans.set(1n, rental({ lastDeductTime: START + 4n * ONE_DAY, prepayAmount: 100n }));
       const r = await run();
+      expect(r.deducted).toEqual([{ loanId: 1n, fee: 100n, closed: true }]);
+      expect(describeReport(r)).toContain('deducted=1(100) closed');
+    });
+
+    it('reads closure after every deduction, so a day another caller took since the scan is not missed (Codex #3131)', async () => {
+      // The scan sees day 4 of 5 due (not the last). Another caller then takes
+      // day 4 before the keeper's call lands, so the keeper's deduction is
+      // day 5 and closes the rental.
+      d.now = START + 5n * ONE_DAY;
+      d.loans.set(1n, rental({ lastDeductTime: START + 3n * ONE_DAY, prepayAmount: 200n }));
+      const inner = d.simulateContract;
+      let raced = false;
+      d.simulateContract = async (req) => {
+        if (!raced && req.functionName === 'autoDeductDaily') {
+          raced = true;
+          const l = d.loans.get(1n)!;
+          l.prepayAmount -= l.principal;
+          l.lastDeductTime += ONE_DAY;
+        }
+        return inner(req);
+      };
+      const r = await run();
+      expect(sent()).toEqual(['autoDeductDaily(1)']);
       expect(r.deducted).toEqual([{ loanId: 1n, fee: 100n, closed: true }]);
       expect(describeReport(r)).toContain('deducted=1(100) closed');
     });
@@ -462,7 +485,7 @@ describe('a run', () => {
         expect(Date.now()).toBeLessThan(sendDeadline);
         expect(sent()).toEqual(['autoDeductDaily(1)']);
         expect(r.deducted).toEqual([{ loanId: 1n, fee: 100n, closed: 'unknown' }]);
-        expect(r.unread.get('deduct:1')).toMatch(/status after the last deduction/);
+        expect(r.unread.get('deduct:1')).toMatch(/status after the deduction/);
         expect(r.unread.has('run'), 'the late read is the deduction\'s unknown, not a lost run').toBe(false);
         expect(describeReport(r)).toContain('deducted=1(100) closure-unknown');
       } finally {
@@ -504,7 +527,7 @@ describe('a run', () => {
         receiptLateBy(25_000);
         const r = await run({ backstopFill: true, sendDeadline });
         expect(sent()).toEqual(['autoDeductDaily(1)']);
-        expect(r.deducted).toEqual([{ loanId: 1n, fee: 100n, closed: null }]);
+        expect(r.deducted).toEqual([{ loanId: 1n, fee: 100n, closed: 'unknown' }]);
         expect(r.fills).not.toBeNull();
         expect(r.fills?.filled).toEqual([]);
         expect(r.unread.get('run')).toMatch(/deadline/);
