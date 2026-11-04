@@ -227,8 +227,11 @@ evidence that the migration has completed.
   from three days before effective maturity, never during the first day of
   the term, through the effective grace end. Its new maturity plus grace
   cannot precede the current grace end. An unreadable window holds the loan.
-  On older testnets without this read, the keeper applies the same window
-  and grace protections itself until the fresh deployment replaces them.
+- An extension is sent only when it is funded: the borrower-position
+  holder's reserve for the loan plus their other free balance of the
+  principal asset must cover what the extension would charge now. A loan
+  that falls short is skipped with the three figures named, and a loan whose
+  funding cannot be read waits for the next run.
 
 ### Compatibility with older deployments
 
@@ -954,6 +957,34 @@ state.
   transaction to confirm can hold a warning back.
 - Each of the two duties ships switched off behind its own flag, and runs
   only while the protected account duty is switched on too.
+
+## Keeping the testnet sanctions stand-in fresh
+
+On test networks the delisting timelocks' cross-chain clearance check reads a
+stand-in for RedStone's Sanctions Oracle, and refuses an answer whose list is
+older than the timelock's age limit. The stand-in is only as fresh as its last
+publication, so one nobody refreshes closes automated delisting once that age
+passes. The keeper keeps it fresh (owner decision 2026-11-04), so the
+rehearsal does not go stale by accident.
+
+- Each hour, on each test network that hosts a clearance attestor, the keeper
+  reads the stand-in that attestor actually reads, and checks that it says it
+  is a testnet stand-in. It reads the age limit of every delisting timelock it
+  serves whose clearance comes from that attestor; the smallest limit binds.
+  When it can read no such timelock, it judges nothing that run and says why.
+- Once the stand-in's list is within a day of that limit, the keeper
+  re-publishes it unchanged. The keeper may do this only when the stand-in's
+  owner has named it the stand-in's refresher. A refresher can re-publish the
+  owner's list and do nothing else: it can never flag or clear an address.
+- The operators' chat is told when the stand-in is past the limit (automated
+  delisting is closed until it is refreshed), when the keeper is not the
+  named refresher, when a refresh is refused, and when a refresh that is due
+  could not be sent for a reason that will recur (no signing key, an RPC that
+  does not answer, a transaction of its own still unmined). That last alert
+  comes inside the one-day margin, before delisting closes. Each alert clears
+  once its condition does.
+- The duty refuses every mainnet, where the check reads RedStone itself. It
+  ships switched off behind its own flag, and pays only gas.
 
 ## Activation and operator visibility
 

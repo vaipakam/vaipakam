@@ -1,8 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { BaseError, ContractFunctionRevertedError, toFunctionSelector, type Address } from 'viem';
+import { BaseError, ContractFunctionRevertedError, type Address } from 'viem';
 import { AutoLifecycleFacetABI } from '@vaipakam/contracts/abis';
 import {
-  EXTEND_FUNDING_SELECTOR,
   contractWindowVerdict,
   fundingVerdict,
   readContractWindow,
@@ -60,10 +59,6 @@ describe('contract window (#2738)', () => {
 describe('extension funding (#2814)', () => {
   const ASSET = '0x00000000000000000000000000000000000000a5' as Address;
   const HOLDER = '0x00000000000000000000000000000000000000b0' as Address;
-
-  it('asks the loupe about getExtendFunding(uint256,address)', () => {
-    expect(EXTEND_FUNDING_SELECTOR).toBe(toFunctionSelector('getExtendFunding(uint256,address)'));
-  });
 
   it('passes an extension the reserve and the other free balance cover together', () => {
     expect(fundingVerdict({ asset: ASSET, reserved: 60n, otherFree: 40n, chargeNow: 100n })).toBeNull();

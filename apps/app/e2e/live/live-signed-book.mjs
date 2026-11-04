@@ -560,7 +560,10 @@ function startWsCollector(url) {
   let stopped = false;
   const connect = () => {
     if (stopped) return;
-    socket = new WebSocket(url);
+    // The browser sends its page Origin on every socket upgrade, and since
+    // #2756 the indexer answers 403 to an upgrade without a listed Origin.
+    // Send the reviewed site's, as the page would (Node sends none).
+    socket = new WebSocket(url, { headers: { Origin: new URL(SITE).origin } });
     lifecycle.push({ at: Date.now(), ev: 'connect' });
     socket.addEventListener('message', (ev) => {
       let obj = null;

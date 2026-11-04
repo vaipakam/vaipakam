@@ -20,6 +20,14 @@
  * directive refused what and under which disposition, where the console
  * text is a sentence whose wording the browser may change.
  *
+ * Only the reviewed site's own pages are judged. The listener runs in every
+ * document of the context, so a third-party window a drive opens (the
+ * Coinbase wallet popup at keys.coinbase.com/connect) reports violations of
+ * ITS OWN policy, which say nothing about this app's. Each report carries
+ * the document's origin, and the verdict counts only those from the origins
+ * it is given; any other is named as a note. A report without an origin, or
+ * a verdict given no origins, is counted (fail-closed).
+ *
  * What it cannot see, stated: a request made from a service worker (it
  * has no document), and a report the page fires in the instant before the
  * browser closes, whose binding call is cut off.
@@ -45,6 +53,7 @@ export async function installCspViolationWatch(ctx, record) {
         directive: e.effectiveDirective,
         blocked: e.blockedURI,
         disposition: e.disposition,
+        origin: location.origin,
         page: location.pathname,
       });
     });
@@ -52,13 +61,20 @@ export async function installCspViolationWatch(ctx, record) {
 }
 
 /**
- * @typedef {{ directive: string, blocked: string, disposition: string, page: string }} CspViolation
+ * @typedef {{ directive: string, blocked: string, disposition: string, origin?: string, page: string }} CspViolation
  */
 
 /** One line naming a violation. */
 export function describeViolation(v) {
   const how = v.disposition === 'report' ? 'reported (report-only)' : 'refused';
-  return `${v.directive} ${how} ${v.blocked || '(inline)'} on ${v.page}`;
+  return `${v.directive} ${how} ${v.blocked || '(inline)'} on ${v.origin ?? ''}${v.page}`;
+}
+
+/** Whether a violation is the reviewed site's own (see the header). */
+function isOwn(v, ownOrigins) {
+  if (!ownOrigins || ownOrigins.length === 0) return true;
+  if (typeof v.origin !== 'string' || v.origin === '') return true;
+  return ownOrigins.includes(v.origin);
 }
 
 /**
@@ -70,11 +86,16 @@ export function describeViolation(v) {
  * stands as it is, with the violations named beside it. Each distinct
  * violation is named once, however many routes or reloads repeated it.
  *
+ * Only violations from `ownOrigins` count (see the header);
+ * `thirdPartyCspNote` names the rest.
+ *
  * @param {number} code
- * @param {CspViolation[]} violations
+ * @param {CspViolation[]} all
+ * @param {string[]} [ownOrigins]
  * @returns {null | { code: number, message: string }}
  */
-export function cspViolationVerdict(code, violations) {
+export function cspViolationVerdict(code, all, ownOrigins) {
+  const violations = all.filter((v) => isOwn(v, ownOrigins));
   if (violations.length === 0) return null;
   const lines = [...new Set(violations.map(describeViolation))];
   const body = lines.map((l) => `  - ${l}`).join('\n');
@@ -88,4 +109,19 @@ export function cspViolationVerdict(code, violations) {
       `\nFAIL: the page reported content-policy violations (the drive's own ${was} is withdrawn):\n${body}` +
       '\n  A report-only line here is a host the narrow connect-src would refuse once enforced.',
   };
+}
+
+/**
+ * One note naming the violations other sites' pages reported under their
+ * own policies, or `null` when there are none. Printed, never a verdict.
+ *
+ * @param {CspViolation[]} all
+ * @param {string[]} [ownOrigins]
+ * @returns {null | string}
+ */
+export function thirdPartyCspNote(all, ownOrigins) {
+  const others = all.filter((v) => !isOwn(v, ownOrigins));
+  if (others.length === 0) return null;
+  const lines = [...new Set(others.map(describeViolation))].map((l) => `  - ${l}`).join('\n');
+  return `\n(third-party pages reported violations of their own content policy; not this app's, not counted:\n${lines})`;
 }

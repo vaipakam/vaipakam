@@ -221,6 +221,7 @@ function ReservePanel({
   funding,
   meta,
   canFund,
+  phase,
   metaFailed,
   busy,
   setBusy,
@@ -229,6 +230,9 @@ function ReservePanel({
   funding: ExtendFunding;
   meta: Meta;
   metaFailed: boolean;
+  /** Where the loan is against its extension window; `undefined` while the
+   *  extension state is unread. Decides what the cover line may claim. */
+  phase: 'before' | 'open' | 'closed' | 'noWindow' | undefined;
   /** `open` when the switch is on and the protocol not paused (the loan's
    *  own state is re-read live before the deposit); `unknown` when that
    *  could not be read. The withdrawal never depends on it. */
@@ -251,7 +255,11 @@ function ReservePanel({
   const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
-  const cover = fundingCover(funding);
+  // Only the latest reserve action's outcome is shown: a withdrawal records
+  // its own outside this panel, which makes an earlier deposit's stale.
+  const withdrawalOutcome = useReserveOutcomes()[loanId];
+  const record = useRecordReserveOutcome();
+  const cover = fundingCover(funding, phase);
   const parsed = meta ? parseExactUnits(input, meta.decimals) : 'invalid';
   const amount = typeof parsed === 'bigint' && parsed > 0n ? parsed : null;
 
@@ -314,6 +322,8 @@ function ReservePanel({
       await write('fundExtendReserve', [BigInt(loanId), amount]);
       approving = false;
       setInput('');
+      // A deposit makes an earlier withdrawal's outcome stale.
+      record(loanId, null);
       setDone(r.added);
     } catch (err) {
       let message = captureTxError(err);
@@ -337,16 +347,21 @@ function ReservePanel({
       <ul style={{ margin: '8px 0', paddingLeft: 18 }}>
         <li>{r.reserved(amountText(funding.reserved, meta))}</li>
         <li>{r.otherFree(amountText(funding.otherFree, meta))}</li>
-        <li>{r.chargeNow(amountText(funding.chargeNow, meta))}</li>
+        {/* An extension "now" is stated only while one can run now. */}
+        {phase === 'open' ? <li>{r.chargeNow(amountText(funding.chargeNow, meta))}</li> : null}
         <li>{r.chargeAtEnd(amountText(funding.chargeAtGraceEnd, meta))}</li>
       </ul>
-      <p>
-        {cover.coversWindow
-          ? r.coversBoth
-          : cover.coversNow
-            ? r.coversNowOnly(amountText(cover.shortWindow, meta))
-            : r.short(amountText(cover.shortWindow, meta))}
-      </p>
+      {cover.kind === 'none' ? null : (
+        <p>
+          {cover.kind === 'coversWindow'
+            ? r.coversBoth
+            : cover.kind === 'coversNowOnly'
+              ? r.coversNowOnly(amountText(cover.shortAtEnd, meta))
+              : cover.kind === 'shortNow'
+                ? r.short(amountText(cover.shortAtEnd, meta))
+                : r.shortAtEnd(amountText(cover.shortAtEnd, meta))}
+        </p>
+      )}
       <p className="muted">{r.eachTime}</p>
       <p className="muted">{r.ownership}</p>
       {fundingVerdict.kind === 'retired' ? (
@@ -393,7 +408,7 @@ function ReservePanel({
       ) : (
         <p className="muted">{canFund === 'unknown' ? r.fundUnknown : r.fundClosed}</p>
       )}
-      {done ? <Banner kind="info">{done}</Banner> : null}
+      {done && withdrawalOutcome === undefined ? <Banner kind="info">{done}</Banner> : null}
       {error ? <Banner kind="danger">{error}</Banner> : null}
       {funding.reserved > 0n ? (
         <div style={{ marginTop: 12 }}>
@@ -702,7 +717,10 @@ function AutoExtendCardBody({
 
   // The borrower-position holder's reserve, read on its own: its figures
   // and withdrawal never wait on, or fall with, the extension-state read.
-  const reservePanel = (canFund: 'open' | 'closed' | 'unknown') =>
+  const reservePanel = (
+    canFund: 'open' | 'closed' | 'unknown',
+    phase: 'before' | 'open' | 'closed' | 'noWindow' | undefined,
+  ) =>
     funding.data ? (
       <ReservePanel
         loanId={loanId}
@@ -710,6 +728,7 @@ function AutoExtendCardBody({
         meta={meta}
         metaFailed={metaQuery.isError}
         canFund={canFund}
+        phase={phase}
         busy={busy}
         setBusy={setBusy}
       />
@@ -722,7 +741,7 @@ function AutoExtendCardBody({
       <section className="card" data-testid="auto-extend">
         {header}
         <p className="muted">{state.isError ? a.unavailable : a.loading}</p>
-        {holdsBorrower ? reservePanel('unknown') : leftover}
+        {holdsBorrower ? reservePanel('unknown', undefined) : leftover}
         {outcomeBanner}
       </section>
     );
@@ -793,7 +812,7 @@ function AutoExtendCardBody({
       {holdsBorrower ? (
         <>
           <KeeperLine loanId={loanId} keepersPaused={s.keepersPaused} />
-          {reservePanel(s.switchOn && !s.paused ? 'open' : 'closed')}
+          {reservePanel(s.switchOn && !s.paused ? 'open' : 'closed', phase ?? 'noWindow')}
         </>
       ) : (
         <>

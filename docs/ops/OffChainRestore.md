@@ -561,6 +561,7 @@ then deploy.
       | `PROTECTED_ACCOUNT_ENABLED` | protected account pass skips — a protected payout or position transfer past its delay stays queued, and a matured protected-mode change (an unlock, a lowered delay, an allowlist or signer addition, a signer removal, a scheduled replacement) stays pending, until the owner, a signer or someone else makes the permissionless release or finalize call by hand | releasing protected payouts and applying matured protected-mode changes (#3088) |
       | `PROTECTED_LOCK_ENABLED` | the protected account pass's Telegram LOCK step skips — a `LOCK` an owner sends to the user bot is recorded by the agent but no lock is made, and the request expires unanswered after an hour, so the owner must lock from the app (or have a signer do it) | locking a protected vault from Telegram (#3088) |
       | `PROTECTED_ALERTS_ENABLED` | the protected account pass's owner alerts skip — an owner hears nothing on Telegram or Push when their vault is locked, a payout is queued or a replacement is proposed, and learns of it only from the app | protected-mode owner alerts (#3088) |
+      | `STANDIN_REFRESH_ENABLED` | the sanctions stand-in refresh pass skips — the testnet stand-in the clearance attestor reads is not re-published, so once it is older than the delisting timelocks' `oracleMaxAge` (7 days) their automated delisting route closes, until the admin calls `markUpdated()` by hand | keeping the testnet sanctions stand-in fresh (#3113) |
 
       The keeper's ops alert channel, `TG_OPS_BOT_TOKEN` + `TG_OPS_CHAT_ID`, is
       captured the same way: while unset the observer's operator alerts reach
@@ -1971,7 +1972,7 @@ restored on its machine in step 3; its Worker keeps `"crons": []` for good
    `GRACE_DEFAULT_ENABLED`, `PERIODIC_SETTLE_ENABLED`,
    `REWARD_SANCTIONS_KEEPER_ENABLED`,
    `REWARD_HORIZON_HEARTBEAT_ENABLED`, `REWARD_DAY_CLOSE_ENABLED`,
-   `REWARD_CLOSE_OUT_ENABLED`, `REWARD_ZEROED_DAY_ENABLED`, `REWARD_DELIVERY_CONFLICT_ENABLED`, `REWARD_RETURN_TRANSPORT_ENABLED`, `REWARD_ENTRY_SETTLE_ENABLED`, `PROTOCOL_UPKEEP_ENABLED`, `PREPAY_SALE_SANCTIONS_SYNC_ENABLED`, `TIER_PUSH_RETRY_ENABLED`, `PREPAY_AUTO_LIST_ENABLED`, `PROTECTED_ACCOUNT_ENABLED`, `PROTECTED_LOCK_ENABLED`, `PROTECTED_ALERTS_ENABLED`, `DISCOUNT_PATH_CHAIN_IDS`) empty — by editing the
+   `REWARD_CLOSE_OUT_ENABLED`, `REWARD_ZEROED_DAY_ENABLED`, `REWARD_DELIVERY_CONFLICT_ENABLED`, `REWARD_RETURN_TRANSPORT_ENABLED`, `REWARD_ENTRY_SETTLE_ENABLED`, `PROTOCOL_UPKEEP_ENABLED`, `PREPAY_SALE_SANCTIONS_SYNC_ENABLED`, `TIER_PUSH_RETRY_ENABLED`, `PREPAY_AUTO_LIST_ENABLED`, `PROTECTED_ACCOUNT_ENABLED`, `PROTECTED_LOCK_ENABLED`, `PROTECTED_ALERTS_ENABLED`, `STANDIN_REFRESH_ENABLED`, `DISCOUNT_PATH_CHAIN_IDS`) empty — by editing the
    file (`sudo -e /etc/vaipakam/keeper.env`), never by assuming what it held.
    Never paste a value from that file anywhere.
 

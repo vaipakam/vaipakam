@@ -216,6 +216,13 @@ interface BaseEnv {
    *  arms the pass. */
   PROTECTED_ALERTS_ENABLED?: string;
 
+  // Sanctions stand-in refresh pass (#3113). `secret_text` like the flags above.
+  /** 'true' arms the stand-in refresh pass (in addition to KEEPER_ENABLED):
+   *  `markUpdated()` on the testnet sanctions stand-in once it nears the
+   *  delisting timelocks' age limit. Needs the keeper named as the stand-in's
+   *  refresher; it can flag nothing and pays only gas. Testnets only. */
+  STANDIN_REFRESH_ENABLED?: string;
+
   // Protocol upkeep pass (#2984). `secret_text` like the flags above.
   /** 'true' arms the protocol upkeep pass (in addition to KEEPER_ENABLED):
    *  the buyback-intent expiry and the tier LTV cache refresh. Both
@@ -439,6 +446,7 @@ export const PLAIN_VAR_KEYS = [
   'PROTECTED_ACCOUNT_ENABLED',
   'PROTECTED_LOCK_ENABLED',
   'PROTECTED_ALERTS_ENABLED',
+  'STANDIN_REFRESH_ENABLED',
   'TIER_LTV_REFRESH_AFTER_SEC',
   'REWARD_ZEROED_DAY_ENABLED',
   'REWARD_ZEROED_DAY_WINDOW_DAYS',
@@ -626,6 +634,7 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     PROTECTED_ACCOUNT_ENABLED: raw.PROTECTED_ACCOUNT_ENABLED,
     PROTECTED_LOCK_ENABLED: raw.PROTECTED_LOCK_ENABLED,
     PROTECTED_ALERTS_ENABLED: raw.PROTECTED_ALERTS_ENABLED,
+    STANDIN_REFRESH_ENABLED: raw.STANDIN_REFRESH_ENABLED,
     TIER_LTV_REFRESH_AFTER_SEC: raw.TIER_LTV_REFRESH_AFTER_SEC,
     REWARD_ZEROED_DAY_ENABLED: raw.REWARD_ZEROED_DAY_ENABLED,
     REWARD_ZEROED_DAY_WINDOW_DAYS: raw.REWARD_ZEROED_DAY_WINDOW_DAYS,

@@ -406,6 +406,11 @@
   //   - PROTECTED_ALERTS_ENABLED — 'true' adds the #3088 owner alerts (a lock,
   //     a queued payout, a proposed replacement) to the armed pass, on
   //     Telegram and Push. Sends nothing on chain. Ships unset.
+  //   - STANDIN_REFRESH_ENABLED — 'true' arms the #3113 sanctions stand-in
+  //     refresh pass: markUpdated() on the testnet stand-in the clearance
+  //     attestor reads, a day before the delisting timelocks' age limit,
+  //     hourly. Needs the keeper named as the stand-in's refresher; it can
+  //     flag nothing. Testnets only; pays only gas. Ships unset.
   //
   // (b) GENUINE PLAIN VARS. `keep_vars: true` preserves the ones this config
   //     does NOT declare — it suppresses the delete of bindings absent from

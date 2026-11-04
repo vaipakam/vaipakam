@@ -2247,6 +2247,7 @@
         "coversBoth": "That covers an extension at any time in the window.",
         "coversNowOnly": "That covers an extension now, but by the end of the window it would be short by {{amount}}.",
         "short": "That does not cover an extension now. By the end of the window it would be short by {{amount}}.",
+        "shortAtEnd": "An extension late in the window may not be covered: by the end of the window it would be short by {{amount}}.",
         "eachTime": "Each extension charges again, for the interest of the term it closes, so a reserve that covers this one may not cover the next.",
         "ownership": "The reserve is yours. Only an extension’s charge and your own withdrawal take it out; repayment, default and liquidation leave it in place. If the borrower position moves to someone else, it no longer pays their extensions, and you can withdraw it.",
         "amount": "Amount to add ({{symbol}})",
