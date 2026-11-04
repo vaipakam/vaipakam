@@ -265,7 +265,12 @@ evidence that the migration has completed.
   still waits on, which the keeper reads from the contract itself. Once the
   contract allows it, the keeper skips the day (closing it unpaid on that
   mirror, so later days move again) and then moves whatever landed for it
-  into that mirror's recycling pool, until nothing is left. What was given up
+  into that mirror's recycling pool, until nothing is left. "Nothing left"
+  is judged from the day's whole list of landed value, not from one draw
+  coming back empty: a draw looks at only part of the list at a time, so the
+  keeper first moves past value already spent and draws again, and value
+  still waiting for its packet's attestation keeps the day in its work until
+  it can move. What was given up
   and what moved is reported from the chain's own records, never from the
   keeper's estimate. A day that opened before its parts disagreed stays paid
   and is reported as a source fault. A day that cannot be skipped because a

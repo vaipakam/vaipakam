@@ -119,8 +119,15 @@ export interface ConflictDeps {
   diamond: Address;
   abi: Abi;
   readParts(day: bigint): Promise<DayParts>;
+  /** `getTransportCoverageForDay`: what the day's epochs can give inside one
+   *  scan window, whether the window ended before the day's list did, and
+   *  what the window holds that waits for its packet's attestation. */
+  readCoverage(day: bigint): Promise<TransportCoverage>;
   sender: ConflictCaller;
 }
+
+/** `getTransportCoverageForDay`'s three returns. */
+export type TransportCoverage = readonly [available: bigint, capHit: boolean, withheldUnattested: bigint];
 
 /** A standing condition for the ops channel. */
 export interface ConflictCondition {
@@ -252,16 +259,37 @@ export async function workConflictedDay(deps: ConflictDeps, day: bigint): Promis
     }
   }
 
-  // Skipped: move what the day's epochs hold, until the contract says nothing
-  // is left. The simulation's return value is what the call would move, so a
-  // call that would move nothing is not sent, and that is the end.
+  // Skipped: move what the day's epochs hold, until nothing is left. The
+  // simulation's return value is what the call would move, so a call that
+  // would move nothing is not sent. A zero is not by itself "nothing left"
+  // (Codex #2999): a draw scans one window of the day's list from its cursor,
+  // so a window of spent epochs hides value beyond it, and an epoch whose
+  // packet is not yet attested is withheld from every draw. So on a zero the
+  // day's coverage decides: a full window of spent epochs is passed with the
+  // cursor prune and the draw tried again; withheld value waits, queued; only
+  // a window that reached the end of the list with nothing withheld finishes
+  // the day.
   let fresh = 0n;
   let recycled = 0n;
   let calls = 0;
+  let waiting: string | null = null;
   for (;;) {
     // eslint-disable-next-line no-await-in-loop
     const res: CallResult = await sender.call('recycle', String(day), 'recycleSkippedDayValue', [day], 0n, (moved) => moved !== 0n);
     if (res === 'idle') {
+      // eslint-disable-next-line no-await-in-loop
+      const [, capHit, withheld] = await deps.readCoverage(day);
+      if (withheld !== 0n) {
+        waiting = `${vpfi(withheld)} of the day's landed value waits for its packet's attestation and moves once attested`;
+        break;
+      }
+      if (capHit) {
+        // eslint-disable-next-line no-await-in-loop
+        const pruned = await sender.call('prune', String(day), 'epochPruneTransportDayCursor', [day]);
+        if (pruned === 'landed') continue;
+        if (pruned !== 'skipped') raise(rk, 'refused', `epochPruneTransportDayCursor was refused: ${pruned}. The day's value beyond its spent epochs has not moved.`);
+        break;
+      }
       out.finished = true;
       out.cleared.push(ck, rk);
       break;
@@ -280,8 +308,10 @@ export async function workConflictedDay(deps: ConflictDeps, day: bigint): Promis
   if (calls > 0) {
     out.notices.push(
       `day ${day}: ${vpfi(fresh)} fresh and ${vpfi(recycled)} recycled value moved to this mirror's recycle bucket in ${calls} call${calls === 1 ? '' : 's'}` +
-        `${out.finished ? '; nothing is left for the day' : '; more may be left, moved next run'}.`,
+        `${out.finished ? '; nothing is left for the day' : waiting !== null ? `; ${waiting}` : '; more may be left, moved next run'}.`,
     );
+  } else if (waiting !== null) {
+    out.notices.push(`day ${day}: ${waiting}.`);
   }
   // A skipped day still holding value this run could not move stays queued,
   // and raises nothing new.
@@ -399,6 +429,7 @@ async function conflictsOnce(env: Env, chain: ChainConfig, sendDeadline: number,
     diamond,
     abi: ABI,
     readParts: (day) => read<DayParts>('getDayDeliveryParts', [day]),
+    readCoverage: (day) => read<TransportCoverage>('getTransportCoverageForDay', [day]),
     sender,
   };
   const r = await workQueue(deps, open, readCutoff);

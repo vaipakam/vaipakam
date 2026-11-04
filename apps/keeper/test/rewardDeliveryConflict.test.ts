@@ -20,6 +20,7 @@ import {
   type ConflictCaller,
   type ConflictDeps,
   type DayParts,
+  type TransportCoverage,
 } from '../src/rewardDeliveryConflict';
 import { discoverConflictedDayParts, enqueueWork, listOpenWork } from '../src/db';
 import type { Env } from '../src/env';
@@ -101,14 +102,16 @@ class FakeCaller implements ConflictCaller {
   }
 }
 
-function fake(parts: DayParts[], steps: Record<string, Step[]>, writes = 4) {
+function fake(parts: DayParts[], steps: Record<string, Step[]>, writes = 4, coverage: TransportCoverage[] = [[0n, false, 0n]]) {
   const queue = [...parts];
+  const covers = [...coverage];
   const sender = new FakeCaller(steps, writes);
   const deps: ConflictDeps = {
     chainId: CHAIN,
     diamond: DIAMOND,
     abi: ABI,
     readParts: async () => (queue.length > 1 ? queue.shift()! : queue[0]),
+    readCoverage: async () => (covers.length > 1 ? covers.shift()! : covers[0]),
     sender,
   };
   return { deps, sender };
@@ -177,6 +180,40 @@ describe('workConflictedDay', () => {
     expect(sender.sent).toEqual(['recycleSkippedDayValue']);
     expect(out.finished).toBe(false);
     expect(out.notices[0]).toContain('more may be left, moved next run');
+  });
+
+  it('a zero draw behind a full window of spent epochs prunes the cursor and draws again before finishing (Codex #2999)', async () => {
+    const moved = eventLog('DayDeliveryConflictValueRecycled', { dayId: DAY, fresh: 3n * E18, recycled: 0n });
+    const { deps, sender } = fake(
+      [conflicted({ skippedAt: 1_800_090_000n })],
+      { recycleSkippedDayValue: [{ result: 0n }, { result: 3n * E18, logs: [moved] }, { result: 0n }], epochPruneTransportDayCursor: [{}] },
+      4,
+      [[0n, true, 0n], [0n, false, 0n]],
+    );
+    const out = await workConflictedDay(deps, DAY);
+    expect(sender.sent).toEqual(['epochPruneTransportDayCursor', 'recycleSkippedDayValue']);
+    expect(out.finished).toBe(true);
+    expect(out.notices[0]).toContain('3 VPFI fresh and 0 VPFI recycled value moved');
+  });
+
+  it('a zero draw while landed value waits for its attestation keeps the day queued and says so', async () => {
+    const { deps, sender } = fake([conflicted({ skippedAt: 1_800_090_000n })], { recycleSkippedDayValue: [{ result: 0n }] }, 4, [[0n, false, 5n * E18]]);
+    const out = await workConflictedDay(deps, DAY);
+    expect(sender.sent).toEqual([]);
+    expect(out.finished).toBe(false);
+    expect(out.notices[0]).toContain("5 VPFI of the day's landed value waits for its packet's attestation");
+  });
+
+  it('a prune the contract refuses is alerted, and the day stays queued', async () => {
+    const { deps } = fake(
+      [conflicted({ skippedAt: 1_800_090_000n })],
+      { recycleSkippedDayValue: [{ result: 0n }], epochPruneTransportDayCursor: [{ refuse: 'SomePruneRefusal' }] },
+      4,
+      [[0n, true, 0n]],
+    );
+    const out = await workConflictedDay(deps, DAY);
+    expect(out.finished).toBe(false);
+    expect(out.conditions.map((c) => c.key)).toContain(refusedKey(CHAIN, DAY));
   });
 
   it('a skip refused because another caller already skipped goes on to recycle, on a fresh read', async () => {
