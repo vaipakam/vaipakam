@@ -106,6 +106,11 @@ export const THREE_VERDICT_DRIVERS = new Set([
   // is not English, or the page's indexer requests got no answer: nothing
   // was compared (#1956).
   'live-recover.mjs',
+  // Exits 2 when the deployments bundle, a mock artifact or a reuse address
+  // is missing or malformed, a setup transaction (mock deploy or mint into
+  // the vault) fails, the Diamond cannot be read, or it has no sanctions
+  // oracle: nothing the adoption claim needs was compared (#3096).
+  'live-recover-nft.mjs',
   // Exits 2 when a locale bundle lacks a key it is asked to assert —
   // a missing PRECONDITION in the repo, not a product regression. It
   // is auto-discovered by the sweep, so without this entry the batch

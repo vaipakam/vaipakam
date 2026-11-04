@@ -1287,6 +1287,9 @@ export async function launch({
   // have calldata judged for one chain broadcast on another.
   signingGate = null,
   pinnedChainId = null,
+  // deviceScaleFactor: the page's pixel density. 1 (the historical default)
+  // for evidence only a drive reads; 2 for screenshots a person will look at.
+  deviceScaleFactor = 1,
 } = {}) {
   requireSiteUrl();
   const watching = watchAddress !== null;
@@ -1452,6 +1455,7 @@ export async function launch({
         : {}),
       args: ['--no-sandbox'],
       viewport: { width: 1280, height: 900 },
+      deviceScaleFactor,
       // The route shim below is the read-only guard and the egress relay,
       // and context.route() does not see a request a service worker serves.
       // The app's sw.js claims clients at once (skipWaiting + clients.claim),
