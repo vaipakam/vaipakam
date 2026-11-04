@@ -259,6 +259,29 @@ evidence that the migration has completed.
   delivery arrives in (#2828), so no indexing or proof is left for anyone to
   send afterwards, and the keeper has no delivery-proof pass. A day waits
   only on its own parts arriving.
+- A mirror day whose delivered parts disagree on the day's whole never
+  opens, and nothing can repair it. Operators are alerted as soon as the
+  conflict is recorded, told when the day may be skipped or what the skip
+  still waits on, which the keeper reads from the contract itself. Once the
+  contract allows it, the keeper skips the day (closing it unpaid on that
+  mirror, so later days move again) and then moves whatever landed for it
+  into that mirror's recycling pool, until nothing is left. "Nothing left"
+  is judged from the day's whole list of landed value, not from one draw
+  coming back empty: a draw looks at only part of the list at a time, so the
+  keeper first moves past value already spent and draws again, and value
+  still waiting for its packet's attestation keeps the day in its work until
+  it can move. What was given up
+  and what moved is reported from the chain's own records, never from the
+  keeper's estimate, and a transaction that landed is always reported, even
+  when a read after it fails; the day then stays in the keeper's work. A day that opened before its parts disagreed stays paid
+  and is reported as a source fault. A day that cannot be skipped because a
+  side whose claims may already have paid carries recycled funding is an
+  incident for a person: the keeper reports it and never retries the skip.
+  Such a day, and a source fault, leaves the keeper's work only once its
+  report has been delivered, so a failed post is posted again. A part that
+  lands on such a day later brings it back for another look. This is its own
+  pass behind its own switch, shipped off; it pays no fee, and every read
+  stops at its stage cutoff so its sends keep their time.
 - Each canonical remittance records the destination messenger it was bound
   to. Quoting and sending require a known route before any value moves.
   Replacing a receiver behind the same messenger and replacing the messenger
@@ -331,11 +354,10 @@ evidence that the migration has completed.
   incompatible reward clocks do not count toward Base's daily figures.
   Authenticated chain-wide accounting still applies to a late or mismatched
   report. A report received before Base's clock is set remains retryable.
-- Until fresh deployment replaces older testnets, the keeper may quote their
-  older B4 report only when the mirror's sender, its reporting route,
-  and Base's receiver are confirmed compatible. An unreadable or unsupported
-  channel holds every close and names the broken link. The new contracts
-  themselves retain no older-format fallback.
+- Every chain the keeper serves runs that one format; the keeper sends no
+  older-format report. A close goes out only when both ends of the reporting
+  channel are confirmed to carry the current format. An unreadable or
+  unsupported channel holds every close and names the broken link.
 - Every report or broadcast pays at most its configured per-chain send-fee
   ceiling, defaulting to 0.002 native token. An excessive quote holds the send
   and names both amounts; malformed fee settings hold all affected sends.

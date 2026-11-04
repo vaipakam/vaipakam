@@ -157,7 +157,7 @@
     "zeroExProxy": "0x2B4F947E7a3aba4e59857c97fE76eCb6F5b386B1"
   },
   "rewardBaseChainId": 84532,
-  "rewardGraceSeconds": 14400,
+  "rewardGraceSeconds": 43200,
   "isCanonicalReward": true,
   "sanctionsTestnetOverlay": "0x9d41ECA993E352e49f9de6CbeDd5990dC01BA921",
   "sanctions": {

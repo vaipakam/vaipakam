@@ -30,25 +30,16 @@
  *      borrower's consent doesn't roll forward indefinitely without
  *      a re-affirmation. Submit `extendLoanInPlace`.
  *
- *   6. Only inside the extension window (#2738): from three days before
- *      the loan's EFFECTIVE due date (the pause-adjusted loan clock) to
- *      the end of its grace, and only when the proposed term does not
- *      make the loan defaultable sooner — its new due date plus the new
- *      term's grace must not be earlier than the old due date plus the
- *      old grace. A shorter term lands in a smaller grace bucket, so
- *      "the end moves later" alone does not hold that. An unread clock
- *      (pause log or grace buckets) skips the chain for the run rather
- *      than deciding against a date the chain may not hold the loan to.
- *      The window comes from the contract's own statement of it,
- *      `getAutoExtendWindow(loanId)`, wherever the Diamond routes that view;
- *      the term rule is the contract's too (`ExtensionMustExtend`,
- *      `ExtensionShortensGrace`), refused at the send's gas estimate, so
- *      nothing is broadcast. A Diamond deployed before the contract half of
- *      #2738 routes neither the view nor the rules: there, and only there,
- *      the pass applies its interim copy of both on the loan clock
- *      (`extendWindowVerdict`), a bridge removed at the all-waves fresh
- *      deploy (#2921). Which one applies is read once per chain per run
- *      from the Diamond's loupe.
+ *   6. Only inside the extension window (#2738), as the contract states
+ *      it for the loan: `getAutoExtendWindow(loanId)`, from three days
+ *      before the loan's effective due date to the end of its grace. A
+ *      window that cannot be read leaves that loan for the next run. The
+ *      term rules are the contract's too (`ExtensionMustExtend`,
+ *      `ExtensionShortensGrace`): a term that does not move the due date
+ *      later, or makes the loan defaultable sooner, is refused at the
+ *      send's gas estimate, so nothing is broadcast. (The keeper's interim
+ *      copy of these rules, for Diamonds deployed before #2738's contract
+ *      half, was removed at the all-waves fresh deploy, #2921.)
  *
  *   7. Only when the extension is funded (#2814): the borrower-position
  *      holder's reserve for the loan plus their other free vault balance of
@@ -90,16 +81,8 @@ import {
   AdminFacetABI,
   AutoLifecycleFacetABI,
   DIAMOND_ABI_VIEM,
-  LoanFacetABI,
   MetricsFacetABI,
 } from '@vaipakam/contracts/abis';
-import {
-  graceSecondsFromBuckets,
-  loanDeadlines,
-  readPauseLog,
-  type GraceBucket,
-  type PauseLog,
-} from '@vaipakam/lib/loanClock';
 import type { ChainConfig, Env } from './env';
 import type { PassTick } from './passSchedule';
 import { getChainConfigs } from './env';
@@ -113,7 +96,6 @@ import { revertErrorName } from '@vaipakam/lib/contractRevert';
 const ADMIN_ABI: Abi = AdminFacetABI as Abi;
 const AUTO_LIFECYCLE_ABI: Abi = AutoLifecycleFacetABI as Abi;
 const METRICS_ABI: Abi = MetricsFacetABI as Abi;
-const LOAN_ABI: Abi = LoanFacetABI as Abi;
 
 /** Pagination size for `getActiveLoansPaginated`. */
 const SCAN_PAGE = 200n;
@@ -133,36 +115,6 @@ const MAX_EXTENDS_PER_TICK = 5;
 const DEFAULT_EXTEND_DAYS = 30n;
 
 const SECONDS_PER_DAY = 86_400n;
-
-/** #2738 — how long before a loan's effective due date the window to extend
- *  it opens. The window closes at the end of the loan's grace, which the
- *  contract already enforces (`ExtensionGraceExpired`). The value is the one
- *  the contract half of #2738 will enforce and publish. */
-export const EXTEND_WINDOW_SECONDS = 3n * SECONDS_PER_DAY;
-
-/** What the INTERIM extension window needs to know about the chain, read
- *  once per chain per run: the pause record behind the loan clock, and the
- *  grace buckets that size each term's grace. Only a Diamond that does not
- *  route `getAutoExtendWindow` needs it (#2921). */
-export interface ExtendClock {
-  pauseLog: PauseLog;
-  graceBuckets: readonly GraceBucket[];
-}
-
-/** Where a chain's extension window comes from this run (#2738): the
- *  contract's view, or — on a Diamond that predates it — the keeper's
- *  interim copy on the loan clock (#2921). */
-export type ExtendWindowSource =
-  | { kind: 'contract' }
-  | { kind: 'interim'; clock: ExtendClock };
-
-/** `AutoLifecycleFacet.getAutoExtendWindow(uint256)`, the selector the loupe
- *  is asked about. */
-export const AUTO_EXTEND_WINDOW_SELECTOR = toFunctionSelector(
-  (AutoLifecycleFacetABI as readonly { type: string; name?: string }[]).find(
-    (i): i is AbiFunction => i.type === 'function' && i.name === 'getAutoExtendWindow',
-  ) as AbiFunction,
-);
 
 /** `AutoLifecycleFacet.getExtendFunding(uint256,address)` (#2814), the
  *  funding pre-check's selector. */
@@ -233,39 +185,6 @@ export function contractWindowVerdict(opensAt: bigint, closesAt: bigint, now: bi
   return null;
 }
 
-/**
- * INTERIM (#2921 — removed at the all-waves fresh deploy): the keeper's own
- * copy of the #2738 rules, for a Diamond that does not route
- * `getAutoExtendWindow` and so enforces neither. Whether an extension of
- * `loan` to `newDurationDays` from `now` is inside the window and keeps the
- * loan's grace-inclusive deadline; null when it is, otherwise the reason it
- * is not. The new term starts at `now`, as `extendLoanInPlace` restarts it,
- * so it carries no pause credit yet.
- */
-export function extendWindowVerdict(
-  loan: { startTime: bigint; durationDays: bigint },
-  newDurationDays: bigint,
-  clock: ExtendClock,
-  now: bigint,
-): string | null {
-  const old = loanDeadlines(
-    loan,
-    graceSecondsFromBuckets(clock.graceBuckets, loan.durationDays),
-    clock.pauseLog,
-    now,
-  );
-  const opensAt = old.maturity - EXTEND_WINDOW_SECONDS;
-  if (now < opensAt) return `window opens at ${opensAt} (due ${old.maturity})`;
-  if (now > old.graceEnd) return `past grace (ended ${old.graceEnd})`;
-  const newMaturity = now + newDurationDays * SECONDS_PER_DAY;
-  if (newMaturity <= old.maturity) return `a ${newDurationDays}-day term would not move the due date ${old.maturity} later`;
-  const newGraceEnd = newMaturity + graceSecondsFromBuckets(clock.graceBuckets, newDurationDays);
-  if (newGraceEnd < old.graceEnd) {
-    return `a ${newDurationDays}-day term would make the loan defaultable sooner (grace end ${newGraceEnd} < ${old.graceEnd})`;
-  }
-  return null;
-}
-
 interface ExtendCaps {
   enabled: boolean;
   minRateBps: bigint;
@@ -321,18 +240,6 @@ async function processChain(env: Env, chain: ChainConfig, deadlineMs: number, ru
   const ctx = buildKeeperContext(env, chain, publicClient, { notAfterMs: deadlineMs });
   if (!ctx) return;
 
-  // #2738 — where the extension window comes from. When it cannot be
-  // established, no loan's window is known, so none is extended this run.
-  let source: ExtendWindowSource;
-  try {
-    source = await readExtendWindowSource(publicClient, chain.diamond as Address);
-  } catch (err) {
-    console.log(
-      `[keeper] autoLifecycle chain=${chain.id} skipped: extension window unread — ${redactedError(err, { stack: false })}`,
-    );
-    return;
-  }
-
   // #2814 — whether this Diamond can say if an extension is funded. When the
   // loupe does not read, the pre-check is simply not run this time: the
   // send's estimate refuses an unfunded extension either way.
@@ -373,7 +280,6 @@ async function processChain(env: Env, chain: ChainConfig, deadlineMs: number, ru
         ctx.wallet,
         chain.diamond as Address,
         loanIdBig,
-        source,
         fundingRouted === true,
       );
       if (fired) submitted++;
@@ -389,7 +295,6 @@ async function tryExtend(
   wallet: import('viem').WalletClient,
   diamond: Address,
   loanIdBig: bigint,
-  source: ExtendWindowSource,
   fundingRouted: boolean,
 ): Promise<boolean> {
   // Read both-side caps. Each getter self-applies the staleness
@@ -438,9 +343,7 @@ async function tryExtend(
 
   // #2738 — only inside the window. Read after the caps: most loans carry
   // no consent and never reach this read.
-  const outside = source.kind === 'contract'
-    ? await readContractWindow(publicClient, diamond, loanIdBig, nowSec)
-    : await interimWindowVerdict(publicClient, diamond, loanIdBig, newDurationDays, source.clock, nowSec);
+  const outside = await readContractWindow(publicClient, diamond, loanIdBig, nowSec);
   if (outside !== null) {
     console.log(`[keeper] autoLifecycle loan=${loanIdBig} not extended: ${outside}`);
     return false;
@@ -483,29 +386,6 @@ async function tryExtend(
   }
 }
 
-/**
- * #2738 — where `diamond`'s extension window comes from: one loupe read of
- * `getAutoExtendWindow`. Routed, the contract states the window and enforces
- * the term rules itself; not routed, the Diamond predates both, and the
- * interim copy runs on the loan clock read here (#2921). A failed read
- * throws, and the caller skips the chain for the run.
- */
-export async function readExtendWindowSource(
-  client: PublicClient,
-  diamond: Address,
-): Promise<ExtendWindowSource> {
-  if (await routes(client, diamond, AUTO_EXTEND_WINDOW_SELECTOR)) return { kind: 'contract' };
-  const [pauseLog, graceBuckets] = await Promise.all([
-    readPauseLog({ client, diamond }),
-    client.readContract({
-      address: diamond,
-      abi: DIAMOND_ABI_VIEM,
-      functionName: 'getGraceBuckets',
-    }) as Promise<readonly GraceBucket[]>,
-  ]);
-  return { kind: 'interim', clock: { pauseLog, graceBuckets } };
-}
-
 /** The contract's window for one loan, judged at `now`; null when open,
  *  otherwise the reason the loan is not extended. A loan that left Active
  *  since its page was read answers `LoanNotActive`; any other failure leaves
@@ -529,23 +409,4 @@ export async function readContractWindow(
     return `window unread — ${redactedError(err, { stack: false })}`;
   }
   return contractWindowVerdict(window[0], window[1], now);
-}
-
-/** INTERIM (#2921): the keeper's own copy of the #2738 rules on a Diamond
- *  that predates them. */
-async function interimWindowVerdict(
-  client: PublicClient,
-  diamond: Address,
-  loanId: bigint,
-  newDurationDays: bigint,
-  clock: ExtendClock,
-  now: bigint,
-): Promise<string | null> {
-  const loan = (await client.readContract({
-    address: diamond,
-    abi: LOAN_ABI,
-    functionName: 'getLoanDetails',
-    args: [loanId],
-  })) as { startTime: bigint; durationDays: bigint };
-  return extendWindowVerdict(loan, newDurationDays, clock, now);
 }
