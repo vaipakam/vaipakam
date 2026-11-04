@@ -1179,10 +1179,12 @@ contract RepatriationFacet is
      *         untyped remainder. The value is never typed here: it leaves the
      *         `Unclassified` row as a non-classification exit (`disposed`),
      *         and Base books what arrives to its recycle bucket as relocated
-     *         custody. The message names the Base Diamond that sent the
-     *         packet (`p.remitter`), so a Base Diamond that replaced it fails
-     *         the delivery closed and re-executable, exactly as the stranded
-     *         return does. CHUNKED, and mirror-outbound capacity is checked
+     *         custody. It goes to the packet's ISSUER: the chain that
+     *         delivered it (`p.sourceChainId`, transport-authenticated) and
+     *         the Base Diamond there (`p.remitter`), never the Base this
+     *         mirror follows when the call runs (#3015's rule). A Base Diamond
+     *         that replaced the issuer fails the delivery closed and
+     *         re-executable, exactly as the stranded return does. CHUNKED, and mirror-outbound capacity is checked
      *         before any effect, under the same lane pairing rule as the other
      *         returns. A failed send reverts the whole call with the remainder
      *         intact.
@@ -1215,7 +1217,11 @@ contract RepatriationFacet is
                 s.strandedRecoveries[keccak256(abi.encode(p.remitter, p.remitId))];
             if (sr.amount != 0 || sr.held != 0) revert UntypedReturnPacketReserved(packetHash);
         }
-        uint32 dst = s.baseChainId;
+        // Home is the ISSUER of the packet — the chain that delivered it, as
+        // the transport authenticated it — never whichever Base this mirror
+        // follows now (the #3015 rule). A mirror that rebound, detached or
+        // retired since still returns the value to the Base that sent it.
+        uint32 dst = p.sourceChainId;
         _assertWithinLaneCapacity(s, dst, amount, false);
 
         LibRewardCustody.takeFromReleasedRemainder(s, packetHash, amount);

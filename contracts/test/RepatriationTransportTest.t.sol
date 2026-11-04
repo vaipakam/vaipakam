@@ -1897,6 +1897,24 @@ contract RepatriationTransportTest is SetupTest {
         assertEq(_repat().getUntypedRemainderReturnedCumulative(), 10 ether);
     }
 
+    /// The return goes to the packet's issuer, not to whichever Base the
+    /// mirror follows when the send runs (#3015's rule): a mirror that has
+    /// since rebound to another Base still sends it to the chain that
+    /// delivered it.
+    function test_UntypedReturn_GoesToTheIssuer_NotTheCurrentBase() public {
+        bytes32 h = _releasedRemainder(5 ether, true);
+        // Detach, then bind to another Base: the rebind route.
+        _rep().setBaseChainId(0);
+        _rep().setBaseChainId(CHAIN_OP);
+        _repat().sendUntypedRemainderReturn(h, 2 ether, payable(address(this)));
+        assertEq(ccip.lastDst(), uint256(CHAIN_BASE), "to the chain that delivered the packet");
+        assertEq(
+            ccip.lastPayload(),
+            abi.encode(ReturnWire.RETURN_WIRE_TAG_UNTYPED_REMAINDER_U1, BASE_DEPLOYMENT, h, uint256(2 ether)),
+            "naming the Base Diamond that sent it"
+        );
+    }
+
     /// Only a RELEASED remainder leaves: a parked-but-unacknowledged batch is
     /// refused, as is a packet with no batch, a zero amount and an amount past
     /// what the remainder holds. Nothing moves on any refusal.

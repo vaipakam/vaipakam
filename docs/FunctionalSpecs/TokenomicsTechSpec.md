@@ -1262,7 +1262,9 @@ Delivered-funding position (recycling completion plan §M7 / #1434 P1-a — reco
   the delivery's untyped remainder by exactly what it sends, is recorded as
   a disposal (never as a classification, so it is neither fresh nor
   recycled on the mirror), and leaves custody measured. It goes only toward
-  the canonical deployment that sent the delivery; a deployment that
+  the canonical deployment that sent the delivery, on the chain that sent
+  it, even after the mirror has detached or bound to another canonical
+  chain (the same rule as a repatriation instruction); a deployment that
   replaced it refuses the return, and the message stays retryable. A
   remainder not yet acknowledged, a delivery with no epoch, and an amount
   past what is parked are all refused with nothing moved.
