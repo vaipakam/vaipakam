@@ -1,4 +1,4 @@
-## Thread — Live driver for the auto-extend card and extension reserves (PR #<n>)
+## Thread — Live driver for the auto-extend card and extension reserves (PR #3124)
 
 A new manual-only live driver, `live-auto-extend.mjs`, drives the loan page's automatic-extension card and the extension reserve through the deployed app with two dev wallets on Base Sepolia. The borrower and the lender each save their limits through the six-row review receipt, and the chain must then hold exactly those limits. The borrower reads the overlap as limits, not as a promise. The borrower then adds a small reserve, withdraws it from the loan page, adds it again, and withdraws it from Claims. Every signature goes through one ordered write plan in the wallet, with each request's full expected payload. Every fund movement is checked against its own event and a read pinned to its block.
 
