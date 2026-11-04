@@ -1267,6 +1267,13 @@ post-launch `D*` will have such loans.
 
 ### Step 3 — complete EVERY keeper prerequisite (still before the arm)
 
+**This step is the one arming checklist for the keeper's reward passes** (#2225).
+Other documents name only the prerequisites their own reader needs:
+IncidentRunbook §2b the remittance-specific ones, which it marks as not the
+whole gate, and the keeper README's flag table each flag's own. Check this list,
+not theirs, before setting any reward flag. When a prerequisite changes, change
+it here.
+
 **Which of these apply depends on which Gate B branch you took, and the split is
 not cosmetic — items that do not apply must be SKIPPED, not performed anyway.** On the
 **M3 / active-mirror** branch, all of it applies. On the **Base-only /
@@ -1286,13 +1293,27 @@ signer leaves those writes failing; the RL-4 readback (3f-bis); and
 remittance to authorize — and **not** `REWARD_COMMIT_ENABLED` or
 `REWARD_REMIT_ENABLED`, whose passes have no mirrors to serve.
 
-**3a. Apply the D1 migrations** — from `apps/indexer/`:
+**3a. Apply the keeper's private D1 migrations** — from the repo root:
 
 ```
-wrangler d1 migrations apply vaipakam-warm --remote
+pnpm --filter @vaipakam/keeper run migrate
 ```
 
-covering `0043_keeper_commitment_scan.sql` and `0044_keeper_remit_ack.sql`.
+The commitment-scan and remit-ack tables the reward passes read
+(`keeper_commitment_scan`, `keeper_commitment_day`, `keeper_remit_ack_frontier`,
+`keeper_remit_ack`) live in the keeper's private database, `vaipakam-keeper-db`,
+since #2450. Its schema is `apps/keeper/migrations/`, and the keeper's own
+`run deploy` is its one applier (`run migrate` applies it alone). Shared
+migrations `0043` and `0044` first created these tables in `vaipakam-warm`;
+indexer migration `0064` dropped those copies, so applying the shared schema
+does not satisfy this step. The shared schema still has to be current, but the
+indexer's deploy applies it.
+
+The keeper checks this itself: every tick verifies that the private database
+records every keeper migration its build carries, and declines, naming the
+missing ones, until it does ([`KeeperMachine.md`](KeeperMachine.md) §4a). So
+the readback is one journal cycle with no `[keeper-host] tick declined:
+keeper-private migration(s) …` line.
 
 **3b. Grant `KEEPER_ROLE` to the keeper EOA on EVERY chain — every mirror AND
 canonical Base.** `submitCommitmentBatch` is mirror-only (`_assertMirror`) and
