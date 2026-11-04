@@ -1876,6 +1876,12 @@ its row in the matrix and, where the reasoning grows, its section here.
 
 **Not driven on Anvil.** The rig deploys no ERC-1155, and every ERC-721 it deploys reports its standard, so the multi-token path and the wrong-standard refusal are left to the live drive owed after the all-waves fresh deploy. Both are the same code path as the ERC-721 drive with a different kind value.
 
+**Live drive (2026-11-04, all-waves fresh Diamond `0x6381…5049` on Base Sepolia, app build `index-DhAFXiMK.js`, the same on app.vaipakam.com and workers.dev).** `live/live-recover-nft.mjs` with the `lender` dev wallet: PASS on every check. An ERC-721 minted into the vault showed the untracked note; its link opened `/recover?kind=1&asset=…&tokenId=…` with no source or amount, and adopting it took the tracked holding to 1. Five ERC-1155 copies: three adopted under kind Multi-token (tracked 3, untracked 2), then "Disown it" on the card reported 2, the `observedAmount` of the `UntrackedDisowned` event, with tracked still 3. The form refused by name, with Review off and no recoverable figure, for the ERC-1155 mock and both VPFI addresses (this deploy's and the earlier one) as ERC-721, and for both VPFI addresses and the ERC-721 mock as ERC-1155.
+
+**Seeding notes.** A plain ERC-1155 `mint` into a vault reverts (`UnauthorizedNFTSender`: the receive hook takes the Diamond or another vault as operator only), so the drive seeds with the mock's `forceMint`; an untracked ERC-1155 reaches a vault only by a delivery that skips the hook. Read a vault with `getUserVaultAddress`, never an `eth_call` of `getUserVault` / `getOrCreateUserVault`: those create lazily, so a simulation answers with the Diamond's next CREATE address, which belongs to whoever creates the next vault. The first attempt of this drive minted to that address before the wallet had a vault, and the wallet's vault was created immediately after so it landed there.
+
+NOT covered live: the banned-adoption outcome (a sanctions-listed source), the unconfirmed and not-taken disowning states, and a replaced account's card.
+
 <a id="cov-automatic-extension"></a>
 
 ## Automatic extension on the loan page and extension reserves on Claims (#2814 app half)

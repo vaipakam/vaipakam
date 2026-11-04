@@ -1269,6 +1269,9 @@ export async function launch({
   // have calldata judged for one chain broadcast on another.
   signingGate = null,
   pinnedChainId = null,
+  // deviceScaleFactor: the page's pixel density. 1 (the historical default)
+  // for evidence only a drive reads; 2 for screenshots a person will look at.
+  deviceScaleFactor = 1,
 } = {}) {
   requireSiteUrl();
   const watching = watchAddress !== null;
@@ -1434,6 +1437,7 @@ export async function launch({
         : {}),
       args: ['--no-sandbox'],
       viewport: { width: 1280, height: 900 },
+      deviceScaleFactor,
     });
     // Register it so a later `blocked()` — from this module or a driver —
     // closes it instead of leaving a Chromium behind.
