@@ -157,7 +157,20 @@ library LibVpfiRecycle {
         ///      recycles in place and funds later days on this chain. refId is
         ///      the DAY id. Also tags the release of that day's recycled
         ///      commitment.
-        DeliveryConflictSkipped
+        DeliveryConflictSkipped,
+        /// @dev #2376 — CUSTODY-RELOCATION class (append-only enum): the VPFI
+        ///      a mirror sent back to Base from a budget packet's released,
+        ///      acknowledged transport remainder (the untyped return leg).
+        ///      Base remitted that value earlier as fresh or recycled budget
+        ///      and already charged any fresh part against the cap, so its
+        ///      return is not new absorption: like {RetiredSurplusReturn} it
+        ///      stays out of the day-bucketed `credited[d]` feed and the
+        ///      first-time-absorption cumulative, and it never reopens fresh
+        ///      headroom. It is booked recycled whatever it began as (owner
+        ///      decision 2026-11-04, a labelling cost, not a loss).
+        ///      refId is the SOURCE CHAIN id; the mirror packet is named on
+        ///      `RepatriationFacet.UntypedRemainderReturnSettled`.
+        UntypedRemainderReturn
     }
 
     /// @notice Emitted once per recycle-bucket credit — the on-chain feed

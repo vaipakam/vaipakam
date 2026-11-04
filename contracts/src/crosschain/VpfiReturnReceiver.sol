@@ -70,6 +70,20 @@ interface IRetiredSurplusReturnIngress {
     ) external;
 }
 
+/// @notice #2376 — the Diamond's untyped-remainder ingress: the satellite
+///         authenticates the transport and forwards the tokens; the Diamond
+///         checks the token and credits what arrived to the recycle bucket.
+interface IUntypedRemainderReturnIngress {
+    function onUntypedRemainderReturnReceived(
+        uint32 sourceChainId,
+        address issuingBase,
+        bytes32 mirrorPacketHash,
+        address token,
+        uint256 declaredAmount,
+        uint256 actualReceived
+    ) external;
+}
+
 /**
  * @title VpfiReturnReceiver — #1568 C2 (mirror→Base VPFI return channel, receive leg)
  *
@@ -164,6 +178,13 @@ contract VpfiReturnReceiver is
         address token,
         uint256 actualReceived
     );
+    /// @custom:event-category informational/reward-transport
+    event UntypedRemainderReturnForwarded(
+        uint256 indexed sourceChainId,
+        bytes32 indexed mirrorPacketHash,
+        address token,
+        uint256 actualReceived
+    );
 
     // ─── Errors ───────────────────────────────────────────────────────
 
@@ -253,6 +274,8 @@ contract VpfiReturnReceiver is
             _handleStrandedReturn(uint32(sourceChainId), payload, tokens, transportMessageId);
         } else if (head == ReturnWire.RETURN_WIRE_TAG_RETIRED_SURPLUS_R1) {
             _handleRetiredSurplusReturn(uint32(sourceChainId), payload, tokens);
+        } else if (head == ReturnWire.RETURN_WIRE_TAG_UNTYPED_REMAINDER_U1) {
+            _handleUntypedRemainderReturn(uint32(sourceChainId), payload, tokens);
         } else {
             // Fail-closed rollout (the {ReturnWire} property): an unknown
             // keccak tag can never be coerced into a known shape, and the
@@ -397,6 +420,39 @@ contract VpfiReturnReceiver is
 
         emit RetiredSurplusReturnForwarded(
             sourceChainId, deliveredToken, actualReceived
+        );
+    }
+
+    /// @dev #2376 — UNTYPED-REMAINDER return: one token, declared must match
+    ///      the transport amount, forwarded with the same measured idiom.
+    ///      Base credits exactly what landed; the Diamond checks the token and
+    ///      that `issuingBase` is itself.
+    function _handleUntypedRemainderReturn(
+        uint32 sourceChainId,
+        bytes calldata payload,
+        ICrossChainMessenger.TokenAmount[] calldata tokens
+    ) internal {
+        if (payload.length != 4 * 32) {
+            revert PayloadSizeMismatch(payload.length, 4 * 32);
+        }
+        if (tokens.length != 1) revert WrongTokenCount(tokens.length);
+        (, address issuingBase, bytes32 mirrorPacketHash, uint256 declaredAmount) =
+            abi.decode(payload, (uint256, address, bytes32, uint256));
+
+        (address deliveredToken, uint256 actualReceived) =
+            _forwardToDiamond(tokens[0], declaredAmount);
+
+        IUntypedRemainderReturnIngress(diamond).onUntypedRemainderReturnReceived(
+            sourceChainId,
+            issuingBase,
+            mirrorPacketHash,
+            deliveredToken,
+            declaredAmount,
+            actualReceived
+        );
+
+        emit UntypedRemainderReturnForwarded(
+            sourceChainId, mirrorPacketHash, deliveredToken, actualReceived
         );
     }
 

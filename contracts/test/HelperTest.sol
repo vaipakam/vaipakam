@@ -3078,7 +3078,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](20);
+        selectors = new bytes4[](24);
         selectors[0] = RepatriationFacet.authorizeRepatriation.selector;
         selectors[1] = RepatriationFacet.onRepatriationReturnReceived.selector;
         selectors[2] = RepatriationFacet.onRepatriationCancelAck.selector;
@@ -3107,6 +3107,12 @@ contract HelperTest {
         selectors[17] = RepatriationFacet.sendRetiredSurplusReturn.selector;
         selectors[18] = RepatriationFacet.onRetiredSurplusReturnReceived.selector;
         selectors[19] = RepatriationFacet.getChainRetiredSurplusReturned.selector;
+        // #2376 — the untyped return leg (mirror send), its Base ingress,
+        // and the two per-side records.
+        selectors[20] = RepatriationFacet.sendUntypedRemainderReturn.selector;
+        selectors[21] = RepatriationFacet.onUntypedRemainderReturnReceived.selector;
+        selectors[22] = RepatriationFacet.getChainUntypedRemainderReturned.selector;
+        selectors[23] = RepatriationFacet.getUntypedRemainderReturnedCumulative.selector;
     }
 
     function getVaultFactoryFacetSelectorsExtended()

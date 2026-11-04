@@ -69,6 +69,15 @@ interface IVpfiReturnSender {
         uint256 remainingAfter,
         address payable refundAddress
     ) external payable returns (bytes32 messageId);
+
+    function sendUntypedRemainderReturn(
+        uint256 dstChainId,
+        address issuingBase,
+        bytes32 mirrorPacketHash,
+        uint256 amount,
+        uint256 remainingAfter,
+        address payable refundAddress
+    ) external payable returns (bytes32 messageId);
 }
 
 /**
@@ -247,6 +256,33 @@ contract RepatriationFacet is
         uint256 actualReceived
     );
 
+    /// @notice #2376 — mirror side: `amount` of budget packet `packetHash`'s
+    ///         released transport remainder left for Base, untyped.
+    ///         `remainingAfter` is what the remainder still holds.
+    /// @custom:event-category state-change/reward-transport
+    event UntypedRemainderReturnDispatched(
+        bytes32 indexed packetHash,
+        uint32 indexed dstChainId,
+        uint256 amount,
+        uint256 remainingAfter,
+        bytes32 messageId
+    );
+
+    /// @notice #2376 — Base side: an untyped-remainder return from
+    ///         `sourceChainId` arrived and `actualReceived` was credited to
+    ///         the recycle bucket as relocated custody. `mirrorPacketHash` is
+    ///         the budget packet on the mirror the value came from; it was
+    ///         remitted as budget and is booked recycled on its return.
+    ///         `declaredAmount - actualReceived` (zero for standard VPFI)
+    ///         arrived short and was not credited.
+    /// @custom:event-category state-change/treasury-mutation
+    event UntypedRemainderReturnSettled(
+        uint32 indexed sourceChainId,
+        bytes32 indexed mirrorPacketHash,
+        uint256 declaredAmount,
+        uint256 actualReceived
+    );
+
     event RepatriationCancelDispatched(
         uint256 indexed authId,
         uint32 indexed dstChainId,
@@ -343,6 +379,15 @@ contract RepatriationFacet is
 
     /// @notice #917 — zero, or above what the pending-surplus row holds.
     error RetiredSurplusBadAmount(uint256 requested, uint256 pending);
+    /// @notice #2376 — the packet is unknown, or holds no transport batch:
+    ///         only a budget packet's released transport remainder leaves by
+    ///         the untyped return; any other untyped value is classified.
+    error UntypedReturnNoRemainder(bytes32 packetHash);
+    /// @notice #2376 — the packet's receipt still carries a live
+    ///         stranded-recovery record: its value is the R4 return's.
+    error UntypedReturnPacketReserved(bytes32 packetHash);
+    /// @notice #2376 — a zero amount.
+    error UntypedReturnBadAmount();
 
     error RepatriationInstructionWrongState(
         uint32 issuerChainId,
@@ -1119,6 +1164,121 @@ contract RepatriationFacet is
         emit RetiredSurplusReturnSettled(sourceChainId, declaredAmount, actualReceived);
     }
 
+    /**
+     * @notice #2376 — the UNTYPED RETURN LEG: send `amount` of budget packet
+     *         `packetHash`'s released transport remainder home to Base, over
+     *         the shared return channel. A remainder is what a transport batch
+     *         still held when every day it funds was proven closed and its
+     *         parking acknowledged; nothing on this chain is owed it.
+     * @dev    ADMIN-gated payable (owner decision 2026-11-04): the caller pays
+     *         the CCIP fee (quote via
+     *         {VpfiReturnSender.quoteUntypedRemainderReturn}). The take is
+     *         bounded twice before anything moves: by the batch's parked
+     *         remainder ({LibRewardCustody.takeFromReleasedRemainder}, which
+     *         refuses a batch that is not released) and by the packet's own
+     *         untyped remainder. The value is never typed here: it leaves the
+     *         `Unclassified` row as a non-classification exit (`disposed`),
+     *         and Base books what arrives to its recycle bucket as relocated
+     *         custody. The message names the Base Diamond that sent the
+     *         packet (`p.remitter`), so a Base Diamond that replaced it fails
+     *         the delivery closed and re-executable, exactly as the stranded
+     *         return does. CHUNKED, and mirror-outbound capacity is checked
+     *         before any effect, under the same lane pairing rule as the other
+     *         returns. A failed send reverts the whole call with the remainder
+     *         intact.
+     * @param  packetHash The budget packet's ingress stamp on this mirror.
+     * @param  amount     VPFI to return this call — at most what the
+     *                    remainder still holds.
+     */
+    function sendUntypedRemainderReturn(
+        bytes32 packetHash,
+        uint256 amount,
+        address payable refundAddress
+    )
+        external
+        payable
+        nonReentrant
+        whenNotPaused
+        onlyMirror
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+        returns (bytes32 messageId)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        address sender = s.repatriationSender;
+        if (sender == address(0)) revert RepatriationNotConfigured();
+        if (amount == 0) revert UntypedReturnBadAmount();
+        LibVaipakam.IngressPacket storage p = s.ingressPackets[packetHash];
+        bytes32 batchId = p.batchId;
+        if (p.arrivedAt == 0 || batchId == bytes32(0)) revert UntypedReturnNoRemainder(packetHash);
+        {
+            LibVaipakam.StrandedRecovery storage sr =
+                s.strandedRecoveries[keccak256(abi.encode(p.remitter, p.remitId))];
+            if (sr.amount != 0 || sr.held != 0) revert UntypedReturnPacketReserved(packetHash);
+        }
+        uint32 dst = s.baseChainId;
+        _assertWithinLaneCapacity(s, dst, amount, false);
+
+        LibRewardCustody.takeFromReleasedRemainder(s, packetHash, amount);
+        uint256 remainingAfter = s.transportRemainders[batchId].amount;
+        s.untypedRemainderReturnedCumulative += amount;
+        LibRewardCustody.releaseUntypedRemainderForReturn(s, packetHash, sender, amount);
+        messageId = IVpfiReturnSender(sender).sendUntypedRemainderReturn{
+            value: msg.value
+        }(uint256(dst), p.remitter, packetHash, amount, remainingAfter, refundAddress);
+        emit UntypedRemainderReturnDispatched(packetHash, dst, amount, remainingAfter, messageId);
+    }
+
+    /**
+     * @notice #2376 — Base ingress for an untyped-remainder return, forwarded
+     *         by the `repatriationReceiver` after it moved the tokens here.
+     *         Credits exactly what arrived to the recycle bucket as RELOCATED
+     *         custody under {RecycleSource.UntypedRemainderReturn},
+     *         automatically (owner decision 2026-11-04): no operator step.
+     * @dev    The value left Base earlier as budget, so its return is not new
+     *         absorption: relocated custody stays out of the `credited[d]`
+     *         feed and the first-time-absorption cumulative, and it never
+     *         reopens fresh headroom. A part that began as fresh is booked
+     *         recycled; that is the disclosed labelling cost of not typing
+     *         the value in passage, and the event names the mirror packet it
+     *         came from. Base needs no entitlement bound: the messenger's
+     *         channel peers authenticate the source, a mirror sends only from
+     *         a released remainder it holds, and the credit is the measured
+     *         arrival. Not `whenNotPaused`, like the other receive ingresses.
+     */
+    function onUntypedRemainderReturnReceived(
+        uint32 sourceChainId,
+        address issuingBase,
+        bytes32 mirrorPacketHash,
+        address token,
+        uint256 declaredAmount,
+        uint256 actualReceived
+    ) external nonReentrant onlyCanonical {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        address receiver = s.repatriationReceiver;
+        if (receiver == address(0) || msg.sender != receiver) {
+            revert OnlyRepatriationReceiver(msg.sender);
+        }
+        if (issuingBase != address(this)) {
+            revert RepatriationWrongEra(issuingBase);
+        }
+        if (
+            token != s.vpfiToken ||
+            actualReceived == 0 ||
+            actualReceived > declaredAmount
+        ) {
+            revert RepatriationDeliveryInvalid();
+        }
+        s.chainUntypedRemainderReturned[sourceChainId] += actualReceived;
+        LibVpfiRecycle.creditCustodyRelocated(
+            sourceChainId,
+            actualReceived,
+            LibVpfiRecycle.RecycleSource.UntypedRemainderReturn
+        );
+        emit UntypedRemainderReturnSettled(
+            sourceChainId, mirrorPacketHash, declaredAmount, actualReceived
+        );
+    }
+
     // ── Config ──────────────────────────────────────────────────────────────
 
     /**
@@ -1228,6 +1388,22 @@ contract RepatriationFacet is
         returns (uint256)
     {
         return LibVaipakam.storageSlot().chainRetiredSurplusReturned[chainId];
+    }
+
+    /// @notice #2376 — Base side: the VPFI credited to the recycle bucket from
+    ///         `chainId`'s untyped-remainder returns (what arrived, cumulative).
+    function getChainUntypedRemainderReturned(uint32 chainId)
+        external
+        view
+        returns (uint256)
+    {
+        return LibVaipakam.storageSlot().chainUntypedRemainderReturned[chainId];
+    }
+
+    /// @notice #2376 — mirror side: the VPFI this chain has sent back to Base
+    ///         from released transport remainders (cumulative).
+    function getUntypedRemainderReturnedCumulative() external view returns (uint256) {
+        return LibVaipakam.storageSlot().untypedRemainderReturnedCumulative;
     }
 
     /// @notice A mirror instruction record, keyed by its issuer — the chain
