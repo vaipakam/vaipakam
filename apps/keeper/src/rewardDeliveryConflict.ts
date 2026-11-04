@@ -266,9 +266,10 @@ export async function workConflictedDay(deps: ConflictDeps, day: bigint): Promis
   // so a window of spent epochs hides value beyond it, and an epoch whose
   // packet is not yet attested is withheld from every draw. So on a zero the
   // day's coverage decides: a full window of spent epochs is passed with the
-  // cursor prune and the draw tried again; withheld value waits, queued; only
-  // a window that reached the end of the list with nothing withheld finishes
-  // the day.
+  // cursor prune and the draw tried again; withheld value waits, queued; value
+  // the coverage still shows as drawable is drawn again; only a coverage of
+  // nothing drawable, nothing withheld and the end of the list reached
+  // finishes the day.
   let fresh = 0n;
   let recycled = 0n;
   let calls = 0;
@@ -280,13 +281,26 @@ export async function workConflictedDay(deps: ConflictDeps, day: bigint): Promis
   // written, and the day stays queued, to be read again next run. Only a
   // failure before anything landed propagates.
   let interrupted: unknown = null;
+  let redrawn = false;
   try {
     for (;;) {
       // eslint-disable-next-line no-await-in-loop
       const res: CallResult = await sender.call('recycle', String(day), 'recycleSkippedDayValue', [day], 0n, (moved) => moved !== 0n);
       if (res === 'idle') {
         // eslint-disable-next-line no-await-in-loop
-        const [, capHit, withheld] = await deps.readCoverage(day);
+        const [available, capHit, withheld] = await deps.readCoverage(day);
+        if (available !== 0n) {
+          // The draw found nothing but the coverage shows value: the cursor
+          // moved between the two (another caller drew or pruned). Draw
+          // again once; if it still finds nothing, the day stays queued
+          // rather than finishing on a read that shows value (Codex #2999).
+          if (!redrawn) {
+            redrawn = true;
+            continue;
+          }
+          waiting = `${vpfi(available)} shows as drawable but the draw found nothing this run; it is drawn again next run`;
+          break;
+        }
         if (withheld !== 0n) {
           waiting = `${vpfi(withheld)} of the day's landed value waits for its packet's attestation and moves once attested`;
           break;
@@ -508,14 +522,17 @@ export async function workQueue(deps: ConflictDeps, open: readonly { item: strin
  *  deadline. A day finished on an alert leaves the queue only once that alert
  *  is delivered. */
 export async function recordAndPost(env: Env, chainId: number, diamond: Address, run: QueueRun, deadline: number, nowSec: number): Promise<void> {
-  await finishWork(env.KEEPER_DB, chainId, diamond, WORK_KIND, run.finished);
-  await touchOpenWork(env.KEEPER_DB, chainId, diamond, WORK_KIND, run.examined.filter((d) => !run.finished.includes(d)));
-
+  // The notices first (Codex #2999): each is a transaction that LANDED, which
+  // the next run cannot reconstruct (the chain already records the skip and
+  // the value moved), so a queue write that fails below must not take them
+  // with it. The journal never fails and the post never throws.
   const tag = `[chain ${chainId}] reward delivery conflicts`;
   if (run.notices.length > 0) {
     journal(`${tag}:`, run.notices);
     await sendOpsNoticeDigest(env, `${tag}:`, run.notices, "Each figure is from the transaction's own event.", chainId);
   }
+  await finishWork(env.KEEPER_DB, chainId, diamond, WORK_KIND, run.finished);
+  await touchOpenWork(env.KEEPER_DB, chainId, diamond, WORK_KIND, run.examined.filter((d) => !run.finished.includes(d)));
   let alerted: OpsAlertOutcome = 'suppressed';
   if (run.conditions.length > 0) {
     alerted = await sendOpsAlertDigest(

@@ -239,6 +239,25 @@ describe('workConflictedDay', () => {
     await expect(workConflictedDay(deps, DAY)).rejects.toThrow('rpc down');
   });
 
+  it('a zero draw while the coverage shows drawable value draws again, and keeps the day queued if it still finds nothing (Codex #2999)', async () => {
+    const moved = eventLog('DayDeliveryConflictValueRecycled', { dayId: DAY, fresh: 2n * E18, recycled: 0n });
+    const raced = fake(
+      [conflicted({ skippedAt: 1_800_090_000n })],
+      { recycleSkippedDayValue: [{ result: 0n }, { result: 2n * E18, logs: [moved] }, { result: 0n }] },
+      4,
+      [[2n * E18, false, 0n], [0n, false, 0n]],
+    );
+    const out = await workConflictedDay(raced.deps, DAY);
+    expect(raced.sender.sent).toEqual(['recycleSkippedDayValue']);
+    expect(out.finished).toBe(true);
+
+    const stuck = fake([conflicted({ skippedAt: 1_800_090_000n })], { recycleSkippedDayValue: [{ result: 0n }] }, 4, [[2n * E18, false, 0n]]);
+    const held = await workConflictedDay(stuck.deps, DAY);
+    expect(stuck.sender.sent).toEqual([]);
+    expect(held.finished).toBe(false);
+    expect(held.cleared).not.toContain(conflictKey(CHAIN, DAY));
+  });
+
   it('a prune the contract refuses is alerted, and the day stays queued', async () => {
     const { deps } = fake(
       [conflicted({ skippedAt: 1_800_090_000n })],
@@ -356,6 +375,27 @@ describe('recordAndPost: a day only a person can act on', () => {
       expect(posts[1]).toContain(`day ${DAY}`);
     });
   }
+});
+
+describe('recordAndPost: landed notices', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it('journals the notices of landed transactions before the queue writes, so a failed write cannot lose them (Codex #2999)', async () => {
+    const warned: string[] = [];
+    vi.spyOn(console, 'warn').mockImplementation((l: unknown) => void warned.push(String(l)));
+    const broken = {
+      prepare: () => {
+        throw new Error('keeper db down');
+      },
+      batch: async () => {
+        throw new Error('keeper db down');
+      },
+    };
+    const env = { ...bindings(createSharedD1(), createKeeperD1()), KEEPER_DB: broken } as unknown as Env;
+    const run = { finished: [DAY.toString()], awaitingAlert: [], examined: [DAY.toString()], conditions: [], cleared: new Set<string>(), notices: [`day ${DAY}: skipped (closed unpaid on this mirror) in 0xabc.`] };
+    await expect(recordAndPost(env, CHAIN, DIAMOND, run, Date.now() + 60_000, Math.floor(Date.now() / 1000))).rejects.toThrow('keeper db down');
+    expect(warned.join('\n')).toContain(`day ${DAY}: skipped (closed unpaid on this mirror) in 0xabc.`);
+  });
 });
 
 describe('discoverConflictedDayParts (real schema)', () => {
