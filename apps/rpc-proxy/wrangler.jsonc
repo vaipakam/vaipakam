@@ -8,10 +8,11 @@
   // in packages/lib/src/rpcProxyPolicy.ts; the README says what it does and
   // does not protect.
   //
-  // OFF BY DEFAULT. Nothing deploys this Worker on merge: it is connected to
-  // no Workers Build, and the app keeps using its own RPC configuration
-  // until a build sets VITE_RPC_PROXY_ORIGIN. Deploying it is an operator
-  // step (README, "Turning it on").
+  // DEPLOYED ON MERGE. Since 2026-11-04 this Worker has its own Workers
+  // Build: a merge to main touching apps/rpc-proxy/ or packages/lib/ deploys
+  // it. The connected app's production build reads through it
+  // (VITE_RPC_PROXY_ORIGIN); a build without that variable keeps its own RPC
+  // configuration. State and steps: README, "Turning it on".
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "vaipakam-rpc-proxy",
   "main": "src/index.ts",
