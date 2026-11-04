@@ -315,22 +315,33 @@ for (const [role, who] of [['borrower', BORROWER], ['lender', LENDER]]) {
     await blocked(`could not read the ${role}'s nonce at startup`, err);
   }
 }
-// Step 6's subject: every Active loan on this Diamond past its grace period,
-// as the chain itself decides it (isLoanDefaultable, which counts any pause
+// Step 6's subject: an Active loan on this Diamond past its grace period, as
+// the chain itself decides it (isLoanDefaultable, which counts any pause
 // credit the loan has accrued), never recomputed here from its start and term.
+// The card is shown only to the loan's lender, so only a loan whose lender
+// position one of the two signing wallets holds is observable, and it is
+// opened in that wallet's session.
 const pastGrace = [];
+const pastGraceOther = [];
 try {
   const at = pre.head.number;
   for (let id = 1n; id < 500n; id++) {
     const l = await read('getLoanDetails', [id], at);
     if (l.startTime === 0n) break;
     if (Number(l.status) !== 0) continue;
-    if (await read('isLoanDefaultable', [id], at)) pastGrace.push(id);
+    if (!(await read('isLoanDefaultable', [id], at))) continue;
+    const holder = await read('ownerOf', [l.lenderTokenId], at);
+    const role = eq(holder, BORROWER) ? 'borrower' : eq(holder, LENDER) ? 'lender' : null;
+    if (role) pastGrace.push({ id, role });
+    else pastGraceOther.push(id);
   }
 } catch (err) {
   await blocked('could not list the Diamond’s loans for the past-grace check', err);
 }
-console.log(`chain: past-grace Active loans on this Diamond: ${pastGrace.length ? pastGrace.join(', ') : 'none'}`);
+console.log(
+  `chain: past-grace Active loans whose lender a signing wallet holds: ${pastGrace.length ? pastGrace.map((g) => `${g.id} (${g.role})`).join(', ') : 'none'}` +
+    (pastGraceOther.length ? `; held by other wallets: ${pastGraceOther.join(', ')}` : ''),
+);
 
 // ── The outcome manifest ───────────────────────────────────────────────
 const SIX = 'the review receipt has its six rows, and its first states exactly what is being signed';
@@ -422,7 +433,7 @@ const MANIFEST = createManifest({
           {
             id: 'forcedClose',
             claim: 'on a past-grace loan the forced close-out card renders and claims no KYC refusal',
-            checks: { card: `the forced-close card renders on loan ${pastGrace[0]} and neither declares nor states the KYC block` },
+            checks: { card: `the forced-close card renders for the lender on loan ${pastGrace[0].id} and neither declares nor states the KYC block` },
           },
         ]
       : []),
@@ -447,7 +458,9 @@ const MANIFEST = createManifest({
           {
             id: 'forcedClose',
             claim: 'on a past-grace loan the forced close-out card renders and claims no KYC refusal',
-            reason: 'no Active loan on this Diamond is past its grace period, so the card is not observable',
+            reason: pastGraceOther.length
+              ? `the past-grace loans on this Diamond (${pastGraceOther.join(', ')}) are lent by neither signing wallet, and the card is shown only to the lender`
+              : 'no Active loan on this Diamond is past its grace period, so the card is not observable',
             coveredBy: 'live-lender-close-out.mjs on a past-grace loan',
           },
         ]),
@@ -1102,8 +1115,10 @@ try {
 
   // ── 6. Read-only: the forced close-out card on a past-grace loan ──────
   if (pastGrace.length) {
-    await go(bp, `/positions/${pastGrace[0]}`);
-    const fc = bp.getByTestId('forced-close-card');
+    const { id: fcId, role: fcRole } = pastGrace[0];
+    const fcPage = fcRole === 'borrower' ? bp : lp;
+    await go(fcPage, `/positions/${fcId}`);
+    const fc = fcPage.getByTestId('forced-close-card');
     const shown = await fc.waitFor({ state: 'visible', timeout: 90_000 }).then(() => true, () => false);
     // The card renders while its facts are still unread ("unknown"), and
     // could become blocked-kyc once the admission read answers: judge only a
@@ -1121,16 +1136,16 @@ try {
           { timeoutMs: 90_000, everyMs: 2_000 },
         )
       : null;
-    if (!shown) check('forcedClose', 'card', `the forced-close card renders on loan ${pastGrace[0]}`, false);
-    else if (!state) unsettled('forcedClose', 'card', `the forced-close card on loan ${pastGrace[0]} never resolved its facts within 90 s`);
+    if (!shown) check('forcedClose', 'card', `the forced-close card renders on loan ${fcId}`, false);
+    else if (!state) unsettled('forcedClose', 'card', `the forced-close card on loan ${fcId} never resolved its facts within 90 s`);
     else if (state === 'not-yet') {
       // The chain called this loan defaultable at startup; a card that says
       // "not yet" did not exercise the overdue case this check is about.
-      unsettled('forcedClose', 'card', `loan ${pastGrace[0]} was defaultable at startup but the card reads not-yet at block ${await fc.getAttribute('data-forced-close-block')}, so the overdue case was not exercised`);
+      unsettled('forcedClose', 'card', `loan ${fcId} was defaultable at startup but the card reads not-yet at block ${await fc.getAttribute('data-forced-close-block')}, so the overdue case was not exercised`);
     } else {
       const block = await fc.getAttribute('data-forced-close-block');
       const text = squash(await fc.innerText());
-      check('forcedClose', 'card', `the forced-close card on loan ${pastGrace[0]} claims no KYC refusal`, state !== 'blocked-kyc' && !text.includes(squash(EN.forcedClose.blockedKyc)), `state ${state}, read at block ${block}`);
+      check('forcedClose', 'card', `the forced-close card on loan ${fcId} claims no KYC refusal`, state !== 'blocked-kyc' && !text.includes(squash(EN.forcedClose.blockedKyc)), `state ${state}, read at block ${block}`);
     }
   }
 } catch (err) {
