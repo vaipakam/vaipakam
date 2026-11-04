@@ -168,6 +168,6 @@
     "zeroExProxy": "0x1341300Dfc3d1517EFd9ff14f65F3b34D657C20D"
   },
   "serviceCapacityEscrow": "0xbB49315011146F3711D1A351552831188ca9AB54",
-  "sanctionsOracleStandIn": "0x6be7DB253aD8e82F43e74f7B7b35B015FFbffaf0",
-  "sanctionsClearanceAttestor": "0x4A0B221D53592D0cB350e8428DD92835f07cD386"
+  "sanctionsOracleStandIn": "0x53Bb8839572d733Cc7E68964EB104B96C7715120",
+  "sanctionsClearanceAttestor": "0x57aB8AA6FfCdA681Fb30Bb58aF788010944beA3E"
 }
