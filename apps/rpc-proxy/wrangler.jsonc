@@ -46,37 +46,13 @@
   // so browser traffic cannot spend the quota the keeper needs to act on a
   // loan in time. A chain whose secret is absent or empty is reported as
   // not configured; nothing falls back to another chain's key.
+  // Testnet chains only, for now. wrangler refuses a deploy whose binding
+  // names a secret the store does not hold, and the mainnet keys are created
+  // with Workers Paid at mainnet (#1724). Until then a mainnet chain id
+  // answers 503 chain-not-configured, and the app falls back to that chain's
+  // public endpoint. Add each mainnet entry back (same name for binding and
+  // secret) once its key exists.
   "secrets_store_secrets": [
-    {
-      // Ethereum (1); also backs the app's ENS name reads
-      "binding": "RPC_PROXY_ETH",
-      "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e",
-      "secret_name": "RPC_PROXY_ETH",
-    },
-    {
-      // Base (8453)
-      "binding": "RPC_PROXY_BASE",
-      "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e",
-      "secret_name": "RPC_PROXY_BASE",
-    },
-    {
-      // Arbitrum One (42161)
-      "binding": "RPC_PROXY_ARB",
-      "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e",
-      "secret_name": "RPC_PROXY_ARB",
-    },
-    {
-      // OP Mainnet (10)
-      "binding": "RPC_PROXY_OP",
-      "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e",
-      "secret_name": "RPC_PROXY_OP",
-    },
-    {
-      // BNB Chain (56)
-      "binding": "RPC_PROXY_BNB",
-      "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e",
-      "secret_name": "RPC_PROXY_BNB",
-    },
     {
       // Base Sepolia (84532)
       "binding": "RPC_PROXY_BASE_SEPOLIA",
@@ -94,6 +70,16 @@
       "binding": "RPC_PROXY_BNB_TESTNET",
       "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e",
       "secret_name": "RPC_PROXY_BNB_TESTNET",
+    },
+  ],
+
+  // The proxy's hostname, declared here so a deploy keeps it bound (the
+  // indexer's pattern). Attached 2026-11-04; the connected app reads
+  // through it (VITE_RPC_PROXY_ORIGIN=https://rpc.vaipakam.com).
+  "routes": [
+    {
+      "pattern": "rpc.vaipakam.com",
+      "custom_domain": true,
     },
   ],
 

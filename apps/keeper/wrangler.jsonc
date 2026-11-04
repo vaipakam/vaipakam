@@ -389,6 +389,19 @@
   //     is still owed, when the protocol broadcast budget can pay it. The
   //     lane's CCIP fee comes from that budget; the keeper attaches no value
   //     and receives none. Ships unset.
+  //   - TIER_EXCLUSION_REFRESH_ENABLED — 'true' adds the #3097 tier-exclusion
+  //     refresh to the armed upkeep pass: refreshTierExclusion for the loans
+  //     whose VPFI fee-tier exclusion a simulation shows would change.
+  //     Permissionless; no fee, nothing to the keeper. Ships unset.
+  //   - REWARD_INDEX_COMPACT_ENABLED — 'true' adds the #3097 reward-entry
+  //     index compaction to the armed upkeep pass: compactRewardEntryIndex
+  //     for a loan party whose index still holds settled entries. Moves no
+  //     value. Ships unset.
+  //   - SANCTIONS_FLAG_REFRESH_ENABLED — 'true' adds the #3097 sanctions-flag
+  //     refresh to the armed upkeep pass: refreshSanctionsFlag for an address
+  //     whose committed flag disagrees with the oracle (flagged and not
+  //     registered, or registered and now clean). No fee, nothing to the
+  //     keeper. Ships unset.
   //   - PREPAY_AUTO_LIST_ENABLED — 'true' arms the #2984 grace auto-list
   //     pass: autoListAtFloorOnGrace for NFT-collateral loans in grace, every
   //     minute. Permissionless; it pays only gas and moves nothing to the

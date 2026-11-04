@@ -285,7 +285,16 @@ against Base, it re-scans a bounded recent-day window per mirror, batches the
 finalized-but-un-remitted days under the lane cap, quotes the exact fee, and
 remits — keeping mirrors funded on a best-effort tick cadence (it does **not**
 synchronize with broadcasts; see the Ordering caveat above). It is **dark by
-default** and requires all of:
+default**.
+
+> **The arming gate is GovernanceRunbook Step 3, not this list** (#2225).
+> Step 3 is the one complete checklist: the keeper's private migrations (3a),
+> `KEEPER_ROLE` on every chain (3b), the Base remittance signer (3c), the keeper
+> EOA funded on every mirror as well as Base (3d), the lane (3e), the mesh
+> watcher (3f) and the flags, last (3g). Check that list before arming. The four
+> items below are the remittance-specific ones an operator needs at an
+> incident, and they are not the whole gate:
+
 1. `KEEPER_ENABLED=true` (master switch) **and** `REWARD_REMIT_ENABLED=true`
    (dedicated flag). Both are lines in the machine's env file,
    `/etc/vaipakam/keeper.env` ([`KeeperMachine.md`](KeeperMachine.md) §4),
@@ -297,7 +306,10 @@ default** and requires all of:
 2. `KEEPER_PRIVATE_KEY` set (the pass shares the keeper's signing key — without it
    the whole keeper stays disabled) **and** that EOA funded with native Base for
    gas plus each remit's quoted CCIP `msg.value`. An unfunded key arms the pass
-   but every remit reverts / fails to submit.
+   but every remit reverts / fails to submit. It must also be funded on **every
+   mirror**: the remit-ack pass sends each acknowledgement from the mirror with
+   that chain's quoted CCIP fee, so a key funded only on Base lands the
+   remittances and fails every acknowledgement (GovernanceRunbook Step 3d).
 3. That signing EOA authorized on-chain — either ADMIN, or granted the
    reward-remittance keeper role via `RewardRemittanceFacet.setRewardRemittanceKeeper(<keeperEOA>)`.
 4. The `RewardRemittanceReceiver` deployed + registered on every mirror and the

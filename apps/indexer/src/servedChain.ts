@@ -25,14 +25,21 @@
  * `/config/:chainId` follows the same rule (its last row for a chain no
  * longer indexed would otherwise be served as a live snapshot).
  *
- * Routes outside that rule, and why:
+ * The two reward metrics follow it too (#2654), so a figure for a chain
+ * nobody is indexing is never served as current:
+ *  - `/metrics/loop-closure` runs after `resolveEnv` and asks
+ *    `chainNotServed`, like every route above.
  *  - `/metrics/recycling` is dispatched BEFORE `resolveEnv` (it must not
- *    read the Secrets Store), so served-ness cannot be computed there.
- *  - `/metrics/loop-closure` belongs to the reward surface; its owners
- *    decide its posture (#2654, together with `/metrics/recycling`). It
- *    is not changed here.
+ *    wait on the Secrets Store), so it cannot ask whether the RPC secret
+ *    resolves. It asks `chainNotConfigured` instead: the chain has a
+ *    deployment artifact and its RPC binding is present
+ *    (`configuredScanChains`, read without resolving any secret). That
+ *    refuses a retired chain or one never set up. A configured chain whose
+ *    secret fails still answers from its stored series; `/health/ingest`
+ *    is what reports that stall, and the series' own day coverage says
+ *    where its record ends.
  */
-import { type Env, getChainConfigs } from './env';
+import { configuredScanChains, type Env, getChainConfigs } from './env';
 
 /** The chain a route assumes when the request names none. Kept as it has
  *  always been on these routes, so a client omitting `chainId` sees no
@@ -68,7 +75,21 @@ export function chainServed(env: Env, chainId: number): boolean {
  * request is a 400 whatever the chain) and before any D1 read.
  */
 export function chainNotServed(env: Env, chainId: number): Response | null {
-  if (chainServed(env, chainId)) return null;
+  return chainServed(env, chainId) ? null : chainUnavailable();
+}
+
+/**
+ * The same 503 for a route dispatched BEFORE `resolveEnv`: refused unless
+ * the chain is configured to be scanned (a deployment artifact and a present
+ * RPC binding), read from the raw env without resolving any secret. See the
+ * module header for what that does and does not establish.
+ */
+export function chainNotConfigured(raw: object, chainId: number): Response | null {
+  return configuredScanChains(raw).includes(chainId) ? null : chainUnavailable();
+}
+
+/** The one response both guards return. */
+function chainUnavailable(): Response {
   return new Response(JSON.stringify({ error: 'chain-not-configured' }), {
     status: 503,
     headers: {
