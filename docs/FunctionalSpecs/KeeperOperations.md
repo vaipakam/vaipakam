@@ -860,6 +860,21 @@ evidence that the migration has completed.
   rotate, so a busy chain can take several runs to reach a loan; a minute's
   schedule is not a promise that every eligible NFT is listed that minute.
 
+## Tearing down expired listings and intents
+
+- Three things can outlive their use and keep holding a position until
+  someone clears them: a prepay listing nobody filled once its loan's grace
+  window has ended, a lender's sale listing that has expired on a live loan
+  or still stands after the loan closed, and a swap-to-repay intent past its
+  order deadline plus the borrower's own cancel grace. Each teardown is open
+  to anyone and moves no value. Every hour, on every chain it serves,
+  the keeper finds the ones that are due from the chain's own records and
+  clock, asks the protocol whether each teardown would succeed, and sends it
+  only then, a few per kind per run. During a loan's grace window a prepay
+  listing is left to the grace auto-list duty, so the two never act on the
+  same listing. Each teardown is reported from the protocol's own record of
+  it. The duty ships switched off behind its own flag and pays only gas.
+
 ## Recording what backs each permissionless step
 
 Every permissionless step that keeps the protocol moving has the keeper as
