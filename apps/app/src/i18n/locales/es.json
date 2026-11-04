@@ -3938,6 +3938,7 @@
         "coversBoth": "Eso cubre una extensión en cualquier momento de la ventana.",
         "coversNowOnly": "Eso cubre una extensión ahora, pero al final de la ventana faltarían {{amount}}.",
         "short": "Eso no cubre una extensión ahora. Al final de la ventana faltarían {{amount}}.",
+        "shortAtEnd": "Puede que una extensión al final de la ventana no quede cubierta: al cierre de la ventana faltarían {{amount}}.",
         "eachTime": "Cada extensión vuelve a cobrar, por los intereses del plazo que cierra, así que una reserva que cubre esta puede no cubrir la siguiente.",
         "ownership": "La reserva es tuya. Solo el cargo de una extensión y tu propio retiro la sacan; el reembolso, el incumplimiento y la liquidación la dejan donde está. Si la posición del prestatario pasa a otra persona, ya no paga sus extensiones y puedes retirarla.",
         "amount": "Importe a añadir ({{symbol}})",

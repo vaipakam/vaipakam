@@ -2204,7 +2204,11 @@ is the borrower's own money.
   at the end of the window, which is the most an extension of the current
   term can charge. The page says whether the reserve and other free balance
   together cover an extension now and at the end of the window, and by how
-  much they fall short if not. It says that the reserve is drawn first and
+  much they fall short if not. It speaks of an extension "now" only while
+  the window is open: before the window opens, or while the window cannot be
+  read, it states only the charge and the cover at the end of the window,
+  and once the window has closed, or the loan has none, it makes no cover
+  claim at all, because no extension can run. It says that the reserve is drawn first and
   the other free balance second, that an extension that is not covered is
   refused and takes nothing, that the wallet is never drawn on, and that each
   extension charges again. When the latest read of these figures failed, the
@@ -2242,7 +2246,9 @@ is the borrower's own money.
   reserve, and is never asked for an approval; while the account's
   protection cannot be read, neither is offered. What a withdrawal did,
   including a protected account's queued or held payout, stays in view after
-  the reserve it emptied disappears from the page and from Claims. The
+  the reserve it emptied disappears from the page and from Claims. Only the
+  latest reserve action's result is shown: a withdrawal replaces the result
+  of an earlier deposit, and a later deposit replaces the withdrawal's. The
   withdrawal is offered only once the token's details are read, so its
   amount can be stated exactly. The reserve's figures and its withdrawal do
   not depend on reading the extension settings: when those cannot be read,

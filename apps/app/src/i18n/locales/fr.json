@@ -3938,6 +3938,7 @@
         "coversBoth": "Cela couvre une prolongation à tout moment de la fenêtre.",
         "coversNowOnly": "Cela couvre une prolongation maintenant, mais à la fin de la fenêtre il manquerait {{amount}}.",
         "short": "Cela ne couvre pas une prolongation maintenant. À la fin de la fenêtre, il manquerait {{amount}}.",
+        "shortAtEnd": "Une prolongation en fin de fenêtre risque de ne pas être couverte : à la fin de la fenêtre, il manquerait {{amount}}.",
         "eachTime": "Chaque prolongation coûte à nouveau, pour les intérêts de la durée qu’elle clôt ; une réserve qui couvre celle-ci peut donc ne pas couvrir la suivante.",
         "ownership": "La réserve vous appartient. Seuls les frais d’une prolongation et votre propre retrait la font sortir ; le remboursement, le défaut et la liquidation la laissent en place. Si la position emprunteur passe à quelqu’un d’autre, elle ne paie plus ses prolongations, et vous pouvez la retirer.",
         "amount": "Montant à ajouter ({{symbol}})",
