@@ -210,6 +210,18 @@ export const FOUR_VERDICT_DRIVERS = new Map([
       'proves nothing was sent (#2505 r48)',
   ],
   [
+    'live-auto-extend.mjs',
+    // Exits 2 only BEFORE its first write (build mismatch, LOAN_ID not an
+    // Active cadence-0 ERC-20 loan held by the two roles with no reserve
+    // standing, the switch off or the protocol paused, Terms not accepted,
+    // short balances, credentials, browser setup). Also MANUAL-ONLY — see
+    // MANUAL_ONLY_DRIVERS below.
+    'after its first write it FAILs only on a page or chain read that ' +
+      'contradicts a claim, or a nonce showing a send the gate never allowed; ' +
+      'any other stop is UNDETERMINED (exit 3), with the write plan and what ' +
+      'is left standing (a reserve, an approval) printed (#2814)',
+  ],
+  [
     'live-seed-illiquid-loan.mjs',
     // Exits 2 only BEFORE its first write (build mismatch, chain facts that
     // would not yield a refinance fixture, short balances, a covering Permit2
@@ -272,6 +284,12 @@ export const MANUAL_ONLY_DRIVERS = new Map([
     'live-refinance.mjs',
     'one-shot on-chain refinance: a success closes the loan it drives, and it ' +
       'needs REFI_LOAN_ID naming a fresh eligible loan — run it by hand',
+  ],
+  [
+    'live-auto-extend.mjs',
+    'writes to the testnet: it sets both sides\' auto-extend limits on LOAN_ID ' +
+      'and funds and withdraws an extension reserve, so it needs a named fixture ' +
+      'loan and two funded dev wallets — run it by hand (#2814)',
   ],
   [
     'live-seed-illiquid-loan.mjs',
