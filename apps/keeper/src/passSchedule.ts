@@ -53,6 +53,7 @@ import { PASS_CADENCE_SEC as PROTOCOL_UPKEEP_CADENCE_SEC, runProtocolUpkeep } fr
 import { PASS_CADENCE_SEC as PREPAY_AUTO_LIST_CADENCE_SEC, runPrepayAutoList } from './prepayAutoList';
 import { PASS_CADENCE_SEC as PROTECTED_ACCOUNT_CADENCE_SEC, runProtectedAccount } from './protectedAccount';
 import { PASS_CADENCE_SEC as STANDIN_REFRESH_CADENCE_SEC, runSanctionsStandInRefresh } from './sanctionsStandInRefresh';
+import { PASS_CADENCE_SEC as EXPIRED_TEARDOWN_CADENCE_SEC, runExpiredTeardown } from './expiredTeardown';
 
 /** The UTC hour `dailyOracleSnapshot` acts in, and how long it stays
  *  open — mirroring the window that pass already self-checks against.
@@ -340,6 +341,17 @@ export const KEEPER_PASSES: readonly KeeperPass[] = [
     offsetMinutes: 21,
     why: 'refreshes the testnet sanctions stand-in a day before the timelocks\' 7-day age limit; an hour is far inside that day (#3113)',
     run: runSanctionsStandInRefresh,
+  },
+  {
+    name: 'expiredTeardown',
+    cadenceMinutes: EXPIRED_TEARDOWN_CADENCE_SEC / 60,
+    // :11/:26/:41/:56 — the one quarter-hour offset still clear of every
+    // staggered pass (the 5-minute ones sit on :02–:03 modulo 5, the other
+    // 15-minute ones on :00, :01, :04, :05, :09 and :10 modulo 15, the hourly
+    // ones on :14, :21, :29, :44 and :59).
+    offsetMinutes: 11,
+    why: 'tears down intents, prepay listings and sale listings already past windows measured in hours or days; a quarter-hour keeps each hold released within minutes of becoming removable (#3097)',
+    run: runExpiredTeardown,
   },
 ];
 

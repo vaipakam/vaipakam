@@ -139,9 +139,10 @@
       "evidence": "apps/keeper/src/prepayAutoList.ts"
     },
     "NFTPrepayListingFacet.cancelExpiredPrepayListing(uint256)": {
-      "class": "gap",
-      "issue": "#3097",
-      "why": "clears an expired prepay listing; the auto-list pass leaves it as an open owner question"
+      "class": "keeper",
+      "pass": "expiredTeardown",
+      "flag": "EXPIRED_TEARDOWN_ENABLED",
+      "evidence": "apps/keeper/src/expiredTeardown.ts"
     },
     "NFTPrepayListingFacet.syncPrepaySaleListing(uint256)": {
       "class": "keeper",
@@ -158,9 +159,10 @@
       "why": "the creator cancels its own offer"
     },
     "OfferCancelFacet.teardownStaleSaleListing(uint256)": {
-      "class": "gap",
-      "issue": "#3097",
-      "why": "tears down a stale loan-sale listing; only the app's sale-hold path names it"
+      "class": "keeper",
+      "pass": "expiredTeardown",
+      "flag": "EXPIRED_TEARDOWN_ENABLED",
+      "evidence": "apps/keeper/src/expiredTeardown.ts"
     },
     "OfferCreateFacet.createOffer(struct:LibVaipakam.CreateOfferParams)": {
       "class": "user",
@@ -747,9 +749,10 @@
       "why": "the signer cancels its own signed offers"
     },
     "SwapToRepayIntentFacet.cancelExpiredIntent(uint256)": {
-      "class": "gap",
-      "issue": "#3097",
-      "why": "tears down an expired swap-to-repay intent; nothing drives it"
+      "class": "keeper",
+      "pass": "expiredTeardown",
+      "flag": "EXPIRED_TEARDOWN_ENABLED",
+      "evidence": "apps/keeper/src/expiredTeardown.ts"
     },
     "TreasuryFacet.expireBuybackIntent(bytes32)": {
       "class": "keeper",

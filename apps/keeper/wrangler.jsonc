@@ -411,6 +411,13 @@
   //     attestor reads, a day before the delisting timelocks' age limit,
   //     hourly. Needs the keeper named as the stand-in's refresher; it can
   //     flag nothing. Testnets only; pays only gas. Ships unset.
+  //   - EXPIRED_TEARDOWN_ENABLED — 'true' arms the #3097 expired-teardown
+  //     pass: cancelExpiredIntent for a swap-to-repay intent past its cancel
+  //     grace, cancelExpiredPrepayListing for a prepay listing past its grace
+  //     window, and teardownStaleSaleListing for a lender-sale listing past
+  //     its expiry or on a closed loan, every 15 minutes. Each is simulated
+  //     first and sent only when it would succeed. Permissionless; moves no
+  //     value and pays only gas. Ships unset.
   //
   // (b) GENUINE PLAIN VARS. `keep_vars: true` preserves the ones this config
   //     does NOT declare — it suppresses the delete of bindings absent from
