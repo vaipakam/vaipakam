@@ -1082,7 +1082,12 @@ spend a borrower's collateral. This is a fund-safety gate, not an accounting one
   - `getRewardRole()`;
   - `rewardCustodyActivated()` = true, with the ceremony record that
     activation leaves;
-  - that the holder is bound.
+  - that the holder is bound: `rewardCustodyHolder()` returns a non-zero
+    address with code, that address's `DIAMOND()` is this Diamond, and
+    `rewardCustodyHolderConstructed(<that address>)` = true. The last view
+    takes the holder as its argument. Called with no argument it reverts
+    with no matching selector, which is not evidence that the holder is
+    unbound.
 
   An `Unconfigured` single-chain deployment never runs the ceremony. Its column
   stays at Diamond custody by design.
