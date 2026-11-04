@@ -1,4 +1,4 @@
-## Thread — www prerender waits for each page to declare itself (PR #<n>)
+## Thread — www prerender waits for each page to declare itself (PR #3138)
 
 With the browser libraries in place, the first real Workers Builds run
 of the prerender step snapshotted 118 of 120 pages. The two translated
