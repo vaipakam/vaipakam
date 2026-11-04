@@ -322,8 +322,6 @@
   //   - REWARD_COMMIT_ENABLED — 'true' arms the #1222 B2-d1 mirror→Base
   //     commitment-report pass (mirror chains only; keeper EOA needs on-chain
   //     KEEPER_ROLE).
-  //   - REWARD_DELIVERY_PROOF_ENABLED — 'true' arms the #1944 / transport-epoch
-  //     delivery pass (mirrors: index epoch days, prove no-epoch day lists).
   //   - REWARD_SANCTIONS_KEEPER_ENABLED — 'true' arms the #2450 sanctions-hold
   //     observer (every reward chain; its ops-alert table is in the keeper's
   //     private `vaipakam-keeper-db`).
@@ -364,6 +362,11 @@
   //     (it pays the quote's CCIP fee) and the two lapse terminals. All
   //     permissionless. Ships unset. Needs no on-chain role. Arming it is an
   //     owner decision.
+  //   - REWARD_DELIVERY_CONFLICT_ENABLED — 'true' arms the #2961 reward
+  //     delivery-conflict pass: on a mirror, the skip of each day whose
+  //     delivered parts disagree on its whole, and the recycling of what
+  //     landed for it. Permissionless; it pays no fee. Ships unset. Needs no
+  //     on-chain role. Arming it is an owner decision.
   //   - REWARD_RETURN_TRANSPORT_ENABLED — 'true' arms the #2984 reward
   //     return-transport pass: repatriation instructions, executions and
   //     cancellation ACKs, stranded-compensation returns and a retired

@@ -20,7 +20,7 @@ import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {Vm} from "forge-std/Vm.sol";
-import {LibD6Delivery} from "./helpers/LibD6Delivery.sol";
+import {LibD8Delivery} from "./helpers/LibD8Delivery.sol";
 
 /// @title RewardStagingDomainTest
 /// @notice 3b-ii-A2-ii (#2305) — a claim whose pending armed days exceed one
@@ -102,15 +102,10 @@ contract RewardStagingDomainTest is SetupTest, IVaipakamErrors {
         );
     }
 
-    function _one(uint256 d) internal pure returns (uint256[] memory a) {
-        a = new uint256[](1);
-        a[0] = d;
-    }
-
     /// @dev Live fresh in custody plus a delivered ledger that can pay it.
     function _liveFresh(uint256 amount) internal {
         // One receipt per amount: the ingress refuses a repeated receipt id.
-        LibD6Delivery.liveFresh(address(diamond), address(vpfi), amount, _one(1), CHAIN_BASE, 1000 + amount / 1e17, REMITTER, keccak256(abi.encode("live", amount)));
+        LibD8Delivery.liveFresh(address(diamond), address(vpfi), amount, 1, CHAIN_BASE, 1000 + amount / 1e17, REMITTER, keccak256(abi.encode("live", amount)));
         _mut().setArmedFreshLedgerRaw(amount, 0);
     }
 
@@ -224,8 +219,7 @@ contract RewardStagingDomainTest is SetupTest, IVaipakamErrors {
         for (uint256 i; i < 140; ++i) { // then day 1's list grows: untyped, unattested, pending
             vm.warp(vm.getBlockTimestamp() + 10);
             bytes32 pid = keccak256(abi.encode("domain-pending", i));
-            LibD6Delivery.deliverUnattested(address(diamond), address(vpfi), 1e12, _one(1), CHAIN_BASE, 900 + i, REMITTER, pid);
-            LibD6Delivery.indexAllDays(address(diamond), keccak256(abi.encode(uint256(CHAIN_BASE), pid)), _one(1));
+            LibD8Delivery.deliverUnattested(address(diamond), address(vpfi), 1e12, 1, CHAIN_BASE, 900 + i, REMITTER, pid);
         }
         // The domain cannot reserve day 1 on an unsettled scan; the permissionless
         // preparation settles it — and passes more pending epochs than it tracks.
@@ -374,9 +368,8 @@ contract RewardStagingDomainTest is SetupTest, IVaipakamErrors {
         _liveFresh(20e18);
         // An attested epoch lists day 3 alone: that day's record has a page to scan.
         bytes32 pid = keccak256("domain-lease-epoch");
-        LibD6Delivery.deliverUnattested(address(diamond), address(vpfi), 0.1e18, _one(3), CHAIN_BASE, 77, REMITTER, pid);
-        LibD6Delivery.indexAllDays(address(diamond), keccak256(abi.encode(uint256(CHAIN_BASE), pid)), _one(3));
-        LibD6Delivery.attest(address(diamond), REMITTER, 77, 0.1e18, 0);
+        LibD8Delivery.deliverUnattested(address(diamond), address(vpfi), 0.1e18, 3, CHAIN_BASE, 77, REMITTER, pid);
+        LibD8Delivery.attest(address(diamond), REMITTER, 77, 0.1e18, 0);
         uint256 t0 = block.timestamp;
         _claim();
         _claim();
@@ -473,9 +466,8 @@ contract RewardStagingDomainTest is SetupTest, IVaipakamErrors {
     /// @dev An attested, fully fresh epoch listing day `d` alone.
     function _attestedEpochOn(uint256 d, uint256 remitId) internal {
         bytes32 pid = keccak256(abi.encode("domain-epoch", d, remitId));
-        LibD6Delivery.deliverUnattested(address(diamond), address(vpfi), 0.1e18, _one(d), CHAIN_BASE, remitId, REMITTER, pid);
-        LibD6Delivery.indexAllDays(address(diamond), keccak256(abi.encode(uint256(CHAIN_BASE), pid)), _one(d));
-        LibD6Delivery.attest(address(diamond), REMITTER, remitId, 0.1e18, 0);
+        LibD8Delivery.deliverUnattested(address(diamond), address(vpfi), 0.1e18, d, CHAIN_BASE, remitId, REMITTER, pid);
+        LibD8Delivery.attest(address(diamond), REMITTER, remitId, 0.1e18, 0);
     }
 
     function _resolveCursor() internal view returns (uint64 c) {

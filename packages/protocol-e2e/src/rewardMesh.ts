@@ -16,20 +16,18 @@
  *      to remit (`fixture.ts`), paying `quoteRemittanceFee`, and the relay
  *      lands VPFI and message together on the mirror, whose ingress records
  *      the packet and admits its VPFI into a transport epoch;
- *   5. {@link indexDelivery}: the epoch's day list INDEXED on the mirror
- *      (`materializeTransportBatchChunk`, permissionless, chunk by chunk with
- *      each chunk's Merkle proof). The delivery stamped only the list's root,
- *      so until somebody supplies the list an epoch funds nothing a claim can
- *      find. The list is rebuilt from Base's reservation record and checked
- *      against both roots before anything is sent, with the shared wire rules
- *      (`@vaipakam/lib/d6Wire`) the keeper's delivery-proof pass uses.
+ *   5. {@link indexDelivery}: CHECKS that the epoch is already indexed under
+ *      its day. There is nothing to send: since #2828 the wire carries the one
+ *      funded day inline, and the mirror's ingress links the epoch into that
+ *      day's index in the same call that admits it. The check reads the day
+ *      the packet and the epoch name, compares it with the one day Base's
+ *      reservation funded, and finds the epoch in the day's index.
  *
  * Each step throws, naming what did not land, rather than leaving a later
  * assertion to fail for a reason it does not state.
  */
 import { BaseError, ContractFunctionRevertedError, type Address, type Hex } from 'viem';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
-import { d6Chunk, d6Leaves, d6Proof, d6Root, fundedDaysFromBits } from '@vaipakam/lib/d6Wire';
 import { BASE_ID, LANE_NATIVE_FEE, MIRROR_ID } from '@vaipakam/anvil-harness/mesh';
 import type { MeshScenario } from '@vaipakam/anvil-harness/meshScenario';
 import type { RelayedMessage } from '@vaipakam/anvil-harness/ccipLane';
@@ -171,25 +169,43 @@ export async function remitRefusals(
   return { quote, send };
 }
 
-/** Step 5: index a delivery's epoch on the mirror. Returns the days indexed. */
+/**
+ * The funded days a reservation records: `dayIds[i]` for every bit `i` set in
+ * `fundedDayBits` (256 days per word). Base sends one funded day per
+ * remittance (#2821), so a well-formed reservation yields exactly one.
+ */
+function fundedDays(dayIds: readonly bigint[], bits: readonly bigint[]): bigint[] {
+  const out: bigint[] = [];
+  for (let i = 0; i < dayIds.length; i++) {
+    const word = bits[i >> 8] ?? 0n;
+    if ((word >> BigInt(i & 255)) & 1n) out.push(dayIds[i]);
+  }
+  return out;
+}
+
+/**
+ * Step 5: confirm a delivery's epoch was indexed under its day AT INGRESS
+ * (#2828) — nothing is sent. Returns the day the epoch funds, as a one-element
+ * list (the shape a multi-day wire once returned).
+ */
 export async function indexDelivery(m: MeshScenario, rem: Remittance): Promise<bigint[]> {
-  const packet = await m.mirror.read<{ remitter: Address; remitId: bigint; dayListRoot: Hex; batchId: Hex }>('getIngressPacket', [rem.packetHash]);
+  const packet = await m.mirror.read<{ remitter: Address; remitId: bigint; dayId: bigint; dayNamed: boolean; batchId: Hex }>('getIngressPacket', [rem.packetHash]);
   if (packet.batchId.toLowerCase() !== rem.batchId.toLowerCase()) throw new Error(`the packet names epoch ${packet.batchId}, not ${rem.batchId}`);
   if (packet.remitter.toLowerCase() !== m.base.diamond.toLowerCase()) throw new Error(`the packet names remitter ${packet.remitter}, not Base's Diamond`);
-  const reservation = await m.base.read<{ dayIds: readonly bigint[]; fundedDayBits: readonly bigint[]; dayListRoot: Hex; dstChainId: number }>(
+  if (!packet.dayNamed) throw new Error(`packet ${rem.packetHash} names no day`);
+  const reservation = await m.base.read<{ dayIds: readonly bigint[]; fundedDayBits: readonly bigint[]; dstChainId: number }>(
     'getRemitReservation',
     [packet.remitId],
   );
   if (Number(reservation.dstChainId) !== MIRROR_ID) throw new Error(`reservation ${packet.remitId} names chain ${reservation.dstChainId}`);
-  const funded = fundedDaysFromBits(reservation.dayIds, reservation.fundedDayBits);
-  if (!funded || funded.length === 0) throw new Error(`reservation ${packet.remitId} records no funded day`);
-  const leaves = d6Leaves(funded);
-  const root = d6Root(leaves);
-  if (root.toLowerCase() !== reservation.dayListRoot.toLowerCase() || root.toLowerCase() !== packet.dayListRoot.toLowerCase()) {
-    throw new Error(`the rebuilt day list's root ${root} matches neither the reservation's nor the packet's`);
+  const funded = fundedDays(reservation.dayIds, reservation.fundedDayBits);
+  if (funded.length !== 1) throw new Error(`reservation ${packet.remitId} records ${funded.length} funded days, not one`);
+  if (funded[0] !== packet.dayId) throw new Error(`the packet names day ${packet.dayId}; Base's reservation funded ${funded[0]}`);
+  const [, , , batchDay] = await m.mirror.read<readonly [Hex, bigint, bigint, bigint, boolean]>('getTransportBatch', [rem.batchId]);
+  if (batchDay !== packet.dayId) throw new Error(`epoch ${rem.batchId} funds day ${batchDay}, not the packet's ${packet.dayId}`);
+  const [page] = await m.mirror.read<readonly [readonly Hex[], readonly bigint[], Hex]>('getTransportDayBatchesFrom', [packet.dayId, '0x' + '00'.repeat(32), 256n]);
+  if (!page.some((id) => id.toLowerCase() === rem.batchId.toLowerCase())) {
+    throw new Error(`epoch ${rem.batchId} is not in day ${packet.dayId}'s index`);
   }
-  for (let c = 0; c < leaves.length; c++) {
-    await m.mirror.diamondWrite('other', 'materializeTransportBatchChunk', [rem.batchId, BigInt(c), d6Chunk(funded, c), d6Proof(leaves, c), [], []]);
-  }
-  return funded;
+  return [packet.dayId];
 }

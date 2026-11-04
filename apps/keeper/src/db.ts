@@ -722,122 +722,6 @@ export async function markReconciledDayConsumed(
     .run();
 }
 
-// ─── #1944 / transport epochs — the delivery-proof pass's discovery read ─────
-
-/** One budget delivery a mirror recorded, joined to its delivery event. Every
- *  budget delivery is rooted (d6): its list is rebuilt from Base. */
-export interface BudgetDeliveryRow {
-  /** The packet's ingress stamp (`IngressPacketRecorded.packetHash`). */
-  packetHash: string;
-  /** Base's remittance id. */
-  remitId: string;
-  block_at: number;
-  /** The packet's block, for the pass's done frontier (#2497 r4). */
-  block: number;
-}
-
-/** Budget-packet kind (`LibRewardCustody.PACKET_KIND_BUDGET`). */
-const PACKET_KIND_BUDGET = 1;
-
-/**
- * EVERY budget delivery recorded on the ACTIVE Diamond of `chainId`, oldest
- * first, each packet paired with the rooted delivery event that carries its
- * commitment.
- *
- * PAIRING IS VERIFIED, never inferred (#2497 r3, root fix). The packet's own
- * stamp event names it AND its commitment: `IngressPacketDayListRooted
- * (packetHash, dayListRoot)`. A delivery event in the same transaction belongs
- * to the packet only when its `dayListRoot` equals the stamped root, and a
- * packet with no verified match is left out.
- *
- * No age and no count bound on what is WORK (Codex #2489 r1): a delivery is
- * work until the chain shows it whole. The READ is bounded instead (#2497 r8):
- * the pass discovers deliveries a page at a time past its cursor
- * ({@link discoverBudgetDeliveries}) into its open-work queue, and the active
- * Diamond's first block ({@link deploymentFloor}) keeps a redeploy's history out.
- */
-export async function listBudgetDeliveries(db: D1Database, chainId: number, fromBlock: number): Promise<BudgetDeliveryRow[]> {
-  return pairBudgetDeliveries(await budgetEvents(db, chainId, fromBlock, Number.MAX_SAFE_INTEGER, null));
-}
-
-/** One discovery page of {@link listBudgetDeliveries}: the deliveries in
- *  `[from, through]`, read `limit` events at a time and cut at a block
- *  boundary ({@link pageByBlock}), so a packet's events — one transaction —
- *  are always paired together. */
-export async function discoverBudgetDeliveries(
-  db: D1Database,
-  chainId: number,
-  from: number,
-  through: number,
-  limit: number,
-): Promise<{ rows: BudgetDeliveryRow[]; next: number }> {
-  const page = await pageByBlock((f, t, l) => budgetEvents(db, chainId, f, t, l), from, through, limit);
-  return { rows: pairBudgetDeliveries(page.rows), next: page.next };
-}
-
-type BudgetEventRow = { kind: string; tx_hash: string; args_json: string; block_at: number; block_number: number };
-
-async function budgetEvents(db: D1Database, chainId: number, from: number, through: number, limit: number | null): Promise<BudgetEventRow[]> {
-  const rows = await db
-    .prepare(
-      `SELECT kind, tx_hash, args_json, block_at, block_number
-         FROM activity_events
-        WHERE chain_id = ?1 AND block_number >= ?2 AND block_number <= ?3
-          AND kind IN ('IngressPacketRecorded', 'IngressPacketDayListRooted', 'RewardBudgetRootReceived')
-        ORDER BY block_number ASC, log_index ASC
-        LIMIT ?4`,
-    )
-    .bind(chainId, from, through, limit ?? -1)
-    .all<BudgetEventRow>();
-  return rows.results ?? [];
-}
-
-function pairBudgetDeliveries(eventRows: readonly BudgetEventRow[]): BudgetDeliveryRow[] {
-  type Ev = { kind: string; tx: string; args: Record<string, unknown>; block_at: number; block: number };
-  const evs: Ev[] = [];
-  for (const r of eventRows) {
-    try {
-      evs.push({
-        kind: r.kind,
-        tx: r.tx_hash,
-        args: JSON.parse(r.args_json) as Record<string, unknown>,
-        block_at: r.block_at,
-        block: Number(r.block_number),
-      });
-    } catch {
-      /* an unreadable row pairs with nothing */
-    }
-  }
-  const lower = (v: unknown) => (typeof v === 'string' ? v.toLowerCase() : '');
-  const rootStamp = new Map<string, string>(); // packetHash -> dayListRoot
-  const deliveriesByTx = new Map<string, Ev[]>();
-  for (const e of evs) {
-    if (e.kind === 'IngressPacketDayListRooted') rootStamp.set(lower(e.args.packetHash), lower(e.args.dayListRoot));
-    else if (e.kind === 'RewardBudgetRootReceived') {
-      const list = deliveriesByTx.get(e.tx) ?? [];
-      list.push(e);
-      deliveriesByTx.set(e.tx, list);
-    }
-  }
-  const out: BudgetDeliveryRow[] = [];
-  for (const p of evs) {
-    if (p.kind !== 'IngressPacketRecorded' || Number(p.args.kind) !== PACKET_KIND_BUDGET) continue;
-    const packetHash = lower(p.args.packetHash);
-    if (!/^0x[0-9a-f]{64}$/.test(packetHash)) continue;
-    const root = rootStamp.get(packetHash);
-    if (root === undefined) continue;
-    const candidates = deliveriesByTx.get(p.tx) ?? [];
-    if (!candidates.some((d) => lower(d.args.dayListRoot) === root)) continue;
-    out.push({
-      packetHash: p.args.packetHash as string,
-      remitId: String(p.args.remitId ?? '0'),
-      block_at: p.block_at,
-      block: p.block,
-    });
-  }
-  return out;
-}
-
 /** EVERY remit id the canonical chain RELEASED, oldest first, from the
  *  indexer's record of `RemitReservationReleased`. The ack pass's frontier scan
  *  treats a released reservation as terminal, so a delivery that executes after
@@ -900,10 +784,67 @@ function firstReleases(rows: readonly ReleaseEventRow[]): { remitId: number; blo
   return [...seen].map(([remitId, block]) => ({ remitId, block }));
 }
 
+/** A part counted toward a mirror day whose delivered parts CONFLICT on the
+ *  day's whole (#2961), as the delivery-conflict pass discovers it. */
+export interface ConflictedDayRow {
+  dayId: string;
+  block: number;
+}
+
+/**
+ * #2961 — one discovery page of the parts counted toward CONFLICTED days on
+ * `chainId`: every `DayDeliveryPartLanded` in `[from, through]` whose day has a
+ * `DayDeliveryWholeConflict` on record at or below `through`. A day is found
+ * when its conflict is recorded (the conflicting part emits both events, in
+ * one call), and found again whenever a later part lands on it: such a part
+ * may add value the skipped day's recycling still has to move. A part that
+ * landed before its day conflicted is found too, when both are in one page;
+ * queuing a day twice is a no-op. Days come back as decimal strings, as the
+ * indexer stores a uint256.
+ */
+export async function discoverConflictedDayParts(
+  db: D1Database,
+  chainId: number,
+  from: number,
+  through: number,
+  limit: number,
+): Promise<{ rows: ConflictedDayRow[]; next: number }> {
+  const page = await pageByBlock(
+    async (f, t, l) =>
+      (
+        await db
+          .prepare(
+            `SELECT CAST(json_extract(args_json, '$.dayId') AS TEXT) AS day_id, block_number
+               FROM activity_events
+              WHERE chain_id = ?1 AND block_number >= ?2 AND block_number <= ?3
+                AND kind = 'DayDeliveryPartLanded'
+                AND CAST(json_extract(args_json, '$.dayId') AS TEXT) IN (
+                  SELECT CAST(json_extract(args_json, '$.dayId') AS TEXT)
+                    FROM activity_events
+                   WHERE chain_id = ?1 AND kind = 'DayDeliveryWholeConflict' AND block_number <= ?5)
+              ORDER BY block_number ASC, log_index ASC
+              LIMIT ?4`,
+          )
+          .bind(chainId, f, t, l ?? -1, through)
+          .all<{ day_id: string | null; block_number: number }>()
+      ).results ?? [],
+    from,
+    through,
+    limit,
+  );
+  return {
+    rows: page.rows.filter((r) => typeof r.day_id === 'string' && /^\d+$/.test(r.day_id)).map((r) => ({ dayId: r.day_id as string, block: Number(r.block_number) })),
+    next: page.next,
+  };
+}
+
 // ─── #2497 r8 — the OPEN-WORK queue (keeper-private, migration 0003) ─
 
 /** The passes that keep an open-work queue, by the `kind` each records under.
- *  The reward day-close pass (#2612) keys its rows by reward day rather than
+ *  `late_ack` is the remit-ack pass's (a remit whose acknowledgement is late).
+ *  `delivery_conflict` (#2961) is a mirror day whose delivered parts disagree
+ *  on its whole, keyed by the day, worked by the delivery-conflict pass until
+ *  the day is skipped and its landed value recycled. The reward day-close pass (#2612) keys its rows by reward day rather than
  *  ledger block: `day_owed` (a day not yet worked through), `day_broadcast` (a
  *  finalized day's sends, by destination) and `day_zeroed` (its zeroed-chain
  *  notice) are open-work rows whose `item` and `block` are the day;
@@ -917,7 +858,7 @@ function firstReleases(rows: readonly ReleaseEventRow[]): { remitId: number; blo
  *  return-transport pass (#2984) records each re-sendable message it sent
  *  under `return_send` (`item` names the message, `block` is 0), so it is not
  *  sent again before the indexer has recorded it. */
-export type WorkKind = 'delivery_proof' | 'late_ack' | 'day_broadcast' | 'day_zeroed' | 'day_close' | 'day_owed' | 'day_clock' | 'day_dispatch' | 'day_open' | 'scan_cursor' | 'return_send';
+export type WorkKind = 'delivery_conflict' | 'late_ack' | 'day_broadcast' | 'day_zeroed' | 'day_close' | 'day_owed' | 'day_clock' | 'day_dispatch' | 'day_open' | 'scan_cursor' | 'return_send';
 
 /** The last block the shared indexer has completely recorded on `chainId`
  *  (its `diamond` cursor, advanced only after a whole window is written), or

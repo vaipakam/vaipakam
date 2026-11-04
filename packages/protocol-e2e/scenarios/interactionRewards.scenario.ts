@@ -19,8 +19,9 @@
  *     pools, one remittance per day: the VPFI the Base pool locks is the
  *     budget Base quoted, the mirror mints exactly that, and the mirror's
  *     supply stays equal to what Base holds locked;
- *   - each delivery's day is indexed on the mirror (until then it funds
- *     nothing a claim can find); each party's first claim there DEFERS — it
+ *   - each delivery lands already indexed under the one day its wire names
+ *     (#2828: nothing is left for a caller to index); each party's first
+ *     claim there DEFERS — it
  *     opens the staging domain of the entry's pre-arming slice and pays
  *     nothing — the domain is stepped home permissionlessly, and the next
  *     claim pays in full, out of that remitted budget (PF-259).
@@ -267,11 +268,8 @@ describe('interaction rewards on a canonical chain and a mirror', () => {
       // Burn/mint against lock/release: the mirror's whole supply is backed by
       // what Base's pool holds locked.
       expect(supplyAfter).toBe(await balanceOf(m.base, m.fixture.vpfiToken, basePool));
-      // The delivery funds nothing a claim can find until its day is indexed.
-      if (d === REMITTED_DAYS[0]) expect(await simulatedClaim(m.mirror, 'lender')).toBeNull();
+      // The epoch is indexed under its day by the delivery itself (#2828).
       expect(await indexDelivery(m, rem)).toEqual([BigInt(d)]);
-      const [, , , dayCount, indexedDays] = await m.mirror.read<readonly [Hex, bigint, bigint, number, number, boolean]>('getTransportBatch', [rem.batchId]);
-      expect(Number(indexedDays)).toBe(Number(dayCount));
       remitted += rem.quoted;
     }
 

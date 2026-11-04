@@ -17,6 +17,7 @@ import {LoanFacet} from "../../src/facets/LoanFacet.sol";
 import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
 import {LibPausable} from "../../src/libraries/LibPausable.sol";
 import {RefreshAllFacetsInPlace} from "../../script/RefreshAllFacetsInPlace.s.sol";
+import {ArtifactDeploy} from "../../script/lib/ArtifactDeploy.sol";
 
 /**
  * @title  RefreshChangedFacetsTest
@@ -146,8 +147,21 @@ contract RefreshChangedFacetsTest is Test {
         address newPerk = _host(PerkFacet.getPerkConfig.selector);
         address newEpoch = _host(RewardEpochFacet.getTransportDayScanIds.selector);
         assertTrue(newPerk != perk && newEpoch != epoch, "both stale facets were replaced");
-        assertEq(keccak256(newPerk.code), keccak256(address(new PerkFacet()).code), "perk runs this tree's build");
-        assertEq(keccak256(newEpoch.code), keccak256(address(new RewardEpochFacet()).code), "epoch runs this tree's build");
+        // "This tree's build" is the ARTIFACT the script deploys from
+        // (`ArtifactDeploy`, #2718), never a `new X()` here: under viaIR a
+        // facet nested in this test's compile unit can be code-generated
+        // differently from the `forge build --skip test` artifact, so a `new`
+        // compares two builds of one source and fails on a correct refresh.
+        assertEq(
+            keccak256(newPerk.code),
+            keccak256(ArtifactDeploy.deploy(type(PerkFacet).name).code),
+            "perk runs this tree's build"
+        );
+        assertEq(
+            keccak256(newEpoch.code),
+            keccak256(ArtifactDeploy.deploy(type(RewardEpochFacet).name).code),
+            "epoch runs this tree's build"
+        );
         assertEq(_host(PerkFacet.getPriorityRoutingStatus.selector), newPerk, "every perk selector moved");
 
         address[] memory afterRun = _facetAddresses();

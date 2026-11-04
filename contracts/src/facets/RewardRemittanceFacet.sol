@@ -123,7 +123,7 @@ contract RewardRemittanceFacet is
         // passes exactly when the rest of its day sent in one would.
         uint256 gateFresh;
         uint256 gateArmedFresh;
-        // #918 — the FUNDED day's whole slice, per component, for the d7 wire
+        // #918 — the FUNDED day's whole slice, per component, for the d8 wire
         // (every part of a day carries it). The send funds at most one day
         // ({LibRewardCustody.TRANSPORT_DAY_FANOUT_CAP}); a plan funding more is
         // refused before a payload is built.
@@ -511,8 +511,9 @@ contract RewardRemittanceFacet is
             r.recycledFull = st.recycledFull;
             r.dayIds = dl.actedDays;
             // #2489 (Codex r2) — which acted days were FUNDED, kept immutably:
-            // the d7 root commits to exactly these, and a release clears the
-            // live per-day mark they would otherwise be rebuilt from.
+            // the wire carries exactly these (one day, #2828), and a release
+            // clears the live per-day mark they would otherwise be rebuilt
+            // from.
             r.fundedDayBits = _fundedDayBits(dl.actedDays, dl.fundedDays);
             if (st.totalAll == 0) {
                 r.status = 2; // Acked — nothing in flight, terminal.
@@ -531,20 +532,16 @@ contract RewardRemittanceFacet is
             return bytes32(0);
         }
 
-        // 3d-2 — the ROOTED wire: the payload is built ONCE here, by the same
-        // builder the fee quote uses, and the day-list root it commits to is
-        // kept on the reservation — the canonical record of what was sent
-        // carries the commitment the mirror indexes against. B2-d5's
-        // `recycledShare` still rides it: the mirror cannot re-derive it
-        // (`p.recycled` is computed after Base's Σcommitments clamp, which is
-        // Base-global state), so it drives the arrival's typed caps. #918: so
-        // does the day's whole, which the mirror waits for.
-        bytes memory payload;
-        {
-            bytes32 root;
-            (payload, root) = _remitPayload(s, dstChainId, dl.fundedDays, st, remitId);
-            s.remitReservations[remitId].dayListRoot = root;
-        }
+        // #2828 — the d8 wire: the payload is built ONCE here, by the same
+        // builder the fee quote uses, and carries the ONE funded day inline. A
+        // send with value funds exactly one day: the planner funds a day
+        // exactly when its part moves VPFI, `totalAll` is non-zero here, and
+        // {LibRewardCustody.requireRemittableFanout} above refused a second.
+        // B2-d5's `recycledShare` still rides it: the mirror cannot re-derive
+        // it (`p.recycled` is computed after Base's Σcommitments clamp, which
+        // is Base-global state), so it drives the arrival's typed caps. #918:
+        // so does the day's whole, which the mirror waits for.
+        bytes memory payload = _remitPayload(s, dstChainId, dl.fundedDays[0], st, remitId);
         messageId = _sendRemitPayload(
             s,
             vpfi,
@@ -652,40 +649,32 @@ contract RewardRemittanceFacet is
     /// @notice The ONE builder of an ordinary remittance's payload — the send
     ///         and its fee quote both call it, so the quote prices exactly the
     ///         bytes the send emits (one walk for a send and all its quotes).
-    /// @dev    #918 — the d7 (ROOTED) wire: the funded days are committed to by
-    ///         a Merkle root over fixed-size indexed chunks
-    ///         ({RemitWire.d6Chunks}, {RemitWire.d6Root}) and travel with the
-    ///         extent, the typed split, the era and the funded day's WHOLE
-    ///         slice per component. The funded list is bounded by
-    ///         {LibRewardCustody.requireRemittableFanout} before this runs, so
-    ///         it holds one day (#2821), the root is over one chunk, and the
-    ///         whole is that day's. The era word is the custody era the
-    ///         DESTINATION last reported (its B4 day report; #1566 PR C
-    ///         revision) — eras are numbered per chain, so the receiver
-    ///         compares like with like: a delivery the destination has since
-    ///         moved past lands in the era it was sent for.
+    /// @dev    #2828 — the d8 wire: the ONE funded day travels inline with
+    ///         the typed split, the era and the day's WHOLE slice per
+    ///         component. The shape names one day: every caller has already
+    ///         held the plan to {LibRewardCustody.requireRemittableFanout}, and
+    ///         builds a payload only for a plan that moves value, so the plan
+    ///         funds exactly one day and its whole is that day's. The era word
+    ///         is the custody era the DESTINATION last reported (its B4 day
+    ///         report; #1566 PR C revision) — eras are numbered per chain, so
+    ///         the receiver compares like with like: a delivery the destination
+    ///         has since moved past lands in the era it was sent for.
     /// @return payload The wire bytes.
-    /// @return root    The day-list root the payload commits to; the send keeps
-    ///                 it on the reservation.
     function _remitPayload(
         LibVaipakam.Storage storage s,
         uint32 dstChainId,
-        uint256[] memory fundedDays,
+        uint256 fundedDay,
         RemitSplitTotals memory st,
         uint256 remitId
-    ) private view returns (bytes memory payload, bytes32 root) {
-        bytes32[] memory leaves = RemitWire.d6Chunks(fundedDays);
-        root = RemitWire.d6Root(leaves);
+    ) private view returns (bytes memory payload) {
         // #1566 PR C revision — stamped with the DESTINATION's era as it last
-        // reported it. A remittance funding days of an era the destination has
-        // since retired is stamped the newer era and files there; its days still
-        // draw from its epoch (a draw reads batch membership, never the era), so
-        // only where an unused remainder goes once those days close differs.
-        payload = RemitWire.encodeD7(
-            RemitWire.D7({
-                dayListRoot: root,
-                elementCount: fundedDays.length,
-                chunkCount: leaves.length,
+        // reported it. A remittance funding a day of an era the destination has
+        // since retired is stamped the newer era and files there; its day still
+        // draws from its epoch (a draw reads batch membership, never the era), so
+        // only where an unused remainder goes once that day closes differs.
+        payload = RemitWire.encodeD8(
+            RemitWire.D8({
+                dayId: fundedDay,
                 total: st.totalAll,
                 remitId: remitId,
                 remitter: address(this),
@@ -1587,7 +1576,7 @@ contract RewardRemittanceFacet is
      *         AS the Diamond, building the exact same funded-day payload +
      *         token list the send would, for the same part, so `fee` is what to
      *         pass as `msg.value` (overpayment is refunded anyway). The part
-     *         size matters: the d7 payload carries the part, and a CCIP token
+     *         size matters: the d8 payload carries the part, and a CCIP token
      *         fee may scale with the amount moved.
      *
      *         It is a faithful DRY-RUN of the send's intrinsic guards: it
@@ -1633,8 +1622,8 @@ contract RewardRemittanceFacet is
         // draw) keeps the quote exact. 3d-2 — the SAME builder as the send
         // ({_remitPayload}) over the SAME totals, so `quote == send` holds by
         // construction.
-        (bytes memory payload, ) =
-            _remitPayload(s, dstChainId, plan.dl.fundedDays, plan.st, s.remitReservationNonce + 1);
+        bytes memory payload =
+            _remitPayload(s, dstChainId, plan.dl.fundedDays[0], plan.st, s.remitReservationNonce + 1);
         // #2561 — the send refuses a remittance with no bound remote adapter,
         // so the dry run refuses it too, by the same rule.
         LibRewardRemitDispatch.boundRemoteMessenger(messenger, dstChainId);
