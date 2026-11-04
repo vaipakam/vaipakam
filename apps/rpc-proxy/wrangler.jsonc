@@ -73,6 +73,16 @@
     },
   ],
 
+  // The proxy's hostname, declared here so a deploy keeps it bound (the
+  // indexer's pattern). Attached 2026-11-04; the connected app reads
+  // through it (VITE_RPC_PROXY_ORIGIN=https://rpc.vaipakam.com).
+  "routes": [
+    {
+      "pattern": "rpc.vaipakam.com",
+      "custom_domain": true,
+    },
+  ],
+
   "vars": {
     // Exact origins whose pages may call this proxy (CSV). The connected
     // app's production and workers.dev hosts. An Origin check only stops
