@@ -91,14 +91,16 @@
       "why": "the lender lists its own loan"
     },
     "EncumbranceMutateFacet.refreshTierExclusion(uint256[])": {
-      "class": "gap",
-      "issue": "#3097",
-      "why": "refreshes tier exclusion for loans; nothing drives it"
+      "class": "keeper",
+      "pass": "protocolUpkeep",
+      "flag": "TIER_EXCLUSION_REFRESH_ENABLED",
+      "evidence": "apps/keeper/src/tierExclusionRefresh.ts"
     },
     "InteractionRewardsFacet.compactRewardEntryIndex(address,uint256)": {
-      "class": "gap",
-      "issue": "#3097",
-      "why": "compacts a user's reward entry index; nothing drives it"
+      "class": "keeper",
+      "pass": "protocolUpkeep",
+      "flag": "REWARD_INDEX_COMPACT_ENABLED",
+      "evidence": "apps/keeper/src/rewardIndexCompact.ts"
     },
     "InteractionRewardsFacet.sweepForfeitedInteractionRewards(uint256)": {
       "class": "keeper",
@@ -234,9 +236,11 @@
       "why": "the user's own keeper settings"
     },
     "ProfileFacet.refreshSanctionsFlag(address)": {
-      "class": "gap",
-      "issue": "#3097",
-      "why": "re-screens one address; inferred (not proven) to be covered by rewardSanctionsHold and the prepay-sale sync"
+      "class": "keeper",
+      "pass": "protocolUpkeep",
+      "flag": "SANCTIONS_FLAG_REFRESH_ENABLED",
+      "evidence": "apps/keeper/src/sanctionsFlagRefresh.ts",
+      "note": "the earlier inference was only partly true (#3097): rewardSanctionsHold's observation writes the same registry entry, but only for loan parties, only while REWARD_SANCTIONS_KEEPER_ENABLED arms it and never while paused, and the prepay-sale sync only registers a flagged recipient of a live listing and never clears one; this step re-screens every vault owner, position recipient, payout recipient, rewarded keeper and refreshed wallet"
     },
     "ProfileFacet.revokeKeeper(address)": {
       "class": "user",
