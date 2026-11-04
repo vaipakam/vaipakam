@@ -32,6 +32,21 @@ contract OracleOnlyAttestor {
     }
 }
 
+/// @dev A stand-in as built before #3113: it says it is one and the admin
+///      alone owns it, but it has no refresher role.
+contract StandInWithoutRefresher {
+    address public owner;
+    address public pendingOwner;
+
+    constructor(address owner_) {
+        owner = owner_;
+    }
+
+    function isTestnetStandIn() external pure returns (bool) {
+        return true;
+    }
+}
+
 /// @dev Answers every call with two words, the first one `value`.
 contract WideAnswer {
     address internal immutable value;
@@ -83,6 +98,13 @@ contract ConfigureSanctionsClearanceTest is Test {
         vm.prank(other);
         standIn.acceptOwnership();
         assertFalse(script.reusableStandIn(address(standIn), admin), "not once another account owns it");
+    }
+
+    /// @notice #3113 — a stand-in built before the refresher role is never
+    ///         reused, so a fresh wiring never binds an attestor to a list
+    ///         only the admin's hand can keep fresh.
+    function test_RefusesAStandInWithoutTheRefresherRole() public {
+        assertFalse(script.reusableStandIn(address(new StandInWithoutRefresher(admin)), admin));
     }
 
     function test_RefusesAContractThatIsNotAStandIn() public view {

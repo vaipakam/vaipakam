@@ -221,6 +221,24 @@ export function clearanceOracleName(snap) {
  * AND no transfer reads as pending.
  */
 export function standInControl(o) {
+  const control = standInOwnerControl(o);
+  // #3113 — a refresher the owner named may re-publish the list too (and
+  // nothing else), whatever the owner's state. Only a refresher READ as an
+  // address is named; one unread, unset or zero adds nothing.
+  const isZero = (a) => typeof a === 'string' && /^0x0{40}$/i.test(a);
+  const refresher = typeof o.refresher === 'string' && !isZero(o.refresher) ? o.refresher : null;
+  if (refresher === null) return control;
+  const by = `its refresher ${refresher} re-publishes it with markUpdated`;
+  return {
+    flags: control.flags,
+    stale: control.refresh ? `${control.stale}, or its refresher ${refresher} does` : `it goes stale unless its refresher ${refresher} re-publishes it`,
+    refresh: control.refresh ? `${control.refresh}, or ${by}` : by,
+    blocked: null,
+  };
+}
+
+/** {@link standInControl} from the owner's side alone. */
+function standInOwnerControl(o) {
   const isZero = (a) => typeof a === 'string' && /^0x0{40}$/i.test(a);
   const pendingTo = typeof o.pendingOwner === 'string' && !isZero(o.pendingOwner) ? o.pendingOwner : null;
   const pending = pendingTo
@@ -1018,7 +1036,7 @@ function oracleReport(snap) {
     updatedAt: o.updatedAt === null || o.updatedAt === undefined ? null : Number.isSafeInteger(Number(o.updatedAt)) ? Number(o.updatedAt) : String(o.updatedAt),
     // The stand-in's owner and pending owner as read this run (null when
     // unreadable); absent for an oracle that is not the stand-in.
-    ...(o.identity === ORACLE_IDENTITY.STAND_IN && { owner: o.owner ?? null, pendingOwner: o.pendingOwner ?? null }),
+    ...(o.identity === ORACLE_IDENTITY.STAND_IN && { owner: o.owner ?? null, pendingOwner: o.pendingOwner ?? null, refresher: o.refresher ?? null }),
     ...(o.detail && { detail: o.detail }),
   };
 }
@@ -1289,12 +1307,13 @@ export function listRoleKeyVet({ listByChain, key, abi }) {
 export async function identifyOracle(client, address, abi) {
   const at = getAddress(address);
   const read = (functionName) => client.readContract({ address: at, abi, functionName }).then((value) => ({ value }), (error) => ({ error }));
-  const [marker, freshness, block, owner, pendingOwner] = await Promise.all([
+  const [marker, freshness, block, owner, pendingOwner, refresher] = await Promise.all([
     read('isTestnetStandIn'),
     read('getLastUpdateBlockTimestamp'),
     client.getBlock().then((b) => b, () => null),
     read('owner'),
     read('pendingOwner'),
+    read('refresher'),
   ]);
   const ts = freshness.error || freshness.value === undefined || freshness.value === null ? 0n : BigInt(freshness.value);
   const updatedAt = ts === 0n || !block || ts > BigInt(block.timestamp) ? null : ts;
@@ -1306,7 +1325,15 @@ export async function identifyOracle(client, address, abi) {
     }
   };
   if (marker.value === true) {
-    return { address: at, identity: ORACLE_IDENTITY.STAND_IN, updatedAt, owner: addressOrNull(owner), pendingOwner: addressOrNull(pendingOwner) };
+    return {
+      address: at,
+      identity: ORACLE_IDENTITY.STAND_IN,
+      updatedAt,
+      owner: addressOrNull(owner),
+      pendingOwner: addressOrNull(pendingOwner),
+      // #3113: null when unread, and for a stand-in built before the role.
+      refresher: addressOrNull(refresher),
+    };
   }
   const detail =
     'error' in marker

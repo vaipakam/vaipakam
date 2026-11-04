@@ -35,7 +35,8 @@ contract TestnetSanctionsOracleStandInTest is Test {
     TestnetSanctionsOracleStandIn internal standIn;
 
     event StandInFlagSet(address indexed account, bool flagged);
-    event StandInUpdated(uint256 timestamp);
+    event StandInUpdated(uint256 timestamp, address indexed by);
+    event StandInRefresherSet(address indexed previous, address indexed refresher);
 
     function setUp() public {
         vm.chainId(84532);
@@ -72,8 +73,8 @@ contract TestnetSanctionsOracleStandInTest is Test {
     function test_DeploymentPublishesAnEmptyList() public {
         assertEq(standIn.getLastUpdateBlockTimestamp(), T0);
         assertFalse(standIn.isSanctioned(a));
-        vm.expectEmit(false, false, false, true);
-        emit StandInUpdated(T0);
+        vm.expectEmit(true, false, false, true);
+        emit StandInUpdated(T0, admin);
         new TestnetSanctionsOracleStandIn(admin);
     }
 
@@ -84,7 +85,7 @@ contract TestnetSanctionsOracleStandInTest is Test {
         vm.expectEmit(address(standIn));
         emit StandInFlagSet(b, true);
         vm.expectEmit(address(standIn));
-        emit StandInUpdated(T0 + 1 days);
+        emit StandInUpdated(T0 + 1 days, admin);
         vm.prank(admin);
         standIn.setFlagged(_arr(a, b), true);
         assertTrue(standIn.isSanctioned(a));
@@ -105,7 +106,7 @@ contract TestnetSanctionsOracleStandInTest is Test {
         assertEq(standIn.getLastUpdateBlockTimestamp(), T0, "time passing alone does not refresh it");
 
         vm.expectEmit(address(standIn));
-        emit StandInUpdated(T0 + 30 days);
+        emit StandInUpdated(T0 + 30 days, admin);
         vm.prank(admin);
         standIn.markUpdated();
         assertEq(standIn.getLastUpdateBlockTimestamp(), T0 + 30 days);
@@ -116,10 +117,48 @@ contract TestnetSanctionsOracleStandInTest is Test {
         vm.startPrank(stranger);
         vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, stranger));
         standIn.setFlagged(_arr(a), true);
-        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, stranger));
+        vm.expectRevert(abi.encodeWithSelector(TestnetSanctionsOracleStandIn.NotOwnerOrRefresher.selector, stranger));
         standIn.markUpdated();
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, stranger));
+        standIn.setRefresher(stranger);
         vm.stopPrank();
         assertEq(standIn.getLastUpdateBlockTimestamp(), T0);
+        assertEq(standIn.refresher(), address(0));
+    }
+
+    /// @dev #3113 — the refresher the owner names keeps the list fresh and
+    ///      can change nothing in it; the owner can clear it again.
+    function test_TheRefresherOnlyRepublishes() public {
+        address keeper = makeAddr("keeper");
+        vm.expectEmit(address(standIn));
+        emit StandInRefresherSet(address(0), keeper);
+        vm.prank(admin);
+        standIn.setRefresher(keeper);
+        assertEq(standIn.refresher(), keeper);
+        assertEq(standIn.getLastUpdateBlockTimestamp(), T0, "naming a refresher publishes nothing");
+
+        vm.warp(T0 + 6 days);
+        vm.expectEmit(address(standIn));
+        emit StandInUpdated(T0 + 6 days, keeper);
+        vm.prank(keeper);
+        standIn.markUpdated();
+        assertEq(standIn.getLastUpdateBlockTimestamp(), T0 + 6 days);
+
+        vm.startPrank(keeper);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, keeper));
+        standIn.setFlagged(_arr(a), true);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, keeper));
+        standIn.setRefresher(stranger);
+        vm.stopPrank();
+        assertFalse(standIn.isSanctioned(a));
+
+        vm.prank(admin);
+        standIn.setRefresher(address(0));
+        vm.warp(T0 + 7 days);
+        vm.prank(keeper);
+        vm.expectRevert(abi.encodeWithSelector(TestnetSanctionsOracleStandIn.NotOwnerOrRefresher.selector, keeper));
+        standIn.markUpdated();
+        assertEq(standIn.getLastUpdateBlockTimestamp(), T0 + 6 days, "a cleared refresher refreshes nothing");
     }
 
     function test_BatchRefusals() public {

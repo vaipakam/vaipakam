@@ -539,7 +539,7 @@ test('a configured chain with no timelock is named as the attestor chain it serv
   });
   assert.match(report.chains.a.reason, /hosts the clearance attestor for Base Sepolia/);
   // It says which oracle that attestor reads, as the timelock chain found it.
-  assert.deepEqual(report.chains.a.attestors, [{ attestor: OTHER, for: ['Base Sepolia'], clearanceOracle: { address: ORACLE, identity: 'stand-in', name: STAND_IN_NAME, updatedAt: 999_000, owner: STAND_IN_OWNER, pendingOwner: ZERO } }]);
+  assert.deepEqual(report.chains.a.attestors, [{ attestor: OTHER, for: ['Base Sepolia'], clearanceOracle: { address: ORACLE, identity: 'stand-in', name: STAND_IN_NAME, updatedAt: 999_000, owner: STAND_IN_OWNER, pendingOwner: ZERO, refresher: null } }]);
 
   const standIn = { ...snap, clearanceOracle: { address: ORACLE, identity: 'stand-in', updatedAt: 999_000n, owner: STAND_IN_OWNER, pendingOwner: ZERO } };
   const onStandIn = await runDelister({
@@ -844,7 +844,7 @@ test('the report names the clearance oracle, and says the stand-in is not RedSto
   const quiet = { list: { pendingDelistings: 0, addresses: [A1, A2] } };
   const standIn = { address: ORACLE, identity: 'stand-in', updatedAt: 999_000n, owner: STAND_IN_OWNER, pendingOwner: ZERO };
   const stand = (await run(snapOf({ ...quiet, clearanceOracle: standIn }))).report;
-  assert.deepEqual(stand.chains.b.clearanceOracle, { address: ORACLE, identity: 'stand-in', name: STAND_IN_NAME, updatedAt: 999_000, owner: STAND_IN_OWNER, pendingOwner: ZERO });
+  assert.deepEqual(stand.chains.b.clearanceOracle, { address: ORACLE, identity: 'stand-in', name: STAND_IN_NAME, updatedAt: 999_000, owner: STAND_IN_OWNER, pendingOwner: ZERO, refresher: null });
   assert.match(summarize(stand), new RegExp(`clearance read from ${STAND_IN_NAME} at ${ORACLE}: NOT RedStone — it flags only what its owner ${STAND_IN_OWNER} flags; last published 1970-01-12T13:30:00.000Z, and it goes stale unless its owner re-publishes it\\.`));
   // Control is reported as read, never as an assumed admin: a pending transfer, a renounced owner, an unreadable one.
   const pending = (await run(snapOf({ ...quiet, clearanceOracle: { ...standIn, pendingOwner: OTHER } }))).report;
@@ -880,6 +880,22 @@ test("the stand-in's control is reported from both reads independently", () => {
   assert.match(unsure.flags, /whether anyone can still change its flags is not known/);
   assert.ok(!/nobody can re-publish it/.test(unsure.stale), 'not claimed without the pending read');
   assert.match(standInControl({ owner: STAND_IN_OWNER, pendingOwner: KEY }).flags, new RegExp(`its owner ${STAND_IN_OWNER} flags; an ownership transfer to ${KEY} is pending`));
+});
+
+test("a stand-in's named refresher is reported as able to re-publish it, and never to flag (#3113)", () => {
+  const owned = standInControl({ owner: STAND_IN_OWNER, pendingOwner: ZERO, refresher: OTHER });
+  assert.equal(owned.flags, `it flags only what its owner ${STAND_IN_OWNER} flags`);
+  assert.equal(owned.refresh, `its owner ${STAND_IN_OWNER} re-publishes it with markUpdated, or its refresher ${OTHER} re-publishes it with markUpdated`);
+  // A renounced owner no longer means nobody can re-publish it.
+  const renounced = standInControl({ owner: ZERO, pendingOwner: ZERO, refresher: OTHER });
+  assert.equal(renounced.refresh, `its refresher ${OTHER} re-publishes it with markUpdated`);
+  assert.equal(renounced.blocked, null);
+  assert.match(renounced.flags, /its flags can no longer change/);
+  assert.ok(!/nobody can re-publish it/.test(renounced.stale));
+  // An unread or zero refresher adds nothing.
+  for (const refresher of [null, ZERO, undefined]) {
+    assert.deepEqual(standInControl({ owner: STAND_IN_OWNER, pendingOwner: ZERO, refresher }), standInControl({ owner: STAND_IN_OWNER, pendingOwner: ZERO }));
+  }
 });
 
 test('the key may control nothing a delisting depends on, an oracle or a messenger included', () => {
@@ -929,8 +945,8 @@ test('an oracle is the stand-in only on its own answer, and never RedStone', asy
   const answering = (marker, updatedAt = 123n, blockTime = 1_000n, owners = { owner: STAND_IN_OWNER.toLowerCase(), pendingOwner: ZERO }) => ({
     readContract: async ({ functionName }) => {
       if (functionName === 'isTestnetStandIn') return marker instanceof Error ? Promise.reject(marker) : marker;
-      if (functionName === 'owner' || functionName === 'pendingOwner') {
-        const v = owners[functionName];
+      if (functionName === 'owner' || functionName === 'pendingOwner' || functionName === 'refresher') {
+        const v = owners[functionName] ?? new Error('no such function');
         return v instanceof Error ? Promise.reject(v) : v;
       }
       assert.equal(functionName, 'getLastUpdateBlockTimestamp');
@@ -938,7 +954,10 @@ test('an oracle is the stand-in only on its own answer, and never RedStone', asy
     },
     getBlock: async () => (blockTime instanceof Error ? Promise.reject(blockTime) : { timestamp: blockTime }),
   });
-  assert.deepEqual(await identifyOracle(answering(true), ORACLE.toLowerCase(), []), { address: ORACLE, identity: 'stand-in', updatedAt: 123n, owner: STAND_IN_OWNER, pendingOwner: ZERO });
+  // A stand-in built before the refresher role answers no `refresher()`: null, never assumed.
+  assert.deepEqual(await identifyOracle(answering(true), ORACLE.toLowerCase(), []), { address: ORACLE, identity: 'stand-in', updatedAt: 123n, owner: STAND_IN_OWNER, pendingOwner: ZERO, refresher: null });
+  const withRefresher = await identifyOracle(answering(true, 123n, 1_000n, { owner: STAND_IN_OWNER, pendingOwner: ZERO, refresher: OTHER.toLowerCase() }), ORACLE, []);
+  assert.equal(withRefresher.refresher, OTHER);
   // Who controls it is read, and an unreadable owner is unknown, not assumed.
   const unreadOwner = await identifyOracle(answering(true, 123n, 1_000n, { owner: new Error('rpc down'), pendingOwner: 'not an address' }), ORACLE, []);
   assert.equal(unreadOwner.owner, null);

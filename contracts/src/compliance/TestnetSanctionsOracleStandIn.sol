@@ -34,14 +34,23 @@ import {TestnetChains} from "./TestnetChains.sol";
  *            so a reader that gets no `true` from it never calls an oracle a
  *            stand-in.
  *
- *         3. **Its freshness is its owner's.** {getLastUpdateBlockTimestamp}
- *            is the time of the owner's last write: deployment (an empty list
- *            published), a flag change, or {markUpdated}, which re-publishes
- *            the list unchanged the way RedStone's own refresh would. It is
- *            never the current block's time, so a stand-in nobody maintains
- *            goes stale and closes the automated route exactly as a frozen
- *            RedStone would (the timelock's `oracleMaxAge`); it never makes a
- *            clearance look fresher than its owner made it.
+ *         3. **Its freshness is a write, never the clock.**
+ *            {getLastUpdateBlockTimestamp} is the time of the last
+ *            publication: deployment (an empty list published), a flag change
+ *            by the owner, or {markUpdated}, which re-publishes the list
+ *            unchanged the way RedStone's own refresh would. It is never the
+ *            current block's time, so a stand-in nobody maintains goes stale
+ *            and closes the automated route exactly as a frozen RedStone
+ *            would (the timelock's `oracleMaxAge`).
+ *
+ *         4. **Only the owner decides what is flagged.** #3113 (owner
+ *            decision 2026-11-04: the keeper refreshes it weekly instead of
+ *            the admin by hand) adds a {refresher}, which the owner names and
+ *            may clear. The refresher may call {markUpdated} and nothing
+ *            else: it can keep the owner's list fresh, never change it. A
+ *            refresh by it is the same unchanged re-publication the owner's
+ *            would be, and is told apart on-chain by {StandInUpdated}'s
+ *            `by`.
  */
 contract TestnetSanctionsOracleStandIn is ISanctionsList, Ownable2Step {
     /// @notice The oracle this contract stands in for on test networks.
@@ -50,18 +59,28 @@ contract TestnetSanctionsOracleStandIn is ISanctionsList, Ownable2Step {
     /// @notice Addresses the owner has flagged on this test network.
     mapping(address account => bool) public flagged;
 
-    /// @dev The time of the owner's last write; see {getLastUpdateBlockTimestamp}.
+    /// @dev The time of the last publication; see {getLastUpdateBlockTimestamp}.
     uint256 private _lastUpdate;
+
+    /// @notice The one address besides the owner that may call {markUpdated}
+    ///         (the keeper, #3113); address(0) when none is named. It can
+    ///         flag nothing.
+    address public refresher;
 
     /// @notice Emitted on every flag change, so the stand-in's list is
     ///         reconstructible from logs alone.
     /// @custom:event-category informational/compliance
     event StandInFlagSet(address indexed account, bool flagged);
 
-    /// @notice Emitted whenever the owner (re)publishes the list: at
-    ///         deployment, after a flag change, and on {markUpdated}.
+    /// @notice Emitted whenever the list is (re)published: at deployment,
+    ///         after a flag change, and on {markUpdated}. `by` is who
+    ///         published it: the owner, or the {refresher}.
     /// @custom:event-category informational/compliance
-    event StandInUpdated(uint256 timestamp);
+    event StandInUpdated(uint256 timestamp, address indexed by);
+
+    /// @notice Emitted when the owner names or clears the {refresher}.
+    /// @custom:event-category informational/compliance
+    event StandInRefresherSet(address indexed previous, address indexed refresher);
 
     /// @notice The constructor ran on a chain id outside the testnet allowlist.
     error NotATestnet(uint256 chainId);
@@ -69,12 +88,14 @@ contract TestnetSanctionsOracleStandIn is ISanctionsList, Ownable2Step {
     error EmptyBatch();
     /// @notice The zero address cannot be flagged or cleared.
     error ZeroAddress();
+    /// @notice {markUpdated} was called by neither the owner nor the refresher.
+    error NotOwnerOrRefresher(address caller);
 
     /// @param owner_ The chain's admin. Two-step ownership applies to every
     ///               later transfer.
     constructor(address owner_) Ownable(owner_) {
         if (!TestnetChains.isTestnet(block.chainid)) revert NotATestnet(block.chainid);
-        _stamp();
+        _stamp(owner_);
     }
 
     /// @notice Always true: this contract is a testnet stand-in, not the
@@ -108,18 +129,29 @@ contract TestnetSanctionsOracleStandIn is ISanctionsList, Ownable2Step {
             flagged[account] = flagged_;
             emit StandInFlagSet(account, flagged_);
         }
-        _stamp();
+        _stamp(msg.sender);
     }
 
     /// @notice Re-publish the list unchanged, as RedStone's own refresh
     ///         would. Without one within the timelock's `oracleMaxAge` of an
     ///         execution, the stand-in is stale and the execution refuses.
-    function markUpdated() external onlyOwner {
-        _stamp();
+    ///         The owner or the {refresher} may call it.
+    function markUpdated() external {
+        if (msg.sender != owner() && msg.sender != refresher) {
+            revert NotOwnerOrRefresher(msg.sender);
+        }
+        _stamp(msg.sender);
     }
 
-    function _stamp() private {
+    /// @notice Name the {refresher}, or clear it with address(0). Changes no
+    ///         flag and does not re-publish the list.
+    function setRefresher(address refresher_) external onlyOwner {
+        emit StandInRefresherSet(refresher, refresher_);
+        refresher = refresher_;
+    }
+
+    function _stamp(address by) private {
         _lastUpdate = block.timestamp;
-        emit StandInUpdated(block.timestamp);
+        emit StandInUpdated(block.timestamp, by);
     }
 }
