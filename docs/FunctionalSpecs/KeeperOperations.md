@@ -612,16 +612,18 @@ evidence that the migration has completed.
   which moves no value and only releases the commitments it still carried;
   an entry that retires a day at a time is retired again until it is done.
   The loan of a forfeited entry is swept once for all its entries, sending
-  the forfeited reward to the recycle bucket. A sweep can make progress
-  while moving nothing, so the keeper does not judge it by the amount it
-  returns: it sweeps such a loan once each round, and again within the run
-  while the last sweep moved value or reported progress and an entry is
-  still unfinished.
+  the forfeited reward to the recycle bucket. Either call can make progress
+  while moving nothing (a sweep preparing its records or advancing its own
+  cursor, a retirement advancing the pricing cursor it depends on), so the
+  keeper judges each call by the progress the protocol reports for it, not
+  by the amount it moves. A call is sent only when it would make progress,
+  and repeated within the run while it still does; a loan whose sweep cannot
+  progress yet costs no transaction.
   A forfeited entry stays in the heartbeat's queue until that sweep has
   processed it, whether or not the switch is on, so turning the switch on
   later reaches every forfeited entry already found. A forfeited entry has no
   expiry clock, so any paused-clock or touch report it carried is cleared.
-  A retirement is not sent when it would retire nothing. Each run states
+  Each run states
   whether the close-out switch is on, and the form of a value it refuses. The run states how many entries were retired
   and the commitments released, and how much each sweep moved, as reported
   just before each call was sent. A refused call is alerted for each entry

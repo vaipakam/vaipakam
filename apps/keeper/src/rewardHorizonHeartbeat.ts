@@ -64,18 +64,18 @@
 //      commitments retire; repeated while the call still moves something,
 //      since a capped entry retires a day at a time), and a FORFEITED entry's
 //      loan is swept (`sweepForfeitedInteractionRewards`: the forfeited reward
-//      goes to the recycle bucket). A sweep's return is NOT a progress
-//      signal: it reads zero for a chunk that only prepares a staging domain,
-//      retires an armed commitment or advances the entry's cursor, and no view
-//      exposes that cursor (Codex #3006). So a loan with an unprocessed
-//      forfeited entry is swept once a heartbeat whatever its simulation
-//      returns, and again within the run while the landed call moved value or
-//      emitted an event and an entry is still unprocessed. A forfeited entry
+//      goes to the recycle bucket). Both calls return `progressed` (#3012 /
+//      #3026): whether the call changed any entry's settlement state, value
+//      or not (a sweep chunk that only prepares a staging domain, retires an
+//      armed commitment or advances the entry's cursor; a retirement that only
+//      advances the side's cumulative pricing cursor). Each is simulated and
+//      sent only when its simulation reports progress, and repeated within
+//      the run while it still does. A forfeited entry
 //      stays queued until it is processed whatever the flag says (idle while
 //      it is off), so arming it later reaches every one already discovered;
 //      its horizon diagnostics are cleared, since a forfeited entry has no
-//      horizon clock. A retirement with nothing to do costs one simulation,
-//      never a transaction. A refusal is alerted per entry or loan, like a
+//      horizon clock. A call with nothing to do costs one simulation, never a
+//      transaction. A refusal is alerted per entry or loan, like a
 //      touch's. Whether step 5 is armed is logged every run.
 //
 // Every call here is permissionless and moves value only into the protocol's
@@ -120,42 +120,6 @@ const ABI = [
   ...(RewardHorizonSweepFacetABI as Abi),
 ] as Abi;
 
-/**
- * The two close-out calls' results, read in the shape EVERY deployed Diamond
- * answers. From #3012 / #3026 both calls also return a trailing `progressed`
- * flag, but the live testnet Diamonds return the older, shorter result until
- * the next fresh deploy, and the shared ABI's longer shape cannot decode it.
- * The leading words are the same in both shapes, so this narrower read decodes
- * either. It is a temporary bridge: reading `progressed` (simulate, send only
- * on progress) replaces it once every chain runs the new code (#3012 / #3026,
- * keeper half).
- */
-const SETTLE_RESULT_ABI = [
-  {
-    type: 'function',
-    name: 'sweepForfeitedInteractionRewards',
-    stateMutability: 'nonpayable',
-    inputs: [{ name: 'loanId', type: 'uint256' }],
-    outputs: [{ name: 'swept', type: 'uint256' }],
-  },
-  {
-    type: 'function',
-    name: 'retireZeroPricedRemainders',
-    stateMutability: 'nonpayable',
-    inputs: [{ name: 'entryIds', type: 'uint256[]' }],
-    outputs: [
-      { name: 'retiredCount', type: 'uint256' },
-      { name: 'settledTotal', type: 'uint256' },
-    ],
-  },
-] as const satisfies Abi;
-const SETTLE_RESULT_FNS: ReadonlySet<string> = new Set(SETTLE_RESULT_ABI.map((f) => f.name));
-/** The pass's ABI with the two close-out calls read as above, and every error
- *  kept, so a simulated refusal still decodes by name. */
-export const SETTLE_SIM_ABI = [
-  ...SETTLE_RESULT_ABI,
-  ...ABI.filter((item) => !(item.type === 'function' && SETTLE_RESULT_FNS.has(item.name))),
-] as Abi;
 
 /** The heartbeat: every live entry is touched about this often. Twice a day,
  *  far inside the contract's maximum observation gap (seven days), so a run
@@ -619,8 +583,7 @@ type Simulated = { ok: true; result: unknown } | 'deadline' | string;
 
 async function simulateCall(ctx: KeeperContext, functionName: string, args: readonly unknown[]): Promise<Simulated> {
   try {
-    const abi = SETTLE_RESULT_FNS.has(functionName) ? SETTLE_SIM_ABI : ABI;
-    const { result } = await ctx.client.simulateContract({ address: ctx.diamond, abi, functionName, args, account: ctx.wallet.account! });
+    const { result } = await ctx.client.simulateContract({ address: ctx.diamond, abi: ABI, functionName, args, account: ctx.wallet.account! });
     return { ok: true, result };
   } catch (err) {
     if (err instanceof PastRunDeadline) return 'deadline';
@@ -636,8 +599,7 @@ async function simulate(ctx: KeeperContext, ids: readonly number[]): Promise<str
 
 /** A send's outcome: landed, reverted on chain (with why), or `stop` — not
  *  sent, or sent with no receipt in time; either way this run sends no more. */
-/** A landed send carries how many logs its receipt holds. */
-type SendResult = { kind: 'landed'; logs: number } | { kind: 'reverted'; reason: string } | { kind: 'stop' };
+type SendResult = { kind: 'landed' } | { kind: 'reverted'; reason: string } | { kind: 'stop' };
 
 async function send(ctx: KeeperContext, ids: readonly number[]): Promise<SendResult> {
   return sendCall(ctx, `entries=${ids.join(',')}`, 'sweepExpiredInteractionRewards', [ids.map((id) => BigInt(id))]);
@@ -669,7 +631,7 @@ async function sendCall(ctx: KeeperContext, subject: string, functionName: strin
       console.error(`${label} reverted on chain: tx=${hash}`);
       return { kind: 'reverted', reason: `reverted on chain (tx ${hash})` };
     }
-    return { kind: 'landed', logs: receipt.logs?.length ?? 0 };
+    return { kind: 'landed' };
   } catch (err) {
     console.error(`${label} receipt not seen in time: ${summarizeFailure(err)}`);
     return { kind: 'stop' };
@@ -708,9 +670,10 @@ const vpfi = (x: bigint): string => `${formatUnits(x, 18)} VPFI`;
 /**
  * Step 5 on the entries this run read: retire the closed ones whose
  * remainder prices to nothing, then sweep the loans of the forfeited ones.
- * Each call is simulated first and sent only when the simulation says it
- * moves something; it is repeated while it still does (a capped entry
- * retires a day at a time, a forfeit sweep is chunked), within
+ * Each call is simulated first and sent only when the simulation reports
+ * `progressed`; it is repeated while it still does (a capped entry retires a
+ * day at a time, a forfeit sweep is chunked, a far-behind pricing cursor
+ * advances a bounded stretch per call), within
  * {@link SETTLE_WRITES_PER_RUN}. A retire group that would revert is halved
  * like a touch group, down to the one entry it names.
  */
@@ -740,12 +703,10 @@ async function settleInto(ctx: KeeperContext, plan: Pick<HeartbeatPlan, 'retire'
     what: string,
     functionName: string,
     args: readonly unknown[],
-    moved: (result: unknown) => bigint,
+    /** The call's `progressed` flag (#3012 / #3026): whether it changes any
+     *  entry's settlement state, whether or not it moves value. */
+    progressed: (result: unknown) => boolean,
     onLanded: (result: unknown) => void,
-    /** Send even when the simulation moves nothing: the call's return is not
-     *  its progress signal. It then counts as moved when it moved value or
-     *  its receipt carries an event. */
-    sendOnZero = false,
   ): Promise<'moved' | 'nothing' | 'would-revert' | 'reverted' | 'stop'> => {
     if (Date.now() >= ctx.notAfterMs) return 'stop';
     const sim = await simulateCall(ctx, functionName, args);
@@ -759,8 +720,7 @@ async function settleInto(ctx: KeeperContext, plan: Pick<HeartbeatPlan, 'retire'
       if (pin) for (const id of ids) out.reverted.set(id, `${what} would revert (${sim})`);
       return 'would-revert';
     }
-    const value = moved(sim.result);
-    if (value === 0n && !sendOnZero) {
+    if (!progressed(sim.result)) {
       for (const id of ids) out.cleared.add(id);
       return 'nothing';
     }
@@ -772,7 +732,7 @@ async function settleInto(ctx: KeeperContext, plan: Pick<HeartbeatPlan, 'retire'
       // that reverts on chain keeps its alert open (Codex #3006).
       for (const id of ids) out.cleared.add(id);
       onLanded(sim.result);
-      return value > 0n || sent.logs > 0 ? 'moved' : 'nothing';
+      return 'moved';
     }
     if (sent.kind === 'reverted') for (const id of ids) out.reverted.set(id, `${what} ${sent.reason}`);
     return sent.kind === 'reverted' ? 'reverted' : 'stop';
@@ -789,9 +749,9 @@ async function settleInto(ctx: KeeperContext, plan: Pick<HeartbeatPlan, 'retire'
       'retiring its zero-priced remainder (`retireZeroPricedRemainders`)',
       'retireZeroPricedRemainders',
       [group.map((id) => BigInt(id))],
-      (x) => (x as readonly [bigint, bigint])[0],
+      (x) => (x as readonly [bigint, bigint, boolean])[2],
       (x) => {
-        const [count, released] = x as readonly [bigint, bigint];
+        const [count, released] = x as readonly [bigint, bigint, boolean];
         out.retired += Number(count);
         out.retireCalls += 1;
         out.retireReleased += released;
@@ -819,12 +779,11 @@ async function settleInto(ctx: KeeperContext, plan: Pick<HeartbeatPlan, 'retire'
         `sweeping its loan ${loanId}'s forfeited reward (\`sweepForfeitedInteractionRewards\`)`,
         'sweepForfeitedInteractionRewards',
         [loanId],
-        (x) => x as bigint,
+        (x) => (x as readonly [bigint, boolean])[1],
         (x) => {
-          out.swept += x as bigint;
+          out.swept += (x as readonly [bigint, boolean])[0];
           out.sweepCalls += 1;
         },
-        true,
       );
       // eslint-disable-next-line no-await-in-loop
       if (r === 'moved') open = await stillUnprocessed(ctx, open);
