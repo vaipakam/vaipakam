@@ -135,7 +135,7 @@ export const STRANDED_EVENTS = ['CompensationQuarantined', 'CompensationDemoted'
 /** The events of the sends that move VPFI off a chain toward Base, whoever
  *  sent them: an executed repatriation, a stranded return, a retired chain's
  *  surplus return. Each carries its amount and CCIP message id. */
-export const SEND_EVENTS = ['RepatriationExecuted', 'StrandedReturnDispatched', 'RetiredSurplusReturnDispatched'] as const;
+export const SEND_EVENTS = ['RepatriationExecuted', 'StrandedReturnDispatched', 'RetiredSurplusReturnDispatched', 'UntypedRemainderReturnDispatched'] as const;
 
 /** Refusals that mean another caller got there first. */
 export const RACES = new Set([
@@ -441,6 +441,10 @@ function sendText(row: LedgerRow): string {
       return `repatriation ${v('authId')} executed, sending ${v('amount')} VPFI (wei) home to the Base Diamond ${v('issuingBase')}`;
     case 'StrandedReturnDispatched':
       return `returned ${v('amount')} VPFI (wei) quarantined for remit ${v('remitId')} (day ${v('dayId')}) to the Base Diamond ${v('remitter')}; ${v('remainingAfter')} stays recorded`;
+    case 'UntypedRemainderReturnDispatched':
+      // The administrator's return of a released transport remainder (#2376);
+      // Base books it recycled on arrival.
+      return `returned ${v('amount')} VPFI (wei) of budget packet ${v('packetHash')}'s released transport remainder to chain ${v('dstChainId')}, untyped; ${v('remainingAfter')} stays in the remainder`;
     default:
       return `returned ${v('amount')} VPFI (wei) of this retired chain's pending surplus to chain ${v('dstChainId')}; ${v('remainingAfter')} stays pending`;
   }

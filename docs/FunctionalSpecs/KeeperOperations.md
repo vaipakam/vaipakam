@@ -566,7 +566,8 @@ evidence that the migration has completed.
   that would leave something behind waits for the lanes to refill; the last
   part is always sent.
 - Every send that moves VPFI is announced to operators with its amount and
-  transaction, whoever made it. The announcement comes from the chain's own
+  transaction, whoever made it, including the administrator's own return of
+  a released transport remainder, which the keeper never sends. The announcement comes from the chain's own
   record of the send, as the indexer recorded it, not from what the keeper
   saw when it sent: a send whose confirmation the keeper never saw is still
   announced, once it is recorded. An announcement that does not go out is
