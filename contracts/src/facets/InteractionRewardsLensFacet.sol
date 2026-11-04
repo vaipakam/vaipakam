@@ -484,6 +484,18 @@ contract InteractionRewardsLensFacet {
         }
     }
 
+    /// @notice #3012 — the progress mark of staging record `key`: a digest of
+    ///         every field of the record a consumption or preparation page
+    ///         can write ({LibRewardEntryProgress.recordMark}). Two reads
+    ///         agree iff nothing in the record moved between them. The
+    ///         legacy-slice step reads it around each page it runs and
+    ///         reports work only when it changed, so a reader holds the same
+    ///         figure the step compares. A closed or never-opened record
+    ///         marks as the digest of all zeros.
+    function getStagingRecordMark(bytes32 key) external view returns (bytes32) {
+        return LibRewardEntryProgress.recordMark(LibVaipakam.storageSlot().stagingRecords[key]);
+    }
+
     /// @notice RL-3 (#1305) — the storage ids backing {getUserRewardEntries},
     ///         same length and order, so keepers and the Claim Center can
     ///         address {getRewardEntryExpiry} /

@@ -337,6 +337,37 @@ contract RewardLegacySliceDomainTest is SetupTest, IVaipakamErrors {
         assertEq(paid, total, "and settles the slice");
     }
 
+    /// @dev #3012 (Codex #3136 r2) — a consumption page that RUNS and changes
+    ///      nothing (a record whose restoration window still blocks it, with a
+    ///      preparation that leaves the blocked restoration unread) reports no
+    ///      progress: the step measures the record around its page instead of
+    ///      counting the call. The page is stood in for by an inert answer of
+    ///      exactly that shape, so the sweep reaches it and nothing moves.
+    function test_TheForfeitSweep_AnInertConsumptionPage_ReportsNoProgress() public {
+        uint256 id = _legacyScene();
+        uint256 total = _legacyTotal();
+        _mut().setRewardEntryForfeitedRaw(id);
+        _mut().setLoanActiveLenderEntryId(LOAN, id);
+        _epochOn(1, EPOCH, 7);
+        _liveFresh(total + 1e18);
+        (, bool progressed) = InteractionRewardsFacet(address(diamond)).sweepForfeitedInteractionRewards(LOAN);
+        assertTrue(progressed, "fixture: the first sweep opens and prepares the domain");
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSignature("consumeRecordInLegacyInternal(bytes32)"),
+            abi.encode(uint256(0), false, true)
+        );
+        vm.mockCall(address(diamond), abi.encodeWithSignature("prepareRecordInDomainInternal(bytes32)"), "");
+        uint256 swept;
+        (swept, progressed) = InteractionRewardsFacet(address(diamond)).sweepForfeitedInteractionRewards(LOAN);
+        assertEq(swept, 0, "nothing consumed");
+        assertFalse(progressed, "a page that changed nothing is no progress");
+        vm.clearMockedCalls();
+        (swept, progressed) = InteractionRewardsFacet(address(diamond)).sweepForfeitedInteractionRewards(LOAN);
+        assertTrue(progressed, "the real page moves the record");
+        assertEq(swept, total, "and settles the slice");
+    }
+
     /// @dev The forfeit sweep's whole-window branch consumes the slice's epochs
     ///      too: the treasury's epoch part is absorbed in place, the live part
     ///      from the live sources, the bucket credited the whole.

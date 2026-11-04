@@ -32,13 +32,19 @@ import {LibInteractionRewards} from "./LibInteractionRewards.sol";
  *         consumption cursor and live-record count. A legacy-slice step can
  *         also work INSIDE one day record (a further consumption or
  *         preparation page of a wide day) without moving any of the domain's
- *         own cursors, so the step itself reports such work where it happens
- *         ({noteLegacyWork}, a per-transaction counter), and the caller reads
- *         that counter before and after ({legacyWorkCount}). Only work that
- *         actually ran is counted: a step that stops at once (a day the
- *         cumulative curve has not reached) and a step that is never reached
- *         (a settlement deferred before it) count nothing. So the report
- *         neither over- nor under-states a call's progress.
+ *         own cursors. So the step measures the day record it worked on
+ *         ({recordMarkOf}, every field of the record a page can write) before
+ *         and after the page, and reports a change ({noteLegacyWork}, a
+ *         per-transaction counter) only when the record actually moved. The
+ *         caller reads that counter before and after its own call
+ *         ({legacyWorkCount}). So a page that ran and changed nothing (a
+ *         consumption the record's restoration window still blocks, with a
+ *         preparation that leaves the blocked restoration unread), a step
+ *         that stops at once (a day the cumulative curve has not reached)
+ *         and a step that is never reached (a settlement deferred before it)
+ *         all count nothing, and the report neither over- nor under-states a
+ *         call's progress: it is measured, never inferred from a call
+ *         having been made.
  */
 library LibRewardEntryProgress {
     /// @notice One reward entry's settlement progress, as the close-out steps
@@ -93,16 +99,63 @@ library LibRewardEntryProgress {
     /// @dev Transient slot of the per-transaction legacy-step work counter.
     bytes32 private constant LEGACY_WORK_SLOT = keccak256("vaipakam.rewardEntryProgress.legacyWork");
 
-    /// @notice A legacy-slice step did work this transaction (opened or
-    ///         prepared a day record, consumed a page of one, or moved the
-    ///         domain's preparation or consumption cursor). Called by the
-    ///         step itself, where the work happens.
+    /// @notice A legacy-slice step changed a day record this transaction
+    ///         (its {recordMark} differs after the page). Called by the step
+    ///         itself, only after measuring the change.
     function noteLegacyWork() internal {
         bytes32 slot = LEGACY_WORK_SLOT;
         assembly ("memory-safe") {
             tstore(slot, add(tload(slot), 1))
         }
     }
+
+    /// @notice A digest of every field of staging record `r` a consumption or
+    ///         preparation page can write: equal before and after a page iff
+    ///         the page changed nothing in the record. A closed record reads
+    ///         as all-zero, so closing one is a change.
+    /// @dev    Every value field, plus the record's two page-bounded lists
+    ///         by content (the skipped epochs, at most one page, and the
+    ///         committed entries). Split into groups only to keep each
+    ///         encoding's stack small.
+    function recordMark(LibVaipakam.StagingRecord storage r) internal view returns (bytes32) {
+        bytes32 a = keccak256(abi.encode(
+            r.phase, r.venue, r.venueSet, r.deadline, r.challengeStart, r.commitment,
+            r.needUserFresh, r.needUserRecycled, r.needTreasuryFresh, r.needTreasuryRecycled,
+            r.stagedFresh, r.stagedRecycled
+        ));
+        bytes32 b = keccak256(abi.encode(
+            r.epochUserFresh, r.epochUserRecycled, r.epochTreasuryFresh, r.epochTreasuryRecycled,
+            r.reservedLiveUserFresh, r.reservedLiveTreasuryFresh, r.reservedLiveUserRecycled,
+            r.reservedPoolCap, r.heldEpoch, r.heldRecycled, r.batchCount, r.resolveCursor
+        ));
+        bytes32 c = keccak256(abi.encode(
+            r.continuationNode, r.lateSeen, r.scanComplete, r.listCountSeen,
+            r.cappedOffFresh, r.cappedOffRecycled, r.consumeFreshLeft, r.consumeRecycledLeft,
+            r.nonce, r.lateGenSeen, r.wasReserved, r.pendingOverflow
+        ));
+        bytes32 d = keccak256(abi.encode(
+            r.lateWorkBase, r.restoredSeen, r.forcedPages, r.eraId, r.eraUserFresh, r.eraTreasuryFresh,
+            r.skippedIds, r.entryIds, r.sliceAmounts.length
+        ));
+        return keccak256(abi.encode(a, b, c, d));
+    }
+
+    /// @notice {recordMark} of staging record `key`, read through its one
+    ///         runtime home, {InteractionRewardsLensFacet.getStagingRecordMark}.
+    /// @dev    A self-staticcall rather than an inlined digest, so the digest
+    ///         lives in one facet and the step's own facet (which sits near
+    ///         EIP-170) carries only the call. A Diamond that does not route
+    ///         the view fails the step closed (`StagingRecordMarkUnavailable`)
+    ///         rather than reading every page as work or as none.
+    function recordMarkOf(bytes32 key) internal view returns (bytes32 mark) {
+        (bool ok, bytes memory ret) =
+            address(this).staticcall(abi.encodeWithSignature("getStagingRecordMark(bytes32)", key));
+        if (!ok || ret.length != 32) revert StagingRecordMarkUnavailable();
+        mark = abi.decode(ret, (bytes32));
+    }
+
+    /// @notice The record-mark view is not routed on this Diamond.
+    error StagingRecordMarkUnavailable();
 
     /// @notice How many legacy-slice work units this transaction has run so
     ///         far; a caller compares it before and after its own call.

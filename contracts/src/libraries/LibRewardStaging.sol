@@ -1600,10 +1600,18 @@ library LibRewardStaging {
                     LibRewardCustody.callPrepareRecordInDomain(key);
                 }
             }
+            // #3012 — the preparation cursor is in the entry's progress
+            // digest itself, so moving it needs no separate report.
             dom.preparedThrough = uint64(d);
-            // #3012 — the page moved the preparation cursor: work done.
-            LibRewardEntryProgress.noteLegacyWork();
             unchecked { ++d; ++walked; }
+        }
+    }
+
+    /// @dev #3012 — report legacy work only when the record's page actually
+    ///      changed it (see {LibRewardEntryProgress.recordMarkOf}).
+    function _noteIfRecordMoved(bytes32 key, bytes32 markBefore) private {
+        if (LibRewardEntryProgress.recordMarkOf(key) != markBefore) {
+            LibRewardEntryProgress.noteLegacyWork();
         }
     }
 
@@ -1617,18 +1625,20 @@ library LibRewardStaging {
                 // settlement (#1566 PR 1 review); quiet days ride along.
                 bool heavy = s.stagingRecords[key].batchCount != 0;
                 if (heavy && heavySpent) return; // the call's batch budget is spent: next call
+                // #3012 — measure the record around its page: a page can move
+                // the record without moving any domain cursor, and can also
+                // run and change nothing (a window-blocked restoration).
+                bytes32 markBefore = LibRewardEntryProgress.recordMarkOf(key);
                 // One page of the record's consumption, hosted on the settle facet.
                 (uint256 held, bool done, bool unsettled) = LibRewardCustody.callConsumeRecordInLegacy(key);
-                // #3012 — a consumption (or, for a wide day, a further
-                // preparation) page of one record ran: work done, even where
-                // no domain cursor moves.
-                LibRewardEntryProgress.noteLegacyWork();
                 if (unsettled) {
                     // A wide day: one more preparation page (hosted on the
                     // record facet), then stop.
                     LibRewardCustody.callPrepareRecordInDomain(key);
+                    _noteIfRecordMoved(key, markBefore);
                     return;
                 }
+                _noteIfRecordMoved(key, markBefore);
                 if (held != 0) {
                     dom.aggFresh += held;
                     if (LibRewardCustody.active(s)) {
