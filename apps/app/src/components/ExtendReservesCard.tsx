@@ -50,7 +50,28 @@ function ReserveItem({ row }: { row: ReserveRow }) {
   );
 }
 
-/** Renders nothing for a wallet with no extension reserve. */
+/**
+ * Where reserve discovery stands, published for a reader of the page (the
+ * live drive), the way the forced-close card publishes its state: `loading`
+ * until the list and every row's chain read have answered, `empty` when they
+ * answered with nothing, `unavailable` when the list could not be read, and
+ * `listed` otherwise. `data-unread` names loans whose row could not be read
+ * and `data-truncated` a list cut short, so a reader never takes a row
+ * missing for one of those reasons as a reserve that is not there.
+ */
+function DiscoveryState({ state, unread = [], truncated = false }: { state: 'loading' | 'empty' | 'unavailable' | 'listed'; unread?: readonly number[]; truncated?: boolean }) {
+  return (
+    <span
+      hidden
+      data-testid="extend-reserves-state"
+      data-state={state}
+      data-unread={unread.join(',')}
+      data-truncated={truncated ? 'true' : 'false'}
+    />
+  );
+}
+
+/** Renders nothing visible for a wallet with no extension reserve. */
 export function ExtendReservesCard() {
   const reserves = useMyExtendReserves();
   const outcomes = useReserveOutcomes();
@@ -70,7 +91,7 @@ export function ExtendReservesCard() {
   // A failed read (or refresh: the hook drops a cached list behind one, as
   // it may already have been withdrawn or drawn) says it could not check.
   const data = reserves.isError ? null : reserves.data;
-  if (data === undefined) return null;
+  if (data === undefined) return <DiscoveryState state="loading" />;
   const header = (
     <div className="card-title">
       <CalendarClock aria-hidden />
@@ -80,6 +101,7 @@ export function ExtendReservesCard() {
   if (data === null) {
     return (
       <section className="card" style={{ marginBottom: 16 }}>
+        <DiscoveryState state="unavailable" />
         {header}
         <p className="muted">{c.unavailable}</p>
         {outcomeList}
@@ -88,9 +110,12 @@ export function ExtendReservesCard() {
   }
   const { rows, unread, truncated } = data;
   // A cut-short list with nothing in it has not shown there is nothing.
-  if (rows.length === 0 && unread.length === 0 && !truncated && outcomeList.length === 0) return null;
+  if (rows.length === 0 && unread.length === 0 && !truncated && outcomeList.length === 0) {
+    return <DiscoveryState state="empty" />;
+  }
   return (
     <section className="card" style={{ marginBottom: 16 }} data-testid="extend-reserves">
+      <DiscoveryState state="listed" unread={unread} truncated={truncated} />
       {header}
       <p className="muted">{c.lede}</p>
       <ul className="row-list" style={{ listStyle: 'none', padding: 0 }}>

@@ -229,6 +229,7 @@ const read = (functionName, args = [], blockNumber) =>
   pub.readContract({ address: DIAMOND, abi: DIAMOND_ABI, functionName, args, ...(blockNumber !== undefined ? { blockNumber } : {}) });
 const BORROWER = addressOf(BORROWER_ROLE);
 const LENDER = addressOf(LENDER_ROLE);
+if (eq(BORROWER, LENDER)) await blocked(`${BORROWER_ROLE} and ${LENDER_ROLE} are the same wallet (${BORROWER}); the drive needs two`);
 const pre = {};
 try {
   const head = await pub.getBlock({ blockTag: 'latest' });
@@ -623,12 +624,16 @@ async function armedClick(role, page, button, done, scope, label) {
   if (outcome !== 'done') stop(`${label} did not complete in the UI: ${outcome ?? 'timed out'}`);
 }
 
+/** The highest block any of this run's mined writes landed in; settlement
+ *  reads at or after it, so a lagging RPC backend cannot show older state. */
+let lastWriteBlock = 0n;
 /** The mined receipt of a consumed step, or a stop. */
 async function minedReceipt(id) {
   const s = PLAN.steps().find((x) => x.id === id);
   if (s?.status !== 'consumed') stop(`step ${id} was never signed (${s?.status})`);
   if (!s.record.hash) stop(`${id} was allowed but no hash came back (${s.record.outcome})`);
   const r = await pub.waitForTransactionReceipt({ hash: s.record.hash, timeout: 180_000 });
+  if (r.blockNumber > lastWriteBlock) lastWriteBlock = r.blockNumber;
   if (r.status !== 'success') stop(`${id} ${s.record.hash} reverted at block ${r.blockNumber}`);
   return r;
 }
@@ -713,6 +718,26 @@ async function saveLimits(side, page, card, rateBps, dateValue, latestEnd) {
 }
 
 const reservePanel = (card) => card.getByTestId('extend-reserve');
+/**
+ * Claims' reserve discovery once it has answered: the card publishes
+ * `extend-reserves-state` (loading, empty, unavailable, listed, with the
+ * loans it could not read and whether the list was cut short). Returns null
+ * if it is still loading after `timeoutMs`.
+ */
+async function reserveDiscovery(page, timeoutMs = 120_000) {
+  const marker = page.getByTestId('extend-reserves-state');
+  return pollUntil(
+    'reserve discovery answers',
+    async () => {
+      if ((await marker.count()) !== 1) return null;
+      const state = await marker.getAttribute('data-state');
+      if (!state || state === 'loading') return null;
+      const unread = ((await marker.getAttribute('data-unread')) ?? '').split(',').filter(Boolean).map(Number);
+      return { state, unread, truncated: (await marker.getAttribute('data-truncated')) === 'true' };
+    },
+    { timeoutMs, everyMs: 2_000 },
+  );
+}
 async function panelLines(panel) {
   return panel.locator('li').allInnerTexts();
 }
@@ -902,15 +927,21 @@ try {
   if (!lSurface.ready || !answered) {
     unsettled('claims', 'lenderNone', !lSurface.ready ? notReadyReason(lSurface) : "the lender's reserve query never answered, so an absent section proves nothing");
   } else {
-    // Only this loan's row is judged: the lender may hold reserves of its own
-    // on other loans, and Claims rightly lists those.
-    await sleep(5_000);
-    const lenderRow = lp
+    // Only this loan's row is judged (the lender may hold reserves of its own
+    // on other loans), and only once discovery has answered: an absent row
+    // proves nothing while the list is loading, unavailable, cut short, or
+    // could not read this loan.
+    const d = await reserveDiscovery(lp);
+    const lenderRows = await lp
       .getByTestId('extend-reserves')
       .locator('li.item-row')
-      .filter({ has: lp.getByRole('link', { name: fill(AE.claims.rowTitle, { id: String(LOAN_ID) }), exact: true }) });
-    const rows = await lenderRow.count();
-    check('claims', 'lenderNone', `the lender's Claims lists no reserve on loan ${LOAN_ID}`, rows === 0, `${rows} row(s) for loan ${LOAN_ID}`);
+      .filter({ has: lp.getByRole('link', { name: fill(AE.claims.rowTitle, { id: String(LOAN_ID) }), exact: true }) })
+      .count();
+    if (lenderRows > 0) check('claims', 'lenderNone', `the lender's Claims lists no reserve on loan ${LOAN_ID}`, false, `${lenderRows} row(s) for loan ${LOAN_ID}`);
+    else if (!d) unsettled('claims', 'lenderNone', "the lender's reserve discovery never answered within 120 s");
+    else if (d.state === 'unavailable' || d.truncated || d.unread.includes(Number(LOAN_ID))) {
+      unsettled('claims', 'lenderNone', `the lender's discovery is ${d.state}${d.truncated ? ', cut short' : ''}${d.unread.length ? `, unread loans ${d.unread.join(', ')}` : ''}, so an absent row proves nothing`);
+    } else check('claims', 'lenderNone', `the lender's Claims lists no reserve on loan ${LOAN_ID}`, true, `discovery ${d.state}, no row for loan ${LOAN_ID}`);
   }
   await shot('lender', 'auto-extend-claims-lender');
 
@@ -924,12 +955,17 @@ try {
   // the indexer's outage, not this card's.
   let listed = false;
   let itemText = '';
+  let discovery = null;
   for (let attempt = 0; attempt < 3 && !itemText; attempt++) {
     await go(bp, '/claims');
     await connect(bp, BORROWER);
     const bSurface = await awaitSurface(bp);
     if (!bSurface.ready) stop(`the borrower's Claims: ${notReadyReason(bSurface)}`);
-    listed = await reserves.waitFor({ state: 'visible', timeout: 120_000 }).then(() => true, () => false);
+    discovery = await reserveDiscovery(bp);
+    // Unavailable or never answered is the indexer's or RPC's state, not a
+    // verdict on the card: open the page again.
+    if (!discovery || discovery.state === 'unavailable') continue;
+    listed = await reserves.waitFor({ state: 'visible', timeout: 30_000 }).then(() => true, () => false);
     if (!listed) continue;
     itemText =
       (await pollUntil(
@@ -943,6 +979,16 @@ try {
       )) ?? ((await item.count()) === 1 ? squash(await item.innerText()) : '');
     if (!itemText.includes(squash(amountLine))) itemText = '';
   }
+  // A missing row is judged only against a discovery that answered, read
+  // this loan, and was not cut short; otherwise it is left undetermined and
+  // the reserve is reported standing by the settlement.
+  const discoveryUnsure =
+    !discovery || discovery.state === 'unavailable' || discovery.truncated || discovery.unread.includes(Number(LOAN_ID));
+  await shot('borrower', 'auto-extend-claims-borrower');
+  if (!itemText && discoveryUnsure) {
+    unsettled('claims', 'listed', `the borrower's reserve discovery is ${discovery ? `${discovery.state}${discovery.truncated ? ', cut short' : ''}${discovery.unread.length ? `, unread loans ${discovery.unread.join(', ')}` : ''}` : 'unanswered'} after 3 visits`);
+    stop(`the borrower's Claims could not show ${rowTitle}: discovery did not answer for it`);
+  }
   check(
     'claims',
     'listed',
@@ -950,7 +996,6 @@ try {
     listed && (await reserves.innerText()).includes(AE.claims.title) && itemText.includes(squash(amountLine)) && itemText.includes(squash(R.kept)),
     itemText || 'no such row',
   );
-  await shot('borrower', 'auto-extend-claims-borrower');
   if (!itemText) stop(`the borrower's Claims did not list ${rowTitle}`);
   const w2 = await withdrawReserve(bp, item, reserves.locator('.banner-info', { hasText: R.withdrawn }), 'from Claims', 'withdraw-2');
   check('claims', 'withdrawn', 'the reserve is withdrawn from Claims, with the outcome shown there', w2.ok, w2.detail);
@@ -1044,12 +1089,19 @@ else if (gateEscape) check('writeDiscipline', 'nonces', 'each wallet sent exactl
 else unsettled('writeDiscipline', 'nonces', nonceLines.join('; '));
 
 // What the run left standing, read from the chain whatever happened above.
+// Pinned to one block at or after this run's last mined write, so a
+// load-balanced RPC whose latest state lags cannot report an older reserve
+// or allowance as standing.
 let standing = null;
 try {
-  const [f, allowance] = await Promise.all([
-    read('getExtendFunding', [LOAN_ID, BORROWER]),
-    pub.readContract({ address: pre.asset, abi: erc20Abi, functionName: 'allowance', args: [BORROWER, DIAMOND] }),
-  ]);
+  const head = await pub.getBlockNumber();
+  const at = head > lastWriteBlock ? head : lastWriteBlock;
+  const [f, allowance] = await readPinned(() =>
+    Promise.all([
+      read('getExtendFunding', [LOAN_ID, BORROWER], at),
+      pub.readContract({ address: pre.asset, abi: erc20Abi, functionName: 'allowance', args: [BORROWER, DIAMOND], blockNumber: at }),
+    ]),
+  );
   standing = { reserved: f[1], allowance };
   const detail = `reserved ${f[1]}, allowance ${allowance} (startup ${pre.allowance})`;
   // Judged only when the planned withdrawals all ran: an interrupted run can
@@ -1060,6 +1112,7 @@ try {
   else if (wrote()) unsettled('leftNothing', 'state', `the run stopped before its withdrawals all ran, so what it left is reported, not judged — ${detail}`);
 } catch (err) {
   console.log(`standing state unreadable: ${describeErr(err)}`);
+  if (wrote()) unsettled('leftNothing', 'state', `what the run left standing could not be read: ${describeErr(err)}`);
 }
 
 console.log('\n=== write plan ===');

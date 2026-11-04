@@ -4,6 +4,8 @@ A new manual-only live driver, `live-auto-extend.mjs`, drives the loan page's au
 
 Funds moved: setting limits moves nothing but gas. Each deposit moves the reserve from the borrower's wallet into the borrower's own vault, reserved for that loan (ExtendReserveFunded). The only approval is exactly the deposit amount. Each withdrawal returns it from the vault to the borrower's wallet (ExtendReserveWithdrawn). Nothing reaches the lender or the treasury, and the drive fails if a reserve or an approval is left standing.
 
+The Claims page's reserve card now publishes where its discovery stands (loading, nothing found, unavailable, or listed, with any loan it could not read), so the drive judges a missing row only once the list has actually answered. Nothing a user sees changes.
+
 The first run passed on Base Sepolia loan 1. Its tx hashes and per-step evidence are on the PR. Advances #2814.
 
 > Caveat: an extension itself is not driven, because the window opens near maturity. Both sides' limits are left in force on the fixture loan on purpose.
