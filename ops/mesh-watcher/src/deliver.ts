@@ -29,7 +29,50 @@
 import { describeFailure } from './errors';
 import type { Finding } from './finding';
 import type { AlertStore, StoreOp } from './store';
-import { sendOpsMessage, type TelegramTarget } from './telegram';
+import { sendOpsMessage, TELEGRAM_MAX_CHARS, type TelegramTarget } from './telegram';
+
+/** Between two findings packed into one message. */
+export const ALERT_SEPARATOR = '\n\n━━━━━━━━━━\n\n';
+
+/** One Telegram message: the findings it carries and its text. */
+export interface AlertBatch {
+  /** Advisory-only messages are sent without a notification. */
+  silent: boolean;
+  findings: Finding[];
+  text: string;
+}
+
+/**
+ * Pack findings into as few messages as fit under `maxChars`.
+ *
+ * Criticals and advisories never share a message, so a critical always
+ * notifies and an advisory never does. Criticals go first. Order within a
+ * severity is kept. A finding whose own text is over the limit gets a message
+ * to itself, which `sendOpsMessage` truncates as it always has; it is never
+ * cut to make room for another.
+ */
+export function packAlerts(
+  findings: readonly Finding[],
+  format: (finding: Finding) => string,
+  maxChars: number,
+): AlertBatch[] {
+  const batches: AlertBatch[] = [];
+  for (const silent of [false, true]) {
+    let current: AlertBatch | null = null;
+    for (const finding of findings) {
+      if ((finding.severity === 'advisory') !== silent) continue;
+      const body = format(finding);
+      if (current && current.text.length + ALERT_SEPARATOR.length + body.length <= maxChars) {
+        current.text += ALERT_SEPARATOR + body;
+        current.findings.push(finding);
+        continue;
+      }
+      current = { silent, findings: [finding], text: body };
+      batches.push(current);
+    }
+  }
+  return batches;
+}
 
 export interface DeliveryReport {
   sent: number;
@@ -107,35 +150,39 @@ export async function deliverFindings(
     }
   }
 
-  // Rule 1 — deliver.
+  // Rule 1 — deliver, packed into as few messages as fit (`packAlerts`).
+  // Each message is one subrequest, and Workers Free allows 50 per tick, so
+  // one message per finding let a burst of findings starve the tick's own
+  // reads and the probe. Counts stay per FINDING: `sent` and `failures` say
+  // how many findings were delivered or lost, not how many messages.
   const byKey = new Map(req.findings.map((f) => [f.key, f]));
+  const due = send
+    .map((s) => byKey.get(s.key))
+    .filter((f): f is Finding => f !== undefined);
   const confirmed: StoreOp[] = [];
-  for (let i = 0; i < send.length; i += 1) {
-    const finding = byKey.get(send[i]!.key);
-    if (!finding) continue;
-    const body = req.format(finding);
-    const ok = await sendOpsMessage(
-      req.telegram,
-      body,
-      finding.severity === 'advisory',
-    );
+  for (const batch of packAlerts(due, req.format, TELEGRAM_MAX_CHARS)) {
+    const ok = await sendOpsMessage(req.telegram, batch.text, batch.silent);
     if (!ok) {
-      report.failures += 1;
+      report.failures += batch.findings.length;
       // Rule 4, in miniature: the send failed, so this is the ONLY
       // surviving copy of the operands. A transient critical that clears
       // before the retry would otherwise lose its figures entirely.
-      console.error(
-        `mesh-watcher: UNDELIVERED ${finding.severity} ${finding.code} chain=${finding.chainId}\n${body}`,
-      );
+      for (const finding of batch.findings) {
+        console.error(
+          `mesh-watcher: UNDELIVERED ${finding.severity} ${finding.code} chain=${finding.chainId}\n${req.format(finding)}`,
+        );
+      }
       continue;
     }
-    report.sent += 1;
-    confirmed.push({
-      kind: 'recordAlert',
-      key: finding.key,
-      fingerprint: finding.fingerprint,
-      at: req.now,
-    });
+    for (const finding of batch.findings) {
+      report.sent += 1;
+      confirmed.push({
+        kind: 'recordAlert',
+        key: finding.key,
+        fingerprint: finding.fingerprint,
+        at: req.now,
+      });
+    }
   }
 
   if (req.probeText) {
