@@ -35,9 +35,10 @@ type Copy = {
   alertLockedBy: (w: string, c: number, by: string) => string;
   /** `what`: the asset and amount; `when`: the release time, UTC. */
   /** `lockHint`: whether a LOCK from Telegram would lock this vault. It
-   *  would not for a vault whose wallet a replacement retired: the alert goes
-   *  to the wallet that replaced it, and a LOCK from that wallet's chat locks
-   *  that wallet's own vault (Codex #3092 r10). */
+   *  would not where this keeper does not work LOCK requests (the duty off,
+   *  or no signing key), nor for a vault whose wallet a replacement retired:
+   *  the alert goes to the wallet that replaced it, and a LOCK from that
+   *  wallet's chat locks that wallet's own vault (Codex #3092 r10, r11). */
   alertPayout: (w: string, c: number, what: string, to: string, when: string, code: string, lockHint: boolean) => string;
   /** A proposed replacement of the primary wallet. The contract refuses the
    *  owner's cancel while a signer holds a lock (`OwnerCannotCancelWhileSignerLock`),

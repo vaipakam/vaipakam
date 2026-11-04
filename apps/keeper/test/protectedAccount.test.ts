@@ -885,6 +885,9 @@ describe('the Telegram steps', () => {
     expect(sent[1].text).toContain(`to ${DEST}`);
     // The app's rendering of the same code (`formatRequestCode`).
     expect(sent[1].text).toContain('Request code AADYSA');
+    // LOCK is off in this run, so the payout alert does not suggest it (Codex #3092 r11).
+    expect(sent[1].text).not.toContain('send LOCK');
+    expect(sent[1].text).toContain('lock the vault in the app');
     expect(sent[2].text).toContain(`naming ${BOB}`);
     // The owner cannot cancel while a signer holds a lock, and is told so.
     expect(sent[2].text).toContain('only a signer can cancel it');
@@ -895,6 +898,13 @@ describe('the Telegram steps', () => {
     expect(sent).toEqual([]);
   });
 
+  it('suggests LOCK in a payout alert only where this keeper works LOCK requests (Codex #3092 r11)', async () => {
+    store.subs.set(`${CHAIN}:${ALICE}`, { tgChatId: '42', push: false, locale: 'en' });
+    ledger.rows.push({ kind: 'PayoutQueued', args: { account: ALICE, id: '9', asset: ASSET, kind: '0', tokenId: '0', amount: '2500000', recipient: DEST, releaseAt: String(NOW_SEC + 3600) }, blockAt: NOW_SEC - 30, block: 1, log: 0, tx: '0x' });
+    await run(true, true);
+    expect(sent.map((a) => a.text)).toEqual([expect.stringContaining('send LOCK')]);
+  });
+
   it("sends a retired account's alerts to its controller, never to the old wallet (Codex #3092 r9)", async () => {
     d.accounts.set(ALICE, account({ retired: true, controller: BOB }));
     store.subs.set(`${CHAIN}:${ALICE}`, { tgChatId: '42', push: true, locale: 'en' }); // the old wallet's channels
@@ -903,7 +913,7 @@ describe('the Telegram steps', () => {
     ledger.rows.push({ kind: 'VaultLocked', args: { account: ALICE, by: BOB }, blockAt: at, block: 1, log: 0, tx: '0x' });
     ledger.rows.push({ kind: 'ReplacementProposed', args: { account: ALICE, nominee: DEST, by: SIGNER, round: '2' }, blockAt: at, block: 2, log: 0, tx: '0x' });
     ledger.rows.push({ kind: 'PayoutQueued', args: { account: ALICE, id: '9', asset: ASSET, kind: '0', tokenId: '0', amount: '2500000', recipient: DEST, releaseAt: String(NOW_SEC + 3600) }, blockAt: at, block: 3, log: 0, tx: '0x' });
-    const r = await run(false, true);
+    const r = await run(true, true); // LOCK on: only the retirement withholds the advice
     expect(r.alerts!.sent).toBe(3);
     expect(sent.map((a) => [a.tgChatId, a.pushSubscriber])).toEqual([['7', BOB], ['7', BOB], ['7', BOB]]);
     // The text still names the vault, and a lock by its controller is the owner's own.

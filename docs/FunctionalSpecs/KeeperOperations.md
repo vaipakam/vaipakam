@@ -929,9 +929,12 @@ state.
   replaced it. The alert still names the vault by its original wallet. The
   retired wallet lost every right over the vault, so its channels are not
   alerted. A lock made by the managing wallet reads as the owner's own lock.
-  Sending LOCK from a chat locks only the wallets linked to that chat, so for
-  a vault whose wallet was retired the payout alert tells the owner to cancel
-  the payout or lock the vault in the app, and does not suggest LOCK.
+  A payout alert suggests sending LOCK only where it would work: where the
+  keeper is working LOCK requests on that chain, and for a vault managed by
+  its own wallet. Sending LOCK from a chat locks only the wallets linked to
+  that chat, so for a vault whose wallet was retired, or where LOCK is not
+  being worked, the alert tells the owner to cancel the payout or lock the
+  vault in the app instead.
 - An event more than an hour old when the keeper first reads it is not
   alerted, because late news is no longer a warning; the keeper counts those.
   An alert is counted as sent only when a channel accepted it. One that no

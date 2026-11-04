@@ -460,6 +460,7 @@ export async function protectedOnce(chainId: number, diamond: Address, deps: Pro
           chainId,
           notify: tg.notify,
           canSign: () => deps.context() !== null,
+          lockOn: tg.lock === true,
           appOrigin: tg.appOrigin,
           nowSec: tg.nowSec ?? (() => Math.floor(Date.now() / 1000)),
           markLocked: (w: Address) => step.markLocked(w),

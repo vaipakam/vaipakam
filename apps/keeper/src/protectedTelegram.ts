@@ -201,6 +201,10 @@ export interface TelegramStepDeps {
   /** Whether this keeper has a signing key for the chain: without one it
    *  can lock nothing, so it does not say it is working LOCK requests. */
   canSign: () => boolean;
+  /** Whether this run works LOCK requests on this chain (the LOCK duty is
+   *  armed). With it off, LOCK from Telegram locks nothing here, so no alert
+   *  suggests it (Codex #3092 r11). */
+  lockOn: boolean;
   /** The app's origin, for the link in a Push alert. */
   appOrigin: string;
   /** Wall-clock seconds now (injected for tests). */
@@ -556,12 +560,17 @@ async function composeAlert(
         d.sender.noteUnread(`alert:${id}`, 'its request code (not a 30-bit value)');
         return null;
       }
-      return copy.alertPayout(w, d.chainId, what, String(lower(args.recipient) ?? args.recipient), when, shown, manager === account);
+      return copy.alertPayout(w, d.chainId, what, String(lower(args.recipient) ?? args.recipient), when, shown, lockTaken(d) && manager === account);
     }
     default:
       return null;
   }
 }
+
+/** Whether a LOCK sent from Telegram now would be made on this chain: the
+ *  LOCK duty is armed and this keeper can sign. (Whether the owner granted
+ *  the keeper the lock is told in the answer to their LOCK.) */
+const lockTaken = (d: TelegramStepDeps): boolean => d.lockOn && d.canSign();
 
 /** The asset and amount, from the token's own decimals and symbol; the raw
  *  amount and the token address when those cannot be read. */
