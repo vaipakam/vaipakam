@@ -850,10 +850,11 @@ describe('the Telegram steps', () => {
     const r = await run(false, true);
     expect(r.alerts).toEqual({ sent: 3, undelivered: 0, retrying: 0, stale: 1, unsubscribed: 1 });
     expect(sent.map((a) => [a.tgChatId, a.pushSubscriber])).toEqual([['42', ALICE], ['42', ALICE], ['42', ALICE]]);
-    expect(sent[0].text).toContain(`locked by ${SIGNER}, one of its signers`);
+    expect(sent[0].text).toContain(`locked by ${SIGNER}, a wallet allowed to lock it`);
     expect(sent[1].text).toContain('2.5 USDC');
     expect(sent[1].text).toContain(`to ${DEST}`);
-    expect(sent[1].text).toContain('Request code 0000123456');
+    // The app's rendering of the same code (`formatRequestCode`).
+    expect(sent[1].text).toContain('Request code AADYSA');
     expect(sent[2].text).toContain(`naming ${BOB}`);
     // The owner cannot cancel while a signer holds a lock, and is told so.
     expect(sent[2].text).toContain('only a signer can cancel it');

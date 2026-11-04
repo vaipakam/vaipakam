@@ -884,13 +884,14 @@ state.
   report names an answer that did not arrive.
 - The keeper also alerts the owner of a protected account, on every channel
   they subscribed (Telegram and Push), when their vault is locked (naming
-  who locked it when it was not the owner), when a payout from it is queued,
+  the wallet that locked it when it was not the owner, as a wallet allowed
+  to lock it, without claiming a role the keeper has not read), when a payout from it is queued,
   and when a replacement of the primary wallet is proposed. The replacement
   alert tells the owner to cancel it in the app if they did not ask for it,
   and says that while one of their signers holds a lock on the vault only a
   signer can cancel it, since the owner's own cancel is refused then. A payout alert
   names the asset, the amount, the destination, the release time and the
-  payout's request code, the same code the app shows for that payout, so the
+  payout's request code, written exactly as the app writes it for that payout, so the
   owner can tell a payout they asked for from one they did not and lock in
   time. An alert waits until the request code can be read; it is never sent
   without one.

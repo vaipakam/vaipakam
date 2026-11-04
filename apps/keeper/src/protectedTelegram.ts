@@ -55,6 +55,7 @@ import type { StepSender } from './stepSender';
 /** A request dropped (and the chat told) when reached later than this after
  *  it was sent: the one limit the agent also applies before recording it. */
 import { LOCK_REQUEST_TTL_SEC } from '@vaipakam/lib/protectedLock';
+import { formatRequestCode } from '@vaipakam/lib/requestCode';
 export { LOCK_REQUEST_TTL_SEC };
 /** A request dropped without a message when older than this. */
 export const LOCK_REQUEST_SILENT_SEC = 24 * 60 * 60;
@@ -492,9 +493,9 @@ async function composeAlert(d: TelegramStepDeps, kind: string, args: Record<stri
     case 'PayoutQueued': {
       const id = uint(args.id);
       if (id === null) return null;
-      let code: number;
+      let code: bigint;
       try {
-        code = Number(await d.r.one<number>('requestCode', [id]));
+        code = BigInt(await d.r.one<number | bigint>('requestCode', [id]));
       } catch (err) {
         if (err instanceof PastRunDeadline) throw err;
         d.sender.noteUnread(`alert:${id}`, `its request code (${shortErr(err)})`);
@@ -502,7 +503,14 @@ async function composeAlert(d: TelegramStepDeps, kind: string, args: Record<stri
       }
       const what = await describeAsset(d, Number(args.kind), lower(args.asset), uint(args.tokenId) ?? 0n, uint(args.amount) ?? 0n);
       const when = new Date(Number(uint(args.releaseAt) ?? 0n) * 1000).toISOString().slice(0, 16).replace('T', ' ');
-      return copy.alertPayout(w, d.chainId, what, String(lower(args.recipient) ?? args.recipient), when, String(code).padStart(10, '0'));
+      // The app's own rendering of the code (`formatRequestCode`), so the two
+      // match; a value it will not render is not printed as a code.
+      const shown = formatRequestCode(code);
+      if (shown === null) {
+        d.sender.noteUnread(`alert:${id}`, 'its request code (not a 30-bit value)');
+        return null;
+      }
+      return copy.alertPayout(w, d.chainId, what, String(lower(args.recipient) ?? args.recipient), when, shown);
     }
     default:
       return null;
