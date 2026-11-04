@@ -176,6 +176,18 @@ const untracked = (kind, asset, id) =>
   pub.readContract({ address: DIAMOND, abi: DIAMOND_ABI, functionName: 'untrackedHolding', args: [A, kind, asset, id] });
 
 // ── Preconditions ─────────────────────────────────────────────────────────
+// A read that fails before the browser opens inspected no app behaviour, so
+// it is a BLOCKED precondition (exit 2), never an uncaught throw (exit 1,
+// which the batch reads as a product FAIL). Every chain read up to the
+// browser goes through this, not only the first.
+async function precondition(what, read) {
+  try {
+    return await read();
+  } catch (err) {
+    return blocked(`could not read ${what}`, err);
+  }
+}
+
 let vault;
 try {
   const oracle = await pub.readContract({ address: DIAMOND, abi: DIAMOND_ABI, functionName: 'getSanctionsOracle' });
@@ -193,7 +205,9 @@ if (/^0x0{40}$/i.test(vault)) {
   await setupTx('create the vault', () =>
     signer.writeContract({ address: DIAMOND, abi: DIAMOND_ABI, functionName: 'getOrCreateUserVault', args: [A] }),
   );
-  vault = await pub.readContract({ address: DIAMOND, abi: DIAMOND_ABI, functionName: 'getUserVaultAddress', args: [A] });
+  vault = await precondition('the vault address after creating it', () =>
+    pub.readContract({ address: DIAMOND, abi: DIAMOND_ABI, functionName: 'getUserVaultAddress', args: [A] }),
+  );
   if (/^0x0{40}$/i.test(vault)) await blocked(`the vault for ${A} still reads as absent after creating it`);
 }
 report.vault = vault;
@@ -225,10 +239,16 @@ if (reuseId('LIVE_ID1155') === null) {
     signer.writeContract({ address: NFT1155, abi: MOCK_ABI, functionName: 'forceMint', args: [vault, ID1155, 5n] }),
   );
 }
-check('seed', 'ERC-721 reads untracked 1, tracked 0',
-  (await settles(() => untracked(KIND.ERC721, NFT721, ID721), 1n)) === 1n && (await settles(() => tracked(NFT721, ID721), 0n)) === 0n);
-check('seed', 'ERC-1155 reads untracked 5, tracked 0',
-  (await settles(() => untracked(KIND.ERC1155, NFT1155, ID1155), 5n)) === 5n && (await settles(() => tracked(NFT1155, ID1155), 0n)) === 0n);
+const seed721 = await precondition('the seeded ERC-721 holding', async () => [
+  await settles(() => untracked(KIND.ERC721, NFT721, ID721), 1n),
+  await settles(() => tracked(NFT721, ID721), 0n),
+]);
+const seed1155 = await precondition('the seeded ERC-1155 holding', async () => [
+  await settles(() => untracked(KIND.ERC1155, NFT1155, ID1155), 5n),
+  await settles(() => tracked(NFT1155, ID1155), 0n),
+]);
+check('seed', 'ERC-721 reads untracked 1, tracked 0', seed721[0] === 1n && seed721[1] === 0n);
+check('seed', 'ERC-1155 reads untracked 5, tracked 0', seed1155[0] === 5n && seed1155[1] === 0n);
 
 // ── Browser ───────────────────────────────────────────────────────────────
 // A throwaway profile: a stored attempt record from an earlier run would put
