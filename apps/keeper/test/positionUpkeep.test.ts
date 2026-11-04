@@ -438,6 +438,81 @@ describe('a run', () => {
   });
 
   describe('the run deadline', () => {
+    // A send starts before the deadline and its receipt arrives inside the
+    // final send reserve, after the read cutoff: every read after it is
+    // refused. The charge it made must still be reported (Codex #3131 P1).
+    const receiptLateBy = (ms: number) => {
+      const wait = d.waitForTransactionReceipt;
+      d.waitForTransactionReceipt = async () => {
+        vi.setSystemTime(Date.now() + ms);
+        return wait();
+      };
+    };
+
+    it('reports a last-day deduction whose receipt lands past the read cutoff, with its closure unknown', async () => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      try {
+        d.now = START + 5n * ONE_DAY;
+        d.loans.set(1n, rental({ lastDeductTime: START + 4n * ONE_DAY, prepayAmount: 100n }));
+        // A 22 s read window, then the 10 s send reserve; the receipt comes
+        // 25 s in, inside the reserve.
+        const sendDeadline = Date.now() + SEND_RESERVE_MS + 22_000;
+        receiptLateBy(25_000);
+        const r = await run({ sendDeadline });
+        expect(Date.now()).toBeLessThan(sendDeadline);
+        expect(sent()).toEqual(['autoDeductDaily(1)']);
+        expect(r.deducted).toEqual([{ loanId: 1n, fee: 100n, closed: 'unknown' }]);
+        expect(r.unread.get('deduct:1')).toMatch(/status after the last deduction/);
+        expect(r.unread.has('run'), 'the late read is the deduction\'s unknown, not a lost run').toBe(false);
+        expect(describeReport(r)).toContain('deducted=1(100) closure-unknown');
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('reports a fill whose receipt lands past the read cutoff, and leaves the floor for the next run', async () => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      try {
+        d.offers.set(1n, optedIn());
+        ledger.add(1n);
+        const sendDeadline = Date.now() + SEND_RESERVE_MS + 22_000;
+        receiptLateBy(25_000);
+        const r = await run({ backstopFill: true, sendDeadline });
+        expect(sent()).toEqual(['backstopFill(1)']);
+        expect(r.fills?.filled).toEqual([{ offerId: 1n, loanId: 900n, amount: 1_000n }]);
+        expect(describeReport(r)).toContain('backstop-filled=1->loan 900(1000)');
+        expect(cursors.rows.has(BACKSTOP_FLOOR_ITEM), 'no read past the cutoff moves the floor').toBe(false);
+        // The next run, in time, lifts it.
+        vi.setSystemTime(Date.now() + 60_000);
+        d.waitForTransactionReceipt = async () => ({ status: 'success', logs: d.lastLogs, blockNumber: 121n });
+        await run({ backstopFill: true });
+        expect(cursors.rows.get(BACKSTOP_FLOOR_ITEM)).toBe(encodePos(ledger.rows[0]));
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('keeps every landed deduction and fill when a later read of the run passes the cutoff', async () => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      try {
+        d.loans.set(1n, rental());
+        d.offers.set(1n, optedIn());
+        ledger.add(1n);
+        const sendDeadline = Date.now() + SEND_RESERVE_MS + 22_000;
+        // The deduction's receipt pushes the clock past the read cutoff, so
+        // the fill step's reads are refused: nothing of it is sent.
+        receiptLateBy(25_000);
+        const r = await run({ backstopFill: true, sendDeadline });
+        expect(sent()).toEqual(['autoDeductDaily(1)']);
+        expect(r.deducted).toEqual([{ loanId: 1n, fee: 100n, closed: null }]);
+        expect(r.fills).not.toBeNull();
+        expect(r.fills?.filled).toEqual([]);
+        expect(r.unread.get('run')).toMatch(/deadline/);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
     it('sends nothing once the deadline has passed', async () => {
       d.loans.set(1n, rental());
       d.offers.set(1n, optedIn());

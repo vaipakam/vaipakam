@@ -160,10 +160,11 @@ export interface Deduction {
   /** The fee the receipt's `AutoDailyDeducted` names; null when the receipt
    *  read held no such event. */
   fee: bigint | null;
-  /** Whether the rental closed as repaid: true or false from the loan's
-   *  status after the deduction, null when that was not read (it was not the
-   *  last agreed day, or the read failed). */
-  closed: boolean | null;
+  /** Whether the rental closed as repaid, for the last agreed day: true or
+   *  false from the loan's status after the deduction, or 'unknown' when that
+   *  read could not finish (the run's unread list says why). Null for any
+   *  other day, whose deduction closes nothing. */
+  closed: boolean | 'unknown' | null;
 }
 
 export interface Fill {
@@ -242,7 +243,7 @@ export async function runPositionUpkeep(env: Env, tick: PassTick): Promise<void>
 export function describeReport(r: PositionUpkeepReport): string {
   if (r.skipped) return `[keeper] positionUpkeep chain=${r.chainId}: not worked this run: ${r.skipped}`;
   const deducted = r.deducted
-    .map((d) => `${d.loanId}${d.fee === null ? '(fee unread)' : `(${d.fee})`}${d.closed === true ? ' closed' : d.closed === false ? ' open' : ''}`)
+    .map((d) => `${d.loanId}${d.fee === null ? '(fee unread)' : `(${d.fee})`}${d.closed === true ? ' closed' : d.closed === false ? ' open' : d.closed === 'unknown' ? ' closure-unknown' : ''}`)
     .join(',');
   const f = r.fills;
   const fills =
@@ -365,7 +366,14 @@ export async function positionUpkeepOnce(chainId: number, diamond: Address, deps
     }
     if (served !== chainId) return { ...report, skipped: `the RPC configured for chain ${chainId} serves chain ${served}` };
     await deductRentals(r, sender, report, diamond, deps);
-    if (deps.backstopFill === true) report.fills = await fillBackstop(r, sender, chainId, deps);
+    if (deps.backstopFill === true) {
+      // The step writes into the report's own record as it goes, so a read
+      // that throws after a fill landed (the floor lift's, at the cutoff)
+      // never drops that fill from the report.
+      const fills: FillReport = { off: null, named: 0, due: 0, filled: [], declined: [] };
+      report.fills = fills;
+      await fillBackstop(r, sender, chainId, deps, fills);
+    }
   } catch (err) {
     if (!(err instanceof PastRunDeadline)) throw err;
     sender.noteUnread('run', 'the run deadline passed during its reads');
@@ -430,21 +438,23 @@ async function deductRentals(r: PassReader, sender: StepSender, report: Position
     // eslint-disable-next-line no-await-in-loop
     const res = await sender.call('deduct', String(id), 'autoDeductDaily', [id]);
     if (res === 'landed') {
-      const fee = deductedFee(diamond, id, sender.receipt?.logs ?? []);
-      let closed: boolean | null = null;
+      // A landed deduction is recorded from its receipt BEFORE any further
+      // read, so a read that cannot finish never drops a charge that
+      // happened from the run's report.
+      const d: Deduction = { loanId: id, fee: deductedFee(diamond, id, sender.receipt?.logs ?? []), closed: lastDay ? 'unknown' : null };
+      report.deducted.push(d);
       if (lastDay) {
         // The last agreed day closes the rental: said from the loan's status
-        // after it, not assumed.
+        // after it, not assumed. Unread (the read cutoff passed, or the RPC
+        // did not answer), it stays 'unknown' and the run says why.
         try {
           // eslint-disable-next-line no-await-in-loop
           const after = await r.one<RentalLoan>('getLoanDetails', [id]);
-          closed = Number(after.status) === LOAN_REPAID;
+          d.closed = Number(after.status) === LOAN_REPAID;
         } catch (err) {
-          if (err instanceof PastRunDeadline) throw err;
           sender.noteUnread(`deduct:${id}`, `its status after the last deduction (${shortErr(err)})`);
         }
       }
-      report.deducted.push({ loanId: id, fee, closed });
       continue;
     }
     const words = RENTAL_REFUSALS.get(res);
@@ -514,8 +524,7 @@ export function offerDue(o: BackstopOffer, now: bigint): boolean {
   );
 }
 
-async function fillBackstop(r: PassReader, sender: StepSender, chainId: number, deps: PositionUpkeepDeps): Promise<FillReport> {
-  const out: FillReport = { off: null, named: 0, due: 0, filled: [], declined: [] };
+async function fillBackstop(r: PassReader, sender: StepSender, chainId: number, deps: PositionUpkeepDeps, out: FillReport): Promise<void> {
   // The offer each row names; a row that names none nominates nothing.
   const page = await readLedgerRotation<bigint>({
     ledger: deps.ledger,
@@ -535,7 +544,7 @@ async function fillBackstop(r: PassReader, sender: StepSender, chainId: number, 
   if (page === null) {
     sender.noteUnread('fill', 'the event ledger of backstop opt-ins');
     out.off = 'the event ledger could not be read';
-    return out;
+    return;
   }
   const offers = page.nominees;
   out.named = offers.length;
@@ -550,7 +559,7 @@ async function fillBackstop(r: PassReader, sender: StepSender, chainId: number, 
       if (err instanceof PastRunDeadline) throw err;
       sender.noteUnread('fill', `the chain's clock (${shortErr(err)})`);
       out.off = "the chain's clock could not be read";
-      return out;
+      return;
     }
     const recs = await readOffers(offers, 'backstop offers');
     const due: bigint[] = [];
@@ -589,16 +598,22 @@ async function fillBackstop(r: PassReader, sender: StepSender, chainId: number, 
   // A row is finished when its offer is filled, cancelled, cleared or expired
   // (`ledgerRotation.ts`): a fill a reorg undoes leaves its row above the
   // floor, to be tried again. At the finalized block the offer is read there
-  // and judged against that block's own time.
-  await page.liftFloor(r.finalized, (id) => finished.has(id), async (ids, block) => {
-    const at = await readOffers(ids, 'backstop-final', block.number);
-    const done = new Set(
-      ids.filter((_, j) => {
-        const o = at[j] as BackstopOffer | undefined;
-        return o !== undefined && offerFinished(o, block.timestamp);
-      }),
-    );
-    return (id) => done.has(id);
-  });
-  return out;
+  // and judged against that block's own time. A lift the read cutoff ends
+  // leaves the floor where it is, for the next run; the fills above are
+  // already recorded.
+  try {
+    await page.liftFloor(r.finalized, (id) => finished.has(id), async (ids, block) => {
+      const at = await readOffers(ids, 'backstop-final', block.number);
+      const done = new Set(
+        ids.filter((_, j) => {
+          const o = at[j] as BackstopOffer | undefined;
+          return o !== undefined && offerFinished(o, block.timestamp);
+        }),
+      );
+      return (id) => done.has(id);
+    });
+  } catch (err) {
+    if (!(err instanceof PastRunDeadline)) throw err;
+    sender.noteUnread('fill', 'the finalized offers that would move the floor (the read cutoff passed)');
+  }
 }
