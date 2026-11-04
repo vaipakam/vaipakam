@@ -47,10 +47,10 @@
  *      (`getExtendFunding`). The holder is the borrower-cap setter, which
  *      the cap's staleness fence guarantees is the current holder. A loan
  *      that falls short is skipped with the three figures named, rather than
- *      left to a generic refusal at the gas estimate. A Diamond that predates
- *      the view (read once per chain per run from its loupe) gets no
- *      pre-check, which the run log says; the send's estimate still refuses
- *      an unfunded extension there, so nothing is broadcast either way.
+ *      left to a generic refusal at the gas estimate. A loan whose funding
+ *      cannot be read waits for the next run. (The loupe check that let a
+ *      Diamond predating the view skip the pre-check was removed once every
+ *      chain was fresh-deployed with it, #2952.)
  *
  *   8. Soft per-tick cap so one rogue chain can't burn the keeper's
  *      gas budget.
@@ -70,17 +70,13 @@
 import {
   createPublicClient,
   http,
-  toFunctionSelector,
-  zeroAddress,
   type Abi,
-  type AbiFunction,
   type Address,
   type PublicClient,
 } from 'viem';
 import {
   AdminFacetABI,
   AutoLifecycleFacetABI,
-  DIAMOND_ABI_VIEM,
   MetricsFacetABI,
 } from '@vaipakam/contracts/abis';
 import type { ChainConfig, Env } from './env';
@@ -115,14 +111,6 @@ const MAX_EXTENDS_PER_TICK = 5;
 const DEFAULT_EXTEND_DAYS = 30n;
 
 const SECONDS_PER_DAY = 86_400n;
-
-/** `AutoLifecycleFacet.getExtendFunding(uint256,address)` (#2814), the
- *  funding pre-check's selector. */
-export const EXTEND_FUNDING_SELECTOR = toFunctionSelector(
-  (AutoLifecycleFacetABI as readonly { type: string; name?: string }[]).find(
-    (i): i is AbiFunction => i.type === 'function' && i.name === 'getExtendFunding',
-  ) as AbiFunction,
-);
 
 /** What the holder has ready for a loan's next extension, and what it would
  *  charge now (`getExtendFunding`, #2814), all in `asset`. */
@@ -161,17 +149,6 @@ export async function readFundingVerdict(
     return `funding unread — ${redactedError(err, { stack: false })}`;
   }
   return fundingVerdict({ asset: out[0], reserved: out[1], otherFree: out[2], chargeNow: out[3] });
-}
-
-/** Whether `diamond` routes `selector` (one loupe read). */
-async function routes(client: Pick<PublicClient, 'readContract'>, diamond: Address, selector: `0x${string}`): Promise<boolean> {
-  const host = (await client.readContract({
-    address: diamond,
-    abi: DIAMOND_ABI_VIEM,
-    functionName: 'facetAddress',
-    args: [selector],
-  })) as Address;
-  return host.toLowerCase() !== zeroAddress;
 }
 
 /**
@@ -240,15 +217,6 @@ async function processChain(env: Env, chain: ChainConfig, deadlineMs: number, ru
   const ctx = buildKeeperContext(env, chain, publicClient, { notAfterMs: deadlineMs });
   if (!ctx) return;
 
-  // #2814 — whether this Diamond can say if an extension is funded. When the
-  // loupe does not read, the pre-check is simply not run this time: the
-  // send's estimate refuses an unfunded extension either way.
-  const fundingRouted = await routes(publicClient, chain.diamond as Address, EXTEND_FUNDING_SELECTOR).catch(() => null);
-  if (fundingRouted !== true) {
-    const why = fundingRouted === null ? 'the loupe did not read' : 'the Diamond predates getExtendFunding';
-    console.log(`[keeper] autoLifecycle chain=${chain.id} funding pre-check off this run (${why}); the send's gas estimate refuses an unfunded extension`);
-  }
-
   // Read a page, act on it, read the next (#2572 r5): the scan never spends
   // the window before the first extension. The walk starts at a loan that
   // moves each run (`pagedWalk`, #2572 r7), not at a page, so a run the
@@ -280,7 +248,6 @@ async function processChain(env: Env, chain: ChainConfig, deadlineMs: number, ru
         ctx.wallet,
         chain.diamond as Address,
         loanIdBig,
-        fundingRouted === true,
       );
       if (fired) submitted++;
     }
@@ -295,7 +262,6 @@ async function tryExtend(
   wallet: import('viem').WalletClient,
   diamond: Address,
   loanIdBig: bigint,
-  fundingRouted: boolean,
 ): Promise<boolean> {
   // Read both-side caps. Each getter self-applies the staleness
   // fence: if the NFT transferred since the setter wrote the cap,
@@ -351,12 +317,10 @@ async function tryExtend(
 
   // #2814 — only a funded extension. The holder whose vault pays is the
   // borrower-cap setter: an enabled cap is one the current holder set.
-  if (fundingRouted) {
-    const unfunded = await readFundingVerdict(publicClient, diamond, loanIdBig, borrowerCaps.setter);
-    if (unfunded !== null) {
-      console.log(`[keeper] autoLifecycle loan=${loanIdBig} not extended: ${unfunded}`);
-      return false;
-    }
+  const unfunded = await readFundingVerdict(publicClient, diamond, loanIdBig, borrowerCaps.setter);
+  if (unfunded !== null) {
+    console.log(`[keeper] autoLifecycle loan=${loanIdBig} not extended: ${unfunded}`);
+    return false;
   }
 
   // Submit `extendLoanInPlace`. Contract reverts on every safety
