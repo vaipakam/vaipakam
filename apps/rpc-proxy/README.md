@@ -8,9 +8,12 @@ holds each chain's provider URL as a secret and forwards only the reads the
 app makes. A build that sets `VITE_RPC_PROXY_ORIGIN` ships this Worker's
 origin and no key.
 
-**Off by default.** Nothing deploys this Worker on merge (it is connected to
-no Workers Build), and the app reads chains exactly as before until a build
-sets `VITE_RPC_PROXY_ORIGIN`.
+**On for the testnets since 2026-11-04.** A merge to `main` that touches
+`apps/rpc-proxy/` or `packages/lib/` deploys this Worker through its own
+Workers Build, and the connected app's production build reads through it
+(`VITE_RPC_PROXY_ORIGIN=https://rpc.vaipakam.com`). A build that does not set
+the variable reads chains exactly as before. The current state is at the end
+of "Turning it on".
 
 ## What it forwards
 
@@ -104,9 +107,9 @@ app's Workers Build sets `VITE_RPC_PROXY_ORIGIN=https://rpc.vaipakam.com`
 with no per-chain RPC URL. Ethereum and Base mainnet have no key yet, so the
 app's ENS and Base reads use public endpoints. The account is still on
 Workers Free (100k requests a day, shared); when the allowance runs out the
-app falls back to public endpoints until it resets. The proxy has no Workers
-Build of its own yet, so a change here ships only when it is deployed by
-hand (step 3).
+app falls back to public endpoints until it resets. Since 2026-11-04 the proxy
+has its own Workers Build: a merge to `main` that touches `apps/rpc-proxy/`
+or `packages/lib/` deploys it (`pnpm run deploy`).
 
 ## Development
 
