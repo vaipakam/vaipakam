@@ -715,10 +715,14 @@ class Worker {
     }
   }
 
-  /** The day record at the cursor a resolving domain works next. */
+  /** The day record at the cursor the domain's current phase works: a
+   *  resolution or unwind page can take several pages on one record while
+   *  no field of the domain moves, so the domain's progress measure carries
+   *  this record too. Null outside those two phases. */
   private async cursorRecord(d: OpenDomain, v: StagingDomainView): Promise<StagingRecordView | null> {
-    if (v.phase !== DOMAIN_PHASE.resolving || v.resolveCursor > v.lastDay) return null;
-    return this.r.one<StagingRecordView>('getStagingRecord', [stagingKey(d.user, d.side, v.resolveCursor)]);
+    const at = v.phase === DOMAIN_PHASE.resolving ? v.resolveCursor : v.phase === DOMAIN_PHASE.unwinding ? v.unwindCursor : null;
+    if (at === null || at > v.lastDay) return null;
+    return this.r.one<StagingRecordView>('getStagingRecord', [stagingKey(d.user, d.side, at)]);
   }
 
   /** Whether the record's next page is a claim payout the sanctions screen

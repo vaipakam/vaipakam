@@ -109,6 +109,7 @@ interface Dom {
   revalidateLeft?: number;
   /** Its revalidation finds a day record stale. */
   stale?: boolean;
+  unwindCursor?: bigint;
 }
 
 interface Slice {
@@ -164,7 +165,7 @@ class FakeDiamond {
         const k = domainKey(a[0], Number(a[1]));
         const d = this.domains.get(k);
         if (d === undefined) return [ZERO32, 0, 0n, 0n, 0n, 0n, 0n, 0n, 0, 0n, 0n, 0n, 0n];
-        return [k, d.phase, d.firstDay, d.lastDay, d.preparedThrough, d.reserveCursor, d.resolveCursor, 0n, 1, NOW - 100n, d.deadline, 1n, 1n];
+        return [k, d.phase, d.firstDay, d.lastDay, d.preparedThrough, d.reserveCursor, d.resolveCursor, d.unwindCursor ?? 0n, 1, NOW - 100n, d.deadline, 1n, 1n];
       }
       case 'getLegacySliceDomain': {
         const s = this.slices.get(a[0]);
@@ -347,6 +348,18 @@ class FakeDiamond {
         const d = this.domains.get(dk)!;
         if (d.phase === 3) throw revert('StagingDomainPhaseInvalid', [dk, d.phase]);
         if (d.phase !== 4 && this.now < d.deadline) throw revert('StagingDomainNotExpired', [dk, d.deadline]);
+        const cur = d.unwindCursor === undefined ? undefined : this.records.get(stagingKey(d.user, d.side, d.unwindCursor));
+        if (d.phase === 4 && cur?.domain === dk && cur.unwindLeft > 1) {
+          // A heavy day record: one more of its batch pages, and no field of
+          // the domain moves.
+          return {
+            result: false,
+            apply: () => {
+              cur.unwindLeft -= 1;
+              cur.view.resolveCursor = BigInt(cur.view.resolveCursor) + 1n;
+            },
+          };
+        }
         return {
           result: d.unwindLeft <= 1,
           apply: () => {
@@ -707,6 +720,15 @@ describe('a run', () => {
       r = await run({ unwind: true });
       expect(d.sent[0]).toBe(`reserveDomainPage(${DK.slice(0, 6)})`);
       expect(d.domains.get(DK)?.phase ?? 0, 'unwinding or cleared').not.toBe(1);
+    });
+
+    it("counts a day record's unwind pages as the unwinding domain's progress (Codex #3145 r2)", async () => {
+      domain({ phase: 4, unwindCursor: 5n, unwindLeft: 1 });
+      d.add(day(5n), { day: 5n, phase: PHASE.unwinding, batchCount: 3n }, { domain: DK, unwindLeft: 3 });
+      src.domain(DK);
+      const r = await run({ unwind: true });
+      expect(d.sent).toEqual([`unwindDomainPage(${DK.slice(0, 6)})`, `unwindDomainPage(${DK.slice(0, 6)})`, `unwindDomainPage(${DK.slice(0, 6)})`]);
+      expect(r.idle).toEqual([]);
     });
 
     it("leaves a resolving domain whose next payout is a flagged claimant's", async () => {
