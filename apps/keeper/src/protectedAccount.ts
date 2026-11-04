@@ -85,6 +85,13 @@ const PICK: ReadonlySet<string> = new Set([
   'finalizeReplacement',
   'PayoutReleased',
   'PayoutCancelled',
+  // What applying each change emits ({@link changeApplied}).
+  'SettingChangeApplied',
+  'ProtectedModeDisabled',
+  'AllowlistAdded',
+  'SignerAdded',
+  'SignerRemoved',
+  'PrimaryReplaced',
 ]);
 const pick = (abi: unknown) => (abi as Abi).filter((x) => x.type === 'error' || ('name' in x && PICK.has(x.name)));
 export const ABI = dedupe([
@@ -690,8 +697,11 @@ class Step {
       const now = await this.clock('change');
       if (now === null) return;
       const st = (await this.readWithAccounts(changeCalls(changes), changes.map((c) => c.account), 'changes')) as (ChangeState | undefined)[];
-      // One `finalizeSettingChanges` per account applies every due setting.
+      // One `finalizeSettingChanges` per account applies every due setting;
+      // what it applied is read from its receipt (`applied`), never assumed
+      // from its landing (Codex #3090).
       const settingsSent = new Set<Address>();
+      const applied = new Map<Address, readonly ReceiptLog[]>();
       for (const i of this.order(changes.length)) {
         const c = changes[i];
         const key = changeId(c);
@@ -714,17 +724,33 @@ class Step {
           this.wait(why);
           continue;
         }
-        if (c.t === 'setting' && settingsSent.has(c.account)) continue;
-        // eslint-disable-next-line no-await-in-loop
-        const res = await this.finalize(c);
-        if (c.t === 'setting') settingsSent.add(c.account);
-        // A due switch-off waits while the account has open rows; the chain
-        // refuses the call only when nothing else was due.
-        if (res === SWITCH_OFF_WAITS) this.wait('switch-off-waits-for-open-rows');
-        if (res !== 'landed') continue;
-        // The call applies every other due setting, but a switch-off only
-        // once no row is open; the next run's read says whether it did.
-        if (c.t === 'setting' && c.kind === CHANGE_DISABLE) continue;
+        let logs: readonly ReceiptLog[];
+        if (c.t === 'setting' && settingsSent.has(c.account)) {
+          // The account's call this run already went out; it applied this
+          // setting only if its receipt says so.
+          const sent = applied.get(c.account);
+          if (sent === undefined) continue;
+          logs = sent;
+        } else {
+          // eslint-disable-next-line no-await-in-loop
+          const res = await this.finalize(c);
+          if (c.t === 'setting') settingsSent.add(c.account);
+          // A due switch-off waits while the account has open rows; the chain
+          // refuses the call only when nothing else was due.
+          if (res === SWITCH_OFF_WAITS) this.wait('switch-off-waits-for-open-rows');
+          if (res !== 'landed') continue;
+          logs = this.sender.receipt?.logs ?? [];
+          if (c.t === 'setting') applied.set(c.account, logs);
+        }
+        // A landed call is not proof the change applied: a replacement
+        // finalized first drops the account's pending settings, another
+        // caller may cancel one between the read and the send, and a
+        // switch-off waits while rows are open. Only the change's own event
+        // in the receipt reports it; otherwise the next run reads it again.
+        if (!changeApplied(logs, this.r.diamond, c)) {
+          this.wait(c.t === 'setting' && c.kind === CHANGE_DISABLE ? 'switch-off-waits-for-open-rows' : 'change-not-applied');
+          continue;
+        }
         settled.add(key);
         this.report.finalized.push(changeLabel(c));
       }
@@ -857,6 +883,46 @@ export function pendingAt(c: Change, s: ChangeState): bigint {
 }
 
 // ─── Receipt logs ───────────────────────────────────────────────────────────
+
+/** A receipt log, as far as the decoding here reads it. */
+type ReceiptLog = { address: string; topics: readonly string[]; data?: string };
+
+/** Whether the receipt's logs carry the event that APPLYING `c` emits, from
+ *  this Diamond, for its account (and its destination, signer or nominee):
+ *  `SettingChangeApplied` for a setting (`ProtectedModeDisabled` for the
+ *  switch-off), `AllowlistAdded`, `SignerAdded`, `SignerRemoved` or
+ *  `PrimaryReplaced`. Pure. Exported for the tests. */
+export function changeApplied(logs: readonly ReceiptLog[], diamond: Address, c: Change): boolean {
+  for (const log of logs) {
+    if (log.address.toLowerCase() !== diamond.toLowerCase()) continue;
+    let ev: { eventName: string; args: Record<string, unknown> };
+    try {
+      ev = decodeEventLog({ abi: ABI, data: (log.data ?? '0x') as Hex, topics: log.topics as [Hex, ...Hex[]] }) as unknown as typeof ev;
+    } catch {
+      continue;
+    }
+    const a = ev.args;
+    if (lower(a.account as Address) !== c.account) continue;
+    switch (c.t) {
+      case 'setting':
+        if (c.kind === CHANGE_DISABLE ? ev.eventName === 'ProtectedModeDisabled' : ev.eventName === 'SettingChangeApplied' && Number(a.kind) === c.kind) return true;
+        break;
+      case 'allow':
+        if (ev.eventName === 'AllowlistAdded' && lower(a.destination as Address) === c.other) return true;
+        break;
+      case 'signerAdd':
+        if (ev.eventName === 'SignerAdded' && lower(a.signer as Address) === c.other) return true;
+        break;
+      case 'signerRemove':
+        if (ev.eventName === 'SignerRemoved' && lower(a.signer as Address) === c.other) return true;
+        break;
+      case 'replace':
+        if (ev.eventName === 'PrimaryReplaced' && lower(a.controller as Address) === c.other) return true;
+        break;
+    }
+  }
+  return false;
+}
 
 function eventIdOf(log: { topics: readonly string[]; data?: string }, name: string): bigint | null {
   try {

@@ -130,7 +130,8 @@ class FakeDiamond {
         return { from: t?.from ?? ZERO, state: t?.state ?? 0, releaseAt: t?.releaseAt ?? 0n, to: t?.to ?? ZERO, tokenId: t?.tokenId ?? 0n };
       }
       case 'getProtectedAccount':
-        return this.acct(a[0]);
+        // A copy, as a chain read is: a later send must not change it.
+        return { ...this.acct(a[0]) };
       case 'getAllowlistPendingAt':
         return this.allowPending.get(`${a[0]}:${a[1]}`) ?? 0n;
       case 'getSignerChange':
@@ -200,11 +201,13 @@ class FakeDiamond {
         const off = due(acct.pendingDisableAt) && !this.openRows.has(a[0]);
         if (due(acct.pendingDisableAt) && !off && !others) throw revert('PendingRowsExist');
         return () => {
-          if (due(acct.pendingUnlockAt)) Object.assign(acct, { locked: false, pendingUnlockAt: 0n });
-          if (due(acct.pendingDelayAt)) Object.assign(acct, { pendingDelayAt: 0n });
-          if (due(acct.pendingNftOffAt)) Object.assign(acct, { protectNfts: false, pendingNftOffAt: 0n });
-          if (off) this.accounts.set(a[0], account({ enabled: false }));
-          this.lastLogs = [];
+          const logs = [];
+          const applied = (kind: number) => logs.push(logOf('SettingChangeApplied', { account: a[0], kind }));
+          if (due(acct.pendingUnlockAt)) (Object.assign(acct, { locked: false, pendingUnlockAt: 0n }), applied(5));
+          if (due(acct.pendingDelayAt)) (Object.assign(acct, { pendingDelayAt: 0n }), applied(2));
+          if (due(acct.pendingNftOffAt)) (Object.assign(acct, { protectNfts: false, pendingNftOffAt: 0n }), applied(3));
+          if (off) (this.accounts.set(a[0], account({ enabled: false })), logs.push(logOf('ProtectedModeDisabled', { account: a[0] })));
+          this.lastLogs = logs;
         };
       }
       case 'finalizeAddAllowlisted': {
@@ -218,7 +221,7 @@ class FakeDiamond {
         if (this.now > at + BigInt(acct.delaySeconds)) throw revert('ChangeExpired', [at + BigInt(acct.delaySeconds)]);
         return () => {
           this.allowPending.delete(k);
-          this.lastLogs = [];
+          this.lastLogs = [logOf('AllowlistAdded', { account: a[0], destination: a[1] })];
         };
       }
       case 'finalizeAddSigner':
@@ -230,7 +233,7 @@ class FakeDiamond {
         if (this.now < at) throw revert('ChangeNotMatured', [at]);
         return () => {
           this.signerChanges.delete(k);
-          this.lastLogs = [];
+          this.lastLogs = [logOf(functionName === 'finalizeAddSigner' ? 'SignerAdded' : 'SignerRemoved', { account: a[0], signer: a[1] })];
         };
       }
       case 'finalizeReplacement': {
@@ -239,7 +242,7 @@ class FakeDiamond {
         if (this.now < p.readyAt) throw revert('ReplacementNotReady');
         return () => {
           this.replacements.delete(a[0]);
-          this.lastLogs = [];
+          this.lastLogs = [logOf('PrimaryReplaced', { account: a[0], controller: p.nominee, cooldownUntil: 0n })];
         };
       }
       default:
@@ -505,7 +508,8 @@ describe('a run', () => {
         ['finalizeSettingChanges', [ALICE]],
         ['finalizeSettingChanges', [BOB]],
       ]);
-      expect(r.finalized).toEqual([`unlock:${ALICE.slice(0, 10)}`, `lower-delay:${BOB.slice(0, 10)}`]);
+      // Bob's one call applied both of his settings, and its receipt says so.
+      expect(r.finalized).toEqual([`unlock:${ALICE.slice(0, 10)}`, `lower-delay:${BOB.slice(0, 10)}`, `nft-protection-off:${BOB.slice(0, 10)}`]);
       expect(d.accounts.get(ALICE)!.locked).toBe(false);
     });
 
@@ -518,13 +522,25 @@ describe('a run', () => {
       ledger.add('SettingChangeRequested', { account: BOB, kind: 1, value: '0', effectiveAt: String(NOW - 5n) });
       ledger.add('SettingChangeRequested', { account: BOB, kind: 3, value: '0', effectiveAt: String(NOW - 5n) });
       const r = await run();
-      // Bob's call lands (it applies the NFT switch-off); Alice's is refused.
+      // Bob's call lands and applies only the NFT switch-off, which its
+      // receipt reports; Alice's is refused. Both switch-offs wait.
       expect(d.sent.map((s) => [s.fn, s.args])).toEqual([['finalizeSettingChanges', [BOB]]]);
       expect(r.refused.size).toBe(0);
-      expect(r.waiting.get('switch-off-waits-for-open-rows')).toBe(1);
-      expect(r.finalized).toEqual([]);
+      expect(r.waiting.get('switch-off-waits-for-open-rows')).toBe(2);
+      expect(r.finalized).toEqual([`nft-protection-off:${BOB.slice(0, 10)}`]);
       expect(d.accounts.get(BOB)!.enabled).toBe(true);
       expect(d.accounts.get(BOB)!.pendingNftOffAt).toBe(0n);
+    });
+
+    it('reports a setting only from its receipt: a landed call that applied nothing reports nothing (Codex #3090)', async () => {
+      // A replacement finalized first, or a cancel between read and send,
+      // leaves the setting's call landing with no SettingChangeApplied.
+      d.accounts.set(ALICE, account({ pendingUnpinAt: NOW - 5n }));
+      ledger.add('SettingChangeRequested', { account: ALICE, kind: 6, value: '0', effectiveAt: String(NOW - 5n) });
+      const r = await run();
+      expect(fns()).toEqual(['finalizeSettingChanges']);
+      expect(r.finalized).toEqual([]);
+      expect(r.waiting.get('change-not-applied')).toBe(1);
     });
 
     it('treats a change whose pending time moved on as finished, and sends nothing for it', async () => {

@@ -799,7 +799,11 @@ state.
   call per account. Switching the mode off waits while the account still has
   open payouts or transfers; the keeper reports it as waiting, applies the
   account's other due settings meanwhile, and never reports the switch-off
-  as applied until the protocol shows it so. A new allowed destination that
+  as applied until the protocol shows it so. More generally, a change is
+  reported as applied only when the transaction's own record shows it
+  applied: a call that went through can still apply nothing, for example
+  when a replacement finalized first dropped the account's pending
+  settings, or the owner cancelled the change in between. A new allowed destination that
   has not expired, a signer addition the nominee has accepted and that has
   not expired, and a signer removal are applied only while the account is
   not locked. Each addition expires one delay after it matures; the keeper
