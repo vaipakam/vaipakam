@@ -28,7 +28,8 @@ deploy or facet refresh of RepayPeriodicFacet.
 Before this change, a rental prepaid for its whole term by a rental partial
 was closed by the first deduction after maturity, at the cost of that extra
 day. That accidental close is gone: such a rental now closes when its
-borrower repays, or defaults after grace like any other open loan. Whether
-it should close on its own at maturity is an open decision, #3159.
+borrower repays, or defaults after grace like any other open loan. The owner
+decided to keep it that way rather than add a permissionless close at
+maturity (#3159).
 
 Closes #3132.
