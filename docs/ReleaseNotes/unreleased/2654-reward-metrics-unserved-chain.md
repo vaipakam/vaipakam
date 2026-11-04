@@ -1,4 +1,4 @@
-## Thread — Reward metrics answer an unserved chain as unavailable (PR #<n>)
+## Thread — Reward metrics answer an unserved chain as unavailable (PR #3128)
 
 The indexer's two reward-metric reads, the loop-closure ratios and the recycling account, now follow the same rule as its loan, offer, signed-offer and protocol-config reads. A chain the indexer is not serving gets a "chain not configured" unavailable answer, never its stored figures. Before this, a chain whose RPC was removed or failed still had its stored figures served with a normal answer. After a chain was retired, those historical figures could read as current.
 
