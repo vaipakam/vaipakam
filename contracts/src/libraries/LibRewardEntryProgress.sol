@@ -29,14 +29,16 @@ import {LibInteractionRewards} from "./LibInteractionRewards.sol";
  *         What it compares, per entry: `processed`, the settlement cursor
  *         (`rewardEntryClaimNextDay`), the side's cumulative pricing cursor,
  *         and the legacy-slice domain's phase, preparation cursor,
- *         consumption cursor and live-record count. One thing those fields
- *         cannot show: a legacy-slice step that works INSIDE one record (a
- *         further consumption page of a wide day, or a further preparation
- *         page of it) moves none of the domain's own cursors. So a domain in
- *         its Staging phase that the sweep will step counts as progress by
- *         itself ({legacyStepDue}). Its one over-count is a preparation page
- *         that stops at once on a day the cumulative curve has not reached;
- *         that costs a caller one transaction, never a stalled entry.
+ *         consumption cursor and live-record count. A legacy-slice step can
+ *         also work INSIDE one day record (a further consumption or
+ *         preparation page of a wide day) without moving any of the domain's
+ *         own cursors, so the step itself reports such work where it happens
+ *         ({noteLegacyWork}, a per-transaction counter), and the caller reads
+ *         that counter before and after ({legacyWorkCount}). Only work that
+ *         actually ran is counted: a step that stops at once (a day the
+ *         cumulative curve has not reached) and a step that is never reached
+ *         (a settlement deferred before it) count nothing. So the report
+ *         neither over- nor under-states a call's progress.
  */
 library LibRewardEntryProgress {
     /// @notice One reward entry's settlement progress, as the close-out steps
@@ -88,38 +90,41 @@ library LibRewardEntryProgress {
         return keccak256(abi.encode(read(s, id)));
     }
 
-    /// @notice Whether the forfeited-entry sweep, reaching entry `id`, will
-    ///         step its legacy-slice domain: a forfeited, unsettled spanning
-    ///         entry (not yet stamped) whose domain is staging. Such a step
-    ///         can work inside one record without moving the domain's
-    ///         cursors, so it counts as progress by itself (see the header).
-    function legacyStepDue(LibVaipakam.Storage storage s, uint256 id) internal view returns (bool) {
-        LibVaipakam.RewardEntry storage e = s.rewardEntries[id];
-        if (e.processed || s.rewardEntryClaimNextDay[id] != 0) return false;
-        if (!LibInteractionRewards.isEntryForfeited(s, e)) return false;
-        return s.stagingDomains[LibRewardCustody.legacyDomainKey(id)].phase == LibVaipakam.DomainPhase.Staging;
+    /// @dev Transient slot of the per-transaction legacy-step work counter.
+    bytes32 private constant LEGACY_WORK_SLOT = keccak256("vaipakam.rewardEntryProgress.legacyWork");
+
+    /// @notice A legacy-slice step did work this transaction (opened or
+    ///         prepared a day record, consumed a page of one, or moved the
+    ///         domain's preparation or consumption cursor). Called by the
+    ///         step itself, where the work happens.
+    function noteLegacyWork() internal {
+        bytes32 slot = LEGACY_WORK_SLOT;
+        assembly ("memory-safe") {
+            tstore(slot, add(tload(slot), 1))
+        }
+    }
+
+    /// @notice How many legacy-slice work units this transaction has run so
+    ///         far; a caller compares it before and after its own call.
+    function legacyWorkCount() internal view returns (uint256 n) {
+        bytes32 slot = LEGACY_WORK_SLOT;
+        assembly ("memory-safe") {
+            n := tload(slot)
+        }
     }
 
     /// @notice The progress digest of every entry the forfeited-entry sweep of
     ///         `loanId` reaches — its active lender entry, its borrower entry
-    ///         and the lender entries a position sale orphaned — and whether
-    ///         any of them has a legacy step due. The sweep compares the digest
-    ///         before and after; a due step is progress on its own.
-    function loanSweepMark(LibVaipakam.Storage storage s, uint256 loanId)
-        internal
-        view
-        returns (bytes32 mark, bool stepDue)
-    {
+    ///         and the lender entries a position sale orphaned. The sweep
+    ///         compares it before and after.
+    function loanSweepMark(LibVaipakam.Storage storage s, uint256 loanId) internal view returns (bytes32 mark) {
         uint256 lenderId = s.loanActiveLenderEntryId[loanId];
         uint256 borrowerId = s.loanBorrowerEntryId[loanId];
         uint256[] storage orphaned = s.loanForfeitedLenderEntryIds[loanId];
         mark = keccak256(abi.encode(_entryMark(s, lenderId), _entryMark(s, borrowerId)));
-        stepDue = (lenderId != 0 && legacyStepDue(s, lenderId)) || (borrowerId != 0 && legacyStepDue(s, borrowerId));
         uint256 n = orphaned.length;
         for (uint256 i; i < n; ) {
-            uint256 id = orphaned[i];
-            mark = keccak256(abi.encode(mark, digest(s, id)));
-            if (!stepDue && legacyStepDue(s, id)) stepDue = true;
+            mark = keccak256(abi.encode(mark, digest(s, orphaned[i])));
             unchecked { ++i; }
         }
     }

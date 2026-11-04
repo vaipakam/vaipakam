@@ -306,6 +306,37 @@ contract RewardLegacySliceDomainTest is SetupTest, IVaipakamErrors {
         assertEq(_claim(), total, "and the claim pays at once");
     }
 
+    /// @dev #3012 (Codex #3136 r1) — a funding wait reads as NO progress on every
+    ///      retry, even with the slice's domain staging: the whole-window branch
+    ///      defers on the delivered allowance before it would step the domain, so
+    ///      no step runs and none is counted. Once the allowance is back the
+    ///      sweep steps and settles.
+    function test_TheForfeitSweep_ADeferredRetry_ReportsNoProgress_WithTheDomainStaging() public {
+        uint256 id = _legacyScene();
+        uint256 total = _legacyTotal();
+        _mut().setRewardEntryForfeitedRaw(id);
+        _mut().setLoanActiveLenderEntryId(LOAN, id);
+        _epochOn(1, EPOCH, 7);
+        _liveFresh(total + 1e18);
+        (, bool progressed) = InteractionRewardsFacet(address(diamond)).sweepForfeitedInteractionRewards(LOAN);
+        assertTrue(progressed, "the first sweep opens and prepares the domain");
+        assertEq(_progress(id).legacyPhase, uint8(LibVaipakam.DomainPhase.Staging), "fixture: the domain is staging");
+        _mut().setArmedFreshLedgerRaw(0, 0); // the delivered allowance is gone: the next chunk defers
+        for (uint256 i; i < 2; ++i) {
+            uint256 swept;
+            (swept, progressed) = InteractionRewardsFacet(address(diamond)).sweepForfeitedInteractionRewards(LOAN);
+            assertEq(swept, 0, "deferred");
+            assertFalse(progressed, "a funding wait is no progress, retry after retry");
+        }
+        _mut().setArmedFreshLedgerRaw(total + 1e18, 0);
+        (uint256 paid, bool moved) = InteractionRewardsFacet(address(diamond)).sweepForfeitedInteractionRewards(LOAN);
+        assertTrue(moved, "funded again, the sweep steps");
+        if (paid == 0) {
+            (paid, moved) = InteractionRewardsFacet(address(diamond)).sweepForfeitedInteractionRewards(LOAN);
+        }
+        assertEq(paid, total, "and settles the slice");
+    }
+
     /// @dev The forfeit sweep's whole-window branch consumes the slice's epochs
     ///      too: the treasury's epoch part is absorbed in place, the live part
     ///      from the live sources, the bucket credited the whole.

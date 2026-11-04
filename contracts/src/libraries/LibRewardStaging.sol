@@ -3,6 +3,7 @@ pragma solidity 0.8.29;
 
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {LibRewardCustody} from "./LibRewardCustody.sol";
+import {LibRewardEntryProgress} from "./LibRewardEntryProgress.sol";
 import {LibInteractionRewards} from "./LibInteractionRewards.sol";
 import {LibVpfiRecycle} from "./LibVpfiRecycle.sol";
 import {LibRewardSanctions} from "./LibRewardSanctions.sol";
@@ -1600,6 +1601,8 @@ library LibRewardStaging {
                 }
             }
             dom.preparedThrough = uint64(d);
+            // #3012 — the page moved the preparation cursor: work done.
+            LibRewardEntryProgress.noteLegacyWork();
             unchecked { ++d; ++walked; }
         }
     }
@@ -1616,6 +1619,10 @@ library LibRewardStaging {
                 if (heavy && heavySpent) return; // the call's batch budget is spent: next call
                 // One page of the record's consumption, hosted on the settle facet.
                 (uint256 held, bool done, bool unsettled) = LibRewardCustody.callConsumeRecordInLegacy(key);
+                // #3012 — a consumption (or, for a wide day, a further
+                // preparation) page of one record ran: work done, even where
+                // no domain cursor moves.
+                LibRewardEntryProgress.noteLegacyWork();
                 if (unsettled) {
                     // A wide day: one more preparation page (hosted on the
                     // record facet), then stop.

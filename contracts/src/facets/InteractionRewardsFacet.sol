@@ -94,7 +94,8 @@ contract InteractionRewardsFacet is
             revert InteractionEmissionsNotStarted();
         }
         if (s.vpfiToken == address(0)) revert VPFITokenNotSet();
-        (bytes32 markBefore, bool stepDue) = LibRewardEntryProgress.loanSweepMark(s, loanId);
+        bytes32 markBefore = LibRewardEntryProgress.loanSweepMark(s, loanId);
+        uint256 legacyWorkBefore = LibRewardEntryProgress.legacyWorkCount();
 
         // #1699 r18 — the forfeit armed leg settles through the day engine
         // (see {LibInteractionRewards.sweepForfeitedByLoanId}). This facet
@@ -150,10 +151,9 @@ contract InteractionRewardsFacet is
         // exhaustion, and a deferred day is a retryable wait, not an error.
         // "Nothing happened" is a zero return, exactly like the expiry batch.
         swept = freshCredited + recycledReleased;
-        {
-            (bytes32 markAfter, ) = LibRewardEntryProgress.loanSweepMark(s, loanId);
-            progressed = stepDue || armedOwed != 0 || swept != 0 || markAfter != markBefore;
-        }
+        progressed = swept != 0 || armedOwed != 0
+            || LibRewardEntryProgress.legacyWorkCount() != legacyWorkBefore
+            || LibRewardEntryProgress.loanSweepMark(s, loanId) != markBefore;
         if (swept == 0 && armedOwed == 0) return (0, progressed);
 
         // A staging reservation binds as a deferral, never a truncation
