@@ -1,4 +1,4 @@
-## Contracts — the daily rental deduction charges only an agreed day (PR #<n>)
+## Contracts — the daily rental deduction charges only an agreed day (PR #3160)
 
 The daily rental deduction is permissionless: anyone may call it once a day
 has passed since the last deduction, and it moves one day's fee from the
