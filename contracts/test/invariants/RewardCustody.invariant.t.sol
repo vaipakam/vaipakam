@@ -23,9 +23,7 @@ import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
 import {LibAccessControl} from "../../src/libraries/LibAccessControl.sol";
 import {LibVpfiRecycle} from "../../src/libraries/LibVpfiRecycle.sol";
 import {TestMutatorFacet} from "../mocks/TestMutatorFacet.sol";
-import {MerkleFixture} from "../mocks/MerkleFixture.sol";
-import {LibD6Delivery} from "../helpers/LibD6Delivery.sol";
-import {RemitWire} from "../../src/crosschain/RemitWire.sol";
+import {LibD8Delivery} from "../helpers/LibD8Delivery.sol";
 
 /**
  * @title  RewardCustodyInvariant
@@ -178,8 +176,7 @@ contract RewardCustodyInvariant is SetupTest {
     /// establishes is "the handler has subjects", and an invariant asserting
     /// that would be flaky. Driving two known seeds by hand proves it once.
     ///
-    /// Since the pre-d6 retirement every budget delivery lands on the rooted
-    /// wire and, on this activated custody, opens an epoch whatever split it
+    /// Every budget delivery lands on the d8 wire (#2828) and, on this activated custody, opens an epoch whatever split it
     /// states. The first version of the handler drew the wire from
     /// `fresh != 0`, which made the epoch path all but unreachable while the
     /// conservation invariant passed over an empty set; this pin is what keeps
@@ -192,7 +189,7 @@ contract RewardCustodyInvariant is SetupTest {
         uint256 n = handler.packets();
         assertEq(n, 2, "two packets recorded");
         for (uint256 i; i < n; ++i) {
-            (bytes32 packetHash, , uint256 admitted, , , ) = ep.getTransportBatch(handler.packetAt(i));
+            (bytes32 packetHash, , uint256 admitted, , ) = ep.getTransportBatch(handler.packetAt(i));
             assertEq(packetHash, handler.packetAt(i), "each delivery opened its epoch");
             assertGt(admitted, 0, "over the amount that landed");
         }
@@ -217,6 +214,11 @@ contract RewardCustodyInvariant is SetupTest {
     /// what hid the falsity — which is why `test_Handler_ReleaseAndClassify
     /// ReachesTheDebit` below pins the liveness rather than trusting it.
     ///
+    /// Since #2828 the ingress indexes each epoch under its day, so the
+    /// handler's claims draw from it and the leg terms are live; before, no
+    /// handler action indexed an epoch before its release, and the identity
+    /// also asserted the legs were zero.
+    ///
     /// It also pins the rule the ingress relies on: on an activated custody a
     /// budget delivery credits no shared ledger, and its whole amount is what
     /// the batch is admitted with, so no component can sit in an epoch as
@@ -226,9 +228,9 @@ contract RewardCustodyInvariant is SetupTest {
         uint256 n = handler.packets();
         for (uint256 i = 0; i < n; ++i) {
             bytes32 h = handler.packetAt(i);
-            (bytes32 packetHash, uint256 balance, uint256 admitted, , , ) = ep.getTransportBatch(h);
+            (bytes32 packetHash, uint256 balance, uint256 admitted, , ) = ep.getTransportBatch(h);
             if (packetHash == bytes32(0)) continue; // defensive: every handler delivery opens one
-            (uint256 parked, , , uint256 debited) = ep.getTransportRemainder(h);
+            (, uint256 parked, , , uint256 debited) = ep.getTransportRemainder(h);
             (uint256 legFresh, uint256 legRecycled) = ep.getTransportBatchLegs(h);
             // 3b-ii-A2 (#2305) — the identity gains the staged terms.
             (uint256 stagedFresh, uint256 stagedRecycled, ) = ep.getTransportBatchStaged(h);
@@ -237,7 +239,6 @@ contract RewardCustodyInvariant is SetupTest {
                 admitted,
                 "transport epoch conserves"
             );
-            assertEq(legFresh + legRecycled, 0, "no draw exists until PR 3b-ii");
         }
     }
 
@@ -425,7 +426,7 @@ contract RewardCustodyInvariant is SetupTest {
 
         handler.releaseEpoch(0);
         assertGt(handler.released(), 0, "the handler released an epoch");
-        (, , bool acknowledged, ) = ep.getTransportRemainder(h);
+        (, , , bool acknowledged, ) = ep.getTransportRemainder(h);
         assertTrue(acknowledged, "and the acknowledgment is recorded");
 
         for (uint256 seed = 1; seed <= 32 && handler.classified() == 0; ++seed) {
@@ -433,8 +434,8 @@ contract RewardCustodyInvariant is SetupTest {
         }
         assertGt(handler.classified(), 0, "a classification was applied against the released epoch");
 
-        (, uint256 balance, uint256 admitted, , , ) = ep.getTransportBatch(h);
-        (uint256 parked, , , uint256 debited) = ep.getTransportRemainder(h);
+        (, uint256 balance, uint256 admitted, , ) = ep.getTransportBatch(h);
+        (, uint256 parked, , , uint256 debited) = ep.getTransportRemainder(h);
         assertGt(debited, 0, "and it DEBITED the remainder - the seam is reached");
         assertLt(balance + parked, admitted, "which the old two-term identity would have called a loss");
         assertEq(balance + parked + debited, admitted, "the epoch conserves with the exit named");
@@ -619,7 +620,7 @@ contract RewardCustodyHandler is Test {
         TestMutatorFacet(diamond).creditInflowRawWithBefore(LibVpfiRecycle.RecycleSource.NotificationFee, 1, amount, before);
     }
 
-    /// A budget delivery on the rooted (d6) wire, as the receiver presents it
+    /// A budget delivery on the d8 wire, as the receiver presents it
     /// (the handler is the registered receiver): the tokens are forwarded to
     /// the Diamond first, then the ingress protects the WHOLE amount into the
     /// `Unclassified` row and opens a transport epoch over it. On an activated
@@ -635,7 +636,7 @@ contract RewardCustodyHandler is Test {
         // Through an external self-call, so a refusal is counted rather than
         // reverting the handler: the ingress call itself is built by the
         // shared test-side delivery library.
-        try this.deliverD6(amount, fresh, ++nextRemit) {
+        try this.deliverD8(amount, fresh, ++nextRemit) {
             ++epochsAdmitted;
             packetHashes.push(keccak256(abi.encode(uint256(8453), ++seqStamped, "seq")));
         } catch {
@@ -643,17 +644,17 @@ contract RewardCustodyHandler is Test {
         }
     }
 
-    /// A whole-split d6 delivery of `amount` over the handler's one day, from
+    /// A whole-split d8 delivery of `amount` on the handler's one day, from
     /// Base, with no transport id (the per-source sequence stamps it), in the
     /// live era. Self-call only: {budgetIngress} wraps it in a `try`.
-    function deliverD6(uint256 amount, uint256 fresh, uint256 remitId) external {
+    function deliverD8(uint256 amount, uint256 fresh, uint256 remitId) external {
         require(msg.sender == address(this), "self only");
-        LibD6Delivery.deliver(
+        LibD8Delivery.deliver(
             diamond,
-            LibD6Delivery.Delivery({
+            LibD8Delivery.Delivery({
                 token: address(vpfi),
                 amount: amount,
-                dayIds: _dayOne(),
+                dayId: 1,
                 sourceChainId: 8453,
                 remitId: remitId,
                 remitter: address(0xBA5E),
@@ -663,12 +664,6 @@ contract RewardCustodyHandler is Test {
                 era: 0
             })
         );
-    }
-
-    /// The one day every handler delivery lists.
-    function _dayOne() internal pure returns (uint256[] memory days_) {
-        days_ = new uint256[](1);
-        days_[0] = 1;
     }
 
     /// #1566 closure 2 cutover PR 2 — classify a random share of a random
@@ -703,8 +698,8 @@ contract RewardCustodyHandler is Test {
     }
 
     /// #1566 transport epochs PR 3b (Codex #2232 r3) — RELEASE a random
-    /// landed packet's epoch: materialize its membership, park what its
-    /// obligations left, and record the acknowledgment.
+    /// landed packet's epoch: park what its obligations left, and record the
+    /// acknowledgment.
     ///
     /// Without this the campaign could not reach `takeFromReleasedRemainder`
     /// AT ALL. Classification against an epoch-backed packet is gated on the
@@ -716,8 +711,8 @@ contract RewardCustodyHandler is Test {
     /// `epochsAdmitted` already is.
     ///
     /// Each step is attempted independently rather than guarded up front: the
-    /// three are reachable in different states (a batch may already be
-    /// indexed, already parked, already acknowledged by an earlier draw of
+    /// steps are reachable in different states (a batch may already be
+    /// parked, already acknowledged by an earlier draw of
     /// this action), and refusing the whole action on any of them would make
     /// the reachable interleavings a function of draw order.
     function releaseEpoch(uint256 seed) external {
@@ -725,20 +720,10 @@ contract RewardCustodyHandler is Test {
         if (packetHashes.length == 0) return;
         bytes32 h = packetHashes[seed % packetHashes.length];
         RewardEpochFacet ep = RewardEpochFacet(diamond);
-        (bytes32 packetHash, , , , , ) = ep.getTransportBatch(h);
+        (bytes32 packetHash, , , , ) = ep.getTransportBatch(h);
         if (packetHash == bytes32(0)) return; // defensive: every handler delivery opens one
-        // The handler's deliveries all list exactly this one day, so its one
-        // chunk, proved against the root the wire carried, is the membership.
-        uint256[] memory days_ = _dayOne();
-        bytes32[] memory leaves = RemitWire.d6Chunks(days_);
-        try ep.materializeTransportBatchChunk(
-            h,
-            0,
-            MerkleFixture.chunk(days_, 0, RemitWire.D6_CHUNK_DAYS),
-            MerkleFixture.proof(leaves, 0),
-            new bytes32[](0),
-            new bytes32[](0)
-        ) {} catch {}
+        // #2828 — the ingress indexed the epoch under its one day when it
+        // landed, so there is no membership step left before the release.
         // #2258 — the production release refuses everyone in 3b-i, so the
         // handler reaches the release (and the debit seam the conservation
         // invariant exists for) through the test-only raw entry.

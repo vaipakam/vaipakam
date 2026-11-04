@@ -3,8 +3,8 @@
  * string the user signs on `/recover`.
  *
  * It is byte-for-byte the literal whose keccak256 is
- * `VaultFactoryFacet`'s `RECOVERY_ACK_TEXT_HASH` (the concatenated
- * literal at VaultFactoryFacet.sol ~line 717). `Recover` shows it
+ * `VaultDepositoryFacet`'s `ADOPTION_ACK_TEXT_HASH` (the concatenated
+ * literal in VaultDepositoryFacet.sol). `Recover` shows it
  * verbatim on the review card so the user reads EXACTLY what the
  * signature commits to, and re-hashes it against the live on-chain
  * value before every signature — a mismatch blocks signing.
@@ -37,11 +37,11 @@ export const RECOVERY_ACK_TEXT =
   // apostrophe ("protocol's"), NOT the typographic one the rest of
   // the catalog uses — the hash is byte-sensitive.
   'I am declaring that the source address belongs to a wallet I' +
-  ' control or authorized. If the source is later determined to' +
-  ' be on the sanctions list, my vault will be locked under the' +
-  " protocol's sanctions policy until the address is de-listed." +
-  ' I have read and understood the Advanced User Guide section' +
-  ' on stuck-token recovery.';
+  ' control or authorized. The asset will be credited to my vault' +
+  ' and will leave it only through an ordinary vault withdrawal.' +
+  ' If the source is on the sanctions list, my vault will be locked' +
+  " under the protocol's sanctions policy until the address is" +
+  ' de-listed.';
 
 /**
  * The word the user must type to arm the recovery sign button.

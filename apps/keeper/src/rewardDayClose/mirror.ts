@@ -36,7 +36,7 @@ import { expectedSources, readBaseDays, type BaseDay } from './reads';
 import type { Sender } from './sender';
 import type { ClockFacts } from './clock';
 import type { DayStore } from './store';
-import { messengerShape } from './shape';
+import { carriesDayReport } from './shape';
 import { reportWire } from './wire';
 
 /** What a mirror knows of Base: each window day's state there, or that this
@@ -58,8 +58,8 @@ export async function runMirror(c: ChainRun, store: DayStore, sender: Sender, x:
   const listed = base === null ? null : await expectedSources(base, c.where);
   const baseClock = await peerClock(store, x.baseChainId, base, c.where);
   const clock = mirrorClock(c.chainId, x.launch, x.baseChainId, baseClock);
-  const shape = await messengerShape(c.deps.client, x.messenger, `${c.where}: the day-report shape of this chain's reward messenger`);
-  const wire = await reportWire(c, base, x.messenger, x.baseChainId, shape);
+  const carries = await carriesDayReport(c.deps.client, x.messenger, `${c.where}: whether this chain's reward messenger carries the day report`);
+  const wire = await reportWire(c, base, x.messenger, x.baseChainId, carries);
   // The chain this Diamond names as Base must be the canonical reward chain:
   // a report a non-canonical Diamond receives is refused there, and is sent
   // once and stamped sent here for good.
@@ -74,12 +74,11 @@ export async function runMirror(c: ChainRun, store: DayStore, sender: Sender, x:
     roleHold ??
     (!wire.known ? `the report channel to Base could not be read whole: ${wire.why}` : wire.value.length > 0 ? 'the report channel to Base is not wired to accept a report' : null);
 
-  // A clean channel read includes the shape (wire.ts), so `sendShape` is set
-  // whenever nothing holds the close.
-  const sendShape = shape.known ? shape.value : null;
+  // A clean channel read includes the day-report link (wire.ts), so nothing
+  // holds the close only when this chain's messenger carries the report.
   const run =
-    closeHold === null && sendShape !== null
-      ? await closeDays(c, store, sender, x.unclosed, { messenger: x.messenger, baseChainId: x.baseChainId, shape: sendShape })
+    closeHold === null
+      ? await closeDays(c, store, sender, x.unclosed, { messenger: x.messenger, baseChainId: x.baseChainId })
       : { closed: [], dispatched: new Map() };
   // This run's unchecked dispatches, and the earlier ones still recorded.
   const dispatched = new Map([...(await store.dispatches(x.window)), ...run.dispatched]);

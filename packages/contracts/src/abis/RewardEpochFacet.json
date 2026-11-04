@@ -207,38 +207,14 @@
         "internalType": "uint256"
       },
       {
-        "name": "dayCount",
-        "type": "uint32",
-        "internalType": "uint32"
-      },
-      {
-        "name": "indexedDays",
-        "type": "uint32",
-        "internalType": "uint32"
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
       },
       {
         "name": "released",
         "type": "bool",
         "internalType": "bool"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getTransportBatchDays",
-    "inputs": [
-      {
-        "name": "batchId",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "days_",
-        "type": "uint256[]",
-        "internalType": "uint256[]"
       }
     ],
     "stateMutability": "view"
@@ -340,11 +316,6 @@
         "name": "capHit",
         "type": "bool",
         "internalType": "bool"
-      },
-      {
-        "name": "withheldMultiDay",
-        "type": "uint256",
-        "internalType": "uint256"
       },
       {
         "name": "withheldUnattested",
@@ -463,45 +434,6 @@
   },
   {
     "type": "function",
-    "name": "getTransportDayLateFrom",
-    "inputs": [
-      {
-        "name": "dayId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "from",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "limit",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "page",
-        "type": "bytes32[]",
-        "internalType": "bytes32[]"
-      },
-      {
-        "name": "arrivedAt",
-        "type": "uint64[]",
-        "internalType": "uint64[]"
-      },
-      {
-        "name": "next",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "getTransportDayScanIds",
     "inputs": [
       {
@@ -531,14 +463,19 @@
     ],
     "outputs": [
       {
+        "name": "parked",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
         "name": "amount",
         "type": "uint256",
         "internalType": "uint256"
       },
       {
-        "name": "dayCount",
-        "type": "uint32",
-        "internalType": "uint32"
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
       },
       {
         "name": "acknowledged",
@@ -555,50 +492,6 @@
   },
   {
     "type": "function",
-    "name": "materializeTransportBatchChunk",
-    "inputs": [
-      {
-        "name": "batchId",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "chunkIndex",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "dayIds",
-        "type": "uint256[]",
-        "internalType": "uint256[]"
-      },
-      {
-        "name": "proof",
-        "type": "bytes32[]",
-        "internalType": "bytes32[]"
-      },
-      {
-        "name": "hints",
-        "type": "bytes32[]",
-        "internalType": "bytes32[]"
-      },
-      {
-        "name": "lateHints",
-        "type": "bytes32[]",
-        "internalType": "bytes32[]"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "indexedDays",
-        "type": "uint32",
-        "internalType": "uint32"
-      }
-    ],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "parkTransportBatchRemainder",
     "inputs": [
       {
@@ -609,49 +502,11 @@
     ],
     "outputs": [
       {
-        "name": "checkedDays",
-        "type": "uint32",
-        "internalType": "uint32"
-      },
-      {
-        "name": "parked",
-        "type": "bool",
-        "internalType": "bool"
-      },
-      {
         "name": "amount",
         "type": "uint256",
         "internalType": "uint256"
       }
     ],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "proveDeliveryDayChunk",
-    "inputs": [
-      {
-        "name": "packetHash",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "chunkIndex",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "dayIds",
-        "type": "uint256[]",
-        "internalType": "uint256[]"
-      },
-      {
-        "name": "proof",
-        "type": "bytes32[]",
-        "internalType": "bytes32[]"
-      }
-    ],
-    "outputs": [],
     "stateMutability": "nonpayable"
   },
   {
@@ -762,123 +617,6 @@
   },
   {
     "type": "event",
-    "name": "DayDeliveryPartLanded",
-    "inputs": [
-      {
-        "name": "dayId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "packetHash",
-        "type": "bytes32",
-        "indexed": true,
-        "internalType": "bytes32"
-      },
-      {
-        "name": "landedFresh",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "landedRecycled",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "wholeFresh",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "wholeRecycled",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "DayDeliveryProved",
-    "inputs": [
-      {
-        "name": "dayId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "packetHash",
-        "type": "bytes32",
-        "indexed": true,
-        "internalType": "bytes32"
-      },
-      {
-        "name": "remitId",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "route",
-        "type": "uint8",
-        "indexed": false,
-        "internalType": "uint8"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "DayDeliveryWholeConflict",
-    "inputs": [
-      {
-        "name": "dayId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "packetHash",
-        "type": "bytes32",
-        "indexed": true,
-        "internalType": "bytes32"
-      },
-      {
-        "name": "wholeFresh",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "wholeRecycled",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "declaredWholeFresh",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "declaredWholeRecycled",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
     "name": "RewardCommitmentReleased",
     "inputs": [
       {
@@ -898,37 +636,6 @@
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "TransportBatchChunkIndexed",
-    "inputs": [
-      {
-        "name": "batchId",
-        "type": "bytes32",
-        "indexed": true,
-        "internalType": "bytes32"
-      },
-      {
-        "name": "chunkIndex",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "indexedDays",
-        "type": "uint32",
-        "indexed": false,
-        "internalType": "uint32"
-      },
-      {
-        "name": "dayCount",
-        "type": "uint32",
-        "indexed": false,
-        "internalType": "uint32"
       }
     ],
     "anonymous": false
@@ -998,31 +705,6 @@
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "TransportParkPageChecked",
-    "inputs": [
-      {
-        "name": "batchId",
-        "type": "bytes32",
-        "indexed": true,
-        "internalType": "bytes32"
-      },
-      {
-        "name": "checkedDays",
-        "type": "uint32",
-        "indexed": false,
-        "internalType": "uint32"
-      },
-      {
-        "name": "dayCount",
-        "type": "uint32",
-        "indexed": false,
-        "internalType": "uint32"
       }
     ],
     "anonymous": false
@@ -2161,49 +1843,6 @@
   },
   {
     "type": "error",
-    "name": "DeliveryPacketDisposed",
-    "inputs": [
-      {
-        "name": "packetHash",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "disposed",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "DeliveryProofNotBudget",
-    "inputs": [
-      {
-        "name": "packetHash",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "kind",
-        "type": "uint8",
-        "internalType": "uint8"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "DeliveryProofRouteIsBatch",
-    "inputs": [
-      {
-        "name": "packetHash",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "DestinationHasNoDayStanding",
     "inputs": [
       {
@@ -2363,7 +2002,18 @@
   },
   {
     "type": "error",
-    "name": "IngressPacketDayListStamped",
+    "name": "IngressPacketDayAlreadyStamped",
+    "inputs": [
+      {
+        "name": "packetHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "IngressPacketDayUnnamed",
     "inputs": [
       {
         "name": "packetHash",
@@ -4586,22 +4236,6 @@
   },
   {
     "type": "error",
-    "name": "SafeCastOverflowedUintDowncast",
-    "inputs": [
-      {
-        "name": "bits",
-        "type": "uint8",
-        "internalType": "uint8"
-      },
-      {
-        "name": "value",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "SaleAboveHeldCeiling",
     "inputs": [
       {
@@ -5439,27 +5073,6 @@
   },
   {
     "type": "error",
-    "name": "TransportBatchNotFullyIndexed",
-    "inputs": [
-      {
-        "name": "batchId",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "indexedDays",
-        "type": "uint32",
-        "internalType": "uint32"
-      },
-      {
-        "name": "dayCount",
-        "type": "uint32",
-        "internalType": "uint32"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "TransportBatchNotReleased",
     "inputs": [
       {
@@ -5467,17 +5080,6 @@
         "type": "bytes32",
         "internalType": "bytes32"
       },
-      {
-        "name": "batchId",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "TransportBatchNotRooted",
-    "inputs": [
       {
         "name": "batchId",
         "type": "bytes32",
@@ -5525,90 +5127,6 @@
   },
   {
     "type": "error",
-    "name": "TransportChunkAlreadyIndexed",
-    "inputs": [
-      {
-        "name": "batchId",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "chunkIndex",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "TransportChunkLengthMismatch",
-    "inputs": [
-      {
-        "name": "batchId",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "chunkIndex",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "expected",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "supplied",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "TransportChunkOutOfExtent",
-    "inputs": [
-      {
-        "name": "batchId",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "chunkIndex",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "chunkCount",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "TransportChunkProofInvalid",
-    "inputs": [
-      {
-        "name": "batchId",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "chunkIndex",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "leaf",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "TransportDayFanoutExceeded",
     "inputs": [
       {
@@ -5620,27 +5138,6 @@
         "name": "cap",
         "type": "uint256",
         "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "TransportDayListMismatch",
-    "inputs": [
-      {
-        "name": "batchId",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "committed",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "supplied",
-        "type": "bytes32",
-        "internalType": "bytes32"
       }
     ]
   },
@@ -5678,27 +5175,6 @@
         "name": "available",
         "type": "uint256",
         "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "TransportIndexHintInvalid",
-    "inputs": [
-      {
-        "name": "batchId",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "dayId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "hint",
-        "type": "bytes32",
-        "internalType": "bytes32"
       }
     ]
   },
@@ -5769,27 +5245,6 @@
         "name": "batchId",
         "type": "bytes32",
         "internalType": "bytes32"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "TransportRootExtentInvalid",
-    "inputs": [
-      {
-        "name": "packetHash",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "elementCount",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "chunkCount",
-        "type": "uint256",
-        "internalType": "uint256"
       }
     ]
   },

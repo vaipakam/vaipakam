@@ -21,6 +21,10 @@
       "path": "oldLoanId",
       "why": "A refinance leaves two loan records. The new loan's own acceptance opens its timeline; this event is the old loan's closing transition and the only refinance-specific record on it. newLoanId stays in args_json."
     },
+    "RefinancePayoffSettled.loanId": {
+      "path": "oldLoanId",
+      "why": "#3042: the settlement statement of the old loan's payoff (what the new lender's net principal and the borrower's wallet each paid the old lender, and the borrower's treasury fee). It belongs on the old loan's timeline beside LoanRefinanced; newLoanId stays in args_json."
+    },
     "IntentMatched.offerId": {
       "path": "counterpartyOfferId",
       "why": "The counterparty is the standing on-chain offer a person created and follows by offer id. The slice is a vehicle the protocol synthesizes inside this same transaction; its owner follows the intent by lender and asset pair, both in args_json."

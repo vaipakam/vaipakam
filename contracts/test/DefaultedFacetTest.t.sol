@@ -2563,6 +2563,9 @@ contract DefaultedFacetTest is Test {
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
         assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Defaulted));
+        // The token moved to the lender's vault is credited to the lender's
+        // tracked holding, which bounds the claim that pays it out.
+        assertEq(VaultFactoryFacet(address(diamond)).getTrackedHolding(loan.lender, mockIlliquidERC20, 99), 1);
         vm.clearMockedCalls();
     }
 
@@ -2592,6 +2595,7 @@ contract DefaultedFacetTest is Test {
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
         assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Defaulted));
+        assertEq(VaultFactoryFacet(address(diamond)).getTrackedHolding(loan.lender, mockIlliquidERC20, 99), 5);
         vm.clearMockedCalls();
     }
 

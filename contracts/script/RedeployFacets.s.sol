@@ -7,6 +7,7 @@ import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {IDiamondLoupe} from "@diamond-3/interfaces/IDiamondLoupe.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {RiskSplitLiquidationFacet} from "../src/facets/RiskSplitLiquidationFacet.sol";
+import {RiskDiscountedLiquidationFacet} from "../src/facets/RiskDiscountedLiquidationFacet.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {PrecloseFacet} from "../src/facets/PrecloseFacet.sol";
@@ -38,7 +39,10 @@ import {Deployments} from "./lib/Deployments.sol";
 import {StorageLayoutRecord} from "./lib/StorageLayoutRecord.sol";
 import {FacetSelectors} from "./lib/FacetSelectors.sol";
 import {RefinanceRecordRollout} from "./lib/RefinanceRecordRollout.sol";
+import {TrackedHoldingRollout} from "./lib/TrackedHoldingRollout.sol";
 import {ArtifactDeploy} from "./lib/ArtifactDeploy.sol";
+import {SellerClaimFacet} from "../src/facets/SellerClaimFacet.sol";
+import {RefinancePayoffFacet} from "../src/facets/RefinancePayoffFacet.sol";
 
 /**
  * @title RedeployFacets
@@ -47,7 +51,9 @@ import {ArtifactDeploy} from "./lib/ArtifactDeploy.sol";
  *         2% treasury liquidation handling fee — plus RiskSplitLiquidationFacet
  *         and ConsolidationFacet, added in #658 so the liquidation family's
  *         eager-consolidation cross-facet dependency stays internally
- *         consistent on a curated redeploy) and diamond-cuts every selector to
+ *         consistent on a curated redeploy, and RiskDiscountedLiquidationFacet,
+ *         the discounted route moved off RiskFacet for EIP-170 headroom) and
+ *         diamond-cuts every selector to
  *         the new implementation, Replacing routed selectors and Adding new ones.
  *
  * @dev    SCOPE — this is a CURATED INCREMENTAL refresh of a fixed facet set,
@@ -90,6 +96,9 @@ contract RedeployFacets is Script {
     /// @notice #2419 - the target Diamond predates the 1e18 numeraire value
     ///         rule; see {_requireNumeraireValueRule}.
     error PredatesNumeraireValueRule(address diamond);
+    /// @notice #1209 / #1808 - the target Diamond predates the interest ledger;
+    ///         see {_requireInterestLedger}.
+    error PredatesInterestLedger(address diamond);
     /// @notice #668 / #935 - the target Diamond predates the loan clock (the
     ///         global pause credit); see {_requireLoanClock}.
     error PredatesLoanClock(address diamond);
@@ -102,6 +111,9 @@ contract RedeployFacets is Script {
     /// @notice #3009 / #3025 - the target Diamond's OfferPreviewFacet predates
     ///         the cadence admission host; see {_requireCadenceAdmissionHost}.
     error PredatesCadenceAdmissionHost(address diamond);
+    /// @notice #1558 - the target Diamond predates the refinance payoff
+    ///         permit; see {_requireRefinancePayoffPermit}.
+    error PredatesRefinancePayoffPermit(address diamond);
 
     function run() external {
         uint256 deployerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
@@ -134,9 +146,13 @@ contract RedeployFacets is Script {
         // {run}, so `--sig runWith(...)` cannot skip it; the in-process tests
         // skip it by the library's own rule ({StorageLayoutRecord.active}).
         StorageLayoutRecord.requireAppendOnly("RedeployFacets", diamond);
-        // #2407 — the refinance-request record spans facets this curated set
-        // does not carry; refuse a Diamond that has not had it rolled out.
+        // #2407 / #3042 — the refinance-request record and the netted payoff
+        // span facets this curated set does not carry; refuse a Diamond that
+        // has not had them rolled out.
         RefinanceRecordRollout.assertInstalled(diamond);
+        // The per-token tracked vault ledger is fresh-deploy only; see
+        // TrackedHoldingRollout.
+        TrackedHoldingRollout.assertInstalled(diamond);
         // #1566 S2b - refuse a Diamond from before vault-held fallback
         // custody, before anything is broadcast; see
         // {_requireVaultHeldFallbackCustody}.
@@ -164,6 +180,12 @@ contract RedeployFacets is Script {
         // #3009 / #3025 - and one whose OfferPreviewFacet cannot answer the
         // origination cadence check; see {_requireCadenceAdmissionHost}.
         _requireCadenceAdmissionHost(diamond);
+        // #1209 / #1808 - and one from before the interest ledger; see
+        // {_requireInterestLedger}.
+        _requireInterestLedger(diamond);
+        // #1558 - and one from before the refinance payoff permit; see
+        // {_requireRefinancePayoffPermit}.
+        _requireRefinancePayoffPermit(diamond);
 
         vm.startBroadcast(deployerKey);
 
@@ -175,6 +197,16 @@ contract RedeployFacets is Script {
         // split path) on a curated redeploy.
         RiskSplitLiquidationFacet riskSplitLiquidationFacet =
             RiskSplitLiquidationFacet(ArtifactDeploy.deploy(type(RiskSplitLiquidationFacet).name));
+        // The discounted liquidation route moved whole off RiskFacet (EIP-170
+        // headroom), so the two are one family: a RiskFacet refresh that left
+        // it behind would keep `triggerLiquidationDiscounted` on the PREVIOUS
+        // RiskFacet build (the route's selector is no longer in RiskFacet's
+        // list, so nothing here would repoint it). Its selector is routed to
+        // RiskFacet on every Diamond cut before the split, so the partition
+        // below makes it a Replace that moves it here; an Add on a Diamond
+        // that never routed it.
+        RiskDiscountedLiquidationFacet riskDiscountedLiquidationFacet =
+            RiskDiscountedLiquidationFacet(ArtifactDeploy.deploy(type(RiskDiscountedLiquidationFacet).name));
         DefaultedFacet defaultedFacet = DefaultedFacet(ArtifactDeploy.deploy(type(DefaultedFacet).name));
         LoanFacet loanFacet = LoanFacet(ArtifactDeploy.deploy(type(LoanFacet).name));
         PrecloseFacet precloseFacet = PrecloseFacet(ArtifactDeploy.deploy(type(PrecloseFacet).name));
@@ -237,16 +269,13 @@ contract RedeployFacets is Script {
         // classifier's host alongside and cut its selectors (partitioned by
         // routing below), exactly as #658 does for ConsolidationFacet.
         RiskPreviewFacet riskPreviewFacet = RiskPreviewFacet(ArtifactDeploy.deploy(type(RiskPreviewFacet).name));
-        // #1503 item 28 (Codex #1801 r4 P1) — the same dependency, one step
-        // further out. The refreshed sale routes READ the seller's paid-through
-        // mark; these two facets are what WRITE it — `RepayPeriodicFacet` passes
-        // the settled period boundary down, and `EncumbranceMutateFacet` records
-        // it on the clean payout branch. Refresh the readers without the writers
-        // and the mark is never written on the upgraded Diamond, so every
-        // periodic payment re-opens the seller's forfeiture over interest the
-        // borrower already paid: the exact bug item 28 fixes, reintroduced by
-        // the upgrade meant to deliver it. Silent, and only visible as sellers
-        // being over-charged.
+        // #1209 / #1808 — the same dependency, one step further out. Every
+        // open-loan interest payout goes through EncumbranceMutateFacet's
+        // pay-or-freeze entries, which pay open seller claims first, and
+        // RepayPeriodicFacet pays the periodic interest through them. Refresh
+        // the sale routes without them and the interest ledger is kept by only
+        // some of the paths that move interest. (This pairing first existed for
+        // #1503 item 28's paid-through mark, now retired.)
         RepayPeriodicFacet repayPeriodicFacet = RepayPeriodicFacet(ArtifactDeploy.deploy(type(RepayPeriodicFacet).name));
         EncumbranceMutateFacet encumbranceMutateFacet = EncumbranceMutateFacet(ArtifactDeploy.deploy(type(EncumbranceMutateFacet).name));
         // #1566 slice 2 - RiskFacet and DefaultedFacet now ENTER the fallback, and
@@ -296,6 +325,7 @@ contract RedeployFacets is Script {
 
         console.log("RiskFacet:            ", address(riskFacet));
         console.log("RiskSplitLiquidation: ", address(riskSplitLiquidationFacet));
+        console.log("RiskDiscountedLiq.:   ", address(riskDiscountedLiquidationFacet));
         console.log("DefaultedFacet:       ", address(defaultedFacet));
         console.log("LoanFacet:            ", address(loanFacet));
         console.log("PrecloseFacet:        ", address(precloseFacet));
@@ -365,12 +395,25 @@ contract RedeployFacets is Script {
         (bytes4[] memory ewdToAdd, bytes4[] memory ewdToReplace) =
             _partitionByRouting(diamond, _earlyWithdrawalDirectSelectors());
         // #2349 — RefinanceFacet gained `refinanceLoanFromMatch` (the matcher-
-        // fill route). On a pre-#2349 diamond `refinanceLoan` and
-        // `refinanceLoanFromAccept` are routed (Replace) and the match entry is
-        // new (Add). The routed subset is never empty (`refinanceLoan` is routed
-        // on every existing diamond), so the fixed Replace slot stays valid.
+        // fill route). On a pre-#2349 diamond `refinanceLoanFromAccept` is
+        // routed (Replace) and the match entry is new (Add). The routed subset
+        // is never empty (`refinanceLoanFromAccept` has been routed on every
+        // diamond since T-092-H), so the fixed Replace slot stays valid.
+        // #3042 — the netted payoff needs the refreshed accept delivery
+        // (OfferAcceptFeeFacet) this script does not carry; `runWith` has
+        // already refused a Diamond from before it.
         (bytes4[] memory refiToAdd, bytes4[] memory refiToReplace) =
             _partitionByRouting(diamond, _refinanceSelectors());
+        // #2625 item 3 — RiskMatchLiquidationFacet gained
+        // `executeAutoDispatchMatch`, the match body the auto-dispatch reaches
+        // by self-call. On an older diamond the other two are routed (Replace)
+        // and it is new (Add); left out, every liquidation, default and claim
+        // that finds a match candidate would revert `FunctionDoesNotExist`.
+        // The routed subset is never empty (`triggerInternalMatchLiquidation`
+        // is routed on every existing diamond), so the fixed Replace slot stays
+        // valid.
+        (bytes4[] memory rmToAdd, bytes4[] memory rmToReplace) =
+            _partitionByRouting(diamond, _riskMatchSelectors());
         // #1817 r9 — the accumulator's surface, same Add/Replace-by-routing
         // split. {_requireTierRecordSeam} has already refused a Diamond that
         // does not route `syncTierRecord`, so on every accepted target the
@@ -442,12 +485,11 @@ contract RedeployFacets is Script {
         retiredPreview[0] = FacetSelectors.retiredPreviewIntentSelector();
         (, bytes4[] memory rpToRemove) = _partitionByRouting(diamond, retiredPreview);
 
-        // #1503 item 28 — the mark's WRITERS. `RepayPeriodicFacet`'s surface is
-        // unchanged (plain Replace); `EncumbranceMutateFacet`'s is not — the
-        // resident-payout entry gained the paid-through boundary, so its 4-arg
-        // selector is an Add on a pre-item-28 Diamond and the retired 3-arg one
-        // must be Removed, or a live entry point survives whose callers pass one
-        // argument too few.
+        // The interest payout entries. `RepayPeriodicFacet`'s surface is
+        // unchanged (plain Replace). `EncumbranceMutateFacet`'s retired 3-arg
+        // resident payout (#1503 item 28) is Removed wherever still routed; the
+        // #1209 entries are already routed on every Diamond this script admits
+        // (`_requireInterestLedger`).
         (bytes4[] memory rpsToAdd, bytes4[] memory rpsToReplace) =
             _partitionByRouting(diamond, FacetSelectors.repayPeriodic());
         (bytes4[] memory encToAdd, bytes4[] memory encToReplace) =
@@ -479,6 +521,10 @@ contract RedeployFacets is Script {
         // #2795 - the forced-sale host, from the one list the deploy cuts.
         (bytes4[] memory fsToAdd, bytes4[] memory fsToReplace) =
             _partitionByRouting(diamond, FacetSelectors.forcedSale());
+        // The discounted liquidation route's host. Routed (to RiskFacet) on
+        // every Diamond cut before the split: a Replace that moves it here.
+        (bytes4[] memory rdToAdd, bytes4[] memory rdToReplace) =
+            _partitionByRouting(diamond, _riskDiscountedSelectors());
 
         // #2796 - every forced-sale entry point gained the caller's sell
         // amount, so each selector CHANGED: the new ones are Add/Replace by
@@ -497,6 +543,7 @@ contract RedeployFacets is Script {
             (ewToAdd.length > 0 ? 1 : 0) +
             (ewdToAdd.length > 0 ? 1 : 0) +
             (refiToAdd.length > 0 ? 1 : 0) +
+            (rmToAdd.length > 0 ? 1 : 0) +
             (accToAdd.length > 0 ? 1 : 0) + (accToReplace.length > 0 ? 1 : 0) +
             (claimToAdd.length > 0 ? 1 : 0) + (claimToReplace.length > 0 ? 1 : 0) +
             (claimToRemove.length > 0 ? 1 : 0) +
@@ -515,6 +562,7 @@ contract RedeployFacets is Script {
             (nvToAdd.length > 0 ? 1 : 0) + (nvToReplace.length > 0 ? 1 : 0) +
             (nfToAdd.length > 0 ? 1 : 0) + (nfToReplace.length > 0 ? 1 : 0) +
             (fsToAdd.length > 0 ? 1 : 0) + (fsToReplace.length > 0 ? 1 : 0) +
+            (rdToAdd.length > 0 ? 1 : 0) + (rdToReplace.length > 0 ? 1 : 0) +
             (dfToAdd.length > 0 ? 1 : 0);
         IDiamondCut.FacetCut[] memory cuts =
             new IDiamondCut.FacetCut[](9 + nExtra);
@@ -535,8 +583,10 @@ contract RedeployFacets is Script {
         // #691 — RiskMatch selectors are already routed on a current diamond
         // (triggerInternalMatchLiquidation + the cross-facet-only
         // attemptInternalMatchAutoDispatch), so a plain Replace repoints them to
-        // the consolidation-aware bytecode.
-        cuts[7] = _replace(address(riskMatchFacet), _riskMatchSelectors());
+        // the consolidation-aware bytecode. #2625 item 3 — only the ROUTED
+        // subset goes through this Replace; the new self-call entry is Add'ed
+        // below on an older diamond.
+        cuts[7] = _replace(address(riskMatchFacet), rmToReplace);
         // #1780 — `sellLoanViaBuyOffer` is already routed on every existing
         // diamond (it was part of EarlyWithdrawalFacet's surface), so it is a
         // plain Replace that repoints the selector to the new address.
@@ -585,6 +635,11 @@ contract RedeployFacets is Script {
         // Add is cut.
         if (ewdToAdd.length > 0) {
             cuts[idx++] = _add(address(earlyWithdrawalDirectFacet), ewdToAdd);
+        }
+        // #2625 item 3 — the auto-dispatch's self-call entry is an Add on an
+        // older diamond (the routed pair went through the fixed Replace above).
+        if (rmToAdd.length > 0) {
+            cuts[idx++] = _add(address(riskMatchFacet), rmToAdd);
         }
         // #2349 — the matcher-fill refinance entry is an Add on any pre-#2349
         // diamond; on a current one the subset is empty and no Add is cut.
@@ -725,6 +780,13 @@ contract RedeployFacets is Script {
         }
         if (fsToAdd.length > 0) {
             cuts[idx++] = _add(address(forcedSaleFacet), fsToAdd);
+        }
+        // And the discounted liquidation route, in the same cut as RiskFacet.
+        if (rdToReplace.length > 0) {
+            cuts[idx++] = _replace(address(riskDiscountedLiquidationFacet), rdToReplace);
+        }
+        if (rdToAdd.length > 0) {
+            cuts[idx++] = _add(address(riskDiscountedLiquidationFacet), rdToAdd);
         }
 
         IDiamondCut(diamond).diamondCut(cuts, address(0), "");
@@ -872,6 +934,22 @@ contract RedeployFacets is Script {
     ///      never this refresh. The marker is the routing of
     ///      `getLiquidNumeraireValue`, which #2419 introduced. Called before
     ///      the broadcast starts, so a refused run sends nothing.
+    /// @dev #1209 / #1808 - refuse a Diamond from before the interest ledger.
+    ///      The ledger is one behaviour across every facet that changes a
+    ///      loan's principal or rate or pays the lender side interest, the two
+    ///      sale facets, ClaimFacet and the new SellerClaimFacet host; this
+    ///      curated set carries only some of them, and none of them opens the
+    ///      ledgers of loans the older Diamond originated. Crossing the
+    ///      boundary is a fresh deploy, or the all-facets refresh with no
+    ///      ERC-20 loan open, never this refresh. The marker is the routing of
+    ///      `SellerClaimFacet.getInterestLedger`. Called before the broadcast
+    ///      starts, so a refused run sends nothing.
+    function _requireInterestLedger(address diamond) internal view {
+        if (IDiamondLoupe(diamond).facetAddress(SellerClaimFacet.getInterestLedger.selector) == address(0)) {
+            revert PredatesInterestLedger(diamond);
+        }
+    }
+
     function _requireNumeraireValueRule(address diamond) internal view {
         if (
             IDiamondLoupe(diamond).facetAddress(NumeraireValueFacet.getLiquidNumeraireValue.selector)
@@ -948,6 +1026,23 @@ contract RedeployFacets is Script {
             IDiamondLoupe(diamond).facetAddress(OfferPreviewFacet.requireOriginationCadenceAdmitted.selector)
                 == address(0)
         ) revert PredatesCadenceAdmissionHost(diamond);
+    }
+
+    /// @dev #1558 - refuse a Diamond from before the refinance payoff permit.
+    ///      This set refreshes RefinanceFacet, whose settlement pays the old
+    ///      loan off only through the permit attached to the request, but not
+    ///      RefinancePayoffFacet, where the borrower attaches it. Run on an
+    ///      older Diamond it would leave no way to attach a permit, so every
+    ///      refinance would revert `RefinancePayoffPermitMissing`, and the app
+    ///      that signs the permit ships with the same change. Crossing the
+    ///      boundary is a fresh deploy or `RefreshAllFacetsInPlace`, never this
+    ///      refresh. The marker is the routing of `setRefinancePayoffPermit`.
+    ///      Called before the broadcast starts.
+    function _requireRefinancePayoffPermit(address diamond) internal view {
+        if (
+            IDiamondLoupe(diamond).facetAddress(RefinancePayoffFacet.setRefinancePayoffPermit.selector)
+                == address(0)
+        ) revert PredatesRefinancePayoffPermit(diamond);
     }
 
     function _replace(address facet, bytes4[] memory selectors)
@@ -1057,12 +1152,13 @@ contract RedeployFacets is Script {
         // (partitioned Add/Replace) instead — see the cut wiring above.
         // #2796 - `triggerLiquidation` gained the sell amount, so its selector
         // is new on an older Diamond and moved to `_riskAddSelectors()`.
-        s = new bytes4[](5);
+        // `triggerLiquidationDiscounted` moved to RiskDiscountedLiquidationFacet
+        // and is cut through `_riskDiscountedSelectors()`.
+        s = new bytes4[](4);
         s[0] = RiskFacet.calculateLTV.selector;
         s[1] = RiskFacet.calculateHealthFactor.selector;
         s[2] = RiskFacet.isCollateralValueCollapsed.selector;
         s[3] = RiskFacet.triggerPartialLiquidation.selector;
-        s[4] = RiskFacet.triggerLiquidationDiscounted.selector;
     }
 
     /// @dev The RiskFacet selectors that may be unrouted on the target, so they
@@ -1085,6 +1181,13 @@ contract RedeployFacets is Script {
     function _riskSplitSelectors() internal pure returns (bytes4[] memory s) {
         s = new bytes4[](1);
         s[0] = RiskSplitLiquidationFacet.triggerLiquidationSplit.selector;
+    }
+
+    /// @dev RiskDiscountedLiquidationFacet's single selector, mirrors
+    ///      `DeployDiamond._getRiskDiscountedLiquidationSelectors`.
+    function _riskDiscountedSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](1);
+        s[0] = RiskDiscountedLiquidationFacet.triggerLiquidationDiscounted.selector;
     }
 
     /// @dev The DefaultedFacet selectors this script cuts through its routing
@@ -1212,17 +1315,20 @@ contract RedeployFacets is Script {
     /// @dev #658 PR-B2 — RefinanceFacet selectors, mirrors
     ///      `DeployDiamond._getRefinanceSelectors` (kept in lockstep).
     function _refinanceSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](5);
-        s[0] = RefinanceFacet.refinanceLoan.selector;
-        s[1] = RefinanceFacet.refinanceLoanFromAccept.selector;
+        s = new bytes4[](4);
+        // #3042 — `refinanceLoan` is retired. No Remove leg is needed here:
+        // `RefinanceRecordRollout.assertInstalled` refuses any Diamond that
+        // still routes it, so on every target this script accepts it is
+        // already gone.
+        s[0] = RefinanceFacet.refinanceLoanFromAccept.selector;
         // #2349 — the matcher-fill route's entry. NEW, so this list is cut via
         // the Add/Replace-by-routing partition (a Replace reverts on an
         // unrouted selector on any pre-#2349 target).
-        s[2] = RefinanceFacet.refinanceLoanFromMatch.selector;
+        s[1] = RefinanceFacet.refinanceLoanFromMatch.selector;
         // #2407 — NEW, so cut through the same Add/Replace-by-routing
         // partition as the #2349 entry above.
-        s[3] = RefinanceFacet.getRefinanceRequest.selector;
-        s[4] = RefinanceFacet.checkRefinanceRequest.selector;
+        s[2] = RefinanceFacet.getRefinanceRequest.selector;
+        s[3] = RefinanceFacet.checkRefinanceRequest.selector;
     }
 
     /// @dev #658 PR-B2 — ClaimFacet selectors, mirrors
@@ -1233,9 +1339,10 @@ contract RedeployFacets is Script {
     ///      (`onlyDiamondInternal`) but is routed through the Diamond, so it is
     ///      cut + refreshed like any other selector.
     function _riskMatchSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](2);
+        s = new bytes4[](3);
         s[0] = RiskMatchLiquidationFacet.triggerInternalMatchLiquidation.selector;
         s[1] = RiskMatchLiquidationFacet.attemptInternalMatchAutoDispatch.selector;
+        s[2] = RiskMatchLiquidationFacet.executeAutoDispatchMatch.selector;
     }
 
     function _claimSelectors() internal pure returns (bytes4[] memory s) {

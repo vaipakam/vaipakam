@@ -36,7 +36,8 @@
  * what I wanted happen?" while a receipt only answers "did my call
  * execute?", and state additionally covers reorgs. See `ensureAllowance`.
  */
-import type { PublicClient, TransactionReceipt } from 'viem';
+import type { Log, PublicClient, TransactionReceipt } from 'viem';
+import { captureTxError } from '../lib/errors';
 
 /** Why the submitted call did not take effect. */
 export type NotSettledReason =
@@ -149,4 +150,41 @@ export async function assertSettled(
   const r = await settled(publicClient, hash);
   if (!r.ok) throw new TxNotSettledError(r.reason, hash, what);
   return r.receipt;
+}
+
+/** How one multicall send ended, as far as the chain can say. A mined
+ *  send carries its receipt's logs: the items that ran emitted them, and
+ *  an item that reverted had its logs rolled back with it. */
+export type Mined =
+  | { block: bigint; logs: readonly Log[] }
+  | { failure: string }
+  | { pending: true };
+
+/**
+ * What a send that did not come back with a receipt actually did. Never
+ * signed: a failure. Settled as not run (`TxNotSettledError`: reverted,
+ * or cancelled or replaced in the wallet, which the receipt wait has
+ * already established): a failure. Otherwise the write can throw while
+ * its transaction is still on its way (a receipt wait that timed out),
+ * so the submitted hash is looked up. Mined and successful: read back at
+ * its block, as if the write had returned. Mined and reverted: a failure. Not found (still
+ * pending, or replaced under another hash): pending, never a failure —
+ * reading its loans as open and unwinding the approval would misreport a
+ * batch that may still close them.
+ */
+export async function settleFailedSend(
+  publicClient: PublicClient,
+  submitted: `0x${string}` | null,
+  err: unknown,
+): Promise<Mined> {
+  const failure = captureTxError(err);
+  if (!submitted || err instanceof TxNotSettledError) return { failure };
+  try {
+    const receipt = await publicClient.getTransactionReceipt({ hash: submitted });
+    return receipt.status === 'success'
+      ? { block: receipt.blockNumber, logs: receipt.logs }
+      : { failure };
+  } catch {
+    return { pending: true };
+  }
 }

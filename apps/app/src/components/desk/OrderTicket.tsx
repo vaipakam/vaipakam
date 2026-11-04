@@ -902,21 +902,14 @@ export function OrderTicket({
       const stakeAmount =
         side === 'lender' ? payload.amountMax : payload.collateralAmountMax;
       try {
-        const [tracked, encumbered] = await Promise.all([
-          publicClient.readContract({
-            address: walletChain.diamondAddress,
-            abi: DIAMOND_ABI_VIEM,
-            functionName: 'getProtocolTrackedVaultBalance',
-            args: [address, stakeToken],
-          }) as Promise<bigint>,
-          publicClient.readContract({
-            address: walletChain.diamondAddress,
-            abi: DIAMOND_ABI_VIEM,
-            functionName: 'getEncumbered',
-            args: [address, stakeToken, 0n],
-          }) as Promise<bigint>,
-        ]);
-        const free = tracked > encumbered ? tracked - encumbered : 0n;
+        // The contract's own free figure: tracked minus liens minus what
+        // protected account mode holds back for queued payouts.
+        const free = (await publicClient.readContract({
+          address: walletChain.diamondAddress,
+          abi: DIAMOND_ABI_VIEM,
+          functionName: 'freeHolding',
+          args: [address, 0, stakeToken, 0n],
+        })) as bigint;
         if (free < stakeAmount) {
           const dec =
             side === 'lender'

@@ -49,6 +49,10 @@ import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet.sol";
 import {RiskSplitLiquidationFacet} from "../src/facets/RiskSplitLiquidationFacet.sol";
+import {RiskDiscountedLiquidationFacet} from "../src/facets/RiskDiscountedLiquidationFacet.sol";
+import {ProtectedAccountFacet} from "../src/facets/ProtectedAccountFacet.sol";
+import {VaultPayoutFacet} from "../src/facets/VaultPayoutFacet.sol";
+import {VaultDepositoryFacet} from "../src/facets/VaultDepositoryFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {AddCollateralFacet} from "../src/facets/AddCollateralFacet.sol";
 import {TreasuryFacet} from "../src/facets/TreasuryFacet.sol";
@@ -103,6 +107,8 @@ import {TreasuryFeeFacet} from "../src/facets/TreasuryFeeFacet.sol";
 import {NumeraireValueFacet} from "../src/facets/NumeraireValueFacet.sol";
 import {NotificationFeeFacet} from "../src/facets/NotificationFeeFacet.sol";
 import {SaleExitVerdictFacet} from "../src/facets/SaleExitVerdictFacet.sol";
+import {SellerClaimFacet} from "../src/facets/SellerClaimFacet.sol";
+import {RefinancePayoffFacet} from "../src/facets/RefinancePayoffFacet.sol";
 import {RateModelFacet} from "../src/facets/RateModelFacet.sol";
 import {VaipakamNFTMetadataFacet} from "../src/facets/VaipakamNFTMetadataFacet.sol";
 import {ForcedSaleFacet} from "../src/facets/ForcedSaleFacet.sol";
@@ -353,6 +359,14 @@ contract DeployDiamond is Script, ArtifactRootBase {
             RiskMatchLiquidationFacet(ArtifactDeploy.deploy(type(RiskMatchLiquidationFacet).name));
         RiskSplitLiquidationFacet riskSplitLiquidationFacet =
             RiskSplitLiquidationFacet(ArtifactDeploy.deploy(type(RiskSplitLiquidationFacet).name));
+        // The discounted liquidation route, moved off RiskFacet for EIP-170
+        // headroom (same selector).
+        RiskDiscountedLiquidationFacet riskDiscountedLiquidationFacet =
+            RiskDiscountedLiquidationFacet(ArtifactDeploy.deploy(type(RiskDiscountedLiquidationFacet).name));
+        // Protected account mode and the depository vault.
+        ProtectedAccountFacet protectedAccountFacet = ProtectedAccountFacet(ArtifactDeploy.deploy(type(ProtectedAccountFacet).name));
+        VaultPayoutFacet vaultPayoutFacet = VaultPayoutFacet(ArtifactDeploy.deploy(type(VaultPayoutFacet).name));
+        VaultDepositoryFacet vaultDepositoryFacet = VaultDepositoryFacet(ArtifactDeploy.deploy(type(VaultDepositoryFacet).name));
         ClaimFacet claimFacet = ClaimFacet(ArtifactDeploy.deploy(type(ClaimFacet).name));
         AddCollateralFacet addCollateralFacet = AddCollateralFacet(ArtifactDeploy.deploy(type(AddCollateralFacet).name));
         TreasuryFacet treasuryFacet = TreasuryFacet(ArtifactDeploy.deploy(type(TreasuryFacet).name));
@@ -450,6 +464,14 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // #1841 - the one sale-exit verdict: the lender exit chooser's view and
         // the guard both sale entries self-call.
         SaleExitVerdictFacet saleExitVerdictFacet = SaleExitVerdictFacet(ArtifactDeploy.deploy(type(SaleExitVerdictFacet).name));
+        // #1209 / #1808 - the seller-claim host: pays past sellers of a lender
+        // position their earned interest first, splits a terminal claim, and
+        // hosts claimAsSeller and the interest ledger view.
+        SellerClaimFacet sellerClaimFacet = SellerClaimFacet(ArtifactDeploy.deploy(type(SellerClaimFacet).name));
+        // #1558 - the borrower's payoff permit on a refinance request, its
+        // removal and the view that sizes it; RefinanceFacet uses the permit.
+        RefinancePayoffFacet refinancePayoffFacet =
+            RefinancePayoffFacet(ArtifactDeploy.deploy(type(RefinancePayoffFacet).name));
         RewardCompensationDispatchFacet rewardCompensationDispatchFacet =
             RewardCompensationDispatchFacet(ArtifactDeploy.deploy(type(RewardCompensationDispatchFacet).name));
         RewardCommitmentFacet rewardCommitmentFacet = RewardCommitmentFacet(ArtifactDeploy.deploy(type(RewardCommitmentFacet).name));
@@ -487,7 +509,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
         // 37 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](103);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](109);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -587,6 +609,17 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // expected-source list (the list setter self-calls its hook).
         cuts[101] = _buildCut(address(rewardRemitDestinationFacet), _getRewardRemitDestinationSelectors());
         cuts[102] = _buildCut(address(saleExitVerdictFacet), _getSaleExitVerdictSelectors());
+        cuts[103] = _buildCut(address(sellerClaimFacet), _getSellerClaimSelectors());
+        cuts[104] = _buildCut(address(refinancePayoffFacet), _getRefinancePayoffSelectors());
+        // The discounted liquidation route, moved off RiskFacet (EIP-170).
+        cuts[105] = _buildCut(
+            address(riskDiscountedLiquidationFacet),
+            _getRiskDiscountedLiquidationSelectors()
+        );
+        // Protected account mode and the depository vault.
+        cuts[106] = _buildCut(address(protectedAccountFacet), _getProtectedAccountSelectors());
+        cuts[107] = _buildCut(address(vaultPayoutFacet), _getVaultPayoutSelectors());
+        cuts[108] = _buildCut(address(vaultDepositoryFacet), _getVaultDepositorySelectors());
         cuts[26] = _buildCut(address(rewardReporterFacet), _getRewardReporterSelectors());
         cuts[27] = _buildCut(address(rewardAggregatorFacet), _getRewardAggregatorSelectors());
         cuts[28] = _buildCut(address(configFacet), _getConfigSelectors());
@@ -1179,6 +1212,10 @@ contract DeployDiamond is Script, ArtifactRootBase {
         Deployments.writeFacet("riskFacet",               address(riskFacet));
         Deployments.writeFacet("riskMatchLiquidationFacet", address(riskMatchLiquidationFacet));
         Deployments.writeFacet("riskSplitLiquidationFacet", address(riskSplitLiquidationFacet));
+        Deployments.writeFacet("riskDiscountedLiquidationFacet", address(riskDiscountedLiquidationFacet));
+        Deployments.writeFacet("protectedAccountFacet", address(protectedAccountFacet));
+        Deployments.writeFacet("vaultPayoutFacet", address(vaultPayoutFacet));
+        Deployments.writeFacet("vaultDepositoryFacet", address(vaultDepositoryFacet));
         Deployments.writeFacet("claimFacet",              address(claimFacet));
         Deployments.writeFacet("addCollateralFacet",      address(addCollateralFacet));
         Deployments.writeFacet("treasuryFacet",           address(treasuryFacet));
@@ -1233,6 +1270,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
         Deployments.writeFacet("vaipakamNFTMetadataFacet", address(nftMetadataFacet));
         Deployments.writeFacet("forcedSaleFacet", address(forcedSaleFacet));
         Deployments.writeFacet("saleExitVerdictFacet", address(saleExitVerdictFacet));
+        Deployments.writeFacet("sellerClaimFacet", address(sellerClaimFacet));
+        Deployments.writeFacet("refinancePayoffFacet", address(refinancePayoffFacet));
         Deployments.writeFacet("repatriationFacet",       address(repatriationFacet));
         Deployments.writeFacet("configFacet",             address(configFacet));
         // #394 (Codex #647 round-8 P2) — persist the carved-out NumeraireConfigFacet
@@ -1468,7 +1507,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     function _getProfileSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](31);
+        s = new bytes4[](32);
         s[0] = ProfileFacet.updateKYCStatus.selector;
         s[1] = ProfileFacet.getUserCountry.selector;
         s[2] = ProfileFacet.isKYCVerified.selector;
@@ -1509,6 +1548,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[29] = ProfileFacet.isRecipientBarred.selector;
         // #1347 — per-offer creator Full VPFI tariff opt-in.
         s[30] = ProfileFacet.setOfferCreatorFullTariff.selector;
+        // #2984 — the three-way sanctions read (the keeper's sale-sync screen).
+        s[31] = ProfileFacet.sanctionsStatus.selector;
     }
 
     function _getOracleSelectors() internal pure returns (bytes4[] memory s) {
@@ -1622,7 +1663,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // returns true for them. The token's metadata (tokenURI, contractURI
         // and their image / external_url configuration) is cut to
         // VaipakamNFTMetadataFacet (#2957), see {_getNftMetadataSelectors}.
-        s = new bytes4[](23);
+        s = new bytes4[](26);
         s[0] = VaipakamNFTFacet.mintNFT.selector;
         s[1] = VaipakamNFTFacet.updateNFTStatus.selector;
         s[2] = VaipakamNFTFacet.burnNFT.selector;
@@ -1649,6 +1690,11 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[20] = bytes4(keccak256("tokenOfOwnerByIndex(address,uint256)"));
         s[21] = VaipakamNFTFacet.nftStatusOf.selector;
         s[22] = VaipakamNFTFacet.highestTokenId.selector;
+        // Protected account mode: a protected owner's position moves only
+        // through a delayed transfer.
+        s[23] = VaipakamNFTFacet.queuePositionTransfer.selector;
+        s[24] = VaipakamNFTFacet.cancelPositionTransfer.selector;
+        s[25] = VaipakamNFTFacet.releasePositionTransfer.selector;
     }
 
     /// @dev #2957 - the position NFT's public metadata: the token and
@@ -1670,7 +1716,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     function _getVaultFactorySelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](34);
+        s = new bytes4[](28);
         s[0] = VaultFactoryFacet.initializeVaultImplementation.selector;
         s[1] = VaultFactoryFacet.getOrCreateUserVault.selector;
         s[2] = VaultFactoryFacet.upgradeVaultImplementation.selector;
@@ -1704,21 +1750,14 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // ERC-20 loan repayment reverts with FunctionDoesNotExist.
         s[22] = VaultFactoryFacet.vaultDepositERC20From.selector;
         s[23] = VaultFactoryFacet.recordVaultDepositERC20.selector;
-        s[24] = VaultFactoryFacet.getProtocolTrackedVaultBalance.selector;
-        // T-054 PR-3 — stuck-token recovery EIP-712 surface.
-        s[25] = VaultFactoryFacet.recoverStuckERC20.selector;
-        s[26] = VaultFactoryFacet.disown.selector;
-        s[27] = VaultFactoryFacet.recoveryDomainSeparator.selector;
-        s[28] = VaultFactoryFacet.recoveryAckTextHash.selector;
-        s[29] = VaultFactoryFacet.recoveryNonce.selector;
-        s[30] = VaultFactoryFacet.vaultBannedSource.selector;
+        s[24] = VaultFactoryFacet.getTrackedHolding.selector;
         // RL-1 — Diamond-funded vault credit primitive (reward
         // claim-to-vault delivery).
-        s[31] = VaultFactoryFacet.vaultCreditFromDiamondERC20.selector;
+        s[25] = VaultFactoryFacet.vaultCreditFromDiamondERC20.selector;
         // #1566 slice 4 PR B — the holder-sourced reward payout into a vault.
-        s[32] = bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256,uint256)"));
+        s[26] = bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256,uint256)"));
         // The four-argument credit stays as a compatibility entry (Codex #2276 r14 P2).
-        s[33] = bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256)"));
+        s[27] = bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256)"));
     }
 
     /// @dev Issue #67 — `OfferFacet` was split into `OfferCreateFacet`
@@ -1960,7 +1999,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     ///         Setters + readers for auto-lend / auto-opt-in / per-loan
     ///         refinance caps + per-loan + per-side extend caps.
     function _getAutoLifecycleFacetSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](14);
+        s = new bytes4[](17);
         s[0] = AutoLifecycleFacet.setAutoLendConsent.selector;
         s[1] = AutoLifecycleFacet.getAutoLendConsent.selector;
         s[2] = AutoLifecycleFacet.setAutoOptInOnNewLoan.selector;
@@ -1977,6 +2016,10 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[12] = AutoLifecycleFacet.extendLoanInPlace.selector;
         // #2738 — when a loan may be extended (the keeper reads it).
         s[13] = AutoLifecycleFacet.getAutoExtendWindow.selector;
+        // #2814 — the extension reserve: fund, withdraw, and what is ready.
+        s[14] = AutoLifecycleFacet.fundExtendReserve.selector;
+        s[15] = AutoLifecycleFacet.withdrawExtendReserve.selector;
+        s[16] = AutoLifecycleFacet.getExtendFunding.selector;
     }
 
     /// @notice #407 PR 2 (2026-06-12) — encumbrance mutate facet
@@ -2112,7 +2155,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     ///      asserts, split off `RiskAccessFacet` into its own `RiskPreviewFacet`
     ///      so both facets keep EIP-170 header room. All are `view`.
     function _getRiskPreviewFacetSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](11);
+        s = new bytes4[](10);
         s[0] = RiskPreviewFacet.previewOfferAcceptBlock.selector;
         s[1] = RiskPreviewFacet.assertMatchAllowed.selector;
         s[2] = RiskPreviewFacet.previewMatchRiskBlock.selector;
@@ -2123,17 +2166,13 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // #1503 PR-E — sale admission classification (live health floor +
         // inherited-risk-terms compatibility), read by LibSaleSolvency.
         s[7] = RiskPreviewFacet.saleAdmission.selector;
-        // #1503 item 28 — the seller's forfeiture window + its value now, so the
-        // client quote can mirror a figure that depends on appended storage with
-        // no field on the loan struct.
-        s[8] = RiskPreviewFacet.sellerForfeitureWindow.selector;
         // #1503 item 4 — the two bounds a listing records, quoted from the same
         // library the sale path enforces them with. On-chain rather than
         // mirrored client-side on purpose: a client copy of the rule drifts from
         // it the moment the rule changes, and this one has changed twice.
-        s[9] = RiskPreviewFacet.quoteSellerBounds.selector;
+        s[8] = RiskPreviewFacet.quoteSellerBounds.selector;
         // #2672 — the figures a standing listing recorded.
-        s[10] = RiskPreviewFacet.getSaleListingBounds.selector;
+        s[9] = RiskPreviewFacet.getSaleListingBounds.selector;
     }
 
     /// @dev #1212 (E-10 Claim-All) — the single generic batching entry point.
@@ -2237,28 +2276,23 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // `RiskSplitLiquidationFacet` (#66 + #633 split — see
         // `_getRiskSplitLiquidationSelectors`) so the `LibSwap.swapWithSplit`
         // inline lands in fresh headroom rather than tipping RiskFacet over
-        // the EIP-170 limit.
-        s = new bytes4[](9);
+        // the EIP-170 limit. `triggerLiquidationDiscounted` was relocated to
+        // `RiskDiscountedLiquidationFacet` for the same reason (see
+        // `_getRiskDiscountedLiquidationSelectors`).
+        s = new bytes4[](8);
         s[0] = RiskFacet.updateRiskParams.selector;
         s[1] = RiskFacet.calculateLTV.selector;
         s[2] = RiskFacet.calculateHealthFactor.selector;
         s[3] = RiskFacet.isCollateralValueCollapsed.selector;
         s[4] = RiskFacet.triggerLiquidation.selector;
         // #394 Lever A — runtime, range-bounded loan-admission HF floor.
-        s[7] = RiskFacet.setMinHealthFactor.selector;
-        s[8] = RiskFacet.getMinHealthFactor.selector;
+        s[6] = RiskFacet.setMinHealthFactor.selector;
+        s[7] = RiskFacet.getMinHealthFactor.selector;
         // Partial HF-restore liquidator (Piece B follow-up — partials).
         // Sweeps only `fractionBps` of remaining collateral, leaves loan
         // Active with reduced size and unchanged maturity. Strict
         // HF-improves + HF>=1 post-mutation gates.
         s[5] = RiskFacet.triggerPartialLiquidation.selector;
-        // FlashLoanLiquidationPath.md — liquidator-buys-at-discount.
-        // Caller pays `totalDebt` in principal-asset; protocol seizes
-        // collateral at per-tier discount and delivers to `recipient`.
-        // Master kill-switch `discountPathEnabled` off by default — the
-        // selector is wired but the entry-point reverts
-        // `DiscountPathDisabled` until governance flips it on per chain.
-        s[6] = RiskFacet.triggerLiquidationDiscounted.selector;
     }
 
     /// @dev Selectors for `RiskMatchLiquidationFacet` — the internal-match
@@ -2273,14 +2307,18 @@ contract DeployDiamond is Script, ArtifactRootBase {
     ///          entry points call before falling through to the
     ///          aggregator path. Wired for cross-facet routing; not
     ///          EOA-callable.
+    ///        - `executeAutoDispatchMatch` — `onlyDiamondInternal` match
+    ///          body the auto-dispatch reaches by self-call, so a leg that
+    ///          delivers short unwinds the match alone (#2625 item 3).
     function _getRiskMatchLiquidationSelectors()
         internal
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](2);
+        s = new bytes4[](3);
         s[0] = RiskMatchLiquidationFacet.triggerInternalMatchLiquidation.selector;
         s[1] = RiskMatchLiquidationFacet.attemptInternalMatchAutoDispatch.selector;
+        s[2] = RiskMatchLiquidationFacet.executeAutoDispatchMatch.selector;
     }
 
     /// @dev Selectors for `RiskSplitLiquidationFacet` — the higher-LTV-aware
@@ -2296,6 +2334,106 @@ contract DeployDiamond is Script, ArtifactRootBase {
     {
         s = new bytes4[](1);
         s[0] = RiskSplitLiquidationFacet.triggerLiquidationSplit.selector;
+    }
+
+    /// @dev Selectors for `RiskDiscountedLiquidationFacet` — the discounted
+    ///      HF liquidation route (FlashLoanLiquidationPath.md), moved whole
+    ///      off `RiskFacet` for EIP-170 headroom; the selector is unchanged.
+    ///      Caller pays `totalDebt` in principal-asset; protocol seizes
+    ///      collateral at per-tier discount and delivers to `recipient`.
+    ///      Master kill-switch `discountPathEnabled` off by default — the
+    ///      selector is wired but the entry-point reverts
+    ///      `DiscountPathDisabled` until governance flips it on per chain.
+    function _getRiskDiscountedLiquidationSelectors()
+        internal
+        pure
+        returns (bytes4[] memory s)
+    {
+        s = new bytes4[](1);
+        s[0] = RiskDiscountedLiquidationFacet.triggerLiquidationDiscounted.selector;
+    }
+
+    /// @dev Selectors for `ProtectedAccountFacet` — protected account mode: settings, allowlist, signers, lock and replacement.
+    function _getProtectedAccountSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](36);
+        s[0] = ProtectedAccountFacet.acceptSignerRole.selector;
+        s[1] = ProtectedAccountFacet.addAllowlisted.selector;
+        s[2] = ProtectedAccountFacet.addSigner.selector;
+        s[3] = ProtectedAccountFacet.approveReplacement.selector;
+        s[4] = ProtectedAccountFacet.cancelAddAllowlisted.selector;
+        s[5] = ProtectedAccountFacet.cancelAddSigner.selector;
+        s[6] = ProtectedAccountFacet.cancelRemoveSigner.selector;
+        s[7] = ProtectedAccountFacet.cancelReplacement.selector;
+        s[8] = ProtectedAccountFacet.cancelSettingChange.selector;
+        s[9] = ProtectedAccountFacet.enableProtectedMode.selector;
+        s[10] = ProtectedAccountFacet.finalizeAddAllowlisted.selector;
+        s[11] = ProtectedAccountFacet.finalizeAddSigner.selector;
+        s[12] = ProtectedAccountFacet.finalizeRemoveSigner.selector;
+        s[13] = ProtectedAccountFacet.finalizeReplacement.selector;
+        s[14] = ProtectedAccountFacet.finalizeSettingChanges.selector;
+        s[15] = ProtectedAccountFacet.getAllowlist.selector;
+        s[16] = ProtectedAccountFacet.getAllowlistPendingAt.selector;
+        s[17] = ProtectedAccountFacet.getProtectedAccount.selector;
+        s[18] = ProtectedAccountFacet.getProtectedDelayBounds.selector;
+        s[19] = ProtectedAccountFacet.getProtectedSigners.selector;
+        s[20] = ProtectedAccountFacet.getReplacement.selector;
+        s[21] = ProtectedAccountFacet.getRetiredAccountOf.selector;
+        s[22] = ProtectedAccountFacet.getSignerChange.selector;
+        s[23] = ProtectedAccountFacet.lockVault.selector;
+        s[24] = ProtectedAccountFacet.lockVaultFor.selector;
+        s[25] = ProtectedAccountFacet.proposeReplacement.selector;
+        s[26] = ProtectedAccountFacet.removeAllowlisted.selector;
+        s[27] = ProtectedAccountFacet.requestDisableProtectedMode.selector;
+        s[28] = ProtectedAccountFacet.requestRemoveSigner.selector;
+        s[29] = ProtectedAccountFacet.requestUnlock.selector;
+        s[30] = ProtectedAccountFacet.setProtectNfts.selector;
+        s[31] = ProtectedAccountFacet.setProtectedDelay.selector;
+        s[32] = ProtectedAccountFacet.setRequireCosign.selector;
+        s[33] = ProtectedAccountFacet.getPendingAllowlistAdditions.selector;
+        s[34] = ProtectedAccountFacet.getPendingSignerAdditions.selector;
+        s[35] = ProtectedAccountFacet.isListingLegAllowed.selector;
+    }
+
+    /// @dev Selectors for `VaultPayoutFacet` — the payout queue, the vault credit and the escape route.
+    function _getVaultPayoutSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](14);
+        s[0] = VaultPayoutFacet.applyPayoutGate.selector;
+        s[1] = VaultPayoutFacet.cancelPayout.selector;
+        s[2] = VaultPayoutFacet.cosignPayout.selector;
+        s[3] = VaultPayoutFacet.creditOwnerVault.selector;
+        s[4] = VaultPayoutFacet.escapeWithdraw.selector;
+        s[5] = VaultPayoutFacet.getPayoutEarmark.selector;
+        s[6] = VaultPayoutFacet.getPendingPayout.selector;
+        s[7] = VaultPayoutFacet.getPendingPayoutIds.selector;
+        s[8] = VaultPayoutFacet.getPendingPositionTransfer.selector;
+        s[9] = VaultPayoutFacet.getPendingTransferIds.selector;
+        s[10] = VaultPayoutFacet.isEscapeOpen.selector;
+        s[11] = VaultPayoutFacet.releasePayout.selector;
+        s[12] = VaultPayoutFacet.requestCode.selector;
+        s[13] = VaultPayoutFacet.cosignPositionTransfer.selector;
+    }
+
+    /// @dev Selectors for `VaultDepositoryFacet` — the depository vault: deposit, withdraw, adopt, disown and the upgrade pin.
+    function _getVaultDepositorySelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](18);
+        s[0] = VaultDepositoryFacet.adoptUntracked.selector;
+        s[1] = VaultDepositoryFacet.adoptionAckTextHash.selector;
+        s[2] = VaultDepositoryFacet.adoptionDigest.selector;
+        s[3] = VaultDepositoryFacet.adoptionDomainSeparator.selector;
+        s[4] = VaultDepositoryFacet.adoptionNonce.selector;
+        s[5] = VaultDepositoryFacet.depositToVault.selector;
+        s[6] = VaultDepositoryFacet.disownUntracked.selector;
+        s[7] = VaultDepositoryFacet.freeHolding.selector;
+        s[8] = VaultDepositoryFacet.getVaultPin.selector;
+        s[9] = VaultDepositoryFacet.pinVaultImplementation.selector;
+        s[10] = VaultDepositoryFacet.unpinVaultImplementation.selector;
+        s[11] = VaultDepositoryFacet.untrackedHolding.selector;
+        s[12] = VaultDepositoryFacet.vaultBannedSource.selector;
+        s[13] = VaultDepositoryFacet.withdrawFromVault.selector;
+        s[14] = VaultDepositoryFacet.withdrawableNow.selector;
+        s[15] = VaultDepositoryFacet.getDepositoryHolding.selector;
+        s[16] = VaultDepositoryFacet.getDepositoryAssets.selector;
+        s[17] = VaultDepositoryFacet.getVaultOwner.selector;
     }
 
     function _getClaimSelectors() internal pure returns (bytes4[] memory s) {
@@ -2320,7 +2458,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     function _getTreasurySelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](56);
+        s = new bytes4[](45);
         s[0] = TreasuryFacet.claimTreasuryFees.selector;
         s[1] = TreasuryFacet.getTreasuryBalance.selector;
         s[2] = TreasuryFacet.mintVPFI.selector;
@@ -2365,26 +2503,14 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[35] = TreasuryFacet.setKeeperRewardTopUpTarget.selector;
         s[36] = TreasuryFacet.getKeeperRewardTopUpTarget.selector;
         s[37] = TreasuryFacet.getKeeperRewardBudget.selector;
-        // T-087 Sub 3 add-on #473 — productive treasury reserve.
-        s[38] = TreasuryFacet.setTreasuryYieldVenue.selector;
-        s[39] = TreasuryFacet.setTreasuryExternalYieldMaxBps.selector;
-        s[40] = TreasuryFacet.setAaveV3Pool.selector;
-        s[41] = TreasuryFacet.setLidoStaking.selector;
-        s[42] = TreasuryFacet.deployTreasuryYield.selector;
-        s[43] = TreasuryFacet.withdrawTreasuryYield.selector;
-        s[44] = TreasuryFacet.getTreasuryYieldVenue.selector;
-        s[45] = TreasuryFacet.getTreasuryDeployedExternal.selector;
-        s[46] = TreasuryFacet.getTreasuryExternalYieldMaxBps.selector;
-        s[47] = TreasuryFacet.getAaveV3Pool.selector;
-        s[48] = TreasuryFacet.getLidoStaking.selector;
         // T-087 Sub 3 add-on #474 — keeper VPFI rewards config.
-        s[49] = TreasuryFacet.setKeeperRewardMultBps.selector;
-        s[50] = TreasuryFacet.getKeeperRewardMultBps.selector;
-        s[51] = TreasuryFacet.setKeeperRewardCashOutSpreadBps.selector;
-        s[52] = TreasuryFacet.getKeeperRewardCashOutSpreadBps.selector;
-        s[53] = TreasuryFacet.setKeeperRewardEnabled.selector;
-        s[54] = TreasuryFacet.getKeeperRewardEnabled.selector;
-        s[55] = TreasuryFacet.setKeeperRewardTwapMaxAgeSec.selector;
+        s[38] = TreasuryFacet.setKeeperRewardMultBps.selector;
+        s[39] = TreasuryFacet.getKeeperRewardMultBps.selector;
+        s[40] = TreasuryFacet.setKeeperRewardCashOutSpreadBps.selector;
+        s[41] = TreasuryFacet.getKeeperRewardCashOutSpreadBps.selector;
+        s[42] = TreasuryFacet.setKeeperRewardEnabled.selector;
+        s[43] = TreasuryFacet.getKeeperRewardEnabled.selector;
+        s[44] = TreasuryFacet.setKeeperRewardTwapMaxAgeSec.selector;
         // #687-C: former s[56] getKeeperRewardTwapMaxAgeSec relocated to s[23].
     }
 
@@ -2540,18 +2666,20 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     function _getRefinanceSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](5);
-        s[0] = RefinanceFacet.refinanceLoan.selector;
+        s = new bytes4[](4);
         // T-092-H (#549) — atomic accept-and-refinance internal entries.
         // Cut here so the diamond fallback routes the cross-facet calls
         // from OfferAcceptFacet / OfferMatchFacet into RefinanceFacet.
         // #2349 — one entry per route (lender accept vs matcher fill), so
         // the route is stated rather than inferred from msg.sender.
-        s[1] = RefinanceFacet.refinanceLoanFromAccept.selector;
-        s[2] = RefinanceFacet.refinanceLoanFromMatch.selector;
+        // #3042 — these are the ONLY completions: the standalone
+        // `refinanceLoan` is retired, so every refinance settles in the
+        // transaction that accepts its offer.
+        s[0] = RefinanceFacet.refinanceLoanFromAccept.selector;
+        s[1] = RefinanceFacet.refinanceLoanFromMatch.selector;
         // #2407 — the loan → refinance-request record's view.
-        s[3] = RefinanceFacet.getRefinanceRequest.selector;
-        s[4] = RefinanceFacet.checkRefinanceRequest.selector;
+        s[2] = RefinanceFacet.getRefinanceRequest.selector;
+        s[3] = RefinanceFacet.checkRefinanceRequest.selector;
     }
 
     function _getVpfiTokenSelectors() internal pure returns (bytes4[] memory s) {
@@ -3261,48 +3389,45 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s = new bytes4[](3);
         s[0] = RewardIngressFacet.onCompensationBudgetReceived.selector;
         s[1] = RewardIngressFacet.onCompensationDayBroadcastArrived.selector;
-        // 3d-1 / #918 — the rooted (d7) ingress.
-        s[2] = RewardIngressFacet.onRewardBudgetReceivedD7.selector;
+        // #2828 — the d8 ingress: the one funded day carried inline.
+        s[2] = RewardIngressFacet.onRewardBudgetReceivedD8.selector;
     }
 
     /// #1566 transport epochs PR 3b — the transport epochs' post-ingress
-    /// lifecycle: paged indexing, the parked remainder and its acknowledgment,
-    /// and the ledger's reads. PR 3b-ii-A adds the DRAWS: the per-day coverage
-    /// read, the Diamond-internal draw and the two custody moves the settle
-    /// paths reach through it, and the permissionless cursor prune.
+    /// lifecycle: the parked remainder and its acknowledgment, and the
+    /// ledger's reads. PR 3b-ii-A adds the DRAWS: the per-day coverage read,
+    /// the Diamond-internal draw and the two custody moves the settle paths
+    /// reach through it, and the permissionless cursor prune. #2828 retired
+    /// the chunk index, the batchless delivery proof, the late-chain hint
+    /// read and the batch day-list read: the d8 wire names the day, and the
+    /// ingress indexes the epoch at arrival.
     function _getRewardEpochSelectors()
         internal
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](22);
-        s[1] = RewardEpochFacet.parkTransportBatchRemainder.selector;
-        s[2] = RewardEpochFacet.acknowledgeTransportBatchRemainder.selector;
-        s[3] = RewardEpochFacet.getTransportBatch.selector;
-        s[4] = RewardEpochFacet.getTransportBatchLegs.selector;
-        s[5] = RewardEpochFacet.getTransportRemainder.selector;
-        s[6] = RewardEpochFacet.getTransportDayBatches.selector;
-        s[8] = RewardEpochFacet.getTransportCoverageForDay.selector;
-        s[9] = RewardEpochFacet.epochDrawForDay.selector;
-        s[10] = RewardEpochFacet.epochPruneTransportDayCursor.selector;
-        s[11] = RewardEpochFacet.getTransportAllocationForDay.selector;
-        s[12] = RewardEpochFacet.epochSettleLegs.selector; // A2-ii: one leg settle, by source (was epochSettleClaimLegs)
-        s[14] = RewardEpochFacet.getTransportDayBatchesFrom.selector;
-        s[15] = RewardEpochFacet.getTransportDayIndex.selector;
-        s[16] = RewardEpochFacet.getTransportDayScanIds.selector;
+        s = new bytes4[](18);
+        s[0] = RewardEpochFacet.parkTransportBatchRemainder.selector;
+        s[1] = RewardEpochFacet.acknowledgeTransportBatchRemainder.selector;
+        s[2] = RewardEpochFacet.getTransportBatch.selector;
+        s[3] = RewardEpochFacet.getTransportBatchLegs.selector;
+        s[4] = RewardEpochFacet.getTransportRemainder.selector;
+        s[5] = RewardEpochFacet.getTransportDayBatches.selector;
+        s[6] = RewardEpochFacet.getTransportCoverageForDay.selector;
+        s[7] = RewardEpochFacet.epochDrawForDay.selector;
+        s[8] = RewardEpochFacet.epochPruneTransportDayCursor.selector;
+        s[9] = RewardEpochFacet.getTransportAllocationForDay.selector;
+        s[10] = RewardEpochFacet.epochSettleLegs.selector; // A2-ii: one leg settle, by source (was epochSettleClaimLegs)
+        s[11] = RewardEpochFacet.getTransportDayBatchesFrom.selector;
+        s[12] = RewardEpochFacet.getTransportDayIndex.selector;
+        s[13] = RewardEpochFacet.getTransportDayScanIds.selector;
         // 3b-ii-A2 (#2305) — the staged terms' read.
-        s[17] = RewardEpochFacet.getTransportBatchStaged.selector;
-        // The batch gates and the indexed day list.
-        s[18] = RewardEpochFacet.getTransportBatchGates.selector;
-        s[19] = RewardEpochFacet.getTransportBatchDays.selector;
-        // 3d-1 — the rooted (d6) chunk index.
-        s[0] = RewardEpochFacet.materializeTransportBatchChunk.selector;
-        // #1944 consequence 1 — the delivery proofs for packets holding no batch.
-        s[7] = RewardEpochFacet.proveDeliveryDayChunk.selector;
-        s[13] = RewardEpochFacet.getTransportDayLateFrom.selector; // #2489 (Codex r2): the late chain, for verified late hints
+        s[14] = RewardEpochFacet.getTransportBatchStaged.selector;
+        // The batch gates.
+        s[15] = RewardEpochFacet.getTransportBatchGates.selector;
         // #2961 — skipping a day whose delivery parts disagreed, and recycling its landed value.
-        s[20] = RewardEpochFacet.skipConflictedDay.selector;
-        s[21] = RewardEpochFacet.recycleSkippedDayValue.selector;
+        s[16] = RewardEpochFacet.skipConflictedDay.selector;
+        s[17] = RewardEpochFacet.recycleSkippedDayValue.selector;
     }
 
     /// @dev 3b-ii-A (Codex #2276 r2) — the epochs' engine-inlining reads:
@@ -3436,6 +3561,18 @@ contract DeployDiamond is Script, ArtifactRootBase {
     ///      with the two sale facets that self-call it.
     function _getSaleExitVerdictSelectors() internal pure returns (bytes4[] memory s) {
         s = FacetSelectors.saleExitVerdict();
+    }
+
+    /// @dev #1209 / #1808 - the seller-claim host. Returns the ONE list in
+    ///      `FacetSelectors.sellerClaim()`.
+    function _getSellerClaimSelectors() internal pure returns (bytes4[] memory s) {
+        s = FacetSelectors.sellerClaim();
+    }
+
+    /// @dev #1558 - the refinance payoff-permit host. Returns the ONE list in
+    ///      `FacetSelectors.refinancePayoff()`.
+    function _getRefinancePayoffSelectors() internal pure returns (bytes4[] memory s) {
+        s = FacetSelectors.refinancePayoff();
     }
 
     /// @dev #2748 - the quote-time rate model (#400): register, fast-disable,
@@ -3676,7 +3813,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](46);
+        s = new bytes4[](45);
         s[0] = RewardRemittanceLensFacet.getDayCompensation.selector;
         s[1] = RewardRemittanceLensFacet.getStrandedRecoveryReserved.selector;
         s[2] = RewardRemittanceLensFacet.getStrandedRecovery.selector;
@@ -3730,7 +3867,6 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // target) and its two operator reads.
         s[37] = RewardRemittanceLensFacet.dayAwaitsFreshDelivery.selector;
         s[38] = RewardRemittanceLensFacet.getDayDeliveryState.selector;
-        s[30] = RewardRemittanceLensFacet.getPacketDeliveryProof.selector;
         // #1452 — the acknowledged recycled share per destination.
         s[31] = RewardRemittanceLensFacet.getChainRemittedRecycled.selector;
         s[35] = RewardRemittanceLensFacet.getRemitRoute.selector; // #2561
@@ -3742,17 +3878,18 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[42] = RewardRemittanceLensFacet.getRemitDayFreshReserved.selector;
         s[43] = RewardRemittanceLensFacet.getRemitDestinationRelease.selector; // #2963
         s[44] = RewardRemittanceLensFacet.getRemitInboundLaneBucket.selector; // #2960
-        s[45] = RewardRemittanceLensFacet.getRemitOpenDays.selector; // #2960
+        // #2828 — the d8 wire retired the delivery-proof read; its slot is reused.
+        s[30] = RewardRemittanceLensFacet.getRemitOpenDays.selector; // #2960
     }
 
     function _getMetricsSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](52);
+        s = new bytes4[](53);
         s[0] = MetricsFacet.getProtocolTVL.selector;
         s[1] = MetricsFacet.getProtocolStats.selector;
         s[2] = MetricsFacet.getUserCount.selector;
         s[3] = MetricsFacet.getActiveLoansCount.selector;
         s[4] = MetricsFacet.getActiveOffersCount.selector;
-        s[5] = MetricsFacet.getTotalInterestEarnedNumeraire.selector;
+        s[5] = MetricsFacet.getLifetimeLendingTotals.selector; // #1832 (replaces the retired full-scan getTotalInterestEarnedNumeraire)
         s[6] = MetricsFacet.getTreasuryMetrics.selector;
         // Legacy overload — disambiguated by full signature now that
         // the per-asset overload (added in §A.2) shares the name.
@@ -3845,6 +3982,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // the `ownerOf`-liveness heuristic.
         s[50] = MetricsFacet.getOfferState.selector;
         s[51] = MetricsFacet.isSaleVehicleLoan.selector; // #1503 item 26
+        s[52] = MetricsFacet.getLifetimeLendingAssets.selector; // #1832
     }
 
     /// AnalyticalGettersDesign §3.1 — per-user dashboard surface. One

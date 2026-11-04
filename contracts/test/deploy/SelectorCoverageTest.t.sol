@@ -78,7 +78,7 @@ contract SelectorCoverageTest is Test, DeployDiamond, DiamondFacetNames {
     function test_DeployDiamond_RoutesEveryFacetSelector() public {
         _populateRoutedSet();
 
-        string[103] memory facets = cutFacetNames();
+        string[109] memory facets = cutFacetNames();
         uint256 missing;
         for (uint256 i; i < facets.length; ++i) {
             string memory name = facets[i];
@@ -108,7 +108,7 @@ contract SelectorCoverageTest is Test, DeployDiamond, DiamondFacetNames {
     ///         4-byte selector — such a collision makes `diamondCut`
     ///         revert and the Diamond undeployable.
     function test_NoSelectorCollisionAcrossFacets() public {
-        string[103] memory facets = cutFacetNames();
+        string[109] memory facets = cutFacetNames();
         uint256 collisions;
         for (uint256 i; i < facets.length; ++i) {
             collisions += _recordAndCountCollisions(facets[i]);
@@ -281,6 +281,8 @@ contract SelectorCoverageTest is Test, DeployDiamond, DiamondFacetNames {
         // #2769 - the paid-notification fee host.
         _addAll(_getNotificationFeeSelectors());
         _addAll(_getSaleExitVerdictSelectors());
+        _addAll(_getSellerClaimSelectors());
+        _addAll(_getRefinancePayoffSelectors());
         _addAll(_getForcedSaleSelectors());
         _addAll(_getRateModelSelectors());
         _addAll(_getNftMetadataSelectors());
@@ -297,6 +299,12 @@ contract SelectorCoverageTest is Test, DeployDiamond, DiamondFacetNames {
         _addAll(_getRiskMatchLiquidationSelectors());
         // #66 + #633 — split-route HF liquidator carved out of RiskFacet.
         _addAll(_getRiskSplitLiquidationSelectors());
+        // The discounted liquidation route, moved off RiskFacet (EIP-170).
+        _addAll(_getRiskDiscountedLiquidationSelectors());
+        // Protected account mode and the depository vault.
+        _addAll(_getProtectedAccountSelectors());
+        _addAll(_getVaultPayoutSelectors());
+        _addAll(_getVaultDepositorySelectors());
         // T-086 step 5 — `PrepayListingFacet` (executor↔diamond trust
         // boundary for Seaport prepay collateral sales). Selector
         // helper lives on `DeployDiamond.s.sol` like every other facet.

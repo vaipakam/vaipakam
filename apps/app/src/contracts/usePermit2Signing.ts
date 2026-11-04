@@ -29,7 +29,7 @@ import { copy } from '../content/copy';
 import type { Address, Hex } from 'viem';
 import { useActiveChain } from '../chain/useActiveChain';
 
-const PERMIT2_ADDRESS = '0x000000000022D473030F116dDEE9F6B43aC78BA3' as const;
+export const PERMIT2_ADDRESS = '0x000000000022D473030F116dDEE9F6B43aC78BA3' as const;
 const PERMIT_DEADLINE_SECONDS = 30 * 60;
 
 /** Session circuit breaker. A failed *WithPermit TRANSACTION surfaces
@@ -154,7 +154,8 @@ export function usePermit2Signing() {
   return { sign, canSign, permit2Address: PERMIT2_ADDRESS };
 }
 
-function randomNonce(): bigint {
+/** A random 256-bit Permit2 nonce (see `sign`). */
+export function randomNonce(): bigint {
   const bytes = new Uint8Array(32);
   crypto.getRandomValues(bytes);
   let n = 0n;

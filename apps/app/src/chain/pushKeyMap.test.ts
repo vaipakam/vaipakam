@@ -100,7 +100,9 @@ describe('IndexerPushSync KEY_MAP (#1131 desk roots)', () => {
       // entered) has NO on-chain log, so no other key fires on the tick
       // that mints it; the dedicated key maps to the bell's feed only.
       'notification.created': ['notifications'],
-      'activity.appended': ['activity'],
+      // #1209 — a past seller is no party to the loan: their claim's rows
+      // reach them only as activity.
+      'activity.appended': ['activity', 'sellerClaims'],
     });
   });
 

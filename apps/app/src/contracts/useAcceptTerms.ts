@@ -447,23 +447,17 @@ export function useAcceptTermsSigning() {
               abi: DIAMOND_ABI_VIEM,
               functionName: 'getVPFIToken',
             })) as Address;
-            // Codex #1412 r5 — the RAW protocol-tracked balance, not
-            // the tier stamp: the tier read already nets out frozen
-            // proceeds, so subtracting encumbrance from it would
-            // double-count and block accepts the chain would allow.
-            const tracked = (await publicClient.readContract({
+            // Codex #1412 r5 — from the RAW protocol-tracked balance, not
+            // the tier stamp (the tier read already nets out frozen
+            // proceeds). The contract's `freeHolding` is exactly that
+            // balance minus liens and minus any payout protected account
+            // mode holds back, which is what the charge can draw.
+            const free = (await publicClient.readContract({
               address: diamondAddr,
               abi: DIAMOND_ABI_VIEM,
-              functionName: 'getProtocolTrackedVaultBalance',
-              args: [o.creator as Address, vpfiToken],
+              functionName: 'freeHolding',
+              args: [o.creator as Address, 0, vpfiToken, 0n],
             })) as bigint;
-            const encumbered = (await publicClient.readContract({
-              address: diamondAddr,
-              abi: DIAMOND_ABI_VIEM,
-              functionName: 'getEncumbered',
-              args: [o.creator as Address, vpfiToken, 0n],
-            })) as bigint;
-            const free = tracked > encumbered ? tracked - encumbered : 0n;
             blocked = free < cStar;
           }
           if (blocked) throw new Error(copy.tariff.creatorFullBlocked);

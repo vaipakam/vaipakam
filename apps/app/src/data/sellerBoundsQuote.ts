@@ -23,7 +23,7 @@
  *
  * 1. TIME. The floor is worked out over the listing's whole window, which
  *    starts when the listing transaction is mined, not when the quote is read.
- *    The interest a sale forfeits keeps growing in between, so a quote for
+ *    What the sale costs the seller can move in between, so a quote for
  *    "now plus the window" would be refused if the transaction landed a little
  *    later. The quote is therefore taken for a window that runs
  *    `QUOTE_CONFIRM_ALLOWANCE_SECONDS` longer (clamped, as the chain clamps

@@ -304,7 +304,7 @@ library LibVaipakam {
     // ─── FlashLoanLiquidationPath.md §4 — per-tier liquidation-discount bounds ─
     //
     // The flash-loan / liquidator-buys-at-discount path
-    // (`RiskFacet.triggerLiquidationDiscounted`) settles at
+    // (`RiskDiscountedLiquidationFacet.triggerLiquidationDiscounted`) settles at
     // `debt-plus-discount-VALUE` priced from oracles: the liquidator
     // delivers `totalDebt` of the principal asset and receives the
     // borrower's collateral at a per-tier discount, profiting on the
@@ -1367,7 +1367,7 @@ library LibVaipakam {
         // ── Flash-loan / liquidator-buys-at-discount path ─────────────
         // See docs/DesignsAndPlans/FlashLoanLiquidationPath.md §6.
         // Master kill-switch — default `false` ⇒
-        // `RiskFacet.triggerLiquidationDiscounted` reverts immediately
+        // `RiskDiscountedLiquidationFacet.triggerLiquidationDiscounted` reverts immediately
         // with `DiscountPathDisabled`. Independent of
         // `depthTieredLtvEnabled` so governance can flip each one
         // separately per chain (e.g. enable discount path while
@@ -3040,6 +3040,50 @@ library LibVaipakam {
         address lopAtCommit;
     }
 
+    /// @notice #1808 — the interest ledger of an ERC-20 loan's CURRENT
+    ///         lender-position holder: what they have earned and not yet been
+    ///         paid, priced segment by segment. Written only by
+    ///         `LibInterestLedger`. See
+    ///         docs/DesignsAndPlans/LenderSaleSellerInterestClaimDesign.md.
+    struct InterestLedger {
+        /// @dev The last checkpoint. Interest from here to now is priced at
+        ///      the loan's current principal and rate when the next
+        ///      checkpoint folds it in. 0 = never opened (read as the loan's
+        ///      start time).
+        uint64 touchedAt;
+        /// @dev Gross interest the current holder has earned and has not been
+        ///      paid, up to `touchedAt`. A share held fail-closed for a
+        ///      flagged holder is NOT paid in this sense, so it stays here.
+        uint256 holderEarnedGross;
+        /// @dev The principal the lender side is still owed. Follows
+        ///      `loan.principal` through every repayment, but NOT through a
+        ///      write-off (`LibInterestLedger.writeOffPrincipal`): a recovery
+        ///      ranks the holder's principal first at this figure.
+        uint256 principalOwed;
+        /// @dev The part of `holderEarnedGross` the borrower already PAID into
+        ///      `heldForLender` rather than to the holder: a share parked because
+        ///      the holder was sanctions-frozen, or the interest an obligation
+        ///      handover credits to the held balance. Gross, and as held (net of
+        ///      the fee). A sale pays it to the seller out of the held balance
+        ///      (`SellerClaimFacet.settleParkedInterestAtSale`), so the buyer
+        ///      never receives interest the seller earned and was already paid.
+        uint256 parkedInterestGross;
+        uint256 parkedInterestNet;
+        /// @dev The part of `parkedInterestNet` held under the active-held
+        ///      reservation (`heldForLenderEncumbered`): the frozen parks. The
+        ///      rest (handover credits) carries no such reservation, so a sale
+        ///      releases only this part of it.
+        uint256 parkedInterestReservedNet;
+    }
+
+    /// @notice #1209 — one open seller claim: gross interest a lender who
+    ///         sold the position earned while they held it and has not yet
+    ///         been paid. Paid before the current holder, oldest first.
+    struct SellerInterestClaim {
+        address seller;
+        uint256 grossOwed;
+    }
+
     struct Storage {
         uint256 nextOfferId;
         uint256 nextLoanId;
@@ -3899,7 +3943,7 @@ library LibVaipakam {
         // ── Stuck-token recovery (T-054 PR-3) ──────────────────────
         // Per-user replay-protection nonce for the EIP-712 recovery
         // acknowledgment. Incremented on every successful
-        // `recoverStuckERC20` call so a previously-signed payload
+        // `VaultDepositoryFacet.adoptUntracked` call so a previously-signed payload
         // can't be re-submitted. See
         // `docs/DesignsAndPlans/VaultStuckRecoveryDesign.md` §5.
         mapping(address => uint256) recoveryNonce;
@@ -3910,6 +3954,13 @@ library LibVaipakam {
         // de-listed without any on-chain action by us. Zero ⇒ no
         // recovery-induced ban.
         mapping(address => address) vaultBannedSource;
+        // ── RETIRED: the ERC-20-only tracked balance (T-051 / T-054) ──
+        // Replaced by `protocolTrackedVaultHolding[user][asset][tokenId]`
+        // (depository vault), which tracks every asset kind under the same
+        // key as `encumbered`. The slot keeps its place under this retired
+        // name (declared in storage-layout/renames.json) and nothing reads or
+        // writes it. The history below describes the rule the new ledger
+        // carries on.
         // ── Vault protocol-tracked balance counter (T-051 / T-054) ──
         // Per-(user, token) running counter of ERC-20 amount the
         // protocol has deposited into / withdrawn from the user's
@@ -3942,7 +3993,7 @@ library LibVaipakam {
         // matching deposit — that's an accounting bug somewhere upstream
         // and we want it to revert loudly rather than silently rolling
         // negative.
-        mapping(address => mapping(address => uint256)) protocolTrackedVaultBalance;
+        mapping(address => mapping(address => uint256)) retiredProtocolTrackedVaultBalance;
         // ── Depth-tiered LTV (Piece B) — Predominantly Available Assets ─
         // Per-chain list of the "predominantly available" quote tokens
         // the liquidity check probes an asset's pools against — the
@@ -4798,32 +4849,22 @@ library LibVaipakam {
         uint256 cfgRewardEmissionsTopUpTarget;
         uint256 cfgKeeperRewardTopUpTarget;
 
-        // T-087 Sub 3 add-on #473 — Productive treasury reserve.
-        // Idle treasury balances earn 0% by default; this surface
-        // routes a portion to external yield venues (Aave V3 for
-        // ERC20 supply, Lido for ETH staking). The
-        // `cfgTreasuryExternalYieldMaxBps` ceiling bounds how much
-        // of a token's treasury balance can be deployed externally
-        // — defence-in-depth against external-protocol counterparty
-        // risk.
-        //
-        // Phase 0 (this card): external venues only.
-        // Phase 1 (future card): adds VAIPAKAM_INTERNAL venue once
-        // TVL crosses the operator-decided threshold.
-        mapping(address => uint8) cfgTreasuryYieldVenue;
-        mapping(address => uint256) treasuryDeployedExternal;
-        uint16 cfgTreasuryExternalYieldMaxBps;
-        address cfgAaveV3Pool;
-        address cfgLidoStaking;
-        // T-087 Sub 3 add-on #473 round-2 P1 #1 — count of tokens
-        // with NON-ZERO Aave principal deployed. `setAaveV3Pool`
-        // refuses to rotate the pool address while this is > 0,
-        // because the old pool would still hold the existing
-        // aTokens / principal. Incremented when a token's deployed
-        // amount transitions 0 → >0 via `deployTreasuryYield`;
-        // decremented when it transitions >0 → 0 via
-        // `withdrawTreasuryYield`.
-        uint256 aaveDeployedTokenCount;
+        // RETIRED (#962 #963 #486 #487, owner decision 2026-10-28): the
+        // Diamond's productive treasury reserve (T-087 Sub 3 add-on #473),
+        // which supplied idle treasury balances to Aave V3 (Lido reserved),
+        // is removed while prelive. On the mainnet topology the treasury is
+        // an external multisig, so the Diamond holds no idle treasury to
+        // deploy, and as built the feature took Aave risk for yield it could
+        // not harvest (#962) and could lock its own configuration after a
+        // venue loss (#963). The multisig holds any yield position itself,
+        // outside the protocol. These six slots keep their places and are
+        // no longer written or read; never reuse them.
+        mapping(address => uint8) retiredTreasuryYieldVenue;
+        mapping(address => uint256) retiredTreasuryDeployedExternal;
+        uint16 retiredTreasuryExternalYieldMaxBps;
+        address retiredAaveV3Pool;
+        address retiredLidoStaking;
+        uint256 retiredAaveDeployedTokenCount;
 
         // T-087 Sub 3 add-on #474 — Keeper VPFI rewards.
         // Permissionless housekeeping calls (Sub 2.D sweep/force-
@@ -4846,11 +4887,12 @@ library LibVaipakam {
         // pre-approved terms. Auto-lend is dapp-side only (this
         // flag is an opt-in marker; no contract enforcement).
         //
-        // Auto-refinance is already keeper-callable today via
-        // KEEPER_ACTION_REFINANCE; the gap this card closes is the
-        // SAFETY BOUNDS — without per-loan caps, a keeper with the
-        // refinance bit could route the borrower into a worse rate
-        // or longer obligation than they agreed to.
+        // The per-loan caps are the SAFETY BOUNDS on an automated
+        // refinance: every refinance-tagged offer is checked against
+        // them when it is created and when it is accepted or matched
+        // (`LibAutoRefinanceCheck`), so neither the matcher nor anyone
+        // else can route the borrower into a worse rate or longer
+        // obligation than they agreed to.
 
         /// @notice Per-user auto-lend opt-in marker. No contract
         ///         enforcement — the dapp reads it to decide whether
@@ -4872,12 +4914,11 @@ library LibVaipakam {
         mapping(address => AutoRefinanceCaps) defaultAutoRefinanceCaps;
 
         /// @notice Per-loan refinance caps (borrower-side consent).
-        ///         When `enabled = true`, the keeper-driven
-        ///         `refinanceLoan` path enforces the new offer's
-        ///         rate ≤ maxRateBps and expiry ≤ maxNewExpiry.
-        ///         When the call is by the borrower-NFT-owner
-        ///         directly (not via a keeper), caps DO NOT apply —
-        ///         the user is acting in their own interest.
+        ///         A refinance-tagged offer against the loan needs
+        ///         `enabled = true` (set by the current borrower-NFT
+        ///         owner), and its rate ≤ maxRateBps and expiry ≤
+        ///         maxNewExpiry, at create and at accept or match
+        ///         (`LibAutoRefinanceCheck`).
         mapping(uint256 => AutoRefinanceCaps) autoRefinanceCaps;
 
         /// @notice Per-loan extend caps (lender + borrower
@@ -4895,7 +4936,7 @@ library LibVaipakam {
         // / Amount / TokenId / Quantity / AssetType`; released on every
         // terminal that frees the collateral (`RepayFacet.repayLoan`,
         // `PrecloseFacet.precloseDirect`, `ClaimFacet`,
-        // `DefaultedFacet.triggerDefault`, `RefinanceFacet.refinanceLoan`).
+        // `DefaultedFacet.triggerDefault`, the `RefinanceFacet` payoff).
         // On obligation-transfer / refinance: the loan's collateral
         // identity may change; the lien must be re-keyed to the new
         // collateral fields.
@@ -5394,7 +5435,7 @@ library LibVaipakam {
         ///      deposit may resolve through despite a sanctions flag. Unlike the
         ///      move-out exemption (where the flagged party loses custody), here
         ///      the flagged party RECEIVES — but the proceeds are LOCKED: the
-        ///      deposit is protocol-tracked (so `recoverStuckERC20` can't reach
+        ///      deposit is protocol-tracked (so `adoptUntracked` cannot take
         ///      it) and `claimAsLender` / `claimAsBorrower` screen the stored
         ///      vault owner, so nothing leaves the vault until the flag clears.
         ///      This lets a Tier-2 close-out complete (the unflagged counterparty
@@ -5455,7 +5496,7 @@ library LibVaipakam {
         // ─── #776 receive side (mirror chains) ────────────────────────────
         // The mirror-side `RewardRemittanceReceiver` authorized to call the
         // Diamond's budget and compensation ingresses
-        // (`onRewardBudgetReceivedD7`, `onCompensationBudgetReceived`). `address(0)` = ingress
+        // (`onRewardBudgetReceivedD8`, `onCompensationBudgetReceived`). `address(0)` = ingress
         // disabled (Base, or an unconfigured mirror).
         address rewardRemittanceReceiver;
         // Cumulative VPFI reward budget received from Base on this mirror.
@@ -5527,7 +5568,7 @@ library LibVaipakam {
         // laundering-chain class (#1006). Mutated ONLY from strict reads
         // (`sanctionsStatus`): registered at non-reverting oracle-up flag
         // observations (the S10 `recordFrozenClaimant` park hook below, sale-buyer
-        // receives, and `recoverStuckERC20`'s recovery-ban) + the permissionless
+        // receives, and `adoptUntracked`'s adoption ban) + the permissionless
         // `ProfileFacet.refreshSanctionsFlag`; cleared on a confirmed de-list.
         // Appended (Codex #1126 r1 P1) — no existing slot shifts.
         mapping(address => bool) sanctionsConfirmedFlagged;
@@ -6828,8 +6869,7 @@ library LibVaipakam {
         // #1659 — sale proceeds held in Diamond custody by `OfferAcceptFacet`
         //   on the resting-listing accept, consumed by
         //   `EarlyWithdrawalFacet._completeLoanSaleImpl`'s net settlement so the
-        //   seller's forfeited accrued interest and any rate shortfall are
-        //   deducted from the INCOMING proceeds rather than pulled from the
+        //   rate shortfall is deducted from the INCOMING proceeds rather than pulled from the
         //   seller's wallet (which cannot work when the buyer is the caller).
         //   Keyed by the UNDERLYING loan id, not the sale offer id. Written and
         //   consumed inside one atomic accept-then-complete transaction, so a
@@ -6945,172 +6985,33 @@ library LibVaipakam {
         //   (`RewardAggregatorFacet.getRecycleCompositionPosition`), so the
         //   counter stays the whole record of what was resolved.
         uint256 recycleReleasedRemitResolvedCumulative;
-        /// @dev #1503 item 28 — the point in time through which the CURRENT
-        ///      lender-position holder has actually been PAID their interest.
-        ///
-        ///      APPENDED AT THE STRUCT TAIL — never insert mid-struct.
-        ///
-        ///      A lender-position sale forfeits the interest that accrued during
-        ///      the seller's tenure, because the borrower has not paid it yet. On
-        ///      a periodic loan the borrower HAS paid part of it: periodic
-        ///      auto-liquidation forwards interest to the lender without moving
-        ///      the accrual clock, so the raw clock still spans periods already
-        ///      settled and the seller is billed for interest they received.
-        ///
-        ///      This is stored as a TIMESTAMP, not an amount. An amount cannot be
-        ///      compared with the forfeiture figure at all: that figure is scoped
-        ///      to the current accrual SEGMENT, and `repayPartial` (among six
-        ///      other paths) restarts the segment, after which a lifetime amount
-        ///      is measuring a different window than the one it would be
-        ///      subtracted from — under-charging on one side of the reset and
-        ///      double-crediting on the other (Codex #1801 r3 P1). A timestamp
-        ///      composes with a clock reset by construction: the forfeiture
-        ///      window starts at whichever is LATER, the accrual origin or this
-        ///      mark, so a reset that moves past it simply wins the `max` and
-        ///      nothing historical carries over. There is likewise no "excess
-        ///      credit" case to refuse, because a clamped window cannot
-        ///      over-subtract.
-        ///
-        ///      It advances in exactly two places, and the difference between
-        ///      them is worth stating because it is not obvious.
-        ///
-        ///      One: a periodic payout that genuinely REACHES the lender — never
-        ///      the freeze branch, whose tokens are parked in `heldForLender` and
-        ///      migrate to the BUYER on a sale.
-        ///
-        ///      Two: a SALE. The forfeiture settles the outstanding accrual (to
-        ///      treasury, or into the buyer's rate shortfall), so the position
-        ///      the buyer receives is clean and their own window opens at the
-        ///      sale. Without this the same stretch would be forfeited again on
-        ///      every resale.
-        ///
-        ///      A plain position TRANSFER does NOT advance it, and must not.
-        ///      Nothing is settled by a transfer, so the outstanding forfeiture
-        ///      travels with the position — exactly as the unpaid interest it
-        ///      represents does. Stamping there instead would let any lender
-        ///      zero their own forfeiture by transferring the position to
-        ///      themselves and selling from the other side, which is a larger
-        ///      hole than the one this whole mechanism closes.
-        ///
-        ///      Zero for a loan predating this upgrade, which makes the `max`
-        ///      pick the accrual origin — precisely the behaviour those loans
-        ///      already had. Grandfathered loans keep it rather than acquiring a
-        ///      wrong new one, and no backfill of unreconstructable history is
-        ///      needed.
+        /// @dev RETIRED (#1209 / #1808). The five fields below were the
+        ///      paid-through mark (#1503 item 28, #1801): a scalar timestamp the
+        ///      sale routes read to decide how much accrued interest the seller
+        ///      forfeited. A sale no longer forfeits interest — the seller keeps
+        ///      a claim, kept in the per-segment ledger
+        ///      (`interestLedger` / `sellerInterestClaims`, {LibInterestLedger})
+        ///      — so nothing writes or reads them. The slots are kept so the
+        ///      storage layout does not move; do not reuse them for a new
+        ///      meaning, and do not read them.
         mapping(uint256 => uint256) lenderInterestDeliveredThroughAt;
-        /// @notice #1801 — the loan's `principal` at the moment the mark above
-        ///         was stamped. Written with the mark and never apart from it
-        ///         (both go through {LibEntitlement.stampInterestDelivered}).
-        ///
-        /// @dev    The mark names a WINDOW; a window is only meaningful at the
-        ///         principal it was priced against. Principal is decremented at
-        ///         eight sites across five facets — `RepayFacet`,
-        ///         `SwapToRepayFacet`, `RiskFacet` and `RiskMatchLiquidationFacet`
-        ///         (five) — and a design that asks each of them to keep the mark
-        ///         honest has eight places to miss, in facets edited for
-        ///         unrelated reasons.
-        ///
-        ///         So the mark is not maintained by them; it is INVALIDATED BY
-        ///         STATE. A read honours it only while this equals the live
-        ///         principal, which means any principal change anywhere — today's
-        ///         eight sites and any added later by someone who has never read
-        ///         this — voids the credit automatically and charges the seller
-        ///         the full accrual instead. Fail-safe by construction rather
-        ///         than by cooperation.
         mapping(uint256 => uint256) lenderMarkPrincipalAt;
-        /// @notice #1801 — set once this position's delivery record has become
-        ///         DISCONTINUOUS, which permanently disqualifies the scalar mark
-        ///         for the rest of the lender's tenure. Two causes: a lender
-        ///         share frozen rather than delivered, and a stamp whose window
-        ///         would span a principal change that no settlement reconciled.
-        ///
-        /// @dev    Voiding the mark at the freeze is not enough on its own: a
-        ///         later clean delivery re-stamps it, and the window from the
-        ///         new mark back to the previous one then spans the frozen
-        ///         stretch, crediting the seller for interest that went to
-        ///         `heldForLender` and migrates to the buyer. That is exactly
-        ///         the "do not leap the mark over frozen periods" case — a
-        ///         single timestamp cannot say "paid for the second period, not
-        ///         the first", so once delivery has become non-contiguous no
-        ///         stamp on this loan is trustworthy again.
-        ///
-        ///         Cleared on a position SALE, through
-        ///         {LibEntitlement.stampInterestDeliveredForNewLender},
-        ///         because the incoming lender's window opens at the sale and
-        ///         carries none of the seller's history — frozen or otherwise.
         mapping(uint256 => bool) lenderMarkVoided;
-
-        /// @notice #1503 item 28 — the `heldForLender` balance the mark was
-        ///         stamped at, so a park that happened since it is DETECTABLE.
-        ///
-        /// @dev    Codex #1801 r11 P1. Parked interest is interest the lender did
-        ///         not receive, so it disqualifies the mark for exactly the
-        ///         reason a freeze does — but the two are not the same event, and
-        ///         only the freeze path was setting {lenderMarkVoided}. The
-        ///         obligation-transfer route parks the lender's accrued share on
-        ///         a CONTINUING loan and never touched the flag, so a later clean
-        ///         settlement re-stamped the mark over the parked stretch and the
-        ///         sale excluded it from the seller's charge — money the seller
-        ///         never received and which migrates to the buyer.
-        ///
-        ///         Reading the balance rather than trusting the park sites is the
-        ///         same choice made for principal one field up, and for the same
-        ///         reason: there are SEVEN places that park to `heldForLender`
-        ///         across four facets, one of which remembered to void, and any
-        ///         future eighth would have to remember too. A rule read off
-        ///         state cannot be forgotten by code that has never seen it.
-        ///
-        ///         Safe as an equality test because `heldForLender[loanId]` only
-        ///         grows while a loan is live — it is consumed at terminal claim,
-        ///         never decremented during a lender's tenure — so a difference
-        ///         is proof of a park and nothing else.
         mapping(uint256 => uint256) lenderMarkHeldAt;
-
-        /// @notice #1503 item 28 — the moment THIS lender's tenure began: loan
-        ///         origination, or the sale that handed them the position.
-        ///
-        /// @dev    Codex #1801 r13, two P1s that turned out to be one missing
-        ///         idea. A disqualified mark falls back to the earlier of the
-        ///         recorded delivery and the accrual clock, and neither of those
-        ///         is anchored to the party being charged:
-        ///
-        ///         - a loan whose FIRST lender payment is the one that freezes
-        ///           has no recorded delivery at all, so the fallback was the
-        ///           clock — which that same repayment had just re-based, giving
-        ///           a window of roughly zero over a genuinely unpaid stretch;
-        ///         - a BUYER disqualified after purchase fell back to the loan's
-        ///           original accrual clock, which predates them, charging them
-        ///           for the seller's whole pre-purchase tenure — a stretch the
-        ///           first sale already settled.
-        ///
-        ///         One bound fixes both, because both are the window escaping
-        ///         the tenure it belongs to. The window may open no earlier than
-        ///         here and, when nothing is disqualified, no earlier than the
-        ///         recorded delivery either.
-        ///
-        ///         Zero for loans that predate this change: nothing is known
-        ///         about when their lender's tenure started, so no clamp is
-        ///         applied and they keep the behaviour they already had.
         mapping(uint256 => uint256) lenderTenureStart;
 
         /// @notice #1503 item 4 — the seller's FLOOR on a sale listing: the
         ///         least they will accept out of the buyer's escrowed proceeds,
-        ///         after the settlement forfeiture is deducted.
+        ///         after the rate shortfall is deducted.
         ///
-        /// @dev    The listing stored no economic bound of any kind, so
-        ///         completion recomputed the forfeiture at the acceptance block
-        ///         and the seller was bound by whatever it came to then.
-        ///
-        ///         The floor is NOT the figure the seller saw. Accrued interest
-        ///         grows across the listing window, so a floor at the displayed
-        ///         value would make the listing unfillable almost immediately.
-        ///         It is the worst case they accepted — the same settlement
-        ///         arithmetic evaluated at BOTH ends of the listing window,
-        ///         taking whichever is worse for them, plus slack for integer
-        ///         truncation. Not the expiry alone: the two legs of the cost
-        ///         move in opposite directions, so an above-rate listing is
-        ///         costliest to fill immediately. Computable only because the
-        ///         expiry is mandatory and finite. See
+        /// @dev    The floor is the worst case the seller accepted: the same
+        ///         settlement arithmetic evaluated at BOTH ends of the listing
+        ///         window, taking whichever is worse for them, plus slack for
+        ///         integer truncation. Since #1209 the cost is the rate shortfall
+        ///         alone (the seller's earned interest becomes a seller claim,
+        ///         not a cost), so what moves the net below the floor is a
+        ///         principal change the seller never reviewed. Computable only
+        ///         because the expiry is mandatory and finite. See
         ///         `LibSaleListing.projectSellerBounds`.
         ///
         ///         Zero does NOT mean "no floor recorded". `projectSellerBounds`
@@ -7270,9 +7171,9 @@ library LibVaipakam {
         ///         itself persists in `loans` and its id was drawn from
         ///         `nextLoanId`. Anything that enumerates by id range —
         ///         `getAllLoansPaginated`, `getLoansByStatusPaginated`, the
-        ///         `getProtocolStats` / `getTotalInterestEarnedNumeraire`
-        ///         lifetime scans, `getGlobalCounts` — would keep finding it
-        ///         and keep pricing its principal into lifetime volume. A
+        ///         lifetime scans `getProtocolStats` ran before #1832 retired
+        ///         them, `getGlobalCounts` — would keep finding it and keep
+        ///         pricing its principal into lifetime volume. A
         ///         durable mark is what lets those surfaces exclude it; a
         ///         transient link cannot, since `saleOfferToLoanId` is
         ///         deleted at completion.
@@ -7596,12 +7497,9 @@ library LibVaipakam {
         ///      obligation behind backing that exists.
         ///
         ///      A batch's POSITION in a day's index is not an order (Codex
-        ///      #2232 r3). Materialization is permissionless and asynchronous,
-        ///      so position records which caller got there first; an earlier
-        ///      revision of this comment called the index arrival-ordered,
-        ///      which position could never have delivered and which a
-        ///      RETROSPECTIVE admission — a rollout packet admitted long after
-        ///      it landed — makes plainly untrue. The order is the delivery's
+        ///      #2232 r3). Since #2828 the ingress itself links each epoch into
+        ///      its day as it lands, so position follows landing, but the rule
+        ///      is still not to read position as the order. The order is the delivery's
         ///      own `ingressPackets[batchId].arrivedAt`: written once by the
         ///      ingress that received it, immutable, and returned with every
         ///      entry so a reader never infers it from the array. Design §5c
@@ -7799,14 +7697,6 @@ library LibVaipakam {
         mapping(bytes32 => ClosureWalk) closureWalks;
         /// @dev 3b-ii-B — the last walk nonce each starter used.
         mapping(address => uint64) closureWalkNonce;
-        /// @dev 3b-ii-B — how many of a batch's listed days the park has checked
-        ///      closed so far (the park is paged like the index was).
-        mapping(bytes32 => uint32) transportParkCursor;
-        /// @dev 3c-1 — the days a batch listed, kept as its membership is indexed
-        ///      (beside the inverse index), so the two allocation gates read each
-        ///      listed day's arrival and closure LIVE. Empty for a batch indexed
-        ///      before this field existed: such a batch is withheld as contested.
-        mapping(bytes32 => uint256[]) transportBatchDays;
         /// @dev Slice 4 PR C-1 (#1566) — the custody era registry. Era 0 is
         ///      the pre-registry era every existing figure keys
         ///      (`LibRewardCustody.RECONCILIATION_QUEUE_ERA`); a role change on an
@@ -7903,7 +7793,7 @@ library LibVaipakam {
         uint256 rewardBudgetFreshReCredited;
         /// @notice #1566 PR C revision — the HIGHEST custody era each source
         ///         chain has reported (B4 day report), keyed by chain id. The
-        ///         canonical chain stamps every rooted remittance to that chain
+        ///         canonical chain stamps every budget remittance to that chain
         ///         with it. Eras only grow on a chain; reports may arrive out of
         ///         order, so the record only rises.
         mapping(uint32 => uint64) chainCustodyEraReported;
@@ -8170,8 +8060,8 @@ library LibVaipakam {
         /// @dev #918 — the mirror's per-day DELIVERY record: the whole slice
         ///      Base said it is sending for the day, and the sum of the parts
         ///      that have landed here, per component. Written only by
-        ///      `LibRewardCustody._noteDayDeliveryPart`, when a single-day
-        ///      packet's chunk is indexed or proven; `landedAt` is the one
+        ///      `LibRewardCustody._noteDayDeliveryPart`, at the ingress of the
+        ///      budget packet that names the day (#2828); `landedAt` is the one
         ///      word `LibRewardCustody.dayDeliveryLanded` reads. Mirror-only.
         ///      Appended — append-only.
         mapping(uint256 => DayDeliveryParts) dayDeliveryParts;
@@ -8254,6 +8144,295 @@ library LibVaipakam {
         ///      abandoned-day walk releases it. Written only by
         ///      `LibRemitDayLedger`. Base-only. Appended — append-only.
         mapping(uint32 => EnumerableSet.UintSet) remitOpenDays;
+        /// @dev #1808 — per ERC-20 loan, the current lender-position holder's
+        ///      interest ledger. Written only by `LibInterestLedger`. Appended
+        ///      — append-only.
+        mapping(uint256 => InterestLedger) interestLedger;
+        /// @dev #1209 — per loan, the open seller claims, oldest first, at
+        ///      most `LibInterestLedger.MAX_SELLER_CLAIMS`. Written only by
+        ///      `LibInterestLedger`. Appended — append-only.
+        mapping(uint256 => SellerInterestClaim[]) sellerInterestClaims;
+        /// @dev #1209 — per loan, seller and asset: seller-claim interest
+        ///      already paid into the seller's own vault and not yet withdrawn
+        ///      by `SellerClaimFacet.claimAsSeller`. Reserved in `encumbered`
+        ///      under the seller while it waits. Written only by
+        ///      `SellerClaimFacet`. Appended — append-only.
+        mapping(uint256 => mapping(address => mapping(address => uint256))) sellerInterestHeld;
+        /// @dev #2814 — per loan and depositor: the loan's principal asset the
+        ///      depositor (the borrower-position holder when they deposited)
+        ///      put into their own vault for that loan's auto-extensions.
+        ///      Reserved in `encumbered` under the depositor while it waits; an
+        ///      extension draws it first, and the depositor may withdraw what is
+        ///      left at any time. Written only by `LibEncumbrance`. Appended —
+        ///      append-only.
+        mapping(uint256 => mapping(address => uint256)) extendReserve;
+        /// @dev #1558 — per refinance request (a borrower offer, by id): the
+        ///      borrower's single-use Permit2 authorisation to pay off the loan
+        ///      that request refinances. Whoever completes the refinance uses
+        ///      it once; nothing else is ever authorised to pull the payoff.
+        ///      Written only by `LibRefinancePayoff`. Appended — append-only.
+        mapping(uint256 => RefinancePayoffPermit) refinancePayoffPermit;
+        /// @dev #1832 — per ERC-20 lending asset, the principal of every loan
+        ///      ever opened in it, in the asset's own units, recorded once as
+        ///      the loan opens (`LibMetricsHooks.onLoanInitialized`). A
+        ///      refinance opens a new loan and counts again; a lender-sale
+        ///      record is not a loan and never counts. Never decreases.
+        ///      Written only by `LibMetricsHooks`. Appended — append-only.
+        mapping(address => uint256) lifetimePrincipalLent;
+        /// @dev #1832 — per ERC-20 lending asset, the gross interest (before
+        ///      the treasury's yield fee) borrowers have paid on loans in it,
+        ///      in the asset's own units, recorded as each payment is made
+        ///      (`LibMetricsHooks.onInterestPaid`). Never decreases from one
+        ///      transaction to the next: a payment parked short takes back, in
+        ///      the same transaction, only the part of what it just recorded
+        ///      that did not arrive (`onInterestUndelivered`).
+        ///      Written only by `LibMetricsHooks`. Appended — append-only.
+        mapping(address => uint256) lifetimeInterestPaid;
+        /// @dev #1832 — every asset a lifetime counter above has recorded,
+        ///      so a reader can value the counters without scanning loans.
+        ///      Only added to. Written only by `LibMetricsHooks`. Appended —
+        ///      append-only.
+        EnumerableSet.AddressSet lifetimeLendingAssets;
+        /// @dev Protected account mode — per owner wallet, the account's
+        ///      settings, lock and pending setting changes. Written only by
+        ///      `LibProtectedAccount`. Appended — append-only.
+        mapping(address => ProtectedAccount) protectedAccount;
+        /// @dev Protected account mode — per owner, the active secondary
+        ///      signers (at most `LibProtectedAccount.MAX_SIGNERS`). Written
+        ///      only by `LibProtectedAccount`. Appended — append-only.
+        mapping(address => EnumerableSet.AddressSet) protectedSigners;
+        /// @dev Protected account mode — per owner and signer, a pending
+        ///      signer addition or removal. Written only by
+        ///      `LibProtectedAccount`. Appended — append-only.
+        mapping(address => mapping(address => ProtectedSignerChange)) protectedSignerChange;
+        /// @dev Protected account mode — per owner, the addresses a payout
+        ///      may be sent to (at most `LibProtectedAccount.MAX_ALLOWLIST`).
+        ///      Written only by `LibProtectedAccount`. Appended — append-only.
+        mapping(address => EnumerableSet.AddressSet) protectedAllowlist;
+        /// @dev Protected account mode — per owner and destination, a
+        ///      pending allowlist addition: when it matures (zero means none)
+        ///      and the change epoch it was requested in. Written only by
+        ///      `ProtectedAccountFacet`. Appended — append-only.
+        mapping(address => mapping(address => ProtectedAllowlistChange)) protectedAllowlistChange;
+        /// @dev Protected account mode — per owner, the change epoch. A
+        ///      lock, a primary replacement and a switch-off each advance it,
+        ///      which voids every pending allowlist addition and signer
+        ///      addition or removal requested before (they are mappings, so
+        ///      they are voided by epoch, not swept). Survives a switch-off.
+        ///      Written only by `ProtectedAccountFacet`. Appended —
+        ///      append-only.
+        mapping(address => uint64) protectedChangeEpoch;
+        /// @dev Protected account mode — per owner and change epoch, the
+        ///      destinations with a pending allowlist addition (at most
+        ///      `LibProtectedAccount.MAX_ALLOWLIST`), so every pending
+        ///      addition can be listed and cancelled. Keyed by epoch: a new
+        ///      epoch starts from an empty set, so voiding needs no sweep.
+        ///      Written only by `ProtectedAccountFacet`. Appended —
+        ///      append-only.
+        mapping(address => mapping(uint64 => EnumerableSet.AddressSet)) protectedPendingAllowlist;
+        /// @dev Protected account mode — per owner and change epoch, the
+        ///      nominees with a pending signer addition (at most
+        ///      `LibProtectedAccount.MAX_SIGNERS`). Same epoch keying as
+        ///      `protectedPendingAllowlist`. Written only by
+        ///      `ProtectedAccountFacet`. Appended — append-only.
+        mapping(address => mapping(uint64 => EnumerableSet.AddressSet)) protectedPendingSigners;
+        /// @dev Protected account mode — every pending payout row by id.
+        ///      Written only by `LibProtectedAccount`. Appended — append-only.
+        mapping(uint256 => PendingPayout) pendingPayouts;
+        /// @dev Protected account mode — per owner, the ids of the payout
+        ///      rows still queued. Written only by `LibProtectedAccount`.
+        ///      Appended — append-only.
+        mapping(address => EnumerableSet.UintSet) pendingPayoutIds;
+        /// @dev Protected account mode — per owner, asset and token id, the
+        ///      amount held back in the owner's vault for queued payouts.
+        ///      `LibEncumbrance.freeBalance` subtracts it beside the liens, so
+        ///      an earmarked amount cannot be queued twice, lent or pledged.
+        ///      Same key as `encumbered`. Written only by
+        ///      `LibProtectedAccount`. Appended — append-only.
+        mapping(address => mapping(address => mapping(uint256 => uint256))) pendingPayoutEarmark;
+        /// @dev Protected account mode — every pending position-NFT transfer
+        ///      row by id. Written only by `LibProtectedAccount`. Appended —
+        ///      append-only.
+        mapping(uint256 => PendingPositionTransfer) pendingPositionTransfers;
+        /// @dev Protected account mode — per owner, the ids of the position
+        ///      transfer rows still queued. Written only by
+        ///      `LibProtectedAccount`. Appended — append-only.
+        mapping(address => EnumerableSet.UintSet) pendingTransferIds;
+        /// @dev Protected account mode — per position token id, the one open
+        ///      transfer row for it; zero means none. Written only by
+        ///      `LibProtectedAccount`. Appended — append-only.
+        mapping(uint256 => uint256) pendingTransferByToken;
+        /// @dev Protected account mode — per owner, the open proposal to
+        ///      replace the primary wallet. Written only by
+        ///      `LibProtectedAccount`. Appended — append-only.
+        mapping(address => ReplacementProposal) replacementProposal;
+        /// @dev Protected account mode — per owner, proposal round and signer:
+        ///      whether that signer approved that round's nominee. Written
+        ///      only by `LibProtectedAccount`. Appended — append-only.
+        mapping(address => mapping(uint32 => mapping(address => bool))) replacementApproved;
+        /// @dev Protected account mode — per replacement wallet, the retired
+        ///      account it controls (one per wallet); zero means none.
+        ///      Written only by `LibProtectedAccount`. Appended — append-only.
+        mapping(address => address) protectedRetiredAccountOf;
+        /// @dev Protected account mode — the last id handed to a pending
+        ///      payout or position-transfer row (one sequence for both).
+        ///      Written only by `LibProtectedAccount`. Appended — append-only.
+        uint256 protectedRowSeq;
+        /// @dev Depository vault — per owner, the vault implementation the
+        ///      owner pinned their vault to; zero means not pinned. A pinned
+        ///      vault is upgraded only by its owner. Written only by
+        ///      `VaultDepositoryFacet`. Appended — append-only.
+        mapping(address => address) vaultPinnedImplementation;
+        /// @dev Depository vault — the one tracked ledger: per owner, asset
+        ///      and token id (zero for an ERC-20), what the protocol put into
+        ///      the owner's vault and has not taken out. Every kind of asset
+        ///      the vault holds is bounded by it, so an asset that arrived
+        ///      outside the protocol is never paid out until its owner adopts
+        ///      it. Same key as `encumbered`. Written only by
+        ///      `LibVaipakam.recordVaultDeposit` / `recordVaultWithdraw`;
+        ///      read through `LibVaipakam.trackedHolding`. Replaces the
+        ///      ERC-20-only `retiredProtocolTrackedVaultBalance`. Appended —
+        ///      append-only.
+        mapping(address => mapping(address => mapping(uint256 => uint256))) protocolTrackedVaultHolding;
+        /// @dev Depository vault — the depository ledger: per owner, asset
+        ///      and token id (zero for an ERC-20), what is the owner's to take
+        ///      out through `VaultDepositoryFacet.withdrawFromVault`: what the
+        ///      owner deposited or adopted, what the protocol credited to the
+        ///      owner's vault as a payment to the owner, and payouts to the
+        ///      owner that were kept in the vault or cancelled; less what the
+        ///      owner withdrew or spent from the vault. A loan, offer, claim or
+        ///      reserve balance is never in it, so the depository withdraw can
+        ///      reach none of them whether or not they are liened. Same key as
+        ///      `encumbered`. Written only by `LibDepositoryLedger`. Appended —
+        ///      append-only.
+        mapping(address => mapping(address => mapping(uint256 => uint256))) depositoryHolding;
+        /// @dev Depository vault — every asset contract that has ever had a
+        ///      depository-ledger credit for the owner, in first-credit order,
+        ///      so the app can find a deposited asset no loan or offer names.
+        ///      Never shrinks: an asset stays listed after its holding returns
+        ///      to zero (the holding view says what is there now). Written only
+        ///      by `LibDepositoryLedger.credit`. Appended — append-only.
+        mapping(address => address[]) depositoryAssets;
+        /// @dev Whether `asset` is already in `depositoryAssets[owner]`.
+        ///      Written only by `LibDepositoryLedger.credit`. Appended —
+        ///      append-only.
+        mapping(address => mapping(address => bool)) depositoryAssetListed;
+        /// @dev Per vault proxy, the user it was created for (the reverse
+        ///      of `userVaipakamVaults`); zero for any address that is not a
+        ///      Vaipakam vault. Lets a vault accept an NFT another Vaipakam
+        ///      vault delivers to it (a protocol move between two users'
+        ///      vaults: a default to the lender, a payment credited to a
+        ///      protected account's vault). Written only by
+        ///      `VaultFactoryFacet.getOrCreateUserVault`. Appended —
+        ///      append-only.
+        mapping(address => address) vaultUserOf;
+    }
+
+    /// @notice Protected account mode — one owner wallet's settings.
+    ///         See `Storage.protectedAccount` and `LibProtectedAccount`.
+    /// @dev    Every time is a unix second; zero means "none pending".
+    ///         `retired` is set when a replacement primary takes over: the
+    ///         account then opens nothing new, and `controller` (the new
+    ///         primary) is the only wallet that may manage it or move what
+    ///         it still holds, always through the delay.
+    struct ProtectedAccount {
+        bool enabled;
+        bool locked;
+        bool protectNfts;
+        bool requireCosign;
+        bool retired;
+        uint32 delaySeconds;
+        uint32 pendingDelay;
+        uint64 pendingDelayAt;
+        uint64 pendingDisableAt;
+        uint64 pendingUnlockAt;
+        uint64 pendingNftOffAt;
+        uint64 pendingCosignOffAt;
+        uint64 cooldownUntil;
+        uint64 lockedAt;
+        address lockedBy;
+        address controller;
+        uint64 pendingUnpinAt;
+    }
+
+    /// @notice Protected account mode — a pending change to one signer.
+    /// @dev    `addAt` matures an addition (which also needs `accepted`,
+    ///         set only by the nominee's own key); `removeAt` matures a
+    ///         removal. Zero means none pending. `epoch` is the account's
+    ///         change epoch when the change was requested: a change from an
+    ///         earlier epoch (before a lock or a switch-off) is void.
+    struct ProtectedSignerChange {
+        uint64 addAt;
+        bool accepted;
+        uint64 removeAt;
+        uint64 epoch;
+    }
+
+    /// @notice Protected account mode — a pending allowlist addition.
+    /// @dev    `at` is when it matures (zero means none); `epoch` as in
+    ///         `ProtectedSignerChange`.
+    struct ProtectedAllowlistChange {
+        uint64 at;
+        uint64 epoch;
+    }
+
+    /// @notice Protected account mode — a payout held back in its owner's
+    ///         vault until `releaseAt`. The asset never leaves the vault
+    ///         while queued; `Storage.pendingPayoutEarmark` holds it back.
+    /// @dev    `state`: 1 queued, 2 released, 3 cancelled. `kind` is the
+    ///         `AssetType` as a `uint8`. `delivered` is what the recipient
+    ///         measurably received at release (ERC-20) or the amount (NFT).
+    struct PendingPayout {
+        address user;
+        uint8 kind;
+        uint8 state;
+        bool cosigned;
+        uint64 releaseAt;
+        address asset;
+        address recipient;
+        uint256 tokenId;
+        uint256 amount;
+        uint256 delivered;
+    }
+
+    /// @notice Protected account mode — a position-NFT transfer held back
+    ///         until `releaseAt`. `state`: 1 queued, 2 released, 3 cancelled.
+    struct PendingPositionTransfer {
+        address from;
+        uint8 state;
+        bool cosigned;
+        uint64 releaseAt;
+        address to;
+        uint256 tokenId;
+    }
+
+    /// @notice Protected account mode — the open proposal to replace the
+    ///         primary wallet. `readyAt` is zero until the proposal has the
+    ///         approvals it needs; it is then when the replacement may be
+    ///         finalized. `round` increments on every new proposal so
+    ///         approvals of an older nominee never count.
+    struct ReplacementProposal {
+        address nominee;
+        address proposedBy;
+        uint64 readyAt;
+        uint32 round;
+        uint8 approvals;
+    }
+
+    /// @notice #1558 — a borrower's signed authorisation to pay off the loan a
+    ///         refinance request targets. See `Storage.refinancePayoffPermit`.
+    /// @dev `signer` signed a Permit2 `PermitWitnessTransferFrom` for up to
+    ///      `maxAmount` of the loan's principal asset, with the Diamond as
+    ///      spender, Permit2 nonce `nonce`, expiring at `deadline`, and the
+    ///      witness `RefinancePayoff(loanId, offerId)`, so the signature pays
+    ///      off this one loan through this one request and nothing else.
+    ///      Permit2 burns the nonce on first use.
+    struct RefinancePayoffPermit {
+        address signer;
+        uint256 maxAmount;
+        uint256 nonce;
+        uint256 deadline;
+        bytes signature;
     }
 
     /// @notice #918 — one (destination, day)'s remit ledger on Base. See
@@ -8705,28 +8884,29 @@ library LibVaipakam {
         uint256 classifiedRecycled;
         uint256 disposed;
         uint256 freshAuthenticated;
-        /// @dev #1566 transport epochs PR 3a, appended.
+        /// @dev #2828 — the ONE day the packet funds, and whether it names one.
         ///
-        ///      `dayListHash` — a flat commitment to a payload's day list
-        ///      (keccak of the ABI-encoded list), written by the mirror ingress
-        ///      in the SAME transaction as the record. Only a P2 COMPENSATION
-        ///      carries one now (its single day); it is provenance, read by
-        ///      nothing that moves value. Every budget packet is rooted
-        ///      (`dayListRoot` below) and leaves this zero.
-        ///
-        ///      `dayCount` — how many days the packet's commitment names.
+        ///      `dayId` / `dayNamed` — written ONCE by the mirror ingress in the
+        ///      SAME transaction as the record ({LibRewardCustody.stampPacketDay}).
+        ///      Every packet a mirror ingress records names exactly one day: a
+        ///      budget delivery carries its funded day inline on the d8 wire,
+        ///      and a P2 compensation names its zeroed day. `dayNamed` is the
+        ///      presence fact, because day 0 is a real day. A budget packet's
+        ///      day is what its epoch is drawn by and what its part counts
+        ///      toward ({LibRewardCustody.dayDeliveryLanded}); a compensation's
+        ///      is provenance, read by nothing that moves value.
         ///
         ///      `freshAttested` / `recycledAttested` / `attested` — the split
-        ///      the packet's own d6 wire carried, written ONCE at ingress and
-        ///      IMMUTABLE ({LibRewardCustody.attestPacketFromWire}) — on an
-        ///      ACTIVATED deployment only. A d6 packet that lands before custody
-        ///      activation is typed through `freshShare` / `recycledShare` and
-        ///      leaves these unset. The
+        ///      the packet's own budget wire carried, written ONCE at ingress
+        ///      and IMMUTABLE ({LibRewardCustody.attestPacketFromWire}) — on an
+        ///      ACTIVATED deployment only. A budget packet that lands before
+        ///      custody activation is typed through `freshShare` /
+        ///      `recycledShare` and leaves these unset. The
         ///      evidence bounding a classification is DERIVED from them at use
         ///      time ({LibRewardCustody.authenticatedFresh}), never snapshotted
         ///      into `freshAuthenticated` (Codex #2217 r3).
-        bytes32 dayListHash;
-        uint256 dayCount;
+        uint256 dayId;
+        bool dayNamed;
         uint256 freshAttested;
         uint256 recycledAttested;
         bool attested;
@@ -8734,14 +8914,14 @@ library LibVaipakam {
         ///      delivery opened, appended. Zero means the packet holds no
         ///      batch balance.
         ///
-        ///      Only the d6 ingress opens a batch, and only over a BUDGET packet
-        ///      landing on a deployment whose reward custody is ACTIVATED; no
-        ///      later entry can open one. Zero is therefore the permanent
-        ///      answer for a COMPENSATION packet (which never takes an epoch)
-        ///      and for a budget packet that arrived before activation, whose
-        ///      value sits Diamond-side and is attributed by the activation
-        ///      envelope (Codex #2232 r1) — its days land through
-        ///      `RewardEpochFacet.proveDeliveryDayChunk` instead.
+        ///      Only the budget ingress opens a batch, and only over a BUDGET
+        ///      packet landing on a deployment whose reward custody is
+        ///      ACTIVATED; no later entry can open one. Zero is therefore the
+        ///      permanent answer for a COMPENSATION packet (which never takes
+        ///      an epoch) and for a budget packet that arrived before
+        ///      activation, whose value sits Diamond-side and is attributed by
+        ///      the activation envelope (Codex #2232 r1). Either way the
+        ///      packet's part counts toward its day at ingress (#2828).
         ///
         ///      The link lives on the PACKET because 3a fixed the evidence
         ///      seam's signature at `(IngressPacket storage)` — no hash, no
@@ -8764,25 +8944,13 @@ library LibVaipakam {
         ///      the attested caps it is drawn under, and never retyped
         ///      (Codex #2276 r26 P1) — an unattested epoch is not drawn.
         uint256 drawn;
-        /// @dev 3d-1 (#1566 transport epochs, the d6 wire), appended — the
-        ///      authenticated day-list COMMITMENT a d6 delivery carries in place
-        ///      of a flat hash: a Merkle root over fixed-size indexed chunks of
-        ///      the list, with the extent the wire committed to (`dayCount`
-        ///      elements in `chunkCount` chunks). Every budget packet carries
-        ///      one; a compensation carries none, and `dayListHash` is zero for
-        ///      every rooted packet: a packet is committed one way or the other,
-        ///      never both. On the epoch path such a
-        ///      packet keeps `freshShare == recycledShare == 0` — those two
-        ///      record what the INGRESS credited to the shared ledgers, which for
-        ///      a delivery held whole as its own epoch is nothing; the wire's
-        ///      split lives in `freshAttested` / `recycledAttested`.
-        bytes32 dayListRoot;
-        uint32 chunkCount;
-        /// @dev Which indexed chunks have landed — bit `i` set once chunk `i`
-        ///      is proven and written; the batch's `indexedDays` reaches
-        ///      `dayCount` exactly when every bit below `chunkCount` is set.
-        uint256 chunksIndexed;
-        /// @dev The era the packet was dispatched in, as the wire stated it.
+        /// @dev On the epoch path a budget packet keeps
+        ///      `freshShare == recycledShare == 0` — those two record what the
+        ///      INGRESS credited to the shared ledgers, which for a delivery
+        ///      held whole as its own epoch is nothing; the wire's split lives
+        ///      in `freshAttested` / `recycledAttested`.
+        ///
+        ///      The era the packet was dispatched in, as the wire stated it.
         ///      STORED, not yet validated: PR C's receive ingresses read it
         ///      against the live era; no wire before d6 carried one.
         uint64 intendedEra;
@@ -8801,7 +8969,7 @@ library LibVaipakam {
         bool eraCounted;
         bool classificationFinal;
         bool eraQuarantined;
-        /// @dev #918, appended — the d7 wire's DECLARED part of its funded day,
+        /// @dev #918, appended — the budget wire's DECLARED part of its funded day,
         ///      per component, as Base sent it: `declaredFresh` + `declaredRecycled`
         ///      is the wire's `total`, before the receiver scales the recycled
         ///      share to a short delivery. Declared, not received, so a part
@@ -8820,39 +8988,30 @@ library LibVaipakam {
     }
 
     /// @notice #1566 transport epochs PR 3b — the TRANSPORT EPOCH of one
-    ///         old-wire delivery: an UNTYPED balance, spendable only by the
-    ///         obligations whose day the delivery listed.
-    /// @dev    The unit is the PACKET and not the day, because the old wire
-    ///         is batched and carries no per-day split (§5c): a legacy
-    ///         remittance is one aggregate over many days, so crediting it to
-    ///         every listed day would duplicate the backing and splitting it
-    ///         would assert a fact the packet never carried. The listed
-    ///         `dayIds` are therefore a MEMBERSHIP FILTER over one balance.
+    ///         budget delivery: an UNTYPED balance, spendable only by the
+    ///         obligations of the ONE day the delivery funds.
+    /// @dev    The unit is the PACKET, so the delivery is held whole as its own
+    ///         epoch rather than credited to a shared ledger: its value is
+    ///         drawn first by its own day's obligations, under the attested
+    ///         caps, and only what they leave reaches the shared sources.
     ///
     ///         `balance` is bounded by the packet's `actualReceived`, never
     ///         its declared total — a short delivery must shrink the funding,
     ///         not the obligations.
     ///
-    ///         ADMISSION IS ALWAYS COMPACT (Codex #2232 r2): it writes this
-    ///         row and nothing per-day, whatever the list's length. The
-    ///         receiver's callback runs inside
-    ///         `LibRewardRemitDispatch.REWARD_BUDGET_DEST_GAS_LIMIT`, a FIXED
-    ///         figure derived from this compact admission — and per-day
-    ///         pushes, two new storage slots each, grow with a list's length
-    ///         without bound (32 of them alone were over the 300,000 the
-    ///         budget stood at then). An admission that
-    ///         indexed short lists synchronously would therefore have failed
-    ///         to deliver exactly the in-flight old-wire messages this path
-    ///         exists to preserve. `indexedDays` climbs afterwards, one
-    ///         permissionless page at a time, proved against the delivery's
-    ///         own day-list commitment.
-    ///
-    ///         Retirement still distinguishes a within-cap list from an
-    ///         over-cap one (§5c: the first retires atomically, the second
-    ///         through the resumable RETIRING path), and 3b-ii reads that from
-    ///         `dayCount` against the cap. It is deliberately NOT a stored
-    ///         flag: a flag beside the count is a second statement of one fact
-    ///         and can disagree with it.
+    ///         #2828 — the epoch is COMPLETE AT ADMISSION. The d8 wire carries
+    ///         the delivery's one day inline, and the ingress links the epoch
+    ///         into that day's index in the same call, so there is no
+    ///         membership left to build afterwards and no state in which an
+    ///         admitted epoch is waiting to be indexed. Before #2828 the d6/d7
+    ///         wire carried a rooted, chunked day list sized for many days, and
+    ///         admission stayed compact while the index was proven in
+    ///         afterwards, page by page ("ADMISSION IS ALWAYS COMPACT", Codex
+    ///         #2232 r2): per-day writes grew with a list's length without
+    ///         bound, which a fixed destination gas budget could not carry.
+    ///         One funded day per send (#2821) bounds them at one day's, which
+    ///         the budget is derived to carry
+    ///         (`LibRewardRemitDispatch.REWARD_BUDGET_DEST_GAS_LIMIT`).
     ///
     ///         `consumedFresh` / `consumedRecycled` are the transport LEG
     ///         COUNTERS: what this packet's own draws have already spent of
@@ -8874,13 +9033,9 @@ library LibVaipakam {
         ///      conservation anchor every draw, restore and disposition is
         ///      checked against.
         uint256 admitted;
-        uint32 dayCount;
-        /// @dev How many listed days carry an index entry. Zero at admission for
-        ///      every batch, climbing one permissionless page at a time until it
-        ///      equals `dayCount`. A batch whose index is not yet whole cannot
-        ///      have its remainder parked — what its obligations may still reach
-        ///      is not known until the membership exists.
-        uint32 indexedDays;
+        /// @dev #2828 — the one day this epoch funds, linked into that day's
+        ///      index at admission. Copied from the packet's `dayId`.
+        uint256 dayId;
         /// @dev Whether the batch's remainder has been parked WITH its
         ///      acknowledgment, which is the sole route by which what remains
         ///      of an old-wire packet becomes classifiable (§5c). Read by
@@ -9067,7 +9222,7 @@ library LibVaipakam {
     ///         membership must be able to reach it: the restore is
     ///         MEMBERSHIP-BOUND, putting value back into the epoch it came
     ///         from rather than into a general pool. The membership is the
-    ///         batch's own, under its packet's day-list root.
+    ///         batch's one day (`dayId`, #2828).
     ///
     ///         `acknowledged` is what releases the batch. Parking alone does
     ///         not: classification is gated behind the parked remainder AND
@@ -9076,12 +9231,8 @@ library LibVaipakam {
     struct TransportRemainder {
         bytes32 batchId;
         uint256 amount;
-        /// @dev RETIRED — never written. It carried the packet's flat day-list
-        ///      commitment; every batch is now rooted, and its membership is the
-        ///      batch's own indexed list. The slot stays so the struct's layout
-        ///      is unchanged (the storage-layout guard, #1274).
-        bytes32 dayListHash;
-        uint32 dayCount;
+        /// @dev #2828 — the batch's one day, copied at parking.
+        uint256 dayId;
         bool acknowledged;
         /// @dev #1566 transport epochs PR 3b (Codex #2232 r3) — CUMULATIVE
         ///      value that has left this remainder through classification.
@@ -9487,13 +9638,6 @@ library LibVaipakam {
         ///      unchanged and an in-place refresh across this change stays
         ///      possible (the storage-layout guard, #1274).
         bool splitOnWire;
-        /// @dev 3d-2 (#1566 transport epochs, the d6 wire), appended — the
-        ///      day-list ROOT this reservation's payload committed to. The
-        ///      receive side indexes the delivery's membership by proofs against
-        ///      exactly this word, so the canonical record of what was sent
-        ///      carries the same commitment the mirror holds. Zero for every
-        ///      reservation dispatched before the rooted wire.
-        bytes32 dayListRoot;
         /// @dev #1461, appended — the recycled share THIS reservation's release
         ///      recorded as stranded in transit (its actual reversal into
         ///      `recycleReleasedRemitStrandedCumulative`) and not yet resolved.
@@ -9513,14 +9657,14 @@ library LibVaipakam {
         /// @dev #2489 (Codex r2), appended — WHICH of `dayIds` this reservation
         ///      funded: bit `i` (word `i >> 8`, bit `i & 255`) is set when
         ///      `dayIds[i]` carried a non-zero slice, i.e. was listed on the wire.
-        ///      Written once at dispatch and never cleared, so the funded list —
-        ///      the list the d6 root commits to — stays recoverable from the
+        ///      Written once at dispatch and never cleared, so the funded day —
+        ///      the day the wire carried — stays recoverable from the
         ///      reservation alone. The live per-day mark (`rewardBudgetRemitted`)
         ///      is not that record: a release deletes it for the days this
         ///      reservation closed, and a later remit of the same days rewrites
-        ///      it, so a list rebuilt from it after either no longer matches the
-        ///      root and the delivery could never be indexed or proven. Empty for
-        ///      a reservation dispatched before it existed, or with no closed day.
+        ///      it. Base's release reads this to attribute the reservation's
+        ///      part to its funded day (`LibRemitDayLedger.fundedDayIndex`).
+        ///      Empty for a reservation with no acted day.
         uint256[] fundedDayBits;
         /// @dev RETIRED (#2910). Was whether `strandedRecycled` had been
         ///      written, so the #2489 history rule could stamp a reservation
@@ -9645,12 +9789,6 @@ library LibVaipakam {
         AssetType assetType;
         bool released;      // tombstone marker — already released, ignore
     }
-
-    /// @dev T-087 Sub 3 add-on #473 — yield venue discriminator.
-    ///      Stored as uint8 in `cfgTreasuryYieldVenue[token]`.
-    uint8 internal constant TREASURY_YIELD_VENUE_NONE       = 0;
-    uint8 internal constant TREASURY_YIELD_VENUE_AAVE_V3    = 1;
-    uint8 internal constant TREASURY_YIELD_VENUE_LIDO_STETH = 2;
 
     /// @notice T-087 Sub 3.B — per-buyback-order state.
     /// @param token       Source asset being swapped into VPFI.
@@ -9940,7 +10078,7 @@ library LibVaipakam {
     // ─── Phase 6: Keeper action bitmask constants ────────────────────────────
     // Each keeper carries a `uint16` bitmask of actions they're authorised to
     // drive for a given NFT holder. Bits are OR'd together; up to 16 actions
-    // (8 defined today, bits 8–15 spare). The constants are `uint16` to match
+    // (7 defined today; bit 4 retired by #3042, bits 8–15 spare). The constants are `uint16` to match
     // the `approvedKeeperActions[user][keeper]` storage type. The container was
     // widened from `uint8` in #1221 (E-4/E-10 prereq): the original 8 bits
     // filled the byte, so adding a 9th action would otherwise force a storage +
@@ -9953,7 +10091,11 @@ library LibVaipakam {
     uint16 internal constant KEEPER_ACTION_COMPLETE_OFFSET = 1 << 1; // 0x02
     uint16 internal constant KEEPER_ACTION_INIT_EARLY_WITHDRAW = 1 << 2; // 0x04
     uint16 internal constant KEEPER_ACTION_INIT_PRECLOSE = 1 << 3; // 0x08
-    uint16 internal constant KEEPER_ACTION_REFINANCE = 1 << 4; // 0x10
+    // Bit 4 (0x10) was `KEEPER_ACTION_REFINANCE`, the delegation a keeper
+    // needed to complete a refinance after the fact. #3042 retired that
+    // completion: every refinance now completes inside the accept of its
+    // tagged offer, where the caller is the Diamond itself, so the bit had no
+    // reader left. It is outside `KEEPER_ACTION_ALL`, so granting it reverts.
     /// @dev T-092 — auto in-place loan extension (no NFT churn).
     ///      Gated by BOTH the borrower's and lender's per-loan
     ///      `autoExtendConsent` caps in `AutoLifecycleFacet`. The
@@ -9985,10 +10127,17 @@ library LibVaipakam {
     ///      widened this from 0x1F to 0x3F at the same time the
     ///      `extendLoanInPlace` executor landed; #393 v1-c widened it 0x3F →
     ///      0x7F with SIGNED_FILL; #393 v1-d.2 widened it 0x7F → 0xFF with
-    ///      AUTO_ROLL. The container is now uint16 (#1221); this value stays
-    ///      0xFF until a bit 8–15 action is defined, at which point the new
-    ///      bit is OR'd in here.
-    uint16 internal constant KEEPER_ACTION_ALL = 0xFF;
+    ///      AUTO_ROLL. #3042 then retired bit 4 (REFINANCE), leaving 0xEF. The
+    ///      container is now uint16 (#1221); a bit 8–15 action, when defined,
+    ///      is OR'd in here.
+    /// @dev Protected account mode — the one delegation that may LOCK the
+    ///      principal's protected account (`ProtectedAccountFacet.lockVaultFor`),
+    ///      so a keeper acting on a linked chat's LOCK command can freeze an
+    ///      account whose owner key may be stolen. Locking only stops movement;
+    ///      no entry accepts this bit for an unlock or for any payout.
+    ///      Principal-keyed, checked via `requireKeeperForPrincipal`.
+    uint16 internal constant KEEPER_ACTION_LOCK_VAULT = 1 << 8; // 0x100
+    uint16 internal constant KEEPER_ACTION_ALL = 0x1EF;
 
     /**
      * @notice Retrieves the Vaipakam storage slot.
@@ -12284,7 +12433,8 @@ library LibVaipakam {
     ///   - `EarlyWithdrawalFacet.createLoanSaleOffer` /
     ///     `EarlyWithdrawalDirectFacet.sellLoanViaBuyOffer` (lender exits early)
     ///   - `PrecloseFacet.transferObligationViaOffer` (funds + state)
-    ///   - `RefinanceFacet.refinanceLoan` (funds + new loan state)
+    ///   - a refinance (funds + new loan state), screened through the
+    ///     accept of its tagged offer and `RefinanceFacet`'s holder screen
     ///
     /// **Tier 2 — ALLOW** even when `msg.sender` is sanctioned. Each
     /// entry point either CLOSES exposure to the sanctioned party or
@@ -12451,7 +12601,7 @@ library LibVaipakam {
     ///         sanctions-oracle outage. Ordinary (never-locked) claims keep using
     ///         the fail-open {_assertNotSanctioned} on `msg.sender`, so an oracle
     ///         blip never bricks honest users. Mirrors the fail-closed pattern in
-    ///         `VaultFactoryFacet.recoverStuckERC20`. Reuses the shared
+    ///         `VaultDepositoryFacet.adoptUntracked`. Reuses the shared
     ///         `IVaipakamErrors.SanctionsOracleUnavailable` + local
     ///         `SanctionedAddress` errors.
     function assertNotSanctionedFailClosed(address who) internal view {
@@ -12531,45 +12681,70 @@ library LibVaipakam {
         if (isRecipientBarred(who)) revert SanctionedAddress(who);
     }
 
-    /// @notice Internal accountant for protocol-deposited ERC-20
-    ///         tokens in a user's vault. Increments the per-(user,
-    ///         token) counter that the Asset Viewer and the future
-    ///         stuck-token recovery flow read.
-    /// @dev    Library-internal helper called from
-    ///         `VaultFactoryFacet.vaultDepositERC20` and
-    ///         `recordVaultDepositERC20` (the counter-only sibling
-    ///         used after Permit2 pulls). Solidity 0.8+ checked
-    ///         arithmetic protects against overflow.
-    function recordVaultDeposit(
-        address user,
-        address token,
-        uint256 amount
-    ) internal {
-        Storage storage s = storageSlot();
-        s.protocolTrackedVaultBalance[user][token] += amount;
-        // #1820 — this and {recordVaultWithdraw} are the only writers of the
-        // tracked balance the VPFI fee-discount tier reads, so a change to a
-        // user's tracked VPFI refreshes their tier record here, on every
-        // path, instead of at each facet that moves VPFI (see LibTierRecord).
-        if (amount != 0 && token == s.vpfiToken && token != address(0)) LibTierRecord.refresh(user);
+    /// @notice The tracked holding of `asset` / `tokenId` in `user`'s vault:
+    ///         what the protocol put in and has not taken out (zero `tokenId`
+    ///         for an ERC-20). The one accessor every reader uses; nothing
+    ///         else indexes `protocolTrackedVaultHolding`.
+    /// @dev    Excludes anything that reached the vault outside the protocol
+    ///         (an unsolicited transfer), which only an adoption
+    ///         (`VaultDepositoryFacet.adoptUntracked`) brings into it.
+    function trackedHolding(address user, address asset, uint256 tokenId)
+        internal
+        view
+        returns (uint256)
+    {
+        return storageSlot().protocolTrackedVaultHolding[user][asset][tokenId];
     }
 
-    /// @notice Internal accountant for protocol-withdrawn ERC-20
-    ///         tokens from a user's vault.
-    /// @dev    Called from `VaultFactoryFacet.vaultWithdrawERC20`.
-    ///         Underflow reverts — a decrement greater than the
-    ///         tracked balance means a withdraw fired without a
-    ///         matching deposit somewhere, which is an accounting
-    ///         bug upstream that we want to surface loudly.
-    function recordVaultWithdraw(
+    /// @notice Record an ERC-20 the protocol put into `user`'s vault.
+    function recordVaultDeposit(address user, address token, uint256 amount) internal {
+        recordVaultDeposit(user, token, 0, amount);
+    }
+
+    /// @notice Record an ERC-20 the protocol took out of `user`'s vault.
+    function recordVaultWithdraw(address user, address token, uint256 amount) internal {
+        recordVaultWithdraw(user, token, 0, amount);
+    }
+
+    /// @notice Internal accountant for every asset kind the protocol puts
+    ///         into a user's vault: raises the tracked holding of
+    ///         `(asset, tokenId)` by `amount` (one for an ERC-721).
+    /// @dev    Called by the vault deposit routes on `VaultFactoryFacet`
+    ///         and by an adoption. Checked arithmetic.
+    function recordVaultDeposit(
         address user,
-        address token,
+        address asset,
+        uint256 tokenId,
         uint256 amount
     ) internal {
         Storage storage s = storageSlot();
-        s.protocolTrackedVaultBalance[user][token] -= amount;
+        s.protocolTrackedVaultHolding[user][asset][tokenId] += amount;
+        // #1820 — this and {recordVaultWithdraw} are the only writers of the
+        // tracked holding the VPFI fee-discount tier reads, so a change to a
+        // user's tracked VPFI refreshes their tier record here, on every
+        // path, instead of at each facet that moves VPFI (see LibTierRecord).
+        if (amount != 0 && tokenId == 0 && asset == s.vpfiToken && asset != address(0)) {
+            LibTierRecord.refresh(user);
+        }
+    }
+
+    /// @notice Internal accountant for every asset kind the protocol takes
+    ///         out of a user's vault.
+    /// @dev    Underflow reverts — a decrement greater than the tracked
+    ///         holding means a withdraw fired without a matching deposit,
+    ///         an accounting bug upstream that must surface loudly.
+    function recordVaultWithdraw(
+        address user,
+        address asset,
+        uint256 tokenId,
+        uint256 amount
+    ) internal {
+        Storage storage s = storageSlot();
+        s.protocolTrackedVaultHolding[user][asset][tokenId] -= amount;
         // #1820 — see {recordVaultDeposit}.
-        if (amount != 0 && token == s.vpfiToken && token != address(0)) LibTierRecord.refresh(user);
+        if (amount != 0 && tokenId == 0 && asset == s.vpfiToken && asset != address(0)) {
+            LibTierRecord.refresh(user);
+        }
     }
 
     // ─── #1123 — fail-closed position-movement restriction ─────────────

@@ -2,20 +2,34 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibDepositoryLedger} from "../libraries/LibDepositoryLedger.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibRewardCustody} from "../libraries/LibRewardCustody.sol";
 import {LibDelivery} from "../libraries/LibDelivery.sol";
+
+import {LibProtectedAccount} from "../libraries/LibProtectedAccount.sol";
 import {VaipakamVaultImplementation} from "../VaipakamVaultImplementation.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts/proxy/utils/UUPSUpgradeable.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC1155} from "@openzeppelin/contracts/token/ERC1155/IERC1155.sol";
+import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
-import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
-import {ISanctionsList} from "../interfaces/ISanctionsList.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
+
+/// @dev The payout gate's host (protected account mode), reached by self-call.
+interface IPayoutGate {
+    function applyPayoutGate(
+        address user,
+        uint8 kind,
+        address asset,
+        uint256 tokenId,
+        uint256 amount,
+        address recipient
+    ) external returns (bool held);
+}
 
 /**
  * @title VaultFactoryFacet
@@ -91,6 +105,39 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
         }
     }
     using SafeERC20 for IERC20;
+
+    /// @dev Protected account mode — whether this payout must not be paid
+    ///      now (queued, or kept in a locked account's vault). Only an
+    ///      account with the mode on pays for the self-call into the gate's
+    ///      host (`VaultPayoutFacet.applyPayoutGate`, the rule in
+    ///      `LibProtectedAccount.gate`).
+    function _payoutHeld(
+        address user,
+        uint8 kind,
+        address asset,
+        uint256 tokenId,
+        uint256 amount,
+        address recipient
+    ) private returns (bool) {
+        if (!LibVaipakam.storageSlot().protectedAccount[user].enabled) return false;
+        return IPayoutGate(address(this)).applyPayoutGate(user, kind, asset, tokenId, amount, recipient);
+    }
+
+    /// @dev Protected account mode, the RECIPIENT side: where a payout from
+    ///      `user`'s vault to `recipient` must land instead of `recipient`'s
+    ///      wallet. A payment the protocol makes to a protected account's
+    ///      wallet from anywhere but that account's own vault is credited to
+    ///      its vault, so it leaves only through the delay; the source side
+    ///      ({_payoutHeld}) covers the account's own vault. Zero when the
+    ///      payout goes where it was addressed: `recipient` is `user`, or has
+    ///      the mode off. An account with the mode on always has a vault
+    ///      (enabling creates it).
+    function _protectedRecipientVault(address user, address recipient) private view returns (address) {
+        if (recipient == user) return address(0);
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (!s.protectedAccount[recipient].enabled) return address(0);
+        return s.userVaipakamVaults[recipient];
+    }
 
     /// @notice Emitted when a new user vault proxy is created.
     /// @param user The address of the user for whom the vault is created.
@@ -189,48 +236,24 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
     ///      ERC-20 loan, which rents nothing.
     error NotRentalLoan();
     error VaultUpgradeRequired();
+    /// @dev Depository vault — `user` pinned their vault's implementation, so
+    ///      only `user` may upgrade it.
+    error VaultPinned(address user);
+    /// @notice Depository vault — `user`'s pin was cleared (by their own
+    ///         upgrade, or by an unpin).
+    /// @custom:event-category state-change/vault-mutation
+    event VaultUnpinned(address indexed account);
     /// @dev #2363 — a mandatory vault version above `currentVaultVersion`
     ///      is a bar no user can clear: {upgradeUserVault} can only stamp a
     ///      user at `currentVaultVersion`, so every existing-vault user
     ///      would be refused until an admin acted again.
     error MandatoryVaultVersionUnreachable(uint256 version, uint256 currentVersion);
-    /// @dev Stuck-recovery rejected: caller-supplied amount is zero.
-    error AmountZero();
-    /// @dev Stuck-recovery rejected: token has protocol-configured risk
-    ///      params (collateral / principal / etc.). Recovery of these
-    ///      tokens via the off-flow path could pull live collateral or
-    ///      claim entitlement; require a governed code change instead.
-    error TokenIsProtocolConfigured();
-    /// @dev Stuck-recovery rejected: VPFI must exit via the proper
-    ///      `withdrawVPFIFromVault` unstake flow that closes the
-    ///      time-weighted discount period and the staking checkpoint.
-    error CannotRecoverVPFI();
-    /// @dev Stuck-recovery rejected: target user has never had an
-    ///      vault created (no proxy address recorded).
-    error UserHasNoVault();
     /// @notice #821 — a wind-down close-out tried to deposit a flagged
     ///         recipient's locked share but the recipient has no existing vault,
     ///         and the receive-side exemption refuses to mint one for a
     ///         sanctioned wallet. Unreachable for real loan parties (they all
     ///         have a vault by close-out time); a defensive backstop.
     error SanctionedRecipientHasNoVault(address recipient);
-
-    /// @notice Emitted when an admin recovers tokens that landed in a
-    ///         user's vault outside the protocol deposit flow (e.g. a
-    ///         direct ERC-20 `transfer` from the user's wallet, which
-    ///         the EVM gives no opportunity to reject).
-    /// @param  user    Vault owner whose proxy held the tokens.
-    /// @param  token   ERC-20 contract being recovered.
-    /// @param  amount  Amount returned to `user` (recipient is locked
-    ///                 to the user themselves — admin cannot redirect).
-    /// @param  admin   `msg.sender` of the recovery call.
-    /// @custom:event-category state-change/vault-mutation
-    event StuckERC20Recovered(
-        address indexed user,
-        address indexed token,
-        uint256 amount,
-        address indexed admin
-    );
 
     /**
      * @notice Initializes the shared vault implementation by deploying a new VaipakamVaultImplementation.
@@ -311,11 +334,20 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
             );
             proxy = address(newProxy);
             s.userVaipakamVaults[user] = proxy;
+            s.vaultUserOf[proxy] = user;
             s.vaultVersion[user] = s.currentVaultVersion;
             emit UserVaultCreated(user, proxy);
         } else {
-            // Block interactions with outdated vaults when a mandatory upgrade is active
-            if (LibVaipakam.vaultUpgradeRequired(user)) revert VaultUpgradeRequired();
+            // Block interactions with outdated vaults when a mandatory upgrade
+            // is active. Depository vault: an owner who PINNED their vault to
+            // the implementation they chose may still deposit, withdraw,
+            // release and escape on it (the depository steps set the context);
+            // every loan step still needs the upgrade.
+            if (
+                LibVaipakam.vaultUpgradeRequired(user)
+                    && !(s.vaultPinnedImplementation[user] != address(0)
+                        && LibProtectedAccount.inDepositoryContext())
+            ) revert VaultUpgradeRequired();
         }
     }
 
@@ -345,24 +377,41 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
      * @notice Upgrades a user's vault proxy to the latest implementation.
      * @dev Calls UUPS upgradeToAndCall on the user's proxy to point it to the
      *      current vaipakamVaultTemplate. Updates the user's version stamp.
-     *      Callable by anyone (typically the user themselves via frontend).
+     *      Callable by anyone (typically the user themselves via frontend),
+     *      except for a vault its owner has pinned
+     *      (`VaultDepositoryFacet.pinVaultImplementation`): only the owner
+     *      upgrades a pinned vault, which also clears the pin. A protected
+     *      account's pinned vault is not upgraded here at all: its pin comes
+     *      off only through the delayed unpin, and then anyone may upgrade.
      * @param user The user whose vault to upgrade.
      */
     function upgradeUserVault(address user) external {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         address proxy = s.userVaipakamVaults[user];
         if (proxy == address(0)) revert NoVault();
+        if (s.vaultPinnedImplementation[user] != address(0)) {
+            // Under protected mode a pin is removed only through the delayed
+            // unpin (`VaultDepositoryFacet.unpinVaultImplementation`), so a
+            // stolen primary key cannot skip that delay with an upgrade.
+            if (msg.sender != user || s.protectedAccount[user].enabled) revert VaultPinned(user);
+            delete s.vaultPinnedImplementation[user];
+            emit VaultUnpinned(user);
+        }
         _upgradeVault(s, user, proxy);
     }
 
     /// @dev Points `user`'s vault `proxy` at the current shared template and
     ///      stamps the current version. The one upgrade step, shared by
-    ///      {upgradeUserVault} and the rental route's catch-up.
+    ///      {upgradeUserVault} and the rental route's catch-up. It refuses a
+    ///      PINNED vault, so no path reaching it can move a vault its owner
+    ///      pinned: the owner's own upgrade clears the pin before calling it,
+    ///      and the rental catch-up skips a pinned vault instead.
     function _upgradeVault(
         LibVaipakam.Storage storage s,
         address user,
         address proxy
     ) private {
+        if (s.vaultPinnedImplementation[user] != address(0)) revert VaultPinned(user);
         // Call UUPS upgradeToAndCall on the proxy
         (bool success, ) = proxy.call(
             abi.encodeWithSelector(
@@ -593,6 +642,10 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
         address proxy = _currentVault(s, user);
         IERC20(token).safeTransfer(proxy, amount);
         LibVaipakam.recordVaultDeposit(user, token, amount);
+        // A reward paid into the vault is the owner's, free: it joins the
+        // depository holding, so the owner (or a replacement controller)
+        // can withdraw it like a deposit.
+        LibDepositoryLedger.credit(user, token, 0, amount);
     }
 
     /**
@@ -667,6 +720,7 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
         uint256 amount = fresh + recycled + epoch;
         LibRewardCustody.releaseMeasured(vpfi, holder, proxy, amount);
         LibVaipakam.recordVaultDeposit(user, token, amount);
+        LibDepositoryLedger.credit(user, token, 0, amount);
     }
 
     /// @dev READ-ONLY resolution of an EXISTING vault on a current implementation
@@ -742,8 +796,7 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
         // stranding/underflowing the eventual collateral return. The
         // tracked counter excludes dust, so capping by it keeps free
         // balance honest.
-        uint256 trackedBalance =
-            LibVaipakam.storageSlot().protocolTrackedVaultBalance[user][token];
+        uint256 trackedBalance = LibVaipakam.trackedHolding(user, token, 0);
         uint256 proxyBefore = IERC20(token).balanceOf(proxy);
         uint256 rawForGuard = proxyBefore;
         if (trackedBalance < rawForGuard) {
@@ -756,12 +809,22 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
             amount,
             rawForGuard
         );
-        uint256 recipientBefore = IERC20(token).balanceOf(recipient);
+        // Protected account mode — a payout to the owner's own wallet is
+        // queued (or, while the account is locked, kept in the vault) instead
+        // of paid; nothing moves and the tracked balance is unchanged until a
+        // release pays it through this same route.
+        if (_payoutHeld(user, uint8(LibVaipakam.AssetType.ERC20), token, 0, amount, recipient)) {
+            return amount;
+        }
+        // A protected recipient's wallet is paid into its vault instead.
+        address creditTo = _protectedRecipientVault(user, recipient);
+        address dest = creditTo == address(0) ? recipient : creditTo;
+        uint256 recipientBefore = IERC20(token).balanceOf(dest);
         (bool success, ) = proxy.call(
             abi.encodeWithSelector(
                 VaipakamVaultImplementation.withdrawERC20.selector,
                 token,
-                recipient,
+                dest,
                 amount
             )
         );
@@ -770,8 +833,11 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
         // balance below falls by exactly that, and a token charging its sender
         // on top would take the excess from the holder's other positions.
         LibDelivery.requireNoOverDebit(token, proxy, proxyBefore, amount);
-        delivered = LibDelivery.measured(token, proxy, recipient, recipientBefore, amount);
+        delivered = LibDelivery.measured(token, proxy, dest, recipientBefore, amount);
         LibVaipakam.recordVaultWithdraw(user, token, amount);
+        if (creditTo != address(0)) {
+            LibProtectedAccount.creditPayment(recipient, token, 0, amount, delivered);
+        }
         // RL-2 — VPFI outflow observability for the reward-retention
         // ledger. This and {recordVaultOutflowERC20} are the two
         // recordVaultWithdraw callers and both emit it, so every tracked
@@ -809,7 +875,7 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
     ) external onlyDiamondInternal {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         address proxy = _currentVault(s, user);
-        uint256 trackedBalance = s.protocolTrackedVaultBalance[user][token];
+        uint256 trackedBalance = LibVaipakam.trackedHolding(user, token, 0);
         uint256 rawForGuard = IERC20(token).balanceOf(proxy);
         if (trackedBalance < rawForGuard) {
             rawForGuard = trackedBalance;
@@ -822,428 +888,45 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
     }
 
     /**
-     * @notice Returns the per-(user, token) protocol-tracked vault
-     *         balance — i.e. the running sum of every
-     *         `vaultDepositERC20` / `recordVaultDepositERC20`
-     *         minus every `vaultWithdrawERC20` for that pair.
-     *
-     * @dev    Pure view; safe to call externally. Asset Viewer
-     *         displays `min(balanceOf(vault, token), this)` so
-     *         unsolicited dust pushed in directly via
-     *         `IERC20.transfer` is hidden from the UI. The future
-     *         stuck-token recovery flow (T-054) caps recovery at
-     *         `max(0, balanceOf - this)`.
+     * @notice The tracked holding of `asset` / `tokenId` in `user`'s vault:
+     *         what the protocol put in and has not taken out (zero `tokenId`
+     *         for an ERC-20, the unit count for an ERC-1155, one for an
+     *         ERC-721 the vault holds through the protocol).
+     * @dev    The one ledger every vault withdraw route is bounded by. An
+     *         asset that reached the vault outside the protocol is not in it
+     *         until its owner adopts it (`VaultDepositoryFacet.adoptUntracked`).
+     *         Display `min(chain balance, this)` to hide unsolicited assets.
      */
-    function getProtocolTrackedVaultBalance(
+    function getTrackedHolding(
         address user,
-        address token
+        address asset,
+        uint256 tokenId
     ) external view returns (uint256) {
-        return LibVaipakam.storageSlot().protocolTrackedVaultBalance[user][token];
-    }
-
-    // ─── Stuck-token recovery (T-054 PR-3) ───────────────────────────────────
-    //
-    // The receiver-hook hardening shipped 2026-05-03 blocks direct
-    // user-initiated NFT transfers into a per-user vault. ERC-20 has
-    // no equivalent receiver-side hook (the EVM gives the recipient
-    // zero opportunity to reject), so unsolicited ERC-20 transfers
-    // CAN land in an vault proxy. This recovery flow gives the
-    // legitimate self-deposit case ("I sent USDC to my vault address
-    // by accident from my own wallet / a CEX") a clean exit, while
-    // structurally preventing the recovery path from touching
-    // protocol-managed collateral / claims.
-    //
-    // The cap is the load-bearing safety property:
-    //
-    //     unsolicited = max(0, balanceOf(vault, token)
-    //                       - protocolTrackedVaultBalance[user][token])
-    //     require(amount <= unsolicited)
-    //
-    // Counter math forbids draining beyond the truly-unsolicited
-    // delta no matter what other check is bypassed. The recipient is
-    // hardcoded to `msg.sender` (the vault owner) so admin / malware
-    // / coordination attacks cannot redirect funds.
-    //
-    // Sanctioned-source declarations trigger an vault ban under the
-    // protocol's existing sanctions semantics: every Tier-1 entry
-    // point starts reverting `SanctionedAddress` for the user's EOA.
-    // The ban tracks the SOURCE wallet's current oracle status — if
-    // the address is later de-listed, the ban auto-unlocks. See
-    // `LibVaipakam.isSanctionedAddress` for the source-tracked
-    // delegation logic.
-    //
-    // EIP-712 acknowledgment + nonce + deadline are replay-protected
-    // and provide a portable cryptographic record of explicit
-    // consent. Combined with a frontend `type CONFIRM` modal (PR-4),
-    // this is defense-in-depth for an action that could lock the
-    // user's vault on a wrong declaration.
-    //
-    // Full design: docs/DesignsAndPlans/VaultStuckRecoveryDesign.md.
-
-    /// @dev EIP-712 domain typehash. Domain name = "Vaipakam Recovery"
-    ///      (separate from any other domain the diamond uses, e.g. Permit2,
-    ///      so signatures can't be cross-domain replayed).
-    bytes32 private constant EIP712_DOMAIN_TYPEHASH =
-        keccak256(
-            "EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"
-        );
-    bytes32 private constant EIP712_DOMAIN_NAME_HASH = keccak256("Vaipakam Recovery");
-    bytes32 private constant EIP712_DOMAIN_VERSION_HASH = keccak256("1");
-
-    /// @dev Typehash for the recovery acknowledgment payload. The
-    ///      `ackTextHash` field anchors the signed payload to the
-    ///      exact warning text the user agreed to — a future change
-    ///      to the wording bumps the constant and breaks the old
-    ///      hash so historical signatures can't be used against new
-    ///      warning text.
-    bytes32 private constant RECOVERY_TYPEHASH =
-        keccak256(
-            "RecoveryAcknowledgment(address user,address token,address declaredSource,uint256 amount,uint256 nonce,uint256 deadline,bytes32 ackTextHash)"
-        );
-
-    /// @dev keccak256 of the canonical recovery warning text shown to
-    ///      the user in the wallet popup + confirmation modal. Constant
-    ///      so the contract can verify the user signed against the
-    ///      EXACT text we display, not a manipulated variant.
-    bytes32 internal constant RECOVERY_ACK_TEXT_HASH =
-        keccak256(
-            bytes(
-                "I am declaring that the source address belongs to a wallet I"
-                " control or authorized. If the source is later determined to"
-                " be on the sanctions list, my vault will be locked under the"
-                " protocol's sanctions policy until the address is de-listed."
-                " I have read and understood the Advanced User Guide section"
-                " on stuck-token recovery."
-            )
-        );
-
-    /// @notice Emitted when stuck ERC-20 tokens are recovered to the
-    ///         user's EOA. Indexed for full audit trail post-deploy.
-    /// @param  user            Vault owner whose vault was tapped.
-    /// @param  token           ERC-20 contract being recovered.
-    /// @param  declaredSource  Address the user attested as the
-    ///                         transfer's origin.
-    /// @param  amount          Amount returned to `user` (recipient
-    ///                         is locked to the user themselves —
-    ///                         no parameter accepted).
-    /// @param  nonce           Recovery nonce consumed by this call.
-    /// @custom:event-category state-change/vault-mutation
-    event StuckERC20Recovered(
-        address indexed user,
-        address indexed token,
-        address indexed declaredSource,
-        uint256 amount,
-        uint256 nonce
-    );
-
-    /// @notice Emitted when a recovery declaration named a sanctions-
-    ///         flagged source — the user's vault is now locked under
-    ///         the existing sanctions policy until the source address
-    ///         is de-listed from the oracle. The corresponding
-    ///         `recoverStuckERC20` call reverts immediately after
-    ///         emitting; tokens stay in the vault.
-    /// @custom:event-category informational/admin
-    event VaultBannedFromRecoveryAttempt(
-        address indexed user,
-        address indexed token,
-        address indexed declaredSource,
-        uint256 amount
-    );
-
-    /// @notice Emitted by {disown} when the user formally asserts
-    ///         that some unsolicited token balance is not theirs.
-    ///         Event-only — changes no on-chain state. Provides a
-    ///         compliance audit trail useful for individual user
-    ///         disputes with CEXs / regulators ("here's the on-chain
-    ///         record of my disowning the suspicious deposit").
-    /// @custom:event-category state-change/vault-mutation
-    event TokenDisowned(
-        address indexed user,
-        address indexed token,
-        uint256 observedAmount,
-        uint256 blockNumber
-    );
-
-    /**
-     * @notice Recover ERC-20 tokens that landed in your vault via a
-     *         direct `IERC20.transfer` (outside the protocol's
-     *         deposit flow). Funds are returned to YOU (the vault
-     *         owner) — recipient is hardcoded, no parameter accepted.
-     *
-     * @dev Cap math is the load-bearing safety property:
-     *
-     *          unsolicited = max(0, balanceOf - tracked)
-     *          require(amount <= unsolicited)
-     *
-     *      No matter what other check is bypassed, the arithmetic
-     *      forbids draining beyond the truly-unsolicited delta.
-     *
-     *      DECLARING A SANCTIONED SOURCE LOCKS YOUR VAULT. The user
-     *      attests via signature that the declared source is theirs.
-     *      If the sanctions oracle flags it, the protocol applies the
-     *      same Tier-1 / Tier-2 semantics as any other sanctioned
-     *      address — Tier-1 entry points (createOffer, acceptOffer,
-     *      VPFI deposit, this function, etc.) revert; Tier-2
-     *      close-outs (repay, mark default) stay open so the
-     *      unflagged counterparty can be made whole. Auto-unlocks
-     *      when the source is de-listed.
-     *
-     *      EIP-712 acknowledgment binds the call to the user's
-     *      explicit consent. Nonce + deadline are replay-protected.
-     *
-     *      Discoverability gating is enforced at the frontend — this
-     *      page is reachable ONLY via a deep link from the Advanced
-     *      User Guide (`noindex,nofollow`), so naive users dust-
-     *      poisoned by a third party can't accidentally trip the
-     *      sanctions-source ban.
-     */
-    // forge-lint: disable-next-line(mixed-case-function)
-    function recoverStuckERC20(
-        address token,
-        address declaredSource,
-        uint256 amount,
-        uint256 deadline,
-        bytes calldata signature
-    ) external {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-
-        // 1. Sanctions check on caller. If the user is already
-        //    flagged (oracle or recovery-induced ban), Tier-1
-        //    semantics block recovery entirely.
-        LibVaipakam._assertNotSanctioned(msg.sender);
-
-        // 2. Validate basic args.
-        if (amount == 0) revert RecoveryAmountZero();
-        if (block.timestamp > deadline) revert RecoveryDeadlineExpired();
-
-        // 3. Validate the EIP-712 signature recovers to msg.sender.
-        //    `nonce` is captured pre-mutation; the increment AFTER
-        //    successful verification is the replay-protection gate.
-        uint256 nonce = s.recoveryNonce[msg.sender];
-        bytes32 digest = _recoveryDigest(
-            msg.sender,
-            token,
-            declaredSource,
-            amount,
-            nonce,
-            deadline
-        );
-        address signer = ECDSA.recover(digest, signature);
-        if (signer != msg.sender) revert RecoverySignatureInvalid();
-
-        // 4. Resolve user's vault proxy.
-        address proxy = s.userVaipakamVaults[msg.sender];
-        if (proxy == address(0)) revert RecoveryUserHasNoVault();
-
-        // 5. Cap = max(0, balanceOf - tracked). Recovery cannot drain
-        //    protocol-managed balance under any circumstance.
-        uint256 actualBal = IERC20(token).balanceOf(proxy);
-        uint256 trackedBal = s.protocolTrackedVaultBalance[msg.sender][token];
-        uint256 unsolicited = actualBal > trackedBal
-            ? actualBal - trackedBal
-            : 0;
-        if (amount > unsolicited) revert RecoveryAmountExceedsUnsolicited();
-
-        // 6. Sanctions oracle check on declaredSource. Failure modes:
-        //      - Oracle unset: refuse (fail-safe).
-        //      - Oracle reverts: refuse (fail-safe).
-        //      - Source flagged: ban vault + revert.
-        //      - Source clean: proceed.
-        address oracle = s.sanctionsOracle;
-        if (oracle == address(0)) revert SanctionsOracleUnavailable();
-        bool sourceFlagged;
-        try ISanctionsList(oracle).isSanctioned(declaredSource) returns (bool flagged) {
-            sourceFlagged = flagged;
-        } catch {
-            revert SanctionsOracleUnavailable();
-        }
-        if (sourceFlagged) {
-            // Record source-tracked ban; auto-unlocks if oracle later
-            // de-lists. Bump nonce so the same signature can't be
-            // replayed once the ban lifts. Tokens DO NOT MOVE — they
-            // stay in vault under the sanctions-policy lock.
-            //
-            // Crucially, this branch RETURNS rather than reverting.
-            // A revert would roll back the ban-state writes, so the
-            // ban would never persist. The transaction succeeds at
-            // the EVM level — frontend reads the
-            // `VaultBannedFromRecoveryAttempt` event to surface the
-            // banned-as-outcome to the user.
-            s.vaultBannedSource[msg.sender] = declaredSource;
-            // #1123 (Codex #1126 r1 P2) — a recovery-banned wallet is treated as
-            // sanctioned by `sanctionsStatus` via its `vaultBannedSource` leg. This
-            // ban was recorded from an AUTHORITATIVE flagged-source read (oracle set
-            // + the call succeeded above), so also register the wallet in the
-            // confirmed-flagged registry: otherwise a later source-read OUTAGE would
-            // make `sanctionsStatus` return `Unavailable` and the movement gate's
-            // outage branch — which consults only the registry — would let this
-            // confirmed-flagged holder move a position.
-            s.sanctionsConfirmedFlagged[msg.sender] = true;
-            unchecked {
-                s.recoveryNonce[msg.sender] = nonce + 1;
-            }
-            emit VaultBannedFromRecoveryAttempt(
-                msg.sender,
-                token,
-                declaredSource,
-                amount
-            );
-            return;
-        }
-
-        // 7. Bump nonce BEFORE the external transfer. Standard
-        //    checks-effects-interactions ordering — even though the
-        //    proxy's `withdrawERC20` is trusted, we don't want the
-        //    nonce-bump to be reorderable across re-entry.
-        unchecked {
-            s.recoveryNonce[msg.sender] = nonce + 1;
-        }
-
-        // 8. Transfer to user's EOA via the proxy. Recipient is
-        //    hardcoded to msg.sender — no caller-supplied recipient.
-        //    #2440 — the vault may lose no more than the recovered dust: a
-        //    token charging its sender on top would take the excess from the
-        //    tracked balance that backs the holder's positions.
-        uint256 proxyBefore = IERC20(token).balanceOf(proxy);
-        (bool success, ) = proxy.call(
-            abi.encodeWithSelector(
-                VaipakamVaultImplementation.withdrawERC20.selector,
-                token,
-                msg.sender,
-                amount
-            )
-        );
-        if (!success) revert ProxyCallFailed("Recovery withdraw failed");
-        LibDelivery.requireNoOverDebit(token, proxy, proxyBefore, amount);
-
-        emit StuckERC20Recovered(msg.sender, token, declaredSource, amount, nonce);
+        return LibVaipakam.trackedHolding(user, asset, tokenId);
     }
 
     /**
-     * @notice Formally disown unsolicited tokens sitting in your
-     *         vault without recovering them. Event-only — no state
-     *         change. Useful as a public on-chain assertion in
-     *         compliance disputes ("the dust isn't mine and I never
-     *         touched it").
-     *
-     * @dev    No funds move; the dust stays locked in the vault as
-     *         before. Any future recovery for this token is
-     *         unaffected.
-     *
-     *         Sanctions-gated: a banned vault can still call
-     *         `disown` because it's purely informational. Tier-2 in
-     *         the parlance of LibVaipakam's sanctions policy.
-     *
-     * @param token The ERC-20 token being disowned.
-     */
-    function disown(address token) external {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        address proxy = s.userVaipakamVaults[msg.sender];
-        if (proxy == address(0)) revert RecoveryUserHasNoVault();
-        uint256 actualBal = IERC20(token).balanceOf(proxy);
-        uint256 trackedBal = s.protocolTrackedVaultBalance[msg.sender][token];
-        uint256 observed = actualBal > trackedBal ? actualBal - trackedBal : 0;
-        emit TokenDisowned(msg.sender, token, observed, block.number);
-    }
-
-    /// @notice View — returns the EIP-712 domain separator for the
-    ///         recovery flow. Frontend reads this to construct the
-    ///         exact digest the wallet will sign over.
-    function recoveryDomainSeparator() external view returns (bytes32) {
-        return _domainSeparator();
-    }
-
-    /// @notice View — returns the keccak256 of the canonical warning
-    ///         text. Frontend MUST use the same text (verified by hash)
-    ///         when constructing the EIP-712 payload, or the
-    ///         signature won't recover correctly.
-    function recoveryAckTextHash() external pure returns (bytes32) {
-        return RECOVERY_ACK_TEXT_HASH;
-    }
-
-    /// @notice View — current recovery nonce for `user`. Frontend
-    ///         reads this to fill in the EIP-712 payload's `nonce`
-    ///         field.
-    function recoveryNonce(address user) external view returns (uint256) {
-        return LibVaipakam.storageSlot().recoveryNonce[user];
-    }
-
-    /// @notice View — the sanctioned source address that locked
-    ///         `user`'s vault under recovery (zero ⇒ no recovery-
-    ///         induced ban). The ban auto-unlocks when this source
-    ///         is de-listed from the oracle, even though the storage
-    ///         field stays populated.
-    function vaultBannedSource(address user) external view returns (address) {
-        return LibVaipakam.storageSlot().vaultBannedSource[user];
-    }
-
-    /// @dev Compute the EIP-712 domain separator. View (depends on
-    ///      block.chainid which can change in a hard fork; we
-    ///      recompute on every call rather than caching).
-    function _domainSeparator() internal view returns (bytes32) {
-        return
-            keccak256(
-                abi.encode(
-                    EIP712_DOMAIN_TYPEHASH,
-                    EIP712_DOMAIN_NAME_HASH,
-                    EIP712_DOMAIN_VERSION_HASH,
-                    block.chainid,
-                    address(this)
-                )
-            );
-    }
-
-    /// @dev Compute the digest the user signs over for a recovery
-    ///      acknowledgment. Layout matches EIP-712 §7.
-    function _recoveryDigest(
-        address user,
-        address token,
-        address declaredSource,
-        uint256 amount,
-        uint256 nonce,
-        uint256 deadline
-    ) internal view returns (bytes32) {
-        bytes32 structHash = keccak256(
-            abi.encode(
-                RECOVERY_TYPEHASH,
-                user,
-                token,
-                declaredSource,
-                amount,
-                nonce,
-                deadline,
-                RECOVERY_ACK_TEXT_HASH
-            )
-        );
-        return
-            keccak256(
-                abi.encodePacked("\x19\x01", _domainSeparator(), structHash)
-            );
-    }
-
-    /**
-     * @notice Deposits an ERC-721 NFT into the specified user's vault.
-     * @dev Low-level call to the proxy's depositERC721 function (safeTransferFrom).
-     *      Reverts on failure.
-     * @param user The user whose vault to deposit into.
+     * @notice Deposits ERC-721 `tokenId` from `from` into `user`'s vault and
+     *         records it in the tracked ledger.
+     * @dev    The Diamond moves the token as `from`'s approved operator
+     *         (the vault's receive hook accepts the Diamond as operator), then
+     *         checks the vault owns it.
+     * @param user        Whose vault is credited.
+     * @param from        Who the token comes from (usually `user`).
      * @param nftContract The NFT contract address.
-     * @param tokenId The token ID.
+     * @param tokenId     The token ID.
      */
     // forge-lint: disable-next-line(mixed-case-function)
     function vaultDepositERC721(
         address user,
+        address from,
         address nftContract,
         uint256 tokenId
     ) external onlyDiamondInternal {
         address proxy = getOrCreateUserVault(user);
-        (bool success, ) = proxy.call(
-            abi.encodeWithSelector(
-                VaipakamVaultImplementation.depositERC721.selector,
-                nftContract,
-                tokenId
-            )
-        );
-        if (!success) revert ProxyCallFailed("Deposit ERC721 failed");
+        IERC721(nftContract).safeTransferFrom(from, proxy, tokenId);
+        if (IERC721(nftContract).ownerOf(tokenId) != proxy) revert ProxyCallFailed("Deposit ERC721 failed");
+        LibVaipakam.recordVaultDeposit(user, nftContract, tokenId, 1);
     }
 
     /**
@@ -1270,46 +953,61 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
         // `ownerOf(tokenId)` (which would revert on a non-existent
         // tokenId and mask the legitimate `ProxyCallFailed` revert
         // path the underlying proxy provides for the not-owned case).
-        if (LibVaipakam.storageSlot().encumbered[user][nftContract][tokenId] > 0) {
-            revert WithdrawWouldUnderflowLien(user, nftContract, tokenId, 1, 0);
+        //
+        // Depository vault — bounded by the tracked ledger: a token the
+        // protocol never put in this vault (one that arrived by a plain
+        // transfer) is not withdrawable until its owner adopts it.
+        _assertWithdrawAllowed(
+            user,
+            nftContract,
+            tokenId,
+            1,
+            LibVaipakam.trackedHolding(user, nftContract, tokenId)
+        );
+        if (_payoutHeld(user, uint8(LibVaipakam.AssetType.ERC721), nftContract, tokenId, 1, recipient)) {
+            return;
         }
+        address creditTo = _protectedRecipientVault(user, recipient);
         (bool success, ) = proxy.call(
             abi.encodeWithSelector(
                 VaipakamVaultImplementation.withdrawERC721.selector,
                 nftContract,
                 tokenId,
-                recipient
+                creditTo == address(0) ? recipient : creditTo
             )
         );
         if (!success) revert ProxyCallFailed("Withdraw ERC721 failed");
+        LibVaipakam.recordVaultWithdraw(user, nftContract, tokenId, 1);
+        if (creditTo != address(0)) {
+            LibProtectedAccount.creditPayment(recipient, nftContract, tokenId, 1, 1);
+        }
     }
 
     /**
-     * @notice Deposits ERC-1155 tokens into the specified user's vault.
-     * @dev Low-level call to the proxy's depositERC1155 function.
-     *      Reverts on failure.
-     * @param user The user whose vault to deposit into.
-     * @param nftContract The NFT contract address.
-     * @param tokenId The token ID.
-     * @param amount The amount to deposit.
+     * @notice Deposits `amount` units of ERC-1155 `tokenId` from `from` into
+     *         `user`'s vault and records what arrived in the tracked ledger.
+     * @dev    Measured: refused unless the vault's balance rose by `amount`.
+     * @param user        Whose vault is credited.
+     * @param from        Who the units come from (usually `user`).
+     * @param nftContract The ERC-1155 contract address.
+     * @param tokenId     The token ID.
+     * @param amount      Units to deposit.
      */
     // forge-lint: disable-next-line(mixed-case-function)
     function vaultDepositERC1155(
         address user,
+        address from,
         address nftContract,
         uint256 tokenId,
         uint256 amount
     ) external onlyDiamondInternal {
         address proxy = getOrCreateUserVault(user);
-        (bool success, ) = proxy.call(
-            abi.encodeWithSelector(
-                VaipakamVaultImplementation.depositERC1155.selector,
-                nftContract,
-                tokenId,
-                amount
-            )
-        );
-        if (!success) revert ProxyCallFailed("Deposit ERC1155 failed");
+        uint256 before = IERC1155(nftContract).balanceOf(proxy, tokenId);
+        IERC1155(nftContract).safeTransferFrom(from, proxy, tokenId, amount, "");
+        if (IERC1155(nftContract).balanceOf(proxy, tokenId) - before != amount) {
+            revert ProxyCallFailed("Deposit ERC1155 failed");
+        }
+        LibVaipakam.recordVaultDeposit(user, nftContract, tokenId, amount);
     }
 
     /**
@@ -1331,24 +1029,36 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
         address recipient
     ) external onlyDiamondInternal {
         address proxy = getOrCreateUserVault(user);
-        // #407 PR 4 — encumbrance guard, keyed on the specific tokenId.
+        // #407 PR 4 — encumbrance guard, keyed on the specific tokenId,
+        // over the tracked units (never more than the vault holds), so units
+        // that arrived outside the protocol stay out of reach until adopted.
+        uint256 units = IERC1155(nftContract).balanceOf(proxy, tokenId);
+        uint256 trackedUnits = LibVaipakam.trackedHolding(user, nftContract, tokenId);
         _assertWithdrawAllowed(
             user,
             nftContract,
             tokenId,
             amount,
-            IERC1155(nftContract).balanceOf(proxy, tokenId)
+            trackedUnits < units ? trackedUnits : units
         );
+        if (_payoutHeld(user, uint8(LibVaipakam.AssetType.ERC1155), nftContract, tokenId, amount, recipient)) {
+            return;
+        }
+        address creditTo = _protectedRecipientVault(user, recipient);
         (bool success, ) = proxy.call(
             abi.encodeWithSelector(
                 VaipakamVaultImplementation.withdrawERC1155.selector,
                 nftContract,
                 tokenId,
                 amount,
-                recipient
+                creditTo == address(0) ? recipient : creditTo
             )
         );
         if (!success) revert ProxyCallFailed("Withdraw ERC1155 failed");
+        LibVaipakam.recordVaultWithdraw(user, nftContract, tokenId, amount);
+        if (creditTo != address(0)) {
+            LibProtectedAccount.creditPayment(recipient, nftContract, tokenId, amount, amount);
+        }
     }
 
     /**
@@ -1418,8 +1128,13 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
         if (proxy == address(0)) revert NoVault();
         // A vault on an older implementation is brought to the current one
         // first, so no rental step (a close included) depends on its lender
-        // having upgraded since the facets were refreshed.
-        if (s.vaultVersion[lender] < s.currentVaultVersion) {
+        // having upgraded since the facets were refreshed. A vault its owner
+        // PINNED is left on the implementation the owner chose: only the
+        // owner upgrades a pinned vault, and the rental step runs on it.
+        if (
+            s.vaultVersion[lender] < s.currentVaultVersion
+                && s.vaultPinnedImplementation[lender] == address(0)
+        ) {
             _upgradeVault(s, lender, proxy);
         }
         address nftContract = loan.principalAsset;

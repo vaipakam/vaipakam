@@ -31,6 +31,53 @@ import { tmpl } from '../i18n/tmpl';
 import { RECOVERY_ACK_TEXT } from '../lib/recoveryAck';
 
 const copySource = {
+  marketplace: {
+  "title": "Lend or borrow, on your terms",
+  "lede": "Choose a token pair, compare offers, or set your own terms.",
+  "network": "Blockchain",
+  "networkHint": "Browsing follows your wallet network. Connect a wallet to switch networks; browsing on the default network does not require a connection.",
+  "networkError": "The network switch did not complete. Check your wallet and try again.",
+  "principal": "Principal token",
+  "collateralLend": "Collateral you accept",
+  "collateralBorrow": "Collateral you pledge",
+  "lendRisk": "If liquidation fails or exceptional settlement applies, you may receive collateral tokens in kind. Their value may be less than your outstanding loan. Recovery and interest are not guaranteed.",
+  "borrowRisk": "Under the applicable default or settlement rules, your full pledged collateral may be transferred. Review the exact terms before signing.",
+  "pairPrompt": "Choose both tokens to see offers and recently initiated loans.",
+  "tokenSearch": "Filter tokens by symbol or address",
+  "tokenHint": "Suggestions are curated for this chain, not a ranking by market capitalisation or a guarantee of safety. You can also paste a token address.",
+  "offers": "Matching offers",
+  "lendSort": "Borrow requests · highest offered APR first",
+  "borrowSort": "Lender offers · lowest requested APR first",
+  "duration": "Loan duration",
+  "anyDuration": "Any duration",
+  "create": "Create your own offer",
+  "back": "Back to marketplace",
+  "review": "Review offer",
+  "empty": "No matching offers for this token pair and duration.",
+  "unavailable": "Offers could not be loaded. Try again before deciding that this market is empty.",
+  "retry": "Try again",
+  "recent": "Recently initiated loans",
+  "recentHint": "Historical loans for this pair, newest loan IDs first. These are not available offers. Only original recorded amounts and terms are shown.",
+  "recentEmpty": "No recently initiated loans were returned for this pair.",
+  "recentUnavailable": "Recent loans could not be verified for this token pair.",
+  "historyMore": "More historical loans are available.",
+  "more": "Show more",
+  "scope": "ERC-20 loan offers only. Position-sale and offset offers are excluded. Rates alone do not measure risk. Live terms, fees, collateral and eligibility are checked in the existing review flow.",
+  "collateral": "Collateral",
+  "principalAmount": "Principal",
+  "apr": "Annual APR",
+  "notRecorded": "Not recorded",
+  "partial": "Partially filled — use the rate desk to match remaining liquidity.",
+  "own": "Your own offer",
+  "refinance": "Refinance request — review existing collateral and loan terms.",
+  "collateralFloor": "Borrower collateral shown is the committed minimum; review the full range before signing.",
+  "collateralFull": "Lender collateral shown is the requirement for the full offer.",
+  "metadataUnknown": "Token details unavailable; amounts below are in base units.",
+  "testnet": "Test network",
+  "minimumAmount": "Minimum available principal",
+  "amountHint": "Optional, in principal-token units. Filters by remaining offer size; it does not reserve funds.",
+  "amountInvalid": "Enter a positive amount within the token precision. Wait for token details if they are still loading."
+},
   app: {
     name: 'Vaipakam',
     tagline: 'Lend, borrow, and rent NFTs — directly with other people.',
@@ -156,7 +203,8 @@ const copySource = {
     },
     settings: { title: 'Settings — Vaipakam' },
     riskAccess: { title: 'Risk access — Vaipakam' },
-    recover: { title: 'Recover stuck tokens — Vaipakam' },
+    protection: { title: 'Vault protection — Vaipakam' },
+    recover: { title: 'Claim stuck tokens — Vaipakam' },
     faucet: { title: 'Test assets — Vaipakam' },
     notFound: { title: 'Page not found — Vaipakam' },
   },
@@ -1357,7 +1405,7 @@ const copySource = {
     // #2421 — a borrow request tagged with a running loan: accepting it is
     // also the payoff and close of that loan, in the same transaction.
     refinanceRequestBanner: tmpl(
-      `This is a refinance request for loan #{{loanId}}. Accepting it opens your loan and, in the same transaction, pays off and closes loan #{{loanId}}. As with any loan, the amount you lend, less the borrower’s loan-initiation fee, goes to the borrower’s wallet. The payoff to that loan’s current lender is then drawn from the borrower’s wallet, so your loan can fund part or all of it, with the borrower covering any difference. What you are owed is set by your new loan’s terms and collateral.`,
+      `This is a refinance request for loan #{{loanId}}. Accepting it opens your loan and, in the same transaction, pays off and closes loan #{{loanId}}. The amount you lend, less the borrower’s loan-initiation fee, funds that loan’s payoff to its current lender, and the borrower’s wallet pays the rest. What you are owed is set by your new loan’s terms and collateral.`,
       ['loanId'],
     ),
     refinanceRequestChecking:
@@ -1549,6 +1597,256 @@ const copySource = {
       'VPFI can’t be used as the rental payment asset — pick another token.',
   },
 
+  // #126 — repay, or close early, every loan that came from one offer.
+  batchClose: {
+    title: tmpl('Loans from offer #{{offerId}}', ['offerId']),
+    lede: tmpl(
+      'Loans {{ids}} came from the same offer. You can repay them, or close them early, together: one approval for the total, then one transaction. Each loan is checked on its own first, and a loan that can’t close is skipped while the others go through.',
+      ['ids'],
+    ),
+    repayAll: 'Repay all',
+    closeAllEarly: 'Close all early',
+    checking: 'Checking each loan…',
+    phase: {
+      approving: 'Approve the total in your wallet…',
+      checking: 'Checking each loan again…',
+      submitting: 'Confirm the transaction in your wallet…',
+    },
+    reviewRepay: 'Repay these loans',
+    reviewPreclose: 'Close these loans early',
+    dueNow: tmpl('Loan #{{id}}: {{amount}} due now', ['id', 'amount']),
+    leftOut: tmpl('Loan #{{id}} is left out: {{reason}}', ['id', 'reason']),
+    totalDue: tmpl('Total due now: {{amount}}.', ['amount']),
+    approval: tmpl(
+      'You’ll approve {{amount}}. That adds about two days of interest and one late-fee step, in case a day passes before the transaction runs. Each loan takes only what it owes when it runs, so the extra is never spent.',
+      ['amount'],
+    ),
+    howItRuns:
+      'After the approval, one transaction closes up to 30 loans. The amounts can rise slightly before it runs.',
+    noneReady:
+      'None of these loans can be closed together right now. Open each loan to see its options.',
+    confirm: 'Confirm',
+    cancel: 'Cancel',
+    dismiss: 'Done',
+    receiveEach:
+      'Each closed loan’s collateral back — claimable from that loan right after it settles.',
+    endsEach:
+      'Each loan settles when the transaction runs. A loan that is skipped stays open, and the results say why.',
+    pending: tmpl(
+      'Loan #{{id}}: the transaction was sent but hasn’t confirmed yet. It may still go through, so check the loan in a few minutes.',
+      ['id'],
+    ),
+    notSentPending:
+      'Not sent, because an earlier transaction in this batch hasn’t confirmed yet. Close it from its own page once that settles.',
+    repaid: tmpl('Loan #{{id}}: repaid.', ['id']),
+    closed: tmpl('Loan #{{id}}: closed early.', ['id']),
+    stillOpen: tmpl('Loan #{{id}}: still open. {{reason}}', ['id', 'reason']),
+    unknown: tmpl(
+      'Loan #{{id}}: we couldn’t read whether it closed. Open the loan to check.',
+      ['id'],
+    ),
+    changedOtherwise: tmpl(
+      'Loan #{{id}}: not closed by this batch. Its status changed another way, so open the loan to see where it stands.',
+      ['id'],
+    ),
+    skippedRetry:
+      'The transaction ran, but this loan was skipped. It can be closed now from its own page.',
+    approvalLeft: tmpl(
+      'Your token approval for the protocol now stands at {{amount}}. You can lower it under Standing token approvals in Settings.',
+      ['amount'],
+    ),
+    approvalLeftUnread:
+      'We couldn’t read your token approval after the batch. You can check it under Standing token approvals in Settings.',
+    ownPageRental: 'Rentals are closed from their own page.',
+    ownPageRefinance:
+      'A refinance request is open on this loan. Close it from its own page, which shows what closing does to the request.',
+    ownPageFallback:
+      'This loan is in its fallback period. Repay it from its own page, which explains what that involves.',
+  },
+  // #126 slice 2 — "List all for sale" on a lender's loans from one offer.
+  // Each listing is the loan page's own listing (same checks, same bound
+  // minimum), sent together; the lock is disclosed before the consent.
+  batchSale: {
+    title: tmpl('Your lender positions from offer #{{offerId}}', ['offerId']),
+    lede: tmpl(
+      'Loans {{ids}} came from the same offer. You can list all of them for sale at once, at one rate and for one listing window, in one transaction. Each loan is checked on its own first, and a loan that can’t be listed is skipped while the others go through.',
+      ['ids'],
+    ),
+    // Codex #3066 r2 — the network gate is disclosed, never a silent absence.
+    unavailableNetwork: tmpl(
+      'Loans {{ids}} came from the same offer. Listing them for sale isn’t available on this network yet: the listing tools aren’t published to this deployment.',
+      ['ids'],
+    ),
+    windowNote:
+      'Each listing expires on its own: at the end of the window, or at that loan’s due date, whichever comes first. Once a listing ends without a sale, that loan can’t be listed again for a day. If a borrower repays part of a loan while its listing is live, buyers’ attempts on that listing are refused; cancel it and list again.',
+    listAll: 'Review listing all',
+    checking: 'Checking each loan and reading its minimum…',
+    phase: {
+      checking: 'Checking each loan again…',
+      submitting: 'Confirm the transaction in your wallet…',
+    },
+    review: 'List these positions for sale',
+    loanFloor: tmpl(
+      'Loan #{{id}}: if a buyer takes it at any time before its listing ends, you come out with at least {{amount}}. The listing records this minimum.',
+      ['id', 'amount'],
+    ),
+    loanHeld: tmpl(
+      '{{amount}} already set aside for the lender on this loan goes to the buyer with the position, not to you.',
+      ['amount'],
+    ),
+    loanSettlementNow: tmpl(
+      'The settlement a buyer’s payment would carry right now: ~{{amount}}.',
+      ['amount'],
+    ),
+    leftOut: tmpl('Loan #{{id}} is left out: {{reason}}', ['id', 'reason']),
+    noneReady:
+      'None of these positions can be listed together right now. Open each loan to see its options.',
+    consentLabel:
+      'I understand the lock on each listed position and the settlement taken out of each buyer’s payment, and agree to them for every loan listed above.',
+    confirm: 'Confirm — list these positions',
+    cancel: 'Cancel',
+    dismiss: 'Done',
+    lockWarning:
+      'Listing locks each listed lender position NFT — it can’t be transferred until that sale completes or that listing ends (cancelling unlocks it in one step, from the loan’s page; after expiry, a cleanup transaction anyone can send does). Your claim rights are unaffected.',
+    receiveEach:
+      'For each listed loan, at least the minimum shown above once the settlement is taken, if a buyer takes it before its listing ends. Each listing records its own minimum, and is skipped rather than made if it would record less.',
+    lockEach:
+      'Each listed loan’s lender position NFT, until its sale completes or its listing ends. Nothing else.',
+    youMayOwe:
+      'Nothing from your wallet, and no approval. When a buyer accepts a listing, the settlement is taken out of their payment before the rest reaches you: the rate difference for the remaining term, when your rate is above that loan’s own. Each loan’s figure right now is shown above. The interest you earned on each loan stays yours as a claim on that loan, paid as its borrower pays; Claims shows it after the sale.',
+    endsEach:
+      'Each listing ends when a buyer accepts it, when you cancel it from the loan’s page, or when it expires. One transaction lists up to 30 loans; a loan whose listing fails is skipped, and the results say why.',
+    listed: tmpl(
+      'Loan #{{id}}: listed as sale offer #{{offerId}}. Its page shows the listing and lets you cancel it.',
+      ['id', 'offerId'],
+    ),
+    notListed: tmpl('Loan #{{id}}: not listed. {{reason}}', ['id', 'reason']),
+    changedOtherwise: tmpl(
+      'Loan #{{id}}: not listed. The loan is no longer active, so open it to see where it stands.',
+      ['id'],
+    ),
+    unknown: tmpl(
+      'Loan #{{id}}: we couldn’t read whether it was listed. Open the loan to check.',
+      ['id'],
+    ),
+    pending: tmpl(
+      'Loan #{{id}}: the transaction was sent but hasn’t confirmed yet. It may still list this loan, so check the loan in a few minutes.',
+      ['id'],
+    ),
+    notSentPending:
+      'Not sent, because an earlier transaction in this batch hasn’t confirmed yet. List it from its own page once that settles.',
+    skippedRetry:
+      'The transaction ran, but this listing was skipped. It can be listed now from the loan’s own page.',
+    reviewAgain: 'Review the listing again to see the current figures.',
+    changedSinceReview:
+      'What this listing involves changed after your review. List it from its own page, which shows the current terms.',
+    ownPageShape:
+      'Only loans with token principal and token collateral can be listed for sale.',
+  },
+  // #126 slice 3 — "Refinance all" on a borrower's loans from one offer.
+  // Each request is the loan page's own request (same checks, same payoff
+  // approval bound, same hard expiry), posted together after one approval
+  // for the sum; the shared approval is disclosed before the consent.
+  batchRefinance: {
+    action: 'Refinance all',
+    lede: 'Post a refinance request for each of these loans, at one rate ceiling and one duration. Each request is the one its loan’s own page would post: the moment a lender accepts one, that loan is paid off and closed in the same transaction, and its collateral moves to the new loan. Each loan is checked on its own first, and a loan that can’t take a request is left out and named.',
+    review: 'Review the requests',
+    checking: 'Checking each loan and working out its payoff…',
+    phase: {
+      approving: 'Approve the total in your wallet…',
+      checking: 'Checking each loan again…',
+      submitting: 'Confirm the transaction in your wallet…',
+      signing: 'Sign each request’s payoff permit in your wallet…',
+      attaching: 'Confirm the transaction that attaches the permits…',
+    },
+    reviewTitle: 'Post these refinance requests',
+    terms: tmpl(
+      'Each request asks for a new loan of {{days}} days at a yearly rate of at most {{rate}}.',
+      ['days', 'rate'],
+    ),
+    loanPayoff: tmpl(
+      'Loan #{{id}}: ~{{payoff}} to pay it off today, settled automatically when a lender accepts its request. The new loan’s money, less its initiation fee, covers most of it; the rest comes from your wallet.',
+      ['id', 'payoff'],
+    ),
+    loanGrowth: tmpl(
+      'If a lender accepts after this loan’s due date, the payoff grows (the late fee plus interest that keeps building up) by up to ~{{amount}} more before the request ends.',
+      ['amount'],
+    ),
+    loanTopUp: tmpl(
+      'Spare in your wallet when a lender accepts: about {{amount}}. That is the payoff’s interest and the new loan’s initiation fee; the new loan’s money covers the rest in the same transaction.',
+      ['amount'],
+    ),
+    leftOut: tmpl('Loan #{{id}} is left out: {{reason}}', ['id', 'reason']),
+    noneReady:
+      'None of these loans can take a refinance request together right now. Open each loan to see its options.',
+    totals: tmpl(
+      'Together: about {{topUp}} spare in your wallet if every request is accepted. Your wallet holds enough for that now, or nothing is sent.',
+      ['topUp'],
+    ),
+    approval: tmpl(
+      'You’ll approve {{amount}}: the sum of each request’s largest possible payoff. Each payoff is pulled from this one approval when its request is accepted, and so is the payoff of any other refinance request you have open on the same token. A lender taking one request can therefore leave too little for another; each loan’s page says when its request’s approval runs short.',
+      ['amount'],
+    ),
+    consentLabel:
+      'I understand the payoff and wallet-balance terms below and agree to them for every loan listed above.',
+    confirm: 'Confirm — post these requests',
+    cancel: 'Cancel',
+    dismiss: 'Done',
+    receiveEach:
+      'For each request a lender accepts, a new loan at your terms the moment it is accepted: that loan’s collateral moves to the new loan without ever unlocking, and the old loan closes in the same transaction.',
+    youMayOwe:
+      'Each loan’s payoff shown above, pulled from your wallet through the approval below when a lender accepts its request. Your wallet must hold that loan’s spare amount at that moment.',
+    endsEach:
+      'Each request ends when a lender accepts it, when you cancel it from its loan’s page, or when it expires; each loan’s line above says when. One transaction posts up to 15 requests. A request that fails is skipped, and the results say why; the guardrails written for it can stay set at your rate and end date, and they only limit what a request on that loan can complete at.',
+    posted: tmpl(
+      'Loan #{{id}}: request posted as offer #{{offerId}}. Its page shows the request and lets you cancel it.',
+      ['id', 'offerId'],
+    ),
+    notPosted: tmpl('Loan #{{id}}: no request posted. {{reason}}', ['id', 'reason']),
+    changedOtherwise: tmpl(
+      'Loan #{{id}}: no request posted. The loan is no longer active, so open it to see where it stands.',
+      ['id'],
+    ),
+    unknown: tmpl(
+      'Loan #{{id}}: we couldn’t read whether its request was posted. Open the loan to check.',
+      ['id'],
+    ),
+    pending: tmpl(
+      'Loan #{{id}}: the transaction was sent but hasn’t confirmed yet. It may still post this request, so check the loan in a few minutes.',
+      ['id'],
+    ),
+    notSentPending:
+      'Not sent, because an earlier transaction in this batch hasn’t confirmed yet. Post its request from its own page once that settles.',
+    skippedRetry:
+      'The transaction ran, but this request was skipped. It can be posted now from the loan’s own page.',
+    changedSinceReview:
+      'What this request involves changed after your review. Post it from its own page, which shows the current terms.',
+    ownPageRental: 'A rental can’t take a refinance request; only token loans can.',
+    ownPageOpenRequest:
+      'A refinance request is already open on this loan. Its own page shows it and lets you cancel it.',
+    approvalLeft: tmpl(
+      'Your token approval for the protocol now stands at {{amount}}. Your open refinance requests draw their payoffs from it, so lowering it can leave a request unable to complete.',
+      ['amount'],
+    ),
+    // #1558 — the batch on a Diamond that pays the payoff through each
+    // request's single-use payoff permit.
+    permit: {
+      total: tmpl(
+        'Each request gets its own payoff permit, signed for the largest share of its payoff your wallet can owe ({{amount}} together); the new loan’s money, less its initiation fee, pays the rest straight to the old lender. A permit can be used once, only for its own loan’s payoff at the moment a lender accepts, and lapses when its request ends, so nothing stays approved to the protocol. If your wallet’s approval of Permit2 (Uniswap’s permit contract) doesn’t already cover that total, you approve it first; that approval moves nothing without one of your signatures.',
+        ['amount'],
+      ),
+      youMayOwe:
+        'Each loan’s payoff shown above, settled when a lender accepts its request: the new loan’s money, less its initiation fee, pays most of it straight to the old lender, and the rest is pulled from your wallet once, through that request’s payoff permit. Your wallet must hold that loan’s spare amount at that moment.',
+      postedNoPermit: tmpl(
+        'Loan #{{id}}: request posted as offer #{{offerId}}, but its payoff permit isn’t attached, so no lender can complete it yet. Open the loan’s page to sign it, or cancel the request there.',
+        ['id', 'offerId'],
+      ),
+      postedPermitPending: tmpl(
+        'Loan #{{id}}: request posted as offer #{{offerId}}. Its payoff permit was sent but isn’t confirmed yet, so whether a lender can complete the request isn’t known yet. Open the loan’s page to see where it stands.',
+        ['id', 'offerId'],
+      ),
+    },
+  },
   preclose: {
     title: 'Close this loan early',
     blurb:
@@ -1622,7 +1920,7 @@ const copySource = {
       refinanceDesc:
         'Post a request for a new loan on better terms. When a lender accepts, the old loan is paid off and your collateral moves over automatically.',
       refinanceCost:
-        'The payoff is the loan amount plus the remaining term’s interest, pulled from your wallet when a lender accepts.',
+        'The payoff is the loan amount plus the remaining term’s interest. When a lender accepts, the new loan’s money, less its initiation fee, covers that much of it in the same transaction; your wallet covers the rest.',
       refinanceTransferredUnavailable:
         'Not available for this position — refinancing stays with the wallet that originally took the loan.',
     },
@@ -1783,6 +2081,10 @@ const copySource = {
   },
 
   refinance: {
+    // #126 slice 3 — a loan in its fallback period is not settled, and no
+    // request can be posted on it.
+    inFallback:
+      'This loan is in its fallback period, so it can’t take a refinance request. Its own page explains its options.',
     /** Shown when the request transaction was sent but its outcome could
      *  not be observed. The spending approval is deliberately LEFT IN
      *  PLACE here — if the request did land, a lender accepting it needs
@@ -1798,7 +2100,7 @@ const copySource = {
     // refs (payoffNote, walletNote, guardrailNote, …) stay composed at
     // the call site.
     receiptYouMayOwe: tmpl(
-      '~{{payoff}} to pay off this loan, pulled automatically when a lender accepts.',
+      '~{{payoff}} to pay off this loan, settled automatically when a lender accepts. The new loan’s money, less its initiation fee, covers most of it; the rest comes from your wallet.',
       ['payoff'],
     ),
     feesTreasuryNote: tmpl(
@@ -1829,7 +2131,7 @@ const copySource = {
     payoffNote:
       'The old loan’s payoff is always the loan amount plus the full remaining term’s interest — even if interest on the loan normally builds up day by day. That is the exiting lender’s fixed entitlement on an early exit.',
     walletNote: tmpl(
-      `The payoff is pulled from your wallet automatically at the moment a lender accepts. The new loan’s money arrives in the same transaction, so keep about {{topUp}} spare in your wallet (the interest portion plus the new loan’s initiation fee) while the request is open.`,
+      `When a lender accepts, the new loan’s money, less its initiation fee, covers most of the payoff in the same transaction, so keep about {{topUp}} in your wallet (the interest portion plus the new loan’s initiation fee) while the request is open.`,
       ['topUp'],
     ),
     shortIsSafe:
@@ -1975,12 +2277,79 @@ const copySource = {
       'We couldn’t check this wallet’s own offers just now. If it posted a refinance request for this loan while it held the borrower position, this page can’t show it yet — try again in a moment. If it is still open, you can cancel it under “Your open offers” on the Rate Desk (an expired request is not listed there); either way, remove the token approval it relied on under “Standing token approvals” in Settings (Advanced mode) if nothing else needs it.',
     repayWarnPending:
       'A refinance request is still live for this loan. Repaying settles the loan, after which the request can never complete — cancel it from its card afterwards (that also removes its standing payoff approval); until then it just sits until it expires.',
+    // #1558 — the payoff is paid through the request's single-use payoff
+    // permit. Used wherever the Diamond has the permit entry; the approval
+    // wording above serves a Diamond deployed before it (#3074).
+    permit: {
+      signDisclosure: tmpl(
+        'You’ll sign a payoff permit for at most {{amount}}: your wallet’s share of the payoff if a lender accepts at the last moment this request allows. The new loan’s money, less its initiation fee, pays the rest of the payoff straight to your current lender. Whoever completes the refinance can use the permit once, only for your share at that moment, so the rest of it is never taken. It lapses when the request ends, and nothing stays approved to the protocol.',
+        ['amount'],
+      ),
+      permit2ApprovalNote:
+        'If your wallet hasn’t approved Permit2 (Uniswap’s permit contract) for this token for at least that amount, you approve it first. That approval moves nothing on its own: Permit2 pays only against a signature you make.',
+      growthDisclosure: tmpl(
+        'If a lender accepts after the loan’s due date, the payoff grows (the late fee plus interest that keeps building up) by up to ~{{maxGrowth}} more for this request. The permit covers that too, so a late acceptance can’t fail on it.',
+        ['maxGrowth'],
+      ),
+      multiStepNote:
+        'Posting takes up to five wallet steps: the guardrails, the Permit2 approval if needed, the request, your signature on the payoff permit, and the transaction that attaches it. If you stop after the request is posted, it stays open without a permit and no lender can complete it; sign the permit from the request’s card, or cancel the request.',
+      done:
+        'Refinance request posted with its payoff permit. When a lender accepts it, this loan closes automatically — you don’t need to do anything else. You can cancel the request below (cancellation opens a few minutes after posting).',
+      postedWithoutPermit:
+        'Your refinance request is posted, but its payoff permit isn’t attached, so no lender can complete it yet. Sign the permit from the request’s card below, or cancel the request.',
+      postedButUnconfirmed:
+        'Your request was sent, but we could not confirm whether it went through. Check your open requests before trying again — if it did land, requesting a second time would create a duplicate. If it landed, sign its payoff permit from the request’s card.',
+      quoteUnavailable:
+        'We couldn’t read this loan’s payoff from the protocol just now, so the request can’t be reviewed yet. Please try again in a moment.',
+      issue: {
+        missing:
+          'No payoff permit from this wallet is attached to this request, so a lender’s acceptance would fail. Sign one below or cancel the request.',
+        spent:
+          'This request’s payoff permit has already been used, so a lender’s acceptance would fail. Sign a new one below or cancel the request.',
+        expired:
+          'This request’s payoff permit has expired, so a lender’s acceptance would fail. Sign a new one below or cancel the request.',
+        lapsesEarly:
+          'This request’s payoff permit expires before the request does, so a later acceptance would fail. Sign a new one below or cancel the request.',
+        short:
+          'This request’s payoff permit allows less than your wallet’s share of the payoff can reach before the request ends (an acceptance after the due date also pulls the late fee and extra interest, and a raised initiation-fee rate raises the share), so a later acceptance could fail. Sign a new one below or cancel the request.',
+        permit2Short:
+          'Your wallet’s approval of Permit2 for this token no longer covers your wallet’s share of the payoff, so a lender’s acceptance would fail. Sign the payoff permit again below; it raises that approval first.',
+      },
+      sign: 'Sign the payoff permit',
+      attaching:
+        'Your refinance request is posted. Approve Permit2 if your wallet asks, then sign the payoff permit and confirm the transaction that attaches it. Until the permit is attached, no lender can complete the request.',
+      attachFailed: tmpl(
+        'The payoff permit wasn’t attached, so no lender can complete this request on it yet ({{reason}}). Sign it again below or cancel the request.',
+        ['reason'],
+      ),
+      signed: 'Payoff permit attached — the request can complete.',
+      // #3042 — the wallet's share of the payoff is zero (nothing to pay
+      // beyond what the new loan's money covers), so no permit is asked for.
+      notNeeded:
+        'Your refinance request is posted. Your wallet owes nothing when a lender accepts it, so no payoff permit is needed and the request can complete as it is.',
+      attachUnconfirmed:
+        'Your refinance request is posted and its payoff permit was sent, but whether the permit attached isn’t confirmed yet. The request’s card shows the permit once the chain does; sign again only if the card still says it is missing.',
+      signAborted:
+        'This request is no longer completable (accepted, cancelled, or the loan closed), so nothing was signed. Refresh to see the latest state.',
+      cancelled:
+        'Refinance request cancelled — this loan continues unchanged. Its payoff permit named this request, so it can never be used, and nothing stays approved to the protocol for it.',
+      pendingLoanClosed:
+        'This loan has since closed another way, so the request can no longer complete. Cancel it to remove it.',
+      pendingExpired: tmpl(
+        `This refinance request expired on {{date}} — no lender can accept it any more, and it no longer holds up your other actions here. Cancel it below to remove it; the loan continues unchanged.`,
+        ['date'],
+      ),
+      pendingPastGrace:
+        'This loan has passed its due date and grace window, so no lender can accept this request any more — it no longer holds up your other actions here. Cancel it below to remove it.',
+      pendingUntakeable:
+        'This refinance request can never be accepted: it isn’t the request the protocol has on record for this loan (a newer request replaced it). It does not hold the loan back. Cancel it below to remove it.',
+    },
   },
 
   approvals: {
     title: 'Standing token approvals',
     blurb:
-      'These are the spending permissions your wallet has granted Vaipakam’s contract for tokens your loans and offers touch. Some flows set them on purpose (such as a refinance request’s payoff); anything left over from an abandoned attempt can be removed here.',
+      'These are the spending permissions your wallet has granted Vaipakam’s contract for tokens your loans and offers touch. Some flows set them on purpose (such as a sale listing’s settlement); anything left over from an abandoned attempt can be removed here.',
     revokeWarning:
       'Careful: if a live request on one of your loans depends on a token’s approval, revoking it makes that flow fail until you restore it from its card — the card will warn you within moments.',
     scopeNote:
@@ -2111,9 +2480,9 @@ const copySource = {
   // friction constant, not translatable copy (same rule as signing
   // text).
   recover: {
-    title: 'Recover stuck tokens',
+    title: 'Claim stuck tokens',
     lede:
-      'For tokens that were sent straight to your vault address outside the app. They aren’t part of any deal and never affect your balances — this flow returns them to your wallet after you declare where they came from.',
+      'For tokens that were sent straight to your vault address outside the app. Until you claim them they aren’t part of your vault balance and can’t be used or withdrawn. This flow adds them to your vault balance after you declare where they came from; you can then withdraw them like anything else in your vault.',
     // Same alignment as the Help card (Codex #1547 r2): the
     // consequence is a wallet-wide new-position block, not a
     // feature-level lock.
@@ -2153,6 +2522,22 @@ const copySource = {
     maxRecoverable: tmpl('Recoverable surplus: {{amount}}', ['amount']),
     tokenLookupFailed:
       'We couldn’t read this token’s details — check the address and try again.',
+    // Asset kinds (#3096): the one flow adopts every kind the contract
+    // takes. An NFT is named by its collection and token id; an ERC-721
+    // is one of a kind, so it has no amount to type.
+    collectionLabel: 'Collection contract address',
+    tokenIdInvalid: 'Enter the token ID as a whole number.',
+    nftMeta: tmpl('{{label}} · Recoverable: {{amount}}', ['label', 'amount']),
+    // Both NFT standards require the contract to say which standard it
+    // follows; one that does not say so is not read under the kind the
+    // user picked.
+    wrongStandard: tmpl(
+      'This contract doesn’t report itself as {{standard}}, so nothing can be added under that kind. Check the kind and the address.',
+      ['standard'],
+    ),
+    nftAmountFixed: 'An ERC-721 token is one of a kind, so the amount is always 1.',
+    multiAmountNote: 'Enter a whole number of copies of this token ID.',
+    reviewKind: 'Kind',
     // The zero address passes a plain address check but is nobody's
     // wallet (Codex #1547 r9) — it is the burn / "not set" sentinel, and
     // declaring it would have the user sign an ownership statement about
@@ -2183,7 +2568,7 @@ const copySource = {
     // and every new-position action is blocked — not just this feature.
     warnings: [
       'If the sender you declare is on the sanctions list, your wallet is flagged and every new-position action is blocked — creating or accepting offers, deposits, recovery and the like. Existing loans can still be repaid or closed. The flag lifts only if that address is later removed from the sanctions oracle.',
-      'Recovered tokens can only go to YOUR connected wallet — no other recipient is possible.',
+      'Nothing leaves your vault here: the tokens are added to your vault balance, and from then on they can only leave through an ordinary withdrawal from your vault.',
       'If you did not send these tokens yourself, do not recover them. Unsolicited “dust” never affects your balances or deals — leaving it in place costs you nothing.',
     ],
     reviewTitle: 'Confirm your declaration',
@@ -2221,20 +2606,19 @@ const copySource = {
     // Guide's stuck-token section — so the review card (and the Help
     // explainer) must LINK it (Codex #1547 r5). Named exactly as the
     // signed text calls it so the two are unmistakably the same thing.
-    guideLinkLabel: 'Read the Advanced User Guide section on stuck-token recovery',
+    guideLinkLabel: 'Read the Advanced User Guide section on stuck tokens',
     confirmPrompt: 'Type CONFIRM to enable signing',
-    sign: 'Sign & recover',
+    sign: 'Sign & add to vault',
     // Distinct busy label for the pre-sign checks + wallet-signature
     // window (Codex #1547 r1): the review controls lock from the moment
     // the sign button is pressed, before the transaction exists.
     signing: 'Waiting for your wallet…',
     submitting: 'Submitting…',
-    successTitle: 'Recovery complete',
-    // Claims the SEND, not the arrival (Codex #1547 r2): fee-on-
-    // transfer tokens deliver less than the transferred amount, so
-    // "X returned to your wallet" would overstate what arrived.
+    successTitle: 'Tokens added to your vault',
+    // Nothing moves on an adoption: the tokens are already in the
+    // vault, and the vault balance rises by exactly the amount adopted.
     successBody: tmpl(
-      'Sent {{amount}} {{symbol}} back to your wallet — fee-on-transfer tokens may deliver slightly less.',
+      '{{amount}} {{symbol}} is now part of your vault balance. Withdraw it from your vault whenever you like.',
       ['amount', 'symbol'],
     ),
     // The outcome the network recorded names a DIFFERENT token from the
@@ -2244,7 +2628,7 @@ const copySource = {
     // plus the address, never this attempt's formatting applied to
     // someone else's numbers.
     successBodyUnknownToken: tmpl(
-      'Sent {{amount}} of the token at {{token}} back to your wallet. That isn’t the token this page looked up — your wallet appears to have replaced the transaction — so the amount is shown in the token’s smallest units. Open the transaction to see the full detail.',
+      '{{amount}} of the token at {{token}} is now part of your vault balance. That isn’t the token this page looked up — your wallet appears to have replaced the transaction — so the amount is shown in the token’s smallest units. Open the transaction to see the full detail.',
       ['amount', 'token'],
     ),
     viewTx: 'View the transaction',
@@ -2359,7 +2743,7 @@ const copySource = {
     // of the two outcomes it had, so this must say both.
     recoveryLandedTitle: 'Your recovery attempt went through',
     recoveryLandedBody:
-      'We still can’t read the transaction itself, but the network shows your attempt was processed — so do not sign again. Check your wallet: if the tokens arrived, you’re done. If they didn’t, the sender you declared was on the sanctions list, which blocks your wallet from new positions until that address is de-listed; existing loans can still be repaid or closed.',
+      'We still can’t read the transaction itself, but the network shows your attempt was processed — so do not sign again. Check your vault: if the tokens now show in your vault balance, you’re done. If they don’t, the sender you declared was on the sanctions list, which blocks your wallet from new positions until that address is de-listed; existing loans can still be repaid or closed.',
     // TERMINAL LOCK (Codex #1547 r7): a processed attempt must NOT
     // unlock a fresh recovery from this card. We can't read how much
     // of the surplus it moved, so a blind second attempt over whatever
@@ -2368,8 +2752,8 @@ const copySource = {
     // reload can't step around it; the only way out is the two-step
     // acknowledgement below.
     executedLockNote:
-      'Starting another recovery from here is switched off on purpose: the attempt that was processed used up the approval you signed, and we can’t read how much it moved. Check your wallet before you do anything else.',
-    executedAck: 'I’ve checked my wallet',
+      'Starting another recovery from here is switched off on purpose: the attempt that was processed used up the approval you signed, and we can’t read how much it added. Check your vault balance before you do anything else.',
+    executedAck: 'I’ve checked my vault',
     executedAckPrompt:
       'One more tap to confirm. This begins a completely separate recovery — a new declaration, a new signature, and it can only move what is still sitting in your vault. The earlier attempt stays done; nothing here undoes or repeats it.',
     executedAckConfirm: 'Start a new recovery',
@@ -2449,16 +2833,251 @@ const copySource = {
       // declaration flags the WALLET and blocks every new-position
       // action until the address is de-listed.
       body2:
-        'If you sent them yourself (or the sender acted for you), a careful recovery flow can return them to your wallet. If a stranger sent them, leave them alone: if the sender you declare turns out to be sanctions-listed, your wallet is flagged and every new-position action is blocked — creating or accepting offers, deposits, recovery and the like — until that address is de-listed (existing loans can still be repaid or closed). It’s a trap known as dust poisoning.',
+        'If you sent them yourself (or the sender acted for you), a careful flow can add them to your vault, from where you withdraw them as usual. If a stranger sent them, leave them alone: if the sender you declare turns out to be sanctions-listed, your wallet is flagged and every new-position action is blocked — creating or accepting offers, deposits, recovery and the like — until that address is de-listed (existing loans can still be repaid or closed). It’s a trap known as dust poisoning.',
       link: 'Open the recovery flow',
     },
   },
 
+  // The asset-kind picker, shared by every surface that names an asset by
+  // its standard (the vault card and the adoption page), so one asset has
+  // one name everywhere.
+  assetKind: {
+    label: 'Asset type',
+    token: 'Token (ERC-20)',
+    nft: 'NFT (ERC-721)',
+    multi: 'Multi-token (ERC-1155)',
+    tokenId: 'Token ID',
+  },
   // #671/#728 progressive risk access — the self-sovereign /risk-access
   // page. Every vault starts at the safest level and only opts UP with
   // explicit consent; wording stays plain-language (Basic-first) while
   // keeping the contract semantics honest (cooldown, terms re-affirm,
   // strict-mode linger).
+  // Protected account mode — /vault/protection. Wording states what the
+  // contract does and does not do: a delay protects against a stolen key
+  // only while someone watches the queue, and a lock never stops loan
+  // servicing.
+  // Depository vault card on /vault. States the free figure the contract
+  // reports, says a protected withdrawal is queued before the user signs,
+  // and points untracked assets to adoption instead of counting them.
+  depository: {
+    title: 'Deposit or withdraw',
+    body: 'Keep any token or NFT in your vault without a loan. You can take out what you deposited or were paid into the vault, unless an offer or a queued payout is holding it. What the protocol keeps in your vault for a loan, an offer or a claim stays out of reach here.',
+    managedTitle: 'Withdraw from the account you manage',
+    managedBody: 'This account was moved to your wallet. You can withdraw what is its owner’s to take out. It is paid to your wallet after the account’s delay.',
+    assetLabel: 'Contract address',
+    amountLabel: 'Amount',
+    tooPrecise: 'This token doesn’t have that many decimal places.',
+    freeNow: tmpl('Yours to withdraw now: {{amount}}', ['amount']),
+    freeUnknown: 'We couldn’t read the amount you can withdraw just now.',
+    decimalsUnknown: 'We couldn’t read this token’s decimal places just now, so no amount can be checked yet.',
+    decimalsRetry: 'Check again',
+    retiredNote: tmpl(
+      'This wallet’s account was moved to {{controller}}. That wallet manages it now: this wallet can no longer deposit into it or withdraw from it.',
+      ['controller'],
+    ),
+    rawUnitsNote: 'This token doesn’t report its decimal places, so amounts here are in its smallest raw units.',
+    escapeNote: 'The protocol has been paused for more than three days, so the emergency exit is open: your withdrawal goes straight to your own wallet.',
+    protectionUnknown: 'We couldn’t read the protection settings or the queue of waiting payouts, so withdrawing is off until we can tell whether a withdrawal pays now, waits or is refused.',
+    escapeUnknown: 'We couldn’t check whether the emergency exit is open, so withdrawing is off until we can tell which route pays you.',
+    untrackedNote: 'Part of this asset reached your vault outside the app, so it can’t be withdrawn yet.',
+    untrackedLink: 'Add it to your vault',
+    untrackedRetiredNote:
+      'This account was replaced, so nothing can add it to the vault balance yet. It stays in the vault, untouched.',
+    // Disowning (#3096): the public "this is not mine" record the
+    // contract offers beside adoption. Event-only: nothing moves and
+    // nothing is credited, and it asks for no declaration.
+    disownTitle: 'Don’t recognise it? Disown it instead',
+    disownBody:
+      'Disowning records on-chain, publicly, that this asset reached your vault without your consent. Nothing moves and nothing is added to your vault balance: the asset stays where it is, out of your balance, and nothing about your loans or offers changes. It needs no declaration and no signature beyond the transaction.',
+    disownButton: 'Disown it',
+    disowning: 'Disowning…',
+    disownDone: tmpl(
+      'Recorded on-chain: you disowned {{amount}} of {{asset}} in your vault. Nothing moved.',
+      ['amount', 'asset'],
+    ),
+    // The receipt carried no readable disowning record (a replaced
+    // transaction can do that): say it went through without an amount.
+    disownDoneUnread: tmpl(
+      'The transaction went through, but we couldn’t read the disowning record from it. Open your wallet’s activity to check what was recorded for {{asset}}. Nothing moved.',
+      ['asset'],
+    ),
+    disownViewTx: 'View the transaction',
+    // No transaction hash came back, which is not proof nothing was sent
+    // (a wallet's reply can be lost); a second disowning is harmless.
+    disownFailed:
+      'We can’t show the disowning as recorded: your wallet didn’t report sending it. If you approved it, check your wallet’s activity before trying again. A second disowning only adds a second record.',
+    // Settled as not run: the chain says nothing was recorded.
+    disownNotTaken:
+      'The disowning didn’t take effect: the transaction reverted, or was cancelled or replaced in your wallet, so nothing was recorded. You can try again.',
+    // Sent, but the receipt could not be read: it may be recorded already.
+    disownUnconfirmed:
+      'The disowning was sent, but we couldn’t read its result. It may already be recorded, or may still be. Check the transaction before disowning again; a second disowning only adds a second record.',
+    queuedNote: tmpl('Protection is on, so a withdrawal waits {{delay}} before it is paid to your wallet. You or your recovery signers can cancel it meanwhile.', ['delay']),
+    cosignNote: 'This account also needs a recovery signer to co-sign each payout: after the delay, it is paid only once a signer has co-signed it.',
+    lockedNote: 'This account is locked, so nothing can be withdrawn until it is unlocked.',
+    deposit: 'Deposit',
+    withdraw: 'Withdraw to my wallet',
+    withdrawQueue: 'Queue withdrawal to my wallet',
+    depositDone: 'Deposited. It can take a moment to show in your vault.',
+    withdrawDone: 'Withdrawn to your wallet.',
+    withdrawQueued: 'Withdrawal queued. Find it under Vault protection, with its request code.',
+    withdrawHeld: 'The account is locked or its queue is full, so nothing was paid: the amount stayed in your vault. Withdraw it again once the account can queue a payout.',
+    queueFullNote: 'This account has 16 payouts and transfers waiting, the most it can hold, so no new withdrawal can be queued until one is paid or cancelled.',
+    nftNotHeld: 'This wallet doesn’t hold that token (or not that many), so there is nothing to deposit.',
+  },
+
+  protection: {
+    title: 'Vault protection',
+    lede: 'Make every payout from your vault to your wallet wait, so a stolen wallet key does not mean stolen funds.',
+    unsupported: 'Vault protection isn’t available on this network’s deployment yet.',
+    unavailable: 'We couldn’t read your protection settings right now, so no controls are shown. Try again in a moment.',
+    loading: 'Reading your protection settings…',
+    vaultLink: 'Vault protection',
+    payoutRouteQueued: tmpl('Protection is on, so what this pays you waits {{delay}} in your account’s queue before it reaches your wallet. Find it on the Vault protection page.', ['delay']),
+    payoutRouteCosign: 'A recovery signer must also co-sign it.',
+    payoutRouteVault: 'Your account is locked or its queue is full, so what this pays you stays in your vault. Withdraw it from there once the account can queue a payout.',
+    payoutRouteRewardsToVault: 'Protection is on, so interaction rewards in this batch are credited to your vault rather than your wallet. They do not queue.',
+    payoutRouteCreditedToVault: 'Protection is on, and this is paid out of another account’s vault, so it is credited to your vault rather than your wallet. Nothing is queued: withdraw it from your vault yourself, which waits the delay.',
+    payoutRouteUnknown: 'We couldn’t read your protection settings, so we can’t say whether this pays your wallet now, queues the payment or keeps it in your vault.',
+    payoutRouteQueuedTo: tmpl('This account was moved to a new wallet, so what this pays waits {{delay}} in the account’s queue and is then paid to {{controller}}, not to this wallet.', ['delay', 'controller']),
+    payoutOutcomeQueuedTo: tmpl('The payment is queued in the account and, because the account was moved to a new wallet, is paid to {{controller}} after the delay, not to this wallet.', ['controller']),
+    payoutOutcomeQueued: 'The payment is queued in your account and reaches your wallet after the delay. Follow it on the Vault protection page.',
+    payoutRouteVaultManaged: tmpl('This account was moved to a new wallet and is locked or its queue is full, so what this pays stays in its vault. Only {{manager}}, which now manages the account, can withdraw it.', ['manager']),
+    payoutRouteCreditedManaged: tmpl('This account was moved to a new wallet, so what this pays is credited to its vault rather than this wallet. Only {{manager}}, which now manages the account, can withdraw it.', ['manager']),
+    payoutOutcomeHeldManaged: tmpl('The payment stayed in this account’s vault. The account was moved to a new wallet, so only {{manager}}, which now manages it, can withdraw it.', ['manager']),
+    payoutOutcomeHeld: 'Your account is locked or its queue is full, so the payment stayed in your vault. Withdraw it from there once the account can queue a payout.',
+    payoutOutcomeInVault: 'Protection is on, so the payment went into your vault, not your wallet. Withdraw it through the delay.',
+    vaultCardBody: 'Delay payouts to your wallet, add recovery signers, and lock your vault in an emergency.',
+    statusOn: 'Protection is on',
+    statusOff: 'Protection is off',
+    statusLocked: 'Your vault is locked',
+    offExplainer:
+      'With protection on, every payout from your vault to your wallet waits the delay you choose, and only you or your recovery signers can cancel it in that time. Payments to the other side of a loan are never delayed, and a lock never stops loan servicing.',
+    watchNote:
+      'A delay only helps if someone sees the request in time. Link Telegram alerts and add recovery signers who will act on them.',
+    delayLabel: 'Payout delay',
+    delayDays: tmpl('{{count}} days', ['count'], { one: '1 day' }),
+    protectNftsLabel: 'Also delay transfers of my position NFTs',
+    enable: 'Turn on protection',
+    summaryDelay: tmpl('Payouts wait {{delay}}.', ['delay']),
+    summaryNftsOn: 'Position NFT transfers wait too.',
+    summaryNftsOff: 'Position NFT transfers are not delayed.',
+    summaryNftsRetired: 'Position NFT transfers wait too, as they always do for an account moved to a new wallet.',
+    summaryCosignOn: 'Each payout needs a recovery signer’s co-signature.',
+    retiredNote: tmpl('This account was moved to a new wallet. It is now managed by {{controller}}.', ['controller']),
+    lockedNote: tmpl('Locked at {{when}}. Queued payouts were cancelled and nothing can leave the vault until it is unlocked. Loans keep being serviced; anything paid to you stays in the vault.', ['when']),
+    changesTitle: 'Changes waiting the delay',
+    changeDelay: tmpl('Delay becomes {{delay}}', ['delay']),
+    changeDisable: 'Protection turns off',
+    changeUnlock: 'Vault unlocks',
+    changeNftsOff: 'Position NFT delay turns off',
+    changeCosignOff: 'Co-signing requirement turns off',
+    changeUnpin: 'Vault version unpins',
+    changeAt: tmpl('from {{when}}', ['when']),
+    changeDue: 'Ready to apply',
+    changeDisableWaitsForRows: tmpl('Due, but protection turns off only once no payout or position transfer is open ({{count}} open now). Let them finish, or cancel them.', ['count']),
+    changeDisableRowsUnknown: 'Due, but we couldn’t read your open payouts and transfers, so we can’t say whether protection can turn off yet. It turns off only once none is open.',
+    applyChanges: 'Apply ready changes',
+    cancel: 'Cancel',
+    settingsTitle: 'Settings',
+    setDelay: 'Change delay',
+    nftsOn: 'Delay position NFT transfers',
+    nftsOff: 'Stop delaying position NFT transfers',
+    cosignOn: 'Require a co-signature on payouts',
+    cosignOff: 'Stop requiring co-signatures',
+    disable: 'Turn off protection',
+    tightenNote: 'Tightening takes effect at once. Loosening waits the delay and can be cancelled meanwhile.',
+    lockTitle: 'Emergency lock',
+    lockBody: 'Lock at once if you think your wallet key is compromised. Every queued payout is cancelled and nothing new can be queued. Unlocking waits the delay.',
+    payoutRawUnits: tmpl('{{amount}} raw base units of {{token}} (its symbol or decimals could not be read)', ['amount', 'token']),
+    lockOverBody: 'The account is locked by the owner’s wallet. Lock it again as a signer: only a signer’s lock stops the owner’s wallet from cancelling or redirecting a replacement.',
+    lockNow: 'Lock my vault now',
+    requestUnlock: 'Ask to unlock',
+    payoutsTitle: 'Queued payouts',
+    payoutsEmpty: 'No payouts are waiting.',
+    payoutsUnknown: 'We couldn’t read the payout queue just now. Don’t assume it is empty; try again in a moment.',
+    payoutLine: tmpl('{{amount}} to {{recipient}}', ['amount', 'recipient']),
+    requestCode: tmpl('Request code {{code}}', ['code']),
+    requestCodeUnknown: 'Request code unavailable',
+    statusWaiting: tmpl('Waits until {{when}}', ['when']),
+    statusDue: 'Ready to release',
+    statusNeedsCosign: 'Needs a co-signature',
+    statusLockedRow: 'Held by the lock',
+    release: 'Release',
+    cosign: 'Co-sign',
+    codeHint: 'Every alert names the request code. If you see a code here you don’t recognise, cancel it and lock your vault.',
+    transfersTitle: 'Queued position NFT transfers',
+    transfersEmpty: 'No position NFT transfers are waiting.',
+    transferQueueRetired: 'Move a position NFT this account holds to your wallet. It waits the delay and can be cancelled meanwhile.',
+    transferQueueOwner: 'Move a position NFT this account holds to your wallet or one of its payout addresses. It waits the delay, needs a signer’s co-signature while co-signing is on, and can be cancelled meanwhile by you or a signer.',
+    transferTokenId: 'Position NFT id',
+    transferQueue: 'Queue transfer',
+    cooldownNote: tmpl(
+      'This wallet took over the account recently. Until {{at}} it cannot ask for any change that loosens protection: an unlock, a shorter delay, co-signing or NFT protection off, a new payout address or signer, a signer removal, or switching off. Each of those then waits the delay as usual.',
+      ['at'],
+    ),
+    lockedLoosenNote:
+      'While the account is locked, no change that loosens protection can be asked for. Request the unlock first; tightening changes still apply at once.',
+    signerLockHoldsMove:
+      'A recovery signer has locked this account, so this wallet cannot cancel the proposed move or propose another. The recovery signers can cancel it.',
+    transfersUnknown: 'We couldn’t read the transfer queue just now. Don’t assume it is empty.',
+    transferLine: tmpl('Position NFT #{{tokenId}} to {{to}}', ['tokenId', 'to']),
+    allowlistTitle: 'Payout addresses',
+    allowlistBody: 'Payouts may go only to your own wallet or to up to five addresses listed here. A new address becomes usable after the delay.',
+    allowlistRetired: 'This account was moved to a new wallet, so its payouts go only to that wallet. No payout address can be added to it.',
+    allowlistEmpty: 'Only your own wallet is allowed.',
+    allowlistUnknown: 'We couldn’t read your payout addresses just now.',
+    addressPlaceholder: '0x… address',
+    addAddress: 'Add address',
+    remove: 'Remove',
+    signersTitle: 'Recovery signers',
+    signersBody: 'Up to five wallets you trust, each accepting from its own key. Any of them can cancel a payout, co-sign one or lock your vault. A majority of three or more can move your account to a new wallet after the delay.',
+    signersEmpty: 'No recovery signers yet.',
+    signersUnknown: 'We couldn’t read your recovery signers just now.',
+    pendingUnknown: 'We couldn’t read the waiting additions just now, so one may be missing here. Try again in a moment.',
+    pendingAddAt: tmpl('Waiting until {{when}}', ['when']),
+    pendingAddReady: 'Ready to activate',
+    pendingAddExpired: tmpl('Expired at {{when}}: cancel it or ask again', ['when']),
+    signerNotAccepted: '(not yet accepted from the signer’s own key)',
+    activate: 'Activate',
+    signerRemovalAt: tmpl('Leaves at {{when}}', ['when']),
+    inviteSigner: 'Invite signer',
+    removeSigner: 'Remove',
+    signersMinNote: 'Moving the account to a new wallet needs at least three signers.',
+    replacementTitle: 'Move to a new wallet',
+    replacementNone: 'No move is proposed.',
+    replacementUnknown: 'We couldn’t read whether a move to a new wallet is proposed, so its controls are hidden. Try again in a moment.',
+    replacementLine: tmpl('Proposed: move to {{nominee}}, {{approvals}} of {{threshold}} approvals.', ['nominee', 'approvals', 'threshold']),
+    replacementReady: tmpl('It can complete from {{when}}.', ['when']),
+    replacementQuorumLost:
+      'This move no longer has the majority it needs among the signers active now (or fewer than three signers remain), so it cannot complete until enough current signers approve it.',
+    replacementNomineeIsSigner:
+      'The proposed wallet has since become one of this account’s signers, so the move cannot complete. Cancel it and propose a wallet that is not a signer.',
+    replacementStageUnknown: 'We couldn’t read the signer list just now, so we can’t say whether this move can complete.',
+    finalizeReplacement: 'Complete the move',
+    escapeTitle: 'Escape route open',
+    escapeBody: 'The protocol has been paused for three days. Payouts already queued keep releasing when they are due. Protection still applies to you: a new withdrawal is queued and waits your delay as usual.',
+    signerViewTitle: 'Act as a recovery signer',
+    signerViewBody: 'Enter the account you were made a signer for.',
+    accountPlaceholder: 'Account address',
+    loadAccount: 'Open account',
+    acceptRole: 'Accept the signer role',
+    lockAccount: 'Lock this account',
+    nomineePlaceholder: 'New wallet address',
+    proposeReplacement: 'Propose a move',
+    approveReplacement: 'Approve the move',
+    notSigner: 'Your wallet is not a recovery signer of this account.',
+    nomineeBody: 'This account has invited your wallet to be one of its recovery signers. Accept from this wallet to take the role, or withdraw from the invitation. It becomes active once the delay has passed and the invitation is applied.',
+    signerRoleUnknown: 'We couldn’t read this account’s signers just now, so we can’t yet tell whether your wallet is one of them.',
+    invalidAddress: 'Enter a valid address.',
+    working: 'Working…',
+    done: 'Done. It can take a moment to show here.',
+    unknownWhen: 'an unknown time',
+    managedAccountTitle: tmpl('Account you now manage: {{account}}', ['account']),
+    managedAccountUnknown: 'We couldn’t check whether your wallet manages a moved account. If it does, that account is not shown here yet.',
+  },
+
   riskAccess: {
     title: 'Risk access',
     lede:
@@ -2584,9 +3203,9 @@ const copySource = {
   keepers: {
     title: 'Keeper permissions',
     blurb:
-      'Keepers are third-party services (or your own bot) you can allow to run specific loan actions FOR you — start an early close, finish a refinance you set up, list a position for sale. Everything here is off until you turn it on, and three switches must all agree before a keeper can act: the master switch, the action on that keeper, and a per-loan switch on each loan’s page.',
+      'Keepers are third-party services (or your own bot) you can allow to run specific loan actions FOR you — start an early close, extend a loan, list a position for sale. Everything here is off until you turn it on, and three switches must all agree before a keeper can act: the master switch, the action on that keeper, and a per-loan switch on each loan’s page.',
     safetyNote:
-      'A keeper can never receive your money — payouts always go to whoever holds the position. You can revoke any keeper (or flip the master switch off) at any time, the protocol can pause all keepers at once, and refinances are additionally bounded by the guardrails you set per loan. If a position changes hands, these permissions apply to the new holder’s settings, not yours.',
+      'A keeper can never receive your money — payouts always go to whoever holds the position. You can revoke any keeper (or flip the master switch off) at any time, and the protocol can pause all keepers at once. If a position changes hands, these permissions apply to the new holder’s settings, not yours.',
     masterLabel:
       'Allow my approved keepers to act (master switch — nothing runs while this is off)',
     addressPlaceholder: '0x… keeper address',
@@ -2598,12 +3217,6 @@ const copySource = {
         side: 'acts on loans you borrowed',
         blurb:
           'Begin any early-close path on a loan where you are the borrower. The payoff still comes from your wallet under your standing approvals.',
-      },
-      refinance: {
-        label: 'Complete a refinance for me',
-        side: 'acts on loans you borrowed',
-        blurb:
-          'Finish a refinance you set up, bounded by the guardrails (rate ceiling, end date) you approved — and the protocol’s own keeper kill switch.',
       },
       completeOffset: {
         label: 'Finish an offset close for me',
@@ -3218,8 +3831,12 @@ const copySource = {
       sellNow: 'Sell your position now',
       sellNowDesc:
         'Sell this position straight into a standing lending offer that matches it. You’re paid immediately from funds already locked by that lender, and the borrower’s rate and due date don’t change.',
-      // Codex r1 P1 — "the LARGER of X or Y, never both" reads as
-      // EXHAUSTIVE, and it is not: both sale paths also migrate any
+      // #1209 — a sale no longer gives up the seller's earned interest: it
+      // becomes the seller's claim on the loan, and the only cost is the
+      // buyer's rate top-up.
+      //
+      // Codex r1 P1 — a single cost figure reads as EXHAUSTIVE, and it is
+      // not: both sale paths also migrate any
       // held-for-lender balance to the buyer and atomically forfeit the
       // seller's pending interaction-reward entry. The held balance can
       // dwarf the interest figure, so naming only the interest
@@ -3241,7 +3858,7 @@ const copySource = {
       // anywhere yet. Pricing them is follow-up work; claiming a
       // destination that prices them was the defect.
       sellNowCost:
-        'Costs the LARGER of the interest built up so far or the buyer’s rate top-up — never both, and the tool shows that figure. On top of that, any balance already being held for you on this loan transfers to the buyer, and your pending reward entry for this position is given up. Those two are not shown as amounts anywhere yet — check your held balance and rewards before you sell.',
+        'Costs only the buyer’s rate top-up, when their rate is above this loan’s own, and the tool shows that figure. The interest you earned so far is not given up: it stays yours as a claim on the loan, paid as the borrower pays interest. On top of that, any balance already being held for you on this loan transfers to the buyer (apart from interest you earned that is waiting in it, which is paid into your vault), and your pending reward entry for this position is given up. Those two are not shown as amounts anywhere yet — check your held balance and rewards before you sell.',
       // FOURTH loss, and only on a Full-stamped position (Codex r12
       // P2). `FeeEntitlement` is keyed by loanId, NOT by lender, and no
       // sale path resets it — only `repriceFeeEntitlementOnExtension`
@@ -3279,7 +3896,7 @@ const copySource = {
       listDesc:
         'Publish this position at your asking rate and wait for a buyer. The sale settles only when someone accepts.',
       listCost:
-        'Costs the LARGER of the interest built up so far or the buyer’s rate top-up — never both, and the tool shows that figure. On top of that, any balance already being held for you on this loan transfers to the buyer, and your pending reward entry for this position is given up. Those two are not shown as amounts anywhere yet — check your held balance and rewards before you sell.',
+        'Costs only the buyer’s rate top-up, when their rate is above this loan’s own, and the tool shows that figure. The interest you earned so far is not given up: it stays yours as a claim on the loan, paid as the borrower pays interest. On top of that, any balance already being held for you on this loan transfers to the buyer (apart from interest you earned that is waiting in it, which is paid into your vault), and your pending reward entry for this position is given up. Those two are not shown as amounts anywhere yet — check your held balance and rewards before you sell.',
       // Cross-party disclosure: listing does not only lock the seller.
       // Codex r1 P2 ×2 — two corrections to what this used to claim.
       // (a) Partial repayment is NOT held: the borrower surface
@@ -3457,17 +4074,17 @@ const copySource = {
 
   earlyExit: {
     receiptYouReceive: tmpl(
-      '~{{toSeller}}, paid straight to your wallet in the same transaction — selling to offer #{{offerId}} at {{rate}} yearly. Nothing to claim afterwards.',
+      '~{{toSeller}}, paid straight to your wallet in the same transaction — selling to offer #{{offerId}} at {{rate}} yearly.',
       ['toSeller', 'offerId', 'rate'],
     ),
     receiptLockNothing: 'Nothing.',
     receiptOweNothing: 'Nothing — you approve nothing and pay nothing out of pocket.',
-    receiptCanLose: 'The LARGER of the interest built up so far or the rate difference for the remaining term — never both. Already reflected in the figure above; the exact amount is re-read live when you confirm.',
-    receiptFees: 'The protocol’s cut comes out of the forfeited interest — never out of your payout beyond the figure shown.',
+    receiptCanLose: 'Only the rate difference for the remaining term, when this buyer’s rate is above the loan’s own. It is already taken from the figure above, and the exact amount is re-read live when you confirm. Your earned interest is not paid now: as a claim on the loan it carries the borrower’s risk, as it did while you held the position.',
+    receiptFees: 'No fee is taken at the sale. When your claim is paid, the protocol’s usual cut of interest comes out of it, as it would have if you had kept the position.',
     receiptEnds: 'Immediately — your position transfers to the buyer and you’re done with this loan. The borrower’s rate and due date don’t change.',
     title: 'Exit this loan early',
     blurb:
-      'Sell your side of this loan to another lender with a matching open lending offer. You’re paid immediately from their already-locked funds — nothing to approve, nothing to claim afterwards — and the borrower’s terms don’t change at all.',
+      'Sell your side of this loan to another lender with a matching open lending offer. You’re paid immediately from their already-locked funds, with nothing to approve, and the borrower’s terms don’t change at all. The interest you earned while you held the position stays yours as a claim on the loan.',
     pickerLead: 'Open lending offers that can buy you out:',
     none:
       'No matching lending offers right now. An offer must match this loan’s assets, cover its remaining amount, and fit inside its remaining time — check back later.',
@@ -3476,13 +4093,11 @@ const copySource = {
     rowReceive: tmpl(`you’d receive ~{{amount}} now`, ['amount']),
     offerRowLine: tmpl('Offer #{{id}} · {{rate}} yearly · {{duration}}', ['id', 'rate', 'duration']),
     shortfallWarn:
-      'This buyer expects a higher rate than your loan pays, and for this candidate that rate difference (not the interest built up — you pay the larger of the two, never both) is what sets your payout.',
-    forfeitNote:
-      'Exiting early forfeits the interest built up so far: it covers the protocol’s cut and, when the buyer’s rate is higher, helps bridge the difference. The figure shown already accounts for this.',
+      'This buyer expects a higher rate than your loan pays, so the difference for the remaining term is taken from your payout. Your earned interest does not cover it: that stays your claim on the loan.',
     action: 'Review exit',
     confirm: 'Confirm — sell my position',
     done:
-      'Position sold — the payout is already in your wallet, and this loan now belongs to the new lender. Nothing more to do here.',
+      'Position sold — the payout is already in your wallet, and this loan now belongs to the new lender. The interest you earned stays yours as a claim on the loan: Claims shows it, and you withdraw there whatever reaches your vault.',
     loadingOffers: 'Looking for matching lending offers…',
     figureMoved:
       'The payout figure moved with time, so the review closed — open it again to confirm against the current number.',
@@ -3540,17 +4155,17 @@ const copySource = {
     // buyer's payment, so nothing is drawn from the seller's wallet and the
     // listing sets no approval.
     receiptYouMayOwe: tmpl(
-      'Nothing from your wallet. When a buyer accepts, the settlement is taken out of their payment before the rest reaches you: the LARGER of the interest built up by then or the rate difference for the remaining term — never both. Right now that would be ~{{amount}} {{sym}}.',
+      'Nothing from your wallet. When a buyer accepts, the settlement is taken out of their payment before the rest reaches you: the rate difference for the remaining term, when your rate is above the loan’s own. Right now that would be ~{{amount}} {{sym}}.',
       ['amount', 'sym'],
     ),
     consentLabel: 'I understand the lock and the settlement taken out of the buyer’s payment, and agree to them.',
     receiptLock: 'Your lender position NFT, until the sale completes or the listing ends. Cancelling releases it in one step; after the listing expires, a small cleanup transaction (which anyone — you, or a helper bot — can send, even while the protocol is paused) releases it. Nothing else.',
     receiptCanLose: 'Nothing in your wallet is at stake. A buyer’s attempt is refused, and nothing moves, if the settlement would be larger than their payment or a sale would break the figures the listing records; the listing then sits unfillable until you cancel it.',
-    receiptFees: 'The protocol’s cut comes out of the settlement figure — nothing beyond it.',
+    receiptFees: 'No fee is taken at the sale. When your claim on the interest you earned is paid, the protocol’s usual cut of interest comes out of it.',
     receiptEnds: 'When a buyer accepts (everything settles in their transaction), when you cancel the listing, or when it expires — at the end of your chosen window, or at the loan’s due date, whichever comes first. An expired listing can’t be bought any more; your NFT then unlocks with the cancel action or a cleanup transaction anyone can send.',
     title: 'List this position for sale',
     blurb:
-      'Set the yearly rate a buyer would earn for the loan’s remaining time and list your position publicly. When a buyer accepts, you’re paid in that same transaction: the buyer’s payment, less the settlement. (If a matching offer above already pays enough, the instant exit is simpler — listing is for naming your own price and waiting.)',
+      'Set the yearly rate a buyer would earn for the loan’s remaining time and list your position publicly. When a buyer accepts, you’re paid in that same transaction: the buyer’s payment, less the settlement. The interest you earned stays yours as a claim on the loan. (If a matching offer above already pays enough, the instant exit is simpler — listing is for naming your own price and waiting.)',
     rateLabel: 'Yearly rate the buyer earns',
     windowLabel: 'Listing window',
     windowOption: tmpl('{{days}} days', ['days']),
@@ -3563,13 +4178,13 @@ const copySource = {
     // settlement is deducted from the buyer's payment (net settlement, #1659),
     // not pulled from the seller's wallet.
     floorQuote: tmpl(
-      'If a buyer takes this listing at any time before it ends, you come out with at least {{amount}} {{sym}}: what the buyer pays, less the settlement (the larger of the interest you give up and the rate top-up owed to the buyer), which is taken out of that payment before it reaches you. It allows for the time your listing takes to confirm, so it can sit slightly below today’s figure.',
+      'If a buyer takes this listing at any time before it ends, you come out with at least {{amount}} {{sym}}: what the buyer pays, less the settlement (the rate top-up owed to the buyer, when your rate is above the loan’s own), which is taken out of that payment before it reaches you. It allows for the time your listing takes to confirm, so it can sit slightly below today’s figure.',
       ['amount', 'sym'],
     ),
     // #1810 — money already set aside for the lender transfers with the
     // position. Shown only when there is some.
     heldQuote: tmpl(
-      '{{amount}} {{sym}} already set aside for the lender on this loan goes to the buyer with the position, not to you.',
+      '{{amount}} {{sym}} already set aside for the lender on this loan goes to the buyer with the position, apart from any interest you earned that is waiting in it, which is paid into your vault.',
       ['amount', 'sym'],
     ),
     floorLoading: 'Reading the minimum this listing would guarantee you…',
@@ -3627,7 +4242,7 @@ const copySource = {
     loanSettledWhileListed:
       'This loan has settled, so the sale listing can never complete — cancel it to unlock your lender NFT.',
     ended:
-      'Your sale listing is no longer active. If a buyer accepted it, your payout (their payment, less the settlement) is already in your wallet.',
+      'Your sale listing is no longer active. If a buyer accepted it, your payout (their payment, less the settlement) is already in your wallet, and the interest you earned is your claim on the loan, shown in Claims.',
     // Issue #951 — the on-chain listing entry point is broken; the
     // form is feature-gated off until the contract fix lands.
     listingUnavailable:
@@ -4094,6 +4709,44 @@ const copySource = {
     guidedLend: 'Lend step by step',
     enableAdvanced: 'Show the extra tools (Advanced mode)',
     dismiss: 'Got it',
+  },
+
+  // #1209 — interest a wallet earned on lender positions it sold. A sale
+  // keeps it as the seller's claim on the loan; this is where the claim is
+  // stated, at the sale and on the Claims page.
+  sellerClaims: {
+    // The sale reviews' statement of the claim, with today's figure.
+    saleNote: tmpl(
+      'The interest you have earned on this position, about {{claim}} so far before the protocol’s cut, is not part of this payout and is not given up: it stays yours as a claim on the loan. Each time the borrower pays interest, open seller claims are paid first, oldest first, into your vault, and you withdraw from Claims. If the borrower defaults and the recovery falls short, the buyer’s loan amount is paid first, so your claim can be paid in part or not at all.',
+      ['claim'],
+    ),
+    title: 'Interest from positions you sold',
+    lede: 'When you sold a lender position, the interest you had earned on it stayed yours as a claim on the loan. As the borrower pays interest, open claims are paid first, oldest first, into your vault, less the protocol’s usual cut of interest. You withdraw from here to your wallet.',
+    rowTitle: tmpl('Loan #{{id}}', ['id']),
+    held: tmpl('{{amount}} is waiting in your vault for you.', ['amount']),
+    owedOpen: tmpl(
+      'About {{amount}} is still owed to you, before the protocol’s cut. It is paid as the borrower pays interest, ahead of the current lender.',
+      ['amount'],
+    ),
+    owedFallback: tmpl(
+      'About {{amount}} is still owed to you, before the protocol’s cut. The loan is waiting on its fallback resolution, and your claim is settled once that resolves.',
+      ['amount'],
+    ),
+    owedEnded: tmpl(
+      'About {{amount}} was still owed to you, before the protocol’s cut, when this loan ended. Withdrawing settles it from what the loan recovered: the current lender’s loan amount is paid first, then sellers, oldest first. Whatever the recovery does not cover is unpaid, and nothing on the loan owes it.',
+      ['amount'],
+    ),
+    nothingYet: 'Nothing is waiting to be withdrawn yet.',
+    refused: tmpl('It can’t be withdrawn right now: {{reason}}', ['reason']),
+    checkFailed: 'We couldn’t check whether it can be withdrawn right now. Try again shortly.',
+    withdraw: 'Withdraw to wallet',
+    withdrawing: 'Withdrawing…',
+    withdrawn: 'Withdrawn to your wallet.',
+    unavailable:
+      'We couldn’t check for interest owed to you from positions you sold, because the activity index is unavailable right now. Try again shortly.',
+    unread: tmpl('We couldn’t read your claim on loan #{{id}} right now.', ['id']),
+    truncated:
+      'Only the loans named by your most recent seller-claim records are checked here, so a claim from an older sale may not be listed.',
   },
 
   claims: {
@@ -5028,6 +5681,21 @@ const copySource = {
       ['amt'],
     ),
     withdrawYouReceive: tmpl('{{amt}} back in your wallet.', ['amt']),
+    withdrawQueuedYouReceive: tmpl(
+      '{{amt}} queued for your wallet. Protection is on, so it is paid after {{delay}}, and you or a signer can cancel it meanwhile.',
+      ['amt', 'delay'],
+    ),
+    withdrawQueuedCosign: 'It also needs a signer’s co-signature before it can be released.',
+    withdrawQueuedDone: 'Withdrawal queued. It is paid to your wallet once the delay passes; follow it on the Protection page.',
+    withdrawHeldDone: 'Nothing was paid: the account is locked or its queue is full, so the VPFI stayed in your vault. Withdraw it again once the account can queue a payout.',
+    withdrawQueueFull: 'This account has 16 payouts and transfers waiting, the most it can hold, so no new withdrawal can be queued until one is paid or cancelled.',
+    withdrawProtectionUnknown: 'We couldn’t read this account’s protection settings, so withdrawing is off until we can tell whether it pays now or waits.',
+    withdrawProtectionBlocked: 'This account is locked or was moved to a new wallet, so VPFI can’t be withdrawn from here. Manage it on the Protection page.',
+    depositProtectionUnknown: 'We couldn’t read this account’s protection settings, so depositing is off until we can tell whether this wallet may fund it.',
+    depositRetired: tmpl(
+      'This account was moved to a new wallet, so this wallet can’t deposit into it. It is now managed by {{controller}}.',
+      ['controller'],
+    ),
     checkingAvailability: tmpl('Checking VPFI availability on {{chain}}…', ['chain']),
     availabilityCheckFailed: tmpl(
       'We couldn’t check VPFI availability on {{chain}} right now. Please try again in a moment.',
@@ -5497,6 +6165,10 @@ const copySource = {
   },
   vault: {
     unreadableCount: tmpl('{{count}} assets', ['count'], { one: 'one asset' }),
+    nftCollectionsNote: tmpl(
+      'Your vault has received NFT deposits from {{list}}. That list stays after a token is withdrawn, so the app cannot tell from it what you hold now: enter a collection and token id in the deposit card to check.',
+      ['list'],
+    ),
     unreadableWarn: tmpl(
       'We couldn’t read {{assets}} just now ({{list}}) — the list below may be missing balances. This usually clears on the next refresh.',
       ['assets', 'list'],
@@ -5532,7 +6204,7 @@ const copySource = {
     unavailable:
       'We couldn’t read your vault right now. Your funds are unaffected — please try again in a moment.',
     lockedHint:
-      'Locked amounts back your open offers, active loans, and rentals. They free up when those close.',
+      'Locked amounts back your open offers, active loans and rentals, or wait in a queued payout. They free up when those close or the payout is paid or cancelled.',
   },
 
   /** Claim-All batch preview labels (data/claimAll.ts). The pure builder
@@ -5694,6 +6366,7 @@ const copySource = {
       BackstopAbsorbedLoan: 'Loan absorbed by backstop',
       LoanExtended: 'Loan extended',
       LoanRefinanced: 'Loan refinanced',
+      RefinancePayoffSettled: 'Loan refinanced',
       LoanPreclosedDirect: 'Loan closed early',
       LenderFundsClaimed: 'Funds claimed',
       BorrowerFundsClaimed: 'Collateral claimed',
@@ -5706,6 +6379,7 @@ const copySource = {
       IntentLoanRolled: 'Loan rolled over',
       CollateralAdded: 'Collateral added',
       InternalMatchExecuted: 'Loan matched internally',
+      InternalMatchRefusedShortDelivery: 'Internal match skipped',
       PrepayListingPosted: 'Collateral listed for sale',
       PrepayListingMatched: 'Collateral sale matched',
       PrepayListingUpdated: 'Collateral listing updated',
@@ -5724,6 +6398,10 @@ const copySource = {
       RepayPartialPeriodAdvanced: 'Interest period advanced',
       ForcedSaleSettled: 'Collateral sold for what was owed',
       BorrowerHeldExtraPaid: 'Held sale extra paid out',
+      SellerInterestClaimRecorded: 'Seller interest claim recorded',
+      SellerInterestPaid: 'Seller interest paid',
+      SellerInterestWithdrawn: 'Seller interest withdrawn',
+      SellerInterestClaimClosed: 'Seller interest claim closed',
       SignedOfferFilled: 'Signed offer filled',
       SignedOfferMatched: 'Signed offers matched',
       SignedOfferCancelled: 'Signed offer cancelled',
@@ -5739,6 +6417,12 @@ const copySource = {
       AutoExtendLenderCapsChanged: 'Automatic extension limits updated',
       AutoListOptOutCleared: 'Automatic grace-period listing on',
       AutoRefinanceCapsChanged: 'Automatic refinance limits updated',
+      ExtendReserveFunded: 'Extension reserve funded',
+      ExtendReserveWithdrawn: 'Extension reserve withdrawn',
+      ExtendChargeDrawn: 'Extension charge paid',
+      RefinancePayoffPermitSet: 'Refinance payoff permit signed',
+      RefinancePayoffPermitCleared: 'Refinance payoff permit removed',
+      RefinancePayoffPulled: 'Refinance payoff paid',
       BackstopFilled: 'Funded by the backstop',
       BackstopLoanClaimed: 'Backstop recovery claimed',
       BorrowerSurplusClaimed: 'Surplus claimed',
@@ -5789,8 +6473,50 @@ const copySource = {
       IlliquidPairConsentSet: 'Consent for an illiquid asset pairing updated',
       MidTierPairAckSet: 'Mid-tier asset pairing confirmed',
       RiskStrictModeSet: 'Strict mode setting updated',
-      TokenDisowned: 'Unsolicited tokens disowned',
-      StuckERC20Recovered: 'Stuck tokens recovered',
+      VaultDeposited: 'Deposited to vault',
+      VaultWithdrawRequested: 'Vault withdrawal requested',
+      UntrackedAdopted: 'Tokens added to vault',
+      UntrackedDisowned: 'Unsolicited tokens disowned',
+      VaultPinned: 'Vault version pinned',
+      VaultUnpinRequested: 'Vault version unpin requested',
+      VaultUnpinned: 'Vault version unpinned',
+      PayoutQueued: 'Payout queued',
+      PayoutReleased: 'Payout released',
+      PayoutCancelled: 'Payout cancelled',
+      PayoutHeldInVault: 'Payout kept in vault',
+      PaymentCreditedToVault: 'Payment credited to vault',
+      PositionTransferQueued: 'Position NFT transfer queued',
+      PositionTransferReleased: 'Position NFT transfer released',
+      PositionTransferCancelled: 'Position NFT transfer cancelled',
+      EscapeWithdrawal: 'Withdrawal during protocol pause',
+      PayoutCosigned: 'Payout co-signed',
+      PositionTransferCosigned: 'Position transfer co-signed',
+      ProtectedModeEnabled: 'Protected mode turned on',
+      ProtectedModeDisabled: 'Protected mode turned off',
+      SettingChangeRequested: 'Protected setting change requested',
+      SettingChangeCancelled: 'Protected setting change cancelled',
+      SettingChangeApplied: 'Protected setting change applied',
+      ProtectedDelaySet: 'Payout delay changed',
+      ProtectNftsSet: 'Position NFT protection changed',
+      CosignRequirementSet: 'Co-signing requirement changed',
+      AllowlistAddRequested: 'Payout address addition requested',
+      AllowlistAddCancelled: 'Payout address addition cancelled',
+      AllowlistAdded: 'Payout address added',
+      AllowlistRemoved: 'Payout address removed',
+      SignerAddRequested: 'Recovery signer invited',
+      SignerAccepted: 'Recovery signer accepted',
+      SignerAddCancelled: 'Recovery signer invitation cancelled',
+      SignerAdded: 'Recovery signer added',
+      SignerRemoveRequested: 'Recovery signer removal requested',
+      SignerRemoveCancelled: 'Recovery signer removal cancelled',
+      SignerRemoved: 'Recovery signer removed',
+      VaultLocked: 'Vault locked',
+      VaultUnlocked: 'Vault unlocked',
+      ReplacementProposed: 'Wallet replacement proposed',
+      ReplacementApproved: 'Wallet replacement approved',
+      ReplacementScheduled: 'Wallet replacement scheduled',
+      ReplacementCancelled: 'Wallet replacement cancelled',
+      PrimaryReplaced: 'Wallet replaced',
       AutoLendConsentChanged: 'Auto-lend setting updated',
       AutoOptInOnNewLoanChanged: 'Automatic refinance setting for new loans updated',
       DefaultAutoRefinanceCapsChanged: 'Default automatic refinance limits updated',
@@ -6894,7 +7620,7 @@ const copySource = {
       'The least a standing intent’s smallest fill must be worth when it is registered. Both of its assets must also be priced. An intent registered before a change keeps its terms until it is set again.',
     autoRefinance: 'Auto-refinance',
     autoRefinanceHint:
-      'Off stops keepers and the order matcher from completing refinances. A borrower refinancing their own loan, or a lender accepting a refinance request directly, still goes through.',
+      'Off stops the order matcher from completing refinances. A lender accepting a refinance request directly still goes through.',
     autoExtend: 'Auto-extend',
     autoExtendHint: 'Off blocks every in-place loan extension, including one the borrower asks for directly.',
     keepers: 'Keepers',

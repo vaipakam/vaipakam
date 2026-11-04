@@ -28,6 +28,8 @@ describe('isExitWrite', () => {
       'precloseDirect',
       'claimAsBorrower',
       'claimAsLender',
+      // #1209 — a past seller's interest claim.
+      'claimAsSeller',
       'withdrawVPFIFromVault',
       'cancelOffer',
       'addCollateral',
@@ -83,6 +85,53 @@ describe('isExitWrite', () => {
     // business even when the intent is to leave.
     expect(isExitWrite('createLoanSaleOffer', [])).toBe(false);
     expect(isExitWrite('offsetWithNewOffer', [])).toBe(false);
+  });
+
+  it('permits the protected-account writes that free, release or protect', () => {
+    // Protected account mode: each of these takes the user's own free
+    // assets out, releases a payout the user already queued, or answers a
+    // stolen key. A user who declined new Terms must still be able to do
+    // all of them, including asking to unlock a vault they locked.
+    for (const fn of [
+      'withdrawFromVault',
+      'escapeWithdraw',
+      'disownUntracked',
+      'releasePayout',
+      'releasePositionTransfer',
+      'cancelPayout',
+      'cancelPositionTransfer',
+      'cosignPayout',
+      'lockVault',
+      'requestUnlock',
+      'removeAllowlisted',
+      'cancelSettingChange',
+      'cancelAddAllowlisted',
+      'cancelAddSigner',
+      'cancelRemoveSigner',
+      'cancelReplacement',
+      'enableProtectedMode',
+      'finalizeSettingChanges',
+    ]) {
+      expect(isExitWrite(fn, []), fn).toBe(true);
+    }
+  });
+
+  it('still gates the protected-account writes that add exposure or reach', () => {
+    // Depositing, widening where payouts may go, adding signers and moving
+    // the account to another wallet are new commitments, not exits.
+    for (const fn of [
+      'depositToVault',
+      'addAllowlisted',
+      'addSigner',
+      'acceptSignerRole',
+      'proposeReplacement',
+      'approveReplacement',
+      'finalizeReplacement',
+      'requestDisableProtectedMode',
+      'setProtectedDelay',
+    ]) {
+      expect(isExitWrite(fn, []), fn).toBe(false);
+    }
   });
 
   it('permits a batch whose every call is an exit', () => {

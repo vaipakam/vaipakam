@@ -13,10 +13,11 @@
  * What it proves, in order:
  *   1. Each remit run sends exactly one part, the keeper's own transaction,
  *      never above the ceiling; the parts sum to the slice Base quoted.
- *   2. After each of the first two parts — relayed, indexed and proven by the
- *      keeper's delivery-proof pass — the mirror still holds the day (not
- *      landed, no landing time), Base's ledger for the day is not whole, Base
- *      lists the day as open, and a claim on the mirror pays nothing.
+ *   2. After each of the first two parts — relayed, and counted by the
+ *      mirror's ingress in the transaction it arrives in (#2828) — the mirror
+ *      still holds the day (not landed, no landing time), Base's ledger for
+ *      the day is not whole, Base lists the day as open, and a claim on the
+ *      mirror pays nothing.
  *   3. The third part makes both ends agree at once: Base's ledger reads
  *      whole and the day leaves Base's open-day list, and the mirror shows the
  *      day landed, every component equal to the whole Base declared, over
@@ -30,7 +31,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { openLoan, repayInFull } from '@vaipakam/anvil-harness/lending';
 import type { Party } from '@vaipakam/anvil-harness/scenarioChain';
-import { runDeliveryProof } from '../../../src/deliveryProof';
 import { runRewardBudgetRemit } from '../../../src/rewardBudgetRemit';
 import { keeperEnvFor, tickNow, type KeeperHarness } from '../../harness/keeperEnv';
 import { collectOpsAlerts, type OpsAlertLog } from '../../harness/opsAlerts';
@@ -73,7 +73,7 @@ let laneCap: bigint;
 
 beforeAll(async () => {
   m = await openMeshScenario();
-  k = await keeperEnvFor([m.base, m.mirror], ['REWARD_DAY_CLOSE_ENABLED', 'REWARD_REMIT_ENABLED', 'REWARD_DELIVERY_PROOF_ENABLED'], { indexer: true });
+  k = await keeperEnvFor([m.base, m.mirror], ['REWARD_DAY_CLOSE_ENABLED', 'REWARD_REMIT_ENABLED'], { indexer: true });
   alerts = collectOpsAlerts();
 });
 
@@ -148,13 +148,12 @@ describe('one day remitted to the mirror in three parts', () => {
       expect(amount).toBeLessThanOrEqual(laneCap);
       sent.push(amount);
 
-      // The part crosses the lane, the indexer sees it, the keeper proves it.
+      // The part crosses the lane and its ingress counts it; the indexer sees it.
       const delivered = await m.relay.deliver(BASE_ID, MIRROR_ID); // eslint-disable-line no-await-in-loop
       expect(delivered, `relay of part ${part}`).toHaveLength(1);
       await m.warp(60); // eslint-disable-line no-await-in-loop
       await k.indexer!.index(); // eslint-disable-line no-await-in-loop
       await m.syncClock(); // eslint-disable-line no-await-in-loop
-      await runDeliveryProof(k.env, tickNow(FIVE_MIN_MS)); // eslint-disable-line no-await-in-loop
 
       const ledger = await baseLedger(); // eslint-disable-line no-await-in-loop
       const parts = await mirrorParts(); // eslint-disable-line no-await-in-loop

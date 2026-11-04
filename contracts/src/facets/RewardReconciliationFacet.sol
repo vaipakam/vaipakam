@@ -156,7 +156,7 @@ contract RewardReconciliationFacet is DiamondAccessControl, DiamondReentrancyGua
         // would report value that has already left — and it bounds the take at
         // what the entry still holds, which is a second ceiling beside the
         // packet's own remainder. A packet holding no batch passes untouched
-        // and is debited nothing: only the d6 ingress opens a batch, at the
+        // and is debited nothing: only the budget (d8) ingress opens a batch, at the
         // packet's own landing, so it never acquires one later.
         LibRewardCustody.takeFromReleasedRemainder(s, packetHash, freshShare + recycledShare);
         if (p.kind <= LibRewardCustody.PACKET_KIND_COMPENSATION) {

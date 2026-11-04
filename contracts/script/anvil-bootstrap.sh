@@ -171,6 +171,22 @@ cast rpc anvil_setCode \
   --rpc-url "$RPC" >/dev/null
 echo "    Multicall3 etched (mock at $MULTICALL3_DEPLOYED → canonical 0xcA11…cA11)"
 
+# Permit2 (#1558). A refinance pays its old loan off through the borrower's
+# single-use Permit2 permit, so on a chain with no Permit2 every refinance
+# refuses. Install Uniswap's canonical runtime (the same committed bytes the
+# e2e harness installs; provenance in script/e2e/README.md) at its canonical
+# address, and check what landed. Idempotent.
+echo "[3b/6] Installing Permit2 at canonical address"
+PERMIT2_ADDR="0x000000000022D473030F116dDEE9F6B43aC78BA3"
+PERMIT2_CODEHASH="0xdcde65555316946c298e4c60c6213eb5c3aeab4354d1f3fac5427236bcbb9ebe"
+cast rpc anvil_setCode "$PERMIT2_ADDR" "$(tr -d '[:space:]' < script/e2e/Permit2.runtime.hex)" \
+  --rpc-url "$RPC" >/dev/null
+if [ "$(cast keccak "$(cast code "$PERMIT2_ADDR" --rpc-url "$RPC")")" != "$PERMIT2_CODEHASH" ]; then
+  echo "Error: Permit2 at $PERMIT2_ADDR does not match the committed runtime" >&2
+  exit 1
+fi
+echo "    Permit2 installed at $PERMIT2_ADDR"
+
 echo "[4/6] BootstrapAnvil (flip Range Orders master flags ON)"
 forge script script/BootstrapAnvil.s.sol --rpc-url "$RPC" --broadcast --slow
 

@@ -36,6 +36,7 @@ interface IBackstopDiamond {
     ) external;
 
     function withdrawLenderIntentCapital(
+        address account,
         address lendingAsset,
         address collateralAsset,
         uint256 amount
@@ -261,7 +262,12 @@ contract BackstopVaultImplementation is
         uint256 amount
     ) external onlyOwner returns (uint256 returned) {
         uint256 before = IERC20(lend).balanceOf(address(this));
-        IBackstopDiamond(diamond).withdrawLenderIntentCapital(lend, coll, amount);
+        // #3088 keyed the withdraw on the intent's ACCOUNT (its manager may be
+        // a replacement controller). This vault is the intent owner and is
+        // never a protected account, so it names itself and is paid directly.
+        IBackstopDiamond(diamond).withdrawLenderIntentCapital(
+            address(this), lend, coll, amount
+        );
         uint256 received = IERC20(lend).balanceOf(address(this)) - before;
         if (received > 0) returned = LibDelivery.pushMeasured(lend, diamond, received);
     }

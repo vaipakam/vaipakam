@@ -1685,29 +1685,26 @@ Master flag for the auto-lend opt-in.
 
 ### `cfgAutoRefinanceEnabled`
 
-Master flag for the AUTOMATED refinance completion routes (#2349 /
+Master flag for the AUTOMATED refinance completion route (#2349 /
 PR #2355 — the scope below replaced an earlier "blocks every tagged
-accept" behaviour).
+accept" behaviour; #3042 retired the keeper route, so the matcher is
+the only automated route left).
 
 - **Getter:** `AdminFacet.getAutoRefinanceEnabled() -> bool`
 - **Setter:** `AdminFacet.setAutoRefinanceEnabled(bool)`
 - **What `false` blocks** (reverts `AutoRefinanceDisabled`):
-  - a **keeper** holding the borrower's refinance delegation calling
-    `RefinanceFacet.refinanceLoan` (caller ≠ current borrower-NFT
-    holder);
   - the **range-order matcher** filling a refinance-tagged borrower
     offer — `matchOffers` / `matchIntent` refuse the pair at admission
     (`RefinanceTaggedOfferNotMatchable`, via
     `LibAutoRefinanceCheck.matchAdmissible`), and
     `RefinanceFacet.refinanceLoanFromMatch` re-checks at execution.
 - **What `false` does NOT block:**
-  - the **borrower-NFT holder** calling `refinanceLoan` themselves;
   - a **lender directly accepting** the holder's refinance-tagged
     offer (`acceptOffer` → `RefinanceFacet.refinanceLoanFromAccept`).
     That is the spec's standard refinance process and not automation,
     so it completes whatever the switch says.
-- **Incident implication:** flipping this off stops the matcher and
-  keepers from completing refinances. It does NOT stop lenders from
+- **Incident implication:** flipping this off stops the matcher from
+  completing refinances. It does NOT stop lenders from
   accepting open refinance requests directly. To halt ALL refinance
   completions, use the protocol pause (every refinance entry is
   `whenNotPaused`) — not this flag.

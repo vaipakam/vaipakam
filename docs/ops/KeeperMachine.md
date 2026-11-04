@@ -308,14 +308,12 @@ a commit. The template documents each line. In short:
   sanctions-hold pass sends its deadline, overdue, capacity and backlog alerts
   here as one digest post per chain per run, however many wallets they name
   (#2565), plus one post per run of one-off notices when its settlement moves
-  reward value or a lapsed held chain restarts (#2515); the horizon heartbeat its revert,
-  overdue-entry and paused-clock alerts; and the delivery-proof pass its
-  not-yet-whole and refused-proof alerts (#2516). With either value unset,
+  reward value or a lapsed held chain restarts (#2515); and the horizon heartbeat its revert,
+  overdue-entry and paused-clock alerts. With either value unset,
   every such alert goes only to the journal,
   as `ops alert NOT delivered`. So set both, and confirm that line is absent,
   before arming any pass that alerts here: `REWARD_SANCTIONS_KEEPER_ENABLED`,
-  `REWARD_HORIZON_HEARTBEAT_ENABLED`, `REWARD_DELIVERY_PROOF_ENABLED` or
-  `REWARD_DAY_CLOSE_ENABLED`.
+  `REWARD_HORIZON_HEARTBEAT_ENABLED` or `REWARD_DAY_CLOSE_ENABLED`.
 - **Knobs:** copy the live values from the keeper Worker's dashboard.
 
 An empty value is unset, as an unbound setting is on the Worker. A chain or
@@ -397,15 +395,18 @@ journalctl -u vaipakam-keeper -f
    (`graceDefault`), `PERIODIC_SETTLE_ENABLED` (`periodicSettle`, every 15
    minutes from :05), `REWARD_REMIT_ENABLED` (`rewardBudgetRemit` and
    `remitAck`), `REWARD_COMMIT_ENABLED` (`commitmentReport`),
-   `REWARD_DELIVERY_PROOF_ENABLED` (`deliveryProof`),
    `REWARD_SANCTIONS_KEEPER_ENABLED` (`rewardSanctionsHold`, hourly) and
    `REWARD_HORIZON_HEARTBEAT_ENABLED` (`rewardHorizonHeartbeat`, hourly at :44; its
    entry close-out step also needs `REWARD_ENTRY_SETTLE_ENABLED`) and
    `REWARD_DAY_CLOSE_ENABLED` (`rewardDayClose`, every 15 minutes from :10),
    `REWARD_CLOSE_OUT_ENABLED` (`rewardCloseOut`, every 15 minutes from :00),
    `REWARD_ZEROED_DAY_ENABLED` (`rewardZeroedDay`, every 15 minutes from :09),
+   `REWARD_DELIVERY_CONFLICT_ENABLED` (`rewardDeliveryConflict`, every 15 minutes from :01),
    `REWARD_RETURN_TRANSPORT_ENABLED` (`rewardReturnTransport`, hourly at :29),
-   `PROTOCOL_UPKEEP_ENABLED` (`protocolUpkeep`, hourly at :59),
+   `PROTOCOL_UPKEEP_ENABLED` (`protocolUpkeep`, hourly at :59; its
+   prepay-sale sanctions sync step also needs
+   `PREPAY_SALE_SANCTIONS_SYNC_ENABLED`, and its tier-push retry step
+   `TIER_PUSH_RETRY_ENABLED`),
    `PREPAY_AUTO_LIST_ENABLED` (`prepayAutoList`, every minute), and
    `DISCOUNT_PATH_CHAIN_IDS` (a list of chain ids, not `true`: the flash-loan
    branch of the liquidator, armed per chain by
@@ -414,7 +415,6 @@ journalctl -u vaipakam-keeper -f
    validate that pass's own cadence: its `<pass> done in …` line on the
    minutes `src/passSchedule.ts` gives it, with no error line. A pass left
    unarmed logs that it skipped, so it is never silently off. Leaving the
-   delivery-proof pass unarmed leaves mirror-funded days gated. Leaving the
    sanctions pass unarmed lets held owners' evidence chains lapse. Leaving the
    horizon heartbeat unarmed means no reward's claim-horizon clock is ever
    observed, so an armed horizon expires nothing. Leaving the day-close pass

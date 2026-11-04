@@ -61,10 +61,10 @@ export function instantSellCandidatesOf(
   input: InstantSellInput,
 ): IndexedOffer[] | null | undefined {
   const { offers, offersFailed, address, row, live, chainNow } = input;
-  // No window, no quote. Every rule below needs one, and a priced-looking
+  // No interest ledger, no quote. Every rule below needs one, and a priced-looking
   // list that cannot be priced is worse than saying so (Codex #1801 r11
   // P2): `null`, because `[]` would claim the market is empty.
-  if (live.lenderForfeitFrom === undefined) return null;
+  if (live.sellerClaimOnSale === undefined) return null;
   // A failed walk states no market, even with an earlier answer cached:
   // TanStack keeps the last success beside `isError`, and an empty book
   // from before the failure is not a reason to say no offer matches now

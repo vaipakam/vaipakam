@@ -2,13 +2,12 @@
 pragma solidity ^0.8.29;
 
 /// @title IAaveV3Pool
-/// @notice The one Aave V3 Pool surface the protocol uses: the simple
-///         flash-loan entry {FlashLoanLiquidator} needs, and the
-///         supply / withdraw / provider reads the productive treasury
-///         reserve (`LibTreasuryYield`) needs. Same interface across every
-///         chain Aave V3 is deployed on (Ethereum, Arbitrum, Optimism,
-///         Base, BNB Chain, Polygon PoS). One declaration, so the two
-///         users cannot drift onto different shapes (#965).
+/// @notice The Aave V3 Pool surface the protocol uses: the simple
+///         flash-loan entry {FlashLoanLiquidator} needs. Same interface
+///         across every chain Aave V3 is deployed on (Ethereum, Arbitrum,
+///         Optimism, Base, BNB Chain, Polygon PoS). The supply, withdraw and
+///         provider reads the Diamond's treasury-yield reserve used were
+///         removed with that feature (#962 #963, retired while prelive).
 /// @dev    Aave V3's `flashLoanSimple` is the preferred single-
 ///         asset flash-loan entry point — it has the lowest gas
 ///         overhead and no receiver-interface constraint on
@@ -34,25 +33,6 @@ interface IAaveV3Pool {
     ///         the repayment.
     // forge-lint: disable-next-line(mixed-case-function)
     function FLASHLOAN_PREMIUM_TOTAL() external view returns (uint128);
-
-    /// @notice Supply `amount` of `asset`, crediting aTokens to `onBehalfOf`.
-    function supply(address asset, uint256 amount, address onBehalfOf, uint16 referralCode) external;
-
-    /// @notice Withdraw `amount` of `asset` to `to`; returns the amount
-    ///         withdrawn (`amount`, unless `type(uint256).max` was passed).
-    function withdraw(address asset, uint256 amount, address to) external returns (uint256);
-
-    /// @notice The `PoolAddressesProvider` this Pool was registered by.
-    // forge-lint: disable-next-line(mixed-case-function)
-    function ADDRESSES_PROVIDER() external view returns (address);
-}
-
-/// @title IPoolAddressesProvider
-/// @notice Aave V3's registry for one market. Its `getPool()` names the
-///         market's canonical Pool proxy, so a Pool whose own provider
-///         points back at it is the market's Pool and not a look-alike.
-interface IPoolAddressesProvider {
-    function getPool() external view returns (address);
 }
 
 /// @title IFlashLoanSimpleReceiver

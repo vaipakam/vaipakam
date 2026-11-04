@@ -3,8 +3,9 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibProtectedAccount} from "../libraries/LibProtectedAccount.sol";
 import {LibLoanClock} from "../libraries/LibLoanClock.sol";
-import {LibEntitlement} from "../libraries/LibEntitlement.sol";
+import {LibInterestLedger} from "../libraries/LibInterestLedger.sol";
 import {LibRiskAccess} from "../libraries/LibRiskAccess.sol";
 import {LibInitRiskGate} from "../libraries/LibInitRiskGate.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
@@ -198,6 +199,10 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         // accept path already screens `offerCancelled`, but initiateLoan is the
         // load-bearing loan-creation chokepoint).
         if (offer.id == 0 || offer.accepted || s.offerCancelled[offerId]) revert InvalidOffer();
+        // Protected account mode — a locked or retired account takes no new
+        // position on either side, whichever route opens the loan.
+        LibProtectedAccount.requireCanOpen(offer.creator);
+        LibProtectedAccount.requireCanOpen(acceptor);
 
         // Detect if this offer is a lender-sale vehicle (created by
         // createLoanSaleOffer).  The temporary loan it creates is not a real
@@ -924,14 +929,10 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         _copyPartyFields(loan, offer, acceptor);
         _snapshotLenderDiscount(loan);
         _snapshotBorrowerDiscount(loan);
-        // #1801 r9 — record the principal this loan opens at, so the FIRST
-        // delivery stamp has a baseline to detect an earlier principal change
-        // against. Without it a change between origination and the first
-        // settlement is invisible, and that settlement installs a mark that
-        // looks valid while excluding interest accrued on the larger principal.
-        // No mark is set: a loan that has paid its lender nothing forfeits from
-        // the accrual origin, which a zero mark already means.
-        LibEntitlement.baselineMark(LibVaipakam.storageSlot(), loanId);
+        // #1808 — open the interest ledger at the start time, principal and
+        // rate just written. Origination is the one place those two fields are
+        // written outside `LibInterestLedger`.
+        LibInterestLedger.open(LibVaipakam.storageSlot(), loan);
         // A lender-sale-vehicle accept (offer mapped to an underlying loan)
         // skips the LIF charge, so the receipt must NOT record one.
         _snapshotFeeBps(

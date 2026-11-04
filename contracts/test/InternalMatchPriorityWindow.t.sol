@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 import {SetupTest} from "./SetupTest.t.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {RiskSplitLiquidationFacet} from "../src/facets/RiskSplitLiquidationFacet.sol";
+import {RiskDiscountedLiquidationFacet} from "../src/facets/RiskDiscountedLiquidationFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {LibSwap} from "../src/libraries/LibSwap.sol";
@@ -342,7 +343,7 @@ contract InternalMatchPriorityWindowTest is SetupTest {
                 uint256(8_700)
             )
         );
-        RiskFacet(address(diamond)).triggerLiquidationDiscounted(LOAN_ID, address(this), "");
+        RiskDiscountedLiquidationFacet(address(diamond)).triggerLiquidationDiscounted(LOAN_ID, address(this), "");
     }
 
     /// @notice #2734 — the discounted liquidation's preview reads the same

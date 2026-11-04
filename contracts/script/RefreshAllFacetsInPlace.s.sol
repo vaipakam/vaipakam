@@ -78,6 +78,11 @@ import {LenderIntentFacet} from "../src/facets/LenderIntentFacet.sol";
 import {AggregatorAdapterFactoryFacet} from "../src/facets/AggregatorAdapterFactoryFacet.sol";
 import {BackstopFacet} from "../src/facets/BackstopFacet.sol";
 import {RiskSplitLiquidationFacet} from "../src/facets/RiskSplitLiquidationFacet.sol";
+import {TrackedHoldingRollout} from "./lib/TrackedHoldingRollout.sol";
+import {RiskDiscountedLiquidationFacet} from "../src/facets/RiskDiscountedLiquidationFacet.sol";
+import {ProtectedAccountFacet} from "../src/facets/ProtectedAccountFacet.sol";
+import {VaultPayoutFacet} from "../src/facets/VaultPayoutFacet.sol";
+import {VaultDepositoryFacet} from "../src/facets/VaultDepositoryFacet.sol";
 import {NumeraireConfigFacet} from "../src/facets/NumeraireConfigFacet.sol";
 import {ReceiverFacet} from "../src/facets/ReceiverFacet.sol";
 import {RiskAccessFacet} from "../src/facets/RiskAccessFacet.sol";
@@ -105,6 +110,8 @@ import {TreasuryFeeFacet} from "../src/facets/TreasuryFeeFacet.sol";
 import {NumeraireValueFacet} from "../src/facets/NumeraireValueFacet.sol";
 import {NotificationFeeFacet} from "../src/facets/NotificationFeeFacet.sol";
 import {SaleExitVerdictFacet} from "../src/facets/SaleExitVerdictFacet.sol";
+import {SellerClaimFacet} from "../src/facets/SellerClaimFacet.sol";
+import {RefinancePayoffFacet} from "../src/facets/RefinancePayoffFacet.sol";
 import {ForcedSaleFacet} from "../src/facets/ForcedSaleFacet.sol";
 import {RateModelFacet} from "../src/facets/RateModelFacet.sol";
 import {VaipakamNFTMetadataFacet} from "../src/facets/VaipakamNFTMetadataFacet.sol";
@@ -265,7 +272,22 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
     // 102 -> 103: SaleExitVerdictFacet (#1841) - the one classifier of a
     // lender sale exit, self-called by both sale facets; its selectors are
     // new, so they are cut as Adds.
-    uint256 public constant EXPECTED_FACETS = 103;
+    // 103 -> 104: SellerClaimFacet (#1209 / #1808) - the seller-claim host:
+    // the seller-first interest payout, the terminal split, claimAsSeller
+    // and the interest ledger view; its selectors are new, so they are cut
+    // as Adds.
+    // 104 -> 105: RefinancePayoffFacet (#1558) - the borrower's payoff permit
+    // on a refinance request, its removal and the view that sizes it; its
+    // selectors are new, so they are cut as Adds.
+    // 105 -> 106: RiskDiscountedLiquidationFacet - the discounted liquidation
+    // route, moved whole off RiskFacet for EIP-170 headroom. Its one selector
+    // is already routed (to RiskFacet), so it is cut as a Replace pointing
+    // here. Until that batch lands the selector stays on the previous
+    // RiskFacet build, which still carries the route unchanged.
+    // 106 -> 109: ProtectedAccountFacet, VaultPayoutFacet and
+    // VaultDepositoryFacet - protected account mode and the depository
+    // vault; their selectors are new, so they are cut as Adds.
+    uint256 public constant EXPECTED_FACETS = 109;
 
     /// @notice #1566 slice 3 - the target Diamond predates the fill lock; see
     ///         {_requireSlice3Diamond}.
@@ -339,6 +361,49 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         }
     }
 
+    /// @notice #1209 / #1808 - the target Diamond predates the interest ledger
+    ///         and has an ERC-20 loan open; see {_requireNoOpenLoanAcrossInterestLedger}.
+    error OpenLoanAcrossInterestLedger(address diamond, uint256 loanId);
+
+    /// @notice #1209 / #1808 - the target Diamond predates the interest ledger
+    ///         and is not under the manual pause.
+    error InterestLedgerCrossingNeedsManualPause(address diamond);
+
+    /// @dev #1209 / #1808 - the interest ledger is opened when a loan is
+    ///      originated, and a ledger never opened opens at the loan's start
+    ///      time, on the assumption that principal and rate have not moved
+    ///      and no interest has been paid since. That holds for every loan a
+    ///      ledger-era Diamond originated and for none an older one did: a
+    ///      pre-ledger loan that was partly repaid, settled a period or
+    ///      changed rate would open with an earned figure it never earned, and
+    ///      a sale would turn that figure into a seller claim paid from the
+    ///      buyer's interest. So crossing the boundary in place is refused
+    ///      while any ERC-20 loan is open (`Active` or `FallbackPending`):
+    ///      close those loans, or cross by fresh deploy. A Diamond that
+    ///      already routes `getInterestLedger` is past the boundary and is not
+    ///      walked. The walk and the manual-pause requirement follow
+    ///      {_requireNoOpenErc1155RentalAcross902}, for the same reasons.
+    function _requireNoOpenLoanAcrossInterestLedger(address diamond) internal view {
+        if (IDiamondLoupe(diamond).facetAddress(SellerClaimFacet.getInterestLedger.selector) != address(0)) {
+            return;
+        }
+        (bool manual,,,) = LibPausable.decodePausableSlot(vm.load(diamond, LibPausable.PAUSABLE_STORAGE_POSITION));
+        if (!manual) revert InterestLedgerCrossingNeedsManualPause(diamond);
+        (uint256 highestLoanId,) = MetricsFacet(diamond).getGlobalCounts();
+        for (uint256 loanId = 1; loanId <= highestLoanId; ++loanId) {
+            if (_isOpenErc20Loan(diamond, loanId)) {
+                revert OpenLoanAcrossInterestLedger(diamond, loanId);
+            }
+        }
+    }
+
+    /// @dev Kept in its own frame, like {_isOpenErc1155Rental}.
+    function _isOpenErc20Loan(address diamond, uint256 loanId) private view returns (bool) {
+        LibVaipakam.Loan memory loan = LoanFacet(diamond).getLoanDetails(loanId);
+        return loan.assetType == LibVaipakam.AssetType.ERC20
+            && (loan.status == LibVaipakam.LoanStatus.Active || loan.status == LibVaipakam.LoanStatus.FallbackPending);
+    }
+
     /// @notice #934 (Codex #2642 r8) - the target Diamond's role root is not
     ///         where D1 requires it; see {_requireD1RootTopology}.
     error RootAdminNotOnOwner(address diamond, address owner);
@@ -406,6 +471,10 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         );
         _requireSlice3Diamond(diamond);
         _requireNoOpenErc1155RentalAcross902(diamond);
+        _requireNoOpenLoanAcrossInterestLedger(diamond);
+        // The per-token tracked vault ledger is fresh-deploy only; see
+        // TrackedHoldingRollout.
+        TrackedHoldingRollout.assertInstalled(diamond);
         _requireD1RootTopology(diamond, currentOwner);
         // #2092 item 1 — the code this run cuts must keep every storage-layout
         // fact recorded for this chain. Before the first transaction, so a
@@ -1250,6 +1319,18 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         items[100] = Item("vaipakamNFTMetadataFacet", ArtifactDeploy.deploy(type(VaipakamNFTMetadataFacet).name), _getNftMetadataSelectors());
         items[101] = Item("rewardRemitDestinationFacet", ArtifactDeploy.deploy(type(RewardRemitDestinationFacet).name), _getRewardRemitDestinationSelectors());
         items[102] = Item("saleExitVerdictFacet", ArtifactDeploy.deploy(type(SaleExitVerdictFacet).name), _getSaleExitVerdictSelectors());
+        items[103] = Item("sellerClaimFacet", ArtifactDeploy.deploy(type(SellerClaimFacet).name), _getSellerClaimSelectors());
+        items[104] = Item("refinancePayoffFacet", ArtifactDeploy.deploy(type(RefinancePayoffFacet).name), _getRefinancePayoffSelectors());
+        // The discounted liquidation route, moved off RiskFacet (EIP-170).
+        items[105] = Item(
+            "riskDiscountedLiquidationFacet",
+            ArtifactDeploy.deploy(type(RiskDiscountedLiquidationFacet).name),
+            _getRiskDiscountedLiquidationSelectors()
+        );
+        // Protected account mode and the depository vault.
+        items[106] = Item("protectedAccountFacet", ArtifactDeploy.deploy(type(ProtectedAccountFacet).name), _getProtectedAccountSelectors());
+        items[107] = Item("vaultPayoutFacet", ArtifactDeploy.deploy(type(VaultPayoutFacet).name), _getVaultPayoutSelectors());
+        items[108] = Item("vaultDepositoryFacet", ArtifactDeploy.deploy(type(VaultDepositoryFacet).name), _getVaultDepositorySelectors());
         items[26] = Item("rewardReporterFacet", ArtifactDeploy.deploy(type(RewardReporterFacet).name), _getRewardReporterSelectors());
         // #1222 M3 B3 — `getChainRecycledLedger` /
         // `getChainDailyRecycledCredit` moved here from ConfigFacet (EIP-170).
@@ -1454,7 +1535,7 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
     ///
     ///         `public` so a test can read it without broadcasting anything.
     function retiredIngressSignatures() public pure returns (string[] memory sigs) {
-        sigs = new string[](7);
+        sigs = new string[](8);
         // #1222 B2-d5 — `recycledShare` (6 → 7 args).
         sigs[0] = "onRewardBudgetReceived(address,uint256,uint256[],uint256,uint256,address)";
         // #1434 P1-a — `freshShare` (7 → 8).
@@ -1474,6 +1555,11 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         // funded day's whole) replaces it, and the receiver (generation 8)
         // refuses the d6 wire.
         sigs[6] = "onRewardBudgetReceivedD6(address,uint256,bytes32,uint256,uint256,uint256,uint256,address,uint256,uint256,bytes32,uint64)";
+        // #2828 — the d7 rooted ingress (16 args). The d8 ingress
+        // `onRewardBudgetReceivedD8` (14 args: the funded day inline in place
+        // of the root and its extent) replaces it, and the receiver
+        // (generation 9) refuses the d7 wire.
+        sigs[7] = "onRewardBudgetReceivedD7(address,uint256,bytes32,uint256,uint256,uint256,uint256,address,uint256,uint256,bytes32,uint64,uint256,uint256,uint256,uint256)";
     }
 
     /// @dev Codex #2232 r3 — the LIVE receiver the refreshed ingress will

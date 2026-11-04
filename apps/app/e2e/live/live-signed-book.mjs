@@ -715,7 +715,7 @@ try {
     'reading the lender vault balance',
     () =>
       Promise.all([
-        diamondRead('getProtocolTrackedVaultBalance', [lenderAddr, WETH]),
+        diamondRead('getTrackedHolding', [lenderAddr, WETH, 0n]),
         diamondRead('getEncumbered', [lenderAddr, WETH, 0n]),
       ]),
   );

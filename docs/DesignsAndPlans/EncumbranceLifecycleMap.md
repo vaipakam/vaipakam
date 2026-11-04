@@ -204,6 +204,17 @@ collateral should be protected pre-loan, that's a fourth surface.
 
 ---
 
+## 5a. Auto-extend reserve is a SEPARATE ledger (#2814)
+
+A borrower-position holder's deposit for a loan's extensions is reserved
+under the depositor in the same aggregate, keyed `(loanId, depositor)`
+(`LibEncumbrance.lienExtendReserve` / `unlienExtendReserve`). It is not
+collateral and no loan lifecycle site touches it: only an extension's draw and
+the depositor's own withdrawal release it. See
+[`AutoExtendReserveDesign.md`](AutoExtendReserveDesign.md).
+
+---
+
 ## 6. Bugs surfaced vs FunctionalSpec
 
 Mapping the lifecycle against the spec surfaced one **current** divergence

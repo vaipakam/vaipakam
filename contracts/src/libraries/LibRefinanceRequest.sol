@@ -56,9 +56,9 @@ import {LibPeriodicInterest} from "./LibPeriodicInterest.sol";
  *         recorded request ({assertTakeable}, on the atomic accept / match
  *         routes): a displaced or never-recorded request can never be taken,
  *         so the request the guard watches is always the only one that can.
- *         The standalone completion of an ALREADY-accepted request is not
- *         gated: the replacement loan exists by then, and refusing would
- *         strand both loans.
+ *         Acceptance and completion are one transaction (#3042 retired the
+ *         standalone completion), so there is no accepted-but-uncompleted
+ *         request for this rule to strand.
  *
  *         NO LOST REQUESTS. The record is how a request is found from its
  *         loan, and a fresh-pledge request holds its collateral until it is

@@ -18,7 +18,7 @@ import {VaipakamVaultImplementation} from "../VaipakamVaultImplementation.sol";
  *           • `RepayFacet.repayLoan` (T-086 follow-up to step 14)
  *           • `PrecloseFacet.precloseDirect` (ERC20 path, follow-up to step 14)
  *           • `PrecloseFacet.offsetCompleted` (defensive, follow-up to step 14)
- *           • `RefinanceFacet.refinanceLoan` (follow-up to step 14)
+ *           • the `RefinanceFacet` payoff (follow-up to step 14)
  *
  *         The design-doc §5.4 directive is "default-flow lock-
  *         bypass": markDefaulted / triggerLiquidation must NOT

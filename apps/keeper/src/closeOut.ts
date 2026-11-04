@@ -48,28 +48,19 @@
  * between the first read and the gate's (sale to none, or none to sale)
  * means the route moved, and the attempt is skipped. A plan read that
  * reverts (a distrusted price) skips, as the default itself would revert.
- *
- * THE SURFACE. A Diamond deployed before #2796 — the live testnets, until
- * the all-waves fresh deploy — has no plan and routes only the
- * `triggerDefault(loanId, adapterCalls)` form, which sells the whole
- * collateral and returns the surplus to the borrower. On such a Diamond the
- * attempt quotes the whole collateral, skips the plan checks, and sends that
- * form; the preview still decides. The surface is one loupe read at the
- * start (`readForcedSaleSurface`); it is not read again at the gate, because
- * the gate's preview simulates the exact form that is sent, and a Diamond
- * cut in between (or routing part of each surface) makes that form revert
- * there, so nothing is sent. The whole-collateral branch is deleted with the
- * rest of that surface (#2907).
  */
 
 import {
+  encodeFunctionData,
   type Abi,
   type Address,
+  type Hex,
   type PublicClient,
   type WalletClient,
   zeroAddress,
 } from 'viem';
 import {
+  DefaultedFacetABI,
   DiamondLoupeFacetABI,
   LoanFacetABI,
   RiskFacetABI,
@@ -78,15 +69,12 @@ import { isRevert } from '@vaipakam/lib/contractRevert';
 import { describeFailure } from '@vaipakam/lib/errorDescription';
 import {
   FORCED_SALE_KIND,
-  encodeTriggerDefault,
   forcedSaleQuoteAccepted,
   forcedSaleQuoteAmount,
   previewCloseOutDetail,
   readForcedSalePlan,
-  readForcedSaleSurface,
   type CloseOutPreview,
   type CloseOutPreviewDetail,
-  type ForcedSaleSurface,
 } from '@vaipakam/lib/routeBuilder';
 import {
   BOUNDED_LISTING_SELECTOR,
@@ -98,7 +86,10 @@ import type { AdapterCall } from '@vaipakam/lib/swapRoutes';
 import { HF_LIQUIDATION_THRESHOLD } from './hfLine';
 import type { ServerOrchestrationResult } from './serverQuotes';
 import { keeperTxPending, sendInSubmissionSlot } from './keeperSend';
+import { PastRunDeadline, readPhaseClient } from './batchRead';
+import { boundedCall } from './passReader';
 
+const DEFAULTED_ABI: Abi = DefaultedFacetABI as Abi;
 const LOUPE_ABI: Abi = DiamondLoupeFacetABI as Abi;
 const LOAN_ABI: Abi = LoanFacetABI as Abi;
 const RISK_ABI: Abi = RiskFacetABI as Abi;
@@ -139,6 +130,34 @@ export type GraceDefaultOutcome =
     }
   | { kind: 'skipped'; reason: string };
 
+/** An attempt that sends nothing, and why. */
+export type Skipped = { kind: 'skipped'; reason: string };
+
+/** The skip reason for an attempt whose reads the run's read cutoff ended. */
+export const READS_PAST_CUTOFF = 'reads-past-cutoff (the run reached its read cutoff before this attempt finished reading; tried again on a later visit)';
+
+/**
+ * An attempt's read phase, stopped at `cutoff` (`runWindow.ts` rule 3): every
+ * read before the send, the gate's included, either finishes by then or is
+ * abandoned, and the attempt sends nothing, so a slow RPC cannot use the time
+ * the send needs. The judge reads only through `reads`, which refuses any
+ * request past the cutoff, so a judge abandoned there and then let go on by
+ * a late answer starts nothing more (#3070 r1). Any other failure is the
+ * caller's, as before.
+ */
+export async function readsBy<T>(
+  cutoff: number,
+  client: PublicClient,
+  judge: (reads: PublicClient) => Promise<T | Skipped>,
+): Promise<T | Skipped> {
+  try {
+    return await boundedCall(cutoff, 'the attempt\'s reads', () => judge(readPhaseClient(client, cutoff)));
+  } catch (err) {
+    if (err instanceof PastRunDeadline) return { kind: 'skipped', reason: READS_PAST_CUTOFF };
+    throw err;
+  }
+}
+
 /** Everything one loan's attempt needs, injected so the decision is
  *  testable without an RPC. */
 export interface GraceDefaultDeps {
@@ -148,10 +167,14 @@ export interface GraceDefaultDeps {
   chainId: number;
   /** The sending pass's run deadline (#2572), enforced at the send's turn. */
   notAfterMs: number;
+  /** When the attempt's reads stop (`runWindow.ts` rule 3): the run deadline
+   *  less the send reserve (`readCutoffMs`). */
+  readCutoff: number;
   /** Builds the try-list for a sale of `sellAmount` of the loan's
-   *  collateral. The `in-kind` role never calls it: it sends an empty list
-   *  by definition. */
-  buildRoute: (loan: GraceLoan, sellAmount: bigint) => Promise<ServerOrchestrationResult>;
+   *  collateral, making no request (RPC or quote) at or after `cutoff`, the
+   *  attempt's read cutoff. The `in-kind` role never calls it: it sends an
+   *  empty list by definition. */
+  buildRoute: (loan: GraceLoan, sellAmount: bigint, cutoff: number) => Promise<ServerOrchestrationResult>;
 }
 
 /** The grace-default pass's attempt: {@link attemptCloseOut} as `grace`. */
@@ -163,13 +186,43 @@ export function attemptGraceDefault(
 }
 
 /** One loan: interlock, route, preview, final gate, submit. Never sends
- *  when any step cannot establish its answer. */
+ *  when any step cannot establish its answer, and reads nothing past the
+ *  run's read cutoff. */
 export async function attemptCloseOut(
   deps: GraceDefaultDeps,
   loanId: bigint,
   role: CloseOutRole,
 ): Promise<GraceDefaultOutcome> {
-  const { client, wallet, diamond } = deps;
+  const judged = await readsBy(deps.readCutoff, deps.client, (reads) => judgeCloseOut(deps, reads, loanId, role));
+  if (judged.kind === 'skipped') return judged;
+  const { data, preview, calls, sellAmount } = judged;
+  // Prepared, signed and broadcast in the account's submission slot (#2486),
+  // so no other pass's send on this chain can take the same nonce. A
+  // broadcast whose answer was lost is reported as such, with its hash.
+  const sent = await sendInSubmissionSlot(deps.wallet, deps.chainId, deps.notAfterMs, deps.diamond, data);
+  return sent.kind === 'submitted'
+    ? { kind: 'submitted', tx: sent.tx, preview, calls, sellAmount }
+    : { kind: 'unconfirmed', tx: sent.tx, preview, calls, sellAmount, reason: sent.reason };
+}
+
+/** A close-out the reads judged sendable: the call, and what it was judged on. */
+interface JudgedCloseOut {
+  kind: 'send';
+  data: Hex;
+  preview: CloseOutPreview;
+  calls: number;
+  sellAmount: bigint;
+}
+
+/** The attempt's read phase: interlock, route, preview, final gate. Every
+ *  read goes through `client`, the cutoff-bound one `readsBy` gives. */
+async function judgeCloseOut(
+  deps: GraceDefaultDeps,
+  client: PublicClient,
+  loanId: bigint,
+  role: CloseOutRole,
+): Promise<JudgedCloseOut | Skipped> {
+  const { wallet, diamond } = deps;
   const keeper = wallet.account?.address;
   if (!keeper) return { kind: 'skipped', reason: 'no-keeper-account' };
 
@@ -179,19 +232,6 @@ export async function attemptCloseOut(
   // it lands. While one is unmined, this run waits.
   const pending = await keeperTxPending(client, keeper);
   if (pending !== null) return { kind: 'skipped', reason: pending };
-
-  // Which `triggerDefault` this Diamond routes: the sized one every fresh
-  // deploy carries, or the whole-collateral one of a Diamond deployed before
-  // #2796, which the live testnets run until the all-waves fresh deploy.
-  // One request: the attempt runs under the pass's request budget. A wrong
-  // reading (a Diamond part-way between the two) is caught by the gate's
-  // preview of the exact form; an unread one is sent nothing.
-  let surface: ForcedSaleSurface;
-  try {
-    surface = await readForcedSaleSurface({ client, diamond });
-  } catch (err) {
-    return { kind: 'skipped', reason: surfaceSkipReason(err) };
-  }
 
   const loan = await readLoan(client, diamond, loanId);
 
@@ -216,18 +256,9 @@ export async function attemptCloseOut(
   let routeNote = '';
   let sellAmount = 0n;
   // Only a grace attempt on an ERC-20 pair can sell, so only it reads the
-  // plan; whether it then sells is the plan's answer. A whole-collateral
-  // Diamond has no plan: its `triggerDefault` sells all the collateral, so
-  // the route is quoted for all of it and the gate's preview judges it.
-  const sells = role === 'grace' && swappable;
-  const readsPlan = sells && surface === 'sized';
+  // plan; whether it then sells is the plan's answer.
+  const readsPlan = role === 'grace' && swappable;
   let planSells = false;
-  if (sells && surface === 'whole') {
-    sellAmount = loan.collateralAmount;
-    const route = await deps.buildRoute(loan, sellAmount);
-    calls = route.calls;
-    if (route.failed.length > 0) routeNote = ` (failed: ${route.failed.join(',')})`;
-  }
   if (readsPlan) {
     // The contract sizes the sale; the quote is built for an amount inside
     // the range it accepts. A plan that sells nothing is a default by
@@ -238,7 +269,7 @@ export async function attemptCloseOut(
     if (quoted !== null) {
       planSells = true;
       sellAmount = quoted;
-      const route = await deps.buildRoute(loan, sellAmount);
+      const route = await deps.buildRoute(loan, sellAmount, deps.readCutoff);
       calls = route.calls;
       if (route.failed.length > 0) routeNote = ` (failed: ${route.failed.join(',')})`;
     }
@@ -262,7 +293,7 @@ export async function attemptCloseOut(
     hfStanding(client, diamond, loanId, gateBlock),
     saleVerdict(client, diamond, loanId, loan.lenderTokenId, keeper, gateBlock),
     readLoan(client, diamond, loanId, gateBlock),
-    previewCloseOutDetail({ client, diamond, account: keeper, loanId, sellAmount, calls, blockNumber: gateBlock, surface }),
+    previewCloseOutDetail({ client, diamond, account: keeper, loanId, sellAmount, calls, blockNumber: gateBlock }),
     readsPlan
       ? readForcedSalePlan({ client, diamond, loanId, kind: FORCED_SALE_KIND.TimeBasedDefault, blockNumber: gateBlock })
       : Promise.resolve(null),
@@ -298,27 +329,13 @@ export async function attemptCloseOut(
 
   const refusal = previewVerdict(role, detail, calls.length, routeNote);
   if (refusal !== null) return { kind: 'skipped', reason: refusal };
-  const preview = detail.preview;
-
-  // Prepared, signed and broadcast in the account's submission slot (#2486),
-  // so no other pass's send on this chain can take the same nonce. A
-  // broadcast whose answer was lost is reported as such, with its hash.
-  const sent = await sendInSubmissionSlot(
-    wallet,
-    deps.chainId,
-    deps.notAfterMs,
-    diamond,
-    encodeTriggerDefault(surface, loanId, sellAmount, calls),
-  );
-  return sent.kind === 'submitted'
-    ? { kind: 'submitted', tx: sent.tx, preview, calls: calls.length, sellAmount }
-    : { kind: 'unconfirmed', tx: sent.tx, preview, calls: calls.length, sellAmount, reason: sent.reason };
-}
-
-/** Why a forced-sale attempt sends nothing when the Diamond's surface could
- *  not be read. */
-export function surfaceSkipReason(err: unknown): string {
-  return `surface-unread:${describeFailure(err)}`;
+  return {
+    kind: 'send',
+    data: encodeFunctionData({ abi: DEFAULTED_ABI, functionName: 'triggerDefault', args: [loanId, sellAmount, calls] }),
+    preview: detail.preview,
+    calls: calls.length,
+    sellAmount,
+  };
 }
 
 /** Null when the loan is this role's to close; otherwise the reason not to. */

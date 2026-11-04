@@ -15,7 +15,7 @@
  *    default path, after which a wall-clock expiry is already in the past and
  *    every later offer dies on `OfferExpiryInPast`.
  */
-import { keccak256, encodeAbiParameters } from 'viem';
+import { keccak256, encodeAbiParameters, toFunctionSelector } from 'viem';
 import {
   DIAMOND,
   ERC20,
@@ -70,6 +70,8 @@ export const ABIS = {
   nft: abi('VaipakamNFTFacet'),
   loupe: abi('DiamondLoupeFacet'),
   forcedSale: abi('ForcedSaleFacet'),
+  // #1558 — the refinance payoff permit and its view.
+  refinancePayoff: abi('RefinancePayoffFacet'),
 };
 
 /** `ForcedSaleFacet.ForcedSaleKind`: which forced sale a plan is for. */
@@ -101,6 +103,67 @@ export const mint = (account, token, whole) =>
 
 export const approveDiamond = (account, token) =>
   tx(account, { address: token, abi: ERC20, functionName: 'approve', args: [DIAMOND, 2n ** 255n] }, 'approve');
+
+export const PERMIT2 = '0x000000000022D473030F116dDEE9F6B43aC78BA3';
+
+/**
+ * #1558 — attach the refinance payoff permit to a posted refinance request.
+ *
+ * The payoff is pulled with an exact-amount, single-use Permit2 signature,
+ * never a standing Diamond allowance. The borrower approves Permit2 for the
+ * token (inert without a signature), reads the wallet's share of the payoff
+ * at the request's last fillable moment (#3042: the new lender's net
+ * principal pays the rest), signs a witness permit bound to (loanId, offerId) with
+ * the Diamond as spender, and records it on the Diamond.
+ *
+ * Returns `null` on a Diamond that does not route the permit yet (a fork of
+ * a chain deployed before #1558), where the old allowance path still pays.
+ */
+export async function attachPayoffPermitIfRouted(borrower, loanId, offerId, expiresAt) {
+  const selector = toFunctionSelector('setRefinancePayoffPermit(uint256,uint256,uint256,uint256,bytes)');
+  const host = await read(ABIS.loupe, 'facetAddress', [selector]);
+  if (host === ZERO) return null;
+  const deadline = BigInt(expiresAt) - 1n;
+  // #3042 — the new lender's net principal pays the old lender directly, so
+  // the permit covers only the wallet's share of the payoff.
+  const [asset, , , , walletShareBy] = await read(ABIS.refinancePayoff, 'getRefinancePayoff', [loanId, offerId, deadline]);
+  await tx(borrower, { address: asset, abi: ERC20, functionName: 'approve', args: [PERMIT2, walletShareBy] }, 'approve Permit2');
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  const nonce = BigInt(`0x${Buffer.from(bytes).toString('hex')}`);
+  const signature = await walletFor(borrower).signTypedData({
+    domain: { name: 'Permit2', chainId: forkChain.id, verifyingContract: PERMIT2 },
+    types: {
+      PermitWitnessTransferFrom: [
+        { name: 'permitted', type: 'TokenPermissions' },
+        { name: 'spender', type: 'address' },
+        { name: 'nonce', type: 'uint256' },
+        { name: 'deadline', type: 'uint256' },
+        { name: 'witness', type: 'RefinancePayoff' },
+      ],
+      TokenPermissions: [
+        { name: 'token', type: 'address' },
+        { name: 'amount', type: 'uint256' },
+      ],
+      RefinancePayoff: [
+        { name: 'loanId', type: 'uint256' },
+        { name: 'offerId', type: 'uint256' },
+      ],
+    },
+    primaryType: 'PermitWitnessTransferFrom',
+    message: {
+      permitted: { token: asset, amount: walletShareBy },
+      spender: DIAMOND,
+      nonce,
+      deadline,
+      witness: { loanId, offerId },
+    },
+  });
+  const receipt = await tx(borrower, {
+    address: DIAMOND, abi: ABIS.refinancePayoff, functionName: 'setRefinancePayoffPermit',
+    args: [offerId, walletShareBy, nonce, deadline, signature],
+  }, 'setRefinancePayoffPermit');
+  return { asset, maxAmount: walletShareBy, nonce, deadline, gas: receipt.gasUsed };
+}
 
 /** A liquid/liquid lender offer with every range bound pinned to the point value. */
 export async function offerParams(overrides = {}) {

@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "./LibVaipakam.sol";
+import {LibProtectedAccount} from "./LibProtectedAccount.sol";
 import {VaipakamVaultImplementation} from "../VaipakamVaultImplementation.sol";
 import {FeeLeg} from "../seaport/PrepayTypes.sol";
 
@@ -152,23 +153,35 @@ library LibPrepayListingWiring {
         }
     }
 
-    /// @dev #818 / #825-r2 (P1) — Tier-1 screen every fee-leg recipient before a
-    ///      prepay listing is built or recorded. The holder-only screen on the
-    ///      manual post/update paths does NOT cover the caller-supplied
-    ///      `feeLegs`: `LibPrepayOrder` appends each leg as a Seaport
-    ///      consideration item payable to `feeLegs[i].recipient`, and the
-    ///      fee-leg validators only reject a ZERO recipient. Without this a
-    ///      clean holder could route principal-asset proceeds to a flagged
-    ///      wallet on fill. Reverts `SanctionedAddress(recipient)` for any
-    ///      flagged recipient. (The atomic / auto-list paths don't take
-    ///      caller-supplied fee legs — atomic passes empty, auto-list derives
-    ///      them — so the manual entry points are the only surface.)
-    function assertFeeLegRecipientsNotSanctioned(FeeLeg[] calldata feeLegs)
+    /// @dev The listing-author rule, run before a prepay or parallel-sale
+    ///      listing is built or recorded. Two screens, one per concern:
+    ///      - #818 / #825-r2 (P1) sanctions: every fee-leg recipient is Tier-1
+    ///        screened. `LibPrepayOrder` appends each leg as a Seaport
+    ///        consideration item payable to `feeLegs[i].recipient`, and the
+    ///        fee-leg validators only reject a ZERO recipient, so without this
+    ///        a clean holder could route proceeds to a flagged wallet on fill.
+    ///      - Protected account mode: a fee leg is a payment the marketplace
+    ///        makes straight from the sale, outside the payout queue, so a
+    ///        protected seller may not open a listing while locked or retired
+    ///        ({LibProtectedAccount.requireCanOpen}), and may name only its
+    ///        own wallet or an allowlisted destination as a fee recipient
+    ///        ({LibProtectedAccount.listingLegAllowed}). The executor applies
+    ///        the same rule again at fill.
+    ///      (The atomic / auto-list paths take no caller-supplied fee legs —
+    ///      atomic passes empty, auto-list reuses the recorded ones — so the
+    ///      manual entry points are the only surface; the fill-time check
+    ///      covers every path.)
+    function assertListingAuthorized(address seller, FeeLeg[] calldata feeLegs)
         internal
         view
     {
+        LibProtectedAccount.requireCanOpen(seller);
         for (uint256 i; i < feeLegs.length; i++) {
-            LibVaipakam._assertNotSanctioned(feeLegs[i].recipient);
+            address recipient = feeLegs[i].recipient;
+            LibVaipakam._assertNotSanctioned(recipient);
+            if (!LibProtectedAccount.listingLegAllowed(seller, recipient)) {
+                revert LibProtectedAccount.RecipientNotAllowlisted(seller, recipient);
+            }
         }
     }
 }

@@ -7,7 +7,7 @@ destinations and flipped the cutover switch; the `/recover` guide links
 alone stay on the legacy host, held by same-origin recovery state rather
 than by any missing route). It is the app-specific functional
 spec consolidated against the release notes from 2026-08-13 through
-2026-10-22, inclusive, while retaining later recorded intent decisions. It is intentionally
+2026-10-28, inclusive, while retaining later recorded intent decisions. It is intentionally
 written without implementation snippets. (The app was called `alpha02` and
 served `alpha02.vaipakam.com` until #1854 renamed it; this file keeps the old
 name only in its filename.)
@@ -221,12 +221,11 @@ including people who never will.
   in-place extension. The layer-2 sequencer guard is described as holding
   prices both while the sequencer is down and for the hour after it
   returns.
-- A setting that can change without announcing it on chain (today the
-  layer-2 sequencer uptime feed, and the ETH reference feed, which one of
-  its two setters changes silently) can lag in the indexer's snapshot until
-  its next scheduled refresh. While the console shows the snapshot, that
-  row says so. Every other published setting names the events that announce
-  its change, and the snapshot refreshes on each of them.
+- Every published mutable setting announces its previous and new value on
+  chain, including chain-level oracle inputs and the backstop switches.
+  The indexer's configuration snapshot refreshes on these announcements.
+  An older deployment without a relevant announcement can lag until its
+  scheduled refresh; the console discloses that limitation beside the value.
 - The console shows the public indexer's snapshot only while that snapshot
   can stand in for the chain: it is dated, recent enough that the indexer's
   regular refresh is still running, not known to be behind a governance
@@ -1554,6 +1553,23 @@ fetch before it can warn.
 Risk Disclosure and Terms links are real links and must not destroy the flow in
 progress.
 
+### Acceptance covers the disclosed deal
+
+- Every acceptance review states the lifecycle terms as well as amounts and
+  rate: interest mode, payment cadence, partial-repay permission, collateral
+  sale permissions, any live listing, and any linked loan or refinance target.
+  The signature binds the reviewed terms. A changed term or token-screening
+  verdict clears consent and holds signing for a fresh review.
+- A rental is secured by its payment-token prepayment and the rented NFT
+  remaining in the lender's vault; it carries no collateral. A listing naming
+  collateral in either the indexed record or the current chain read is refused
+  with that explanation, including at submission. The renter acknowledges the
+  disclosed rented-NFT model, never an unused collateral asset.
+- Direct, rental, and signed-offer acceptances recheck the required token-
+  security verdicts for ERC-20 legs outside the curated list before the wallet
+  prompt. A warning is accepted only when that exact warning was reviewed; a blocked or unreadable verdict holds
+  signing. Listing a signed offer in the book is not evidence it was screened.
+
 ## Wallet Prompt Transparency
 
 - Offer creation, offer acceptance, rental listing, rental acceptance, loan
@@ -1842,6 +1858,167 @@ Thin-market honesty rules apply.
 - Health and risk labels escalate when collateral health is poor.
 - Position rows should offer the next relevant action where one exists. A row
   with a payout waiting says what that payout is and offers to collect it.
+
+### Closing several loans from one offer at once (#126)
+
+- When one of the borrower's offers filled into two or more loans that are
+  still open, the positions page offers to repay them all together, and in
+  Advanced mode to close them all early. Only the connected wallet's own
+  borrower positions are grouped; another borrower's loan from the same
+  offer is never included. Rentals are not grouped.
+- Each loan in the group passes the same live checks its own page runs
+  before it is offered, and the two must never disagree. A loan with
+  anything the borrower should see before closing it (an accepted sale
+  waiting to complete, an open refinance request, an open offset offer, a
+  loan in its fallback period) is left out of the batch and named, with
+  the reason and a pointer to its own page. A loan whose checks could not
+  be read is left out with that reason too, never included on a guess.
+- Before anything is signed the borrower sees every loan's amount due now,
+  every loan left out and why, the total, and the approval the batch will
+  ask for, stated as covering a small allowance for the amount rising
+  before the transaction runs. The pad is never taken: each loan pays
+  only what it owes when it runs. The review is the same six-row review
+  every other write shows, and under each loan it repeats what that
+  loan's own page states before the same action: for an early close, the
+  loan's interest rule (whole term or built up so far), the late fee when
+  it is past due, and that a paid Full tariff is not refunded. A loan
+  whose tariff record cannot be read is left out, as its own page holds
+  its early close until that record is known.
+- The batch is one token approval and then one transaction for up to 30
+  loans. Each loan's close runs as the borrower, with its own checks, and
+  a loan that fails when the transaction runs is skipped while the others
+  still close. One failed loan never undoes the others.
+- Every loan's outcome is read back from the chain after the transaction,
+  never assumed from it: repaid (or closed early), still open with the
+  reason, changed another way (for example defaulted meanwhile, which is
+  never reported as this batch's close), left out, or could not be read.
+  A transaction that was sent but has not confirmed when the app stops
+  waiting is reported as not confirmed yet, never as failed; nothing more
+  is sent behind it, and the loans it would have carried are named as
+  not sent.
+- Immediately before each transaction is sent, every loan in it is
+  checked again in full, as at review, since the wallet may have waited on
+  the approval or an earlier transaction meanwhile. A loan that no longer
+  passes (its position has moved to another wallet, a sale was accepted, a
+  request or offset was posted) is left out and named.
+- The approval is set back to what it was before only when it is
+  established that no loan closed; an outcome that could not be read
+  counts as a possible close. Either way, the approval that remains is
+  read from the chain afterwards and stated, with where to lower it, and
+  never described as restored on the strength of the attempt. If it
+  cannot be read, the page says that instead.
+- The batch card stays on the page with its results until the borrower
+  dismisses it, even when the batch leaves the offer with fewer than two
+  open loans, and even while the positions lists cannot be read.
+
+### Listing several lender positions from one offer for sale at once (#126)
+
+- When one of the lender's offers filled into two or more loans whose lender
+  positions the connected wallet still holds, the positions page offers, in
+  Advanced mode, to list them all for sale together, at one rate and for one
+  listing window. Only the wallet's own lender positions are grouped. Rentals
+  are not grouped. On a network where listing a position is not available,
+  the group still shows and says that listing is not available on this
+  network, rather than leaving the lender to guess why there is no option.
+- Each loan passes the same live checks its own page's listing form runs before
+  it is listed, and the two must never disagree. A loan the platform would
+  refuse to list (already listed, an offset open on it, matured or too close to
+  its due date, in its relisting pause, a paused asset, collateral that is not a
+  token) is left out and named with the reason. A loan whose checks or figures
+  could not be read is left out with that reason too, never included on a
+  guess.
+- Before anything is signed the lender sees, for every loan to be listed, the
+  minimum they are guaranteed if a buyer takes the listing before it ends, any
+  money already set aside for the lender that goes to the buyer with the
+  position, and the settlement a buyer's payment would carry today; and under
+  each loan what its own page states before a listing: that a Full fee mode
+  travels to the buyer with the position, and that a rate above the loan's own
+  costs the lender the difference. Every loan left out is named with the reason.
+  The review is the same six-row review every other write shows, it says that
+  each listed position is locked until its sale completes or its listing ends,
+  and the lender must agree to the lock and the settlement before confirming.
+  The agreement covers exactly what the review shows and is withdrawn if any of
+  it changes.
+- Each listing is bound to the figures the lender reviewed: if, by the time it
+  runs, it would guarantee the lender less, or pass more already set aside to
+  the buyer, it is not made. Listing draws nothing from the wallet and asks for
+  no approval.
+- The batch is one transaction for up to 30 loans. Each listing runs as the
+  lender, with its own checks, and a listing that fails when the transaction
+  runs is skipped while the others are made. Immediately before each
+  transaction is sent every loan in it is checked again in full against the
+  reviewed figures; a loan that no longer passes, or whose statements changed
+  since the review, is left out and named.
+- Which loans were listed is established from the chain, never assumed: a loan
+  is reported listed, with its sale offer, only when that transaction itself
+  listed it. Otherwise it is reported not listed with the reason, no longer
+  active, left out, not confirmed yet (when the transaction was sent but has not
+  confirmed, in which case nothing more is sent behind it), or could not be
+  read. Every loan in a transaction that has not confirmed is reported not
+  confirmed yet, even one no longer active: a listing does not change the
+  loan's status, so that loan may have been listed before it closed. Each listed loan's own page then shows its listing and lets the lender
+  cancel it.
+
+### Refinancing several loans from one offer at once (#126)
+
+- On the borrower's card for an offer that filled into two or more open
+  loans, the positions page offers, in Advanced mode like the loan page's own
+  refinance form, to post a refinance request for every loan in it, at one
+  highest rate and one duration. Only one of the card's actions runs at a time.
+- Each loan passes the same live checks its own page's refinance form runs
+  before a request is posted, and the two must never disagree: the wallet is
+  not sanctioned, still holds the borrower position and is the loan's original
+  borrower, the loan is active and not past its grace window, neither asset is
+  paused, the fee terms are the ones the review quoted, and no request is
+  already on record for the loan (open, or expired and never cancelled). A
+  rental, a loan with an accepted sale waiting to complete, a loan with an open
+  offset, a loan in its fallback period, and any loan the platform would
+  refuse are left out and named with the reason. A loan whose checks could not
+  be read is left out too, never included on a guess.
+- Before anything is signed the borrower sees, for every loan: today's payoff;
+  how much more the payoff can grow if a lender accepts after the due date;
+  what the wallet must hold spare when a lender accepts (the payoff's interest
+  and the new loan's initiation fee, since the new principal arrives in the
+  same transaction); and what that loan's own page states before a request
+  (the late fee when it is past due; when the loan pays on a schedule, that
+  an overdue payment period makes an acceptance fail until it is settled, so
+  payments must stay current while the request is open, and that scheduled
+  interest ends with this loan; and when the request expires). The loan page
+  and the batch draw these statements from one source, so neither can make
+  one the other omits. The review states the rate ceiling and duration every
+  request asks for, since the inputs are no longer on screen. It also states the spare amount for all the loans together, which the wallet
+  must hold now or nothing is sent, and the single approval it will grant: the
+  sum of every request's largest possible payoff. It says that this one
+  approval also serves any other refinance request the borrower has open on
+  the same token, so one acceptance can leave another request short. The
+  borrower agrees to the payoff and balance terms for every listed loan before
+  confirming; the agreement covers exactly what the review shows and is
+  withdrawn if any of it changes.
+- Each request is exactly the one the loan page would post: its own hard
+  expiry, the reviewed rate ceiling and duration, and the loan's collateral
+  carried over. Where a loan's on-chain guardrails do not already cover the
+  request, they are written in the same transaction, immediately before it; a
+  request is never posted without the guardrails it needs. A guardrail written
+  for a request that then fails can stay, and it only limits what a request
+  on that loan can complete at.
+- One approval for the sum comes first, then one transaction for up to 15
+  loans. Each request runs as the borrower, with its own checks, and a request
+  that fails is skipped while the others are posted. Immediately before each
+  transaction every loan in it is checked again in full; a loan whose largest
+  possible payoff grew, whose spare amount grew (in the grace window it grows
+  with each day's late fee), or whose statements changed, since the review is
+  left out and named. So every request sent needs no more than the balance
+  that was checked and the approval that was granted.
+- Which loans got a request is established from the chain, never assumed: a
+  loan is reported as having a request, with its offer number, only when that
+  transaction itself posted it. Otherwise it is reported as no request with the
+  reason, no longer active, left out, not confirmed yet (every loan in a
+  transaction that has not confirmed is reported so, and nothing more is sent
+  behind it), or could not be read. The approval is set back to what it was
+  only when it is established that no request was posted; otherwise the
+  approval left standing is read from the chain and stated, with the reminder
+  that open requests draw on it. Each loan's own page then shows its request
+  and lets the borrower cancel it.
 
 ### Taking back extra collateral
 
@@ -2615,6 +2792,39 @@ is the borrower's own money.
   enumeration finds is verified whether or not the indexer suggested it.
 - Frozen sanctioned proceeds remain parked until the recorded frozen claimant is
   proven clean.
+- A wallet that SOLD a lender position keeps a claim on the interest it earned
+  while it held it (#1209), and the Claims page lists those claims on their own
+  card, separate from the claims of positions the wallet holds now. The seller
+  holds no position token any more, so the loans are found from the history
+  service's record of the claims the wallet was given and the payments made
+  into its vault (a sale can pay a seller in full without recording a claim),
+  and each one is then read from the chain: what the seller's open claims on the loan are still
+  owed (stated before the protocol's cut of interest, and saying it is), and
+  what has already reached the seller's vault for them, per asset. A loan on
+  which nothing is owed to the seller and nothing waits for them is not listed.
+- Each seller claim says where the loan stands: still owed and paid as the
+  borrower pays interest, ahead of the current lender; waiting on the loan's
+  fallback resolution; or, once the loan has ended, settled at withdrawal from
+  what the loan recovered, the current lender's principal first and then the
+  sellers oldest first, with any part the recovery does not cover unpaid and
+  owed by nothing on the loan. The card never states a payout the protocol has
+  not settled.
+- Withdrawing a seller claim moves what the seller is owed from their vault to
+  their wallet. It is offered only when the protocol's own check of the
+  withdrawal says it would pay something now, and it is checked again just
+  before signing. A claim with nothing paid toward it yet says so; a
+  withdrawal the protocol would refuse says why; and a check that could not be
+  completed says that, rather than offering a withdrawal that might fail.
+- When the history service cannot be read, the card says the seller claims
+  could not be checked, rather than showing nothing (which would read as "no
+  claims"). A loan that could not be read is named rather than dropped, and a
+  wallet with more records than the card reads is told the list covers only
+  its most recent ones, even when those hold nothing. The page does not
+  describe the wallet's claims as empty while the seller-claims card lists
+  anything, was cut short, or could not check. Withdrawing a seller claim is
+  a way out, like any claim of settled funds, so it is never held behind the
+  Terms of Service acceptance, and a row whose payment was just withdrawn
+  offers the next one as soon as it arrives.
 - When two or more payouts are ready at once, the user may collect them all in a
   single wallet signature instead of one transaction per claim. The batch spans
   lender and borrower loan proceeds, pending interaction rewards, and free
@@ -2654,6 +2864,23 @@ is the borrower's own money.
 
 - A lender position sale review is based on the live loan, not only the listing
   row.
+- Both direct sales and listings explain that the seller keeps earned unpaid
+  interest as a claim on the loan. The buyer pays outstanding principal;
+  a higher buyer rate costs the seller the disclosed rate shortfall, paid
+  to the buyer. Treasury takes nothing at sale. Later lender-side interest
+  pays sellers oldest first, before the current holder's interest, under
+  [the platform's sale rules](ProjectDetailsREADME.md#accrued-interest--the-seller-keeps-a-claim).
+- The review distinguishes this retained interest from interaction rewards,
+  which the selling lender still forfeits. It states that an interest claim
+  depends on later payment and recovery: the current holder's principal
+  ranks first in a short recovery, and an unvalueable in-kind recovery closes
+  seller claims unpaid. The current holder's fee discount applies only to
+  their own interest. A sale that would exceed four open seller claims is
+  refused with that reason, rather than shown as available.
+- Interest already paid but held for the seller is credited to the seller's
+  own vault at sale; the remaining held balance follows the buyer. The
+  review shows these separately and states any sanctions hold. A historical
+  forfeiture description must not be presented as the current sale terms.
 - The buyer sees the current principal, collateral, remaining economics,
   borrower identity, and due date before signing.
 - The buyer signs the same live facts that the protocol enforces.
@@ -2820,6 +3047,9 @@ is the borrower's own money.
   faucet supply alone.
 - Faucet success should offer clear next steps back into borrow, lend, rent, or
   manage flows.
+- Demo rental NFTs may be burned only by their owner or an approved operator;
+  another wallet cannot destroy a token held by a user or escrowed for a loan.
+  These collections are testnet tooling, not production rental assets.
 
 ## Alerts
 
@@ -4507,16 +4737,23 @@ Its intended behaviour, as the test oracle for this surface:
   review is open, the review closes with a visible explanation and
   must be reopened against the current number. The
   review states the payout plainly: the seller receives the
-  principal minus the LARGER of the interest accrued so far or the
-  rate difference for the remaining term (when the buyer expects a
-  higher rate — flagged before review), paid straight to the wallet
-  in the same transaction with nothing to approve and nothing to
-  claim afterwards; the borrower's rate and due date do not change.
+  principal minus only the rate difference for the remaining term
+  (when the buyer expects a higher rate — flagged before review), paid
+  straight to the wallet in the same transaction with nothing to
+  approve; the borrower's rate and due date do not change. The review
+  also states, separately from the payout, the interest the seller has
+  earned so far (before the protocol's cut): it is not paid at the
+  sale and not given up, but stays the seller's claim on the loan,
+  paid into the seller's vault as the borrower pays interest and
+  withdrawn from Claims, and it carries the borrower's risk (a short
+  recovery pays the buyer's principal first) (#1209).
   Because a consumed buy offer can linger as available in off-chain
   data, confirmation always re-verifies the offer live (still open,
   unchanged terms, not expired) and re-reads the payout with chain
-  time, re-reviewing on material drift. The protocol's cut comes out
-  of the forfeited interest, never beyond the shown figure.
+  time, re-reviewing on material drift. No fee is taken at the sale;
+  the protocol's usual cut of interest comes out of the seller's
+  claim when it is paid, as it would have if the seller had kept the
+  position.
 - The lender can instead LIST the position for sale at a rate of
   their choosing and for a listing window of their choosing, picked
   from a small set of preset durations. The form must state that
@@ -4560,13 +4797,17 @@ Its intended behaviour, as the test oracle for this surface:
   released by cancelling or by a cleanup step that anyone may
   trigger after expiry (even while the protocol is paused), and the
   disclosure must say so rather than imply the lock vanishes at the
-  expiry moment; the settlement (the larger
-  of interest accrued by acceptance or the rate difference for the
-  remaining term — never both) is deducted from the buyer's payment
-  inside the buyer's transaction before the rest reaches the seller,
-  so nothing is drawn from the seller's wallet and listing asks for no
-  token approval; and a rate above the loan's own attracts buyers at
-  the seller's cost. An explicit
+  expiry moment; the settlement (the rate difference for the
+  remaining term, when the seller's rate is above the loan's own) is
+  deducted from the buyer's payment inside the buyer's transaction
+  before the rest reaches the seller, so nothing is drawn from the
+  seller's wallet and listing asks for no token approval; a rate above
+  the loan's own attracts buyers at the seller's cost; and the
+  interest the seller earned is not part of the settlement but stays
+  the seller's claim on the loan, shown in Claims after the sale
+  (#1209). Where the loan's lender balance set aside goes to the buyer
+  with the position, the form says that interest the seller earned
+  and waiting in it is paid to the seller's vault instead. An explicit
   risk-and-terms acknowledgement is required before listing and is
   voided by any term change.
   The listing's standing surface is chain-authoritative (the lock on
@@ -4839,6 +5080,69 @@ Its intended behaviour, as the test oracle for this surface:
   answered, and an asset behind any held offer may be missing when part
   of the offer list could not be read at all, stating both when both
   apply. It never presents the list as complete in either case.
+- The vault page lets a wallet deposit any token or NFT into its own
+  vault and withdraw a free part of it, with no loan involved. The amount
+  it calls free is the contract's own free figure (tracked holding less
+  everything loans, offers, intents and queued payouts hold), never one
+  the app works out, so the page never offers more than the contract will
+  release. The locked and withdrawable figures elsewhere in the app, and
+  the trading desk's and the accept flow's own-balance checks, use the
+  same figure, so a queued payout is never shown or spent as free. An
+  asset that reached the vault outside the app is named as not yet
+  withdrawable, with a link to adopt it that already names the asset
+  (its kind, contract and token id), for every kind of asset. A replaced
+  account, which cannot adopt, is told so instead of being given the
+  link. Beside it the card offers disowning: a public record that the
+  asset is not the user's, which moves nothing, credits nothing and asks
+  for no declaration, signature or sanctions check, so it stays available
+  where adoption is not (a flagged or replaced wallet, a smart-contract
+  wallet, a network whose screening is not set up). Its result comes from
+  the transaction's own record; a transaction that was sent but whose
+  result cannot be read is reported as unconfirmed with its link, never as
+  failed; one the chain settled as not run (reverted, or cancelled or
+  replaced in the wallet) is reported as not taken, with nothing
+  recorded, and can be tried again; and one the wallet never reported
+  sending is not claimed as unsent. With protected mode on, the
+  withdraw button says the withdrawal is queued, and for how long, before
+  the user signs, and the result names where to find it.
+- The adoption page takes every kind of asset the vault can hold: a
+  token, an NFT (by collection and token id) or a multi-token balance.
+  What it offers to adopt is the contract's own figure for the untracked
+  part of that exact asset, read again just before signing, never one the
+  app works out. An NFT kind is read only when the contract says it
+  follows that standard; otherwise the page says the contract is not of
+  that kind and offers nothing to sign. A single NFT has no amount to
+  type. The signed acknowledgement, the saved attempt and the outcome all
+  name the kind and token id, and an outcome that names a different
+  token id or kind from the one the user asked for is reported as that
+  other asset, never as the one asked for. A link to the page may
+  fill in the asset, never the declared source or the amount, and a
+  malformed link opens a blank form.
+- A vault protection page shows the account's protected mode state from
+  one block, so every figure and every "ready" verdict describe the same
+  moment. A Diamond without the feature reads as unavailable, never as
+  "protection off". When the account's settings cannot be read the page
+  shows no controls at all, because "off" drawn over a failed read would
+  invite turning protection on twice or hide a lock. When the payout
+  queue, the transfer queue, the payout addresses or the signers cannot
+  be read, each says so and says not to assume it is empty; a partly read
+  list counts as unread, since the one missing row could be the one an
+  attacker queued. Each queued payout shows its request code (the same
+  six characters every alert carries), what it waits on in the order the
+  contract checks (the lock, then the time, then a co-signature) and the
+  actions that apply to it. Every change waiting the delay is listed with
+  its time and can be cancelled; due ones can be applied. The page also
+  states the escape route when it is open, names the wallet that now
+  manages a moved account, and lets a recovery signer open another
+  account to accept the role, cancel, co-sign, lock, and propose or
+  approve a move. When the app cannot check whether the wallet manages a
+  moved account it says so, rather than implying it manages none.
+- The Terms gate never blocks a protected-account write that takes the
+  user's own free assets out, releases a payout they already asked for,
+  asks to unlock, or protects the account (a lock, a cancellation, a
+  co-signature, removing a payout address, turning protection on).
+  Depositing, adding a payout address or a signer, and moving the account
+  stay behind it.
 - Advanced mode surfaces keeper permissions as the protocol's
   three-switch opt-in: a master switch, per-keeper action grants,
   and a per-loan switch on each loan's page — all off by default,

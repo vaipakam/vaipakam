@@ -90,7 +90,6 @@ to these ids in `contracts/script/positive-flows/PositiveFlowsBase.sol`.
 | PF-096 | BasicLifecycle | PF-096, PF-110, PF-112, PF-113 |
 | PF-095 | BasicLifecycle | PF-095, PF-110, PF-112, PF-113 |
 | PF-114 | AdvancedCredit | PF-114 |
-| PF-214 | AdvancedCredit | PF-213, PF-214 |
 | PF-053 | AdvancedCredit | PF-053, PF-055, PF-056, PF-057 (skips if partial fills are off) |
 | PF-098 | AdvancedCredit | PF-098, PF-213, PF-112 |
 | PF-211 | AdvancedCredit | PF-211 |
@@ -265,7 +264,7 @@ walked the same flow as PF-230 and is not carried twice.
 | PF-211 | Advanced | Preclose option 2: transfer obligation through compatible borrower offer. | New borrower assumes obligation; original borrower exits under rules. | scripted | Keep; add current-holder assertions. |
 | PF-212 | Advanced | Preclose option 3: offset with new lender offer. | Original borrower becomes lender or exits through offset as specified. | scripted | Keep; add NFT lock assertions. |
 | PF-213 | Basic | Refinance via compatible borrower offer. | Old lender receives entitlement; new loan opens; borrower continuity preserved. | scripted | Keep; add full-term interest disclosure assertions in app. |
-| PF-214 | Advanced | Standalone `refinanceLoan` flow. | Existing loan closes and replacement loan becomes active. | scripted | Keep. |
+| PF-214 | Advanced | Standalone `refinanceLoan` flow. | Retired by #3042: every refinance completes in the transaction that accepts its offer (PF-098, PF-215). | retired | None. The function and its scenario are removed. |
 | PF-215 | Advanced | Auto-refinance caps configured and keeper executes within caps. | Replacement loan posted/accepted only within borrower caps and keeper gates. | scripted | Keep. A request above the caps is refused at creation, the matcher is refused while the admin switch is off, and the matcher's fill opens the replacement inside the caps. |
 | PF-216 | Advanced | Auto-extend caps configured and keeper executes within caps. | Loan extension respects borrower/lender caps and kill switches. | unit/integration | Script blocked by #2814 (no route funds the borrower vault with the principal asset an extension charges). |
 | PF-217 | Advanced | Pre-grace warning state appears for borrower with caps enabled. | UI warns best-effort and offers repay/widen actions. | frontend/indexer | app E2E. |
@@ -382,7 +381,7 @@ counterpart.
 | Periodic-interest long loan settles a due checkpoint. | PF-116, PF-117 |
 | Borrower swap-to-repay full and partial modes. | PF-118, PF-119 |
 | Borrower preclose option 2 and option 3. | PF-211, PF-212 |
-| Refinance tagged accept-and-refinance and standalone refinance. | PF-098, PF-213, PF-214 |
+| Refinance tagged accept-and-refinance, netted inside the Diamond (#3042). | PF-098, PF-213 |
 | Lender early withdrawal through buy offer and sale offer. | PF-230, PF-231, PF-232 |
 | Position NFT transfer followed by current-holder claim/action. | PF-163, PF-164, PF-234 |
 | Fallback pending rescue: swap fails, borrower cures by repay/add-collateral, lender claim remains one-shot. | PF-183, PF-184, PF-185, PF-186 |

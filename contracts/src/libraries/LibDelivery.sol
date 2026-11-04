@@ -4,6 +4,16 @@ pragma solidity ^0.8.29;
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
+import {LibVaipakam} from "./LibVaipakam.sol";
+
+/// @dev Protected account mode — the host that credits a protected owner's
+///      vault with a payment the Diamond would otherwise make to the owner's
+///      wallet (`VaultPayoutFacet.creditOwnerVault`, self-call only).
+interface IProtectedVaultCredit {
+    function creditOwnerVault(address token, address owner, uint256 amount)
+        external
+        returns (uint256 received);
+}
 
 /**
  * @title  LibDelivery
@@ -142,7 +152,20 @@ library LibDelivery {
     ///      liquidator's payment in a forced flow included), and the books
     ///      around the pull are set at the requested figure. A zero amount
     ///      still runs the transfer, as the unmeasured call it replaces did.
+    ///      A wallet in protected account mode is never paid directly, here
+    ///      as in {pushExact}: the payment is pulled into the Diamond and
+    ///      credited to the wallet's vault ({creditIfProtected}), refused
+    ///      unless all of it arrived at both hops.
     function pullExact(address token, address from, address to, uint256 amount) internal {
+        if (amount != 0 && LibVaipakam.storageSlot().protectedAccount[to].enabled) {
+            uint256 held = IERC20(token).balanceOf(address(this));
+            // slither-disable-next-line arbitrary-send-erc20
+            IERC20(token).safeTransferFrom(from, address(this), amount);
+            requireFull(token, amount, measured(token, from, address(this), held, amount));
+            (, uint256 received) = creditIfProtected(token, to, amount);
+            requireFull(token, amount, received);
+            return;
+        }
         uint256 before = IERC20(token).balanceOf(to);
         // Every caller pulls from a party that approved the Diamond for this
         // move (the payer named by the calling flow). Not an arbitrary send.
@@ -187,8 +210,30 @@ library LibDelivery {
     ///      a payment to a user's wallet that books a party as paid, in any
     ///      flow): the Diamond pushes `amount` to `to`, refused unless `to`
     ///      received all of it.
+    ///      A wallet in protected account mode is never paid directly: the
+    ///      payment is credited to its vault instead, from where it leaves
+    ///      only through the delay ({creditIfProtected}).
     function pushExact(address token, address to, uint256 amount) internal {
+        (bool credited, uint256 received) = creditIfProtected(token, to, amount);
+        if (credited) {
+            requireFull(token, amount, received);
+            return;
+        }
         requireFull(token, amount, pushMeasured(token, to, amount));
+    }
+
+    /// @dev Protected account mode — when `to` is a wallet with the mode on,
+    ///      credit `amount` to its vault instead of paying the wallet, and
+    ///      return what the vault measurably received. One rule for every
+    ///      wallet payment the Diamond makes from its own balance, so no
+    ///      protocol path can pay a protected owner's wallet without the
+    ///      delay (a payout from the vault is queued by the withdraw route).
+    function creditIfProtected(address token, address to, uint256 amount)
+        internal
+        returns (bool credited, uint256 received)
+    {
+        if (amount == 0 || !LibVaipakam.storageSlot().protectedAccount[to].enabled) return (false, 0);
+        return (true, IProtectedVaultCredit(address(this)).creditOwnerVault(token, to, amount));
     }
 
     /// @dev A payout that books nobody by what arrives (outcome 3: a
@@ -197,7 +242,11 @@ library LibDelivery {
     ///      the recipient bears its own token's charge on this hop, so no
     ///      reading is taken there. Refused only when the move cost the
     ///      Diamond more than `amount`.
+    ///      A protected wallet is credited in its vault instead
+    ///      ({creditIfProtected}).
     function pushOut(address token, address to, uint256 amount) internal {
+        (bool credited, ) = creditIfProtected(token, to, amount);
+        if (credited) return;
         uint256 senderBefore = IERC20(token).balanceOf(address(this));
         IERC20(token).safeTransfer(to, amount);
         requireNoOverDebit(token, address(this), senderBefore, amount);

@@ -93,6 +93,11 @@ contract NFTPrepayListingAtomicFacetTest is SetupTest {
         collateralNFT.mint(borrowerHolder, COLLATERAL_TOKEN_ID);
         vm.prank(borrowerHolder);
         collateralNFT.transferFrom(borrowerHolder, borrowerVaultAddr, COLLATERAL_TOKEN_ID);
+        // The raw transfer bypasses the deposit chokepoint; seed the tracked
+        // row so the collateral is movable (an untracked NFT is not).
+        TestMutatorFacet(address(diamond)).setTrackedHoldingRaw(
+            borrowerHolder, address(collateralNFT), COLLATERAL_TOKEN_ID, 1
+        );
 
         mockExecutor.setApprovedConduit(conduit, true);
         vm.startPrank(owner);

@@ -91,7 +91,8 @@ the dashboard claimables + a `BorrowerSurplusClaimed` event.
   position-NFT `transferFrom`/`safeTransferFrom` (freeze-at-source screens BOTH
   parties, #821/#832), `triggerLiquidation`(+partial/discounted/split/internal),
   `settlePeriodicInterest`, `precloseDirect`/`transferObligationViaOffer`,
-  `refinanceLoan`, `addCollateral`, `extendLoanInPlace`, `sellLoanViaBuyOffer`/
+  `refinanceLoanFromAccept`/`refinanceLoanFromMatch` (#3042 retired
+  `refinanceLoan`), `addCollateral`, `extendLoanInPlace`, `sellLoanViaBuyOffer`/
   `createLoanSaleOffer`/`completeLoanSale`, `withdrawSalary`, the NFT-prepay
   listing family, `setLenderIntent`/`fundLenderIntent`/`withdrawLenderIntentCapital`/
   `rollIntentLoan`, `claimInteractionRewards` (#953), the Claim family.

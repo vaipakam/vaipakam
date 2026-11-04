@@ -20,6 +20,7 @@ import { useActiveChain } from '../chain/useActiveChain';
 import { useDiamondWrite } from '../contracts/diamond';
 import { EmptyState, UnavailableState } from '../components/EmptyState';
 import { ClaimAllCard } from '../components/ClaimAllCard';
+import { SellerClaimsCard, useSellerClaimsListed } from '../components/SellerClaimsCard';
 import { AssetType } from '../lib/types';
 import { formatDate, formatTokenAmount } from '../lib/format';
 import { captureTxError } from '../lib/errors';
@@ -279,8 +280,13 @@ export function Claims() {
   // preview is unavailable — where it does, "Nothing to claim" under it would
   // be false too (Codex #2489 r5). Same key as the card's own read.
   const held = useHeldReward();
+  // #1209 — interest earned on positions this wallet sold is listed in its
+  // own card, so "Nothing to claim" under it would be false too.
+  const sellerClaimsListed = useSellerClaimsListed();
   const hasOtherClaimable =
-    (rewards.data?.pending ?? 0n) > 0n || (rewards.isError && (held.data ?? 0n) > 0n);
+    (rewards.data?.pending ?? 0n) > 0n ||
+    (rewards.isError && (held.data ?? 0n) > 0n) ||
+    sellerClaimsListed;
 
   return (
     <div>
@@ -300,6 +306,7 @@ export function Claims() {
       ) : (
         <>
           <RewardsCard />
+          <SellerClaimsCard />
           {/* #1268 / E-10 — one-signature Claim-All over the settled,
               confirmed claimables (+ rewards + free vault VPFI). Only
               once the claimables list is settled, so the batch never

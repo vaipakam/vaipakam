@@ -19,6 +19,7 @@ import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {EarlyWithdrawalFacet} from "../src/facets/EarlyWithdrawalFacet.sol";
 import {SaleExitVerdictFacet} from "../src/facets/SaleExitVerdictFacet.sol";
 import {EarlyWithdrawalDirectFacet} from "../src/facets/EarlyWithdrawalDirectFacet.sol";
+import {SellerClaimFacet} from "../src/facets/SellerClaimFacet.sol";
 import {PrecloseFacet} from "../src/facets/PrecloseFacet.sol";
 import {VaipakamVaultImplementation} from "../src/VaipakamVaultImplementation.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
@@ -29,6 +30,7 @@ import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {AddCollateralFacet} from "../src/facets/AddCollateralFacet.sol";
+import {LibAutoRefinanceCheck} from "../src/libraries/LibAutoRefinanceCheck.sol";
 import {RefinanceFacet} from "../src/facets/RefinanceFacet.sol";
 import {DiamondCutFacet} from "../src/facets/DiamondCutFacet.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
@@ -184,7 +186,7 @@ contract WorkflowComplianceAndRejection is Test {
         TestMutatorFacet testMutatorFacet = new TestMutatorFacet();
         helperTest = new HelperTest();
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](29);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](30);
         cuts[0]  = IDiamondCut.FacetCut({facetAddress: address(offerCreateFacet),          action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCreateFacetSelectors()});
         cuts[19] = IDiamondCut.FacetCut({
             facetAddress: address(offerAcceptFacet),
@@ -283,6 +285,17 @@ contract WorkflowComplianceAndRejection is Test {
             facetAddress: ArtifactDeploy.deploy(type(SaleExitVerdictFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getSaleExitVerdictFacetSelectors()
+        });
+
+        // #1209 / #1808 - a completed sale leaves the seller a claim on the
+        // loan's later interest, and every interest payout and the holder's
+        // terminal claim settle open seller claims by a self-call into
+        // SellerClaimFacet. A hand-built Diamond that completes a sale must cut
+        // this host too.
+        cuts[29] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(SellerClaimFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getSellerClaimFacetSelectors()
         });
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
@@ -787,11 +800,14 @@ contract WorkflowComplianceAndRejection is Test {
         EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(nftLoanId, 500, true, 7 days);
     }
 
-    /// @notice NFT rental loan: refinanceLoan reverts InvalidRefinanceOffer
+    /// @notice NFT rental loan: a refinance request against it is refused at
+    ///         creation (RefinanceTargetIncompatible). #3042 — a refinance is
+    ///         only ever the accept of such a request, so this is where an
+    ///         NFT rental refinance stops.
     function test_Refinance_RejectsNFTRental() public {
-        // Borrower creates a Borrower offer for refinancing
         vm.prank(borrower);
-        uint256 refiOfferId = OfferCreateFacet(address(diamond)).createOffer(
+        vm.expectRevert(LibAutoRefinanceCheck.RefinanceTargetIncompatible.selector);
+        OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: address(mockUsdc),
@@ -816,16 +832,11 @@ contract WorkflowComplianceAndRejection is Test {
                 collateralAmountMax: COLLATERAL,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
                 expiresAt: 0,
-                fillMode: LibVaipakam.FillMode.Partial,
-                refinanceTargetLoanId: 0,
+                fillMode: LibVaipakam.FillMode.Aon,
+                refinanceTargetLoanId: nftLoanId,
                 useFullTermInterest: false
             })
         );
-
-        // Borrower tries to refinance NFT rental loan -> InvalidRefinanceOffer (assetType != ERC20)
-        vm.prank(borrower);
-        vm.expectRevert(RefinanceFacet.InvalidRefinanceOffer.selector);
-        RefinanceFacet(address(diamond)).refinanceLoan(nftLoanId, refiOfferId);
     }
 
     // ═══════════════════════════════════════════════════════════════════════

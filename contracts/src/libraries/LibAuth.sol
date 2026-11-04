@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibProtectedAccount} from "./LibProtectedAccount.sol";
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
@@ -21,8 +22,8 @@ import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
  *      ── Keeper-accessible surface (Phase 6) ────────────────────────────────
  *      Keeper authority is gated per-action via
  *      {requireKeeperFor(action, loan, lenderSide)} against the relevant
- *      NFT holder's `approvedKeeperActions` bitmask. Five actions are
- *      accepted at these seven entry points:
+ *      NFT holder's `approvedKeeperActions` bitmask. Four actions are
+ *      accepted at these six entry points:
  *
  *        EarlyWithdrawalFacet.createLoanSaleOffer    → INIT_EARLY_WITHDRAW
  *        EarlyWithdrawalFacet.completeLoanSale       → COMPLETE_LOAN_SALE
@@ -30,7 +31,9 @@ import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
  *        PrecloseFacet.transferObligationViaOffer    → initPreclose
  *        PrecloseFacet.offsetWithNewOffer            → initPreclose
  *        PrecloseFacet.completeOffset                → COMPLETE_OFFSET
- *        RefinanceFacet.refinanceLoan                → REFINANCE
+ *
+ *      (#3042 retired `RefinanceFacet.refinanceLoan` → REFINANCE: a
+ *      refinance now completes only inside the accept of its tagged offer.)
  *
  *      Money-out operations (repay, claim, addCollateral,
  *      partialWithdraw, acceptOffer, liquidate, triggerDefault)
@@ -64,6 +67,15 @@ library LibAuth {
     /// @dev Caller must own the borrower-side position NFT for this loan.
     function requireBorrowerNftOwner(LibVaipakam.Loan storage loan) internal view {
         if (IERC721(address(this)).ownerOf(loan.borrowerTokenId) != msg.sender)
+            revert IVaipakamErrors.NotNFTOwner();
+    }
+
+    /// @dev Caller must MANAGE the `tokenId` position NFT's holder: the holder
+    ///      itself, or its controller once a protected-account replacement
+    ///      retired it. The rule for a holder's standing CONSENT (auto-extend
+    ///      caps), which a retired wallet must not be able to give.
+    function requirePositionManager(uint256 tokenId) internal view {
+        if (msg.sender != LibProtectedAccount.manager(IERC721(address(this)).ownerOf(tokenId)))
             revert IVaipakamErrors.NotNFTOwner();
     }
 
@@ -102,7 +114,11 @@ library LibAuth {
         if (msg.sender == address(this)) return false;
         uint256 tokenId = lenderSide ? loan.lenderTokenId : loan.borrowerTokenId;
         address nftOwner = IERC721(address(this)).ownerOf(tokenId);
-        if (msg.sender == nftOwner) return false;
+        // Protected account mode: the holder acts through its manager. Once
+        // a replacement retired the holder, its controller acts on the
+        // position and the old wallet is no longer the owner here; no keeper
+        // grant it made survives ({keeperMayActFor}).
+        if (msg.sender == LibProtectedAccount.manager(nftOwner)) return false;
         if (!keeperMayActFor(msg.sender, action, loan.id, nftOwner)) {
             revert IVaipakamErrors.KeeperAccessRequired();
         }
@@ -123,6 +139,8 @@ library LibAuth {
         address nftOwner
     ) internal view returns (bool) {
         if (LibVaipakam.cfgKeepersPaused()) return false;
+        // A replacement voids every keeper grant the retired holder made.
+        if (LibProtectedAccount.manager(nftOwner) != nftOwner) return false;
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         return s.keeperAccessEnabled[nftOwner] &&
             s.loanKeeperEnabled[loanId][keeper] &&
@@ -168,7 +186,12 @@ library LibAuth {
         address principal
     ) internal view returns (bool) {
         if (solver == address(this)) return true; // diamond-internal
-        if (solver == principal) return true; // self
+        // Protected account mode: a replaced (retired) account acts only
+        // through its controller. Its old wallet is no longer "self", and no
+        // keeper grant it made survives the replacement.
+        address mgr = LibProtectedAccount.manager(principal);
+        if (solver == mgr) return true; // self, or the controller
+        if (mgr != principal) return false;
         // #633 — global delegated-keeper pause (principal can still self-act).
         if (LibVaipakam.cfgKeepersPaused()) return false;
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();

@@ -735,6 +735,22 @@ contract ProfileFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors 
         return LibVaipakam.isSanctionedAddress(who);
     }
 
+    /// @notice The three-way sanctions read for `who` that every authoritative
+    ///         sanctions write uses: `Clean` (0), `Flagged` (1) or
+    ///         `Unavailable` (2). Unlike {isSanctionedAddress}, an oracle outage
+    ///         is reported as `Unavailable` rather than as clean, so an
+    ///         off-chain caller can tell "screened and clean" from "could not
+    ///         be screened" (the keeper's prepay-sale sanctions backstop, #2984).
+    /// @dev    Delegates to `LibVaipakam.sanctionsStatus`, the rule
+    ///         {refreshSanctionsFlag} and the prepay-sale syncs act on, so a
+    ///         caller deciding whether a sync is due reads exactly what the sync
+    ///         will read. `Unavailable` also covers an unset oracle; a caller
+    ///         that must tell the two apart reads {getSanctionsOracle} first.
+    /// @param who The address to query.
+    function sanctionsStatus(address who) external view returns (LibVaipakam.SanctionsRead) {
+        return LibVaipakam.sanctionsStatus(who);
+    }
+
     /// @notice #1123 — a wallet was (de)registered in the confirmed-flagged
     ///         registry from an authoritative oracle read.
     /// @param who     The synced wallet.

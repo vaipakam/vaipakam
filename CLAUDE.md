@@ -103,6 +103,7 @@ Cross-facet calls use `address(this).call(abi.encodeWithSelector(...))` — this
 | **RepayFacet**         | Full/partial repayment, NFT daily deductions, late fees                     |
 | **DefaultedFacet**     | Time-based defaults (grace period expired)                                  |
 | **RiskFacet**          | LTV/Health Factor calculation, HF-based liquidation via 0x swap             |
+| **RiskDiscountedLiquidationFacet** | The discounted HF liquidation route, `triggerLiquidationDiscounted` (the liquidator pays the whole debt and receives the collateral at a per-tier discount). Moved whole off `RiskFacet` because RiskFacet had reached the EIP-170 ceiling; the selector, the `LiquidationDiscounted` event and the route's errors are unchanged. **`triggerLiquidationDiscounted` is NOT on RiskFacet any more**, so a grep of RiskFacet for it comes back empty. **The two must be refreshed together** — `RedeployFacets` carries both |
 | **FallbackCustodyFacet** | The ONE host of the liquidation-fallback custody flows (#1566 slice 2, #2141), split out in #1566 step S2a. When every swap adapter the caller listed is tried and fails (an empty or all-disabled try-list reverts `NoEnabledSwapRoute` instead, #1005), RiskFacet's HF liquidation and DefaultedFacet's time-based default both self-call `enterFallback`; before S2a each carried its own copy of `_fullCollateralTransferFallback` — one producer written out twice, in two facets close to EIP-170 (RiskFacet had about 67 bytes of headroom). ClaimFacet self-calls `retryFallbackSwap` (the retry swap and its soft-fail adapter loop) and `disposeFallbackCustody` (the in-kind split of the fallback snapshot); the retry *distribution* (`_distributeRetryProceeds`), the `retryAttempted` stamp and `ClaimRetryExecuted` stay in ClaimFacet. The three mutators are `address(this)`-gated and carry no `nonReentrant` of their own, because every caller already holds the Diamond guard. `LiquidationFallback` / `LiquidationFallbackSplit` / `LiquidationFallbackOracleUnavailable` are re-declared here byte-identical, so their topic hashes are unchanged. **From S2b the custody is vault-held**: `enterFallback` returns the collateral to `loan.borrower`'s vault in the failing transaction, under the loan's collateral lien, and the per-loan row `fallbackVaultCustody` (written only through `LibFallbackCustody`, one `FallbackCustodyMoved` event per row move) records how much of that vault balance is the episode's custody. `getFallbackCustody` reports that row as `vaultHeld`; `legacyDiamondHeld` is non-zero only for a pre-S2b Diamond-held row, which every consumer refuses with `FallbackCustodyNotVaultHeld` (owner decision O1 = A: fresh deploys only, no migration). The backstop absorb also disposes through `disposeFallbackCustody` (lender slice labelled `ToBackstop`). **Refreshed together with its family** — see "Refresh-together families" below this table |
 | **OracleFacet**        | Chainlink price feeds, v3-style concentrated-liquidity AMM liquidity checks |
 | **VaultFactoryFacet** | Per-user UUPS vault proxy deployment                                       |
@@ -168,7 +169,9 @@ runs half of it on old code:
   DefaultedFacet, EarlyWithdrawalFacet, EarlyWithdrawalDirectFacet,
   IntentDispatchFacet (the intent settlement), OfferAcceptFeeFacet,
   ForcedSaleFacet, PrecloseFacet, PrepayListingFacet, RefinanceFacet, RepayFacet,
-  RepayPeriodicFacet, RiskFacet, SwapToRepayFacet and SwapToRepayPartialFacet.
+  RepayPeriodicFacet, RiskFacet, RiskDiscountedLiquidationFacet (the discounted
+  liquidation's treasury cut on interest), SwapToRepayFacet and
+  SwapToRepayPartialFacet.
   Find it again with a grep for those three helpers, not from this list.
   RiskMatchLiquidationFacet and RiskSplitLiquidationFacet left the family
   with #1980: they reached the host only through the VPFI LIF forfeit
@@ -211,6 +214,28 @@ runs half of it on old code:
   disagree with them. `RefreshAllFacetsInPlace` and `RedeployFacets` both carry
   all three.
 
+- **SellerClaimFacet + every facet that pays interest to the lender side, both
+  sale facets and ClaimFacet (#1209, #1808).** A sale turns the seller's earned
+  and unpaid interest into a seller claim (`LibInterestLedger.recordSale`,
+  inside `LibLoan.migrateLenderPosition`). Every interest payout then reaches
+  `LibInterestLedger.paySellersFirst`, which self-calls
+  `SellerClaimFacet.paySellersFirst` while a claim is open; the holder's
+  terminal claim (ClaimFacet) and the backstop buyout split through
+  `resolveSellerClaims` / `settleSellerClaimsFrom`. Find the payers again with
+  a grep for `paySellersFirst`, `holderPaid` and `LibInterestLedger.set`, not
+  from this list. A payer refreshed without the host reverts
+  `FunctionDoesNotExist` on the first payout of a sold loan. The ledger opens
+  lazily at the loan's start, so a loan opened under older code would read as
+  unpaid since it began: `RefreshAllFacetsInPlace` and
+  `RefreshChangedFacetsInPlace` refuse the crossing while any ERC-20 loan is
+  Active or FallbackPending (`OpenLoanAcrossInterestLedger`) and need the
+  manual pause, and `RedeployFacets` / `ReplaceStaleFacets` refuse a Diamond
+  that does not already route `getInterestLedger` (`PredatesInterestLedger`).
+  Cross it by fresh deploy. Never assign `loan.principal` or
+  `loan.interestRateBps` outside `LibInterestLedger` (origination in LoanFacet
+  aside); `contracts/script/check-loan-terms-writer.mjs`, pre-deploy step 1d,
+  holds it.
+
 - **VaultFactoryFacet + every facet that withdraws from a vault (#2440).**
   `vaultWithdrawERC20` now returns what the recipient received, and every
   caller compiled against it decodes that return, including the plain
@@ -225,8 +250,9 @@ runs half of it on old code:
   `LibFallback.tryOracleRate` reads `getAssetPriceStatus`, a selector only
   OracleFacet carries, to tell a missing price (the lender takes all the
   collateral) from a distrusted one (the close-out refuses). It is inlined into
-  FallbackCustodyFacet (the fallback entry), RiskFacet (the discounted
-  liquidation), ClaimFacet (the backstop par check), and DefaultedFacet and
+  FallbackCustodyFacet (the fallback entry), RiskDiscountedLiquidationFacet
+  (the discounted liquidation, moved off RiskFacet, which no longer reaches
+  it), ClaimFacet (the backstop par check), and DefaultedFacet and
   ForcedSaleFacet through `LibDefaultRoute` (the time-based default's route
   rule, which the default acts on and the sale preview reads, #2419 / #2796);
   find the set again with a grep for `tryOracleRate`, `LibDefaultRoute`,
@@ -358,6 +384,26 @@ runs half of it on old code:
   per-facet tier stamp in new code; write the balance through the two
   writers.
 
+- **RefinancePayoffFacet + RefinanceFacet + OfferAcceptFeeFacet (#1558,
+  #3042).** The borrower attaches the payoff permit through the first; the
+  second's settlement spends it (`LibRefinancePayoff.pull`) on every refinance
+  route, for the wallet's share only, because the third parks the new lender's
+  net principal (`LibRefinanceNetting`) and the settlement pays the old lender
+  from it. An accept facet without the park delivers the principal to the
+  wallet while the new settlement refuses for a missing park
+  (`RefinanceNetPrincipalMissing`); a new park under an old settlement strands
+  the principal. The curated refreshes refuse a Diamond that still routes the
+  retired `refinanceLoan(uint256,uint256)` (`RefinanceRecordRollout`). A `RefinanceFacet`
+  refreshed without the host refuses every refinance (`RefinancePayoffPermitMissing`:
+  nothing can attach a permit), and a host without the new settlement stores
+  permits nothing reads while the old code pulls on an allowance. Both are in
+  `RefreshAllFacetsInPlace` and `RedeployFacets`; `RedeployFacets` refuses a
+  Diamond that does not already route `setRefinancePayoffPermit`
+  (`PredatesRefinancePayoffPermit`), so the crossing is the all-facets refresh
+  or a fresh deploy. The app keeps the old approval route only where the
+  Diamond lacks the route, a temporary bridge #3074 removes after the
+  all-waves fresh deploy.
+
 How the #1566 slices reach a chain is settled (owner, 2026-10-07, decision O1 = A): **every
 chain that runs slices 2–3 gets a fresh deploy.** Nothing is upgraded in place
 across this boundary and no pre-slice row is migrated; slices 2–3 make a
@@ -387,13 +433,14 @@ true on a settlement path, and it cost real time in #1503.
 | Facet                      | Role                                                                        |
 | -------------------------- | --------------------------------------------------------------------------- |
 | **PrecloseFacet**          | Borrower early close-out: `precloseDirect`, obligation handover to a replacement borrower (`transferObligationViaOffer`), and the offset route (`offsetWithNewOffer` → completion). Completion has TWO entries: `completeOffset` (external) and `completeOffsetInternal` — the `address(this)`-gated cross-facet entry `_acceptOffer`'s auto-link block invokes when a third party accepts the offset offer, skipping the outer `nonReentrant` because the accept already holds the diamond guard. Don't assume a manual second step |
-| **RefinanceFacet**         | Move a borrower onto better terms — `refinanceLoan`, `refinanceLoanFromAccept`. NOT an in-place edit: the replacement loan is a **separate record** (`s.offerIdToLoanId[borrowerOfferId]` → a new `loanId`) created when the new lender accepted the offer, and the old loan is terminalized **Active → Repaid**. So a completed refinance leaves **two loan records and FOUR position NFTs**: every loan carries both a `lenderTokenId` and a `borrowerTokenId`, and the old pair is *status-updated* to `LoanRepaid` — **not burned** — so `ownerOf` still resolves and the old borrower NFT stays a redeemable receipt on the original position. Load-bearing for indexer state and the terminal-path invariants: an indexer that assumes one NFT per loan, or that a terminal loan's NFTs are gone, is wrong on both counts |
+| **RefinanceFacet**         | Move a borrower onto better terms — `refinanceLoanFromAccept` and `refinanceLoanFromMatch`, both `address(this)`-gated: the refinance completes INSIDE the accept or match of the borrower's refinance-tagged offer, and since #3042 there is no standalone `refinanceLoan` (and no `KEEPER_ACTION_REFINANCE`). The new lender's net principal pays the old lender vault-to-vault (`LibRefinanceNetting` carries it from `OfferAcceptFeeFacet`, so the two are one behaviour across a self-call); the holder's wallet pays only the rest of the due plus the treasury cut, in one pull through the request's payoff permit (`RefinancePayoffFacet`, #1558), stated by `RefinancePayoffSettled`. NOT an in-place edit: the replacement loan is a **separate record** (`s.offerIdToLoanId[borrowerOfferId]` → a new `loanId`) created by the same accept, and the old loan is terminalized **Active → Repaid**. So a completed refinance leaves **two loan records and FOUR position NFTs**: every loan carries both a `lenderTokenId` and a `borrowerTokenId`, and the old pair is *status-updated* to `LoanRepaid` — **not burned** — so `ownerOf` still resolves and the old borrower NFT stays a redeemable receipt on the original position. Load-bearing for indexer state and the terminal-path invariants: an indexer that assumes one NFT per loan, or that a terminal loan's NFTs are gone, is wrong on both counts |
+| **RefinancePayoffFacet**   | The refinance payoff permit (#1558): `setRefinancePayoffPermit` / `clearRefinancePayoffPermit` (the request's creator attaches or removes an exact-amount, single-use Permit2 witness permit bound to `RefinancePayoff(loanId, offerId)`) and the sizing view `getRefinancePayoff(loanId, offerId, by)`. The PULL is not here: `RefinanceFacet`'s settlement spends the permit through `LibRefinancePayoff.pull`, once, for the wallet's share of the payoff (since #3042 the new lender's net principal pays the rest vault-to-vault), and the view reports that share as `walletShareNow` / `walletShareBy`. Split out because `RefinanceFacet` sits close to EIP-170. **The two must be refreshed together** (see "Refresh-together families"). There is no standing payoff allowance to the Diamond any more; the wallet approves Permit2, which moves nothing without the signature. Design: `docs/DesignsAndPlans/RefinancePayoffPermitDesign.md` |
 | **EarlyWithdrawalFacet**   | Lender exit, LISTED route only: `createLoanSaleOffer` (carries a MANDATORY finite expiry) → completion. Completion mirrors the offset route's shape: `completeLoanSale` (external) plus `completeLoanSaleInternal`, the `address(this)`-gated entry `_acceptOffer` invokes automatically after a buyer accepts the linked sale offer. **`sellLoanViaBuyOffer` is NOT here** — #1780 moved it to `EarlyWithdrawalDirectFacet` below, so a grep of this facet for the direct sale comes back empty |
 | **EarlyWithdrawalDirectFacet** | Lender exit, DIRECT route: `sellLoanViaBuyOffer` — instant sale into a standing lender ("buy") offer in one transaction. Split out of `EarlyWithdrawalFacet` in #1780, which had reached 30 bytes under EIP-170 — less than one cross-facet call, so every queued fix to either route was undeployable. Same storage, same Diamond, same call surface for callers; only the runtime bytecode is separate. **The two must be refreshed together** — the redeploy scripts carry both, and refreshing one alone leaves the other on pre-split code. Both are sale hosts that reach `RiskPreviewFacet.saleAdmission` through `LibSaleSolvency`, so a curated refresh script touching either must also route that selector (#1649) |
 | **SaleExitVerdictFacet** | The ONE rule for whether a lender may exit by sale now (#1841): `saleExitVerdict(loanId, caller)` returns, per route (direct sale, listing), every refusal as the ABI-encoded custom error the entry raises plus the earliest time it can lift (`reopensAt`, 0 = needs a decision or never). Both entries open with a self-call to `requireSaleExitOpen`, which reverts with the first refusal, so the app's exit chooser and the entries cannot drift. It covers the loan- and caller-level checks only, not the buy offer a direct sale consumes, the listing's inputs or a keeper's capacity. **Refreshed together with both early-withdrawal facets** (see the family below) |
 | **SwapToRepayFacet** / **SwapToRepayPartialFacet** | Borrower swap-to-repay: collateral swapped into the principal asset and applied to the loan in one transaction. `SwapToRepayFacet` hosts the FULL close-out (`swapToRepayFull`) and its sizing preview (`previewSwapToRepayFull`). `swapToRepayPartial` is **NOT here** — #2416 moved it to `SwapToRepayPartialFacet`, so a grep of the first facet for the partial route comes back empty. Split because `SwapToRepayFacet` had reached 73 bytes under EIP-170, less than any guard costs, so every queued change to either route was undeployable (the #1780 / #1835 condition again). Same storage, same Diamond, same selector and call surface; only the runtime bytecode is separate. **The two must be refreshed together** — `RefreshAllFacetsInPlace` carries both, and refreshing one alone leaves the other route on pre-split code |
 | **PartialWithdrawalFacet** | Release surplus collateral while a loan is open — `calculateMaxWithdrawable`, `partialWithdrawCollateral` |
-| **TreasuryFacet**          | Treasury operations (56 functions — claims, buyback intents, remittance absorption, asset conversion). Custody is **deployment-mode dependent**: `LibFacet.recordTreasuryAccrual` only credits `treasuryBalances` when `s.treasury == address(this)`, so on the documented mainnet topology (`TREASURY_ADDRESS` = an external multisig) fees leave immediately and the claim / conversion paths have nothing at the Diamond to act on. Those paths are for Diamond-as-treasury deployments |
+| **TreasuryFacet**          | Treasury operations (45 functions — claims, buyback intents, remittance absorption, asset conversion, the reward and keeper budgets). It deploys nothing into external yield venues: the productive treasury reserve was retired while prelive (#962 #963 #486 #487). Custody is **deployment-mode dependent**: `LibFacet.recordTreasuryAccrual` only credits `treasuryBalances` when `s.treasury == address(this)`, so on the documented mainnet topology (`TREASURY_ADDRESS` = an external multisig) fees leave immediately and the claim / conversion paths have nothing at the Diamond to act on. Those paths are for Diamond-as-treasury deployments |
 
 Two of them do carry a genuine *future-scope* note in their own headers, which
 is what the retired line probably grew out of: TreasuryFacet's "expand for
@@ -646,6 +693,15 @@ authorizes nothing. Do not reintroduce an exclusion list.
 **When you add a function to a facet**: add its selector to the matching
 `_get<Facet>Selectors()` in `DeployDiamond.s.sol` (and `HelperTest.sol`) —
 `SelectorCoverageTest` fails otherwise.
+
+**When that function is one anyone may call** (state-changing, no caller
+gate), it also needs a row in `contracts/permissionless-steps.json` (#2984):
+the keeper pass and flag that back it, or why none is owed, or a recorded gap
+with its issue. `check-permissionless-steps.mjs` (predeploy step 1e) reads the
+caller gates from the AST and refuses an open function with no row. The same
+holds for a standalone contract in `diamond-facets.json`'s `standalone` list.
+A keeper PR that adds or retires a pass updates the rows it backs; the
+keeper's typecheck runs the ledger's keeper half.
 
 There is a **third** registration site, and only for some facets, which is why
 it is easy to miss: `contracts/script/lib/FacetSelectors.sol` carries the FULL
@@ -1207,9 +1263,9 @@ artifacts and stay in their respective env / config:
   `PUSH_CHANNEL_PK`, aggregator API keys, `KEEPER_PRIVATE_KEY`.
 - apps/keeper Cloudflare secrets: `KEEPER_PRIVATE_KEY` +
   `KEEPER_ENABLED`, `REWARD_REMIT_ENABLED`, `REWARD_COMMIT_ENABLED`,
-  `REWARD_DELIVERY_PROOF_ENABLED`, `REWARD_SANCTIONS_KEEPER_ENABLED`,
+  `REWARD_SANCTIONS_KEEPER_ENABLED`,
   `REWARD_HORIZON_HEARTBEAT_ENABLED`, `REWARD_DAY_CLOSE_ENABLED`,
-  `REWARD_CLOSE_OUT_ENABLED`, `REWARD_ZEROED_DAY_ENABLED`, `REWARD_RETURN_TRANSPORT_ENABLED`, `REWARD_ENTRY_SETTLE_ENABLED`, `PROTOCOL_UPKEEP_ENABLED`, `PREPAY_AUTO_LIST_ENABLED`, `GRACE_DEFAULT_ENABLED`, `PERIODIC_SETTLE_ENABLED`, `RPC_*`,
+  `REWARD_CLOSE_OUT_ENABLED`, `REWARD_ZEROED_DAY_ENABLED`, `REWARD_DELIVERY_CONFLICT_ENABLED`, `REWARD_RETURN_TRANSPORT_ENABLED`, `REWARD_ENTRY_SETTLE_ENABLED`, `PROTOCOL_UPKEEP_ENABLED`, `PREPAY_SALE_SANCTIONS_SYNC_ENABLED`, `TIER_PUSH_RETRY_ENABLED`, `PREPAY_AUTO_LIST_ENABLED`, `GRACE_DEFAULT_ENABLED`, `PERIODIC_SETTLE_ENABLED`, `RPC_*`,
   `TG_BOT_TOKEN`,
   `TG_OPS_BOT_TOKEN` + `TG_OPS_CHAT_ID` (operator alerts — see "Two
   Telegram bots" below), `PUSH_CHANNEL_PK`, `ZEROEX_API_KEY`,
@@ -1219,15 +1275,17 @@ artifacts and stay in their respective env / config:
   which left THREE scheduled passes dark — `rewardBudgetRemit` and
   `remitAck` both gate on `REWARD_REMIT_ENABLED`, `commitmentReport` on
   `REWARD_COMMIT_ENABLED`; `rewardSanctionsHold` (#2450) gates on
-  `REWARD_SANCTIONS_KEEPER_ENABLED`, `deliveryProof` (#1944) on
-  `REWARD_DELIVERY_PROOF_ENABLED`, `rewardHorizonHeartbeat` (#2517) on
+  `REWARD_SANCTIONS_KEEPER_ENABLED`, `rewardHorizonHeartbeat` (#2517) on
   `REWARD_HORIZON_HEARTBEAT_ENABLED` (its #2984 entry close-out step also
   on `REWARD_ENTRY_SETTLE_ENABLED`), `rewardDayClose` (#2612) on
   `REWARD_DAY_CLOSE_ENABLED`, `rewardCloseOut` (#2984) on
   `REWARD_CLOSE_OUT_ENABLED`, `rewardZeroedDay` (#2984) on
-  `REWARD_ZEROED_DAY_ENABLED`, `rewardReturnTransport` (#2984) on
+  `REWARD_ZEROED_DAY_ENABLED`, `rewardDeliveryConflict` (#2961) on
+  `REWARD_DELIVERY_CONFLICT_ENABLED`, `rewardReturnTransport` (#2984) on
   `REWARD_RETURN_TRANSPORT_ENABLED`, `protocolUpkeep` (#2984) on
-  `PROTOCOL_UPKEEP_ENABLED`, `prepayAutoList` (#2984) on
+  `PROTOCOL_UPKEEP_ENABLED` (its prepay-sale sanctions sync step also on
+  `PREPAY_SALE_SANCTIONS_SYNC_ENABLED`, its tier-push retry step on
+  `TIER_PUSH_RETRY_ENABLED`), `prepayAutoList` (#2984) on
   `PREPAY_AUTO_LIST_ENABLED`, `graceDefault` (#2483) on
   `GRACE_DEFAULT_ENABLED` and `periodicSettle` on
   `PERIODIC_SETTLE_ENABLED`, all added after it. `rewardDayClose` makes the

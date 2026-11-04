@@ -477,6 +477,43 @@
   },
   {
     "type": "function",
+    "name": "getLifetimeLendingAssets",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address[]",
+        "internalType": "address[]"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getLifetimeLendingTotals",
+    "inputs": [
+      {
+        "name": "asset",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "principalLent",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "interestPaid",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getLoanCollateralLien",
     "inputs": [
       {
@@ -1257,7 +1294,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "totalInterestEarnedNumeraire",
+        "name": "totalInterestPaidNumeraire",
         "type": "uint256",
         "internalType": "uint256"
       },
@@ -1393,19 +1430,6 @@
           }
         ]
       },
-      {
-        "name": "total",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getTotalInterestEarnedNumeraire",
-    "inputs": [],
-    "outputs": [
       {
         "name": "total",
         "type": "uint256",

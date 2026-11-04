@@ -149,6 +149,55 @@
         "zh": "。"
       }
     },
+    "copy.assetKind.multi": {
+      "reason": "German \"Multi-Token\" and Spanish \"Multitoken\" are the settled terms for an ERC-1155 multi-token, built from the same loanwords as the English; ERC-1155 is a standard's name.",
+      "source": "Multi-token (ERC-1155)",
+      "locales": [
+        "de",
+        "es"
+      ],
+      "values": {
+        "de": "Multi-Token (ERC-1155)",
+        "es": "Multitoken (ERC-1155)"
+      }
+    },
+    "copy.assetKind.nft": {
+      "reason": "\"NFT\" is the term every one of these locales already uses untranslated across the app (the vault, offer and rental pages all render it as NFT), and ERC-721 is a standard's name. The siblings around it in the same picker are localized (Token / Multi-token labels and the field labels).",
+      "source": "NFT (ERC-721)",
+      "locales": [
+        "ar",
+        "de",
+        "es",
+        "fr",
+        "hi",
+        "ja",
+        "ko",
+        "ta",
+        "zh"
+      ],
+      "values": {
+        "ja": "NFT（ERC-721）",
+        "zh": "NFT（ERC-721）"
+      }
+    },
+    "copy.assetKind.token": {
+      "reason": "\"Token\" is the ordinary German and Spanish noun for a crypto token, spelled as the English one; ERC-20 is a standard's name. The surrounding labels in the same card are localized (Betrag/Cantidad, Vertragsadresse/Dirección del contrato).",
+      "source": "Token (ERC-20)",
+      "locales": [
+        "de",
+        "es"
+      ]
+    },
+    "copy.assetKind.tokenId": {
+      "reason": "German writes a token identifier as \"Token-ID\", the same loanword and abbreviation as the English, hyphenated per German compounding.",
+      "source": "Token ID",
+      "locales": [
+        "de"
+      ],
+      "values": {
+        "de": "Token-ID"
+      }
+    },
     "copy.desk.positions.tab": {
       "reason": "\"Positions\" is the correct French plural of \"position\" — an ordinary French word spelled as the English. The same-language sibling copy.chrome.nav.positions is \"Mes positions\", which uses the identical noun, so this is settled French rather than an untouched string. Recorded here for the same reason as the notification labels: it is a translation already done, and a shrink-only baseline could only lose it to a worse synonym.",
       "source": "Positions",
@@ -254,6 +303,16 @@
         "zh": "{{pct}}%（{{bps}} bps）"
       }
     },
+    "copy.protocolConsole.hfBpsValue": {
+      "reason": "German DeFi usage keeps \"Health Factor\" as the term of art, and this bundle already uses it in seven other strings (the loan page, the alerts and the console's own partial-liquidation hints), so this value matches its siblings rather than skipping translation.",
+      "source": "health factor {{hf}} ({{bps}} bps)",
+      "locales": [
+        "de"
+      ],
+      "values": {
+        "de": "Health Factor {{hf}} ({{bps}} bps)"
+      }
+    },
     "copy.protocolConsole.hoursValue": {
       "reason": "A duration built from placeholders and the SI unit symbols \"h\" and \"s\", which are the same marks in Spanish and French. The locale values are not byte-identical — both insert the non-breaking-style space their typography requires before a unit — but the guard compares words, and a symbol shared with the English cannot be told from an untranslated one. German is deliberately absent: it says \"Std.\". Recorded here rather than in the shrinkable baseline because \"h\" IS the Spanish and French rendering; the only way out of a worklist would be to replace a correct symbol with a wrong one.",
       "source": "{{h}} h ({{s}}s)",
@@ -265,6 +324,14 @@
         "es": "{{h}} h ({{s}} s)",
         "fr": "{{h}} h ({{s}} s)"
       }
+    },
+    "copy.protocolConsole.keepers": {
+      "reason": "\"Keepers\" is the term the Spanish and French bundles already use for the protocol's automation bots — the keeper-permissions surfaces read \"Permisos de keepers\" / \"Permissions de keepers\" and use the bare noun throughout — so the Protocol Console row names the same thing in the same word. Rendering it differently on one page would leave readers unsure the two are the same bots.",
+      "source": "Keepers",
+      "locales": [
+        "es",
+        "fr"
+      ]
     },
     "copy.protocolConsole.minutesValue": {
       "reason": "As hoursValue: placeholders plus the SI unit symbols \"min\" and \"s\". Spanish and French use the identical abbreviation; German capitalizes and abbreviates it as \"Min.\", which the word comparison folds back onto the English \"min\" — a real localization the guard cannot see. All three carry their own spacing, recorded below.",
@@ -280,6 +347,16 @@
         "fr": "{{m}} min ({{s}} s)"
       }
     },
+    "copy.protocolConsole.pythOracle": {
+      "reason": "French 'Oracle Pyth' is the correct rendering of 'Pyth oracle': 'oracle' is the French word, Pyth is a provider name that is not translated, and the noun-then-name order is French grammar. The guard cannot tell that from a rearranged English phrase; the accepted French is recorded below so rewording it retires this entry.",
+      "source": "Pyth oracle",
+      "locales": [
+        "fr"
+      ],
+      "values": {
+        "fr": "Oracle Pyth"
+      }
+    },
     "copy.protocolConsole.secondsValue": {
       "reason": "One placeholder and the SI symbol for the second. There are no words in this string at all; the three locales differ from the English only in the space their typography puts before a unit symbol.",
       "source": "{{s}}s",
@@ -293,6 +370,29 @@
         "es": "{{s}} s",
         "fr": "{{s}} s"
       }
+    },
+    "copy.protocolConsole.treasuryHeading": {
+      "reason": "\"Treasury\" is the German bundle's settled loanword for the protocol treasury — the same page's fee row reads \"Treasury-Gebühr\" and the lede says \"die Treasury\" — so the section heading uses the same word rather than a synonym the rest of the page does not.",
+      "source": "Treasury",
+      "locales": [
+        "de"
+      ]
+    },
+    "copy.protocolConsole.vpfiValue": {
+      "reason": "An amount followed by the token's ticker. The ticker is a symbol, not a word, and the amount placeholder arrives already formatted for the locale, so there is nothing left to translate.",
+      "source": "{{amount}} VPFI",
+      "locales": [
+        "ar",
+        "de",
+        "es",
+        "fr",
+        "hi",
+        "ja",
+        "ko",
+        "ta",
+        "zh"
+      ],
+      "invariant": true
     },
     "copy.recycling.backedNo": {
       "reason": "\"No\" is the ordinary Spanish negative answer, spelled as the English one; there is no other correct word. It answers the sibling question copy.recycling.backedLabel, which Spanish renders \"¿Está el fondo reciclado totalmente respaldado?\", and its neighbours copy.recycling.backedYesDiamond (\"Sí: …\") and copy.recycling.backedShortDiamond (\"No: al contrato de la plataforma le faltan …\") are translated in full — so this leaf is settled vocabulary, not an untouched string. Recorded here for the same reason as copy.analytics.total: a translation already correct could only leave a shrink-only baseline by being replaced with a worse synonym.",
@@ -330,31 +430,6 @@
       "values": {
         "fr": "Mode strict"
       }
-    },
-    "copy.protocolConsole.keepers": {
-      "reason": "\"Keepers\" is the term the Spanish and French bundles already use for the protocol's automation bots — the keeper-permissions surfaces read \"Permisos de keepers\" / \"Permissions de keepers\" and use the bare noun throughout — so the Protocol Console row names the same thing in the same word. Rendering it differently on one page would leave readers unsure the two are the same bots.",
-      "source": "Keepers",
-      "locales": [
-        "es",
-        "fr"
-      ]
-    },
-    "copy.protocolConsole.pythOracle": {
-      "reason": "French 'Oracle Pyth' is the correct rendering of 'Pyth oracle': 'oracle' is the French word, Pyth is a provider name that is not translated, and the noun-then-name order is French grammar. The guard cannot tell that from a rearranged English phrase; the accepted French is recorded below so rewording it retires this entry.",
-      "source": "Pyth oracle",
-      "locales": [
-        "fr"
-      ],
-      "values": {
-        "fr": "Oracle Pyth"
-      }
-    },
-    "copy.protocolConsole.treasuryHeading": {
-      "reason": "\"Treasury\" is the German bundle's settled loanword for the protocol treasury — the same page's fee row reads \"Treasury-Gebühr\" and the lede says \"die Treasury\" — so the section heading uses the same word rather than a synonym the rest of the page does not.",
-      "source": "Treasury",
-      "locales": [
-        "de"
-      ]
     },
     "copy.units.durationMinute_few": {
       "reason": "\"minute\"/\"minutes\" is the ordinary French noun, spelled as the English one; the sibling hour forms read \"heure\"/\"heures\", so the bundle was localized and this leaf is settled vocabulary. A shrink-only baseline could only lose it to a worse synonym (#2808).",
@@ -401,32 +476,6 @@
       "locales": [
         "fr"
       ]
-    },
-    "copy.protocolConsole.vpfiValue": {
-      "reason": "An amount followed by the token's ticker. The ticker is a symbol, not a word, and the amount placeholder arrives already formatted for the locale, so there is nothing left to translate.",
-      "source": "{{amount}} VPFI",
-      "locales": [
-        "ar",
-        "de",
-        "es",
-        "fr",
-        "hi",
-        "ja",
-        "ko",
-        "ta",
-        "zh"
-      ],
-      "invariant": true
-    },
-    "copy.protocolConsole.hfBpsValue": {
-      "reason": "German DeFi usage keeps \"Health Factor\" as the term of art, and this bundle already uses it in seven other strings (the loan page, the alerts and the console's own partial-liquidation hints), so this value matches its siblings rather than skipping translation.",
-      "source": "health factor {{hf}} ({{bps}} bps)",
-      "locales": [
-        "de"
-      ],
-      "values": {
-        "de": "Health Factor {{hf}} ({{bps}} bps)"
-      }
     }
   }
 }

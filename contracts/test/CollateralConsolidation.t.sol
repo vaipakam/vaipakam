@@ -106,8 +106,8 @@ contract CollateralConsolidationTest is SetupTest {
     }
 
     function _tracked(address user) internal view returns (uint256) {
-        return VaultFactoryFacet(address(diamond)).getProtocolTrackedVaultBalance(
-            user, address(collat)
+        return VaultFactoryFacet(address(diamond)).getTrackedHolding(
+            user, address(collat), 0
         );
     }
 
@@ -191,8 +191,8 @@ contract CollateralConsolidationTest is SetupTest {
 
     /// Test 9 — ERC-721 collateral moves via the Diamond-mediated two-leg move
     /// (arming the ReceiverFacet pin): the NFT ends up in the holder's vault,
-    /// the lien re-keys, the anchor re-points, and (iWB) no ERC-20
-    /// `protocolTrackedVaultBalance` is touched.
+    /// the lien re-keys, the anchor re-points, and the tracked row for the
+    /// token moves with it.
     function test_ERC721Collateral_TwoLegMoveViaReceiver() public {
         ERC4907Mock nft = new ERC4907Mock("NFT", "NFT");
         uint256 tokenId = 42;
@@ -218,6 +218,9 @@ contract CollateralConsolidationTest is SetupTest {
             borrowerOrig
         );
         nft.mint(bVault, tokenId);
+        // The mint bypasses the deposit chokepoint, so seed its tracked row
+        // (an NFT the ledger does not record is not movable until adopted).
+        TestMutatorFacet(address(diamond)).setTrackedHoldingRaw(borrowerOrig, address(nft), tokenId, 1);
         TestMutatorFacet(address(diamond)).setLoanCollateralLienRaw(
             LOAN, borrowerOrig, address(nft), tokenId, 1, LibVaipakam.AssetType.ERC721
         );
@@ -242,6 +245,15 @@ contract CollateralConsolidationTest is SetupTest {
         assertEq(
             MetricsFacet(address(diamond)).getEncumbered(holder, address(nft), tokenId),
             1, "new NFT lien == 1"
+        );
+        // The tracked row moved with the token.
+        assertEq(
+            VaultFactoryFacet(address(diamond)).getTrackedHolding(borrowerOrig, address(nft), tokenId),
+            0, "old tracked row zeroed"
+        );
+        assertEq(
+            VaultFactoryFacet(address(diamond)).getTrackedHolding(holder, address(nft), tokenId),
+            1, "holder tracked row == 1"
         );
         // The pin was consumed — the Diamond is no longer armed to accept NFTs.
         // (A follow-up call with the flag cleared would revert UnexpectedNFTReceipt.)

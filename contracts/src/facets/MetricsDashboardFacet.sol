@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibInterestLedger} from "../libraries/LibInterestLedger.sol";
 import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
 import {LibMetricsTypes} from "../libraries/LibMetricsTypes.sol";
 import {LibScanPage} from "../libraries/LibScanPage.sol";
@@ -471,6 +472,9 @@ contract MetricsDashboardFacet {
                     : ci;
             idBuf[written] = lid;
             claimBuf[written] = emitCi;
+            // #1209 — a lender row lists what the holder is paid: the row
+            // less the part the terminal split moves to past sellers.
+            if (!borrowerSide) claimBuf[written].amount = LibInterestLedger.holderClaimAmount(s, lid);
             written += 1;
         }
 

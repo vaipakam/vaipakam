@@ -89,7 +89,6 @@ RISK_PREVIEW_SELECTORS=(
   0x314efc12  # previewCreatorBlock
   0x1835a83c  # previewIntent  (#2459 r4: gained the route's initiator; was 0xa7aaae7f)
   0x2c87c1a3  # saleAdmission
-  0x03530269  # sellerForfeitureWindow  (#1503 item 28)
   0xda39c1e5  # quoteSellerBounds       (#1503 item 4)
   0x1a3370e0  # getSaleListingBounds    (#2672)
 )

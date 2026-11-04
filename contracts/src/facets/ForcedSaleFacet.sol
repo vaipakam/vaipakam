@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibSwap} from "../libraries/LibSwap.sol";
 import {LibFallback} from "../libraries/LibFallback.sol";
@@ -273,9 +274,9 @@ contract ForcedSaleFacet is IVaipakamErrors {
 
     /**
      * @notice The discounted liquidation of `loanId` as it would run now
-     *         ({RiskFacet.triggerLiquidationDiscounted}): whether it can, and
-     *         if so the debt the liquidator pays and the collateral it
-     *         receives (#2697).
+     *         ({RiskDiscountedLiquidationFacet.triggerLiquidationDiscounted}):
+     *         whether it can, and if so the debt the liquidator pays and the
+     *         collateral it receives (#2697).
      * @dev    Not a sale through this host: on the discount path the
      *         liquidator buys the collateral with its own funds. It is
      *         previewed here, beside {previewForcedSale}, so a keeper reads
@@ -564,7 +565,7 @@ contract ForcedSaleFacet is IVaipakamErrors {
         if (sp.bonus > 0) LibDelivery.pushOut(loan.principalAsset, j.keeper, sp.bonus);
 
         if (j.kind == ForcedSaleKind.PeriodicSettlement) {
-            _bookPeriodic(s, j.loanId, loan, j.debt, sp, out);
+            _bookPeriodic(s, j.loanId, loan, sp, out);
             loan.collateralAmount = j.unsold;
         } else {
             _bookTerminal(s, j.loanId, loan, sp, out);
@@ -626,25 +627,22 @@ contract ForcedSaleFacet is IVaipakamErrors {
         LibVaipakam.Storage storage s,
         uint256 loanId,
         LibVaipakam.Loan storage loan,
-        uint256 debt,
         Split memory sp,
         ForcedSaleOutcome memory out
     ) private {
         // The treasury accrues what reached it (TreasuryFeeFacet).
         LibFacet.transferToTreasury(loan.principalAsset, sp.fee);
-        // The paid-through mark moves only on full coverage of the shortfall
-        // (Codex #1801 r4 P1): a partial payout leaves the window open over
-        // what is still owed. The mark is the UNMOVED period end
-        // ({LibPeriodicInterest.deliveredThroughAt}, #668 / #935), not the
-        // payment deadline: the deadline carries the pause credit, while the
-        // shortfall covered here is one interval of interest.
+        // #1209 / #1808 — the whole payout is interest, and this slice carries
+        // no treasury cut, so it is passed as both the gross and the net
+        // interest: open seller claims are paid out of it first, in full.
         out.lenderPaid = LibCloseoutFreeze.freezeOrPayActiveLenderResident(
             s,
             loanId,
             loan,
             loan.principalAsset,
             sp.lender,
-            sp.lender >= debt ? LibPeriodicInterest.deliveredThroughAt(loan) : 0
+            sp.lender,
+            sp.lender
         );
         // #2795 — credit exactly what the lender received, never more than the
         // shortfall: the extra above it is the borrower's, not prepaid interest.
@@ -677,6 +675,9 @@ contract ForcedSaleFacet is IVaipakamErrors {
         uint256 lenderNet = sp.lender;
         if (sp.lender > loan.principal) {
             uint256 interestRecovered = sp.lender - loan.principal;
+            // #1832 — terminal seam of the lifetime interest counter: what the
+            // sale recovered, not what was owed.
+            LibMetricsHooks.onInterestPaid(loan, interestRecovered);
             (treasuryInterest, ) = LibEntitlement.splitTreasury(loan, interestRecovered);
             (, treasuryInterest) = LibLenderYieldFeeHost.resolve(
                 loanId, LibERC721.ownerOf(loan.lenderTokenId), interestRecovered, treasuryInterest

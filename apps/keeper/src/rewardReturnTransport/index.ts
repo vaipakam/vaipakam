@@ -67,7 +67,8 @@ import type { PassTick } from '../passSchedule';
 import { deadlineClient, PastRunDeadline } from '../batchRead';
 import { shortErr } from '../callErrors';
 import { finishWork, getWorkItems, putWork } from '../db';
-import { d1EventLedger, decodePos, encodePos, posAfter, rowFinalized, type EventLedger, type LedgerRow } from '../eventLedger';
+import { d1EventLedger, decodePos, encodePos, type EventLedger, type LedgerRow } from '../eventLedger';
+import { readLedgerRotation } from '../ledgerRotation';
 import { feeCeiling } from '../feeCeiling';
 import { sendOpsAlert, type OpsAlertOutcome } from '../opsAlert';
 import { d1ScanCursors, decodeIndex, finalFloor, rotatingWindow, type ScanCursors } from '../scanCursors';
@@ -764,60 +765,43 @@ async function strandedReturns(mirror: ChainState, states: ReadonlyMap<number, C
   // stored floor every row before which has been returned in full. A read of
   // the oldest rows only would never reach a later quarantine (the Codex
   // #2993 r2 rule).
-  const cursors = deps.cursors(mirror.deps.chainId, mirror.deps.diamond);
-  const stored = await cursors.get([STRANDED_FLOOR_ITEM, STRANDED_NEXT_ITEM]);
-  const floor = decodePos(stored.get(STRANDED_FLOOR_ITEM));
-  const next = decodePos(stored.get(STRANDED_NEXT_ITEM));
-  const start = next !== null && (floor === null || posAfter(next, floor)) ? next : floor;
-  const ledger = await deps.ledger.page(mirror.deps.chainId, STRANDED_EVENTS, start, LEDGER_PAGE);
-  if (ledger === null) {
+  const page = await readLedgerRotation<{ remitter: Address; remitId: bigint }>({
+    ledger: deps.ledger,
+    cursors: deps.cursors(mirror.deps.chainId, mirror.deps.diamond),
+    chainId: mirror.deps.chainId,
+    kinds: STRANDED_EVENTS,
+    floorItem: STRANDED_FLOOR_ITEM,
+    nextItem: STRANDED_NEXT_ITEM,
+    limit: LEDGER_PAGE,
+    cutoff: mirror.r.cutoff,
+    nominee: (row) => {
+      const remitId = asBig(row.args.remitId);
+      const remitter = asAddr(row.args.remitter);
+      return remitId === null || !/^0x[0-9a-f]{40}$/.test(remitter) ? null : { remitter: remitter as Address, remitId };
+    },
+    id: (k) => `${k.remitter}:${k.remitId}`,
+  });
+  if (page === null) {
     mirror.sender.noteUnread('stranded', 'the event ledger');
     return;
   }
-  const last = ledger.rows[ledger.rows.length - 1];
-  // Past the last page the next run starts at the floor again.
-  const nextPos = ledger.more && last !== undefined ? encodePos(last) : '';
-  if (nextPos !== (stored.get(STRANDED_NEXT_ITEM) ?? '')) await cursors.put(STRANDED_NEXT_ITEM, nextPos);
-  const keys = new Map<string, { remitter: Address; remitId: bigint }>();
-  const rowKey: (string | null)[] = [];
-  for (const row of ledger.rows) {
-    const remitId = asBig(row.args.remitId);
-    const remitter = asAddr(row.args.remitter);
-    if (remitId === null || !/^0x[0-9a-f]{40}$/.test(remitter)) {
-      rowKey.push(null);
-      continue;
-    }
-    const k = `${remitter}:${remitId}`;
-    rowKey.push(k);
-    keys.set(k, { remitter: remitter as Address, remitId });
-  }
   const returned = new Set<string>();
-  // On a page read from the floor, the floor moves past the leading rows whose
-  // quarantine is returned in full, or which nominate nothing, at the head AND
-  // at the finalized block (Codex #2993 r4): a return a reorg undoes leaves
-  // its row above the floor, to be returned again. At the finalized block the
-  // row's own quarantine must be finalized too: an empty record before the
-  // quarantine was made is not a return (Codex #3002).
-  const liftFloor = async () => {
-    if (start !== floor) return;
-    const positions = ledger.rows.map((_, i) => i);
-    const doneAtHead = (i: number) => rowKey[i] === null || returned.has(rowKey[i]!);
-    const n = await finalFloor(0, positions, doneAtHead, mirror.r.finalized, async (passed, block) => {
-      const named = passed.filter((i) => rowKey[i] !== null && rowFinalized(ledger.rows[i], block));
-      const at = await mirror.r.many(named.map((i) => ({ functionName: 'getStrandedRecovery', args: [keys.get(rowKey[i]!)!.remitter, keys.get(rowKey[i]!)!.remitId] })), 'stranded-final', block.number);
-      const done = new Set(passed.filter((i) => rowKey[i] === null));
-      named.forEach((i, j) => {
-        if ((at[j] as StrandedRecord | undefined)?.amount === 0n) done.add(i);
-      });
-      return done;
+  // A row is finished when its quarantine is returned in full
+  // (`ledgerRotation.ts`): a return a reorg undoes leaves its row above the
+  // floor, to be returned again. At the finalized block the quarantine must
+  // itself be finalized: an empty record before it was made is not a return
+  // (Codex #3002).
+  const liftFloor = () =>
+    page.liftFloor(mirror.r.finalized, (k) => returned.has(`${k.remitter}:${k.remitId}`), async (ks, block) => {
+      const at = await mirror.r.many(ks.map((k) => ({ functionName: 'getStrandedRecovery', args: [k.remitter, k.remitId] })), 'stranded-final', block.number);
+      const done = new Set(ks.filter((_, j) => (at[j] as StrandedRecord | undefined)?.amount === 0n).map((k) => `${k.remitter}:${k.remitId}`));
+      return (k) => done.has(`${k.remitter}:${k.remitId}`);
     });
-    if (n > 0) await cursors.put(STRANDED_FLOOR_ITEM, encodePos(ledger.rows[n - 1]));
-  };
-  if (keys.size === 0) {
+  if (page.nominees.length === 0) {
     await liftFloor();
     return;
   }
-  const list = [...keys.values()];
+  const list = page.nominees;
   const recs = await mirror.r.many(list.map((k) => ({ functionName: 'getStrandedRecovery', args: [k.remitter, k.remitId] })), 'stranded records');
   for (let i = 0; i < list.length; i++) {
     const { remitter, remitId } = list[i];

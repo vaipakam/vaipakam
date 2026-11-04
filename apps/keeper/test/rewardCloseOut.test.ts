@@ -120,11 +120,10 @@ describe('the pure rules', () => {
   });
 
   it('epochPrunable: only the plainly exhausted case', () => {
-    const ep = { exists: true, balance: 0n, dayCount: 2, indexedDays: 2, references: 0n };
+    const ep = { exists: true, balance: 0n, references: 0n };
     expect(epochPrunable(ep)).toBe(true);
     expect(epochPrunable({ ...ep, exists: false })).toBe(false);
     expect(epochPrunable({ ...ep, balance: 1n }), 'exhausted only by its caps is not detected').toBe(false);
-    expect(epochPrunable({ ...ep, indexedDays: 1 })).toBe(false);
     expect(epochPrunable({ ...ep, references: 1n })).toBe(false);
   });
 });
@@ -167,10 +166,9 @@ interface Era {
 
 interface Batch {
   balance: bigint;
-  dayCount: number;
-  indexedDays: number;
   references: bigint;
-  days: number[];
+  /** The one day its delivery funds (#2828). */
+  day: number;
   parked: bigint | null;
 }
 
@@ -219,9 +217,9 @@ class FakeDiamond {
     return this.entries.length;
   }
 
-  addBatch(id: string, b: Partial<Batch> & { days: number[] }): void {
-    this.batches.set(id, { balance: 0n, dayCount: b.days.length, indexedDays: b.days.length, references: 0n, parked: null, ...b });
-    for (const d of b.days) this.dayIndex.set(d, [...(this.dayIndex.get(d) ?? []), id]);
+  addBatch(id: string, b: Partial<Batch> & { day: number }): void {
+    this.batches.set(id, { balance: 0n, references: 0n, parked: null, ...b });
+    this.dayIndex.set(b.day, [...(this.dayIndex.get(b.day) ?? []), id]);
   }
 
   private covering(day: number, side: number): number[] {
@@ -323,17 +321,15 @@ class FakeDiamond {
       }
       case 'getTransportBatch': {
         const b = this.batches.get(a[0]);
-        return b ? [`0x${'aa'.repeat(32)}`, b.balance, 0n, b.dayCount, b.indexedDays, false] : [ZERO32, 0n, 0n, 0, 0, false];
+        return b ? [`0x${'aa'.repeat(32)}`, b.balance, 0n, BigInt(b.day), false] : [ZERO32, 0n, 0n, 0n, false];
       }
       case 'getTransportRemainder': {
         const b = this.batches.get(a[0]);
         if (!b) throw revert('TransportBatchUnknown', [a[0]]);
-        return b.parked === null ? [0n, 0, false, 0n] : [b.parked, b.dayCount, false, 0n];
+        return b.parked === null ? [false, 0n, 0n, false, 0n] : [true, b.parked, BigInt(b.day), false, 0n];
       }
       case 'getTransportBatchStaged':
         return [0n, 0n, this.batches.get(a[0])?.references ?? 0n];
-      case 'getTransportBatchDays':
-        return (this.batches.get(a[0])?.days ?? []).map(BigInt);
       case 'getRemitDestinationRelease': {
         const x = this.releases.get(Number(a[0]));
         return [BigInt(x?.bound ?? 0), BigInt(x?.cursor ?? 0)];
@@ -469,10 +465,8 @@ class FakeDiamond {
         const b = this.batches.get(a[0]);
         if (!b) throw revert('TransportBatchUnknown', [a[0]]);
         if (b.parked !== null) throw revert('TransportRemainderAlreadyParked', [a[0]]);
-        if (b.indexedDays < b.dayCount) throw revert('TransportBatchNotFullyIndexed', [a[0], b.indexedDays, b.dayCount]);
+        if (!this.closed.has(b.day)) throw revert('TransportDayNotClosed', [a[0], BigInt(b.day)]);
         if (b.references !== 0n) throw revert('TransportBatchReferenced', [a[0], b.references]);
-        const open = b.days.find((d) => !this.closed.has(d));
-        if (open !== undefined) throw revert('TransportDayNotClosed', [a[0], BigInt(open)]);
         return () => {
           b.parked = b.balance;
           b.balance = 0n;
@@ -484,7 +478,7 @@ class FakeDiamond {
           let c = this.dayCursor.get(day) ?? 0;
           for (let node = this.nextNode(day, c); node !== undefined; node = this.nextNode(day, c)) {
             const b = this.batches.get(node)!;
-            if (b.balance !== 0n || b.references !== 0n || b.indexedDays < b.dayCount) break;
+            if (b.balance !== 0n || b.references !== 0n) break;
             c += 1;
           }
           this.dayCursor.set(day, c);
@@ -977,17 +971,17 @@ describe('a run', () => {
   });
 
   describe('park and prune', () => {
-    it('parks an epoch once every day it lists is closed, its membership whole and nothing references it', async () => {
+    it('parks an epoch once its day is closed and nothing references it, in one call', async () => {
       closeAllButDay(3);
-      d.addBatch(batchId(1), { days: [1, 2], balance: 9n });
-      d.addBatch(batchId(2), { days: [2, 3], balance: 8n }); // lists day 3, closed only this run
-      d.addBatch(batchId(3), { days: [1], balance: 7n, references: 1n });
-      d.addBatch(batchId(4), { days: [2], dayCount: 2, indexedDays: 1, balance: 6n });
+      d.addBatch(batchId(1), { day: 2, balance: 9n });
+      d.addBatch(batchId(2), { day: 3, balance: 8n }); // its day closes only this run
+      d.addBatch(batchId(3), { day: 1, balance: 7n, references: 1n });
+      d.addBatch(batchId(4), { day: 2, balance: 0n, parked: 6n }); // parked already
       const r = await run();
       expect(r.daysClosed).toEqual([3]);
       expect(r.parked).toEqual([
-        { batchId: batchId(1), pages: 1, state: 'parked', amount: 9n },
-        { batchId: batchId(2), pages: 1, state: 'parked', amount: 8n },
+        { batchId: batchId(1), state: 'parked', amount: 9n },
+        { batchId: batchId(2), state: 'parked', amount: 8n },
       ]);
       expect(fns()).toEqual(['startDayClosure', 'parkTransportBatchRemainder', 'parkTransportBatchRemainder']);
       expect(describeReport(r)).toMatch(/release is the administrator's acknowledgment/);
@@ -997,15 +991,15 @@ describe('a run', () => {
       expect(d.sent).toEqual([]);
     });
 
-    it('reports a landed park page whose outcome it could not read, instead of failing the run (Codex #3010)', async () => {
+    it('reports a landed park whose outcome it could not read, instead of failing the run (Codex #3010)', async () => {
       closeAllButDay(-1);
-      d.addBatch(batchId(1), { days: [1, 2], balance: 9n });
-      // The admission read succeeds; the read after the landed page fails.
+      d.addBatch(batchId(1), { day: 2, balance: 9n });
+      // The admission read succeeds; the read after the landed park fails.
       d.failAfter.set('getTransportRemainder', { left: 1, error: () => new Error('remainder read failed') });
       const r = await run();
       expect(fns()).toEqual(['parkTransportBatchRemainder']);
-      expect(r.parked).toEqual([{ batchId: batchId(1), pages: 1, state: 'unread', amount: null }]);
-      expect(describeReport(r)).toContain(`parked=${batchId(1).slice(0, 10)}(1 page(s), outcome unread)`);
+      expect(r.parked).toEqual([{ batchId: batchId(1), state: 'unread', amount: null }]);
+      expect(describeReport(r)).toContain(`parked=${batchId(1).slice(0, 10)}(outcome unread)`);
       expect(describeReport(r)).not.toMatch(/administrator's acknowledgment/);
       expect(r.unread.has(`park:${batchId(1).slice(0, 10)}`)).toBe(true);
     });
@@ -1014,8 +1008,8 @@ describe('a run', () => {
       d.today = 30;
       d.frontiers = [100, 100];
       for (let x = 0; x < d.today; x++) d.closed.add(x);
-      d.addBatch(batchId(1), { days: [2], balance: 9n });
-      d.addBatch(batchId(2), { days: [25], balance: 4n });
+      d.addBatch(batchId(1), { day: 2, balance: 9n });
+      d.addBatch(batchId(2), { day: 25, balance: 4n });
       const parked: string[] = [];
       for (let i = 0; i < 3; i++) for (const p of (await run({ windowDays: 10 })).parked) parked.push(p.batchId);
       expect(parked.sort()).toEqual([batchId(1), batchId(2)].sort());
@@ -1024,7 +1018,7 @@ describe('a run', () => {
 
     it(`discovers a day's epochs ${MAX_BATCHES_PER_DAY} a run from where the last run stopped, so one past the first page is parked`, async () => {
       closeAllButDay(99);
-      for (let i = 1; i <= MAX_BATCHES_PER_DAY + 1; i++) d.addBatch(batchId(i), { days: [2], balance: BigInt(i) });
+      for (let i = 1; i <= MAX_BATCHES_PER_DAY + 1; i++) d.addBatch(batchId(i), { day: 2, balance: BigInt(i) });
       const parked = new Set<string>();
       let runs = 0;
       while (parked.size < MAX_BATCHES_PER_DAY + 1 && runs < 10) {
@@ -1040,10 +1034,10 @@ describe('a run', () => {
       expect(cursors.rows.get(parkCursorItem(2))).toBe(ZERO32);
     });
 
-    it('does not park an epoch listing a day still open', async () => {
+    it('does not park an epoch whose day is still open', async () => {
       closeAllButDay(3);
       d.addEntry({ side: SIDE_LENDER, startDay: 3, endDay: 4, perDay: 1n, open: true });
-      d.addBatch(batchId(1), { days: [2, 3], balance: 9n });
+      d.addBatch(batchId(1), { day: 3, balance: 9n });
       const r = await run();
       expect(r.parked).toEqual([]);
       expect(d.sent).toEqual([]);
@@ -1052,8 +1046,8 @@ describe('a run', () => {
     it('prunes an open day\'s cursor past a plainly exhausted epoch, and only that', async () => {
       closeAllButDay(3);
       d.addEntry({ side: SIDE_LENDER, startDay: 3, endDay: 4, perDay: 1n, open: true });
-      d.addBatch(batchId(1), { days: [3], balance: 0n });
-      d.addBatch(batchId(2), { days: [3], balance: 5n });
+      d.addBatch(batchId(1), { day: 3, balance: 0n });
+      d.addBatch(batchId(2), { day: 3, balance: 5n });
       const r = await run();
       expect(r.pruned).toEqual([3]);
       expect(d.dayCursor.get(3)).toBe(1);

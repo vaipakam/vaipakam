@@ -63,9 +63,19 @@ import NotificationFeeFacetABI from './NotificationFeeFacet.json';
 import ForcedSaleFacetABI from './ForcedSaleFacet.json';
 // #1841 — the sale-exit verdict host (both lender-exit routes, one rule).
 import SaleExitVerdictFacetABI from './SaleExitVerdictFacet.json';
+// #1209 / #1808 — the seller-claim host (seller-first payout, claimAsSeller).
+import SellerClaimFacetABI from './SellerClaimFacet.json';
+// #1558 — the refinance payoff-permit host (attach, remove, size).
+import RefinancePayoffFacetABI from './RefinancePayoffFacet.json';
 // #2748 — the rate-model host (model, band, offer-rate clamp).
 import RateModelFacetABI from './RateModelFacet.json';
 import RiskSplitLiquidationFacetABI from './RiskSplitLiquidationFacet.json';
+// The discounted liquidation route, moved off RiskFacet (EIP-170 headroom).
+import RiskDiscountedLiquidationFacetABI from './RiskDiscountedLiquidationFacet.json';
+// Protected account mode and the depository vault.
+import ProtectedAccountFacetABI from './ProtectedAccountFacet.json';
+import VaultPayoutFacetABI from './VaultPayoutFacet.json';
+import VaultDepositoryFacetABI from './VaultDepositoryFacet.json';
 import ClaimFacetABI from './ClaimFacet.json';
 import OracleFacetABI from './OracleFacet.json';
 import OracleAdminFacetABI from './OracleAdminFacet.json';
@@ -231,8 +241,14 @@ export {
   NotificationFeeFacetABI,
   ForcedSaleFacetABI,
   SaleExitVerdictFacetABI,
+  SellerClaimFacetABI,
+  RefinancePayoffFacetABI,
   RateModelFacetABI,
   RiskSplitLiquidationFacetABI,
+  RiskDiscountedLiquidationFacetABI,
+  ProtectedAccountFacetABI,
+  VaultPayoutFacetABI,
+  VaultDepositoryFacetABI,
   ClaimFacetABI,
   OracleFacetABI,
   OracleAdminFacetABI,

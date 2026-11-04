@@ -86,6 +86,9 @@ export const EXIT_WRITES: ReadonlySet<string> = new Set([
   // Claims — the user's own settled funds.
   'claimAsBorrower',
   'claimAsLender',
+  // A past seller's interest claim (#1209): the interest they earned on a
+  // position they sold, paid into their vault and withdrawn from there.
+  'claimAsSeller',
   'claimInteractionRewards',
   // The held-apart balance alone (#2489 r2) — the same settled funds as the
   // combined claim, taken on their own.
@@ -146,6 +149,36 @@ export const EXIT_WRITES: ReadonlySet<string> = new Set([
   // exit by the same test. Permitted only with a zero cap (see `ZERO_ONLY`):
   // agreeing to pay, or raising a cap, stays gated.
   'setNotificationFeeConsent',
+  // Protected account mode and the depository vault. Each either takes the
+  // user's own free assets out, releases a payout the user already asked
+  // for, or protects the account (a lock, a cancellation, a co-signature,
+  // turning protection on). Refusing any of them would trap the user's own
+  // money or leave a stolen key unanswered. Loosening a setting, adding a
+  // signer or a payout address and moving the account stay gated. Asking
+  // to unlock is an exit too: a locked vault releases nothing, so refusing
+  // it would trap every asset behind a lock the user set themselves.
+  'withdrawFromVault',
+  'escapeWithdraw',
+  'disownUntracked',
+  'releasePayout',
+  'releasePositionTransfer',
+  // Queuing a position NFT to an allowed destination is how a protected
+  // account (and a replaced one's controller) takes its own position out.
+  'queuePositionTransfer',
+  'cancelPayout',
+  'cancelPositionTransfer',
+  'cosignPayout',
+  'cosignPositionTransfer',
+  'lockVault',
+  'requestUnlock',
+  'removeAllowlisted',
+  'cancelSettingChange',
+  'cancelAddAllowlisted',
+  'cancelAddSigner',
+  'cancelRemoveSigner',
+  'cancelReplacement',
+  'enableProtectedMode',
+  'finalizeSettingChanges',
 ]);
 
 /**

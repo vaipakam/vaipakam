@@ -195,7 +195,12 @@ export const KEY_MAP: Record<string, string[]> = {
   // ride the frame's hints, so own-scoped relevance dropping still
   // applies (notifications is in OWN_SCOPED_ROOTS).
   'notification.created': ['notifications'],
-  'activity.appended': ['activity'],
+  // 'sellerClaims' (#1209): a past seller is no party to the loan, so no
+  // loan or ownership key is theirs; every payment into their vault and every
+  // claim recorded or closed for them is an activity row, so this frame is
+  // the one that reaches them. Unscoped on purpose (not in OWN_SCOPED_ROOTS):
+  // the frame's loan hints never name a past seller.
+  'activity.appended': ['activity', 'sellerClaims'],
   // NOT mapped on purpose: 'deskSymbols' (token metadata is immutable).
 };
 
@@ -224,6 +229,9 @@ export const STRETCHED_ROOTS: readonly string[] = [
   'notifications',
   'vpfi',
   'interactionRewards',
+  // A past seller's interest claims (#1209) — signalAware; a returning tab
+  // must re-read them or a payment that arrived while hidden stays unshown.
+  'sellerClaims',
   'standingApprovals',
   'keeperConfig',
   'loanKeeperEnabled',

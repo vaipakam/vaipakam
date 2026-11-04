@@ -61,6 +61,7 @@ import { getChainConfigs } from './env';
 import { buildKeeperContext, passIsArmed, type KeeperContext } from './keeper';
 import type { PassTick } from './passSchedule';
 import { deadlineClient, PastRunDeadline, settledChunkedRead } from './batchRead';
+import { boundedCall } from './passReader';
 import { shortErr } from './callErrors';
 import { readActiveWindow, type ScanWindow } from './activeLoanWindow';
 import { pickBatch } from './rotate';
@@ -229,8 +230,6 @@ export async function autoListOnce(chainId: number, diamond: Address, deps: Auto
     unread: sender.unread,
     stopped: null,
   };
-  const read = <T>(functionName: string, args: readonly unknown[] = []) =>
-    deps.client.readContract({ address: diamond, abi: ABI, functionName, args }) as Promise<T>;
   // Each read stage stops early enough to leave the stages after it their
   // time (runWindow.ts, rule 3): the per-loan reads by the read cutoff, which
   // reserves the sends' time; the deadline reads a stage reserve before that;
@@ -238,6 +237,11 @@ export async function autoListOnce(chainId: number, diamond: Address, deps: Auto
   const readCutoff = readCutoffMs(deps.sendDeadline);
   const deadlinesCutoff = priorStageCutoffMs(readCutoff);
   const scanCutoff = priorStageCutoffMs(deadlinesCutoff);
+  // The scan stage's single calls (the chain id, the gate, the window, its
+  // block's time), each stopped at the scan cutoff (`passReader.boundedCall`).
+  const scanCall = <T>(what: string, work: () => Promise<T>) => boundedCall(scanCutoff, what, work);
+  const read = <T>(functionName: string, args: readonly unknown[] = []) =>
+    scanCall(functionName, () => deps.client.readContract({ address: diamond, abi: ABI, functionName, args }) as Promise<T>);
   // Through the keeper's one chunked read, which starts each visit's reads
   // at a point that moves with the window's own visit count, so a cutoff that
   // ends a stage partway never leaves the same tail unread every visit.
@@ -269,7 +273,7 @@ export async function autoListOnce(chainId: number, diamond: Address, deps: Auto
     // a Diamond at the same address on another chain.
     let served: number;
     try {
-      served = await deps.client.getChainId();
+      served = await scanCall('the chain id', () => deps.client.getChainId());
     } catch (err) {
       if (err instanceof PastRunDeadline) throw err;
       return { ...report, skipped: `the RPC's chain id could not be read (${shortErr(err)})` };
@@ -289,11 +293,11 @@ export async function autoListOnce(chainId: number, diamond: Address, deps: Auto
     if (bufferBps === 0n) return { ...report, skipped: 'the prepay-listing buffer is not configured on this chain, so the contract has no floor to list at' };
 
     // 2–3. One window, and which of it is in grace at that block.
-    const scan = await readActiveWindow(deadlineClient(deps.readClient, scanCutoff), diamond, deps.visit);
+    const scan = await readActiveWindow(deps.readClient, diamond, deps.visit, scanCutoff);
     report.window = scan.window;
     if (scan.ids.length === 0) return report;
     const at = { blockNumber: scan.blockNumber, round: scan.window.round };
-    const now = (await deps.client.getBlock({ blockNumber: scan.blockNumber })).timestamp;
+    const now = (await scanCall("the window block's time", () => deps.client.getBlock({ blockNumber: scan.blockNumber }))).timestamp;
     const deadlines = await many('getLoanDeadlines', scan.ids, 'deadlines', at, deadlinesCutoff);
     const inGrace: bigint[] = [];
     let deadlinesUnread = 0;

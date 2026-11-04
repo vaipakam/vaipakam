@@ -1862,14 +1862,14 @@ Du hast die Token versehentlich selbst gesendet, du kontrollierst das Quell-Wall
 6. Sende die Transaktion ab.
 
 Zwei Ergebnisse sind möglich:
-- **Quelle sauber** → Token kehren zu deinem EOA zurück.
+- **Quelle sauber** → Die Token werden dem erfassten Saldo deines Vaults gutgeschrieben. Hebe sie wie gewohnt aus deinem Vault ab; ist der geschützte Kontomodus aktiv, gilt seine Auszahlungsverzögerung.
 - **Quelle markiert** → Token bleiben im Vault, dein Vault wird im Rahmen der Sanktionspolitik des Protokolls gesperrt. Die Sperre hebt sich automatisch auf, wenn die Adresse später vom Sanktions-Orakel entfernt wird.
 
 <a id="stuck-recovery.disown"></a>
 
 ### Unaufgeforderte Token verleugnen (Compliance-Audit-Trail)
 
-Wenn du einen öffentlichen On-Chain-Nachweis möchtest, dass ein bestimmter Token-Saldo in deinem Vault NICHT dir gehört, bietet das Protokoll eine `disown(token)`-Funktion an. Sie emittiert ein Event (`TokenDisowned`) und ändert sonst nichts — die Token bleiben wie zuvor im Vault. Dies ist nützlich bei Compliance-Streitigkeiten, falls eine CEX oder eine Regulierungsbehörde fragt: "Haben Sie diese Mittel erhalten?". Du kannst dann auf das On-Chain-Event verweisen.
+Wenn du einen öffentlichen On-Chain-Nachweis möchtest, dass ein bestimmter Token-Saldo in deinem Vault NICHT dir gehört, bietet das Protokoll eine `disownUntracked(kind, asset, tokenId)`-Funktion an. Sie emittiert ein Event (`UntrackedDisowned`) und ändert sonst nichts — die Token bleiben wie zuvor im Vault. Dies ist nützlich bei Compliance-Streitigkeiten, falls eine CEX oder eine Regulierungsbehörde fragt: "Haben Sie diese Mittel erhalten?". Du kannst dann auf das On-Chain-Event verweisen.
 
 Die Disown-Funktion ist derzeit nur über direkten Vertragsaufruf zugänglich; das Vaipakam-Frontend bietet dafür keinen Button an. Nutze die "Write Contract"-Oberfläche eines Block-Explorers oder ein Tool zur Interaktion mit Smart Contracts, um sie aufzurufen.
 

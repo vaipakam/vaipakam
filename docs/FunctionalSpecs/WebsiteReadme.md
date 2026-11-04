@@ -3,7 +3,7 @@
 ## Purpose
 
 This document defines the website and product experience for Vaipakam.
-It consolidates the release notes from 2026-08-13 through 2026-10-22,
+It consolidates the release notes from 2026-08-13 through 2026-10-28,
 inclusive, while retaining later recorded intent decisions.
 It is separate from the repository root `README.md`, which is a product-facing overview. Protocol and workflow detail lives in `apps/www/src/content/whitepaper/Whitepaper.en.md` and the other `docs/FunctionalSpecs/` documents.
 
@@ -280,7 +280,7 @@ SEO and discoverability requirements:
 - a page indexed in English alone declares no `hreflang` alternates, and a page marked `noindex` declares none either
 - every public marketing route should set a unique localized title, meta description, canonical URL, and locale alternate metadata on page mount
 - canonical and `hreflang` URLs should be rooted at `https://vaipakam.com`, even if a visitor briefly arrives through `www` or a legacy hostname before redirect / routing settles
-- social-preview and prerendering work may be staged separately; JavaScript-rendered metadata plus sitemap discovery is the baseline requirement unless search-console measurements show a remaining indexing gap
+- response metadata, prerendered page content, sitemap membership, and language alternates must agree on the actual body language. A localized navigation shell around English content does not make a translated page. Language-specific addresses remain usable for navigation even while excluded from indexing
 
 PWA requirements:
 
@@ -444,9 +444,9 @@ Current connected-app surface expectations:
 - the primary Create Offer duration control should be a bucketed picker using the standard buckets `7 / 14 / 30 / 60 / 90 / 180 / 365 days`, defaulting to `30 days`; defensive validation should still reject out-of-range or non-bucket values if the form is hydrated from an external source
 - Range Orders should default to the same one-input-per-role experience in Basic and Advanced modes, with advanced panels focused on risk detail, collateral availability, and explicit review copy rather than exposing raw protocol field names. When a chain has not enabled the canonical limit-order surface, the form should fall back to the single-value offer experience and explain that range matching is not active on that chain.
 - Offer Book and accept-review surfaces should resolve ranged offers by role. A borrower accepting a lender's ranged offer should see the lender's maximum principal and floor rate as the direct-accept terms; a lender accepting a borrower's ranged offer should see the borrower's minimum principal and ceiling rate. If the borrower pre-vaulted more collateral than the direct-accept loan locks, the review should show that unused collateral will return to the borrower.
-- Periodic-interest cadence controls should appear only when `periodicInterestEnabled` is true, the user is in Advanced mode, both lending and collateral legs are liquid ERC-20s, and the principal value satisfies the configured finer-cadence threshold where required. When those requirements are not met, the cadence section should be absent rather than shown as a disabled dropdown.
-- The cadence dropdown should support `None`, `Monthly`, `Quarterly`, `Semi-annual`, and `Annual`; loans longer than one year should surface the mandatory annual-minimum rule when applicable. Offer acceptance should show a prominent cadence callout explaining the missed-checkpoint consequence before the user submits.
-- For borrower ERC-20 offers that are intended to refinance an existing active loan through a keeper path, `Create Offer` should expose an optional refinance-target loan id field. When present, the UI should force all-or-nothing fill mode, explain that per-loan refinance caps must already permit the terms, warn that tagging the offer does not guarantee a timely match, and pass the target loan id through the create-offer payload so the contract can enforce caps at both create and accept time. Standard offers should send an empty / zero target. Review copy should explain that accepting a refinance-tagged offer is expected to atomically create the replacement loan and close the old loan when the contract path supports it.
+- The offer form explains when interest is paid: at repayment, monthly, quarterly, every six months, or yearly. Available choices and each refusal come from the protocol admission preview for the entered terms. When only payment at repayment is available, the form says why. In Basic mode a choice appears only when needed because payment at repayment is unavailable; Advanced mode exposes the available choices. A loading, failed, or unsupported preview is named and permits only payment at repayment. A selected schedule later refused by changed terms blocks continuing until the user chooses again.
+- The review names the selected schedule and missed-checkpoint consequence. A loan over one year requires at least annual payments only while periodic settlement is enabled and both assets are liquid. Every loan opening, including a match, refinance, or offset acceptance, rechecks admission against the principal actually funded and current inputs; a lender-position sale inherits the existing schedule. The Rate Desk order ticket remains payable at repayment until its book can disclose schedules to takers.
+- For borrower ERC-20 offers that are intended to refinance an existing active loan, `Create Offer` should expose an optional refinance-target loan id field. When present, the UI should force all-or-nothing fill mode, explain that per-loan refinance caps must already permit the terms, warn that tagging the offer does not guarantee a timely match, and pass the target loan id through the create-offer payload so the contract can enforce caps at both create and accept time. Standard offers should send an empty / zero target. Review copy should explain that accepting a refinance-tagged offer atomically creates the replacement loan and closes the old loan — every refinance completes that way (#3042).
 - For borrower ERC-20 offers that opt into treasury backstop funding, `Create Offer` should expose the backstop deadline only when the backstop Role-A feature is readable and enabled for the selected market. The review should explain that the deadline must be after the configured minimum wait and before offer expiry, ordinary lenders retain priority until the deadline, and the backstop can fund only governance-approved liquid collateral within live capacity and oracle-coverage requirements.
 - `Loan Details` should be wallet-gated inside the connected app; after connection it should show the live loan state, role-gated actions, a chronological on-chain timeline, claimable-state action bar, and precise event breakdowns for settlement splits, fallback collateral allocations, partial repayments, and swap retries
 - Money-moving Loan Details actions must be gated by live on-chain loan status, not only the indexed row. If a loan has already moved to a terminal state while the indexer is still catching up, the page should suppress live actions such as Repay, update badges and receipts toward the more-settled state, and explain that the lists are catching up. The repay submit path should re-check status before approvals or wallet prompts and stop with a clear message when the loan is no longer repayable.
@@ -466,10 +466,10 @@ Current connected-app surface expectations:
 - when a marketplace listing is no longer fillable because the grace boundary has passed, the UI should show the listing as closed or cleanup-eligible and should not encourage buyers to attempt a stale fill.
 - OpenSea-offer match controls for NFT collateral listings should describe the atomic match behavior: cancel, replacement, and bidder fill happen together or nothing changes. Collection-fee metadata and signed-zone fulfillment data should be treated as loading or unsupported states when unavailable; the app must not send a known-invalid Seaport match transaction merely because an off-chain proxy could not return the required fulfillment data.
 - If a borrower's ordinary repay attempt races a marketplace fill and the loan has already moved to the marketplace-settled state, `Loan Details` should replace the generic transaction failure with a tailored message explaining that the loan was settled by the buyer fill, no repay funds moved, and any borrower remainder is available through claimables.
-- `Loan Details` should show a periodic-interest checkpoint card for cadence-bearing loans, including cadence label, next checkpoint countdown, expected interest, interest paid this period, shortfall, and whether the period is covered, pending, or past grace. Borrowers with a shortfall should get a `Pay now` action that routes to the partial-repay surface.
+- A scheduled-interest loan shows its current period in both modes, with the protocol preview's block, chain time, deadline, grace end, expected interest at the current amount and rate, amount paid, and shortfall. A fully paid elapsed period can be recorded without moving funds. For a short period the page explains the permissionless collateral-sale settlement and that it cannot build that sale itself; paying what is owed first avoids the sale. A paused protocol or disabled settlement is disclosed in every phase without warning of a sale that cannot run, and an unread setting stays unknown. New blocks, returning tabs, repayments in any tab, and interaction after idling refresh the card.
 - `Loan Details` should show an auto-lifecycle caps card when the AutoLifecycle facet is readable and the connected wallet currently holds the borrower or lender position NFT. Borrower-position holders may set refinance-offer posting caps and borrower-side auto-extend caps; lender-position holders may set lender-side auto-extend caps. The card should show cap staleness after NFT transfer, the admin kill-switch state, rate / expiry bounds, and clear copy that keepers can act only within the approved caps and ordinary keeper authorization gates.
 - `Loan Details` auto-lifecycle caps editing should add friction when the user turns on refinance or extend caps: show a best-effort warning that stays visible the whole time a cap is enabled (not only during the enable transition), require deliberate confirmation, and explain that caps do not guarantee a compatible counterparty before grace ends. For NFT collateral, and for ERC-20 collateral known to be illiquid when that read is available, the card should warn that default or liquidation can transfer the full collateral in-kind and that default auto-refinance copying is off; explicit per-loan enablement is required.
-- the auto-lifecycle caps card should also make the keeper kill-switch visible at the point of configuration: because both auto-refinance and auto-extend execute against the BORROWER side, the relevant hard gates are the borrower holder's master keeper switch AND the global delegated-keeper pause — when the borrower's switch is off, OR keeper automation is globally paused by governance, the card should warn that any enabled cap is inert until keeper automation can run again, since those actions are keeper-executed, so an enabled cap is never mistaken for active protection. The two gates have different audiences: the borrower master-switch case warns only the borrower holder (their switch gates the borrower-side execution of both auto-refinance and auto-extend), but the global-pause case warns BOTH the borrower and the lender holder — a global pause blocks every keeper call, so a lender's own enabled auto-extend cap is equally inert. The warning should state the full fix path (master switch on, a keeper approved with the right permissions, AND that keeper enabled for this specific loan via the per-loan toggles; and note that a global pause resumes only when governance lifts it), should NOT treat the lender's keeper switch as a blocker (the lender's extend-caps are only their consent surface), and should NOT infer inertness from the approved-keeper count (a non-zero count doesn't prove a capable, loan-enabled keeper). The finer per-keeper action-permission detail is surfaced by the per-keeper toggles on the same page.
+- the auto-lifecycle caps card should also make the keeper kill-switch visible at the point of configuration for auto-extend. (Refinance caps are not keeper-executed: since #3042 a refinance completes only when a lender accepts, or the matcher fills, the borrower's refinance-tagged request, so no keeper switch gates it and the card must not warn that refinance caps are inert for keeper reasons.) Because auto-extend executes against the BORROWER side, the relevant hard gates are the borrower holder's master keeper switch AND the global delegated-keeper pause — when the borrower's switch is off, OR keeper automation is globally paused by governance, the card should warn that an enabled extend cap is inert until keeper automation can run again, since those actions are keeper-executed, so an enabled cap is never mistaken for active protection. The two gates have different audiences: the borrower master-switch case warns only the borrower holder (their switch gates the borrower-side execution of auto-extend), but the global-pause case warns BOTH the borrower and the lender holder — a global pause blocks every keeper call, so a lender's own enabled auto-extend cap is equally inert. The warning should state the full fix path (master switch on, a keeper approved with the right permissions, AND that keeper enabled for this specific loan via the per-loan toggles; and note that a global pause resumes only when governance lifts it), should NOT treat the lender's keeper switch as a blocker (the lender's extend-caps are only their consent surface), and should NOT infer inertness from the approved-keeper count (a non-zero count doesn't prove a capable, loan-enabled keeper). The finer per-keeper action-permission detail is surfaced by the per-keeper toggles on the same page.
 - `Loan Details` should show a prominent pre-grace warning banner near the loan title when the connected wallet is the borrower, refinance caps are enabled, and the loan is within the final 24 hours before grace begins. The banner should state that auto-refinance is best-effort, show the time remaining until grace, explain that repayment is accepted until the grace period expires, and offer shortcuts to widen refinance caps and to repay when repayment is available. The caps card should also include an Alerts CTA for Telegram / Push delivery rails so borrowers can receive keeper-side pre-grace warnings even when they are not actively viewing the page.
 - `Activity` rows that reference a loan should use a clickable `Loan #X` pill linking to that loan's full details page
 - Activity must read as plain language, never raw protocol event names: each event is shown with a human label (acronyms like NFT preserved, spelling consistent), the many events of a single transaction collapse into one row labelled by the real outcome with a note of how many sub-events it represents, each row states what it concerns and when and links to its transaction on the block explorer, and the list paginates rather than rendering unbounded.
@@ -526,7 +526,7 @@ Wallet connection UX:
 - BNB testnet may appear as a user-facing testnet only when its deployment metadata, indexer coverage, wallet-switch metadata, oracle numeraire, and liquidation-route configuration are complete. On BNB testnet, liquidation and liquidity previews should use the configured on-chain DEX route instead of assuming an aggregator backend exists.
 - Chain-specific liquidity caveats should be presented as environment limitations, not generic app failure. For thin testnet markets, valid flows should remain available when the protocol can price and route the selected assets, while unsupported assets should fail conservatively.
 - Testnet-only faucet access should be shown only when the active chain is a testnet and its deployment metadata publishes faucet assets. The faucet should let connected reviewers mint the configured test assets needed for demo flows: at least two oracle-priced (liquid) test tokens so a deal can carry a different liquid token on each side, and at least two unpriced (illiquid) test tokens so a deal where NEITHER side has a price is testable (dual-consent, no health factor, in-kind default hand-over), plus the rentable test NFTs. On mainnet routes, or on testnets without the required metadata, the surface should stay unavailable rather than exposing unrestricted mint controls.
-- Tokens outside the curated list must pass an independent contract-security screen before a deal that carries them can be accepted, on EVERY accept surface — a direct accept, an NFT rental (its prepayment token, and a collateral token if the listing carries one), and a fill of a gasless signed offer alike, since signed offers are admitted without any asset screening of their own. The screen is enforced where the acceptance is signed, not by each surface separately, so a surface added later cannot leave it out: a token flagged as unsellable or booby-trapped (honeypot, sell restrictions, counterfeit of a well-known token, self-destruct capability, per-address tax control, owner blacklist-plus-pause, punitive buy/sell taxes, or any fee on plain transfers — the protocol's vault accounting cannot absorb fee-on-transfer tokens) blocks acceptance with a plain-language reason, and softer owner-power and structural findings (upgradeable proxy, hidden or reclaimable ownership, owner-modifiable taxes or limits, anti-whale limits, cooldowns, whitelists, minting, balance rewrites) are disclosed as warnings the user must knowingly proceed past. "Couldn't verify" is never treated as clean: an unverified contract source or an unevaluated honeypot check blocks acceptance, secondary trade checks or taxes the screen could not evaluate are disclosed as warnings rather than assumed clear, and a screening-service outage holds acceptance back while offering a working retry (the check re-probes on its own and the review exposes a manual retry). Consent given against disclosed warnings is re-collected whenever the disclosed content changes. The screen re-verifies at signing time: a flag or a previously undisclosed warning landing after review aborts before any signature, and the review then shows the new finding so consent is always given against current knowledge. Curated tokens are pre-vetted and exempt; networks the screen does not cover (test networks) show a notice instead of a block. Pasting an unknown token address surfaces the same screen's verdict at entry, and posting an offer is gated and re-verified at signing time the same way accepting one is — the creator's own deposit is exposed to the same token risks. On networks with market data, the paste entry additionally shows a market-listing SOFT signal beside the security verdict: a listed token's name, symbol, and market rank (identity confirmation against paste mistakes), a caution for listed tokens outside the top 200, and a verify-the-contract prompt for addresses the market doesn't know at all. The listing line never blocks or gates anything, stays silent when its own lookup fails, and is absent on test networks — where no test token has a listing and the line would train users to ignore it. The screen also warns while the user is still BROWSING: Offer Book rows and guided-match cards carry a compact badge when a non-curated token in the offer has a concrete finding (danger, caution, or could-not-be-screened), and the guided matcher withholds danger-flagged offers from its shortlist while stating how many it hid — a thinner list must never pass silently as the whole market. The browse tier is early warning only: the book never hides rows, a still-loading screen shows no badge rather than a false alarm, and enforcement stays at the accept review. Screening a page of offers happens as one batched lookup, and verdicts are shared between the browsing badges and the review gates so each token is screened once, whichever surface asked first.
+- Tokens outside the curated list must pass an independent contract-security screen before a deal that carries them can be accepted, on EVERY accept surface — a direct accept, an NFT rental (its prepayment token; a listing that names collateral is refused), and a fill of a gasless signed offer alike, since signed offers are admitted without any asset screening of their own. The screen is enforced where the acceptance is signed, not by each surface separately, so a surface added later cannot leave it out: a token flagged as unsellable or booby-trapped (honeypot, sell restrictions, counterfeit of a well-known token, self-destruct capability, per-address tax control, owner blacklist-plus-pause, punitive buy/sell taxes, or any fee on plain transfers — the protocol's vault accounting cannot absorb fee-on-transfer tokens) blocks acceptance with a plain-language reason, and softer owner-power and structural findings (upgradeable proxy, hidden or reclaimable ownership, owner-modifiable taxes or limits, anti-whale limits, cooldowns, whitelists, minting, balance rewrites) are disclosed as warnings the user must knowingly proceed past. "Couldn't verify" is never treated as clean: an unverified contract source or an unevaluated honeypot check blocks acceptance, secondary trade checks or taxes the screen could not evaluate are disclosed as warnings rather than assumed clear, and a screening-service outage holds acceptance back while offering a working retry (the check re-probes on its own and the review exposes a manual retry). Consent given against disclosed warnings is re-collected whenever the disclosed content changes. The screen re-verifies at signing time: a flag or a previously undisclosed warning landing after review aborts before any signature, and the review then shows the new finding so consent is always given against current knowledge. Curated tokens are pre-vetted and exempt; networks the screen does not cover (test networks) show a notice instead of a block. Pasting an unknown token address surfaces the same screen's verdict at entry, and posting an offer is gated and re-verified at signing time the same way accepting one is — the creator's own deposit is exposed to the same token risks. On networks with market data, the paste entry additionally shows a market-listing SOFT signal beside the security verdict: a listed token's name, symbol, and market rank (identity confirmation against paste mistakes), a caution for listed tokens outside the top 200, and a verify-the-contract prompt for addresses the market doesn't know at all. The listing line never blocks or gates anything, stays silent when its own lookup fails, and is absent on test networks — where no test token has a listing and the line would train users to ignore it. The screen also warns while the user is still BROWSING: Offer Book rows and guided-match cards carry a compact badge when a non-curated token in the offer has a concrete finding (danger, caution, or could-not-be-screened), and the guided matcher withholds danger-flagged offers from its shortlist while stating how many it hid — a thinner list must never pass silently as the whole market. The browse tier is early warning only: the book never hides rows, a still-loading screen shows no badge rather than a false alarm, and enforcement stays at the accept review. Screening a page of offers happens as one batched lookup, and verdicts are shared between the browsing badges and the review gates so each token is screened once, whichever surface asked first.
 - Users can opt into off-site alerts (Telegram, with a Push Protocol channel as an alternative rail) framed as plain-language outcomes — a message before an interest payment comes due, a message when a loan gets risky — with sensible fixed risk thresholds behind the toggles; raw threshold numbers are an advanced-mode control. Every offered toggle is a real control: an opt-out must be stored and honored by EVERY detector that delivers that outcome (the due-date opt-out covers both the interest-payment reminder and the pre-grace warning), a stored preference changes only when the user actually flips its control — a device without a server read-back must not overwrite stored preferences with its local defaults, and alert outcomes that have no working delivery path are not offered. Turning the risk toggle off still leaves a final pre-liquidation warning, and the surface says so. Starting a Telegram link, unlinking, sending a test alert, and switching a warning lane off (such as the due-date reminder opt-out) each require a free wallet signature proving ownership of the wallet — the alert service must refuse to issue a link code, clear a link, send a test message, or store an opt-out without it, so nobody can point another wallet's alert stream at their own chat, spam another wallet's chat, or silently switch off another wallet's warnings. A Telegram link is confirmed by a real delivery round-trip, not the user's word: after receiving the handshake code the user triggers a test alert, the alert service sends one actual "your alerts are working" message to the linked chat, and the surface treats the wallet as linked only once that send succeeds — a handshake that never reached the bot (no stored chat) is reported plainly and the wallet stays unlinked, rather than being marked linked and silently dropping every later alert. The setup states in one honest sentence what linking stores (wallet address, alert preferences, chat id, and a small per-alert delivery record — which loan, which level, when — kept so the same event is never delivered twice) and provides a working unlink, presented as a clearly-labelled control, that remains reachable even when the link was made on another device. Enabling Push delivery records the opt-in on the alert service in addition to linking out to the channel. In builds with no alerts backend configured, the surface says so and sends nothing rather than defaulting to another environment's backend. A borrower viewing an active loan is nudged, in one line, toward the alert setup.
 - the website should expose the self-sovereign risk-access surface (see ProjectDetailsREADME "Progressive Risk Access") as a dedicated wallet-gated settings page reachable from Settings: it shows the vault's EFFECTIVE risk level (read-time re-locked) in plain language, lets the user choose among the three levels with honest per-level explanations of what each additionally allows (including that illiquid pairs settle in-kind on default), states truthfully whether the choice is currently enforced on the active network (the retail deploy's master switch is off — the page must say the choice is saved but not yet enforced, never imply active enforcement), distinguishes a held-but-not-yet-active level as cooling-down versus stale-after-a-terms-change ONLY from trustworthy on-chain reads (offering the one-click in-place re-affirm only for the stale case, since re-submitting a merely-cooling level restarts its cooldown; when either supporting read fails the page says it cannot tell and suggests the lower-then-re-raise fallback), never renders the level controls over a failed tier read (a wrong default could drive a cooldown-restarting write), and exposes the strict-mode state with the disable-linger note (a recent turn-off keeps the mid-tier acknowledgement requirement in force through the configured cooldown; a failed linger read says "couldn't check" rather than implying absence). A surface that cannot yet collect the per-deal mid-tier acknowledgement strict mode demands must NOT offer enabling strict mode (that would lock the user out of their own mid-tier deals once enforcement is on) — it explains why enabling is unavailable while always offering the disable as the recovery path for a vault that enabled strict mode on another surface — presented honestly as a risk-increasing change (it removes the extra per-pair acknowledgement requirement), whose disable-linger cooldown keeps that requirement in force for the configured window. Per-pair illiquid consent and the strict-mode mid-tier acknowledgement remain contextual in the create/accept flows — the page owns only the two global controls
 - Operators can disable individual position-opening write flows (posting offers, accepting offers, listing NFTs, renting NFTs, depositing VPFI) via deploy configuration during an incident; a disabled flow explains itself in plain words and states that repayments, claims, and withdrawals are unaffected. Close-out flows are structurally outside the switch's reach — an operator precaution must never trap funds or cause missed deadlines (the same entry-closes/exit-stays-open tier principle the sanctions gate follows).
@@ -544,22 +544,44 @@ Liquidation quote orchestration:
 
 - Loan Details should show a `Liquidate` action for active loans with on-chain Health Factor below `1.0`
 - liquidation review should quote available routes in parallel across 0x, 1inch, Uniswap V3, and Balancer V2 where configured
-- liquidation review should fetch full-size and half-size route quotes when available. When partial liquidation is eligible, the route planner should also fetch an exact-size quote for the computed optimal partial fraction because adapter calldata must encode the precise sell amount. The exact partial quote should be requested only for active, in-term loans in the mildly distressed band where the computed fraction is within live bounds.
-- 0x and 1inch quote requests should go through Cloudflare Worker proxy routes so operator API keys are injected server-side and never ship to the browser
+- liquidation quotes use the exact amount of collateral the current protocol
+  sale plan permits, with each split leg quoted for its own amount. Partial
+  liquidation uses the loan's recorded threshold and its permitted partial
+  size; a quote for a different amount is not a valid execution quote.
+- browser quote requests that need operator credentials use the configured
+  platform proxy, which keeps those credentials out of the browser. The agent
+  provides the active 1inch route; it provides no 0x quote route. A keeper's
+  separately configured 0x access is not an app proxy capability.
 - Uniswap V3 quotes may use direct on-chain quote reads across supported fee tiers
 - Balancer V2 quotes may use a configured per-chain subgraph URL to find a deep eligible pool and estimate output for route ranking
 - successful quotes should be sorted by expected output, with the best route and fallback order shown before the user submits liquidation
 - when internal-liquidation matching is enabled, liquidation planning should surface the internal-match opportunity before external aggregator routes. The review should explain whether the loan is in the internal-match priority window, whether an opposing-direction loan or three-loan asset cycle is available, the estimated per-leg matcher incentive, and when ordinary external liquidation becomes available again.
 - internal-match planning should include both active distressed loans and fallback-pending loans. Fallback-pending legs should be considered only when the oracle can price the relevant assets; they should not use the ordinary active-loan LTV gate because they have already crossed into fallback handling.
-- when two half-size quotes from different aggregators together beat the best full-size single route by at least the live configured split-route improvement threshold, the route planner may choose split-route liquidation and show the two legs as one atomic transaction. If the improvement is below the threshold, the planner should prefer the existing single-route try-list to avoid unnecessary gas overhead.
-- when an active in-term loan is in the configurable mildly distressed Health Factor band, the planner may prefer partial liquidation and show the computed fraction, expected principal reduction, post-call Health Factor target, fee / slippage assumptions, and non-terminal loan outcome before submission. If the risk-profile read fails, the planner may fall back to the legacy fixed-fraction path where still safe; if the loan is past maturity, if the computed fraction is outside bounds, if the selected fraction would not restore Health Factor to at least `1.0`, or if the fraction would close all remaining principal, the partial path should be hidden and full liquidation should remain the visible route.
+- a split-route review quotes the collateral amount in the protocol's sale
+  plan. Each leg must independently clear its proportional oracle floor,
+  rounded up, and the combined output must clear the total floor. Among such
+  pairs, splitting is offered only when it beats the best single-route quote
+  by the live improvement threshold. The review shows both legs as one atomic
+  transaction; one good leg never excuses another below its own floor.
+- for an active loan still inside its effective term and the configured
+  mildly distressed band, partial-liquidation review states the proposed
+  fraction, principal reduction, resulting Health Factor, fee and slippage
+  assumptions, and that the loan remains open. A fallback size is offered
+  only when the protocol confirms it is safe. Unknown bounds, a size outside
+  them, failure to restore Health Factor to at least 1.0, or a size that closes
+  all principal prevents offering that partial; a full route remains subject
+  to its own preview rather than becoming automatically authorized.
 - partial-liquidation review should also surface the borrower-protective target ceiling and dust rules when they affect route choice: a routine partial must not sell so much collateral that the post-call Health Factor exceeds the live target ceiling, except for configured deep-underwater or pre-existing-dust cases; when dust handling is enabled, a partial must not leave a fresh tiny residual that should have been full-liquidated instead.
 - partial-liquidation review must make clear that there is no soft fallback: if the supplied route fails or the post-call Health Factor gate is not met, the transaction reverts and the loan remains unchanged.
 - when `discountPathEnabled` is active and collateral has a valid effective tier, liquidation planning should also evaluate the liquidator-buys-at-discount route after respecting any internal-match priority window. The review should show the tier discount, debt paid, collateral seized, recipient, expected borrower surplus left in the borrower's Vaipakam Vault, and whether the route uses an external liquidator payment or the keeper's flash-loan receiver. The UI should describe this as an optional permissionless path rather than a replacement for ordinary swap-based liquidation.
 - flash-loan discounted liquidation should be attempted only when a per-chain `FlashLoanLiquidator` receiver is deployed, the keeper-side enable flag is set, a collateral-to-principal quote is profitable after debt, flash-loan fee, gas/profit headroom, the loan is outside the internal-match priority window, and the sale runs through one of the Diamond's own registered, enabled swap adapters. The receiver must refuse any other venue: the quote is built with the same route builder the Diamond's own forced closes use, each aggregator quoted with its adapter as taker, and the receiver names the adapter and that adapter's quote bytes, so a hostile quote can neither redirect an approval nor call an arbitrary contract. If this branch reverts or is unprofitable, the planner should fall back to partial, split-route, or atomic liquidation.
 - liquidation fallback copy should distinguish the ordinary fresh-oracle fair-value collateral split from the oracle-unavailable fallback where stale or unavailable quorum pricing causes the full collateral to settle to the lender, matching the illiquid-collateral branch. Loan timelines and issue reports should surface the dedicated oracle-unavailable fallback event when present.
 - if one quote source is unavailable, the UI should still submit a ranked try-list from the remaining sources where possible
-- the quote-proxy routes should use per-upstream rate limits, such as separate 0x and 1inch per-IP budgets, so one upstream cannot exhaust the other
+- credential-spending proxies accept only the platform's permitted origins
+  and require working caller and upstream budgets. A missing or failed limiter
+  refuses the request. A partly completed venue walk states that it was
+  truncated and why. These budgets limit spending per serving location; they
+  are not advertised as exact network-wide quotas.
 - quote services that target keeper / liquidation swap adapters must carry both the approved swap-call destination and calldata, because venues such as 0x separate the ERC-20 allowance target from the rotating execution target
 - frontend, worker, and reference-bot quote packers should validate destination addresses from 0x / 1inch responses and share one wire format for adapter calls so a malformed quote cannot become a half-formed liquidation transaction
 
@@ -584,7 +606,7 @@ Keeper-bot reference UX / ops requirements:
 - keeper and operator surfaces should show tier-LTV cache freshness, peer-derived values, the governance-configured per-tier fallback caps, refresh rejection reasons, and whether the cache has passed the stale-warning threshold so humans can refresh before loan initiation falls back to those caps.
 - keeper and operator surfaces should show flash-loan discounted-path readiness per chain: receiver deployed address, Aave / Balancer provider availability, keeper-owner match, keeper-side enable flag, swap-adapter quote health, last submitted flash-loan liquidation, and fallback reason when the keeper chooses partial / split / atomic instead.
 - the public bot documentation should describe setup, chain coverage, optional aggregator API keys, logging, MEV-protection options, and clear scope limits
-- the production keeper and public reference bot should include an auto-lifecycle pass or detector for auto-extend where enabled: scan active loans, read both sides' caps, respect the admin kill switch and per-tick caps, submit only terms the contract will enforce, and continue past per-loan failures without stopping the whole cron tick
+- the production keeper and public reference bot should include an auto-lifecycle pass or detector for auto-extend where enabled: scan active loans, read both sides' caps, respect the admin kill switch and per-tick caps, submit only terms the contract will enforce, skip an extension the borrower-position holder cannot fund (their reserve for the loan plus their other free balance of the principal asset, against what the extension would charge now) with those figures stated in its log, say in the run log when a deployment cannot report that funding, and continue past per-loan failures without stopping the whole cron tick
 - the production keeper should include a pre-grace watcher for loans with refinance caps enabled: scan active loans near the grace boundary, throttle repeat sends, and dispatch warnings through the user's configured Telegram / Push rails for every such loan not yet refinanced; no offer in the book suppresses the warning, since an offer that only looks compatible can fail to fill and anyone can post one
 - Bots use published interfaces matching the deployed protocol; an interface mismatch must not silently change the meaning of a read or transaction.
 
@@ -785,7 +807,7 @@ Governance-configuration visibility:
 - the discounted-liquidation editor must validate per-tier discount floors / ceilings and `Tier 1 >= Tier 2 >= Tier 3` before proposal, and should show a clear disabled or not-ready state until the audit / deployment runbook prerequisites are satisfied on the selected chain.
 - `/admin` should include internal-match liquidation controls in the Risk category: read-only enablement state, per-tier liquidation thresholds, external-liquidation priority window, per-leg matcher incentive, and latest keeper readiness. Admin viewers may compose Safe transactions for the internal-match switch and bounded configuration changes.
 - the internal-match editor must validate threshold floors / ceilings, cross-tier ordering, priority-window bounds, and incentive caps before proposal. It should show a default-off state on fresh deployments and a runbook-gated ready state only after keeper deployment and audit prerequisites are met.
-- `/admin` should include auto-lifecycle kill switches in the Protocol Console: auto-lend enablement, keeper-driven auto-refinance enablement, and auto-extend enablement. Each card should read the live value, describe the blast radius, and compose the corresponding admin / Safe transaction. Fresh deployments should show all three as disabled until governance deliberately flips them.
+- `/admin` should include auto-lifecycle kill switches in the Protocol Console: auto-lend enablement, matcher-driven auto-refinance enablement, and auto-extend enablement. Each card should read the live value, describe the blast radius, and compose the corresponding admin / Safe transaction. Fresh deployments should show all three as disabled until governance deliberately flips them.
 - `/admin` should include controls for the runtime standard Health Factor admission floor and the optional rate-model registry. The HF-floor editor should show the bounded range and clarify that it affects only future standard-regime admissions, not open loans, the tiered-regime `1.0` floor, or the liquidation trigger. The rate-model cards should distinguish model registration / disablement on the Diamond from premium retunes on the model's own owner, show the deviation clamp, and label the unset model as identity behavior.
 - `/admin` should include hybrid-liquidity controls where deployed: signed-offer and standing-intent feature switches, standing-intent solver permission actions, ERC-4626 aggregator adapter pause/onboarding state, and treasury backstop Role-A / Role-B switches, capacity, collateral allowlists, posted rates, minimum wait, cash buckets, and minimum secondary-oracle coverage. All default-off or emergency levers should describe the blast radius before composing a Safe transaction.
 - `/admin` should include the additional emergency levers for global delegated-keeper pause, per-venue swap pause, peer-data-read pause, and aggregator-adapter pause. The UI should explain that the keeper pause freezes delegated keeper activity while preserving owner-direct actions and ordinary permissionless liquidation, that per-venue pause removes a venue from both single-route and split liquidation routing, and that peer-data pause falls back to governance-set risk limits.
@@ -946,6 +968,11 @@ The website/app should clearly communicate:
 - liquidation conditions
 - borrower NFT and lender NFT ownership implications
 - the role-relevant Vaipakam NFT ID in dashboard and position views; show the lender NFT ID to lender-side users and the borrower NFT ID to borrower-side users. These Vaipakam NFT identifiers should be clickable and route to a Vaipakam NFT details / verifier view because they control position ownership and claim rights
+- the NFT verifier requires no wallet, signature, or approval, and permanently
+  warns against a verifier asking for any of them. It shows the full official
+  contract address for the network, explains that names and images can be
+  copied, and links every verdict to the same token on the independent chain
+  explorer. Help lists the official addresses by supported network.
 - the Vaipakam NFT verifier must distinguish between a valid live NFT, a burned NFT, and a token ID that was never minted on the current chain
 - a valid NFT should continue to show a normal verified success state with owner and on-chain metadata
 - a burned NFT should be shown as a warning state rather than a hard error, because the position NFT was previously valid but is no longer claim-capable after the underlying loan terminated
@@ -1077,7 +1104,7 @@ Keeper UX requirements:
 - keeper surfaces should warn when the global master switch is off, because per-offer or per-loan toggles alone do not authorize execution
 - future keeper settings should allow users to choose which operation classes each keeper may perform, with scopes at the global user level, per keeper address, per offer, and per loan
 - auto-extend should appear as its own keeper action class once supported. Granting an `all actions` style permission should clearly include extension only after the protocol's action mask includes that bit.
-- early withdrawal, borrower preclose, refinance completion, and auto-extension paths may be opened to keepers only when the relevant operation is explicitly allowed for that keeper and scope
+- early withdrawal, borrower preclose, and auto-extension paths may be opened to keepers only when the relevant operation is explicitly allowed for that keeper and scope
 
 Strategic-flow transfer-lock UX requirements:
 
@@ -1085,168 +1112,131 @@ Strategic-flow transfer-lock UX requirements:
 - when a user starts a lender early-withdrawal flow, the UI must clearly notify them before confirmation that the lender-side Vaipakam NFT will be locked for transfer until that early-withdrawal flow is completed, cancelled, or otherwise unwound by the protocol
 - these transfer-lock warnings should appear in the relevant transaction review / confirmation state, not only as passive helper text elsewhere on the page
 - the notice should explain in plain language that while the strategic flow is still in progress, the affected Vaipakam NFT cannot be transferred to another wallet and its ownership-driven actions remain constrained by that in-progress flow
-- refinance is different: a refinance-tagged offer should use atomic accept-and-refinance when available, so replacement-loan creation and old-loan payoff happen in one transaction; the standalone `refinanceLoan` completion path remains a settlement step rather than a multi-day strategic lock. The UI should not warn about a refinance-specific borrower-NFT transfer lock unless a later protocol version introduces one.
-- before signature, lender early withdrawal, borrower preclose, and borrower refinance screens should also show the interest implication of the chosen path in plain language, including forfeited accrued interest, full-term interest, accrued-to-date interest, and rate-shortfall obligations where applicable
+- refinance is different: every refinance completes inside the accept or match of its refinance-tagged offer (#3042), so replacement-loan creation and old-loan payoff happen in one transaction and there is no later settlement step to lock for. The refinance screen should say that the new loan's principal, less its initiation fee, pays the old lender directly, that the wallet pays only the rest of the payoff (the old loan's interest and any late fee, plus the new loan's initiation fee), and that the spending approval it asks for is sized to that remainder, not to the whole payoff. The UI should not warn about a refinance-specific borrower-NFT transfer lock unless a later protocol version introduces one.
+- before signature, lender early withdrawal, borrower preclose, and borrower refinance screens should also show the interest implication of the chosen path in plain language, including the selling lender's accrued interest becoming a claim on the loan (paid from later interest, after the buyer's principal on a default), full-term interest, accrued-to-date interest, and rate-shortfall obligations where applicable
 - the Direct-preclose interest-implication copy should reflect the affected ERC-20 loan's actual interest mode rather than always assuming full-term: a full-term loan owes interest as if it ran to maturity, but a pro-rata loan owes only interest accrued to date, so the Direct-preclose warning should not overstate the cost of exiting a pro-rata ERC-20 loan. This mode-awareness applies only to ERC-20 principal; NFT-rental preclose always settles the full rental and must keep the full-term-style copy
-- refinance is the exception: its old-lender payoff is computed full-term on-chain regardless of the loan's stored interest mode, so the refinance screen must ALWAYS disclose full-term interest (plus the treasury fee) and must never switch to pro-rata copy, so the pre-sign disclosure matches what the transaction actually pulls. It must NOT mention a rate shortfall — the refinance path no longer pulls one (no shortfall)
+- refinance review follows the original loan's agreed interest mode: full-term
+  interest for a full-term loan, accrued interest for a pro-rata loan, net of
+  interest already settled and with the applicable treasury fee disclosed.
+  The exiting lender receives that payoff with no rate-shortfall top-up.
+  This is the mode-aware refinance policy ratified in #1003, also stated in
+  the platform spec's Original Lender Protection Rule for Refinance.
 - the full-term-vs-pro-rata interest mode should also be visible at a glance, not only inside the pre-signature warnings: Offer Book rows/cards should carry a small interest-mode chip next to the rate, Loan Details should show the mode in the loan terms for the life of the loan and in the Repay-in-Full confirmation copy, and both swap-to-repay surfaces (the atomic panel and the best-price intent panel) should disclose it because a full close honours the loan's mode. The indicator applies only to ERC-20 principal offers/loans, where the distinction is meaningful, and should be omitted otherwise
 
 ## Public Analytics Dashboard
 
-The public website should include a no-wallet-required analytics dashboard focused on transparent, aggregated protocol data for regular users, potential participants, analysts, community members, security researchers, auditors, and public-sector reviewers.
+The public website links to the connected app's public Analytics page. It
+loads without a wallet and reports one selected network at a time. The
+October 28 owner-directed guide update supersedes the retired dashboard's
+all-chain totals, TVL and volume charts, per-chain comparison table, and
+export requirements; these must not be advertised as current capabilities.
 
-Core dashboard principles:
+- The selected network is visible. Changing it refreshes every section for
+  that network and never mixes readings from different deployments.
+- Loan and offer counts, the recycling transparency account, and loop
+  closure come from the public indexer. VPFI token and fee figures come
+  directly from the protocol contract. Each section names its source, block,
+  age, and relevant contract or explorer link. The indexer's database is
+  disclosed; the page must not claim that no database supports its figures.
+- Loan totals reconcile to their visible categories and stated remainder.
+  Fallback-pending loans remain active, and unclassified assets stay in the
+  total without entering a typed subtotal. On-chain offers are distinguished
+  from signed offers that have not been written to the chain.
+- On the issuing chain the token section shows the VPFI address, supply,
+  cap, remaining mintable amount, and authorized minter. On a bridge chain
+  it shows local supply and explains that the cap and minter belong to the
+  issuing chain. An unconfigured token is stated as such.
+- Fee figures cover recording-to-date, the last day, and the last week in
+  the protocol's reference currency. Nearby limitations explain unvalueable
+  fees counted at zero, bounded recent-record windows, and reference-currency
+  changes. These are recorded fee values, never a token price or return claim.
+- The treasury is named and linked. A held balance is shown only when the
+  protocol contract itself keeps the fees, with its exclusions stated;
+  an external treasury address does not imply a measured balance.
+- Direct token and fee readings share one block. A failed component stays
+  unread without hiding successful components. Missing, invalid, stale,
+  genuinely zero, and not-yet-indexed readings have distinct explanations;
+  an unread value is never rendered as zero or included in a derived total.
+- The recycling account and loop-closure display retain the funding,
+  custody, source, and unknown-value rules in the
+  [tokenomics specification](TokenomicsTechSpec.md#9-treasury-recycling-rule).
+- The page uses the product's theme, language, and interface-density choices,
+  remains accessible on phones and large screens, and carries descriptive
+  search and sharing metadata. Analytics is indexable; wallet-specific
+  records remain outside the public aggregate dashboard.
+- Basic and Advanced guides in every published language describe this same
+  page and its two sources. Stable section links identify the same chapter
+  in every edition; an absent translation is disclosed rather than replaced
+  by claims about an older dashboard.
 
-- all dashboard data must be derived from on-chain contract state or raw on-chain events
-- the dashboard must not depend on PII, KYC data, or user-identifying profiles
-- displayed metrics must be privacy-preserving and aggregated
-- each important number should be traceable back to contract view calls, event logs, or explorer links
-- the dashboard should follow the same Vaipakam design language as the rest of the website and connected app, including theme support, responsive behavior, and Basic / Advanced presentation density
+### Shared data freshness and ownership
 
-Phase 1 scope:
+These requirements apply to Analytics and the connected app's other indexed
+read surfaces. They do not make indexed state authoritative for signing.
 
-- use only aggregated metrics derived from the existing protocol facets such as `LoanFacet`, `OfferFacet`, `TreasuryFacet`, `VaultFactoryFacet`, `ProfileFacet`, `OracleFacet`, and `RiskFacet`
-- do not require governance dashboards or off-chain warehousing in Phase 1
-- high-level cross-chain aggregation is in scope for the public analytics dashboard, but it should remain lightweight and read-only
-- prefer lightweight view functions added to an existing facet if direct aggregation from current views/events is too expensive or awkward
-- if a dedicated analytics view surface is eventually needed, it should remain minimal and read-only
-- reuse existing frontend hooks, formatting utilities, and multicall patterns where practical
+- Market, history, and loan analytics prefer the indexer in normal operation
+  and identify their source and freshness. Direct chain reads remain the outage fallback where available;
+  a total that cannot be reconstructed is unknown, never a partial total
+  described as complete. Historical series retain the event and block context
+  needed to substantiate them.
+- Offer, loan, claim, and activity projections from a scan share one atomic
+  indexed frontier for each network and deployment. Only configured active
+  deployments are included. A missing provider credential for an active
+  chain is an operator configuration error, not an empty chain.
+- Sync distance is measured against that chain's safe head. Pagination
+  continues through ordinary active sets; a defensive bound is disclosed
+  rather than silently truncating the list. User views scale with that
+  user's records rather than requiring a scan of every global position.
+- A list known to be behind says it may be delayed instead of declaring
+  nothing available. Unknown freshness is kept unknown. Offer Book totals,
+  tab badges, and filtered counts describe the same rows the visitor sees.
+- New global offers appear within seconds through the existing live-update
+  path without changing the book's fixed sort. Asset-pair filters require
+  both lending and collateral assets, start from that network's defaults,
+  and use the protocol's pair-specific active-offer reading when selected.
+  Hide my offers defaults on and survives navigation and reloads.
+- Your Offers prefers indexed creator and current-holder records, so a
+  transferred offer can still be inspected or managed where permitted.
+  Its pagination resets when the status filter changes. Your Loans and
+  Claim Center prefer current-holder records and fall back to live holder
+  enumeration, then browser history, when indexed discovery is unavailable.
+- Current position-token ownership, including transfers, controls whose
+  loans and claims appear. Origination parties alone do not determine
+  ownership. Indexed candidates may widen claim discovery but never narrow
+  what a live current-holder enumeration would find.
+- Claim amounts, ownership, periodic-settlement previews, and every term
+  signed against are read live before signing. A failed per-loan check is
+  unavailable, not proof of no funds. Periodic-interest and ownership history
+  remain part of the same discoverable activity record.
+- Own confirmed transactions refresh relevant records immediately across
+  tabs. Realtime signals are invalidation hints; while healthy they permit
+  slower safety polling, and on failure ordinary polling resumes. A lost
+  signal cannot leave a money-action gate using an unchecked old answer.
+- Browser caches and shared snapshots are bounded and deployment-scoped.
+  They may improve loading, but cannot authorize a transfer, settle a claim,
+  or replace a fresh protocol decision. The shared-data recovery path keeps
+  direct reads usable when the indexer is unreachable.
+- Large token totals retain exact precision and cannot overflow into false
+  figures. A short-lived shared snapshot may last approximately thirty
+  seconds while retaining its stated age. The app footer offers one link
+  to verify the active deployment on its explorer.
+- A static or independently hosted recovery surface should retain critical
+  direct chain reads when the central API is unavailable, with provider
+  failover and a user-supplied endpoint where permitted by the deployment's
+  credential policy. Read caches remain accelerators, never money authority.
+- Aggregates expose no PII, KYC records, or wallet profiles as a dashboard
+  dimension. Nearby source explanations describe the data actually used;
+  a blanket claim that no user data is collected anywhere is inappropriate.
+  Sanctions and price-source behavior follow the platform and app specs.
+- With a sanctions source configured, offer creation screens the connected
+  wallet and offer acceptance screens both wallet and creator before signing.
+  Warnings identify the external list provider for disputes rather than
+  implying that Vaipakam owns the list. An unconfigured source produces no
+  sanctions banner. Price-safety copy follows the Chainlink-led secondary
+  quorum and offers no separate pull-oracle update transaction.
 
-Required page placement and access:
-
-- the analytics dashboard should exist as a public route and must load without wallet connection
-- the implementation target is the connected app's public analytics page (the `/analytics` route of `apps/app`), which also carries the recycling transparency account and the loop-closure metric
-- the public website navigation should expose the dashboard clearly
-- the connected app shell may also link to the same public dashboard when appropriate, but the page itself should remain usable without connecting a wallet
-
-Required top-level metrics:
-
-- the very top summary row should show protocol-wide combined metrics aggregated from all supported chains at a high level
-- this combined top section is intended only for headline totals and should not replace the per-chain drill-down below
-- `Total Value Locked (TVL)` in the active numeraire, including visible `24h` and `7d` change percentages
-- TVL breakdown covering ERC-20 collateral, NFT collateral, and vault balances where meaningful
-- active loans, shown as both count and total value
-- currently active offers and lifetime offer totals at the combined all-chains level in the global header
-- total volume lent in the active numeraire, lifetime
-- total interest earned by lenders in the active numeraire, lifetime
-- `Total NFTs rented`, shown in the combined all-chains summary
-
-Per-chain analytics section:
-
-- all cards, charts, tables, and drill-down sections below the top summary row should be chain-specific rather than combined
-- the page should provide a visible chain selector that switches the active chain context for those lower sections
-- switching the chain selector should refresh the below-the-fold cards, charts, recent activity, treasury snapshot, and other detailed analytics to the selected chain only
-- the selected-chain state should be obvious in the UI so users can clearly distinguish protocol-wide combined totals from chain-local analytics
-- `Total NFTs rented` should also be shown in the selected chain's detailed breakdown
-- it is acceptable for this selector to also become the app's active read-chain context so that subsequent read surfaces follow the chain the user just chose; if a wallet is connected, the app may additionally request a wallet network switch for consistency
-
-Required charts and visualizations:
-
-- `TVL Over Time` as a line chart with range options such as `24h`, `7d`, `30d`, `90d`, and `All`
-- daily loan volume and interest earned, shown as a combined bar-plus-line chart or similarly readable equivalent
-- active versus completed loans, shown through a composition such as pie plus trend indicator
-- asset distribution covering the main lending assets and collateral categories
-- NFT rental utilization, showing active rentals versus total NFTs currently in vault
-
-Advanced-mode detail sections:
-
-- in `Advanced` mode, the page should expose a recent-activity table covering approximately the latest `50` loans and offers with anonymized key parameters such as amount, rate, duration, and status
-- in `Advanced` mode, the page should expose an asset-wise breakdown table including asset symbol, total locked amount, and share of TVL
-- in `Advanced` mode, the page should expose protocol-health indicators such as average APR, average LTV, and illiquid-asset warning counts
-- even in `Advanced` mode, the page must remain privacy-preserving and must not expose raw user-address identity as a primary dashboard data dimension
-
-Transparency and export block:
-
-- the page should show the current block number used for the displayed snapshot
-- the page should show a clear data-freshness timestamp
-- the page should link to the relevant contract addresses and explorer pages
-- the page should provide full export actions for both `CSV` and `JSON`
-- exported data should include the snapshot timestamp, contract addresses used, and the relevant block number so auditors and researchers can verify the source context
-
-Presentation requirements:
-
-- Analytics uses the same theme, language, and Basic / Advanced choices as
-  the rest of the product and remains usable on phones and large screens.
-- Token labels and market context do not replace authoritative protocol
-  amounts. Important figures retain their source, timestamp, and block.
-- Refreshes may share a short-lived snapshot, approximately thirty seconds,
-  but the page states its age and distinguishes loading, stale, failed, and
-  genuinely empty results.
-
-Data-fetching strategy:
-
-- prefer multicall-based reads for efficiency
-- top-level combined metrics may be assembled by querying each supported chain separately in the frontend and summing the resulting headline values client-side
-- all lower sections should continue to read from one selected chain at a time so the detailed analytics remain attributable to a specific chain
-- when selected-chain dashboard sections need large loan or offer sets, the implementation should prefer worker-indexed aggregate endpoints first and reserve batching / multicall aggregation as an outage fallback
-- derive historical series from worker-bucketed event data when available, with raw event logs or chain-side multicalls kept as fallback paths
-- a shared Cloudflare Worker indexer may maintain D1-backed `offers`, `loans`, and append-only `activity_events` tables for fast first paint across offers, loans, activity, and claimability hints
-- the worker indexer should fan out across configured active chains according to the deployment allow-list; inactive or missing deployment artifacts should be skipped, while an active chain missing its RPC secret should be treated as an operator configuration error before deploy completion rather than silently disappearing from the cache
-- the worker should perform one shared event scan per chain / tick across the full allow-list instead of separate per-domain scans; per-domain handlers then persist offers, loans, and activity rows from that shared scan output
-- a single cursor per chain / Diamond source should advance atomically so offer, loan, claim, and activity views cannot drift onto different indexed block heights
-- frontend hooks such as active offers, active loans, wallet loans, activity, claimables, and offer stats should prefer the indexer when available and return an explicit `indexer` / `fallback` source state
-- analytics hooks should also be indexer-first: loan stats, recent loans, recent offers, and loan time series should come from worker endpoints when reachable, with `useProtocolStats` and other per-loan multicall walks gated behind a confirmed worker failure
-- expected analytics worker endpoints include `/loans/stats`, `/loans/recent`, `/offers/recent`, and `/loans/timeseries?range=24h|7d|30d|90d|All`; BigInt token sums should be kept out of SQLite integer overflow paths and priced client-side over the unique asset set
-- analytics fields such as lender interest earned, recent-offer amounts, recent loans, and CSV / JSON exports should be sourced from the same indexer-backed feeds used to render the page during normal operation. The UI must not depend on disabled chain-multicall stats paths for these fields unless the worker has explicitly failed and the page is in fallback mode.
-- sync-distance labels should compare against the relevant safe head and indexed frontier for the selected chain, and must not display nonsensical large behind counts when the indexer cursor is actually caught up.
-- active-loan and active-offer worker fetches should paginate through the returned cursor rather than reading only the first page; frontend hard caps may bound defensive fetches, but the UI must not silently truncate ordinary active sets at a single default page
-- `Offer Book` should consume indexed active offers first, while keeping the existing browser event watcher so newly created global offers appear within seconds according to the existing non-user-customizable sort
-- OfferBook's displayed totals and tab badges should come from the same indexed list that renders rows when in indexer mode, and `Showing X of Y` copy should reflect post-filter visible rows with an explicit hidden-by-filters suffix where applicable
-- Offer Book, guided matching, rental browsing, and Claim Center should distinguish a genuinely empty result from a stale or stalled indexer snapshot. When the app has positive freshness evidence that the indexer is behind, empty-list copy should say the list may be delayed rather than presenting "nothing available" as final. Unknown freshness should stay quiet rather than alarming users without evidence.
-- OfferBook's lending-asset plus collateral-asset filter should use a contract-side active-offers-by-asset-pair primitive when both legs are selected; the UI should require explicit values for both legs, seeded from a per-chain default, instead of using an `all assets` sentinel for either side
-- the `Hide my offers` setting should default on and persist across navigation / reloads under a Vaipakam-namespaced localStorage key
-- dashboard loan lists may consume indexed loan origination data, but current lender / borrower NFT-holder views should be keyed by current position-NFT owner, maintained from ERC-721 `Transfer` events, and verified by direct chain reads on money-relevant screens so transferred loan NFTs are reflected accurately
-- Dashboard's `Your Offers` card should be indexer-first through the creator endpoint, paginate rows locally, reset pagination on status-filter changes, and fall back to direct reads only when the worker is unavailable; when reading directly from chain, it should prefer the struct-returning per-user offers getter over an id-list plus per-row detail fan-out
-- the dashboard `Your Loans` card and Claim Center should prefer current-holder keyed endpoints so users who received lender / borrower position NFTs through secondary transfer can see the relevant loans and claims without a global walk
-- the dashboard `Your Loans` card may render directly from indexed current-holder loan endpoints after the worker has maintained current position-NFT ownership from ERC-721 `Transfer` events; if the worker is unavailable, it should fall back to the on-chain current-holder view and then the browser-index path
-- Dashboard `Your Offers` should also support current-holder offer lookup so a wallet that received an open offer position NFT can manage or inspect that position when protocol rules allow
-- user-keyed dashboard and analytics views should scale with the connected user's result count by consuming per-user indexes where available rather than walking global active loan / offer sets and filtering client-side
-- Claim Center money-relevant claim payloads should continue to read directly from chain; indexed claimability is only a discovery hint
-- Claim Center should union indexed wallet loans with current position ownership discovered on-chain, so users who acquired lender or borrower positions after origination can discover claimable proceeds even if the indexer never associated them with the original loan parties. A per-loan transport failure should make claimability unavailable rather than present a confidently incomplete list that could hide funds.
-- periodic-interest checkpoint state may be mirrored by the indexer for fast display and reminders, but `previewPeriodicSettle` and transaction review amounts should read the current Diamond state before signing
-- VPFI token-panel scans may remain direct filtered log reads while volume stays low
-- ERC-721 `Transfer` events for Vaipakam position NFTs should enter the shared `activity_events` ledger so ownership history is queryable without maintaining a separate mutable `nft_positions` table
-- frontend live-tail scanning should converge toward one AppLayout-level provider with topic-routed dispatch, page-aware cadence, and cache-invalidation semantics rather than each hook maintaining an independent scanner
-- IndexedDB should be the browser cache layer for user-owned offers / loans and top-N global offers, with versioned schemas, eviction rules, and lazy `getOfferDetails` / `getLoanDetails` fallback only on cache misses
-- the app footer should expose one active-chain `Verify on-chain` affordance that opens the current Diamond on the relevant explorer; repeated per-row verify links are not required
-- the frontend should be capable of an IPFS / static-hosted no-server fallback where critical app reads can go directly to chain RPC when the centralized API / indexer is unreachable; this fallback should use Multicall3 batching, IndexedDB caching, RPC failover, and optional user-supplied RPC URLs where practical
-- Durable Objects, WebSocket, SSE, or webhook push are optional freshness accelerators for this cache layer. When the realtime WebSocket channel is enabled, it should send invalidation signals only and leave polling / live-tail reads as the canonical fallback for disconnects and unsupported clients.
-- for aggregates that are too expensive to reconstruct repeatedly on the client, the protocol may expose lightweight read-only helper functions such as `getProtocolTVL`, `getUserCount`, `getActiveLoansCountAndValue`, and `getTotalInterestEarned`
-- direct contract reads and browser log indexing remain the fallback path whenever the worker is unavailable, times out, or has no configured origin; the cache must never become an oracle for money-moving actions
-
-Quality requirements:
-
-- errors explain the relevant protocol failure in terms the user can act on
-- interactive controls and charts remain accessible, including meaningful labels for assistive technology
-- the public transparency page includes descriptive search and sharing metadata
-
-Dashboard coding and build guidance is preserved in the
+Dashboard implementation guidance is preserved in the
 [implementation notes](../procedures/FunctionalSpecImplementationNotes.md#dashboard-coding-and-build-guidance).
-
-Security, privacy, and compliance requirements:
-
-- no PII, no personal user data, and no KYC data may be shown anywhere on the analytics dashboard
-- all metrics must be aggregated and privacy-preserving
-- selected-chain metrics should include nearby `View on-chain` affordances linking users toward the relevant contract call context, event source, or explorer trail where practical
-- the combined all-chains headline cards do not need chain-specific explorer links, because those values are frontend-aggregated across multiple Diamond deployments rather than sourced from one canonical read target
-- if heavy public queries need protection, lightweight frontend throttling or edge rate-limiting may be used as an implementation safeguard
-- where a sanctions oracle is configured on the active chain, Create Offer should pre-flight the connected wallet and the Offer Book accept modal should pre-flight both the connected wallet and offer creator
-- sanctions warnings should explain that Vaipakam does not maintain its own sanctions list and that list disputes must be handled with the oracle/list provider
-- when no sanctions oracle is configured on a chain, sanctions banners should stay silent
-- frontend oracle safety surfaces should reflect the Chainlink-led secondary quorum model using configured Tellor, API3, and DIA sources; the app should not present any separate pull-oracle price-update transaction as part of the current pricing path
-
-Required dashboard disclaimer text:
-
-- `Vaipakam is a fully decentralized, non-custodial protocol. All displayed data is aggregated from on-chain smart contracts. No personal user data is collected or stored. This dashboard is provided for transparency purposes only.`
-
-Acceptance expectations for the dashboard:
-
-- it must load without wallet connection
-- displayed values must be verifiable against on-chain contract state or event history
-- exports must work and include verifiable metadata
-- the page must match the broader Vaipakam design system
-- the page must be responsive and accessibility-conscious
-- loading, successful, empty, stale, and failed dashboard states must each present an accurate and usable result
 
 ## Troubleshooting And Observability
 

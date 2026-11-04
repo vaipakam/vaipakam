@@ -10,6 +10,7 @@ import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibServiceCapacity} from "../libraries/LibServiceCapacity.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
+import {LibInterestLedger} from "../libraries/LibInterestLedger.sol";
 import {LibSettlement} from "../libraries/LibSettlement.sol";
 import {LibPrepayCleanup} from "../libraries/LibPrepayCleanup.sol";
 import {LibCompliance} from "../libraries/LibCompliance.sol";
@@ -216,11 +217,7 @@ contract PrecloseFacet is
         // Phase 6: borrower-entitled strategic flow. Authority follows the
         // current borrower-NFT owner OR a keeper with the InitPreclose
         // action bit.
-        if (LibAuth.requireKeeperFor(
-            LibVaipakam.KEEPER_ACTION_INIT_PRECLOSE,
-            loan,
-            /* lenderSide */ false
-        )) LibServiceCapacity.chargeKeeper(); // #1219 — one keeper action
+        _authorizeBorrowerSide(LibVaipakam.KEEPER_ACTION_INIT_PRECLOSE, loan); // #1219 — a keeper action is charged
         if (loan.status != LibVaipakam.LoanStatus.Active)
             revert LoanNotActive();
 
@@ -295,6 +292,8 @@ contract PrecloseFacet is
             // lateFee` and folds it into `treasuryShare`/`lenderShare`/`lenderDue`.
             uint256 lateFee = LibVaipakam.calculateLateFee(loanId);
             LibSettlement.ERC20Settlement memory plan = LibSettlement.computePreclose(loan, lateFee);
+            // #1832 — terminal seam of the lifetime interest counter.
+            LibMetricsHooks.onInterestPaid(loan, plan.interest + plan.lateFee);
 
             // Lender Yield Fee discount (Tokenomics §6 / §F2, #1354 / #1383):
             // eligibility is `consent OR lenderMode == Full` (a Full lender
@@ -641,11 +640,7 @@ contract PrecloseFacet is
         // Phase 6: borrower-entitled strategic flow (Preclose Option 2).
         // Authority binds to the current borrower-NFT owner OR a keeper
         // with the InitPreclose action bit.
-        if (LibAuth.requireKeeperFor(
-            LibVaipakam.KEEPER_ACTION_INIT_PRECLOSE,
-            loan,
-            /* lenderSide */ false
-        )) LibServiceCapacity.chargeKeeper(); // #1219 — one keeper action
+        _authorizeBorrowerSide(LibVaipakam.KEEPER_ACTION_INIT_PRECLOSE, loan); // #1219 — a keeper action is charged
         // #819 Tier-1 sanctions on the EXITING borrower-position holder.
         // `requireKeeperFor` authorises against the borrower NFT owner, but a
         // keeper caller leaves that holder unscreened — and the exiting
@@ -870,6 +865,25 @@ contract PrecloseFacet is
         address payAsset = _paymentAsset(loan);
         // #1281-011 — the one payer -> treasury pull (refuses a short arrival).
         LibFacet.transferFromPayerToTreasury(msg.sender, payAsset, treasuryFee);
+        // #1209 / #1808 — the open seller claims are paid first out of the
+        // interest, straight from the payer into each seller's vault, and the
+        // holder's part of it is recorded as held for the lender side, so a
+        // later sale pays it to that seller ({LibInterestLedger.holderParked}).
+        // The shortfall is the holder's top-up, never a seller's interest.
+        if (isErc20) {
+            (uint256 sellersGross, uint256 sellersNet) = LibInterestLedger.paySellersFirst(
+                s, loan, msg.sender, payAsset, accruedInterest, accruedInterest - treasuryFee
+            );
+            lenderShare -= sellersNet;
+            LibInterestLedger.holderParked(
+                s,
+                loan,
+                accruedInterest - sellersGross,
+                accruedInterest - treasuryFee - sellersNet,
+                lenderShare,
+                false
+            );
+        }
         if (lenderShare > 0) {
             // T-037 — direct borrower → lender's vault via the cross-payer
             // chokepoint. Counter ticks up under the lender even though the
@@ -1123,13 +1137,16 @@ contract PrecloseFacet is
         loan.collateralTokenId = offer.collateralTokenId;
         loan.collateralQuantity = offer.collateralQuantity;
         loan.durationDays = offer.durationDays;
+        // #1808 — the new rate goes through the ledger's single writer, which
+        // checkpoints the old segment first, and BEFORE the new start time is
+        // written: a ledger still unopened would otherwise open at the new start.
+        LibInterestLedger.setRate(LibVaipakam.storageSlot(), loan, offer.interestRateBps);
         // T-034 — startTime downsized to uint64; explicit cast.
         loan.startTime = uint64(block.timestamp);
         // #641 — offset re-originates the obligation under a new term; mirror
         // the interest-accrual clock onto it (validated 1..365 ⇒ uint16 exact).
         loan.interestAccrualStart = uint64(block.timestamp);
         loan.interestRemainingDays = uint16(offer.durationDays);
-        loan.interestRateBps = offer.interestRateBps;
         // #915 (Codex #1087 r1 P2) — the re-originated obligation restarts its
         // accrual clock above, so any periodic-settled interest credited to the
         // EXITING borrower (already netted from their step-2 payment) belongs to
@@ -1203,7 +1220,7 @@ contract PrecloseFacet is
             // or liquidate it.
             uint256 rawBal = IERC20(loan.collateralAsset).balanceOf(newBorrowerVault);
             uint256 trackedBal =
-                s.protocolTrackedVaultBalance[newBorrower][loan.collateralAsset];
+                LibVaipakam.trackedHolding(newBorrower, loan.collateralAsset, 0);
             if (trackedBal < rawBal) {
                 rawBal = trackedBal;
             }
@@ -1463,11 +1480,7 @@ contract PrecloseFacet is
         // Phase 6: borrower-entitled strategic flow (Preclose Option 3).
         // Authority binds to current borrower-NFT owner OR a keeper with
         // the InitPreclose action bit.
-        if (LibAuth.requireKeeperFor(
-            LibVaipakam.KEEPER_ACTION_INIT_PRECLOSE,
-            loan,
-            /* lenderSide */ false
-        )) LibServiceCapacity.chargeKeeper(); // #1219 — one keeper action
+        _authorizeBorrowerSide(LibVaipakam.KEEPER_ACTION_INIT_PRECLOSE, loan); // #1219 — a keeper action is charged
         if (loan.status != LibVaipakam.LoanStatus.Active)
             revert LoanNotActive();
         // NFT rentals cannot use the offset path: the NFT is in the lender's
@@ -1678,6 +1691,17 @@ contract PrecloseFacet is
         // #1281-011 — the one payer -> treasury pull (refuses a short arrival);
         // the payer is Alice, on her standing allowance.
         LibFacet.transferFromPayerToTreasury(loan.borrower, payAssetOffset, treasuryFee);
+        // #1209 / #1808 — the payoff lands in the held balance, not in the
+        // lender claim row the terminal split ranks, so the open seller claims
+        // are paid first here, out of the interest, from Alice into each
+        // seller's vault. Whatever the interest cannot cover closes unpaid at
+        // the terminal split, as on any other close.
+        if (loan.assetType == LibVaipakam.AssetType.ERC20) {
+            (, uint256 sellersNet) = LibInterestLedger.paySellersFirst(
+                s, loan, loan.borrower, payAssetOffset, interestBase, interestBase - treasuryFee
+            );
+            lenderTotal -= sellersNet;
+        }
         // Repay original principal + interest/shortfall into the CURRENT old
         // lender's vault via the cross-payer chokepoint (keeps the Diamond out
         // of the funds path AND ticks protocolTrackedVaultBalance under the
@@ -2010,11 +2034,7 @@ contract PrecloseFacet is
         // Phase 6: borrower-entitled action. Authority resolves against
         // the current borrower-NFT holder OR a keeper with the
         // CompleteOffset action bit.
-        if (LibAuth.requireKeeperFor(
-            LibVaipakam.KEEPER_ACTION_COMPLETE_OFFSET,
-            loan,
-            /* lenderSide */ false
-        )) LibServiceCapacity.chargeKeeper(); // #1219 — one keeper action
+        _authorizeBorrowerSide(LibVaipakam.KEEPER_ACTION_COMPLETE_OFFSET, loan); // #1219 — a keeper action is charged
 
         // #1001 (S3, Codex #1070 r8 P2) — clear any parallel-sale listing BEFORE
         // the consolidation below. A borrower-side listing (`prepayListingOrderHash`
@@ -2227,5 +2247,14 @@ contract PrecloseFacet is
             ),
             IVaipakamErrors.NFTStatusUpdateFailed.selector
         );
+    }
+
+    /// @dev The borrower-side authority check every preclose entry runs: the
+    ///      position's holder (or, once a protected-account replacement
+    ///      retired it, its controller) or a keeper it granted `action`; a
+    ///      keeper's action is charged against its service capacity (#1219).
+    ///      One body for the four entries, so the check is compiled once.
+    function _authorizeBorrowerSide(uint16 action, LibVaipakam.Loan storage loan) private {
+        if (LibAuth.requireKeeperFor(action, loan, /* lenderSide */ false)) LibServiceCapacity.chargeKeeper();
     }
 }

@@ -277,7 +277,7 @@ const REQUIRED_LITERALS: Readonly<Record<string, readonly string[]>> =
  * exists to catch.
  */
 const ACK_TEXT_TRANSLATED_AGAINST =
-  '32457a8662663726ac9c701a5786520c82ed28e35aee3306218b9a75865f918f';
+  'b2be82ac1e28d974a5d823f34b14eec4f01a42d5bb9e6ccb791b3bc1b0d2ddb7';
 
 
 const read = (code: string): Bundle =>

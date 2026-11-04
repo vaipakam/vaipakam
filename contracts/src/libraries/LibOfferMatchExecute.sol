@@ -12,6 +12,7 @@ import {VaultFactoryFacet} from "../facets/VaultFactoryFacet.sol";
 import {EncumbranceMutateFacet} from "../facets/EncumbranceMutateFacet.sol";
 import {OfferCreateFacet} from "../facets/OfferCreateFacet.sol";
 import {RiskPreviewFacet} from "../facets/RiskPreviewFacet.sol";
+import {LibRefinanceNetting} from "./LibRefinanceNetting.sol";
 
 /**
  * @title  LibOfferMatchExecute — the match-execution core every match host shares.
@@ -654,7 +655,8 @@ library LibOfferMatchExecute {
                 // OfferAcceptFacet._acceptOffer. #2349 — a matcher fill
                 // chains into the MATCH entry, which the auto-refinance
                 // kill switch gates (the lender-accept entry is not).
-                if (bm.refinanceTargetLoanId != 0) {
+                // #3042 — the predicate the net-principal delivery parked on.
+                if (LibRefinanceNetting.isRefinanceAccept(bm)) {
                     LibFacet.crossFacetCall(
                         abi.encodeWithSelector(
                             RefinanceFacet.refinanceLoanFromMatch.selector,

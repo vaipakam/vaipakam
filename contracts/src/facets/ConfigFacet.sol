@@ -1529,7 +1529,7 @@ contract ConfigFacet is DiamondAccessControl {
     /**
      * @notice Master kill-switch for the flash-loan /
      *         liquidator-buys-at-discount liquidation path
-     *         (`RiskFacet.triggerLiquidationDiscounted`). Default
+     *         (`RiskDiscountedLiquidationFacet.triggerLiquidationDiscounted`). Default
      *         `false` ⇒ the entry point reverts immediately so a
      *         fresh deploy never exposes the path before its per-chain
      *         audit + risk-committee sign-off.

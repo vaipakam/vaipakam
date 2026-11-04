@@ -339,8 +339,8 @@ library LibAutoRefinanceCheck {
         }
         // Codex round-1 P2 — fail-fast on refinance-incompatible
         // targets so a refinance-tagged offer can't pass create,
-        // attract a lender, and then strand the principal when
-        // `RefinanceFacet.refinanceLoan` rejects the mismatched
+        // attract a lender, and then revert the accept when
+        // `RefinanceFacet`'s payoff rejects the mismatched
         // shape. NFT-rental refinance is out of scope (Refinance
         // gates on `loan.assetType == ERC20`); the asset pair must
         // match the old loan's; the offer's amountMax must cover

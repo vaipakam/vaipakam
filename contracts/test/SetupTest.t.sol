@@ -36,6 +36,10 @@ import {IntentConfigFacet} from "../src/facets/IntentConfigFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet.sol";
 import {RiskSplitLiquidationFacet} from "../src/facets/RiskSplitLiquidationFacet.sol";
+import {RiskDiscountedLiquidationFacet} from "../src/facets/RiskDiscountedLiquidationFacet.sol";
+import {ProtectedAccountFacet} from "../src/facets/ProtectedAccountFacet.sol";
+import {VaultPayoutFacet} from "../src/facets/VaultPayoutFacet.sol";
+import {VaultDepositoryFacet} from "../src/facets/VaultDepositoryFacet.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {LibPausable} from "../src/libraries/LibPausable.sol";
@@ -170,6 +174,8 @@ import {NumeraireValueFacet} from "../src/facets/NumeraireValueFacet.sol";
 import {NotificationFeeFacet} from "../src/facets/NotificationFeeFacet.sol";
 import {ForcedSaleFacet} from "../src/facets/ForcedSaleFacet.sol";
 import {SaleExitVerdictFacet} from "../src/facets/SaleExitVerdictFacet.sol";
+import {SellerClaimFacet} from "../src/facets/SellerClaimFacet.sol";
+import {RefinancePayoffFacet} from "../src/facets/RefinancePayoffFacet.sol";
 import {RateModelFacet} from "../src/facets/RateModelFacet.sol";
 import {VaipakamNFTMetadataFacet} from "../src/facets/VaipakamNFTMetadataFacet.sol";
 import {RewardSweepWalkFacet} from "../src/facets/RewardSweepWalkFacet.sol";
@@ -305,6 +311,10 @@ contract SetupTest is Test {
     RiskFacet riskFacet; // Added
     RiskMatchLiquidationFacet riskMatchLiquidationFacet;
     RiskSplitLiquidationFacet riskSplitLiquidationFacet;
+    RiskDiscountedLiquidationFacet riskDiscountedLiquidationFacet;
+    ProtectedAccountFacet protectedAccountFacet;
+    VaultPayoutFacet vaultPayoutFacet;
+    VaultDepositoryFacet vaultDepositoryFacet;
     RepayFacet repayFacet;
     RepayPeriodicFacet repayPeriodicFacet;
     SwapToRepayFacet swapToRepayFacet;
@@ -398,6 +408,8 @@ contract SetupTest is Test {
     NotificationFeeFacet notificationFeeFacet;
     ForcedSaleFacet forcedSaleFacet;
     SaleExitVerdictFacet saleExitVerdictFacet;
+    SellerClaimFacet sellerClaimFacet;
+    RefinancePayoffFacet refinancePayoffFacet;
     RateModelFacet rateModelFacet;
     VaipakamNFTMetadataFacet nftMetadataFacet;
     RewardCompensationDispatchFacet rewardCompensationDispatchFacet;
@@ -469,6 +481,10 @@ contract SetupTest is Test {
         riskFacet = RiskFacet(ArtifactDeploy.deploy(type(RiskFacet).name));
         riskMatchLiquidationFacet = RiskMatchLiquidationFacet(ArtifactDeploy.deploy(type(RiskMatchLiquidationFacet).name));
         riskSplitLiquidationFacet = RiskSplitLiquidationFacet(ArtifactDeploy.deploy(type(RiskSplitLiquidationFacet).name));
+        riskDiscountedLiquidationFacet = RiskDiscountedLiquidationFacet(ArtifactDeploy.deploy(type(RiskDiscountedLiquidationFacet).name));
+        protectedAccountFacet = ProtectedAccountFacet(ArtifactDeploy.deploy(type(ProtectedAccountFacet).name));
+        vaultPayoutFacet = VaultPayoutFacet(ArtifactDeploy.deploy(type(VaultPayoutFacet).name));
+        vaultDepositoryFacet = VaultDepositoryFacet(ArtifactDeploy.deploy(type(VaultDepositoryFacet).name));
         repayFacet = RepayFacet(ArtifactDeploy.deploy(type(RepayFacet).name));
         repayPeriodicFacet = RepayPeriodicFacet(ArtifactDeploy.deploy(type(RepayPeriodicFacet).name));
         swapToRepayFacet = SwapToRepayFacet(ArtifactDeploy.deploy(type(SwapToRepayFacet).name));
@@ -553,6 +569,8 @@ contract SetupTest is Test {
         notificationFeeFacet = NotificationFeeFacet(ArtifactDeploy.deploy(type(NotificationFeeFacet).name));
         forcedSaleFacet = ForcedSaleFacet(ArtifactDeploy.deploy(type(ForcedSaleFacet).name));
         saleExitVerdictFacet = SaleExitVerdictFacet(ArtifactDeploy.deploy(type(SaleExitVerdictFacet).name));
+        sellerClaimFacet = SellerClaimFacet(ArtifactDeploy.deploy(type(SellerClaimFacet).name));
+        refinancePayoffFacet = RefinancePayoffFacet(ArtifactDeploy.deploy(type(RefinancePayoffFacet).name));
         rateModelFacet = RateModelFacet(ArtifactDeploy.deploy(type(RateModelFacet).name));
         nftMetadataFacet = VaipakamNFTMetadataFacet(ArtifactDeploy.deploy(type(VaipakamNFTMetadataFacet).name));
         rewardCompensationDispatchFacet = RewardCompensationDispatchFacet(ArtifactDeploy.deploy(type(RewardCompensationDispatchFacet).name));
@@ -587,7 +605,7 @@ contract SetupTest is Test {
         // Preclose / Refinance / EarlyWithdrawal / PartialWithdrawal
         // quartet at slots 24-27 to unblock the PauseGating fold —
         // those slots stay where they are.
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](104);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](110);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -1013,6 +1031,41 @@ contract SetupTest is Test {
             facetAddress: address(saleExitVerdictFacet),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getSaleExitVerdictFacetSelectors()
+        });
+        // #1209 / #1808 — the seller-claim host every interest payout and
+        // ClaimFacet self-call.
+        cuts[104] = IDiamondCut.FacetCut({
+            facetAddress: address(sellerClaimFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getSellerClaimFacetSelectors()
+        });
+        // #1558 — the borrower's payoff permit on a refinance request.
+        cuts[105] = IDiamondCut.FacetCut({
+            facetAddress: address(refinancePayoffFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getRefinancePayoffFacetSelectors()
+        });
+        // The discounted liquidation route, moved off RiskFacet (EIP-170).
+        cuts[106] = IDiamondCut.FacetCut({
+            facetAddress: address(riskDiscountedLiquidationFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getRiskDiscountedLiquidationFacetSelectors()
+        });
+        // Protected account mode and the depository vault.
+        cuts[107] = IDiamondCut.FacetCut({
+            facetAddress: address(protectedAccountFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getProtectedAccountFacetSelectors()
+        });
+        cuts[108] = IDiamondCut.FacetCut({
+            facetAddress: address(vaultPayoutFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getVaultPayoutFacetSelectors()
+        });
+        cuts[109] = IDiamondCut.FacetCut({
+            facetAddress: address(vaultDepositoryFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getVaultDepositoryFacetSelectors()
         });
         // #1306 follow-up — read-only lens facet (view/getter surface split
         // off InteractionRewardsFacet for EIP-170 headroom; shared storage).

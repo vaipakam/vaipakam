@@ -11,6 +11,8 @@ import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
+import {ProtectedAccountFacet} from "../src/facets/ProtectedAccountFacet.sol";
+import {VaultPayoutFacet} from "../src/facets/VaultPayoutFacet.sol";
 
 /**
  * @title CancelAfterPartialFillTest
@@ -173,6 +175,52 @@ contract CancelAfterPartialFillTest is SetupTest {
                 useFullTermInterest: false
             })
         );
+    }
+
+    /// @notice Protected account mode — a good-till-cancelled offer left
+    ///         open by a wallet that a signer majority replaced is cancelled
+    ///         by the new wallet (the controller), not the old one, and the
+    ///         refund queues to the controller behind the delay.
+    function test_controllerCancelsARetiredCreatorsOffer() public {
+        uint256 offerId = _postLenderOffer({
+            creator: lender2,
+            amount: 1_000,
+            amountMax: 1_000,
+            rateMin: 500,
+            rateMax: 500,
+            collateralRequired: 500
+        });
+        address nominee = makeAddr("offerNominee");
+        ProtectedAccountFacet p = ProtectedAccountFacet(address(diamond));
+        vm.prank(lender2);
+        p.enableProtectedMode(2 days, true);
+        address[3] memory signers = [makeAddr("os1"), makeAddr("os2"), makeAddr("os3")];
+        for (uint256 i; i < 3; ++i) {
+            vm.prank(lender2);
+            p.addSigner(lender2, signers[i]);
+            vm.prank(signers[i]);
+            p.acceptSignerRole(lender2);
+            vm.warp(vm.getBlockTimestamp() + 2 days);
+            p.finalizeAddSigner(lender2, signers[i]);
+        }
+        vm.prank(signers[0]);
+        p.proposeReplacement(lender2, nominee);
+        vm.prank(signers[1]);
+        p.approveReplacement(lender2);
+        vm.warp(vm.getBlockTimestamp() + 2 days);
+        p.finalizeReplacement(lender2);
+
+        vm.prank(lender2);
+        vm.expectRevert(
+            abi.encodeWithSelector(OfferCancelFacet.NotCreatorOrNotExpired.selector, lender2, uint64(0))
+        );
+        OfferCancelFacet(address(diamond)).cancelOffer(offerId);
+
+        uint256 before = ERC20(mockERC20).balanceOf(nominee);
+        vm.prank(nominee);
+        OfferCancelFacet(address(diamond)).cancelOffer(offerId);
+        assertEq(ERC20(mockERC20).balanceOf(nominee), before, "queued, not paid at once");
+        assertEq(VaultPayoutFacet(address(diamond)).getPendingPayoutIds(lender2).length, 1, "refund queued");
     }
 
     // ─────────────────────────────────────────────────────────────────

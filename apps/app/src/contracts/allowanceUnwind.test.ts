@@ -21,7 +21,12 @@
  */
 import { describe, expect, it, vi } from 'vitest';
 import type { PublicClient, WalletClient } from 'viem';
-import { ensureAllowance, restoreAllowance, trackApproval } from './erc20';
+import {
+  ensureAllowance,
+  readAllowanceNotBefore,
+  restoreAllowance,
+  trackApproval,
+} from './erc20';
 
 const TOKEN = '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' as const;
 const OWNER = '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' as const;
@@ -1238,5 +1243,67 @@ describe('trackApproval', () => {
     await ensureAllowance({ ...base(h), amount: 1_000n, ...approval.hooks(TOKEN) });
     expect(await approval.unwind(clients(h))).toBe(false);
     expect(h.allowance).toBe(1_000n);
+  });
+});
+
+describe('trackApproval — the block its writes mined in', () => {
+  const clients = (h: ReturnType<typeof harness>) => ({
+    publicClient: h.publicClient,
+    walletClient: h.walletClient,
+    owner: OWNER,
+    spender: SPENDER,
+  });
+
+  it('is null when nothing was written, and the receipt block once something was', async () => {
+    const h = harness({ allowance: 2_000n });
+    const approval = trackApproval();
+    await ensureAllowance({ ...base(h), amount: 1_000n, ...approval.hooks(TOKEN) });
+    expect(approval.lastMinedBlock()).toBeNull();
+
+    const h2 = harness({ allowance: 0n });
+    const approval2 = trackApproval();
+    await ensureAllowance({ ...base(h2), amount: 1_000n, ...approval2.hooks(TOKEN) });
+    expect(approval2.lastMinedBlock()).toBe(RECEIPT_BLOCK);
+  });
+
+  it('reports the block the restore mined in', async () => {
+    const h = harness({ allowance: 1_000n });
+    const onMined = vi.fn();
+    await restoreAllowance({ ...clients(h), token: TOKEN, previous: 0n, wrote: 1_000n, onMined });
+    expect(h.allowance).toBe(0n);
+    expect(onMined).toHaveBeenCalledWith(RECEIPT_BLOCK);
+  });
+});
+
+describe('readAllowanceNotBefore', () => {
+  function reader(heads: bigint[], value: bigint) {
+    const reads: (bigint | undefined)[] = [];
+    let i = 0;
+    const client = {
+      getBlockNumber: vi.fn(async () => heads[Math.min(i++, heads.length - 1)]),
+      readContract: vi.fn(async ({ blockNumber }: { blockNumber?: bigint }) => {
+        reads.push(blockNumber);
+        return value;
+      }),
+    } as unknown as PublicClient;
+    return { client, reads };
+  }
+
+  it('reads pinned to a head that has reached the floor', async () => {
+    const r = reader([105n], 7n);
+    expect(await readAllowanceNotBefore(r.client, TOKEN, OWNER, SPENDER, 100n)).toBe(7n);
+    expect(r.reads).toEqual([105n]);
+  });
+
+  it('waits out a lagging head, and reads once it catches up', async () => {
+    const r = reader([99n, 100n], 7n);
+    expect(await readAllowanceNotBefore(r.client, TOKEN, OWNER, SPENDER, 100n)).toBe(7n);
+    expect(r.reads).toEqual([100n]);
+  });
+
+  it('answers null, never a stale figure, when no node reaches the floor', async () => {
+    const r = reader([99n], 7n);
+    expect(await readAllowanceNotBefore(r.client, TOKEN, OWNER, SPENDER, 100n)).toBeNull();
+    expect(r.reads).toEqual([]);
   });
 });

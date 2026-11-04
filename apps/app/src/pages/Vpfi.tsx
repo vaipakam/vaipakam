@@ -22,6 +22,8 @@ import { useQueryClient } from '@tanstack/react-query';
 import { encodeFunctionData } from 'viem';
 import { getDeployment } from '@vaipakam/contracts/deployments';
 import { copy } from '../content/copy';
+import { ownFundingVerdict, ownWithdrawalVerdict, payoutOutcome, useProtectedAccount } from '../data/protectedAccount';
+import { formatExactSpan, shortAddress } from '../lib/format';
 import { useActiveChain } from '../chain/useActiveChain';
 import { useLatestAttempt } from '../lib/useLatestAttempt';
 import { SUPPORTED_CHAINS } from '../chain/chains';
@@ -68,6 +70,40 @@ export function Vpfi() {
   const { setOpen } = useModal();
   const vpfi = useVpfi();
   const { write } = useDiamondWrite();
+  // Protected account mode decides what a withdrawal does: paid now, or
+  // queued behind the account's delay. It must be READ before a withdrawal
+  // is offered, and a locked or replaced account cannot withdraw here.
+  const protection = useProtectedAccount(address ?? undefined);
+  const protRecord =
+    protection.data && !protection.isError && !protection.data.recordFailed ? protection.data.record : undefined;
+  const protOn = protRecord?.enabled === true;
+  // One rule for whether this withdrawal can be sent now (the contract's):
+  // a locked or retired account, or a full queue, is refused before sending.
+  const withdrawal = ownWithdrawalVerdict(protection.data, protection.isError);
+  const withdrawRefusal =
+    !address || protection.isLoading
+      ? null
+      : withdrawal.kind === 'unread'
+        ? copy.vpfi.withdrawProtectionUnknown
+        : withdrawal.kind === 'queueFull'
+          ? copy.vpfi.withdrawQueueFull
+          : withdrawal.kind === 'locked' || withdrawal.kind === 'retired'
+            ? copy.vpfi.withdrawProtectionBlocked
+            : null;
+  const withdrawReady = withdrawal.kind === 'open';
+  // A deposit reads the same funding rule as the depository card: a wallet
+  // whose account was moved to a new wallet cannot fund it (the contract
+  // refuses), so neither the deposit nor its approval is offered.
+  const funding = ownFundingVerdict(protection.data, protection.isError);
+  const depositRefusal =
+    !address || protection.isLoading
+      ? null
+      : funding.kind === 'unread'
+        ? copy.vpfi.depositProtectionUnknown
+        : funding.kind === 'retired'
+          ? copy.vpfi.depositRetired(shortAddress(funding.controller))
+          : null;
+  const depositReady = funding.kind === 'open';
   const termsBlocked = useTermsBlockNonExitWrites();
   const permit2 = usePermit2Signing();
   const { data: walletClient } = useWalletClient();
@@ -145,15 +181,20 @@ export function Vpfi() {
         whenThisEnds: copy.vpfi.receiptDeposit.whenThisEnds,
       };
     }
+    if (!withdrawReady) return null;
     return {
-      youReceive: copy.vpfi.withdrawYouReceive(amtStr),
+      youReceive: protOn
+        ? `${copy.vpfi.withdrawQueuedYouReceive(amtStr, formatExactSpan(protRecord?.delaySeconds ?? 0))}${
+            protRecord?.requireCosign ? ` ${copy.vpfi.withdrawQueuedCosign}` : ''
+          }`
+        : copy.vpfi.withdrawYouReceive(amtStr),
       youLock: copy.vpfi.nothing,
       youMayOwe: copy.vpfi.nothing,
       youCanLose: `${copy.vpfi.receiptWithdraw.youCanLoseLead} ${copy.vpfi.withdrawWarning}`,
       fees: copy.vpfi.receiptWithdraw.fees,
       whenThisEnds: copy.vpfi.receiptWithdraw.whenThisEnds,
     };
-  }, [action, amountWei, overMax]);
+  }, [action, amountWei, overMax, withdrawReady, protOn, protRecord]);
 
   // #1028 item 2 — advisory pre-sign dry run of the exact vault
   // action calldata. Deposits approve first, so the zero-allowance
@@ -316,8 +357,18 @@ export function Vpfi() {
         setDone(copy.vpfi.depositDone);
       } else {
         setPhase('submitting');
-        await write('withdrawVPFIFromVault', [amountWei]);
-        setDone(copy.vpfi.withdrawDone);
+        if (!withdrawReady) throw new Error(withdrawRefusal ?? copy.vpfi.withdrawProtectionUnknown);
+        const { receipt: txReceipt } = await write('withdrawVPFIFromVault', [amountWei]);
+        // The receipt says what happened: paid now, queued behind the delay,
+        // or held in the vault; never assume the wallet was paid.
+        const outcome = payoutOutcome(txReceipt.logs, address).kind;
+        setDone(
+          outcome === 'held'
+            ? copy.vpfi.withdrawHeldDone
+            : outcome === 'queued'
+              ? copy.vpfi.withdrawQueuedDone
+              : copy.vpfi.withdrawDone,
+        );
       }
       setAmount('');
       setReviewing(false);
@@ -775,6 +826,13 @@ export function Vpfi() {
               />
             </div>
 
+            {action === 'withdraw' && withdrawRefusal ? (
+              <p className="muted" role="status">{withdrawRefusal}</p>
+            ) : null}
+            {action === 'deposit' && depositRefusal ? (
+              <p className="muted" role="status">{depositRefusal}</p>
+            ) : null}
+
             {reviewing && receipt ? (
               <div style={{ marginTop: 8 }}>
                 <ReviewReceipt data={receipt} />
@@ -805,7 +863,8 @@ export function Vpfi() {
                 type="button"
                 className="btn btn-primary btn-block"
                 style={{ marginTop: 8 }}
-                disabled={!amountWei || overMax}
+                disabled={!amountWei || overMax || (action === 'withdraw' && !withdrawReady) ||
+                  (action === 'deposit' && !depositReady)}
                 onClick={() => {
                   setDone(null);
                   setReviewing(true);
@@ -829,7 +888,9 @@ export function Vpfi() {
                   !walletClient ||
                   !publicClient ||
                   !amountWei ||
-                  overMax
+                  overMax ||
+                  (action === 'withdraw' && !withdrawReady) ||
+                  (action === 'deposit' && !depositReady)
                 }
                 onClick={() => void runVaultAction()}
               >

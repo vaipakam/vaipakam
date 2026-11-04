@@ -19,18 +19,17 @@
  * Lender-intent capital and payroll salary are a documented follow-up
  * (no app read surface yet).
  */
-import { encodeFunctionData } from 'viem';
-import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
+import { encodeBestEffort, MAX_MULTICALL_CALLS, type EncodedMulticallCall } from './multicall';
 import { AssetType } from '../lib/types';
 import { formatTokenAmount } from '../lib/format';
 import { VPFI_DECIMALS } from './vpfi';
 import { copySource } from '../content/copy';
 import type { ClaimableLoan } from './claimables';
 
-/** Upper bound mirrors `MulticallFacet.MAX_MULTICALL_CALLS` — a batch
- *  past this reverts on-chain, so the UI caps the SELECTED count here
- *  and asks the user to claim the rest in a second pass. */
-export const MAX_CLAIM_ALL = 30;
+/** The on-chain batch bound (`MulticallFacet.MAX_MULTICALL_CALLS`) — a
+ *  batch past it reverts, so the UI caps the SELECTED count here and asks
+ *  the user to claim the rest in a second pass. */
+export const MAX_CLAIM_ALL = MAX_MULTICALL_CALLS;
 
 export type ClaimAllKind =
   | 'loan-lender'
@@ -208,14 +207,10 @@ export function defaultSelectedKeys(
   );
 }
 
-/** One encoded `MulticallFacet.Call` — index-aligned with its item. */
-export interface EncodedClaimCall {
-  callData: `0x${string}`;
-  /** Always true for Claim-All: an item finalized by another party
-   *  between preview and tx is SKIPPED, and the rest still execute
-   *  (a reverted delegatecall rolls back only its own frame). */
-  allowFailure: boolean;
-}
+/** One encoded `MulticallFacet.Call` — index-aligned with its item.
+ *  Always `allowFailure: true` for Claim-All: an item finalized by another
+ *  party between preview and tx is SKIPPED, and the rest still execute. */
+export type EncodedClaimCall = EncodedMulticallCall;
 
 /**
  * Encode a chosen set of items into the `Call[]` `multicall` takes.
@@ -226,12 +221,5 @@ export interface EncodedClaimCall {
 export function encodeClaimAllCalls(
   items: ClaimAllItem[],
 ): EncodedClaimCall[] {
-  return items.map((item) => ({
-    callData: encodeFunctionData({
-      abi: DIAMOND_ABI_VIEM,
-      functionName: item.functionName,
-      args: item.args as unknown[],
-    }),
-    allowFailure: true,
-  }));
+  return encodeBestEffort(items);
 }

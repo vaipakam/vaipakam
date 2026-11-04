@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibProtectedAccount} from "../libraries/LibProtectedAccount.sol";
 import {LibCloseoutFreeze} from "../libraries/LibCloseoutFreeze.sol";
 import {LibPriorityRouting} from "../libraries/LibPriorityRouting.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
@@ -206,6 +207,7 @@ contract LenderIntentFacet is
         bool riskAndTermsConsent
     ) external nonReentrant whenNotPaused {
         LibVaipakam._assertNotSanctioned(msg.sender);
+        LibProtectedAccount.requireCanOpen(msg.sender);
 
         // Mandatory risk/terms consent — same gate as every offer-create path
         // (`RiskAndTermsConsentRequired`), captured once for the standing intent.
@@ -381,6 +383,7 @@ contract LenderIntentFacet is
         uint256 amount
     ) external nonReentrant whenNotPaused {
         LibVaipakam._assertNotSanctioned(msg.sender);
+        LibProtectedAccount.requireCanOpen(msg.sender);
         if (amount == 0) revert LenderIntentInvalidBounds();
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         if (!s.lenderIntent[msg.sender][lendingAsset][collateralAsset].active) {
@@ -438,41 +441,49 @@ contract LenderIntentFacet is
     ///         vault chokepoint's free-balance guard sees the amount as free
     ///         (same ordering as `ClaimFacet` releasing the proceeds
     ///         reservation before paying out).
+    /// @param account         The intent's owner; the caller must be its
+    ///                        manager (`LibProtectedAccount.requireManager`).
     /// @param lendingAsset    The intent's lending asset (intent key).
     /// @param collateralAsset The intent's collateral asset (intent key).
     /// @param amount          Un-lent capital to return wallet-ward (> 0,
     ///                        <= the liened capital).
     function withdrawLenderIntentCapital(
+        address account,
         address lendingAsset,
         address collateralAsset,
         uint256 amount
     ) external nonReentrant whenNotPaused {
+        // The account's manager: its own wallet, or its controller once a
+        // replacement retired it, so a recovered account's capital is never
+        // stranded behind the lost key. Paid to the manager (a protected
+        // account's payout queues behind the delay).
+        LibProtectedAccount.requireManager(account);
         LibVaipakam._assertNotSanctioned(msg.sender);
         if (amount == 0) revert LenderIntentInvalidBounds();
         // Release from the lien (reverts `IntentCapitalInsufficient` if it
         // exceeds the un-lent capital) BEFORE the withdraw, so the chokepoint
         // guard sees the amount as free balance.
         LibEncumbrance.unlienIntentCapital(
-            msg.sender, lendingAsset, collateralAsset, amount
+            account, lendingAsset, collateralAsset, amount
         );
         // A VPFI-denominated intent withdraws like any other asset: the
         // withdraw below refreshes the lender's VPFI tier record itself
         // (#1820), so pulling VPFI out lowers their tier at once.
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         VaultFactoryFacet(address(this)).vaultWithdrawERC20(
-            msg.sender,
+            account,
             lendingAsset,
             msg.sender,
             amount
         );
         // #625 WI-2a — capital may now be 0 ⇒ de-list the intent if depleted.
-        LibVaipakam.syncIntentRegistry(msg.sender, lendingAsset, collateralAsset);
+        LibVaipakam.syncIntentRegistry(account, lendingAsset, collateralAsset);
         emit LenderIntentCapitalWithdrawn(
-            msg.sender,
+            account,
             lendingAsset,
             collateralAsset,
             amount,
-            s.lenderIntentCapital[msg.sender][lendingAsset][collateralAsset]
+            s.lenderIntentCapital[account][lendingAsset][collateralAsset]
         );
     }
 
@@ -653,6 +664,10 @@ contract LenderIntentFacet is
         // claim makes but this roll doesn't. Rather than strand it (the NFT is
         // about to burn), reject the loan to the normal claim path.
         if (s.heldForLender[loanId] != 0) revert LenderIntentLoanNotRollable();
+        // #1209 — a position sold and bought back carries seller claims on this
+        // claim row; the normal claim splits it with them first. The roll
+        // would compound their interest into the owner's intent, so refuse.
+        if (s.sellerInterestClaims[loanId].length != 0) revert LenderIntentLoanNotRollable();
         // #2860 — a VPFI loan's repayment proceeds are RESERVED by RepayFacet
         // (`lenderProceedsEncumbered`) until the position holder claims them;
         // this roll can't release that reservation, and consuming the claim
@@ -723,7 +738,7 @@ contract LenderIntentFacet is
         // claim path rather than mint UNBACKED intent capital (which could never
         // be matched or withdrawn) and strand the real proceeds.
         uint256 rawBal =
-            s.protocolTrackedVaultBalance[io.owner][io.lendingAsset];
+            LibVaipakam.trackedHolding(io.owner, io.lendingAsset, 0);
         if (
             LibEncumbrance.freeBalance(io.owner, io.lendingAsset, 0, rawBal)
                 < rolledAmount

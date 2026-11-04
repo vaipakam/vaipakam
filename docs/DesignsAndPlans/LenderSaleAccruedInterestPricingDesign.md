@@ -1,6 +1,11 @@
 # Lender position sale — price accrued interest to the seller (E-7)
 
-**Status:** design for an **owner economics decision + contract change**.
+**Status:** SUPERSEDED (owner decision 2026-10-28). The upfront-price model
+below was not built. The seller keeps a claim on the loan instead; see
+[`LenderSaleSellerInterestClaimDesign.md`](LenderSaleSellerInterestClaimDesign.md).
+Kept as the record of the options considered.
+
+**Original status:** design for an **owner economics decision + contract change**.
 Card: #1209. Umbrella: #1221. Sequenced with the sale-vehicle chain
 (#951 / #974 / #927) and `LenderSaleVehicleRedesign.md`.
 

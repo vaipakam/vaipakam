@@ -63,7 +63,7 @@ contract KeeperRewardTest is SetupTest {
     }
 
     /// @dev Write directly into `s.keeperRewardBudget` via the diamond's
-    ///      EIP-7201 storage slot, same probe pattern as TreasuryYieldTest.
+    ///      EIP-7201 storage slot, the usual direct storage probe.
     function _seedKeeperBudget(uint256 amount) internal {
         bytes32 baseSlot = 0x76f6f3ffb4e1cbadb2d289330bfeb7bd9d50e6e2407a61733161f6e3e1d10e00;
         // keeperRewardBudget is at a known offset within the Storage

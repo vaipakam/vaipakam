@@ -33,6 +33,7 @@ import {LibFeeEntitlement} from "../libraries/LibFeeEntitlement.sol";
 import {LibUserVault} from "../libraries/LibUserVault.sol";
 import {OfferAcceptFeeFacet} from "./OfferAcceptFeeFacet.sol";
 import {NumeraireValueFacet} from "./NumeraireValueFacet.sol";
+import {LibRefinanceNetting} from "../libraries/LibRefinanceNetting.sol";
 
 /**
  * @title OfferAcceptFacet
@@ -116,8 +117,8 @@ contract OfferAcceptFacet is
     ///      which facet emits.
 
     /// @dev Emitted by `OfferFacet.matchOffers` (and the
-    ///      `acceptOffer` / `PrecloseFacet.transferObligationViaOffer` /
-    ///      `RefinanceFacet.refinanceLoan` wrappers around the shared
+    ///      `acceptOffer` / `PrecloseFacet.transferObligationViaOffer`
+    ///      wrappers around the shared
     ///      matching core, once Range Orders Phase 1 PR3 lands). Single
     ///      source-of-truth event for the matched terms — both midpoints
     ///      are emitted so downstream alt-rule analytics can reconstruct
@@ -1407,19 +1408,9 @@ contract OfferAcceptFacet is
                 // Borrower-type NFT offer accepted by lender: vault the lender's NFT.
                 // The lender (msg.sender/acceptor) must custody the NFT in their vault
                 // for the rental duration, matching the Lender-offer model.
-                if (offer.assetType == LibVaipakam.AssetType.ERC721) {
-                    IERC721(offer.lendingAsset).safeTransferFrom(
-                        lender,
-                        lenderVault,
-                        offer.tokenId
-                    );
-                } else if (offer.assetType == LibVaipakam.AssetType.ERC1155) {
-                    IERC1155(offer.lendingAsset).safeTransferFrom(
-                        lender,
-                        lenderVault,
-                        offer.tokenId,
-                        offer.quantity,
-                        ""
+                if (offer.assetType != LibVaipakam.AssetType.ERC20) {
+                    _pullNftIntoVault(
+                        offer.assetType, offer.lendingAsset, lender, lenderVault, offer.tokenId, offer.quantity
                     );
                 }
             }
@@ -1466,19 +1457,14 @@ contract OfferAcceptFacet is
                             VaultDepositFailed.selector
                         );
                     }
-                } else if (offer.collateralAssetType == LibVaipakam.AssetType.ERC721) {
-                    IERC721(offer.collateralAsset).safeTransferFrom(
-                        borrower,
-                        borrowerVault,
-                        offer.collateralTokenId
-                    );
-                } else if (offer.collateralAssetType == LibVaipakam.AssetType.ERC1155) {
-                    IERC1155(offer.collateralAsset).safeTransferFrom(
+                } else {
+                    _pullNftIntoVault(
+                        offer.collateralAssetType,
+                        offer.collateralAsset,
                         borrower,
                         borrowerVault,
                         offer.collateralTokenId,
-                        offer.collateralQuantity,
-                        ""
+                        offer.collateralQuantity
                     );
                 }
             }
@@ -1628,10 +1614,9 @@ contract OfferAcceptFacet is
             // `refinanceLoanFromMatch` (kill-switch gated); a plain
             // lender accept chains into `refinanceLoanFromAccept`
             // (never gated by it).
-            if (
-                offer.refinanceTargetLoanId != 0 &&
-                offer.offerType == LibVaipakam.OfferType.Borrower
-            ) {
+            // #3042 — the same predicate the net-principal delivery parked
+            // on, so a parked net principal is always consumed here.
+            if (LibRefinanceNetting.isRefinanceAccept(offer)) {
                 LibFacet.crossFacetCall(
                     abi.encodeWithSelector(
                         s.matchOverride.active
@@ -2079,4 +2064,24 @@ contract OfferAcceptFacet is
         AcceptError errorCode;
     }
 
+
+    /// @dev Pull a rental or collateral NFT from `owner`'s wallet into
+    ///      `owner`'s vault (the Diamond as approved operator) and record it
+    ///      in the tracked ledger, which bounds every vault withdrawal.
+    function _pullNftIntoVault(
+        LibVaipakam.AssetType kind,
+        address asset,
+        address owner,
+        address vault,
+        uint256 tokenId,
+        uint256 quantity
+    ) private {
+        if (kind == LibVaipakam.AssetType.ERC721) {
+            IERC721(asset).safeTransferFrom(owner, vault, tokenId);
+            quantity = 1;
+        } else {
+            IERC1155(asset).safeTransferFrom(owner, vault, tokenId, quantity, "");
+        }
+        LibVaipakam.recordVaultDeposit(owner, asset, tokenId, quantity);
+    }
 }

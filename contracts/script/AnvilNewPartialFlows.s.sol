@@ -483,8 +483,8 @@ contract AnvilNewPartialFlows is Script {
         vm.stopBroadcast();
 
         uint256 stray = usdc.balanceOf(userVault);
-        uint256 tracked = VaultFactoryFacet(diamond).getProtocolTrackedVaultBalance(
-            user, address(usdc)
+        uint256 tracked = VaultFactoryFacet(diamond).getTrackedHolding(
+            user, address(usdc), 0
         );
         console.log("Stray balance in vault:", stray);
         console.log("Tracked balance:", tracked);

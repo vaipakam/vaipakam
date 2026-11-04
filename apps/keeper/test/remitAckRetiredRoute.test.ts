@@ -25,6 +25,7 @@ import {
   RewardRemittanceLensFacetABI,
   RewardReporterFacetABI,
 } from '@vaipakam/contracts/abis';
+import { getDeployment } from '@vaipakam/contracts/deployments';
 import {
   parseUndeliveredAlertKey,
   REMIT_OVERDUE_SEC,
@@ -395,7 +396,11 @@ async function tick(book: Book) {
   return { alerts, warns, errors, cleared, routeReads: routeReads(), routeIds, posts, postTexts, quotes: quotes(), quoteRpcs, sendRpcs, elapsedMs, cursors };
 }
 
-const BASE_DIAMOND = '0x2535baC87F3df287268fC697F2f31cf418365303';
+// The pass keys an open alert on the Diamond the bundle names for Base, so the
+// test reads that same address rather than pinning one: a pinned literal went
+// stale on the next fresh deploy and every "clears an open alert" cell silently
+// asserted against a Diamond the pass no longer watched.
+const BASE_DIAMOND = getDeployment(BASE)!.diamond;
 
 afterEach(() => vi.restoreAllMocks());
 

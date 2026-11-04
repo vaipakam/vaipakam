@@ -141,10 +141,6 @@ interface BaseEnv {
   /** recent-day window re-scanned for un-reported commitments each tick (default 14). */
   REWARD_COMMIT_LOOKBACK_DAYS?: string;
 
-  // #1944 + the transport epochs — the delivery-proof pass (`deliveryProof.ts`).
-  /** 'true' arms the mirror-side delivery indexing/proof pass (in addition to KEEPER_ENABLED). `secret_text`. */
-  REWARD_DELIVERY_PROOF_ENABLED?: string;
-
   // #2450 — the #1566 sanctions-hold observer (`rewardSanctionsHold.ts`).
   /** 'true' arms the sanctions-hold observer (in addition to KEEPER_ENABLED). `secret_text`, like the flags above. */
   REWARD_SANCTIONS_KEEPER_ENABLED?: string;
@@ -207,6 +203,20 @@ interface BaseEnv {
    *  the buyback-intent expiry and the tier LTV cache refresh. Both
    *  permissionless; neither pays a fee or moves value to the keeper. */
   PROTOCOL_UPKEEP_ENABLED?: string;
+  /** 'true' adds the #2984 prepay-sale sanctions sync to the armed protocol
+   *  upkeep pass: `syncPrepaySaleListing` / `syncPrepaySaleOffer` for a live
+   *  listing with a party the oracle flags, which commits the flag to the
+   *  fail-closed registry and cancels the listing. Permissionless; no fee,
+   *  nothing to the keeper. Read only while PROTOCOL_UPKEEP_ENABLED arms the
+   *  pass. */
+  PREPAY_SALE_SANCTIONS_SYNC_ENABLED?: string;
+  /** #2984 — 'true' adds the tier-push retry to the protocol upkeep pass
+   *  (step 4): deliverTierPush for a user whose committed tier push a
+   *  broadcast lane is still owed, when the protocol broadcast budget can
+   *  pay the lane now. Permissionless; the keeper attaches no value, and the
+   *  lane's CCIP fee is the protocol budget's under the facet's own rule.
+   *  Read only while PROTOCOL_UPKEEP_ENABLED arms the pass. */
+  TIER_PUSH_RETRY_ENABLED?: string;
   /** Seconds after which a cached tier LTV is refreshed even when its value
    *  would not change (default 7 days; the contract uses a cached tier only
    *  while it is under 14 days old). A plain var. */
@@ -217,6 +227,12 @@ interface BaseEnv {
    *  a mirror's compensation quote for each deliberately zeroed day, and the
    *  two lapse terminals. Permissionless; the quote pays its CCIP fee. */
   REWARD_ZEROED_DAY_ENABLED?: string;
+  // Reward delivery-conflict pass (#2961). `secret_text` like the flags above.
+  /** 'true' arms the reward delivery-conflict pass (in addition to
+   *  KEEPER_ENABLED): on a mirror, the skip of each day whose delivered parts
+   *  disagree on its whole, and the recycling of what landed for it.
+   *  Permissionless; it pays no fee. */
+  REWARD_DELIVERY_CONFLICT_ENABLED?: string;
   /** How many days the zeroed-day pass reads a run (default 60), rotating
    *  over every elapsed day not yet settled. A plain var. */
   REWARD_ZEROED_DAY_WINDOW_DAYS?: string;
@@ -386,7 +402,6 @@ export const PLAIN_VAR_KEYS = [
   'REWARD_REMIT_LANE_CAP',
   'REWARD_REMIT_MIN_PART',
   'REWARD_COMMIT_ENABLED',
-  'REWARD_DELIVERY_PROOF_ENABLED',
   'REWARD_SANCTIONS_KEEPER_ENABLED',
   'REWARD_HORIZON_HEARTBEAT_ENABLED',
   'REWARD_ENTRY_SETTLE_ENABLED',
@@ -400,11 +415,14 @@ export const PLAIN_VAR_KEYS = [
   'REWARD_CLOSE_OUT_ENABLED',
   'REWARD_CLOSE_OUT_WINDOW_DAYS',
   'PROTOCOL_UPKEEP_ENABLED',
+  'PREPAY_SALE_SANCTIONS_SYNC_ENABLED',
+  'TIER_PUSH_RETRY_ENABLED',
   'PREPAY_AUTO_LIST_ENABLED',
   'TIER_LTV_REFRESH_AFTER_SEC',
   'REWARD_ZEROED_DAY_ENABLED',
   'REWARD_ZEROED_DAY_WINDOW_DAYS',
   'REWARD_ZEROED_DAY_MAX_FEE_WEI',
+  'REWARD_DELIVERY_CONFLICT_ENABLED',
   'REWARD_RETURN_TRANSPORT_ENABLED',
   'REWARD_RETURN_TRANSPORT_MAX_FEE_WEI',
   'REWARD_RETURN_MIN_PART',
@@ -568,7 +586,6 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     REWARD_REMIT_LANE_CAP: raw.REWARD_REMIT_LANE_CAP,
     REWARD_REMIT_MIN_PART: raw.REWARD_REMIT_MIN_PART,
     REWARD_COMMIT_ENABLED: raw.REWARD_COMMIT_ENABLED,
-    REWARD_DELIVERY_PROOF_ENABLED: raw.REWARD_DELIVERY_PROOF_ENABLED,
     REWARD_SANCTIONS_KEEPER_ENABLED: raw.REWARD_SANCTIONS_KEEPER_ENABLED,
     REWARD_HORIZON_HEARTBEAT_ENABLED: raw.REWARD_HORIZON_HEARTBEAT_ENABLED,
     REWARD_ENTRY_SETTLE_ENABLED: raw.REWARD_ENTRY_SETTLE_ENABLED,
@@ -582,11 +599,14 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     REWARD_CLOSE_OUT_ENABLED: raw.REWARD_CLOSE_OUT_ENABLED,
     REWARD_CLOSE_OUT_WINDOW_DAYS: raw.REWARD_CLOSE_OUT_WINDOW_DAYS,
     PROTOCOL_UPKEEP_ENABLED: raw.PROTOCOL_UPKEEP_ENABLED,
+    PREPAY_SALE_SANCTIONS_SYNC_ENABLED: raw.PREPAY_SALE_SANCTIONS_SYNC_ENABLED,
+    TIER_PUSH_RETRY_ENABLED: raw.TIER_PUSH_RETRY_ENABLED,
     PREPAY_AUTO_LIST_ENABLED: raw.PREPAY_AUTO_LIST_ENABLED,
     TIER_LTV_REFRESH_AFTER_SEC: raw.TIER_LTV_REFRESH_AFTER_SEC,
     REWARD_ZEROED_DAY_ENABLED: raw.REWARD_ZEROED_DAY_ENABLED,
     REWARD_ZEROED_DAY_WINDOW_DAYS: raw.REWARD_ZEROED_DAY_WINDOW_DAYS,
     REWARD_ZEROED_DAY_MAX_FEE_WEI: raw.REWARD_ZEROED_DAY_MAX_FEE_WEI,
+    REWARD_DELIVERY_CONFLICT_ENABLED: raw.REWARD_DELIVERY_CONFLICT_ENABLED,
     REWARD_RETURN_TRANSPORT_ENABLED: raw.REWARD_RETURN_TRANSPORT_ENABLED,
     REWARD_RETURN_TRANSPORT_MAX_FEE_WEI: raw.REWARD_RETURN_TRANSPORT_MAX_FEE_WEI,
     REWARD_RETURN_MIN_PART: raw.REWARD_RETURN_MIN_PART,

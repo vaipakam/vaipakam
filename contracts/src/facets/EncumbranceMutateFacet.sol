@@ -398,25 +398,27 @@ contract EncumbranceMutateFacet is DiamondReentrancyGuard {
     ///         registry-aware `mustFreezeParty` + park machinery is heavy. Runs in
     ///         the diamond's storage context, so it reads the live loan and the
     ///         diamond-held proceeds exactly as an inline call would.
-    /// @param deliveredThroughAt #1503 item 28 — the period boundary this payout
-    ///        settles. Recorded as the lender's paid-through mark on the CLEAN
-    ///        branch only, so a later position sale does not forfeit a stretch
-    ///        the borrower has already paid for. Pass `0` from any caller whose
-    ///        payout does not correspond to a settled interest period.
+    /// @param amount        The lender side's whole payout (principal and net
+    ///                      interest).
+    /// @param interestGross #1209 / #1808 — the gross interest in `amount`,
+    ///                      before the fee. Open seller claims are paid first
+    ///                      out of it; 0 for a payout that carries no interest.
+    /// @param interestNet   The net interest in `amount`, after the fee.
     /// @return delivered #2440 — `amount` when the clean holder's wallet was
     ///         paid (a short arrival there is refused, since a wallet reading
-    ///         is trusted only to refuse); what the stored lender's vault
-    ///         received when the share was frozen, never more than `amount`.
-    ///         The caller credits the loan by this figure.
+    ///         is trusted only to refuse); the sellers' part plus what the
+    ///         stored lender's vault received when the share was frozen, never
+    ///         more than `amount`. The caller credits the loan by this figure.
     function freezeOrPayActiveLenderResident(
         uint256 loanId,
         address asset,
         uint256 amount,
-        uint256 deliveredThroughAt
+        uint256 interestGross,
+        uint256 interestNet
     ) external onlyDiamondInternal returns (uint256 delivered) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         delivered = LibCloseoutFreeze.freezeOrPayActiveLenderResident(
-            s, loanId, s.loans[loanId], asset, amount, deliveredThroughAt
+            s, loanId, s.loans[loanId], asset, amount, interestGross, interestNet
         );
     }
 
@@ -426,15 +428,19 @@ contract EncumbranceMutateFacet is DiamondReentrancyGuard {
     ///         `safeTransferFrom(payer → holder)` for a clean holder; park into the
     ///         stored lender's vault for a frozen one. See
     ///         {LibCloseoutFreeze.freezeOrPayActiveLenderFromPayer}.
+    ///         `interestGross` / `interestNet` name the interest in `amount`
+    ///         (#1209 / #1808), as on {freezeOrPayActiveLenderResident}.
     function freezeOrPayActiveLenderFromPayer(
         uint256 loanId,
         address payer,
         address asset,
-        uint256 amount
+        uint256 amount,
+        uint256 interestGross,
+        uint256 interestNet
     ) external onlyDiamondInternal {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibCloseoutFreeze.freezeOrPayActiveLenderFromPayer(
-            s, loanId, s.loans[loanId], payer, asset, amount
+            s, loanId, s.loans[loanId], payer, asset, amount, interestGross, interestNet
         );
     }
 

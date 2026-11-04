@@ -650,7 +650,7 @@ contract FallbackPartialLegCureTest is CustodyInvariantBase {
     }
 
     function _plTracked(address who, address token) internal view returns (uint256) {
-        return VaultFactoryFacet(address(diamond)).getProtocolTrackedVaultBalance(who, token);
+        return VaultFactoryFacet(address(diamond)).getTrackedHolding(who, token, 0);
     }
 
     function _plVault(address who) internal view returns (address) {

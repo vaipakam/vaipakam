@@ -4,11 +4,15 @@
  * this app knows the wallet touches (assets across its loans and
  * offers), with one-click revoke.
  *
- * Why it exists: several app flows deliberately create STANDING
- * approvals (refinance payoff, sale-listing settlement), and their
- * cards unwind them on cancel — but abandoned mid-sequences, wallets
- * migrating devices, and plain history leave residue. This is the
- * one place to see and remove it.
+ * Why it exists: some app flows deliberately create STANDING
+ * approvals (sale-listing settlement), and their cards unwind them on
+ * cancel — but abandoned mid-sequences, wallets migrating devices, and
+ * plain history leave residue. This is the one place to see and
+ * remove it. A refinance payoff is NOT one of them since #1558: it is
+ * paid by an exact-amount, single-use Permit2 signature, and the
+ * wallet's approval goes to Permit2, which moves nothing without that
+ * signature. Only on a Diamond that predates #1558 does the app still
+ * set a payoff approval to the Diamond (the bridge #3074 removes).
  *
  * Revoke honesty: an approval may be load-bearing for a LIVE flow
  * (a pending refinance request or sale listing on the same token) —

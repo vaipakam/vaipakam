@@ -145,6 +145,15 @@ export interface DeploymentFacets {
    *  lender-exit entries gate on, readable by the app before it offers
    *  either route. Optional: a chain deployed before it has no such key. */
   saleExitVerdictFacet?: HexAddress;
+  /** #1209 / #1808 - the seller-claim host: pays past sellers of a lender
+   *  position their earned interest first, splits a terminal lender claim,
+   *  and hosts claimAsSeller and the interest ledger view. Optional: a chain
+   *  deployed before it has no such key. */
+  sellerClaimFacet?: HexAddress;
+  /** #1558 - the borrower's payoff permit on a refinance request, its
+   *  removal and the view that sizes it. Optional: a chain deployed before
+   *  it has no such key. */
+  refinancePayoffFacet?: HexAddress;
   /** #2748 - the rate-model host: the reference-rate model, its band and
    *  the offer-rate clamp. Optional: a chain deployed before it has no such
    *  key. */
@@ -209,6 +218,12 @@ export interface DeploymentFacets {
   rewardBroadcastFacet?: HexAddress;
   riskMatchLiquidationFacet?: HexAddress;
   riskSplitLiquidationFacet?: HexAddress;
+  /** The discounted liquidation route (`triggerLiquidationDiscounted`),
+   *  moved off riskFacet for EIP-170 headroom; same selector. */
+  riskDiscountedLiquidationFacet?: HexAddress;
+  protectedAccountFacet?: HexAddress;
+  vaultPayoutFacet?: HexAddress;
+  vaultDepositoryFacet?: HexAddress;
   signedOfferFacet?: HexAddress;
   swapToRepayFacet?: HexAddress;
   /** #2416 — the partial swap-to-repay route, split off swapToRepayFacet. */

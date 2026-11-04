@@ -330,7 +330,13 @@ function MatchOfferRow({
   );
 }
 
-export function OfferFlow({ side }: { side: Side }) {
+export function OfferFlow({ side, initialMarket, createOnly = false }: {
+  side: Side;
+  /** Seeds only a newly mounted flow; parent must key it by chain/wallet/pair. */
+  initialMarket?: Pick<OfferTerms, 'lendingAsset' | 'collateralAsset' | 'durationDays'>;
+  /** Marketplace has already shown the book; proceed directly to own terms. */
+  createOnly?: boolean;
+}) {
   const text = SIDE_COPY()[side];
   const { isAdvanced } = useMode();
   const { address, walletChain, readChain, isConnected } = useActiveChain();
@@ -381,6 +387,7 @@ export function OfferFlow({ side }: { side: Side }) {
   // (`useReviewConsent` below, #1696) and joins them at payload time.
   const [form, setForm] = useState<OfferTerms>({
     ...initialOfferTerms,
+    ...initialMarket,
     offerType: side,
   });
   // #1037 — null while idle; {kind, current, total} during the
@@ -414,7 +421,7 @@ export function OfferFlow({ side }: { side: Side }) {
   // Validates the SAME rules as the browse path (side, open, ERC-20
   // both legs, not my own offer) and turns every dead link into a
   // plain-language notice instead of a silent hang.
-  const offerParam = searchParams.get('offer');
+  const offerParam = createOnly ? null : searchParams.get('offer');
   const offerParamValid =
     offerParam !== null && /^\d+$/.test(offerParam.trim()) && offerParam.trim() !== '';
   const deepLinkId = offerParamValid ? Number(offerParam) : undefined;
@@ -2416,7 +2423,7 @@ export function OfferFlow({ side }: { side: Side }) {
     <div>
       <h1 className="page-title">{text.title}</h1>
       <p className="page-lede">{text.lede}</p>
-      <StepNav steps={flowSteps} current={step} />
+      <StepNav steps={createOnly ? flowSteps.filter((item) => item.id !== 'choose') : flowSteps} current={step} />
 
       {deepLinkNotice && step === 'details' ? (
         <div className="banner banner-warn" role="alert">
@@ -2494,10 +2501,10 @@ export function OfferFlow({ side }: { side: Side }) {
             disabled={!detailsComplete}
             onClick={() => {
               setSelected(null);
-              setStep('choose');
+              setStep(createOnly ? 'terms' : 'choose');
             }}
           >
-            {copy.offerFlow.seeMatches}
+            {createOnly ? copy.offerFlow.steps.terms : copy.offerFlow.seeMatches}
           </button>
         </div>
       ) : null}
@@ -2720,7 +2727,7 @@ export function OfferFlow({ side }: { side: Side }) {
           <CollateralPrecheck tx={collateralPreviewTx} />
 
           <div className="cluster">
-            <button type="button" className="btn btn-secondary" onClick={() => setStep('choose')}>
+            <button type="button" className="btn btn-secondary" onClick={() => setStep(createOnly ? 'details' : 'choose')}>
               {copy.offerFlow.back}
             </button>
             <button

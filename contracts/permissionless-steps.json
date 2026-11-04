@@ -1,0 +1,841 @@
+{
+  "_readme": [
+    "Every entry point anyone may call, on the Diamond and on the contracts shipped beside it, with what backs it (#2984).",
+    "Checked by contracts/script/check-permissionless-steps.mjs (predeploy-check step 1e; the keeper typecheck runs its --ledger-only half). Its header defines each class.",
+    "An open entry point with no row fails the check, and so does a row for a function that is gated or gone. Add a row with the function that adds the entry point."
+  ],
+  "steps": {
+    "AccessControlFacet.renounceRole(bytes32,address)": {
+      "class": "user",
+      "why": "a holder gives up its own role; the confirmation argument must be the caller"
+    },
+    "AggregatorAdapterFactoryFacet.upgradeAggregatorAdapter(address)": {
+      "class": "user",
+      "why": "the adapter principal's upgrade; once a version is mandatory anyone may apply it, and the adapter refuses withdrawals until then, so its principal is the one waiting"
+    },
+    "AggregatorAdapterImplementation.approve(address,uint256)": {
+      "class": "user",
+      "why": "the holder's own ERC-20 approval"
+    },
+    "AggregatorAdapterImplementation.initialize(address,address,address,address,uint16,address,string,string,uint256,uint256,uint16,uint32,uint256)": {
+      "class": "init",
+      "why": "the deployment, or the Diamond's factory, initializes each proxy once in the transaction that creates it"
+    },
+    "AggregatorAdapterImplementation.transfer(address,uint256)": {
+      "class": "user",
+      "why": "the holder's own ERC-20 transfer"
+    },
+    "AggregatorAdapterImplementation.transferFrom(address,address,uint256)": {
+      "class": "user",
+      "why": "an ERC-20 transfer the holder approved"
+    },
+    "AutoLifecycleFacet.setAutoLendConsent(bool)": {
+      "class": "user",
+      "why": "the user's own consent"
+    },
+    "AutoLifecycleFacet.setAutoOptInOnNewLoan(bool)": {
+      "class": "user",
+      "why": "the user's own setting"
+    },
+    "AutoLifecycleFacet.setDefaultAutoRefinanceCaps(bool,uint16,uint64)": {
+      "class": "user",
+      "why": "the user's own setting"
+    },
+    "BackstopFacet.backstopFill(uint256)": {
+      "class": "gap",
+      "issue": "#3097",
+      "why": "fills from the backstop vault; nothing drives it"
+    },
+    "BackstopVaultImplementation.initialize(address)": {
+      "class": "init",
+      "why": "the deployment, or the Diamond's factory, initializes each proxy once in the transaction that creates it"
+    },
+    "CcipMessenger.initialize(address)": {
+      "class": "init",
+      "why": "the deployment, or the Diamond's factory, initializes each proxy once in the transaction that creates it"
+    },
+    "ConsolidationFacet.consolidateCollateralToHolder(uint256)": {
+      "class": "gap",
+      "issue": "#3097",
+      "why": "moves collateral claims to the current holder; nothing drives it"
+    },
+    "ConsolidationFacet.consolidatePrincipalToHolder(uint256)": {
+      "class": "gap",
+      "issue": "#3097",
+      "why": "moves principal claims to the current holder; nothing drives it"
+    },
+    "DefaultedFacet.triggerDefault(uint256,uint256,struct:LibSwap.AdapterCall[])": {
+      "class": "keeper",
+      "pass": "graceDefault",
+      "flag": "GRACE_DEFAULT_ENABLED",
+      "evidence": "apps/keeper/src/closeOut.ts"
+    },
+    "EarlyWithdrawalDirectFacet.sellLoanViaBuyOffer(uint256,uint256)": {
+      "class": "user",
+      "why": "the lender sells its own loan"
+    },
+    "EarlyWithdrawalDirectFacet.sellLoanViaBuyOfferBound(uint256,uint256,uint256,uint256,uint64)": {
+      "class": "user",
+      "why": "the lender sells its own loan"
+    },
+    "EarlyWithdrawalFacet.completeLoanSale(uint256)": {
+      "class": "user",
+      "why": "completes the lender's own sale; an accepted sale offer completes it automatically"
+    },
+    "EarlyWithdrawalFacet.createLoanSaleOffer(uint256,uint256,bool,uint64)": {
+      "class": "user",
+      "why": "the lender lists its own loan"
+    },
+    "EarlyWithdrawalFacet.createLoanSaleOfferBound(uint256,uint256,bool,uint64,uint256,uint256)": {
+      "class": "user",
+      "why": "the lender lists its own loan"
+    },
+    "EncumbranceMutateFacet.refreshTierExclusion(uint256[])": {
+      "class": "gap",
+      "issue": "#3097",
+      "why": "refreshes tier exclusion for loans; nothing drives it"
+    },
+    "InteractionRewardsFacet.compactRewardEntryIndex(address,uint256)": {
+      "class": "gap",
+      "issue": "#3097",
+      "why": "compacts a user's reward entry index; nothing drives it"
+    },
+    "InteractionRewardsFacet.sweepForfeitedInteractionRewards(uint256)": {
+      "class": "keeper",
+      "pass": "rewardHorizonHeartbeat",
+      "flag": "REWARD_HORIZON_HEARTBEAT_ENABLED",
+      "evidence": "apps/keeper/src/rewardHorizonHeartbeat.ts"
+    },
+    "LegalFacet.acceptTerms(uint32,bytes32)": {
+      "class": "user",
+      "why": "the user accepts the terms for itself"
+    },
+    "LenderIntentFacet.cancelLenderIntent(address,address)": {
+      "class": "user",
+      "why": "the lender's own standing intent"
+    },
+    "LenderIntentFacet.rollIntentLoan(uint256)": {
+      "class": "keeper",
+      "pass": "matcher",
+      "flag": "KEEPER_ENABLED",
+      "evidence": "apps/keeper/src/matcher.ts"
+    },
+    "LenderIntentFacet.setLenderIntent(address,address,uint256,uint256,uint16,uint32,uint256,bool,bool)": {
+      "class": "user",
+      "why": "the lender's own standing intent"
+    },
+    "LenderIntentFacet.setLenderIntentPriority(address,address,bool)": {
+      "class": "user",
+      "why": "the lender's own standing intent"
+    },
+    "MulticallFacet.multicall(struct:MulticallFacet.Call[])": {
+      "class": "user",
+      "why": "runs the caller's own calls as the caller (delegatecall keeps msg.sender); each inner call keeps its own gate"
+    },
+    "NFTPrepayAutoListFacet.autoListAtFloorOnGrace(uint256)": {
+      "class": "keeper",
+      "pass": "prepayAutoList",
+      "flag": "PREPAY_AUTO_LIST_ENABLED",
+      "evidence": "apps/keeper/src/prepayAutoList.ts"
+    },
+    "NFTPrepayListingFacet.cancelExpiredPrepayListing(uint256)": {
+      "class": "gap",
+      "issue": "#3097",
+      "why": "clears an expired prepay listing; the auto-list pass leaves it as an open owner question"
+    },
+    "NFTPrepayListingFacet.syncPrepaySaleListing(uint256)": {
+      "class": "keeper",
+      "pass": "protocolUpkeep",
+      "flag": "PREPAY_SALE_SANCTIONS_SYNC_ENABLED",
+      "evidence": "apps/keeper/src/prepaySaleSanctions.ts"
+    },
+    "NotificationFeeFacet.setNotificationFeeConsent(uint256)": {
+      "class": "user",
+      "why": "the user's own consent"
+    },
+    "OfferCancelFacet.cancelOffer(uint256)": {
+      "class": "user",
+      "why": "the creator cancels its own offer"
+    },
+    "OfferCancelFacet.teardownStaleSaleListing(uint256)": {
+      "class": "gap",
+      "issue": "#3097",
+      "why": "tears down a stale loan-sale listing; only the app's sale-hold path names it"
+    },
+    "OfferCreateFacet.createOffer(struct:LibVaipakam.CreateOfferParams)": {
+      "class": "user",
+      "why": "the offer creator's own offer"
+    },
+    "OfferCreateFacet.createOfferWithPermit(struct:LibVaipakam.CreateOfferParams,struct:ISignatureTransfer.PermitTransferFrom,bytes)": {
+      "class": "user",
+      "why": "the offer creator's own offer"
+    },
+    "OfferCreateFacet.getUserVault(address)": {
+      "class": "user",
+      "why": "creates or returns a user's own vault; no step waits on it"
+    },
+    "OfferMatchFacet.matchOffers(uint256,uint256)": {
+      "class": "keeper",
+      "pass": "matcher",
+      "flag": "KEEPER_ENABLED",
+      "evidence": "apps/keeper/src/matcher.ts"
+    },
+    "OfferMatchFacet.matchSignedOffer(struct:LibSignedOffer.SignedOffer,bytes,uint256,uint256)": {
+      "class": "alternative",
+      "of": "OfferMatchFacet.matchOffers(uint256,uint256)",
+      "why": "matches an off-chain signed offer the matcher does not index; on-chain offers are matched by matchOffers"
+    },
+    "OfferMatchIntentFacet.matchIntent(address,address,address,uint256,uint256)": {
+      "class": "keeper",
+      "pass": "matcher",
+      "flag": "KEEPER_ENABLED",
+      "evidence": "apps/keeper/src/matcher.ts"
+    },
+    "OfferParallelSaleFacet.releaseParallelSaleLock(uint96)": {
+      "class": "user",
+      "why": "the borrower unwinds its own parallel-sale binding"
+    },
+    "OfferParallelSaleFacet.syncPrepaySaleOffer(uint96)": {
+      "class": "keeper",
+      "pass": "protocolUpkeep",
+      "flag": "PREPAY_SALE_SANCTIONS_SYNC_ENABLED",
+      "evidence": "apps/keeper/src/prepaySaleSanctions.ts"
+    },
+    "OracleFacet.captureDailyPriceSnapshot(address[])": {
+      "class": "keeper",
+      "pass": "dailyOracleSnapshot",
+      "flag": "KEEPER_ENABLED",
+      "evidence": "apps/keeper/src/dailyOracleSnapshot.ts"
+    },
+    "OracleFacet.refreshTierLtvCache()": {
+      "class": "keeper",
+      "pass": "protocolUpkeep",
+      "flag": "PROTOCOL_UPKEEP_ENABLED",
+      "evidence": "apps/keeper/src/protocolUpkeep.ts"
+    },
+    "PrecloseFacet.completeOffset(uint256)": {
+      "class": "user",
+      "why": "completes the borrower's own offset; an accepted offset offer completes it automatically"
+    },
+    "PrecloseFacet.offsetWithNewOffer(uint256,uint256,uint256,address,uint256,bool,address)": {
+      "class": "user",
+      "why": "the borrower offsets its own loan"
+    },
+    "PrecloseFacet.precloseDirect(uint256)": {
+      "class": "user",
+      "why": "the borrower closes its own loan early"
+    },
+    "PrecloseFacet.transferObligationViaOffer(uint256,uint256)": {
+      "class": "user",
+      "why": "the borrower hands over its own loan"
+    },
+    "ProfileFacet.approveKeeper(address,uint16)": {
+      "class": "user",
+      "why": "the user's own keeper settings"
+    },
+    "ProfileFacet.refreshSanctionsFlag(address)": {
+      "class": "gap",
+      "issue": "#3097",
+      "why": "re-screens one address; inferred (not proven) to be covered by rewardSanctionsHold and the prepay-sale sync"
+    },
+    "ProfileFacet.revokeKeeper(address)": {
+      "class": "user",
+      "why": "the user's own keeper settings"
+    },
+    "ProfileFacet.setKeeperAccess(bool)": {
+      "class": "user",
+      "why": "the user's own keeper settings"
+    },
+    "ProfileFacet.setKeeperActions(address,uint16)": {
+      "class": "user",
+      "why": "the user's own keeper settings"
+    },
+    "ProfileFacet.setUserCountry(string)": {
+      "class": "user",
+      "why": "the user's own profile"
+    },
+    "ProtectedAccountFacet.acceptSignerRole(address)": {
+      "class": "user",
+      "why": "the nominee accepts its own nomination"
+    },
+    "ProtectedAccountFacet.addAllowlisted(address,address)": {
+      "class": "user",
+      "why": "the account manager's own protected-account setting (called with its own account; a caller naming another account is refused unless it manages it)"
+    },
+    "ProtectedAccountFacet.addSigner(address,address)": {
+      "class": "user",
+      "why": "the account manager's own protected-account setting (called with its own account; a caller naming another account is refused unless it manages it)"
+    },
+    "ProtectedAccountFacet.cancelAddAllowlisted(address,address)": {
+      "class": "user",
+      "why": "the account manager's own protected-account setting (called with its own account; a caller naming another account is refused unless it manages it)"
+    },
+    "ProtectedAccountFacet.cancelAddSigner(address,address)": {
+      "class": "user",
+      "why": "the account manager cancels its own nomination"
+    },
+    "ProtectedAccountFacet.cancelRemoveSigner(address,address)": {
+      "class": "user",
+      "why": "the account manager's own protected-account setting (called with its own account; a caller naming another account is refused unless it manages it)"
+    },
+    "ProtectedAccountFacet.cancelReplacement(address)": {
+      "class": "user",
+      "why": "the account manager's own protected-account setting (called with its own account; a caller naming another account is refused unless it manages it)"
+    },
+    "ProtectedAccountFacet.cancelSettingChange(address,uint8)": {
+      "class": "user",
+      "why": "the account manager's own protected-account setting (called with its own account; a caller naming another account is refused unless it manages it)"
+    },
+    "ProtectedAccountFacet.enableProtectedMode(uint32,bool)": {
+      "class": "user",
+      "why": "the account owner's own setting"
+    },
+    "ProtectedAccountFacet.finalizeAddAllowlisted(address,address)": {
+      "class": "keeper-pending",
+      "pass": "protectedAccount",
+      "flag": "PROTECTED_ACCOUNT_ENABLED",
+      "pr": "#3090"
+    },
+    "ProtectedAccountFacet.finalizeAddSigner(address,address)": {
+      "class": "keeper-pending",
+      "pass": "protectedAccount",
+      "flag": "PROTECTED_ACCOUNT_ENABLED",
+      "pr": "#3090"
+    },
+    "ProtectedAccountFacet.finalizeRemoveSigner(address,address)": {
+      "class": "keeper-pending",
+      "pass": "protectedAccount",
+      "flag": "PROTECTED_ACCOUNT_ENABLED",
+      "pr": "#3090"
+    },
+    "ProtectedAccountFacet.finalizeReplacement(address)": {
+      "class": "keeper-pending",
+      "pass": "protectedAccount",
+      "flag": "PROTECTED_ACCOUNT_ENABLED",
+      "pr": "#3090"
+    },
+    "ProtectedAccountFacet.finalizeSettingChanges(address)": {
+      "class": "keeper-pending",
+      "pass": "protectedAccount",
+      "flag": "PROTECTED_ACCOUNT_ENABLED",
+      "pr": "#3090"
+    },
+    "ProtectedAccountFacet.lockVault(address)": {
+      "class": "user",
+      "why": "the account manager or one of its signers locks its own account"
+    },
+    "ProtectedAccountFacet.proposeReplacement(address,address)": {
+      "class": "user",
+      "why": "a signer or the manager proposes; approvals and the delay follow"
+    },
+    "ProtectedAccountFacet.removeAllowlisted(address,address)": {
+      "class": "user",
+      "why": "the account manager's own protected-account setting (called with its own account; a caller naming another account is refused unless it manages it)"
+    },
+    "ProtectedAccountFacet.requestRemoveSigner(address,address)": {
+      "class": "user",
+      "why": "the account manager's own protected-account setting (called with its own account; a caller naming another account is refused unless it manages it)"
+    },
+    "ProtectedAccountFacet.requestUnlock(address)": {
+      "class": "user",
+      "why": "the account manager's own protected-account setting (called with its own account; a caller naming another account is refused unless it manages it)"
+    },
+    "ProtectedAccountFacet.setProtectNfts(address,bool)": {
+      "class": "user",
+      "why": "the account manager's own protected-account setting (called with its own account; a caller naming another account is refused unless it manages it)"
+    },
+    "ProtectedAccountFacet.setProtectedDelay(address,uint32)": {
+      "class": "user",
+      "why": "the account manager's own protected-account setting (called with its own account; a caller naming another account is refused unless it manages it)"
+    },
+    "ProtectedAccountFacet.setRequireCosign(address,bool)": {
+      "class": "user",
+      "why": "the account manager's own protected-account setting (called with its own account; a caller naming another account is refused unless it manages it)"
+    },
+    "ProtocolBroadcastFacet.deliverTierPush(address)": {
+      "class": "keeper",
+      "pass": "protocolUpkeep",
+      "flag": "TIER_PUSH_RETRY_ENABLED",
+      "evidence": "apps/keeper/src/tierPushRetry.ts"
+    },
+    "ProtocolBroadcastFacet.topUpBroadcastBudget()": {
+      "class": "user",
+      "why": "a payment into the protocol broadcast budget; no step waits on it"
+    },
+    "RepatriationFacet.executeRepatriation(address,uint256,address)": {
+      "class": "keeper",
+      "pass": "rewardReturnTransport",
+      "flag": "REWARD_RETURN_TRANSPORT_ENABLED",
+      "evidence": "apps/keeper/src/rewardReturnTransport/index.ts"
+    },
+    "RepatriationFacet.sendRepatriationCancelAck(address,uint256,address)": {
+      "class": "keeper",
+      "pass": "rewardReturnTransport",
+      "flag": "REWARD_RETURN_TRANSPORT_ENABLED",
+      "evidence": "apps/keeper/src/rewardReturnTransport/index.ts"
+    },
+    "RepatriationFacet.sendRepatriationInstruction(uint256,address)": {
+      "class": "keeper",
+      "pass": "rewardReturnTransport",
+      "flag": "REWARD_RETURN_TRANSPORT_ENABLED",
+      "evidence": "apps/keeper/src/rewardReturnTransport/index.ts"
+    },
+    "RepatriationFacet.sendRetiredSurplusReturn(uint256,address)": {
+      "class": "keeper",
+      "pass": "rewardReturnTransport",
+      "flag": "REWARD_RETURN_TRANSPORT_ENABLED",
+      "evidence": "apps/keeper/src/rewardReturnTransport/index.ts"
+    },
+    "RepatriationFacet.sendStrandedReturn(address,uint256,uint256,address)": {
+      "class": "keeper",
+      "pass": "rewardReturnTransport",
+      "flag": "REWARD_RETURN_TRANSPORT_ENABLED",
+      "evidence": "apps/keeper/src/rewardReturnTransport/index.ts"
+    },
+    "RepayFacet.repayLoan(uint256)": {
+      "class": "user",
+      "why": "the borrower (or anyone paying for it) repays; the borrower is the party it serves"
+    },
+    "RepayPeriodicFacet.autoDeductDaily(uint256)": {
+      "class": "gap",
+      "issue": "#3097",
+      "why": "the daily NFT-rental deduction; no keeper or app caller"
+    },
+    "RepayPeriodicFacet.settlePeriodicInterest(uint256,uint256,struct:LibSwap.AdapterCall[])": {
+      "class": "keeper",
+      "pass": "periodicSettle",
+      "flag": "PERIODIC_SETTLE_ENABLED",
+      "evidence": "apps/keeper/src/periodicSettle.ts"
+    },
+    "RewardAggregatorFacet.finalizeDay(uint256)": {
+      "class": "keeper",
+      "pass": "rewardDayClose",
+      "flag": "REWARD_DAY_CLOSE_ENABLED",
+      "evidence": "apps/keeper/src/rewardDayClose/base.ts"
+    },
+    "RewardBroadcastFacet.broadcastGlobal(uint256)": {
+      "class": "keeper",
+      "pass": "rewardDayClose",
+      "flag": "REWARD_DAY_CLOSE_ENABLED",
+      "evidence": "apps/keeper/src/rewardDayClose/broadcast.ts"
+    },
+    "RewardBroadcastFacet.broadcastGlobalTo(uint256,uint256)": {
+      "class": "keeper",
+      "pass": "rewardDayClose",
+      "flag": "REWARD_DAY_CLOSE_ENABLED",
+      "evidence": "apps/keeper/src/rewardDayClose/broadcast.ts"
+    },
+    "RewardClaimFacet.claimHeldInteractionRewards(enum:LibVaipakam.RewardDelivery)": {
+      "class": "user",
+      "why": "the user claims its own held rewards"
+    },
+    "RewardClaimFacet.claimInteractionRewards()": {
+      "class": "user",
+      "why": "the user claims its own rewards"
+    },
+    "RewardClaimFacet.claimInteractionRewardsTo(enum:LibVaipakam.RewardDelivery)": {
+      "class": "user",
+      "why": "the user claims its own rewards"
+    },
+    "RewardClaimFacet.settleSanctionedInteractionRewards(address)": {
+      "class": "keeper",
+      "pass": "rewardSanctionsHold",
+      "flag": "REWARD_SANCTIONS_KEEPER_ENABLED",
+      "evidence": "apps/keeper/src/rewardSanctionsHold.ts"
+    },
+    "RewardClaimFacet.simulateClaimInteractionRewards(address,enum:LibVaipakam.RewardDelivery)": {
+      "class": "user",
+      "why": "a preview: it always reverts with its result, so nothing it writes survives"
+    },
+    "RewardClosureFacet.proveDayClosurePage(uint256,uint64,uint8,uint256[])": {
+      "class": "keeper",
+      "pass": "rewardCloseOut",
+      "flag": "REWARD_CLOSE_OUT_ENABLED",
+      "evidence": "apps/keeper/src/rewardCloseOut/index.ts"
+    },
+    "RewardClosureFacet.startDayClosure(uint256)": {
+      "class": "keeper",
+      "pass": "rewardCloseOut",
+      "flag": "REWARD_CLOSE_OUT_ENABLED",
+      "evidence": "apps/keeper/src/rewardCloseOut/index.ts"
+    },
+    "RewardCommitmentFacet.accumulateCompQuoteBatch(uint256,enum:LibVaipakam.RewardSide,uint256[])": {
+      "class": "keeper",
+      "pass": "rewardZeroedDay",
+      "flag": "REWARD_ZEROED_DAY_ENABLED",
+      "evidence": "apps/keeper/src/rewardZeroedDay/index.ts"
+    },
+    "RewardCommitmentFacet.lapseShortCompensatedDay(uint256)": {
+      "class": "keeper",
+      "pass": "rewardZeroedDay",
+      "flag": "REWARD_ZEROED_DAY_ENABLED",
+      "evidence": "apps/keeper/src/rewardZeroedDay/index.ts"
+    },
+    "RewardCommitmentFacet.lapseZeroedDay(uint256)": {
+      "class": "keeper",
+      "pass": "rewardZeroedDay",
+      "flag": "REWARD_ZEROED_DAY_ENABLED",
+      "evidence": "apps/keeper/src/rewardZeroedDay/index.ts"
+    },
+    "RewardCommitmentFacet.quoteZeroedDayCompensation(uint256,address)": {
+      "class": "keeper",
+      "pass": "rewardZeroedDay",
+      "flag": "REWARD_ZEROED_DAY_ENABLED",
+      "evidence": "apps/keeper/src/rewardZeroedDay/index.ts"
+    },
+    "RewardCommitmentFacet.sendCommitmentReport(uint256)": {
+      "class": "keeper",
+      "pass": "commitmentReport",
+      "flag": "REWARD_COMMIT_ENABLED",
+      "evidence": "apps/keeper/src/commitmentReport.ts"
+    },
+    "RewardEpochFacet.epochPruneTransportDayCursor(uint256)": {
+      "class": "keeper",
+      "pass": "rewardCloseOut",
+      "flag": "REWARD_CLOSE_OUT_ENABLED",
+      "evidence": "apps/keeper/src/rewardCloseOut/index.ts"
+    },
+    "RewardEpochFacet.parkTransportBatchRemainder(bytes32)": {
+      "class": "keeper",
+      "pass": "rewardCloseOut",
+      "flag": "REWARD_CLOSE_OUT_ENABLED",
+      "evidence": "apps/keeper/src/rewardCloseOut/index.ts"
+    },
+    "RewardEpochFacet.recycleSkippedDayValue(uint256)": {
+      "class": "keeper",
+      "pass": "rewardDeliveryConflict",
+      "flag": "REWARD_DELIVERY_CONFLICT_ENABLED",
+      "evidence": "apps/keeper/src/rewardDeliveryConflict.ts"
+    },
+    "RewardEpochFacet.skipConflictedDay(uint256)": {
+      "class": "keeper",
+      "pass": "rewardDeliveryConflict",
+      "flag": "REWARD_DELIVERY_CONFLICT_ENABLED",
+      "evidence": "apps/keeper/src/rewardDeliveryConflict.ts"
+    },
+    "RewardEraFacet.drainPendingSurplus(uint256)": {
+      "class": "keeper",
+      "pass": "rewardCloseOut",
+      "flag": "REWARD_CLOSE_OUT_ENABLED",
+      "evidence": "apps/keeper/src/rewardCloseOut/index.ts"
+    },
+    "RewardEraFacet.finalizeCustodyEra(uint64)": {
+      "class": "keeper",
+      "pass": "rewardCloseOut",
+      "flag": "REWARD_CLOSE_OUT_ENABLED",
+      "evidence": "apps/keeper/src/rewardCloseOut/index.ts"
+    },
+    "RewardHorizonSweepFacet.recordRewardSanctionsEvidence(address)": {
+      "class": "keeper",
+      "pass": "rewardSanctionsHold",
+      "flag": "REWARD_SANCTIONS_KEEPER_ENABLED",
+      "evidence": "apps/keeper/src/rewardSanctionsHold.ts"
+    },
+    "RewardHorizonSweepFacet.retireZeroPricedRemainders(uint256[])": {
+      "class": "keeper",
+      "pass": "rewardHorizonHeartbeat",
+      "flag": "REWARD_HORIZON_HEARTBEAT_ENABLED",
+      "evidence": "apps/keeper/src/rewardHorizonHeartbeat.ts"
+    },
+    "RewardHorizonSweepFacet.sweepExpiredInteractionRewards(uint256[])": {
+      "class": "keeper",
+      "pass": "rewardHorizonHeartbeat",
+      "flag": "REWARD_HORIZON_HEARTBEAT_ENABLED",
+      "evidence": "apps/keeper/src/rewardHorizonHeartbeat.ts"
+    },
+    "RewardReconciliationFacet.advanceReconciliationQueue(uint8,uint256)": {
+      "class": "keeper",
+      "pass": "rewardCloseOut",
+      "flag": "REWARD_CLOSE_OUT_ENABLED",
+      "evidence": "apps/keeper/src/rewardCloseOut/index.ts"
+    },
+    "RewardRemitDestinationFacet.continueRemitDestinationRelease(uint32,uint256)": {
+      "class": "keeper",
+      "pass": "rewardCloseOut",
+      "flag": "REWARD_CLOSE_OUT_ENABLED",
+      "evidence": "apps/keeper/src/rewardCloseOut/index.ts"
+    },
+    "RewardRemittanceFacet.sendRemitAck(uint256,address,address)": {
+      "class": "keeper",
+      "pass": "remitAck",
+      "flag": "REWARD_REMIT_ENABLED",
+      "evidence": "apps/keeper/src/remitAck.ts"
+    },
+    "RewardReporterFacet.advanceInterestFrontiers(uint256)": {
+      "class": "keeper",
+      "pass": "rewardDayClose",
+      "flag": "REWARD_DAY_CLOSE_ENABLED",
+      "evidence": "apps/keeper/src/rewardDayClose/close.ts"
+    },
+    "RewardReporterFacet.closeDay(uint256)": {
+      "class": "keeper",
+      "pass": "rewardDayClose",
+      "flag": "REWARD_DAY_CLOSE_ENABLED",
+      "evidence": "apps/keeper/src/rewardDayClose/close.ts"
+    },
+    "RewardStagingDomainFacet.reserveDomainPage(bytes32)": {
+      "class": "gap",
+      "issue": "#3097",
+      "why": "continues a staged domain page; nothing drives it"
+    },
+    "RewardStagingDomainFacet.resolveDomainPage(bytes32)": {
+      "class": "keeper",
+      "pass": "rewardSanctionsHold",
+      "flag": "REWARD_SANCTIONS_KEEPER_ENABLED",
+      "evidence": "apps/keeper/src/rewardSanctionsHold.ts",
+      "note": "covers only the sanctions-held case; the general case is part of #3097"
+    },
+    "RewardStagingDomainFacet.stepLegacySlice(uint256)": {
+      "class": "gap",
+      "issue": "#3097",
+      "why": "steps a legacy staging slice; nothing drives it"
+    },
+    "RewardStagingDomainFacet.unwindDomainPage(bytes32)": {
+      "class": "gap",
+      "issue": "#3097",
+      "why": "unwinds a domain page after its deadline; nothing drives it"
+    },
+    "RewardStagingFacet.prepareStagedDay(bytes32)": {
+      "class": "gap",
+      "issue": "#3097",
+      "why": "continues a staged reward day; nothing drives it"
+    },
+    "RewardStagingFacet.reserveStagedDay(bytes32)": {
+      "class": "gap",
+      "issue": "#3097",
+      "why": "continues a staged reward day; nothing drives it"
+    },
+    "RewardStagingSettleFacet.registerForBatchWindow(bytes32,bytes32)": {
+      "class": "gap",
+      "issue": "#3097",
+      "why": "continues a staged reward day; nothing drives it"
+    },
+    "RewardStagingSettleFacet.resolveStagedDayPage(bytes32)": {
+      "class": "keeper",
+      "pass": "rewardSanctionsHold",
+      "flag": "REWARD_SANCTIONS_KEEPER_ENABLED",
+      "evidence": "apps/keeper/src/rewardSanctionsHold.ts",
+      "note": "covers only the sanctions-held case; the general case is part of #3097"
+    },
+    "RewardStagingSettleFacet.unwindStagedDayPage(bytes32)": {
+      "class": "gap",
+      "issue": "#3097",
+      "why": "unwinds a staged page after its deadline; nothing drives it"
+    },
+    "RiskAccessFacet.setIlliquidPairConsent(struct:LibRiskAccess.PairId,bool)": {
+      "class": "user",
+      "why": "the vault owner's own risk setting"
+    },
+    "RiskAccessFacet.setIlliquidPairConsentBySig(struct:LibRiskAccess.SetIlliquidPairConsent,bytes)": {
+      "class": "gated",
+      "gate": "an EIP-712 signature by the vault owner; anyone may relay it, and it sets only what the owner signed"
+    },
+    "RiskAccessFacet.setMidTierPairAck(struct:LibRiskAccess.PairId)": {
+      "class": "user",
+      "why": "the vault owner's own risk setting"
+    },
+    "RiskAccessFacet.setMidTierPairAckBySig(struct:LibRiskAccess.SetMidTierPairAck,bytes)": {
+      "class": "gated",
+      "gate": "an EIP-712 signature by the vault owner; anyone may relay it, and it sets only what the owner signed"
+    },
+    "RiskAccessFacet.setRiskStrictMode(bool)": {
+      "class": "user",
+      "why": "the vault owner's own risk setting"
+    },
+    "RiskAccessFacet.setRiskStrictModeBySig(struct:LibRiskAccess.SetRiskStrictMode,bytes)": {
+      "class": "gated",
+      "gate": "an EIP-712 signature by the vault owner; anyone may relay it, and it sets only what the owner signed"
+    },
+    "RiskAccessFacet.setVaultRiskTier(uint8)": {
+      "class": "user",
+      "why": "the vault owner's own risk setting"
+    },
+    "RiskAccessFacet.setVaultRiskTierBySig(struct:LibRiskAccess.SetVaultRiskTier,bytes)": {
+      "class": "gated",
+      "gate": "an EIP-712 signature by the vault owner; anyone may relay it, and it sets only what the owner signed"
+    },
+    "RiskAccessFacet.setVaultRiskTierChecked(uint8,uint64,uint64)": {
+      "class": "user",
+      "why": "the vault owner's own risk setting"
+    },
+    "RiskAccessFacet.setVaultRiskTierCheckedBySig(struct:LibRiskAccess.SetVaultRiskTierChecked,bytes)": {
+      "class": "gated",
+      "gate": "an EIP-712 signature by the vault owner; anyone may relay it, and it sets only what the owner signed"
+    },
+    "RiskDiscountedLiquidationFacet.triggerLiquidationDiscounted(uint256,address,bytes)": {
+      "class": "alternative",
+      "of": "RiskFacet.triggerLiquidation(uint256,uint256,struct:LibSwap.AdapterCall[])",
+      "why": "the flash-loan discount route; the keeper reaches it only through its own FlashLoanLiquidator (liquidateViaAaveV3 / liquidateViaBalancerV2), on the chains DISCOUNT_PATH_CHAIN_IDS lists, which ships empty (#2697)"
+    },
+    "RiskFacet.triggerLiquidation(uint256,uint256,struct:LibSwap.AdapterCall[])": {
+      "class": "keeper",
+      "pass": "liquidator",
+      "flag": "KEEPER_ENABLED",
+      "evidence": "apps/keeper/src/keeper.ts"
+    },
+    "RiskFacet.triggerPartialLiquidation(uint256,uint256,struct:LibSwap.AdapterCall[])": {
+      "class": "keeper",
+      "pass": "liquidator",
+      "flag": "KEEPER_ENABLED",
+      "evidence": "apps/keeper/src/keeper.ts"
+    },
+    "RiskMatchLiquidationFacet.triggerInternalMatchLiquidation(uint256,uint256,uint256)": {
+      "class": "alternative",
+      "of": "RiskFacet.triggerLiquidation(uint256,uint256,struct:LibSwap.AdapterCall[])",
+      "why": "fills an unhealthy loan from a standing lender offer instead of a swap; the liquidation itself is backed by triggerLiquidation"
+    },
+    "RiskSplitLiquidationFacet.triggerLiquidationSplit(uint256,struct:LibSwap.SplitCall[])": {
+      "class": "keeper",
+      "pass": "liquidator",
+      "flag": "KEEPER_ENABLED",
+      "evidence": "apps/keeper/src/keeper.ts"
+    },
+    "SanctionsClearanceAttestor.sendReply(bytes32,bytes)": {
+      "class": "service",
+      "service": "sanctions delister (ops/sanctions)",
+      "evidence": "packages/contracts/scripts/sanctions-delister.mjs",
+      "why": "sends an owed clearance reply back across CCIP (payable: the caller pays the fee); the payload is fixed by the request"
+    },
+    "SanctionsDelistingTimelock.cancel(uint256)": {
+      "class": "gated",
+      "gate": "a vetoer, or the proposal's own proposer (`_requireItsProposer`): `if (!vetoer)` guards a call the rules do not follow"
+    },
+    "SanctionsDelistingTimelock.discard(uint256)": {
+      "class": "service",
+      "service": "sanctions delister (ops/sanctions)",
+      "evidence": "packages/contracts/scripts/sanctions-delister.mjs",
+      "why": "drops a proposal whose proposer lost its appointment"
+    },
+    "SanctionsDelistingTimelock.execute(uint256)": {
+      "class": "service",
+      "service": "sanctions delister (ops/sanctions)",
+      "evidence": "packages/contracts/scripts/sanctions-delister.mjs",
+      "why": "applies a delisting once its delay passed and RedStone still clears the address"
+    },
+    "SanctionsDelistingTimelock.requestClearance(uint256)": {
+      "class": "service",
+      "service": "sanctions delister (ops/sanctions)",
+      "evidence": "packages/contracts/scripts/sanctions-delister.mjs",
+      "why": "asks the clearance oracle across CCIP once the delay passed (payable: the caller pays the fee)"
+    },
+    "SellerClaimFacet.claimAsSeller(uint256)": {
+      "class": "user",
+      "why": "the seller withdraws what it is owed"
+    },
+    "ServiceCapacityFacet.postCapacityDeposit(uint8,uint256,struct:LibServiceCapacity.ArmingBind)": {
+      "class": "user",
+      "why": "the operator's own deposit"
+    },
+    "ServiceCapacityFacet.withdrawArchivedCapacityDeposit(uint8,uint64)": {
+      "class": "user",
+      "why": "the operator's own deposit"
+    },
+    "ServiceCapacityFacet.withdrawCapacityDeposit(uint8,uint256)": {
+      "class": "user",
+      "why": "the operator's own deposit"
+    },
+    "SignedOfferFacet.acceptSignedOffer(struct:LibSignedOffer.SignedOffer,bytes,struct:LibAcceptTerms.AcceptTerms,bytes)": {
+      "class": "user",
+      "why": "the acceptor takes a signed offer for itself"
+    },
+    "SignedOfferFacet.acceptSignedOfferWithPermit(struct:LibSignedOffer.SignedOffer,struct:ISignatureTransfer.PermitTransferFrom,bytes,struct:LibAcceptTerms.AcceptTerms,bytes)": {
+      "class": "user",
+      "why": "the acceptor takes a signed offer for itself"
+    },
+    "SignedOfferFacet.invalidateSignedOfferNonce(uint256)": {
+      "class": "user",
+      "why": "the signer cancels its own signed offers"
+    },
+    "SwapToRepayIntentFacet.cancelExpiredIntent(uint256)": {
+      "class": "gap",
+      "issue": "#3097",
+      "why": "tears down an expired swap-to-repay intent; nothing drives it"
+    },
+    "TreasuryFacet.expireBuybackIntent(bytes32)": {
+      "class": "keeper",
+      "pass": "protocolUpkeep",
+      "flag": "PROTOCOL_UPKEEP_ENABLED",
+      "evidence": "apps/keeper/src/protocolUpkeep.ts"
+    },
+    "VPFIDiscountFacet.pokeMyTier()": {
+      "class": "user",
+      "why": "the user refreshes its own tier"
+    },
+    "VPFIDiscountFacet.setVPFIDiscountConsent(bool)": {
+      "class": "user",
+      "why": "the user's own consent"
+    },
+    "VaipakamFeedRegistry.execute(uint256,struct:VaipakamFeedRegistry.Change[])": {
+      "class": "user",
+      "why": "the proposer executes its own feed change after the delay; a change nobody executes leaves the current feeds in place"
+    },
+    "VaipakamNFTFacet.releasePositionTransfer(uint256)": {
+      "class": "keeper-pending",
+      "pass": "protectedAccount",
+      "flag": "PROTECTED_ACCOUNT_ENABLED",
+      "pr": "#3090"
+    },
+    "VaipakamNFTFacet.setApprovalForAll(address,bool)": {
+      "class": "user",
+      "why": "the holder's own ERC-721 approval"
+    },
+    "VaipakamRewardMessenger.initialize(address,address,address,bool,uint256,uint256)": {
+      "class": "init",
+      "why": "the deployment, or the Diamond's factory, initializes each proxy once in the transaction that creates it"
+    },
+    "VaipakamTimelock.execute(address,uint256,bytes,bytes32,bytes32)": {
+      "class": "gated",
+      "gate": "OpenZeppelin `onlyRoleOrOpenRole(EXECUTOR_ROLE)`: open only when the executor role is granted to address(0), which is the deploy default (`TIMELOCK_EXECUTOR`); the change it executes already waited out the delay, and the multisig that scheduled it executes it"
+    },
+    "VaipakamTimelock.executeBatch(address[],uint256[],bytes[],bytes32,bytes32)": {
+      "class": "gated",
+      "gate": "OpenZeppelin `onlyRoleOrOpenRole(EXECUTOR_ROLE)`: as for execute"
+    },
+    "VaipakamTimelock.onERC1155BatchReceived(address,address,uint256[],uint256[],bytes)": {
+      "class": "user",
+      "why": "a token-receipt callback; it accepts the token and changes no protocol state"
+    },
+    "VaipakamTimelock.onERC1155Received(address,address,uint256,uint256,bytes)": {
+      "class": "user",
+      "why": "a token-receipt callback; it accepts the token and changes no protocol state"
+    },
+    "VaipakamTimelock.onERC721Received(address,address,uint256,bytes)": {
+      "class": "user",
+      "why": "a token-receipt callback; it accepts the token and changes no protocol state"
+    },
+    "VaipakamTimelock.renounceRole(bytes32,address)": {
+      "class": "user",
+      "why": "a holder gives up its own role; the confirmation argument must be the caller"
+    },
+    "VaultDepositoryFacet.disownUntracked(uint8,address,uint256)": {
+      "class": "user",
+      "why": "the vault owner disowns its own untracked asset"
+    },
+    "VaultFactoryFacet.getOrCreateUserVault(address)": {
+      "class": "user",
+      "why": "creates or returns a user's own vault; no step waits on it"
+    },
+    "VaultFactoryFacet.upgradeUserVault(address)": {
+      "class": "user",
+      "why": "moves a vault to the current implementation; the owner does it when the app asks, and a pinned vault only by its owner"
+    },
+    "VaultPayoutFacet.escapeWithdraw(uint8,address,uint256,uint256)": {
+      "class": "user",
+      "why": "the vault owner's own withdrawal during a long pause"
+    },
+    "VaultPayoutFacet.releasePayout(uint256)": {
+      "class": "keeper-pending",
+      "pass": "protectedAccount",
+      "flag": "PROTECTED_ACCOUNT_ENABLED",
+      "pr": "#3090"
+    },
+    "VpfiReturnReceiver.initialize(address,address,address)": {
+      "class": "init",
+      "why": "the deployment, or the Diamond's factory, initializes each proxy once in the transaction that creates it"
+    },
+    "VpfiReturnSender.initialize(address,address,address,address,uint256)": {
+      "class": "init",
+      "why": "the deployment, or the Diamond's factory, initializes each proxy once in the transaction that creates it"
+    }
+  }
+}

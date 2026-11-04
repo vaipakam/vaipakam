@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibDepositoryLedger} from "../libraries/LibDepositoryLedger.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibProtectedAccount} from "../libraries/LibProtectedAccount.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
@@ -191,6 +193,9 @@ contract VPFIDiscountFacet is
             ),
             VaultDepositFailed.selector
         );
+        // Staked VPFI is the owner's own deposit: it joins the depository
+        // holding, so a replacement controller can withdraw it too.
+        LibDepositoryLedger.credit(msg.sender, vpfi, 0, amount);
         emit VPFIDepositedToVault(msg.sender, amount, LibVPFIDiscount.vaultVpfiBalance(msg.sender));
     }
 
@@ -245,6 +250,9 @@ contract VPFIDiscountFacet is
             ),
             VaultDepositFailed.selector
         );
+        // Staked VPFI is the owner's own deposit: it joins the depository
+        // holding, so a replacement controller can withdraw it too.
+        LibDepositoryLedger.credit(msg.sender, vpfi, 0, amount);
         emit VPFIDepositedToVault(msg.sender, amount, LibVPFIDiscount.vaultVpfiBalance(msg.sender));
     }
 
@@ -256,6 +264,9 @@ contract VPFIDiscountFacet is
         private
         returns (address vpfi, address vault)
     {
+        // Protected account mode: a retired wallet funds nothing; its
+        // account is managed by the controller from now on.
+        LibProtectedAccount.requireManager(msg.sender);
         if (amount == 0) revert InvalidAmount();
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         vpfi = s.vpfiToken;
@@ -296,6 +307,9 @@ contract VPFIDiscountFacet is
     {
         // Tier-1 sanctions gate. Funds OUT to msg.sender — block.
         LibVaipakam._assertNotSanctioned(msg.sender);
+        // Protected account mode: a wallet a replacement retired lost every
+        // right over its account, spending its vault included.
+        LibProtectedAccount.requireManager(msg.sender);
         if (amount == 0) revert InvalidAmount();
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         address vpfi = s.vpfiToken;
@@ -306,7 +320,7 @@ contract VPFIDiscountFacet is
         uint256 prevBal = IERC20(vpfi).balanceOf(vault);
         if (prevBal < amount) revert VPFIVaultBalanceInsufficient();
 
-        uint256 prevTracked = s.protocolTrackedVaultBalance[msg.sender][vpfi];
+        uint256 prevTracked = LibVaipakam.trackedHolding(msg.sender, vpfi, 0);
 
         // #569 §6 F-1 (2026-06-13) — explicit encumbrance consult. VPFI
         // is collateral-eligible (triaged code-wrong: safe under P2P +
@@ -332,12 +346,18 @@ contract VPFIDiscountFacet is
         }
         // The withdraw refreshes the caller's tier record at the write
         // (#1820); the tracked counter alone feeds it, so dust never counts.
+        // Protected account mode: this withdrawal is paid now or queued,
+        // never held in the vault as a success that moved nothing.
+        LibProtectedAccount.requirePayoutRoom(msg.sender);
         VaultFactoryFacet(address(this)).vaultWithdrawERC20(
             msg.sender,
             vpfi,
             msg.sender,
             amount
         );
+        // Taken from the depository holding first (a queued protected payout
+        // that is cancelled is credited back, as for any withdrawal).
+        LibDepositoryLedger.spend(msg.sender, vpfi, 0, amount);
 
         emit VPFIWithdrawnFromVault(msg.sender, amount, LibVPFIDiscount.vaultVpfiBalance(msg.sender));
     }

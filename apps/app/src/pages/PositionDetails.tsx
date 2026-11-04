@@ -25,6 +25,7 @@ import {
   ContractFunctionRevertedError,
   ContractFunctionZeroDataError,
   formatUnits,
+  type Log,
 } from 'viem';
 import { copy } from '../content/copy';
 import { useScrollToFragment } from '../lib/useScrollToFragment';
@@ -79,6 +80,7 @@ import { EmptyState, UnavailableState } from '../components/EmptyState';
 import { type ReceiptData } from '../components/ReviewReceipt';
 import { ConfirmReceipt } from '../components/ConfirmReceipt';
 import { RefinanceFlow } from '../components/RefinanceFlow';
+import { refinancePostRefusal } from '../data/refinancePlan';
 import { RefinancePendingCard } from '../components/RefinancePendingCard';
 import { EarlyRepayOptionsCard } from '../components/EarlyRepayOptionsCard';
 import { earlyRepayChooserRenders } from '../data/earlyRepayChooser';
@@ -93,6 +95,8 @@ import {
 import { useForcedCloseReads } from '../data/useForcedClose';
 import { probeClaim, useLoanClaim } from '../data/claimables';
 import { receiptPayout, useClaimPayoutText } from '../data/useClaimPayout';
+import { payoutOutcomes, useOwnPayoutRoute, useProtectedAccount, vaultManagerLookup } from '../data/protectedAccount';
+import { payoutOutcomesText, payoutRouteText } from '../lib/payoutRouteText';
 import { initiatedPrincipal, lockedCollateralLine } from '../lib/positionAmounts';
 import {
   classifyMaxWithdrawable,
@@ -130,8 +134,13 @@ import {
 } from '../data/refinancePending';
 import { discoverRefinanceRequest } from '../data/refinanceDiscovery';
 import {
+  planPreclose,
+  planRepay,
+  refinanceRefusal,
+  saleSettlementRefusal,
+} from '../data/closeOutPlan';
+import {
   liveRefinanceVerdict,
-  postRefinanceVerdict,
   refinanceInterlock,
   repayRefinanceDecision,
   type RefinanceCheck,
@@ -233,6 +242,27 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   const { data: walletClient } = useWalletClient();
   const publicClient = usePublicClient({ chainId: walletChain?.chainId });
   const { write } = useDiamondWrite();
+  // Protected account mode: where a payment to this wallet lands (a claim,
+  // a collateral release). The confirmation states it instead of promising
+  // the wallet, and the result reads it from the receipt.
+  const { address: payeeAddress } = useActiveChain();
+  const ownProtection = useProtectedAccount(payeeAddress ?? undefined);
+  // A claim pays out of the RECORDED party's vault, which is not the
+  // claimant's own for a transferred position, so each route is read
+  // against its source.
+  const lenderPayoutRouteNote = payoutRouteText(useOwnPayoutRoute(loan.data?.lender));
+  const borrowerPayoutRouteNote = payoutRouteText(useOwnPayoutRoute(loan.data?.borrower));
+  // A collateral release first consolidates the position to its holder
+  // (the caller), so it pays out of the caller's own vault and its own gate.
+  const collateralPayoutRouteNote = payoutRouteText(useOwnPayoutRoute());
+  const withPayoutOutcome = (done: string, logs: readonly Log[], source: string | undefined) => {
+    const note = payoutOutcomesText(
+      payoutOutcomes(logs, payeeAddress, source),
+      payeeAddress,
+      vaultManagerLookup([{ address: payeeAddress, snap: ownProtection.data, readFailed: ownProtection.isError }], payeeAddress),
+    );
+    return note ? `${done} ${note}` : done;
+  };
   const queryClient = useQueryClient();
 
   const { isAdvanced, setMode } = useMode();
@@ -478,8 +508,8 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         periodicInterestCadence: live.periodicInterestCadence,
         // Third field lifted out of the SAME struct, for the third time
         // and the same reason (Codex r24 P2). `readLoanLive` returns
-        // `lenderForfeitFrom === undefined` when the optional seller-
-        // window call fails softly — on an unrefreshed deployment, say
+        // `sellerClaimOnSale === undefined` when the optional interest-
+        // ledger call fails softly — on a Diamond without it, say
         // — and neither sale tool can quote a price without it.
         //
         // The advanced-only `loanLive` already carried that verdict
@@ -488,7 +518,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         // shown both rows as available AND offered the Advanced switch,
         // and only after taking it did the rows turn to "failed". The
         // switch was an invitation to discover a dead end.
-        sellerWindowReadable: live.lenderForfeitFrom !== undefined,
+        sellerWindowReadable: live.sellerClaimOnSale !== undefined,
         // #2461 r1 (P2) — the two amounts a terminal transition moves,
         // from the same struct: when this read reconciles the status ahead
         // of the indexed row, the row's principal and collateral are just
@@ -876,42 +906,15 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     if (!publicClient || !walletChain || !loan.data) {
       return copy.saleHold.checkFailed;
     }
-    try {
-      const state = await probeSaleHoldLive(
-        publicClient,
-        walletChain.diamondAddress,
-        loanId,
-        loan.data.lenderTokenId,
-        address ?? undefined,
-        atBlock,
-      );
-      if (state === 'accepted') {
-        // Block ONLY while the loan is genuinely Active. A sale
-        // completion reverts LoanNotActive on anything else, so on a
-        // non-Active loan there is no completion left to strand — and
-        // blocking would trap the borrower permanently, since nothing
-        // they can reach from a blocked UI returns the loan to Active.
-        // Read live rather than trusting the reconciled row: this gate
-        // exists precisely because cached state can be stale.
-        const live = await readLoanLive(
-          publicClient,
-          walletChain.diamondAddress,
-          loanId,
-          atBlock,
-        );
-        return Number(live.status) === LOAN_STATUS_ACTIVE
-          ? copy.saleHold.completionPaused
-          : null;
-      }
-      // An unrecognized decoded revert is as unanswered as an RPC
-      // failure (Codex #1511 r8) — the hook fails closed on it, and
-      // the write gate must match.
-      if (state === 'unknown') return copy.saleHold.checkFailed;
-      return null;
-    } catch {
-      return copy.saleHold.checkFailed;
-    }
-  }, [saleEligible, publicClient, walletChain, loan.data, loanId, address]);
+    // One rule with the batch on Positions (#126).
+    return saleSettlementRefusal(
+      publicClient,
+      walletChain.diamondAddress,
+      loan.data,
+      address ?? undefined,
+      atBlock,
+    );
+  }, [saleEligible, publicClient, walletChain, loan.data, address]);
 
   /** #2391 / #2406 r1 — the live refinance check every BORROWER action
    *  that changes or settles the loan runs immediately before sending
@@ -932,20 +935,13 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     if (!publicClient || !walletChain || !loan.data || !address) {
       return copy.refinance.uncheckedBlocks;
     }
-    const verdict = liveRefinanceVerdict(
-      await discoverRefinanceRequest({
-        client: publicClient,
-        diamond: walletChain.diamondAddress,
-        loanId: BigInt(loanId),
-        sinceOfferId: BigInt(loan.data.offerId),
-        holder: address,
-      }),
+    // One rule with the batch on Positions (#126).
+    return refinanceRefusal(
+      { publicClient, diamond: walletChain.diamondAddress, holder: address },
+      loan.data,
+      blockedMsg,
     );
-    if (verdict === 'open') return blockedMsg;
-    if (verdict === 'capped') return copy.refinance.cappedBlocks;
-    if (verdict === 'unchecked') return copy.refinance.uncheckedBlocks;
-    return null;
-  }, [loanIsRental, publicClient, walletChain, loan.data, address, loanId]);
+  }, [loanIsRental, publicClient, walletChain, loan.data, address]);
   const assertBorrowerSettlementSafe = useCallback(
     async (): Promise<string | null> =>
       (await assertSaleSettlementSafe()) ?? (await assertNoRefinanceRequestLive()),
@@ -964,23 +960,13 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       }
       // #2424 r7 — posting uses its own verdict: an uncancelled expired
       // request blocks a new one too, because the protocol refuses the post
-      // until it is cancelled.
-      const verdict = postRefinanceVerdict(
-        await discoverRefinanceRequest({
-          client: publicClient,
-          diamond: walletChain.diamondAddress,
-          loanId: BigInt(loanId),
-          sinceOfferId: BigInt(loan.data.offerId),
-          holder: address,
-        }),
+      // until it is cancelled. One rule, shared with the batch (#126).
+      return refinancePostRefusal(
+        { publicClient, diamond: walletChain.diamondAddress, holder: address },
+        loan.data,
       );
-      if (verdict === 'open') return copy.refinance.alreadyOpen;
-      if (verdict === 'expired') return copy.refinance.expiredBlocksNew;
-      if (verdict === 'capped') return copy.refinance.cappedBlocks;
-      if (verdict === 'unchecked') return copy.refinance.uncheckedBlocks;
-      return null;
     },
-    [assertSaleSettlementSafe, loanIsRental, publicClient, walletChain, loan.data, address, loanId],
+    [assertSaleSettlementSafe, loanIsRental, publicClient, walletChain, loan.data, address],
   );
 
   // Live-offset state (preclose Option 3) — chain-authoritative
@@ -1667,10 +1653,10 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     (r) => (r.fresh ? r.status : undefined),
   );
 
-  /** Whether the optional seller-window call inside `readLoanLive`
+  /** Whether the optional interest-ledger call inside `readLoanLive`
    *  answered — `false` when a HEALTHY snapshot carries
-   *  `lenderForfeitFrom === undefined`, which is how that call fails
-   *  softly (an unrefreshed deployment, say). Neither sale tool can
+   *  `sellerClaimOnSale === undefined`, which is how that call fails
+   *  softly (a Diamond without the ledger, say). Neither sale tool can
    *  quote a price without it.
    *
    *  **Derived from all three sources in ONE place, deliberately**
@@ -1697,13 +1683,13 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   const sellerWindowReadable: boolean | undefined = (() => {
     const answers = [
       loanLive.data && !loanLive.isError
-        ? loanLive.data.live.lenderForfeitFrom !== undefined
+        ? loanLive.data.live.sellerClaimOnSale !== undefined
         : undefined,
       liveStatus.data && !liveStatus.isError
         ? liveStatus.data.sellerWindowReadable
         : undefined,
       bannerTermsData && !bannerTerms.isError
-        ? bannerTermsData.live.lenderForfeitFrom !== undefined
+        ? bannerTermsData.live.sellerClaimOnSale !== undefined
         : undefined,
     ].filter((a): a is boolean => a !== undefined);
     if (answers.length === 0) return undefined;
@@ -2197,129 +2183,38 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     setError(null);
     try {
       if (kind === 'repay') {
-        const [calcDue, latestBlock, liveGate] = await Promise.all([
-          readRepaymentDueLive(publicClient, walletChain.diamondAddress, row.loanId),
-          publicClient.getBlock({ blockTag: 'latest' }),
-          // The LIVE loan, unconditionally (OBS-2 #988): its STATUS is
-          // the authoritative repayability gate for rentals too, and
-          // for ERC-20 loans its term fields feed the grace math below
-          // (a keeper extendLoanInPlace moves durationDays under the
-          // indexer row; the contract judges gracePeriod on the live
-          // term).
-          readLoanLive(publicClient, walletChain.diamondAddress, row.loanId),
-        ]);
-        const chainNow = latestBlock.timestamp;
-        // repayLoan accepts only Active + FallbackPending (the cure
-        // path). Anything else means the loan already settled or was
-        // liquidated — abort BEFORE any balance check, approval, or
-        // wallet prompt instead of estimating a doomed write. This is
-        // the submit-side twin of the render-time reconciliation: it
-        // covers the race where the user clicks before the live-status
-        // query lands.
-        if (
-          liveGate.status !== LoanStatus.Active &&
-          liveGate.status !== LoanStatus.FallbackPending
-        ) {
-          setError(copy.errors.loanAlreadySettled);
+        // The live checks are the shared close-out plan (#126) — the same
+        // functions the batch on Positions runs, so the two cannot drift.
+        const plan = await planRepay(
+          { publicClient, diamond: walletChain.diamondAddress, holder: address },
+          row,
+        );
+        if (plan.kind === 'refused') {
+          setError(plan.reason);
           return;
         }
-        // Two more independent live reads, one round-trip: the role
-        // came from a CACHED ownerOf (repayLoan is PERMISSIONLESS — a
-        // stale "borrower" could pay off a position whose claim now
-        // belongs to someone else), and the grace window is judged by
-        // CHAIN time against the LIVE buckets.
-        const [, graceSec] = await Promise.all([
-          assertPositionNftHeldLive({
-            publicClient,
-            diamondAddress: walletChain.diamondAddress,
-            tokenId: row.borrowerTokenId,
-            expectedOwner: address,
-          }),
-          // Grace only gates ERC-20 repays — don't spend a read on
-          // rental closes.
-          row.assetType === AssetType.ERC20
-            ? readGraceSecondsLive({
-                publicClient,
-                diamondAddress: walletChain.diamondAddress,
-                durationDays: Number(liveGate.durationDays),
-              })
-            : Promise.resolve(0n),
-        ]);
-        // repayLoan reverts RepaymentPastGracePeriod once past the
-        // grace window — fail BEFORE the approval, judged on the LIVE
-        // term fields (see the liveGate read above).
-        if (row.assetType === AssetType.ERC20) {
-          const endTime = loanEndTimeOf(liveGate, chainNow);
-          if (chainNow > endTime + graceSec) {
-            setError(copy.errors.pastGrace);
-            return;
-          }
-        }
-        // calculateRepaymentAmount returns 0 for any non-Active status
-        // — but repayLoan ACCEPTS FallbackPending (the cure path) and
-        // still pulls principal + interest. Estimate the pull from the
-        // live loan so the cure flow gets a real allowance; the
-        // estimate only over-approves (repayLoan pulls what it
-        // recomputes) and the pad below is never spent.
-        let totalDue = calcDue;
-        // Keyed on the LIVE status (not the row's): the cure estimate
-        // must fire exactly when the chain says FallbackPending, even
-        // if the indexer row hasn't caught up to that state yet.
-        if (totalDue === 0n && liveGate.status === LoanStatus.FallbackPending) {
-          const live = liveGate;
-          const elapsedDays =
-            chainNow > live.startTime ? (chainNow - live.startTime) / 86_400n : 0n;
-          const interestEst =
-            (live.principal * live.interestRateBps * (elapsedDays + 2n)) /
-            (365n * 10_000n);
-          // Late fees mirror LibVaipakam.calculateLateFee: 1% base +
-          // 0.5%/day past maturity, CAPPED at 5%. Judge maturity by the
-          // LIVE term (a keeper extend moves it), pad one day-step, and
-          // clamp — an uncapped estimate blocks a borrower who holds
-          // enough for the real capped pull once ~8 days late.
-          const endTimeLive = loanEndTimeOf(live, chainNow);
-          const daysPastEnd =
-            chainNow > endTimeLive ? (chainNow - endTimeLive) / 86_400n : 0n;
-          let lateFeeBps = 100n + (daysPastEnd + 2n) * 50n;
-          if (lateFeeBps > 500n) lateFeeBps = 500n;
-          const lateFeeEst = (live.principal * lateFeeBps) / 10_000n;
-          totalDue = live.principal + interestEst + lateFeeEst;
-        }
-        if (row.assetType === AssetType.ERC20 && totalDue > 0n) {
-          // The owed amount STEPS UP at each elapsed-day boundary
-          // (whole-day interest flooring) and by the late fee — an
-          // exact-amount approval can be short by the time repayLoan
-          // executes. Pad by ~2 days of interest + the worst single
-          // late-fee jump (the 1% base landing when a repay signed
-          // just before maturity mines just after it, plus a 0.5%
-          // day-step — same bound as the preclose pad, Codex #1256
-          // r1); repayLoan only pulls the recomputed amount, so the
-          // pad is never spent.
-          const principal = BigInt(row.principal);
-          const pad =
-            fullTermInterest(principal, row.interestRateBps, 2) +
-            (principal * 150n) / 10_000n;
+        if (plan.pull) {
           // approve() succeeds no matter the balance — check the wallet
           // holds the PADDED amount before asking for an approval
-          // signature: a wallet holding exactly totalDue can still be
-          // short when repayLoan recomputes across a boundary, which
-          // would burn the approval on a doomed transferFrom.
+          // signature: a wallet holding exactly the due figure can still be
+          // short when repayLoan recomputes across a boundary, which would
+          // burn the approval on a doomed transferFrom.
           await assertErc20BalanceLive({
             publicClient,
-            token: row.lendingAsset as `0x${string}`,
+            token: plan.pull.token,
             owner: address,
-            amount: totalDue + pad,
+            amount: plan.pull.approve,
             symbol: principalMeta.data?.symbol,
           });
           await ensureAllowance({
             onPrompt: () => setPhase('approving'),
             publicClient,
             walletClient,
-            token: row.lendingAsset as `0x${string}`,
+            token: plan.pull.token,
             owner: address,
             spender: walletChain.diamondAddress,
-            amount: totalDue + pad,
-            ...approval.hooks(row.lendingAsset as `0x${string}`),
+            amount: plan.pull.approve,
+            ...approval.hooks(plan.pull.token),
           });
         }
         setPhase('submitting');
@@ -2374,9 +2269,11 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           }
         }
         setPhase('submitting');
-        await write('claimAsBorrower', [BigInt(row.loanId)]);
+        const { receipt: claimReceipt } = await write('claimAsBorrower', [BigInt(row.loanId)]);
         setClaimed((c) => ({ ...c, borrower: true }));
-        setDoneMessage(copy.claims.claimed);
+        // Where the payment landed, read from the receipt (protection may
+        // have queued it or kept it in the vault), never assumed.
+        setDoneMessage(withPayoutOutcome(copy.claims.claimed, claimReceipt.logs, loan.data?.borrower));
       } else {
         await assertWalletNotSanctionedLive(
           publicClient,
@@ -2384,9 +2281,9 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           address,
         );
         setPhase('submitting');
-        await write('claimAsLender', [BigInt(row.loanId)]);
+        const { receipt: claimReceipt } = await write('claimAsLender', [BigInt(row.loanId)]);
         setClaimed((c) => ({ ...c, lender: true }));
-        setDoneMessage(copy.claims.claimed);
+        setDoneMessage(withPayoutOutcome(copy.claims.claimed, claimReceipt.logs, loan.data?.lender));
       }
       setConfirmingSurface(null);
       void queryClient.invalidateQueries({ queryKey: ['loan'] });
@@ -2635,8 +2532,8 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         return;
       }
       setPhase('submitting');
-      await write('partialWithdrawCollateral', [BigInt(row.loanId), wei]);
-      setDoneMessage(copy.positions.details.done.collateralWithdrawn);
+      const { receipt: releaseReceipt } = await write('partialWithdrawCollateral', [BigInt(row.loanId), wei]);
+      setDoneMessage(withPayoutOutcome(copy.positions.details.done.collateralWithdrawn, releaseReceipt.logs, undefined));
       setWithdrawInput('');
       setConfirmingSurface(null);
       void queryClient.invalidateQueries({ queryKey: ['loan'] });
@@ -2885,84 +2782,39 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     }
     setError(null);
     try {
-      // precloseDirect is a Tier-1 entry point — live re-screen, plus
-      // the ownership/clock reads, one round-trip.
-      await assertWalletNotSanctionedLive(
-        publicClient,
-        walletChain.diamondAddress,
-        address,
+      // The live checks are the shared close-out plan (#126): the wallet
+      // re-screen (a Tier-1 entry point), the position NFT, the grace
+      // window on the LIVE term, the live status, and the borrower
+      // position's offset lock read live — the card's offset branch is a
+      // cached read.
+      const plan = await planPreclose(
+        { publicClient, diamond: walletChain.diamondAddress, holder: address },
+        row,
       );
-      const [, live, calcDue, latestBlock] = await Promise.all([
-        assertPositionNftHeldLive({
+      if (plan.kind === 'refused') {
+        setError(plan.reason);
+        return;
+      }
+      // `pull` is always set for an early close; the guard is for the type.
+      if (plan.pull) {
+        await assertErc20BalanceLive({
           publicClient,
-          diamondAddress: walletChain.diamondAddress,
-          tokenId: row.borrowerTokenId,
-          expectedOwner: address,
-        }),
-        readLoanLive(publicClient, walletChain.diamondAddress, row.loanId),
-        readRepaymentDueLive(publicClient, walletChain.diamondAddress, row.loanId),
-        publicClient.getBlock({ blockTag: 'latest' }),
-      ]);
-      // The card's grace gate ran on a CACHED chain clock (a
-      // backgrounded tab stops refetching) — re-judge live against
-      // the LIVE term fields and the LIVE grace bucket. Since #1189,
-      // precloseDirect stays valid THROUGH the grace window (charging
-      // the same late fee repayLoan does — calcDue already includes
-      // it) and reverts strictly past it, so mirror exactly that
-      // boundary (#1235).
-      const graceSec = await readGraceSecondsLive({
-        publicClient,
-        diamondAddress: walletChain.diamondAddress,
-        durationDays: Number(live.durationDays),
-      });
-      if (
-        latestBlock.timestamp >
-        loanEndTimeOf(live, latestBlock.timestamp) + graceSec
-      ) {
-        setError(copy.errors.preclosePastGrace);
-        return;
+          token: plan.pull.token,
+          owner: address,
+          amount: plan.pull.approve,
+          symbol: principalMeta.data.symbol,
+        });
+        await ensureAllowance({
+          onPrompt: () => setPhase('approving'),
+          publicClient,
+          walletClient,
+          token: plan.pull.token,
+          owner: address,
+          spender: walletChain.diamondAddress,
+          amount: plan.pull.approve,
+          ...approval.hooks(plan.pull.token),
+        });
       }
-      // `calculateRepaymentAmount` IS the preclose figure — it and
-      // `computePreclose` route through the same settlementInterestNet
-      // (full-term floor max(elapsed, remaining), interest already
-      // settled by partials, CHAIN time). It returns 0 for any
-      // non-Active loan — but 0 on a still-ACTIVE loan is the legal
-      // "principal fully paid down via partials" state, where
-      // precloseDirect is exactly the call that settles and releases
-      // the collateral (pulling nothing), so only a non-Active status
-      // aborts.
-      if (calcDue === 0n && live.status !== LOAN_STATUS_ACTIVE) {
-        setError(copy.errors.loanAlreadySettled);
-        return;
-      }
-      // The owed amount steps up at each elapsed-day boundary while
-      // the tx is pending — pad by ~2 days of interest plus the
-      // worst single late-fee jump: a close signed just before
-      // maturity that mines just after it picks up the 1% base fee
-      // at once, and an in-grace close crossing a day boundary steps
-      // 0.5% (Codex #1256 r1 — 1% + 0.5% covers both). precloseDirect
-      // pulls only what it recomputes, so the pad is never spent.
-      const due =
-        calcDue +
-        (live.principal * live.interestRateBps * 2n) / (365n * 10_000n) +
-        (live.principal * 150n) / 10_000n;
-      await assertErc20BalanceLive({
-        publicClient,
-        token: row.lendingAsset as `0x${string}`,
-        owner: address,
-        amount: due,
-        symbol: principalMeta.data.symbol,
-      });
-      await ensureAllowance({
-            onPrompt: () => setPhase('approving'),
-        publicClient,
-        walletClient,
-        token: row.lendingAsset as `0x${string}`,
-        owner: address,
-        spender: walletChain.diamondAddress,
-        amount: due,
-        ...approval.hooks(row.lendingAsset as `0x${string}`),
-      });
       setPhase('submitting');
       // LATE re-gate (Codex #1511 r10 P1): the entry gate ran before
       // the reads/approval steps above — a buyer acceptance can land
@@ -3172,7 +3024,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
             youMayOwe: copy.positions.details.receipt.nothing,
             youCanLose: copy.positions.details.receipt.nothing,
             fees: copy.positions.details.receipt.feesNone,
-            whenThisEnds: copy.positions.details.receipt.endsClaim,
+            whenThisEnds: borrowerPayoutRouteNote ?? copy.positions.details.receipt.endsClaim,
           }
         : action === 'claim-lender'
           ? {
@@ -3202,7 +3054,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                 : isRental
                   ? copy.positions.details.receipt.feesRental
                   : copy.positions.details.receipt.feesNone,
-              whenThisEnds: copy.positions.details.receipt.endsClaim,
+              whenThisEnds: lenderPayoutRouteNote ?? copy.positions.details.receipt.endsClaim,
             }
           : null;
 
@@ -3997,7 +3849,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                       youMayOwe: copy.positions.details.withdrawCollateral.oweNothingMore,
                       youCanLose: copy.positions.details.withdrawCollateral.lose,
                       fees: copy.positions.details.receipt.feesNone,
-                      whenThisEnds: copy.positions.details.withdrawCollateral.ends,
+                      whenThisEnds: collateralPayoutRouteNote ?? copy.positions.details.withdrawCollateral.ends,
                     }}
                   />
                 </div>
@@ -4326,6 +4178,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                 setConfirmingSurface((s) => (s === 'refinance' ? null : s))
               }
               onPosted={refi.remember}
+              onPermitAttach={refi.reportPermitAttach}
               busy={busy}
               setBusy={setBusy}
             />
@@ -4952,6 +4805,10 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           loanId={row.loanId}
           offerId={refi.offerId}
           state={refi.state}
+          attachProgress={
+            refi.permitAttach?.offerId === refi.offerId ? refi.permitAttach : null
+          }
+          onPermitAttach={refi.reportPermitAttach}
           principalAsset={row.lendingAsset as `0x${string}`}
           principalMeta={principal ?? undefined}
           busy={busy}

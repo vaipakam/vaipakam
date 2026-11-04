@@ -33,6 +33,17 @@ describe('activityActor', () => {
     expect(activityActor('PrepayCollateralSaleSettled', { executor: A })).toBeNull();
   });
 
+  it('files every step of a seller claim under the seller (#1209)', () => {
+    for (const kind of [
+      'SellerInterestClaimRecorded',
+      'SellerInterestPaid',
+      'SellerInterestWithdrawn',
+      'SellerInterestClaimClosed',
+    ]) {
+      expect(activityActor(kind, { loanId: 1n, seller: A })).toBe(A.toLowerCase());
+    }
+  });
+
   it('reads a non-string field as no actor, never throws', () => {
     expect(activityActor('LoanRepaid', { repayer: 1 })).toBeNull();
     expect(activityActor('TierExclusionUpdated', { vaultOwner: { a: 1 } })).toBeNull();

@@ -138,7 +138,7 @@ contract InteractionRewardVaultDeliveryTest is SetupTest, IVaipakamErrors {
     }
 
     function _tracked(address user) internal view returns (uint256) {
-        return _vaultFacet().getProtocolTrackedVaultBalance(user, address(vpfi));
+        return _vaultFacet().getTrackedHolding(user, address(vpfi), 0);
     }
 
     // ─── EOA default → vault credit ──────────────────────────────────────────

@@ -35,7 +35,8 @@ import { tipAware } from '../chain/railHealth';
 export const LOCK_EARLY_WITHDRAWAL_SALE = 2;
 
 /** The settlement a buyer's acceptance would deduct from their payment to
- *  the seller RIGHT NOW: max(accrued interest forfeited, rate top-up). */
+ *  the seller RIGHT NOW: the rate top-up only. The seller's earned interest
+ *  is not deducted; it becomes their claim on the loan (#1209). */
 export function saleSettlementNow(
   live: LoanLive,
   saleRateBps: bigint,
@@ -44,6 +45,14 @@ export function saleSettlementNow(
 }
 
 const marker = makePendingMarkerStore('app.loanSaleOffer');
+
+/** Record a listing made away from its loan page (the batch listing on
+ *  Positions, #126), so that page finds the offer id for cancel without
+ *  waiting on the recovery probe. Verified live there before it is
+ *  trusted, like any marker. */
+export function rememberLoanSaleOffer(chainId: number, loanId: number, offerId: string): void {
+  marker.write(chainId, loanId, offerId);
+}
 
 export interface LoanSalePendingState {
   /** The lender NFT is lock-tagged for a sale — a listing exists. */

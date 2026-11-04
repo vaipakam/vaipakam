@@ -8,13 +8,16 @@ import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {EncumbranceMutateFacet} from "../src/facets/EncumbranceMutateFacet.sol";
 import {FallbackCustodyFacet} from "../src/facets/FallbackCustodyFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
+import {MetricsFacet} from "../src/facets/MetricsFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {PrecloseFacet} from "../src/facets/PrecloseFacet.sol";
+import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {RepayPeriodicFacet} from "../src/facets/RepayPeriodicFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
+import {SellerClaimFacet} from "../src/facets/SellerClaimFacet.sol";
 import {TreasuryFacet} from "../src/facets/TreasuryFacet.sol";
 import {TreasuryFeeFacet} from "../src/facets/TreasuryFeeFacet.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
@@ -27,6 +30,7 @@ import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
 import {defaultAdapterCalls} from "./helpers/AdapterCallHelpers.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {FeeOnTransferERC20Mock} from "./mocks/FeeOnTransferERC20Mock.sol";
+import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {ZeroExProxyMock} from "./mocks/ZeroExProxyMock.sol";
 import {Vm} from "forge-std/Vm.sol";
@@ -126,7 +130,7 @@ contract MeasuredDeliveryTest is SetupTest {
     }
 
     function _tracked(address user, address token) internal view returns (uint256) {
-        return VaultFactoryFacet(address(diamond)).getProtocolTrackedVaultBalance(user, token);
+        return VaultFactoryFacet(address(diamond)).getTrackedHolding(user, token, 0);
     }
 
     function _vault(address user) internal returns (address) {
@@ -215,15 +219,6 @@ contract MeasuredDeliveryTest is SetupTest {
 
     function _lien() internal view returns (uint256 amount) {
         (amount, ) = TestMutatorFacet(address(diamond)).getLoanCollateralLienAmount(LOAN);
-    }
-
-    /// @dev The loan's paid-through mark (`lenderInterestDeliveredThroughAt`),
-    ///      which has no getter: slot 480 of the Diamond's namespace, per
-    ///      `storage-layout/layout.golden.json`. Every cell that reads it first
-    ///      proves the slot by writing a known value through the mutator.
-    function _paidThrough(uint256 loanId) internal view returns (uint256) {
-        bytes32 slot = keccak256(abi.encode(loanId, uint256(LibVaipakam.VANGKI_STORAGE_POSITION) + 480));
-        return uint256(vm.load(address(diamond), slot));
     }
 
     /// @dev The fallback custody fixture: a liquid default whose every swap
@@ -574,15 +569,12 @@ contract MeasuredDeliveryTest is SetupTest {
     ///         refuse: its owner can lower it mid-transfer (a receiving hook
     ///         forwarding the tokens on) and would be paid again if the short
     ///         figure were booked. So a short arrival is refused there, in the
-    ///         forced auto-liquidation too, and the paid-through mark does not
-    ///         move. Kills: reporting what arrived and leaving the rest owed to
-    ///         the same wallet.
+    ///         forced auto-liquidation too. Kills: reporting what arrived and
+    ///         leaving the rest owed to the same wallet.
     function test_ResidentLenderPayout_WalletShortRefused() public {
         _scaffold(true);
         uint256 amount = 100 ether;
         ERC20Mock(mockERC20).mint(address(diamond), amount);
-        TestMutatorFacet(address(diamond)).setLenderPaidThroughWithPrincipalRaw(LOAN, 1, PRINCIPAL);
-        assertEq(_paidThrough(LOAN), 1, "fixture: the slot read is the paid-through mark");
         _chargesFee(mockERC20, address(diamond));
 
         vm.expectRevert(
@@ -592,28 +584,73 @@ contract MeasuredDeliveryTest is SetupTest {
         );
         vm.prank(address(diamond));
         EncumbranceMutateFacet(address(diamond)).freezeOrPayActiveLenderResident(
-            LOAN, mockERC20, amount, block.timestamp + 30 days
+            LOAN, mockERC20, amount, amount, amount
         );
-        assertEq(_paidThrough(LOAN), 1, "the period stays open");
     }
 
     /// @notice The control for the cell above: a payout that arrives in full
-    ///         reports the whole amount and marks the lender paid through.
-    function test_ResidentLenderPayout_FullArrivalMarksPaidThrough() public {
+    ///         reports the whole amount, and the interest ledger is
+    ///         checkpointed at the payout (#1808).
+    function test_ResidentLenderPayout_FullArrivalReportsWhole() public {
         _scaffold(true);
         uint256 amount = 100 ether;
         ERC20Mock(mockERC20).mint(address(diamond), amount);
-        TestMutatorFacet(address(diamond)).setLenderPaidThroughWithPrincipalRaw(LOAN, 1, PRINCIPAL);
-        assertEq(_paidThrough(LOAN), 1, "fixture: the slot read is the paid-through mark");
-        uint256 boundary = block.timestamp + 30 days;
+        vm.warp(block.timestamp + 1 days);
 
         vm.prank(address(diamond));
         uint256 delivered = EncumbranceMutateFacet(address(diamond)).freezeOrPayActiveLenderResident(
-            LOAN, mockERC20, amount, boundary
+            LOAN, mockERC20, amount, amount, amount
         );
 
         assertEq(delivered, amount, "the whole payout arrived");
-        assertEq(_paidThrough(LOAN), boundary, "the lender is paid through the boundary");
+        (,, uint64 touchedAt,) = SellerClaimFacet(address(diamond)).getInterestLedger(LOAN);
+        assertEq(touchedAt, block.timestamp, "the ledger is checkpointed at the payout");
+    }
+
+    /// @notice #1832 (Codex r1 on #3085) — a frozen holder's share is parked
+    ///         in the stored lender's vault, and a charged token parks less
+    ///         than was sent. The caller credits the loan with what arrived,
+    ///         so the lifetime interest counter must state that figure too:
+    ///         the rest is still owed, and a later payment that settles it
+    ///         records it then. Kills: counting the whole requested slice at
+    ///         the seller-payment seam, which double counts the shortfall.
+    function test_ResidentLenderPayout_FrozenShortCountsOnlyWhatArrived() public {
+        _scaffold(true);
+        MockSanctionsList m = new MockSanctionsList();
+        ProfileFacet(address(diamond)).setSanctionsOracle(address(m));
+        m.setFlagged(lender, true);
+        uint256 amount = 100 ether;
+        ERC20Mock(mockERC20).mint(address(diamond), amount);
+        _chargesFee(mockERC20, address(diamond));
+
+        vm.prank(address(diamond));
+        uint256 delivered = EncumbranceMutateFacet(address(diamond)).freezeOrPayActiveLenderResident(
+            LOAN, mockERC20, amount, amount, amount
+        );
+
+        assertEq(delivered, _less(amount), "the vault received less than was sent");
+        (, uint256 interestPaid) = MetricsFacet(address(diamond)).getLifetimeLendingTotals(mockERC20);
+        assertEq(interestPaid, delivered, "only the interest that arrived is counted");
+    }
+
+    /// @notice The control: the same frozen park arriving in full counts the
+    ///         whole slice.
+    function test_ResidentLenderPayout_FrozenFullCountsWhole() public {
+        _scaffold(true);
+        MockSanctionsList m = new MockSanctionsList();
+        ProfileFacet(address(diamond)).setSanctionsOracle(address(m));
+        m.setFlagged(lender, true);
+        uint256 amount = 100 ether;
+        ERC20Mock(mockERC20).mint(address(diamond), amount);
+
+        vm.prank(address(diamond));
+        uint256 delivered = EncumbranceMutateFacet(address(diamond)).freezeOrPayActiveLenderResident(
+            LOAN, mockERC20, amount, amount, amount
+        );
+
+        assertEq(delivered, amount, "the whole payout arrived");
+        (, uint256 interestPaid) = MetricsFacet(address(diamond)).getLifetimeLendingTotals(mockERC20);
+        assertEq(interestPaid, amount, "the whole slice is counted");
     }
 
     // -- Voluntary flows refuse a short arrival at every hop ----------------

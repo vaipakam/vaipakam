@@ -28,6 +28,7 @@ import { signalAware } from '../chain/railHealth';
 import { fetchFreshConfigValues } from './indexer';
 import { readConfigBundleLive } from './protocol';
 import { copy } from '../content/copy';
+import { isMissingSelectorError } from '../contracts/preflights';
 
 export const VPFI_DECIMALS = 18;
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
@@ -267,7 +268,7 @@ export function useVpfi() {
         };
       }
 
-      const [walletBalance, effective, tracked, consent, encumbered] =
+      const [walletBalance, effective, tracked, consent, encumbered, earmark] =
         await Promise.all([
           read<bigint>('getVPFIBalanceOf', [address]),
           read<readonly [number, number]>('getEffectiveDiscount', [address]),
@@ -289,10 +290,20 @@ export function useVpfi() {
             if (isRevert) return 0n;
             throw err;
           }),
+          // What protected account mode holds back for the owner's queued
+          // payouts: not withdrawable either. A Diamond without protected
+          // account mode (a confirmed missing selector) holds nothing back;
+          // a transport failure is not knowledge, so it rethrows like the
+          // lien read above.
+          read<bigint>('getPayoutEarmark', [address, token, 0n]).catch((err) => {
+            if (isMissingSelectorError(err)) return 0n;
+            throw err;
+          }),
         ]);
       const [effTier, effBps] = effective;
       const [trackedTier, trackedBal] = tracked;
-      const freeBalance = trackedBal > encumbered ? trackedBal - encumbered : 0n;
+      const heldBack = encumbered + earmark;
+      const freeBalance = trackedBal > heldBack ? trackedBal - heldBack : 0n;
 
       return {
         registered,

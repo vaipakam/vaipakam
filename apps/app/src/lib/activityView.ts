@@ -83,6 +83,9 @@ export const ACTIVITY_LABELS: Record<string, ActivityLabel> = {
   BackstopAbsorbedLoan: { label: 'Loan absorbed by backstop', category: 'loan-default', priority: 88 },
   LoanExtended: { label: 'Loan extended', category: 'loan-modify', priority: 75 },
   LoanRefinanced: { label: 'Loan refinanced', category: 'loan-modify', priority: 85 },
+  // #3042 — the refinance's settlement statement (each leg of the old
+  // loan's payoff); low priority so LoanRefinanced represents the tx.
+  RefinancePayoffSettled: { label: 'Loan refinanced', category: 'loan-modify', priority: 10 },
   LoanPreclosedDirect: { label: 'Loan closed early', category: 'loan-close', priority: 85 },
   // A claim is the user's OWN final action and must outrank the
   // LoanSettled (85) the same tx emits (Codex #1171 r2): ClaimFacet
@@ -102,6 +105,10 @@ export const ACTIVITY_LABELS: Record<string, ActivityLabel> = {
   IntentLoanRolled: { label: 'Loan rolled over', category: 'loan-modify', priority: 75 },
   CollateralAdded: { label: 'Collateral added', category: 'collateral', priority: 75 },
   InternalMatchExecuted: { label: 'Loan matched internally', category: 'loan-open', priority: 82 },
+  // #2625 item 3 — the match found for a loan in liquidation, default or a
+  // fallback claim was skipped because a leg delivered short; the loan went
+  // on to its own close-out in the same transaction.
+  InternalMatchRefusedShortDelivery: { label: 'Internal match skipped', category: 'other', priority: 40 },
   // Prepay collateral-sale listings (the borrower's parallel-sale exit).
   PrepayListingPosted: { label: 'Collateral listed for sale', category: 'loan-modify', priority: 55 },
   PrepayListingMatched: { label: 'Collateral sale matched', category: 'loan-modify', priority: 78 },
@@ -130,6 +137,14 @@ export const ACTIVITY_LABELS: Record<string, ActivityLabel> = {
   // #2795 — a borrower extra held on an open loan, paid out when the
   // obligation was handed over to a replacement borrower.
   BorrowerHeldExtraPaid: { label: 'Held sale extra paid out', category: 'collateral', priority: 50 },
+  // #1209 — a lender sale's seller keeps a claim on the interest they earned.
+  // Recorded rides the sale (below LoanSold's 80); a payment rides the
+  // repayment that funded it; the withdrawal is the seller's own transaction;
+  // the close rides the terminal claim that settled it.
+  SellerInterestClaimRecorded: { label: 'Seller interest claim recorded', category: 'loan-modify', priority: 70 },
+  SellerInterestPaid: { label: 'Seller interest paid', category: 'loan-repay', priority: 60 },
+  SellerInterestWithdrawn: { label: 'Seller interest withdrawn', category: 'loan-close', priority: 90 },
+  SellerInterestClaimClosed: { label: 'Seller interest claim closed', category: 'loan-close', priority: 50 },
   // Signed offers
   SignedOfferFilled: { label: 'Signed offer filled', category: 'loan-open', priority: 80 },
   SignedOfferMatched: { label: 'Signed offers matched', category: 'loan-open', priority: 80 },
@@ -165,6 +180,19 @@ export const ACTIVITY_LABELS: Record<string, ActivityLabel> = {
   // confirmation), so the label states the resulting setting, not a change.
   AutoListOptOutCleared: { label: 'Automatic grace-period listing on', category: 'loan-modify', priority: 40 },
   AutoRefinanceCapsChanged: { label: 'Automatic refinance limits updated', category: 'loan-modify', priority: 40 },
+  // #2814 — the borrower's earmarked top-up for an extension. The draw is
+  // the companion of `LoanExtended` in the same transaction, so it rides
+  // inside that row (below the default of 20) and states where the charge
+  // came from.
+  ExtendReserveFunded: { label: 'Extension reserve funded', category: 'loan-modify', priority: 40 },
+  ExtendReserveWithdrawn: { label: 'Extension reserve withdrawn', category: 'loan-modify', priority: 40 },
+  ExtendChargeDrawn: { label: 'Extension charge paid', category: 'loan-modify', priority: 15 },
+  // #1558 — the borrower's signed payoff permit on a refinance request. The
+  // pull is the companion of `LoanRefinanced` in the same transaction, so it
+  // rides inside that row and states where the payoff came from.
+  RefinancePayoffPermitSet: { label: 'Refinance payoff permit signed', category: 'loan-modify', priority: 40 },
+  RefinancePayoffPermitCleared: { label: 'Refinance payoff permit removed', category: 'loan-modify', priority: 40 },
+  RefinancePayoffPulled: { label: 'Refinance payoff paid', category: 'loan-modify', priority: 15 },
   BackstopFilled: { label: 'Funded by the backstop', category: 'loan-open', priority: 60 },
   BackstopLoanClaimed: { label: 'Backstop recovery claimed', category: 'loan-close', priority: 80 },
   // Paid inside the borrower's claim, before its own event: below the claim
@@ -233,8 +261,51 @@ export const ACTIVITY_LABELS: Record<string, ActivityLabel> = {
   IlliquidPairConsentSet: { label: 'Consent for an illiquid asset pairing updated', category: 'other', priority: 40 },
   MidTierPairAckSet: { label: 'Mid-tier asset pairing confirmed', category: 'other', priority: 40 },
   RiskStrictModeSet: { label: 'Strict mode setting updated', category: 'other', priority: 40 },
-  TokenDisowned: { label: 'Unsolicited tokens disowned', category: 'other', priority: 40 },
-  StuckERC20Recovered: { label: 'Stuck tokens recovered', category: 'other', priority: 60 },
+  // The depository vault, its payout queue and protected account mode.
+  VaultDeposited: { label: 'Deposited to vault', category: 'other', priority: 60 },
+  VaultWithdrawRequested: { label: 'Vault withdrawal requested', category: 'other', priority: 60 },
+  UntrackedAdopted: { label: 'Tokens added to vault', category: 'other', priority: 60 },
+  UntrackedDisowned: { label: 'Unsolicited tokens disowned', category: 'other', priority: 40 },
+  VaultPinned: { label: 'Vault version pinned', category: 'other', priority: 40 },
+  VaultUnpinRequested: { label: 'Vault version unpin requested', category: 'other', priority: 40 },
+  VaultUnpinned: { label: 'Vault version unpinned', category: 'other', priority: 40 },
+  PayoutQueued: { label: 'Payout queued', category: 'other', priority: 55 },
+  PayoutReleased: { label: 'Payout released', category: 'other', priority: 60 },
+  PayoutCancelled: { label: 'Payout cancelled', category: 'other', priority: 40 },
+  PayoutHeldInVault: { label: 'Payout kept in vault', category: 'other', priority: 55 },
+  PaymentCreditedToVault: { label: 'Payment credited to vault', category: 'other', priority: 55 },
+  PositionTransferQueued: { label: 'Position NFT transfer queued', category: 'other', priority: 40 },
+  PositionTransferReleased: { label: 'Position NFT transfer released', category: 'other', priority: 40 },
+  PositionTransferCancelled: { label: 'Position NFT transfer cancelled', category: 'other', priority: 40 },
+  EscapeWithdrawal: { label: 'Withdrawal during protocol pause', category: 'other', priority: 60 },
+  PayoutCosigned: { label: 'Payout co-signed', category: 'other', priority: 40 },
+  PositionTransferCosigned: { label: 'Position transfer co-signed', category: 'other', priority: 40 },
+  ProtectedModeEnabled: { label: 'Protected mode turned on', category: 'other', priority: 40 },
+  ProtectedModeDisabled: { label: 'Protected mode turned off', category: 'other', priority: 40 },
+  SettingChangeRequested: { label: 'Protected setting change requested', category: 'other', priority: 40 },
+  SettingChangeCancelled: { label: 'Protected setting change cancelled', category: 'other', priority: 40 },
+  SettingChangeApplied: { label: 'Protected setting change applied', category: 'other', priority: 40 },
+  ProtectedDelaySet: { label: 'Payout delay changed', category: 'other', priority: 40 },
+  ProtectNftsSet: { label: 'Position NFT protection changed', category: 'other', priority: 40 },
+  CosignRequirementSet: { label: 'Co-signing requirement changed', category: 'other', priority: 40 },
+  AllowlistAddRequested: { label: 'Payout address addition requested', category: 'other', priority: 40 },
+  AllowlistAddCancelled: { label: 'Payout address addition cancelled', category: 'other', priority: 40 },
+  AllowlistAdded: { label: 'Payout address added', category: 'other', priority: 40 },
+  AllowlistRemoved: { label: 'Payout address removed', category: 'other', priority: 40 },
+  SignerAddRequested: { label: 'Recovery signer invited', category: 'other', priority: 40 },
+  SignerAccepted: { label: 'Recovery signer accepted', category: 'other', priority: 40 },
+  SignerAddCancelled: { label: 'Recovery signer invitation cancelled', category: 'other', priority: 40 },
+  SignerAdded: { label: 'Recovery signer added', category: 'other', priority: 40 },
+  SignerRemoveRequested: { label: 'Recovery signer removal requested', category: 'other', priority: 40 },
+  SignerRemoveCancelled: { label: 'Recovery signer removal cancelled', category: 'other', priority: 40 },
+  SignerRemoved: { label: 'Recovery signer removed', category: 'other', priority: 40 },
+  VaultLocked: { label: 'Vault locked', category: 'other', priority: 70 },
+  VaultUnlocked: { label: 'Vault unlocked', category: 'other', priority: 40 },
+  ReplacementProposed: { label: 'Wallet replacement proposed', category: 'other', priority: 40 },
+  ReplacementApproved: { label: 'Wallet replacement approved', category: 'other', priority: 40 },
+  ReplacementScheduled: { label: 'Wallet replacement scheduled', category: 'other', priority: 40 },
+  ReplacementCancelled: { label: 'Wallet replacement cancelled', category: 'other', priority: 40 },
+  PrimaryReplaced: { label: 'Wallet replaced', category: 'other', priority: 70 },
   AutoLendConsentChanged: { label: 'Auto-lend setting updated', category: 'other', priority: 40 },
   AutoOptInOnNewLoanChanged: { label: 'Automatic refinance setting for new loans updated', category: 'other', priority: 40 },
   DefaultAutoRefinanceCapsChanged: { label: 'Default automatic refinance limits updated', category: 'other', priority: 40 },

@@ -186,7 +186,7 @@ library LibOfferMatch {
 
     /// @notice Asset-continuity check between an existing loan and a
     ///         replacement offer (Preclose's `transferObligationViaOffer`
-    ///         + Refinance's `refinanceLoan`). Returns `true` iff the
+    ///         + `RefinanceFacet`'s payoff). Returns `true` iff the
     ///         offer carries the same lendingAsset, collateralAsset,
     ///         collateralAssetType, and prepayAsset as the loan.
     /// @dev    Returns bool (rather than reverting) so each caller can

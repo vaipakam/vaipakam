@@ -8336,6 +8336,45 @@ contended case.
 > Collapsing it to a single inline day is a separate simplification,
 > tracked as #2828.
 
+> **LANDED — #2828, the inline-day wire (d8).** The budget wire carries its
+> ONE funded day as a word: `(tag, dayId, total, remitId, remitter,
+> recycledShare, intendedEra, dayWholeFresh, dayWholeRecycled)`. Days the
+> remittance only closed stay in the canonical reservation (`dayIds`, with
+> the immutable `fundedDayBits` naming the funded one) and never travel. The
+> receiver moves to generation 9 and refuses d7, like every older shape, by
+> name.
+>
+> The mirror does at arrival what used to be a second, permissionless call.
+> In one transaction the ingress records the packet, stamps its day
+> (`IngressPacketDayStamped`), records the part, and, on an activated
+> custody, admits the epoch with that day and links it into the day's
+> arrival order (`arrivedAt`, then batch id). It then counts the part toward
+> the day's delivery record on both paths, so a pre-activation delivery lands
+> its day the same way. Linking walks back from the day's tail, stops at the
+> passed prefix, and is bounded at 128 nodes (`TransportIndexWalkExceeded`):
+> a delivery that would need more is refused and stays re-executable. Only
+> epochs of one day landing out of arrival order can come near the bound,
+> which in practice means same-second ties. A non-tail placement goes on the
+> late chain staging already reads.
+>
+> Removed with the step it served: the chunk index and the no-epoch proof
+> routes, the placement hints, the per-delivery index cursor and chunk
+> bitmap, the incomplete-index and multi-day withholding gates (and
+> `withheldMultiDay` from the coverage view), the per-delivery proof view,
+> the day-list views, the paged park, and their errors, events and
+> selectors. `RefreshAllFacetsInPlace` lists the d7 ingress among the
+> retired signatures. Parking a remainder is one call once its day is proven
+> closed. The destination gas budget is re-derived from the new ingress,
+> which now carries the link and the part count (figures on the constant).
+> The change breaks the storage layout, acknowledged in `breaks.ack.json`;
+> like the rest of slices 2 and 3 it reaches a chain only by fresh deploy.
+>
+> One follow-up is worth recording. Ordering the day list by an admission
+> sequence rather than `arrivedAt` would make every link a tail link. The
+> ingress could then never hit the walk bound, and the late chain could go.
+> It is left out here because staging's deadline arithmetic reads the late
+> chain.
+
 **Transport epochs PR 3d — the d6 wire.** The new wire version embedding a
 Merkle root over fixed-size chunks together with the authenticated extent,
 the indexed materialization pages verified against it, **and the INTENDED

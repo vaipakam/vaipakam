@@ -255,7 +255,7 @@ library LibFeeEntitlement {
         if (vpfi == address(0)) return 0;
         address vault = s.userVaipakamVaults[party];
         if (vault == address(0)) return 0;
-        uint256 tracked = s.protocolTrackedVaultBalance[party][vpfi];
+        uint256 tracked = LibVaipakam.trackedHolding(party, vpfi, 0);
         uint256 raw = IERC20(vpfi).balanceOf(vault);
         uint256 capped = tracked < raw ? tracked : raw;
         return LibEncumbrance.freeBalance(party, vpfi, 0, capped);

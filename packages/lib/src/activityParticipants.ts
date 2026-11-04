@@ -59,6 +59,16 @@ const PARTIES: ReadonlyMap<string, readonly string[]> = new Map<string, readonly
   ['AutoExtendBorrowerCapsChanged', ['borrower']],
   ['AutoExtendLenderCapsChanged', ['lender']],
   ['AutoRefinanceCapsChanged', ['borrower']],
+  // #2814 — the extension reserve is the depositor's own; each step of it,
+  // and an extension's draw on it, concerns that depositor.
+  ['ExtendReserveFunded', ['holder']],
+  ['ExtendReserveWithdrawn', ['holder']],
+  ['ExtendChargeDrawn', ['holder']],
+  // #1558 — the borrower's single-use payoff permit on a refinance request;
+  // the pull names the borrower who pays, whoever completes the refinance.
+  ['RefinancePayoffPermitSet', ['signer']],
+  ['RefinancePayoffPermitCleared', ['signer']],
+  ['RefinancePayoffPulled', ['payer']],
   ['AutoListOptOutCleared', ['clearedBy']],
   ['LenderBackstopOptInSet', ['lenderNftOwner']],
   ['CollateralAdded', ['borrower']],
@@ -132,8 +142,58 @@ const PARTIES: ReadonlyMap<string, readonly string[]> = new Map<string, readonly
   ['VaultRiskTierSet', ['vault']],
   // ── Vault and position NFTs.
   ['UserVaultCreated', ['user']],
-  ['TokenDisowned', ['user']],
-  ['StuckERC20Recovered', ['user']],
+  // The depository vault and its payout queue: each row concerns the vault's
+  // owner (`account`). Where a payout or a position transfer goes is the
+  // owner's own choice of destination, classified below.
+  ['VaultDeposited', ['account']],
+  ['VaultWithdrawRequested', ['account']],
+  ['UntrackedAdopted', ['account']],
+  ['UntrackedDisowned', ['account']],
+  ['VaultPinned', ['account']],
+  ['VaultUnpinRequested', ['account']],
+  ['VaultUnpinned', ['account']],
+  ['PayoutQueued', ['account']],
+  ['PayoutReleased', ['account']],
+  ['PayoutCancelled', ['account']],
+  ['PayoutHeldInVault', ['account']],
+  ['PaymentCreditedToVault', ['account']],
+  ['PositionTransferQueued', ['account']],
+  ['PositionTransferReleased', ['account']],
+  ['PositionTransferCancelled', ['account']],
+  ['EscapeWithdrawal', ['account']],
+  // A co-signature names the signer who gave it.
+  ['PayoutCosigned', ['account', 'signer']],
+  ['PositionTransferCosigned', ['account', 'signer']],
+  // Protected account mode: the account's own settings and its lock.
+  ['ProtectedModeEnabled', ['account']],
+  ['ProtectedModeDisabled', ['account']],
+  ['SettingChangeRequested', ['account']],
+  ['SettingChangeCancelled', ['account']],
+  ['SettingChangeApplied', ['account']],
+  ['ProtectedDelaySet', ['account']],
+  ['ProtectNftsSet', ['account']],
+  ['CosignRequirementSet', ['account']],
+  ['AllowlistAddRequested', ['account']],
+  ['AllowlistAddCancelled', ['account']],
+  ['AllowlistAdded', ['account']],
+  ['AllowlistRemoved', ['account']],
+  ['VaultLocked', ['account']],
+  ['VaultUnlocked', ['account']],
+  // A recovery signer's own membership concerns that signer too.
+  ['SignerAddRequested', ['account', 'signer']],
+  ['SignerAccepted', ['account', 'signer']],
+  ['SignerAddCancelled', ['account', 'signer']],
+  ['SignerAdded', ['account', 'signer']],
+  ['SignerRemoveRequested', ['account', 'signer']],
+  ['SignerRemoveCancelled', ['account', 'signer']],
+  ['SignerRemoved', ['account', 'signer']],
+  // A replacement concerns the nominated wallet; an approval also names the
+  // approving signer, and the completed replacement the new controller.
+  ['ReplacementProposed', ['account', 'nominee']],
+  ['ReplacementApproved', ['account', 'nominee', 'signer']],
+  ['ReplacementScheduled', ['account', 'nominee']],
+  ['ReplacementCancelled', ['account', 'nominee']],
+  ['PrimaryReplaced', ['account', 'controller']],
   ['NFTMinted', ['owner']],
   ['Approval', ['owner']],
   ['ApprovalForAll', ['owner']],
@@ -192,15 +252,31 @@ const LOCAL_NOT_A_PARTY: ReadonlyMap<string, Readonly<Record<string, string>>> =
 >([
   ['Approval', { approved: 'the address approved for one position NFT' }],
   ['ApprovalForAll', { operator: 'the operator approved for every position NFT' }],
-  // Two definitions share the name (an admin recovery, and the user's own
-  // declared recovery); the rule is keyed by name, so both are classified.
-  [
-    'StuckERC20Recovered',
-    {
-      admin: 'the admin role that signed the recovery',
-      declaredSource: 'the address the user declared sent the tokens',
-    },
-  ],
+  // The owner's declared source of an adopted asset is a statement about
+  // where it came from, not a wallet acting in the row.
+  ['UntrackedAdopted', { declaredSource: 'the address the owner declared sent the asset' }],
+  // Payout and position-transfer destinations are the owner's own wallet or
+  // an address on the owner's allowlist: the owner's choice, not a party.
+  ['VaultWithdrawRequested', { recipient: "the owner's wallet or an allowlisted address" }],
+  ['PayoutQueued', { recipient: "the owner's wallet or an allowlisted address" }],
+  ['PayoutReleased', { recipient: "the owner's wallet or an allowlisted address" }],
+  ['PayoutCancelled', { by: 'the wallet that cancelled (the owner or one of its signers, acting on the account)' }],
+  ['PositionTransferQueued', { to: "the owner's wallet or an allowlisted address" }],
+  ['PositionTransferReleased', { to: "the owner's wallet or an allowlisted address" }],
+  ['PositionTransferCancelled', { by: 'the wallet that cancelled (the owner or one of its signers, acting on the account)' }],
+  ['VaultPinned', { implementation: 'the vault implementation contract pinned' }],
+  ['SettingChangeCancelled', { by: 'the wallet that cancelled (the owner or one of its signers, acting on the account)' }],
+  ['AllowlistAddRequested', { destination: 'an address the owner is adding as a payout destination' }],
+  ['AllowlistAddCancelled', { destination: 'the payout destination withdrawn', by: 'the wallet that cancelled (the owner or one of its signers, acting on the account)' }],
+  ['AllowlistAdded', { destination: 'a payout destination the owner configured' }],
+  ['AllowlistRemoved', { destination: 'the payout destination removed', by: 'the wallet that cancelled (the owner or one of its signers, acting on the account)' }],
+  ['SignerAddCancelled', { by: 'the wallet that cancelled (the owner or one of its signers, acting on the account)' }],
+  ['SignerRemoveCancelled', { by: 'the wallet that cancelled (the owner or one of its signers, acting on the account)' }],
+  // A lock is taken by the owner, a signer, or the keeper relaying the
+  // owner's own lock message: whoever it is acts for the account.
+  ['VaultLocked', { by: 'the owner, a signer, or the keeper relaying the owner\'s lock' }],
+  ['ReplacementProposed', { by: 'the signer who proposed the replacement' }],
+  ['ReplacementCancelled', { by: 'the wallet that cancelled (the owner or one of its signers, acting on the account)' }],
   // A keeper being permitted or refused is configured, not acting.
   ['KeeperActionsUpdated', { keeper: 'the keeper being permitted' }],
   ['KeeperRevoked', { keeper: 'the keeper being refused' }],
@@ -236,7 +312,6 @@ const EXEMPT: ReadonlyMap<string, ExemptGroup> = new Map<string, ExemptGroup>([
   // admin
   ...(
     [
-      'AaveV3PoolSet',
       'AdapterImplementationUpgraded',
       'AdapterOperatorBound',
       'AdminTransferred',
@@ -257,7 +332,6 @@ const EXEMPT: ReadonlyMap<string, ExemptGroup> = new Map<string, ExemptGroup>([
       'FeedOverrideSet',
       'FusionLimitOrderProtocolSet',
       'LaunchedThroughGate',
-      'LidoStakingSet',
       'MirrorRewardDeploymentSet',
       'NumeraireUpdated',
       'OwnershipTransferred',
@@ -390,7 +464,7 @@ const EXEMPT: ReadonlyMap<string, ExemptGroup> = new Map<string, ExemptGroup>([
       'ServiceCapacitySanctionsMarkerHealed',
       'ServiceCapacitySanctionsRefused',
       'UserCountrySet',
-      'VaultBannedFromRecoveryAttempt',
+      'VaultBannedFromAdoption',
     ] as const
   ).map((k) => [k, 'screening'] as const),
   // rewardInternal

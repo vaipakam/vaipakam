@@ -14,6 +14,7 @@ import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {FeeEntitlementFacet} from "../src/facets/FeeEntitlementFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
+import {ERC1155Mock} from "./mocks/ERC1155Mock.sol";
 import {PrecloseFacet} from "../src/facets/PrecloseFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {RefinanceFacet} from "../src/facets/RefinanceFacet.sol";
@@ -22,12 +23,17 @@ import {MetricsFacet} from "../src/facets/MetricsFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
+import {RepayFacet} from "../src/facets/RepayFacet.sol";
+import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
+import {LibProtectedAccount} from "../src/libraries/LibProtectedAccount.sol";
+import {LibEncumbrance} from "../src/libraries/LibEncumbrance.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibAutoRefinanceCheck} from "../src/libraries/LibAutoRefinanceCheck.sol";
 import {LibOfferMatch} from "../src/libraries/LibOfferMatch.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import {RefinancePayoffPermitHelper} from "./helpers/RefinancePayoffPermitHelper.sol";
 
 /**
  * @title  T092AutoLifecycleIntegrationTest
@@ -44,15 +50,13 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
  *             AutoExtendDisabled).
  *           - Refinance-tagged offer creation enforces
  *             `LibAutoRefinanceCheck.validate` at create-time.
- *           - Keeper-driven refinance rejects untagged offers
- *             (InvalidRefinanceOffer).
+ *           - A refinance completes only inside the accept or match
+ *             of its tagged offer (#3042 retired the standalone completion).
  *           - Extend-in-place rejects when both-side consent is
  *             missing (BothSideAutoExtendRequired).
  *
- *         Happy-path fund-flow assertions are intentionally NOT
- *         covered here — that requires the full multi-step keeper
- *         orchestration (create→accept→refinance) which is exercised
- *         by the existing RefinanceFacetTest fixtures. This file's
+ *         Happy-path fund-flow assertions (the netted payoff, #3042)
+ *         live in RefinanceFacetTest. This file's
  *         scope is the NEW T-092 surface (kill switches + tagged-
  *         offer binding + consent gates) bound to a real loan.
  */
@@ -418,8 +422,8 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
 
     function test_RefinanceTaggedOffer_AcceptsWithinCaps() public {
         // Caps satisfied → create succeeds; the offer becomes
-        // accessible to a lender accept (and downstream to
-        // refinanceLoan once accepted).
+        // accessible to a lender accept, which completes the
+        // refinance in the same transaction (#3042).
         uint256 loanId = _buildActiveLoan();
         vm.prank(borrower);
         _f().setAutoRefinanceCaps(
@@ -468,16 +472,25 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         vm.prank(lender);
         _f().setAutoExtendLenderCaps(loanId, true, 0, 1000, farExpiry);
 
-        // Pre-fund the borrower's vault with principal asset so the extension's
-        // per-term interest settlement (`_routeInterest` → vault withdraw) clears.
-        address borrowerVault =
-            VaultFactoryFacet(address(diamond)).getOrCreateUserVault(borrower);
-        ERC20Mock(mockERC20).mint(borrowerVault, 10 ether);
-        TestMutatorFacet(address(diamond)).setProtocolTrackedVaultBalanceRaw(
-            borrower, mockERC20, 10 ether
-        );
+        // #2814 — the borrower reserves principal asset for the loan's
+        // extensions through the one deployed route, so the extension's
+        // per-term interest settlement (`_routeInterest` → vault withdraw)
+        // clears.
+        _fundReserve(loanId, borrower, EXTEND_RESERVE);
 
         _warpToExtendWindow(loanId);
+    }
+
+    uint256 internal constant EXTEND_RESERVE = 10 ether;
+
+    /// @dev #2814 — `who` deposits `amount` of the principal asset from their
+    ///      wallet into the extension reserve for `loanId`.
+    function _fundReserve(uint256 loanId, address who, uint256 amount) internal {
+        ERC20Mock(mockERC20).mint(who, amount);
+        vm.startPrank(who);
+        ERC20(mockERC20).approve(address(diamond), amount);
+        _f().fundExtendReserve(loanId, amount);
+        vm.stopPrank();
     }
 
     /// @dev Warp to the moment the loan's extension window opens (#2738).
@@ -914,10 +927,10 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
             LOAN_PRINCIPAL * 4
         );
 
-        // Step 5: borrower needs a standing diamond approval so the
-        // chained refinance can pull the old-payoff from their wallet.
-        // (Mirrors the dapp's consent-time approval set in #520.)
-        _grantStandingApprovalToDiamond(borrower, mockERC20);
+        // Step 5: the borrower attaches a payoff permit to the request so
+        // the chained refinance can pull the old payoff from their wallet
+        // (#1558: a single-use Permit2 permit, no standing allowance).
+        RefinancePayoffPermitHelper.attach(address(diamond), borrower, mockERC20, refinanceOfferId);
 
         // Step 6: SINGLE TX — accept fires the chain. `makeAddrAndKey` yields
         // the SAME address `_provisionFundedActorWithVault` derived via
@@ -967,7 +980,7 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         address newLender = _provisionFundedActorWithVault(
             "carryoverNewLender", mockERC20, LOAN_PRINCIPAL * 4
         );
-        _grantStandingApprovalToDiamond(borrower, mockERC20);
+        RefinancePayoffPermitHelper.attach(address(diamond), borrower, mockERC20, refinanceOfferId);
 
         // Pre-state: the OLD loan's collateral is liened exactly once.
         assertEq(
@@ -1179,6 +1192,7 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         vm.prank(borrower);
         taggedOfferId = OfferCreateFacet(address(diamond))
             .createOffer(_refinanceTaggedOfferParams(oldLoanId, 400));
+        RefinancePayoffPermitHelper.attach(address(diamond), borrower, mockERC20, taggedOfferId);
     }
 
     function test_595_matchedCarryOver_admitsRetagsAndRepaysOld() public {
@@ -1380,7 +1394,7 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
             lenderLabel, mockERC20, LOAN_PRINCIPAL * 4
         );
         (, newLenderPk) = makeAddrAndKey(lenderLabel);
-        _grantStandingApprovalToDiamond(borrower, mockERC20);
+        RefinancePayoffPermitHelper.attach(address(diamond), borrower, mockERC20, taggedOfferId);
     }
 
     function test_2349_lenderAccept_killSwitchOff_refinanceCompletes() public {
@@ -1526,46 +1540,6 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
             .getEncumbered(borrower, mockCollateralERC20, 0);
     }
 
-    function test_2349_keeperRefinance_killSwitchOff_reverts() public {
-        // A keeper holding the holder's refinance delegation IS the automated
-        // route the switch exists to stop (spec: admin kill switches control
-        // keeper-driven auto-refinance).
-        (uint256 oldLoanId, uint256 taggedOfferId, , ) =
-            _taggedRefinanceRequest("keeperRouteLender");
-        address keeper = makeAddr("refinanceKeeper");
-        vm.startPrank(borrower);
-        ProfileFacet(address(diamond)).setKeeperAccess(true);
-        ProfileFacet(address(diamond)).approveKeeper(
-            keeper, LibVaipakam.KEEPER_ACTION_REFINANCE
-        );
-        ProfileFacet(address(diamond)).setLoanKeeperEnabled(oldLoanId, keeper, true);
-        vm.stopPrank();
-
-        _admin().setAutoRefinanceEnabled(false);
-        vm.prank(keeper);
-        vm.expectRevert(RefinanceFacet.AutoRefinanceDisabled.selector);
-        RefinanceFacet(address(diamond)).refinanceLoan(oldLoanId, taggedOfferId);
-
-        // Switch on: the keeper clears the gate and stops at the NEXT check
-        // (the request has not been accepted yet) — proving the revert above
-        // was the switch and nothing else.
-        _admin().setAutoRefinanceEnabled(true);
-        vm.prank(keeper);
-        vm.expectRevert(RefinanceFacet.OfferNotAccepted.selector);
-        RefinanceFacet(address(diamond)).refinanceLoan(oldLoanId, taggedOfferId);
-    }
-
-    function test_2349_holderDirectRefinance_killSwitchOff_notGated() public {
-        // The holder calling refinanceLoan themselves is never gated: with the
-        // switch off they reach the next check, not AutoRefinanceDisabled.
-        (uint256 oldLoanId, uint256 taggedOfferId, , ) =
-            _taggedRefinanceRequest("holderRouteLender");
-        _admin().setAutoRefinanceEnabled(false);
-        vm.prank(borrower);
-        vm.expectRevert(RefinanceFacet.OfferNotAccepted.selector);
-        RefinanceFacet(address(diamond)).refinanceLoan(oldLoanId, taggedOfferId);
-    }
-
     function test_2349_atomicEntries_stateTheirRoute() public {
         // The two atomic entries differ ONLY in the route they state. Driven
         // as the Diamond (their sole permitted caller) with the switch off:
@@ -1586,12 +1560,13 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
             .refinanceLoanFromAccept(oldLoanId, taggedOfferId);
     }
 
-    function test_2349_frozenHolder_blockedOnUngatedRoutes() public {
-        // The lender-accept route no longer stops at the switch, so the
+    function test_2349_frozenHolder_blockedOnLenderAcceptRoute() public {
+        // The lender-accept route does not stop at the switch, so the
         // fail-closed frozen-holder block is what keeps a registry-confirmed
         // sanctioned holder from receiving the old collateral during an oracle
         // outage — when every fail-open screen reads "clean". Pins S10 #1006
-        // on BOTH ungated routes, with the switch off.
+        // on that ungated route, with the switch off. (#3042 retired the
+        // other ungated route, the standalone completion.)
         (uint256 oldLoanId, uint256 taggedOfferId, , ) =
             _taggedRefinanceRequest("frozenHolderLender");
         _admin().setAutoRefinanceEnabled(false);
@@ -1612,12 +1587,6 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         );
         RefinanceFacet(address(diamond))
             .refinanceLoanFromAccept(oldLoanId, taggedOfferId);
-
-        vm.prank(borrower);
-        vm.expectRevert(
-            abi.encodeWithSelector(LibVaipakam.SanctionedAddress.selector, borrower)
-        );
-        RefinanceFacet(address(diamond)).refinanceLoan(oldLoanId, taggedOfferId);
     }
 
     function test_2349_refinanceLoanFromMatch_rejectsExternalEOA() public {
@@ -1667,5 +1636,181 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
             100 ether,
             "freeBalance = raw - sum(liens)"
         );
+    }
+
+    // ─── #2814 — the extension reserve ───────────────────────────────
+
+    /// @notice #2814 — the extension's charge comes out of the holder's reserve
+    ///         first, equals what the funding view said it would be, and the
+    ///         draw is stated in the event.
+    function test_2814_extension_drawsTheReserveFirst_atTheViewsCharge() public {
+        uint256 loanId = _setupExtendableLoan();
+        (address asset, uint256 reserved, uint256 otherFree, uint256 chargeNow, ) =
+            _f().getExtendFunding(loanId, borrower);
+        assertEq(asset, mockERC20, "the principal asset");
+        assertEq(reserved, EXTEND_RESERVE, "the deposit is reserved");
+        assertEq(otherFree, 0, "the reserve is not free balance");
+        assertGt(chargeNow, 0, "interest is owed");
+        vm.expectEmit(true, true, false, true, address(diamond));
+        emit AutoLifecycleFacet.ExtendChargeDrawn(
+            loanId, borrower, mockERC20, chargeNow, 0, EXTEND_RESERVE - chargeNow
+        );
+        vm.prank(borrower);
+        _f().extendLoanInPlace(loanId, 500, 30);
+        (, uint256 left, , , ) = _f().getExtendFunding(loanId, borrower);
+        assertEq(left, EXTEND_RESERVE - chargeNow, "the charge left the reserve");
+    }
+
+    /// @notice #2814 — a reserve short of the charge, with nothing else free,
+    ///         refuses the extension rather than paying out of other balance.
+    function test_2814_extension_refusedWhenTheReserveFallsShort() public {
+        uint256 loanId = _buildActiveLoan();
+        uint64 farExpiry = uint64(block.timestamp + 400 days);
+        vm.prank(borrower);
+        _f().setAutoExtendBorrowerCaps(loanId, true, 0, 1000, farExpiry);
+        vm.prank(lender);
+        _f().setAutoExtendLenderCaps(loanId, true, 0, 1000, farExpiry);
+        _fundReserve(loanId, borrower, 1);
+        _warpToExtendWindow(loanId);
+        vm.prank(borrower);
+        vm.expectRevert();
+        _f().extendLoanInPlace(loanId, 500, 30);
+        (, uint256 reserved, , , ) = _f().getExtendFunding(loanId, borrower);
+        assertEq(reserved, 1, "a refused extension takes nothing");
+    }
+
+    /// @notice #2814 — the charge at the end of the window is the most an
+    ///         extension of this term can cost, and an extension at that
+    ///         moment charges exactly it.
+    function test_2814_chargeAtGraceEnd_isWhatAnExtensionThenCharges() public {
+        uint256 loanId = _setupExtendableLoan();
+        (, , , uint256 chargeNow, uint256 chargeAtEnd) = _f().getExtendFunding(loanId, borrower);
+        assertGt(chargeAtEnd, chargeNow, "later costs more (interest and late fee)");
+        (, uint64 closesAt) = _f().getAutoExtendWindow(loanId);
+        vm.warp(closesAt);
+        (, , , uint256 chargeThen, ) = _f().getExtendFunding(loanId, borrower);
+        assertEq(chargeThen, chargeAtEnd, "the view's ceiling is the charge at the grace end");
+        vm.expectEmit(true, true, false, true, address(diamond));
+        emit AutoLifecycleFacet.ExtendChargeDrawn(
+            loanId, borrower, mockERC20, chargeAtEnd, 0, EXTEND_RESERVE - chargeAtEnd
+        );
+        vm.prank(borrower);
+        _f().extendLoanInPlace(loanId, 500, 30);
+    }
+
+    /// @notice #2814 — unused reserve goes back to the depositor's wallet, and
+    ///         no more than is reserved.
+    function test_2814_withdraw_returnsUnusedReserveToTheWallet() public {
+        uint256 loanId = _buildActiveLoan();
+        _fundReserve(loanId, borrower, 3 ether);
+        uint256 walletBefore = ERC20(mockERC20).balanceOf(borrower);
+        vm.prank(borrower);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LibEncumbrance.ExtendReserveInsufficient.selector, loanId, borrower, 4 ether, 3 ether
+            )
+        );
+        _f().withdrawExtendReserve(borrower, loanId, 4 ether);
+        vm.expectEmit(true, true, false, true, address(diamond));
+        emit AutoLifecycleFacet.ExtendReserveWithdrawn(loanId, borrower, mockERC20, 3 ether, 0);
+        vm.prank(borrower);
+        _f().withdrawExtendReserve(borrower, loanId, 3 ether);
+        assertEq(ERC20(mockERC20).balanceOf(borrower), walletBefore + 3 ether, "back in the wallet");
+        (, uint256 reserved, , , ) = _f().getExtendFunding(loanId, borrower);
+        assertEq(reserved, 0, "nothing left reserved");
+    }
+
+    /// @notice Only the depositor's account manager (its own wallet, or its
+    ///         controller after a protected-account replacement) can take a
+    ///         reserve out.
+    function test_2814_withdraw_refusesAnyoneButTheManager() public {
+        uint256 loanId = _buildActiveLoan();
+        _fundReserve(loanId, borrower, 3 ether);
+        address stranger = makeAddr("reserveStranger");
+        vm.prank(stranger);
+        vm.expectRevert(
+            abi.encodeWithSelector(LibProtectedAccount.NotAccountManager.selector, borrower, stranger)
+        );
+        _f().withdrawExtendReserve(borrower, loanId, 3 ether);
+    }
+
+    /// @notice #2814 — a repayment leaves the reserve alone, and the depositor
+    ///         withdraws it after the loan has closed.
+    function test_2814_reserve_survivesRepayment_andIsWithdrawnAfter() public {
+        uint256 loanId = _buildActiveLoan();
+        _fundReserve(loanId, borrower, 2 ether);
+        vm.warp(vm.getBlockTimestamp() + 5 days);
+        ERC20Mock(mockERC20).mint(borrower, LOAN_PRINCIPAL);
+        vm.startPrank(borrower);
+        ERC20(mockERC20).approve(address(diamond), type(uint256).max);
+        RepayFacet(address(diamond)).repayLoan(loanId);
+        vm.stopPrank();
+        (, uint256 reserved, , uint256 chargeNow, ) = _f().getExtendFunding(loanId, borrower);
+        assertEq(reserved, 2 ether, "the repayment took none of it");
+        assertEq(chargeNow, 0, "a closed loan cannot be extended");
+        uint256 walletBefore = ERC20(mockERC20).balanceOf(borrower);
+        vm.prank(borrower);
+        _f().withdrawExtendReserve(borrower, loanId, 2 ether);
+        assertEq(ERC20(mockERC20).balanceOf(borrower), walletBefore + 2 ether, "withdrawn after the close");
+    }
+
+    /// @notice #2814 — only the current borrower-position holder funds, only a
+    ///         non-zero amount, and only while extension is switched on.
+    function test_2814_fund_refusals() public {
+        uint256 loanId = _buildActiveLoan();
+        ERC20Mock(mockERC20).mint(lender, 1 ether);
+        vm.startPrank(lender);
+        ERC20(mockERC20).approve(address(diamond), 1 ether);
+        vm.expectRevert(AutoLifecycleFacet.NotBorrowerNftOwner.selector);
+        _f().fundExtendReserve(loanId, 1 ether);
+        vm.stopPrank();
+        vm.prank(borrower);
+        vm.expectRevert(AutoLifecycleFacet.ExtendReserveZeroAmount.selector);
+        _f().fundExtendReserve(loanId, 0);
+        _admin().setAutoExtendEnabled(false);
+        vm.prank(borrower);
+        vm.expectRevert(AutoLifecycleFacet.AutoExtendDisabled.selector);
+        _f().fundExtendReserve(loanId, 1 ether);
+    }
+
+    /// @notice #2814 — an extension draws only the CURRENT holder's reserve: a
+    ///         reserve left by a holder who transferred the position pays
+    ///         nothing, and stays theirs to withdraw.
+    function test_2814_reserve_staysWithTheDepositorAfterATransfer() public {
+        uint256 loanId = _buildActiveLoan();
+        _fundReserve(loanId, borrower, 2 ether);
+        address newHolder = makeAddr("newBorrowerHolder");
+        LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        vm.prank(borrower);
+        VaipakamNFTFacet(address(diamond)).transferFrom(borrower, newHolder, l.borrowerTokenId);
+        (, uint256 forNew, , , ) = _f().getExtendFunding(loanId, newHolder);
+        assertEq(forNew, 0, "the new holder has no reserve");
+        vm.prank(newHolder);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LibEncumbrance.ExtendReserveInsufficient.selector, loanId, newHolder, 1, 0
+            )
+        );
+        _f().withdrawExtendReserve(newHolder, loanId, 1);
+        vm.prank(borrower);
+        _f().withdrawExtendReserve(borrower, loanId, 2 ether);
+    }
+
+    /// @notice #2814 Codex r1 — a rental loan's principal is the NFT contract,
+    ///         so the view must not read an ERC-20 balance of it: it answers
+    ///         with zeros, and funding refuses the loan by name.
+    function test_2814_view_answersForARentalLoan() public {
+        uint256 loanId = _buildActiveLoan();
+        LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        l.assetType = LibVaipakam.AssetType.ERC1155;
+        l.principalAsset = address(new ERC1155Mock());
+        TestMutatorFacet(address(diamond)).setLoan(loanId, l);
+        (address asset, uint256 reserved, uint256 otherFree, uint256 chargeNow, uint256 chargeEnd) =
+            _f().getExtendFunding(loanId, borrower);
+        assertEq(asset, l.principalAsset, "the asset is still stated");
+        assertEq(reserved + otherFree + chargeNow + chargeEnd, 0, "nothing to fund or charge");
+        vm.prank(borrower);
+        vm.expectRevert(AutoLifecycleFacet.UnsupportedAssetTypeForExtend.selector);
+        _f().fundExtendReserve(loanId, 1 ether);
     }
 }

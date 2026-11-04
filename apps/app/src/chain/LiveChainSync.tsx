@@ -61,6 +61,9 @@ export const LIVE_KEYS: ReadonlySet<string> = new Set([
   'loanRisk',
   'positionOwners',
   'claimables',
+  // A past seller's interest claims (#1209): a borrower's payment moves them
+  // with no action of the seller's.
+  'sellerClaims',
   'vaultAssets',
   'loanSalePending',
   'refinancePending',
@@ -98,6 +101,11 @@ export const LIVE_KEYS: ReadonlySet<string> = new Set([
   // down (or legacy pinned) the strip would otherwise only re-run on
   // its interval, losing the old inline catch-up's block cadence.
   'bookGhostStrip',
+  // Protected account mode and the depository card (see tipRoots.ts): moved
+  // by recovery signers and by payments from others, so they ride the
+  // rail-down blanket too.
+  'protectedAccount',
+  'depository',
   // 'loanKeeperEnabled' and 'vpfi' are DELIBERATELY absent: their
   // toggle writes PATCH the cache with the mined value (read-after-
   // write honesty — public testnet RPCs serve pre-tx state for

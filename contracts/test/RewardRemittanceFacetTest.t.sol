@@ -21,8 +21,9 @@ import {LibRewardCustody} from "../src/libraries/LibRewardCustody.sol";
 import {MockRewardMessenger} from "./mocks/MockRewardMessenger.sol";
 import {MockCrossChainMessenger} from "./mocks/MockCrossChainMessenger.sol";
 import {RemitWire} from "../src/crosschain/RemitWire.sol";
+import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
-import {LibD6Delivery} from "./helpers/LibD6Delivery.sol";
+import {LibD8Delivery} from "./helpers/LibD8Delivery.sol";
 
 /**
  * @title RewardRemittanceFacetTest — #776 PR1 (Base sender) unit coverage.
@@ -247,10 +248,8 @@ contract RewardRemittanceFacetTest is SetupTest {
         assertEq(agg.getChainCustodyEraReported(CHAIN_OP), 0, "a pre-B4 report records none");
         remit.remitRewardBudget{value: 1 ether}(CHAIN_ARB, _days(1), CAP);
         bytes memory wire = ccip.sentPayload(ccip.sentCount() - 1);
-        (, , , , , , , , uint256 intendedEra) = abi.decode(
-            wire, (uint256, bytes32, uint256, uint256, uint256, uint256, address, uint256, uint256)
-        );
-        assertEq(intendedEra, 3, "stamped with the destination's era");
+        (, RemitWire.D8 memory w) = abi.decode(wire, (uint256, RemitWire.D8));
+        assertEq(w.intendedEra, 3, "stamped with the destination's era");
         rewardMessenger.deliverChainReport(CHAIN_BASE, 2, 10e18, 5e18);
         rewardMessenger.deliverChainReportB4(CHAIN_ARB, 2, 20e18, 10e18, 2); // an older era, delivered late
         assertEq(agg.getChainCustodyEraReported(CHAIN_ARB), 3, "an older report never lowers it");
@@ -704,25 +703,32 @@ contract RewardRemittanceFacetTest is SetupTest {
         dup[0] = 1;
         dup[1] = 1;
         remit.remitRewardBudget{value: 1 ether}(CHAIN_ARB, dup, CAP);
-        // 3d-2 / #918 — the payload is the ROOTED (d7) shape: it names no
-        // days, it commits to them. The extent says ONE day, and the root is the root
-        // over exactly [1] — a list echoing the caller's [1, 1] would root
-        // differently.
-        (uint256 tag, bytes32 root, uint256 n, uint256 chunks, uint256 sentTotal, uint256 remitId, address remitter, , uint256 era, uint256 wholeFresh, uint256 wholeRecycled) =
-            abi.decode(ccip.sentPayload(0), (uint256, bytes32, uint256, uint256, uint256, uint256, address, uint256, uint256, uint256, uint256));
-        assertEq(tag, RemitWire.REMIT_WIRE_TAG_D7, "the rooted wire");
+        // #2828 — the payload is the d8 shape: the one funded day rides
+        // inline. A payload echoing the caller's [1, 1] would have no way to
+        // name day 1 twice; what this pins is that the day is 1.
+        (uint256 tag, RemitWire.D8 memory w) = abi.decode(ccip.sentPayload(0), (uint256, RemitWire.D8));
+        assertEq(tag, RemitWire.REMIT_WIRE_TAG_D8, "the inline-day wire");
         // #918 — a whole-in-one send: the day's whole is the part it carries.
-        assertEq(wholeFresh + wholeRecycled, sentTotal, "the day's whole rides the wire");
-        assertEq(n, 1, "the extent names only the funded day");
-        assertEq(chunks, 1);
-        assertEq(root, RemitWire.d6Root(RemitWire.d6Chunks(_days(1))), "the root is over exactly [1]");
-        assertEq(remitter, address(diamond), "the deployment's identity rides the wire");
-        assertEq(era, 0, "the pre-registry era");
-        assertGt(sentTotal, 0, "non-zero total");
-        assertEq(rlens.getRemitReservation(remitId).dayListRoot, root, "the reservation keeps the root it committed to");
+        assertEq(w.dayWholeFresh + w.dayWholeRecycled, w.total, "the day's whole rides the wire");
+        assertEq(w.dayId, 1, "the wire names only the funded day");
+        assertEq(w.remitter, address(diamond), "the deployment's identity rides the wire");
+        assertEq(w.intendedEra, 0, "the pre-registry era");
+        assertGt(w.total, 0, "non-zero total");
+        // The reservation's funded-day record names the same day the wire did.
+        LibVaipakam.RemitReservation memory r = rlens.getRemitReservation(w.remitId);
+        uint256 funded;
+        uint256 at;
+        for (uint256 i; i < r.dayIds.length; ++i) {
+            if ((r.fundedDayBits[i >> 8] >> (i & 255)) & 1 == 1) {
+                ++funded;
+                at = i;
+            }
+        }
+        assertEq(funded, 1, "the reservation funded one day");
+        assertEq(r.dayIds[at], w.dayId, "the day it funded is the day the wire carried");
     }
 
-    // ─── mirror-side ingress: the rooted budget ingress (#776 PR2) ─────────
+    // ─── mirror-side ingress: the budget ingress (#776 PR2, #2828) ─────────
 
     // A code-bearing stand-in for the registered receiver — `setRewardRemittance
     // Receiver` rejects EOAs, so the gate test needs a contract address.
@@ -730,13 +736,13 @@ contract RewardRemittanceFacetTest is SetupTest {
         return address(ccip);
     }
 
-    /// @dev A budget delivery on the rooted (d6) wire, the only budget shape
+    /// @dev A budget delivery on the d8 wire, the only budget shape
     ///      the remittance receiver accepts, filed in the live era. Returns
     ///      the packet stamp.
-    function _d6(
+    function _d8(
         address token,
         uint256 amount,
-        uint256[] memory dayIds,
+        uint256 dayId,
         uint256 sourceChainId,
         uint256 remitId,
         address remitter,
@@ -744,12 +750,12 @@ contract RewardRemittanceFacetTest is SetupTest {
         uint256 fresh,
         bytes32 messageId
     ) internal returns (bytes32 h) {
-        (h, ) = LibD6Delivery.deliver(
+        h = LibD8Delivery.deliver(
             address(diamond),
-            LibD6Delivery.Delivery({
+            LibD8Delivery.Delivery({
                 token: token,
                 amount: amount,
-                dayIds: dayIds,
+                dayId: dayId,
                 sourceChainId: sourceChainId,
                 remitId: remitId,
                 remitter: remitter,
@@ -782,7 +788,7 @@ contract RewardRemittanceFacetTest is SetupTest {
         remit.setRewardRemittanceReceiver(rcv);
         assertEq(rlens.getRewardRemittanceReceiver(), rcv, "receiver set");
         vm.prank(rcv);
-        _d6(address(vpfiTok), 123e18, _days(1), CHAIN_BASE, 0, address(0xBA5E), 0, 123e18, bytes32(0));
+        _d8(address(vpfiTok), 123e18, 1, CHAIN_BASE, 0, address(0xBA5E), 0, 123e18, bytes32(0));
         assertEq(rlens.getRewardBudgetReceivedTotal(), 123e18, "recorded total");
     }
 
@@ -795,7 +801,7 @@ contract RewardRemittanceFacetTest is SetupTest {
                 stranger
             )
         );
-        _d6(address(vpfiTok), 1e18, _days(1), CHAIN_BASE, 0, address(0xBA5E), 0, 1e18, bytes32(0));
+        _d8(address(vpfiTok), 1e18, 1, CHAIN_BASE, 0, address(0xBA5E), 0, 1e18, bytes32(0));
     }
 
     function test_Ingress_RevertsOnTokenMismatch() public {
@@ -809,7 +815,7 @@ contract RewardRemittanceFacetTest is SetupTest {
                 address(0xDEAD)
             )
         );
-        _d6(address(0xDEAD), 1e18, _days(1), CHAIN_BASE, 0, address(0xBA5E), 0, 1e18, bytes32(0));
+        _d8(address(0xDEAD), 1e18, 1, CHAIN_BASE, 0, address(0xBA5E), 0, 1e18, bytes32(0));
     }
 
     receive() external payable {}

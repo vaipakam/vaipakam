@@ -68,6 +68,8 @@ function ExternalRedirect({ url }: { url: string }) {
   }
   return null;
 }
+const Marketplace = lazy(() => import('./pages/Marketplace').then((m) => ({ default: m.Marketplace })));
+
 const Borrow = lazy(() =>
   import('./pages/Borrow').then((m) => ({ default: m.Borrow })),
 );
@@ -88,6 +90,9 @@ const Offers = lazy(() =>
 );
 const Desk = lazy(() => import('./pages/Desk').then((m) => ({ default: m.Desk })));
 const Vault = lazy(() => import('./pages/Vault').then((m) => ({ default: m.Vault })));
+const Protection = lazy(() =>
+  import('./pages/Protection').then((m) => ({ default: m.Protection })),
+);
 const Activity = lazy(() =>
   import('./pages/Activity').then((m) => ({ default: m.Activity })),
 );
@@ -230,8 +235,10 @@ export function App() {
         <Route path="/positions/:loanId" element={<PositionDetails />} />
         <Route path="/claims" element={<Claims />} />
         <Route path="/offers" element={<Offers />} />
+        <Route path="/marketplace" element={<Marketplace />} />
         <Route path="/desk" element={<Desk />} />
         <Route path="/vault" element={<Vault />} />
+        <Route path="/vault/protection" element={<Protection />} />
         <Route path="/activity" element={<Activity />} />
         <Route path="/vpfi" element={<Vpfi />} />
         <Route path="/nft" element={<NftVerifier />} />

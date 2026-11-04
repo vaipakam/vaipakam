@@ -124,6 +124,15 @@ const ACTIVITY_ACTOR: ReadonlyMap<string, ActorRead> = new Map<string, ActorRead
   // the exiting holder it was paid to.
   ['ForcedSaleSettled', arg('keeper')],
   ['BorrowerHeldExtraPaid', arg('to')],
+  // #1209 — the seller of a lender position keeps a claim on the interest
+  // they earned. Every step of that claim is filed under the seller, who is
+  // no longer a party to the loan, so the Claims page can find the loans
+  // they hold a claim on (`/activity?actor=<seller>&kind=…`) and their feed
+  // shows each payment.
+  ['SellerInterestClaimRecorded', arg('seller')],
+  ['SellerInterestPaid', arg('seller')],
+  ['SellerInterestWithdrawn', arg('seller')],
+  ['SellerInterestClaimClosed', arg('seller')],
   ['RepayPartialPeriodAdvanced', arg('advancedBy')],
   ['VPFIDepositedToVault', arg('user')],
   ['VPFIWithdrawnFromVault', arg('user')],

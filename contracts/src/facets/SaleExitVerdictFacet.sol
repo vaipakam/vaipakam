@@ -2,8 +2,10 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibProtectedAccount} from "../libraries/LibProtectedAccount.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibERC721} from "../libraries/LibERC721.sol";
+import {LibInterestLedger} from "../libraries/LibInterestLedger.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibLoanClock} from "../libraries/LibLoanClock.sol";
 import {LibPausable} from "../libraries/LibPausable.sol";
@@ -177,6 +179,34 @@ contract SaleExitVerdictFacet {
             return _trim(r);
         }
 
+        // Protected account mode — a locked or retired holder's position does
+        // not leave it by sale; the lock lifts only by its delayed unlock (no
+        // known reopening time), and a retired account never reopens.
+        LibVaipakam.ProtectedAccount storage pa = s.protectedAccount[holder];
+        if (pa.enabled && (pa.locked || pa.retired)) {
+            _add(
+                r,
+                pa.retired
+                    ? abi.encodeWithSelector(LibProtectedAccount.AccountRetired.selector, holder)
+                    : abi.encodeWithSelector(LibProtectedAccount.ProtectedVaultLocked.selector, holder),
+                0
+            );
+            if (_full(r)) return _trim(r);
+        } else if (LibProtectedAccount.protectsNfts(holder)) {
+            // With NFT protection on, a position leaves the account only by a
+            // queued, cancellable transfer (allowlist, co-sign, delay). A sale
+            // moves it to the buyer at once, and its shortfall pays the buyer
+            // from the seller's principal, so it would route value past every
+            // one of those checks. The owner may switch NFT protection off
+            // (after the delay) to sell.
+            _add(
+                r,
+                abi.encodeWithSelector(LibProtectedAccount.PositionMovesOnlyByQueuedTransfer.selector, holder),
+                0
+            );
+            if (_full(r)) return _trim(r);
+        }
+
         // Who may submit. The direct sale settles to its caller, so only the
         // holder may, with no exception. The listing admits an authorised
         // keeper for the holder, and the Diamond's own self-call (the rule
@@ -213,6 +243,36 @@ contract SaleExitVerdictFacet {
         if (loan.assetType != LibVaipakam.AssetType.ERC20) {
             _add(r, abi.encodeWithSelector(IVaipakamErrors.InvalidSaleOffer.selector), 0);
             if (_full(r)) return _trim(r);
+        }
+        // #1209 — the sale records the holder's earned-unpaid interest as a
+        // seller claim, and a loan carries a bounded number of open claims.
+        // Older claims are paid from the borrower's later interest, so the
+        // refusal lifts as they are paid; it names no reopening time.
+        if (
+            loan.assetType == LibVaipakam.AssetType.ERC20 &&
+            !LibInterestLedger.saleClaimRoom(s, loanId, holder)
+        ) {
+            _add(
+                r,
+                abi.encodeWithSelector(
+                    LibInterestLedger.SellerClaimsFull.selector,
+                    loanId,
+                    s.sellerInterestClaims[loanId].length
+                ),
+                0
+            );
+            if (_full(r)) return _trim(r);
+        }
+        // #1209 — interest parked for a frozen holder is paid to the seller at
+        // the sale; it waits on the recorded frozen claimant, so a different
+        // claimant who is still blocked refuses the sale (one rule, shared
+        // with the settlement).
+        if (loan.assetType == LibVaipakam.AssetType.ERC20) {
+            address blocker = LibInterestLedger.parkedSaleBlocker(s, loanId, holder);
+            if (blocker != address(0)) {
+                _add(r, abi.encodeWithSelector(LibVaipakam.SanctionedAddress.selector, blocker), 0);
+                if (_full(r)) return _trim(r);
+            }
         }
         // The listing vehicle escrows no collateral, so it needs ERC-20 collateral.
         if (listing && loan.collateralAssetType != LibVaipakam.AssetType.ERC20) {

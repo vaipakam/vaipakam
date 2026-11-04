@@ -502,7 +502,7 @@ contract NFTPrepayListingFacet is
         if (existing != bytes32(0)) {
             revert PrepayListingAlreadyExists(loanId, existing);
         }
-        LibERC721.LockReason currentLock = LibERC721.lockOf(loan.borrowerTokenId);
+        LibERC721.LockReason currentLock = LibERC721.storedLockOf(loan.borrowerTokenId);
         if (currentLock != LibERC721.LockReason.None) {
             revert BorrowerNFTAlreadyLocked(loan.borrowerTokenId, currentLock);
         }
@@ -527,7 +527,7 @@ contract NFTPrepayListingFacet is
         // #825-r2 (P1) — also screen every fee-leg recipient: a fee leg pays an
         // arbitrary caller-supplied address on fill, so the holder screen alone
         // would leave that value-to-flagged route open.
-        LibPrepayListingWiring.assertFeeLegRecipientsNotSanctioned(feeLegs);
+        LibPrepayListingWiring.assertListingAuthorized(msg.sender, feeLegs);
 
         // #656b (#594) — consolidate the borrower side to the current holder
         // before the order is built + the vault cached, so the listing binds the
@@ -725,8 +725,9 @@ contract NFTPrepayListingFacet is
         }
         // #818 Tier-1 sanctions — see `postPrepayListing`. `holder == msg.sender`.
         LibVaipakam._assertNotSanctioned(msg.sender);
-        // #825-r2 (P1) — screen fee-leg recipients (see `postPrepayListing`).
-        LibPrepayListingWiring.assertFeeLegRecipientsNotSanctioned(feeLegs);
+        // #825-r2 (P1) — screen fee-leg recipients and apply the protected-account
+        // listing rule (see `postPrepayListing`).
+        LibPrepayListingWiring.assertListingAuthorized(msg.sender, feeLegs);
 
         bytes32 oldOrderHash = s.prepayListingOrderHash[loanId];
         if (oldOrderHash == bytes32(0)) {

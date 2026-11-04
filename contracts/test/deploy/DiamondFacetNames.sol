@@ -101,7 +101,16 @@ abstract contract DiamondFacetNames {
     ///      does when a remit destination leaves its expected-source list).
     ///      102 → 103 with `SaleExitVerdictFacet` (#1841 — the one classifier
     ///      of a lender sale exit, self-called by both sale facets).
-    function cutFacetNames() internal pure returns (string[103] memory) {
+    ///      103 → 104 with `SellerClaimFacet` (#1209 / #1808 — the seller-claim
+    ///      host every interest payout and ClaimFacet self-call).
+    ///      104 → 105 with `RefinancePayoffFacet` (#1558 — the borrower's
+    ///      payoff permit on a refinance request, which RefinanceFacet uses).
+    ///      105 → 106 with `RiskDiscountedLiquidationFacet` (the discounted
+    ///      liquidation route, moved whole off RiskFacet for EIP-170 headroom).
+    ///      106 → 109 with `ProtectedAccountFacet`, `VaultPayoutFacet` and
+    ///      `VaultDepositoryFacet` (protected account mode and the depository
+    ///      vault).
+    function cutFacetNames() internal pure returns (string[109] memory) {
         return [
             "AccessControlFacet",
             "AddCollateralFacet",
@@ -234,9 +243,19 @@ abstract contract DiamondFacetNames {
             "VaipakamNFTMetadataFacet",
             // #1841 - the sale-exit verdict both sale facets self-call.
             "SaleExitVerdictFacet",
+            // #1209 / #1808 - the seller-claim host.
+            "SellerClaimFacet",
+            // #1558 - the refinance payoff-permit host.
+            "RefinancePayoffFacet",
             "RiskFacet",
             "RiskMatchLiquidationFacet",
             "RiskSplitLiquidationFacet",
+            // The discounted liquidation route, moved off RiskFacet (EIP-170).
+            "RiskDiscountedLiquidationFacet",
+            // Protected account mode and the depository vault.
+            "ProtectedAccountFacet",
+            "VaultPayoutFacet",
+            "VaultDepositoryFacet",
             "SwapToRepayFacet",
             "SwapToRepayPartialFacet",
             "SwapToRepayIntentFacet",
@@ -273,9 +292,10 @@ abstract contract DiamondFacetNames {
             // setters + readers + the LoanFacet.initiateLoan hook
             // that auto-populates per-loan refinance caps when the
             // borrower has `autoOptInOnNewLoan` enabled. Phase 2/3
-            // follow-ups (#500/#501) wire the caps into
-            // `RefinanceFacet.refinanceLoan` and add the
-            // `extendLoanInPlace` executor.
+            // follow-ups (#500/#501) wire the caps into the refinance
+            // completion (since #3042 only the atomic accept route,
+            // `refinanceLoanFromAccept` / `refinanceLoanFromMatch`) and
+            // add the `extendLoanInPlace` executor.
             "AutoLifecycleFacet",
             // #407 PR 2 (2026-06-12) — thin cross-facet entry for
             // the encumbrance sub-ledger's mutate surface. Created
