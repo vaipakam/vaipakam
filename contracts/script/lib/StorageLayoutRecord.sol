@@ -141,7 +141,8 @@ library StorageLayoutRecord {
     ///        address in the chain's `addresses.json` outside `.facets`
     ///        (which the loupe covers), and the `messenger()` each of those
     ///        proxies trusts. A candidate counts as a proxy when its
-    ///        implementation slot is non-zero.
+    ///        implementation slot is non-zero. The chain's own WETH
+    ///        (`.weth`) is not governed: see {governs}.
     ///
     ///      A Diamond getter that does not exist (an older facet set) reads
     ///      as no candidate, never as a revert.
@@ -208,18 +209,58 @@ library StorageLayoutRecord {
         view
         returns (address[] memory proxies, address[] memory impls)
     {
-        // The candidates come from the one shared walk (#2743), which the
-        // governance handover reads too; this keeps the proxies.
         string memory json;
         try CHEATS.readFile(Deployments.path()) returns (string memory j) {
             json = j;
         } catch {}
+        return liveProxies(diamond, json);
+    }
+
+    /// Whether the record governs the candidate the walk found at `source`:
+    /// every candidate but the artifact's top-level `.weth`.
+    ///
+    /// @dev `.weth` names the chain's wrapped native token, a contract the
+    ///      chain provides and Vaipakam neither deploys nor upgrades (a
+    ///      testnet rig may record its own stand-in there, which is test
+    ///      infrastructure and not a proxy). On Arbitrum Sepolia, as on
+    ///      Arbitrum One, it is a TransparentUpgradeableProxy under
+    ///      Arbitrum's own ProxyAdmin. Anchoring it bound our in-place
+    ///      refreshes to Arbitrum's upgrade schedule, and because the testnet
+    ///      rig writes the key after the deploy anchors, the first refresh
+    ///      after the 2026-11-03 deploy was refused for a proxy the anchor did
+    ///      not list while every Vaipakam address was unchanged.
+    ///
+    ///      Only the record leaves it out. The walk itself still returns it,
+    ///      so the governance handover keeps its own rule of reporting any
+    ///      third-party contract that answers `owner()` rather than skipping
+    ///      it (#2743).
+    ///
+    ///      The rule errs closed. A chain-provided proxy under any other key
+    ///      makes a refresh refuse, loudly, naming the proxy. Leaving out one
+    ///      of Vaipakam's own proxies would drop it from the guard without a
+    ///      word, so this names the one key only. It cannot hide a contract
+    ///      the Diamond names: the walk tries the Diamond's getters before
+    ///      the artifact and keeps the first source of a repeated address.
+    function governs(string memory source) internal pure returns (bool) {
+        return keccak256(bytes(source)) != keccak256(".weth");
+    }
+
+    /// The EIP-1967 proxies the record governs on `diamond`'s chain, given
+    /// its artifact `json`, sorted by address, with their implementations.
+    /// The candidates come from the one shared walk (#2743), which the
+    /// governance handover reads too; this keeps the governed proxies.
+    function liveProxies(address diamond, string memory json)
+        internal
+        view
+        returns (address[] memory proxies, address[] memory impls)
+    {
         ChainContracts.Found[] memory cand = ChainContracts.walk(diamond, json);
         uint256 n = cand.length;
-        // Keep the proxies, sorted by address.
+        // Keep the governed proxies, sorted by address.
         address[] memory sorted = new address[](n);
         uint256 k;
         for (uint256 i = 0; i < n; ++i) {
+            if (!governs(cand[i].source)) continue;
             address a = cand[i].addr;
             if (ChainContracts.implementationOf(a) == address(0)) continue;
             uint256 j = k;
