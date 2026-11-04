@@ -227,6 +227,9 @@ console.log(`build: ${siteBundle} on ${hostOf(SITE_URL)} and ${hostOf(REFERENCE_
 const { pub } = clientsFor(CHAIN_ID);
 const read = (functionName, args = [], blockNumber) =>
   pub.readContract({ address: DIAMOND, abi: DIAMOND_ABI, functionName, args, ...(blockNumber !== undefined ? { blockNumber } : {}) });
+// Every configuration read that can exit the process (`blockedSync`) runs
+// here, before any write: after one, an exit would skip the settlement.
+const IDX = indexerOrigin();
 const BORROWER = addressOf(BORROWER_ROLE);
 const LENDER = addressOf(LENDER_ROLE);
 if (eq(BORROWER, LENDER)) await blocked(`${BORROWER_ROLE} and ${LENDER_ROLE} are the same wallet (${BORROWER}); the drive needs two`);
@@ -979,7 +982,6 @@ try {
   // Claims page read before the indexer has this loan's deposit says nothing
   // about the card. The deposits are already mined; this waits out the lag.
   const fundHash = PLAN.steps().find((s) => s.id === 'b-fund').record.hash;
-  const IDX = indexerOrigin();
   const idxUrl = `${IDX}/activity?chainId=${CHAIN_ID}&actor=${BORROWER.toLowerCase()}&kind=ExtendReserveFunded`;
   const row = await pollUntil(
     'the indexer files the deposit',
@@ -993,14 +995,18 @@ try {
   if (row) check('indexer', 'row', 'the indexer files the deposit under the borrower', true, `block ${row.blockNumber}, tx ${row.txHash}`);
   else unsettled('indexer', 'row', `no ExtendReserveFunded row for ${fundHash} under the borrower within 600 s (${idxUrl}) — indexer lag cannot be told from a missing row`);
 
-  const lenderQuery = lp.waitForResponse(
-    (res) => res.url().includes('/activity?') && res.url().includes(`actor=${LENDER.toLowerCase()}`) && res.url().includes('ExtendReserveFunded'),
-    { timeout: 90_000 },
-  );
+  // Settled to a boolean as it is created, so a timeout or a closed page can
+  // never surface as an unhandled rejection that ends the run unsettled.
+  const lenderQuery = lp
+    .waitForResponse(
+      (res) => res.url().includes('/activity?') && res.url().includes(`actor=${LENDER.toLowerCase()}`) && res.url().includes('ExtendReserveFunded'),
+      { timeout: 90_000 },
+    )
+    .then((r) => r.ok(), () => false);
   await go(lp, '/claims');
   await connect(lp, LENDER);
   const lSurface = await awaitSurface(lp);
-  const answered = await lenderQuery.then((r) => r.ok(), () => false);
+  const answered = await lenderQuery;
   if (!lSurface.ready || !answered) {
     unsettled('claims', 'lenderNone', !lSurface.ready ? notReadyReason(lSurface) : "the lender's reserve query never answered, so an absent section proves nothing");
   } else {
