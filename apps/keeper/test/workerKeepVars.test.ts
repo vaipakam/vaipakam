@@ -218,7 +218,11 @@ describe('worker configs preserve dashboard vars at the source (#1995)', () => {
         `{"name": "vaipakam-site", "pages_build_output_dir": "./dist"}\n`,
         (r) => {
           expect(r.ok, r.out).toBe(true);
-          expect(r.out).toContain('5 wrangler config(s) declare preservation');
+          // The copy holds one config per entry of VAR_CARRYING_WORKERS; the
+          // seeded Pages config is counted apart, never in this total.
+          expect(r.out).toContain(
+            `${VAR_CARRYING_WORKERS.length} wrangler config(s) declare preservation`,
+          );
           expect(r.out).toContain('1 Pages config(s) are exempt');
           expect(r.out).toContain('apps/site/wrangler.jsonc');
         },

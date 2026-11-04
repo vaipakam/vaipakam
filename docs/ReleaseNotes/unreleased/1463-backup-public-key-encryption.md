@@ -1,4 +1,4 @@
-## Thread — Backups the archive Worker cannot read (PR #<n>)
+## Thread — Backups the archive Worker cannot read (PR #3152)
 
 Slice 2 of the backup security design. The nightly archive Worker now
 encrypts each archive to offline public keys: a fresh data key per archive,
