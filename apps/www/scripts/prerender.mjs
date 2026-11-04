@@ -257,12 +257,26 @@ async function snapshot(context, route, locale) {
       waitUntil: 'networkidle',
       timeout: 30_000,
     });
-    // The app is mounted once #root has children; give the SEO hooks'
-    // effects one more tick to settle head tags.
-    await page.waitForFunction(
-      () => document.getElementById('root')?.children.length > 0,
-      { timeout: 15_000 },
-    );
+    // Wait for the page itself to declare its indexing, not for a fixed
+    // delay. The shell mounts (#root gains children) before a lazy route
+    // has rendered, and usePageMeta writes the canonical and hreflang
+    // links in one effect only once the route's component commits. A
+    // heavy route — the translated advanced guide — can commit well after
+    // the network goes idle on a slow build machine, and the old 100 ms
+    // settle snapshotted /zh and /ja/help/advanced with no canonical at
+    // all on Workers Builds (#2903). Every route declares a canonical
+    // (expectedIndexing), and the shell carries none, so its presence is
+    // the signal; a route that never declares one fails here by name.
+    await page
+      .waitForFunction(
+        () => document.querySelector('link[rel="canonical"][data-page-meta="1"]') !== null,
+        { timeout: 30_000 },
+      )
+      .catch(() => {
+        throw new Error('the page declared no canonical link within 30 s of loading');
+      });
+    // The structured-data hooks run in the same commit; one more tick
+    // lets every effect of that commit finish.
     await page.waitForTimeout(100);
 
     const head = await page.evaluate(() => ({
