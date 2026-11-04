@@ -270,9 +270,9 @@ export interface LocalLedger {
 
 export interface MeshObservation {
   canonicalChainId: number;
-  /** One entry per chain in `getExpectedSourceChainIds()`, plus the
-   *  canonical chain itself (whose books must be inert — see
-   *  `base-self-inert`). */
+  /** Base's books for the observed chain (see `observedChainId`) — the
+   *  canonical chain's own books must be inert, see `base-self-inert`.
+   *  Empty when that read failed. */
   books: readonly BaseChainBooks[];
   /**
    * Every chain the mesh EXPECTS, including ones whose reads failed.
@@ -303,6 +303,15 @@ export interface MeshObservation {
    */
   allLocals: ReadonlyMap<number, Omit<LocalLedger, FRESH>>;
   gaps: readonly CoverageGap[];
+  /**
+   * The ONE chain this tick read, or `null` when a manually named chain
+   * is not in the mesh. `books`, `freshLocals` and `allLocals` hold this
+   * chain only; the rest of the mesh is read on other ticks (see
+   * `rotation.ts`).
+   */
+  observedChainId: number | null;
+  /** The full rotation, canonical first. */
+  rotation: readonly number[];
 }
 
 export type { Severity, Finding } from './finding';

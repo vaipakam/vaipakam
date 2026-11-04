@@ -28,6 +28,7 @@ import {
   type StreakState,
 } from './invariants';
 import { observeMesh } from './mesh';
+import { ownedAlertChainIds, slotIndex, type TickScope } from './rotation';
 import { makeBaseRedactor } from './redact';
 import { formatAlert, sendOpsMessage } from './telegram';
 
@@ -73,6 +74,10 @@ export interface TickSummary {
   /** Which health preconditions failed. Empty when `ok`. */
   unhealthyBecause: string[];
   chainsObserved: number;
+  /** The chain this tick observed — see `rotation.ts`. `null` when none. */
+  observedChainId: number | null;
+  /** The full rotation, canonical first; each tick observes one entry. */
+  rotation: number[];
   critical: number;
   advisory: number;
   coverageGaps: number;
@@ -107,7 +112,12 @@ function chainLabel(chainId: number): string {
  *  handler is invisible outside the Cloudflare logs. */
 export async function runTick(
   env: Env,
-  options: { probeDelivery?: boolean; persistState?: boolean } = {},
+  options: {
+    probeDelivery?: boolean;
+    persistState?: boolean;
+    /** Which chain to observe. Defaults to the rotation slot for now. */
+    scope?: TickScope;
+  } = {},
 ): Promise<TickSummary> {
   // Manual `POST /run` reads the windowed state but never ADVANCES it.
   // The 6- and 130-tick windows are denominated in CRON observations, so
@@ -126,7 +136,9 @@ export async function runTick(
     assertAbiShape();
 
     const config = readConfig(env);
-    const obs = await observeMesh(env, config);
+    const scope: TickScope =
+      options.scope ?? { kind: 'slot', index: slotIndex(Date.now(), config.rotationStepSeconds) };
+    const obs = await observeMesh(env, config, scope);
 
     const findings: Finding[] = checkHardInvariants(
       obs,
@@ -334,7 +346,14 @@ export async function runTick(
         // Keyed on the EXPECTED set, not the successfully-read one: a
         // chain whose read merely failed is still in the mesh.
         { kind: 'pruneStreaks', keepChainIds: obs.expectedChainIds },
-        { kind: 'retainAlerts', keepKeys: findings.map((f) => f.key) },
+        // Only the observed chain's records (and chain 0's): another
+        // chain's alerts were not evaluated this tick, so their absence
+        // here says nothing about whether they cleared.
+        {
+          kind: 'retainAlerts',
+          keepKeys: findings.map((f) => f.key),
+          ownedChainIds: ownedAlertChainIds(obs.observedChainId),
+        },
       );
     }
 
@@ -351,7 +370,8 @@ export async function runTick(
       writes: streakWrites,
       probeText: options.probeDelivery
         ? `✅ vaipakam-mesh-watcher delivery probe — manual POST /run. ` +
-          `Chains observed: ${obs.books.length}. ` +
+          `Chain observed: ${obs.observedChainId === null ? 'none' : chainLabel(obs.observedChainId)} ` +
+          `(rotation ${obs.rotation.join(', ')}). ` +
           `Critical: ${findings.filter((f) => f.severity === 'critical').length}. ` +
           `Advisory: ${findings.filter((f) => f.severity === 'advisory').length}. ` +
           `If you can read this, the ops pager works.`
@@ -392,6 +412,8 @@ export async function runTick(
       deliveryFailures: delivery.failures,
       stateDegraded: delivery.stateDegraded,
       chainsObserved: obs.books.length,
+      observedChainId: obs.observedChainId,
+      rotation: [...obs.rotation],
       critical,
       advisory: findings.length - critical,
       coverageGaps: obs.gaps.length,
@@ -471,6 +493,8 @@ export async function runTick(
       stateDegraded: true,
       unhealthyBecause: ['tick failed before completion'],
       chainsObserved: 0,
+      observedChainId: null,
+      rotation: [],
       critical: 0,
       advisory: 0,
       coverageGaps: 0,

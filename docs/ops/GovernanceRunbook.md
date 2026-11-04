@@ -1808,8 +1808,9 @@ before arming, not after: arming is when the invariants it watches start moving.
 **Deploying is not verifying.** A Worker deploys successfully with a wrong RPC, a
 missing deployment stanza or a bad alert credential, and a cron that has not
 fired yet looks exactly like one that is broken. Trigger the authenticated
-`POST /run` and require a clean health result — delivery succeeded, no coverage
-gaps — before Step 4. Arming behind a watcher that has never completed a tick is
+`POST /run?chain=<id>` once for every chain in the response's `rotation` (each
+run observes one chain, like a cron tick) and require a clean health result on
+every one of them — delivery succeeded, no coverage gaps — before Step 4. Arming behind a watcher that has never completed a tick is
 arming with no invariant coverage at all, which is the state this step exists to
 prevent.
 

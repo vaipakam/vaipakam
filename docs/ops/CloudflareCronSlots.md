@@ -58,7 +58,7 @@ one expression), and splitting on it produced two nonsense fragments.
 | `vaipakam-agent` | `* * * * *` | `apps/agent` | live |
 | `vaipakam-indexer` | `* * * * *` | `apps/indexer` | live |
 | `vaipakam-offchain-data-warm` | `17 3 * * *` | `ops/offchain-data-warm` | live |
-| `vaipakam-mesh-watcher` | `*/15 * * * *` | `ops/mesh-watcher` | live — deployed 2026-11-04 |
+| `vaipakam-mesh-watcher` | `*/5 * * * *` | `ops/mesh-watcher` | live — deployed 2026-11-04 |
 
 **The table above is the whole inventory.** A Worker not listed holds no
 trigger, and `--live` is what enforces that: any Worker armed on the account

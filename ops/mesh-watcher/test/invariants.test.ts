@@ -376,6 +376,10 @@ function observation(o: Overrides = {}): MeshObservation {
     freshLocals,
     allLocals,
     gaps: [],
+    // `checkHardInvariants` reads neither field and checks every chain in
+    // `books`, so these fixtures may carry two chains' books at once.
+    observedChainId: MIRROR,
+    rotation: [CANONICAL, MIRROR],
   };
 }
 
@@ -2033,7 +2037,7 @@ describe('AlertStore — storage that cannot throw', () => {
     // ops are data precisely so this happens inside the guard.
     const ops: StoreOp[] = [
       { kind: 'pruneStreaks', keepChainIds: [1, 2] },
-      { kind: 'retainAlerts', keepKeys: ['a'] },
+      { kind: 'retainAlerts', keepKeys: ['a'], ownedChainIds: [0] },
     ];
     const r = await new AlertStore(exploding).commit(ops);
     expect(r.ok).toBe(false);
@@ -2675,6 +2679,8 @@ describe('bucket coverage on a STALE snapshot — a same-chain check', () => {
       // ...but present here, because its own two figures are comparable.
       allLocals: new Map([[MIRROR, stale]]),
       gaps: [],
+      observedChainId: MIRROR,
+      rotation: [CANONICAL, MIRROR],
     };
   }
 
@@ -2703,6 +2709,8 @@ describe('bucket coverage on a STALE snapshot — a same-chain check', () => {
       {
         canonicalChainId: CANONICAL,
         expectedChainIds: [CANONICAL, MIRROR],
+        observedChainId: MIRROR,
+        rotation: [CANONICAL, MIRROR],
         books: [canonicalBooks(), mirrorBooks()],
         freshLocals: new Map(),
         allLocals: new Map([[MIRROR, stale]]),
@@ -2736,6 +2744,8 @@ describe('recovery-reservation backing (#1434 P2-w2, §4.1)', () => {
     return {
       canonicalChainId: CANONICAL,
       expectedChainIds: [CANONICAL, MIRROR],
+      observedChainId: MIRROR,
+      rotation: [CANONICAL, MIRROR],
       books: [canonicalBooks(), mirrorBooks()],
       freshLocals: new Map(),
       allLocals: new Map([[MIRROR, local]]),

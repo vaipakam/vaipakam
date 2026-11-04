@@ -20,6 +20,7 @@
 
 import { classify, type Failure } from './errors';
 import type { StreakState } from './invariants';
+import { alertKeyChainId } from './rotation';
 // THE SHARED CHUNKER, reached by relative path rather than a package
 // dependency (#2234, Codex #2235 r1 P2). This Worker is outside the pnpm
 // workspace on purpose — its own D1, its own Telegram bot — so it cannot
@@ -39,7 +40,13 @@ export type StoreOp =
   | { kind: 'clearStreak'; signal: string; chainId: number }
   | { kind: 'pruneStreaks'; keepChainIds: readonly number[] }
   | { kind: 'recordAlert'; key: string; fingerprint: string; at: number }
-  | { kind: 'retainAlerts'; keepKeys: readonly string[] };
+  /**
+   * Forget stored alerts that are not firing any more — but only those of
+   * `ownedChainIds`, the chains this tick actually observed (see
+   * `rotation.ts` `ownedAlertChainIds`). A key whose chain id cannot be
+   * parsed counts as chain 0, the watcher-level id.
+   */
+  | { kind: 'retainAlerts'; keepKeys: readonly string[]; ownedChainIds: readonly number[] };
 
 export interface DueAlert {
   key: string;
@@ -209,14 +216,14 @@ export class AlertStore {
             .bind(op.key, op.at, op.fingerprint),
         ];
       case 'retainAlerts': {
-        if (op.keepKeys.length === 0) return [this.db.prepare('DELETE FROM alert_sent')];
         const stored = await this.db
           .prepare('SELECT alert_key FROM alert_sent')
           .all<{ alert_key: string }>();
         const keep = new Set(op.keepKeys);
+        const owned = new Set(op.ownedChainIds);
         const drop = (stored.results ?? [])
           .map((r) => r.alert_key)
-          .filter((k) => !keep.has(k));
+          .filter((k) => !keep.has(k) && owned.has(alertKeyChainId(k) ?? 0));
         return chunkD1InList(drop).map((c) =>
           this.db
             .prepare(`DELETE FROM alert_sent WHERE alert_key IN (${c.placeholders})`)

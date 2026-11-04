@@ -19,8 +19,7 @@ record the watcher as the live occupant of its slot.
 
 Advances #1222 (Step 3f of the recycling activation ceremony).
 
-> Caveat: At three chains the watcher does not fit the Workers Free limits. Its
-> first verified run used more than the 50 subrequests allowed per invocation,
-> so the BNB testnet reads and the Telegram sends failed, and it used about
-> 93 ms of CPU against a 10 ms allowance. A clean run, which the ceremony
-> requires, needs Workers Paid or a host outside Workers.
+> Caveat: At three chains a run that read the whole mesh did not fit the free
+> Workers plan: it made more than the 50 outbound requests allowed per
+> invocation and used about 93 ms of CPU against a 10 ms allowance. The
+> one-chain-per-tick rotation (PR #3142) addresses the request limit.

@@ -30,18 +30,21 @@
   "observability": {
     "enabled": true,
   },
-  // Cron — every 15 minutes.
+  // Cron — every 5 minutes, ONE chain per tick.
   //
   // The checks are detection-only: nothing here moves funds or pauses a
   // contract, and the invariants it watches change at day-close cadence,
-  // not per block. 15 minutes gives a windowed advisory a meaningful
-  // multi-hour run at the default 6-observation window while keeping the
-  // per-tick RPC fan-out (roughly 1 + 3n reads on Base plus 3 per chain)
-  // modest. This slot is the one freed by retiring `vaipakam-lz-watcher`,
-  // whose LayerZero surface the T-068 CCIP migration and the #687-A
-  // securities excision had between them made entirely dead.
+  // not per block. Each tick reads Base plus ONE chain of the rotation
+  // (canonical first, then `getExpectedSourceChainIds()` ascending — see
+  // `src/rotation.ts`), because reading the whole mesh in one invocation
+  // went past the Workers Free cap of 50 subrequests. At three chains each
+  // chain is read every 15 minutes, which is what the tick-counted windows
+  // below are sized for. `ROTATION_STEP_SECONDS` must equal this interval.
+  // This slot is the one freed by retiring `vaipakam-lz-watcher`, whose
+  // LayerZero surface the T-068 CCIP migration and the #687-A securities
+  // excision had between them made entirely dead.
   "triggers": {
-    "crons": ["*/15 * * * *"],
+    "crons": ["*/5 * * * *"],
   },
   // D1 — windowed-advisory streak state + alert repeat suppression.
   //
@@ -116,8 +119,12 @@
     "CANONICAL_CHAIN_ID": "84532",
 
     // ── Windowed-advisory tuning ────────────────────────────────────
-    // Consecutive observations a condition must hold, unchanged, before
-    // its advisory fires.
+    // Consecutive observations OF ONE CHAIN a condition must hold,
+    // unchanged, before its advisory fires. A chain is observed once per
+    // rotation: (chains in the mesh) x ROTATION_STEP_SECONDS = 3 x 5min =
+    // 15min today. Wiring a fourth chain makes that 20 minutes and
+    // lengthens both windows by a third — the safe direction (later, never
+    // spurious), but RETUNE them then.
     //
     // Stuck settlement: 6 x 15min = 1.5h of uninterrupted stasis. Fine at
     // this size because retirement is read from the CHAIN'S OWN ledger,
@@ -130,8 +137,8 @@
     // Base is legitimately behind and frozen for a whole day — a window
     // shorter than one report cycle makes a perfectly healthy chain alarm
     // daily. Floor = day (86400s) + finalization grace (14400s) + CCIP
-    // delivery, over the cron interval: ~112 ticks at 15 minutes. 130 is
-    // ~32.5h. RETUNE IF YOU CHANGE THE CRON above.
+    // delivery, over the per-chain cycle: ~112 observations at 15 minutes. 130 is
+    // ~32.5h. RETUNE IF YOU CHANGE THE CRON above or the chain count.
     "REPORT_LAG_WINDOW_TICKS": "130",
 
     // Slack on the bucket-coverage check, in VPFI wei. Non-zero on
@@ -159,8 +166,13 @@
     // they do Base legitimately holds newer figures than the snapshot —
     // which the cross-chain checks would otherwise report as ledger
     // corruption. 300s sits well above ordinary head lag and clock skew,
-    // and well below both the 15-minute tick and the day-close cadence.
+    // and well below both the 15-minute per-chain cycle and the day-close cadence.
     // Raise it only for a chain that genuinely idles between blocks.
     "STALE_LOCAL_SECONDS": "300",
+
+    // Seconds between cron ticks — MUST equal the cron interval above. The
+    // tick's chain is (scheduled time / this) mod the rotation length, so a
+    // mismatch skips or doubles chains.
+    "ROTATION_STEP_SECONDS": "300",
   },
 }

@@ -11,20 +11,33 @@
 
 import { isAuthorized } from './auth';
 import { statusFor } from './health';
-import { resolveEnv, type Env } from './env';
+import { readRotationStep, resolveEnv, type Env } from './env';
+import { slotIndex } from './rotation';
 import { runTick } from './runner';
 
 export default {
   /** Cron entry point. */
   async scheduled(
-    _event: ScheduledController,
+    event: ScheduledController,
     env: Env,
     ctx: ExecutionContext,
   ): Promise<void> {
     ctx.waitUntil(
-      resolveEnv(env).then(runTick).then((summary) => {
-        console.log(`mesh-watcher tick: ${JSON.stringify(summary)}`);
-      }),
+      resolveEnv(env)
+        .then((resolved) =>
+          // The slot comes from the SCHEDULED time, not the wall clock, so
+          // a tick that starts a few seconds late still observes its own
+          // chain — see `rotation.ts`.
+          runTick(resolved, {
+            scope: {
+              kind: 'slot',
+              index: slotIndex(event.scheduledTime, readRotationStep(resolved)),
+            },
+          }),
+        )
+        .then((summary) => {
+          console.log(`mesh-watcher tick: ${JSON.stringify(summary)}`);
+        }),
     );
   },
 
@@ -68,6 +81,17 @@ export default {
           { status: 401, headers: { 'www-authenticate': 'Bearer' } },
         );
       }
+      // `?chain=<id>` observes that chain; without it, the chain the
+      // rotation is on now. One chain per request — reading the whole mesh
+      // in one invocation is exactly what did not fit (see `rotation.ts`),
+      // so verifying a deploy means one request per chain.
+      const chainParam = url.searchParams.get('chain');
+      if (chainParam !== null && !/^[1-9][0-9]*$/.test(chainParam)) {
+        return Response.json(
+          { error: 'chain must be a positive EVM chain id, e.g. ?chain=84532' },
+          { status: 400 },
+        );
+      }
       const env = await resolveEnv(rawEnv);
       // Probe delivery on the manual path: this is the documented
       // post-deploy verification, and certifying a pager without ever
@@ -77,6 +101,9 @@ export default {
         // Read the windowed state, never advance it: those windows are
         // denominated in CRON observations.
         persistState: false,
+        ...(chainParam !== null
+          ? { scope: { kind: 'chain' as const, chainId: Number(chainParam) } }
+          : {}),
       });
       // Derived from health, never restated — see `health.ts`.
       return Response.json(summary, {
@@ -91,7 +118,7 @@ export default {
       worker: 'vaipakam-mesh-watcher',
       purpose: 'VPFI recycling mesh ledger invariants (#1222 M3 B4-c)',
       endpoints: {
-        run: 'POST /run — execute one tick and return its summary (requires Authorization: Bearer <WATCHER_RUN_TOKEN>)',
+        run: 'POST /run[?chain=<id>] — execute one tick for one chain (default: the chain the rotation is on now) and return its summary (requires Authorization: Bearer <WATCHER_RUN_TOKEN>)',
       },
     });
   },
