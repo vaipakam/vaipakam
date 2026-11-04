@@ -57,13 +57,18 @@ export default {
           { status: 405, headers: { allow: 'POST' } },
         );
       }
-      const env = await resolveEnv(rawEnv);
-      if (!isAuthorized(request, env)) {
+      // Authenticate BEFORE resolving the store bindings. The run token is
+      // a plain per-Worker secret that `resolveEnv` never touches, so the
+      // raw env already holds it; resolving first would turn every
+      // unauthenticated request on this public URL into five Secrets
+      // Store reads, and make the 401 depend on the store being up.
+      if (!isAuthorized(request, rawEnv)) {
         return Response.json(
           { error: 'unauthorized' },
           { status: 401, headers: { 'www-authenticate': 'Bearer' } },
         );
       }
+      const env = await resolveEnv(rawEnv);
       // Probe delivery on the manual path: this is the documented
       // post-deploy verification, and certifying a pager without ever
       // exercising it is how a silent pager ships.

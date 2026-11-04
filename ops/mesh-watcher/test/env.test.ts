@@ -64,3 +64,25 @@ describe('resolveEnv — Secrets Store bindings resolved at the boundary', () =>
     expect(typeof env.WATCHER_RUN_TOKEN).not.toBe('string');
   });
 });
+
+describe('POST /run — authentication precedes the store reads', () => {
+  it('rejects an unauthenticated request without reading any binding', async () => {
+    const { default: worker } = await import('../src/index');
+    const get = vi.fn(async () => 'secret');
+    const rawEnv = {
+      WATCHER_RUN_TOKEN: 'run-token',
+      TG_OPS_BOT_TOKEN: { get },
+      TG_OPS_CHAT_ID: { get },
+      RPC_84532: { get },
+    } as unknown as Env;
+    const res = await worker.fetch(
+      new Request('https://example.com/run', {
+        method: 'POST',
+        headers: { authorization: 'Bearer wrong' },
+      }),
+      rawEnv,
+    );
+    expect(res.status).toBe(401);
+    expect(get).not.toHaveBeenCalled();
+  });
+});
