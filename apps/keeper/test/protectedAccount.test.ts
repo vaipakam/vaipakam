@@ -147,8 +147,11 @@ class FakeDiamond {
 
   /** The functions each batched read named, in order. */
   batches: string[][] = [];
+  /** Each batched read in full, in order. */
+  calls: { functionName: string; args?: readonly unknown[] }[][] = [];
   multicall = async ({ contracts, blockNumber }: { contracts: { functionName: string; args?: readonly unknown[] }[]; blockNumber?: bigint }) =>
     (this.batches.push([...new Set(contracts.map((c) => c.functionName))]),
+    this.calls.push(contracts.map((c) => ({ functionName: c.functionName, args: c.args }))),
     Promise.all(
       contracts.map(async (c) => {
         try {
@@ -379,6 +382,21 @@ describe('a run', () => {
       // The transfer's account was read with the payouts: its batch adds none.
       expect(d.batches.find((b) => b.includes('getPendingPositionTransfer'))).toEqual(['getPendingPositionTransfer']);
       expect(d.batches.filter((b) => b.length === 1 && b[0] === 'getProtectedAccount'), 'no follow-up account read').toEqual([]);
+    });
+
+    it('places each account read right after the first record naming it, so a part-read batch still yields whole pairs (Codex #3090)', async () => {
+      queuePayout(1n);
+      queuePayout(2n, { user: BOB, recipient: BOB });
+      queuePayout(3n);
+      await run();
+      const batch = d.calls.find((b) => b.some((c) => c.functionName === 'getPendingPayout'))!;
+      expect(batch.map((c) => [c.functionName, String(c.args?.[0])])).toEqual([
+        ['getPendingPayout', '1'],
+        ['getProtectedAccount', ALICE],
+        ['getPendingPayout', '2'],
+        ['getProtectedAccount', BOB],
+        ['getPendingPayout', '3'],
+      ]);
     });
 
     it('starts each run at a different row of the page, so slow refusals at its top cannot starve a row below them', async () => {

@@ -497,21 +497,38 @@ class Step {
 
   /** The accounts' settings at the head, read once a run each. */
   private async readAccounts(accounts: readonly Address[]): Promise<void> {
-    await this.readWithAccounts([], accounts, 'accounts');
+    const want = [...new Set(accounts)].filter((a) => !this.accounts.has(a));
+    const got = await this.r.many(want.map((a) => ({ functionName: 'getProtectedAccount', args: [a] })), 'accounts');
+    want.forEach((a, i) => this.accounts.set(a, got[i] as ProtectedAccount | undefined));
   }
 
   /**
-   * `calls` and the settings of `accounts` (those not read yet this run) in
-   * ONE batch, returning `calls`' answers. A row's account is named by the
-   * event that queued it, so its settings need not wait for its record: read
-   * one after the other, the records could use the whole read window and
-   * leave every account unread, and nothing could be sent run after run.
+   * `calls` in ONE batch with the settings of the account each names (those
+   * not read yet this run), each settings read placed right after the first
+   * call naming its account; returns `calls`' answers. A row's account is
+   * named by the event that queued it, so its settings need not wait for its
+   * record. Placed side by side, a record and its settings fall in the same
+   * stretch of the batch: a read window that completes only part of a long
+   * batch still yields whole pairs, so something is sendable every run.
+   * Appending every settings read after every record would put each record
+   * a whole batch-length from its settings, and a window shorter than the
+   * batch would then complete no pair at all, run after run (Codex #3090).
    */
-  private async readWithAccounts(calls: readonly { functionName: string; args: readonly unknown[] }[], accounts: readonly Address[], label: string): Promise<unknown[]> {
-    const want = [...new Set(accounts)].filter((a) => !this.accounts.has(a));
-    const got = await this.r.many([...calls, ...want.map((a) => ({ functionName: 'getProtectedAccount', args: [a] }))], label);
-    want.forEach((a, i) => this.accounts.set(a, got[calls.length + i] as ProtectedAccount | undefined));
-    return got.slice(0, calls.length);
+  private async readWithAccounts(calls: readonly AccountCall[], label: string): Promise<unknown[]> {
+    const list: { functionName: string; args: readonly unknown[] }[] = [];
+    const settingsAt = new Map<Address, number>();
+    const callAt: number[] = [];
+    for (const c of calls) {
+      callAt.push(list.length);
+      list.push({ functionName: c.functionName, args: c.args });
+      if (c.account !== null && !this.accounts.has(c.account) && !settingsAt.has(c.account)) {
+        settingsAt.set(c.account, list.length);
+        list.push({ functionName: 'getProtectedAccount', args: [c.account] });
+      }
+    }
+    const got = await this.r.many(list, label);
+    for (const [a, i] of settingsAt) this.accounts.set(a, got[i] as ProtectedAccount | undefined);
+    return callAt.map((i) => got[i]);
   }
 
   /** The order this run tries the page's nominees in (`attemptOrder`). */
@@ -544,9 +561,9 @@ class Step {
     if (ids.length > 0) {
       const now = await this.clock('payout');
       if (now === null) return;
+      const named = accountsNamed(page);
       const rows = (await this.readWithAccounts(
-        ids.map((id) => ({ functionName: 'getPendingPayout', args: [id] })),
-        accountsNamed(page),
+        ids.map((id) => ({ functionName: 'getPendingPayout', args: [id], account: named.get(id) ?? null })),
         'payouts',
       )) as (PendingPayout | undefined)[];
       // A record naming an account its event did not (none should) has that
@@ -627,9 +644,9 @@ class Step {
     if (ids.length > 0) {
       const now = await this.clock('transfer');
       if (now === null) return;
+      const named = accountsNamed(page);
       const rows = (await this.readWithAccounts(
-        ids.map((id) => ({ functionName: 'getPendingPositionTransfer', args: [id] })),
-        accountsNamed(page),
+        ids.map((id) => ({ functionName: 'getPendingPositionTransfer', args: [id], account: named.get(id) ?? null })),
         'transfers',
       )) as (PendingTransfer | undefined)[];
       // A record naming an account its event did not (none should) has that
@@ -696,7 +713,7 @@ class Step {
     if (changes.length > 0) {
       const now = await this.clock('change');
       if (now === null) return;
-      const st = (await this.readWithAccounts(changeCalls(changes), changes.map((c) => c.account), 'changes')) as (ChangeState | undefined)[];
+      const st = (await this.readWithAccounts(changeCalls(changes).map((call, i) => ({ ...call, account: changes[i].account })), 'changes')) as (ChangeState | undefined)[];
       // One `finalizeSettingChanges` per account applies every due setting;
       // what it applied is read from its receipt (`applied`), never assumed
       // from its landing (Codex #3090).
@@ -852,11 +869,18 @@ function changeCalls(cs: readonly Change[]): { functionName: string; args: reado
 /** The accounts the page's events name (`PayoutQueued` and
  *  `PositionTransferQueued` both carry it), so their settings are read with
  *  the rows' own records. */
-function accountsNamed(page: LedgerRotation<bigint>): Address[] {
-  return page.rows.flatMap((row, i) => {
-    const a = page.named[i] === null ? null : lower(row.args.account);
-    return a === null ? [] : [a];
+/** A read and the account whose settings go with it (null: none named). */
+type AccountCall = { functionName: string; args: readonly unknown[]; account: Address | null };
+
+/** The account the event that first named each nominee names, by nominee. */
+function accountsNamed(page: LedgerRotation<bigint>): Map<bigint, Address> {
+  const out = new Map<bigint, Address>();
+  page.rows.forEach((row, i) => {
+    const id = page.named[i];
+    const a = id === null ? null : lower(row.args.account);
+    if (id !== null && a !== null && !out.has(id)) out.set(id, a);
   });
+  return out;
 }
 
 /** What a change's own record read returns. */
