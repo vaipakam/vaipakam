@@ -99,7 +99,8 @@ remover, owner or pending owner of the list recorded on ANY chain it has an
 RPC for, the attestor's chain included, checked before the key is used on
 that chain at all (a chain with no timelock whose list it holds a role on is
 reported refused, and fails the run), or the owner or pending owner of the
-clearance oracle or of either clearance messenger, so the key can never also
+clearance oracle (or, for the testnet stand-in, its refresher, #3113) or of
+either clearance messenger, so the key can never also
 decide a clearance; for the run, a chain where it cannot read who controls
 any of these — which ones follows from the route, so an unreachable attestor
 chain, whose oracle and messenger then go unread, refuses it too, every step

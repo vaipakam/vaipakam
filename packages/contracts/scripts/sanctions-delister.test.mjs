@@ -945,6 +945,13 @@ test('the key may control nothing a delisting depends on, an oracle or a messeng
     unknown: ['the clearance oracle'],
     reasons: ["the list's secondary oracle could not be read: rpc down"],
   });
+  // #3113 (#3118 r2): the stand-in's refresher is control too, and an unread one is unknown.
+  const refreshing = delistingControllers({ route: 1, timelock: none, clearanceOracle: { ...standIn, pendingOwner: ZERO, refresher: KEY.toLowerCase() } });
+  assert.deepEqual(keyControls(refreshing, KEY), { holds: [`${STAND_IN_NAME}'s refresher`], unknown: [], reasons: [] });
+  assert.deepEqual(keyControls(delistingControllers({ route: 1, timelock: none, clearanceOracle: { ...standIn, pendingOwner: ZERO, refresher: ZERO } }), KEY), { holds: [], unknown: [], reasons: [] });
+  assert.deepEqual(keyControls(delistingControllers({ route: 1, timelock: none, clearanceOracle: { ...standIn, pendingOwner: ZERO, refresher: null } }), KEY).unknown, [STAND_IN_NAME]);
+  // Only a stand-in carries the role.
+  assert.ok(!('refresher' in delistingControllers({ route: 1, timelock: none, clearanceOracle: { address: ORACLE, identity: 'unknown', updatedAt: 1n, owner: OTHER, pendingOwner: ZERO } })[1]));
   // No clearance check: only the timelock.
   assert.deepEqual(delistingControllers({ route: 0, timelock: none }).map((c) => c.what), ['the timelock']);
 });
@@ -962,8 +969,12 @@ test('an oracle is the stand-in only on its own answer, and never RedStone', asy
     },
     getBlock: async () => (blockTime instanceof Error ? Promise.reject(blockTime) : { timestamp: blockTime }),
   });
-  // A stand-in built before the refresher role answers no `refresher()`: null, never assumed.
+  // A `refresher()` that got no answer is unknown: null, never assumed.
   assert.deepEqual(await identifyOracle(answering(true), ORACLE.toLowerCase(), []), { address: ORACLE, identity: 'stand-in', updatedAt: 123n, owner: STAND_IN_OWNER, pendingOwner: ZERO, refresher: null });
+  // A stand-in built before the role reverts it: it has no refresher (#3118 r2).
+  const revert = Object.assign(new Error('execution reverted'), { name: 'ContractFunctionExecutionError', cause: Object.assign(new Error('reverted'), { name: 'ContractFunctionRevertedError' }) });
+  const preRole = await identifyOracle(answering(true, 123n, 1_000n, { owner: STAND_IN_OWNER, pendingOwner: ZERO, refresher: revert }), ORACLE, []);
+  assert.equal(preRole.refresher, ZERO);
   const withRefresher = await identifyOracle(answering(true, 123n, 1_000n, { owner: STAND_IN_OWNER, pendingOwner: ZERO, refresher: OTHER.toLowerCase() }), ORACLE, []);
   assert.equal(withRefresher.refresher, OTHER);
   // Who controls it is read, and an unreadable owner is unknown, not assumed.
