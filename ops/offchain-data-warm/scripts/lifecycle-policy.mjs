@@ -31,15 +31,25 @@
  * deletion by the whole lifetime PLUS that gap. The gap is minutes; a full day
  * of headroom makes the arithmetic hold without depending on it.
  *
- * WHAT THE DETECTOR ACTUALLY DETECTS. `healthcheck.ts` checks the newest
- * archive against its manifest — hash, size, decryptability. That catches
- * corruption and a BLIND overwrite. It does NOT catch an authenticated
- * forgery: a compromised Worker yields both B2 credential pairs and
- * `BACKUP_ENCRYPTION_KEY` from one environment, so an attacker can enumerate
- * the genuine nonce and write a self-consistent encrypted pair at that key,
- * and every check passes. The floors below are therefore a floor of
- * USEFULNESS — time for a human or an out-of-band signal to notice — not a
- * sufficiency argument. #1473 is what closes the forgery case.
+ * THE DETECTOR THESE FLOORS WERE DERIVED AGAINST IS RETIRED (#1463 slice 2).
+ * Everything below that names "the healthcheck" means the Worker's weekly
+ * `healthcheck.ts`, which checked the newest archive against its manifest —
+ * hash, size, decryptability. It caught corruption and a BLIND overwrite, and
+ * not an authenticated forgery: a compromised Worker yielded both B2
+ * credential pairs and the symmetric archive key from one environment, so an
+ * attacker could enumerate the genuine nonce and write a self-consistent
+ * encrypted pair at that key, and every check passed.
+ *
+ * Slice 2 removed it, and the read key and archive key with it. The routine
+ * inspection is now the DAILY ledger watcher (`scripts/backup-ledger.mjs`),
+ * which records every archive version and its digest outside the Worker and
+ * pages when a name holds a second version or an archive stops matching what
+ * was recorded. The floors below are KEPT AS THEY WERE: the watcher inspects
+ * more often and more completely than the healthcheck did, so a floor derived
+ * against the weekly cycle is still a defensible minimum. Re-deriving them
+ * against the watcher is a separate decision and is not made here. They stay
+ * floors of USEFULNESS — time for a human to act on a page — not a
+ * sufficiency argument.
  *
  * WHY THE RECOVERY TERM HAS A FLOOR. `daysFromHidingToDeleting` is the window
  * in which a SUPERSEDED version can still be recovered — the only defence
@@ -67,8 +77,8 @@
  * nearly-expired archive; bounding that needs immutability (Object Lock or
  * retention, #1469) rather than lifecycle arithmetic.
  *
- * The floor below is derived from the CADENCE of the only routine inspection
- * these objects get — the healthcheck, which runs on Mondays off the daily cron — and
+ * The floor below was derived from the CADENCE of the only routine inspection
+ * these objects then got — the healthcheck, which ran on Mondays off the daily cron — and
  * NOT from any alert. Per the note above, no alert fires for an authenticated
  * forgery. So the floor says: the window must outlive one full inspection
  * cycle, which is 7 days plus a day of slack. Under it, a window can open and
@@ -119,7 +129,9 @@ export const DAILY_MAX_TOTAL_DAYS = 29;
 export const MONTHLY_MAX_TOTAL_DAYS = 365;
 /**
  * Recovery-window floors, PER TIER, because the tiers are not inspected the
- * same way. Both are now READ by the weekly healthcheck (#1476), but only the
+ * same way. (The derivation as made, against the weekly healthcheck; see the
+ * retirement note at the top of this file.) Both were READ by the weekly
+ * healthcheck (#1476), but only the
  * newest period of each family is verified in full — which is enough to
  * derive the daily floor, whose newest period turns over every night, and is
  * NOT enough to derive the monthly one. See the monthly note below.
@@ -217,11 +229,11 @@ export function assertPolicyCeilings(decl, fail) {
   // daily and monthly groups, so a rule accidentally declared for
   // `archives-yearly/` or `manifests-yearly/` was ignored here and forwarded
   // to B2 by both writers. That would silently start expiring the legal-audit
-  // durability tier. The healthcheck does read these prefixes since #1476, but
-  // it verifies the newest object against its manifest — it cannot report that
-  // an object which should still exist has been aged out, and no promise caps
-  // this tier either. So a rule here still expires the tier with no other
-  // signal; reading it is not the same as noticing it shrink.
+  // durability tier. The backup watcher reports a yearly period as missing
+  // once `ARCHIVE_FIRST_YEARLY` is declared, but only AFTER the object is
+  // gone, and no promise caps this tier either. So this validator is what
+  // stops the rule being written; the watcher's page is the after-the-fact
+  // signal, not a substitute.
   // PREFIX MATCHING, NOT EQUALITY (#1471 r11). B2 applies a rule to every key
   // UNDER its prefix, so `archives-yearly/2025/` expires yearly objects just as
   // surely as `archives-yearly/` would — and an exact-membership test let it
@@ -234,10 +246,10 @@ export function assertPolicyCeilings(decl, fail) {
         `bucket-lifecycle.json declares a rule for "${r.fileNamePrefix}". The ` +
           `yearly prefixes must have NO rule — their indefinite retention is ` +
           `exactly that absence, and it exists for legal-audit durability. Any ` +
-          `rule here starts expiring that tier, and nothing else would report ` +
-          `it: the healthcheck verifies the newest object under those prefixes ` +
-          `(#1476) but cannot notice one that has been aged out, and no ` +
-          `published promise bounds them.`,
+          `rule here starts expiring that tier. The backup watcher would ` +
+          `report an expired year only after it is gone (and only once ` +
+          `ARCHIVE_FIRST_YEARLY is declared), and no published promise ` +
+          `bounds them.`,
       );
     }
   }
@@ -363,21 +375,18 @@ export function assertPolicyCeilings(decl, fail) {
             `window in which a superseded (possibly forged-over) object can be ` +
             `recovered.\n` +
             (DAILY_PREFIXES.includes(prefix)
-              ? `The only routine inspection of these objects is the WEEKLY ` +
-                `healthcheck, so under 8 days the window can close inside a ` +
-                `single inspection cycle. Note it cannot raise an alert for an ` +
-                `authenticated forgery at all (#1473) — this floor buys a full ` +
-                `cycle of routine looking, not response time (#1469).`
+              ? `The floor was derived against the WEEKLY healthcheck, under ` +
+                `which 8 days let the window close inside a single inspection ` +
+                `cycle. The daily backup watcher replaced it (#1463), and the ` +
+                `floor is kept as a minimum: it buys time for a human to act ` +
+                `on a page, not a guarantee (#1469).`
               : `The monthly floor is HIGHER than the daily one on purpose. ` +
-                `Since #1476 the weekly healthcheck reads these prefixes, but ` +
-                `it fully verifies only the NEWEST period; every older month ` +
-                `still inside retention gets a presence-and-pairing check, ` +
-                `which an in-place overwrite or corruption passes unchanged. ` +
-                `So nothing routinely inspects those objects in full, and the ` +
-                `window has to outlast the monthly write cadence rather than ` +
-                `an inspection cycle. Lowering it toward the daily figure was ` +
-                `tried and reverted for exactly this reason. It cannot raise ` +
-                `an alert for an authenticated forgery either (#1473).`),
+                `It was set when the weekly healthcheck fully verified only ` +
+                `the NEWEST monthly period, so the window had to outlast the ` +
+                `monthly write cadence rather than an inspection cycle. The ` +
+                `daily backup watcher replaced that check (#1463), and the ` +
+                `floor is kept as a minimum until it is re-derived against ` +
+                `the watcher.`),
         );
       }
     }

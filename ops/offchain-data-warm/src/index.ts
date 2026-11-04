@@ -1,18 +1,19 @@
 /**
- * Worker entry — Cloudflare invokes `scheduled()` on every cron tick.
- * Two crons are wired (see `wrangler.jsonc`):
- *   - "17 3 * * *"  → nightly backup at 03:17 UTC.
- *   - "0 9 * * 1"   → weekly healthcheck on Monday 09:00 UTC.
+ * Worker entry — Cloudflare invokes `scheduled()` on the nightly cron tick
+ * (`17 3 * * *`, see `wrangler.jsonc`), which runs the backup and reports the
+ * outcome to the ops chat.
  *
- * Both paths converge on the same `tg()` alert helper so the
- * operator sees identical formatting whether the news is good (backup
- * landed) or bad (healthcheck found drift).
+ * The Worker no longer checks its own archives. The weekly healthcheck it
+ * used to run needed a read key and the symmetric decryption key, and holding
+ * those beside the write key is what let one compromised environment find,
+ * read and overwrite an archive; all three left together (#1463, #1469). The
+ * backup watcher (`scripts/backup-ledger.mjs`, run outside Cloudflare) makes
+ * the online checks every day instead, and only an offline restore drill can
+ * prove an archive decrypts (design: docs/DesignsAndPlans/BackupSecurityDesign.md).
  */
 
-import { importBackupKey } from './crypto';
 import { parseRegionFromEndpoint, type B2Config } from './b2';
-import { runNightlyBackup } from './backup';
-import { runHealthcheck, type TierOutcome } from './healthcheck';
+import { runNightlyBackup, type WrittenArchive } from './backup';
 import type { Env } from './env';
 
 /**
@@ -26,7 +27,7 @@ import type { Env } from './env';
  */
 const WORKER_NAME = 'vaipakam-offchain-data-warm';
 
-/** Two B2 configs — see env.ts for why the keys are split. */
+/** The write-scoped B2 config: the only B2 key the Worker holds (env.ts). */
 function b2WriteConfig(env: Env): B2Config {
   return {
     accessKeyId: env.B2_WRITE_ACCESS_KEY_ID,
@@ -37,18 +38,8 @@ function b2WriteConfig(env: Env): B2Config {
   };
 }
 
-function b2ReadConfig(env: Env): B2Config {
-  return {
-    accessKeyId: env.B2_READ_ACCESS_KEY_ID,
-    secretAccessKey: env.B2_READ_SECRET_ACCESS_KEY,
-    endpoint: env.B2_ENDPOINT,
-    bucket: env.B2_BUCKET,
-    region: parseRegionFromEndpoint(env.B2_ENDPOINT),
-  };
-}
-
 /** Send a Telegram alert. Never throws — alert failures must not
- *  abort a backup or mask a healthcheck failure. Returns true if the
+ *  abort a backup or mask its failure. Returns true if the
  *  message landed, false otherwise (logged but swallowed). */
 async function tg(env: Env, text: string): Promise<boolean> {
   if (!env.TG_OPS_BOT_TOKEN || !env.TG_OPS_CHAT_ID) {
@@ -74,13 +65,6 @@ async function tg(env: Env, text: string): Promise<boolean> {
   }
 }
 
-/** Boot helper — imports the AES key from env once and returns the
- *  env enriched with the CryptoKey handle. */
-async function withEncryptionKey(env: Env): Promise<Env> {
-  env.encryptionKey = await importBackupKey(env.BACKUP_ENCRYPTION_KEY);
-  return env;
-}
-
 /**
  * Fail-fast preflight that enumerates EVERY required secret/var and
  * throws a single error naming all the missing ones. Without this
@@ -91,11 +75,12 @@ async function withEncryptionKey(env: Env): Promise<Env> {
  *
  * Hard-required (cron can't function without these — missing any
  * means the backup path will crash):
- *   - BACKUP_ENCRYPTION_KEY  (64 hex chars, AES-256 key)
  *   - B2_ENDPOINT            (S3-compatible host)
  *   - B2_BUCKET              (B2 bucket name)
  *   - B2_WRITE_ACCESS_KEY_ID + B2_WRITE_SECRET_ACCESS_KEY
- *   - B2_READ_ACCESS_KEY_ID  + B2_READ_SECRET_ACCESS_KEY
+ *
+ * No encryption key is required, or accepted: the recipients are public
+ * keys bundled from `backup-recipients/recipients.json` at build time.
  *
  * Soft-required (cron functions; alerts silently no-op — `tg()` is
  * already defensive about these):
@@ -109,15 +94,7 @@ async function withEncryptionKey(env: Env): Promise<Env> {
  * would otherwise run fine.
  */
 function assertRequiredEnv(env: Env): void {
-  const required = [
-    'BACKUP_ENCRYPTION_KEY',
-    'B2_ENDPOINT',
-    'B2_BUCKET',
-    'B2_WRITE_ACCESS_KEY_ID',
-    'B2_WRITE_SECRET_ACCESS_KEY',
-    'B2_READ_ACCESS_KEY_ID',
-    'B2_READ_SECRET_ACCESS_KEY',
-  ] as const;
+  const required = ['B2_ENDPOINT', 'B2_BUCKET', 'B2_WRITE_ACCESS_KEY_ID', 'B2_WRITE_SECRET_ACCESS_KEY'] as const;
   const missing = required.filter((k) => {
     const v = (env as unknown as Record<string, string | undefined>)[k];
     return v === undefined || v === '';
@@ -131,65 +108,21 @@ function assertRequiredEnv(env: Env): void {
       `+ values to paste.`,
     );
   }
-  // Additional shape check: AES key must be 64 hex chars.
-  // importBackupKey() does the same check but its error surfaces
-  // from inside withEncryptionKey(); calling it out upfront gives
-  // the operator a single page-source-of-truth.
-  if (!/^[0-9a-fA-F]{64}$/.test(env.BACKUP_ENCRYPTION_KEY)) {
-    throw new Error(
-      'MISSING ENV: BACKUP_ENCRYPTION_KEY is set but is not 64 ' +
-      'hex chars (expected an AES-256 key from `openssl rand -hex 32`).',
-    );
-  }
 }
 
 export default {
   /**
-   * Cron dispatcher. Single cron at 03:17 UTC daily. Runs the
-   * nightly backup unconditionally; on Mondays ALSO runs the weekly
-   * healthcheck in parallel.
-   *
-   * Why parallel (two separate `ctx.waitUntil` calls instead of
-   * sequential or `Promise.all`):
-   *  - The two paths share NO state. They use different scoped B2
-   *    keys (write-only vs read-only) and hit different B2 endpoints
-   *    (PUT vs GET / list).
-   *  - Cuts total Worker wall-time roughly in half on Mondays.
-   *  - Failure isolation — a backup-path crash doesn't tear down the
-   *    healthcheck Promise the way `Promise.all` would, and vice
-   *    versa. The operator gets two independent Telegram alerts;
-   *    healthcheck typically finishes first (smaller payload), which
-   *    also gives faster "the cron actually fired" confirmation.
-   *  - The Monday healthcheck verifies the MOST RECENT archive
-   *    within the last 3 days (i.e. yesterday's at the time the cron
-   *    starts, since today's hasn't uploaded yet). Acceptable
-   *    trade-off vs the alternative of healthcheck-after-backup
-   *    sequentially (which would verify today's just-written archive
-   *    for a stronger end-to-end signal at the cost of doubling the
-   *    cron wall-time and serializing failure modes).
-   *
-   * Why one cron at all: free-plan account cap of 5 cron triggers
-   * across the org, of which this Worker takes one. Splitting backup +
-   * healthcheck into two crons would take a second, and CF rejects the
-   * trigger that goes past the cap with API error 10072 — at deploy
-   * time, for whichever Worker happens to be deploying rather than for
-   * whoever spent the budget.
-   *
-   * What the budget holds today is in `docs/ops/CloudflareCronSlots.md`
-   * and deliberately not here: the count this comment used to carry was
-   * wrong for months because it could only see Workers that have source
-   * in this tree, and one of them does not (#1977).
-   *
-   * Split back into two crons if/when the account upgrades to
-   * Workers Paid ($5/mo, which raises the cap to 250 rather than
-   * removing it).
+   * Cron handler: one cron, at 03:17 UTC daily, runs the nightly backup.
+   * Why one cron: the account caps cron triggers, and this Worker takes
+   * exactly one. What that budget holds today is in
+   * `docs/ops/CloudflareCronSlots.md` and deliberately not here (#1977).
    */
-  async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
+  async scheduled(_event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
     // Preflight: validate every required secret exists BEFORE any
     // helper that touches them gets called. A missing value would
-    // otherwise crash inside `parseRegionFromEndpoint(undefined)` or
-    // `importBackupKey('')` ~10 frames down, surfacing as CF
-    // Error 1101 with no operator-actionable context.
+    // otherwise crash inside `parseRegionFromEndpoint(undefined)` ~10
+    // frames down, surfacing as CF Error 1101 with no
+    // operator-actionable context.
     //
     // On failure: try to alert via Telegram BEFORE rethrowing, so
     // the operator gets a clear "missing X" message in the ops
@@ -201,56 +134,23 @@ export default {
       assertRequiredEnv(env);
     } catch (err) {
       const msg = (err as Error).message;
-      // Note: we haven't booted the encryption key yet, but the
-      // error path doesn't need it — only the tg() call which
-      // reads TG_OPS_BOT_TOKEN + TG_OPS_CHAT_ID directly from env.
-      // Identity on THIS alert especially (#1537 r8). Preflight failure —
-      // a missing B2 or encryption secret — is the likeliest way the
-      // replacement Worker fails during the archive→warm handoff, and in
-      // that window two Workers share the schedule AND the ops bot. An
-      // unattributed "preflight FAILED" cannot tell the operator which
-      // deployment is broken. `cfg.bucket` is unavailable here (an unset
-      // bucket is one of the things being reported), so the Worker name is
-      // the identity that always resolves; `WORKER_NAME` is pinned to
-      // wrangler.jsonc by a test so it cannot drift.
+      // Identity on THIS alert especially (#1537 r8): a preflight failure
+      // names no bucket (an unset bucket is one of the things reported), so
+      // the Worker name is the identity that always resolves. `WORKER_NAME`
+      // is pinned to wrangler.jsonc by a test so it cannot drift.
       ctx.waitUntil(
         tg(env, `🚨 ${WORKER_NAME} preflight FAILED:\n${msg}`),
       );
       throw err;
     }
 
-    const bootedEnv = await withEncryptionKey(env);
-
-    // Backup path — runs every day. Write-scoped B2 key, whose actual
-    // capabilities are `['listBuckets', 'writeFiles']` (see
-    // scripts/setup-backblaze.mjs) — NOT `listFiles`, which this comment
-    // used to claim (#1450 r26).
-    //
-    // That correction matters more than a capability list usually would,
-    // because omitting `listFiles` from the write key is precisely what
-    // `setup-backblaze.mjs` says the immutable-naming guard rests on: an
-    // attacker who cannot enumerate keys cannot overwrite an existing
-    // archive. But this Worker also binds the READ key
-    // (`B2_READ_ACCESS_KEY_ID`), which does carry `listFiles`. One
-    // compromised environment therefore yields enumeration AND write, so the
-    // forgery lands at the genuine key and the original survives only as a
-    // hidden older version — recoverable for as long as the lifecycle rule
-    // keeps it, which is why that window exists (#1469) and why detection is
-    // version-aware. `deleteFiles` is still absent, so nothing can be
-    // tombstoned; that half of the guarantee holds.
-    ctx.waitUntil(handleNightlyBackup(bootedEnv, b2WriteConfig(bootedEnv)));
-
-    // Healthcheck path — runs on Mondays only. Read-scoped B2 key
-    // (listBuckets + listFiles + readFiles). A CF compromise yields
-    // AES-256-GCM ciphertext only; the offline encryption key
-    // blocks plaintext recovery. `getUTCDay()` returns 1 for Monday
-    // (0=Sun..6=Sat). Computed from event.scheduledTime so the
-    // weekday is unambiguous even if the Worker's local clock
-    // somehow drifts (Workers run in UTC; defensive but cheap).
-    const monday = new Date(event.scheduledTime).getUTCDay() === 1;
-    if (monday) {
-      ctx.waitUntil(handleHealthcheck(bootedEnv, b2ReadConfig(bootedEnv)));
-    }
+    // The write-scoped key's capabilities are `['listBuckets',
+    // 'writeFiles']` (scripts/setup-backblaze.mjs): no `listFiles`, no
+    // `readFiles`, no `deleteFiles`. With no read key beside it, the Worker
+    // can neither enumerate nor read an existing archive, so overwriting one
+    // in place means guessing its 128-bit nonce, which the Worker no longer
+    // writes anywhere (design §4).
+    ctx.waitUntil(handleNightlyBackup(env, b2WriteConfig(env)));
   },
 
   /** No HTTP surface today — keep `fetch` defined so wrangler dev
@@ -283,6 +183,17 @@ async function openSupportTicketCount(env: Env): Promise<string> {
   }
 }
 
+/**
+ * One report line per archive written: tier, period, size and the full
+ * SHA-256. Never the object name: the random nonce in it is what keeps a
+ * leaked write key from overwriting the archive, and this message goes to a
+ * chat and the Worker log, both of which outlive the run (design §4). The
+ * SHA-256 matches the archive to the backup watcher's ledger entry.
+ */
+function archiveLine(a: WrittenArchive): string {
+  return `  ${a.tier} ${a.period}: ${(a.bytes / 1024 / 1024).toFixed(2)} MB, sha256 ${a.sha256}`;
+}
+
 async function handleNightlyBackup(env: Env, cfg: B2Config): Promise<void> {
   try {
     const out = await runNightlyBackup(env, cfg);
@@ -297,57 +208,17 @@ async function handleNightlyBackup(env: Env, cfg: B2Config): Promise<void> {
       env,
       [
         '✅ Nightly off-chain backup succeeded',
-        // WHICH bucket, on every alert (#1537 r7). During the archive→warm
-        // switchover two Workers share the 03:17 schedule AND the same ops
-        // bot, so an unattributed success line could come from either — and
-        // the retirement step treats that line as proof the replacement
-        // works before deleting the old Worker. Reading the old one's alert
-        // as the new one's would delete the only functioning backup.
-        // The bucket is the honest discriminator: each Worker writes its
-        // own, and it is what an operator actually needs to know.
+        // WHICH bucket, on every alert (#1537 r7): the bucket is what an
+        // operator needs to know which deployment wrote the archives.
         `  bucket: ${cfg.bucket}`,
-        `  archive: ${out.archiveKey}`,
-        `  manifest: ${out.manifestKey}`,
-        `  size: ${(out.archiveBytes / 1024 / 1024).toFixed(2)} MB`,
-        // FULL digest, not truncated (#1469). The reason is mundane, and
-        // narrower than an earlier version of this comment claimed: a
-        // 16-character prefix IS comparable — an operator can hash a
-        // candidate archive and check its first 16 hex characters, and an
-        // accidental match is ~2^-64. Saying it "cannot be compared" was
-        // overstating in the opposite direction from the original error.
-        //
-        // What changes with the full value is the cost to an adversary
-        // CHOOSING the input. Matching a fixed 64-bit prefix deliberately is
-        // a truncated second-preimage search at ~2^64; matching all 256 bits
-        // is ~2^256. Both are bounded targets — the full digest RAISES the
-        // bound, it does not remove one, and saying otherwise was this
-        // comment's third wording and its second overstatement. Since the
-        // other 48 characters are free, raising it costs nothing.
-        //
-        // THIS IS NOT A PROVENANCE ANCHOR, and an earlier version of this
-        // comment claimed it was. The claim was wrong three times over, and
-        // is recorded here because the mistake is easy to repeat:
-        //
-        //   1. The SAME credential writes both sides. A Workers-Edit
-        //      compromise yields the B2 write key AND `TG_OPS_BOT_TOKEN`
-        //      from this one environment, so whoever can forge the archive
-        //      can also write the record that would attest to it. A record
-        //      cannot vouch for its own author.
-        //   2. The channel is not append-only. Telegram's `editMessageText`
-        //      lets a bot edit its own messages and `deleteMessage` lets it
-        //      remove them, so "cannot rewrite the message sent that night"
-        //      was simply false.
-        //   3. Nothing reads it. `OffChainRestore.md` verifies the
-        //      manifest's self-reported SHA, byte length and row counts and
-        //      never compares them to any operator record, so even a
-        //      trustworthy anchor would not be consulted.
-        //
-        // The underlying gap is real — a manifest proves integrity, never
-        // authorship, so a forged archive with a self-consistent manifest
-        // passes every check the restore makes. Closing it needs a store
-        // this Worker cannot write to, and a restore step that consults it.
-        // Tracked as #1473; this line is not that.
-        `  sha256: ${out.archiveSha256}`,
+        ...out.archives.map(archiveLine),
+        // THE DIGEST IS NOT A PROVENANCE ANCHOR. The same environment holds
+        // the B2 write key and this bot's token, so whoever can forge an
+        // archive can also send this line, and a bot can edit and delete its
+        // own messages. What vouches for an archive is the backup watcher's
+        // ledger, a record this Worker cannot write (#1473); the full digest
+        // is here so the operator can match the two.
+        `  encrypted to recipient set ${out.recipientSet}`,
         `  rows: ${out.rowsBackedUp}, R2 objects: ${out.r2ObjectsBackedUp}`,
         `  open support tickets: ${await openSupportTicketCount(env)}`,
         `  took ${(out.durationMs / 1000).toFixed(1)} s`,
@@ -356,8 +227,8 @@ async function handleNightlyBackup(env: Env, cfg: B2Config): Promise<void> {
     if (!notified) {
       console.warn(
         `[cloud-backup] nightly SUCCEEDED but the ops notification did not send. ` +
-          `archive=${out.archiveKey} sha256=${out.archiveSha256} ` +
-          `rows=${out.rowsBackedUp} r2Objects=${out.r2ObjectsBackedUp}. ` +
+          out.archives.map((a) => `${a.tier} ${a.period} sha256=${a.sha256}`).join('; ') +
+          ` rows=${out.rowsBackedUp} r2Objects=${out.r2ObjectsBackedUp}. ` +
           `The backup exists in B2; only the record of it is missing.`,
       );
     }
@@ -366,57 +237,6 @@ async function handleNightlyBackup(env: Env, cfg: B2Config): Promise<void> {
     await tg(env, `🚨 Nightly backup FAILED (bucket: ${cfg.bucket}): ${msg}`);
     // Re-throw so Worker's invocation log shows the failure too
     // (operator-visible via `wrangler tail`).
-    throw err;
-  }
-}
-
-/**
- * One reported line per tier — ALWAYS, on pass as well as on failure.
- *
- * The alert enumerates what was actually examined rather than implying
- * it. That is half of #1476: before it, the check only ever read the
- * daily prefixes, but the message said "Weekly backup healthcheck
- * PASS" with no scope, so a green run was read as "the backups are
- * fine" when two of the three prefix families had never been looked at
- * by anything. Extending the check without changing the message would
- * have left the same false assurance for the next tier added.
- */
-function tierLine(t: TierOutcome): string {
-  const mark = t.ok ? (t.absent ? '·' : '✓') : '✗';
-  const age =
-    t.archiveAgeHours !== undefined ? ` (${t.archiveAgeHours.toFixed(1)} h)` : '';
-  const key = t.archiveKey ? `\n      ${t.archiveKey}${age}` : '';
-  return `  ${mark} ${t.tier}: ${t.reason}${key}`;
-}
-
-async function handleHealthcheck(env: Env, cfg: B2Config): Promise<void> {
-  try {
-    const r = await runHealthcheck(env, cfg);
-    const lines = r.tiers.map(tierLine);
-    if (r.ok) {
-      await tg(env, ['✅ Weekly backup healthcheck PASS', ...lines].join('\n'));
-    } else {
-      const failed = r.tiers.filter((t) => !t.ok);
-      await tg(
-        env,
-        [
-          `🚨 Weekly backup healthcheck FAILED (${failed.length}/${r.tiers.length} tiers)`,
-          ...lines,
-          // Only a hash divergence carries these, and only for the
-          // tier that diverged — printing them per tier keeps them
-          // attached to the object they describe.
-          ...failed
-            .filter((t) => t.manifestSha && t.actualSha)
-            .map(
-              (t) =>
-                `  ${t.tier} manifest sha: ${t.manifestSha}\n` +
-                `  ${t.tier} actual sha:   ${t.actualSha}`,
-            ),
-        ].join('\n'),
-      );
-    }
-  } catch (err) {
-    await tg(env, `🚨 Weekly healthcheck CRASHED: ${(err as Error).message}`);
     throw err;
   }
 }

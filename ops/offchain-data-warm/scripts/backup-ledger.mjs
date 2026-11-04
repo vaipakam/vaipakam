@@ -19,6 +19,13 @@
  *      (`lib/ledger-rules.mjs`): missing, ambiguous, replay, mismatch, ledger
  *      tampered, hidden early, deleted early, renewal failed.
  *
+ * In step 2 it also checks each new archive's public-key header (#1463): well
+ * formed, naming the archive's own tier and period and a time within the run
+ * that uploaded it, and exactly the recipient set in force then, from the
+ * committed `backup-recipients/recipients.json`. Nobody online holds a private
+ * key, so a passing header is not proof that an archive decrypts; only the
+ * offline restore drill shows that.
+ *
  * A problem is written to GITHUB_OUTPUT in the shape the shared alert job
  * reads (`problems`, `keys`), and the run exits 1. A run that cannot reach a
  * verdict (a missing secret, a key with the wrong authority, B2 down) exits 2
@@ -49,16 +56,20 @@ import { createHash, randomUUID } from 'node:crypto';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { importRecipientKey, parseRecipientsFile } from '../src/archiveFormat.ts';
 import { MAX_MANIFEST_BYTES, MAX_STORED_ARCHIVE_BYTES } from '../src/limits.ts';
 import { TIERS, validateBaseline } from '../src/tiers.ts';
 import { authorize, bytesById, digestById, extendRetention, listAllVersions, requireScope, uploadLocked } from './lib/b2-native.mjs';
 import {
+  HEAD_BYTES,
   MANIFEST_GRACE_MS,
   NOT_DIGESTED,
+  PK_FORMAT,
   boundedKeys,
   entryBody,
   entryFileInfo,
   entryName,
+  headerCheck,
   judge,
   manifestCheck,
   manifestSetDigest,
@@ -123,6 +134,11 @@ export async function runWatcher({ env = process.env, dryRun = false, now = Date
   if (lifecycle.bucket !== archiveBucket) {
     throw new Error(`bucket-lifecycle.json declares ${lifecycle.bucket}, not ${archiveBucket}; the early-deletion check would judge the wrong rules`);
   }
+  // The recipient sets every public-key archive is judged against. A file
+  // that does not validate, or whose fingerprints are not its keys', stops
+  // the run with no verdict rather than judging against a wrong set.
+  const recipients = parseRecipientsFile(JSON.parse(readFileSync(resolve(HERE, '../backup-recipients/recipients.json'), 'utf8')));
+  for (const set of recipients.sets) for (const r of set.recipients) await importRecipientKey(r);
   const baselineCheck = validateBaseline(
     { monthly: env.ARCHIVE_FIRST_MONTHLY || undefined, yearly: env.ARCHIVE_FIRST_YEARLY || undefined },
     now,
@@ -176,15 +192,24 @@ export async function runWatcher({ env = process.env, dryRun = false, now = Date
     // write is recorded as such without downloading it, and a manifest too
     // large to be one is a bad manifest.
     const oversized = Number.isSafeInteger(a.contentLength) && a.contentLength > MAX_STORED_ARCHIVE_BYTES;
-    const digest = oversized ? { sha256: NOT_DIGESTED, length: a.contentLength } : await digestById(archiveAuth, a.fileId, io);
+    const digest = oversized
+      ? { sha256: NOT_DIGESTED, length: a.contentLength, head: null }
+      : await digestById(archiveAuth, a.fileId, { ...io, headBytes: HEAD_BYTES });
+    const header = oversized
+      ? { verdict: '-', reason: null }
+      : headerCheck({ head: digest.head, length: digest.length, tier: a.tier, period: a.period, uploadTimestamp: a.uploadTimestamp }, recipients);
     const manifests = await readManifests(archiveAuth, manifestUploads, io);
-    const verdict = oversized ? { check: 'oversized', format: 'unknown', declared: null } : manifestCheck(digest, manifests);
+    const verdict = oversized
+      ? { check: 'oversized', format: 'unknown', declared: null }
+      : manifestCheck({ ...digest, pk: header.verdict !== 'none' }, manifests);
     const record = {
       ...a,
       sha256: digest.sha256,
       length: digest.length,
       check: verdict.check,
       format: verdict.format,
+      header: header.verdict,
+      headerReason: header.reason,
       manifest: {
         key: a.manifestName,
         versions: manifests.map((m) => ({
@@ -222,7 +247,7 @@ export async function runWatcher({ env = process.env, dryRun = false, now = Date
       }
     }
     written.push(entry);
-    log(`${dryRun ? 'would record' : 'recorded'} ${a.tier} ${a.period} (${a.fileId}): ${verdict.check}`);
+    log(`${dryRun ? 'would record' : 'recorded'} ${a.tier} ${a.period} (${a.fileId}): ${verdict.check}, header ${header.verdict}`);
   }
 
   // 3. Keep each yearly entry locked while its archive exists.
@@ -267,7 +292,7 @@ export async function runWatcher({ env = process.env, dryRun = false, now = Date
     const uploads = bucket.manifests.get(a.manifestName)?.uploads ?? [];
     if (manifestSetDigest(uploads.map((m) => m.fileId)) === r.manifests) continue;
     const manifests = await readManifests(archiveAuth, uploads, io);
-    manifestRechecks.set(r.fileId, manifestCheck({ sha256: r.sha256, length: r.length }, manifests).check);
+    manifestRechecks.set(r.fileId, manifestCheck({ sha256: r.sha256, length: r.length, pk: r.format === PK_FORMAT }, manifests).check);
   }
 
   const { problems, notes } = judge({

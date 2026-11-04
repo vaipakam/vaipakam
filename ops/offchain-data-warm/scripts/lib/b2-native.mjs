@@ -237,18 +237,27 @@ async function download(auth, fileId, io) {
 
 /**
  * The SHA-256 and length of one file version, computed from the bytes as they
- * arrive. Nothing is kept in memory past the digest, so an archive's size is
- * not a limit.
+ * arrive, and its first `headBytes` bytes. Nothing past those is kept in
+ * memory, so an archive's size is not a limit.
  */
-export async function digestById(auth, fileId, io = {}) {
+export async function digestById(auth, fileId, { headBytes = 0, ...io } = {}) {
   const res = await download(auth, fileId, io);
   const hash = createHash('sha256');
   let length = 0;
+  // The first `headBytes` bytes are kept, so the caller can check a header
+  // without a second download; nothing past them is held.
+  const head = [];
+  let held = 0;
   for await (const chunk of res.body) {
     hash.update(chunk);
     length += chunk.byteLength;
+    if (held < headBytes) {
+      const part = chunk.subarray(0, headBytes - held);
+      head.push(Buffer.from(part));
+      held += part.byteLength;
+    }
   }
-  return { sha256: hash.digest('hex'), length };
+  return { sha256: hash.digest('hex'), length, head: Buffer.concat(head) };
 }
 
 /**

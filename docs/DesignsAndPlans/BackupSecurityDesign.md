@@ -86,6 +86,15 @@ That is all the header authentication buys, and it is worth saying what it
 does not: anyone with the public key can build a brand-new archive with any
 header. Authorship is §5's job, not the format's.
 
+The header is bounded at 16,384 bytes (a two-recipient header is about
+1.6 KB) and a set at eight recipients, so the stored archive is the plaintext
+plus a bounded overhead and the watcher never holds more than the header to
+check it. The manifest declares the scheme and the recipient set's number.
+The format and the recipient rules live in one module
+(`ops/offchain-data-warm/src/archiveFormat.ts`) that the Worker, the watcher
+and the decrypt tool all use; the code that opens an archive, in either
+format, is in the offline tool only.
+
 ### 3.2 Why RSA-OAEP
 
 It is in WebCrypto in both the Worker runtime and Node, so the Worker and the
@@ -120,6 +129,11 @@ the two runtimes is less uniform, and nothing here needs the saving.
   an earlier one. So the watcher (§5.3) can judge each archive against the set
   in force when it was uploaded, and the restore drill knows which private
   keys an old archive needs.
+- **The run picks its set when it starts.** The watcher therefore accepts an
+  archive whose recipients are the set in force at its header's `createdAt`
+  or at its upload, so a rotation that takes effect during a run is not a
+  wrong-key write. Pick each `effectiveFrom` away from the 03:17 UTC nightly
+  anyway.
 
 ### 3.4 What it proves and what it cannot
 
@@ -277,6 +291,15 @@ issue keyed by stable problem names plus the ops chat, on:
   versions an entry was checked against, are kept in its body and carried in
   the file info as a digest), and a manifest name holding more than one
   version is judged from the listing without downloading any of them.
+- **Old format after the switch**: once the ledger holds an archive with a
+  valid public-key header, any archive uploaded later without one is a
+  mismatch. The switch is read from the ledger rather than from a committed
+  date, so the check needs no coordination with when the Worker is deployed.
+  The header verdict (well formed, the archive's own tier and period, a
+  `createdAt` within an hour before its upload, exactly the set in force) is
+  recorded in each entry apart from the manifest check, because it depends on
+  the bytes and the upload alone and never changes when a manifest is
+  replaced.
 - **Ledger tampered**: a ledger name has more than one version or a hide
   marker (§5.2). The honest watcher never writes either, so this means the
   ledger key was used by someone else.
@@ -420,6 +443,13 @@ Each slice is its own PR, each lands before mainnet, and the order matters.
    `decrypt-archive.mjs` arrives with the matching refusals (§6), and the
    watcher learns the header check. After merge, the owner deletes the three
    secrets from the Worker (§9).
+
+   The decrypt tool reads the ledger with its own key, confined to the ledger
+   bucket with `listFiles` and `readFileRetentions` and nothing that writes;
+   the owner creates it for a restore or a drill. The runbook's decrypt step
+   (§3) and its key-rotation section (§8) were rewritten in this slice,
+   because the old ones would have destroyed the AES key every pre-slice-2
+   archive needs; the rest of the runbook is slice 3.
 3. **Docs.** `OffChainRestore.md` (download by file id, the ledger check, the
    entry choice, the drill), `OffChainDataResilience.md` §3.3–§3.6, the Worker
    README, and the privacy policy's encryption sentence if its wording needs

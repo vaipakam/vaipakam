@@ -2,8 +2,9 @@
 /**
  * Print the values for `ARCHIVE_FIRST_MONTHLY` / `ARCHIVE_FIRST_YEARLY`.
  *
- * WHY THIS EXISTS. #1476 gave the healthcheck two operator-declared
- * baselines — the first monthly and yearly archive this deployment ever
+ * WHY THIS EXISTS. #1476 gave the archive check two operator-declared
+ * baselines (the Worker's weekly healthcheck then; since #1463 slice 2,
+ * the daily ledger watcher, `.github/workflows/backup-ledger.yml`) — the first monthly and yearly archive this deployment ever
  * wrote — because deriving them from the surviving objects is circular:
  * delete the oldest yearly archive and the inferred baseline advances past
  * it, so the deleted year stops being required; empty the family and there
@@ -16,12 +17,12 @@
  * you had no way to look up. This reads the bucket and tells you.
  *
  * It is read-only: it lists, and prints. It never writes to B2 and never
- * touches the Worker.
+ * touches the Worker or the workflow.
  *
  * ONE JUDGEMENT IT CANNOT MAKE FOR YOU. It reports the earliest archive
  * that still EXISTS. If the very first monthly cut has already been
  * deleted or aged out, the true baseline is earlier than what it prints,
- * and declaring the printed value would tell the healthcheck to stop
+ * and declaring the printed value would tell the watcher to stop
  * expecting the ones already gone. The yearly family has no lifecycle rule
  * so nothing should have aged out of it; the monthly family retains ~12
  * months, so if this deployment is older than that, set the monthly value
@@ -40,7 +41,7 @@ import { readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-// The SAME validator the healthcheck uses. Re-deriving "is this a real
+// The SAME validator the watcher uses. Re-deriving "is this a real
 // period" here would let the two disagree, and this script's whole output
 // is a period the operator is asked to commit.
 import { isRealPeriod, validateBaseline } from '../src/tiers.ts';
@@ -350,13 +351,13 @@ for (const fam of FAMILIES) {
   console.log(`   objects:  ${files}`);
   if (periods.length === 0) {
     console.log(`   periods:  NONE — nothing written yet.`);
-    console.log(`   → leave ${fam.env} UNSET. The healthcheck reports`);
+    console.log(`   → leave ${fam.env} UNSET. The watcher reports`);
     console.log(`     COVERAGE DEGRADED for this tier until one exists, which`);
     console.log(`     is the honest state rather than a fault.\n`);
     continue;
   }
   console.log(`   periods:  ${periods.length} (${periods[0]} … ${periods[periods.length - 1]})`);
-  // Run the value through the SAME gate the healthcheck will. I imported
+  // Run the value through the SAME gate the watcher will. I imported
   // `isRealPeriod` and stopped there, which is half the validation: a
   // validly shaped FUTURE key (`manifests-yearly/2999/x`, stray or
   // planted) sorts first, would be reported as the baseline, and
@@ -377,16 +378,16 @@ for (const fam of FAMILIES) {
 if (toSet.length === 0) {
   console.log('Nothing to set yet.\n');
 } else {
-  console.log('Add these to the "vars" block of');
-  console.log('ops/offchain-data-warm/wrangler.jsonc, then redeploy:\n');
-  console.log('  "vars": {');
-  console.log(toSet.map((v) => `    "${v.split('=')[0]}": "${v.split('=')[1]}"`).join(',\n'));
-  console.log('  }\n');
+  console.log('Set these in the `env:` block of the watcher job in');
+  console.log('.github/workflows/backup-ledger.yml, in a reviewed commit:\n');
+  console.log(toSet.map((v) => `      ${v.split('=')[0]}: '${v.split('=')[1]}'`).join('\n'));
+  console.log('');
   console.log('They are plain configuration, NOT secrets — dates, not credentials —');
-  console.log('so they belong in the committed wrangler config where a reviewer can');
-  console.log('see them, rather than in `wrangler secret put`.\n');
+  console.log('so they belong in the committed workflow where a reviewer can see');
+  console.log('them, rather than in a repository secret. The Worker no longer reads');
+  console.log('them: it writes archives and never reads one back.\n');
   console.log('⚠ These say when this deployment FIRST wrote each family. If the');
   console.log('  earliest object has already aged out, the true value is EARLIER');
-  console.log('  than shown, and declaring the shown one tells the healthcheck to');
+  console.log('  than shown, and declaring the shown one tells the watcher to');
   console.log('  stop expecting what is already gone.\n');
 }

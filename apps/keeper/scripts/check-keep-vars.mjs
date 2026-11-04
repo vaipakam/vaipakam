@@ -146,7 +146,6 @@ const VAR_CARRYING_WORKERS = [
   'apps/keeper',
   'apps/indexer',
   'ops/mesh-watcher',
-  'ops/offchain-data-warm',
 ];
 
 import { parseJsonc } from './lib/jsonc.mjs';

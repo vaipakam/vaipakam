@@ -17,9 +17,11 @@
  *      `archives/` + `manifests/` and their `-monthly/` counterparts. The
  *      `-yearly/` prefixes deliberately get NO rule — that absence is what
  *      gives them indefinite retention for the legal-hold durability story.
- *   4. Create TWO scoped Application Keys (one write-only for
- *      nightly backup, one read-only for weekly healthcheck), both
- *      bucket-scoped. Capabilities are deliberately tight — see the
+ *   4. Create TWO scoped Application Keys (one write-only for the
+ *      nightly backup Worker, one read-only for local read tooling such
+ *      as `find-archive-baselines.mjs`), both bucket-scoped. Since #1463
+ *      slice 2 the read key is never a Worker secret: the Worker writes
+ *      archives and never reads one back. Capabilities are deliberately tight — see the
  *      key-creation block in main() for the rationale (TL;DR: dropping
  *      `listFiles` from the write key is what makes the immutable-
  *      nonce naming actually protect against discovered/leaked
@@ -55,13 +57,15 @@ const REPO_ROOT = resolve(HERE, '../../..');
 // ── Defaults — overridable via env or CLI flags. ────────────────────
 const DEFAULTS = {
   bucketName: 'vaipakam-offchain-data-warm',
-  // Two scoped Application Keys (PR #248 round-2 follow-up to
-  // Codex's healthcheck-can't-GET finding):
-  //   write-only — nightly backup uploader.
-  //   read-only  — weekly healthcheck verifier.
+  // Two scoped Application Keys:
+  //   write-only — nightly backup uploader (the Worker's only key).
+  //   read-only  — local read tooling, never a Worker secret.
   // The cleavage keeps the nightly key incapable of leaking archive
-  // contents; the healthcheck key gets read access but the
-  // ciphertext stays AES-256-GCM-protected against the offline key.
+  // contents. Until #1463 slice 2 the read key also lived in the
+  // Worker for its weekly healthcheck; a read key beside the write key
+  // is what let one compromised environment find and overwrite an
+  // archive, so it left with the healthcheck. A leaked read key yields
+  // ciphertext only: archives are encrypted to offline public keys.
   writeKeyName: 'vaipakam-offchain-data-warm-write-only',
   readKeyName: 'vaipakam-offchain-data-warm-read-only',
 };
@@ -419,15 +423,15 @@ async function main() {
   //     ListObjectsV2 to enumerate the existing 32-hex-nonce keys
   //     and then PUT over them; their PUTs land at NEW keys with
   //     their own nonces, leaving the original archives untouched.
-  //     The healthcheck catches the rogue uploads via SHA divergence.
+  //     The daily ledger watcher records every upload and pages when
+  //     a period holds more than one archive.
   //     If we kept `listFiles` here, the immutable-nonce guarantee
   //     would collapse for a discovered/leaked write key.
   //
-  //   Read key   — `listBuckets` + `listFiles` + `readFiles`. The
-  //     healthcheck needs both list (paginated ListObjectsV2) and
-  //     read (download the manifest + archive bytes for SHA check).
-  //     A leaked read key yields AES-256-GCM ciphertext only; the
-  //     offline encryption key blocks the plaintext.
+  //   Read key   — `listBuckets` + `listFiles` + `readFiles`, for
+  //     local read tooling that lists and downloads archives. A leaked
+  //     read key yields ciphertext only; the offline private keys
+  //     block the plaintext.
   //
   // Both reuse paths verify the live key still matches the expected
   // bucket + capabilities — drift on either dimension would leave
@@ -499,12 +503,12 @@ async function main() {
     console.log();
   }
   if (newReadKey) {
-    console.log('# Read-only key (weekly healthcheck):');
-    console.log(`wrangler secret put B2_READ_ACCESS_KEY_ID`);
-    console.log(`  Paste:  ${newReadKey.applicationKeyId}`);
-    console.log();
-    console.log(`wrangler secret put B2_READ_SECRET_ACCESS_KEY`);
-    console.log(`  Paste:  ${newReadKey.applicationKey}`);
+    console.log('# Read-only key (local read tooling — NOT a Worker secret):');
+    console.log('# Put it in the repo-root .env as BACKBLAZE_KEY_ID /');
+    console.log('# BACKBLAZE_APP_KEY (README setup step 7). Never `wrangler');
+    console.log('# secret put` it: the Worker must hold no read key.');
+    console.log(`  Key ID:  ${newReadKey.applicationKeyId}`);
+    console.log(`  App key: ${newReadKey.applicationKey}`);
     console.log();
   } else {
     console.log('# Read-only key already exists; reusing. Same KEY-ONLY rotation');

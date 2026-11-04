@@ -20,6 +20,7 @@
 
 import { createHash } from 'node:crypto';
 
+import { MAX_HEADER_BYTES, PK_SCHEME, PREFIX_BYTES, hasArchiveMagic, headerAgreement, parseArchiveHeader } from '../../src/archiveFormat.ts';
 import { TIERS, classifyListing, isRealPeriod, periodOf } from '../../src/tiers.ts';
 
 export const LEDGER_PREFIX = 'entries/';
@@ -51,6 +52,56 @@ export const MANIFEST_GRACE_MS = 2 * 60 * 60 * 1000;
 
 /** The only archive format before the public-key switch (design §3). */
 export const LEGACY_FORMAT = 'legacy-aes-256-gcm';
+/** The public-key format the nightly writes from slice 2 (#1463, design §3.1). */
+export const PK_FORMAT = 'pk-rsa-oaep-256-a256gcm';
+/** How much of an archive the watcher keeps to check its header. */
+export const HEAD_BYTES = PREFIX_BYTES + MAX_HEADER_BYTES;
+
+/**
+ * The header verdict an entry records, apart from the manifest check because
+ * it is a property of the archive's bytes and its upload alone, so it never
+ * changes when a manifest is replaced:
+ *   `-`                 not checked: an entry written before slice 2, or an
+ *                       archive too large to download
+ *   `none`              the bytes carry no public-key header (an archive in
+ *                       the old format, or not an archive at all)
+ *   `ok`                well formed, and agrees with the archive's name, its
+ *                       upload time and the recipient set in force then
+ *   `malformed`         starts with the format magic but is not well formed
+ *   `wrong-period`      names another tier or period, or a time outside the
+ *                       run that uploaded it
+ *   `wrong-recipients`  does not name exactly the recipient set in force
+ *
+ * A passing header is not proof the archive decrypts: nobody online holds a
+ * private key, and only the offline restore drill can show that (design §3.4).
+ */
+export const HEADER_VERDICTS = ['-', 'none', 'ok', 'malformed', 'wrong-period', 'wrong-recipients'];
+
+/**
+ * The header verdict for one archive, from its first HEAD_BYTES bytes, its
+ * full length, its name and its upload time.
+ *
+ * TOTAL BY CONSTRUCTION. The bytes are whatever a holder of the write key
+ * uploaded, so nothing in them may stop the run: an exception from the
+ * parser or the agreement rule would abort the watcher before it recorded
+ * this archive or judged any other. The parser is written not to throw; the
+ * catch below is the boundary that keeps a future slip in it from becoming a
+ * way to switch inspection off. What it catches is reported as `malformed`,
+ * which pages, so it is never silent.
+ *
+ * @returns {{verdict: string, reason: string | null}}
+ */
+export function headerCheck({ head, length, tier, period, uploadTimestamp }, recipients) {
+  try {
+    if (!hasArchiveMagic(head)) return { verdict: 'none', reason: null };
+    const parsed = parseArchiveHeader(head, length);
+    if (!parsed.ok) return { verdict: 'malformed', reason: parsed.reason };
+    const agreed = headerAgreement(parsed.header, { tier, period, uploadedMs: uploadTimestamp, file: recipients });
+    return agreed.verdict === 'ok' ? { verdict: 'ok', reason: null } : { verdict: agreed.verdict, reason: agreed.reason };
+  } catch (e) {
+    return { verdict: 'malformed', reason: `checking its header threw (${String(e?.message ?? e).slice(0, 120)})` };
+  }
+}
 
 const NONCE = /^[0-9a-f]{32}$/;
 const FILE_ID = /^[A-Za-z0-9_-]{1,200}$/;
@@ -110,33 +161,43 @@ export function minimumRetention(tier, entryUploadedMs) {
 /**
  * The manifest verdict on one archive, from its bytes and its manifest.
  *
- * @param {{sha256: string, length: number}} archive computed by the watcher
+ * The FORMAT is read from the bytes first: an archive that starts with the
+ * public-key magic is in that format whatever its manifest says, and its
+ * manifest must declare that scheme. Without the magic the bytes cannot be
+ * told from random, so the format is the old one only when the manifest
+ * declares it, and unknown otherwise. A manifest declaring one format beside
+ * bytes in the other is `format-mismatch`.
+ *
+ * @param {{sha256: string, length: number, pk?: boolean}} archive computed by
+ *        the watcher; `pk` when the bytes start with the public-key magic
  * @param {Array<{bytes: Buffer | null}>} manifests every uploaded version of
  *        the sibling manifest name; `null` bytes were too large to read
  */
 export function manifestCheck(archive, manifests) {
-  if (manifests.length === 0) return { check: 'no-manifest', format: 'unknown', declared: null };
-  if (manifests.length > 1) return { check: 'ambiguous-manifest', format: 'unknown', declared: null };
+  const byBytes = archive.pk ? PK_FORMAT : 'unknown';
+  if (manifests.length === 0) return { check: 'no-manifest', format: byBytes, declared: null };
+  if (manifests.length > 1) return { check: 'ambiguous-manifest', format: byBytes, declared: null };
   // `bytes: null` is a manifest the caller refused to read for its size.
-  if (manifests[0].bytes == null) return { check: 'bad-manifest', format: 'unknown', declared: null };
+  if (manifests[0].bytes == null) return { check: 'bad-manifest', format: byBytes, declared: null };
   let m;
   try {
     m = JSON.parse(manifests[0].bytes.toString('utf8'));
   } catch {
-    return { check: 'bad-manifest', format: 'unknown', declared: null };
+    return { check: 'bad-manifest', format: byBytes, declared: null };
   }
   const a = m?.archive;
   if (!a || typeof a.sha256 !== 'string' || !Number.isInteger(a.byteLength)) {
-    return { check: 'bad-manifest', format: 'unknown', declared: null };
+    return { check: 'bad-manifest', format: byBytes, declared: null };
   }
   const declared = { sha256: a.sha256, byteLength: a.byteLength, encryption: a.encryption ?? null };
-  const format = a.encryption === 'AES-256-GCM' ? LEGACY_FORMAT : 'unknown';
+  const format = archive.pk ? PK_FORMAT : a.encryption === 'AES-256-GCM' ? LEGACY_FORMAT : 'unknown';
   if (a.sha256 !== archive.sha256) return { check: 'sha-mismatch', format, declared };
   if (a.byteLength !== archive.length) return { check: 'length-mismatch', format, declared };
+  if (Boolean(archive.pk) !== (a.encryption === PK_SCHEME)) return { check: 'format-mismatch', format, declared };
   return { check: 'match', format, declared };
 }
 
-const CHECKS = ['match', 'sha-mismatch', 'length-mismatch', 'no-manifest', 'bad-manifest', 'ambiguous-manifest', 'oversized'];
+const CHECKS = ['match', 'sha-mismatch', 'length-mismatch', 'format-mismatch', 'no-manifest', 'bad-manifest', 'ambiguous-manifest', 'oversized'];
 
 /**
  * The digest field of an archive the watcher would not download because it is
@@ -153,7 +214,7 @@ export const NOT_DIGESTED = '-';
  * explains.
  */
 export const UNRECORDED_PAGE_MS = 2 * 86_400_000;
-const FORMATS = [LEGACY_FORMAT, 'unknown'];
+const FORMATS = [LEGACY_FORMAT, PK_FORMAT, 'unknown'];
 
 /**
  * The fields every reader needs, carried as B2 file info so the ledger listing
@@ -177,6 +238,7 @@ export function entryFileInfo(r) {
     uploaded: String(r.uploadTimestamp),
     check: r.check,
     format: r.format,
+    header: r.header ?? '-',
     // The manifest versions the check was made against, as one digest, so a
     // later run can tell when the manifest beside a recorded archive has
     // changed. The ids themselves are in the body.
@@ -210,11 +272,13 @@ export function readEntryInfo(v, named) {
     !Number.isSafeInteger(uploaded) ||
     !CHECKS.includes(i.check) ||
     !FORMATS.includes(i.format) ||
+    // Absent on entries written before slice 2, which checked no header.
+    !HEADER_VERDICTS.includes(i.header ?? '-') ||
     !MANIFEST_SET.test(i.manifests ?? '')
   ) {
     return null;
   }
-  return { tier: i.tier, period: i.period, nonce: i.nonce, sha256: i.sha256, length, uploaded, check: i.check, format: i.format, manifests: i.manifests };
+  return { tier: i.tier, period: i.period, nonce: i.nonce, sha256: i.sha256, length, uploaded, check: i.check, format: i.format, header: i.header ?? '-', manifests: i.manifests };
 }
 
 /** The entry body: everything the file info holds, plus provenance. */
@@ -237,6 +301,8 @@ export function entryBody(r, ctx) {
     manifest: r.manifest,
     check: r.check,
     format: r.format,
+    // A passing header is not proof the archive decrypts (design §3.4).
+    header: { verdict: r.header ?? '-', reason: r.headerReason ?? null },
     recordedAt: new Date(ctx.now).toISOString(),
     // An archive uploaded before the ledger existed is recorded as found when
     // the ledger began: its entry proves it has not changed since then, not
@@ -397,11 +463,11 @@ export function earliestLifecycleDeletion(terms, uploaded, endedAt) {
 }
 
 /**
- * The January pair the current Worker writes: the same encrypted bytes as the
+ * The January pair the old Worker wrote: the same encrypted bytes as the
  * monthly for `<year>-01` and the yearly for `<year>`, under one nonce. Only
  * that pair, in the legacy format, is an honest copy; any other equal pair is
  * a replay. The public-key format encrypts each tier on its own, so it never
- * produces one.
+ * produces one, and the exception never applies to it.
  */
 export function isLegacyJanuaryPair(a, b) {
   if (a.format !== LEGACY_FORMAT || b.format !== LEGACY_FORMAT || a.nonce !== b.nonce) return false;
@@ -409,12 +475,19 @@ export function isLegacyJanuaryPair(a, b) {
   return m.tier === 'monthly' && y.tier === 'yearly' && m.period === `${y.period}-01`;
 }
 
+const HEADER_TEXT = {
+  malformed: 'it starts with the public-key format magic but its header is not well formed',
+  'wrong-period': 'its header names another tier or period, or a time outside the run that uploaded it',
+  'wrong-recipients': 'its header does not name exactly the recipient set in force when it was written',
+};
+
 const CHECK_TEXT = {
   'sha-mismatch': "its bytes do not match its manifest's SHA-256",
   'length-mismatch': "its length does not match its manifest's",
   'no-manifest': 'it has no manifest beside it',
   'bad-manifest': 'its manifest cannot be read',
   'ambiguous-manifest': 'its manifest name holds more than one version',
+  'format-mismatch': 'its manifest declares a different encryption format from the one its bytes are in',
   oversized: 'it is larger than the nightly can write, so it was not downloaded',
 };
 
@@ -453,7 +526,7 @@ export function judge({ now, ledger, bucket, lifecycle, baseline, baselineErrors
     add(`ledger-tampered:${t.name}`, `Ledger tampered: ${shown} has ${t.why}. The honest watcher never writes that.`);
   }
 
-  // Missing: the same tier rules the healthcheck runs, on what is current.
+  // Missing: the shared tier rules (src/tiers.ts), on what is current.
   for (const spec of TIERS) {
     const v = classifyListing(
       spec,
@@ -519,6 +592,27 @@ export function judge({ now, ledger, bucket, lifecycle, baseline, baselineErrors
     );
     if (earlier && !isLegacyJanuaryPair(r, earlier)) {
       add(`replay:${r.fileId}`, `Replay: the ${r.tier} archive for ${r.period} (${r.fileId}) has the same bytes as the ${earlier.tier} archive for ${earlier.period}.`);
+    }
+  }
+
+  // The header (design §5.3): a property of the bytes and the upload alone,
+  // so it is judged as recorded. A pass is not proof the archive decrypts.
+  for (const r of all) {
+    if (!present.has(r.fileId) || !HEADER_TEXT[r.header]) continue;
+    add(`header:${r.fileId}`, `Mismatch: the ${r.tier} archive for ${r.period} (${r.fileId}): ${HEADER_TEXT[r.header]}.`);
+  }
+
+  // Old format after the switch. Once the nightly has written an archive in
+  // the public-key format, every later one must be too: an archive without
+  // the header after that point carries nothing the watcher can check, and
+  // the Worker no longer holds the symmetric key an honest one would need.
+  // The switch is read from the ledger, not from a committed date, so the
+  // check needs no coordination with when slice 2 is deployed.
+  const firstPk = Math.min(...all.filter((r) => r.header === 'ok').map((r) => r.uploaded));
+  for (const r of all) {
+    if (!present.has(r.fileId) || r.sha256 === NOT_DIGESTED || r.header === 'ok' || r.format === PK_FORMAT) continue;
+    if (r.uploaded > firstPk) {
+      add(`old-format:${r.fileId}`, `Mismatch: the ${r.tier} archive for ${r.period} (${r.fileId}) is not in the public-key format, though it was uploaded after the nightly switched to it.`);
     }
   }
 

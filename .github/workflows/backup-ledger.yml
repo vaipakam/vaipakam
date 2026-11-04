@@ -2,9 +2,9 @@ name: Backup ledger
 
 # WHY THIS EXISTS (#1469, #1473; design:
 # docs/DesignsAndPlans/BackupSecurityDesign.md §5). The nightly archive Worker
-# holds a key that can write to the archive bucket, and until slice 2 one that
-# can read it too, so nothing the Worker checks about its own archives can
-# survive the Worker being compromised. This watcher runs on a different
+# holds a key that can write to the archive bucket (before slice 2, #1463, one
+# that could read it too), so nothing the Worker checks about its own archives
+# could survive the Worker being compromised. This watcher runs on a different
 # credential boundary (GitHub, not Cloudflare), records every archive version
 # in a ledger bucket under Object Lock that the Worker holds no key to, and
 # pages on: a missing period, a period holding more than one archive, a copy of
@@ -12,12 +12,19 @@ name: Backup ledger
 # manifest (re-checked whenever the manifest changes), a ledger entry with a
 # second version or a hide marker, an archive hidden or deleted before its
 # lifecycle could do it, a yearly entry whose retention could not be
-# lengthened, an archive the ledger has failed to record for two days, and a
-# ledger that still holds nothing after a run that could not write to it.
+# lengthened, an archive the ledger has failed to record for two days, a
+# ledger that still holds nothing after a run that could not write to it, and
+# (from slice 2) an archive whose public-key header is malformed, names another
+# period, or does not name exactly the recipient set in force when it was
+# written, or an archive in the old format after the nightly switched to the
+# new one. Nobody online holds a private key, so a passing header is not proof
+# an archive decrypts; only the offline restore drill shows that.
 #
 # The rules and their fixtures live in
 # ops/offchain-data-warm/scripts/lib/ledger-rules.mjs and
-# scripts/backup-ledger.test.mjs; the run itself in scripts/backup-ledger.mjs.
+# scripts/backup-ledger.test.mjs; the run itself in scripts/backup-ledger.mjs;
+# the archive format and the recipient sets it is judged against in
+# src/archiveFormat.ts and backup-recipients/recipients.json.
 #
 # HOW THE OPERATOR HEARS OF IT: the shared alert job (alert-issue.yml), as the
 # ingest probe does. One issue, keyed by stable problem names; a run that could
@@ -47,6 +54,10 @@ on:
       - 'ops/offchain-data-warm/src/tiers.ts'
       - 'ops/offchain-data-warm/src/limits.ts'
       - 'ops/offchain-data-warm/src/b2.ts'
+      - 'ops/offchain-data-warm/src/archiveFormat.ts'
+      - 'ops/offchain-data-warm/backup-recipients/**'
+      - 'ops/offchain-data-warm/scripts/archive-format.test.mjs'
+      - 'ops/offchain-data-warm/scripts/test-helpers/**'
 
 permissions:
   contents: read # the alert job adds issues: write for itself
@@ -66,7 +77,7 @@ jobs:
         with:
           node-version: 22
       - working-directory: ops/offchain-data-warm
-        run: node --experimental-strip-types --test scripts/backup-ledger.test.mjs
+        run: node --experimental-strip-types --test scripts/backup-ledger.test.mjs scripts/archive-format.test.mjs
 
   watch:
     if: github.event_name != 'pull_request'
@@ -95,8 +106,8 @@ jobs:
       # Monthly 2026-09: the bucket was created empty by the archive-to-warm
       # rename (#1537, merged 2026-08-03), a monthly is cut on the 1st, so
       # 2026-09 is the first month this bucket could hold; it is also the
-      # earliest monthly the first watcher run found (2026-10-28). Keep it
-      # equal to the Worker's own value in wrangler.jsonc.
+      # earliest monthly the first watcher run found (2026-10-28). This is the
+      # only copy: the Worker's own left with its healthcheck in slice 2.
       ARCHIVE_FIRST_MONTHLY: '2026-09'
       ARCHIVE_FIRST_YEARLY: ''
       # Problem keys an operator has investigated, comma-separated. Listing one
