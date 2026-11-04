@@ -807,17 +807,46 @@ describe('a run', () => {
     expect(r[1].stranded).toEqual([`${REMITTER}:12=${300n * E18}`]);
   });
 
-  it('sends nothing for an authorization whose mirror now returns to another chain, and alerts (Codex #3002)', async () => {
+  it('sends no instruction toward a mirror now bound to another Base, and alerts (Codex #3002)', async () => {
+    // The mirror records an instruction only from the Base it is bound to.
+    authorize(2n, 400n * E18);
+    const moved = new FakeChain(MIRROR_ID, MIRROR, ROLE_MIRROR, 11155111);
+    const r = await run({ chains: [base, moved] });
+    expect(base.sent).toEqual([]);
+    expect(moved.sent).toEqual([]);
+    expect(r[0].stalled[0]).toMatch(new RegExp(`authorization 2 to chain ${MIRROR_ID}: chain ${MIRROR_ID} now is bound to the Base on chain 11155111, not the issuing Base on chain ${BASE_ID}, so it would refuse the instruction`));
+    expect(alerts.map((a) => a.key)).toContain(`return-transport-stalled:${BASE_ID}:auth:2`);
+  });
+
+  it('executes an instruction already recorded on a mirror since bound elsewhere, toward its issuer (#3015)', async () => {
     authorize(2n, 400n * E18);
     ledger.add(BASE_ID, 'RepatriationInstructionDispatched', { authId: '2' }, NOW - 600);
     const moved = new FakeChain(MIRROR_ID, MIRROR, ROLE_MIRROR, 11155111);
     moved.instr.set(`${BASE}:2`, { state: INSTR_PENDING, amount: 400n * E18 });
-    moved.outbound.set(11155111, bucket());
+    moved.outbound.set(BASE_ID, bucket());
     const r = await run({ chains: [base, moved] });
+    expect(moved.sent).toEqual([{ fn: 'executeRepatriation', args: [BASE_ID, BASE, 2n, KEEPER], value: FEE }]);
+    expect(r[1].executed).toEqual(['2']);
+    expect(r[0].stalled).toEqual([]);
+  });
+
+  it('acknowledges a cancelled instruction on a mirror since bound elsewhere, toward its issuer (#3015)', async () => {
+    authorize(2n, 400n * E18);
+    ledger.add(BASE_ID, 'RepatriationInstructionDispatched', { authId: '2' }, NOW - 600);
+    const moved = new FakeChain(MIRROR_ID, MIRROR, ROLE_MIRROR, 11155111);
+    moved.instr.set(`${BASE}:2`, { state: INSTR_TOMBSTONED, amount: 400n * E18 });
+    const r = await run({ chains: [base, moved] });
+    expect(moved.sent).toEqual([{ fn: 'sendRepatriationCancelAck', args: [BASE_ID, BASE, 2n, KEEPER], value: FEE }]);
+    expect(r[1].acked).toEqual(['2']);
+  });
+
+  it('drives nothing for an authorization whose chain is now Canonical, and alerts', async () => {
+    authorize(2n, 400n * E18);
+    const promoted = new FakeChain(MIRROR_ID, MIRROR, ROLE_CANONICAL, MIRROR_ID);
+    const r = await run({ chains: [base, promoted] });
     expect(base.sent).toEqual([]);
-    expect(moved.sent).toEqual([]);
-    expect(r[0].stalled[0]).toMatch(new RegExp(`authorization 2 to chain ${MIRROR_ID}: chain ${MIRROR_ID} now returns to chain 11155111, not to the issuing Base on chain ${BASE_ID}`));
-    expect(alerts.map((a) => a.key)).toContain(`return-transport-stalled:${BASE_ID}:auth:2`);
+    expect(promoted.sent).toEqual([]);
+    expect(r[0].stalled.join('\n')).toMatch(new RegExp(`authorization 2 to chain ${MIRROR_ID}: chain ${MIRROR_ID} now has reward role Canonical`));
   });
 
   describe('checks where a return lands before sending it (Codex #3002)', () => {

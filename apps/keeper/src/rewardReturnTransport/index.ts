@@ -655,13 +655,10 @@ async function oneAuthorization(
     base.sender.noteUnread(`auth:${authId}`, `chain ${dst}, which this keeper has no RPC or Diamond for (or whose gate refused it)`);
     return;
   }
-  // A mirror detached and reattached elsewhere is not driven for this
-  // authorization (Codex #3002); an operator decides. Since #3015 the mirror
-  // itself pays out and acknowledges only toward the issuing chain, so this
-  // stall is the keeper's own caution, not the only guard.
-  if (mirror.role !== ROLE_MIRROR || mirror.baseChainId !== base.deps.chainId) {
-    const now = mirror.role === ROLE_MIRROR ? `returns to chain ${mirror.baseChainId}` : `has reward role ${mirror.role}, not Mirror`;
-    await stall(base, `auth:${authId}`, `${label}: chain ${dst} now ${now}, not to the issuing Base on chain ${base.deps.chainId}, so the keeper sends no instruction, return or ACK for it; cancelling the authorization is an operator decision`);
+  // The mirror's entries refuse only a Canonical chain (`onlyMirror`), so a
+  // Canonical chain is never driven for an authorization.
+  if (mirror.role === ROLE_CANONICAL) {
+    await stall(base, `auth:${authId}`, `${label}: chain ${dst} now has reward role Canonical, so it holds no instruction to execute or acknowledge; cancelling the authorization is an operator decision`);
     return;
   }
   const instr = await mirror.r.tryOne<readonly [number, bigint]>(mirror.sender, `auth:${authId}`, `its instruction record on chain ${dst}`, 'getRepatriationInstruction', [base.deps.chainId, base.deps.diamond, authId]);
@@ -702,6 +699,17 @@ async function oneAuthorization(
       else base.report.waiting.push(`${label}: ${step.why}`);
       return;
     case 'dispatch': {
+      // A new instruction is recorded only from the Base the mirror is bound
+      // to (`RepatriationIssuerNotBound`), so one toward a mirror detached or
+      // bound elsewhere would spend its CCIP fee on a refused delivery. An
+      // instruction already recorded is keyed by its issuer and is executed
+      // or acknowledged toward that issuer whatever the binding is now
+      // (#3015), so the steps below are driven either way.
+      if (mirror.role !== ROLE_MIRROR || mirror.baseChainId !== base.deps.chainId) {
+        const now = mirror.role === ROLE_MIRROR ? `is bound to the Base on chain ${mirror.baseChainId}` : `has reward role ${mirror.role}, not Mirror`;
+        await stall(base, `auth:${authId}`, `${label}: chain ${dst} now ${now}, not the issuing Base on chain ${base.deps.chainId}, so it would refuse the instruction and the keeper sends none; cancelling the authorization is an operator decision`);
+        return;
+      }
       if (deps.keeper === null) {
         base.sender.noteUnread(`auth:${authId}`, 'the keeper key (no refund address)');
         return;

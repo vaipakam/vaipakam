@@ -537,11 +537,15 @@ evidence that the migration has completed.
   attempted.
 - **One route.** A mirror returns VPFI, and acknowledges cancellations,
   only toward the chain that issued the instruction (#3015), so no caller can
-  redirect one. The keeper is still more cautious than that: when a mirror's
-  current Base is not the Base that issued an authorization, as after the
-  mirror detached and reattached elsewhere, it sends nothing for that
-  authorization and alerts operators, because what happens to it then is an
-  operator decision.
+  redirect one. So an instruction the mirror has already recorded is
+  executed, or its cancellation acknowledged, toward the issuing Base even
+  after the mirror detached and reattached elsewhere. A new instruction is
+  different: a mirror records one only from the Base it is bound to now, so
+  when a mirror's current Base is not the Base that issued an authorization,
+  the keeper sends no instruction for it (the delivery would be refused and
+  its fee lost) and alerts operators, because cancelling the authorization is
+  then an operator decision. A chain that has become Canonical holds no
+  instruction to act on, and is alerted the same way.
 - **The right Base Diamond.** Every return names the Base Diamond that is
   meant to credit it: the Base that issued an authorization, the Base that
   remitted a quarantined compensation, or the Base a retired mirror detached
