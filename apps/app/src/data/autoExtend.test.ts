@@ -135,11 +135,24 @@ describe('capsArgs', () => {
 });
 
 describe('fundingCover', () => {
+  // Reserve and other free balance count together: 40 available.
   const f = { asset: USDC, reserved: 30n, otherFree: 10n, chargeNow: 20n, chargeAtGraceEnd: 50n };
-  it('counts the reserve and other free balance together', () => {
-    expect(fundingCover(f)).toEqual({ available: 40n, coversNow: true, coversWindow: false, shortWindow: 10n });
-    expect(fundingCover({ ...f, chargeAtGraceEnd: 40n }).coversWindow).toBe(true);
-    expect(fundingCover({ ...f, chargeNow: 41n }).coversNow).toBe(false);
+  it('states now and the end of the window while the window is open', () => {
+    expect(fundingCover(f, 'open')).toEqual({ kind: 'coversNowOnly', shortAtEnd: 10n });
+    expect(fundingCover({ ...f, chargeNow: 41n }, 'open')).toEqual({ kind: 'shortNow', shortAtEnd: 10n });
+    expect(fundingCover({ ...f, chargeAtGraceEnd: 40n }, 'open')).toEqual({ kind: 'coversWindow' });
+  });
+  it('says nothing about "now" before the window opens, or while the phase is unread', () => {
+    // Live finding: before the window, "does not cover an extension now" was shown
+    // although no extension could run yet.
+    const early = { ...f, chargeNow: 41n };
+    expect(fundingCover(early, 'before')).toEqual({ kind: 'shortAtEnd', shortAtEnd: 10n });
+    expect(fundingCover(early, undefined)).toEqual({ kind: 'shortAtEnd', shortAtEnd: 10n });
+    expect(fundingCover({ ...f, chargeAtGraceEnd: 40n }, 'before')).toEqual({ kind: 'coversWindow' });
+  });
+  it('says nothing once no extension can run', () => {
+    expect(fundingCover(f, 'closed')).toEqual({ kind: 'none' });
+    expect(fundingCover(f, 'noWindow')).toEqual({ kind: 'none' });
   });
 });
 

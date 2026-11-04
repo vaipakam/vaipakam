@@ -3938,6 +3938,7 @@
         "coversBoth": "Das deckt eine Verlängerung zu jedem Zeitpunkt im Fenster.",
         "coversNowOnly": "Das deckt eine Verlängerung jetzt, aber zum Ende des Fensters würden {{amount}} fehlen.",
         "short": "Das deckt jetzt keine Verlängerung. Zum Ende des Fensters würden {{amount}} fehlen.",
+        "shortAtEnd": "Eine Verlängerung spät im Fenster ist womöglich nicht gedeckt: Zum Ende des Fensters würden {{amount}} fehlen.",
         "eachTime": "Jede Verlängerung kostet erneut, nämlich die Zinsen der Laufzeit, die sie abschließt; eine Reserve, die diese deckt, deckt die nächste also vielleicht nicht.",
         "ownership": "Die Reserve gehört Ihnen. Nur die Gebühr einer Verlängerung und Ihre eigene Abhebung nehmen sie heraus; Rückzahlung, Ausfall und Liquidation lassen sie unberührt. Geht die Kreditnehmerposition an jemand anderen über, zahlt sie dessen Verlängerungen nicht mehr, und Sie können sie abheben.",
         "amount": "Hinzuzufügender Betrag ({{symbol}})",

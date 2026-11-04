@@ -4859,6 +4859,10 @@ const copySource = {
         ['amount'],
       ),
       short: tmpl('That does not cover an extension now. By the end of the window it would be short by {{amount}}.', ['amount']),
+      shortAtEnd: tmpl(
+        'An extension late in the window may not be covered: by the end of the window it would be short by {{amount}}.',
+        ['amount'],
+      ),
       eachTime:
         'Each extension charges again, for the interest of the term it closes, so a reserve that covers this one may not cover the next.',
       ownership:

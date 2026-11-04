@@ -147,21 +147,34 @@ export function windowPhase(
   return 'open';
 }
 
-/** Whether the reserve and other free balance together cover the charge
- *  now and at the end of the window, and the shortfall against the second. */
-export function fundingCover(f: ExtendFunding): {
-  available: bigint;
-  coversNow: boolean;
-  coversWindow: boolean;
-  shortWindow: bigint;
-} {
+/** What the reserve panel can truthfully say about cover, given where the
+ *  loan is against its extension window.
+ *
+ *  - `open`: an extension can run now, so both "now" and "by the end of the
+ *    window" are stated.
+ *  - `before`, or a phase not yet read: no extension can run yet, so only the
+ *    end of the window is stated. The end-of-window charge is the most an
+ *    extension of the current term can charge, so covering it covers the
+ *    whole window.
+ *  - `closed`, or no window: no extension can run, so nothing is said.
+ */
+export type CoverVerdict =
+  | { kind: 'coversWindow' }
+  | { kind: 'coversNowOnly'; shortAtEnd: bigint }
+  | { kind: 'shortNow'; shortAtEnd: bigint }
+  | { kind: 'shortAtEnd'; shortAtEnd: bigint }
+  | { kind: 'none' };
+
+export function fundingCover(
+  f: ExtendFunding,
+  phase: 'before' | 'open' | 'closed' | 'noWindow' | undefined,
+): CoverVerdict {
+  if (phase === 'closed' || phase === 'noWindow') return { kind: 'none' };
   const available = f.reserved + f.otherFree;
-  return {
-    available,
-    coversNow: available >= f.chargeNow,
-    coversWindow: available >= f.chargeAtGraceEnd,
-    shortWindow: f.chargeAtGraceEnd > available ? f.chargeAtGraceEnd - available : 0n,
-  };
+  if (available >= f.chargeAtGraceEnd) return { kind: 'coversWindow' };
+  const shortAtEnd = f.chargeAtGraceEnd - available;
+  if (phase !== 'open') return { kind: 'shortAtEnd', shortAtEnd };
+  return available >= f.chargeNow ? { kind: 'coversNowOnly', shortAtEnd } : { kind: 'shortNow', shortAtEnd };
 }
 
 /** The setter's arguments for a side. The borrower bounds the rate from
@@ -340,14 +353,21 @@ export function useReserveOutcomes(): Readonly<Record<number, string>> {
   return q.data ?? {};
 }
 
-/** Records a withdrawal's outcome where {@link useReserveOutcomes} reads it. */
-export function useRecordReserveOutcome(): (loanId: number, text: string) => void {
+/** Records a withdrawal's outcome where {@link useReserveOutcomes} reads it.
+ *  `null` clears it: a later deposit makes an earlier withdrawal's outcome
+ *  stale, and only the latest reserve action is shown. */
+export function useRecordReserveOutcome(): (loanId: number, text: string | null) => void {
   const { readChain, address } = useActiveChain();
   const queryClient = useQueryClient();
   return (loanId, text) =>
     queryClient.setQueryData<Record<number, string>>(
       [OUTCOME_ROOT, readChain.chainId, address?.toLowerCase()],
-      (prev) => ({ ...(prev ?? {}), [loanId]: text }),
+      (prev) => {
+        const next = { ...(prev ?? {}) };
+        if (text === null) delete next[loanId];
+        else next[loanId] = text;
+        return next;
+      },
     );
 }
 
