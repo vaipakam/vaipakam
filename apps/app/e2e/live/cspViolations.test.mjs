@@ -10,6 +10,7 @@ import {
   cspViolationVerdict,
   describeViolation,
   installCspViolationWatch,
+  thirdPartyCspNote,
 } from './cspViolations.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -50,6 +51,27 @@ describe('cspViolationVerdict', () => {
     expect(v?.message.split(reported.blocked)).toHaveLength(2);
   });
 
+  it('judges only the reviewed site\'s own pages and names the rest as a note', () => {
+    const popup = { ...refused, directive: 'script-src', blocked: 'eval', origin: 'https://keys.coinbase.com', page: '/connect' };
+    const own = ['https://app.vaipakam.com'];
+    // A third-party window's own policy is not this app's: no verdict.
+    expect(cspViolationVerdict(0, [popup], own)).toBeNull();
+    expect(thirdPartyCspNote([popup], own)).toContain('script-src refused eval on https://keys.coinbase.com/connect');
+    // The site's own report still fails the run beside it.
+    const mine = { ...reported, origin: 'https://app.vaipakam.com' };
+    expect(cspViolationVerdict(0, [popup, mine], own)?.code).toBe(1);
+    expect(cspViolationVerdict(0, [popup, mine], own)?.message).not.toContain('keys.coinbase.com');
+    expect(thirdPartyCspNote([mine], own)).toBeNull();
+  });
+
+  it('counts a report it cannot place, and every report when given no origins', () => {
+    const own = ['https://app.vaipakam.com'];
+    expect(cspViolationVerdict(0, [reported], own)?.code).toBe(1); // no origin field
+    const popup = { ...refused, origin: 'https://keys.coinbase.com' };
+    expect(cspViolationVerdict(0, [popup], [])?.code).toBe(1);
+    expect(cspViolationVerdict(0, [popup])?.code).toBe(1);
+  });
+
   it('says what an inline refusal blocked', () => {
     expect(describeViolation({ ...refused, blocked: '' })).toContain('(inline)');
   });
@@ -74,6 +96,7 @@ describe('installCspViolationWatch', () => {
     // dispositions, not for console text.
     expect(String(calls[1][1])).toContain("'securitypolicyviolation'");
     expect(String(calls[1][1])).toContain('e.disposition');
+    expect(String(calls[1][1])).toContain('location.origin');
   });
 });
 
@@ -98,6 +121,6 @@ describe('every drive that opens a browser context watches it', () => {
   it('the shared launch watches its own context', () => {
     const driver = readFileSync(join(HERE, 'driver.mjs'), 'utf8');
     expect(driver).toMatch(/setup\('watching for content-policy violations', \(\) => watchCspViolations\(ctx\)\)/);
-    expect(driver).toMatch(/cspViolationVerdict\(code, OBSERVED_CSP_VIOLATIONS\)/);
+    expect(driver).toMatch(/cspViolationVerdict\(code, OBSERVED_CSP_VIOLATIONS, own\)/);
   });
 });

@@ -50,7 +50,7 @@ import { baseSepolia, arbitrumSepolia, bscTestnet } from 'viem/chains';
 import { walletGateDecision } from './walletGate.mjs';
 import { LiveShapeMismatchError, shapeBlock, shapeChecked } from './shapeCheckedClient.mjs';
 import { classifyRpcResponse, createSocketCalls, isChainRpcMethod } from './rpc-verdict.mjs';
-import { cspViolationVerdict, installCspViolationWatch } from './cspViolations.mjs';
+import { cspViolationVerdict, installCspViolationWatch, thirdPartyCspNote } from './cspViolations.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 // Dev TEST wallets only — throwaway keys holding testnet dust. The
@@ -132,6 +132,21 @@ export async function watchCspViolations(ctx) {
  * code; `uncaughtExceptionMonitor` only observes and leaves Node's own
  * handling of the throw as it is.
  */
+/** The reviewed site's origins (SITE_URL and REFERENCE_SITE_URL, when
+ *  set): the pages whose content-policy reports are findings. Empty when
+ *  neither parses, which the verdict reads as "count every report". */
+function ownSiteOrigins() {
+  const out = [];
+  for (const u of [process.env.SITE_URL, process.env.REFERENCE_SITE_URL]) {
+    try {
+      if (u) out.push(new URL(u).origin);
+    } catch {
+      /* unparseable: contributes no origin */
+    }
+  }
+  return out;
+}
+
 let UNCAUGHT;
 process.on('uncaughtExceptionMonitor', (err) => {
   UNCAUGHT = err;
@@ -140,7 +155,10 @@ process.on('exit', (code) => {
   // #43 — a content-policy violation on the page is a finding, applied here
   // for every drive whatever its own exits: a PASS or BLOCKED becomes FAIL.
   // It outranks the shape rule below, which only ever withdraws a PASS.
-  const csp = cspViolationVerdict(code, OBSERVED_CSP_VIOLATIONS);
+  const own = ownSiteOrigins();
+  const note = thirdPartyCspNote(OBSERVED_CSP_VIOLATIONS, own);
+  if (note) console.error(note);
+  const csp = cspViolationVerdict(code, OBSERVED_CSP_VIOLATIONS, own);
   if (csp) {
     console.error(csp.message);
     process.exitCode = csp.code;
@@ -1434,6 +1452,14 @@ export async function launch({
         : {}),
       args: ['--no-sandbox'],
       viewport: { width: 1280, height: 900 },
+      // The route shim below is the read-only guard and the egress relay,
+      // and context.route() does not see a request a service worker serves.
+      // The app's sw.js claims clients at once (skipWaiting + clients.claim),
+      // so with it allowed a page's fetches leave the shim's view mid-drive:
+      // live-role-journeys lost routes to aborted fetches and failed lazy
+      // chunks on 2026-11-04. Block it, as Playwright advises when routing.
+      // live-pwa.mjs, which reviews the worker, launches its own context.
+      serviceWorkers: 'block',
     });
     // Register it so a later `blocked()` — from this module or a driver —
     // closes it instead of leaving a Chromium behind.

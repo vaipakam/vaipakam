@@ -21,7 +21,7 @@
 // a lag read at another moment. Calls are observed over HTTP and
 // WebSocket alike. A write the read-only session had to abort, or one sent
 // on a socket, is a FAIL; a run the wire cannot attribute is UNRESOLVED.
-import { READ_METHODS, SITE, blocked, launch, visit } from './driver.mjs';
+import { READ_METHODS, SITE, blocked, indexerOrigin, launch, visit } from './driver.mjs';
 import { attachLedger } from './pageSanctionsReads.mjs';
 import { splitBlocked } from './readOnlyFindings.mjs';
 import { CHUNK_BLOCKS, MAX_CHUNKS_PER_SCAN, createCallLedger, tallyCalls } from './catchUpTally.mjs';
@@ -112,7 +112,27 @@ check(
 // audit — UNRESOLVED, not a budget PASS (Codex #1621 r7). The budgets are
 // CEILINGS: an unreachable or misconfigured chain endpoint scores zero and
 // would otherwise pass them, so they are not judged at all.
-if (rpcOk === 0) {
+if (rpcOk === 0 && calls.length === 0) {
+  // No attempt at all is a different case from attempts that failed. The
+  // book reads the chain only to strip terminal offers from a NON-EMPTY page
+  // (the ghost strip in data/hooks.ts), so a chain with no active offer — a
+  // fresh Diamond, 2026-11-04 — sends no JSON-RPC by design. Say which.
+  const active = await fetch(`${indexerOrigin()}/offers/active?chainId=84532&limit=1`, {
+    signal: AbortSignal.timeout(20_000),
+  })
+    .then(async (r) => ({ status: r.status, body: await r.json().catch(() => null) }))
+    .catch((e) => ({ status: 0, body: null, error: String(e) }));
+  const offers = Array.isArray(active.body?.offers) ? active.body.offers.length : null;
+  unresolved.push(
+    offers === 0
+      ? 'the page sent no JSON-RPC in the 60s window, and the indexer lists no active offer on' +
+          ' chain 84532, so the book had nothing to strip and no RPC behaviour to audit.' +
+          '\n  → post one offer on this chain, then re-run'
+      : 'the page sent no JSON-RPC in the 60s window although the indexer read of active offers' +
+          ` returned ${offers === null ? `no list (status ${active.status})` : `${offers} offer(s)`};` +
+          ' the strip should have run, so look at the page before trusting any verdict.',
+  );
+} else if (rpcOk === 0) {
   unresolved.push(
     'the page received no successful JSON-RPC response in the 60s window, so' +
       ' there was no RPC behaviour to audit. The budgets are CEILINGS: an' +
