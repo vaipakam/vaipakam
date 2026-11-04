@@ -258,6 +258,25 @@ interface BaseEnv {
    *  lane's CCIP fee is the protocol budget's under the facet's own rule.
    *  Read only while PROTOCOL_UPKEEP_ENABLED arms the pass. */
   TIER_PUSH_RETRY_ENABLED?: string;
+  /** #3097 — 'true' adds the tier-exclusion refresh to the protocol upkeep
+   *  pass (step 5): refreshTierExclusion for the loans whose VPFI fee-tier
+   *  exclusion record a simulation shows would change. Permissionless; no
+   *  fee, nothing to the keeper. Read only while PROTOCOL_UPKEEP_ENABLED arms
+   *  the pass. */
+  TIER_EXCLUSION_REFRESH_ENABLED?: string;
+  /** #3097 — 'true' adds the reward-entry index compaction to the protocol
+   *  upkeep pass (step 6): compactRewardEntryIndex for a loan party whose
+   *  index a simulation shows still holds settled entries. Permissionless
+   *  bookkeeping; moves no value. Read only while PROTOCOL_UPKEEP_ENABLED
+   *  arms the pass. */
+  REWARD_INDEX_COMPACT_ENABLED?: string;
+  /** #3097 — 'true' adds the sanctions-flag refresh to the protocol upkeep
+   *  pass (step 7): refreshSanctionsFlag for an address whose committed flag
+   *  disagrees with the oracle's authoritative read (flagged and not
+   *  registered, or registered and now clean). Permissionless; no fee,
+   *  nothing to the keeper. Read only while PROTOCOL_UPKEEP_ENABLED arms the
+   *  pass. */
+  SANCTIONS_FLAG_REFRESH_ENABLED?: string;
   /** Seconds after which a cached tier LTV is refreshed even when its value
    *  would not change (default 7 days; the contract uses a cached tier only
    *  while it is under 14 days old). A plain var. */
@@ -458,6 +477,9 @@ export const PLAIN_VAR_KEYS = [
   'PROTOCOL_UPKEEP_ENABLED',
   'PREPAY_SALE_SANCTIONS_SYNC_ENABLED',
   'TIER_PUSH_RETRY_ENABLED',
+  'TIER_EXCLUSION_REFRESH_ENABLED',
+  'REWARD_INDEX_COMPACT_ENABLED',
+  'SANCTIONS_FLAG_REFRESH_ENABLED',
   'PREPAY_AUTO_LIST_ENABLED',
   'PROTECTED_ACCOUNT_ENABLED',
   'PROTECTED_LOCK_ENABLED',
@@ -648,6 +670,9 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     PROTOCOL_UPKEEP_ENABLED: raw.PROTOCOL_UPKEEP_ENABLED,
     PREPAY_SALE_SANCTIONS_SYNC_ENABLED: raw.PREPAY_SALE_SANCTIONS_SYNC_ENABLED,
     TIER_PUSH_RETRY_ENABLED: raw.TIER_PUSH_RETRY_ENABLED,
+    TIER_EXCLUSION_REFRESH_ENABLED: raw.TIER_EXCLUSION_REFRESH_ENABLED,
+    REWARD_INDEX_COMPACT_ENABLED: raw.REWARD_INDEX_COMPACT_ENABLED,
+    SANCTIONS_FLAG_REFRESH_ENABLED: raw.SANCTIONS_FLAG_REFRESH_ENABLED,
     PREPAY_AUTO_LIST_ENABLED: raw.PREPAY_AUTO_LIST_ENABLED,
     PROTECTED_ACCOUNT_ENABLED: raw.PROTECTED_ACCOUNT_ENABLED,
     PROTECTED_LOCK_ENABLED: raw.PROTECTED_LOCK_ENABLED,

@@ -86,6 +86,7 @@ import {
 
 import { redactedError } from '@vaipakam/lib/errorDescription';
 import type { Env } from './env';
+import { chainNotConfigured, requestedChainId } from './servedChain';
 import { getChainConfigs, getDeployedChainCount } from './env';
 import { DO_PATH_CADENCE_MINUTES } from './cronRouting';
 import { jsonResponse } from './offerRoutes';
@@ -1245,12 +1246,6 @@ function liveJsonResponse(body: unknown, status = 200): Response {
   return new Response(res.body, { status: res.status, headers });
 }
 
-function parseChainId(raw: string | null): number | null {
-  if (!raw) return null;
-  const n = Number.parseInt(raw, 10);
-  return Number.isFinite(n) && n > 0 ? n : null;
-}
-
 function parseDays(raw: string | null): number {
   if (!raw) return DEFAULT_DAYS;
   const n = Number.parseInt(raw, 10);
@@ -1282,8 +1277,12 @@ export async function handleRecyclingSeries(
   env: Env,
 ): Promise<Response> {
   const url = new URL(req.url);
-  const chainId = parseChainId(url.searchParams.get('chainId')) ?? 8453;
+  const chainId = requestedChainId(url);
   const days = parseDays(url.searchParams.get('days'));
+  // #2654 — a chain this Worker does not serve is refused, never answered
+  // from rows that would read as current (see `servedChain.ts`).
+  const refused = chainNotConfigured(env, chainId);
+  if (refused) return refused;
 
   try {
     // The window is the last `days` REWARD days present for this chain.

@@ -1142,9 +1142,13 @@ additive** (#2214 / #2409). Only the indexer — the schema's owner — APPLIES
 migrations: its `deploy` (`apps/indexer/scripts/deploy-shared-d1.mjs apply`)
 applies non-interactively, VERIFIES in the database that every migration in
 `packages/lib/src/sharedD1Migrations.json` is recorded, then publishes. The
-keeper's and agent's `deploy` (`… verify`) only verify, read-only, waiting a
-bounded time for the indexer to apply, and refuse to publish onto an older
-schema — three appliers raced on one merge and left partial releases. The
+keeper's and agent's `deploy` (`… verify`) only READ the record once, warn by
+name about any migration still pending, and publish anyway (#3115) — three
+appliers raced on one merge and left partial releases. They never wait:
+Workers Builds runs one build at a time on this account, so a waiting keeper
+or agent build held the only slot while the indexer build that would apply
+the migrations sat queued behind it, and timed out. The schema gate below,
+not the deploy order, is what keeps their scheduled work off an older schema. The
 wrapper refuses arguments (dry runs: `pnpm run deploy:dry`, which never
 touches the database). **Migrations land while the old Workers are still
 serving, so each one must be compatible with the deployed code** — additive
@@ -1265,7 +1269,7 @@ artifacts and stay in their respective env / config:
   `KEEPER_ENABLED`, `REWARD_REMIT_ENABLED`, `REWARD_COMMIT_ENABLED`,
   `REWARD_SANCTIONS_KEEPER_ENABLED`,
   `REWARD_HORIZON_HEARTBEAT_ENABLED`, `REWARD_DAY_CLOSE_ENABLED`,
-  `REWARD_CLOSE_OUT_ENABLED`, `REWARD_ZEROED_DAY_ENABLED`, `REWARD_DELIVERY_CONFLICT_ENABLED`, `REWARD_RETURN_TRANSPORT_ENABLED`, `REWARD_ENTRY_SETTLE_ENABLED`, `PROTOCOL_UPKEEP_ENABLED`, `PREPAY_SALE_SANCTIONS_SYNC_ENABLED`, `TIER_PUSH_RETRY_ENABLED`, `PREPAY_AUTO_LIST_ENABLED`, `PROTECTED_ACCOUNT_ENABLED`, `PROTECTED_LOCK_ENABLED`, `PROTECTED_ALERTS_ENABLED`, `STANDIN_REFRESH_ENABLED`, `POSITION_UPKEEP_ENABLED`, `BACKSTOP_FILL_ENABLED`, `GRACE_DEFAULT_ENABLED`, `PERIODIC_SETTLE_ENABLED`, `RPC_*`,
+  `REWARD_CLOSE_OUT_ENABLED`, `REWARD_ZEROED_DAY_ENABLED`, `REWARD_DELIVERY_CONFLICT_ENABLED`, `REWARD_RETURN_TRANSPORT_ENABLED`, `REWARD_ENTRY_SETTLE_ENABLED`, `PROTOCOL_UPKEEP_ENABLED`, `PREPAY_SALE_SANCTIONS_SYNC_ENABLED`, `TIER_PUSH_RETRY_ENABLED`, `TIER_EXCLUSION_REFRESH_ENABLED`, `REWARD_INDEX_COMPACT_ENABLED`, `SANCTIONS_FLAG_REFRESH_ENABLED`, `PREPAY_AUTO_LIST_ENABLED`, `PROTECTED_ACCOUNT_ENABLED`, `PROTECTED_LOCK_ENABLED`, `PROTECTED_ALERTS_ENABLED`, `STANDIN_REFRESH_ENABLED`, `POSITION_UPKEEP_ENABLED`, `BACKSTOP_FILL_ENABLED`, `GRACE_DEFAULT_ENABLED`, `PERIODIC_SETTLE_ENABLED`, `RPC_*`,
   `TG_BOT_TOKEN`,
   `TG_OPS_BOT_TOKEN` + `TG_OPS_CHAT_ID` (operator alerts — see "Two
   Telegram bots" below), `PUSH_CHANNEL_PK`, `ZEROEX_API_KEY`,
@@ -1285,7 +1289,9 @@ artifacts and stay in their respective env / config:
   `REWARD_RETURN_TRANSPORT_ENABLED`, `protocolUpkeep` (#2984) on
   `PROTOCOL_UPKEEP_ENABLED` (its prepay-sale sanctions sync step also on
   `PREPAY_SALE_SANCTIONS_SYNC_ENABLED`, its tier-push retry step on
-  `TIER_PUSH_RETRY_ENABLED`), `prepayAutoList` (#2984) on
+  `TIER_PUSH_RETRY_ENABLED`, and its #3097 steps on
+  `TIER_EXCLUSION_REFRESH_ENABLED`, `REWARD_INDEX_COMPACT_ENABLED` and
+  `SANCTIONS_FLAG_REFRESH_ENABLED`), `prepayAutoList` (#2984) on
   `PREPAY_AUTO_LIST_ENABLED`, `protectedAccount` (#3088) on
   `PROTECTED_ACCOUNT_ENABLED` (its Telegram LOCK step also on
   `PROTECTED_LOCK_ENABLED`, its owner alerts on `PROTECTED_ALERTS_ENABLED`),

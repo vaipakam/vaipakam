@@ -51,6 +51,7 @@ import {
 import { resolve, dirname, join, extname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
+import { provideChromiumSystemLibs } from './chromiumSystemLibs.mjs';
 import { policyScriptSources, uncoveredScripts } from '@vaipakam/lib/cspScriptHashes';
 import {
   LOCALES,
@@ -142,54 +143,107 @@ const server = createServer((req, res) => {
 await new Promise((r) => server.listen(0, '127.0.0.1', r));
 const PORT = server.address().port;
 
+/** The first line of an error, for the attempt list. */
+function firstLine(err) {
+  return String(err?.message ?? err).split('\n')[0];
+}
+
 /**
- * Launch Chromium with graceful fallbacks so the deploy pipeline
- * never dies on a browserless runner (Codex #1309 r3), in order:
+ * The managed browser is launched as the full Chromium build in its new
+ * headless mode (`channel: 'chromium'`), not as the separate
+ * `chromium-headless-shell` binary Playwright picks by default. That way
+ * `chromium.executablePath()` names the binary that actually launches, so
+ * the install check and the library check below look at the right file.
+ * The default would launch the headless shell while `executablePath()`
+ * names the full browser, and either can be installed without the other.
+ */
+const MANAGED = { channel: 'chromium' };
+
+/**
+ * Launch Chromium, trying in order:
  *   1. Playwright's own managed browser (exact-revision match).
  *   2. `PRERENDER_CHROMIUM` env — explicit executable override.
  *   3. Any chromium under PLAYWRIGHT_BROWSERS_PATH (revision-mismatch
  *      tolerant — fine for a static snapshot pass, which exercises no
  *      bleeding-edge browser APIs).
- *   4. Self-heal: `npx playwright install chromium` (the same step
- *      the app e2e workflow runs), then retry (1). One-shot —
- *      a runner without network/deps still fails loudly after this.
+ *   4. When the managed browser is not installed:
+ *      `npx playwright install --no-shell chromium` (the full browser
+ *      only — the headless shell is not what MANAGED launches), then
+ *      retry (1).
+ *   5. When the managed browser is installed but cannot load its system
+ *      libraries — the Workers Builds image (#2903) — fetch them into a
+ *      private folder (chromiumSystemLibs.mjs) and retry (1) with them on
+ *      LD_LIBRARY_PATH.
+ *
+ * Every attempt's reason is kept, and a launch that never succeeds fails
+ * with all of them. It used to rethrow only the FIRST error, which hid why
+ * the last resort failed: on Workers Builds the report read "Executable
+ * doesn't exist" for a browser the self-heal had just installed.
  */
 async function launchChromium() {
-  try {
-    return await chromium.launch();
-  } catch (err) {
-    const candidates = [];
-    if (process.env.PRERENDER_CHROMIUM) {
-      candidates.push(process.env.PRERENDER_CHROMIUM);
-    }
-    const browsersDir = process.env.PLAYWRIGHT_BROWSERS_PATH;
-    if (browsersDir && existsSync(browsersDir)) {
-      for (const entry of readdirSync(browsersDir)) {
-        if (/^chromium-\d+$/.test(entry)) {
-          candidates.push(join(browsersDir, entry, 'chrome-linux', 'chrome'));
-        }
-      }
-    }
-    for (const executablePath of candidates) {
-      if (!existsSync(executablePath)) continue;
-      try {
-        console.warn(`[prerender] falling back to ${executablePath}`);
-        return await chromium.launch({ executablePath });
-      } catch {
-        /* try the next candidate */
-      }
-    }
-    // Last resort: fetch Playwright's managed Chromium, then retry.
+  const attempts = [];
+  async function attempt(label, options) {
     try {
-      console.warn(
-        '[prerender] no usable Chromium found — running `npx playwright install chromium`…',
-      );
-      execSync('npx playwright install chromium', { stdio: 'inherit' });
-      return await chromium.launch();
-    } catch {
-      throw err;
+      return await chromium.launch(options);
+    } catch (err) {
+      attempts.push(`${label}: ${firstLine(err)}`);
+      return null;
     }
   }
+
+  let browser = await attempt('managed browser', MANAGED);
+  if (browser) return browser;
+
+  const candidates = [];
+  if (process.env.PRERENDER_CHROMIUM) {
+    candidates.push(process.env.PRERENDER_CHROMIUM);
+  }
+  const browsersDir = process.env.PLAYWRIGHT_BROWSERS_PATH;
+  if (browsersDir && existsSync(browsersDir)) {
+    for (const entry of readdirSync(browsersDir)) {
+      if (/^chromium-\d+$/.test(entry)) {
+        candidates.push(join(browsersDir, entry, 'chrome-linux', 'chrome'));
+      }
+    }
+  }
+  for (const executablePath of candidates) {
+    if (!existsSync(executablePath)) continue;
+    console.warn(`[prerender] falling back to ${executablePath}`);
+    browser = await attempt(executablePath, { executablePath });
+    if (browser) return browser;
+  }
+
+  const managed = chromium.executablePath();
+  if (!existsSync(managed)) {
+    console.warn('[prerender] managed Chromium not installed — running `npx playwright install --no-shell chromium`…');
+    try {
+      execSync('npx playwright install --no-shell chromium', { stdio: 'inherit' });
+      browser = await attempt('managed browser after install', MANAGED);
+      if (browser) return browser;
+    } catch (err) {
+      attempts.push(`npx playwright install --no-shell chromium: ${firstLine(err)}`);
+    }
+  }
+
+  try {
+    const env = provideChromiumSystemLibs(managed);
+    if (env) {
+      // Set on THIS process, not only as a launch option: before starting
+      // a managed browser Playwright may re-check its dependencies with
+      // ldd under process.env, and would otherwise report the libraries
+      // as still missing. Nothing else this script runs after this point
+      // loads them.
+      Object.assign(process.env, env);
+      browser = await attempt('managed browser with fetched system libraries', MANAGED);
+      if (browser) return browser;
+    }
+  } catch (err) {
+    attempts.push(`system libraries: ${firstLine(err)}`);
+  }
+
+  throw new Error(
+    `[prerender] could not start Chromium. Attempts:\n${attempts.map((a) => `  - ${a}`).join('\n')}`,
+  );
 }
 
 const browser = await launchChromium();
@@ -203,12 +257,26 @@ async function snapshot(context, route, locale) {
       waitUntil: 'networkidle',
       timeout: 30_000,
     });
-    // The app is mounted once #root has children; give the SEO hooks'
-    // effects one more tick to settle head tags.
-    await page.waitForFunction(
-      () => document.getElementById('root')?.children.length > 0,
-      { timeout: 15_000 },
-    );
+    // Wait for the page itself to declare its indexing, not for a fixed
+    // delay. The shell mounts (#root gains children) before a lazy route
+    // has rendered, and usePageMeta writes the canonical and hreflang
+    // links in one effect only once the route's component commits. A
+    // heavy route — the translated advanced guide — can commit well after
+    // the network goes idle on a slow build machine, and the old 100 ms
+    // settle snapshotted /zh and /ja/help/advanced with no canonical at
+    // all on Workers Builds (#2903). Every route declares a canonical
+    // (expectedIndexing), and the shell carries none, so its presence is
+    // the signal; a route that never declares one fails here by name.
+    await page
+      .waitForFunction(
+        () => document.querySelector('link[rel="canonical"][data-page-meta="1"]') !== null,
+        { timeout: 30_000 },
+      )
+      .catch(() => {
+        throw new Error('the page declared no canonical link within 30 s of loading');
+      });
+    // The structured-data hooks run in the same commit; one more tick
+    // lets every effect of that commit finish.
     await page.waitForTimeout(100);
 
     const head = await page.evaluate(() => ({

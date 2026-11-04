@@ -405,8 +405,12 @@ journalctl -u vaipakam-keeper -f
    `REWARD_RETURN_TRANSPORT_ENABLED` (`rewardReturnTransport`, hourly at :29),
    `PROTOCOL_UPKEEP_ENABLED` (`protocolUpkeep`, hourly at :59; its
    prepay-sale sanctions sync step also needs
-   `PREPAY_SALE_SANCTIONS_SYNC_ENABLED`, and its tier-push retry step
-   `TIER_PUSH_RETRY_ENABLED`),
+   `PREPAY_SALE_SANCTIONS_SYNC_ENABLED`, its tier-push retry step
+   `TIER_PUSH_RETRY_ENABLED`, its tier-exclusion refresh step
+   `TIER_EXCLUSION_REFRESH_ENABLED`, its reward-entry index compaction step
+   `REWARD_INDEX_COMPACT_ENABLED`, and its sanctions-flag refresh step
+   `SANCTIONS_FLAG_REFRESH_ENABLED`; none of the four has a cadence of its
+   own),
    `PREPAY_AUTO_LIST_ENABLED` (`prepayAutoList`, every minute),
    `PROTECTED_ACCOUNT_ENABLED` (`protectedAccount`, every minute; its
    Telegram LOCK step also needs `PROTECTED_LOCK_ENABLED`, and its owner

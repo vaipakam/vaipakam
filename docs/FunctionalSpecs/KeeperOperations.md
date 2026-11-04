@@ -738,6 +738,98 @@ evidence that the migration has completed.
   of a deferral is passed for good only once the finalized chain shows that
   push delivered, superseded, or no longer owed.
 
+## Keeping each loan's fee-tier exclusion derived
+
+- VPFI held in one wallet's vault but owed to another (a closed loan whose
+  position changed hands, or a loan's fallback custody) must not count
+  toward the vault owner's fee-discount tier. The protocol derives that
+  exclusion from the loan's own state at every event that changes it, and
+  offers a permissionless refresh that re-derives it for any loan. A loan
+  that was already closed when the rule was installed passes none of those
+  events again, so only the refresh brings it into line. The keeper is the
+  caller.
+- It checks every hour, as a step of protocol upkeep that is armed on its
+  own. It reads a page of every loan the protocol has created, of any status,
+  from a position that moves each run and starts over at the end of the
+  range.
+- It previews the refresh for the whole page and calls it only for the loans
+  whose exclusion the preview shows would change. A page with nothing to
+  change costs one preview and no transaction. A loan the refresh would
+  leave as it is is never sent.
+- A page is passed only once it is settled: previewed with nothing due, or
+  refreshed and landed. A page the keeper could not preview, or whose refresh
+  was refused or did not land, is read again the next run. Each side the
+  refresh re-derived is reported with the wallet charged and the amount
+  excluded, from the transaction's own records.
+- The keeper pays only gas and moves no value.
+
+## Keeping reward-entry indexes to unsettled entries
+
+- Each wallet's list of reward entries is meant to hold only the entries
+  still to settle, so a claim and the Claim Center's countdown cost what the
+  wallet has live, not its whole history. A settled entry leaves the list
+  only through the wallet's own claim, which retires a bounded number of
+  positions, or through a permissionless compaction that moves no value.
+  Entries settled any other way (an expiry, a forfeit, a retirement of an
+  entry worth nothing) stay until one of those runs. The keeper is the
+  caller of the compaction.
+- It checks every hour, as a step of protocol upkeep that is armed on its
+  own. Every reward entry belongs to a loan party, so the keeper reads a
+  slice of the chain's loan parties (every lender and borrower, and every
+  wallet that ever held a position) from a position that moves each run.
+- For each party with entries it previews the compaction on the current
+  state and calls it only where the preview would retire at least one
+  entry, and only while the call's own simulation still would. A party whose
+  list holds nothing settled costs reads, not a transaction.
+- One call examines a bounded number of positions from the start of the
+  list. A party whose list is longer than that and whose examined positions
+  hold nothing settled is reported by name as beyond one call's reach, never
+  as clean.
+- A party due a compaction that was not sent or did not land is read again
+  the next run. The keeper pays only gas and moves no value.
+
+## Keeping the sanctions registry in step with the oracle
+
+- The protocol keeps a record of wallets an authoritative oracle read has
+  shown flagged. It is consulted only while the oracle is set but cannot
+  answer, and then it decides: a recorded wallet cannot move a position, is
+  refused as a recipient of payouts, sale proceeds and keeper rewards, and
+  has its close-out proceeds frozen; a wallet not recorded passes. So the
+  record must follow the oracle while the oracle answers. A wallet flagged
+  that no other path recorded would pass through an outage, and a recorded
+  wallet the oracle has since cleared would be refused through one. A
+  permissionless refresh copies the oracle's answer for one wallet into the
+  record; it cannot record anything the oracle does not confirm, and it is
+  refused while the oracle cannot answer.
+- The keeper's sanctions observer for rewards also writes this record, but
+  only for loan parties, only while that observer is armed, and not while the
+  protocol is paused. The sale-recipient sync records only a flagged
+  recipient of a live listing and never clears one. Neither covers every
+  wallet whose record matters, so the keeper also refreshes the record as its
+  own step.
+- It checks every hour, on every chain with a sanctions oracle set, as a step
+  of protocol upkeep that is armed on its own. Without an oracle the record is
+  not consulted and the report says so.
+- The wallets it screens are those the chain's own events name as ones the
+  protocol deals with: every vault owner, every recipient of a position,
+  every recipient of a protected payout, every keeper paid a keeper reward,
+  and every wallet anyone has refreshed. They are read a page of events at a
+  time, from a position that moves each run and starts over at the end. No
+  wallet is ever passed for good, because an oracle's answer changes without
+  any event on the chain.
+- For each wallet it reads the protocol's own three-way answer (clean,
+  flagged, or not answerable) and the record together, and calls the refresh
+  only where they disagree: flagged and not recorded, or clean and recorded.
+  A wallet the oracle cannot answer for is not sent, and is counted as not
+  screened that run, never as clean. Each refresh is simulated first, and
+  the report names each wallet recorded or cleared, from the transaction's
+  own records.
+- A wallet the protocol has never dealt with, such as an address a vault
+  owner pays for the first time, is outside what the keeper can screen in
+  advance; through an outage it passes unless some earlier read recorded it.
+  This is the protocol's stated outage rule, not a gap the keeper closes.
+- The keeper pays only gas and moves no value.
+
 ## Listing NFT collateral during grace
 
 - While a loan backed by an NFT is in its grace window, anyone other than the
@@ -1051,9 +1143,9 @@ The master keeper switch and each duty's own arming choice are separate.
 The periodic-interest settler and grace auto-list each have their own
 disabled-by-default activation.
 Late acknowledgements, sanctions observation, reward-day
-automation, reward-day close-out, zeroed-day recovery, the return transport, the reward heartbeat and its entry close-out, protocol upkeep, its prepay-sale sanctions sync and its tier-push retry, and position upkeep and its backstop fill must each
+automation, reward-day close-out, zeroed-day recovery, the return transport, the reward heartbeat and its entry close-out, protocol upkeep, its prepay-sale sanctions sync, its tier-push retry, its tier-exclusion refresh, its reward-entry index compaction and its sanctions-registry refresh, and position upkeep and its backstop fill must each
 disclose whether they are armed on the selected deployment. Reward-day
-automation, close-out, zeroed-day recovery, the return transport, the heartbeat and its entry close-out, protocol upkeep, its sanctions sync and its tier-push retry, and position upkeep and its backstop fill ship disabled and require
+automation, close-out, zeroed-day recovery, the return transport, the heartbeat and its entry close-out, protocol upkeep, its sanctions sync, its tier-push retry, its tier-exclusion refresh, its index compaction and its sanctions-registry refresh, and position upkeep and its backstop fill ship disabled and require
 deliberate activation. Deploying their software does not prove they run, that rewards have launched, or that custody or the
 expiry horizon has been activated. The mirror's day-delivery protection is
 required by its reward role, as stated in the current tokenomics spec; it is

@@ -3,13 +3,15 @@
  *  - ONE applier (r4): the indexer's deploy applies; keeper/agent only verify.
  *  - Refuses every argument after the mode (r3 — deciding which spellings
  *    mean "do not publish" is unbounded).
- *  - Publishes only after VERIFYING every required migration is recorded,
- *    never on an exit status (r3 — a declined prompt exited 0).
+ *  - The indexer publishes only after VERIFYING every required migration is
+ *    recorded, never on an exit status (r3 — a declined prompt exited 0).
+ *  - Keeper and agent read the record once and publish either way (#3115):
+ *    a wait held the account's single build slot the indexer needed.
  */
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 // @ts-expect-error — plain ESM script, no type declarations.
-import { admit, isSettled, unapplied, waitsForSchema } from '../scripts/deploy-shared-d1.mjs';
+import { admit, isSettled, unapplied, verifyReport, waitsForSchema } from '../scripts/deploy-shared-d1.mjs';
 
 const pkg = (w: string) =>
   JSON.parse(readFileSync(new URL(`../../${w}/package.json`, import.meta.url), 'utf8')).scripts;
@@ -90,11 +92,40 @@ describe('deploy-shared-d1 — what counts as settled', () => {
 });
 
 describe('deploy-shared-d1 — when the verification waits', () => {
-  it('verify mode always waits; apply mode waits only after a failed apply (r7)', () => {
-    expect(waitsForSchema('verify', true)).toBe(true);
-    expect(waitsForSchema('apply', true)).toBe(false);
+  it('the apply waits only after a failed apply (r7); verify mode never waits (#3115)', () => {
+    expect(waitsForSchema(true)).toBe(false);
     // A concurrent indexer deploy may be part-way through the same
     // migrations: one re-read would abort while it finishes.
-    expect(waitsForSchema('apply', false)).toBe(true);
+    expect(waitsForSchema(false)).toBe(true);
+    // verify mode reads once and never reaches the wait: main() takes the
+    // verify branch before any deadline exists.
+    const src = readFileSync(new URL('../scripts/deploy-shared-d1.mjs', import.meta.url), 'utf8');
+    const verifyBranch = src.slice(src.indexOf("if (gate.mode === 'verify')"), src.indexOf('} else {', src.indexOf("if (gate.mode === 'verify')")));
+    expect(verifyBranch).toContain('verifyReport(readMissing(required))');
+    expect(verifyBranch).not.toMatch(/sleep|deadline|fail\(|process\.exit/);
+  });
+});
+
+describe('deploy-shared-d1 — what a verify deploy reports (#3115)', () => {
+  it('says the schema is current only on a clean read', () => {
+    expect(verifyReport([])).toEqual({
+      level: 'ok',
+      message: '[deploy] every migration this build carries is recorded',
+    });
+  });
+
+  it('names the pending migrations and says the runtime gate holds scheduled work', () => {
+    const r = verifyReport(['0084_a.sql', '0085_b.sql']);
+    expect(r.level).toBe('warn');
+    expect(r.message).toContain('0084_a.sql, 0085_b.sql');
+    expect(r.message).toContain('d1SchemaGate');
+    expect(r.message).toContain('pnpm --filter @vaipakam/indexer run deploy');
+  });
+
+  it('reports an unreadable record as UNKNOWN, never as current', () => {
+    const r = verifyReport(null);
+    expect(r.level).toBe('warn');
+    expect(r.message).toContain('UNKNOWN');
+    expect(r.message).not.toContain('every migration this build carries is recorded');
   });
 });
