@@ -822,9 +822,10 @@ serves. Each ships switched off behind its own flag.
   two steps have separate shares of each run's sends, so neither can starve
   the other, and the rental step's reads leave the fill step time for its
   own. A paused protocol stops the run.
-- The two holder consolidations are not keeper duties. The protocol accepts
-  them only from the current position holder, so a keeper call would always
-  be refused. Whether that should change is an open question on #3097.
+- The two holder consolidations are not keeper duties, and are meant not to
+  be (owner decision, November 4). The protocol accepts them only from the
+  current position holder, so they are the holder's own step, taken when the
+  holder wants it; nothing else waits on them.
 
 ## Recording what backs each permissionless step
 

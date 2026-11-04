@@ -8,9 +8,9 @@ Every call is simulated first and sent only if the simulation succeeds. Each ste
 
 Both steps ship switched off. The rental deduction arms with the pass's own flag. The backstop fill needs a second flag of its own, because each fill commits treasury capital to a new loan and counts against the keeper's free-tier service capacity. Whether the keeper key should do that is a separate owner decision.
 
-The two holder consolidations on #3097 are not covered. The protocol accepts them only from the current position holder, so a keeper call could never succeed. They stay recorded as gaps pending a contract decision.
+The two holder consolidations on #3097 are not covered, by owner decision. The protocol accepts them only from the current position holder, so a keeper call could never succeed, and the owner chose to keep them the holder's own step rather than change the contract. They are now recorded as user-driven, not as gaps. The connected app does not offer either call today, so a holder who wants one makes it directly.
 
 Advances #3097.
 
-> Caveat: the holder consolidations (`consolidateCollateralToHolder`, `consolidatePrincipalToHolder`) remain gaps; a keeper backstop for them needs a contract change.
+> Caveat: the holder consolidations (`consolidateCollateralToHolder`, `consolidatePrincipalToHolder`) are user-driven by owner decision (2026-11-04) and have no app button yet.
 > Caveat: the deduction itself checks neither the agreed term nor that the loan's deduction clock is at or after its start; the keeper declines both cases, but nothing stops another caller.
