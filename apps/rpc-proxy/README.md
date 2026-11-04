@@ -77,12 +77,14 @@ in the provider's dashboard.
 
 Each step needs the owner's go-ahead.
 
-1. Create the eight `RPC_PROXY_*` secrets in the account Secrets Store
+1. Create the `RPC_PROXY_*` secrets in the account Secrets Store
    (`vaipakam-credentials`, the store the other Workers use), each a new
    provider key restricted to this proxy. `wrangler` validates every
-   binding at deploy, so create all eight, or remove a chain's entry from
-   `wrangler.jsonc`, before deploying. A chain with no secret answers
-   `503 chain-not-configured`.
+   binding at deploy, so `wrangler.jsonc` binds only the chains whose key
+   exists. Today that is the three testnets (Base Sepolia, Arbitrum Sepolia,
+   BNB Testnet). The five mainnet entries are added back with their keys at
+   mainnet. A chain with no binding answers `503 chain-not-configured`, and
+   the app falls back to that chain's public endpoint.
 2. Set `FRONTEND_ORIGIN` to the app's origins if they differ from the
    committed value.
 3. `pnpm --filter @vaipakam/rpc-proxy run deploy`, then bind a hostname
