@@ -564,7 +564,7 @@
     "RewardRemittanceFacet.sendRemitAck(uint256,address,address)": {
       "class": "keeper",
       "pass": "remitAck",
-      "flag": "REWARD_REMIT_ENABLED",
+      "flag": "REWARD_REMIT_ACK_ENABLED",
       "evidence": "apps/keeper/src/remitAck.ts"
     },
     "RewardReporterFacet.advanceInterestFrontiers(uint256)": {

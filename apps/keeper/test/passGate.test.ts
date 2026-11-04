@@ -43,15 +43,15 @@ describe('passIsArmed — an armed pass announces itself', () => {
   it('reports an unset pass flag rather than staying silent', () => {
     // The default env has the keeper armed but no pass flag — the case that
     // used to be indistinguishable from "ran, found nothing".
-    expect(passIsArmed(env(), 'remitAck', 'REWARD_REMIT_ENABLED')).toBe(false);
+    expect(passIsArmed(env(), 'remitAck', 'REWARD_REMIT_ACK_ENABLED')).toBe(false);
     expect(lines).toEqual([
-      '[keeper] remitAck skipped: REWARD_REMIT_ENABLED unset',
+      '[keeper] remitAck skipped: REWARD_REMIT_ACK_ENABLED unset',
     ]);
   });
 
   it('logs a start line once the pass flag is on', () => {
-    const on = env({ REWARD_REMIT_ENABLED: 'true' });
-    expect(passIsArmed(on, 'remitAck', 'REWARD_REMIT_ENABLED')).toBe(true);
+    const on = env({ REWARD_REMIT_ACK_ENABLED: 'true' });
+    expect(passIsArmed(on, 'remitAck', 'REWARD_REMIT_ACK_ENABLED')).toBe(true);
     expect(lines).toEqual(['[keeper] remitAck start']);
   });
 
@@ -98,9 +98,9 @@ describe('passIsArmed — a skipped pass names the binding that stopped it', () 
     }
     // Same for a pass flag, which is also routinely left deliberately off.
     lines = [];
-    passIsArmed(env({ REWARD_REMIT_ENABLED: 'false' }), 'remitAck', 'REWARD_REMIT_ENABLED');
+    passIsArmed(env({ REWARD_REMIT_ACK_ENABLED: 'false' }), 'remitAck', 'REWARD_REMIT_ACK_ENABLED');
     expect(lines).toEqual([
-      '[keeper] remitAck skipped: REWARD_REMIT_ENABLED off (explicitly disabled)',
+      '[keeper] remitAck skipped: REWARD_REMIT_ACK_ENABLED off (explicitly disabled)',
     ]);
   });
 
@@ -240,9 +240,9 @@ describe('passIsArmed — a skipped pass names the binding that stopped it', () 
       KEEPER_PRIVATE_KEY: undefined,
       REWARD_REMIT_ENABLED: 'True',
     });
-    passIsArmed(e, 'remitAck', 'REWARD_REMIT_ENABLED');
+    passIsArmed(e, 'rewardBudgetRemit', 'REWARD_REMIT_ENABLED');
     expect(lines).toEqual([
-      '[keeper] remitAck skipped: KEEPER_ENABLED unset; ' +
+      '[keeper] rewardBudgetRemit skipped: KEEPER_ENABLED unset; ' +
         'KEEPER_PRIVATE_KEY unset; ' +
         'REWARD_REMIT_ENABLED wrong case — these flags require lowercase `true`',
     ]);

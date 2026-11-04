@@ -542,7 +542,8 @@ then deploy.
       | Flag | While unset | Arms |
       |---|---|---|
       | `KEEPER_ENABLED` | `isKeeperEnabled()` is false | autonomous liquidation, the matcher, liquidity-confidence submits, auto-lifecycle — and it gates the `REWARD_*` and `GRACE_DEFAULT_ENABLED` flags below as well |
-      | `REWARD_REMIT_ENABLED` | remit + remit-ACK passes skip | reward-budget remittance and delivered-backing acknowledgement |
+      | `REWARD_REMIT_ENABLED` | the remit pass skips | reward-budget remittance |
+      | `REWARD_REMIT_ACK_ENABLED` | the remit-ACK pass skips — a remittance already sent stays Pending on Base until it is acknowledged by hand | delivered-backing acknowledgement (#3100) |
       | `REWARD_COMMIT_ENABLED` | commitment-report pass skips | mirror→canonical commitment reporting |
       | `GRACE_DEFAULT_ENABLED` | grace-default pass skips — past-grace loans stay Active until someone else closes them | autonomous `triggerDefault` on past-grace loans (#2483) |
       | `PERIODIC_SETTLE_ENABLED` | periodic settler skips — an overdue periodic-interest period stays open until someone else settles it, so its lender is not paid the period's interest | autonomous `settlePeriodicInterest` on periods past grace, selling only the collateral the contract sizes to the shortfall (#2795) |
@@ -1973,7 +1974,7 @@ restored on its machine in step 3; its Worker keeps `"crons": []` for good
    still holds the keeper's secrets, RPC URLs, knobs and flags. If it was
    rebuilt, install it per `KeeperMachine.md` §3 and fill the env file per §4
    from the offline record. Either way, BEFORE starting, set
-   `KEEPER_ENABLED=false` and every per-pass flag (`REWARD_REMIT_ENABLED`,
+   `KEEPER_ENABLED=false` and every per-pass flag (`REWARD_REMIT_ENABLED`, `REWARD_REMIT_ACK_ENABLED`,
    `REWARD_COMMIT_ENABLED`,
    `GRACE_DEFAULT_ENABLED`, `PERIODIC_SETTLE_ENABLED`,
    `REWARD_SANCTIONS_KEEPER_ENABLED`,
@@ -2049,7 +2050,7 @@ restored on its machine in step 3; its Worker keeps `"crons": []` for good
    `sudo systemctl stop vaipakam-keeper` (§6). Nothing on the Cloudflare side
    changes in either direction.
 
-   `REWARD_REMIT_ENABLED` has two further prerequisites, and on a
+   `REWARD_REMIT_ENABLED` and `REWARD_REMIT_ACK_ENABLED` have two further prerequisites, and on a
    NON-compromise restore **both are normally already satisfied** — so
    VERIFY them rather than assuming they need rebuilding:
 
@@ -2166,7 +2167,7 @@ restored on its machine in step 3; its Worker keeps `"crons": []` for good
    | | accepts | rejects |
    |---|---|---|
    | `KEEPER_ENABLED` (`isKeeperEnabled`) | `true` / `1`, **case-insensitive** — `True` and `TRUE` are on | anything else, **and** it returns false whenever `KEEPER_PRIVATE_KEY` is unset, regardless of the flag |
-   | `REWARD_REMIT_ENABLED`, `REWARD_COMMIT_ENABLED`, `GRACE_DEFAULT_ENABLED`, `PERIODIC_SETTLE_ENABLED` (`passIsArmed`) | exactly `true` or `1`, **case-SENSITIVE** | `True`, `TRUE`, and anything with surrounding whitespace |
+   | `REWARD_REMIT_ENABLED`, `REWARD_REMIT_ACK_ENABLED`, `REWARD_COMMIT_ENABLED`, `GRACE_DEFAULT_ENABLED`, `PERIODIC_SETTLE_ENABLED` (`passIsArmed`) | exactly `true` or `1`, **case-SENSITIVE** | `True`, `TRUE`, and anything with surrounding whitespace |
 
    So `KEEPER_ENABLED=True` works while `REWARD_REMIT_ENABLED=True` is off —
    **off but reported**, not silently so. That is the whole point of the

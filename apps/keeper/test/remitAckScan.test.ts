@@ -227,16 +227,17 @@ function db(): { handle: unknown; sql: string[]; bound: { sql: string; binds: un
  * its writes must reach `KEEPER_DB` — a pass that wrote it to the shared
  * handle would record progress where the next tick never reads it.
  */
-async function run(shared: unknown, keeper: unknown): Promise<void> {
+async function run(shared: unknown, keeper: unknown, flags: Record<string, string> = {}): Promise<void> {
   const { runRemitAck } = await import('../src/remitAck');
   await runRemitAck({
     DB: shared,
     KEEPER_DB: keeper,
     KEEPER_ENABLED: 'true',
-    REWARD_REMIT_ENABLED: 'true',
+    REWARD_REMIT_ACK_ENABLED: 'true',
     KEEPER_PRIVATE_KEY:
       '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80',
     RPC_BASE_SEPOLIA: 'https://mock-rpc.invalid/base-sepolia',
+    ...flags,
   } as never, { scheduledTimeMs: undefined, deadlineMs: Date.now() + 60_000 });
 }
 
@@ -276,6 +277,30 @@ describe('remitAck — the late path is contained (#2497 r5)', () => {
     }
     expect(errors.some((e) => /late deliveries failed this tick \(pending acks continue\)/.test(e))).toBe(true);
     expect(wroteScanState(sql), 'the scan still recorded its progress').toBe(true);
+  });
+});
+
+describe('remitAck arming — its own flag, so the drain works (#3100)', () => {
+  async function scanned(flags: Record<string, string>): Promise<boolean> {
+    const { restore } = install();
+    const shared = db();
+    const { handle, sql } = db();
+    const quiet = (['error', 'warn', 'log'] as const).map((m) => vi.spyOn(console, m).mockImplementation(() => {}));
+    try {
+      await run(shared.handle, handle, flags);
+    } finally {
+      restore();
+      for (const q of quiet) q.mockRestore();
+    }
+    return wroteScanState(sql);
+  }
+
+  it('still acknowledges while new remits are disarmed (the pre-deploy drain)', async () => {
+    expect(await scanned({ REWARD_REMIT_ENABLED: 'false' })).toBe(true);
+  });
+
+  it('does not run on the remit flag alone', async () => {
+    expect(await scanned({ REWARD_REMIT_ENABLED: 'true', REWARD_REMIT_ACK_ENABLED: '' })).toBe(false);
   });
 });
 
