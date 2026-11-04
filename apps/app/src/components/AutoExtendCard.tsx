@@ -341,7 +341,16 @@ function ReservePanel({
   }
 
   return (
-    <div style={{ marginTop: 16 }} data-testid="extend-reserve">
+    // `data-phase` (`unread` until the extension state answers) decides
+    // whether the charge-now line may render; `data-amounts` says whether the
+    // figures are in the token's units yet. Both are read by the live drive,
+    // which judges the figures only once neither is still loading.
+    <div
+      style={{ marginTop: 16 }}
+      data-testid="extend-reserve"
+      data-phase={phase ?? 'unread'}
+      data-amounts={meta ? 'ready' : metaFailed ? 'unavailable' : 'loading'}
+    >
       <h4 style={{ margin: '0 0 4px' }}>{r.title}</h4>
       <p className="muted">{r.lede(meta?.symbol ?? '')}</p>
       <ul style={{ margin: '8px 0', paddingLeft: 18 }}>
@@ -701,7 +710,7 @@ function AutoExtendCardBody({
 
   if (cadence === undefined || cadence !== 0) {
     return (
-      <section className="card" data-testid="auto-extend">
+      <section className="card" data-testid="auto-extend" data-state={cadence === undefined ? 'unread' : 'scheduled'}>
         {header}
         <p className="muted">{cadence === undefined ? a.scheduleUnknown : a.scheduled}</p>
         {reserved > 0n ? (
@@ -738,7 +747,9 @@ function AutoExtendCardBody({
 
   if (!state.data) {
     return (
-      <section className="card" data-testid="auto-extend">
+      // `data-state` says whether the extension state has answered (read by
+      // the live drive, which judges the band only once it is `ready`).
+      <section className="card" data-testid="auto-extend" data-state={state.isError ? 'unavailable' : 'loading'}>
         {header}
         <p className="muted">{state.isError ? a.unavailable : a.loading}</p>
         {holdsBorrower ? reservePanel('unknown', undefined) : leftover}
@@ -762,7 +773,7 @@ function AutoExtendCardBody({
   }
 
   return (
-    <section className="card" data-testid="auto-extend">
+    <section className="card" data-testid="auto-extend" data-state="ready" data-band={band.kind}>
       {header}
       <p className="muted">{a.lede}</p>
       {s.paused ? <Banner kind="warn">{a.paused}</Banner> : null}
