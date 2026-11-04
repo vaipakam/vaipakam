@@ -104,10 +104,22 @@ interface IVpfiReturnSender {
  *         exclusion (5c) structural rather than checked.
  *
  *         Era binding (5b): the wire carries the ISSUING Base deployment in
- *         both directions. The mirror keys instruction state by
- *         `keccak256(issuingBase, authId)`, and Base's return/cancel
+ *         both directions. The mirror keys instruction state by the issuer's
+ *         full identity, `keccak256(issuerChainId, issuingBase, authId)`,
+ *         where `issuerChainId` is the CCIP-authenticated source chain the
+ *         messenger delivered the instruction from, and Base's return/cancel
  *         ingresses accept only `issuingBase == address(this)` — a rotated
- *         deployment's records can never collide with a prior era's.
+ *         deployment's records can never collide with a prior era's, and two
+ *         Bases at one address on different chains never share a record.
+ *
+ *         Issuer binding (#3015): an instruction is paid out, and its
+ *         cancellation acknowledged, ONLY to the chain that issued it —
+ *         never to whatever `s.baseChainId` holds when it executes. A
+ *         mirror that detaches and binds to another Base therefore cannot
+ *         redirect an instruction it accepted from the old one. The mirror
+ *         takes on a NEW instruction only from the Base it is bound to when
+ *         the instruction arrives; a cancel is accepted from any issuer,
+ *         because it can only stop a payment in that issuer's own records.
  *
  *         The transport rides two seams: the Base→mirror instruction kinds
  *         on {VaipakamRewardMessenger} (kinds 8/9 — this facet's
@@ -168,6 +180,7 @@ contract RepatriationFacet is
     /// @notice Mirror recorded a Base repatriation instruction (pending).
     /// @custom:event-category state-change/treasury-mutation
     event RepatriationInstructionRecorded(
+        uint32 indexed issuerChainId,
         address indexed issuingBase,
         uint256 indexed authId,
         uint256 amount
@@ -244,14 +257,18 @@ contract RepatriationFacet is
     ///         terminal, mutually exclusive with execution (one shared slot).
     /// @custom:event-category state-change/treasury-mutation
     event RepatriationInstructionTombstoned(
+        uint32 indexed issuerChainId,
         address indexed issuingBase,
         uint256 indexed authId
     );
 
     /// @notice Mirror executed a repatriation instruction: the bucket
-    ///         surplus was debited and the VPFI left on the return channel.
+    ///         surplus was debited and the VPFI left on the return channel
+    ///         for the issuing chain `issuerChainId` (#3015: always the
+    ///         issuer, whatever this mirror's Base is now).
     /// @custom:event-category state-change/treasury-mutation
     event RepatriationExecuted(
+        uint32 indexed issuerChainId,
         address indexed issuingBase,
         uint256 indexed authId,
         uint256 amount,
@@ -262,6 +279,7 @@ contract RepatriationFacet is
     ///         tombstoned instruction over the return channel.
     /// @custom:event-category informational/reward-transport
     event RepatriationCancelAckDispatched(
+        uint32 indexed issuerChainId,
         address indexed issuingBase,
         uint256 indexed authId,
         bytes32 messageId
@@ -327,10 +345,35 @@ contract RepatriationFacet is
     error RetiredSurplusBadAmount(uint256 requested, uint256 pending);
 
     error RepatriationInstructionWrongState(
+        uint32 issuerChainId,
         address issuingBase,
         uint256 authId,
         uint8 state
     );
+
+    /// @notice #3015 — a NEW instruction arrived from `issuerChainId`, which
+    ///         is not the Base this mirror is bound to (`baseChainId`; 0 =
+    ///         detached). The mirror takes on a payout obligation only from
+    ///         its current Base. The CCIP message stays failed and
+    ///         re-executable; the issuing Base resolves its authorization by
+    ///         cancelling it (a cancel is accepted from any issuer).
+    error RepatriationIssuerNotBound(uint32 issuerChainId, uint32 baseChainId);
+
+    // ── Instruction identity ────────────────────────────────────────────────
+
+    /// @dev The ONE key of a mirror instruction record: the issuer's chain,
+    ///      its Base Diamond, and the authorization id (#3015). The chain is
+    ///      part of the identity because a deployment IS (chain, address): a
+    ///      Base at the same address on another chain is another issuer, and
+    ///      without it a mirror re-bound to such a Base would read that
+    ///      Base's first ids as re-deliveries of the old one's and drop them.
+    function _instructionKey(uint32 issuerChainId, address issuingBase, uint256 authId)
+        private
+        pure
+        returns (bytes32)
+    {
+        return keccak256(abi.encode(issuerChainId, issuingBase, authId));
+    }
 
     // ── Live lane-capacity bound ────────────────────────────────────────────
 
@@ -676,6 +719,7 @@ contract RepatriationFacet is
      *         land in fresh keys rather than colliding with a prior era's.
      */
     function onRepatriationInstructionReceived(
+        uint32 issuerChainId,
         address issuingBase,
         uint256 authId,
         uint256 amount
@@ -693,14 +737,23 @@ contract RepatriationFacet is
         if (s.repatriationSender == address(0)) {
             revert RepatriationNotConfigured();
         }
-        if (issuingBase == address(0) || authId == 0 || amount == 0) {
+        if (issuerChainId == 0 || issuingBase == address(0) || authId == 0 || amount == 0) {
             revert RepatriationInvalidRequest();
         }
-        bytes32 key = keccak256(abi.encodePacked(issuingBase, authId));
+        bytes32 key = _instructionKey(issuerChainId, issuingBase, authId);
+        // Idempotent re-delivery first: a record that already exists was
+        // accepted under the binding in force when it first landed, and a
+        // re-execution after a rebind must stay the no-op it always was.
         if (s.repatInstructionState[key] != INSTR_NONE) return;
+        // #3015 — a new payout obligation only from the Base this mirror is
+        // bound to now. Once accepted, it is paid to its issuer whatever the
+        // binding later becomes ({executeRepatriation}).
+        if (issuerChainId != s.baseChainId) {
+            revert RepatriationIssuerNotBound(issuerChainId, s.baseChainId);
+        }
         s.repatInstructionState[key] = INSTR_PENDING;
         s.repatInstructionAmount[key] = amount;
-        emit RepatriationInstructionRecorded(issuingBase, authId, amount);
+        emit RepatriationInstructionRecorded(issuerChainId, issuingBase, authId, amount);
     }
 
     /**
@@ -717,6 +770,7 @@ contract RepatriationFacet is
      *         no-op re-delivery.
      */
     function onRepatriationCancelInstructionReceived(
+        uint32 issuerChainId,
         address issuingBase,
         uint256 authId
     ) external nonReentrant whenNotPaused onlyMirror {
@@ -731,14 +785,19 @@ contract RepatriationFacet is
         if (s.repatriationSender == address(0)) {
             revert RepatriationNotConfigured();
         }
-        if (issuingBase == address(0) || authId == 0) {
+        if (issuerChainId == 0 || issuingBase == address(0) || authId == 0) {
             revert RepatriationInvalidRequest();
         }
-        bytes32 key = keccak256(abi.encodePacked(issuingBase, authId));
+        // No binding check here (#3015): the key carries the issuer, so a
+        // cancel can only tombstone that issuer's own record, and a
+        // tombstone stops a payment rather than making one. Accepting it
+        // from a Base this mirror has since left is what lets that Base
+        // release its authorization (the ACK goes back to the issuer).
+        bytes32 key = _instructionKey(issuerChainId, issuingBase, authId);
         uint8 state = s.repatInstructionState[key];
         if (state == INSTR_EXECUTED || state == INSTR_TOMBSTONED) return;
         s.repatInstructionState[key] = INSTR_TOMBSTONED;
-        emit RepatriationInstructionTombstoned(issuingBase, authId);
+        emit RepatriationInstructionTombstoned(issuerChainId, issuingBase, authId);
     }
 
     /**
@@ -764,6 +823,7 @@ contract RepatriationFacet is
      *         safely charged meanwhile (constraint 5's safe direction).
      */
     function executeRepatriation(
+        uint32 issuerChainId,
         address issuingBase,
         uint256 authId,
         address payable refundAddress
@@ -778,10 +838,10 @@ contract RepatriationFacet is
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         address sender = s.repatriationSender;
         if (sender == address(0)) revert RepatriationNotConfigured();
-        bytes32 key = keccak256(abi.encodePacked(issuingBase, authId));
+        bytes32 key = _instructionKey(issuerChainId, issuingBase, authId);
         uint8 state = s.repatInstructionState[key];
         if (state != INSTR_PENDING) {
-            revert RepatriationInstructionWrongState(issuingBase, authId, state);
+            revert RepatriationInstructionWrongState(issuerChainId, issuingBase, authId, state);
         }
         uint256 amount = s.repatInstructionAmount[key];
 
@@ -795,8 +855,10 @@ contract RepatriationFacet is
         // or governance re-raises the lane. The destination the capacity
         // was checked FOR is then threaded into the send (r7): the
         // satellite holds no destination of its own, so the lane checked
-        // and the lane used cannot diverge.
-        uint256 dst = uint256(s.baseChainId);
+        // and the lane used cannot diverge. The destination is the ISSUER
+        // the instruction is keyed by (#3015), never the current
+        // `s.baseChainId`: a detach-then-rebind cannot redirect it.
+        uint256 dst = uint256(issuerChainId);
         _assertWithinLaneCapacity(s, dst, amount, false);
 
         // CEI: the one-shot marker precedes every effect and interaction.
@@ -807,7 +869,7 @@ contract RepatriationFacet is
         messageId = IVpfiReturnSender(sender).sendRepatriationReturn{
             value: msg.value
         }(dst, issuingBase, authId, amount, refundAddress);
-        emit RepatriationExecuted(issuingBase, authId, amount, messageId);
+        emit RepatriationExecuted(issuerChainId, issuingBase, authId, amount, messageId);
     }
 
     /**
@@ -823,6 +885,7 @@ contract RepatriationFacet is
      *         delivery.
      */
     function sendRepatriationCancelAck(
+        uint32 issuerChainId,
         address issuingBase,
         uint256 authId,
         address payable refundAddress
@@ -837,15 +900,16 @@ contract RepatriationFacet is
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         address sender = s.repatriationSender;
         if (sender == address(0)) revert RepatriationNotConfigured();
-        bytes32 key = keccak256(abi.encodePacked(issuingBase, authId));
+        bytes32 key = _instructionKey(issuerChainId, issuingBase, authId);
         uint8 state = s.repatInstructionState[key];
         if (state != INSTR_TOMBSTONED) {
-            revert RepatriationInstructionWrongState(issuingBase, authId, state);
+            revert RepatriationInstructionWrongState(issuerChainId, issuingBase, authId, state);
         }
+        // To the issuer, like the return (#3015).
         messageId = IVpfiReturnSender(sender).sendRepatriationCancelAck{
             value: msg.value
-        }(uint256(s.baseChainId), issuingBase, authId, refundAddress);
-        emit RepatriationCancelAckDispatched(issuingBase, authId, messageId);
+        }(uint256(issuerChainId), issuingBase, authId, refundAddress);
+        emit RepatriationCancelAckDispatched(issuerChainId, issuingBase, authId, messageId);
     }
 
     /**
@@ -1166,18 +1230,25 @@ contract RepatriationFacet is
         return LibVaipakam.storageSlot().chainRetiredSurplusReturned[chainId];
     }
 
-    /// @notice A mirror instruction record, keyed by its issuing deployment
-    ///         and authorization id. `state`: 0 none, 1 pending, 2 executed,
+    /// @notice A mirror instruction record, keyed by its issuer — the chain
+    ///         that sent it (`issuerChainId`) and the Base Diamond there
+    ///         (`issuingBase`) — and its authorization id. The issuer chain is
+    ///         also where the record is paid out or acknowledged (#3015).
+    ///         `state`: 0 none, 1 pending, 2 executed,
     ///         3 tombstoned. This is how an operator (or the mesh watcher)
     ///         sees that a tombstone exists and its cancellation ACK is
     ///         still owed, or that a pending instruction awaits execution.
-    function getRepatriationInstruction(address issuingBase, uint256 authId)
+    function getRepatriationInstruction(
+        uint32 issuerChainId,
+        address issuingBase,
+        uint256 authId
+    )
         external
         view
         returns (uint8 state, uint256 amount)
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        bytes32 key = keccak256(abi.encodePacked(issuingBase, authId));
+        bytes32 key = _instructionKey(issuerChainId, issuingBase, authId);
         return (s.repatInstructionState[key], s.repatInstructionAmount[key]);
     }
 

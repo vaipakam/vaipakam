@@ -367,13 +367,13 @@
       "class": "user",
       "why": "a payment into the protocol broadcast budget; no step waits on it"
     },
-    "RepatriationFacet.executeRepatriation(address,uint256,address)": {
+    "RepatriationFacet.executeRepatriation(uint32,address,uint256,address)": {
       "class": "keeper",
       "pass": "rewardReturnTransport",
       "flag": "REWARD_RETURN_TRANSPORT_ENABLED",
       "evidence": "apps/keeper/src/rewardReturnTransport/index.ts"
     },
-    "RepatriationFacet.sendRepatriationCancelAck(address,uint256,address)": {
+    "RepatriationFacet.sendRepatriationCancelAck(uint32,address,uint256,address)": {
       "class": "keeper",
       "pass": "rewardReturnTransport",
       "flag": "REWARD_RETURN_TRANSPORT_ENABLED",

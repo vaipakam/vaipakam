@@ -3831,6 +3831,12 @@ revision unimplementable:
    taking the source component from the charged-side reconciliation that
    certified them.
 
+   *Status (#3015, owner decision 2026-11-04):* the mirror's instruction
+   state now keys on that triple, the source component being the chain the
+   reward messenger authenticated, and the return and the acknowledgment go
+   to that chain rather than to the current `baseChainId`. It reaches a chain
+   only by fresh deploy, so no two-field record exists to backfill.
+
    **A collision that ALREADY happened under the old two-field key cannot
    be disambiguated by the new one, and the backfill must refuse to
    guess.** If two Base chains used the same `issuingBase` and `authId`,

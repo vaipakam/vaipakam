@@ -536,11 +536,12 @@ evidence that the migration has completed.
   never carry, or one the mirror cannot yet fund, is stated rather than
   attempted.
 - **One route.** A mirror returns VPFI, and acknowledges cancellations,
-  toward its current Base. When a mirror's current Base is not the Base that
-  issued an authorization, as after the mirror detached and reattached
-  elsewhere, the keeper sends nothing for that authorization and alerts
-  operators. Sending would move the VPFI to the other chain and leave the
-  issuing Base's authorization unsettled.
+  only toward the chain that issued the instruction (#3015), so no caller can
+  redirect one. The keeper is still more cautious than that: when a mirror's
+  current Base is not the Base that issued an authorization, as after the
+  mirror detached and reattached elsewhere, it sends nothing for that
+  authorization and alerts operators, because what happens to it then is an
+  operator decision.
 - **The right Base Diamond.** Every return names the Base Diamond that is
   meant to credit it: the Base that issued an authorization, the Base that
   remitted a quarantined compensation, or the Base a retired mirror detached

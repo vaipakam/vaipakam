@@ -243,7 +243,8 @@ class FakeChain {
         return x === undefined ? [0, 0, 0n, 0n, 0n] : [x.status, x.dst, 0n, x.amount, 0n];
       }
       case 'getRepatriationInstruction': {
-        const x = this.instr.get(`${(a[0] as string).toLowerCase()}:${a[1]}`);
+        // Keyed by issuer chain + Diamond (#3015); only Base issues here.
+        const x = Number(a[0]) === BASE_ID ? this.instr.get(`${(a[1] as string).toLowerCase()}:${a[2]}`) : undefined;
         return x === undefined ? [INSTR_NONE, 0n] : [x.state, x.amount];
       }
       case 'getStrandedRecovery': {
@@ -296,21 +297,22 @@ class FakeChain {
         return () => {};
       }
       case 'executeRepatriation': {
-        const key = `${(a[0] as string).toLowerCase()}:${a[1]}`;
-        const x = this.instr.get(key);
-        if (x === undefined || x.state !== INSTR_PENDING) throw revert('RepatriationInstructionWrongState', [a[0], a[1], x?.state ?? 0]);
-        const b = this.outbound.get(this.baseChainId);
+        const key = `${(a[1] as string).toLowerCase()}:${a[2]}`;
+        const x = Number(a[0]) === BASE_ID ? this.instr.get(key) : undefined;
+        if (x === undefined || x.state !== INSTR_PENDING) throw revert('RepatriationInstructionWrongState', [a[0], a[1], a[2], x?.state ?? 0]);
+        // The return goes to the issuer (#3015), so that lane bounds it.
+        const b = this.outbound.get(Number(a[0]));
         if (b && b.limited && x.amount > b.capacity) throw revert('RepatriationExceedsLaneCapacity', [x.amount, b.capacity]);
         if (x.amount > this.fundable) throw revert('RepatriationExceedsFundable', [x.amount, this.fundable]);
         return () => {
           x.state = INSTR_EXECUTED;
           this.drawOutbound(x.amount);
-          return { kind: 'RepatriationExecuted', args: { issuingBase: String(a[0]).toLowerCase(), authId: String(a[1]), amount: String(x.amount), messageId: '0xm1' } };
+          return { kind: 'RepatriationExecuted', args: { issuerChainId: String(a[0]), issuingBase: String(a[1]).toLowerCase(), authId: String(a[2]), amount: String(x.amount), messageId: '0xm1' } };
         };
       }
       case 'sendRepatriationCancelAck': {
-        const x = this.instr.get(`${(a[0] as string).toLowerCase()}:${a[1]}`);
-        if (x === undefined || x.state !== INSTR_TOMBSTONED) throw revert('RepatriationInstructionWrongState', [a[0], a[1], x?.state ?? 0]);
+        const x = Number(a[0]) === BASE_ID ? this.instr.get(`${(a[1] as string).toLowerCase()}:${a[2]}`) : undefined;
+        if (x === undefined || x.state !== INSTR_TOMBSTONED) throw revert('RepatriationInstructionWrongState', [a[0], a[1], a[2], x?.state ?? 0]);
         return () => {};
       }
       case 'sendStrandedReturn': {
@@ -629,7 +631,7 @@ describe('a run', () => {
     mirror.instr.set(`${BASE}:2`, { state: INSTR_PENDING, amount: 400n * E18 });
     const r = await run();
     expect(base.sent).toEqual([]);
-    expect(mirror.sent).toEqual([{ fn: 'executeRepatriation', args: [BASE, 2n, KEEPER], value: FEE }]);
+    expect(mirror.sent).toEqual([{ fn: 'executeRepatriation', args: [BASE_ID, BASE, 2n, KEEPER], value: FEE }]);
     expect(r[1].executed).toEqual(['2']);
     // Executed, Base not yet settled: a wait, and no second execute.
     indexed(mirror);
@@ -673,7 +675,7 @@ describe('a run', () => {
     ledger.add(BASE_ID, 'RepatriationInstructionDispatched', { authId: '1' }, NOW - 600);
     mirror.instr.set(`${BASE}:1`, { state: INSTR_TOMBSTONED, amount: 400n * E18 });
     const r = await run();
-    expect(mirror.sent).toEqual([{ fn: 'sendRepatriationCancelAck', args: [BASE, 1n, KEEPER], value: FEE }]);
+    expect(mirror.sent).toEqual([{ fn: 'sendRepatriationCancelAck', args: [BASE_ID, BASE, 1n, KEEPER], value: FEE }]);
     expect(r[1].acked).toEqual(['1']);
     expect(alerts).toEqual([]);
     mirror.sent = [];

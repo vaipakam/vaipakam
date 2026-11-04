@@ -287,7 +287,7 @@ contract RepatriationTransportTest is SetupTest {
         _armMirror();
         _mut().setRecycleBucketRaw(100 ether);
         vpfi.mint(address(diamond), 100 ether);
-        messenger.deliverRepatriationInstruction(issuingBase, authId, amount);
+        messenger.deliverRepatriationInstruction(CHAIN_BASE, issuingBase, authId, amount);
     }
 
     function _oneToken(uint256 amount)
@@ -516,13 +516,13 @@ contract RepatriationTransportTest is SetupTest {
                 30 ether
             )
         );
-        _repat().executeRepatriation(base, 1, payable(address(this)));
-        (uint8 state, ) = _repat().getRepatriationInstruction(base, 1);
+        _repat().executeRepatriation(CHAIN_BASE, base, 1, payable(address(this)));
+        (uint8 state, ) = _repat().getRepatriationInstruction(CHAIN_BASE, base, 1);
         assertEq(state, 1, "still pending after the refused execute");
         // A raise (or drain) unblocks the same instruction.
         pool.setOutbound(SEL_BASE, true, 100 ether);
-        _repat().executeRepatriation(base, 1, payable(address(this)));
-        (state, ) = _repat().getRepatriationInstruction(base, 1);
+        _repat().executeRepatriation(CHAIN_BASE, base, 1, payable(address(this)));
+        (state, ) = _repat().getRepatriationInstruction(CHAIN_BASE, base, 1);
         assertEq(state, 2);
     }
 
@@ -574,22 +574,23 @@ contract RepatriationTransportTest is SetupTest {
     function test_CancelIngress_TombstonesPending() public {
         address base = address(0xBA5E);
         _instructed(base, 1, 40 ether);
-        (uint8 state, uint256 amount) = _repat().getRepatriationInstruction(base, 1);
+        (uint8 state, uint256 amount) = _repat().getRepatriationInstruction(CHAIN_BASE, base, 1);
         assertEq(state, 1);
         assertEq(amount, 40 ether);
-        messenger.deliverRepatriationCancel(base, 1);
-        (state, ) = _repat().getRepatriationInstruction(base, 1);
+        messenger.deliverRepatriationCancel(CHAIN_BASE, base, 1);
+        (state, ) = _repat().getRepatriationInstruction(CHAIN_BASE, base, 1);
         assertEq(state, 3, "tombstoned");
         // Execution is now structurally excluded (shared slot).
         vm.expectRevert(
             abi.encodeWithSelector(
                 RepatriationFacet.RepatriationInstructionWrongState.selector,
+                CHAIN_BASE,
                 base,
                 1,
                 3
             )
         );
-        _repat().executeRepatriation(base, 1, payable(address(this)));
+        _repat().executeRepatriation(CHAIN_BASE, base, 1, payable(address(this)));
     }
 
     function test_CancelIngress_PreTombstonesUnknownId() public {
@@ -597,25 +598,25 @@ contract RepatriationTransportTest is SetupTest {
         _armMirror();
         // The cancel OVERTOOK the instruction: tombstone the never-received
         // id, so the late instruction lands on a terminal record and no-ops.
-        messenger.deliverRepatriationCancel(base, 9);
-        (uint8 state, ) = _repat().getRepatriationInstruction(base, 9);
+        messenger.deliverRepatriationCancel(CHAIN_BASE, base, 9);
+        (uint8 state, ) = _repat().getRepatriationInstruction(CHAIN_BASE, base, 9);
         assertEq(state, 3, "pre-tombstoned");
-        messenger.deliverRepatriationInstruction(base, 9, 40 ether);
-        (state, ) = _repat().getRepatriationInstruction(base, 9);
+        messenger.deliverRepatriationInstruction(CHAIN_BASE, base, 9, 40 ether);
+        (state, ) = _repat().getRepatriationInstruction(CHAIN_BASE, base, 9);
         assertEq(state, 3, "instruction after tombstone is a no-op");
-        (, uint256 amount) = _repat().getRepatriationInstruction(base, 9);
+        (, uint256 amount) = _repat().getRepatriationInstruction(CHAIN_BASE, base, 9);
         assertEq(amount, 0, "no amount recorded for a tombstoned-first id");
     }
 
     function test_CancelIngress_NoopOnExecuted() public {
         address base = address(0xBA5E);
         _instructed(base, 1, 40 ether);
-        _repat().executeRepatriation(base, 1, payable(address(this)));
+        _repat().executeRepatriation(CHAIN_BASE, base, 1, payable(address(this)));
         // Execution won the race; the late cancel must not revert (the CCIP
         // packet would retry forever toward an unreachable state) and must
         // not un-execute.
-        messenger.deliverRepatriationCancel(base, 1);
-        (uint8 state, ) = _repat().getRepatriationInstruction(base, 1);
+        messenger.deliverRepatriationCancel(CHAIN_BASE, base, 1);
+        (uint8 state, ) = _repat().getRepatriationInstruction(CHAIN_BASE, base, 1);
         assertEq(state, 2, "still executed");
     }
 
@@ -623,7 +624,7 @@ contract RepatriationTransportTest is SetupTest {
         vm.chainId(CHAIN_ARB);
         _rep().setIsCanonicalRewardChain(false);
         vm.expectRevert(RepatriationFacet.RepatriationNotConfigured.selector);
-        messenger.deliverRepatriationCancel(address(0xBA5E), 1);
+        messenger.deliverRepatriationCancel(CHAIN_BASE, address(0xBA5E), 1);
     }
 
     // ── Mirror side: execute ────────────────────────────────────────────────
@@ -634,14 +635,14 @@ contract RepatriationTransportTest is SetupTest {
         ccip.setFee(0.2 ether);
         vm.prank(STRANGER);
         _repat().executeRepatriation{value: 0.2 ether}(
-            base, 1, payable(STRANGER)
+            CHAIN_BASE, base, 1, payable(STRANGER)
         );
         // Ledger: bucket down, outflow cumulative up (§7 #8's new term).
         assertEq(_mut().getRecycleBucketRaw(), 60 ether);
         (uint256 repatriatedOut, , , ) = _repat().getRepatriationPosition();
         assertEq(repatriatedOut, 40 ether);
         // Marker: executed, one-shot.
-        (uint8 state, ) = _repat().getRepatriationInstruction(base, 1);
+        (uint8 state, ) = _repat().getRepatriationInstruction(CHAIN_BASE, base, 1);
         assertEq(state, 2);
         // Physical: the VPFI left the Diamond, was pulled from the sender
         // satellite by the (mock) CCIP adapter, and nothing stranded in
@@ -666,19 +667,104 @@ contract RepatriationTransportTest is SetupTest {
         assertEq(ccip.lastGasLimit(), DEST_GAS);
     }
 
+    // ── #3015: an instruction is paid out only to the chain that issued it ──
+
+    /// A mirror that detaches and binds to another Base still sends an
+    /// instruction it accepted from the old Base home to the OLD Base, never
+    /// to its new `baseChainId`.
+    function test_Execute_AfterDetachAndRebind_PaysTheIssuer() public {
+        address base = address(0xBA5E);
+        _instructed(base, 1, 40 ether);
+        _rep().setBaseChainId(0);
+        _rep().setBaseChainId(CHAIN_OP);
+        _repat().executeRepatriation(CHAIN_BASE, base, 1, payable(address(this)));
+        assertEq(ccip.lastDst(), uint256(CHAIN_BASE), "to the issuer, not the new Base");
+        (uint8 state, ) = _repat().getRepatriationInstruction(CHAIN_BASE, base, 1);
+        assertEq(state, 2, "executed");
+    }
+
+    /// The record is keyed by its issuer: naming another chain finds nothing,
+    /// so a caller cannot redirect an instruction by naming a destination.
+    function test_Execute_NamingAnotherChain_FindsNoRecord() public {
+        address base = address(0xBA5E);
+        _instructed(base, 1, 40 ether);
+        vm.expectRevert(abi.encodeWithSelector(
+            RepatriationFacet.RepatriationInstructionWrongState.selector,
+            CHAIN_OP, base, 1, 0));
+        _repat().executeRepatriation(CHAIN_OP, base, 1, payable(address(this)));
+    }
+
+    /// A NEW instruction is taken only from the Base the mirror is bound to.
+    function test_InstructionIngress_RevertWhen_IssuerIsNotTheBoundBase() public {
+        _armMirror();
+        vm.expectRevert(abi.encodeWithSelector(
+            RepatriationFacet.RepatriationIssuerNotBound.selector, CHAIN_OP, CHAIN_BASE));
+        messenger.deliverRepatriationInstruction(CHAIN_OP, address(0xBA5E), 1, 40 ether);
+        // Detached: no Base, so no new instruction at all.
+        _rep().setBaseChainId(0);
+        vm.expectRevert(abi.encodeWithSelector(
+            RepatriationFacet.RepatriationIssuerNotBound.selector, CHAIN_BASE, uint32(0)));
+        messenger.deliverRepatriationInstruction(CHAIN_BASE, address(0xBA5E), 1, 40 ether);
+    }
+
+    /// A re-delivery of an instruction accepted before a rebind stays the
+    /// no-op it always was, rather than reverting on the new binding.
+    function test_InstructionIngress_RedeliveryAfterRebind_IsANoOp() public {
+        address base = address(0xBA5E);
+        _instructed(base, 1, 40 ether);
+        _rep().setBaseChainId(0);
+        _rep().setBaseChainId(CHAIN_OP);
+        messenger.deliverRepatriationInstruction(CHAIN_BASE, base, 1, 99 ether);
+        (uint8 state, uint256 amount) = _repat().getRepatriationInstruction(CHAIN_BASE, base, 1);
+        assertEq(state, 1, "still pending");
+        assertEq(amount, 40 ether, "the first record stands");
+    }
+
+    /// Two Bases at ONE address on different chains are different issuers:
+    /// the new Base's first id is a fresh record, not a re-delivery of the
+    /// old Base's executed one.
+    function test_SameAddressOnAnotherChain_IsAnotherIssuer() public {
+        address base = address(0xBA5E);
+        _instructed(base, 1, 40 ether);
+        _repat().executeRepatriation(CHAIN_BASE, base, 1, payable(address(this)));
+        _rep().setBaseChainId(0);
+        _rep().setBaseChainId(CHAIN_OP);
+        messenger.deliverRepatriationInstruction(CHAIN_OP, base, 1, 10 ether);
+        (uint8 state, uint256 amount) = _repat().getRepatriationInstruction(CHAIN_OP, base, 1);
+        assertEq(state, 1, "a fresh pending record");
+        assertEq(amount, 10 ether);
+        (state, ) = _repat().getRepatriationInstruction(CHAIN_BASE, base, 1);
+        assertEq(state, 2, "the old issuer's record is untouched");
+    }
+
+    /// A Base the mirror has left can still cancel what it issued, and the
+    /// ACK goes back to it, so its authorization can be released.
+    function test_CancelFromAFormerBase_TombstonesAndAcksToIt() public {
+        address base = address(0xBA5E);
+        _instructed(base, 1, 40 ether);
+        _rep().setBaseChainId(0);
+        _rep().setBaseChainId(CHAIN_OP);
+        messenger.deliverRepatriationCancel(CHAIN_BASE, base, 1);
+        (uint8 state, ) = _repat().getRepatriationInstruction(CHAIN_BASE, base, 1);
+        assertEq(state, 3, "tombstoned");
+        _repat().sendRepatriationCancelAck(CHAIN_BASE, base, 1, payable(address(this)));
+        assertEq(ccip.lastDst(), uint256(CHAIN_BASE), "ACK to the issuer");
+    }
+
     function test_Execute_OneShot() public {
         address base = address(0xBA5E);
         _instructed(base, 1, 40 ether);
-        _repat().executeRepatriation(base, 1, payable(address(this)));
+        _repat().executeRepatriation(CHAIN_BASE, base, 1, payable(address(this)));
         vm.expectRevert(
             abi.encodeWithSelector(
                 RepatriationFacet.RepatriationInstructionWrongState.selector,
+                CHAIN_BASE,
                 base,
                 1,
                 2
             )
         );
-        _repat().executeRepatriation(base, 1, payable(address(this)));
+        _repat().executeRepatriation(CHAIN_BASE, base, 1, payable(address(this)));
     }
 
     function test_Execute_RetryableWhenSurplusReserved() public {
@@ -693,14 +779,14 @@ contract RepatriationTransportTest is SetupTest {
                 30 ether
             )
         );
-        _repat().executeRepatriation(base, 1, payable(address(this)));
+        _repat().executeRepatriation(CHAIN_BASE, base, 1, payable(address(this)));
         // A failed execute leaves the instruction PENDING — retryable once
         // the reservation clears.
-        (uint8 state, ) = _repat().getRepatriationInstruction(base, 1);
+        (uint8 state, ) = _repat().getRepatriationInstruction(CHAIN_BASE, base, 1);
         assertEq(state, 1, "still pending after a failed execute");
         _mut().setRecycleKeeperBudgetRaw(0);
-        _repat().executeRepatriation(base, 1, payable(address(this)));
-        (state, ) = _repat().getRepatriationInstruction(base, 1);
+        _repat().executeRepatriation(CHAIN_BASE, base, 1, payable(address(this)));
+        (state, ) = _repat().getRepatriationInstruction(CHAIN_BASE, base, 1);
         assertEq(state, 2);
     }
 
@@ -711,7 +797,7 @@ contract RepatriationTransportTest is SetupTest {
         uint256 before = STRANGER.balance;
         vm.prank(STRANGER);
         _repat().executeRepatriation{value: 0.7 ether}(
-            base, 1, payable(STRANGER)
+            CHAIN_BASE, base, 1, payable(STRANGER)
         );
         assertEq(before - STRANGER.balance, 0.2 ether, "surplus refunded");
     }
@@ -726,7 +812,7 @@ contract RepatriationTransportTest is SetupTest {
             )
         );
         _repat().executeRepatriation{value: 0.1 ether}(
-            base, 1, payable(address(this))
+            CHAIN_BASE, base, 1, payable(address(this))
         );
     }
 
@@ -735,7 +821,7 @@ contract RepatriationTransportTest is SetupTest {
         _rep().setIsCanonicalRewardChain(false);
         vm.expectRevert(RepatriationFacet.RepatriationNotConfigured.selector);
         _repat().executeRepatriation(
-            address(0xBA5E), 1, payable(address(this))
+            CHAIN_BASE, address(0xBA5E), 1, payable(address(this))
         );
     }
 
@@ -760,20 +846,21 @@ contract RepatriationTransportTest is SetupTest {
         vm.expectRevert(
             abi.encodeWithSelector(
                 RepatriationFacet.RepatriationInstructionWrongState.selector,
+                CHAIN_BASE,
                 base,
                 1,
                 1
             )
         );
-        _repat().sendRepatriationCancelAck(base, 1, payable(address(this)));
+        _repat().sendRepatriationCancelAck(CHAIN_BASE, base, 1, payable(address(this)));
     }
 
     function test_CancelAckSend_DataOnlyAndResendable() public {
         address base = address(0xBA5E);
         _instructed(base, 1, 40 ether);
-        messenger.deliverRepatriationCancel(base, 1);
+        messenger.deliverRepatriationCancel(CHAIN_BASE, base, 1);
         vm.prank(STRANGER);
-        _repat().sendRepatriationCancelAck(base, 1, payable(STRANGER));
+        _repat().sendRepatriationCancelAck(CHAIN_BASE, base, 1, payable(STRANGER));
         assertEq(ccip.sendCount(), 1);
         assertEq(ccip.lastDst(), uint256(CHAIN_BASE));
         assertEq(ccip.lastTokenAmount(), 0, "ACK is data-only");
@@ -786,7 +873,7 @@ contract RepatriationTransportTest is SetupTest {
             )
         );
         // Re-sendable: a lost ACK is retried by re-calling.
-        _repat().sendRepatriationCancelAck(base, 1, payable(address(this)));
+        _repat().sendRepatriationCancelAck(CHAIN_BASE, base, 1, payable(address(this)));
         assertEq(ccip.sendCount(), 2);
     }
 
@@ -1070,8 +1157,8 @@ contract RepatriationTransportTest is SetupTest {
         _armMirror();
         _mut().setRecycleBucketRaw(100 ether);
         vpfi.mint(address(diamond), 100 ether);
-        messenger.deliverRepatriationInstruction(issuingBase, authId, 40 ether);
-        _repat().executeRepatriation(issuingBase, authId, payable(address(this)));
+        messenger.deliverRepatriationInstruction(CHAIN_BASE, issuingBase, authId, 40 ether);
+        _repat().executeRepatriation(CHAIN_BASE, issuingBase, authId, payable(address(this)));
         bytes memory wire = ccip.lastPayload();
         uint256 bridged = ccip.lastTokenAmount();
 
@@ -1106,9 +1193,9 @@ contract RepatriationTransportTest is SetupTest {
         // Mirror: the cancel lands (before any instruction), pre-tombstones,
         // and the ACK goes out.
         _armMirror();
-        messenger.deliverRepatriationCancel(issuingBase, authId);
+        messenger.deliverRepatriationCancel(CHAIN_BASE, issuingBase, authId);
         _repat().sendRepatriationCancelAck(
-            issuingBase, authId, payable(address(this))
+            CHAIN_BASE, issuingBase, authId, payable(address(this))
         );
         bytes memory ackWire = ccip.lastPayload();
 

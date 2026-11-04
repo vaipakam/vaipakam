@@ -28,6 +28,11 @@
     "name": "executeRepatriation",
     "inputs": [
       {
+        "name": "issuerChainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
         "name": "issuingBase",
         "type": "address",
         "internalType": "address"
@@ -139,6 +144,11 @@
     "name": "getRepatriationInstruction",
     "inputs": [
       {
+        "name": "issuerChainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
         "name": "issuingBase",
         "type": "address",
         "internalType": "address"
@@ -232,6 +242,11 @@
     "name": "onRepatriationCancelInstructionReceived",
     "inputs": [
       {
+        "name": "issuerChainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
         "name": "issuingBase",
         "type": "address",
         "internalType": "address"
@@ -249,6 +264,11 @@
     "type": "function",
     "name": "onRepatriationInstructionReceived",
     "inputs": [
+      {
+        "name": "issuerChainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
       {
         "name": "issuingBase",
         "type": "address",
@@ -367,6 +387,11 @@
     "type": "function",
     "name": "sendRepatriationCancelAck",
     "inputs": [
+      {
+        "name": "issuerChainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
       {
         "name": "issuingBase",
         "type": "address",
@@ -535,6 +560,12 @@
     "name": "RepatriationCancelAckDispatched",
     "inputs": [
       {
+        "name": "issuerChainId",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
         "name": "issuingBase",
         "type": "address",
         "indexed": true,
@@ -604,6 +635,12 @@
     "name": "RepatriationExecuted",
     "inputs": [
       {
+        "name": "issuerChainId",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
         "name": "issuingBase",
         "type": "address",
         "indexed": true,
@@ -666,6 +703,12 @@
     "name": "RepatriationInstructionRecorded",
     "inputs": [
       {
+        "name": "issuerChainId",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
         "name": "issuingBase",
         "type": "address",
         "indexed": true,
@@ -690,6 +733,12 @@
     "type": "event",
     "name": "RepatriationInstructionTombstoned",
     "inputs": [
+      {
+        "name": "issuerChainId",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
       {
         "name": "issuingBase",
         "type": "address",
@@ -1059,6 +1108,11 @@
     "name": "RepatriationInstructionWrongState",
     "inputs": [
       {
+        "name": "issuerChainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
         "name": "issuingBase",
         "type": "address",
         "internalType": "address"
@@ -1079,6 +1133,22 @@
     "type": "error",
     "name": "RepatriationInvalidRequest",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RepatriationIssuerNotBound",
+    "inputs": [
+      {
+        "name": "issuerChainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "baseChainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
   },
   {
     "type": "error",
