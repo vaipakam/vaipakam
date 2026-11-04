@@ -68,6 +68,14 @@ This bifurcation cuts the cross-replication surface roughly in half.
 
 ## 3. Stage A — Cross-cloud backup (pre-audit, NOW)
 
+> **Superseded in part by [`BackupSecurityDesign.md`](BackupSecurityDesign.md)
+> (slice 2, #1463).** The archive is now encrypted to offline recipient
+> public keys, not a symmetric key the Worker holds; the Worker binds the
+> write key only; the weekly healthcheck is gone, and the backup watcher
+> checks every archive from outside Cloudflare. §3.3–§3.6 below still
+> describe the design before that change and are rewritten in that design's
+> docs slice; where they disagree, `BackupSecurityDesign.md` is the intent.
+
 ### 3.1 Scope
 
 Schedule a Cloudflare Worker (`ops/offchain-data-warm`) that nightly:

@@ -35,34 +35,20 @@
   // collide with every other team-on-the-internet's :00 crons
   // fighting for B2's incoming HTTP capacity at exact-minute marks.
   //
-  // The single cron does TWO things on Monday and ONE thing on every
-  // other day:
-  //   - Daily (Mon-Sun): nightly backup runs, encrypts, uploads to B2.
-  //   - Monday only: ALSO runs the weekly healthcheck IN PARALLEL with
-  //     the nightly backup (two independent ctx.waitUntil() calls, no
-  //     shared state, different scoped B2 keys, different B2 endpoints).
+  // The cron runs the nightly backup and nothing else. The Monday
+  // healthcheck that used to share this tick was removed with the read
+  // key and the symmetric decryption key it needed (#1463, #1469); the
+  // backup watcher (.github/workflows/backup-ledger.yml) makes its checks
+  // every day from outside Cloudflare.
   //
-  // Why one cron instead of two: the Cloudflare Workers free plan caps
-  // an account at 5 cron triggers total, and this Worker is entitled to
-  // one of them. Folding the Monday healthcheck under the nightly tick
-  // is what keeps it to one; splitting them would cost a second, and the
-  // deploy that pushes past the cap fails with CF API error 10072.
-  //
-  // How much of the budget is actually spoken for is NOT stated here.
-  // It was, for a long time, and it was wrong — the arithmetic in this
+  // The free plan caps cron triggers per account, and this Worker takes
+  // one. How much of that budget is spoken for is NOT stated here: it
+  // was, for a long time, and it was wrong — the arithmetic in this
   // comment omitted `vaipakam-offchain-data-archive`, this Worker's own
   // predecessor, which has no source in this repository and is therefore
   // invisible to anyone counting `crons` entries across the tree (#1977).
-  // WHETHER IT IS STILL ARMED IS NOT STATED HERE: the retirement procedure
-  // updates the authority and nothing else, so a present-tense claim in this
-  // file would survive it untouched and uncontradicted — the stale-state
-  // belief this whole change exists to remove, recreated in the config an
-  // operator reads while changing the cron.
   // `docs/ops/CloudflareCronSlots.md` carries both the count and the status,
   // once, with the date they were last checked against the account.
-  //
-  // If/when the account upgrades to Workers Paid ($5/mo, which RAISES the
-  // cap to 250 rather than removing it), this can split back into two crons.
   "triggers": {
     "crons": ["17 3 * * *"],
   },
@@ -76,8 +62,8 @@
   // The Worker NEVER writes to either DB; the bindings are present
   // only so the cron can SELECT rows for export. We deliberately
   // don't add a third D1 for backup bookkeeping (last-run-id,
-  // success/failure log) — that lives in `wrangler tail` + the
-  // healthcheck alert path, which is enough at Stage A scale.
+  // success/failure log) — that lives in `wrangler tail`, the nightly
+  // ops message and the backup watcher's ledger, outside this Worker.
   "d1_databases": [
     {
       "binding": "DB_ARCHIVE",
@@ -104,61 +90,36 @@
       "bucket_name": "vaipakam-legal-vault",
     },
   ],
-  // Public vars. Real secrets live in `wrangler secret put`. Two
-  // B2 key pairs (write-scoped + read-scoped) — see src/env.ts for
-  // the trust-boundary rationale.
-  //   BACKUP_ENCRYPTION_KEY        — 32-byte hex AES-256-GCM key,
-  //                                  kept OFFLINE outside Cloudflare
-  //                                  (1Password / pass). Never rotated
-  //                                  automatically; manual rotation
-  //                                  procedure in docs/ops/OffChainRestore.md.
+  // Secrets live in `wrangler secret put`:
   //   B2_WRITE_ACCESS_KEY_ID       — Application Key id, scoped
   //                                  write-only to the backup bucket
   //                                  (listBuckets + writeFiles — NOT
-  //                                  listFiles; #1450 r27). Used by
-  //                                  the nightly cron only. A CF
-  //                                  compromise that steals THIS key
-  //                                  alone can corrupt FUTURE archives
-  //                                  and cannot delete anything.
-  //                                  It canNOT be assumed to be alone,
-  //                                  though: this Worker also binds the
-  //                                  READ key below, which carries
-  //                                  listFiles — so one compromised
-  //                                  environment can enumerate an
-  //                                  existing nonce and overwrite AT
-  //                                  that key. The immutable-naming
-  //                                  guard rests on withholding
-  //                                  listFiles here, and binding both
-  //                                  keys together defeats it.
+  //                                  listFiles; #1450 r27). The ONLY
+  //                                  B2 key this Worker holds: it
+  //                                  cannot list, read or delete an
+  //                                  archive, so it cannot learn an
+  //                                  existing archive's name, and the
+  //                                  random nonce in each name is what
+  //                                  keeps a leaked key from
+  //                                  overwriting it.
   //   B2_WRITE_SECRET_ACCESS_KEY   — matching secret of above.
-  //   B2_READ_ACCESS_KEY_ID        — Application Key id, scoped
-  //                                  read-only to the backup bucket
-  //                                  (listBuckets + listFiles +
-  //                                  readFiles). Used by the weekly
-  //                                  healthcheck only. A CF compromise
-  //                                  yields AES-256-GCM ciphertext;
-  //                                  the offline encryption key
-  //                                  protects the plaintext.
-  //   B2_READ_SECRET_ACCESS_KEY    — matching secret of above.
   //   TG_OPS_BOT_TOKEN             — Telegram bot dedicated to
-  //                                  internal-ops alerts (this
-  //                                  Worker; ops/lz-watcher retired).
-  //                                  DELIBERATELY DISTINCT from
-  //                                  `TG_BOT_TOKEN`, which is the
-  //                                  user-facing bot used by
-  //                                  apps/keeper + apps/agent.
-  //                                  Splitting the bots bounds the
-  //                                  blast radius of a token leak:
-  //                                  a user-bot compromise can't
-  //                                  spoof ops alerts (where the
-  //                                  operator acts on detection
-  //                                  signals like backup failure
-  //                                  or LZ-mesh drift) and an ops-
-  //                                  bot compromise can't reach
-  //                                  the user-alert channels.
-  //                                  Healthcheck failures +
-  //                                  nightly backup outcomes go
-  //                                  to TG_OPS_CHAT_ID.
+  //                                  internal-ops alerts. DELIBERATELY
+  //                                  DISTINCT from `TG_BOT_TOKEN`,
+  //                                  the user-facing bot used by
+  //                                  apps/keeper + apps/agent, so a
+  //                                  leak of either cannot reach the
+  //                                  other's channels. Nightly backup
+  //                                  outcomes go to TG_OPS_CHAT_ID.
+  //
+  // There is NO encryption secret. Each archive is encrypted to the
+  // recipient PUBLIC keys committed in backup-recipients/recipients.json
+  // and bundled at build time; the private keys are offline and never
+  // reach Cloudflare (#1463). The read key (B2_READ_*) and the symmetric
+  // BACKUP_ENCRYPTION_KEY were removed with the healthcheck; deleting them
+  // from the deployed Worker is an owner step, because a deploy does not
+  // remove a secret.
+  //
   // All three of B2_ENDPOINT, B2_BUCKET, and TG_OPS_CHAT_ID are
   // operator-configured via `wrangler secret put` rather than baked
   // into this JSONC file. Reasons:
@@ -178,32 +139,12 @@
   //     in. Free-of-cost obfuscation.
   // Workers reads `env.X` identically for vars and secrets — no
   // Worker code change is needed.
-  // The first monthly / yearly archive THIS deployment wrote — declared,
-  // because the healthcheck cannot infer them (#1476). Inferring from the
-  // surviving objects is circular: delete the oldest and the inferred
-  // baseline advances past it, so the deleted period stops being required.
   //
-  // BOTH ARE DELIBERATELY UNSET. The archive→warm rename created a NEW,
-  // EMPTY bucket rather than migrating the old one, so this deployment has
-  // written no monthly or yearly cut yet. `ARCHIVE_FIRST_MONTHLY="2026-06"`
-  // was committed here while it still described the OLD bucket — against
-  // the new one it would mark every month from 2026-06 as required and the
-  // monthly tier would report FAILED rather than the honest "young bucket,
-  // coverage degraded".
-  //
-  // Set each one once its first cut exists — the 1st of a month for
-  // monthly, Jan 1 for yearly — using:
-  //     cd ops/offchain-data-warm && npm run archive:baselines
-  // While unset, the weekly report says COVERAGE DEGRADED for that tier,
-  // which is the truthful state for a bucket with nothing older to lose.
-  //
-  // MONTHLY IS NOW SET: 2026-09. The new bucket dates from #1537 (merged
-  // 2026-08-03) and a monthly is cut on the 1st, so September 2026 is the
-  // first month it could hold; it is also the earliest monthly the backup
-  // ledger's first run found (2026-10-28). The ledger workflow
-  // (.github/workflows/backup-ledger.yml) declares the same value, and the
-  // two must stay equal. Yearly stays unset until the first Jan 1 cut.
-  "vars": {
-    "ARCHIVE_FIRST_MONTHLY": "2026-09",
-  },
+  // No plain vars. `ARCHIVE_FIRST_MONTHLY` / `ARCHIVE_FIRST_YEARLY` (the
+  // first monthly and yearly cut, declared because they cannot be inferred
+  // from what survived, #1476) moved to the backup watcher with the
+  // healthcheck that read them: .github/workflows/backup-ledger.yml now
+  // carries the one committed copy. Because `keep_vars` is set, removing the
+  // var here does not remove it from the deployed Worker; the Worker no
+  // longer reads it, and deleting it there is an owner step.
 }

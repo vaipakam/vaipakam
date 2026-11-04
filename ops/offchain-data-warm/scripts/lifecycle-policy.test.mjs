@@ -4,8 +4,10 @@
  * The monthly floor was 31 rather than 8 for one reason: nothing inspected the
  * monthly prefixes, so the window could not be justified by detection and had
  * to outlast the monthly write cadence instead. #1476 gave that tier the same
- * weekly healthcheck the daily tier has, which is what permits the same
- * derivation and therefore the same number.
+ * weekly healthcheck the daily tier had, which is what permits the same
+ * derivation and therefore the same number. (#1463 slice 2 replaced that
+ * healthcheck with the daily backup watcher; the floors are kept as
+ * minimums, see lifecycle-policy.mjs.)
  *
  * These tests exist so the floor cannot drift back to a value nothing
  * justifies, and so the committed declaration is checked against the floors
@@ -43,7 +45,7 @@ test('the committed declaration satisfies both floors and ceilings', () => {
 
 test('the monthly floor is NOT lowered to the daily one', () => {
   assert.equal(MIN_RECOVERY_DAYS_DAILY, 8);
-  // 31, deliberately. The healthcheck now READS the monthly prefixes, but
+  // 31, deliberately. The retired healthcheck READ the monthly prefixes, but
   // fully verifies only the NEWEST period of each family; older retained
   // months get presence-and-pairing only, and an overwrite leaves both keys
   // in place. An 8-day window there would rest on a detector that does not
@@ -96,17 +98,17 @@ test('exactly the floor is accepted — the bound is inclusive', () => {
   assert.doesNotThrow(() => assertPolicyCeilings(ok, fail));
 });
 
-test('the healthcheck retention window agrees with the declared lifecycle', async () => {
-  // `MONTHLY_RETAINED_MONTHS` lives in the Worker's tier table and the
+test('the watcher\'s monthly retention window agrees with the declared lifecycle', async () => {
+  // `MONTHLY_RETAINED_MONTHS` lives in the shared tier table and the
   // retention days live in bucket-lifecycle.json. Nothing else ties them
-  // together, so a lifecycle change could silently make the healthcheck
-  // demand months that have legitimately aged out — a weekly false page.
+  // together, so a lifecycle change could silently make the backup watcher
+  // demand months that have legitimately aged out — a daily false page.
   const { MONTHLY_RETAINED_MONTHS } = await import('../src/tiers.ts');
   const rule = declared.rules.find((r) => r.fileNamePrefix === 'archives-monthly/');
   const liveMonths = rule.daysFromUploadingToHiding / 30.44; // mean month
   assert.ok(
     MONTHLY_RETAINED_MONTHS <= liveMonths,
-    `healthcheck requires ${MONTHLY_RETAINED_MONTHS} months but only ` +
+    `the watcher requires ${MONTHLY_RETAINED_MONTHS} months but only ` +
       `~${liveMonths.toFixed(1)} are retained`,
   );
   // …and not so conservative that a deletion goes unnoticed for a year.

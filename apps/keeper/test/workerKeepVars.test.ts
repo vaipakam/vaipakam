@@ -35,7 +35,6 @@ const VAR_CARRYING_WORKERS = [
   'apps/keeper',
   'apps/indexer',
   'ops/mesh-watcher',
-  'ops/offchain-data-warm',
 ];
 
 function runCheck(root?: string): { ok: boolean; out: string } {

@@ -11,6 +11,23 @@ produced by [`ops/offchain-data-warm`](../../ops/offchain-data-warm/README.md).
 > unaffected by anything in this document — what we're restoring is
 > the off-chain convenience layer.
 
+> **SINCE SLICE 2 (#1463), NEW ARCHIVES ARE ENCRYPTED TO OFFLINE PUBLIC
+> KEYS.** The Worker holds no decryption key, no B2 read key and no weekly
+> healthcheck any more; the backup watcher
+> (`.github/workflows/backup-ledger.yml`) checks every archive from outside
+> Cloudflare and records it in the Object Lock ledger. Decrypt with
+> `scripts/decrypt-archive.mjs` (§3), which reads both formats and refuses
+> an archive the ledger does not vouch for. The old AES key is still needed,
+> **offline**, for every archive written before slice 2 — a yearly one is
+> kept indefinitely, so **never destroy that key** (§8).
+>
+> Sections below that still describe `B2_READ_*`, `BACKUP_ENCRYPTION_KEY` on
+> the Worker or the healthcheck describe the deployment before slice 2. They
+> are rewritten in the docs slice of
+> [`BackupSecurityDesign.md`](../DesignsAndPlans/BackupSecurityDesign.md) §8;
+> where they disagree with this box, §3 or §8, this box and those sections
+> are right.
+
 > **"ARCHIVE" MEANS THE BACKUP HERE — never the database called
 > `vaipakam-archive`** (#2267). That word is overloaded as of the
 > 2026-09-21 cutover and this is the one place it must not be misread.
@@ -1260,42 +1277,52 @@ vaipakam-offchain-data-warm`.
 
 ## 3. Decrypt the archive
 
+Use the committed tool, offline, on the machine that holds the private
+key. It sits in front of `restore-from-archive.mjs` (§4) and never talks to
+anything but the ledger bucket:
+
 ```bash
-cat > restore/decrypt.mjs <<'EOF'
-// Decrypts the archive locally — never run this with the AES key
-// pasted on the command-line (history-disclosure risk). Read the key
-// from the offline store into a transient env var instead.
-import { readFileSync, writeFileSync } from 'node:fs';
-import { webcrypto as crypto } from 'node:crypto';
+cd ops/offchain-data-warm
+# A key confined to the LEDGER bucket that can list it and read retentions
+# and nothing else (listFiles + readFileRetentions; the tool refuses a key
+# that can write, delete or bypass a retention). Create it for the restore
+# and delete it afterwards.
+export B2_LEDGER_READ_KEY_ID=...  B2_LEDGER_READ_KEY=...
 
-const [_node, _script, inPath, outPath] = process.argv;
-const keyHex = process.env.BACKUP_ENCRYPTION_KEY;
-if (!keyHex || !/^[0-9a-fA-F]{64}$/.test(keyHex))
-  throw new Error('Set BACKUP_ENCRYPTION_KEY env (64-hex-char AES-256 key) before running');
+# A public-key archive (written from slice 2 on): a recipient private key.
+# Its passphrase is asked for on the terminal, without echo.
+node --experimental-strip-types scripts/decrypt-archive.mjs \
+  --archive ../../restore/archive.bin --file-id <B2 file id of that version> \
+  --tier daily --period 2026-12-09 \
+  --key /path/to/backup-primary.key.pem --out ../../restore/archive.json
 
-const keyBytes = new Uint8Array(32);
-for (let i = 0; i < 32; i++) keyBytes[i] = parseInt(keyHex.slice(i*2, i*2+2), 16);
-const key = await crypto.subtle.importKey(
-  'raw', keyBytes, 'AES-GCM', false, ['decrypt'],
-);
-
-const buf = new Uint8Array(readFileSync(inPath));
-const iv = buf.subarray(0, 12);
-const ct = buf.subarray(12);
-const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ct);
-writeFileSync(outPath, new Uint8Array(pt));
-console.log(`decrypted ${pt.byteLength} bytes → ${outPath}`);
-EOF
-
-# Load the key from your offline store and run the decrypt:
-read -rs -p "Paste BACKUP_ENCRYPTION_KEY: " BACKUP_ENCRYPTION_KEY
-export BACKUP_ENCRYPTION_KEY
-node restore/decrypt.mjs ./restore/archive.bin ./restore/archive.json
-unset BACKUP_ENCRYPTION_KEY
+# An archive written before slice 2: the old AES key, from a file holding
+# its 64 hex characters (never on the command line).
+node --experimental-strip-types scripts/decrypt-archive.mjs ... \
+  --legacy-key /path/to/old-aes-key.hex --out ../../restore/archive.json
 ```
 
-If decryption throws, the archive is either tampered with or you
-have the wrong AES key. Both cases stop the restore.
+It **refuses**, printing the evidence, on any disagreement (design §6):
+
+- the period's ledger entries show tampering (a second version, a hide
+  marker) — name the version to trust with `--ledger-version <id>` once you
+  know which one the watcher wrote;
+- the archive's file id and the SHA-256 and length it computes are not one
+  entry's;
+- the period has more than one entry — pick the newest entry uploaded
+  **before the compromise began** and name it with `--entry <file id>`; if
+  that time is unknown, **stop**;
+- the decrypted payload's `createdAt` is not in the period, or, for the new
+  format, disagrees with the authenticated header, whose tier, period, time
+  and recipients must agree with the ledger entry.
+
+An archive the ledger never saw (from before it began on 2026-10-28) needs
+`--pre-ledger-archive`, which skips the ledger and says that nothing vouches
+for it; only an old-format archive can need it. The output is written with
+mode 0600 and never over an earlier one.
+
+A refusal stops the restore. So does a decryption that fails: the archive
+is tampered with, or the key is not one of its recipients.
 
 ---
 
@@ -2284,224 +2311,30 @@ Confirm one clean nightly before considering the restore complete — the
 first successful unattended run is the evidence that the whole pipeline,
 not just the Worker, came back.
 
-## 8. Key-rotation procedure for `BACKUP_ENCRYPTION_KEY`
+## 8. Rotating the backup encryption keys
 
-Not part of an emergency restore, but documented here because the
-two procedures share the offline-key handling discipline.
+Not part of an emergency restore. **The old procedure here (rotate
+`BACKUP_ENCRYPTION_KEY`, re-encrypt every archive, destroy the old key) is
+retired with slice 2 (#1463) and must not be followed.** Re-uploading an
+archive writes a second version at its name, which is exactly what the
+backup watcher pages on as a forgery, and destroying the old AES key makes
+every archive written before slice 2 unreadable, including the yearly ones,
+which are kept indefinitely.
 
-> ⚠️ **WHILE #1977 IS OPEN, THIS PROCEDURE IS WRITTEN FOR THE WRONG
-> NUMBER OF WORKERS.** It says "the archive Worker" and flips one secret;
-> there are **two** Workers scheduled, each holding its **own copy of
-> `BACKUP_ENCRYPTION_KEY`** and writing to its **own bucket** — see §2's
-> selection box and `docs/ops/CloudflareCronSlots.md`.
->
-> Run as written, it pauses one Worker, migrates one bucket, flips one
-> secret, and then **destroys the old key at step 6**. The Worker that was
-> not migrated keeps producing OLD-key ciphertext throughout, and the
-> predecessor bucket's entire retained history becomes **permanently
-> undecryptable** — including the copies §2 now names as a restore
-> fallback. That is the same failure step 1 already guards against for a
-> single Worker's late write, at the scale of a whole bucket.
->
-> **Either retire `vaipakam-offchain-data-archive` first (#1977 carries
-> the sequence, and this is the strongest argument for doing it), or run
-> every step below against BOTH Workers and BOTH buckets**: pause both in
-> step 1, enumerate and re-encrypt both in steps 2–3, `wrangler secret
-> put` on both in step 4, and sweep both in step 6.
->
-> This is separate from §1's compromise-time B2 **credential** rotation,
-> which has its own two-Worker warning. Different keys, different step,
-> same root cause — delete this box when the predecessor is retired.
+From slice 2, a rotation changes what NEW archives are written to and never
+what old ones need (design §3.3):
 
-1. Generate a NEW key locally:
-
-   ```bash
-   openssl rand -hex 32 > /tmp/new-backup-key
-   ```
-
-   Then **pause the archive Worker's schedule before enumerating**
-   (**both Workers' schedules** while #1977 is open — see the box above) —
-   disable the cron from the CF dashboard (Worker → Settings →
-   Triggers) and note the time. If the rotation spans 03:17 UTC with
-   the cron live, the Worker uploads a fresh OLD-key archive *after*
-   your enumeration; steps 4–6 then switch the key, validate only
-   new-key output, and destroy the old key — leaving that late
-   archive (and its monthly/yearly siblings on a boundary date)
-   permanently undecryptable (#1450 r31). Re-enable **both crons** after
-   step 4 — the singular "the cron" here was the same one-Worker assumption
-   this box exists to correct, and it is worse than the others: step 5
-   requires a fresh archive from EVERY Worker, so leaving the predecessor
-   disabled stalls the rotation outright, and skipping that validation
-   instead leaves the fallback bucket silently receiving nothing (Codex
-   #1978 r42). If the predecessor was retired before you started — the #1977
-   sequence — there is one cron and this reads as written.
-
-   **A dashboard pause does not survive a deploy — make the warm Worker's
-   pause durable in its config.** `ops/offchain-data-warm/wrangler.jsonc`
-   commits `"crons": ["17 3 * * *"]`, and a deploy republishes whatever that
-   file says. Any `wrangler deploy` of that Worker between here and step 4 —
-   somebody else's unrelated change, a CI deploy, your own step-4 command run
-   early — silently re-arms the old-key writer AFTER steps 2–3 fixed the set
-   of objects to migrate. The archive it then writes at 03:17 is old-key
-   ciphertext nobody enumerated, and step 6 destroys the key that could read
-   it. That is the #1450 r31 failure this pause exists to prevent, arriving
-   through the door the dashboard does not close.
-
-   So commit `"crons": []` in that file and deploy it, the way
-   `apps/keeper/wrangler.jsonc` already holds an empty schedule for its own
-   hold, and restore the committed schedule in step 4. Note the asymmetry
-   while #1977 is open: `vaipakam-offchain-data-archive` has no config in this
-   repository — that is the whole reason #1977 exists — so nothing here can
-   redeploy it and the dashboard pause is the only lever it has. One Worker
-   needs the config change; the other cannot have one.
-
-   **Update the authority in the same sitting as the pause, before you begin
-   step 2.** Disabling a cron removes a trigger from the account, so
-   `docs/ops/CloudflareCronSlots.md` — the only place the count lives — now
-   describes an account that no longer exists, and
-   `node .github/scripts/check-cron-slots.mjs --live` fails for as long as the
-   window lasts. That window is not short: step 2 enumerates every retained
-   object across three tiers and both buckets, and step 3 decrypts,
-   re-encrypts and re-verifies each one. Another operator reading the
-   inventory during it would be told two Workers are armed that are not.
-
-   For each Worker you paused: set its Schedule cell to `*(none)*`, set its
-   Status to `reserved — paused for the encryption-key rotation, re-armed at
-   step 4`, re-derive the three summary lines from the table, and re-stamp
-   `Verified:` with the time you paused. Do not carry the numbers over from
-   the old summary — derive them, which is what the gate checks.
-
-   **Commit and push that, together with the `"crons": []` change above.** An
-   edit sitting in your checkout is not the authority; the authority is what
-   the shared repository says, and that is what another operator reads. If the
-   rotation then aborts in the paused state this section explicitly supports,
-   an uncommitted correction leaves the repository telling everyone else both
-   Workers are live for as long as the pause lasts — which is the stale
-   inventory #1977 is about, now produced by the procedure written to prevent
-   it. The same applies in reverse at step 4: the restoration is committed and
-   pushed too, not left local.
-
-   **If the rotation aborts, the document follows the account, not the plan.**
-   Stopping with the crons still paused is the safe stopping point — a paused
-   Worker cannot write old-key ciphertext — so if you stop there, leave the
-   rows reserved and record in the restore log that the pause is outstanding
-   and why. Restore the rows only when the crons are actually back. Reverting
-   the document because the procedure was abandoned, while the schedules stay
-   off, manufactures exactly the stale inventory #1977 is about, and does it
-   deliberately.
-
-2. Enumerate and download **every retained ciphertext across all
-   three tiers** — `archives/` (daily), `archives-monthly/`, and
-   `archives-yearly/` — to a local workstation, **in EACH bucket while
-   #1977 is open**. This step names tiers and not buckets, which reads as
-   complete until you notice it never says where; an operator who has just
-   come from §2 has been told to prefer the warm bucket, and would
-   reasonably enumerate only that one. Three tiers times two buckets. The backup writer
-   populates all three (`backup.ts`), and the yearly tier is
-   retained indefinitely: any object skipped here is **permanently
-   undecryptable** the moment step 6 destroys the old key. An
-   earlier revision said "the past 30 nightlies", which migrated the
-   shortest-lived tier and stranded the two long-term ones (#1450
-   r28).
-3. For each archive: decrypt with the OLD key, re-encrypt with the
-   NEW key, re-upload to B2 under the same object key (B2's
-   versioning preserves the prior cipher-text version for the
-   lifecycle retention window) — **and regenerate its sibling
-   manifest in the same pass**. AES-GCM re-encryption produces new
-   ciphertext, so the manifest's `archive.sha256` and `byteLength`
-   no longer match; `runHealthcheck()` compares exactly those fields
-   against the downloaded object, and §2's restore verification does
-   the same. A rotated archive under a stale manifest fails both.
-   Upload the re-encrypted object and its updated manifest together,
-   and verify the pair (download → sha256sum → compare) per archive
-   before moving on. **Record the file id of every object this step
-   uploads** (the upload response carries it) — step 6's straggler
-   sweep needs the set to tell your own re-uploads apart from a
-   genuine late Worker write.
-4. `wrangler secret put BACKUP_ENCRYPTION_KEY` on
-   `vaipakam-offchain-data-warm` to flip the Worker to the new key —
-   **and on `vaipakam-offchain-data-archive` too, for as long as that Worker
-   still exists.** A Worker left on the old key keeps writing ciphertext that
-   step 6 is about to make undecryptable; naming only the warm Worker here
-   is what makes that easy to miss, since every other step reads as
-   generic.
-
-   ```bash
-   ( cd ops/offchain-data-warm && wrangler secret put BACKUP_ENCRYPTION_KEY )
-   wrangler secret put BACKUP_ENCRYPTION_KEY --name vaipakam-offchain-data-archive
-   ```
-
-   **The `--name` on the second is not optional** (Codex #1978 r33). The
-   predecessor has no Wrangler config in this repository — that is the whole
-   reason #1977 exists — so there is no directory to run it from. Without
-   `--name`, Wrangler takes the Worker from the config it finds: run from
-   `ops/offchain-data-warm` it silently rotates the WARM Worker a second time
-   and reports success, leaving the predecessor on the old key; run from the
-   repository root it finds no config at all.
-
-   **Re-enable both schedules now, and restore the authority in the same
-   sitting.** Put `"crons": ["17 3 * * *"]` back in
-   `ops/offchain-data-warm/wrangler.jsonc` and deploy it — that is the warm
-   Worker's re-arm, since step 1 made its pause durable in the config, and a
-   dashboard toggle alone would be undone by the next deploy. Re-enable the
-   archive Worker's cron from the dashboard, which is the only lever it has.
-   Then put each Worker's schedule back in its Schedule cell in the authority,
-   set its Status back to `live`, re-derive the three summary lines, re-stamp
-   `Verified:`, and **commit and push both changes**. Step 1 took the rows
-   down; this is where they come back. Doing it here rather than "at the end" matters because step 5 waits
-   a full nightly cycle plus a weekly healthcheck: leaving the document
-   describing paused Workers across that wait is a stale inventory lasting
-   days, and it is the state in which someone else deploys a Worker into what
-   the summary reports as spare capacity.
-
-   Deliberately NOT "while it is still scheduled" (Codex #1978 r24): step 1
-   disabled BOTH schedules and step 1's own note says to re-enable only after
-   this step. So at this point neither Worker is scheduled, and an operator
-   reading "while it is still scheduled" as a precondition would either skip
-   the archive Worker's secret — the exact omission this sentence exists to
-   prevent — or re-arm it early to satisfy the wording, putting it back to
-   writing old-key ciphertext before its key has changed. Both of my own
-   edits landed in the same commit; the pause instruction and the wording
-   that contradicts it were written minutes apart.
-5. Wait for one full nightly cycle + one weekly healthcheck. Both
-   should land green on the new key.
-
-   **Then DECRYPT fresh output from every Worker and every bucket with the
-   retained offline new key, before step 6 destroys the old one** (Codex
-   #1978 r28). A green run is not proof the key is right: a mistyped but
-   valid 64-hex secret lets a Worker encrypt and upload successfully, and
-   its own in-Worker verification uses that same mistyped value, so it
-   agrees with itself. The warm Worker's weekly healthcheck reads only the
-   warm bucket, so nothing at all examines the predecessor's output while
-   #1977 is open — its bucket, the one §2 now names as a restore fallback,
-   can quietly fill with ciphertext no retained key opens.
-   Pull one archive written after step 4 from each bucket and decrypt it
-   OFFLINE with the new key you hold. Only that proves the secret each
-   Worker received is the secret you kept.
-6. **Sweep for stragglers before retiring anything — in EVERY bucket you
-   paused in step 1.** The old key is destroyed at the end of this step, so
-   a bucket left unswept is a bucket whose stragglers become permanently
-   undecryptable with no further warning. List every
-   object uploaded between the step-1 pause time and the step-4 key
-   switch (the `--long` listing carries upload timestamps), then
-   **subtract the file ids step 3 recorded** — step 3's own
-   re-uploads land in exactly this window, so without the exclusion
-   every rotation "finds" its own writes and an operator trying to
-   old-key-decrypt them gets GCM authentication failures on new-key
-   ciphertext (#1450 r32). For anything REMAINING after the exclusion
-   (a manual trigger, a pause that did not take), **key
-   classification applies to `archives*` objects ONLY — manifests are
-   plaintext JSON and fail decryption under every key by
-   construction** (#1450 r33). A late Worker write leaves a PAIR in
-   the residue: old-key-decrypt the archive half to confirm it, then
-   send it through step 3, which regenerates its manifest as part of
-   the same pass; the residual manifest needs reading, not
-   decrypting. Only an `archives*` object that NEITHER key decrypts
-   is an incident rather than a rotation artifact. Only then retire the OLD key —
-   destroy the offline copies. Keep ONE
-   archived offline copy in case of a B2 lifecycle anomaly that
-   surfaces an old-cipher version mid-cycle.
-
-The rotation window has TWO keys live at once. Treat that window as
-a security-sensitive interval; don't merge anything to main during
-it.
+1. Generate the new RSA-4096 key pair offline and store its private key,
+   passphrase-protected, apart from the others.
+2. **Append** a set to `ops/offchain-data-warm/backup-recipients/recipients.json`
+   holding the old and the new keys together, with an `effectiveFrom` away
+   from the 03:17 UTC nightly, in a reviewed PR, and deploy the Worker. Never
+   edit or remove an earlier set: the watcher judges each archive against
+   the set in force when it was written.
+3. During a 30-day overlap, run the restore drill and prove the new key
+   decrypts an archive written to the overlap set.
+4. Append a set holding the new key alone, and deploy.
+5. **Keep every old private key**, and the old AES key, offline for as long
+   as any retained archive was written to it. For a daily or monthly archive
+   that ends with its lifecycle; a yearly archive is kept indefinitely, so its
+   key is too.

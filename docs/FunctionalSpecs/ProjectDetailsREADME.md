@@ -3457,14 +3457,37 @@ All functions are pure `view` functions (zero gas for callers when invoked via R
 
 Production off-chain data needed for usability and compliance requires a
 backup outside the primary hosting account and billing boundary, a recurring
-readability check, and a restore path into a fresh hosting account. Indexed
+integrity check, a periodic offline restore drill that proves the archives
+decrypt, and a restore path into a fresh hosting account. Indexed
 offers and loans, signed offers and other user-created records, support
 diagnostics, legal-hold records, and legal-document storage belong in scope.
 Every off-chain record has an explicit restore treatment: restore it from
 backup or rebuild it from the chain; chain-derived fields are rebuilt rather
-than trusted from the archive. Encryption remains a mainnet requirement;
-offline public-key encryption and removal of the backup Worker's read access
-must not be described as completed by these monitoring changes alone.
+than trusted from the archive. Encryption is a mainnet requirement.
+
+- The backup job can write archives and nothing else. It encrypts each
+  archive to offline recipient public keys, two at least and held apart, so
+  it cannot decrypt anything it wrote; it holds no read credential and no
+  decryption key, and it never logs or reports an archive's name. Each
+  backup tier is encrypted on its own, so no two archives share ciphertext.
+  The recipient public keys are a reviewed, versioned record that only ever
+  gains sets; a rotation changes what new archives are written to, never
+  what old ones need, and every private key, and the earlier symmetric key,
+  is kept offline for as long as any archive written to it is retained.
+- An archive states its tier, period, creation time and recipients in an
+  authenticated header. Nobody online can show that an archive decrypts: the
+  watcher checks the header is well formed, names the archive's own period,
+  a creation time within the run that uploaded it, and exactly the recipient
+  set in force then, and reports that a passing header is not proof of a
+  readable archive. Only the restore drill shows that.
+- A restore decrypts offline only, and only an archive the observation
+  ledger vouches for: its identity, digest and length must equal one
+  observation; tampered observations, or more than one observation for the
+  period, stop the restore until the operator names the one to trust, by
+  the time it was recorded relative to the compromise; and the decrypted
+  creation time must agree with the header and the period. Any disagreement
+  stops the restore. An archive from before the ledger began is restored
+  only on an explicit statement that nothing vouches for it.
 
 - A daily integrity watcher runs independently of the backup job and its
   hosting account. It downloads each new archive version, computes the digest
@@ -3476,8 +3499,10 @@ must not be described as completed by these monitoring changes alone.
   extended while the corresponding archive still exists. Unexpected ledger
   versions or hiding markers are incidents, including failed extensions.
 - Missing expected periods, duplicate archives for a period, reused old
-  archive bytes, manifest disagreement, premature disappearance, and unexpected
-  ledger additions alert operators. Archive names are not exposed in logs or
+  archive bytes, manifest disagreement, a malformed header or one naming the
+  wrong period or recipients, an archive in the earlier symmetric format after
+  the switch to public-key encryption, premature disappearance, and
+  unexpected ledger additions alert operators. Archive names are not exposed in logs or
   alerts, because their unpredictable component helps protect against
   replacement using a leaked write credential.
 - An unavailable watcher or incomplete check raises a distinct not-running
@@ -3496,8 +3521,8 @@ must not be described as completed by these monitoring changes alone.
 - An archive left unrecorded more than two days after the ledger could first
   record it alerts operators. An empty ledger has no age clock and protects
   nothing, so inability to write its first record alerts immediately.
-- Expected monthly coverage starts at September 2026, in both the watcher
-  and backup service healthcheck. It does not move forward merely because the
+- Expected monthly coverage starts at September 2026, declared once, in the
+  watcher. It does not move forward merely because the
   oldest surviving archive was deleted. Yearly coverage starts only with an
   actual first January archive. A stale deployed baseline is disclosed as
   degraded coverage until the matching configuration is deployed.

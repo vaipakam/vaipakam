@@ -175,8 +175,10 @@ during exactly the cleanup the rest of this file anticipates.
   nothing else on it was in use.
 - **Splitting an existing Worker's one cron into two costs a trigger** and
   has the same effect as a new deploy. This is why
-  `ops/offchain-data-warm` folds its Monday healthcheck into the nightly
-  backup tick rather than scheduling it separately.
+  `ops/offchain-data-warm` folded its Monday healthcheck into the nightly
+  backup tick rather than scheduling it separately, until #1463 removed the
+  healthcheck (the daily backup watcher runs in GitHub Actions, not on a
+  Worker cron).
 
 ## Re-verifying
 

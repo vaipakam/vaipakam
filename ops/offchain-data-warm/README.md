@@ -2,10 +2,33 @@
 
 Internal-ops Cloudflare Worker that nightly exports Vaipakam's off-
 chain footprint to Backblaze B2 on a separate billing/credential
-boundary, client-side encrypted with AES-256-GCM using an
-operator-offline key. Stage A of the off-chain data resilience plan —
+boundary, encrypted to offline recipient public keys so the Worker
+cannot read back anything it wrote. Stage A of the off-chain data resilience plan —
 issue [#30 (T-077)](https://github.com/vaipakam/vaipakam/issues/30).
 Design notes: [`docs/DesignsAndPlans/OffChainDataResilience.md`](../../docs/DesignsAndPlans/OffChainDataResilience.md).
+
+## Encryption to offline public keys (#1463)
+
+Each archive gets a fresh AES-256-GCM data key, wrapped with RSA-OAEP
+(4096-bit, SHA-256) to every recipient in the set in force, then dropped
+(`src/archiveFormat.ts`; design:
+[`BackupSecurityDesign.md`](../../docs/DesignsAndPlans/BackupSecurityDesign.md)
+§3). The recipient **public** keys are committed in
+[`backup-recipients/recipients.json`](./backup-recipients/recipients.json),
+one versioned set per rotation, and bundled at build time; the **private**
+keys are passphrase-protected files in the operator's offline store and never
+reach Cloudflare, GitHub or any server. Each tier is sealed on its own, with
+its own data key, IV and nonce, so the January monthly and the yearly are
+unrelated ciphertexts. The Worker holds one B2 key, write-only, and no
+decryption key; it runs no healthcheck and never logs or posts an archive's
+name. Decrypting is offline only, with `scripts/decrypt-archive.mjs`, which
+reads both this format and the old symmetric one and refuses an archive the
+ledger below does not vouch for
+([`OffChainRestore.md`](../../docs/ops/OffChainRestore.md) §3).
+
+**Nobody online can check that an archive decrypts.** The watcher checks that
+its header is well formed and names exactly the recipients in force; only the
+offline restore drill proves decryption.
 
 ## The backup watcher and its ledger (#1469, #1473)
 
@@ -22,8 +45,10 @@ and the ops chat, on a missing period, a period holding more than one archive,
 a copy of an older archive in a newer period, an archive that disagrees with
 its manifest (re-checked whenever the manifest changes), a ledger entry with a
 second version or a hide marker, an archive hidden or deleted before its
-lifecycle could do it, and a yearly entry whose
-retention could not be lengthened. The design and its limits are in
+lifecycle could do it, a yearly entry whose retention could not be
+lengthened, a public-key header that is malformed, names another period or
+does not name exactly the recipient set in force when the archive was
+written, and an old-format archive written after the switch to the new one. The design and its limits are in
 [`BackupSecurityDesign.md`](../../docs/DesignsAndPlans/BackupSecurityDesign.md)
 §5; the rules are `scripts/lib/ledger-rules.mjs`, pinned by
 `scripts/backup-ledger.test.mjs`.
@@ -157,56 +182,37 @@ version until *our own* rule removes it. That window is the entire fallback,
 and at its original value of 1 day it was effectively no window at all — which
 is what #1469 exists to fix.
 
-**What the weekly check does and does not detect — the window's value depends
-on this.** `healthcheck.ts` verifies the newest archive against its manifest:
-hash, size, decryptability. That catches corruption and a *blind* overwrite. It
-does **not** catch an authenticated forgery, and in this scenario it cannot: the
-Worker binds BOTH B2 credential pairs plus `BACKUP_ENCRYPTION_KEY`, so an
-attacker enumerates the genuine nonce with the read key's `listFiles` and writes
-a self-consistent encrypted archive+manifest pair at that exact key. Every check
-the healthcheck makes passes.
-
-So the window is not "time after an alert" against a competent attacker — it is
-time for a human or an out-of-band signal to notice. Real, but much weaker than
-an earlier revision of this file implied, and it is the integrity-is-not-
-provenance gap tracked as **#1473**. The backup watcher above is what closes
-it: an overwrite at a known key adds a second version, which the watcher reports
-the same day, and the ledger keeps the genuine version's digest and upload time
-where the Worker cannot reach them. The
-floors in `lifecycle-policy.mjs` are a floor of usefulness, not a sufficiency
-argument, and its comments say so.
+**What detects an overwrite — the window's value depends on this.** Before
+slice 2 the Worker bound a read key and the symmetric decryption key beside
+its write key, so one compromised environment could find an archive's nonce
+and write a self-consistent forgery at that exact name, and the weekly
+healthcheck it ran would pass it. Slice 2 removed the read key, the decryption
+key and the healthcheck, and stopped the nonce leaking (#1463, #1469): an
+overwrite in place now means guessing a 128-bit value. The backup watcher
+above is what detects one anyway: an overwrite adds a second version, which
+the watcher reports the same day, and the ledger keeps the genuine version's
+digest and upload time where the Worker cannot reach them. Archives written
+before slice 2 keep their exposure, because their names were already in the
+ops channel and the Worker logs (design §4). The floors in
+`lifecycle-policy.mjs` are a floor of usefulness, not a sufficiency argument,
+and its comments say so.
 
 ### Declare the first archive of each long tier (`ARCHIVE_FIRST_*`)
 
-Two optional vars on the Worker:
-
-- `ARCHIVE_FIRST_MONTHLY` — `YYYY-MM` of the first monthly cut this
-  deployment wrote.
-- `ARCHIVE_FIRST_YEARLY` — `YYYY` of the first yearly cut.
-
-**Set them once each first cut exists.** Without them the healthcheck
-derives what *should* be present from what *is* present, and that is
-circular: delete the oldest yearly archive and the inferred baseline
-advances past it, so the deleted year stops being required; empty the
-family entirely and there is nothing left to infer from, so nothing is
-reported missing and the tier passes. A detector whose expectations come
-from the survivors cannot report a deletion.
-
-They are optional because a fresh deployment genuinely has no baseline to
-state. While unset, the tier falls back to the earliest archive it can still
-see — enough to catch a gap ABOVE that point, blind to a deletion below it —
-and the weekly report appends `COVERAGE DEGRADED` to that tier's line saying
-so. The absence of the guarantee is published rather than implied.
-
-A malformed value fails **only its own tier**: a typo in
-`ARCHIVE_FIRST_MONTHLY` must not suppress the daily and yearly checks for the
-week, or an alert about a typo hides a simultaneous loss elsewhere.
+The first monthly and yearly cut are committed facts, because a detector whose
+expectations come from the survivors cannot report a deletion of the oldest
+period (#1476). Since slice 2 they live in ONE place, the backup watcher's
+workflow (`.github/workflows/backup-ledger.yml`); the Worker no longer reads
+them. A malformed value fails only its own tier.
 
 The monthly floor is higher than the daily one, and **#1476 did not change
 that** — deliberately, after trying to.
 
-Before #1476, `healthcheck.ts` examined only `manifests/<recent dates>/`, so a
-monthly overwrite was detected by nothing at all and the window could not be
+(The rest of this subsection is the reasoning as it stood before slice 2, when
+the Worker's weekly healthcheck was the routine inspection; the floors it
+derives are unchanged.) Before #1476, `healthcheck.ts` examined only
+`manifests/<recent dates>/`, so a monthly overwrite was detected by nothing at
+all and the window could not be
 justified by detection in any form; it simply had to outlast the monthly write
 cadence. #1476 closed that gap: the weekly run now reads every prefix family.
 
@@ -242,25 +248,18 @@ written table has none, or where this backup, the restore converter and
   on chain.
 - Workers themselves — Worker code lives in this monorepo and ships
   via `wrangler deploy`; a restore re-runs the deploy.
-- Secrets — `BACKUP_ENCRYPTION_KEY`, `B2_*`, `TG_*`. Operator
-  maintains these out-of-band (1Password / pass).
+- Secrets — `B2_*`, `TG_*`, and offline, the recipient private keys and
+  the old AES key (still needed for archives written before slice 2). The
+  operator maintains these out-of-band (1Password / pass).
 
 ## Schedule
 
 Single cron: **`17 3 * * *` UTC** daily (03:17 — non-zero minute
-avoids exact-minute B2 contention). On every invocation:
+avoids exact-minute B2 contention). It runs the nightly backup and nothing
+else: the Monday healthcheck that shared the tick left with slice 2.
 
-- **Backup** runs unconditionally.
-- **Healthcheck** also runs IN PARALLEL when the invocation falls on
-  a Monday. Same cron tick fires both via two independent
-  `ctx.waitUntil` calls; the operator gets two separate Telegram
-  alerts in their natural finish-order (healthcheck first, since
-  it's smaller; backup second).
-
-Why one cron instead of two: the Cloudflare Workers free plan caps an
-account at 5 cron triggers, and this Worker is entitled to one of them.
-Folding the healthcheck into the same cron is what keeps it to one
-rather than two.
+Why one cron: the Cloudflare Workers free plan caps cron triggers per
+account, and this Worker takes one.
 
 **How much of that budget is left is in
 [`docs/ops/CloudflareCronSlots.md`](../../docs/ops/CloudflareCronSlots.md),
@@ -281,7 +280,8 @@ later, in the sentence explaining why (Codex #1978 r29).
 Split back into two crons if/when the account upgrades to Workers
 Paid ($5/mo, which raises the cap to 250 rather than removing it).
 
-Both paths report to Telegram (`TG_OPS_CHAT_ID`).
+The run reports to Telegram (`TG_OPS_CHAT_ID`): per archive its tier,
+period, size and SHA-256, and never its name.
 
 ## Setup
 
@@ -290,7 +290,9 @@ Both paths report to Telegram (`TG_OPS_CHAT_ID`).
    different 2FA).
 
 2. **Run the setup script** to provision the bucket, lifecycle rules,
-   and the two scoped Application Keys (write-only + read-only):
+   and the two scoped Application Keys (write-only + read-only). Since
+   slice 2 only the write key goes to the Worker; the read key is for
+   local read tooling (step 7):
 
    ```bash
    # The MASTER B2 Application Key is read from the repo `.env` as
@@ -329,42 +331,50 @@ Both paths report to Telegram (`TG_OPS_CHAT_ID`).
      are not repeated in this README). The yearly prefixes get
      NO rule, which is what gives them indefinite retention — an earlier
      revision of this line said "six rules … yearly indefinite", which
-     described a rule that does not and should not exist. (The healthcheck
-     verifies the newest yearly object since #1476, but treats its ABSENCE as
-     expected rather than pageable — a deployment that has not lived through a
-     Jan 1 legitimately has none.)
+     described a rule that does not and should not exist. (The backup
+     watcher treats a yearly tier's ABSENCE as expected rather than pageable
+     until `ARCHIVE_FIRST_YEARLY` is set — a deployment that has not lived
+     through a Jan 1 legitimately has none.)
    - Create `vaipakam-offchain-data-warm-write-only` (listBuckets +
      writeFiles, bucket-scoped — NOT listFiles) for the nightly cron.
    - Create `vaipakam-offchain-data-warm-read-only` (listBuckets +
-     listFiles + readFiles, bucket-scoped) for the weekly
-     healthcheck.
+     listFiles + readFiles, bucket-scoped) for local read tooling. It
+     is never a Worker secret: a read key beside the write key is what
+     let one compromised environment find and overwrite an archive.
    - Print both key IDs + Application Key strings ONCE. Save them
      to your offline secret store immediately — B2 never shows the
      Application Key strings again.
 
-3. **Generate the AES-256 encryption key** locally and store it
-   offline (1Password / pass / a printed paper backup). Never
-   commit, never paste in chat, never store in CF in plaintext
-   except through the wrangler secret upload:
+3. **Generate the recipient key pairs** offline, on the machine that will
+   keep them (a primary and an escrow, stored apart), and commit only the
+   public halves to `backup-recipients/recipients.json` with their
+   fingerprints (see that folder's README). The private keys never leave
+   the offline store:
 
    ```bash
-   openssl rand -hex 32
+   openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:4096 -aes-256-cbc -out backup-primary.key.pem
+   openssl pkey -in backup-primary.key.pem -pubout -out backup-primary.pub.pem
    ```
 
-4. **Configure the Worker secrets** — paste each value when prompted:
+4. **Configure the Worker secrets** — paste each value when prompted. There
+   is no encryption secret:
 
    ```bash
    cd ops/offchain-data-warm
-   wrangler secret put BACKUP_ENCRYPTION_KEY        # 64-hex from step 3
    wrangler secret put B2_WRITE_ACCESS_KEY_ID       # from step 2 output
    wrangler secret put B2_WRITE_SECRET_ACCESS_KEY   # from step 2 output
-   wrangler secret put B2_READ_ACCESS_KEY_ID        # from step 2 output
-   wrangler secret put B2_READ_SECRET_ACCESS_KEY    # from step 2 output
    wrangler secret put B2_ENDPOINT                  # from step 2 output (account-region specific, e.g. "s3.eu-central-003.backblazeb2.com"). Not committed because forks land in different regions.
    wrangler secret put B2_BUCKET                    # from step 2 output (B2 bucket names are globally unique across accounts; forks need their own name).
    wrangler secret put TG_OPS_BOT_TOKEN             # ops-internal Telegram bot — DISTINCT from the user-facing TG_BOT_TOKEN used by apps/keeper + apps/agent. Same bot shared with ops/mesh-watcher.
-   wrangler secret put TG_OPS_CHAT_ID               # channel id where ops alerts land (e.g. -1003903308626). Not strictly secret, but kept out of the public repo for free-of-cost obfuscation.
+   wrangler secret put TG_OPS_CHAT_ID               # channel id where ops alerts land. Not strictly secret, but kept out of the public repo for free-of-cost obfuscation.
    ```
+
+   A deployment from before slice 2 also holds `BACKUP_ENCRYPTION_KEY` and
+   `B2_READ_ACCESS_KEY_ID` / `B2_READ_SECRET_ACCESS_KEY`, which the Worker no
+   longer reads. A deploy does not remove a secret, so delete those three
+   (`wrangler secret delete <NAME>`), and the `ARCHIVE_FIRST_MONTHLY` var from
+   the dashboard, after the slice-2 deploy. Keep the old AES key itself
+   offline.
 
 5. **Deploy** — every operator-specific value lives in the secret
    store, so the deploy takes no flags. `npm run deploy` runs `wrangler
@@ -382,9 +392,8 @@ Both paths report to Telegram (`TG_OPS_CHAT_ID`).
 7. **Put the generated READ key into `.env`**, then remove the master.
 
    Step 2 prints a bucket-scoped read-only key (listBuckets + listFiles
-   + readFiles) which step 4 stores as the Worker's `B2_READ_*` secrets.
-   Local read tooling — `find-archive-baselines.mjs` — needs it too, and
-   nothing until now put it on disk:
+   + readFiles). Local read tooling — `find-archive-baselines.mjs` — needs
+   it, and nothing until now put it on disk:
 
    ```bash
    # In the repo-root .env, SET these to the READ key from step 2 output.
@@ -432,8 +441,10 @@ for the full procedure. High level:
 
 1. Stand up a fresh Cloudflare account; recreate the Workers / D1 /
    R2 via `wrangler deploy` from the monorepo.
-2. Download the most recent encrypted archive from B2 locally.
-3. Decrypt with the offline AES key.
+2. Download the archive version to restore from B2, by its file id.
+3. Decrypt offline with `scripts/decrypt-archive.mjs`, which checks it
+   against the backup ledger first, using a recipient private key (or the
+   old AES key, for an archive written before slice 2).
 4. `wrangler d1 execute --file=<dump.sql>` to restore the born-off-
    chain tables; re-bootstrap the indexer from block 0 for the
    re-derivable tables.

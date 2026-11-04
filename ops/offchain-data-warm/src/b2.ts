@@ -1,10 +1,11 @@
 /**
- * Backblaze B2 S3-compatible client. Implements just the two
- * operations the backup pipeline needs:
- *   - PUT object   — upload a new archive (write-only path).
- *   - HEAD object  — confirm an archive exists, read its metadata.
- *                    Used by the weekly healthcheck (§3.6 of the
- *                    design doc).
+ * Backblaze B2 S3-compatible client. Implements the one operation
+ * the backup Worker needs: PUT object, to upload a new archive or
+ * manifest. Nothing here reads the bucket: the Worker holds a
+ * write-only key, and since #1463 slice 2 it never reads an archive
+ * back (the HEAD helper left with the weekly healthcheck). The daily
+ * ledger watcher reads the bucket through the native API, from
+ * `scripts/lib/b2-native.mjs`.
  *
  * Auth: AWS Signature Version 4 (SigV4), hand-rolled because the
  * official AWS SDK is too heavy for a V8-isolate Worker. The signing
@@ -209,25 +210,4 @@ export async function putObject(
     failures.push(failure);
   }
   throw new Error(`B2 PUT ${key} failed after ${PUT_ATTEMPTS} attempts: ${failures.join(' | ')}`);
-}
-
-/** HEAD an object — returns null if 404, response otherwise. */
-export async function headObject(
-  cfg: B2Config,
-  key: string,
-): Promise<Response | null> {
-  const url = `https://${cfg.endpoint}/${cfg.bucket}/${encodeURI(key)}`;
-  const payloadHash = await sha256Hex('');
-  const req: SignedRequest = {
-    url,
-    method: 'HEAD',
-    headers: {},
-  };
-  await signRequest(cfg, req, payloadHash, new Date());
-  const res = await fetch(url, { method: 'HEAD', headers: req.headers });
-  if (res.status === 404) return null;
-  if (!res.ok) {
-    throw new Error(`B2 HEAD ${key} failed: ${res.status}`);
-  }
-  return res;
 }

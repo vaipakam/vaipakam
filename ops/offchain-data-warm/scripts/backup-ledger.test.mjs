@@ -14,6 +14,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 
 import { isBackblazeHost, requireScope } from './lib/b2-native.mjs';
+import { fakeB2 as makeFakeB2 } from './test-helpers/fake-b2.mjs';
 import {
   ENTRY_RETENTION_DAYS,
   NOT_DIGESTED,
@@ -39,6 +40,10 @@ import {
 } from './lib/ledger-rules.mjs';
 import { ARCHIVE_KEY_SCOPE, LEDGER_KEY_SCOPE, runWatcher } from './backup-ledger.mjs';
 import { MAX_MANIFEST_BYTES, MAX_STORED_ARCHIVE_BYTES } from '../src/limits.ts';
+import { PK_SCHEME, parseRecipientsFile, recipientSetAt, sealArchive } from '../src/archiveFormat.ts';
+import { HEAD_BYTES, PK_FORMAT, headerCheck, readEntryInfo } from './lib/ledger-rules.mjs';
+import { readFileSync } from 'node:fs';
+import { testRecipient } from './test-helpers/keys.mjs';
 
 const DAY = 86_400_000;
 const NOW = Date.UTC(2026, 9, 28, 4, 17); // 2026-10-28 04:17 UTC
@@ -331,139 +336,7 @@ test('only Backblaze hosts over https are called', () => {
 
 // ── Whole runs, against an in-memory B2 ─────────────────────────────────
 
-/**
- * Enough of B2's native API for the watcher: authorize, versioned listing
- * with (name, id) paging, download by id, upload with file info and a
- * compliance retention (refused on a bucket without Object Lock), and a
- * retention update that may only lengthen.
- */
-function fakeB2({ pageSize = 2 } = {}) {
-  const buckets = new Map();
-  const keys = new Map();
-  let ids = 0;
-  let clock = NOW - 10 * DAY;
-  const api = 'https://api005.backblazeb2.com';
-  const dl = 'https://f005.backblazeb2.com';
-  const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
-  const keyOf = (auth) => keys.get(auth);
-
-  const b2 = {
-    downloads: [],
-    // Faults to inject, each used once: {match(path), status, store}. With
-    // `store`, the request takes effect and the answer is still the error, as
-    // B2 can do.
-    faults: [],
-    bucket(name, { lock = false } = {}) {
-      buckets.set(name, { id: `bkt-${name}`, name, lock, versions: [], bytes: new Map() });
-      return b2;
-    },
-    key(id, { bucket, capabilities, namePrefix = null }) {
-      keys.set(id, { id, bucket, capabilities, namePrefix });
-      return b2;
-    },
-    put(bucketName, fileName, body, at) {
-      const b = buckets.get(bucketName);
-      const fileId = `4_z${b.id}_f${++ids}`;
-      const bytes = Buffer.from(body);
-      b.versions.push({ action: 'upload', fileName, fileId, uploadTimestamp: at ?? (clock += 1000), contentLength: bytes.byteLength, fileInfo: {}, fileRetention: null });
-      b.bytes.set(fileId, bytes);
-      return fileId;
-    },
-    hide(bucketName, fileName) {
-      buckets.get(bucketName).versions.push({ action: 'hide', fileName, fileId: `4_zh${++ids}`, uploadTimestamp: (clock += 1000), fileInfo: {} });
-    },
-    remove(bucketName, match) {
-      const b = buckets.get(bucketName);
-      b.versions = b.versions.filter((v) => !match(v));
-    },
-    versions(bucketName) {
-      return buckets.get(bucketName).versions;
-    },
-    async fetch(url, init = {}) {
-      const u = new URL(url);
-      const i = b2.faults.findIndex((f) => f.match(u.pathname, init));
-      if (i >= 0) {
-        const [f] = b2.faults.splice(i, 1);
-        if (f.store) await b2.handle(url, init);
-        return json({ code: 'internal_error', message: 'incident' }, f.status);
-      }
-      return b2.handle(url, init);
-    },
-    async handle(url, init = {}) {
-      const u = new URL(url);
-      if (u.pathname.endsWith('/b2_authorize_account')) {
-        const [id] = Buffer.from(init.headers.Authorization.slice(6), 'base64').toString().split(':');
-        const k = keys.get(id);
-        if (!k) return json({ message: 'bad key' }, 401);
-        const b = buckets.get(k.bucket);
-        return json({
-          accountId: 'acct',
-          authorizationToken: id,
-          apiInfo: { storageApi: { apiUrl: api, downloadUrl: dl, capabilities: k.capabilities, bucketId: b.id, bucketName: b.name, namePrefix: k.namePrefix } },
-        });
-      }
-      const k = keyOf(init.headers?.Authorization) ?? null;
-      const b = k && buckets.get(k.bucket);
-      if (u.pathname.endsWith('/b2_list_file_versions')) {
-        const body = JSON.parse(init.body);
-        const sorted = b.versions
-          .filter((v) => v.fileName.startsWith(body.prefix))
-          .sort((x, y) => (x.fileName < y.fileName ? -1 : x.fileName > y.fileName ? 1 : y.uploadTimestamp - x.uploadTimestamp));
-        let start = 0;
-        if (body.startFileName) start = sorted.findIndex((v) => v.fileName === body.startFileName && (!body.startFileId || v.fileId === body.startFileId));
-        const page = sorted.slice(start, start + pageSize);
-        const next = sorted[start + pageSize];
-        const canRead = k.capabilities.includes('readFileRetentions');
-        return json({
-          files: page.map((v) => ({ ...v, fileRetention: { isClientAuthorizedToRead: canRead, value: canRead ? v.fileRetention : null } })),
-          nextFileName: next?.fileName ?? null,
-          nextFileId: next?.fileId ?? null,
-        });
-      }
-      if (u.pathname.endsWith('/b2_download_file_by_id')) {
-        b2.downloads.push(u.searchParams.get('fileId'));
-        const bytes = b.bytes.get(u.searchParams.get('fileId'));
-        return bytes ? new Response(bytes) : json({ message: 'not found' }, 404);
-      }
-      if (u.pathname.endsWith('/b2_get_upload_url')) {
-        // B2 hands out upload URLs on its pod hosts, under backblaze.com.
-        return json({ uploadUrl: `https://pod-000-1005-03.backblaze.com/upload/${b.name}`, authorizationToken: k.id });
-      }
-      if (u.pathname.startsWith('/upload/')) {
-        if (!k.capabilities.includes('writeFiles')) return json({ message: 'unauthorized' }, 401);
-        if (init.headers['X-Bz-File-Retention-Mode'] && !b.lock) return json({ message: 'file lock is not enabled' }, 400);
-        const fileInfo = {};
-        for (const [h, v] of Object.entries(init.headers)) if (h.startsWith('X-Bz-Info-')) fileInfo[h.slice(10)] = decodeURIComponent(v);
-        // B2's own limit on an Object Lock bucket: the name and the file info
-        // together, at most 2,048 bytes.
-        const infoBytes = Buffer.byteLength(decodeURIComponent(init.headers['X-Bz-File-Name'])) + Object.entries(fileInfo).reduce((n, [k, v]) => n + Buffer.byteLength(k) + Buffer.byteLength(v), 0);
-        if (b.lock && infoBytes > 2048) return json({ message: `file name and info are ${infoBytes} bytes, over 2048` }, 400);
-        const fileId = `4_z${b.id}_f${++ids}`;
-        b.versions.push({
-          action: 'upload',
-          fileName: decodeURIComponent(init.headers['X-Bz-File-Name']),
-          fileId,
-          uploadTimestamp: b2.now ?? NOW,
-          contentLength: Buffer.byteLength(init.body),
-          contentSha1: createHash('sha1').update(init.body).digest('hex'),
-          fileInfo,
-          fileRetention: { mode: init.headers['X-Bz-File-Retention-Mode'], retainUntilTimestamp: Number(init.headers['X-Bz-File-Retention-Retain-Until-Timestamp']) },
-        });
-        b.bytes.set(fileId, Buffer.from(init.body));
-        return json({ fileId });
-      }
-      if (u.pathname.endsWith('/b2_update_file_retention')) {
-        const body = JSON.parse(init.body);
-        const v = b.versions.find((x) => x.fileId === body.fileId);
-        if (body.fileRetention.retainUntilTimestamp < v.fileRetention.retainUntilTimestamp) return json({ message: 'cannot shorten' }, 403);
-        v.fileRetention = { ...body.fileRetention };
-        return json({ fileId: v.fileId });
-      }
-      return json({ message: `unhandled ${u.pathname}` }, 500);
-    },
-  };
-  return b2;
-}
+const fakeB2 = (opts = {}) => makeFakeB2({ now: NOW, ...opts });
 
 const ENV = {
   B2_ARCHIVE_READ_KEY_ID: 'reader',
@@ -843,4 +716,139 @@ test('the nightly\'s PUT retries a transient B2 failure and gives up on a refusa
   assert.equal(refused.seen.length, 1);
   const down = answers(Array(PUT_ATTEMPTS).fill(503));
   await assert.rejects(putObject(cfg, 'k', body, 'application/json', { fetchImpl: down.fetchImpl, sleep }), new RegExp(`after ${PUT_ATTEMPTS} attempts`));
+});
+
+// ── The public-key format (#1463) ───────────────────────────────────────
+
+const RECIPIENTS = parseRecipientsFile(JSON.parse(readFileSync(new URL('../backup-recipients/recipients.json', import.meta.url), 'utf8')));
+// After the committed set 1 took effect, so its archives are judged against it.
+const NOV = Date.UTC(2026, 11, 10, 4, 17); // 2026-12-10 04:17 UTC
+const STRANGER = testRecipient('stranger');
+
+/** An archive the slice-2 nightly would write, sealed to the committed set unless told otherwise. */
+async function sealedNightly(b2, tier, period, nonce, at, { set, createdAt = new Date(at - 60_000).toISOString(), encryption = PK_SCHEME } = {}) {
+  const bytes = Buffer.from(
+    await sealArchive({
+      set: set ?? recipientSetAt(RECIPIENTS, at),
+      plaintext: new TextEncoder().encode(JSON.stringify({ version: 1, createdAt })),
+      tier,
+      period,
+      createdAt,
+    }),
+  );
+  const [ap, mp] = { daily: ['archives/', 'manifests/'], monthly: ['archives-monthly/', 'manifests-monthly/'], yearly: ['archives-yearly/', 'manifests-yearly/'] }[tier];
+  const fileId = b2.put('vaipakam-offchain-data-warm', `${ap}${period}/${nonce}.bin`, bytes, at);
+  b2.put('vaipakam-offchain-data-warm', `${mp}${period}/${nonce}.json`, JSON.stringify({ archive: { sha256: sha(bytes), byteLength: bytes.length, encryption } }), at + 1000);
+  return { fileId, bytes };
+}
+
+/**
+ * A world in December: the November monthly in the old format, written before
+ * slice 2, and the December monthly in the new one, the switch.
+ */
+async function novemberWorld() {
+  const b2 = world();
+  nightly(b2, 'monthly', '2026-11', 'd'.repeat(32), 'november', Date.UTC(2026, 10, 1, 3, 18));
+  await sealedNightly(b2, 'monthly', '2026-12', 'e'.repeat(32), Date.UTC(2026, 11, 1, 3, 18));
+  return b2;
+}
+
+const entryOf = (b2, fileId) => b2.versions('vaipakam-offchain-backup-ledger').find((v) => v.fileName.endsWith(`/${fileId}.json`));
+
+test('the header check reads the format from the bytes and judges it against the set in force', async () => {
+  const at = NOV - DAY;
+  const createdAt = new Date(at - 60_000).toISOString();
+  const seal = (over = {}) => sealArchive({ set: recipientSetAt(RECIPIENTS, at), plaintext: new Uint8Array(4), tier: 'daily', period: '2026-12-09', createdAt, ...over });
+  const judgeBytes = (bytes, over = {}) =>
+    headerCheck({ head: Buffer.from(bytes).subarray(0, HEAD_BYTES), length: bytes.length, tier: 'daily', period: '2026-12-09', uploadTimestamp: at, ...over }, RECIPIENTS);
+  assert.deepEqual(judgeBytes(await seal()), { verdict: 'ok', reason: null });
+  assert.equal(judgeBytes(Buffer.from('an old symmetric archive')).verdict, 'none');
+  assert.equal(judgeBytes((await seal()).subarray(0, 40)).verdict, 'malformed');
+  assert.equal(judgeBytes(await seal(), { period: '2026-12-08' }).verdict, 'wrong-period');
+  assert.equal(judgeBytes(await seal({ set: { set: 1, effectiveFrom: '2026-11-04T00:00:00.000Z', recipients: [STRANGER.recipient] } })).verdict, 'wrong-recipients');
+  // Before the first set took effect no archive in this format is expected.
+  const early = Date.UTC(2026, 10, 2, 3, 18);
+  const earlyBytes = await sealArchive({ set: RECIPIENTS.sets[0], plaintext: new Uint8Array(4), tier: 'daily', period: '2026-11-02', createdAt: new Date(early - 60_000).toISOString() });
+  assert.equal(judgeBytes(earlyBytes, { period: '2026-11-02', uploadTimestamp: early }).verdict, 'wrong-recipients');
+});
+
+test('a manifest must declare the format its archive\'s bytes are in', () => {
+  const archive = { sha256: sha('x'), length: 1 };
+  const manifest = (encryption) => [{ bytes: Buffer.from(JSON.stringify({ archive: { sha256: archive.sha256, byteLength: 1, encryption } })) }];
+  assert.deepEqual(manifestCheck({ ...archive, pk: true }, manifest(PK_SCHEME)).check, 'match');
+  assert.equal(manifestCheck({ ...archive, pk: true }, manifest(PK_SCHEME)).format, PK_FORMAT);
+  assert.equal(manifestCheck({ ...archive, pk: true }, manifest('AES-256-GCM')).check, 'format-mismatch');
+  assert.equal(manifestCheck({ ...archive, pk: false }, manifest(PK_SCHEME)).check, 'format-mismatch');
+  // The bytes decide the format even when there is no manifest to read.
+  assert.equal(manifestCheck({ ...archive, pk: true }, []).format, PK_FORMAT);
+});
+
+test('an entry written before slice 2 carries no header verdict and still reads; an unknown verdict does not', () => {
+  const old = entryVersion();
+  assert.equal(readEntryInfo(old, parseEntryName(old.fileName)).header, '-');
+  const odd = entryVersion();
+  odd.fileInfo.header = 'trust-me';
+  assert.equal(readEntryInfo(odd, parseEntryName(odd.fileName)), null);
+});
+
+test('a public-key archive to the set in force is recorded with its format and header, and pages nothing', async () => {
+  const b2 = await novemberWorld();
+  const { fileId } = await sealedNightly(b2, 'daily', '2026-12-09', N1, NOV - DAY);
+  const r = await run(b2, { now: NOV });
+  assert.deepEqual(r.live, []);
+  const e = entryOf(b2, fileId);
+  assert.equal(e.fileInfo.format, PK_FORMAT);
+  assert.equal(e.fileInfo.header, 'ok');
+  assert.equal(e.fileInfo.check, 'match');
+  // The watcher keeps no more of an archive than its header bound.
+  assert.ok(HEAD_BYTES < 20_000);
+});
+
+test('a public-key archive to other recipients is a mismatch', async () => {
+  const b2 = await novemberWorld();
+  const wrongKey = await sealedNightly(b2, 'daily', '2026-12-09', N1, NOV - DAY, { set: { set: 1, effectiveFrom: '2026-11-04T00:00:00.000Z', recipients: [STRANGER.recipient] } });
+  const r = await run(b2, { now: NOV });
+  const keys = r.live.flatMap((p) => p.keys);
+  assert.ok(keys.includes(`header:${wrongKey.fileId}`), keys.join(','));
+  assert.match(r.live.find((p) => p.keys.includes(`header:${wrongKey.fileId}`)).text, /recipient set in force/);
+  assert.equal(entryOf(b2, wrongKey.fileId).fileInfo.header, 'wrong-recipients');
+});
+
+test('an archive whose header disagrees with its name is a mismatch', async () => {
+  const b2 = await novemberWorld();
+  // Sealed for 2026-11-08, uploaded under 2026-11-09.
+  const at = NOV - DAY;
+  const bytes = Buffer.from(await sealArchive({ set: recipientSetAt(RECIPIENTS, at), plaintext: new Uint8Array(4), tier: 'daily', period: '2026-12-08', createdAt: '2026-12-08T03:17:00.000Z' }));
+  const fileId = b2.put('vaipakam-offchain-data-warm', `archives/2026-12-09/${N1}.bin`, bytes, at);
+  b2.put('vaipakam-offchain-data-warm', `manifests/2026-12-09/${N1}.json`, JSON.stringify({ archive: { sha256: sha(bytes), byteLength: bytes.length, encryption: PK_SCHEME } }), at + 1000);
+  const r = await run(b2, { now: NOV });
+  assert.ok(r.live.some((p) => p.keys.includes(`header:${fileId}`)), JSON.stringify(r.live));
+  assert.equal(entryOf(b2, fileId).fileInfo.header, 'wrong-period');
+});
+
+test('a manifest declaring the old format beside a public-key archive is a mismatch', async () => {
+  const b2 = await novemberWorld();
+  const { fileId } = await sealedNightly(b2, 'daily', '2026-12-09', N1, NOV - DAY, { encryption: 'AES-256-GCM' });
+  const r = await run(b2, { now: NOV });
+  assert.ok(r.live.some((p) => p.keys.includes(`mismatch:${fileId}`)), JSON.stringify(r.live));
+});
+
+test('an old-format archive after the switch pages; one before it does not', async () => {
+  const b2 = await novemberWorld(); // the switch: the December monthly, on the 1st
+  // November's last daily, before the switch, in the old format: fine.
+  const before = nightly(b2, 'daily', '2026-11-30', N2, 'before', Date.UTC(2026, 10, 30, 3, 18));
+  const after = nightly(b2, 'daily', '2026-12-09', N1, 'after', NOV - DAY);
+  const r = await run(b2, { now: NOV });
+  const keys = r.live.flatMap((p) => p.keys);
+  assert.ok(keys.includes(`old-format:${after}`), keys.join(','));
+  assert.ok(!keys.includes(`old-format:${before}`), keys.join(','));
+});
+
+test('two public-key archives with equal bytes are a replay, January pair or not', async () => {
+  const b2 = await novemberWorld();
+  const { bytes } = await sealedNightly(b2, 'monthly', '2027-01', N1, Date.UTC(2027, 0, 1, 3, 18));
+  const copy = b2.put('vaipakam-offchain-data-warm', `archives-yearly/2027/${N1}.bin`, bytes, Date.UTC(2027, 0, 1, 3, 19));
+  b2.put('vaipakam-offchain-data-warm', `manifests-yearly/2027/${N1}.json`, JSON.stringify({ archive: { sha256: sha(bytes), byteLength: bytes.length, encryption: PK_SCHEME } }), Date.UTC(2027, 0, 1, 3, 20));
+  const r = await run(b2, { now: Date.UTC(2027, 0, 2, 4, 17) });
+  assert.ok(r.live.some((p) => p.keys.includes(`replay:${copy}`)), JSON.stringify(r.live.map((p) => p.keys)));
 });

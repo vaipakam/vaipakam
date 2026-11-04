@@ -1,7 +1,9 @@
 /**
- * The archive's prefix families, and how the healthcheck addresses them.
+ * The archive's prefix families, and how the backup watcher addresses them.
  *
- * WHY THIS IS ITS OWN MODULE (#1476). The healthcheck used to hard-code
+ * WHY THIS IS ITS OWN MODULE (#1476). The Worker's weekly healthcheck
+ * (retired in #1463 slice 2; the daily ledger watcher,
+ * `scripts/backup-ledger.mjs`, is the reader now) used to hard-code
  * the daily prefix, so the monthly and yearly families — written by the
  * same backup pass, on the same credential, under the same threat model
  * — were never examined by anything. A green weekly PASS therefore
@@ -310,7 +312,7 @@ export const TIERS: TierSpec[] = [
  * the pattern does not match `manifests-monthly/`, so it would leave the
  * prefix untouched and dereference a `.bin` under the MANIFEST prefix —
  * surfacing as a GET 404 reported as a missing archive, on a tier that
- * was perfectly healthy. A daily-only healthcheck could never hit it,
+ * was perfectly healthy. A daily-only check could never hit it,
  * which is exactly why extending to more tiers is where it would bite.
  */
 export function siblingArchiveKey(spec: TierSpec, manifestKey: string): string {
@@ -548,36 +550,5 @@ export function validateBaseline(
   return errors.length > 0
     ? { ok: false, baseline: checked, byTier, errors }
     : { ok: true, baseline: checked, byTier };
-}
-
-/**
- * The manifest to verify in full: newest in `period` whose archive still
- * exists.
- *
- * The surviving-archive filter is the point. `classifyListing`
- * deliberately tolerates one superseded manifest losing its pair, because
- * the period remains restorable through the other — and selecting the
- * newest of ALL manifests then picked that orphan and paged on its
- * missing sibling, failing on exactly the state declared benign one
- * function earlier. Two rules about the same tolerance, in two places,
- * disagreeing; this is the one place now.
- */
-export function newestVerifiableManifest<
-  T extends { key: string; lastModified: string },
->(
-  spec: TierSpec,
-  entries: T[],
-  archiveKeys: Set<string>,
-  period: string,
-): T | null {
-  const candidates = entries
-    .filter((e) => periodOf(spec, e.key) === period)
-    .filter((e) => archiveKeys.has(siblingArchiveKey(spec, e.key)));
-  if (candidates.length === 0) return null;
-  // Newest by LastModified — covers the "uploaded twice by an attacker"
-  // case where an honest and a malicious manifest share a period.
-  return candidates.slice().sort((a, b) =>
-    b.lastModified.localeCompare(a.lastModified),
-  )[0];
 }
 

@@ -1,70 +1,37 @@
 /**
  * Typed Worker environment.
  *
- * Two B2 key pairs are exposed — one write-scoped (the nightly
- * uploader), one read-scoped (the weekly healthcheck). The split is
- * a load-bearing security boundary: if the weekly healthcheck shared
- * the nightly uploader's write-only key, the healthcheck's signed
- * GETs would fail at B2's `Unauthorized` boundary every week even
- * when archives are intact (per the round-2 finding on PR #248).
- * Splitting the keys lets us keep the nightly path write-only
- * (so a CF compromise that exfiltrates the write key can't read past
- * archives) AND lets the weekly healthcheck actually fetch + verify.
- * Loss of EITHER scoped key has bounded blast-radius:
- *   - write-key compromise: attacker can corrupt FUTURE backups but
- *     cannot read past archives (no readFiles) and cannot delete
- *     them (no deleteFiles). The immutable-naming nonce + the
- *     weekly healthcheck catch new corrupt uploads.
- *   - read-key compromise: attacker can read past archives but they
- *     are AES-256-GCM ciphertext; the encryption key lives offline
- *     and is not in CF or B2.
+ * The Worker is WRITE-ONLY in every sense (#1463, #1469; design:
+ * docs/DesignsAndPlans/BackupSecurityDesign.md §4):
  *
- * The CryptoKey field doesn't exist on the raw Cloudflare `Env` —
- * it's derived once at Worker boot from the `BACKUP_ENCRYPTION_KEY`
- * secret and threaded through the rest of the pipeline as a
- * non-extractable WebCrypto handle.
+ *   - It holds ONE B2 key, write-scoped (`listBuckets` + `writeFiles`). It
+ *     cannot list, read or delete an archive, and it never learns an existing
+ *     archive's name.
+ *   - It holds NO decryption key. Each archive is encrypted to the recipient
+ *     public keys committed in `backup-recipients/recipients.json` and bundled
+ *     at build time; the private keys are offline. So a compromise of this
+ *     Worker yields no plaintext from any archive it wrote.
+ *
+ * The read key, the weekly healthcheck that used it and the symmetric
+ * `BACKUP_ENCRYPTION_KEY` were removed in slice 2. The checks the healthcheck
+ * made now run in the backup watcher (`scripts/backup-ledger.mjs`), outside
+ * Cloudflare, under its own keys.
  */
 
 export interface Env {
-  // D1 bindings — read-only (the Worker never writes).
+  // D1 binding — read-only (the Worker never writes).
   DB_ARCHIVE: D1Database;
   // R2 binding — read-only (the Worker never writes to legal-vault).
   R2_LEGAL_VAULT: R2Bucket;
-  // Vars (set in wrangler.jsonc).
+  // Operator-configured (wrangler secret put; see wrangler.jsonc for why).
   B2_ENDPOINT: string;
   B2_BUCKET: string;
   TG_OPS_CHAT_ID: string;
-  // Secrets (wrangler secret put).
-  BACKUP_ENCRYPTION_KEY: string;
-  // Write-scoped B2 Application Key (capabilities:
-  // listBuckets + writeFiles; bucket-scoped — NOT listFiles, #1450 r27).
-  // Used by the nightly backup path. A CF compromise exfiltrating
-  // these keys cannot read or delete past archives.
+  // Write-scoped B2 Application Key (capabilities: listBuckets + writeFiles;
+  // bucket-scoped — NOT listFiles, #1450 r27). A compromise exfiltrating it
+  // can write FUTURE archives (each one caught by the watcher as an extra
+  // version or an ambiguous period) and cannot read, list or delete any.
   B2_WRITE_ACCESS_KEY_ID: string;
   B2_WRITE_SECRET_ACCESS_KEY: string;
-  // Read-scoped B2 Application Key (capabilities:
-  // listBuckets + listFiles + readFiles; bucket-scoped).
-  // Used by the weekly healthcheck path only. A CF compromise
-  // exfiltrating these keys yields AES ciphertext only — the
-  // archive plaintext stays protected by the offline encryption
-  // key.
-  B2_READ_ACCESS_KEY_ID: string;
-  B2_READ_SECRET_ACCESS_KEY: string;
-  /**
-   * The first monthly / yearly archive this deployment wrote — DECLARED,
-   * `YYYY-MM` and `YYYY`. Optional, and optional on purpose: a fresh
-   * deployment has none to state.
-   *
-   * They exist because the healthcheck otherwise derives its expectations
-   * from the archives that survived, which cannot notice that the OLDEST
-   * ones were deleted — and with a family emptied, cannot notice anything
-   * at all. Set these once the first cut of each kind has been written;
-   * until then the weekly report says its deletion detection is degraded
-   * rather than implying full coverage.
-   */
-  ARCHIVE_FIRST_MONTHLY?: string;
-  ARCHIVE_FIRST_YEARLY?: string;
   TG_OPS_BOT_TOKEN: string;
-  // Derived at boot — not a binding, attached by `withEncryptionKey`.
-  encryptionKey: CryptoKey;
 }

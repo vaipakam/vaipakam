@@ -3,9 +3,11 @@
  * trigger; the cron handler in `index.ts` calls
  * `runNightlyBackup(env)`.
  *
- * Output: one client-side-encrypted archive uploaded to Backblaze B2
- * per night, plus a manifest object that the weekly healthcheck reads
- * to verify the archive's SHA-256 still matches.
+ * Output: one archive per tier due that night (daily always, monthly on
+ * the 1st, yearly on 1 January), each encrypted to the committed recipient
+ * public keys (`./archiveFormat`, `./recipients`) so the Worker cannot read
+ * it back, and each with a manifest the backup watcher compares with the
+ * archive's bytes (`scripts/backup-ledger.mjs`).
  *
  * Per the design doc §3.1, the archive carries the union of:
  *   - "Born-off-chain" D1 tables (MUST-back-up): diag_errors,
@@ -23,10 +25,13 @@
  * silently re-importing into the wrong shape.
  */
 
-import { encrypt, sha256Hex } from './crypto';
+import { PK_SCHEME, sealArchive, type ArchiveTier } from './archiveFormat';
+import { sha256Hex } from './crypto';
+import { recipientSetForRun } from './recipients';
 import type { B2Config } from './b2';
 import { putObject } from './b2';
 import { MAX_ARCHIVE_BYTES } from './limits';
+import { TIERS } from './tiers';
 import type { Env } from './env';
 
 interface TableExport {
@@ -50,7 +55,9 @@ interface Manifest {
   archive: {
     sha256: string;
     byteLength: number;
-    encryption: 'AES-256-GCM';
+    encryption: typeof PK_SCHEME;
+    /** The `set` number in backup-recipients/recipients.json. */
+    recipientSet: number;
   };
   d1: {
     archive: { table: string; rowCount: number; schemaHash: string }[];
@@ -241,11 +248,23 @@ async function schemaHash(
   return sha256Hex(new TextEncoder().encode(normalised));
 }
 
+/**
+ * One archive the run wrote, as the nightly report names it. Deliberately no
+ * object name: the random nonce in the name is what keeps a leaked write key
+ * from overwriting the archive, so it is never logged or posted (design §4).
+ * The SHA-256 is enough to match the archive against the watcher's ledger.
+ */
+export interface WrittenArchive {
+  tier: ArchiveTier;
+  period: string;
+  bytes: number;
+  sha256: string;
+}
+
 export interface BackupRunOutput {
-  manifestKey: string;
-  archiveKey: string;
-  archiveBytes: number;
-  archiveSha256: string;
+  archives: WrittenArchive[];
+  /** The recipient set every archive of this run is encrypted to. */
+  recipientSet: number;
   rowsBackedUp: number;
   r2ObjectsBackedUp: number;
   durationMs: number;
@@ -318,61 +337,56 @@ export async function runNightlyBackup(env: Env, b2Cfg: B2Config): Promise<Backu
   // 2. Export the R2 legal-vault.
   const r2Objects = await exportR2Bucket(env.R2_LEGAL_VAULT);
 
-  // 3+4. Build the canonical archive blob + its manifest. Extracted
-  //    as a local helper because the Jan-1 run needs a SECOND build
-  //    with a different table set (see the yearly-tier note below).
+  // 3+4. Serialize, then seal once per tier. The recipient set is chosen
+  //    once, at the start of the run, which is also the time every header
+  //    and plaintext states as `createdAt`; the watcher judges the header
+  //    against the set in force then.
   //    JSON is fine at this scale (≤ 10 GB year-1); if archive size
   //    becomes a bottleneck a future PR can swap to a streaming
   //    format (NDJSON line-delimited + Reader-aware encryption).
-  const createdAt = new Date().toISOString();
-  const buildPayload = async (tables: TableExport[]) => {
-    const archiveObj = {
-      version: 1,
-      createdAt,
-      d1: { archive: tables },
-      r2: { bucket: 'vaipakam-legal-vault', objects: r2Objects },
-    };
-    const plaintext = new TextEncoder().encode(JSON.stringify(archiveObj));
-
-    // Memory ceiling — checked BEFORE encrypt because encryption
-    // doubles peak memory (plaintext + ciphertext both resident at
-    // ~equal size; AES-GCM ciphertext is plaintext + 28 bytes IV+tag).
-    // A post-encryption check is too late — the encrypt() call itself
-    // would OOM the isolate first. Comparing plaintext bytes against
-    // the encrypted budget MAX_ARCHIVE_BYTES is conservative by ~28
-    // bytes (plaintext < ciphertext) — safe direction. The 128 MB
-    // isolate cap is the hard ceiling; 100 MB target leaves headroom
-    // for stack + transient buffers.
+  const createdAt = new Date(startedAt).toISOString();
+  const recipientSet = recipientSetForRun(startedAt);
+  const serialize = (tables: TableExport[]): Uint8Array => {
+    const plaintext = new TextEncoder().encode(
+      JSON.stringify({
+        version: 1,
+        createdAt,
+        d1: { archive: tables },
+        r2: { bucket: 'vaipakam-legal-vault', objects: r2Objects },
+      }),
+    );
+    // Memory ceiling — checked BEFORE encryption, which holds the plaintext
+    // and the ciphertext at once; a post-encryption check would be too late,
+    // because the encrypt call itself would exhaust the isolate first. The
+    // stored archive is the plaintext plus the format's bounded overhead
+    // (MAX_STORED_ARCHIVE_BYTES in ./limits).
     if (plaintext.byteLength > MAX_ARCHIVE_BYTES) {
       throw new Error(
         `BACKUP ABORT: archive plaintext size ${plaintext.byteLength} bytes ` +
         `exceeds MAX_ARCHIVE_BYTES (${MAX_ARCHIVE_BYTES}). Cloudflare Workers' ` +
-        `128 MB isolate cap means encrypt() would OOM the Worker. Time to ship ` +
+        `128 MB isolate cap means encryption would exhaust the Worker. Time to ship ` +
         `the streaming implementation (Stage A.1 follow-up).`,
       );
     }
+    return plaintext;
+  };
 
-    // `TextEncoder().encode(...).buffer` is `ArrayBufferLike` in TS's
-    // strict typings (it could be a SharedArrayBuffer in theory).
-    // WebCrypto wants a plain ArrayBuffer; slice(0) returns one
-    // explicitly without an extra copy beyond the bytes we already own.
-    const encrypted = await encrypt(
-      env.encryptionKey,
-      plaintext.buffer.slice(0) as ArrayBuffer,
-    );
-    const archiveSha = await sha256Hex(encrypted);
-
-    // Manifest — small, unencrypted (the healthcheck reads it
-    // without the key). Carries only metadata: row counts, schema
-    // hashes, archive SHA-256. No plaintext data.
+  // One archive: sealed to the recipients, digested, and given its manifest.
+  // The manifest is small and unencrypted: metadata only (row counts, schema
+  // hashes, the archive's SHA-256), no plaintext data. The backup watcher
+  // compares it with the bytes it downloads.
+  const seal = async (tables: TableExport[], plaintext: Uint8Array, tier: ArchiveTier, period: string) => {
+    const archive = await sealArchive({ set: recipientSet, plaintext, tier, period, createdAt });
+    const archiveSha = await sha256Hex(archive);
     const manifest: Manifest = {
       version: 1,
       createdAt,
-      schemaVersion: 1,
+      schemaVersion: 2,
       archive: {
         sha256: archiveSha,
-        byteLength: encrypted.byteLength,
-        encryption: 'AES-256-GCM',
+        byteLength: archive.byteLength,
+        encryption: PK_SCHEME,
+        recipientSet: recipientSet.set,
       },
       d1: {
         archive: await Promise.all(
@@ -389,133 +403,89 @@ export async function runNightlyBackup(env: Env, b2Cfg: B2Config): Promise<Backu
         totalBytes: r2Objects.reduce((acc, o) => acc + o.size, 0),
       },
     };
-    return { encrypted, archiveSha, manifest };
+    return { archive, archiveSha, manifest };
   };
 
-  // 5. Upload — archive first, then manifest. Reverse-order failure
-  //    means a missing manifest with an existing archive (harmless;
-  //    a later GC sweep cleans the orphan via the lifecycle rule).
-  //    The opposite order would leave a manifest pointing at an
-  //    archive that didn't land, which the healthcheck would then
-  //    false-positive on.
+  // 5. Upload — archive first, then manifest. A failure between the two
+  //    leaves an archive without a manifest, which the backup watcher waits
+  //    for (MANIFEST_GRACE_MS) and then records as such. The opposite order
+  //    would leave a manifest naming an archive that never landed.
   //
-  // Tiered prefixes match the lifecycle rules set by
-  // `scripts/setup-backblaze.mjs`:
-  //   archives/<date>/<nonce>.bin         — daily, 30-day retention.
-  //   archives-monthly/<month>/<nonce>.bin — 1st-of-month, 365-day.
-  //   archives-yearly/<year>/<nonce>.bin   — Jan-1, no rule (indefinite).
+  // Tiered prefixes match the lifecycle rules in `bucket-lifecycle.json`:
+  //   archives/<date>/<nonce>.bin          — daily.
+  //   archives-monthly/<month>/<nonce>.bin — 1st of the month.
+  //   archives-yearly/<year>/<nonce>.bin   — 1 January, no rule (indefinite).
   //
-  // Object keys carry a random 16-byte nonce (32 hex chars) so the
-  // SAME date/month/year written twice produces two DIFFERENT keys.
-  // This blocks a write-only-key attacker from overwriting an
-  // existing archive: their PUT lands at a new key, the original
-  // file survives, and the healthcheck's manifest-vs-archive
-  // verification catches the divergence. Without the nonce, a
-  // single PUT to `archives/2026-05-23.bin` with garbage bytes
-  // would silently replace the previous night's data — write-only
-  // alone doesn't defend against in-place overwrite.
-  //
-  // The same nonce is shared by an archive and its manifest so the
-  // healthcheck can pair them deterministically (`archives/<d>/<n>.bin`
-  // ↔ `manifests/<d>/<n>.json`).
+  // Every archive gets its OWN random 16-byte nonce (32 hex chars), shared
+  // only with its manifest. The write key cannot list the bucket, and the
+  // nonce is now written nowhere the Worker or Cloudflare keeps (it is not
+  // logged and not in the ops message), so overwriting an archive in place
+  // means guessing a 128-bit value; a write to a new name is caught by the
+  // watcher as an ambiguous period (design §4).
   const dateKey = createdAt.slice(0, 10); // YYYY-MM-DD
   const monthKey = createdAt.slice(0, 7); // YYYY-MM
-  const yearKey = createdAt.slice(0, 4);  // YYYY
+  const yearKey = createdAt.slice(0, 4); // YYYY
   const isFirstOfMonth = dateKey.endsWith('-01');
   const isFirstOfYear = dateKey.endsWith('-01-01');
-
-  // 16-byte cryptographic nonce → 32 hex chars. crypto.getRandomValues
-  // is the same source WebCrypto's encrypt() draws from internally,
-  // so we don't add any new entropy assumption.
-  const nonceBytes = crypto.getRandomValues(new Uint8Array(16));
-  let nonceHex = '';
-  for (let i = 0; i < nonceBytes.length; i++) {
-    nonceHex += nonceBytes[i].toString(16).padStart(2, '0');
-  }
-
-  // DAILY tier (30-day retention) — the FULL table set, including
-  // support_tickets. Built, uploaded, then RELEASED before any
-  // long-tier build: holding two ciphertexts (plus the second
-  // build's plaintext) at once could push a well-under-the-guard
-  // archive past the 128 MB isolate cap on exactly the runs that
-  // build twice (Codex round-5 P2).
-  const archiveKey = `archives/${dateKey}/${nonceHex}.bin`;
-  const manifestKey = `manifests/${dateKey}/${nonceHex}.json`;
-  let daily: Awaited<ReturnType<typeof buildPayload>> | null =
-    await buildPayload(archiveTables);
-  const archiveSha256 = daily.archiveSha;
-  const archiveBytes = daily.encrypted.byteLength;
-  await putObject(b2Cfg, archiveKey, daily.encrypted, 'application/octet-stream');
-  await putObject(
-    b2Cfg,
-    manifestKey,
-    new TextEncoder().encode(JSON.stringify(daily.manifest, null, 2)),
-    'application/json',
-  );
-  daily = null; // release the first ciphertext before any second build
-
-  // LONG tiers (monthly: 365-day lifecycle; yearly: NO rule,
-  // indefinite) — built as ONE separate payload that EXCLUDES
-  // `support_tickets`. The Privacy Policy promises tickets are
-  // deleted no later than 12 months after submission; a ticket
-  // caught by a monthly cut can outlive that by ~a month (Codex
-  // round-5 P1) and an indefinite yearly copy would keep it forever.
-  // With the exclusion, a ticket's backup copies live ONLY in the
-  // 30-day daily tier — at most 30 days past its D1 deletion.
-  // Everything else in the long tiers (legal-hold audit trail etc.)
-  // is exactly the data they exist for.
-  if (isFirstOfMonth || isFirstOfYear) {
-    let longTier: Awaited<ReturnType<typeof buildPayload>> | null =
-      await buildPayload(
-        archiveTables.filter((t) => t.name !== 'support_tickets'),
-      );
-    const longManifestBody = new TextEncoder().encode(
-      JSON.stringify(longTier.manifest, null, 2),
+  const written: WrittenArchive[] = [];
+  const upload = async (tier: ArchiveTier, period: string, sealed: Awaited<ReturnType<typeof seal>>) => {
+    const nonce = newNonce();
+    // The prefixes are the tier table's, the one the watcher reads too.
+    const spec = TIERS.find((t) => t.tier === tier)!;
+    await putObject(b2Cfg, `${spec.archivePrefix}${period}/${nonce}.bin`, sealed.archive, 'application/octet-stream');
+    await putObject(
+      b2Cfg,
+      `${spec.manifestPrefix}${period}/${nonce}.json`,
+      new TextEncoder().encode(JSON.stringify(sealed.manifest, null, 2)),
+      'application/json',
     );
-    if (isFirstOfMonth) {
-      await putObject(
-        b2Cfg,
-        `archives-monthly/${monthKey}/${nonceHex}.bin`,
-        longTier.encrypted,
-        'application/octet-stream',
-      );
-      await putObject(
-        b2Cfg,
-        `manifests-monthly/${monthKey}/${nonceHex}.json`,
-        longManifestBody,
-        'application/json',
-      );
-    }
-    if (isFirstOfYear) {
-      await putObject(
-        b2Cfg,
-        `archives-yearly/${yearKey}/${nonceHex}.bin`,
-        longTier.encrypted,
-        'application/octet-stream',
-      );
-      await putObject(
-        b2Cfg,
-        `manifests-yearly/${yearKey}/${nonceHex}.json`,
-        longManifestBody,
-        'application/json',
-      );
-    }
-    longTier = null;
+    written.push({ tier, period, bytes: sealed.archive.byteLength, sha256: sealed.archiveSha });
+  };
+
+  // DAILY tier — the FULL table set, including support_tickets. Built,
+  // uploaded, then RELEASED before any long-tier build: holding two
+  // ciphertexts (plus the second build's plaintext) at once could push a
+  // well-under-the-guard archive past the 128 MB isolate cap on exactly the
+  // runs that build twice (Codex round-5 P2).
+  {
+    const plaintext = serialize(archiveTables);
+    await upload('daily', dateKey, await seal(archiveTables, plaintext, 'daily', dateKey));
   }
 
-  // The healthcheck looks up the most recent manifest under
-  // `manifests/<recent-date>/` via list-with-prefix (the read-scoped
-  // key can do that) and dereferences to its sibling archive. The
-  // BackupRunOutput surfaces the daily key — monthly / yearly
-  // siblings are reflected in the Telegram alert.
+  // LONG tiers (monthly and yearly) — ONE plaintext that EXCLUDES
+  // `support_tickets`. The Privacy Policy promises tickets are deleted no
+  // later than 12 months after submission; a ticket caught by a monthly cut
+  // could outlive that (Codex round-5 P1) and an indefinite yearly copy would
+  // keep it forever. With the exclusion, a ticket's backup copies live ONLY
+  // in the daily tier.
+  //
+  // The plaintext is shared; the encryption is not. Each tier is sealed on
+  // its own, with its own data key, IV, header and nonce, so the January
+  // monthly and the yearly are unrelated ciphertexts and the watcher's
+  // replay check needs no exception for them (design §5.3). They are sealed
+  // and uploaded one after the other, so at most one ciphertext is held
+  // beside the plaintext.
+  if (isFirstOfMonth || isFirstOfYear) {
+    const longTables = archiveTables.filter((t) => t.name !== 'support_tickets');
+    const plaintext = serialize(longTables);
+    if (isFirstOfMonth) await upload('monthly', monthKey, await seal(longTables, plaintext, 'monthly', monthKey));
+    if (isFirstOfYear) await upload('yearly', yearKey, await seal(longTables, plaintext, 'yearly', yearKey));
+  }
+
   const rowsBackedUp = archiveTables.reduce((a, t) => a + t.rowCount, 0);
   return {
-    manifestKey,
-    archiveKey,
-    archiveBytes,
-    archiveSha256,
+    archives: written,
+    recipientSet: recipientSet.set,
     rowsBackedUp,
     r2ObjectsBackedUp: r2Objects.length,
     durationMs: Date.now() - startedAt,
   };
+}
+
+/** A fresh 16-byte nonce as 32 hex characters. */
+function newNonce(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  let hex = '';
+  for (let i = 0; i < bytes.length; i++) hex += bytes[i].toString(16).padStart(2, '0');
+  return hex;
 }

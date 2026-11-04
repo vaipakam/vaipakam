@@ -1,5 +1,5 @@
 /**
- * Size limits shared by the nightly, the healthcheck and the backup watcher
+ * Size limits shared by the nightly and the backup watcher
  * (#1473). One copy, so the watcher's "larger than the nightly can write"
  * cannot drift from what the nightly actually writes.
  *
@@ -15,11 +15,13 @@
 export const MAX_ARCHIVE_BYTES = 100_000_000;
 
 /**
- * What the current (symmetric) format adds to the plaintext: a 12-byte IV
- * and a 16-byte GCM tag. The public-key format of slice 2 (#1463) changes
- * this and must update it with the format.
+ * The most the archive format (`./archiveFormat`, #1463) adds to the
+ * plaintext: the 11-byte prefix (magic and header length), a header of at
+ * most MAX_HEADER_BYTES (16,384) and the 16-byte GCM tag. Written out here
+ * rather than imported, so this file keeps importing nothing; a test pins it
+ * to the format's own constants.
  */
-export const ARCHIVE_FORMAT_OVERHEAD_BYTES = 28;
+export const ARCHIVE_FORMAT_OVERHEAD_BYTES = 11 + 16_384 + 16;
 
 /** The largest archive object the nightly can store. */
 export const MAX_STORED_ARCHIVE_BYTES = MAX_ARCHIVE_BYTES + ARCHIVE_FORMAT_OVERHEAD_BYTES;

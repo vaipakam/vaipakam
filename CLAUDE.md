@@ -1322,8 +1322,8 @@ artifacts and stay in their respective env / config:
 
 **Dashboard-managed vars survive a deploy — declared, not remembered.**
 Every Worker carrying operator-tuned vars (`apps/{agent,keeper,indexer}`,
-`ops/{mesh-watcher,offchain-data-warm}`) sets `"keep_vars": true` in its own
-`wrangler.jsonc`. Wrangler otherwise treats the config as the source of truth
+`ops/mesh-watcher`; `ops/offchain-data-warm` carried one until #1463) sets
+`"keep_vars": true` in its own `wrangler.jsonc`. Wrangler otherwise treats the config as the source of truth
 and DELETES any var absent from it on deploy — which for the keeper is
 `HF_SCALE` / the `LIQ_*` thresholds / `SPLIT_*` / `PARTIAL_LIQ_*`, and for the
 agent `RECIPIENT_VALIDATING_TOKENS` / `OPENSEA_OFFERS_MAX_PAGES`. It reads the

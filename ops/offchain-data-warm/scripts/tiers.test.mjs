@@ -1,7 +1,8 @@
 /**
  * node:test suite for src/tiers.ts (#1476).
  *
- * The healthcheck only ever examined the daily prefixes, so the monthly
+ * The Worker's healthcheck (retired in #1463 slice 2) only ever examined
+ * the daily prefixes, so the monthly
  * and yearly families were unverified by anything — and the retention
  * policy then justified the monthly floor with "the detector will catch
  * it". These tests cover the two parts of the fix most likely to be
@@ -23,7 +24,6 @@ import {
   yearKey,
   periodOf,
   classifyListing,
-  newestVerifiableManifest,
   siblingArchiveKey,
   summarisePeriods,
   MAX_LISTED_PERIODS,
@@ -527,46 +527,6 @@ test('a mistyped baseline is REJECTED, not silently obeyed', () => {
 
   // Unset stays legal — a fresh deployment has none to declare.
   assert.deepEqual(validateBaseline({}, now), { ok: true, baseline: {}, byTier: {} });
-});
-
-test('the newest-period candidate must have a SURVIVING archive', () => {
-  // `classifyListing` tolerates one superseded manifest losing its pair
-  // because the period stays restorable through the other. Selecting the
-  // newest of ALL manifests then picked that orphan and paged on its
-  // missing sibling — failing on exactly the state declared benign.
-  const entries = [
-    { key: 'manifests-monthly/2026-03/GOOD.json', lastModified: '2026-03-01T00:00:00Z' },
-    { key: 'manifests-monthly/2026-03/ORPHAN.json', lastModified: '2026-03-09T00:00:00Z' },
-  ];
-  const archives = new Set(['archives-monthly/2026-03/GOOD.bin']);
-  const picked = newestVerifiableManifest(tier('monthly'), entries, archives, '2026-03');
-  // The ORPHAN is newer and must still lose.
-  assert.equal(picked.key, 'manifests-monthly/2026-03/GOOD.json');
-});
-
-test('among SURVIVING manifests the newest still wins', () => {
-  // The attacker-uploaded-twice case the newest-first rule exists for
-  // must survive the added filter.
-  const entries = [
-    { key: 'manifests-monthly/2026-03/OLD.json', lastModified: '2026-03-01T00:00:00Z' },
-    { key: 'manifests-monthly/2026-03/NEW.json', lastModified: '2026-03-09T00:00:00Z' },
-  ];
-  const archives = new Set([
-    'archives-monthly/2026-03/OLD.bin',
-    'archives-monthly/2026-03/NEW.bin',
-  ]);
-  const picked = newestVerifiableManifest(tier('monthly'), entries, archives, '2026-03');
-  assert.equal(picked.key, 'manifests-monthly/2026-03/NEW.json');
-});
-
-test('a period whose manifests have NO surviving archive selects nothing', () => {
-  const entries = [
-    { key: 'manifests-monthly/2026-03/A.json', lastModified: '2026-03-01T00:00:00Z' },
-  ];
-  assert.equal(
-    newestVerifiableManifest(tier('monthly'), entries, new Set(), '2026-03'),
-    null,
-  );
 });
 
 test('an alert list is capped so the alert can actually be delivered', () => {
