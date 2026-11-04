@@ -14,7 +14,7 @@
 // bounded by the send deadline itself; this is the copy they share.
 
 import type { Abi, Address, PublicClient } from 'viem';
-import { deadlineClient, PastRunDeadline, settleBy, settledChunkedRead } from './batchRead';
+import { deadlineClient, PastRunDeadline, settleBy, settledGroupedRead } from './batchRead';
 import { readCutoffMs } from './runWindow';
 import { finalizedBlockOnce, type FinalBlock } from './scanCursors';
 
@@ -44,6 +44,9 @@ export async function boundedCall<T>(cutoff: number, what: string, work: () => P
 export function finalizedBy(cutoff: number, finalized: () => Promise<FinalBlock | null>): () => Promise<FinalBlock | null> {
   return () => boundedCall(cutoff, 'the finalized block', finalized).catch(() => null);
 }
+
+/** One read of the pass's contract: a function and its arguments. */
+export type ReadCall = { functionName: string; args: readonly unknown[] };
 
 /** The clients a pass reads through. */
 export interface PassReadClients {
@@ -95,25 +98,30 @@ export class PassReader {
 
   /** Many reads; `undefined` where a read did not come back. At the head, or
    *  at `blockNumber` when one is given. */
-  async many(calls: readonly { functionName: string; args: readonly unknown[] }[], label: string, blockNumber?: bigint): Promise<unknown[]> {
-    if (calls.length === 0) return [];
-    // Chunked from a point that moves with the run (`settledChunkedRead`),
+  async many(calls: readonly ReadCall[], label: string, blockNumber?: bigint): Promise<unknown[]> {
+    return (await this.groups(calls.map((c) => [c]), label, blockNumber)).map((g) => g[0]);
+  }
+
+  /** {@link many} over groups of calls that are only useful together; a
+   *  group's calls always share one chunk, so a cutoff partway through the
+   *  reads leaves each group wholly read or wholly unread
+   *  (`settledGroupedRead`). Each group's answers, in its calls' order. */
+  async groups(groups: readonly (readonly ReadCall[])[], label: string, blockNumber?: bigint): Promise<unknown[][]> {
+    if (groups.length === 0) return [];
+    // Chunked from a point that moves with the run (`settledGroupedRead`),
     // each answer kept at its call's own position.
-    const at = calls.map((_, i) => i);
-    const res = await settledChunkedRead(
+    const at = groups.map((_, i) => i);
+    const res = await settledGroupedRead(
       this.readClient,
       at,
       PASS_READ_CHUNK,
-      (i) => ({ address: this.diamond, abi: this.abi, functionName: calls[i].functionName, args: calls[i].args }),
+      (i) => groups[i].map((c) => ({ address: this.diamond, abi: this.abi, functionName: c.functionName, args: c.args })),
       `${this.pass} ${label}`,
       this.cutoff,
       this.visit,
       blockNumber,
     );
-    return at.map((i) => {
-      const x = res.get(i);
-      return x?.status === 'success' ? x.result : undefined;
-    });
+    return at.map((i) => (res.get(i) ?? []).map((x) => (x?.status === 'success' ? x.result : undefined)));
   }
 
   /** `many` of one function over day ids. */

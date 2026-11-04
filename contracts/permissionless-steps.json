@@ -291,34 +291,34 @@
       "why": "the account owner's own setting"
     },
     "ProtectedAccountFacet.finalizeAddAllowlisted(address,address)": {
-      "class": "keeper-pending",
+      "class": "keeper",
       "pass": "protectedAccount",
       "flag": "PROTECTED_ACCOUNT_ENABLED",
-      "pr": "#3090"
+      "evidence": "apps/keeper/src/protectedAccount.ts"
     },
     "ProtectedAccountFacet.finalizeAddSigner(address,address)": {
-      "class": "keeper-pending",
+      "class": "keeper",
       "pass": "protectedAccount",
       "flag": "PROTECTED_ACCOUNT_ENABLED",
-      "pr": "#3090"
+      "evidence": "apps/keeper/src/protectedAccount.ts"
     },
     "ProtectedAccountFacet.finalizeRemoveSigner(address,address)": {
-      "class": "keeper-pending",
+      "class": "keeper",
       "pass": "protectedAccount",
       "flag": "PROTECTED_ACCOUNT_ENABLED",
-      "pr": "#3090"
+      "evidence": "apps/keeper/src/protectedAccount.ts"
     },
     "ProtectedAccountFacet.finalizeReplacement(address)": {
-      "class": "keeper-pending",
+      "class": "keeper",
       "pass": "protectedAccount",
       "flag": "PROTECTED_ACCOUNT_ENABLED",
-      "pr": "#3090"
+      "evidence": "apps/keeper/src/protectedAccount.ts"
     },
     "ProtectedAccountFacet.finalizeSettingChanges(address)": {
-      "class": "keeper-pending",
+      "class": "keeper",
       "pass": "protectedAccount",
       "flag": "PROTECTED_ACCOUNT_ENABLED",
-      "pr": "#3090"
+      "evidence": "apps/keeper/src/protectedAccount.ts"
     },
     "ProtectedAccountFacet.lockVault(address)": {
       "class": "user",
@@ -770,10 +770,10 @@
       "why": "the proposer executes its own feed change after the delay; a change nobody executes leaves the current feeds in place"
     },
     "VaipakamNFTFacet.releasePositionTransfer(uint256)": {
-      "class": "keeper-pending",
+      "class": "keeper",
       "pass": "protectedAccount",
       "flag": "PROTECTED_ACCOUNT_ENABLED",
-      "pr": "#3090"
+      "evidence": "apps/keeper/src/protectedAccount.ts"
     },
     "VaipakamNFTFacet.setApprovalForAll(address,bool)": {
       "class": "user",
@@ -824,10 +824,10 @@
       "why": "the vault owner's own withdrawal during a long pause"
     },
     "VaultPayoutFacet.releasePayout(uint256)": {
-      "class": "keeper-pending",
+      "class": "keeper",
       "pass": "protectedAccount",
       "flag": "PROTECTED_ACCOUNT_ENABLED",
-      "pr": "#3090"
+      "evidence": "apps/keeper/src/protectedAccount.ts"
     },
     "VpfiReturnReceiver.initialize(address,address,address)": {
       "class": "init",
