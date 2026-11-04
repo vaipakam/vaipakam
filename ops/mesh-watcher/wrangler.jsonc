@@ -39,7 +39,10 @@
   // `src/rotation.ts`), because reading the whole mesh in one invocation
   // went past the Workers Free cap of 50 subrequests. At three chains each
   // chain is read every 15 minutes, which is what the tick-counted windows
-  // below are sized for. `ROTATION_STEP_SECONDS` must equal this interval.
+  // below are sized for. This cron is the ONLY statement of the cadence: each
+  // firing derives its slot from its own cron string (`cronStepSeconds` in
+  // `src/rotation.ts`), which must be `* * * * *` or `*/N * * * *` with N
+  // dividing 60. Any other shape fails the tick loudly (#3144).
   // This slot is the one freed by retiring `vaipakam-lz-watcher`, whose
   // LayerZero surface the T-068 CCIP migration and the #687-A securities
   // excision had between them made entirely dead.
@@ -121,7 +124,7 @@
     // ── Windowed-advisory tuning ────────────────────────────────────
     // Consecutive observations OF ONE CHAIN a condition must hold,
     // unchanged, before its advisory fires. A chain is observed once per
-    // rotation: (chains in the mesh) x ROTATION_STEP_SECONDS = 3 x 5min =
+    // rotation: (chains in the mesh) x the cron interval = 3 x 5min =
     // 15min today. Wiring a fourth chain makes that 20 minutes and
     // lengthens both windows by a third — the safe direction (later, never
     // spurious), but RETUNE them then.
@@ -169,10 +172,5 @@
     // and well below both the 15-minute per-chain cycle and the day-close cadence.
     // Raise it only for a chain that genuinely idles between blocks.
     "STALE_LOCAL_SECONDS": "300",
-
-    // Seconds between cron ticks — MUST equal the cron interval above. The
-    // tick's chain is (scheduled time / this) mod the rotation length, so a
-    // mismatch skips or doubles chains.
-    "ROTATION_STEP_SECONDS": "300",
   },
 }

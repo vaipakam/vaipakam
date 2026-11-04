@@ -11,8 +11,7 @@
 
 import { isAuthorized } from './auth';
 import { statusFor } from './health';
-import { readRotationStep, resolveEnv, type Env } from './env';
-import { slotIndex } from './rotation';
+import { resolveEnv, type Env } from './env';
 import { runTick } from './runner';
 
 export default {
@@ -27,12 +26,10 @@ export default {
         .then((resolved) =>
           // The slot comes from the SCHEDULED time, not the wall clock, so
           // a tick that starts a few seconds late still observes its own
-          // chain — see `rotation.ts`.
+          // chain. The step comes from the firing's own cron string, so it
+          // cannot drift from the schedule (#3144) — see `rotation.ts`.
           runTick(resolved, {
-            scope: {
-              kind: 'slot',
-              index: slotIndex(event.scheduledTime, readRotationStep(resolved)),
-            },
+            scope: { kind: 'cron', cron: event.cron, scheduledTimeMs: event.scheduledTime },
           }),
         )
         .then((summary) => {

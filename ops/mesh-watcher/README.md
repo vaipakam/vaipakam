@@ -472,14 +472,26 @@ chain's own books. Nothing is lost by this, because every check compares
 Base's row for one chain with that chain's own books, and none sums across
 chains. The rotation is the canonical chain first, then
 `getExpectedSourceChainIds()` in ascending order, and the slot comes from
-the cron's scheduled time (`src/rotation.ts`). It is never configured, so
-a newly wired mirror joins the rotation without a redeploy.
+the cron's scheduled time divided by the cron's own interval
+(`src/rotation.ts`). It is never configured, so a newly wired mirror joins
+the rotation without a redeploy.
+
+The cron in `wrangler.jsonc` is the only statement of the cadence. Each
+firing reads its interval from its own cron string, so there is no second
+setting to keep in step with it (#3144). The rotation supports `* * * * *`
+and `*/N * * * *` where N divides 60, because those are the schedules whose
+firings are evenly spaced. Any other shape could observe one chain twice and
+skip another, so a tick on one fails as a configuration fault and pages,
+rather than observing some chains and quietly never others. A manual
+`POST /run` without `?chain` picks a chain from the wall clock in 5-minute
+slots; it only chooses which chain to show and never advances the windowed
+state.
 
 Two consequences to know:
 
 - **The windows count observations of one chain.** A chain is observed
   once per rotation, which is the number of chains times
-  `ROTATION_STEP_SECONDS` (3 × 5 minutes = 15 minutes today, the cadence
+  the cron interval (3 × 5 minutes = 15 minutes today, the cadence
   the defaults were sized for). A fourth chain makes it 20 minutes and
   lengthens both windows by a third. Late is the safe direction, but
   retune them then.
