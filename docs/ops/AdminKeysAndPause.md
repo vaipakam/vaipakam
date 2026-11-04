@@ -235,9 +235,12 @@ exactly the assumption that would leave the attacker authorized
 > follow it. The `vaipakam-lz-alerts-db` database deletion is the one
 > remaining operator step, gated on a clean nightly backup.
 >
-> The live ops-internal watcher is now `ops/mesh-watcher` (VPFI recycling
-> mesh invariants), which has its own D1 and uses the same
-> `TG_OPS_BOT_TOKEN` ops bot.
+> Its successor is `ops/mesh-watcher` (VPFI recycling mesh invariants),
+> built for its own D1 and the same `TG_OPS_BOT_TOKEN` ops bot. It is
+> code-complete but **not deployed** (`CloudflareCronSlots.md` records it
+> as holding no trigger), so nothing checks those mesh invariants today.
+> Its D1 creation, secrets and first deploy are operator steps in
+> `ops/mesh-watcher/README.md`.
 
 > **T-068 status:** The cross-chain layer migrated from LayerZero to
 > Chainlink CCIP in PR #46 (2026-05-18). The three checks this
