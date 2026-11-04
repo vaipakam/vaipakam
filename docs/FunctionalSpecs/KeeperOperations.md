@@ -975,8 +975,11 @@ rehearsal does not go stale by accident.
   owner's list and do nothing else: it can never flag or clear an address.
 - The operators' chat is told when the stand-in is past the limit (automated
   delisting is closed until it is refreshed), when the keeper is not the
-  named refresher, and when a refresh is refused. Each alert clears once its
-  condition does.
+  named refresher, when a refresh is refused, and when a refresh that is due
+  could not be sent for a reason that will recur (no signing key, an RPC that
+  does not answer, a transaction of its own still unmined). That last alert
+  comes inside the one-day margin, before delisting closes. Each alert clears
+  once its condition does.
 - The duty refuses every mainnet, where the check reads RedStone itself. It
   ships switched off behind its own flag, and pays only gas.
 

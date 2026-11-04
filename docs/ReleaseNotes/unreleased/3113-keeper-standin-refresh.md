@@ -4,7 +4,7 @@ On test networks, the delisting timelocks check a clearance answer from a stand-
 
 The stand-in now has a refresher role. The admin names one address, the keeper, which may re-publish the admin's list unchanged and do nothing else. It can never flag or clear an address. Every publication now says on-chain who made it, the admin or the refresher.
 
-A new hourly keeper duty reads the stand-in the attestor actually reads, and the smallest age limit among the timelocks that take their answers from it. A day before that limit, it refreshes the stand-in. The operators' chat is told when the stand-in is past the limit, when the keeper is not its named refresher, and when a refresh is refused. The duty refuses every mainnet and ships switched off.
+A new hourly keeper duty reads the stand-in the attestor actually reads, and the smallest age limit among the timelocks that take their answers from it. A day before that limit, it refreshes the stand-in. The operators' chat is told when the stand-in is past the limit, when the keeper is not its named refresher, when a refresh is refused, and when a due refresh could not be sent for a reason that will recur, which it says before delisting closes. The duty refuses every mainnet and ships switched off.
 
 The wiring script now names the keeper as the refresher when it is given one. It no longer reuses a stand-in built before the role. The stand-in already on BNB testnet predates the role, so it still has to be replaced, along with the attestor that reads it, before the keeper can take over. Until then it is refreshed by hand.
 

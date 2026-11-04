@@ -822,7 +822,7 @@ test('a stale clearance names the remedy from what the oracle holds now, not fro
   // Its current time unknown: the refresh is conditional, never asserted.
   assert.match(stale({ ...owned, updatedAt: null, detail: 'rpc down' }), new RegExp(`could not be read \\(rpc down\\), so whether it has updated since is not known; if it has not, its owner ${STAND_IN_OWNER} re-publishes it`));
   // Renounced: nobody can re-publish it, and the report says what moves it on instead.
-  const renounced = stale({ identity: 'stand-in', owner: ZERO, pendingOwner: ZERO, updatedAt: now - 9n * DAY });
+  const renounced = stale({ identity: 'stand-in', owner: ZERO, pendingOwner: ZERO, refresher: ZERO, updatedAt: now - 9n * DAY });
   assert.match(renounced, /also too old; its ownership was renounced, so nobody can re-publish it; only a new clearance source on the timelock moves this on/);
   assert.ok(!renounced.includes('markUpdated'), 'no step nobody can take');
   // Its owner unreadable: the step is named without a claimed account.
@@ -842,9 +842,9 @@ test('the report names the clearance oracle, and says the stand-in is not RedSto
       nowMs: 1,
     });
   const quiet = { list: { pendingDelistings: 0, addresses: [A1, A2] } };
-  const standIn = { address: ORACLE, identity: 'stand-in', updatedAt: 999_000n, owner: STAND_IN_OWNER, pendingOwner: ZERO };
+  const standIn = { address: ORACLE, identity: 'stand-in', updatedAt: 999_000n, owner: STAND_IN_OWNER, pendingOwner: ZERO, refresher: ZERO };
   const stand = (await run(snapOf({ ...quiet, clearanceOracle: standIn }))).report;
-  assert.deepEqual(stand.chains.b.clearanceOracle, { address: ORACLE, identity: 'stand-in', name: STAND_IN_NAME, updatedAt: 999_000, owner: STAND_IN_OWNER, pendingOwner: ZERO, refresher: null });
+  assert.deepEqual(stand.chains.b.clearanceOracle, { address: ORACLE, identity: 'stand-in', name: STAND_IN_NAME, updatedAt: 999_000, owner: STAND_IN_OWNER, pendingOwner: ZERO, refresher: ZERO });
   assert.match(summarize(stand), new RegExp(`clearance read from ${STAND_IN_NAME} at ${ORACLE}: NOT RedStone — it flags only what its owner ${STAND_IN_OWNER} flags; last published 1970-01-12T13:30:00.000Z, and it goes stale unless its owner re-publishes it\\.`));
   // Control is reported as read, never as an assumed admin: a pending transfer, a renounced owner, an unreadable one.
   const pending = (await run(snapOf({ ...quiet, clearanceOracle: { ...standIn, pendingOwner: OTHER } }))).report;
@@ -869,7 +869,7 @@ test("the stand-in's control is reported from both reads independently", () => {
   assert.match(standInControl({ owner: null, pendingOwner: OTHER }).flags, new RegExp(`its owner could not be read this run, so who controls its flags is not known; an ownership transfer to ${OTHER} is pending, and that account controls it once it accepts`));
   assert.match(standInControl({ owner: null, pendingOwner: null }).flags, /not known; whether an ownership transfer is pending could not be read/);
   // "Nobody can re-publish it" only when renounced AND no transfer reads as pending.
-  const renounced = standInControl({ owner: ZERO, pendingOwner: ZERO });
+  const renounced = standInControl({ owner: ZERO, pendingOwner: ZERO, refresher: ZERO });
   assert.equal(renounced.refresh, null);
   assert.match(renounced.stale, /nobody can re-publish it/);
   const handedOver = standInControl({ owner: ZERO, pendingOwner: OTHER });
@@ -892,7 +892,15 @@ test("a stand-in's named refresher is reported as able to re-publish it, and nev
   assert.equal(renounced.blocked, null);
   assert.match(renounced.flags, /its flags can no longer change/);
   assert.ok(!/nobody can re-publish it/.test(renounced.stale));
-  // An unread or zero refresher adds nothing.
+  // A refresher not read this run leaves "nobody can" unestablished (#3113 r1).
+  for (const refresher of [null, undefined]) {
+    const unread = standInControl({ owner: ZERO, pendingOwner: ZERO, refresher });
+    assert.equal(unread.refresh, null);
+    assert.ok(!/nobody can re-publish it/.test(unread.stale), 'not claimed without the refresher read');
+    assert.match(unread.blocked, /^its ownership was renounced, and whether it has a refresher that can re-publish it was not read this run/);
+  }
+  assert.match(standInControl({ owner: ZERO, pendingOwner: null, refresher: null }).blocked, /^its ownership was given up and whether a transfer is pending could not be read, and whether it has a refresher/);
+  // Where the owner can re-publish it, an unread or zero refresher adds nothing.
   for (const refresher of [null, ZERO, undefined]) {
     assert.deepEqual(standInControl({ owner: STAND_IN_OWNER, pendingOwner: ZERO, refresher }), standInControl({ owner: STAND_IN_OWNER, pendingOwner: ZERO }));
   }

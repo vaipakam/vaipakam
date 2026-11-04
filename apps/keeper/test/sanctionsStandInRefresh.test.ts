@@ -138,6 +138,23 @@ describe('sanctions stand-in refresh (#3113)', () => {
     expect(r.stale).toBe(true);
     expect(chain.sent).toEqual([]);
     expect(r.refresh).toMatch(/^not sent: /);
+    expect(r.stalled).toContain('no signing key');
+  });
+
+  it('says a due refresh is stalled inside the margin, before the route closes (#3118 r1)', async () => {
+    // A transaction of its own still unmined: the pending nonce is ahead of the mined one.
+    chain.getTransactionCount = async ({ blockTag }: { blockTag?: string } = {}) => (blockTag === 'pending' ? 4 : 3);
+    const r = await refreshOnce(BNB, deps);
+    expect(r.stale).toBe(false);
+    expect(chain.sent).toEqual([]);
+    expect(r.stalled).toContain('still unmined');
+  });
+
+  it('does not call an ordinary deadline stop a stall', async () => {
+    deps.sendDeadline = 0;
+    const r = await refreshOnce(BNB, deps);
+    expect(chain.sent).toEqual([]);
+    expect(r.stalled).toBeNull();
   });
 
   it('sends nothing, and says so, when the keeper is not the named refresher', async () => {
@@ -146,6 +163,7 @@ describe('sanctions stand-in refresh (#3113)', () => {
     expect(chain.sent).toEqual([]);
     expect(r.notRefresher).toBe('0x0000000000000000000000000000000000000000');
     expect(r.refresh).toContain('not this keeper');
+    expect(r.stalled).toBeNull();
   });
 
   it('judges nothing when no timelock it serves can be read', async () => {

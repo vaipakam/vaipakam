@@ -26,8 +26,13 @@
 //      else, so the keeper can flag or clear no address. The keeper must be
 //      that refresher (`refresher()`); otherwise nothing is sent.
 //   5. The ops chat is told when the stand-in is past the limit (the route is
-//      closed), when the keeper is not its refresher, and when a refresh was
-//      refused; each alert clears once its condition does.
+//      closed), when the keeper is not its refresher, when a refresh was
+//      refused, and when a due refresh could not go out for a reason that
+//      repeats run after run (no signing key, an RPC that does not answer, a
+//      send the node refused, a transaction of its own still unmined). That
+//      last one is said inside the margin too, before the route closes; an
+//      ordinary stop (the run's deadline) is not. Each alert clears once its
+//      condition does.
 //
 // Gated by KEEPER_ENABLED + STANDIN_REFRESH_ENABLED. Ships disarmed. On a
 // chain with no clearance attestor recorded the pass does nothing.
@@ -104,6 +109,8 @@ export interface RefreshReport {
   stale: boolean;
   notRefresher: Address | null;
   refused: string | null;
+  /** Why a due refresh could not go out, when that can repeat run after run. */
+  stalled: string | null;
 }
 
 export async function runSanctionsStandInRefresh(env: Env, tick: PassTick): Promise<void> {
@@ -168,6 +175,7 @@ const blank = (chainId: number): RefreshReport => ({
   stale: false,
   notRefresher: null,
   refused: null,
+  stalled: null,
 });
 
 /** One chain's run. Exported for tests. */
@@ -246,6 +254,7 @@ export async function refreshOnce(chainId: number, deps: RefreshDeps): Promise<R
     if (!due) return report;
     if (deps.keeper === null) {
       report.refresh = 'due, but the keeper has no usable signing key';
+      report.stalled = 'the keeper has no usable signing key';
       return report;
     }
     if (refresher.toLowerCase() !== deps.keeper.toLowerCase()) {
@@ -276,6 +285,7 @@ export async function refreshOnce(chainId: number, deps: RefreshDeps): Promise<R
       report.refused = res;
     } else if (sender.stopped) {
       report.refresh = `not sent: ${sender.stall ?? sender.stopReason}`;
+      report.stalled = sender.stall;
     }
   } catch (err) {
     if (!(err instanceof PastRunDeadline)) throw err;
@@ -302,6 +312,11 @@ async function alert(env: Env, r: RefreshReport): Promise<void> {
         `The keeper cannot refresh the sanctions stand-in on ${where}: its refresher is ${r.notRefresher}. The admin names the keeper with setRefresher, or refreshes it with markUpdated.`,
     ],
     [`standin-refused:${r.chainId}`, r.refused !== null, () => `The stand-in refresh on ${where} was refused: ${r.refused}.`],
+    [
+      `standin-stalled:${r.chainId}`,
+      r.stalled !== null,
+      () => `The stand-in on ${where} is due a refresh (${r.ageSec}s old, limit ${r.maxAgeSec}s) and the keeper could not send it: ${r.stalled}.`,
+    ],
   ];
   for (const [key, on, text] of conditions) {
     if (on) await sendOpsAlert(env, key, text(), ALERT_REPEAT_SEC, undefined, r.chainId);

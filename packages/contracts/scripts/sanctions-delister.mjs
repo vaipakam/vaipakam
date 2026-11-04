@@ -218,15 +218,28 @@ export function clearanceOracleName(snap) {
  * dropped because the other failed, so a known pending owner is named even
  * when the current owner could not be read. Nothing is inferred beyond them:
  * "nobody can re-publish it" is said only when the owner reads as renounced
- * AND no transfer reads as pending.
+ * AND no transfer reads as pending AND the refresher reads as unset (#3113).
  */
 export function standInControl(o) {
   const control = standInOwnerControl(o);
   // #3113 — a refresher the owner named may re-publish the list too (and
-  // nothing else), whatever the owner's state. Only a refresher READ as an
-  // address is named; one unread, unset or zero adds nothing.
+  // nothing else), whatever the owner's state. A refresher READ as an address
+  // is named, and one read as zero adds nothing. One NOT read (null or absent:
+  // an RPC that did not answer, or a stand-in built before the role, which
+  // cannot answer) is unknown, and matters only where the owner cannot
+  // re-publish it: there "nobody can" is no longer established.
   const isZero = (a) => typeof a === 'string' && /^0x0{40}$/i.test(a);
-  const refresher = typeof o.refresher === 'string' && !isZero(o.refresher) ? o.refresher : null;
+  if (typeof o.refresher !== 'string') {
+    if (control.refresh !== null) return control;
+    const owner = o.pendingOwner === null ? 'its ownership was given up and whether a transfer is pending could not be read' : 'its ownership was renounced';
+    return {
+      flags: control.flags,
+      stale: 'its owner cannot re-publish it and whether it has a refresher that can was not read this run, so once stale it may stay stale',
+      refresh: null,
+      blocked: `${owner}, and whether it has a refresher that can re-publish it was not read this run (a stand-in built before #3113 has none); if nobody can, only a new clearance source on the timelock moves this on`,
+    };
+  }
+  const refresher = isZero(o.refresher) ? null : o.refresher;
   if (refresher === null) return control;
   const by = `its refresher ${refresher} re-publishes it with markUpdated`;
   return {
