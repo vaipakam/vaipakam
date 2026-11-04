@@ -28,7 +28,13 @@ import {
   type StreakState,
 } from './invariants';
 import { observeMesh } from './mesh';
-import { ownedAlertChainIds, slotIndex, type TickScope } from './rotation';
+import {
+  MANUAL_SLOT_STEP_SECONDS,
+  ownedAlertChainIds,
+  resolveTickScope,
+  slotIndex,
+  type TickRequest,
+} from './rotation';
 import { makeBaseRedactor } from './redact';
 import { formatAlert, sendOpsMessage } from './telegram';
 
@@ -115,8 +121,8 @@ export async function runTick(
   options: {
     probeDelivery?: boolean;
     persistState?: boolean;
-    /** Which chain to observe. Defaults to the rotation slot for now. */
-    scope?: TickScope;
+    /** Which chain to observe. Defaults to the wall-clock manual slot. */
+    scope?: TickRequest;
   } = {},
 ): Promise<TickSummary> {
   // Manual `POST /run` reads the windowed state but never ADVANCES it.
@@ -136,8 +142,11 @@ export async function runTick(
     assertAbiShape();
 
     const config = readConfig(env);
-    const scope: TickScope =
-      options.scope ?? { kind: 'slot', index: slotIndex(Date.now(), config.rotationStepSeconds) };
+    // Resolved INSIDE the try: an unsupported cron throws a configuration
+    // failure here, which pages as a failed tick (#3144).
+    const scope = resolveTickScope(
+      options.scope ?? { kind: 'slot', index: slotIndex(Date.now(), MANUAL_SLOT_STEP_SECONDS) },
+    );
     const obs = await observeMesh(env, config, scope);
 
     const findings: Finding[] = checkHardInvariants(

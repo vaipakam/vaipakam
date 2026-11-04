@@ -80,11 +80,6 @@ export interface Env {
    *  below the day-close cadence, and far below the 15-minute tick. Raise
    *  it only for a chain that genuinely idles between blocks. */
   STALE_LOCAL_SECONDS?: string;
-  /** Var. Seconds between cron ticks, which each observe ONE chain of the
-   *  rotation (see `rotation.ts`). Must equal the cron interval in
-   *  `wrangler.jsonc`, or ticks land on the wrong slots and a chain can be
-   *  skipped or doubled. Default 300 (the `*\/5` cron). */
-  ROTATION_STEP_SECONDS?: string;
 
   // ── Per-chain RPC endpoints (Secrets Store — they carry API keys) ───
   //
@@ -109,7 +104,6 @@ export interface Config {
   compositionSlackToleranceWei: bigint;
   alertRepeatSeconds: number;
   staleLocalSeconds: number;
-  rotationStepSeconds: number;
   telegram: { token: string; chatId: string } | null;
 }
 
@@ -172,20 +166,6 @@ export function readAlertRepeatSeconds(env: Env): number {
 }
 
 /**
- * The rotation step, INDEPENDENTLY and without throwing — the cron entry
- * needs it to pick a slot before `readConfig` runs, and a malformed value
- * must still let the tick start (and fail loudly inside `runTick`, which
- * validates it again) rather than throw outside the alerting path.
- */
-export function readRotationStep(env: Env): number {
-  try {
-    return intVar(env.ROTATION_STEP_SECONDS, 300, 'ROTATION_STEP_SECONDS');
-  } catch {
-    return 300;
-  }
-}
-
-/**
  * Resolve the tick configuration.
  *
  * @throws When `CANONICAL_CHAIN_ID` is unset or unparseable — without it
@@ -223,7 +203,6 @@ export function readConfig(env: Env): Config {
     ),
     alertRepeatSeconds: readAlertRepeatSeconds(env),
     staleLocalSeconds: intVar(env.STALE_LOCAL_SECONDS, 300, 'STALE_LOCAL_SECONDS'),
-    rotationStepSeconds: intVar(env.ROTATION_STEP_SECONDS, 300, 'ROTATION_STEP_SECONDS'),
     telegram: readTelegramTarget(env),
   };
 }
