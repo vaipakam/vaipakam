@@ -889,7 +889,12 @@ state.
   run's time spent) still holds back that account's payouts and position
   transfers until it is handled: an owner's lock is never overtaken by the
   payout it was sent to stop. When the keeper cannot tell which requests are
-  still open, it releases nothing that run.
+  still open, it releases nothing that run. The keeper starts locks only in
+  the first half of what is left of a run's reading time, so a stream of
+  lock requests whose confirmations are slow cannot use every run's time and
+  hold back other owners' payouts, transfers and matured changes; requests
+  it did not reach wait for the next run, with their accounts held as
+  above.
 - A request's age is measured from when the owner sent the LOCK, not from
   when it reached Vaipakam, so a LOCK delivered late (after an outage) is
   as old as it really is. One that arrives already more than an hour old is
@@ -924,6 +929,9 @@ state.
   replaced it. The alert still names the vault by its original wallet. The
   retired wallet lost every right over the vault, so its channels are not
   alerted. A lock made by the managing wallet reads as the owner's own lock.
+  Sending LOCK from a chat locks only the wallets linked to that chat, so for
+  a vault whose wallet was retired the payout alert tells the owner to cancel
+  the payout or lock the vault in the app, and does not suggest LOCK.
 - An event more than an hour old when the keeper first reads it is not
   alerted, because late news is no longer a warning; the keeper counts those.
   An alert is counted as sent only when a channel accepted it. One that no

@@ -902,12 +902,17 @@ describe('the Telegram steps', () => {
     const at = NOW_SEC - 30;
     ledger.rows.push({ kind: 'VaultLocked', args: { account: ALICE, by: BOB }, blockAt: at, block: 1, log: 0, tx: '0x' });
     ledger.rows.push({ kind: 'ReplacementProposed', args: { account: ALICE, nominee: DEST, by: SIGNER, round: '2' }, blockAt: at, block: 2, log: 0, tx: '0x' });
+    ledger.rows.push({ kind: 'PayoutQueued', args: { account: ALICE, id: '9', asset: ASSET, kind: '0', tokenId: '0', amount: '2500000', recipient: DEST, releaseAt: String(NOW_SEC + 3600) }, blockAt: at, block: 3, log: 0, tx: '0x' });
     const r = await run(false, true);
-    expect(r.alerts.sent).toBe(2);
-    expect(sent.map((a) => [a.tgChatId, a.pushSubscriber])).toEqual([['7', BOB], ['7', BOB]]);
+    expect(r.alerts!.sent).toBe(3);
+    expect(sent.map((a) => [a.tgChatId, a.pushSubscriber])).toEqual([['7', BOB], ['7', BOB], ['7', BOB]]);
     // The text still names the vault, and a lock by its controller is the owner's own.
     expect(sent[0].text).toContain(ALICE.slice(0, 6));
     expect(sent[0].text).not.toContain('a wallet allowed to lock it');
+    // A LOCK from the controller's chat would lock the controller's own
+    // vault, so the payout alert does not offer it (Codex #3092 r10).
+    expect(sent[2].text).not.toContain('send LOCK');
+    expect(sent[2].text).toContain('lock the vault in the app');
   });
 
   it("waits for a payout alert's request code rather than alerting without it", async () => {
@@ -1049,6 +1054,30 @@ describe('the Telegram steps', () => {
     expect(again.alerts!.sent).toBe(2);
     expect(sent.filter((a) => a.tgChatId === '7'), 'the next run starts at the third alert').toHaveLength(2);
     expect(cursors.rows.get(ALERT_NEXT_ITEM)).toBe(encodePos(ledger.rows[3]));
+  });
+
+  it("gives the LOCK step a share of the window: slow lock receipts leave the other owners' releases their time (Codex #3092 r10)", async () => {
+    d.lockGranted.add(ALICE);
+    d.lockGranted.add(BOB);
+    d.accounts.set(BOB, account());
+    d.accounts.set(DEST, account());
+    d.payouts.set(1n, { user: DEST, state: 1, cosigned: false, releaseAt: NOW - 1n, recipient: DEST, amount: 100n });
+    ledger.add(PAYOUT_EVENT, { account: DEST, id: '1' });
+    store.requests = [request(1, ALICE), request(2, BOB)];
+    d.receiptDelayMs = 1200;
+    // The read cutoff is 2 s away, so the LOCK step starts locks only in the
+    // first second: one lock goes out, and the payout is still released.
+    const r = await protectedOnce(CHAIN, DIAMOND, {
+      client: d.client(),
+      readClient: d.client(),
+      context: () => d.ctx(),
+      sendDeadline: Date.now() + SEND_RESERVE_MS + 2000,
+      cursors,
+      ledger,
+      telegram: { lock: true, alerts: false, store, notify, appOrigin: '', nowSec: () => NOW_SEC },
+    });
+    expect(d.sent.map((x) => [x.fn, x.args[0]])).toEqual([['lockVaultFor', ALICE], ['releasePayout', 1n]]);
+    expect(r.locks!.map((l) => l.wallet)).toEqual([ALICE]);
   });
 
   it('runs neither step when its flag is off, and says so in the line', async () => {

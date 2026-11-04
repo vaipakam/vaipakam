@@ -150,6 +150,12 @@ export function stepOrder(visit: number): readonly StepName[] {
  *  so no receipt wait holds them back; the share keeps a slow channel from
  *  using the time the LOCK step and the releases after them need. */
 export const ALERT_STAGE_SHARE = 1 / 3;
+/** The share of what is left of the read window the LOCK step may start
+ *  locks in. It runs before every release, so without a bound a stream of
+ *  LOCK requests with slow receipts would take the whole window each run and
+ *  no release or finalize would ever run (Codex #3092 r10). A lock started
+ *  inside the share may finish past it; the releases keep the rest. */
+export const LOCK_STAGE_SHARE = 1 / 2;
 
 /** Sends per chain per run: every step's share, and no more. */
 export const MAX_SENDS_PER_RUN = Object.values(STEP_SENDS).reduce((a, b) => a + b, 0);
@@ -439,7 +445,10 @@ export async function protectedOnce(chainId: number, diamond: Address, deps: Pro
     // this run for an account its owner just asked to lock. And a request
     // the LOCK step could not reach this run (its share of sends used, the
     // read window spent) still holds back that account's releases: an owner's
-    // LOCK is never overtaken by the payout it was sent to stop.
+    // LOCK is never overtaken by the payout it was sent to stop. The LOCK
+    // step in turn starts locks only in a share of what is left
+    // (`LOCK_STAGE_SHARE`), so a run of LOCK requests cannot hold back every
+    // other owner's releases and matured changes run after run.
     const tg = deps.telegram;
     const tgDeps = tg
       ? {
@@ -462,7 +471,7 @@ export async function protectedOnce(chainId: number, diamond: Address, deps: Pro
       report.alerts = await alertOwners({ ...tgDeps, r: stage }, r.cutoff);
     }
     if (tgDeps && tg!.lock) {
-      report.locks = await lockFromTelegram(tgDeps);
+      report.locks = await lockFromTelegram(tgDeps, leadStageCutoffMs(Date.now(), r.cutoff, LOCK_STAGE_SHARE));
       await step.holdForLockRequests(tg!.store, tgDeps.nowSec());
     }
     const work: Record<StepName, () => Promise<void>> = {

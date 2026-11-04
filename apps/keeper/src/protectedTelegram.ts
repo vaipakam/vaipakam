@@ -222,8 +222,12 @@ interface AccountLock {
 
 // ─── LOCK ───────────────────────────────────────────────────────────────────
 
-/** Work this run's LOCK requests; returns each one's outcome. */
-export async function lockFromTelegram(d: TelegramStepDeps): Promise<LockResult[]> {
+/** Work this run's LOCK requests; returns each one's outcome. No lock starts
+ *  at or past `sendCutoff`: the pass gives the step a share of the read
+ *  window, so its receipt waits cannot use the time every release after it
+ *  needs (Codex #3092 r10). A request not reached waits for the next run,
+ *  and its account's releases are held meanwhile (`holdForLockRequests`). */
+export async function lockFromTelegram(d: TelegramStepDeps, sendCutoff: number = d.r.cutoff): Promise<LockResult[]> {
   const out: LockResult[] = [];
   // The heartbeat first, and only from a keeper that can sign: the agent
   // takes a LOCK only while it is fresh, so an owner is told a lock is coming
@@ -255,7 +259,7 @@ export async function lockFromTelegram(d: TelegramStepDeps): Promise<LockResult[
   const recordCutoff = d.sendDeadline + RUN_DEADLINE_MARGIN_MS;
   for (const q of reqs) {
     // eslint-disable-next-line no-await-in-loop
-    const done = await lockOne(d, q);
+    const done = await lockOne(d, q, sendCutoff);
     if (done === null) break; // not finished: the next run starts here
     let recorded = true;
     try {
@@ -305,7 +309,7 @@ async function answer(d: TelegramStepDeps, q: LockRequest, text: string | null):
  *  or null when this run cannot finish them. The outcome is recorded whether
  *  or not the answer arrives: the row says what was done, and the run line
  *  counts an answer that did not reach the chat. */
-async function lockOne(d: TelegramStepDeps, q: LockRequest): Promise<{ outcome: LockOutcome; text: string | null } | null> {
+async function lockOne(d: TelegramStepDeps, q: LockRequest, sendCutoff: number): Promise<{ outcome: LockOutcome; text: string | null } | null> {
   const copy = protectedCopy(q.locale);
   const w = shortAddress(q.wallet);
   const end = (outcome: LockOutcome, text: string) => ({ outcome, text });
@@ -335,8 +339,10 @@ async function lockOne(d: TelegramStepDeps, q: LockRequest): Promise<{ outcome: 
   // "already locked" without the call would leave an unlock asked for since
   // the first lock to mature, perhaps in this very run.
   const wasLocked = a.locked;
-  // A lock starts only inside the read window, so its record fits in the run.
-  if (Date.now() >= d.r.cutoff) return null;
+  // A lock starts only inside the step's share of the read window (never
+  // past the read cutoff), so its record fits in the run and the releases
+  // after it keep their time.
+  if (Date.now() >= Math.min(sendCutoff, d.r.cutoff)) return null;
   const res = await d.sender.call('lock', q.wallet, 'lockVaultFor', [q.wallet]);
   if (res === 'landed') {
     d.markLocked(q.wallet);
@@ -550,7 +556,7 @@ async function composeAlert(
         d.sender.noteUnread(`alert:${id}`, 'its request code (not a 30-bit value)');
         return null;
       }
-      return copy.alertPayout(w, d.chainId, what, String(lower(args.recipient) ?? args.recipient), when, shown);
+      return copy.alertPayout(w, d.chainId, what, String(lower(args.recipient) ?? args.recipient), when, shown, manager === account);
     }
     default:
       return null;
