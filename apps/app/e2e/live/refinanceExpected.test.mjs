@@ -76,6 +76,9 @@ const TERMS_ARGS = {
   // The accept deadline is anchored to chain time read when the lender's
   // submit starts; NOW − 6 s mirrors the real run (deadline = chainNow + 1800).
   anchor: () => NOW - 6n,
+  // Loan 22's legs as checkLiquidity classifies them: the principal liquid,
+  // the collateral illiquid.
+  illiquidLegs: { lending: false, collateral: true },
 };
 
 /** The acceptance terms request #45 was actually signed with. */
@@ -96,6 +99,16 @@ describe('refinanceExpected — complete payloads, closed in both directions', (
     ]);
     // Every expected-terms field is a typed field and vice versa.
     expect(Object.keys(expectedAcceptTerms(TERMS_ARGS)).sort()).toEqual(types.map((t) => t.name).sort());
+  });
+
+  it('acknowledges only the illiquid leg (#2728)', () => {
+    const t = expectedAcceptTerms(TERMS_ARGS);
+    expect(t.acknowledgedIlliquidLendingAsset).toBe('0x0000000000000000000000000000000000000000');
+    expect(t.acknowledgedIlliquidCollateralAsset).toBe(LOAN.collateralAsset);
+    const both = expectedAcceptTerms({ ...TERMS_ARGS, illiquidLegs: { lending: true, collateral: true } });
+    expect(both.acknowledgedIlliquidLendingAsset).toBe(LOAN.principalAsset);
+    const { illiquidLegs: _omit, ...noLegs } = TERMS_ARGS;
+    expect(() => expectedAcceptTerms(noLegs)).toThrow(/illiquidLegs/);
   });
 
   it('accepts the genuine signed terms and refuses a Full-tariff opt-in', () => {
@@ -171,6 +184,7 @@ describe('refinanceExpected — complete payloads, closed in both directions', (
         graceSeconds: 86_400n,
         borrowerAnchor: () => NOW,
         lenderAnchor: () => NOW,
+        illiquidLegs: TERMS_ARGS.illiquidLegs,
         requestId: () => requestId,
         signedAcceptTerms: () => null,
       }),

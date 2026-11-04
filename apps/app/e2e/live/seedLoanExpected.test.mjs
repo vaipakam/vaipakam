@@ -38,6 +38,8 @@ const LENDER = '0x648897f2c549956eFfF626D57fBc3E39761e6792';
 const WETH = '0x4200000000000000000000000000000000000006';
 const TILQ = '0xa3beBf673f7b16d88295930193d7dbd80C8f8664';
 const NOW = 1_792_000_000n;
+// The fixture's legs as checkLiquidity classifies them: WETH liquid, tILQ illiquid.
+const LEGS = { lending: false, collateral: true };
 const INTENT = {
   principalAsset: WETH,
   principal: parseUnits('0.0001', 18),
@@ -177,12 +179,28 @@ describe('seedLoanExpected — the AcceptTerms are a borrow request’s', () => 
       lender: LENDER,
       riskTermsHash: ZERO_HASH,
       anchor: () => NOW,
+      illiquidLegs: LEGS,
     });
     expect(Object.keys(t).sort()).toEqual(acceptTermsTypes(ABI).map((x) => x.name).sort());
     expect(t.amount).toBe(INTENT.principal);
     expect(t.interestRateBps).toBe(INTENT.rateBps);
     expect(t.acknowledgedIlliquidCollateralAsset).toBe(TILQ);
+    // The lending leg (WETH) is liquid, so its acknowledgement is the zero
+    // address, as the app signs it (#2728), never the asset.
+    expect(t.acknowledgedIlliquidLendingAsset).toBe(ZERO_ADDRESS);
     expect(t.refinanceTargetLoanId).toBe(0n);
+  });
+
+  it('refuses to build terms without the per-leg liquidity read', () => {
+    expect(() =>
+      expectedRequestAcceptTerms({
+        requestId: 7n,
+        stored: storedRequest(),
+        lender: LENDER,
+        riskTermsHash: ZERO_HASH,
+        anchor: () => NOW,
+      }),
+    ).toThrow(/illiquidLegs/);
   });
 });
 
@@ -202,6 +220,7 @@ describe('seedLoanExpected — the whole plan, in order', () => {
       lender: LENDER,
       riskTermsHash: ZERO_HASH,
       lenderAnchor: () => NOW,
+      illiquidLegs: LEGS,
       requestId: () => requestId,
       storedRequest: () => stored,
       signedAcceptTerms: () =>
@@ -223,6 +242,7 @@ describe('seedLoanExpected — the whole plan, in order', () => {
       lender: LENDER,
       riskTermsHash: ZERO_HASH,
       pinned: { nonce, deadline: NOW + 1_800n },
+      illiquidLegs: LEGS,
     });
   const typedParams = (terms) => [
     LENDER,

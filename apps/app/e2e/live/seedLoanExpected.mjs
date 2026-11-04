@@ -46,6 +46,7 @@ import {
   expectedApproveCall,
   expectedTx,
   ZERO_HASH,
+  illiquidAcknowledgementsFor,
 } from './refinanceExpected.mjs';
 
 export const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
@@ -237,7 +238,8 @@ export function requestRecordMismatches(intent, stored, { borrower }) {
  * `pinned` replaces the nonce/deadline matchers with exact values — for the
  * accept CALL, whose terms must be exactly the ones signed.
  */
-export function expectedRequestAcceptTerms({ requestId, stored, lender, riskTermsHash, anchor, pinned }) {
+export function expectedRequestAcceptTerms({ requestId, stored, lender, riskTermsHash, anchor, pinned, illiquidLegs }) {
+  const ack = illiquidAcknowledgementsFor(illiquidLegs, stored.lendingAsset, stored.collateralAsset);
   return {
     acceptor: lender,
     offerCreator: stored.creator,
@@ -265,8 +267,7 @@ export function expectedRequestAcceptTerms({ requestId, stored, lender, riskTerm
     parallelSaleOrderHash: stored.parallelSaleOrderHash ?? ZERO_HASH,
     periodicInterestCadence: Number(stored.periodicInterestCadence),
     riskAndTermsConsent: true,
-    acknowledgedIlliquidLendingAsset: stored.lendingAsset,
-    acknowledgedIlliquidCollateralAsset: stored.collateralAsset,
+    ...ack,
     nonce: pinned
       ? pinned.nonce
       : is('a non-zero uint256 (drawn at random by the app)', (v) => BigInt(v) > 0n),
@@ -315,6 +316,7 @@ export function seedPlanSteps({
   lender,
   riskTermsHash,
   lenderAnchor,
+  illiquidLegs,
   requestId,
   storedRequest,
   signedAcceptTerms,
@@ -353,6 +355,7 @@ export function seedPlanSteps({
       riskTermsHash,
       anchor: lenderAnchor,
       pinned,
+      illiquidLegs,
     });
   };
   return [

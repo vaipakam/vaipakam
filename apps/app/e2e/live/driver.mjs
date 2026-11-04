@@ -987,6 +987,20 @@ function assertInjectedAccount(requested, account) {
   }
 }
 
+/** ConnectKit leaves its modal open on a "Connected" screen after a
+ *  connect completes, over the page, so the drive's next click times out
+ *  (seen on /faucet and /borrow in the 2026-11-04 live run). Close it with
+ *  Escape, ConnectKit's own close key, and wait for the dialog to go. Best
+ *  effort: a modal that is already gone is the state we want. */
+async function dismissConnectModal(page) {
+  // Only ConnectKit's own "Connected" screen: any other dialog the app opens
+  // after a connect (the Terms gate, for one) is the drive's to handle.
+  const dialog = page.getByRole('dialog').filter({ hasText: /\bconnected\b/i }).first();
+  if (!(await dialog.isVisible().catch(() => false))) return;
+  await page.keyboard.press('Escape').catch(() => {});
+  await dialog.waitFor({ state: 'hidden', timeout: 5_000 }).catch(() => {});
+}
+
 /** Connect the injected wallet through ConnectKit if the page shows
  *  the connect state — a clean profiles/ dir must not depend on a
  *  pre-primed session (round 3). Safe to call when already
@@ -1011,6 +1025,7 @@ export async function ensureConnected(page) {
   while (Date.now() < deadline) {
     if (!(await connect.isVisible().catch(() => false))) {
       await page.waitForTimeout(1_000);
+      await dismissConnectModal(page);
       return;
     }
     // ConnectKit lists announced EIP-6963 providers by name.
