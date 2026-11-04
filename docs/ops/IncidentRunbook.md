@@ -300,6 +300,9 @@ default**.
    `/etc/vaipakam/keeper.env` ([`KeeperMachine.md`](KeeperMachine.md) §4),
    and take effect only when the keeper restarts. **Do not set them yet** —
    they are the LAST step, not the first; see the arming note after item 4.
+   The acknowledgements that finalize each remit on Base are a separate pass
+   with its own flag, `REWARD_REMIT_ACK_ENABLED` (#3100); arm it with this
+   one, or every remit stays Pending.
 2. `KEEPER_PRIVATE_KEY` set (the pass shares the keeper's signing key — without it
    the whole keeper stays disabled) **and** that EOA funded with native Base for
    gas plus each remit's quoted CCIP `msg.value`. An unfunded key arms the pass
@@ -393,7 +396,8 @@ the window or with the manual §2b procedure, as before.
 
 **To disable in an incident** (e.g. a misconfigured lane, or to hand back to
 manual control): set `REWARD_REMIT_ENABLED=false` (leaves the rest of the keeper
-running) or `KEEPER_ENABLED=false` (stops the seven GATED passes — **not**
+running, the acknowledgement pass included; also set
+`REWARD_REMIT_ACK_ENABLED=false` to stop the keeper's acks) or `KEEPER_ENABLED=false` (stops the seven GATED passes — **not**
 `runDailyOracleSnapshot`, which signs on `KEEPER_PRIVATE_KEY` alone and
 keeps broadcasting; owner decision 2026-08-03 leaves it that way, see
 #1466). Either is an edit to `/etc/vaipakam/keeper.env` followed by `sudo

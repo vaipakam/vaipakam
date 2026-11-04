@@ -292,8 +292,8 @@
   //     entries in the `vars` block below. Verified against the live
   //     `vaipakam-keeper` deployment on 2026-07-30 for KEEPER_ENABLED; the
   //     two REWARD_* flags are ABSENT there, which leaves THREE scheduled
-  //     passes dark, not two — rewardBudgetRemit and remitAck both gate on
-  //     REWARD_REMIT_ENABLED, commitmentReport on REWARD_COMMIT_ENABLED —
+  //     passes dark, not two — rewardBudgetRemit and remitAck then both gated on
+  //     REWARD_REMIT_ENABLED (remitAck has REWARD_REMIT_ACK_ENABLED since #3100), commitmentReport on REWARD_COMMIT_ENABLED —
   //     and are held the same way once armed. GRACE_DEFAULT_ENABLED (#2483)
   //     ships unset too, which keeps graceDefault dark: a FOURTH. Their VALUES cannot be read
   //     back from the API or dashboard, which is why each gated pass
@@ -315,10 +315,12 @@
   //                        and gates the REWARD_* and GRACE_DEFAULT flags
   //                        below as well.
   //   - REWARD_REMIT_ENABLED — 'true' arms the #776 reward-budget remit pass
-  //     (only after the keeper EOA is authorized on-chain) AND the #1222
-  //     B2-d2 remit-ACK pass (delivered-backing reservations; its ack tables
-  //     moved from shared migration 0044 to the keeper's private
-  //     `vaipakam-keeper-db`, #2450, whose schema the keeper's deploy applies).
+  //     (only after the keeper EOA is authorized on-chain).
+  //   - REWARD_REMIT_ACK_ENABLED — 'true' arms the #1222 B2-d2 remit-ACK pass
+  //     (delivered-backing reservations; its ack tables moved from shared
+  //     migration 0044 to the keeper's private `vaipakam-keeper-db`, #2450,
+  //     whose schema the keeper's deploy applies). Its own flag since #3100,
+  //     so the pre-deploy drain can stop remits and keep acknowledging.
   //   - REWARD_COMMIT_ENABLED — 'true' arms the #1222 B2-d1 mirror→Base
   //     commitment-report pass (mirror chains only; keeper EOA needs on-chain
   //     KEEPER_ROLE).

@@ -36,8 +36,11 @@
 // Acknowledging itself is unchanged: a receipt on the configured mirror proves
 // the delivery reached it, whatever the route.
 //
-// Gated by KEEPER_ENABLED + REWARD_REMIT_ENABLED (the ack completes remits —
-// same arming as the remit pass itself).
+// Gated by KEEPER_ENABLED + REWARD_REMIT_ACK_ENABLED (#3100). Its own flag,
+// not the remit pass's: an ack only completes a remit already sent, so the
+// pre-fresh-deploy drain stops new remits (REWARD_REMIT_ENABLED off) while
+// this pass keeps acknowledging the ones in flight until none is Pending.
+// Each ack spends a CCIP fee from the keeper key, hence an arming of its own.
 
 import { createPublicClient, http, type Abi, type Address, type PublicClient } from 'viem';
 import {
@@ -124,7 +127,7 @@ interface RemitReservationView {
 }
 
 export async function runRemitAck(env: Env, tick: PassTick): Promise<void> {
-  if (!passIsArmed(env, 'remitAck', 'REWARD_REMIT_ENABLED')) return;
+  if (!passIsArmed(env, 'remitAck', 'REWARD_REMIT_ACK_ENABLED')) return;
   // The run's deadline (#2497 re-cut review): every read through this run's
   // clients is refused past it, and no send starts after it.
   const deadline = tick.deadlineMs;

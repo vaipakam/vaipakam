@@ -81,6 +81,7 @@ function makeEnv(): Env {
     KEEPER_DB: d1Stub() as Env['KEEPER_DB'],
     KEEPER_ENABLED: 'true',
     REWARD_REMIT_ENABLED: 'true',
+    REWARD_REMIT_ACK_ENABLED: 'true',
     REWARD_COMMIT_ENABLED: 'true',
     GRACE_DEFAULT_ENABLED: 'true',
     PERIODIC_SETTLE_ENABLED: 'true',

@@ -128,6 +128,9 @@ interface BaseEnv {
   // note above); the numeric tuning knobs below are plain vars.
   /** 'true' arms the reward-budget remit pass (in addition to KEEPER_ENABLED). */
   REWARD_REMIT_ENABLED?: string;
+  /** #3100 — 'true' arms the remit-ack pass (in addition to KEEPER_ENABLED). Its own flag so a
+   *  pre-deploy drain can stop new remits while the acks of the ones in flight still go out. */
+  REWARD_REMIT_ACK_ENABLED?: string;
   /** recent-day window re-scanned for un-remitted budget each tick (default 45). */
   REWARD_REMIT_LOOKBACK_DAYS?: string;
   /** per-send VPFI ceiling in wei — perRemittanceCap + batch bound (default 50000e18, matches the on-chain lane default). */
@@ -450,6 +453,7 @@ export const PLAIN_VAR_KEYS = [
   'KEEPER_ENABLED',
   'KEEPER_RUNNER_ID',
   'REWARD_REMIT_ENABLED',
+  'REWARD_REMIT_ACK_ENABLED',
   'REWARD_REMIT_LOOKBACK_DAYS',
   'REWARD_REMIT_LANE_CAP',
   'REWARD_REMIT_MIN_PART',
@@ -642,6 +646,7 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     KEEPER_ENABLED: raw.KEEPER_ENABLED,
     KEEPER_RUNNER_ID: raw.KEEPER_RUNNER_ID,
     REWARD_REMIT_ENABLED: raw.REWARD_REMIT_ENABLED,
+    REWARD_REMIT_ACK_ENABLED: raw.REWARD_REMIT_ACK_ENABLED,
     REWARD_REMIT_LOOKBACK_DAYS: raw.REWARD_REMIT_LOOKBACK_DAYS,
     REWARD_REMIT_LANE_CAP: raw.REWARD_REMIT_LANE_CAP,
     REWARD_REMIT_MIN_PART: raw.REWARD_REMIT_MIN_PART,
