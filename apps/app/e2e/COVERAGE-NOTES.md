@@ -1875,3 +1875,17 @@ its row in the matrix and, where the reasoning grows, its section here.
 **The vault card.** Every kind now links to the adoption page with the kind, contract and token id in the query (`recoverPrefill`). The page reads them once on arrival, never carries a declared source or an amount, and a malformed link reads as the blank form. A replaced account cannot adopt (#3094), so its card shows the note without the link.
 
 **Not driven on Anvil.** The rig deploys no ERC-1155, and every ERC-721 it deploys reports its standard, so the multi-token path and the wrong-standard refusal are left to the live drive owed after the all-waves fresh deploy. Both are the same code path as the ERC-721 drive with a different kind value.
+
+<a id="cov-automatic-extension"></a>
+
+## Automatic extension on the loan page and extension reserves on Claims (#2814 app half)
+
+**What the page states.** The protocol's switch and pause, the loan's extension window (before, open, closed), the refusals for an open refinance request or a swap-to-repay order, both sides' limits as their getters return them (an earlier holder's limits are not in force, and the page says so), and the terms both leave open, or that they admit no rate, or that a side is missing.
+
+**Who edits what.** The page passes which positions the wallet holds from a fresh ownership read, so a wallet holding both positions sets each side's limits separately. Each editor is keyed by chain, wallet and side, so a draft never becomes another wallet's or side's consent. Turning a side off is a Terms-gate exit.
+
+**The reserve.** The borrower-position holder sees the reserve, other free balance, the charge now and at window end, and the cover verdict. A deposit re-checks the switch, pause, window, schedule and position holder live before any approval, and an approval is put back on any failure once the approval step starts. A withdrawal re-reads the reserve live, is a Terms-gate exit, and states where the payment goes. A reserve on an ended loan or a passed-on position (a lender who once held the borrower position included) is shown with its withdrawal, and Claims lists reserves found from the depositor's funding rows.
+
+**Fresh reads only.** The state, funding and reserve-list hooks drop data behind a failed refresh, so no cover verdict or consent is shown from a stale read; a keeper permission that could not be read is stated as unknown.
+
+**Identity and recovery.** The card and every reserve withdrawal are keyed by read network, wallet network, wallet and loan, so a typed amount, an open receipt or a local result is dropped on any change. A failed ownership read still mounts the card with only the reserve withdrawal and a note that positions could not be checked. A retired account is told its keeper grants no longer count. Migration 0082 files reserve rows stored before the actor rule under their depositor, so Claims lists them.

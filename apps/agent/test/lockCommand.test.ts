@@ -46,7 +46,7 @@ type SqlValue = number | string | null;
 function sqliteD1() {
   const db = new DatabaseSync(':memory:');
   db.exec(`CREATE TABLE user_thresholds (wallet TEXT NOT NULL, chain_id INTEGER NOT NULL, tg_chat_id TEXT, locale TEXT, PRIMARY KEY (wallet, chain_id))`);
-  db.exec(readFileSync(new URL('../../indexer/migrations/0081_protected_lock_requests.sql', import.meta.url), 'utf8'));
+  db.exec(readFileSync(new URL('../../indexer/migrations/0083_protected_lock_requests.sql', import.meta.url), 'utf8'));
   const stmt = (sql: string, args: SqlValue[] = []) => ({
     bind: (...a: SqlValue[]) => stmt(sql, a),
     all: async () => ({ results: db.prepare(sql).all(...args) }),

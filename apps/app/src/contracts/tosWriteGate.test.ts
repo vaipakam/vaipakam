@@ -30,6 +30,8 @@ describe('isExitWrite', () => {
       'claimAsLender',
       // #1209 — a past seller's interest claim.
       'claimAsSeller',
+      // #2814 — the depositor's own unused extension reserve.
+      'withdrawExtendReserve',
       'withdrawVPFIFromVault',
       'cancelOffer',
       'addCollateral',
@@ -62,6 +64,8 @@ describe('isExitWrite', () => {
       'modifyOffer',
       // #1219 — posting capacity is new business, unlike withdrawing it.
       'postCapacityDeposit',
+      // #2814 — funding the reserve is new custody.
+      'fundExtendReserve',
     ]) {
       expect(isExitWrite(fn, []), fn).toBe(false);
     }
@@ -197,6 +201,15 @@ describe('isExitWrite', () => {
     expect(isExitWrite('pokeMyTier', [])).toBe(true);
     // Granting it is new authority.
     expect(isExitWrite('setVPFIDiscountConsent', [true])).toBe(false);
+  });
+
+  it('permits turning auto-extend limits off, never on', () => {
+    // #2814 — the flag is the second argument: (loanId, enabled, …).
+    for (const fn of ['setAutoExtendBorrowerCaps', 'setAutoExtendLenderCaps']) {
+      expect(isExitWrite(fn, [1n, false, 0, 0, 0n]), fn).toBe(true);
+      expect(isExitWrite(fn, [1n, true, 0, 500, 2_000_000_000n]), fn).toBe(false);
+      expect(isExitWrite(fn, [false]), fn).toBe(false);
+    }
   });
 
   it('permits withdrawing paid-Push billing consent, and only with a zero cap', () => {

@@ -133,6 +133,13 @@ const ACTIVITY_ACTOR: ReadonlyMap<string, ActorRead> = new Map<string, ActorRead
   ['SellerInterestPaid', arg('seller')],
   ['SellerInterestWithdrawn', arg('seller')],
   ['SellerInterestClaimClosed', arg('seller')],
+  // #2814 — an extension reserve is its depositor's own money, and they may
+  // no longer be a party to the loan (the borrower position moved on, or the
+  // loan ended). Every step of it is filed under them, so the Claims page can
+  // find the loans they hold a reserve on (`/activity?actor=…&kind=…`).
+  ['ExtendReserveFunded', arg('holder')],
+  ['ExtendReserveWithdrawn', arg('holder')],
+  ['ExtendChargeDrawn', arg('holder')],
   ['RepayPartialPeriodAdvanced', arg('advancedBy')],
   ['VPFIDepositedToVault', arg('user')],
   ['VPFIWithdrawnFromVault', arg('user')],
