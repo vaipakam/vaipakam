@@ -254,9 +254,13 @@ The script re-points only a handler or peer that is the named attestor. On the
 attestor chain it first copies every account the old stand-in flags onto the
 new one. It rebuilds that list from the old stand-in's own events, refuses
 unless the range read includes the old stand-in's deployment, and checks each
-account against the old stand-in itself. Each timelock's automated delisting
-is closed from the attestor-chain run until that timelock's own chain has run.
-Requests in flight are voided, and the delister requests again. Then export
+account against the old stand-in itself. Between the BNB run and a timelock
+chain's own run, that timelock gets no new answers. Answers it already holds,
+and answers the old attestor already sent, still count until its own run
+voids them. They were read from the old stand-in, which keeps exactly the same
+flags, and they still expire at the timelock's age limit. Once voided, the
+delister requests again. A re-run after the rotation carries nothing, so it
+never re-flags an account cleared on the new stand-in since. Then export
 deployments
 (`bash contracts/script/exportFrontendDeployments.sh`), commit, and merge: the
 services read the addresses from the release they run, so a new contract

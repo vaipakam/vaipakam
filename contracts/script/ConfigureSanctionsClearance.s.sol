@@ -99,7 +99,14 @@ interface IStandInRefresherRead {
  *         answer still in flight from the old one is refused by the
  *         re-pointed peer (a failed CCIP message) while the timelock's
  *         `setClearanceSource` voids the request it answered anyway; the
- *         delister then requests again. On the attestor chain the run also
+ *         delister then requests again. Until a timelock chain's own run,
+ *         that timelock still accepts the old attestor: answers it already
+ *         holds and answers still in flight count under its unchanged epoch.
+ *         They were read from the old stand-in, which keeps the same flags
+ *         (it is not changed by the rotation, and the new one is given all
+ *         of them), and they still expire at the timelock's `oracleMaxAge`.
+ *         New requests in that window get no answer, since the new
+ *         attestor's replies are refused by the old peer. On the attestor chain the run also
  *         carries the old stand-in's flags to the new one BEFORE the handler
  *         moves, so the new attestor never answers from a shorter list. The
  *         flags are rebuilt from the old stand-in's own `StandInFlagSet`
@@ -138,8 +145,10 @@ interface IStandInRefresherRead {
  *           SANCTIONS_STANDIN_REFRESHER=<keeper address> ... (attestor chain)
  *           SANCTIONS_CLEARANCE_REPLACE_ATTESTOR=<old attestor> ... (each
  *           timelock chain)
- *         Each timelock's automated route is closed from the attestor-chain
- *         run until its own chain's run re-points it.
+ *         Between the attestor-chain run and a timelock chain's own run, that
+ *         timelock gets no NEW answers; ones it holds, or that the old
+ *         attestor already sent, still count (read from the old stand-in,
+ *         which keeps the same flags).
  */
 contract ConfigureSanctionsClearance is Script, ArtifactRootBase {
     /// @notice The `ICrossChainMessenger` channel clearance requests and
@@ -279,7 +288,7 @@ contract ConfigureSanctionsClearance is Script, ArtifactRootBase {
 
     /// @dev On a rotation, the accounts the replaced attestor's stand-in
     ///      flags and the new stand-in `s` does not yet; empty when this run
-    ///      replaces nothing. Refuses a replace target that is not the
+    ///      replaces nothing or the handler already is `a`. Refuses a replace target that is not the
     ///      channel's handler here (nor already replaced by `a`), and a
     ///      replaced oracle that is not a stand-in.
     function _flagsToCarry(CcipMessenger m, TestnetSanctionsOracleStandIn s, SanctionsClearanceAttestor a)
@@ -292,8 +301,12 @@ contract ConfigureSanctionsClearance is Script, ArtifactRootBase {
             "ConfigureSanctionsClearance: SANCTIONS_CLEARANCE_REPLACE_ATTESTOR names the attestor this run keeps"
         );
         address handler = m.handlerOf(SANCTIONS_CLEARANCE_CHANNEL);
+        // Already rotated: the flags were carried in the broadcast that moved
+        // the handler, before it moved. Carrying again would re-flag an
+        // account the admin has cleared on the new stand-in since.
+        if (handler == address(a)) return missing;
         require(
-            handler == replaceAttestor || handler == address(a),
+            handler == replaceAttestor,
             "ConfigureSanctionsClearance: SANCTIONS_CLEARANCE_REPLACE_ATTESTOR is not the clearance channel's handler here"
         );
         (bool read, address oldStandIn) = TotalRead.addressOf(replaceAttestor, IClearanceAttestorReads.oracle.selector);

@@ -263,6 +263,19 @@ contract ConfigureSanctionsClearanceTest is Test {
         script.flagsToCarry(address(m2), address(fresh), address(newA));
     }
 
+    function test_CarriesNothingOnceTheRotationIsDone() public {
+        // A re-run after the handler moved: no carry, so nothing the admin has
+        // cleared on the new stand-in since is flagged again (#3125 r1). No
+        // start block is needed either: the history is not read.
+        CcipMessenger m = _messenger();
+        TestnetSanctionsOracleStandIn fresh = new TestnetSanctionsOracleStandIn(admin);
+        SanctionsClearanceAttestor oldA = new SanctionsClearanceAttestor(ISanctionsList(address(standIn)), ICrossChainMessenger(address(m)));
+        SanctionsClearanceAttestor newA = new SanctionsClearanceAttestor(ISanctionsList(address(fresh)), ICrossChainMessenger(address(m)));
+        script.ensureHandler(address(m), address(newA));
+        script.setReplace(address(oldA), 0);
+        assertEq(script.flagsToCarry(address(m), address(fresh), address(newA)).length, 0);
+    }
+
     function _flagLog(address emitter, address account, bool on, uint64 blockNumber, uint256 logIndex)
         internal
         pure
