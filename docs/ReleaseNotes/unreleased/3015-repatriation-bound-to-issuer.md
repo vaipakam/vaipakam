@@ -1,4 +1,4 @@
-## Thread — a repatriation instruction is paid out only to the chain that issued it (PR #<n>)
+## Thread — a repatriation instruction is paid out only to the chain that issued it (PR #3143)
 
 A mirror chain records each Base-issued repatriation instruction under the full identity of its issuer: the chain the cross-chain transport authenticated it from, and the Base Diamond there. Executing the instruction, which sends the mirror's surplus VPFI home, and acknowledging its cancellation now both go to that issuing chain. Before this change they went to whichever Base the mirror followed at the moment the step ran. A mirror that detached and then bound to a different Base would therefore send an earlier instruction's VPFI to a chain that never authorized it, and leave the issuing Base's authorization charged. Both steps are permissionless, so anyone could trigger that.
 
