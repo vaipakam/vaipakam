@@ -22,6 +22,7 @@ import { KEEPER_PASSES, cadenceSkipReason, runDeadline } from './passSchedule';
 import { claimRunnerLease } from './runnerLease';
 import { adoptKeeperDeployments } from './keeperEpoch';
 import { armEpochFence } from './epochFence';
+import { signingKeyHealth } from './signingKeyAlert';
 import { redactedError } from '@vaipakam/lib/errorDescription';
 /**
  * Run one pass and report what it cost.
@@ -151,6 +152,13 @@ export async function runKeeperTick(
   // send and alert asserts it, and every shared write carries it inside its
   // statement; see epochFence.ts.
   armEpochFence(resolved.DB, chains);
+
+  // #3119 — a key that cannot sign leaves every pass below unable to send a
+  // transaction, each gated pass saying so only in its own skip line. One ops
+  // alert says it for the machine.
+  launch('signingKeyHealth', async () => {
+    await signingKeyHealth(resolved);
+  });
 
   // ONE loop over the declared table (#1896), rather than ten
   // hand-written blocks. Each pass still gets its own `launch` and

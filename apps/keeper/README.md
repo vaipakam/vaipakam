@@ -55,7 +55,7 @@ Cloudflare Worker secrets (set via `wrangler secret put`):
 
 | Secret | Purpose |
 |---|---|
-| `KEEPER_PRIVATE_KEY` | The signing key. Holds funds; rotate per the AdminKeysAndPause runbook. |
+| `KEEPER_PRIVATE_KEY` | The signing key. Holds funds; rotate per the AdminKeysAndPause runbook. While `KEEPER_ENABLED` is on and this is unset or cannot sign, the keeper sends no transaction (every gated pass is disarmed; the user-notice watchers, which sign nothing, keep running) and the tick posts one ops alert for the machine (`keeper-signing-key`, every 6 h until the key signs; #3119). |
 | `RPC_*` | Per-chain RPC URLs (carry API keys). |
 | `KEEPER_ENABLED` | Kill-switch for the **gated** passes; set to `false` to disable them. **It does not cover every on-chain write** — see the note below. |
 | `REWARD_REMIT_ENABLED` | Arms the #776 reward-budget remittance pass (in addition to `KEEPER_ENABLED`). Keep off until the keeper EOA is authorized on-chain via `setRewardRemittanceKeeper` (or is ADMIN). Remit acknowledgements have their own flag, `REWARD_REMIT_ACK_ENABLED`, below (#3100). |

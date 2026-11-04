@@ -1006,19 +1006,30 @@ export function resolveKeeperAccount(
  */
 function keeperBlockers(env: Env): string[] {
   const blockers: string[] = [];
-  const enabled = env.KEEPER_ENABLED;
-  if (enabled === undefined || !['true', '1'].includes(enabled.toLowerCase())) {
-    blockers.push(`KEEPER_ENABLED ${describeFlagValue(enabled, true)}`);
+  if (!keeperFlagOn(env)) {
+    blockers.push(`KEEPER_ENABLED ${describeFlagValue(env.KEEPER_ENABLED, true)}`);
   }
-  if (!env.KEEPER_PRIVATE_KEY) {
-    blockers.push('KEEPER_PRIVATE_KEY unset');
-  } else {
-    const resolved = resolveKeeperAccount(env.KEEPER_PRIVATE_KEY);
-    if ('problem' in resolved) {
-      blockers.push(`KEEPER_PRIVATE_KEY ${resolved.problem}`);
-    }
-  }
+  const key = signingKeyProblem(env);
+  if (key !== null) blockers.push(`KEEPER_PRIVATE_KEY ${key}`);
   return blockers;
+}
+
+/** Whether `KEEPER_ENABLED` reads on (`true` or `1`, any case). */
+export function keeperFlagOn(env: Env): boolean {
+  const enabled = env.KEEPER_ENABLED;
+  return enabled !== undefined && ['true', '1'].includes(enabled.toLowerCase());
+}
+
+/**
+ * Why the signing key cannot sign (`unset`, or the form of the mistake), or
+ * null when it can. Never the value: `resolveKeeperAccount` names only the
+ * form. The machine-level ops alert (`signingKeyAlert.ts`, #3119) reads the
+ * same answer the pass gate does, so the two cannot disagree.
+ */
+export function signingKeyProblem(env: Env): string | null {
+  if (!env.KEEPER_PRIVATE_KEY) return 'unset';
+  const resolved = resolveKeeperAccount(env.KEEPER_PRIVATE_KEY);
+  return 'problem' in resolved ? resolved.problem : null;
 }
 
 /**
