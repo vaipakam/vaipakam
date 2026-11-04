@@ -80,4 +80,22 @@ library ReturnWire {
     ///      `uint256(keccak256("vaipakam.return.wire.retired-surplus.r1"))`.
     uint256 internal constant RETURN_WIRE_TAG_RETIRED_SURPLUS_R1 =
         uint256(keccak256("vaipakam.return.wire.retired-surplus.r1"));
+
+    /// @notice Leading word of an UNTYPED-REMAINDER return payload (#2376):
+    ///         `abi.encode(RETURN_WIRE_TAG_UNTYPED_REMAINDER_U1,
+    ///         address issuingBase, bytes32 mirrorPacketHash, uint256 amount)`,
+    ///         carried with exactly one `TokenAmount` (mirror VPFI taken from
+    ///         a budget packet's released, acknowledged transport remainder).
+    ///         `issuingBase` is the Base Diamond that sent the packet; only
+    ///         that Diamond credits it. `mirrorPacketHash` names the packet
+    ///         on the mirror, for provenance only. It settles no record: Base
+    ///         credits what arrives to its recycle bucket as relocated
+    ///         custody, attributed to the authenticated source chain. The
+    ///         passage never TYPES the value as fresh or recycled on the
+    ///         mirror (design §5c); Base books it recycled by owner decision
+    ///         (2026-11-04), and the arrival event states its origin.
+    /// @dev Value is
+    ///      `uint256(keccak256("vaipakam.return.wire.untyped-remainder.u1"))`.
+    uint256 internal constant RETURN_WIRE_TAG_UNTYPED_REMAINDER_U1 =
+        uint256(keccak256("vaipakam.return.wire.untyped-remainder.u1"));
 }

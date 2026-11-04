@@ -26,6 +26,8 @@ import {ICrossChainMessenger} from "../src/crosschain/ICrossChainMessenger.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {MockRewardMessenger} from "./mocks/MockRewardMessenger.sol";
+import {LibD8Delivery} from "./helpers/LibD8Delivery.sol";
+import {RewardEpochFacet} from "../src/facets/RewardEpochFacet.sol";
 import {
     MockTokenAdminRegistry,
     MockVpfiTokenPool
@@ -1827,5 +1829,195 @@ contract RepatriationTransportTest is SetupTest {
 
         vm.expectRevert(abi.encodeWithSelector(RepatriationFacet.OnlyRepatriationReceiver.selector, address(this)));
         _repat().onRetiredSurplusReturnReceived(CHAIN_ARB, address(diamond), address(vpfi), 1 ether, 1 ether);
+    }
+
+    // ── #2376 — the untyped return leg ──────────────────────────────────────
+
+    /// Mirror fixture: custody activated, one whole-fresh budget delivery of
+    /// `amount` from `BASE_DEPLOYMENT` for day 1, its transport batch parked
+    /// and (when `ack`) acknowledged, so its remainder is released.
+    function _releasedRemainder(uint256 amount, bool ack) internal returns (bytes32 h) {
+        _armMirror();
+        _ensureRewardClockLaunched();
+        vm.warp(block.timestamp + 5 days);
+        RewardRemittanceFacet(address(diamond)).setRewardRemittanceReceiver(address(this));
+        activateRewardCustodyForTest(address(vpfi), 0);
+        vpfi.mint(address(diamond), amount); // the receiver forwarded the delivery here
+        h = LibD8Delivery.deliverFresh(
+            address(diamond), address(vpfi), amount, 1, CHAIN_BASE, 7, BASE_DEPLOYMENT, keccak256("u-1")
+        );
+        _mut().parkTransportBatchRaw(h);
+        if (ack) _mut().acknowledgeTransportBatchRaw(h);
+    }
+
+    function _remainderOf(bytes32 h) internal view returns (uint256 amount, uint256 debited) {
+        (, amount, , , debited) = RewardEpochFacet(address(diamond)).getTransportRemainder(h);
+    }
+
+    /// The released remainder leaves for Base in chunks: each chunk debits the
+    /// remainder and the packet (as a disposal, not a classification), leaves
+    /// the `Unclassified` row measured, and rides a message naming the packet
+    /// and the Base Diamond that sent it.
+    function test_UntypedReturn_SendsTheReleasedRemainderHome() public {
+        bytes32 h = _releasedRemainder(10 ether, true);
+        address holder = RewardCustodyFacet(address(diamond)).rewardCustodyHolder();
+        uint256 holderBefore = vpfi.balanceOf(holder);
+        assertEq(_custodyRow(LibVaipakam.RewardCustodyRow.Unclassified), 10 ether, "fixture: untyped in the row");
+
+        _repat().sendUntypedRemainderReturn(h, 4 ether, payable(address(this)));
+        (uint256 left, uint256 debited) = _remainderOf(h);
+        assertEq(left, 6 ether, "the remainder stepped down");
+        assertEq(debited, 4 ether, "and records what left");
+        LibVaipakam.IngressPacket memory p = RewardRemittanceLensFacet(address(diamond)).getIngressPacket(h);
+        assertEq(p.unclassified, 6 ether, "the packet's untyped remainder stepped down");
+        assertEq(p.disposed, 4 ether, "as a non-classification exit");
+        assertEq(p.classifiedFresh + p.classifiedRecycled, 0, "nothing was typed");
+        assertEq(_custodyRow(LibVaipakam.RewardCustodyRow.Unclassified), 6 ether, "the row stepped down");
+        assertEq(holderBefore - vpfi.balanceOf(holder), 4 ether, "the holder released it");
+        assertEq(vpfi.balanceOf(address(returnSender)), 0, "nothing stranded in escrow");
+        assertEq(vpfi.balanceOf(address(ccip)), 4 ether, "pulled by CCIP");
+        assertEq(ccip.lastDst(), uint256(CHAIN_BASE), "to the bound base chain");
+        assertEq(
+            ccip.lastPayload(),
+            abi.encode(ReturnWire.RETURN_WIRE_TAG_UNTYPED_REMAINDER_U1, BASE_DEPLOYMENT, h, uint256(4 ether)),
+            "names the Base Diamond that sent the packet, and the packet"
+        );
+        assertEq(
+            returnSender.quoteUntypedRemainderReturn(uint256(CHAIN_BASE), BASE_DEPLOYMENT, h, 4 ether),
+            ccip.fee(),
+            "the quote prices the same message"
+        );
+        assertEq(_repat().getUntypedRemainderReturnedCumulative(), 4 ether);
+
+        _repat().sendUntypedRemainderReturn(h, 6 ether, payable(address(this)));
+        (left, debited) = _remainderOf(h);
+        assertEq(left, 0, "the terminal chunk empties the remainder");
+        assertEq(debited, 10 ether);
+        assertEq(_custodyRow(LibVaipakam.RewardCustodyRow.Unclassified), 0);
+        assertEq(_repat().getUntypedRemainderReturnedCumulative(), 10 ether);
+    }
+
+    /// The return goes to the packet's issuer, not to whichever Base the
+    /// mirror follows when the send runs (#3015's rule): a mirror that has
+    /// since rebound to another Base still sends it to the chain that
+    /// delivered it.
+    function test_UntypedReturn_GoesToTheIssuer_NotTheCurrentBase() public {
+        bytes32 h = _releasedRemainder(5 ether, true);
+        // Detach, then bind to another Base: the rebind route.
+        _rep().setBaseChainId(0);
+        _rep().setBaseChainId(CHAIN_OP);
+        _repat().sendUntypedRemainderReturn(h, 2 ether, payable(address(this)));
+        assertEq(ccip.lastDst(), uint256(CHAIN_BASE), "to the chain that delivered the packet");
+        assertEq(
+            ccip.lastPayload(),
+            abi.encode(ReturnWire.RETURN_WIRE_TAG_UNTYPED_REMAINDER_U1, BASE_DEPLOYMENT, h, uint256(2 ether)),
+            "naming the Base Diamond that sent it"
+        );
+    }
+
+    /// Only a RELEASED remainder leaves: a parked-but-unacknowledged batch is
+    /// refused, as is a packet with no batch, a zero amount and an amount past
+    /// what the remainder holds. Nothing moves on any refusal.
+    function test_UntypedReturn_RefusedUnlessReleasedAndBounded() public {
+        bytes32 h = _releasedRemainder(5 ether, false);
+        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.TransportBatchNotReleased.selector, h, h));
+        _repat().sendUntypedRemainderReturn(h, 1 ether, payable(address(this)));
+
+        bytes32 unknown = keccak256("nobody");
+        vm.expectRevert(abi.encodeWithSelector(RepatriationFacet.UntypedReturnNoRemainder.selector, unknown));
+        _repat().sendUntypedRemainderReturn(unknown, 1 ether, payable(address(this)));
+
+        _mut().acknowledgeTransportBatchRaw(h);
+        vm.expectRevert(RepatriationFacet.UntypedReturnBadAmount.selector);
+        _repat().sendUntypedRemainderReturn(h, 0, payable(address(this)));
+        vm.expectRevert(
+            abi.encodeWithSelector(IVaipakamErrors.TransportRemainderExceeded.selector, h, 6 ether, 5 ether)
+        );
+        _repat().sendUntypedRemainderReturn(h, 6 ether, payable(address(this)));
+        (uint256 left, ) = _remainderOf(h);
+        assertEq(left, 5 ether, "intact after every refusal");
+        assertEq(_custodyRow(LibVaipakam.RewardCustodyRow.Unclassified), 5 ether);
+    }
+
+    /// The send is ADMIN-gated, and mirror-only.
+    function test_UntypedReturn_AdminOnly_MirrorOnly() public {
+        bytes32 h = _releasedRemainder(5 ether, true);
+        vm.prank(STRANGER);
+        vm.expectRevert();
+        _repat().sendUntypedRemainderReturn(h, 1 ether, payable(STRANGER));
+        _rep().setIsCanonicalRewardChain(true);
+        vm.expectRevert(RepatriationFacet.RepatriationWrongChainRole.selector);
+        _repat().sendUntypedRemainderReturn(h, 1 ether, payable(address(this)));
+    }
+
+    /// Mirror-outbound lane capacity is checked before any effect: an
+    /// over-capacity send fails retryably with the remainder intact.
+    function test_UntypedReturn_LaneCapacityRetryable() public {
+        bytes32 h = _releasedRemainder(5 ether, true);
+        pool.setOutbound(SEL_BASE, true, 1 ether);
+        vm.expectRevert();
+        _repat().sendUntypedRemainderReturn(h, 5 ether, payable(address(this)));
+        (uint256 left, ) = _remainderOf(h);
+        assertEq(left, 5 ether, "remainder intact after a failed send");
+        _repat().sendUntypedRemainderReturn(h, 1 ether, payable(address(this)));
+        (left, ) = _remainderOf(h);
+        assertEq(left, 4 ether, "a chunk within capacity goes");
+    }
+
+    /// Base credits exactly what arrived to the recycle bucket as relocated
+    /// custody, automatically, attributed to the source chain.
+    function test_UntypedReturn_BaseCreditsWhatArrives() public {
+        _armBase();
+        ConfigFacet cfg = ConfigFacet(address(diamond));
+        uint256 bucketBefore = cfg.getRecycleBucket();
+        uint256 creditedBefore = cfg.getRecycleCreditedCumulative();
+        uint256 todayBefore = cfg.getRecycledCreditedByDay(0);
+        bytes32 mirrorPacket = keccak256("mirror-packet");
+        vpfi.mint(address(returnReceiver), 6 ether);
+        vm.expectEmit(true, true, false, true, address(diamond));
+        emit RepatriationFacet.UntypedRemainderReturnSettled(CHAIN_ARB, mirrorPacket, 6 ether, 6 ether);
+        relay.relay(
+            returnReceiver,
+            uint256(CHAIN_ARB),
+            address(0),
+            abi.encode(ReturnWire.RETURN_WIRE_TAG_UNTYPED_REMAINDER_U1, address(diamond), mirrorPacket, uint256(6 ether)),
+            _oneToken(6 ether)
+        );
+        assertEq(cfg.getRecycleBucket(), bucketBefore + 6 ether, "credited to the bucket");
+        assertEq(cfg.getRecycleCreditedCumulative(), creditedBefore, "no new absorption");
+        assertEq(cfg.getRecycledCreditedByDay(0), todayBefore, "the day feed is untouched");
+        assertEq(_repat().getChainUntypedRemainderReturned(CHAIN_ARB), 6 ether, "attributed to the source");
+        assertEq(vpfi.balanceOf(address(diamond)), 6 ether, "tokens home");
+        assertEq(vpfi.balanceOf(address(returnReceiver)), 0);
+    }
+
+    /// A return naming a Base Diamond this one replaced fails closed (CCIP
+    /// keeps it re-executable), a malformed payload is refused, and the
+    /// Diamond ingress takes a delivery from its receiver only.
+    function test_UntypedReturn_BaseRefusesWrongEraAndMalformed() public {
+        _armBase();
+        vpfi.mint(address(returnReceiver), 6 ether);
+        bytes32 mirrorPacket = keccak256("mirror-packet");
+        vm.expectRevert(abi.encodeWithSelector(RepatriationFacet.RepatriationWrongEra.selector, BASE_DEPLOYMENT));
+        relay.relay(
+            returnReceiver,
+            uint256(CHAIN_ARB),
+            address(0),
+            abi.encode(ReturnWire.RETURN_WIRE_TAG_UNTYPED_REMAINDER_U1, BASE_DEPLOYMENT, mirrorPacket, uint256(6 ether)),
+            _oneToken(6 ether)
+        );
+        vm.expectRevert(abi.encodeWithSelector(VpfiReturnReceiver.PayloadSizeMismatch.selector, 96, 128));
+        relay.relay(
+            returnReceiver,
+            uint256(CHAIN_ARB),
+            address(0),
+            abi.encode(ReturnWire.RETURN_WIRE_TAG_UNTYPED_REMAINDER_U1, address(diamond), uint256(6 ether)),
+            _oneToken(6 ether)
+        );
+        vm.expectRevert(abi.encodeWithSelector(RepatriationFacet.OnlyRepatriationReceiver.selector, address(this)));
+        _repat().onUntypedRemainderReturnReceived(
+            CHAIN_ARB, address(diamond), mirrorPacket, address(vpfi), 1 ether, 1 ether
+        );
+        assertEq(_repat().getChainUntypedRemainderReturned(CHAIN_ARB), 0, "nothing credited");
     }
 }

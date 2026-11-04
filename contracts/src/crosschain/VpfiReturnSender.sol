@@ -117,6 +117,14 @@ contract VpfiReturnSender is
         uint256 amount,
         uint256 remainingAfter
     );
+    /// @custom:event-category informational/reward-transport
+    event UntypedRemainderReturnSent(
+        bytes32 indexed messageId,
+        uint256 indexed dstChainId,
+        bytes32 indexed mirrorPacketHash,
+        uint256 amount,
+        uint256 remainingAfter
+    );
 
     // ─── Errors ───────────────────────────────────────────────────────
 
@@ -352,6 +360,46 @@ contract VpfiReturnSender is
         emit RetiredSurplusReturnSent(messageId, dstChainId, amount, remainingAfter);
     }
 
+    /// @notice #2376 — send part of a budget packet's released transport
+    ///         remainder to Base: the VPFI the Diamond just released into
+    ///         this escrow from its `Unclassified` row. The payload names the
+    ///         Base Diamond that sent the packet (`issuingBase`) and the
+    ///         mirror packet: Base credits what arrives to its recycle bucket
+    ///         and settles no record.
+    /// @dev    Called by {RepatriationFacet.sendUntypedRemainderReturn} in the
+    ///         same transaction that debits the remainder and releases the
+    ///         tokens here; any failure reverts the whole return.
+    ///         `remainingAfter` is the remainder's post-send figure, for the
+    ///         event only.
+    function sendUntypedRemainderReturn(
+        uint256 dstChainId,
+        address issuingBase,
+        bytes32 mirrorPacketHash,
+        uint256 amount,
+        uint256 remainingAfter,
+        address payable refundAddress
+    )
+        external
+        payable
+        whenNotPaused
+        nonReentrant
+        returns (bytes32 messageId)
+    {
+        if (msg.sender != diamond) revert NotDiamond(msg.sender);
+        if (amount == 0) revert ZeroAmount();
+        address token = vpfiToken;
+        uint256 held = IERC20(token).balanceOf(address(this));
+        if (held < amount) revert InsufficientEscrow(amount, held);
+
+        (bytes memory payload, ICrossChainMessenger.TokenAmount[] memory tokens) =
+            _untypedRemainderMessage(token, issuingBase, mirrorPacketHash, amount);
+        IERC20(token).forceApprove(messenger, amount);
+        messageId = _send(dstChainId, payload, tokens, refundAddress);
+        emit UntypedRemainderReturnSent(
+            messageId, dstChainId, mirrorPacketHash, amount, remainingAfter
+        );
+    }
+
     // ─── Quotes ───────────────────────────────────────────────────────
 
     /// @notice Fee quote for {sendRepatriationReturn} with these arguments.
@@ -419,6 +467,20 @@ contract VpfiReturnSender is
         );
     }
 
+    /// @notice Fee quote for {sendUntypedRemainderReturn} with these arguments.
+    function quoteUntypedRemainderReturn(
+        uint256 dstChainId,
+        address issuingBase,
+        bytes32 mirrorPacketHash,
+        uint256 amount
+    ) external view returns (uint256 fee) {
+        (bytes memory payload, ICrossChainMessenger.TokenAmount[] memory tokens) =
+            _untypedRemainderMessage(vpfiToken, issuingBase, mirrorPacketHash, amount);
+        return ICrossChainMessenger(messenger).quoteMessageFee(
+            dstChainId, payload, tokens, destGasLimit
+        );
+    }
+
     /// @notice Fee quote for {sendRepatriationCancelAck} with these arguments.
     function quoteRepatriationCancelAck(
         uint256 dstChainId,
@@ -471,6 +533,25 @@ contract VpfiReturnSender is
         returns (bytes memory payload, ICrossChainMessenger.TokenAmount[] memory tokens)
     {
         payload = abi.encode(ReturnWire.RETURN_WIRE_TAG_RETIRED_SURPLUS_R1, issuingBase, amount);
+        tokens = new ICrossChainMessenger.TokenAmount[](1);
+        tokens[0] = ICrossChainMessenger.TokenAmount({token: token, amount: amount});
+    }
+
+    /// @dev #2376 — the untyped-remainder return message, built once for the
+    ///      send and its quote so the two can never price different payloads.
+    function _untypedRemainderMessage(
+        address token,
+        address issuingBase,
+        bytes32 mirrorPacketHash,
+        uint256 amount
+    )
+        internal
+        pure
+        returns (bytes memory payload, ICrossChainMessenger.TokenAmount[] memory tokens)
+    {
+        payload = abi.encode(
+            ReturnWire.RETURN_WIRE_TAG_UNTYPED_REMAINDER_U1, issuingBase, mirrorPacketHash, amount
+        );
         tokens = new ICrossChainMessenger.TokenAmount[](1);
         tokens[0] = ICrossChainMessenger.TokenAmount({token: token, amount: amount});
     }

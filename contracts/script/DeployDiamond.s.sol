@@ -2961,7 +2961,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](20);
+        s = new bytes4[](24);
         s[0] = RepatriationFacet.authorizeRepatriation.selector;
         s[1] = RepatriationFacet.onRepatriationReturnReceived.selector;
         s[2] = RepatriationFacet.onRepatriationCancelAck.selector;
@@ -2988,6 +2988,12 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[17] = RepatriationFacet.sendRetiredSurplusReturn.selector;
         s[18] = RepatriationFacet.onRetiredSurplusReturnReceived.selector;
         s[19] = RepatriationFacet.getChainRetiredSurplusReturned.selector;
+        // #2376 — the untyped return leg (mirror send), its Base ingress,
+        // and the two per-side records.
+        s[20] = RepatriationFacet.sendUntypedRemainderReturn.selector;
+        s[21] = RepatriationFacet.onUntypedRemainderReturnReceived.selector;
+        s[22] = RepatriationFacet.getChainUntypedRemainderReturned.selector;
+        s[23] = RepatriationFacet.getUntypedRemainderReturnedCumulative.selector;
     }
 
     /// T-087 Sub 1.B — single-home accumulator facet (ring-buffer

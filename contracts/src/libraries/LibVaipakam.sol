@@ -8326,6 +8326,19 @@ library LibVaipakam {
         ///      `VaultFactoryFacet.getOrCreateUserVault`. Appended —
         ///      append-only.
         mapping(address => address) vaultUserOf;
+        /// @dev #2376 — cumulative VPFI this mirror has sent back to Base from
+        ///      budget packets' released transport remainders (the untyped
+        ///      return leg). Written only by
+        ///      `RepatriationFacet.sendUntypedRemainderReturn`; each packet's
+        ///      own share is its `disposed` figure. Mirror-only. Appended —
+        ///      append-only.
+        uint256 untypedRemainderReturnedCumulative;
+        /// @dev #2376 — per source chain, the VPFI Base credited to the
+        ///      recycle bucket from that chain's untyped-remainder returns:
+        ///      what actually arrived, never a declared figure. Written only
+        ///      by `RepatriationFacet.onUntypedRemainderReturnReceived`.
+        ///      Base-only. Appended — append-only.
+        mapping(uint32 => uint256) chainUntypedRemainderReturned;
     }
 
     /// @notice Protected account mode — one owner wallet's settings.

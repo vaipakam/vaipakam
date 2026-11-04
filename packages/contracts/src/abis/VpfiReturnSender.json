@@ -319,6 +319,40 @@
   },
   {
     "type": "function",
+    "name": "quoteUntypedRemainderReturn",
+    "inputs": [
+      {
+        "name": "dstChainId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "issuingBase",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "mirrorPacketHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "fee",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "renounceOwnership",
     "inputs": [],
     "outputs": [],
@@ -459,6 +493,50 @@
         "name": "dayId",
         "type": "uint256",
         "internalType": "uint256"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "remainingAfter",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "refundAddress",
+        "type": "address",
+        "internalType": "address payable"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "messageId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "payable"
+  },
+  {
+    "type": "function",
+    "name": "sendUntypedRemainderReturn",
+    "inputs": [
+      {
+        "name": "dstChainId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "issuingBase",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "mirrorPacketHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
       },
       {
         "name": "amount",
@@ -880,6 +958,43 @@
         "type": "address",
         "indexed": false,
         "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "UntypedRemainderReturnSent",
+    "inputs": [
+      {
+        "name": "messageId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "dstChainId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "mirrorPacketHash",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "remainingAfter",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
       }
     ],
     "anonymous": false

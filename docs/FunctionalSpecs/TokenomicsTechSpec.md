@@ -1254,6 +1254,30 @@ Delivered-funding position (recycling completion plan §M7 / #1434 P1-a — reco
   reports six still parked and four classified out, rather than presenting
   six as if six were the original holding. Readers can account for the
   delivery's opening value, remaining custody, and every recorded outflow.
+- A released remainder has a second way out besides classification: it can
+  be sent home to the canonical chain (owner decision 2026-11-04, #2376).
+  On the mirror this is an administrator's step, taken in parts no larger
+  than the mirror's side of the lane can carry, with the administrator
+  paying only the cross-chain fee. Each part reduces the parked balance and
+  the delivery's untyped remainder by exactly what it sends, is recorded as
+  a disposal (never as a classification, so it is neither fresh nor
+  recycled on the mirror), and leaves custody measured. It goes only toward
+  the canonical deployment that sent the delivery, on the chain that sent
+  it, even after the mirror has detached or bound to another canonical
+  chain (the same rule as a repatriation instruction); a deployment that
+  replaced it refuses the return, and the message stays retryable. A
+  remainder not yet acknowledged, a delivery with no epoch, and an amount
+  past what is parked are all refused with nothing moved.
+- On the canonical chain such a return is credited **automatically** to the
+  recycle bucket, exactly as it arrives, with no operator step. Like the
+  retired-chain return it is relocated custody, not new absorption: it never
+  feeds the day series behind the trailing absorption average and never
+  reopens fresh headroom. Part of it may have left as fresh budget; it is
+  booked as recycled on its return. That is a disclosed labelling cost of
+  never typing value in passage, not a loss, and every arrival is announced
+  with its source chain and the mirror delivery it came from. Both sides
+  publish their running totals: how much the mirror has sent this way, and
+  how much each source chain's returns have delivered.
 - Accounting reads about a delivery the ledger does not know are refused;
   unknown funds must never look like a substantiated zero drawn or parked.
   The explicit epoch-existence read is the exception: it remains available

@@ -4619,6 +4619,35 @@ library LibRewardCustody {
         emit RewardCustodyUnclassifiedReleased(h, to, amount);
     }
 
+    /// @notice #2376 — the untyped return leg's draw on the row: `amount` of a
+    ///         budget packet's untyped remainder leaves the `Unclassified`
+    ///         row for the return sender, measured, recorded as a
+    ///         NON-classification exit of the packet (`disposed`), and the
+    ///         holder-side aggregates step down with it, exactly.
+    /// @dev    The CALLER has already debited the packet's released transport
+    ///         remainder by the same amount ({takeFromReleasedRemainder}),
+    ///         which is what bounds the take to value the batch's own listed
+    ///         days can no longer draw. The packet's own remainder is a second
+    ///         ceiling, checked here by name. Nothing is typed: the value
+    ///         leaves as neither fresh nor recycled, so neither queue moves.
+    ///         The release itself runs through the custody facet
+    ///         ({callReleaseFromRow}), the only host of the holder.
+    function releaseUntypedRemainderForReturn(
+        LibVaipakam.Storage storage s,
+        bytes32 h,
+        address to,
+        uint256 amount
+    ) internal {
+        LibVaipakam.IngressPacket storage p = s.ingressPackets[h];
+        uint256 have = p.unclassified;
+        if (amount > have) revert IVaipakamErrors.ReconciliationExceedsPacketRemainder(h, amount, have);
+        p.unclassified = have - amount;
+        p.disposed += amount;
+        _stepDownUncounted(s, amount);
+        callReleaseFromRow(LibVaipakam.RewardCustodyRow.Unclassified, to, amount);
+        emit RewardCustodyUnclassifiedReleased(h, to, amount);
+    }
+
     // ─── The legacy reconciliation epoch (#1566 closure 2 cutover PR 2) ──────
     //
     // The classification EXITS of the `Unclassified` row and the custody
