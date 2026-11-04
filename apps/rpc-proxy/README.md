@@ -87,8 +87,9 @@ Each step needs the owner's go-ahead.
    the app falls back to that chain's public endpoint.
 2. Set `FRONTEND_ORIGIN` to the app's origins if they differ from the
    committed value.
-3. `pnpm --filter @vaipakam/rpc-proxy run deploy`, then bind a hostname
-   (e.g. `rpc.vaipakam.com`) in the dashboard.
+3. `pnpm --filter @vaipakam/rpc-proxy run deploy`. The hostname
+   `rpc.vaipakam.com` is declared in `wrangler.jsonc` (`routes`), so a
+   deploy attaches it and keeps it attached.
 4. Check it: `curl -s -H 'origin: https://app.vaipakam.com' -H 'content-type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"eth_blockNumber","params":[]}' https://rpc.vaipakam.com/rpc/84532`
    should return a block number. Without the `origin` header the answer is
    `403`, which is correct.
@@ -96,6 +97,16 @@ Each step needs the owner's go-ahead.
    `VITE_*_RPC_URL` / `VITE_*_WSS_URL` unset (the build refuses otherwise),
    then retire the old keys that shipped in earlier bundles: they were
    public.
+
+**State (2026-11-04).** On for the testnets. The proxy is deployed at
+`rpc.vaipakam.com` with the three testnet keys bound, and the connected
+app's Workers Build sets `VITE_RPC_PROXY_ORIGIN=https://rpc.vaipakam.com`
+with no per-chain RPC URL. Ethereum and Base mainnet have no key yet, so the
+app's ENS and Base reads use public endpoints. The account is still on
+Workers Free (100k requests a day, shared); when the allowance runs out the
+app falls back to public endpoints until it resets. The proxy has no Workers
+Build of its own yet, so a change here ships only when it is deployed by
+hand (step 3).
 
 ## Development
 
