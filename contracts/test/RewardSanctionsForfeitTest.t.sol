@@ -2321,13 +2321,16 @@ contract RewardSanctionsForfeitTest is RewardSanctionsTestBase {
         _mut().setLoanActiveLenderEntryId(LOAN_S, id);
         vm.recordLogs();
         vm.prank(keeper);
-        uint256 swept = InteractionRewardsFacet(address(diamond)).sweepForfeitedInteractionRewards(LOAN_S);
+        (uint256 swept, ) = InteractionRewardsFacet(address(diamond)).sweepForfeitedInteractionRewards(LOAN_S);
         Vm.Log[] memory logs = vm.getRecordedLogs();
         assertGt(swept, 0, "fixture LIVE: the sweep settled");
         _assertSettledLog(logs, id, alice, LOAN_S, swept);
         vm.recordLogs();
         vm.prank(keeper);
-        assertEq(InteractionRewardsFacet(address(diamond)).sweepForfeitedInteractionRewards(LOAN_S), 0);
+        {
+            (uint256 swept_, ) = InteractionRewardsFacet(address(diamond)).sweepForfeitedInteractionRewards(LOAN_S);
+            assertEq(swept_, 0);
+        }
         assertEq(_count(vm.getRecordedLogs(), T_SETTLED), 0, "nothing moved: nothing announced");
     }
 

@@ -1149,11 +1149,14 @@ contract RewardReporterFacet is
         );
     }
 
-    /// @notice Single-field getter for the reward grace seconds. Added
-    ///         for the protocol-console knob schema (per-knob single-
-    ///         value getters).
+    /// @notice Single-field getter for the reward grace window IN FORCE,
+    ///         for the protocol-console knob schema (per-knob single-value
+    ///         getters). #2681 — the effective value, like every other
+    ///         single-field console getter: the default
+    ///         ({LibRewardDayReport.DEFAULT_REWARD_GRACE_SECONDS}) while
+    ///         governance never set one, never the raw zero slot.
     function getRewardGraceSeconds() external view returns (uint64) {
-        return LibVaipakam.storageSlot().rewardGraceSeconds;
+        return LibRewardDayReport.effectiveGraceSeconds(LibVaipakam.storageSlot());
     }
 
     // ─── Views ──────────────────────────────────────────────────────────────
@@ -1210,7 +1213,8 @@ contract RewardReporterFacet is
     /// @return localChainId           This chain's EVM chain id.
     /// @return baseChainId            Canonical reward chain's EVM chain id.
     /// @return isCanonicalRewardChain  Canonical flag.
-    /// @return rewardGraceSeconds      Grace window (0 ⇒ default 4h).
+    /// @return rewardGraceSeconds      Grace window in force (the default
+    ///                                 while never set, #2681).
     function getRewardReporterConfig()
         external
         view
@@ -1228,9 +1232,7 @@ contract RewardReporterFacet is
             uint32(block.chainid),
             s.baseChainId,
             s.isCanonicalRewardChain,
-            s.rewardGraceSeconds == 0
-                ? LibRewardDayReport.DEFAULT_REWARD_GRACE_SECONDS
-                : s.rewardGraceSeconds
+            LibRewardDayReport.effectiveGraceSeconds(s)
         );
     }
 

@@ -438,12 +438,21 @@ contract RewardDeliveredChokepointTest is SetupTest, IVaipakamErrors {
         _mut().setLoanActiveLenderEntryId(42, id);
         _mut().setArmedFreshLedgerRaw(0, 0);
         uint256 bucketBefore = _cfg().getRecycleBucket();
-        assertEq(_facet().sweepForfeitedInteractionRewards(42), 0, "deferred while unfunded");
+        {
+            (uint256 swept_, ) = _facet().sweepForfeitedInteractionRewards(42);
+            assertEq(swept_, 0, "deferred while unfunded");
+            // #3012 — retried with nothing changed, the deferred sweep moves
+            // no state either, and says so: a keeper need not send it.
+            bool progressed_;
+            (swept_, progressed_) = _facet().sweepForfeitedInteractionRewards(42);
+            assertEq(swept_, 0, "still deferred");
+            assertFalse(progressed_, "a deferred retry reports no progress");
+        }
         assertEq(_cfg().getRecycleBucket(), bucketBefore, "no credit");
         (uint256 paid0, ) = _rlens().getDeliveredFreshBound();
         assertEq(paid0, 0, "no charge");
         _deliverFresh(1_000_000e18, 0, 7);
-        uint256 swept = _facet().sweepForfeitedInteractionRewards(42);
+        (uint256 swept, ) = _facet().sweepForfeitedInteractionRewards(42);
         assertGt(swept, 0, "credited once funded");
         assertEq(_cfg().getRecycleBucket() - bucketBefore, swept, "bucket credited by the fresh share");
         (uint256 paid1, ) = _rlens().getDeliveredFreshBound();

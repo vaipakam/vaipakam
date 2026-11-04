@@ -5,6 +5,7 @@ import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
 import {LibVpfiRecycle} from "../libraries/LibVpfiRecycle.sol";
 import {LibRewardCustody} from "../libraries/LibRewardCustody.sol";
+import {LibRewardEntryProgress} from "../libraries/LibRewardEntryProgress.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
@@ -67,17 +68,33 @@ contract InteractionRewardsFacet is
     /// @custom:event-category informational/config
     event InteractionCapVpfiPerEthSet(uint256 value);
 
+    /// @notice Settle one chunk of each forfeited reward entry of `loanId`
+    ///         into the recycle bucket, permissionless. A long entry settles
+    ///         across calls; a chunk waiting on delivered or backing allowance
+    ///         defers and moves nothing.
+    /// @return swept      The VPFI this call moved: fresh credited to the
+    ///                    recycle bucket plus recycled commitment released.
+    /// @return progressed #3012 — whether the call changed any entry's
+    ///                    settlement state, measured by
+    ///                    {LibRewardEntryProgress} before and after. A chunk
+    ///                    can move nothing and still progress (it opens or
+    ///                    steps a legacy slice's domain, stamps or advances the
+    ///                    settlement cursor, retires a commitment, or advances
+    ///                    the side's pricing cursor), so `swept == 0` alone
+    ///                    does not say the call was a no-op. False means the
+    ///                    call did nothing a later call could build on.
     function sweepForfeitedInteractionRewards(uint256 loanId)
         external
         nonReentrant
         whenNotPaused
-        returns (uint256 swept)
+        returns (uint256 swept, bool progressed)
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         if (s.interactionLaunchTimestamp == 0) {
             revert InteractionEmissionsNotStarted();
         }
         if (s.vpfiToken == address(0)) revert VPFITokenNotSet();
+        (bytes32 markBefore, bool stepDue) = LibRewardEntryProgress.loanSweepMark(s, loanId);
 
         // #1699 r18 — the forfeit armed leg settles through the day engine
         // (see {LibInteractionRewards.sweepForfeitedByLoanId}). This facet
@@ -133,7 +150,11 @@ contract InteractionRewardsFacet is
         // exhaustion, and a deferred day is a retryable wait, not an error.
         // "Nothing happened" is a zero return, exactly like the expiry batch.
         swept = freshCredited + recycledReleased;
-        if (swept == 0 && armedOwed == 0) return 0;
+        {
+            (bytes32 markAfter, ) = LibRewardEntryProgress.loanSweepMark(s, loanId);
+            progressed = stepDue || armedOwed != 0 || swept != 0 || markAfter != markBefore;
+        }
+        if (swept == 0 && armedOwed == 0) return (0, progressed);
 
         // A staging reservation binds as a deferral, never a truncation
         // (3b-ii-A2, #2305): the whole batch waits rather than spend headroom

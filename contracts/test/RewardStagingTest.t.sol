@@ -1449,7 +1449,10 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         _mut().setLoanActiveLenderEntryId(LOAN, id);
         _wideDay(true);
         uint256 bucketBefore = _bucket();
-        assertEq(InteractionRewardsFacet(address(diamond)).sweepForfeitedInteractionRewards(LOAN), 0, "deferred: the wide day is staged, not swept short");
+        {
+            (uint256 swept_, ) = InteractionRewardsFacet(address(diamond)).sweepForfeitedInteractionRewards(LOAN);
+            assertEq(swept_, 0, "deferred: the wide day is staged, not swept short");
+        }
         RewardStagingDomainFacet.StagingRecordView memory r = _rec();
         assertEq(r.phase, uint8(LibVaipakam.StagingPhase.Staging), "a record stands");
         assertEq(r.op, uint8(LibVaipakam.StagingOp.Forfeit), "under the forfeit's own commitment");
@@ -1466,7 +1469,10 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         assertEq(_rec().phase, uint8(LibVaipakam.StagingPhase.None), "resolved and closed");
         assertEq(_bucket() - bucketBefore, treasuryFresh, "the forfeited day absorbed into the bucket, as the sweep absorbs it");
         assertEq(_mut().loanSideRewardPaidRaw(LOAN, uint8(LibVaipakam.RewardSide.Lender)), paidBefore, "a forfeit charges no loan-side cap");
-        assertEq(InteractionRewardsFacet(address(diamond)).sweepForfeitedInteractionRewards(LOAN), 0, "nothing left to sweep: the day is settled");
+        {
+            (uint256 swept_, ) = InteractionRewardsFacet(address(diamond)).sweepForfeitedInteractionRewards(LOAN);
+            assertEq(swept_, 0, "nothing left to sweep: the day is settled");
+        }
     }
 
     /// @dev #1566 PR 1 review (P3) — the forfeited party cannot cancel the forfeit sweep's record
@@ -1625,7 +1631,10 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         (, uint256 id) = _stagedScene();
         _mut().setRewardEntryForfeitedRaw(id);
         _mut().setLoanActiveLenderEntryId(LOAN, id);
-        assertEq(InteractionRewardsFacet(address(diamond)).sweepForfeitedInteractionRewards(LOAN), 0, "deferred on the claim's record");
+        {
+            (uint256 swept_, ) = InteractionRewardsFacet(address(diamond)).sweepForfeitedInteractionRewards(LOAN);
+            assertEq(swept_, 0, "deferred on the claim's record");
+        }
         RewardStagingDomainFacet.StagingRecordView memory r = _rec();
         assertEq(r.op, uint8(LibVaipakam.StagingOp.Claim), "the claim's record stands, unchanged");
         assertEq(r.phase, uint8(LibVaipakam.StagingPhase.Staging));

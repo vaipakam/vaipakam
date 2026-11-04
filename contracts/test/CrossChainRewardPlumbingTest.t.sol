@@ -206,6 +206,9 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
         _configureCanonical();
         (, , , , uint64 grace) = _rep().getRewardReporterConfig();
         assertEq(grace, 4 hours, "default grace 4h");
+        // #2681 — the single-field console getter answers the same window in
+        // force, never the raw zero slot.
+        assertEq(_rep().getRewardGraceSeconds(), 4 hours, "single-field getter: default in force");
     }
 
     function testConfigGetterReturnsCustomGrace() public {
@@ -213,6 +216,7 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
         _rep().setRewardGraceSeconds(9999);
         (, , , , uint64 grace) = _rep().getRewardReporterConfig();
         assertEq(grace, 9999, "custom grace echoed");
+        assertEq(_rep().getRewardGraceSeconds(), 9999, "single-field getter: custom grace");
     }
 
     function testExpectedSourceChainIdsListReplacement() public {

@@ -568,7 +568,7 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         uint256 recycledBefore = _row(LibVaipakam.RewardCustodyRow.Recycled);
         uint256 unclBefore = _row(LibVaipakam.RewardCustodyRow.Unclassified);
 
-        uint256 swept = InteractionRewardsFacet(address(diamond)).sweepForfeitedInteractionRewards(LOAN);
+        (uint256 swept, ) = InteractionRewardsFacet(address(diamond)).sweepForfeitedInteractionRewards(LOAN);
         assertEq(swept, NEED, "the forfeit settled from the epoch, with the live row empty");
         (uint256 lf, ) = _legs(h);
         assertEq(lf, NEED, "the fresh leg recorded on the epoch");
@@ -583,7 +583,10 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         _mut().setRewardEntryForfeitedRaw(id);
         _mut().setLoanActiveLenderEntryId(LOAN, id);
         uint256 bucketBefore = _cfg().getRecycleBucket();
-        assertEq(InteractionRewardsFacet(address(diamond)).sweepForfeitedInteractionRewards(LOAN), 0, "deferred");
+        {
+            (uint256 swept_, ) = InteractionRewardsFacet(address(diamond)).sweepForfeitedInteractionRewards(LOAN);
+            assertEq(swept_, 0, "deferred");
+        }
         assertEq(_cfg().getRecycleBucket(), bucketBefore, "no credit");
     }
 

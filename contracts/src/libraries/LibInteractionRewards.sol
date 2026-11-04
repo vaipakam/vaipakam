@@ -5550,6 +5550,17 @@ library LibInteractionRewards {
         return e.forfeited || _entryTerminalForfeit(s, e);
     }
 
+    /// @notice Whether entry `e` is forfeited — by its own flag or by its
+    ///         loan's terminal state — the same predicate the forfeit sweep's
+    ///         guard applies ({forfeitEntryChunkEvented}). For the readers of
+    ///         an entry's settlement progress ({LibRewardEntryProgress}, #3012).
+    function isEntryForfeited(
+        LibVaipakam.Storage storage s,
+        LibVaipakam.RewardEntry storage e
+    ) internal view returns (bool) {
+        return _isForfeited(s, e);
+    }
+
     /// @notice Whether entry `e`'s share routes to the TREASURY legs — the
     ///         entry forfeited, by its own flag or by its loan's terminal
     ///         state, or the settlement an expiry's (`recycleSettlement`),

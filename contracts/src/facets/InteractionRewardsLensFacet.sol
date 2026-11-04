@@ -5,6 +5,7 @@ import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
 import {LibVpfiRecycle} from "../libraries/LibVpfiRecycle.sol";
 import {LibRewardSanctions} from "../libraries/LibRewardSanctions.sol";
+import {LibRewardEntryProgress} from "../libraries/LibRewardEntryProgress.sol";
 
 /**
  * @title InteractionRewardsLensFacet
@@ -453,6 +454,33 @@ contract InteractionRewardsLensFacet {
         entries = new LibVaipakam.RewardEntry[](count);
         for (uint256 i = 0; i < count; ++i) {
             entries[i] = s.rewardEntries[fromId + i];
+        }
+    }
+
+    /// @notice #3012 — each listed entry's SETTLEMENT PROGRESS: whether it is
+    ///         settled or forfeited, its settlement cursor, its side's
+    ///         cumulative pricing cursor and its legacy-slice domain's phase
+    ///         and cursors. These are exactly the fields the close-out steps
+    ///         compare to report `progressed`
+    ///         ({InteractionRewardsFacet.sweepForfeitedInteractionRewards},
+    ///         {RewardHorizonSweepFacet.retireZeroPricedRemainders}), so a
+    ///         reader can see where a forfeited entry's settlement stands
+    ///         without replaying events. A legacy phase of 1 (staging) means a
+    ///         step is pending: the next sweep of the entry's loan, or
+    ///         {RewardStagingDomainFacet.stepLegacySlice}, does it. An id with
+    ///         no entry reads as all zeros.
+    /// @param  entryIds The entries to read.
+    /// @return progress `progress[i]` is entry `entryIds[i]`'s.
+    function getRewardEntrySettlementProgress(uint256[] calldata entryIds)
+        external
+        view
+        returns (LibRewardEntryProgress.EntryProgress[] memory progress)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        progress = new LibRewardEntryProgress.EntryProgress[](entryIds.length);
+        for (uint256 i = 0; i < entryIds.length; ) {
+            progress[i] = LibRewardEntryProgress.read(s, entryIds[i]);
+            unchecked { ++i; }
         }
     }
 

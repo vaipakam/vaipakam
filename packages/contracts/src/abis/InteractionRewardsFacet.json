@@ -149,6 +149,11 @@
         "name": "swept",
         "type": "uint256",
         "internalType": "uint256"
+      },
+      {
+        "name": "progressed",
+        "type": "bool",
+        "internalType": "bool"
       }
     ],
     "stateMutability": "nonpayable"

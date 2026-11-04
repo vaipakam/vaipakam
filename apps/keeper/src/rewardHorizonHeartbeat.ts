@@ -120,6 +120,43 @@ const ABI = [
   ...(RewardHorizonSweepFacetABI as Abi),
 ] as Abi;
 
+/**
+ * The two close-out calls' results, read in the shape EVERY deployed Diamond
+ * answers. From #3012 / #3026 both calls also return a trailing `progressed`
+ * flag, but the live testnet Diamonds return the older, shorter result until
+ * the next fresh deploy, and the shared ABI's longer shape cannot decode it.
+ * The leading words are the same in both shapes, so this narrower read decodes
+ * either. It is a temporary bridge: reading `progressed` (simulate, send only
+ * on progress) replaces it once every chain runs the new code (#3012 / #3026,
+ * keeper half).
+ */
+const SETTLE_RESULT_ABI = [
+  {
+    type: 'function',
+    name: 'sweepForfeitedInteractionRewards',
+    stateMutability: 'nonpayable',
+    inputs: [{ name: 'loanId', type: 'uint256' }],
+    outputs: [{ name: 'swept', type: 'uint256' }],
+  },
+  {
+    type: 'function',
+    name: 'retireZeroPricedRemainders',
+    stateMutability: 'nonpayable',
+    inputs: [{ name: 'entryIds', type: 'uint256[]' }],
+    outputs: [
+      { name: 'retiredCount', type: 'uint256' },
+      { name: 'settledTotal', type: 'uint256' },
+    ],
+  },
+] as const satisfies Abi;
+const SETTLE_RESULT_FNS: ReadonlySet<string> = new Set(SETTLE_RESULT_ABI.map((f) => f.name));
+/** The pass's ABI with the two close-out calls read as above, and every error
+ *  kept, so a simulated refusal still decodes by name. */
+export const SETTLE_SIM_ABI = [
+  ...SETTLE_RESULT_ABI,
+  ...ABI.filter((item) => !(item.type === 'function' && SETTLE_RESULT_FNS.has(item.name))),
+] as Abi;
+
 /** The heartbeat: every live entry is touched about this often. Twice a day,
  *  far inside the contract's maximum observation gap (seven days), so a run
  *  that fails costs nothing the next one cannot make up. */
@@ -582,7 +619,8 @@ type Simulated = { ok: true; result: unknown } | 'deadline' | string;
 
 async function simulateCall(ctx: KeeperContext, functionName: string, args: readonly unknown[]): Promise<Simulated> {
   try {
-    const { result } = await ctx.client.simulateContract({ address: ctx.diamond, abi: ABI, functionName, args, account: ctx.wallet.account! });
+    const abi = SETTLE_RESULT_FNS.has(functionName) ? SETTLE_SIM_ABI : ABI;
+    const { result } = await ctx.client.simulateContract({ address: ctx.diamond, abi, functionName, args, account: ctx.wallet.account! });
     return { ok: true, result };
   } catch (err) {
     if (err instanceof PastRunDeadline) return 'deadline';
