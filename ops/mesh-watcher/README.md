@@ -458,6 +458,16 @@ contracts merge.
 
 ### Known limitations
 
+**It does not fit the Workers Free plan at three chains (measured
+2026-11-04).** One tick over Base Sepolia, Arbitrum Sepolia and BNB testnet
+made more than the free plan's 50 subrequests per invocation, so the last
+chain's reads and every Telegram send failed with "Too many subrequests",
+and it used 93 ms of CPU against the free plan's 10 ms. The tick reports
+this honestly (`ok: false`, coverage gaps, `deliveryVerified: false`); it
+does not pass silently. Batching RPC calls would cut the subrequests but not
+the CPU, which is viem's decoding. It needs the Workers Paid plan or a host
+outside Workers.
+
 **Endpoint identity — RESOLVED (#1445).** Every tick now calls
 `eth_chainId` per target and compares it against the id the
 `RPC_<chainId>` secret is named for, so a mis-set secret can no longer be
