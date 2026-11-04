@@ -131,13 +131,26 @@ contract RepayPeriodicFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
     error InsufficientPrepay();
     error NotDailyYet();
     error NotNFTRental();
+    /// @notice #3132 — every agreed rental day is already paid (by daily
+    ///         deductions or a rental partial). Time past the term is the
+    ///         rental late fee, settled at close, never an extra rental day.
+    error RentalTermFullyDeducted(uint256 loanId);
+    /// @notice #3132 — the rental's deduction clock (`lastDeductTime`) is
+    ///         behind its start. Consumed days read 0 on such a record, so a
+    ///         deduction would charge a day without counting it.
+    error RentalClockBehindStart(uint256 loanId, uint256 lastDeductTime, uint256 startTime);
 
     /**
      * @notice Permissionless auto deduct for NFT rental daily fee.
      * @dev Callable by anyone after each day (checks lastDeductTime + 1 day <= now).
      *      Deducts one day's fee from prepay and splits it between the
      *      lender and the treasury at the loan's snapshotted treasury rate.
-     *      Updates lastDeductTime, reduces prepayAmount and durationDays by 1.
+     *      Advances lastDeductTime by one day and reduces prepayAmount by the
+     *      fee; `durationDays` is the immutable term and is never reduced
+     *      (#1188). Charges only an AGREED day (#3132): it refuses once every
+     *      term day is consumed (`RentalTermFullyDeducted`) and refuses a
+     *      record whose deduction clock is behind its start
+     *      (`RentalClockBehindStart`), on which a charged day would not count.
      *      If insufficient prepay, reverts (default via DefaultedFacet).
      *      No incentive yet (Phase 2: Small bounty from treasury).
      *      Reverts if not NFT or not daily yet.
@@ -150,6 +163,15 @@ contract RepayPeriodicFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
         if (loan.status != LibVaipakam.LoanStatus.Active)
             revert InvalidLoanStatus();
         if (loan.assetType == LibVaipakam.AssetType.ERC20) revert NotNFTRental();
+
+        // #3132 — charge only a day the terms provide, and only on a clock
+        // that counts it. Both read the one consumed-days rule
+        // (`LibVaipakam.consumedRentalDays` / `remainingRentalDays`), which
+        // reads a clock behind its start as nothing consumed: on such a
+        // record a deduction would charge a day and leave the count at 0.
+        if (loan.lastDeductTime < loan.startTime)
+            revert RentalClockBehindStart(loanId, loan.lastDeductTime, loan.startTime);
+        if (LibVaipakam.remainingRentalDays(loan) == 0) revert RentalTermFullyDeducted(loanId);
 
         if (block.timestamp < loan.lastDeductTime + LibVaipakam.ONE_DAY)
             revert NotDailyYet();
