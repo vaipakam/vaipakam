@@ -27,7 +27,7 @@
 //      order's deadline plus the configured cancel grace (the borrower's own
 //      window to cancel), anyone may tear it down. Refused while paused.
 //
-// Per chain, per run (every 15 minutes):
+// Per chain, per run (hourly, at :06):
 //
 //   a. One window of the active-loan list at one pinned block
 //      (`activeLoanWindow.ts`), walked a window per run on a larger book. For
@@ -104,8 +104,9 @@ export const ABI = [
 ] as Abi;
 
 /** The pass's cadence, in seconds; the scheduler reads it from here. Every
- *  item it tears down is already past a window measured in hours or days. */
-export const PASS_CADENCE_SEC = 15 * 60;
+ *  item it tears down is already past a window measured in hours or days, so
+ *  an hour's wait changes nothing material. */
+export const PASS_CADENCE_SEC = 60 * 60;
 
 /** The pass's steps, in the order a run sends them. */
 export const STEPS = ['prepay', 'sale', 'intent'] as const;

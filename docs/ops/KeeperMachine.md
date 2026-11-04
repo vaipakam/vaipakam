@@ -413,7 +413,7 @@ journalctl -u vaipakam-keeper -f
    alerts `PROTECTED_ALERTS_ENABLED`),
    `STANDIN_REFRESH_ENABLED` (`sanctionsStandInRefresh`, hourly at :21; the
    keeper must also be named the stand-in's refresher),
-   `EXPIRED_TEARDOWN_ENABLED` (`expiredTeardown`, every 15 minutes from :11), and
+   `EXPIRED_TEARDOWN_ENABLED` (`expiredTeardown`, hourly at :06), and
    `DISCOUNT_PATH_CHAIN_IDS` (a list of chain ids, not `true`: the flash-loan
    branch of the liquidator, armed per chain by
    [`FlashLoanLiquidatorRollout.md`](FlashLoanLiquidatorRollout.md) only; the

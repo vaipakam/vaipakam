@@ -775,7 +775,7 @@ evidence that the migration has completed.
   window has ended, a lender's sale listing that has expired on a live loan
   or still stands after the loan closed, and a swap-to-repay intent past its
   order deadline plus the borrower's own cancel grace. Each teardown is open
-  to anyone and moves no value. Every quarter hour, on every chain it serves,
+  to anyone and moves no value. Every hour, on every chain it serves,
   the keeper finds the ones that are due from the chain's own records and
   clock, asks the protocol whether each teardown would succeed, and sends it
   only then, a few per kind per run. During a loan's grace window a prepay

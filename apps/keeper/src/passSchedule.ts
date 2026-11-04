@@ -345,12 +345,12 @@ export const KEEPER_PASSES: readonly KeeperPass[] = [
   {
     name: 'expiredTeardown',
     cadenceMinutes: EXPIRED_TEARDOWN_CADENCE_SEC / 60,
-    // :11/:26/:41/:56 — the one quarter-hour offset still clear of every
-    // staggered pass (the 5-minute ones sit on :02–:03 modulo 5, the other
-    // 15-minute ones on :00, :01, :04, :05, :09 and :10 modulo 15, the hourly
-    // ones on :14, :21, :29, :44 and :59).
-    offsetMinutes: 11,
-    why: 'tears down intents, prepay listings and sale listings already past windows measured in hours or days; a quarter-hour keeps each hold released within minutes of becoming removable (#3097)',
+    // :06 — clear of every staggered pass (the 5-minute ones sit on :02–:03
+    // modulo 5, the 15-minute ones on :00, :01, :04, :05, :09 and :10 modulo
+    // 15, the other hourly ones on :14, :21, :29, :44 and :59), and it leaves
+    // :11 modulo 15, the last free quarter-hour offset, for a pass that needs it.
+    offsetMinutes: 6,
+    why: 'tears down intents, prepay listings and sale listings already past windows measured in hours or days; nothing is time-critical, so hourly (#3097)',
     run: runExpiredTeardown,
   },
 ];
