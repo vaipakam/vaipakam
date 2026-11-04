@@ -1,4 +1,4 @@
-## Thread — Mesh watcher reads one chain per tick (PR #TBD)
+## Thread — Mesh watcher reads one chain per tick (PR #3142)
 
 The mesh watcher now runs every five minutes, and each run reads the canonical
 chain plus one chain of the mesh, in rotation. Reading the whole mesh in one

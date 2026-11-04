@@ -22,4 +22,4 @@ Advances #1222 (Step 3f of the recycling activation ceremony).
 > Caveat: At three chains a run that read the whole mesh did not fit the free
 > Workers plan: it made more than the 50 outbound requests allowed per
 > invocation and used about 93 ms of CPU against a 10 ms allowance. The
-> one-chain-per-tick rotation that follows addresses the request limit.
+> one-chain-per-tick rotation (PR #3142) addresses the request limit.
