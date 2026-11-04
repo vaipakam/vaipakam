@@ -1,11 +1,16 @@
 /**
  * #3119 — one machine-level ops alert when the keeper cannot sign.
  *
- * `passIsArmed` (keeper.ts) disarms every pass while `KEEPER_PRIVATE_KEY` is
- * unset or unusable: the fund-moving passes and the observers alike (the
- * reward sanctions hold, the horizon heartbeat, the testnet stand-in refresh).
- * Each pass logs a skip line naming the cause, and nothing else does, so an
- * operator learns of it only from the journal. This alert says it once for the
+ * `passIsArmed` (keeper.ts) disarms every gated pass while
+ * `KEEPER_PRIVATE_KEY` is unset or unusable: the fund-moving passes and the
+ * gated observers alike (the reward sanctions hold, the horizon heartbeat, the
+ * testnet stand-in refresh). The two ungated senders (the daily oracle
+ * snapshot and the liquidity-confidence tier write) check the key themselves
+ * and send nothing, so the keeper sends no transaction at all. Four passes
+ * that sign nothing keep running: the health-factor watcher and the pre-grace
+ * watcher (user notices), the liquidity-confidence counter and the oracle
+ * snapshot's reads. Each gated pass logs a skip line naming the cause, and
+ * nothing else does, so an operator learns of it only from the journal. This alert says it once for the
  * whole machine, on the ops channel, while `KEEPER_ENABLED` is on and the key
  * cannot sign.
  *
@@ -14,8 +19,8 @@
  * the gate's own reading (`signingKeyProblem`), which names only the form of
  * the mistake, never the value.
  *
- * While `KEEPER_ENABLED` is off every pass is deliberately dark and the key is
- * not in use, so nothing is said. Once the key signs again (or the keeper is
+ * While `KEEPER_ENABLED` is off the keeper is switched off on purpose, so
+ * nothing is said. Once the key signs again (or the keeper is
  * switched off) the alert's record is cleared, so a recurrence alerts at once.
  */
 
@@ -44,7 +49,7 @@ const DEFAULT_DEPS: SigningKeyAlertDeps = {
 };
 
 export function signingKeyAlertText(problem: string): string {
-  return `⚠️ Keeper machine: KEEPER_ENABLED is on, but KEEPER_PRIVATE_KEY is ${problem}, so every keeper pass is disarmed (liquidations, defaults, reward passes and the observers alike) until the key can sign again. Fix the key in the machine's keeper environment and restart the keeper.`;
+  return `⚠️ Keeper machine: KEEPER_ENABLED is on, but KEEPER_PRIVATE_KEY is ${problem}, so the keeper sends no transaction (no liquidations, defaults, reward passes or other on-chain upkeep) until the key can sign again. The health-factor and pre-grace user notices still go out, since they sign nothing. Fix the key in the machine's keeper environment and restart the keeper.`;
 }
 
 /** Raise, repeat or clear the alert for this tick. Never throws. */

@@ -153,8 +153,9 @@ export async function runKeeperTick(
   // statement; see epochFence.ts.
   armEpochFence(resolved.DB, chains);
 
-  // #3119 — a key that cannot sign disarms every pass below, each saying so
-  // only in its own skip line. One ops alert says it for the machine.
+  // #3119 — a key that cannot sign leaves every pass below unable to send a
+  // transaction, each gated pass saying so only in its own skip line. One ops
+  // alert says it for the machine.
   launch('signingKeyHealth', async () => {
     await signingKeyHealth(resolved);
   });

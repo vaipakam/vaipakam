@@ -55,7 +55,7 @@ describe('signingKeyHealth (#3119)', () => {
     const r = await signingKeyHealth(env({ KEEPER_PRIVATE_KEY: undefined }), deps);
     expect(r).toEqual({ kind: 'alerted', outcome: 'sent' });
     expect(sent).toEqual([{ key: SIGNING_KEY_ALERT_KEY, text: signingKeyAlertText('unset'), interval: SIGNING_KEY_ALERT_INTERVAL_SEC }]);
-    expect(sent[0].text).toMatch(/KEEPER_PRIVATE_KEY is unset, so every keeper pass is disarmed/);
+    expect(sent[0].text).toMatch(/KEEPER_PRIVATE_KEY is unset, so the keeper sends no transaction/);
   });
 
   it('names the form of a malformed key, never the key', async () => {

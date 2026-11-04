@@ -46,8 +46,9 @@ evidence that the migration has completed.
 ## One runner and safe deployment adoption
 
 - When the keeper is switched on but its signing key is missing or cannot
-  sign, every keeper action is held, the observers included. Operators are
-  told so once for the whole machine, and again every six hours until the key
+  sign, the keeper sends no transaction: every on-chain action is held,
+  including the on-chain observers. The user notices that sign nothing (the
+  health-factor and pre-grace warnings) still go out. Operators are told so once for the whole machine, and again every six hours until the key
   works, rather than finding out from each action's log line. The alert names
   only the kind of problem, never the key. Nothing is said while the keeper is
   switched off.
