@@ -40,7 +40,7 @@ import {
 } from './lib/ledger-rules.mjs';
 import { ARCHIVE_KEY_SCOPE, LEDGER_KEY_SCOPE, runWatcher } from './backup-ledger.mjs';
 import { MAX_MANIFEST_BYTES, MAX_STORED_ARCHIVE_BYTES } from '../src/limits.ts';
-import { PK_SCHEME, parseRecipientsFile, recipientSetAt, sealArchive } from '../src/archiveFormat.ts';
+import { PK_SCHEME, encodeHeader, parseArchiveHeader, parseRecipientsFile, recipientSetAt, sealArchive } from '../src/archiveFormat.ts';
 import { HEAD_BYTES, PK_FORMAT, headerCheck, readEntryInfo } from './lib/ledger-rules.mjs';
 import { readFileSync } from 'node:fs';
 import { testRecipient } from './test-helpers/keys.mjs';
@@ -709,13 +709,37 @@ test('the nightly\'s PUT retries a transient B2 failure and gives up on a refusa
   const sleep = async () => {};
   const body = new TextEncoder().encode('{}');
   const ok = answers([500, 'network', 200]);
-  assert.equal((await putObject(cfg, 'manifests/x.json', body, 'application/json', { fetchImpl: ok.fetchImpl, sleep })).status, 200);
+  assert.equal((await putObject(cfg, 'manifests/x.json', body, 'application/json', { label: 'x', fetchImpl: ok.fetchImpl, sleep })).status, 200);
   assert.equal(ok.seen.length, 3);
   const refused = answers([403, 200]);
-  await assert.rejects(putObject(cfg, 'k', body, 'application/json', { fetchImpl: refused.fetchImpl, sleep }), /failed: 403/);
+  await assert.rejects(putObject(cfg, 'k', body, 'application/json', { label: 'x', fetchImpl: refused.fetchImpl, sleep }), /failed: 403/);
   assert.equal(refused.seen.length, 1);
   const down = answers(Array(PUT_ATTEMPTS).fill(503));
-  await assert.rejects(putObject(cfg, 'k', body, 'application/json', { fetchImpl: down.fetchImpl, sleep }), new RegExp(`after ${PUT_ATTEMPTS} attempts`));
+  await assert.rejects(putObject(cfg, 'k', body, 'application/json', { label: 'daily 2026-12-09 manifest', fetchImpl: down.fetchImpl, sleep }), new RegExp(`after ${PUT_ATTEMPTS} attempts`));
+});
+
+test('a PUT failure names the tier and period, never the object, even when B2 echoes it', async () => {
+  // The nonce is what keeps a leaked write key from overwriting an archive,
+  // and this error reaches the ops channel and the logs (Codex #3152 r1).
+  const { putObject } = await import('../src/b2.ts');
+  const cfg = { endpoint: 's3.us-west-004.backblazeb2.com', bucket: 'b', region: 'us-west-004', accessKeyId: 'k', secretAccessKey: 's' };
+  const nonce = 'f0'.repeat(16);
+  const key = `manifests/2026-12-09/${nonce}.json`;
+  const echo = (status, net = false) => async (url) => {
+    if (net) throw new TypeError(`fetch failed for ${url}`);
+    return new Response(`<Error><Key>${key}</Key><Resource>/b/${encodeURIComponent(key)}</Resource><Url>${url}</Url></Error>`, { status });
+  };
+  const body = new TextEncoder().encode('{}');
+  const sleep = async () => {};
+  for (const fetchImpl of [echo(403), echo(503), echo(0, true)]) {
+    const err = await putObject(cfg, key, body, 'application/json', { label: 'daily 2026-12-09 manifest', fetchImpl, sleep }).then(
+      () => assert.fail('the PUT succeeded'),
+      (e) => e,
+    );
+    assert.match(err.message, /daily 2026-12-09 manifest/);
+    assert.ok(!err.message.includes(nonce), err.message);
+    assert.ok(!err.message.includes('manifests/'), err.message);
+  }
 });
 
 // ── The public-key format (#1463) ───────────────────────────────────────
@@ -824,6 +848,35 @@ test('an archive whose header disagrees with its name is a mismatch', async () =
   const r = await run(b2, { now: NOV });
   assert.ok(r.live.some((p) => p.keys.includes(`header:${fileId}`)), JSON.stringify(r.live));
   assert.equal(entryOf(b2, fileId).fileInfo.header, 'wrong-period');
+});
+
+test('a header time that is the right shape but no real time pages, and the run judges everything else', async () => {
+  // `2026-13-04T…` passes the shape check and made Date#toISOString throw,
+  // which aborted the whole run: one upload by the write key would have
+  // switched inspection off (Codex #3152 r1).
+  const b2 = await novemberWorld();
+  const at = NOV - DAY;
+  const good = Buffer.from(await sealArchive({ set: recipientSetAt(RECIPIENTS, at), plaintext: new Uint8Array(4), tier: 'daily', period: '2026-12-09', createdAt: new Date(at - 60_000).toISOString() }));
+  const parsed = parseArchiveHeader(good);
+  const forged = Buffer.concat([
+    Buffer.from(encodeHeader({ ...parsed.header, createdAt: '2026-13-09T03:17:00.000Z' })),
+    good.subarray(parsed.bodyOffset),
+  ]);
+  const fileId = b2.put('vaipakam-offchain-data-warm', `archives/2026-12-09/${N1}.bin`, forged, at);
+  b2.put('vaipakam-offchain-data-warm', `manifests/2026-12-09/${N1}.json`, JSON.stringify({ archive: { sha256: sha(forged), byteLength: forged.length, encryption: PK_SCHEME } }), at + 1000);
+  const r = await run(b2, { now: NOV });
+  assert.ok(r.live.some((p) => p.keys.includes(`header:${fileId}`)), JSON.stringify(r.live));
+  assert.equal(entryOf(b2, fileId).fileInfo.header, 'malformed');
+  // The December monthly was still recorded and judged alongside it.
+  assert.ok(b2.versions('vaipakam-offchain-backup-ledger').some((v) => v.fileName.includes('monthly')));
+});
+
+test('the header check is total: a throw inside it is reported as malformed, never raised', () => {
+  // A head that is not bytes at all makes the parser throw; the boundary
+  // turns that into a verdict, which pages, instead of an aborted run.
+  const r = headerCheck({ head: null, length: 0, tier: 'daily', period: '2026-12-09', uploadTimestamp: NOV }, RECIPIENTS);
+  assert.equal(r.verdict, 'malformed');
+  assert.match(r.reason, /threw/);
 });
 
 test('a manifest declaring the old format beside a public-key archive is a mismatch', async () => {

@@ -81,14 +81,26 @@ export const HEADER_VERDICTS = ['-', 'none', 'ok', 'malformed', 'wrong-period', 
  * The header verdict for one archive, from its first HEAD_BYTES bytes, its
  * full length, its name and its upload time.
  *
+ * TOTAL BY CONSTRUCTION. The bytes are whatever a holder of the write key
+ * uploaded, so nothing in them may stop the run: an exception from the
+ * parser or the agreement rule would abort the watcher before it recorded
+ * this archive or judged any other. The parser is written not to throw; the
+ * catch below is the boundary that keeps a future slip in it from becoming a
+ * way to switch inspection off. What it catches is reported as `malformed`,
+ * which pages, so it is never silent.
+ *
  * @returns {{verdict: string, reason: string | null}}
  */
 export function headerCheck({ head, length, tier, period, uploadTimestamp }, recipients) {
-  if (!hasArchiveMagic(head)) return { verdict: 'none', reason: null };
-  const parsed = parseArchiveHeader(head, length);
-  if (!parsed.ok) return { verdict: 'malformed', reason: parsed.reason };
-  const agreed = headerAgreement(parsed.header, { tier, period, uploadedMs: uploadTimestamp, file: recipients });
-  return agreed.verdict === 'ok' ? { verdict: 'ok', reason: null } : { verdict: agreed.verdict, reason: agreed.reason };
+  try {
+    if (!hasArchiveMagic(head)) return { verdict: 'none', reason: null };
+    const parsed = parseArchiveHeader(head, length);
+    if (!parsed.ok) return { verdict: 'malformed', reason: parsed.reason };
+    const agreed = headerAgreement(parsed.header, { tier, period, uploadedMs: uploadTimestamp, file: recipients });
+    return agreed.verdict === 'ok' ? { verdict: 'ok', reason: null } : { verdict: agreed.verdict, reason: agreed.reason };
+  } catch (e) {
+    return { verdict: 'malformed', reason: `checking its header threw (${String(e?.message ?? e).slice(0, 120)})` };
+  }
 }
 
 const NONCE = /^[0-9a-f]{32}$/;

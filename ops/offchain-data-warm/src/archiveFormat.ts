@@ -102,9 +102,16 @@ const PERIOD: Record<ArchiveTier, RegExp> = {
 };
 const PERIOD_CHARS: Record<ArchiveTier, number> = { daily: 10, monthly: 7, yearly: 4 };
 
-/** A canonical ISO-8601 UTC time with milliseconds, as `Date.toISOString` writes it. */
+/**
+ * A canonical ISO-8601 UTC time with milliseconds, as `Date.toISOString`
+ * writes it. Total: it answers false, never throws, for a string of the right
+ * shape that is not a real time (`2026-13-04T…`), because the string can come
+ * from an archive header anyone with the write key can upload.
+ */
 export function isIsoTime(s: unknown): s is string {
-  return typeof s === 'string' && ISO_MS.test(s) && new Date(Date.parse(s)).toISOString() === s;
+  if (typeof s !== 'string' || !ISO_MS.test(s)) return false;
+  const ms = Date.parse(s);
+  return Number.isFinite(ms) && new Date(ms).toISOString() === s;
 }
 
 /** The period a run started at `createdAt` writes for `tier`. */

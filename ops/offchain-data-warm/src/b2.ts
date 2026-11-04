@@ -173,16 +173,25 @@ function isTransient(status: number): boolean {
  * then leaves a second version of the name. That is stated, not hidden: the
  * backup watcher reports a name holding two versions as ambiguous, which is
  * a page an operator can check, never a silent loss.
+ *
+ * AN ERROR NEVER NAMES THE OBJECT (#1463 slice 2). A key's random part is
+ * what stops a leaked write key from overwriting an archive, and an error
+ * from here reaches the ops channel and the Worker's logs. So a failure is
+ * described by the caller's `label` ("daily 2026-11-04 manifest"), and the
+ * text B2 or the network sends back is passed through `redactName` before it
+ * is quoted, since a response can echo the request path. This is the one
+ * place a key is known, so it is the one place that has to keep it.
  */
 export async function putObject(
   cfg: B2Config,
   key: string,
   body: Uint8Array,
-  contentType = 'application/octet-stream',
-  { fetchImpl = fetch, sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms)) }: {
+  contentType: string,
+  { label, fetchImpl = fetch, sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms)) }: {
+    label: string;
     fetchImpl?: typeof fetch;
     sleep?: (ms: number) => Promise<void>;
-  } = {},
+  },
 ): Promise<Response> {
   const url = `https://${cfg.endpoint}/${cfg.bucket}/${encodeURI(key)}`;
   const payloadHash = await sha256Hex(body);
@@ -200,14 +209,27 @@ export async function putObject(
     try {
       res = await fetchImpl(url, { method: 'PUT', headers: req.headers, body });
     } catch (e) {
-      failures.push(`network: ${e instanceof Error ? e.message : String(e)}`.slice(0, 200));
+      failures.push(redactName(`network: ${e instanceof Error ? e.message : String(e)}`, key, url).slice(0, 200));
       continue;
     }
     if (res.ok) return res;
     const txt = await res.text().catch(() => '<no body>');
-    const failure = `${res.status} ${txt.slice(0, 200)}`;
-    if (!isTransient(res.status)) throw new Error(`B2 PUT ${key} failed: ${failure}`);
+    const failure = `${res.status} ${redactName(txt, key, url).slice(0, 200)}`;
+    if (!isTransient(res.status)) throw new Error(`B2 PUT of the ${label} failed: ${failure}`);
     failures.push(failure);
   }
-  throw new Error(`B2 PUT ${key} failed after ${PUT_ATTEMPTS} attempts: ${failures.join(' | ')}`);
+  throw new Error(`B2 PUT of the ${label} failed after ${PUT_ATTEMPTS} attempts: ${failures.join(' | ')}`);
+}
+
+/**
+ * `text` with the object's name taken out: the URL, the key (raw and
+ * URL-encoded), and any run of 32 hex characters, the width of the nonce, in
+ * case a response quotes the name in a form not listed here.
+ */
+export function redactName(text: string, key: string, url: string): string {
+  let out = text;
+  for (const s of [url, key, encodeURI(key), encodeURIComponent(key)]) {
+    if (s) out = out.split(s).join('<object>');
+  }
+  return out.replace(/[0-9a-fA-F]{32}/g, '<redacted>');
 }

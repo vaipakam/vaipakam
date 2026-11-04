@@ -432,12 +432,17 @@ export async function runNightlyBackup(env: Env, b2Cfg: B2Config): Promise<Backu
     const nonce = newNonce();
     // The prefixes are the tier table's, the one the watcher reads too.
     const spec = TIERS.find((t) => t.tier === tier)!;
-    await putObject(b2Cfg, `${spec.archivePrefix}${period}/${nonce}.bin`, sealed.archive, 'application/octet-stream');
+    // Each PUT is labelled by tier and period: its errors reach the ops
+    // channel and the logs, and never carry the name (see `putObject`).
+    await putObject(b2Cfg, `${spec.archivePrefix}${period}/${nonce}.bin`, sealed.archive, 'application/octet-stream', {
+      label: `${tier} ${period} archive`,
+    });
     await putObject(
       b2Cfg,
       `${spec.manifestPrefix}${period}/${nonce}.json`,
       new TextEncoder().encode(JSON.stringify(sealed.manifest, null, 2)),
       'application/json',
+      { label: `${tier} ${period} manifest` },
     );
     written.push({ tier, period, bytes: sealed.archive.byteLength, sha256: sealed.archiveSha });
   };

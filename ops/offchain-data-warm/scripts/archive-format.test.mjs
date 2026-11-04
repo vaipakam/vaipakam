@@ -158,6 +158,9 @@ test('every way a header can be malformed is refused by name', async () => {
     [withHeader({ ...h, scheme: 'other' }), /another scheme/],
     [withHeader({ ...h, iv: toBase64(new Uint8Array(8)) }), /IV/],
     [withHeader({ ...h, createdAt: '2026-11-10' }), /createdAt/],
+    // The right shape and no such time: refused, never thrown (Codex #3152 r1).
+    [withHeader({ ...h, createdAt: '2026-13-04T03:17:00.000Z' }), /createdAt/],
+    [withHeader({ ...h, createdAt: '2026-02-30T03:17:00.000Z' }), /createdAt/],
     [withHeader({ ...h, tier: 'weekly' }), /tier/],
     [withHeader({ ...h, period: '2026-11' }), /period/],
     [withHeader({ ...h, recipients: [] }), /recipients/],
