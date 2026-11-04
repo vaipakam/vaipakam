@@ -24,6 +24,27 @@ import { decodeFunctionData, encodeAbiParameters, keccak256, toFunctionSelector 
 import { is, optional } from './expectedPayload.mjs';
 
 export const ZERO_HASH = `0x${'0'.repeat(64)}`;
+const ZERO_ADDR = '0x0000000000000000000000000000000000000000';
+
+/**
+ * The two illiquid acknowledgements, per leg (#2728): a leg's asset when the
+ * chain classifies that leg illiquid, the zero address when it is liquid.
+ * The app signs exactly this (`illiquidAcknowledgements` in
+ * src/contracts/acceptReview.ts), and the contract reverts
+ * `IlliquidAssetNotAcknowledged` only for an illiquid leg left unacknowledged.
+ * `illiquidLegs` is the drive's own `checkLiquidity` read and is REQUIRED: a
+ * default would put back the blanket consent the rule retired.
+ */
+export function illiquidAcknowledgementsFor(illiquidLegs, lendingAsset, collateralAsset) {
+  if (typeof illiquidLegs?.lending !== 'boolean' || typeof illiquidLegs?.collateral !== 'boolean') {
+    throw new Error('illiquidLegs { lending, collateral } (booleans from checkLiquidity) is required');
+  }
+  return {
+    acknowledgedIlliquidLendingAsset: illiquidLegs.lending ? lendingAsset : ZERO_ADDR,
+    acknowledgedIlliquidCollateralAsset: illiquidLegs.collateral ? collateralAsset : ZERO_ADDR,
+  };
+}
+
 /** RefinanceFlow's REQUEST_WINDOW_DAYS — the request's own expiry window. */
 export const REQUEST_WINDOW_SEC = 30n * 86_400n;
 /** useAcceptTerms' ACCEPT_DEADLINE_SECONDS — the signed terms' lifetime. */
@@ -390,7 +411,9 @@ export function expectedAcceptTerms({
   riskTermsHash,
   anchor,
   pinned,
+  illiquidLegs,
 }) {
+  const ack = illiquidAcknowledgementsFor(illiquidLegs, loan.principalAsset, loan.collateralAsset);
   return {
     acceptor: lender,
     offerCreator: borrower,
@@ -418,8 +441,7 @@ export function expectedAcceptTerms({
     parallelSaleOrderHash: ZERO_HASH,
     periodicInterestCadence: 0,
     riskAndTermsConsent: true,
-    acknowledgedIlliquidLendingAsset: loan.principalAsset,
-    acknowledgedIlliquidCollateralAsset: loan.collateralAsset,
+    ...ack,
     nonce: pinned
       ? pinned.nonce
       : is('a non-zero uint256 (drawn at random by the app)', (v) => BigInt(v) > 0n),
@@ -500,6 +522,7 @@ export function refinancePlanSteps({
   graceSeconds,
   borrowerAnchor,
   lenderAnchor,
+  illiquidLegs,
   requestId,
   signedAcceptTerms,
 }) {
@@ -515,6 +538,7 @@ export function refinancePlanSteps({
     riskTermsHash,
     anchor: lenderAnchor,
     pinned,
+    illiquidLegs,
   });
   const payoff = payoffApprovalBounds(loan, graceSeconds, borrowerAnchor);
   const approvePair = (role, who, min, max, why) => [

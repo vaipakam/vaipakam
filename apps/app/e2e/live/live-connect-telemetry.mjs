@@ -589,6 +589,9 @@ try {
     'as.coinbase.com',
     'api.wallet.coinbase.com',
     'api.cdp.coinbase.com',
+    // The popup's own error reporting (a Sentry ingest Coinbase hosts). The
+    // 2026-11-04 live run failed on these alone; the app sends none.
+    'exceptions.coinbase.com',
   ]);
   // The INITIATOR decides, not the destination (Codex #1894 r5). A
   // host-only test exempts the destination for everybody: if app

@@ -448,6 +448,8 @@ try {
     allowances: { bTilqDiamond, lWethDiamond },
     nonces: { borrower: bBase.nonce, lender: lBase.nonce },
     refiLenderWeth,
+    // Per-leg illiquid acknowledgements (#2728) come from these same reads.
+    illiquidLegs: { lending: Number(pLiq) === LIQUIDITY_ILLIQUID, collateral: Number(cLiq) === LIQUIDITY_ILLIQUID },
   };
   const want = (label, ok, observed) => {
     console.log(`${ok ? 'pre   ok' : 'pre   MISS'}  ${label} — ${observed}`);
@@ -550,6 +552,7 @@ PLAN = createWritePlan(
     lender: LENDER,
     riskTermsHash: pre.riskTermsHash,
     lenderAnchor: () => LENDER_ANCHOR,
+    illiquidLegs: pre.illiquidLegs,
     requestId: () => REQUEST_ID,
     storedRequest: () => REQUEST_STORED,
     signedAcceptTerms: () => PLAN.steps().find((s) => s.id === 'l-sign' && s.status === 'consumed')?.record ?? null,
