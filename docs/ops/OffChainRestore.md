@@ -558,6 +558,7 @@ then deploy.
       | `PREPAY_SALE_SANCTIONS_SYNC_ENABLED` | the upkeep pass's sanctions sync step skips — a prepay-sale recipient flagged while its listing is up is not committed to the fail-closed registry, so during an oracle outage the fill could still pay it, and its listing stays up, unless someone makes the permissionless `syncPrepaySaleListing` / `syncPrepaySaleOffer` call by hand | committing flagged prepay-sale recipients to the registry and cancelling their listings (#2984); needs `PROTOCOL_UPKEEP_ENABLED` too |
       | `TIER_PUSH_RETRY_ENABLED` | the upkeep pass's tier-push retry step skips — a tier push a broadcast lane could not take stays owed, so that mirror keeps the user's previous tier (bounded by its maximum age) until the user's tier changes again or someone calls the permissionless `deliverTierPush` by hand | delivering owed tier pushes from the protocol broadcast budget (#2984); needs `PROTOCOL_UPKEEP_ENABLED` too |
       | `PREPAY_AUTO_LIST_ENABLED` | grace auto-list pass skips — an NFT-collateral loan in its grace window is not put up for sale at the protocol floor, so the grace window can pass unsold and the lender takes the NFT in kind at default, unless someone makes the permissionless `autoListAtFloorOnGrace` call by hand | listing NFT collateral at the floor during grace (#2984) |
+      | `PROTECTED_ACCOUNT_ENABLED` | protected account pass skips — a protected payout or position transfer past its delay stays queued, and a matured protected-mode change (an unlock, a lowered delay, an allowlist or signer addition, a signer removal, a scheduled replacement) stays pending, until the owner, a signer or someone else makes the permissionless release or finalize call by hand | releasing protected payouts and applying matured protected-mode changes (#3088) |
 
       The keeper's ops alert channel, `TG_OPS_BOT_TOKEN` + `TG_OPS_CHAT_ID`, is
       captured the same way: while unset the observer's operator alerts reach
@@ -1948,7 +1949,7 @@ restored on its machine in step 3; its Worker keeps `"crons": []` for good
    `GRACE_DEFAULT_ENABLED`, `PERIODIC_SETTLE_ENABLED`,
    `REWARD_SANCTIONS_KEEPER_ENABLED`,
    `REWARD_HORIZON_HEARTBEAT_ENABLED`, `REWARD_DAY_CLOSE_ENABLED`,
-   `REWARD_CLOSE_OUT_ENABLED`, `REWARD_ZEROED_DAY_ENABLED`, `REWARD_DELIVERY_CONFLICT_ENABLED`, `REWARD_RETURN_TRANSPORT_ENABLED`, `REWARD_ENTRY_SETTLE_ENABLED`, `PROTOCOL_UPKEEP_ENABLED`, `PREPAY_SALE_SANCTIONS_SYNC_ENABLED`, `TIER_PUSH_RETRY_ENABLED`, `PREPAY_AUTO_LIST_ENABLED`, `DISCOUNT_PATH_CHAIN_IDS`) empty — by editing the
+   `REWARD_CLOSE_OUT_ENABLED`, `REWARD_ZEROED_DAY_ENABLED`, `REWARD_DELIVERY_CONFLICT_ENABLED`, `REWARD_RETURN_TRANSPORT_ENABLED`, `REWARD_ENTRY_SETTLE_ENABLED`, `PROTOCOL_UPKEEP_ENABLED`, `PREPAY_SALE_SANCTIONS_SYNC_ENABLED`, `TIER_PUSH_RETRY_ENABLED`, `PREPAY_AUTO_LIST_ENABLED`, `PROTECTED_ACCOUNT_ENABLED`, `DISCOUNT_PATH_CHAIN_IDS`) empty — by editing the
    file (`sudo -e /etc/vaipakam/keeper.env`), never by assuming what it held.
    Never paste a value from that file anywhere.
 

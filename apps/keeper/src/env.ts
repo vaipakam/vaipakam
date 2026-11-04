@@ -198,6 +198,13 @@ interface BaseEnv {
    *  Permissionless; it pays only gas and moves no value to the keeper. */
   PREPAY_AUTO_LIST_ENABLED?: string;
 
+  // Protected account pass (#3088). `secret_text` like the flags above.
+  /** 'true' arms the protected account pass (in addition to KEEPER_ENABLED):
+   *  the permissionless releases of queued payouts and position transfers,
+   *  and the finalize calls of matured protected-mode changes. It pays only
+   *  gas and moves no value to the keeper. */
+  PROTECTED_ACCOUNT_ENABLED?: string;
+
   // Protocol upkeep pass (#2984). `secret_text` like the flags above.
   /** 'true' arms the protocol upkeep pass (in addition to KEEPER_ENABLED):
    *  the buyback-intent expiry and the tier LTV cache refresh. Both
@@ -418,6 +425,7 @@ export const PLAIN_VAR_KEYS = [
   'PREPAY_SALE_SANCTIONS_SYNC_ENABLED',
   'TIER_PUSH_RETRY_ENABLED',
   'PREPAY_AUTO_LIST_ENABLED',
+  'PROTECTED_ACCOUNT_ENABLED',
   'TIER_LTV_REFRESH_AFTER_SEC',
   'REWARD_ZEROED_DAY_ENABLED',
   'REWARD_ZEROED_DAY_WINDOW_DAYS',
@@ -602,6 +610,7 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     PREPAY_SALE_SANCTIONS_SYNC_ENABLED: raw.PREPAY_SALE_SANCTIONS_SYNC_ENABLED,
     TIER_PUSH_RETRY_ENABLED: raw.TIER_PUSH_RETRY_ENABLED,
     PREPAY_AUTO_LIST_ENABLED: raw.PREPAY_AUTO_LIST_ENABLED,
+    PROTECTED_ACCOUNT_ENABLED: raw.PROTECTED_ACCOUNT_ENABLED,
     TIER_LTV_REFRESH_AFTER_SEC: raw.TIER_LTV_REFRESH_AFTER_SEC,
     REWARD_ZEROED_DAY_ENABLED: raw.REWARD_ZEROED_DAY_ENABLED,
     REWARD_ZEROED_DAY_WINDOW_DAYS: raw.REWARD_ZEROED_DAY_WINDOW_DAYS,

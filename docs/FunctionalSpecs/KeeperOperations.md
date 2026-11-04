@@ -793,6 +793,66 @@ prevents is an unrecorded one. A deployed switch being off still means the
 step is not being driven on that deployment, as the activation rules below
 state.
 
+## Releasing protected payouts and applying matured protected-mode changes
+
+- When an account runs in protected account mode, a payout from its vault and
+  a transfer of one of its position NFTs are held back for the delay the owner
+  chose, and the settings that loosen protection take effect only after that
+  delay. Releasing a held item and applying a matured change are open to
+  anyone. Without a keeper nobody makes those calls on time, so a payout the
+  owner waited out stays in the vault until someone makes the call by hand.
+  The keeper makes them.
+- It checks every minute, on every chain it serves, because each item is due
+  the second its delay ends.
+- A held payout or position transfer is released only when the protocol's
+  own record says it can go: still held, past its release time by the chain's
+  clock, the account not locked, and co-signed while the account requires a
+  co-sign. A payout whose destination has since left the account's allowed
+  destinations is cancelled by the release itself, and the asset stays in the
+  vault; the report names it apart from a paid one. A payout to a recipient
+  the sanctions screen flags is refused by the protocol and stays held; the
+  keeper reports the refusal and tries again later. Each paid payout is
+  reported with what the recipient actually received.
+- A matured change is applied only when the protocol's own record still holds
+  the change its announcement named, at the time it named: a change that was
+  cancelled or asked again with a later time is not applied early. Settings
+  changes (a lowered delay, NFT protection or the co-sign requirement switched
+  off, an unlock, an unpin, switching the mode off) are applied together, one
+  call per account. Switching the mode off waits while the account still has
+  open payouts or transfers; the keeper reports it as waiting, applies the
+  account's other due settings meanwhile, and never reports the switch-off
+  as applied until the protocol shows it so. More generally, a change is
+  reported as applied only when the transaction's own record shows it
+  applied: a call that went through can still apply nothing, for example
+  when a replacement finalized first dropped the account's pending
+  settings, or the owner cancelled the change in between. A new allowed destination that
+  has not expired, a signer addition the nominee has accepted and that has
+  not expired, and a signer removal are applied only while the account is
+  not locked. Each addition expires one delay after it matures; the keeper
+  does not try an expired one and reports it as expired. A scheduled replacement of the
+  primary wallet is applied only while it still has the approvals it needs.
+  Every change left waiting is reported with the protocol's reason.
+- Each kind of work (releases, position transfers, applied changes) has its
+  own share of the calls the keeper makes in a run, so a long queue of one
+  kind never holds back another: an unlock, a replacement or a signer
+  addition that would expire is not left waiting behind payouts. The kinds
+  also take turns going first, one run in three each, because each call
+  waits to be confirmed: on a chain with slow blocks the kind that always
+  went first could use the whole run's time, so a due item waits at most a
+  couple of runs, never indefinitely. Within one kind, each run starts at a
+  different item of its queue, spread evenly round it, so a run of items the
+  protocol keeps refusing (each refusal costs time if not a call) cannot
+  hold back an item behind them run after run. An item's own record and its
+  account's settings are always read together, in the same request, and
+  each item carries its own read of the settings even when several items
+  belong to one account. So a run whose reading time covers only part of a
+  long queue still reads whole items it can send, every item it reached
+  can be sent, and no item is left waiting run after run because its
+  account's settings were read in some other part of the queue.
+- The keeper pays only gas and moves no value to itself: a release pays the
+  account's own recipient from the account's own vault. It needs no
+  permission from the owner.
+
 ## Activation and operator visibility
 
 The master keeper switch and each duty's own arming choice are separate.

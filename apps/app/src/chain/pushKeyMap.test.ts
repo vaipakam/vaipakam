@@ -102,7 +102,7 @@ describe('IndexerPushSync KEY_MAP (#1131 desk roots)', () => {
       'notification.created': ['notifications'],
       // #1209 — a past seller is no party to the loan: their claim's rows
       // reach them only as activity.
-      'activity.appended': ['activity', 'sellerClaims'],
+      'activity.appended': ['activity', 'sellerClaims', 'autoExtend', 'extendReserve'],
     });
   });
 

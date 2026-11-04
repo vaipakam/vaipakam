@@ -44,6 +44,12 @@ describe('activityActor', () => {
     }
   });
 
+  it('files every step of an extension reserve under its depositor (#2814)', () => {
+    for (const kind of ['ExtendReserveFunded', 'ExtendReserveWithdrawn', 'ExtendChargeDrawn']) {
+      expect(activityActor(kind, { loanId: 1n, holder: A })).toBe(A.toLowerCase());
+    }
+  });
+
   it('reads a non-string field as no actor, never throws', () => {
     expect(activityActor('LoanRepaid', { repayer: 1 })).toBeNull();
     expect(activityActor('TierExclusionUpdated', { vaultOwner: { a: 1 } })).toBeNull();

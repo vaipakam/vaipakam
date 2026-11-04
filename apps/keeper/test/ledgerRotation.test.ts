@@ -7,7 +7,7 @@
  */
 import { describe, expect, it, vi } from 'vitest';
 import { encodePos, type EventLedger, type LedgerPos, type LedgerRow } from '../src/eventLedger';
-import { readLedgerRotation } from '../src/ledgerRotation';
+import { attemptOrder, readLedgerRotation } from '../src/ledgerRotation';
 import { PastRunDeadline } from '../src/batchRead';
 import { memoryScanCursors } from '../src/scanCursors';
 
@@ -111,5 +111,30 @@ describe('readLedgerRotation', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe('attemptOrder', () => {
+  it('tries every nominee once, starting at a point that moves from run to run', () => {
+    expect(attemptOrder(0, 5)).toEqual([]);
+    expect(attemptOrder(1, 7)).toEqual([0]);
+    for (const n of [2, 3, 7, 200]) {
+      for (const v of [0, 1, 2, 31, 1_000_000]) {
+        const o = attemptOrder(n, v);
+        expect([...o].sort((a, b) => a - b)).toEqual(Array.from({ length: n }, (_, i) => i));
+        expect(o.every((x, j) => j === 0 || x === (o[j - 1]! + 1) % n), 'one turn round the page').toBe(true);
+      }
+    }
+    expect(attemptOrder(5, 0)[0]).toBe(0);
+    expect(attemptOrder(3, 1)).toEqual([1, 2, 0]);
+  });
+
+  it('spreads the starts over the page, so a row far down is soon near a start', () => {
+    // 20 runs over a page of 200: no stretch of the page is left without a
+    // start for more than about 2.6 times the even spacing of 10.
+    const starts = [...new Set(Array.from({ length: 20 }, (_, v) => attemptOrder(200, v)[0]!))].sort((a, b) => a - b);
+    expect(starts).toHaveLength(20);
+    const gaps = starts.map((x, i) => (i + 1 < starts.length ? starts[i + 1]! : starts[0]! + 200) - x);
+    expect(Math.max(...gaps)).toBeLessThanOrEqual(26);
   });
 });

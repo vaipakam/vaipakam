@@ -21,6 +21,7 @@ import { useDiamondWrite } from '../contracts/diamond';
 import { EmptyState, UnavailableState } from '../components/EmptyState';
 import { ClaimAllCard } from '../components/ClaimAllCard';
 import { SellerClaimsCard, useSellerClaimsListed } from '../components/SellerClaimsCard';
+import { ExtendReservesCard, useExtendReservesListed } from '../components/ExtendReservesCard';
 import { AssetType } from '../lib/types';
 import { formatDate, formatTokenAmount } from '../lib/format';
 import { captureTxError } from '../lib/errors';
@@ -283,10 +284,14 @@ export function Claims() {
   // #1209 — interest earned on positions this wallet sold is listed in its
   // own card, so "Nothing to claim" under it would be false too.
   const sellerClaimsListed = useSellerClaimsListed();
+  // #2814 — an extension reserve is the depositor's own money, withdrawable
+  // at any time, and listed in its own card.
+  const extendReservesListed = useExtendReservesListed();
   const hasOtherClaimable =
     (rewards.data?.pending ?? 0n) > 0n ||
     (rewards.isError && (held.data ?? 0n) > 0n) ||
-    sellerClaimsListed;
+    sellerClaimsListed ||
+    extendReservesListed;
 
   return (
     <div>
@@ -307,6 +312,7 @@ export function Claims() {
         <>
           <RewardsCard />
           <SellerClaimsCard />
+          <ExtendReservesCard />
           {/* #1268 / E-10 — one-signature Claim-All over the settled,
               confirmed claimables (+ rewards + free vault VPFI). Only
               once the claimables list is settled, so the batch never

@@ -59,11 +59,6 @@ const PARTIES: ReadonlyMap<string, readonly string[]> = new Map<string, readonly
   ['AutoExtendBorrowerCapsChanged', ['borrower']],
   ['AutoExtendLenderCapsChanged', ['lender']],
   ['AutoRefinanceCapsChanged', ['borrower']],
-  // #2814 — the extension reserve is the depositor's own; each step of it,
-  // and an extension's draw on it, concerns that depositor.
-  ['ExtendReserveFunded', ['holder']],
-  ['ExtendReserveWithdrawn', ['holder']],
-  ['ExtendChargeDrawn', ['holder']],
   // #1558 — the borrower's single-use payoff permit on a refinance request;
   // the pull names the borrower who pays, whoever completes the refinance.
   ['RefinancePayoffPermitSet', ['signer']],
