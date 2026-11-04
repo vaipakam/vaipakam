@@ -898,11 +898,38 @@ describe('the Telegram steps', () => {
     expect(sent).toEqual([]);
   });
 
-  it('suggests LOCK in a payout alert only where this keeper works LOCK requests (Codex #3092 r11)', async () => {
-    store.subs.set(`${CHAIN}:${ALICE}`, { tgChatId: '42', push: false, locale: 'en' });
-    ledger.rows.push({ kind: 'PayoutQueued', args: { account: ALICE, id: '9', asset: ASSET, kind: '0', tokenId: '0', amount: '2500000', recipient: DEST, releaseAt: String(NOW_SEC + 3600) }, blockAt: NOW_SEC - 30, block: 1, log: 0, tx: '0x' });
-    await run(true, true);
-    expect(sent.map((a) => a.text)).toEqual([expect.stringContaining('send LOCK')]);
+  describe('the LOCK advice in a payout alert', () => {
+    const queue = () =>
+      ledger.rows.push({ kind: 'PayoutQueued', args: { account: ALICE, id: '9', asset: ASSET, kind: '0', tokenId: '0', amount: '2500000', recipient: DEST, releaseAt: String(NOW_SEC + 3600) }, blockAt: NOW_SEC - 30, block: 1, log: 0, tx: '0x' });
+
+    it('suggests LOCK where a LOCK from the linked chat would lock the vault (Codex #3092 r11)', async () => {
+      d.lockGranted.add(ALICE);
+      store.subs.set(`${CHAIN}:${ALICE}`, { tgChatId: '42', push: false, locale: 'en' });
+      queue();
+      await run(true, true);
+      expect(sent.map((a) => a.text)).toEqual([expect.stringContaining('send LOCK')]);
+      // The advice was simulated, never sent.
+      expect(d.sent.filter((s) => s.fn === 'lockVaultFor')).toEqual([]);
+    });
+
+    it('gives the app-only advice to a Push-only subscriber, who has no chat to send LOCK from (Codex #3092 r12)', async () => {
+      d.lockGranted.add(ALICE);
+      store.subs.set(`${CHAIN}:${ALICE}`, { tgChatId: null, push: true, locale: 'en' });
+      queue();
+      await run(true, true);
+      expect(sent).toHaveLength(1);
+      expect(sent[0].text).not.toContain('send LOCK');
+      expect(sent[0].text).toContain('lock the vault in the app');
+    });
+
+    it('gives the app-only advice when the owner has not granted the keeper the lock', async () => {
+      store.subs.set(`${CHAIN}:${ALICE}`, { tgChatId: '42', push: false, locale: 'en' });
+      queue();
+      await run(true, true);
+      expect(sent).toHaveLength(1);
+      expect(sent[0].text).not.toContain('send LOCK');
+      expect(sent[0].text).toContain('lock the vault in the app');
+    });
   });
 
   it("sends a retired account's alerts to its controller, never to the old wallet (Codex #3092 r9)", async () => {

@@ -446,7 +446,7 @@ export async function alertOwners(d: TelegramStepDeps, writeCutoff: number = d.r
           report.unsubscribed += 1;
         } else {
           // eslint-disable-next-line no-await-in-loop
-          const text = await composeAlert(d, row.kind, row.args, account, manager, sub.locale);
+          const text = await composeAlert(d, row.kind, row.args, account, manager, sub);
           if (text === null) {
             finished = false;
           } else {
@@ -529,9 +529,9 @@ async function composeAlert(
   args: Record<string, unknown>,
   account: Address,
   manager: Address,
-  locale: string | null,
+  sub: Subscriber,
 ): Promise<string | null> {
-  const copy = protectedCopy(locale);
+  const copy = protectedCopy(sub.locale);
   const w = shortAddress(account);
   switch (kind) {
     case 'VaultLocked': {
@@ -560,17 +560,37 @@ async function composeAlert(
         d.sender.noteUnread(`alert:${id}`, 'its request code (not a 30-bit value)');
         return null;
       }
-      return copy.alertPayout(w, d.chainId, what, String(lower(args.recipient) ?? args.recipient), when, shown, lockTaken(d) && manager === account);
+      return copy.alertPayout(w, d.chainId, what, String(lower(args.recipient) ?? args.recipient), when, shown, await lockWouldWork(d, account, manager, sub));
     }
     default:
       return null;
   }
 }
 
-/** Whether a LOCK sent from Telegram now would be made on this chain: the
- *  LOCK duty is armed and this keeper can sign. (Whether the owner granted
- *  the keeper the lock is told in the answer to their LOCK.) */
-const lockTaken = (d: TelegramStepDeps): boolean => d.lockOn && d.canSign();
+/**
+ * Whether a LOCK the subscriber sends from Telegram now would lock this vault,
+ * so a payout alert may suggest it (Codex #3092 r10–r12). Every condition is
+ * here, in one place, and anything not known reads as no: the alert then
+ * gives the app-only advice, which is always true.
+ *
+ * The off-chain conditions are checked first: this run works LOCK requests
+ * (the duty is armed and the keeper can sign); the alert goes to the vault's
+ * own wallet (a retired account's go to its controller, whose LOCK would lock
+ * the controller's vault); and that wallet is linked to a Telegram chat,
+ * where LOCK is sent. The on-chain part is the protocol's own answer:
+ * `lockVaultFor(account)` simulated from this keeper, so the grant, protected
+ * mode and the global keeper pause are read from the contract rather than
+ * from a copy of its rules.
+ */
+async function lockWouldWork(d: TelegramStepDeps, account: Address, manager: Address, sub: Subscriber): Promise<boolean> {
+  if (!d.lockOn || !d.canSign() || manager !== account || sub.tgChatId === null) return false;
+  try {
+    return (await boundedCall(d.r.cutoff, 'the lock simulation', () => d.sender.wouldTake('lockVaultFor', [account]))) === true;
+  } catch (err) {
+    if (err instanceof PastRunDeadline) throw err;
+    return false;
+  }
+}
 
 /** The asset and amount, from the token's own decimals and symbol; the raw
  *  amount and the token address when those cannot be read. */
