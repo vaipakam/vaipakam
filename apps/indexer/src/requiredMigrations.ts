@@ -1,8 +1,9 @@
 /**
  * Every D1 migration this build was written against — the schema gate
  * (schemaGate.ts) holds scheduled work until ALL of them are recorded in
- * `d1_migrations`, and the deploy wrapper (scripts/deploy-shared-d1.mjs)
- * refuses to publish until they are.
+ * `d1_migrations`, and the indexer's deploy (scripts/deploy-shared-d1.mjs
+ * apply) refuses to publish until they are (the keeper's and agent's deploys
+ * only report them, #3115).
  *
  * The list is the shared database's, so it lives in the shared package
  * (`packages/lib/src/sharedD1Migrations.json`, #2410) where the keeper and the

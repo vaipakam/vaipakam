@@ -1,13 +1,14 @@
 /**
  * One machine-hosted tick: build the env, confirm the schema, run the tick.
  *
- * SCHEMA. On Cloudflare the keeper's deploy refuses to publish until the
- * shared database records every migration the build carries (#2409). A
+ * SCHEMA. On Cloudflare the keeper's deploy reads whether the shared database
+ * records every migration the build carries and publishes either way
+ * (#2409, #3115); the Worker's `scheduled` handler declines every tick. A
  * machine has no deploy step: pulling new code and restarting IS the
  * release. So each tick first asks the database the same question, with the
  * shared gate and the shared database's migration list
  * (`@vaipakam/lib/d1SchemaGate`, #2410 — the list the keeper's deploy already
- * verifies against), and declines by name while any migration is missing. It
+ * reports against), and declines by name while any migration is missing. It
  * resumes by itself once the indexer has applied them. The gate
  * caches only `current`, so the steady-state cost is one read per process.
  */

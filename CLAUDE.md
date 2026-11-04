@@ -1142,9 +1142,13 @@ additive** (#2214 / #2409). Only the indexer — the schema's owner — APPLIES
 migrations: its `deploy` (`apps/indexer/scripts/deploy-shared-d1.mjs apply`)
 applies non-interactively, VERIFIES in the database that every migration in
 `packages/lib/src/sharedD1Migrations.json` is recorded, then publishes. The
-keeper's and agent's `deploy` (`… verify`) only verify, read-only, waiting a
-bounded time for the indexer to apply, and refuse to publish onto an older
-schema — three appliers raced on one merge and left partial releases. The
+keeper's and agent's `deploy` (`… verify`) only READ the record once, warn by
+name about any migration still pending, and publish anyway (#3115) — three
+appliers raced on one merge and left partial releases. They never wait:
+Workers Builds runs one build at a time on this account, so a waiting keeper
+or agent build held the only slot while the indexer build that would apply
+the migrations sat queued behind it, and timed out. The schema gate below,
+not the deploy order, is what keeps their scheduled work off an older schema. The
 wrapper refuses arguments (dry runs: `pnpm run deploy:dry`, which never
 touches the database). **Migrations land while the old Workers are still
 serving, so each one must be compatible with the deployed code** — additive
