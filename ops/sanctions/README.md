@@ -232,7 +232,36 @@ forge script script/ConfigureSanctionsClearance.s.sol --rpc-url "$ARB_SEPOLIA_RP
 ```
 
 It refuses a mainnet. Every step is skipped when already in place, and
-nothing already set to something else is re-pointed. Then export deployments
+nothing already set to something else is re-pointed. Set
+`SANCTIONS_STANDIN_REFRESHER` to the keeper's address on the attestor-chain run
+so the keeper's `sanctionsStandInRefresh` pass can keep the stand-in fresh
+(#3113).
+
+**Replacing the stand-in (#3113).** An attestor reads one oracle for good, so a
+new stand-in comes with a new attestor, and the clearance channel moves to it.
+Run the same three commands with the old attestor named, and on the attestor
+chain where the old stand-in's history starts:
+
+```bash
+export SANCTIONS_CLEARANCE_REPLACE_ATTESTOR=<old attestor>
+SANCTIONS_STANDIN_CARRY_FROM_BLOCK=<old stand-in deploy block> SANCTIONS_STANDIN_REFRESHER=<keeper> \
+  forge script script/ConfigureSanctionsClearance.s.sol --rpc-url "$BNB_TESTNET_RPC_URL"   # dry run, then --broadcast --slow
+forge script script/ConfigureSanctionsClearance.s.sol --rpc-url "$BASE_SEPOLIA_RPC_URL"    # dry run, then --broadcast --slow
+forge script script/ConfigureSanctionsClearance.s.sol --rpc-url "$ARB_SEPOLIA_RPC_URL"     # dry run, then --broadcast --slow
+```
+
+The script re-points only a handler or peer that is the named attestor. On the
+attestor chain it first copies every account the old stand-in flags onto the
+new one. It rebuilds that list from the old stand-in's own events, refuses
+unless the range read includes the old stand-in's deployment, and checks each
+account against the old stand-in itself. Between the BNB run and a timelock
+chain's own run, that timelock gets no new answers. Answers it already holds,
+and answers the old attestor already sent, still count until its own run
+voids them. They were read from the old stand-in, which keeps exactly the same
+flags, and they still expire at the timelock's age limit. Once voided, the
+delister requests again. A re-run after the rotation carries nothing, so it
+never re-flags an account cleared on the new stand-in since. Then export
+deployments
 (`bash contracts/script/exportFrontendDeployments.sh`), commit, and merge: the
 services read the addresses from the release they run, so a new contract
 reaches them with the next install.

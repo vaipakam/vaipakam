@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {Script} from "forge-std/Script.sol";
+import {Vm} from "forge-std/Vm.sol";
 import {console} from "forge-std/console.sol";
 import {IRouterClient} from "@chainlink/contracts-ccip/contracts/interfaces/IRouterClient.sol";
 import {CcipMessenger} from "../src/crosschain/CcipMessenger.sol";
@@ -17,6 +18,7 @@ import {AdminControl} from "./lib/AdminControl.sol";
 import {SanctionsRecords} from "./lib/SanctionsRecords.sol";
 import {SanctionsClearanceReport} from "./lib/SanctionsClearanceReport.sol";
 import {TotalRead} from "./lib/TotalRead.sol";
+import {StandInFlagReplay} from "./lib/StandInFlagReplay.sol";
 
 /// @dev The two reads {ConfigureSanctionsClearance._recordedAttestorToReuse}
 ///      makes of a recorded attestor, as an interface so their selectors can
@@ -80,12 +82,38 @@ interface IStandInRefresherRead {
  *         sends nothing if any step reverts, but an artifact write made
  *         during that execution survives the revert, so a write before a step
  *         that can still refuse could name contracts that were never sent.
- *         Nothing is ever re-pointed: a channel handler, a channel peer or a
- *         lane already set to something else stops the run, because rotating
- *         any of them needs the drain `CcipMessenger.registerChannel` /
- *         `setChannelPeer` describe. `setClearanceSource` is called only when
- *         the source differs, since every call voids requests already in
- *         flight. The route it reports is read from the timelock and names
+ *         Nothing is re-pointed unless the run is told what to replace: a
+ *         channel handler, a channel peer or a lane already set to something
+ *         else stops the run. `setClearanceSource` is called only when the
+ *         source differs, since every call voids requests already in flight.
+ *
+ *         ROTATION (#3113, owner decision 2026-11-04: a new stand-in with the
+ *         refresher role). An attestor's oracle is fixed at construction, so
+ *         a new stand-in means a new attestor, and the clearance channel's
+ *         handler (attestor chain) and peer (each timelock chain) move to it.
+ *         `SANCTIONS_CLEARANCE_REPLACE_ATTESTOR` names the attestor being
+ *         replaced; only a handler or peer that IS that attestor is cleared
+ *         and re-pointed, anything else still stops the run. No drain is
+ *         needed on this channel: it carries no tokens, a request delivered
+ *         to the new attestor is answered from the new stand-in, and an
+ *         answer still in flight from the old one is refused by the
+ *         re-pointed peer (a failed CCIP message) while the timelock's
+ *         `setClearanceSource` voids the request it answered anyway; the
+ *         delister then requests again. Until a timelock chain's own run,
+ *         that timelock still accepts the old attestor: answers it already
+ *         holds and answers still in flight count under its unchanged epoch.
+ *         They were read from the old stand-in, which keeps the same flags
+ *         (it is not changed by the rotation, and the new one is given all
+ *         of them), and they still expire at the timelock's `oracleMaxAge`.
+ *         New requests in that window get no answer, since the new
+ *         attestor's replies are refused by the old peer. On the attestor chain the run also
+ *         carries the old stand-in's flags to the new one BEFORE the handler
+ *         moves, so the new attestor never answers from a shorter list. The
+ *         flags are rebuilt from the old stand-in's own `StandInFlagSet`
+ *         events from `SANCTIONS_STANDIN_CARRY_FROM_BLOCK` (its deployment
+ *         block or earlier) to the head, the run refuses unless that range
+ *         holds the stand-in's construction, and every carried account is
+ *         checked against the old stand-in's live mapping. The route it reports is read from the timelock and names
  *         the oracle only from what it reads ({SanctionsClearanceReport}).
  *
  *         Keys: `ADMIN_PRIVATE_KEY` owns the messengers, the timelocks and
@@ -108,6 +136,19 @@ interface IStandInRefresherRead {
  *           forge script script/ConfigureSanctionsClearance.s.sol \
  *             --rpc-url "$BNB_TESTNET_RPC_URL" [--broadcast --slow]
  *         then the same on Base Sepolia and Arbitrum Sepolia.
+ *
+ *         A rotation is the same three runs with the replaced attestor named
+ *         (and, on the attestor chain, where the old stand-in's history
+ *         starts):
+ *           SANCTIONS_CLEARANCE_REPLACE_ATTESTOR=<old attestor> \
+ *           SANCTIONS_STANDIN_CARRY_FROM_BLOCK=<old stand-in deploy block> \
+ *           SANCTIONS_STANDIN_REFRESHER=<keeper address> ... (attestor chain)
+ *           SANCTIONS_CLEARANCE_REPLACE_ATTESTOR=<old attestor> ... (each
+ *           timelock chain)
+ *         Between the attestor-chain run and a timelock chain's own run, that
+ *         timelock gets no NEW answers; ones it holds, or that the old
+ *         attestor already sent, still count (read from the old stand-in,
+ *         which keeps the same flags).
  */
 contract ConfigureSanctionsClearance is Script, ArtifactRootBase {
     /// @notice The `ICrossChainMessenger` channel clearance requests and
@@ -127,10 +168,25 @@ contract ConfigureSanctionsClearance is Script, ArtifactRootBase {
     ///         `SANCTIONS_STANDIN_REFRESHER`, or by a test.
     address public standInRefresher;
 
+    /// @notice The attestor a rotation replaces (#3113); address(0) refuses
+    ///         every re-point. Set by {run} from
+    ///         `SANCTIONS_CLEARANCE_REPLACE_ATTESTOR`, or by a test.
+    address public replaceAttestor;
+
+    /// @notice First block of the replaced stand-in's history, for carrying
+    ///         its flags (attestor chain only). Set by {run} from
+    ///         `SANCTIONS_STANDIN_CARRY_FROM_BLOCK`, or by a test.
+    uint256 public carryFromBlock;
+
+    /// @notice The accounts this run carried to the new stand-in.
+    address[] public carriedFlags;
+
     function run() external {
         address admin = vm.rememberKey(vm.envUint("ADMIN_PRIVATE_KEY"));
         address deployer = vm.rememberKey(vm.envUint("DEPLOYER_PRIVATE_KEY"));
         standInRefresher = vm.envOr("SANCTIONS_STANDIN_REFRESHER", address(0));
+        replaceAttestor = vm.envOr("SANCTIONS_CLEARANCE_REPLACE_ATTESTOR", address(0));
+        carryFromBlock = vm.envOr("SANCTIONS_STANDIN_CARRY_FROM_BLOCK", uint256(0));
         runWith(
             admin,
             deployer,
@@ -184,11 +240,17 @@ contract ConfigureSanctionsClearance is Script, ArtifactRootBase {
             : _deployAttestor(s, m, deployer);
         standIn = address(s);
         attestor = address(a);
+        address[] memory carry = _flagsToCarry(m, s, a);
 
         vm.startBroadcast(admin);
         if (standInRefresher != address(0) && s.refresher() != standInRefresher) {
             s.setRefresher(standInRefresher);
             console.log("  stand-in: refresher named", standInRefresher);
+        }
+        // Before the handler moves: the new attestor answers from the full list.
+        if (carry.length != 0) {
+            s.setFlagged(carry, true);
+            console.log("  stand-in: flags carried from the replaced stand-in:", carry.length);
         }
         for (uint256 i; i < timelockChainIds.length; ++i) {
             _ensureLane(m, timelockChainIds[i]);
@@ -222,6 +284,107 @@ contract ConfigureSanctionsClearance is Script, ArtifactRootBase {
             console.log("  answers the timelock on chain", cid, m.channelPeerOf(SANCTIONS_CLEARANCE_CHANNEL, cid));
         }
         console.log("Next: run this script on each timelock chain.");
+    }
+
+    /// @dev On a rotation, the accounts the replaced attestor's stand-in
+    ///      flags and the new stand-in `s` does not yet; empty when this run
+    ///      replaces nothing or the handler already is `a`. Refuses a replace target that is not the
+    ///      channel's handler here (nor already replaced by `a`), and a
+    ///      replaced oracle that is not a stand-in.
+    function _flagsToCarry(CcipMessenger m, TestnetSanctionsOracleStandIn s, SanctionsClearanceAttestor a)
+        internal
+        returns (address[] memory missing)
+    {
+        if (replaceAttestor == address(0)) return missing;
+        require(
+            replaceAttestor != address(a),
+            "ConfigureSanctionsClearance: SANCTIONS_CLEARANCE_REPLACE_ATTESTOR names the attestor this run keeps"
+        );
+        address handler = m.handlerOf(SANCTIONS_CLEARANCE_CHANNEL);
+        // Already rotated: the flags were carried in the broadcast that moved
+        // the handler, before it moved. Carrying again would re-flag an
+        // account the admin has cleared on the new stand-in since.
+        if (handler == address(a)) return missing;
+        require(
+            handler == replaceAttestor,
+            "ConfigureSanctionsClearance: SANCTIONS_CLEARANCE_REPLACE_ATTESTOR is not the clearance channel's handler here"
+        );
+        (bool read, address oldStandIn) = TotalRead.addressOf(replaceAttestor, IClearanceAttestorReads.oracle.selector);
+        require(read, "ConfigureSanctionsClearance: the replaced attestor does not answer oracle()");
+        if (oldStandIn == address(s)) return missing; // same stand-in: nothing to carry
+        require(
+            SanctionsClearanceReport.isStandIn(oldStandIn),
+            "ConfigureSanctionsClearance: the replaced attestor's oracle is not a testnet stand-in - its flags cannot be carried"
+        );
+        address[] memory flagged = _replayFlags(oldStandIn);
+        uint256 n;
+        for (uint256 i; i < flagged.length; ++i) {
+            if (!s.flagged(flagged[i])) ++n;
+        }
+        missing = new address[](n);
+        n = 0;
+        for (uint256 i; i < flagged.length; ++i) {
+            if (!s.flagged(flagged[i])) missing[n++] = flagged[i];
+        }
+        for (uint256 i; i < flagged.length; ++i) {
+            carriedFlags.push(flagged[i]);
+        }
+        console.log("Replaced stand-in", oldStandIn, "flags", flagged.length);
+    }
+
+    /// @dev The accounts `oldStandIn` flags now, from its events between
+    ///      {carryFromBlock} and the head ({StandInFlagReplay}). Refuses a
+    ///      range that does not hold its construction, and any account its
+    ///      live mapping does not confirm.
+    function _replayFlags(address oldStandIn) internal returns (address[] memory flagged) {
+        require(
+            carryFromBlock != 0,
+            "ConfigureSanctionsClearance: set SANCTIONS_STANDIN_CARRY_FROM_BLOCK to the replaced stand-in's deployment block (or earlier) to carry its flags"
+        );
+        uint256 head = block.number;
+        require(carryFromBlock <= head, "ConfigureSanctionsClearance: SANCTIONS_STANDIN_CARRY_FROM_BLOCK is ahead of the head");
+        uint256 chunk = vm.envOr("SANCTIONS_STANDIN_LOG_CHUNK", uint256(5000));
+        require(chunk > 0, "ConfigureSanctionsClearance: SANCTIONS_STANDIN_LOG_CHUNK must be > 0");
+        // Ownable's constructor emits OwnershipTransferred(address(0), owner):
+        // the one event no later call can emit, so seeing it proves the range
+        // starts at or before the deployment.
+        bytes32[] memory constructionTopics = new bytes32[](2);
+        constructionTopics[0] = keccak256("OwnershipTransferred(address,address)");
+        constructionTopics[1] = bytes32(0);
+        bytes32[] memory flagTopics = new bytes32[](1);
+        flagTopics[0] = StandInFlagReplay.FLAG_SET;
+        bool constructed;
+        Vm.EthGetLogs[] memory acc = new Vm.EthGetLogs[](0);
+        for (uint256 b = carryFromBlock; b <= head; b += chunk) {
+            uint256 to = b + chunk - 1 > head ? head : b + chunk - 1;
+            if (!constructed && vm.eth_getLogs(b, to, oldStandIn, constructionTopics).length != 0) constructed = true;
+            acc = _concat(acc, vm.eth_getLogs(b, to, oldStandIn, flagTopics));
+        }
+        require(
+            constructed,
+            "ConfigureSanctionsClearance: the replaced stand-in's construction is not in the range read - SANCTIONS_STANDIN_CARRY_FROM_BLOCK is after its deployment"
+        );
+        flagged = StandInFlagReplay.flaggedNow(acc, oldStandIn);
+        for (uint256 i; i < flagged.length; ++i) {
+            require(
+                TestnetSanctionsOracleStandIn(oldStandIn).flagged(flagged[i]),
+                "ConfigureSanctionsClearance: the replaced stand-in's events disagree with its live flags"
+            );
+        }
+    }
+
+    function _concat(Vm.EthGetLogs[] memory a, Vm.EthGetLogs[] memory b)
+        internal
+        pure
+        returns (Vm.EthGetLogs[] memory out)
+    {
+        out = new Vm.EthGetLogs[](a.length + b.length);
+        for (uint256 i; i < a.length; ++i) {
+            out[i] = a[i];
+        }
+        for (uint256 i; i < b.length; ++i) {
+            out[a.length + i] = b[i];
+        }
     }
 
     /// @dev The recorded stand-in while it is fit to reuse (see
@@ -304,6 +467,11 @@ contract ConfigureSanctionsClearance is Script, ArtifactRootBase {
             "ConfigureSanctionsClearance: the attestor chain's artifact records no sanctionsClearanceAttestor - run this script on the attestor chain first"
         );
 
+        require(
+            replaceAttestor != a,
+            "ConfigureSanctionsClearance: SANCTIONS_CLEARANCE_REPLACE_ATTESTOR names the attestor the artifact records - it would replace nothing"
+        );
+
         vm.startBroadcast(admin);
         _ensureLane(m, attestorChainId);
         _ensureHandler(m, address(tl));
@@ -362,11 +530,17 @@ contract ConfigureSanctionsClearance is Script, ArtifactRootBase {
         }
     }
 
-    /// @dev Registers `handler` on the clearance channel. Refuses to replace
-    ///      another handler: a rotation needs a drain first.
+    /// @dev Registers `handler` on the clearance channel. Replaces only
+    ///      {replaceAttestor} (cleared, then re-pointed); any other handler
+    ///      stops the run.
     function _ensureHandler(CcipMessenger m, address handler) internal {
         address current = m.handlerOf(SANCTIONS_CLEARANCE_CHANNEL);
         if (current == handler) return;
+        if (current != address(0) && current == replaceAttestor) {
+            m.registerChannel(SANCTIONS_CLEARANCE_CHANNEL, address(0));
+            console.log("  channel: handler cleared (replaced attestor)", current);
+            current = address(0);
+        }
         require(
             current == address(0),
             "ConfigureSanctionsClearance: another contract handles the clearance channel here - rotating it needs a drain (CcipMessenger.registerChannel); clear it deliberately first"
@@ -379,11 +553,17 @@ contract ConfigureSanctionsClearance is Script, ArtifactRootBase {
         console.log("  channel: handler registered", handler);
     }
 
-    /// @dev Sets `peer` as the clearance channel's peer for `remote`. Refuses
-    ///      to replace another peer: a rotation needs a drain first.
+    /// @dev Sets `peer` as the clearance channel's peer for `remote`.
+    ///      Replaces only {replaceAttestor} (cleared, then re-pointed); any
+    ///      other peer stops the run.
     function _ensurePeer(CcipMessenger m, uint256 remote, address peer) internal {
         address current = m.channelPeerOf(SANCTIONS_CLEARANCE_CHANNEL, remote);
         if (current == peer) return;
+        if (current != address(0) && current == replaceAttestor) {
+            m.setChannelPeer(SANCTIONS_CLEARANCE_CHANNEL, remote, address(0));
+            console.log("  channel: peer cleared (replaced attestor) for chain", remote, current);
+            current = address(0);
+        }
         require(
             current == address(0),
             "ConfigureSanctionsClearance: the clearance channel already has another peer for that chain - rotating it needs a drain (CcipMessenger.setChannelPeer); clear it deliberately first"
