@@ -710,7 +710,7 @@ function AutoExtendCardBody({
 
   if (cadence === undefined || cadence !== 0) {
     return (
-      <section className="card" data-testid="auto-extend">
+      <section className="card" data-testid="auto-extend" data-state={cadence === undefined ? 'unread' : 'scheduled'}>
         {header}
         <p className="muted">{cadence === undefined ? a.scheduleUnknown : a.scheduled}</p>
         {reserved > 0n ? (
@@ -747,7 +747,9 @@ function AutoExtendCardBody({
 
   if (!state.data) {
     return (
-      <section className="card" data-testid="auto-extend">
+      // `data-state` says whether the extension state has answered (read by
+      // the live drive, which judges the band only once it is `ready`).
+      <section className="card" data-testid="auto-extend" data-state={state.isError ? 'unavailable' : 'loading'}>
         {header}
         <p className="muted">{state.isError ? a.unavailable : a.loading}</p>
         {holdsBorrower ? reservePanel('unknown', undefined) : leftover}
@@ -771,7 +773,7 @@ function AutoExtendCardBody({
   }
 
   return (
-    <section className="card" data-testid="auto-extend">
+    <section className="card" data-testid="auto-extend" data-state="ready" data-band={band.kind}>
       {header}
       <p className="muted">{a.lede}</p>
       {s.paused ? <Banner kind="warn">{a.paused}</Banner> : null}

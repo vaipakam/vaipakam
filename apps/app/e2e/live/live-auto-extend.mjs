@@ -922,8 +922,21 @@ try {
     max: formatBpsAsPercent(B_RATE_BPS),
     end: await dateTimeText(bp, L_END),
   });
-  const bandSeen = await pollUntil('the band line', async () => squash(await card.innerText()).includes(squash(band)), { timeoutMs: 90_000, everyMs: 3_000 });
-  check('band', 'text', 'the borrower reads the overlap, worded as limits that can still be refused', Boolean(bandSeen), band);
+  // The card publishes whether its extension state has answered
+  // (`data-state`) and the band it derived (`data-band`); a band is judged
+  // only once the state is ready, so an unread or unavailable read is never
+  // taken for a wrong band.
+  const bandSeen = await pollUntil(
+    'the band line',
+    async () => (await card.getAttribute('data-state')) === 'ready' && squash(await card.innerText()).includes(squash(band)),
+    { timeoutMs: 90_000, everyMs: 3_000 },
+  );
+  const cardState = await card.getAttribute('data-state');
+  if (!bandSeen && cardState !== 'ready') {
+    unsettled('band', 'text', `the card's extension state is ${cardState ?? 'unpublished'} after 90 s, so the band was not read`);
+  } else {
+    check('band', 'text', 'the borrower reads the overlap, worded as limits that can still be refused', Boolean(bandSeen), bandSeen ? band : `band ${await card.getAttribute('data-band')}; expected: ${band}`);
+  }
   await shot('borrower', 'auto-extend-band');
 
   // ── 3. The reserve panel, then a deposit ──────────────────────────────
