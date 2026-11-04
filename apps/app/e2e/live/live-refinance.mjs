@@ -1503,6 +1503,7 @@ const pre = await precondition('reading the preconditions from chain', async () 
   const watched = await readWatchedConfig(diamondRead, watchedContextOf(loan, lenderPositionHolder), head);
   const { riskAccessGate: riskGate, autoRefinance: autoRefi, paused, partialFill } = watched;
   const collLiquidity = await read('checkLiquidity', [loan.collateralAsset], head);
+  const principalLiquidity = await read('checkLiquidity', [loan.principalAsset], head);
   const [tosB, tosL] = await Promise.all([
     read('hasAcceptedCurrentTerms', [BORROWER], head),
     read('hasAcceptedCurrentTerms', [LENDER], head),
@@ -1577,6 +1578,7 @@ const pre = await precondition('reading the preconditions from chain', async () 
     autoRefi,
     paused,
     collLiquidity,
+    principalLiquidity,
     tosB,
     tosL,
     b,
@@ -1812,6 +1814,11 @@ PLAN = createWritePlan(
     graceSeconds: GRACE_SECONDS,
     borrowerAnchor: () => BORROWER_ANCHOR,
     lenderAnchor: () => LENDER_ANCHOR,
+    // Per-leg illiquid acknowledgements (#2728), from the pinned-head reads.
+    illiquidLegs: {
+      lending: Number(pre.principalLiquidity) === LIQUIDITY_ILLIQUID,
+      collateral: Number(pre.collLiquidity) === LIQUIDITY_ILLIQUID,
+    },
     requestId: () => REQUEST_ID,
     signedAcceptTerms: () => planSteps().find((st) => st.id === 'l-sign' && st.status === 'consumed')?.record ?? null,
   }),
