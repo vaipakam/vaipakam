@@ -149,6 +149,17 @@ function firstLine(err) {
 }
 
 /**
+ * The managed browser is launched as the full Chromium build in its new
+ * headless mode (`channel: 'chromium'`), not as the separate
+ * `chromium-headless-shell` binary Playwright picks by default. That way
+ * `chromium.executablePath()` names the binary that actually launches, so
+ * the install check and the library check below look at the right file.
+ * The default would launch the headless shell while `executablePath()`
+ * names the full browser, and either can be installed without the other.
+ */
+const MANAGED = { channel: 'chromium' };
+
+/**
  * Launch Chromium, trying in order:
  *   1. Playwright's own managed browser (exact-revision match).
  *   2. `PRERENDER_CHROMIUM` env — explicit executable override.
@@ -156,8 +167,9 @@ function firstLine(err) {
  *      tolerant — fine for a static snapshot pass, which exercises no
  *      bleeding-edge browser APIs).
  *   4. When the managed browser is not installed:
- *      `npx playwright install chromium` (the same step the app e2e
- *      workflow runs), then retry (1).
+ *      `npx playwright install --no-shell chromium` (the full browser
+ *      only — the headless shell is not what MANAGED launches), then
+ *      retry (1).
  *   5. When the managed browser is installed but cannot load its system
  *      libraries — the Workers Builds image (#2903) — fetch them into a
  *      private folder (chromiumSystemLibs.mjs) and retry (1) with them on
@@ -179,7 +191,7 @@ async function launchChromium() {
     }
   }
 
-  let browser = await attempt('managed browser');
+  let browser = await attempt('managed browser', MANAGED);
   if (browser) return browser;
 
   const candidates = [];
@@ -203,13 +215,13 @@ async function launchChromium() {
 
   const managed = chromium.executablePath();
   if (!existsSync(managed)) {
-    console.warn('[prerender] managed Chromium not installed — running `npx playwright install chromium`…');
+    console.warn('[prerender] managed Chromium not installed — running `npx playwright install --no-shell chromium`…');
     try {
-      execSync('npx playwright install chromium', { stdio: 'inherit' });
-      browser = await attempt('managed browser after install');
+      execSync('npx playwright install --no-shell chromium', { stdio: 'inherit' });
+      browser = await attempt('managed browser after install', MANAGED);
       if (browser) return browser;
     } catch (err) {
-      attempts.push(`npx playwright install chromium: ${firstLine(err)}`);
+      attempts.push(`npx playwright install --no-shell chromium: ${firstLine(err)}`);
     }
   }
 
@@ -217,6 +229,7 @@ async function launchChromium() {
     const env = provideChromiumSystemLibs(managed);
     if (env) {
       browser = await attempt('managed browser with fetched system libraries', {
+        ...MANAGED,
         env: { ...process.env, ...env },
       });
       if (browser) return browser;

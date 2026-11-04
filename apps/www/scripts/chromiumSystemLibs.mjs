@@ -157,10 +157,11 @@ function missingLibraries(executable, dirs) {
 /**
  * Make sure every shared library `executable` links against can be found.
  *
- * Returns `null` when nothing is missing (the browser's failure to start
- * is then not a library problem, and the caller reports its own error).
- * Otherwise fetches and unpacks what is missing and returns the
- * environment the browser must be launched with. Throws, naming the
+ * Returns `null` when the host alone supplies every library (the
+ * browser's failure to start is then not a library problem, and the caller
+ * reports its own error). Otherwise returns the environment the browser
+ * must be launched with, fetching and unpacking what is missing unless an
+ * earlier run on this host already left it in the private root. Throws, naming the
  * cause, when the libraries cannot be supplied.
  *
  * @param {string} executable the browser binary Playwright launches
@@ -177,8 +178,15 @@ export function provideChromiumSystemLibs(executable, opts = {}) {
   const debs = join(base, 'debs');
   const dirs = libDirs(root);
 
+  // The host alone supplies everything: the browser's failure is not ours.
+  if (missingLibraries(executable, []).length === 0) return null;
+  const env = { LD_LIBRARY_PATH: joinPath(dirs, process.env.LD_LIBRARY_PATH) };
+  // A previous run on this host left the libraries in the private root.
   let missing = missingLibraries(executable, dirs);
-  if (missing.length === 0) return null;
+  if (missing.length === 0) {
+    log(`[prerender] system libraries supplied from ${root} (already fetched)`);
+    return env;
+  }
 
   log(`[prerender] Chromium cannot load ${missing.length} system librar${missing.length === 1 ? 'y' : 'ies'}: ${missing.join(', ')}`);
   for (const d of [join(base, 'lists', 'partial'), join(base, 'cache', 'archives', 'partial'), debs, root]) {
@@ -210,5 +218,5 @@ export function provideChromiumSystemLibs(executable, opts = {}) {
     throw new Error(`still missing after fetching: ${missing.join(', ')}`);
   }
   log(`[prerender] system libraries supplied from ${root}`);
-  return { LD_LIBRARY_PATH: joinPath(dirs, process.env.LD_LIBRARY_PATH) };
+  return env;
 }
