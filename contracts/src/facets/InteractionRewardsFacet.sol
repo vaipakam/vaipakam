@@ -324,7 +324,7 @@ contract InteractionRewardsFacet is
         // #1067 — `closeLoan` re-anchors the EXITING entries to their live NFT
         // holders (centralized) then closes them clean, so the buyer of a
         // transferred position keeps the slice they earned pre-transfer.
-        LibInteractionRewards.closeLoanForContinuation(loanId, /* borrowerClean */ true);
+        uint256 resumeDay = LibInteractionRewards.closeLoanForContinuation(loanId, /* borrowerClean */ true);
         // Fresh continuing-loan entries. Codex #1147 r1 F4 — the LENDER side
         // anchors to the CURRENT lender-NFT holder, not the (possibly stale)
         // l.lender, so post-transfer lender rewards don't accrue to a prior
@@ -333,14 +333,15 @@ contract InteractionRewardsFacet is
         // to it right AFTER this hook, so l.borrower is both the obligor and the
         // post-tx NFT holder — Codex r2 F7).
         address freshLender = _currentHolderOr(l.lenderTokenId, l.lender);
-        LibInteractionRewards.registerLoan(
+        LibInteractionRewards.registerLoanFrom(
             loanId,
             freshLender,
             l.borrower, // == incoming borrower (set before this hook)
             l.principalAsset,
             l.principal,
             l.interestRateBps,
-            l.durationDays
+            l.durationDays,
+            resumeDay // #3171 — resume where the closed entries stopped
         );
     }
 

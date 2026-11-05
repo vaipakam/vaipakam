@@ -40,7 +40,11 @@ const DAY = 86_400;
 const HOUR = 3_600;
 /** `LibVaipakam.RewardDelivery.Wallet`: pay the claim to the caller's wallet. */
 const TO_WALLET = 1;
-/** The days the loans accrue over (accepted on day 0, repaid on day 3). */
+/**
+ * The days reported and finalized. The loans are accepted on day 0 and repaid
+ * on day 4, so they earn days 1-3: the opening day and the closing day earn
+ * nothing (#3171).
+ */
 const DAYS = [0, 1, 2, 3];
 /**
  * Day 0 is never remitted: the remit window starts at day 1. Base funds one
@@ -183,10 +187,10 @@ describe('interaction rewards on a canonical chain and a mirror', () => {
     expect(await m.base.rewardDay()).toBe(0);
     expect(await m.mirror.rewardDay()).toBe(0);
 
-    await warpToDay(3);
+    await warpToDay(4);
     await repayInFull(m.base, 'borrower', baseLoan.loanId);
     await repayInFull(m.mirror, 'borrower', mirrorLoan.loanId);
-    await warpToDay(4);
+    await warpToDay(4, 2);
 
     const baseFrom = await m.base.blockNumber();
     const mirrorFrom = await m.mirror.blockNumber();
@@ -217,8 +221,8 @@ describe('interaction rewards on a canonical chain and a mirror', () => {
       expect(borrower).toBe(b!.borrower + r!.borrower);
       finalized.set(d, { lender, borrower });
     }
-    // The days the loans were open carry interest from both chains.
-    for (const d of [1, 2]) {
+    // The whole days the loans were open carry interest from both chains.
+    for (const d of [1, 2, 3]) {
       expect(baseReports.get(d)!.lender).toBeGreaterThan(0n);
       expect(mirrorReports.get(d)!.lender).toBeGreaterThan(0n);
       expect(baseReports.get(d)!.borrower).toBeGreaterThan(0n);

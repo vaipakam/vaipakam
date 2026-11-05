@@ -636,6 +636,27 @@ library LibInteractionRewards {
     ) internal {
         (uint256 today, bool active) = currentDayOrZero();
         if (!active) return;
+        registerLoanFrom(
+            loanId, lender, borrower, principalAsset, principal, interestRateBps, durationDays, today + 1
+        );
+    }
+
+    /// @notice {registerLoan} with an explicit first reward day: a new loan
+    ///         starts tomorrow (its opening day earns nothing); a continuing
+    ///         loan re-registered after {closeLoanForContinuation} resumes on
+    ///         the day that returned (#3171).
+    function registerLoanFrom(
+        uint256 loanId,
+        address lender,
+        address borrower,
+        address principalAsset,
+        uint256 principal,
+        uint256 interestRateBps,
+        uint256 durationDays,
+        uint256 startDay
+    ) internal {
+        (, bool active) = currentDayOrZero();
+        if (!active || startDay == 0) return;
         if (principal == 0 || interestRateBps == 0 || durationDays == 0) return;
 
         uint256 perDayNumeraire18 = _perDayInterestNumeraire18(
@@ -646,7 +667,6 @@ library LibInteractionRewards {
         if (perDayNumeraire18 == 0) return;
 
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        uint256 startDay = today + 1;
         uint256 endDay = startDay + durationDays;
 
         uint256 lenderId = _allocEntry(
@@ -706,32 +726,40 @@ library LibInteractionRewards {
         bool borrowerClean,
         bool lenderForfeit
     ) internal {
-        _closeLoanEntries(loanId, borrowerClean, lenderForfeit, /* loanContinues */ false);
+        _closeLoanEntries(loanId, borrowerClean, lenderForfeit);
     }
 
     /// @notice Close both sides of a loan's entries ahead of re-registering
     ///         the SAME loan under new terms or a new borrower: the in-place
-    ///         extension and the preclose obligation handover. The loan does
-    ///         not end, so the entries end at `today + 1` and the re-registered
-    ///         ones start there: the loan's own window loses no day (#3171).
-    ///         Forfeit routing is exactly {closeLoan}'s.
-    function closeLoanForContinuation(uint256 loanId, bool borrowerClean) internal {
-        _closeLoanEntries(loanId, borrowerClean, /* lenderForfeit */ false, /* loanContinues */ true);
+    ///         extension and the preclose obligation handover. Closes exactly
+    ///         as {closeLoan} does, at the start of today, and returns the day
+    ///         the re-registered entries resume from (pass it to
+    ///         {registerLoanFrom}). The continuing slice carries today, so the
+    ///         loan's own window loses no day, and a terminal close later today
+    ///         removes today from that slice too: no sequence of continuations
+    ///         lets the day a loan ends earn a reward (#3171).
+    /// @return resumeDay `max(today, the closed entries' start days)`: a loan
+    ///         registered today still starts tomorrow, so a continuation on the
+    ///         opening day never credits the opening day.
+    function closeLoanForContinuation(uint256 loanId, bool borrowerClean)
+        internal
+        returns (uint256 resumeDay)
+    {
+        resumeDay = _closeLoanEntries(loanId, borrowerClean, /* lenderForfeit */ false);
     }
 
-    /// @dev The one body of {closeLoan} and {closeLoanForContinuation}.
-    ///      `loanContinues` picks the entries' exclusive end: `today` when the
-    ///      loan ends (its closing day earns nothing), `today + 1` when the
-    ///      same loan is re-registered from tomorrow.
+    /// @dev The one body of {closeLoan} and {closeLoanForContinuation}: every
+    ///      entry closes at the start of today (see {_closeEntry}). Returns
+    ///      `max(today, the closed entries' start days)`, the day a continuing
+    ///      slice resumes from; zero when the programme is not active.
     function _closeLoanEntries(
         uint256 loanId,
         bool borrowerClean,
-        bool lenderForfeit,
-        bool loanContinues
-    ) private {
+        bool lenderForfeit
+    ) private returns (uint256 resumeDay) {
         (uint256 today, bool active) = currentDayOrZero();
-        if (!active) return;
-        uint256 endBefore = loanContinues ? today + 1 : today;
+        if (!active) return 0;
+        resumeDay = today;
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
 
         // #1067 (S13 Part 2) — CENTRALIZED holder re-anchor: before closing an
@@ -762,10 +790,12 @@ library LibInteractionRewards {
         }
 
         if (lenderId != 0) {
+            uint256 st = s.rewardEntries[lenderId].startDay;
+            if (st > resumeDay) resumeDay = st;
             _closeEntry(
                 s,
                 lenderId,
-                endBefore,
+                today,
                 /* forfeited */ lenderForfeit,
                 s.lenderPerDayDeltaNumeraire18,
                 s.lenderFrontierDay
@@ -773,10 +803,12 @@ library LibInteractionRewards {
             s.loanActiveLenderEntryId[loanId] = 0;
         }
         if (borrowerId != 0) {
+            uint256 st = s.rewardEntries[borrowerId].startDay;
+            if (st > resumeDay) resumeDay = st;
             _closeEntry(
                 s,
                 borrowerId,
-                endBefore,
+                today,
                 /* forfeited */ !borrowerClean,
                 s.borrowerPerDayDeltaNumeraire18,
                 s.borrowerFrontierDay
@@ -845,11 +877,15 @@ library LibInteractionRewards {
         uint256 originalEnd = oldEntry.endDay; // snapshot before close mutates it
         uint256 perDay = oldEntry.perDayNumeraire18;
 
-        // Shrink the old entry at today+1 (or earlier if already closed).
+        // #3171 — the old entry ends at the start of today, and the new one
+        // starts there (or at the old start, for an entry registered today), so
+        // the loan's window loses no day and today belongs to the holder the
+        // day ends with.
+        uint256 newStart = oldEntry.startDay > today ? oldEntry.startDay : today;
         _closeEntry(
             s,
             oldId,
-            /* endBefore */ today + 1,
+            today,
             /* forfeited */ true,
             s.lenderPerDayDeltaNumeraire18,
             s.lenderFrontierDay
@@ -861,7 +897,6 @@ library LibInteractionRewards {
         // exiting holder is later sanctioned (and thus blocked from claiming).
         s.loanForfeitedLenderEntryIds[loanId].push(oldId);
 
-        uint256 newStart = today + 1;
         if (newStart >= originalEnd) {
             // No residual window for the new lender — clear the pointer.
             s.loanActiveLenderEntryId[loanId] = 0;
@@ -953,9 +988,9 @@ library LibInteractionRewards {
 
     /// @dev Codex #2489 r15 — split an OPEN entry at today between its earner
     ///      and the holder consolidating the position: the earner keeps
-    ///      `[startDay, today + 1)` as a CLOSED (claimable) entry — the same
+    ///      `[startDay, today)` as a CLOSED (claimable) entry — the same
     ///      shrink `transferLenderEntry` applies, minus its forfeit — and the
-    ///      holder gets a fresh open entry over `[today + 1, originalEnd)` with
+    ///      holder gets a fresh open entry over `[today, originalEnd)` (#3171) with
     ///      the per-loan pointer moved onto it; the global per-day series is
     ///      unchanged (the close un-stamps the original end and stamps the
     ///      shrunk one, the new entry stamps both ends back). With nothing left
@@ -973,16 +1008,18 @@ library LibInteractionRewards {
     ) private {
         (uint256 today, bool active) = currentDayOrZero();
         uint256 originalEnd = e.endDay;
-        uint256 newStart = today + 1;
+        // #3171 — split at the start of today (or at the entry's own start, for
+        // one registered today): the holder the day ends with carries today.
+        uint256 newStart = e.startDay > today ? e.startDay : today;
         if (!active || e.closed || newStart >= originalEnd) {
             LibRewardSanctions.repointKeepsEarner(s, id, oldUser, newUser);
             return;
         }
         uint256 perDay = e.perDayNumeraire18;
         if (isLenderSide) {
-            _closeEntry(s, id, today + 1, false, s.lenderPerDayDeltaNumeraire18, s.lenderFrontierDay);
+            _closeEntry(s, id, today, false, s.lenderPerDayDeltaNumeraire18, s.lenderFrontierDay);
         } else {
-            _closeEntry(s, id, today + 1, false, s.borrowerPerDayDeltaNumeraire18, s.borrowerFrontierDay);
+            _closeEntry(s, id, today, false, s.borrowerPerDayDeltaNumeraire18, s.borrowerFrontierDay);
         }
         uint256 newId = _allocEntry(
             s,
@@ -6820,32 +6857,33 @@ library LibInteractionRewards {
         s.rewardEntryUserIdx[id] = s.userRewardEntryIds[user].length;
     }
 
-    /// @dev Shrink `entry` to `[startDay, min(originalEnd, endBefore))`,
+    /// @dev Shrink `entry` to `[startDay, min(originalEnd, today))`,
     ///      un-stamping the original end-delta and stamping the shrunk
     ///      end-delta (only for future days — already-frontier-consumed
     ///      days cannot be retroactively changed).
     ///
-    ///      #3171 (owner decision 2026-11-05, option A) — the caller names the
-    ///      exclusive end, because the two kinds of close differ on the day
-    ///      they happen in:
-    ///        - a loan that ENDS (`closeLoan`, refinance included: the new
-    ///          loan is a new record that starts tomorrow like any other)
-    ///          passes `today`: the closing day earns nothing, so a loan
-    ///          opened late one day and closed early the next cannot buy a
-    ///          full reward day for minutes of interest;
+    ///      #3171 (owner decision 2026-11-05, option A) — every close happens
+    ///      at the START of today, so today is never an outgoing entry's:
+    ///        - a loan that ENDS (`closeLoan`, refinance included: the new loan
+    ///          is a new record that starts tomorrow like any other) earns
+    ///          nothing for its closing day, so a loan opened late one day and
+    ///          closed early the next cannot buy a full reward day for minutes
+    ///          of interest;
     ///        - a loan that CONTINUES (`closeLoanForContinuation` before a
     ///          re-registration, `transferLenderEntry`, `_splitAtTransfer`)
-    ///          passes `today + 1`: the outgoing entry keeps today and the
-    ///          incoming one starts tomorrow, so the loan's own window loses
-    ///          no day.
-    ///      `endBefore` is always above every frontier: frontiers advance only
+    ///          hands today to the continuing entry, which starts at today (or
+    ///          at the outgoing entry's own start, if that is later), so the
+    ///          loan's window loses no day, and a terminal close later the same
+    ///          day removes today from the continuing entry as well: no
+    ///          continuation can carry a closing day out of the rule.
+    ///      Today is always above every frontier: frontiers advance only
     ///      through days strictly before today (`closeDay`,
     ///      `advanceInterestFrontiers`), so the shrunk end-delta is never
     ///      dropped while the original one is undone.
     function _closeEntry(
         LibVaipakam.Storage storage /* s */,
         uint256 id,
-        uint256 endBefore,
+        uint256 today,
         bool forfeited,
         mapping(uint256 => int256) storage deltas,
         uint256 frontier
@@ -6857,7 +6895,7 @@ library LibInteractionRewards {
         // guard — `endDay` is never 0 in practice.)
         if (e.closed) return;
         uint256 originalEnd = e.endDay;
-        uint256 newEnd = endBefore;
+        uint256 newEnd = today;
         if (newEnd >= originalEnd) newEnd = originalEnd; // natural close or late
         if (newEnd < e.startDay) newEnd = e.startDay;    // closed before accrual began
 
