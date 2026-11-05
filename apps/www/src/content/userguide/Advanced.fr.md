@@ -2204,3 +2204,21 @@ bas. Un loan impossible à évaluer (un NFT ou un actif sans prix) est
 compté, pas estimé. Le côté le plus grand n'est nommé que si les
 loans non évalués ne pourraient pas changer la réponse ; sinon Home
 montre les totaux évalués et le décompte.
+
+<a id="home-faucet"></a>
+
+### Home : actifs de test
+
+Sur un testnet dont l'enregistrement de déploiement publie des actifs de test, Home les liste : des ERC-20 de test reliés à un flux de prix et à un pool de test (liquides), d'autres laissés sans l'un ni l'autre à dessein (illiquides : les prêts qui les utilisent ne sont pas valorisés et le défaut se règle en nature), et des NFT de location ERC-4907. Une frappe appelle le contrat du jeton fictif, jamais le Diamond : 1 000 jetons entiers, ou un NFT sous un nouvel identifiant aléatoire vérifié non frappé avant l'ouverture du wallet. Le résultat est mesuré en relisant le solde ou `ownerOf`, et une frappe de jeton propose ensuite `wallet_watchAsset`. Un NFT de test ne peut être brûlé que par son propriétaire ou un opérateur approuvé.
+
+<a id="home-fee-discount"></a>
+
+### Home : remise sur les frais
+
+`setVPFIDiscountConsent` fixe un indicateur par wallet sur le Diamond de cette chaîne. Désactivé, la remise liée à la détention vaut 0. Activé, les frais d'initiation du prêt de l'emprunteur sont réduits à l'acceptation, dans l'actif prêté (la voie de prix du VPFI ne fait jamais partie du parcours emprunteur), et les frais sur le rendement du prêteur sont remisés à chaque règlement selon le niveau effectif alors en vigueur. Le versement suit `getVPFIDiscountConfig` : si le taux du VPFI et son actif de référence sont tous deux définis, les frais remisés sont débités en VPFI du vault du prêteur, qui garde tous les intérêts ; sinon, les frais de trésorerie eux-mêmes sont réduits et aucun VPFI ne bouge. Si ce débit ne peut pas s'exécuter lors d'un règlement (pas de cotation disponible, trop peu de VPFI libre suivi dans le vault, ou ce VPFI bloqué en garantie), les frais de ce règlement ne reçoivent aucune remise liée à la détention. L'appel est `whenNotPaused`, donc la pause globale le ferme dans les deux sens. L'activation est soumise aux Conditions, la désactivation non, et aucune des deux ne diffuse de niveau vers les mirrors. La remise de l'emprunteur ne s'applique que si l'actif prêté est liquide à l'acceptation (un prêt illiquide paie la LIF complète), et toute remise est plafonnée à 50 % des frais.
+
+<a id="terms-gate"></a>
+
+### La demande d'acceptation des Conditions
+
+`getCurrentTos` renvoie la version et le hash du contenu en vigueur sur la chaîne de l'action ; la version 0 signifie aucune, et rien n'est bloqué. Un wallet dont `hasAcceptedCurrentTerms` vaut false est sollicité avant toute nouvelle exposition, et la demande renvoie vers `/terms/v<N>`, la page figée sur la version, dont le texte ne change jamais. Accepter appelle `acceptTerms(version, hash)` une seule fois. Avant l'ouverture du wallet, la paire est relue : une version plus récente remplace celle affichée, et une acceptation faite dans un autre onglet laisse l'action continuer. Une lecture échouée signifie « impossible à confirmer », avec un nouvel essai, jamais « non accepté ». Les sorties ne sont jamais bloquées.

@@ -1071,3 +1071,21 @@ heutigen Wert. Loans, die nicht bewertet werden können, etwa NFTs
 oder Assets ohne Preis, werden gezählt und herausgelassen, und Home
 nennt die größere Seite nur, wenn sie das Ergebnis nicht ändern
 könnten.
+
+<a id="home-faucet"></a>
+
+### Home: Test-Assets
+
+Auf einem Testnetz bietet Home Test-Token und NFTs an, damit du Leihen, Verleihen und Mieten ohne echtes Geld ausprobieren kannst. Sie haben keinen Wert und werden von Test-Token-Verträgen geprägt, nicht vom Protokoll. Manche Test-Token haben einen Testpreis, sodass Kredite in ihnen einen Health Factor haben; andere haben keinen, sodass ein Ausfall die Sicherheit selbst übergibt. Die Test-NFTs lassen sich vermieten. Jede Prägung zeigt zuerst einen Beleg, und das Ergebnis wird danach auf der Chain geprüft.
+
+<a id="home-fee-discount"></a>
+
+### Home: Gebührenrabatt
+
+Der Gebührenrabatt ist eine Einstellung pro Netzwerk für deine ganze Wallet. Solange er aus ist, erhalten deine Gebühren keinen Rabatt, egal wie viel VPFI du hältst. Solange er an ist, wird die Gebühr beim Leihen reduziert, ebenso die Gebühr auf Zinsen, die du als Verleiher verdienst, und zwar nach deiner VPFI-Rabattstufe im Moment, in dem die Gebühr anfällt; bei Stufe 0 gibt es keinen. In manchen Netzwerken wird der Verleiher-Rabatt in VPFI aus deinem Vault bezahlt, und der Beleg sagt dir vor dem Bestätigen, welcher Fall gilt. Zum Einschalten müssen die aktuellen Bedingungen akzeptiert sein; zum Ausschalten nie. Während das Protokoll pausiert ist, lässt sich die Einstellung in keine Richtung ändern. Ein Kredit in einem illiquiden Kreditasset zahlt weiterhin die volle Gebühr beim Leihen, und kein Rabatt ist je mehr als die Hälfte der Gebühr.
+
+<a id="terms-gate"></a>
+
+### Die Abfrage der Nutzungsbedingungen
+
+Wo eine Version der Nutzungsbedingungen gilt, bittet dich die App, sie vor einer Aktion zu akzeptieren, die etwas Neues beginnt, etwa das Einschalten des Gebührenrabatts, und nennt die Aktion, die gefragt hat. Sie zeigt die Version, einen Fingerabdruck ihres Textes und einen Link zu genau dieser Version, deren Text sich nie ändert. Das Akzeptieren ist eine Bestätigung in der Wallet und bewegt keine Mittel. Kann die App nicht lesen, ob du akzeptiert hast, sagt sie das und lässt dich es erneut versuchen, statt es als Nein zu werten. Zurückzahlen, Forderungen einlösen, eigene Assets abheben, eigene Angebote stornieren und eine Zustimmung ausschalten werden nie aufgehalten.

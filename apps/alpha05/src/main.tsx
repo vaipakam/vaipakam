@@ -11,6 +11,7 @@ import { CapabilityProvider } from './shared/capability/CapabilityContext';
 import { HelpProvider } from './shared/help/HelpContext';
 import { WorldRailProvider } from './shared/reads/world/WorldRailContext';
 import { ErrorBoundary } from './app/ErrorBoundary';
+import { TxStoreProvider } from './shared/tx/txStore';
 import { App } from './App';
 // i18n bootstrap: a side-effect import BEFORE the app renders so the
 // detection chain has resolved and <html lang>/dir are right by first paint.
@@ -73,9 +74,11 @@ createRoot(document.getElementById('root')!).render(
                 <CapabilityProvider>
                   <WorldRailProvider>
                     <HelpProvider>
-                      <BrowserRouter>
-                        <App />
-                      </BrowserRouter>
+                      <TxStoreProvider>
+                        <BrowserRouter>
+                          <App />
+                        </BrowserRouter>
+                      </TxStoreProvider>
                     </HelpProvider>
                   </WorldRailProvider>
                 </CapabilityProvider>

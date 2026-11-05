@@ -320,21 +320,44 @@ function jsonSafe(v: unknown): unknown {
  *  provider (it reports accounts without a prompt, unlike a locked
  *  MetaMask), so the Connect button often detaches mid-click. Success is
  *  therefore "the Connect button is gone"; clicks are best-effort nudges.
- *  `buttonName` is the app's own connect-control label. */
+ *  `buttonName` is the app's own connect-control label.
+ *
+ *  The test wallet's own entry is WAITED for before any fallback: a picker
+ *  lists a generic "MetaMask" entry (the provider sets `isMetaMask`) before
+ *  the EIP-6963 announcement is drawn, and choosing it opens an install
+ *  screen that holds no wallet entry at all. (`isVisible` takes no wait, so
+ *  an earlier version raced exactly that.) Each retry after the first
+ *  presses Escape, so a picker left on such a screen is closed and opened
+ *  again. */
 export async function connectWallet(page: Page, buttonName: RegExp = /^connect wallet$/i): Promise<void> {
   const btn = page.getByRole('button', { name: buttonName }).first();
   const gone = async () => !(await btn.isVisible().catch(() => false));
+  const shown = (name: RegExp, timeout: number) =>
+    page
+      .getByRole('button', { name })
+      .first()
+      .waitFor({ state: 'visible', timeout })
+      .then(
+        () => true,
+        () => false,
+      );
   const deadline = Date.now() + 25_000;
-  while (Date.now() < deadline) {
+  for (let attempt = 0; Date.now() < deadline; attempt++) {
     if (await gone()) return;
+    if (attempt > 0) await page.keyboard.press('Escape').catch(() => {});
     await btn.click({ timeout: 2_000 }).catch(() => {});
-    for (const name of [/vaipakam test wallet/i, /metamask/i, /browser/i, /injected/i]) {
-      const opt = page.getByRole('button', { name }).first();
-      if (await opt.isVisible({ timeout: 1_000 }).catch(() => false)) {
-        await opt.click({ timeout: 2_000 }).catch(() => {});
-        break;
+    // Prefer the test wallet; fall back to generic entries only once it has
+    // had time to appear (later attempts wait less).
+    let picked: RegExp | null = (await shown(/vaipakam test wallet/i, attempt < 2 ? 5_000 : 1_000)) ? /vaipakam test wallet/i : null;
+    if (!picked) {
+      for (const name of [/metamask/i, /browser/i, /injected/i]) {
+        if (await shown(name, 250)) {
+          picked = name;
+          break;
+        }
       }
     }
+    if (picked) await page.getByRole('button', { name: picked }).first().click({ timeout: 2_000 }).catch(() => {});
     await page.waitForTimeout(1_000);
   }
   if (!(await gone())) throw new Error('wallet never connected (Connect button still present)');

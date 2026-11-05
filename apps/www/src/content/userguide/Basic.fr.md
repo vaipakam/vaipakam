@@ -1067,3 +1067,21 @@ selon leur valeur du jour. Les loans impossibles à évaluer, comme les
 NFT ou les actifs sans prix, sont comptés et laissés de côté, et Home
 ne nomme le côté le plus grand que s'ils ne pourraient pas changer la
 réponse.
+
+<a id="home-faucet"></a>
+
+### Home : actifs de test
+
+Sur un réseau de test, Home propose des jetons et des NFT de test pour essayer d'emprunter, de prêter et de louer sans argent réel. Ils n'ont aucune valeur et sont frappés par des contrats de jetons de test, pas par le protocole. Certains jetons de test ont un prix de test, donc les prêts qui les utilisent ont un facteur de santé ; d'autres n'en ont pas, donc un défaut remet la garantie elle-même. Les NFT de test peuvent être loués. Chaque frappe affiche d'abord un reçu, et le résultat est vérifié ensuite sur la chaîne.
+
+<a id="home-fee-discount"></a>
+
+### Home : remise sur les frais
+
+La remise sur les frais est un seul réglage par réseau pour tout votre wallet. Tant qu'elle est désactivée, vos frais n'ont aucune remise, quel que soit le VPFI que vous détenez. Tant qu'elle est activée, les frais payés quand vous empruntez sont réduits, de même que les frais sur les intérêts que vous gagnez comme prêteur, selon votre niveau de remise VPFI au moment où chaque frais est prélevé ; au niveau 0, il n'y en a pas. Sur certains réseaux, la remise du prêteur est payée en VPFI depuis votre vault, et le reçu indique lequel s'applique avant que vous confirmiez. L'activer exige d'avoir accepté les Conditions en vigueur ; la désactiver, jamais. Pendant une pause du protocole, elle ne peut être modifiée dans aucun sens. Un prêt dans un actif prêté illiquide paie toujours les frais complets, et aucune remise ne dépasse jamais la moitié des frais.
+
+<a id="terms-gate"></a>
+
+### La demande d'acceptation des Conditions
+
+Lorsqu'une version des Conditions d'utilisation est en vigueur, l'app vous demande de l'accepter avant une action qui crée quelque chose de nouveau, comme activer la remise sur les frais, et nomme l'action qui l'a demandé. Elle affiche la version, une empreinte de son texte et un lien vers cette version précise, dont le texte ne change jamais. Accepter tient en une confirmation dans le wallet et ne déplace aucun fonds. Si l'app ne peut pas lire si vous avez accepté, elle le dit et vous laisse réessayer au lieu d'y voir un refus. Rembourser, réclamer, retirer vos propres actifs, annuler vos propres offres et désactiver un consentement ne sont jamais bloqués.

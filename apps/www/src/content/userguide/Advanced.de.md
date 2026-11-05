@@ -2194,3 +2194,21 @@ bewertbarer Loan (ein NFT oder ein Asset ohne Preis) wird gezählt,
 nicht geschätzt. Die größere Seite wird nur genannt, wenn die
 unbewerteten Loans das Ergebnis nicht ändern könnten; sonst zeigt
 Home die bewerteten Summen und die Anzahl.
+
+<a id="home-faucet"></a>
+
+### Home: Test-Assets
+
+Auf einem Testnetz, dessen Deployment-Eintrag Test-Assets veröffentlicht, listet Home sie auf: Test-ERC-20s mit Test-Preisfeed und Pool (liquide), solche, die bewusst ohne beides bleiben (illiquide: Kredite in ihnen sind unbepreist und fallen in Sachwerten aus), und ERC-4907-Miet-NFTs. Eine Prägung ruft den Mock-Token-Vertrag auf, nie den Diamond: 1.000 ganze Token oder ein NFT unter einer frischen zufälligen Token-ID, die vor dem Öffnen der Wallet als ungeprägt geprüft wird. Das Ergebnis wird gemessen, indem der Saldo oder `ownerOf` zurückgelesen wird; eine Token-Prägung bietet danach `wallet_watchAsset` an. Ein Test-NFT kann nur sein Eigentümer oder ein genehmigter Operator verbrennen.
+
+<a id="home-fee-discount"></a>
+
+### Home: Gebührenrabatt
+
+`setVPFIDiscountConsent` setzt ein Flag pro Wallet auf dem Diamond dieser Chain. Aus ist der Hold-Tier-Rabatt 0. An wird die Loan Initiation Fee des Leihenden bei der Annahme im Kreditasset reduziert (der VPFI-Preisweg gehört nie zum Leihenden-Pfad), und die Yield Fee des Verleihers wird bei jeder Abrechnung mit der dann geltenden effektiven Stufe rabattiert. Die Auszahlung folgt `getVPFIDiscountConfig`: Sind VPFI-Kurs und Referenz-Asset beide gesetzt, wird die rabattierte Gebühr in VPFI aus dem Vault des Verleihers abgebucht und er behält die gesamten Zinsen; sonst wird die Treasury-Gebühr selbst reduziert und kein VPFI bewegt. Kann diese Abbuchung bei einer Abrechnung nicht laufen (kein aktueller Kurs, zu wenig freies erfasstes VPFI im Vault oder dieses VPFI als Sicherheit gesperrt), erhält die Gebühr dieser Abrechnung keinen Hold-Tier-Rabatt. Der Aufruf ist `whenNotPaused`, die globale Pause schließt ihn also in beide Richtungen. Das Einschalten ist durch die Bedingungen gesperrt, das Ausschalten nicht, und keines von beiden sendet eine Stufe an die Mirrors. Der Leihenden-Rabatt gilt nur, wenn das Kreditasset bei der Annahme liquide ist (ein illiquider Kredit zahlt die volle LIF), und jeder Rabatt ist auf 50 % der Gebühr begrenzt.
+
+<a id="terms-gate"></a>
+
+### Die Abfrage der Nutzungsbedingungen
+
+`getCurrentTos` liefert Version und Inhalts-Hash, die auf der Chain der Aktion gelten; Version 0 bedeutet keine, und nichts ist gesperrt. Eine Wallet, deren `hasAcceptedCurrentTerms` false ist, wird vor neuer Exposition gefragt, und die Abfrage verlinkt `/terms/v<N>`, die versionsfeste Seite, deren Text sich nie ändert. Das Akzeptieren ruft `acceptTerms(version, hash)` einmal auf. Bevor die Wallet öffnet, wird das Paar erneut gelesen: Eine neuere Version ersetzt die angezeigte, und eine Akzeptanz aus einem anderen Tab lässt die Aktion weiterlaufen. Ein fehlgeschlagener Lesevorgang heißt „nicht bestätigbar“, mit Wiederholung, nie „nicht akzeptiert“. Ausstiege sind nie gesperrt.

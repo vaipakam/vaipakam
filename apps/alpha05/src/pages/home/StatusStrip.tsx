@@ -2,11 +2,11 @@ import type { ReactNode } from 'react';
 import { useCopy } from '../../shared/copy/useCopy';
 import { SWITCH_EFFECTS } from '../../shared/eligibility/switchClasses';
 import { WhyLink } from '../../shared/help/WhyLink';
-import { useChainRead, useScreenChain } from '../../shared/reads/chainRead';
+import { useScreenChain } from '../../shared/reads/chainRead';
+import { usePosture } from '../../shared/reads/posture';
 import { formatUtc } from '../../shared/ui/format';
 import { Notice } from '../../shared/ui/Notice';
 import { useNow } from '../../shared/ui/useNow';
-import { readPosture } from './reads';
 
 /**
  * ACC-31's Home strip: the protocol's pause posture on the chain the screen
@@ -23,7 +23,7 @@ import { readPosture } from './reads';
 export function useStatusStrip(): { urgent: boolean; node: ReactNode } {
   const chain = useScreenChain();
   const { format } = useCopy();
-  const posture = useChainRead(['posture', chain.diamondAddress], (client) => readPosture(client, chain.diamondAddress));
+  const posture = usePosture(chain.diamondAddress);
   const name = chain.name;
   const nowSec = Math.floor(useNow() / 1000);
 

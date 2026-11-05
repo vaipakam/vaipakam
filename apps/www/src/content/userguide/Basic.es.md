@@ -1049,3 +1049,21 @@ Cuando prestas y pides prestado a la vez, Home compara los dos lados
 por su valor de hoy. Los loans que no se pueden valorar, como NFTs o
 activos sin precio, se cuentan y se dejan fuera, y Home nombra el
 lado mayor solo cuando no podrían cambiar la respuesta.
+
+<a id="home-faucet"></a>
+
+### Home: activos de prueba
+
+En una red de prueba, Home ofrece tokens y NFT de prueba para que puedas probar a pedir prestado, prestar y alquilar sin dinero real. No tienen valor y los acuñan contratos de tokens de prueba, no el protocolo. Algunos tokens de prueba tienen un precio de prueba, así que los préstamos en ellos tienen factor de salud; otros no lo tienen, así que un impago entrega la propia garantía. Los NFT de prueba se pueden alquilar. Cada acuñación muestra primero un recibo y el resultado se comprueba después en la cadena.
+
+<a id="home-fee-discount"></a>
+
+### Home: descuento en comisiones
+
+El descuento en comisiones es un único ajuste por red para toda tu wallet. Mientras está desactivado, tus comisiones no tienen descuento, tengas el VPFI que tengas. Mientras está activado, se reduce la comisión que pagas al pedir prestado y también la comisión sobre los intereses que ganas como prestamista, según tu nivel de descuento VPFI en el momento de cobrarse cada comisión; en el nivel 0 no hay descuento. En algunas redes el descuento del prestamista se paga en VPFI desde tu vault, y el recibo te dice cuál aplica antes de confirmar. Activarlo requiere haber aceptado los Términos vigentes; desactivarlo, nunca. Mientras el protocolo está en pausa no se puede cambiar en ningún sentido. Un préstamo en un activo prestado ilíquido sigue pagando la comisión completa, y ningún descuento supera nunca la mitad de la comisión.
+
+<a id="terms-gate"></a>
+
+### El aviso de los Términos
+
+Cuando hay una versión de los Términos del servicio vigente, la app te pide aceptarla antes de una acción que inicia algo nuevo, como activar el descuento en comisiones, y nombra la acción que lo pidió. Muestra la versión, una huella de su texto y un enlace a esa versión exacta, cuyo texto nunca cambia. Aceptar es una confirmación en la wallet y no mueve fondos. Si la app no puede leer si aceptaste, lo dice y te deja reintentar en lugar de tomarlo como un no. Repagar, cobrar, retirar tus propios activos, cancelar tus propias ofertas y desactivar un consentimiento nunca se bloquean.

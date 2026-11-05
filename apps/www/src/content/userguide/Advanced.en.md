@@ -2357,3 +2357,56 @@ loan you made rounded down. A loan that cannot be valued (an NFT,
 or an asset with no price) is counted, not guessed. The larger
 side is named only when the unvalued loans could not change the
 answer; otherwise Home shows the valued totals and the count.
+
+<a id="home-faucet"></a>
+
+### Home: Test Assets
+
+On a testnet whose deployment record publishes test assets, Home
+lists them: test ERC-20s wired to a test price feed and pool
+(liquid), ones deliberately left without either (illiquid: loans in
+them are unpriced and default in kind), and ERC-4907 rental NFTs. A
+mint calls the mock token contract, never the Diamond: 1,000 whole
+tokens, or one NFT under a fresh random token id checked unminted
+before the wallet opens. The outcome is measured by reading the
+balance or `ownerOf` back, and a token mint then offers
+`wallet_watchAsset`. A test NFT can be burnt only by its owner or an
+approved operator.
+
+<a id="home-fee-discount"></a>
+
+### Home: Fee Discount
+
+`setVPFIDiscountConsent` sets one per-wallet flag on this chain's
+Diamond. Off, the hold-tier discount is 0. On, the borrower's loan
+initiation fee is reduced at acceptance in the lending asset (the
+VPFI pricing route is never part of the borrower path), and the
+lender's yield fee is discounted at each settlement at the effective
+tier then in force. Delivery follows `getVPFIDiscountConfig`: with
+both the VPFI rate and its reference asset set, the discounted fee
+is debited in VPFI from the lender's vault and the lender keeps all
+the interest; otherwise the treasury fee itself is reduced and no
+VPFI moves. If that debit cannot run at a settlement (no live quote,
+too little free tracked VPFI in the vault, or that VPFI locked as
+collateral), that settlement's fee gets no hold-tier discount. The
+call is `whenNotPaused`, so the global pause closes it in both
+directions. Turning it on is gated by the Terms, turning it off is
+not, and neither broadcasts a tier to the mirrors. The borrower
+discount applies only when the lending asset is liquid at acceptance
+(an illiquid loan pays the full LIF), and every discount is capped
+at 50% of the fee.
+
+<a id="terms-gate"></a>
+
+### The Terms Prompt
+
+`getCurrentTos` returns the version and content hash in force on
+the chain an action is scoped to; version 0 means none, and nothing
+is gated. A wallet whose `hasAcceptedCurrentTerms` is false is asked
+before new exposure, and the prompt links `/terms/v<N>`, the
+version-pinned page whose text never changes. Accepting calls
+`acceptTerms(version, hash)` once. Before the wallet opens the pair
+is read again, so a newer version replaces the one shown and an
+acceptance made in another tab lets the action continue. A failed
+read is "cannot confirm", with a retry, never "not accepted". Exits
+are never gated.
