@@ -1,15 +1,12 @@
-import { useState } from 'react';
 import { useConfig } from 'wagmi';
 import { writeContract } from 'wagmi/actions';
 import type { OwnStateClient } from '../../chain/ownRail';
 import type { SupportedChain } from '../../chain/chains';
 import { useCopy } from '../copy/useCopy';
+import { inFlight, useStoredValue } from '../tx/txStore';
 import { useTrackedTx, type TrackedTx } from '../tx/useTrackedTx';
 import { reviewIdentity } from '../ui/ActionFlow';
 import { LEGAL_ABI, readTerms, type TermsState } from './terms';
-
-/** Phases a transaction is still out in: never reset, never re-opened. */
-export const IN_FLIGHT: ReadonlySet<string> = new Set(['signing', 'submitted', 'mined']);
 
 export type NeededTerms = Extract<TermsState, { kind: 'needed' }>;
 
@@ -39,21 +36,22 @@ export interface TermsGate {
 }
 
 /**
- * ACC-15 — the Terms acceptance as state OWNED BY THE ASKING SECTION, held
- * above the prompt and above the section's own "no wallet" return. The
- * prompt is a view of it: a wallet or network switch that unmounts the
- * prompt cannot drop a pending acceptance's hash or offer a second one,
- * because the tracker (which keeps the chain, account and read-back each
- * transaction was submitted with) and the session survive the remount.
+ * ACC-15 — the Terms acceptance for one asking action (`key`). Its session
+ * and tracker are held in the app's transaction store, not in the prompt or
+ * the page: a navigation, disconnect or network switch that unmounts them
+ * cannot drop a pending acceptance's hash or offer a second one, and the
+ * prompt reopens where it was when its page mounts again. The prompt is
+ * only a view of this.
  */
-export function useTermsGate(chain: SupportedChain | null, own: OwnStateClient | null): TermsGate {
+export function useTermsGate(key: string, chain: SupportedChain | null, own: OwnStateClient | null): TermsGate {
   const { text, format } = useCopy();
   const config = useConfig();
-  const [session, setSession] = useState<TermsSession | null>(null);
+  const [session, setSession] = useStoredValue<TermsSession>(`${key}:session`);
   const diamond = (chain?.diamondAddress ?? '0x') as `0x${string}`;
   const account = (own?.account ?? '0x') as `0x${string}`;
 
   const tx = useTrackedTx({
+    key,
     chainId: chain?.chainId ?? 0,
     account,
     send: () => {
@@ -77,16 +75,16 @@ export function useTermsGate(chain: SupportedChain | null, own: OwnStateClient |
     },
   });
 
-  const inFlight = IN_FLIGHT.has(tx.phase.kind);
+  const out = inFlight(tx.phase);
   const start = (terms: NeededTerms) => {
-    if (!own || inFlight) return;
+    if (!own || out) return;
     if (tx.phase.kind !== 'idle') tx.reset();
     setSession({ terms, identity: reviewIdentity(own), settled: false, readAt: Date.now() });
     tx.review();
   };
   const update = (patch: Partial<Omit<TermsSession, 'identity'>>) => setSession((s) => (s ? { ...s, ...patch } : s));
   const end = () => {
-    if (inFlight) return;
+    if (out) return;
     if (tx.phase.kind !== 'idle') tx.reset();
     setSession(null);
   };

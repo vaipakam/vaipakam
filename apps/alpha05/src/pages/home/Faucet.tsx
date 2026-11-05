@@ -11,6 +11,7 @@ import type { Receipt } from '../../shared/receipt/types';
 import { assetName, useTokenMeta } from '../../shared/reads/tokens';
 import { refusalFromError } from '../../shared/eligibility/refusal';
 import { askThrough, simulateCall } from '../../shared/tx/simulate';
+import { holdsFlow } from '../../shared/tx/txStore';
 import { useTrackedTx } from '../../shared/tx/useTrackedTx';
 import { ActionFlow, reviewIdentity, type Recheck } from '../../shared/ui/ActionFlow';
 import { shortAddress } from '../../shared/ui/format';
@@ -54,6 +55,7 @@ export function Faucet() {
   const account = (own?.account ?? '0x') as Hex;
 
   const tx = useTrackedTx({
+    key: 'home.faucet',
     chainId: chain?.chainId ?? 0,
     account,
     send: () => {
@@ -98,6 +100,8 @@ export function Faucet() {
     } else {
       setPick({ kind: 'nft', asset, tokenId: freshTokenId(), readAt: readNow(), identity: reviewIdentity(own) });
     }
+    // A review left open when this page last unmounted has lost its inputs.
+    if (tx.phase.kind !== 'idle') tx.reset();
     tx.review();
   };
 
@@ -167,7 +171,7 @@ export function Faucet() {
       </h2>
       <p className="tier-a">{format('faucet.noValue', { chain: chain.name })}</p>
       <WhyLink summaryKey="faucet.summary" detailKey="faucet.why" />
-      {pick === null ? (
+      {pick === null && !holdsFlow(tx.phase) ? (
         <ul className="faucet-assets">
           {assets.map((a) => {
             const name = assetName(a.address, meta ?? null);
@@ -194,7 +198,7 @@ export function Faucet() {
         <ActionFlow
           tx={tx}
           identity={reviewIdentity(own)}
-          reviewedFor={pick.identity}
+          reviewedFor={pick?.identity ?? tx.frozen?.identity ?? ''}
           receipt={receipt}
           recheck={recheck}
           describeAsset={describeAsset}
@@ -203,7 +207,7 @@ export function Faucet() {
           after={(outcome) =>
             outcome.verdict === 'done' ? (
               <div className="faucet-next">
-                {pick.kind === 'erc20' && (
+                {pick?.kind === 'erc20' && (
                   <p className="tier-b">
                     {watch === 'idle' && (
                       <button type="button" className="btn" onClick={() => void askWallet()}>

@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useLocation } from 'react-router-dom';
 import type { OwnStateClient } from '../../chain/ownRail';
+import { useTxStore } from '../tx/txStore';
 import { useCopy } from '../copy/useCopy';
 import type { Refusal } from '../eligibility/types';
 import type { FinishCard as FinishCardModel, Receipt as ReceiptModel } from '../receipt/types';
@@ -43,12 +45,16 @@ export interface ActionFlowProps {
    *  signed under another (RB-REVIEW): when they differ, signing is
    *  withheld and the reader starts again. */
   reviewedFor: string;
-  /** The receipt as of the review's latest read; null while it is read. */
+  /** The receipt as of the review's latest read; null while it is read, or
+   *  when the page mounted again after the review (progress and the finish
+   *  card then show the receipt frozen when the wallet was asked). */
   receipt: ReceiptModel | null;
   /** Re-read and simulate right before the wallet opens. */
   recheck: () => Promise<Recheck>;
   describeAsset: (asset: `0x${string}`) => AssetInfo | null;
-  /** The chain's explorer origin, for the transaction link. */
+  /** The connected chain's explorer origin, frozen with the review when the
+   *  wallet is asked: transaction links always use the network it was sent
+   *  on. */
   explorer: string;
   /** The next action the finish card offers, if any. */
   next: FinishCardModel['next'];
@@ -73,6 +79,18 @@ export function ActionFlow({ tx, identity, reviewedFor, receipt, recheck, descri
   const [checking, setChecking] = useState(false);
   const [found, setFound] = useState<Exclude<Recheck, { kind: 'ok' }> | null>(null);
   const { phase } = tx;
+  const store = useTxStore();
+  const location = useLocation();
+  // While this flow is on screen the shell's "still in progress" line is not
+  // needed for it.
+  useEffect(() => {
+    store.update(tx.key, (e) => ({ ...e, shown: e.shown + 1 }));
+    return () => void store.update(tx.key, (e) => ({ ...e, shown: Math.max(0, e.shown - 1) }));
+  }, [store, tx.key]);
+  // Past the review, what the reader confirmed is drawn from the frozen
+  // copy, never rebuilt for the wallet or network connected now.
+  const shownReceipt = phase.kind === 'review' ? receipt : (tx.frozen?.receipt ?? receipt);
+  const shownExplorer = phase.kind === 'review' ? explorer : (tx.frozen?.explorer ?? explorer);
   /** Bumped when the review closes or this flow unmounts: a re-check still
    *  running for a review the reader has left never opens the wallet, even
    *  if the caller has since opened another review on the same tracker. */
@@ -115,11 +133,11 @@ export function ActionFlow({ tx, identity, reviewedFor, receipt, recheck, descri
       setFound(result);
       return;
     }
-    await tx.run();
+    await tx.run({ identity: reviewedFor, chainId: Number(reviewedFor.split(':')[0]), receipt, explorer, where: location.pathname });
   };
 
   const txLink = (hash: `0x${string}`) => (
-    <a href={`${explorer}/tx/${hash}`} target="_blank" rel="noreferrer">
+    <a href={`${shownExplorer}/tx/${hash}`} target="_blank" rel="noreferrer">
       {shortAddress(hash)}
     </a>
   );
@@ -194,7 +212,7 @@ export function ActionFlow({ tx, identity, reviewedFor, receipt, recheck, descri
     case 'measured':
       return (
         <div className="action-flow" data-phase="measured" data-verdict={phase.outcome.verdict}>
-          {receipt !== null && <FinishCard card={{ receipt, outcome: phase.outcome, next }} describeAsset={describeAsset} nowMs={nowMs} />}
+          {shownReceipt !== null && <FinishCard card={{ receipt: shownReceipt, outcome: phase.outcome, next }} describeAsset={describeAsset} nowMs={nowMs} />}
           <p className="tier-b">
             {text('flow.transaction')} {txLink(phase.hash)}
           </p>

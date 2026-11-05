@@ -16,6 +16,7 @@ import { readTerms } from '../terms/terms';
 import { useTermsGate } from '../terms/useTermsGate';
 import { useTerms } from '../terms/useTerms';
 import { simulateCall } from '../tx/simulate';
+import { holdsFlow } from '../tx/txStore';
 import { useTrackedTx } from '../tx/useTrackedTx';
 import { ActionFlow, reviewIdentity, type Recheck } from '../ui/ActionFlow';
 import { Notice } from '../ui/Notice';
@@ -45,17 +46,17 @@ export function FeeDiscountConsent() {
   const terms = useTerms();
   const { caps } = useCapabilities();
   const routed = requireSelector(caps, selectorOf(SET_CONSENT_SIGNATURE), text('consent.capabilityName'));
-  const [panel, setPanel] = useState<'none' | 'terms' | 'flow'>('none');
   /** The review's inputs, with the wallet and network they were read
    *  under, so a switch while the section is unmounted cannot carry the
    *  review to another identity (RB-REVIEW). */
   const [reviewed, setReviewed] = useState<(Reviewed & { identity: string }) | null>(null);
-  /** The Terms acceptance, held here (above the "no wallet" return) so a
-   *  wallet or network switch never drops its tracker or session. */
-  const termsGate = useTermsGate(chain, own);
+  /** The Terms acceptance this action asks for; held in the app's
+   *  transaction store, so no unmount drops it. */
+  const termsGate = useTermsGate('home.consent.terms', chain, own);
 
   const target = reviewed?.target ?? false;
   const tx = useTrackedTx({
+    key: 'home.consent',
     chainId: chain?.chainId ?? 0,
     account,
     send: () =>
@@ -74,14 +75,14 @@ export function FeeDiscountConsent() {
 
   const startReview = (next: boolean) => {
     setReviewed({ target: next, mode: mode.state === 'ready' && mode.error === null ? mode.data : null, readAt: Date.now(), identity });
-    setPanel('flow');
+    // A review left open when this page last unmounted has lost its inputs.
+    if (tx.phase.kind !== 'idle') tx.reset();
     tx.review();
   };
 
   const toggle = (next: boolean) => {
     if (next && terms.data?.kind === 'needed') {
       termsGate.start(terms.data);
-      setPanel('terms');
       return;
     }
     startReview(next);
@@ -117,8 +118,13 @@ export function FeeDiscountConsent() {
     return simulateCall(own, { address: diamond, abi: VPFI_DISCOUNT_ABI, functionName: 'setVPFIDiscountConsent', args: [reviewed.target] });
   };
 
+  // What is open, read from the review and the store, so a page that mounts
+  // again shows a flow still out (or a Terms prompt still open) instead of
+  // offering the action a second time.
+  const termsOpen = termsGate.session !== null;
+  const flowOpen = !termsOpen && (reviewed !== null || holdsFlow(tx.phase));
+
   const close = () => {
-    setPanel('none');
     setReviewed(null);
     termsGate.end();
   };
@@ -161,7 +167,7 @@ export function FeeDiscountConsent() {
   } else {
     action = (
       <p className="actions">
-        <button type="button" className="btn btn-primary" disabled={panel !== 'none'} onClick={() => toggle(!current)} data-testid="consent-toggle">
+        <button type="button" className="btn btn-primary" disabled={termsOpen || flowOpen} onClick={() => toggle(!current)} data-testid="consent-toggle">
           {text(current ? 'consent.turnOff' : 'consent.turnOn')}
         </button>
       </p>
@@ -184,8 +190,8 @@ export function FeeDiscountConsent() {
         <WhyLink summaryKey={current ? 'consent.on' : 'consent.off'} detailKey="consent.why" vars={{ chain: chainName }} />
       )}
       {consent.error !== null && current !== null && <p className="tier-b">{text('consent.stale')}</p>}
-      {panel === 'none' && action}
-      {panel === 'terms' && termsGate.session && (
+      {!termsOpen && !flowOpen && action}
+      {termsOpen && termsGate.session && (
         <TermsPrompt
           asker={text('consent.asker')}
           gate={termsGate}
@@ -199,12 +205,12 @@ export function FeeDiscountConsent() {
           onClose={close}
         />
       )}
-      {panel === 'flow' && reviewed && (
+      {flowOpen && (
         <ActionFlow
           tx={tx}
           identity={identity}
-          reviewedFor={reviewed.identity}
-          receipt={consentReceipt(reviewed, chainName, { text, format })}
+          reviewedFor={reviewed?.identity ?? tx.frozen?.identity ?? ''}
+          receipt={reviewed ? consentReceipt(reviewed, chainName, { text, format }) : null}
           recheck={recheck}
           describeAsset={() => null}
           explorer={chain.blockExplorer}

@@ -16,17 +16,25 @@
  * The chain, account and measurement a transaction was SUBMITTED with are
  * kept with its hash, so a resume after the reader switched wallet or
  * network still polls the right chain and measures the sender's positions.
+ * The tracker itself lives in the app's transaction store (`txStore`), so
+ * none of this is lost when the page showing it unmounts.
  */
-import { useCallback, useRef, useState } from 'react';
+import { useCallback } from 'react';
 import { useConfig } from 'wagmi';
 import { getPublicClient } from 'wagmi/actions';
 import type { ReplacementReason, TransactionReceipt } from 'viem';
 import { announceOwnChange } from '../reads/signals';
 import { refusalFromError } from '../eligibility/refusal';
-import { summarize, type LegOutcome, type TxPhase } from './outcome';
+import { summarize, type LegOutcome } from './outcome';
 import { IllegalTransition, transition, type TxEvent } from './track';
+import { useTxEntry, useTxStore, type Frozen, type Submission } from './txStore';
+import type { TxPhase } from './outcome';
 
 export interface TrackedTxOptions {
+  /** The action that owns this tracker, unique in the app ("home.faucet").
+   *  The tracker is held in the app's transaction store under it, so it
+   *  outlives the page that shows it. */
+  key: string;
   chainId: number;
   account: `0x${string}`;
   /** Ask the wallet; resolves with the hash once submitted. */
@@ -36,39 +44,39 @@ export interface TrackedTxOptions {
   measure: (receipt: TransactionReceipt) => Promise<readonly LegOutcome[]>;
 }
 
-/** What a transaction was submitted with, kept with its hash. */
-interface Submission {
-  chainId: number;
-  account: `0x${string}`;
-  measure: TrackedTxOptions['measure'];
-}
-
 export interface TrackedTx {
+  key: string;
   phase: TxPhase;
+  /** What the reader confirmed, from the moment the wallet was asked. */
+  frozen: Frozen | null;
   /** From `idle`, `measured`, `failed` or `superseded`: start a review. */
   review: () => void;
-  /** From `review`: sign, submit, wait, measure. Resolves when measured,
-   *  failed, or left in `receipt-unknown`. */
-  run: () => Promise<void>;
+  /** From `review`: freeze what was confirmed, sign, submit, wait, measure.
+   *  Resolves when measured, failed, or left in `receipt-unknown`. */
+  run: (frozen: Frozen) => Promise<void>;
   /** From `receipt-unknown`: wait for the receipt again and measure. */
   resume: () => Promise<void>;
-  /** From `measured`, `failed`, `superseded` or `receipt-unknown`: back to idle. */
+  /** From `review`, `measured`, `failed`, `superseded` or
+   *  `receipt-unknown`: back to idle. */
   reset: () => void;
 }
 
 export function useTrackedTx(opts: TrackedTxOptions): TrackedTx {
-  const [phase, setPhase] = useState<TxPhase>({ kind: 'idle' });
-  const phaseRef = useRef(phase);
+  const store = useTxStore();
+  const { key } = opts;
+  const entry = useTxEntry(key);
   const config = useConfig();
-  /** The context of the transaction in flight: what it was submitted with. */
-  const submittedWith = useRef<Submission | null>(null);
 
-  const apply = useCallback((event: TxEvent) => {
-    const next = transition(phaseRef.current, event);
-    phaseRef.current = next;
-    setPhase(next);
-    return next;
-  }, []);
+  // Every transition reads and writes the STORE, never a component's state,
+  // so a promise still running after its page unmounted keeps recording.
+  const apply = useCallback(
+    (event: TxEvent) => {
+      const next = transition(store.get(key).phase, event);
+      store.update(key, (e) => (next.kind === 'idle' ? { ...e, phase: next, frozen: null, submission: null } : { ...e, phase: next }));
+      return next;
+    },
+    [store, key],
+  );
 
   const review = useCallback(() => void apply({ type: 'review' }), [apply]);
   const reset = useCallback(() => void apply({ type: 'reset' }), [apply]);
@@ -117,30 +125,34 @@ export function useTrackedTx(opts: TrackedTxOptions): TrackedTx {
     [apply, config],
   );
 
-  const run = useCallback(async () => {
-    apply({ type: 'sign' });
-    let hash: `0x${string}`;
-    try {
-      hash = await opts.send();
-    } catch (e) {
-      apply({ type: 'failed', message: refusalFromError(e).reason });
-      return;
-    }
-    const ctx: Submission = { chainId: opts.chainId, account: opts.account, measure: opts.measure };
-    submittedWith.current = ctx;
-    apply({ type: 'submitted', hash, at: Date.now() });
-    await track(hash, ctx);
-  }, [apply, opts, track]);
+  const run = useCallback(
+    async (frozen: Frozen) => {
+      apply({ type: 'sign' });
+      store.update(key, (e) => ({ ...e, frozen }));
+      let hash: `0x${string}`;
+      try {
+        hash = await opts.send();
+      } catch (e) {
+        apply({ type: 'failed', message: refusalFromError(e).reason });
+        return;
+      }
+      const ctx: Submission = { chainId: opts.chainId, account: opts.account, measure: opts.measure };
+      store.update(key, (e) => ({ ...e, submission: ctx }));
+      apply({ type: 'submitted', hash, at: Date.now() });
+      await track(hash, ctx);
+    },
+    [apply, opts, store, key, track],
+  );
 
   const resume = useCallback(async () => {
-    const current = phaseRef.current;
+    const current = store.get(key);
     // The phase moves to `submitted` synchronously, before the wait, so a
     // second resume or a reset during it is refused by the transition rule.
-    const ctx = submittedWith.current;
-    if (current.kind !== 'receipt-unknown' || ctx === null) throw new IllegalTransition(current.kind, 'resume');
-    apply({ type: 'resume', hash: current.hash });
-    await track(current.hash, ctx);
-  }, [apply, track]);
+    const ctx = current.submission;
+    if (current.phase.kind !== 'receipt-unknown' || ctx === null) throw new IllegalTransition(current.phase.kind, 'resume');
+    apply({ type: 'resume', hash: current.phase.hash });
+    await track(current.phase.hash, ctx);
+  }, [apply, store, key, track]);
 
-  return { phase, review, run, resume, reset };
+  return { key, phase: entry.phase, frozen: entry.frozen, review, run, resume, reset };
 }

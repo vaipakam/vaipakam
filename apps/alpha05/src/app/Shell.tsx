@@ -9,6 +9,7 @@ import { HelpPanel } from '../shared/help/HelpPanel';
 import { WhyLink } from '../shared/help/WhyLink';
 import { useWorldRail } from '../shared/reads/world/WorldRailContext';
 import { FreshnessStamp } from '../shared/ui/FreshnessStamp';
+import { OutstandingTx } from '../shared/tx/OutstandingTx';
 import { NAV_ADVANCED, NAV_BASIC } from '../routes/pageMap';
 
 /** How many destinations of the derived navigation the phone's bottom bar
@@ -125,6 +126,7 @@ export function Shell() {
         </div>
       </div>
       <div id="main">
+        <OutstandingTx />
         <Outlet />
       </div>
       <footer className="foot">

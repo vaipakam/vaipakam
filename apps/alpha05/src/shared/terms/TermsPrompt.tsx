@@ -10,7 +10,8 @@ import { ActionFlow, reviewIdentity, type Recheck } from '../ui/ActionFlow';
 import { Notice } from '../ui/Notice';
 import { formatUtc } from '../ui/format';
 import { LEGAL_ABI, PRIVACY_URL, fingerprint, readTerms, termsUrl } from './terms';
-import { IN_FLIGHT, type TermsGate, type TermsSession } from './useTermsGate';
+import { inFlight } from '../tx/txStore';
+import type { TermsGate, TermsSession } from './useTermsGate';
 
 /**
  * ACC-15 — the Terms prompt, opened at the first value-creating action and
@@ -110,7 +111,7 @@ export function TermsPrompt({
       aria-labelledby="terms-title"
       onCancel={(e) => {
         // Escape never closes while the wallet or the chain is still working.
-        if (IN_FLIGHT.has(tx.phase.kind)) e.preventDefault();
+        if (inFlight(tx.phase)) e.preventDefault();
         else onClose();
       }}
     >

@@ -62,6 +62,19 @@ test('the faucet mints a test token and a test NFT, measures each, and offers th
   await expect(faucet.locator('.receipt')).toContainText(/NFT #\d+ of /);
   await faucet.getByRole('button', { name: 'Confirm in wallet' }).click();
   await expect(faucet.locator('[data-phase="measured"]')).toHaveAttribute('data-verdict', 'done', { timeout: 60_000 });
+  await faucet.getByRole('button', { name: 'Close' }).click();
+
+  // A transaction outlives the page that sent it: leave Home right after
+  // confirming, come back, and the flow is still there (not the list).
+  await faucet.locator('[data-asset="liquidToken"]').getByRole('button', { name: 'Get 1000' }).click();
+  await faucet.getByRole('button', { name: 'Confirm in wallet' }).click();
+  await page.locator('nav a[href="/borrow"]:visible').first().click();
+  await expect(page).toHaveURL(/\/borrow$/);
+  await page.locator('nav a[href="/"]:visible').first().click();
+  await expect(faucet.locator('[data-phase="measured"]')).toHaveAttribute('data-verdict', 'done', { timeout: 60_000 });
+  await expect(faucet.locator('[data-asset="liquidToken"]')).toHaveCount(0);
+  await faucet.getByRole('button', { name: 'Close' }).click();
+  await expect(faucet.locator('[data-asset="liquidToken"]')).toBeVisible();
 });
 
 test('the fee discount turns on and off with a measured outcome; with no Terms in force nothing else is asked', async ({ launchWallet }) => {
