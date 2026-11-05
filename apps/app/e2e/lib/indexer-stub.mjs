@@ -20,6 +20,7 @@ import {
   recoverTypedDataAddress,
 } from 'viem';
 import { loopClosureBody, recyclingBody } from './recycling-fixture.mjs';
+import { planOwnerNotifications } from '@vaipakam/lib/rewardOwnerNotifications';
 
 const CHAIN_ID = 84532;
 const ANVIL_URL = process.env.APP_E2E_ANVIL_URL ?? 'http://127.0.0.1:8545';
@@ -39,9 +40,12 @@ const DIAMOND_ABI_VIEM = fs
 // The e2e bundle global setup writes after deploying the fixture chain
 // (#2334) — the same file `artifacts.ts` and the app read, never the
 // committed one, whose 84532 entry is the live testnet.
-const DIAMOND = JSON.parse(
+const E2E_DEPLOYMENT = JSON.parse(
   fs.readFileSync(path.resolve(HERE, '..', '.state', 'deployments.json'), 'utf8'),
-)[String(CHAIN_ID)].diamond;
+)[String(CHAIN_ID)];
+const DIAMOND = E2E_DEPLOYMENT.diamond;
+/** The block the fixture Diamond was deployed at — where a log scan starts. */
+const DEPLOY_BLOCK = BigInt(E2E_DEPLOYMENT.deployBlock ?? 0);
 const pub = createPublicClient({
   chain: {
     id: CHAIN_ID,
@@ -54,6 +58,67 @@ const pub = createPublicClient({
 
 const read = (functionName, args = []) =>
   pub.readContract({ address: DIAMOND, abi: DIAMOND_ABI_VIEM, functionName, args });
+
+/** The claim-horizon events whose rows are addressed to the reward entry's
+ *  owner, by their ABI entries in the compiled Diamond ABI. */
+const OWNER_NOTIF_EVENTS = ['RewardEntryExpiryArmed', 'RewardEntryExpiryBegun'].map((name) => {
+  const ev = DIAMOND_ABI_VIEM.find((e) => e.type === 'event' && e.name === name);
+  if (!ev) throw new Error(`the Diamond ABI carries no ${name} event`);
+  return ev;
+});
+
+/**
+ * The owner-addressed inbox rows (RL-3, #1956) for `addr`, derived from the
+ * chain's real claim-horizon logs exactly as the indexer derives them: the
+ * logs are read by their indexed owner, decoded by the compiled ABI, stamped
+ * with their blocks' timestamps, and planned by the indexer's own
+ * `planOwnerNotifications`. Ids follow chain order (the D1 table's
+ * autoincrement does the same for rows inserted in scan order), and the feed
+ * is newest first by (block, log index, id), as the route orders it.
+ */
+async function ownerNotificationsFromChain(addr) {
+  const logs = [];
+  for (const event of OWNER_NOTIF_EVENTS) {
+    const found = await pub.getLogs({
+      address: DIAMOND,
+      event,
+      args: { user: addr },
+      fromBlock: DEPLOY_BLOCK,
+      toBlock: 'latest',
+    });
+    logs.push(...found);
+  }
+  if (logs.length === 0) return [];
+  logs.sort((a, b) =>
+    a.blockNumber === b.blockNumber ? a.logIndex - b.logIndex : a.blockNumber < b.blockNumber ? -1 : 1,
+  );
+  const blockTimestamps = new Map();
+  for (const l of logs) {
+    if (blockTimestamps.has(l.blockNumber)) continue;
+    const block = await pub.getBlock({ blockNumber: l.blockNumber });
+    blockTimestamps.set(l.blockNumber, Number(block.timestamp));
+  }
+  const nowSec = Number((await pub.getBlock({ blockTag: 'latest' })).timestamp);
+  const rows = planOwnerNotifications(
+    CHAIN_ID,
+    logs.map((l) => ({ eventName: l.eventName, args: l.args, blockNumber: l.blockNumber, logIndex: l.logIndex })),
+    blockTimestamps,
+    nowSec,
+  );
+  return rows
+    .map((r, i) => ({
+      id: i + 1,
+      kind: r.kind,
+      loanId: r.loanId,
+      offerId: null,
+      eventKind: r.eventKind,
+      data: JSON.parse(r.dataJson),
+      createdAt: r.createdAt,
+      blockNumber: r.blockNumber,
+      logIndex: r.logIndex,
+    }))
+    .reverse();
+}
 
 // On-chain LoanStatus → indexer row status (apps/app/src/lib/types.ts).
 const LOAN_STATUS = ['active', 'repaid', 'defaulted', 'settled', 'fallback_pending', 'internal_matched'];
@@ -1238,7 +1303,19 @@ async function handler(req, res) {
       return loan ? json(200, loan) : json(404, { error: 'not found' });
     }
 
-    // GET /notifications/:addr — the in-app inbox feed (#1213). A small
+    // GET /notifications/:addr — the in-app inbox feed (#1213).
+    //
+    // CHAIN-DERIVED FIRST (#3207). A wallet the local chain has addressed a
+    // claim-horizon event to (RewardEntryExpiryArmed / RewardEntryExpiryBegun,
+    // owner in the indexed `user` topic) gets the rows the INDEXER would
+    // materialize from those real logs — through the indexer's own planner,
+    // shared from @vaipakam/lib/rewardOwnerNotifications — serialized the way
+    // the route serializes them (apps/indexer/src/loanRoutes.ts
+    // `notificationToJson`), newest first. Nothing in those rows is written
+    // here: spec 54 proves the RL-3 pre-expiry notice from them.
+    //
+    // Every other wallet keeps the synthetic feed below, which spec 22 reads.
+    // A small
     // deterministic synthetic feed is enough for the frontend spec:
     // read/unread is CLIENT-side, so the spec drives the whole flow
     // (badge count → open → mark-read → deep-link) off these rows without
@@ -1250,6 +1327,15 @@ async function handler(req, res) {
         return json(400, { error: 'bad-address' });
       }
       const before = url.searchParams.get('before');
+      const derived = await ownerNotificationsFromChain(addr);
+      if (derived.length > 0) {
+        return json(200, {
+          chainId: CHAIN_ID,
+          address: addr,
+          notifications: before ? [] : derived,
+          nextBefore: null,
+        });
+      }
       const notifications = before
         ? []
         : [

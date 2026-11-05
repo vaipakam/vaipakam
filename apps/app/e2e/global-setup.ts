@@ -18,7 +18,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ANVIL_URL, anvilRpc, childHasExited, waitForAnvil } from './lib/anvil';
-import { E2E_BUNDLE, E2E_BUNDLE_RUN_ID } from './lib/artifacts';
+import { E2E_ADMIN_KEY, E2E_BUNDLE, E2E_BUNDLE_RUN_ID } from './lib/artifacts';
 import { deployFixture } from './lib/fixture';
 import { createAndFundWallets } from './lib/wallets';
 
@@ -77,6 +77,7 @@ export default async function globalSetup(): Promise<void> {
   // plausible-looking file behind.
   fs.rmSync(E2E_BUNDLE_RUN_ID, { force: true });
   fs.rmSync(E2E_BUNDLE, { force: true });
+  fs.rmSync(E2E_ADMIN_KEY, { force: true });
 
   await assertNothingListening(ANVIL_URL, 'anvil');
   await assertNothingListening(`http://127.0.0.1:${STUB_PORT}/`, 'indexer stub');

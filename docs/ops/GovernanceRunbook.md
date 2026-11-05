@@ -2778,13 +2778,59 @@ while the operator believes the default allocation is in force. Read it back, an
 ratify explicitly if it is not zero.
 
 It is separate from Steps 1-5 on purpose: it carries **its own** preconditions,
-and setting it ad hoc later is how those get skipped. All of them must be
-verified live first:
+and setting it ad hoc later is how those get skipped. Every one of them is
+checked before the setter is scheduled. The two UX safeguards in the first
+bullet are proven on Anvil before arming and re-verified live right after,
+because neither can appear on a chain before the knob is set. The other
+preconditions must be verified live first:
 
 - **both** ratified RL-3 UX safeguards — the free-channel pre-expiry notice in
   the in-app notification centre **and** the claim-centre countdown surface.
   Notice alone does not satisfy the ratified safeguard: a user has to be able to
-  see when claimable rewards become terminally sweepable;
+  see when claimable rewards become terminally sweepable.
+
+  **Neither can be seen live before arming.** While the knob is zero no entry has
+  a clock, so the countdown has no date to show, and no sweep can emit the
+  final-notice event the inbox row comes from. Requiring them "live first" asks
+  for something that cannot exist yet. They are therefore checked twice, in
+  this order:
+
+  1. **Before arming, on Anvil.** The connected app's e2e spec
+     `apps/app/e2e/tests/54-reward-claim-horizon.spec.ts` (#3207) must be green
+     in CI on the commit the deployed app was built from. It sets a 180-day
+     horizon on the repository's own contracts and drives a real reward entry
+     through both safeguards. The Claim Center shows the `getRewardEntryExpiry`
+     estimate as its countdown. Then the bell shows the final-notice row, which
+     the indexer's own planner derives from the real `RewardEntryExpiryArmed`
+     log, and later the removal row from `RewardEntryExpiryBegun`. A red or
+     skipped run blocks this step.
+  2. **Right after arming, live, in the SAME ceremony.** Once the setter has
+     executed and `getRewardClaimHorizonDays` reads back, wait for the first
+     heartbeat that stamps entries (item 2 of the heartbeat check above). Pick
+     the first entry it touched and open the deployed Claim Center as that
+     entry's owner, or read the same views the page reads. Confirm the
+     countdown states that entry's `getRewardEntryExpiry` date.
+
+     The notice cannot be seen yet: a freshly stamped entry reaches its final
+     notice only after a full horizon of executable time. Confirm the
+     indexer's side of it instead. The indexer must run the release that maps
+     `RewardEntryExpiryArmed` and `RewardEntryExpiryBegun` to owner rows
+     (`/notifications/<owner>` answers on that release). Record a follow-up for
+     the ceremony's owner to open the bell when the first entry's
+     `RewardEntryExpiryArmed` lands. If either check fails, schedule
+     `setRewardClaimHorizonDays(0)` through the Timelock on every chain where
+     the knob was set (zero is the dark reset). Then treat the step as not
+     done.
+
+  **Why checking after arming is safe.** A removal comes only after the full
+  90-day notice period has also accrued on top of the horizon. So from the
+  first stamp, nothing can be removed for at least the horizon plus 90 days of
+  executable time. That is the window in which a failed live check is found
+  and the knob is reset to zero before any entitlement is affected. The same
+  holds for the deferred bell check. When the first final notice lands, that
+  entry still has its whole 90-day notice ahead of it. The bell is checked in
+  that time, and a failure is fixed or the knob reset before the entry can be
+  removed.
 - the **same mesh gate as arming** — rewards Base-only / dark on mirrors, OR M3
   complete. Mirror expiry credits land in local buckets Base can neither count
   nor consume until B′, so activating across an incomplete mesh strands them;

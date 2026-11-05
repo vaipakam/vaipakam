@@ -112,7 +112,11 @@ jobs:
         working-directory: contracts
         env:
           FOUNDRY_PROFILE: default
-        run: forge build script/e2e/DeployE2EFixture.s.sol
+        # The reward-posture script spec 54 broadcasts (#3207): compiled here
+        # too, so its compile error lands in this step, not mid-spec.
+        run: |
+          forge build script/e2e/DeployE2EFixture.s.sol
+          forge build script/e2e/ConfigureKeeperRewardsFixture.s.sol
 
       - name: Setup pnpm
         uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4

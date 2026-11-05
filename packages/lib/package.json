@@ -94,6 +94,10 @@
       "types": "./src/notificationProvenance.ts",
       "default": "./src/notificationProvenance.ts"
     },
+    "./rewardOwnerNotifications": {
+      "types": "./src/rewardOwnerNotifications.d.mts",
+      "default": "./src/rewardOwnerNotifications.mjs"
+    },
     "./contractRevert": {
       "types": "./src/contractRevert.ts",
       "default": "./src/contractRevert.ts"

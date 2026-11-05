@@ -163,12 +163,10 @@ export const EVENT_NOTIF_MAP: Readonly<Record<string, NotifMapping>> = {
  * `RewardEntryExpiryArmed` is the contract's last-call signal — the entry
  * accrued its full horizon and now has the notice period left — and
  * `RewardEntryExpiryBegun` is the removal point, after which the owner can no
- * longer claim that entry.
+ * longer claim that entry. The map is defined once, in
+ * `@vaipakam/lib/rewardOwnerNotifications`, with the planner below (#3207).
  */
-export const EVENT_OWNER_NOTIF_MAP: Readonly<Record<string, NotifKind>> = {
-  RewardEntryExpiryArmed: 'reward_final_notice',
-  RewardEntryExpiryBegun: 'reward_expired',
-};
+export const EVENT_OWNER_NOTIF_MAP: Readonly<Record<string, NotifKind>> = REWARD_OWNER_NOTIF_MAP;
 
 /**
  * Loan/offer state-change events that deliberately produce NO inbox row
@@ -667,11 +665,11 @@ export async function replayNotificationsFromArchive(
 /**
  * Pure planner for the OWNER-addressed rows (RL-3, exported for the unit
  * test): one row per source event, to the lowercased `user` the event names.
- * The dedup key carries the event position, not just the entry, because a
- * horizon reconfiguration re-earns a fresh notice and re-arms the entry — that
- * second last-call must notify again rather than be swallowed as a duplicate.
- * `data_json` carries the entry id (and, for the last call, when its notice
- * period began) so the client can say which reward it means.
+ * It lives in `@vaipakam/lib/rewardOwnerNotifications` (#3207) because the
+ * connected app's e2e indexer stub derives the bell's reward rows from the
+ * local chain's real logs with the same rule, so the Anvil drive that proves
+ * the claim-horizon safeguard tests THIS planner rather than a copy of it.
+ * See that module for the dedup and `data_json` rules.
  */
 export function planOwnerNotifications(
   chainId: number,
@@ -679,38 +677,7 @@ export function planOwnerNotifications(
   blockTimestamps: Map<bigint, number>,
   nowSec: number,
 ): NotifRow[] {
-  const rows: NotifRow[] = [];
-  const seen = new Set<string>();
-  for (const log of logs) {
-    const kind = EVENT_OWNER_NOTIF_MAP[log.eventName];
-    if (!kind) continue;
-    const user = log.args.user;
-    if (typeof user !== 'string' || !/^0x[0-9a-fA-F]{40}$/.test(user) || user.toLowerCase() === ZERO_ADDR) {
-      continue;
-    }
-    const recipient = user.toLowerCase();
-    const entryId = String(log.args.entryId ?? '');
-    if (!/^[0-9]+$/.test(entryId)) continue;
-    const blockNumber = Number(log.blockNumber);
-    const dedupKey = `${chainId}:${recipient}:${kind}:entry:${entryId}:${blockNumber}:${log.logIndex}`;
-    if (seen.has(dedupKey)) continue;
-    seen.add(dedupKey);
-    const data: Record<string, string | number> = { entryId };
-    if (log.args.finalNoticeFrom !== undefined) data.finalNoticeFrom = Number(log.args.finalNoticeFrom);
-    rows.push({
-      chainId,
-      recipient,
-      kind,
-      loanId: null,
-      eventKind: log.eventName,
-      blockNumber,
-      logIndex: log.logIndex,
-      createdAt: blockTimestamps.get(log.blockNumber) ?? nowSec,
-      dedupKey,
-      dataJson: JSON.stringify(data),
-    });
-  }
-  return rows;
+  return planSharedOwnerNotifications(chainId, logs, blockTimestamps, nowSec);
 }
 
 /**
@@ -834,6 +801,10 @@ export const DERIVED_LOG_INDEX = 1_000_000;
  *  the row rendering as a plain announcement (#2190 r5 `4007500682`). */
 export { NOTIF_EVENT_KIND_RECONCILED as RECONCILED_EVENT_KIND } from '@vaipakam/lib/notificationProvenance';
 import { NOTIF_EVENT_KIND_RECONCILED } from '@vaipakam/lib/notificationProvenance';
+import {
+  REWARD_OWNER_NOTIF_MAP,
+  planOwnerNotifications as planSharedOwnerNotifications,
+} from '@vaipakam/lib/rewardOwnerNotifications';
 import { chunkD1InList } from '@vaipakam/lib/d1Binds';
 import { redactedError } from '@vaipakam/lib/errorDescription';
 
