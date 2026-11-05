@@ -157,12 +157,33 @@ export function RewardsWidget() {
   const shown = [pending, held, expiry, tier, ...(p ? [] : [lower])];
   const stale = shown.some((r) => r.error !== null && r.data !== null);
 
+  // A claim needs the reward token's address (its receipt names the asset and
+  // its outcome is measured in it). While that read has not answered, a ready
+  // balance says why the claim is not offered, with a retry, rather than
+  // standing without an action.
+  const tokenGate =
+    token !== null ? null : vpfi.state === 'reading' && vpfi.data === null ? (
+      <p className="tier-b" data-testid="rewards-token-gate">
+        {text('rewards.tokenReading')}
+      </p>
+    ) : (
+      <Notice tone="warn" tier="A">
+        <span data-testid="rewards-token-gate">{format('rewards.tokenFailed', { reason: vpfi.data ? text('rewards.tokenUnset') : (vpfi.error ?? 'no answer') })}</span>{' '}
+        <button type="button" className="btn" onClick={vpfi.refetch}>
+          {text('rewards.retry')}
+        </button>
+      </Notice>
+    );
+  const interactionReady = p?.kind === 'exact' ? p : null;
+  const heldReady = h && h.held > 0n && h.decision === 'deliver' ? { amount: h.held, fromDay: 0n, toDay: 0n } : null;
+
   return (
     <section className="home-section rewards" aria-labelledby="rewards-title" data-testid="rewards-widget">
       <h2 id="rewards-title">{text('rewards.title')}</h2>
       <WhyLink summaryKey="rewards.rebate" detailKey="rewards.why" vars={{ chain: chain.name }} />
       {headline}
-      <RewardClaim kind="interaction" ready={p?.kind === 'exact' ? p : null} token={token} meta={meta} />
+      {interactionReady && tokenGate}
+      <RewardClaim kind="interaction" ready={interactionReady} token={token} meta={meta} />
       <h3>{text('rewards.expiryTitle')}</h3>
       <div data-testid="rewards-expiry" data-expiry={e?.kind ?? expiry.state}>
         {removal ?? (expiry.state === 'reading' ? <p className="tier-b">{text('rewards.reading')}</p> : null)}
@@ -177,7 +198,8 @@ export function RewardsWidget() {
       )}
       {/* Always mounted: a held claim still open (or just finished) stays on
           screen after the balance it paid has gone to zero. */}
-      <RewardClaim kind="held" ready={h && h.held > 0n && h.decision === 'deliver' ? { amount: h.held, fromDay: 0n, toDay: 0n } : null} token={token} meta={meta} />
+      {heldReady && tokenGate}
+      <RewardClaim kind="held" ready={heldReady} token={token} meta={meta} />
       <p className="tier-b">{tier.data !== null ? format('rewards.tier', { tier: String(tier.data) }) : tier.state === 'failed' ? text('rewards.tierFailed') : null}</p>
       {stale && <p className="tier-b">{text('rewards.stale')}</p>}
       <OwnStamp reads={shown} />

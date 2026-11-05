@@ -392,6 +392,9 @@ export const copy = {
     claim: B('Claim'),
     more: B('More rewards are still pending: a claim pays a bounded number of days at a time.'),
     claimAgain: B('Claim again'),
+    tokenReading: B('Reading the reward token before the claim is offered…'),
+    tokenFailed: A('The reward token could not be read ({{reason}}), so claiming is not offered until it can be. Nothing is lost by waiting.'),
+    tokenUnset: B('no reward token is set on this network'),
     why: C(
       'Rewards are usage rebates for your lending and borrowing on this network, counted per reward day and paid in VPFI. The figure shown is the claim itself, run as a preview: the protocol performs the claim and tells the app what it would pay, so the figure is exactly what a claim made now pays. When that preview cannot run, the app shows the protocol\'s own lower bound instead, labelled as such, and does not offer the claim until the exact figure can be worked out. A claim pays a bounded number of days at a time; stopping partway is safe, and what remains is shown with a way to claim again. A claim can pay nothing and still be offered: the protocol allows that only when the claim moves past reward days that paid nothing, so the days after them can be paid. A claim is delivered to your vault, ready to use, whatever kind of wallet you connect, and to your wallet when the vault cannot take it; a claim never opens a vault. Where it landed is read from the claim\'s own transaction, and stated as unknown when that does not add up. A claim waits when a reward day it needs has not been finalised across networks, or its funding has not reached this network yet, and the waiting day is named. Rewards on each network are claimed on that network. Rewards are not yield or interest, and claiming never stakes or reinvests anything.',
       'home-rewards',
