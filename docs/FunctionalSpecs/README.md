@@ -116,6 +116,10 @@ That gate is what keeps bugs out of the oracle.
   Oracle Cloud VM and operational state in a dedicated Cloudflare database.
   It describes the intended move without claiming migration completion.
 
+- [VaultOperations.md](VaultOperations.md) — depository ownership, all-asset
+  adoption, protected payouts, delayed settings, recovery signers, account
+  replacement, and the app's disclosures and limitations.
+
 The two cross-cutting **analysis matrices** (action × actor) now live under
 `docs/DesignsAndPlans/` — they are code-derived analysis of how the live gates
 and the keeper boundary behave per action, not code-independent intended-behavior
@@ -144,7 +148,6 @@ epic; see below). One doc per functional domain:
   internal-match liquidation, the flash-loan liquidation path
 - Risk, Oracle & Liquidity — health factor / LTV, price feeds, liquidity
   classification, depth-tiered LTV
-- Vault — per-user vault proxies, depository vault, adoption of untracked assets, protected account mode
 - Position NFTs — offer / loan position NFTs and their metadata
 - VPFI Token, Discounts, Staking & Rewards — fee discounts, staking
   rewards, interaction rewards
@@ -187,7 +190,7 @@ code at that time. Until a domain's spec exists, its intended behaviour
 is described — less tidily — across the release notes and the
 `DesignsAndPlans/` docs.
 
-## Release-note consolidation: August 13 through October 28, 2026
+## Release-note consolidation: August 13 through November 4, 2026
 
 The following source map accounts for every dated file present in the inclusive
 range. It identifies where functional decisions belong, rather than copying
@@ -214,11 +217,24 @@ decisions supersede that day's earlier caveats: schedule admission runs again
 at loan opening, and an independently armed keeper step can retry owed tier
 pushes from the protocol budget. Deployment caveats remain explicit.
 
+The October 28–November 4 continuation preserves the overlapping October 28
+source and adds all six later dated files present in the range; there is no
+October 30 dated file. It reconciles single-use netted refinance, protected
+accounts and depository assets, automatic-extension reserves, one-day delivery
+ingress, independent acknowledgement activation, keeper upkeep, actual rental
+days, offline-key backups, and the recorded fresh testnet deployments.
+Later same-day decisions control: BNB was redeployed, the app adopted the
+proxy, recorded repatriations follow their issuer, and protocol upkeep gets
+independent send shares. Existing later intent, including keeper use of the
+protocol's close-out progress flag, remains in force. Tooling-only layout,
+build, test-driver, and interface-relocation details are not product rules.
+
 In this table, Platform means [ProjectDetailsREADME.md](ProjectDetailsREADME.md),
 App means [Alpha02ConnectedApp.md](Alpha02ConnectedApp.md), Website means
 [WebsiteReadme.md](WebsiteReadme.md), Tokenomics means
 [TokenomicsTechSpec.md](TokenomicsTechSpec.md), and Keeper means
-[KeeperOperations.md](KeeperOperations.md). Internal notes identify supporting
+[KeeperOperations.md](KeeperOperations.md). Vault means
+[VaultOperations.md](VaultOperations.md). Internal notes identify supporting
 verification or tooling history, not additional product requirements.
 
 | Release source | Functional home | Decisions reconciled |
@@ -283,12 +299,17 @@ verification or tooling history, not additional product requirements.
 | [2026-10-26](../ReleaseNotes/ReleaseNotes-2026-10-26.md) | Platform; app; website; tokenomics; keeper | Per-leg floors, extension windows, interest credits, collateral evidence, signed alert changes, safe proxy limits, restore ownership and retirement of migration-only states |
 | [2026-10-27](../ReleaseNotes/ReleaseNotes-2026-10-27.md) | Platform; app; website; tokenomics; keeper | Reviewed acceptance terms, matching parity, rental shape, asset-specific metadata, neutral collateral sales, bridged-feed evidence, partial-day funding and retired-mirror returns |
 | [2026-10-28](../ReleaseNotes/ReleaseNotes-2026-10-28.md) | Platform; app; website; tokenomics; keeper | Retained seller-interest claims, grouped actions, live schedule admission, exit verdicts, single-network analytics, locale indexing, independent backups, reward-part recovery, and bounded keeper upkeep |
+| [2026-10-29](../ReleaseNotes/ReleaseNotes-2026-10-29.md) | Platform; app; vault; keeper | Seller claims and individual collection, extension reserve ownership and funding checks |
+| [2026-10-31](../ReleaseNotes/ReleaseNotes-2026-10-31.md) | Platform; app; website | Request-specific single-use refinance permits and disclosed historical approval route |
+| [2026-11-01](../ReleaseNotes/ReleaseNotes-2026-11-01.md) | Platform; app; website; tokenomics | Atomic netted refinance, actual lending counters, short-delivery match refusal, retirement of external treasury yield |
+| [2026-11-02](../ReleaseNotes/ReleaseNotes-2026-11-02.md) | Vault; app; website; keeper | Depository assets, protected payouts and replacement, permissionless service coverage |
+| [2026-11-03](../ReleaseNotes/ReleaseNotes-2026-11-03.md) | Tokenomics; keeper; vault; app | One funded day on arrival, proof-pass retirement, all-asset adoption and disowning; unchanged backstop withdrawal intent |
+| [2026-11-04](../ReleaseNotes/ReleaseNotes-2026-11-04.md) | Platform; app; website; tokenomics; keeper; vault | Fresh testnets, proxy reads, extension UX, offline-key backups, mesh observations, protected and reward upkeep, issuer-bound returns and agreed rental days |
 
-A source release is not a live-deployment guarantee. For example, the October
-19 notes record capacity enabled on three testnets. The October 24 correction
-establishes that priority routing was priced on all three on October 19;
-BNB's usable mock pairs and independent fork check came later. The October
-27 and 28 notes still say the contract wave had not reached the testnets. Older
-testnet keeper compatibility is not evidence that those chains implement the
-fresh-deploy requirements. Feature defaults, dated activation facts, and
-current chain observations must be described separately.
+A source release is not a live-deployment guarantee. The October 27–28 caveat
+that the contract wave had not reached testnets was superseded by the November
+4 record of fresh Base Sepolia, Arbitrum Sepolia, and BNB testnet deployments.
+Those dated facts do not establish that later changes were deployed or that
+independent keeper duties are armed. The keeper database and VM destination
+remains intended deployment architecture, not a migration-completion claim.
+Feature defaults, dated activations, and current observations stay distinct.

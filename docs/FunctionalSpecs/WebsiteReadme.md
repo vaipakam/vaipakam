@@ -3,7 +3,7 @@
 ## Purpose
 
 This document defines the website and product experience for Vaipakam.
-It consolidates the release notes from 2026-08-13 through 2026-10-28,
+It consolidates the release notes from 2026-08-13 through 2026-11-04,
 inclusive, while retaining later recorded intent decisions.
 It is separate from the repository root `README.md`, which is a product-facing overview. Protocol and workflow detail lives in `apps/www/src/content/whitepaper/Whitepaper.en.md` and the other `docs/FunctionalSpecs/` documents.
 
@@ -59,6 +59,11 @@ learn Vaipakam from, and it must be fully legible to both:
   interfaces instead of scraping rendered pages.
 - A sitemap and an open crawl policy are generated with every build
   and always agree with the set of pages that actually exist.
+- A published prerendered page contains the page's own body and canonical
+  declaration, including the longer translated guides. A mounted navigation
+  shell or elapsed fixed delay is not proof that the content is ready. A page
+  that cannot declare its identity within the bounded publication wait fails
+  by name rather than shipping a shell or metadata for another route.
 
 ## Main Experience Areas
 
@@ -606,7 +611,7 @@ Keeper-bot reference UX / ops requirements:
 - keeper and operator surfaces should show tier-LTV cache freshness, peer-derived values, the governance-configured per-tier fallback caps, refresh rejection reasons, and whether the cache has passed the stale-warning threshold so humans can refresh before loan initiation falls back to those caps.
 - keeper and operator surfaces should show flash-loan discounted-path readiness per chain: receiver deployed address, Aave / Balancer provider availability, keeper-owner match, keeper-side enable flag, swap-adapter quote health, last submitted flash-loan liquidation, and fallback reason when the keeper chooses partial / split / atomic instead.
 - the public bot documentation should describe setup, chain coverage, optional aggregator API keys, logging, MEV-protection options, and clear scope limits
-- the production keeper and public reference bot should include an auto-lifecycle pass or detector for auto-extend where enabled: scan active loans, read both sides' caps, respect the admin kill switch and per-tick caps, submit only terms the contract will enforce, skip an extension the borrower-position holder cannot fund (their reserve for the loan plus their other free balance of the principal asset, against what the extension would charge now) with those figures stated in its log, say in the run log when a deployment cannot report that funding, and continue past per-loan failures without stopping the whole cron tick
+- the production keeper and public reference bot should include an auto-lifecycle pass or detector for auto-extend where enabled: scan active loans, read both sides' caps, respect the admin kill switch and per-tick caps, submit only terms the contract will enforce, skip an extension the borrower-position holder cannot fund (their reserve for the loan plus their other free balance of the principal asset, against what the extension would charge now) with those figures stated in its log, leave an unreadable funding result for the next run with the reason stated, and continue past per-loan failures without stopping the whole cron tick
 - the production keeper should include a pre-grace watcher for loans with refinance caps enabled: scan active loans near the grace boundary, throttle repeat sends, and dispatch warnings through the user's configured Telegram / Push rails for every such loan not yet refinanced; no offer in the book suppresses the warning, since an offer that only looks compatible can fail to fill and anyone can post one
 - Bots use published interfaces matching the deployed protocol; an interface mismatch must not silently change the meaning of a read or transaction.
 
@@ -667,18 +672,18 @@ Sanctions-screening UX:
 - the banner should appear on action-heavy app surfaces where the user can be affected, including Dashboard, Create Offer, Offer Book, VPFI Vault, Loan Details, and Claim Center
 - clean wallets should not see persistent sanctions education banners; the public Terms prohibited-use clause remains the general policy surface
 
-Stuck-token recovery UX:
+Untracked-asset adoption UX:
 
-- `/app/recover` is an advanced, wallet-gated utility route for unsolicited ERC-20 tokens sent directly to a user's Vaipakam Vault
-- the route should not appear in the main nav, footer, Dashboard shortcuts, Asset Viewer actions, or basic user guide; the Advanced User Guide — or an equivalent in-app explainer section (e.g. a Help-page card) that first explains the dust-poisoning risk — may deep-link to it for users who already understand the risk. Because the Advanced User Guide is served from the marketing site and the recovery route lives on the connected app, that deep link must be the recovery page's full address on the connected app — a path relative to the guide's own site would be a dead link, leaving a reader who followed the app's link out to the guide with no way back into the flow. Every language edition of the guide must carry the same working link
+- The advanced adoption page handles untracked tokens, NFTs, and multi-token balances in the connected account's vault. Adoption credits the vault without moving funds; a separate ordinary withdrawal follows account protection. [Vault Operations](VaultOperations.md) defines the ownership and protection rules.
+- the route stays out of the main nav, footer, Dashboard shortcuts, and basic user guide; the vault card may link an identified untracked asset to it; the Advanced User Guide — or an equivalent in-app explainer section (e.g. a Help-page card) that first explains the dust-poisoning risk — may deep-link to it for users who already understand the risk. Because the Advanced User Guide is served from the marketing site and the recovery route lives on the connected app, that deep link must be the recovery page's full address on the connected app — a path relative to the guide's own site would be a dead link, leaving a reader who followed the app's link out to the guide with no way back into the flow. Every language edition of the guide must carry the same working link
 - the page should emit `noindex,nofollow` metadata and should not be promoted as a normal portfolio-management surface
-- the form should ask for token address, declared source address, and amount; the recoverable maximum is the excess of raw vault balance over tracked balance, or zero when there is no excess for the selected token
-- the UI should clearly state that the declared source must be the wallet or contract the user believes sent the unsolicited tokens and that recovery is sent only to the connected user's own EOA
+- The form asks for asset kind, contract, token identifier where applicable, declared source, and quantity for divisible assets. It reads the protocol's own untracked amount for that exact asset on lookup and before signing. A single NFT has no amount field; a wrong asset standard is refused by name.
+- The declaration identifies the wallet or contract believed to have sent the asset. The result states adoption into the vault, never a wallet payment; a withdrawal may subsequently be paid, queued, or refused under protected mode.
 - a token that does not publish a symbol or a decimal format must stay recoverable — amounts for it are entered and shown in raw smallest units, whole numbers only — but that treatment may only follow from a POSITIVELY RECOGNISED answer by the token itself — it declined, returned nothing, or answered in a format that cannot be read — and never from a failed read or an unrecognised failure. Any failure to reach an answer (network unreachable, and equally a node refusing or erroring on the request, such as a rate limit) must fail the lookup and say the token's details couldn't be read, so the user can retry. Silently taking a failed read as "no decimal format" would make an ordinary token accept an amount interpreted in its smallest units, so a user entering `1` would authorise a fraction of a token instead of one — a wrong amount the user cannot see in what they sign
 - "declining to answer" covers every answer the app cannot use, not only a refusal to answer: some long-standing tokens publish their symbol in an older format the current standard replaced, and the network returns it perfectly well even though the app cannot read it as a name. Because these details are optional decoration, any answer the network delivers — however unusable — may fall back to the shortened token address for a symbol and to raw smallest units for a decimal format. Only a failure to REACH the network keeps the stricter treatment above, since that alone says nothing about the token. Where the older symbol format is the cause, the app should prefer reading it in that format and showing the real ticker, falling back to the shortened address only if that read fails too; doing so must not slow down a token that publishes its symbol normally
 - before signing, the user must pass a deliberate confirmation step — a modal or an equivalent dedicated review step that replaces the form — that includes the standing warning and requires typing `CONFIRM`
 - the wallet signature should use the on-chain recovery domain / nonce / acknowledgement reads (`recoveryDomainSeparator`, the user’s recovery nonce, and `recoveryAckTextHash`) so the app signs the same EIP-712 statement the contract verifies
-- receipt parsing should distinguish `StuckERC20Recovered` from `VaultBannedFromRecoveryAttempt`; a ban outcome is a completed transaction with a blocked recovery, not a generic failed receipt
+- Transaction evidence distinguishes an adopted asset from a recovery ban. A confirmed ban is a completed transaction with adoption blocked, not a generic failed receipt. Asset kind and token identifier remain part of every saved attempt and result.
 - the blocked outcome must be described in full, not as a limit on this page: declaring a sanctions-listed sender flags the WALLET and blocks every new-position action across the protocol — creating or accepting offers, deposits, recovery and the like — while existing loans stay repayable and closable, and the block lifts by itself if that address is later removed from the sanctions list. Because outcome cards are deliberately shown ahead of every other check, this card is the only status the user gets after such a transaction: a wording that mentions only the recovery page leaves them to discover the wallet-wide block by hitting it elsewhere with no explanation. The same three facts should be worded consistently wherever the risk is stated in advance (the standing warning on the form, the in-app explainer) so the surfaces do not appear to describe different consequences
 - a result must be described from what the transaction actually recorded, not from what the user submitted. The amount, the token and the declared sender shown on a result — and repeated in any success or blocked-recovery wording — should come from the outcome the transaction emitted, using the submitted details only for what that outcome does not carry. This matters because a wallet may replace a transaction with one carrying different values, and reporting the submitted values beside a link to a transaction showing different ones is a false statement, not merely a stale one. If the recorded outcome names a token the app holds no decimal format or symbol for, it should say so and state the amount in that token's smallest units next to its address, never format it with another token's decimals
 - because the signed declaration states the user has read the Advanced User Guide's stuck-token-recovery section, the confirmation step should link that section directly, and the in-app explainer should link it too
@@ -708,7 +713,7 @@ Stuck-token recovery UX:
 - the last-moment re-screen of the connected wallet itself must fail CLOSED, exactly as the availability check does: recovery's outcome is decided by the screening service, so a wallet-specific screening query the app cannot read is not permission to sign. An unreadable screen should leave the user in the same retryable blocked state an unreachable availability check produces, while a wallet the service positively flags is reported as blocked
 - that fail-safe blocked state should distinguish a screening service that is confirmed absent on the network from one the app simply could not reach. Both keep the form closed, but the first is a permanent property of the network and should be stated as such, while the second is a passing failure: it should say the check did not answer, retry a bounded number of times on its own, and offer a manual retry, so a momentary read failure does not read as a permanent verdict or require a page reload to clear. The same distinction must survive the last-moment re-check the app makes immediately before asking for the signature: neither answer may proceed to sign, but a service that did not answer must be reported as a retryable failure and leave the retry route open, while only a confirmed-absent service may be described as permanently unavailable here
 - Disowning the selected token may be offered only as an advanced declaration that emits an event; the UI must not imply that it moves tokens or changes accounting
-- Asset Viewer may show that unsolicited balance exists through a restrained hint, but it should not expose a direct recovery button inline
+- The vault card links all asset kinds to adoption with identity prefilled, never source or amount. A replaced account sees the current adoption limitation instead. Disowning remains on the card without adoption's declaration, signature, or screening gates.
 
 Activity and local log-index requirements:
 
@@ -918,6 +923,18 @@ Chrome-level layout behavior:
 - layout fixes should preserve the existing design language in both light and dark themes
 - the settings popover should group global preferences such as Basic / Advanced mode, language, and theme in one predictable place
 
+## Vault Protection Experience
+
+The vault is also a depository for tokens and NFTs. Its free amount comes from
+the protocol after all encumbrances, queued payouts included. Protected mode
+discloses its two-to-five-day delay before a withdrawal, and results state
+whether funds were paid, queued, or refused. Settlements may stay held without
+blocking the counterparty. The protection page shows queues and request codes,
+signers, destinations, pending changes, locks, and replacement authority;
+unread or partial data is unknown, never empty or off. Terms acceptance does
+not obstruct withdrawals or protective actions. The complete rules and current
+app limitations are in [Vault Operations](VaultOperations.md).
+
 ## Interaction Modes
 
 The frontend should support both basic and advanced UX options through a single mode setting in shared UI context.
@@ -1112,7 +1129,7 @@ Strategic-flow transfer-lock UX requirements:
 - when a user starts a lender early-withdrawal flow, the UI must clearly notify them before confirmation that the lender-side Vaipakam NFT will be locked for transfer until that early-withdrawal flow is completed, cancelled, or otherwise unwound by the protocol
 - these transfer-lock warnings should appear in the relevant transaction review / confirmation state, not only as passive helper text elsewhere on the page
 - the notice should explain in plain language that while the strategic flow is still in progress, the affected Vaipakam NFT cannot be transferred to another wallet and its ownership-driven actions remain constrained by that in-progress flow
-- refinance is different: every refinance completes inside the accept or match of its refinance-tagged offer (#3042), so replacement-loan creation and old-loan payoff happen in one transaction and there is no later settlement step to lock for. The refinance screen should say that the new loan's principal, less its initiation fee, pays the old lender directly, that the wallet pays only the rest of the payoff (the old loan's interest and any late fee, plus the new loan's initiation fee), and that the spending approval it asks for is sized to that remainder, not to the whole payoff. The UI should not warn about a refinance-specific borrower-NFT transfer lock unless a later protocol version introduces one.
+- refinance is different: every refinance completes inside the accept or match of its refinance-tagged offer (#3042), so replacement-loan creation and old-loan payoff happen in one transaction and there is no later settlement step to lock for. The refinance screen should say that the new loan's principal, less its initiation fee, pays the old lender directly, that the wallet pays only the rest of the payoff (the old loan's interest and any late fee, plus the new loan's initiation fee), and that the request-specific single-use permit covers at most that remainder before expiry. It asks for no permit when the wallet share is zero; there is no standing payoff allowance to the protocol. The UI should not warn about a refinance-specific borrower-NFT transfer lock unless a later protocol version introduces one.
 - before signature, lender early withdrawal, borrower preclose, and borrower refinance screens should also show the interest implication of the chosen path in plain language, including the selling lender's accrued interest becoming a claim on the loan (paid from later interest, after the buyer's principal on a default), full-term interest, accrued-to-date interest, and rate-shortfall obligations where applicable
 - the Direct-preclose interest-implication copy should reflect the affected ERC-20 loan's actual interest mode rather than always assuming full-term: a full-term loan owes interest as if it ran to maturity, but a pro-rata loan owes only interest accrued to date, so the Direct-preclose warning should not overstate the cost of exiting a pro-rata ERC-20 loan. This mode-awareness applies only to ERC-20 principal; NFT-rental preclose always settles the full rental and must keep the full-term-style copy
 - refinance review follows the original loan's agreed interest mode: full-term
