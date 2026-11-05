@@ -1,4 +1,4 @@
-## Thread — the RL-3 claim-horizon safeguards are proven on Anvil before arming (PR #<n>)
+## Thread — the RL-3 claim-horizon safeguards are proven on Anvil before arming (PR #3211)
 
 The governance runbook required both ratified claim-horizon safeguards to be "verified live first", before the horizon knob is set: the free pre-expiry notice in the in-app notification centre, and the Claim Center countdown. Neither can appear on a chain while the knob is zero, so the step could not be met as written.
 
