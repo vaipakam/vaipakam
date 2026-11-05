@@ -46,3 +46,12 @@ test('a wallet on a network this app does not serve gets a tier-A notice and the
   await expect(page.getByTestId('wallet-chip').locator('.wallet-chain')).toHaveText('Base Sepolia');
   await expect(page.locator('.posture').getByText(`${shortAddress(account.address)} on Base Sepolia`)).toBeVisible();
 });
+
+test('an open wallet picker is not called connecting: nothing connects until a wallet is chosen', async ({ launchWallet }) => {
+  const { page } = await launchWallet('visitor', { preAuthorized: false });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Connect wallet' }).click();
+  await expect(page.getByRole('dialog')).toBeVisible();
+  await expect(page.locator('.wallet').getByRole('button', { name: 'Connect wallet' })).toBeVisible();
+  await expect(page.locator('.wallet').getByText('Connecting…')).toHaveCount(0);
+});

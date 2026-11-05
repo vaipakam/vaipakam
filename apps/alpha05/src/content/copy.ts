@@ -11,6 +11,7 @@ import { A, B, C } from '../shared/copy/tiers';
 export const copy = {
   shell: {
     brand: B('Vaipakam'),
+    more: B('More'),
     modeBasic: B('Basic'),
     modeAdvanced: B('Advanced'),
     mode: B('Mode: {{mode}}.'),

@@ -36,11 +36,15 @@ export function WalletControl() {
   return (
     <div className="wallet">
       <ConnectKitButton.Custom>
-        {({ isConnected, isConnecting, show }) => {
+        {({ isConnected, show }) => {
           if (!isConnected) {
+            // The label follows the wallet's own state, not the picker's: an
+            // open picker connects nothing until a wallet is chosen, so it
+            // must not read as connecting.
+            const connecting = status === 'connecting' || status === 'reconnecting';
             return (
-              <button type="button" className="btn btn-primary" onClick={show} disabled={isConnecting}>
-                {isConnecting ? text('wallet.connecting') : text('wallet.connect')}
+              <button type="button" className="btn btn-primary" onClick={show} disabled={connecting}>
+                {connecting ? text('wallet.connecting') : text('wallet.connect')}
               </button>
             );
           }

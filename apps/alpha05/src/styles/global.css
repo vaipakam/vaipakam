@@ -96,6 +96,17 @@ code {
   width: 120px;
   height: 36px;
 }
+/* On a phone the shield alone stands for the brand (the link keeps its
+   accessible name), so brand, wallet and Menu fit one row. The name shows
+   beside the mark only where there is room for it. */
+.brand-text {
+  display: none;
+}
+@media (min-width: 480px) and (max-width: 719px) {
+  .brand-text {
+    display: inline;
+  }
+}
 @media (min-width: 720px) {
   .brand-wordmark {
     display: block;
@@ -125,11 +136,112 @@ code {
   color: var(--brand-soft-text);
 }
 
-.controls {
+/* Phone first (RB-A11Y): the header is one row, brand and wallet; a fixed
+   bottom bar carries the first destinations and More, which opens every
+   destination and the mode and theme controls as a sheet above the bar.
+   From 720px up the bar goes and the navigation sits in the header. */
+.wallet-slot {
   margin-inline-start: auto;
+  min-width: 0;
+}
+.controls {
   display: flex;
+  flex-wrap: wrap;
   gap: 10px;
   align-items: center;
+  max-width: 100%;
+}
+.bottom-bar {
+  position: fixed;
+  inset-inline: 0;
+  bottom: 0;
+  z-index: 40;
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  padding-bottom: env(safe-area-inset-bottom);
+  /* Opaque: the page scrolls under the bar, and no text may show through. */
+  background: var(--surface-raised);
+  border-top: 1px solid var(--border);
+}
+.bottom-bar a,
+.bottom-bar button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 56px;
+  padding: 4px;
+  border: 0;
+  background: transparent;
+  color: var(--text-body);
+  font: inherit;
+  font-size: 0.85rem;
+  text-decoration: none;
+  cursor: pointer;
+}
+.bottom-bar a.active,
+.bottom-bar button[aria-expanded='true'] {
+  color: var(--brand-soft-text);
+  background: var(--brand-soft);
+}
+@media (max-width: 719px) {
+  .shell {
+    padding-bottom: calc(56px + env(safe-area-inset-bottom));
+  }
+  .topbar {
+    gap: 10px 12px;
+    /* A filter would make the header the containing block of the fixed
+       sheet inside it, pinning the sheet to the header; without the blur
+       the header is opaque, so nothing scrolling under it shows through. */
+    backdrop-filter: none;
+    background: var(--surface-raised);
+  }
+  .site-menu {
+    display: none;
+  }
+  .site-menu[data-open='true'] {
+    position: fixed;
+    inset-inline: 0;
+    bottom: calc(56px + env(safe-area-inset-bottom));
+    z-index: 39;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    max-height: 70dvh;
+    overflow-y: auto;
+    padding: 16px;
+    background: var(--surface-raised);
+    border-top: 1px solid var(--border);
+    border-radius: 16px 16px 0 0;
+    box-shadow: var(--shadow-pop);
+  }
+  .site-menu nav {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 4px;
+  }
+  .site-menu nav a {
+    min-height: 44px;
+    display: flex;
+    align-items: center;
+  }
+}
+@media (min-width: 720px) {
+  .bottom-bar {
+    display: none;
+  }
+  .site-menu {
+    flex: 1 1 auto;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 12px 20px;
+  }
+  .site-menu .controls {
+    margin-inline-start: auto;
+  }
+  .wallet-slot {
+    margin-inline-start: 0;
+  }
 }
 .segment {
   display: inline-flex;

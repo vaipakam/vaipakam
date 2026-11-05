@@ -47,6 +47,13 @@ export default defineConfig({
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
   },
+  // About half of the app's readers are on phones (owner, 2026-11-05), so
+  // every spec runs twice: on a desktop window and on a phone-sized touch
+  // device. A layout that only works on one of them fails here.
+  projects: [
+    { name: 'desktop', use: { viewport: { width: 1280, height: 900 } } },
+    { name: 'phone', use: { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, deviceScaleFactor: 3 } },
+  ],
   webServer: {
     command: `node node_modules/vite/bin/vite.js --host 127.0.0.1 --port ${APP_PORT} --strictPort`,
     url: `http://127.0.0.1:${APP_PORT}`,
