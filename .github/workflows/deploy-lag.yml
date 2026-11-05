@@ -69,7 +69,7 @@ jobs:
       # Workers whose lag is a DECISION, as `worker=reason;…`. A held Worker is
       # still judged and reported in the run summary, with its reason; it only
       # stops failing the run. Add or remove one in a reviewed commit.
-      DEPLOY_LAG_HELD: 'vaipakam-alpha05=new connected app under construction (#3180), no Workers Build yet'
+      DEPLOY_LAG_HELD: ''
     steps:
       # The whole history: a deployment is placed on main by its commit, or
       # by the last commit before its upload time.
