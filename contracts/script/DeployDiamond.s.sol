@@ -1436,7 +1436,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     function _getAdminSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](52);
+        s = new bytes4[](54);
         s[0] = AdminFacet.setTreasury.selector;
         s[1] = AdminFacet.getTreasury.selector;
         s[2] = AdminFacet.setZeroExProxy.selector;
@@ -1504,6 +1504,9 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // #1637 — reads for the two kill switches.
         s[50] = AdminFacet.aggregatorAdaptersPaused.selector;
         s[51] = AdminFacet.peerLtvReadsPaused.selector;
+        // #3173 — the bounded escape period.
+        s[52] = AdminFacet.setEscapeGraceSeconds.selector;
+        s[53] = AdminFacet.getEscapeGraceSeconds.selector;
     }
 
     function _getProfileSelectors() internal pure returns (bytes4[] memory s) {
@@ -2396,7 +2399,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
 
     /// @dev Selectors for `VaultPayoutFacet` — the payout queue, the vault credit and the escape route.
     function _getVaultPayoutSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](14);
+        s = new bytes4[](15);
         s[0] = VaultPayoutFacet.applyPayoutGate.selector;
         s[1] = VaultPayoutFacet.cancelPayout.selector;
         s[2] = VaultPayoutFacet.cosignPayout.selector;
@@ -2411,6 +2414,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[11] = VaultPayoutFacet.releasePayout.selector;
         s[12] = VaultPayoutFacet.requestCode.selector;
         s[13] = VaultPayoutFacet.cosignPositionTransfer.selector;
+        // #3173 — when the escape opens under the current pause.
+        s[14] = VaultPayoutFacet.escapeOpensAt.selector;
     }
 
     /// @dev Selectors for `VaultDepositoryFacet` — the depository vault: deposit, withdraw, adopt, disown and the upgrade pin.

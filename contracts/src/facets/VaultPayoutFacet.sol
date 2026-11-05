@@ -189,8 +189,9 @@ contract VaultPayoutFacet is DiamondReentrancyGuard {
     // ─── Escape route ────────────────────────────────────────────────────
 
     /**
-     * @notice During a manual pause that has lasted `ESCAPE_GRACE` since the
-     *         Diamond's launch, take `amount` of a FREE asset out of your own
+     * @notice During a manual pause that has lasted its escape period (#3173:
+     *         the governance setting in force when the pause started, default
+     *         3 days) after the Diamond's launch, take `amount` of a FREE asset out of your own
      *         vault to your own wallet.
      * @dev    For accounts without protected mode. A protected account's
      *         queued payouts keep releasing during the same window
@@ -227,6 +228,14 @@ contract VaultPayoutFacet is DiamondReentrancyGuard {
     /// @notice Whether the escape route is open now.
     function isEscapeOpen() external view returns (bool) {
         return _escapeOpen();
+    }
+
+    /// @notice #3173 — when the escape route opens under the current manual
+    ///         pause: the pause's start plus the escape period it started with.
+    ///         Zero when no manual pause is in force or the Diamond has never
+    ///         launched. A countdown reads this, never a hard-coded period.
+    function escapeOpensAt() external view returns (uint256) {
+        return LibProtectedAccount.escapeOpensAt();
     }
 
     // ─── Views ───────────────────────────────────────────────────────────

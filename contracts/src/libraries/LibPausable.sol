@@ -95,6 +95,17 @@ library LibPausable {
         // after handover), inside [{MIN_AUTO_PAUSE_COOLDOWN},
         // {MAX_AUTO_PAUSE_COOLDOWN}].
         uint32 autoPauseCooldownSeconds;
+        // #3173 — how long a manual pause must run, after launch, before a
+        // protected account's escape route opens, in seconds. Zero means
+        // {ESCAPE_GRACE_DEFAULT}. Set by the admin role (the Timelock after
+        // handover), inside [{MIN_ESCAPE_GRACE}, {MAX_ESCAPE_GRACE}]. A change
+        // applies to manual pauses that start afterwards, never to one already
+        // running: see {escapeGraceAtPause}.
+        uint32 escapeGraceSeconds;
+        // #3173 — the escape period in force when the CURRENT manual pause
+        // started, stamped by {pause}. The escape rule reads this, so a change
+        // made during a pause can neither open nor close that pause's escape.
+        uint32 escapeGraceAtPause;
     }
 
     /// @dev #2744 — the default gap between the end of one auto-pause window
@@ -109,6 +120,17 @@ library LibPausable {
     uint256 internal constant MIN_AUTO_PAUSE_COOLDOWN = 1 hours;
     /// @dev The cooldown's ceiling.
     uint256 internal constant MAX_AUTO_PAUSE_COOLDOWN = 7 days;
+
+    /// @dev #3173 — the default escape period: how long a manual pause must
+    ///      run, after launch, before a protected account's escape route opens.
+    uint256 internal constant ESCAPE_GRACE_DEFAULT = 3 days;
+    /// @dev The escape period's floor: longer than the governance timelock's
+    ///      48-hour delay, so a pause that is part of an ordinary timelocked
+    ///      fix never opens the escape (owner decision 2026-11-05).
+    uint256 internal constant MIN_ESCAPE_GRACE = 49 hours;
+    /// @dev The escape period's ceiling, so a protected account is never held
+    ///      longer than a week by a pause nobody lifts.
+    uint256 internal constant MAX_ESCAPE_GRACE = 7 days;
 
     /// @notice One paused interval.
     /// @dev `end == OPEN_END` while a manual pause is in force. An
@@ -147,6 +169,9 @@ library LibPausable {
     ///         `newSeconds == 0` restores the default.
     /// @custom:event-category informational/config
     event AutoPauseCooldownSet(uint32 newSeconds);
+    /// @notice #3173 — the escape period for manual pauses that start from
+    ///         now on was set; 0 restores the default.
+    event EscapeGraceSet(uint32 newSeconds);
 
     error EnforcedPause();
     error ExpectedPause();
@@ -162,6 +187,8 @@ library LibPausable {
     /// @dev #2744 — a cooldown outside [`minSec`, `maxSec`] (0 is allowed:
     ///      it restores the default).
     error InvalidAutoPauseCooldown(uint32 provided, uint256 minSec, uint256 maxSec);
+    /// @notice #3173 — an escape period outside [`minSec`, `maxSec`].
+    error InvalidEscapeGrace(uint32 provided, uint256 minSec, uint256 maxSec);
 
     function _storage() private pure returns (PausableStorage storage ps) {
         bytes32 position = PAUSABLE_STORAGE_POSITION;
@@ -260,6 +287,10 @@ library LibPausable {
         PausableStorage storage ps = _storage();
         _recordUnlogged(ps);
         _openInterval(ps);
+        // #3173 — a manual pause keeps the escape period in force when it
+        // starts. A repeat `pause` during the same manual pause keeps both its
+        // interval (above) and its period, so it cannot re-time the escape.
+        if (!ps.paused) ps.escapeGraceAtPause = SafeCast.toUint32(_escapeGrace(ps));
         ps.paused = true;
         ps.lastPauseBoundaryAt = SafeCast.toUint64(block.timestamp);
         ++ps.pauseTransitions;
@@ -392,6 +423,39 @@ library LibPausable {
         }
         _storage().autoPauseCooldownSeconds = newSeconds;
         emit AutoPauseCooldownSet(newSeconds);
+    }
+
+    /// @dev #3173 — sets the escape period for manual pauses that start from
+    ///      now on; 0 restores the default. The caller enforces the role; this
+    ///      enforces the bounds, so no caller can set a value outside them. A
+    ///      pause already running keeps the period it started with.
+    function setEscapeGraceSeconds(uint32 newSeconds) internal {
+        if (newSeconds != 0 && (newSeconds < MIN_ESCAPE_GRACE || newSeconds > MAX_ESCAPE_GRACE)) {
+            revert InvalidEscapeGrace(newSeconds, MIN_ESCAPE_GRACE, MAX_ESCAPE_GRACE);
+        }
+        _storage().escapeGraceSeconds = newSeconds;
+        emit EscapeGraceSet(newSeconds);
+    }
+
+    /// @dev #3173 — the escape period a manual pause starting now would get.
+    function escapeGraceSeconds() internal view returns (uint256) {
+        return _escapeGrace(_storage());
+    }
+
+    /// @dev #3173 — the escape period of the current manual pause: the value
+    ///      stamped when it started. Zero when no manual pause is in force.
+    ///      A stamp of zero (a pause recorded before the field existed) reads
+    ///      as the default.
+    function escapeGraceOfCurrentPause() internal view returns (uint256) {
+        PausableStorage storage ps = _storage();
+        if (!ps.paused) return 0;
+        uint32 v = ps.escapeGraceAtPause;
+        return v == 0 ? ESCAPE_GRACE_DEFAULT : uint256(v);
+    }
+
+    function _escapeGrace(PausableStorage storage ps) private view returns (uint256) {
+        uint32 v = ps.escapeGraceSeconds;
+        return v == 0 ? ESCAPE_GRACE_DEFAULT : uint256(v);
     }
 
     function _cooldownSeconds(PausableStorage storage ps) private view returns (uint256) {

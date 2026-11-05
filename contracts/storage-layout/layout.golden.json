@@ -350,6 +350,8 @@
     "L|pausable|1|20|uint64|firstUnpausedAt",
     "L|pausable|2|0|address|firstUnpausedVia",
     "L|pausable|4|0|uint64|lastAutoPauseUntil",
+    "L|pausable|4|12|uint32|escapeGraceSeconds",
+    "L|pausable|4|16|uint32|escapeGraceAtPause",
     "L|pausable|4|8|uint32|autoPauseCooldownSeconds",
     "L|reentrancy-guard|0|0|uint256|status",
     "L|uups:AggregatorAdapterImplementation|0|0|address|diamond",
