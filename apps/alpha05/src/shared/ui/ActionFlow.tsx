@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useLocation } from 'react-router-dom';
 import type { OwnStateClient } from '../../chain/ownRail';
+import { getSupportedChain } from '../../chain/chains';
 import { useTxStore } from '../tx/txStore';
 import { useCopy } from '../copy/useCopy';
 import type { Refusal } from '../eligibility/types';
@@ -141,6 +142,17 @@ export function ActionFlow({ tx, identity, reviewedFor, receipt, recheck, descri
     await tx.run({ identity: reviewedFor, chainId: Number(reviewedFor.split(':')[0]), receipt, explorer, where: location.pathname });
   };
 
+  // Past the review, everything shown is about the wallet that confirmed
+  // it. When the reader has since switched wallet or network, say whose it
+  // is, so that wallet's outcome is never read as the connected one's.
+  const sender = phase.kind === 'review' || phase.kind === 'idle' ? null : (tx.frozen?.identity ?? null);
+  const senderNote =
+    sender !== null && sender !== identity ? (
+      <Notice tone="warn" tier="A">
+        {format('flow.sentFrom', { account: shortAddress(sender.split(':')[1] as `0x${string}`), chain: getSupportedChain(Number(sender.split(':')[0]))?.name ?? sender.split(':')[0]! })}
+      </Notice>
+    ) : null;
+
   const txLink = (hash: `0x${string}`) => (
     <a href={`${shownExplorer}/tx/${hash}`} target="_blank" rel="noreferrer">
       {shortAddress(hash)}
@@ -193,6 +205,7 @@ export function ActionFlow({ tx, identity, reviewedFor, receipt, recheck, descri
     case 'signing':
       return (
         <div className="action-flow" data-phase="signing">
+          {senderNote}
           <p className="tier-b" role="status">
             {text('flow.signing')}
           </p>
@@ -201,6 +214,7 @@ export function ActionFlow({ tx, identity, reviewedFor, receipt, recheck, descri
     case 'submitted':
       return (
         <div className="action-flow" data-phase="submitted">
+          {senderNote}
           <p className="tier-b" role="status">
             {text('flow.submitted')} {txLink(phase.hash)}
           </p>
@@ -209,6 +223,7 @@ export function ActionFlow({ tx, identity, reviewedFor, receipt, recheck, descri
     case 'mined':
       return (
         <div className="action-flow" data-phase="mined">
+          {senderNote}
           <p className="tier-b" role="status">
             {format('flow.mined', { block: phase.blockNumber.toString() })} {txLink(phase.hash)}
           </p>
@@ -217,6 +232,7 @@ export function ActionFlow({ tx, identity, reviewedFor, receipt, recheck, descri
     case 'measured':
       return (
         <div className="action-flow" data-phase="measured" data-verdict={phase.outcome.verdict}>
+          {senderNote}
           {shownReceipt !== null && <FinishCard card={{ receipt: shownReceipt, outcome: phase.outcome, next }} describeAsset={describeAsset} nowMs={nowMs} />}
           <p className="tier-b">
             {text('flow.transaction')} {txLink(phase.hash)}
@@ -232,6 +248,7 @@ export function ActionFlow({ tx, identity, reviewedFor, receipt, recheck, descri
     case 'receipt-unknown':
       return (
         <div className="action-flow" data-phase="receipt-unknown">
+          {senderNote}
           <Notice tone="warn" tier="A">
             {format('flow.receiptUnknown', { reason: phase.message })} {txLink(phase.hash)}
           </Notice>
@@ -248,6 +265,7 @@ export function ActionFlow({ tx, identity, reviewedFor, receipt, recheck, descri
     case 'superseded':
       return (
         <div className="action-flow" data-phase="superseded">
+          {senderNote}
           <Notice tone="warn" tier="A">
             {text(phase.reason === 'cancelled' ? 'flow.cancelled' : 'flow.replaced')} {txLink(phase.minedHash)}
           </Notice>
@@ -261,6 +279,7 @@ export function ActionFlow({ tx, identity, reviewedFor, receipt, recheck, descri
     case 'failed':
       return (
         <div className="action-flow" data-phase="failed">
+          {senderNote}
           <Notice tone="danger" tier="A">
             {format('flow.notSent', { reason: phase.message })}
           </Notice>

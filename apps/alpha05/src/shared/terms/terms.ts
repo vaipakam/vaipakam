@@ -31,8 +31,11 @@ export interface AcceptanceRecord {
   acceptedAt: number;
 }
 
-export async function readAcceptance(client: PublicClient, diamond: Hex, account: Hex): Promise<AcceptanceRecord | null> {
-  const record = (await client.readContract({ address: diamond, abi: LEGAL, functionName: 'getUserTosAcceptance', args: [account] })) as {
+/** `at` pins a read to a block (a measurement); omitted, it reads latest. */
+type At = { blockNumber: bigint } | undefined;
+
+export async function readAcceptance(client: PublicClient, diamond: Hex, account: Hex, at?: At): Promise<AcceptanceRecord | null> {
+  const record = (await client.readContract({ address: diamond, abi: LEGAL, functionName: 'getUserTosAcceptance', args: [account], ...at })) as {
     version: number;
     hash: Hex;
     acceptedAt: bigint;
@@ -40,11 +43,11 @@ export async function readAcceptance(client: PublicClient, diamond: Hex, account
   return Number(record.version) === 0 ? null : { version: Number(record.version), hash: record.hash, acceptedAt: Number(record.acceptedAt) };
 }
 
-export async function readTerms(client: PublicClient, diamond: Hex, account: Hex): Promise<TermsState> {
+export async function readTerms(client: PublicClient, diamond: Hex, account: Hex, at?: At): Promise<TermsState> {
   const [current, accepted, record] = await Promise.all([
-    client.readContract({ address: diamond, abi: LEGAL, functionName: 'getCurrentTos' }) as Promise<readonly [number, Hex]>,
-    client.readContract({ address: diamond, abi: LEGAL, functionName: 'hasAcceptedCurrentTerms', args: [account] }) as Promise<boolean>,
-    readAcceptance(client, diamond, account),
+    client.readContract({ address: diamond, abi: LEGAL, functionName: 'getCurrentTos', ...at }) as Promise<readonly [number, Hex]>,
+    client.readContract({ address: diamond, abi: LEGAL, functionName: 'hasAcceptedCurrentTerms', args: [account], ...at }) as Promise<boolean>,
+    readAcceptance(client, diamond, account, at),
   ]);
   return termsFrom(Number(current[0]), current[1], accepted, record === null ? null : { version: record.version, acceptedAt: record.acceptedAt });
 }

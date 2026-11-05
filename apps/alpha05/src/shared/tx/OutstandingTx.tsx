@@ -9,7 +9,8 @@ import { inFlight, useTxEntries } from './txStore';
  * RB-CONFIDENCE — a transaction handed to the wallet is never out of sight:
  * while no page shows a flow that is still out (or whose receipt could not
  * be read), the shell says so on every page, names what was confirmed and on
- * which network, links the hash, and points back to the page that owns it,
+ * which network and from which wallet, links the hash, and points back to
+ * the page that owns it,
  * where the flow is shown in full and can be checked again.
  */
 export function OutstandingTx() {
@@ -26,7 +27,7 @@ export function OutstandingTx() {
         const hash = 'hash' in e.phase ? e.phase.hash : null;
         return (
           <Notice key={key} tone="warn" tier="A">
-            {format(e.phase.kind === 'receipt-unknown' ? 'shell.txUnknown' : 'shell.txOut', { title, chain })}{' '}
+            {format(e.phase.kind === 'receipt-unknown' ? 'shell.txUnknown' : 'shell.txOut', { title, chain, account: shortAddress(frozen.identity.split(':')[1] as `0x${string}`) })}{' '}
             {hash && (
               <a href={`${frozen.explorer}/tx/${hash}`} target="_blank" rel="noreferrer">
                 {shortAddress(hash)}

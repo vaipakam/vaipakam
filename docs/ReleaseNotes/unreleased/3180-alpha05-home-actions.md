@@ -6,6 +6,8 @@ On a test network whose deployment record publishes test assets, Home offers the
 
 The fee-discount setting can now be turned on and off from Home, as the platform's one per-network flag. The review says what changes for borrowing and for lending, and how a lender's discount is delivered on that network (paid in VPFI from the vault where a price source is configured and the vault can pay at that settlement, otherwise a smaller fee with no VPFI moved), that the borrower discount applies only on a liquid lending asset, and that no discount exceeds half the fee. Turning it on asks for the Terms of Service in force first, when a version is in force: the prompt names the action that asked, shows the version, the whole fingerprint of its text, the version's permanent page and the privacy notice, and continues to the setting once accepted. Turning it off never asks. While the protocol is paused the setting cannot be changed in either direction, and Home says so with what stays open.
 
+Every outcome is read back at the block the transaction was mined in, so a node that is behind cannot report a finished change as not made; when no source can serve that block, the outcome says it is unknown. If the reader switches wallet after confirming, the flow says which wallet it belongs to.
+
 The rewards widget that was planned beside these moves to the next Home part, with the shared claim flow it needs. The user guide's Basic and Advanced editions gain sections on the test assets, the fee discount and the Terms prompt, in every language.
 
 Rulebook: `docs/DesignsAndPlans/Alpha05AppDesign.md` RB-CONFIDENCE, RB-REVIEW, RB-SWITCH, RB-FUNDS. Epic #3180.

@@ -28,6 +28,8 @@ import { refusalFromError } from '../eligibility/refusal';
 import { summarize, type LegOutcome } from './outcome';
 import { IllegalTransition, transition, type TxEvent } from './track';
 import { useTxEntry, useTxStore, type Frozen, type Submission } from './txStore';
+import { anchoredReader, type AnchoredReader } from './anchored';
+import type { OwnStateSource } from '../../chain/ownRail';
 import type { TxPhase } from './outcome';
 
 export interface TrackedTxOptions {
@@ -37,11 +39,18 @@ export interface TrackedTxOptions {
   key: string;
   chainId: number;
   account: `0x${string}`;
+  /** The sender's own-rail sources (`own.sources`): the measurement reads
+   *  through these, kept with the hash, so a resume after a switch still
+   *  reads the sender's state. */
+  sources: readonly OwnStateSource[];
   /** Ask the wallet; resolves with the hash once submitted. */
   send: () => Promise<`0x${string}`>;
   /** Read the chain back after the receipt: one leg per intended effect.
-   *  A leg the read-back cannot substantiate is `unknown`, never omitted. */
-  measure: (receipt: TransactionReceipt) => Promise<readonly LegOutcome[]>;
+   *  Every read goes through `at`, pinned to the receipt's block, never
+   *  through a client at "latest" (a lagging node would answer with the
+   *  state from before the transaction). A leg the read-back cannot
+   *  substantiate is `unknown`, never omitted. */
+  measure: (receipt: TransactionReceipt, at: AnchoredReader) => Promise<readonly LegOutcome[]>;
 }
 
 export interface TrackedTx {
@@ -116,7 +125,7 @@ export function useTrackedTx(opts: TrackedTxOptions): TrackedTx {
       if (mined.kind !== 'mined') return;
       let legs: readonly LegOutcome[];
       try {
-        legs = await ctx.measure(receipt);
+        legs = await ctx.measure(receipt, anchoredReader(ctx.sources, receipt.blockNumber));
       } catch (e) {
         legs = [{ status: 'unknown', label: 'outcome', reason: `The read-back failed: ${(e as Error).message}` }];
       }
@@ -136,7 +145,7 @@ export function useTrackedTx(opts: TrackedTxOptions): TrackedTx {
         apply({ type: 'failed', message: refusalFromError(e).reason });
         return;
       }
-      const ctx: Submission = { chainId: opts.chainId, account: opts.account, measure: opts.measure };
+      const ctx: Submission = { chainId: opts.chainId, account: opts.account, sources: opts.sources, measure: opts.measure };
       store.update(key, (e) => ({ ...e, submission: ctx }));
       apply({ type: 'submitted', hash, at: Date.now() });
       await track(hash, ctx);

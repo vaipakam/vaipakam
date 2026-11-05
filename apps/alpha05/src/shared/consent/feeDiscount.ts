@@ -27,8 +27,9 @@ export type DeliveryMode = 'vpfi' | 'direct';
 
 const ZERO = '0x0000000000000000000000000000000000000000';
 
-export async function readFeeDiscountConsent(client: PublicClient, diamond: `0x${string}`, account: `0x${string}`): Promise<boolean> {
-  return (await client.readContract({ address: diamond, abi: VPFI_DISCOUNT_ABI, functionName: 'getVPFIDiscountConsent', args: [account] })) as boolean;
+/** `at` pins the read to a block (a measurement); omitted, it reads latest. */
+export async function readFeeDiscountConsent(client: PublicClient, diamond: `0x${string}`, account: `0x${string}`, at?: { blockNumber: bigint }): Promise<boolean> {
+  return (await client.readContract({ address: diamond, abi: VPFI_DISCOUNT_ABI, functionName: 'getVPFIDiscountConsent', args: [account], ...at })) as boolean;
 }
 
 /** The lender discount's delivery mode, from the price configuration: VPFI

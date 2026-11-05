@@ -58,18 +58,19 @@ export function Faucet() {
     key: 'home.faucet',
     chainId: chain?.chainId ?? 0,
     account,
+    sources: own?.sources ?? [],
     send: () => {
       if (!pick || !chain) throw new Error('no mint under review');
       return pick.kind === 'erc20'
         ? writeContract(config, { address: pick.asset.address, abi: FAUCET_ERC20_ABI, functionName: 'mint', args: [account, pick.amount], chainId: chain.chainId, account })
         : writeContract(config, { address: pick.asset.address, abi: FAUCET_NFT_ABI, functionName: 'mint', args: [account, pick.tokenId], chainId: chain.chainId, account });
     },
-    measure: async () => {
-      if (!pick || !own) return [];
+    measure: async (_receipt, at) => {
+      if (!pick) return [];
       if (pick.kind === 'erc20') {
         const amount = pick.amount;
         const label = format('faucet.legToken', { symbol: assetName(pick.asset.address, meta ?? null) });
-        const after = (await own.read((c) => c.readContract({ address: pick.asset.address, abi: FAUCET_ERC20_ABI, functionName: 'balanceOf', args: [account] }))).value;
+        const after = await at.read((c, b) => c.readContract({ address: pick.asset.address, abi: FAUCET_ERC20_ABI, functionName: 'balanceOf', args: [account], ...b }));
         if (before.current === null) return [{ status: 'unknown', label, reason: text('faucet.noBefore') }];
         const rose = after - before.current;
         if (rose >= amount) return [{ status: 'done', label }];
@@ -79,7 +80,7 @@ export function Faucet() {
       const label = format('faucet.legNft', { symbol: assetName(pick.asset.address, meta ?? null), id: tokenId.toString() });
       // Only the contract's own refusal says "not minted"; a read no source
       // could run says nothing about the chain, so the leg stays unknown.
-      const owner = await askThrough(own, (c) => c.readContract({ address: pick.asset.address, abi: FAUCET_NFT_ABI, functionName: 'ownerOf', args: [tokenId] }));
+      const owner = await at.ask((c, b) => c.readContract({ address: pick.asset.address, abi: FAUCET_NFT_ABI, functionName: 'ownerOf', args: [tokenId], ...b }));
       if (owner.kind === 'unreadable') return [{ status: 'unknown', label, reason: format('faucet.ownerUnknown', { reason: owner.reason }) }];
       if (owner.kind === 'reverted') return [{ status: 'not-done', label, reason: text('faucet.notMinted') }];
       return owner.value.toLowerCase() === account.toLowerCase() ? [{ status: 'done', label }] : [{ status: 'not-done', label, reason: text('faucet.notYours') }];

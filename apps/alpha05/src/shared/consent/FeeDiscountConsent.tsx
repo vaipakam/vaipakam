@@ -59,10 +59,11 @@ export function FeeDiscountConsent() {
     key: 'home.consent',
     chainId: chain?.chainId ?? 0,
     account,
+    sources: own?.sources ?? [],
     send: () =>
       writeContract(config, { address: diamond, abi: VPFI_DISCOUNT_ABI, functionName: 'setVPFIDiscountConsent', args: [target], chainId: chain!.chainId, account }),
-    measure: async () => {
-      const now = (await own!.read((c) => readFeeDiscountConsent(c, diamond, account))).value;
+    measure: async (_receipt, at) => {
+      const now = await at.read((c, b) => readFeeDiscountConsent(c, diamond, account, b));
       const label = format('consent.leg', { state: text(target ? 'consent.stateOn' : 'consent.stateOff') });
       if (now === target) return [{ status: 'done', label }];
       return [{ status: 'not-done', label, reason: text('consent.legMissing') }];

@@ -7,7 +7,7 @@
  * rather than guessed.
  */
 import { BaseError, ContractFunctionRevertedError, type Abi, type PublicClient } from 'viem';
-import type { OwnStateClient } from '../../chain/ownRail';
+import type { OwnStateClient, OwnStateSource } from '../../chain/ownRail';
 import { refusalFromError } from '../eligibility/refusal';
 import type { Recheck } from '../ui/ActionFlow';
 
@@ -30,9 +30,13 @@ function isRevert(e: unknown): boolean {
  *  like an outage, and an outage proves nothing about the chain. */
 export type Asked<T> = { kind: 'answered'; value: T } | { kind: 'reverted'; error: unknown } | { kind: 'unreadable'; reason: string };
 
-export async function askThrough<T>(own: OwnStateClient, fn: (client: PublicClient) => Promise<T>): Promise<Asked<T>> {
+export async function askThrough<T>(own: Pick<OwnStateClient, 'sources'>, fn: (client: PublicClient) => Promise<T>): Promise<Asked<T>> {
+  return askSources(own.sources, fn);
+}
+
+export async function askSources<T>(sources: readonly OwnStateSource[], fn: (client: PublicClient) => Promise<T>): Promise<Asked<T>> {
   let firstFailure: unknown = null;
-  for (const source of own.sources) {
+  for (const source of sources) {
     try {
       return { kind: 'answered', value: await fn(source.client) };
     } catch (e) {

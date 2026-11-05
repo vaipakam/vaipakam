@@ -18,6 +18,8 @@ import { createContext, useContext, useState, useSyncExternalStore, type ReactNo
 import type { TransactionReceipt } from 'viem';
 import type { Receipt } from '../receipt/types';
 import type { LegOutcome, TxPhase } from './outcome';
+import type { OwnStateSource } from '../../chain/ownRail';
+import type { AnchoredReader } from './anchored';
 
 /** What the reader confirmed, frozen when the wallet is asked. */
 export interface Frozen {
@@ -35,7 +37,9 @@ export interface Frozen {
 export interface Submission {
   chainId: number;
   account: `0x${string}`;
-  measure: (receipt: TransactionReceipt) => Promise<readonly LegOutcome[]>;
+  /** The sender's own-rail sources, which the measurement reads through. */
+  sources: readonly OwnStateSource[];
+  measure: (receipt: TransactionReceipt, at: AnchoredReader) => Promise<readonly LegOutcome[]>;
 }
 
 export interface TxEntry {

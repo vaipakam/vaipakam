@@ -54,6 +54,7 @@ export function useTermsGate(key: string, chain: SupportedChain | null, own: Own
     key,
     chainId: chain?.chainId ?? 0,
     account,
+    sources: own?.sources ?? [],
     send: () => {
       if (!session || !chain) throw new Error('no Terms under review');
       return writeContract(config, {
@@ -65,17 +66,14 @@ export function useTermsGate(key: string, chain: SupportedChain | null, own: Own
         account,
       });
     },
-    measure: async () => {
-      if (!session || !own) return [];
+    measure: async (_receipt, at) => {
+      if (!session) return [];
       const reviewed = session.terms;
       const label = format('terms.legAccepted', { version: String(reviewed.version) });
       // What was sent is measured against the wallet's RECORDED acceptance,
       // not against which version is in force now: a version installed
       // after this one mined does not undo it, and is stated as its own leg.
-      const [record, now] = await Promise.all([
-        own.read((c) => readAcceptance(c, diamond, account)).then((r) => r.value),
-        own.read((c) => readTerms(c, diamond, account)).then((r) => r.value),
-      ]);
+      const [record, now] = await Promise.all([at.read((c, b) => readAcceptance(c, diamond, account, b)), at.read((c, b) => readTerms(c, diamond, account, b))]);
       if (!record || record.version !== reviewed.version || record.hash !== reviewed.hash) return [{ status: 'not-done', label, reason: text('terms.legMissing') }];
       if (now.kind !== 'needed') return [{ status: 'done', label }];
       return [

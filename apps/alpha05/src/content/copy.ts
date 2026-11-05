@@ -12,8 +12,8 @@ export const copy = {
   shell: {
     brand: B('Vaipakam'),
     more: B('More'),
-    txOut: A('A transaction you confirmed is still out: {{title}}, on {{chain}}.'),
-    txUnknown: A('A transaction you confirmed has no readable receipt yet: {{title}}, on {{chain}}. It may still execute.'),
+    txOut: A('A transaction you confirmed from {{account}} is still out: {{title}}, on {{chain}}.'),
+    txUnknown: A('A transaction you confirmed from {{account}} has no readable receipt yet: {{title}}, on {{chain}}. It may still execute.'),
     txOpen: B('Show it'),
     modeBasic: B('Basic'),
     modeAdvanced: B('Advanced'),
@@ -265,6 +265,7 @@ export const copy = {
     replaced: A('Your wallet replaced this transaction with a different one, so the change was not made through it. The replacing transaction:'),
     notSent: A('Not sent. {{reason}}'),
     identityChanged: A('Your wallet or network changed after this review opened, so it is not offered for signing. Close it and start again.'),
+    sentFrom: A('This was confirmed from {{account}} on {{chain}}, not the wallet connected now. Everything below is about that wallet.'),
   },
   terms: {
     title: B('Terms of Service'),
