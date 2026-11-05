@@ -1,4 +1,4 @@
-## Keeper — release and return loops start somewhere new each run (PR #TBD)
+## Keeper — release and return loops start somewhere new each run (PR #3194)
 
 The keeper's reward close-out (the removed remit-destination releases on
 Base) and its return transport (pending repatriation authorizations and
