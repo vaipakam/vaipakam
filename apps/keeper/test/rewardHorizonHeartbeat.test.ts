@@ -182,20 +182,21 @@ class FakeChain {
   retireLeft = new Map<number, number>();
   /** Step 5: entries whose retirement reverts. */
   retireFailing = new Set<number>();
+  /** Step 5: calls an entry's retirement spends only advancing the side's
+   *  pricing cursor (nothing retired, `progressed` true, #3026) first. */
+  retireCursorOnly = new Map<number, number>();
   /** Step 5: what each forfeit sweep of a loan moves, call by call. */
   sweepChunks = new Map<bigint, bigint[]>();
   /** Step 5: loans whose forfeit sweep reverts. */
   sweepFailing = new Set<bigint>();
-  /** Step 5: calls a loan's sweep spends preparing (returning zero, with an
-   *  event) before its chunks move value. */
+  /** Step 5: calls a loan's sweep spends preparing (zero swept, `progressed`
+   *  true, #3012) before its chunks move value. */
   sweepPrepares = new Map<bigint, number>();
   /** Step 5: loans whose sweep simulates clean but reverts on chain. */
   sweepRevertsOnChain = new Set<bigint>();
   /** Step 5: the run's deadline passes while a landed sweep's entries are
    *  re-read. */
   deadlineOnRecheck = false;
-  /** Logs the next receipt carries. */
-  private nextLogs = 0;
   private nextReverts = false;
   /** Step 5 calls sent, in order. */
   settleSent: { fn: string; arg: unknown }[] = [];
@@ -232,14 +233,16 @@ class FakeChain {
     if (functionName === 'retireZeroPricedRemainders') {
       const ids = (args[0] as bigint[]).map(Number);
       if (ids.some((id) => this.retireFailing.has(id))) throw revert('InteractionPoolReservedShortfall');
-      const count = ids.filter((id) => (this.retireLeft.get(id) ?? 0) > 0).length;
-      return { result: [BigInt(count), 7n * BigInt(count)] };
+      const cursorOnly = ids.some((id) => (this.retireCursorOnly.get(id) ?? 0) > 0);
+      const count = cursorOnly ? 0 : ids.filter((id) => (this.retireLeft.get(id) ?? 0) > 0).length;
+      return { result: [BigInt(count), 7n * BigInt(count), cursorOnly || count > 0] };
     }
     if (functionName === 'sweepForfeitedInteractionRewards') {
       const loan = args[0] as bigint;
       if (this.sweepFailing.has(loan)) throw revert('InteractionPoolReservedShortfall');
-      if ((this.sweepPrepares.get(loan) ?? 0) > 0) return { result: 0n };
-      return { result: this.sweepChunks.get(loan)?.[0] ?? 0n };
+      if ((this.sweepPrepares.get(loan) ?? 0) > 0) return { result: [0n, true] };
+      const chunks = this.sweepChunks.get(loan) ?? [];
+      return { result: [chunks[0] ?? 0n, chunks.length > 0] };
     }
     const ids = (args[0] as bigint[]).map(Number);
     const bad = ids.find((id) => this.failing.has(id));
@@ -249,11 +252,9 @@ class FakeChain {
   };
 
   waitForTransactionReceipt = async () => {
-    const logs = Array.from({ length: this.nextLogs }, () => ({}));
     const reverted = this.receiptReverts || this.nextReverts;
-    this.nextLogs = 0;
     this.nextReverts = false;
-    return { status: reverted ? 'reverted' : 'success', logs };
+    return { status: reverted ? 'reverted' : 'success', logs: [] };
   };
 
   client(): PublicClient {
@@ -271,7 +272,12 @@ class FakeChain {
         writeContract: async ({ functionName, args }: { functionName: string; args: readonly unknown[] }) => {
           if (functionName === 'retireZeroPricedRemainders') {
             this.settleSent.push({ fn: functionName, arg: (args[0] as bigint[]).map(Number) });
-            for (const id of (args[0] as bigint[]).map(Number)) {
+            const ids = (args[0] as bigint[]).map(Number);
+            if (ids.some((id) => (this.retireCursorOnly.get(id) ?? 0) > 0)) {
+              for (const id of ids) this.retireCursorOnly.set(id, Math.max(0, (this.retireCursorOnly.get(id) ?? 0) - 1));
+              return `0x${'1'.repeat(64)}`;
+            }
+            for (const id of ids) {
               const left = (this.retireLeft.get(id) ?? 0) - 1;
               if (left < 0) continue;
               this.retireLeft.set(id, left);
@@ -287,11 +293,9 @@ class FakeChain {
             const prep = this.sweepPrepares.get(loan) ?? 0;
             if (prep > 0) {
               this.sweepPrepares.set(loan, prep - 1);
-              this.nextLogs = 1;
               return `0x${'1'.repeat(64)}`;
             }
             const chunks = this.sweepChunks.get(loan) ?? [];
-            if (chunks.length > 0) this.nextLogs = 1;
             chunks.shift();
             // A loan with no chunks set is deferred: nothing it can settle yet.
             if (this.sweepChunks.has(loan) && chunks.length === 0) for (const [id, e] of this.entries) if (e.loanId === loan && e.forfeited) this.entries.set(id, { ...e, processed: true });
@@ -438,7 +442,7 @@ describe('a run', () => {
       expect(typo.line).not.toContain('ture');
     });
 
-    it('sweeps a loan whose first chunk only prepares (zero swept, an event), until it settles (Codex #3006)', async () => {
+    it('sweeps a loan whose first chunk only prepares (zero swept, progressed), until it settles (#3012)', async () => {
       chain.entries.set(1, entry({ forfeited: true, loanId: 9n }));
       chain.sweepPrepares.set(9n, 1);
       chain.sweepChunks.set(9n, [4n * 10n ** 18n]);
@@ -458,20 +462,38 @@ describe('a run', () => {
       expect(queued(), 'the loan stays due').toEqual([1]);
     });
 
-    it('sweeps a deferred loan once a heartbeat, not more, while it moves nothing', async () => {
+    it('sends nothing for a deferred loan whose sweep would not progress, and keeps it queued (#3012)', async () => {
       chain.entries.set(1, entry({ forfeited: true, loanId: 9n }));
       await run(true);
-      expect(chain.settleSent).toEqual([{ fn: 'sweepForfeitedInteractionRewards', arg: 9n }]);
-      await run(true);
-      expect(chain.settleSent, 'not due again within the heartbeat').toHaveLength(1);
+      expect(chain.settleSent, 'a simulation only, never a transaction').toEqual([]);
       later(DUE_AFTER_SEC);
       await run(true);
-      expect(chain.settleSent).toHaveLength(2);
-      expect(queued()).toEqual([1]);
+      expect(chain.settleSent).toEqual([]);
+      expect(queued(), 'it stays for the run its sweep can settle').toEqual([1]);
+      chain.sweepChunks.set(9n, [2n * 10n ** 18n]);
+      later(DUE_AFTER_SEC);
+      await run(true);
+      expect(chain.settleSent).toEqual([{ fn: 'sweepForfeitedInteractionRewards', arg: 9n }]);
+      expect(chain.entries.get(1)!.processed).toBe(true);
+    });
+
+    it('sends a retirement that only advances the pricing cursor, then retires the entry (#3026)', async () => {
+      chain.entries.set(1, entry());
+      chain.retireCursorOnly.set(1, 2);
+      chain.retireLeft.set(1, 1);
+      await run(true);
+      expect(chain.settleSent).toEqual([
+        { fn: 'retireZeroPricedRemainders', arg: [1] },
+        { fn: 'retireZeroPricedRemainders', arg: [1] },
+        { fn: 'retireZeroPricedRemainders', arg: [1] },
+      ]);
+      expect(chain.entries.get(1)!.processed).toBe(true);
+      expect(logged.join('\n')).toMatch(/retire=1 retired=1 in 3 call\(s\)/);
     });
 
     it('keeps a close-out alert open when the send that simulated clean reverts on chain (Codex #3006)', async () => {
       chain.entries.set(1, entry({ forfeited: true, loanId: 9n }));
+      chain.sweepChunks.set(9n, [1n]);
       chain.sweepRevertsOnChain.add(9n);
       openAlert(`horizon-settle:${CHAIN}:1`);
       await run(true);
