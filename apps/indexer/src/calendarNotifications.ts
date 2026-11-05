@@ -31,7 +31,7 @@
  *     correctly after an extension. Partial repays do NOT move the
  *     maturity: since #641 every partial path (ERC-20 RepayFacet,
  *     rental #1188, SwapToRepayFacet) re-stamps only the dedicated
- *     interest clock (`interestAccrualStart`/`interestRemainingDays`)
+ *     interest clock (`interestAccrualStart`)
  *     and leaves the term tuple untouched — the D1 columns stay
  *     correct without a refresh.
  *   - The dedup key embeds the maturity timestamp, so an extension

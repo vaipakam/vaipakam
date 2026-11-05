@@ -120,14 +120,18 @@ export function lateFeeAt(l, ts) {
   return (l.principal * bps) / 10_000n;
 }
 
-/** `refinancePayoffOf`: principal + interest for max(elapsed whole days,
- *  remaining committed days) + the grace-window late fee. */
+/** `refinancePayoffOf`: principal + interest for max(seconds elapsed since the
+ *  interest clock, the full-term minimum) + the grace-window late fee. #3169:
+ *  to the second, and the minimum runs from the clock's start to the term's
+ *  end (`startTime + durationDays`; this drive reads no pause log, as the
+ *  late fee above does not). */
 export function refinancePayoffAt(l, asOf) {
   const start = l.interestAccrualStart !== 0n ? l.interestAccrualStart : l.startTime;
-  const elapsed = asOf > start ? (asOf - start) / DAY : 0n;
-  const floorDays = l.interestAccrualStart !== 0n ? BigInt(l.interestRemainingDays) : l.durationDays;
-  const days = elapsed > floorDays ? elapsed : floorDays;
-  return l.principal + (l.principal * l.interestRateBps * days) / (365n * 10_000n) + lateFeeAt(l, asOf);
+  const elapsed = asOf > start ? asOf - start : 0n;
+  const termEnd = l.startTime + l.durationDays * DAY;
+  const floor = termEnd > start ? termEnd - start : 0n;
+  const secs = elapsed > floor ? elapsed : floor;
+  return l.principal + (l.principal * l.interestRateBps * secs) / (365n * DAY * 10_000n) + lateFeeAt(l, asOf);
 }
 
 /**
@@ -138,7 +142,7 @@ export function refinancePayoffAt(l, asOf) {
  *
  * The payoff is the LIVE remaining-term figure, never `durationDays` of
  * interest: a loan re-anchored by a partial repayment owes interest from
- * `interestAccrualStart` over `interestRemainingDays`, which can be far
+ * `interestAccrualStart` to the term's end, which can be far
  * shorter than its original length — a full-term figure over-reserves and
  * BLOCKS a drivable loan. So it is the larger of
  *   - `viewDue`: the contract's own payoff view (RepayFacet

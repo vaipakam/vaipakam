@@ -54,24 +54,42 @@ library LibLoanClock {
         return (m - block.timestamp + 1 days - 1) / 1 days;
     }
 
-    /// @notice The end of the loan's interest term as of `at`: the interest
-    ///         clock's start plus its remaining days (#641), moved by the
-    ///         paused time since that start. The term a rate shortfall at a
-    ///         sale or an early close is priced over.
-    /// @dev    The interest clock counts only unpaused days (a partial that
-    ///         re-stamps it consumes no paused day, see
-    ///         {unpausedDaysSinceInterestStart}), so the pause credit is added
-    ///         here from the clock's own start, not from the loan's. On a loan
-    ///         that has never been re-stamped the two starts coincide and this
-    ///         is {maturity}.
+    /// @notice The end of the loan's interest term as of `at`: the original
+    ///         maturity moved by the paused time since the loan's start. The
+    ///         term a rate shortfall at a sale or an early close is priced
+    ///         over.
+    /// @dev    #3169 — derived from the term tuple, to the second. A partial
+    ///         re-stamps only the interest clock's start, never the term, so
+    ///         the term's end needs no counter of its own: it was the clock's
+    ///         start plus a whole-day remaining-term counter, which lost the
+    ///         part day at every partial. This is exactly what that sum was
+    ///         meant to be. At `at = block.timestamp` it is {maturity}.
     function interestTermEnd(LibVaipakam.Loan storage loan, uint256 at)
         internal
         view
         returns (uint256)
     {
+        return originalMaturity(loan) + LibPausable.pausedSecondsBetween(loan.startTime, at);
+    }
+
+    /// @notice #3169 — the seconds of interest a full-term loan owes at least,
+    ///         for its current accrual segment: from the interest clock's start
+    ///         to the term's end as it stood at that start.
+    /// @dev    The term's end is read at the SEGMENT START, not now, so a pause
+    ///         inside the segment does not raise the minimum: accrual already
+    ///         counts the paused seconds by elapsed time, and the pause only
+    ///         moves the deadline. A pause before the segment moved the term,
+    ///         and a partial at that point owes the moved remainder. On a loan
+    ///         never re-stamped the segment starts at `startTime`, and this is
+    ///         exactly `durationDays` of interest, as before.
+    function minimumInterestSeconds(LibVaipakam.Loan storage loan)
+        internal
+        view
+        returns (uint256)
+    {
         uint256 start = LibVaipakam.interestAccrualStartOf(loan);
-        return start + LibVaipakam.interestRemainingDaysOf(loan) * 1 days
-            + LibPausable.pausedSecondsBetween(start, at);
+        uint256 end = interestTermEnd(loan, start);
+        return end > start ? end - start : 0;
     }
 
     /// @notice Seconds of interest term left at `at`; zero past the end.
@@ -82,21 +100,6 @@ library LibLoanClock {
     {
         uint256 end = interestTermEnd(loan, at);
         return end > at ? end - at : 0;
-    }
-
-    /// @notice Whole unpaused days since the interest clock's start: the
-    ///         days a partial that re-stamps the clock consumes from its
-    ///         remaining term. A paused day is not consumed, because the
-    ///         pause moved the term's end by that day.
-    function unpausedDaysSinceInterestStart(LibVaipakam.Loan storage loan)
-        internal
-        view
-        returns (uint256)
-    {
-        uint256 start = LibVaipakam.interestAccrualStartOf(loan);
-        if (block.timestamp <= start) return 0;
-        return (block.timestamp - start - LibPausable.pausedSecondsBetween(start, block.timestamp))
-            / 1 days;
     }
 
     /// @notice The loan's effective grace end: past it the loan may be

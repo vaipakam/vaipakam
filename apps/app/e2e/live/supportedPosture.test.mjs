@@ -38,7 +38,6 @@ const LOAN22 = {
   startTime: 1_790_964_520n,
   durationDays: 29n,
   interestAccrualStart: 1_790_964_520n,
-  interestRemainingDays: 29,
   treasuryFeeBpsAtInit: 200,
 };
 
@@ -91,11 +90,10 @@ describe('supportedPosture — preflight evaluation', () => {
     expect(postureMisses({ ...LOAN22, collateralLiquidity: 0 }).map((x) => x.field)).toEqual(['collateralLiquidity']);
   });
 
-  it('the clock: a re-anchored loan is supported; a remaining term past the loan is not', () => {
-    expect(postureMisses({ ...LOAN22, interestAccrualStart: LOAN22.startTime + 86_400n * 10n, interestRemainingDays: 10 })).toEqual([]);
-    expect(postureMisses({ ...LOAN22, interestRemainingDays: 30 }).map((x) => x.field)).toEqual(['interestRemainingDays']);
-    // A legacy loan (no stamped clock) falls back to durationDays: supported.
-    expect(postureMisses({ ...LOAN22, interestAccrualStart: 0n, interestRemainingDays: 0 })).toEqual([]);
+  it('the clock: a re-anchored loan is supported, and so is a legacy unstamped one', () => {
+    // #3169 — no remaining-day counter: the minimum derives from the term.
+    expect(postureMisses({ ...LOAN22, interestAccrualStart: LOAN22.startTime + 86_400n * 10n })).toEqual([]);
+    expect(postureMisses({ ...LOAN22, interestAccrualStart: 0n })).toEqual([]);
   });
 
   it('a field missing from the read is outside the posture, never assumed', () => {

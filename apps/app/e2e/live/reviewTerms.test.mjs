@@ -149,7 +149,6 @@ const LOAN22 = {
   durationDays: 29n,
   interestRateBps: 1000n,
   interestAccrualStart: 1_790_964_520n,
-  interestRemainingDays: 29,
 };
 const REVIEW_AT = 1_791_190_250n; // chain time of the 2026-10-05 review
 const GRACE_END = 1_793_470_120n + 86_400n; // loan end + 1-day grace

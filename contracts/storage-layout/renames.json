@@ -320,6 +320,14 @@
       "from": "protocolTrackedVaultBalance",
       "to": "retiredProtocolTrackedVaultBalance",
       "reason": "Protected vault (depository vault): the ERC-20-only tracked balance is replaced by the per-(asset, tokenId) tracked holding appended at the tail of Storage. The slot keeps its place, is no longer read or written, and is marked retired, not repurposed. Every chain takes the new ledger by fresh deploy (TrackedHoldingRollout refuses an in-place crossing)."
+    },
+    {
+      "region": "vaipakam@20[uint256]",
+      "slot": 25,
+      "offset": 18,
+      "from": "loans[].interestRemainingDays",
+      "to": "loans[].retiredInterestRemainingDays",
+      "reason": "#3169 (owner decision 2026-11-05): interest counts by the second and a full-term loan's minimum is derived to the second from the term tuple (LibLoanClock.minimumInterestSeconds), so the whole-day remaining-term counter is retired; the slot keeps its place and is no longer written or read. Same type and position; marked retired, not repurposed."
     }
   ]
 }

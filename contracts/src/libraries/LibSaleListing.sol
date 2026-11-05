@@ -6,6 +6,7 @@ import {LibERC721} from "./LibERC721.sol";
 import {LibMetricsHooks} from "./LibMetricsHooks.sol";
 import {LibFacet} from "./LibFacet.sol";
 import {LibLoanClock} from "./LibLoanClock.sol";
+import {LibEntitlement} from "./LibEntitlement.sol";
 import {VaipakamNFTFacet} from "../facets/VaipakamNFTFacet.sol";
 
 /**
@@ -272,10 +273,9 @@ library LibSaleListing {
         LibVaipakam.Loan storage loan = s.loans[loanId];
         // #668 / #935 — the remaining term runs to the pause-moved end.
         uint256 remainingSecs = LibLoanClock.remainingInterestSeconds(loan, at);
-        uint256 denom = LibVaipakam.SECONDS_PER_YEAR * LibVaipakam.BASIS_POINTS;
         uint256 originalRemaining =
-            (loan.principal * loan.interestRateBps * remainingSecs) / denom;
-        uint256 saleRemaining = (loan.principal * saleRateBps * remainingSecs) / denom;
+            LibEntitlement.proRataInterestSeconds(loan.principal, loan.interestRateBps, remainingSecs);
+        uint256 saleRemaining = LibEntitlement.proRataInterestSeconds(loan.principal, saleRateBps, remainingSecs);
         return saleRemaining > originalRemaining ? saleRemaining - originalRemaining : 0;
     }
 

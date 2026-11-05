@@ -21,8 +21,8 @@
  * The contract rules mirrored (LibEntitlement): `settlementInterest` floors
  * the interest days at the remaining term ONLY when `useFullTermInterest`;
  * `settlementInterestNet` subtracts `interestSettled`; the accrual clock is
- * `interestAccrualStart` (else `startTime`) and the remaining term
- * `interestRemainingDays` (else `durationDays`) — both forms mirrored.
+ * `interestAccrualStart` (else `startTime`), and the full-term minimum runs
+ * from it to the term's end, `startTime + durationDays` (#3169).
  */
 
 const ACTIVE = 0;
@@ -80,15 +80,11 @@ export const SUPPORTED = Object.freeze({
     want: 'any (0 = a pre-#641 loan, mirrored as startTime)',
     why: 'both clock forms are mirrored, re-anchored by a partial repayment included',
   },
-  interestRemainingDays: {
-    ok: (v, l) => BigInt(l.interestAccrualStart) === 0n || BigInt(v) <= BigInt(l.durationDays),
-    want: '≤ durationDays when the clock is stamped',
-    why: 'the remaining term the mirror floors interest at; one longer than the loan is not a state the contract produces',
-  },
 });
 
 /** Fields that do not affect what the drive builds or checks, each with the reason. */
 export const NOT_AFFECTING = Object.freeze({
+  retiredInterestRemainingDays: 'retired by #3169: never written or read; the full-term minimum is derived from startTime + durationDays',
   id: 'an identifier',
   offerId: 'an identifier',
   lender: 'compared as a party (must not be the accepting lender); the old lender\u2019s payout is not verified by this drive',

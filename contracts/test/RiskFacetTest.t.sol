@@ -4186,8 +4186,10 @@ contract RiskFacetTest is Test {
             endTimeBefore,
             "endTime must be preserved exactly across partial"
         );
-        // Interest remaining = 20 whole days (30 − 10 elapsed).
-        assertEq(loanAfter.interestRemainingDays, 20, "interest remaining = whole days left");
+        // #3169 — no remaining-day counter: the residual's full-term minimum
+        // runs from the re-stamped clock to this preserved end, to the second
+        // (pinned in PerSecondInterestTest).
+        assertEq(uint256(loanAfter.interestAccrualStart), block.timestamp, "interest accrual restarts at now");
 
         vm.clearMockedCalls();
     }
@@ -4285,8 +4287,8 @@ contract RiskFacetTest is Test {
     ///      loan's maturity EXACTLY. The old code reset `startTime = now` and
     ///      floored `durationDays`, dropping the sub-day remainder and maturing
     ///      a 10.5-days-in 30-day loan 12h EARLY. The fix re-stamps only the
-    ///      dedicated INTEREST clock (`interestAccrualStart` /
-    ///      `interestRemainingDays`) and leaves the term tuple
+    ///      dedicated INTEREST clock (`interestAccrualStart`) and leaves
+    ///      the term tuple
     ///      (`startTime` + `durationDays`) untouched, so the maturity is
     ///      preserved to the second.
     function testPartialLiq_SubDayRemainder_NeverShortensMaturity() public {
@@ -4333,13 +4335,13 @@ contract RiskFacetTest is Test {
             1 days;
         assertEq(endTimeAfter, endTimeBefore, "maturity preserved exactly across a sub-day partial");
 
-        // The INTEREST clock re-stamps: origin = now, remaining = floor(19.5).
+        // The INTEREST clock re-stamps: origin = now. #3169 — the residual's
+        // minimum is the full 19.5 days to maturity, not floor(19.5).
         assertEq(
             uint256(loanAfter.interestAccrualStart),
             block.timestamp,
             "interest accrual restarts at now"
         );
-        assertEq(loanAfter.interestRemainingDays, 19, "interest remaining = whole days left");
 
         vm.clearMockedCalls();
     }
@@ -4446,9 +4448,9 @@ contract RiskFacetTest is Test {
         LibVaipakam.Loan memory loanAfter = LoanFacet(address(diamond))
             .getLoanDetails(loanId);
         // The term tuple is untouched: durationDays stays 30 → grace bucket
-        // unchanged. Only the interest remaining-term shrank.
+        // unchanged. Only the interest clock restarted.
         assertEq(loanAfter.durationDays, 30, "durationDays (term) unchanged - grace bucket unchanged");
-        assertLt(loanAfter.interestRemainingDays, 7, "interest remaining-term shrank (grace doesn't key off it)");
+        assertEq(uint256(loanAfter.interestAccrualStart), block.timestamp, "interest clock restarted (grace doesn't key off it)");
 
         // Maturity preserved exactly; default deadline = origMaturity + 3-day
         // bucket, NOT the collapsed 1-hour bucket the OLD live-term would imply.
@@ -4730,9 +4732,9 @@ contract RiskFacetTest is Test {
             endTimeInit,
             "endTime preserved across both partials"
         );
-        // term unchanged (30); interest remaining-term = 20 (30 - 10 elapsed).
+        // term unchanged (30); the interest clock restarted at the second partial.
         assertEq(loanAfter2.durationDays, 30, "durationDays (term) unchanged across both partials");
-        assertEq(loanAfter2.interestRemainingDays, 20, "interest remaining = 20 after 10 days elapsed");
+        assertEq(uint256(loanAfter2.interestAccrualStart), block.timestamp, "interest clock restarted at the second partial");
 
         // HF restored above 1.0 after the second partial.
         uint256 hfAfter2 = RiskFacet(address(diamond)).calculateHealthFactor(loanId);

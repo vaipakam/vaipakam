@@ -737,19 +737,11 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
         view
         returns (uint256 accruedInterest, uint256 lateFee)
     {
-        if (loan.useFullTermInterest) {
-            accruedInterest = LibEntitlement.fullTermInterest(
-                loan.principal,
-                loan.interestRateBps,
-                LibVaipakam.interestRemainingDaysOf(loan)
-            );
-        } else {
-            uint256 from = LibVaipakam.interestAccrualStartOf(loan);
-            uint256 elapsedSeconds = at > from ? at - from : 0;
-            accruedInterest =
-                (loan.principal * loan.interestRateBps * elapsedSeconds) /
-                (LibVaipakam.SECONDS_PER_YEAR * LibVaipakam.BASIS_POINTS);
-        }
+        // #3169 — the one settlement rule: per-second elapsed, with the
+        // full-term minimum when the loan carries it. It priced the full-term
+        // case at the minimum alone, which past maturity (the window runs to
+        // the grace end) undercharged the time actually elapsed.
+        accruedInterest = LibEntitlement.settlementInterest(loan, at);
         lateFee = LibVaipakam.calculateLateFeeAt(loanId, at);
     }
 
@@ -1038,10 +1030,9 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
         LibInterestLedger.setRate(LibVaipakam.storageSlot(), loan, newRateBps);
         loan.startTime = uint64(block.timestamp);
         loan.durationDays = newDurationDays;
-        // #641 — auto-refinance commits a NEW term; mirror the interest-accrual
-        // clock onto it (validated 1..365 ⇒ uint16 exact).
+        // #641 — auto-refinance commits a NEW term; restart the interest-accrual
+        // clock with it.
         loan.interestAccrualStart = uint64(block.timestamp);
-        loan.interestRemainingDays = uint16(newDurationDays);
         // Codex round-8 P2 — only re-register when the extension is
         // in-term. After `oldEndTime`, the borrower side is forfeited
         // and `loanBorrowerEntryId[loanId]` must stay pointed at the

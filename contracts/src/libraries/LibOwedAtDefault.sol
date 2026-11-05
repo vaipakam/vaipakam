@@ -105,8 +105,7 @@ library LibOwedAtDefault {
         uint256 elapsed = block.timestamp > start ? block.timestamp - start : 0;
         interest = LibEntitlement.creditSettledInterest(
             loan,
-            (principal * loan.interestRateBps * elapsed) /
-                (LibVaipakam.SECONDS_PER_YEAR * LibVaipakam.BASIS_POINTS)
+            LibEntitlement.proRataInterestSeconds(principal, loan.interestRateBps, elapsed)
         );
         lateFee = (principal * LibVaipakam.lateFeeBps(LibLoanClock.maturity(loan))) /
             LibVaipakam.BASIS_POINTS;

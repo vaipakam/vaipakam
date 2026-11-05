@@ -39,7 +39,6 @@ const loanDetails = (over: Record<string, unknown> = {}) => ({
   startTime: START,
   durationDays: 30n,
   interestAccrualStart: 0n,
-  interestRemainingDays: 0,
   useFullTermInterest: false,
   allowsPartialRepay: true,
   periodicInterestCadence: 0,
