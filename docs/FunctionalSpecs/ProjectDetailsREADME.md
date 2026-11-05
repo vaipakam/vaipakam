@@ -30,7 +30,7 @@ platform-wide rules apply across the lifecycle:
 - Forced-close paths credit interest that has already been settled, so default,
   liquidation, fallback, and related recovery flows do not charge the same
   interest twice.
-- NFT-rental late fees scale with overdue rent and are bounded by the buffer
+- NFT-rental late fees scale with the rental's whole agreed rent and are bounded by the buffer
   that the specific rental funded.
 - Lender position-sale listings settle against the live loan. A buyer acquires
   the current lender side of an already-running loan; the borrower and the
@@ -1839,13 +1839,13 @@ operator incident.
 - A pro-rata rental (one not charged the full term) owes rent for every day the renter used, and any part of a day counts as a whole day. A rental closed in its first day, even in the same transaction that opened it, owes one day of rent. Without this a renter could take the NFT, use whatever the user right unlocks, and hand it back within a day for nothing. A day already paid by the daily deduction or a partial prepayment is never billed again, and a close at an exact day boundary owes no extra day. The offer form states this rule where the lender chooses pro-rata.
 - Rent is never billed past the agreed term. A rental closed after its maturity, inside the grace period, owes at most its remaining prepaid rental days (the whole remaining prepayment); the time past maturity is charged only as the late fee, drawn from the buffer. A borrower who closes inside grace can therefore always settle, whether or not the daily deductions ran, and every path that settles a rental's accrued rent (repayment, and handing the rental over to a replacement borrower) counts the owed days by this one rule.
 - The daily rental deduction, which anyone may trigger, charges only an agreed day. Once every day of the term has been paid, by earlier deductions or by a partial prepayment, it refuses, so time past maturity is only ever charged as the late fee at close. It also refuses a rental whose deduction clock reads earlier than the rental's start, because a day charged there would never be counted as used.
-- A rental whose whole term is prepaid does not close on its own at maturity. Like any other loan, it closes when its borrower repays (paying the late fee for any time past maturity) or defaults after the grace period.
+- A rental whose whole term is prepaid does not close on its own at maturity. Like any other loan, it closes when its borrower repays (paying the late fee for any time past maturity) or defaults after the grace period. Its repayment inside grace owes no rent, only the late fee from the buffer, and must always settle. The buffer funds the late fee alone: rent the prepayment cannot cover is refused, never drawn from the buffer.
 
 ### Late Fees
 
-- A late fee of 1% of the outstanding principal (for ERC-20 loans) or overdue rental amount (for NFT renting) is applied on the first day after the due date. For an NFT rental the "overdue rental amount" is the rent still owed on the remaining term (the per-day fee times the remaining rental days) — the late fee scales with the size of that obligation, not with a single day's fee.
+- A late fee of 1% of the outstanding principal (for ERC-20 loans) or overdue rental amount (for NFT renting) is applied on the first day after the due date. For an NFT rental the "overdue rental amount" is the whole agreed rent (the per-day fee times the agreed number of rental days), whether that rent was paid by daily deductions, prepaid by a partial repayment, or is still owed. The late fee prices keeping the lender's NFT past maturity, so it must not shrink, or vanish, because the rent was paid early (owner decision #3170, 2026-11-05).
 - The late fee increases by an additional 0.5% daily.
-- The total late fee is capped at 5% of the outstanding principal or remaining rental amount. For an NFT rental the cap is further bounded by the configured rental-buffer percentage (default 5%): if an operator sets the rental buffer below 5%, the late-fee cap tracks that lower buffer so the pre-paid buffer always covers the fee.
+- The total late fee is capped at 5% of the outstanding principal or of the rental's whole agreed rent. For an NFT rental the cap is further bounded by the configured rental-buffer percentage (default 5%): if an operator sets the rental buffer below 5%, the late-fee cap tracks that lower buffer so the pre-paid buffer always covers the fee.
 - A rental late fee is paid out of the borrower's pre-paid rental **buffer** (the small safety margin collected up front alongside the rental prepayment), not out of the rental prepayment itself. This guarantees a late rental repayment can always settle the fee: a fully-overdue rental has its whole prepayment consumed by the rent owed, so without drawing the fee from the buffer the repayment could not complete. Any unused buffer is refunded to the borrower at repayment.
 - Late fees are collected along with the repayment and are subject to treasury fees.
 
