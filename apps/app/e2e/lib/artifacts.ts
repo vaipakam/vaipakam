@@ -49,6 +49,25 @@ export const E2E_BUNDLE = path.resolve(HERE, '..', '.state', 'deployments.json')
 /** Written after the bundle, holding the run id it belongs to. */
 export const E2E_BUNDLE_RUN_ID = path.resolve(HERE, '..', '.state', 'deployments.run-id');
 
+/**
+ * The fixture admin's ephemeral key, for the one spec that must SIGN as the
+ * admin rather than impersonate it: the claim-horizon drive (spec 54, #3207)
+ * runs the reward-posture forge script `ConfigureKeeperRewardsFixture`, which
+ * broadcasts with the key the deploy granted the roles to, as an operator's
+ * script does. Minted per run by `deployFromSource` and never outlives it
+ * (`.state/` is gitignored and rewritten by every global setup); recorded with
+ * the run id, so another run's key is refused.
+ */
+export const E2E_ADMIN_KEY = path.resolve(HERE, '..', '.state', 'admin-key.json');
+
+export function loadAdminKey(): `0x${string}` {
+  const rec = JSON.parse(fs.readFileSync(E2E_ADMIN_KEY, 'utf8')) as { runId?: string; adminKey?: string };
+  if (rec.runId !== e2eRunId() || !rec.adminKey || !/^0x[0-9a-fA-F]{64}$/.test(rec.adminKey)) {
+    throw new Error(`${E2E_ADMIN_KEY} is not this run's admin key — global setup writes it after the fixture deploy`);
+  }
+  return rec.adminKey as `0x${string}`;
+}
+
 /** This suite run's id, minted by `playwright.config.ts`. */
 export function e2eRunId(): string {
   const id = process.env.APP_E2E_RUN_ID;

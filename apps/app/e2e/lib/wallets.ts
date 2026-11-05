@@ -16,9 +16,30 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 
 /** `vaultOwner` is a wallet no loan scenario touches: the protected-account
  *  spec turns protection ON for it, which would delay every payout of a
- *  shared role and so change what every later spec saw. */
-export type Role = 'lender' | 'borrower' | 'newLender' | 'newBorrower' | 'vaultOwner';
-export const ROLES: Role[] = ['lender', 'borrower', 'newLender', 'newBorrower', 'vaultOwner'];
+ *  shared role and so change what every later spec saw.
+ *
+ *  `rewardLender` / `rewardBorrower` are the two sides of the claim-horizon
+ *  drive's one loan (spec 54, #3207). Theirs are the only reward entries on
+ *  the chain, and the indexer stub serves a wallet carrying claim-horizon
+ *  logs its chain-derived feed instead of the synthetic one spec 22 reads,
+ *  so no other spec may use them. */
+export type Role =
+  | 'lender'
+  | 'borrower'
+  | 'newLender'
+  | 'newBorrower'
+  | 'vaultOwner'
+  | 'rewardLender'
+  | 'rewardBorrower';
+export const ROLES: Role[] = [
+  'lender',
+  'borrower',
+  'newLender',
+  'newBorrower',
+  'vaultOwner',
+  'rewardLender',
+  'rewardBorrower',
+];
 
 const STATE_FILE = path.join(HERE, '..', '.state', 'wallets.json');
 

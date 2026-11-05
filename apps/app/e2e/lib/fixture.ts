@@ -13,7 +13,9 @@
  * the keeper's Anvil scenarios; read its header for each step and why the id
  * switch comes last. What is THIS suite's is the publication, step 5:
  *
- *   5. write `.state/deployments.json`: the committed bundle with its 84532
+ *   5. write `.state/admin-key.json` (the run's ephemeral admin key, for the
+ *      one spec that broadcasts a forge script as the admin) and
+ *      `.state/deployments.json`: the committed bundle with its 84532
  *      entry replaced by this deployment, then stamp it with this run's id.
  *      The app (through a vite hook, APP_E2E only), the harness and the
  *      indexer stub all read it, and the first two accept it only under
@@ -23,7 +25,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { bundleWith, deployFromSource } from '@vaipakam/anvil-harness/fixture';
 import { ANVIL_URL } from './anvil';
-import { E2E_BUNDLE, E2E_BUNDLE_RUN_ID, e2eRunId } from './artifacts';
+import { E2E_ADMIN_KEY, E2E_BUNDLE, E2E_BUNDLE_RUN_ID, e2eRunId } from './artifacts';
 
 export { E2E_CHAIN_ID } from '@vaipakam/anvil-harness/fixture';
 
@@ -33,8 +35,12 @@ export interface FixtureResult {
 }
 
 export async function deployFixture(): Promise<FixtureResult> {
-  const { diamond, admin, artifact } = await deployFromSource(ANVIL_URL);
+  const { diamond, admin, adminKey, artifact } = await deployFromSource(ANVIL_URL);
   fs.mkdirSync(path.dirname(E2E_BUNDLE), { recursive: true });
+  // The admin's ephemeral key, for the spec that broadcasts a forge script
+  // as the admin (see `E2E_ADMIN_KEY`). Written before the stamp below, so a
+  // completed setup always has it.
+  fs.writeFileSync(E2E_ADMIN_KEY, JSON.stringify({ runId: e2eRunId(), adminKey }), { mode: 0o600 });
   fs.writeFileSync(E2E_BUNDLE, JSON.stringify(bundleWith(artifact), null, 2));
   // The stamp goes LAST: a reader waits for it, so it must not appear
   // before the bundle it vouches for is complete.
