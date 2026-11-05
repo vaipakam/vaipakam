@@ -8,6 +8,8 @@ import { wagmiConfig } from './chain/wagmi';
 import { ThemeProvider, useTheme } from './app/ThemeContext';
 import { ModeProvider } from './app/ModeContext';
 import { CapabilityProvider } from './shared/capability/CapabilityContext';
+import { HelpProvider } from './shared/help/HelpContext';
+import { WorldRailProvider } from './shared/reads/world/WorldRailContext';
 import { ErrorBoundary } from './app/ErrorBoundary';
 import { App } from './App';
 // i18n bootstrap: a side-effect import BEFORE the app renders so the
@@ -69,9 +71,13 @@ createRoot(document.getElementById('root')!).render(
             <ConnectKitThemed>
               <ModeProvider>
                 <CapabilityProvider>
-                  <BrowserRouter>
-                    <App />
-                  </BrowserRouter>
+                  <WorldRailProvider>
+                    <HelpProvider>
+                      <BrowserRouter>
+                        <App />
+                      </BrowserRouter>
+                    </HelpProvider>
+                  </WorldRailProvider>
                 </CapabilityProvider>
               </ModeProvider>
             </ConnectKitThemed>

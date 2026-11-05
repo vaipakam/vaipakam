@@ -1,6 +1,6 @@
 import { useLocation, useParams } from 'react-router-dom';
 import { PAGES, currentAppHref, type PageEntry } from './pageMap';
-import { copy } from '../content/copy';
+import { useCopy } from '../shared/copy/useCopy';
 
 /**
  * The honest placeholder every route renders until its PR lands: it names
@@ -10,12 +10,13 @@ import { copy } from '../content/copy';
 export function NotBuilt({ page }: { page: PageEntry }) {
   const location = useLocation();
   const params = useParams();
+  const { text } = useCopy();
   const fallback = currentAppHref(page, params);
   return (
     <main className="page" aria-labelledby="nb-title">
       <p className="eyebrow">Under construction</p>
       <h1 id="nb-title">{page.name}</h1>
-      <p className="tier-a">{copy.notBuilt.a.text}</p>
+      <p className="tier-a">{text('notBuilt.a')}</p>
       <dl className="facts">
         <dt>Route</dt>
         <dd>
@@ -30,10 +31,10 @@ export function NotBuilt({ page }: { page: PageEntry }) {
       </dl>
       {fallback ? (
         <p className="tier-b">
-          {copy.notBuilt.b.text} <a href={fallback}>Open it in the current app</a>.
+          {text('notBuilt.b')} <a href={fallback}>{text('notBuilt.open')}</a>.
         </p>
       ) : (
-        <p className="tier-b">{copy.notBuilt.none.text}</p>
+        <p className="tier-b">{text('notBuilt.none')}</p>
       )}
     </main>
   );

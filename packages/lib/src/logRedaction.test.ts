@@ -70,9 +70,11 @@ const REPO = resolve(HERE, '..', '..', '..');
  * Browser bundles are outside the rule: what they log goes to the user's
  * own developer tools, and the RPC URLs they hold are already in the bundle
  * (#1724). Everything else under apps/ and packages/ runs on a server or in
- * a Worker.
+ * a Worker. apps/alpha05 is the next connected app (#3180), a browser
+ * bundle like apps/app; its Worker serves static assets and holds no code
+ * of its own.
  */
-const BROWSER = new Set(['apps/app', 'apps/www', 'packages/i18n']);
+const BROWSER = new Set(['apps/app', 'apps/alpha05', 'apps/www', 'packages/i18n']);
 
 /**
  * Sites not yet moved, each with the change that moves it. An entry must

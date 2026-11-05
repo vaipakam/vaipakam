@@ -7,6 +7,7 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { cspScriptHashesPlugin } from '@vaipakam/lib/cspScriptHashes';
+import { e2eDeploymentsBundlePlugin } from '@vaipakam/lib/e2eDeploymentsBundle';
 import { REPORT_ONLY_HEADER, cspConnectSourcesPlugin } from '@vaipakam/lib/cspConnectSources';
 import { connectSources, rpcConfigProblems } from './src/lib/endpoints.ts';
 
@@ -85,65 +86,17 @@ function deployedChainIds(): number[] {
 }
 
 // E2E ONLY (#2334): serve the deployments bundle the e2e global setup wrote
-// instead of the committed one. The e2e chain is the repository's current
-// contracts deployed from source onto a local anvil, so its addresses exist
-// only in that generated file (`e2e/.state/deployments.json`, gitignored);
-// the committed bundle's 84532 entry is the live testnet, which is exactly
-// what the suite must not read. Exactly one module imports the bundle —
-// `packages/contracts/src/deployments.ts` — so this redirects that one
-// import and nothing else. Registered only when APP_E2E is set; no other
-// dev, build or deploy path sees it.
-//
-// Playwright starts this server BEFORE global setup runs, and vite
-// pre-transforms the entry's imports as soon as the readiness probe loads
-// the page, so the first load of this module can arrive before the file
-// exists. It therefore WAITS until the bundle is stamped with this run's id
-// (`APP_E2E_RUN_ID`, minted by the Playwright config) — which also means a
-// file left by an earlier run is never served. A bundle that never arrives
-// is an error, never a fallback to the committed one: a silent fallback
-// would point the app at the live testnet while every harness helper
-// points at the local chain.
+// instead of the committed one, through the plugin shared with apps/alpha05
+// (`@vaipakam/lib/e2eDeploymentsBundle`): it redirects the one import of the
+// committed bundle to the file under `e2e/.state` and waits for this run's
+// stamp (`APP_E2E_RUN_ID`) rather than ever falling back to the live testnet.
+// Registered only when APP_E2E is set; no other dev, build or deploy path
+// sees it.
 function e2eDeploymentsBundle(): Plugin {
-  const stateDir = path.join(path.dirname(fileURLToPath(import.meta.url)), 'e2e', '.state');
-  const bundle = path.join(stateDir, 'deployments.json');
-  const stamp = path.join(stateDir, 'deployments.run-id');
-  const WAIT_MS = 20 * 60_000;
-  const stampedForThisRun = (runId: string): boolean => {
-    try {
-      return fs.readFileSync(stamp, 'utf8').trim() === runId;
-    } catch {
-      return false;
-    }
-  };
-  return {
-    name: 'vaipakam-e2e-deployments-bundle',
-    enforce: 'pre',
-    resolveId(source, importer) {
-      if (source !== './deployments.json' || !importer) return null;
-      const from = importer.split('?')[0].replace(/\\/g, '/');
-      if (!from.endsWith('/packages/contracts/src/deployments.ts')) return null;
-      return bundle;
-    },
-    async load(id) {
-      if (id !== bundle) return null;
-      const runId = process.env.APP_E2E_RUN_ID;
-      if (!runId) {
-        this.error('APP_E2E_RUN_ID is unset — start the e2e app through Playwright, whose config mints it.');
-      }
-      const deadline = Date.now() + WAIT_MS;
-      while (!stampedForThisRun(runId)) {
-        if (Date.now() > deadline) {
-          this.error(
-            `${bundle} was not written for this run within ${WAIT_MS / 60_000} minutes. ` +
-              'The e2e global setup writes it after deploying the fixture chain; the ' +
-              'app does not fall back to the committed bundle.',
-          );
-        }
-        await new Promise((r) => setTimeout(r, 1_000));
-      }
-      return fs.readFileSync(bundle, 'utf8');
-    },
-  };
+  return e2eDeploymentsBundlePlugin({
+    stateDir: path.join(path.dirname(fileURLToPath(import.meta.url)), 'e2e', '.state'),
+    runIdEnv: 'APP_E2E_RUN_ID',
+  }) as Plugin;
 }
 
 // #43 (ET-017) — the Content-Security-Policy allows inline scripts only by

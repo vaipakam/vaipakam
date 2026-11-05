@@ -1,0 +1,4 @@
+# e2e tier (Playwright): per-run state and reports
+e2e/.state/
+test-results/
+playwright-report/

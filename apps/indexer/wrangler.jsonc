@@ -204,7 +204,7 @@
     // push channel, which the app alone uses and which fans out from the
     // ingest Durable Object, is gated. The SAME list as the agent's
     // `FRONTEND_ORIGIN`, which `test/wsSubscribe.test.ts` pins.
-    "FRONTEND_ORIGIN": "https://defi.vaipakam.com,https://app.vaipakam.com,https://labs.vaipakam.com,https://www.vaipakam.com,https://vaipakam.com,https://alpha02.vaipakam.com,https://vaipakam-app.dawn-fire-139e.workers.dev",
+    "FRONTEND_ORIGIN": "https://defi.vaipakam.com,https://app.vaipakam.com,https://labs.vaipakam.com,https://www.vaipakam.com,https://vaipakam.com,https://alpha02.vaipakam.com,https://vaipakam-app.dawn-fire-139e.workers.dev,https://alpha05.vaipakam.com,https://vaipakam-alpha05.dawn-fire-139e.workers.dev",
     // #757 Phase A — enable the DO ingest path (cron→DO AND the webhook→DO
     // forward). While unset/not "true" the cron keeps the legacy inline scan and
     // the webhook 200-no-ops, so deploying the DO never re-routes live ingest by
