@@ -1,4 +1,4 @@
-## Thread — The auto-extend switch stops only the keeper (PR #TBD)
+## Thread — The auto-extend switch stops only the keeper (PR #3195)
 
 The protocol's automatic-extension switch used to stop every extension and
 every reserve deposit. It now stops only the automated route: a keeper
