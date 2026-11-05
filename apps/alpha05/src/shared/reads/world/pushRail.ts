@@ -49,14 +49,59 @@ export type PushFrame =
   | { t: 'invalidate'; chainId: number; keys: InvalidationKey[]; scannedTo: string; hints?: PushHints }
   | { t: 'cursor'; chainId: number; lastBlock: string; updatedAt: number; scanCadenceSec: number };
 
+/** The rail's state is DERIVED from what the indexer says over the socket,
+ *  never from the socket alone: an open socket proves a connection, not that
+ *  anything will ever be announced on it (design §4.1.1 of the indexer's
+ *  read-diet plan). `hello` says whether this chain is scanned at all, and
+ *  the `cursor` heartbeat that follows every successful scan says the scan
+ *  loop is alive; a heartbeat overdue by `HEARTBEAT_GRACE` cadences while
+ *  the socket stays open is a stalled rail, and the stamp says so. */
 export type PushState =
   /** This build has no indexer origin: there is no rail to open. */
   | 'off'
+  /** Opening the socket, or open and waiting for the indexer's `hello`. */
   | 'connecting'
+  /** `hello` said this chain is scanned and a heartbeat is not overdue. */
   | 'live'
+  /** `hello` said the indexer does not scan this chain: the socket stays
+   *  open but nothing will be announced on it, so the app polls. */
+  | 'inactive'
+  /** The socket is open but no heartbeat arrived within the grace period:
+   *  the scan loop is not reporting, so the app polls. */
+  | 'stalled'
   /** Refused or dropped; reconnecting with backoff while the tab lives. */
   | 'unavailable'
   | 'closed';
+
+/** Heartbeats are expected once per scan cadence; this many cadences
+ *  without one reads as a stall. Two, because a single late scan (a busy
+ *  pass, a slow RPC) is ordinary and should not flip the stamp. */
+export const HEARTBEAT_GRACE = 2;
+
+/** How long after a heartbeat (or `hello`) the next one may take before the
+ *  rail reads as stalled. The cadence comes from the frame itself, so an
+ *  indexer that scans slower or faster moves the deadline with it. */
+export function heartbeatDeadlineMs(scanCadenceSec: number): number {
+  return Math.max(1, scanCadenceSec) * HEARTBEAT_GRACE * 1000;
+}
+
+/** The state the rail is in after `frame`, given the state before it. Pure,
+ *  so the rule is testable without a socket: `hello` decides between live
+ *  and inactive; a `cursor` heartbeat makes a live-or-stalled rail live
+ *  again; an `invalidate` changes nothing (its scan's heartbeat follows it
+ *  when the scan's cursor could be read, and its absence is the signal). */
+export function stateAfterFrame(frame: PushFrame, before: PushState, nowSec: number = Date.now() / 1000): PushState {
+  if (frame.t === 'hello') {
+    if (!frame.ingestActive) return 'inactive';
+    // A cursor already older than the grace period at connect time is a
+    // stall the socket's openness cannot contradict (design §4.1.1).
+    const cadence = frame.scanCadenceSec ?? 0;
+    if (frame.cursor && cadence > 0 && nowSec - frame.cursor.updatedAt > cadence * HEARTBEAT_GRACE) return 'stalled';
+    return 'live';
+  }
+  if (frame.t === 'cursor') return before === 'inactive' ? 'inactive' : 'live';
+  return before;
+}
 
 /** The socket URL for a chain's push rail, from the indexer's HTTP origin. */
 export function pushRailUrl(indexerOrigin: string | null, chainId: number): string | null {
@@ -68,14 +113,23 @@ export function pushRailUrl(indexerOrigin: string | null, chainId: number): stri
 }
 
 /** Which of the app's reads a frame invalidates. World reads refetch on
- *  every invalidate; own reads refetch when the hints name the account, and
- *  ALWAYS when the hints are absent or truncated (the coarse key): a hint
- *  may only narrow the work when it is complete. */
+ *  every invalidate. Own reads refetch unless the hints PROVE the account
+ *  unaffected: a hint may only narrow the work when it is complete (not
+ *  truncated) AND every affected id carries a link naming its parties, none
+ *  of them this account. An id with no link (a repayment, a default, a
+ *  periodic settlement: the indexer links only creations) names no party,
+ *  so it could be one of this account's positions, and the own reads
+ *  refetch (the coarse key). Degraded is never wrong; skipping a refetch
+ *  of a position that just changed would be. */
 export function invalidationsFor(frame: PushFrame, account: `0x${string}` | null): { world: boolean; own: boolean } {
   if (frame.t !== 'invalidate' || frame.keys.length === 0) return { world: false, own: false };
   if (account === null) return { world: true, own: false };
   const hints = frame.hints;
   if (!hints || hints.truncated) return { world: true, own: true };
+  const unlinked =
+    hints.loanIds.some((id) => !hints.links.some((l) => l.loanId === id)) ||
+    hints.offerIds.some((id) => !hints.links.some((l) => l.offerId === id));
+  if (unlinked) return { world: true, own: true };
   const me = account.toLowerCase();
   const named = hints.links.some((l) =>
     [l.lender, l.borrower, l.creator, l.newLender, l.newBorrower].some((p) => typeof p === 'string' && p.toLowerCase() === me),
@@ -126,12 +180,38 @@ export function openPushRail(opts: PushRailOptions): PushRailHandle {
   const clearT = opts.clearTimeoutImpl ?? clearTimeout;
   let socket: WebSocket | null = null;
   let timer: ReturnType<typeof setTimeout> | null = null;
+  let heartbeat: ReturnType<typeof setTimeout> | null = null;
   let attempt = 0;
   let closed = false;
+  // `closed` until `connect` runs, so the first `connecting` is announced.
+  let state: PushState = 'closed';
+
+  const setState = (next: PushState) => {
+    if (state === next) return;
+    state = next;
+    opts.onState(next);
+  };
+
+  const clearHeartbeat = () => {
+    if (heartbeat !== null) clearT(heartbeat);
+    heartbeat = null;
+  };
+
+  /** Arm (or re-arm) the stall deadline from a frame that carries the scan
+   *  cadence. A `hello` for an inactive chain carries none, and arms nothing:
+   *  no heartbeat is expected there. */
+  const armHeartbeat = (scanCadenceSec: number | null) => {
+    clearHeartbeat();
+    if (scanCadenceSec === null || state !== 'live') return;
+    heartbeat = setT(() => {
+      heartbeat = null;
+      if (!closed && state === 'live') setState('stalled');
+    }, heartbeatDeadlineMs(scanCadenceSec));
+  };
 
   const connect = () => {
     if (closed) return;
-    opts.onState('connecting');
+    setState('connecting');
     let ws: WebSocket;
     try {
       ws = new WS(opts.url);
@@ -141,12 +221,16 @@ export function openPushRail(opts: PushRailOptions): PushRailHandle {
     }
     socket = ws;
     ws.onopen = () => {
+      // Open proves a connection, not a live rail: the state stays
+      // `connecting` until the indexer's `hello` says what this socket carries.
       attempt = 0;
-      opts.onState('live');
     };
     ws.onmessage = (ev) => {
       const frame = parseFrame(ev.data);
-      if (frame) opts.onFrame(frame);
+      if (!frame) return;
+      setState(stateAfterFrame(frame, state));
+      if (frame.t === 'hello' || frame.t === 'cursor') armHeartbeat(frame.scanCadenceSec);
+      opts.onFrame(frame);
     };
     ws.onclose = () => {
       if (socket === ws) socket = null;
@@ -159,7 +243,8 @@ export function openPushRail(opts: PushRailOptions): PushRailHandle {
 
   const scheduleReconnect = () => {
     if (closed) return;
-    opts.onState('unavailable');
+    clearHeartbeat();
+    setState('unavailable');
     const delay = reconnectDelayMs(attempt++);
     timer = setT(connect, delay);
   };
@@ -171,13 +256,14 @@ export function openPushRail(opts: PushRailOptions): PushRailHandle {
       if (closed) return;
       closed = true;
       if (timer !== null) clearT(timer);
+      clearHeartbeat();
       const ws = socket;
       socket = null;
       if (ws) {
         ws.onclose = null;
         ws.close();
       }
-      opts.onState('closed');
+      setState('closed');
     },
   };
 }

@@ -73,7 +73,10 @@ export function WorldRailProvider({ children }: { children: ReactNode }) {
             : frame.t === 'hello'
               ? frame.cursor
               : null;
-        setPush((p) => ({ chainId, state: p.chainId === chainId ? p.state : 'live', lastFrameAt: at, cursor: cursor ?? (p.chainId === chainId ? p.cursor : null) }));
+        // The state itself arrives through `onState`, derived by the rail
+        // from the frames (hello, heartbeat deadline); a frame only stamps
+        // the time and carries the cursor.
+        setPush((p) => ({ chainId, state: p.chainId === chainId ? p.state : 'connecting', lastFrameAt: at, cursor: cursor ?? (p.chainId === chainId ? p.cursor : null) }));
         const what = invalidationsFor(frame, account);
         if (what.world) void queryClient.invalidateQueries({ queryKey: worldKey(chainId) });
         if (what.own && account) announceOwnChange({ chainId, account, cause: 'push' });

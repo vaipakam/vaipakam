@@ -7,7 +7,7 @@ import { OPEN, closed, unknownVerdict } from '../eligibility/types';
 import type { Receipt as ReceiptModel } from '../receipt/types';
 import { summarize } from '../tx/outcome';
 import { ActionList } from './ActionList';
-import { FinishCard } from './FinishCard';
+import { FinishCard, verdictCopyKey } from './FinishCard';
 import { Receipt, renderValue } from './Receipt';
 
 const USDC = ('0x' + 'a'.repeat(40)) as `0x${string}`;
@@ -55,11 +55,26 @@ describe('FinishCard', () => {
       1,
     );
     const out = html(createElement(FinishCard, { card: { receipt, outcome, next: { label: 'See the position', to: '/positions/1' } }, describeAsset, nowMs: 1_000_000 }));
-    expect(out).toContain('Partly done');
+    expect(out).toContain('Partly done: some parts are confirmed on the chain; the rest could not be read back');
+    expect(out).not.toContain('did not land');
     expect(out).toContain('Repay</span>: done');
     expect(out).toContain('Collateral returned</span>: the vault balance could not be read');
     expect(out).toContain('href="/positions/1"');
     expect(out).toContain('Repay in full');
+  });
+});
+
+describe('FinishCard verdict sentence', () => {
+  it('says "did not land" only of legs whose failure was read', () => {
+    const done = { status: 'done', label: 'A' } as const;
+    const failed = { status: 'not-done', label: 'B', reason: 'reverted' } as const;
+    const unread = { status: 'unknown', label: 'C', reason: 'not read back' } as const;
+    expect(verdictCopyKey(summarize([done, failed], 1))).toBe('finish.partialFailed');
+    expect(verdictCopyKey(summarize([done, unread], 1))).toBe('finish.partialUnknown');
+    expect(verdictCopyKey(summarize([done, failed, unread], 1))).toBe('finish.partialMixed');
+    expect(verdictCopyKey(summarize([done], 1))).toBe('finish.done');
+    expect(verdictCopyKey(summarize([failed, unread], 1))).toBe('finish.unknown');
+    expect(verdictCopyKey(summarize([failed], 1))).toBe('finish.notDone');
   });
 });
 
@@ -80,7 +95,8 @@ describe('ActionList', () => {
       }),
     );
     expect(out).toContain('href="/repay"');
-    expect(out).toContain('Extend: checking whether this is open');
+    expect(out).toContain('Extend: not offered until its inputs are read');
+    expect(out).toContain('data-code="NotRead">not read');
     expect(out).not.toMatch(/<button[^>]*>Extend<\/button>/);
     expect(out).toMatch(/<button[^>]*disabled[^>]*>Sell<\/button>/);
     expect(out).toContain('A sale is already listed.');

@@ -7,14 +7,28 @@ import { Notice } from './Notice';
 /**
  * The world rail's stamp (RB-RAILS): every world figure carries its block
  * and age; a stale index is a tier-A notice, an unreadable one a degraded-
- * source warning that says figures are unavailable, not empty; and the
- * push rail's own state is named, so a quiet rail is told from a stalled
- * one.
+ * source warning that says figures are unavailable, not empty; a re-read
+ * that failed after an earlier answer is a warning beside that last answer
+ * (the figures shown are the last read, aged, never a fresh-looking stamp);
+ * and the push rail's own state is named, so a quiet rail is told from a
+ * stalled one.
  */
+/** One line per rail state, so a quiet rail (live, nothing to announce) is
+ *  told from one the indexer does not run for this chain and from one whose
+ *  scan loop has stopped reporting. */
+const PUSH_LINE: Record<PushState, 'rail.pushLive' | 'rail.pushOff' | 'rail.pushConnecting' | 'rail.pushInactive' | 'rail.pushStalled' | 'rail.pushUnavailable'> = {
+  live: 'rail.pushLive',
+  off: 'rail.pushOff',
+  connecting: 'rail.pushConnecting',
+  inactive: 'rail.pushInactive',
+  stalled: 'rail.pushStalled',
+  unavailable: 'rail.pushUnavailable',
+  closed: 'rail.pushUnavailable',
+};
+
 export function FreshnessStamp({ freshness, push, onRefresh }: { freshness: Freshness; push: PushState; onRefresh: () => void }) {
   const { text, format } = useCopy();
-  const pushLine =
-    push === 'live' ? text('rail.pushLive') : push === 'off' ? text('rail.pushOff') : push === 'connecting' ? text('rail.pushConnecting') : text('rail.pushUnavailable');
+  const pushLine = text(PUSH_LINE[push]);
   const refresh = (
     <button type="button" className="link" onClick={onRefresh}>
       {text('rail.refresh')}
@@ -35,6 +49,13 @@ export function FreshnessStamp({ freshness, push, onRefresh }: { freshness: Fres
     );
   }
   const where = format('rail.at', { block: String(freshness.lastBlock), age: formatAge(freshness.ageSeconds) });
+  if (freshness.refreshError !== null) {
+    return (
+      <Notice tone="warn" tier="A">
+        {format('rail.refreshFailed', { reason: freshness.refreshError })} {where} {pushLine} {refresh}
+      </Notice>
+    );
+  }
   if (freshness.kind === 'stale') {
     return (
       <Notice tone="warn" tier="A">

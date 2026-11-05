@@ -14,7 +14,12 @@ export type TxPhase =
   | { kind: 'submitted'; hash: `0x${string}`; at: number }
   | { kind: 'mined'; hash: `0x${string}`; blockNumber: bigint; reverted: boolean }
   | { kind: 'measured'; hash: `0x${string}`; outcome: MeasuredOutcome }
-  | { kind: 'failed'; stage: 'signing' | 'submission'; message: string };
+  /** Submitted, but the receipt could not be read (the node timed out or
+   *  went away): the transaction may still execute, so the hash is kept and
+   *  shown, tracking can resume, and no new review starts from here. */
+  | { kind: 'receipt-unknown'; hash: `0x${string}`; message: string }
+  /** The wallet refused or failed before anything was submitted. */
+  | { kind: 'failed'; message: string };
 
 export type LegOutcome =
   | { status: 'done'; label: string }
@@ -42,4 +47,19 @@ export function summarize(legs: readonly LegOutcome[], measuredAt: number): Meas
   else if (done === 0) verdict = unknown > 0 ? 'unknown' : 'not-done';
   else verdict = 'partial';
   return { verdict, legs, measuredAt };
+}
+
+/** What a `partial` verdict is made of, so the summary sentence states only
+ *  what the legs substantiate (RB-FUNDS): `failed` when every unconfirmed
+ *  leg is known not to have landed, `unknown` when none of them could be
+ *  read back, `mixed` when both kinds are present. A done-only or
+ *  unconfirmed-only set is not partial and is not asked here.
+ */
+export type PartialMix = 'failed' | 'unknown' | 'mixed';
+
+export function partialMix(legs: readonly LegOutcome[]): PartialMix {
+  const notDone = legs.some((l) => l.status === 'not-done');
+  const unknown = legs.some((l) => l.status === 'unknown');
+  if (notDone && unknown) return 'mixed';
+  return unknown ? 'unknown' : 'failed';
 }

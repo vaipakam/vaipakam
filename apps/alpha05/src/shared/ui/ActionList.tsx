@@ -16,8 +16,10 @@ export interface Action {
  * RB-ACTION, RB-ELIG — the actions a page offers, each rendered FROM its
  * verdict: open shows the control; closed shows the control disabled with
  * every refusal (tier A), when it may lift and the remedy this session can
- * drive; unknown withholds the control and says the inputs are not read.
- * A handler never re-derives eligibility.
+ * drive; unknown withholds the control and says WHY its inputs are not read
+ * (the verdict's own reason: a read not made yet, or the failure it met),
+ * never a bare "checking" that outlives the attempt. A handler never
+ * re-derives eligibility.
  */
 export function ActionList({ actions }: { actions: readonly Action[] }) {
   const { text, format } = useCopy();
@@ -29,7 +31,7 @@ export function ActionList({ actions }: { actions: readonly Action[] }) {
         return (
           <li key={a.id} data-verdict={a.verdict.state}>
             {a.verdict.state === 'unknown' ? (
-              <span className="tier-b action-withheld">{a.label}: {text('action.checking')}</span>
+              <span className="tier-b action-withheld">{a.label}: {text('action.withheld')}</span>
             ) : a.to && open ? (
               <Link className={cls} to={a.to}>
                 {a.label}
@@ -39,7 +41,7 @@ export function ActionList({ actions }: { actions: readonly Action[] }) {
                 {a.label}
               </button>
             )}
-            {a.verdict.state === 'closed' && (
+            {a.verdict.state !== 'open' && (
               <ul className="refusals tier-a">
                 {a.verdict.refusals.map((r) => (
                   <li key={r.code} data-code={r.code}>

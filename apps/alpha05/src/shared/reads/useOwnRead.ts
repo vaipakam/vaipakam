@@ -4,12 +4,15 @@
  * on signals (own receipt, push hint for the address, focus, reconnection)
  * and on the bounded interval while visible; per block when the read gates
  * an imminent money decision. The answer carries when it was read and which
- * transport answered, so a surface states both.
+ * SOURCE answered (the wallet's provider, the proxy or the public endpoint,
+ * named by the rail per read, never inferred from the configured order), so
+ * a surface states both.
  */
 import { useEffect, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useBlockNumber } from 'wagmi';
-import { useOwnStateClient, type OwnStateClient } from '../../chain/ownRail';
+import type { PublicClient } from 'viem';
+import { useOwnStateClient, type OwnSource } from '../../chain/ownRail';
 import { ownKey } from './identityKey';
 import { ownRefreshIntervalMs } from './refreshPolicy';
 import { matchesIdentity, subscribeOwnChanges } from './signals';
@@ -22,8 +25,8 @@ export interface OwnRead<T> {
   error: string | null;
   /** When the data was read (unix ms), null before the first answer. */
   readAt: number | null;
-  /** Which transport answered first: the wallet's provider or the proxy. */
-  via: 'wallet' | 'proxy' | null;
+  /** Which source answered the read the data came from; null before an answer. */
+  via: OwnSource | null;
   /** Whether a refresh is in flight behind data already shown. */
   refreshing: boolean;
   refetch: () => void;
@@ -41,7 +44,7 @@ function useVisible(): boolean {
 
 export function useOwnRead<T>(
   parts: readonly unknown[],
-  read: (own: OwnStateClient) => Promise<T>,
+  read: (client: PublicClient) => Promise<T>,
   opts: { perBlock?: boolean; enabled?: boolean } = {},
 ): OwnRead<T> {
   const own = useOwnStateClient();
@@ -52,7 +55,7 @@ export function useOwnRead<T>(
 
   const query = useQuery({
     queryKey: key,
-    queryFn: () => read(own!),
+    queryFn: () => own!.read(read),
     enabled,
     refetchInterval: ownRefreshIntervalMs(visible),
     refetchIntervalInBackground: false,
@@ -94,19 +97,18 @@ export function useOwnRead<T>(
   }, [blockNumber, enabled]);
 
   if (!own) return { data: null, state: 'no-identity', error: null, readAt: null, via: null, refreshing: false, refetch: () => {} };
-  const via = own.walletFirst ? 'wallet' : 'proxy';
   if (query.status === 'error' && query.data === undefined) {
-    return { data: null, state: 'failed', error: (query.error as Error).message, readAt: null, via, refreshing: query.isFetching, refetch: () => void query.refetch() };
+    return { data: null, state: 'failed', error: (query.error as Error).message, readAt: null, via: null, refreshing: query.isFetching, refetch: () => void query.refetch() };
   }
   if (query.data === undefined) {
-    return { data: null, state: 'reading', error: null, readAt: null, via, refreshing: true, refetch: () => void query.refetch() };
+    return { data: null, state: 'reading', error: null, readAt: null, via: null, refreshing: true, refetch: () => void query.refetch() };
   }
   return {
-    data: query.data,
+    data: query.data.value,
     state: 'ready',
     error: query.status === 'error' ? (query.error as Error).message : null,
     readAt: query.dataUpdatedAt,
-    via,
+    via: query.data.via,
     refreshing: query.isFetching,
     refetch: () => void query.refetch(),
   };

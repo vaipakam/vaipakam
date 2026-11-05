@@ -23,13 +23,24 @@ describe('transition', () => {
     const submitted = transition(transition(transition({ kind: 'idle' }, { type: 'review' }), { type: 'sign' }), { type: 'submitted', hash: HASH, at: 1 });
     expect(() => transition(submitted, { type: 'mined', hash: OTHER, blockNumber: 1n, reverted: false })).toThrow(IllegalTransition);
   });
-  it('fails from signing and submission only', () => {
+  it('fails from signing only: nothing was submitted', () => {
     const signing = transition(transition({ kind: 'idle' }, { type: 'review' }), { type: 'sign' });
-    expect(transition(signing, { type: 'failed', stage: 'signing', message: 'declined' })).toMatchObject({ kind: 'failed', stage: 'signing' });
-    expect(() => transition({ kind: 'review' }, { type: 'failed', stage: 'signing', message: 'x' })).toThrow(IllegalTransition);
+    expect(transition(signing, { type: 'failed', message: 'declined' })).toEqual({ kind: 'failed', message: 'declined' });
+    expect(() => transition({ kind: 'review' }, { type: 'failed', message: 'x' })).toThrow(IllegalTransition);
+    expect(() => transition({ kind: 'submitted', hash: HASH, at: 1 }, { type: 'failed', message: 'x' })).toThrow(IllegalTransition);
+  });
+  it('keeps the hash when the receipt cannot be read, resumes into mined, never into a new review', () => {
+    const submitted = transition(transition(transition({ kind: 'idle' }, { type: 'review' }), { type: 'sign' }), { type: 'submitted', hash: HASH, at: 1 });
+    const unknown = transition(submitted, { type: 'receipt-unknown', hash: HASH, message: 'timed out' });
+    expect(unknown).toEqual({ kind: 'receipt-unknown', hash: HASH, message: 'timed out' });
+    expect(() => transition(unknown, { type: 'review' })).toThrow(IllegalTransition);
+    expect(() => transition(unknown, { type: 'mined', hash: OTHER, blockNumber: 1n, reverted: false })).toThrow(IllegalTransition);
+    expect(transition(unknown, { type: 'mined', hash: HASH, blockNumber: 7n, reverted: false })).toMatchObject({ kind: 'mined', hash: HASH });
+    expect(transition(unknown, { type: 'reset' })).toEqual({ kind: 'idle' });
   });
   it('resets only a flow that is not in flight', () => {
-    expect(transition({ kind: 'failed', stage: 'signing', message: 'x' }, { type: 'reset' })).toEqual({ kind: 'idle' });
+    expect(transition({ kind: 'failed', message: 'x' }, { type: 'reset' })).toEqual({ kind: 'idle' });
     expect(() => transition({ kind: 'submitted', hash: HASH, at: 1 }, { type: 'reset' })).toThrow(IllegalTransition);
+    expect(() => transition({ kind: 'mined', hash: HASH, blockNumber: 1n, reverted: false }, { type: 'reset' })).toThrow(IllegalTransition);
   });
 });

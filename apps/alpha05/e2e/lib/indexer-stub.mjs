@@ -148,7 +148,10 @@ const server = http.createServer(async (req, res) => {
     }
     json(res, 404, { error: `no route ${req.method} ${url.pathname}` });
   } catch (e) {
-    json(res, 500, { error: e instanceof Error ? e.message : String(e) });
+    // The cause goes to the e2e log (stderr is inherited by the Playwright
+    // run); the page gets a fixed text, never the error's own.
+    console.error('[e2e] stand-in request failed:', req.method, url.pathname, e);
+    json(res, 500, { error: 'stand-in request failed; see the e2e log' });
   }
 });
 
