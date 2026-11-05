@@ -113,9 +113,15 @@ test('on a phone the header is one row and a bottom bar carries the first destin
   // A bar destination works directly.
   await bar.getByRole('link', { name: 'Borrow', exact: true }).click();
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('Borrow');
-  // Escape closes the sheet and returns focus to More.
-  await more.click();
+  // From the keyboard: opening the sheet moves focus into it, onto its first
+  // destination, and Tab walks on through the destinations.
+  await more.focus();
+  await page.keyboard.press('Enter');
   await expect(nav).toBeVisible();
+  await expect(nav.getByRole('link', { name: 'Home', exact: true })).toBeFocused();
+  await page.keyboard.press('Tab');
+  await expect(nav.getByRole('link', { name: 'Borrow', exact: true })).toBeFocused();
+  // Escape closes the sheet and returns focus to More.
   await page.keyboard.press('Escape');
   await expect(nav).toBeHidden();
   await expect(more).toBeFocused();

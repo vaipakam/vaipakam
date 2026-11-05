@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
 import { useMode } from './ModeContext';
 import { useTheme } from './ThemeContext';
@@ -40,7 +40,14 @@ export function Shell() {
   const quick = nav.slice(0, QUICK_DESTINATIONS);
   const [menuOpen, setMenuOpen] = useState(false);
   const menuButton = useRef<HTMLButtonElement>(null);
+  const sheet = useRef<HTMLDivElement>(null);
   const closeMenu = () => setMenuOpen(false);
+  // Opening the sheet moves focus into it: the sheet sits earlier in the
+  // document than More, so without this a keyboard user's Tab would leave
+  // the page instead of reaching the destinations just revealed.
+  useEffect(() => {
+    if (menuOpen) sheet.current?.querySelector<HTMLElement>('a, button, select')?.focus();
+  }, [menuOpen]);
 
   return (
     <div
@@ -64,7 +71,7 @@ export function Shell() {
           <img src={resolved === 'dark' ? '/logo-dark.png' : '/logo-light.png'} alt="" className="brand-wordmark" width={120} height={36} />
           <span className="brand-text">{text('shell.brand')}</span>
         </NavLink>
-        <div id="site-menu" className="site-menu" data-open={menuOpen}>
+        <div id="site-menu" ref={sheet} className="site-menu" data-open={menuOpen}>
           <nav aria-label="Primary">
             {nav.map((e) => (
               <NavLink key={e.path} to={e.path} end={e.path === '/'} onClick={closeMenu}>
