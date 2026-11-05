@@ -23,12 +23,12 @@
   transform: translateX(-50%);
   width: 500px;
   height: 300px;
-  background: radial-gradient(ellipse, rgba(79, 70, 229, 0.1) 0%, transparent 70%);
+  background: radial-gradient(ellipse, color-mix(in srgb, var(--brand) 10%, transparent) 0%, transparent 70%);
   pointer-events: none;
 }
 
 [data-theme='dark'] .cta-glow {
-  background: radial-gradient(ellipse, rgba(129, 140, 248, 0.08) 0%, transparent 70%);
+  background: radial-gradient(ellipse, color-mix(in srgb, var(--brand) 8%, transparent) 0%, transparent 70%);
 }
 
 .cta-title {

@@ -46,7 +46,7 @@
   width: 44px;
   height: 44px;
   border-radius: var(--radius-sm);
-  background: var(--brand-bg);
+  background: var(--brand-soft);
   color: var(--brand);
   margin-bottom: 16px;
 }

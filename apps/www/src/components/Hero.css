@@ -19,7 +19,7 @@
   height: 600px;
   background: radial-gradient(
     ellipse,
-    rgba(79, 70, 229, 0.12) 0%,
+    color-mix(in srgb, var(--brand) 12%, transparent) 0%,
     transparent 70%
   );
   pointer-events: none;
@@ -28,7 +28,7 @@
 [data-theme="dark"] .hero-bg-glow {
   background: radial-gradient(
     ellipse,
-    rgba(129, 140, 248, 0.1) 0%,
+    color-mix(in srgb, var(--brand) 10%, transparent) 0%,
     transparent 70%
   );
 }
@@ -80,7 +80,7 @@
   font-weight: 700;
   letter-spacing: 0.22em;
   text-transform: uppercase;
-  background: linear-gradient(135deg, var(--brand), var(--brand-light));
+  background: linear-gradient(135deg, var(--brand), var(--brand-strong));
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
@@ -107,7 +107,7 @@
 }
 
 .hero-gradient {
-  background: linear-gradient(135deg, var(--brand), var(--brand-light));
+  background: linear-gradient(135deg, var(--brand), var(--brand-strong));
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
@@ -228,7 +228,7 @@
   color: var(--accent-orange);
 }
 .hero-card-icon.repay {
-  background: rgba(79, 70, 229, 0.12);
+  background: color-mix(in srgb, var(--brand) 12%, transparent);
   color: var(--brand);
 }
 
@@ -262,6 +262,6 @@
   color: var(--accent-orange);
 }
 .hero-card-status.settled {
-  background: rgba(79, 70, 229, 0.12);
+  background: color-mix(in srgb, var(--brand) 12%, transparent);
   color: var(--brand);
 }

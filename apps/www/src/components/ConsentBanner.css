@@ -73,7 +73,7 @@
   height: 36px;
   border-radius: 10px;
   background: var(--brand-muted, rgba(99, 102, 241, 0.12));
-  color: var(--brand, #6366f1);
+  color: var(--brand);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -160,7 +160,7 @@
 }
 
 .consent-switch--on {
-  background: var(--brand, #6366f1);
+  background: var(--brand-fill);
 }
 
 .consent-switch--on .consent-switch-thumb {
@@ -197,9 +197,9 @@
 }
 
 .consent-banner-btn--primary {
-  background: var(--brand, #6366f1);
-  color: #fff;
-  border-color: var(--brand, #6366f1);
+  background: var(--brand-fill);
+  color: var(--text-on-brand);
+  border-color: var(--brand-fill);
 }
 
 .consent-banner-btn--primary:hover {

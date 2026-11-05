@@ -88,7 +88,7 @@
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: var(--brand);
+  background: var(--brand-fill);
   opacity: 0.5;
 }
 
