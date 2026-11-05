@@ -305,7 +305,7 @@ export async function run() {
         // rate and term, clock restarted at the handover block (the exiting
         // borrower settled the interest accrued so far).
         interestRateBps: standing.interestRateBps, durationDays: standing.durationDays,
-        interestRemainingDays: standing.durationDays, startTime: at, interestAccrualStart: at,
+        startTime: at, interestAccrualStart: at,
       });
     expectEq('A7.8', 'the lender is untouched by a handover — same lender, same principal',
       `${moved.lender}/${moved.principal}`, `${loan.lender}/${loan.principal}`);

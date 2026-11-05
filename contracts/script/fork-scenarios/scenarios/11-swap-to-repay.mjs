@@ -10,7 +10,7 @@
  * start it.
  */
 import { DIAMOND, ERC20, MOCKS, TREASURY, VENUE_ROUTE, borrower, lender, outsider, parseUnits, pub, tx } from '../lib/chain.mjs';
-import { ABIS, STATUS, claimAndExpect, delta, expectPosition, openLoan, positionOf, read, snapshot, vaultAddressFor, bothNfts, NFT_STATUS } from '../lib/flow.mjs';
+import { ABIS, STATUS, claimAndExpect, delta, expectPosition, openLoan, positionOf, read, snapshot, vaultAddressFor, bothNfts, NFT_STATUS, perSecondInterest } from '../lib/flow.mjs';
 import { f18 } from '../lib/chain.mjs';
 import { simulate } from '../lib/errors.mjs';
 import { cannotContinue, check, expectLedger, expectRefusal, requireEnvelope } from '../lib/report.mjs';
@@ -179,14 +179,14 @@ export async function run() {
     const hfAfter = await read(ABIS.risk, 'calculateHealthFactor', [loanId]);
     const loanAfter = await read(ABIS.loan, 'getLoanDetails', [loanId]);
     // The money: the venue's proceeds for exactly 0.1 collateral go to the
-    // lender (interest accrued so far — whole days, rounded down — then
+    // lender (interest accrued so far — to the second, rounded down — then
     // principal), the treasury's fee on the interest part only, and the
     // principal falls by exactly the proceeds' principal part.
     const SOLD = parseUnits('0.1', 18);
     const psProceeds = before['lending.venue'] - after['lending.venue'];
     const psAt = BigInt((await pub.getBlock({ blockNumber: receipt.blockNumber })).timestamp);
-    const psDays = (psAt - BigInt(loanBefore.startTime)) / 86_400n;
-    const psInterest = (loanBefore.principal * BigInt(loanBefore.interestRateBps) * psDays) / (365n * 10_000n);
+    // #3169 — interest accrued to the second.
+    const psInterest = perSecondInterest(loanBefore.principal, loanBefore.interestRateBps, psAt - BigInt(loanBefore.startTime));
     const psCut = (psInterest * BigInt(loanBefore.treasuryFeeBpsAtInit)) / 10_000n;
     check('A11.8', 'a partial swap sells exactly 0.1 collateral, reduces principal by the proceeds net of accrued interest, and the loan stays Active',
       String(loanAfter.status) === '0' && loanBefore.principal - loanAfter.principal === psProceeds - psInterest,
