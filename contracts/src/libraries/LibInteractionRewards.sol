@@ -656,7 +656,7 @@ library LibInteractionRewards {
         uint256 startDay
     ) internal {
         (, bool active) = currentDayOrZero();
-        if (!active || startDay == 0) return;
+        if (!active) return;
         if (principal == 0 || interestRateBps == 0 || durationDays == 0) return;
 
         uint256 perDayNumeraire18 = _perDayInterestNumeraire18(
@@ -740,7 +740,8 @@ library LibInteractionRewards {
     ///         lets the day a loan ends earn a reward (#3171).
     /// @return resumeDay `max(today, the closed entries' start days)`: a loan
     ///         registered today still starts tomorrow, so a continuation on the
-    ///         opening day never credits the opening day.
+    ///         opening day never credits the opening day. A loan with no
+    ///         entries resumes tomorrow, like a first registration.
     function closeLoanForContinuation(uint256 loanId, bool borrowerClean)
         internal
         returns (uint256 resumeDay)
@@ -802,6 +803,11 @@ library LibInteractionRewards {
             );
             s.loanActiveLenderEntryId[loanId] = 0;
         }
+        // Codex #3203 r2 — a loan with no entries (opened before the programme
+        // launched) has no outgoing slice to continue: its continuing
+        // registration is a first registration and starts tomorrow, as
+        // `registerLoan` does.
+        if (lenderId == 0 && borrowerId == 0) resumeDay = today + 1;
         if (borrowerId != 0) {
             uint256 st = s.rewardEntries[borrowerId].startDay;
             if (st > resumeDay) resumeDay = st;

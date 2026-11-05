@@ -3,7 +3,7 @@
  * parts, by the keeper's own passes, across a Base/mirror pair on Anvil.
  *
  * The cycle is the real one (`rewardCycle.ts`): a mirror loan accrues over
- * days 0 and 1 and is repaid on day 1, and the keeper's day-close pass closes,
+ * days 0 and 1 and is repaid as day 2 begins (the closing day earns nothing, #3171), and the keeper's day-close pass closes,
  * finalizes and broadcasts both days. The only thing the scenario sets is the
  * operator's part ceiling, `REWARD_REMIT_LANE_CAP`: just over a third of day
  * 1's slice as Base quotes it, so the keeper's remit pass must send the day in
@@ -114,7 +114,9 @@ async function mirrorLanded(): Promise<boolean> {
 describe('one day remitted to the mirror in three parts', () => {
   it('closes and finalizes a day whose slice comes from a repaid mirror loan', async () => {
     const loan = await openLoan(m.mirror, { lender: 'lender', borrower: 'borrower', principalWeth: '1', collateralTliq: '5', rateBps: 1000, days: 30 });
-    await warpToDay(1, 20);
+    // Repaid just after day 2 begins: the closing day earns nothing
+    // (#3171), so the loan earns day 1 whole, the day this scenario remits.
+    await warpToDay(2, 0, 30);
     await repayInFull(m.mirror, 'borrower', loan.loanId);
     await warpToDay(2, 0, 60);
     await closeAndFinalizeDays(m, k);

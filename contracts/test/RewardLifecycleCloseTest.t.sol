@@ -15,6 +15,7 @@ import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol";
 import {InteractionRewardsLensFacet} from "../src/facets/InteractionRewardsLensFacet.sol";
 import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
+import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 
 /**
  * @notice #1002 (S4) + #969 (S5) — interaction-reward lifecycle.
@@ -327,6 +328,26 @@ contract RewardLifecycleCloseTest is SetupTest {
         InteractionRewardsFacet(address(diamond)).precloseRewardTransferObligation(loanId);
         LibVaipakam.RewardEntry[] memory le = _entries(lender);
         assertEq(le[le.length - 1].startDay, opened + 1, "the opening day earns nothing");
+    }
+
+    /// @dev Codex #3203 r2 P2 — a loan with NO reward entries (opened before
+    ///      the programme launched) that is continued must still be registered
+    ///      for the continuing term, starting tomorrow like any first
+    ///      registration. Kills: a resume day of `today` for an entryless loan
+    ///      (which on launch day 0 skipped the registration altogether).
+    function testEntrylessLoanContinuedRegistersFromTomorrow() public {
+        uint256 loanId = _createLoan();
+        // Simulate a loan opened before the launch: no entry pointers.
+        TestMutatorFacet(address(diamond)).setLoanActiveLenderEntryId(loanId, 0);
+        TestMutatorFacet(address(diamond)).setLoanBorrowerEntryId(loanId, 0);
+        uint256 before = _entries(lender).length;
+        uint256 today = _today();
+        vm.prank(address(diamond));
+        InteractionRewardsFacet(address(diamond)).precloseRewardTransferObligation(loanId);
+        LibVaipakam.RewardEntry[] memory le = _entries(lender);
+        assertEq(le.length, before + 1, "the continuing term is registered");
+        assertEq(le[le.length - 1].startDay, today + 1, "starting tomorrow");
+        assertFalse(le[le.length - 1].closed, "open");
     }
 
     /// @dev Codex #3203 r1 P2 — a loan repaid at its maturity, on the reward

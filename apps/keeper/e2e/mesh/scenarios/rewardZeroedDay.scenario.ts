@@ -6,7 +6,7 @@
  * once the D* commitment cutover is armed, and the shared fixture and every
  * current deployment leave it unarmed, so the admin arms it from day 1 at the
  * start: the planned armed state, not a testnet's configuration. A mirror loan
- * then accrues over days 0 and 1 and is repaid on day 1; the keeper's day-close
+ * then accrues over days 0 and 1 and is repaid as day 2 begins (the closing day earns nothing, #3171); the keeper's day-close
  * pass closes both days on both chains, but the mirror's two reports are held
  * in the lane past Base's grace, so the next day-close run finalizes both days
  * on Base without them, and the broadcasts tell the mirror its day 1 was
@@ -35,7 +35,6 @@ import { FIFTEEN_MIN_MS, transactionsSince } from '../rewardCycle';
 import { BASE_ID, MIRROR_ID } from '../fixture';
 
 const DAY = 86_400;
-const HOUR = 3_600;
 const ZEROED_MS = PASS_CADENCE_SEC * 1000;
 /** The days closed and finalized; only day 1 is zeroed (see the arming below). */
 const CLOSED = [0, 1] as const;
@@ -96,7 +95,9 @@ describe('the zeroed-day pass on a Base/mirror pair', () => {
     const launch = m.fixture.interactionLaunchTimestamp;
     await m.base.diamondWrite('admin', 'setGovernorCommitArmedFromDay', [1n]);
     const loan = await openLoan(m.mirror, { lender: 'lender', borrower: 'borrower', principalWeth: '1', collateralTliq: '5', rateBps: 1000, days: 30 });
-    await warpTo(launch + DAY + 20 * HOUR);
+    // Repaid just after day 2 begins: the closing day earns nothing (#3171),
+    // so the loan earns day 1 whole, the day this scenario zeroes.
+    await warpTo(launch + 2 * DAY + 30);
     await repayInFull(m.mirror, 'borrower', loan.loanId);
     await warpTo(launch + 2 * DAY + 60);
 
