@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { HEARTBEAT_GRACE, heartbeatDeadlineMs, invalidationsFor, openPushRail, parseFrame, pushRailUrl, reconnectDelayMs, stateAfterFrame, type PushFrame, type PushState } from './pushRail';
+import { HEARTBEAT_GRACE, frameDeadlineSec, invalidationsFor, openPushRail, parseFrame, pushRailUrl, reconnectDelayMs, stallDeadlineSec, stateAfterFrame, type PushFrame, type PushState } from './pushRail';
 
 const ME = '0x000000000000000000000000000000000000aBcD' as const;
 
@@ -85,15 +85,40 @@ describe('stateAfterFrame', () => {
     expect(stateAfterFrame(stale, 'connecting', 1_000 + 300 * HEARTBEAT_GRACE)).toBe('live');
     expect(stateAfterFrame(stale, 'connecting', 1_001 + 300 * HEARTBEAT_GRACE)).toBe('stalled');
   });
-  it('a heartbeat revives a stalled rail, leaves an inactive one, and an invalidate changes nothing', () => {
-    expect(stateAfterFrame(cursor, 'stalled')).toBe('live');
-    expect(stateAfterFrame(cursor, 'live')).toBe('live');
-    expect(stateAfterFrame(cursor, 'inactive')).toBe('inactive');
-    expect(stateAfterFrame({ t: 'invalidate', chainId: 84532, keys: ['loan.updated'], scannedTo: '1' }, 'stalled')).toBe('stalled');
+  it('a heartbeat with a recent timestamp revives a stalled rail, leaves an inactive one, and an invalidate changes nothing', () => {
+    expect(stateAfterFrame(cursor, 'stalled', 1_100)).toBe('live');
+    expect(stateAfterFrame(cursor, 'live', 1_100)).toBe('live');
+    expect(stateAfterFrame(cursor, 'inactive', 1_100)).toBe('inactive');
+    expect(stateAfterFrame({ t: 'invalidate', chainId: 84532, keys: ['loan.updated'], scannedTo: '1' }, 'stalled', 1_100)).toBe('stalled');
   });
-  it('allows two cadences before a stall', () => {
-    expect(heartbeatDeadlineMs(300)).toBe(600_000);
-    expect(heartbeatDeadlineMs(0)).toBe(HEARTBEAT_GRACE * 1000);
+  it('a heartbeat carrying an old timestamp never revives the rail: a wedged scan keeps sending the same cursor', () => {
+    const late = 1_001 + 300 * HEARTBEAT_GRACE;
+    expect(stateAfterFrame(cursor, 'stalled', late)).toBe('stalled');
+    expect(stateAfterFrame(cursor, 'live', late)).toBe('stalled');
+  });
+});
+
+describe('stallDeadlineSec', () => {
+  it('is the cursor timestamp plus two cadences', () => {
+    expect(stallDeadlineSec(1_000, 300, 1_200)).toBe(1_000 + 300 * HEARTBEAT_GRACE);
+    expect(stallDeadlineSec(1_000, 0, 1_200)).toBe(1_000 + HEARTBEAT_GRACE);
+  });
+  it('gives a chain with no cursor yet the grace from now', () => {
+    expect(stallDeadlineSec(null, 300, 5_000)).toBe(5_000 + 300 * HEARTBEAT_GRACE);
+  });
+  it('earns a timestamp ahead of the clock no extra time', () => {
+    expect(stallDeadlineSec(9_999, 300, 1_000)).toBe(1_000 + 300 * HEARTBEAT_GRACE);
+  });
+});
+
+describe('frameDeadlineSec', () => {
+  it('sets none for an inactive hello or an invalidation', () => {
+    expect(frameDeadlineSec({ t: 'hello', chainId: 1, ingestActive: false, cursor: null, scanCadenceSec: null }, 10)).toBeNull();
+    expect(frameDeadlineSec({ t: 'invalidate', chainId: 1, keys: ['loan.updated'], scannedTo: '1' }, 10)).toBeNull();
+  });
+  it('reads the cursor a hello or a heartbeat carries', () => {
+    expect(frameDeadlineSec({ t: 'hello', chainId: 1, ingestActive: true, cursor: { lastBlock: 1, updatedAt: 100 }, scanCadenceSec: 60 }, 120)).toBe(220);
+    expect(frameDeadlineSec({ t: 'cursor', chainId: 1, lastBlock: '1', updatedAt: 100, scanCadenceSec: 60 }, 120)).toBe(220);
   });
 });
 
@@ -142,7 +167,9 @@ describe('openPushRail', () => {
       },
     };
   };
-  const open = () => {
+  /** The test clock, in unix seconds; `open` hands the rail its millisecond view. */
+  const NOW = 1_000_000;
+  const open = (clock = { sec: NOW }) => {
     const t = timers();
     const states: PushState[] = [];
     const frames: PushFrame[] = [];
@@ -153,9 +180,10 @@ describe('openPushRail', () => {
       WebSocketImpl: FakeSocket as unknown as typeof WebSocket,
       setTimeoutImpl: t.setT,
       clearTimeoutImpl: t.clearT,
+      nowMs: () => clock.sec * 1000,
     });
     const ws = FakeSocket.last!;
-    return { t, states, frames, handle, ws };
+    return { t, states, frames, handle, ws, clock };
   };
   it('stays connecting on open until hello says the chain is scanned, then goes live and arms the heartbeat', () => {
     const { t, states, ws } = open();
@@ -163,7 +191,7 @@ describe('openPushRail', () => {
     expect(states).toEqual(['connecting']);
     ws.frame({ t: 'hello', chainId: 84532, ingestActive: true, cursor: null, scanCadenceSec: 300 });
     expect(states).toEqual(['connecting', 'live']);
-    expect(t.pending().map((q) => q.ms)).toEqual([heartbeatDeadlineMs(300)]);
+    expect(t.pending().map((q) => q.ms)).toEqual([300 * HEARTBEAT_GRACE * 1000]);
   });
   it('reads an inactive hello as inactive, with no heartbeat expected', () => {
     const { t, states, ws } = open();
@@ -172,21 +200,41 @@ describe('openPushRail', () => {
     expect(states).toEqual(['connecting', 'inactive']);
     expect(t.pending()).toEqual([]);
   });
-  it('turns stalled when the heartbeat is overdue and live again on the next cursor frame', () => {
+  it('arms the stall timer at the deadline the cursor itself sets, not a full grace from the frame', () => {
     const { t, states, ws } = open();
     ws.onopen?.();
-    ws.frame({ t: 'hello', chainId: 84532, ingestActive: true, cursor: null, scanCadenceSec: 300 });
+    ws.frame({ t: 'hello', chainId: 84532, ingestActive: true, cursor: { lastBlock: 9, updatedAt: NOW - 500 }, scanCadenceSec: 300 });
+    expect(states.at(-1)).toBe('live');
+    expect(t.pending().map((q) => q.ms)).toEqual([(300 * HEARTBEAT_GRACE - 500) * 1000]);
+  });
+  it('turns stalled when the cursor is overdue and live again only on a heartbeat carrying a recent timestamp', () => {
+    const { t, states, ws, clock } = open();
+    ws.onopen?.();
+    ws.frame({ t: 'hello', chainId: 84532, ingestActive: true, cursor: { lastBlock: 10, updatedAt: NOW }, scanCadenceSec: 300 });
+    clock.sec = NOW + 300 * HEARTBEAT_GRACE + 1;
     t.fire();
     expect(states.at(-1)).toBe('stalled');
-    ws.frame({ t: 'cursor', chainId: 84532, lastBlock: '11', updatedAt: 1, scanCadenceSec: 300 });
+    // The wedged scan's heartbeat: the same persisted timestamp, still old.
+    ws.frame({ t: 'cursor', chainId: 84532, lastBlock: '10', updatedAt: NOW, scanCadenceSec: 300 });
+    expect(states.at(-1)).toBe('stalled');
+    expect(t.pending()).toEqual([]);
+    // The scan advanced: a fresh timestamp revives the rail and re-arms.
+    ws.frame({ t: 'cursor', chainId: 84532, lastBlock: '11', updatedAt: clock.sec, scanCadenceSec: 300 });
     expect(states.at(-1)).toBe('live');
-    expect(t.pending().map((q) => q.ms)).toEqual([heartbeatDeadlineMs(300)]);
+    expect(t.pending().map((q) => q.ms)).toEqual([300 * HEARTBEAT_GRACE * 1000]);
+  });
+  it('a hello whose cursor is already past the grace reads as stalled at connect', () => {
+    const { t, states, ws } = open();
+    ws.onopen?.();
+    ws.frame({ t: 'hello', chainId: 84532, ingestActive: true, cursor: { lastBlock: 9, updatedAt: NOW - 3_600 }, scanCadenceSec: 300 });
+    expect(states).toEqual(['connecting', 'stalled']);
+    expect(t.pending()).toEqual([]);
   });
   it('a cursor frame re-arms the deadline instead of adding a second one', () => {
     const { t, ws } = open();
     ws.onopen?.();
     ws.frame({ t: 'hello', chainId: 84532, ingestActive: true, cursor: null, scanCadenceSec: 300 });
-    ws.frame({ t: 'cursor', chainId: 84532, lastBlock: '11', updatedAt: 1, scanCadenceSec: 300 });
+    ws.frame({ t: 'cursor', chainId: 84532, lastBlock: '11', updatedAt: NOW, scanCadenceSec: 300 });
     expect(t.pending()).toHaveLength(1);
   });
   it('a drop clears the heartbeat, announces unavailable and schedules the reconnect', () => {

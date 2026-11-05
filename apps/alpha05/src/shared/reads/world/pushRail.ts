@@ -52,55 +52,67 @@ export type PushFrame =
 /** The rail's state is DERIVED from what the indexer says over the socket,
  *  never from the socket alone: an open socket proves a connection, not that
  *  anything will ever be announced on it (design §4.1.1 of the indexer's
- *  read-diet plan). `hello` says whether this chain is scanned at all, and
- *  the `cursor` heartbeat that follows every successful scan says the scan
- *  loop is alive; a heartbeat overdue by `HEARTBEAT_GRACE` cadences while
- *  the socket stays open is a stalled rail, and the stamp says so. */
+ *  read-diet plan). `hello` says whether this chain is scanned at all. After
+ *  that, liveness is the AGE of the indexer's persisted cursor, which every
+ *  frame carries, never the arrival of a frame: a scan whose RPC head has
+ *  wedged still sends heartbeats, carrying the same old timestamp
+ *  (apps/indexer chainIngestDO.ts), so a frame arriving proves nothing. The
+ *  rail is live while that timestamp is within `HEARTBEAT_GRACE` scan
+ *  cadences of now, and stalled from the moment it is not. */
 export type PushState =
   /** This build has no indexer origin: there is no rail to open. */
   | 'off'
   /** Opening the socket, or open and waiting for the indexer's `hello`. */
   | 'connecting'
-  /** `hello` said this chain is scanned and a heartbeat is not overdue. */
+  /** `hello` said this chain is scanned and its cursor is recent. */
   | 'live'
   /** `hello` said the indexer does not scan this chain: the socket stays
    *  open but nothing will be announced on it, so the app polls. */
   | 'inactive'
-  /** The socket is open but no heartbeat arrived within the grace period:
-   *  the scan loop is not reporting, so the app polls. */
+  /** The socket is open but the indexer's cursor has not advanced within
+   *  the grace period: the scan is not progressing, so the app polls. */
   | 'stalled'
   /** Refused or dropped; reconnecting with backoff while the tab lives. */
   | 'unavailable'
   | 'closed';
 
-/** Heartbeats are expected once per scan cadence; this many cadences
- *  without one reads as a stall. Two, because a single late scan (a busy
- *  pass, a slow RPC) is ordinary and should not flip the stamp. */
+/** The cursor is expected to advance once per scan cadence; this many
+ *  cadences without it reads as a stall. Two, because a single late scan (a
+ *  busy pass, a slow RPC) is ordinary and should not flip the stamp. */
 export const HEARTBEAT_GRACE = 2;
 
-/** How long after a heartbeat (or `hello`) the next one may take before the
- *  rail reads as stalled. The cadence comes from the frame itself, so an
- *  indexer that scans slower or faster moves the deadline with it. */
-export function heartbeatDeadlineMs(scanCadenceSec: number): number {
-  return Math.max(1, scanCadenceSec) * HEARTBEAT_GRACE * 1000;
+/** When (unix seconds) the rail stops counting as live: the cursor's own
+ *  timestamp plus the grace. A `hello` with no cursor yet (a chain the scan
+ *  has not reached) gives the indexer the grace from now. A timestamp ahead
+ *  of this clock earns no extra time: it counts as "now". The cadence comes
+ *  from the frame, so an indexer that scans slower moves the line with it. */
+export function stallDeadlineSec(cursorUpdatedAt: number | null, scanCadenceSec: number, nowSec: number): number {
+  const evidence = cursorUpdatedAt === null ? nowSec : Math.min(cursorUpdatedAt, nowSec);
+  return evidence + Math.max(1, scanCadenceSec) * HEARTBEAT_GRACE;
+}
+
+/** The deadline a frame sets, or null when it sets none (an inactive chain,
+ *  an invalidation). */
+export function frameDeadlineSec(frame: PushFrame, nowSec: number): number | null {
+  if (frame.t === 'hello') {
+    if (!frame.ingestActive || frame.scanCadenceSec === null) return null;
+    return stallDeadlineSec(frame.cursor?.updatedAt ?? null, frame.scanCadenceSec, nowSec);
+  }
+  if (frame.t === 'cursor') return stallDeadlineSec(frame.updatedAt, frame.scanCadenceSec, nowSec);
+  return null;
 }
 
 /** The state the rail is in after `frame`, given the state before it. Pure,
- *  so the rule is testable without a socket: `hello` decides between live
- *  and inactive; a `cursor` heartbeat makes a live-or-stalled rail live
- *  again; an `invalidate` changes nothing (its scan's heartbeat follows it
- *  when the scan's cursor could be read, and its absence is the signal). */
+ *  so the rule is testable without a socket: `hello` decides inactive, or
+ *  live or stalled by its cursor's age; a `cursor` frame decides live or
+ *  stalled by ITS timestamp's age, the same way (an inactive chain stays
+ *  inactive); an `invalidate` changes nothing. */
 export function stateAfterFrame(frame: PushFrame, before: PushState, nowSec: number = Date.now() / 1000): PushState {
-  if (frame.t === 'hello') {
-    if (!frame.ingestActive) return 'inactive';
-    // A cursor already older than the grace period at connect time is a
-    // stall the socket's openness cannot contradict (design §4.1.1).
-    const cadence = frame.scanCadenceSec ?? 0;
-    if (frame.cursor && cadence > 0 && nowSec - frame.cursor.updatedAt > cadence * HEARTBEAT_GRACE) return 'stalled';
-    return 'live';
-  }
-  if (frame.t === 'cursor') return before === 'inactive' ? 'inactive' : 'live';
-  return before;
+  if (frame.t === 'hello' && !frame.ingestActive) return 'inactive';
+  if (frame.t === 'cursor' && before === 'inactive') return 'inactive';
+  const deadline = frameDeadlineSec(frame, nowSec);
+  if (deadline === null) return frame.t === 'hello' ? 'live' : before;
+  return nowSec > deadline ? 'stalled' : 'live';
 }
 
 /** The socket URL for a chain's push rail, from the indexer's HTTP origin. */
@@ -168,6 +180,8 @@ export interface PushRailOptions {
   WebSocketImpl?: typeof WebSocket;
   setTimeoutImpl?: typeof setTimeout;
   clearTimeoutImpl?: typeof clearTimeout;
+  /** The clock, in unix milliseconds; `Date.now` by default. */
+  nowMs?: () => number;
 }
 
 export interface PushRailHandle {
@@ -178,6 +192,7 @@ export function openPushRail(opts: PushRailOptions): PushRailHandle {
   const WS = opts.WebSocketImpl ?? WebSocket;
   const setT = opts.setTimeoutImpl ?? setTimeout;
   const clearT = opts.clearTimeoutImpl ?? clearTimeout;
+  const nowSec = () => (opts.nowMs ?? Date.now)() / 1000;
   let socket: WebSocket | null = null;
   let timer: ReturnType<typeof setTimeout> | null = null;
   let heartbeat: ReturnType<typeof setTimeout> | null = null;
@@ -197,16 +212,17 @@ export function openPushRail(opts: PushRailOptions): PushRailHandle {
     heartbeat = null;
   };
 
-  /** Arm (or re-arm) the stall deadline from a frame that carries the scan
-   *  cadence. A `hello` for an inactive chain carries none, and arms nothing:
-   *  no heartbeat is expected there. */
-  const armHeartbeat = (scanCadenceSec: number | null) => {
+  /** Arm (or re-arm) the stall timer at the deadline a frame set: the
+   *  cursor's own age decides it, so a frame carrying an old timestamp arms
+   *  a timer that is already due, and nothing is armed for an inactive
+   *  chain or a rail that is already stalled. */
+  const armHeartbeat = (deadlineSec: number | null) => {
     clearHeartbeat();
-    if (scanCadenceSec === null || state !== 'live') return;
+    if (deadlineSec === null || state !== 'live') return;
     heartbeat = setT(() => {
       heartbeat = null;
       if (!closed && state === 'live') setState('stalled');
-    }, heartbeatDeadlineMs(scanCadenceSec));
+    }, Math.max(0, (deadlineSec - nowSec()) * 1000));
   };
 
   const connect = () => {
@@ -228,8 +244,9 @@ export function openPushRail(opts: PushRailOptions): PushRailHandle {
     ws.onmessage = (ev) => {
       const frame = parseFrame(ev.data);
       if (!frame) return;
-      setState(stateAfterFrame(frame, state));
-      if (frame.t === 'hello' || frame.t === 'cursor') armHeartbeat(frame.scanCadenceSec);
+      const now = nowSec();
+      setState(stateAfterFrame(frame, state, now));
+      if (frame.t === 'hello' || frame.t === 'cursor') armHeartbeat(frameDeadlineSec(frame, now));
       opts.onFrame(frame);
     };
     ws.onclose = () => {
