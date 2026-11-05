@@ -26,15 +26,17 @@ import {
   MetricsFacetABI,
   NumeraireConfigFacetABI,
   NumeraireValueFacetABI,
+  RepayPeriodicFacetABI,
   RiskFacetABI,
 } from '@vaipakam/contracts/abis';
 import { scanAll } from '../../shared/reads/scan';
-import { ASSET_ERC20, isLiveStatus, positionKey, type Deadlines, type LiveLoanRow, type LoanSummary } from './model';
+import { ASSET_ERC20, LOAN_STATUS_ACTIVE, isLiveStatus, positionKey, type Deadlines, type LiveLoanRow, type LoanSummary } from './model';
 
 const DASHBOARD = MetricsDashboardFacetABI as Abi;
 const METRICS = MetricsFacetABI as Abi;
 const LOAN = LoanFacetABI as Abi;
 const RISK = RiskFacetABI as Abi;
+const PERIODIC = RepayPeriodicFacetABI as Abi;
 const VALUE = NumeraireValueFacetABI as Abi;
 const ADMIN = AdminFacetABI as Abi;
 const NUMERAIRE = NumeraireConfigFacetABI as Abi;
@@ -109,9 +111,9 @@ export interface PayoutRow {
 export interface Payouts {
   rows: PayoutRow[];
   complete: boolean;
-  /** Ended loans whose position the wallet holds but did not originate on
-   *  that side: the protocol's pending rule is listed only for the recorded
-   *  party, so whether these pay out is not known here. */
+  /** Ended (or fallback) loans whose position the wallet holds but did not
+   *  originate on that side: the protocol's pending rule is listed only for
+   *  the recorded party, so whether these pay out is not known here. */
   unlisted: number;
 }
 
@@ -150,19 +152,19 @@ export async function readPositionBook(client: PublicClient, diamond: Hex, accou
   });
 
   const live = held.filter((h) => isLiveStatus(h.loan.status));
-  const ended = held.filter((h) => !isLiveStatus(h.loan.status));
 
   const [healthList, deadlineList, valueList, payouts] = await Promise.all([
     settled(live.map(async (h) => (await client.readContract({ address: diamond, abi: RISK, functionName: 'calculateHealthFactor', args: [h.loan.id] })) as bigint)),
     settled(
+      // Both dates the loan answers to: maturity and, with a periodic-interest
+      // cadence, the next checkpoint. Either unread leaves the deadline
+      // unknown rather than half-known.
       live.map(async (h) => {
-        const [, pauseCredit, maturity, graceEnd] = (await client.readContract({
-          address: diamond,
-          abi: LOAN,
-          functionName: 'getLoanDeadlines',
-          args: [h.loan.id],
-        })) as [bigint, bigint, bigint, bigint];
-        return { maturity, graceEnd, pauseCredit } satisfies Deadlines;
+        const [[, pauseCredit, maturity, graceEnd], [cadence, periodEndAt, graceEndsAt, , , shortfall]] = (await Promise.all([
+          client.readContract({ address: diamond, abi: LOAN, functionName: 'getLoanDeadlines', args: [h.loan.id] }),
+          client.readContract({ address: diamond, abi: PERIODIC, functionName: 'previewPeriodicSettle', args: [h.loan.id] }),
+        ])) as [[bigint, bigint, bigint, bigint], [number, bigint, bigint, bigint, bigint, bigint, boolean]];
+        return { maturity, graceEnd, pauseCredit, periodic: cadence === 0 ? null : { periodEndAt, graceEndsAt, shortfall } } satisfies Deadlines;
       }),
     ),
     settled(
@@ -176,7 +178,7 @@ export async function readPositionBook(client: PublicClient, diamond: Hex, accou
         })) as bigint;
       }),
     ),
-    readPayouts(client, diamond, account, ended, inventory.complete),
+    readPayouts(client, diamond, account, held, inventory.complete),
   ]);
 
   const rows: LiveLoanRow[] = live.map((h, i) => ({ loan: h.loan, borrowerSide: h.borrowerSide, healthFactor: healthList[i] ?? 0n }));
@@ -189,8 +191,11 @@ export async function readPositionBook(client: PublicClient, diamond: Hex, accou
   return { loans: { rows, complete: inventory.complete, deadlines, values }, payouts };
 }
 
-async function readPayouts(client: PublicClient, diamond: Hex, account: Hex, ended: readonly HeldPosition[], inventoryComplete: boolean): Promise<Payouts> {
-  const heldEnded = new Set(ended.map((h) => positionKey(h)));
+/** A claim can be open on a loan that is still live (a lender's claim on a
+ *  FallbackPending loan, recorded at fallback entry), so the pending rows are
+ *  matched against every held position, not only ended ones. */
+async function readPayouts(client: PublicClient, diamond: Hex, account: Hex, held: readonly HeldPosition[], inventoryComplete: boolean): Promise<Payouts> {
+  const heldKeys = new Set(held.map((h) => positionKey(h)));
   const side = (borrowerSide: boolean) =>
     scanAll<PayoutRow>(
       async (cursor, maxScan) => {
@@ -206,9 +211,11 @@ async function readPayouts(client: PublicClient, diamond: Hex, account: Hex, end
     );
   const [lender, borrower] = await Promise.all([side(false), side(true)]);
   const rows = [...lender.rows, ...borrower.rows]
-    .filter((p) => heldEnded.has(positionKey({ loan: { id: p.loanId }, borrowerSide: p.side === 'borrower' })))
+    .filter((p) => heldKeys.has(positionKey({ loan: { id: p.loanId }, borrowerSide: p.side === 'borrower' })))
     .sort((a, b) => (a.loanId < b.loanId ? -1 : a.loanId > b.loanId ? 1 : 0));
-  const unlisted = ended.filter((h) => h.recordedParty.toLowerCase() !== account.toLowerCase()).length;
+  // Positions the pending view cannot cover: received from another wallet,
+  // on a loan that is no longer simply Active (ended, or in fallback).
+  const unlisted = held.filter((h) => h.loan.status !== LOAN_STATUS_ACTIVE && h.recordedParty.toLowerCase() !== account.toLowerCase()).length;
   return { rows, complete: inventoryComplete && lender.complete && borrower.complete, unlisted };
 }
 

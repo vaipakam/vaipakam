@@ -158,7 +158,7 @@ export const copy = {
     payoutRow: B('Loan #{{id}}, as {{side}}: a payout is ready.'),
     payoutsNote: B('Amounts, and how each payout is paid, are on Claims, where you collect them.'),
     payoutsAction: B('Open in Claims'),
-    payoutsUnlisted: B('Ended loans whose position you received from another wallet: {{count}}. Claims shows whether they pay out.'),
+    payoutsUnlisted: B('Closed or settling loans whose position you received from another wallet: {{count}}. Claims shows whether they pay.'),
     payoutsWhy: C(
       'A payout is ready when the loan has ended and a claim would pay you now: the repayment or settlement for a lender, the collateral back (or what remains of it) for a borrower, or an NFT returned at the end of a rental. A payout can be paid in more than one asset, so Home names it and Claims shows every amount before you collect. A claim pays whoever holds the position, so Home lists payouts on positions this wallet holds; an ended loan whose position you received from another wallet is counted, and Claims shows whether it pays.',
       'home-payouts',
@@ -172,6 +172,15 @@ export const copy = {
     loanCollateral: B('Collateral: {{amount}}.'),
     loanDue: B('Repayment due {{when}}.'),
     rentalDue: B('The rental is due to close {{when}}.'),
+    interestNext: B('Next interest payment due {{when}}.'),
+    interestSoonBorrower: A(
+      'An interest payment of {{amount}} is due {{when}}, in {{left}}; if it is still unpaid when its grace period ends, collateral can be sold to pay it.',
+    ),
+    interestSoonLender: B('An interest payment of {{amount}} is due to you {{when}}, in {{left}}.'),
+    interestInGraceBorrower: A('An interest payment of {{amount}} was due {{due}}. Pay it before {{graceEnd}}, or collateral can be sold to pay it.'),
+    interestInGraceLender: B('An interest payment of {{amount}} was due {{due}}; its grace period ends {{graceEnd}}.'),
+    interestOverdueBorrower: A('An interest payment of {{amount}} was not met by {{when}}: collateral can now be sold to pay it, and the loan stays open.'),
+    interestOverdueLender: A('An interest payment of {{amount}} was not met by {{when}}: collateral can now be sold to pay it. The loan page shows your options.'),
     loanDueSoonRenter: A('The rental is due to close {{when}}, in {{left}}; after that, a late fee applies.'),
     loanDueSoonOwner: B('The rental is due to close {{when}}, in {{left}}.'),
     loanInGraceRenter: A(
@@ -197,7 +206,7 @@ export const copy = {
     groupHealth: B('Lowest health factor {{hf}}.'),
     groupUnpriced: B('Loans here with no health reading: {{count}}.'),
     loansWhy: C(
-      'Each live loan shows its next deadline. A loan is due on its due date; after it, a grace period runs, during which the borrower can still repay with a late fee; once the grace period ends, anyone can start the default, which settles the loan from the collateral. Time the protocol spent paused is added to these dates. The health factor compares the collateral\'s value with the debt; below 1 the loan can be liquidated. A loan in an unpriced asset has no health factor. An NFT rental has no collateral: its default pays the renter\'s prepaid rent to the owner and the buffer to the treasury. Several loans opened from one offer are shown together, with the principal filled, the rate weighted by principal and the lowest health factor among them.',
+      'Each live loan shows its next deadline. A loan is due on its due date; after it, a grace period runs, during which the borrower can still repay with a late fee; once the grace period ends, anyone can start the default, which settles the loan from the collateral. Time the protocol spent paused is added to these dates. A loan that pays interest periodically also has a checkpoint before then: interest still owed when the checkpoint\'s grace period ends can be paid by selling collateral, and the loan stays open. The health factor compares the collateral\'s value with the debt; below 1 the loan can be liquidated. A loan in an unpriced asset has no health factor. An NFT rental has no collateral: its default pays the renter\'s prepaid rent to the owner and the buffer to the treasury. Several loans opened from one offer are shown together, with the principal filled, the rate weighted by principal and the lowest health factor among them.',
       'home-loans',
     ),
     exposureLent: B('More lent than borrowed: {{lent}} lent and {{borrowed}} borrowed, in {{unit}} at today\'s prices.'),

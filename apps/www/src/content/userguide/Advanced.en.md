@@ -2345,6 +2345,8 @@ summed, rate weighted by principal and rounded down, and the lowest
 health factor among the priced loans, with the unpriced ones
 counted.
 
+A loan that pays interest periodically also has checkpoints before its due date. Interest still owed when a checkpoint's grace period ends can be paid by selling collateral, and the loan stays open; Home shows the next checkpoint and puts an owed one first.
+
 <a id="home-exposure"></a>
 
 ### Home: Lent and Borrowed

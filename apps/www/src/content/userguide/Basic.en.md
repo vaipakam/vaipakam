@@ -996,6 +996,8 @@ health factor compares the collateral's value with the debt: below
 no health factor. Loans opened from one of your offers are shown
 together.
 
+A loan that pays interest periodically also has checkpoints before its due date. Interest still owed when a checkpoint's grace period ends can be paid by selling collateral, and the loan stays open; Home shows the next checkpoint and puts an owed one first.
+
 <a id="home-exposure"></a>
 
 ### Home: Lent and Borrowed

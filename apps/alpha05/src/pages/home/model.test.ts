@@ -9,6 +9,7 @@ import {
   isLiveStatus,
   loanStage,
   positionKey,
+  type Deadlines,
   type LiveLoanRow,
 } from './model';
 
@@ -43,7 +44,13 @@ function row(id: number, over: Partial<LiveLoanRow['loan']> = {}, rest: Partial<
 }
 
 const NOW = 1_000_000;
-const dl = (maturity: number, graceEnd: number) => ({ maturity: BigInt(maturity), graceEnd: BigInt(graceEnd), pauseCredit: 0n });
+const dl = (maturity: number, graceEnd: number, periodic: Deadlines['periodic'] = null): Deadlines => ({
+  maturity: BigInt(maturity),
+  graceEnd: BigInt(graceEnd),
+  pauseCredit: 0n,
+  periodic,
+});
+const cp = (periodEndAt: number, graceEndsAt: number, shortfall = 10n) => ({ periodEndAt: BigInt(periodEndAt), graceEndsAt: BigInt(graceEndsAt), shortfall });
 
 describe('loanStage', () => {
   it('names a fallback before reading any date', () => {
@@ -59,21 +66,33 @@ describe('loanStage', () => {
     expect(loanStage(row(1), dl(NOW, NOW + 100), NOW)).toEqual({ kind: 'in-grace', dueAt: NOW, graceEndsAt: NOW + 100 });
     expect(loanStage(row(1), dl(NOW - 100, NOW), NOW)).toEqual({ kind: 'grace-over', graceEndedAt: NOW });
   });
+  it('puts an owed interest checkpoint before maturity ahead of a distant due date', () => {
+    const far = NOW + 100 * 86_400;
+    expect(loanStage(row(1), dl(far, far + 100, cp(NOW - 200, NOW - 1)), NOW)).toEqual({ kind: 'interest-overdue', graceEndedAt: NOW - 1, shortfall: 10n });
+    expect(loanStage(row(1), dl(far, far + 100, cp(NOW - 1, NOW + 50)), NOW).kind).toBe('interest-in-grace');
+    expect(loanStage(row(1), dl(far, far + 100, cp(NOW + 60, NOW + 99)), NOW).kind).toBe('interest-soon');
+    expect(loanStage(row(1), dl(far, far + 100, cp(NOW + 10 * 86_400, NOW + 11 * 86_400)), NOW)).toEqual({ kind: 'running', dueAt: far, interestDueAt: NOW + 10 * 86_400 });
+  });
+  it('ignores a checkpoint with nothing owed, or one that falls on the due date itself', () => {
+    const far = NOW + 100 * 86_400;
+    expect(loanStage(row(1), dl(far, far + 100, cp(NOW - 200, NOW - 1, 0n)), NOW).kind).toBe('running');
+    expect(loanStage(row(1), dl(NOW - 100, NOW + 50, cp(NOW - 100, NOW - 1)), NOW).kind).toBe('in-grace');
+  });
 });
 
 describe('compareStages', () => {
   it('puts an ended grace period first and a far due date last, earlier dates first within a stage', () => {
     const stages = [
-      { kind: 'running', dueAt: 9 } as const,
+      { kind: 'running', dueAt: 9, interestDueAt: null } as const,
       { kind: 'grace-over', graceEndedAt: 5 } as const,
       { kind: 'due-soon', dueAt: 3 } as const,
-      { kind: 'running', dueAt: 4 } as const,
+      { kind: 'running', dueAt: 4, interestDueAt: null } as const,
       { kind: 'in-grace', dueAt: 1, graceEndsAt: 2 } as const,
       { kind: 'deadline-unknown' } as const,
       { kind: 'fallback' } as const,
     ];
     expect([...stages].sort(compareStages).map((s) => s.kind)).toEqual(['grace-over', 'in-grace', 'fallback', 'deadline-unknown', 'due-soon', 'running', 'running']);
-    expect([...stages].sort(compareStages).at(-1)).toEqual({ kind: 'running', dueAt: 9 });
+    expect([...stages].sort(compareStages).at(-1)).toEqual({ kind: 'running', dueAt: 9, interestDueAt: null });
   });
 });
 

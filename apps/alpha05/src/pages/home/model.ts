@@ -68,25 +68,58 @@ export interface Deadlines {
   graceEnd: bigint;
   /** Seconds of pause credited to this loan's dates. */
   pauseCredit: bigint;
+  /** The loan's periodic-interest checkpoint (`previewPeriodicSettle`), or
+   *  null when it has no cadence. Missing it lets anyone sell collateral to
+   *  cover the shortfall after the checkpoint's grace, before maturity. */
+  periodic: PeriodicCheckpoint | null;
+}
+
+export interface PeriodicCheckpoint {
+  periodEndAt: bigint;
+  graceEndsAt: bigint;
+  /** Interest still owed for the current period, in the principal asset. */
+  shortfall: bigint;
 }
 
 export type LoanStage =
   | { kind: 'fallback' }
   | { kind: 'deadline-unknown' }
-  | { kind: 'running'; dueAt: number }
+  | { kind: 'running'; dueAt: number; interestDueAt: number | null }
   | { kind: 'due-soon'; dueAt: number }
   | { kind: 'in-grace'; dueAt: number; graceEndsAt: number }
-  | { kind: 'grace-over'; graceEndedAt: number };
+  | { kind: 'grace-over'; graceEndedAt: number }
+  | { kind: 'interest-soon'; dueAt: number; shortfall: bigint }
+  | { kind: 'interest-in-grace'; dueAt: number; graceEndsAt: number; shortfall: bigint }
+  | { kind: 'interest-overdue'; graceEndedAt: number; shortfall: bigint };
 
+/**
+ * The loan's next obligation: the more urgent of its final due date and,
+ * when it carries a periodic-interest cadence with interest still owed, the
+ * checkpoint before maturity. A checkpoint is its own deadline: once its
+ * grace ends, collateral can be sold to pay the shortfall while the loan
+ * stays open, whatever the maturity date says.
+ */
 export function loanStage(row: LiveLoanRow, deadlines: Deadlines | null, nowSec: number): LoanStage {
   if (row.loan.status === LOAN_STATUS_FALLBACK_PENDING) return { kind: 'fallback' };
   if (!deadlines) return { kind: 'deadline-unknown' };
   const dueAt = Number(deadlines.maturity);
   const graceEnd = Number(deadlines.graceEnd);
-  if (nowSec >= graceEnd) return { kind: 'grace-over', graceEndedAt: graceEnd };
-  if (nowSec >= dueAt) return { kind: 'in-grace', dueAt, graceEndsAt: graceEnd };
-  if (dueAt - nowSec <= DUE_SOON_SECONDS) return { kind: 'due-soon', dueAt };
-  return { kind: 'running', dueAt };
+  const p = deadlines.periodic;
+  const checkpoint = p && p.shortfall > 0n && p.periodEndAt < deadlines.maturity ? p : null;
+  let maturityStage: LoanStage;
+  if (nowSec >= graceEnd) maturityStage = { kind: 'grace-over', graceEndedAt: graceEnd };
+  else if (nowSec >= dueAt) maturityStage = { kind: 'in-grace', dueAt, graceEndsAt: graceEnd };
+  else if (dueAt - nowSec <= DUE_SOON_SECONDS) maturityStage = { kind: 'due-soon', dueAt };
+  else maturityStage = { kind: 'running', dueAt, interestDueAt: checkpoint ? Number(checkpoint.periodEndAt) : null };
+  if (!checkpoint) return maturityStage;
+  const at = Number(checkpoint.periodEndAt);
+  const until = Number(checkpoint.graceEndsAt);
+  const shortfall = checkpoint.shortfall;
+  let interestStage: LoanStage | null = null;
+  if (nowSec >= until) interestStage = { kind: 'interest-overdue', graceEndedAt: until, shortfall };
+  else if (nowSec >= at) interestStage = { kind: 'interest-in-grace', dueAt: at, graceEndsAt: until, shortfall };
+  else if (at - nowSec <= DUE_SOON_SECONDS) interestStage = { kind: 'interest-soon', dueAt: at, shortfall };
+  return interestStage && compareStages(interestStage, maturityStage) < 0 ? interestStage : maturityStage;
 }
 
 /** Which stage needs the reader first: an ended grace period, then one
@@ -94,21 +127,28 @@ export function loanStage(row: LiveLoanRow, deadlines: Deadlines | null, nowSec:
  *  deadline sorts with the urgent ones, because it may be. */
 const STAGE_RANK: Record<LoanStage['kind'], number> = {
   'grace-over': 0,
+  'interest-overdue': 0,
   'in-grace': 1,
+  'interest-in-grace': 1,
   fallback: 2,
   'deadline-unknown': 3,
   'due-soon': 4,
+  'interest-soon': 4,
   running: 5,
 };
 
 function stageTime(s: LoanStage): number {
   switch (s.kind) {
     case 'running':
+      return s.interestDueAt ?? s.dueAt;
     case 'due-soon':
+    case 'interest-soon':
       return s.dueAt;
     case 'in-grace':
+    case 'interest-in-grace':
       return s.graceEndsAt;
     case 'grace-over':
+    case 'interest-overdue':
       return s.graceEndedAt;
     default:
       return 0;

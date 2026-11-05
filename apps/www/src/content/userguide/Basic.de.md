@@ -1060,6 +1060,8 @@ liquidiert werden. Ein Loan in einem Asset ohne Preis hat keinen
 Health Factor. Loans aus einem deiner Angebote werden zusammen
 gezeigt.
 
+Ein Loan mit periodischer Zinszahlung hat vor seinem Fälligkeitsdatum zusätzlich Stichtage. Zinsen, die nach der Kulanzfrist eines Stichtags noch offen sind, können durch den Verkauf von Sicherheiten bezahlt werden, und der Loan bleibt offen; Home zeigt den nächsten Stichtag und stellt einen offenen nach vorn.
+
 <a id="home-exposure"></a>
 
 ### Home: Verliehen und geliehen

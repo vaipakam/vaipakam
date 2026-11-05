@@ -2191,6 +2191,8 @@ et dans le même ERC-20, sont regroupés : principal additionné, taux
 pondéré par le principal et arrondi vers le bas, et le health factor
 le plus bas parmi les loans évalués, les autres étant comptés.
 
+Un loan qui paie des intérêts périodiquement a aussi des échéances intermédiaires avant son échéance finale. Les intérêts encore dus à la fin du délai de grâce d'une échéance peuvent être payés en vendant du collatéral, et le loan reste ouvert ; Home montre la prochaine échéance et place en premier une échéance impayée.
+
 <a id="home-exposure"></a>
 
 ### Home : prêté et emprunté

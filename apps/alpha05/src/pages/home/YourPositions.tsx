@@ -246,7 +246,7 @@ function LoanCard({ row, meta, stage, deadlines }: { row: LiveLoanRow; meta: Tok
       {l.assetType === ASSET_ERC20 && (
         <p className="tier-b">{format('home.loanCollateral', { amount: legText(l.collateralAsset, l.collateralAssetType, l.collateralAmount, l.collateralTokenId) })}</p>
       )}
-      <StageLine stage={stage} borrowerSide={row.borrowerSide} rental={l.assetType !== ASSET_ERC20} />
+      <StageLine stage={stage} borrowerSide={row.borrowerSide} rental={l.assetType !== ASSET_ERC20} amountOf={(v) => tokenAmount(v, l.principalAsset, meta, format)} />
       {deadlines && deadlines.pauseCredit > 0n && <p className="tier-b">{format('home.loanPauseCredit', { credit: formatSpan(Number(deadlines.pauseCredit)) })}</p>}
       <p className="tier-b">{row.healthFactor > 0n ? format('home.loanHealth', { hf: formatScaled(row.healthFactor) }) : text('home.loanHealthNone')}</p>
       <Link className="btn btn-primary" to={`/positions/${id}`}>
@@ -258,8 +258,19 @@ function LoanCard({ row, meta, stage, deadlines }: { row: LiveLoanRow; meta: Tok
 
 /** The loan's next date and, for the side that bears it, the consequence of
  *  missing it. An NFT rental has no collateral, so its renter is told what a
- *  default does to the prepaid rent instead. */
-function StageLine({ stage, borrowerSide, rental }: { stage: LoanStage; borrowerSide: boolean; rental: boolean }) {
+ *  default does to the prepaid rent instead. A periodic-interest checkpoint
+ *  is named with the interest still owed, in the principal asset. */
+function StageLine({
+  stage,
+  borrowerSide,
+  rental,
+  amountOf,
+}: {
+  stage: LoanStage;
+  borrowerSide: boolean;
+  rental: boolean;
+  amountOf: (v: bigint) => string;
+}) {
   const { text, format } = useCopy();
   const nowSec = Math.floor(useNow() / 1000);
   switch (stage.kind) {
@@ -268,7 +279,26 @@ function StageLine({ stage, borrowerSide, rental }: { stage: LoanStage; borrower
     case 'deadline-unknown':
       return <p className="tier-a stage">{text('home.loanDeadlineUnknown')}</p>;
     case 'running':
-      return <p className="tier-b stage">{format(rental ? 'home.rentalDue' : 'home.loanDue', { when: formatUtc(stage.dueAt) })}</p>;
+      return (
+        <>
+          <p className="tier-b stage">{format(rental ? 'home.rentalDue' : 'home.loanDue', { when: formatUtc(stage.dueAt) })}</p>
+          {stage.interestDueAt !== null && <p className="tier-b">{format('home.interestNext', { when: formatUtc(stage.interestDueAt) })}</p>}
+        </>
+      );
+    case 'interest-soon': {
+      const vars = { amount: amountOf(stage.shortfall), when: formatUtc(stage.dueAt), left: formatSpan(stage.dueAt - nowSec) };
+      return borrowerSide ? <p className="tier-a stage">{format('home.interestSoonBorrower', vars)}</p> : <p className="tier-b stage">{format('home.interestSoonLender', vars)}</p>;
+    }
+    case 'interest-in-grace': {
+      const vars = { amount: amountOf(stage.shortfall), due: formatUtc(stage.dueAt), graceEnd: formatUtc(stage.graceEndsAt) };
+      return borrowerSide ? <p className="tier-a stage">{format('home.interestInGraceBorrower', vars)}</p> : <p className="tier-b stage">{format('home.interestInGraceLender', vars)}</p>;
+    }
+    case 'interest-overdue':
+      return (
+        <p className="tier-a stage">
+          {format(borrowerSide ? 'home.interestOverdueBorrower' : 'home.interestOverdueLender', { amount: amountOf(stage.shortfall), when: formatUtc(stage.graceEndedAt) })}
+        </p>
+      );
     case 'due-soon': {
       const vars = { when: formatUtc(stage.dueAt), left: formatSpan(stage.dueAt - nowSec) };
       if (borrowerSide) return <p className="tier-a stage">{format(rental ? 'home.loanDueSoonRenter' : 'home.loanDueSoonBorrower', vars)}</p>;
