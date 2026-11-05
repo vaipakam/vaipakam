@@ -1547,19 +1547,23 @@ contract NFTPrepayListingFacetTest is SetupTest {
 
     function test_postPrepayDutchListing_revertsDutchEndAskBelowProjectedFloor() public {
         _scaffoldActiveLoan({allowsPrepay: true});
-        // Lender=100, treasury=0, no fees → endMin=100. Pick endAsk=99
-        // to trip the end-state solvency revert. startAsk=110 keeps the
-        // start-state solvency check passing so the end-state path is
-        // reached.
+        // Lender=100 plus the interest projected to the auction's end,
+        // treasury=0, no fees. Interest counts by the second (#3169), so
+        // the 6h auction window adds 6h of the scaffold's 12% on 100,
+        // rounded down. Pick endAsk=99 to trip the end-state solvency
+        // revert; startAsk=110 keeps the start-state check passing so the
+        // end-state path is reached.
         uint256 startAsk = 110 ether;
         uint256 endAsk = 99 ether;
+        uint256 principal = 100 ether;
+        uint256 endFloor = principal + (principal * 1_200 * 6 hours) / (10_000 * 365 days);
         vm.prank(borrowerHolder);
         vm.expectRevert(
             abi.encodeWithSelector(
                 NFTPrepayDutchListingFacet.DutchEndAskBelowProjectedFloorPlusFees.selector,
                 LOAN_ID,
                 endAsk,
-                100 ether  // protocolLegs (lender + treasury, no fees)
+                endFloor // protocolLegs (lender + treasury, no fees)
             )
         );
         NFTPrepayDutchListingFacet(address(diamond)).postPrepayDutchListing(
