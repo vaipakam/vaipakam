@@ -150,7 +150,12 @@ export function RewardsWidget() {
     heldBlock = <Notice tone="warn" tier="A">{format('rewards.heldFailed', { reason: held.error ?? 'no answer' })}</Notice>;
   }
 
-  const stale = [pending, held, expiry].some((r) => r.error !== null && r.data !== null);
+  // Every read the section shows, and only those, carries the freshness:
+  // a figure kept from an earlier read after a failed refresh is stated as
+  // such and counted by the stamp, the tier included (it is a fee claim).
+  // The lower bound counts only while it is the headline.
+  const shown = [pending, held, expiry, tier, ...(p ? [] : [lower])];
+  const stale = shown.some((r) => r.error !== null && r.data !== null);
 
   return (
     <section className="home-section rewards" aria-labelledby="rewards-title" data-testid="rewards-widget">
@@ -175,7 +180,7 @@ export function RewardsWidget() {
       <RewardClaim kind="held" ready={h && h.held > 0n && h.decision === 'deliver' ? { amount: h.held, fromDay: 0n, toDay: 0n } : null} token={token} meta={meta} />
       <p className="tier-b">{tier.data !== null ? format('rewards.tier', { tier: String(tier.data) }) : tier.state === 'failed' ? text('rewards.tierFailed') : null}</p>
       {stale && <p className="tier-b">{text('rewards.stale')}</p>}
-      <OwnStamp reads={[pending, held, expiry]} />
+      <OwnStamp reads={shown} />
       <p>
         <Link to="/rewards">{text('rewards.open')}</Link>
       </p>
