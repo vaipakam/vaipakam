@@ -99,7 +99,7 @@ import type { PassTick } from '../passSchedule';
 import { deadlineClient, PastRunDeadline } from '../batchRead';
 import { shortErr } from '../callErrors';
 import { d1EventLedger, type EventLedger } from '../eventLedger';
-import { readLedgerRotation } from '../ledgerRotation';
+import { attemptOrder, readLedgerRotation } from '../ledgerRotation';
 import {
   advanceEntryFloor,
   continueDaySums,
@@ -120,6 +120,7 @@ import {
 import { advanceFloor, d1ScanCursors, decodeIndex, finalFloor, rotatingWindow, type ScanCursors } from '../scanCursors';
 import { StepSender } from '../stepSender';
 import { PassReader } from '../passReader';
+import { runIndex } from '../runWindow';
 import {
   provableThrough,
   epochPrunable,
@@ -233,6 +234,9 @@ export interface CloseOutDeps {
   cursors: ScanCursors;
   /** The indexer's event ledger: what nominates removed remit destinations. */
   ledger: EventLedger;
+  /** Which run this is (`runIndex`): where the release step starts on its
+   *  page (`attemptOrder`). */
+  visit?: number;
 }
 
 /** What a run did on one chain: its log line's figures, and what tests read. */
@@ -281,6 +285,7 @@ export interface CloseOutReport {
 export async function runRewardCloseOut(env: Env, tick: PassTick): Promise<void> {
   if (!passIsArmed(env, 'rewardCloseOut', 'REWARD_CLOSE_OUT_ENABLED')) return;
   const sendDeadline = tick.deadlineMs;
+  const visit = runIndex(tick, PASS_CADENCE_SEC * 1000);
   const windowDays = readPositive(env, 'REWARD_CLOSE_OUT_WINDOW_DAYS', DEFAULT_WINDOW_DAYS);
   const resolved = env.KEEPER_PRIVATE_KEY ? resolveKeeperAccount(env.KEEPER_PRIVATE_KEY) : null;
   const keeper = resolved && 'account' in resolved ? resolved.account.address : null;
@@ -300,6 +305,7 @@ export async function runRewardCloseOut(env: Env, tick: PassTick): Promise<void>
           windowDays,
           cursors: d1ScanCursors(env.KEEPER_DB, chain.id, chain.diamond as string, 'rewardCloseOut'),
           ledger: d1EventLedger(env.DB),
+          visit,
         });
         console.log(describeReport(report));
       } catch (err) {
@@ -602,7 +608,11 @@ async function releaseDestinations(r: Reader, sender: StepSender, report: CloseO
     r.many(cs.map((c) => ({ functionName: 'getRemitDestinationRelease', args: [c] })), label, blockNumber);
   const done = new Set<number>();
   const states = await readRelease(chains, 'releases');
-  for (let i = 0; i < chains.length; i++) {
+  // Each run starts elsewhere on the page (`attemptOrder`, #3155): the send
+  // budget can stop the walk part-way, and a page read from the top every run
+  // would spend it on the same leading chains. The chains' releases are
+  // independent of one another, so the order carries no meaning.
+  for (const i of attemptOrder(chains.length, deps.visit ?? 0)) {
     const chain = chains[i];
     const subject = `chain ${chain}`;
     const st = states[i] as readonly [bigint, bigint] | undefined;

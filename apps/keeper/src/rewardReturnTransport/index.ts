@@ -68,12 +68,13 @@ import { deadlineClient, PastRunDeadline } from '../batchRead';
 import { shortErr } from '../callErrors';
 import { finishWork, getWorkItems, putWork } from '../db';
 import { d1EventLedger, decodePos, encodePos, type EventLedger, type LedgerRow } from '../eventLedger';
-import { readLedgerRotation } from '../ledgerRotation';
+import { attemptOrder, readLedgerRotation } from '../ledgerRotation';
 import { feeCeiling } from '../feeCeiling';
 import { sendOpsAlert, type OpsAlertOutcome } from '../opsAlert';
 import { d1ScanCursors, decodeIndex, finalFloor, rotatingWindow, type ScanCursors } from '../scanCursors';
 import { StepSender, type CallResult, type SendFeeCeiling } from '../stepSender';
 import { PassReader } from '../passReader';
+import { runIndex } from '../runWindow';
 import { AUTH_PENDING, AUTH_RELEASED, AUTH_SETTLED, executeBlocked, repatStep, returnChunk, type LaneBucket, type RepatState } from './plan';
 
 export * from './plan';
@@ -179,6 +180,9 @@ export interface ReturnTransportDeps {
   sendDeadline: number;
   minPart: bigint;
   now: () => number;
+  /** Which run this is (`runIndex`): where the authorization and stranded
+   *  steps start on their lists (`attemptOrder`). */
+  visit?: number;
 }
 
 export interface ReturnTransportReport {
@@ -232,6 +236,7 @@ export async function runRewardReturnTransport(env: Env, tick: PassTick): Promis
       sendDeadline,
       minPart,
       now: () => Math.floor(Date.now() / 1000),
+      visit: runIndex(tick, PASS_CADENCE_SEC * 1000),
     });
     for (const r of reports) console.log(describeReport(r));
   } catch (err) {
@@ -639,7 +644,12 @@ async function repatriations(base: ChainState, states: ReadonlyMap<number, Chain
     if (id !== null) dispatchedAt.set(id, Math.max(dispatchedAt.get(id) ?? 0, row.blockAt));
   }
   const own = await deps.records.get(base.deps.chainId, base.deps.diamond, pending.map((p) => RECORD_INSTRUCTION(p.authId)));
-  for (const { authId, dst, amount } of pending) {
+  // Each run starts elsewhere in the list (`attemptOrder`, #3155): the send
+  // budget can stop the walk part-way, and the authorizations are independent
+  // of one another, so a list tried from the first id every run would leave
+  // the later ones waiting while the early ones are retried.
+  for (const j of attemptOrder(pending.length, deps.visit ?? 0)) {
+    const { authId, dst, amount } = pending[j];
     // eslint-disable-next-line no-await-in-loop
     await oneAuthorization(base, states.get(dst), deps, authId, dst, amount, Math.max(dispatchedAt.get(authId) ?? 0, own.get(RECORD_INSTRUCTION(authId)) ?? 0) || null);
   }
@@ -818,7 +828,9 @@ async function strandedReturns(mirror: ChainState, states: ReadonlyMap<number, C
   }
   const list = page.nominees;
   const recs = await mirror.r.many(list.map((k) => ({ functionName: 'getStrandedRecovery', args: [k.remitter, k.remitId] })), 'stranded records');
-  for (let i = 0; i < list.length; i++) {
+  // Each run starts elsewhere on the page (`attemptOrder`, #3155), as above:
+  // each quarantine's return stands alone.
+  for (const i of attemptOrder(list.length, deps.visit ?? 0)) {
     const { remitter, remitId } = list[i];
     const rec = recs[i] as StrandedRecord | undefined;
     const subject = `stranded ${remitter}:${remitId}`;
