@@ -14,6 +14,8 @@ describe('transition', () => {
     expect(p).toMatchObject({ kind: 'mined', hash: HASH });
     p = transition(p, { type: 'measured', hash: HASH, outcome: summarize([{ status: 'done', label: 'repay' }], 2) });
     expect(p).toMatchObject({ kind: 'measured', outcome: { verdict: 'done' } });
+    // The measured phase keeps the block the transaction mined in.
+    expect(p).toMatchObject({ kind: 'measured', blockNumber: 10n });
   });
   it('never jumps from submitted to measured: the receipt is not the effect', () => {
     const submitted = transition(transition(transition({ kind: 'idle' }, { type: 'review' }), { type: 'sign' }), { type: 'submitted', hash: HASH, at: 1 });

@@ -2217,6 +2217,24 @@ Sur un testnet dont l'enregistrement de déploiement publie des actifs de test, 
 
 `setVPFIDiscountConsent` fixe un indicateur par wallet sur le Diamond de cette chaîne. Désactivé, la remise liée à la détention vaut 0. Activé, les frais d'initiation du prêt de l'emprunteur sont réduits à l'acceptation, dans l'actif prêté (la voie de prix du VPFI ne fait jamais partie du parcours emprunteur), et les frais sur le rendement du prêteur sont remisés à chaque règlement selon le niveau effectif alors en vigueur. Le versement suit `getVPFIDiscountConfig` : si le taux du VPFI et son actif de référence sont tous deux définis, les frais remisés sont débités en VPFI du vault du prêteur, qui garde tous les intérêts ; sinon, les frais de trésorerie eux-mêmes sont réduits et aucun VPFI ne bouge. Si ce débit ne peut pas s'exécuter lors d'un règlement (pas de cotation disponible, trop peu de VPFI libre suivi dans le vault, ou ce VPFI bloqué en garantie), les frais de ce règlement ne reçoivent aucune remise liée à la détention. L'appel est `whenNotPaused`, donc la pause globale le ferme dans les deux sens. L'activation est soumise aux Conditions, la désactivation non, et aucune des deux ne diffuse de niveau vers les mirrors. La remise de l'emprunteur ne s'applique que si l'actif prêté est liquide à l'acceptation (un prêt illiquide paie la LIF complète), et toute remise est plafonnée à 50 % des frais.
 
+<a id="home-rewards"></a>
+
+### Home: Récompenses
+
+Le chiffre principal est `RewardClaimFacet.simulateClaimInteractionRewards(user, 2)`, qui exécute le claim avec la destination Vault et revient toujours en arrière : `InteractionRewardsSimulation(paid, fromDay, toDay)` porte le chiffre exact, et tout autre revert est le refus propre du claim (`NoInteractionRewardsToClaim`, `InteractionDayGlobalNotFinalized(day)`, `InteractionDayAwaitingDelivery(day)`, `InteractionEmissionsNotStarted`, `EnforcedPause`, `SanctionedAddress`), affiché par son nom. Ce n'est que lorsqu'aucune source ne peut exécuter l'aperçu que Home lit `previewInteractionRewards`, une borne inférieure, et retient le claim. Un chiffre exact de zéro est tout de même proposé : le protocole n'autorise un claim qui ne paie rien que lorsqu'il dépasse des jours de récompense qui n'ont rien payé, et Home le dit. Home réclame via `claimInteractionRewardsTo(2)`, qui paie au plus `MAX_INTERACTION_CLAIM_DAYS` (30) jours par appel ; lorsqu'un aperçu lu au bloc du claim terminé ou après répond encore par un montant, Home propose le reste. Un claim payé uniquement à partir des entrées de récompense ne nomme aucune plage de jours (0 à 0), et Home le dit au lieu d'afficher des jours. La destination Vault est transmise pour tout compte, wallet de contrat compris, car la destination Default paie un appelant contrat sur son wallet : le vault est crédité, avec repli sur le wallet quand le crédit ne peut aboutir (pas encore de vault, une mise à niveau du vault en attente). Le résultat est lu dans le reçu : `InteractionRewardsClaimed` donne ce qui a été payé, et les logs `Transfer` de VPFI de la même transaction vers le wallet et vers `getUserVaultAddress(user)` indiquent où il est arrivé ; s'ils ne totalisent pas le montant payé, la destination est déclarée inconnue. Le total réclamé n'est pas affiché : aucune route d'index par utilisateur n'existe encore pour cela.
+
+<a id="home-rewards-expiry"></a>
+
+### Home: Dates de retrait des récompenses
+
+Un `ConfigFacet.getRewardClaimHorizonDays()` égal à 0 signifie que l'horizon est éteint et qu'aucune date n'est affichée. Sinon, Home parcourt `getUserSoonestRewardExpiry(user, offset, 200, 50)` page par page, toutes au même bloc, jusqu'à dix pages ; le parcours est complet quand `nextOffset >= total`, et un parcours qui s'arrête avant est déclaré incomplet, jamais comme « rien n'est dû ». Le dernier avis s'affiche dans les 90 jours précédant l'estimation la plus proche. L'estimation est l'`expiresAt` de l'entrée à ce bloc : le temps où la réclamation n'est pas exécutable repousse le retrait réel, et un changement de gouvernance de l'horizon peut l'avancer. Le montant que retirerait l'entrée n'est pas affiché sur Home.
+
+<a id="home-rewards-held"></a>
+
+### Home: Récompenses retenues
+
+`getSanctionsHeldReward(user)` est le solde retenu et `getRewardSanctionsStatus(user)` sa décision (Deliver, Hold ou Confirmed). Avec un solde et la décision Deliver, Home propose `claimHeldInteractionRewards(2)`, qui paie exactement le solde retenu sans régler quoi que ce soit de nouvellement dû et émet `InteractionRewardsClaimed(user, 0, 0, paid)` ; il revert avec `SanctionedAddress` tant que le portefeuille est interdit. La vérification avant signature relit les deux et simule l'appel en tant qu'expéditeur. Les jours gagnés sous un signalement confirmé sont perdus définitivement.
+
 <a id="terms-gate"></a>
 
 ### La demande d'acceptation des Conditions

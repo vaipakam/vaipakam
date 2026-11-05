@@ -1035,6 +1035,24 @@ protocol is paused it cannot be changed either way. A loan in an
 illiquid lending asset still pays the full borrowing fee, and no
 discount is ever more than half the fee.
 
+<a id="home-rewards"></a>
+
+### Home: Rewards
+
+Rewards are usage rebates for your lending and borrowing on this network, counted per reward day and paid in VPFI. Home shows exactly what a claim made now would pay, because the app runs the claim as a preview first. If that preview cannot run, Home shows a lower bound instead, labelled as such, and does not offer the claim until the exact figure can be worked out. One claim pays up to 30 reward days; when more remain, Home offers to claim again, and stopping partway is safe. A claim is delivered to your vault, ready to use, or to your wallet when the vault cannot take it; a claim never opens a vault. When a reward day is still waiting to be finalised across networks, or for its funding to reach this network, Home names that day instead of offering a claim that would fail. Rewards are not interest or yield, and claiming never stakes or reinvests anything. Now and then a claim pays nothing but still moves past reward days that paid you nothing, so the days after them can be paid; Home says so and still offers it.
+
+<a id="home-rewards-expiry"></a>
+
+### Home: Reward Removal Dates
+
+On a network where unclaimed rewards can be removed, Home shows the soonest estimated removal date among your rewards, and a final notice in the last 90 days before it. Claiming before then always keeps the reward. The estimate is never later than the real date as things stand: time during which the reward cannot be claimed moves the real date later, but a change to the network's claim window can make it earlier, so check again before relying on it. If not every reward could be checked, Home says so instead of saying nothing is due. Where the network removes nothing, no date is shown.
+
+<a id="home-rewards-held"></a>
+
+### Home: Held Rewards
+
+If the sanctions screen flags your wallet, no rewards are paid to it while it stays flagged. Rewards it earned before the flag are held for it, locked but not lost, and are released once the wallet is no longer flagged; Home then offers to claim exactly that balance on its own. While a flag is confirmed, rewards earned are forfeited for good and VPFI in your vault cannot be moved. If whether the wallet is still flagged cannot be read, nothing is released.
+
 <a id="terms-gate"></a>
 
 ### The Terms Prompt

@@ -1752,6 +1752,24 @@ health factor 是仪表盘视图中按 1e18 缩放的读数；读数为 0 表示
 
 `setVPFIDiscountConsent` 会在本链的 Diamond 上为每个钱包设置一个标志。关闭时，持有等级折扣为 0。开启时，借款人的贷款发起费在接受时以出借资产减少（VPFI 定价路径从不进入借款人路径），出借人的收益手续费在每次结算时按当时生效的实际等级打折。交付方式取决于 `getVPFIDiscountConfig`：若 VPFI 汇率及其参考资产都已设置，打折后的手续费以 VPFI 从出借人的金库扣除，出借人保留全部利息；否则直接减少国库手续费本身，不移动 VPFI。若某次结算时无法执行该扣除（没有有效报价、金库中已记录的可用 VPFI 不足，或该 VPFI 作为抵押被锁定），该次结算的手续费不享受持有等级折扣。该调用为 `whenNotPaused`，因此全局暂停会在两个方向上都将其关闭。开启受服务条款约束，关闭则不受约束，且两者都不会向镜像链广播等级。借款人折扣仅在接受时出借资产具备流动性时适用（非流动贷款支付全额 LIF），且任何折扣都以手续费的 50% 为上限。
 
+<a id="home-rewards"></a>
+
+### Home: 奖励
+
+标题数字是 `RewardClaimFacet.simulateClaimInteractionRewards(user, 2)`，它以 Vault 交付目标执行领取并始终 revert：`InteractionRewardsSimulation(paid, fromDay, toDay)` 携带确切数字，其他任何 revert 都是领取本身的拒绝 (`NoInteractionRewardsToClaim`, `InteractionDayGlobalNotFinalized(day)`, `InteractionDayAwaitingDelivery(day)`, `InteractionEmissionsNotStarted`, `EnforcedPause`, `SanctionedAddress`)，按名称显示。只有在任何来源都无法运行预览时，Home 才读取下限 `previewInteractionRewards`，并暂不提供领取。确切数字为零时仍会提供领取：协议只在领取越过未支付任何金额的奖励日时才允许一次不支付任何金额的领取，Home 会说明这一点。Home 通过 `claimInteractionRewardsTo(2)` 领取，每次调用最多支付 `MAX_INTERACTION_CLAIM_DAYS`（30）天；在已完成领取的区块或之后读取的预览若仍给出金额，Home 就提供剩余部分。仅从奖励条目支付的领取不标明日期范围（0 到 0），Home 会说明这一点而不显示日期。Vault 交付目标会传给每个账户，包括合约钱包，因为 Default 目标会把合约调用者的款项付到其钱包：款项记入金库，记入无法完成时（尚无金库、金库升级待完成）退回钱包。结果从回执读取：`InteractionRewardsClaimed` 给出支付金额，同一交易中发往钱包和 `getUserVaultAddress(user)` 的 VPFI `Transfer` 日志给出款项到达何处；两者合计与支付金额不符时，目的地标为未知。累计领取额不显示：目前还没有对应的按用户索引路由。
+
+<a id="home-rewards-expiry"></a>
+
+### Home: 奖励移除日期
+
+`ConfigFacet.getRewardClaimHorizonDays()` 为 0 表示期限未启用，不显示日期。否则 Home 会逐页读取 `getUserSoonestRewardExpiry(user, offset, 200, 50)`，所有页都在同一区块，最多十页；当 `nextOffset >= total` 时遍历完成，提前停止的遍历会标明不完整，绝不显示为没有到期。最终通知在最早估计日期前 90 天内显示。估计值是该区块上条目的 `expiresAt`：领取无法执行的时间会推后实际移除，治理对期限的修改可能使其提前。Home 不显示该条目将移除的金额。
+
+<a id="home-rewards-held"></a>
+
+### Home: 暂扣的奖励
+
+`getSanctionsHeldReward(user)` 是暂扣余额，`getRewardSanctionsStatus(user)` 是其判定（Deliver、Hold 或 Confirmed）。有余额且判定为 Deliver 时，Home 提供 `claimHeldInteractionRewards(2)`，它只支付恰好的暂扣余额而不结算任何新欠款，并发出 `InteractionRewardsClaimed(user, 0, 0, paid)`；钱包被禁止期间它会以 `SanctionedAddress` revert。签名前的复核会重新读取二者，并以发送者身份模拟该调用。标记确认期间赚得的天数将被永久没收。
+
 <a id="terms-gate"></a>
 
 ### 服务条款确认

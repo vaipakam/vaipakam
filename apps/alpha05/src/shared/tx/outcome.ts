@@ -16,7 +16,8 @@ export type TxPhase =
    *  sent. They differ only when the wallet repriced it (sped it up: the same
    *  call at a higher fee), which still runs the intended action. */
   | { kind: 'mined'; hash: `0x${string}`; submittedHash: `0x${string}`; blockNumber: bigint; reverted: boolean }
-  | { kind: 'measured'; hash: `0x${string}`; submittedHash: `0x${string}`; outcome: MeasuredOutcome }
+  /** `blockNumber`: the block the measured transaction mined in. */
+  | { kind: 'measured'; hash: `0x${string}`; submittedHash: `0x${string}`; blockNumber: bigint; outcome: MeasuredOutcome }
   /** The wallet replaced the submitted transaction with one that does NOT
    *  run the intended action: `cancelled` (the nonce was spent on an empty
    *  self-transfer) or `replaced` (a different call took its place). The

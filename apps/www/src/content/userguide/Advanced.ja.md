@@ -2019,6 +2019,24 @@ factor を示し、価格のないものは件数を示します。
 
 `setVPFIDiscountConsent` は、このチェーンの Diamond にウォレットごとのフラグを一つ設定します。オフなら保有ティア割引は 0 です。オンなら、借り手のローン開始手数料が受諾時に貸出資産で減額され（VPFI の価格経路が借り手側に関わることはありません）、貸し手のイールド手数料は決済のたびにその時点の実効ティアで割り引かれます。支払い方法は `getVPFIDiscountConfig` に従います。VPFI レートと参照資産の両方が設定されていれば、割引後の手数料は貸し手のボールトから VPFI で引き落とされ、貸し手は利息を全額受け取ります。そうでなければトレジャリー手数料そのものが減額され、VPFI は動きません。決済時にこの引き落としができない場合（有効な価格がない、ボールト内の追跡済みの自由な VPFI が足りない、またはその VPFI が担保としてロックされている）、その決済の手数料には保有ティア割引が適用されません。この呼び出しは `whenNotPaused` なので、グローバル一時停止中はどちらの方向にも閉じられます。オンにするには規約が必要でオフには不要、どちらもミラーへティアを送信しません。借り手の割引は受諾時に貸出資産が流動的な場合にのみ適用され（流動性のないローンは LIF を満額支払います）、どの割引も手数料の 50% が上限です。
 
+<a id="home-rewards"></a>
+
+### Home: リワード
+
+見出しの数値は `RewardClaimFacet.simulateClaimInteractionRewards(user, 2)` で、Vault 送付先でクレームを実行し、必ず revert します。`InteractionRewardsSimulation(paid, fromDay, toDay)` が正確な数値を運び、それ以外の revert はクレーム自身の拒否 (`NoInteractionRewardsToClaim`, `InteractionDayGlobalNotFinalized(day)`, `InteractionDayAwaitingDelivery(day)`, `InteractionEmissionsNotStarted`, `EnforcedPause`, `SanctionedAddress`) で、名前で表示されます。どのソースもプレビューを実行できない場合に限り、Home は下限である `previewInteractionRewards` を読み、クレームを保留します。正確な数値がゼロでもクレームは提示されます。プロトコルが何も支払わないクレームを認めるのは、何も支払わなかった報酬日を先へ進む場合だけで、Home はそのことを伝えます。Home は `claimInteractionRewardsTo(2)` でクレームし、1 回の呼び出しで最大 `MAX_INTERACTION_CLAIM_DAYS`（30）日分を支払います。完了したクレームのブロック以降に読み取ったプレビューがまだ金額を返す場合、Home は残りを提示します。報酬エントリーだけから支払うクレームは日付の範囲を示さないため（0 から 0）、Home は日付の代わりにそのことを伝えます。Vault 送付先はコントラクトウォレットを含むすべてのアカウントに渡されます。Default 送付先はコントラクトの呼び出し元にはウォレットへ支払うためです。ボールトに入金され、入金が完了できない場合（まだボールトがない、ボールトのアップグレードが保留中）はウォレットに戻ります。結果はレシートから読み取ります。`InteractionRewardsClaimed` が支払額を示し、同じトランザクションのウォレットと `getUserVaultAddress(user)` への VPFI `Transfer` ログが届いた先を示します。それらの合計が支払額にならない場合、送付先は不明と表示されます。累計クレーム額は表示されません。そのためのユーザー別インデックスルートがまだないためです。
+
+<a id="home-rewards-expiry"></a>
+
+### Home: リワードの削除日
+
+`ConfigFacet.getRewardClaimHorizonDays()` が 0 ならホライズンは無効で、日付は表示しません。それ以外の場合、Home は `getUserSoonestRewardExpiry(user, offset, 200, 50)` をページごとに、すべて同じブロックで、最大 10 ページまで読みます。`nextOffset >= total` で走査は完了し、途中で止まった走査は「期限のものなし」ではなく不完全と表示します。最終通知は最も早い見積もりの 90 日前から表示されます。見積もりはそのブロック時点のエントリーの `expiresAt` で、クレームが実行できない期間は実際の削除を遅らせ、ホライズンのガバナンス変更は早めることがあります。エントリーが削除する額は Home には表示しません。
+
+<a id="home-rewards-held"></a>
+
+### Home: 保留中のリワード
+
+`getSanctionsHeldReward(user)` が保留残高、`getRewardSanctionsStatus(user)` がその判定（Deliver、Hold、Confirmed）です。残高があり判定が Deliver のとき、Home は `claimHeldInteractionRewards(2)` を提示します。これは新たな未払い分を精算せずに保留残高そのものを支払い、`InteractionRewardsClaimed(user, 0, 0, paid)` を発行します。ウォレットが禁止されている間は `SanctionedAddress` で revert します。署名前の再確認では両方を読み直し、送信者として呼び出しをシミュレートします。フラグ確定中に得た日数分は永久に没収されます。
+
 <a id="terms-gate"></a>
 
 ### 利用規約の確認

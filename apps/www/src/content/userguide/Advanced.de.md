@@ -2207,6 +2207,24 @@ Auf einem Testnetz, dessen Deployment-Eintrag Test-Assets veröffentlicht, liste
 
 `setVPFIDiscountConsent` setzt ein Flag pro Wallet auf dem Diamond dieser Chain. Aus ist der Hold-Tier-Rabatt 0. An wird die Loan Initiation Fee des Leihenden bei der Annahme im Kreditasset reduziert (der VPFI-Preisweg gehört nie zum Leihenden-Pfad), und die Yield Fee des Verleihers wird bei jeder Abrechnung mit der dann geltenden effektiven Stufe rabattiert. Die Auszahlung folgt `getVPFIDiscountConfig`: Sind VPFI-Kurs und Referenz-Asset beide gesetzt, wird die rabattierte Gebühr in VPFI aus dem Vault des Verleihers abgebucht und er behält die gesamten Zinsen; sonst wird die Treasury-Gebühr selbst reduziert und kein VPFI bewegt. Kann diese Abbuchung bei einer Abrechnung nicht laufen (kein aktueller Kurs, zu wenig freies erfasstes VPFI im Vault oder dieses VPFI als Sicherheit gesperrt), erhält die Gebühr dieser Abrechnung keinen Hold-Tier-Rabatt. Der Aufruf ist `whenNotPaused`, die globale Pause schließt ihn also in beide Richtungen. Das Einschalten ist durch die Bedingungen gesperrt, das Ausschalten nicht, und keines von beiden sendet eine Stufe an die Mirrors. Der Leihenden-Rabatt gilt nur, wenn das Kreditasset bei der Annahme liquide ist (ein illiquider Kredit zahlt die volle LIF), und jeder Rabatt ist auf 50 % der Gebühr begrenzt.
 
+<a id="home-rewards"></a>
+
+### Home: Belohnungen
+
+Die Hauptzahl ist `RewardClaimFacet.simulateClaimInteractionRewards(user, 2)`, das den Claim mit dem Vault-Ziel ausführt und immer revertiert: `InteractionRewardsSimulation(paid, fromDay, toDay)` trägt den genauen Betrag, jeder andere Revert ist die eigene Ablehnung des Claims (`NoInteractionRewardsToClaim`, `InteractionDayGlobalNotFinalized(day)`, `InteractionDayAwaitingDelivery(day)`, `InteractionEmissionsNotStarted`, `EnforcedPause`, `SanctionedAddress`) und wird beim Namen genannt. Nur wenn keine Quelle die Vorschau ausführen kann, liest Home `previewInteractionRewards`, eine Untergrenze, und hält den Claim zurück. Ein genauer Betrag von null wird trotzdem angeboten: Das Protokoll erlaubt einen Claim, der nichts auszahlt, nur wenn er über Belohnungstage hinausrückt, die nichts ausgezahlt haben, und Home sagt das. Home beansprucht über `claimInteractionRewardsTo(2)`, das pro Aufruf höchstens `MAX_INTERACTION_CLAIM_DAYS` (30) Tage zahlt; liefert eine Vorschau, die im Block des abgeschlossenen Claims oder später gelesen wurde, noch einen Betrag, bietet Home den Rest an. Ein Claim, der nur aus Belohnungseinträgen zahlt, nennt keinen Tagesbereich (0 bis 0), und Home sagt das, statt Tage zu zeigen. Das Vault-Ziel wird für jedes Konto übergeben, auch für eine Contract-Wallet, weil das Default-Ziel einen Contract-Aufrufer an seine Wallet auszahlt: Der Vault wird gutgeschrieben, mit Rückfall auf die Wallet, wenn die Gutschrift nicht abgeschlossen werden kann (noch kein Vault, ein ausstehendes Vault-Upgrade). Das Ergebnis wird aus dem Beleg gelesen: `InteractionRewardsClaimed` nennt den gezahlten Betrag, und die VPFI-`Transfer`-Logs derselben Transaktion an die Wallet und an `getUserVaultAddress(user)` zeigen, wo er gelandet ist; ergeben sie nicht den gezahlten Betrag, wird das Ziel als unbekannt ausgewiesen. Die Summe aller Claims wird nicht gezeigt: Dafür gibt es noch keine Index-Route pro Nutzer.
+
+<a id="home-rewards-expiry"></a>
+
+### Home: Entfernungstermine für Belohnungen
+
+`ConfigFacet.getRewardClaimHorizonDays()` gleich 0 bedeutet, dass der Horizont dunkel ist und kein Termin angezeigt wird. Andernfalls durchläuft Home `getUserSoonestRewardExpiry(user, offset, 200, 50)` Seite für Seite, jede Seite im selben Block, bis zu zehn Seiten; der Durchlauf ist vollständig, wenn `nextOffset >= total`, und ein vorzeitig endender Durchlauf wird als unvollständig ausgewiesen, nie als „nichts fällig“. Der letzte Hinweis erscheint innerhalb von 90 Tagen vor der frühesten Schätzung. Die Schätzung ist das `expiresAt` des Eintrags in diesem Block: nicht ausführbare Claim-Zeit verschiebt die tatsächliche Entfernung nach hinten, eine Governance-Änderung des Horizonts kann sie vorziehen. Der Betrag, den der Eintrag entfernen würde, wird auf Home nicht gezeigt.
+
+<a id="home-rewards-held"></a>
+
+### Home: Zurückgehaltene Belohnungen
+
+`getSanctionsHeldReward(user)` ist das zurückgehaltene Guthaben und `getRewardSanctionsStatus(user)` seine Entscheidung (Deliver, Hold oder Confirmed). Mit einem Guthaben und der Entscheidung Deliver bietet Home `claimHeldInteractionRewards(2)` an, das genau das zurückgehaltene Guthaben auszahlt, ohne neu Geschuldetes abzurechnen, und `InteractionRewardsClaimed(user, 0, 0, paid)` emittiert; solange die Wallet gesperrt ist, revertiert es mit `SanctionedAddress`. Die Prüfung vor dem Signieren liest beides erneut und simuliert den Aufruf als Absender. Tage, die bei bestätigter Markierung verdient wurden, verfallen endgültig.
+
 <a id="terms-gate"></a>
 
 ### Die Abfrage der Nutzungsbedingungen

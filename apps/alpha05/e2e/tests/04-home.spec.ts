@@ -40,7 +40,9 @@ test('a wallet with nothing yet sees the first-run cards, "nothing yet" and the 
   await expect(page.getByText('Nothing yet on Base Sepolia: no live loans, open offers or payouts.')).toBeVisible({ timeout: 60_000 });
   await expect(page.getByRole('region', { name: 'I want to…' })).toBeVisible();
   // The sync chip names how long ago and through which source the book was read.
-  await expect(page.getByText(/^Synced .* ago through (your wallet|the read-only proxy|the public endpoint)\./)).toBeVisible();
+  // The book's own stamp (a direct child of the page; the rewards section
+  // carries its own).
+  await expect(page.locator('main > .stamp', { hasText: /^Synced .* ago through (your wallet|the read-only proxy|the public endpoint)\./ })).toBeVisible();
 
   await cards.locator('[data-card="vault"]').getByRole('button', { name: 'Got it' }).click();
   await expect(cards.locator('[data-card]')).toHaveCount(2);
@@ -139,7 +141,7 @@ test('a position follows its NFT: a lender who transferred it no longer sees the
   const { page } = await launchWallet('lender');
   await page.goto('/');
   await connectWallet(page);
-  await expect(page.getByText(/^Synced .* ago through /)).toBeVisible({ timeout: 60_000 });
+  await expect(page.locator('main > .stamp', { hasText: /^Synced .* ago through / })).toBeVisible({ timeout: 60_000 });
   await expect(page.locator(`[data-loan-id="${loanId}"]`)).toHaveCount(0);
 });
 

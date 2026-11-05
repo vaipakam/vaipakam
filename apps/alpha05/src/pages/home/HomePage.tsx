@@ -5,13 +5,15 @@ import { FeeDiscountConsent } from '../../shared/consent/FeeDiscountConsent';
 import { Faucet } from './Faucet';
 import { FirstRunCards } from './FirstRunCards';
 import { IntentChooser } from './IntentChooser';
+import { RewardsWidget } from './RewardsWidget';
 import { useStatusStrip } from './StatusStrip';
 import { useHomeBook } from './useHomeBook';
 import { YourPositions } from './YourPositions';
 
 /**
  * Home (rulebook §4: positions with next action, deadlines, first-run
- * cards). Two writes live here: the fee-discount toggle (RW-07, behind the
+ * cards). Its writes: the reward claims of the rewards widget (RW-71,
+ * through the shared claim flow), the fee-discount toggle (RW-07, behind the
  * Terms gate when turned on) and, on a testnet, the faucet (ACC-63); each
  * runs the shared signing flow (receipt, re-check, measured outcome).
  *
@@ -20,8 +22,8 @@ import { YourPositions } from './YourPositions';
  * - with no wallet, the job chooser (ACC-05) and a connect prompt;
  * - with a wallet on a served network, the first-run cards, then the
  *   wallet's book (payouts ready, live loans, open offers), then on a
- *   testnet the faucet, then the job chooser, then the fee-discount
- *   setting; a wallet with nothing yet sees the faucet and the chooser
+ *   testnet the faucet, then the job chooser, then rewards and VPFI,
+ *   then the fee-discount setting; a wallet with nothing yet sees the faucet and the chooser
  *   right after the "nothing yet" line;
  * - a running protocol as one quiet line at the end.
  */
@@ -55,6 +57,7 @@ export function HomePage() {
           <YourPositions book={book} />
           <Faucet />
           <IntentChooser />
+          <RewardsWidget />
           <FeeDiscountConsent />
         </>
       )}

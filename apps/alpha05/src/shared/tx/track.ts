@@ -80,7 +80,7 @@ export function transition(phase: TxPhase, event: TxEvent): TxPhase {
       break;
     }
     case 'mined':
-      if (event.type === 'measured' && event.hash === phase.hash) return { kind: 'measured', hash: event.hash, submittedHash: phase.submittedHash, outcome: event.outcome };
+      if (event.type === 'measured' && event.hash === phase.hash) return { kind: 'measured', hash: event.hash, submittedHash: phase.submittedHash, blockNumber: phase.blockNumber, outcome: event.outcome };
       break;
     case 'measured':
     case 'failed':

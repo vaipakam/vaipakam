@@ -2197,6 +2197,24 @@ En una testnet cuyo registro de despliegue publica activos de prueba, Home los l
 
 `setVPFIDiscountConsent` fija una bandera por wallet en el Diamond de esta cadena. Desactivada, el descuento por tenencia es 0. Activada, la comisión de inicio del préstamo del prestatario se reduce al aceptar, en el activo prestado (la ruta de precio de VPFI nunca forma parte del camino del prestatario), y la comisión sobre el rendimiento del prestamista se descuenta en cada liquidación según el nivel efectivo vigente entonces. La entrega sigue `getVPFIDiscountConfig`: con la tasa de VPFI y su activo de referencia ambos fijados, la comisión descontada se debita en VPFI del vault del prestamista y este conserva todos los intereses; si no, se reduce la propia comisión de la tesorería y no se mueve VPFI. Si ese cargo no puede ejecutarse en una liquidación (sin cotización vigente, con poco VPFI libre registrado en el vault o con ese VPFI bloqueado como garantía), la comisión de esa liquidación no recibe descuento por tenencia. La llamada es `whenNotPaused`, así que la pausa global la cierra en ambos sentidos. Activarla está sujeto a los Términos, desactivarla no, y ninguna de las dos difunde un nivel a los mirrors. El descuento del prestatario solo se aplica si el activo prestado es líquido al aceptar (un préstamo ilíquido paga la LIF completa), y todo descuento está limitado al 50 % de la comisión.
 
+<a id="home-rewards"></a>
+
+### Home: Recompensas
+
+La cifra principal es `RewardClaimFacet.simulateClaimInteractionRewards(user, 2)`, que ejecuta el claim con el destino Vault y siempre revierte: `InteractionRewardsSimulation(paid, fromDay, toDay)` lleva la cifra exacta, y cualquier otra reversión es el propio rechazo del claim (`NoInteractionRewardsToClaim`, `InteractionDayGlobalNotFinalized(day)`, `InteractionDayAwaitingDelivery(day)`, `InteractionEmissionsNotStarted`, `EnforcedPause`, `SanctionedAddress`), mostrado por su nombre. Solo cuando ninguna fuente puede ejecutar la vista previa, Home lee `previewInteractionRewards`, un límite inferior, y retiene el claim. Una cifra exacta de cero se ofrece igualmente: el protocolo permite un claim que no paga nada solo cuando avanza más allá de días de recompensa que no pagaron nada, y Home lo indica. Home reclama mediante `claimInteractionRewardsTo(2)`, que paga como máximo `MAX_INTERACTION_CLAIM_DAYS` (30) días por llamada; cuando una vista previa leída en el bloque del claim terminado o después aún responde con una cifra, Home ofrece el resto. Un claim pagado solo desde entradas de recompensa no nombra un rango de días (0 a 0), y Home lo indica en lugar de mostrar días. El destino Vault se pasa para toda cuenta, incluida una wallet de contrato, porque el destino Default paga a un llamante de contrato en su wallet: se acredita el vault, con retorno a la wallet cuando el abono no puede completarse (aún no hay vault, una actualización del vault pendiente). El resultado se lee del recibo: `InteractionRewardsClaimed` da lo pagado, y los logs `Transfer` de VPFI de la misma transacción hacia la wallet y hacia `getUserVaultAddress(user)` dan dónde llegó; cuando no suman la cifra pagada, el destino se declara desconocido. El total reclamado no se muestra: aún no existe una ruta de índice por usuario para ello.
+
+<a id="home-rewards-expiry"></a>
+
+### Home: Fechas de retirada de recompensas
+
+Un `ConfigFacet.getRewardClaimHorizonDays()` igual a 0 significa que el horizonte está apagado y no se muestra fecha. Si no, Home recorre `getUserSoonestRewardExpiry(user, offset, 200, 50)` página a página, todas en un mismo bloque, hasta diez páginas; el recorrido está completo cuando `nextOffset >= total`, y uno que se detiene antes se declara incompleto, nunca como que nada vence. El aviso final se muestra dentro de los 90 días previos a la estimación más próxima. La estimación es el `expiresAt` de la entrada en ese bloque: el tiempo en que el reclamo no es ejecutable retrasa la retirada real, y un cambio de gobernanza en el horizonte puede adelantarla. El importe que retiraría la entrada no se muestra en Home.
+
+<a id="home-rewards-held"></a>
+
+### Home: Recompensas retenidas
+
+`getSanctionsHeldReward(user)` es el saldo retenido y `getRewardSanctionsStatus(user)` su decisión (Deliver, Hold o Confirmed). Con saldo y decisión Deliver, Home ofrece `claimHeldInteractionRewards(2)`, que paga exactamente el saldo retenido sin liquidar nada nuevo adeudado y emite `InteractionRewardsClaimed(user, 0, 0, paid)`; revierte con `SanctionedAddress` mientras la billetera esté vetada. La comprobación antes de firmar vuelve a leer ambos y simula la llamada como el remitente. Los días ganados con una marca confirmada se pierden para siempre.
+
 <a id="terms-gate"></a>
 
 ### El aviso de los Términos

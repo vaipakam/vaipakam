@@ -2396,6 +2396,24 @@ discount applies only when the lending asset is liquid at acceptance
 (an illiquid loan pays the full LIF), and every discount is capped
 at 50% of the fee.
 
+<a id="home-rewards"></a>
+
+### Home: Rewards
+
+The headline is `RewardClaimFacet.simulateClaimInteractionRewards(user, 2)`, which runs the claim with the Vault venue and always reverts: `InteractionRewardsSimulation(paid, fromDay, toDay)` carries the exact figure, and any other revert is the claim's own refusal (`NoInteractionRewardsToClaim`, `InteractionDayGlobalNotFinalized(day)`, `InteractionDayAwaitingDelivery(day)`, `InteractionEmissionsNotStarted`, `EnforcedPause`, `SanctionedAddress`), shown by name. Only when no source can run the preview does Home read `previewInteractionRewards`, a lower bound, and it withholds the claim. An exact figure of zero is still offered: the protocol allows a claim that pays nothing only when it moves past reward days that paid nothing, and Home says so. Home claims through `claimInteractionRewardsTo(2)`, which pays at most `MAX_INTERACTION_CLAIM_DAYS` (30) days per call; when a preview read at or after the finished claim's block still answers with a figure, Home offers the remainder. A claim paid from reward entries alone names no day range (0 to 0), and Home says so instead of showing days. The Vault venue is passed for every account, a contract wallet included, because the Default venue pays a contract caller to its wallet: the vault is credited, falling back to the wallet when the credit cannot complete (no vault yet, a vault upgrade pending). The outcome is read from the receipt: `InteractionRewardsClaimed` gives what was paid, and the same transaction's VPFI `Transfer` logs to the wallet and to `getUserVaultAddress(user)` give where it landed; when they do not add up to the paid figure, the destination is stated as unknown. Lifetime claimed is not shown: no per-user index route exists for it yet.
+
+<a id="home-rewards-expiry"></a>
+
+### Home: Reward Removal Dates
+
+`ConfigFacet.getRewardClaimHorizonDays()` of 0 means the horizon is dark and no date is shown. Otherwise Home walks `getUserSoonestRewardExpiry(user, offset, 200, 50)` page by page, every page at one block, for up to ten pages; the walk is complete when `nextOffset >= total`, and a walk that stops short is stated as incomplete, never as nothing due. The final notice is shown within 90 days of the soonest estimate. The estimate is the entry's `expiresAt` as of that block: claim-unexecutable time moves the real removal later, and a governance change to the horizon can move it earlier. The amount the entry would remove is not shown on Home.
+
+<a id="home-rewards-held"></a>
+
+### Home: Held Rewards
+
+`getSanctionsHeldReward(user)` is the held balance and `getRewardSanctionsStatus(user)` its decision (Deliver, Hold or Confirmed). With a balance and a Deliver decision, Home offers `claimHeldInteractionRewards(2)`, which pays exactly the held balance without settling anything newly owed and emits `InteractionRewardsClaimed(user, 0, 0, paid)`; it reverts `SanctionedAddress` while the wallet is barred. The re-check before signing re-reads both and simulates the call as the sender. Days earned while a flag is confirmed are forfeited permanently.
+
 <a id="terms-gate"></a>
 
 ### The Terms Prompt
