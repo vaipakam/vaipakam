@@ -73,10 +73,11 @@ interface RewardClaimProps {
  * so a claim sent from one page is the same outstanding flow on another.
  * The re-check runs the claim's own preview again (or re-reads the held
  * balance and the screen) and simulates the call as the sender; the outcome
- * is the payment the claim's logs record, substantiated by the wallet's and
- * the vault's VPFI across the claim's own block. After an interaction claim
- * that stopped at its bound, the remainder is offered as "claim again"
- * (RW-27).
+ * is the payment the claim's logs record, placed by the VPFI the claim's own
+ * transaction delivered to the wallet and to the vault (unknown when those
+ * do not add up to it). Every send, preview and re-check passes the Vault
+ * venue explicitly. After an interaction claim that stopped at its bound,
+ * the remainder is offered as "claim again" (RW-27).
  */
 export function RewardClaim({ kind, ready, token, meta }: RewardClaimProps) {
   const copy = useCopy();
