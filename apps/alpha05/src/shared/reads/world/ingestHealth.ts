@@ -90,8 +90,8 @@ export function freshnessOf({ health, error, chainId, diamond, elapsedSec }: Fre
   };
 }
 
-/** A push-rail cursor frame newer than the polled health advances the
- *  stamp between polls; an older one changes nothing, and one dated ahead
+/** A push-rail cursor frame newer than an ATTRIBUTED polled answer advances
+ *  the stamp between polls; an older one changes nothing, and one dated ahead
  *  of the clock is not trusted to say anything about age. A failed re-read
  *  stays disclosed: a push frame proves the rail is live, not that the
  *  health route answers. */
@@ -101,16 +101,12 @@ export function withCursor(
   nowSec: number,
 ): Freshness {
   if (!cursor || cursor.updatedAt > nowSec) return freshness;
-  if (freshness.kind === 'fresh' || freshness.kind === 'stale') {
-    if (cursor.updatedAt <= freshness.scannedAt) return freshness;
-  }
-  if (freshness.kind === 'unavailable' || freshness.kind === 'unknown') {
-    // A live push frame is evidence of a cursor the poll could not read;
-    // it still does not say which deployment the index describes, so an
-    // unknown stays unknown and only an unreachable poll is lifted by it.
-    if (freshness.kind === 'unknown') return freshness;
-  }
+  // Only an answer that already PROVED which contract the index describes
+  // may be advanced: a cursor frame carries no deployment, so it can age an
+  // attributed stamp forward but never stand in for the health answer. An
+  // unreadable or unattributed index stays as it is, with its reason.
+  if (freshness.kind !== 'fresh' && freshness.kind !== 'stale') return freshness;
+  if (cursor.updatedAt <= freshness.scannedAt) return freshness;
   const ageSeconds = nowSec - cursor.updatedAt;
-  const refreshError = freshness.kind === 'fresh' || freshness.kind === 'stale' ? freshness.refreshError : null;
-  return { kind: ageSeconds >= STALE_AFTER_SEC ? 'stale' : 'fresh', lastBlock: cursor.lastBlock, scannedAt: cursor.updatedAt, ageSeconds, refreshError };
+  return { kind: ageSeconds >= STALE_AFTER_SEC ? 'stale' : 'fresh', lastBlock: cursor.lastBlock, scannedAt: cursor.updatedAt, ageSeconds, refreshError: freshness.refreshError };
 }

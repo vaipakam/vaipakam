@@ -73,9 +73,9 @@ describe('withCursor', () => {
   it('ignores an older cursor', () => {
     expect(withCursor(fresh, { lastBlock: 400, updatedAt: 999_000 }, 1_000_000)).toBe(fresh);
   });
-  it('lifts an unreachable poll but never an unknown deployment', () => {
-    const unavailable = freshnessOf({ ...base, health: null, error: 'x' });
-    expect(withCursor(unavailable, { lastBlock: 600, updatedAt: 999_990 }, 1_000_000).kind).toBe('fresh');
+  it('never stands in for an unreadable or unattributed answer: a cursor frame names no contract', () => {
+    const unavailable = freshnessOf({ ...base, health: null, error: 'HTTP 503' });
+    expect(withCursor(unavailable, { lastBlock: 600, updatedAt: 999_990 }, 1_000_000)).toBe(unavailable);
     const unknown = freshnessOf({ ...base, health: health({ deployment: { diamond: '0x' + '1'.repeat(40), resetPending: false, adoptedBlind: false } }) });
     expect(withCursor(unknown, { lastBlock: 600, updatedAt: 999_990 }, 1_000_000)).toBe(unknown);
   });

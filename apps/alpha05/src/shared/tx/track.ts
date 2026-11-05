@@ -3,7 +3,9 @@
  * so the sequence a page may show is one rule: idle → review → signing →
  * submitted → mined → measured, with `failed` reachable from signing only
  * (nothing was submitted), `receipt-unknown` from submission (the hash
- * exists and is kept; tracking may resume into `mined`), and `superseded`
+ * exists and is kept; `resume` puts it back in `submitted`, in flight
+ * again, BEFORE any wait starts, so no reset or second resume can race
+ * the receipt), and `superseded`
  * from submission when the wallet cancelled or replaced the transaction
  * (the intended action never ran, so there is nothing of it to measure). A
  * mined receipt may carry another hash than the one submitted only when the
@@ -24,6 +26,8 @@ export type TxEvent =
   | { type: 'superseded'; submittedHash: `0x${string}`; minedHash: `0x${string}`; reason: SupersededReason; blockNumber: bigint }
   | { type: 'measured'; hash: `0x${string}`; outcome: MeasuredOutcome }
   | { type: 'receipt-unknown'; hash: `0x${string}`; message: string }
+  /** Track a `receipt-unknown` hash again: back to `submitted`, in flight. */
+  | { type: 'resume'; hash: `0x${string}` }
   | { type: 'failed'; message: string }
   | { type: 'reset' };
 
@@ -71,7 +75,8 @@ export function transition(phase: TxPhase, event: TxEvent): TxPhase {
       if (event.type === 'superseded' && event.submittedHash === phase.hash && event.minedHash !== phase.hash) {
         return { kind: 'superseded', submittedHash: event.submittedHash, minedHash: event.minedHash, reason: event.reason, blockNumber: event.blockNumber };
       }
-      if (event.type === 'receipt-unknown' && event.hash === phase.hash) return { kind: 'receipt-unknown', hash: event.hash, message: event.message };
+      if (event.type === 'receipt-unknown' && event.hash === phase.hash) return { kind: 'receipt-unknown', hash: event.hash, at: phase.at, message: event.message };
+      if (event.type === 'resume' && phase.kind === 'receipt-unknown' && event.hash === phase.hash) return { kind: 'submitted', hash: phase.hash, at: phase.at };
       break;
     }
     case 'mined':

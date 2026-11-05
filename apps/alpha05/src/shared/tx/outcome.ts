@@ -26,7 +26,7 @@ export type TxPhase =
   /** Submitted, but the receipt could not be read (the node timed out or
    *  went away): the transaction may still execute, so the hash is kept and
    *  shown, tracking can resume, and no new review starts from here. */
-  | { kind: 'receipt-unknown'; hash: `0x${string}`; message: string }
+  | { kind: 'receipt-unknown'; hash: `0x${string}`; at: number; message: string }
   /** The wallet refused or failed before anything was submitted. */
   | { kind: 'failed'; message: string };
 

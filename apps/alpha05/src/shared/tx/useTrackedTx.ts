@@ -20,7 +20,7 @@ import type { ReplacementReason, TransactionReceipt } from 'viem';
 import { announceOwnChange } from '../reads/signals';
 import { refusalFromError } from '../eligibility/refusal';
 import { summarize, type LegOutcome, type TxPhase } from './outcome';
-import { transition, type TxEvent } from './track';
+import { IllegalTransition, transition, type TxEvent } from './track';
 
 export interface TrackedTxOptions {
   chainId: number;
@@ -118,9 +118,12 @@ export function useTrackedTx(opts: TrackedTxOptions): TrackedTx {
 
   const resume = useCallback(async () => {
     const current = phaseRef.current;
-    if (current.kind !== 'receipt-unknown') throw new Error(`tx: cannot resume in phase "${current.kind}"`);
+    // The phase moves to `submitted` synchronously, before the wait, so a
+    // second resume or a reset during it is refused by the transition rule.
+    if (current.kind !== 'receipt-unknown') throw new IllegalTransition(current.kind, 'resume');
+    apply({ type: 'resume', hash: current.hash });
     await track(current.hash);
-  }, [track]);
+  }, [apply, track]);
 
   return { phase, review, run, resume, reset };
 }

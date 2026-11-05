@@ -32,7 +32,7 @@ describe('transition', () => {
   it('keeps the hash when the receipt cannot be read, resumes into mined, never into a new review', () => {
     const submitted = transition(transition(transition({ kind: 'idle' }, { type: 'review' }), { type: 'sign' }), { type: 'submitted', hash: HASH, at: 1 });
     const unknown = transition(submitted, { type: 'receipt-unknown', hash: HASH, message: 'timed out' });
-    expect(unknown).toEqual({ kind: 'receipt-unknown', hash: HASH, message: 'timed out' });
+    expect(unknown).toEqual({ kind: 'receipt-unknown', hash: HASH, at: 1, message: 'timed out' });
     expect(() => transition(unknown, { type: 'review' })).toThrow(IllegalTransition);
     expect(() => transition(unknown, { type: 'mined', submittedHash: HASH, hash: OTHER, repriced: false, blockNumber: 1n, reverted: false })).toThrow(IllegalTransition);
     expect(transition(unknown, { type: 'mined', submittedHash: HASH, hash: HASH, repriced: false, blockNumber: 7n, reverted: false })).toMatchObject({ kind: 'mined', hash: HASH });
@@ -62,6 +62,18 @@ describe('transition', () => {
   it('refuses a different mined hash that is not a reprice', () => {
     const submitted = transition({ kind: 'signing' }, { type: 'submitted', hash: HASH, at: 1 });
     expect(() => transition(submitted, { type: 'mined', submittedHash: HASH, hash: OTHER, repriced: false, blockNumber: 1n, reverted: false })).toThrow(IllegalTransition);
+  });
+  it('puts a resumed hash back in flight before the wait, refusing a reset or a second resume', () => {
+    const submitted = transition({ kind: 'signing' }, { type: 'submitted', hash: HASH, at: 1 });
+    const unknown = transition(submitted, { type: 'receipt-unknown', hash: HASH, message: 'timed out' });
+    const resumed = transition(unknown, { type: 'resume', hash: HASH });
+    expect(resumed).toEqual({ kind: 'submitted', hash: HASH, at: 1 });
+    expect(() => transition(resumed, { type: 'resume', hash: HASH })).toThrow(IllegalTransition);
+    expect(() => transition(resumed, { type: 'reset' })).toThrow(IllegalTransition);
+    expect(() => transition(unknown, { type: 'resume', hash: OTHER })).toThrow(IllegalTransition);
+    expect(() => transition(submitted, { type: 'resume', hash: HASH })).toThrow(IllegalTransition);
+    // The resumed wait can still fail again, keeping the hash and its time.
+    expect(transition(resumed, { type: 'receipt-unknown', hash: HASH, message: 'again' })).toEqual({ kind: 'receipt-unknown', hash: HASH, at: 1, message: 'again' });
   });
   it('resets only a flow that is not in flight', () => {
     expect(transition({ kind: 'failed', message: 'x' }, { type: 'reset' })).toEqual({ kind: 'idle' });
