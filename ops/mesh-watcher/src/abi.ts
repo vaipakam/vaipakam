@@ -22,24 +22,45 @@
  * names and types the reader code assumes, and throws if not. A re-export
  * that changes a view's shape therefore fails the very first tick with a
  * precise message instead of quietly mislabelling a ledger figure.
+ *
+ * **The Worker carries a SUBSET of each facet ABI** (`abiSubset.json`): the
+ * watched views only, each entry copied verbatim from the compiled facet
+ * JSON by `scripts/abi-subset.mjs`. The complete files were about 300 KB of
+ * a 1.1 MB bundle, nearly all error and event entries this Worker never
+ * decodes, and every cold start on the 5-minute cron parsed them. The copy
+ * cannot drift silently: `npm run abi:check` refuses a subset that differs
+ * from today's compiled ABI in any way, and it runs in CI and before every
+ * build and deploy. A revert still classifies as a revert without the
+ * error entries: viem reports an undecodable error by its selector, and
+ * `classify` reads only that the call reverted.
  */
 
 import type { Abi, AbiFunction } from 'viem';
-import rewardAggregatorAbi from '../../../packages/contracts/src/abis/RewardAggregatorFacet.json';
-import repatriationAbi from '../../../packages/contracts/src/abis/RepatriationFacet.json';
-import rewardCustodyAbi from '../../../packages/contracts/src/abis/RewardCustodyFacet.json';
-import rewardReconciliationAbi from '../../../packages/contracts/src/abis/RewardReconciliationFacet.json';
-import rewardRemittanceLensAbi from '../../../packages/contracts/src/abis/RewardRemittanceLensFacet.json';
+import abiSubset from './abiSubset.json';
 
-/** The compiled `RewardAggregatorFacet` ABI, as viem consumes it. */
-export const REWARD_AGGREGATOR_ABI = rewardAggregatorAbi as unknown as Abi;
+/**
+ * The compiled facet file each watched view lives in, by the `facet` tag
+ * `EXPECTED_VIEWS` uses. Also the key of that facet's entries in
+ * `abiSubset.json`, which `test/abiSubset.test.ts` holds equal to
+ * `EXPECTED_VIEWS`.
+ */
+export const FACET_FILES = {
+  aggregator: 'RewardAggregatorFacet',
+  repatriation: 'RepatriationFacet',
+  custody: 'RewardCustodyFacet',
+  reconciliation: 'RewardReconciliationFacet',
+  remittanceLens: 'RewardRemittanceLensFacet',
+} as const;
+
+/** The compiled `RewardAggregatorFacet` ABI (watched views), as viem consumes it. */
+export const REWARD_AGGREGATOR_ABI = abiSubset.RewardAggregatorFacet as unknown as Abi;
 
 /** The compiled `RepatriationFacet` ABI (#1568 C2) — the repatriation
  *  draw / position views the C2 checks read. Kept as its OWN import
  *  rather than merged into the aggregator ABI so a repat-view revert on a
  *  not-yet-refreshed chain stays attributable to the facet that is
  *  actually missing. */
-export const REPATRIATION_ABI = repatriationAbi as unknown as Abi;
+export const REPATRIATION_ABI = abiSubset.RepatriationFacet as unknown as Abi;
 
 /** #1566 slice 4 PR B — the custody facet, for the VERSIONED backing snapshot
  *  (`getRecycleBackingSnapshotV2`): the legacy eight fields (#1434 P2-w2 —
@@ -52,7 +73,7 @@ export const REPATRIATION_ABI = repatriationAbi as unknown as Abi;
  *  facet, so a Diamond that cannot answer V2 cannot establish
  *  non-activation either — the legacy tuple never stands in. Its own
  *  import for the same attribution reason as the repatriation ABI. */
-export const REWARD_CUSTODY_ABI = rewardCustodyAbi as unknown as Abi;
+export const REWARD_CUSTODY_ABI = abiSubset.RewardCustodyFacet as unknown as Abi;
 
 /** #1566 closure 2 cutover PR 2 (Codex #2206 r9) — the reconciliation
  *  facet, for the two REATTRIBUTION cumulatives a reclassification moves
@@ -62,13 +83,13 @@ export const REWARD_CUSTODY_ABI = rewardCustodyAbi as unknown as Abi;
  *  needs them exactly as it needs the repatriated-out term.
  *  Its own import for the same attribution reason as the repatriation ABI:
  *  a chain not yet refreshed with the facet reverts this read alone. */
-export const REWARD_RECONCILIATION_ABI = rewardReconciliationAbi as unknown as Abi;
+export const REWARD_RECONCILIATION_ABI = abiSubset.RewardReconciliationFacet as unknown as Abi;
 
 /** #1452 — the remittance lens, for Base's per-destination ACKNOWLEDGED
  *  recycled share (`getChainRemittedRecycled`). Its own import for the same
  *  attribution reason as the others: a Diamond refreshed without the lens
  *  reverts this read alone. */
-export const REWARD_REMITTANCE_LENS_ABI = rewardRemittanceLensAbi as unknown as Abi;
+export const REWARD_REMITTANCE_LENS_ABI = abiSubset.RewardRemittanceLensFacet as unknown as Abi;
 
 /**
  * Every view this Worker calls, with the output shape its reader assumes.
@@ -257,6 +278,10 @@ const EXPECTED_VIEWS: ReadonlyArray<{
 export const WATCHED_VIEWS: readonly string[] = EXPECTED_VIEWS.map(
   (v) => v.name,
 );
+
+/** Each watched view's compiled facet file — what `abiSubset.json` must list. */
+export const WATCHED_VIEW_FACETS: ReadonlyArray<{ name: string; facetFile: string }> =
+  EXPECTED_VIEWS.map((v) => ({ name: v.name, facetFile: FACET_FILES[v.facet ?? 'aggregator'] }));
 
 function describe(io: { name?: string; type: string }): string {
   return `${io.name ?? ''}:${io.type}`;

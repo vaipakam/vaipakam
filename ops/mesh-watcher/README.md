@@ -292,21 +292,40 @@ is its RPC secret, and its absence is a reported coverage gap rather than
 a silent skip. The canonical chain's own id is included deliberately — its
 per-chain books must be inert, and `base-self-inert` is what proves it.
 
-**ABIs are compiled, not hand-typed.** `src/abi.ts` imports the exported
-`RewardAggregatorFacet.json` relatively, so the Solidity compiler stays the
-single source of truth for every decode shape (CLAUDE.md, *Worker ABI
-consumption*). `ops/lz-watcher` hand-wrote its signatures with `parseAbi`,
-correctly — it read the LayerZero standard surface, none of which is in the
-Diamond ABI. This Worker reads only the Diamond, where that shortcut is
-exactly the 2026-05-05 offer-decode-drift failure mode.
+**ABIs are compiled, not hand-typed.** The Worker reads its views through
+`src/abiSubset.json`: the entries for exactly the views it calls, each copied
+verbatim from the exported facet ABIs under `packages/contracts/src/abis/` by
+`scripts/abi-subset.mjs`. The Solidity compiler therefore stays the single
+source of truth for every decode shape (CLAUDE.md, *Worker ABI consumption*).
+`ops/lz-watcher` hand-wrote its signatures with `parseAbi`, correctly — it
+read the LayerZero standard surface, none of which is in the Diamond ABI.
+This Worker reads only the Diamond, where that shortcut is exactly the
+2026-05-05 offer-decode-drift failure mode.
+
+Why a subset rather than the whole files: the five complete facet ABIs were
+about 300 KB of a 1.1 MB bundle, nearly all error and event entries this
+Worker never decodes, and every cold start on the 5-minute cron parsed them
+(the bundle is now about 790 KB). A revert still reads as a revert without
+the error entries: viem reports an undecodable error by its selector.
+
+The subset is a copy, so it is checked against the compiled ABIs:
+`npm run abi:check` refuses an entry that differs in any way, or a view that
+is missing or overloaded in the compiled ABI. It runs before `npm run build`
+and `npm run deploy` finish, and the unit tests run the same comparison plus
+one that holds the subset's view list equal to the readers' list, in the CI
+job every facet re-export triggers. After a re-export that touches a watched
+view, run `npm run abi:write`; to watch a new view, run
+`npm run abi:write -- --add <Facet>:<function>`.
 
 A JSON import cannot be `as const`, so viem's return types degrade to
 `unknown` and this module labels the tuple positions by hand. **That**
 could drift, so `assertAbiShape()` runs before any read each tick and
 throws unless every watched view still has the exact output arity, order,
 names and types the readers assume. A facet re-export that changes a shape
-fails the first tick with a precise message instead of quietly mislabelling
-a ledger figure — and the CI job below catches it before deploy.
+fails the subset check before deploy, and `assertAbiShape()` with a precise
+message if a refreshed subset no longer matches the readers, instead of
+quietly mislabelling a ledger figure — and the CI job below catches both
+before deploy.
 
 **Reads are pinned to one block per chain.** Related ledger fields are
 written atomically on-chain but read over several RPC calls, so an
