@@ -12,7 +12,8 @@ import { useChainRead } from '../reads/chainRead';
 import { readPosture, usePosture } from '../reads/posture';
 import { useOwnRead } from '../reads/useOwnRead';
 import { TermsPrompt } from '../terms/TermsPrompt';
-import { readTerms, type TermsState } from '../terms/terms';
+import { readTerms } from '../terms/terms';
+import { useTermsGate } from '../terms/useTermsGate';
 import { useTerms } from '../terms/useTerms';
 import { simulateCall } from '../tx/simulate';
 import { useTrackedTx } from '../tx/useTrackedTx';
@@ -49,10 +50,9 @@ export function FeeDiscountConsent() {
    *  under, so a switch while the section is unmounted cannot carry the
    *  review to another identity (RB-REVIEW). */
   const [reviewed, setReviewed] = useState<(Reviewed & { identity: string }) | null>(null);
-  /** The Terms the prompt was opened for, and under which identity: kept
-   *  while it is open, so the acceptance's own re-read does not close it
-   *  before its outcome shows. */
-  const [asked, setAsked] = useState<{ terms: Extract<TermsState, { kind: 'needed' }>; identity: string } | null>(null);
+  /** The Terms acceptance, held here (above the "no wallet" return) so a
+   *  wallet or network switch never drops its tracker or session. */
+  const termsGate = useTermsGate(chain, own);
 
   const target = reviewed?.target ?? false;
   const tx = useTrackedTx({
@@ -80,7 +80,7 @@ export function FeeDiscountConsent() {
 
   const toggle = (next: boolean) => {
     if (next && terms.data?.kind === 'needed') {
-      setAsked({ terms: terms.data, identity });
+      termsGate.start(terms.data);
       setPanel('terms');
       return;
     }
@@ -120,7 +120,7 @@ export function FeeDiscountConsent() {
   const close = () => {
     setPanel('none');
     setReviewed(null);
-    setAsked(null);
+    termsGate.end();
   };
 
   // The action, by one verdict: withheld until its inputs are read, closed by
@@ -185,25 +185,17 @@ export function FeeDiscountConsent() {
       )}
       {consent.error !== null && current !== null && <p className="tier-b">{text('consent.stale')}</p>}
       {panel === 'none' && action}
-      {panel === 'terms' && asked && asked.identity !== identity && (
-        <>
-          <Notice tone="warn" tier="A">
-            {text('flow.identityChanged')}
-          </Notice>
-          <p className="actions">
-            <button type="button" className="btn" onClick={close}>
-              {text('flow.close')}
-            </button>
-          </p>
-        </>
-      )}
-      {panel === 'terms' && asked && asked.identity === identity && (
+      {panel === 'terms' && termsGate.session && (
         <TermsPrompt
           asker={text('consent.asker')}
-          terms={asked.terms}
+          gate={termsGate}
+          session={termsGate.session}
           chain={chain}
           own={own}
-          onAccepted={() => startReview(true)}
+          onAccepted={() => {
+            termsGate.end();
+            startReview(true);
+          }}
           onClose={close}
         />
       )}

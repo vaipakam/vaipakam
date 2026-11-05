@@ -1,6 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
-import { useConfig } from 'wagmi';
-import { writeContract } from 'wagmi/actions';
+import { useEffect, useRef } from 'react';
 import type { OwnStateClient } from '../../chain/ownRail';
 import type { SupportedChain } from '../../chain/chains';
 import { useMode } from '../../app/ModeContext';
@@ -8,14 +6,11 @@ import { useCopy } from '../copy/useCopy';
 import { guideUrl } from '../help/guide';
 import type { Receipt } from '../receipt/types';
 import { simulateCall } from '../tx/simulate';
-import { useTrackedTx } from '../tx/useTrackedTx';
 import { ActionFlow, reviewIdentity, type Recheck } from '../ui/ActionFlow';
+import { Notice } from '../ui/Notice';
 import { formatUtc } from '../ui/format';
-import { LEGAL_ABI, PRIVACY_URL, fingerprint, readTerms, termsUrl, type TermsState } from './terms';
-
-type Needed = Extract<TermsState, { kind: 'needed' }>;
-
-const IN_FLIGHT = new Set(['signing', 'submitted', 'mined']);
+import { LEGAL_ABI, PRIVACY_URL, fingerprint, readTerms, termsUrl } from './terms';
+import { IN_FLIGHT, type TermsGate, type TermsSession } from './useTermsGate';
 
 /**
  * ACC-15 — the Terms prompt, opened at the first value-creating action and
@@ -26,10 +21,16 @@ const IN_FLIGHT = new Set(['signing', 'submitted', 'mined']);
  * again: a newer version replaces the one shown, and an acceptance recorded
  * meanwhile (another tab) lets the action continue without a second one.
  * Declining costs nothing: no approval or other step runs before it.
+ *
+ * A view of the asking section's `TermsGate`: the session and its tracker
+ * live there, so unmounting this prompt (a wallet or network switch) loses
+ * nothing, and a review opened under one identity is never signed, or
+ * continued, under another.
  */
 export function TermsPrompt({
   asker,
-  terms,
+  gate,
+  session,
   chain,
   own,
   onAccepted,
@@ -37,71 +38,40 @@ export function TermsPrompt({
 }: {
   /** The action that asked, as a phrase ("Turning on the fee discount"). */
   asker: string;
-  terms: Needed;
+  gate: TermsGate;
+  session: TermsSession;
   chain: SupportedChain;
   own: OwnStateClient;
   onAccepted: () => void;
   onClose: () => void;
 }) {
   const { text, format } = useCopy();
-  const config = useConfig();
   const { mode } = useMode();
   const dialog = useRef<HTMLDialogElement>(null);
-  const [reviewed, setReviewed] = useState<Needed>(terms);
-  const [settled, setSettled] = useState(false);
-  /** When the Terms shown were read: at opening, then at each re-check. */
-  const [readAt, setReadAt] = useState(() => Date.now());
-  /** The identity the prompt opened under; the caller renders it only while
-   *  that identity holds, and a switch while it is open withholds signing. */
-  const [reviewedFor] = useState(() => reviewIdentity(own));
+  const { tx } = gate;
+  const reviewed = session.terms;
   const diamond = chain.diamondAddress;
+  const identity = reviewIdentity(own);
+  const moved = identity !== session.identity;
 
-  const tx = useTrackedTx({
-    chainId: chain.chainId,
-    account: own.account,
-    send: () =>
-      writeContract(config, {
-        address: diamond,
-        abi: LEGAL_ABI,
-        functionName: 'acceptTerms',
-        args: [reviewed.version, reviewed.hash],
-        chainId: chain.chainId,
-        account: own.account,
-      }),
-    measure: async () => {
-      const after = (await own.read((c) => readTerms(c, diamond, own.account))).value;
-      const label = format('terms.legAccepted', { version: String(reviewed.version) });
-      if (after.kind === 'accepted' && after.version === reviewed.version && after.hash === reviewed.hash) return [{ status: 'done', label }];
-      return [{ status: 'not-done', label, reason: text('terms.legMissing') }];
-    },
-  });
-
-  // Open as a modal at once, in review: the prompt IS the review.
-  // The ref survives React's development double-run of mount effects, so the
-  // review starts exactly once.
-  const started = useRef(false);
+  // Shown as a modal whenever mounted; the review itself was opened by the
+  // asking section, so a remount never starts a second one.
   useEffect(() => {
     const el = dialog.current;
     if (el && typeof el.showModal === 'function' && !el.open) el.showModal();
-    if (!started.current) {
-      started.current = true;
-      tx.review();
-    }
-    // Once, on mount.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const recheck = async (): Promise<Recheck> => {
     const fresh = (await own.read((c) => readTerms(c, diamond, own.account))).value;
-    setReadAt(Date.now());
     if (fresh.kind !== 'needed') {
-      setSettled(true);
+      gate.update({ settled: true, readAt: Date.now() });
       return { kind: 'changed', what: text('terms.changedSettled') };
     }
     if (fresh.version !== reviewed.version || fresh.hash !== reviewed.hash) {
-      setReviewed(fresh);
+      gate.update({ terms: fresh, readAt: Date.now() });
       return { kind: 'changed', what: text('terms.changedVersion') };
     }
+    gate.update({ readAt: Date.now() });
     return simulateCall(own, { address: diamond, abi: LEGAL_ABI, functionName: 'acceptTerms', args: [reviewed.version, reviewed.hash] });
   };
 
@@ -115,13 +85,23 @@ export function TermsPrompt({
     ],
     consequences: [],
     prompts: 1,
-    readAt,
+    readAt: session.readAt,
   };
 
   const close = () => {
     dialog.current?.close();
     onClose();
   };
+
+  const proceed = moved ? (
+    <Notice tone="warn" tier="A">
+      {text('flow.identityChanged')}
+    </Notice>
+  ) : (
+    <button type="button" className="btn btn-primary" onClick={onAccepted}>
+      {format('terms.continue', { asker })}
+    </button>
+  );
 
   return (
     <dialog
@@ -157,34 +137,26 @@ export function TermsPrompt({
         </li>
       </ul>
       <p className="tier-b">{text('terms.english')}</p>
-      {settled ? (
-        <p className="actions">
-          <button type="button" className="btn btn-primary" onClick={onAccepted}>
-            {format('terms.continue', { asker })}
-          </button>
-          <button type="button" className="btn" onClick={close}>
-            {text('flow.close')}
-          </button>
-        </p>
+      {session.settled ? (
+        <>
+          <p className="actions">{proceed}</p>
+          <p className="actions">
+            <button type="button" className="btn" onClick={close}>
+              {text('flow.close')}
+            </button>
+          </p>
+        </>
       ) : (
         <ActionFlow
           tx={tx}
-          identity={reviewIdentity(own)}
-          reviewedFor={reviewedFor}
+          identity={identity}
+          reviewedFor={session.identity}
           receipt={receipt}
           recheck={recheck}
           describeAsset={() => null}
           explorer={chain.blockExplorer}
           next={null}
-          after={(outcome) =>
-            outcome.verdict === 'done' ? (
-              <p className="actions">
-                <button type="button" className="btn btn-primary" onClick={onAccepted}>
-                  {format('terms.continue', { asker })}
-                </button>
-              </p>
-            ) : null
-          }
+          after={(outcome) => (outcome.verdict === 'done' ? <p className="actions">{proceed}</p> : null)}
           onClose={close}
         />
       )}

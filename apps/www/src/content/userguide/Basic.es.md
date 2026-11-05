@@ -1060,7 +1060,7 @@ En una red de prueba, Home ofrece tokens y NFT de prueba para que puedas probar 
 
 ### Home: descuento en comisiones
 
-El descuento en comisiones es un único ajuste por red para toda tu wallet. Mientras está desactivado, tus comisiones no tienen descuento, tengas el VPFI que tengas. Mientras está activado, se reduce la comisión que pagas al pedir prestado y también la comisión sobre los intereses que ganas como prestamista, según tu nivel de descuento VPFI en el momento de cobrarse cada comisión; en el nivel 0 no hay descuento. En algunas redes el descuento del prestamista se paga en VPFI desde tu vault, y el recibo te dice cuál aplica antes de confirmar. Activarlo requiere haber aceptado los Términos vigentes; desactivarlo, nunca. Mientras el protocolo está en pausa no se puede cambiar en ningún sentido.
+El descuento en comisiones es un único ajuste por red para toda tu wallet. Mientras está desactivado, tus comisiones no tienen descuento, tengas el VPFI que tengas. Mientras está activado, se reduce la comisión que pagas al pedir prestado y también la comisión sobre los intereses que ganas como prestamista, según tu nivel de descuento VPFI en el momento de cobrarse cada comisión; en el nivel 0 no hay descuento. En algunas redes el descuento del prestamista se paga en VPFI desde tu vault, y el recibo te dice cuál aplica antes de confirmar. Activarlo requiere haber aceptado los Términos vigentes; desactivarlo, nunca. Mientras el protocolo está en pausa no se puede cambiar en ningún sentido. Un préstamo en un activo prestado ilíquido sigue pagando la comisión completa, y ningún descuento supera nunca la mitad de la comisión.
 
 <a id="terms-gate"></a>
 

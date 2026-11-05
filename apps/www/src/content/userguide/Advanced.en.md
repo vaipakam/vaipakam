@@ -2390,8 +2390,11 @@ VPFI moves. If that debit cannot run at a settlement (no live quote,
 too little free tracked VPFI in the vault, or that VPFI locked as
 collateral), that settlement's fee gets no hold-tier discount. The
 call is `whenNotPaused`, so the global pause closes it in both
-directions. Turning it on is gated by the Terms, turning
-it off is not, and neither broadcasts a tier to the mirrors.
+directions. Turning it on is gated by the Terms, turning it off is
+not, and neither broadcasts a tier to the mirrors. The borrower
+discount applies only when the lending asset is liquid at acceptance
+(an illiquid loan pays the full LIF), and every discount is capped
+at 50% of the fee.
 
 <a id="terms-gate"></a>
 

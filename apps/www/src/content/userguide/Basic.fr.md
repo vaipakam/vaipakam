@@ -1078,7 +1078,7 @@ Sur un réseau de test, Home propose des jetons et des NFT de test pour essayer 
 
 ### Home : remise sur les frais
 
-La remise sur les frais est un seul réglage par réseau pour tout votre wallet. Tant qu'elle est désactivée, vos frais n'ont aucune remise, quel que soit le VPFI que vous détenez. Tant qu'elle est activée, les frais payés quand vous empruntez sont réduits, de même que les frais sur les intérêts que vous gagnez comme prêteur, selon votre niveau de remise VPFI au moment où chaque frais est prélevé ; au niveau 0, il n'y en a pas. Sur certains réseaux, la remise du prêteur est payée en VPFI depuis votre vault, et le reçu indique lequel s'applique avant que vous confirmiez. L'activer exige d'avoir accepté les Conditions en vigueur ; la désactiver, jamais. Pendant une pause du protocole, elle ne peut être modifiée dans aucun sens.
+La remise sur les frais est un seul réglage par réseau pour tout votre wallet. Tant qu'elle est désactivée, vos frais n'ont aucune remise, quel que soit le VPFI que vous détenez. Tant qu'elle est activée, les frais payés quand vous empruntez sont réduits, de même que les frais sur les intérêts que vous gagnez comme prêteur, selon votre niveau de remise VPFI au moment où chaque frais est prélevé ; au niveau 0, il n'y en a pas. Sur certains réseaux, la remise du prêteur est payée en VPFI depuis votre vault, et le reçu indique lequel s'applique avant que vous confirmiez. L'activer exige d'avoir accepté les Conditions en vigueur ; la désactiver, jamais. Pendant une pause du protocole, elle ne peut être modifiée dans aucun sens. Un prêt dans un actif prêté illiquide paie toujours les frais complets, et aucune remise ne dépasse jamais la moitié des frais.
 
 <a id="terms-gate"></a>
 

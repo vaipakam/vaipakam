@@ -1031,7 +1031,9 @@ tier at the moment each fee is charged; at tier 0 there is none. On
 some networks the lender discount is paid in VPFI from your vault,
 and the receipt says which before you confirm. Turning it on needs
 the current Terms accepted; turning it off never does. While the
-protocol is paused it cannot be changed either way.
+protocol is paused it cannot be changed either way. A loan in an
+illiquid lending asset still pays the full borrowing fee, and no
+discount is ever more than half the fee.
 
 <a id="terms-gate"></a>
 

@@ -2,7 +2,8 @@
  * RW-07 — the shared fee-discount consent: ONE platform-level flag per
  * network, not per offer or loan. Off, the holding discount is 0 whatever
  * VPFI the vault holds. On, a borrower's loan initiation fee is reduced at
- * acceptance (in the lending asset, no VPFI moved), and a lender's fee on
+ * acceptance when the lending asset is liquid (in the lending asset, no VPFI
+ * moved; an illiquid loan pays the full fee), and a lender's fee on
  * interest is discounted at each settlement, delivered one of two ways the
  * deployment's VPFI price configuration selects:
  * - `vpfi`: a price source is configured, so the discounted fee is paid in
