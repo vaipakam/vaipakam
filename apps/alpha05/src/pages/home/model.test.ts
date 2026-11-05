@@ -6,7 +6,9 @@ import {
   compareStages,
   exposure,
   groupByOffer,
+  isLiveStatus,
   loanStage,
+  positionKey,
   type LiveLoanRow,
 } from './model';
 
@@ -30,6 +32,8 @@ function row(id: number, over: Partial<LiveLoanRow['loan']> = {}, rest: Partial<
       collateralAmount: 1n,
       collateralAssetType: 0,
       collateralTokenId: 0n,
+      lenderTokenId: BigInt(2 * id),
+      borrowerTokenId: BigInt(2 * id + 1),
       ...over,
     },
     healthFactor: 2n * 10n ** 18n,
@@ -108,26 +112,40 @@ describe('groupByOffer', () => {
 });
 
 describe('exposure', () => {
-  const values = (m: Record<number, bigint | null>) => (id: bigint) => m[Number(id)] ?? null;
+  const values = (m: Record<number, bigint | null>) => (r: LiveLoanRow) => m[Number(r.loan.id)] ?? null;
   it('names the larger side when every loan is valued', () => {
-    const e = exposure([row(1), row(2, {}, { borrowerSide: true })], values({ 1: 500n, 2: 200n }));
+    const e = exposure([row(1), row(2, {}, { borrowerSide: true })], values({ 1: 500n, 2: 200n }), true);
     expect(e).toMatchObject({ lent: 500n, borrowed: 200n, larger: 'lent' });
   });
   it('still names the larger side when the unvalued loans are all on it', () => {
-    const e = exposure([row(1), row(3), row(2, {}, { borrowerSide: true })], values({ 1: 500n, 2: 200n, 3: null }));
+    const e = exposure([row(1), row(3), row(2, {}, { borrowerSide: true })], values({ 1: 500n, 2: 200n, 3: null }), true);
     expect(e).toMatchObject({ larger: 'lent', unvaluedLent: 1 });
   });
   it('refuses to name a side an unvalued loan could overturn', () => {
-    const e = exposure([row(1), row(2, {}, { borrowerSide: true }), row(3, {}, { borrowerSide: true })], values({ 1: 500n, 2: 200n, 3: null }));
+    const e = exposure([row(1), row(2, {}, { borrowerSide: true }), row(3, {}, { borrowerSide: true })], values({ 1: 500n, 2: 200n, 3: null }), true);
     expect(e).toMatchObject({ larger: 'unknown', unvaluedBorrowed: 1 });
   });
   it('says only one side exists without comparing, and none when there are no loans', () => {
-    expect(exposure([row(1, {}, { borrowerSide: true })], values({ 1: null })).larger).toBe('only-borrowed');
-    expect(exposure([row(1)], values({})).larger).toBe('only-lent');
-    expect(exposure([], values({})).larger).toBe('none');
+    expect(exposure([row(1, {}, { borrowerSide: true })], values({ 1: null }), true).larger).toBe('only-borrowed');
+    expect(exposure([row(1)], values({}), true).larger).toBe('only-lent');
+    expect(exposure([], values({}), true).larger).toBe('none');
+  });
+  it('draws no whole-book conclusion from a walk that stopped before the end', () => {
+    expect(exposure([row(1)], values({ 1: 5n }), false)).toMatchObject({ larger: 'partial', lent: 5n });
+    expect(exposure([row(1), row(2, {}, { borrowerSide: true })], values({ 1: 500n, 2: 200n }), false).larger).toBe('partial');
+    expect(exposure([], values({}), false).larger).toBe('partial');
   });
   it('calls equal totals even only when nothing is unvalued', () => {
-    expect(exposure([row(1), row(2, {}, { borrowerSide: true })], values({ 1: 5n, 2: 5n })).larger).toBe('even');
-    expect(exposure([row(1), row(3), row(2, {}, { borrowerSide: true })], values({ 1: 5n, 2: 5n, 3: null })).larger).toBe('unknown');
+    expect(exposure([row(1), row(2, {}, { borrowerSide: true })], values({ 1: 5n, 2: 5n }), true).larger).toBe('even');
+    expect(exposure([row(1), row(3), row(2, {}, { borrowerSide: true })], values({ 1: 5n, 2: 5n, 3: null }), true).larger).toBe('unknown');
+  });
+});
+
+describe('positions', () => {
+  it('counts Active and FallbackPending as live, and nothing else', () => {
+    expect([0, 1, 2, 3, 4, 5, 6].filter(isLiveStatus)).toEqual([0, 4]);
+  });
+  it('keys a wallet holding both sides of one loan as two positions', () => {
+    expect(positionKey(row(7))).not.toBe(positionKey(row(7, {}, { borrowerSide: true })));
   });
 });

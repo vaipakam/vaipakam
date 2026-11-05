@@ -4,7 +4,7 @@ import { useCopy } from '../../shared/copy/useCopy';
 import { WhyLink } from '../../shared/help/WhyLink';
 import { assetName, tokenAmount, type TokenMetaMap } from '../../shared/reads/tokens';
 import type { OwnRead } from '../../shared/reads/useOwnRead';
-import { formatBps, formatScaled, formatSpan, formatUtc } from '../../shared/ui/format';
+import { formatAge, formatBps, formatScaled, formatSpan, formatUtc } from '../../shared/ui/format';
 import { OwnStamp } from '../../shared/ui/OwnStamp';
 import { useNow } from '../../shared/ui/useNow';
 import {
@@ -14,6 +14,7 @@ import {
   exposure,
   groupByOffer,
   loanStage,
+  positionKey,
   type Deadlines,
   type LiveLoanRow,
   type LoanEntry,
@@ -44,7 +45,7 @@ export function YourPositions({ book }: { book: HomeBook }) {
   if (!chain) return null;
   return (
     <>
-      <OwnStamp reads={[payouts, loans, offers]} />
+      <OwnStamp reads={[loans, offers]} />
       {empty ? (
         <p className="tier-b home-empty">{format('home.empty', { chain: chain.name })}</p>
       ) : (
@@ -58,16 +59,33 @@ export function YourPositions({ book }: { book: HomeBook }) {
   );
 }
 
+/** A section's read, stated: still reading, failed, or answered; and an
+ *  answer kept after a failed re-read is labelled with its age, never shown
+ *  as current. */
 function ReadState<T>({ read, children }: { read: OwnRead<T>; children: (data: T) => ReactNode }) {
   const { text, format } = useCopy();
+  const now = useNow();
   if (read.state === 'failed') return <p className="tier-a notice-warn">{format('home.failed', { reason: read.error ?? '' })}</p>;
   if (read.data === null) return <p className="tier-b">{text('home.reading')}</p>;
-  return <>{children(read.data)}</>;
+  return (
+    <>
+      {read.error !== null && read.readAt !== null && (
+        <p className="tier-a notice-warn">{format('home.stale', { reason: read.error, age: formatAge((now - read.readAt) / 1000) })}</p>
+      )}
+      {children(read.data)}
+    </>
+  );
+}
+
+/** A section is left out only when its whole inventory was read, the
+ *  latest re-read succeeded, and there is nothing in it. */
+function settledEmpty<T>(read: OwnRead<T>, isEmpty: (data: T) => boolean): boolean {
+  return read.data !== null && read.error === null && isEmpty(read.data);
 }
 
 function PayoutsSection({ read }: { read: OwnRead<Payouts> }) {
   const { text, format } = useCopy();
-  if (read.data && read.data.complete && read.data.rows.length === 0) return null;
+  if (settledEmpty(read, (d) => d.complete && d.rows.length === 0 && d.unlisted === 0)) return null;
   return (
     <section className="home-section" aria-labelledby="home-payouts">
       <h2 id="home-payouts">{text('home.payoutsTitle')}</h2>
@@ -84,6 +102,7 @@ function PayoutsSection({ read }: { read: OwnRead<Payouts> }) {
                 </li>
               ))}
             </ul>
+            {data.unlisted > 0 && <p className="tier-b">{format('home.payoutsUnlisted', { count: String(data.unlisted) })}</p>}
             <WhyLink summaryKey="home.payoutsNote" detailKey="home.payoutsWhy" />
             <Link className="btn btn-primary" to="/claims">
               {text('home.payoutsAction')}
@@ -97,7 +116,7 @@ function PayoutsSection({ read }: { read: OwnRead<Payouts> }) {
 
 function LoansSection({ read, meta, unit }: { read: OwnRead<LiveLoans>; meta: TokenMetaMap | null; unit: string }) {
   const { text } = useCopy();
-  if (read.data && read.data.complete && read.data.rows.length === 0) return null;
+  if (settledEmpty(read, (d) => d.complete && d.rows.length === 0)) return null;
   return (
     <section className="home-section" aria-labelledby="home-loans">
       <h2 id="home-loans">{text('home.loansTitle')}</h2>
@@ -109,18 +128,18 @@ function LoansSection({ read, meta, unit }: { read: OwnRead<LiveLoans>; meta: To
 function LoanList({ data, meta, unit }: { data: LiveLoans; meta: TokenMetaMap | null; unit: string }) {
   const { text } = useCopy();
   const nowSec = Math.floor(useNow() / 1000);
-  const deadlinesOf = (r: LiveLoanRow) => data.deadlines[r.loan.id.toString()] ?? null;
+  const deadlinesOf = (r: LiveLoanRow) => data.deadlines[positionKey(r)] ?? null;
   const stageOf = (r: LiveLoanRow) => loanStage(r, deadlinesOf(r), nowSec);
   const ordered = [...data.rows].sort((a, b) => compareStages(stageOf(a), stageOf(b)));
   const entries = groupByOffer(ordered);
-  const exp = exposure(data.rows, (id) => data.values[id.toString()] ?? null);
+  const exp = exposure(data.rows, (r) => data.values[positionKey(r)] ?? null, data.complete);
   return (
     <>
       <ExposureLine e={exp} unit={unit} />
       {!data.complete && <p className="tier-a">{text('home.incomplete')}</p>}
       <ul className="rows">
         {entries.map((e) => (
-          <EntryCard key={e.kind === 'single' ? `l${e.row.loan.id}` : `g${e.group.offerId}:${e.group.borrowerSide}`} entry={e} meta={meta} stageOf={stageOf} deadlinesOf={deadlinesOf} />
+          <EntryCard key={e.kind === 'single' ? positionKey(e.row) : `g${e.group.offerId}:${e.group.borrowerSide}`} entry={e} meta={meta} stageOf={stageOf} deadlinesOf={deadlinesOf} />
         ))}
       </ul>
     </>
@@ -160,6 +179,8 @@ function ExposureLine({ e, unit }: { e: ReturnType<typeof exposure>; unit: strin
       return <WhyLink summaryKey="home.exposureEven" detailKey="home.exposureWhy" vars={{ lent, unit }} />;
     case 'unknown':
       return <WhyLink summaryKey="home.exposureUnknown" detailKey="home.exposureWhy" vars={{ lent, borrowed, unit, count: String(unvalued) }} />;
+    case 'partial':
+      return <WhyLink summaryKey="home.exposurePartial" detailKey="home.exposureWhy" vars={{ lent, borrowed, unit }} />;
   }
 }
 
@@ -199,7 +220,7 @@ function GroupCard({
       {group.unpricedChildren > 0 && <p className="tier-b">{format('home.groupUnpriced', { count: String(group.unpricedChildren) })}</p>}
       <ul className="rows nested">
         {group.rows.map((r) => (
-          <LoanCard key={r.loan.id.toString()} row={r} meta={meta} stage={stageOf(r)} deadlines={deadlinesOf(r)} />
+          <LoanCard key={positionKey(r)} row={r} meta={meta} stage={stageOf(r)} deadlines={deadlinesOf(r)} />
         ))}
       </ul>
     </li>
@@ -221,8 +242,11 @@ function LoanCard({ row, meta, stage, deadlines }: { row: LiveLoanRow; meta: Tok
           ? format('home.loanTerms', { amount: tokenAmount(l.principal, l.principalAsset, meta, format), rate: formatBps(l.interestRateBps), days: l.durationDays.toString() })
           : format('home.loanRental', { asset: legText(l.principalAsset, l.assetType, l.principal, l.tokenId), days: l.durationDays.toString() })}
       </p>
-      <p className="tier-b">{format('home.loanCollateral', { amount: legText(l.collateralAsset, l.collateralAssetType, l.collateralAmount, l.collateralTokenId) })}</p>
-      <StageLine stage={stage} borrowerSide={row.borrowerSide} />
+      {/* An NFT rental carries no collateral leg; its prepaid rent is what a default settles. */}
+      {l.assetType === ASSET_ERC20 && (
+        <p className="tier-b">{format('home.loanCollateral', { amount: legText(l.collateralAsset, l.collateralAssetType, l.collateralAmount, l.collateralTokenId) })}</p>
+      )}
+      <StageLine stage={stage} borrowerSide={row.borrowerSide} rental={l.assetType !== ASSET_ERC20} />
       {deadlines && deadlines.pauseCredit > 0n && <p className="tier-b">{format('home.loanPauseCredit', { credit: formatSpan(Number(deadlines.pauseCredit)) })}</p>}
       <p className="tier-b">{row.healthFactor > 0n ? format('home.loanHealth', { hf: formatScaled(row.healthFactor) }) : text('home.loanHealthNone')}</p>
       <Link className="btn btn-primary" to={`/positions/${id}`}>
@@ -232,7 +256,10 @@ function LoanCard({ row, meta, stage, deadlines }: { row: LiveLoanRow; meta: Tok
   );
 }
 
-function StageLine({ stage, borrowerSide }: { stage: LoanStage; borrowerSide: boolean }) {
+/** The loan's next date and, for the side that bears it, the consequence of
+ *  missing it. An NFT rental has no collateral, so its renter is told what a
+ *  default does to the prepaid rent instead. */
+function StageLine({ stage, borrowerSide, rental }: { stage: LoanStage; borrowerSide: boolean; rental: boolean }) {
   const { text, format } = useCopy();
   const nowSec = Math.floor(useNow() / 1000);
   switch (stage.kind) {
@@ -241,23 +268,27 @@ function StageLine({ stage, borrowerSide }: { stage: LoanStage; borrowerSide: bo
     case 'deadline-unknown':
       return <p className="tier-a stage">{text('home.loanDeadlineUnknown')}</p>;
     case 'running':
-      return <p className="tier-b stage">{format('home.loanDue', { when: formatUtc(stage.dueAt) })}</p>;
+      return <p className="tier-b stage">{format(rental ? 'home.rentalDue' : 'home.loanDue', { when: formatUtc(stage.dueAt) })}</p>;
     case 'due-soon': {
       const vars = { when: formatUtc(stage.dueAt), left: formatSpan(stage.dueAt - nowSec) };
-      return borrowerSide ? <p className="tier-a stage">{format('home.loanDueSoonBorrower', vars)}</p> : <p className="tier-b stage">{format('home.loanDueSoonLender', vars)}</p>;
+      if (borrowerSide) return <p className="tier-a stage">{format(rental ? 'home.loanDueSoonRenter' : 'home.loanDueSoonBorrower', vars)}</p>;
+      return <p className="tier-b stage">{format(rental ? 'home.loanDueSoonOwner' : 'home.loanDueSoonLender', vars)}</p>;
     }
     case 'in-grace': {
       const vars = { due: formatUtc(stage.dueAt), graceEnd: formatUtc(stage.graceEndsAt) };
-      return borrowerSide ? <p className="tier-a stage">{format('home.loanInGraceBorrower', vars)}</p> : <p className="tier-b stage">{format('home.loanInGraceLender', vars)}</p>;
+      if (borrowerSide) return <p className="tier-a stage">{format(rental ? 'home.loanInGraceRenter' : 'home.loanInGraceBorrower', vars)}</p>;
+      return <p className="tier-b stage">{format('home.loanInGraceLender', vars)}</p>;
     }
-    case 'grace-over':
-      return <p className="tier-a stage">{format(borrowerSide ? 'home.loanGraceOverBorrower' : 'home.loanGraceOverLender', { when: formatUtc(stage.graceEndedAt) })}</p>;
+    case 'grace-over': {
+      const key = borrowerSide ? (rental ? 'home.loanGraceOverRenter' : 'home.loanGraceOverBorrower') : 'home.loanGraceOverLender';
+      return <p className="tier-a stage">{format(key, { when: formatUtc(stage.graceEndedAt) })}</p>;
+    }
   }
 }
 
 function OffersSection({ read, meta }: { read: OwnRead<OpenOffers>; meta: TokenMetaMap | null }) {
   const { text, format } = useCopy();
-  if (read.data && read.data.complete && read.data.rows.length === 0) return null;
+  if (settledEmpty(read, (d) => d.complete && d.rows.length === 0)) return null;
   return (
     <section className="home-section" aria-labelledby="home-offers">
       <h2 id="home-offers">{text('home.offersTitle')}</h2>

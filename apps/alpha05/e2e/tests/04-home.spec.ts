@@ -8,6 +8,7 @@
  */
 import { openLoan, postLenderOffer, repayInFull } from '@vaipakam/anvil-harness/lending';
 import { scenario } from '../lib/chain';
+import { accountFor } from '../lib/wallets';
 import { connectWallet, expect, test } from '../lib/wallet';
 
 const INTENTS = ['/borrow', '/lend', '/rent', '/rent?side=owner', '/positions'];
@@ -118,6 +119,27 @@ test('a repaid loan is a payout ready to collect, listed before the live loans, 
   });
   expect(before).toBe(true);
   // The repaid loan is no longer live.
+  await expect(page.locator(`[data-loan-id="${loanId}"]`)).toHaveCount(0);
+});
+
+test('a position follows its NFT: a lender who transferred it no longer sees the loan, the borrower still does', async ({ launchWallet }) => {
+  const sc = scenario();
+  const { loanId } = await openLoan(sc, { lender: 'lender', borrower: 'borrower', principalWeth: '0.1', collateralTliq: '500', rateBps: 450, days: 30 });
+  const [view] = await sc.read<readonly { loan: { lenderTokenId: bigint } }[]>('getLoansBatch', [[loanId]]);
+  // The lender position moves to a wallet this suite does not drive; the
+  // loan's recorded lender is unchanged, which is what an index walk would read.
+  await sc.diamondWrite('lender', 'transferFrom', [accountFor('lender').address, '0x000000000000000000000000000000000000dEaD', view!.loan.lenderTokenId]);
+
+  const borrower = await launchWallet('borrower');
+  await borrower.page.goto('/');
+  await connectWallet(borrower.page);
+  await expect(borrower.page.locator(`[data-loan-id="${loanId}"]`)).toBeVisible({ timeout: 60_000 });
+  await borrower.ctx.close();
+
+  const { page } = await launchWallet('lender');
+  await page.goto('/');
+  await connectWallet(page);
+  await expect(page.getByText(/^Synced .* ago through /)).toBeVisible({ timeout: 60_000 });
   await expect(page.locator(`[data-loan-id="${loanId}"]`)).toHaveCount(0);
 });
 

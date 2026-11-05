@@ -3,7 +3,7 @@ import { getSupportedChain, type SupportedChain } from '../../chain/chains';
 import { useChainRead, type ChainRead } from '../../shared/reads/chainRead';
 import { useTokenMeta, type TokenMetaMap } from '../../shared/reads/tokens';
 import { useOwnRead, type OwnRead } from '../../shared/reads/useOwnRead';
-import { readLiveLoans, readNumeraireSymbol, readOpenOffers, readPayouts, type LiveLoans, type OpenOffers, type Payouts } from './reads';
+import { readNumeraireSymbol, readOpenOffers, readPositionBook, type LiveLoans, type OpenOffers, type Payouts } from './reads';
 
 type Hex = `0x${string}`;
 
@@ -16,13 +16,20 @@ export interface HomeBook {
   offers: OwnRead<OpenOffers>;
   numeraire: ChainRead<string | null>;
   meta: TokenMetaMap | null;
-  /** True only when all three walks completed and found nothing. */
+  /** True only when every walk completed, its latest re-read succeeded,
+   *  and nothing was found: a stale answer is never called empty. */
   empty: boolean;
 }
 
-/** The connected wallet's book on its chain (RW-70): three own reads, so a
- *  section that fails never hides the others, plus the token and numeraire
- *  metadata the rows are written with. */
+/** One part of an own read, with the read's state, age and source. */
+function part<T, U>(read: OwnRead<T>, pick: (data: T) => U): OwnRead<U> {
+  return { ...read, data: read.data === null ? null : pick(read.data) };
+}
+
+/** The connected wallet's book on its chain (RW-70): the loan positions it
+ *  holds (live loans and payouts come from that one inventory) and the offers
+ *  it holds, as two own reads so a failure of one never hides the other, plus
+ *  the token and numeraire metadata the rows are written with. */
 export function useHomeBook(): HomeBook {
   const own = useOwnStateClient();
   const chain = getSupportedChain(own?.chainId);
@@ -30,8 +37,9 @@ export function useHomeBook(): HomeBook {
   const account = (own?.account ?? '0x') as Hex;
   const enabled = chain !== null;
 
-  const loans = useOwnRead(['home', 'loans'], (c) => readLiveLoans(c, diamond, account), { enabled });
-  const payouts = useOwnRead(['home', 'payouts'], (c) => readPayouts(c, diamond, account), { enabled });
+  const positions = useOwnRead(['home', 'positions'], (c) => readPositionBook(c, diamond, account), { enabled });
+  const loans = part(positions, (d) => d.loans);
+  const payouts = part(positions, (d) => d.payouts);
   const offers = useOwnRead(['home', 'offers'], (c) => readOpenOffers(c, diamond, account), { enabled });
   const numeraire = useChainRead(['numeraireSymbol', diamond], (c) => readNumeraireSymbol(c, diamond), { enabled });
 
@@ -42,12 +50,15 @@ export function useHomeBook(): HomeBook {
   const meta = useTokenMeta(assets).data;
 
   const empty =
+    positions.error === null &&
+    offers.error === null &&
     loans.data?.complete === true &&
     payouts.data?.complete === true &&
     offers.data?.complete === true &&
     loans.data.rows.length === 0 &&
     payouts.data.rows.length === 0 &&
-    offers.data.rows.length === 0;
+    offers.data.rows.length === 0 &&
+    payouts.data.unlisted === 0;
 
   return { chain, loans, payouts, offers, numeraire, meta, empty };
 }

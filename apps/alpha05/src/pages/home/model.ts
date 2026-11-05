@@ -13,6 +13,18 @@
 export const LOAN_STATUS_ACTIVE = 0;
 export const LOAN_STATUS_FALLBACK_PENDING = 4;
 
+/** Live = Active or FallbackPending, the protocol's own active set (#940):
+ *  a FallbackPending loan is still curable by the borrower. */
+export function isLiveStatus(status: number): boolean {
+  return status === LOAN_STATUS_ACTIVE || status === LOAN_STATUS_FALLBACK_PENDING;
+}
+
+/** One key per held position: a wallet holding both sides of a loan holds
+ *  two positions on it, each with its own value and rounding. */
+export function positionKey(p: { loan: { id: bigint }; borrowerSide: boolean }): string {
+  return `${p.loan.id}:${p.borrowerSide ? 'borrower' : 'lender'}`;
+}
+
 /** `AssetType.ERC20`; anything else is an NFT leg. */
 export const ASSET_ERC20 = 0;
 
@@ -38,6 +50,8 @@ export interface LoanSummary {
   collateralAmount: bigint;
   collateralAssetType: number;
   collateralTokenId: bigint;
+  lenderTokenId: bigint;
+  borrowerTokenId: bigint;
 }
 
 export interface LiveLoanRow {
@@ -183,13 +197,15 @@ export interface Exposure {
   borrowedLoans: number;
   unvaluedLent: number;
   unvaluedBorrowed: number;
-  larger: 'none' | 'only-lent' | 'only-borrowed' | 'lent' | 'borrowed' | 'even' | 'unknown';
+  /** `partial`: the walk of the wallet's positions stopped before the end,
+   *  so no conclusion about the whole book is drawn from the part read. */
+  larger: 'none' | 'only-lent' | 'only-borrowed' | 'lent' | 'borrowed' | 'even' | 'unknown' | 'partial';
 }
 
-export function exposure(rows: readonly LiveLoanRow[], valueOf: (loanId: bigint) => bigint | null): Exposure {
+export function exposure(rows: readonly LiveLoanRow[], valueOf: (row: LiveLoanRow) => bigint | null, complete: boolean): Exposure {
   const e: Exposure = { lent: 0n, borrowed: 0n, lentLoans: 0, borrowedLoans: 0, unvaluedLent: 0, unvaluedBorrowed: 0, larger: 'none' };
   for (const r of rows) {
-    const v = valueOf(r.loan.id);
+    const v = valueOf(r);
     if (r.borrowerSide) {
       e.borrowedLoans++;
       if (v === null) e.unvaluedBorrowed++;
@@ -200,7 +216,8 @@ export function exposure(rows: readonly LiveLoanRow[], valueOf: (loanId: bigint)
       else e.lent += v;
     }
   }
-  if (e.lentLoans === 0 && e.borrowedLoans === 0) e.larger = 'none';
+  if (e.lentLoans === 0 && e.borrowedLoans === 0) e.larger = complete ? 'none' : 'partial';
+  else if (!complete) e.larger = 'partial';
   else if (e.borrowedLoans === 0) e.larger = 'only-lent';
   else if (e.lentLoans === 0) e.larger = 'only-borrowed';
   else if (e.lent > e.borrowed) e.larger = e.unvaluedBorrowed === 0 ? 'lent' : 'unknown';
