@@ -139,8 +139,17 @@ remain governed by [Keeper Operations](KeeperOperations.md).
   a sanctions-refused payout remains held and is retried.
 - Telegram lock requests require a current wallet link, keeper permission,
   and an active lock service on that chain. They expire after one hour and
-  are not instant. Pending lock requests hold that account's payouts and NFT
-  transfers. Lock, payout, and replacement alerts disclose the request code
+  are not instant. A pending lock request holds back only the keeper's own
+  releases of that account's payouts and NFT transfers; it does not hold
+  anyone else's. Because release stays permissionless, anyone can still
+  release a payout or transfer already past its delay until the lock lands on
+  chain, so protection starts when the lock lands, not when the request is
+  sent. The app's own lock is one transaction from the owner and has no keeper
+  delay, and every such payout was queued on chain and could have been
+  cancelled during its whole delay. The owner's alert of a queued payout is
+  best effort, not a guarantee: it is not sent when alerts are off or the
+  owner is not subscribed, and a late or undeliverable one can be missed
+  (owner decision #3177, 2026-11-05). Lock, payout, and replacement alerts disclose the request code
   and route to the current manager. Detailed limits and retry rules are in
   [Keeper Operations](KeeperOperations.md#locking-a-protected-vault-from-telegram-and-owner-alerts).
 - Protected-mode contracts and the all-asset tracked ledger require a fresh
