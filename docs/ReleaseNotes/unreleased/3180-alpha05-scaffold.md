@@ -1,4 +1,4 @@
-## Thread — Scaffold the next connected app, apps/alpha05 (PR #3192)
+## Thread — Scaffold the next connected app, apps/alpha05 (PR #3179)
 
 A new workspace package, `apps/alpha05`, starts the connected app rebuilt
 from the functional specs under the rulebook in
