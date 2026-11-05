@@ -51,6 +51,7 @@ import { walletGateDecision } from './walletGate.mjs';
 import { LiveShapeMismatchError, shapeBlock, shapeChecked } from './shapeCheckedClient.mjs';
 import { classifyRpcResponse, createSocketCalls, isChainRpcMethod } from './rpc-verdict.mjs';
 import { cspViolationVerdict, installCspViolationWatch, thirdPartyCspNote } from './cspViolations.mjs';
+import { makeIsRpcProxyEndpoint } from './rpcProxyRoute.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 // Dev TEST wallets only — throwaway keys holding testnet dust. The
@@ -1579,6 +1580,8 @@ export async function launch({
     return false;
   }
 
+  const isRpcProxyEndpoint = makeIsRpcProxyEndpoint(process.env.RPC_PROXY_ORIGIN);
+
   function readOnlyViolation(req) {
     if (!readOnly && !readOnlyEgress) return null;
     const method = req.method().toUpperCase();
@@ -1609,9 +1612,14 @@ export async function launch({
       try {
         const parsed = JSON.parse(body);
         const calls = Array.isArray(parsed) ? parsed : [parsed];
+        //
+        // One first-party destination IS an RPC endpoint: the read-only
+        // proxy the app reads every chain through (#1724). It gets the
+        // same method check as a third-party provider, not an exemption,
+        // and only on its `/rpc/<chainId>` route (rpcProxyRoute.mjs).
         if (
           method === 'POST' &&
-          !isFirstParty(req.url()) &&
+          (!isFirstParty(req.url()) || isRpcProxyEndpoint(req.url())) &&
           calls.every((c) => c && typeof c.jsonrpc === 'string')
         ) {
           // Named write first, so the reason still says `json-rpc
