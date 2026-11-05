@@ -71,9 +71,9 @@
 }
 
 .faq-tab.active {
-  background: var(--brand);
-  border-color: var(--brand);
-  color: var(--text-inverse);
+  background: var(--brand-fill);
+  border-color: var(--brand-fill);
+  color: var(--text-on-brand);
 }
 
 /* List */

@@ -51,7 +51,7 @@
 }
 
 .legal-page a {
-  color: var(--brand, #6366f1);
+  color: var(--brand);
   text-decoration: none;
 }
 

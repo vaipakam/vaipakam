@@ -44,7 +44,7 @@
   font-weight: 600;
   padding: 4px 12px;
   border-radius: var(--radius-full);
-  background: var(--brand-bg);
+  background: var(--brand-soft);
   color: var(--brand);
 }
 

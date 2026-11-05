@@ -1,3 +1,11 @@
+/* The brand palette is SHARED with the connected app (owner decision
+   2026-11-05): packages/lib/src/brand/tokens.css defines --brand (the brand
+   as text), --brand-fill + --text-on-brand (filled controls), --brand-strong
+   (hover), --brand-soft + --brand-soft-text (tints) and --focus-ring, for
+   both themes, keyed on the same [data-theme] attribute. Nothing below
+   defines a brand colour; a brand change is made there, once. */
+@import '@vaipakam/lib/brand.css';
+
 /* ── Reset ── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -14,7 +22,6 @@
   --bg-secondary:  #f0f2f5;
   --bg-card:       #ffffff;
   --bg-card-hover: #f0f2f5;
-  --bg-accent:     #eef2ff;
   --bg-nav:        rgba(247, 248, 250, 0.85);
 
   --text-primary:   #0f172a;
@@ -22,10 +29,6 @@
   --text-tertiary:  #94a3b8;
   --text-inverse:   #ffffff;
 
-  --brand:        #4f46e5;
-  --brand-light:  #818cf8;
-  --brand-dark:   #3730a3;
-  --brand-bg:     #eef2ff;
 
   --accent-green:  #10b981;
   --accent-orange: #f59e0b;
@@ -49,7 +52,6 @@
   --bg-secondary:  #111827;
   --bg-card:       #1e2538;
   --bg-card-hover: #283044;
-  --bg-accent:     #1e1b4b;
   --bg-nav:        rgba(11, 15, 26, 0.9);
 
   --text-primary:   #f1f5f9;
@@ -57,10 +59,6 @@
   --text-tertiary:  #64748b;
   --text-inverse:   #0f172a;
 
-  --brand:        #818cf8;
-  --brand-light:  #a5b4fc;
-  --brand-dark:   #6366f1;
-  --brand-bg:     #1e1b4b;
 
   --accent-green:  #34d399;
   --accent-orange: #fbbf24;
@@ -128,7 +126,7 @@ img { max-width: 100%; display: block; }
   height: 900px;
   background: radial-gradient(
     ellipse,
-    rgba(79, 70, 229, 0.08) 0%,
+    color-mix(in srgb, var(--brand) 8%, transparent) 0%,
     transparent 65%
   );
 }
@@ -142,7 +140,7 @@ img { max-width: 100%; display: block; }
   height: 600px;
   background: radial-gradient(
     ellipse,
-    rgba(129, 140, 248, 0.06) 0%,
+    color-mix(in srgb, var(--brand) 6%, transparent) 0%,
     transparent 70%
   );
 }
@@ -150,7 +148,7 @@ img { max-width: 100%; display: block; }
 [data-theme='dark'] .public-page-glow::before {
   background: radial-gradient(
     ellipse,
-    rgba(129, 140, 248, 0.07) 0%,
+    color-mix(in srgb, var(--brand) 7%, transparent) 0%,
     transparent 65%
   );
 }
@@ -223,7 +221,7 @@ img { max-width: 100%; display: block; }
   letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--brand);
-  background: var(--brand-bg);
+  background: var(--brand-soft);
   padding: 6px 16px;
   border-radius: var(--radius-full);
   margin-bottom: 16px;
@@ -258,12 +256,12 @@ img { max-width: 100%; display: block; }
 }
 
 .btn-primary {
-  background: var(--brand);
-  color: #fff;
+  background: var(--brand-fill);
+  color: var(--text-on-brand);
 }
 .btn-primary:hover {
-  background: var(--brand-dark);
-  box-shadow: 0 4px 16px rgba(79, 70, 229, 0.4);
+  background: var(--brand-strong);
+  box-shadow: 0 4px 16px color-mix(in srgb, var(--brand) 40%, transparent);
   transform: translateY(-1px);
 }
 
@@ -290,7 +288,7 @@ img { max-width: 100%; display: block; }
   padding: 8px 16px;
 }
 .btn-ghost:hover {
-  background: var(--brand-bg);
+  background: var(--brand-soft);
 }
 
 /* Disabled state — applied to any .btn variant. Short-circuit the hover
@@ -370,7 +368,7 @@ img { max-width: 100%; display: block; }
   color: var(--text-tertiary);
 }
 .themed-select option:checked {
-  background-color: var(--brand-bg);
+  background-color: var(--brand-soft);
   color: var(--brand);
 }
 
@@ -560,14 +558,14 @@ img { max-width: 100%; display: block; }
 .info-tip-trigger:focus-visible,
 .info-tip-trigger[aria-expanded='true'] {
   color: var(--brand);
-  background: var(--brand-bg);
+  background: var(--brand-soft);
   outline: none;
 }
 
 @media (hover: hover) {
   .info-tip-trigger:hover {
     color: var(--brand);
-    background: var(--brand-bg);
+    background: var(--brand-soft);
   }
 }
 
