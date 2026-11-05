@@ -1719,7 +1719,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     function _getVaultFactorySelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](28);
+        s = new bytes4[](29);
         s[0] = VaultFactoryFacet.initializeVaultImplementation.selector;
         s[1] = VaultFactoryFacet.getOrCreateUserVault.selector;
         s[2] = VaultFactoryFacet.upgradeVaultImplementation.selector;
@@ -1761,6 +1761,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[26] = bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256,uint256)"));
         // The four-argument credit stays as a compatibility entry (Codex #2276 r14 P2).
         s[27] = bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256)"));
+        s[28] = VaultFactoryFacet.vaultDeliverERC20From.selector;
     }
 
     /// @dev Issue #67 — `OfferFacet` was split into `OfferCreateFacet`
@@ -1791,7 +1792,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     ///      jump-table reservation stays under the "Tag too large" ICE
     ///      ceiling.
     function _getOfferParallelSaleSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](4);
+        s = new bytes4[](5);
         s[0] = OfferParallelSaleFacet.postParallelSaleListing.selector;
         s[1] = OfferParallelSaleFacet.releaseParallelSaleLock.selector;
         // #1144 (S10 Invariant B) — permissionless offer-keyed prepay-sale
@@ -1799,6 +1800,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[2] = OfferParallelSaleFacet.syncPrepaySaleOffer.selector;
         // #2984 — the sync's own party set, read by the keeper's backstop.
         s[3] = OfferParallelSaleFacet.prepaySaleOfferParties.selector;
+        // #3178 — the executor's "may this listing's vault send out" read.
+        s[4] = OfferParallelSaleFacet.isParallelSaleVaultBlocked.selector;
     }
 
     function _getOfferAcceptSelectors() internal pure returns (bytes4[] memory s) {
@@ -2030,7 +2033,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     ///         offer-principal-lock impl PR adds the lock create /
     ///         decrement / release surface.
     function _getEncumbranceMutateFacetSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](24);
+        s = new bytes4[](25);
         s[0] = EncumbranceMutateFacet.releaseCollateralLien.selector;
         // #407 PR 4 round-1 (2026-06-12) — decrement/increment cross-
         // facet entries used by active-loan slice flows + addCollateral.
@@ -2072,6 +2075,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // #2795 — pay a held borrower extra out on an obligation handover
         // (PrecloseFacet EIP-170 host).
         s[23] = EncumbranceMutateFacet.payHeldBorrowerExtra.selector;
+        s[24] = EncumbranceMutateFacet.settleRentalPrecloseShares.selector;
     }
 
     /// @notice #396 v0.5 — gasless signed off-chain offer book selectors.

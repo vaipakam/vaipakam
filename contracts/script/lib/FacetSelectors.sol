@@ -77,7 +77,7 @@ library FacetSelectors {
     ///         `getDiamondAddress` and `vaultSetNFTUser1155` (the exact drift
     ///         #778 warns about). The parity test keeps this list == the ABI.
     function vaultFactory() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](28);
+        s = new bytes4[](29);
         s[0] = VaultFactoryFacet.initializeVaultImplementation.selector;
         s[1] = VaultFactoryFacet.getOrCreateUserVault.selector;
         s[2] = VaultFactoryFacet.upgradeVaultImplementation.selector;
@@ -114,6 +114,7 @@ library FacetSelectors {
         s[26] = bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256,uint256)"));
         // The four-argument credit stays as a compatibility entry (Codex #2276 r14 P2).
         s[27] = bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256)"));
+        s[28] = VaultFactoryFacet.vaultDeliverERC20From.selector;
     }
 
     /// @notice Full external selector surface of {ProfileFacet} (32).
@@ -280,7 +281,7 @@ library FacetSelectors {
     ///         (`PredatesInterestLedger`), so on every Diamond they cut the
     ///         #1209 selectors are already routed.
     function encumbranceMutate() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](24);
+        s = new bytes4[](25);
         s[0] = EncumbranceMutateFacet.assertNotFrozenParty.selector;
         s[1] = EncumbranceMutateFacet.createOfferPrincipalLien.selector;
         s[2] = EncumbranceMutateFacet.decrementCollateralLien.selector;
@@ -305,6 +306,7 @@ library FacetSelectors {
         s[21] = EncumbranceMutateFacet.terminalize.selector;
         s[22] = EncumbranceMutateFacet.terminalizeFromAny.selector;
         s[23] = EncumbranceMutateFacet.payHeldBorrowerExtra.selector;
+        s[24] = EncumbranceMutateFacet.settleRentalPrecloseShares.selector;
     }
 
     /// @notice #1503 item 28 — the RETIRED 3-argument

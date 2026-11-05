@@ -7,6 +7,7 @@ import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibRewardCustody} from "../libraries/LibRewardCustody.sol";
 import {LibDelivery} from "../libraries/LibDelivery.sol";
+import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
 
 import {LibProtectedAccount} from "../libraries/LibProtectedAccount.sol";
 import {VaipakamVaultImplementation} from "../VaipakamVaultImplementation.sol";
@@ -339,14 +340,27 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
             emit UserVaultCreated(user, proxy);
         } else {
             // Block interactions with outdated vaults when a mandatory upgrade
-            // is active. Depository vault: an owner who PINNED their vault to
-            // the implementation they chose may still deposit, withdraw,
-            // release and escape on it (the depository steps set the context);
-            // every loan step still needs the upgrade.
+            // is active: every step the vault's OWNER takes on it (a claim, a
+            // withdrawal, the pause escape, a payout release, a deposit, a new
+            // position) waits for the upgrade. A pinned vault has no exception
+            // (#3178, owner decision 2026-11-05): its owner unpins and upgrades.
+            //
+            // #3178 (owner decision 2026-11-05) — the version gate guards what
+            // leaves a vault, never what a close-out pays into it, and never a
+            // close-out paying a counterparty out of it:
+            //  - a DELIVERY (the receive-side window above, pinned to the exact
+            //    recipient) lands in the vault whatever its version, so no
+            //    counterparty's repayment, early close or default ever waits on
+            //    the recipient's upgrade; the recipient's own steps (claim,
+            //    withdrawal, new offers) still pass this gate and wait;
+            //  - a protocol MOVE-OUT on a close-out (the move-out window, pinned
+            //    to the exact paying user) is not stopped by the payer's own
+            //    vault version, so an old vault cannot block its loan's default,
+            //    liquidation or settlement.
             if (
                 LibVaipakam.vaultUpgradeRequired(user)
-                    && !(s.vaultPinnedImplementation[user] != address(0)
-                        && LibProtectedAccount.inDepositoryContext())
+                    && !receiveExempt
+                    && !moveOutExempt
             ) revert VaultUpgradeRequired();
         }
     }
@@ -563,6 +577,39 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
         // lender's vault.
         LibDelivery.pullExact(token, payer, proxy, amount);
         LibVaipakam.recordVaultDeposit(user, token, amount);
+    }
+
+    /**
+     * @notice #3178 — a CLOSE-OUT's payer-funded delivery into `user`'s vault
+     *         (an early close's lender due): {vaultDepositERC20From} with
+     *         `user`'s vault resolved as a RECEIVER, inside the receive-side
+     *         window, so neither `user`'s vault version nor a sanctions flag on
+     *         `user` can block the payer's close-out. A flagged `user`'s share
+     *         is announced as locked proceeds, as every other close-out
+     *         delivery's is.
+     * @dev    onlyDiamondInternal. Kept apart from {vaultDepositERC20From},
+     *         which also funds a party's OWN position (a collateral top-up)
+     *         that must still pass the gate. Refused unless all of `amount`
+     *         arrived.
+     * @param loanId The loan whose close-out this is (named on the lock event).
+     */
+    // forge-lint: disable-next-line(mixed-case-function)
+    function vaultDeliverERC20From(
+        address payer,
+        address user,
+        address token,
+        uint256 amount,
+        uint256 loanId
+    ) external onlyDiamondInternal {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        s.sanctionedDepositExemptUser = user;
+        address proxy = getOrCreateUserVault(user);
+        s.sanctionedDepositExemptUser = address(0);
+        LibDelivery.pullExact(token, payer, proxy, amount);
+        LibVaipakam.recordVaultDeposit(user, token, amount);
+        if (LibVaipakam.isSanctionedAddress(user)) {
+            emit LibSanctionedLock.SanctionedProceedsLocked(loanId, user, token, amount);
+        }
     }
 
     /**

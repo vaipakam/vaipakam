@@ -345,6 +345,41 @@ contract SwapToRepayIntentFillTest is CustodyInvariantBase {
         );
     }
 
+    /// @notice #3178 — a vault below the mandatory vault version sends nothing
+    ///         out on its owner's own order: once the version is raised past a
+    ///         committed borrower vault, the vault no longer signs for the order
+    ///         (a fill reads as unsigned), a new commit is refused by name, and
+    ///         the borrower's upgrade restores the signature.
+    /// @dev    Kills: the validator ignoring the vault version (the fill would
+    ///         draw the lot from a below-mandatory vault), and a check that
+    ///         stays shut after the upgrade.
+    function test_I14_belowMandatoryVault_signsNothing_untilUpgraded() public {
+        uint256 loanId = _openWeth(++_seed);
+        uint256 other = _openWeth(++_seed); // opened while every vault is current
+        SwapToRepayIntentFacet.FusionOrderRead memory r = _commitOn(loanId);
+        address vault = _vaultOf(loanId);
+        bytes32 h = lopFill.hashOrder(_order(r));
+        assertEq(IERC1271(vault).isValidSignature(h, ""), IERC1271.isValidSignature.selector, "fixture: signed");
+
+        VaultFactoryFacet vf = VaultFactoryFacet(address(diamond));
+        vf.upgradeVaultImplementation(address(new VaipakamVaultImplementation()));
+        address borrower = LoanFacet(address(diamond)).getLoanDetails(loanId).borrower;
+        (, uint256 current,,) = vf.getVaultVersionInfo(borrower);
+        vf.setMandatoryVaultUpgrade(current);
+        assertEq(IERC1271(vault).isValidSignature(h, ""), bytes4(0xffffffff), "unsigned below mandatory");
+
+        vm.expectRevert(VaultFactoryFacet.VaultUpgradeRequired.selector);
+        this.commitAsBorrower(other);
+
+        vf.upgradeUserVault(borrower);
+        assertEq(IERC1271(vault).isValidSignature(h, ""), IERC1271.isValidSignature.selector, "signed again");
+    }
+
+    /// @dev External hop so `expectRevert` sees the commit's own revert.
+    function commitAsBorrower(uint256 loanId) external {
+        _commitOn(loanId);
+    }
+
     /// @notice I2. A whole fill takes exactly the lot out of the vault straight to the taker (S3e:
     ///         the vault is the maker): the Diamond's collateral balance is the same after the fill as
     ///         before it, the vault is down by the lot and so is its tracked balance, its allowance to
@@ -986,13 +1021,13 @@ contract SwapToRepayIntentFillTest is CustodyInvariantBase {
         assertEq(IERC20(weth).allowance(vault, address(lopFill)), 0, "and its fill spends exactly its own lot");
     }
 
-    /// @notice I20. A mandatory vault upgrade imposed during the auction holds the fill: the outflow
-    ///         record refuses an outdated vault (`VaultUpgradeRequired`), as every protocol payout into
-    ///         a vault does, and nothing moves. Anyone may run the upgrade; the same fill then clears.
-    /// @dev    Kills: the outflow record reading the vault raw (a fill through an implementation the
-    ///         admin has marked unsafe). The settlement's payout into the LENDER's vault is held by the
-    ///         same upgrade, so the lender's vault is upgraded first: only the order's maker is then
-    ///         outdated, and the refusal can come from the outflow record alone.
+    /// @notice I20. A mandatory vault upgrade imposed during the auction holds the fill: the
+    ///         borrower's vault no longer signs for its owner's own order while it is outdated (#3178),
+    ///         so the order book refuses the fill as unsigned and nothing moves. Anyone may run the
+    ///         upgrade; the same fill then clears.
+    /// @dev    Kills: the validator ignoring the maker vault's version (a fill through an
+    ///         implementation the admin has marked unsafe). The lender's vault is upgraded first, so
+    ///         only the order's maker is outdated.
     function test_I20_aMandatoryVaultUpgrade_holdsTheFill_untilAnyoneUpgrades() public {
         uint256 loanId = _commitWeth();
         SwapToRepayIntentFacet.FusionOrderRead memory r = _read(loanId);
@@ -1012,7 +1047,7 @@ contract SwapToRepayIntentFillTest is CustodyInvariantBase {
 
         _fund(r.takerAmount);
         vm.prank(taker);
-        vm.expectRevert(VaultFactoryFacet.VaultUpgradeRequired.selector);
+        vm.expectRevert(MockLopFill.BadSignature.selector);
         lopFill.fillContractOrderParsed(_order(r), "", r.makerAmount, taker, r.extension, "");
         assertEq(IERC20(weth).balanceOf(vault), vaultBefore, "nothing left the vault");
 

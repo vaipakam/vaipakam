@@ -132,9 +132,7 @@ contract VaultPayoutFacet is DiamondReentrancyGuard {
         }
         LibVaipakam.PendingPayout storage p = LibProtectedAccount.beginRelease(id);
         LibVaipakam.assertRecipientNotBarred(p.recipient);
-        LibProtectedAccount.setDepositoryContext(true);
         delivered = _pay(p.kind, p.user, p.asset, p.tokenId, p.amount, p.recipient);
-        LibProtectedAccount.setDepositoryContext(false);
         LibProtectedAccount.recordReleased(id, delivered);
     }
 
@@ -219,9 +217,7 @@ contract VaultPayoutFacet is DiamondReentrancyGuard {
         uint256 own = LibDepositoryLedger.holding(msg.sender, asset, tokenId);
         if (amount > own) revert LibProtectedAccount.AmountExceedsFree(amount, own);
         LibDepositoryLedger.debit(msg.sender, asset, tokenId, amount);
-        LibProtectedAccount.setDepositoryContext(true);
         _pay(kind, msg.sender, asset, tokenId, amount, msg.sender);
-        LibProtectedAccount.setDepositoryContext(false);
         emit EscapeWithdrawal(msg.sender, asset, tokenId, amount);
     }
 

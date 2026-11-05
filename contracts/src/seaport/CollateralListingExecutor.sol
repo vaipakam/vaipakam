@@ -11,6 +11,7 @@ import {ISeaportZone, ZoneParameters, ReceivedItem, SpentItem, ItemType} from ".
 import {IVaipakamPrepayCallbacks} from "./IVaipakamPrepayCallbacks.sol";
 import {IVaipakamPrepayContext} from "./IVaipakamPrepayContext.sol";
 import {IVaipakamSanctionsView} from "./IVaipakamSanctionsView.sol";
+import {IVaipakamVaultOutflowView} from "./IVaipakamVaultOutflowView.sol";
 import {IVaipakamListingLegView} from "./IVaipakamListingLegView.sol";
 import {ISeaportOrderHash, ISeaportCancel, OrderComponents} from "./ISeaportOrderHash.sol";
 import {
@@ -1194,6 +1195,13 @@ contract CollateralListingExecutor is
             // fill-time content + sanctions recheck lives in
             // _checkOfferOrderPreconditions.
             if (!approvedConduits[offerCtx.conduit]) return false;
+            // #3178 — a vault below the mandatory vault version sends nothing
+            // out on its owner's own listing: the fill reads as unsigned until
+            // the creator upgrades. (A loan-keyed prepay listing below is a
+            // close-out sale that pays the counterparty and is not held back.)
+            if (IVaipakamVaultOutflowView(vaipakamDiamond).isParallelSaleVaultBlocked(offerCtx.offerId)) {
+                return false;
+            }
             return true;
         }
 

@@ -3334,7 +3334,7 @@ contract PrecloseFacetTest is Test {
     ///      When getOrCreateUserVault fails for the lender during precloseDirect.
     function testPrecloseDirectGetLenderVaultFails() public {
         // T-051 — the lender-side chokepoint deposit is now via
-        // `vaultDepositERC20From`. Mocking that selector to revert
+        // `vaultDeliverERC20From` (#3178: the close-out delivery route). Mocking that selector to revert
         // exercises the same failure-propagation path: if the
         // protocol's vault plumbing fails, precloseDirect must
         // bubble the revert up. The vault resolution that used to
@@ -3342,7 +3342,7 @@ contract PrecloseFacetTest is Test {
         // chokepoint.
         vm.mockCallRevert(
             address(diamond),
-            abi.encodeWithSelector(VaultFactoryFacet.vaultDepositERC20From.selector),
+            abi.encodeWithSelector(VaultFactoryFacet.vaultDeliverERC20From.selector),
             "vault fail"
         );
 

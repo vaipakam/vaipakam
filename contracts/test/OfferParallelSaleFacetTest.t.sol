@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {SetupTest} from "./SetupTest.t.sol";
+import {VaipakamVaultImplementation} from "../src/VaipakamVaultImplementation.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {OfferParallelSaleFacet} from "../src/facets/OfferParallelSaleFacet.sol";
 import {ConsolidationFacet} from "../src/facets/ConsolidationFacet.sol";
@@ -190,6 +191,34 @@ contract OfferParallelSaleFacetTest is SetupTest {
     }
 
     // ─── 2. Precondition revert paths ───────────────────────────────────
+
+    /// @notice #3178 — a creator whose vault is below the mandatory vault
+    ///         version cannot list (the listing would let Seaport take the
+    ///         collateral out on the creator's own initiative), and the view
+    ///         the listing executor reads says so; the upgrade clears both.
+    function test_postParallelSaleListing_refusedBelowMandatoryVault_untilUpgraded() public {
+        _scaffoldDefaultOffer();
+        VaultFactoryFacet vf = VaultFactoryFacet(address(diamond));
+        vf.upgradeVaultImplementation(address(new VaipakamVaultImplementation()));
+        (, uint256 current,,) = vf.getVaultVersionInfo(borrowerHolder);
+        vf.setMandatoryVaultUpgrade(current);
+        assertTrue(
+            OfferParallelSaleFacet(address(diamond)).isParallelSaleVaultBlocked(OFFER_ID), "the executor's read: blocked"
+        );
+
+        vm.prank(borrowerHolder);
+        vm.expectRevert(VaultFactoryFacet.VaultUpgradeRequired.selector);
+        OfferParallelSaleFacet(address(diamond)).postParallelSaleListing(
+            uint96(OFFER_ID), SAFE_ASK, conduitKey, _emptyFeeLegs()
+        );
+
+        vf.upgradeUserVault(borrowerHolder);
+        assertFalse(OfferParallelSaleFacet(address(diamond)).isParallelSaleVaultBlocked(OFFER_ID), "clear after upgrade");
+        vm.prank(borrowerHolder);
+        OfferParallelSaleFacet(address(diamond)).postParallelSaleListing(
+            uint96(OFFER_ID), SAFE_ASK, conduitKey, _emptyFeeLegs()
+        );
+    }
 
     function test_postParallelSaleListing_revertsForNonCreator() public {
         _scaffoldDefaultOffer();

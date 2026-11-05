@@ -6,6 +6,8 @@ import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibCloseoutFreeze} from "../libraries/LibCloseoutFreeze.sol";
 import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
+import {LibDelivery} from "../libraries/LibDelivery.sol";
+import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibLifecycle} from "../libraries/LibLifecycle.sol";
 import {LibTierExclusion} from "../libraries/LibTierExclusion.sol";
 import {LibOwedAtDefault} from "../libraries/LibOwedAtDefault.sol";
@@ -361,6 +363,34 @@ contract EncumbranceMutateFacet is DiamondReentrancyGuard {
             s, payer, loan.lender, loanId, asset, lenderTotal
         );
         LibSanctionedLock.recordFrozenClaimantForLoan(s, loan, true);
+    }
+
+    /// @notice #3178 — the rental early close's two prepay legs, hosted for the
+    ///         EIP-170-tight `PrecloseFacet`. Out of the stored renter's vault,
+    ///         under its move-out exemption (a close-out settlement: neither that
+    ///         vault's version nor a flag on the renter stops it): the treasury's
+    ///         `treasuryFee` (accrued as it arrived, #2440), then the lender's
+    ///         `lenderShare` into the stored lender's vault through the shared
+    ///         vault-to-vault close-out delivery (resolved as a receiver: neither
+    ///         the lender's vault version nor a flag on the lender blocks it; the
+    ///         lock event fires for a flagged lender), refused unless it all
+    ///         arrived and credited under `loan.lender`.
+    function settleRentalPrecloseShares(uint256 loanId, uint256 treasuryFee, uint256 lenderShare)
+        external
+        onlyDiamondInternal
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.Loan storage loan = s.loans[loanId];
+        LibSanctionedLock.beginMoveOut(s, loan.borrower);
+        LibFacet.vaultFeeToTreasury(loan.borrower, loan.prepayAsset, treasuryFee);
+        LibSanctionedLock.endMoveOut(s);
+        LibDelivery.requireFull(
+            loan.prepayAsset,
+            lenderShare,
+            LibSanctionedLock.depositLockedFromVault(
+                s, loan.borrower, loan.lender, loanId, loan.prepayAsset, lenderShare
+            )
+        );
     }
 
     /// @notice #998 S10 (#1006, Codex #1122-rework r4) — registry-aware fail-closed

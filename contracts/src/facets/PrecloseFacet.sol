@@ -16,6 +16,8 @@ import {LibPrepayCleanup} from "../libraries/LibPrepayCleanup.sol";
 import {LibCompliance} from "../libraries/LibCompliance.sol";
 import {LibLoan} from "../libraries/LibLoan.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
+import {LibDelivery} from "../libraries/LibDelivery.sol";
+import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
 import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
 import {ProfileFacet} from "./ProfileFacet.sol";
 import {LibOfferMatch} from "../libraries/LibOfferMatch.sol";
@@ -348,13 +350,18 @@ contract PrecloseFacet is
             // `repayLoan`, which carries the exemption). Adding the receive-side
             // exemption here overflows this EIP-170-maxed facet, so it is deferred
             // to a follow-up that splits PrecloseFacet (see #1124).
+            // #3178 — the close-out delivery route resolves the lender's vault
+            // as a RECEIVER: neither its version nor a sanctions flag on the
+            // stored lender can block the borrower's early close (which also
+            // closes the flagged-lender half of #1124 for this leg).
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
-                    VaultFactoryFacet.vaultDepositERC20From.selector,
+                    VaultFactoryFacet.vaultDeliverERC20From.selector,
                     msg.sender,        // payer — borrower
                     loan.lender,       // user — lender's vault
                     loan.principalAsset,
-                    plan.lenderDue
+                    plan.lenderDue,
+                    loanId
                 ),
                 VaultDepositFailed.selector
             );
@@ -497,36 +504,26 @@ contract PrecloseFacet is
             // out of someone else's vault. The fee belongs to the prepay, so
             // it must come from where the prepay lives.
             // #2440 — the treasury accrues what reached it.
-            LibFacet.vaultFeeToTreasury(loan.borrower, loan.prepayAsset, treasuryFee);
-
-            // T-037 — vault → vault direct, no Diamond intermediate.
-            // `vaultWithdrawERC20` accepts an arbitrary recipient
-            // (it's just `safeTransfer(recipient, amount)` from inside
-            // the borrower's vault), so we pass the lender's vault
-            // straight in. Saves one transfer + removes a transient
-            // Diamond `prepayAsset` balance.
-            // #574 — source from `loan.borrower`, not `msg.sender` (same
-            // transferred-position / keeper reasoning as the treasury-fee
-            // deduction above): the lender's rental income comes out of the
-            // borrower's prepay, which lives in the original borrower's vault.
-            // #998 S10 note: see the ERC20 branch — the flagged-STORED-lender
-            // brick on this resolution is the same pre-existing #821 gap deferred
-            // to the PrecloseFacet-split follow-up (#1124); the S10 markers here
-            // protect the transferred-flagged-holder case, which resolves a clean
-            // stored `loan.lender` and succeeds.
-            // #2440 — a voluntary close: refused unless the lender's vault
-            // received the whole share, and the credit is recorded under
-            // `loan.lender`, whose vault the claim below is paid from. (Before
-            // #2440 the share reached the vault untracked, so the lender's
-            // claim withdraw underflowed the tracked balance it debits.)
-            LibFacet.vaultWithdrawExact(
-                loan.borrower,
-                loan.prepayAsset,
-                LibFacet.getOrCreateVault(loan.lender),
-                lenderShare,
-                IVaipakamErrors.VaultWithdrawFailed.selector
+            // #3178 — both prepay legs (the treasury's fee and the lender's
+            // share) leave the renter's vault through ONE host on
+            // `EncumbranceMutateFacet`: a close-out settlement, so neither the
+            // renter's vault version nor a flag on the stored renter can stop
+            // it, and the lender's vault is resolved as a RECEIVER, so neither
+            // its version nor a flag on the stored lender can block the
+            // renter's early close. Hosted off this EIP-170-tight facet.
+            // #574 — sourced from `loan.borrower`, where the prepay lives.
+            // #2440 — the treasury accrues what reached it; the lender's share
+            // is refused unless it all arrived, and is credited under
+            // `loan.lender`, whose vault the claim below is paid from.
+            LibFacet.crossFacetCall(
+                abi.encodeWithSelector(
+                    EncumbranceMutateFacet.settleRentalPrecloseShares.selector,
+                    loanId,
+                    treasuryFee,
+                    lenderShare
+                ),
+                bytes4(0)
             );
-            LibVaipakam.recordVaultDeposit(loan.lender, loan.prepayAsset, lenderShare);
 
             // Record lender's claimable (rental fees in prepayAsset)
             s.lenderClaims[loanId] = LibVaipakam.ClaimInfo({
