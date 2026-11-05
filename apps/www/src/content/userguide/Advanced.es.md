@@ -2066,3 +2066,121 @@ detalla aquí para quien opere su propio despliegue.
   la tabla.
 - `setTwaMinStakedDays` cambia el periodo mínimo de tenencia sin hacer
   avanzar la versión. Surte efecto en la siguiente lectura.
+
+<a id="chapter.next-app"></a>
+
+## La próxima app
+
+La próxima versión de la app de Vaipakam se construye página a
+página, junto a la actual. Una página aún no construida lo dice y
+enlaza a la app actual, que la sigue sirviendo. Cada cifra de una
+página construida se lee de la cadena y nombra su fuente; una cifra
+que no se puede leer se muestra como desconocida, nunca como cero.
+
+<a id="advanced-mode"></a>
+
+### Basic y Advanced
+
+Basic muestra las capacidades que la mayoría necesita. Advanced
+añade las herramientas de salida y liquidación, la automatización,
+las órdenes firmadas, la postura de los keepers y el detalle
+contable. El modo es una preferencia de visualización guardada en tu
+navegador: cambia cuánto se muestra, no lo que el protocolo te
+permite, y nunca oculta un consentimiento, un bloqueo ni un remedio.
+
+<a id="wallet"></a>
+
+### Tu wallet y de dónde salen tus cifras
+
+Tu propio estado (loans, ofertas, vault, claims) se lee de la
+cadena: primero por el proveedor del wallet, luego por el proxy RPC
+de solo lectura y luego por el endpoint público de la red. La línea
+de sincronización nombra la fuente que respondió y la antigüedad de
+la lectura más vieja de la página, y Actualizar las vuelve a leer
+todas. El índice solo se usa para las cifras del mundo (el mercado
+y el historial), con su altura de bloque y antigüedad. Un wallet en
+una red no atendida no ve nada propio hasta que cambia.
+
+<a id="deployments"></a>
+
+### Qué admite el despliegue
+
+La app se vincula a un Diamond por cadena y lee sus selectores
+enrutados a través del loupe antes de ofrecer cualquier acción. Tras
+un refresco de facets ese conjunto cambia; leerlo, en vez de
+suponerlo, permite a la app nombrar una función que falta en lugar
+de fallar con `FunctionDoesNotExist`. Mientras no se pueda leer, no
+se ofrece ningún paso de firma.
+
+<a id="home-start"></a>
+
+### Home: elegir una tarea
+
+Home empieza por una tarea, no por un término del protocolo: pedir
+prestado, prestar, alquilar un NFT, alquilar un NFT propio o
+gestionar lo que tienes. Pedir prestado y prestar abren con las
+ofertas que encajan y, si no, llevan a publicar la tuya. Alquilar
+cubre los dos lados de un alquiler de NFT, con el NFT en un vault
+todo el tiempo. Un wallet conectado ve también tres tarjetas de
+inicio que se pueden ocultar; la elección se guarda en el navegador.
+
+<a id="home-status"></a>
+
+### Home: estado del protocolo
+
+Home lee la pausa global, la ventana de pausa automática y la pausa
+de los keepers en la cadena que describe la página, y declara el
+resultado en todos los casos. Una pausa global detiene las nuevas
+posiciones, los claims, los retiros, las liquidaciones, los defaults
+y la liquidación hecha por keepers; el reembolso total y parcial y
+añadir colateral siguen abiertos, y el tiempo en pausa se abona a los
+plazos de cada loan abierto. Una ventana de pausa automática muestra
+su fin; una pausa de administración, si la hay, dura más, y una
+nueva ventana automática solo se abre tras un periodo de espera. Una
+pausa de keepers solo detiene los pasos que el servicio ejecuta por
+ti. Un estado que no se puede leer, incluida una relectura que falló
+tras una respuesta anterior, aparece arriba como desconocido. Los
+activos individuales también pueden pausarse; los flujos afectados
+lo dicen.
+
+<a id="home-payouts"></a>
+
+### Home: listo para cobrar
+
+Home recorre página a página las vistas de claims del lado prestamista
+y del lado prestatario y nombra cada pago por loan y lado. No muestra
+importe: un pago puede hacerse en más de un activo y por más de una
+vía, y Claims es donde se indica cada importe antes de cobrar. Si el
+recorrido se detiene antes del final, Home dice que puede haber más
+de lo mostrado.
+
+<a id="home-loans"></a>
+
+### Home: tus loans
+
+Cada loan Active o FallbackPending aparece con su lado, condiciones,
+colateral y etapa, ordenado por urgencia: gracia vencida, en gracia,
+fallback, plazo ilegible, vence en tres días, en curso. El
+vencimiento y el fin de la gracia salen del reloj de loans del
+protocolo e incluyen ya el tiempo en pausa, que se muestra cuando no
+es cero. El health factor es la lectura escalada a 1e18 de la vista
+del panel; una lectura de 0 significa ninguna (un activo sin precio o
+una lectura fallida) y se muestra así. Dos o más loans abiertos desde
+la misma oferta, en el mismo lado y en el mismo ERC-20, se agrupan:
+principal sumado, tasa ponderada por principal y redondeada hacia
+abajo, y el health factor más bajo entre los loans con precio,
+contando los que no lo tienen.
+
+Un loan que paga intereses periódicamente también tiene hitos, hasta su vencimiento incluido. Los intereses aún debidos cuando termina la gracia de un hito pueden pagarse vendiendo colateral, y el loan sigue abierto; Home muestra el próximo hito y pone primero uno pendiente, aunque caiga en el vencimiento, porque su gracia puede terminar antes que la del loan. El protocolo puede desactivar esta liquidación; Home dice entonces que no se vende colateral en un hito.
+
+<a id="home-exposure"></a>
+
+### Home: prestado y pedido
+
+El principal de cada loan se valora en el numerario a precios
+actuales mediante la única regla de valoración del protocolo: una
+deuda redondeada hacia arriba, un loan que diste redondeado hacia
+abajo. Un loan que no se puede valorar (un NFT o un activo sin
+precio) se cuenta, no se estima. El lado mayor solo se nombra cuando
+los loans sin valorar no podrían cambiar la respuesta; si no, Home
+muestra los totales valorados y el recuento.

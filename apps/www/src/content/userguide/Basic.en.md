@@ -903,3 +903,106 @@ and you wait for a buyer. As soon as a buyer accepts, the
 proceeds land in your wallet and the loan continues — but you
 are no longer on the hook for it. While the listing is open and
 unfilled you can cancel it.
+
+<a id="chapter.next-app"></a>
+
+## The Next App
+
+The next version of the Vaipakam app is being built page by page,
+beside the current one. A page that is not built yet says so and
+links you to the current app, which still serves it. This chapter
+explains the pages that are already built.
+
+<a id="advanced-mode"></a>
+
+### Basic and Advanced
+
+Basic shows what most people need. Advanced adds the exit and
+settlement tools, automation, signed orders, keeper status and
+accounting detail. Switching modes never hides a consent you have
+to give, something that blocks you, or the way to fix it. Every
+"Why?" link opens the full explanation, and its "Read more" link
+opens this guide in the mode you are using.
+
+<a id="wallet"></a>
+
+### Your Wallet and Where Your Figures Come From
+
+The app reads your loans, vault and claims through your wallet's
+own connection to the network first. Only when the wallet offers
+none does it use a read-only proxy. Your own figures are never
+taken from the shared index. The address and network shown at the
+top are the ones every figure on the page belongs to. If your
+wallet is on a network the app does not serve, nothing of yours is
+shown until you switch.
+
+<a id="deployments"></a>
+
+### What the Deployment Supports
+
+Before it offers any action, the app reads which functions the
+protocol contract on your network supports right now. An upgrade
+can change that list, and reading it lets the app tell you what
+changed instead of failing. If the list cannot be read, no signing
+step is offered.
+
+<a id="home-start"></a>
+
+### Home: Choosing a Job
+
+Home starts with "I want to…": borrow, lend, rent an NFT, rent out
+your NFT, or manage what you have. Each choice opens a guided page.
+Borrowing and lending show matching offers first and let you post
+your own when none fits. Renting covers both sides: using someone
+else's NFT, or letting someone use yours while it stays in a vault.
+With a wallet connected, Home also shows three short
+getting-started cards, which you can hide.
+
+<a id="home-status"></a>
+
+### Home: Protocol Status
+
+Home always says whether the protocol on your network is running.
+While it is paused for an incident, new positions, claims,
+withdrawals, liquidations, defaults and keeper steps stop. Full
+repayment, partial repayment and adding collateral stay open, and
+the paused time is added to every open loan's due date. An
+automatic pause lasts a fixed time, and a new one can only start
+after a cooldown. The keeper service can be paused on its own; that
+never blocks anything you do yourself. If the status cannot be
+read, Home says so at the top instead of assuming it is running.
+
+<a id="home-payouts"></a>
+
+### Home: Ready to Collect
+
+A payout is ready when a loan has ended and a claim would pay you
+now: the repayment for a lender, the collateral back (or what is
+left of it) for a borrower, or an NFT returned at the end of a
+rental. Home lists them first and sends you to Claims, which shows
+every amount before you collect.
+
+<a id="home-loans"></a>
+
+### Home: Your Loans
+
+Each live loan shows your side, its terms, its collateral and its
+next deadline, the most urgent first. A loan is due on its due
+date. After that a grace period runs, in which the borrower can
+still repay with a late fee. Once the grace period ends, anyone can
+start the default, which settles the loan from the collateral. The
+health factor compares the collateral's value with the debt: below
+1, the loan can be liquidated. A loan in an asset with no price has
+no health factor. Loans opened from one of your offers are shown
+together.
+
+A loan that pays interest periodically also has checkpoints, up to and including its due date. Interest still owed when a checkpoint's grace period ends can be paid by selling collateral, and the loan stays open; Home shows the next checkpoint and puts an owed one first, even when it falls on the due date, because its grace period can end before the loan's. The protocol can switch this settlement off; Home then says that no collateral is sold at a checkpoint.
+
+<a id="home-exposure"></a>
+
+### Home: Lent and Borrowed
+
+When you both lend and borrow, Home compares the two sides by
+today's value. Loans that cannot be valued, such as NFTs or assets
+with no price, are counted and left out, and Home names the larger
+side only when they could not change the answer.

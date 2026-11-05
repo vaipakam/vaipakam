@@ -15,7 +15,7 @@ import { fileURLToPath } from 'node:url';
 import { bundleWith, deployFromSource } from '@vaipakam/anvil-harness/fixture';
 import { assertNothingListening, spawnAnvil } from '@vaipakam/anvil-harness/process';
 import { ANVIL_URL } from './lib/anvil';
-import { E2E_BUNDLE, E2E_BUNDLE_RUN_ID, STATE_DIR, e2eRunId } from './lib/artifacts';
+import { E2E_BUNDLE, E2E_BUNDLE_RUN_ID, FIXTURE_FILE, STATE_DIR, e2eRunId } from './lib/artifacts';
 import { STUB_ORIGIN, STUB_PORT } from './lib/stub';
 import { createAndFundWallets } from './lib/wallets';
 
@@ -44,6 +44,7 @@ export default async function globalSetup(): Promise<void> {
   fs.writeFileSync(PIDS_FILE, JSON.stringify(pids));
   fs.rmSync(E2E_BUNDLE_RUN_ID, { force: true });
   fs.rmSync(E2E_BUNDLE, { force: true });
+  fs.rmSync(FIXTURE_FILE, { force: true });
 
   await assertNothingListening(`${STUB_ORIGIN}/`, 'stand-in Worker');
   // Anvil's own id: the fixture deploys as 31337 and switches the chain to
@@ -56,8 +57,11 @@ export default async function globalSetup(): Promise<void> {
   await anvil.control.rpc('anvil_mine', ['0x400']);
   console.log('[e2e] anvil ready (bare chain)');
 
-  const { diamond, admin, artifact } = await deployFromSource(ANVIL_URL);
+  const { diamond, admin, adminKey, artifact } = await deployFromSource(ANVIL_URL);
   fs.writeFileSync(E2E_BUNDLE, JSON.stringify(bundleWith(artifact), null, 2));
+  // The admin's key is an ephemeral key Anvil funded for this run; specs that
+  // pause the protocol act as the admin through it (`lib/chain.ts`).
+  fs.writeFileSync(FIXTURE_FILE, JSON.stringify({ diamond, adminKey, artifact }, null, 2));
   // The stamp goes LAST: readers wait for it, so it must not appear before
   // the bundle it vouches for is complete.
   fs.writeFileSync(E2E_BUNDLE_RUN_ID, e2eRunId());

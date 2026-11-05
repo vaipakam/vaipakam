@@ -14,6 +14,9 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const STATE_DIR = path.resolve(HERE, '..', '.state');
 export const E2E_BUNDLE = path.join(STATE_DIR, 'deployments.json');
 export const E2E_BUNDLE_RUN_ID = path.join(STATE_DIR, 'deployments.run-id');
+/** The fixture deployment global setup made: the Diamond, its admin's key
+ *  and the deploy artifact, read by `chain.ts`. */
+export const FIXTURE_FILE = path.join(STATE_DIR, 'fixture.json');
 
 export function e2eRunId(): string {
   const id = process.env.APP_E2E_RUN_ID;

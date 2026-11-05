@@ -2244,3 +2244,116 @@ listed here for anyone running their own deployment.
   before changing the table.
 - `setTwaMinStakedDays` changes the minimum holding period without
   moving the version. It takes effect on the next read.
+
+<a id="chapter.next-app"></a>
+
+## The Next App
+
+The next version of the Vaipakam app is being built page by page,
+beside the current one. A page that is not built yet says so and
+links to the current app, which still serves it. Every figure on a
+built page is read from the chain and names its source; a figure
+that cannot be read is shown as unknown, never as zero.
+
+<a id="advanced-mode"></a>
+
+### Basic and Advanced
+
+Basic shows the capabilities most people need. Advanced adds the
+exit and settlement tools, automation, signed orders, keeper
+posture and accounting detail. The mode is a display choice kept in
+your browser: it changes how much is shown, not what the protocol
+lets you do, and it never hides a consent, a blocker or a remedy.
+
+<a id="wallet"></a>
+
+### Your Wallet and Where Your Figures Come From
+
+Your own state (loans, offers, vault, claims) is read from the
+chain: through the wallet's provider first, then the read-only RPC
+proxy, then the network's public endpoint. The sync line names the
+source that answered and the age of the oldest read on the page,
+and Refresh re-reads them all. The index is used only for world
+figures (the market and history), with its block height and age
+shown. A wallet on an unserved network sees nothing of its own
+until it switches.
+
+<a id="deployments"></a>
+
+### What the Deployment Supports
+
+The app binds to one Diamond per chain and reads its routed
+selectors through the loupe before offering any action. After a
+facet refresh that set changes; reading it, rather than assuming
+it, lets the app name a missing function instead of failing with
+`FunctionDoesNotExist`. While the set cannot be read, no signing
+step is offered.
+
+<a id="home-start"></a>
+
+### Home: Choosing a Job
+
+Home leads with a job, not a protocol term: borrow, lend, rent an
+NFT, rent out an NFT, or manage what you have. Borrowing and
+lending open on matching offers and fall back to posting your own.
+Renting covers both sides of an NFT rental, with the NFT held in a
+vault throughout. A connected wallet also sees three dismissible
+getting-started cards; the dismissals are kept in the browser.
+
+<a id="home-status"></a>
+
+### Home: Protocol Status
+
+Home reads the global pause, the automatic pause window and the
+keeper pause on the chain the page describes, and states the result
+in every case. A global pause stops new positions, claims,
+withdrawals, liquidations, defaults and keeper-driven settlement;
+full repayment, partial repayment and adding collateral stay open,
+and the paused time is credited to every open loan's deadlines. An
+automatic pause window shows its end time; an administrator pause,
+if any, outlasts it, and a new automatic window opens only after a
+cooldown. A keeper pause only stops steps the service runs on your
+behalf. A status that cannot be read, including a re-read that
+failed after an earlier answer, is shown at the top as unknown.
+Single assets can also be paused; the flows that need one say so.
+
+<a id="home-payouts"></a>
+
+### Home: Ready to Collect
+
+Home walks the claimable views for the lender and the borrower side
+page by page and names each payout by loan and side. It shows no
+amount: a payout can be paid in more than one asset and through
+more than one route, and Claims is where each amount is stated
+before you collect. If the walk stops before the end, Home says
+more may exist than is shown.
+
+<a id="home-loans"></a>
+
+### Home: Your Loans
+
+Each Active or FallbackPending loan is listed with its side, terms,
+collateral and stage, ordered by urgency: past grace, in grace,
+fallback, deadline unreadable, due within three days, running. The
+due date and grace end come from the protocol's loan clock and
+already include paused time, which is shown when non-zero. The
+health factor is the 1e18-scaled reading of the dashboard view; a
+reading of 0 means none (an unpriced asset, or the reading failed)
+and is shown as such. Two or more loans opened from the same offer,
+on the same side and in the same ERC-20, are grouped: principal
+summed, rate weighted by principal and rounded down, and the lowest
+health factor among the priced loans, with the unpriced ones
+counted.
+
+A loan that pays interest periodically also has checkpoints, up to and including its due date. Interest still owed when a checkpoint's grace period ends can be paid by selling collateral, and the loan stays open; Home shows the next checkpoint and puts an owed one first, even when it falls on the due date, because its grace period can end before the loan's. The protocol can switch this settlement off; Home then says that no collateral is sold at a checkpoint.
+
+<a id="home-exposure"></a>
+
+### Home: Lent and Borrowed
+
+Each loan's principal is valued in the numeraire at current prices
+through the protocol's one valuation rule: a debt rounded up, a
+loan you made rounded down. A loan that cannot be valued (an NFT,
+or an asset with no price) is counted, not guessed. The larger
+side is named only when the unvalued loans could not change the
+answer; otherwise Home shows the valued totals and the count.

@@ -8,7 +8,7 @@
  * named by the rail per read, never inferred from the configured order), so
  * a surface states both.
  */
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useBlockNumber } from 'wagmi';
 import type { PublicClient } from 'viem';
@@ -16,6 +16,7 @@ import { useOwnStateClient, type OwnSource } from '../../chain/ownRail';
 import { ownKey } from './identityKey';
 import { ownRefreshIntervalMs } from './refreshPolicy';
 import { matchesIdentity, subscribeOwnChanges } from './signals';
+import { useVisible } from './useVisible';
 
 export interface OwnRead<T> {
   /** `null` until read, or when no wallet is connected on a supported chain. */
@@ -30,16 +31,6 @@ export interface OwnRead<T> {
   /** Whether a refresh is in flight behind data already shown. */
   refreshing: boolean;
   refetch: () => void;
-}
-
-function useVisible(): boolean {
-  const [visible, setVisible] = useState(() => typeof document === 'undefined' || document.visibilityState === 'visible');
-  useEffect(() => {
-    const on = () => setVisible(document.visibilityState === 'visible');
-    document.addEventListener('visibilitychange', on);
-    return () => document.removeEventListener('visibilitychange', on);
-  }, []);
-  return visible;
 }
 
 export function useOwnRead<T>(

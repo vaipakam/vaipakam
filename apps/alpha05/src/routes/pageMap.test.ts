@@ -37,3 +37,12 @@ describe('navigation by mode', () => {
     for (const p of PAGES) if (p.path.includes(':')) expect(p.nav).toBe(false);
   });
 });
+
+describe('built pages', () => {
+  it('renders a page exactly for the routes the page map marks built', async () => {
+    const { BUILT_PAGES } = await import('./builtPages');
+    for (const p of PAGES) expect(p.path in BUILT_PAGES).toBe(p.built);
+    for (const path of Object.keys(BUILT_PAGES)) expect(PAGES.some((p) => p.path === path)).toBe(true);
+    // The import pulls in the wallet stack, which is slow to transform cold.
+  }, 60_000);
+});

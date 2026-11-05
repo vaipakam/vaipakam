@@ -943,3 +943,109 @@ y esperas a un comprador. Apenas un comprador acepta, lo pagado
 llega a tu billetera y el préstamo continúa —pero ya no estás en el
 gancho por él. Mientras la publicación esté abierta y sin llenarse
 puedes cancelarla.
+
+<a id="chapter.next-app"></a>
+
+## La próxima app
+
+La próxima versión de la app de Vaipakam se construye página a
+página, junto a la actual. Una página que aún no está construida lo
+dice y te lleva a la app actual, que la sigue sirviendo. Este
+capítulo explica las páginas que ya están construidas.
+
+<a id="advanced-mode"></a>
+
+### Basic y Advanced
+
+Basic muestra lo que la mayoría necesita. Advanced añade las
+herramientas de salida y liquidación, la automatización, las órdenes
+firmadas, el estado de los keepers y el detalle contable. Cambiar de
+modo nunca oculta un consentimiento que debas dar, algo que te
+bloquee ni la forma de resolverlo. Cada enlace "¿Por qué?" abre la
+explicación completa, y su enlace "Leer más" abre esta guía en el
+modo que usas.
+
+<a id="wallet"></a>
+
+### Tu wallet y de dónde salen tus cifras
+
+La app lee tus loans, tu vault y tus claims primero a través de la
+propia conexión de tu wallet a la red. Solo cuando el wallet no
+ofrece ninguna usa un proxy de solo lectura. Tus cifras nunca salen
+del índice compartido. La dirección y la red que se muestran arriba
+son a las que pertenece cada cifra de la página. Si tu wallet está
+en una red que la app no atiende, no se muestra nada tuyo hasta que
+cambies.
+
+<a id="deployments"></a>
+
+### Qué admite el despliegue
+
+Antes de ofrecer cualquier acción, la app lee qué funciones admite
+ahora mismo el contrato del protocolo en tu red. Una actualización
+puede cambiar esa lista, y leerla permite a la app decirte qué
+cambió en lugar de fallar. Si la lista no se puede leer, no se
+ofrece ningún paso de firma.
+
+<a id="home-start"></a>
+
+### Home: elegir una tarea
+
+Home empieza con "Quiero…": pedir prestado, prestar, alquilar un
+NFT, alquilar tu NFT o gestionar lo que tienes. Cada opción abre
+una página guiada. Pedir prestado y prestar muestran primero las
+ofertas que encajan y te dejan publicar la tuya si ninguna sirve.
+Alquilar cubre los dos lados: usar el NFT de otra persona o dejar
+que alguien use el tuyo mientras sigue en un vault. Con un wallet
+conectado, Home también muestra tres tarjetas breves de inicio, que
+puedes ocultar.
+
+<a id="home-status"></a>
+
+### Home: estado del protocolo
+
+Home siempre dice si el protocolo en tu red está en marcha. Mientras
+está en pausa por un incidente, se detienen las nuevas posiciones,
+los claims, los retiros, las liquidaciones, los defaults y los pasos
+de los keepers. El reembolso total, el reembolso parcial y añadir
+colateral siguen abiertos, y el tiempo en pausa se suma a la fecha
+de vencimiento de cada loan abierto. Una pausa automática dura un
+tiempo fijo, y otra solo puede empezar tras un periodo de espera. El
+servicio de keepers puede pausarse por separado; eso nunca bloquea
+lo que haces tú. Si el estado no se puede leer, Home lo dice arriba
+en lugar de suponer que todo funciona.
+
+<a id="home-payouts"></a>
+
+### Home: listo para cobrar
+
+Un pago está listo cuando un loan ha terminado y un claim te pagaría
+ahora: el reembolso para quien prestó, el colateral de vuelta (o lo
+que quede) para quien pidió prestado, o un NFT devuelto al final de
+un alquiler. Home los lista primero y te envía a Claims, que muestra
+cada importe antes de cobrar.
+
+<a id="home-loans"></a>
+
+### Home: tus loans
+
+Cada loan activo muestra tu lado, sus condiciones, su colateral y su
+próximo plazo, el más urgente primero. Un loan vence en su fecha de
+vencimiento. Después corre un periodo de gracia en el que quien pidió
+prestado aún puede pagar con un recargo por demora. Cuando termina,
+cualquiera puede iniciar el default, que liquida el loan con el
+colateral. El health factor compara el valor del colateral con la
+deuda: por debajo de 1, el loan puede liquidarse. Un loan en un
+activo sin precio no tiene health factor. Los loans abiertos desde
+una de tus ofertas se muestran juntos.
+
+Un loan que paga intereses periódicamente también tiene hitos, hasta su vencimiento incluido. Los intereses aún debidos cuando termina la gracia de un hito pueden pagarse vendiendo colateral, y el loan sigue abierto; Home muestra el próximo hito y pone primero uno pendiente, aunque caiga en el vencimiento, porque su gracia puede terminar antes que la del loan. El protocolo puede desactivar esta liquidación; Home dice entonces que no se vende colateral en un hito.
+
+<a id="home-exposure"></a>
+
+### Home: prestado y pedido
+
+Cuando prestas y pides prestado a la vez, Home compara los dos lados
+por su valor de hoy. Los loans que no se pueden valorar, como NFTs o
+activos sin precio, se cuentan y se dejan fuera, y Home nombra el
+lado mayor solo cuando no podrían cambiar la respuesta.
