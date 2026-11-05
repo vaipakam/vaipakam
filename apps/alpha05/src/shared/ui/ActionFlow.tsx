@@ -49,8 +49,12 @@ export interface ActionFlowProps {
    *  when the page mounted again after the review (progress and the finish
    *  card then show the receipt frozen when the wallet was asked). */
   receipt: ReceiptModel | null;
-  /** Re-read and simulate right before the wallet opens. */
-  recheck: () => Promise<Recheck>;
+  /** Re-read and simulate right before the wallet opens. `current` turns
+   *  false once the reader closes this review, opens another, or the flow
+   *  unmounts: a re-check writes what it found into the caller's review
+   *  state only while it is true, so a late answer never reopens or edits a
+   *  review the reader has left. */
+  recheck: (current: () => boolean) => Promise<Recheck>;
   describeAsset: (asset: `0x${string}`) => AssetInfo | null;
   /** The connected chain's explorer origin, frozen with the review when the
    *  wallet is asked: transaction links always use the network it was sent
@@ -117,11 +121,12 @@ export function ActionFlow({ tx, identity, reviewedFor, receipt, recheck, descri
 
   const confirm = async () => {
     const mine = attempt.current;
+    const current = () => attempt.current === mine;
     setChecking(true);
     setFound(null);
     let result: Recheck;
     try {
-      result = await recheck();
+      result = await recheck(current);
     } catch (e) {
       result = { kind: 'unreadable', reason: (e as Error).message };
     }

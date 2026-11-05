@@ -285,6 +285,7 @@ export const copy = {
     continue: B('Continue: {{asker}}'),
     legAccepted: B('Terms version {{version}} accepted'),
     legMissing: B('The chain does not show this acceptance.'),
+    legNewer: B('Version {{version}} came into force afterwards; it needs its own acceptance.'),
     changedSettled: B('Your acceptance (recorded from another tab or session)'),
     changedVersion: B('The Terms version in force'),
   },

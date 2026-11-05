@@ -23,17 +23,30 @@ export type TermsState =
    *  the version it accepted earlier, when it did (a newer version re-asks). */
   | { kind: 'needed'; version: number; hash: Hex; previous: { version: number; acceptedAt: number } | null };
 
+/** The acceptance the protocol has recorded for a wallet, whatever version
+ *  is in force now; null when it has recorded none. */
+export interface AcceptanceRecord {
+  version: number;
+  hash: Hex;
+  acceptedAt: number;
+}
+
+export async function readAcceptance(client: PublicClient, diamond: Hex, account: Hex): Promise<AcceptanceRecord | null> {
+  const record = (await client.readContract({ address: diamond, abi: LEGAL, functionName: 'getUserTosAcceptance', args: [account] })) as {
+    version: number;
+    hash: Hex;
+    acceptedAt: bigint;
+  };
+  return Number(record.version) === 0 ? null : { version: Number(record.version), hash: record.hash, acceptedAt: Number(record.acceptedAt) };
+}
+
 export async function readTerms(client: PublicClient, diamond: Hex, account: Hex): Promise<TermsState> {
   const [current, accepted, record] = await Promise.all([
     client.readContract({ address: diamond, abi: LEGAL, functionName: 'getCurrentTos' }) as Promise<readonly [number, Hex]>,
     client.readContract({ address: diamond, abi: LEGAL, functionName: 'hasAcceptedCurrentTerms', args: [account] }) as Promise<boolean>,
-    client.readContract({ address: diamond, abi: LEGAL, functionName: 'getUserTosAcceptance', args: [account] }) as Promise<{
-      version: number;
-      hash: Hex;
-      acceptedAt: bigint;
-    }>,
+    readAcceptance(client, diamond, account),
   ]);
-  return termsFrom(Number(current[0]), current[1], accepted, record.version === 0 ? null : { version: Number(record.version), acceptedAt: Number(record.acceptedAt) });
+  return termsFrom(Number(current[0]), current[1], accepted, record === null ? null : { version: record.version, acceptedAt: record.acceptedAt });
 }
 
 /** The state from the three answers; pure, so the rule is tested once. */

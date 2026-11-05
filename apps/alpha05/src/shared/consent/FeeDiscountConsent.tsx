@@ -90,7 +90,7 @@ export function FeeDiscountConsent() {
 
   // RB-REVIEW: everything the receipt and the gate stand on, read again
   // through the own rail, then the call simulated as the sender.
-  const recheck = async (): Promise<Recheck> => {
+  const recheck = async (current: () => boolean): Promise<Recheck> => {
     if (!reviewed) return { kind: 'unreadable', reason: text('flow.reading') };
     const [now, p, m, t] = await Promise.all([
       own.read((c) => readFeeDiscountConsent(c, diamond, account)),
@@ -112,7 +112,7 @@ export function FeeDiscountConsent() {
     // delivered is a funds fact, so it must be READ before signing.
     if (reviewed.target && m === null) return { kind: 'unreadable', reason: text('consent.modeUnknown') };
     if (m !== reviewed.mode) {
-      setReviewed({ ...reviewed, mode: m, readAt: Date.now() });
+      if (current()) setReviewed({ ...reviewed, mode: m, readAt: Date.now() });
       return { kind: 'changed', what: text('consent.changedMode') };
     }
     return simulateCall(own, { address: diamond, abi: VPFI_DISCOUNT_ABI, functionName: 'setVPFIDiscountConsent', args: [reviewed.target] });

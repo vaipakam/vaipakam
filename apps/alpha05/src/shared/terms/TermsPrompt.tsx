@@ -62,17 +62,17 @@ export function TermsPrompt({
     if (el && typeof el.showModal === 'function' && !el.open) el.showModal();
   }, []);
 
-  const recheck = async (): Promise<Recheck> => {
+  const recheck = async (current: () => boolean): Promise<Recheck> => {
     const fresh = (await own.read((c) => readTerms(c, diamond, own.account))).value;
     if (fresh.kind !== 'needed') {
-      gate.update({ settled: true, readAt: Date.now() });
+      if (current()) gate.update({ settled: true, readAt: Date.now() });
       return { kind: 'changed', what: text('terms.changedSettled') };
     }
     if (fresh.version !== reviewed.version || fresh.hash !== reviewed.hash) {
-      gate.update({ terms: fresh, readAt: Date.now() });
+      if (current()) gate.update({ terms: fresh, readAt: Date.now() });
       return { kind: 'changed', what: text('terms.changedVersion') };
     }
-    gate.update({ readAt: Date.now() });
+    if (current()) gate.update({ readAt: Date.now() });
     return simulateCall(own, { address: diamond, abi: LEGAL_ABI, functionName: 'acceptTerms', args: [reviewed.version, reviewed.hash] });
   };
 

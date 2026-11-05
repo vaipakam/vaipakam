@@ -6,7 +6,7 @@ import { useCopy } from '../copy/useCopy';
 import { inFlight, useStoredValue } from '../tx/txStore';
 import { useTrackedTx, type TrackedTx } from '../tx/useTrackedTx';
 import { reviewIdentity } from '../ui/ActionFlow';
-import { LEGAL_ABI, readTerms, type TermsState } from './terms';
+import { LEGAL_ABI, readAcceptance, readTerms, type TermsState } from './terms';
 
 export type NeededTerms = Extract<TermsState, { kind: 'needed' }>;
 
@@ -69,9 +69,19 @@ export function useTermsGate(key: string, chain: SupportedChain | null, own: Own
       if (!session || !own) return [];
       const reviewed = session.terms;
       const label = format('terms.legAccepted', { version: String(reviewed.version) });
-      const after = (await own.read((c) => readTerms(c, diamond, account))).value;
-      if (after.kind === 'accepted' && after.version === reviewed.version && after.hash === reviewed.hash) return [{ status: 'done', label }];
-      return [{ status: 'not-done', label, reason: text('terms.legMissing') }];
+      // What was sent is measured against the wallet's RECORDED acceptance,
+      // not against which version is in force now: a version installed
+      // after this one mined does not undo it, and is stated as its own leg.
+      const [record, now] = await Promise.all([
+        own.read((c) => readAcceptance(c, diamond, account)).then((r) => r.value),
+        own.read((c) => readTerms(c, diamond, account)).then((r) => r.value),
+      ]);
+      if (!record || record.version !== reviewed.version || record.hash !== reviewed.hash) return [{ status: 'not-done', label, reason: text('terms.legMissing') }];
+      if (now.kind !== 'needed') return [{ status: 'done', label }];
+      return [
+        { status: 'done', label },
+        { status: 'not-done', label: format('terms.legAccepted', { version: String(now.version) }), reason: format('terms.legNewer', { version: String(now.version) }) },
+      ];
     },
   });
 

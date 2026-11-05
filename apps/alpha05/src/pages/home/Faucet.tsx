@@ -105,14 +105,16 @@ export function Faucet() {
     tx.review();
   };
 
-  const recheck = async (): Promise<Recheck> => {
+  const recheck = async (current: () => boolean): Promise<Recheck> => {
     if (!pick) return { kind: 'unreadable', reason: text('flow.reading') };
     if (pick.kind === 'erc20') {
+      let balance: bigint;
       try {
-        before.current = (await own.read((c) => c.readContract({ address: pick.asset.address, abi: FAUCET_ERC20_ABI, functionName: 'balanceOf', args: [account] }))).value;
+        balance = (await own.read((c) => c.readContract({ address: pick.asset.address, abi: FAUCET_ERC20_ABI, functionName: 'balanceOf', args: [account] }))).value;
       } catch (e) {
         return { kind: 'unreadable', reason: refusalFromError(e).reason };
       }
+      if (current()) before.current = balance;
       return simulateCall(own, { address: pick.asset.address, abi: FAUCET_ERC20_ABI, functionName: 'mint', args: [account, pick.amount] });
     }
     // An NFT number already minted is replaced before the wallet opens.
@@ -120,7 +122,7 @@ export function Faucet() {
     const owner = await askThrough(own, (c) => c.readContract({ address: pick.asset.address, abi: FAUCET_NFT_ABI, functionName: 'ownerOf', args: [tokenId] }));
     if (owner.kind === 'unreadable') return { kind: 'unreadable', reason: owner.reason };
     if (owner.kind === 'answered') {
-      setPick({ ...pick, tokenId: freshTokenId(), readAt: readNow() });
+      if (current()) setPick({ ...pick, tokenId: freshTokenId(), readAt: readNow() });
       return { kind: 'changed', what: text('faucet.changedId') };
     }
     return simulateCall(own, { address: pick.asset.address, abi: FAUCET_NFT_ABI, functionName: 'mint', args: [account, tokenId] });
