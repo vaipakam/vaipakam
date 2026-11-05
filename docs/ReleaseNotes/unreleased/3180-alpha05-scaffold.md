@@ -31,3 +31,5 @@ CI typechecks and unit-tests the package.
 > deduplicates peers across the workspace; the resolved versions are the same
 > and neither app imports that optional entry, so the current app's bundle is
 > unchanged.
+
+The new app carries the website's brand set (the shield mark in both colourways, the wordmark, the home-screen icon) as its own files: the favicon follows the colour scheme, the header shows the mark on phones and the wordmark on wider screens, and the loading splash uses the same mark.

@@ -10,7 +10,13 @@
       content="Vaipakam — lend, borrow, and rent NFTs directly with other people. Your assets stay in your own vault on the blockchain."
     />
     <title>Vaipakam</title>
-    <link rel="icon" href="/logo.svg" type="image/svg+xml" />
+    <!-- Brand assets are the www set (apps/www/public), copied as files so the
+         app never loads its identity cross-origin: the icon mark per colour
+         scheme (browsers without `media` on icon links take the first) and
+         the 512 px raster for home-screen icons. -->
+    <link rel="icon" href="/icon-light.svg" type="image/svg+xml" media="(prefers-color-scheme: light)" />
+    <link rel="icon" href="/icon-dark.svg" type="image/svg+xml" media="(prefers-color-scheme: dark)" />
+    <link rel="apple-touch-icon" href="/icon-light.png" />
     <meta name="theme-color" content="#4f46e5" />
     <script>
       // Apply the persisted (or system) theme before first paint so the page
@@ -95,10 +101,13 @@
         color: #f5f7fa;
       }
       #boot-splash .boot-mark { display: flex; align-items: center; gap: 10px; font-size: 1.25rem; font-weight: 700; }
-      #boot-splash .boot-badge {
-        display: flex; align-items: center; justify-content: center;
-        width: 34px; height: 34px; border-radius: 9px; background: #4f46e5; color: #fff; font-weight: 800;
-      }
+      /* The www shield mark, one file per colourway, switched by the theme the
+         bootstrap above stamped (not by the system scheme, which the user may
+         have overridden). */
+      #boot-splash .boot-badge { width: 34px; height: 34px; }
+      #boot-splash .boot-badge--dark { display: none; }
+      :root[data-theme='dark'] #boot-splash .boot-badge--dark { display: block; }
+      :root[data-theme='dark'] #boot-splash .boot-badge--light { display: none; }
       #boot-splash .boot-spinner {
         width: 26px; height: 26px; border: 3px solid rgba(128, 128, 128, 0.3);
         border-top-color: #4f46e5; border-radius: 50%; animation: boot-spin 0.8s linear infinite;
@@ -118,7 +127,8 @@
     <div id="root">
       <div id="boot-splash">
         <div class="boot-mark">
-          <span class="boot-badge">V</span>
+          <img class="boot-badge boot-badge--light" src="/icon-light.svg" alt="" width="34" height="34" />
+          <img class="boot-badge boot-badge--dark" src="/icon-dark.svg" alt="" width="34" height="34" />
           Vaipakam
         </div>
         <div class="boot-spinner" role="status" aria-label="Loading"></div>

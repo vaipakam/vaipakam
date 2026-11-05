@@ -34,7 +34,7 @@ export function contrast(a: string, b: string): number {
 
 /** [text token, background token] pairs the components actually render. */
 const TEXT_PAIRS: readonly [string, string][] = [
-  ['text-on-brand', 'brand-fill'], // .btn-primary, the pressed mode segment, the brand badge
+  ['text-on-brand', 'brand-fill'], // .btn-primary and the pressed mode segment
   ['brand', 'surface-page'], // links and the active nav item on the page
   ['brand', 'surface-raised'], // the same on a card
   ['brand-soft-text', 'brand-soft'], // soft brand chips

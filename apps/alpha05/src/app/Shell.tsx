@@ -17,7 +17,7 @@ const GUIDE_BASE = 'https://vaipakam.com/guide';
  */
 export function Shell() {
   const { mode, setMode, isAdvanced } = useMode();
-  const { preference, setPreference } = useTheme();
+  const { preference, resolved, setPreference } = useTheme();
   const { caps, stale, chainId, error } = useCapabilities();
   const nav = isAdvanced ? NAV_ADVANCED : NAV_BASIC;
 
@@ -28,7 +28,12 @@ export function Shell() {
       </a>
       <header className="topbar">
         <NavLink to="/" className="brand" aria-label="Vaipakam home">
-          <span className="badge">V</span> {copy.shell.brand.text}
+          {/* The www brand set: the shield mark on phones, the full wordmark
+              from 720px up, each in the resolved theme's colourway. The text
+              is the accessible name and shows beside the mark only. */}
+          <img src={resolved === 'dark' ? '/icon-dark.svg' : '/icon-light.svg'} alt="" className="brand-mark" width={28} height={28} />
+          <img src={resolved === 'dark' ? '/logo-dark.png' : '/logo-light.png'} alt="" className="brand-wordmark" width={120} height={36} />
+          <span className="brand-text">{copy.shell.brand.text}</span>
         </NavLink>
         <nav aria-label="Primary">
           {nav.map((e) => (

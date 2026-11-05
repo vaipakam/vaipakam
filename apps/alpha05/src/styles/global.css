@@ -84,16 +84,23 @@ code {
   color: var(--text-strong);
   text-decoration: none;
 }
-.badge {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
+.brand-mark {
   width: 28px;
   height: 28px;
-  border-radius: 8px;
-  background: var(--brand-fill);
-  color: var(--text-on-brand);
-  font-weight: 800;
+}
+.brand-wordmark {
+  display: none;
+  width: 120px;
+  height: 36px;
+}
+@media (min-width: 720px) {
+  .brand-wordmark {
+    display: block;
+  }
+  .brand-mark,
+  .brand-text {
+    display: none;
+  }
 }
 
 .topbar nav {
