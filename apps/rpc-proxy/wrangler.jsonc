@@ -86,10 +86,12 @@
 
   "vars": {
     // Exact origins whose pages may call this proxy (CSV). The connected
-    // app's production and workers.dev hosts. An Origin check only stops
+    // app's production and workers.dev hosts, and the same pair for the next
+    // connected app, apps/alpha05 (#3180), which reads through this proxy
+    // from its own hostname until the cutover. An Origin check only stops
     // other sites' pages; a script can send any Origin, which is what the
     // rate limit above is for.
-    "FRONTEND_ORIGIN": "https://app.vaipakam.com,https://vaipakam-app.dawn-fire-139e.workers.dev",
+    "FRONTEND_ORIGIN": "https://app.vaipakam.com,https://vaipakam-app.dawn-fire-139e.workers.dev,https://alpha05.vaipakam.com,https://vaipakam-alpha05.dawn-fire-139e.workers.dev",
   },
 
   "observability": {

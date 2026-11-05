@@ -1,0 +1,5 @@
+# apps/alpha05 is under construction on its own hostname (rulebook §5).
+# Nothing here is indexed until the cutover; the _headers file sends the
+# matching X-Robots-Tag on every response.
+User-agent: *
+Disallow: /

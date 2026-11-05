@@ -1,0 +1,59 @@
+# Cloudflare Workers static-assets header rules for apps/alpha05.
+# https://developers.cloudflare.com/workers/static-assets/headers/
+#
+# Copied verbatim from `public/` to `dist/` by Vite; Cloudflare serves it as
+# deploy-time routing metadata. Nothing here ships as code to the browser.
+#
+# RB-INTEGRITY. script-src is 'self' plus the hashes of the inline boot
+# scripts in index.html and NOTHING else: the upper-case token below is a
+# placeholder the build replaces with the SHA-256 of each inline script in
+# the page it actually wrote (packages/lib/src/cspScriptHashes.mjs), and the
+# build fails if it cannot. `'unsafe-inline'` and `'unsafe-eval'` are absent
+# on purpose (measured on apps/app: no built chunk evaluates a string).
+# style-src keeps 'unsafe-inline' because React writes style attributes;
+# inline style cannot run code.
+#
+# connect-src is NARROWED IN TWO STEPS, the same staging apps/app follows
+# (#43, owner decision 2026-10-26): the enforced line allows 'self' https:
+# wss:, and the narrow list this build's bundle actually reads from (its
+# Workers, the RPC route of every deployed chain, the wallet SDK hosts) is
+# sent REPORT-ONLY in place of the second placeholder. A live review of a
+# deployed build fails on any report; once a build has been driven clean the
+# list moves into the enforced line (rulebook §3.2, deployment acceptance).
+#
+# frame-ancestors allows the Safe dapp-browser origins (the Safe connector is
+# registered); X-Frame-Options is omitted because it cannot express an
+# allowlist. frame-src allows the WalletConnect verify iframe.
+#
+# Cloudflare Web Analytics is OFF at the zone (#1592); do not add its host
+# here to silence a console error.
+
+/*
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: camera=(), microphone=(), geolocation=(), interest-cohort=()
+  Cross-Origin-Opener-Policy: same-origin-allow-popups
+  Cross-Origin-Resource-Policy: cross-origin
+  Content-Security-Policy: default-src 'self'; script-src 'self' __INLINE_SCRIPT_HASHES__; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: blob: https:; connect-src 'self' https: wss:; frame-src 'self' https://verify.walletconnect.com https://verify.walletconnect.org; worker-src 'self' blob:; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self' https://app.safe.global https://*.safe.global; upgrade-insecure-requests
+  Content-Security-Policy-Report-Only: connect-src 'self' __CONNECT_SOURCES__
+  X-Robots-Tag: noindex
+
+# Nothing on this host is indexed until the cutover (rulebook §5): the app is
+# under construction on its own hostname, and apps/app's pages stay the
+# canonical addresses. The header applies to every path above; robots.txt
+# carries the matching Disallow. Remove both with the cutover PR, together
+# with the per-route noindex rules apps/app's _headers.base documents.
+
+# SPA entry point — revalidated on every load so a deploy can never pin a
+# client to stale JS that signs calldata against stale ABIs or addresses.
+
+/
+  Cache-Control: public, max-age=0, must-revalidate
+
+/index.html
+  Cache-Control: public, max-age=0, must-revalidate
+
+# Immutable static assets (content-hashed filenames).
+
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable

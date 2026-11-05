@@ -1,0 +1,4 @@
+# A trailing-slash form of any single-segment route is answered with a 301
+# to the slashless URL (the same rule apps/app records in #2079), so one
+# address exists per page.
+/:slug/ /:slug 301

@@ -1,0 +1,51 @@
+/*
+ * The Vaipakam brand palette, ONE file for every surface (the website, the
+ * connected app, the next connected app). Owner decision 2026-11-05: the
+ * website and the app share one palette, the logo's own colours
+ * (apps/www/public/icon-*.svg): navy #0a2540 and green #00c853.
+ *
+ * Only the brand tokens live here. Each app keeps its own surface and text
+ * tokens, because those follow the app's layout; the brand must not.
+ *
+ * Both themes define the SAME names, switched by `[data-theme]` on <html>:
+ *   --brand            the brand as TEXT: links, the active nav item
+ *   --brand-fill       the brand as a filled control's BACKGROUND
+ *   --text-on-brand    the text on that fill
+ *   --brand-strong     the hover / pressed shade of the fill
+ *   --brand-soft       a tinted background (chips, the active nav pill)
+ *   --brand-soft-text  the text on that tint
+ *   --focus-ring       the keyboard focus outline
+ *
+ * The text pairs are WCAG AA (>= 4.5:1) in both themes; the consuming app's
+ * contrast test reads this file and refuses a pair below it. `--brand` and
+ * `--brand-fill` are kept as two tokens on purpose: a colour that reads on a
+ * dark page can fail under white text, which is how an earlier indigo pair
+ * reached 2.98:1 (Codex on #3179).
+ *
+ * Light is navy-led: navy as text and as the fill under white (15.5:1). The
+ * green fails AA as text on a light surface (2.2:1), so in light it stays in
+ * the mark and in the success state. Dark is green-led, as the dark
+ * colourway of the mark is: navy cannot read on a dark page, so the green is
+ * the brand as text (8.4:1 on #0c111d) and the fill under navy text (6.9:1).
+ */
+
+:root,
+:root[data-theme='light'] {
+  --brand: #0a2540;
+  --brand-fill: #0a2540;
+  --text-on-brand: #ffffff;
+  --brand-strong: #061a2e;
+  --brand-soft: #e6edf7;
+  --brand-soft-text: #0a2540;
+  --focus-ring: #0a2540;
+}
+
+:root[data-theme='dark'] {
+  --brand: #00c853;
+  --brand-fill: #00c853;
+  --text-on-brand: #0a2540;
+  --brand-strong: #5ce0a0;
+  --brand-soft: #0f2a1c;
+  --brand-soft-text: #9ff0c3;
+  --focus-ring: #00c853;
+}

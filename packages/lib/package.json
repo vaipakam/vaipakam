@@ -9,6 +9,7 @@
       "types": "./src/index.ts",
       "default": "./src/index.ts"
     },
+    "./brand.css": "./src/brand/tokens.css",
     "./address": {
       "types": "./src/address.ts",
       "default": "./src/address.ts"

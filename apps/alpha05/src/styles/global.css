@@ -1,0 +1,260 @@
+/* The shared brand palette first (packages/lib/src/brand/tokens.css, one file
+   for the website and the app), then this app's surface and text tokens. */
+@import '@vaipakam/lib/brand.css';
+@import './tokens.css';
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--surface-page);
+  color: var(--text-body);
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  font-size: 16px;
+  line-height: 1.5;
+}
+
+a {
+  color: var(--brand);
+}
+
+code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.92em;
+  background: var(--surface-sunken);
+  padding: 0 4px;
+  border-radius: 4px;
+}
+
+:focus-visible {
+  outline: 3px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.skip {
+  position: absolute;
+  inset-inline-start: 8px;
+  top: -40px;
+  padding: 8px 12px;
+  background: var(--surface-raised);
+  border-radius: 8px;
+}
+.skip:focus {
+  top: 8px;
+}
+
+.shell {
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+}
+
+.topbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 20px;
+  padding: 10px 16px;
+  background: var(--surface-nav);
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  backdrop-filter: blur(8px);
+}
+
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 700;
+  color: var(--text-strong);
+  text-decoration: none;
+}
+.brand-mark {
+  width: 28px;
+  height: 28px;
+}
+.brand-wordmark {
+  display: none;
+  width: 120px;
+  height: 36px;
+}
+@media (min-width: 720px) {
+  .brand-wordmark {
+    display: block;
+  }
+  .brand-mark,
+  .brand-text {
+    display: none;
+  }
+}
+
+.topbar nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.topbar nav a {
+  padding: 6px 10px;
+  border-radius: 8px;
+  color: var(--text-body);
+  text-decoration: none;
+}
+.topbar nav a:hover {
+  background: var(--surface-hover);
+}
+.topbar nav a.active {
+  background: var(--brand-soft);
+  color: var(--brand-soft-text);
+}
+
+.controls {
+  margin-inline-start: auto;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+.segment {
+  display: inline-flex;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.segment button {
+  border: 0;
+  background: var(--surface-raised);
+  color: var(--text-body);
+  padding: 6px 12px;
+  font: inherit;
+  cursor: pointer;
+}
+.segment button[aria-pressed='true'] {
+  background: var(--brand-fill);
+  color: var(--text-on-brand);
+}
+.select select {
+  font: inherit;
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface-raised);
+  color: var(--text-body);
+}
+
+.notice {
+  margin: 12px 16px 0;
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: var(--warn-soft);
+  border: 1px solid var(--warn);
+  color: var(--text-strong);
+}
+.posture {
+  margin: 8px 16px 0;
+  color: var(--text-muted);
+}
+
+.page {
+  max-width: 760px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 24px 16px 48px;
+}
+.eyebrow {
+  margin: 0;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+h1 {
+  margin: 4px 0 12px;
+  color: var(--text-strong);
+  font-size: 1.6rem;
+}
+.tier-a {
+  color: var(--text-strong);
+}
+.tier-b {
+  color: var(--text-body);
+}
+.facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 6px 16px;
+  margin: 16px 0;
+  padding: 12px 14px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.facts dt {
+  color: var(--text-muted);
+}
+.facts dd {
+  margin: 0;
+}
+
+.why .link {
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  color: var(--brand);
+  text-decoration: underline;
+  cursor: pointer;
+}
+.why-panel {
+  margin: 8px 0 0;
+  padding: 12px 14px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.btn {
+  font: inherit;
+  padding: 10px 18px;
+  border-radius: 10px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface-raised);
+  color: var(--text-body);
+  cursor: pointer;
+}
+.btn-primary {
+  background: var(--brand-fill);
+  border-color: var(--brand-fill);
+  color: var(--text-on-brand);
+}
+
+.foot {
+  margin-top: auto;
+  padding: 16px;
+  border-top: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation: none !important;
+    transition: none !important;
+  }
+}
