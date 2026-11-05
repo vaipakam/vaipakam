@@ -9,7 +9,7 @@ import { guideUrl } from '../help/guide';
 import type { Receipt } from '../receipt/types';
 import { simulateCall } from '../tx/simulate';
 import { useTrackedTx } from '../tx/useTrackedTx';
-import { ActionFlow, type Recheck } from '../ui/ActionFlow';
+import { ActionFlow, reviewIdentity, type Recheck } from '../ui/ActionFlow';
 import { formatUtc } from '../ui/format';
 import { LEGAL_ABI, PRIVACY_URL, fingerprint, readTerms, termsUrl, type TermsState } from './terms';
 
@@ -51,6 +51,9 @@ export function TermsPrompt({
   const [settled, setSettled] = useState(false);
   /** When the Terms shown were read: at opening, then at each re-check. */
   const [readAt, setReadAt] = useState(() => Date.now());
+  /** The identity the prompt opened under; the caller renders it only while
+   *  that identity holds, and a switch while it is open withholds signing. */
+  const [reviewedFor] = useState(() => reviewIdentity(own));
   const diamond = chain.diamondAddress;
 
   const tx = useTrackedTx({
@@ -166,7 +169,8 @@ export function TermsPrompt({
       ) : (
         <ActionFlow
           tx={tx}
-          identity={`${chain.chainId}:${own.account}`}
+          identity={reviewIdentity(own)}
+          reviewedFor={reviewedFor}
           receipt={receipt}
           recheck={recheck}
           describeAsset={() => null}

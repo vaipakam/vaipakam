@@ -2386,8 +2386,11 @@ tier then in force. Delivery follows `getVPFIDiscountConfig`: with
 both the VPFI rate and its reference asset set, the discounted fee
 is debited in VPFI from the lender's vault and the lender keeps all
 the interest; otherwise the treasury fee itself is reduced and no
-VPFI moves. The call is `whenNotPaused`, so the global pause closes
-it in both directions. Turning it on is gated by the Terms, turning
+VPFI moves. If that debit cannot run at a settlement (no live quote,
+too little free tracked VPFI in the vault, or that VPFI locked as
+collateral), that settlement's fee gets no hold-tier discount. The
+call is `whenNotPaused`, so the global pause closes it in both
+directions. Turning it on is gated by the Terms, turning
 it off is not, and neither broadcasts a tier to the mirrors.
 
 <a id="terms-gate"></a>

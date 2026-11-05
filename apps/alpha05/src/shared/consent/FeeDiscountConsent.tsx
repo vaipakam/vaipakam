@@ -16,7 +16,7 @@ import { readTerms, type TermsState } from '../terms/terms';
 import { useTerms } from '../terms/useTerms';
 import { simulateCall } from '../tx/simulate';
 import { useTrackedTx } from '../tx/useTrackedTx';
-import { ActionFlow, type Recheck } from '../ui/ActionFlow';
+import { ActionFlow, reviewIdentity, type Recheck } from '../ui/ActionFlow';
 import { Notice } from '../ui/Notice';
 import { SET_CONSENT_SIGNATURE, VPFI_DISCOUNT_ABI, consentReceipt, readDeliveryMode, readFeeDiscountConsent, type Reviewed } from './feeDiscount';
 
@@ -45,10 +45,14 @@ export function FeeDiscountConsent() {
   const { caps } = useCapabilities();
   const routed = requireSelector(caps, selectorOf(SET_CONSENT_SIGNATURE), text('consent.capabilityName'));
   const [panel, setPanel] = useState<'none' | 'terms' | 'flow'>('none');
-  const [reviewed, setReviewed] = useState<Reviewed | null>(null);
-  /** The Terms the prompt was opened for: kept while it is open, so the
-   *  acceptance's own re-read does not close it before its outcome shows. */
-  const [asked, setAsked] = useState<Extract<TermsState, { kind: 'needed' }> | null>(null);
+  /** The review's inputs, with the wallet and network they were read
+   *  under, so a switch while the section is unmounted cannot carry the
+   *  review to another identity (RB-REVIEW). */
+  const [reviewed, setReviewed] = useState<(Reviewed & { identity: string }) | null>(null);
+  /** The Terms the prompt was opened for, and under which identity: kept
+   *  while it is open, so the acceptance's own re-read does not close it
+   *  before its outcome shows. */
+  const [asked, setAsked] = useState<{ terms: Extract<TermsState, { kind: 'needed' }>; identity: string } | null>(null);
 
   const target = reviewed?.target ?? false;
   const tx = useTrackedTx({
@@ -66,16 +70,17 @@ export function FeeDiscountConsent() {
 
   if (!own || !chain) return null;
   const chainName = chain.name;
+  const identity = reviewIdentity(own);
 
   const startReview = (next: boolean) => {
-    setReviewed({ target: next, mode: mode.state === 'ready' && mode.error === null ? mode.data : null, readAt: Date.now() });
+    setReviewed({ target: next, mode: mode.state === 'ready' && mode.error === null ? mode.data : null, readAt: Date.now(), identity });
     setPanel('flow');
     tx.review();
   };
 
   const toggle = (next: boolean) => {
     if (next && terms.data?.kind === 'needed') {
-      setAsked(terms.data);
+      setAsked({ terms: terms.data, identity });
       setPanel('terms');
       return;
     }
@@ -180,10 +185,22 @@ export function FeeDiscountConsent() {
       )}
       {consent.error !== null && current !== null && <p className="tier-b">{text('consent.stale')}</p>}
       {panel === 'none' && action}
-      {panel === 'terms' && asked && (
+      {panel === 'terms' && asked && asked.identity !== identity && (
+        <>
+          <Notice tone="warn" tier="A">
+            {text('flow.identityChanged')}
+          </Notice>
+          <p className="actions">
+            <button type="button" className="btn" onClick={close}>
+              {text('flow.close')}
+            </button>
+          </p>
+        </>
+      )}
+      {panel === 'terms' && asked && asked.identity === identity && (
         <TermsPrompt
           asker={text('consent.asker')}
-          terms={asked}
+          terms={asked.terms}
           chain={chain}
           own={own}
           onAccepted={() => startReview(true)}
@@ -193,7 +210,8 @@ export function FeeDiscountConsent() {
       {panel === 'flow' && reviewed && (
         <ActionFlow
           tx={tx}
-          identity={`${chain.chainId}:${own.account}`}
+          identity={identity}
+          reviewedFor={reviewed.identity}
           receipt={consentReceipt(reviewed, chainName, { text, format })}
           recheck={recheck}
           describeAsset={() => null}

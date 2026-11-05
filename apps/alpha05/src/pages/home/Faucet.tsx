@@ -10,17 +10,17 @@ import { WhyLink } from '../../shared/help/WhyLink';
 import type { Receipt } from '../../shared/receipt/types';
 import { assetName, useTokenMeta } from '../../shared/reads/tokens';
 import { refusalFromError } from '../../shared/eligibility/refusal';
-import { simulateCall } from '../../shared/tx/simulate';
+import { askThrough, simulateCall } from '../../shared/tx/simulate';
 import { useTrackedTx } from '../../shared/tx/useTrackedTx';
-import { ActionFlow, type Recheck } from '../../shared/ui/ActionFlow';
+import { ActionFlow, reviewIdentity, type Recheck } from '../../shared/ui/ActionFlow';
 import { shortAddress } from '../../shared/ui/format';
 
 type Hex = `0x${string}`;
 
 /** The mint the open review was built for. */
 type MintPick =
-  | { kind: 'erc20'; asset: Extract<FaucetAsset, { kind: 'erc20' }>; amount: bigint; readAt: number }
-  | { kind: 'nft'; asset: Extract<FaucetAsset, { kind: 'nft' }>; tokenId: bigint; readAt: number };
+  | { kind: 'erc20'; asset: Extract<FaucetAsset, { kind: 'erc20' }>; amount: bigint; readAt: number; identity: string }
+  | { kind: 'nft'; asset: Extract<FaucetAsset, { kind: 'nft' }>; tokenId: bigint; readAt: number; identity: string };
 
 /** The moment a review's inputs were read (called from event handlers). */
 const readNow = () => Date.now();
@@ -75,12 +75,12 @@ export function Faucet() {
       }
       const tokenId = pick.tokenId;
       const label = format('faucet.legNft', { symbol: assetName(pick.asset.address, meta ?? null), id: tokenId.toString() });
-      try {
-        const owner = (await own.read((c) => c.readContract({ address: pick.asset.address, abi: FAUCET_NFT_ABI, functionName: 'ownerOf', args: [tokenId] }))).value;
-        return owner.toLowerCase() === account.toLowerCase() ? [{ status: 'done', label }] : [{ status: 'not-done', label, reason: text('faucet.notYours') }];
-      } catch {
-        return [{ status: 'not-done', label, reason: text('faucet.notMinted') }];
-      }
+      // Only the contract's own refusal says "not minted"; a read no source
+      // could run says nothing about the chain, so the leg stays unknown.
+      const owner = await askThrough(own, (c) => c.readContract({ address: pick.asset.address, abi: FAUCET_NFT_ABI, functionName: 'ownerOf', args: [tokenId] }));
+      if (owner.kind === 'unreadable') return [{ status: 'unknown', label, reason: format('faucet.ownerUnknown', { reason: owner.reason }) }];
+      if (owner.kind === 'reverted') return [{ status: 'not-done', label, reason: text('faucet.notMinted') }];
+      return owner.value.toLowerCase() === account.toLowerCase() ? [{ status: 'done', label }] : [{ status: 'not-done', label, reason: text('faucet.notYours') }];
     },
   });
 
@@ -94,9 +94,9 @@ export function Faucet() {
     if (asset.kind === 'erc20') {
       const decimals = decimalsOf(asset.address);
       if (decimals === null) return;
-      setPick({ kind: 'erc20', asset, amount: ERC20_MINT_UNITS * 10n ** BigInt(decimals), readAt: readNow() });
+      setPick({ kind: 'erc20', asset, amount: ERC20_MINT_UNITS * 10n ** BigInt(decimals), readAt: readNow(), identity: reviewIdentity(own) });
     } else {
-      setPick({ kind: 'nft', asset, tokenId: freshTokenId(), readAt: readNow() });
+      setPick({ kind: 'nft', asset, tokenId: freshTokenId(), readAt: readNow(), identity: reviewIdentity(own) });
     }
     tx.review();
   };
@@ -113,14 +113,10 @@ export function Faucet() {
     }
     // An NFT number already minted is replaced before the wallet opens.
     const tokenId = pick.tokenId;
-    const taken = await own
-      .read((c) => c.readContract({ address: pick.asset.address, abi: FAUCET_NFT_ABI, functionName: 'ownerOf', args: [tokenId] }))
-      .then(
-        () => true,
-        () => false,
-      );
-    if (taken) {
-      setPick({ kind: 'nft', asset: pick.asset, tokenId: freshTokenId(), readAt: readNow() });
+    const owner = await askThrough(own, (c) => c.readContract({ address: pick.asset.address, abi: FAUCET_NFT_ABI, functionName: 'ownerOf', args: [tokenId] }));
+    if (owner.kind === 'unreadable') return { kind: 'unreadable', reason: owner.reason };
+    if (owner.kind === 'answered') {
+      setPick({ ...pick, tokenId: freshTokenId(), readAt: readNow() });
       return { kind: 'changed', what: text('faucet.changedId') };
     }
     return simulateCall(own, { address: pick.asset.address, abi: FAUCET_NFT_ABI, functionName: 'mint', args: [account, tokenId] });
@@ -197,7 +193,8 @@ export function Faucet() {
       ) : (
         <ActionFlow
           tx={tx}
-          identity={`${chain.chainId}:${own.account}`}
+          identity={reviewIdentity(own)}
+          reviewedFor={pick.identity}
           receipt={receipt}
           recheck={recheck}
           describeAsset={describeAsset}

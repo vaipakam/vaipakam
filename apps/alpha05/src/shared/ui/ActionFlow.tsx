@@ -1,4 +1,5 @@
-import { useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import type { OwnStateClient } from '../../chain/ownRail';
 import { useCopy } from '../copy/useCopy';
 import type { Refusal } from '../eligibility/types';
 import type { FinishCard as FinishCardModel, Receipt as ReceiptModel } from '../receipt/types';
@@ -27,12 +28,21 @@ export type Recheck =
   | { kind: 'refused'; refusal: Refusal }
   | { kind: 'unreadable'; reason: string };
 
+/** The wallet and network a review is built under (`chainId:account`). */
+export function reviewIdentity(own: Pick<OwnStateClient, 'chainId' | 'account'>): string {
+  return `${own.chainId}:${own.account.toLowerCase()}`;
+}
+
 export interface ActionFlowProps {
   tx: TrackedTx;
-  /** The connected wallet and network (`chainId:account`). A review built
-   *  for one identity is never signed under another (RB-REVIEW): when it
-   *  changes, the review is withheld and the reader starts again. */
+  /** The connected wallet and network now (`reviewIdentity`). */
   identity: string;
+  /** The identity the review's inputs were read under, kept by the caller
+   *  WITH those inputs, so it survives this component unmounting while the
+   *  wallet or network switches. A review built for one identity is never
+   *  signed under another (RB-REVIEW): when they differ, signing is
+   *  withheld and the reader starts again. */
+  reviewedFor: string;
   /** The receipt as of the review's latest read; null while it is read. */
   receipt: ReceiptModel | null;
   /** Re-read and simulate right before the wallet opens. */
@@ -57,22 +67,38 @@ export interface ActionFlowProps {
  * retried silently: a receipt that cannot be read keeps its hash on screen
  * and offers "Check again", and nothing new is offered until it is resolved.
  */
-export function ActionFlow({ tx, identity, receipt, recheck, describeAsset, explorer, next, after, onClose }: ActionFlowProps) {
+export function ActionFlow({ tx, identity, reviewedFor, receipt, recheck, describeAsset, explorer, next, after, onClose }: ActionFlowProps) {
   const { text, format } = useCopy();
   const nowMs = useNow();
   const [checking, setChecking] = useState(false);
   const [found, setFound] = useState<Exclude<Recheck, { kind: 'ok' }> | null>(null);
-  /** The identity this review was opened under. */
-  const [reviewedFor] = useState(identity);
   const { phase } = tx;
+  /** Bumped when the review closes or this flow unmounts: a re-check still
+   *  running for a review the reader has left never opens the wallet, even
+   *  if the caller has since opened another review on the same tracker. */
+  const attempt = useRef(0);
+  useEffect(
+    () => () => {
+      attempt.current += 1;
+    },
+    [],
+  );
+  /** The identity as of the latest render, for a re-check that resolves
+   *  after the wallet or network moved. */
+  const live = useRef(identity);
+  useEffect(() => {
+    live.current = identity;
+  }, [identity]);
 
   const close = () => {
+    attempt.current += 1;
     setFound(null);
     tx.reset();
     onClose();
   };
 
   const confirm = async () => {
+    const mine = attempt.current;
     setChecking(true);
     setFound(null);
     let result: Recheck;
@@ -81,7 +107,10 @@ export function ActionFlow({ tx, identity, receipt, recheck, describeAsset, expl
     } catch (e) {
       result = { kind: 'unreadable', reason: (e as Error).message };
     }
+    if (attempt.current !== mine) return;
     setChecking(false);
+    // Moved while the re-check ran: the render now withholds signing.
+    if (live.current !== reviewedFor) return;
     if (result.kind !== 'ok') {
       setFound(result);
       return;

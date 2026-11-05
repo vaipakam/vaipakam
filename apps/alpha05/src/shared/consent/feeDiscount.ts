@@ -6,7 +6,10 @@
  * interest is discounted at each settlement, delivered one of two ways the
  * deployment's VPFI price configuration selects:
  * - `vpfi`: a price source is configured, so the discounted fee is paid in
- *   VPFI from the lender's vault and the lender keeps all the interest;
+ *   VPFI from the lender's vault and the lender keeps all the interest,
+ *   when at that settlement a quote reads and enough unlocked, tracked VPFI
+ *   is in the vault; a settlement where it cannot be paid that way gets no
+ *   holding discount (the contract's own fallback), and the copy says so;
  * - `direct`: none is configured, so the fee itself is reduced in the loan's
  *   asset and no VPFI moves.
  * Toggling never broadcasts a tier to other networks.
