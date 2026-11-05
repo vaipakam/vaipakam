@@ -91,7 +91,7 @@ code {
   width: 28px;
   height: 28px;
   border-radius: 8px;
-  background: var(--brand);
+  background: var(--brand-fill);
   color: var(--text-on-brand);
   font-weight: 800;
 }
@@ -136,7 +136,7 @@ code {
   cursor: pointer;
 }
 .segment button[aria-pressed='true'] {
-  background: var(--brand);
+  background: var(--brand-fill);
   color: var(--text-on-brand);
 }
 .select select {
@@ -229,8 +229,8 @@ h1 {
   cursor: pointer;
 }
 .btn-primary {
-  background: var(--brand);
-  border-color: var(--brand);
+  background: var(--brand-fill);
+  border-color: var(--brand-fill);
   color: var(--text-on-brand);
 }
 

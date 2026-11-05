@@ -15,9 +15,43 @@
 
 export type EnvLike = Record<string, string | undefined>;
 
+/** The three service origins this build may be given. Each is an ORIGIN
+ *  (scheme and host, nothing after), never a URL with a path: the resolvers
+ *  append their own routes, and a path here would silently move them. */
+export const SERVICE_ORIGIN_KEYS = ['VITE_INDEXER_ORIGIN', 'VITE_AGENT_ORIGIN', 'VITE_RPC_PROXY_ORIGIN'] as const;
+
+/** Why a configured service value is not an origin this build can use, or
+ *  `null` when it is. One rule, read by the build's refusal
+ *  ({@link rpcConfigProblems}) and by every resolver below, so a value the
+ *  build would refuse can never reach a transport. */
+export function serviceOriginProblem(value: string): string | null {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return 'is not a URL';
+  }
+  if (url.protocol !== 'https:' && !(url.protocol === 'http:' && (url.hostname === 'localhost' || url.hostname === '127.0.0.1'))) {
+    return `uses ${url.protocol.replace(/:$/, '')}; an origin is https (http only for localhost)`;
+  }
+  if (url.username || url.password) return 'carries credentials';
+  if (url.search || url.hash) return 'carries a query or fragment';
+  if (url.pathname !== '/') return `carries the path ${url.pathname}; give the origin only, the app appends its routes`;
+  return null;
+}
+
+/** A configured service origin, normalised (no trailing slash), or `null`
+ *  when the variable is unset. A SET value that is not a usable origin
+ *  throws, naming the variable: the build refuses it first
+ *  ({@link rpcConfigProblems}), so at runtime this is unreachable; it is a
+ *  throw and not a `null` so a misconfiguration can never read as "this
+ *  build has no proxy" and fall back to the public endpoints unannounced. */
 function configured(env: EnvLike, key: string): string | null {
   const raw = env[key]?.trim();
-  return raw ? raw.replace(/\/+$/, '') : null;
+  if (!raw) return null;
+  const problem = serviceOriginProblem(raw);
+  if (problem !== null) throw new Error(`endpoints: ${key} ${problem}`);
+  return new URL(raw).origin;
 }
 
 /** The indexer Worker's origin (the world rail), or `null`: this build then
@@ -90,6 +124,17 @@ export function rpcEndpointsFor(chainId: number, env: EnvLike): readonly RpcEndp
  *  variable and the rule, never a silent downgrade. */
 export function rpcConfigProblems(env: EnvLike, deployedChainIds: readonly number[]): string[] {
   const problems: string[] = [];
+  // A service origin the resolvers cannot use stops the build by name
+  // (RB-INTEGRITY: the build names every endpoint or stops). Without this a
+  // mistyped proxy would ship and every read would fall to the public
+  // endpoints, which the page would never say.
+  for (const key of SERVICE_ORIGIN_KEYS) {
+    const raw = env[key]?.trim();
+    if (!raw) continue;
+    const problem = serviceOriginProblem(raw);
+    if (problem !== null) problems.push(`${key} ${problem} (value not echoed).`);
+  }
+  const serviceOk = (key: string) => !env[key]?.trim() || serviceOriginProblem(env[key]!.trim()) === null;
   // Every `VITE_*` value is compiled into the bundle whether or not the code
   // reads it (`chains.ts` hands the whole env to the resolver), so a per-chain
   // HTTP or WebSocket provider URL is refused by NAME: an unused socket URL
@@ -102,7 +147,7 @@ export function rpcConfigProblems(env: EnvLike, deployedChainIds: readonly numbe
       );
     }
   }
-  if (rpcProxyOrigin(env) === null) {
+  if (serviceOk('VITE_RPC_PROXY_ORIGIN') && rpcProxyOrigin(env) === null) {
     for (const chainId of deployedChainIds) {
       if (isMainnetChain(chainId)) {
         problems.push(
@@ -137,16 +182,14 @@ const WALLET_SDK_SOURCES: readonly { source: string; why: string }[] = [
  *  the build; enforced before the cutover. */
 export function connectSources(env: EnvLike, deployedChainIds: readonly number[]): string[] {
   const out = new Set<string>();
+  // Every value here has passed `serviceOriginProblem` (the resolvers throw
+  // otherwise), so a parse failure is a bug, never something to skip: a CSP
+  // list quietly missing an origin would block the reads it was meant to name.
   const addOrigin = (url: string | null) => {
-    if (!url) return;
-    try {
-      out.add(new URL(url).origin);
-    } catch {
-      /* a malformed value is refused by its own guard; never a CSP entry */
-    }
+    if (url !== null) out.add(new URL(url).origin);
   };
-  addOrigin(indexerOrigin(env));
   const indexer = indexerOrigin(env);
+  addOrigin(indexer);
   if (indexer?.startsWith('https://')) out.add('wss://' + indexer.slice('https://'.length));
   addOrigin(agentOrigin(env));
   for (const chainId of deployedChainIds) {

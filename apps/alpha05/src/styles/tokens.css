@@ -1,9 +1,17 @@
 /*
  * alpha05 design tokens. Both themes define the SAME custom-property names so
  * components never branch on theme: they read the token and the [data-theme]
- * switch on <html> does the rest. Body text pairs are chosen for >= 4.5:1 on
- * their backgrounds in both themes (RB-A11Y, WCAG AA). Carried over from the
+ * switch on <html> does the rest. Every text pair is >= 4.5:1 on its
+ * background in both themes (RB-A11Y, WCAG AA): `contrast.test.ts` reads
+ * this file and refuses a pair that falls below it. Carried over from the
  * current app so the brand is continuous across the cutover.
+ *
+ * Two brand tokens, on purpose: `--brand` is the brand as TEXT (links, the
+ * active nav item) and must contrast with the surfaces; `--brand-fill` is the
+ * brand as a filled control's BACKGROUND and must contrast with
+ * `--text-on-brand`. One token cannot do both in dark mode: an indigo light
+ * enough to read on a dark page is too light under white text (Codex on
+ * #3179 measured 2.98:1).
  */
 
 :root,
@@ -26,6 +34,7 @@
 
   /* Brand — indigo, carried over from the existing Vaipakam identity */
   --brand: #4f46e5;
+  --brand-fill: #4f46e5;
   --brand-strong: #4338ca;
   --brand-soft: #eef2ff;
   --brand-soft-text: #3730a3;
@@ -63,9 +72,10 @@
   --text-body: #cdd5df;
   --text-muted: #98a2b3;
   --text-faint: #667085;
-  --text-on-brand: #ffffff;
+  --text-on-brand: #1e1b4b;
 
   --brand: #818cf8;
+  --brand-fill: #a5b4fc;
   --brand-strong: #a5b4fc;
   --brand-soft: #23274b;
   --brand-soft-text: #c7d2fe;

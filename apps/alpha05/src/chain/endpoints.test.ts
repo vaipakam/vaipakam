@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { connectSources, rpcConfigProblems, rpcEndpointsFor } from './endpoints';
+import { connectSources, rpcConfigProblems, rpcEndpointsFor, rpcProxyOrigin, serviceOriginProblem } from './endpoints';
 
 const TESTNETS = [84532, 421614, 97];
 
@@ -27,6 +27,36 @@ describe('rpcConfigProblems', () => {
     );
     expect(problems).toHaveLength(1);
     expect(problems[0]).toMatch(/VITE_ARBITRUM_SEPOLIA_WSS_URL/);
+  });
+});
+
+describe('service origins', () => {
+  it('refuses a malformed, pathed, http, credentialed or queried value by name, not by omission', () => {
+    for (const [value, why] of [
+      ['not-a-url', /not a URL/],
+      ['https://rpc.vaipakam.com/rpc', /path/],
+      ['http://rpc.vaipakam.com', /https/],
+      ['https://user:pw@rpc.vaipakam.com', /credentials/],
+      ['https://rpc.vaipakam.com/?x=1', /query/],
+    ] as const) {
+      expect(serviceOriginProblem(value), value).toMatch(why);
+      const problems = rpcConfigProblems({ VITE_RPC_PROXY_ORIGIN: value }, TESTNETS);
+      expect(problems, value).toHaveLength(1);
+      expect(problems[0]).toMatch(/^VITE_RPC_PROXY_ORIGIN /);
+      expect(problems[0]).not.toContain('user:pw');
+    }
+  });
+  it('accepts an origin, a trailing slash, and http on localhost', () => {
+    expect(serviceOriginProblem('https://rpc.vaipakam.com')).toBeNull();
+    expect(serviceOriginProblem('https://rpc.vaipakam.com/')).toBeNull();
+    expect(serviceOriginProblem('http://localhost:8787')).toBeNull();
+    expect(rpcProxyOrigin({ VITE_RPC_PROXY_ORIGIN: 'https://rpc.vaipakam.com/' })).toBe('https://rpc.vaipakam.com');
+  });
+  it('never lets a refused value reach a transport as a proxy route, nor read as "no proxy"', () => {
+    expect(() => rpcEndpointsFor(84532, { VITE_RPC_PROXY_ORIGIN: 'not-a-url' })).toThrow(/VITE_RPC_PROXY_ORIGIN/);
+    expect(() => connectSources({ VITE_INDEXER_ORIGIN: 'indexer' }, [84532])).toThrow(/VITE_INDEXER_ORIGIN/);
+    // A malformed proxy on a mainnet build is reported once, as the malformed value, not as "no proxy".
+    expect(rpcConfigProblems({ VITE_RPC_PROXY_ORIGIN: 'not-a-url' }, [8453])).toHaveLength(1);
   });
 });
 
