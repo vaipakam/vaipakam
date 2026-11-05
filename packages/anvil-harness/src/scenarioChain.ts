@@ -37,11 +37,17 @@ import {
   type WalletClient,
 } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
-import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
+import fs from 'node:fs';
 import { gasLimitFromEstimate } from '@vaipakam/lib/gasLimit';
 import type { SpawnedAnvil } from './process';
 import { explainMinedRevert } from './minedRevert';
 import { ANVIL_DEV_KEYS } from './devKeys';
+
+/** The combined Diamond ABI (`DIAMOND_ABI_VIEM` of `@vaipakam/contracts/abis`),
+ *  read from the generated union file rather than imported: the barrel
+ *  imports JSON without an import attribute, which a test runner that loads
+ *  this harness as native ESM (Playwright) refuses. Same file, same entries. */
+const DIAMOND_ABI_VIEM = JSON.parse(fs.readFileSync(new URL('../../contracts/src/diamondAbi.json', import.meta.url), 'utf8')) as Abi;
 
 export type Party = keyof typeof ANVIL_DEV_KEYS | 'admin';
 
@@ -89,7 +95,17 @@ export interface ScenarioChainOptions {
   name?: string;
   /** The process clock to keep in step with the head, if any. */
   clock?: ClockPin;
+  /** Accounts that act as a party in place of its Anvil dev key: a suite
+   *  whose wallets are generated per run (the app suites' ephemeral role
+   *  wallets) drives the same scenarios as those wallets. */
+  accounts?: Partial<Record<Party, Account>>;
 }
+
+/** The part of a node a scenario drives: its URL and its control RPCs, and
+ *  `stop` when the scenario owns the node. A node another process spawned
+ *  (a suite's global setup) is reached by `{ url, control: anvilControl(url) }`
+ *  and is left running by {@link ScenarioChain.stop}. */
+export type ScenarioNode = Pick<SpawnedAnvil, 'url' | 'control'> & Partial<Pick<SpawnedAnvil, 'stop'>>;
 
 export class ScenarioChain<F extends ChainFixture = ChainFixture> {
   readonly chain: Chain;
@@ -99,7 +115,7 @@ export class ScenarioChain<F extends ChainFixture = ChainFixture> {
   private readonly clock?: ClockPin;
 
   constructor(
-    readonly node: SpawnedAnvil,
+    readonly node: ScenarioNode,
     readonly fixture: F,
     chainId: number,
     opts: ScenarioChainOptions = {},
@@ -120,6 +136,7 @@ export class ScenarioChain<F extends ChainFixture = ChainFixture> {
       keeper: privateKeyToAccount(ANVIL_DEV_KEYS.keeper),
       other: privateKeyToAccount(ANVIL_DEV_KEYS.other),
       admin: privateKeyToAccount(fixture.adminKey),
+      ...opts.accounts,
     };
   }
 
@@ -253,7 +270,7 @@ export class ScenarioChain<F extends ChainFixture = ChainFixture> {
 
   async stop(): Promise<void> {
     this.clock?.release();
-    await this.node.stop();
+    await this.node.stop?.();
   }
 }
 

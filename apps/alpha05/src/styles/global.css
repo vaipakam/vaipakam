@@ -596,3 +596,129 @@ h1 {
   cursor: not-allowed;
   opacity: 0.6;
 }
+
+/* ── Home (and any page built of sections and cards) ─────────────────── */
+.home-section {
+  margin: 24px 0 0;
+}
+.home-section h2 {
+  margin: 0 0 8px;
+  font-size: 1.15rem;
+  color: var(--text-strong);
+}
+.section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+.card {
+  padding: 14px 16px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-card);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.card h3 {
+  margin: 0 0 6px;
+  font-size: 1rem;
+  color: var(--text-strong);
+}
+.card p {
+  margin: 4px 0;
+}
+.card .btn {
+  margin-top: 8px;
+}
+.rows {
+  list-style: none;
+  margin: 8px 0 12px;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+.rows.nested {
+  margin: 10px 0 0;
+}
+.rows.nested .card {
+  box-shadow: none;
+  background: var(--surface-sunken);
+}
+.row-head {
+  font-weight: 600;
+  color: var(--text-strong);
+}
+.stage.tier-a {
+  color: var(--text-strong);
+  border-left: 3px solid var(--warn);
+  padding-left: 8px;
+}
+.intents {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+}
+.intent {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-height: 44px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  color: var(--text-body);
+  text-decoration: none;
+  box-shadow: var(--shadow-card);
+}
+.intent:hover {
+  border-color: var(--brand-fill);
+}
+.intent:focus-visible {
+  outline: 2px solid var(--brand-fill);
+  outline-offset: 2px;
+}
+.intent-title {
+  font-weight: 600;
+  color: var(--text-strong);
+}
+.first-run-cards {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+}
+.home-status {
+  margin: 16px 0 0;
+}
+.home-status .notice-danger,
+.home-status .notice-warn {
+  margin-top: 8px;
+}
+.home-empty {
+  margin-top: 16px;
+}
+@media (min-width: 480px) {
+  .intents {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (min-width: 720px) {
+  .intents,
+  .first-run-cards {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+a.btn {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  text-decoration: none;
+}

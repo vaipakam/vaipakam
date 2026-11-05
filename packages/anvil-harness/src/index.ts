@@ -19,8 +19,8 @@ export {
 export { CcipRelay, compileLocalLane, deployLocalLane, type LaneEnd, type LocalLane, type RelayedMessage } from './ccipLane';
 export { ANVIL_DEV_KEYS } from './devKeys';
 export { explainMinedRevert } from './minedRevert';
-export { ScenarioChain, TOKEN_ABI, type ChainFixture, type ClockPin, type DecodedEvent, type Party, type ScenarioChainOptions } from './scenarioChain';
-export { openLoan, repayInFull, WETH, type LoanTerms, type OpenedLoan } from './lending';
+export { ScenarioChain, TOKEN_ABI, type ChainFixture, type ClockPin, type DecodedEvent, type Party, type ScenarioChainOptions, type ScenarioNode } from './scenarioChain';
+export { openLoan, postLenderOffer, repayInFull, WETH, type LoanTerms, type OfferTerms, type OpenedLoan } from './lending';
 export { finalizeThrough } from './rewardDays';
 export {
   BASE_ID,

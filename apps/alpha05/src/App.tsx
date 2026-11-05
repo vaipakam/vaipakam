@@ -1,6 +1,7 @@
 import { Route, Routes } from 'react-router-dom';
 import { Shell } from './app/Shell';
 import { NotBuilt, NotFound } from './routes/NotBuilt';
+import { BUILT_PAGES } from './routes/builtPages';
 import { PAGES } from './routes/pageMap';
 
 /**
@@ -13,9 +14,10 @@ export function App() {
   return (
     <Routes>
       <Route element={<Shell />}>
-        {PAGES.map((page) => (
-          <Route key={page.path} path={page.path} element={<NotBuilt page={page} />} />
-        ))}
+        {PAGES.map((page) => {
+          const Page = BUILT_PAGES[page.path];
+          return <Route key={page.path} path={page.path} element={Page ? <Page /> : <NotBuilt page={page} />} />;
+        })}
         <Route path="*" element={<NotFound />} />
       </Route>
     </Routes>

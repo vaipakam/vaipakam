@@ -963,3 +963,109 @@ akzeptiert, landet der Erlös in deinem Wallet und der Loan läuft
 weiter — aber du stehst nicht mehr in der Verantwortung dafür.
 Solange das Listing offen und unbefüllt ist, kannst du es
 stornieren.
+
+<a id="chapter.next-app"></a>
+
+## Die nächste App
+
+Die nächste Version der Vaipakam-App entsteht Seite für Seite,
+neben der aktuellen. Eine Seite, die noch nicht gebaut ist, sagt
+das und verlinkt auf die aktuelle App, die sie weiter bedient.
+Dieses Kapitel erklärt die Seiten, die schon gebaut sind.
+
+<a id="advanced-mode"></a>
+
+### Basic und Advanced
+
+Basic zeigt, was die meisten brauchen. Advanced ergänzt die Exit-
+und Settlement-Werkzeuge, Automatisierung, signierte Orders, den
+Keeper-Status und Details zur Abrechnung. Ein Moduswechsel blendet
+nie eine Zustimmung aus, die du geben musst, nichts, was dich
+blockiert, und nie den Weg, es zu beheben. Jeder „Warum?"-Link
+öffnet die volle Erklärung, und sein „Mehr lesen"-Link öffnet
+diesen Guide in deinem Modus.
+
+<a id="wallet"></a>
+
+### Dein Wallet und woher deine Zahlen kommen
+
+Die App liest deine Loans, deinen Vault und deine Claims zuerst
+über die eigene Netzwerkverbindung deines Wallets. Nur wenn das
+Wallet keine anbietet, nutzt sie einen Read-only-Proxy. Deine
+eigenen Zahlen kommen nie aus dem gemeinsamen Index. Adresse und
+Netzwerk oben sind die, zu denen jede Zahl auf der Seite gehört.
+Ist dein Wallet in einem Netzwerk, das die App nicht bedient, wird
+nichts von dir angezeigt, bis du wechselst.
+
+<a id="deployments"></a>
+
+### Was das Deployment unterstützt
+
+Bevor die App eine Aktion anbietet, liest sie, welche Funktionen
+der Protokoll-Contract in deinem Netzwerk gerade unterstützt. Ein
+Upgrade kann diese Liste ändern; weil die App sie liest, kann sie
+dir sagen, was sich geändert hat, statt zu scheitern. Ist die
+Liste nicht lesbar, wird kein Signaturschritt angeboten.
+
+<a id="home-start"></a>
+
+### Home: Eine Aufgabe wählen
+
+Home beginnt mit „Ich möchte …": leihen, verleihen, ein NFT mieten,
+dein NFT vermieten oder verwalten, was du hast. Jede Wahl öffnet
+eine geführte Seite. Leihen und Verleihen zeigen zuerst passende
+Angebote und lassen dich ein eigenes erstellen, wenn keines passt.
+Mieten deckt beide Seiten ab: das NFT eines anderen nutzen oder
+jemanden deines nutzen lassen, während es in einem Vault bleibt.
+Mit verbundenem Wallet zeigt Home außerdem drei kurze
+Einstiegskarten, die du ausblenden kannst.
+
+<a id="home-status"></a>
+
+### Home: Protokollstatus
+
+Home sagt immer, ob das Protokoll in deinem Netzwerk läuft. Ist es
+wegen eines Vorfalls pausiert, stoppen neue Positionen, Claims,
+Auszahlungen, Liquidationen, Defaults und Keeper-Schritte. Volle
+Rückzahlung, Teilrückzahlung und das Nachlegen von Sicherheiten
+bleiben offen, und die pausierte Zeit wird zum Fälligkeitsdatum
+jedes offenen Loans addiert. Eine automatische Pause dauert eine
+feste Zeit, und eine neue kann erst nach einer Abkühlphase
+beginnen. Der Keeper-Dienst kann separat pausiert werden; das
+blockiert nie etwas, das du selbst tust. Ist der Status nicht
+lesbar, sagt Home das oben, statt anzunehmen, dass alles läuft.
+
+<a id="home-payouts"></a>
+
+### Home: Bereit zum Abholen
+
+Eine Auszahlung ist bereit, wenn ein Loan beendet ist und ein Claim
+dich jetzt bezahlen würde: die Rückzahlung für den Verleiher, die
+Sicherheit (oder was davon übrig ist) für den Leihenden, oder ein
+NFT, das am Ende einer Miete zurückkommt. Home listet sie zuerst
+und schickt dich zu Claims, wo jeder Betrag vor dem Abholen steht.
+
+<a id="home-loans"></a>
+
+### Home: Deine Loans
+
+Jeder laufende Loan zeigt deine Seite, seine Bedingungen, seine
+Sicherheit und seine nächste Frist, die dringendste zuerst. Ein
+Loan ist an seinem Fälligkeitsdatum fällig. Danach läuft eine
+Kulanzfrist, in der der Leihende noch mit einer Verspätungsgebühr
+zurückzahlen kann. Endet sie, kann jeder den Default auslösen, der
+den Loan aus der Sicherheit begleicht. Der Health Factor vergleicht
+den Wert der Sicherheit mit der Schuld: unter 1 kann der Loan
+liquidiert werden. Ein Loan in einem Asset ohne Preis hat keinen
+Health Factor. Loans aus einem deiner Angebote werden zusammen
+gezeigt.
+
+<a id="home-exposure"></a>
+
+### Home: Verliehen und geliehen
+
+Wenn du verleihst und leihst, vergleicht Home beide Seiten nach dem
+heutigen Wert. Loans, die nicht bewertet werden können, etwa NFTs
+oder Assets ohne Preis, werden gezählt und herausgelassen, und Home
+nennt die größere Seite nur, wenn sie das Ergebnis nicht ändern
+könnten.

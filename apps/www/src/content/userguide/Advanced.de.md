@@ -2074,3 +2074,121 @@ steht hier für alle, die ein eigenes Deployment betreiben.
   bezahlt werden. Lade das Budget auf, bevor du die Tabelle änderst.
 - `setTwaMinStakedDays` ändert die Mindesthaltedauer, ohne die Version
   zu erhöhen. Die Änderung wirkt beim nächsten Lesen.
+
+<a id="chapter.next-app"></a>
+
+## Die nächste App
+
+Die nächste Version der Vaipakam-App entsteht Seite für Seite,
+neben der aktuellen. Eine noch nicht gebaute Seite sagt das und
+verlinkt auf die aktuelle App, die sie weiter bedient. Jede Zahl
+auf einer gebauten Seite wird von der Chain gelesen und nennt ihre
+Quelle; eine nicht lesbare Zahl wird als unbekannt gezeigt, nie als
+null.
+
+<a id="advanced-mode"></a>
+
+### Basic und Advanced
+
+Basic zeigt die Funktionen, die die meisten brauchen. Advanced
+ergänzt Exit- und Settlement-Werkzeuge, Automatisierung, signierte
+Orders, den Keeper-Status und Abrechnungsdetails. Der Modus ist eine
+Anzeigewahl in deinem Browser: Er ändert, wie viel gezeigt wird,
+nicht, was das Protokoll erlaubt, und blendet nie eine Zustimmung,
+eine Sperre oder eine Abhilfe aus.
+
+<a id="wallet"></a>
+
+### Dein Wallet und woher deine Zahlen kommen
+
+Dein eigener Zustand (Loans, Angebote, Vault, Claims) wird von der
+Chain gelesen: zuerst über den Provider des Wallets, dann über den
+Read-only-RPC-Proxy, dann über den öffentlichen Endpunkt des
+Netzwerks. Die Sync-Zeile nennt die Quelle, die geantwortet hat, und
+das Alter des ältesten Lesevorgangs der Seite; Aktualisieren liest
+alles neu. Der Index dient nur für Weltzahlen (Markt und Verlauf),
+mit Blockhöhe und Alter. Ein Wallet in einem nicht bedienten
+Netzwerk sieht nichts Eigenes, bis es wechselt.
+
+<a id="deployments"></a>
+
+### Was das Deployment unterstützt
+
+Die App bindet sich pro Chain an einen Diamond und liest dessen
+geroutete Selektoren über die Loupe, bevor sie eine Aktion anbietet.
+Nach einem Facet-Refresh ändert sich diese Menge; weil die App sie
+liest statt annimmt, kann sie eine fehlende Funktion benennen, statt
+mit `FunctionDoesNotExist` zu scheitern. Solange die Menge nicht
+lesbar ist, wird kein Signaturschritt angeboten.
+
+<a id="home-start"></a>
+
+### Home: Eine Aufgabe wählen
+
+Home beginnt mit einer Aufgabe, nicht mit einem Protokollbegriff:
+leihen, verleihen, ein NFT mieten, ein NFT vermieten oder verwalten,
+was du hast. Leihen und Verleihen öffnen mit passenden Angeboten und
+führen sonst zum eigenen Angebot. Mieten deckt beide Seiten einer
+NFT-Miete ab; das NFT liegt die ganze Zeit in einem Vault. Ein
+verbundenes Wallet sieht außerdem drei ausblendbare Einstiegskarten;
+das Ausblenden wird im Browser gespeichert.
+
+<a id="home-status"></a>
+
+### Home: Protokollstatus
+
+Home liest die globale Pause, das automatische Pausenfenster und die
+Keeper-Pause auf der Chain, die die Seite beschreibt, und nennt das
+Ergebnis in jedem Fall. Eine globale Pause stoppt neue Positionen,
+Claims, Auszahlungen, Liquidationen, Defaults und Keeper-Settlement;
+volle und teilweise Rückzahlung sowie Nachlegen von Sicherheiten
+bleiben offen, und die pausierte Zeit wird den Fristen jedes offenen
+Loans gutgeschrieben. Ein automatisches Pausenfenster zeigt sein
+Ende; eine Admin-Pause, falls vorhanden, dauert länger, und ein
+neues automatisches Fenster öffnet erst nach einer Abkühlphase. Eine
+Keeper-Pause stoppt nur Schritte, die der Dienst für dich ausführt.
+Ein nicht lesbarer Status, auch ein Neulesen, das nach einer
+früheren Antwort scheiterte, steht oben als unbekannt. Einzelne
+Assets können ebenfalls pausiert sein; die betroffenen Abläufe sagen
+es.
+
+<a id="home-payouts"></a>
+
+### Home: Bereit zum Abholen
+
+Home geht die Claimable-Views für Verleiher- und Leiherseite Seite
+für Seite durch und nennt jede Auszahlung nach Loan und Seite. Es
+zeigt keinen Betrag: Eine Auszahlung kann in mehr als einem Asset
+und über mehr als einen Weg erfolgen, und Claims nennt jeden Betrag
+vor dem Abholen. Endet der Durchgang vor dem Ende, sagt Home, dass
+mehr existieren kann als gezeigt.
+
+<a id="home-loans"></a>
+
+### Home: Deine Loans
+
+Jeder Loan im Status Active oder FallbackPending wird mit Seite,
+Bedingungen, Sicherheit und Stufe gezeigt, nach Dringlichkeit
+sortiert: Kulanz vorbei, in Kulanz, Fallback, Frist unlesbar, fällig
+in drei Tagen, laufend. Fälligkeit und Kulanzende kommen aus der
+Loan-Uhr des Protokolls und enthalten die pausierte Zeit, die
+angezeigt wird, wenn sie nicht null ist. Der Health Factor ist der
+1e18-skalierte Wert der Dashboard-View; ein Wert von 0 bedeutet
+keinen Wert (ein Asset ohne Preis oder ein gescheitertes Lesen) und
+wird so gezeigt. Zwei oder mehr Loans aus demselben Angebot, auf
+derselben Seite und im selben ERC-20, werden gruppiert: Principal
+summiert, Zins nach Principal gewichtet und abgerundet, und der
+niedrigste Health Factor der bepreisten Loans, die unbepreisten
+gezählt.
+
+<a id="home-exposure"></a>
+
+### Home: Verliehen und geliehen
+
+Der Principal jedes Loans wird zu aktuellen Preisen im Numeraire
+bewertet, über die eine Bewertungsregel des Protokolls: eine Schuld
+aufgerundet, ein von dir gegebener Loan abgerundet. Ein nicht
+bewertbarer Loan (ein NFT oder ein Asset ohne Preis) wird gezählt,
+nicht geschätzt. Die größere Seite wird nur genannt, wenn die
+unbewerteten Loans das Ergebnis nicht ändern könnten; sonst zeigt
+Home die bewerteten Summen und die Anzahl.

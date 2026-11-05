@@ -31,7 +31,7 @@ export interface PageEntry {
 }
 
 export const PAGES: readonly PageEntry[] = [
-  { path: '/', name: 'Home', tier: 'basic', rows: 'positions with next action, deadlines, first-run cards', order: 1, built: false, nav: true, currentApp: '/' },
+  { path: '/', name: 'Home', tier: 'basic', rows: 'positions with next action, deadlines, first-run cards', order: 1, built: true, nav: true, currentApp: '/' },
   { path: '/borrow', name: 'Borrow', tier: 'basic', rows: 'OFF (borrow side), LN origination', order: 2, built: false, nav: true, currentApp: '/borrow' },
   { path: '/lend', name: 'Lend', tier: 'basic', rows: 'OFF (lend side), auto-lend intents', order: 3, built: false, nav: true, currentApp: '/lend' },
   { path: '/positions', name: 'Positions', tier: 'basic', rows: 'LN list, quick actions', order: 4, built: false, nav: true, currentApp: '/positions' },

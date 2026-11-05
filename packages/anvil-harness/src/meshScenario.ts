@@ -89,7 +89,7 @@ export async function openMeshScenario(store: MeshFixtureStore, opts: OpenMeshSc
     syncClock,
     async stop() {
       opts.clock?.release();
-      await Promise.all([base.node.stop(), mirror.node.stop()]);
+      await Promise.all([base.node.stop?.(), mirror.node.stop?.()]);
     },
   };
 }

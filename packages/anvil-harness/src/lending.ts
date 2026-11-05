@@ -61,19 +61,8 @@ const ACCEPT_TERMS_TYPES = {
   ],
 } as const;
 
-export interface LoanTerms {
-  lender: Party;
+export interface LoanTerms extends OfferTerms {
   borrower: Party;
-  /** WETH lent, decimal string. */
-  principalWeth: string;
-  /** tLIQ locked, decimal string. */
-  collateralTliq: string;
-  rateBps: number;
-  days: number;
-  /** `LibVaipakam.PeriodicInterestCadence` (0 None, 1 Monthly, …). Omitted,
-   *  None. A finer cadence needs periodic interest switched on and a
-   *  principal above the finer-cadence threshold. */
-  cadence?: number;
 }
 
 export interface OpenedLoan {
@@ -87,14 +76,25 @@ function tliq(sc: ScenarioChain): Address {
   return (sc.fixture.artifact.testnetMocks as Record<string, Address>).liquidToken;
 }
 
-/** The lender posts a lender offer; the borrower accepts it with a signed
- *  AcceptTerms. Returns the loan the accept initiated. */
-export async function openLoan(sc: ScenarioChain, t: LoanTerms): Promise<OpenedLoan> {
+export interface OfferTerms {
+  lender: Party;
+  /** WETH lent, decimal string. */
+  principalWeth: string;
+  /** tLIQ asked as collateral, decimal string. */
+  collateralTliq: string;
+  rateBps: number;
+  days: number;
+  /** `LibVaipakam.PeriodicInterestCadence` (0 None, 1 Monthly, …). Omitted,
+   *  None. A finer cadence needs periodic interest switched on and a
+   *  principal above the finer-cadence threshold. */
+  cadence?: number;
+}
+
+/** The lender posts a lender offer, escrowing the principal it wrapped from
+ *  its own ETH, and leaves it open. Returns the offer id. */
+export async function postLenderOffer(sc: ScenarioChain, t: OfferTerms): Promise<bigint> {
   const principal = parseEther(t.principalWeth);
   const collateral = parseEther(t.collateralTliq);
-  const collateralAsset = tliq(sc);
-
-  // The lender's leg: wrap its own ETH, escrow it with the offer.
   await sc.write(t.lender, WETH, TOKEN_ABI, 'deposit', [], principal);
   await sc.write(t.lender, WETH, TOKEN_ABI, 'approve', [sc.diamond, principal]);
   const created = await sc.diamondWrite(t.lender, 'createOffer', [
@@ -103,7 +103,7 @@ export async function openLoan(sc: ScenarioChain, t: LoanTerms): Promise<OpenedL
       lendingAsset: WETH,
       amount: principal,
       interestRateBps: BigInt(t.rateBps),
-      collateralAsset,
+      collateralAsset: tliq(sc),
       collateralAmount: collateral,
       durationDays: BigInt(t.days),
       assetType: 0,
@@ -129,7 +129,15 @@ export async function openLoan(sc: ScenarioChain, t: LoanTerms): Promise<OpenedL
   ]);
   const offerEv = sc.decodeDiamondLogs(created.logs).find((e) => e.eventName === 'OfferCreated');
   if (!offerEv) throw new Error('createOffer emitted no OfferCreated');
-  const offerId = BigInt(offerEv.args.offerId as bigint);
+  return BigInt(offerEv.args.offerId as bigint);
+}
+
+/** The lender posts a lender offer; the borrower accepts it with a signed
+ *  AcceptTerms. Returns the loan the accept initiated. */
+export async function openLoan(sc: ScenarioChain, t: LoanTerms): Promise<OpenedLoan> {
+  const collateral = parseEther(t.collateralTliq);
+  const collateralAsset = tliq(sc);
+  const offerId = await postLenderOffer(sc, t);
 
   // The borrower's leg: mint the faucet collateral, sign, accept.
   await sc.write(t.borrower, collateralAsset, TOKEN_ABI, 'mint', [sc.address(t.borrower), collateral]);

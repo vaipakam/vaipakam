@@ -959,3 +959,109 @@ prêteur, et tu attends un acheteur. Dès qu'un acheteur accepte, le
 produit atterrit dans ton wallet et le prêt continue — mais tu
 n'es plus engagé dessus. Tant que la mise en vente est ouverte et
 non remplie, tu peux l'annuler.
+
+<a id="chapter.next-app"></a>
+
+## La prochaine app
+
+La prochaine version de l'app Vaipakam se construit page par page, à
+côté de l'actuelle. Une page pas encore construite le dit et vous
+renvoie vers l'app actuelle, qui la sert toujours. Ce chapitre
+explique les pages déjà construites.
+
+<a id="advanced-mode"></a>
+
+### Basic et Advanced
+
+Basic montre ce dont la plupart des gens ont besoin. Advanced ajoute
+les outils de sortie et de règlement, l'automatisation, les ordres
+signés, l'état des keepers et le détail comptable. Changer de mode ne
+masque jamais un consentement à donner, ce qui vous bloque, ni le
+moyen d'y remédier. Chaque lien « Pourquoi ? » ouvre l'explication
+complète, et son lien « En savoir plus » ouvre ce guide dans le mode
+que vous utilisez.
+
+<a id="wallet"></a>
+
+### Votre wallet et l'origine de vos chiffres
+
+L'app lit vos loans, votre vault et vos claims d'abord par la propre
+connexion de votre wallet au réseau. Ce n'est que si le wallet n'en
+propose aucune qu'elle utilise un proxy en lecture seule. Vos
+chiffres ne viennent jamais de l'index partagé. L'adresse et le
+réseau affichés en haut sont ceux auxquels appartient chaque chiffre
+de la page. Si votre wallet est sur un réseau que l'app ne sert pas,
+rien de vous n'est affiché tant que vous ne changez pas.
+
+<a id="deployments"></a>
+
+### Ce que le déploiement prend en charge
+
+Avant de proposer une action, l'app lit quelles fonctions le contrat
+du protocole prend en charge en ce moment sur votre réseau. Une mise
+à jour peut changer cette liste, et la lire permet à l'app de vous
+dire ce qui a changé au lieu d'échouer. Si la liste est illisible,
+aucune étape de signature n'est proposée.
+
+<a id="home-start"></a>
+
+### Home : choisir une tâche
+
+Home commence par « Je veux… » : emprunter, prêter, louer un NFT,
+mettre votre NFT en location ou gérer ce que vous avez. Chaque choix
+ouvre une page guidée. Emprunter et prêter montrent d'abord les
+offres qui correspondent et vous laissent publier la vôtre si aucune
+ne convient. La location couvre les deux côtés : utiliser le NFT de
+quelqu'un d'autre, ou laisser quelqu'un utiliser le vôtre pendant
+qu'il reste dans un vault. Avec un wallet connecté, Home montre aussi
+trois courtes cartes de démarrage, que vous pouvez masquer.
+
+<a id="home-status"></a>
+
+### Home : état du protocole
+
+Home indique toujours si le protocole tourne sur votre réseau.
+Pendant une pause liée à un incident, les nouvelles positions, les
+claims, les retraits, les liquidations, les défauts et les étapes des
+keepers s'arrêtent. Le remboursement total, le remboursement partiel
+et l'ajout de collatéral restent ouverts, et le temps de pause
+s'ajoute à l'échéance de chaque loan ouvert. Une pause automatique
+dure un temps fixe, et une nouvelle ne peut commencer qu'après un
+délai de carence. Le service des keepers peut être mis en pause à
+part ; cela ne bloque jamais ce que vous faites vous-même. Si l'état
+est illisible, Home le dit en haut au lieu de supposer que tout
+tourne.
+
+<a id="home-payouts"></a>
+
+### Home : prêt à encaisser
+
+Un paiement est prêt quand un loan est terminé et qu'un claim vous
+paierait maintenant : le remboursement pour le prêteur, le collatéral
+rendu (ou ce qu'il en reste) pour l'emprunteur, ou un NFT rendu à la
+fin d'une location. Home les liste en premier et vous envoie vers
+Claims, qui montre chaque montant avant l'encaissement.
+
+<a id="home-loans"></a>
+
+### Home : vos loans
+
+Chaque loan en cours montre votre côté, ses conditions, son
+collatéral et sa prochaine échéance, la plus urgente d'abord. Un loan
+est dû à sa date d'échéance. Ensuite court un délai de grâce pendant
+lequel l'emprunteur peut encore rembourser avec des frais de retard.
+Une fois ce délai écoulé, n'importe qui peut lancer le défaut, qui
+règle le loan sur le collatéral. Le health factor compare la valeur
+du collatéral à la dette : sous 1, le loan peut être liquidé. Un loan
+dans un actif sans prix n'a pas de health factor. Les loans ouverts à
+partir d'une de vos offres sont montrés ensemble.
+
+<a id="home-exposure"></a>
+
+### Home : prêté et emprunté
+
+Quand vous prêtez et empruntez à la fois, Home compare les deux côtés
+selon leur valeur du jour. Les loans impossibles à évaluer, comme les
+NFT ou les actifs sans prix, sont comptés et laissés de côté, et Home
+ne nomme le côté le plus grand que s'ils ne pourraient pas changer la
+réponse.
