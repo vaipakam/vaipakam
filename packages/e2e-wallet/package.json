@@ -1,0 +1,26 @@
+{
+  "name": "@vaipakam/e2e-wallet",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "description": "TEST-ONLY: the injected-wallet Playwright fixture the connected apps' e2e tiers share (apps/app/e2e, apps/alpha05/e2e). Injects an EIP-1193 + EIP-6963 provider into the page whose signing and RPC happen in the Playwright process via viem against a local Anvil, so the app sees an ordinary browser wallet and the ephemeral key never enters the page. Never imported by runtime code.",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc -p . --noEmit"
+  },
+  "peerDependencies": {
+    "@playwright/test": "^1.49.0",
+    "viem": "^2.0.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.49.0",
+    "@types/node": "^22",
+    "typescript": "~6.0.2",
+    "viem": "^2.48.4"
+  }
+}

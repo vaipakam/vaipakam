@@ -1,24 +1,28 @@
 import { NavLink, Outlet } from 'react-router-dom';
 import { useMode } from './ModeContext';
 import { useTheme } from './ThemeContext';
+import { IdentityLine, WalletControl } from './WalletControl';
 import { useCapabilities } from '../shared/capability/CapabilityContext';
+import { useCopy } from '../shared/copy/useCopy';
+import { HelpPanel } from '../shared/help/HelpPanel';
 import { WhyLink } from '../shared/help/WhyLink';
-import { copy } from '../content/copy';
+import { useWorldRail } from '../shared/reads/world/WorldRailContext';
+import { FreshnessStamp } from '../shared/ui/FreshnessStamp';
 import { NAV_ADVANCED, NAV_BASIC } from '../routes/pageMap';
 
-const GUIDE_BASE = 'https://vaipakam.com/guide';
-
 /**
- * The shell: brand, mode toggle, theme toggle, primary navigation by mode,
- * the deployment-posture line (RB-RAILS, RB-FUNDS: the capability read is
- * stated as reading, read or unreadable, never implied), and the routed
- * page. The wallet control lands with the Home PR, where the first
- * connected read is.
+ * The shell: brand, mode toggle, theme toggle, the wallet control, primary
+ * navigation by mode, the deployment-posture lines (RB-RAILS, RB-FUNDS:
+ * the capability read and the index's freshness are stated as reading,
+ * read or unreadable, never implied), the routed page, and the one help
+ * panel every "Why?" opens.
  */
 export function Shell() {
   const { mode, setMode, isAdvanced } = useMode();
   const { preference, resolved, setPreference } = useTheme();
   const { caps, stale, chainId, error } = useCapabilities();
+  const world = useWorldRail();
+  const { text, format } = useCopy();
   const nav = isAdvanced ? NAV_ADVANCED : NAV_BASIC;
 
   return (
@@ -33,7 +37,7 @@ export function Shell() {
               is the accessible name and shows beside the mark only. */}
           <img src={resolved === 'dark' ? '/icon-dark.svg' : '/icon-light.svg'} alt="" className="brand-mark" width={28} height={28} />
           <img src={resolved === 'dark' ? '/logo-dark.png' : '/logo-light.png'} alt="" className="brand-wordmark" width={120} height={36} />
-          <span className="brand-text">{copy.shell.brand.text}</span>
+          <span className="brand-text">{text('shell.brand')}</span>
         </NavLink>
         <nav aria-label="Primary">
           {nav.map((e) => (
@@ -45,10 +49,10 @@ export function Shell() {
         <div className="controls">
           <div className="segment" role="group" aria-label="Mode">
             <button type="button" aria-pressed={mode === 'basic'} onClick={() => setMode('basic')}>
-              {copy.shell.modeBasic.text}
+              {text('shell.modeBasic')}
             </button>
             <button type="button" aria-pressed={mode === 'advanced'} onClick={() => setMode('advanced')}>
-              {copy.shell.modeAdvanced.text}
+              {text('shell.modeAdvanced')}
             </button>
           </div>
           <label className="select">
@@ -59,36 +63,39 @@ export function Shell() {
               <option value="dark">Dark</option>
             </select>
           </label>
+          <WalletControl />
         </div>
       </header>
       <div className="notice tier-a" role="status">
-        {copy.shell.underConstruction.text}
+        {text('shell.underConstruction')}
       </div>
       <div className="posture">
+        <IdentityLine />
         {error ? (
-          <p className="tier-a">{copy.capability.unreadable.text}</p>
+          <p className="tier-a">{text('capability.unreadable')}</p>
         ) : caps === null ? (
-          <p className="tier-b">{copy.capability.reading.text}</p>
+          <p className="tier-b">{text('capability.reading')}</p>
         ) : (
           <WhyLink
-            summary={{
-              tier: 'B',
-              text: `Chain ${chainId}: ${caps.routedSelectors?.size ?? 0} routed functions read from the protocol contract${stale ? ' (re-reading now)' : ''}.`,
-            }}
-            detail={copy.capability.why}
-            guideBase={GUIDE_BASE}
+            summaryKey="capability.routed"
+            detailKey="capability.why"
+            vars={{ chain: String(chainId), count: String(caps.routedSelectors?.size ?? 0) }}
+            extra={stale ? text('capability.rereading') : undefined}
           />
         )}
+        <div className="stamp-row">
+          <FreshnessStamp freshness={world.freshness} push={world.push.state} onRefresh={world.refresh} />
+          <WhyLink summaryKey="rail.source" detailKey="rail.why" />
+        </div>
       </div>
       <div id="main">
         <Outlet />
       </div>
       <footer className="foot">
-        <WhyLink summary={{ tier: 'B', text: `Mode: ${mode}.` }} detail={copy.shell.modeWhy} guideBase={GUIDE_BASE} />
-        <p className="tier-b">
-          Build {import.meta.env.VITE_BUILD_HASH ?? 'unknown'} · {import.meta.env.VITE_BUILD_TIME ?? 'unknown'}
-        </p>
+        <WhyLink summaryKey="shell.mode" detailKey="shell.modeWhy" vars={{ mode }} />
+        <p className="tier-b">{format('shell.build', { hash: import.meta.env.VITE_BUILD_HASH ?? 'unknown', time: import.meta.env.VITE_BUILD_TIME ?? 'unknown' })}</p>
       </footer>
+      <HelpPanel />
     </div>
   );
 }

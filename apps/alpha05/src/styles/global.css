@@ -212,22 +212,6 @@ h1 {
   margin: 0;
 }
 
-.why .link {
-  border: 0;
-  background: none;
-  padding: 0;
-  font: inherit;
-  color: var(--brand);
-  text-decoration: underline;
-  cursor: pointer;
-}
-.why-panel {
-  margin: 8px 0 0;
-  padding: 12px 14px;
-  background: var(--surface-raised);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-}
 
 .btn {
   font: inherit;
@@ -257,4 +241,246 @@ h1 {
     animation: none !important;
     transition: none !important;
   }
+}
+
+/* ── Wallet control ─────────────────────────────────────────────────── */
+.wallet {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.wallet-chip {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0;
+  padding: 4px 12px;
+  line-height: 1.2;
+}
+.wallet-address {
+  font-family: var(--font-mono);
+  color: var(--text-strong);
+}
+.wallet-chain {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+/* ── Notices with meaning ────────────────────────────────────────────── */
+.notice-info,
+.notice-ok,
+.notice-warn,
+.notice-danger {
+  margin: 8px 0;
+  padding: 10px 14px;
+  border-radius: 10px;
+  border: 1px solid;
+  color: var(--text-strong);
+}
+.notice-info {
+  background: var(--info-soft);
+  border-color: var(--info);
+}
+.notice-ok {
+  background: var(--ok-soft);
+  border-color: var(--ok);
+}
+.notice-warn {
+  background: var(--warn-soft);
+  border-color: var(--warn);
+}
+.notice-danger {
+  background: var(--danger-soft);
+  border-color: var(--danger);
+}
+.notice-danger .btn,
+.notice-warn .btn {
+  margin-inline-start: 8px;
+}
+.stamp {
+  margin: 4px 0;
+}
+.stamp-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  align-items: baseline;
+}
+.stamp-row .why {
+  margin: 4px 0;
+}
+.link {
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  color: var(--brand);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+/* ── Help panel: a side panel from 720px up, a bottom sheet below ───── */
+.help-scrim {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  z-index: 50;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+.help-panel {
+  background: var(--surface-raised);
+  color: var(--text-body);
+  border: 1px solid var(--border);
+  border-radius: 16px 16px 0 0;
+  box-shadow: var(--shadow-pop);
+  width: 100%;
+  max-height: 80dvh;
+  overflow: auto;
+  padding: 16px;
+}
+@media (min-width: 720px) {
+  .help-scrim {
+    align-items: stretch;
+    justify-content: flex-end;
+  }
+  .help-panel {
+    width: min(420px, 90vw);
+    max-height: none;
+    border-radius: 0;
+    border-inline-start: 1px solid var(--border);
+  }
+}
+.help-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.help-head h2 {
+  margin: 0 0 8px;
+  font-size: 1.1rem;
+  color: var(--text-strong);
+}
+.help-close {
+  padding: 4px 10px;
+  font-size: 1.2rem;
+  line-height: 1;
+}
+.tier-c {
+  color: var(--text-body);
+}
+.help-guide {
+  display: inline-block;
+  margin-top: 8px;
+}
+
+/* ── Receipt, finish card, actions, forms, steps ───────────────────── */
+.receipt h2,
+.finish h2 {
+  font-size: 1.1rem;
+  margin: 12px 0 4px;
+  color: var(--text-strong);
+}
+.value-unknown {
+  color: var(--warn);
+}
+.consequences {
+  margin: 8px 0;
+  padding-inline-start: 20px;
+}
+.legs {
+  list-style: none;
+  padding: 0;
+  margin: 8px 0;
+}
+.legs li[data-status='done']::before {
+  content: '✓ ';
+  color: var(--ok);
+}
+.legs li[data-status='not-done']::before {
+  content: '✕ ';
+  color: var(--danger);
+}
+.legs li[data-status='unknown']::before {
+  content: '? ';
+  color: var(--warn);
+}
+.actions {
+  list-style: none;
+  padding: 0;
+  margin: 12px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.actions .btn[aria-disabled='true'] {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.refusals {
+  margin: 6px 0 0;
+  padding-inline-start: 20px;
+}
+.action-withheld {
+  color: var(--text-muted);
+}
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 12px 0;
+}
+.field input,
+.field select,
+.field textarea {
+  font: inherit;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface-raised);
+  color: var(--text-body);
+  min-height: var(--taptarget);
+}
+.field-invalid input,
+.field-invalid select,
+.field-invalid textarea {
+  border-color: var(--danger);
+}
+.field-hint {
+  margin: 0;
+  color: var(--text-muted);
+}
+.field-error {
+  margin: 0;
+  color: var(--danger);
+}
+.steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  padding: 0;
+  margin: 12px 0;
+  counter-reset: step;
+  list-style: none;
+}
+.steps li {
+  counter-increment: step;
+  color: var(--text-muted);
+}
+.steps li::before {
+  content: counter(step) '. ';
+}
+.steps li[data-state='current'] {
+  color: var(--text-strong);
+  font-weight: 600;
+}
+.steps li[data-state='done'] {
+  color: var(--ok);
+}
+.btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
 }

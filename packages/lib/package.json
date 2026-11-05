@@ -150,6 +150,10 @@
       "types": "./src/cspScriptHashes.d.mts",
       "default": "./src/cspScriptHashes.mjs"
     },
+    "./e2eDeploymentsBundle": {
+      "types": "./src/e2eDeploymentsBundle.d.mts",
+      "default": "./src/e2eDeploymentsBundle.mjs"
+    },
     "./markdownCitations": {
       "types": "./src/markdownCitations.d.mts",
       "default": "./src/markdownCitations.mjs"

@@ -1,0 +1,141 @@
+# alpha05 e2e — the next connected app's own verification tier (#3180,
+# rulebook docs/DesignsAndPlans/Alpha05AppDesign.md §5). Runs the real app
+# (Vite dev server) against a LOCAL anvil carrying the repository's CURRENT
+# contracts, deployed from source by the e2e global setup and presented as
+# Base Sepolia (`@vaipakam/anvil-harness`), with a stand-in for the two
+# Workers the app reads (the indexer's health route and push rail, the
+# read-only RPC proxy's route) and ephemeral per-run wallets — no secrets,
+# no live RPC. The job's inputs are the commit and nothing else.
+#
+# Its own workflow, keyed on apps/alpha05, separate from apps/app's
+# (`app-e2e.yml`): the two apps share the wallet fixture
+# (`packages/e2e-wallet`) and the Anvil harness but nothing of the app
+# under test, and a change to one must not run the other's suite.
+name: alpha05 e2e
+
+on:
+  pull_request:
+    paths:
+      - 'apps/alpha05/**'
+      - 'packages/contracts/**'
+      - 'packages/lib/**'
+      - 'packages/i18n/**'
+      - 'packages/anvil-harness/**'
+      - 'packages/e2e-wallet/**'
+      - 'contracts/src/**'
+      - 'contracts/script/**'
+      - 'contracts/test/mocks/**'
+      - 'contracts/lib/**'
+      - 'contracts/foundry.toml'
+      - 'contracts/remappings.txt'
+      - '.github/workflows/alpha05-e2e.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'apps/alpha05/**'
+      - 'packages/contracts/**'
+      - 'packages/lib/**'
+      - 'packages/i18n/**'
+      - 'packages/anvil-harness/**'
+      - 'packages/e2e-wallet/**'
+      - 'contracts/src/**'
+      - 'contracts/script/**'
+      - 'contracts/test/mocks/**'
+      - 'contracts/lib/**'
+      - 'contracts/foundry.toml'
+      - 'contracts/remappings.txt'
+      - '.github/workflows/alpha05-e2e.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: alpha05-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    name: anvil-tier scenarios
+    runs-on: ubuntu-latest
+    # A cold fixture compile (viaIR, every facet) is the long pole; the forge
+    # cache below makes most runs incremental.
+    timeout-minutes: 60
+    steps:
+      - name: Checkout (with submodules — the fixture compiles the contracts)
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          submodules: recursive
+
+      - name: Install Foundry (forge + anvil)
+        uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1.9.1
+        with:
+          # PINNED by number, never `stable` (#1984, owner decision
+          # 2026-10-28), in lockstep with app-e2e.yml and mainnet-gate.yml: a
+          # toolchain change lands as a reviewed commit. Bump by PR.
+          version: v1.8.6
+
+      # The same content-keyed cache as app-e2e.yml, under the SAME prefix:
+      # both suites compile the same fixture with the `default` profile, so
+      # the artifact trees are interchangeable and one warm cache serves both.
+      - name: Snapshot submodule SHAs (for content-based cache key)
+        working-directory: contracts
+        run: git submodule status --recursive > .submodule-state
+
+      - name: Cache forge artifacts
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            contracts/out
+            contracts/cache
+          key: forge-e2e-${{ runner.os }}-${{ hashFiles('contracts/foundry.toml', 'contracts/remappings.txt', 'contracts/.submodule-state') }}-${{ hashFiles('contracts/src/**/*.sol', 'contracts/script/**/*.sol', 'contracts/test/mocks/**/*.sol') }}
+          restore-keys: |
+            forge-e2e-${{ runner.os }}-${{ hashFiles('contracts/foundry.toml', 'contracts/remappings.txt', 'contracts/.submodule-state') }}-
+
+      # Global setup compiles too, but doing it as its own step keeps the
+      # compile's time and any compile error out of the Playwright log.
+      - name: Compile the e2e fixture (current contracts)
+        working-directory: contracts
+        env:
+          FOUNDRY_PROFILE: default
+        run: forge build script/e2e/DeployE2EFixture.s.sol
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install workspace deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Playwright Chromium
+        run: pnpm --filter @vaipakam/alpha05 exec playwright install --with-deps chromium
+
+      - name: Typecheck the e2e surface
+        run: pnpm --filter @vaipakam/alpha05 run e2e:typecheck
+
+      - name: Run e2e
+        run: pnpm --filter @vaipakam/alpha05 run e2e
+
+      - name: Upload traces on failure
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: alpha05-e2e-traces
+          path: apps/alpha05/test-results/
+          retention-days: 7
+
+      # The page snapshot Playwright writes per failure, printed into the job
+      # log so a diagnosis never requires downloading the trace artifact.
+      - name: Print failure context
+        if: failure()
+        run: |
+          for f in apps/alpha05/test-results/*/error-context.md; do
+            [ -f "$f" ] || continue
+            echo "===== $f ====="
+            cat "$f"
+          done

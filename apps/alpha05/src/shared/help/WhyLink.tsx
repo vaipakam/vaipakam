@@ -1,35 +1,45 @@
-import { useId, useState } from 'react';
-import type { Copy } from '../copy/tiers';
+import { useRef } from 'react';
+import { useCopy, type CopyKey } from '../copy/useCopy';
+import { useHelp } from './HelpContext';
 
 /**
- * RB-HELP — a one-line summary (tier B) followed by a "Why?" link that opens
- * the full explanation (tier C) from the SAME copy entry, ending with a
- * deep link to the user guide. Rendered as a disclosure here; the side
- * panel / bottom sheet replaces the inline disclosure in the shell PR.
- * Tooltips are not used (touch screens, screen readers, length).
+ * RB-HELP — a one-line summary (tier B) followed by a "Why?" link that
+ * opens the help panel on the full explanation (tier C) of the SAME copy
+ * key family. Both are keys, so the inline line, the panel and every
+ * locale bundle agree. Tooltips are not used (touch screens, screen
+ * readers, length).
  */
-export function WhyLink({ summary, detail, guideBase }: { summary: Copy; detail: Copy; guideBase: string }) {
-  const [open, setOpen] = useState(false);
-  const id = useId();
-  if (detail.tier !== 'C') throw new Error('WhyLink: the detail must be tier C');
+export function WhyLink({
+  summaryKey,
+  detailKey,
+  vars,
+  extra,
+}: {
+  summaryKey: CopyKey;
+  detailKey: CopyKey;
+  /** Placeholder values for the summary's `{{name}}`s. */
+  vars?: Readonly<Record<string, string>>;
+  /** A sentence appended after the summary (already translated). */
+  extra?: string;
+}) {
+  const { entry, text, format } = useCopy();
+  const { open } = useHelp();
+  const ref = useRef<HTMLButtonElement>(null);
+  const summary = vars ? { ...entry(summaryKey), text: format(summaryKey, vars) } : entry(summaryKey);
+  if (summary.tier === 'C') throw new Error(`WhyLink: "${summaryKey}" is tier C and cannot be inline`);
+  if (entry(detailKey).tier !== 'C') throw new Error(`WhyLink: "${detailKey}" must be tier C`);
   return (
-    <div className="why">
-      <p className="tier-b">
-        {summary.text}{' '}
-        <button type="button" className="link" aria-expanded={open} aria-controls={id} onClick={() => setOpen((o) => !o)}>
-          Why?
-        </button>
-      </p>
-      {open && (
-        <div id={id} className="why-panel" role="region" aria-label="Explanation">
-          <p>{detail.text}</p>
-          {detail.guide && (
-            <a href={`${guideBase}#${detail.guide}`} target="_blank" rel="noreferrer">
-              Read more in the user guide
-            </a>
-          )}
-        </div>
-      )}
-    </div>
+    <p className={`why ${summary.tier === 'A' ? 'tier-a' : 'tier-b'}`}>
+      {summary.text}
+      {extra ? ` ${extra}` : ''}{' '}
+      <button
+        ref={ref}
+        type="button"
+        className="link"
+        onClick={() => open({ summaryKey, detailKey, vars, returnTo: ref.current })}
+      >
+        {text('help.why')}
+      </button>
+    </p>
   );
 }

@@ -532,7 +532,7 @@
     // would break the very smoke test the staging plan prescribes — so
     // it is withdrawn rather than acted on. Retire this entry only if
     // the review target itself stops being the workers.dev URL.
-    "FRONTEND_ORIGIN": "https://defi.vaipakam.com,https://app.vaipakam.com,https://labs.vaipakam.com,https://www.vaipakam.com,https://vaipakam.com,https://alpha02.vaipakam.com,https://vaipakam-app.dawn-fire-139e.workers.dev",
+    "FRONTEND_ORIGIN": "https://defi.vaipakam.com,https://app.vaipakam.com,https://labs.vaipakam.com,https://www.vaipakam.com,https://vaipakam.com,https://alpha02.vaipakam.com,https://vaipakam-app.dawn-fire-139e.workers.dev,https://alpha05.vaipakam.com,https://vaipakam-alpha05.dawn-fire-139e.workers.dev",
     "DIAG_SAMPLE_RATE": "1.0",
     "DIAG_RETENTION_DAYS": "90",
   },
