@@ -738,7 +738,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](52);
+        selectors = new bytes4[](54);
         selectors[0] = AdminFacet.setTreasury.selector;
         selectors[1] = AdminFacet.getTreasury.selector;
         selectors[2] = AdminFacet.setZeroExProxy.selector;
@@ -799,6 +799,9 @@ contract HelperTest {
         // #1637 — reads for the two kill switches.
         selectors[50] = AdminFacet.aggregatorAdaptersPaused.selector;
         selectors[51] = AdminFacet.peerLtvReadsPaused.selector;
+        // #3173 — the bounded escape period.
+        selectors[52] = AdminFacet.setEscapeGraceSeconds.selector;
+        selectors[53] = AdminFacet.getEscapeGraceSeconds.selector;
         return selectors;
     }
 
@@ -1522,7 +1525,7 @@ contract HelperTest {
 
     /// @dev Selectors for `VaultPayoutFacet` — the payout queue, the vault credit and the escape route.
     function getVaultPayoutFacetSelectors() public pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](14);
+        selectors = new bytes4[](15);
         selectors[0] = VaultPayoutFacet.applyPayoutGate.selector;
         selectors[1] = VaultPayoutFacet.cancelPayout.selector;
         selectors[2] = VaultPayoutFacet.cosignPayout.selector;
@@ -1537,6 +1540,8 @@ contract HelperTest {
         selectors[11] = VaultPayoutFacet.releasePayout.selector;
         selectors[12] = VaultPayoutFacet.requestCode.selector;
         selectors[13] = VaultPayoutFacet.cosignPositionTransfer.selector;
+        // #3173 — when the escape opens under the current pause.
+        selectors[14] = VaultPayoutFacet.escapeOpensAt.selector;
     }
 
     /// @dev Selectors for `VaultDepositoryFacet` — the depository vault: deposit, withdraw, adopt, disown and the upgrade pin.

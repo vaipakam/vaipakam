@@ -109,10 +109,14 @@ remain governed by [Keeper Operations](KeeperOperations.md).
 
 ## Pause escape and implementation pinning
 
-- A continuous administrative pause of three days opens the owner's escape
-  withdrawal route from their own vault to their own wallet. An automatic
-  pause during that period does not restart the count. Queued payouts remain
-  releasable.
+- A continuous administrative pause lasting the escape period opens the
+  owner's escape withdrawal route from their own vault to their own wallet.
+  An automatic pause during that period does not restart the count. Queued
+  payouts remain releasable.
+- The escape period is three days by default; the admin may set it between
+  49 hours and seven days. Each administrative pause keeps the period in force
+  when it started, so a change applies only to pauses that start afterwards.
+  The time the running pause's escape opens is readable.
 - An owner may pin the vault's current implementation. A vault behind the
   current release is upgraded before it is pinned, so the pin names the code
   actually in use. Only the owner can upgrade a pinned vault; protected mode
