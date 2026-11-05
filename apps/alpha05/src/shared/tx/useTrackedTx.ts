@@ -13,9 +13,13 @@
  * is tracked and measured; when it cancels or replaces it with another call,
  * the flow ends `superseded` with both hashes, and the intended effects are
  * not measured, because they did not happen through this transaction.
+ * The chain, account and measurement a transaction was SUBMITTED with are
+ * kept with its hash, so a resume after the reader switched wallet or
+ * network still polls the right chain and measures the sender's positions.
  */
 import { useCallback, useRef, useState } from 'react';
-import { usePublicClient } from 'wagmi';
+import { useConfig } from 'wagmi';
+import { getPublicClient } from 'wagmi/actions';
 import type { ReplacementReason, TransactionReceipt } from 'viem';
 import { announceOwnChange } from '../reads/signals';
 import { refusalFromError } from '../eligibility/refusal';
@@ -30,6 +34,13 @@ export interface TrackedTxOptions {
   /** Read the chain back after the receipt: one leg per intended effect.
    *  A leg the read-back cannot substantiate is `unknown`, never omitted. */
   measure: (receipt: TransactionReceipt) => Promise<readonly LegOutcome[]>;
+}
+
+/** What a transaction was submitted with, kept with its hash. */
+interface Submission {
+  chainId: number;
+  account: `0x${string}`;
+  measure: TrackedTxOptions['measure'];
 }
 
 export interface TrackedTx {
@@ -48,7 +59,9 @@ export interface TrackedTx {
 export function useTrackedTx(opts: TrackedTxOptions): TrackedTx {
   const [phase, setPhase] = useState<TxPhase>({ kind: 'idle' });
   const phaseRef = useRef(phase);
-  const client = usePublicClient({ chainId: opts.chainId });
+  const config = useConfig();
+  /** The context of the transaction in flight: what it was submitted with. */
+  const submittedWith = useRef<Submission | null>(null);
 
   const apply = useCallback((event: TxEvent) => {
     const next = transition(phaseRef.current, event);
@@ -63,7 +76,8 @@ export function useTrackedTx(opts: TrackedTxOptions): TrackedTx {
   // From `submitted` or `receipt-unknown`: wait for the receipt, then
   // measure. A receipt that cannot be read keeps the hash in the phase.
   const track = useCallback(
-    async (hash: `0x${string}`) => {
+    async (hash: `0x${string}`, ctx: Submission) => {
+      const client = getPublicClient(config, { chainId: ctx.chainId });
       if (!client) {
         apply({ type: 'receipt-unknown', hash, message: 'No chain client for this network; the transaction was sent and its receipt is not tracked here.' });
         return;
@@ -77,7 +91,7 @@ export function useTrackedTx(opts: TrackedTxOptions): TrackedTx {
         return;
       }
       // Something mined from this account either way: every tab re-reads.
-      announceOwnChange({ chainId: opts.chainId, account: opts.account, cause: 'receipt' });
+      announceOwnChange({ chainId: ctx.chainId, account: ctx.account, cause: 'receipt' });
       const reason = replacement as ReplacementReason | null;
       if (reason === 'cancelled' || reason === 'replaced') {
         apply({ type: 'superseded', submittedHash: hash, minedHash: receipt.transactionHash, reason, blockNumber: receipt.blockNumber });
@@ -94,13 +108,13 @@ export function useTrackedTx(opts: TrackedTxOptions): TrackedTx {
       if (mined.kind !== 'mined') return;
       let legs: readonly LegOutcome[];
       try {
-        legs = await opts.measure(receipt);
+        legs = await ctx.measure(receipt);
       } catch (e) {
         legs = [{ status: 'unknown', label: 'outcome', reason: `The read-back failed: ${(e as Error).message}` }];
       }
       apply({ type: 'measured', hash: mined.hash, outcome: summarize(legs, Date.now()) });
     },
-    [apply, client, opts],
+    [apply, config],
   );
 
   const run = useCallback(async () => {
@@ -112,17 +126,20 @@ export function useTrackedTx(opts: TrackedTxOptions): TrackedTx {
       apply({ type: 'failed', message: refusalFromError(e).reason });
       return;
     }
+    const ctx: Submission = { chainId: opts.chainId, account: opts.account, measure: opts.measure };
+    submittedWith.current = ctx;
     apply({ type: 'submitted', hash, at: Date.now() });
-    await track(hash);
+    await track(hash, ctx);
   }, [apply, opts, track]);
 
   const resume = useCallback(async () => {
     const current = phaseRef.current;
     // The phase moves to `submitted` synchronously, before the wait, so a
     // second resume or a reset during it is refused by the transition rule.
-    if (current.kind !== 'receipt-unknown') throw new IllegalTransition(current.kind, 'resume');
+    const ctx = submittedWith.current;
+    if (current.kind !== 'receipt-unknown' || ctx === null) throw new IllegalTransition(current.kind, 'resume');
     apply({ type: 'resume', hash: current.hash });
-    await track(current.hash);
+    await track(current.hash, ctx);
   }, [apply, track]);
 
   return { phase, review, run, resume, reset };

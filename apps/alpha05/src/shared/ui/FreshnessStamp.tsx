@@ -10,6 +10,8 @@ import { Notice } from './Notice';
  * source warning that says figures are unavailable, not empty; a re-read
  * that failed after an earlier answer is a warning beside that last answer
  * (the figures shown are the last read, aged, never a fresh-looking stamp);
+ * an index that reports it has stopped scanning says so at once, with its
+ * reason, instead of waiting for the age to cross the stale line;
  * and the push rail's own state is named, so a quiet rail is told from a
  * stalled one.
  */
@@ -53,6 +55,13 @@ export function FreshnessStamp({ freshness, push, onRefresh }: { freshness: Fres
     return (
       <Notice tone="warn" tier="A">
         {format('rail.refreshFailed', { reason: freshness.refreshError })} {where} {pushLine} {refresh}
+      </Notice>
+    );
+  }
+  if (freshness.halted !== null) {
+    return (
+      <Notice tone="warn" tier="A">
+        {format('rail.halted', { reason: freshness.halted })} {where} {pushLine} {refresh}
       </Notice>
     );
   }

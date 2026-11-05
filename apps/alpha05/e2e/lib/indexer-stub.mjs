@@ -5,8 +5,9 @@
 //    every request (its cursor is the chain's head, scanned "now"), so the
 //    freshness stamp reads a real block and a real age, and the posture
 //    control lets a spec put the index into `stale` (cursor half an hour
-//    behind), `down` (503) or `other-diamond` (an index describing a
-//    protocol contract this build does not bind to) — the three states
+//    behind), `down` (503), `other-diamond` (an index describing a
+//    protocol contract this build does not bind to) or `schema-pending`
+//    (the indexer's schema gate has stopped its scans) — the states
 //    RB-RAILS says the stamp must tell apart;
 //  - the indexer's push rail, `GET /ws/chain/:chainId`: refused with 503,
 //    the indexer's own answer while push is off, so the stamp's "push
@@ -34,7 +35,7 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 // committed one, whose 84532 entry is the live testnet).
 const DEPLOYMENT = JSON.parse(fs.readFileSync(path.resolve(HERE, '..', '.state', 'deployments.json'), 'utf8'))[String(CHAIN_ID)];
 
-/** @type {'live' | 'stale' | 'down' | 'other-diamond'} */
+/** @type {'live' | 'stale' | 'down' | 'other-diamond' | 'schema-pending'} */
 let posture = 'live';
 
 async function anvil(method, params = []) {
@@ -54,7 +55,7 @@ async function ingestHealth() {
   const scannedAt = posture === 'stale' ? now - STALE_SECONDS : now;
   return {
     checkedAt: now,
-    schema: { state: 'current', pending: [] },
+    schema: posture === 'schema-pending' ? { state: 'pending', missing: ['9999_e2e_stand_in.sql'] } : { state: 'current' },
     chains: [
       {
         chainId: CHAIN_ID,
@@ -115,7 +116,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (url.pathname === '/__stub/index-posture' && req.method === 'POST') {
       const { posture: next } = JSON.parse(await readBody(req));
-      if (!['live', 'stale', 'down', 'other-diamond'].includes(next)) {
+      if (!['live', 'stale', 'down', 'other-diamond', 'schema-pending'].includes(next)) {
         json(res, 400, { error: `unknown posture ${String(next)}` });
         return;
       }
@@ -158,8 +159,26 @@ const server = http.createServer(async (req, res) => {
 // The push rail: an upgrade request is refused the way the indexer refuses
 // one while push is off. The app's rail then reports unavailable and keeps
 // polling, which is the degradable-by-construction behaviour under test.
+//
+// The upgrade hands over a RAW socket, which has no error listener of its
+// own: a browser that resets it (the page navigates, the context closes)
+// would raise an unhandled 'error' and kill this process, and every later
+// spec would then meet a refused connection instead of its posture. A reset
+// of a refused socket is expected, so it is swallowed here; the body length
+// is computed, so the declared length can never disagree with it.
+const PUSH_OFF = JSON.stringify({ error: 'e2e stand-in: push rail is off' });
 server.on('upgrade', (req, socket) => {
-  socket.end('HTTP/1.1 503 Service Unavailable\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: 42\r\n\r\n{"error":"e2e stand-in: push rail is off"}\r\n');
+  socket.on('error', () => {});
+  socket.end(
+    'HTTP/1.1 503 Service Unavailable\r\nContent-Type: application/json\r\nConnection: close\r\n' +
+      `Content-Length: ${Buffer.byteLength(PUSH_OFF)}\r\n\r\n${PUSH_OFF}`,
+  );
+});
+
+// A client that drops an ordinary request mid-way is not this process's
+// failure either: close that socket and keep serving.
+server.on('clientError', (err, socket) => {
+  if (!socket.destroyed) socket.destroy();
 });
 
 server.listen(PORT, '127.0.0.1', () => {

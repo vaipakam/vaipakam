@@ -69,6 +69,11 @@ export default async function globalSetup(): Promise<void> {
     cwd: path.join(HERE, '..'),
   });
   if (stub.pid) pids.push(stub.pid);
+  // If the stand-in dies mid-run every later spec fails on a refused
+  // connection, far from the cause; say so in the log the moment it happens.
+  stub.on('exit', (code, signal) => {
+    if (code !== 0 && signal !== 'SIGTERM') console.error(`[e2e] stand-in Worker EXITED mid-run (code ${code}, signal ${signal}); later specs will see refused connections`);
+  });
   fs.writeFileSync(PIDS_FILE, JSON.stringify(pids));
   await waitForHttp(`${STUB_ORIGIN}/health/ingest`);
   if (stub.exitCode !== null) throw new Error(`stand-in Worker exited early (code ${stub.exitCode})`);

@@ -2,7 +2,7 @@
 export const STUB_PORT = Number(process.env.ALPHA05_E2E_STUB_PORT ?? 8789);
 export const STUB_ORIGIN = `http://127.0.0.1:${STUB_PORT}`;
 
-export type IndexPosture = 'live' | 'stale' | 'down' | 'other-diamond';
+export type IndexPosture = 'live' | 'stale' | 'down' | 'other-diamond' | 'schema-pending';
 
 /** Put the stand-in index into a posture: `stale` reports a cursor half an
  *  hour old, `down` answers 503, `other-diamond` reports a Diamond this

@@ -16,9 +16,16 @@
  * beside the last answer, never swallowed into a healthy-looking stamp.
  */
 
-/** The subset of the indexer's answer this app reads. */
+/** The subset of the indexer's answer this app reads. `schema` is the
+ *  indexer's own schema gate: while it is not `current` the indexer declines
+ *  every scheduled scan (apps/indexer index.ts), so the index is stopped,
+ *  whatever its last cursor says. */
 export interface IngestHealth {
   checkedAt: number;
+  schema: { state: 'current' } | { state: 'pending'; missing: readonly string[] } | { state: 'unknown' };
+  /** The chains this indexer deployment is configured to scan. A chain with
+   *  rows but outside this list keeps its last cursor and never advances. */
+  configured?: { chains: readonly number[] };
   chains: readonly {
     chainId: number;
     lastBlock: number | null;
@@ -43,6 +50,9 @@ export type Freshness =
       ageSeconds: number;
       /** The latest re-read failed: these figures are the last answer, aged. */
       refreshError: string | null;
+      /** The indexer reports that it has stopped scanning, and why: its last
+       *  cursor stands, aged, but it will not advance until this lifts. */
+      halted: string | null;
     };
 
 export interface FreshnessInputs {
@@ -87,7 +97,28 @@ export function freshnessOf({ health, error, chainId, diamond, elapsedSec }: Fre
     scannedAt: chain.scannedAt,
     ageSeconds,
     refreshError: error,
+    halted: ingestHalt(health.schema) ?? notScanned(health.configured, chainId),
   };
+}
+
+/** A chain the indexer keeps rows for but is no longer configured to scan:
+ *  its cursor is real and will never move. An answer without the list says
+ *  nothing either way (older indexers), so it is not read as a halt. */
+function notScanned(configured: IngestHealth['configured'], chainId: number): string | null {
+  if (!configured || configured.chains.includes(chainId)) return null;
+  return 'the index is no longer configured to scan this chain';
+}
+
+/** Why the indexer has stopped scanning, from its own schema gate, or null
+ *  while it scans. An answer without the field is not taken as `current`:
+ *  this app only calls an index running when the index says so. */
+export function ingestHalt(schema: IngestHealth['schema'] | undefined): string | null {
+  if (schema?.state === 'current') return null;
+  if (schema?.state === 'pending') {
+    const n = schema.missing.length;
+    return `the index has stopped scanning until its database is updated (${n} ${n === 1 ? 'change' : 'changes'} waiting)`;
+  }
+  return 'the index has stopped scanning because it cannot confirm its database is up to date';
 }
 
 /** A push-rail cursor frame newer than an ATTRIBUTED polled answer advances
@@ -108,5 +139,5 @@ export function withCursor(
   if (freshness.kind !== 'fresh' && freshness.kind !== 'stale') return freshness;
   if (cursor.updatedAt <= freshness.scannedAt) return freshness;
   const ageSeconds = nowSec - cursor.updatedAt;
-  return { kind: ageSeconds >= STALE_AFTER_SEC ? 'stale' : 'fresh', lastBlock: cursor.lastBlock, scannedAt: cursor.updatedAt, ageSeconds, refreshError: freshness.refreshError };
+  return { kind: ageSeconds >= STALE_AFTER_SEC ? 'stale' : 'fresh', lastBlock: cursor.lastBlock, scannedAt: cursor.updatedAt, ageSeconds, refreshError: freshness.refreshError, halted: freshness.halted };
 }

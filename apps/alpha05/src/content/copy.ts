@@ -66,6 +66,7 @@ export const copy = {
     stale: A('The index has not advanced for {{age}}; world figures may be behind the chain.'),
     unavailable: A('The index could not be read ({{reason}}). World figures are unavailable, not empty.'),
     unknown: B('Index position unknown: {{reason}}'),
+    halted: A('World figures will fall behind the chain: {{reason}}. The last scan is shown below.'),
     refreshFailed: A('The index could not be re-read ({{reason}}). World figures are from its last answer, aged below, and may be behind the chain.'),
     pushLive: B('Push live.'),
     pushConnecting: B('Push connecting.'),

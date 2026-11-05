@@ -36,6 +36,18 @@ test('an index that has not advanced for half an hour is a tier-A stale notice',
   await expect(notice).toContainText(/Index at block \d+/);
 });
 
+test('an index that has stopped scanning says so at once, with its last block', async ({ launchWallet }) => {
+  // The cursor is current: only the indexer's own schema gate says the
+  // scans have stopped, and the stamp must not wait for the age to tell.
+  await setIndexPosture('schema-pending');
+  const { page } = await launchWallet('visitor');
+  await page.goto('/');
+  const notice = page.locator('.stamp-row').getByText('World figures will fall behind the chain:', { exact: false });
+  await expect(notice).toBeVisible();
+  await expect(notice).toContainText('the index has stopped scanning until its database is updated (1 change waiting)');
+  await expect(notice).toContainText(/Index at block \d+/);
+});
+
 test('an unreadable index says world figures are unavailable, not empty', async ({ launchWallet }) => {
   await setIndexPosture('down');
   const { page } = await launchWallet('visitor');

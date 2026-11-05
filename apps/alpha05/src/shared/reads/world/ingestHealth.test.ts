@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { STALE_AFTER_SEC, freshnessOf, withCursor, type IngestHealth } from './ingestHealth';
+import { STALE_AFTER_SEC, freshnessOf, ingestHalt, withCursor, type IngestHealth } from './ingestHealth';
 
 const DIAMOND = '0x63816B149266C9dBFB7683dfd02D851915238049';
-const health = (over: Partial<IngestHealth['chains'][number]> = {}): IngestHealth => ({
+const health = (over: Partial<IngestHealth['chains'][number]> = {}, schema: IngestHealth['schema'] = { state: 'current' }): IngestHealth => ({
   checkedAt: 1_000_000,
+  schema,
   chains: [{ chainId: 84532, lastBlock: 500, scannedAt: 999_940, ageSeconds: 60, deployment: { diamond: DIAMOND, resetPending: false, adoptedBlind: false }, ...over }],
 });
 const base = { chainId: 84532, diamond: DIAMOND, elapsedSec: 0, error: null };
@@ -13,7 +14,7 @@ describe('freshnessOf', () => {
     expect(freshnessOf({ ...base, health: null, error: 'timed out' })).toEqual({ kind: 'unavailable', reason: 'timed out' });
   });
   it('is fresh with the block and age the index reports, aged by the time since the read', () => {
-    expect(freshnessOf({ ...base, health: health(), elapsedSec: 30 })).toEqual({ kind: 'fresh', lastBlock: 500, scannedAt: 999_940, ageSeconds: 90, refreshError: null });
+    expect(freshnessOf({ ...base, health: health(), elapsedSec: 30 })).toEqual({ kind: 'fresh', lastBlock: 500, scannedAt: 999_940, ageSeconds: 90, refreshError: null, halted: null });
   });
   it('is stale once the cursor has not advanced for half an hour', () => {
     expect(freshnessOf({ ...base, health: health({ ageSeconds: STALE_AFTER_SEC }) }).kind).toBe('stale');
@@ -54,14 +55,36 @@ describe('freshnessOf', () => {
       scannedAt: 999_940,
       ageSeconds: 180,
       refreshError: 'HTTP 503',
+      halted: null,
     });
+  });
+});
+
+describe('ingest halt', () => {
+  it('discloses a stopped index at once, keeping its last block and age', () => {
+    const f = freshnessOf({ ...base, health: health({}, { state: 'pending', missing: ['0084_x.sql', '0085_y.sql'] }) });
+    expect(f).toMatchObject({ kind: 'fresh', lastBlock: 500, halted: 'the index has stopped scanning until its database is updated (2 changes waiting)' });
+    expect(freshnessOf({ ...base, health: health({}, { state: 'unknown' }) })).toMatchObject({ halted: 'the index has stopped scanning because it cannot confirm its database is up to date' });
+  });
+  it('discloses a chain the index keeps rows for but no longer scans', () => {
+    const h = { ...health(), configured: { chains: [97] } };
+    expect(freshnessOf({ ...base, health: h })).toMatchObject({ kind: 'fresh', halted: 'the index is no longer configured to scan this chain' });
+    expect(freshnessOf({ ...base, health: { ...health(), configured: { chains: [84532] } } })).toMatchObject({ halted: null });
+  });
+  it('treats an answer without a schema status as not proven running', () => {
+    expect(ingestHalt(undefined)).not.toBeNull();
+    expect(ingestHalt({ state: 'current' })).toBeNull();
+  });
+  it('keeps the halt when a push cursor advances the stamp', () => {
+    const f = freshnessOf({ ...base, health: health({}, { state: 'unknown' }) });
+    expect(withCursor(f, { lastBlock: 600, updatedAt: 999_990 }, 1_000_000)).toMatchObject({ lastBlock: 600, halted: expect.any(String) });
   });
 });
 
 describe('withCursor', () => {
   const fresh = freshnessOf({ ...base, health: health() });
   it('advances the stamp on a newer push cursor', () => {
-    expect(withCursor(fresh, { lastBlock: 600, updatedAt: 999_990 }, 1_000_000)).toEqual({ kind: 'fresh', lastBlock: 600, scannedAt: 999_990, ageSeconds: 10, refreshError: null });
+    expect(withCursor(fresh, { lastBlock: 600, updatedAt: 999_990 }, 1_000_000)).toEqual({ kind: 'fresh', lastBlock: 600, scannedAt: 999_990, ageSeconds: 10, refreshError: null, halted: null });
   });
   it('ignores a cursor dated ahead of the clock', () => {
     expect(withCursor(fresh, { lastBlock: 600, updatedAt: 1_000_001 }, 1_000_000)).toBe(fresh);
