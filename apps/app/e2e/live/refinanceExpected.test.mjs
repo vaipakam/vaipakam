@@ -29,6 +29,7 @@ import {
   approvalBetween,
   borrowerReserve,
   graceSecondsFrom,
+  lateFeeAt,
   payoffApprovalBounds,
   refinancePayoffAt,
   refinancePlanSteps,
@@ -62,7 +63,6 @@ const LOAN = {
   durationDays: 29n,
   interestRateBps: 1000n,
   interestAccrualStart: 1_790_964_520n,
-  interestRemainingDays: 29,
 };
 const TERMS_ARGS = {
   loan: LOAN,
@@ -321,10 +321,10 @@ describe('refinanceExpected — complete payloads, closed in both directions', (
     const anchor = 1_800_000_000n;
     // A one-year loan that started a day before the anchor: its grace end
     // is ~a year out, far past the request's 30-day window.
-    const long = { ...LOAN, startTime: anchor - DAY, interestAccrualStart: anchor - DAY, durationDays: 365n, interestRemainingDays: 365, useFullTermInterest: false };
-    // Accrual past the floor: make interest grow with elapsed days by
-    // setting the remaining-term floor to 0 days.
-    const growing = { ...long, interestRemainingDays: 0 };
+    const long = { ...LOAN, startTime: anchor - DAY, interestAccrualStart: anchor - DAY, durationDays: 365n, useFullTermInterest: false };
+    // #3169 — the minimum runs to the term's end; past it (the grace end is a
+    // month past maturity) interest grows with elapsed seconds.
+    const growing = long;
     const grace = 30n * DAY;
     const graceEnd = growing.startTime + growing.durationDays * DAY + grace;
     const lastFillable = anchor + ANCHOR_WINDOW_SEC + 30n * DAY - 1n;
@@ -360,7 +360,7 @@ describe('refinanceExpected — complete payloads, closed in both directions', (
 });
 
 // #2422 r8 — the borrower's top-up reserve comes from the LIVE remaining
-// term (interestAccrualStart / interestRemainingDays, and the contract's
+// term (interestAccrualStart to the term's end, #3169, and the contract's
 // payoff view), never from the loan's original durationDays.
 describe('refinanceExpected — the borrower reserve', () => {
   const DAY = 86_400n;
@@ -384,7 +384,6 @@ describe('refinanceExpected — the borrower reserve', () => {
       interestRateBps: 1000n,
       // A partial repayment on day 50 re-anchored the clock: 10 days left.
       interestAccrualStart: t0 + 50n * DAY,
-      interestRemainingDays: 10,
     };
     const tenDays = (10n ** 18n * 1000n * 10n) / (365n * 10_000n);
     const sixtyDays = (10n ** 18n * 1000n * 60n) / (365n * 10_000n);
@@ -406,16 +405,18 @@ describe('refinanceExpected — the borrower reserve', () => {
     expect(r.payoff).toBe(5_100_000_000_000_000n);
   });
 
-  it('reserves for a whole-day accrual step inside the horizon', () => {
-    // A loan whose elapsed days already equal its remaining floor: one more
-    // day of interest accrues if the accept lands after the next day mark.
+  it('reserves for the per-second accrual inside the horizon (#3169)', () => {
+    // A 3-day loan four days in: past its minimum, interest grows by the
+    // second, so the horizon's two hours are reserved too. It is past
+    // maturity as well, so the late fee at each moment is part of the share.
     const start = 1_700_000_000n;
-    const l = { ...LOAN, interestAccrualStart: start, startTime: start, interestRemainingDays: 3, durationDays: 30n };
-    const asOf = start + 4n * DAY - 60n; // one minute before day 4 begins
+    const l = { ...LOAN, interestAccrualStart: start, startTime: start, durationDays: 3n };
+    const asOf = start + 4n * DAY - 60n;
     const now = borrowerReserve({ loan: l, viewDue: 0n, asOf, horizonSec: 0n, lifBps: 0n });
     const later = borrowerReserve({ loan: l, viewDue: 0n, asOf, horizonSec: HORIZON, lifBps: 0n });
-    const interestFor = (days) => (l.principal * l.interestRateBps * days) / (365n * 10_000n);
-    expect(now.interestShare).toBe(interestFor(3n));
-    expect(later.interestShare).toBe(interestFor(4n));
+    const interestFor = (secs) => (l.principal * l.interestRateBps * secs) / (365n * DAY * 10_000n);
+    expect(now.interestShare).toBe(interestFor(4n * DAY - 60n) + lateFeeAt(l, asOf));
+    expect(later.interestShare).toBe(interestFor(4n * DAY - 60n + HORIZON) + lateFeeAt(l, asOf + HORIZON));
+    expect(later.interestShare).toBeGreaterThan(now.interestShare);
   });
 });

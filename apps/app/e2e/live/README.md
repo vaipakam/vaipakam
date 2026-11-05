@@ -50,6 +50,15 @@ SITE_URL=https://<the-deployed-worker>.workers.dev \
   but never imports it fails every routed request in such a sandbox
   with no hint that the shim was ignored, so keep the import next to
   the fetch capture when adding a new one.
+- `RPC_PROXY_ORIGIN` — the read-only RPC proxy (#1724) the build under
+  review reads chains through; default `https://rpc.vaipakam.com`, which
+  is what the production build ships. The driver's read-only guard
+  refuses every POST to our own hosts, except a JSON-RPC POST to this
+  origin's `/rpc/<chainId>` route. That one gets the same method check
+  as a third-party RPC provider, so a write or an unlisted method is
+  still a finding (`rpcProxyRoute.mjs`). Set it when the build was
+  given a different `VITE_RPC_PROXY_ORIGIN`. A wrong value makes no
+  exemption, so the drive's reads are refused, loudly.
 - `FAUCET_JSON` — optional deployments artifact for the faucet mock
   token addresses (defaults to the live Base Sepolia set).
 

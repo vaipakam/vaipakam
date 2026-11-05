@@ -180,7 +180,7 @@ export function repatDrawUnavailableGap(
       `The draw is UNKNOWN this tick, so the availability-formula, repat-cap AND keeper-cap checks for this chain did NOT run (substituting zero would page a false CRITICAL on any chain with a live repatriation). keeper-cap is included because its remaining-capacity figure is measured AFTER the repatriation draw, so an unreadable repat draw disables it too — the keeper draw's own capacity bound is NOT monitored in this window either.\n\n` +
       (preC2
         ? `The selector does not exist in this Diamond's CURRENT CUT — either a pre-C2 deployment, or a partial facet refresh that dropped the RepatriationFacet while its storage (possibly nonzero) persists; selector absence cannot distinguish the two. Cut the facet (back) in to close this gap.`
-        : `The view did not revert, so the cause is not the cut; the classification above names what failed. Inside a batched read that is usually an answer that does not decode against the compiled ABI, so re-export the facet ABIs if the Diamond changed. (A transport failure fails the whole batch and is reported as the chain being unreadable instead.)`),
+        : `The view did not revert, so the cause is not the cut; the classification above names what failed. Inside a batched read that is usually an answer that does not decode against the compiled ABI, so if the Diamond changed, re-export the facet ABIs and refresh this Worker's copy ("npm run abi:write" in ops/mesh-watcher). (A transport failure fails the whole batch and is reported as the chain being unreadable instead.)`),
   };
 }
 
@@ -209,7 +209,7 @@ export function keeperDrawUnavailableGap(
       `The draw is UNKNOWN this tick, so the availability-formula, keeper-cap AND (on the canonical chain) the base-self-inert keeper leg did NOT run (substituting zero would page a false CRITICAL on any chain with an armed keeper allocation, and the cap check has nothing to compare). Naming all three matters during an incident: the draw's capacity bound is NOT monitored in this window, and on Base the self-inertness leg is the ONLY check that would catch a keeper draw booked against the canonical id.\n\n` +
       (pre1569
         ? `The selector does not exist in this Diamond's CURRENT CUT — either a pre-#1569 deployment, or a partial facet refresh that dropped the RewardAggregatorFacet while its storage (possibly nonzero) persists; selector absence cannot distinguish the two. Cut the facet (back) in to close this gap.`
-        : `The view did not revert, so the cause is not the cut; the classification above names what failed. Inside a batched read that is usually an answer that does not decode against the compiled ABI, so re-export the facet ABIs if the Diamond changed. (A transport failure fails the whole batch and is reported as the chain being unreadable instead.)`),
+        : `The view did not revert, so the cause is not the cut; the classification above names what failed. Inside a batched read that is usually an answer that does not decode against the compiled ABI, so if the Diamond changed, re-export the facet ABIs and refresh this Worker's copy ("npm run abi:write" in ops/mesh-watcher). (A transport failure fails the whole batch and is reported as the chain being unreadable instead.)`),
   };
 }
 
@@ -231,7 +231,7 @@ export function remittedRecycledUnavailableGap(chainId: number, err: unknown): C
       `The acknowledged recycled share is UNKNOWN this tick, so the relocated-custody leg of base-ahead-of-chain did NOT run for this chain: an arrival credited as absorption instead of relocated custody is NOT being watched in this window.\n\n` +
       (missing
         ? `The selector does not exist in this Diamond's CURRENT CUT — a pre-#1452 deployment, or a refresh that dropped the remittance lens. Cut it (back) in to close this gap.`
-        : `The view did not revert, so the cause is not the cut; the classification above names what failed. Inside a batched read that is usually an answer that does not decode against the compiled ABI, so re-export the facet ABIs if the Diamond changed. (A transport failure fails the whole batch and is reported as the chain being unreadable instead.)`),
+        : `The view did not revert, so the cause is not the cut; the classification above names what failed. Inside a batched read that is usually an answer that does not decode against the compiled ABI, so if the Diamond changed, re-export the facet ABIs and refresh this Worker's copy ("npm run abi:write" in ops/mesh-watcher). (A transport failure fails the whole batch and is reported as the chain being unreadable instead.)`),
   };
 }
 
@@ -350,7 +350,7 @@ export function repatPositionUnavailableGap(
       `The repatriated-out cumulative is UNKNOWN this tick, so bucket composition for this chain did NOT run (substituting zero would page a false CRITICAL after any real repatriation).\n\n` +
       (preC2
         ? `The selector does not exist in this Diamond's CURRENT CUT — either a pre-C2 deployment, or a partial facet refresh that dropped the RepatriationFacet while its storage (possibly nonzero) persists; selector absence cannot distinguish the two. Cut the facet (back) in to close this gap.`
-        : `The view did not revert, so the cause is not the cut; the classification above names what failed. Inside a batched read that is usually an answer that does not decode against the compiled ABI, so re-export the facet ABIs if the Diamond changed. (A transport failure fails the whole batch and is reported as the chain being unreadable instead.)`),
+        : `The view did not revert, so the cause is not the cut; the classification above names what failed. Inside a batched read that is usually an answer that does not decode against the compiled ABI, so if the Diamond changed, re-export the facet ABIs and refresh this Worker's copy ("npm run abi:write" in ops/mesh-watcher). (A transport failure fails the whole batch and is reported as the chain being unreadable instead.)`),
   };
 }
 
@@ -375,7 +375,7 @@ export function reattributionUnavailableGap(
       `The two reattribution cumulatives are UNKNOWN this tick, so bucket composition for this chain did NOT run (substituting zero would page a false CRITICAL after any real correction of a classification).\n\n` +
       (missing
         ? `The selector does not exist in this Diamond's CURRENT CUT — either a deployment predating the reconciliation epoch, or a partial facet refresh that dropped the RewardReconciliationFacet while its storage (possibly nonzero) persists; selector absence cannot distinguish the two. Cut the facet (back) in to close this gap.`
-        : `The view did not revert, so the cause is not the cut; the classification above names what failed. Inside a batched read that is usually an answer that does not decode against the compiled ABI, so re-export the facet ABIs if the Diamond changed. (A transport failure fails the whole batch and is reported as the chain being unreadable instead.)`),
+        : `The view did not revert, so the cause is not the cut; the classification above names what failed. Inside a batched read that is usually an answer that does not decode against the compiled ABI, so if the Diamond changed, re-export the facet ABIs and refresh this Worker's copy ("npm run abi:write" in ops/mesh-watcher). (A transport failure fails the whole batch and is reported as the chain being unreadable instead.)`),
   };
 }
 
@@ -400,7 +400,7 @@ export function backingSnapshotUnavailableGap(
       `The balance / arrival-reservation tuple AND the custody activation state are UNKNOWN this tick, so the recovery-reservation backing check did NOT run for this chain (substituting zero would page a false CRITICAL after any real quarantine, substituting the reservation as zero would silently stop alarming on spent recovery backing, and assuming non-activation would apply the Diamond-only relation to custody that may be on the holder).\n\n` +
       (missing
         ? `The versioned snapshot does not exist in this Diamond's CURRENT CUT — either a pre-slice-4 deployment, or a partial refresh that dropped the RewardCustodyFacet while its storage (possibly an ACTIVATED custody) persists; selector absence cannot distinguish the two. The legacy lens tuple cannot stand in: it carries no activation state, and the flag that does lives on the same facet as the versioned snapshot, so an activated chain that has lost the facet is indistinguishable from one that never had it. Cut the RewardCustodyFacet (back) in to close this gap.`
-        : `The view did not revert, so the cause is not the cut; the classification above names what failed. Inside a batched read that is usually an answer that does not decode against the compiled ABI, so re-export the facet ABIs if the Diamond changed. (A transport failure fails the whole batch and is reported as the chain being unreadable instead.)`),
+        : `The view did not revert, so the cause is not the cut; the classification above names what failed. Inside a batched read that is usually an answer that does not decode against the compiled ABI, so if the Diamond changed, re-export the facet ABIs and refresh this Worker's copy ("npm run abi:write" in ops/mesh-watcher). (A transport failure fails the whole batch and is reported as the chain being unreadable instead.)`),
   };
 }
 

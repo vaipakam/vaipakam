@@ -48,10 +48,12 @@ contract GlobalPauseLoanClockTest is SetupTest {
         admin = AdminFacet(address(diamond));
         // Test-only reads of the late fee and the interest term, so each is
         // measured on its own.
-        bytes4[] memory sels = new bytes4[](3);
+        bytes4[] memory sels = new bytes4[](5);
         sels[0] = LoanClockProbeFacet.probeLateFee.selector;
         sels[1] = LoanClockProbeFacet.probeInterestTermEnd.selector;
         sels[2] = LoanClockProbeFacet.probeRemainingInterestSeconds.selector;
+        sels[3] = LoanClockProbeFacet.probeMinimumInterestSeconds.selector;
+        sels[4] = LoanClockProbeFacet.probeSettlementInterest.selector;
         IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](1);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(new LoanClockProbeFacet()),
@@ -508,11 +510,14 @@ contract GlobalPauseLoanClockTest is SetupTest {
             maturity,
             "the re-stamped term still ends at the moved maturity"
         );
+        // #3169 — the new segment's minimum runs to the moved maturity: ten
+        // unpaused days were consumed, not twenty.
         assertEq(
-            LoanFacet(address(diamond)).getLoanDetails(loanId).interestRemainingDays,
-            20,
-            "ten unpaused days consumed, not twenty"
+            LoanClockProbeFacet(address(diamond)).probeMinimumInterestSeconds(loanId),
+            maturity - block.timestamp,
+            "the minimum runs from the re-stamped clock to the moved maturity"
         );
+        assertEq(maturity - block.timestamp, 20 days, "ten unpaused days consumed, not twenty");
     }
 
     /// @dev #2809 r2 P1 — a periodic settlement after a pause pays one

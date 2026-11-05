@@ -464,7 +464,7 @@ describe('a run', () => {
       return alertOutcome;
     },
   });
-  const run = (o: { keeper?: Address | null; cap?: SendFeeCeiling; chains?: FakeChain[] } = {}) =>
+  const run = (o: { keeper?: Address | null; cap?: SendFeeCeiling; chains?: FakeChain[]; visit?: number } = {}) =>
     returnTransportOnce({
       chains: (o.chains ?? [base, mirror]).map((c) => deps(c, o.cap ?? CAP)),
       ledger,
@@ -478,6 +478,7 @@ describe('a run', () => {
       sendDeadline: Number.POSITIVE_INFINITY,
       minPart: MIN_PART,
       now: () => now,
+      visit: o.visit,
     });
   const fns = (c: FakeChain) => c.sent.map((s) => s.fn);
   /** The indexer records what a chain's sends emitted. */
@@ -577,6 +578,16 @@ describe('a run', () => {
     alerts = [];
     await run();
     expect(sentNotices(), 'announced once').toEqual([]);
+  });
+
+  it('starts each run elsewhere on the stranded page, so a later quarantine is not held behind the first (#3155)', async () => {
+    mirror.stranded.set(`${REMITTER}:9`, { amount: 300n * E18, dayId: 4n });
+    mirror.stranded.set(`${REMITTER}:10`, { amount: 300n * E18, dayId: 4n });
+    ledger.add(MIRROR_ID, 'CompensationQuarantined', { remitter: REMITTER, remitId: '9' }, NOW - 600);
+    ledger.add(MIRROR_ID, 'CompensationQuarantined', { remitter: REMITTER, remitId: '10' }, NOW - 600);
+    // attemptOrder(2, 1) starts at the second nominee.
+    const r = await run({ visit: 1 });
+    expect(r[1].stranded).toEqual([`${REMITTER}:10=${300n * E18}`, `${REMITTER}:9=${300n * E18}`]);
   });
 
   it('announces a send whose receipt was not seen, once the indexer records it (Codex #3002)', async () => {

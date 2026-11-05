@@ -261,8 +261,7 @@ library LibFallback {
         // immutable term start, so a previously partial-liquidated loan's
         // fallback split is computed on its true post-partial accrual.
         uint256 elapsed = block.timestamp - LibVaipakam.interestAccrualStartOf(loan);
-        uint256 accrued = (loan.principal * loan.interestRateBps * elapsed) /
-            (LibVaipakam.SECONDS_PER_YEAR * LibVaipakam.BASIS_POINTS);
+        uint256 accrued = LibEntitlement.proRataInterestSeconds(loan.principal, loan.interestRateBps, elapsed);
         // #915 (M7 / spec-review S12) — credit interest already forwarded to the
         // lender via periodic auto-liquidation (`loan.interestSettled`) so the
         // in-kind fallback split does not over-allocate collateral to the lender

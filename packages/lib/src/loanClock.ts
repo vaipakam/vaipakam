@@ -213,22 +213,65 @@ export function periodicPeriod(
 
 /**
  * The end of a loan's interest term as of `at` — `LibLoanClock.interestTermEnd`:
- * the interest clock's start plus its remaining days, moved by the paused time
- * since THAT start (a partial that re-stamps the clock consumes no paused
- * day). The term a rate shortfall at a sale or an early close is priced over.
- * Both inputs are the resolved `interestAccrualStartOf` /
- * `interestRemainingDaysOf` values, not the raw struct fields.
+ * the original maturity (`startTime + durationDays`) moved by the paused time
+ * since the loan's start. The term a rate shortfall at a sale or an early
+ * close is priced over. #3169: derived from the term to the second; a partial
+ * re-stamps only the interest clock, never the term.
  */
 export function interestTermEnd(
-  clock: { interestAccrualStart: bigint; interestRemainingDays: bigint },
+  loan: { startTime: bigint; durationDays: bigint },
   log: PauseLog,
   at: bigint,
 ): bigint {
-  return (
-    clock.interestAccrualStart +
-    clock.interestRemainingDays * DAY +
-    pausedSecondsBetween(log, clock.interestAccrualStart, at)
-  );
+  return loan.startTime + loan.durationDays * DAY + pausedSecondsBetween(log, loan.startTime, at);
+}
+
+/**
+ * #3169 — the seconds of interest a full-term loan owes at least for its
+ * current accrual segment — `LibLoanClock.minimumInterestSeconds`: from the
+ * interest clock's start to the term's end as it stood at that start, so a
+ * pause inside the segment does not raise it. `interestAccrualStart` is the
+ * RESOLVED clock start (`interestAccrualStartOf`), not the raw field.
+ */
+export function minimumInterestSeconds(
+  loan: { startTime: bigint; durationDays: bigint; interestAccrualStart: bigint },
+  log: PauseLog,
+): bigint {
+  const end = interestTermEnd(loan, log, loan.interestAccrualStart);
+  return end > loan.interestAccrualStart ? end - loan.interestAccrualStart : 0n;
+}
+
+/** `SECONDS_PER_YEAR * BASIS_POINTS`: the denominator of every interest figure. */
+const YEAR_BPS = 365n * DAY * 10_000n;
+
+/** #3169 — interest on `principal` at `rateBps` over `seconds`, rounded down
+ *  once — `LibEntitlement.proRataInterestSeconds`. */
+export function proRataInterestSeconds(principal: bigint, rateBps: bigint, seconds: bigint): bigint {
+  return (principal * rateBps * seconds) / YEAR_BPS;
+}
+
+/**
+ * #3169 — the gross interest an ERC-20 loan owes at settlement as of `at` —
+ * `LibEntitlement.settlementInterest`: the seconds since the interest clock's
+ * start, or the full-term minimum when the loan carries it and that is more,
+ * at the loan's rate, rounded down once. Gross of `interestSettled`; a caller
+ * that needs the net subtracts it (saturating at 0), as the contract does.
+ */
+export function settlementInterestAt(
+  loan: {
+    startTime: bigint;
+    durationDays: bigint;
+    interestAccrualStart: bigint;
+    principal: bigint;
+    interestRateBps: bigint;
+    useFullTermInterest: boolean;
+  },
+  log: PauseLog,
+  at: bigint,
+): bigint {
+  const elapsed = at > loan.interestAccrualStart ? at - loan.interestAccrualStart : 0n;
+  const floor = loan.useFullTermInterest ? minimumInterestSeconds(loan, log) : 0n;
+  return proRataInterestSeconds(loan.principal, loan.interestRateBps, elapsed > floor ? elapsed : floor);
 }
 
 /**

@@ -2277,15 +2277,18 @@ library LibVaipakam {
         // (`gracePeriod(durationDays)`), so the reset silently pulled the
         // default deadline earlier and collapsed grace. These two fields hold
         // the accrual clock instead: a partial sets `interestAccrualStart = now`
-        // and `interestRemainingDays = remaining` while the term tuple stays
-        // immutable, so maturity + grace are preserved on every path.
-        // `LibEntitlement` reads these for ERC-20 interest, falling back to
-        // `startTime` / `durationDays` when zero (a pre-#641 loan, or an NFT
-        // rental whose fee model doesn't use them). Set at origination and at
-        // every genuine re-term (offset, refinance). Pack: uint64 + uint16.
-        // Append-only tail fields.
+        // while the term tuple stays immutable, so maturity + grace are
+        // preserved on every path. `LibEntitlement` reads it for ERC-20
+        // interest, falling back to `startTime` when zero (a pre-#641 loan, or
+        // an NFT rental whose fee model doesn't use it). Set at origination and
+        // at every genuine re-term (offset, extension). Append-only tail.
         uint64 interestAccrualStart;
-        uint16 interestRemainingDays;
+        // #3169 — RETIRED, never written or read. It was the whole-day
+        // remaining-term counter (`interestRemainingDays`); the full-term
+        // minimum is now derived to the second from the term tuple
+        // ({LibLoanClock.minimumInterestSeconds}). The slot stays so the
+        // layout is append-only; declared in storage-layout/renames.json.
+        uint16 retiredInterestRemainingDays;
         // #957 (#921 item 6) — fee BPS SNAPSHOTTED at init from the live
         // governance knobs (`cfgTreasuryFeeBps` / `cfgLoanInitiationFeeBps`),
         // so a loan's economics are fixed at origination (the snapshot is
@@ -11237,24 +11240,11 @@ library LibVaipakam {
     ///         Defaulted / Refinance) reads, so a partial's reduced-principal
     ///         re-anchor is honoured everywhere. `interestAccrualStart` is set
     ///         to a real timestamp at origination, so `!= 0` cleanly tells a
-    ///         post-#641 loan (use the clock, even if `interestRemainingDays`
-    ///         legitimately reached 0) from a legacy one.
+    ///         post-#641 loan from a legacy one.
     function interestAccrualStartOf(Loan storage loan) internal view returns (uint256) {
         return loan.interestAccrualStart != 0
             ? uint256(loan.interestAccrualStart)
             : uint256(loan.startTime);
-    }
-
-    /// @notice #641 — a loan's REMAINING interest term in days: the dedicated
-    ///         `interestRemainingDays` (re-stamped by a partial), falling back
-    ///         to the immutable `durationDays` for pre-field loans. Gated on
-    ///         `interestAccrualStart` (NOT `interestRemainingDays != 0`) so a
-    ///         post-#641 loan whose remaining term reached 0 isn't mistaken for
-    ///         legacy.
-    function interestRemainingDaysOf(Loan storage loan) internal view returns (uint256) {
-        return loan.interestAccrualStart != 0
-            ? uint256(loan.interestRemainingDays)
-            : loan.durationDays;
     }
 
     /// @notice #641 — seed the interest clock from the term for a loan that
@@ -11266,7 +11256,6 @@ library LibVaipakam {
     function seedInterestClockIfUnset(Loan storage loan) internal {
         if (loan.interestAccrualStart == 0) {
             loan.interestAccrualStart = loan.startTime;
-            loan.interestRemainingDays = uint16(loan.durationDays);
         }
     }
 
@@ -11397,11 +11386,13 @@ library LibVaipakam {
     ///      correct for an ERC-20 loan (whole principal) but wrong for a
     ///      rental — there `loan.principal` is the PER-DAY fee, so the fee
     ///      never scaled with the size of the overdue obligation. This
-    ///      rental variant bases the fee on the REMAINING OWED RENTAL
-    ///      `principal × durationDays`. `durationDays` is the live remaining
-    ///      term, retired by BOTH `autoDeductDaily` and `repayPartial`
-    ///      (term-retirement semantics), so it faithfully tracks the overdue
-    ///      rent with no separate paid-days counter.
+    ///      rental variant bases the fee on the WHOLE AGREED RENT
+    ///      `principal × durationDays`, where `durationDays` is the immutable
+    ///      origination term (#1188). It is not reduced by the days already
+    ///      paid, whether by `autoDeductDaily` or a `repayPartial` prepayment:
+    ///      the fee prices holding the NFT past maturity, and basing it on
+    ///      the days still owed let a rental prepaid in full owe no late fee
+    ///      at all (#3170, owner decision 2026-11-05).
     ///
     ///      The fee is capped two ways: the historical 5% penalty ceiling on
     ///      the slope, AND — load-bearingly — clamped to the loan's OWN
@@ -11430,10 +11421,12 @@ library LibVaipakam {
         uint256 feePercent = 100 + (daysLate * 50); // 1% + 0.5% per day
         if (feePercent > 500) feePercent = 500; // historical 5% penalty ceiling
 
-        // Pass-2 D1 (#1188) — base the fee on the REMAINING owed rental days
-        // (`remainingRentalDays`), not the now-immutable `durationDays` term,
-        // so a partially-serviced rental isn't penalised on already-paid days.
-        fee = (loan.principal * remainingRentalDays(loan) * feePercent) / 10000;
+        // #3170 (owner decision 2026-11-05) — base the fee on the WHOLE agreed
+        // rent (daily fee × the immutable `durationDays` term). The fee prices
+        // keeping the NFT past maturity, so it must not depend on how the rent
+        // was paid: on the remaining days (#1188) a rental prepaid in full by a
+        // partial repay owed no late fee for the whole grace window.
+        fee = (loan.principal * uint256(loan.durationDays) * feePercent) / 10000;
 
         // Clamp to the loan's ACTUAL pre-funded buffer (per-loan snapshot, not
         // the mutable global config), so the buffer always covers the fee.

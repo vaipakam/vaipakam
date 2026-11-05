@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "./LibVaipakam.sol";
+import {LibEntitlement} from "./LibEntitlement.sol";
 import {LibFacet} from "./LibFacet.sol";
 import {LibMetricsHooks} from "./LibMetricsHooks.sol";
 import {SellerClaimFacet} from "../facets/SellerClaimFacet.sol";
@@ -92,8 +93,7 @@ library LibInterestLedger {
         if (!_accrues(loan)) return 0;
         uint256 from = _touchedAt(s.interestLedger[loan.id], loan);
         if (block.timestamp <= from) return 0;
-        return (loan.principal * loan.interestRateBps * (block.timestamp - from))
-            / (LibVaipakam.SECONDS_PER_YEAR * LibVaipakam.BASIS_POINTS);
+        return LibEntitlement.proRataInterestSeconds(loan.principal, loan.interestRateBps, block.timestamp - from);
     }
 
     /// @notice What the current holder has earned and not been paid, as of now.
@@ -206,8 +206,9 @@ library LibInterestLedger {
         // Only an open loan accrues ({_accrues}). A terminal loan keeps its
         // checkpoint and earns nothing more.
         if (_accrues(loan) && block.timestamp > l.touchedAt) {
-            l.holderEarnedGross += (loan.principal * loan.interestRateBps * (block.timestamp - l.touchedAt))
-                / (LibVaipakam.SECONDS_PER_YEAR * LibVaipakam.BASIS_POINTS);
+            l.holderEarnedGross += LibEntitlement.proRataInterestSeconds(
+                loan.principal, loan.interestRateBps, block.timestamp - l.touchedAt
+            );
             l.touchedAt = uint64(block.timestamp);
         }
     }

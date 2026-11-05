@@ -635,7 +635,7 @@ describe('a run', () => {
   });
   afterEach(() => vi.restoreAllMocks());
 
-  const run = (opts: { keeper?: Address | null; windowDays?: number; context?: () => KeeperContext | null } = {}) =>
+  const run = (opts: { keeper?: Address | null; windowDays?: number; context?: () => KeeperContext | null; visit?: number } = {}) =>
     closeOutOnce(CHAIN, DIAMOND, {
       client: d.client(),
       readClient: d.client(),
@@ -645,6 +645,7 @@ describe('a run', () => {
       windowDays: opts.windowDays ?? DEFAULT_WINDOW_DAYS,
       cursors,
       ledger,
+      visit: opts.visit,
     });
   const fns = () => d.sent.map((s) => s.fn);
   const closeAllButDay = (day: number) => {
@@ -1085,6 +1086,18 @@ describe('a run', () => {
       await run();
       expect(d.sent).toEqual([]);
       expect(ledger.pages[ledger.pages.length - 1], 'the next run reads after the floor').toEqual({ block: 1, log: 0 });
+    });
+
+    it('starts each run elsewhere on the page, so a later removed chain is not held behind the first (#3155)', async () => {
+      const DST2 = 98;
+      ledger.add(DST);
+      ledger.add(DST2);
+      d.releases.set(DST, { bound: 10, cursor: 0 });
+      d.releases.set(DST2, { bound: 10, cursor: 0 });
+      finalizeThrough(10);
+      // attemptOrder(2, 1) starts at the second nominee.
+      await run({ visit: 1 });
+      expect(d.sent.map((s) => s.args[0])).toEqual([DST2, DST]);
     });
 
     it('sends nothing while the release waits on a day that is not finalized, and keeps the row above the floor', async () => {

@@ -1046,6 +1046,59 @@ contract RepayFacetTest is Test {
         assertEq(afterCall.prepayAmount, paid.prepayAmount, "no extra day charged");
     }
 
+    /// @dev #3170 — a rental prepaid in full by a partial repay still settles
+    ///      in grace, and pays the late fee on the whole agreed rent
+    ///      (10 × 30 × 2% = 6 at two days late), drawn from the buffer.
+    ///      Before #3170 `repayLoan` reverted `InsufficientPrepay` here, and the
+    ///      fee, based on the days still owed (none), read 0.
+    function test_3170_fullyPrepaidRental_settlesInGraceWithLateFee() public {
+        helperOfferLoan();
+        LibVaipakam.Loan memory before = LoanFacet(address(diamond)).getLoanDetails(2);
+        vm.prank(borrower);
+        RepayFacet(address(diamond)).repayPartial(2, before.durationDays);
+        LibVaipakam.Loan memory paid = LoanFacet(address(diamond)).getLoanDetails(2);
+        assertEq(paid.prepayAmount, 0, "the whole rent is prepaid");
+
+        address borrowerVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(borrower);
+        uint256 vaultBefore = ERC20Mock(mockERC20).balanceOf(borrowerVault);
+
+        vm.warp(uint256(paid.startTime) + 32 days + 1);
+        assertEq(RepayFacet(address(diamond)).calculateRepaymentAmount(2), 6, "late fee on the whole term");
+        vm.prank(borrower);
+        RepayFacet(address(diamond)).repayLoan(2);
+
+        LibVaipakam.Loan memory done = LoanFacet(address(diamond)).getLoanDetails(2);
+        assertEq(uint8(done.status), uint8(LibVaipakam.LoanStatus.Repaid), "settles in grace");
+        assertEq(vaultBefore - ERC20Mock(mockERC20).balanceOf(borrowerVault), 6, "only the late fee leaves");
+    }
+
+    /// @dev #3170 — a rental with part of its rent already deducted pays the
+    ///      same late fee as one with none deducted: the whole agreed rent is
+    ///      the base, not the days still owed (which would give 10 × 15 × 2% = 3).
+    function test_3170_partlyDeductedRental_lateFeeOnWholeTerm() public {
+        helperOfferLoan();
+        vm.prank(borrower);
+        RepayFacet(address(diamond)).repayPartial(2, 15);
+        LibVaipakam.Loan memory paid = LoanFacet(address(diamond)).getLoanDetails(2);
+
+        vm.warp(uint256(paid.startTime) + 32 days + 1);
+        // The quote is the late fee alone (rent comes from the vaulted prepay).
+        assertEq(RepayFacet(address(diamond)).calculateRepaymentAmount(2), 6, "whole-term fee, not 3");
+    }
+
+    /// @dev #3170 — the buffer funds the late fee only: rent the prepayment
+    ///      cannot cover is still refused, never drawn from the buffer.
+    function test_3170_rentNeverDrawsOnTheBuffer() public {
+        helperOfferLoan();
+        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(2);
+        loan.prepayAmount = 5; // one day of rent (10) owed, buffer 15 would cover it
+        TestMutatorFacet(address(diamond)).setLoan(2, loan);
+        vm.warp(block.timestamp + 1 days);
+        vm.prank(borrower);
+        vm.expectRevert(RepayFacet.InsufficientPrepay.selector);
+        RepayFacet(address(diamond)).repayLoan(2);
+    }
+
     /// @dev #3132 — a record whose deduction clock is behind its start is
     ///      refused: consumed days read 0 there, so a charged day would never
     ///      be counted and every call would charge again.
@@ -1573,9 +1626,9 @@ contract RepayFacetTest is Test {
     }
 
     /// @dev Same, after 10 daily deductions: the close owes only the 20
-    ///      remaining term days (200) plus the fee on that remaining rent
-    ///      (10 × 20 × 2% = 4). Pre-fix it billed 32 − 10 = 22 days
-    ///      (220 + 4 = 224 > prepay 200 + buffer 15) and reverted.
+    ///      remaining term days (200) plus the late fee, which is on the
+    ///      whole agreed rent (10 × 30 × 2% = 6, #3170). Pre-#901 it billed
+    ///      32 − 10 = 22 days (more than prepay 200 + buffer 15) and reverted.
     function test_901_partlyDeductedRentalRepaidInGrace_owesOnlyRemainingTerm() public {
         helperOfferLoan();
         uint256 start = LoanFacet(address(diamond)).getLoanDetails(2).startTime;
@@ -1594,8 +1647,8 @@ contract RepayFacetTest is Test {
         assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Repaid), "in-grace repay settles");
         assertEq(
             vaultBefore - ERC20Mock(mockERC20).balanceOf(borrowerVault),
-            204,
-            "remaining 20 term days (200) + late fee (4)"
+            206,
+            "remaining 20 term days (200) + whole-term late fee (6)"
         );
     }
 

@@ -1138,7 +1138,12 @@ state.
   run's time spent) still holds back that account's payouts and position
   transfers until it is handled: an owner's lock is never overtaken by the
   payout it was sent to stop. When the keeper cannot tell which requests are
-  still open, it releases nothing that run. The keeper starts locks only in
+  still open, it releases nothing that run. This hold binds the keeper only:
+  release is permissionless, so another caller can still release a payout or
+  transfer already past its delay until the lock lands on chain. The request
+  promises protection from the lock, not from the moment it is sent, which
+  is why the bot's reply says nothing is locked yet; every surface showing a
+  request must say the same (owner decision #3177). The keeper starts locks only in
   the first half of what is left of a run's reading time, so a stream of
   lock requests whose confirmations are slow cannot use every run's time and
   hold back other owners' payouts, transfers and matured changes; requests

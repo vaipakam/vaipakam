@@ -9,7 +9,9 @@ import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import {
   interestTermEnd,
   pausedSecondsBetween,
+  proRataInterestSeconds,
   readPauseLog,
+  settlementInterestAt,
   type PauseLog,
 } from '@vaipakam/lib/loanClock';
 
@@ -38,11 +40,11 @@ export interface LoanLive {
    *  position transfer re-stamps them on-chain while the indexer row
    *  still carries the old values. */
   durationDays: bigint;
+  /** The interest clock's start, re-stamped by partials. Read via
+   *  {@link interestAccrualStartOf}. #3169: there is no remaining-day
+   *  counter beside it; the term's end is derived from `startTime` +
+   *  `durationDays` (`@vaipakam/lib/loanClock`). */
   interestAccrualStart: bigint;
-  /** Remaining committed interest term, re-stamped by partials. Read
-   *  via {@link interestRemainingDaysOf}, never directly — the raw
-   *  field is only meaningful when `interestAccrualStart != 0`. */
-  interestRemainingDays: number;
   useFullTermInterest: boolean;
   allowsPartialRepay: boolean;
   /** LibVaipakam.PeriodicInterestCadence as a number (None = 0). */
@@ -87,15 +89,6 @@ export interface LoanLive {
   prepayAsset: `0x${string}`;
 }
 
-/** Mirrors LibVaipakam.interestRemainingDaysOf: the dedicated
- *  remaining-term field (re-stamped by partials) when the #641
- *  interest clock is present, else the immutable term. */
-export function interestRemainingDaysOf(live: LoanLive): bigint {
-  return live.interestAccrualStart !== 0n
-    ? BigInt(live.interestRemainingDays)
-    : live.durationDays;
-}
-
 /** Mirrors LibVaipakam.interestAccrualStartOf: the #641 interest
  *  clock's origin (re-stamped by partials), falling back to the
  *  immutable start for pre-field loans. */
@@ -129,18 +122,11 @@ export function loanEndTimeOf(live: LoanLive, at: bigint = live.readAtTimestamp)
 }
 
 /** Seconds of the interest term left at `at` — `LibLoanClock
- *  .remainingInterestSeconds`: the interest clock's end, moved by the paused
- *  time since THAT clock started, minus `at`. What a sale, a transfer and an
- *  offset price their rate difference over. */
+ *  .remainingInterestSeconds`: the term's end (the original maturity moved by
+ *  the paused time since the loan's start), minus `at`. What a sale, a
+ *  transfer and an offset price their rate difference over. */
 export function remainingInterestSecondsOf(live: LoanLive, at: bigint): bigint {
-  const end = interestTermEnd(
-    {
-      interestAccrualStart: interestAccrualStartOf(live),
-      interestRemainingDays: interestRemainingDaysOf(live),
-    },
-    live.pauseLog,
-    at,
-  );
+  const end = interestTermEnd(live, live.pauseLog, at);
   return end > at ? end - at : 0n;
 }
 
@@ -160,24 +146,21 @@ export function lateFeeAt(live: LoanLive, ts: bigint): bigint {
 /** The refinance old-lender payoff AS OF `asOf` (chain time). The
  *  facet pays `settlementInterestNet(oldLoan, now)` + the #1189
  *  grace-window late fee, and that settlement interest is
- *  `max(whole days elapsed since the interest clock, remaining
- *  committed term)` — i.e. the full-term floor in term, but PAST
+ *  `max(seconds since the interest clock, the full-term minimum)`
+ *  (#3169: to the second) — i.e. the full-term floor in term, but PAST
  *  maturity it keeps accruing with elapsed time (Codex #1256 r1).
- *  This mirror applies the remaining-term floor in BOTH interest
- *  modes (exact for full-term loans; over-covers a pro-rata loan —
- *  the pull only shrinks) and stays gross of `interestSettled`
- *  (again over-covers only). ONE definition — the review quote, the
- *  pending watch, and the funding checks must never drift apart. */
+ *  This mirror applies the full-term minimum in BOTH interest modes
+ *  (exact for full-term loans; over-covers a pro-rata loan — the pull
+ *  only shrinks) and stays gross of `interestSettled` (again
+ *  over-covers only). ONE definition — the review quote, the pending
+ *  watch, and the funding checks must never drift apart. */
 export function refinancePayoffOf(live: LoanLive, asOf: bigint): bigint {
-  const start = interestAccrualStartOf(live);
-  const elapsedDays = asOf > start ? (asOf - start) / 86_400n : 0n;
-  const floorDays = interestRemainingDaysOf(live);
-  const days = elapsedDays > floorDays ? elapsedDays : floorDays;
-  return (
-    live.principal +
-    (live.principal * live.interestRateBps * days) / (365n * 10_000n) +
-    lateFeeAt(live, asOf)
+  const interest = settlementInterestAt(
+    { ...live, interestAccrualStart: interestAccrualStartOf(live), useFullTermInterest: true },
+    live.pauseLog,
+    asOf,
   );
+  return live.principal + interest + lateFeeAt(live, asOf);
 }
 
 /** #3042 — what a refinance accept costs the holder's WALLET at `asOf`:
@@ -398,13 +381,9 @@ export function transferEconomicsOf(
  *  approval, never a short-paid lender. */
 export function offsetCompletionBoundOf(live: LoanLive): bigint {
   const start = interestAccrualStartOf(live);
-  const windowSecs =
-    interestRemainingDaysOf(live) * 86_400n +
-    pausedSecondsBetween(live.pauseLog, start, live.readAtTimestamp);
-  return (
-    live.principal +
-    (live.principal * live.interestRateBps * windowSecs) / (SECONDS_PER_YEAR * BASIS_POINTS)
-  );
+  const end = interestTermEnd(live, live.pauseLog, live.readAtTimestamp);
+  const windowSecs = end > start ? end - start : 0n;
+  return live.principal + proRataInterestSeconds(live.principal, live.interestRateBps, windowSecs);
 }
 
 export async function readLoanLive(
@@ -489,7 +468,6 @@ export async function readLoanLive(
     startTime: raw.startTime,
     durationDays: raw.durationDays,
     interestAccrualStart: raw.interestAccrualStart,
-    interestRemainingDays: Number(raw.interestRemainingDays),
     useFullTermInterest: Boolean(raw.useFullTermInterest),
     allowsPartialRepay: Boolean(raw.allowsPartialRepay),
     periodicInterestCadence: Number(raw.periodicInterestCadence),

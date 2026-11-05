@@ -30,7 +30,6 @@ const live = {
   startTime: 1_000n,
   durationDays: 30n,
   interestAccrualStart: 0n,
-  interestRemainingDays: 0,
   readAtTimestamp: 1_000n,
   // Never paused: every deadline is the original one.
   pauseLog: [] as LoanLive['pauseLog'],
@@ -76,11 +75,14 @@ describe('refinancePayoffOf', () => {
   });
 
   it('keeps accruing interest past maturity AND adds the late fee', () => {
-    // One day + 1s past maturity: elapsedDays = 31 > the 30-day floor
-    // (settlementInterest's max(elapsed, remaining)), late fee =
-    // 1% + 1×0.5%.
+    // One day + 1s past maturity: 31 days and 1 second elapsed > the 30-day
+    // floor (settlementInterest's max(elapsed, minimum), to the second since
+    // #3169), late fee = 1% + 1×0.5%.
+    const elapsed = endTime + DAY + 1n - live.startTime;
     expect(refinancePayoffOf(live, endTime + DAY + 1n)).toBe(
-      live.principal + interestFor(31n) + (live.principal * 150n) / 10_000n,
+      live.principal +
+        (live.principal * live.interestRateBps * elapsed) / (365n * DAY * 10_000n) +
+        (live.principal * 150n) / 10_000n,
     );
   });
 });
@@ -180,7 +182,6 @@ describe('sellerEconomics — forfeiture window (#1503 item 28)', () => {
     startTime: 1_000n,
     durationDays: 30n,
     interestAccrualStart: 1_000n,
-    interestRemainingDays: 30,
     // The seller clock lives on the SNAPSHOT since #1801 r9 — callers cannot
     // supply their own, so the fixture carries the block it was read at.
     readAtTimestamp: 1_000n + 10n * DAY,
@@ -229,7 +230,6 @@ describe('the loan clock (#2808, D2 #668 / #935)', () => {
   const paused = {
     ...live,
     interestAccrualStart: 1_000n,
-    interestRemainingDays: 30,
     readAtTimestamp: 1_000n + 10n * DAY,
     pauseLog: [{ start: 1_000n + 5n * DAY, end: 1_000n + 7n * DAY, pausedBefore: 0n }],
   } as LoanLive;

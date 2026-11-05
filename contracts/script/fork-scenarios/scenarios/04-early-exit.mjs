@@ -8,7 +8,7 @@
  * has to say out loud.
  */
 import { DIAMOND, MOCKS, TREASURY, borrower, lender, outsider, parseUnits, pub, tx } from '../lib/chain.mjs';
-import { ABIS, STATUS, claimAndExpect, delta, expectPosition, openLoan, positionOf, read, snapshot, vaultAddressFor, bothNfts, NFT_STATUS } from '../lib/flow.mjs';
+import { ABIS, STATUS, claimAndExpect, delta, expectPosition, openLoan, positionOf, read, snapshot, vaultAddressFor, bothNfts, NFT_STATUS, perSecondInterest } from '../lib/flow.mjs';
 import { parseEventLogs } from 'viem';
 import { f18 } from '../lib/chain.mjs';
 import { warpDays } from '../lib/impersonate.mjs';
@@ -88,20 +88,19 @@ export async function run() {
     const receipt = await tx(borrower, { address: DIAMOND, abi: ABIS.repay, functionName: 'repayPartial', args: [loanId, part] }, 'repayPartial');
     const after = await snapshot(tokens, holders);
     const mid = await read(ABIS.loan, 'getLoanDetails', [loanId]);
-    // Spec: a non-periodic partial pays the interest accrued so far (whole
-    // days, rounded down — borrower-favourable) plus the principal reduction,
+    // Spec: a non-periodic partial pays the interest accrued so far (to the
+    // second, rounded down once — #3169) plus the principal reduction,
     // straight to the lender's WALLET; the treasury takes its fee on the
     // interest only.
     const partAt = BigInt((await pub.getBlock({ blockNumber: receipt.blockNumber })).timestamp);
-    const partDays = (partAt - BigInt(opened.startTime)) / 86_400n;
-    const partInterest = (opened.principal * BigInt(opened.interestRateBps) * partDays) / (365n * 10_000n);
+    const partInterest = perSecondInterest(opened.principal, opened.interestRateBps, partAt - BigInt(opened.startTime));
     const partCut = (partInterest * BigInt(opened.treasuryFeeBpsAtInit)) / 10_000n;
     expectLedger('A4.5b', 'the partial repayment moves exactly: accrued interest + the principal reduction from the borrower, to the lender\'s wallet, the treasury\'s fee on the interest only',
       before, after, {
         'lending.borrowerEOA': -(part + partInterest),
         'lending.lenderEOA': part + partInterest - partCut,
         'lending.treasury': partCut,
-      }, `wholeDaysElapsed=${partDays} interest=${f18(partInterest)}`);
+      }, `secondsElapsed=${partAt - BigInt(opened.startTime)} interest=${f18(partInterest)}`);
     check('A4.5', 'a partial repayment reduces the outstanding principal by exactly the payment and leaves the loan Active',
       String(mid.status) === '0' && opened.principal - mid.principal === part,
       `gas=${receipt.gasUsed} status=${mid.status} principalNow=${f18(mid.principal)} deltas=${JSON.stringify(delta(before, after))}`);

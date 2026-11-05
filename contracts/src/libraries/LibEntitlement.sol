@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "./LibVaipakam.sol";
+import {LibLoanClock} from "./LibLoanClock.sol";
 
 /**
  * @title LibEntitlement
@@ -61,36 +62,38 @@ library LibEntitlement {
     ///         moving the term/maturity), falling back to `startTime` for loans
     ///         that predate the field. `interestAccrualStart` is set to a real
     ///         timestamp at origination, so `!= 0` cleanly distinguishes a
-    ///         post-#641 loan (use the clock, even if `interestRemainingDays`
-    ///         legitimately reached 0) from a legacy one.
+    ///         post-#641 loan from a legacy one.
     function _accrualStart(LibVaipakam.Loan storage loan) private view returns (uint256) {
         return loan.interestAccrualStart != 0
             ? uint256(loan.interestAccrualStart)
             : uint256(loan.startTime);
     }
 
-    /// @notice #641 — a loan's remaining interest term in days: the dedicated
-    ///         `interestRemainingDays` (re-stamped by partials), falling back to
-    ///         the live `durationDays` for pre-field loans. Gated on
-    ///         `interestAccrualStart` (NOT `interestRemainingDays != 0`) so a
-    ///         post-#641 loan whose remaining term has reached 0 isn't mistaken
-    ///         for a legacy loan.
-    function _remainingTermDays(LibVaipakam.Loan storage loan) private view returns (uint256) {
-        return loan.interestAccrualStart != 0
-            ? uint256(loan.interestRemainingDays)
-            : loan.durationDays;
-    }
-
     /// @notice Pro-rata interest accrued on an ERC-20 loan from its interest-
-    ///         accrual clock to `nowTime`, rounded down to whole days.
+    ///         accrual clock to `nowTime`, to the second, rounded down.
+    /// @dev    #3169 — counted in seconds, like every other accrual in the
+    ///         protocol. It counted whole days, so a segment closed inside its
+    ///         first day accrued nothing.
     function accruedInterestToTime(
         LibVaipakam.Loan storage loan,
         uint256 nowTime
     ) internal view returns (uint256) {
         uint256 accrualStart = _accrualStart(loan);
         if (nowTime <= accrualStart) return 0;
-        uint256 elapsedDays = (nowTime - accrualStart) / LibVaipakam.ONE_DAY;
-        return proRataInterest(loan.principal, loan.interestRateBps, elapsedDays);
+        return proRataInterestSeconds(loan.principal, loan.interestRateBps, nowTime - accrualStart);
+    }
+
+    /// @notice The current borrow balance of a loan in storage: principal plus
+    ///         the interest accrued to now, net of the periodic credit
+    ///         (`interestSettled`, saturating at 0).
+    /// @dev    #3169 — the storage-side twin of {currentBorrowBalance}, the same
+    ///         figure to the wei, for callers that hold the loan in storage
+    ///         (partial withdrawal's health check) and must not value the debt
+    ///         differently from {RiskFacet}.
+    function currentBorrowBalanceOf(
+        LibVaipakam.Loan storage loan
+    ) internal view returns (uint256) {
+        return loan.principal + creditSettledInterest(loan, accruedInterestToTime(loan, block.timestamp));
     }
 
     /// @notice Seconds-precise current borrow balance — `principal +
@@ -99,10 +102,9 @@ library LibEntitlement {
     ///         paths accrue interest by the *second* (`elapsed /
     ///         SECONDS_PER_YEAR`) so a loan's debt — and therefore its
     ///         liquidation proceeds split — is exact at the block of
-    ///         liquidation, whereas settlement-time math rounds down to
-    ///         whole days (borrower-favourable). Do not substitute one for
-    ///         the other: it would shift the liquidation debt by up to a
-    ///         day's interest. Rounds DOWN (borrower-favourable by <=1 wei),
+    ///         liquidation. #3169: settlement counts seconds too, so on a
+    ///         pro-rata loan this debt and {settlementInterestNet} agree to
+    ///         the wei at the same second. Rounds DOWN (borrower-favourable by <=1 wei),
     ///         multiplying first to preserve numerator precision. Shared by
     ///         {RiskFacet} (HF / single-route + partial liquidation) and
     ///         {RiskMatchLiquidationFacet} (split-route liquidation) since
@@ -146,13 +148,18 @@ library LibEntitlement {
 
     /// @notice #408/#410/#413 (2026-06-12) — Gross interest owed on an
     ///         ERC-20 loan at settlement time, per the full-term FLOOR
-    ///         model:
+    ///         model, counted in SECONDS (#3169):
     ///
     ///         ```
-    ///         floorDays     = useFullTermInterest ? durationDays : 0
-    ///         effectiveDays = max(elapsedDays, floorDays)
-    ///         gross         = proRataInterest(P, rate, effectiveDays)
+    ///         floorSeconds     = useFullTermInterest ? minimumInterestSeconds : 0
+    ///         effectiveSeconds = max(elapsedSeconds, floorSeconds)
+    ///         gross            = proRataInterestSeconds(P, rate, effectiveSeconds)
     ///         ```
+    ///
+    ///         `SECONDS_PER_YEAR` is exactly 365 days, so a full-term loan
+    ///         settled early owes exactly the whole-day figure it always did;
+    ///         what changed is the elapsed side, which counted whole days
+    ///         and let a segment closed inside its first day accrue nothing.
     ///
     ///         Callers (`LibSettlement.computePreclose` /
     ///         `computeRepayment`) subtract `loan.interestSettled`
@@ -169,7 +176,7 @@ library LibEntitlement {
     ///           interest keeps accruing past full-term. (Late fee +
     ///           treasury split stay additive on top, unchanged.)
     ///         - Lender opt-out (`useFullTermInterest = false`) →
-    ///           floorDays = 0 → pure pro-rata-elapsed. Both branches
+    ///           floorSeconds = 0 → pure pro-rata-elapsed. Both branches
     ///           still accrue through grace.
     ///
     ///         Pre-#408 the `true` branch returned `fullTermInterest`
@@ -178,24 +185,24 @@ library LibEntitlement {
     ///         (ignored `interestSettled`). The floor + accumulator-
     ///         credit pair fixes both.
     ///
-    ///         Partial-repay accounting (Option A): #641 moved the
-    ///         remaining-term counter off `durationDays` onto the dedicated
-    ///         `interestRemainingDays` (decremented in `RepayFacet.repayPartial`
-    ///         / partial liquidation / swap-to-repay by elapsed-since-last-
-    ///         segment) so `floorDays` here reflects the borrower's REMAINING
-    ///         commitment WITHOUT shrinking the term tuple that defines
-    ///         maturity + grace. Read via `_remainingTermDays`.
+    ///         Partial-repay accounting (Option A): a partial (repay,
+    ///         swap-to-repay, partial liquidation) re-stamps only the interest
+    ///         clock's start (#641), never the term tuple that defines
+    ///         maturity + grace, so the minimum reflects the borrower's
+    ///         REMAINING commitment: the clock's start to the term's end
+    ///         ({LibLoanClock.minimumInterestSeconds}). It was a whole-day
+    ///         counter, `interestRemainingDays`, decremented by whole days at
+    ///         each partial; #3169 retired it, so a partial no longer leaves a
+    ///         part day of commitment uncounted.
     function settlementInterest(
         LibVaipakam.Loan storage loan,
         uint256 nowTime
     ) internal view returns (uint256) {
         uint256 accrualStart = _accrualStart(loan);
-        uint256 elapsedDays = nowTime > accrualStart
-            ? (nowTime - accrualStart) / LibVaipakam.ONE_DAY
-            : 0;
-        uint256 floorDays = loan.useFullTermInterest ? _remainingTermDays(loan) : 0;
-        uint256 effectiveDays = elapsedDays > floorDays ? elapsedDays : floorDays;
-        return proRataInterest(loan.principal, loan.interestRateBps, effectiveDays);
+        uint256 elapsedSeconds = nowTime > accrualStart ? nowTime - accrualStart : 0;
+        uint256 floorSeconds = loan.useFullTermInterest ? LibLoanClock.minimumInterestSeconds(loan) : 0;
+        uint256 effectiveSeconds = elapsedSeconds > floorSeconds ? elapsedSeconds : floorSeconds;
+        return proRataInterestSeconds(loan.principal, loan.interestRateBps, effectiveSeconds);
     }
 
     /// @notice #408/#410/#413 — convenience wrapper that subtracts

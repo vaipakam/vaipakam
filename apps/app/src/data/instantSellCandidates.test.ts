@@ -28,7 +28,6 @@ const live = {
   startTime: START,
   durationDays: 30n,
   interestAccrualStart: 0n,
-  interestRemainingDays: 0,
   interestSettled: 0n,
   useFullTermInterest: false,
   sellerClaimOnSale: 0n,

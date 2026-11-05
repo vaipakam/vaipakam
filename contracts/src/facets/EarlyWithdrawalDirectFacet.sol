@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibLoanClock} from "../libraries/LibLoanClock.sol";
+import {LibEntitlement} from "../libraries/LibEntitlement.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibCompliance} from "../libraries/LibCompliance.sol";
 import {LibRiskAccess} from "../libraries/LibRiskAccess.sol";
@@ -662,14 +663,10 @@ contract EarlyWithdrawalDirectFacet is
         // to the pause-moved end ({LibLoanClock.interestTermEnd}), as on the
         // listed route.
         uint256 remainingSecs = LibLoanClock.remainingInterestSeconds(loan, block.timestamp);
-        uint256 originalRemainingInterest = (loan.principal *
-            loan.interestRateBps *
-            remainingSecs) /
-            (LibVaipakam.SECONDS_PER_YEAR * LibVaipakam.BASIS_POINTS);
-        uint256 newRemainingInterest = (loan.principal *
-            buyOffer.interestRateBps *
-            remainingSecs) /
-            (LibVaipakam.SECONDS_PER_YEAR * LibVaipakam.BASIS_POINTS);
+        uint256 originalRemainingInterest =
+            LibEntitlement.proRataInterestSeconds(loan.principal, loan.interestRateBps, remainingSecs);
+        uint256 newRemainingInterest =
+            LibEntitlement.proRataInterestSeconds(loan.principal, buyOffer.interestRateBps, remainingSecs);
 
         uint256 shortfall = newRemainingInterest > originalRemainingInterest
             ? newRemainingInterest - originalRemainingInterest
