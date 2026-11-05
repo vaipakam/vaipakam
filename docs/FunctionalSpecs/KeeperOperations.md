@@ -2,7 +2,7 @@
 
 This document describes the intended behavior of the protocol-operated keeper.
 It consolidates the operational decisions in the release notes from August 13
-through October 28, 2026, while retaining later recorded intent decisions.
+through November 4, 2026, while retaining later recorded intent decisions.
 The deployment destination incorporates the owner's
 October 27 direction: a dedicated Cloudflare database and a separate always-on
 keeper VM in Oracle Cloud. This is the required deployment arrangement, not
@@ -240,18 +240,18 @@ evidence that the migration has completed.
   that falls short is skipped with the three figures named, and a loan whose
   funding cannot be read waits for the next run.
 
-### Compatibility with older deployments
+### Required deployment capabilities
 
-- The intended forced-sale behavior is the sized, sell-only-what-is-needed
-  rule in the platform spec. Until the older testnets are replaced, the
-  keeper checks which sale form the deployed protocol supports and previews
-  or simulates that exact form before sending. Older whole-collateral sales
-  still return the surplus; they are disclosed as compatibility behavior,
-  not described as sized sales. A failed routing read holds the attempt.
-- A default checks the sale form again at its final gate. An unsupported
-  exact call never reaches broadcast. Split sales and the periodic settler
-  are not attempted on deployments without the sized-sale plan. These
-  temporary paths are removed when the served testnets are freshly deployed.
+- Served testnets were freshly deployed with the all-waves contracts in
+  November. Forced sales always use the protocol's sized, sell-to-need plan,
+  and simulate that exact call before sending. The old whole-collateral
+  fallback is retired; an unsupported preview sends nothing.
+- Extension windows and funding are always read from the protocol. There is
+  no keeper-computed interim window or permission to skip the funding check.
+  An unreadable answer leaves the loan for a later run.
+- Reward day closing uses the one current report format at both ends.
+  A missing or unreadable report channel holds the close and identifies the
+  affected end, rather than falling back to an older report.
 
 ### Liquidity-confidence relay
 
@@ -428,7 +428,7 @@ evidence that the migration has completed.
   administrator's acknowledgment; the keeper never makes it, and each run's
   report names every epoch parked.
 - It advances a still-open day's transport cursor past an epoch that is
-  plainly exhausted: nothing left, fully indexed and unreferenced. An epoch
+  plainly exhausted: nothing left and unreferenced. An epoch
   exhausted only by its caps is not detected by the keeper; the day's next
   draw passes it.
 - On Base, when a remit destination has been taken off the expected-source
@@ -666,8 +666,10 @@ evidence that the migration has completed.
 
 ## Protocol upkeep outside the reward system
 
-- Two permissionless housekeeping steps outside the reward system have a
-  keeper backstop, checked every hour on every chain the keeper serves.
+- Protocol upkeep checks seven permissionless steps every hour: buyback
+  expiry, tier-LTV refresh, prepay sanctions sync, owed tier pushes, tier
+  exclusion refresh, reward-index compaction, and sanctions-registry refresh.
+  Each retains its own activation and send share.
 - A buyback intent that has passed its expiry while still pending is rolled
   back, so the unfilled part of its reservation returns to the spendable
   buyback budget and its allowance and commitment slot are released. The
@@ -911,6 +913,11 @@ serves. Each ships switched off behind its own flag.
   start, because there each deduction would charge a day without counting it.
   It deducts at most one day per loan per run, so a rental several days behind
   catches up a day an hour.
+- The contract also refuses a deduction after all agreed days have been paid
+  or when its clock is earlier than the rental's start. A rental prepaid in
+  full by a partial payment does not acquire another rent day or an automatic
+  maturity close: the borrower closes it, or it defaults after grace. The
+  keeper's prefilter preserves those same limits.
 - Each deduction is reported with the fee the chain recorded for it, and
   with whether the rental closed, read from the loan's status afterwards for
   every deduction (another caller may have taken a day in between, so the
@@ -1275,3 +1282,12 @@ dependency is never turned into an empty queue or a successful run.
   auto-listing, resumable entry reads, bounded stage reads, and gas margins.
 - Issue #2984 and the owner's October 27 direction: every permissionless step
   recorded with what backs it.
+
+- [October 29](../ReleaseNotes/ReleaseNotes-2026-10-29.md): extension reserves
+  and funding checks.
+- [November 2](../ReleaseNotes/ReleaseNotes-2026-11-02.md) and
+  [November 3](../ReleaseNotes/ReleaseNotes-2026-11-03.md): protected accounts,
+  permissionless service coverage, and retirement of delivery proofs.
+- [November 4](../ReleaseNotes/ReleaseNotes-2026-11-04.md): independent remit
+  acknowledgements, protected releases and locks, fair upkeep budgets,
+  staging, rental limits, sanctions freshness, and required current interfaces.

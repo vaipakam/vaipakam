@@ -7,7 +7,7 @@ destinations and flipped the cutover switch; the `/recover` guide links
 alone stay on the legacy host, held by same-origin recovery state rather
 than by any missing route). It is the app-specific functional
 spec consolidated against the release notes from 2026-08-13 through
-2026-10-28, inclusive, while retaining later recorded intent decisions. It is intentionally
+2026-11-04, inclusive, while retaining later recorded intent decisions. It is intentionally
 written without implementation snippets. (The app was called `alpha02` and
 served `alpha02.vaipakam.com` until #1854 renamed it; this file keeps the old
 name only in its filename.)
@@ -105,6 +105,13 @@ including people who never will.
   being read and offers a way to open it on a public explorer, so a
   reader can go to the primary source rather than accept the page's
   reading of it.
+- Reward metrics for a chain the indexer does not serve are unavailable,
+  rather than old stored figures presented as current. Loop closure requires
+  a deployed chain and a working provider connection. The recycling series
+  checks deployment and configured provider access without waiting on secret
+  resolution; if a configured secret later fails, its stored series still
+  names where day coverage ends and ingest health reports the stall. A retired
+  or unconfigured chain is never treated as a current zero-valued account.
 - The analytics view also states the VPFI token as the chain itself
   reports it: the token's address, its supply on the chain being read,
   and — on the chain where VPFI is issued — the supply cap, how much can
@@ -1977,9 +1984,9 @@ Thin-market honesty rules apply.
   be read is left out too, never included on a guess.
 - Before anything is signed the borrower sees, for every loan: today's payoff;
   how much more the payoff can grow if a lender accepts after the due date;
-  what the wallet must hold spare when a lender accepts (the payoff's interest
-  and the new loan's initiation fee, since the new principal arrives in the
-  same transaction); and what that loan's own page states before a request
+  what the wallet must hold spare when a lender accepts (the payoff less the
+  new principal net of its initiation fee, which pays the old lender directly);
+  and what that loan's own page states before a request
   (the late fee when it is past due; when the loan pays on a schedule, that
   an overdue payment period makes an acceptance fail until it is settled, so
   payments must stay current while the request is open, and that scheduled
@@ -1987,10 +1994,12 @@ Thin-market honesty rules apply.
   and the batch draw these statements from one source, so neither can make
   one the other omits. The review states the rate ceiling and duration every
   request asks for, since the inputs are no longer on screen. It also states the spare amount for all the loans together, which the wallet
-  must hold now or nothing is sent, and the single approval it will grant: the
-  sum of every request's largest possible payoff. It says that this one
-  approval also serves any other refinance request the borrower has open on
-  the same token, so one acceptance can leave another request short. The
+  must hold now or nothing is sent. Each nonzero wallet share has its own
+  single-use permit, bounded to that request's largest share before expiry;
+  the review distinguishes that ceiling from the exact amount taken. The
+  wallet approves the permit service, never a standing protocol payoff
+  allowance. Permits authorize separate requests but do not reserve balances:
+  another acceptance can still leave a later request short. The
   borrower agrees to the payoff and balance terms for every listed loan before
   confirming; the agreement covers exactly what the review shows and is
   withdrawn if any of it changes.
@@ -2001,24 +2010,26 @@ Thin-market honesty rules apply.
   request is never posted without the guardrails it needs. A guardrail written
   for a request that then fails can stay, and it only limits what a request
   on that loan can complete at.
-- One approval for the sum comes first, then one transaction for up to 15
-  loans. Each request runs as the borrower, with its own checks, and a request
+- The borrower signs one permit per nonzero-share request, attached with
+  the requests in one transaction for up to 15 loans. A zero share asks for
+  no permit. Each request runs as the borrower, with its own checks; a request
   that fails is skipped while the others are posted. Immediately before each
   transaction every loan in it is checked again in full; a loan whose largest
   possible payoff grew, whose spare amount grew (in the grace window it grows
   with each day's late fee), or whose statements changed, since the review is
   left out and named. So every request sent needs no more than the balance
-  that was checked and the approval that was granted.
+  that was checked and the request-specific permit ceiling reviewed.
 - Which loans got a request is established from the chain, never assumed: a
   loan is reported as having a request, with its offer number, only when that
   transaction itself posted it. Otherwise it is reported as no request with the
   reason, no longer active, left out, not confirmed yet (every loan in a
   transaction that has not confirmed is reported so, and nothing more is sent
-  behind it), or could not be read. The approval is set back to what it was
-  only when it is established that no request was posted; otherwise the
-  approval left standing is read from the chain and stated, with the reminder
-  that open requests draw on it. Each loan's own page then shows its request
-  and lets the borrower cancel it.
+  behind it), or could not be read. The card reports which permits were
+  attached and remains honest about any token approval left at the permit
+  service. An unused permit expires with its request; cancelling a request
+  does not require revoking a standing protocol payoff allowance. Each loan's
+  own page shows its request and lets the borrower cancel or replace a short
+  or expired permit after a fresh review.
 
 ### Taking back extra collateral
 
@@ -2084,15 +2095,11 @@ is the borrower's own money.
   accepted and holds nothing back; the app still looks for one among the
   current holder's own offers and, when it finds it, shows it as a request
   that can never be accepted and offers to cancel it. Cancelling such a
-  request never removes its payoff approval: the same approval serves every
-  refinance request the wallet posts on that token, and another may stand now
-  or be posted from another device at any moment, which no check made before
-  a separate revoke transaction can rule out. The card says so before and
-  after the cancel and names where to remove the approval by hand. (Cancelling
-  the loan's own request still removes it; a request posted elsewhere in the
-  meantime then shows its short approval on its own card, with the action to
-  re-approve.) When the record proves no request stands but the details of
-  its lapsed request cannot be read, nothing is held back and only a new post
+  request leaves no standing protocol payoff allowance to remove: its
+  unused single-use permit expires, and cannot authorize another request.
+  The wallet's approval to the permit service is a distinct authorization
+  and is disclosed as such. When the record proves no request stands but the
+  details of its lapsed request cannot be read, nothing is held back and only a new post
   is reported as unconfirmed. That look is best effort: when it cannot answer,
   nothing is held back, because nothing the protocol would refuse depends on
   it, and the page says it could not check for an older request and names the
@@ -2773,6 +2780,9 @@ is the borrower's own money.
 
 ## Claims
 
+Seller-interest claims currently stay outside Claim all and are withdrawn
+from their own individual rows, with the live eligibility check before signing.
+
 - Once the reward claim window is in force, the interaction-rewards card states
   the soonest date by which an unclaimed reward must be claimed before it
   returns to the rewards programme. The date is the earliest the platform could
@@ -3019,6 +3029,12 @@ is the borrower's own money.
   payment; the seller's own wallet plays no part in it and is not read.
 
 ## VPFI Vault and Discounts
+
+Depository balances, adoption, protected withdrawals, recovery signers, and
+account replacement follow [Vault Operations](VaultOperations.md). The vault
+and protection pages implement those rules in addition to VPFI discounts.
+A replacement controller's reserve withdrawal is not yet exposed
+by the extension card even though the contract permits it.
 
 - The VPFI page is availability-first. A chain without registered VPFI utility
   does not show deposit controls.
@@ -4424,129 +4440,56 @@ Its intended behaviour, as the test oracle for this surface:
   omitting the feature. A compliance-flagged wallet is not shown
   close-early at all; its open path remains the wind-down repayment.
   Only one pending-action review can be open on the page at a time.
-- Advanced mode offers refinancing on an active ERC-20 loan up to and
-  including the end of its grace window (a request can be posted and
-  accepted through grace; strictly past grace both are rejected and
-  the surface says the default process applies) — and only while the
-  position still belongs to the wallet that originally took the loan
-  (collateral carry-over binds to the original borrower; a
-  transferred position is not offered refinancing). The borrower
-  posts a refinance request for exactly the loan's outstanding amount
-  at a chosen rate ceiling and duration, and a lender's acceptance
-  completes everything in one transaction — new loan opened, old
-  lender paid off from the borrower's wallet, old loan closed,
-  collateral moved across without unlocking. When the acceptance
-  lands after the loan's due date, the payoff also includes the same
-  late fee a late repayment charges plus the interest that keeps
-  accruing past the due date. Before posting, the review must
-  state: the payoff is always principal plus the full remaining
-  term's interest (never pro-rata, regardless of the loan's interest
-  mode) plus the protocol's cut inside it; that a late acceptance
-  adds the late fee, with the largest amount the payoff could grow
-  by (late fee plus continued interest) disclosed and the granted
-  approval sized to the largest total pull any remaining acceptance
-  could make (so a grace-window acceptance cannot fail on a short
-  allowance) — and if that bound has grown by signing time (a review
-  left open while the loan slid toward maturity), the submission
-  stops for a re-review rather than signing undisclosed headroom; the
-  spare wallet balance to keep while the request is open (payoff
-  interest plus the new loan's initiation fee — the new principal
-  arrives in the same transaction); that a short balance only makes
-  the acceptance fail, taking nothing; that posting takes multiple
-  wallet confirmations; and, for a loan on a periodic interest
-  schedule, that the replacement loan will not carry a payment
-  schedule. The form, the review and the standing request all say that a
-  request is not a guarantee (#544): until a lender accepts it, the loan
-  keeps its due date and grace window, and if none accepts in time it can
-  still default like any other loan, so the borrower must be ready to repay
-  it themselves; the standing request card says this while it is still
-  checking the request's state, too. A loan already past due but inside grace shows a plain
-  past-due notice on the form, and the quoted figures include the fee
-  as of now. If the posting sequence is abandoned
-  after the payoff approval was granted but before the request was
-  posted, the approval is unwound automatically (best effort). The
-  request carries its own on-chain expiry matching the reviewed
-  lifetime — acceptance past it fails safely regardless of any wider
-  pre-existing guardrails — plus guardrails bounding completion to
-  the reviewed rate ceiling. A request whose standard lifetime would
-  outlive the loan's grace window is capped on-chain at the grace
-  boundary, and the review states that shorter effective expiry
-  rather than the standard lifetime. The pending request's view — its state,
-  expiry, funding warnings, and cancel action — must outlive every
-  gate on the posting form: it stays present through data-source
-  errors, unresolved compliance checks, mode switches, the loan
-  crossing maturity, and the loan settling some other way (where it
-  states the request can no longer complete and offers cancel as the
-  cleanup). Once the loan is strictly past its grace window the view
-  likewise states that no lender can accept the request any more,
-  stops the funding warnings (there is nothing left to fund), and
-  keeps cancel as the unwind. The page verifies the request against
-  the chain (a cancelled or replaced request clears itself) and warns
-  distinctly when the standing payoff approval no longer covers
-  completion (with a restore action, which first re-verifies the
-  request is still completable — including that the loan is not past
-  grace — and restores cover for the largest pull a remaining
-  acceptance could carry) or when the wallet balance is short (top up
-  or cancel — no false remedy). Cancellation is offered from that view
-  (it becomes available a few minutes after posting, per the
-  protocol's cancel cooldown, judged by chain time) and also removes
-  the standing payoff approval. While a request is live, partial
-  repayment and close-early are held off with an explanation —
-  either would strand the request — and the full-repayment review
-  warns that the request survives settlement until cancelled. While
-  the search for a request has not answered, the full-repayment review
-  stays available (it is the safety valve) but says that a request
-  could exist, posted from another device, and that repaying would
-  strand it too. Because the page's search runs on a cadence, a review
-  is checked again every time it is confirmed: when what the review
-  showed does not cover what that check found (a request turned up, or
-  the check could not answer, after the review said nothing; or a
-  request is now open after the review said only that the check had not
-  answered), nothing is sent that time and the review now says what
-  repaying would do — the next confirmation repays unless the answer has
-  changed again. A warning from an earlier check is dropped once a later
-  check comes back clear, and never carries across a change of network,
-  account or loan. Repayment is never refused, only disclosed first. Only an acceptable request is live: one that has
-  expired, whose loan is past grace, or whose poster no longer holds
-  the borrower position can never be filled, so it holds nothing back.
-  The request is found on chain from the borrower-position holder's own
-  offers, so a request posted from another device or tool shows here
-  too, with its cancel action, to the wallet that posted it; this device's
-  own record of a request it just posted only speeds that up. A request
-  the search has already found stays named, with its cancel action, when
-  a later search fails — the surfaces it would strand hold back
-  meanwhile — and stops being named only once the chain confirms it is
-  gone. A wallet
-  that posted a request and then transferred the position, or whose loan
-  has settled, is shown that request from any device too — only the
-  poster can cancel it and remove its payoff approval. When that search
-  of the wallet's own offers cannot answer — it failed, or the wallet has
-  posted more offers since the loan's own offer than one search reads —
-  the page says it cannot show such a request (and, for a failure, that
-  a later try may) and names the manual cleanup (cancel it from the
-  wallet's open offers if it is still open — an expired request is not
-  listed there, and the page says so — and, either way, remove the token
-  approval it relied on if nothing else needs it), rather than staying
-  silent. This depends only
-  on that search, not on any other role the wallet holds in the loan. An expired
-  request is still shown so it can be cancelled and its approval removed,
-  and the card outlives the loan's settlement for the same reason. A new
-  request is not posted while the app can see one open, and the form waits until the search has answered, checking again just
-  before posting. The protocol enforces the same limit (#2407): while a
-  request stands against the loan, posting a second is refused, so two
-  devices that both pass the app's check in the same moment cannot both
-  post — the protocol refuses the second, naming the request already
-  open. Only the request the protocol has recorded for the loan can be
-  taken; a second request left over from before that limit can never be
-  taken, and the page shows it so it can be cancelled. An expired request
-  that was never cancelled must be cancelled before a new one is posted —
-  the protocol refuses the new one otherwise, because the expired request
-  may still hold a fresh collateral pledge and the loan's record is how it
-  is found — so the form says so and offers the cancel rather than letting
-  the post fail. A request the search has already found
-  expired stays treated as expired even when the page's fuller check of
-  it cannot finish. Loans on a periodic interest schedule carry a visible
-  warning that an overdue period blocks completion until settled.
+- Advanced mode offers refinancing on an active ERC-20 loan through its
+  effective grace end, only while the original borrower still holds the
+  borrower position. A transferred position is not offered this carry-over
+  flow. A request names the outstanding principal, a rate ceiling, duration,
+  and hard expiry no later than the loan's grace boundary.
+  Acceptance or matching opens the replacement loan and settles the old loan
+  atomically. The new lender's principal, less the initiation fee, pays the
+  old lender directly; the wallet pays only the remaining payoff. There is
+  no later standalone refinance step and no keeper grant for one.
+  The payoff follows the old loan's interest mode: full-term interest for
+  a full-term loan, accrued interest for a pro-rata loan, with prior settled
+  interest credited and late fees included where due. Refinance adds no
+  rate-shortfall top-up. The review shows the payoff and wallet share now,
+  their maximum before the last fillable moment, and the spare balance to
+  keep. If the reviewed bound grows, signing stops for a new review.
+  For each nonzero share the borrower signs an exact-token, single-use
+  permit tied to that loan and request, sized to its maximum share before
+  expiry. Acceptance takes only the exact share then due. The token approval
+  is to the permit service; the protocol holds no standing wallet allowance.
+  A zero share needs no permit. A missing, spent, wrong-holder, expired, or
+  too-small permit refuses the entire acceptance without moving funds.
+  A later initiation-fee increase can make the permit short, so the pending
+  card offers a new signature after rechecking eligibility and the live bound.
+  The card distinguishes a short permit from a short wallet balance; only
+  a balance top-up or cancellation remedies the latter. An unused permit
+  expires with the request. Historical deployments without these features
+  may retain the disclosed whole-payoff approval route; it is not the
+  required route for the freshly deployed testnets.
+  Posting shows the ordered wallet prompts and writes required guardrails
+  immediately before the request. A failure leaves no implied posted request
+  or spent permit. Cancellation and pending-request details remain available
+  through mode changes, data errors, compliance uncertainty, maturity, loss
+  of the position, and loan settlement. Dead requests are marked unable to
+  complete and retain cleanup, without funding warnings. Only the poster
+  cancels their request; cancellation never revokes an unrelated signature.
+  Discovery uses the protocol's loan-request record and the poster's own
+  offers across devices. A failed or bounded search says it is incomplete,
+  retains a request already found until chain evidence clears it, and points
+  to manual cleanup rather than silently hiding it. A lapsed request still
+  recorded for the current holder must be cancelled before a new one is
+  posted. Only the recorded request can fill; an older displaced one cannot.
+  The pending request never promises a refinance: the old loan keeps its
+  due date and may default if nobody accepts. Partial repayment, collateral
+  withdrawal, and early close respect the live-request interlocks. Full
+  repayment stays available with a warning that the request needs cleanup;
+  confirmation rechecks that warning and shows any newly found or unread
+  request before sending. A request whose poster no longer owns the position,
+  or which cannot fill before expiry or grace end, does not hold those
+  actions back. An overdue periodic-interest period blocks acceptance until
+  settled; the replacement loan does not silently inherit that schedule.
 - An active loan on a periodic interest schedule shows its current
   period on the loan page, in both interface modes and to anyone viewing
   it (#2524): the schedule, the period's deadline and the end of its grace,
