@@ -55,7 +55,7 @@ import {
   readLoanLive,
   readRepaymentDueLive,
 } from '../contracts/loanLive';
-import { pauseInForceAt } from '@vaipakam/lib/loanClock';
+import { pauseInForceAt, proRataInterestSeconds } from '@vaipakam/lib/loanClock';
 import { useActiveChain } from '../chain/useActiveChain';
 import { useMode } from '../app/ModeContext';
 import { DIAMOND_ABI_VIEM, useDiamondWrite } from '../contracts/diamond';
@@ -2690,12 +2690,15 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       const accrualStart =
         live.interestAccrualStart !== 0n ? live.interestAccrualStart : live.startTime;
       const nowSec = latestBlock.timestamp;
-      const elapsedDays = nowSec > accrualStart ? (nowSec - accrualStart) / 86_400n : 0n;
-      // +2 days pad for day-boundary steps while the tx is pending —
-      // the contract pulls only the recomputed accrued, never the pad.
-      const accrued =
-        (live.principal * live.interestRateBps * (elapsedDays + 2n)) /
-        (365n * 10_000n);
+      const elapsed = nowSec > accrualStart ? nowSec - accrualStart : 0n;
+      // Interest counts by the second (#3169); +2 days pad for the time the
+      // tx may sit pending — the contract pulls only the recomputed accrued,
+      // never the pad.
+      const accrued = proRataInterestSeconds(
+        live.principal,
+        live.interestRateBps,
+        elapsed + 2n * 86_400n,
+      );
       const required = wei + accrued;
       await assertErc20BalanceLive({
         publicClient,

@@ -3,6 +3,7 @@ pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
 import {LibLoanClock} from "../../src/libraries/LibLoanClock.sol";
+import {LibEntitlement} from "../../src/libraries/LibEntitlement.sol";
 
 /// @title LoanClockProbeFacet — test-only reads of the loan clock
 /// @notice Cut into a test Diamond by {GlobalPauseLoanClockTest} so the
@@ -26,5 +27,15 @@ contract LoanClockProbeFacet {
         return LibLoanClock.remainingInterestSeconds(
             LibVaipakam.storageSlot().loans[loanId], block.timestamp
         );
+    }
+
+    /// @notice #3169 — {LibLoanClock.minimumInterestSeconds} for `loanId`.
+    function probeMinimumInterestSeconds(uint256 loanId) external view returns (uint256) {
+        return LibLoanClock.minimumInterestSeconds(LibVaipakam.storageSlot().loans[loanId]);
+    }
+
+    /// @notice #3169 — {LibEntitlement.settlementInterest} for `loanId`, now.
+    function probeSettlementInterest(uint256 loanId) external view returns (uint256) {
+        return LibEntitlement.settlementInterest(LibVaipakam.storageSlot().loans[loanId], block.timestamp);
     }
 }

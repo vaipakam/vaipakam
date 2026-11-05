@@ -23,6 +23,7 @@
  */
 import type { PublicClient } from 'viem';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
+import { proRataInterestSeconds } from '@vaipakam/lib/loanClock';
 import { copy } from '../content/copy';
 import { captureTxError } from '../lib/errors';
 import { AssetType, LoanStatus } from '../lib/types';
@@ -253,10 +254,13 @@ export async function planRepay(
   }
   let due = calcDue;
   if (due === 0n && live.status === LoanStatus.FallbackPending) {
-    const elapsedDays =
-      chainNow > live.startTime ? (chainNow - live.startTime) / 86_400n : 0n;
-    const interestEst =
-      (live.principal * live.interestRateBps * (elapsedDays + 2n)) / (365n * 10_000n);
+    // Interest counts by the second (#3169), padded two days ahead.
+    const elapsed = chainNow > live.startTime ? chainNow - live.startTime : 0n;
+    const interestEst = proRataInterestSeconds(
+      live.principal,
+      live.interestRateBps,
+      elapsed + 2n * 86_400n,
+    );
     // Late fees mirror LibVaipakam.calculateLateFee: 1% base + 0.5%/day
     // past maturity, CAPPED at 5%, judged on the live term, one day-step
     // ahead.

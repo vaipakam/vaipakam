@@ -15,7 +15,7 @@
  * contract path, not an interface gap.
  */
 import { ADMIN, DIAMOND, ERC20, MOCKS, TREASURY, VENUE_ROUTE, borrower, chainNow, lender, outsider, parseUnits, pub, tx } from '../lib/chain.mjs';
-import { ABIS, approveDiamond, delta, expectPosition, mint, offerParams, openLoan, positionOf, read, snapshot, vaultAddressFor, STATUS, bothNfts, NFT_STATUS } from '../lib/flow.mjs';
+import { ABIS, approveDiamond, delta, expectPosition, mint, offerParams, openLoan, positionOf, read, snapshot, vaultAddressFor, STATUS, bothNfts, NFT_STATUS, perSecondInterest } from '../lib/flow.mjs';
 import { f18 } from '../lib/chain.mjs';
 import { sendAs, warpDays } from '../lib/impersonate.mjs';
 import { simulate } from '../lib/errors.mjs';
@@ -274,8 +274,8 @@ async function runPeriodic(initial) {
   }
 
   // Voluntary path: a second loan whose borrower pays the period themselves.
-  // A partial repayment charges ALL interest accrued to now (whole days,
-  // borrower-favourable) and then retires the principal amount named — so to
+  // A partial repayment charges ALL interest accrued to now (to the second,
+  // rounded down once, #3169) and then retires the principal amount named — so to
   // pay the period rather than buy down principal, the borrower names the
   // SMALLEST principal reduction the protocol accepts (the asset's
   // `minPartialBps` floor, or one unit if there is none). What it costs is
@@ -300,15 +300,15 @@ async function runPeriodic(initial) {
   const afterPay = await read(ABIS.repayPeriodic, 'previewPeriodicSettle', [second.loanId]);
   const payAt = BigInt((await pub.getBlock({ blockNumber: payReceipt.blockNumber })).timestamp);
   const accrualStart = BigInt(secondLoan.interestAccrualStart || secondLoan.startTime);
-  const payDays = (payAt - accrualStart) / 86_400n;
-  const payInterest = (secondLoan.principal * BigInt(secondLoan.interestRateBps) * payDays) / (365n * 10_000n);
+  // #3169 — interest accrued to the second.
+  const payInterest = perSecondInterest(secondLoan.principal, secondLoan.interestRateBps, payAt - accrualStart);
   const payCut = (payInterest * BigInt(secondLoan.treasuryFeeBpsAtInit)) / 10_000n;
   expectLedger('A9.13', 'the voluntary period payment costs exactly the interest accrued to now plus the minimum principal reduction, to the lender\'s wallet, the treasury fee on the interest only',
     beforePay, afterPayBal, {
       'lending.borrowerEOA': -(payInterest + part),
       'lending.lenderEOA': payInterest - payCut + part,
       'lending.treasury': payCut,
-    }, `wholeDays=${payDays} interest=${f18(payInterest)} principalReduction=${f18(part)} (minPartialBps=${minPartialBps}) periodDue=${f18(due[3])}`);
+    }, `seconds=${payAt - accrualStart} interest=${f18(payInterest)} principalReduction=${f18(part)} (minPartialBps=${minPartialBps}) periodDue=${f18(due[3])}`);
   // Exactly ONE period closes: the stamp lands on the period end the
   // pre-payment preview reported — not merely "later", which a jump past
   // several intervals would also satisfy while forgiving the ones skipped.
@@ -316,14 +316,13 @@ async function runPeriodic(initial) {
     payInterest >= due[3] && BigInt(paid.lastPeriodicInterestSettledAt) === BigInt(due[1]) && paid.collateralAmount === secondLoan.collateralAmount,
     `settledAt ${stampBefore} -> ${paid.lastPeriodicInterestSettledAt} (previewed period end ${due[1]}) principal ${f18(secondLoan.principal)} -> ${f18(paid.principal)} ` +
     `nextDue=${Array.isArray(afterPay) ? afterPay[1] : '?'} dueNow=${Array.isArray(afterPay) ? afterPay[6] : '?'}`);
-  await expectPosition('A9.13c', 'the voluntary payment changes the position exactly: principal down by the reduction, the period checkpointed, the accrual clock restarted, the remaining days reduced',
+  await expectPosition('A9.13c', 'the voluntary payment changes the position exactly: principal down by the reduction, the period checkpointed, the accrual clock restarted (#3169: no remaining-day counter moves)',
     second.loanId, payPos, {
       principal: payPos.principal - part,
-      // The period is checkpointed at its previewed end, the accrual clock
-      // restarts at the payment, and the days remaining fall by the whole
-      // days elapsed.
+      // The period is checkpointed at its previewed end and the accrual clock
+      // restarts at the payment. #3169 — the full-term minimum is derived
+      // from the term, so no remaining-day field changes.
       lastPeriodicInterestSettledAt: due[1], interestAccrualStart: payAt,
-      interestRemainingDays: BigInt(payPos.durationDays) - payDays,
     });
   const stampSim = await simulate(DIAMOND, ABIS.repayPeriodic, 'settlePeriodicInterest', [second.loanId, 0n, []], outsider.address);
   expectRefusal('A9.14', 'a stamp call after a voluntary payment is refused — the period is already closed', stampSim, 'PeriodicSettleNotDue');

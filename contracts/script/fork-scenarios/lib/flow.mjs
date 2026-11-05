@@ -594,14 +594,15 @@ export const CHAIN_ASSIGNED_AT_CREATION = ['id', 'lenderTokenId', 'borrowerToken
 /**
  * The creation-time fields of a loan opened by accepting `offerId` in the
  * transaction `receipt`, called by `acceptor`: the clock starts at the fill
- * block, the whole term remains, every running counter is zero (a rental's
+ * block, the retired remaining-day slot (#3169) is never written and reads
+ * zero for the life of the loan, every running counter is zero (a rental's
  * deduction clock too, on an ERC-20 loan), the accept's
  * caller is the matcher, and both parties' consent is recorded.
  */
 export async function creationFields(receipt, offerId, durationDays, acceptor, { rental = false } = {}) {
   const at = BigInt((await pub.getBlock({ blockNumber: receipt.blockNumber })).timestamp);
   return {
-    offerId, startTime: at, interestAccrualStart: at, interestRemainingDays: BigInt(durationDays),
+    offerId, startTime: at, interestAccrualStart: at, retiredInterestRemainingDays: 0n,
     // `lastDeductTime` is an NFT rental's daily-deduction clock; an ERC-20
     // loan has no daily deduction, so it stays unset.
     lastPeriodicInterestSettledAt: at, lastDeductTime: rental ? at : 0n,

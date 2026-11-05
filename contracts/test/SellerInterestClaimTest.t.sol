@@ -94,8 +94,18 @@ contract SellerInterestClaimTest is SetupTest {
         _sellTo(loanId, seller, buyer);
     }
 
+    /// @dev The loan's remaining term in whole days, counting a part day as a
+    ///      day: the shortest buy-offer duration that covers the live exposure
+    ///      (the direct sale refuses one shorter than maturity - now). #3169
+    ///      retired the remaining-day counter these sales read.
+    function _remainingWholeDays(uint256 loanId) internal view returns (uint256) {
+        LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        uint256 end = uint256(l.startTime) + uint256(l.durationDays) * 1 days;
+        return end > block.timestamp ? (end - block.timestamp + 1 days - 1) / 1 days : 0;
+    }
+
     function _sellTo(uint256 loanId, address seller, address buyer) internal {
-        uint256 remaining = LoanFacet(address(diamond)).getLoanDetails(loanId).interestRemainingDays;
+        uint256 remaining = _remainingWholeDays(loanId);
         LibVaipakam.CreateOfferParams memory p = _params(LibVaipakam.OfferType.Lender, remaining);
         // The buyer funds exactly the principal outstanding now.
         p.amount = LoanFacet(address(diamond)).getLoanDetails(loanId).principal;
@@ -262,7 +272,7 @@ contract SellerInterestClaimTest is SetupTest {
         assertTrue(named, "the verdict names the full claim list");
 
         address buyer = _provisionFundedActor("b5", mockERC20, PRINCIPAL * 2);
-        uint256 remaining = LoanFacet(address(diamond)).getLoanDetails(loanId).interestRemainingDays;
+        uint256 remaining = _remainingWholeDays(loanId);
         vm.prank(buyer);
         uint256 buyOfferId =
             OfferCreateFacet(address(diamond)).createOffer(_params(LibVaipakam.OfferType.Lender, remaining));
@@ -344,7 +354,7 @@ contract SellerInterestClaimTest is SetupTest {
 
         address buyer = _provisionFundedActor("buyerB", mockERC20, PRINCIPAL * 2);
         LibVaipakam.CreateOfferParams memory p =
-            _params(LibVaipakam.OfferType.Lender, LoanFacet(address(diamond)).getLoanDetails(loanId).interestRemainingDays);
+            _params(LibVaipakam.OfferType.Lender, _remainingWholeDays(loanId));
         p.amount = LoanFacet(address(diamond)).getLoanDetails(loanId).principal;
         p.amountMax = p.amount;
         vm.prank(buyer);

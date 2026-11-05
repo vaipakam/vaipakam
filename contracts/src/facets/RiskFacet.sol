@@ -778,8 +778,9 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
      *         `durationDays` are all UNCHANGED (the #641 pattern — ~20+
      *         maturity/grace consumers treat `startTime + durationDays` as the
      *         fixed maturity). Implementation re-stamps ONLY the interest-accrual
-     *         clock (`interestAccrualStart`/`interestRemainingDays`); from now on
-     *         interest accrues on the reduced principal for the remaining term.
+     *         clock (`interestAccrualStart`); from now on interest accrues on
+     *         the reduced principal for the remaining term (#3169: to the
+     *         second, up to the term's end).
      *
      *         Repeated partials: a loan may be partial-liquidated multiple
      *         times. Each call further reduces collateral + principal,
@@ -1071,15 +1072,17 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         // and grace bucket (`gracePeriod(durationDays)`) are preserved exactly:
         // a partial can no longer pull the default / late-fee deadline earlier
         // or collapse the grace window. The accrual clock lives in the dedicated
-        // `interestAccrualStart` / `interestRemainingDays` fields instead — the
-        // reduced principal accrues from `now` over the whole days remaining to
-        // maturity. The pre-partial coupon was already settled interest-first
+        // `interestAccrualStart` field instead — the reduced principal accrues
+        // from `now`, and a full-term minimum runs to maturity to the second
+        // (#3169). The pre-partial coupon was already settled interest-first
         // from the swap proceeds above.
         loan.collateralAmount -= swappedCollateral;
         LibInterestLedger.reducePrincipal(s, loan, principalRepaid, principalRepaid);
-        uint256 remainingDays = (endTime - block.timestamp) / 1 days;
+        // #3169 — only the clock's start moves; the residual's full-term
+        // minimum runs to the term's end to the second
+        // ({LibLoanClock.minimumInterestSeconds}). A whole-day counter here
+        // dropped the part day before maturity.
         loan.interestAccrualStart = uint64(block.timestamp);
-        loan.interestRemainingDays = uint16(remainingDays);
         // #915 / #2731 — the residual loan restarts its accrual clock at
         // `now`, so the periodic credit this slice's interest was netted
         // against is consumed: only the gross interest it covered is taken off,

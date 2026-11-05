@@ -1164,7 +1164,7 @@ contract EarlyWithdrawalFacetTest is Test {
     ///      These parameters are not decorative — they are the smallest case I
     ///      could construct that is REACHABLE here. The counterexample in the
     ///      review used 7,203 seconds of remaining term, which this contract
-    ///      cannot express: `interestRemainingDaysOf` returns whole days, so
+    ///      cannot express: a loan's term is `durationDays` whole days, so
     ///      the term is always a multiple of 86,400. Searching whole-day terms
     ///      found this one:
     ///
@@ -1187,8 +1187,9 @@ contract EarlyWithdrawalFacetTest is Test {
         l.lender = lender;
         l.principal = 1_000_000_000;
         l.interestRateBps = 2;
+        l.startTime = uint64(block.timestamp);
+        l.durationDays = 13;
         l.interestAccrualStart = uint64(block.timestamp);
-        l.interestRemainingDays = 13;
         TestMutatorFacet(address(diamond)).setLoan(truncLoanId, l);
 
         uint256 listedAt = block.timestamp;

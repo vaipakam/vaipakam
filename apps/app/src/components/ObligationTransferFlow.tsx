@@ -359,8 +359,7 @@ export function ObligationTransferFlow({
         liveLoan.interestRateBps !== live.interestRateBps ||
         liveLoan.startTime !== live.startTime ||
         liveLoan.durationDays !== live.durationDays ||
-        liveLoan.interestAccrualStart !== live.interestAccrualStart ||
-        liveLoan.interestRemainingDays !== live.interestRemainingDays
+        liveLoan.interestAccrualStart !== live.interestAccrualStart
       ) {
         setError(copy.match.termsChanged);
         void queryClient.invalidateQueries({ queryKey: ['loanLive'] });

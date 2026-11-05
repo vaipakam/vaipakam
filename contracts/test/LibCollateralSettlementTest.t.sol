@@ -184,16 +184,20 @@ contract LibCollateralSettlementTest is SetupTest {
         );
     }
 
-    // ─── 3. Sub-day elapsed rounds down to zero ─────────────────────────
+    // ─── 3. Sub-day elapsed accrues to the second (#3169) ───────────────
 
-    function test_liveFloor_subDayElapsed_doesNotAccrueYet() public {
-        // 23 hours, 59 minutes after start — accrual is per whole-day,
-        // rounded down. Floor must still be principal exactly.
-        vm.warp(block.timestamp + 23 hours + 59 minutes);
+    function test_liveFloor_subDayElapsed_accruesPerSecond() public {
+        // 23 hours, 59 minutes after start. #3169 — interest counts by the
+        // second, so the floor carries 86,340 seconds of interest. It used to
+        // count whole days and read principal exactly here.
+        uint256 elapsed = 23 hours + 59 minutes;
+        vm.warp(block.timestamp + elapsed);
         uint256 floor = TestMutatorFacet(address(diamond)).getLiveFloor(
             TEST_LOAN_ID, block.timestamp
         );
-        assertEq(floor, PRINCIPAL, "sub-day elapsed rounds to 0 accrued interest");
+        uint256 accrued = (PRINCIPAL * RATE_BPS * elapsed) / (365 days * BASIS_POINTS);
+        assertGt(accrued, 0, "a sub-day segment accrues");
+        assertEq(floor, PRINCIPAL + accrued, "sub-day elapsed accrues per second");
     }
 
     // ─── 4. Monotonicity: floor never decreases as time advances ────────
@@ -574,7 +578,10 @@ contract LibCollateralSettlementTest is SetupTest {
         uint256 maturity = block.timestamp + DURATION_DAYS * ONE_DAY;
         vm.warp(maturity + 2 * ONE_DAY + 1 hours);
 
-        uint256 accrued = _expectedAccrued(PRINCIPAL, RATE_BPS, DURATION_DAYS + 2);
+        // #3169 — interest counts the extra hour too; the late fee still steps
+        // by whole days late.
+        uint256 accrued = (PRINCIPAL * RATE_BPS * ((DURATION_DAYS + 2) * ONE_DAY + 1 hours))
+            / (365 days * BASIS_POINTS);
         // Two whole days late: 1% + 2 × 0.5%.
         uint256 lateFee = (PRINCIPAL * 200) / BASIS_POINTS;
         uint256 treasury = ((accrued + lateFee) * DEFAULT_TREASURY_FEE_BPS) / BASIS_POINTS;
