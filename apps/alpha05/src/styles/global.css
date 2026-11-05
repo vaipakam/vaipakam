@@ -723,3 +723,93 @@ a.btn {
   min-height: 44px;
   text-decoration: none;
 }
+/* ── Writes: the signing flow, the Terms prompt, the faucet ──────────── */
+.facts dt,
+.facts dd {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 479px) {
+  /* A label and its value stacked: a fingerprint or an address never
+     pushes the page sideways on a phone. */
+  .facts {
+    grid-template-columns: 1fr;
+    gap: 2px;
+  }
+  .facts dd {
+    margin-bottom: 8px;
+  }
+}
+.action-flow {
+  margin: 12px 0 0;
+  overflow-wrap: anywhere;
+}
+.terms-prompt {
+  width: min(560px, calc(100vw - 32px));
+  max-height: calc(100dvh - 32px);
+  overflow: auto;
+  padding: 16px;
+  color: var(--text-body);
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-pop);
+}
+.terms-prompt::backdrop {
+  background: rgba(0, 0, 0, 0.45);
+}
+.terms-prompt h2 {
+  margin: 0 0 8px;
+  font-size: 1.15rem;
+  color: var(--text-strong);
+}
+.terms-links {
+  margin: 8px 0;
+  padding-inline-start: 18px;
+}
+.terms-links li {
+  margin: 4px 0;
+}
+.badge {
+  display: inline-block;
+  padding: 1px 8px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-strong);
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  vertical-align: middle;
+}
+.faucet-assets {
+  list-style: none;
+  margin: 8px 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+.faucet-assets li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px 10px;
+  padding: 10px 12px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+.faucet-kind {
+  display: block;
+  margin-top: 2px;
+}
+.faucet-name {
+  font-weight: 600;
+  color: var(--text-strong);
+}
+.faucet-next-steps {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  padding: 0;
+}

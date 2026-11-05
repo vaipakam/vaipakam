@@ -2184,3 +2184,21 @@ abajo. Un loan que no se puede valorar (un NFT o un activo sin
 precio) se cuenta, no se estima. El lado mayor solo se nombra cuando
 los loans sin valorar no podrían cambiar la respuesta; si no, Home
 muestra los totales valorados y el recuento.
+
+<a id="home-faucet"></a>
+
+### Home: activos de prueba
+
+En una testnet cuyo registro de despliegue publica activos de prueba, Home los lista: ERC-20 de prueba conectados a un feed de precio y un pool de prueba (líquidos), otros dejados sin ninguno a propósito (ilíquidos: los préstamos en ellos no tienen precio y el impago se liquida en especie) y NFT de alquiler ERC-4907. Una acuñación llama al contrato del token simulado, nunca al Diamond: 1.000 tokens enteros, o un NFT con un token id aleatorio nuevo comprobado como no acuñado antes de abrir la wallet. El resultado se mide leyendo de nuevo el saldo o `ownerOf`, y una acuñación de token ofrece después `wallet_watchAsset`. Un NFT de prueba solo puede quemarlo su dueño o un operador aprobado.
+
+<a id="home-fee-discount"></a>
+
+### Home: descuento en comisiones
+
+`setVPFIDiscountConsent` fija una bandera por wallet en el Diamond de esta cadena. Desactivada, el descuento por tenencia es 0. Activada, la comisión de inicio del préstamo del prestatario se reduce al aceptar, en el activo prestado (la ruta de precio de VPFI nunca forma parte del camino del prestatario), y la comisión sobre el rendimiento del prestamista se descuenta en cada liquidación según el nivel efectivo vigente entonces. La entrega sigue `getVPFIDiscountConfig`: con la tasa de VPFI y su activo de referencia ambos fijados, la comisión descontada se debita en VPFI del vault del prestamista y este conserva todos los intereses; si no, se reduce la propia comisión de la tesorería y no se mueve VPFI. La llamada es `whenNotPaused`, así que la pausa global la cierra en ambos sentidos. Activarla está sujeto a los Términos, desactivarla no, y ninguna de las dos difunde un nivel a los mirrors.
+
+<a id="terms-gate"></a>
+
+### El aviso de los Términos
+
+`getCurrentTos` devuelve la versión y el hash del contenido vigentes en la cadena de la acción; la versión 0 significa ninguna y nada queda bloqueado. A una wallet cuyo `hasAcceptedCurrentTerms` es false se le pregunta antes de una nueva exposición, y el aviso enlaza `/terms/v<N>`, la página fijada a la versión cuyo texto nunca cambia. Aceptar llama a `acceptTerms(version, hash)` una sola vez. Antes de abrir la wallet se vuelve a leer el par: una versión más nueva reemplaza la mostrada y una aceptación hecha en otra pestaña deja continuar la acción. Una lectura fallida es «no se puede confirmar», con reintento, nunca «no aceptado». Las salidas nunca se bloquean.

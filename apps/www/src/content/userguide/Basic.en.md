@@ -1006,3 +1006,43 @@ When you both lend and borrow, Home compares the two sides by
 today's value. Loans that cannot be valued, such as NFTs or assets
 with no price, are counted and left out, and Home names the larger
 side only when they could not change the answer.
+
+<a id="home-faucet"></a>
+
+### Home: Test Assets
+
+On a test network, Home offers test tokens and NFTs so you can try
+borrowing, lending and renting without real money. They have no
+value and are minted by test token contracts, not by the protocol.
+Some test tokens have a test price, so loans in them have a health
+factor; others have none, so a default hands over the collateral
+itself. The test NFTs can be rented out. Each mint shows a receipt
+first, and the result is checked on the chain afterwards.
+
+<a id="home-fee-discount"></a>
+
+### Home: Fee Discount
+
+The fee discount is one setting per network for your whole wallet.
+While it is off, your fees get no discount, whatever VPFI you hold.
+While it is on, the fee charged when you borrow is reduced, and so
+is the fee on interest you earn as a lender, by your VPFI discount
+tier at the moment each fee is charged; at tier 0 there is none. On
+some networks the lender discount is paid in VPFI from your vault,
+and the receipt says which before you confirm. Turning it on needs
+the current Terms accepted; turning it off never does. While the
+protocol is paused it cannot be changed either way.
+
+<a id="terms-gate"></a>
+
+### The Terms Prompt
+
+Where a Terms of Service version is in force, the app asks you to
+accept it before an action that starts something new, such as
+turning on the fee discount, and names the action that asked. It
+shows the version, a fingerprint of its text and a link to that
+exact version, whose text never changes. Accepting is one wallet
+confirmation and moves no funds. If the app cannot read whether you
+accepted, it says so and lets you try again instead of treating it
+as a no. Repaying, claiming, withdrawing your own assets, cancelling
+your own offers and turning a consent off are never held back.

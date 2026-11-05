@@ -20,7 +20,6 @@
  */
 import { hexToString, type Abi, type PublicClient } from 'viem';
 import {
-  AdminFacetABI,
   LoanFacetABI,
   MetricsDashboardFacetABI,
   MetricsFacetABI,
@@ -38,7 +37,6 @@ const LOAN = LoanFacetABI as Abi;
 const RISK = RiskFacetABI as Abi;
 const PERIODIC = RepayPeriodicFacetABI as Abi;
 const VALUE = NumeraireValueFacetABI as Abi;
-const ADMIN = AdminFacetABI as Abi;
 const NUMERAIRE = NumeraireConfigFacetABI as Abi;
 
 /** Inventory slots or index rows per call, under the views' page limit (100). */
@@ -261,19 +259,6 @@ export async function readOpenOffers(client: PublicClient, diamond: Hex, account
   );
   const rows = views.filter((v) => v.id !== 0n && v.state === OFFER_STATE_OPEN);
   return { rows: rows.sort((a, b) => (a.id > b.id ? -1 : a.id < b.id ? 1 : 0)), complete: inventory.complete };
-}
-
-export interface ProtocolPosture {
-  paused: boolean;
-  /** When an automatic pause window ends (unix seconds); 0 when none runs. */
-  pausedUntil: bigint;
-  keepersPaused: boolean;
-}
-
-export async function readPosture(client: PublicClient, diamond: Hex): Promise<ProtocolPosture> {
-  const call = (functionName: string) => client.readContract({ address: diamond, abi: ADMIN, functionName });
-  const [paused, pausedUntil, keepersPaused] = await Promise.all([call('paused'), call('pausedUntil'), call('keepersPaused')]);
-  return { paused: paused as boolean, pausedUntil: pausedUntil as bigint, keepersPaused: keepersPaused as boolean };
 }
 
 /** The numeraire's display symbol ("USD"), or null when unset or unreadable. */
