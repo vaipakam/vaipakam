@@ -1,4 +1,4 @@
-## Website — one brand palette shared with the connected app (#3180 follow-up)
+## Website — one brand palette shared with the connected app (PR #3199)
 
 The website now draws every brand colour from the same file the new connected app uses, the shared palette in the lib package, instead of defining its own. The owner decided on 2026-11-05 that the website and the app should look like one product, and chose the website logo's navy and green over the indigo both surfaces had been painting their controls with. The app moved onto the shared palette with its scaffold; this change moves the website.
 
