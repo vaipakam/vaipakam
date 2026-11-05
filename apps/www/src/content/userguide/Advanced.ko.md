@@ -1914,7 +1914,7 @@ health factor를 보여 주고, 가격이 없는 것은 개수를 셉니다.
 
 ### Home: 리워드
 
-대표 수치는 `RewardClaimFacet.simulateClaimInteractionRewards(user, 0)`이며, Default 수령처로 청구를 실행하고 항상 revert합니다. `InteractionRewardsSimulation(paid, fromDay, toDay)`가 정확한 금액을 담고, 그 밖의 revert는 청구 자체의 거부(`NoInteractionRewardsToClaim`, `InteractionDayGlobalNotFinalized(day)`, `InteractionDayAwaitingDelivery(day)`, `InteractionEmissionsNotStarted`, `EnforcedPause`, `SanctionedAddress`)로 이름과 함께 표시됩니다. 어떤 소스도 미리보기를 실행할 수 없을 때에만 Home은 하한값인 `previewInteractionRewards`를 읽고 청구를 보류합니다. `claimInteractionRewards()`는 호출당 최대 `MAX_INTERACTION_CLAIM_DAYS`(30)일을 지급하며, 읽기 결과가 방금 청구한 날 이후의 날을 보여 주면 Home이 나머지를 제시합니다. Default 수령처는 EOA 형태의 호출자(보호된 지갑은 항상)에게 볼트로 입금하고, 볼트 입금을 완료할 수 없으면 지갑으로 대체합니다. 결과는 영수증의 `InteractionRewardsClaimed`와 `RewardDeliveredToVault` 로그에서 읽고, 영수증 블록과 그 직전 블록에서 지갑의 VPFI 잔액 및 볼트의 추적 VPFI와 대조합니다. 누적 청구액은 표시하지 않습니다. 이를 위한 사용자별 인덱스 경로가 아직 없기 때문입니다.
+헤드라인 수치는 `RewardClaimFacet.simulateClaimInteractionRewards(user, 2)`로, Vault 수령처로 클레임을 실행하고 항상 revert합니다. `InteractionRewardsSimulation(paid, fromDay, toDay)`가 정확한 수치를 담고, 그 밖의 revert는 클레임 자체의 거절 (`NoInteractionRewardsToClaim`, `InteractionDayGlobalNotFinalized(day)`, `InteractionDayAwaitingDelivery(day)`, `InteractionEmissionsNotStarted`, `EnforcedPause`, `SanctionedAddress`)이며 이름으로 표시됩니다. 어떤 소스도 미리보기를 실행할 수 없을 때에만 Home은 하한인 `previewInteractionRewards`를 읽고 클레임을 보류합니다. 정확한 수치가 0이어도 클레임은 제공됩니다. 프로토콜은 아무것도 지급하지 않는 클레임을 아무것도 지급하지 않은 보상일을 넘어설 때에만 허용하며, Home은 그렇다고 알려 줍니다. Home은 `claimInteractionRewardsTo(2)`로 클레임하며, 호출당 최대 `MAX_INTERACTION_CLAIM_DAYS`(30)일을 지급합니다. 읽기 결과가 방금 클레임한 날 이후의 날을 보여 주면 Home은 나머지를 제공합니다. Vault 수령처는 컨트랙트 지갑을 포함한 모든 계정에 전달됩니다. Default 수령처는 컨트랙트 호출자에게는 지갑으로 지급하기 때문입니다. 볼트에 입금되며, 입금을 완료할 수 없을 때(아직 볼트 없음, 볼트 업그레이드 대기 중)는 지갑으로 돌아갑니다. 결과는 영수증에서 읽습니다. `InteractionRewardsClaimed`가 지급액을 알려 주고, 같은 트랜잭션에서 지갑과 `getUserVaultAddress(user)`로 간 VPFI `Transfer` 로그가 도착한 곳을 알려 줍니다. 그 합이 지급액과 맞지 않으면 수령처는 알 수 없음으로 표시됩니다. 누적 클레임 금액은 표시되지 않습니다. 이를 위한 사용자별 인덱스 경로가 아직 없기 때문입니다.
 
 <a id="home-rewards-expiry"></a>
 
@@ -1926,7 +1926,7 @@ health factor를 보여 주고, 가격이 없는 것은 개수를 셉니다.
 
 ### Home: 보류된 리워드
 
-`getSanctionsHeldReward(user)`는 보류 잔액이고 `getRewardSanctionsStatus(user)`는 그 판정(Deliver, Hold, Confirmed)입니다. 잔액이 있고 판정이 Deliver이면 Home은 `claimHeldInteractionRewards(0)`을 제시합니다. 이 호출은 새로 발생한 미지급분을 정산하지 않고 보류 잔액만 정확히 지급하며 `InteractionRewardsClaimed(user, 0, 0, paid)`를 발생시킵니다. 지갑이 금지된 동안에는 `SanctionedAddress`로 revert합니다. 서명 전 재확인은 둘 다 다시 읽고 발신자로서 호출을 시뮬레이션합니다. 플래그가 확정된 동안 얻은 날은 영구히 몰수됩니다.
+`getSanctionsHeldReward(user)`는 보류 잔액이고 `getRewardSanctionsStatus(user)`는 그 판정(Deliver, Hold, Confirmed)입니다. 잔액이 있고 판정이 Deliver이면 Home은 `claimHeldInteractionRewards(2)`을 제시합니다. 이 호출은 새로 발생한 미지급분을 정산하지 않고 보류 잔액만 정확히 지급하며 `InteractionRewardsClaimed(user, 0, 0, paid)`를 발생시킵니다. 지갑이 금지된 동안에는 `SanctionedAddress`로 revert합니다. 서명 전 재확인은 둘 다 다시 읽고 발신자로서 호출을 시뮬레이션합니다. 플래그가 확정된 동안 얻은 날은 영구히 몰수됩니다.
 
 <a id="terms-gate"></a>
 

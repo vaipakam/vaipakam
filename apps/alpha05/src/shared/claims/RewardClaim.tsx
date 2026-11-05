@@ -11,7 +11,7 @@ import { holdsFlow } from '../tx/txStore';
 import { useTrackedTx } from '../tx/useTrackedTx';
 import { ActionFlow, reviewIdentity, type Recheck } from '../ui/ActionFlow';
 import { shortAddress } from '../ui/format';
-import { REWARD_CLAIM_ABI, VENUE_DEFAULT, claimRecord, deliveryOutcome, readHeldRewards, readPendingRewards, readVpfiHoldings, readVpfiToken, moreRemains, type PendingRewards } from './rewards';
+import { REWARD_CLAIM_ABI, VENUE_VAULT, claimRecord, deliveryOutcome, moreRemains, readHeldRewards, readPendingRewards, readVaultAddress, readVpfiToken, vpfiArrivals, type PendingRewards } from './rewards';
 
 type Hex = `0x${string}`;
 
@@ -93,26 +93,31 @@ export function RewardClaim({ kind, ready, token, meta }: RewardClaimProps) {
     sources: own?.sources ?? [],
     send: () =>
       kind === 'interaction'
-        ? writeContract(config, { address: diamond, abi: REWARD_CLAIM_ABI, functionName: 'claimInteractionRewards', args: [], chainId: chain!.chainId, account })
-        : writeContract(config, { address: diamond, abi: REWARD_CLAIM_ABI, functionName: 'claimHeldInteractionRewards', args: [VENUE_DEFAULT], chainId: chain!.chainId, account }),
+        ? writeContract(config, { address: diamond, abi: REWARD_CLAIM_ABI, functionName: 'claimInteractionRewardsTo', args: [VENUE_VAULT], chainId: chain!.chainId, account })
+        : writeContract(config, { address: diamond, abi: REWARD_CLAIM_ABI, functionName: 'claimHeldInteractionRewards', args: [VENUE_VAULT], chainId: chain!.chainId, account }),
     measure: async (receipt, at) => {
       const record = claimRecord(receipt.logs, diamond, account);
       if (record.paid === null) return [{ status: 'not-done', label: text(kind === 'interaction' ? 'claim.titleRewards' : 'claim.titleHeld'), reason: text('claim.noLog') }];
       const paid = record.paid;
       if (paid === 0n) return [{ status: 'done', label: text('claim.legNothing') }];
       const vpfi = token ?? (await at.read((c) => readVpfiToken(c, diamond)));
-      // Across the claim's own block only: a transfer made while the claim
-      // waited for confirmation is outside it.
-      const [before, after] = await Promise.all([
-        at.read((c) => readVpfiHoldings(c, diamond, vpfi, account, { blockNumber: at.blockNumber - 1n })),
-        at.read((c, b) => readVpfiHoldings(c, diamond, vpfi, account, b)),
-      ]);
-      const outcome = deliveryOutcome(paid, after.wallet - before.wallet, after.vault - before.vault);
-      const where = text(outcome.where === 'vault' ? 'claim.whereVault' : outcome.where === 'wallet' ? 'claim.whereWallet' : 'claim.whereSplit');
-      const label = format('claim.legPaid', { amount: tokenAmount(paid, vpfi, meta, format), where });
-      if (outcome.verdict === 'done') return [{ status: 'done', label }];
-      const rose = after.wallet - before.wallet + (after.vault - before.vault);
-      return [{ status: 'unknown', label, reason: format('claim.roseLess', { amount: tokenAmount(rose < 0n ? 0n : rose, vpfi, meta, format) }) }];
+      // From the claim's own transaction: the VPFI its Transfer logs sent to
+      // the wallet and to the vault. Another transfer in the same block is
+      // not in these logs, so it cannot be read as the claim's delivery.
+      const vault = await at.read((c, b) => readVaultAddress(c, diamond, account, b));
+      const arrived = vpfiArrivals(receipt.logs, vpfi, account, vault);
+      const outcome = deliveryOutcome(paid, arrived.wallet, arrived.vault);
+      if (outcome.verdict === 'done') {
+        const where = text(outcome.where === 'vault' ? 'claim.whereVault' : outcome.where === 'wallet' ? 'claim.whereWallet' : 'claim.whereSplit');
+        return [{ status: 'done', label: format('claim.legPaid', { amount: tokenAmount(paid, vpfi, meta, format), where }) }];
+      }
+      return [
+        {
+          status: 'unknown',
+          label: format('claim.legLogged', { amount: tokenAmount(paid, vpfi, meta, format) }),
+          reason: format('claim.arrivedOther', { amount: tokenAmount(arrived.wallet + arrived.vault, vpfi, meta, format) }),
+        },
+      ];
     },
   });
 
@@ -140,7 +145,7 @@ export function RewardClaim({ kind, ready, token, meta }: RewardClaimProps) {
         if (current()) setReviewed({ ...reviewed, amount: now.amount, fromDay: now.fromDay, toDay: now.toDay, readAt: readNow() });
         return { kind: 'changed', what: text('claim.changedAmount') };
       }
-      return simulateCall(own, { address: diamond, abi: REWARD_CLAIM_ABI, functionName: 'claimInteractionRewards', args: [] });
+      return simulateCall(own, { address: diamond, abi: REWARD_CLAIM_ABI, functionName: 'claimInteractionRewardsTo', args: [VENUE_VAULT] });
     }
     const held = (await own.read((c) => readHeldRewards(c, diamond, account))).value;
     if (held.decision !== 'deliver') return { kind: 'refused', refusal: { code: 'SanctionedAddress', reason: text('claim.heldStillFlagged'), reopensAt: null, remedy: null } };
@@ -149,7 +154,7 @@ export function RewardClaim({ kind, ready, token, meta }: RewardClaimProps) {
       if (current()) setReviewed({ ...reviewed, amount: held.held, readAt: readNow() });
       return { kind: 'changed', what: text('claim.changedHeld') };
     }
-    return simulateCall(own, { address: diamond, abi: REWARD_CLAIM_ABI, functionName: 'claimHeldInteractionRewards', args: [VENUE_DEFAULT] });
+    return simulateCall(own, { address: diamond, abi: REWARD_CLAIM_ABI, functionName: 'claimHeldInteractionRewards', args: [VENUE_VAULT] });
   };
 
   const receipt: Receipt | null =

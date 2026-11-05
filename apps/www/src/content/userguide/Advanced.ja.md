@@ -2023,7 +2023,7 @@ factor を示し、価格のないものは件数を示します。
 
 ### Home: リワード
 
-見出しの数値は `RewardClaimFacet.simulateClaimInteractionRewards(user, 0)` で、Default の受取先でクレームを実行し、必ず revert します。`InteractionRewardsSimulation(paid, fromDay, toDay)` が正確な額を運び、それ以外の revert はクレーム自身の拒否（`NoInteractionRewardsToClaim`、`InteractionDayGlobalNotFinalized(day)`、`InteractionDayAwaitingDelivery(day)`、`InteractionEmissionsNotStarted`、`EnforcedPause`、`SanctionedAddress`）として名前で表示されます。どのソースもプレビューを実行できない場合に限り、Home は下限値である `previewInteractionRewards` を読み、クレームを提示しません。`claimInteractionRewards()` は 1 回の呼び出しで最大 `MAX_INTERACTION_CLAIM_DAYS`（30）日分を支払い、読み取りが直前にクレームした日より後の日を示すと、Home は残りを提示します。Default の受取先は EOA 型の呼び出し元（保護されたウォレットは常に）にはボールトへ入金し、ボールトへの入金を完了できないときはウォレットに切り替えます。結果はレシートの `InteractionRewardsClaimed` と `RewardDeliveredToVault` のログから読み、レシートのブロックとその前のブロックにおけるウォレットの VPFI 残高とボールトの追跡 VPFI と照合します。累計クレーム額は表示しません。そのためのユーザー別インデックスルートがまだないためです。
+見出しの数値は `RewardClaimFacet.simulateClaimInteractionRewards(user, 2)` で、Vault 送付先でクレームを実行し、必ず revert します。`InteractionRewardsSimulation(paid, fromDay, toDay)` が正確な数値を運び、それ以外の revert はクレーム自身の拒否 (`NoInteractionRewardsToClaim`, `InteractionDayGlobalNotFinalized(day)`, `InteractionDayAwaitingDelivery(day)`, `InteractionEmissionsNotStarted`, `EnforcedPause`, `SanctionedAddress`) で、名前で表示されます。どのソースもプレビューを実行できない場合に限り、Home は下限である `previewInteractionRewards` を読み、クレームを保留します。正確な数値がゼロでもクレームは提示されます。プロトコルが何も支払わないクレームを認めるのは、何も支払わなかった報酬日を先へ進む場合だけで、Home はそのことを伝えます。Home は `claimInteractionRewardsTo(2)` でクレームし、1 回の呼び出しで最大 `MAX_INTERACTION_CLAIM_DAYS`（30）日分を支払います。読み取りがいまクレームした日より後の日を示した時点で、Home は残りを提示します。Vault 送付先はコントラクトウォレットを含むすべてのアカウントに渡されます。Default 送付先はコントラクトの呼び出し元にはウォレットへ支払うためです。ボールトに入金され、入金が完了できない場合（まだボールトがない、ボールトのアップグレードが保留中）はウォレットに戻ります。結果はレシートから読み取ります。`InteractionRewardsClaimed` が支払額を示し、同じトランザクションのウォレットと `getUserVaultAddress(user)` への VPFI `Transfer` ログが届いた先を示します。それらの合計が支払額にならない場合、送付先は不明と表示されます。累計クレーム額は表示されません。そのためのユーザー別インデックスルートがまだないためです。
 
 <a id="home-rewards-expiry"></a>
 
@@ -2035,7 +2035,7 @@ factor を示し、価格のないものは件数を示します。
 
 ### Home: 保留中のリワード
 
-`getSanctionsHeldReward(user)` が保留残高、`getRewardSanctionsStatus(user)` がその判定（Deliver、Hold、Confirmed）です。残高があり判定が Deliver のとき、Home は `claimHeldInteractionRewards(0)` を提示します。これは新たな未払い分を精算せずに保留残高そのものを支払い、`InteractionRewardsClaimed(user, 0, 0, paid)` を発行します。ウォレットが禁止されている間は `SanctionedAddress` で revert します。署名前の再確認では両方を読み直し、送信者として呼び出しをシミュレートします。フラグ確定中に得た日数分は永久に没収されます。
+`getSanctionsHeldReward(user)` が保留残高、`getRewardSanctionsStatus(user)` がその判定（Deliver、Hold、Confirmed）です。残高があり判定が Deliver のとき、Home は `claimHeldInteractionRewards(2)` を提示します。これは新たな未払い分を精算せずに保留残高そのものを支払い、`InteractionRewardsClaimed(user, 0, 0, paid)` を発行します。ウォレットが禁止されている間は `SanctionedAddress` で revert します。署名前の再確認では両方を読み直し、送信者として呼び出しをシミュレートします。フラグ確定中に得た日数分は永久に没収されます。
 
 <a id="terms-gate"></a>
 

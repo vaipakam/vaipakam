@@ -55,7 +55,7 @@ const PREVIEW = parseAbi([
  *  reverts with; any other answer fails the spec, naming it. */
 async function exactPreview(sc: ReturnType<typeof scenario>, user: Hex): Promise<{ amount: bigint; fromDay: bigint; toDay: bigint }> {
   try {
-    await sc.pub.simulateContract({ address: sc.diamond, abi: PREVIEW, functionName: 'simulateClaimInteractionRewards', args: [user, 0], account: user });
+    await sc.pub.simulateContract({ address: sc.diamond, abi: PREVIEW, functionName: 'simulateClaimInteractionRewards', args: [user, 2], account: user });
   } catch (e) {
     // Walked by shape: the harness's viem copy need not be the one whose
     // classes an `instanceof` would test against.
@@ -120,6 +120,9 @@ test('the rewards widget: a waiting day, the removal estimate, an exact claim me
     // 2. The claim window is off on this chain: no date.
     await expect(widget.getByTestId('rewards-expiry')).toHaveAttribute('data-expiry', 'dark');
     await expect(widget).toContainText('Unclaimed rewards are not removed on this network');
+    // The tier line reads through the public getter (consent-gated: 0 here).
+    await expect(widget).toContainText('Fee-discount tier applied to your fees now: 0');
+    await expect(widget).not.toContainText('could not be read');
     await fitsWidth(page);
 
     await finalizeThrough(sc, (await sc.rewardDay()) - 1);

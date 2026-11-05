@@ -57,10 +57,15 @@ export function RewardsWidget() {
   if (p?.kind === 'exact') {
     headline = (
       <>
-        <p className="rewards-figure" data-testid="rewards-pending" data-figure="exact">
-          {format('rewards.pendingExact', { amount: amount(p.amount) })}
+        {/* An exact zero is a claim that still makes progress: the protocol
+            refuses a claim that would do nothing, so the claim is offered
+            with what it does instead of being withheld (RW-27). */}
+        <p className="rewards-figure" data-testid="rewards-pending" data-figure="exact" data-amount={p.amount.toString()}>
+          {p.amount > 0n
+            ? format('rewards.pendingExact', { amount: amount(p.amount) })
+            : format('rewards.pendingZero', { from: p.fromDay.toString(), to: p.toDay.toString() })}
         </p>
-        <p className="tier-b">{format('rewards.pendingDays', { from: p.fromDay.toString(), to: p.toDay.toString() })}</p>
+        {p.amount > 0n && <p className="tier-b">{format('rewards.pendingDays', { from: p.fromDay.toString(), to: p.toDay.toString() })}</p>}
       </>
     );
   } else if (p) {
@@ -152,7 +157,7 @@ export function RewardsWidget() {
       <h2 id="rewards-title">{text('rewards.title')}</h2>
       <WhyLink summaryKey="rewards.rebate" detailKey="rewards.why" vars={{ chain: chain.name }} />
       {headline}
-      <RewardClaim kind="interaction" ready={p?.kind === 'exact' && p.amount > 0n ? p : null} token={token} meta={meta} />
+      <RewardClaim kind="interaction" ready={p?.kind === 'exact' ? p : null} token={token} meta={meta} />
       <h3>{text('rewards.expiryTitle')}</h3>
       <div data-testid="rewards-expiry" data-expiry={e?.kind ?? expiry.state}>
         {removal ?? (expiry.state === 'reading' ? <p className="tier-b">{text('rewards.reading')}</p> : null)}

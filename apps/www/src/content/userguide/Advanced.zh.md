@@ -1756,7 +1756,7 @@ health factor 是仪表盘视图中按 1e18 缩放的读数；读数为 0 表示
 
 ### Home: 奖励
 
-主数值来自 `RewardClaimFacet.simulateClaimInteractionRewards(user, 0)`，它以 Default 接收方运行领取并总是 revert：`InteractionRewardsSimulation(paid, fromDay, toDay)` 携带准确金额，其他任何 revert 都是领取本身的拒绝（`NoInteractionRewardsToClaim`、`InteractionDayGlobalNotFinalized(day)`、`InteractionDayAwaitingDelivery(day)`、`InteractionEmissionsNotStarted`、`EnforcedPause`、`SanctionedAddress`），并按名称显示。只有当没有任何来源能运行预览时，Home 才读取作为下限的 `previewInteractionRewards`，并暂不提供领取。`claimInteractionRewards()` 每次调用最多支付 `MAX_INTERACTION_CLAIM_DAYS`（30）天；一旦读取结果显示有晚于刚领取日期的天数，Home 就会提供剩余部分。Default 接收方对 EOA 类调用者（对受保护钱包则始终）记入金库，金库入账无法完成时改为转入钱包。结果从收据中的 `InteractionRewardsClaimed` 和 `RewardDeliveredToVault` 日志读取，并与收据所在区块及其前一区块的钱包 VPFI 余额和金库跟踪 VPFI 核对。累计已领取金额不显示：目前还没有按用户的索引路由。
+标题数字是 `RewardClaimFacet.simulateClaimInteractionRewards(user, 2)`，它以 Vault 交付目标执行领取并始终 revert：`InteractionRewardsSimulation(paid, fromDay, toDay)` 携带确切数字，其他任何 revert 都是领取本身的拒绝 (`NoInteractionRewardsToClaim`, `InteractionDayGlobalNotFinalized(day)`, `InteractionDayAwaitingDelivery(day)`, `InteractionEmissionsNotStarted`, `EnforcedPause`, `SanctionedAddress`)，按名称显示。只有在任何来源都无法运行预览时，Home 才读取下限 `previewInteractionRewards`，并暂不提供领取。确切数字为零时仍会提供领取：协议只在领取越过未支付任何金额的奖励日时才允许一次不支付任何金额的领取，Home 会说明这一点。Home 通过 `claimInteractionRewardsTo(2)` 领取，每次调用最多支付 `MAX_INTERACTION_CLAIM_DAYS`（30）天；一旦读取显示刚领取的日期之后还有日期，Home 就提供剩余部分。Vault 交付目标会传给每个账户，包括合约钱包，因为 Default 目标会把合约调用者的款项付到其钱包：款项记入金库，记入无法完成时（尚无金库、金库升级待完成）退回钱包。结果从回执读取：`InteractionRewardsClaimed` 给出支付金额，同一交易中发往钱包和 `getUserVaultAddress(user)` 的 VPFI `Transfer` 日志给出款项到达何处；两者合计与支付金额不符时，目的地标为未知。累计领取额不显示：目前还没有对应的按用户索引路由。
 
 <a id="home-rewards-expiry"></a>
 
@@ -1768,7 +1768,7 @@ health factor 是仪表盘视图中按 1e18 缩放的读数；读数为 0 表示
 
 ### Home: 暂扣的奖励
 
-`getSanctionsHeldReward(user)` 是暂扣余额，`getRewardSanctionsStatus(user)` 是其判定（Deliver、Hold 或 Confirmed）。有余额且判定为 Deliver 时，Home 提供 `claimHeldInteractionRewards(0)`，它只支付恰好的暂扣余额而不结算任何新欠款，并发出 `InteractionRewardsClaimed(user, 0, 0, paid)`；钱包被禁止期间它会以 `SanctionedAddress` revert。签名前的复核会重新读取二者，并以发送者身份模拟该调用。标记确认期间赚得的天数将被永久没收。
+`getSanctionsHeldReward(user)` 是暂扣余额，`getRewardSanctionsStatus(user)` 是其判定（Deliver、Hold 或 Confirmed）。有余额且判定为 Deliver 时，Home 提供 `claimHeldInteractionRewards(2)`，它只支付恰好的暂扣余额而不结算任何新欠款，并发出 `InteractionRewardsClaimed(user, 0, 0, paid)`；钱包被禁止期间它会以 `SanctionedAddress` revert。签名前的复核会重新读取二者，并以发送者身份模拟该调用。标记确认期间赚得的天数将被永久没收。
 
 <a id="terms-gate"></a>
 

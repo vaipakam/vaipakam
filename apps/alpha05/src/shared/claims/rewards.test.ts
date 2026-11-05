@@ -1,15 +1,27 @@
 import { describe, expect, it } from 'vitest';
 import { encodeAbiParameters, encodeErrorResult, encodeEventTopics, parseAbi, type Log } from 'viem';
-import { claimRecord, deliveryOutcome, inFinalNotice, moreRemains, pendingFromRevert, revertOf, soonestFrom, type ExpiryPage } from './rewards';
+import { claimRecord, deliveryOutcome, inFinalNotice, moreRemains, pendingFromRevert, revertOf, soonestFrom, vpfiArrivals, type ExpiryPage } from './rewards';
 
 const DIAMOND = '0x00000000000000000000000000000000000000d1' as const;
 const ME = '0x00000000000000000000000000000000000000a1' as const;
 const OTHER = '0x00000000000000000000000000000000000000b2' as const;
 
+const VPFI = '0x00000000000000000000000000000000000000e1' as const;
+const VAULT = '0x00000000000000000000000000000000000000f1' as const;
+
 const EVENTS = parseAbi([
   'event InteractionRewardsClaimed(address indexed user, uint256 fromDay, uint256 toDay, uint256 amount)',
   'event RewardDeliveredToVault(address indexed user, uint256 amount, uint256 claimDayId)',
+  'event Transfer(address indexed from, address indexed to, uint256 value)',
 ]);
+
+function transfer(to: `0x${string}`, value: bigint, token: `0x${string}` = VPFI): Log {
+  return {
+    address: token,
+    topics: encodeEventTopics({ abi: EVENTS, eventName: 'Transfer', args: { from: DIAMOND, to } }) as Log['topics'],
+    data: encodeAbiParameters([{ type: 'uint256' }], [value]),
+  } as unknown as Log;
+}
 
 function claimed(user: `0x${string}`, amount: bigint, address: `0x${string}` = DIAMOND): Log {
   return {
@@ -79,7 +91,9 @@ describe('moreRemains', () => {
   it('offers claim again only for days past the claimed window', () => {
     expect(moreRemains({ kind: 'exact', amount: 5n, fromDay: 31n, toDay: 35n }, 30n)).toBe(true);
     expect(moreRemains({ kind: 'exact', amount: 5n, fromDay: 1n, toDay: 30n }, 30n)).toBe(false);
-    expect(moreRemains({ kind: 'exact', amount: 0n, fromDay: 31n, toDay: 35n }, 30n)).toBe(false);
+  });
+  it('offers a remainder that pays nothing, since the protocol answers zero only for a claim that makes progress', () => {
+    expect(moreRemains({ kind: 'exact', amount: 0n, fromDay: 31n, toDay: 35n }, 30n)).toBe(true);
     expect(moreRemains({ kind: 'none' }, 30n)).toBe(false);
     expect(moreRemains(null, 30n)).toBe(false);
   });
@@ -106,14 +120,25 @@ describe('claimRecord', () => {
   });
 });
 
+describe('vpfiArrivals', () => {
+  it('counts only the VPFI this transaction sent to the wallet and to its vault', () => {
+    const logs = [transfer(ME, 3n), transfer(VAULT, 7n), transfer(OTHER, 99n), transfer(ME, 50n, OTHER)];
+    expect(vpfiArrivals(logs, VPFI, ME, VAULT)).toEqual({ wallet: 3n, vault: 7n });
+  });
+  it('counts nothing for the vault when the account has none', () => {
+    expect(vpfiArrivals([transfer(ME, 4n)], VPFI, ME, '0x0000000000000000000000000000000000000000')).toEqual({ wallet: 4n, vault: 0n });
+  });
+});
+
 describe('deliveryOutcome', () => {
-  it('names where the payment landed from the measured rises', () => {
+  it('names where the payment landed when the arrivals add up to it', () => {
     expect(deliveryOutcome(10n, 0n, 10n)).toEqual({ where: 'vault', verdict: 'done' });
     expect(deliveryOutcome(10n, 10n, 0n)).toEqual({ where: 'wallet', verdict: 'done' });
     expect(deliveryOutcome(10n, 4n, 6n)).toEqual({ where: 'split', verdict: 'done' });
   });
-  it('is unknown, never not-done, when the rises fall short of the logged payment', () => {
-    expect(deliveryOutcome(10n, 0n, 7n)).toEqual({ where: 'split', verdict: 'unknown' });
-    expect(deliveryOutcome(10n, -5n, 10n)).toEqual({ where: 'vault', verdict: 'unknown' });
+  it('leaves the destination unknown, never inferred, when they do not', () => {
+    expect(deliveryOutcome(10n, 0n, 7n)).toEqual({ where: 'unknown', verdict: 'unknown' });
+    expect(deliveryOutcome(10n, 0n, 0n)).toEqual({ where: 'unknown', verdict: 'unknown' });
+    expect(deliveryOutcome(10n, 5n, 10n)).toEqual({ where: 'unknown', verdict: 'unknown' });
   });
 });

@@ -13,7 +13,7 @@
  * yield (RL-6).
  */
 import { BaseError, ContractFunctionRevertedError, decodeErrorResult, parseAbi, parseEventLogs, type Abi, type Log, type PublicClient } from 'viem';
-import { InteractionRewardsLensFacetABI, RewardClaimFacetABI, VPFIDiscountAccumulatorFacetABI, VPFIDiscountFacetABI, VPFITokenFacetABI, ConfigFacetABI } from '@vaipakam/contracts/abis';
+import { InteractionRewardsLensFacetABI, RewardClaimFacetABI, VPFIDiscountFacetABI, VPFITokenFacetABI, ConfigFacetABI, VaultFactoryFacetABI } from '@vaipakam/contracts/abis';
 import { extractRevertData } from '@vaipakam/lib/decodeContractError';
 import type { AtBlock } from '../tx/anchored';
 
@@ -22,15 +22,18 @@ type Hex = `0x${string}`;
 export const REWARD_CLAIM_ABI = RewardClaimFacetABI as Abi;
 const LENS = InteractionRewardsLensFacetABI as Abi;
 const CONFIG = ConfigFacetABI as Abi;
-const ACCUMULATOR = VPFIDiscountAccumulatorFacetABI as Abi;
 const DISCOUNT = VPFIDiscountFacetABI as Abi;
 const VPFI_TOKEN = VPFITokenFacetABI as Abi;
-const ERC20 = parseAbi(['function balanceOf(address owner) view returns (uint256)']);
+const VAULT_FACTORY = VaultFactoryFacetABI as Abi;
 
-/** The protocol's delivery venue argument: Default resolves by caller shape
- *  (a direct wallet gets its vault, falling back to the wallet when vault
- *  credit cannot complete). */
-export const VENUE_DEFAULT = 0;
+/** The protocol's delivery venue argument, chosen explicitly: Vault credits
+ *  the claimant's vault for every kind of account, and falls back to the
+ *  wallet only when the credit cannot complete (no vault yet, a vault
+ *  upgrade pending). The protocol's Default venue is not used: it resolves
+ *  by account shape and pays a contract wallet straight to the wallet, which
+ *  would make the receipt's destination depend on something the receipt
+ *  does not show. The preview, the re-check and the claim all pass this. */
+export const VENUE_VAULT = 2;
 
 /** The days the protocol counts from when it ends the final notice. */
 export const FINAL_NOTICE_DAYS = 90;
@@ -139,7 +142,7 @@ export function pendingFromRevert(r: Reverted): PendingRewards {
  */
 export async function readPendingRewards(client: PublicClient, diamond: Hex, account: Hex): Promise<PendingRewards> {
   try {
-    await client.simulateContract({ address: diamond, abi: REWARD_CLAIM_ABI, functionName: 'simulateClaimInteractionRewards', args: [account, VENUE_DEFAULT], account });
+    await client.simulateContract({ address: diamond, abi: REWARD_CLAIM_ABI, functionName: 'simulateClaimInteractionRewards', args: [account, VENUE_VAULT], account });
   } catch (e) {
     const r = revertOf(e);
     if (r) return pendingFromRevert(r);
@@ -238,10 +241,13 @@ export async function readSoonestExpiry(client: PublicClient, diamond: Hex, acco
 
 /** RW-27: whether the reads now show reward days past the ones a finished
  *  claim covered, so the remainder is offered as "claim again". A read still
- *  showing the claimed window (not yet refreshed) does not count. Pure, so
- *  the rule is tested once. */
+ *  showing the claimed window (not yet refreshed) does not count. A
+ *  remainder that pays nothing still counts: the protocol answers with an
+ *  exact zero only when the claim makes progress (it moves past reward days
+ *  that paid nothing, toward the ones behind them), and refuses otherwise.
+ *  Pure, so the rule is tested once. */
 export function moreRemains(now: PendingRewards | null, claimedToDay: bigint): boolean {
-  return now?.kind === 'exact' && now.amount > 0n && now.fromDay > claimedToDay;
+  return now?.kind === 'exact' && now.fromDay > claimedToDay;
 }
 
 /** Within the final notice before the estimate (unix seconds). */
@@ -249,9 +255,11 @@ export function inFinalNotice(at: number, nowSeconds: number): boolean {
   return at - nowSeconds <= FINAL_NOTICE_DAYS * 86_400;
 }
 
-/** The fee-discount tier as the protocol resolves it now. */
+/** The fee-discount tier the protocol applies to this wallet's fees now:
+ *  the public getter the fee path agrees with, so it is 0 while the wallet's
+ *  fee-discount setting is off. */
 export async function readEffectiveTier(client: PublicClient, diamond: Hex, account: Hex): Promise<number> {
-  const [tier] = (await client.readContract({ address: diamond, abi: ACCUMULATOR, functionName: 'effectiveTierAndBps', args: [account] })) as readonly [number, number];
+  const [tier] = (await client.readContract({ address: diamond, abi: DISCOUNT, functionName: 'getEffectiveDiscount', args: [account] })) as readonly [number, number];
   return Number(tier);
 }
 
@@ -284,23 +292,40 @@ export function claimRecord(logs: readonly Log[], diamond: Hex, account: Hex): C
   return { paid, toVault };
 }
 
-/** The wallet's VPFI and the vault's tracked VPFI at one block. */
-export async function readVpfiHoldings(client: PublicClient, diamond: Hex, token: Hex, account: Hex, at: AtBlock): Promise<{ wallet: bigint; vault: bigint }> {
-  const [wallet, tier] = await Promise.all([
-    client.readContract({ address: token, abi: ERC20, functionName: 'balanceOf', args: [account], ...at }),
-    client.readContract({ address: diamond, abi: DISCOUNT, functionName: 'getVPFIDiscountTier', args: [account], ...at }) as Promise<readonly [number, bigint, bigint]>,
-  ]);
-  return { wallet: wallet as bigint, vault: tier[1] };
+const TRANSFER = parseAbi(['event Transfer(address indexed from, address indexed to, uint256 value)']);
+
+/** The wallet's and the vault's VPFI arrivals inside ONE transaction, from
+ *  the token's own Transfer logs in its receipt. Transaction-local, so
+ *  another transfer in the same block cannot be mistaken for the claim's.
+ *  `vault` is the account's vault address (none: the zero address). */
+export function vpfiArrivals(logs: readonly Log[], token: Hex, account: Hex, vault: Hex): { wallet: bigint; vault: bigint } {
+  let wallet = 0n;
+  let toVault = 0n;
+  const zero = '0x0000000000000000000000000000000000000000';
+  for (const l of parseEventLogs({ abi: TRANSFER, logs: [...logs], strict: false })) {
+    if (l.address.toLowerCase() !== token.toLowerCase()) continue;
+    const to = l.args.to?.toLowerCase();
+    const value = l.args.value ?? 0n;
+    if (to === account.toLowerCase()) wallet += value;
+    else if (vault.toLowerCase() !== zero && to === vault.toLowerCase()) toVault += value;
+  }
+  return { wallet, vault: toVault };
 }
 
-/** Where a claim's payment was measured landing, and whether the rises
- *  substantiate it: `done` when the wallet's and the vault's rises across
- *  the claim's own block cover what the logs say it paid; `unknown` when
- *  they fall short (another transfer landed in the same block), since the
- *  logs record the payment. The place is read from the rises rather than
- *  the logs, so a wallet whose delivery is redirected to its vault is
- *  described where the VPFI actually went. Pure, so the rule is tested once. */
-export function deliveryOutcome(paid: bigint, walletRose: bigint, vaultRose: bigint): { where: 'vault' | 'wallet' | 'split'; verdict: 'done' | 'unknown' } {
-  const where = vaultRose >= paid ? 'vault' : walletRose >= paid ? 'wallet' : 'split';
-  return { where, verdict: walletRose + vaultRose >= paid ? 'done' : 'unknown' };
+/** The account's vault address at a block (the zero address: none). */
+export async function readVaultAddress(client: PublicClient, diamond: Hex, account: Hex, at: AtBlock): Promise<Hex> {
+  return (await client.readContract({ address: diamond, abi: VAULT_FACTORY, functionName: 'getUserVaultAddress', args: [account], ...at })) as Hex;
+}
+
+/** Where a claim's payment landed, from the VPFI the claim's own
+ *  transaction delivered to the wallet and to the vault. `done` only when
+ *  those arrivals add up to exactly what the claim logged it paid; any other
+ *  total leaves the destination `unknown` rather than inferring one. The
+ *  place is read from the arrivals rather than from the claim's own events,
+ *  so a delivery the protocol redirects (a protected wallet credited in its
+ *  vault) is described where the VPFI actually went. Pure, so the rule is
+ *  tested once. */
+export function deliveryOutcome(paid: bigint, toWallet: bigint, toVault: bigint): { where: 'vault' | 'wallet' | 'split' | 'unknown'; verdict: 'done' | 'unknown' } {
+  if (toWallet + toVault !== paid) return { where: 'unknown', verdict: 'unknown' };
+  return { where: toWallet === 0n ? 'vault' : toVault === 0n ? 'wallet' : 'split', verdict: 'done' };
 }
