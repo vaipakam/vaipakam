@@ -72,6 +72,11 @@ export interface WalletFixtureOptions<Role extends string> {
   advancedModeStorage?: Record<string, string>;
   /** The viewport every session opens with. */
   viewport?: { width: number; height: number };
+  /** Open each session with the Playwright PROJECT's device instead of a
+   *  fixed viewport: its viewport, `isMobile` and `hasTouch`. A suite that
+   *  runs a phone project beside a desktop one sets this, so every spec
+   *  runs on both devices; `viewport` is then ignored. */
+  deviceFromProject?: boolean;
 }
 
 export interface WireWalletOptions {
@@ -351,11 +356,12 @@ export function walletTest<Role extends string>(options: WalletFixtureOptions<Ro
   const rpc = options.rpc ?? ((method, params) => jsonRpc(options.rpcUrl, method, params));
   const viewport = options.viewport ?? { width: 1280, height: 900 };
   return base.extend<{ launchWallet: LaunchWallet<Role> }>({
-    launchWallet: async ({ browser, baseURL }, use) => {
+    launchWallet: async ({ browser, baseURL, viewport: projectViewport, isMobile, hasTouch }, use) => {
       const sessions: WalletSession[] = [];
+      const device = options.deviceFromProject ? { viewport: projectViewport ?? viewport, isMobile, hasTouch } : { viewport };
       await use(async (role, opts = {}) => {
         const account = options.accountFor(role);
-        const ctx = await browser.newContext({ viewport });
+        const ctx = await browser.newContext(device);
         const flags = newWalletFlags();
         await wireWallet(ctx, account, flags, {
           chainId: options.chainId,

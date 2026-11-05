@@ -4,7 +4,7 @@
  * built yet says so, and the one help panel opens from a "Why?" and closes
  * from its control, from Escape and from the scrim, returning focus.
  */
-import { expect, test } from '../lib/wallet';
+import { connectWallet, expect, onPhone, openMenu, test } from '../lib/wallet';
 
 const BASIC_NAV = ['Home', 'Borrow', 'Lend', 'Positions', 'Claims', 'Vault', 'Offers', 'Rent', 'Rewards'];
 const ADVANCED_ONLY = ['Protection', 'Desk', 'Console', 'Recover', 'Analytics'];
@@ -14,6 +14,7 @@ test('the shell loads with the derived Basic navigation and the under-constructi
   await page.goto('/');
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('Home');
   await expect(page.getByRole('status').filter({ hasText: 'next version of the Vaipakam app' })).toBeVisible();
+  await openMenu(page);
   const nav = page.getByRole('navigation', { name: 'Primary' });
   for (const name of BASIC_NAV) await expect(nav.getByRole('link', { name, exact: true })).toBeVisible();
   for (const name of ADVANCED_ONLY) await expect(nav.getByRole('link', { name, exact: true })).toHaveCount(0);
@@ -24,6 +25,7 @@ test('the shell loads with the derived Basic navigation and the under-constructi
 test('Advanced mode adds the advanced primary pages and the mode line follows', async ({ launchWallet }) => {
   const { page } = await launchWallet('visitor', { advanced: true });
   await page.goto('/');
+  await openMenu(page);
   const nav = page.getByRole('navigation', { name: 'Primary' });
   for (const name of [...BASIC_NAV, ...ADVANCED_ONLY]) await expect(nav.getByRole('link', { name, exact: true })).toBeVisible();
   await expect(page.locator('footer').getByText('Mode: advanced.')).toBeVisible();
@@ -69,4 +71,58 @@ test('"Why?" opens the help panel on the explanation and closes three ways, retu
   await expect(dialog).toBeVisible();
   await page.getByTestId('help-scrim').click({ position: { x: 10, y: 10 } });
   await expect(dialog).toHaveCount(0);
+});
+
+test('at phone width the page never scrolls sideways, before and after connecting', async ({ launchWallet }) => {
+  const { page } = await launchWallet('lender', { preAuthorized: false });
+  await page.setViewportSize({ width: 360, height: 780 });
+  await page.goto('/');
+  const sideways = () => page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+  await expect(page.getByRole('button', { name: 'Connect wallet' })).toBeVisible();
+  expect(await sideways()).toBeLessThanOrEqual(0);
+  await connectWallet(page);
+  await expect(page.getByTestId('wallet-chip')).toBeVisible();
+  expect(await sideways()).toBeLessThanOrEqual(0);
+});
+
+test('on a phone the header is one row and a bottom bar carries the first destinations and More', async ({ launchWallet }, testInfo) => {
+  test.skip(!onPhone(testInfo.project.name), 'the bottom bar exists at phone width only');
+  const { page } = await launchWallet('visitor');
+  await page.goto('/');
+  const viewportHeight = page.viewportSize()?.height ?? 844;
+  // One row: brand and the wallet control. Well under a tenth of the screen.
+  expect((await page.locator('header.topbar').boundingBox())?.height ?? Infinity).toBeLessThan(viewportHeight * 0.1);
+  const bar = page.getByRole('navigation', { name: 'Quick access' });
+  // The bar is derived from the same page map: its first four destinations.
+  await expect(bar.getByRole('link')).toHaveText(BASIC_NAV.slice(0, 4));
+  const barBox = await bar.boundingBox();
+  expect(barBox && barBox.y + barBox.height).toBeCloseTo(viewportHeight, 0);
+  // The full navigation is folded into More until asked for.
+  const nav = page.getByRole('navigation', { name: 'Primary' });
+  await expect(nav).toBeHidden();
+  const more = bar.getByRole('button', { name: 'More' });
+  await expect(more).toHaveAttribute('aria-expanded', 'false');
+  await more.click();
+  await expect(more).toHaveAttribute('aria-expanded', 'true');
+  for (const name of BASIC_NAV) await expect(nav.getByRole('link', { name, exact: true })).toBeVisible();
+  await expect(page.getByRole('group', { name: 'Mode' })).toBeVisible();
+  // Choosing a page closes the sheet.
+  await nav.getByRole('link', { name: 'Rewards', exact: true }).click();
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('Rewards');
+  await expect(nav).toBeHidden();
+  // A bar destination works directly.
+  await bar.getByRole('link', { name: 'Borrow', exact: true }).click();
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('Borrow');
+  // Escape closes the sheet and returns focus to More.
+  await more.click();
+  await expect(nav).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(nav).toBeHidden();
+  await expect(more).toBeFocused();
+  // Nothing the page ends with sits under the bar: scrolled to the end, the
+  // footer finishes at or above the bar's top edge (sub-pixel rounding aside).
+  await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+  const foot = await page.locator('footer').boundingBox();
+  const bar2 = await bar.boundingBox();
+  expect((foot?.y ?? Infinity) + (foot?.height ?? 0)).toBeLessThanOrEqual((bar2?.y ?? 0) + 2);
 });
