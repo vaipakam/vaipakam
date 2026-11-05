@@ -1,0 +1,33 @@
+{
+  // alpha05 Worker — Cloudflare Workers Static Assets deploy of the
+  // apps/alpha05 Vite SPA build (#3180). This is the NEXT connected app,
+  // built from docs/FunctionalSpecs under the rulebook in
+  // docs/DesignsAndPlans/Alpha05AppDesign.md. It serves on its own Worker
+  // and hostname until it reaches parity; `vaipakam-app` keeps serving
+  // app.vaipakam.com, and the custom domain moves only under the cutover
+  // conditions in the rulebook's §5 (then apps/app is retired).
+  //
+  // Deploy with `pnpm run deploy`, never a bare `wrangler deploy`: the
+  // package script stamps the commit on the Worker version so the hourly
+  // deploy-lag check can place it (#2242).
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "vaipakam-alpha05",
+  "compatibility_date": "2026-04-23",
+
+  // Required on EVERY wrangler config in the tree (check-keep-vars.mjs,
+  // unconditional by design): a deploy may never delete a dashboard var.
+  // This Worker carries none today; the declaration costs nothing and is
+  // already right if one is ever added.
+  "keep_vars": true,
+  "observability": {
+    "enabled": true
+  },
+  "assets": {
+    // Vite's default outDir; `pnpm run deploy` builds first so it exists.
+    "directory": "./dist",
+    "not_found_handling": "single-page-application"
+  },
+  "compatibility_flags": [
+    "nodejs_compat"
+  ]
+}

@@ -17,6 +17,13 @@
 #                   helper selects host AND route table together and five
 #                   marketing call sites pass named destinations rather than
 #                   paths. Preserve that coupling (#1854).
+#   - apps/alpha05 the NEXT connected app (#3180), rebuilt from the
+#                   functional specs under
+#                   docs/DesignsAndPlans/Alpha05AppDesign.md. Its own Worker
+#                   (vaipakam-alpha05) and hostname until it reaches parity
+#                   with apps/app, which keeps serving app.vaipakam.com; the
+#                   cutover conditions are the rulebook's §5. No logic is
+#                   extracted from apps/app.
 #   - apps/www     marketing + docs site → vaipakam.com (APEX is the
 #                   canonical, indexable host) + www.vaipakam.com,
 #                   which is a Bulk Redirect 301 to the apex and is
