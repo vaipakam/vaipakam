@@ -12,14 +12,25 @@ export type TxPhase =
   | { kind: 'review' }
   | { kind: 'signing' }
   | { kind: 'submitted'; hash: `0x${string}`; at: number }
-  | { kind: 'mined'; hash: `0x${string}`; blockNumber: bigint; reverted: boolean }
-  | { kind: 'measured'; hash: `0x${string}`; outcome: MeasuredOutcome }
+  /** `hash` is the transaction that MINED; `submittedHash` the one this flow
+   *  sent. They differ only when the wallet repriced it (sped it up: the same
+   *  call at a higher fee), which still runs the intended action. */
+  | { kind: 'mined'; hash: `0x${string}`; submittedHash: `0x${string}`; blockNumber: bigint; reverted: boolean }
+  | { kind: 'measured'; hash: `0x${string}`; submittedHash: `0x${string}`; outcome: MeasuredOutcome }
+  /** The wallet replaced the submitted transaction with one that does NOT
+   *  run the intended action: `cancelled` (the nonce was spent on an empty
+   *  self-transfer) or `replaced` (a different call took its place). The
+   *  intended effects are not measured, because they cannot have happened
+   *  through this flow; both hashes are kept so the page can say so. */
+  | { kind: 'superseded'; submittedHash: `0x${string}`; minedHash: `0x${string}`; reason: SupersededReason; blockNumber: bigint }
   /** Submitted, but the receipt could not be read (the node timed out or
    *  went away): the transaction may still execute, so the hash is kept and
    *  shown, tracking can resume, and no new review starts from here. */
   | { kind: 'receipt-unknown'; hash: `0x${string}`; message: string }
   /** The wallet refused or failed before anything was submitted. */
   | { kind: 'failed'; message: string };
+
+export type SupersededReason = 'cancelled' | 'replaced';
 
 export type LegOutcome =
   | { status: 'done'; label: string }

@@ -10,7 +10,7 @@ describe('transition', () => {
     let p = transition({ kind: 'idle' }, { type: 'review' });
     p = transition(p, { type: 'sign' });
     p = transition(p, { type: 'submitted', hash: HASH, at: 1 });
-    p = transition(p, { type: 'mined', hash: HASH, blockNumber: 10n, reverted: false });
+    p = transition(p, { type: 'mined', submittedHash: HASH, hash: HASH, repriced: false, blockNumber: 10n, reverted: false });
     expect(p).toMatchObject({ kind: 'mined', hash: HASH });
     p = transition(p, { type: 'measured', hash: HASH, outcome: summarize([{ status: 'done', label: 'repay' }], 2) });
     expect(p).toMatchObject({ kind: 'measured', outcome: { verdict: 'done' } });
@@ -21,7 +21,7 @@ describe('transition', () => {
   });
   it('refuses a receipt for another hash', () => {
     const submitted = transition(transition(transition({ kind: 'idle' }, { type: 'review' }), { type: 'sign' }), { type: 'submitted', hash: HASH, at: 1 });
-    expect(() => transition(submitted, { type: 'mined', hash: OTHER, blockNumber: 1n, reverted: false })).toThrow(IllegalTransition);
+    expect(() => transition(submitted, { type: 'mined', submittedHash: HASH, hash: OTHER, repriced: false, blockNumber: 1n, reverted: false })).toThrow(IllegalTransition);
   });
   it('fails from signing only: nothing was submitted', () => {
     const signing = transition(transition({ kind: 'idle' }, { type: 'review' }), { type: 'sign' });
@@ -34,13 +34,38 @@ describe('transition', () => {
     const unknown = transition(submitted, { type: 'receipt-unknown', hash: HASH, message: 'timed out' });
     expect(unknown).toEqual({ kind: 'receipt-unknown', hash: HASH, message: 'timed out' });
     expect(() => transition(unknown, { type: 'review' })).toThrow(IllegalTransition);
-    expect(() => transition(unknown, { type: 'mined', hash: OTHER, blockNumber: 1n, reverted: false })).toThrow(IllegalTransition);
-    expect(transition(unknown, { type: 'mined', hash: HASH, blockNumber: 7n, reverted: false })).toMatchObject({ kind: 'mined', hash: HASH });
+    expect(() => transition(unknown, { type: 'mined', submittedHash: HASH, hash: OTHER, repriced: false, blockNumber: 1n, reverted: false })).toThrow(IllegalTransition);
+    expect(transition(unknown, { type: 'mined', submittedHash: HASH, hash: HASH, repriced: false, blockNumber: 7n, reverted: false })).toMatchObject({ kind: 'mined', hash: HASH });
     expect(transition(unknown, { type: 'reset' })).toEqual({ kind: 'idle' });
+  });
+  it('tracks a repriced transaction under its mined hash and measures it', () => {
+    const submitted = transition({ kind: 'signing' }, { type: 'submitted', hash: HASH, at: 1 });
+    const mined = transition(submitted, { type: 'mined', submittedHash: HASH, hash: OTHER, repriced: true, blockNumber: 3n, reverted: false });
+    expect(mined).toEqual({ kind: 'mined', hash: OTHER, submittedHash: HASH, blockNumber: 3n, reverted: false });
+    expect(() => transition(mined, { type: 'measured', hash: HASH, outcome: summarize([], 1) })).toThrow(IllegalTransition);
+    expect(transition(mined, { type: 'measured', hash: OTHER, outcome: summarize([{ status: 'done', label: 'x' }], 2) })).toMatchObject({ kind: 'measured', hash: OTHER, submittedHash: HASH });
+  });
+  it('ends a cancelled or replaced transaction as superseded, never mined or measured', () => {
+    const submitted = transition({ kind: 'signing' }, { type: 'submitted', hash: HASH, at: 1 });
+    for (const reason of ['cancelled', 'replaced'] as const) {
+      const p = transition(submitted, { type: 'superseded', submittedHash: HASH, minedHash: OTHER, reason, blockNumber: 4n });
+      expect(p).toEqual({ kind: 'superseded', submittedHash: HASH, minedHash: OTHER, reason, blockNumber: 4n });
+      expect(() => transition(p, { type: 'measured', hash: OTHER, outcome: summarize([], 1) })).toThrow(IllegalTransition);
+      expect(transition(p, { type: 'review' })).toEqual({ kind: 'review' });
+      expect(transition(p, { type: 'reset' })).toEqual({ kind: 'idle' });
+    }
+    // Also after a resumed track, and only for this flow's hash.
+    const unknown = transition(submitted, { type: 'receipt-unknown', hash: HASH, message: 'timed out' });
+    expect(transition(unknown, { type: 'superseded', submittedHash: HASH, minedHash: OTHER, reason: 'cancelled', blockNumber: 5n }).kind).toBe('superseded');
+    expect(() => transition(submitted, { type: 'superseded', submittedHash: OTHER, minedHash: OTHER, reason: 'cancelled', blockNumber: 5n })).toThrow(IllegalTransition);
+  });
+  it('refuses a different mined hash that is not a reprice', () => {
+    const submitted = transition({ kind: 'signing' }, { type: 'submitted', hash: HASH, at: 1 });
+    expect(() => transition(submitted, { type: 'mined', submittedHash: HASH, hash: OTHER, repriced: false, blockNumber: 1n, reverted: false })).toThrow(IllegalTransition);
   });
   it('resets only a flow that is not in flight', () => {
     expect(transition({ kind: 'failed', message: 'x' }, { type: 'reset' })).toEqual({ kind: 'idle' });
     expect(() => transition({ kind: 'submitted', hash: HASH, at: 1 }, { type: 'reset' })).toThrow(IllegalTransition);
-    expect(() => transition({ kind: 'mined', hash: HASH, blockNumber: 1n, reverted: false }, { type: 'reset' })).toThrow(IllegalTransition);
+    expect(() => transition({ kind: 'mined', hash: HASH, submittedHash: HASH, blockNumber: 1n, reverted: false }, { type: 'reset' })).toThrow(IllegalTransition);
   });
 });

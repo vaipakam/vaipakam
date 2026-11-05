@@ -8,11 +8,15 @@
  * success. A receipt that cannot be read leaves the flow in
  * `receipt-unknown` with its hash, and `resume()` tracks it again: the
  * transaction may still execute, so the hash is never dropped and no new
- * review is offered until the reader resets with it on screen.
+ * review is offered until the reader resets with it on screen. When the
+ * wallet speeds the transaction up (repriced: the same call), the mined hash
+ * is tracked and measured; when it cancels or replaces it with another call,
+ * the flow ends `superseded` with both hashes, and the intended effects are
+ * not measured, because they did not happen through this transaction.
  */
 import { useCallback, useRef, useState } from 'react';
 import { usePublicClient } from 'wagmi';
-import type { TransactionReceipt } from 'viem';
+import type { ReplacementReason, TransactionReceipt } from 'viem';
 import { announceOwnChange } from '../reads/signals';
 import { refusalFromError } from '../eligibility/refusal';
 import { summarize, type LegOutcome, type TxPhase } from './outcome';
@@ -30,14 +34,14 @@ export interface TrackedTxOptions {
 
 export interface TrackedTx {
   phase: TxPhase;
-  /** From `idle`, `measured` or `failed`: start a review. */
+  /** From `idle`, `measured`, `failed` or `superseded`: start a review. */
   review: () => void;
   /** From `review`: sign, submit, wait, measure. Resolves when measured,
    *  failed, or left in `receipt-unknown`. */
   run: () => Promise<void>;
   /** From `receipt-unknown`: wait for the receipt again and measure. */
   resume: () => Promise<void>;
-  /** From `measured`, `failed` or `receipt-unknown`: back to idle. */
+  /** From `measured`, `failed`, `superseded` or `receipt-unknown`: back to idle. */
   reset: () => void;
 }
 
@@ -65,21 +69,36 @@ export function useTrackedTx(opts: TrackedTxOptions): TrackedTx {
         return;
       }
       let receipt: TransactionReceipt;
+      let replacement: ReplacementReason | null = null;
       try {
-        receipt = await client.waitForTransactionReceipt({ hash });
+        receipt = await client.waitForTransactionReceipt({ hash, onReplaced: (r) => void (replacement = r.reason) });
       } catch (e) {
         apply({ type: 'receipt-unknown', hash, message: `The receipt could not be read: ${(e as Error).message}` });
         return;
       }
-      apply({ type: 'mined', hash, blockNumber: receipt.blockNumber, reverted: receipt.status === 'reverted' });
+      // Something mined from this account either way: every tab re-reads.
       announceOwnChange({ chainId: opts.chainId, account: opts.account, cause: 'receipt' });
+      const reason = replacement as ReplacementReason | null;
+      if (reason === 'cancelled' || reason === 'replaced') {
+        apply({ type: 'superseded', submittedHash: hash, minedHash: receipt.transactionHash, reason, blockNumber: receipt.blockNumber });
+        return;
+      }
+      const mined = apply({
+        type: 'mined',
+        submittedHash: hash,
+        hash: receipt.transactionHash,
+        repriced: reason === 'repriced',
+        blockNumber: receipt.blockNumber,
+        reverted: receipt.status === 'reverted',
+      });
+      if (mined.kind !== 'mined') return;
       let legs: readonly LegOutcome[];
       try {
         legs = await opts.measure(receipt);
       } catch (e) {
         legs = [{ status: 'unknown', label: 'outcome', reason: `The read-back failed: ${(e as Error).message}` }];
       }
-      apply({ type: 'measured', hash, outcome: summarize(legs, Date.now()) });
+      apply({ type: 'measured', hash: mined.hash, outcome: summarize(legs, Date.now()) });
     },
     [apply, client, opts],
   );

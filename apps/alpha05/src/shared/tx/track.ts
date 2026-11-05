@@ -2,19 +2,26 @@
  * The transaction tracker's transitions (rulebook §3.2), as a pure function
  * so the sequence a page may show is one rule: idle → review → signing →
  * submitted → mined → measured, with `failed` reachable from signing only
- * (nothing was submitted) and `receipt-unknown` from submission (the hash
- * exists and is kept; tracking may resume into `mined`). A receipt proves
+ * (nothing was submitted), `receipt-unknown` from submission (the hash
+ * exists and is kept; tracking may resume into `mined`), and `superseded`
+ * from submission when the wallet cancelled or replaced the transaction
+ * (the intended action never ran, so there is nothing of it to measure). A
+ * mined receipt may carry another hash than the one submitted only when the
+ * wallet REPRICED it (the same call at a higher fee). A receipt proves
  * inclusion, not the effect; `mined` is never the last word a page shows,
  * `measured` is (RB-FUNDS). A submitted hash is never dropped from the
  * phase: a page can always show and reconcile it.
  */
-import type { MeasuredOutcome, TxPhase } from './outcome';
+import type { MeasuredOutcome, SupersededReason, TxPhase } from './outcome';
 
 export type TxEvent =
   | { type: 'review' }
   | { type: 'sign' }
   | { type: 'submitted'; hash: `0x${string}`; at: number }
-  | { type: 'mined'; hash: `0x${string}`; blockNumber: bigint; reverted: boolean }
+  /** `submittedHash` names the transaction this flow sent; `hash` the one
+   *  that mined. They may differ only with `repriced`. */
+  | { type: 'mined'; submittedHash: `0x${string}`; hash: `0x${string}`; repriced: boolean; blockNumber: bigint; reverted: boolean }
+  | { type: 'superseded'; submittedHash: `0x${string}`; minedHash: `0x${string}`; reason: SupersededReason; blockNumber: bigint }
   | { type: 'measured'; hash: `0x${string}`; outcome: MeasuredOutcome }
   | { type: 'receipt-unknown'; hash: `0x${string}`; message: string }
   | { type: 'failed'; message: string }
@@ -25,6 +32,15 @@ export class IllegalTransition extends Error {
     super(`tx: cannot apply "${event}" in phase "${from}"`);
     this.name = 'IllegalTransition';
   }
+}
+
+/** A `mined` event is accepted for the submitted hash, or for another hash
+ *  only when the wallet repriced it (the same call): a different mined
+ *  transaction that is NOT a reprice is a supersession, never a success. */
+function minedFrom(submitted: `0x${string}`, event: TxEvent): TxPhase | null {
+  if (event.type !== 'mined' || event.submittedHash !== submitted) return null;
+  if (event.hash !== submitted && !event.repriced) return null;
+  return { kind: 'mined', hash: event.hash, submittedHash: submitted, blockNumber: event.blockNumber, reverted: event.reverted };
 }
 
 export function transition(phase: TxPhase, event: TxEvent): TxPhase {
@@ -48,19 +64,22 @@ export function transition(phase: TxPhase, event: TxEvent): TxPhase {
       if (event.type === 'failed') return { kind: 'failed', message: event.message };
       break;
     case 'submitted':
-      if (event.type === 'mined' && event.hash === phase.hash) return { kind: 'mined', hash: event.hash, blockNumber: event.blockNumber, reverted: event.reverted };
+    case 'receipt-unknown': {
+      // The receipt (first try, or a resumed one) for THIS flow's hash.
+      const mined = minedFrom(phase.hash, event);
+      if (mined) return mined;
+      if (event.type === 'superseded' && event.submittedHash === phase.hash && event.minedHash !== phase.hash) {
+        return { kind: 'superseded', submittedHash: event.submittedHash, minedHash: event.minedHash, reason: event.reason, blockNumber: event.blockNumber };
+      }
       if (event.type === 'receipt-unknown' && event.hash === phase.hash) return { kind: 'receipt-unknown', hash: event.hash, message: event.message };
       break;
-    case 'receipt-unknown':
-      // Tracking resumed and found the receipt; the same hash, nothing else.
-      if (event.type === 'mined' && event.hash === phase.hash) return { kind: 'mined', hash: event.hash, blockNumber: event.blockNumber, reverted: event.reverted };
-      if (event.type === 'receipt-unknown' && event.hash === phase.hash) return { kind: 'receipt-unknown', hash: event.hash, message: event.message };
-      break;
+    }
     case 'mined':
-      if (event.type === 'measured' && event.hash === phase.hash) return { kind: 'measured', hash: event.hash, outcome: event.outcome };
+      if (event.type === 'measured' && event.hash === phase.hash) return { kind: 'measured', hash: event.hash, submittedHash: phase.submittedHash, outcome: event.outcome };
       break;
     case 'measured':
     case 'failed':
+    case 'superseded':
       if (event.type === 'review') return { kind: 'review' };
       break;
   }
