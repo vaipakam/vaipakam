@@ -1,4 +1,4 @@
-## Thread — a released transport remainder goes home to Base and is recycled there automatically (PR #<n>)
+## Thread — a released transport remainder goes home to Base and is recycled there automatically (PR #3148)
 
 A reward delivery to a mirror is held in a transport epoch until every day it funds is proven closed. What is still in the epoch then is parked, and once an operator acknowledges the parking it is released. Until now a released remainder had one way out: an administrator classifying it, on the mirror, as fresh or recycled. Where no one can say which it was, the remainder had nowhere to go.
 

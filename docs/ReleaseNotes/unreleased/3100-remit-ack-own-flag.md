@@ -1,4 +1,4 @@
-# Remit acknowledgements get their own keeper switch (#3100)
+## Remit acknowledgements get their own keeper switch (PR #3129)
 
 The keeper's acknowledgement pass, which completes each reward-budget
 remittance on Base once its delivery lands on the mirror, used to share its
