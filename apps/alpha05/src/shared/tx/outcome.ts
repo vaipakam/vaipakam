@@ -33,9 +33,13 @@ export function summarize(legs: readonly LegOutcome[], measuredAt: number): Meas
   const done = legs.filter((l) => l.status === 'done').length;
   const unknown = legs.filter((l) => l.status === 'unknown').length;
   let verdict: MeasuredOutcome['verdict'];
-  if (legs.length === 0 || unknown === legs.length) verdict = 'unknown';
+  if (legs.length === 0) verdict = 'unknown';
   else if (done === legs.length) verdict = 'done';
-  else if (done === 0 && unknown === 0) verdict = 'not-done';
+  // `partial` is reserved for a batch with at least one CONFIRMED successful
+  // leg. With none confirmed, an unknown leg makes the whole outcome unknown:
+  // a reverted claim beside one whose read-back failed has substantiated no
+  // payout, and saying "partial success" would present one (RB-FUNDS).
+  else if (done === 0) verdict = unknown > 0 ? 'unknown' : 'not-done';
   else verdict = 'partial';
   return { verdict, legs, measuredAt };
 }

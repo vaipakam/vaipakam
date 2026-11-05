@@ -15,30 +15,47 @@ export interface PageEntry {
   /** The epic's build order, 1 = first. */
   order: number;
   built: boolean;
+  /** Where the SAME job is done in the current app today (apps/app's
+   *  router), so the placeholder's fallback link lands on the feature and
+   *  not on a path the current app does not serve. `null` where the current
+   *  app has no page for it (the placeholder then offers no link). A `:id`
+   *  segment is filled from this route's params. */
+  currentApp: string | null;
 }
 
 export const PAGES: readonly PageEntry[] = [
-  { path: '/', name: 'Home', tier: 'basic', rows: 'positions with next action, deadlines, first-run cards', order: 1, built: false },
-  { path: '/borrow', name: 'Borrow', tier: 'basic', rows: 'OFF (borrow side), LN origination', order: 2, built: false },
-  { path: '/lend', name: 'Lend', tier: 'basic', rows: 'OFF (lend side), auto-lend intents', order: 3, built: false },
-  { path: '/positions', name: 'Positions', tier: 'basic', rows: 'LN list, quick actions', order: 4, built: false },
-  { path: '/positions/:id', name: 'Position', tier: 'basic', rows: 'LN, EX (113 rows, action-first)', order: 5, built: false },
-  { path: '/claims', name: 'Claims', tier: 'basic', rows: 'RW claims, EX settlements, extension reserve', order: 6, built: false },
-  { path: '/vault', name: 'Vault', tier: 'basic', rows: 'ACC depository, holdings, untracked assets', order: 7, built: false },
-  { path: '/offers', name: 'Offers', tier: 'basic', rows: 'OFF my offers and the book', order: 8, built: false },
-  { path: '/alerts', name: 'Alerts', tier: 'basic', rows: 'ACC alerts, Telegram, push', order: 9, built: false },
-  { path: '/settings', name: 'Settings', tier: 'basic', rows: 'ACC settings, consents, data rights', order: 10, built: false },
-  { path: '/rent', name: 'Rent', tier: 'basic', rows: 'NFT rentals', order: 11, built: false },
-  { path: '/rewards', name: 'Rewards', tier: 'basic', rows: 'RW VPFI, tiers, recycling', order: 12, built: false },
-  { path: '/protection', name: 'Protection', tier: 'advanced', rows: 'ACC protected account mode', order: 13, built: false },
-  { path: '/desk', name: 'Desk', tier: 'advanced', rows: 'OFF signed orders', order: 14, built: false },
-  { path: '/console', name: 'Console', tier: 'advanced', rows: 'ACC switches, keeper posture, pause', order: 15, built: false },
-  { path: '/recover', name: 'Recover', tier: 'advanced', rows: 'ACC/NFT adoption and disown', order: 16, built: false },
-  { path: '/analytics', name: 'Analytics', tier: 'public', rows: 'metrics, transparency', order: 17, built: false },
-  { path: '/nft', name: 'Verifier', tier: 'public', rows: 'NFT position verifier', order: 18, built: false },
-  { path: '/activity', name: 'Activity', tier: 'basic', rows: 'ACC activity feed', order: 19, built: false },
-  { path: '/help', name: 'Help', tier: 'public', rows: 'help, guides, build provenance', order: 20, built: false },
+  { path: '/', name: 'Home', tier: 'basic', rows: 'positions with next action, deadlines, first-run cards', order: 1, built: false, currentApp: '/' },
+  { path: '/borrow', name: 'Borrow', tier: 'basic', rows: 'OFF (borrow side), LN origination', order: 2, built: false, currentApp: '/borrow' },
+  { path: '/lend', name: 'Lend', tier: 'basic', rows: 'OFF (lend side), auto-lend intents', order: 3, built: false, currentApp: '/lend' },
+  { path: '/positions', name: 'Positions', tier: 'basic', rows: 'LN list, quick actions', order: 4, built: false, currentApp: '/positions' },
+  { path: '/positions/:id', name: 'Position', tier: 'basic', rows: 'LN, EX (113 rows, action-first)', order: 5, built: false, currentApp: '/positions/:id' },
+  { path: '/claims', name: 'Claims', tier: 'basic', rows: 'RW claims, EX settlements, extension reserve', order: 6, built: false, currentApp: '/claims' },
+  { path: '/vault', name: 'Vault', tier: 'basic', rows: 'ACC depository, holdings, untracked assets', order: 7, built: false, currentApp: '/vault' },
+  { path: '/offers', name: 'Offers', tier: 'basic', rows: 'OFF my offers and the book', order: 8, built: false, currentApp: '/offers' },
+  { path: '/alerts', name: 'Alerts', tier: 'basic', rows: 'ACC alerts, Telegram, push', order: 9, built: false, currentApp: '/settings' },
+  { path: '/settings', name: 'Settings', tier: 'basic', rows: 'ACC settings, consents, data rights', order: 10, built: false, currentApp: '/settings' },
+  { path: '/rent', name: 'Rent', tier: 'basic', rows: 'NFT rentals', order: 11, built: false, currentApp: '/rent' },
+  { path: '/rewards', name: 'Rewards', tier: 'basic', rows: 'RW VPFI, tiers, recycling', order: 12, built: false, currentApp: '/vpfi' },
+  { path: '/protection', name: 'Protection', tier: 'advanced', rows: 'ACC protected account mode', order: 13, built: false, currentApp: '/vault/protection' },
+  { path: '/desk', name: 'Desk', tier: 'advanced', rows: 'OFF signed orders', order: 14, built: false, currentApp: '/desk' },
+  { path: '/console', name: 'Console', tier: 'advanced', rows: 'ACC switches, keeper posture, pause', order: 15, built: false, currentApp: '/protocol-console' },
+  { path: '/recover', name: 'Recover', tier: 'advanced', rows: 'ACC/NFT adoption and disown', order: 16, built: false, currentApp: '/recover' },
+  { path: '/analytics', name: 'Analytics', tier: 'public', rows: 'metrics, transparency', order: 17, built: false, currentApp: '/analytics' },
+  { path: '/nft', name: 'Verifier', tier: 'public', rows: 'NFT position verifier', order: 18, built: false, currentApp: '/nft' },
+  { path: '/activity', name: 'Activity', tier: 'basic', rows: 'ACC activity feed', order: 19, built: false, currentApp: '/activity' },
+  { path: '/help', name: 'Help', tier: 'public', rows: 'help, guides, build provenance', order: 20, built: false, currentApp: '/help' },
 ];
+
+/** The current app's address for the same job, with this route's params
+ *  filled in; null when the current app has no page for it. Alerts live on the
+ *  current app's Settings page, Rewards on its VPFI page, Protection under its
+ *  Vault, the Console at its protocol-console address. */
+export function currentAppHref(page: PageEntry, params: Readonly<Record<string, string | undefined>>): string | null {
+  if (page.currentApp === null) return null;
+  const path = page.currentApp.replace(/:(\w+)/g, (_, key: string) => params[key] ?? '');
+  if (path.includes('//') || path.endsWith('/') && path !== '/') return null;
+  return `https://app.vaipakam.com${path}`;
+}
 
 /** Pages in the primary navigation, by mode. */
 export const NAV_BASIC = ['/', '/borrow', '/lend', '/positions', '/claims', '/vault'] as const;

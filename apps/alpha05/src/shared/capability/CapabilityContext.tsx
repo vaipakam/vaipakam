@@ -9,11 +9,25 @@ import type { ChainCapabilities } from './types';
 /** The one `facets()` read the loupe offers, typed from the exported ABI. */
 const LOUPE_ABI = DiamondLoupeFacetABI as Abi;
 
-const SNAPSHOT_TTL_MS = 10 * 60_000;
+/** How long a snapshot is trusted before it is re-read: a facet refresh
+ *  changes the routed set, and the app re-reads it rather than failing on a
+ *  missing function (ACC-65, rulebook §5). */
+export const SNAPSHOT_TTL_MS = 10 * 60_000;
+/** How soon a FAILED read is retried: a transient RPC failure must not leave
+ *  the capability line unreadable for the life of the tab. */
+export const RETRY_MS = 30_000;
+
+/** When the next read is due after a read that succeeded or failed. */
+export function nextReadDelayMs(failed: boolean): number {
+  return failed ? RETRY_MS : SNAPSHOT_TTL_MS;
+}
 
 interface CapabilityContextValue {
   /** The active chain's snapshot, `null` until the first read completes. */
   caps: ChainCapabilities | null;
+  /** The snapshot has passed its expiry (or a retry is due) and a re-read is
+   *  in flight; the surface says so rather than presenting it as current. */
+  stale: boolean;
   /** The chain the snapshot describes (the wallet's, else the default). */
   chainId: number;
   /** A read failure, stated rather than swallowed. */
@@ -39,6 +53,8 @@ function unknownServices(): Record<string, 'unknown'> {
 
 interface Snapshot {
   chainId: number;
+  /** The read generation that produced this snapshot. */
+  generation: number;
   caps: ChainCapabilities | null;
   error: string | null;
 }
@@ -50,10 +66,16 @@ export function CapabilityProvider({ children }: { children: ReactNode }) {
   // "reading" at once (the stale snapshot is simply not for this chain) with
   // no state write in the effect body.
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
-  const current: Snapshot = snapshot?.chainId === chain.chainId ? snapshot : { chainId: chain.chainId, caps: null, error: null };
+  // Each generation is one read. The expiry timer (or the retry timer after a
+  // failure) advances it, and so does a return to a visible tab whose snapshot
+  // has expired; the effect below re-reads for the new generation.
+  const [generation, setGeneration] = useState(0);
+  const current: Snapshot | null = snapshot?.chainId === chain.chainId ? snapshot : null;
+  const stale = current !== null && current.generation < generation;
 
   useEffect(() => {
     let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const client = createPublicClient({ transport: httpTransports(chain.rpcEndpoints) });
     (async () => {
       let routed: Set<`0x${string}`> | null = null;
@@ -69,8 +91,10 @@ export function CapabilityProvider({ children }: { children: ReactNode }) {
         error = `The Diamond's routed functions could not be read: ${(e as Error).message}`;
       }
       if (cancelled) return;
+      const delay = nextReadDelayMs(routed === null);
       setSnapshot({
         chainId: chain.chainId,
+        generation,
         error,
         caps: {
           chainId: chain.chainId,
@@ -83,19 +107,35 @@ export function CapabilityProvider({ children }: { children: ReactNode }) {
             buildTime: import.meta.env.VITE_BUILD_TIME ?? 'unknown',
             deployCommit: null,
           },
-          expiresAt: Date.now() + SNAPSHOT_TTL_MS,
+          expiresAt: Date.now() + delay,
           source: routed ? 'chain' : 'none',
         },
       });
+      timer = setTimeout(() => setGeneration((g) => g + 1), delay);
     })();
     return () => {
       cancelled = true;
+      if (timer !== undefined) clearTimeout(timer);
     };
-  }, [chain]);
+  }, [chain, generation]);
+
+  // A tab that comes back after being hidden may hold an expired snapshot
+  // whose timer fired while throttled; re-read at once if it has expired.
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState !== 'visible') return;
+      setSnapshot((snap) => {
+        if (snap && snap.caps && snap.caps.expiresAt <= Date.now()) setGeneration((g) => g + 1);
+        return snap;
+      });
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, []);
 
   const value = useMemo(
-    () => ({ caps: current.caps, chainId: chain.chainId, error: current.error }),
-    [current.caps, current.error, chain.chainId],
+    () => ({ caps: current?.caps ?? null, stale, chainId: chain.chainId, error: current?.error ?? null }),
+    [current, stale, chain.chainId],
   );
   return <CapabilityContext.Provider value={value}>{children}</CapabilityContext.Provider>;
 }

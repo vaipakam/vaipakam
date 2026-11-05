@@ -23,6 +23,7 @@ export const copy = {
   notBuilt: {
     a: A('This page is not built yet in the new app. Nothing you own is affected; the current app still serves it.'),
     b: B('Use the current app for this job until this page ships.'),
+    none: B('The current app has no page for this job; it arrives with this page.'),
   },
   capability: {
     reading: B('Checking what this deployment supports.'),

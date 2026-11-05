@@ -90,11 +90,15 @@ export function rpcEndpointsFor(chainId: number, env: EnvLike): readonly RpcEndp
  *  variable and the rule, never a silent downgrade. */
 export function rpcConfigProblems(env: EnvLike, deployedChainIds: readonly number[]): string[] {
   const problems: string[] = [];
+  // Every `VITE_*` value is compiled into the bundle whether or not the code
+  // reads it (`chains.ts` hands the whole env to the resolver), so a per-chain
+  // HTTP or WebSocket provider URL is refused by NAME: an unused socket URL
+  // would publish its key as surely as a used one.
   for (const key of Object.keys(env)) {
-    if (/^VITE_.*_RPC_URL$/.test(key) && env[key]) {
+    if (/^VITE_.*_(RPC|WSS|WS)_URL$/.test(key) && env[key]) {
       problems.push(
-        `${key} is set: a per-chain RPC URL ships in the bundle with its key. ` +
-          'Reads go through VITE_RPC_PROXY_ORIGIN or the keyless public endpoint only.',
+        `${key} is set: a per-chain provider URL ships in the bundle with its key. ` +
+          'Reads go through VITE_RPC_PROXY_ORIGIN or the keyless public endpoint only; this app opens no provider socket.',
       );
     }
   }

@@ -18,7 +18,7 @@ const GUIDE_BASE = 'https://vaipakam.com/guide';
 export function Shell() {
   const { mode, setMode, isAdvanced } = useMode();
   const { preference, setPreference } = useTheme();
-  const { caps, chainId, error } = useCapabilities();
+  const { caps, stale, chainId, error } = useCapabilities();
   const nav = (isAdvanced ? NAV_ADVANCED : NAV_BASIC).map((p) => PAGES.find((e) => e.path === p)!);
 
   return (
@@ -68,7 +68,7 @@ export function Shell() {
           <WhyLink
             summary={{
               tier: 'B',
-              text: `Chain ${chainId}: ${caps.routedSelectors?.size ?? 0} routed functions read from the protocol contract.`,
+              text: `Chain ${chainId}: ${caps.routedSelectors?.size ?? 0} routed functions read from the protocol contract${stale ? ' (re-reading now)' : ''}.`,
             }}
             detail={copy.capability.why}
             guideBase={GUIDE_BASE}

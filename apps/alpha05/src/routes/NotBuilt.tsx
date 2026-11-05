@@ -1,5 +1,5 @@
-import { useLocation } from 'react-router-dom';
-import { PAGES, type PageEntry } from './pageMap';
+import { useLocation, useParams } from 'react-router-dom';
+import { PAGES, currentAppHref, type PageEntry } from './pageMap';
 import { copy } from '../content/copy';
 
 /**
@@ -9,6 +9,8 @@ import { copy } from '../content/copy';
  */
 export function NotBuilt({ page }: { page: PageEntry }) {
   const location = useLocation();
+  const params = useParams();
+  const fallback = currentAppHref(page, params);
   return (
     <main className="page" aria-labelledby="nb-title">
       <p className="eyebrow">Under construction</p>
@@ -26,10 +28,13 @@ export function NotBuilt({ page }: { page: PageEntry }) {
           {page.order} of {PAGES.length}
         </dd>
       </dl>
-      <p className="tier-b">
-        {copy.notBuilt.b.text}{' '}
-        <a href={`https://app.vaipakam.com${location.pathname}`}>Open it in the current app</a>.
-      </p>
+      {fallback ? (
+        <p className="tier-b">
+          {copy.notBuilt.b.text} <a href={fallback}>Open it in the current app</a>.
+        </p>
+      ) : (
+        <p className="tier-b">{copy.notBuilt.none.text}</p>
+      )}
     </main>
   );
 }

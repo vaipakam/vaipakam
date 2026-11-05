@@ -26,6 +26,19 @@ describe('summarize', () => {
     );
     expect(out.verdict).toBe('partial');
   });
+  it('is unknown, never partial, when nothing is confirmed done and a leg is unknown', () => {
+    const out = summarize(
+      [
+        { status: 'not-done', label: 'claim 1', reason: 'reverted' },
+        { status: 'unknown', label: 'claim 2', reason: 'read-back failed' },
+      ],
+      1,
+    );
+    expect(out.verdict).toBe('unknown');
+  });
+  it('is not-done when every leg is confirmed not done', () => {
+    expect(summarize([{ status: 'not-done', label: 'a', reason: 'reverted' }], 1).verdict).toBe('not-done');
+  });
   it('is done only when every leg is done', () => {
     expect(summarize([{ status: 'done', label: 'a' }], 1).verdict).toBe('done');
   });
