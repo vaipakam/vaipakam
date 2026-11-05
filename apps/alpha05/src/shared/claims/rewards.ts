@@ -40,8 +40,10 @@ export const FINAL_NOTICE_DAYS = 90;
 
 /** What a claim made now would do, as the protocol answers it. */
 export type PendingRewards =
-  /** The simulated claim: exactly what it pays. */
-  | { kind: 'exact'; amount: bigint; fromDay: bigint; toDay: bigint }
+  /** The simulated claim: exactly what it pays, as of block `atBlock`.
+   *  `fromDay`/`toDay` are 0 when the claim pays from its reward entries
+   *  only and walks no separate day range. */
+  | { kind: 'exact'; amount: bigint; fromDay: bigint; toDay: bigint; atBlock: bigint }
   /** Nothing to claim on this chain, every entry read. */
   | { kind: 'none' }
   /** A day the claim needs is not ready yet: its global figures have not
@@ -111,11 +113,11 @@ function quotedHex(e: unknown): Hex[] {
 }
 
 /** The simulation's answer, from its revert. Pure, so the rule is tested once. */
-export function pendingFromRevert(r: Reverted): PendingRewards {
+export function pendingFromRevert(r: Reverted, atBlock: bigint): PendingRewards {
   const [a, b, c] = r.args as readonly bigint[];
   switch (r.errorName) {
     case 'InteractionRewardsSimulation':
-      return { kind: 'exact', amount: a!, fromDay: b!, toDay: c! };
+      return { kind: 'exact', amount: a!, fromDay: b!, toDay: c!, atBlock };
     case 'NoInteractionRewardsToClaim':
       return { kind: 'none' };
     case 'InteractionDayGlobalNotFinalized':
@@ -141,11 +143,16 @@ export function pendingFromRevert(r: Reverted): PendingRewards {
  * back to the labelled lower bound).
  */
 export async function readPendingRewards(client: PublicClient, diamond: Hex, account: Hex): Promise<PendingRewards> {
+  // Pinned to one block, so the answer says which chain state it describes
+  // (a finished claim's remainder is told from a read taken before it).
+  // Uncached: a refresh right after a claim must not reuse a block number
+  // read before it.
+  const blockNumber = await client.getBlockNumber({ cacheTime: 0 });
   try {
-    await client.simulateContract({ address: diamond, abi: REWARD_CLAIM_ABI, functionName: 'simulateClaimInteractionRewards', args: [account, VENUE_VAULT], account });
+    await client.simulateContract({ address: diamond, abi: REWARD_CLAIM_ABI, functionName: 'simulateClaimInteractionRewards', args: [account, VENUE_VAULT], account, blockNumber });
   } catch (e) {
     const r = revertOf(e);
-    if (r) return pendingFromRevert(r);
+    if (r) return pendingFromRevert(r, blockNumber);
     throw e;
   }
   // The entry always reverts; a success means this is not that entry.
@@ -217,7 +224,9 @@ export function soonestFrom(pages: readonly ExpiryPage[], finished: boolean): So
 
 /** Every page read at ONE block, so the answer is as of one moment. */
 export async function readSoonestExpiry(client: PublicClient, diamond: Hex, account: Hex): Promise<SoonestExpiry> {
-  const blockNumber = await client.getBlockNumber();
+  // Uncached: a refresh right after a claim must not reuse a block number
+  // read before it.
+  const blockNumber = await client.getBlockNumber({ cacheTime: 0 });
   const horizon = (await client.readContract({ address: diamond, abi: CONFIG, functionName: 'getRewardClaimHorizonDays', blockNumber })) as number;
   if (Number(horizon) === 0) return { kind: 'dark' };
   const pages: ExpiryPage[] = [];
@@ -239,15 +248,18 @@ export async function readSoonestExpiry(client: PublicClient, diamond: Hex, acco
   return soonestFrom(pages, false);
 }
 
-/** RW-27: whether the reads now show reward days past the ones a finished
- *  claim covered, so the remainder is offered as "claim again". A read still
- *  showing the claimed window (not yet refreshed) does not count. A
- *  remainder that pays nothing still counts: the protocol answers with an
- *  exact zero only when the claim makes progress (it moves past reward days
- *  that paid nothing, toward the ones behind them), and refuses otherwise.
- *  Pure, so the rule is tested once. */
-export function moreRemains(now: PendingRewards | null, claimedToDay: bigint): boolean {
-  return now?.kind === 'exact' && now.fromDay > claimedToDay;
+/** RW-27: whether a claim is still available after a finished claim that
+ *  mined in `claimBlock`, so the remainder is offered as "claim again". Only
+ *  a preview taken at that block or later counts: it describes the chain
+ *  with the claim applied, so any exact answer there is a further claim.
+ *  The day range is not used for this: a claim that pays from its reward
+ *  entries alone names no days (0 to 0), and the entries' shared day budget
+ *  can still leave a remainder. An exact zero counts too: the protocol
+ *  answers zero only for a claim that makes progress (it moves past reward
+ *  days that paid nothing), and refuses otherwise. Pure, so the rule is
+ *  tested once. */
+export function moreRemains(now: PendingRewards | null, claimBlock: bigint): boolean {
+  return now?.kind === 'exact' && now.atBlock >= claimBlock;
 }
 
 /** Within the final notice before the estimate (unix seconds). */

@@ -23,11 +23,13 @@ const readNow = () => Date.now();
 export type RewardClaimKind = 'interaction' | 'held';
 
 /** What the reads say a claim pays now: the exact preview for an
- *  interaction claim, the held balance for a held one (days 0 to 0). */
+ *  interaction claim (with the block it was read at), the held balance for
+ *  a held one (days 0 to 0, no block). */
 export interface RewardReady {
   amount: bigint;
   fromDay: bigint;
   toDay: bigint;
+  atBlock?: bigint;
 }
 
 /** The sentence for a preview that is not an exact figure. */
@@ -164,7 +166,7 @@ export function RewardClaim({ kind, ready, token, meta }: RewardClaimProps) {
           rows: [
             { label: text('claim.rowReceive'), value: { kind: 'amount', asset: token, amount: reviewed.amount }, binding: true },
             kind === 'interaction'
-              ? { label: text('claim.rowDays'), value: { kind: 'text', text: format('claim.days', { from: reviewed.fromDay.toString(), to: reviewed.toDay.toString() }) }, binding: false }
+              ? { label: text('claim.rowDays'), value: { kind: 'text', text: reviewed.toDay === 0n ? text('claim.daysEntries') : format('claim.days', { from: reviewed.fromDay.toString(), to: reviewed.toDay.toString() }) }, binding: false }
               : { label: text('claim.rowFrom'), value: { kind: 'text', text: text('claim.heldFrom') }, binding: false },
             { label: text('claim.rowTo'), value: { kind: 'text', text: text('claim.to') }, binding: true },
             { label: text('claim.rowNetwork'), value: { kind: 'text', text: format('claim.network', { chain: chain.name }) }, binding: false },
@@ -180,9 +182,11 @@ export function RewardClaim({ kind, ready, token, meta }: RewardClaimProps) {
     return m && m.decimals !== null ? { symbol: m.symbol ?? shortAddress(a), decimals: m.decimals } : null;
   };
 
-  // RW-27: a claim pays a bounded number of days; once the reads show days
-  // past the ones just claimed, the remainder is offered at once.
-  const more = kind === 'interaction' && reviewed !== null && ready !== null && moreRemains({ kind: 'exact', ...ready }, reviewed.toDay);
+  // RW-27: a claim pays a bounded amount at a time; once a preview read at
+  // or after the finished claim's block still answers with a figure, the
+  // remainder is offered at once.
+  const more =
+    kind === 'interaction' && tx.phase.kind === 'measured' && ready?.atBlock !== undefined && moreRemains({ kind: 'exact', ...ready, atBlock: ready.atBlock }, tx.phase.blockNumber);
 
   return (
     <>

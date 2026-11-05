@@ -41,19 +41,19 @@ function toVault(user: `0x${string}`, amount: bigint): Log {
 
 describe('pendingFromRevert', () => {
   it('reads the simulation revert as the exact figure', () => {
-    expect(pendingFromRevert({ errorName: 'InteractionRewardsSimulation', args: [5n, 1n, 4n] })).toEqual({ kind: 'exact', amount: 5n, fromDay: 1n, toDay: 4n });
+    expect(pendingFromRevert({ errorName: 'InteractionRewardsSimulation', args: [5n, 1n, 4n] }, 9n)).toEqual({ kind: 'exact', amount: 5n, fromDay: 1n, toDay: 4n, atBlock: 9n });
   });
   it('names each refusal the claim itself would raise', () => {
-    expect(pendingFromRevert({ errorName: 'NoInteractionRewardsToClaim', args: [] })).toEqual({ kind: 'none' });
-    expect(pendingFromRevert({ errorName: 'InteractionDayGlobalNotFinalized', args: [7n] })).toEqual({ kind: 'waiting', day: 7n, why: 'global' });
-    expect(pendingFromRevert({ errorName: 'InteractionDayAwaitingDelivery', args: [8n] })).toEqual({ kind: 'waiting', day: 8n, why: 'delivery' });
-    expect(pendingFromRevert({ errorName: 'InteractionEmissionsNotStarted', args: [] })).toEqual({ kind: 'not-started' });
-    expect(pendingFromRevert({ errorName: 'VPFITokenNotSet', args: [] })).toEqual({ kind: 'not-started' });
-    expect(pendingFromRevert({ errorName: 'EnforcedPause', args: [] })).toEqual({ kind: 'paused' });
-    expect(pendingFromRevert({ errorName: 'SanctionedAddress', args: [ME] })).toEqual({ kind: 'barred' });
+    expect(pendingFromRevert({ errorName: 'NoInteractionRewardsToClaim', args: [] }, 9n)).toEqual({ kind: 'none' });
+    expect(pendingFromRevert({ errorName: 'InteractionDayGlobalNotFinalized', args: [7n] }, 9n)).toEqual({ kind: 'waiting', day: 7n, why: 'global' });
+    expect(pendingFromRevert({ errorName: 'InteractionDayAwaitingDelivery', args: [8n] }, 9n)).toEqual({ kind: 'waiting', day: 8n, why: 'delivery' });
+    expect(pendingFromRevert({ errorName: 'InteractionEmissionsNotStarted', args: [] }, 9n)).toEqual({ kind: 'not-started' });
+    expect(pendingFromRevert({ errorName: 'VPFITokenNotSet', args: [] }, 9n)).toEqual({ kind: 'not-started' });
+    expect(pendingFromRevert({ errorName: 'EnforcedPause', args: [] }, 9n)).toEqual({ kind: 'paused' });
+    expect(pendingFromRevert({ errorName: 'SanctionedAddress', args: [ME] }, 9n)).toEqual({ kind: 'barred' });
   });
   it('keeps any other refusal by its name, never as "nothing to claim"', () => {
-    expect(pendingFromRevert({ errorName: 'RewardDeliveryNotSelectable', args: [3] })).toEqual({ kind: 'refused', code: 'RewardDeliveryNotSelectable' });
+    expect(pendingFromRevert({ errorName: 'RewardDeliveryNotSelectable', args: [3] }, 9n)).toEqual({ kind: 'refused', code: 'RewardDeliveryNotSelectable' });
   });
 });
 
@@ -88,14 +88,19 @@ describe('soonestFrom', () => {
 });
 
 describe('moreRemains', () => {
-  it('offers claim again only for days past the claimed window', () => {
-    expect(moreRemains({ kind: 'exact', amount: 5n, fromDay: 31n, toDay: 35n }, 30n)).toBe(true);
-    expect(moreRemains({ kind: 'exact', amount: 5n, fromDay: 1n, toDay: 30n }, 30n)).toBe(false);
+  const exact = (amount: bigint, fromDay: bigint, toDay: bigint, atBlock: bigint) => ({ kind: 'exact' as const, amount, fromDay, toDay, atBlock });
+  it('offers claim again only for a preview read at or after the claim block', () => {
+    expect(moreRemains(exact(5n, 31n, 35n, 100n), 100n)).toBe(true);
+    expect(moreRemains(exact(5n, 31n, 35n, 101n), 100n)).toBe(true);
+    expect(moreRemains(exact(5n, 1n, 30n, 99n), 100n)).toBe(false);
+  });
+  it('counts an entries-only remainder that names no day range', () => {
+    expect(moreRemains(exact(5n, 0n, 0n, 100n), 100n)).toBe(true);
   });
   it('offers a remainder that pays nothing, since the protocol answers zero only for a claim that makes progress', () => {
-    expect(moreRemains({ kind: 'exact', amount: 0n, fromDay: 31n, toDay: 35n }, 30n)).toBe(true);
-    expect(moreRemains({ kind: 'none' }, 30n)).toBe(false);
-    expect(moreRemains(null, 30n)).toBe(false);
+    expect(moreRemains(exact(0n, 31n, 35n, 100n), 100n)).toBe(true);
+    expect(moreRemains({ kind: 'none' }, 100n)).toBe(false);
+    expect(moreRemains(null, 100n)).toBe(false);
   });
 });
 

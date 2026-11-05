@@ -63,9 +63,12 @@ export function RewardsWidget() {
         <p className="rewards-figure" data-testid="rewards-pending" data-figure="exact" data-amount={p.amount.toString()}>
           {p.amount > 0n
             ? format('rewards.pendingExact', { amount: amount(p.amount) })
-            : format('rewards.pendingZero', { from: p.fromDay.toString(), to: p.toDay.toString() })}
+            : p.toDay === 0n
+              ? text('rewards.pendingZeroEntries')
+              : format('rewards.pendingZero', { from: p.fromDay.toString(), to: p.toDay.toString() })}
         </p>
-        {p.amount > 0n && <p className="tier-b">{format('rewards.pendingDays', { from: p.fromDay.toString(), to: p.toDay.toString() })}</p>}
+        {/* A claim paid from its reward entries alone names no day range. */}
+        {p.amount > 0n && <p className="tier-b">{p.toDay === 0n ? text('rewards.pendingEntries') : format('rewards.pendingDays', { from: p.fromDay.toString(), to: p.toDay.toString() })}</p>}
       </>
     );
   } else if (p) {
