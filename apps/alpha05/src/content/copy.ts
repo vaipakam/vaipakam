@@ -359,7 +359,7 @@ export const copy = {
     value: B('None: test assets exist only on test networks.'),
     legToken: B('{{symbol}} received'),
     legNft: B('{{symbol}} #{{id}} received'),
-    noBefore: B('The balance before the mint was not read, so the change cannot be measured.'),
+    roseWithLog: B('The token logged the mint, but your balance moved by {{amount}} in that block.'),
     roseBy: B('Your balance rose by {{amount}} base units, less than asked.'),
     notYours: B('The NFT exists but another wallet owns it.'),
     notMinted: B('The NFT was not found on the chain.'),

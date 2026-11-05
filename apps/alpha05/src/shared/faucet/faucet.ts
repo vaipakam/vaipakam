@@ -7,7 +7,7 @@
  * and ones it deliberately left without (that absence is what makes them
  * unpriced), plus rentable test NFTs.
  */
-import { parseAbi } from 'viem';
+import { parseAbi, parseEventLogs, zeroAddress, type Log } from 'viem';
 import { getDeployment } from '@vaipakam/contracts/deployments';
 import type { SupportedChain } from '../../chain/chains';
 
@@ -31,6 +31,33 @@ const NFT_KEYS: readonly string[] = ['rentalNft', 'rentalNft2'];
 export const ERC20_MINT_UNITS = 1000n;
 
 export const FAUCET_ERC20_ABI = parseAbi(['function mint(address to, uint256 amount)', 'function balanceOf(address owner) view returns (uint256)']);
+const TRANSFER_ABI = parseAbi(['event Transfer(address indexed from, address indexed to, uint256 value)']);
+
+/** Whether the mined transaction's own logs record `token` minting at
+ *  least `amount` to `to` (a Transfer from the zero address). */
+export function mintLogged(logs: readonly Log[], token: Hex, to: Hex, amount: bigint): boolean {
+  return parseEventLogs({ abi: TRANSFER_ABI, logs: [...logs], eventName: 'Transfer', strict: false }).some(
+    (l) =>
+      l.address.toLowerCase() === token.toLowerCase() &&
+      l.args.from?.toLowerCase() === zeroAddress &&
+      l.args.to?.toLowerCase() === to.toLowerCase() &&
+      (l.args.value ?? 0n) >= amount,
+  );
+}
+
+/**
+ * A token mint's measured outcome. `rose` is the balance change across the
+ * mint's own block (read at the block before and at it), so a transfer made
+ * while the mint waited is not counted against it. A shortfall the
+ * transaction's own mint log contradicts (another transfer in the same
+ * block) is unknown, never "not done"; only a shortfall with no mint
+ * recorded is.
+ */
+export function mintVerdict(rose: bigint, amount: bigint, logged: boolean): 'done' | 'unknown' | 'not-done' {
+  if (rose >= amount) return 'done';
+  return logged ? 'unknown' : 'not-done';
+}
+
 export const FAUCET_NFT_ABI = parseAbi(['function mint(address to, uint256 tokenId)', 'function ownerOf(uint256 tokenId) view returns (address)']);
 
 /** The faucet's assets on `chain`, or null when it offers none: a mainnet,

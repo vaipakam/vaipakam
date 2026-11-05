@@ -1,15 +1,14 @@
-import { useRef, useState } from 'react';
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useConfig } from 'wagmi';
 import { watchAsset, writeContract } from 'wagmi/actions';
 import { useOwnStateClient } from '../../chain/ownRail';
 import { getSupportedChain } from '../../chain/chains';
 import { useCopy } from '../../shared/copy/useCopy';
-import { ERC20_MINT_UNITS, FAUCET_ERC20_ABI, FAUCET_NFT_ABI, faucetAssets, freshTokenId, type FaucetAsset } from '../../shared/faucet/faucet';
+import { ERC20_MINT_UNITS, FAUCET_ERC20_ABI, FAUCET_NFT_ABI, faucetAssets, freshTokenId, mintLogged, mintVerdict, type FaucetAsset } from '../../shared/faucet/faucet';
 import { WhyLink } from '../../shared/help/WhyLink';
 import type { Receipt } from '../../shared/receipt/types';
 import { assetName, useTokenMeta } from '../../shared/reads/tokens';
-import { refusalFromError } from '../../shared/eligibility/refusal';
 import { askThrough, simulateCall } from '../../shared/tx/simulate';
 import { holdsFlow } from '../../shared/tx/txStore';
 import { useTrackedTx } from '../../shared/tx/useTrackedTx';
@@ -50,8 +49,6 @@ export function Faucet() {
   const meta = useTokenMeta(assets?.map((a) => a.address) ?? []).data;
   const [pick, setPick] = useState<MintPick | null>(null);
   const [watch, setWatch] = useState<'idle' | 'asked' | 'declined'>('idle');
-  /** The ERC-20 balance read right before the wallet opened. */
-  const before = useRef<bigint | null>(null);
   const account = (own?.account ?? '0x') as Hex;
 
   const tx = useTrackedTx({
@@ -65,15 +62,21 @@ export function Faucet() {
         ? writeContract(config, { address: pick.asset.address, abi: FAUCET_ERC20_ABI, functionName: 'mint', args: [account, pick.amount], chainId: chain.chainId, account })
         : writeContract(config, { address: pick.asset.address, abi: FAUCET_NFT_ABI, functionName: 'mint', args: [account, pick.tokenId], chainId: chain.chainId, account });
     },
-    measure: async (_receipt, at) => {
+    measure: async (receipt, at) => {
       if (!pick) return [];
       if (pick.kind === 'erc20') {
         const amount = pick.amount;
-        const label = format('faucet.legToken', { symbol: assetName(pick.asset.address, meta ?? null) });
-        const after = await at.read((c, b) => c.readContract({ address: pick.asset.address, abi: FAUCET_ERC20_ABI, functionName: 'balanceOf', args: [account], ...b }));
-        if (before.current === null) return [{ status: 'unknown', label, reason: text('faucet.noBefore') }];
-        const rose = after - before.current;
-        if (rose >= amount) return [{ status: 'done', label }];
+        const token = pick.asset.address;
+        const label = format('faucet.legToken', { symbol: assetName(token, meta ?? null) });
+        // Across the mint's own block only: a transfer made while the mint
+        // waited for confirmation is outside it.
+        const balanceAt = (blockNumber: bigint) =>
+          at.read((c) => c.readContract({ address: token, abi: FAUCET_ERC20_ABI, functionName: 'balanceOf', args: [account], blockNumber }));
+        const [prior, after] = await Promise.all([balanceAt(at.blockNumber - 1n), balanceAt(at.blockNumber)]);
+        const rose = after - prior;
+        const verdict = mintVerdict(rose, amount, mintLogged(receipt.logs, token, account, amount));
+        if (verdict === 'done') return [{ status: 'done', label }];
+        if (verdict === 'unknown') return [{ status: 'unknown', label, reason: format('faucet.roseWithLog', { amount: rose.toString() }) }];
         return [{ status: 'not-done', label, reason: format('faucet.roseBy', { amount: rose.toString() }) }];
       }
       const tokenId = pick.tokenId;
@@ -93,7 +96,6 @@ export function Faucet() {
 
   const start = (asset: FaucetAsset) => {
     setWatch('idle');
-    before.current = null;
     if (asset.kind === 'erc20') {
       const decimals = decimalsOf(asset.address);
       if (decimals === null) return;
@@ -109,13 +111,6 @@ export function Faucet() {
   const recheck = async (current: () => boolean): Promise<Recheck> => {
     if (!pick) return { kind: 'unreadable', reason: text('flow.reading') };
     if (pick.kind === 'erc20') {
-      let balance: bigint;
-      try {
-        balance = (await own.read((c) => c.readContract({ address: pick.asset.address, abi: FAUCET_ERC20_ABI, functionName: 'balanceOf', args: [account] }))).value;
-      } catch (e) {
-        return { kind: 'unreadable', reason: refusalFromError(e).reason };
-      }
-      if (current()) before.current = balance;
       return simulateCall(own, { address: pick.asset.address, abi: FAUCET_ERC20_ABI, functionName: 'mint', args: [account, pick.amount] });
     }
     // An NFT number already minted is replaced before the wallet opens.

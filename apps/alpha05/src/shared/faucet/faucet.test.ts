@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { SupportedChain } from '../../chain/chains';
-import { faucetAssets, freshTokenId } from './faucet';
+import { encodeAbiParameters, encodeEventTopics, parseAbi, zeroAddress, type Log } from 'viem';
+import { faucetAssets, freshTokenId, mintLogged, mintVerdict } from './faucet';
 
 const chain = (chainId: number, testnet: boolean): SupportedChain => ({
   chainId,
@@ -35,5 +36,30 @@ describe('freshTokenId', () => {
   it('draws above the reserved low range', () => {
     expect(freshTokenId(() => 0)).toBe(1_000_000n);
     expect(freshTokenId(() => 0.5) > 1_000_000n).toBe(true);
+  });
+});
+
+describe('the token mint outcome', () => {
+  const token = '0x00000000000000000000000000000000000000aa' as const;
+  const me = '0x00000000000000000000000000000000000000bb' as const;
+  const transfer = parseAbi(['event Transfer(address indexed from, address indexed to, uint256 value)']);
+  const log = (from: `0x${string}`, to: `0x${string}`, value: bigint, address: `0x${string}` = token) =>
+    ({
+      address,
+      topics: encodeEventTopics({ abi: transfer, eventName: 'Transfer', args: { from, to } }),
+      data: encodeAbiParameters([{ type: 'uint256' }], [value]),
+    }) as unknown as Log;
+
+  it('finds the mint in the transaction logs, only from the zero address, to the sender, on the token', () => {
+    expect(mintLogged([log(zeroAddress, me, 1000n)], token, me, 1000n)).toBe(true);
+    expect(mintLogged([log(me, me, 1000n)], token, me, 1000n)).toBe(false);
+    expect(mintLogged([log(zeroAddress, me, 1000n, '0x00000000000000000000000000000000000000cc')], token, me, 1000n)).toBe(false);
+    expect(mintLogged([log(zeroAddress, me, 999n)], token, me, 1000n)).toBe(false);
+  });
+
+  it('a shortfall the mint log contradicts is unknown; only an unrecorded one is not done', () => {
+    expect(mintVerdict(1000n, 1000n, true)).toBe('done');
+    expect(mintVerdict(500n, 1000n, true)).toBe('unknown');
+    expect(mintVerdict(500n, 1000n, false)).toBe('not-done');
   });
 });
