@@ -4,7 +4,7 @@ import { STALE_AFTER_SEC, freshnessOf, withCursor, type IngestHealth } from './i
 const DIAMOND = '0x63816B149266C9dBFB7683dfd02D851915238049';
 const health = (over: Partial<IngestHealth['chains'][number]> = {}): IngestHealth => ({
   checkedAt: 1_000_000,
-  chains: [{ chainId: 84532, lastBlock: 500, scannedAt: 999_940, ageSeconds: 60, deployment: { diamond: DIAMOND }, ...over }],
+  chains: [{ chainId: 84532, lastBlock: 500, scannedAt: 999_940, ageSeconds: 60, deployment: { diamond: DIAMOND, resetPending: false, adoptedBlind: false }, ...over }],
 });
 const base = { chainId: 84532, diamond: DIAMOND, elapsedSec: 0, error: null };
 
@@ -24,8 +24,22 @@ describe('freshnessOf', () => {
     expect(freshnessOf({ ...base, health: health({ lastBlock: null, scannedAt: null, ageSeconds: null }) }).kind).toBe('unknown');
   });
   it('is unknown, never fresh, when the index describes another protocol contract', () => {
-    const f = freshnessOf({ ...base, health: health({ deployment: { diamond: '0x' + '1'.repeat(40) } }) });
+    const f = freshnessOf({ ...base, health: health({ deployment: { diamond: '0x' + '1'.repeat(40), resetPending: false, adoptedBlind: false } }) });
     expect(f).toEqual({ kind: 'unknown', reason: 'The index describes a different protocol contract than this build.' });
+  });
+  it('is unknown, never fresh, until the deployment record proves the figures came from this build\'s contract', () => {
+    const reason = (deployment: IngestHealth['chains'][number]['deployment']) => {
+      const f = freshnessOf({ ...base, health: health({ deployment }) });
+      return f.kind === 'unknown' ? f.reason : f.kind;
+    };
+    // No record: an indexer before its deployment table, or a cursor no pass attributed.
+    expect(reason(null)).toBe('The index does not say which protocol contract its figures came from.');
+    // Mid-reset: the older contract's rows are being cleared.
+    expect(reason({ diamond: DIAMOND, resetPending: true, adoptedBlind: false })).toBe("The index is part-way through clearing an older contract's figures.");
+    // Blind adoption: no prior record to compare, so the rows' origin is not known.
+    expect(reason({ diamond: DIAMOND, resetPending: false, adoptedBlind: true })).toBe("The index cannot yet confirm its figures all came from this build's protocol contract.");
+    // Proven, compared case-insensitively.
+    expect(reason({ diamond: DIAMOND.toLowerCase(), resetPending: false, adoptedBlind: false })).toBe('fresh');
   });
   it('is unknown, never fresh, when the scan time is ahead of the indexer\'s clock', () => {
     expect(freshnessOf({ ...base, health: health({ ageSeconds: -30 }) })).toEqual({
@@ -62,7 +76,7 @@ describe('withCursor', () => {
   it('lifts an unreachable poll but never an unknown deployment', () => {
     const unavailable = freshnessOf({ ...base, health: null, error: 'x' });
     expect(withCursor(unavailable, { lastBlock: 600, updatedAt: 999_990 }, 1_000_000).kind).toBe('fresh');
-    const unknown = freshnessOf({ ...base, health: health({ deployment: { diamond: '0x' + '1'.repeat(40) } }) });
+    const unknown = freshnessOf({ ...base, health: health({ deployment: { diamond: '0x' + '1'.repeat(40), resetPending: false, adoptedBlind: false } }) });
     expect(withCursor(unknown, { lastBlock: 600, updatedAt: 999_990 }, 1_000_000)).toBe(unknown);
   });
 });

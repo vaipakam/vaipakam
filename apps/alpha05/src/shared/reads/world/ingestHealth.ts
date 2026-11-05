@@ -3,10 +3,14 @@
  * block and age of the index it came from, read from the indexer's own
  * `GET /health/ingest` (per chain: the last block the scan completed
  * through and when), and the index is called stale once it has not
- * advanced for half an hour. An index that describes another protocol
- * contract than this build binds to (a fresh testnet deploy the indexer
- * has not adopted yet, ACC-65) is UNKNOWN, never presented as current, and
- * so is a scan time ahead of the indexer's own clock (a restored cursor,
+ * advanced for half an hour. An index is presented as current only when it
+ * PROVES which protocol contract its rows came from: its adopted deployment
+ * is present, is the one this build binds to, was adopted by a reset rather
+ * than blindly (no prior record to compare, so the rows' origin is unknown),
+ * and has no reset still pending (a mixed index). Anything short of that is
+ * UNKNOWN, never current (a fresh testnet deploy the indexer has not adopted
+ * yet, ACC-65; an indexer before its deployment record existed). So is a
+ * scan time ahead of the indexer's own clock (a restored cursor,
  * clock skew), which the indexer reports as a negative age on purpose. A
  * re-read that failed after an earlier answer is disclosed on the stamp
  * beside the last answer, never swallowed into a healthy-looking stamp.
@@ -20,7 +24,7 @@ export interface IngestHealth {
     lastBlock: number | null;
     scannedAt: number | null;
     ageSeconds: number | null;
-    deployment: { diamond: string } | null;
+    deployment: { diamond: string; resetPending: boolean; adoptedBlind: boolean } | null;
   }[];
 }
 
@@ -52,13 +56,24 @@ export interface FreshnessInputs {
   elapsedSec: number;
 }
 
+/** Why the index cannot be shown as describing this build's contract, or
+ *  null when its deployment record proves it does. Every unproven case is a
+ *  reason, never a pass: the indexer states these flags so a reader does not
+ *  have to guess (apps/indexer deploymentEpoch.ts). */
+export function attributionGap(deployment: IngestHealth['chains'][number]['deployment'], diamond: string): string | null {
+  if (deployment === null) return 'The index does not say which protocol contract its figures came from.';
+  if (deployment.diamond.toLowerCase() !== diamond.toLowerCase()) return 'The index describes a different protocol contract than this build.';
+  if (deployment.resetPending !== false) return 'The index is part-way through clearing an older contract\'s figures.';
+  if (deployment.adoptedBlind !== false) return 'The index cannot yet confirm its figures all came from this build\'s protocol contract.';
+  return null;
+}
+
 export function freshnessOf({ health, error, chainId, diamond, elapsedSec }: FreshnessInputs): Freshness {
   if (health === null) return { kind: 'unavailable', reason: error ?? 'The index has not been read yet.' };
   const chain = health.chains.find((c) => c.chainId === chainId);
   if (!chain) return { kind: 'unknown', reason: 'The index does not scan this chain.' };
-  if (chain.deployment && chain.deployment.diamond.toLowerCase() !== diamond.toLowerCase()) {
-    return { kind: 'unknown', reason: 'The index describes a different protocol contract than this build.' };
-  }
+  const unattributed = attributionGap(chain.deployment, diamond);
+  if (unattributed !== null) return { kind: 'unknown', reason: unattributed };
   if (chain.lastBlock === null || chain.scannedAt === null || chain.ageSeconds === null) {
     return { kind: 'unknown', reason: 'The index has no scan position for this chain yet.' };
   }
