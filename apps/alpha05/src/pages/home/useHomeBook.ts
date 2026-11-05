@@ -4,6 +4,7 @@ import { useChainRead, type ChainRead } from '../../shared/reads/chainRead';
 import { useTokenMeta, type TokenMetaMap } from '../../shared/reads/tokens';
 import { useOwnRead, type OwnRead } from '../../shared/reads/useOwnRead';
 import { readNumeraireSymbol, readOpenOffers, readPositionBook, type LiveLoans, type OpenOffers, type Payouts } from './reads';
+import { ASSET_ERC20 } from './model';
 
 type Hex = `0x${string}`;
 
@@ -45,7 +46,7 @@ export function useHomeBook(): HomeBook {
 
   const assets: Hex[] = [
     ...(loans.data?.rows.flatMap((r) => [r.loan.principalAsset, r.loan.collateralAsset]) ?? []),
-    ...(offers.data?.rows.map((o) => o.lendingAsset) ?? []),
+    ...(offers.data?.rows.flatMap((o) => (o.assetType === ASSET_ERC20 ? [o.lendingAsset] : [o.lendingAsset, o.prepayAsset])) ?? []),
   ];
   const meta = useTokenMeta(assets).data;
 

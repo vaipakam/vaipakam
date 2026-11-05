@@ -173,6 +173,7 @@ export const copy = {
     loanDue: B('Repayment due {{when}}.'),
     rentalDue: B('The rental is due to close {{when}}.'),
     interestNext: B('Next interest payment due {{when}}.'),
+    interestCheckpointsOff: B('Periodic interest settlement is switched off here, so no collateral is sold at a checkpoint.'),
     interestSoonBorrower: A(
       'An interest payment of {{amount}} is due {{when}}, in {{left}}; if it is still unpaid when its grace period ends, collateral can be sold to pay it.',
     ),
@@ -206,7 +207,7 @@ export const copy = {
     groupHealth: B('Lowest health factor {{hf}}.'),
     groupUnpriced: B('Loans here with no health reading: {{count}}.'),
     loansWhy: C(
-      'Each live loan shows its next deadline. A loan is due on its due date; after it, a grace period runs, during which the borrower can still repay with a late fee; once the grace period ends, anyone can start the default, which settles the loan from the collateral. Time the protocol spent paused is added to these dates. A loan that pays interest periodically also has a checkpoint before then: interest still owed when the checkpoint\'s grace period ends can be paid by selling collateral, and the loan stays open. The health factor compares the collateral\'s value with the debt; below 1 the loan can be liquidated. A loan in an unpriced asset has no health factor. An NFT rental has no collateral: its default pays the renter\'s prepaid rent to the owner and the buffer to the treasury. Several loans opened from one offer are shown together, with the principal filled, the rate weighted by principal and the lowest health factor among them.',
+      'Each live loan shows its next deadline. A loan is due on its due date; after it, a grace period runs, during which the borrower can still repay with a late fee; once the grace period ends, anyone can start the default, which settles the loan from the collateral. Time the protocol spent paused is added to these dates. A loan that pays interest periodically also has checkpoints, the last one on the due date itself: interest still owed when a checkpoint\'s grace period ends can be paid by selling collateral, and the loan stays open. The protocol can switch that settlement off, and Home then says so. The health factor compares the collateral\'s value with the debt; below 1 the loan can be liquidated. A loan in an unpriced asset has no health factor. An NFT rental has no collateral: its default pays the renter\'s prepaid rent to the owner and the buffer to the treasury. Several loans opened from one offer are shown together, with the principal filled, the rate weighted by principal and the lowest health factor among them.',
       'home-loans',
     ),
     exposureLent: B('More lent than borrowed: {{lent}} lent and {{borrowed}} borrowed, in {{unit}} at today\'s prices.'),
@@ -227,6 +228,8 @@ export const copy = {
     offersTitle: B('Your open offers'),
     offerLend: B('Offer #{{id}}: lend {{amount}} at {{rate}}% a year, on a {{days}}-day term.'),
     offerBorrow: B('Offer #{{id}}: borrow {{amount}} at {{rate}}% a year, on a {{days}}-day term.'),
+    offerRentOut: B('Offer #{{id}}: rent out {{asset}} for {{fee}} a day, on a {{days}}-day term.'),
+    offerRent: B('Offer #{{id}}: rent {{asset}} for {{fee}} a day, on a {{days}}-day term.'),
     offerRange: B('Offer #{{id}}: {{side}} {{min}} to {{max}} at {{rate}}% a year, on a {{days}}-day term.'),
     offerFilled: B('{{filled}} of {{max}} filled so far.'),
     offerExpires: B('Expires {{when}}.'),

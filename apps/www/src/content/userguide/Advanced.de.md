@@ -2181,7 +2181,7 @@ summiert, Zins nach Principal gewichtet und abgerundet, und der
 niedrigste Health Factor der bepreisten Loans, die unbepreisten
 gezählt.
 
-Ein Loan mit periodischer Zinszahlung hat vor seinem Fälligkeitsdatum zusätzlich Stichtage. Zinsen, die nach der Kulanzfrist eines Stichtags noch offen sind, können durch den Verkauf von Sicherheiten bezahlt werden, und der Loan bleibt offen; Home zeigt den nächsten Stichtag und stellt einen offenen nach vorn.
+Ein Loan mit periodischer Zinszahlung hat zusätzlich Stichtage, bis einschließlich seines Fälligkeitsdatums. Zinsen, die nach der Kulanzfrist eines Stichtags noch offen sind, können durch den Verkauf von Sicherheiten bezahlt werden, und der Loan bleibt offen; Home zeigt den nächsten Stichtag und stellt einen offenen nach vorn, auch wenn er auf das Fälligkeitsdatum fällt, weil seine Kulanzfrist vor der des Loans enden kann. Das Protokoll kann diese Abrechnung abschalten; Home sagt dann, dass an einem Stichtag keine Sicherheit verkauft wird.
 
 <a id="home-exposure"></a>
 

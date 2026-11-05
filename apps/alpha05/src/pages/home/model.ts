@@ -70,7 +70,8 @@ export interface Deadlines {
   pauseCredit: bigint;
   /** The loan's periodic-interest checkpoint (`previewPeriodicSettle`), or
    *  null when it has no cadence. Missing it lets anyone sell collateral to
-   *  cover the shortfall after the checkpoint's grace, before maturity. */
+   *  cover the shortfall once the checkpoint's grace ends, whether or not
+   *  maturity has come. */
   periodic: PeriodicCheckpoint | null;
 }
 
@@ -79,6 +80,10 @@ export interface PeriodicCheckpoint {
   graceEndsAt: bigint;
   /** Interest still owed for the current period, in the principal asset. */
   shortfall: bigint;
+  /** Whether periodic settlement is switched on (`getPeriodicInterestEnabled`).
+   *  Switched off, `settlePeriodicInterest` refuses, so no collateral is
+   *  sold at a checkpoint and the checkpoint sets no deadline. */
+  enforced: boolean;
 }
 
 export type LoanStage =
@@ -94,10 +99,10 @@ export type LoanStage =
 
 /**
  * The loan's next obligation: the more urgent of its final due date and,
- * when it carries a periodic-interest cadence with interest still owed, the
- * checkpoint before maturity. A checkpoint is its own deadline: once its
- * grace ends, collateral can be sold to pay the shortfall while the loan
- * stays open, whatever the maturity date says.
+ * when it carries an enforced periodic-interest cadence with interest still
+ * owed, the current checkpoint. A checkpoint is its own deadline, even one
+ * on the due date itself: once its grace ends (often before the loan's),
+ * collateral can be sold to pay the shortfall while the loan stays open.
  */
 export function loanStage(row: LiveLoanRow, deadlines: Deadlines | null, nowSec: number): LoanStage {
   if (row.loan.status === LOAN_STATUS_FALLBACK_PENDING) return { kind: 'fallback' };
@@ -105,7 +110,7 @@ export function loanStage(row: LiveLoanRow, deadlines: Deadlines | null, nowSec:
   const dueAt = Number(deadlines.maturity);
   const graceEnd = Number(deadlines.graceEnd);
   const p = deadlines.periodic;
-  const checkpoint = p && p.shortfall > 0n && p.periodEndAt < deadlines.maturity ? p : null;
+  const checkpoint = p && p.enforced && p.shortfall > 0n ? p : null;
   let maturityStage: LoanStage;
   if (nowSec >= graceEnd) maturityStage = { kind: 'grace-over', graceEndedAt: graceEnd };
   else if (nowSec >= dueAt) maturityStage = { kind: 'in-grace', dueAt, graceEndsAt: graceEnd };

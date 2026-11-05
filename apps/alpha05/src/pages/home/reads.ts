@@ -152,19 +152,25 @@ export async function readPositionBook(client: PublicClient, diamond: Hex, accou
   });
 
   const live = held.filter((h) => isLiveStatus(h.loan.status));
+  // Read once: whether periodic settlement is switched on. Unread, a loan
+  // with a cadence has an unknown deadline (its checkpoint may or may not
+  // let collateral be sold); a loan without one is unaffected.
+  const periodicOn = live.length === 0 ? Promise.resolve(false) : (client.readContract({ address: diamond, abi: NUMERAIRE, functionName: 'getPeriodicInterestEnabled' }) as Promise<boolean>);
+  periodicOn.catch(() => undefined);
 
   const [healthList, deadlineList, valueList, payouts] = await Promise.all([
     settled(live.map(async (h) => (await client.readContract({ address: diamond, abi: RISK, functionName: 'calculateHealthFactor', args: [h.loan.id] })) as bigint)),
     settled(
       // Both dates the loan answers to: maturity and, with a periodic-interest
-      // cadence, the next checkpoint. Either unread leaves the deadline
-      // unknown rather than half-known.
+      // cadence, the current checkpoint and whether it is enforced. Any of
+      // them unread leaves the deadline unknown rather than half-known.
       live.map(async (h) => {
         const [[, pauseCredit, maturity, graceEnd], [cadence, periodEndAt, graceEndsAt, , , shortfall]] = (await Promise.all([
           client.readContract({ address: diamond, abi: LOAN, functionName: 'getLoanDeadlines', args: [h.loan.id] }),
           client.readContract({ address: diamond, abi: PERIODIC, functionName: 'previewPeriodicSettle', args: [h.loan.id] }),
         ])) as [[bigint, bigint, bigint, bigint], [number, bigint, bigint, bigint, bigint, bigint, boolean]];
-        return { maturity, graceEnd, pauseCredit, periodic: cadence === 0 ? null : { periodEndAt, graceEndsAt, shortfall } } satisfies Deadlines;
+        const periodic = cadence === 0 ? null : { periodEndAt, graceEndsAt, shortfall, enforced: await periodicOn };
+        return { maturity, graceEnd, pauseCredit, periodic } satisfies Deadlines;
       }),
     ),
     settled(
@@ -233,6 +239,8 @@ export interface OpenOffer {
   interestRateBpsMax: bigint;
   durationDays: bigint;
   tokenId: bigint;
+  /** A rental's fee asset; `amount` is then the daily fee in it. */
+  prepayAsset: Hex;
 }
 
 export interface OpenOffers {

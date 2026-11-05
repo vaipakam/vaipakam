@@ -50,7 +50,7 @@ const dl = (maturity: number, graceEnd: number, periodic: Deadlines['periodic'] 
   pauseCredit: 0n,
   periodic,
 });
-const cp = (periodEndAt: number, graceEndsAt: number, shortfall = 10n) => ({ periodEndAt: BigInt(periodEndAt), graceEndsAt: BigInt(graceEndsAt), shortfall });
+const cp = (periodEndAt: number, graceEndsAt: number, shortfall = 10n, enforced = true) => ({ periodEndAt: BigInt(periodEndAt), graceEndsAt: BigInt(graceEndsAt), shortfall, enforced });
 
 describe('loanStage', () => {
   it('names a fallback before reading any date', () => {
@@ -73,10 +73,19 @@ describe('loanStage', () => {
     expect(loanStage(row(1), dl(far, far + 100, cp(NOW + 60, NOW + 99)), NOW).kind).toBe('interest-soon');
     expect(loanStage(row(1), dl(far, far + 100, cp(NOW + 10 * 86_400, NOW + 11 * 86_400)), NOW)).toEqual({ kind: 'running', dueAt: far, interestDueAt: NOW + 10 * 86_400 });
   });
-  it('ignores a checkpoint with nothing owed, or one that falls on the due date itself', () => {
+  it('ignores a checkpoint with nothing owed', () => {
     const far = NOW + 100 * 86_400;
     expect(loanStage(row(1), dl(far, far + 100, cp(NOW - 200, NOW - 1, 0n)), NOW).kind).toBe('running');
-    expect(loanStage(row(1), dl(NOW - 100, NOW + 50, cp(NOW - 100, NOW - 1)), NOW).kind).toBe('in-grace');
+  });
+  it('keeps a checkpoint on the due date, whose shorter grace ends before the loan\'s', () => {
+    // Due NOW-100 with seven days of grace; the checkpoint on the same date had one day, now over.
+    expect(loanStage(row(1), dl(NOW - 100, NOW + 7 * 86_400, cp(NOW - 100, NOW - 1)), NOW)).toEqual({ kind: 'interest-overdue', graceEndedAt: NOW - 1, shortfall: 10n });
+    // Both graces still running: the one ending first leads.
+    expect(loanStage(row(1), dl(NOW - 100, NOW + 7 * 86_400, cp(NOW - 100, NOW + 50)), NOW).kind).toBe('interest-in-grace');
+  });
+  it('sets no deadline from a checkpoint while periodic settlement is switched off', () => {
+    const far = NOW + 100 * 86_400;
+    expect(loanStage(row(1), dl(far, far + 100, cp(NOW - 200, NOW - 1, 10n, false)), NOW)).toEqual({ kind: 'running', dueAt: far, interestDueAt: null });
   });
 });
 

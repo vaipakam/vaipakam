@@ -1056,7 +1056,7 @@ du collatéral à la dette : sous 1, le loan peut être liquidé. Un loan
 dans un actif sans prix n'a pas de health factor. Les loans ouverts à
 partir d'une de vos offres sont montrés ensemble.
 
-Un loan qui paie des intérêts périodiquement a aussi des échéances intermédiaires avant son échéance finale. Les intérêts encore dus à la fin du délai de grâce d'une échéance peuvent être payés en vendant du collatéral, et le loan reste ouvert ; Home montre la prochaine échéance et place en premier une échéance impayée.
+Un loan qui paie des intérêts périodiquement a aussi des échéances intermédiaires, jusqu'à son échéance finale incluse. Les intérêts encore dus à la fin du délai de grâce d'une échéance peuvent être payés en vendant du collatéral, et le loan reste ouvert ; Home montre la prochaine échéance et place en premier une échéance impayée, même si elle tombe à l'échéance finale, car son délai de grâce peut finir avant celui du loan. Le protocole peut désactiver ce règlement ; Home indique alors qu'aucun collatéral n'est vendu à une échéance.
 
 <a id="home-exposure"></a>
 

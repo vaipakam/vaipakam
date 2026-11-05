@@ -2171,7 +2171,7 @@ principal sumado, tasa ponderada por principal y redondeada hacia
 abajo, y el health factor más bajo entre los loans con precio,
 contando los que no lo tienen.
 
-Un loan que paga intereses periódicamente también tiene hitos antes de su vencimiento. Los intereses aún debidos cuando termina la gracia de un hito pueden pagarse vendiendo colateral, y el loan sigue abierto; Home muestra el próximo hito y pone primero uno pendiente.
+Un loan que paga intereses periódicamente también tiene hitos, hasta su vencimiento incluido. Los intereses aún debidos cuando termina la gracia de un hito pueden pagarse vendiendo colateral, y el loan sigue abierto; Home muestra el próximo hito y pone primero uno pendiente, aunque caiga en el vencimiento, porque su gracia puede terminar antes que la del loan. El protocolo puede desactivar esta liquidación; Home dice entonces que no se vende colateral en un hito.
 
 <a id="home-exposure"></a>
 

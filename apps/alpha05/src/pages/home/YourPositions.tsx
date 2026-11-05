@@ -247,6 +247,7 @@ function LoanCard({ row, meta, stage, deadlines }: { row: LiveLoanRow; meta: Tok
         <p className="tier-b">{format('home.loanCollateral', { amount: legText(l.collateralAsset, l.collateralAssetType, l.collateralAmount, l.collateralTokenId) })}</p>
       )}
       <StageLine stage={stage} borrowerSide={row.borrowerSide} rental={l.assetType !== ASSET_ERC20} amountOf={(v) => tokenAmount(v, l.principalAsset, meta, format)} />
+      {deadlines?.periodic && !deadlines.periodic.enforced && <p className="tier-b">{text('home.interestCheckpointsOff')}</p>}
       {deadlines && deadlines.pauseCredit > 0n && <p className="tier-b">{format('home.loanPauseCredit', { credit: formatSpan(Number(deadlines.pauseCredit)) })}</p>}
       <p className="tier-b">{row.healthFactor > 0n ? format('home.loanHealth', { hf: formatScaled(row.healthFactor) }) : text('home.loanHealthNone')}</p>
       <Link className="btn btn-primary" to={`/positions/${id}`}>
@@ -350,8 +351,15 @@ function OfferCard({ offer: o, meta }: { offer: OpenOffer; meta: TokenMetaMap | 
   const amountOf = (v: bigint) => (erc20 ? tokenAmount(v, o.lendingAsset, meta, format) : format('asset.nft', { id: o.tokenId.toString(), asset: assetName(o.lendingAsset, meta) }));
   const rate = o.interestRateBpsMax > o.interestRateBps ? format('home.rateRange', { min: formatBps(o.interestRateBps), max: formatBps(o.interestRateBpsMax) }) : formatBps(o.interestRateBps);
   const common = { id, rate, days: o.durationDays.toString() };
-  const line =
-    erc20 && o.amountMax > o.amount
+  // A rental carries no APR: `amount` is its daily fee, in the prepay asset.
+  const line = !erc20
+    ? format(lend ? 'home.offerRentOut' : 'home.offerRent', {
+        id,
+        asset: amountOf(o.amount),
+        fee: tokenAmount(o.amount, o.prepayAsset, meta, format),
+        days: o.durationDays.toString(),
+      })
+    : erc20 && o.amountMax > o.amount
       ? format('home.offerRange', { ...common, side: text(lend ? 'home.offerSideLend' : 'home.offerSideBorrow'), min: amountOf(o.amount), max: amountOf(o.amountMax) })
       : format(lend ? 'home.offerLend' : 'home.offerBorrow', { ...common, amount: amountOf(o.amountMax > 0n ? o.amountMax : o.amount) });
   return (
