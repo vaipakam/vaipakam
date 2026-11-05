@@ -1769,20 +1769,24 @@ Master flag for the in-place loan extension.
 
 - **Getter:** `AdminFacet.getAutoExtendEnabled() -> bool`
 - **Setter:** `AdminFacet.setAutoExtendEnabled(bool)`
-- **What `false` blocks:** BOTH keeper-driven AND borrower-direct
-  `AutoLifecycleFacet.extendLoanInPlace` revert `AutoExtendDisabled`.
-  Unlike `cfgAutoRefinanceEnabled`, the borrower-direct path is
-  ALSO blocked — there is no "manual extension" fallback when the
-  flag is off, because the executor is shared.
+- **What `false` blocks:** only the keeper-driven extension: a
+  keeper acting for the borrower in
+  `AutoLifecycleFacet.extendLoanInPlace` reverts `AutoExtendDisabled`.
+  Like `cfgAutoRefinanceEnabled`, it does NOT block the parties: the
+  borrower-position holder extending directly within both sides'
+  caps, and funding the extension reserve, still go through
+  (#3175, owner decision 2026-11-05).
 - **When to flip on:** once governance has rehearsed an extend on
   a testnet loan with both-side consent and validated the
   per-side cap intersection logic (lender minimum, both-side
   maxes, both-side expiry caps) and the
   `LibInteractionRewards` schedule refresh.
-- **When to flip off:** if the executor's interest-accrual / fee
-  treatment surfaces an unexpected behaviour. Existing loans
-  continue with their original terms (no extension fired ⇒ no
-  state change); the next extension simply doesn't happen.
+- **When to flip off:** to stop runaway or misbehaving keeper
+  extensions. Existing loans keep their terms, and the next
+  keeper extension simply does not happen; a borrower can still
+  extend directly. If the extension itself (its interest-accrual
+  or fee treatment) misbehaves, this flag does not stop it: use the
+  global pause, which stops every extension.
 
 ### Independence from per-user consent
 

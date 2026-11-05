@@ -4757,7 +4757,7 @@ const copySource = {
     unavailable: 'We couldn’t read this loan’s automatic extension right now. Try again shortly.',
     paused: 'The protocol is paused: no extension can run and no limits can be set until it resumes.',
     switchOff:
-      'The protocol’s automatic extension is switched off. No extension can run and a reserve can’t be funded. You can still set or clear your limits, and withdraw a reserve.',
+      'The protocol’s automatic extension is switched off, so no keeper will extend this loan. The borrower-position holder can still extend it directly on the contract within both sides’ limits (this app doesn’t offer that step yet), and can add or withdraw a reserve. You can still set or clear your limits.',
     scheduled:
       'This loan pays interest on a schedule, and a loan on a schedule can’t be extended in place.',
     scheduleUnknown: 'Checking whether this loan pays interest on a schedule…',

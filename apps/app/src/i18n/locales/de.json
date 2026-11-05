@@ -3873,7 +3873,7 @@
       "loading": "Automatische Verlängerung für diesen Kredit wird geprüft…",
       "unavailable": "Wir konnten die automatische Verlängerung dieses Kredits gerade nicht lesen. Versuchen Sie es gleich noch einmal.",
       "paused": "Das Protokoll ist pausiert: Bis es fortgesetzt wird, kann keine Verlängerung laufen und es können keine Grenzen gesetzt werden.",
-      "switchOff": "Die automatische Verlängerung des Protokolls ist ausgeschaltet. Keine Verlängerung kann laufen, und eine Reserve kann nicht aufgefüllt werden. Sie können Ihre Grenzen weiterhin setzen oder löschen und eine Reserve abheben.",
+      "switchOff": "Die automatische Verlängerung des Protokolls ist ausgeschaltet, daher verlängert kein Keeper diesen Kredit. Der Inhaber der Kreditnehmerposition kann ihn weiterhin direkt über den Vertrag innerhalb der Grenzen beider Seiten verlängern (diese App bietet diesen Schritt noch nicht an) und eine Reserve auffüllen oder abheben. Sie können Ihre Grenzen weiterhin setzen oder löschen.",
       "scheduled": "Dieser Kredit zahlt Zinsen nach einem Zahlungsplan, und ein Kredit mit Zahlungsplan kann nicht an Ort und Stelle verlängert werden.",
       "scheduleUnknown": "Es wird geprüft, ob dieser Kredit Zinsen nach einem Zahlungsplan zahlt…",
       "windowBefore": "Verlängerungen können vom {{opens}} bis zum {{closes}} laufen.",
