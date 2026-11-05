@@ -11397,11 +11397,13 @@ library LibVaipakam {
     ///      correct for an ERC-20 loan (whole principal) but wrong for a
     ///      rental — there `loan.principal` is the PER-DAY fee, so the fee
     ///      never scaled with the size of the overdue obligation. This
-    ///      rental variant bases the fee on the REMAINING OWED RENTAL
-    ///      `principal × durationDays`. `durationDays` is the live remaining
-    ///      term, retired by BOTH `autoDeductDaily` and `repayPartial`
-    ///      (term-retirement semantics), so it faithfully tracks the overdue
-    ///      rent with no separate paid-days counter.
+    ///      rental variant bases the fee on the WHOLE AGREED RENT
+    ///      `principal × durationDays`, where `durationDays` is the immutable
+    ///      origination term (#1188). It is not reduced by the days already
+    ///      paid, whether by `autoDeductDaily` or a `repayPartial` prepayment:
+    ///      the fee prices holding the NFT past maturity, and basing it on
+    ///      the days still owed let a rental prepaid in full owe no late fee
+    ///      at all (#3170, owner decision 2026-11-05).
     ///
     ///      The fee is capped two ways: the historical 5% penalty ceiling on
     ///      the slope, AND — load-bearingly — clamped to the loan's OWN
@@ -11430,10 +11432,12 @@ library LibVaipakam {
         uint256 feePercent = 100 + (daysLate * 50); // 1% + 0.5% per day
         if (feePercent > 500) feePercent = 500; // historical 5% penalty ceiling
 
-        // Pass-2 D1 (#1188) — base the fee on the REMAINING owed rental days
-        // (`remainingRentalDays`), not the now-immutable `durationDays` term,
-        // so a partially-serviced rental isn't penalised on already-paid days.
-        fee = (loan.principal * remainingRentalDays(loan) * feePercent) / 10000;
+        // #3170 (owner decision 2026-11-05) — base the fee on the WHOLE agreed
+        // rent (daily fee × the immutable `durationDays` term). The fee prices
+        // keeping the NFT past maturity, so it must not depend on how the rent
+        // was paid: on the remaining days (#1188) a rental prepaid in full by a
+        // partial repay owed no late fee for the whole grace window.
+        fee = (loan.principal * uint256(loan.durationDays) * feePercent) / 10000;
 
         // Clamp to the loan's ACTUAL pre-funded buffer (per-loan snapshot, not
         // the mutable global config), so the buffer always covers the fee.

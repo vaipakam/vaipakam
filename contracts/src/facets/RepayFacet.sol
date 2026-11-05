@@ -441,7 +441,10 @@ contract RepayFacet is DiamondReentrancyGuard, IVaipakamErrors {
             // per auto-deduction, so (lastDeductTime - startTime) / ONE_DAY
             // gives the count of already-paid days (`consumedRentalDays`,
             // the Pass-2 D1 #1188 guarded derivation both branches read).
-            if (loan.prepayAmount == 0) revert InsufficientPrepay();
+            // #3170 — no blanket refusal of an empty prepayment: a rental whose
+            // whole term was prepaid by a partial repay has `prepayAmount == 0`
+            // and owes no rent, only the late fee (from the buffer), so it must
+            // still settle here. Rent alone is bounded by the prepayment below.
 
             if (loan.useFullTermInterest) {
                 // Pass-2 D1 (#1188) — `durationDays` is now the IMMUTABLE
@@ -458,12 +461,16 @@ contract RepayFacet is DiamondReentrancyGuard, IVaipakamErrors {
                 interest = loan.principal * LibVaipakam.accruedUnpaidRentalDays(loan);
             }
 
-            // #998 S8 (#1004) — the rental late fee is based on the REMAINING
-            // owed rental (`principal × durationDays`, capped at the pre-funded
-            // buffer bps), NOT the one-day `loan.principal` base that the shared
+            // #998 S8 (#1004) — the rental late fee is based on the whole
+            // agreed rent (`principal × durationDays`, the immutable term,
+            // #3170; capped at the pre-funded buffer), NOT the one-day `loan.principal` base that the shared
             // `calculateLateFee` (computed at the top of this fn for the ERC-20
             // path) uses. Override it here for the rental branch.
             lateFee = LibVaipakam.calculateRentalLateFee(loanId);
+
+            // Rent is paid only out of the prepayment; the buffer funds the
+            // late fee alone, so rent never draws on it (#3170).
+            if (interest > loan.prepayAmount) revert InsufficientPrepay();
 
             // The late fee is funded from the pre-funded 5% `bufferAmount`
             // (swept at resolution), not from `prepayAmount`. A full-term late
@@ -1092,7 +1099,7 @@ contract RepayFacet is DiamondReentrancyGuard, IVaipakamErrors {
         // the rule lives.
 
         // Late fee if past endTime. #998 S8 (#1004) — the rental branch quotes
-        // the remaining-rental-based fee so this preview matches what
+        // the whole-term rental fee (#3170) so this preview matches what
         // `repayLoan` charges at settlement (else a late-rental preview would
         // under-quote the fee).
         uint256 lateFee = 0;
