@@ -1626,9 +1626,9 @@ contract RepayFacetTest is Test {
     }
 
     /// @dev Same, after 10 daily deductions: the close owes only the 20
-    ///      remaining term days (200) plus the fee on that remaining rent
-    ///      (10 × 20 × 2% = 4). Pre-fix it billed 32 − 10 = 22 days
-    ///      (220 + 4 = 224 > prepay 200 + buffer 15) and reverted.
+    ///      remaining term days (200) plus the late fee, which is on the
+    ///      whole agreed rent (10 × 30 × 2% = 6, #3170). Pre-#901 it billed
+    ///      32 − 10 = 22 days (more than prepay 200 + buffer 15) and reverted.
     function test_901_partlyDeductedRentalRepaidInGrace_owesOnlyRemainingTerm() public {
         helperOfferLoan();
         uint256 start = LoanFacet(address(diamond)).getLoanDetails(2).startTime;
@@ -1647,8 +1647,8 @@ contract RepayFacetTest is Test {
         assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Repaid), "in-grace repay settles");
         assertEq(
             vaultBefore - ERC20Mock(mockERC20).balanceOf(borrowerVault),
-            204,
-            "remaining 20 term days (200) + late fee (4)"
+            206,
+            "remaining 20 term days (200) + whole-term late fee (6)"
         );
     }
 
