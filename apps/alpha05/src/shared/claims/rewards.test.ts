@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { encodeAbiParameters, encodeErrorResult, encodeEventTopics, parseAbi, type Log } from 'viem';
+import { ContractFunctionRevertedError, encodeAbiParameters, encodeErrorResult, encodeEventTopics, parseAbi, type Log } from 'viem';
 import { claimRecord, deliveryOutcome, inFinalNotice, moreRemains, pendingFromRevert, revertOf, soonestFrom, vpfiArrivals, type ExpiryPage } from './rewards';
 
 const DIAMOND = '0x00000000000000000000000000000000000000d1' as const;
@@ -70,6 +70,9 @@ describe('revertOf', () => {
   });
   it('is null for a failure that never reached the contract', () => {
     expect(revertOf(new Error('fetch failed'))).toBeNull();
+  });
+  it('is null for a revert whose source dropped the reason, so the next source is asked', () => {
+    expect(revertOf(new ContractFunctionRevertedError({ abi: ERRORS, functionName: 'simulateClaimInteractionRewards' }))).toBeNull();
   });
 });
 

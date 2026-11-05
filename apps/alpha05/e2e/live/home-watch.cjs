@@ -1,10 +1,16 @@
 // Watch-only live review of Home (live tier, run after each deploy): an
 // injected provider that reports one address and forwards reads to the
 // public endpoint; it refuses every signature, so nothing can be sent.
-// Usage: node e2e/live/home-watch.cjs <address>  (screenshots go to $LIVE_OUT or /tmp)
+// Usage: node e2e/live/home-watch.cjs <address>  (screenshots go to $LIVE_OUT or /tmp;
+// $LIVE_URL overrides the deployed origin, e.g. a local preview build)
 const { chromium, devices } = require('playwright');
 const ADDR = process.argv[2];
 const RPC = 'https://sepolia.base.org';
+const URL = process.env.LIVE_URL ?? 'https://alpha05.vaipakam.com/';
+// The provider carries the node's revert data on its errors, as real wallets
+// do; LIVE_DROP_REVERT_DATA=1 drops it, as some wallets do, to check the
+// page asks another source instead of showing an unidentified refusal.
+const DROP = process.env.LIVE_DROP_REVERT_DATA === '1';
 async function session(b, opts, label) {
   const ctx = await b.newContext(opts);
   await ctx.exposeFunction('__walletRequest', async (p) => {
@@ -18,11 +24,11 @@ async function session(b, opts, label) {
     const j = await r.json();
     return j.error ? { error: j.error } : { result: j.result };
   });
-  await ctx.addInitScript(() => {
+  await ctx.addInitScript((drop) => {
     const listeners = {};
     const provider = {
       isMetaMask: true,
-      request: async (payload) => { const r = await window.__walletRequest(payload); if (r.error) { const e = new Error(r.error.message); e.code = r.error.code; throw e; } return r.result; },
+      request: async (payload) => { const r = await window.__walletRequest(payload); if (r.error) { const e = new Error(r.error.message); e.code = r.error.code; if (!drop && r.error.data !== undefined) e.data = r.error.data; throw e; } return r.result; },
       on: (ev, fn) => { (listeners[ev] ??= []).push(fn); return provider; },
       removeListener: (ev, fn) => { listeners[ev] = (listeners[ev] ?? []).filter((f) => f !== fn); return provider; },
     };
@@ -30,9 +36,9 @@ async function session(b, opts, label) {
     const info = { uuid: '7a3f4b1e-9d2c-4f6a-8e5b-00000000watch', name: 'Watch', icon: 'data:image/svg+xml;base64,PHN2Zy8+', rdns: 'com.vaipakam.watch' };
     const announce = () => window.dispatchEvent(new CustomEvent('eip6963:announceProvider', { detail: Object.freeze({ info, provider }) }));
     window.addEventListener('eip6963:requestProvider', announce); announce();
-  });
+  }, DROP);
   const p = await ctx.newPage(); const errs = []; p.on('pageerror', (e) => errs.push(e.message));
-  await p.goto('https://alpha05.vaipakam.com/', { waitUntil: 'networkidle' });
+  await p.goto(URL, { waitUntil: 'networkidle' });
   const btn = p.getByRole('button', { name: /^connect wallet$/i }).first();
   for (let i = 0; i < 10 && (await btn.isVisible().catch(() => false)); i++) { await btn.click({ timeout: 2000 }).catch(() => {}); await p.waitForTimeout(1500); const w = p.getByRole('button', { name: /watch|injected|browser wallet/i }).first(); if (await w.isVisible().catch(() => false)) await w.click().catch(() => {}); }
   await p.getByText(/^Synced .* ago through /).first().waitFor({ timeout: 90000 }).catch(() => {});
