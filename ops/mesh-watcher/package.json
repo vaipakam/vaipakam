@@ -5,13 +5,15 @@
   "description": "Internal-only Cloudflare Worker that watches the VPFI recycling mesh (#1222 M3 B4-c). Reads every reward chain's recycled ledger \u2014 Base's per-chain books plus each mirror's own bucket and reservation counters \u2014 and alerts on accounting invariants that cannot legitimately break. Ops-internal Telegram bot, separate D1, distinct from the user-facing keeper/agent surfaces.",
   "scripts": {
     "dev": "wrangler dev",
-    "deploy": "node ../../packages/lib/bin/wrangler-deploy.mjs",
+    "deploy": "node scripts/abi-subset.mjs && node ../../packages/lib/bin/wrangler-deploy.mjs",
     "db:migrate": "wrangler d1 migrations apply vaipakam-mesh-alerts-db --remote",
     "db:migrate:local": "wrangler d1 migrations apply vaipakam-mesh-alerts-db --local",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.test.json --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "build": "npm ci --ignore-scripts && ./node_modules/.bin/tsc --noEmit && ./node_modules/.bin/tsc -p tsconfig.test.json --noEmit"
+    "build": "npm ci --ignore-scripts && ./node_modules/.bin/tsc --noEmit && ./node_modules/.bin/tsc -p tsconfig.test.json --noEmit && node scripts/abi-subset.mjs",
+    "abi:check": "node scripts/abi-subset.mjs",
+    "abi:write": "node scripts/abi-subset.mjs --write"
   },
   "dependencies": {
     "viem": "^2.21.0"
