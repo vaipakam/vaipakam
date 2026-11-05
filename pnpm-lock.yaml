@@ -451,6 +451,10 @@ importers:
         version: 2.48.11(bufferutil@4.1.0)(typescript@6.0.3)(utf-8-validate@5.0.10)(zod@4.4.3)
 
   packages/e2e-wallet:
+    dependencies:
+      '@vaipakam/lib':
+        specifier: workspace:*
+        version: link:../lib
     devDependencies:
       '@playwright/test':
         specifier: ^1.49.0

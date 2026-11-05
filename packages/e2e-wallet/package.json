@@ -17,6 +17,9 @@
     "@playwright/test": "^1.49.0",
     "viem": "^2.0.0"
   },
+  "dependencies": {
+    "@vaipakam/lib": "workspace:*"
+  },
   "devDependencies": {
     "@playwright/test": "^1.49.0",
     "@types/node": "^22",

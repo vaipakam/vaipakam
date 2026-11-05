@@ -12,6 +12,7 @@
  */
 import { test as base, expect, type BrowserContext, type Page } from '@playwright/test';
 import { createWalletClient, http, numberToHex, type Chain, type PrivateKeyAccount } from 'viem';
+import { redactSecrets } from '@vaipakam/lib/errorDescription';
 
 /** Per-session wallet behaviour switches, mutable from a spec.
  *  `rejectPermit2` makes the wallet refuse Permit2 typed-data requests
@@ -240,8 +241,12 @@ export async function wireWallet(
         }) as { data?: string } | null;
         revertData = hit?.data;
       }
-      const base = err.shortMessage ?? err.message ?? 'error';
-      const details = (err as { details?: string }).details;
+      // The text crosses into the page as the wallet's refusal, so it goes
+      // through the shared formatter like every other caught value in a
+      // Node-side package (#2759): viem's `shortMessage` carries no request
+      // URL, the raw message may, and `details` is the node's own text.
+      const base = redactSecrets(err.shortMessage ?? err.message ?? 'error');
+      const details = redactSecrets((err as { details?: string }).details ?? '');
       const message = [
         base,
         details && details !== base ? details : undefined,
