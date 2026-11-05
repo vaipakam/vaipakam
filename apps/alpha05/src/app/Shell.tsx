@@ -4,7 +4,7 @@ import { useTheme } from './ThemeContext';
 import { useCapabilities } from '../shared/capability/CapabilityContext';
 import { WhyLink } from '../shared/help/WhyLink';
 import { copy } from '../content/copy';
-import { NAV_ADVANCED, NAV_BASIC, PAGES } from '../routes/pageMap';
+import { NAV_ADVANCED, NAV_BASIC } from '../routes/pageMap';
 
 const GUIDE_BASE = 'https://vaipakam.com/guide';
 
@@ -19,7 +19,7 @@ export function Shell() {
   const { mode, setMode, isAdvanced } = useMode();
   const { preference, setPreference } = useTheme();
   const { caps, stale, chainId, error } = useCapabilities();
-  const nav = (isAdvanced ? NAV_ADVANCED : NAV_BASIC).map((p) => PAGES.find((e) => e.path === p)!);
+  const nav = isAdvanced ? NAV_ADVANCED : NAV_BASIC;
 
   return (
     <div className="shell">
