@@ -669,7 +669,10 @@ evidence that the migration has completed.
 - Protocol upkeep checks seven permissionless steps every hour: buyback
   expiry, tier-LTV refresh, prepay sanctions sync, owed tier pushes, tier
   exclusion refresh, reward-index compaction, and sanctions-registry refresh.
-  Each retains its own activation and send share.
+  All seven require the master keeper switch and the protocol-upkeep pass
+  to be armed. Buyback expiry and tier-LTV refresh arm together with that
+  pass; the other five also require their own subsidiary switches. Every
+  step has its own send share, independently of those activation gates.
 - A buyback intent that has passed its expiry while still pending is rolled
   back, so the unfilled part of its reservation returns to the spendable
   buyback budget and its allowance and commitment slot are released. The

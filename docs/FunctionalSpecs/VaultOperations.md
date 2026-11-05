@@ -74,17 +74,22 @@ remain governed by [Keeper Operations](KeeperOperations.md).
   A lock or full queue cannot produce a successful voluntary withdrawal that
   silently pays and queues nothing. A settlement may retain value safely;
   the app distinguishes that hold from a payment or queued withdrawal.
-- A protected owner's position NFTs move only through queued, cancellable
-  transfers under the payout destination and co-sign rules. The lender
-  position cannot be sold while its owner's protection is on.
+- When the owner enables the separate NFT-protection setting, position NFTs
+  cannot be transferred or approved directly. They move only through queued,
+  cancellable transfers under the payout destination and co-sign rules, and
+  lender positions cannot be sold directly or by listing. The owner may
+  switch NFT protection off after the delay to transfer or sell without
+  disabling the account's other protection. A lock still applies its own
+  payout and new-position restrictions regardless of that setting.
 - A protected account's collateral or parallel-sale listing may pay
   marketplace fees only to its owner or allowed destinations. A locked or
   replaced account cannot post it; the protection check runs again at fill.
 
 ## Delayed changes and account replacement
 
-- Changes that loosen protection wait the selected delay and may be cancelled
-  meanwhile. Locks, account replacement, and switching protection off void
+- Changes that loosen protection, including switching NFT protection off,
+  wait the selected delay and may be cancelled meanwhile. Locks, account
+  replacement, and switching protected mode off void
   pending destination and signer changes; replacement also discards the old
   wallet's pending settings. A matured addition expires if not applied within
   one further delay.
