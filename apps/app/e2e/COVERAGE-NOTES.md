@@ -452,17 +452,39 @@ its row in the matrix and, where the reasoning grows, its section here.
 
 **Live-only reason.** Post-deploy with the keeper enabled and a dev-wallet loan pushed under HF 1.5 (oracle mock): the bell shows the "health dipped below 1.5" warning once, no repeat on the next tick, and a recovery then re-drop the next day re-alerts.
 
+<a id="cov-rl-3-claim-horizon-free-pre-expiry-notice"></a>
+
+## RL-3 claim horizon — free pre-expiry notice (#1956) — the indexer files OWNER-addressed inbox rows from the contract's horizon events
+
+**Feature.** RL-3 claim horizon — free pre-expiry notice (#1956). The indexer files OWNER-addressed inbox rows from the contract's horizon events. `RewardEntryExpiryArmed` becomes `reward_final_notice`, the last call; a re-arm after a horizon reconfiguration notifies again, because the dedup key carries the event position. `RewardEntryExpiryBegun` becomes `reward_expired`, the removal point. There is no loan lookup, so a failed party lookup in the same scan cannot drop these rows. The bell names the reward (`Reward #id`) and links to the Claim Center. The planner lives in `@vaipakam/lib/rewardOwnerNotifications` (#3207), and the indexer re-exports it.
+
+**Tier.** CI-Anvil + unit (+ the M7.2 ceremony's live check)
+
+**Where.** `tests/54-reward-claim-horizon.spec.ts` (#3207) produces a real interaction-reward entry (see the countdown row for how). It sets a 180-day horizon and touches the entry every six days, inside the contract's seven-day observation gap. When a sweep emits `RewardEntryExpiryArmed`, the spec asserts three things:
+
+- the notice starts exactly 180 days of executable time after the stamp;
+- the stub's feed for the owner is exactly one row, whose kind, entry id, notice start, block, log index and timestamp match that receipt's decoded log;
+- the bell shows it as unread, with the final-notice copy and `Reward #<id>`, and it opens `/claims`.
+
+Touches across the 90-day notice then reach `RewardEntryExpiryBegun`, and the bell shows the `reward_expired` row above the final notice.
+
+The stub derives those rows from the chain's real logs with the indexer's own planner, shared from `@vaipakam/lib`, and serializes them as the route does. Nothing in them is hand-written. The synthetic feed spec 22 reads is served only to wallets with no claim-horizon logs. `tests/22-notifications.spec.ts` still renders the stub's synthetic reward row. Indexer `test/notifications.test.ts` pins the planner (owner recipient, data bag, re-arm notifies again, malformed rows dropped) and materialization over the real schema (idempotent; survives a failed party lookup).
+
+**Live-only reason.** None for the behaviour, which spec 54 proves on Anvil. The deployed testnet keeps the horizon dark until the M7.2 ceremony. GovernanceRunbook Step 6 re-verifies the notice live in that ceremony, right after arming, on the first entry the keeper touches. The 90-day notice period is what makes checking after arming safe: nothing can be removed before the owner has had the whole notice.
+
 <a id="cov-rl-3-claim-horizon-claim-center-countdown"></a>
 
 ## RL-3 claim horizon — Claim Center countdown (#1956) — once getRewardClaimHorizonDays() is non-zero, the interaction-rewards card states the SOONEST getRewardEntryExpiry estimate across the wallet's entries (zero = no countdown: dark, unstarted, forfeited) as "claim before" a date that non-claimable time moves later and a claim-window …
 
 **Feature.** RL-3 claim horizon — Claim Center countdown (#1956) — once `getRewardClaimHorizonDays()` is non-zero, the interaction-rewards card states the SOONEST `getRewardEntryExpiry` estimate across the wallet's entries (zero = no countdown: dark, unstarted, forfeited) as "claim before" a date that non-claimable time moves later and a claim-window change can bring earlier (the copy says both, r8); inside the 90-day notice period it switches to a final-notice warning; a failed read of ANY entry fails the whole read (never a later date than the contract would enforce), and a failed read is SHOWN as "couldn't check the deadline" rather than as no countdown (#2489 r5); the soonest estimate is computed ON CHAIN over bounded pages of the wallet's entry index (`getUserSoonestRewardExpiry`, r16/r17 — the index holds the wallet's UNSETTLED entries because settled ones are retired from it by the wallet's own claim and by the permissionless `compactRewardEntryIndex` (r17 root), so the call count follows live rewards, not lifetime history; a page scans a bounded number of positions and prices a bounded number of live entries, ending before an entry it would not price) with every page pinned to one block, walking each page's `nextOffset` to the reported total
 
-**Tier.** Unit (+ M7.2 live)
+**Tier.** CI-Anvil + unit (+ the M7.2 ceremony's live check)
 
-**Where.** `src/data/rewardExpiry.test.ts` — soonest non-zero selection, no-countdown cases, the final-notice switch straddled by one second, the page walk (from each returned `nextOffset` to the total, keeping the soonest across pages; a live-bounded page ends before the entry it did not price and the next page prices it; a page that makes no progress short of the total fails rather than stops short)
+**Where.** `tests/54-reward-claim-horizon.spec.ts` (#3207) drives the surface on a REAL entry. It makes the e2e chain a single-chain canonical reward deployment with the keeper suite's `ConfigureKeeperRewardsFixture` script, broadcast as the fixture admin. A loan between the two `reward*` wallets accrues reward days and is repaid, and the days are closed and finalized. The admin then sets a 180-day horizon, and one `sweepExpiredInteractionRewards` touch starts each entry's clock. The spec asserts the estimate is a full horizon plus notice ahead and equal to `getUserSoonestRewardExpiry`'s, and that the card reads exactly `expiryCountdown(<that date>)`, with the browser clock set to the chain's. After six-day touches arm the final notice, the card reads `expiryFinalNotice(<date>)`. The drive runs between `evm_snapshot` and `evm_revert`, so later specs find the chain and its clock as it found them.
 
-**Live-only reason.** Not fork-drivable: a non-zero estimate needs an entry whose horizon accumulator a sweep has started (finalized reward days, a keeper touch), and the deployed testnet keeps the horizon dark until M7.2, whose ceremony verifies this surface live by plan
+The unit half, `src/data/rewardExpiry.test.ts`, pins soonest non-zero selection and the no-countdown cases. It also pins the final-notice switch, straddled by one second, and the page walk: from each returned `nextOffset` to the total, keeping the soonest across pages. A live-bounded page ends before the entry it did not price and the next page prices it. A page that makes no progress short of the total fails rather than stopping short.
+
+**Live-only reason.** None for the behaviour, which spec 54 proves on Anvil. What stays live is the deployment itself: GovernanceRunbook Step 6 re-verifies the countdown on the deployed app in the same ceremony, right after arming, on the first entry the keeper touches.
 
 <a id="cov-seo-indexing-policy-seo-multilang-batch-per"></a>
 
