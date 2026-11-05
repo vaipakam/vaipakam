@@ -2877,7 +2877,7 @@ const copySource = {
       ['controller'],
     ),
     rawUnitsNote: 'This token doesn’t report its decimal places, so amounts here are in its smallest raw units.',
-    escapeNote: 'The protocol has been paused for more than three days, so the emergency exit is open: your withdrawal goes straight to your own wallet.',
+    escapeNote: 'The protocol has been paused for longer than its emergency-exit period, so the emergency exit is open: your withdrawal goes straight to your own wallet.',
     protectionUnknown: 'We couldn’t read the protection settings or the queue of waiting payouts, so withdrawing is off until we can tell whether a withdrawal pays now, waits or is refused.',
     escapeUnknown: 'We couldn’t check whether the emergency exit is open, so withdrawing is off until we can tell which route pays you.',
     untrackedNote: 'Part of this asset reached your vault outside the app, so it can’t be withdrawn yet.',
@@ -3057,7 +3057,7 @@ const copySource = {
     replacementStageUnknown: 'We couldn’t read the signer list just now, so we can’t say whether this move can complete.',
     finalizeReplacement: 'Complete the move',
     escapeTitle: 'Escape route open',
-    escapeBody: 'The protocol has been paused for three days. Payouts already queued keep releasing when they are due. Protection still applies to you: a new withdrawal is queued and waits your delay as usual.',
+    escapeBody: 'The protocol has been paused for longer than its emergency-exit period. Payouts already queued keep releasing when they are due. Protection still applies to you: a new withdrawal is queued and waits your delay as usual.',
     signerViewTitle: 'Act as a recovery signer',
     signerViewBody: 'Enter the account you were made a signer for.',
     accountPlaceholder: 'Account address',
@@ -4757,7 +4757,7 @@ const copySource = {
     unavailable: 'We couldn’t read this loan’s automatic extension right now. Try again shortly.',
     paused: 'The protocol is paused: no extension can run and no limits can be set until it resumes.',
     switchOff:
-      'The protocol’s automatic extension is switched off. No extension can run and a reserve can’t be funded. You can still set or clear your limits, and withdraw a reserve.',
+      'The protocol’s automatic extension is switched off, so no keeper will extend this loan. The borrower-position holder can still extend it directly on the contract within both sides’ limits (this app doesn’t offer that step yet), and can add or withdraw a reserve. You can still set or clear your limits.',
     scheduled:
       'This loan pays interest on a schedule, and a loan on a schedule can’t be extended in place.',
     scheduleUnknown: 'Checking whether this loan pays interest on a schedule…',

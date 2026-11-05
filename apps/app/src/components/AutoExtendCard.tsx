@@ -296,7 +296,7 @@ function ReservePanel({
         readAutoExtendState({ client: publicClient, diamond }, loanId),
         readLoanLive(publicClient, diamond, loanId),
       ]);
-      if (live.paused || !live.switchOn || live.window === null || Number(loan.periodicInterestCadence) !== 0) {
+      if (live.paused || live.window === null || Number(loan.periodicInterestCadence) !== 0) {
         setError(r.fundClosed);
         return;
       }
@@ -823,7 +823,7 @@ function AutoExtendCardBody({
       {holdsBorrower ? (
         <>
           <KeeperLine loanId={loanId} keepersPaused={s.keepersPaused} />
-          {reservePanel(s.switchOn && !s.paused ? 'open' : 'closed', phase ?? 'noWindow')}
+          {reservePanel(!s.paused ? 'open' : 'closed', phase ?? 'noWindow')}
         </>
       ) : (
         <>

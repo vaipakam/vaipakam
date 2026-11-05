@@ -583,10 +583,12 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
     ///         extension draws only on that holder's vault. The reserve stays
     ///         the depositor's if the position later moves: a new holder funds
     ///         their own, and the depositor can withdraw theirs. Refused while
-    ///         the loan could not be extended at all (the feature switched
-    ///         off, the loan not Active, not an ERC-20 loan, or on a periodic
-    ///         cadence), so no deposit sits behind an extension that cannot
-    ///         run. Tier-1 sanctions-gated and refused for a paused asset (new
+    ///         the loan could not be extended at all (the loan not Active, not
+    ///         an ERC-20 loan, or on a periodic cadence), so no deposit sits
+    ///         behind an extension that cannot run. The auto-extend switch
+    ///         does not refuse it: the borrower's own direct extension stays
+    ///         open while the switch is off, and draws on this reserve too
+    ///         (#3175). Tier-1 sanctions-gated and refused for a paused asset (new
     ///         custody), like {LenderIntentFacet.fundLenderIntent}. The caller
     ///         approves the Diamond for exactly `amount` first.
     /// @param loanId The loan whose extensions the reserve pays.
@@ -601,7 +603,10 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
         if (amount == 0) revert ExtendReserveZeroAmount();
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
-        if (!s.protocolCfg.cfgAutoExtendEnabled) revert AutoExtendDisabled();
+        // #3175 — no auto-extend switch check: the switch stops only the
+        // keeper-driven extension, and the reserve is the borrower's own
+        // money for their own direct extension too (owner decision
+        // 2026-11-05, "Free borrower").
         if (loan.startTime == 0 || loan.status != LibVaipakam.LoanStatus.Active) {
             revert LoanNotActive();
         }
@@ -782,11 +787,6 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
 
-        // T-092 #508 — admin kill switch covers both keeper-driven
-        // AND borrower-direct extensions because this executor is
-        // the only entry point.
-        if (!s.protocolCfg.cfgAutoExtendEnabled) revert AutoExtendDisabled();
-
         // `startTime == 0` is a loan id never opened: its zero status reads
         // as Active.
         if (loan.startTime == 0 || loan.status != LibVaipakam.LoanStatus.Active) {
@@ -848,6 +848,13 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
             loan,
             /* lenderSide */ false
         );
+        // #3175 (owner decision 2026-11-05, "Free borrower") — the admin
+        // auto-extend switch stops only the AUTOMATED extension, like the
+        // auto-refinance switch: a keeper acting for the borrower is refused
+        // while it is off, and the borrower-position holder extending
+        // directly (within both sides' caps) is never blocked by it. A
+        // defect in the extension itself is stopped by the global pause.
+        if (keeperActed && !s.protocolCfg.cfgAutoExtendEnabled) revert AutoExtendDisabled();
         if (keeperActed) LibServiceCapacity.chargeKeeper(); // #1219 — one keeper action
         LibVaipakam._assertNotSanctioned(msg.sender);
         address borrowerNftOwner = LibERC721.ownerOf(loan.borrowerTokenId);

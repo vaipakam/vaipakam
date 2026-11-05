@@ -103,10 +103,49 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         assertFalse(_f().getAutoLendConsent(user));
     }
 
-    function test_KillSwitch_AutoExtend_BlocksExecutor() public {
+    /// @notice #3175 (owner decision 2026-11-05, "Free borrower") — the
+    ///         auto-extend switch stops the keeper-driven extension only. A
+    ///         keeper acting for the borrower is refused while it is off and
+    ///         goes through once it is back on.
+    function test_3175_KillSwitch_AutoExtend_BlocksTheKeeper() public {
+        uint256 loanId = _setupExtendableLoan();
+        address keeper = makeAddr("extendKeeper");
+        vm.startPrank(borrower);
+        ProfileFacet(address(diamond)).setKeeperAccess(true);
+        ProfileFacet(address(diamond)).approveKeeper(keeper, LibVaipakam.KEEPER_ACTION_EXTEND);
+        ProfileFacet(address(diamond)).setLoanKeeperEnabled(loanId, keeper, true);
+        vm.stopPrank();
+
         _admin().setAutoExtendEnabled(false);
+        vm.prank(keeper);
         vm.expectRevert(AutoLifecycleFacet.AutoExtendDisabled.selector);
-        _f().extendLoanInPlace(1, 500, 30);
+        _f().extendLoanInPlace(loanId, 500, 45);
+
+        _admin().setAutoExtendEnabled(true);
+        vm.prank(keeper);
+        _f().extendLoanInPlace(loanId, 500, 45);
+        assertEq(LoanFacet(address(diamond)).getLoanDetails(loanId).durationDays, 45);
+    }
+
+    /// @notice #3175 — with the switch off, the borrower-position holder
+    ///         still extends directly within both sides' caps.
+    function test_3175_KillSwitch_AutoExtend_LeavesTheBorrowerFree() public {
+        uint256 loanId = _setupExtendableLoan();
+        _admin().setAutoExtendEnabled(false);
+        vm.prank(borrower);
+        _f().extendLoanInPlace(loanId, 500, 45);
+        assertEq(LoanFacet(address(diamond)).getLoanDetails(loanId).durationDays, 45);
+    }
+
+    /// @notice #3175 — with the switch off, someone holding neither position
+    ///         and acting as no approved keeper is still refused for want of
+    ///         keeper access, not let through by the change.
+    function test_3175_KillSwitch_AutoExtend_StrangerStillRefused() public {
+        uint256 loanId = _setupExtendableLoan();
+        _admin().setAutoExtendEnabled(false);
+        vm.prank(makeAddr("stranger"));
+        vm.expectRevert(IVaipakamErrors.KeeperAccessRequired.selector);
+        _f().extendLoanInPlace(loanId, 500, 45);
     }
 
     function test_KillSwitch_GettersExposeState() public {
@@ -1754,8 +1793,10 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         assertEq(ERC20(mockERC20).balanceOf(borrower), walletBefore + 2 ether, "withdrawn after the close");
     }
 
-    /// @notice #2814 — only the current borrower-position holder funds, only a
-    ///         non-zero amount, and only while extension is switched on.
+    /// @notice #2814 — only the current borrower-position holder funds, and
+    ///         only a non-zero amount. #3175 — the auto-extend switch does not
+    ///         stop funding: the reserve also pays the borrower's own direct
+    ///         extension, which the switch leaves open.
     function test_2814_fund_refusals() public {
         uint256 loanId = _buildActiveLoan();
         ERC20Mock(mockERC20).mint(lender, 1 ether);
@@ -1768,9 +1809,9 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         vm.expectRevert(AutoLifecycleFacet.ExtendReserveZeroAmount.selector);
         _f().fundExtendReserve(loanId, 0);
         _admin().setAutoExtendEnabled(false);
-        vm.prank(borrower);
-        vm.expectRevert(AutoLifecycleFacet.AutoExtendDisabled.selector);
-        _f().fundExtendReserve(loanId, 1 ether);
+        _fundReserve(loanId, borrower, 1 ether);
+        (, uint256 reserved, , , ) = _f().getExtendFunding(loanId, borrower);
+        assertEq(reserved, 1 ether, "funded with the switch off");
     }
 
     /// @notice #2814 — an extension draws only the CURRENT holder's reserve: a

@@ -773,7 +773,7 @@ contract ProtectedVaultTest is Test {
         vm.expectRevert(LibProtectedAccount.EscapeClosed.selector);
         _pay().escapeWithdraw(K20, address(token), 0, 10 ether);
 
-        vm.warp(block.timestamp + LibProtectedAccount.ESCAPE_GRACE);
+        vm.warp(block.timestamp + LibPausable.ESCAPE_GRACE_DEFAULT);
         assertTrue(_pay().isEscapeOpen());
         vm.prank(user);
         _pay().escapeWithdraw(K20, address(token), 0, 10 ether);
@@ -791,7 +791,7 @@ contract ProtectedVaultTest is Test {
         AdminFacet(address(diamond)).autoPause("probe");
         vm.warp(start + 2 days + 12 hours);
         AdminFacet(address(diamond)).autoPause("probe again");
-        vm.warp(start + LibProtectedAccount.ESCAPE_GRACE);
+        vm.warp(start + LibPausable.ESCAPE_GRACE_DEFAULT);
         assertTrue(_pay().isEscapeOpen());
         vm.prank(user);
         _pay().escapeWithdraw(K20, address(token), 0, 10 ether);
@@ -806,9 +806,105 @@ contract ProtectedVaultTest is Test {
         vm.warp(block.timestamp + DELAY);
         vm.expectRevert(LibPausable.EnforcedPause.selector);
         _pay().releasePayout(id);
-        vm.warp(block.timestamp + LibProtectedAccount.ESCAPE_GRACE);
+        vm.warp(block.timestamp + LibPausable.ESCAPE_GRACE_DEFAULT);
         _pay().releasePayout(id);
         assertEq(token.balanceOf(user), 993 ether);
+    }
+
+    // ─── The escape period knob (#3173) ──────────────────────────────────
+
+    function testEscapePeriodDefaultsToThreeDays() public view {
+        (uint256 nextPause, uint256 currentPause) = AdminFacet(address(diamond)).getEscapeGraceSeconds();
+        assertEq(nextPause, 3 days);
+        assertEq(currentPause, 0);
+        assertEq(_pay().escapeOpensAt(), 0);
+    }
+
+    function testEscapePeriodBoundsAndZeroRestoresTheDefault() public {
+        AdminFacet admin = AdminFacet(address(diamond));
+        uint32 justUnder = uint32(LibPausable.MIN_ESCAPE_GRACE - 1);
+        vm.expectRevert(abi.encodeWithSelector(
+            LibPausable.InvalidEscapeGrace.selector, justUnder, LibPausable.MIN_ESCAPE_GRACE, LibPausable.MAX_ESCAPE_GRACE));
+        admin.setEscapeGraceSeconds(justUnder);
+        uint32 justOver = uint32(LibPausable.MAX_ESCAPE_GRACE + 1);
+        vm.expectRevert(abi.encodeWithSelector(
+            LibPausable.InvalidEscapeGrace.selector, justOver, LibPausable.MIN_ESCAPE_GRACE, LibPausable.MAX_ESCAPE_GRACE));
+        admin.setEscapeGraceSeconds(justOver);
+
+        vm.expectEmit(address(diamond));
+        emit LibPausable.EscapeGraceSet(49 hours);
+        admin.setEscapeGraceSeconds(49 hours);
+        (uint256 nextPause,) = admin.getEscapeGraceSeconds();
+        assertEq(nextPause, 49 hours);
+        admin.setEscapeGraceSeconds(7 days);
+        (nextPause,) = admin.getEscapeGraceSeconds();
+        assertEq(nextPause, 7 days);
+        admin.setEscapeGraceSeconds(0);
+        (nextPause,) = admin.getEscapeGraceSeconds();
+        assertEq(nextPause, 3 days);
+    }
+
+    function testOnlyTheAdminSetsTheEscapePeriod() public {
+        vm.prank(thief);
+        vm.expectRevert();
+        AdminFacet(address(diamond)).setEscapeGraceSeconds(5 days);
+        (uint256 nextPause,) = AdminFacet(address(diamond)).getEscapeGraceSeconds();
+        assertEq(nextPause, 3 days);
+    }
+
+    function testAChangeDuringAPauseDoesNotMoveItsEscape() public {
+        _deposit20(10 ether);
+        AdminFacet admin = AdminFacet(address(diamond));
+        admin.pause();
+        uint256 start = block.timestamp;
+        assertEq(_pay().escapeOpensAt(), start + 3 days);
+
+        // Shortening the period mid-pause does not open the escape early...
+        admin.setEscapeGraceSeconds(49 hours);
+        assertEq(_pay().escapeOpensAt(), start + 3 days);
+        (uint256 nextPause, uint256 currentPause) = admin.getEscapeGraceSeconds();
+        assertEq(nextPause, 49 hours);
+        assertEq(currentPause, 3 days);
+        vm.warp(start + 49 hours);
+        assertFalse(_pay().isEscapeOpen());
+        vm.prank(user);
+        vm.expectRevert(LibProtectedAccount.EscapeClosed.selector);
+        _pay().escapeWithdraw(K20, address(token), 0, 10 ether);
+
+        // ...and lengthening it does not close an escape the users were promised.
+        admin.setEscapeGraceSeconds(7 days);
+        vm.warp(start + 3 days);
+        assertTrue(_pay().isEscapeOpen());
+
+        // A repeat pause inside the same manual pause keeps the period too.
+        admin.pause();
+        assertEq(_pay().escapeOpensAt(), start + 3 days);
+        assertTrue(_pay().isEscapeOpen());
+    }
+
+    function testTheNextPauseUsesTheNewPeriod() public {
+        _deposit20(10 ether);
+        AdminFacet admin = AdminFacet(address(diamond));
+        admin.setEscapeGraceSeconds(5 days);
+        admin.pause();
+        uint256 start = block.timestamp;
+        assertEq(_pay().escapeOpensAt(), start + 5 days);
+        vm.warp(start + 5 days - 1);
+        assertFalse(_pay().isEscapeOpen());
+        vm.warp(start + 5 days);
+        assertTrue(_pay().isEscapeOpen());
+        vm.prank(user);
+        _pay().escapeWithdraw(K20, address(token), 0, 10 ether);
+        assertEq(token.balanceOf(user), 1_000 ether);
+
+        // Once unpaused there is no escape time; a later pause stamps afresh.
+        admin.unpause();
+        assertEq(_pay().escapeOpensAt(), 0);
+        (, uint256 currentPause) = admin.getEscapeGraceSeconds();
+        assertEq(currentPause, 0);
+        admin.setEscapeGraceSeconds(0);
+        admin.pause();
+        assertEq(_pay().escapeOpensAt(), block.timestamp + 3 days);
     }
 
     // ─── Implementation pin ──────────────────────────────────────────────
@@ -1066,7 +1162,7 @@ contract ProtectedVaultTest is Test {
         _protocolPlaces20(user, 10 ether);
         _deposit20(3 ether);
         AdminFacet(address(diamond)).pause();
-        vm.warp(block.timestamp + LibProtectedAccount.ESCAPE_GRACE);
+        vm.warp(block.timestamp + LibPausable.ESCAPE_GRACE_DEFAULT);
         vm.prank(user);
         vm.expectRevert(abi.encodeWithSelector(LibProtectedAccount.AmountExceedsFree.selector, 10 ether, 3 ether));
         _pay().escapeWithdraw(K20, address(token), 0, 10 ether);

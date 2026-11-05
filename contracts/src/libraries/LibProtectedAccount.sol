@@ -62,11 +62,6 @@ library LibProtectedAccount {
     /// @dev Most rows (payouts plus position transfers) one account may have
     ///      queued at once, so a lock can cancel them all in one call.
     uint256 internal constant MAX_OPEN_ROWS = 16;
-    /// @dev How long the Diamond must have been under a manual pause, after
-    ///      its launch, before the escape route opens (longer than the
-    ///      governance timelock's 48-hour delay, so a pause that is part of
-    ///      an ordinary fix never opens it).
-    uint256 internal constant ESCAPE_GRACE = 3 days;
 
     uint8 internal constant ROW_QUEUED = 1;
     uint8 internal constant ROW_RELEASED = 2;
@@ -287,14 +282,29 @@ library LibProtectedAccount {
 
     /// @notice Whether the escape route is open: the Diamond has launched,
     ///         is under a manual pause, and has been paused without a break
-    ///         for `ESCAPE_GRACE`.
+    ///         for that pause's escape period.
     /// @dev    The one rule every escape-aware route reads. Measured from
     ///         {LibPausable.manualPauseSince}, which stays put for the whole
     ///         manual pause, so an auto-pause fired during it cannot restart
-    ///         the grace and hold the escape shut.
+    ///         the grace and hold the escape shut. #3173 — the period is a
+    ///         bounded governance setting (default 3 days, never under 49
+    ///         hours, so longer than the timelock's 48-hour delay and a pause
+    ///         that is part of an ordinary fix never opens it), and the pause
+    ///         uses the value in force when it STARTED
+    ///         ({LibPausable.escapeGraceOfCurrentPause}): a change made during
+    ///         a pause can neither open nor close that pause's escape.
     function escapeOpen() internal view returns (bool) {
+        uint256 at = escapeOpensAt();
+        return at != 0 && block.timestamp >= at;
+    }
+
+    /// @notice #3173 — when the escape route opens under the current manual
+    ///         pause: its start plus the period it started with. Zero when no
+    ///         manual pause is in force or the Diamond has never launched.
+    function escapeOpensAt() internal view returns (uint256) {
         uint256 since = LibPausable.manualPauseSince();
-        return since != 0 && LibPausable.everUnpaused() && block.timestamp >= since + ESCAPE_GRACE;
+        if (since == 0 || !LibPausable.everUnpaused()) return 0;
+        return since + LibPausable.escapeGraceOfCurrentPause();
     }
 
     // ─── Transient bindings ──────────────────────────────────────────────
