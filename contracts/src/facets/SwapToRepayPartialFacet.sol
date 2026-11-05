@@ -389,23 +389,13 @@ contract SwapToRepayPartialFacet is DiamondReentrancyGuard, DiamondPausable, IVa
         // loan state shape.
         //
         // #641 — the re-stamp lands on the dedicated INTEREST clock
-        // (`interestAccrualStart` / `interestRemainingDays`); the term tuple
+        // (`interestAccrualStart`); the term tuple
         // (`startTime` + `durationDays` → maturity + grace) is LEFT UNTOUCHED,
         // mirroring `RepayFacet.repayPartial`. Seed the clock from the term for
         // any loan that predates the fields before reading elapsed.
         LibVaipakam.seedInterestClockIfUnset(loan);
-        // #668 / #935 — a paused day is not consumed: the pause moved the
-        // term's end by that day ({LibLoanClock.interestTermEnd}).
-        uint256 elapsedSinceSegmentStart = LibLoanClock.unpausedDaysSinceInterestStart(loan);
-        if (elapsedSinceSegmentStart >= loan.interestRemainingDays) {
-            loan.interestRemainingDays = 0;
-        } else {
-            unchecked {
-                loan.interestRemainingDays = uint16(
-                    uint256(loan.interestRemainingDays) - elapsedSinceSegmentStart
-                );
-            }
-        }
+        // #3169 — only the clock's start moves; the new segment's full-term
+        // minimum is derived from the term ({LibLoanClock.minimumInterestSeconds}).
         loan.interestAccrualStart = uint64(block.timestamp); // reset accrual clock
         // Pass-2 A3 (#1191) — consume ONLY the settled portion this partial's
         // charge just netted (the gross accrual) and PRESERVE any excess: a periodic

@@ -1143,10 +1143,9 @@ contract PrecloseFacet is
         LibInterestLedger.setRate(LibVaipakam.storageSlot(), loan, offer.interestRateBps);
         // T-034 — startTime downsized to uint64; explicit cast.
         loan.startTime = uint64(block.timestamp);
-        // #641 — offset re-originates the obligation under a new term; mirror
-        // the interest-accrual clock onto it (validated 1..365 ⇒ uint16 exact).
+        // #641 — offset re-originates the obligation under a new term; restart
+        // the interest-accrual clock with it.
         loan.interestAccrualStart = uint64(block.timestamp);
-        loan.interestRemainingDays = uint16(offer.durationDays);
         // #915 (Codex #1087 r1 P2) — the re-originated obligation restarts its
         // accrual clock above, so any periodic-settled interest credited to the
         // EXITING borrower (already netted from their step-2 payment) belongs to

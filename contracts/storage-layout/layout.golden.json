@@ -581,7 +581,7 @@
     "L|vaipakam@20[uint256]|24|0|uint256|loans[].interestSettled",
     "L|vaipakam@20[uint256]|25|0|uint64|loans[].minHealthFactorAtInit",
     "L|vaipakam@20[uint256]|25|10|uint64|loans[].interestAccrualStart",
-    "L|vaipakam@20[uint256]|25|18|uint16|loans[].interestRemainingDays",
+    "L|vaipakam@20[uint256]|25|18|uint16|loans[].retiredInterestRemainingDays",
     "L|vaipakam@20[uint256]|25|20|uint16|loans[].treasuryFeeBpsAtInit",
     "L|vaipakam@20[uint256]|25|22|uint16|loans[].loanInitiationFeeBpsAtInit",
     "L|vaipakam@20[uint256]|25|8|uint16|loans[].initLtvCapBpsAtInit",

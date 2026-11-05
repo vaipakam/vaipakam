@@ -371,6 +371,8 @@ contract PartialWithdrawalFacet is DiamondReentrancyGuard, DiamondPausable, IVai
     function _calculateCurrentBorrowBalance(
         LibVaipakam.Loan storage loan
     ) internal view returns (uint256) {
-        return loan.principal + LibEntitlement.accruedInterestToTime(loan, block.timestamp);
+        // #3169 — the same debt RiskFacet values: per-second accrual, net of
+        // the periodic credit.
+        return LibEntitlement.currentBorrowBalanceOf(loan);
     }
 }

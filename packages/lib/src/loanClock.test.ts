@@ -6,6 +6,9 @@ import {
   graceSecondsFromBuckets,
   interestTermEnd,
   loanDeadlines,
+  minimumInterestSeconds,
+  proRataInterestSeconds,
+  settlementInterestAt,
   loanMaturity,
   pauseInForceAt,
   pauseLogFromJson,
@@ -101,11 +104,57 @@ describe('periodicPeriod', () => {
   });
 });
 
-describe('interestTermEnd', () => {
-  it('moves the term by the pauses since the interest clock started', () => {
-    expect(
-      interestTermEnd({ interestAccrualStart: 1_500_000n, interestRemainingDays: 10n }, LOG, 2_500_000n),
-    ).toBe(1_500_000n + 10n * DAY + 7_200n);
+describe('interestTermEnd — #3169, derived from the term', () => {
+  it('is the original maturity moved by the pauses since the loan started', () => {
+    // Start 500,000; 30-day term; at 2,500,000 both closed pauses (1 day, 2 hours) are behind.
+    expect(interestTermEnd({ startTime: 500_000n, durationDays: 30n }, LOG, 2_500_000n)).toBe(
+      500_000n + 30n * DAY + DAY + 7_200n,
+    );
+  });
+});
+
+describe('minimumInterestSeconds — #3169', () => {
+  it('is the whole term for a loan never re-stamped', () => {
+    expect(minimumInterestSeconds({ startTime: 500_000n, durationDays: 30n, interestAccrualStart: 500_000n }, LOG)).toBe(
+      30n * DAY,
+    );
+  });
+  it('runs from a re-stamped clock to the term end as it stood then, to the second', () => {
+    // Re-stamped at 1,500,000: the 1-day pause before it moved the term; the
+    // 2-hour pause after it does not raise the minimum.
+    const start = 500_000n;
+    const restamp = 1_500_000n;
+    expect(minimumInterestSeconds({ startTime: start, durationDays: 30n, interestAccrualStart: restamp }, LOG)).toBe(
+      start + 30n * DAY + DAY - restamp,
+    );
+  });
+  it('is zero once the clock starts at or past the term end', () => {
+    expect(minimumInterestSeconds({ startTime: 0n, durationDays: 1n, interestAccrualStart: 10n * DAY }, [])).toBe(0n);
+  });
+});
+
+describe('settlementInterestAt — #3169, the contract rule', () => {
+  const loan = {
+    startTime: 0n,
+    durationDays: 30n,
+    interestAccrualStart: 0n,
+    principal: 1_000n * 10n ** 18n,
+    interestRateBps: 500n,
+    useFullTermInterest: false,
+  };
+  it('charges a sub-day hold by the second', () => {
+    const held = 6n * 3_600n + 17n;
+    expect(settlementInterestAt(loan, [], held)).toBe(proRataInterestSeconds(loan.principal, 500n, held));
+    expect(settlementInterestAt(loan, [], held)).toBeGreaterThan(0n);
+  });
+  it('owes the whole term, exactly the whole-day figure, for a full-term loan settled early', () => {
+    const full = { ...loan, useFullTermInterest: true };
+    expect(settlementInterestAt(full, [], 3n * DAY)).toBe((loan.principal * 500n * 30n) / (365n * 10_000n));
+  });
+  it('accrues past the term by the second', () => {
+    const full = { ...loan, useFullTermInterest: true };
+    const at = 30n * DAY + 5n * 3_600n;
+    expect(settlementInterestAt(full, [], at)).toBe(proRataInterestSeconds(loan.principal, 500n, at));
   });
 });
 

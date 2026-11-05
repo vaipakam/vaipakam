@@ -1704,7 +1704,7 @@ want('lender holds the principal', pre.l.principal >= loan.principal, `${fmtP(pr
 // arrives in the same transaction). The payoff is the LIVE remaining-term
 // figure (#2422 r8, `borrowerReserve`): the larger of the contract's payoff
 // view at the pinned head and the app's payoff formula — which reads
-// `interestAccrualStart` / `interestRemainingDays` — at the latest moment
+// `interestAccrualStart` and the term's end — at the latest moment
 // this drive could accept (the maturity margin out, so a day's accrual step
 // in between is covered and no late fee is). Never the loan's original
 // `durationDays`: a loan re-anchored by a partial repayment owes far less,
@@ -1721,7 +1721,7 @@ const lifWei = RESERVE.lif;
 const borrowerSpareNeed = RESERVE.reserve;
 console.log(
   `pre   payoff: contract view ${fmtP(pre.repayDue)} at block ${pre.head}; reserved for ${fmtP(RESERVE.payoff)} ` +
-    `(remaining term: ${loan.interestRemainingDays} days from ${loan.interestAccrualStart || loan.startTime})`,
+    `(interest clock from ${loan.interestAccrualStart || loan.startTime}, term ends ${loan.startTime + loan.durationDays * 86_400n})`,
 );
 console.log(`pre   live loan-initiation fee: ${pre.lifBps} bps → ${fmtP(lifWei)} on the new principal (decimals ${PDEC})`);
 want('borrower holds the payoff top-up (remaining-term interest share + live LIF)', pre.b.principal >= borrowerSpareNeed, `${fmtP(pre.b.principal)} ≥ ${fmtP(borrowerSpareNeed)}`);

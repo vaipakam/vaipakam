@@ -834,17 +834,15 @@ contract RepayFacet is DiamondReentrancyGuard, IVaipakamErrors {
             LibInterestLedger.reducePrincipal(s, loan, partialAmount, partialAmount);
             // #408 / #410 / #413 (2026-06-12) — Option A: track
             // remaining committed term. The accrual clock reset
-            // below (`interestAccrualStart = now`) measures `elapsedDays`
-            // from the most recent partial. To keep the floor in
-            // `LibEntitlement.settlementInterest` reflecting the
-            // borrower's REMAINING commitment (not the original),
-            // decrement `interestRemainingDays` by the elapsed days since
-            // the segment's start. After this, `max(elapsed, remaining)`
-            // in the floor uses the post-partial remaining term as the
-            // lower bound.
+            // below (`interestAccrualStart = now`) measures elapsed seconds
+            // from the most recent partial, and the floor in
+            // `LibEntitlement.settlementInterest` runs from that reset to
+            // the term's end ({LibLoanClock.minimumInterestSeconds}), so it
+            // reflects the borrower's REMAINING commitment (not the
+            // original) with no counter to keep in step (#3169).
             //
             // #641 — the re-stamp now lands on the dedicated INTEREST clock
-            // (`interestAccrualStart` / `interestRemainingDays`); the term
+            // (`interestAccrualStart`); the term
             // tuple (`startTime` + `durationDays`) is LEFT UNTOUCHED so the
             // loan's maturity + grace window are preserved. (Pre-#641 this
             // reset `startTime` and shrank `durationDays`, which silently
@@ -854,9 +852,9 @@ contract RepayFacet is DiamondReentrancyGuard, IVaipakamErrors {
             //
             // Codex round-1 P1 (PR #559): DO NOT ACCUMULATE into
             // `loan.interestSettled` here. The combined state reset
-            // (`principal -=`, `interestRemainingDays -=`,
-            // `interestAccrualStart =`) makes the next settlement FUTURE-ONLY:
-            // `gross = proRataInterest(remainingPrincipal, rate, remainingDays)`.
+            // (`principal -=`, `interestAccrualStart =`) makes the next
+            // settlement FUTURE-ONLY: its gross runs from the reset on the
+            // remaining principal.
             // Adding the partial's paid interest to the accumulator AND
             // subtracting it from a future-only gross would double-count.
             //
@@ -874,18 +872,10 @@ contract RepayFacet is DiamondReentrancyGuard, IVaipakamErrors {
             // predates the fields, so the elapsed math below doesn't compute
             // from timestamp 0 and zero out the remaining term.
             LibVaipakam.seedInterestClockIfUnset(loan);
-            // #668 / #935 — a paused day is not consumed: the pause moved the
-            // term's end by that day ({LibLoanClock.interestTermEnd}).
-            uint256 elapsedSinceSegmentStart = LibLoanClock.unpausedDaysSinceInterestStart(loan);
-            if (elapsedSinceSegmentStart >= loan.interestRemainingDays) {
-                loan.interestRemainingDays = 0;
-            } else {
-                unchecked {
-                    loan.interestRemainingDays = uint16(
-                        uint256(loan.interestRemainingDays) - elapsedSinceSegmentStart
-                    );
-                }
-            }
+            // #3169 — only the clock's start moves. The full-term minimum of the
+            // new segment is derived from the term to the second
+            // ({LibLoanClock.minimumInterestSeconds}); there is no remaining-day
+            // counter to decrement, so no part day is lost here.
             // T-034 — interestAccrualStart downsized to uint64; explicit cast.
             loan.interestAccrualStart = uint64(block.timestamp); // Reset accrual start
             // Pass-2 A3 (#1191) — consume ONLY the portion of the settled credit
