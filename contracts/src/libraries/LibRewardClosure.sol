@@ -19,7 +19,8 @@ import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 ///         Admissible only once both interest frontiers have reached the day,
 ///         because the stamp is irreversible (Codex #2274 r1/r2, #2277): the side
 ///         totals the completeness test compares against are final from then
-///         (registration and close writes land at today + 1 or later), and an
+///         (registration writes land at today + 1 or later and close writes at today
+///         or later (#3171), so every write is past both frontiers), and an
 ///         EMPTY walk can no longer pass conservation against two unfolded zeros.
 ///         The chain's OWN day close was this guarantee's first proxy and is not a
 ///         condition (#1566 PR 1 review): the canonical chain may finalize a day

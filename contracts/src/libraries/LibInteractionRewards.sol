@@ -680,8 +680,9 @@ library LibInteractionRewards {
     /**
      * @notice Close both sides of a loan's reward entries at `today`.
      *         The lender and borrower entries are shrunk from their
-     *         contracted endDay to `min(originalEndDay, today+1)` and
-     *         flagged according to the close reason.
+     *         contracted endDay to `min(originalEndDay, today)` — the
+     *         closing day itself earns nothing (#3171) — and flagged
+     *         according to the close reason.
      *
      *         Forfeit routing (user directive):
      *           - `lenderForfeit = true` on the lender entry → the
@@ -705,8 +706,32 @@ library LibInteractionRewards {
         bool borrowerClean,
         bool lenderForfeit
     ) internal {
+        _closeLoanEntries(loanId, borrowerClean, lenderForfeit, /* loanContinues */ false);
+    }
+
+    /// @notice Close both sides of a loan's entries ahead of re-registering
+    ///         the SAME loan under new terms or a new borrower: the in-place
+    ///         extension and the preclose obligation handover. The loan does
+    ///         not end, so the entries end at `today + 1` and the re-registered
+    ///         ones start there: the loan's own window loses no day (#3171).
+    ///         Forfeit routing is exactly {closeLoan}'s.
+    function closeLoanForContinuation(uint256 loanId, bool borrowerClean) internal {
+        _closeLoanEntries(loanId, borrowerClean, /* lenderForfeit */ false, /* loanContinues */ true);
+    }
+
+    /// @dev The one body of {closeLoan} and {closeLoanForContinuation}.
+    ///      `loanContinues` picks the entries' exclusive end: `today` when the
+    ///      loan ends (its closing day earns nothing), `today + 1` when the
+    ///      same loan is re-registered from tomorrow.
+    function _closeLoanEntries(
+        uint256 loanId,
+        bool borrowerClean,
+        bool lenderForfeit,
+        bool loanContinues
+    ) private {
         (uint256 today, bool active) = currentDayOrZero();
         if (!active) return;
+        uint256 endBefore = loanContinues ? today + 1 : today;
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
 
         // #1067 (S13 Part 2) — CENTRALIZED holder re-anchor: before closing an
@@ -740,7 +765,7 @@ library LibInteractionRewards {
             _closeEntry(
                 s,
                 lenderId,
-                today,
+                endBefore,
                 /* forfeited */ lenderForfeit,
                 s.lenderPerDayDeltaNumeraire18,
                 s.lenderFrontierDay
@@ -751,7 +776,7 @@ library LibInteractionRewards {
             _closeEntry(
                 s,
                 borrowerId,
-                today,
+                endBefore,
                 /* forfeited */ !borrowerClean,
                 s.borrowerPerDayDeltaNumeraire18,
                 s.borrowerFrontierDay
@@ -824,7 +849,7 @@ library LibInteractionRewards {
         _closeEntry(
             s,
             oldId,
-            today,
+            /* endBefore */ today + 1,
             /* forfeited */ true,
             s.lenderPerDayDeltaNumeraire18,
             s.lenderFrontierDay
@@ -955,9 +980,9 @@ library LibInteractionRewards {
         }
         uint256 perDay = e.perDayNumeraire18;
         if (isLenderSide) {
-            _closeEntry(s, id, today, false, s.lenderPerDayDeltaNumeraire18, s.lenderFrontierDay);
+            _closeEntry(s, id, today + 1, false, s.lenderPerDayDeltaNumeraire18, s.lenderFrontierDay);
         } else {
-            _closeEntry(s, id, today, false, s.borrowerPerDayDeltaNumeraire18, s.borrowerFrontierDay);
+            _closeEntry(s, id, today + 1, false, s.borrowerPerDayDeltaNumeraire18, s.borrowerFrontierDay);
         }
         uint256 newId = _allocEntry(
             s,
@@ -6795,14 +6820,32 @@ library LibInteractionRewards {
         s.rewardEntryUserIdx[id] = s.userRewardEntryIds[user].length;
     }
 
-    /// @dev Shrink `entry` to `[startDay, min(originalEnd, today+1))`,
+    /// @dev Shrink `entry` to `[startDay, min(originalEnd, endBefore))`,
     ///      un-stamping the original end-delta and stamping the shrunk
     ///      end-delta (only for future days — already-frontier-consumed
     ///      days cannot be retroactively changed).
+    ///
+    ///      #3171 (owner decision 2026-11-05, option A) — the caller names the
+    ///      exclusive end, because the two kinds of close differ on the day
+    ///      they happen in:
+    ///        - a loan that ENDS (`closeLoan`, refinance included: the new
+    ///          loan is a new record that starts tomorrow like any other)
+    ///          passes `today`: the closing day earns nothing, so a loan
+    ///          opened late one day and closed early the next cannot buy a
+    ///          full reward day for minutes of interest;
+    ///        - a loan that CONTINUES (`closeLoanForContinuation` before a
+    ///          re-registration, `transferLenderEntry`, `_splitAtTransfer`)
+    ///          passes `today + 1`: the outgoing entry keeps today and the
+    ///          incoming one starts tomorrow, so the loan's own window loses
+    ///          no day.
+    ///      `endBefore` is always above every frontier: frontiers advance only
+    ///      through days strictly before today (`closeDay`,
+    ///      `advanceInterestFrontiers`), so the shrunk end-delta is never
+    ///      dropped while the original one is undone.
     function _closeEntry(
         LibVaipakam.Storage storage /* s */,
         uint256 id,
-        uint256 today,
+        uint256 endBefore,
         bool forfeited,
         mapping(uint256 => int256) storage deltas,
         uint256 frontier
@@ -6814,7 +6857,7 @@ library LibInteractionRewards {
         // guard — `endDay` is never 0 in practice.)
         if (e.closed) return;
         uint256 originalEnd = e.endDay;
-        uint256 newEnd = today + 1;
+        uint256 newEnd = endBefore;
         if (newEnd >= originalEnd) newEnd = originalEnd; // natural close or late
         if (newEnd < e.startDay) newEnd = e.startDay;    // closed before accrual began
 

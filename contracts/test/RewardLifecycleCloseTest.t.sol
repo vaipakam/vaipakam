@@ -212,6 +212,92 @@ contract RewardLifecycleCloseTest is SetupTest {
         PrecloseFacet(address(diamond)).precloseDirect(loanId);
         vm.stopPrank();
     }
+
+    // ─── #3171: the day a loan ends earns no reward day ──────────────────────
+
+    function _today() internal view returns (uint256 day) {
+        (day,) = InteractionRewardsLensFacet(address(diamond)).getInteractionCurrentDay();
+    }
+
+    function _repay(uint256 loanId) internal {
+        vm.startPrank(borrower);
+        IERC20Mint(mockERC20).approve(address(diamond), type(uint256).max);
+        RepayFacet(address(diamond)).repayLoan(loanId);
+        vm.stopPrank();
+    }
+
+    /// @dev A loan repaid mid-term earns its reward days from the day after
+    ///      it opened up to, NOT including, the day it closed.
+    function testClosingDayEarnsNothing() public {
+        uint256 opened = _today();
+        uint256 loanId = _createLoan();
+        vm.warp(block.timestamp + 5 days);
+        uint256 closedOn = _today();
+        assertEq(closedOn, opened + 5, "five reward days later");
+        _repay(loanId);
+
+        LibVaipakam.RewardEntry memory le = _entries(lender)[0];
+        LibVaipakam.RewardEntry memory be = _entries(borrower)[0];
+        assertEq(le.startDay, opened + 1, "earns from the day after opening");
+        assertEq(le.endDay, closedOn, "lender: the closing day is excluded");
+        assertEq(be.endDay, closedOn, "borrower: the closing day is excluded");
+        assertEq(le.endDay - le.startDay, 4, "four whole days earned");
+    }
+
+    /// @dev The round trip #3171 names: opened late one day, repaid early the
+    ///      next. The entry closes empty — no reward day for minutes of interest.
+    function testLoanAcrossOneDayBoundaryEarnsNoDay() public {
+        // Move to the last minute of the current reward day.
+        (uint256 day,) = InteractionRewardsLensFacet(address(diamond)).getInteractionCurrentDay();
+        uint256 loanId;
+        {
+            uint256 secondsIntoDay = (block.timestamp - _launch()) % 1 days;
+            vm.warp(block.timestamp + (1 days - secondsIntoDay) - 60);
+            assertEq(_today(), day, "still the opening day");
+            loanId = _createLoan();
+        }
+        vm.warp(block.timestamp + 120);
+        assertEq(_today(), day + 1, "the next day");
+        _repay(loanId);
+
+        LibVaipakam.RewardEntry memory le = _entries(lender)[0];
+        LibVaipakam.RewardEntry memory be = _entries(borrower)[0];
+        assertEq(le.endDay, le.startDay, "lender entry closes empty");
+        assertEq(be.endDay, be.startDay, "borrower entry closes empty");
+    }
+
+    /// @dev A close at or after the term's end keeps the full contracted window.
+    function testCloseAfterTermKeepsTheWholeWindow() public {
+        uint256 opened = _today();
+        uint256 loanId = _createLoan();
+        vm.warp(block.timestamp + 31 days);
+        _repay(loanId);
+        LibVaipakam.RewardEntry memory le = _entries(lender)[0];
+        assertEq(le.startDay, opened + 1, "start");
+        assertEq(le.endDay, opened + 31, "the whole 30-day window");
+    }
+
+    /// @dev The same loan continuing (preclose obligation handover) loses no
+    ///      day: the outgoing entries keep today, the re-registered ones start
+    ///      tomorrow.
+    function testContinuingLoanLosesNoDay() public {
+        uint256 loanId = _createLoan();
+        vm.warp(block.timestamp + 3 days);
+        uint256 today = _today();
+        vm.prank(address(diamond));
+        InteractionRewardsFacet(address(diamond)).precloseRewardTransferObligation(loanId);
+
+        LibVaipakam.RewardEntry[] memory le = _entries(lender);
+        assertEq(le.length, 2, "old and re-registered lender entries");
+        assertTrue(le[0].closed, "old entry closed");
+        assertEq(le[0].endDay, today + 1, "outgoing entry keeps today");
+        assertEq(le[1].startDay, today + 1, "continuing entry starts tomorrow");
+        assertFalse(le[1].closed, "continuing entry open");
+    }
+
+    function _launch() internal view returns (uint256) {
+        return InteractionRewardsLensFacet(address(diamond)).getInteractionLaunchTimestamp();
+    }
 }
 
 interface IERC20Mint {

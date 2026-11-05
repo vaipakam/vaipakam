@@ -1019,10 +1019,9 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
         // transfer the new holders are the parties earning the
         // post-extension reward accrual.
         bool inTermExtension = block.timestamp <= oldEndTime;
-        LibInteractionRewards.closeLoan(
+        LibInteractionRewards.closeLoanForContinuation(
             loanId,
-            /* borrowerClean */ inTermExtension,
-            /* lenderForfeit */ false
+            /* borrowerClean */ inTermExtension
         );
         // #1808 — the new rate goes through the ledger's single writer, which
         // checkpoints the old segment first, and BEFORE the new start time is
