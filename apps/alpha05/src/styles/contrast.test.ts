@@ -4,18 +4,30 @@ import { describe, expect, it } from 'vitest';
 /**
  * RB-A11Y pinned to the token file: every text pair below is >= 4.5:1 (WCAG
  * AA, normal text) in BOTH themes. The test reads tokens.css itself, so a
- * retuned colour is checked rather than remembered. Codex on #3179 found the
- * dark theme's filled control at 2.98:1 (white on the link indigo); the
- * `--brand-fill` token exists because of it.
+ * retuned colour is checked rather than remembered. Codex on #3179 found an
+ * earlier dark filled control at 2.98:1 (white on a light indigo); the
+ * `--brand-fill` token exists because of it, and the navy/green retune that
+ * followed (owner decision 2026-11-05) passed through this same test.
  */
-const css = readFileSync(new URL('./tokens.css', import.meta.url), 'utf8');
+/** The app's surface and text tokens, and the shared brand palette the app
+ *  imports before them (packages/lib/src/brand/tokens.css). A pair may span
+ *  the two files, so both are read and merged per theme. */
+const SHEETS = [
+  readFileSync(new URL('../../../../packages/lib/src/brand/tokens.css', import.meta.url), 'utf8'),
+  readFileSync(new URL('./tokens.css', import.meta.url), 'utf8'),
+];
 
 function block(selector: string): Record<string, string> {
-  const start = css.indexOf(selector);
-  expect(start, `${selector} block`).toBeGreaterThanOrEqual(0);
-  const body = css.slice(css.indexOf('{', start) + 1, css.indexOf('}', start));
   const out: Record<string, string> = {};
-  for (const m of body.matchAll(/--([\w-]+):\s*(#[0-9a-fA-F]{6})\s*;/g)) out[m[1]] = m[2].toLowerCase();
+  for (const css of SHEETS) {
+    const start = css.indexOf(selector);
+    expect(start, `${selector} block`).toBeGreaterThanOrEqual(0);
+    const body = css.slice(css.indexOf('{', start) + 1, css.indexOf('}', start));
+    for (const m of body.matchAll(/--([\w-]+):\s*(#[0-9a-fA-F]{6})\s*;/g)) {
+      expect(out[m[1]], `--${m[1]} defined in both files`).toBeUndefined();
+      out[m[1]] = m[2].toLowerCase();
+    }
+  }
   return out;
 }
 

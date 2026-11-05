@@ -1,3 +1,6 @@
+/* The shared brand palette first (packages/lib/src/brand/tokens.css, one file
+   for the website and the app), then this app's surface and text tokens. */
+@import '@vaipakam/lib/brand.css';
 @import './tokens.css';
 
 *,

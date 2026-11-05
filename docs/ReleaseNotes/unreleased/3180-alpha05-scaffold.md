@@ -33,3 +33,5 @@ CI typechecks and unit-tests the package.
 > unchanged.
 
 The new app carries the website's brand set (the shield mark in both colourways, the wordmark, the home-screen icon) as its own files: the favicon follows the colour scheme, the header shows the mark on phones and the wordmark on wider screens, and the loading splash uses the same mark.
+
+The brand palette is now one shared file in the shared library (navy and green, the logo's own colours, with a light theme led by navy and a dark theme led by green), which the new app reads first; the website moves onto the same file in a follow-up so the two cannot drift apart. Every text pair stays at AA contrast in both themes, checked by a test that reads the files.
