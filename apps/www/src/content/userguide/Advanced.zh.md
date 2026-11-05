@@ -1752,6 +1752,24 @@ health factor 是仪表盘视图中按 1e18 缩放的读数；读数为 0 表示
 
 `setVPFIDiscountConsent` 会在本链的 Diamond 上为每个钱包设置一个标志。关闭时，持有等级折扣为 0。开启时，借款人的贷款发起费在接受时以出借资产减少（VPFI 定价路径从不进入借款人路径），出借人的收益手续费在每次结算时按当时生效的实际等级打折。交付方式取决于 `getVPFIDiscountConfig`：若 VPFI 汇率及其参考资产都已设置，打折后的手续费以 VPFI 从出借人的金库扣除，出借人保留全部利息；否则直接减少国库手续费本身，不移动 VPFI。若某次结算时无法执行该扣除（没有有效报价、金库中已记录的可用 VPFI 不足，或该 VPFI 作为抵押被锁定），该次结算的手续费不享受持有等级折扣。该调用为 `whenNotPaused`，因此全局暂停会在两个方向上都将其关闭。开启受服务条款约束，关闭则不受约束，且两者都不会向镜像链广播等级。借款人折扣仅在接受时出借资产具备流动性时适用（非流动贷款支付全额 LIF），且任何折扣都以手续费的 50% 为上限。
 
+<a id="home-rewards"></a>
+
+### Home: 奖励
+
+主数值来自 `RewardClaimFacet.simulateClaimInteractionRewards(user, 0)`，它以 Default 接收方运行领取并总是 revert：`InteractionRewardsSimulation(paid, fromDay, toDay)` 携带准确金额，其他任何 revert 都是领取本身的拒绝（`NoInteractionRewardsToClaim`、`InteractionDayGlobalNotFinalized(day)`、`InteractionDayAwaitingDelivery(day)`、`InteractionEmissionsNotStarted`、`EnforcedPause`、`SanctionedAddress`），并按名称显示。只有当没有任何来源能运行预览时，Home 才读取作为下限的 `previewInteractionRewards`，并暂不提供领取。`claimInteractionRewards()` 每次调用最多支付 `MAX_INTERACTION_CLAIM_DAYS`（30）天；一旦读取结果显示有晚于刚领取日期的天数，Home 就会提供剩余部分。Default 接收方对 EOA 类调用者（对受保护钱包则始终）记入金库，金库入账无法完成时改为转入钱包。结果从收据中的 `InteractionRewardsClaimed` 和 `RewardDeliveredToVault` 日志读取，并与收据所在区块及其前一区块的钱包 VPFI 余额和金库跟踪 VPFI 核对。累计已领取金额不显示：目前还没有按用户的索引路由。
+
+<a id="home-rewards-expiry"></a>
+
+### Home: 奖励移除日期
+
+`ConfigFacet.getRewardClaimHorizonDays()` 为 0 表示期限未启用，不显示日期。否则 Home 会逐页读取 `getUserSoonestRewardExpiry(user, offset, 200, 50)`，所有页都在同一区块，最多十页；当 `nextOffset >= total` 时遍历完成，提前停止的遍历会标明不完整，绝不显示为没有到期。最终通知在最早估计日期前 90 天内显示。估计值是该区块上条目的 `expiresAt`：领取无法执行的时间会推后实际移除，治理对期限的修改可能使其提前。Home 不显示该条目将移除的金额。
+
+<a id="home-rewards-held"></a>
+
+### Home: 暂扣的奖励
+
+`getSanctionsHeldReward(user)` 是暂扣余额，`getRewardSanctionsStatus(user)` 是其判定（Deliver、Hold 或 Confirmed）。有余额且判定为 Deliver 时，Home 提供 `claimHeldInteractionRewards(0)`，它只支付恰好的暂扣余额而不结算任何新欠款，并发出 `InteractionRewardsClaimed(user, 0, 0, paid)`；钱包被禁止期间它会以 `SanctionedAddress` revert。签名前的复核会重新读取二者，并以发送者身份模拟该调用。标记确认期间赚得的天数将被永久没收。
+
 <a id="terms-gate"></a>
 
 ### 服务条款确认

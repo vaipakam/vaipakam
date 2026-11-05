@@ -1910,6 +1910,24 @@ health factor를 보여 주고, 가격이 없는 것은 개수를 셉니다.
 
 `setVPFIDiscountConsent`는 이 체인의 Diamond에 지갑별 플래그 하나를 설정합니다. 꺼져 있으면 보유 등급 할인은 0입니다. 켜져 있으면 차입자의 대출 개시 수수료가 수락 시 대출 자산으로 줄어들고(VPFI 가격 경로는 차입자 쪽에 절대 관여하지 않음), 대출자의 수익 수수료는 정산할 때마다 그 시점의 실효 등급으로 할인됩니다. 지급 방식은 `getVPFIDiscountConfig`를 따릅니다. VPFI 환율과 기준 자산이 모두 설정되어 있으면 할인된 수수료가 대출자의 볼트에서 VPFI로 차감되고 대출자는 이자를 모두 받습니다. 그렇지 않으면 재무 수수료 자체가 줄고 VPFI는 움직이지 않습니다. 정산 시 이 차감이 실행될 수 없으면(유효한 시세가 없거나, 볼트에 추적되는 자유 VPFI가 부족하거나, 그 VPFI가 담보로 잠겨 있는 경우) 그 정산의 수수료에는 보유 등급 할인이 적용되지 않습니다. 호출은 `whenNotPaused`이므로 전역 일시 중지는 양방향 모두를 막습니다. 켜기에는 약관이 필요하고 끄기에는 필요 없으며, 둘 다 미러에 등급을 전송하지 않습니다. 차입자 할인은 수락 시 대출 자산이 유동적일 때만 적용되며(비유동 대출은 LIF 전액을 냄), 모든 할인은 수수료의 50%로 제한됩니다.
 
+<a id="home-rewards"></a>
+
+### Home: 리워드
+
+대표 수치는 `RewardClaimFacet.simulateClaimInteractionRewards(user, 0)`이며, Default 수령처로 청구를 실행하고 항상 revert합니다. `InteractionRewardsSimulation(paid, fromDay, toDay)`가 정확한 금액을 담고, 그 밖의 revert는 청구 자체의 거부(`NoInteractionRewardsToClaim`, `InteractionDayGlobalNotFinalized(day)`, `InteractionDayAwaitingDelivery(day)`, `InteractionEmissionsNotStarted`, `EnforcedPause`, `SanctionedAddress`)로 이름과 함께 표시됩니다. 어떤 소스도 미리보기를 실행할 수 없을 때에만 Home은 하한값인 `previewInteractionRewards`를 읽고 청구를 보류합니다. `claimInteractionRewards()`는 호출당 최대 `MAX_INTERACTION_CLAIM_DAYS`(30)일을 지급하며, 읽기 결과가 방금 청구한 날 이후의 날을 보여 주면 Home이 나머지를 제시합니다. Default 수령처는 EOA 형태의 호출자(보호된 지갑은 항상)에게 볼트로 입금하고, 볼트 입금을 완료할 수 없으면 지갑으로 대체합니다. 결과는 영수증의 `InteractionRewardsClaimed`와 `RewardDeliveredToVault` 로그에서 읽고, 영수증 블록과 그 직전 블록에서 지갑의 VPFI 잔액 및 볼트의 추적 VPFI와 대조합니다. 누적 청구액은 표시하지 않습니다. 이를 위한 사용자별 인덱스 경로가 아직 없기 때문입니다.
+
+<a id="home-rewards-expiry"></a>
+
+### Home: 리워드 제거 날짜
+
+`ConfigFacet.getRewardClaimHorizonDays()`가 0이면 호라이즌이 꺼져 있어 날짜를 표시하지 않습니다. 그렇지 않으면 Home은 `getUserSoonestRewardExpiry(user, offset, 200, 50)`을 페이지별로, 모두 같은 블록에서, 최대 10페이지까지 읽습니다. `nextOffset >= total`이면 탐색이 완료되며, 도중에 멈춘 탐색은 "기한 없음"이 아니라 불완전하다고 표시합니다. 최종 알림은 가장 이른 예상치의 90일 전부터 표시됩니다. 예상치는 해당 블록에서 엔트리의 `expiresAt`이며, 청구를 실행할 수 없는 시간은 실제 제거를 늦추고, 호라이즌의 거버넌스 변경은 앞당길 수 있습니다. 엔트리가 제거할 금액은 Home에 표시하지 않습니다.
+
+<a id="home-rewards-held"></a>
+
+### Home: 보류된 리워드
+
+`getSanctionsHeldReward(user)`는 보류 잔액이고 `getRewardSanctionsStatus(user)`는 그 판정(Deliver, Hold, Confirmed)입니다. 잔액이 있고 판정이 Deliver이면 Home은 `claimHeldInteractionRewards(0)`을 제시합니다. 이 호출은 새로 발생한 미지급분을 정산하지 않고 보류 잔액만 정확히 지급하며 `InteractionRewardsClaimed(user, 0, 0, paid)`를 발생시킵니다. 지갑이 금지된 동안에는 `SanctionedAddress`로 revert합니다. 서명 전 재확인은 둘 다 다시 읽고 발신자로서 호출을 시뮬레이션합니다. 플래그가 확정된 동안 얻은 날은 영구히 몰수됩니다.
+
 <a id="terms-gate"></a>
 
 ### 이용약관 확인

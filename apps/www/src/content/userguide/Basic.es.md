@@ -1062,6 +1062,24 @@ En una red de prueba, Home ofrece tokens y NFT de prueba para que puedas probar 
 
 El descuento en comisiones es un único ajuste por red para toda tu wallet. Mientras está desactivado, tus comisiones no tienen descuento, tengas el VPFI que tengas. Mientras está activado, se reduce la comisión que pagas al pedir prestado y también la comisión sobre los intereses que ganas como prestamista, según tu nivel de descuento VPFI en el momento de cobrarse cada comisión; en el nivel 0 no hay descuento. En algunas redes el descuento del prestamista se paga en VPFI desde tu vault, y el recibo te dice cuál aplica antes de confirmar. Activarlo requiere haber aceptado los Términos vigentes; desactivarlo, nunca. Mientras el protocolo está en pausa no se puede cambiar en ningún sentido. Un préstamo en un activo prestado ilíquido sigue pagando la comisión completa, y ningún descuento supera nunca la mitad de la comisión.
 
+<a id="home-rewards"></a>
+
+### Home: Recompensas
+
+Las recompensas son reembolsos por uso de tus préstamos dados y recibidos en esta red, se cuentan por día de recompensa y se pagan en VPFI. Home muestra exactamente lo que pagaría un reclamo hecho ahora, porque la app ejecuta primero el reclamo como vista previa. Si esa vista previa no puede ejecutarse, Home muestra en su lugar un límite inferior, señalado como tal, y no ofrece el reclamo hasta poder calcular la cifra exacta. Un reclamo paga hasta 30 días de recompensa; si queda más, Home ofrece reclamar de nuevo, y detenerse a mitad es seguro. Un reclamo se entrega en tu bóveda, listo para usar, o en tu billetera cuando la bóveda no puede recibirlo; un reclamo nunca abre una bóveda. Cuando un día de recompensa aún espera su finalización entre redes, o que su financiación llegue a esta red, Home nombra ese día en vez de ofrecer un reclamo que fallaría. Las recompensas no son interés ni rendimiento, y reclamar nunca hace staking ni reinvierte nada.
+
+<a id="home-rewards-expiry"></a>
+
+### Home: Fechas de retirada de recompensas
+
+En una red donde las recompensas no reclamadas pueden retirarse, Home muestra la fecha estimada de retirada más próxima entre tus recompensas, y un aviso final en los últimos 90 días antes de ella. Reclamar antes conserva siempre la recompensa. La estimación nunca es posterior a la fecha real tal como están las cosas: el tiempo en que la recompensa no puede reclamarse retrasa la fecha real, pero un cambio en la ventana de reclamo de la red puede adelantarla, así que vuelve a comprobarla antes de confiar en ella. Si no pudo comprobarse cada recompensa, Home lo dice en lugar de afirmar que nada vence. Donde la red no retira nada, no se muestra ninguna fecha.
+
+<a id="home-rewards-held"></a>
+
+### Home: Recompensas retenidas
+
+Si el control de sanciones marca tu billetera, no se le paga nada mientras siga marcada. Las recompensas que ganó antes de la marca se retienen para ella, bloqueadas pero no perdidas, y se liberan cuando la billetera deja de estar marcada; entonces Home ofrece reclamar exactamente ese saldo por separado. Mientras una marca esté confirmada, las recompensas ganadas se pierden para siempre y el VPFI de tu bóveda no puede moverse. Si no puede leerse si la billetera sigue marcada, no se libera nada.
+
 <a id="terms-gate"></a>
 
 ### El aviso de los Términos

@@ -2197,6 +2197,24 @@ En una testnet cuyo registro de despliegue publica activos de prueba, Home los l
 
 `setVPFIDiscountConsent` fija una bandera por wallet en el Diamond de esta cadena. Desactivada, el descuento por tenencia es 0. Activada, la comisión de inicio del préstamo del prestatario se reduce al aceptar, en el activo prestado (la ruta de precio de VPFI nunca forma parte del camino del prestatario), y la comisión sobre el rendimiento del prestamista se descuenta en cada liquidación según el nivel efectivo vigente entonces. La entrega sigue `getVPFIDiscountConfig`: con la tasa de VPFI y su activo de referencia ambos fijados, la comisión descontada se debita en VPFI del vault del prestamista y este conserva todos los intereses; si no, se reduce la propia comisión de la tesorería y no se mueve VPFI. Si ese cargo no puede ejecutarse en una liquidación (sin cotización vigente, con poco VPFI libre registrado en el vault o con ese VPFI bloqueado como garantía), la comisión de esa liquidación no recibe descuento por tenencia. La llamada es `whenNotPaused`, así que la pausa global la cierra en ambos sentidos. Activarla está sujeto a los Términos, desactivarla no, y ninguna de las dos difunde un nivel a los mirrors. El descuento del prestatario solo se aplica si el activo prestado es líquido al aceptar (un préstamo ilíquido paga la LIF completa), y todo descuento está limitado al 50 % de la comisión.
 
+<a id="home-rewards"></a>
+
+### Home: Recompensas
+
+La cifra principal es `RewardClaimFacet.simulateClaimInteractionRewards(user, 0)`, que ejecuta el reclamo con el destino Default y siempre revierte: `InteractionRewardsSimulation(paid, fromDay, toDay)` lleva la cifra exacta, y cualquier otro revert es el rechazo propio del reclamo (`NoInteractionRewardsToClaim`, `InteractionDayGlobalNotFinalized(day)`, `InteractionDayAwaitingDelivery(day)`, `InteractionEmissionsNotStarted`, `EnforcedPause`, `SanctionedAddress`), mostrado por su nombre. Solo cuando ninguna fuente puede ejecutar la vista previa, Home lee `previewInteractionRewards`, un límite inferior, y retiene el reclamo. `claimInteractionRewards()` paga como máximo `MAX_INTERACTION_CLAIM_DAYS` (30) días por llamada; cuando las lecturas muestran días posteriores a los recién reclamados, Home ofrece el resto. El destino Default acredita la bóveda para un llamante de tipo EOA (y siempre para una billetera protegida), y recurre a la billetera cuando el crédito en la bóveda no puede completarse. El resultado se lee de los logs `InteractionRewardsClaimed` y `RewardDeliveredToVault` del recibo, contrastados con el saldo de VPFI de la billetera y el VPFI registrado de la bóveda en el bloque del recibo y en el anterior. El total reclamado histórico no se muestra: aún no existe una ruta de índice por usuario para ello.
+
+<a id="home-rewards-expiry"></a>
+
+### Home: Fechas de retirada de recompensas
+
+Un `ConfigFacet.getRewardClaimHorizonDays()` igual a 0 significa que el horizonte está apagado y no se muestra fecha. Si no, Home recorre `getUserSoonestRewardExpiry(user, offset, 200, 50)` página a página, todas en un mismo bloque, hasta diez páginas; el recorrido está completo cuando `nextOffset >= total`, y uno que se detiene antes se declara incompleto, nunca como que nada vence. El aviso final se muestra dentro de los 90 días previos a la estimación más próxima. La estimación es el `expiresAt` de la entrada en ese bloque: el tiempo en que el reclamo no es ejecutable retrasa la retirada real, y un cambio de gobernanza en el horizonte puede adelantarla. El importe que retiraría la entrada no se muestra en Home.
+
+<a id="home-rewards-held"></a>
+
+### Home: Recompensas retenidas
+
+`getSanctionsHeldReward(user)` es el saldo retenido y `getRewardSanctionsStatus(user)` su decisión (Deliver, Hold o Confirmed). Con saldo y decisión Deliver, Home ofrece `claimHeldInteractionRewards(0)`, que paga exactamente el saldo retenido sin liquidar nada nuevo adeudado y emite `InteractionRewardsClaimed(user, 0, 0, paid)`; revierte con `SanctionedAddress` mientras la billetera esté vetada. La comprobación antes de firmar vuelve a leer ambos y simula la llamada como el remitente. Los días ganados con una marca confirmada se pierden para siempre.
+
 <a id="terms-gate"></a>
 
 ### El aviso de los Términos

@@ -2207,6 +2207,24 @@ Auf einem Testnetz, dessen Deployment-Eintrag Test-Assets veröffentlicht, liste
 
 `setVPFIDiscountConsent` setzt ein Flag pro Wallet auf dem Diamond dieser Chain. Aus ist der Hold-Tier-Rabatt 0. An wird die Loan Initiation Fee des Leihenden bei der Annahme im Kreditasset reduziert (der VPFI-Preisweg gehört nie zum Leihenden-Pfad), und die Yield Fee des Verleihers wird bei jeder Abrechnung mit der dann geltenden effektiven Stufe rabattiert. Die Auszahlung folgt `getVPFIDiscountConfig`: Sind VPFI-Kurs und Referenz-Asset beide gesetzt, wird die rabattierte Gebühr in VPFI aus dem Vault des Verleihers abgebucht und er behält die gesamten Zinsen; sonst wird die Treasury-Gebühr selbst reduziert und kein VPFI bewegt. Kann diese Abbuchung bei einer Abrechnung nicht laufen (kein aktueller Kurs, zu wenig freies erfasstes VPFI im Vault oder dieses VPFI als Sicherheit gesperrt), erhält die Gebühr dieser Abrechnung keinen Hold-Tier-Rabatt. Der Aufruf ist `whenNotPaused`, die globale Pause schließt ihn also in beide Richtungen. Das Einschalten ist durch die Bedingungen gesperrt, das Ausschalten nicht, und keines von beiden sendet eine Stufe an die Mirrors. Der Leihenden-Rabatt gilt nur, wenn das Kreditasset bei der Annahme liquide ist (ein illiquider Kredit zahlt die volle LIF), und jeder Rabatt ist auf 50 % der Gebühr begrenzt.
 
+<a id="home-rewards"></a>
+
+### Home: Belohnungen
+
+Die Hauptzahl ist `RewardClaimFacet.simulateClaimInteractionRewards(user, 0)`, das den Claim mit dem Default-Ziel ausführt und immer revertiert: `InteractionRewardsSimulation(paid, fromDay, toDay)` trägt den genauen Betrag, jeder andere Revert ist die eigene Ablehnung des Claims (`NoInteractionRewardsToClaim`, `InteractionDayGlobalNotFinalized(day)`, `InteractionDayAwaitingDelivery(day)`, `InteractionEmissionsNotStarted`, `EnforcedPause`, `SanctionedAddress`) und wird beim Namen genannt. Nur wenn keine Quelle die Vorschau ausführen kann, liest Home `previewInteractionRewards`, eine Untergrenze, und hält den Claim zurück. `claimInteractionRewards()` zahlt pro Aufruf höchstens `MAX_INTERACTION_CLAIM_DAYS` (30) Tage; sobald die Lesewerte Tage nach den gerade beanspruchten zeigen, bietet Home den Rest an. Das Default-Ziel schreibt einem EOA-artigen Aufrufer (und einer geschützten Wallet immer) im Vault gut und fällt auf die Wallet zurück, wenn die Vault-Gutschrift nicht abgeschlossen werden kann. Das Ergebnis wird aus den Logs `InteractionRewardsClaimed` und `RewardDeliveredToVault` des Belegs gelesen und gegen das VPFI-Guthaben der Wallet und das erfasste VPFI des Vaults im Block des Belegs und im Block davor geprüft. Die Summe aller Claims wird nicht gezeigt: Dafür gibt es noch keine Index-Route pro Nutzer.
+
+<a id="home-rewards-expiry"></a>
+
+### Home: Entfernungstermine für Belohnungen
+
+`ConfigFacet.getRewardClaimHorizonDays()` gleich 0 bedeutet, dass der Horizont dunkel ist und kein Termin angezeigt wird. Andernfalls durchläuft Home `getUserSoonestRewardExpiry(user, offset, 200, 50)` Seite für Seite, jede Seite im selben Block, bis zu zehn Seiten; der Durchlauf ist vollständig, wenn `nextOffset >= total`, und ein vorzeitig endender Durchlauf wird als unvollständig ausgewiesen, nie als „nichts fällig“. Der letzte Hinweis erscheint innerhalb von 90 Tagen vor der frühesten Schätzung. Die Schätzung ist das `expiresAt` des Eintrags in diesem Block: nicht ausführbare Claim-Zeit verschiebt die tatsächliche Entfernung nach hinten, eine Governance-Änderung des Horizonts kann sie vorziehen. Der Betrag, den der Eintrag entfernen würde, wird auf Home nicht gezeigt.
+
+<a id="home-rewards-held"></a>
+
+### Home: Zurückgehaltene Belohnungen
+
+`getSanctionsHeldReward(user)` ist das zurückgehaltene Guthaben und `getRewardSanctionsStatus(user)` seine Entscheidung (Deliver, Hold oder Confirmed). Mit einem Guthaben und der Entscheidung Deliver bietet Home `claimHeldInteractionRewards(0)` an, das genau das zurückgehaltene Guthaben auszahlt, ohne neu Geschuldetes abzurechnen, und `InteractionRewardsClaimed(user, 0, 0, paid)` emittiert; solange die Wallet gesperrt ist, revertiert es mit `SanctionedAddress`. Die Prüfung vor dem Signieren liest beides erneut und simuliert den Aufruf als Absender. Tage, die bei bestätigter Markierung verdient wurden, verfallen endgültig.
+
 <a id="terms-gate"></a>
 
 ### Die Abfrage der Nutzungsbedingungen

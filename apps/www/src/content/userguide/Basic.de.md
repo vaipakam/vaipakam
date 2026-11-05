@@ -1084,6 +1084,24 @@ Auf einem Testnetz bietet Home Test-Token und NFTs an, damit du Leihen, Verleihe
 
 Der Gebührenrabatt ist eine Einstellung pro Netzwerk für deine ganze Wallet. Solange er aus ist, erhalten deine Gebühren keinen Rabatt, egal wie viel VPFI du hältst. Solange er an ist, wird die Gebühr beim Leihen reduziert, ebenso die Gebühr auf Zinsen, die du als Verleiher verdienst, und zwar nach deiner VPFI-Rabattstufe im Moment, in dem die Gebühr anfällt; bei Stufe 0 gibt es keinen. In manchen Netzwerken wird der Verleiher-Rabatt in VPFI aus deinem Vault bezahlt, und der Beleg sagt dir vor dem Bestätigen, welcher Fall gilt. Zum Einschalten müssen die aktuellen Bedingungen akzeptiert sein; zum Ausschalten nie. Während das Protokoll pausiert ist, lässt sich die Einstellung in keine Richtung ändern. Ein Kredit in einem illiquiden Kreditasset zahlt weiterhin die volle Gebühr beim Leihen, und kein Rabatt ist je mehr als die Hälfte der Gebühr.
 
+<a id="home-rewards"></a>
+
+### Home: Belohnungen
+
+Belohnungen sind Nutzungsrabatte für Ihr Verleihen und Leihen in diesem Netzwerk, werden pro Belohnungstag gezählt und in VPFI ausgezahlt. Home zeigt genau, was ein jetzt ausgeführter Claim auszahlen würde, weil die App den Claim zuerst als Vorschau ausführt. Kann diese Vorschau nicht laufen, zeigt Home stattdessen eine als solche gekennzeichnete Untergrenze und bietet den Claim erst an, wenn der genaue Betrag ermittelt werden kann. Ein Claim zahlt bis zu 30 Belohnungstage aus; bleibt mehr übrig, bietet Home einen weiteren Claim an, und ein Abbruch zwischendurch ist sicher. Ein Claim wird in Ihren Vault geliefert, sofort nutzbar, oder an Ihre Wallet, wenn der Vault ihn nicht aufnehmen kann; ein Claim eröffnet nie einen Vault. Wartet ein Belohnungstag noch auf seine netzwerkübergreifende Finalisierung oder auf seine Finanzierung in diesem Netzwerk, nennt Home diesen Tag, statt einen Claim anzubieten, der scheitern würde. Belohnungen sind weder Zinsen noch Rendite, und ein Claim stakt oder reinvestiert nie etwas.
+
+<a id="home-rewards-expiry"></a>
+
+### Home: Entfernungstermine für Belohnungen
+
+In einem Netzwerk, in dem nicht beanspruchte Belohnungen entfernt werden können, zeigt Home den frühesten geschätzten Entfernungstermin Ihrer Belohnungen und in den letzten 90 Tagen davor einen letzten Hinweis. Wer vorher beansprucht, behält die Belohnung immer. Die Schätzung liegt beim aktuellen Stand nie nach dem tatsächlichen Termin: Zeit, in der die Belohnung nicht beansprucht werden kann, verschiebt den tatsächlichen Termin nach hinten, eine Änderung des Claim-Fensters im Netzwerk kann ihn aber vorziehen, prüfen Sie also erneut, bevor Sie sich darauf verlassen. Konnte nicht jede Belohnung geprüft werden, sagt Home das, statt zu behaupten, nichts sei fällig. Wo das Netzwerk nichts entfernt, wird kein Termin angezeigt.
+
+<a id="home-rewards-held"></a>
+
+### Home: Zurückgehaltene Belohnungen
+
+Markiert die Sanktionsprüfung Ihre Wallet, wird ihr nichts ausgezahlt, solange die Markierung besteht. Vor der Markierung verdiente Belohnungen werden für sie zurückgehalten, gesperrt, aber nicht verloren, und freigegeben, sobald die Wallet nicht mehr markiert ist; Home bietet dann an, genau diesen Betrag allein zu beanspruchen. Solange eine Markierung bestätigt ist, verfallen verdiente Belohnungen endgültig, und VPFI in Ihrem Vault kann nicht bewegt werden. Kann nicht gelesen werden, ob die Wallet noch markiert ist, wird nichts freigegeben.
+
 <a id="terms-gate"></a>
 
 ### Die Abfrage der Nutzungsbedingungen

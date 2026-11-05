@@ -110,8 +110,15 @@ async function jsonRpc(rpcUrl: string, method: string, params: unknown[]): Promi
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
   });
-  const body = (await res.json()) as { result?: unknown; error?: { message: string } };
-  if (body.error) throw new Error(`${method}: ${body.error.message}`);
+  const body = (await res.json()) as { result?: unknown; error?: { code?: number; message: string; data?: unknown } };
+  if (body.error) {
+    // The node's code and revert data travel with the error, as a real
+    // wallet's provider error carries them (EIP-1474 `code` 3 + `data`).
+    const err = new Error(`${method}: ${body.error.message}`) as Error & { code?: number; data?: unknown };
+    if (typeof body.error.code === 'number') err.code = body.error.code;
+    if (body.error.data !== undefined) err.data = body.error.data;
+    throw err;
+  }
   return body.result;
 }
 
@@ -239,7 +246,9 @@ export async function wireWallet(
       // (the decoders recover the selector from the message string). Walk
       // viem's cause chain for the revert bytes and append them.
       let revertData: string | undefined;
-      if (typeof err.walk === 'function') {
+      const own = (err as { data?: unknown }).data;
+      if (typeof own === 'string' && own.startsWith('0x') && own.length >= 10) revertData = own;
+      else if (typeof err.walk === 'function') {
         const hit = err.walk((x) => {
           const d = (x as { data?: unknown } | null)?.data;
           return typeof d === 'string' && d.startsWith('0x') && d.length >= 10;
@@ -259,14 +268,14 @@ export async function wireWallet(
       ]
         .filter(Boolean)
         .join(' | ');
-      return { error: { code: err.code ?? -32603, message } };
+      return { error: { code: err.code ?? -32603, message, ...(revertData ? { data: revertData } : {}) } };
     }
   });
 
   await ctx.addInitScript(() => {
     const w = window as unknown as {
       ethereum?: { __vaipakamTest?: boolean };
-      __walletRequest: (p: unknown) => Promise<{ result?: unknown; error?: { code: number; message: string } }>;
+      __walletRequest: (p: unknown) => Promise<{ result?: unknown; error?: { code: number; message: string; data?: string } }>;
     };
     if (w.ethereum?.__vaipakamTest) return;
     const listeners: Record<string, ((a: unknown) => void)[]> = {};
@@ -276,8 +285,10 @@ export async function wireWallet(
       request: async (payload: unknown) => {
         const r = await w.__walletRequest(payload);
         if (r.error) {
-          const err = new Error(r.error.message) as Error & { code: number };
+          const err = new Error(r.error.message) as Error & { code: number; data?: string };
           err.code = r.error.code;
+          // A real wallet's provider error carries the revert bytes here.
+          if (r.error.data) err.data = r.error.data;
           throw err;
         }
         // A real wallet announces a switch it accepted; the page's listeners

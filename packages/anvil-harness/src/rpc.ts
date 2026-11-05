@@ -99,8 +99,16 @@ export function anvilControl(url: string): AnvilControl {
       body: JSON.stringify({ jsonrpc: '2.0', id: rpcId++, method, params }),
       signal,
     });
-    const body = (await res.json()) as { result?: T; error?: { message: string } };
-    if (body.error) throw new Error(`${method}: ${body.error.message}`);
+    const body = (await res.json()) as { result?: T; error?: { code?: number; message: string; data?: unknown } };
+    if (body.error) {
+      // The node's code and revert data travel with the error, so a caller
+      // that relays it (the e2e wallet) hands the page what a real
+      // provider error carries (EIP-1474 `code` 3 + `data`).
+      const err = new Error(`${method}: ${body.error.message}`) as Error & { code?: number; data?: unknown };
+      if (typeof body.error.code === 'number') err.code = body.error.code;
+      if (body.error.data !== undefined) err.data = body.error.data;
+      throw err;
+    }
     return body.result as T;
   };
   const rpc = <T = unknown>(method: string, params: unknown[] = []): Promise<T> => call<T>(method, params);

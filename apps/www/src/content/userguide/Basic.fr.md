@@ -1080,6 +1080,24 @@ Sur un réseau de test, Home propose des jetons et des NFT de test pour essayer 
 
 La remise sur les frais est un seul réglage par réseau pour tout votre wallet. Tant qu'elle est désactivée, vos frais n'ont aucune remise, quel que soit le VPFI que vous détenez. Tant qu'elle est activée, les frais payés quand vous empruntez sont réduits, de même que les frais sur les intérêts que vous gagnez comme prêteur, selon votre niveau de remise VPFI au moment où chaque frais est prélevé ; au niveau 0, il n'y en a pas. Sur certains réseaux, la remise du prêteur est payée en VPFI depuis votre vault, et le reçu indique lequel s'applique avant que vous confirmiez. L'activer exige d'avoir accepté les Conditions en vigueur ; la désactiver, jamais. Pendant une pause du protocole, elle ne peut être modifiée dans aucun sens. Un prêt dans un actif prêté illiquide paie toujours les frais complets, et aucune remise ne dépasse jamais la moitié des frais.
 
+<a id="home-rewards"></a>
+
+### Home: Récompenses
+
+Les récompenses sont des remises d'usage sur vos prêts et emprunts sur ce réseau, comptées par jour de récompense et versées en VPFI. Home affiche exactement ce que paierait une réclamation faite maintenant, car l'app exécute d'abord la réclamation en aperçu. Si cet aperçu ne peut pas s'exécuter, Home affiche à la place une borne inférieure, indiquée comme telle, et ne propose la réclamation qu'une fois le montant exact calculable. Une réclamation paie jusqu'à 30 jours de récompense ; s'il en reste, Home propose de réclamer à nouveau, et s'arrêter en cours de route est sans risque. Une réclamation est livrée dans votre coffre, prête à l'emploi, ou dans votre portefeuille quand le coffre ne peut pas la recevoir ; une réclamation n'ouvre jamais de coffre. Quand un jour de récompense attend encore sa finalisation entre réseaux, ou que son financement atteigne ce réseau, Home nomme ce jour au lieu de proposer une réclamation qui échouerait. Les récompenses ne sont ni des intérêts ni un rendement, et réclamer ne met jamais rien en staking ni ne réinvestit rien.
+
+<a id="home-rewards-expiry"></a>
+
+### Home: Dates de retrait des récompenses
+
+Sur un réseau où les récompenses non réclamées peuvent être retirées, Home affiche la date de retrait estimée la plus proche parmi vos récompenses, et un dernier avis dans les 90 derniers jours avant celle-ci. Réclamer avant garde toujours la récompense. L'estimation n'est jamais postérieure à la date réelle en l'état : le temps pendant lequel la récompense ne peut pas être réclamée repousse la date réelle, mais une modification de la fenêtre de réclamation du réseau peut l'avancer, vérifiez donc à nouveau avant de vous y fier. Si toutes les récompenses n'ont pas pu être vérifiées, Home le dit au lieu d'affirmer que rien n'est dû. Là où le réseau ne retire rien, aucune date n'est affichée.
+
+<a id="home-rewards-held"></a>
+
+### Home: Récompenses retenues
+
+Si le filtrage des sanctions signale votre portefeuille, rien ne lui est versé tant que le signalement demeure. Les récompenses gagnées avant le signalement sont retenues pour lui, bloquées mais pas perdues, et libérées dès que le portefeuille n'est plus signalé ; Home propose alors de réclamer exactement ce solde seul. Tant qu'un signalement est confirmé, les récompenses gagnées sont perdues définitivement et le VPFI de votre coffre ne peut pas être déplacé. S'il est impossible de lire si le portefeuille est toujours signalé, rien n'est libéré.
+
 <a id="terms-gate"></a>
 
 ### La demande d'acceptation des Conditions
