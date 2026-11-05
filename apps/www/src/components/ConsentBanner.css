@@ -72,7 +72,7 @@
   width: 36px;
   height: 36px;
   border-radius: 10px;
-  background: var(--brand-muted, rgba(99, 102, 241, 0.12));
+  background: color-mix(in srgb, var(--brand) 12%, transparent);
   color: var(--brand);
   display: inline-flex;
   align-items: center;

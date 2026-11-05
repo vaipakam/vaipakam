@@ -10,7 +10,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 
 const SHEETS = [
   readFileSync(new URL('../../../packages/lib/src/brand/tokens.css', import.meta.url), 'utf8'),
@@ -84,3 +84,34 @@ for (const [name, selectors] of Object.entries(THEMES)) {
     }
   });
 }
+
+/** Every stylesheet the website ships, read from disk so a new component
+ *  is covered without being listed. */
+function componentSheets() {
+  const root = new URL('../src/', import.meta.url);
+  const out = [];
+  const walk = (dir) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const path = new URL(entry.name + (entry.isDirectory() ? '/' : ''), dir);
+      if (entry.isDirectory()) walk(path);
+      else if (entry.name.endsWith('.css')) out.push([path.pathname.slice(root.pathname.length), readFileSync(path, 'utf8')]);
+    }
+  };
+  walk(root);
+  return out;
+}
+
+/** A `var(--brand…, <literal>)` is a second colour the palette never
+ *  defined, shown wherever the token is missing (the consent banner's icon
+ *  shipped the old indigo that way after the palette moved), and the old
+ *  indigo literals are the brand colour this palette replaced. Neither
+ *  belongs in a stylesheet: a surface takes its colour from the shared
+ *  tokens, or mixes one from --brand. */
+test('no stylesheet carries a brand-token fallback or the retired indigo', () => {
+  const offenders = [];
+  for (const [file, css] of componentSheets()) {
+    for (const m of css.matchAll(/var\(\s*--brand[\w-]*\s*,[^)]*\)/g)) offenders.push(`${file}: ${m[0]}`);
+    for (const m of css.matchAll(/rgba?\(\s*99\s*,\s*102\s*,\s*241\b|#(?:6366f1|4f46e5|4338ca|3730a3|312e81|818cf8|a5b4fc|c7d2fe|e0e7ff|eef2ff)\b/gi)) offenders.push(`${file}: ${m[0]}`);
+  }
+  assert.deepEqual(offenders, []);
+});
