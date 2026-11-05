@@ -3873,7 +3873,7 @@
       "loading": "Comprobando la extensión automática de este préstamo…",
       "unavailable": "No pudimos leer la extensión automática de este préstamo ahora mismo. Inténtalo de nuevo en breve.",
       "paused": "El protocolo está en pausa: no puede ejecutarse ninguna extensión ni fijarse límites hasta que se reanude.",
-      "switchOff": "La extensión automática del protocolo está desactivada. No puede ejecutarse ninguna extensión ni financiarse una reserva. Aún puedes fijar o borrar tus límites y retirar una reserva.",
+      "switchOff": "La extensión automática del protocolo está desactivada, así que ningún keeper extenderá este préstamo. El titular de la posición del prestatario aún puede extenderlo directamente en el contrato dentro de los límites de ambas partes (esta app aún no ofrece ese paso) y puede añadir o retirar una reserva. Aún puedes fijar o borrar tus límites.",
       "scheduled": "Este préstamo paga intereses según un calendario, y un préstamo con calendario no puede extenderse en el mismo préstamo.",
       "scheduleUnknown": "Comprobando si este préstamo paga intereses según un calendario…",
       "windowBefore": "Las extensiones pueden ejecutarse desde el {{opens}} hasta el {{closes}}.",

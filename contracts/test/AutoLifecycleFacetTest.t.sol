@@ -195,12 +195,6 @@ contract AutoLifecycleFacetTest is SetupTest {
         );
     }
 
-    function test_AutoExtendKillSwitch_BlocksExecutor() public {
-        AdminFacet(address(diamond)).setAutoExtendEnabled(false);
-        vm.expectRevert(AutoLifecycleFacet.AutoExtendDisabled.selector);
-        _f().extendLoanInPlace(1, 500, 30);
-    }
-
     function test_ExtendLoanInPlace_ErrorSelectorsExist() public {
         // Compile-time guardrail — these error selectors are part of
         // the public ABI surface that the dapp + indexer must

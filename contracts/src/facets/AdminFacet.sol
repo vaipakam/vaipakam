@@ -692,11 +692,14 @@ contract AdminFacet is DiamondAccessControl, IVaipakamErrors {
         emit AutoRefinanceEnabledSet(enabled);
     }
 
-    /// @notice Toggle the whole `AutoLifecycleFacet.extendLoanInPlace`
-    ///         entry point. When `false`, both keeper-driven AND
-    ///         borrower-direct extension calls revert — the executor
-    ///         IS the only entry point, so the kill switch covers
-    ///         both invocation modes.
+    /// @notice Toggle the AUTOMATED in-place extension. When `false`, a
+    ///         keeper acting for the borrower in
+    ///         `AutoLifecycleFacet.extendLoanInPlace` reverts
+    ///         `AutoExtendDisabled`; the borrower-position holder extending
+    ///         directly (within both sides' caps) and funding the extension
+    ///         reserve are never blocked by it, like the auto-refinance
+    ///         switch (#3175, owner decision 2026-11-05). The global pause
+    ///         stops a defect in the extension itself.
     function setAutoExtendEnabled(bool enabled)
         external
         onlyRole(LibAccessControl.ADMIN_ROLE)

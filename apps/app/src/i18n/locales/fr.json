@@ -3873,7 +3873,7 @@
       "loading": "Vérification de la prolongation automatique de ce prêt…",
       "unavailable": "Nous n’avons pas pu lire la prolongation automatique de ce prêt pour le moment. Réessayez dans un instant.",
       "paused": "Le protocole est en pause : aucune prolongation ne peut s’exécuter et aucune limite ne peut être fixée avant sa reprise.",
-      "switchOff": "La prolongation automatique du protocole est désactivée. Aucune prolongation ne peut s’exécuter et aucune réserve ne peut être alimentée. Vous pouvez toujours fixer ou effacer vos limites, et retirer une réserve.",
+      "switchOff": "La prolongation automatique du protocole est désactivée : aucun keeper ne prolongera ce prêt. Le détenteur de la position emprunteur peut toujours le prolonger directement sur le contrat dans les limites des deux parties (cette application ne propose pas encore cette étape), et ajouter ou retirer une réserve. Vous pouvez toujours fixer ou effacer vos limites.",
       "scheduled": "Ce prêt paie ses intérêts selon un échéancier, et un prêt à échéancier ne peut pas être prolongé sur place.",
       "scheduleUnknown": "Vérification si ce prêt paie ses intérêts selon un échéancier…",
       "windowBefore": "Les prolongations peuvent s’exécuter du {{opens}} au {{closes}}.",
