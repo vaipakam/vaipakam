@@ -13,11 +13,14 @@ import {
   compareStages,
   exposure,
   groupByOffer,
-  loanStage,
+  loanObligations,
+  mostUrgent,
   positionKey,
   type Deadlines,
   type LiveLoanRow,
   type LoanEntry,
+  type InterestStage,
+  type LoanObligations,
   type LoanStage,
   type OfferGroup,
 } from './model';
@@ -129,8 +132,8 @@ function LoanList({ data, meta, unit }: { data: LiveLoans; meta: TokenMetaMap | 
   const { text } = useCopy();
   const nowSec = Math.floor(useNow() / 1000);
   const deadlinesOf = (r: LiveLoanRow) => data.deadlines[positionKey(r)] ?? null;
-  const stageOf = (r: LiveLoanRow) => loanStage(r, deadlinesOf(r), nowSec);
-  const ordered = [...data.rows].sort((a, b) => compareStages(stageOf(a), stageOf(b)));
+  const obligationsOf = (r: LiveLoanRow) => loanObligations(r, deadlinesOf(r), nowSec);
+  const ordered = [...data.rows].sort((a, b) => compareStages(mostUrgent(obligationsOf(a)), mostUrgent(obligationsOf(b))));
   const entries = groupByOffer(ordered);
   const exp = exposure(data.rows, (r) => data.values[positionKey(r)] ?? null, data.complete);
   return (
@@ -139,7 +142,7 @@ function LoanList({ data, meta, unit }: { data: LiveLoans; meta: TokenMetaMap | 
       {!data.complete && <p className="tier-a">{text('home.incomplete')}</p>}
       <ul className="rows">
         {entries.map((e) => (
-          <EntryCard key={e.kind === 'single' ? positionKey(e.row) : `g${e.group.offerId}:${e.group.borrowerSide}`} entry={e} meta={meta} stageOf={stageOf} deadlinesOf={deadlinesOf} />
+          <EntryCard key={e.kind === 'single' ? positionKey(e.row) : `g${e.group.offerId}:${e.group.borrowerSide}`} entry={e} meta={meta} obligationsOf={obligationsOf} deadlinesOf={deadlinesOf} />
         ))}
       </ul>
     </>
@@ -187,27 +190,27 @@ function ExposureLine({ e, unit }: { e: ReturnType<typeof exposure>; unit: strin
 function EntryCard({
   entry,
   meta,
-  stageOf,
+  obligationsOf,
   deadlinesOf,
 }: {
   entry: LoanEntry;
   meta: TokenMetaMap | null;
-  stageOf: (r: LiveLoanRow) => LoanStage;
+  obligationsOf: (r: LiveLoanRow) => LoanObligations;
   deadlinesOf: (r: LiveLoanRow) => Deadlines | null;
 }) {
-  if (entry.kind === 'single') return <LoanCard row={entry.row} meta={meta} stage={stageOf(entry.row)} deadlines={deadlinesOf(entry.row)} />;
-  return <GroupCard group={entry.group} meta={meta} stageOf={stageOf} deadlinesOf={deadlinesOf} />;
+  if (entry.kind === 'single') return <LoanCard row={entry.row} meta={meta} obligations={obligationsOf(entry.row)} deadlines={deadlinesOf(entry.row)} />;
+  return <GroupCard group={entry.group} meta={meta} obligationsOf={obligationsOf} deadlinesOf={deadlinesOf} />;
 }
 
 function GroupCard({
   group,
   meta,
-  stageOf,
+  obligationsOf,
   deadlinesOf,
 }: {
   group: OfferGroup;
   meta: TokenMetaMap | null;
-  stageOf: (r: LiveLoanRow) => LoanStage;
+  obligationsOf: (r: LiveLoanRow) => LoanObligations;
   deadlinesOf: (r: LiveLoanRow) => Deadlines | null;
 }) {
   const { text, format } = useCopy();
@@ -220,14 +223,14 @@ function GroupCard({
       {group.unpricedChildren > 0 && <p className="tier-b">{format('home.groupUnpriced', { count: String(group.unpricedChildren) })}</p>}
       <ul className="rows nested">
         {group.rows.map((r) => (
-          <LoanCard key={positionKey(r)} row={r} meta={meta} stage={stageOf(r)} deadlines={deadlinesOf(r)} />
+          <LoanCard key={positionKey(r)} row={r} meta={meta} obligations={obligationsOf(r)} deadlines={deadlinesOf(r)} />
         ))}
       </ul>
     </li>
   );
 }
 
-function LoanCard({ row, meta, stage, deadlines }: { row: LiveLoanRow; meta: TokenMetaMap | null; stage: LoanStage; deadlines: Deadlines | null }) {
+function LoanCard({ row, meta, obligations, deadlines }: { row: LiveLoanRow; meta: TokenMetaMap | null; obligations: LoanObligations; deadlines: Deadlines | null }) {
   const { text, format } = useCopy();
   const l = row.loan;
   const id = l.id.toString();
@@ -235,7 +238,7 @@ function LoanCard({ row, meta, stage, deadlines }: { row: LiveLoanRow; meta: Tok
   const legText = (asset: Hex, assetType: number, amount: bigint, tokenId: bigint) =>
     assetType === ASSET_ERC20 ? tokenAmount(amount, asset, meta, format) : format('asset.nft', { id: tokenId.toString(), asset: assetName(asset, meta) });
   return (
-    <li className="card loan" data-loan-id={id} data-stage={stage.kind}>
+    <li className="card loan" data-loan-id={id} data-stage={mostUrgent(obligations).kind}>
       <h3>{format('home.loanHead', { id, side })}</h3>
       <p className="tier-b">
         {l.assetType === ASSET_ERC20
@@ -246,7 +249,9 @@ function LoanCard({ row, meta, stage, deadlines }: { row: LiveLoanRow; meta: Tok
       {l.assetType === ASSET_ERC20 && (
         <p className="tier-b">{format('home.loanCollateral', { amount: legText(l.collateralAsset, l.collateralAssetType, l.collateralAmount, l.collateralTokenId) })}</p>
       )}
-      <StageLine stage={stage} borrowerSide={row.borrowerSide} rental={l.assetType !== ASSET_ERC20} amountOf={(v) => tokenAmount(v, l.principalAsset, meta, format)} />
+      {/* Both obligations, each with its own grace: neither hides the other. */}
+      <StageLine stage={obligations.stage} borrowerSide={row.borrowerSide} rental={l.assetType !== ASSET_ERC20} />
+      {obligations.interest && <InterestLine stage={obligations.interest} borrowerSide={row.borrowerSide} amountOf={(v) => tokenAmount(v, l.principalAsset, meta, format)} />}
       {deadlines?.periodic && !deadlines.periodic.enforced && <p className="tier-b">{text('home.interestCheckpointsOff')}</p>}
       {deadlines && deadlines.pauseCredit > 0n && <p className="tier-b">{format('home.loanPauseCredit', { credit: formatSpan(Number(deadlines.pauseCredit)) })}</p>}
       <p className="tier-b">{row.healthFactor > 0n ? format('home.loanHealth', { hf: formatScaled(row.healthFactor) }) : text('home.loanHealthNone')}</p>
@@ -257,21 +262,10 @@ function LoanCard({ row, meta, stage, deadlines }: { row: LiveLoanRow; meta: Tok
   );
 }
 
-/** The loan's next date and, for the side that bears it, the consequence of
- *  missing it. An NFT rental has no collateral, so its renter is told what a
- *  default does to the prepaid rent instead. A periodic-interest checkpoint
- *  is named with the interest still owed, in the principal asset. */
-function StageLine({
-  stage,
-  borrowerSide,
-  rental,
-  amountOf,
-}: {
-  stage: LoanStage;
-  borrowerSide: boolean;
-  rental: boolean;
-  amountOf: (v: bigint) => string;
-}) {
+/** The loan's final due date and, for the side that bears it, the
+ *  consequence of missing it. An NFT rental has no collateral, so its renter
+ *  is told what a default does to the prepaid rent instead. */
+function StageLine({ stage, borrowerSide, rental }: { stage: LoanStage; borrowerSide: boolean; rental: boolean }) {
   const { text, format } = useCopy();
   const nowSec = Math.floor(useNow() / 1000);
   switch (stage.kind) {
@@ -280,26 +274,7 @@ function StageLine({
     case 'deadline-unknown':
       return <p className="tier-a stage">{text('home.loanDeadlineUnknown')}</p>;
     case 'running':
-      return (
-        <>
-          <p className="tier-b stage">{format(rental ? 'home.rentalDue' : 'home.loanDue', { when: formatUtc(stage.dueAt) })}</p>
-          {stage.interestDueAt !== null && <p className="tier-b">{format('home.interestNext', { when: formatUtc(stage.interestDueAt) })}</p>}
-        </>
-      );
-    case 'interest-soon': {
-      const vars = { amount: amountOf(stage.shortfall), when: formatUtc(stage.dueAt), left: formatSpan(stage.dueAt - nowSec) };
-      return borrowerSide ? <p className="tier-a stage">{format('home.interestSoonBorrower', vars)}</p> : <p className="tier-b stage">{format('home.interestSoonLender', vars)}</p>;
-    }
-    case 'interest-in-grace': {
-      const vars = { amount: amountOf(stage.shortfall), due: formatUtc(stage.dueAt), graceEnd: formatUtc(stage.graceEndsAt) };
-      return borrowerSide ? <p className="tier-a stage">{format('home.interestInGraceBorrower', vars)}</p> : <p className="tier-b stage">{format('home.interestInGraceLender', vars)}</p>;
-    }
-    case 'interest-overdue':
-      return (
-        <p className="tier-a stage">
-          {format(borrowerSide ? 'home.interestOverdueBorrower' : 'home.interestOverdueLender', { amount: amountOf(stage.shortfall), when: formatUtc(stage.graceEndedAt) })}
-        </p>
-      );
+      return <p className="tier-b stage">{format(rental ? 'home.rentalDue' : 'home.loanDue', { when: formatUtc(stage.dueAt) })}</p>;
     case 'due-soon': {
       const vars = { when: formatUtc(stage.dueAt), left: formatSpan(stage.dueAt - nowSec) };
       if (borrowerSide) return <p className="tier-a stage">{format(rental ? 'home.loanDueSoonRenter' : 'home.loanDueSoonBorrower', vars)}</p>;
@@ -314,6 +289,32 @@ function StageLine({
       const key = borrowerSide ? (rental ? 'home.loanGraceOverRenter' : 'home.loanGraceOverBorrower') : 'home.loanGraceOverLender';
       return <p className="tier-a stage">{format(key, { when: formatUtc(stage.graceEndedAt) })}</p>;
     }
+  }
+}
+
+/** An owed periodic-interest checkpoint, named with the interest still owed
+ *  in the principal asset and, for the borrower, the sale that follows its
+ *  grace. Shown beside the due date, whichever comes first. */
+function InterestLine({ stage, borrowerSide, amountOf }: { stage: InterestStage; borrowerSide: boolean; amountOf: (v: bigint) => string }) {
+  const { format } = useCopy();
+  const nowSec = Math.floor(useNow() / 1000);
+  switch (stage.kind) {
+    case 'interest-later':
+      return <p className="tier-b interest">{format('home.interestNext', { when: formatUtc(stage.dueAt) })}</p>;
+    case 'interest-soon': {
+      const vars = { amount: amountOf(stage.shortfall), when: formatUtc(stage.dueAt), left: formatSpan(stage.dueAt - nowSec) };
+      return borrowerSide ? <p className="tier-a interest">{format('home.interestSoonBorrower', vars)}</p> : <p className="tier-b interest">{format('home.interestSoonLender', vars)}</p>;
+    }
+    case 'interest-in-grace': {
+      const vars = { amount: amountOf(stage.shortfall), due: formatUtc(stage.dueAt), graceEnd: formatUtc(stage.graceEndsAt) };
+      return borrowerSide ? <p className="tier-a interest">{format('home.interestInGraceBorrower', vars)}</p> : <p className="tier-b interest">{format('home.interestInGraceLender', vars)}</p>;
+    }
+    case 'interest-overdue':
+      return (
+        <p className="tier-a interest">
+          {format(borrowerSide ? 'home.interestOverdueBorrower' : 'home.interestOverdueLender', { amount: amountOf(stage.shortfall), when: formatUtc(stage.graceEndedAt) })}
+        </p>
+      );
   }
 }
 

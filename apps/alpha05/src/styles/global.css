@@ -650,7 +650,8 @@ h1 {
   font-weight: 600;
   color: var(--text-strong);
 }
-.stage.tier-a {
+.stage.tier-a,
+.interest.tier-a {
   color: var(--text-strong);
   border-left: 3px solid var(--warn);
   padding-left: 8px;

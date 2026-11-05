@@ -86,51 +86,79 @@ export interface PeriodicCheckpoint {
   enforced: boolean;
 }
 
+/** Where the loan stands against its final due date. */
 export type LoanStage =
   | { kind: 'fallback' }
   | { kind: 'deadline-unknown' }
-  | { kind: 'running'; dueAt: number; interestDueAt: number | null }
+  | { kind: 'running'; dueAt: number }
   | { kind: 'due-soon'; dueAt: number }
   | { kind: 'in-grace'; dueAt: number; graceEndsAt: number }
-  | { kind: 'grace-over'; graceEndedAt: number }
+  | { kind: 'grace-over'; graceEndedAt: number };
+
+/** Where the loan stands against an owed periodic-interest checkpoint. */
+export type InterestStage =
+  | { kind: 'interest-later'; dueAt: number; shortfall: bigint }
   | { kind: 'interest-soon'; dueAt: number; shortfall: bigint }
   | { kind: 'interest-in-grace'; dueAt: number; graceEndsAt: number; shortfall: bigint }
   | { kind: 'interest-overdue'; graceEndedAt: number; shortfall: bigint };
 
+export type AnyStage = LoanStage | InterestStage;
+
 /**
- * The loan's next obligation: the more urgent of its final due date and,
- * when it carries an enforced periodic-interest cadence with interest still
- * owed, the current checkpoint. A checkpoint is its own deadline, even one
- * on the due date itself: once its grace ends (often before the loan's),
- * collateral can be sold to pay the shortfall while the loan stays open.
+ * Every obligation a live loan answers to. A loan with an enforced
+ * periodic-interest cadence and interest still owed answers to TWO dates,
+ * the final due date and the current checkpoint, each with its own grace;
+ * either can let collateral be sold first, and their grace periods differ.
+ * Both are kept and both are shown: neither is chosen over the other.
  */
+export interface LoanObligations {
+  stage: LoanStage;
+  interest: InterestStage | null;
+}
+
+/** The loan's stage against its final due date alone. */
 export function loanStage(row: LiveLoanRow, deadlines: Deadlines | null, nowSec: number): LoanStage {
   if (row.loan.status === LOAN_STATUS_FALLBACK_PENDING) return { kind: 'fallback' };
   if (!deadlines) return { kind: 'deadline-unknown' };
   const dueAt = Number(deadlines.maturity);
   const graceEnd = Number(deadlines.graceEnd);
-  const p = deadlines.periodic;
-  const checkpoint = p && p.enforced && p.shortfall > 0n ? p : null;
-  let maturityStage: LoanStage;
-  if (nowSec >= graceEnd) maturityStage = { kind: 'grace-over', graceEndedAt: graceEnd };
-  else if (nowSec >= dueAt) maturityStage = { kind: 'in-grace', dueAt, graceEndsAt: graceEnd };
-  else if (dueAt - nowSec <= DUE_SOON_SECONDS) maturityStage = { kind: 'due-soon', dueAt };
-  else maturityStage = { kind: 'running', dueAt, interestDueAt: checkpoint ? Number(checkpoint.periodEndAt) : null };
-  if (!checkpoint) return maturityStage;
-  const at = Number(checkpoint.periodEndAt);
-  const until = Number(checkpoint.graceEndsAt);
-  const shortfall = checkpoint.shortfall;
-  let interestStage: LoanStage | null = null;
-  if (nowSec >= until) interestStage = { kind: 'interest-overdue', graceEndedAt: until, shortfall };
-  else if (nowSec >= at) interestStage = { kind: 'interest-in-grace', dueAt: at, graceEndsAt: until, shortfall };
-  else if (at - nowSec <= DUE_SOON_SECONDS) interestStage = { kind: 'interest-soon', dueAt: at, shortfall };
-  return interestStage && compareStages(interestStage, maturityStage) < 0 ? interestStage : maturityStage;
+  if (nowSec >= graceEnd) return { kind: 'grace-over', graceEndedAt: graceEnd };
+  if (nowSec >= dueAt) return { kind: 'in-grace', dueAt, graceEndsAt: graceEnd };
+  if (dueAt - nowSec <= DUE_SOON_SECONDS) return { kind: 'due-soon', dueAt };
+  return { kind: 'running', dueAt };
+}
+
+/** The current checkpoint's stage, when it can lead to a sale: periodic
+ *  settlement switched on and interest still owed, whatever the checkpoint's
+ *  date (one on the due date itself included). */
+export function interestStage(deadlines: Deadlines | null, nowSec: number): InterestStage | null {
+  const p = deadlines?.periodic;
+  if (!p || !p.enforced || p.shortfall === 0n) return null;
+  const at = Number(p.periodEndAt);
+  const until = Number(p.graceEndsAt);
+  const shortfall = p.shortfall;
+  if (nowSec >= until) return { kind: 'interest-overdue', graceEndedAt: until, shortfall };
+  if (nowSec >= at) return { kind: 'interest-in-grace', dueAt: at, graceEndsAt: until, shortfall };
+  if (at - nowSec <= DUE_SOON_SECONDS) return { kind: 'interest-soon', dueAt: at, shortfall };
+  return { kind: 'interest-later', dueAt: at, shortfall };
+}
+
+export function loanObligations(row: LiveLoanRow, deadlines: Deadlines | null, nowSec: number): LoanObligations {
+  const stage = loanStage(row, deadlines, nowSec);
+  // A fallback loan is no longer Active, so no periodic settlement applies.
+  return { stage, interest: stage.kind === 'fallback' ? null : interestStage(deadlines, nowSec) };
+}
+
+/** The obligation that orders the loan in the list: the more urgent of the
+ *  two. Ordering only; the card shows both. */
+export function mostUrgent(o: LoanObligations): AnyStage {
+  return o.interest && compareStages(o.interest, o.stage) < 0 ? o.interest : o.stage;
 }
 
 /** Which stage needs the reader first: an ended grace period, then one
  *  running, then a fallback, then a due date close, then the rest. An unknown
  *  deadline sorts with the urgent ones, because it may be. */
-const STAGE_RANK: Record<LoanStage['kind'], number> = {
+const STAGE_RANK: Record<AnyStage['kind'], number> = {
   'grace-over': 0,
   'interest-overdue': 0,
   'in-grace': 1,
@@ -140,13 +168,14 @@ const STAGE_RANK: Record<LoanStage['kind'], number> = {
   'due-soon': 4,
   'interest-soon': 4,
   running: 5,
+  'interest-later': 5,
 };
 
-function stageTime(s: LoanStage): number {
+function stageTime(s: AnyStage): number {
   switch (s.kind) {
     case 'running':
-      return s.interestDueAt ?? s.dueAt;
     case 'due-soon':
+    case 'interest-later':
     case 'interest-soon':
       return s.dueAt;
     case 'in-grace':
@@ -160,7 +189,7 @@ function stageTime(s: LoanStage): number {
   }
 }
 
-export function compareStages(a: LoanStage, b: LoanStage): number {
+export function compareStages(a: AnyStage, b: AnyStage): number {
   return STAGE_RANK[a.kind] - STAGE_RANK[b.kind] || stageTime(a) - stageTime(b);
 }
 
