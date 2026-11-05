@@ -69,8 +69,9 @@ export interface Reverted {
 const PREVIEW_ERRORS = [...REWARD_CLAIM_ABI, ...parseAbi(['error SanctionedAddress(address who)', 'error EnforcedPause()'])] as Abi;
 
 /**
- * The decoded revert, when `e` is a contract revert at all; null when the
- * call never reached the contract (a source outage). The revert bytes are
+ * The decoded revert, when `e` is a contract revert whose reason this source
+ * reported; null when the call never reached the contract (a source outage)
+ * or the source dropped the reason, so the own rail asks the next source. The revert bytes are
  * read wherever the provider put them (a structured field, or quoted in the
  * wallet's message text, as some wallets do), so a wallet that drops the
  * structured field still yields the figure.
@@ -93,7 +94,11 @@ export function revertOf(e: unknown): Reverted | null {
   if (!(e instanceof BaseError)) return null;
   const r = e.walk((x) => x instanceof ContractFunctionRevertedError) as ContractFunctionRevertedError | null;
   if (!r) return null;
-  return { errorName: r.data?.errorName ?? r.signature ?? 'Unrecognised', args: (r.data?.args ?? []) as readonly unknown[] };
+  // A revert this source reported without its reason (some wallets drop the
+  // revert bytes) is not an answer: null, so the read moves to the next
+  // source instead of showing an unidentified refusal.
+  const name = r.data?.errorName ?? r.signature;
+  return name ? { errorName: name, args: (r.data?.args ?? []) as readonly unknown[] } : null;
 }
 
 /** Every ABI-shaped hex run in the error's messages along its causes,
