@@ -19,7 +19,9 @@ export const BPS = 10_000n;
  * protocol's published rule: principal × rate × term ÷ (365 days × 10,000),
  * counted in seconds and rounded down. A loan repaid on its due date owes
  * exactly this under either interest mode (pro-rata and full-term agree at
- * the full term); paused time moves the date, not the figure.
+ * the full term). This is the figure if the protocol never pauses: a pause
+ * moves the due date later by its length and interest keeps accruing
+ * through it, so the review labels the figure and states the pause rule.
  */
 export function interestAtDue(principal: bigint, rateBps: bigint, durationDays: bigint): bigint {
   return (principal * rateBps * durationDays) / (DAYS_PER_YEAR * BPS);

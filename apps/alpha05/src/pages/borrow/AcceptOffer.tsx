@@ -70,6 +70,11 @@ export function AcceptOffer({ offerId, chain, own, meta, terms, onClose }: Accep
   const [loanId, setLoanId] = useStoredValue<bigint>(`${ACCEPT_KEY}:loan`);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [step, setStep] = useState<string | null>(null);
+  /** The approval this flow made and has not yet seen used or put back: a
+   *  submitted acceptance that reverts leaves it standing, so the receipt's
+   *  measurement puts it back. A ref, because the measurement runs from the
+   *  closure the tracker froze at submission. */
+  const approvalLeft = useRef<{ token: Hex; prior: bigint; amount: bigint } | null>(null);
 
   const amt = (asset: Hex, v: bigint) => tokenAmount(v, asset, meta, format);
 
@@ -93,6 +98,29 @@ export function AcceptOffer({ offerId, chain, own, meta, terms, onClose }: Accep
         );
       const collateral = r.offer.collateralAsset;
       const lock = r.preview.collateralAmount;
+      approvalLeft.current = null;
+
+      // The allowance is read again now: the value a stop puts back is the
+      // one the wallet holds right before this flow's approval, never the
+      // review's, and a change that alters the steps stops before any prompt.
+      const prior = (
+        await own.read((c) =>
+          c.readContract({
+            address: collateral,
+            abi: erc20Abi,
+            functionName: 'allowance',
+            args: [account, diamond],
+          }),
+        )
+      ).value;
+      const approved = prior < lock;
+      if (approved !== needsApproval(r))
+        throw new StatedRefusal({
+          code: 'AcceptChanged',
+          reason: text('accept.allowanceMoved'),
+          reopensAt: null,
+          remedy: null,
+        });
 
       // 1. The signed terms, built from the offer as stored. No chain effect.
       const block = await own.read((c) => c.getBlock({ blockTag: 'latest' }));
@@ -121,8 +149,6 @@ export function AcceptOffer({ offerId, chain, own, meta, terms, onClose }: Accep
 
       // 2. The approval, for exactly what is locked, when the wallet's
       //    current allowance does not cover it.
-      const prior = r.funds.allowance;
-      const approved = needsApproval(r);
       if (approved) {
         say(format('accept.stepApprove', { amount: amt(collateral, lock) }));
         const hash = await writeContract(config, {
@@ -144,6 +170,7 @@ export function AcceptOffer({ offerId, chain, own, meta, terms, onClose }: Accep
             reopensAt: null,
             remedy: null,
           });
+        approvalLeft.current = { token: collateral, prior, amount: lock };
       }
 
       // Anything that stops the acceptance after the approval puts it back.
@@ -155,10 +182,11 @@ export function AcceptOffer({ offerId, chain, own, meta, terms, onClose }: Accep
             reopensAt: null,
             remedy: null,
           });
+        approvalLeft.current = null;
         const after = await putBack(collateral, prior, lock);
         throw new StatedRefusal({
           code: 'AcceptStopped',
-          reason: `${reason} ${after}`,
+          reason: `${reason} ${after.sentence}`,
           reopensAt: null,
           remedy: null,
         });
@@ -206,6 +234,15 @@ export function AcceptOffer({ offerId, chain, own, meta, terms, onClose }: Accep
       const r = review;
       const f = acceptFigures(r.preview, r.offer.durationDays, r.matcherBps);
       const legs: LegOutcome[] = [];
+      // A submitted acceptance that reverted (someone took the offer first)
+      // used none of the approval this flow made: put it back, and say so.
+      const left = approvalLeft.current;
+      approvalLeft.current = null;
+      if (receipt.status === 'reverted' && left) {
+        const after = await putBack(left.token, left.prior, left.amount);
+        const label = format('accept.legApprovalBack', { amount: amt(left.token, left.prior) });
+        legs.push(after.ok ? { status: 'done', label } : { status: 'not-done', label, reason: after.sentence });
+      }
       const opened = openedLoan(receipt.logs, diamond, offerId, account);
       if (opened) {
         setLoanId(opened.loanId);
@@ -283,7 +320,7 @@ export function AcceptOffer({ offerId, chain, own, meta, terms, onClose }: Accep
 
   /** Puts the allowance back to `prior` (best effort, and only if nothing
    *  else changed it since the approval), and says what happened. */
-  async function putBack(token: Hex, prior: bigint, approvedAmount: bigint): Promise<string> {
+  async function putBack(token: Hex, prior: bigint, approvedAmount: bigint): Promise<{ ok: boolean; sentence: string }> {
     const now = await own
       .read((c) =>
         c.readContract({
@@ -298,10 +335,13 @@ export function AcceptOffer({ offerId, chain, own, meta, terms, onClose }: Accep
         () => null,
       );
     if (now !== approvedAmount)
-      return format('accept.notRestored', {
-        why: text('accept.restoreChanged'),
-        amount: amt(token, now ?? approvedAmount),
-      });
+      return {
+        ok: false,
+        sentence: format('accept.notRestored', {
+          why: text('accept.restoreChanged'),
+          amount: amt(token, now ?? approvedAmount),
+        }),
+      };
     try {
       setStep(text('accept.stepRestore'));
       const hash = await writeContract(config, {
@@ -317,12 +357,15 @@ export function AcceptOffer({ offerId, chain, own, meta, terms, onClose }: Accep
         chainId: chain.chainId,
       });
       if (mined.status !== 'success') throw new Error('the approval reset reverted');
-      return format('accept.restored', { amount: amt(token, prior) });
+      return { ok: true, sentence: format('accept.restored', { amount: amt(token, prior) }) };
     } catch (e) {
-      return format('accept.notRestored', {
-        why: refusalFromError(e).reason,
-        amount: amt(token, approvedAmount),
-      });
+      return {
+        ok: false,
+        sentence: format('accept.notRestored', {
+          why: refusalFromError(e).reason,
+          amount: amt(token, approvedAmount),
+        }),
+      };
     }
   }
 

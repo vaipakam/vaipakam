@@ -36,6 +36,7 @@ import { formatBps, formatSpan, shortAddress } from '../../shared/ui/format';
 type Hex = `0x${string}`;
 
 export const ZERO: Hex = '0x0000000000000000000000000000000000000000';
+const ZERO_HASH: Hex = '0x0000000000000000000000000000000000000000000000000000000000000000';
 
 export interface AcceptReview {
   /** The wallet and network the review was read under (RB-REVIEW). */
@@ -230,7 +231,11 @@ export function acceptReceipt(r: AcceptReview, meta: TokenMetaMap | null, copy: 
   });
   const cadence = cadenceText(o.periodicInterestCadence, copy);
   const discounted = f.fee < listFee(f.principal, r.lifBps);
-  const illiquid = r.lendingClass === 'illiquid' || r.collateralClass === 'illiquid';
+  const textRow = (label: CopyKey, value: string, binding: boolean) => ({
+    label: text(label),
+    value: { kind: 'text' as const, text: value },
+    binding,
+  });
 
   const rows: Receipt['rows'] = [
     {
@@ -328,6 +333,21 @@ export function acceptReceipt(r: AcceptReview, meta: TokenMetaMap | null, copy: 
       },
       binding: true,
     },
+    // The lifecycle terms the signature binds, each stated even when it is
+    // the default (the acceptance review states every term it signs).
+    textRow('accept.rowPartial', text(o.allowsPartialRepay ? 'accept.partialYes' : 'accept.partialNo'), true),
+    textRow('accept.rowPrepayListing', text(o.allowsPrepayListing ? 'accept.prepayListingYes' : 'accept.prepayListingNo'), true),
+    textRow(
+      'accept.rowParallelSale',
+      text(!o.allowsParallelSale ? 'accept.parallelNo' : o.parallelSaleOrderHash === ZERO_HASH ? 'accept.parallelYes' : 'accept.parallelLive'),
+      true,
+    ),
+    textRow(
+      'accept.rowRefinance',
+      o.refinanceTargetLoanId === 0n ? text('accept.refinanceNone') : format('accept.refinanceLoan', { id: o.refinanceTargetLoanId.toString() }),
+      true,
+    ),
+    textRow('accept.rowLinked', r.linkedLoanId === 0n ? text('accept.linkedNone') : format('accept.linkedLoan', { id: r.linkedLoanId.toString() }), true),
     {
       label: text('accept.rowVault'),
       value: {
@@ -357,10 +377,15 @@ export function acceptReceipt(r: AcceptReview, meta: TokenMetaMap | null, copy: 
 
   const consequences = [
     text('accept.loseDefault'),
-    illiquid ? text('accept.loseIlliquid') : text('accept.loseLiquidation'),
+    // Each illiquid leg is named for what it is; either one rules out the
+    // price-based liquidation, so that line shows only when both are liquid.
+    ...(r.lendingClass === 'illiquid' ? [text('accept.loseIlliquidLending')] : []),
+    ...(r.collateralClass === 'illiquid' ? [text('accept.loseIlliquidCollateral')] : []),
+    ...(r.lendingClass !== 'illiquid' && r.collateralClass !== 'illiquid' ? [text('accept.loseLiquidation')] : []),
     text('accept.loseLocked'),
     text(o.useFullTermInterest ? (o.allowsPartialRepay ? 'accept.loseFullTermPartial' : 'accept.loseFullTerm') : 'accept.loseProRata'),
     ...(cadence ? [format('accept.loseCadence', { cadence })] : []),
+    text('accept.losePause'),
     text('accept.loseBinding'),
   ];
 

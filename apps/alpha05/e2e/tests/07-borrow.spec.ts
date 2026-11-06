@@ -65,7 +65,14 @@ test('a borrower takes a lender offer whole: signed terms, an exact approval, an
   // The protocol pays the sender a share of the fee; on a direct take that is the borrower.
   await expect(receipt).toContainText('Of that fee, paid back to you as the sender');
   await expect(receipt).toContainText('2000');
-  await expect(receipt).toContainText('You owe on the due date');
+  await expect(receipt).toContainText('You owe on the due date, if the protocol never pauses');
+  // Every lifecycle term the signature binds is stated, defaults included.
+  await expect(receipt).toContainText('Partial repayment');
+  await expect(receipt).toContainText('Selling the collateral during the loan');
+  await expect(receipt).toContainText('Collateral listed for sale before the loan');
+  await expect(receipt).toContainText('Refinances a loan');
+  await expect(receipt).toContainText('Linked loan');
+  await expect(receipt).toContainText('interest keeps accruing through it');
   // A first loan opens the vault in the same transaction; a later one (the
   // second project's run) names the vault it already has.
   const vault = await sc.read<Hex>('getUserVaultAddress', [borrower]).catch(() => null);

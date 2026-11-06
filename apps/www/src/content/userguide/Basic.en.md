@@ -1075,7 +1075,7 @@ The page lists the lender offers open for your two tokens, read from the protoco
 
 ### Borrow: Review and Signing
 
-Before your wallet opens, the review shows every figure: what you receive, the fee, what you lock, the rate, what you owe on the due date, the grace period and what you can lose. You tick a box to agree to the Risk Disclosures and Terms; if the figures change before you confirm, the box clears. Your wallet then asks you to sign the terms, which costs nothing, to approve exactly the collateral if that is needed, and to send the acceptance, which the app first tries as a dry run. If it stops after an approval, the app asks to put the approval back and says whether that happened. Afterwards the app checks on the chain the loan it opened, what arrived and what was locked.
+Before your wallet opens, the review shows every figure: what you receive, the fee, what you lock, the rate, what you owe on the due date, the grace period and what you can lose. You tick a box to agree to the Risk Disclosures and Terms; if the figures change before you confirm, the box clears. Your wallet then asks you to sign the terms, which costs nothing, to approve exactly the collateral if that is needed, and to send the acceptance, which the app first tries as a dry run. If it stops after an approval, the app asks to put the approval back and says whether that happened. Afterwards the app checks on the chain the loan it opened, what arrived and what was locked. It also states the loan's lifecycle terms, each even when it is the default: partial repayment, selling the collateral, and any refinance or linked loan. The amount owed assumes no pause: a pause moves the due date later and interest keeps running through it.
 
 <a id="borrow-fee"></a>
 

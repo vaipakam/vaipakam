@@ -1792,7 +1792,7 @@ Borrow 通过 `acceptOffer(offerId, terms, signature)` 直接接受以 ERC-20 �
 
 ### Borrow: 审核与签名
 
-审核读取报价、其状态、`previewAccept`、`getOfferLinkedLoanId`、`getCurrentRiskTermsHash`、两种类别、`getEffectiveGraceSeconds(durationDays)`、`getLoanInitiationFeeBps`、钱包的金库、余额和授权额度、`previewOfferAcceptBlock` 以及折扣同意，并在钱包打开前再读一次。钱包签署由已存储报价构建的 EIP-712 `AcceptTerms`（域 `Vaipakam AcceptOffer`，版本 1），附带新的 128 位 nonce 和 30 分钟期限；无流动性确认只指明审核中显示为无流动性的一侧。仅当授权额度不足时才批准与抵押品完全相同的额度，然后用签名模拟 `acceptOffer` 再发送。若在批准后中止，且额度未被其他操作改变，应用会把它恢复为原值。结果从该报价和钱包的 `LoanInitiated` 以及收据中的 `Transfer` 日志读取。
+审核读取报价、其状态、`previewAccept`、`getOfferLinkedLoanId`、`getCurrentRiskTermsHash`、两种类别、`getEffectiveGraceSeconds(durationDays)`、`getLoanInitiationFeeBps`、钱包的金库、余额和授权额度、`previewOfferAcceptBlock` 以及折扣同意，并在钱包打开前再读一次。钱包签署由已存储报价构建的 EIP-712 `AcceptTerms`（域 `Vaipakam AcceptOffer`，版本 1），附带新的 128 位 nonce 和 30 分钟期限；无流动性确认只指明审核中显示为无流动性的一侧。仅当授权额度不足时才批准与抵押品完全相同的额度，然后用签名模拟 `acceptOffer` 再发送。若在批准后中止，且额度未被其他操作改变，应用会把它恢复为原值。结果从该报价和钱包的 `LoanInitiated` 以及收据中的 `Transfer` 日志读取。授权额度会在第一次钱包请求之前重新读取，重置时恢复的就是这个值；已发送但回滚（revert）的接受交易也会得到同样的重置。审核页列出 `allowsPartialRepay`、`allowsPrepayListing`、带 `parallelSaleOrderHash` 的 `allowsParallelSale`、`refinanceTargetLoanId` 以及关联贷款，并将应还金额标注为无暂停情形，因为暂停期间利息照常累计，只是到期日后移。
 
 <a id="borrow-fee"></a>
 

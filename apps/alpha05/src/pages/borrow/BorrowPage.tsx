@@ -124,7 +124,7 @@ export function BorrowPage() {
           </button>
         </Notice>
       )}
-      {chain && !flowOpen && <PairPicker chain={chain} meta={meta} lending={pair.lending} collateral={pair.collateral} onChange={setPair} />}
+      {chain && !flowOpen && <PairPicker key={chain.chainId} chain={chain} meta={meta} lending={pair.lending} collateral={pair.collateral} onChange={setPair} />}
       {chain && ready && !flowOpen && <MatchingOffers view={view} meta={meta} connected={connected && walletChain !== null} onTake={take} takeDisabled={takeDisabled} />}
       {termsOpen && termsGate.session && walletChain && own && (
         <TermsPrompt
