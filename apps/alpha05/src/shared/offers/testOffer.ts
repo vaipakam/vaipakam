@@ -38,6 +38,7 @@ export function offer(over: Partial<StoredOffer> = {}): StoredOffer {
     periodicInterestCadence: 0,
     expiresAt: 0n,
     accepted: false,
+    creatorFull: false,
     ...over,
   };
 }

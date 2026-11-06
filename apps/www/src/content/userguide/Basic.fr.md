@@ -1182,6 +1182,36 @@ En mode Avancé, une demande peut payer les intérêts selon un échéancier plu
 
 En mode Avancé, une demande peut prendre le tarif de frais Full : des frais en VPFI, prélevés dans votre coffre à l'ouverture de chaque prêt, qui ajoutent dix points à la remise sur les frais de prêt, jusqu'au plafond de 50 % du protocole. Les frais de prêt restent facturés dans l'actif prêté, et le tarif n'est pas remboursé. Le formulaire ne le propose que tant que le protocole l'a activé, et affiche le tarif du jour pour votre montant et votre durée. Vous fixez le maximum de VPFI qu'un prêt peut prendre (laissé vide : le tarif du jour pour le plus grand prêt) et ce qui arrive à un prêt qui ne peut pas prendre le tarif à son ouverture : il est refusé, ou il s'ouvre sans lui. Un prêt ne peut le prendre que si, à ce moment, le tarif est activé, l'actif prêté a un prix et est liquide, son tarif reste dans votre maximum et votre coffre détient assez de VPFI libres. Le tarif est fixé par une seconde transaction après la publication ; un prêteur qui prend la demande avant sa confirmation ouvre donc un prêt sans lui. Cette application ne propose pas encore de prêt de secours pour les demandes que personne ne prend.
 
+<a id="lend-start"></a>
+
+### Lend: Comment ça marche
+
+Pour prêter, vous financez la demande ouverte d'un emprunteur : un montant d'un jeton, le taux qu'il paiera, une durée et une garantie que l'emprunteur a déjà bloquée dans son propre coffre. La financer ouvre le prêt en une seule transaction. Le montant quitte votre portefeuille, l'emprunteur le reçoit moins ses frais d'ouverture, et la garantie reste bloquée pour vous jusqu'à la fin du prêt. Votre côté du prêt est un jeton de position dans votre portefeuille, et c'est son détenteur qui est remboursé. L'emprunteur rembourse le montant plus les intérêts avant l'échéance, et le protocole garde sa part des intérêts. Pour l'instant, publier votre propre offre de prêt se fait dans l'application actuelle ; la page y renvoie.
+
+<a id="lend-offers"></a>
+
+### Lend: Choisir une demande
+
+Choisissez d'abord ce que vous prêtez et la garantie que vous acceptez ; ce doivent être des jetons différents, et cette page ne propose que des jetons. La page liste les demandes d'emprunt ouvertes pour cette paire, lues dans le protocole lui-même. Chacune indique le montant, le taux et la durée, la garantie bloquée, le ratio prêt-valeur aux prix du jour, le mode de calcul des intérêts, un éventuel calendrier d'intérêts et la part des frais de l'emprunteur qui vous revient. Une demande se finance en entier : si elle indique une fourchette, vous prêtez le plus petit montant de l'emprunteur à son taux le plus élevé. Quand le protocole refuserait une demande, la page dit pourquoi et ne propose aucun bouton. Vos propres demandes, les demandes avec un NFT et les ventes de prêts en cours sont comptées, pas listées. L'ordre (d'abord les demandes que vous pouvez financer, puis le taux le plus élevé) est une commodité, pas un conseil.
+
+<a id="lend-review"></a>
+
+### Lend: Vérifier et signer
+
+Avant l'ouverture de votre portefeuille, la vérification affiche chaque chiffre : ce qui quitte votre portefeuille, ce que reçoit l'emprunteur, les frais et votre part de ceux-ci, la garantie détenue pour vous, le taux, les intérêts dus à l'échéance, la part du protocole sur ceux-ci, ce qui vous revient, le délai de grâce et ce que vous pouvez perdre. Elle indique aussi chaque condition du cycle de vie, même quand c'est la valeur par défaut. Si votre portefeuille détient moins que le montant, la vérification dit combien il manque et ne propose aucune signature. Vous cochez une case pour accepter les Avertissements sur les risques et les Conditions ; si les chiffres changent avant votre confirmation, la case se décoche. Votre portefeuille vous demande ensuite de signer les conditions, ce qui ne coûte rien, d'approuver exactement le montant si nécessaire, et d'envoyer l'acceptation, que l'application essaie d'abord à blanc. Si cela s'arrête après une approbation, l'application propose de rétablir l'approbation et dit si c'est fait. Ensuite, l'application vérifie sur la chaîne le prêt ouvert, ce qui a quitté votre portefeuille et ce qui y est revenu.
+
+<a id="lend-fee"></a>
+
+### Lend: Les frais et la part du protocole
+
+Les frais d'ouverture sont à la charge de l'emprunteur : une petite part du montant, prélevée une fois dans l'actif prêté et déduite de ce que reçoit l'emprunteur. Vous prêtez le montant entier, et l'emprunteur le doit en totalité avec les intérêts. Comme vous envoyez vous-même l'acceptation, une petite part de ces frais, celle que le protocole verse à qui soumet un appariement, revient à votre portefeuille ; la vérification l'affiche. Si l'emprunteur a choisi le tarif de frais Full et qu'il s'applique à l'ouverture du prêt, les frais sont plus bas, et cette part aussi. Quand des intérêts sont payés, le protocole garde sa part, au taux en vigueur à l'ouverture du prêt ; votre palier de remise sur les frais peut réduire cette part tant que votre réglage de remise est activé. La vérification affiche le taux du jour et le maximum que cette part peut prendre.
+
+<a id="lend-risks"></a>
+
+### Lend: Risques
+
+Prêter peut vous faire perdre de l'argent. Si l'emprunteur n'a pas remboursé à la fin du délai de grâce, le prêt est en défaut et vous êtes payé sur la garantie : vendue pour vous là où le protocole le peut, remise telle quelle sinon, et une vente peut rapporter moins que ce qui vous est dû. Avec une garantie liquide, n'importe qui peut liquider le prêt dès que son facteur de santé passe sous 1 ; la vente vous rembourse en premier, mais une forte baisse peut laisser moins que ce qui vous est dû. Un jeton illiquide est valorisé à zéro, il n'y a donc pas de liquidation fondée sur le prix, et en cas de défaut vous recevez toute la garantie, quelle que soit sa valeur. Vous ne pouvez pas reprendre le montant avant la fin du prêt ; sortir plus tôt signifie vendre votre position à un autre prêteur. Avec des intérêts au prorata, un remboursement anticipé vous rapporte moins. Une pause repousse l'échéance, et les intérêts continuent de courir pendant celle-ci.
+
 <a id="risk-access"></a>
 
 ### Risk Access : votre niveau de risque

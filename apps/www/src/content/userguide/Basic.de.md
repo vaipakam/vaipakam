@@ -1186,6 +1186,36 @@ Im erweiterten Modus kann eine Anfrage die Zinsen nach einem Plan zahlen statt a
 
 Im erweiterten Modus kann eine Anfrage den Full-Gebührentarif nehmen: eine Gebühr in VPFI, die beim Eröffnen jedes Kredits aus Ihrem Tresor genommen wird und den Rabatt auf die Kreditgebühr um zehn Punkte erhöht, bis zur Obergrenze des Protokolls von 50 %. Die Kreditgebühr selbst wird weiterhin im verliehenen Vermögenswert berechnet, und der Tarif wird nicht erstattet. Das Formular bietet ihn nur an, solange das Protokoll ihn eingeschaltet hat, und zeigt den heutigen Tarif für Betrag und Laufzeit. Sie legen fest, wie viel VPFI ein Kredit höchstens nehmen darf (leer gelassen: der heutige Tarif für den größten Kredit), und was mit einem Kredit geschieht, der den Tarif beim Eröffnen nicht nehmen kann: Er wird abgelehnt oder ohne ihn eröffnet. Ein Kredit kann ihn nur nehmen, wenn in diesem Moment der Tarif eingeschaltet ist, der verliehene Vermögenswert einen Preis hat und liquide ist, sein Tarif innerhalb Ihres Höchstwerts liegt und Ihr Tresor genug freie VPFI hält. Der Tarif wird mit einer zweiten Transaktion nach dem Veröffentlichen gesetzt; ein Kreditgeber, der die Anfrage vorher übernimmt, eröffnet einen Kredit ohne ihn. Backstop-Kredite für Anfragen, die niemand übernimmt, bietet diese App noch nicht an.
 
+<a id="lend-start"></a>
+
+### Lend: So funktioniert es
+
+Um zu verleihen, finanzieren Sie die offene Anfrage eines Kreditnehmers: einen Betrag eines Tokens, den Zinssatz, den er zahlt, eine Laufzeit und Sicherheiten, die der Kreditnehmer bereits in seinem eigenen Tresor gesperrt hat. Die Finanzierung eröffnet den Kredit in einer Transaktion. Der Betrag verlässt Ihre Wallet, der Kreditnehmer erhält ihn abzüglich seiner Eröffnungsgebühr, und die Sicherheiten bleiben bis zum Ende des Kredits für Sie gesperrt. Ihre Seite des Kredits ist ein Positions-Token in Ihrer Wallet; wer es hält, wird zurückgezahlt. Der Kreditnehmer zahlt den Betrag plus Zinsen bis zum Fälligkeitsdatum zurück, und das Protokoll behält seinen Anteil an den Zinsen. Ein eigenes Kreditangebot veröffentlichen Sie vorerst in der aktuellen App; die Seite verlinkt dorthin.
+
+<a id="lend-offers"></a>
+
+### Lend: Eine Anfrage auswählen
+
+Wählen Sie zuerst, was Sie verleihen und welche Sicherheiten Sie akzeptieren; es müssen verschiedene Token sein, und diese Seite bietet nur Token an. Die Seite listet die für dieses Paar offenen Kreditanfragen, direkt aus dem Protokoll gelesen. Jede zeigt Betrag, Zinssatz und Laufzeit, die gesperrten Sicherheiten, den Beleihungswert zu heutigen Preisen, wie Zinsen berechnet werden, einen etwaigen Zinsplan und wie viel von der Gebühr des Kreditnehmers an Sie zurückfließt. Eine Anfrage wird vollständig finanziert: Nennt sie eine Spanne, verleihen Sie den kleinsten Betrag des Kreditnehmers zu seinem höchsten Zinssatz. Würde das Protokoll eine Anfrage ablehnen, sagt die Seite warum und bietet keine Schaltfläche an. Ihre eigenen Anfragen, Anfragen mit einem NFT und Verkäufe laufender Kredite werden gezählt, nicht gelistet. Die Reihenfolge (finanzierbare Anfragen zuerst, dann der höchste Zinssatz) ist eine Hilfe, keine Empfehlung.
+
+<a id="lend-review"></a>
+
+### Lend: Prüfen und Signieren
+
+Bevor Ihre Wallet sich öffnet, zeigt die Prüfung jede Zahl: was Ihre Wallet verlässt, was der Kreditnehmer erhält, die Gebühr und Ihren Anteil daran, die für Sie gehaltenen Sicherheiten, den Zinssatz, die am Fälligkeitsdatum geschuldeten Zinsen, den Anteil des Protokolls daran, was an Sie zurückfließt, die Nachfrist und was Sie verlieren können. Sie nennt außerdem jede Lebenszyklus-Bedingung, auch wenn sie der Standard ist. Hält Ihre Wallet weniger als den Betrag, sagt die Prüfung, wie viel fehlt, und bietet keine Signatur an. Sie setzen ein Häkchen, um den Risikohinweisen und Bedingungen zuzustimmen; ändern sich die Zahlen vor der Bestätigung, wird das Häkchen entfernt. Ihre Wallet bittet Sie dann, die Bedingungen zu signieren, was nichts kostet, genau den Betrag freizugeben, falls nötig, und die Annahme zu senden, die die App zuerst als Probelauf ausführt. Stoppt der Ablauf nach einer Freigabe, bietet die App an, die Freigabe zurückzusetzen, und sagt, ob das geschehen ist. Danach prüft die App auf der Chain den eröffneten Kredit, was Ihre Wallet verlassen hat und was zurückgekommen ist.
+
+<a id="lend-fee"></a>
+
+### Lend: Die Gebühr und der Anteil des Protokolls
+
+Die Eröffnungsgebühr trägt der Kreditnehmer: ein kleiner Anteil des Betrags, einmal im verliehenen Vermögenswert berechnet und von dem abgezogen, was der Kreditnehmer erhält. Sie verleihen den ganzen Betrag, und der Kreditnehmer schuldet ihn vollständig mit Zinsen zurück. Weil Sie die Annahme selbst senden, fließt ein kleiner Teil dieser Gebühr, der Anteil, den das Protokoll dem Einreicher eines Matches zahlt, in Ihre Wallet zurück; die Prüfung zeigt ihn. Hat der Kreditnehmer den Full-Gebührentarif gewählt und greift er beim Eröffnen, ist die Gebühr niedriger und damit auch dieser Anteil. Werden Zinsen gezahlt, behält das Protokoll seinen Anteil daran, zu dem Satz, der beim Eröffnen des Kredits gilt; Ihre Gebührenrabattstufe kann diesen Anteil senken, solange Ihre Gebührenrabatt-Einstellung an ist. Die Prüfung zeigt den heutigen Satz und das Höchste, was dieser Anteil nehmen kann.
+
+<a id="lend-risks"></a>
+
+### Lend: Risiken
+
+Beim Verleihen können Sie Geld verlieren. Hat der Kreditnehmer bis zum Ende der Nachfrist nicht zurückgezahlt, fällt der Kredit aus und Sie werden aus den Sicherheiten bezahlt: für Sie verkauft, wo das Protokoll es kann, unverändert übergeben, wo nicht; ein Verkauf kann weniger einbringen, als Ihnen geschuldet wird. Bei liquiden Sicherheiten kann jeder den Kredit liquidieren, sobald sein Health Factor unter 1 fällt; der Verkauf zahlt Sie zuerst, aber ein starker Kursrückgang kann weniger übrig lassen, als Ihnen geschuldet wird. Ein illiquider Token wird mit null bewertet, daher gibt es keine preisbasierte Liquidation, und bei einem Ausfall erhalten Sie alle Sicherheiten, was immer sie wert sind. Sie können den Betrag nicht vor Ende des Kredits zurücknehmen; früher aussteigen heißt, Ihre Position an einen anderen Kreditgeber zu verkaufen. Bei anteiligen Zinsen bringt eine vorzeitige Rückzahlung Ihnen weniger. Eine Pause verschiebt das Fälligkeitsdatum nach hinten, und die Zinsen laufen währenddessen weiter.
+
 <a id="risk-access"></a>
 
 ### Risk Access: Ihre Risikostufe

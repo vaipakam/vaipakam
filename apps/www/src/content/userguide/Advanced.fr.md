@@ -2319,6 +2319,36 @@ Une fourchette envoie `amount` (le plus petit) en dessous de `amountMax` (le plu
 
 L'adhésion est `setOfferCreatorFullTariff(offerId, true, maxCStar, allowDowngrade)`, envoyée par le créateur après `createOffer` et refusée avec `OfferAlreadyAccepted` dès qu'un prêteur a pris la demande ; `maxCStar` doit être supérieur à zéro (`FullTariffMaxCStarRequired`). Le formulaire affiche l'interrupteur de `getFeeEntitlementConfig()` et le tarif de `quoteCStar(lendingAsset, principal, durationDays)`, à `amount` et `amountMax` pour une fourchette ; le plafond par défaut est la cotation à `amountMax`. À chaque acceptation, le prélèvement prend `C*`, calculé sur le principal de ce prêt, seulement si l'interrupteur est activé, le principal a un prix et est liquide, `C* ≤ maxCStar` et les VPFI libres du coffre le couvrent (le solde du coffre plafonné par `getTrackedVPFIBalance`, moins les nantissements actifs, via `getFreeBalance`) ; sinon il échoue avec `FeeEntitlementDisabled`, `FeeEntitlementFullOptInFailed` ou `FeeEntitlementTariffAboveAuth`, sauf si `allowDowngrade` laisse le prêt s'ouvrir sans lui. La remise sur les frais de prêt de l'emprunteur augmente de `FULL_MODE_FEE_DISCOUNT_BONUS_BPS` (1000), plafonnée à `MAX_FEE_DISCOUNT_BPS` (5000). La revue bloque un choix sous lequel tout prêt serait refusé, et l'adhésion est mesurée en relisant `getOffer` (`creatorFull`, `creatorMaxCStar`, `creatorAllowFullDowngrade`). Cette application ne propose pas encore de prêt de secours pour les demandes non remplies.
 
+<a id="lend-start"></a>
+
+### Lend: Comment ça marche
+
+Lend prend directement une demande d'emprunt (`offerType` 1) d'un ERC-20 contre une garantie ERC-20, avec `acceptOffer(offerId, terms, signature)` envoyé par le prêteur. En une transaction, le principal est prélevé du portefeuille du prêteur, via une autorisation au Diamond, vers le coffre du prêteur ; l'emprunteur le reçoit moins les frais d'ouverture ; la garantie déjà dans le coffre de l'emprunteur devient celle du prêt ; et `LoanInitiated` est émis, avec un NFT de position pour le prêteur et un pour l'emprunteur. Publier une offre de prêt (`offerType` 0), les côtés NFT et les options avancées arriveront dans des mises à jour ultérieures ; la page renvoie à l'application actuelle.
+
+<a id="lend-offers"></a>
+
+### Lend: Choisir une demande
+
+`getActiveOffersByAssetPairRanked(lending, collateral, 0, 20)` donne les identifiants des offres ouvertes de la paire. Pour chacune, la page lit `getOffer`, `getOfferState`, `getOfferLinkedLoanId` et, avec un portefeuille, `previewAccept(offerId, wallet)`, dont le `errorCode` est le refus du protocole. Une prise directe fixe le `amount` de la demande (son minimum) à `interestRateBpsMax`, et le ratio prêt-valeur est `calculateLTV` sur ce montant aux prix du jour. Les offres de prêteurs, les côtés NFT, les demandes du lecteur et les véhicules de vente de position prêteur (une offre côté emprunteur avec un `getOfferLinkedLoanId` non nul) sont comptés, pas listés. L'ordre : finançables d'abord, puis taux décroissant, puis montant décroissant.
+
+<a id="lend-review"></a>
+
+### Lend: Vérifier et signer
+
+La vérification lit ce que lit celle de Borrow (l'offre, son état, `previewAccept`, `getOfferLinkedLoanId`, `getCurrentRiskTermsHash`, les deux classes, `getEffectiveGraceSeconds(durationDays)`, `getLoanInitiationFeeBps`, `getLifMatcherFeeBps`, le coffre du portefeuille, `previewOfferAcceptBlock` et le consentement à la remise sur les frais) plus `getTreasuryFeeBps`, et mesure solde et autorisation sur l'actif prêté, le côté que paie le prêteur. Un manque sur celui-ci bloque la signature, de même qu'un véhicule de vente de position prêteur. Le portefeuille signe l'EIP-712 `AcceptTerms` (domaine `Vaipakam AcceptOffer`, version 1), approuve exactement le principal seulement si l'autorisation est insuffisante (avec un passage à zéro d'abord pour un jeton qui refuse un changement entre valeurs non nulles), et `acceptOffer` est simulé puis envoyé ; une autorisation laissée par un parcours interrompu est rétablie comme sur Borrow. Le résultat lit `LoanInitiated` pour cette offre, le `Transfer` du principal hors du portefeuille et le `Transfer` retour de la part de l'apparieur.
+
+<a id="lend-fee"></a>
+
+### Lend: Les frais et la part du protocole
+
+Les frais sont le `lifEstimate` de `previewAccept`, et ils sont à l'emprunteur : `getLoanInitiationFeeBps` du principal dans l'actif prêté, déduits de ce qui est versé à l'emprunteur, réduits à l'acceptation par la remise de palier de détention de l'emprunteur et, quand `creatorFull` est activé et que le prélèvement réussit, par le bonus du tarif Full. La part de celui qui soumet, `getLifMatcherFeeBps` des frais, est versée à l'expéditeur, ici le prêteur. La part du protocole sur les intérêts est `getTreasuryFeeBps`, fixée par prêt à son ouverture (`treasuryFeeBpsAtInit`) ; la remise de palier de détention du prêteur, consentement activé, la réduit au règlement des intérêts. La vérification affiche le taux du jour, et la part à ce taux comme plafond.
+
+<a id="lend-risks"></a>
+
+### Lend: Risques
+
+Un prêt passé la fin de sa grâce (`getEffectiveGraceSeconds` après l'échéance, que le temps en pause décale) peut être mis en défaut par n'importe qui : la garantie liquide est vendue pour le prêteur, la garantie illiquide est transférée telle quelle. Si les deux côtés sont liquides, le prêt peut être liquidé dès que le facteur de santé passe sous 1, et la vente paie le prêteur en premier. Un côté illiquide exclut la liquidation fondée sur le prix, et en cas de défaut le prêteur reçoit toute la garantie. `useFullTermInterest` impose un plancher d'intérêts en cas de remboursement anticipé ; sans lui, les intérêts sont au prorata. Un calendrier d'intérêts périodiques règle une période manquée par une vente forcée de garantie au prêteur. Le NFT de position du prêteur porte la créance : le transférer transfère le prêt.
+
 <a id="risk-access"></a>
 
 ### Risk Access : votre niveau de risque

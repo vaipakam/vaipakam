@@ -1,8 +1,10 @@
 /**
- * OFF-50 / OFF-17 / OFF-19 / OFF-29 — what a borrower's acceptance review
- * stands on, read in one go through the wallet's connection, and the rules
- * that turn it into the receipt, the blockers stated in place, and the
- * "what changed" of a re-check. The protocol's preview is the source of
+ * OFF-50 / OFF-17 / OFF-19 / OFF-29 — what an acceptance review stands on,
+ * for either side (a borrower taking a lender offer, a lender taking a
+ * borrow request), read in one go through the wallet's connection, and the
+ * rules that turn it into the blockers stated in place and the "what
+ * changed" of a re-check. Each side's receipt is written in its own module
+ * (borrowerReceipt, lenderReceipt). The protocol's preview is the source of
  * truth for every figure; the review never computes an amount the protocol
  * reports.
  */
@@ -10,8 +12,8 @@ import type { OwnStateClient } from '../../chain/ownRail';
 import type { CopyAccess, CopyKey } from '../copy/useCopy';
 import { readFeeDiscountConsent } from '../consent/feeDiscount';
 import { readAssetClass, type AssetClass } from '../offers/assets';
-import { ASSET_ERC20, type StoredOffer } from '../offers/acceptTerms';
-import { acceptFigures, gateBlock, listFee, shortfall, type GateBlock } from '../offers/model';
+import type { StoredOffer } from '../offers/acceptTerms';
+import { acceptorRole, gateBlock, payLeg, shortfall, type AcceptRole, type GateBlock } from '../offers/model';
 import {
   readAcceptGate,
   readCreatorGate,
@@ -23,6 +25,7 @@ import {
   readOfferState,
   readPreview,
   readRiskTermsHash,
+  readTreasuryFeeBps,
   readVault,
   readVaultUpgradeRequired,
   readWalletFunds,
@@ -31,20 +34,21 @@ import {
   type OfferState,
   type WalletFunds,
 } from '../offers/reads';
-import type { Receipt } from '../receipt/types';
 import { SWITCH_EFFECTS } from '../eligibility/switchClasses';
 import { tokenAmount, type TokenMetaMap } from '../reads/tokens';
 import { allowanceSteps } from '../tx/approval';
-import { formatBps, formatSpan, shortAddress } from '../ui/format';
+import { shortAddress } from '../ui/format';
 
 type Hex = `0x${string}`;
 
 export const ZERO: Hex = '0x0000000000000000000000000000000000000000';
-const ZERO_HASH: Hex = '0x0000000000000000000000000000000000000000000000000000000000000000';
+export const ZERO_HASH: Hex = '0x0000000000000000000000000000000000000000000000000000000000000000';
 
 export interface AcceptReview {
   /** The wallet and network the review was read under (RB-REVIEW). */
   identity: string;
+  /** The side this wallet takes, from the offer's own side. */
+  role: AcceptRole;
   offerId: bigint;
   offer: StoredOffer;
   state: OfferState;
@@ -57,21 +61,25 @@ export interface AcceptReview {
   lifBps: bigint;
   /** The share of the fee paid back to the submitter (bps of the fee). */
   matcherBps: bigint;
-  /** The borrower's vault; the zero address when it is opened by this accept. */
+  /** The protocol's share of the lender's interest under today's setting
+   *  (bps), read for a lender; null for a borrower. */
+  protocolShareBps: bigint | null;
+  /** This wallet's vault; the zero address when it is opened by this accept. */
   vault: Hex;
+  /** The wallet's balance and allowance of what it pays (payLeg). */
   funds: WalletFunds;
-  /** Wallet prompts the approval takes: 0 when the allowance covers the
-   *  collateral, 2 when the token must be set to zero first. */
+  /** Wallet prompts the approval takes: 0 when the allowance covers what
+   *  the wallet pays, 2 when the token must be set to zero first. */
   approvalSteps: number;
   /** Read only when the protocol reports a vault below the required
-   *  version: whether it is this wallet's own (false: the lender's), or
+   *  version: whether it is this wallet's own (false: the other side's), or
    *  null when that could not be read. */
   vaultUpgradeYours: boolean | null;
   /** The risk-access gate's code for this acceptance (0 = open); it is the
    *  creator's code when the creator is blocked. */
   gate: number;
-  /** The creator's own block on this offer (0 = none): a lender-side block
-   *  the connected wallet cannot fix. */
+  /** The creator's own block on this offer (0 = none): the other side's
+   *  block, which the connected wallet cannot fix. */
   creatorGate: number;
   /** The fee-discount setting; null when it could not be read. */
   consent: boolean | null;
@@ -82,7 +90,11 @@ export async function readAcceptReview(own: OwnStateClient, diamond: Hex, offerI
   const account = own.account;
   const r = <T>(fn: Parameters<OwnStateClient['read']>[0]) => own.read(fn).then((x) => x.value as T);
   const offer = await r<StoredOffer>((c) => readOffer(c, diamond, offerId));
-  const [state, preview, linkedLoanId, riskTermsHash, lendingClass, collateralClass, graceSeconds, lifBps, matcherBps, vault, funds, gate, creatorGate, consent] =
+  const role = acceptorRole(offer);
+  // What this wallet pays: the collateral for a borrower, the principal for
+  // a lender. Its token is known from the offer before the preview sizes it.
+  const payAsset = role === 'borrower' ? offer.collateralAsset : offer.lendingAsset;
+  const [state, preview, linkedLoanId, riskTermsHash, lendingClass, collateralClass, graceSeconds, lifBps, matcherBps, protocolShareBps, vault, funds, gate, creatorGate, consent] =
     await Promise.all([
       r<OfferState>((c) => readOfferState(c, diamond, offerId)),
       r<AcceptPreview>((c) => readPreview(c, diamond, offerId, account)),
@@ -93,8 +105,9 @@ export async function readAcceptReview(own: OwnStateClient, diamond: Hex, offerI
       r<bigint>((c) => readGraceSeconds(c, diamond, offer.durationDays)),
       r<bigint>((c) => readLifBps(c, diamond)),
       r<bigint>((c) => readLifMatcherBps(c, diamond)),
+      role === 'lender' ? r<bigint>((c) => readTreasuryFeeBps(c, diamond)) : Promise.resolve(null),
       r<Hex>((c) => readVault(c, diamond, account)),
-      r<WalletFunds>((c) => readWalletFunds(c, offer.collateralAsset, account, diamond)),
+      r<WalletFunds>((c) => readWalletFunds(c, payAsset, account, diamond)),
       r<number>((c) => readAcceptGate(c, diamond, offerId, account)),
       r<number>((c) => readCreatorGate(c, diamond, offerId)),
       r<boolean>((c) => readFeeDiscountConsent(c, diamond, account)).catch(() => null),
@@ -103,13 +116,12 @@ export async function readAcceptReview(own: OwnStateClient, diamond: Hex, offerI
   // version; which one is read from this wallet's own vault, so the remedy
   // is never sent to the side that cannot act on it.
   const vaultUpgradeYours = preview.error === 'VaultUpgradeRequired' ? await r<boolean>((c) => readVaultUpgradeRequired(c, diamond, account)).catch(() => null) : null;
-  const lock = preview.collateralAmount;
+  const pay = payLeg(role, offer, preview).amount;
   const approvalSteps =
-    funds.allowance >= lock
-      ? 0
-      : (await allowanceSteps({ accepts: (amount) => r<boolean>((c) => tokenAcceptsApproval(c, offer.collateralAsset, account, diamond, amount)) }, funds.allowance, lock)).length;
+    funds.allowance >= pay ? 0 : (await allowanceSteps({ accepts: (amount) => r<boolean>((c) => tokenAcceptsApproval(c, payAsset, account, diamond, amount)) }, funds.allowance, pay)).length;
   return {
     identity,
+    role,
     offerId,
     offer,
     state,
@@ -121,6 +133,7 @@ export async function readAcceptReview(own: OwnStateClient, diamond: Hex, offerI
     graceSeconds,
     lifBps,
     matcherBps,
+    protocolShareBps,
     vault,
     funds,
     approvalSteps,
@@ -132,9 +145,14 @@ export async function readAcceptReview(own: OwnStateClient, diamond: Hex, offerI
   };
 }
 
-/** Whether the collateral needs an approval step before the acceptance. */
-export function needsApproval(r: Pick<AcceptReview, 'funds' | 'preview'>): boolean {
-  return r.funds.allowance < r.preview.collateralAmount;
+/** What this acceptance takes from the wallet (payLeg), for the review. */
+export function paid(r: Pick<AcceptReview, 'role' | 'offer' | 'preview'>): { asset: Hex; amount: bigint } {
+  return payLeg(r.role, r.offer, r.preview);
+}
+
+/** Whether what the wallet pays needs an approval step before the acceptance. */
+export function needsApproval(r: Pick<AcceptReview, 'funds' | 'preview' | 'role' | 'offer'>): boolean {
+  return r.funds.allowance < paid(r).amount;
 }
 
 /** The wallet prompts this acceptance asks for: the signed terms, the
@@ -143,38 +161,66 @@ export function promptCount(r: Pick<AcceptReview, 'approvalSteps'>): number {
   return 2 + r.approvalSteps;
 }
 
-const STATE_KEYS: Readonly<Record<Exclude<OfferState, 'open'>, CopyKey>> = {
-  accepted: 'borrow.stateAccepted',
-  cancelled: 'borrow.stateCancelled',
-  expired: 'borrow.stateExpired',
-  'sale-consumed': 'borrow.stateSaleConsumed',
+const STATE_KEYS: Readonly<Record<AcceptRole, Readonly<Record<Exclude<OfferState, 'open'>, CopyKey>>>> = {
+  borrower: {
+    accepted: 'borrow.stateAccepted',
+    cancelled: 'borrow.stateCancelled',
+    expired: 'borrow.stateExpired',
+    'sale-consumed': 'borrow.stateSaleConsumed',
+  },
+  lender: {
+    accepted: 'lend.stateAccepted',
+    cancelled: 'lend.stateCancelled',
+    expired: 'borrow.stateExpired',
+    'sale-consumed': 'borrow.stateSaleConsumed',
+  },
 };
 
-export function stateText(state: Exclude<OfferState, 'open'>, copy: Pick<CopyAccess, 'text'>): string {
-  return copy.text(STATE_KEYS[state]);
+/** An ended offer's state, naming the other side for the reader's role. */
+export function stateText(state: Exclude<OfferState, 'open'>, copy: Pick<CopyAccess, 'text'>, role: AcceptRole = 'borrower'): string {
+  return copy.text(STATE_KEYS[role][state]);
 }
 
 const GATE_KEYS: Readonly<Record<number, CopyKey>> = { 1: 'risk.blockTier', 2: 'risk.blockConsent', 3: 'risk.blockAck', 4: 'risk.blockConsent' };
 
-/** A risk-access block as the page states it: a lender-side block is named
- *  as the lender's and never sent to this wallet's settings, and a code
+/** A risk-access block as the page states it: the other side's block is
+ *  named as theirs and never sent to this wallet's settings, and a code
  *  this build cannot name is still a block. */
-export function gateBlockText(b: GateBlock, copy: Pick<CopyAccess, 'text'>): string {
-  if (b.creator) return copy.text('accept.blockCreatorGate');
+export function gateBlockText(b: GateBlock, copy: Pick<CopyAccess, 'text'>, role: AcceptRole = 'borrower'): string {
+  if (b.creator) return copy.text(role === 'borrower' ? 'accept.blockCreatorGate' : 'lendAccept.blockCreatorGate');
   return copy.text(GATE_KEYS[b.code] ?? 'accept.blockGateOther');
 }
 
-/** The protocol's first refusal, as the page states it. */
-export function acceptErrorText(error: AcceptPreview['error'], copy: Pick<CopyAccess, 'text' | 'format'>, vaultUpgradeYours: boolean | null = null): string {
+/** The refusals whose wording names the other side or the offer's kind,
+ *  written for a lender taking a borrow request; every other refusal reads
+ *  the same from either side. */
+const LENDER_ERRORS: Partial<Record<AcceptPreview['error'], CopyKey>> = {
+  OfferAlreadyAccepted: 'lendAccept.err.OfferAlreadyAccepted',
+  SanctionedCreator: 'lendAccept.err.SanctionedCreator',
+  RiskAndTermsConsentRequired: 'lendAccept.err.RiskAndTermsConsentRequired',
+  OfferExpired: 'lendAccept.err.OfferExpired',
+  OfferPartiallyFilled: 'lendAccept.err.OfferPartiallyFilled',
+  OfferIsCancelled: 'lendAccept.err.OfferIsCancelled',
+  VaultUpgradeRequired: 'lendAccept.err.VaultUpgradeRequired',
+  SelfTrade: 'lendAccept.err.SelfTrade',
+  RefinanceRequestUntakeable: 'lendAccept.err.RefinanceRequestUntakeable',
+  CadenceNotAdmitted: 'lendAccept.err.CadenceNotAdmitted',
+  Unrecognised: 'lendAccept.err.Unrecognised',
+};
+
+/** The protocol's first refusal, as the page states it for the reader's role. */
+export function acceptErrorText(error: AcceptPreview['error'], copy: Pick<CopyAccess, 'text' | 'format'>, vaultUpgradeYours: boolean | null = null, role: AcceptRole = 'borrower'): string {
   // Either party's vault can be the one below the required version: the
   // remedy goes to this wallet only when its own vault is the one.
-  if (error === 'VaultUpgradeRequired' && vaultUpgradeYours !== true) return copy.text(vaultUpgradeYours === false ? 'accept.vaultUpgradeLender' : 'accept.vaultUpgradeEither');
+  if (error === 'VaultUpgradeRequired' && vaultUpgradeYours !== true)
+    return copy.text(vaultUpgradeYours === false ? (role === 'borrower' ? 'accept.vaultUpgradeLender' : 'lendAccept.vaultUpgradeBorrower') : 'accept.vaultUpgradeEither');
   if (error === 'ProtocolPaused')
     return copy.format('accept.err.ProtocolPaused', {
       staysOpen: SWITCH_EFFECTS['2'].staysOpen,
     });
   if (error === 'None') return '';
-  return copy.text(`accept.err.${error}` as CopyKey);
+  const lender = role === 'lender' ? LENDER_ERRORS[error] : undefined;
+  return copy.text(lender ?? (`accept.err.${error}` as CopyKey));
 }
 
 const CADENCE_KEYS: readonly (CopyKey | null)[] = [null, 'borrow.cadenceMonthly', 'borrow.cadenceQuarterly', 'borrow.cadenceSemiAnnual', 'borrow.cadenceAnnual'];
@@ -188,13 +234,17 @@ export function cadenceText(cadence: number, copy: Pick<CopyAccess, 'text'>): st
 /**
  * Every reason the wallet must not open for this review, in the order the
  * reader should meet them; empty when the protocol reports nothing and the
- * wallet holds the collateral. Each is a tier-A sentence with its remedy
+ * wallet holds what it pays. Each is a tier-A sentence with its remedy
  * where this session can offer one.
  */
 export function reviewBlockers(r: AcceptReview, meta: TokenMetaMap | null, copy: Pick<CopyAccess, 'text' | 'format'>): string[] {
   const out: string[] = [];
-  if (r.state !== 'open') out.push(copy.format('accept.blockState', { state: stateText(r.state, copy) }));
-  else if (r.preview.error !== 'None') out.push(acceptErrorText(r.preview.error, copy, r.vaultUpgradeYours));
+  if (r.state !== 'open') out.push(copy.format('accept.blockState', { state: stateText(r.state, copy, r.role) }));
+  else if (r.preview.error !== 'None') out.push(acceptErrorText(r.preview.error, copy, r.vaultUpgradeYours, r.role));
+  // A borrow-side offer linked to a loan is a sale of that loan's lender
+  // position: taking it buys a running loan, which this review does not
+  // describe, so it is never taken here.
+  if (r.role === 'lender' && r.linkedLoanId !== 0n) out.push(copy.format('lendAccept.blockPositionSale', { id: r.linkedLoanId.toString() }));
   for (const [asset, cls] of [
     [r.offer.lendingAsset, r.lendingClass],
     [r.offer.collateralAsset, r.collateralClass],
@@ -207,15 +257,16 @@ export function reviewBlockers(r: AcceptReview, meta: TokenMetaMap | null, copy:
       );
   }
   const gate = gateBlock(r.gate, r.creatorGate);
-  if (gate !== null) out.push(gateBlockText(gate, copy));
-  const missing = shortfall(r.funds.balance, r.preview.collateralAmount);
+  if (gate !== null) out.push(gateBlockText(gate, copy, r.role));
+  const pay = paid(r);
+  const missing = shortfall(r.funds.balance, pay.amount);
   if (missing > 0n) {
-    const amt = (v: bigint) => tokenAmount(v, r.offer.collateralAsset, meta, copy.format);
+    const amt = (v: bigint) => tokenAmount(v, pay.asset, meta, copy.format);
     out.push(
-      copy.format('accept.blockShortfall', {
+      copy.format(r.role === 'borrower' ? 'accept.blockShortfall' : 'lendAccept.blockShortfall', {
         have: amt(r.funds.balance),
         missing: amt(missing),
-        need: amt(r.preview.collateralAmount),
+        need: amt(pay.amount),
       }),
     );
   }
@@ -249,218 +300,16 @@ export function changedBetween(a: AcceptReview, b: AcceptReview, copy: Pick<Copy
     a.creatorGate !== b.creatorGate ||
     a.graceSeconds !== b.graceSeconds ||
     a.lifBps !== b.lifBps ||
-    a.matcherBps !== b.matcherBps
+    a.matcherBps !== b.matcherBps ||
+    a.protocolShareBps !== b.protocolShareBps
   )
     return copy.text('accept.changedClass');
   if (
-    shortfall(a.funds.balance, a.preview.collateralAmount) !== shortfall(b.funds.balance, b.preview.collateralAmount) ||
+    shortfall(a.funds.balance, paid(a).amount) !== shortfall(b.funds.balance, paid(b).amount) ||
     needsApproval(a) !== needsApproval(b) ||
     a.approvalSteps !== b.approvalSteps
   )
     return copy.text('accept.changedFunds');
   if (a.vault.toLowerCase() !== b.vault.toLowerCase()) return copy.text('accept.changedVault');
   return null;
-}
-
-/** The receipt (RB-CONFIDENCE): what arrives, what is locked, what is
- *  owed and when, the fee and its rule, and every consequence. */
-export function acceptReceipt(r: AcceptReview, meta: TokenMetaMap | null, copy: Pick<CopyAccess, 'text' | 'format'>): Receipt {
-  const { text, format } = copy;
-  const o = r.offer;
-  const f = acceptFigures(r.preview, o.durationDays, r.matcherBps);
-  const lending = o.lendingAsset;
-  const collateral = o.collateralAsset;
-  const amount = (asset: Hex, value: bigint) => ({
-    kind: 'amount' as const,
-    asset,
-    amount: value,
-  });
-  const cadence = cadenceText(o.periodicInterestCadence, copy);
-  const discounted = f.fee < listFee(f.principal, r.lifBps);
-  const textRow = (label: CopyKey, value: string, binding: boolean) => ({
-    label: text(label),
-    value: { kind: 'text' as const, text: value },
-    binding,
-  });
-
-  const rows: Receipt['rows'] = [
-    {
-      label: text('accept.rowReceive'),
-      value: amount(lending, f.received),
-      binding: true,
-    },
-    {
-      label: text('accept.rowFee'),
-      value: amount(lending, f.fee),
-      binding: true,
-    },
-    ...(f.feeBack > 0n
-      ? [
-          {
-            label: text('accept.rowFeeBack'),
-            value: amount(lending, f.feeBack),
-            binding: true,
-          },
-        ]
-      : []),
-    {
-      label: text('accept.rowFeeRule'),
-      value: {
-        kind: 'text',
-        text: format(discounted ? 'accept.feeDiscounted' : 'accept.feeRule', {
-          rate: formatBps(r.lifBps),
-        }),
-      },
-      binding: false,
-    },
-    {
-      label: text('accept.rowPrincipal'),
-      value: amount(lending, f.principal),
-      binding: true,
-    },
-    {
-      label: text('accept.rowLock'),
-      value: amount(collateral, f.collateral),
-      binding: true,
-      movesOut: true,
-    },
-    ...(f.refund > 0n
-      ? [
-          {
-            label: text('accept.rowRefund'),
-            value: amount(collateral, f.refund),
-            binding: true,
-          },
-        ]
-      : []),
-    {
-      label: text('accept.rowRate'),
-      value: {
-        kind: 'text',
-        text: format('accept.rate', { rate: formatBps(f.rateBps) }),
-      },
-      binding: true,
-    },
-    {
-      // With an interest schedule, part of this is paid at each checkpoint
-      // and credited, so the figure is the term's total, not the last payment.
-      label: text(cadence ? 'accept.rowOweTotal' : 'accept.rowOwe'),
-      value: amount(lending, f.owedAtDue),
-      binding: true,
-    },
-    {
-      label: text('accept.rowDue'),
-      value: {
-        kind: 'text',
-        text: format('accept.due', { days: o.durationDays.toString() }),
-      },
-      binding: true,
-    },
-    {
-      label: text('accept.rowGrace'),
-      value: {
-        kind: 'text',
-        text: format('accept.grace', {
-          span: formatSpan(Number(r.graceSeconds)),
-        }),
-      },
-      // Not bound by the loan: the protocol reads the grace period from the
-      // live configuration when it applies it, so this is today's figure.
-      binding: false,
-    },
-    {
-      label: text('accept.rowInterest'),
-      value: {
-        kind: 'text',
-        text: text(o.useFullTermInterest ? (o.allowsPartialRepay ? 'accept.fullTermPartial' : 'accept.fullTerm') : 'accept.proRata'),
-      },
-      binding: true,
-    },
-    {
-      label: text('accept.rowSchedule'),
-      value: {
-        kind: 'text',
-        text: cadence ? format('accept.scheduleEvery', { cadence }) : text('accept.scheduleNone'),
-      },
-      binding: true,
-    },
-    // The lifecycle terms the signature binds, each stated even when it is
-    // the default (the acceptance review states every term it signs).
-    textRow('accept.rowPartial', text(o.allowsPartialRepay ? 'accept.partialYes' : 'accept.partialNo'), true),
-    // Both sale routes list the collateral as an NFT: on token collateral a
-    // permission the terms grant is stated as one this loan cannot use.
-    textRow(
-      'accept.rowPrepayListing',
-      text(!o.allowsPrepayListing ? 'accept.prepayListingNo' : o.collateralAssetType === ASSET_ERC20 ? 'accept.prepayListingNotNft' : 'accept.prepayListingYes'),
-      true,
-    ),
-    textRow(
-      'accept.rowParallelSale',
-      text(
-        !o.allowsParallelSale
-          ? 'accept.parallelNo'
-          : o.collateralAssetType === ASSET_ERC20
-            ? 'accept.parallelNotNft'
-            : o.parallelSaleOrderHash === ZERO_HASH
-              ? 'accept.parallelYes'
-              : 'accept.parallelLive',
-      ),
-      true,
-    ),
-    textRow(
-      'accept.rowRefinance',
-      o.refinanceTargetLoanId === 0n ? text('accept.refinanceNone') : format('accept.refinanceLoan', { id: o.refinanceTargetLoanId.toString() }),
-      true,
-    ),
-    textRow('accept.rowLinked', r.linkedLoanId === 0n ? text('accept.linkedNone') : format('accept.linkedLoan', { id: r.linkedLoanId.toString() }), true),
-    {
-      label: text('accept.rowVault'),
-      value: {
-        kind: 'text',
-        text: r.vault === ZERO ? text('accept.vaultNew') : r.vault,
-      },
-      binding: false,
-    },
-    {
-      label: text('accept.rowLender'),
-      value: { kind: 'text', text: o.creator },
-      binding: false,
-    },
-    {
-      label: text('accept.rowApproval'),
-      value: {
-        kind: 'text',
-        text: needsApproval(r)
-          ? format(r.approvalSteps === 2 ? 'accept.approvalZeroFirst' : 'accept.approvalNeeded', {
-              amount: tokenAmount(f.collateral, collateral, meta, format),
-            })
-          : text('accept.approvalEnough'),
-      },
-      binding: false,
-      // An approval lets the protocol pull from the wallet; none asked, none marked.
-      movesOut: needsApproval(r),
-    },
-  ];
-
-  const consequences = [
-    text('accept.loseDefault'),
-    // Each illiquid leg is named for what it is; either one rules out the
-    // price-based liquidation, so that line shows only when both are liquid.
-    ...(r.lendingClass === 'illiquid' ? [text('accept.loseIlliquidLending')] : []),
-    ...(r.collateralClass === 'illiquid' ? [text('accept.loseIlliquidCollateral')] : []),
-    ...(r.lendingClass !== 'illiquid' && r.collateralClass !== 'illiquid' ? [text('accept.loseLiquidation')] : []),
-    text('accept.loseLocked'),
-    text(o.useFullTermInterest ? (o.allowsPartialRepay ? 'accept.loseFullTermPartial' : 'accept.loseFullTerm') : 'accept.loseProRata'),
-    ...(cadence ? [format('accept.loseCadence', { cadence })] : []),
-    text('accept.losePause'),
-    text('accept.loseBinding'),
-  ];
-
-  return {
-    title: format('accept.title', { id: r.offerId.toString() }),
-    rows,
-    consequences,
-    prompts: promptCount(r),
-    readAt: r.readAt,
-  };
 }

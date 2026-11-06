@@ -1164,6 +1164,36 @@ En el modo Avanzado una solicitud puede pagar los intereses según un calendario
 
 En el modo Avanzado una solicitud puede tomar la tarifa de comisión Full: una comisión en VPFI, tomada de su bóveda al abrirse cada préstamo, que añade diez puntos al descuento de la comisión del préstamo, hasta el tope del 50 % del protocolo. La comisión del préstamo se sigue cobrando en el activo prestado, y la tarifa no se reembolsa. El formulario la ofrece solo mientras el protocolo la tiene activada y muestra la tarifa de hoy para su importe y plazo. Usted fija lo máximo en VPFI que puede tomar un préstamo (en blanco, la tarifa de hoy para el préstamo más grande) y qué ocurre con un préstamo que no puede tomar la tarifa al abrirse: se rechaza, o se abre sin ella. Un préstamo solo puede tomarla si, en ese momento, la tarifa está activada, el activo prestado tiene precio y es líquido, su tarifa está dentro de su máximo y su bóveda tiene suficiente VPFI libre. La tarifa se fija con una segunda transacción después de publicar, así que un prestamista que tome la solicitud antes de que esa transacción se confirme abre un préstamo sin ella. Esta aplicación aún no ofrece préstamos de respaldo para solicitudes que nadie toma.
 
+<a id="lend-start"></a>
+
+### Lend: Cómo funciona
+
+Para prestar, usted financia la solicitud abierta de un prestatario: un importe de un token, la tasa que pagará, un plazo y una garantía que el prestatario ya ha bloqueado en su propia bóveda. Financiarla abre el préstamo en una sola transacción. El importe sale de su billetera, el prestatario lo recibe menos su comisión de apertura y la garantía queda bloqueada para usted hasta que el préstamo termine. Su lado del préstamo es un token de posición en su billetera, y quien lo tenga es quien cobra. El prestatario devuelve el importe más los intereses antes de la fecha de vencimiento, y el protocolo se queda con su parte de los intereses. Por ahora, publicar su propia oferta de préstamo se hace en la app actual; la página enlaza a ella.
+
+<a id="lend-offers"></a>
+
+### Lend: Elegir una solicitud
+
+Primero elija qué prestar y qué garantía acepta; deben ser tokens distintos, y esta página solo ofrece tokens. La página lista las solicitudes de préstamo abiertas para ese par, leídas del propio protocolo. Cada una muestra el importe, la tasa y el plazo, la garantía bloqueada, la relación préstamo-valor a los precios de hoy, cómo se cobran los intereses, cualquier calendario de intereses y cuánto de la comisión del prestatario vuelve a usted. Una solicitud se financia completa: si indica un rango, usted presta el importe mínimo del prestatario a su tasa más alta. Cuando el protocolo rechazaría una solicitud, la página dice por qué y no ofrece botón. Sus propias solicitudes, las solicitudes con un NFT y las ventas de préstamos en curso se cuentan, no se listan. El orden (primero las solicitudes que puede financiar, luego la tasa más alta) es una ayuda, no un consejo.
+
+<a id="lend-review"></a>
+
+### Lend: Revisar y firmar
+
+Antes de que se abra su billetera, la revisión muestra cada cifra: lo que sale de su billetera, lo que recibe el prestatario, la comisión y su parte de ella, la garantía retenida para usted, la tasa, los intereses debidos en la fecha de vencimiento, la parte del protocolo en ellos, lo que vuelve a usted, el período de gracia y lo que puede perder. También indica cada condición del ciclo de vida, incluso cuando es la predeterminada. Si su billetera tiene menos que el importe, la revisión dice cuánto falta y no ofrece firma. Marca una casilla para aceptar las Divulgaciones de Riesgo y los Términos; si las cifras cambian antes de confirmar, la casilla se desmarca. Luego su billetera le pide firmar los términos, lo que no cuesta nada, aprobar exactamente el importe si hace falta y enviar la aceptación, que la app primero prueba como simulación. Si se detiene después de una aprobación, la app ofrece revertir la aprobación y dice si ocurrió. Después, la app comprueba en la cadena el préstamo que abrió, lo que salió de su billetera y lo que volvió.
+
+<a id="lend-fee"></a>
+
+### Lend: La comisión y la parte del protocolo
+
+La comisión de apertura es del prestatario: una pequeña parte del importe, cobrada una vez en el activo prestado y descontada de lo que recibe el prestatario. Usted presta el importe completo, y el prestatario lo debe íntegro con intereses. Como usted mismo envía la aceptación, una pequeña parte de esa comisión, la que el protocolo paga a quien envía un emparejamiento, vuelve a su billetera; la revisión la muestra. Si el prestatario eligió la tarifa de comisión Full y se aplica al abrirse el préstamo, la comisión es menor, y también esa parte. Cuando se pagan intereses, el protocolo se queda con su parte, a la tasa vigente al abrirse el préstamo; su nivel de descuento de comisiones puede reducir esa parte mientras su ajuste de descuento esté activado. La revisión muestra la tasa de hoy y lo máximo que puede tomar esa parte.
+
+<a id="lend-risks"></a>
+
+### Lend: Riesgos
+
+Prestar puede hacerle perder dinero. Si el prestatario no ha pagado al final del período de gracia, el préstamo entra en impago y se le paga con la garantía: vendida para usted donde el protocolo puede, entregada tal cual donde no, y una venta puede obtener menos de lo que se le debe. Con garantía líquida, cualquiera puede liquidar el préstamo cuando su factor de salud baja de 1; la venta le paga a usted primero, pero una caída brusca puede dejar menos de lo que se le debe. Un token ilíquido se valora en cero, así que no hay liquidación por precio, y en caso de impago usted recibe toda la garantía, valga lo que valga. No puede recuperar el importe antes de que termine el préstamo; salir antes significa vender su posición a otro prestamista. Con intereses prorrateados, un pago anticipado le rinde menos. Una pausa aplaza la fecha de vencimiento, y los intereses siguen acumulándose durante ella.
+
 <a id="risk-access"></a>
 
 ### Risk Access: tu nivel de riesgo

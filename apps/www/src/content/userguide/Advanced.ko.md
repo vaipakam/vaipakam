@@ -2012,6 +2012,36 @@ Basic은 단일 값 요청을 올립니다: `amount` = `amountMax`, `interestRat
 
 옵트인은 `setOfferCreatorFullTariff(offerId, true, maxCStar, allowDowngrade)`로, 작성자가 `createOffer` 뒤에 보내며, 대출자가 요청을 받은 뒤에는 `OfferAlreadyAccepted`로 거절됩니다. `maxCStar`는 0보다 커야 합니다(`FullTariffMaxCStarRequired`). 양식은 스위치를 `getFeeEntitlementConfig()`에서, 요율을 `quoteCStar(lendingAsset, principal, durationDays)`에서 보여 주며, 범위라면 `amount`와 `amountMax`에서 읽습니다. 최대치의 기본값은 `amountMax`에서의 견적입니다. 각 수락에서 부과는 그 대출의 원금으로 산정한 `C*`를 가져가지만, 스위치가 켜져 있고, 원금에 가격과 유동성이 있으며, `C* ≤ maxCStar`이고, 금고의 자유 VPFI(`getTrackedVPFIBalance`로 상한을 둔 금고 잔액에서 유효한 담보권을 뺀 값, `getFreeBalance` 경유)로 충당될 때만입니다. 그렇지 않으면 `FeeEntitlementDisabled`, `FeeEntitlementFullOptInFailed`, `FeeEntitlementTariffAboveAuth`로 되돌려지며, `allowDowngrade`라면 요율 없이 대출이 열립니다. 차입자의 대출 수수료 할인은 `FULL_MODE_FEE_DISCOUNT_BONUS_BPS`(1000)만큼 오르고 `MAX_FEE_DISCOUNT_BPS`(5000)가 상한입니다. 검토 화면은 모든 대출이 거절될 선택을 막고, 옵트인은 `getOffer`를 다시 읽어 측정합니다(`creatorFull`, `creatorMaxCStar`, `creatorAllowFullDowngrade`). 채워지지 않은 요청에 대한 백스톱 대출은 이 앱에서 아직 제공하지 않습니다.
 
+<a id="lend-start"></a>
+
+### Lend: 작동 방식
+
+Lend는 ERC-20 담보에 대한 ERC-20 차입 요청(`offerType` 1)을 대출자가 보내는 `acceptOffer(offerId, terms, signature)`로 직접 받습니다. 한 번의 트랜잭션으로 원금은 Diamond에 대한 승인 아래 대출자의 지갑에서 대출자의 볼트로 인출되고, 차입자는 개시 수수료를 뺀 금액을 받으며, 차입자의 볼트에 이미 있는 담보가 대출의 담보가 되고, `LoanInitiated`가 발생하며 대출자와 차입자에게 각각 포지션 NFT가 주어집니다. 대출 오퍼 게시(`offerType` 0), NFT 측, 고급 옵션은 이후 업데이트에서 추가됩니다. 페이지는 현재 앱으로 연결됩니다.
+
+<a id="lend-offers"></a>
+
+### Lend: 요청 고르기
+
+`getActiveOffersByAssetPairRanked(lending, collateral, 0, 20)`가 쌍의 열린 오퍼 id를 줍니다. 각각에 대해 페이지는 `getOffer`, `getOfferState`, `getOfferLinkedLoanId`와, 지갑이 있으면 `previewAccept(offerId, wallet)`를 읽으며, 그 `errorCode`가 프로토콜의 거절 사유입니다. 직접 수락은 요청의 `amount`(최소치)를 `interestRateBpsMax`로 확정하고, 담보인정비율은 그 금액에 대한 오늘 가격 기준 `calculateLTV`입니다. 대출자 오퍼, NFT 측, 읽는 사람 자신의 요청, 대출자 포지션 매각 수단(`getOfferLinkedLoanId`가 0이 아닌 차입자 측 오퍼)은 개수만 세고 목록에 넣지 않습니다. 순서는 자금 제공 가능 먼저, 그다음 이율 내림차순, 그다음 금액 내림차순입니다.
+
+<a id="lend-review"></a>
+
+### Lend: 검토와 서명
+
+검토 화면은 Borrow와 같은 것(오퍼, 그 상태, `previewAccept`, `getOfferLinkedLoanId`, `getCurrentRiskTermsHash`, 두 분류, `getEffectiveGraceSeconds(durationDays)`, `getLoanInitiationFeeBps`, `getLifMatcherFeeBps`, 지갑의 볼트, `previewOfferAcceptBlock`, 수수료 할인 동의)에 더해 `getTreasuryFeeBps`를 읽고, 잔액과 승인액은 대출자가 내는 쪽인 대출 자산에서 측정합니다. 그 자산이 부족하면 서명이 막히며, 대출자 포지션 매각 수단도 마찬가지입니다. 지갑은 EIP-712 `AcceptTerms`(도메인 `Vaipakam AcceptOffer`, 버전 1)에 서명하고, 승인액이 모자랄 때만 원금만큼 정확히 승인하며(0이 아닌 값끼리의 변경을 거부하는 토큰은 먼저 0으로 바꾸는 단계를 둡니다), `acceptOffer`를 시뮬레이션한 뒤 보냅니다. 중간에 멈춘 흐름이 남긴 승인은 Borrow와 같이 재설정됩니다. 결과로 이 오퍼의 `LoanInitiated`, 지갑에서 나간 원금의 `Transfer`, 매처 몫이 돌아오는 `Transfer`를 읽습니다.
+
+<a id="lend-fee"></a>
+
+### Lend: 수수료와 프로토콜의 몫
+
+수수료는 `previewAccept`의 `lifEstimate`이며 차입자가 부담합니다. 대출 자산으로 원금의 `getLoanInitiationFeeBps`이고, 차입자에게 전달되는 금액에서 빠지며, 수락 시 차입자의 보유 등급 할인으로, 그리고 `creatorFull`이 설정되고 부과가 성공하면 Full 요율 보너스로 낮아집니다. 제출자의 몫(수수료의 `getLifMatcherFeeBps`)은 보낸 사람, 여기서는 대출자에게 지급됩니다. 이자에 대한 프로토콜의 몫은 `getTreasuryFeeBps`로, 대출이 열릴 때 대출별로 고정됩니다(`treasuryFeeBpsAtInit`). 동의가 켜져 있으면 대출자의 보유 등급 할인이 이자 정산 시 이를 낮춥니다. 검토 화면은 오늘의 요율과, 그 요율에서의 몫을 상한으로 보여 줍니다.
+
+<a id="lend-risks"></a>
+
+### Lend: 위험
+
+유예 종료(만기일로부터 `getEffectiveGraceSeconds` 후이며, 일시 정지 시간만큼 뒤로 밀립니다)가 지난 대출은 누구나 디폴트 처리할 수 있습니다. 유동 담보는 대출자를 위해 매각되고, 비유동 담보는 그대로 이전됩니다. 양쪽이 모두 유동적이면 건전성 지수가 1 아래일 때 대출을 청산할 수 있으며, 매각은 대출자에게 먼저 지급합니다. 비유동인 쪽이 있으면 가격 기반 청산이 없고, 디폴트 시 대출자가 담보 전부를 받습니다. `useFullTermInterest`는 조기 상환 시 이자의 하한을 두며, 없으면 이자는 일할 계산입니다. 정기 이자 일정에서는 놓친 기간을 담보의 강제 매각으로 대출자에게 지급합니다. 대출자의 포지션 NFT가 청구권을 지니며, 이를 이전하면 대출도 이전됩니다.
+
 <a id="risk-access"></a>
 
 ### Risk Access: 내 위험 등급

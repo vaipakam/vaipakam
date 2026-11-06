@@ -1,5 +1,6 @@
 /**
- * OFF-44 — the lender offers open for the pair the borrower picked, read
+ * OFF-44 — the offers open for the pair the reader picked, from the other
+ * side (lender offers for a borrower, borrow requests for a lender), read
  * from the protocol's pair index through the wallet's connection. Each row
  * carries the offer as stored, its state, and (with a wallet) what accepting
  * it would do for this wallet, from `previewAccept`. A row whose reads fail
@@ -7,9 +8,9 @@
  * into a confident "nothing here".
  */
 import type { PublicClient } from 'viem';
-import { type StoredOffer } from './acceptTerms';
-import { borrowFit, gateBlock, notTakeable, rankForBorrower, type GateBlock, type NotTakeable, type OfferFit } from './model';
-import { readAcceptGate, readCreatorGate, readLifMatcherBps, readOffer, readOfferState, readPairLtvBps, readPairOfferIds, readPreview, type AcceptPreview, type OfferState } from './reads';
+import { roleTerms, type StoredOffer } from './acceptTerms';
+import { gateBlock, notTakeable, offerFit, rankFor, type AcceptRole, type GateBlock, type NotTakeable, type OfferFit } from './model';
+import { readAcceptGate, readCreatorGate, readLifMatcherBps, readLinkedLoanId, readOffer, readOfferState, readPairLtvBps, readPairOfferIds, readPreview, type AcceptPreview, type OfferState } from './reads';
 import { refusalFromError } from '../eligibility/refusal';
 import { readAssetClass } from './assets';
 
@@ -40,8 +41,11 @@ export interface UnreadRow {
 export interface Matches {
   rows: MatchRow[];
   unread: UnreadRow[];
-  /** Offers on the pair the guided flow does not take, by why. */
-  skipped: Readonly<Record<Exclude<OfferFit, 'fits'>, number>>;
+  /** Offers on the pair the guided flow does not take, by why. A
+   *  `position-sale` is a borrow-side offer linked to a running loan: its
+   *  accept buys that loan's lender position, which a lender's guided flow
+   *  does not take. */
+  skipped: Readonly<Record<Exclude<OfferFit, 'fits'> | 'position-sale', number>>;
   /** How many open offers the protocol's pair index holds. */
   total: bigint;
   /** How many of them this read looked at. */
@@ -55,7 +59,7 @@ function message(e: unknown): string {
   return refusalFromError(e).reason;
 }
 
-export async function readMatches(client: PublicClient, diamond: Hex, lending: Hex, collateral: Hex, account: Hex | null): Promise<Matches> {
+export async function readMatches(client: PublicClient, diamond: Hex, lending: Hex, collateral: Hex, account: Hex | null, role: AcceptRole): Promise<Matches> {
   const [{ ids, total }, matcherBps, pairLtv] = await Promise.all([
     readPairOfferIds(client, diamond, lending, collateral, MATCH_PAGE),
     account ? readLifMatcherBps(client, diamond) : Promise.resolve(null),
@@ -66,7 +70,7 @@ export async function readMatches(client: PublicClient, diamond: Hex, lending: H
       (e): Ltv => ({ kind: 'not-worked-out', reason: message(e) }),
     ),
   ]);
-  const skipped = { own: 0, 'not-lender': 0, 'not-erc20': 0 };
+  const skipped = { own: 0, 'other-side': 0, 'not-erc20': 0, 'position-sale': 0 };
   const rows: MatchRow[] = [];
   const unread: UnreadRow[] = [];
   await Promise.all(
@@ -78,12 +82,16 @@ export async function readMatches(client: PublicClient, diamond: Hex, lending: H
         unread.push({ id, reason: message(e) });
         return;
       }
-      const fit = borrowFit(offer, account ?? '0x0000000000000000000000000000000000000000');
+      const fit = offerFit(offer, account ?? '0x0000000000000000000000000000000000000000', role);
       if (fit !== 'fits') {
         skipped[fit] += 1;
         return;
       }
       try {
+        if (role === 'lender' && (await readLinkedLoanId(client, diamond, id)) !== 0n) {
+          skipped['position-sale'] += 1;
+          return;
+        }
         const [state, preview, gate, ltv] = await Promise.all([
           readOfferState(client, diamond, id),
           account ? readPreview(client, diamond, id, account) : Promise.resolve(null),
@@ -93,7 +101,8 @@ export async function readMatches(client: PublicClient, diamond: Hex, lending: H
             ? readAcceptGate(client, diamond, id, account).then(async (g): Promise<GateBlock | null> => gateBlock(g, g === 0 ? 0 : await readCreatorGate(client, diamond, id)))
             : Promise.resolve(null),
           pairLtv ??
-            readPairLtvBps(client, diamond, offer.lendingAsset, offer.amountMax, offer.collateralAsset, offer.collateralAmount).then(
+            // The amount the acceptance binds for this side (roleTerms).
+            readPairLtvBps(client, diamond, offer.lendingAsset, roleTerms(offer).amount, offer.collateralAsset, offer.collateralAmount).then(
               (bps): Ltv => ({ kind: 'bps', bps }),
               (e): Ltv => ({ kind: 'not-worked-out', reason: message(e) }),
             ),
@@ -107,7 +116,7 @@ export async function readMatches(client: PublicClient, diamond: Hex, lending: H
   );
   unread.sort((a, b) => (a.id < b.id ? -1 : 1));
   return {
-    rows: rankForBorrower(rows),
+    rows: rankFor(role, rows),
     unread,
     skipped,
     total,

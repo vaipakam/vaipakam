@@ -2017,6 +2017,36 @@ fallback، موعد غير مقروء، يستحق خلال ثلاثة أيام�
 
 الاشتراك هو `setOfferCreatorFullTariff(offerId, true, maxCStar, allowDowngrade)`، يرسله المنشئ بعد `createOffer`، ويُرفض بـ `OfferAlreadyAccepted` متى أخذ مُقرِض الطلب؛ ويجب أن يكون `maxCStar` أكبر من صفر (`FullTariffMaxCStarRequired`). يعرض النموذج المفتاح من `getFeeEntitlementConfig()` والتعرفة من `quoteCStar(lendingAsset, principal, durationDays)`، عند `amount` و`amountMax` للنطاق؛ والسقف الافتراضي هو التسعير عند `amountMax`. عند كل قبول يأخذ التحصيل `C*` مسعّرًا على أصل ذلك القرض، فقط إذا كان المفتاح مفعّلًا، وللأصل سعر وسيولة، و`C* ≤ maxCStar`، وكان VPFI الحرّ في الخزنة يغطيه (رصيد الخزنة محدودًا بـ `getTrackedVPFIBalance`، ناقص الرهون النشطة، عبر `getFreeBalance`)؛ وإلا فيرتد بـ `FeeEntitlementDisabled` أو `FeeEntitlementFullOptInFailed` أو `FeeEntitlementTariffAboveAuth`، ما لم يسمح `allowDowngrade` بفتح القرض بدونها. يرتفع خصم رسوم قرض المقترض بمقدار `FULL_MODE_FEE_DISCOUNT_BONUS_BPS` (1000)، بسقف `MAX_FEE_DISCOUNT_BPS` (5000). تمنع المراجعة اختيارًا يُرفض بموجبه كل قرض، ويُقاس الاشتراك بقراءة `getOffer` من جديد (`creatorFull` و`creatorMaxCStar` و`creatorAllowFullDowngrade`). لا يتيح هذا التطبيق بعد الإقراض الاحتياطي للطلبات غير المملوءة.
 
+<a id="lend-start"></a>
+
+### Lend: كيف يعمل
+
+يأخذ Lend طلب اقتراض (`offerType` 1) لرمز ERC-20 مقابل ضمان ERC-20 مباشرة، عبر `acceptOffer(offerId, terms, signature)` الذي يرسله المُقرض. في معاملة واحدة يُسحب أصل القرض من محفظة المُقرض، بموجب إذن للـ Diamond، إلى خزنة المُقرض؛ ويستلمه المقترض بعد خصم رسم الافتتاح؛ ويصبح الضمان الموجود في خزنة المقترض ضمان القرض؛ ويُصدر `LoanInitiated`، مع NFT مركز للمُقرض وآخر للمقترض. نشر عرض إقراض (`offerType` 0)، وجوانب NFT، والخيارات المتقدمة تأتي في تحديثات لاحقة؛ وتضع الصفحة رابطًا إلى التطبيق الحالي.
+
+<a id="lend-offers"></a>
+
+### Lend: اختيار طلب
+
+يعطي `getActiveOffersByAssetPairRanked(lending, collateral, 0, 20)` معرّفات العروض المفتوحة للزوج. لكل عرض تقرأ الصفحة `getOffer` و`getOfferState` و`getOfferLinkedLoanId`، ومع وجود محفظة `previewAccept(offerId, wallet)`، الذي يمثل `errorCode` فيه رفض البروتوكول. يثبّت الأخذ المباشر `amount` الطلب (حده الأدنى) عند `interestRateBpsMax`، ونسبة القرض إلى القيمة هي `calculateLTV` على ذلك المبلغ بأسعار اليوم. عروض المُقرضين، وجوانب NFT، وطلبات القارئ نفسه، ووسائل بيع مراكز المُقرضين (عرض من جانب المقترض له `getOfferLinkedLoanId` غير صفري) تُعَدّ ولا تُسرَد. الترتيب: القابل للتمويل أولًا، ثم السعر تنازليًا، ثم المبلغ تنازليًا.
+
+<a id="lend-review"></a>
+
+### Lend: المراجعة والتوقيع
+
+تقرأ المراجعة ما تقرؤه مراجعة Borrow (العرض، وحالته، و`previewAccept`، و`getOfferLinkedLoanId`، و`getCurrentRiskTermsHash`، والفئتين، و`getEffectiveGraceSeconds(durationDays)`، و`getLoanInitiationFeeBps`، و`getLifMatcherFeeBps`، وخزنة المحفظة، و`previewOfferAcceptBlock`، وموافقة خصم الرسوم) إضافة إلى `getTreasuryFeeBps`، وتقيس الرصيد والإذن على الأصل المُقرَض، وهو الجانب الذي يدفعه المُقرض. أي نقص فيه يمنع التوقيع، وكذلك وسيلة بيع مركز مُقرض. توقّع المحفظة EIP-712 `AcceptTerms` (النطاق `Vaipakam AcceptOffer`، الإصدار 1)، وتوافق على أصل القرض بالضبط فقط عندما يكون الإذن ناقصًا (مع خطوة إلى الصفر أولًا لرمز يرفض التغيير بين قيمتين غير صفريتين)، ثم يُحاكى `acceptOffer` ويُرسل؛ ويُعاد ضبط إذن تركه مسار متوقف كما في Borrow. تقرأ النتيجة `LoanInitiated` لهذا العرض، و`Transfer` أصل القرض من المحفظة، و`Transfer` عودة حصة المطابِق إليها.
+
+<a id="lend-fee"></a>
+
+### Lend: الرسم وحصة البروتوكول
+
+الرسم هو `lifEstimate` من `previewAccept`، وهو على المقترض: `getLoanInitiationFeeBps` من أصل القرض بالأصل المُقرَض، يُخصم مما يُسلَّم للمقترض، ويُخفَّض عند القبول بخصم مستوى الحيازة للمقترض، وعندما يكون `creatorFull` مفعّلًا وينجح التحصيل، بمكافأة تعرفة Full. حصة المُقدِّم، `getLifMatcherFeeBps` من الرسم، تُدفع للمرسل، وهو هنا المُقرض. حصة البروتوكول من الفائدة هي `getTreasuryFeeBps`، تُثبَّت لكل قرض عند فتحه (`treasuryFeeBpsAtInit`)؛ ويخفضها خصم مستوى الحيازة للمُقرض، مع تفعيل الموافقة، عند تسوية الفائدة. تعرض المراجعة معدل اليوم، والحصة بذلك المعدل كحد أعلى.
+
+<a id="lend-risks"></a>
+
+### Lend: المخاطر
+
+القرض الذي تجاوز نهاية سماحه (`getEffectiveGraceSeconds` بعد تاريخ الاستحقاق، الذي يؤخره وقت الإيقاف المؤقت) يمكن لأي أحد إعلان تعثره: يُباع الضمان السائل لصالح المُقرض، ويُنقل الضمان غير السائل كما هو. عندما يكون الجانبان سائلين يمكن تصفية القرض حين يكون عامل الصحة دون 1، ويدفع البيع للمُقرض أولًا. الجانب غير السائل يستبعد التصفية القائمة على السعر، وعند التعثر يستلم المُقرض الضمان كله. يضع `useFullTermInterest` حدًا أدنى للفائدة عند السداد المبكر؛ ومن دونه تكون الفائدة تناسبية. يسوّي جدول الفائدة الدورية الفترة الفائتة ببيع قسري للضمان لصالح المُقرض. يحمل NFT مركز المُقرض الحق: نقله ينقل القرض.
+
 <a id="risk-access"></a>
 
 ### Risk Access: مستوى المخاطرة لديك

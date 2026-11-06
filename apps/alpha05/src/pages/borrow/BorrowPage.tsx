@@ -94,10 +94,10 @@ export function BorrowPage() {
   const diamond = (chain?.diamondAddress ?? '0x') as Hex;
   const lending = pair.lending ?? ('0x' as Hex);
   const collateral = pair.collateral ?? ('0x' as Hex);
-  const ownMatches = useOwnRead(['borrow', 'matches', lending.toLowerCase(), collateral.toLowerCase()], (c) => readMatches(c, diamond, lending, collateral, own!.account), {
+  const ownMatches = useOwnRead(['borrow', 'matches', lending.toLowerCase(), collateral.toLowerCase()], (c) => readMatches(c, diamond, lending, collateral, own!.account, 'borrower'), {
     enabled: ready && walletChain !== null,
   });
-  const publicMatches = useChainRead(['borrow', 'matches', diamond, lending.toLowerCase(), collateral.toLowerCase()], (c) => readMatches(c, diamond, lending, collateral, null), {
+  const publicMatches = useChainRead(['borrow', 'matches', diamond, lending.toLowerCase(), collateral.toLowerCase()], (c) => readMatches(c, diamond, lending, collateral, null, 'borrower'), {
     enabled: ready && !connected,
   });
   const view: MatchesView = connected ? ownMatches : publicMatches;
@@ -165,8 +165,8 @@ export function BorrowPage() {
           </button>
         </Notice>
       )}
-      {chain && !flowOpen && <PairPicker key={chain.chainId} chain={chain} meta={meta} lending={pair.lending} collateral={pair.collateral} onChange={setPair} />}
-      {chain && ready && !flowOpen && <MatchingOffers view={view} meta={meta} connected={connected && walletChain !== null} onTake={take} takeDisabled={takeDisabled} />}
+      {chain && !flowOpen && <PairPicker key={chain.chainId} role="borrower" chain={chain} meta={meta} lending={pair.lending} collateral={pair.collateral} onChange={setPair} />}
+      {chain && ready && !flowOpen && <MatchingOffers role="borrower" view={view} meta={meta} connected={connected && walletChain !== null} onTake={take} takeDisabled={takeDisabled} />}
       {chain && ready && !flowOpen && connected && walletChain !== null && (
         <section className="borrow-section request-open" aria-labelledby="borrow-request-open">
           <h2 id="borrow-request-open" className="sr-only">
@@ -214,7 +214,7 @@ export function BorrowPage() {
           <h2 id="borrow-review" className="sr-only">
             {text('borrow.stepSign')}
           </h2>
-          <AcceptOffer offerId={taking} chain={walletChain} own={own} meta={meta} terms={terms.data} onClose={() => setTaking(null)} />
+          <AcceptOffer flowKey={ACCEPT_KEY} offerId={taking} chain={walletChain} own={own} meta={meta} terms={terms.data} onClose={() => setTaking(null)} />
         </section>
       )}
       {draft !== null && walletChain && own && (
