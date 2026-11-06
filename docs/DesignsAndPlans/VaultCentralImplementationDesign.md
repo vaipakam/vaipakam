@@ -68,6 +68,17 @@ factory, which answers **for the calling proxy**:
 One function decides which code every vault runs, and it reads three storage
 slots. No vault can run code the registry does not hold.
 
+**The fill lock must let this lookup through.** While a limit-order fill is
+between its pre-hook and post-hook, `VaipakamDiamond.fallback` refuses every
+caller except the Diamond itself and the post-hook selector (#1566 slice 3).
+A vault called during the fill, for example to move the lot or grant an
+allowance in the pre-hook, makes its proxy call `implementation()` on the
+Diamond, which the lock would refuse, so the fill would revert. The lock
+gains one exception: the `implementation()` selector. It is a view that
+only says which code a vault runs, so letting it through the lock opens no
+mutation path. A test runs a complete swap-to-repay fill with beacon
+vaults.
+
 **Default: a stock `BeaconProxy`, not a custom proxy.** It is audited, and
 its only dependency is a beacon that answers `implementation()`. No other
 facet exposes that selector today (checked against `main`).
@@ -235,6 +246,8 @@ puts those checks into every vault at once.
 - Every vault still refuses a non-Diamond caller, on every version.
 - Storage-layout guard: the beacon-implementation root, and a version that
   breaks layout fails the guard.
+- A complete swap-to-repay fill with beacon vaults succeeds under the fill
+  lock, and every other selector is still refused during the fill.
 - Gas: the per-call cost of the beacon lookup on the heaviest paths,
   reported in the PR.
 - Deploy-sanity and targeted suites, as usual.

@@ -116,12 +116,12 @@ asks, without the indexer subscribing to every vault address.
 
 | Class | Layer 1 (Diamond: intent) | Layer 2 (vault: independent) |
 | --- | --- | --- |
-| **Owner** | Recipient is the owner's wallet or, with protected mode on, an allowlisted address after its delay. Version and pause rules apply. | `to == owner` (the owner wallet is recorded in the vault at creation), or `to` is on the vault's **own** allowlist with its delay elapsed |
+| **Owner** | Recipient is the owner's wallet or, with protected mode on, an allowlisted address after its delay. Version and pause rules apply. | `to == owner` (the owner wallet is recorded in the vault at creation), or `to` is on the vault's **own** allowlist with its delay elapsed. **And** the amount is at most the vault's free balance of that asset: its balance less the sum of its own open liens on it (§3.7), so an owner outflow can never take what a lien still holds |
 | **Counterparty** | `to` is the vault of THAT loan's other party (or the current holder of that position). The amount is drawn from that loan's lien and bounded by its claim records | `to` is a genuine Vaipakam vault (§3.4). The amount is at most the open lien this vault recorded for `ref`, and that lien is reduced by it |
 | **Treasury** | `to == s.treasury` | `to ==` the treasury address the registry holds (§3.6) |
 | **Swap adapter / order taker** | A registered adapter for this action, against a lien | `to` is on the registry. The amount is at most the lien for `ref` |
 | **Marketplace conduit** | A recorded listing for `ref`, through a registered conduit | Grant only (§3.5), and only to a registry conduit |
-| **Incentive** (liquidator, matcher, keeper) | The actor of THIS action, at the configured rate | The amount is at most the vault's hard cap for incentives (a fraction of the lien for `ref`). The recipient cannot be checked by the vault, so the cap is the bound |
+| **Incentive** (liquidator, matcher, keeper) | The actor of THIS action, at the configured rate | The amount is drawn from the lien for `ref` and from that lien's **incentive budget**, a running total the vault sets when it records the lien (the cap fraction of the lien) and debits before each payment. Repeated payments against one `ref` cannot exceed the budget in sum. The recipient cannot be checked by the vault, so the budget is the bound |
 | **Seller claim** | A recorded seller of THIS loan | Genuine vault, or the seller's wallet, against the lien |
 | **Backstop** | The configured backstop | The registry's backstop |
 | **Diamond (transient)** | Only inside one transaction, with an onward class declared | `to == diamond`, at most the lien for `ref` |
@@ -147,12 +147,36 @@ which the vault records in transient storage:
 - for marketplace listings, the executor's authorize and validate hooks.
 
 The matching post-hook sets the allowance back to zero and asserts it is
-zero. A test asserts zero standing allowance after every fill and teardown
-path. The spender must be on the registry.
+zero. But the vault cannot rely on the Diamond to call that post-hook: a
+faulty Diamond could open the window, grant, and return. The fill itself
+cannot run inside one vault frame either, because the external protocol
+pulls the tokens between the two hooks. So the vault bounds a grant
+independently, in three ways:
+
+1. **A grant spends the lien when it is made.** The vault debits the lien
+   for `ref` by the granted amount at grant time, and the grant can never
+   exceed it. An allowance left standing can move at most what the lien
+   already counts as gone, so it cannot reach a lien's other funds or the
+   owner's free balance.
+2. **An outstanding grant is recorded in the vault's own storage**, not
+   only in the token. While one is recorded, the vault refuses every other
+   outflow and grant. A revoke entry that only sets allowances to zero
+   clears it. It is open to any caller, because it can only reduce what
+   the vault has exposed.
+3. **The spender is a registry contract** (§3.6), which moves a vault's
+   tokens only for an order the vault validates, and the vault validates
+   an order only inside an open fill window. A standing allowance therefore
+   has no order to serve once the transaction ends.
+
+A test drives the faulty-Diamond case: grant without the post-hook, then
+show that the lien was already debited, that the next outflow is refused,
+and that the open revoke clears it.
 
 The standing approvals granted at listing time today (the ERC-1155
 `setApprovalForAll` for a collection, and the ERC-721 conduit approval) move
-into those hooks.
+into those hooks. `setApprovalForAll` cannot be bounded to an amount, so for
+ERC-1155 the grant is made only while the lien covers the vault's whole
+balance of that token id, and point 2 holds the vault until it is revoked.
 
 ### 3.6 The registry (adapters, conduits, treasury, backstop)
 
@@ -169,7 +193,10 @@ two fails closed: the vault refuses.
 - **Liens.** When a position opens, the vault records `(ref, asset, tokenId,
   amount)`. A counterparty, adapter, seller-claim or Diamond-transient
   outflow is allowed only against an open lien for its `ref`, and reduces
-  it. A close-out releases what is left to the owner's free balance.
+  it. So does an incentive payment, which also debits that lien's
+  incentive budget. The vault keeps a running sum of its open liens per
+  asset and token id, which is what the owner class's free-balance check
+  reads. A close-out releases what is left to the owner's free balance.
 - **The allowlist** moves from Diamond storage into the vault, with its own
   delay counter.
 
@@ -222,8 +249,13 @@ opens by itself.
   - paying a non-vault reverts on the code hash.
 - Owner, without protected mode: any address but the owner's wallet
   reverts. With protected mode: an allowlisted address passes only after
-  its delay.
-- After every fill and teardown path, no allowance remains.
+  its delay. An owner-class withdrawal to the owner's own wallet that
+  would dip into an open lien reverts at layer 2, with layer 1 bypassed.
+- Incentive: repeated payments against one `ref` revert once their sum
+  reaches that lien's incentive budget.
+- After every fill and teardown path, no allowance remains. A grant made
+  without its post-hook leaves the lien already debited, blocks the next
+  outflow, and is cleared by the open revoke.
 - While paused:
   - every vault-signed order reads as unsigned;
   - close-outs still complete;
@@ -244,7 +276,10 @@ opens by itself.
   forced sale, only layer 1 checks the onward leg. The vault bounds the
   amount to the lien. Routing vault-to-adapter directly, where the route
   allows it, would remove the transient leg and is a follow-up.
-- **Incentive recipients** are checked only by the amount cap. Who acted is
+- **A grant left standing by a faulty Diamond** can be used by its
+  registry spender until someone calls the open revoke, but only up to the
+  lien it already debited (§3.5).
+- **Incentive recipients** are checked only by the per-lien budget. Who acted is
   not something a vault can verify.
 
 ## 8. Questions for the owner
