@@ -101,3 +101,50 @@ describe('PreclassifiedFailure (#1464 r1)', () => {
     expect(mangled.summary).not.toContain('421614');
   });
 });
+
+describe('JSON-RPC errors are classified structurally', () => {
+  it('names a JSON-RPC error by its code, through viem\'s real wrapping', async () => {
+    // A provider that answers HTTP 200 with a JSON-RPC error object
+    // (`header not found` on a load-balanced endpoint is the common one)
+    // carries no status and none of the text markers. Built from viem's
+    // own classes so the test fails if the structural read drifts.
+    const { InvalidInputRpcError, RpcRequestError, ContractFunctionExecutionError } =
+      await import('viem');
+    const request = new RpcRequestError({
+      body: {},
+      url: 'https://rpc.example/SECRETKEY',
+      error: { code: -32000, message: 'header not found' },
+    });
+    const wrapped = new ContractFunctionExecutionError(new InvalidInputRpcError(request), {
+      abi: [],
+      functionName: 'getExpectedSourceChainIds',
+      contractAddress: '0x00000000000000000000000000000000000000d1',
+    });
+    const out = classify(wrapped, 'canonical read');
+    expect(out.kind).toBe('rpc-error');
+    expect(out.summary).toContain('-32000');
+    expect(out.summary).toContain('InvalidInputRpcError');
+    // The provider's text and URL never leave.
+    expect(out.summary).not.toContain('header not found');
+    expect(out.summary).not.toContain('SECRETKEY');
+    expect(out.summary).not.toContain('rpc.example');
+  });
+
+  it('keeps an execution revert a revert', () => {
+    expect(classify(new Error('execution reverted')).kind).toBe('contract-revert');
+  });
+
+  it('an unclassified error names its types, not its message', () => {
+    const err = new TypeError('Cannot read properties of undefined (reading "secret-ish")');
+    const out = classify(err, 'mesh watcher tick');
+    expect(out.kind).toBe('unknown');
+    expect(out.summary).toContain('TypeError');
+    expect(out.summary).not.toContain('secret-ish');
+    expect(out.summary).not.toContain('Worker logs');
+  });
+
+  it('refuses a type name that is not identifier-shaped', () => {
+    const err = Object.assign(new Error('x'), { name: 'https://leak.example/key' });
+    expect(classify(err).summary).not.toContain('leak.example');
+  });
+});

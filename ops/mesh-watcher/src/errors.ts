@@ -81,6 +81,7 @@ interface ErrorLike {
   name?: unknown;
   message?: unknown;
   status?: unknown;
+  code?: unknown;
   shortMessage?: unknown;
   cause?: unknown;
 }
@@ -95,6 +96,67 @@ function findStatus(err: unknown, depth = 0): number | undefined {
   const e = asErrorLike(err);
   if (typeof e.status === 'number') return e.status;
   return e.cause === undefined ? undefined : findStatus(e.cause, depth + 1);
+}
+
+/**
+ * The JSON-RPC error code, if the cause chain carries a JSON-RPC error.
+ *
+ * Recognised STRUCTURALLY, never from text: viem gives every JSON-RPC
+ * error object it receives a class whose name ends in `RpcError`
+ * (`InternalRpcError`, `InvalidInputRpcError`, `UnknownRpcError`, …) or is
+ * `RpcRequestError`, and puts the provider's numeric code on `code`. The
+ * code is a number we read ourselves, so it is safe to forward; the
+ * provider's message is not, and is not read.
+ *
+ * Before this existed, a provider that answered with a JSON-RPC error and
+ * HTTP 200 (`header not found` on a load-balanced endpoint, a rate-limit
+ * body, `missing trie node`) carried no status and none of the text
+ * markers, so it was reported as "an unclassified error" — the one failure
+ * class the declared `rpc-error` kind was meant for, and which `classify`
+ * never produced.
+ */
+function findRpcCode(err: unknown, depth = 0): number | undefined {
+  if (depth > 6) return undefined;
+  const e = asErrorLike(err);
+  if (
+    typeof e.code === 'number' &&
+    typeof e.name === 'string' &&
+    (e.name === 'RpcRequestError' || e.name.endsWith('RpcError'))
+  ) {
+    return e.code;
+  }
+  return e.cause === undefined ? undefined : findRpcCode(e.cause, depth + 1);
+}
+
+/** An identifier-shaped string, and nothing else, may leave this module. */
+const SAFE_TYPE_NAME = /^[A-Za-z_$][A-Za-z0-9_$]{0,63}$/;
+
+/**
+ * The CLASS NAMES along the cause chain, outermost first.
+ *
+ * These are names from library and platform code (`TypeError`,
+ * `ContractFunctionExecutionError`, `InvalidInputRpcError`), never text a
+ * provider sent, and each is checked against an identifier shape before it
+ * is used, so the list is safe to put in an alert. It is what makes an
+ * unclassified failure diagnosable: the old wording sent the operator to
+ * "Worker logs by request id", but the Worker logged only this same
+ * summary, so there was nothing more to find there.
+ */
+export function errorTypeChain(err: unknown): string[] {
+  const names: string[] = [];
+  let current: unknown = err;
+  for (let depth = 0; depth <= 6 && current !== undefined; depth++) {
+    const e = asErrorLike(current);
+    const name =
+      typeof e.name === 'string'
+        ? e.name
+        : typeof current === 'object' && current !== null
+          ? current.constructor?.name
+          : typeof current;
+    names.push(typeof name === 'string' && SAFE_TYPE_NAME.test(name) ? name : '?');
+    current = e.cause;
+  }
+  return names;
 }
 
 /**
@@ -148,6 +210,16 @@ export function classify(err: unknown, context?: string): Failure {
             : 'endpoint returned an error status';
     return { kind: 'http', status, summary: `${where}HTTP ${status} — ${hint}` };
   }
+  // Structural, so it runs before the text markers below: a JSON-RPC
+  // error's message is the provider's own text and could contain any of
+  // them.
+  const rpcCode = findRpcCode(err);
+  if (rpcCode !== undefined) {
+    return {
+      kind: 'rpc-error',
+      summary: `${where}the endpoint answered with JSON-RPC error ${rpcCode} (${errorTypeChain(err).join(' > ')})`,
+    };
+  }
   if (hasMarker(err, ['revert', 'execution reverted'])) {
     return { kind: 'contract-revert', summary: `${where}the contract call reverted` };
   }
@@ -165,7 +237,7 @@ export function classify(err: unknown, context?: string): Failure {
   }
   return {
     kind: 'unknown',
-    summary: `${where}an unclassified error occurred (details deliberately not forwarded — see Worker logs by request id)`,
+    summary: `${where}an unclassified error occurred (error types: ${errorTypeChain(err).join(' > ')}; the message is deliberately not forwarded)`,
   };
 }
 
