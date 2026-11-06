@@ -101,3 +101,99 @@ describe('PreclassifiedFailure (#1464 r1)', () => {
     expect(mangled.summary).not.toContain('421614');
   });
 });
+
+describe('JSON-RPC errors are classified structurally', () => {
+  it('names a JSON-RPC error by its code, through viem\'s real wrapping', async () => {
+    // A provider that answers HTTP 200 with a JSON-RPC error object
+    // (`header not found` on a load-balanced endpoint is the common one)
+    // carries no status and none of the text markers. Built from viem's
+    // own classes so the test fails if the structural read drifts.
+    const { InvalidInputRpcError, RpcRequestError, ContractFunctionExecutionError } =
+      await import('viem');
+    const request = new RpcRequestError({
+      body: {},
+      url: 'https://rpc.example/SECRETKEY',
+      error: { code: -32000, message: 'header not found' },
+    });
+    const wrapped = new ContractFunctionExecutionError(new InvalidInputRpcError(request), {
+      abi: [],
+      functionName: 'getExpectedSourceChainIds',
+      contractAddress: '0x00000000000000000000000000000000000000d1',
+    });
+    const out = classify(wrapped, 'canonical read');
+    expect(out.kind).toBe('rpc-error');
+    expect(out.summary).toContain('-32000');
+    expect(out.summary).toContain('InvalidInputRpcError');
+    // The provider's text and URL never leave.
+    expect(out.summary).not.toContain('header not found');
+    expect(out.summary).not.toContain('SECRETKEY');
+    expect(out.summary).not.toContain('rpc.example');
+  });
+
+  it('keeps an execution revert a revert', () => {
+    expect(classify(new Error('execution reverted')).kind).toBe('contract-revert');
+  });
+
+  it('an unclassified error names its types, not its message', () => {
+    const err = new TypeError('Cannot read properties of undefined (reading "secret-ish")');
+    const out = classify(err, 'mesh watcher tick');
+    expect(out.kind).toBe('unknown');
+    expect(out.summary).toContain('TypeError');
+    expect(out.summary).not.toContain('secret-ish');
+    expect(out.summary).not.toContain('Worker logs');
+  });
+
+  it('refuses a type name that is not identifier-shaped', () => {
+    const err = Object.assign(new Error('x'), { name: 'https://leak.example/key' });
+    expect(classify(err).summary).not.toContain('leak.example');
+  });
+});
+
+describe('classification through a real viem client (Codex #3249 r1)', () => {
+  async function failingRead(rpcError: Record<string, unknown>): Promise<unknown> {
+    const { createPublicClient, http, parseAbi } = await import('viem');
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async (_input: unknown, init?: { body?: unknown }) => {
+      const body = JSON.parse(String(init?.body ?? '{}')) as { id?: number };
+      return new Response(JSON.stringify({ jsonrpc: '2.0', id: body.id ?? 0, error: rpcError }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }) as typeof fetch;
+    try {
+      const client = createPublicClient({
+        transport: http('https://rpc.example/SECRETKEY', { retryCount: 0 }),
+      });
+      await client.readContract({
+        address: '0x00000000000000000000000000000000000000d1',
+        abi: parseAbi(['function getExpectedSourceChainIds() view returns (uint32[])']),
+        functionName: 'getExpectedSourceChainIds',
+      });
+      throw new Error('expected the read to fail');
+    } catch (err) {
+      return err;
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  }
+
+  it('a JSON-RPC error is rpc-error with its code, and no provider field leaks', async () => {
+    const err = await failingRead({
+      code: -32000,
+      message: 'header not found',
+      // Provider-controlled and identifier-shaped: must not be emitted.
+      name: 'UpstreamSecretKey123456',
+    });
+    const out = classify(err, 'canonical read');
+    expect(out.kind).toBe('rpc-error');
+    expect(out.summary).toContain('-32000');
+    expect(out.summary).not.toContain('UpstreamSecretKey123456');
+    expect(out.summary).not.toContain('header not found');
+    expect(out.summary).not.toContain('SECRETKEY');
+  });
+
+  it('a real contract revert (JSON-RPC code 3) stays a contract revert', async () => {
+    const err = await failingRead({ code: 3, message: 'execution reverted', data: '0x' });
+    expect(classify(err).kind).toBe('contract-revert');
+  });
+});
