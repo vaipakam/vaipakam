@@ -12,14 +12,16 @@ import {LibAccessControl, DiamondAccessControl} from
  * @notice Self-sovereign progressive risk-access controls (#671 — see
  *         `docs/DesignsAndPlans/ProgressiveRiskAccessDesign.md`). Every vault
  *         starts at the safest tier (`BlueChipOnly`, zero-init) and opts UP only
- *         by its OWNER — either directly (`msg.sender == vault`) or via a gasless
- *         EIP-712 self-submit a relayer forwards (`*BySig`). There is NO
+ *         by its OWNER, by a direct call (`msg.sender == vault`). There is no
+ *         relayed or signature-based setter (removed while prelive, #3238:
+ *         nothing used it, and a grant that could be held and submitted later
+ *         was a standing phishing surface). There is NO
  *         governance allow-list of who may reach a tier; the only admin levers
  *         are the global terms version, the opt-up cooldown, and the
  *         protocol-managed-vault exemption set.
  *
- * @dev    A dedicated facet (not a fold into `ProfileFacet`) keeps the EIP-712
- *         verify path off an already-large facet and within EIP-170. The gate
+ * @dev    A dedicated facet (not a fold into `ProfileFacet`) keeps the risk-access
+ *         setters off an already-large facet and within EIP-170. The gate
  *         LOGIC lives in `LibRiskAccess` and is consumed at the transaction
  *         chokepoints (create / accept / match); this facet only WRITES the
  *         per-vault state and exposes plain state views. The read-only PREVIEW
@@ -64,14 +66,7 @@ contract RiskAccessFacet is DiamondAccessControl {
     // ─── Errors ──────────────────────────────────────────────────────────────
 
     error InvalidRiskLevel(uint8 level);
-    error RiskSigExpired(uint256 deadline);
-    error RiskNonceUsed(address vault, uint256 nonce);
-    error RiskBadSignature(address vault);
     error RiskCooldownTooLong(uint64 requested, uint64 maxAllowed);
-    /// @notice A relayed `*BySig` grant bound a terms anchor (`termsHash`) that
-    ///         isn't the live `currentRiskTermsHash` — stale across a terms change,
-    ///         a pre-signed future-epoch grant, or zero (pre-first-reveal) (#737).
-    error RiskTermsHashStale(bytes32 signed, bytes32 current);
     /// @notice The revealed terms hash was zero or unchanged from the live one
     ///         (#730) — every change must publish a fresh, non-zero anchor.
     error InvalidRiskTermsHash();
@@ -141,56 +136,6 @@ contract RiskAccessFacet is DiamondAccessControl {
         _applyIlliquidConsent(msg.sender, p, consent);
     }
 
-    // ─── User-facing setters: gasless EIP-712 self-submit (relayed) ──────────
-
-    /// @notice Relayer-submittable tier change. `m.vault` is bound into the
-    ///         EIP-712 digest and verified (EOA or ERC-1271), so a relayer can
-    ///         pay gas but cannot alter the request.
-    function setVaultRiskTierBySig(
-        LibRiskAccess.SetVaultRiskTier calldata m,
-        bytes calldata sig
-    ) external {
-        _consumeSig(
-            m.vault, m.termsHash, m.nonce, m.deadline,
-            LibRiskAccess.digest(m), sig
-        );
-        _applyTier(m.vault, m.level);
-    }
-
-    /// @notice #1522 — checked variant of {setVaultRiskTierBySig}: the signed
-    ///         message additionally binds the tier-state expectations, so the
-    ///         gasless path gets the same TOCTOU guard as the direct one
-    ///         (Codex #1528 r1 P2 — two devices signing DISTINCT replay
-    ///         nonces for the same raise would otherwise both relay
-    ///         successfully, the second restarting the first's cooldown).
-    ///         The expectations are inside the EIP-712 digest, so a relayer
-    ///         can neither alter nor strip them.
-    function setVaultRiskTierCheckedBySig(
-        LibRiskAccess.SetVaultRiskTierChecked calldata m,
-        bytes calldata sig
-    ) external {
-        _consumeSig(
-            m.vault, m.termsHash, m.nonce, m.deadline,
-            LibRiskAccess.digest(m), sig
-        );
-        _checkTierExpectations(
-            m.vault, m.expectedTierNonce, m.expectedTermsVersion
-        );
-        _applyTier(m.vault, m.level);
-    }
-
-    /// @notice Relayer-submittable illiquid-pair consent.
-    function setIlliquidPairConsentBySig(
-        LibRiskAccess.SetIlliquidPairConsent calldata m,
-        bytes calldata sig
-    ) external {
-        _consumeSig(
-            m.vault, m.termsHash, m.nonce, m.deadline,
-            LibRiskAccess.digest(m), sig
-        );
-        _applyIlliquidConsent(m.vault, _pairIdOf(m), m.consent);
-    }
-
     // ─── RD-1 strict mode (#728 PR-2d) ───────────────────────────────────────
 
     /// @notice Opt the caller's vault INTO or OUT of strict mode. In strict mode
@@ -204,37 +149,12 @@ contract RiskAccessFacet is DiamondAccessControl {
         _applyStrictMode(msg.sender, enabled);
     }
 
-    /// @notice Relayer-submittable strict-mode toggle. Carries the full signed
-    ///         envelope because the OFF direction is risk-increasing.
-    function setRiskStrictModeBySig(
-        LibRiskAccess.SetRiskStrictMode calldata m,
-        bytes calldata sig
-    ) external {
-        _consumeSig(
-            m.vault, m.termsHash, m.nonce, m.deadline,
-            LibRiskAccess.digest(m), sig
-        );
-        _applyStrictMode(m.vault, m.enabled);
-    }
-
     /// @notice Record the caller's EXPLICIT acknowledgement of a specific mid-tier
     ///         pair (the strict-mode prerequisite). Carries the full pair identity
     ///         so it binds to the exact assets the signer reviewed. Stamps the live
     ///         terms version, so a later terms bump re-locks it.
     function setMidTierPairAck(LibRiskAccess.PairId calldata p) external {
         _applyMidTierAck(msg.sender, p);
-    }
-
-    /// @notice Relayer-submittable explicit mid-tier pair ack.
-    function setMidTierPairAckBySig(
-        LibRiskAccess.SetMidTierPairAck calldata m,
-        bytes calldata sig
-    ) external {
-        _consumeSig(
-            m.vault, m.termsHash, m.nonce, m.deadline,
-            LibRiskAccess.digest(m), sig
-        );
-        _applyMidTierAck(m.vault, _midTierPairIdOf(m));
     }
 
     // ─── Admin levers (ADMIN_ROLE → Timelock post-handover) ──────────────────
@@ -442,14 +362,6 @@ contract RiskAccessFacet is DiamondAccessControl {
         return LibVaipakam.storageSlot().protocolManagedVault[vault];
     }
 
-    function riskAccessNonceUsed(address vault, uint256 nonce)
-        external
-        view
-        returns (bool)
-    {
-        return LibVaipakam.storageSlot().riskAccessNonceUsed[vault][nonce];
-    }
-
     // ─── RD-1 strict mode views (#728 PR-2d) ─────────────────────────────────
 
     /// @notice The raw strict-mode flag (ignores the disable-cooldown).
@@ -628,23 +540,6 @@ contract RiskAccessFacet is DiamondAccessControl {
         emit IlliquidPairConsentSet(vault, pk, consent);
     }
 
-    /// @dev Map a signed illiquid-consent message onto the canonical `PairId`.
-    function _pairIdOf(LibRiskAccess.SetIlliquidPairConsent calldata m)
-        private
-        pure
-        returns (LibRiskAccess.PairId memory)
-    {
-        return LibRiskAccess.PairId({
-            lendAsset: m.lendAsset,
-            lendType: LibVaipakam.AssetType(m.lendAssetType),
-            lendTokenId: m.lendTokenId,
-            collAsset: m.collAsset,
-            collType: LibVaipakam.AssetType(m.collAssetType),
-            collTokenId: m.collTokenId,
-            prepayAsset: m.prepayAsset
-        });
-    }
-
     /// @dev Apply a strict-mode toggle. Enabling is immediate and clears any
     ///      pending disable-cooldown; disabling stamps `strictModeDisabledAt` so
     ///      the gate keeps treating the vault as strict for `riskAccessUnlockCooldown`
@@ -677,55 +572,5 @@ contract RiskAccessFacet is DiamondAccessControl {
         s.midTierAckUnlockAt[vault][pk] =
             uint64(block.timestamp) + s.riskAccessUnlockCooldown;
         emit MidTierPairAckSet(vault, pk);
-    }
-
-    /// @dev Map a signed mid-tier-ack message onto the canonical `PairId`.
-    function _midTierPairIdOf(LibRiskAccess.SetMidTierPairAck calldata m)
-        private
-        pure
-        returns (LibRiskAccess.PairId memory)
-    {
-        return LibRiskAccess.PairId({
-            lendAsset: m.lendAsset,
-            lendType: LibVaipakam.AssetType(m.lendAssetType),
-            lendTokenId: m.lendTokenId,
-            collAsset: m.collAsset,
-            collType: LibVaipakam.AssetType(m.collAssetType),
-            collTokenId: m.collTokenId,
-            prepayAsset: m.prepayAsset
-        });
-    }
-
-    function _consumeSig(
-        address vault,
-        bytes32 termsHash,
-        uint256 nonce,
-        uint256 deadline,
-        bytes32 digest,
-        bytes calldata sig
-    ) private {
-        if (block.timestamp > deadline) revert RiskSigExpired(deadline);
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        // Bind the relayed grant to the UNGUESSABLE live terms anchor (#737),
-        // superseding the predictable numeric `termsVersion` of Codex #727 r1 P1.
-        // The version is `current + 1`, so a malicious UI could induce a user to
-        // PRE-SIGN a future-epoch grant and relay it the instant governance bumped
-        // — silently re-establishing freshness and bypassing #730's ack re-lock via
-        // the standing-consent branch. `currentRiskTermsHash` is hidden behind the
-        // #730 commit-reveal until activation, so the future anchor is unknowable at
-        // sign-time. Reject the zero anchor too: before the first reveal there is no
-        // real terms epoch (zero is guessable), so a relayed grant carries no
-        // freshness meaning — the gate must not be enabled before a reveal anyway
-        // (the documented #737 precondition).
-        if (termsHash == bytes32(0) || termsHash != s.currentRiskTermsHash) {
-            revert RiskTermsHashStale(termsHash, s.currentRiskTermsHash);
-        }
-        if (s.riskAccessNonceUsed[vault][nonce]) {
-            revert RiskNonceUsed(vault, nonce);
-        }
-        if (!LibRiskAccess.verify(vault, digest, sig)) {
-            revert RiskBadSignature(vault);
-        }
-        s.riskAccessNonceUsed[vault][nonce] = true;
     }
 }

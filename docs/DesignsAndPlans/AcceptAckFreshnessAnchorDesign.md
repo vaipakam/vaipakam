@@ -214,6 +214,12 @@ implementation. None of this blocks any live deployment (gate is OFF, pre-live).
 ## 9. Scope boundary — relayed signed-grants (tracked separately, #737)
 
 #730 binds the unguessable anchor into the **acceptance acknowledgement** only.
+> **Update (#3238, 2026-11-06):** the relayed `*BySig` risk-access setters this
+> design describes were removed while prelive (owner decision): nothing used
+> them, and a signed grant that could be held and submitted later was a
+> standing phishing surface. Every risk-access change is now a direct call by
+> the vault owner. Passages below about relayed grants are history.
+
 The #671/#727 **relayed signed-grant** path (`setVaultRiskTierBySig` /
 `setIlliquidPairConsentBySig` / `setMidTierPairAckBySig`) anchors freshness on the
 **predictable numeric** `currentRiskTermsVersion`, so a future-version grant can be

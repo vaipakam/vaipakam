@@ -111,73 +111,6 @@ contract RiskStrictModeTest is SetupTest {
         RiskAccessFacet(address(diamond)).setVaultRiskTier(BROAD);
     }
 
-    // ─── EIP-712 digest builders (replicate LibRiskAccess field order) ────────
-
-    bytes32 constant EIP712_DOMAIN_TYPEHASH = keccak256(
-        "EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"
-    );
-
-    function _domainSeparator() internal view returns (bytes32) {
-        return keccak256(
-            abi.encode(
-                EIP712_DOMAIN_TYPEHASH,
-                keccak256("Vaipakam RiskAccess"),
-                keccak256("1"),
-                block.chainid,
-                address(diamond)
-            )
-        );
-    }
-
-    function _digest(bytes32 structHash) internal view returns (bytes32) {
-        return keccak256(
-            abi.encodePacked("\x19\x01", _domainSeparator(), structHash)
-        );
-    }
-
-    function _strictDigest(LibRiskAccess.SetRiskStrictMode memory m)
-        internal
-        view
-        returns (bytes32)
-    {
-        return _digest(
-            keccak256(
-                abi.encode(
-                    LibRiskAccess.SET_RISK_STRICT_MODE_TYPEHASH,
-                    m.vault, m.enabled, m.termsHash, m.nonce, m.deadline
-                )
-            )
-        );
-    }
-
-    function _ackDigest(LibRiskAccess.SetMidTierPairAck memory m)
-        internal
-        view
-        returns (bytes32)
-    {
-        return _digest(
-            keccak256(
-                bytes.concat(
-                    abi.encode(
-                        LibRiskAccess.SET_MID_TIER_PAIR_ACK_TYPEHASH,
-                        m.vault, m.lendAsset, m.lendAssetType, m.lendTokenId,
-                        m.collAsset, m.collAssetType, m.collTokenId, m.prepayAsset
-                    ),
-                    abi.encode(m.termsHash, m.nonce, m.deadline)
-                )
-            )
-        );
-    }
-
-    function _sign(uint256 pk, bytes32 digest)
-        internal
-        pure
-        returns (bytes memory)
-    {
-        (uint8 v, bytes32 r, bytes32 s) = vm.sign(pk, digest);
-        return abi.encodePacked(r, s, v);
-    }
-
     // ════════════════════════════════════════════════════════════════════════
     // 1 — strict mode OFF (default): a BroadLiquid create needs NO per-pair ack.
     // ════════════════════════════════════════════════════════════════════════
@@ -313,64 +246,6 @@ contract RiskStrictModeTest is SetupTest {
             "requirement clears once the disable-cooldown elapses"
         );
         assertGt(_createOffer(), 0, "create succeeds after the disable-cooldown");
-    }
-
-    // ════════════════════════════════════════════════════════════════════════
-    // 6 — the relayed (EIP-712 *BySig) setters work: a relayer submits the
-    //     vault's signed strict-mode toggle + mid-tier ack, then the create
-    //     succeeds. Proves the typehashes / digests are correct.
-    // ════════════════════════════════════════════════════════════════════════
-
-    function test_strictMode_bySigPaths() public {
-        // #737 — relayed grants bind the UNGUESSABLE `currentRiskTermsHash`. Seed a
-        // live non-zero anchor BEFORE arming so the tier stamp is fresh against it
-        // (the gate rejects a zero-bound grant; a post-arm bump would re-lock the
-        // tier and block the create for the wrong reason).
-        _bumpRiskTerms(keccak256("rt-sm-bysig"));
-        _armBroadLiquidGate();
-        bytes32 termsHash =
-            RiskAccessFacet(address(diamond)).getCurrentRiskTermsHash();
-
-        // Relayer enables strict mode on the lender's behalf.
-        LibRiskAccess.SetRiskStrictMode memory sm = LibRiskAccess.SetRiskStrictMode({
-            vault: lender, enabled: true, termsHash: termsHash, nonce: 1,
-            deadline: block.timestamp + 1 hours
-        });
-        vm.prank(makeAddr("relayer"));
-        RiskAccessFacet(address(diamond)).setRiskStrictModeBySig(
-            sm, _sign(lenderPk, _strictDigest(sm))
-        );
-        assertTrue(RiskAccessFacet(address(diamond)).getRiskStrictMode(lender));
-
-        // Without the ack the create is blocked.
-        bytes32 pk = LibRiskAccess.pairKey(_pair());
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                LibRiskAccess.MidTierPairNotAcknowledged.selector, lender, pk
-            )
-        );
-        _createOffer();
-
-        // Relayer submits the lender's signed mid-tier ack.
-        LibRiskAccess.SetMidTierPairAck memory am = LibRiskAccess.SetMidTierPairAck({
-            vault: lender,
-            lendAsset: mockERC20,
-            lendAssetType: uint8(LibVaipakam.AssetType.ERC20),
-            lendTokenId: 0,
-            collAsset: mockCollateralERC20,
-            collAssetType: uint8(LibVaipakam.AssetType.ERC20),
-            collTokenId: 0,
-            prepayAsset: mockERC20,
-            termsHash: termsHash,
-            nonce: 2,
-            deadline: block.timestamp + 1 hours
-        });
-        vm.prank(makeAddr("relayer"));
-        RiskAccessFacet(address(diamond)).setMidTierPairAckBySig(
-            am, _sign(lenderPk, _ackDigest(am))
-        );
-
-        assertGt(_createOffer(), 0, "relayed strict toggle + ack unblock the create");
     }
 
     // ════════════════════════════════════════════════════════════════════════
