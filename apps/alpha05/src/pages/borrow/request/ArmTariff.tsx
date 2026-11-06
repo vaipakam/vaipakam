@@ -80,7 +80,12 @@ export function ArmTariff({ ctx, own, onDone }: ArmTariffProps) {
    *  an earlier request is started again for this one. */
   const subject = `${ctx.identity}#${offerId.toString()}`;
   const [armedFor, setArmedFor] = useStoredValue<string>(`${TARIFF_KEY}:for`);
-  const [ended, setEnded] = useStoredValue<ArmEnding>(`${TARIFF_KEY}:ended`);
+  /** The step's ending, stored with the request it belongs to: an ending
+   *  written for another request (a late read-back after its step was
+   *  dismissed) is never read as this step's. */
+  const [storedEnding, setStoredEnding] = useStoredValue<{ for: string; ending: ArmEnding }>(`${TARIFF_KEY}:ended`);
+  const ended = storedEnding?.for === subject ? storedEnding.ending : null;
+  const setEnded = (ending: ArmEnding | null) => setStoredEnding(ending === null ? null : { for: subject, ending });
   const [readAt] = useState(() => Date.now());
   /** The last read-back of an unknown ending, as stated under it. */
   const [readNote, setReadNote] = useState<ReadNote | null>(null);
@@ -115,6 +120,7 @@ export function ArmTariff({ ctx, own, onDone }: ArmTariffProps) {
     if (opened.current === subject) return;
     opened.current = subject;
     if (armedFor !== subject) {
+      readSet.current = false;
       setArmedFor(subject);
       setEnded(null);
       if (tx.phase.kind !== 'idle') tx.reset();
@@ -130,6 +136,16 @@ export function ArmTariff({ ctx, own, onDone }: ArmTariffProps) {
   const lastPhase = useRef<TxPhase>(tx.phase);
   /** Whether a re-check read the chosen tariff already on the request. */
   const readSet = useRef(false);
+  /** The read-back in flight (each start or dismissal moves it on), and
+   *  whether the step is still on screen, so a late answer is dropped. */
+  const readSeq = useRef(0);
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
   useEffect(() => {
     lastPhase.current = tx.phase;
   }, [tx.phase]);
@@ -187,8 +203,13 @@ export function ArmTariff({ ctx, own, onDone }: ArmTariffProps) {
       return;
     }
     setReadNote({ kind: 'reading' });
+    const asked = ++readSeq.current;
+    // A read answered after the ending was dismissed, or after another read
+    // was started, is dropped: it would speak for a step no longer shown.
+    const stale = () => !mounted.current || asked !== readSeq.current;
     try {
       const now = (await own.read((c) => readOfferTariff(c, diamond, offerId))).value;
+      if (stale()) return;
       if (now.creator.toLowerCase() === account.toLowerCase() && tariffMatches(now.stored, choice)) {
         setReadNote(null);
         setEnded('armed');
@@ -196,6 +217,7 @@ export function ArmTariff({ ctx, own, onDone }: ArmTariffProps) {
       }
       setReadNote({ kind: now.accepted ? 'taken' : 'not-yet', at: Date.now() });
     } catch (e) {
+      if (stale()) return;
       setReadNote({ kind: 'failed', reason: refusalFromError(e).reason });
     }
   };
@@ -235,6 +257,7 @@ export function ArmTariff({ ctx, own, onDone }: ArmTariffProps) {
             type="button"
             className="btn"
             onClick={() => {
+              readSeq.current += 1;
               setEnded(null);
               setArmedFor(null);
               onDone();
