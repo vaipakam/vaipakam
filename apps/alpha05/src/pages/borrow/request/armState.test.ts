@@ -25,4 +25,9 @@ describe('armEnding', () => {
     expect(armEnding({ kind: 'failed', message: 'x' } as unknown as TxPhase)).toBe('skipped');
     expect(armEnding({ kind: 'superseded', reason: 'cancelled' } as unknown as TxPhase)).toBe('skipped');
   });
+
+  it('says set when the step read the choice already on the request, whatever the phase', () => {
+    expect(armEnding({ kind: 'review' } as TxPhase, true)).toBe('armed');
+    expect(armEnding({ kind: 'idle' } as TxPhase, true)).toBe('armed');
+  });
 });

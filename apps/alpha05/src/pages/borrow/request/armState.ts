@@ -16,15 +16,19 @@ export interface ArmContext {
   choice: TariffChoice;
 }
 
-/** How the step ended when its card was closed. Only `skipped` and
- *  `not-set` say the tariff is not on the request; `unknown` says the
- *  transaction may have set it and the request shows which. */
+/** How the step ended when its card was closed. `armed` and `not-set` are
+ *  read from the chain; `unknown` says a transaction was sent and may have
+ *  set it; `skipped` says only that this step sent nothing, so the tariff is
+ *  not on the request unless it was set some other way. */
 export type ArmEnding = 'armed' | 'not-set' | 'unknown' | 'skipped';
 
-/** The ending a closed card stands for, from the phase it was closed in. A
- *  transaction that was sent and not measured (pending, unreadable, or
- *  replaced by another one) is unknown, never "not set". */
-export function armEnding(phase: TxPhase): ArmEnding {
+/** The ending a closed card stands for, from the phase it was closed in and
+ *  what the step last read of the request. A transaction that was sent and
+ *  not measured (pending, unreadable, or replaced by another one) is
+ *  unknown, never "not set". A read that found the choice already on the
+ *  request (set from another tab or app) is armed, whatever the phase. */
+export function armEnding(phase: TxPhase, readSet = false): ArmEnding {
+  if (readSet) return 'armed';
   switch (phase.kind) {
     case 'measured':
       return phase.outcome.verdict === 'done' ? 'armed' : phase.outcome.verdict === 'not-done' ? 'not-set' : 'unknown';
@@ -39,4 +43,3 @@ export function armEnding(phase: TxPhase): ArmEnding {
       return 'skipped';
   }
 }
-

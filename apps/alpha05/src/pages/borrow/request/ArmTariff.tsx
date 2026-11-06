@@ -128,6 +128,8 @@ export function ArmTariff({ ctx, own, onDone }: ArmTariffProps) {
   /** The phase as of the latest render: the card's Close resets the tracker
    *  before it reports, so the ending is read from here. */
   const lastPhase = useRef<TxPhase>(tx.phase);
+  /** Whether a re-check read the chosen tariff already on the request. */
+  const readSet = useRef(false);
   useEffect(() => {
     lastPhase.current = tx.phase;
   }, [tx.phase]);
@@ -150,7 +152,12 @@ export function ArmTariff({ ctx, own, onDone }: ArmTariffProps) {
     if (now.creator.toLowerCase() !== account.toLowerCase())
       return { kind: 'refused', refusal: { code: 'NotCreator', reason: text('request.tariffNotCreator'), reopensAt: null, remedy: null } };
     if (now.accepted) return { kind: 'refused', refusal: { code: 'OfferAlreadyAccepted', reason: text('request.tariffArmTaken'), reopensAt: null, remedy: null } };
-    if (tariffMatches(now.stored, choice)) return { kind: 'refused', refusal: { code: 'AlreadySet', reason: text('request.tariffAlreadySet'), reopensAt: null, remedy: null } };
+    if (tariffMatches(now.stored, choice)) {
+      // Read from the chain: the request already carries this choice (set
+      // from another tab or app), so closing records it as set.
+      readSet.current = true;
+      return { kind: 'refused', refusal: { code: 'AlreadySet', reason: text('request.tariffAlreadySet'), reopensAt: null, remedy: null } };
+    }
     return simulateCall(own, { address: diamond, abi: PROFILE, functionName: 'setOfferCreatorFullTariff', args: [offerId, true, choice.maxCStar, choice.allowDowngrade] });
   };
 
@@ -170,10 +177,10 @@ export function ArmTariff({ ctx, own, onDone }: ArmTariffProps) {
     readAt,
   };
 
-  /** An unknown ending is resolved by reading the request back from its own
-   *  network: a match sets the ending to armed; anything else is stated as
-   *  read, with its time, and never settles the ending on its own, since a
-   *  transaction still pending can still set the tariff. */
+  /** An unknown or skipped ending is checked by reading the request back
+   *  from its own network: a match sets the ending to armed; anything else
+   *  is stated as read, with its time, and never settles the ending on its
+   *  own, since a transaction still pending can still set the tariff. */
   const readBack = async () => {
     if (identity !== ctx.identity) {
       setReadNote({ kind: 'switch' });
@@ -200,7 +207,7 @@ export function ArmTariff({ ctx, own, onDone }: ArmTariffProps) {
         <Notice tone={ended === 'armed' ? 'ok' : 'warn'} tier="A">
           {format(ENDING_KEYS[ended], { id })}
         </Notice>
-        {ended === 'unknown' && (
+        {(ended === 'unknown' || ended === 'skipped') && (
           <>
             {readNote !== null && (
               <p className="tier-a" role="status" data-testid="request-tariff-read">
@@ -210,7 +217,10 @@ export function ArmTariff({ ctx, own, onDone }: ArmTariffProps) {
                     ? format('request.tariffReadSwitch', { id })
                     : readNote.kind === 'failed'
                       ? format('request.tariffReadFailed', { reason: readNote.reason })
-                      : format(readNote.kind === 'taken' ? 'request.tariffReadTaken' : 'request.tariffReadNotYet', { id, time: new Date(readNote.at).toLocaleTimeString() })}
+                      : format(readNote.kind === 'taken' ? 'request.tariffReadTaken' : ended === 'skipped' ? 'request.tariffReadNotSet' : 'request.tariffReadNotYet', {
+                          id,
+                          time: new Date(readNote.at).toLocaleTimeString(),
+                        })}
               </p>
             )}
             <p className="actions">
@@ -251,7 +261,7 @@ export function ArmTariff({ ctx, own, onDone }: ArmTariffProps) {
         describeAsset={() => null}
         explorer={chain?.blockExplorer ?? ''}
         next={null}
-        onClose={() => setEnded(armEnding(lastPhase.current))}
+        onClose={() => setEnded(armEnding(lastPhase.current, readSet.current))}
       />
     </section>
   );
