@@ -287,7 +287,13 @@ export function ArmTariff({ ctx, own, onDone }: ArmTariffProps) {
         describeAsset={() => null}
         explorer={chain?.blockExplorer ?? ''}
         next={null}
-        onClose={() => setEnded(armEnding(lastPhase.current, readSet.current))}
+        onClose={() => {
+          const ending = armEnding(lastPhase.current, readSet.current);
+          setEnded(ending);
+          // An ending the phase alone cannot settle is read from the chain at
+          // once, so what the reader sees rests on a read, not on the phase.
+          if (ending === 'unknown' || ending === 'skipped') void readBack();
+        }}
       />
     </section>
   );

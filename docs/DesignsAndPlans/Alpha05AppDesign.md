@@ -550,9 +550,12 @@ above. Each resolves here, so a route reviewer needs no private file:
   back. Closing the step leaves its ending in place until dismissed: set,
   not set, skipped (the step sent nothing, so the tariff is off unless set
   some other way), or not known; a re-check that already read the choice on
-  the request ends as set. Skipped and not known offer a read of the
-  request that settles it as set on a match and otherwise states what it
-  read and when, since a pending transaction can still land.
+  the request ends as set. Skipped and not known are read from the chain
+  as the step closes, and offer that read again: one rule reads the request
+  for the check and the read (another wallet's request, the choice already
+  on it even if since taken, taken without it, open without it); a match
+  settles the ending as set, anything else is stated with the time it was
+  read, since a pending transaction can still land.
   The tariff is an Advanced choice; set there, it still
   applies in Basic, which says so. The backstop for requests nobody takes
   (OFF-26) is stated as not offered (#3181), never as a step.
