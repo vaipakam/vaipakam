@@ -104,7 +104,7 @@ test('a ranged request posts both ends, the floor and the fill mode, with the ri
     await expect(receipt).toContainText(
       /Loan-to-value of the largest loan a match can make, at today's prices\s*[\d.]+% with all your collateral locked, up to [\d.]+% with only the floor/,
     );
-    await expect(receipt).toContainText('A match locks only the collateral its lender asks for, at least 1000 tLIQ');
+    await expect(receipt).toContainText('A match locks only the collateral its lender asks for, at least 1,000 tLIQ');
     await expect(receipt).toContainText('You owe at the due date on the largest loan a match can make');
     // Advanced detail: the health factor a loan must start at, read live.
     await expect(receipt).toContainText(/At least \d+\.\d\d, read now/);
@@ -118,7 +118,7 @@ test('a ranged request posts both ends, the floor and the fill mode, with the ri
     else await expect(receipt).not.toContainText(keepsRest);
     await expect(receipt).not.toContainText('a lender cannot take this directly');
     // The approval covers everything posted, not the floor.
-    await expect(receipt).toContainText('Exactly 2000');
+    await expect(receipt).toContainText('Exactly 2,000');
     await fitsWidth(page);
 
     const flow = page.locator('.post-request');
@@ -165,9 +165,9 @@ test('a range the collateral cannot carry is refused with its ceiling, the direc
   // The protocol's own ceiling for the largest amount, as a blocker that the
   // wallet's shortfall (it holds no tLIQ) never hides; and the direct point,
   // which the create check does not cover, warned.
-  await expect(flow).toContainText(/The largest amount asks for more than your collateral supports at today's prices: at most [\d.,]+ WETH/, { timeout: 60_000 });
+  await expect(flow).toContainText(/The largest amount asks for more than your collateral supports at today's prices: at most (≈ )?[\d.,]+ WETH/, { timeout: 60_000 });
   await expect(flow).toContainText('1 tLIQ short of the 1 tLIQ this request locks');
-  await expect(flow.locator('.receipt')).toContainText(/At today's prices a lender cannot take this directly: 0\.0001 tLIQ supports at most [\d.]+ WETH/);
+  await expect(flow.locator('.receipt')).toContainText(/At today's prices a lender cannot take this directly: 0\.0001 tLIQ supports at most (≈ )?[\d.,]+ WETH/);
   await expect(flow.getByTestId('request-consent')).toHaveCount(0);
   expect(flags.sentTransactions).toBe(0);
   await fitsWidth(page);

@@ -13,7 +13,7 @@ import { readNumeraireSymbol } from '../reads/numeraire';
 import { useOwnRead } from '../reads/useOwnRead';
 import { legVerdict, moved } from '../offers/acceptOutcome';
 import { readVault } from '../offers/reads';
-import { tokenAmount, type TokenMetaMap } from '../reads/tokens';
+import { exactTokenAmount, tokenAmount, type TokenMetaMap } from '../reads/tokens';
 import { readTerms, termsUrl, type TermsState } from '../terms/terms';
 import { allowanceSteps } from '../tx/approval';
 import { allowanceMoved, approvalFlow } from '../tx/approvalFlow';
@@ -126,7 +126,10 @@ export function PostOffer({ flowKey, draft, chain, own, meta, terms, onEdit, onC
   };
 
   const amt = (asset: Hex, v: bigint) => tokenAmount(v, asset, meta, format);
-  const { readAllowance, allowanceIo, approveExactly, putBack } = approvalFlow({ own, config, chainId: chain.chainId, diamond, copy, amount: amt, setStep });
+  // Every digit: what an approval is sent for, and the two figures a
+  // measured-outcome mismatch compares (shortened, both could read the same).
+  const exact = (asset: Hex, v: bigint) => exactTokenAmount(v, asset, meta, format);
+  const { readAllowance, allowanceIo, approveExactly, putBack } = approvalFlow({ own, config, chainId: chain.chainId, diamond, copy, exactAmount: exact, setStep });
   /** The one-token approval for an ERC-721 collateral. */
   const tokenApproval = (asset: Hex, tokenId: bigint) =>
     nftApproval(
@@ -199,7 +202,7 @@ export function PostOffer({ flowKey, draft, chain, own, meta, terms, onEdit, onC
         // An ERC-20 stake: the collateral for a request, the amount for an offer.
         const token = stake.asset;
         const lock = stake.amount;
-        const io = allowanceIo(token, (amount, i, of) => say(of === 2 && i === 0 ? text('approval.stepZero') : format('approval.step', { amount: amt(token, amount) })));
+        const io = allowanceIo(token, (amount, i, of) => say(of === 2 && i === 0 ? text('approval.stepZero') : format('approval.step', { amount: exact(token, amount) })));
         const prior = await readAllowance(token);
         const steps = prior < lock ? await allowanceSteps(io, prior, lock) : [];
         if (steps.length !== h.approvalSteps) throw allowanceMoved(copy);
@@ -240,7 +243,7 @@ export function PostOffer({ flowKey, draft, chain, own, meta, terms, onEdit, onC
         return cleanUpLeg(after, text('nftApproval.legBack'));
       }
       const after = await putBack(left.token, left.prior, left.amount, left.since);
-      return cleanUpLeg(after, format('approval.legBack', { amount: amt(left.token, left.prior) }));
+      return cleanUpLeg(after, format('approval.legBack', { amount: exact(left.token, left.prior) }));
     },
     release: async () => {
       const left = grantLeft.current;
@@ -305,7 +308,7 @@ export function PostOffer({ flowKey, draft, chain, own, meta, terms, onEdit, onC
         legs.push(
           lv === 'done'
             ? { status: 'done', label: lockLabel }
-            : { status: lv, label: lockLabel, reason: format('request.lockedOther', { amount: amt(stake.asset, locked), expected: amt(stake.asset, stake.amount) }) },
+            : { status: lv, label: lockLabel, reason: format('request.lockedOther', { amount: exact(stake.asset, locked), expected: exact(stake.asset, stake.amount) }) },
         );
       }
       return legs;

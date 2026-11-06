@@ -10,8 +10,8 @@
 import type { CopyAccess, CopyKey } from '../copy/useCopy';
 import { ASSET_ERC20 } from '../offers/acceptTerms';
 import { lenderFigures, refinancePayoff } from '../offers/model';
-import type { Receipt } from '../receipt/types';
-import { tokenAmount, type TokenMetaMap } from '../reads/tokens';
+import { figured, textValue, type Receipt, type ReceiptText } from '../receipt/types';
+import { exactTokenAmount, tokenAmount, type TokenMetaMap } from '../reads/tokens';
 import { formatBps, formatSpan } from '../ui/format';
 import { cadenceText, needsApproval, promptCount, ZERO, ZERO_HASH, type AcceptReview } from './acceptReview';
 
@@ -29,7 +29,7 @@ export function lenderReceipt(r: AcceptReview, meta: TokenMetaMap | null, copy: 
   const cadence = cadenceText(o.periodicInterestCadence, copy);
   // A refinance request pays the old loan's lender, not the borrower.
   const payoff = refinancePayoff(o);
-  const textRow = (label: CopyKey, value: string, binding: boolean) => ({ label: text(label), value: { kind: 'text' as const, text: value }, binding });
+  const textRow = (label: CopyKey, value: ReceiptText, binding: boolean) => ({ label: text(label), value: textValue(value), binding });
 
   const rows: Receipt['rows'] = [
     { label: text('lendAccept.rowPay'), value: amount(lending, f.principal), binding: true, movesOut: true },
@@ -48,7 +48,11 @@ export function lenderReceipt(r: AcceptReview, meta: TokenMetaMap | null, copy: 
     { label: text(cadence ? 'lendAccept.rowInterestTotal' : 'lendAccept.rowInterestDue'), value: amount(lending, f.interest), binding: true },
     // Today's setting: the loan fixes the share in force when it opens, and
     // a fee-discount tier can lower it when interest is paid.
-    textRow('lendAccept.rowShare', format('lendAccept.share', { rate: formatBps(shareBps), amount: tokenAmount(f.protocolShare, lending, meta, format) }), false),
+    textRow(
+      'lendAccept.rowShare',
+      figured((x) => format('lendAccept.share', { rate: formatBps(shareBps), amount: tokenAmount(f.protocolShare, lending, meta, format, x) })),
+      false,
+    ),
     { label: text('lendAccept.rowBack'), value: amount(lending, f.backAtDue), binding: false },
     textRow('accept.rowDue', format('accept.due', { days: o.durationDays.toString() }), true),
     // Not bound by the loan: the protocol reads the grace period from the
@@ -86,7 +90,7 @@ export function lenderReceipt(r: AcceptReview, meta: TokenMetaMap | null, copy: 
       value: {
         kind: 'text',
         text: needsApproval(r)
-          ? format(r.approvalSteps === 2 ? 'accept.approvalZeroFirst' : 'accept.approvalNeeded', { amount: tokenAmount(f.principal, lending, meta, format) })
+          ? format(r.approvalSteps === 2 ? 'accept.approvalZeroFirst' : 'accept.approvalNeeded', { amount: exactTokenAmount(f.principal, lending, meta, format) })
           : text('accept.approvalEnough'),
       },
       binding: false,

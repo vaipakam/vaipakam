@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatAge, formatBps, formatScaled, formatSpan, formatUnits, formatUtc, shortAddress } from './format';
+import { formatAge, formatBps, formatExact, formatFigure, formatFigureText, formatScaled, formatSpan, formatUnits, formatUtc, shortAddress } from './format';
 
 describe('formatAge', () => {
   it('states seconds, minutes, then hours with the remaining minutes', () => {
@@ -55,5 +55,35 @@ describe('formatSpan', () => {
 describe('formatUtc', () => {
   it('labels the moment as UTC', () => {
     expect(formatUtc(0, 'en-GB')).toBe('1 Jan 1970, 00:00 UTC');
+  });
+});
+
+describe('formatFigure', () => {
+  it('groups the whole part and leaves a short fraction exact', () => {
+    expect(formatFigure(1_000n * 10n ** 18n, 18)).toEqual({ text: '1,000', cut: false });
+    expect(formatFigure(1_234_567_500_000n, 6)).toEqual({ text: '1,234,567.5', cut: false });
+  });
+  it('keeps four places once there is a whole part, cut toward zero', () => {
+    expect(formatFigure(1_000_939_726_027_397_260_273n, 18)).toEqual({ text: '1,000.9397', cut: true });
+    expect(formatFigure(1_999_999_999_999_999_999n, 18)).toEqual({ text: '1.9999', cut: true });
+  });
+  it('keeps four significant digits below one, never reading as zero', () => {
+    expect(formatFigure(958_904_109_589_041_095n, 18)).toEqual({ text: '0.9589', cut: true });
+    expect(formatFigure(19_178_082_191_780_821n, 18)).toEqual({ text: '0.01917', cut: true });
+    expect(formatFigure(12n, 18)).toEqual({ text: '0.000000000000000012', cut: false });
+    expect(formatFigure(123_456n, 18)).toEqual({ text: '0.0000000000001234', cut: true });
+  });
+  it('drops trailing zeros left by the cut and handles zero and negatives', () => {
+    expect(formatFigure(1_000_000_9n, 7)).toEqual({ text: '1', cut: true });
+    expect(formatFigure(0n, 18)).toEqual({ text: '0', cut: false });
+    expect(formatFigure(-1_500_250_000n, 6)).toEqual({ text: '-1,500.25', cut: false });
+  });
+  it('writes an exact figure with every digit and digit groups', () => {
+    expect(formatExact(1_000_939_726_027_397_260_273n, 18)).toBe('1,000.939726027397260273');
+    expect(formatExact(2_000n * 10n ** 18n, 18)).toBe('2,000');
+  });
+  it('marks a cut figure in a sentence', () => {
+    expect(formatFigureText(958_904_109_589_041_095n, 18)).toBe('≈ 0.9589');
+    expect(formatFigureText(10n ** 16n, 18)).toBe('0.01');
   });
 });

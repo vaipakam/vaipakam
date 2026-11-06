@@ -8,7 +8,7 @@ import type { CopyAccess, CopyKey } from '../copy/useCopy';
 import { ASSET_ERC20 } from '../offers/acceptTerms';
 import { acceptFigures, listFee } from '../offers/model';
 import type { Receipt } from '../receipt/types';
-import { tokenAmount, type TokenMetaMap } from '../reads/tokens';
+import { exactTokenAmount, type TokenMetaMap } from '../reads/tokens';
 import { formatBps, formatSpan } from '../ui/format';
 import { cadenceText, needsApproval, promptCount, ZERO, ZERO_HASH, type AcceptReview } from './acceptReview';
 
@@ -184,7 +184,7 @@ export function borrowerReceipt(r: AcceptReview, meta: TokenMetaMap | null, copy
         kind: 'text',
         text: needsApproval(r)
           ? format(r.approvalSteps === 2 ? 'accept.approvalZeroFirst' : 'accept.approvalNeeded', {
-              amount: tokenAmount(f.collateral, collateral, meta, format),
+              amount: exactTokenAmount(f.collateral, collateral, meta, format),
             })
           : text('accept.approvalEnough'),
       },

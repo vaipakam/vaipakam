@@ -68,7 +68,7 @@ test('each side sees its live loan with its side, terms, due date and a button t
     await expect(card).toBeVisible({ timeout: 60_000 });
     await expect(card.getByRole('heading')).toHaveText(`Loan #${loanId}: you are the ${role}`);
     await expect(card).toContainText('1 WETH at 5% a year, on a 30-day term.');
-    await expect(card).toContainText('Collateral: 5000 tLIQ.');
+    await expect(card).toContainText('Collateral: 5,000 tLIQ.');
     await expect(card).toContainText(/Repayment due .* UTC\./);
     await expect(card).toContainText(/Health factor \d/);
     const open = card.getByRole('link', { name: `Open loan #${loanId}` });

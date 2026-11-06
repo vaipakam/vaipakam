@@ -10,6 +10,7 @@ import { useOwnRead } from '../reads/useOwnRead';
 import { useStoredValue } from '../tx/txStore';
 import { useMounted } from '../tx/useReviewRefresh';
 import { FormField } from '../ui/FormField';
+import { formatFigureText } from '../ui/format';
 import { useMode } from '../../app/ModeContext';
 import { Notice } from '../ui/Notice';
 import {
@@ -341,7 +342,7 @@ export function OfferForm({ side, flowKey, chain, own, pair, meta, onReview, onC
   const ceilingTyped = input.tariffCeiling.trim() !== '';
   const ceiling = ceilingTyped ? parseAmount(input.tariffCeiling, VPFI_DECIMALS) : null;
   const ceilingValue = ceiling?.ok ? ceiling.value : ceilingTyped ? null : suggested;
-  const vpfi = (v: bigint) => format('request.tariffVpfi', { amount: formatUnits(v, VPFI_DECIMALS) });
+  const vpfi = (v: bigint) => format('request.tariffVpfi', { amount: formatFigureText(v, VPFI_DECIMALS) });
   /** Why the chosen tariff cannot go to review: switched off now, or no
    *  ceiling to authorize (none typed, and no quote to take it from). */
   const tariffBlock = !tariffChosen

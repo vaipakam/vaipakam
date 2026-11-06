@@ -19,8 +19,8 @@
  */
 import type { CopyAccess, CopyKey } from '../copy/useCopy';
 import type { Posture } from '../capability/types';
-import type { Receipt } from '../receipt/types';
-import { tokenAmount, type TokenMetaMap } from '../reads/tokens';
+import { figured, textValue, type Receipt, type ReceiptText } from '../receipt/types';
+import { exactTokenAmount, tokenAmount, type TokenMetaMap } from '../reads/tokens';
 import { formatBps, formatSpan, formatUtc } from '../ui/format';
 import { pageHandoff } from '../../routes/pageMap';
 import { isRanged, lenderPostFigures, partCollateral, ZERO, type ParsedPost } from './postModel';
@@ -46,7 +46,7 @@ export function lenderPostReceipt(r: PostReview, meta: TokenMetaMap | null, copy
   const f = lenderPostFigures(parsed.amountMax, parsed.rateBps, parsed.durationDays, r.lifBps, shareBps ?? 0n);
   const ranged = isRanged(parsed);
   const amount = (asset: Hex, value: bigint) => ({ kind: 'amount' as const, asset, amount: value });
-  const textRow = (label: CopyKey, value: string, binding: boolean) => ({ label: text(label), value: { kind: 'text' as const, text: value }, binding });
+  const textRow = (label: CopyKey, value: ReceiptText, binding: boolean) => ({ label: text(label), value: textValue(value), binding });
   const illiquid = r.lendingClass === 'illiquid' || r.collateralClass === 'illiquid';
   const approvalSteps = r.holding.kind === 'erc20' ? r.holding.approvalSteps : 0;
 
@@ -89,7 +89,11 @@ export function lenderPostReceipt(r: PostReview, meta: TokenMetaMap | null, copy
     // could not be read is said, never shown as zero.
     shareBps === null
       ? textRow('lendAccept.rowShare', text('lendOffer.shareUnread'), false)
-      : textRow('lendAccept.rowShare', format('lendAccept.share', { rate: formatBps(shareBps), amount: tokenAmount(f.protocolShare, pair.lending, meta, format) }), false),
+      : textRow(
+          'lendAccept.rowShare',
+          figured((x) => format('lendAccept.share', { rate: formatBps(shareBps), amount: tokenAmount(f.protocolShare, pair.lending, meta, format, x) })),
+          false,
+        ),
     ...(shareBps === null ? [] : [{ label: text(ranged ? 'lendOffer.rowBackWhole' : 'lendAccept.rowBack'), value: amount(pair.lending, f.backAtDue), binding: false }]),
     textRow('accept.rowInterest', text(parsed.fullTerm ? (parsed.allowsPartialRepay ? 'lendAccept.fullTermPartial' : 'lendAccept.fullTerm') : 'lendAccept.proRata'), true),
     ...scheduleRows(r, meta, copy, advanced, keeper),
@@ -108,7 +112,7 @@ export function lenderPostReceipt(r: PostReview, meta: TokenMetaMap | null, copy
         kind: 'text',
         text: !needsApproval(r)
           ? text('accept.approvalEnough')
-          : format(approvalSteps === 2 ? 'request.approvalZeroFirst' : 'request.approvalNeeded', { amount: tokenAmount(stake.amount, stake.asset, meta, format) }),
+          : format(approvalSteps === 2 ? 'request.approvalZeroFirst' : 'request.approvalNeeded', { amount: exactTokenAmount(stake.amount, stake.asset, meta, format) }),
       },
       binding: false,
       movesOut: needsApproval(r),
@@ -118,7 +122,7 @@ export function lenderPostReceipt(r: PostReview, meta: TokenMetaMap | null, copy
   // Where the offer is followed and cancelled after posting: said before
   // the amount locks, not discovered afterwards (pageHandoff).
   const manage = pageHandoff('/offers');
-  const consequences = [
+  const consequences: ReceiptText[] = [
     text('lendOffer.loseLocked'),
     ...(manage.kind === 'here' ? [] : [text(manage.kind === 'currentApp' ? 'lendOffer.manageElsewhere' : 'lendOffer.manageNowhere')]),
     text(r.draft.expiresAt === 0n ? 'lendOffer.loseOpen' : 'lendOffer.loseLapse'),
@@ -155,7 +159,7 @@ export function lenderPostReceipt(r: PostReview, meta: TokenMetaMap | null, copy
  * change while the offer is open (RB-SWITCH). A fill mode is fixed once
  * posted.
  */
-export function matchConsequences(r: PostReview, meta: TokenMetaMap | null, copy: Pick<CopyAccess, 'text' | 'format'>): string[] {
+export function matchConsequences(r: PostReview, meta: TokenMetaMap | null, copy: Pick<CopyAccess, 'text' | 'format'>): ReceiptText[] {
   const { text, format } = copy;
   const { parsed, pair } = r.draft;
   const sw = r.risk.partialFill;
@@ -165,9 +169,8 @@ export function matchConsequences(r: PostReview, meta: TokenMetaMap | null, copy
       ...(parsed.fillMode !== 'partial' ? [text('lendOffer.loseFillFixed')] : []),
     ];
   }
-  const part = tokenAmount(parsed.amount, pair.lending, meta, format);
   return [
-    format('lendOffer.loseRangeParts', { part }),
+    figured((x) => format('lendOffer.loseRangeParts', { part: tokenAmount(parsed.amount, pair.lending, meta, format, x) })),
     text(sw === null ? 'lendOffer.loseRangeMatchUnread' : sw ? 'lendOffer.loseRangeMatch' : 'lendOffer.loseRangeMatchOff'),
     text('lendOffer.loseRangeNoDirect'),
     text('lendOffer.loseRangeShare'),

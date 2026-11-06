@@ -85,7 +85,7 @@ test('a borrower posts their own request: exact figures, an exact approval, and 
     // back, every term it binds, and the prompts (approve, post).
     const receipt = page.locator('.post-request .receipt');
     await expect(receipt).toContainText('You lock in your vault now', { timeout: 60_000 });
-    await expect(receipt).toContainText('2000');
+    await expect(receipt).toContainText('2,000');
     await expect(receipt).toContainText('Amount you ask to borrow');
     await expect(receipt).toContainText('All of it by one lender, or not at all');
     await expect(receipt).toContainText('7.25% a year');
@@ -93,7 +93,7 @@ test('a borrower posts their own request: exact figures, an exact approval, and 
     await expect(receipt).toContainText("You receive in your wallet if a lender takes it, at today's fee rate");
     await expect(receipt).toContainText('Full term, with partial repayments allowed');
     await expect(receipt).toContainText('Request open until');
-    await expect(receipt).toContainText('Exactly 2000');
+    await expect(receipt).toContainText('Exactly 2,000');
     await expect(receipt).toContainText('used up by posting');
     await expect(receipt).toContainText('A lender who takes the request opens the loan at once');
     await expect(receipt).toContainText('When the request lapses it can no longer be taken');

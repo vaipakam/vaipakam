@@ -4,7 +4,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it } from 'vitest';
 import '../../test/i18n';
 import { OPEN, closed, unknownVerdict } from '../eligibility/types';
-import type { Receipt as ReceiptModel } from '../receipt/types';
+import { figured, textValue, type Receipt as ReceiptModel } from '../receipt/types';
 import { summarize } from '../tx/outcome';
 import { ActionList } from './ActionList';
 import { FinishCard, verdictCopyKey } from './FinishCard';
@@ -50,7 +50,39 @@ describe('Receipt', () => {
   });
 
   it('renderValue states a time in UTC', () => {
-    expect(renderValue({ kind: 'time', unixSeconds: 1_700_000_000 }, describeAsset, 'Unknown')).toEqual({ text: '2023-11-14 22:13 UTC', unknown: false });
+    expect(renderValue({ kind: 'time', unixSeconds: 1_700_000_000 }, describeAsset, 'Unknown')).toEqual({ text: '2023-11-14 22:13 UTC', unknown: false, cut: false, full: null });
+  });
+
+  it('shows an amount short, marked approximate, with every digit on request', () => {
+    const long = { kind: 'amount' as const, asset: USDC, amount: 1_000_939_726n };
+    expect(renderValue(long, describeAsset, 'Unknown')).toEqual({ text: '≈ 1,000.9397 USDC', unknown: false, cut: true, full: '1000.939726 USDC' });
+    expect(renderValue(long, describeAsset, 'Unknown', true).text).toBe('1000.939726 USDC');
+    const out = html(createElement(Receipt, { receipt: { ...receipt, rows: [{ label: 'Interest', value: long, binding: false }] }, describeAsset, nowMs: 1_061_000 }));
+    expect(out).toContain('title="1000.939726 USDC"');
+    expect(out).toContain('Show exact figures');
+    // A receipt whose figures are all exact offers no toggle.
+    expect(html(createElement(Receipt, { receipt, describeAsset, nowMs: 1_061_000 }))).not.toContain('Show exact figures');
+  });
+
+  it('switches a figure written inside a sentence with the amount rows, rows and "You can lose" lines alike', () => {
+    const share = figured((x) => `2% of interest, ${x ? '0.123456789 VPFI' : '≈ 0.1234 VPFI'}`);
+    expect(share).toEqual({ text: '2% of interest, ≈ 0.1234 VPFI', exact: '2% of interest, 0.123456789 VPFI' });
+    // Nothing shortened: a plain string, no toggle.
+    expect(figured(() => 'Never')).toBe('Never');
+    const value = textValue(share);
+    expect(renderValue(value, describeAsset, 'Unknown')).toEqual({ text: '2% of interest, ≈ 0.1234 VPFI', unknown: false, cut: true, full: '2% of interest, 0.123456789 VPFI' });
+    expect(renderValue(value, describeAsset, 'Unknown', true).text).toBe('2% of interest, 0.123456789 VPFI');
+    // Only a "You can lose" line is shortened: the toggle is still offered.
+    const out = html(
+      createElement(Receipt, {
+        receipt: { ...receipt, rows: [], consequences: [figured((x) => `Tariff ${x ? '1.234567 VPFI' : '≈ 1.2345 VPFI'}`)] },
+        describeAsset,
+        nowMs: 1_061_000,
+      }),
+    );
+    expect(out).toContain('Tariff ≈ 1.2345 VPFI');
+    expect(out).toContain('title="Tariff 1.234567 VPFI"');
+    expect(out).toContain('Show exact figures');
   });
 });
 

@@ -14,7 +14,7 @@ import { ACCEPT_DEADLINE_SECONDS, ACCEPT_TERMS_DOMAIN_NAME, ACCEPT_TERMS_DOMAIN_
 import { deliverySplit, legVerdict, moved, openedLoan } from '../offers/acceptOutcome';
 import { acceptFigures, lenderFigures } from '../offers/model';
 import { readVault } from '../offers/reads';
-import { tokenAmount, type TokenMetaMap } from '../reads/tokens';
+import { exactTokenAmount, tokenAmount, type TokenMetaMap } from '../reads/tokens';
 import { readTerms, termsUrl, type TermsState } from '../terms/terms';
 import { askThrough } from '../tx/simulate';
 import { cleanUpLeg } from '../tx/cleanUp';
@@ -97,7 +97,10 @@ export function AcceptOffer({ flowKey, offerId, chain, own, meta, terms, onClose
   const approvalLeft = useRef<{ token: Hex; prior: bigint; amount: bigint; since: bigint | null } | null>(null);
 
   const amt = (asset: Hex, v: bigint) => tokenAmount(v, asset, meta, format);
-  const { readAllowance, allowanceIo, approveExactly, putBack } = approvalFlow({ own, config, chainId: chain.chainId, diamond, copy, amount: amt, setStep });
+  // Every digit: what an approval is sent for, and the two figures a
+  // measured-outcome mismatch compares (shortened, both could read the same).
+  const exact = (asset: Hex, v: bigint) => exactTokenAmount(v, asset, meta, format);
+  const { readAllowance, allowanceIo, approveExactly, putBack } = approvalFlow({ own, config, chainId: chain.chainId, diamond, copy, exactAmount: exact, setStep });
 
   const tx = useTrackedTx({
     key: flowKey,
@@ -124,7 +127,7 @@ export function AcceptOffer({ flowKey, offerId, chain, own, meta, terms, onClose
       // The allowance is read again now: the value a stop puts back is the
       // one the wallet holds right before this flow's approval, never the
       // review's, and a change that alters the steps stops before any prompt.
-      const io = allowanceIo(collateral, (amount, i, of) => say(of === 2 && i === 0 ? text('approval.stepZero') : format('approval.step', { amount: amt(collateral, amount) })));
+      const io = allowanceIo(collateral, (amount, i, of) => say(of === 2 && i === 0 ? text('approval.stepZero') : format('approval.step', { amount: exact(collateral, amount) })));
       const prior = await readAllowance(collateral);
       const steps = prior < lock ? await allowanceSteps(io, prior, lock) : [];
       const approved = steps.length > 0;
@@ -230,7 +233,7 @@ export function AcceptOffer({ flowKey, offerId, chain, own, meta, terms, onClose
       approvalLeft.current = null;
       if (!left) return null;
       const after = await putBack(left.token, left.prior, left.amount, left.since);
-      return cleanUpLeg(after, format('approval.legBack', { amount: amt(left.token, left.prior) }));
+      return cleanUpLeg(after, format('approval.legBack', { amount: exact(left.token, left.prior) }));
     },
     measure: async (receipt, at) => {
       if (!review) return [];
@@ -261,13 +264,13 @@ export function AcceptOffer({ flowKey, offerId, chain, own, meta, terms, onClose
         label:
           split.received === f.received
             ? format('accept.legReceived', { amount: amt(lending, split.received) })
-            : format('accept.legReceivedFee', { amount: amt(lending, split.received), shown: amt(lending, f.received), principal: amt(lending, opened.principal) }),
+            : format('accept.legReceivedFee', { amount: exact(lending, split.received), shown: exact(lending, f.received), principal: exact(lending, opened.principal) }),
       });
     } else {
       legs.push({
         status: 'unknown',
         label: shownLabel,
-        reason: format('accept.receivedOther', { amount: amt(lending, split.received), expected: amt(lending, f.received) }),
+        reason: format('accept.receivedOther', { amount: exact(lending, split.received), expected: exact(lending, f.received) }),
       });
     }
     const collateral = r.offer.collateralAsset;
@@ -296,8 +299,8 @@ export function AcceptOffer({ flowKey, offerId, chain, own, meta, terms, onClose
               status: lv,
               label: lockLabel,
               reason: format('accept.lockedOther', {
-                amount: amt(collateral, locked),
-                expected: amt(collateral, f.collateral),
+                amount: exact(collateral, locked),
+                expected: exact(collateral, f.collateral),
               }),
             },
       );
@@ -319,7 +322,11 @@ export function AcceptOffer({ flowKey, offerId, chain, own, meta, terms, onClose
     legs.push(
       lv === 'done'
         ? { status: 'done', label: lentLabel }
-        : { status: lv, label: lentLabel, reason: lv === 'not-done' ? text('lendAccept.lentNone') : format('lendAccept.lentOther', { amount: amt(lending, lent), expected: amt(lending, f.principal) }) },
+        : {
+            status: lv,
+            label: lentLabel,
+            reason: lv === 'not-done' ? text('lendAccept.lentNone') : format('lendAccept.lentOther', { amount: exact(lending, lent), expected: exact(lending, f.principal) }),
+          },
     );
     const back = moved(logs, lending, null, account);
     if (f.feeBack > 0n || back > 0n) {
@@ -327,7 +334,11 @@ export function AcceptOffer({ flowKey, offerId, chain, own, meta, terms, onClose
       legs.push(
         back === f.feeBack
           ? { status: 'done', label: backLabel }
-          : { status: back === 0n ? 'not-done' : 'unknown', label: backLabel, reason: format('lendAccept.feeBackOther', { amount: amt(lending, back), expected: amt(lending, f.feeBack) }) },
+          : {
+              status: back === 0n ? 'not-done' : 'unknown',
+              label: backLabel,
+              reason: format('lendAccept.feeBackOther', { amount: exact(lending, back), expected: exact(lending, f.feeBack) }),
+            },
       );
     }
     return legs;
