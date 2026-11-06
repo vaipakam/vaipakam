@@ -1184,3 +1184,200 @@ a.btn {
     width: auto;
   }
 }
+
+/* ── Buttons: hover and press (RB polish) ────────────────────────────── */
+.btn {
+  transition:
+    background-color 150ms var(--ease-standard),
+    border-color 150ms var(--ease-standard),
+    box-shadow 150ms var(--ease-standard);
+}
+.btn:hover:not(:disabled) {
+  background: var(--surface-hover);
+}
+.btn-primary:hover:not(:disabled) {
+  background: var(--brand-strong);
+  border-color: var(--brand-strong);
+  box-shadow: var(--shadow-card);
+}
+.btn-link {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--brand-soft-text);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  min-height: var(--taptarget);
+}
+.btn-link:hover:not(:disabled) {
+  background: transparent;
+  color: var(--brand-strong);
+}
+
+/* ── Borrow: the borrower's own request ──────────────────────────────── */
+.request-open {
+  display: grid;
+  gap: 8px;
+  justify-items: start;
+  padding: 16px;
+  border: 1px dashed var(--border-strong);
+  border-radius: 14px;
+  background: var(--surface-raised);
+}
+.request-open p {
+  margin: 0;
+}
+.request-form {
+  display: grid;
+  gap: 4px;
+}
+.request-form h2 {
+  margin: 0 0 4px;
+}
+.request-form .field input,
+.request-form .field select {
+  width: 100%;
+  box-sizing: border-box;
+}
+.request-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0 16px;
+}
+.choice-group {
+  margin: 12px 0;
+  padding: 0;
+  border: 0;
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+.choice-group legend {
+  padding: 0;
+  margin-bottom: 4px;
+  font-weight: 600;
+  color: var(--text-strong);
+}
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.chip {
+  position: relative;
+}
+.chip input {
+  position: absolute;
+  opacity: 0;
+  inset: 0;
+  margin: 0;
+  cursor: pointer;
+}
+.chip span {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--taptarget);
+  padding: 0 16px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: var(--surface-raised);
+  color: var(--text-body);
+  transition:
+    background-color 150ms var(--ease-standard),
+    border-color 150ms var(--ease-standard),
+    color 150ms var(--ease-standard);
+}
+.chip:hover span {
+  background: var(--surface-hover);
+}
+.chip input:checked + span {
+  background: var(--brand-soft);
+  border-color: var(--brand-fill);
+  color: var(--brand-soft-text);
+  font-weight: 600;
+}
+.chip input:focus-visible + span {
+  outline: 3px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+.choice {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-height: var(--taptarget);
+  cursor: pointer;
+}
+.choice input {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  margin: 2px 0 0;
+  accent-color: var(--brand-fill);
+}
+/* The form's primary action, with the live summary above it. On a phone it
+   is pinned just above the bottom bar, full width, where the thumb rests;
+   from 720px it sits in the flow under the form. */
+.thumb-action {
+  display: grid;
+  gap: 8px;
+  margin: 12px 0 0;
+}
+.thumb-action .request-summary {
+  margin: 0;
+  color: var(--text-strong);
+}
+.thumb-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+@media (max-width: 719px) {
+  .thumb-action,
+  .action-flow[data-phase='review'] > .actions {
+    position: sticky;
+    bottom: calc(56px + env(safe-area-inset-bottom));
+    z-index: 5;
+    margin-inline: -16px;
+    padding: 12px 16px;
+    background: var(--surface-raised);
+    border-top: 1px solid var(--border);
+    box-shadow: 0 -6px 16px rgba(16, 24, 40, 0.08);
+  }
+  .thumb-buttons {
+    flex-direction: column;
+  }
+  .thumb-buttons .btn,
+  .action-flow[data-phase='review'] > .actions .btn {
+    width: 100%;
+    min-height: 52px;
+    font-weight: 600;
+  }
+  .thumb-buttons .btn:not(.btn-primary),
+  .action-flow[data-phase='review'] > .actions .btn:not(.btn-primary) {
+    min-height: var(--taptarget);
+    font-weight: 400;
+    background: transparent;
+    border-color: transparent;
+    color: var(--brand);
+  }
+}
+@media (min-width: 720px) {
+  .request-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    align-items: start;
+  }
+}
+.input-with-action {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+.request-form .input-with-action input {
+  flex: 1 1 auto;
+  width: auto;
+  min-width: 0;
+}
+.input-with-action .btn {
+  flex: none;
+  min-height: var(--taptarget);
+}

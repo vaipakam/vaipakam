@@ -2219,7 +2219,7 @@ Un `ConfigFacet.getRewardClaimHorizonDays()` igual a 0 significa que el horizont
 
 ### Borrow: Cómo funciona
 
-Borrow acepta directamente una oferta de prestamista (`offerType` 0) de un ERC-20 contra garantía ERC-20, con `acceptOffer(offerId, terms, signature)`. En una transacción abre el vault del prestatario si no existe, mete en él la garantía, entrega a la wallet el principal menos la comisión de apertura y emite `LoanInitiated`. Las solicitudes de préstamo, los lados NFT, los consentimientos por par y las opciones avanzadas llegan en actualizaciones posteriores.
+Borrow acepta directamente una oferta de prestamista (`offerType` 0) de un ERC-20 contra garantía ERC-20, con `acceptOffer(offerId, terms, signature)`. En una transacción abre el vault del prestatario si no existe, mete en él la garantía, entrega a la wallet el principal menos la comisión de apertura y emite `LoanInitiated`. Un prestatario también puede publicar una solicitud (`offerType` 1); los lados NFT, los consentimientos por par y las opciones avanzadas llegan en actualizaciones posteriores.
 
 <a id="borrow-pair"></a>
 
@@ -2250,6 +2250,24 @@ La comisión es el `lifEstimate` de `previewAccept`: `getLoanInitiationFeeBps` d
 ### Borrow: Riesgos
 
 Un préstamo pasado el fin de su gracia (`getEffectiveGraceSeconds` tras el vencimiento, que el tiempo en pausa desplaza) puede declararlo en impago cualquiera: la garantía líquida se vende para el prestamista y la ilíquida se transfiere tal cual. La garantía líquida también puede liquidarse cuando el factor de salud baja de 1. `useFullTermInterest` cobra los intereses del plazo completo al devolver antes; un calendario de intereses salda un periodo impagado con una venta forzosa de garantía.
+
+<a id="borrow-request"></a>
+
+### Borrow: Publicar tu propia solicitud
+
+Una solicitud es `createOffer` con `offerType` 1, ERC-20 en ambos lados, enviada desde la wallet del prestatario. Mueve `collateralAmount` al vault del prestatario, creándolo si no existe, y emite `OfferCreated(offerId, creator, 1)`. Un prestamista la acepta con `acceptOffer`: el principal menos la comisión va a la wallet del prestatario, y la parte de la comisión para quien envía va al prestamista que la envió. `cancelOffer` está abierto al creador desde `MIN_OFFER_CANCEL_DELAY` (5 minutos) tras la creación, y a cualquiera una vez vencida la solicitud; la garantía siempre vuelve al creador.
+
+<a id="borrow-request-terms"></a>
+
+### Borrow: Las condiciones de la solicitud
+
+Basic publica una solicitud de valor único: `amount` = `amountMax`, `interestRateBps` = `interestRateBpsMax`, `collateralAmount` = `collateralAmountMax`, `fillMode` 0, `periodicInterestCadence` 0, `allowsPrepayListing` y `allowsParallelSale` false, `refinanceTargetLoanId` 0, `creatorRiskAndTermsConsent` true. Los importes se convierten exactamente a unidades base y la tasa es como máximo 10.000 bps. `durationDays` está limitado por el máximo configurado que se lee de `getProtocolConfigBundle`. `expiresAt` es 0 (abierta hasta cancelarse) o un momento fijado desde el último bloque al abrir la revisión, como mucho `MAX_OFFER_EXPIRY_HORIZON` (365 días) por delante. `useFullTermInterest` es true por defecto y `allowsPartialRepay` false.
+
+<a id="borrow-request-review"></a>
+
+### Borrow: Revisar y publicar una solicitud
+
+La revisión simula `createOffer` desde la wallet y lee ambas clases, `getEffectiveGraceSeconds(durationDays)`, `getLoanInitiationFeeBps`, el plazo máximo, el vault, el saldo y la aprobación de la wallet, y `calculateLTV` cuando ambos lados son líquidos; se vuelve a leer en cada bloque y justo antes de abrir la wallet. Mientras la aprobación no alcanza, la simulación solo llega al cobro de la garantía: un error de cobro del token o una reversión sin nombre de error del protocolo se muestra como la aprobación pendiente, y un error con nombre del protocolo es un rechazo. Tras una aprobación exacta, `createOffer` se simula de nuevo y se envía; una parada tras la aprobación la restablece a su valor anterior si nada más la cambió. El resultado lee `OfferCreated` para esta wallet y el `Transfer` de la garantía al vault.
 
 <a id="terms-gate"></a>
 

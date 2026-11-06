@@ -2229,7 +2229,7 @@ Die Hauptzahl ist `RewardClaimFacet.simulateClaimInteractionRewards(user, 2)`, d
 
 ### Borrow: So funktioniert es
 
-Borrow nimmt ein Verleiherangebot (`offerType` 0) eines ERC-20 gegen ERC-20-Sicherheit direkt an, mit `acceptOffer(offerId, terms, signature)`. In einer Transaktion eröffnet es den Vault des Leihenden, falls keiner existiert, zieht die Sicherheit hinein, liefert den Kapitalbetrag abzüglich der Eröffnungsgebühr an die Wallet und emittiert `LoanInitiated`. Kreditanfragen, NFT-Seiten, Paar-Zustimmungen und die erweiterten Optionen folgen in späteren Updates.
+Borrow nimmt ein Verleiherangebot (`offerType` 0) eines ERC-20 gegen ERC-20-Sicherheit direkt an, mit `acceptOffer(offerId, terms, signature)`. In einer Transaktion eröffnet es den Vault des Leihenden, falls keiner existiert, zieht die Sicherheit hinein, liefert den Kapitalbetrag abzüglich der Eröffnungsgebühr an die Wallet und emittiert `LoanInitiated`. Ein Leihender kann auch eine Anfrage stellen (`offerType` 1); NFT-Seiten, Paar-Zustimmungen und die erweiterten Optionen folgen in späteren Updates.
 
 <a id="borrow-pair"></a>
 
@@ -2260,6 +2260,24 @@ Die Gebühr ist `lifEstimate` aus `previewAccept`: `getLoanInitiationFeeBps` des
 ### Borrow: Risiken
 
 Ein Kredit nach dem Ende seiner Nachfrist (`getEffectiveGraceSeconds` nach dem Fälligkeitstag, den pausierte Zeit verschiebt) kann von jedem als ausgefallen ausgelöst werden: liquide Sicherheit wird für den Verleiher verkauft, illiquide unverändert übertragen. Liquide Sicherheit kann auch liquidiert werden, sobald der Health Factor unter 1 liegt. `useFullTermInterest` berechnet bei früher Rückzahlung die Zinsen der vollen Laufzeit; ein Zinsplan begleicht eine verpasste Periode durch einen Zwangsverkauf von Sicherheit.
+
+<a id="borrow-request"></a>
+
+### Borrow: Eine eigene Anfrage stellen
+
+Eine Anfrage ist `createOffer` mit `offerType` 1, ERC-20 auf beiden Seiten, gesendet aus der Wallet des Leihenden. Sie zieht `collateralAmount` in den Vault des Leihenden, legt ihn an, falls keiner existiert, und emittiert `OfferCreated(offerId, creator, 1)`. Ein Verleiher nimmt sie mit `acceptOffer` an: der Kapitalbetrag abzüglich der Gebühr geht an die Wallet des Leihenden, der Absenderanteil der Gebühr an den Verleiher, der sie gesendet hat. `cancelOffer` steht dem Ersteller ab `MIN_OFFER_CANCEL_DELAY` (5 Minuten) nach der Erstellung offen und jedem, sobald die Anfrage abgelaufen ist; die Sicherheit geht immer an den Ersteller zurück.
+
+<a id="borrow-request-terms"></a>
+
+### Borrow: Die Bedingungen der Anfrage
+
+Basic stellt eine Anfrage mit Einzelwerten: `amount` = `amountMax`, `interestRateBps` = `interestRateBpsMax`, `collateralAmount` = `collateralAmountMax`, `fillMode` 0, `periodicInterestCadence` 0, `allowsPrepayListing` und `allowsParallelSale` false, `refinanceTargetLoanId` 0, `creatorRiskAndTermsConsent` true. Beträge werden exakt in Basiseinheiten umgerechnet, der Zinssatz beträgt höchstens 10.000 bps. `durationDays` ist durch das konfigurierte Maximum aus `getProtocolConfigBundle` begrenzt. `expiresAt` ist 0 (offen bis zur Stornierung) oder ein Zeitpunkt, der beim Öffnen der Prüfung aus dem letzten Block festgelegt wird, höchstens `MAX_OFFER_EXPIRY_HORIZON` (365 Tage) voraus. `useFullTermInterest` ist standardmäßig true, `allowsPartialRepay` false.
+
+<a id="borrow-request-review"></a>
+
+### Borrow: Anfrage prüfen und stellen
+
+Die Prüfung simuliert `createOffer` aus der Wallet und liest beide Klassen, `getEffectiveGraceSeconds(durationDays)`, `getLoanInitiationFeeBps`, die maximale Laufzeit, Vault, Guthaben und Freigabe der Wallet sowie `calculateLTV`, wenn beide Seiten liquide sind; sie wird jeden Block und direkt vor dem Öffnen der Wallet neu gelesen. Solange die Freigabe zu niedrig ist, erreicht die Simulation nur den Einzug der Sicherheit: Ein Einzugsfehler des Tokens oder ein Revert ohne Fehlernamen des Protokolls wird als die zu erteilende Freigabe gezeigt, ein benannter Protokollfehler ist eine Ablehnung. Nach einer exakten Freigabe wird `createOffer` erneut simuliert und gesendet; ein Stopp nach der Freigabe setzt sie auf den früheren Wert zurück, wenn nichts anderes sie geändert hat. Das Ergebnis liest `OfferCreated` für diese Wallet und den `Transfer` der Sicherheit in den Vault.
 
 <a id="terms-gate"></a>
 

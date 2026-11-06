@@ -1937,7 +1937,7 @@ fallback، موعد غير مقروء، يستحق خلال ثلاثة أيام�
 
 ### Borrow: كيف يعمل
 
-يقبل Borrow مباشرةً عرض مُقرض (`offerType` 0) لرمز ERC-20 مقابل ضمان ERC-20، عبر `acceptOffer(offerId, terms, signature)`. في معاملة واحدة يفتح خزنة المقترض إن لم تكن موجودة، ويسحب الضمان إليها، ويسلّم المحفظة أصل القرض بعد خصم رسم الافتتاح، ويُصدر `LoanInitiated`. طلبات الاقتراض وجوانب NFT وموافقات الأزواج والخيارات المتقدمة تأتي في تحديثات لاحقة.
+يقبل Borrow مباشرةً عرض مُقرض (`offerType` 0) لرمز ERC-20 مقابل ضمان ERC-20، عبر `acceptOffer(offerId, terms, signature)`. في معاملة واحدة يفتح خزنة المقترض إن لم تكن موجودة، ويسحب الضمان إليها، ويسلّم المحفظة أصل القرض بعد خصم رسم الافتتاح، ويُصدر `LoanInitiated`. يمكن للمقترض أيضًا نشر طلب (`offerType` 1)؛ وجوانب NFT وموافقات الأزواج والخيارات المتقدمة تأتي في تحديثات لاحقة.
 
 <a id="borrow-pair"></a>
 
@@ -1968,6 +1968,24 @@ fallback، موعد غير مقروء، يستحق خلال ثلاثة أيام�
 ### Borrow: المخاطر
 
 القرض الذي تجاوز نهاية سماحه (`getEffectiveGraceSeconds` بعد الاستحقاق، ويؤخّره وقت الإيقاف المؤقت) يمكن لأي أحد إعلان تعثره: يُباع الضمان السائل للمُقرض ويُنقل غير السائل كما هو. ويمكن أيضًا تصفية الضمان السائل متى انخفض عامل الصحة عن 1. يفرض `useFullTermInterest` فائدة المدة كاملة عند السداد المبكر؛ ويسوّي جدول الفائدة الفترة الفائتة ببيع قسري للضمان.
+
+<a id="borrow-request"></a>
+
+### Borrow: نشر طلبك الخاص
+
+الطلب هو `createOffer` بقيمة `offerType` 1، وERC-20 في الجانبين، يُرسَل من محفظة المقترض. ينقل `collateralAmount` إلى خزنة المقترض، وينشئ الخزنة إن لم تكن موجودة، ويُصدر `OfferCreated(offerId, creator, 1)`. يقبله المُقرض بـ `acceptOffer`: يذهب الأصل بعد خصم الرسم إلى محفظة المقترض، وتذهب حصة المُرسِل من الرسم إلى المُقرض الذي أرسله. `cancelOffer` متاح للمنشئ بعد `MIN_OFFER_CANCEL_DELAY` (5 دقائق) من الإنشاء، ولأي شخص بعد انتهاء الطلب؛ ويعود الضمان دائمًا إلى المنشئ.
+
+<a id="borrow-request-terms"></a>
+
+### Borrow: شروط الطلب
+
+ينشر Basic طلبًا بقيمة واحدة: `amount` = `amountMax`، و`interestRateBps` = `interestRateBpsMax`، و`collateralAmount` = `collateralAmountMax`، و`fillMode` 0، و`periodicInterestCadence` 0، و`allowsPrepayListing` و`allowsParallelSale` false، و`refinanceTargetLoanId` 0، و`creatorRiskAndTermsConsent` true. تُحوَّل المبالغ إلى الوحدات الأساسية بدقة، والسعر 10,000 bps على الأكثر. يُحدّ `durationDays` بالحد الأقصى المضبوط المقروء من `getProtocolConfigBundle`. وقيمة `expiresAt` إما 0 (مفتوح حتى الإلغاء) وإما وقت يُحدَّد من أحدث كتلة عند فتح المراجعة، لا يتجاوز `MAX_OFFER_EXPIRY_HORIZON` (365 يومًا). القيمة الافتراضية لـ `useFullTermInterest` هي true ولـ `allowsPartialRepay` هي false.
+
+<a id="borrow-request-review"></a>
+
+### Borrow: مراجعة الطلب ونشره
+
+تحاكي المراجعة `createOffer` من المحفظة وتقرأ فئتي الجانبين، و`getEffectiveGraceSeconds(durationDays)`، و`getLoanInitiationFeeBps`، وأطول مدة، وخزنة المحفظة ورصيدها وسماحها، و`calculateLTV` حين يكون الجانبان سائلين؛ وتُقرأ من جديد في كل كتلة وقبيل فتح المحفظة. ما دام السماح ناقصًا لا تبلغ المحاكاة إلا سحب الضمان، فيُعرض خطأ السحب من الرمز أو أي ارتداد بلا اسم خطأ من البروتوكول على أنه الموافقة المطلوبة، ويُعد خطأ البروتوكول المسمّى رفضًا. بعد موافقة بالمقدار الدقيق تُحاكى `createOffer` مجددًا ثم تُرسل؛ وإذا توقف الأمر بعد الموافقة يُعاد السماح إلى قيمته السابقة ما لم يغيّره شيء آخر. تُقرأ النتيجة من `OfferCreated` لهذه المحفظة ومن `Transfer` الضمان إلى الخزنة.
 
 <a id="terms-gate"></a>
 

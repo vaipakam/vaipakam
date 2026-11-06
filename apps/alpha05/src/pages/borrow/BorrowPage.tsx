@@ -18,6 +18,9 @@ import { AcceptOffer, ACCEPT_KEY } from './AcceptOffer';
 import { MatchingOffers, type MatchesView } from './MatchingOffers';
 import { PairPicker } from './PairPicker';
 import { readMatches } from './matches';
+import { PostRequest } from './request/PostRequest';
+import { RequestForm, REQUEST_KEY } from './request/RequestForm';
+import type { RequestDraft } from './request/requestReview';
 
 type Hex = `0x${string}`;
 
@@ -38,9 +41,11 @@ function initialPair(chainId: number, suggested: readonly { address: Hex }[]): {
  * Borrow (rulebook §4: guided flows, review, finish). The guided path for a
  * borrower: choose what to borrow and what to lock, see the lender offers
  * open for that pair (read from the protocol through the wallet), and take
- * one whole through the shared signing flow, behind the Terms gate. Posting
- * one's own borrow request, NFT collateral and the Advanced options follow
- * in the next updates; the page says so instead of hiding them.
+ * one whole through the shared signing flow, behind the Terms gate. When
+ * no offer fits, the borrower posts their own request for the pair instead,
+ * through the same review and signing flow. NFT collateral and the Advanced
+ * options follow in the next updates; the page says so instead of hiding
+ * them.
  */
 export function BorrowPage() {
   const { text, format } = useCopy();
@@ -57,6 +62,12 @@ export function BorrowPage() {
   const [taking, setTaking] = useStoredValue<bigint>(`${ACCEPT_KEY}:offer`);
   /** The offer a Terms acceptance was asked for, taken once it is recorded. */
   const [pendingTake, setPendingTake] = useStoredValue<bigint>(`${ACCEPT_KEY}:pending`);
+  /** The borrower's own request: the form is open (`composing`), and the
+   *  confirmed draft under review, each kept like the offer above. */
+  const [composing, setComposing] = useStoredValue<boolean>(`${REQUEST_KEY}:composing`);
+  const [draft, setDraft] = useStoredValue<RequestDraft>(`${REQUEST_KEY}:draft`);
+  const [pendingDraft, setPendingDraft] = useStoredValue<RequestDraft>(`${REQUEST_KEY}:pending`);
+  const [, setTyped] = useStoredValue<unknown>(`${REQUEST_KEY}:input`);
 
   const suggested = chain ? suggestedAssets(chain) : [];
   const [pairByChain, setPairByChain] = useState<Record<number, { lending: Hex | null; collateral: Hex | null }>>({});
@@ -86,7 +97,8 @@ export function BorrowPage() {
   const assets: Hex[] = [...suggested.map((s) => s.address), ...(pair.lending ? [pair.lending] : []), ...(pair.collateral ? [pair.collateral] : [])];
   const meta = useTokenMeta(assets).data;
 
-  const flowOpen = taking !== null;
+  const requesting = composing === true || draft !== null;
+  const flowOpen = taking !== null || requesting;
   const termsOpen = termsGate.session !== null;
 
   // OFF-35: taking an offer is new exposure, so an unaccepted Terms version
@@ -100,10 +112,22 @@ export function BorrowPage() {
     setTaking(id);
   };
 
+  // OFF-35 holds for a request too: it is new exposure, so an unaccepted
+  // Terms version is accepted before its review opens.
+  const reviewRequest = (next: RequestDraft) => {
+    if (terms.data?.kind === 'needed') {
+      setPendingDraft(next);
+      termsGate.start(terms.data);
+      return;
+    }
+    setDraft(next);
+  };
+
   const termsUnknown = connected && walletChain !== null && terms.state === 'failed';
   const takeDisabled = !connected || walletChain === null || terms.state !== 'ready' || termsOpen;
 
-  const step = flowOpen ? 2 : ready ? 1 : 0;
+  const step = taking !== null || draft !== null ? 2 : ready ? 1 : 0;
+  const requestPair = ready ? { lending: pair.lending!, collateral: pair.collateral! } : null;
 
   return (
     <main className="page borrow" aria-labelledby="borrow-title">
@@ -126,6 +150,22 @@ export function BorrowPage() {
       )}
       {chain && !flowOpen && <PairPicker key={chain.chainId} chain={chain} meta={meta} lending={pair.lending} collateral={pair.collateral} onChange={setPair} />}
       {chain && ready && !flowOpen && <MatchingOffers view={view} meta={meta} connected={connected && walletChain !== null} onTake={take} takeDisabled={takeDisabled} />}
+      {chain && ready && !flowOpen && connected && walletChain !== null && (
+        <section className="borrow-section request-open" aria-labelledby="borrow-request-open">
+          <h2 id="borrow-request-open" className="sr-only">
+            {text('request.open')}
+          </h2>
+          <p className="tier-b">{text('request.openLead')}</p>
+          <button type="button" className="btn" disabled={takeDisabled} onClick={() => setComposing(true)} data-testid="request-open">
+            {text('request.open')}
+          </button>
+        </section>
+      )}
+      {composing === true && draft === null && !termsOpen && walletChain && own && requestPair && (
+        <section className="borrow-section" aria-labelledby="borrow-request-form">
+          <RequestForm chain={walletChain} own={own} pair={requestPair} meta={meta} onReview={reviewRequest} onCancel={() => setComposing(null)} />
+        </section>
+      )}
       {termsOpen && termsGate.session && walletChain && own && (
         <TermsPrompt
           asker={text('borrow.asker')}
@@ -136,10 +176,13 @@ export function BorrowPage() {
           onAccepted={() => {
             termsGate.end();
             if (pendingTake !== null) setTaking(pendingTake);
+            if (pendingDraft !== null) setDraft(pendingDraft);
             setPendingTake(null);
+            setPendingDraft(null);
           }}
           onClose={() => {
             setPendingTake(null);
+            setPendingDraft(null);
             termsGate.end();
           }}
         />
@@ -150,6 +193,26 @@ export function BorrowPage() {
             {text('borrow.stepSign')}
           </h2>
           <AcceptOffer offerId={taking} chain={walletChain} own={own} meta={meta} terms={terms.data} onClose={() => setTaking(null)} />
+        </section>
+      )}
+      {draft !== null && walletChain && own && (
+        <section className="borrow-section" aria-labelledby="borrow-request-review">
+          <h2 id="borrow-request-review" className="sr-only">
+            {text('borrow.stepSign')}
+          </h2>
+          <PostRequest
+            draft={draft}
+            chain={walletChain}
+            own={own}
+            meta={meta}
+            terms={terms.data}
+            onEdit={() => setDraft(null)}
+            onClose={(posted) => {
+              setDraft(null);
+              setComposing(null);
+              if (posted) setTyped(null);
+            }}
+          />
         </section>
       )}
     </main>

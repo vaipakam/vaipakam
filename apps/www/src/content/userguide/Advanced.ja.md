@@ -2041,7 +2041,7 @@ factor を示し、価格のないものは件数を示します。
 
 ### Borrow: 仕組み
 
-Borrow は、ERC-20 担保に対する ERC-20 の貸し手オファー（`offerType` 0）を `acceptOffer(offerId, terms, signature)` で直接受けます。1回のトランザクションで、借り手のボールトがなければ開設し、担保をそこへ移し、組成手数料を差し引いた元本をウォレットに渡し、`LoanInitiated` を発行します。借入リクエスト、NFT の側、ペアの同意、詳細オプションは今後のアップデートで追加されます。
+Borrow は、ERC-20 担保に対する ERC-20 の貸し手オファー（`offerType` 0）を `acceptOffer(offerId, terms, signature)` で直接受けます。1回のトランザクションで、借り手のボールトがなければ開設し、担保をそこへ移し、組成手数料を差し引いた元本をウォレットに渡し、`LoanInitiated` を発行します。借り手はリクエスト（`offerType` 1）を出すこともできます。NFT の側、ペアの同意、詳細オプションは今後のアップデートで追加されます。
 
 <a id="borrow-pair"></a>
 
@@ -2072,6 +2072,24 @@ Borrow は、ERC-20 担保に対する ERC-20 の貸し手オファー（`offerT
 ### Borrow: リスク
 
 猶予期間を過ぎたローン（期日から `getEffectiveGraceSeconds` 後。一時停止の時間だけ後ろにずれます）は誰でもデフォルトにできます。流動担保は貸し手のために売却され、非流動担保はそのまま移転されます。流動担保はヘルスファクターが 1 を下回ると清算されることもあります。`useFullTermInterest` は早期返済時に全期間の利息を課し、利払いスケジュールは支払われなかった期間を担保の強制売却で精算します。
+
+<a id="borrow-request"></a>
+
+### Borrow: 自分のリクエストを出す
+
+リクエストは、借り手のウォレットから送る `offerType` 1、両側 ERC-20 の `createOffer` です。`collateralAmount` を借り手のボールトに移し（なければボールトを作成）、`OfferCreated(offerId, creator, 1)` を発行します。貸し手は `acceptOffer` で受けます。手数料を差し引いた元本は借り手のウォレットへ、手数料のうち送信者の取り分は送信した貸し手へ渡ります。`cancelOffer` は作成者には作成から `MIN_OFFER_CANCEL_DELAY`（5分）後から、誰にでもリクエストの期限切れ後に開かれています。担保は常に作成者に戻ります。
+
+<a id="borrow-request-terms"></a>
+
+### Borrow: リクエストの条件
+
+Basic は単一値のリクエストを出します。`amount` = `amountMax`、`interestRateBps` = `interestRateBpsMax`、`collateralAmount` = `collateralAmountMax`、`fillMode` 0、`periodicInterestCadence` 0、`allowsPrepayListing` と `allowsParallelSale` は false、`refinanceTargetLoanId` 0、`creatorRiskAndTermsConsent` true です。金額は基本単位へ正確に変換され、金利は最大 10,000 bps です。`durationDays` は `getProtocolConfigBundle` から読む設定上の最大値で上限が決まります。`expiresAt` は 0（キャンセルまで有効）か、確認画面を開いた時点の最新ブロックから決めた時刻で、最大 `MAX_OFFER_EXPIRY_HORIZON`（365日）先までです。`useFullTermInterest` の既定は true、`allowsPartialRepay` は false です。
+
+<a id="borrow-request-review"></a>
+
+### Borrow: リクエストの確認と掲載
+
+確認画面はウォレットから `createOffer` をシミュレートし、両方の区分、`getEffectiveGraceSeconds(durationDays)`、`getLoanInitiationFeeBps`、最長期間、ウォレットのボールト・残高・承認額、両側が流動的なら `calculateLTV` を読み、毎ブロックとウォレットが開く直前に読み直します。承認額が足りない間、シミュレーションは担保の引き出しまでしか進めないため、トークンの引き出しエラーやプロトコルのエラー名がない revert は解消すべき承認として示し、名前のあるプロトコルエラーは拒否として扱います。ちょうどの額を承認した後、`createOffer` を再度シミュレートして送信します。承認後に止まった場合、他に変更がなければ承認額を元の値に戻します。結果はこのウォレットの `OfferCreated` と、ボールトへの担保の `Transfer` から読みます。
 
 <a id="terms-gate"></a>
 

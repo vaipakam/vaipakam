@@ -1932,7 +1932,7 @@ health factor를 보여 주고, 가격이 없는 것은 개수를 셉니다.
 
 ### Borrow: 작동 방식
 
-Borrow는 ERC-20 담보에 대한 ERC-20 대출자 오퍼(`offerType` 0)를 `acceptOffer(offerId, terms, signature)`로 직접 수락합니다. 한 번의 트랜잭션으로 차입자의 볼트가 없으면 열고, 담보를 그 안으로 옮기고, 개시 수수료를 뺀 원금을 지갑으로 보내며, `LoanInitiated`를 발생시킵니다. 차입 요청, NFT 측, 페어 동의, 고급 옵션은 이후 업데이트에서 제공됩니다.
+Borrow는 ERC-20 담보에 대한 ERC-20 대출자 오퍼(`offerType` 0)를 `acceptOffer(offerId, terms, signature)`로 직접 수락합니다. 한 번의 트랜잭션으로 차입자의 볼트가 없으면 열고, 담보를 그 안으로 옮기고, 개시 수수료를 뺀 원금을 지갑으로 보내며, `LoanInitiated`를 발생시킵니다. 차입자는 요청(`offerType` 1)을 올릴 수도 있습니다. NFT 측, 페어 동의, 고급 옵션은 이후 업데이트에서 제공됩니다.
 
 <a id="borrow-pair"></a>
 
@@ -1963,6 +1963,24 @@ Borrow는 ERC-20 담보에 대한 ERC-20 대출자 오퍼(`offerType` 0)를 `acc
 ### Borrow: 위험
 
 유예 기간이 끝난 대출(만기일 뒤 `getEffectiveGraceSeconds`, 일시 정지 시간만큼 늦춰짐)은 누구나 연체 처리할 수 있습니다. 유동 담보는 대출자를 위해 매각되고 비유동 담보는 그대로 이전됩니다. 유동 담보는 헬스 팩터가 1 아래로 내려가면 청산될 수도 있습니다. `useFullTermInterest`는 조기 상환 시 전체 기간 이자를 부과하고, 이자 일정은 놓친 기간을 담보 강제 매각으로 정산합니다.
+
+<a id="borrow-request"></a>
+
+### Borrow: 직접 요청 올리기
+
+요청은 차입자의 지갑에서 보내는 `offerType` 1, 양쪽 ERC-20의 `createOffer`입니다. `collateralAmount`를 차입자의 볼트로 옮기고(볼트가 없으면 만들고) `OfferCreated(offerId, creator, 1)`를 발생시킵니다. 대출자는 `acceptOffer`로 받습니다. 수수료를 뺀 원금은 차입자의 지갑으로, 수수료 중 송신자 몫은 보낸 대출자에게 갑니다. `cancelOffer`는 생성자에게는 생성 후 `MIN_OFFER_CANCEL_DELAY`(5분)부터, 누구에게나 요청이 만료된 뒤 열려 있으며, 담보는 항상 생성자에게 돌아갑니다.
+
+<a id="borrow-request-terms"></a>
+
+### Borrow: 요청의 조건
+
+Basic은 단일 값 요청을 올립니다: `amount` = `amountMax`, `interestRateBps` = `interestRateBpsMax`, `collateralAmount` = `collateralAmountMax`, `fillMode` 0, `periodicInterestCadence` 0, `allowsPrepayListing`과 `allowsParallelSale`은 false, `refinanceTargetLoanId` 0, `creatorRiskAndTermsConsent` true. 금액은 기본 단위로 정확히 변환되고 이자율은 최대 10,000 bps입니다. `durationDays`는 `getProtocolConfigBundle`에서 읽은 설정 최대값으로 제한됩니다. `expiresAt`은 0(취소할 때까지 유효)이거나, 검토를 열 때 최신 블록에서 정한 시각으로 최대 `MAX_OFFER_EXPIRY_HORIZON`(365일) 뒤까지입니다. `useFullTermInterest` 기본값은 true, `allowsPartialRepay`는 false입니다.
+
+<a id="borrow-request-review"></a>
+
+### Borrow: 요청 검토와 게시
+
+검토 화면은 지갑에서 `createOffer`를 시뮬레이션하고 양쪽 분류, `getEffectiveGraceSeconds(durationDays)`, `getLoanInitiationFeeBps`, 최장 기간, 지갑의 볼트·잔액·승인액, 양쪽이 유동적이면 `calculateLTV`를 읽으며, 매 블록과 지갑이 열리기 직전에 다시 읽습니다. 승인액이 부족한 동안 시뮬레이션은 담보 인출까지만 갈 수 있으므로, 토큰의 인출 오류나 프로토콜 오류 이름이 없는 revert는 해결할 승인으로 표시하고, 이름이 있는 프로토콜 오류는 거절로 봅니다. 정확한 금액을 승인한 뒤 `createOffer`를 다시 시뮬레이션하고 보냅니다. 승인 뒤 멈추면, 다른 변경이 없을 때 승인액을 이전 값으로 되돌립니다. 결과는 이 지갑의 `OfferCreated`와 볼트로의 담보 `Transfer`에서 읽습니다.
 
 <a id="terms-gate"></a>
 

@@ -1106,7 +1106,7 @@ Markiert die Sanktionsprüfung Ihre Wallet, wird ihr nichts ausgezahlt, solange 
 
 ### Borrow: So funktioniert es
 
-Zum Leihen nimmst du das offene Angebot eines Verleihers an: einen Betrag eines Tokens, einen Zinssatz, eine Laufzeit und die Sicherheit, die der Verleiher verlangt. Die Annahme eröffnet den Kredit in einer Transaktion. Deine Sicherheit wandert aus deiner Wallet in deinen eigenen Vault und bleibt dort gesperrt, solange der Kredit läuft; der Betrag, abzüglich einer kleinen Eröffnungsgebühr, kommt in deiner Wallet an. Du zahlst Betrag und Zinsen bis zum Fälligkeitstag zurück. Eine eigene Kreditanfrage zu stellen, kommt in einem späteren Update.
+Zum Leihen nimmst du das offene Angebot eines Verleihers an: einen Betrag eines Tokens, einen Zinssatz, eine Laufzeit und die Sicherheit, die der Verleiher verlangt. Die Annahme eröffnet den Kredit in einer Transaktion. Deine Sicherheit wandert aus deiner Wallet in deinen eigenen Vault und bleibt dort gesperrt, solange der Kredit läuft; der Betrag, abzüglich einer kleinen Eröffnungsgebühr, kommt in deiner Wallet an. Du zahlst Betrag und Zinsen bis zum Fälligkeitstag zurück. Passt kein Angebot, kannst du auch eine eigene Kreditanfrage stellen und auf einen Verleiher warten.
 
 <a id="borrow-pair"></a>
 
@@ -1137,6 +1137,24 @@ Die Eröffnung eines Kredits kostet einen kleinen Anteil des Betrags, einmalig, 
 ### Borrow: Risiken
 
 Ein Kredit kann dich deine Sicherheit kosten. Hast du bis zum Ende der Nachfrist nicht zurückgezahlt, fällt der Kredit aus und der Verleiher wird aus deiner Sicherheit bezahlt: für ihn verkauft, wo das Protokoll es kann, unverändert übergeben, wo nicht. Bei liquider Sicherheit kann jeder den Kredit liquidieren, wenn ihr Wert fällt, bis der Health Factor unter 1 sinkt, und du verlierst Sicherheit. Bei Zinsen für die volle Laufzeit schuldest du die Zinsen der ganzen Laufzeit auch bei früher Rückzahlung. Mit einem Zinsplan wird eine verpasste Periode durch den Verkauf eines Teils deiner Sicherheit bezahlt. Deine Sicherheit bleibt gesperrt, bis der Kredit zurückgezahlt oder abgewickelt ist.
+
+<a id="borrow-request"></a>
+
+### Borrow: Eine eigene Anfrage stellen
+
+Passt kein Angebot, kannst du für deine beiden Tokens eine eigene Kreditanfrage stellen: den genauen Betrag, den Zinssatz, den du zahlst, die Laufzeit und die Sicherheit, die du sperrst. Beim Stellen wandert die Sicherheit aus deiner Wallet in deinen eigenen Vault und bleibt dort, solange die Anfrage offen ist. Ein Verleiher, der sie annimmt, eröffnet den Kredit sofort zu deinen Bedingungen, ohne dich noch einmal zu fragen; der Betrag, abzüglich der Eröffnungsgebühr, kommt in deiner Wallet an. Ab fünf Minuten nach dem Stellen kannst du stornieren, und die Sicherheit kehrt in deine Wallet zurück. Eine abgelaufene Anfrage kann nicht mehr angenommen werden; ihre Sicherheit bleibt in deinem Vault, bis du oder jemand anderes sie schließt, und geht dann nur an deine Wallet zurück.
+
+<a id="borrow-request-terms"></a>
+
+### Borrow: Die Bedingungen der Anfrage
+
+Ein Verleiher übernimmt den ganzen Betrag oder keiner. Jede Zahl wird genau so gelesen, wie du sie eingibst: mehr Nachkommastellen, als der Token hat, werden abgelehnt, nie gerundet, und der Zinssatz geht bis 100 % im Jahr mit zwei Nachkommastellen. Die angebotenen Laufzeiten enden bei der längsten, die das Netzwerk erlaubt; du kannst eine Laufzeit auch in Tagen eingeben. Die Anfrage bleibt offen, bis sie angenommen oder storniert wird, oder so viele Tage, wie du wählst, höchstens ein Jahr. Zinsen für die volle Laufzeit, die übliche Wahl, sind auch bei früher Rückzahlung ganz geschuldet; anteilige Zinsen fallen nur für die Zeit an, in der der Kredit läuft. Das Formular zeigt, was du mindestens erhältst und am Fälligkeitstag schuldest.
+
+<a id="borrow-request-review"></a>
+
+### Borrow: Anfrage prüfen und stellen
+
+Bevor sich deine Wallet öffnet, lässt die App das Protokoll deine Anfrage als Probelauf ausführen, sodass die Prüfung die eigene Antwort des Protokolls zeigt. Sie nennt, was du jetzt sperrst, Betrag, Zinssatz und Laufzeit, was du erhalten würdest und wie die Gebühr bestimmt wird (der Listensatz, den deine Gebührenrabattstufe zum Zeitpunkt der Annahme nur senken kann), was du schulden würdest, jede Laufzeitbedingung, wann die Anfrage abläuft, den Beleihungswert und ob eine Freigabe nötig ist. Du setzt ein Häkchen, um den Risikohinweisen und den Bedingungen zuzustimmen. Deine Wallet gibt, falls nötig, genau die Sicherheit frei, die App führt die Anfrage erneut als Probelauf aus und stellt sie erst dann. Stoppt es nach einer Freigabe, bittet die App darum, die Freigabe zurückzusetzen, und sagt, ob das geschah. Danach prüft die App auf der Chain die erfasste Anfrage und die gesperrte Sicherheit.
 
 <a id="terms-gate"></a>
 

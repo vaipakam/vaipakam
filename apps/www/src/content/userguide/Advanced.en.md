@@ -2418,7 +2418,7 @@ The headline is `RewardClaimFacet.simulateClaimInteractionRewards(user, 2)`, whi
 
 ### Borrow: How It Works
 
-Borrow takes a lender offer (`offerType` 0) of an ERC-20 against ERC-20 collateral directly, with `acceptOffer(offerId, terms, signature)`. In one transaction it opens the borrower's vault if there is none, pulls the collateral into it and delivers the principal less the initiation fee to the wallet, and emits `LoanInitiated`. Borrow requests, NFT legs, pair consents and the Advanced options follow in later updates.
+Borrow takes a lender offer (`offerType` 0) of an ERC-20 against ERC-20 collateral directly, with `acceptOffer(offerId, terms, signature)`. In one transaction it opens the borrower's vault if there is none, pulls the collateral into it and delivers the principal less the initiation fee to the wallet, and emits `LoanInitiated`. A borrower can also post a request (`offerType` 1); NFT legs, pair consents and the Advanced options follow in later updates.
 
 <a id="borrow-pair"></a>
 
@@ -2449,6 +2449,24 @@ The fee is `previewAccept`'s `lifEstimate`: `getLoanInitiationFeeBps` of the pri
 ### Borrow: Risks
 
 A loan past its grace end (`getEffectiveGraceSeconds` after the due date, which paused time moves) can be defaulted by anyone: liquid collateral is sold for the lender, illiquid collateral is transferred as-is. Liquid collateral can also be liquidated once the health factor is below 1. `useFullTermInterest` charges the full term's interest on early repayment; a periodic-interest cadence settles a missed period by a forced sale of collateral.
+
+<a id="borrow-request"></a>
+
+### Borrow: Posting Your Own Request
+
+A request is `createOffer` with `offerType` 1, ERC-20 on both legs, sent from the borrower's wallet. It pulls `collateralAmount` into the borrower's vault, creating the vault if there is none, and emits `OfferCreated(offerId, creator, 1)`. A lender takes it with `acceptOffer`: the principal less the fee goes to the borrower's wallet, and the sender's share of the fee goes to the lender who sent it. `cancelOffer` is open to the creator from `MIN_OFFER_CANCEL_DELAY` (5 minutes) after creation, and to anyone once the request has expired; the collateral always returns to the creator.
+
+<a id="borrow-request-terms"></a>
+
+### Borrow: The Request's Terms
+
+Basic posts a single-value request: `amount` = `amountMax`, `interestRateBps` = `interestRateBpsMax`, `collateralAmount` = `collateralAmountMax`, `fillMode` 0, `periodicInterestCadence` 0, `allowsPrepayListing` and `allowsParallelSale` false, `refinanceTargetLoanId` 0, `creatorRiskAndTermsConsent` true. Amounts are parsed into base units exactly and the rate is at most 10,000 bps. `durationDays` is capped by the configured maximum read from `getProtocolConfigBundle`. `expiresAt` is 0 (open until cancelled) or a time fixed from the latest block when the review opens, at most `MAX_OFFER_EXPIRY_HORIZON` (365 days) ahead. `useFullTermInterest` defaults to true and `allowsPartialRepay` to false.
+
+<a id="borrow-request-review"></a>
+
+### Borrow: Reviewing and Posting a Request
+
+The review simulates `createOffer` from the wallet and reads both classes, `getEffectiveGraceSeconds(durationDays)`, `getLoanInitiationFeeBps`, the maximum term, the wallet's vault, balance and allowance, and `calculateLTV` when both legs are liquid; it is read again every block and right before the wallet opens. While the allowance is short the simulation can only reach the collateral pull, so a token's pull error or a revert without a protocol error name is shown as the approval to clear, and a named protocol error is a refusal. After an exact approval `createOffer` is simulated again and sent; a stop after the approval resets the allowance to its earlier value when nothing else changed it. The outcome reads `OfferCreated` for this wallet and the collateral `Transfer` into the vault.
 
 <a id="terms-gate"></a>
 

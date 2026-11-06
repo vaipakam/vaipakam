@@ -199,7 +199,8 @@ Every common job within three decisions from Home; a screen that only asks
 the user to confirm what the app already knows is a wasted click. Home shows
 each position with its next action as a button; Borrow and Lend open
 prefilled from the last pair used; forms validate as the user types with the
-fix stated inline; amounts carry a Max button and a numeraire equivalent;
+fix stated inline (a field's error appears once the reader leaves it or asks
+for the review, then follows each keystroke, so nobody is told off mid-entry); amounts carry a Max button and a numeraire equivalent;
 impossible choices are greyed out with a count of what remains rather than
 refused later. Where the wallet supports call batching or a permit the
 contract path accepts, approval and action are one wallet prompt, with the
@@ -299,7 +300,10 @@ without moving it, Escape hiding it; folding, revealing and unfolding
 slide the panel and the page beside it over a quarter second on the standard
 easing while the names fade and the icons stay put, with no motion at all for
 a reader whose device asks for reduced motion; the breakpoints follow the common
-compact, medium and expanded window classes); an unknown route shows
+compact, medium and expanded window classes); on a phone a form's primary
+action, with its live summary, and a review's Confirm rest just above the
+bottom bar at full width, where the thumb reaches, while the rest of the page
+scrolls under them; an unknown route shows
 a recovery page, and a display failure is contained to a recovery card that
 says funds and on-chain positions are unchanged. Every string in the copy
 catalog; locale bundles override per key, and the language rules of the
