@@ -99,9 +99,22 @@ test('with the tariff switched on, the request states it, posts, and sets it by 
     await expect(arm).toContainText('Your request is posted. This second transaction sets the tariff on it.');
     await expect(arm.locator('.receipt')).toContainText(`Request #${id}`);
     await fitsWidth(page);
+    // The step outlives the request's own finish card: closing that card
+    // keeps it, bound to the request just posted.
+    await finish.getByRole('button', { name: 'Close' }).click();
+    await expect(page.locator('.post-request')).toHaveCount(0);
+    await expect(arm.locator('.receipt')).toContainText(`Request #${id}`);
     await arm.getByRole('button', { name: 'Confirm in wallet' }).click();
-    await expect(arm.locator('[data-phase="measured"]')).toHaveAttribute('data-verdict', 'done', { timeout: 90_000 });
+    const armFinish = arm.locator('[data-phase="measured"]');
+    await expect(armFinish).toHaveAttribute('data-verdict', 'done', { timeout: 90_000 });
     expect(flags.sentTransactions).toBe(sent + 3);
+    // Closing its card leaves the measured result in place until dismissed.
+    await armFinish.getByRole('button', { name: 'Close' }).click();
+    const ended = page.getByTestId('request-tariff-ended');
+    await expect(ended).toHaveAttribute('data-ending', 'armed');
+    await expect(ended).toContainText(`The Full fee tariff is set on request #${id}`);
+    await ended.getByRole('button', { name: 'Close' }).click();
+    await expect(ended).toHaveCount(0);
 
     const offer = await sc.read<{ creatorFull: boolean; creatorMaxCStar: bigint; creatorAllowFullDowngrade: boolean }>('getOffer', [id]);
     expect(offer.creatorFull).toBe(true);

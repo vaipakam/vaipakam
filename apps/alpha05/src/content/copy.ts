@@ -935,6 +935,8 @@ export const copy = {
     tariffNotCreator: A('This wallet did not post the request, so it cannot set the tariff on it.'),
     tariffArmTaken: A('A lender has already taken this request, so the protocol no longer lets the tariff be set; that loan opened without it.'),
     tariffAlreadySet: A('The request already carries exactly this tariff choice.'),
+    tariffEndArmed: A('The Full fee tariff is set on request #{{id}}: each loan it opens pays the tariff, under the ceiling and rule you chose.'),
+    tariffEndUnknown: A('Whether the tariff was set on request #{{id}} is not known from this app: the transaction was sent but its outcome was not read. The request in Offers shows whether it is on.'),
     tariffSkipped: A('Closed without setting the tariff: loans from this request open without it. This app cannot set it later yet.'),
     backstopGap: B('Backstop lending for requests nobody takes is not offered in this app yet.'),
     rowPeriod: B('Interest due each period'),

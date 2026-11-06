@@ -28,7 +28,7 @@ import { Notice } from '../../../shared/ui/Notice';
 import { shortAddress } from '../../../shared/ui/format';
 import { pageHandoff } from '../../../routes/pageMap';
 import { REQUEST_KEY } from './RequestForm';
-import { ArmTariff } from './ArmTariff';
+import { TARIFF_CONTEXT_KEY, type ArmContext } from './ArmTariff';
 import { createdRequest } from './requestOutcome';
 import { erc20Pair, nftCollateralPair, type RiskNeed } from '../../../shared/risk/riskAccess';
 import { nftApproval } from '../../../shared/tx/nftApproval';
@@ -97,6 +97,7 @@ export function PostRequest({ draft, chain, own, meta, terms, onEdit, onClose }:
   const [review, setReview] = useStoredValue<RequestReview>(`${REQUEST_KEY}:review`);
   const [consentFor, setConsentFor] = useStoredValue<number>(`${REQUEST_KEY}:consent`);
   const [offerId, setOfferId] = useStoredValue<bigint>(`${REQUEST_KEY}:offer`);
+  const [, setArmContext] = useStoredValue<ArmContext>(TARIFF_CONTEXT_KEY);
   /** The risk-access step open in the review's place, if any (ACC-RISK). */
   const [riskOpen, setRiskOpen] = useStoredValue<RiskNeed>(`${REQUEST_KEY}:risk`);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -247,6 +248,12 @@ export function PostRequest({ draft, chain, own, meta, terms, onEdit, onClose }:
       const id = createdRequest(receipt.logs, diamond, account);
       if (id !== null) {
         setOfferId(id);
+        // OFF-22: the tariff is armed by its own transaction once the
+        // request exists, bound to the wallet and network that posted it.
+        // The step is kept apart from this review (BorrowPage shows it), so
+        // closing this card never drops it; until it confirms, loans open
+        // without the tariff.
+        setArmContext(r.draft.parsed.tariff ? { identity: r.identity, offerId: id, choice: r.draft.parsed.tariff } : null);
         legs.push({ status: 'done', label: format('request.legOffer', { id: id.toString() }) });
       } else {
         legs.push({ status: 'not-done', label: text('request.legNoOffer'), reason: text('request.noOffer') });
@@ -517,9 +524,6 @@ export function PostRequest({ draft, chain, own, meta, terms, onEdit, onClose }:
                 : { label: text('request.openOffersCurrent'), href: offersPage.href }
           }
           gate={gate}
-          // OFF-22: the tariff is armed by its own transaction once the
-          // request exists; until it confirms, loans open without it.
-          after={() => (offerId !== null && review?.draft.parsed.tariff ? <ArmTariff chain={chain} own={own} offerId={offerId} choice={review.draft.parsed.tariff} /> : null)}
           onClose={close}
         />
       )}

@@ -18,6 +18,7 @@ import { AcceptOffer, ACCEPT_KEY } from './AcceptOffer';
 import { MatchingOffers, type MatchesView } from './MatchingOffers';
 import { PairPicker } from './PairPicker';
 import { readMatches } from './matches';
+import { ArmTariff, TARIFF_CONTEXT_KEY, type ArmContext } from './request/ArmTariff';
 import { PostRequest } from './request/PostRequest';
 import { RequestForm, REQUEST_KEY } from './request/RequestForm';
 import type { RequestDraft } from './request/requestReview';
@@ -72,6 +73,9 @@ export function BorrowPage() {
   const [draft, setDraft] = useStoredValue<RequestDraft>(`${REQUEST_KEY}:draft`);
   const [pendingDraft, setPendingDraft] = useStoredValue<RequestDraft>(`${REQUEST_KEY}:pending`);
   const [, setTyped] = useStoredValue<unknown>(`${REQUEST_KEY}:input`);
+  /** OFF-22: the Full tariff step for a request just posted, kept apart from
+   *  the request's review so it outlives that card. */
+  const [armContext, setArmContext] = useStoredValue<ArmContext>(TARIFF_CONTEXT_KEY);
 
   const suggested = chain ? suggestedAssets(chain) : [];
   const [pairByChain, setPairByChain] = useState<Record<number, { lending: Hex | null; collateral: Hex | null }>>({});
@@ -226,6 +230,11 @@ export function BorrowPage() {
               if (posted) setTyped(null);
             }}
           />
+        </section>
+      )}
+      {armContext !== null && own && (
+        <section className="borrow-section" aria-labelledby="arm-tariff-title">
+          <ArmTariff ctx={armContext} own={own} onDone={() => setArmContext(null)} />
         </section>
       )}
     </main>
