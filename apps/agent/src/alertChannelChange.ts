@@ -222,10 +222,71 @@ export function supersedeIfChatStatement(
     .bind(now, w, chainId, expectedChatId, newChatId);
 }
 
+/**
+ * The first statement of a batch whose writes were decided on `observed`, the
+ * linked rows of `wallet` in scope (`chainId` null = every chain) as read just
+ * before. It FAILS when the rows in scope are no longer exactly `observed`
+ * (a chat linked, changed or cleared meanwhile), and a D1 batch is one
+ * transaction, so a failure rolls every write of it back: the caller then
+ * reads again and decides again. This is what makes a decision and its writes
+ * one atomic step, so a concurrent link can never be cleared, or a moved chat
+ * pended, on a stale read.
+ *
+ * SQLite raises no error from plain SQL on demand; `json()` of a non-JSON
+ * string does ("malformed JSON"), so the guard evaluates `json('0')` when
+ * the state matches and `json('alert-chat-state-moved')` when it does not.
+ */
+export function observedStateGuard(
+  db: D1Database,
+  wallet: string,
+  chainId: number | null,
+  observed: readonly LinkedRow[],
+): D1PreparedStatement {
+  const w = wallet.toLowerCase();
+  const scope = chainId === null ? '' : ' AND chain_id = ?';
+  const scopeArgs = chainId === null ? [] : [chainId];
+  const match = observed.length === 0 ? '0' : observed.map(() => '(chain_id = ? AND tg_chat_id = ?)').join(' OR ');
+  return db
+    .prepare(
+      `SELECT json(CASE WHEN
+          (SELECT COUNT(*) FROM user_thresholds WHERE wallet = ?${scope} AND tg_chat_id IS NOT NULL) = ?
+          AND (SELECT COUNT(*) FROM user_thresholds WHERE wallet = ? AND (${match})) = ?
+        THEN '0' ELSE 'alert-chat-state-moved' END) AS state_guard`,
+    )
+    .bind(
+      w,
+      ...scopeArgs,
+      observed.length,
+      w,
+      ...observed.flatMap((r) => [r.chainId, r.chatId]),
+      observed.length,
+    );
+}
+
+/** Clear the chat of (wallet, chain) now: the immediate unlink of a row whose
+ *  account is not protected. Only ever run behind `observedStateGuard`. */
+export function clearChatStatement(db: D1Database, wallet: string, chainId: number, now: number): D1PreparedStatement {
+  return db
+    .prepare(`UPDATE user_thresholds SET tg_chat_id = NULL, updated_at = ? WHERE wallet = ? AND chain_id = ?`)
+    .bind(now, wallet.toLowerCase(), chainId);
+}
+
+/** Revoke every handshake code in scope (`chainId` null = the whole wallet).
+ *  A code only links, so revoking it silences nothing; leaving one would let
+ *  another tab reverse the unlink. */
+export function revokeCodesStatement(db: D1Database, wallet: string, chainId: number | null): D1PreparedStatement {
+  const w = wallet.toLowerCase();
+  return chainId === null
+    ? db.prepare(`DELETE FROM telegram_links WHERE wallet = ?`).bind(w)
+    : db.prepare(`DELETE FROM telegram_links WHERE wallet = ? AND chain_id = ?`).bind(w, chainId);
+}
+
 /** The ids the INSERTs of a `pendingChangeStatements` batch returned, in
  *  statement order (an INSERT carries `RETURNING id`; others return none). */
 export function insertedIds(results: readonly D1Result[]): number[] {
-  return results.flatMap((r) => (r.results ?? []).map((row) => Number((row as { id: unknown }).id)));
+  return results.flatMap((r) =>
+    (r.results ?? []).flatMap((row) => (row && typeof row === 'object' && 'id' in row ? [Number((row as { id: unknown }).id)] : [])),
+  );
 }
 
 /** The old chat accepted the notice for the changes `ids`: their wait starts

@@ -140,8 +140,6 @@ import {
   OptOutStorageUnavailableError,
   reserveTestAlert,
   sweepExpiredLinks,
-  unlinkTelegram,
-  unlinkTelegramOnChain,
   hasStoredPushOptIn,
   upsertThresholds,
 } from './db';
@@ -832,7 +830,7 @@ async function handleUnlinkTelegram(
   // The clear's SCOPE follows the authority that signed (#2013 round
   // 3 P1). An ECDSA key is the wallet's universal controller, so its
   // unlink honours the privacy promise wallet-wide (see
-  // unlinkTelegram). A smart account verified via its contract has
+  // requestUnlink). A smart account verified via its contract has
   // authority only on the chain whose contract approved — divergent
   // per-chain controllers are real (Safe owners drift apart) — so a
   // chain-verified unlink clears exactly the signed chain_id's rows,
@@ -850,14 +848,6 @@ async function handleUnlinkTelegram(
     channelDeps(env),
     wallet,
     verified.via === 'chain' ? parsed.req.chain_id : null,
-    async (chains) => {
-      if (chains === 'all') {
-        if (verified.via === 'chain') await unlinkTelegramOnChain(env.DB, wallet, parsed.req.chain_id);
-        else await unlinkTelegram(env.DB, wallet);
-        return;
-      }
-      for (const c of chains) await unlinkTelegramOnChain(env.DB, wallet, c);
-    },
   );
   if (outcome.kind === 'unknown') {
     return json(

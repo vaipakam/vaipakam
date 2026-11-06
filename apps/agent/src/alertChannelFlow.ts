@@ -13,6 +13,7 @@
  */
 import {
   applyChange,
+  clearChatStatement,
   cancelPendingForChat,
   dueChanges,
   insertedIds,
@@ -20,9 +21,11 @@ import {
   linkedRows,
   markNoticeAttempt,
   markNotified,
+  observedStateGuard,
   pendingChangeStatements,
   protectionByRow,
   pruneClosedChanges,
+  revokeCodesStatement,
   supersedeIfChatStatement,
   shortWallet,
   supersedeStatement,
@@ -98,67 +101,78 @@ async function notifyOldChat(
   return true;
 }
 
+/** How many times a request decides again when another request moved the
+ *  rows between its read and its write. */
+const DECIDE_ATTEMPTS = 3;
+
 /**
  * An owner asked to unlink Telegram, wallet-wide (`chainId` null) or for one
- * chain. Rows whose account is not protected are cleared at once by
- * `unlinkNow`; protected rows get a pending change and their chat a notice.
- * Every handshake code in the request's scope is revoked at once either way:
- * a code only links, so revoking it can silence nothing, and leaving one would
- * let another tab reverse the unlink. Returns 'unknown' when any row's
- * protection could not be read: then nothing is changed at all, so a failed
- * read never silences a protected account.
+ * chain. Rows whose account is not protected are cleared at once; protected
+ * rows get a pending change and their chat a notice. Every handshake code in
+ * the request's scope is revoked at once either way: a code only links, so
+ * revoking it can silence nothing, and leaving one would let another tab
+ * reverse the unlink.
+ *
+ * The decision and all its writes are one atomic batch behind
+ * `observedStateGuard`: if any row in scope changed after the read (a chat
+ * linked concurrently, say), the batch writes nothing and the request reads
+ * and decides again. Returns 'unknown' when any row's protection could not be
+ * read, or the rows kept moving: then nothing is changed at all, so neither a
+ * failed read nor a race ever silences a protected account.
  */
 export async function requestUnlink(
   deps: ChannelDeps,
   wallet: string,
   chainId: number | null,
-  unlinkNow: (chainIds: number[] | 'all') => Promise<void>,
 ): Promise<{ kind: 'done'; pending: PendingReport[] } | { kind: 'unknown' }> {
   const w = wallet.toLowerCase();
-  const rows = await linkedRows(deps.db, w, chainId);
-  const delays = rows.length > 0 ? await protectionByRow(deps.read, w, rows) : new Map<number, number | null>();
-  if (delays === null) return { kind: 'unknown' };
-  const waiting = rows.filter((r) => delays.get(r.chainId) != null);
-  const open = rows.filter((r) => delays.get(r.chainId) == null);
-  if (waiting.length === 0) {
-    // The immediate path, as before; it also revokes the handshake codes.
-    await deps.db.batch([supersedeStatement(deps.db, w, chainId, deps.now)]);
-    await unlinkNow(chainId === null ? 'all' : [chainId]);
-    return { kind: 'done', pending: [] };
-  }
-  if (open.length > 0) {
-    await deps.db.batch(open.map((r) => supersedeStatement(deps.db, w, r.chainId, deps.now)));
-    await unlinkNow(open.map((r) => r.chainId));
-  }
-  const results = await deps.db.batch([
-    ...waiting.flatMap((r) =>
-      pendingChangeStatements(deps.db, w, r.chainId, 'unlink', r.chatId, null, deps.now, delays.get(r.chainId)!),
-    ),
-    chainId === null
-      ? deps.db.prepare(`DELETE FROM telegram_links WHERE wallet = ?`).bind(w)
-      : deps.db.prepare(`DELETE FROM telegram_links WHERE wallet = ? AND chain_id = ?`).bind(w, chainId),
-  ]);
-  // One id per waiting row, in order (each row's INSERT returns its id).
-  const ids = insertedIds(results);
-  const idOf = new Map(waiting.map((r, i) => [r.chainId, ids[i]!]));
-  const told = new Set<number>();
-  // One notice per (chat, delay), so each states its own chains' deadline.
-  for (const list of groupBy(waiting, (r) => `${r.chatId}|${delays.get(r.chainId)}`).values()) {
-    const chains = list.map((r) => ({ id: idOf.get(r.chainId)!, chainId: r.chainId, delaySeconds: delays.get(r.chainId)! }));
-    if (await notifyOldChat(deps, w, list[0]!.chatId, 'unlink', chains, list[0]!.locale, null)) {
-      for (const r of list) told.add(r.chainId);
+  for (let attempt = 0; attempt < DECIDE_ATTEMPTS; attempt++) {
+    const rows = await linkedRows(deps.db, w, chainId);
+    const delays = rows.length > 0 ? await protectionByRow(deps.read, w, rows) : new Map<number, number | null>();
+    if (delays === null) return { kind: 'unknown' };
+    const waiting = rows.filter((r) => delays.get(r.chainId) != null);
+    const open = rows.filter((r) => delays.get(r.chainId) == null);
+    let results: D1Result[];
+    try {
+      results = await deps.db.batch([
+        observedStateGuard(deps.db, w, chainId, rows),
+        // A wallet-wide request with nothing waiting closes every pending
+        // change of the wallet, as the immediate unlink always did.
+        ...(waiting.length === 0 ? [supersedeStatement(deps.db, w, chainId, deps.now)] : []),
+        ...open.flatMap((r) => [
+          supersedeStatement(deps.db, w, r.chainId, deps.now),
+          clearChatStatement(deps.db, w, r.chainId, deps.now),
+        ]),
+        ...waiting.flatMap((r) =>
+          pendingChangeStatements(deps.db, w, r.chainId, 'unlink', r.chatId, null, deps.now, delays.get(r.chainId)!),
+        ),
+        revokeCodesStatement(deps.db, w, chainId),
+      ]);
+    } catch (err) {
+      // The rows moved (the guard failed and nothing was written), or D1
+      // failed: read and decide again; the last attempt reports it.
+      if (attempt === DECIDE_ATTEMPTS - 1) throw err;
+      continue;
     }
+    // One id per waiting row, in order (each row's INSERT returns its id).
+    const ids = insertedIds(results);
+    const idOf = new Map(waiting.map((r, i) => [r.chainId, ids[i]!]));
+    const told = new Set<number>();
+    // One notice per (chat, delay), so each states its own chains' deadline.
+    for (const list of groupBy(waiting, (r) => `${r.chatId}|${delays.get(r.chainId)}`).values()) {
+      const chains = list.map((r) => ({ id: idOf.get(r.chainId)!, chainId: r.chainId, delaySeconds: delays.get(r.chainId)! }));
+      if (await notifyOldChat(deps, w, list[0]!.chatId, 'unlink', chains, list[0]!.locale, null)) {
+        for (const r of list) told.add(r.chainId);
+      }
+    }
+    const pending = waiting.map((r) => ({
+      chain_id: r.chainId,
+      effective_at: told.has(r.chainId) ? deps.now + delays.get(r.chainId)! : null,
+    }));
+    return { kind: 'done', pending };
   }
-  const pending = waiting.map((r) => ({
-    chain_id: r.chainId,
-    effective_at: told.has(r.chainId) ? deps.now + delays.get(r.chainId)! : null,
-  }));
-  return { kind: 'done', pending };
+  return { kind: 'unknown' };
 }
-
-/** How many times a link re-decides when another request moved the row
- *  between its read and its write. */
-const RELINK_ATTEMPTS = 3;
 
 /**
  * A chat completed the link handshake for (`wallet`, `chainId`). Linking where
@@ -190,7 +204,7 @@ export async function requestRelink(
     ]);
     return (write?.meta?.changes ?? 0) > 0;
   };
-  for (let attempt = 0; attempt < RELINK_ATTEMPTS; attempt++) {
+  for (let attempt = 0; attempt < DECIDE_ATTEMPTS; attempt++) {
     const outcome = await decideRelink(deps, w, chainId, newChatId, locale, immediate);
     if (outcome !== 'moved') return outcome;
   }
