@@ -43,7 +43,7 @@ beforeEach(() => {
 describe('the one-token approval', () => {
   it('approves the protocol for the token and counts it only when it reads back', async () => {
     states = [at(WALLET, null), at(WALLET, DIAMOND)];
-    await expect(make().approve(null)).resolves.toBeUndefined();
+    await expect(make().approve(null)).resolves.toBe(20n);
     expect(sent).toEqual([{ to: DIAMOND }]);
   });
   it('refuses before any prompt when the holder or the approval moved since the review', async () => {
@@ -78,30 +78,31 @@ describe('an approval whose read-back fails', () => {
 describe('putting the approval back', () => {
   it('needs nothing once the token has left the wallet (a transfer clears it)', async () => {
     states = [at(OTHER, null)];
-    expect(await make().putBack(null)).toEqual({ ok: true, sentence: 'nftApproval.notHeld' });
+    expect(await make().putBack(null, 1n)).toEqual({ ok: true, sentence: 'nftApproval.notHeld' });
     expect(sent).toEqual([]);
   });
   it('never overwrites an approval something else set since', async () => {
     states = [at(WALLET, OTHER)];
-    expect(await make().putBack(null)).toEqual({ ok: false, sentence: 'nftApproval.restoreChanged' });
+    expect(await make().putBack(null, 1n)).toEqual({ ok: false, sentence: 'nftApproval.restoreChanged' });
     expect(sent).toEqual([]);
   });
   it('restores the prior approval while it still reads the protocol, judged by the read back', async () => {
     states = [at(WALLET, DIAMOND), at(WALLET, null)];
-    expect(await make().putBack(null)).toEqual({ ok: true, sentence: 'nftApproval.restored' });
+    expect(await make().putBack(null, 1n)).toEqual({ ok: true, sentence: 'nftApproval.restored' });
     expect(sent).toEqual([{ to: '0x0000000000000000000000000000000000000000' }]);
     states = [at(WALLET, DIAMOND), at(WALLET, DIAMOND)];
-    expect(await make().putBack(null)).toEqual({ ok: false, sentence: 'nftApproval.restoreNotLanded' });
+    expect(await make().putBack(null, 1n)).toEqual({ ok: false, sentence: 'nftApproval.restoreNotLanded' });
   });
 });
 
 describe('reads after the approval mined', () => {
-  it('never read the token at a block before the approval, so put-back cannot mistake it for restored', async () => {
-    states = [at(WALLET, null), at(WALLET, DIAMOND), at(WALLET, DIAMOND), at(WALLET, null)];
-    const ap = make();
-    await ap.approve(null);
+  it('never read the token at a block before the approval, even from a fresh helper, so put-back cannot mistake it for restored', async () => {
+    states = [at(WALLET, null), at(WALLET, DIAMOND)];
+    const since = await make().approve(null);
+    // The unwind builds its own helper; the approval's block travels with it.
+    states = [at(WALLET, DIAMOND), at(WALLET, null)];
     vi.mocked(readErc721).mockClear();
-    await ap.putBack(null);
+    await make().putBack(null, since);
     // The head reads 15, the approval mined at 20: the put-back reads at 20.
     expect(vi.mocked(readErc721).mock.calls[0]![5]).toBe(20n);
     expect(client.getBlockNumber).toHaveBeenCalledWith({ cacheTime: 0 });

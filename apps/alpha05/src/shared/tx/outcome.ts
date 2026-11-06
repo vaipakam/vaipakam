@@ -42,10 +42,7 @@ export type TxPhase =
 
 export type SupersededReason = 'cancelled' | 'replaced';
 
-export type LegOutcome =
-  | { status: 'done'; label: string }
-  | { status: 'not-done'; label: string; reason: string }
-  | { status: 'unknown'; label: string; reason: string };
+export type LegOutcome = { status: 'done'; label: string } | { status: 'not-done'; label: string; reason: string } | { status: 'unknown'; label: string; reason: string };
 
 export interface MeasuredOutcome {
   /** `partial` when at least one leg is done and at least one is not. */

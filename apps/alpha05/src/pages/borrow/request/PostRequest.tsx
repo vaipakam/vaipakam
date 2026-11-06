@@ -87,8 +87,12 @@ export function PostRequest({ draft, chain, own, meta, terms, onEdit, onClose }:
   const [loadError, setLoadError] = useState<string | null>(null);
   const [step, setStep] = useState<string | null>(null);
   /** The approval this flow made and has not yet seen used or put back (see
-   *  AcceptOffer): a sent request that reverts leaves it standing. */
-  const approvalLeft = useRef<{ kind: 'erc20'; token: Hex; prior: bigint; amount: bigint } | { kind: 'erc721'; token: Hex; tokenId: bigint; prior: Hex | null } | null>(null);
+   *  AcceptOffer): a sent request that reverts leaves it standing.
+   *  `since` is the block the approval mined in, so a put-back never reads
+   *  the approval as it stood before it. */
+  const approvalLeft = useRef<
+    { kind: 'erc20'; token: Hex; prior: bigint; amount: bigint; since: bigint | null } | { kind: 'erc721'; token: Hex; tokenId: bigint; prior: Hex | null; since: bigint } | null
+  >(null);
 
   const amt = (asset: Hex, v: bigint) => tokenAmount(v, asset, meta, format);
   const { readAllowance, allowanceIo, approveExactly, putBack } = approvalFlow({ own, config, chainId: chain.chainId, diamond, copy, amount: amt, setStep });
@@ -130,9 +134,9 @@ export function PostRequest({ draft, chain, own, meta, terms, onEdit, onClose }:
         if ((needed ? 1 : 0) !== approvalPrompts(r)) throw allowanceMoved(copy);
         if (needed) {
           say(format('nftApproval.step', { token: format('asset.nft', { asset: assetName(collateral, meta), id: String(h.tokenId) }) }));
-          await ap.approve(now.approved);
-          approvalLeft.current = { kind: 'erc721', token: collateral, tokenId: h.tokenId, prior: now.approved };
-          putItBack = () => ap.putBack(now.approved);
+          const since = await ap.approve(now.approved);
+          approvalLeft.current = { kind: 'erc721', token: collateral, tokenId: h.tokenId, prior: now.approved, since };
+          putItBack = () => ap.putBack(now.approved, since);
         }
       } else {
         const io = allowanceIo(collateral, (amount, i, of) => say(of === 2 && i === 0 ? text('approval.stepZero') : format('approval.step', { amount: amt(collateral, amount) })));
@@ -140,9 +144,9 @@ export function PostRequest({ draft, chain, own, meta, terms, onEdit, onClose }:
         const steps = prior < lock ? await allowanceSteps(io, prior, lock) : [];
         if (steps.length !== h.approvalSteps) throw allowanceMoved(copy);
         if (steps.length > 0) {
-          await approveExactly(io, collateral, lock, prior);
-          approvalLeft.current = { kind: 'erc20', token: collateral, prior, amount: lock };
-          putItBack = () => putBack(collateral, prior, lock);
+          const since = await approveExactly(io, collateral, lock, prior);
+          approvalLeft.current = { kind: 'erc20', token: collateral, prior, amount: lock, since };
+          putItBack = () => putBack(collateral, prior, lock, since);
         }
       }
 
@@ -172,11 +176,11 @@ export function PostRequest({ draft, chain, own, meta, terms, onEdit, onClose }:
       approvalLeft.current = null;
       if (!left) return null;
       if (left.kind === 'erc721') {
-        const after = await tokenApproval(left.token, left.tokenId).putBack(left.prior);
+        const after = await tokenApproval(left.token, left.tokenId).putBack(left.prior, left.since);
         const label = text('nftApproval.legBack');
         return after.ok ? { status: 'done', label } : { status: 'not-done', label, reason: after.sentence };
       }
-      const after = await putBack(left.token, left.prior, left.amount);
+      const after = await putBack(left.token, left.prior, left.amount, left.since);
       const label = format('approval.legBack', { amount: amt(left.token, left.prior) });
       return after.ok ? { status: 'done', label } : { status: 'not-done', label, reason: after.sentence };
     },

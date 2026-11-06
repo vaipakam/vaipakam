@@ -35,12 +35,16 @@ export interface NftApprovalDeps {
 export interface NftApproval {
   read: (block?: bigint) => Promise<Erc721State>;
   /** Approves the protocol for the token, overwriting `prior` (the approved
-   *  address read just before; the caller names the prompt). Throws a stated refusal when the approval or
-   *  the holder moved meanwhile or the step did not land. */
-  approve: (prior: Hex | null) => Promise<void>;
+   *  address read just before; the caller names the prompt), and resolves
+   *  with the block the approval mined in. Throws a stated refusal when the
+   *  approval or the holder moved meanwhile or the step did not land. */
+  approve: (prior: Hex | null) => Promise<bigint>;
   /** Puts the approval back to `prior`, only while it still reads the
-   *  protocol and the wallet still holds the token, and says what happened. */
-  putBack: (prior: Hex | null) => Promise<{ ok: boolean; sentence: string }>;
+   *  protocol and the wallet still holds the token, and says what happened.
+   *  `since` is the block the approval mined in: the token is never read as
+   *  it stood before it, whichever node answers, so a reset is never skipped
+   *  as already done. */
+  putBack: (prior: Hex | null, since: bigint) => Promise<{ ok: boolean; sentence: string }>;
 }
 
 function same(a: Hex | null, b: Hex | null): boolean {
@@ -52,42 +56,38 @@ export function nftApproval(d: NftApprovalDeps, asset: Hex, tokenId: bigint): Nf
   const { text, format } = copy;
   const account = own.account;
 
-  // The newest block this flow saw its own approval step mine in. A later
-  // read without a named block never describes the token as it stood before
-  // that block, whichever node answers: put-back would otherwise read the
-  // approval as already restored and leave the protocol approved.
-  let floor = 0n;
-  const read = (block?: bigint) =>
+  const read = (block?: bigint) => own.read((c) => readErc721(c, asset, tokenId, account, diamond, block)).then((x) => x.value);
+  /** The token now, but never as it stood before block `since`. */
+  const readSince = (since: bigint) =>
     own
       .read(async (c) => {
-        const head = block ?? (await c.getBlockNumber({ cacheTime: 0 }));
-        return readErc721(c, asset, tokenId, account, diamond, head < floor ? floor : head);
+        const head = await c.getBlockNumber({ cacheTime: 0 });
+        return readErc721(c, asset, tokenId, account, diamond, head < since ? since : head);
       })
       .then((x) => x.value);
 
-  async function setTo(to: Hex): Promise<{ landed: boolean; hash: Hex | null; now: Erc721State | null }> {
+  async function setTo(to: Hex): Promise<{ landed: boolean; hash: Hex | null; now: Erc721State | null; at: bigint | null }> {
     const hash = await writeContract(config, { address: asset, abi: NFT_ABI, functionName: 'approve', args: [to, tokenId], chainId, account });
     let block: bigint;
     try {
       block = (await waitForTransactionReceipt(config, { hash, chainId })).blockNumber;
     } catch {
-      return { landed: false, hash, now: null };
+      return { landed: false, hash, now: null, at: null };
     }
-    if (block > floor) floor = block;
     // A read-back that fails is missing evidence, not a failure: the hash is
     // kept, so the caller states the step as unverified (it may have landed).
     const now = await read(block).catch(() => null);
-    return { landed: now !== null && same(now.approved, to), hash: now === null ? hash : null, now };
+    return { landed: now !== null && same(now.approved, to), hash: now === null ? hash : null, now, at: block };
   }
 
-  async function approve(prior: Hex | null): Promise<void> {
+  async function approve(prior: Hex | null): Promise<bigint> {
     const before = await read();
     if (before.owner === null || !same(before.owner, account) || !same(before.approved, prior)) {
       throw new StatedRefusal({ code: 'NftApprovalChanged', reason: text('nftApproval.moved'), reopensAt: null, remedy: null });
     }
     // The caller names this prompt in its own step count.
     const r = await setTo(diamond);
-    if (r.landed) return;
+    if (r.landed && r.at !== null) return r.at;
     throw new StatedRefusal({
       code: r.hash !== null ? 'NftApprovalUnverified' : 'NftApprovalNotSet',
       reason: r.hash !== null ? format('nftApproval.unread', { hash: r.hash }) : format('nftApproval.notSet', { token: d.tokenName }),
@@ -96,9 +96,9 @@ export function nftApproval(d: NftApprovalDeps, asset: Hex, tokenId: bigint): Nf
     });
   }
 
-  async function putBack(prior: Hex | null): Promise<{ ok: boolean; sentence: string }> {
+  async function putBack(prior: Hex | null, since: bigint): Promise<{ ok: boolean; sentence: string }> {
     try {
-      const now = await read();
+      const now = await readSince(since);
       if (now.owner === null || !same(now.owner, account)) return { ok: true, sentence: text('nftApproval.notHeld') };
       if (same(now.approved, prior)) return { ok: true, sentence: text('nftApproval.restored') };
       if (!same(now.approved, diamond)) return { ok: false, sentence: text('nftApproval.restoreChanged') };

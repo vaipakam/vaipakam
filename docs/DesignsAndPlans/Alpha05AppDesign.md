@@ -459,7 +459,9 @@ above. Each resolves here, so a route reviewer needs no private file:
   when it reads the protocol at the block its receipt mined in. When what it
   was for does not go through, it is put back, but only while it still reads
   the protocol and the wallet still holds the token; anything else is stated,
-  never overwritten. An ERC-1155 token needs an operator approval over the
+  never overwritten. The put-back reads the approval no earlier than the
+  block the approval mined in (the same holds for an ERC-20 allowance), so a
+  node that has not caught up can never pass a skipped reset as done. An ERC-1155 token needs an operator approval over the
   whole collection taken back after the action, so it is named and handed to
   the current app until that step is built.
 
