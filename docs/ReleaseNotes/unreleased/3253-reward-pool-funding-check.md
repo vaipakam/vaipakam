@@ -1,4 +1,4 @@
-## Keeper — a fresh Base can no longer launch rewards unfunded (PR #<n>)
+## Keeper — a fresh Base can no longer launch rewards unfunded (PR #3263)
 
 On the canonical chain the daily reward budgets sent to the mirrors draw only on what an admin has delivered into the reward pool. The 69M interaction pool is an allocation, not a balance, so a fresh Base starts with nothing to send. After the 2026-11-03 fresh deploy nobody funded it, and day 1 never reached Arbitrum Sepolia or BNB Testnet until an operator spotted it by hand.
 
