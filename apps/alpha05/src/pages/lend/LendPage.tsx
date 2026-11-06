@@ -48,9 +48,10 @@ function initialPair(chainId: number, suggested: readonly { address: Hex }[]): {
  * Terms gate. When no request fits, the lender posts their own offer for
  * the pair instead (OFF-06), through the shared posting flow the Borrow
  * page's request uses, from the other side: the amount lent is what locks.
- * A request that locks an NFT, an offer that asks for one, and the lender's
- * Advanced options follow in later updates; the page says so instead of
- * hiding them.
+ * In Advanced the lender may lend in parts, choose a fill mode, an interest
+ * schedule and the Full fee tariff, which is set by its own step here after
+ * posting. A request that locks an NFT and an offer that asks for one follow
+ * in later updates; the page says so instead of hiding them.
  */
 export function LendPage() {
   const { text, format } = useCopy();
