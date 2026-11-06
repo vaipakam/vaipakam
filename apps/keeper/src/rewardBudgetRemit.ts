@@ -37,6 +37,8 @@ import { readCutoffMs, runIndex } from './runWindow';
 import { rotate } from './rotate';
 import { isUnroutedRead, owedButBlocked, readRemitDayStatuses } from './remitDayStatus';
 import { redactedError } from '@vaipakam/lib/errorDescription';
+import { classify, revertArgs } from './callErrors';
+import { resolveOpsAlert, sendOpsAlert } from './opsAlert';
 
 const REMIT_ABI = RewardRemittanceFacetABI as Abi;
 /** `getDayClosedByRemitId` lives on the read-only lens facet. */
@@ -352,6 +354,47 @@ function readBigint(env: Env, key: PlainVarKey, fallback: bigint): bigint {
   }
 }
 
+/** #3253 — how often an unchanged remit refusal is re-posted to the ops chat. */
+export const REMIT_REFUSAL_REPEAT_SEC = 6 * 3600;
+
+/**
+ * Refusals that DO clear by themselves, so they are not alerted: a
+ * duplicate send racing an earlier one (or an admin remit) finds the days
+ * already marked and reverts `NothingToRemit`, which the next tick's re-plan
+ * resolves.
+ */
+const SELF_CLEARING_REFUSALS = new Set(['NothingToRemit']);
+
+/** One ops-alert key per lane: a lane carries at most one standing refusal. */
+export function remitRefusalKey(baseChainId: number, mirrorId: number): string {
+  return `remit-refused/${baseChainId}/${mirrorId}`;
+}
+
+/**
+ * The contract's refusal of a remit, when the Diamond ANSWERED and refused
+ * and the refusal is not one that clears by itself. `undefined` for a
+ * transport error, a timeout or an RPC rejection, which say nothing about
+ * the call. The arguments are decoded on-chain values (amounts, ids), never
+ * provider text.
+ */
+export function remitRefusal(err: unknown): { name: string; args: string[] } | undefined {
+  const c = classify(err);
+  if (!('refused' in c)) return undefined;
+  if (SELF_CLEARING_REFUSALS.has(c.refused)) return undefined;
+  return { name: c.refused, args: revertArgs(err).map((a) => String(a)) };
+}
+
+export function remitRefusalText(baseChainId: number, mirrorId: number, refusal: { name: string; args: string[] }): string {
+  const call = refusal.args.length > 0 ? `${refusal.name}(${refusal.args.join(', ')})` : refusal.name;
+  return (
+    `⚠️ Reward remit refused — chain ${baseChainId} → ${mirrorId}\n` +
+    `The Diamond refuses remitRewardBudget with ${call}. Nothing is sent and no gas is spent, ` +
+    `and the keeper retries every run, but this refusal does not clear by waiting: ` +
+    `the mirror's owed days are not being funded until it is resolved.\n` +
+    `Repeats every ${REMIT_REFUSAL_REPEAT_SEC / 3600} h while it persists; clears when the lane next completes.`
+  );
+}
+
 export async function runRewardBudgetRemit(env: Env, tick: PassTick): Promise<void> {
   if (!passIsArmed(env, 'rewardBudgetRemit', 'REWARD_REMIT_ENABLED')) return;
 
@@ -447,12 +490,29 @@ async function remitFromCanonical(env: Env, chain: ChainConfig, deadlineMs: numb
       const sizing: RemitSizing = { baseChainId: localChainId, mirror, minPart };
       if (await remitToMirror(publicClient, ctx, diamond, mirrorId, currentDay, lookback, laneCap, armedFromDay, readCutoff, sizing)) {
         covered += 1;
+        // Nothing left owed at the source: any refusal reported for this lane
+        // has cleared, so a recurrence alerts at once.
+        await resolveOpsAlert(env, remitRefusalKey(localChainId, mirrorId));
       }
     } catch (err) {
-      // Benign reverts (RewardPoolCapExceeded near exhaustion, NotRewardRemitter
-      // if the keeper isn't authorized yet, etc.) — log at info and continue.
       // The failure marker `skipped Base-><id>:` is the one the runbook names.
       reportSendError(`[keeper] rewardBudgetRemit`, err, `skipped Base->${mirrorId}: ${redactedError(err, { stack: false })}`, console.log);
+      // #3253 — a refusal the contract gives is retried every run, and most
+      // do not clear by waiting (an unfunded delivered-fresh bound, a keeper
+      // the Diamond does not authorise). Logged alone, a pass that can never
+      // succeed looked exactly like an idle one for hours. Transport errors
+      // say nothing about the call and are not alerted.
+      const refusal = remitRefusal(err);
+      if (refusal) {
+        await sendOpsAlert(
+          env,
+          remitRefusalKey(localChainId, mirrorId),
+          remitRefusalText(localChainId, mirrorId, refusal),
+          REMIT_REFUSAL_REPEAT_SEC,
+          undefined,
+          localChainId,
+        );
+      }
     }
   }
   // #1896 — POSITIVE coverage evidence, for the same reason the liquidator
