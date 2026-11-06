@@ -442,6 +442,29 @@
   },
   {
     "type": "function",
+    "name": "settleRentalPrecloseShares",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "treasuryFee",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "lenderShare",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "syncTierExclusion",
     "inputs": [
       {

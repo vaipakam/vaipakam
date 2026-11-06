@@ -1,6 +1,25 @@
 [
   {
     "type": "function",
+    "name": "isParallelSaleVaultBlocked",
+    "inputs": [
+      {
+        "name": "offerId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "postParallelSaleListing",
     "inputs": [
       {
@@ -4987,6 +5006,11 @@
   {
     "type": "error",
     "name": "VaultTransferFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VaultUpgradeRequired",
     "inputs": []
   },
   {
