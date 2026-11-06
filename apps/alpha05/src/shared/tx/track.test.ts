@@ -45,11 +45,7 @@ describe('transition', () => {
     const mined = transition(submitted, { type: 'mined', submittedHash: HASH, hash: OTHER, repriced: true, blockNumber: 3n, reverted: false });
     expect(mined).toEqual({ kind: 'mined', hash: OTHER, submittedHash: HASH, blockNumber: 3n, reverted: false });
     expect(() => transition(mined, { type: 'measured', hash: HASH, outcome: summarize([], 1) })).toThrow(IllegalTransition);
-    expect(transition(mined, { type: 'measured', hash: OTHER, outcome: summarize([{ status: 'done', label: 'x' }], 2) })).toMatchObject({
-      kind: 'measured',
-      hash: OTHER,
-      submittedHash: HASH,
-    });
+    expect(transition(mined, { type: 'measured', hash: OTHER, outcome: summarize([{ status: 'done', label: 'x' }], 2) })).toMatchObject({ kind: 'measured', hash: OTHER, submittedHash: HASH });
   });
   it('ends a cancelled or replaced transaction as superseded, never mined or measured', () => {
     const submitted = transition({ kind: 'signing' }, { type: 'submitted', hash: HASH, at: 1 });
