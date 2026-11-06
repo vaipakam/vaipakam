@@ -77,6 +77,15 @@ export function acceptorRole(o: Pick<StoredOffer, 'offerType'>): AcceptRole {
   return o.offerType === OFFER_LENDER ? 'borrower' : 'lender';
 }
 
+/** The loan a borrow request refinances, or null. Funding such a request
+ *  does not deliver to the borrower: the amount less the borrower's fee
+ *  stays in the lender's vault and pays the old loan's lender in the same
+ *  transaction. The protocol's rule is a borrower-side offer naming a
+ *  target loan; this is the same rule, so the review and the chain agree. */
+export function refinancePayoff(o: Pick<StoredOffer, 'offerType' | 'refinanceTargetLoanId'>): bigint | null {
+  return o.offerType !== OFFER_LENDER && o.refinanceTargetLoanId !== 0n ? o.refinanceTargetLoanId : null;
+}
+
 /** Whether this offer is one a guided flow can take for `role`: an offer
  *  from the other side (a lender offer for a borrower, a borrow request for
  *  a lender) of an ERC-20 against ERC-20 collateral, posted by someone
@@ -107,7 +116,7 @@ export function rankFor<T extends Ranked>(role: AcceptRole, rows: readonly T[]):
     if (Boolean(a.blocked) !== Boolean(b.blocked)) return a.blocked ? 1 : -1;
     const ra = roleTerms(a.offer);
     const rb = roleTerms(b.offer);
-    if (ra.rateBps !== rb.rateBps) return (ra.rateBps < rb.rateBps) === (role === 'borrower') ? -1 : 1;
+    if (ra.rateBps !== rb.rateBps) return ra.rateBps < rb.rateBps === (role === 'borrower') ? -1 : 1;
     if (ra.amount !== rb.amount) return ra.amount > rb.amount ? -1 : 1;
     return a.offer.id < b.offer.id ? -1 : a.offer.id > b.offer.id ? 1 : 0;
   });
@@ -115,7 +124,11 @@ export function rankFor<T extends Ranked>(role: AcceptRole, rows: readonly T[]):
 
 /** What the acceptor pays from the wallet: a borrower locks the collateral
  *  in their vault, a lender funds the principal. */
-export function payLeg(role: AcceptRole, o: Pick<StoredOffer, 'lendingAsset' | 'collateralAsset'>, p: Pick<AcceptPreview, 'effectivePrincipal' | 'collateralAmount'>): { asset: Hex; amount: bigint } {
+export function payLeg(
+  role: AcceptRole,
+  o: Pick<StoredOffer, 'lendingAsset' | 'collateralAsset'>,
+  p: Pick<AcceptPreview, 'effectivePrincipal' | 'collateralAmount'>,
+): { asset: Hex; amount: bigint } {
   return role === 'borrower' ? { asset: o.collateralAsset, amount: p.collateralAmount } : { asset: o.lendingAsset, amount: p.effectivePrincipal };
 }
 

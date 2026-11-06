@@ -130,7 +130,7 @@ describe('a lender funding a borrow request', () => {
     expect(reviewBlockers(lenderReview({ funds: { balance: p.effectivePrincipal - 1n, allowance: 0n } }), null, copy)).toEqual(['lendAccept.blockShortfall']);
   });
 
-  it("names the other side as the borrower in refusals and blocks", () => {
+  it('names the other side as the borrower in refusals and blocks', () => {
     expect(reviewBlockers(lenderReview({ gate: 2, creatorGate: 2 }), null, copy)).toEqual(['lendAccept.blockCreatorGate']);
     const vault = { ...lenderReview().preview, error: 'VaultUpgradeRequired' as const };
     expect(reviewBlockers(lenderReview({ preview: vault, vaultUpgradeYours: false }), null, copy)).toEqual(['lendAccept.vaultUpgradeBorrower']);
@@ -144,7 +144,7 @@ describe('a lender funding a borrow request', () => {
     expect(reviewBlockers(lenderReview({ linkedLoanId: 9n }), null, copy)).toEqual(['lendAccept.blockPositionSale']);
   });
 
-  it('states what leaves the wallet, what the borrower gets, and the protocol share as today\'s figure', () => {
+  it("states what leaves the wallet, what the borrower gets, and the protocol share as today's figure", () => {
     const r = rows(lenderReview());
     const pay = r.find((x) => x.label === 'lendAccept.rowPay')!;
     expect(pay.movesOut).toBe(true);
@@ -155,6 +155,13 @@ describe('a lender funding a borrow request', () => {
     expect(labels(lenderReview())).not.toContain('accept.rowLock');
     expect(labels(lenderReview())).not.toContain('lendAccept.rowFeeTariff');
     expect(labels(lenderReview({ offer: offer({ offerType: OFFER_BORROWER, creatorFull: true }) }))).toContain('lendAccept.rowFeeTariff');
+  });
+
+  it("says a refinance request pays the old loan's lender, never that the borrower receives it", () => {
+    const r = rows(lenderReview({ offer: offer({ offerType: OFFER_BORROWER, creator: BORROWER, refinanceTargetLoanId: 5n }) }));
+    expect(r.map((x) => x.label)).not.toContain('lendAccept.rowBorrowerGets');
+    expect(r.find((x) => x.label === 'lendAccept.rowPaysOff')!.value).toMatchObject({ amount: 2n * 10n ** 18n - 4n * 10n ** 15n });
+    expect(r.find((x) => x.label === 'lendAccept.rowRefinance')!.value).toMatchObject({ text: 'lendAccept.refinanceLoan' });
   });
 
   it("states the lender's consequences, including the position token", () => {

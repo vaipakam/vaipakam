@@ -1,7 +1,7 @@
 import { useCopy, type CopyKey } from '../copy/useCopy';
 import { WhyLink } from '../help/WhyLink';
 import { roleTerms } from './acceptTerms';
-import { acceptFigures, lenderFigures, type AcceptRole } from './model';
+import { acceptFigures, lenderFigures, refinancePayoff, type AcceptRole } from './model';
 import { tokenAmount, type TokenMetaMap } from '../reads/tokens';
 import { Notice } from '../ui/Notice';
 import { formatBps, formatUtc } from '../ui/format';
@@ -118,6 +118,7 @@ function OfferRow({
   const f = row.preview && matcherBps !== null ? acceptFigures(row.preview, o.durationDays, matcherBps) : null;
   // A lender's line needs no protocol share: it states what leaves the
   // wallet and the fee share that comes back, both from the preview.
+  const payoff = role === 'lender' ? refinancePayoff(o) : null;
   const lf = role === 'lender' && row.preview && matcherBps !== null ? lenderFigures(row.preview, o.durationDays, matcherBps, 0n) : null;
 
   return (
@@ -160,6 +161,7 @@ function OfferRow({
           })}
         </p>
       )}
+      {payoff !== null && <p className="tier-a">{format('lend.rowRefinance', { id: payoff.toString() })}</p>}
       {lf && (!blocked || ownStep) && (
         <p className="tier-b">
           {format('lend.rowLend', {

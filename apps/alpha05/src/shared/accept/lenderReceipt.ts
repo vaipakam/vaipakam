@@ -9,7 +9,7 @@
  */
 import type { CopyAccess, CopyKey } from '../copy/useCopy';
 import { ASSET_ERC20 } from '../offers/acceptTerms';
-import { lenderFigures } from '../offers/model';
+import { lenderFigures, refinancePayoff } from '../offers/model';
 import type { Receipt } from '../receipt/types';
 import { tokenAmount, type TokenMetaMap } from '../reads/tokens';
 import { formatBps, formatSpan } from '../ui/format';
@@ -27,11 +27,17 @@ export function lenderReceipt(r: AcceptReview, meta: TokenMetaMap | null, copy: 
   const collateral = o.collateralAsset;
   const amount = (asset: Hex, value: bigint) => ({ kind: 'amount' as const, asset, amount: value });
   const cadence = cadenceText(o.periodicInterestCadence, copy);
+  // A refinance request pays the old loan's lender, not the borrower.
+  const payoff = refinancePayoff(o);
   const textRow = (label: CopyKey, value: string, binding: boolean) => ({ label: text(label), value: { kind: 'text' as const, text: value }, binding });
 
   const rows: Receipt['rows'] = [
     { label: text('lendAccept.rowPay'), value: amount(lending, f.principal), binding: true, movesOut: true },
-    { label: text('lendAccept.rowBorrowerGets'), value: amount(lending, f.principal - f.fee), binding: true },
+    {
+      label: payoff === null ? text('lendAccept.rowBorrowerGets') : format('lendAccept.rowPaysOff', { id: payoff.toString() }),
+      value: amount(lending, f.principal - f.fee),
+      binding: true,
+    },
     { label: text('lendAccept.rowFee'), value: amount(lending, f.fee), binding: true },
     ...(f.feeBack > 0n ? [{ label: text('lendAccept.rowFeeBack'), value: amount(lending, f.feeBack), binding: true }] : []),
     // The borrower's own Full tariff is confirmed only as the loan opens,
@@ -71,11 +77,7 @@ export function lenderReceipt(r: AcceptReview, meta: TokenMetaMap | null, copy: 
       ),
       true,
     ),
-    textRow(
-      'lendAccept.rowRefinance',
-      o.refinanceTargetLoanId === 0n ? text('accept.refinanceNone') : format('lendAccept.refinanceLoan', { id: o.refinanceTargetLoanId.toString() }),
-      true,
-    ),
+    textRow('lendAccept.rowRefinance', payoff === null ? text('accept.refinanceNone') : format('lendAccept.refinanceLoan', { id: payoff.toString() }), true),
     textRow('accept.rowLinked', r.linkedLoanId === 0n ? text('accept.linkedNone') : format('lendAccept.linkedSale', { id: r.linkedLoanId.toString() }), true),
     textRow('accept.rowVault', r.vault === ZERO ? text('accept.vaultNew') : r.vault, false),
     textRow('lendAccept.rowBorrower', o.creator, false),

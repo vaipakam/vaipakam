@@ -1,8 +1,22 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { OFFER_BORROWER } from './acceptTerms';
+import { OFFER_BORROWER, OFFER_LENDER } from './acceptTerms';
 import { offer } from './testOffer';
-import { acceptFigures, gateBlock, interestAtDue, listFee, movedBetween, notTakeable, rankFor, lenderFigures, acceptorRole, offerFit, payLeg, shortfall } from './model';
+import {
+  acceptFigures,
+  gateBlock,
+  interestAtDue,
+  listFee,
+  movedBetween,
+  notTakeable,
+  rankFor,
+  lenderFigures,
+  acceptorRole,
+  offerFit,
+  payLeg,
+  refinancePayoff,
+  shortfall,
+} from './model';
 import { ACCEPT_ERRORS, type AcceptPreview } from './reads';
 
 const ME = '0x2222222222222222222222222222222222222222' as const;
@@ -131,7 +145,7 @@ describe('the acceptance figures', () => {
 });
 
 describe('gateBlock', () => {
-  it('blocks on the lender\'s code first, on this wallet\'s codes 1-3 and unknown ones, never on the acknowledgement-covered 4', () => {
+  it("blocks on the lender's code first, on this wallet's codes 1-3 and unknown ones, never on the acknowledgement-covered 4", () => {
     expect(gateBlock(2, 2)).toEqual({ creator: true, code: 2 });
     expect(gateBlock(1, 0)).toEqual({ creator: false, code: 1 });
     expect(gateBlock(9, 0)).toEqual({ creator: false, code: 9 });
@@ -142,5 +156,15 @@ describe('gateBlock', () => {
   it('marks a row the review would block as not takeable', () => {
     expect(notTakeable('open', preview(), null, gateBlock(3, 0))).toEqual({ kind: 'gate', block: { creator: false, code: 3 } });
     expect(notTakeable('open', preview(), null, gateBlock(4, 0))).toEqual({ kind: 'gate', block: { creator: false, code: 4 } });
+  });
+});
+
+describe('a refinance request', () => {
+  it('names the loan it pays off when a borrow request carries a target, as the protocol does', () => {
+    expect(refinancePayoff({ offerType: OFFER_BORROWER, refinanceTargetLoanId: 7n })).toBe(7n);
+    expect(refinancePayoff({ offerType: OFFER_BORROWER, refinanceTargetLoanId: 0n })).toBeNull();
+  });
+  it('never reads a lender offer as one, whatever it carries', () => {
+    expect(refinancePayoff({ offerType: OFFER_LENDER, refinanceTargetLoanId: 7n })).toBeNull();
   });
 });

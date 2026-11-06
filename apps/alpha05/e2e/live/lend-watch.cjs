@@ -37,6 +37,7 @@ async function session(b, opts, label) {
   const main = async () => (await p.locator('main').innerText()).replace(/\n+/g, '\n');
   if (!found) {
     console.log(`===== ${label}: no pair lists a request\n${await main()}`);
+    await p.screenshot({ path: `${OUT}/live-lend-${label}-empty.png`, fullPage: true });
   } else {
     console.log(`===== ${label}: pair ${found.l} / ${found.c}`);
     await p.screenshot({ path: `${OUT}/live-lend-${label}-list.png`, fullPage: true });

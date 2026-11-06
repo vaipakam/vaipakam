@@ -573,7 +573,11 @@ above. Each resolves here, so a route reviewer needs no private file:
   protocol's share of interest at today's rate as an upper bound (fixed when
   the loan opens, lowered by the lender's fee-discount tier while the
   consent is on, and stated as off when it is), and what comes back if
-  repaid on the due date. A borrow-side offer linked to a running loan is a
+  repaid on the due date. A request that refinances a loan does not pay the
+  borrower: the amount less the fee pays the old loan's lender in the same
+  transaction, so the list row and the receipt say whose loan it pays and
+  never show it as the borrower's proceeds (the protocol's own rule, a
+  borrow-side offer naming a target loan, read once). A borrow-side offer linked to a running loan is a
   sale of that loan's lender position, not a request: the list counts it
   apart and the review blocks it, because buying a running loan has its own
   terms and is not this flow. A request is funded whole, at its smallest
