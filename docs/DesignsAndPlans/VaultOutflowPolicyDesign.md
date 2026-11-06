@@ -2,7 +2,7 @@
 
 Status: **design for owner review**. The owner's decisions of 2026-11-05/06
 are recorded on #3205 and repeated where they apply. Choices they did not
-settle are marked **Default**. Four questions in §8 still need an answer (the first is decided)
+settle are marked **Default**. Five questions in §8 still need an answer (the first is decided)
 before code starts. This builds on [#3204's central vault code
 design](VaultCentralImplementationDesign.md) and ships after it.
 
@@ -52,7 +52,8 @@ delivery checks and the sanctions lock.
   loan state and registries. So defaults and liquidations stay unblockable,
   which is the #3178 principle.
 - **A vault-held lien record.** A counterparty is paid only against a lien
-  the vault itself recorded when the position opened, up to that lien.
+  the vault itself recorded when the position opened, up to that lien, and
+  only to the payee recorded on it.
 - **The treasury** stays one address behind the multisig and Timelock.
   Guardians only pause.
 - **Just-in-time approvals.** No vault holds an allowance between
@@ -117,7 +118,7 @@ asks, without the indexer subscribing to every vault address.
 | Class | Layer 1 (Diamond: intent) | Layer 2 (vault: independent) |
 | --- | --- | --- |
 | **Owner** | Recipient is the owner's wallet or, with protected mode on, an allowlisted address after its delay. Version and pause rules apply. | `to == owner`, where `owner` is the vault's own record of its owner wallet (set at creation, changed only as §3.7 allows), or `to` is on the vault's **own** allowlist with its delay elapsed. **And** the amount is at most the vault's free balance of that asset: its balance less the sum of its own open liens on it (§3.7), so an owner outflow can never take what a lien still holds |
-| **Counterparty** | `to` is the vault of THAT loan's other party (or the current holder of that position). The amount is drawn from that loan's lien and bounded by its claim records | `to` is a genuine Vaipakam vault (§3.4). The amount is at most the open lien this vault recorded for `ref`, and that lien is reduced by it |
+| **Counterparty** | `to` is the vault of THAT loan's other party (or the current holder of that position). The amount is drawn from that loan's lien and bounded by its claim records | `to` is the **payee** this vault recorded on the lien for `ref` (§3.7): the vault whose owner signed the other side of the terms, or a later holder the current payee's owner assigned the position to. The amount is at most that open lien, and the lien is reduced by it |
 | **Treasury** | `to == s.treasury` | `to ==` the treasury address the registry holds (§3.6), **and** the amount is drawn either from the lien for `ref` and its fee budget, or from free balance under the owner's signed **fee authorization** for `ref` (§3.7). Without one of those, the vault pays the treasury nothing |
 | **Swap adapter / order taker** | A registered adapter for this action, against a lien | `to` is on the registry. The amount is at most the lien for `ref` |
 | **Marketplace conduit** | A recorded listing for `ref`, through a registered conduit | Grant only (§3.5), per amount or token id, and only to a registry conduit |
@@ -222,7 +223,17 @@ two fails closed: the vault refuses.
   amount)`. A counterparty, adapter, seller-claim or Diamond-transient
   outflow is allowed only against an open lien for its `ref`, and reduces
   it. So does an incentive payment, which also debits that lien's
-  incentive budget. The vault keeps a running sum of its open liens per
+  incentive budget.
+- **The payee.** Each lien also records its payee: the vault that may
+  receive counterparty payments against it. It is set from the other
+  side's own signature over the same terms, verified through that vault's
+  ERC-1271 answer, which checks its own owner record (§3.4 makes sure it is
+  a genuine vault). So a compromised Diamond cannot name a payee; it could
+  only replay terms the other party really signed. The payee changes only
+  when the position changes hands, and only with an **assignment** the
+  current payee's owner signed (the new holder's vault, the `ref`, a
+  nonce), verified the same way. A sale route already collects the
+  seller's signature; §8 Q6 covers a plain transfer of the position NFT. The vault keeps a running sum of its open liens per
   asset and token id, which is what the owner class's free-balance check
   reads.
 - **One rule for every protocol class.** Every outflow that is not the
@@ -303,7 +314,11 @@ opens by itself.
   - a layer-1 bypass (a test facet calling the vault directly with a forged
     class) reverts at layer 2.
 - Counterparty:
-  - paying any vault other than that loan's party reverts;
+  - paying any vault other than the lien's recorded payee reverts at
+    layer 2, with layer 1 bypassed, including the attacker's own genuine
+    vault against an honest user's existing lien;
+  - a payee change without the current payee owner's signed assignment
+    reverts, and a replayed assignment reverts on its nonce;
   - paying more than the recorded lien reverts;
   - paying a non-vault reverts on the code hash.
 - Owner, without protected mode: any address but the owner's wallet
@@ -349,10 +364,13 @@ opens by itself.
 ## 7. Residuals (stated, from the owner's direction)
 
 - **Funnelling through the attacker's own vault.** A destination check
-  cannot tell an attacker's genuine vault from a counterparty's. The lien
-  binding limits this to one recorded lien, and with the owner's signature
-  (§8 Q1) a compromised Diamond cannot create such a lien at all; only the
-  attacker's own signed positions are reachable.
+  alone cannot tell an attacker's genuine vault from a counterparty's. The
+  recorded payee closes that for counterparty payments: an honest user's
+  open lien pays only the vault its other party signed as, or one that
+  party assigned it to. A compromised Diamond can reach a counterparty
+  payment only on positions whose other side the attacker signed. The
+  classes the vault cannot bind to a recipient (incentives, the Diamond
+  transient leg) stay bounded by their budgets and are listed below.
 - **A bad price through a legitimate route.** Oracle floors, slippage caps,
   #3227's two-source rule and the #3206 rate limit cover it.
 - **Diamond-transient legs.** Once value is in the Diamond for a swap or a
@@ -395,6 +413,15 @@ opens by itself.
    require the counterparty's own authorization for a release (a lender
    signature, or a receipt the lender's vault records), which adds a step
    to every repayment.
+6. **A plain transfer of a position NFT.** The payee follows a position only
+   with the current holder's signed assignment (§3.7). Default: while a
+   position has an open lien, its NFT moves only through an entry that
+   carries that assignment, so a plain `transferFrom` reverts and a
+   marketplace sale of the NFT needs the app's assignment step. The
+   alternative, letting the payee follow the NFT owner as the Diamond
+   records it, keeps plain transfers but brings back the exposure this
+   section closes: a compromised Diamond could rewrite the owner and
+   redirect an honest user's payments.
 
 ## 9. Order of work
 
