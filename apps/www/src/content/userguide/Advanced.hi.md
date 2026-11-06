@@ -2193,6 +2193,12 @@ Basic एकल-मान अनुरोध पोस्ट करता है
 
 `fillMode` 0 (Partial), 1 (AON) या 2 (IOC) है और पोस्ट करने के बाद नहीं बदलता। AON के लिए `amount` = `amountMax` चाहिए (`AonRequiresSingleValueAmount`), और IOC के लिए `expiresAt` ≠ 0 चाहिए (`IocRequiresExpiry`); फ़ॉर्म अस्वीकार होने वाला कोई रूप नहीं देता। खुले अनुरोध पर राशियाँ, दर और संपार्श्विक `setOfferAmount`, `setOfferRate`, `setOfferCollateral` और `modifyOffer` से बदले जा सकते हैं, पर कभी `amountFilled` या `collateralAmountFilled` से नीचे नहीं; यह ऐप अभी इन्हें कॉल नहीं करता।
 
+<a id="borrow-request-cadence"></a>
+
+### Borrow: अनुरोध की ब्याज अनुसूची
+
+`periodicInterestCadence` 0 (None) से 4 (Annual) तक होता है, जिनकी अवधियाँ 30, 90, 180 और 365 दिन हैं। फ़ॉर्म वही देता है जिसकी `previewCadenceAdmission(lendingAsset, amount, assetType, collateralAsset, collateralAssetType, durationDays)` अनुमति देता है; यह वही नियम चलाता है जिसे `createOffer` लागू करता है, `amount` (रेंज के सबसे छोटे सिरे) पर मूल्यांकित। हर अस्वीकृति उसके रिवर्ट डेटा से बताई जाती है: `PeriodicInterestDisabled`, `CadenceNotAllowedForIlliquid`, या `CadenceNotAllowed(cadence, durationDays, principalNumeraire, threshold)`। एक अवधि का ब्याज `principal × rate × intervalDays / (10000 × 365)` है। मोहलत `getEffectiveGraceSeconds(intervalDays − 1)` बीतने के बाद कोई भी `settlePeriodicInterest` से छूटी अवधि का निपटान कर सकता है; इसमें कोलैटरल बिकता है और ऋण खुला रहता है। कीपर पास `periodicSettle` की सक्रियता वैसी दिखाई जाती है जैसी क्षमता सेवा बताती है, डिफ़ॉल्ट रूप से अज्ञात। पोस्ट करने के बाद अनुसूची बदली नहीं जा सकती।
+
 <a id="risk-access"></a>
 
 ### Risk Access: आपका जोखिम स्तर

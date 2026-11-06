@@ -1170,6 +1170,12 @@ En mode Avancé, une demande peut accepter une fourchette : le plus petit et le 
 
 Partiel, le mode par défaut, laisse les appariements remplir la demande en un ou plusieurs prêts jusqu'à ce qu'elle soit remplie, annulée ou expirée. Tout ou rien n'admet qu'un seul remplissage du montant entier et ne peut donc pas servir avec une fourchette. Immédiat ou annulé remplit comme partiel, mais seulement jusqu'à l'expiration de la demande, et exige donc une date d'expiration. Le mode de remplissage ne peut pas être modifié après la publication ; pour le changer, annulez la demande et publiez-en une nouvelle. Le protocole permet de modifier les montants, le taux et la garantie tant que la demande est ouverte, jamais en dessous de ce que les appariements ont déjà utilisé, mais cette application ne le propose pas encore : pour l'instant, un changement implique d'annuler et de republier.
 
+<a id="borrow-request-cadence"></a>
+
+### Borrow: Un échéancier d'intérêts (Avancé)
+
+En mode Avancé, une demande peut payer les intérêts selon un échéancier plutôt que tout au remboursement : chaque mois, trimestre, semestre ou année. Le formulaire ne propose que les échéanciers que le protocole autorise pour vos conditions et indique sous chacun de ceux qui sont fermés pourquoi : les intérêts périodiques sont désactivés sur le réseau, un actif n'a pas de prix, le prêt vaut moins que le seuil du protocole (les deux chiffres sont affichés), ou la période n'est pas plus courte que le prêt. La revue montre les intérêts de chaque période et le délai de grâce d'une période manquée. Si une période n'est pas payée avant la fin de son délai de grâce, n'importe qui peut vendre une partie de votre garantie pour la payer, et le prêt reste ouvert. L'échéancier ne peut plus être modifié après publication. Comme les autres options avancées, il continue de s'appliquer si vous passez en mode Basique, et le formulaire le dit.
+
 <a id="risk-access"></a>
 
 ### Risk Access : votre niveau de risque

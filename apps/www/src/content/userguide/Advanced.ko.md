@@ -2000,6 +2000,12 @@ Basic은 단일 값 요청을 올립니다: `amount` = `amountMax`, `interestRat
 
 `fillMode`는 0(Partial), 1(AON), 2(IOC) 중 하나이며 게시 후 바꿀 수 없습니다. AON은 `amount` = `amountMax`를 요구하고(`AonRequiresSingleValueAmount`), IOC는 `expiresAt` ≠ 0을 요구합니다(`IocRequiresExpiry`). 양식은 거부되는 조합을 제공하지 않습니다. 금액, 이자율, 담보는 열린 요청에서 `setOfferAmount`, `setOfferRate`, `setOfferCollateral`, `modifyOffer`로 바꿀 수 있지만 `amountFilled`나 `collateralAmountFilled` 아래로는 바꿀 수 없습니다. 이 앱은 아직 이를 호출하지 않습니다.
 
+<a id="borrow-request-cadence"></a>
+
+### Borrow: 요청의 이자 일정
+
+`periodicInterestCadence` 는 0(None)부터 4(Annual)까지이며, 기간은 30·90·180·365일입니다. 양식은 `previewCadenceAdmission(lendingAsset, amount, assetType, collateralAsset, collateralAssetType, durationDays)` 가 허용하는 것을 제시합니다. 이 함수는 `createOffer` 가 적용하는 규칙을 `amount`(범위의 최소값)로 평가해 실행합니다. 각 거부는 리버트 데이터에서 표시됩니다: `PeriodicInterestDisabled`, `CadenceNotAllowedForIlliquid`, 또는 `CadenceNotAllowed(cadence, durationDays, principalNumeraire, threshold)`. 한 기간의 이자는 `principal × rate × intervalDays / (10000 × 365)` 입니다. 미납 기간은 유예 `getEffectiveGraceSeconds(intervalDays − 1)` 가 지나면 누구나 `settlePeriodicInterest` 로 정산할 수 있으며, 담보를 팔고 대출은 유지됩니다. 키퍼 패스 `periodicSettle` 의 활성 상태는 기능 서비스가 보고하는 대로 표시되며 기본값은 알 수 없음입니다. 일정은 게시 후 바꿀 수 없습니다.
+
 <a id="risk-access"></a>
 
 ### Risk Access: 내 위험 등급

@@ -2221,6 +2221,12 @@ Basic ஒற்றை-மதிப்புக் கோரிக்கையை
 
 `fillMode` 0 (Partial), 1 (AON) அல்லது 2 (IOC); இடுகையிட்ட பிறகு மாறாது. AON க்கு `amount` = `amountMax` தேவை (`AonRequiresSingleValueAmount`), IOC க்கு `expiresAt` ≠ 0 தேவை (`IocRequiresExpiry`); மறுக்கப்படும் எந்த வடிவத்தையும் படிவம் வழங்காது. திறந்த கோரிக்கையில் தொகைகள், வட்டி விகிதம், பிணையம் ஆகியவற்றை `setOfferAmount`, `setOfferRate`, `setOfferCollateral`, `modifyOffer` மூலம் மாற்றலாம், ஆனால் `amountFilled` அல்லது `collateralAmountFilled` க்குக் கீழே ஒருபோதும் இல்லை; இந்தச் செயலி இன்னும் அவற்றை அழைப்பதில்லை.
 
+<a id="borrow-request-cadence"></a>
+
+### Borrow: கோரிக்கையின் வட்டி அட்டவணை
+
+`periodicInterestCadence` 0 (None) முதல் 4 (Annual) வரை; காலங்கள் 30, 90, 180, 365 நாட்கள். `previewCadenceAdmission(lendingAsset, amount, assetType, collateralAsset, collateralAssetType, durationDays)` அனுமதிப்பதையே படிவம் வழங்குகிறது; அது `createOffer` செயல்படுத்தும் விதியை `amount` (வரம்பின் சிறிய முனை) மதிப்பில் இயக்குகிறது. ஒவ்வொரு மறுப்பும் அதன் ரிவர்ட் தரவிலிருந்து கூறப்படுகிறது: `PeriodicInterestDisabled`, `CadenceNotAllowedForIlliquid`, அல்லது `CadenceNotAllowed(cadence, durationDays, principalNumeraire, threshold)`. ஒரு காலத்தின் வட்டி `principal × rate × intervalDays / (10000 × 365)`. சலுகைக் காலம் `getEffectiveGraceSeconds(intervalDays − 1)` கடந்த பின், தவறிய காலத்தை யார் வேண்டுமானாலும் `settlePeriodicInterest` மூலம் தீர்க்கலாம்; அது பிணையத்தை விற்கிறது, கடன் திறந்தே இருக்கும். கீப்பர் பாஸ் `periodicSettle` இயக்க நிலை, திறன் சேவை தெரிவிப்பது போலவே காட்டப்படுகிறது; இயல்பாகத் தெரியாது. பதிவிட்ட பிறகு அட்டவணையை மாற்ற முடியாது.
+
 <a id="risk-access"></a>
 
 ### Risk Access: உங்கள் இடர் நிலை

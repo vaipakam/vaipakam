@@ -8,6 +8,9 @@ import { refusalFromError, StatedRefusal } from '../../../shared/eligibility/ref
 import { WhyLink } from '../../../shared/help/WhyLink';
 import { GUIDE_ORIGIN, guideUrl } from '../../../shared/help/guide';
 import { useMode } from '../../../app/ModeContext';
+import { useCapabilities } from '../../../shared/capability/CapabilityContext';
+import { readNumeraireSymbol } from '../../../shared/reads/numeraire';
+import { useOwnRead } from '../../../shared/reads/useOwnRead';
 import { legVerdict, moved } from '../../../shared/offers/acceptOutcome';
 import { readVault } from '../../../shared/offers/reads';
 import { tokenAmount, type TokenMetaMap } from '../../../shared/reads/tokens';
@@ -82,6 +85,14 @@ export function PostRequest({ draft, chain, own, meta, terms, onEdit, onClose }:
   const diamond = chain.diamondAddress;
   const account = own.account;
   const identity = reviewIdentity(own);
+  // OFF-14: a closed schedule names the principal and the threshold in the
+  // numeraire; the keeper's arming for the settlement pass is the capability
+  // service's answer (unknown until it reports).
+  const scheduled = draft.parsed.cadence !== 0;
+  const numeraire = useOwnRead(['numeraireSymbol', diamond], (c) => readNumeraireSymbol(c, diamond), { enabled: scheduled });
+  const unit = numeraire.data ?? '';
+  const { caps } = useCapabilities();
+  const settleKeeper = caps?.keeper.find((k) => k.pass === 'periodicSettle')?.armed ?? 'unknown';
   const [review, setReview] = useStoredValue<RequestReview>(`${REQUEST_KEY}:review`);
   const [consentFor, setConsentFor] = useStoredValue<number>(`${REQUEST_KEY}:consent`);
   const [offerId, setOfferId] = useStoredValue<bigint>(`${REQUEST_KEY}:offer`);
@@ -359,7 +370,7 @@ export function PostRequest({ draft, chain, own, meta, terms, onEdit, onClose }:
       }
       return { kind: 'changed', what };
     }
-    const blockers = requestBlockers(next, meta, copy);
+    const blockers = requestBlockers(next, meta, copy, unit);
     if (blockers.length > 0) return { kind: 'refused', refusal: { code: 'RequestBlocked', reason: blockers[0]!, reopensAt: null, remedy: null } };
     return { kind: 'ok' };
   };
@@ -387,7 +398,7 @@ export function PostRequest({ draft, chain, own, meta, terms, onEdit, onClose }:
   // Where the request is followed and cancelled once posted (built page or
   // the current app's), said before the collateral locks.
   const offersPage = pageHandoff('/offers');
-  const blockers = review ? requestBlockers(review, meta, copy) : [];
+  const blockers = review ? requestBlockers(review, meta, copy, unit) : [];
   const consented = review !== null && consentFor === review.readAt;
   const termsLink = terms && terms.kind !== 'none' ? termsUrl(terms.version) : `${GUIDE_ORIGIN}/terms`;
   const riskLink = guideUrl(mode, 'borrow-risks');
@@ -493,7 +504,7 @@ export function PostRequest({ draft, chain, own, meta, terms, onEdit, onClose }:
           tx={tx}
           identity={identity}
           reviewedFor={review?.identity ?? tx.frozen?.identity ?? identity}
-          receipt={review ? requestReceipt(review, meta, copy, isAdvanced) : null}
+          receipt={review ? requestReceipt(review, meta, copy, isAdvanced, settleKeeper) : null}
           recheck={recheck}
           describeAsset={describeAsset}
           explorer={chain.blockExplorer}

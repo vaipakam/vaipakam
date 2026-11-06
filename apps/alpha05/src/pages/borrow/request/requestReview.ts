@@ -28,6 +28,8 @@ import { allowanceSteps } from '../../../shared/tx/approval';
 import { formatBps, formatScaled, formatSpan, formatUtc, shortAddress } from '../../../shared/ui/format';
 import { createParams, isRanged, requestFigures, ZERO, type CollateralLeg, type CreateParams, type ParsedRequest, type RequestPair } from './requestModel';
 import { pageHandoff } from '../../../routes/pageMap';
+import { CADENCE_ERRORS, cadenceRefusalText, classifyCadenceError, INTERVAL_DAYS, periodGraceLookupDays, periodInterest, type CadenceRefusal } from '../../../shared/offers/cadence';
+import type { Posture } from '../../../shared/capability/types';
 import { needFromRefusal, type RiskNeed } from '../../../shared/risk/riskAccess';
 import { diamondMayMove, holds, readErc1155, readErc721, type Erc1155State, type Erc721State } from '../../../shared/nft/nft';
 
@@ -59,8 +61,9 @@ export type CreateVerdict =
   | { kind: 'needs-approval' }
   /** The protocol refused, with its own reason. `ceiling` is the largest
    *  amount the posted collateral supports today, when the refusal is that
-   *  the largest amount asks for more (`MaxLendingAboveCeiling`). */
-  | { kind: 'refused'; code: string; reason: string; ceiling?: bigint }
+   *  the largest amount asks for more (`MaxLendingAboveCeiling`); `schedule`
+   *  is why the interest schedule is closed, when that is the refusal. */
+  | { kind: 'refused'; code: string; reason: string; ceiling?: bigint; schedule?: CadenceRefusal }
   /** No answer could be read; the review says so instead of guessing. */
   | { kind: 'unreadable'; reason: string };
 
@@ -80,6 +83,9 @@ export interface RequestReview {
   risk: RequestRisk;
   maxDurationDays: bigint;
   graceSeconds: bigint;
+  /** OFF-14: the grace a missed period gets before it can be settled, read
+   *  live; null without a schedule, or when it could not be read. */
+  periodGraceSeconds: bigint | null;
   lifBps: bigint;
   /** The borrower's vault; the zero address when posting opens it. */
   vault: Hex;
@@ -174,7 +180,15 @@ export function judgeDryRun(
   if (outcome.kind === 'unreadable') return { kind: 'unreadable', reason: outcome.reason };
   const refusal = refusalFromError(outcome.error);
   if (!allowanceCovers && (PULL_ERRORS.has(refusal.code) || unnamed(refusal.code) || /allowance/i.test(refusal.reason))) return { kind: 'needs-approval' };
-  return { kind: 'refused', code: refusal.code, reason: refusal.reason, ...ceilingOf(refusal.code, outcome.error) };
+  return { kind: 'refused', code: refusal.code, reason: refusal.reason, ...ceilingOf(refusal.code, outcome.error), ...scheduleOf(refusal.code, outcome.error) };
+}
+
+/** Why the interest schedule is closed, when the protocol's refusal is one
+ *  of its cadence errors, classified from the error's own arguments. */
+function scheduleOf(code: string, error: unknown): { schedule?: CadenceRefusal } {
+  if (!CADENCE_ERRORS.has(code)) return {};
+  const schedule = classifyCadenceError(code, revertArgs(error));
+  return schedule === null ? {} : { schedule };
 }
 
 /** The ceiling a `MaxLendingAboveCeiling(provided, ceiling)` refusal names. */
@@ -282,7 +296,7 @@ export async function readRequestReview(own: OwnStateClient, diamond: Hex, draft
           .catch((e: unknown) => ({ kind: 'unread' as const, reason: refusalFromError(e).reason }))
       : Promise.resolve({ kind: 'unpriced' as const });
   const collateralRanged = parsed.collateralFloor < parsed.collateral;
-  const [direct, largest, largestAtFloor, probe, start, partialFill] = await Promise.all([
+  const [direct, largest, largestAtFloor, probe, start, partialFill, periodGraceSeconds] = await Promise.all([
     ltv(parsed.amount, parsed.collateralFloor),
     ranged ? ltv(parsed.amountMax, parsed.collateral) : Promise.resolve(null),
     ranged && collateralRanged ? ltv(parsed.amountMax, parsed.collateralFloor) : Promise.resolve(null),
@@ -301,6 +315,7 @@ export async function readRequestReview(own: OwnStateClient, diamond: Hex, draft
       : Promise.resolve(null),
     priced ? r<StartGate>((c) => readStartGate(c, diamond)).catch((): StartGate => ({ kind: 'unread' })) : Promise.resolve<StartGate>({ kind: 'none' }),
     r<boolean>((c) => c.readContract({ address: diamond, abi: CONFIG, functionName: 'getPartialFillEnabled' }) as Promise<boolean>).catch(() => null),
+    parsed.cadence === 0 ? Promise.resolve(null) : r<bigint>((c) => readGraceSeconds(c, diamond, BigInt(periodGraceLookupDays(parsed.cadence)))).catch(() => null),
   ]);
   const probed = probe === null ? null : judgeLimit(probe, allowanceCovers);
   const risk: RequestRisk = {
@@ -312,7 +327,7 @@ export async function readRequestReview(own: OwnStateClient, diamond: Hex, draft
     start,
     partialFill,
   };
-  return { identity, account, diamond, draft, params, verdict, lendingClass, collateralClass, risk, maxDurationDays, graceSeconds, lifBps, vault, holding, readAt: Date.now() };
+  return { identity, account, diamond, draft, params, verdict, lendingClass, collateralClass, risk, maxDurationDays, graceSeconds, periodGraceSeconds, lifBps, vault, holding, readAt: Date.now() };
 }
 
 /** Whether the collateral needs an approval step before posting. */
@@ -359,7 +374,7 @@ export function collateralLack(r: Pick<RequestReview, 'holding' | 'draft' | 'acc
  * reader should meet them; empty when the protocol reports nothing and the
  * wallet holds the collateral.
  */
-export function requestBlockers(r: RequestReview, meta: TokenMetaMap | null, copy: Pick<CopyAccess, 'text' | 'format'>): string[] {
+export function requestBlockers(r: RequestReview, meta: TokenMetaMap | null, copy: Pick<CopyAccess, 'text' | 'format'>, unit = ''): string[] {
   const out: string[] = [];
   const name = (a: Hex) => meta?.[a.toLowerCase()]?.symbol ?? shortAddress(a);
   for (const [asset, cls] of [
@@ -390,6 +405,9 @@ export function requestBlockers(r: RequestReview, meta: TokenMetaMap | null, cop
     out.push(
       copy.format(isRanged(r.draft.parsed) ? 'request.blockCeilingRange' : 'request.blockCeiling', { ceiling: tokenAmount(r.verdict.ceiling, r.draft.pair.lending, meta, copy.format) }),
     );
+  // A closed schedule is refused before any pull too, and named with why.
+  else if (r.verdict.kind === 'refused' && r.verdict.schedule !== undefined)
+    out.push(copy.format('request.blockSchedule', { reason: cadenceRefusalText(r.verdict.schedule, unit || copy.text('home.exposureUnit'), copy) }));
   else if (r.verdict.kind === 'refused' && lack.kind === 'none') out.push(copy.format('request.blockRefused', { reason: r.verdict.reason }));
   if (r.verdict.kind === 'unreadable') out.push(copy.format('request.blockUnread', { reason: r.verdict.reason }));
   return out;
@@ -409,7 +427,7 @@ export function changedBetween(a: RequestReview, b: RequestReview, copy: Pick<Co
   if (a.verdict.kind !== b.verdict.kind || (a.verdict.kind === 'refused' && b.verdict.kind === 'refused' && a.verdict.code !== b.verdict.code))
     return copy.text('request.changedVerdict');
   if (a.lendingClass !== b.lendingClass || a.collateralClass !== b.collateralClass || riskKey(a.risk) !== riskKey(b.risk)) return copy.text('accept.changedClass');
-  if (a.graceSeconds !== b.graceSeconds || a.lifBps !== b.lifBps || a.maxDurationDays !== b.maxDurationDays) return copy.text('request.changedConfig');
+  if (a.graceSeconds !== b.graceSeconds || a.periodGraceSeconds !== b.periodGraceSeconds || a.lifBps !== b.lifBps || a.maxDurationDays !== b.maxDurationDays) return copy.text('request.changedConfig');
   if (lackKey(collateralLack(a)) !== lackKey(collateralLack(b)) || needsApproval(a) !== needsApproval(b) || approvalPrompts(a) !== approvalPrompts(b))
     return copy.text(a.holding.kind === 'erc20' ? 'accept.changedFunds' : 'request.changedToken');
   if (a.vault.toLowerCase() !== b.vault.toLowerCase()) return copy.text('accept.changedVault');
@@ -469,7 +487,7 @@ function startRows(start: StartGate, copy: Pick<CopyAccess, 'text' | 'format'>):
  *  taking it directly lends and what the largest match can lend, with the
  *  risk at each (OFF-16). `advanced` adds the panel detail, the live
  *  start-of-loan health factor; every risk warning stays in Basic. */
-export function requestReceipt(r: RequestReview, meta: TokenMetaMap | null, copy: Pick<CopyAccess, 'text' | 'format'>, advanced = false): Receipt {
+export function requestReceipt(r: RequestReview, meta: TokenMetaMap | null, copy: Pick<CopyAccess, 'text' | 'format'>, advanced = false, keeper: Posture = 'unknown'): Receipt {
   const { text, format } = copy;
   const { parsed, pair } = r.draft;
   const f = requestFigures(parsed.amount, parsed.rateBps, parsed.durationDays, r.lifBps);
@@ -515,10 +533,17 @@ export function requestReceipt(r: RequestReview, meta: TokenMetaMap | null, copy
     { label: text('request.rowReceive'), value: amount(pair.lending, f.received), binding: false },
     { label: text('accept.rowFee'), value: amount(pair.lending, f.fee), binding: false },
     textRow('accept.rowFeeRule', format('request.feeRule', { rate: formatBps(r.lifBps) }), false),
-    { label: text(ranged ? 'request.rowOweDirect' : 'accept.rowOwe'), value: amount(pair.lending, f.owedAtDue), binding: true },
-    ...(largest ? [{ label: text('request.rowOweLargest'), value: amount(pair.lending, largest.owedAtDue), binding: true }] : []),
+    // With a schedule the figure is the whole term's interest, and the
+    // instalments paid along the way count toward it, so it is labelled as a
+    // total rather than as what is left to pay at the due date.
+    {
+      label: text(parsed.cadence !== 0 ? (ranged ? 'request.rowOweDirectTotal' : 'accept.rowOweTotal') : ranged ? 'request.rowOweDirect' : 'accept.rowOwe'),
+      value: amount(pair.lending, f.owedAtDue),
+      binding: true,
+    },
+    ...(largest ? [{ label: text(parsed.cadence !== 0 ? 'request.rowOweLargestTotal' : 'request.rowOweLargest'), value: amount(pair.lending, largest.owedAtDue), binding: true }] : []),
     textRow('accept.rowInterest', text(parsed.fullTerm ? (parsed.allowsPartialRepay ? 'accept.fullTermPartial' : 'accept.fullTerm') : 'accept.proRata'), true),
-    textRow('accept.rowSchedule', text('accept.scheduleNone'), true),
+    ...scheduleRows(r, meta, copy, advanced, keeper),
     textRow('accept.rowPartial', text(parsed.allowsPartialRepay ? 'accept.partialYes' : 'accept.partialNo'), true),
     textRow('accept.rowPrepayListing', text('accept.prepayListingNo'), true),
     textRow('accept.rowParallelSale', text('accept.parallelNo'), true),
@@ -558,6 +583,7 @@ export function requestReceipt(r: RequestReview, meta: TokenMetaMap | null, copy
     text('request.loseTaken'),
     ...rangeConsequences(r, meta, copy),
     ...matchConsequences(r, meta, copy),
+    ...scheduleConsequences(r, copy),
     text('accept.loseDefault'),
     ...(r.lendingClass === 'illiquid' ? [text('accept.loseIlliquidLending')] : []),
     ...(r.collateralClass === 'illiquid' ? [text('accept.loseIlliquidCollateral')] : []),
@@ -594,6 +620,55 @@ export function matchConsequences(r: RequestReview, meta: TokenMetaMap | null, c
   }
   out.push(copy.text('request.loseMatchKeepsRest'));
   return out;
+}
+
+const CADENCE_NAME: Readonly<Record<Exclude<ParsedRequest['cadence'], 0>, CopyKey>> = {
+  1: 'borrow.cadenceMonthly',
+  2: 'borrow.cadenceQuarterly',
+  3: 'borrow.cadenceSemiAnnual',
+  4: 'borrow.cadenceAnnual',
+};
+
+/**
+ * OFF-14 — the schedule rows. Interest at repayment is one bound line. A
+ * schedule states each period's interest as the protocol expects it (on the
+ * direct loan, and on the largest loan a match can make for a range), the
+ * grace a missed period gets (today's figure, read live), and, in Advanced,
+ * who may settle a missed period: anyone, with the keeper service's arming
+ * stated as the capability service reports it (RB-SWITCH class 4, unknown
+ * by default).
+ */
+function scheduleRows(r: RequestReview, meta: TokenMetaMap | null, copy: Pick<CopyAccess, 'text' | 'format'>, advanced: boolean, keeper: Posture): Receipt['rows'] {
+  const { text, format } = copy;
+  const { parsed, pair } = r.draft;
+  const row = (label: CopyKey, value: string, binding: boolean) => ({ label: text(label), value: { kind: 'text' as const, text: value }, binding });
+  if (parsed.cadence === 0) return [row('accept.rowSchedule', text('accept.scheduleNone'), true)];
+  const days = String(INTERVAL_DAYS[parsed.cadence]);
+  const owe = (principal: bigint) => format('request.periodOwe', { amount: tokenAmount(periodInterest(principal, parsed.rateBps, parsed.cadence), pair.lending, meta, format), days });
+  return [
+    row('accept.rowSchedule', format('accept.scheduleEvery', { cadence: text(CADENCE_NAME[parsed.cadence]) }), true),
+    row(isRanged(parsed) ? 'request.rowPeriodDirect' : 'request.rowPeriod', owe(parsed.amount), true),
+    ...(isRanged(parsed) ? [row('request.rowPeriodLargest', owe(parsed.amountMax), true)] : []),
+    // Today's figure: the grace is read from the live configuration when a
+    // period is settled, so the request does not bind it.
+    row('request.rowPeriodGrace', r.periodGraceSeconds !== null ? format('accept.grace', { span: formatSpan(Number(r.periodGraceSeconds)) }) : text('request.periodGraceUnread'), false),
+    ...(advanced ? [row('request.rowPeriodSettle', text(keeper === 'present' ? 'request.settleArmed' : keeper === 'absent' ? 'request.settleOff' : 'request.settleUnknown'), false)] : []),
+  ];
+}
+
+/** OFF-14 — what a schedule adds to the "You can lose" list, tier A and in
+ *  Basic: a missed period is settled by selling collateral (with the grace
+ *  when it was read), and the schedule is fixed once posted. */
+export function scheduleConsequences(r: RequestReview, copy: Pick<CopyAccess, 'text' | 'format'>): string[] {
+  const { parsed } = r.draft;
+  if (parsed.cadence === 0) return [];
+  const cadence = copy.text(CADENCE_NAME[parsed.cadence]);
+  return [
+    r.periodGraceSeconds === null
+      ? copy.format('request.loseCadenceUnread', { cadence })
+      : copy.format('request.loseCadence', { cadence, grace: formatSpan(Number(r.periodGraceSeconds)) }),
+    copy.text('request.loseCadenceFixed'),
+  ];
 }
 
 /** OFF-10 / OFF-11 / OFF-16 — what a range and a fill mode add to the

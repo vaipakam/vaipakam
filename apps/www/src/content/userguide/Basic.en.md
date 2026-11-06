@@ -1125,6 +1125,12 @@ In Advanced mode a request can accept a range: the smallest and the largest amou
 
 Partial, the default, lets matches fill the request over one or more loans until it is filled, cancelled or lapses. All or none admits one fill of the whole amount, so it cannot be used with a range. Immediate or cancel fills like partial but only until the request lapses, so it needs an expiry. The fill mode cannot be changed after posting; to change it, cancel the request and post a new one. The protocol lets you change the amounts, the rate and the collateral while the request is open, never below what matches have already used, but this app does not offer that yet, so for now a change means cancelling and posting again.
 
+<a id="borrow-request-cadence"></a>
+
+### Borrow: An Interest Schedule (Advanced)
+
+In Advanced mode a request can pay interest on a schedule instead of all at repayment: every month, quarter, six months or year. The form offers only the schedules the protocol allows for your terms, and says under each closed one why: periodic interest is switched off on the network, an asset has no price, the loan is worth less than the protocol's threshold (both figures are shown), or the period is not shorter than the loan. The review shows each period's interest and the grace a missed period gets. If a period is not paid by the end of its grace, anyone may sell part of your collateral to pay it, and the loan stays open. The schedule cannot be changed after posting. Like the other Advanced options, it still applies if you switch to Basic, and the form says so.
+
 <a id="risk-access"></a>
 
 ### Risk Access: Your Risk Level

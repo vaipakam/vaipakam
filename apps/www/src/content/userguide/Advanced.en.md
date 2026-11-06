@@ -2486,6 +2486,12 @@ A range sends `amount` (the smallest) below `amountMax` (the largest), `interest
 
 `fillMode` is 0 (Partial), 1 (AON) or 2 (IOC) and cannot change after posting. AON requires `amount` = `amountMax` (`AonRequiresSingleValueAmount`), and IOC requires `expiresAt` ≠ 0 (`IocRequiresExpiry`); the form does not offer either refused shape. The amounts, the rate and the collateral can change on an open request through `setOfferAmount`, `setOfferRate`, `setOfferCollateral` and `modifyOffer`, never below `amountFilled` or `collateralAmountFilled`; this app does not call them yet.
 
+<a id="borrow-request-cadence"></a>
+
+### Borrow: A Request's Interest Schedule
+
+`periodicInterestCadence` is 0 (None) to 4 (Annual), with periods of 30, 90, 180 and 365 days. The form offers what `previewCadenceAdmission(lendingAsset, amount, assetType, collateralAsset, collateralAssetType, durationDays)` admits, which runs the rule `createOffer` enforces, valued at `amount` (the smallest end of a range). Each refusal is stated from its revert data: `PeriodicInterestDisabled`, `CadenceNotAllowedForIlliquid`, or `CadenceNotAllowed(cadence, durationDays, principalNumeraire, threshold)`. One period's interest is `principal × rate × intervalDays / (10000 × 365)`. A missed period can be settled by anyone through `settlePeriodicInterest` once the grace `getEffectiveGraceSeconds(intervalDays − 1)` has passed; it sells collateral and the loan stays open. The `periodicSettle` keeper pass's arming is shown as the capability service reports it, unknown by default. The schedule cannot change after posting.
+
 <a id="risk-access"></a>
 
 ### Risk Access: Your Risk Level

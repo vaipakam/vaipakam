@@ -1842,6 +1842,12 @@ Basic 发布单一数值的请求：`amount` = `amountMax`，`interestRateBps` =
 
 `fillMode` 为 0（Partial）、1（AON）或 2（IOC），发布后不可更改。AON 要求 `amount` = `amountMax`（`AonRequiresSingleValueAmount`），IOC 要求 `expiresAt` ≠ 0（`IocRequiresExpiry`）；表单不会提供被拒绝的组合。金额、利率和抵押品可在请求开放期间通过 `setOfferAmount`、`setOfferRate`、`setOfferCollateral` 和 `modifyOffer` 更改，但不能低于 `amountFilled` 或 `collateralAmountFilled`；本应用尚未调用它们。
 
+<a id="borrow-request-cadence"></a>
+
+### Borrow: 请求的利息计划
+
+`periodicInterestCadence` 取值 0（None）到 4（Annual），周期分别为 30、90、180 和 365 天。表单提供 `previewCadenceAdmission(lendingAsset, amount, assetType, collateralAsset, collateralAssetType, durationDays)` 允许的计划；它执行 `createOffer` 强制的规则，并按 `amount`（区间的最小端）估值。每个拒绝都根据其回滚数据说明：`PeriodicInterestDisabled`、`CadenceNotAllowedForIlliquid` 或 `CadenceNotAllowed(cadence, durationDays, principalNumeraire, threshold)`。一个周期的利息为 `principal × rate × intervalDays / (10000 × 365)`。宽限期 `getEffectiveGraceSeconds(intervalDays − 1)` 过后，任何人都可以通过 `settlePeriodicInterest` 结算逾期周期；它会出售抵押品，贷款继续有效。keeper 流程 `periodicSettle` 的启用状态按能力服务的报告显示，默认为未知。计划在发布后不能更改。
+
 <a id="risk-access"></a>
 
 ### Risk Access：你的风险等级

@@ -2287,6 +2287,12 @@ Un rango envía `amount` (el más pequeño) por debajo de `amountMax` (el más g
 
 `fillMode` es 0 (Partial), 1 (AON) o 2 (IOC) y no puede cambiar después de publicar. AON exige `amount` = `amountMax` (`AonRequiresSingleValueAmount`) e IOC exige `expiresAt` ≠ 0 (`IocRequiresExpiry`); el formulario no ofrece ninguna de las formas rechazadas. Los importes, la tasa y la garantía pueden cambiar en una solicitud abierta mediante `setOfferAmount`, `setOfferRate`, `setOfferCollateral` y `modifyOffer`, nunca por debajo de `amountFilled` o `collateralAmountFilled`; esta aplicación aún no los llama.
 
+<a id="borrow-request-cadence"></a>
+
+### Borrow: El calendario de intereses de una solicitud
+
+`periodicInterestCadence` va de 0 (None) a 4 (Annual), con periodos de 30, 90, 180 y 365 días. El formulario ofrece lo que admite `previewCadenceAdmission(lendingAsset, amount, assetType, collateralAsset, collateralAssetType, durationDays)`, que ejecuta la regla que aplica `createOffer`, valorada en `amount` (el extremo menor de un rango). Cada rechazo se indica a partir de sus datos de reversión: `PeriodicInterestDisabled`, `CadenceNotAllowedForIlliquid` o `CadenceNotAllowed(cadence, durationDays, principalNumeraire, threshold)`. Los intereses de un periodo son `principal × rate × intervalDays / (10000 × 365)`. Cualquiera puede liquidar un periodo impagado mediante `settlePeriodicInterest` cuando pasa la gracia `getEffectiveGraceSeconds(intervalDays − 1)`; vende garantía y el préstamo sigue abierto. La activación del paso de keeper `periodicSettle` se muestra tal como la informa el servicio de capacidades, desconocida por defecto. El calendario no puede cambiar después de publicar.
+
 <a id="risk-access"></a>
 
 ### Risk Access: tu nivel de riesgo

@@ -80,6 +80,7 @@ describe('createParams', () => {
         collateral: 20n,
         collateralFloor: 20n,
         fillMode: DEFAULT_INPUT.fillMode,
+        cadence: 0,
         rateBps: 850n,
         durationDays: 30,
         expiry: '7d',
@@ -111,6 +112,7 @@ describe('createParams for an NFT', () => {
         collateral: 1n,
         collateralFloor: 1n,
         fillMode: 'partial',
+        cadence: 0,
         rateBps: 850n,
         durationDays: 30,
         expiry: '7d',
@@ -143,6 +145,7 @@ describe('a range and a fill mode (OFF-10 / OFF-11)', () => {
     collateral: 100n,
     collateralFloor: 30n,
     fillMode: 'ioc' as const,
+    cadence: 2 as const,
     rateBps: 850n,
     durationDays: 30,
     expiry: '7d' as const,
@@ -155,6 +158,7 @@ describe('a range and a fill mode (OFF-10 / OFF-11)', () => {
     expect([p.collateralAmount, p.collateralAmountMax]).toEqual([30n, 100n]);
     expect([p.interestRateBps, p.interestRateBpsMax]).toEqual([850n, 850n]);
     expect(p.fillMode).toBe(2);
+    expect(p.periodicInterestCadence).toBe(2);
     expect(isRanged(ranged)).toBe(true);
     expect(isRanged({ ...ranged, amountMax: 10n, collateralFloor: 100n })).toBe(false);
     expect(isRanged({ ...ranged, amountMax: 10n })).toBe(true);
@@ -178,5 +182,6 @@ describe('a range and a fill mode (OFF-10 / OFF-11)', () => {
   it('names the Advanced options a request carries, so Basic can say they still apply', () => {
     expect(advancedSet(DEFAULT_INPUT)).toEqual([]);
     expect(advancedSet({ ...DEFAULT_INPUT, ranged: true, fillMode: 'aon' })).toEqual(['range', 'fill']);
+    expect(advancedSet({ ...DEFAULT_INPUT, cadence: 1 })).toEqual(['cadence']);
   });
 });

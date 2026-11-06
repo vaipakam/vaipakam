@@ -1152,6 +1152,12 @@ En el modo Avanzado una solicitud puede aceptar un rango: el importe más peque�
 
 Parcial, el valor predeterminado, permite que los emparejamientos llenen la solicitud en uno o más préstamos hasta que se llene, se cancele o caduque. Todo o nada admite un único llenado del importe completo, por lo que no puede usarse con un rango. Inmediato o cancelar llena como parcial, pero solo hasta que la solicitud caduca, por lo que necesita una caducidad. El modo de llenado no puede cambiarse después de publicar; para cambiarlo, cancele la solicitud y publique una nueva. El protocolo permite cambiar los importes, la tasa y la garantía mientras la solicitud está abierta, nunca por debajo de lo que ya usaron los emparejamientos, pero esta aplicación aún no lo ofrece, así que por ahora un cambio implica cancelar y publicar de nuevo.
 
+<a id="borrow-request-cadence"></a>
+
+### Borrow: Un calendario de intereses (Avanzado)
+
+En el modo Avanzado una solicitud puede pagar los intereses según un calendario en lugar de todo al reembolsar: cada mes, trimestre, seis meses o año. El formulario ofrece solo los calendarios que el protocolo permite para tus condiciones y, bajo cada uno cerrado, dice por qué: los intereses periódicos están desactivados en la red, un activo no tiene precio, el préstamo vale menos que el umbral del protocolo (se muestran ambas cifras) o el periodo no es más corto que el préstamo. La revisión muestra los intereses de cada periodo y la gracia que recibe un periodo impagado. Si un periodo no se paga antes de que termine su gracia, cualquiera puede vender parte de tu garantía para pagarlo, y el préstamo sigue abierto. El calendario no se puede cambiar después de publicar. Como las demás opciones avanzadas, sigue aplicándose si cambias a Básico, y el formulario lo dice.
+
 <a id="risk-access"></a>
 
 ### Risk Access: tu nivel de riesgo

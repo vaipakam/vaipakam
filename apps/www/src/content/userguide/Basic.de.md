@@ -1174,6 +1174,12 @@ Im erweiterten Modus kann eine Anfrage eine Spanne annehmen: den kleinsten und d
 
 Teilweise, die Voreinstellung, lässt Matches die Anfrage über einen oder mehrere Kredite füllen, bis sie gefüllt, storniert oder abgelaufen ist. Alles oder nichts erlaubt eine einzige Füllung des ganzen Betrags und geht daher nicht mit einer Spanne. Sofort oder stornieren füllt wie teilweise, aber nur bis die Anfrage abläuft, und braucht daher ein Ablaufdatum. Der Füllmodus lässt sich nach dem Veröffentlichen nicht ändern; um ihn zu ändern, stornieren Sie die Anfrage und veröffentlichen eine neue. Das Protokoll erlaubt, Beträge, Zinssatz und Sicherheit zu ändern, solange die Anfrage offen ist, nie unter das, was Matches schon genutzt haben; diese App bietet das noch nicht an, daher bedeutet eine Änderung vorerst Stornieren und neu Veröffentlichen.
 
+<a id="borrow-request-cadence"></a>
+
+### Borrow: Ein Zinsplan (Erweitert)
+
+Im erweiterten Modus kann eine Anfrage die Zinsen nach einem Plan zahlen statt alles bei der Rückzahlung: jeden Monat, jedes Quartal, alle sechs Monate oder jedes Jahr. Das Formular bietet nur die Pläne an, die das Protokoll für deine Bedingungen zulässt, und nennt unter jedem geschlossenen den Grund: periodische Zinsen sind im Netzwerk abgeschaltet, ein Asset hat keinen Preis, der Kredit ist weniger wert als die Schwelle des Protokolls (beide Zahlen werden gezeigt), oder die Periode ist nicht kürzer als der Kredit. Die Prüfung zeigt die Zinsen jeder Periode und die Nachfrist einer versäumten Periode. Wird eine Periode bis zum Ende ihrer Nachfrist nicht bezahlt, darf jeder einen Teil deiner Sicherheit verkaufen, um sie zu bezahlen, und der Kredit bleibt offen. Der Plan lässt sich nach dem Veröffentlichen nicht mehr ändern. Wie die anderen erweiterten Optionen gilt er auch nach dem Wechsel zu Basis weiter, und das Formular sagt es.
+
 <a id="risk-access"></a>
 
 ### Risk Access: Ihre Risikostufe

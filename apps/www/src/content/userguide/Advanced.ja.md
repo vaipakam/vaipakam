@@ -2109,6 +2109,12 @@ Basic は単一値のリクエストを出します。`amount` = `amountMax`、`
 
 `fillMode` は 0（Partial）、1（AON）、2（IOC）のいずれかで、投稿後は変更できません。AON は `amount` = `amountMax` を必要とし（`AonRequiresSingleValueAmount`）、IOC は `expiresAt` ≠ 0 を必要とします（`IocRequiresExpiry`）。フォームは拒否される組み合わせを提示しません。金額、金利、担保は、開いているリクエストで `setOfferAmount`、`setOfferRate`、`setOfferCollateral`、`modifyOffer` により変更できますが、`amountFilled` や `collateralAmountFilled` を下回ることはできません。このアプリはまだこれらを呼び出しません。
 
+<a id="borrow-request-cadence"></a>
+
+### Borrow: リクエストの利息スケジュール
+
+`periodicInterestCadence` は 0（None）から 4（Annual）で、期間はそれぞれ 30・90・180・365 日です。フォームは `previewCadenceAdmission(lendingAsset, amount, assetType, collateralAsset, collateralAssetType, durationDays)` が認めるものを提示します。これは `createOffer` が適用するルールを、`amount`（レンジの最小端）で評価して実行します。拒否はそれぞれリバートデータから表示されます：`PeriodicInterestDisabled`、`CadenceNotAllowedForIlliquid`、または `CadenceNotAllowed(cadence, durationDays, principalNumeraire, threshold)`。1期間の利息は `principal × rate × intervalDays / (10000 × 365)` です。支払いが遅れた期間は、猶予 `getEffectiveGraceSeconds(intervalDays − 1)` が過ぎると誰でも `settlePeriodicInterest` で精算でき、担保が売却されローンは継続します。キーパーパス `periodicSettle` の有効状態はケイパビリティサービスの報告どおりに表示され、既定では不明です。スケジュールは投稿後に変更できません。
+
 <a id="risk-access"></a>
 
 ### Risk Access: あなたのリスクレベル

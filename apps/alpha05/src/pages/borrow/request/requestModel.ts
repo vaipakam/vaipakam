@@ -18,6 +18,8 @@
  */
 import { interestAtDue, listFee } from '../../../shared/offers/model';
 
+import type { Cadence } from '../../../shared/offers/cadence';
+
 type Hex = `0x${string}`;
 
 export const ZERO: Hex = '0x0000000000000000000000000000000000000000';
@@ -65,6 +67,9 @@ export interface RequestInput {
   collateralFloor: string;
   /** OFF-11 (Advanced): how matches may fill the request. */
   fillMode: FillMode;
+  /** OFF-14 (Advanced): the periodic-interest schedule, by the protocol's
+   *  cadence position; 0 is interest at repayment. */
+  cadence: Cadence;
 }
 
 /** OFF-11: the fill modes, in the protocol's `FillMode` order. */
@@ -88,6 +93,7 @@ export const DEFAULT_INPUT: RequestInput = {
   amountMax: '',
   collateralFloor: '',
   fillMode: 'partial',
+  cadence: 0,
 };
 
 /** Why a fill mode cannot go with the rest of the request: all-or-none
@@ -113,10 +119,13 @@ export function rangeError(amount: bigint, amountMax: bigint, collateral: bigint
 
 /** The Advanced options a request carries, named so a Basic reader is told
  *  they still apply (RB-MODE: switching mode never drops what was set). */
-export function advancedSet(input: RequestInput): ('range' | 'fill')[] {
-  const out: ('range' | 'fill')[] = [];
+export type AdvancedOption = 'range' | 'fill' | 'cadence';
+
+export function advancedSet(input: RequestInput): AdvancedOption[] {
+  const out: AdvancedOption[] = [];
   if (input.ranged) out.push('range');
   if (input.fillMode !== 'partial') out.push('fill');
+  if (input.cadence !== 0) out.push('cadence');
   return out;
 }
 
@@ -196,6 +205,8 @@ export interface ParsedRequest {
    *  NFT leg. */
   collateralFloor: bigint;
   fillMode: FillMode;
+  /** OFF-14: the schedule; 0 is interest at repayment. */
+  cadence: Cadence;
   rateBps: bigint;
   durationDays: number;
   expiry: ExpiryChoice;
@@ -230,8 +241,7 @@ export const ASSET_ERC1155 = 2;
  * range fields carry the request's range (equal ends for a single value);
  * the rate's two ends are the one rate, the most the borrower pays. Every
  * option this page does not offer is sent at its stated default (no
- * schedule, no listing rights, no refinance target), and the review states
- * each.
+ * listing rights, no refinance target), and the review states each.
  */
 export function createParams(p: ParsedRequest, pair: RequestPair, expiry: bigint) {
   const leg = pair.leg;
@@ -258,7 +268,7 @@ export function createParams(p: ParsedRequest, pair: RequestPair, expiry: bigint
     amountMax: p.amountMax,
     interestRateBpsMax: p.rateBps,
     collateralAmountMax: nft ? 0n : p.collateral,
-    periodicInterestCadence: 0,
+    periodicInterestCadence: p.cadence,
     expiresAt: expiry,
     fillMode: FILL_MODE_CODE[p.fillMode],
     allowsPrepayListing: false,

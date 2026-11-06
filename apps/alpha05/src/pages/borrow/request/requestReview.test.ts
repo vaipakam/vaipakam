@@ -32,6 +32,7 @@ function review(over: Partial<RequestReview> = {}): RequestReview {
     collateral: 5_000n,
     collateralFloor: 5_000n,
     fillMode: 'partial' as const,
+    cadence: 0 as const,
     rateBps: 800n,
     durationDays: 30,
     expiry: '7d' as const,
@@ -51,6 +52,7 @@ function review(over: Partial<RequestReview> = {}): RequestReview {
     risk: { direct: { kind: 'value', bps: 5_000n }, largest: null, largestAtFloor: null, directWithinLimit: 'not-asked', directCeiling: null, start: { kind: 'hf', floor: 1_500_000_000_000_000_000n, tiered: false }, partialFill: true },
     maxDurationDays: 365n,
     graceSeconds: 86_400n,
+    periodGraceSeconds: null,
     lifBps: 20n,
     vault: ZERO,
     holding: { kind: 'erc20', funds: { balance: 10_000n, allowance: 0n }, approvalSteps: 1 },
@@ -403,5 +405,61 @@ describe('what a match can lock (OFF-16)', () => {
     expect(tiered.rows.find((x) => x.label === 'request.rowHfFloor')?.value).toEqual({ kind: 'text', text: 'request.hfFloorTiered' });
     const none = requestReceipt(review({ risk: { ...review().risk, start: { kind: 'none' } } }), null, copy, true);
     expect(none.rows.map((x) => x.label)).not.toContain('request.rowHfFloor');
+  });
+});
+
+describe('an interest schedule (OFF-14)', () => {
+  const scheduled = (cadence: 0 | 1 | 2 | 3 | 4, over: Partial<RequestReview> = {}, base = review()): RequestReview => {
+    const parsed = { ...base.draft.parsed, cadence };
+    const draft = { ...base.draft, parsed };
+    return { ...base, draft, params: createParams(parsed, draft.pair, draft.expiresAt), ...over };
+  };
+  const row = (r: RequestReview, label: string, advanced = false) => requestReceipt(r, null, copy, advanced).rows.find((x) => x.label === label);
+
+  it('states interest at repayment as one bound line, with no schedule consequence', () => {
+    const r = scheduled(0);
+    expect(row(r, 'accept.rowSchedule')?.value).toEqual({ kind: 'text', text: 'accept.scheduleNone' });
+    expect(row(r, 'request.rowPeriod')).toBeUndefined();
+    expect(requestReceipt(r, null, copy).consequences).not.toContain('request.loseCadenceFixed');
+  });
+  it('states the schedule, each period, its grace and the sale a missed period brings, in Basic', () => {
+    const r = scheduled(1, { periodGraceSeconds: 86_400n });
+    expect(r.params.periodicInterestCadence).toBe(1);
+    expect(row(r, 'accept.rowSchedule')?.value).toEqual({ kind: 'text', text: 'accept.scheduleEvery' });
+    expect(row(r, 'request.rowPeriod')?.binding).toBe(true);
+    expect(row(r, 'request.rowPeriodGrace')?.binding).toBe(false);
+    expect(row(r, 'request.rowPeriodSettle')).toBeUndefined();
+    expect(requestReceipt(r, null, copy).consequences).toEqual(expect.arrayContaining(['request.loseCadence', 'request.loseCadenceFixed']));
+  });
+  it('labels what is owed as the whole term with instalments counted, not as what is left at the due date', () => {
+    expect(row(scheduled(0), 'accept.rowOwe')).toBeDefined();
+    expect(row(scheduled(1), 'accept.rowOwe')).toBeUndefined();
+    expect(row(scheduled(1), 'accept.rowOweTotal')?.binding).toBe(true);
+    const ranged = scheduled(1, {}, rangedReview());
+    expect(row(ranged, 'request.rowOweDirectTotal')).toBeDefined();
+    expect(row(ranged, 'request.rowOweLargestTotal')).toBeDefined();
+    expect(row(ranged, 'request.rowOweDirect')).toBeUndefined();
+  });
+  it('says an unread grace instead of a figure, and states the keeper posture in Advanced only', () => {
+    const r = scheduled(2);
+    expect(row(r, 'request.rowPeriodGrace')?.value).toEqual({ kind: 'text', text: 'request.periodGraceUnread' });
+    expect(requestReceipt(r, null, copy).consequences).toContain('request.loseCadenceUnread');
+    expect(requestReceipt(r, null, copy, true).rows.find((x) => x.label === 'request.rowPeriodSettle')?.value).toEqual({ kind: 'text', text: 'request.settleUnknown' });
+    expect(requestReceipt(r, null, copy, true, 'present').rows.find((x) => x.label === 'request.rowPeriodSettle')?.value).toEqual({ kind: 'text', text: 'request.settleArmed' });
+  });
+  it('states each period at both ends of a range', () => {
+    const r = scheduled(1, {}, rangedReview());
+    expect(row(r, 'request.rowPeriodDirect')).toBeDefined();
+    expect(row(r, 'request.rowPeriodLargest')).toBeDefined();
+  });
+  it("turns the protocol's schedule refusal into a blocker that says why", () => {
+    const verdict = judgeDryRun({ kind: 'reverted', error: decoded('CadenceNotAllowed', [1, 30n, 5n, 1000n]) }, true);
+    expect(verdict).toMatchObject({ kind: 'refused', code: 'CadenceNotAllowed', schedule: { kind: 'below-threshold', principal: 5n, threshold: 1000n } });
+    expect(requestBlockers(scheduled(1, { verdict }), null, copy, 'USD')).toEqual(['request.blockSchedule']);
+    const off = judgeDryRun({ kind: 'reverted', error: decoded('PeriodicInterestDisabled', []) }, false);
+    expect(off).toMatchObject({ kind: 'refused', schedule: { kind: 'switch-off' } });
+  });
+  it('names a re-read whose period grace moved', () => {
+    expect(changedBetween(scheduled(1, { periodGraceSeconds: 86_400n }), scheduled(1, { periodGraceSeconds: 172_800n }), copy)).toBe('request.changedConfig');
   });
 });
