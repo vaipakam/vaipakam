@@ -100,8 +100,8 @@ Entry points, all on the vault factory:
 | `setCurrentVaultVersion(id)` | VAULT_ADMIN_ROLE | `id` must be registered and not revoked. Emits `CurrentVaultVersionSet(old, new)`. |
 | `revokeVaultVersion(id, successorId)` | VAULT_ADMIN_ROLE | See 3.3. |
 | `guardianRevokeVaultVersion(id, successorId)` | PAUSER_ROLE (the Pauser Safe), **only while paused** | Same effect as the timelock revoke. Can never register code. |
-| `pinVaultVersion(id)` | The vault's manager (`LibProtectedAccount.requireManager`) | `id` must be registered and not revoked. Replaces `pinVaultImplementation`. |
-| `unpinVaultVersion(account)` | The manager | Unchanged rules: immediate without protected mode, the delay with it. |
+| `pinVaultVersion(id)` | The vault's manager (`LibProtectedAccount.requireManager`) | `id` must be registered and not revoked. Replaces `pinVaultImplementation`. Without protected mode it takes effect at once. Under protected mode, **every** pin change (a first pin, a replacement, a removal) changes the code the vault runs, so it goes through protected mode's delayed, cancellable settings path and is refused while the account is locked. |
+| `unpinVaultVersion(account)` | The manager | Same rule: immediate without protected mode, the delay (and the lock check) with it. |
 
 **Default: the guardian is `PAUSER_ROLE`.** The existing pause holder is the
 party the decision means. A separate role would add a key to protect and gain
@@ -160,11 +160,21 @@ card if wanted. They are not folded in here.
   guard's vault root changes from "UUPS implementation" to "beacon
   implementation", with the same rule, and `registerVaultVersion` checks the
   layout identity constant.
+- **A pin change is a code change.** Under protected mode, a stolen primary
+  key cannot move a vault to another version on the spot, whether by pinning,
+  re-pinning or unpinning. Today's `upgradeUserVault` refuses a protected
+  pinned vault for the same reason.
 - **Who can change vault code does not widen.** Today the same role can swap
   the template and anyone can push unpinned vaults onto it, with no delay.
   After this change, a code change needs the Timelock. The Diamond's own
   `diamondCut` was already able to rewrite any storage, and stays behind the
   same Timelock.
+  This authority is custody-equivalent: registered code can do anything with
+  a vault's funds, and a revoke moves pinned vaults too. #3205's vault-side
+  checks live in the vault code, so they bound what a facet can make a vault
+  do, not what governance's next version does. The 48h delay, the Pauser
+  Safe's cancel and the alerting in #3237 are the defence, as the threat
+  model's residuals state.
 
 ### 3.6 The vault-side checks (#3205)
 
@@ -218,6 +228,8 @@ puts those checks into every vault at once.
 
   The deploy script refuses to register an implementation whose
   initializer can still be called.
+- Under protected mode, a first pin, a re-pin and an unpin each wait the
+  delay, can be cancelled, and are refused while the account is locked.
 - `implementation()` answers per calling proxy. A pin by user A never
   affects user B.
 - Every vault still refuses a non-Diamond caller, on every version.

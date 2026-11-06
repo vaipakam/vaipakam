@@ -68,17 +68,18 @@ A "residual" below is a stated limit, not a bug report.
 - **Sanctions screening** of state-creating and fund-receiving entry points,
   while close-outs stay open so an unflagged counterparty can be made whole.
 - **Progressive risk access** (#671). A wallet starts at the lowest tier and
-  opts up, and an opt-up takes effect only after a 48h cooldown. An illiquid
-  deal needs a standing pair consent armed 48h ahead (#3231), so a stolen key
-  cannot open a risky position on the spot.
+  opts up, and an opt-up takes effect only after an unlock cooldown. An
+  illiquid deal needs a standing pair consent that has cleared the same
+  cooldown (#3231), so a stolen key cannot open a risky position on the spot.
+  The cooldown is a stored setting that defaults to **zero**, and with zero
+  this protection does not exist. It is set to 48h on every testnet. Making
+  the deploy set it and the mainnet gate refuse zero is planned (#3266).
 - **Protected mode** (opt-in). Second keys, a delay on settings and
   outflows, a lock, and an alert channel whose removal is itself delayed
   (#3246 part 1).
 - **Pause.** One switch stops new positions and owner outflows. Close-outs
   stay open, and the pause cannot hold an escape withdrawal past its window,
   which protects users from the admin.
-- **Outdated vaults never trap a counterparty** (#3178). Close-outs land;
-  only the owner's own outflows wait for the upgrade.
 - **Governance delay.** A 48h Timelock on every admin change, a canceller,
   and a revoke-only emergency role.
 - **Storage-layout guard.** No in-place upgrade can silently move a field.
@@ -89,6 +90,8 @@ A "residual" below is a stated limit, not a bug report.
 
 | Defence | Card |
 | --- | --- |
+| Outdated vaults never trap a counterparty: close-outs land, and only the owner's own outflows wait for the upgrade. Until it merges, a loan party's vault below the mandatory version can block a close-out | #3178 (PR #3220) |
+| The deploy sets the risk-access cooldown, and the mainnet gate refuses zero | #3266 |
 | One timelocked pointer for every vault's code; the guardian can revoke a version while paused, but only to code already registered | #3204 ([design](VaultCentralImplementationDesign.md)) |
 | One vault outflow policy: typed destinations, a lien the vault itself recorded, payouts to the owner's own wallet when not protected, just-in-time approvals, signed orders that follow the pause | #3205 ([design](VaultOutflowPolicyDesign.md)) |
 | Outflow circuit breaker: per-asset caps over a rolling window held in each vault's own storage, a delay on large wallet withdrawals for every account, and an automatic pause on an outflow spike | #3206 |
@@ -124,8 +127,13 @@ lands.
 - **Prices inside the forced-sale cap.** A coordinated move in both price
   sources, within the liquidation slippage cap, is not detected.
 - **Governance multisig compromise.** Changes wait 48h, but an open loan
-  cannot always exit in 48h. The vault-side checks (#3205) bound what any
-  change can make a vault do, and noticing depends on #3237.
+  cannot always exit in 48h. Governance can register new vault code, make it
+  current and revoke pinned versions (#3204), and that code need not keep the
+  #3205 checks. So after the delay, governance holds authority equivalent to
+  custody of every vault. The #3205 checks bound what a facet change can make
+  a vault do, not what a vault-code change can. What stands against this is
+  the 48h delay, the Pauser Safe's cancel, and noticing in time, which
+  depends on #3237.
 - **Misleading reads.** A lying indexer or proxy can show a misleading list.
   It cannot change what a signed accept does.
 - **Cross-chain message-only effects** (reward accounting, acknowledgements)
