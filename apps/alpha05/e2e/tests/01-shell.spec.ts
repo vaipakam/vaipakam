@@ -210,3 +210,44 @@ test('from 720px the navigation is a left column under a one-row header: a rail,
     expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(0);
   }
 });
+
+test('from 1024px the panel collapses to its icons, reveals itself over the page on a resting pointer or focus, and remembers the choice', async ({ launchWallet }, testInfo) => {
+  test.skip(onPhone(testInfo.project.name), 'the panel exists from 1024px only');
+  const { page } = await launchWallet('visitor', { advanced: true });
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto('/');
+  const column = page.locator('.site-menu');
+  const nav = page.getByRole('navigation', { name: 'Primary' });
+  const width = async () => (await column.boundingBox())!.width;
+  const pageX = async () => (await page.locator('#main').boundingBox())!.x;
+  const expanded = await pageX();
+  await page.getByRole('button', { name: 'Collapse the menu' }).click();
+  // Icons only; every destination still a named link; the page takes the room.
+  await expect.poll(width).toBeLessThan(80);
+  for (const name of [...BASIC_NAV, ...ADVANCED_ONLY]) await expect(nav.getByRole('link', { name, exact: true })).toBeVisible();
+  await expect(nav.getByRole('link', { name: 'Borrow', exact: true }).locator('span')).toHaveCSS('clip-path', 'inset(50%)');
+  const collapsedX = await pageX();
+  expect(collapsedX).toBeLessThan(expanded);
+  // A resting pointer reveals the full panel OVER the page, which does not move.
+  const box = (await column.boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + 200);
+  await expect.poll(width).toBeGreaterThan(200);
+  expect(await pageX()).toBe(collapsedX);
+  await expect(nav.getByRole('link', { name: 'Borrow', exact: true }).locator('span')).toHaveCSS('clip-path', 'none');
+  // Leaving hides it again.
+  await page.mouse.move(1000, 400);
+  await expect.poll(width).toBeLessThan(80);
+  // The choice is remembered.
+  await page.reload();
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('Home');
+  await expect.poll(width).toBeLessThan(80);
+  // Keyboard: focus inside reveals it at once; Escape hides it.
+  await page.getByRole('button', { name: 'Expand the menu' }).focus();
+  await expect.poll(width).toBeGreaterThan(200);
+  await page.keyboard.press('Escape');
+  await expect.poll(width).toBeLessThan(80);
+  // Expanding again restores the panel and the page beside it.
+  await page.getByRole('button', { name: 'Expand the menu' }).click();
+  await expect.poll(width).toBeGreaterThan(200);
+  await expect.poll(pageX).toBe(expanded);
+});

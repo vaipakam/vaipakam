@@ -370,6 +370,69 @@ code {
     flex: 1 1 0;
     font-size: 0.9rem;
   }
+  /* The panel's toggle, at its top: collapse to icons, or expand again. */
+  .site-menu .nav-toggle {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-height: 40px;
+    padding: 8px 12px;
+    border: 0;
+    border-radius: 8px;
+    background: none;
+    color: var(--text-muted);
+    font: inherit;
+    font-size: 0.85rem;
+    cursor: pointer;
+  }
+  .site-menu .nav-toggle:hover {
+    background: var(--brand-soft);
+    color: var(--brand-soft-text);
+  }
+  /* Collapsed: icons only, the names kept for screen readers (each link
+     keeps its accessible name), the group label a rule, the controls folded
+     away until the panel is revealed. The page takes the narrow width. */
+  .shell[data-nav-collapsed='true'] {
+    --side-w: 72px;
+  }
+  .shell[data-nav-collapsed='true'] .site-menu {
+    width: 232px;
+    transition: box-shadow 120ms ease;
+  }
+  .shell[data-nav-collapsed='true']:not([data-nav-peek='true']) .site-menu {
+    width: var(--side-w);
+    padding-inline: 8px;
+    overflow-x: hidden;
+  }
+  .shell[data-nav-collapsed='true']:not([data-nav-peek='true']) .site-menu nav a,
+  .shell[data-nav-collapsed='true']:not([data-nav-peek='true']) .site-menu .nav-toggle {
+    justify-content: center;
+    padding-inline: 0;
+  }
+  .shell[data-nav-collapsed='true']:not([data-nav-peek='true']) .site-menu nav a > span,
+  .shell[data-nav-collapsed='true']:not([data-nav-peek='true']) .nav-toggle > span,
+  .shell[data-nav-collapsed='true']:not([data-nav-peek='true']) .nav-group-title {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  .shell[data-nav-collapsed='true']:not([data-nav-peek='true']) .nav-group {
+    border-top: 1px solid var(--border);
+    padding-top: 8px;
+  }
+  .shell[data-nav-collapsed='true']:not([data-nav-peek='true']) .site-menu .controls {
+    display: none;
+  }
+  /* Revealed while collapsed: the full panel over the page, which stays put. */
+  .shell[data-nav-peek='true'] .site-menu {
+    box-shadow: var(--shadow-pop);
+  }
+}
+.nav-toggle {
+  display: none;
 }
 .segment {
   display: inline-flex;

@@ -209,6 +209,21 @@ export const PLACES: Readonly<Record<string, Shape>> = {
   ],
 };
 
+/** The desktop panel's own toggle: collapse to icons, or expand to names.
+ *  A control of the navigation, not a destination and not a meaning. */
+export const CONTROLS = {
+  collapse: [
+    ['rect', { width: '18', height: '18', x: '3', y: '3', rx: '2' }],
+    ['path', { d: 'M9 3v18' }],
+    ['path', { d: 'm16 15-3-3 3-3' }],
+  ],
+  expand: [
+    ['rect', { width: '18', height: '18', x: '3', y: '3', rx: '2' }],
+    ['path', { d: 'M9 3v18' }],
+    ['path', { d: 'm14 9 3 3-3 3' }],
+  ],
+} as const satisfies Record<string, Shape>;
+
 function draw(shape: Shape, className: string, size: number) {
   return createElement(
     'svg',
@@ -238,4 +253,9 @@ export function Icon({ meaning, size = 18 }: { meaning: Meaning; size?: number }
 export function PlaceIcon({ place, size = 22 }: { place: string; size?: number }) {
   const shape = PLACES[place];
   return shape ? draw(shape, 'icon icon-place', size) : null;
+}
+
+/** The panel toggle's icon; its button carries the words (or the name). */
+export function ControlIcon({ control, size = 20 }: { control: keyof typeof CONTROLS; size?: number }) {
+  return draw(CONTROLS[control], `icon icon-${control}`, size);
 }

@@ -9,9 +9,24 @@ import { HelpPanel } from '../shared/help/HelpPanel';
 import { WhyLink } from '../shared/help/WhyLink';
 import { useWorldRail } from '../shared/reads/world/WorldRailContext';
 import { FreshnessStamp } from '../shared/ui/FreshnessStamp';
-import { PlaceIcon } from '../shared/ui/Icon';
+import { ControlIcon, PlaceIcon } from '../shared/ui/Icon';
 import { OutstandingTx } from '../shared/tx/OutstandingTx';
 import { NAV_ADVANCED, NAV_BASIC } from '../routes/pageMap';
+
+/** The desktop panel's collapsed choice is remembered per browser (a
+ *  convenience; nothing depends on it, and an unreadable store means open). */
+const NAV_COLLAPSED_KEY = 'alpha05.navCollapsed';
+function readCollapsed(): boolean {
+  try {
+    return localStorage.getItem(NAV_COLLAPSED_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+/** Hover intent for the collapsed panel (NN/g): reveal the names after the
+ *  pointer rests 300 ms, hide them once it has been away 500 ms. */
+const PEEK_OPEN_MS = 300;
+const PEEK_CLOSE_MS = 500;
 
 /** How many destinations of the derived navigation the phone's bottom bar
  *  carries before More: the first ones in page-map order. */
@@ -56,6 +71,30 @@ export function Shell() {
   const menuButton = useRef<HTMLButtonElement>(null);
   const sheet = useRef<HTMLDivElement>(null);
   const header = useRef<HTMLElement>(null);
+  // From 1024px the panel can be collapsed to its icons (the toggle at its
+  // top; the choice remembered). While collapsed, resting a mouse on it, or
+  // moving keyboard focus into it, reveals the full panel OVER the page (the
+  // page does not move); leaving it, focus leaving it, or Escape hides it
+  // again. Touch has no hover: the toggle is the way there.
+  const [collapsed, setCollapsed] = useState(readCollapsed);
+  const [peek, setPeek] = useState(false);
+  const peekTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const schedulePeek = (open: boolean) => {
+    clearTimeout(peekTimer.current);
+    peekTimer.current = setTimeout(() => setPeek(open), open ? PEEK_OPEN_MS : PEEK_CLOSE_MS);
+  };
+  useEffect(() => () => clearTimeout(peekTimer.current), []);
+  const toggleCollapsed = () => {
+    const next = !collapsed;
+    setCollapsed(next);
+    clearTimeout(peekTimer.current);
+    setPeek(false);
+    try {
+      localStorage.setItem(NAV_COLLAPSED_KEY, next ? '1' : '0');
+    } catch {
+      /* not remembered; the panel still collapses for this visit */
+    }
+  };
   // From 720px the navigation column sits below the header. The header is
   // one row normally but grows when the wallet control has more to say (an
   // unsupported network and its remedy), so its measured height, not a fixed
@@ -78,17 +117,20 @@ export function Shell() {
   // document than More, so without this a keyboard user's Tab would leave
   // the page instead of reaching the destinations just revealed.
   useEffect(() => {
-    if (menuOpen) sheet.current?.querySelector<HTMLElement>('a, button, select')?.focus();
+    if (menuOpen) sheet.current?.querySelector<HTMLElement>('nav a')?.focus();
   }, [menuOpen]);
 
   return (
     <div
       className="shell"
+      data-nav-collapsed={collapsed}
+      data-nav-peek={collapsed && peek}
       onKeyDown={(e) => {
         if (e.key === 'Escape' && menuOpen) {
           closeMenu();
           menuButton.current?.focus();
         }
+        if (e.key === 'Escape' && peek) setPeek(false);
       }}
     >
       <a className="skip" href="#main">
@@ -103,7 +145,26 @@ export function Shell() {
           <img src={resolved === 'dark' ? '/logo-dark.png' : '/logo-light.png'} alt="" className="brand-wordmark" width={120} height={36} />
           <span className="brand-text">{text('shell.brand')}</span>
         </NavLink>
-        <div id="site-menu" ref={sheet} className="site-menu" data-open={menuOpen}>
+        <div
+          id="site-menu"
+          ref={sheet}
+          className="site-menu"
+          data-open={menuOpen}
+          onPointerEnter={(e) => collapsed && e.pointerType === 'mouse' && schedulePeek(true)}
+          onPointerLeave={(e) => collapsed && e.pointerType === 'mouse' && schedulePeek(false)}
+          onFocus={() => {
+            if (!collapsed) return;
+            clearTimeout(peekTimer.current);
+            setPeek(true);
+          }}
+          onBlur={(e) => {
+            if (collapsed && !e.currentTarget.contains(e.relatedTarget as Node | null)) setPeek(false);
+          }}
+        >
+          <button type="button" className="nav-toggle" aria-controls="site-menu" onClick={toggleCollapsed}>
+            <ControlIcon control={collapsed ? 'expand' : 'collapse'} />
+            <span>{text(collapsed ? 'shell.navExpand' : 'shell.navCollapse')}</span>
+          </button>
           <nav aria-label="Primary">
             {basicNav.map(navLink)}
             {advancedNav.length > 0 && (

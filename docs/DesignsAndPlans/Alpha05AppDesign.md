@@ -289,7 +289,11 @@ bar of the first four destinations and More; from 720 px a one-row header of
 brand and wallet over a left column, a rail of icons above short names up to
 1023 px and a panel of icons beside names from 1024 px, the pages only
 Advanced adds grouped under their own label after the Basic ones, and the mode
-and theme controls at the column's foot; the breakpoints follow the common
+and theme controls at the column's foot; from 1024 px the panel can be
+collapsed to its icons by a toggle at its top, the choice remembered per
+browser, and while collapsed a resting mouse (after about 0.3 s, hidden again
+0.5 s after it leaves) or keyboard focus reveals the full panel over the page
+without moving it, Escape hiding it; the breakpoints follow the common
 compact, medium and expanded window classes); an unknown route shows
 a recovery page, and a display failure is contained to a recovery card that
 says funds and on-chain positions are unchanged. Every string in the copy
@@ -323,8 +327,11 @@ its label. Two families only:
   after the sentence it explains, which opens the help panel of RB-HELP; its
   accessible name is "Why?", its description is that sentence, and its tap
   area is at least 44 px square; no hover tooltip, since touch has no hover).
-- **Places**: one icon per destination of the page map, shown on the phone
-  bottom bar above the destination's name, which always shows.
+- **Places**: one icon per destination of the page map, beside or above the
+  destination's name on the phone bar and the desktop column. The one place
+  the names fold away is the desktop panel the reader has chosen to collapse:
+  each link keeps its name for screen readers, and a resting mouse or
+  keyboard focus brings the names back.
 
 A plain information notice carries no icon, so an icon always means the
 reader should look. A new meaning is a change to this rule, not a local
