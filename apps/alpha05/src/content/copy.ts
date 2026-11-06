@@ -552,7 +552,7 @@ export const copy = {
     rowDue: B('Due'),
     due: B('{{days}} days after the loan opens, plus any time the protocol is paused'),
     rowGrace: B('Grace period after the due date'),
-    grace: B('{{span}}; a late fee applies during it'),
+    grace: B("{{span}} under today's settings, which governance can change; a late fee applies during it"),
     rowInterest: B('Interest'),
     fullTerm: B('Full term: the whole term\'s interest is owed even if you repay early'),
     fullTermPartial: B('Full term, with partial repayments allowed'),

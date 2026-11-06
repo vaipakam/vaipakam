@@ -215,7 +215,9 @@ export function requestReceipt(r: RequestReview, meta: TokenMetaMap | null, copy
     textRow('request.rowWhole', text('request.whole'), true),
     textRow('accept.rowRate', format('accept.rate', { rate: formatBps(parsed.rateBps) }), true),
     textRow('accept.rowDue', format('request.due', { days: String(parsed.durationDays) }), true),
-    textRow('accept.rowGrace', format('accept.grace', { span: formatSpan(Number(r.graceSeconds)) }), true),
+    // Not bound by the request or the loan: the grace period is read from the
+    // live configuration when it is applied, so it is today's figure.
+    textRow('accept.rowGrace', format('accept.grace', { span: formatSpan(Number(r.graceSeconds)) }), false),
     // Not bound by the request: the fee is set when a lender takes it, at the
     // rate in force then, so these are today's figures, labelled as such.
     { label: text('request.rowReceive'), value: amount(pair.lending, f.received), binding: false },

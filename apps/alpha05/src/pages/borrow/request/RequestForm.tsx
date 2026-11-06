@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { formatUnits } from 'viem';
 import type { OwnStateClient } from '../../../chain/ownRail';
 import type { SupportedChain } from '../../../chain/chains';
@@ -8,6 +8,7 @@ import { refusalFromError } from '../../../shared/eligibility/refusal';
 import { assetName, tokenAmount, type TokenMetaMap } from '../../../shared/reads/tokens';
 import { useOwnRead } from '../../../shared/reads/useOwnRead';
 import { useStoredValue } from '../../../shared/tx/txStore';
+import { useMounted } from '../../../shared/tx/useReviewRefresh';
 import { FormField } from '../../../shared/ui/FormField';
 import { Notice } from '../../../shared/ui/Notice';
 import {
@@ -153,14 +154,29 @@ export function RequestForm({ chain, own, pair, meta, onReview, onCancel }: Requ
   const figures = inputs.data && amount?.ok && rate.ok && durationDays !== null ? requestFigures(amount.value, rate.value, durationDays, inputs.data.lifBps) : null;
   const valid = amount?.ok === true && collateral?.ok === true && rate.ok && durationDays !== null && expiryOk && inputs.data !== null;
 
+  // Only the latest submission, from a form still on screen for the same
+  // wallet and network, may open a review: a slow block read answered after
+  // the reader cancelled, or after they asked again, is dropped.
+  const mounted = useMounted();
+  const attempt = useRef(0);
+  const identity = `${chain.chainId}:${own.account.toLowerCase()}`;
+  const identityNow = useRef(identity);
+  useEffect(() => {
+    identityNow.current = identity;
+  }, [identity]);
+
   const review = async () => {
     setAsked(true);
     if (!valid || !amount?.ok || !collateral?.ok || !rate.ok || durationDays === null) return;
     setOpening(null);
+    const mine = ++attempt.current;
+    const askedFor = identity;
+    const current = () => mounted.current && attempt.current === mine && identityNow.current === askedFor;
     try {
       // The expiry is fixed from the chain's own clock now, so a re-read of
       // the review never moves the deadline under a consent.
       const block = await own.read((c) => c.getBlock({ blockTag: 'latest' }));
+      if (!current()) return;
       onReview({
         parsed: {
           amount: amount.value,
@@ -175,7 +191,7 @@ export function RequestForm({ chain, own, pair, meta, onReview, onCancel }: Requ
         expiresAt: expiresAt(input.expiry, block.value.timestamp, typedExpiry.ok ? typedExpiry.value : 0),
       });
     } catch (e) {
-      setOpening(refusalFromError(e).reason);
+      if (current()) setOpening(refusalFromError(e).reason);
     }
   };
 
