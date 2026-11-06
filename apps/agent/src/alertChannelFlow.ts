@@ -26,7 +26,7 @@ import {
   protectionByRow,
   pruneClosedChanges,
   revokeCodesStatement,
-  supersedeIfChatStatement,
+  isStateGuardFailure,
   shortWallet,
   supersedeStatement,
   unnotifiedChanges,
@@ -132,28 +132,21 @@ export async function requestUnlink(
     if (delays === null) return { kind: 'unknown' };
     const waiting = rows.filter((r) => delays.get(r.chainId) != null);
     const open = rows.filter((r) => delays.get(r.chainId) == null);
-    let results: D1Result[];
-    try {
-      results = await deps.db.batch([
-        observedStateGuard(deps.db, w, chainId, rows),
-        // A wallet-wide request with nothing waiting closes every pending
-        // change of the wallet, as the immediate unlink always did.
-        ...(waiting.length === 0 ? [supersedeStatement(deps.db, w, chainId, deps.now)] : []),
-        ...open.flatMap((r) => [
-          supersedeStatement(deps.db, w, r.chainId, deps.now),
-          clearChatStatement(deps.db, w, r.chainId, deps.now),
-        ]),
-        ...waiting.flatMap((r) =>
-          pendingChangeStatements(deps.db, w, r.chainId, 'unlink', r.chatId, null, deps.now, delays.get(r.chainId)!),
-        ),
-        revokeCodesStatement(deps.db, w, chainId),
-      ]);
-    } catch (err) {
-      // The rows moved (the guard failed and nothing was written), or D1
-      // failed: read and decide again; the last attempt reports it.
-      if (attempt === DECIDE_ATTEMPTS - 1) throw err;
-      continue;
-    }
+    const results = await guardedBatch(deps, w, chainId, rows, [
+      // A request with nothing waiting closes every pending change in its
+      // scope, as the immediate unlink always did.
+      ...(waiting.length === 0 ? [supersedeStatement(deps.db, w, chainId, deps.now)] : []),
+      ...open.flatMap((r) => [
+        supersedeStatement(deps.db, w, r.chainId, deps.now),
+        clearChatStatement(deps.db, w, r.chainId, deps.now),
+      ]),
+      ...waiting.flatMap((r) =>
+        pendingChangeStatements(deps.db, w, r.chainId, 'unlink', r.chatId, null, deps.now, delays.get(r.chainId)!),
+      ),
+      revokeCodesStatement(deps.db, w, chainId),
+    ]);
+    // The rows moved after the read: nothing was written; decide again.
+    if (results === null) continue;
     // One id per waiting row, in order (each row's INSERT returns its id).
     const ids = insertedIds(results);
     const idOf = new Map(waiting.map((r, i) => [r.chainId, ids[i]!]));
@@ -196,13 +189,15 @@ export async function requestRelink(
   linkStatement: (expectedChatId: string | null) => D1PreparedStatement,
 ): Promise<'linked' | 'pending' | 'unknown'> {
   const w = wallet.toLowerCase();
-  /** Link now if the row's chat is still `expected`; false when it moved. */
-  const immediate = async (expected: string | null): Promise<boolean> => {
-    const [, write] = await deps.db.batch([
-      supersedeIfChatStatement(deps.db, w, chainId, expected, newChatId, deps.now),
+  /** Link now if the row is still exactly `observed`; false when it moved. */
+  const immediate = async (observed: readonly LinkedRow[]): Promise<boolean> => {
+    const expected = observed[0]?.chatId ?? null;
+    const results = await guardedBatch(deps, w, chainId, observed, [
+      supersedeStatement(deps.db, w, chainId, deps.now),
       linkStatement(expected),
     ]);
-    return (write?.meta?.changes ?? 0) > 0;
+    // The link write is guarded on its own too (defence in depth).
+    return results !== null && (results[2]?.meta?.changes ?? 0) > 0;
   };
   for (let attempt = 0; attempt < DECIDE_ATTEMPTS; attempt++) {
     const outcome = await decideRelink(deps, w, chainId, newChatId, locale, immediate);
@@ -219,11 +214,12 @@ async function decideRelink(
   chainId: number,
   newChatId: string,
   locale: string,
-  immediate: (expected: string | null) => Promise<boolean>,
+  immediate: (observed: readonly LinkedRow[]) => Promise<boolean>,
 ): Promise<'linked' | 'pending' | 'unknown' | 'moved'> {
-  const [current] = await linkedRows(deps.db, w, chainId);
+  const observed = await linkedRows(deps.db, w, chainId);
+  const [current] = observed;
   if (!current || current.chatId === newChatId) {
-    return (await immediate(current?.chatId ?? null)) ? 'linked' : 'moved';
+    return (await immediate(observed)) ? 'linked' : 'moved';
   }
   const delays = await protectionByRow(deps.read, w, [current]);
   if (delays === null) {
@@ -231,12 +227,19 @@ async function decideRelink(
     return 'unknown';
   }
   const delay = delays.get(chainId);
-  if (delay == null) return (await immediate(current.chatId)) ? 'linked' : 'moved';
-  const [id] = insertedIds(
-    await deps.db.batch(
-      pendingChangeStatements(deps.db, w, chainId, 'replace', current.chatId, newChatId, deps.now, delay),
-    ),
+  if (delay == null) return (await immediate(observed)) ? 'linked' : 'moved';
+  // The pending move is written only while the chat linked now is still the
+  // one it moves away from, so a scheduled move or unlink that landed during
+  // the protection read is never overwritten by a stale decision.
+  const results = await guardedBatch(
+    deps,
+    w,
+    chainId,
+    observed,
+    pendingChangeStatements(deps.db, w, chainId, 'replace', current.chatId, newChatId, deps.now, delay),
   );
+  if (results === null) return 'moved';
+  const [id] = insertedIds(results);
   const told = await notifyOldChat(deps, w, current.chatId, 'replace', [{ id: id!, chainId, delaySeconds: delay }], current.locale, {
     chatId: newChatId,
     locale,
@@ -247,6 +250,24 @@ async function decideRelink(
     await deps.send?.(newChatId, channelCopy.moveWaitingForNotice(locale, [{ walletShort: shortWallet(w), chainId }]));
   }
   return 'pending';
+}
+
+/** Run `writes` behind `observedStateGuard` in one batch. Null when the rows
+ *  in scope are no longer `observed`: the guard failed and nothing was
+ *  written, so the caller decides again. Any other D1 failure throws. */
+async function guardedBatch(
+  deps: ChannelDeps,
+  wallet: string,
+  chainId: number | null,
+  observed: readonly LinkedRow[],
+  writes: readonly D1PreparedStatement[],
+): Promise<D1Result[] | null> {
+  try {
+    return await deps.db.batch([observedStateGuard(deps.db, wallet, chainId, observed), ...writes]);
+  } catch (err) {
+    if (!isStateGuardFailure(err)) throw err;
+    return null;
+  }
 }
 
 /** CANCEL from `chatId`: stop every pending removal of that chat, and answer. */

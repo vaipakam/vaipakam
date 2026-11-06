@@ -199,29 +199,6 @@ export function supersedeStatement(
         .bind(now, w, chainId);
 }
 
-/** Supersede the pending change of (wallet, chain) only while the row's chat
- *  is still `expectedChatId` (null = none) or already `newChatId`: the same
- *  condition the guarded link write checks, in the same batch, so the two
- *  happen together or not at all. */
-export function supersedeIfChatStatement(
-  db: D1Database,
-  wallet: string,
-  chainId: number,
-  expectedChatId: string | null,
-  newChatId: string,
-  now: number,
-): D1PreparedStatement {
-  const w = wallet.toLowerCase();
-  return db
-    .prepare(
-      `UPDATE alert_channel_changes SET state = 'superseded', closed_at = ?1
-        WHERE wallet = ?2 AND chain_id = ?3 AND state = 'pending'
-          AND COALESCE((SELECT tg_chat_id FROM user_thresholds WHERE wallet = ?2 AND chain_id = ?3), '')
-              IN (COALESCE(?4, ''), ?5)`,
-    )
-    .bind(now, w, chainId, expectedChatId, newChatId);
-}
-
 /**
  * The first statement of a batch whose writes were decided on `observed`, the
  * linked rows of `wallet` in scope (`chainId` null = every chain) as read just
@@ -261,6 +238,14 @@ export function observedStateGuard(
       ...observed.flatMap((r) => [r.chainId, r.chatId]),
       observed.length,
     );
+}
+
+/** Whether a batch failed on `observedStateGuard` (SQLite's "malformed JSON"
+ *  from the guard's deliberate `json()` of a non-JSON string), rather than
+ *  on anything else, which the caller must not retry as a race. */
+export function isStateGuardFailure(err: unknown): boolean {
+  const text = err instanceof Error ? `${err.message} ${String((err as { cause?: unknown }).cause ?? '')}` : String(err);
+  return /malformed JSON/i.test(text);
 }
 
 /** Clear the chat of (wallet, chain) now: the immediate unlink of a row whose

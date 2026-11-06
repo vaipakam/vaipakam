@@ -428,4 +428,23 @@ describe('applyDueChannelChanges', () => {
     expect(chat(db, 84532)).toBe('42');
     expect(sent.map((m) => m.chat)).toEqual(['42']);
   });
+
+  it('a move decided while the linked chat changed writes nothing and decides again', async () => {
+    const { db, d1 } = sqliteD1();
+    db.exec(`INSERT INTO user_thresholds (wallet, chain_id, tg_chat_id, locale, updated_at) VALUES ('${W}', 84532, '42', 'en', 0)`);
+    let reads = 0;
+    // While this request reads protection, another change moves the chat
+    // from 42 to 55.
+    const read: ProtectionReader = async () => {
+      if (reads++ === 0) db.exec(`UPDATE user_thresholds SET tg_chat_id = '55'`);
+      return { enabled: true, delaySeconds: 2 * DAY };
+    };
+    const { d, sent } = deps(d1, read);
+    expect(await requestRelink(d, W, 84532, '77', 'en', link(d1, '77'))).toBe('pending');
+    // The move recorded is from the chat linked now, and that chat is told.
+    expect(db.prepare(`SELECT old_chat_id, new_chat_id, state FROM alert_channel_changes`).all()).toEqual([
+      { old_chat_id: '55', new_chat_id: '77', state: 'pending' },
+    ]);
+    expect(sent.map((m) => m.chat)).toEqual(['55', '77']);
+  });
 });
