@@ -252,8 +252,10 @@ export function PostRequest({ draft, chain, own, meta, terms, onEdit, onClose }:
         // request exists, bound to the wallet and network that posted it.
         // The step is kept apart from this review (BorrowPage shows it), so
         // closing this card never drops it; until it confirms, loans open
-        // without the tariff.
-        setArmContext(r.draft.parsed.tariff ? { identity: r.identity, offerId: id, choice: r.draft.parsed.tariff } : null);
+        // without the tariff. Never cleared from here: the Borrow page
+        // holds new requests back while a step is open, so one request's
+        // posting can never replace or drop another's tariff step.
+        if (r.draft.parsed.tariff) setArmContext({ identity: r.identity, offerId: id, choice: r.draft.parsed.tariff });
         legs.push({ status: 'done', label: format('request.legOffer', { id: id.toString() }) });
       } else {
         legs.push({ status: 'not-done', label: text('request.legNoOffer'), reason: text('request.noOffer') });

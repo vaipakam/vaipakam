@@ -103,6 +103,10 @@ test('with the tariff switched on, the request states it, posts, and sets it by 
     // keeps it, bound to the request just posted.
     await finish.getByRole('button', { name: 'Close' }).click();
     await expect(page.locator('.post-request')).toHaveCount(0);
+    // A new request is held back while the step is open, so another
+    // posting can never replace or drop it.
+    await expect(page.getByTestId('request-held-for-tariff')).toContainText(`request #${id}`);
+    await expect(page.getByTestId('request-open')).toBeDisabled();
     await expect(arm.locator('.receipt')).toContainText(`Request #${id}`);
     await arm.getByRole('button', { name: 'Confirm in wallet' }).click();
     const armFinish = arm.locator('[data-phase="measured"]');
@@ -115,6 +119,7 @@ test('with the tariff switched on, the request states it, posts, and sets it by 
     await expect(ended).toContainText(`The Full fee tariff is set on request #${id}`);
     await ended.getByRole('button', { name: 'Close' }).click();
     await expect(ended).toHaveCount(0);
+    await expect(page.getByTestId('request-held-for-tariff')).toHaveCount(0);
 
     const offer = await sc.read<{ creatorFull: boolean; creatorMaxCStar: bigint; creatorAllowFullDowngrade: boolean }>('getOffer', [id]);
     expect(offer.creatorFull).toBe(true);

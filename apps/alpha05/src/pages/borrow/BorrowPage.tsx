@@ -173,12 +173,17 @@ export function BorrowPage() {
             {text('request.open')}
           </h2>
           <p className="tier-b">{text(requestPair === null || requestPair.standard === 'erc20' ? 'request.openLead' : 'request.openLeadNft')}</p>
-          <button type="button" className="btn" disabled={takeDisabled || requestPair === null} onClick={() => setComposing(true)} data-testid="request-open">
+          {armContext !== null && (
+            <p className="tier-b" data-testid="request-held-for-tariff">
+              {format('request.heldForTariff', { id: armContext.offerId.toString() })}
+            </p>
+          )}
+          <button type="button" className="btn" disabled={takeDisabled || requestPair === null || armContext !== null} onClick={() => setComposing(true)} data-testid="request-open">
             {text('request.open')}
           </button>
         </section>
       )}
-      {composing === true && draft === null && !termsOpen && walletChain && own && requestPair && (
+      {composing === true && draft === null && armContext === null && !termsOpen && walletChain && own && requestPair && (
         <section className="borrow-section" aria-labelledby="borrow-request-form">
           <RequestForm chain={walletChain} own={own} pair={requestPair} meta={meta} onReview={reviewRequest} onCancel={() => setComposing(null)} />
         </section>
