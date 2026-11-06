@@ -45,7 +45,7 @@ export function useHomeBook(): HomeBook {
     loans.data.rows.length === 0 &&
     payouts.data.rows.length === 0 &&
     offers.data.rows.length === 0 &&
-    payouts.data.unlisted === 0;
+    payouts.data.unlisted.length === 0;
 
   return { chain, loans, payouts, offers, numeraire, meta, empty };
 }

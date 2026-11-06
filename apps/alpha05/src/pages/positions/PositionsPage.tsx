@@ -32,7 +32,11 @@ export function PositionsPage() {
   const keep = (borrowerSide: boolean) => side === 'all' || (side === 'borrowed') === borrowerSide;
 
   const loans = part(book.loans, (d) => ({ ...d, rows: d.rows.filter((r) => keep(r.borrowerSide)) }));
-  const payouts = part(book.payouts, (d) => ({ ...d, rows: d.rows.filter((p) => keep(p.side === 'borrower')) }));
+  const payouts = part(book.payouts, (d) => ({
+    ...d,
+    rows: d.rows.filter((p) => keep(p.side === 'borrower')),
+    unlisted: d.unlisted.filter((p) => keep(p.side === 'borrower')),
+  }));
   const ended = part(book.ended, (d) => ({ ...d, rows: d.rows.filter((r) => keep(r.borrowerSide)) }));
   const payoutKeys = new Set((book.payouts.data?.rows ?? []).map((p) => positionKey({ loan: { id: p.loanId }, borrowerSide: p.side === 'borrower' })));
 
@@ -49,10 +53,10 @@ export function PositionsPage() {
     loans: (filtered ? loans : book.loans).data?.rows.length ?? 0,
     payouts: (filtered ? payouts : book.payouts).data?.rows.length ?? 0,
     ended: (filtered ? ended : book.ended).data?.rows.length ?? 0,
-    unlisted: book.payouts.data?.unlisted ?? 0,
+    unlisted: (filtered ? payouts : book.payouts).data?.unlisted.length ?? 0,
   });
   const emptyAll = settled && nothing(counts(false));
-  const emptyFiltered = settled && !emptyAll && side !== 'all' && nothing({ ...counts(true), unlisted: 0 });
+  const emptyFiltered = settled && !emptyAll && side !== 'all' && nothing(counts(true));
 
   return (
     <main className="page positions" aria-labelledby="positions-title">

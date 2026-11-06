@@ -64,7 +64,7 @@ export function settledEmpty<T>(read: OwnRead<T>, isEmpty: (data: T) => boolean)
 
 export function PayoutsSection({ read }: { read: OwnRead<Payouts> }) {
   const { text, format } = useCopy();
-  if (settledEmpty(read, (d) => d.complete && d.rows.length === 0 && d.unlisted === 0)) return null;
+  if (settledEmpty(read, (d) => d.complete && d.rows.length === 0 && d.unlisted.length === 0)) return null;
   return (
     <section className="home-section" aria-labelledby="home-payouts">
       <h2 id="home-payouts">{text('positions.payoutsTitle')}</h2>
@@ -81,7 +81,7 @@ export function PayoutsSection({ read }: { read: OwnRead<Payouts> }) {
                 </li>
               ))}
             </ul>
-            {data.unlisted > 0 && <p className="tier-b">{format('positions.payoutsUnlisted', { count: String(data.unlisted) })}</p>}
+            {data.unlisted.length > 0 && <p className="tier-b">{format('positions.payoutsUnlisted', { count: String(data.unlisted.length) })}</p>}
             <WhyLink summaryKey="positions.payoutsNote" detailKey="positions.payoutsWhy" />
             <Link className="btn btn-primary" to="/claims">
               {text('positions.payoutsAction')}

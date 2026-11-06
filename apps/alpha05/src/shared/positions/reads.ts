@@ -112,8 +112,9 @@ export interface Payouts {
   complete: boolean;
   /** Ended (or fallback) loans whose position the wallet holds but did not
    *  originate on that side: the protocol's pending rule is listed only for
-   *  the recorded party, so whether these pay out is not known here. */
-  unlisted: number;
+   *  the recorded party, so whether these pay out is not known here. Each
+   *  keeps its side, so a side choice narrows them with the listed rows. */
+  unlisted: PayoutRow[];
 }
 
 /** Held positions on loans that have ended (repaid, defaulted, settled or
@@ -137,7 +138,7 @@ export interface PositionBook {
  * claimables view) says a claim would pay the recorded party AND the wallet
  * still holds that side's position, since the claim pays the holder. A held
  * position on an ended loan the wallet received from someone else is not
- * covered by that view; it is counted (`unlisted`) rather than guessed.
+ * covered by that view; it is listed apart (`unlisted`) rather than guessed.
  */
 export async function readPositionBook(client: PublicClient, diamond: Hex, account: Hex): Promise<PositionBook> {
   const inventory = await walkInventory(client, diamond, account, 'getUserPositionLoansPaginated');
@@ -233,7 +234,9 @@ async function readPayouts(client: PublicClient, diamond: Hex, account: Hex, hel
     .sort((a, b) => (a.loanId < b.loanId ? -1 : a.loanId > b.loanId ? 1 : 0));
   // Positions the pending view cannot cover: received from another wallet,
   // on a loan that is no longer simply Active (ended, or in fallback).
-  const unlisted = held.filter((h) => h.loan.status !== LOAN_STATUS_ACTIVE && h.recordedParty.toLowerCase() !== account.toLowerCase()).length;
+  const unlisted = held
+    .filter((h) => h.loan.status !== LOAN_STATUS_ACTIVE && h.recordedParty.toLowerCase() !== account.toLowerCase())
+    .map((h): PayoutRow => ({ loanId: h.loan.id, side: h.borrowerSide ? 'borrower' : 'lender' }));
   return { rows, complete: inventoryComplete && lender.complete && borrower.complete, unlisted };
 }
 

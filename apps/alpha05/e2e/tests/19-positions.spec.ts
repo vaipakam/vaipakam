@@ -9,6 +9,7 @@
 import { openLoan, repayInFull } from '@vaipakam/anvil-harness/lending';
 import { scenario } from '../lib/chain';
 import { connectWallet, expect, test } from '../lib/wallet';
+import { accountFor } from '../lib/wallets';
 
 test('with no wallet, Positions asks for one and lists nothing', async ({ launchWallet }) => {
   const { page } = await launchWallet('visitor', { preAuthorized: false });
@@ -73,4 +74,31 @@ test('each side sees its live loan and its repaid loan, in the order payouts, li
     expect(overflow).toBeLessThanOrEqual(0);
     await ctx.close();
   }
+});
+
+test('a position received on an ended loan is stated apart under Ready to collect, and the side choice narrows it too', async ({ launchWallet }) => {
+  const sc = scenario();
+  const { loanId } = await openLoan(sc, { lender: 'lender', borrower: 'borrower', principalWeth: '0.1', collateralTliq: '500', rateBps: 400, days: 30 });
+  await repayInFull(sc, 'borrower', loanId);
+  // The lender hands the ended loan's lender position to the visitor, who is
+  // not the recorded party: the protocol's pending view does not cover it.
+  const { lenderTokenId } = await sc.read<{ lenderTokenId: bigint }>('getLoanDetails', [loanId]);
+  await sc.diamondWrite('lender', 'transferFrom', [sc.address('lender'), accountFor('visitor').address, lenderTokenId]);
+
+  const { page } = await launchWallet('visitor');
+  await page.goto('/positions');
+  await connectWallet(page);
+  const payouts = page.getByRole('region', { name: 'Ready to collect' });
+  await expect(payouts).toContainText(/received from another wallet: \d+\. Claims shows whether they pay\./, { timeout: 60_000 });
+  await expect(page.getByRole('region', { name: 'Ended loans' }).locator(`[data-loan-id="${loanId}"]`)).toBeVisible();
+
+  // Every position the visitor received is a lender one, so "Borrowed"
+  // leaves nothing: not the loan, and not the unverified payout either.
+  const sideGroup = page.getByRole('group', { name: 'Which positions to show' });
+  await sideGroup.getByRole('button', { name: 'Borrowed' }).click();
+  await expect(page.getByText(/None of your positions on .* match this choice\./)).toBeVisible();
+  await expect(payouts).toHaveCount(0);
+  await expect(page.locator(`[data-loan-id="${loanId}"]`)).toHaveCount(0);
+  await sideGroup.getByRole('button', { name: 'Lent' }).click();
+  await expect(payouts).toContainText(/received from another wallet: \d+\./);
 });
