@@ -90,7 +90,7 @@ A "residual" below is a stated limit, not a bug report.
 | Defence | Card |
 | --- | --- |
 | One timelocked pointer for every vault's code; the guardian can revoke a version while paused, but only to code already registered | #3204 ([design](VaultCentralImplementationDesign.md)) |
-| One vault outflow policy: typed destinations, a lien the vault itself recorded, payouts to the owner's own wallet when not protected, just-in-time approvals, signed orders that follow the pause | #3205 |
+| One vault outflow policy: typed destinations, a lien the vault itself recorded, payouts to the owner's own wallet when not protected, just-in-time approvals, signed orders that follow the pause | #3205 ([design](VaultOutflowPolicyDesign.md)) |
 | Outflow circuit breaker: per-asset caps over a rolling window held in each vault's own storage, a delay on large wallet withdrawals for every account, and an automatic pause on an outflow spike | #3206 |
 | Protected mode guards commitments, not only withdrawals: off-band rates, below-par lender sales, NFT listings below the owner's minimum, and two price sources agreeing before a forced sale | #3227 |
 | Above a liquid-value threshold, adding value needs protected mode or a signed, versioned decline | #3233 |
