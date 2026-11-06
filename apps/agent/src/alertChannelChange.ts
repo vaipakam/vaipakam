@@ -170,7 +170,8 @@ export function pendingChangeStatements(
       .prepare(
         `INSERT INTO alert_channel_changes
            (wallet, chain_id, kind, old_chat_id, new_chat_id, requested_at, delay_seconds, state)
-         VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')
+         RETURNING id`,
       )
       .bind(w, chainId, kind, oldChatId, newChatId, now, delaySeconds),
   ];
@@ -198,43 +199,39 @@ export function supersedeStatement(
         .bind(now, w, chainId);
 }
 
-/** The old chat accepted the notice for (wallet, `chainIds`): the wait starts
- *  now. Only rows still waiting for their notice are touched. */
-export async function markNotified(
-  db: D1Database,
-  wallet: string,
-  chainIds: readonly number[],
-  oldChatId: string,
-  now: number,
-): Promise<void> {
-  if (chainIds.length === 0) return;
+/** The ids the INSERTs of a `pendingChangeStatements` batch returned, in
+ *  statement order (an INSERT carries `RETURNING id`; others return none). */
+export function insertedIds(results: readonly D1Result[]): number[] {
+  return results.flatMap((r) => (r.results ?? []).map((row) => Number((row as { id: unknown }).id)));
+}
+
+/** The old chat accepted the notice for the changes `ids`: their wait starts
+ *  now. Bound to the ids the notice named, so a notice accepted after a newer
+ *  request replaced its change can never start the newer change's wait. */
+export async function markNotified(db: D1Database, ids: readonly number[], now: number): Promise<void> {
+  if (ids.length === 0) return;
   await db
     .prepare(
       `UPDATE alert_channel_changes
           SET notified_at = ?1, effective_at = ?1 + delay_seconds, notice_attempt_at = ?1
-        WHERE wallet = ?2 AND old_chat_id = ?3 AND state = 'pending' AND notified_at IS NULL
-          AND chain_id IN (${chainIds.map(() => '?').join(', ')})`,
+        WHERE state = 'pending' AND notified_at IS NULL
+          AND id IN (${ids.map(() => '?').join(', ')})`,
     )
-    .bind(now, wallet.toLowerCase(), oldChatId, ...chainIds)
+    .bind(now, ...ids)
     .run();
 }
 
-/** A notice attempt that Telegram did not accept: recorded so the retry waits. */
-export async function markNoticeAttempt(
-  db: D1Database,
-  wallet: string,
-  chainIds: readonly number[],
-  oldChatId: string,
-  now: number,
-): Promise<void> {
-  if (chainIds.length === 0) return;
+/** A notice attempt for `ids` that Telegram did not accept: recorded so the
+ *  retry waits, and so the retry order rotates past it. */
+export async function markNoticeAttempt(db: D1Database, ids: readonly number[], now: number): Promise<void> {
+  if (ids.length === 0) return;
   await db
     .prepare(
       `UPDATE alert_channel_changes SET notice_attempt_at = ?1
-        WHERE wallet = ?2 AND old_chat_id = ?3 AND state = 'pending' AND notified_at IS NULL
-          AND chain_id IN (${chainIds.map(() => '?').join(', ')})`,
+        WHERE state = 'pending' AND notified_at IS NULL
+          AND id IN (${ids.map(() => '?').join(', ')})`,
     )
-    .bind(now, wallet.toLowerCase(), oldChatId, ...chainIds)
+    .bind(now, ...ids)
     .run();
 }
 
@@ -250,6 +247,10 @@ export async function unnotifiedChanges(
     `c.state = 'pending' AND c.notified_at IS NULL AND (c.notice_attempt_at IS NULL OR c.notice_attempt_at <= ?)`,
     retryBefore,
     limit,
+    // Least recently tried first: every attempt stamps `notice_attempt_at`,
+    // so chats that keep refusing rotate to the back and can never starve
+    // other requests out of the batch.
+    'COALESCE(c.notice_attempt_at, 0), c.id',
   );
 }
 
@@ -276,14 +277,20 @@ export async function dueChanges(db: D1Database, now: number, limit = APPLY_BATC
   return readChanges(db, `c.state = 'pending' AND c.effective_at IS NOT NULL AND c.effective_at <= ?`, now, limit);
 }
 
-async function readChanges(db: D1Database, where: string, arg: number, limit: number): Promise<PendingChange[]> {
+async function readChanges(
+  db: D1Database,
+  where: string,
+  arg: number,
+  limit: number,
+  orderBy = 'c.id',
+): Promise<PendingChange[]> {
   const res = await db
     .prepare(
       `SELECT c.id, c.wallet, c.chain_id, c.kind, c.old_chat_id, c.new_chat_id, c.delay_seconds, c.effective_at, t.locale
          FROM alert_channel_changes c
          LEFT JOIN user_thresholds t ON t.wallet = c.wallet AND t.chain_id = c.chain_id
         WHERE ${where}
-        ORDER BY c.id LIMIT ?`,
+        ORDER BY ${orderBy} LIMIT ?`,
     )
     .bind(arg, limit)
     .all<{

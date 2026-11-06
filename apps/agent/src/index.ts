@@ -146,7 +146,7 @@ import {
   upsertThresholds,
 } from './db';
 import { extractCancelCommand, extractLinkCode, extractLockCommand, isTelegramDelivery, sendMessage, type TelegramUpdate } from './telegram';
-import { handshakeExpired, handshakeLinked, lockNotLinked, lockNotRecorded, lockNotRunning, lockPrivateOnly, lockRecorded, lockStale, testAlert } from './i18n';
+import { channelCopy, handshakeExpired, handshakeLinked, lockNotLinked, lockNotRecorded, lockNotRunning, lockPrivateOnly, lockRecorded, lockStale, testAlert } from './i18n';
 import {
   authoriseAlertRequest,
   parseSignedLinkRequest,
@@ -1031,11 +1031,18 @@ async function handleTelegramWebhook(
   // a change would silence may cancel it, and only from a private chat.
   const cancel = extractCancelCommand(update);
   if (cancel) {
+    let locale: string | null = null;
     try {
-      await cancelFromChat(channelDeps(env), cancel.chatId, cancel.isPrivate, await chatLocale(env.DB, cancel.chatId));
+      locale = await chatLocale(env.DB, cancel.chatId);
+      await cancelFromChat(channelDeps(env), cancel.chatId, cancel.isPrivate, locale);
     } catch (err) {
-      // Before migration 0084 lands there is no table; nothing can be pending.
+      // Nothing was cancelled (a D1 failure, or the table not there yet).
+      // Say so, like LOCK does, so the owner sends it again instead of
+      // believing the change was stopped.
       console.error('[agent] CANCEL not handled:', redactedError(err));
+      if (env.TG_BOT_TOKEN) {
+        await sendMessage(env.TG_BOT_TOKEN, cancel.chatId, channelCopy.cancelNotRecorded(locale)).catch(() => undefined);
+      }
     }
     return new Response('ok', { status: 200 });
   }

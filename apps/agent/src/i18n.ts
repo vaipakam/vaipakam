@@ -454,6 +454,8 @@ type ChannelCatalogue = {
   cancelNone: string;
   /** Reply to CANCEL from a group or channel. */
   cancelPrivateOnly: string;
+  /** CANCEL could not be processed: the change still stands. */
+  cancelNotRecorded: string;
   /** To the old chat when an unlink took effect. */
   removalApplied: (list: string) => string;
   /** To the old chat when a move took effect. */
@@ -476,6 +478,7 @@ const CHANNEL_CAT: Record<Locale, ChannelCatalogue> = {
       `Cancelled. This chat keeps getting alerts for ${list}. If you did not ask for that change, someone may hold your wallet key: lock the vault now in the Vaipakam app (sending LOCK here works too if you allowed Telegram locking) and check it there.`,
     cancelNone: 'There is no pending change to cancel for this chat.',
     cancelPrivateOnly: 'CANCEL works only in your private chat with this bot. Nothing was cancelled.',
+    cancelNotRecorded: 'CANCEL could not be recorded just now, so the pending change still stands. Send CANCEL again, and lock the vault in the Vaipakam app if you did not ask for this change.',
     removalApplied: (list) => `As requested, this chat no longer gets alerts for ${list}.`,
     moveApplied: (list) => `As requested, the alerts for ${list} now go to a different Telegram chat. This chat no longer gets them.`,
   },
@@ -494,6 +497,7 @@ const CHANNEL_CAT: Record<Locale, ChannelCatalogue> = {
       `Cancelado. Este chat sigue recibiendo alertas de ${list}. Si no pediste ese cambio, alguien podría tener la clave de tu billetera: bloquea la bóveda ahora en la app de Vaipakam (enviar LOCK aquí también funciona si permitiste el bloqueo por Telegram) y revísala allí.`,
     cancelNone: 'No hay ningún cambio pendiente que cancelar para este chat.',
     cancelPrivateOnly: 'CANCEL solo funciona en tu chat privado con este bot. No se canceló nada.',
+    cancelNotRecorded: 'No se pudo registrar CANCEL en este momento, así que el cambio pendiente sigue en pie. Envía CANCEL de nuevo y bloquea la bóveda en la app de Vaipakam si no pediste este cambio.',
     removalApplied: (list) => `Como se pidió, este chat ya no recibe alertas de ${list}.`,
     moveApplied: (list) => `Como se pidió, las alertas de ${list} ahora van a otro chat de Telegram. Este chat ya no las recibe.`,
   },
@@ -512,6 +516,7 @@ const CHANNEL_CAT: Record<Locale, ChannelCatalogue> = {
       `Annulé. Ce chat continue de recevoir les alertes de ${list}. Si vous n'avez pas demandé ce changement, quelqu'un détient peut-être la clé de votre portefeuille : verrouillez le coffre maintenant dans l'application Vaipakam (envoyer LOCK ici fonctionne aussi si vous avez autorisé le verrouillage par Telegram) et vérifiez-le là-bas.`,
     cancelNone: "Aucun changement en attente à annuler pour ce chat.",
     cancelPrivateOnly: "CANCEL ne fonctionne que dans votre conversation privée avec ce bot. Rien n'a été annulé.",
+    cancelNotRecorded: "CANCEL n'a pas pu être enregistré pour l'instant, le changement en attente est donc maintenu. Envoyez CANCEL à nouveau et verrouillez le coffre dans l'application Vaipakam si vous n'avez pas demandé ce changement.",
     removalApplied: (list) => `Comme demandé, ce chat ne reçoit plus les alertes de ${list}.`,
     moveApplied: (list) => `Comme demandé, les alertes de ${list} vont maintenant vers un autre chat Telegram. Ce chat ne les reçoit plus.`,
   },
@@ -530,6 +535,7 @@ const CHANNEL_CAT: Record<Locale, ChannelCatalogue> = {
       `Abgebrochen. Dieser Chat erhält weiter Warnungen für ${list}. Wenn Sie diese Änderung nicht verlangt haben, hat vielleicht jemand Ihren Wallet-Schlüssel: Sperren Sie den Tresor jetzt in der Vaipakam-App (LOCK hier zu senden funktioniert auch, wenn Sie das Sperren über Telegram erlaubt haben) und prüfen Sie ihn dort.`,
     cancelNone: 'Für diesen Chat gibt es keine ausstehende Änderung zum Abbrechen.',
     cancelPrivateOnly: 'CANCEL funktioniert nur in Ihrem privaten Chat mit diesem Bot. Es wurde nichts abgebrochen.',
+    cancelNotRecorded: 'CANCEL konnte gerade nicht erfasst werden, die ausstehende Änderung bleibt also bestehen. Senden Sie CANCEL erneut und sperren Sie den Tresor in der Vaipakam-App, wenn Sie diese Änderung nicht angefordert haben.',
     removalApplied: (list) => `Wie verlangt erhält dieser Chat keine Warnungen mehr für ${list}.`,
     moveApplied: (list) => `Wie verlangt gehen die Warnungen für ${list} jetzt an einen anderen Telegram-Chat. Dieser Chat erhält sie nicht mehr.`,
   },
@@ -548,6 +554,7 @@ const CHANNEL_CAT: Record<Locale, ChannelCatalogue> = {
       `取り消しました。このチャットは引き続き ${list} のアラートを受け取ります。その変更に心当たりがない場合、誰かがウォレットの鍵を持っている可能性があります。今すぐ Vaipakam アプリでボールトをロックし（Telegram からのロックを許可している場合はここで LOCK を送ることもできます）、そこで確認してください。`,
     cancelNone: 'このチャットには取り消せる保留中の変更はありません。',
     cancelPrivateOnly: 'CANCEL はこのボットとのプライベートチャットでのみ使えます。何も取り消されていません。',
+    cancelNotRecorded: '現在 CANCEL を記録できなかったため、保留中の変更は有効なままです。もう一度 CANCEL を送信し、この変更に心当たりがなければ Vaipakam アプリで保管庫をロックしてください。',
     removalApplied: (list) => `ご依頼どおり、このチャットは ${list} のアラートを受け取らなくなりました。`,
     moveApplied: (list) => `ご依頼どおり、${list} のアラートは別の Telegram チャットに届くようになりました。このチャットにはもう届きません。`,
   },
@@ -565,6 +572,7 @@ const CHANNEL_CAT: Record<Locale, ChannelCatalogue> = {
       `已取消。此聊天继续收到 ${list} 的提醒。如果你没有提出该更改，可能有人掌握了你的钱包密钥：请立即在 Vaipakam 应用中锁定金库（如果你允许通过 Telegram 锁定，也可以在这里发送 LOCK），并在那里检查。`,
     cancelNone: '此聊天没有可取消的待处理更改。',
     cancelPrivateOnly: 'CANCEL 只能在你与此机器人的私聊中使用。未取消任何内容。',
+    cancelNotRecorded: '目前无法记录 CANCEL，因此待处理的更改仍然有效。请再次发送 CANCEL；如果你没有请求此更改，请在 Vaipakam 应用中锁定保管库。',
     removalApplied: (list) => `按你的请求，此聊天不再收到 ${list} 的提醒。`,
     moveApplied: (list) => `按你的请求，${list} 的提醒现在发送到另一个 Telegram 聊天。此聊天不再收到。`,
   },
@@ -583,6 +591,7 @@ const CHANNEL_CAT: Record<Locale, ChannelCatalogue> = {
       `취소했습니다. 이 채팅은 계속 ${list}의 알림을 받습니다. 그 변경을 요청하지 않았다면 누군가 지갑 키를 가지고 있을 수 있습니다. 지금 Vaipakam 앱에서 볼트를 잠그고(Telegram 잠금을 허용했다면 여기서 LOCK을 보내도 됩니다) 거기서 확인하세요.`,
     cancelNone: '이 채팅에는 취소할 대기 중인 변경이 없습니다.',
     cancelPrivateOnly: 'CANCEL은 이 봇과의 개인 채팅에서만 작동합니다. 아무것도 취소되지 않았습니다.',
+    cancelNotRecorded: '지금은 CANCEL을 기록할 수 없어 대기 중인 변경이 그대로 유지됩니다. CANCEL을 다시 보내고, 이 변경을 요청하지 않았다면 Vaipakam 앱에서 금고를 잠그세요.',
     removalApplied: (list) => `요청하신 대로 이 채팅은 더 이상 ${list}의 알림을 받지 않습니다.`,
     moveApplied: (list) => `요청하신 대로 ${list}의 알림은 이제 다른 Telegram 채팅으로 갑니다. 이 채팅은 더 이상 받지 않습니다.`,
   },
@@ -601,6 +610,7 @@ const CHANNEL_CAT: Record<Locale, ChannelCatalogue> = {
       `रद्द कर दिया गया। इस चैट को ${list} के अलर्ट मिलते रहेंगे। अगर वह बदलाव आपने नहीं माँगा था, तो हो सकता है किसी के पास आपकी वॉलेट कुंजी हो: अभी Vaipakam ऐप में वॉल्ट लॉक करें (अगर आपने Telegram से लॉक करने की अनुमति दी है तो यहाँ LOCK भेजना भी काम करता है) और वहीं जाँचें।`,
     cancelNone: 'इस चैट के लिए रद्द करने को कोई लंबित बदलाव नहीं है।',
     cancelPrivateOnly: 'CANCEL केवल इस बॉट के साथ आपकी निजी चैट में काम करता है। कुछ भी रद्द नहीं हुआ।',
+    cancelNotRecorded: 'CANCEL अभी दर्ज नहीं हो सका, इसलिए लंबित बदलाव अब भी बना हुआ है। CANCEL फिर से भेजें, और अगर आपने यह बदलाव नहीं माँगा था तो Vaipakam ऐप में वॉल्ट लॉक करें।',
     removalApplied: (list) => `आपके अनुरोध के अनुसार, इस चैट को अब ${list} के अलर्ट नहीं मिलेंगे।`,
     moveApplied: (list) => `आपके अनुरोध के अनुसार, ${list} के अलर्ट अब किसी दूसरे Telegram चैट पर जाते हैं। इस चैट को अब वे नहीं मिलेंगे।`,
   },
@@ -619,6 +629,7 @@ const CHANNEL_CAT: Record<Locale, ChannelCatalogue> = {
       `ரத்து செய்யப்பட்டது. இந்த அரட்டை ${list} க்கான எச்சரிக்கைகளைத் தொடர்ந்து பெறும். அந்த மாற்றத்தை நீங்கள் கேட்கவில்லை என்றால், உங்கள் வாலெட் சாவி வேறொருவரிடம் இருக்கலாம்: இப்போதே Vaipakam செயலியில் பெட்டகத்தைப் பூட்டி (Telegram மூலம் பூட்ட அனுமதித்திருந்தால் இங்கே LOCK அனுப்புவதும் வேலை செய்யும்) அங்கே சரிபாருங்கள்.`,
     cancelNone: 'இந்த அரட்டைக்கு ரத்து செய்ய நிலுவையில் உள்ள மாற்றம் எதுவும் இல்லை.',
     cancelPrivateOnly: 'CANCEL இந்த பாட்டுடனான உங்கள் தனிப்பட்ட அரட்டையில் மட்டுமே வேலை செய்யும். எதுவும் ரத்து செய்யப்படவில்லை.',
+    cancelNotRecorded: 'இப்போது CANCEL ஐப் பதிவு செய்ய முடியவில்லை, எனவே நிலுவையில் உள்ள மாற்றம் தொடர்கிறது. CANCEL ஐ மீண்டும் அனுப்புங்கள்; இந்த மாற்றத்தை நீங்கள் கேட்கவில்லை என்றால் Vaipakam செயலியில் பெட்டகத்தைப் பூட்டுங்கள்.',
     removalApplied: (list) => `கேட்டபடி, இந்த அரட்டை இனி ${list} க்கான எச்சரிக்கைகளைப் பெறாது.`,
     moveApplied: (list) => `கேட்டபடி, ${list} க்கான எச்சரிக்கைகள் இப்போது வேறு Telegram அரட்டைக்குச் செல்கின்றன. இந்த அரட்டை இனி அவற்றைப் பெறாது.`,
   },
@@ -637,6 +648,7 @@ const CHANNEL_CAT: Record<Locale, ChannelCatalogue> = {
       `تم الإلغاء. تستمر هذه المحادثة في تلقي تنبيهات ${list}. إن لم تطلب ذلك التغيير، فقد يملك أحدهم مفتاح محفظتك: اقفل الخزنة الآن من تطبيق Vaipakam (يعمل إرسال LOCK هنا أيضًا إن سمحت بالقفل عبر Telegram) وتحقق منها هناك.`,
     cancelNone: 'لا يوجد تغيير معلّق لإلغائه لهذه المحادثة.',
     cancelPrivateOnly: 'يعمل CANCEL فقط في محادثتك الخاصة مع هذا البوت. لم يُلغَ أي شيء.',
+    cancelNotRecorded: 'تعذّر تسجيل CANCEL الآن، لذا ما زال التغيير المعلّق قائمًا. أرسل CANCEL مرة أخرى، وأقفل الخزنة في تطبيق Vaipakam إن لم تكن قد طلبت هذا التغيير.',
     removalApplied: (list) => `كما طُلب، لم تعد هذه المحادثة تتلقى تنبيهات ${list}.`,
     moveApplied: (list) => `كما طُلب، تذهب تنبيهات ${list} الآن إلى محادثة Telegram أخرى. لم تعد هذه المحادثة تتلقاها.`,
   },
@@ -663,6 +675,7 @@ export const channelCopy = {
     CHANNEL_CAT[resolveLocale(locale)].cancelDone(channelList(locale, entries)),
   cancelNone: (locale: string | null | undefined) => CHANNEL_CAT[resolveLocale(locale)].cancelNone,
   cancelPrivateOnly: (locale: string | null | undefined) => CHANNEL_CAT[resolveLocale(locale)].cancelPrivateOnly,
+  cancelNotRecorded: (locale: string | null | undefined) => CHANNEL_CAT[resolveLocale(locale)].cancelNotRecorded,
   removalApplied: (locale: string | null | undefined, entries: readonly Entry[]) =>
     CHANNEL_CAT[resolveLocale(locale)].removalApplied(channelList(locale, entries)),
   moveApplied: (locale: string | null | undefined, entries: readonly Entry[]) =>

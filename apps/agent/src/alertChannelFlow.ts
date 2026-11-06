@@ -15,6 +15,7 @@ import {
   applyChange,
   cancelPendingForChat,
   dueChanges,
+  insertedIds,
   formatUtc,
   linkedRows,
   markNoticeAttempt,
@@ -72,7 +73,7 @@ async function notifyOldChat(
   wallet: string,
   oldChatId: string,
   kind: 'unlink' | 'replace',
-  chains: readonly { chainId: number; delaySeconds: number }[],
+  chains: readonly { id: number; chainId: number; delaySeconds: number }[],
   locale: string,
   newChat: { chatId: string; locale: string } | null,
 ): Promise<boolean> {
@@ -85,12 +86,13 @@ async function notifyOldChat(
     kind === 'unlink'
       ? channelCopy.removalPending(locale, entries, when)
       : channelCopy.movePending(locale, entries, when);
-  const ids = chains.map((c) => c.chainId);
+  // The change ids this notice names: only these may start their wait.
+  const ids = chains.map((c) => c.id);
   if ((await deps.send(oldChatId, text)) !== 'accepted') {
-    await markNoticeAttempt(deps.db, wallet, ids, oldChatId, deps.now);
+    await markNoticeAttempt(deps.db, ids, deps.now);
     return false;
   }
-  await markNotified(deps.db, wallet, ids, oldChatId, deps.now);
+  await markNotified(deps.db, ids, deps.now);
   if (newChat) await deps.send(newChat.chatId, channelCopy.moveIncoming(newChat.locale, entries, when));
   return true;
 }
@@ -127,7 +129,7 @@ export async function requestUnlink(
     await deps.db.batch(open.map((r) => supersedeStatement(deps.db, w, r.chainId, deps.now)));
     await unlinkNow(open.map((r) => r.chainId));
   }
-  await deps.db.batch([
+  const results = await deps.db.batch([
     ...waiting.flatMap((r) =>
       pendingChangeStatements(deps.db, w, r.chainId, 'unlink', r.chatId, null, deps.now, delays.get(r.chainId)!),
     ),
@@ -135,10 +137,13 @@ export async function requestUnlink(
       ? deps.db.prepare(`DELETE FROM telegram_links WHERE wallet = ?`).bind(w)
       : deps.db.prepare(`DELETE FROM telegram_links WHERE wallet = ? AND chain_id = ?`).bind(w, chainId),
   ]);
+  // One id per waiting row, in order (each row's INSERT returns its id).
+  const ids = insertedIds(results);
+  const idOf = new Map(waiting.map((r, i) => [r.chainId, ids[i]!]));
   const told = new Set<number>();
   // One notice per (chat, delay), so each states its own chains' deadline.
   for (const list of groupBy(waiting, (r) => `${r.chatId}|${delays.get(r.chainId)}`).values()) {
-    const chains = list.map((r) => ({ chainId: r.chainId, delaySeconds: delays.get(r.chainId)! }));
+    const chains = list.map((r) => ({ id: idOf.get(r.chainId)!, chainId: r.chainId, delaySeconds: delays.get(r.chainId)! }));
     if (await notifyOldChat(deps, w, list[0]!.chatId, 'unlink', chains, list[0]!.locale, null)) {
       for (const r of list) told.add(r.chainId);
     }
@@ -181,10 +186,12 @@ export async function requestRelink(
   }
   const delay = delays.get(chainId);
   if (delay == null) return immediate();
-  await deps.db.batch(
-    pendingChangeStatements(deps.db, w, chainId, 'replace', current.chatId, newChatId, deps.now, delay),
+  const [id] = insertedIds(
+    await deps.db.batch(
+      pendingChangeStatements(deps.db, w, chainId, 'replace', current.chatId, newChatId, deps.now, delay),
+    ),
   );
-  const told = await notifyOldChat(deps, w, current.chatId, 'replace', [{ chainId, delaySeconds: delay }], current.locale, {
+  const told = await notifyOldChat(deps, w, current.chatId, 'replace', [{ id: id!, chainId, delaySeconds: delay }], current.locale, {
     chatId: newChatId,
     locale,
   });
@@ -239,7 +246,7 @@ export async function applyDueChannelChanges(deps: ChannelDeps): Promise<number>
           first.wallet,
           first.oldChatId,
           first.kind,
-          batch.map((x) => ({ chainId: x.chainId, delaySeconds: x.delaySeconds })),
+          batch.map((x) => ({ id: x.id, chainId: x.chainId, delaySeconds: x.delaySeconds })),
           first.locale,
           c.newChatId ? { chatId: c.newChatId, locale: c.locale } : null,
         );

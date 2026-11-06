@@ -36,7 +36,7 @@ function sqliteD1() {
     all: async () => ({ results: db.prepare(sql).all(...args) }),
     first: async () => db.prepare(sql).get(...args) ?? null,
     run: async () => run(sql, args),
-    __exec: () => (/^\s*select/i.test(sql) ? { results: db.prepare(sql).all(...args) } : run(sql, args)),
+    __exec: () => (/^\s*select|\breturning\b/i.test(sql) ? { results: db.prepare(sql).all(...args) } : run(sql, args)),
   });
   const d1 = {
     prepare: (sql: string) => stmt(sql),
@@ -326,5 +326,61 @@ describe('applyDueChannelChanges', () => {
     expect(sent[0]!.text).toContain(two);
     expect(sent[0]!.text).not.toContain(five);
     expect(sent[1]!.text).toContain(five);
+  });
+
+  it('a notice accepted after its change was replaced never starts the newer change', async () => {
+    const { db, d1 } = sqliteD1();
+    db.exec(`INSERT INTO user_thresholds VALUES ('${W}', 84532, '42', 'en', 0)`);
+    const r = reader({ 84532: { enabled: true, delaySeconds: 2 * DAY } });
+    let inner = true;
+    const racing: ChannelDeps = {
+      db: d1,
+      read: r,
+      now: NOW,
+      send: async () => {
+        // While the first notice is in flight, a second request replaces the
+        // change, and its own notice fails.
+        if (inner) {
+          inner = false;
+          await requestUnlink(deps(d1, r, NOW + 60, 'transient').d, W, null, unlinkNow(d1, null));
+        }
+        return 'accepted';
+      },
+    };
+    await requestUnlink(racing, W, null, unlinkNow(d1, null));
+    expect(db.prepare(`SELECT state, notified_at FROM alert_channel_changes ORDER BY id`).all()).toEqual([
+      { state: 'superseded', notified_at: null },
+      { state: 'pending', notified_at: null },
+    ]);
+    expect(await applyDueChannelChanges(deps(d1, reader({}), NOW + 2 * DAY + 60, 'refused').d)).toBe(0);
+    expect(chat(db, 84532)).toBe('42');
+  });
+
+  it('retries the least recently tried notices first, so refusing chats cannot starve others', async () => {
+    const { db, d1 } = sqliteD1();
+    // 60 rows whose chats refuse (more than one batch of 50), then one more.
+    for (let i = 0; i < 61; i++) {
+      const w = `0x${i.toString(16).padStart(40, '0')}`;
+      db.exec(`INSERT INTO alert_channel_changes (wallet, chain_id, kind, old_chat_id, requested_at, delay_seconds, state)
+               VALUES ('${w}', 84532, 'unlink', '${i === 60 ? 'good' : 'bad' + i}', ${NOW}, ${2 * DAY}, 'pending')`);
+    }
+    const tried = new Set<string>();
+    for (let tick = 0; tick < 2; tick++) {
+      const t = NOW + tick * NOTICE_RETRY_SECONDS;
+      const d: ChannelDeps = {
+        db: d1,
+        read: reader({}),
+        now: t,
+        send: async (c) => {
+          tried.add(c);
+          return c === 'good' ? 'accepted' : 'refused';
+        },
+      };
+      await applyDueChannelChanges(d);
+    }
+    expect(tried.has('good')).toBe(true);
+    expect(db.prepare(`SELECT notified_at FROM alert_channel_changes WHERE old_chat_id = 'good'`).get()).toEqual({
+      notified_at: NOW + NOTICE_RETRY_SECONDS,
+    });
   });
 });
