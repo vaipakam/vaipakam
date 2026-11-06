@@ -35,7 +35,7 @@ describe('which step the protocol asks for', () => {
     expect(needFromAcceptCode(1)).toBe('tier');
     expect(needFromAcceptCode(2)).toBe('pair-consent');
     expect(needFromAcceptCode(3)).toBe('mid-tier-ack');
-    expect(needFromAcceptCode(4)).toBeNull();
+    expect(needFromAcceptCode(4)).toBe('pair-consent');
     expect(needFromAcceptCode(0)).toBeNull();
   });
   it('maps the create refusals by name', () => {

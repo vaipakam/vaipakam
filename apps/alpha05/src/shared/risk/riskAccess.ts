@@ -65,11 +65,12 @@ export function pairName(p: RiskPair): string {
 }
 
 /** The accept preview's codes (`previewOfferAcceptBlock`) for a block this
- *  wallet can act on. Code 4 (the signed acceptance covers it) is not a
- *  block, and the creator's own block is never this wallet's to fix. */
+ *  wallet can act on. Code 4 is the illiquid pair the acceptance's
+ *  acknowledgement once softened: a pair consent clears it, as it clears 2.
+ *  The creator's own block is never this wallet's to fix. */
 export function needFromAcceptCode(code: number): RiskNeed | null {
   if (code === 1) return 'tier';
-  if (code === 2) return 'pair-consent';
+  if (code === 2 || code === 4) return 'pair-consent';
   if (code === 3) return 'mid-tier-ack';
   return null;
 }
