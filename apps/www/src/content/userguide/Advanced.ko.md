@@ -1992,13 +1992,13 @@ Basic은 단일 값 요청을 올립니다: `amount` = `amountMax`, `interestRat
 
 ### Borrow: 범위가 있는 요청
 
-범위는 `amount`(최소)를 `amountMax`(최대)보다 작게, `interestRateBps` = `interestRateBpsMax`(하나의 이자율)로, `collateralAmount`(가장 작은 대출의 하한)를 `collateralAmountMax`(게시할 때 금고로 옮겨짐) 이하로 보냅니다. 하한이 비어 있으면 둘을 같게 보냅니다. 범위는 ERC-20 담보에서만 제공됩니다. 직접 `acceptOffer`는 `collateralAmount`를 담보로 `amount`를 `interestRateBpsMax`로 빌려주고 `collateralAmountMax − collateralAmount`를 지갑으로 돌려줍니다. `getPartialFillEnabled`가 true인 동안 `matchOffers`는 양 끝 사이에서 체결합니다. `createOffer` 모의 실행은 가장 큰 끝에서 오퍼 한도를 적용하고 `MaxLendingAboveCeiling(provided, ceiling)`으로 거부하며, 검토 화면이 그 상한을 보여 줍니다. 직접 수락 끝은 (`amount`, `collateralAmount`)에서 단일 값 요청의 두 번째 모의 실행으로 확인하고, 한도 이전에 멈춘 응답은 알 수 없음으로 표시합니다. 각 끝의 LTV는 `calculateLTV(lending, amount, collateral, collateralAmount)`이며, `ZeroCollateral`은 가치 없는 담보로 읽습니다. 표시되는 대출 시작 건전성 지수는 `getDepthTieredLtvEnabled`가 false인 동안 `getMinHealthFactor`, true인 동안 1.0입니다. 매칭은 대출자의 비례 요구량을 잠그며, 담보가 범위이면 `collateralAmount` 까지 올리고 그렇지 않으면 나머지를 환불합니다. 그래서 가장 큰 매칭은 `collateralAmountMax` 와 `collateralAmount` 두 경우 모두로 표시됩니다(담보 범위가 없으면 더 적게 잠글 수 있다고 표시). 이를 제한하는 것은 대출 시작 시점의 검사뿐이며, 그 검사를 읽지 못하면 그 사실을 표시하고 빼지 않습니다. 계층형 체계에서는 검사가 등급의 LTV 상한도 적용합니다.
+범위는 `amount`(최소)를 `amountMax`(최대)보다 작게, `interestRateBps` = `interestRateBpsMax`(하나의 이자율)로, `collateralAmount`(가장 작은 대출의 하한)를 `collateralAmountMax`(게시할 때 금고로 옮겨짐) 이하로 보냅니다. 하한이 비어 있으면 둘을 같게 보냅니다. 범위는 ERC-20 담보에서만 제공됩니다. 직접 `acceptOffer`는 `collateralAmount`를 담보로 `amount`를 `interestRateBpsMax`로 빌려주고 `collateralAmountMax − collateralAmount`를 지갑으로 돌려줍니다. `getPartialFillEnabled`가 true인 동안 `matchOffers`는 양 끝 사이에서 체결합니다. `createOffer` 모의 실행은 가장 큰 끝에서 오퍼 한도를 적용하고 `MaxLendingAboveCeiling(provided, ceiling)`으로 거부하며, 검토 화면이 그 상한을 보여 줍니다. 직접 수락 끝은 (`amount`, `collateralAmount`)에서 단일 값 요청의 두 번째 모의 실행으로 확인하고, 한도 이전에 멈춘 응답은 알 수 없음으로 표시합니다. 각 끝의 LTV는 `calculateLTV(lending, amount, collateral, collateralAmount)`이며, `ZeroCollateral`은 가치 없는 담보로 읽습니다. 표시되는 대출 시작 건전성 지수는 `getDepthTieredLtvEnabled`가 false인 동안 `getMinHealthFactor`, true인 동안 1.0입니다. 매칭은 대출자의 비례 요구량을 잠그며, 담보가 범위이면 `collateralAmount` 까지 올리고 그렇지 않으면 요구량 그대로입니다. 그래서 가장 큰 매칭은 `collateralAmountMax` 와 `collateralAmount` 두 경우 모두로 표시됩니다(담보 범위가 없으면 더 적게 잠글 수 있다고 표시). 이를 제한하는 것은 대출 시작 시점의 검사뿐이며, 그 검사를 읽지 못하면 그 사실을 표시하고 빼지 않습니다. 계층형 체계에서는 검사가 등급의 LTV 상한도 적용합니다. `getPartialFillEnabled`가 true인 동안 매칭이 잠그지 않은 담보는 이후 매칭을 위해 금고에 남으며, 요청이 닫힐 때(남은 용량이 `amount` 아래로 떨어질 때)나 `cancelOffer`가 실행될 때에만 환불됩니다.
 
 <a id="borrow-request-fill"></a>
 
 ### Borrow: 요청의 체결 방식
 
-`fillMode`는 0(Partial), 1(AON), 2(IOC) 중 하나이며 게시 후 바꿀 수 없습니다. AON은 `amount` = `amountMax`를 요구하고(`AonRequiresSingleValueAmount`), IOC는 `expiresAt` ≠ 0을 요구합니다(`IocRequiresExpiry`). 양식은 거부되는 조합을 제공하지 않습니다.
+`fillMode`는 0(Partial), 1(AON), 2(IOC) 중 하나이며 게시 후 바꿀 수 없습니다. AON은 `amount` = `amountMax`를 요구하고(`AonRequiresSingleValueAmount`), IOC는 `expiresAt` ≠ 0을 요구합니다(`IocRequiresExpiry`). 양식은 거부되는 조합을 제공하지 않습니다. 금액, 이자율, 담보는 열린 요청에서 `setOfferAmount`, `setOfferRate`, `setOfferCollateral`, `modifyOffer`로 바꿀 수 있지만 `amountFilled`나 `collateralAmountFilled` 아래로는 바꿀 수 없습니다. 이 앱은 아직 이를 호출하지 않습니다.
 
 <a id="risk-access"></a>
 

@@ -379,21 +379,22 @@ describe('what a match can lock (OFF-16)', () => {
   it('states the largest match from all the collateral to only the floor for a collateral range', () => {
     const row = requestReceipt(rangedReview(), null, copy).rows.find((x) => x.label === 'request.rowLtvLargest');
     expect(row?.value).toEqual({ kind: 'text', text: 'request.ltvSpan' });
-    expect(matchConsequences(rangedReview(), null, copy)).toEqual(['request.loseMatchLocksFloor']);
+    expect(matchConsequences(rangedReview(), null, copy)).toEqual(['request.loseMatchLocksFloor', 'request.loseMatchKeepsRest']);
   });
   it('says a match may lock less than everything without a collateral range, and warns in Basic', () => {
     const base = rangedReview({}, { largestAtFloor: null });
     const parsed = { ...base.draft.parsed, collateralFloor: base.draft.parsed.collateral };
     const r = { ...base, draft: { ...base.draft, parsed } };
     expect(requestReceipt(r, null, copy).rows.find((x) => x.label === 'request.rowLtvLargest')?.value).toEqual({ kind: 'text', text: 'request.ltvAllLocked' });
-    expect(matchConsequences(r, null, copy)).toEqual(['request.loseMatchLocksLess']);
+    expect(matchConsequences(r, null, copy)).toEqual(['request.loseMatchLocksLess', 'request.loseMatchKeepsRest']);
     // A single-value request can be matched too, so the warning is not a range's alone.
     expect(requestReceipt(review(), null, copy).consequences).toContain('request.loseMatchLocksLess');
   });
-  it('drops the warning only where no match can fill it or no loan-to-value applies', () => {
+  it('drops the risk warning where no loan-to-value applies, and both only where no match can fill it', () => {
     expect(matchConsequences(review({ risk: { ...review().risk, partialFill: false } }), null, copy)).toEqual([]);
-    expect(matchConsequences(review({ risk: { ...review().risk, start: { kind: 'none' } } }), null, copy)).toEqual([]);
-    expect(matchConsequences(review({ risk: { ...review().risk, partialFill: null } }), null, copy)).toEqual(['request.loseMatchLocksLess']);
+    // An unpriced pair has no loan-to-value, but a match still keeps the rest committed to the request.
+    expect(matchConsequences(review({ risk: { ...review().risk, start: { kind: 'none' } } }), null, copy)).toEqual(['request.loseMatchKeepsRest']);
+    expect(matchConsequences(review({ risk: { ...review().risk, partialFill: null } }), null, copy)).toEqual(['request.loseMatchLocksLess', 'request.loseMatchKeepsRest']);
   });
   it('states a start-of-loan limit that could not be read, never dropping the row', () => {
     const unread = requestReceipt(review({ risk: { ...review().risk, start: { kind: 'unread' } } }), null, copy, true);

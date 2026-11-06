@@ -108,7 +108,14 @@ test('a ranged request posts both ends, the floor and the fill mode, with the ri
     await expect(receipt).toContainText('You owe at the due date on the largest loan a match can make');
     // Advanced detail: the health factor a loan must start at, read live.
     await expect(receipt).toContainText(/At least \d+\.\d\d, read now/);
-    await expect(receipt).toContainText('The range and the fill mode cannot be changed after posting');
+    // Only the fill mode is fixed: the protocol lets an open request's
+    // amounts, rate and collateral change, which this app does not offer yet.
+    await expect(receipt).toContainText('The fill mode cannot be changed after posting');
+    await expect(receipt).toContainText('but this app does not offer that yet');
+    // While matching is on, the collateral a match leaves stays with the request.
+    const keepsRest = 'comes back to your wallet only when the request closes or you cancel it';
+    if (matching) await expect(receipt).toContainText(keepsRest);
+    else await expect(receipt).not.toContainText(keepsRest);
     await expect(receipt).not.toContainText('a lender cannot take this directly');
     // The approval covers everything posted, not the floor.
     await expect(receipt).toContainText('Exactly 2000');

@@ -572,20 +572,28 @@ export function requestReceipt(r: RequestReview, meta: TokenMetaMap | null, copy
 
 /**
  * OFF-16 — what a match can do that a direct take cannot, tier A and in
- * Basic: it locks only the collateral its lender asks for (at least the
- * floor for a collateral range; otherwise only the requirement, with the
- * rest sent back), so a matched loan can start riskier than the figures
- * shown, bounded only by the protocol's start-of-loan limit. Stated for a
- * priced pair while matching is on or not known to be off; with an unpriced
- * leg no loan-to-value applies.
+ * Basic, for ERC-20 collateral while matching is on or not known to be off.
+ * A match locks only the collateral its lender asks for (at least the floor
+ * for a collateral range; otherwise only the requirement), so for a priced
+ * pair a matched loan can start riskier than the figures shown, bounded only
+ * by the protocol's start-of-loan limit (with an unpriced leg no
+ * loan-to-value applies). Whatever the pair, the collateral a match does not
+ * lock stays committed to the request for later matches: the protocol
+ * returns it only when the request closes or is cancelled, never per match.
  */
 export function matchConsequences(r: RequestReview, meta: TokenMetaMap | null, copy: Pick<CopyAccess, 'text' | 'format'>): string[] {
   const { parsed, pair } = r.draft;
-  if (r.risk.start.kind === 'none' || r.risk.partialFill === false || r.holding.kind !== 'erc20') return [];
-  if (parsed.collateralFloor < parsed.collateral) {
-    return [copy.format('request.loseMatchLocksFloor', { floor: tokenAmount(parsed.collateralFloor, pair.collateral, meta, copy.format) })];
+  if (r.risk.partialFill === false || r.holding.kind !== 'erc20') return [];
+  const out: string[] = [];
+  if (r.risk.start.kind !== 'none') {
+    out.push(
+      parsed.collateralFloor < parsed.collateral
+        ? copy.format('request.loseMatchLocksFloor', { floor: tokenAmount(parsed.collateralFloor, pair.collateral, meta, copy.format) })
+        : copy.text('request.loseMatchLocksLess'),
+    );
   }
-  return [copy.text('request.loseMatchLocksLess')];
+  out.push(copy.text('request.loseMatchKeepsRest'));
+  return out;
 }
 
 /** OFF-10 / OFF-11 / OFF-16 — what a range and a fill mode add to the
