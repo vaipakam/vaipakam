@@ -2175,6 +2175,12 @@ Basic एकल-मान अनुरोध पोस्ट करता है
 
 समीक्षा वॉलेट से `createOffer` का सिमुलेशन करती है और दोनों वर्ग, `getEffectiveGraceSeconds(durationDays)`, `getLoanInitiationFeeBps`, अधिकतम अवधि, वॉलेट का वॉल्ट, बैलेंस और अलाउंस, और दोनों पक्ष लिक्विड हों तो `calculateLTV` पढ़ती है; हर ब्लॉक और वॉलेट खुलने से ठीक पहले यह फिर पढ़ी जाती है। अलाउंस कम रहने तक सिमुलेशन केवल कोलैटरल खींचने तक पहुँचता है, इसलिए टोकन की खींचने की त्रुटि या बिना प्रोटोकॉल त्रुटि-नाम वाला revert पूरी करनी वाली मंज़ूरी के रूप में दिखता है, और नामित प्रोटोकॉल त्रुटि अस्वीकृति है। सटीक मंज़ूरी के बाद `createOffer` का फिर सिमुलेशन होता है और उसे भेजा जाता है; मंज़ूरी के बाद रुकने पर, अगर कुछ और न बदला हो, अलाउंस पिछले मान पर लौटाया जाता है। परिणाम इस वॉलेट के `OfferCreated` और वॉल्ट में कोलैटरल के `Transfer` से पढ़ा जाता है।
 
+<a id="risk-access"></a>
+
+### Risk Access: आपका जोखिम स्तर
+
+स्विच `getRiskAccessGateEnabled` है। किसी प्रवाह को कौन-सा कदम चाहिए, यह प्रोटोकॉल का अपना उत्तर है: स्वीकृति के लिए `previewOfferAcceptBlock` (1 = स्तर बहुत कम, 2 = जोड़ी सहमति, 3 = सख़्त मोड स्वीकृति, 4 = स्वीकृति की अपनी स्वीकारोक्ति से कवर, एक चेतावनी, रुकावट नहीं), जब `previewCreatorBlock` दिखाए कि ऋणदाता रुका नहीं है; अनुरोध के लिए `createOffer` के ड्राई रन का `RiskTierTooLow`, `IlliquidPairNotConsented` या `MidTierPairNotAcknowledged`। कदम एक ही ब्लॉक में पढ़ता है: जोड़ी के लिए `pairRequiredRiskLevel` (ऑफ़र के लिए `acceptMidTierAckPair`), `getVaultRiskTier`, `getEffectiveRiskTier`, `getCurrentRiskTermsVersion` के सामने `getVaultRiskTierVersion`, `getRiskTierUnlockAt`, `getRiskAccessUnlockCooldown` और `getRiskTierMutationNonce`, और जोड़ी के लिए `hasIlliquidPairConsent` के साथ `isPairConsentPending`, या `midTierStrictBlocked` के साथ `isMidTierAckPending`। स्तर बढ़ाना `setVaultRiskTierChecked(level, nonce, termsVersion)` है, जोड़ी की ज़रूरत के न्यूनतम स्तर तक, इसलिए समीक्षा के बाद कोई और स्तर-लेखन या शर्तों का बदलाव आ गया हो तो यह बिना कुछ बदले अस्वीकार होता है। जोड़ी का कदम `setIlliquidPairConsent(pair, true)` या `setMidTierPairAck(pair)` है। प्रतीक्षा में चल रही वृद्धि या लंबित जोड़ी कदम दोबारा नहीं दिया जाता। कोई रीड यह नहीं बताता कि लंबित जोड़ी कदम कब प्रभावी होगा, इसलिए ऐप वह समय केवल इस सत्र में दर्ज कदम के लिए दिखाता है (रसीद के ब्लॉक का समय और प्रतीक्षा अवधि), वरना बताता है कि वह इसे नहीं पढ़ सकता। परिणाम रसीद के ब्लॉक पर वापस पढ़ा जाता है।
+
 <a id="terms-gate"></a>
 
 ### शर्तों की पुष्टि

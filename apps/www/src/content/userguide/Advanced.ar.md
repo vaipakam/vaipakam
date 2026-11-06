@@ -1987,6 +1987,12 @@ fallback، موعد غير مقروء، يستحق خلال ثلاثة أيام�
 
 تحاكي المراجعة `createOffer` من المحفظة وتقرأ فئتي الجانبين، و`getEffectiveGraceSeconds(durationDays)`، و`getLoanInitiationFeeBps`، وأطول مدة، وخزنة المحفظة ورصيدها وسماحها، و`calculateLTV` حين يكون الجانبان سائلين؛ وتُقرأ من جديد في كل كتلة وقبيل فتح المحفظة. ما دام السماح ناقصًا لا تبلغ المحاكاة إلا سحب الضمان، فيُعرض خطأ السحب من الرمز أو أي ارتداد بلا اسم خطأ من البروتوكول على أنه الموافقة المطلوبة، ويُعد خطأ البروتوكول المسمّى رفضًا. بعد موافقة بالمقدار الدقيق تُحاكى `createOffer` مجددًا ثم تُرسل؛ وإذا توقف الأمر بعد الموافقة يُعاد السماح إلى قيمته السابقة ما لم يغيّره شيء آخر. تُقرأ النتيجة من `OfferCreated` لهذه المحفظة ومن `Transfer` الضمان إلى الخزنة.
 
+<a id="risk-access"></a>
+
+### Risk Access: مستوى المخاطرة لديك
+
+المفتاح هو `getRiskAccessGateEnabled`. الخطوة التي يحتاجها مسار ما هي إجابة البروتوكول نفسه: عند القبول، `previewOfferAcceptBlock` (1 = المستوى منخفض جدًا، 2 = موافقة على الزوج، 3 = إقرار الوضع الصارم، 4 = يغطيه إقرار القبول نفسه، وهو تنبيه وليس حظرًا) بعد أن يُظهر `previewCreatorBlock` أن المُقرض غير محظور؛ وعند الطلب، `RiskTierTooLow` أو `IlliquidPairNotConsented` أو `MidTierPairNotAcknowledged` من التشغيل التجريبي لـ `createOffer`. تقرأ الخطوة في كتلة واحدة `pairRequiredRiskLevel` للزوج (`acceptMidTierAckPair` للعرض)، و`getVaultRiskTier`، و`getEffectiveRiskTier`، و`getVaultRiskTierVersion` مقابل `getCurrentRiskTermsVersion`، و`getRiskTierUnlockAt`، و`getRiskAccessUnlockCooldown`، و`getRiskTierMutationNonce`، وللزوج `isPairConsentPending` مع `hasIlliquidPairConsent`، أو `isMidTierAckPending` مع `midTierStrictBlocked`. الرفع هو `setVaultRiskTierChecked(level, nonce, termsVersion)` إلى أدنى مستوى يحتاجه الزوج، فيُرفض دون أي تغيير إذا وصل بعد المراجعة تعديل آخر للمستوى أو تغيير في الشروط. خطوة الزوج هي `setIlliquidPairConsent(pair, true)` أو `setMidTierPairAck(pair)`. لا يُعرض مجددًا رفع ما زال في فترة الانتظار، ولا خطوة زوج ما زالت معلّقة. لا توجد قراءة تُرجع متى تسري خطوة زوج معلّقة، لذا يعرض التطبيق ذلك الوقت فقط لخطوة سجّلها في هذه الجلسة (وقت كتلة الإيصال مضافًا إليه فترة الانتظار)، وإلا يقول إنه لا يستطيع قراءته. تُقرأ النتيجة مجددًا عند كتلة الإيصال.
+
 <a id="terms-gate"></a>
 
 ### طلب قبول الشروط

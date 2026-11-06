@@ -1134,6 +1134,12 @@ Un prestamista toma el importe completo, o nadie lo toma. Cada cifra se lee exac
 
 Antes de que se abra tu wallet, la app pide al protocolo que pruebe tu solicitud como simulación, así que la revisión muestra la respuesta del propio protocolo. Indica lo que bloqueas ahora, el importe, la tasa y el plazo, lo que recibirías y cómo se fija la comisión (la tasa de comisión vigente cuando un prestamista la acepte, menos tu nivel de descuento de comisiones en ese momento; la cifra mostrada usa la tasa de hoy), lo que deberías, cada condición del préstamo, cuándo vence la solicitud, la relación préstamo-valor y si hace falta una aprobación. Marcas una casilla para aceptar las Divulgaciones de riesgos y los Términos. Tu wallet aprueba exactamente la garantía si hace falta, la app vuelve a probar la solicitud y solo entonces la publica. Si se detiene tras una aprobación, la app pide restablecerla y dice si lo logró. Después, la app comprueba en la cadena la solicitud registrada y la garantía bloqueada.
 
+<a id="risk-access"></a>
+
+### Risk Access: tu nivel de riesgo
+
+Toda cuenta empieza en el nivel de riesgo más bajo, solo activos blue-chip, y solo tú puedes subirlo. Un par necesita el nivel de su token más arriesgado: los tokens blue-chip no necesitan nada, otros tokens líquidos necesitan «Activos líquidos» y un token ilíquido necesita «Cualquier activo, incluidos los ilíquidos» más tu acuerdo con ese par exacto. Cuando aceptar una oferta o publicar una solicitud necesita un paso así, la revisión lo dice en el mismo lugar y lo ofrece como una sola confirmación en la billetera con su propio recibo: qué cambia, a qué pares alcanza, cuándo entra en vigor y que no se mueven fondos. Subir tu nivel, o aceptar un par, puede esperar un periodo que fija el protocolo; la app muestra entonces la hora en que entra en vigor, leída de la cadena, y nunca ofrece el mismo paso dos veces, porque un segundo reiniciaría la espera. Bajar tu nivel siempre surte efecto al instante. Cuando el protocolo publica nuevos términos de riesgo, tu nivel y tus acuerdos dejan de contar hasta que los confirmes de nuevo. Si activaste el modo estricto, cada par líquido también necesita tu reconocimiento. Un bloqueo que viene del nivel de riesgo del prestamista se muestra como suyo: nada en tu cuenta lo cambiaría.
+
 <a id="terms-gate"></a>
 
 ### El aviso de los Términos

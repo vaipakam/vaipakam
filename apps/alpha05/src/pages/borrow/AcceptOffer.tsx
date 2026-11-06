@@ -26,6 +26,8 @@ import type { LegOutcome } from '../../shared/tx/outcome';
 import { ActionFlow, reviewIdentity, type Recheck } from '../../shared/ui/ActionFlow';
 import { Notice } from '../../shared/ui/Notice';
 import { shortAddress } from '../../shared/ui/format';
+import { needFromAcceptCode, type RiskNeed } from '../../shared/risk/riskAccess';
+import { RiskGate, RiskStepFlow } from '../../shared/risk/RiskAccessStep';
 import { acceptReceipt, changedBetween, promptCount, readAcceptReview, reviewBlockers, type AcceptReview } from './acceptReview';
 
 type Hex = `0x${string}`;
@@ -71,6 +73,8 @@ export function AcceptOffer({ offerId, chain, own, meta, terms, onClose }: Accep
    *  read is a new set of figures, so the consent does not carry over. */
   const [consentFor, setConsentFor] = useStoredValue<number>(`${ACCEPT_KEY}:consent`);
   const [loanId, setLoanId] = useStoredValue<bigint>(`${ACCEPT_KEY}:loan`);
+  /** The risk-access step open in the review's place, if any (ACC-RISK). */
+  const [riskOpen, setRiskOpen] = useStoredValue<RiskNeed>(`${ACCEPT_KEY}:risk`);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [step, setStep] = useState<string | null>(null);
   /** The approval this flow made and has not yet seen used or put back: a
@@ -338,6 +342,7 @@ export function AcceptOffer({ offerId, chain, own, meta, terms, onClose }: Accep
       setReview(null);
       setConsentFor(null);
       setLoanId(null);
+      setRiskOpen(null);
       let live = true;
       readAcceptReview(own, diamond, offerId, identity).then(
         (next) => {
@@ -395,6 +400,12 @@ export function AcceptOffer({ offerId, chain, own, meta, terms, onClose }: Accep
   const consented = review !== null && consentFor === review.readAt;
   const termsLink = terms && terms.kind !== 'none' ? termsUrl(terms.version) : `${GUIDE_ORIGIN}/terms`;
   const riskLink = guideUrl(mode, 'borrow-risks');
+  // A risk-access block this wallet can clear itself: never the lender's own
+  // (the protocol answers the creator's block first), and the step is the one
+  // the protocol's answer names.
+  const riskNeed = review !== null && review.creatorGate === 0 ? needFromAcceptCode(review.gate) : null;
+  const symbol = (a: Hex) => meta?.[a.toLowerCase()]?.symbol ?? shortAddress(a);
+  const pairLabel = review ? format('risk.pairName', { lend: symbol(review.offer.lendingAsset), coll: symbol(review.offer.collateralAsset) }) : '';
 
   const gate = review
     ? {
@@ -406,6 +417,9 @@ export function AcceptOffer({ offerId, chain, own, meta, terms, onClose }: Accep
                 {b}
               </Notice>
             ))}
+            {riskNeed !== null && (
+              <RiskGate chain={chain} own={own} need={riskNeed} source={{ kind: 'offer', offerId }} pairLabel={pairLabel} onOpen={() => setRiskOpen(riskNeed)} />
+            )}
             {review.consent === false && <p className="tier-b">{text('accept.feeOff')}</p>}
             <WhyLink summaryKey="accept.feeSummary" detailKey="accept.feeWhy" />
             <WhyLink summaryKey="accept.signSummary" detailKey="accept.signWhy" />
@@ -443,6 +457,7 @@ export function AcceptOffer({ offerId, chain, own, meta, terms, onClose }: Accep
     setConsentFor(null);
     setLoanId(null);
     setStep(null);
+    setRiskOpen(null);
     onClose();
   };
 
@@ -456,26 +471,41 @@ export function AcceptOffer({ offerId, chain, own, meta, terms, onClose }: Accep
           </button>
         </Notice>
       )}
-      <ActionFlow
-        tx={tx}
-        identity={identity}
-        reviewedFor={review?.identity ?? tx.frozen?.identity ?? identity}
-        receipt={review ? acceptReceipt(review, meta, copy) : null}
-        recheck={recheck}
-        describeAsset={describeAsset}
-        explorer={chain.blockExplorer}
-        next={
-          loanId !== null
-            ? {
-                label: format('accept.openLoan', { id: loanId.toString() }),
-                to: `/positions/${loanId.toString()}`,
-              }
-            : null
-        }
-        gate={gate}
-        signingNote={step}
-        onClose={close}
-      />
+      {riskOpen !== null && review !== null ? (
+        <RiskStepFlow
+          chain={chain}
+          own={own}
+          need={riskOpen}
+          source={{ kind: 'offer', offerId }}
+          pairLabel={pairLabel}
+          flowKey={ACCEPT_KEY}
+          onBack={() => {
+            setRiskOpen(null);
+            void load();
+          }}
+        />
+      ) : (
+        <ActionFlow
+          tx={tx}
+          identity={identity}
+          reviewedFor={review?.identity ?? tx.frozen?.identity ?? identity}
+          receipt={review ? acceptReceipt(review, meta, copy) : null}
+          recheck={recheck}
+          describeAsset={describeAsset}
+          explorer={chain.blockExplorer}
+          next={
+            loanId !== null
+              ? {
+                  label: format('accept.openLoan', { id: loanId.toString() }),
+                  to: `/positions/${loanId.toString()}`,
+                }
+              : null
+          }
+          gate={gate}
+          signingNote={step}
+          onClose={close}
+        />
+      )}
     </div>
   );
 }

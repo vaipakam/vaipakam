@@ -46,7 +46,7 @@ function review(over: Partial<AcceptReview> = {}): AcceptReview {
 describe('reviewBlockers', () => {
   it("names a lender-side risk block as the lender's, never as this wallet's setting", () => {
     expect(reviewBlockers(review({ gate: 2, creatorGate: 2 }), null, copy)).toEqual(['accept.blockCreatorGate']);
-    expect(reviewBlockers(review({ gate: 1, creatorGate: 0 }), null, copy)).toEqual(['accept.blockGate1']);
+    expect(reviewBlockers(review({ gate: 1, creatorGate: 0 }), null, copy)).toEqual(['risk.blockTier']);
     expect(reviewBlockers(review(), null, copy)).toEqual([]);
   });
 });

@@ -2468,6 +2468,12 @@ Basic posts a single-value request: `amount` = `amountMax`, `interestRateBps` = 
 
 The review simulates `createOffer` from the wallet and reads both classes, `getEffectiveGraceSeconds(durationDays)`, `getLoanInitiationFeeBps`, the maximum term, the wallet's vault, balance and allowance, and `calculateLTV` when both legs are liquid; it is read again every block and right before the wallet opens. While the allowance is short the simulation can only reach the collateral pull, so a token's pull error or a revert without a protocol error name is shown as the approval to clear, and a named protocol error is a refusal. After an exact approval `createOffer` is simulated again and sent; a stop after the approval resets the allowance to its earlier value when nothing else changed it. The outcome reads `OfferCreated` for this wallet and the collateral `Transfer` into the vault.
 
+<a id="risk-access"></a>
+
+### Risk Access: Your Risk Level
+
+The gate is `getRiskAccessGateEnabled`. Which step a flow needs is the protocol's own answer: for an acceptance, `previewOfferAcceptBlock` (1 = level too low, 2 = pair consent, 3 = strict-mode acknowledgement, 4 = covered by the acceptance's own acknowledgement, a warning and not a block) once `previewCreatorBlock` shows the lender is not blocked; for a request, the `createOffer` dry run's `RiskTierTooLow`, `IlliquidPairNotConsented` or `MidTierPairNotAcknowledged`. The step reads in one block `pairRequiredRiskLevel` for the pair (`acceptMidTierAckPair` for an offer), `getVaultRiskTier`, `getEffectiveRiskTier`, `getVaultRiskTierVersion` against `getCurrentRiskTermsVersion`, `getRiskTierUnlockAt`, `getRiskAccessUnlockCooldown` and `getRiskTierMutationNonce`, and for a pair `isPairConsentPending` with `hasIlliquidPairConsent`, or `isMidTierAckPending` with `midTierStrictBlocked`. A raise is `setVaultRiskTierChecked(level, nonce, termsVersion)` to the least level the pair needs, so it is refused, changing nothing, if another tier write or a terms change landed after the review. A pair step is `setIlliquidPairConsent(pair, true)` or `setMidTierPairAck(pair)`. A raise still cooling down, or a pair step still pending, is not offered again. No read returns when a pending pair step takes effect, so the app shows that time only for a step it recorded in this session (the receipt block's time plus the cooldown) and otherwise says it cannot read it. The outcome is read back at the receipt's block.
+
 <a id="terms-gate"></a>
 
 ### The Terms Prompt
