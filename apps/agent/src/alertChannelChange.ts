@@ -390,12 +390,19 @@ async function readChanges(
  *  when nothing changed (cancelled or applied meanwhile, or, for a move, the
  *  chat it moves away from is no longer the linked one). */
 export async function applyChange(db: D1Database, c: PendingChange, now: number): Promise<boolean> {
-  // The mark goes first and the row updates are guarded on it, so a change
-  // cancelled between the read and this batch changes nothing. Both kinds act
-  // only while the old chat is still the linked one: anything else means a
-  // later immediate change already decided the row.
-  const applied = `EXISTS (SELECT 1 FROM alert_channel_changes WHERE id = ? AND state = 'applied' AND closed_at = ?)`;
+  // The batch opens with a guard that FAILS unless this change is still
+  // pending, so the whole batch, mark and row updates alike, is this pass's
+  // claim on the change: a second pass that read the same due change (or a
+  // CANCEL that landed meanwhile) aborts it and writes nothing, whatever the
+  // timestamps. Both kinds act only while the old chat is still the linked
+  // one: anything else means a later immediate change already decided it.
   const stmts: D1PreparedStatement[] = [
+    db
+      .prepare(
+        `SELECT json(CASE WHEN EXISTS (SELECT 1 FROM alert_channel_changes WHERE id = ? AND state = 'pending')
+           THEN '0' ELSE 'alert-chat-state-moved' END) AS state_guard`,
+      )
+      .bind(c.id),
     db
       .prepare(`UPDATE alert_channel_changes SET state = 'applied', closed_at = ? WHERE id = ? AND state = 'pending'`)
       .bind(now, c.id),
@@ -405,28 +412,34 @@ export async function applyChange(db: D1Database, c: PendingChange, now: number)
       db
         .prepare(
           `UPDATE user_thresholds SET tg_chat_id = NULL, updated_at = ?
-            WHERE wallet = ? AND chain_id = ? AND tg_chat_id = ? AND ${applied}`,
+            WHERE wallet = ? AND chain_id = ? AND tg_chat_id = ?`,
         )
-        .bind(now, c.wallet, c.chainId, c.oldChatId, c.id, now),
+        .bind(now, c.wallet, c.chainId, c.oldChatId),
       // As the immediate unlink does: an unexpired handshake code for the row
       // could otherwise re-link it at once.
-      db
-        .prepare(`DELETE FROM telegram_links WHERE wallet = ? AND chain_id = ? AND ${applied}`)
-        .bind(c.wallet, c.chainId, c.id, now),
+      db.prepare(`DELETE FROM telegram_links WHERE wallet = ? AND chain_id = ?`).bind(c.wallet, c.chainId),
     );
   } else {
     stmts.push(
       db
         .prepare(
           `UPDATE user_thresholds SET tg_chat_id = ?, updated_at = ?
-            WHERE wallet = ? AND chain_id = ? AND tg_chat_id = ? AND ${applied}`,
+            WHERE wallet = ? AND chain_id = ? AND tg_chat_id = ?`,
         )
-        .bind(c.newChatId, now, c.wallet, c.chainId, c.oldChatId, c.id, now),
+        .bind(c.newChatId, now, c.wallet, c.chainId, c.oldChatId),
     );
   }
-  const results = await db.batch(stmts);
-  const changes = (i: number) => Number((results[i] as { meta?: { changes?: number } })?.meta?.changes ?? 0);
-  return changes(0) > 0 && changes(1) > 0;
+  let results: D1Result[];
+  try {
+    results = await db.batch(stmts);
+  } catch (err) {
+    // Not pending any more: another pass applied it, or it was cancelled.
+    if (isStateGuardFailure(err)) return false;
+    throw err;
+  }
+  // Applied only when the chat row actually changed (the old chat was still
+  // the linked one).
+  return Number(results[2]?.meta?.changes ?? 0) > 0;
 }
 
 /** Drop closed rows older than the retention window. */

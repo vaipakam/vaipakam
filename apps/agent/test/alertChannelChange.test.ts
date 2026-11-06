@@ -17,7 +17,7 @@ import {
   type ChannelDeps,
   type SendOutcome,
 } from '../src/alertChannelFlow';
-import { MAX_PROTECTED_DELAY_SECONDS, type ProtectionReader } from '../src/alertChannelChange';
+import { MAX_PROTECTED_DELAY_SECONDS, applyChange, dueChanges, type ProtectionReader } from '../src/alertChannelChange';
 import { linkTelegramStatement } from '../src/db';
 
 type SqlValue = number | string | null;
@@ -446,5 +446,19 @@ describe('applyDueChannelChanges', () => {
       { old_chat_id: '55', new_chat_id: '77', state: 'pending' },
     ]);
     expect(sent.map((m) => m.chat)).toEqual(['55', '77']);
+  });
+
+  it('a second pass that read the same due change writes nothing, even in the same second', async () => {
+    const { db, d1 } = sqliteD1();
+    db.exec(`INSERT INTO user_thresholds (wallet, chain_id, tg_chat_id, locale, updated_at) VALUES ('${W}', 84532, '42', 'en', 0)`);
+    const r = reader({ 84532: { enabled: true, delaySeconds: 2 * DAY } });
+    await requestUnlink(deps(d1, r).d, W, null);
+    const due = await dueChanges(d1, NOW + 2 * DAY);
+    expect(due).toHaveLength(1);
+    expect(await applyChange(d1, due[0]!, NOW + 2 * DAY)).toBe(true);
+    // The owner links the same chat again before the second pass runs.
+    db.exec(`UPDATE user_thresholds SET tg_chat_id = '42'`);
+    expect(await applyChange(d1, due[0]!, NOW + 2 * DAY)).toBe(false);
+    expect(chat(db, 84532)).toBe('42');
   });
 });
