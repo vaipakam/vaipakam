@@ -39,14 +39,11 @@ contract RiskPreviewFacet {
     ///         `OfferAcceptFacet.previewAccept`'s dry-run (Codex #729 r3 finding
     ///         C; sale-offer handling r4): returns the FIRST failing block code.
     /// @return 0 = OK (or gate off), 1 = tier too low,
-    ///         2 = illiquid pair needs standing consent (the acceptor's #662 ack
-    ///             cannot cover it — a creator-side gap, a rental-prepay / derived-
-    ///             tier-0 leg, or a stale tier anchor),
-    ///         3 = strict-mode mid-tier pair needs a fresh explicit ack (PR-2d),
-    ///         4 = #735 — illiquid pair, but the ACCEPTOR's standard #662
-    ///             acknowledgement (always produced by the accept-signing flow)
-    ///             WILL clear it at sign-time; a SOFT warning the dapp proceeds
-    ///             past, NOT a hard block.
+    ///         2 = illiquid pair needs a standing consent that is not yet
+    ///             armed (record it, then wait the unlock cooldown),
+    ///         3 = strict-mode mid-tier pair needs a fresh explicit ack (PR-2d).
+    ///         Code 4 (the #735 "the accept acknowledgement will cover it" soft
+    ///         warning) was retired by #3231 and is never returned.
     /// @dev    The WHOLE decision lives HERE, not in OfferAcceptFacet: that facet
     ///         sits at the EIP-170 ceiling, and the classification chain
     ///         (`previewActorBlock` → `_pairRequiredLevel` → `_isBlueChip` …) is
@@ -55,15 +52,10 @@ contract RiskPreviewFacet {
     ///         two-way branch. Builds the PairId the SAME way the matching accept
     ///         gate does so the preview and the gate classify identically.
     ///
-    ///         #735 item 1 — the ACCEPTOR leg is evaluated ack-AWARE
-    ///         (`previewAcceptorBlockAckAware`): an accept always carries the
-    ///         acceptor's #662 ack, so modeling it lets the dapp soft-warn (code 4)
-    ///         on the common illiquid-accept the ack self-heals instead of hard-
-    ///         blocking every illiquid pair. The CREATOR leg stays standing-consent
-    ///         only (it authors no accept ack — see `previewActorBlock`), and the
-    ///         lender-sale-vehicle branch stays conservative (the buyer's #662 ack
-    ///         is derived from the sale offer, not the linked loan's pair, so
-    ///         softening it is out of scope here — never a false soften).
+    ///         Every party is read against STANDING consent only (#3231): the
+    ///         gate no longer lets the acceptor's #662 accept acknowledgement
+    ///         stand in for an illiquid pair consent, so there is no soft code
+    ///         to model and the preview reports exactly what the gate enforces.
     ///
     ///         Two shapes (mirroring `LoanFacet._maybeRunInitialRiskGates`):
     ///          - **lender-sale vehicle** (`saleOfferToLoanId[offerId] != 0`): the
@@ -87,13 +79,11 @@ contract RiskPreviewFacet {
             return LibRiskAccess.previewActorBlock(s, acceptor, pair);
         }
         // Normal offer: the creator is re-gated against the LIVE state, then the
-        // acceptor — ack-aware (#735 item 1): an accept always carries the
-        // acceptor's #662 ack, so an illiquid pair the ack self-heals reports code
-        // 4 (soft) instead of code 2 (hard).
+        // acceptor, both against standing consent (#3231).
         uint8 creatorBlock =
             LibRiskAccess.previewActorBlock(s, s.offers[offerId].creator, pair);
         if (creatorBlock != 0) return creatorBlock;
-        return LibRiskAccess.previewAcceptorBlockAckAware(s, acceptor, pair);
+        return LibRiskAccess.previewActorBlock(s, acceptor, pair);
     }
 
     /// @notice #735 item 3 — the risk-gate block code the OFFER CREATOR faces for

@@ -276,7 +276,11 @@ export function useAcceptTermsSigning() {
           args: [input.offerId, address],
           blockNumber: gateProbeBlock,
         })) as number | bigint;
-        if (Number(gateBlock) !== 0 && Number(gateBlock) !== 4) {
+        // #3231 — every non-zero code blocks. The retired code 4 ("the accept
+        // acknowledgement will cover it") is blocking too: an illiquid pair
+        // needs a standing consent armed before the deal, and a Diamond that
+        // still returns 4 has not been refreshed past #3231 yet.
+        if (Number(gateBlock) !== 0) {
           // Codex #1517 r4 — the combined preview reports the CREATOR's
           // block first (RiskPreviewFacet.previewOfferAcceptBlock), so
           // disambiguate with the creator-only preview before wording
