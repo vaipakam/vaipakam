@@ -14,7 +14,7 @@
  * `measured` is (RB-FUNDS). A submitted hash is never dropped from the
  * phase: a page can always show and reconcile it.
  */
-import type { MeasuredOutcome, SupersededReason, TxPhase } from './outcome';
+import type { LegOutcome, MeasuredOutcome, SupersededReason, TxPhase } from './outcome';
 
 export type TxEvent =
   | { type: 'review' }
@@ -23,7 +23,7 @@ export type TxEvent =
   /** `submittedHash` names the transaction this flow sent; `hash` the one
    *  that mined. They may differ only with `repriced`. */
   | { type: 'mined'; submittedHash: `0x${string}`; hash: `0x${string}`; repriced: boolean; blockNumber: bigint; reverted: boolean }
-  | { type: 'superseded'; submittedHash: `0x${string}`; minedHash: `0x${string}`; reason: SupersededReason; blockNumber: bigint }
+  | { type: 'superseded'; submittedHash: `0x${string}`; minedHash: `0x${string}`; reason: SupersededReason; blockNumber: bigint; unwound?: LegOutcome | null }
   | { type: 'measured'; hash: `0x${string}`; outcome: MeasuredOutcome }
   | { type: 'receipt-unknown'; hash: `0x${string}`; message: string }
   /** Track a `receipt-unknown` hash again: back to `submitted`, in flight. */
@@ -73,7 +73,14 @@ export function transition(phase: TxPhase, event: TxEvent): TxPhase {
       const mined = minedFrom(phase.hash, event);
       if (mined) return mined;
       if (event.type === 'superseded' && event.submittedHash === phase.hash && event.minedHash !== phase.hash) {
-        return { kind: 'superseded', submittedHash: event.submittedHash, minedHash: event.minedHash, reason: event.reason, blockNumber: event.blockNumber };
+        return {
+          kind: 'superseded',
+          submittedHash: event.submittedHash,
+          minedHash: event.minedHash,
+          reason: event.reason,
+          blockNumber: event.blockNumber,
+          unwound: event.unwound ?? null,
+        };
       }
       if (event.type === 'receipt-unknown' && event.hash === phase.hash) return { kind: 'receipt-unknown', hash: event.hash, at: phase.at, message: event.message };
       if (event.type === 'resume' && phase.kind === 'receipt-unknown' && event.hash === phase.hash) return { kind: 'submitted', hash: phase.hash, at: phase.at };

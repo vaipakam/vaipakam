@@ -229,20 +229,23 @@ export function AcceptOffer({ offerId, chain, own, meta, terms, onClose }: Accep
         );
       }
     },
+    // A sent acceptance that did not take effect (it reverted because
+    // someone took the offer first, or the wallet cancelled or replaced it)
+    // used none of the approval this flow made: the tracker runs this to put
+    // it back, and the outcome says whether that happened.
+    unwind: async () => {
+      const left = approvalLeft.current;
+      approvalLeft.current = null;
+      if (!left) return null;
+      const after = await putBack(left.token, left.prior, left.amount);
+      const label = format('accept.legApprovalBack', { amount: amt(left.token, left.prior) });
+      return after.ok ? { status: 'done', label } : { status: 'not-done', label, reason: after.sentence };
+    },
     measure: async (receipt, at) => {
       if (!review) return [];
       const r = review;
       const f = acceptFigures(r.preview, r.offer.durationDays, r.matcherBps);
       const legs: LegOutcome[] = [];
-      // A submitted acceptance that reverted (someone took the offer first)
-      // used none of the approval this flow made: put it back, and say so.
-      const left = approvalLeft.current;
-      approvalLeft.current = null;
-      if (receipt.status === 'reverted' && left) {
-        const after = await putBack(left.token, left.prior, left.amount);
-        const label = format('accept.legApprovalBack', { amount: amt(left.token, left.prior) });
-        legs.push(after.ok ? { status: 'done', label } : { status: 'not-done', label, reason: after.sentence });
-      }
       const opened = openedLoan(receipt.logs, diamond, offerId, account);
       if (opened) {
         setLoanId(opened.loanId);

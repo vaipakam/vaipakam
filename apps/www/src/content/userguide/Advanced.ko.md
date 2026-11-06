@@ -1950,7 +1950,7 @@ Borrow는 ERC-20 담보에 대한 ERC-20 대출자 오퍼(`offerType` 0)를 `acc
 
 ### Borrow: 검토와 서명
 
-검토는 오퍼, 그 상태, `previewAccept`, `getOfferLinkedLoanId`, `getCurrentRiskTermsHash`, 두 분류, `getEffectiveGraceSeconds(durationDays)`, `getLoanInitiationFeeBps`, 지갑의 볼트·잔액·승인액, `previewOfferAcceptBlock`, 할인 동의를 읽고, 지갑이 열리기 직전에 다시 읽습니다. 지갑은 저장된 오퍼로 만든 EIP-712 `AcceptTerms`(도메인 `Vaipakam AcceptOffer`, 버전 1)에 새 128비트 nonce와 30분 기한으로 서명합니다. 비유동 확인은 검토가 비유동으로 보여 준 측만 지정합니다. 승인액이 부족할 때만 담보 금액만큼 정확히 승인하고, 서명과 함께 `acceptOffer`를 모의 실행한 뒤 보냅니다. 승인 뒤에 멈추면 다른 변경이 없는 한 앱은 승인액을 이전 값으로 되돌립니다. 결과는 이 오퍼와 지갑의 `LoanInitiated`와 영수증의 `Transfer` 로그에서 읽습니다. 허용량은 첫 지갑 요청 직전에 다시 읽으며, 재설정은 그 값으로 되돌립니다. 전송된 수락이 revert되면 같은 재설정을 합니다. 검토 화면은 `allowsPartialRepay`, `allowsPrepayListing`, `parallelSaleOrderHash`와 함께 `allowsParallelSale`, `refinanceTargetLoanId`, 연결된 대출을 표시하고, 갚을 금액을 일시 중지가 없는 경우로 표시합니다. 일시 중지 동안에도 이자는 붙고 만기일만 늦춰지기 때문입니다.
+검토는 오퍼, 그 상태, `previewAccept`, `getOfferLinkedLoanId`, `getCurrentRiskTermsHash`, 두 분류, `getEffectiveGraceSeconds(durationDays)`, `getLoanInitiationFeeBps`, 지갑의 볼트·잔액·승인액, `previewOfferAcceptBlock`, 할인 동의를 읽고, 지갑이 열리기 직전에 다시 읽습니다. 지갑은 저장된 오퍼로 만든 EIP-712 `AcceptTerms`(도메인 `Vaipakam AcceptOffer`, 버전 1)에 새 128비트 nonce와 30분 기한으로 서명합니다. 비유동 확인은 검토가 비유동으로 보여 준 측만 지정합니다. 승인액이 부족할 때만 담보 금액만큼 정확히 승인하고, 서명과 함께 `acceptOffer`를 모의 실행한 뒤 보냅니다. 승인 뒤에 멈추면 다른 변경이 없는 한 앱은 승인액을 이전 값으로 되돌립니다. 결과는 이 오퍼와 지갑의 `LoanInitiated`와 영수증의 `Transfer` 로그에서 읽습니다. 허용량은 첫 지갑 요청 직전에 다시 읽으며, 재설정은 그 값으로 되돌립니다. 전송된 수락이 revert되거나 지갑이 취소 또는 대체하면 거래 추적기가 같은 재설정을 합니다. 검토 화면은 `allowsPartialRepay`, `allowsPrepayListing`, `parallelSaleOrderHash`와 함께 `allowsParallelSale`, `refinanceTargetLoanId`, 연결된 대출을 표시하고, 갚을 금액을 일시 중지가 없는 경우로 표시합니다. 일시 중지 동안에도 이자는 붙고 만기일만 늦춰지기 때문입니다.
 
 <a id="borrow-fee"></a>
 

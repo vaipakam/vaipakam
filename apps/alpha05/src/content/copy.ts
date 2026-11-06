@@ -651,7 +651,7 @@ export const copy = {
     notRestored: A('The approval was not put back ({{why}}): it still lets the protocol pull {{amount}} from your wallet. You can lower it from your wallet.'),
     restoreChanged: B('something else changed it since'),
     allowanceMoved: A('Your wallet\'s approval for this token changed since the review, so nothing was signed or sent. Check the offer again to see the new steps.'),
-    legApprovalBack: B('Approval put back to {{amount}} after the acceptance failed'),
+    legApprovalBack: B('Approval put back to {{amount}}, since the acceptance did not go through'),
     legLoan: B('Loan #{{id}} opened with you as the borrower'),
     legNoLoan: B('Loan opened from offer #{{id}}'),
     noLoan: B('This transaction recorded no new loan from this offer.'),

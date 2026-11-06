@@ -277,6 +277,11 @@ export function ActionFlow({ tx, identity, reviewedFor, receipt, recheck, descri
           <Notice tone="warn" tier="A">
             {text(phase.reason === 'cancelled' ? 'flow.cancelled' : 'flow.replaced')} {txLink(phase.minedHash)}
           </Notice>
+          {phase.unwound && (
+            <Notice tone={phase.unwound.status === 'done' ? 'ok' : 'warn'} tier="A">
+              {phase.unwound.status === 'done' ? phase.unwound.label : `${phase.unwound.label}: ${phase.unwound.reason}`}
+            </Notice>
+          )}
           <p className="actions">
             <button type="button" className="btn" onClick={close}>
               {text('flow.close')}
