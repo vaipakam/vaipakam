@@ -98,11 +98,12 @@ describe('gateBlock', () => {
     expect(gateBlock(2, 2)).toEqual({ creator: true, code: 2 });
     expect(gateBlock(1, 0)).toEqual({ creator: false, code: 1 });
     expect(gateBlock(9, 0)).toEqual({ creator: false, code: 9 });
-    expect(gateBlock(4, 0)).toBeNull();
+    // The soft illiquid-pair code blocks too: only a pair consent clears it.
+    expect(gateBlock(4, 0)).toEqual({ creator: false, code: 4 });
     expect(gateBlock(0, 0)).toBeNull();
   });
   it('marks a row the review would block as not takeable', () => {
     expect(notTakeable('open', preview(), null, gateBlock(3, 0))).toEqual({ kind: 'gate', block: { creator: false, code: 3 } });
-    expect(notTakeable('open', preview(), null, gateBlock(4, 0))).toBeNull();
+    expect(notTakeable('open', preview(), null, gateBlock(4, 0))).toEqual({ kind: 'gate', block: { creator: false, code: 4 } });
   });
 });

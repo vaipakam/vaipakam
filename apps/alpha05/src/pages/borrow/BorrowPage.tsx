@@ -21,6 +21,12 @@ import { readMatches } from './matches';
 import { PostRequest } from './request/PostRequest';
 import { RequestForm, REQUEST_KEY } from './request/RequestForm';
 import type { RequestDraft } from './request/requestReview';
+import type { RequestAssets } from './request/requestModel';
+import { useAssetStandard } from '../../shared/nft/useStandard';
+import { currentAppHref, PAGES } from '../../routes/pageMap';
+
+/** The current app's borrow form, which takes an ERC-1155 collateral today. */
+const BORROW_ELSEWHERE = currentAppHref(PAGES.find((p) => p.path === '/borrow')!, {});
 
 type Hex = `0x${string}`;
 
@@ -43,9 +49,11 @@ function initialPair(chainId: number, suggested: readonly { address: Hex }[]): {
  * open for that pair (read from the protocol through the wallet), and take
  * one whole through the shared signing flow, behind the Terms gate. When
  * no offer fits, the borrower posts their own request for the pair instead,
- * through the same review and signing flow. NFT collateral and the Advanced
- * options follow in the next updates; the page says so instead of hiding
- * them.
+ * through the same review and signing flow. A request may lock one ERC-721
+ * token as collateral (NFT-13), named by its id; an ERC-1155 collateral, and
+ * a lender offer that asks for an NFT, are named and handed to the current
+ * app until their steps are built. The Advanced options follow in a later
+ * update; the page says so instead of hiding them.
  */
 export function BorrowPage() {
   const { text, format } = useCopy();
@@ -127,7 +135,17 @@ export function BorrowPage() {
   const takeDisabled = !connected || walletChain === null || terms.state !== 'ready' || termsOpen;
 
   const step = taking !== null || draft !== null ? 2 : ready ? 1 : 0;
-  const requestPair = ready ? { lending: pair.lending!, collateral: pair.collateral! } : null;
+  // NFT-13: what each leg's contract claims decides the request's shape. A
+  // request borrows an ERC-20 (borrowing an NFT is a rental), and locks an
+  // ERC-20 or one ERC-721 token; an ERC-1155 collateral is not offered here
+  // yet, and an unread standard offers no request rather than a guessed one.
+  const lendingStandard = useAssetStandard(ready ? pair.lending : null).data;
+  const collateralStandard = useAssetStandard(ready ? pair.collateral : null).data;
+  const requestPair: RequestAssets | null =
+    ready && lendingStandard === 'erc20' && (collateralStandard === 'erc20' || collateralStandard === 'erc721')
+      ? { lending: pair.lending!, collateral: pair.collateral!, standard: collateralStandard }
+      : null;
+  const requestHandoff = ready && lendingStandard === 'erc20' && collateralStandard === 'erc1155';
 
   return (
     <main className="page borrow" aria-labelledby="borrow-title">
@@ -155,10 +173,23 @@ export function BorrowPage() {
           <h2 id="borrow-request-open" className="sr-only">
             {text('request.open')}
           </h2>
-          <p className="tier-b">{text('request.openLead')}</p>
-          <button type="button" className="btn" disabled={takeDisabled} onClick={() => setComposing(true)} data-testid="request-open">
-            {text('request.open')}
-          </button>
+          {requestHandoff ? (
+            <Notice tone="info" tier="A">
+              {text('request.erc1155Elsewhere')}{' '}
+              {BORROW_ELSEWHERE !== null && (
+                <a href={BORROW_ELSEWHERE} target="_blank" rel="noreferrer" data-testid="request-1155-handoff">
+                  {text('request.erc1155Link')}
+                </a>
+              )}
+            </Notice>
+          ) : (
+            <>
+              <p className="tier-b">{text(requestPair?.standard === 'erc721' ? 'request.openLeadNft' : 'request.openLead')}</p>
+              <button type="button" className="btn" disabled={takeDisabled || requestPair === null} onClick={() => setComposing(true)} data-testid="request-open">
+                {text('request.open')}
+              </button>
+            </>
+          )}
         </section>
       )}
       {composing === true && draft === null && !termsOpen && walletChain && own && requestPair && (

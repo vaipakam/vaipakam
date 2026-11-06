@@ -53,17 +53,24 @@ export function erc20Pair(lendAsset: Hex, collAsset: Hex): RiskPair {
   return { lendAsset, lendType: 0, lendTokenId: 0n, collAsset, collType: 0, collTokenId: 0n, prepayAsset: ZERO };
 }
 
+/** The pair of a loan of an ERC-20 against one ERC-721 token (NFT-13): the
+ *  protocol keys a consent to the token's id, so each token is its own pair. */
+export function erc721CollateralPair(lendAsset: Hex, collAsset: Hex, tokenId: bigint): RiskPair {
+  return { lendAsset, lendType: 0, lendTokenId: 0n, collAsset, collType: 1, collTokenId: tokenId, prepayAsset: ZERO };
+}
+
 /** A stable name for a pair, to key a flow's review of it. */
 export function pairName(p: RiskPair): string {
   return [p.lendAsset, p.lendType, p.lendTokenId, p.collAsset, p.collType, p.collTokenId, p.prepayAsset].map((x) => String(x).toLowerCase()).join(':');
 }
 
 /** The accept preview's codes (`previewOfferAcceptBlock`) for a block this
- *  wallet can act on. Code 4 (the signed acceptance covers it) is not a
- *  block, and the creator's own block is never this wallet's to fix. */
+ *  wallet can act on. Code 4 is the illiquid pair the acceptance's
+ *  acknowledgement once softened: a pair consent clears it, as it clears 2.
+ *  The creator's own block is never this wallet's to fix. */
 export function needFromAcceptCode(code: number): RiskNeed | null {
   if (code === 1) return 'tier';
-  if (code === 2) return 'pair-consent';
+  if (code === 2 || code === 4) return 'pair-consent';
   if (code === 3) return 'mid-tier-ack';
   return null;
 }

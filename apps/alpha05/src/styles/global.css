@@ -855,6 +855,44 @@ dd.value-unknown > .icon {
   margin: 0;
   color: var(--danger);
 }
+/* NFT-13: who holds the typed token, said under the field as it is read. */
+.token-standing {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-top: 6px;
+  animation: standing-in 180ms ease-out;
+}
+.token-standing::before {
+  font-weight: 600;
+}
+.token-standing-ok {
+  color: var(--ok);
+}
+.token-standing-ok::before {
+  content: '✓';
+}
+.token-standing-warn {
+  color: var(--warn);
+}
+.token-standing-warn::before {
+  content: '!';
+}
+@keyframes standing-in {
+  from {
+    opacity: 0;
+    transform: translateY(-2px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .token-standing {
+    animation: none;
+  }
+}
 .steps {
   display: flex;
   flex-wrap: wrap;

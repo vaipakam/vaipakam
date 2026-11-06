@@ -61,7 +61,7 @@ describe('createParams', () => {
   it('sends a single-value borrower request with every unoffered option at its default', () => {
     const p = createParams(
       { amount: 10n, collateral: 20n, rateBps: 850n, durationDays: 30, expiry: '7d', fullTerm: DEFAULT_INPUT.fullTerm, allowsPartialRepay: false },
-      { lending, collateral },
+      { lending, collateral, leg: { kind: 'erc20' } },
       99n,
     );
     expect(p.offerType).toBe(1);
@@ -73,6 +73,19 @@ describe('createParams', () => {
     expect(p.useFullTermInterest).toBe(true);
     expect([p.periodicInterestCadence, p.allowsPrepayListing, p.allowsParallelSale, p.refinanceTargetLoanId]).toEqual([0, false, false, 0n]);
     expect(p.creatorRiskAndTermsConsent).toBe(true);
+  });
+});
+
+describe('createParams for an NFT', () => {
+  it('names the one ERC-721 token by its id and carries no collateral amount', () => {
+    const p = createParams(
+      { amount: 10n, collateral: 1n, rateBps: 850n, durationDays: 30, expiry: '7d', fullTerm: true, allowsPartialRepay: false },
+      { lending, collateral, leg: { kind: 'erc721', tokenId: 7n } },
+      99n,
+    );
+    expect([p.collateralAssetType, p.collateralTokenId, p.collateralQuantity]).toEqual([1, 7n, 1n]);
+    expect([p.collateralAmount, p.collateralAmountMax]).toEqual([0n, 0n]);
+    expect([p.assetType, p.amount]).toEqual([0, 10n]);
   });
 });
 

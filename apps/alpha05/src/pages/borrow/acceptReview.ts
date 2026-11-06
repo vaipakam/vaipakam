@@ -154,7 +154,7 @@ export function stateText(state: Exclude<OfferState, 'open'>, copy: Pick<CopyAcc
   return copy.text(STATE_KEYS[state]);
 }
 
-const GATE_KEYS: Readonly<Record<number, CopyKey>> = { 1: 'risk.blockTier', 2: 'risk.blockConsent', 3: 'risk.blockAck' };
+const GATE_KEYS: Readonly<Record<number, CopyKey>> = { 1: 'risk.blockTier', 2: 'risk.blockConsent', 3: 'risk.blockAck', 4: 'risk.blockConsent' };
 
 /** A risk-access block as the page states it: a lender-side block is named
  *  as the lender's and never sent to this wallet's settings, and a code

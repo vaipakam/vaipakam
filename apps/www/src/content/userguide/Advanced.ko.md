@@ -1982,11 +1982,17 @@ Basic은 단일 값 요청을 올립니다: `amount` = `amountMax`, `interestRat
 
 검토 화면은 지갑에서 `createOffer`를 시뮬레이션하고 양쪽 분류, `getEffectiveGraceSeconds(durationDays)`, `getLoanInitiationFeeBps`, 최장 기간, 지갑의 볼트·잔액·승인액, 양쪽이 유동적이면 `calculateLTV`를 읽으며, 매 블록과 지갑이 열리기 직전에 다시 읽습니다. 승인액이 부족한 동안 시뮬레이션은 담보 인출까지만 갈 수 있으므로, 토큰의 인출 오류나 프로토콜 오류 이름이 없는 revert는 해결할 승인으로 표시하고, 이름이 있는 프로토콜 오류는 거절로 봅니다. 정확한 금액을 승인한 뒤 `createOffer`를 다시 시뮬레이션하고 보냅니다. 승인 뒤 멈추면, 다른 변경이 없을 때 승인액을 이전 값으로 되돌립니다. 결과는 이 지갑의 `OfferCreated`와 볼트로의 담보 `Transfer`에서 읽습니다.
 
+<a id="borrow-nft-collateral"></a>
+
+### Borrow: NFT를 담보로
+
+담보의 표준은 `supportsInterface`로 읽습니다(ERC-721 `0x80ac58cd`, ERC-1155 `0xd9b67a26`). revert는 어느 쪽도 아닌 것으로 보며, 읽기에 실패하면 요청을 제시하지 않습니다. ERC-721 요청은 `collateralAssetType` 1, `collateralTokenId`에 입력한 ID, `collateralQuantity` 1, `collateralAmount` = `collateralAmountMax` = 0을 보냅니다. 위험 페어는 그 토큰 ID를 키로 합니다. 검토는 한 블록에서 `ownerOf`, `getApproved`, `isApprovedForAll(wallet, Diamond)`를 읽으며, 다른 지갑이 보유한 토큰이나 revert하는 `ownerOf`는 요청을 막습니다. 어느 승인도 없으면 드라이 런은 토큰의 `ERC721InsufficientApproval`에서 멈추고, 이는 필요한 승인으로 표시됩니다. 승인은 `approve(Diamond, id)`이며, 영수증 블록에서 `getApproved`가 Diamond를 읽을 때만 완료로 봅니다. 그 뒤에 멈추면 승인이 여전히 Diamond를 가리키고 지갑이 여전히 토큰을 보유하는 동안에만 이전 주소로 되돌립니다. `setApprovalForAll`은 결코 요청하지 않습니다. 결과는 `OfferCreated`와 지갑에서 금고로 가는 토큰 자체의 `Transfer`(topic 4개)를 읽습니다. ERC-1155 담보와 NFT를 요구하는 대출자 오퍼는 현재 앱으로 갑니다.
+
 <a id="risk-access"></a>
 
 ### Risk Access: 내 위험 등급
 
-스위치는 `getRiskAccessGateEnabled`입니다. 흐름에 필요한 단계는 프로토콜 자체의 답입니다. 수락에서는 `previewCreatorBlock`이 대출자가 차단되지 않았음을 보인 뒤 `previewOfferAcceptBlock`(1 = 등급 부족, 2 = 쌍 동의, 3 = 엄격 모드 확인, 4 = 수락 자체의 확인으로 충족, 경고이며 차단 아님), 요청에서는 `createOffer` 모의 실행의 `RiskTierTooLow`, `IlliquidPairNotConsented`, `MidTierPairNotAcknowledged`입니다. 단계는 한 블록에서 쌍의 `pairRequiredRiskLevel`(오퍼는 `acceptMidTierAckPair`), `getVaultRiskTier`, `getEffectiveRiskTier`, `getCurrentRiskTermsVersion`과 비교한 `getVaultRiskTierVersion`, `getRiskTierUnlockAt`, `getRiskAccessUnlockCooldown`, `getRiskTierMutationNonce`를 읽고, 쌍에 대해서는 `isPairConsentPending`과 `hasIlliquidPairConsent`, 또는 `isMidTierAckPending`과 `midTierStrictBlocked`를 읽습니다. 등급 올리기는 쌍에 필요한 최소 등급으로의 `setVaultRiskTierChecked(level, nonce, termsVersion)`이며, 검토 후 다른 등급 쓰기나 약관 변경이 있었다면 아무것도 바꾸지 않고 거부됩니다. 쌍 단계는 `setIlliquidPairConsent(pair, true)` 또는 `setMidTierPairAck(pair)`입니다. 대기 중인 등급 올리기나 보류 중인 쌍 단계는 다시 제시하지 않습니다. 보류 중인 쌍 단계가 언제 효력이 생기는지 돌려주는 읽기는 없으므로, 검토 화면은 그 시각을 읽을 수 없다고 알립니다. 그 시각은 단계 자체의 완료 카드만 영수증 블록 시각과 대기 기간의 합으로 보여 줍니다. 결과는 영수증 블록에서 다시 읽습니다.
+스위치는 `getRiskAccessGateEnabled`입니다. 흐름에 필요한 단계는 프로토콜 자체의 답입니다. 수락에서는 `previewCreatorBlock`이 대출자가 차단되지 않았음을 보인 뒤 `previewOfferAcceptBlock`(1 = 등급 부족, 2 = 쌍 동의, 3 = 엄격 모드 확인, 4 = 예전에는 수락 시 확인이 대신하던 비유동 페어로, 2와 같이 차단하며 페어 동의로 해제됩니다), 요청에서는 `createOffer` 모의 실행의 `RiskTierTooLow`, `IlliquidPairNotConsented`, `MidTierPairNotAcknowledged`입니다. 단계는 한 블록에서 쌍의 `pairRequiredRiskLevel`(오퍼는 `acceptMidTierAckPair`), `getVaultRiskTier`, `getEffectiveRiskTier`, `getCurrentRiskTermsVersion`과 비교한 `getVaultRiskTierVersion`, `getRiskTierUnlockAt`, `getRiskAccessUnlockCooldown`, `getRiskTierMutationNonce`를 읽고, 쌍에 대해서는 `isPairConsentPending`과 `hasIlliquidPairConsent`, 또는 `isMidTierAckPending`과 `midTierStrictBlocked`를 읽습니다. 등급 올리기는 쌍에 필요한 최소 등급으로의 `setVaultRiskTierChecked(level, nonce, termsVersion)`이며, 검토 후 다른 등급 쓰기나 약관 변경이 있었다면 아무것도 바꾸지 않고 거부됩니다. 쌍 단계는 `setIlliquidPairConsent(pair, true)` 또는 `setMidTierPairAck(pair)`입니다. 대기 중인 등급 올리기나 보류 중인 쌍 단계는 다시 제시하지 않습니다. 보류 중인 쌍 단계가 언제 효력이 생기는지 돌려주는 읽기는 없으므로, 검토 화면은 그 시각을 읽을 수 없다고 알립니다. 그 시각은 단계 자체의 완료 카드만 영수증 블록 시각과 대기 기간의 합으로 보여 줍니다. 결과는 영수증 블록에서 다시 읽습니다.
 
 <a id="terms-gate"></a>
 

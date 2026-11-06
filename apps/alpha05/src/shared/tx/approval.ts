@@ -32,7 +32,13 @@ export interface AllowanceIo {
 }
 
 export type AllowanceResult =
-  | { ok: true }
+  | {
+      ok: true;
+      /** The block the last step mined in; null when nothing was sent. A
+       *  later put-back reads no earlier than it (RB-FUNDS: never judge a
+       *  reset against the allowance as it stood before the approval). */
+      at: bigint | null;
+    }
   | {
       ok: false;
       /** Why it stopped: the wallet refused a prompt, a step did not leave
@@ -47,6 +53,8 @@ export type AllowanceResult =
        *  zero ahead of a failed one); null when none did. A clean-up may
        *  overwrite only this value, never one something else set. */
       last: bigint | null;
+      /** The block the step that set `last` mined in; null when none did. */
+      at: bigint | null;
       /** A sent step whose outcome is not known (its receipt or the
        *  allowance after it could not be read), with the amount that step
        *  sets: on a token that goes through zero it may be the step to
@@ -74,27 +82,30 @@ export async function setAllowance(io: AllowanceIo, target: bigint, expect?: big
   try {
     now = await io.read();
   } catch (e) {
-    return { ok: false, why: 'not-set', sent: 0, now: null, last: null, pending: null, reason: (e as Error).message };
+    return { ok: false, why: 'not-set', sent: 0, now: null, last: null, at: null, pending: null, reason: (e as Error).message };
   }
-  if (expect !== undefined && now !== expect) return { ok: false, why: 'changed', sent: 0, now, last: null, pending: null, reason: null };
+  if (expect !== undefined && now !== expect) return { ok: false, why: 'changed', sent: 0, now, last: null, at: null, pending: null, reason: null };
   const steps = await allowanceSteps(io, now, target);
   let last: bigint | null = null;
+  let at: bigint | null = null;
   for (const [i, amount] of steps.entries()) {
     io.onStep?.(amount, i, steps.length);
     let hash: Hex;
     try {
       hash = await io.send(amount);
     } catch (e) {
-      return { ok: false, why: 'refused', sent: i, now, last, pending: null, reason: (e as Error).message };
+      return { ok: false, why: 'refused', sent: i, now, last, at, pending: null, reason: (e as Error).message };
     }
     const block = await io.wait(hash).catch(() => undefined);
     const after = await io.read(block).catch(() => null);
     if (after !== amount) {
       // Without a receipt the step may still land: its hash stays open.
-      return { ok: false, why: 'not-set', sent: i + 1, now: after, last, pending: block === undefined || after === null ? { hash, amount } : null, reason: null };
+      return { ok: false, why: 'not-set', sent: i + 1, now: after, last, at, pending: block === undefined || after === null ? { hash, amount } : null, reason: null };
     }
     now = after;
     last = amount;
+    // A step that read back had a receipt, so its block is known.
+    at = block ?? null;
   }
-  return { ok: true };
+  return { ok: true, at };
 }

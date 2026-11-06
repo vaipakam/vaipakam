@@ -36,7 +36,7 @@ function token(start: bigint, opts: { zeroFirst?: boolean; land?: (amount: bigin
 describe('setAllowance', () => {
   it('approves directly when the token accepts it, and judges the step by the allowance', async () => {
     const t = token(0n);
-    expect(await setAllowance(t.io, 50n)).toEqual({ ok: true });
+    expect(await setAllowance(t.io, 50n)).toEqual({ ok: true, at: 1n });
     expect(t.prompts).toEqual([50n]);
   });
   it('goes through zero only for a token that refuses a non-zero change', async () => {
@@ -44,7 +44,7 @@ describe('setAllowance', () => {
     await setAllowance(plain.io, 50n);
     expect(plain.prompts).toEqual([50n]);
     const strict = token(10n, { zeroFirst: true });
-    expect(await setAllowance(strict.io, 50n)).toEqual({ ok: true });
+    expect(await setAllowance(strict.io, 50n)).toMatchObject({ ok: true });
     expect(strict.prompts).toEqual([0n, 50n]);
   });
   it('reports a cancelled or replaced step as not set, from the allowance, not the receipt', async () => {
@@ -55,7 +55,7 @@ describe('setAllowance', () => {
     const t = token(50n, { land: () => false, unreadable: 0 });
     expect(await setAllowance(t.io, 0n)).toMatchObject({ ok: false, why: 'not-set', pending: { hash: H(1), amount: 0n } });
     const landed = token(50n, { unreadable: 0 });
-    expect(await setAllowance(landed.io, 0n)).toEqual({ ok: true });
+    expect(await setAllowance(landed.io, 0n)).toMatchObject({ ok: true });
   });
   it('says how far it got when the wallet refuses a later step', async () => {
     const t = token(10n, { zeroFirst: true, refuse: 1 });
