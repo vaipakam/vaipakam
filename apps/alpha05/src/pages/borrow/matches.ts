@@ -11,13 +11,17 @@ import { type StoredOffer } from '../../shared/offers/acceptTerms';
 import { borrowFit, notTakeable, rankForBorrower, type NotTakeable, type OfferFit } from '../../shared/offers/model';
 import { readLifMatcherBps, readOffer, readOfferState, readPairLtvBps, readPairOfferIds, readPreview, type AcceptPreview, type OfferState } from '../../shared/offers/reads';
 import { refusalFromError } from '../../shared/eligibility/refusal';
+import { readAssetClass } from '../../shared/offers/assets';
 
 type Hex = `0x${string}`;
 
 /** How many of the pair's open offers one read covers. */
 export const MATCH_PAGE = 20;
 
-export type Ltv = { kind: 'bps'; bps: bigint } | { kind: 'not-worked-out'; reason: string };
+/** `illiquid`: a leg the protocol classes illiquid is valued at zero and the
+ *  loan carries no price-based risk math, so no ratio is shown even when a
+ *  price-only one could be read. */
+export type Ltv = { kind: 'bps'; bps: bigint } | { kind: 'illiquid' } | { kind: 'not-worked-out'; reason: string };
 
 export interface MatchRow {
   offer: StoredOffer;
@@ -52,9 +56,15 @@ function message(e: unknown): string {
 }
 
 export async function readMatches(client: PublicClient, diamond: Hex, lending: Hex, collateral: Hex, account: Hex | null): Promise<Matches> {
-  const [{ ids, total }, matcherBps] = await Promise.all([
+  const [{ ids, total }, matcherBps, pairLtv] = await Promise.all([
     readPairOfferIds(client, diamond, lending, collateral, MATCH_PAGE),
     account ? readLifMatcherBps(client, diamond) : Promise.resolve(null),
+    // The pair's classes decide whether a ratio applies at all: read once,
+    // and a class that cannot be read leaves the ratio unstated, with why.
+    Promise.all([readAssetClass(client, diamond, lending), readAssetClass(client, diamond, collateral)]).then(
+      (classes): Ltv | null => (classes.includes('illiquid') ? { kind: 'illiquid' } : null),
+      (e): Ltv => ({ kind: 'not-worked-out', reason: message(e) }),
+    ),
   ]);
   const skipped = { own: 0, 'not-lender': 0, 'not-erc20': 0 };
   const rows: MatchRow[] = [];
@@ -77,10 +87,11 @@ export async function readMatches(client: PublicClient, diamond: Hex, lending: H
         const [state, preview, ltv] = await Promise.all([
           readOfferState(client, diamond, id),
           account ? readPreview(client, diamond, id, account) : Promise.resolve(null),
-          readPairLtvBps(client, diamond, offer.lendingAsset, offer.amountMax, offer.collateralAsset, offer.collateralAmount).then(
-            (bps): Ltv => ({ kind: 'bps', bps }),
-            (e): Ltv => ({ kind: 'not-worked-out', reason: message(e) }),
-          ),
+          pairLtv ??
+            readPairLtvBps(client, diamond, offer.lendingAsset, offer.amountMax, offer.collateralAsset, offer.collateralAmount).then(
+              (bps): Ltv => ({ kind: 'bps', bps }),
+              (e): Ltv => ({ kind: 'not-worked-out', reason: message(e) }),
+            ),
         ]);
         const blocked = account ? notTakeable(state, preview, null) : state === 'open' ? null : { kind: 'state' as const, state };
         rows.push({ offer, state, preview, ltv, blocked });

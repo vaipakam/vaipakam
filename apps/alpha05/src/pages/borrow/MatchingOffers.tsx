@@ -64,7 +64,11 @@ function OfferRow({
           amount: amt(o.collateralAsset, o.collateralAmount),
         })}
       </p>
-      <p className="tier-b">{row.ltv.kind === 'bps' ? format('borrow.rowLtv', { ltv: formatBps(row.ltv.bps) }) : format('borrow.rowLtvNone', { reason: row.ltv.reason })}</p>
+      <p className="tier-b">{row.ltv.kind === 'bps'
+          ? format('borrow.rowLtv', { ltv: formatBps(row.ltv.bps) })
+          : row.ltv.kind === 'illiquid'
+            ? text('borrow.rowLtvIlliquid')
+            : format('borrow.rowLtvNone', { reason: row.ltv.reason })}</p>
       <p className="tier-b">{text(o.useFullTermInterest ? (o.allowsPartialRepay ? 'borrow.rowFullTermPartial' : 'borrow.rowFullTerm') : 'borrow.rowProRata')}</p>
       {o.allowsPartialRepay && !o.useFullTermInterest && <p className="tier-b">{text('borrow.rowPartial')}</p>}
       {cadence && <p className="tier-a">{format('borrow.rowCadence', { cadence })}</p>}

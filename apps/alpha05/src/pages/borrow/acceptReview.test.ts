@@ -55,6 +55,12 @@ describe('acceptReceipt', () => {
     for (const key of ['accept.rowPartial', 'accept.rowPrepayListing', 'accept.rowParallelSale', 'accept.rowRefinance', 'accept.rowLinked'])
       expect(labels(review())).toContain(key);
   });
+  it('labels the owed figure as the term total when interest is paid on a schedule', () => {
+    expect(labels(review())).toContain('accept.rowOwe');
+    const scheduled = labels(review({ offer: offer({ periodicInterestCadence: 1 }) }));
+    expect(scheduled).toContain('accept.rowOweTotal');
+    expect(scheduled).not.toContain('accept.rowOwe');
+  });
   it('names each illiquid leg for what it is and drops the price-liquidation line', () => {
     const lose = (r: AcceptReview) => acceptReceipt(r, null, copy).consequences;
     expect(lose(review())).toContain('accept.loseLiquidation');

@@ -119,6 +119,12 @@ export function ActionFlow({ tx, identity, reviewedFor, receipt, recheck, descri
   useEffect(() => {
     live.current = identity;
   }, [identity]);
+  /** The gate (a consent) as of the latest render: a reader who withdraws it
+   *  while the re-check runs never has the wallet opened on the old answer. */
+  const gateReady = useRef(gate === undefined || gate.ready);
+  useEffect(() => {
+    gateReady.current = gate === undefined || gate.ready;
+  }, [gate]);
 
   const close = () => {
     attempt.current += 1;
@@ -142,6 +148,9 @@ export function ActionFlow({ tx, identity, reviewedFor, receipt, recheck, descri
     setChecking(false);
     // Moved while the re-check ran: the render now withholds signing.
     if (live.current !== reviewedFor) return;
+    // The gate was withdrawn while the re-check ran: the render now holds
+    // Confirm until it is given again.
+    if (!gateReady.current) return;
     if (result.kind !== 'ok') {
       setFound(result);
       return;

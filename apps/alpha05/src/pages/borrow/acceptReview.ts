@@ -306,7 +306,9 @@ export function acceptReceipt(r: AcceptReview, meta: TokenMetaMap | null, copy: 
       binding: true,
     },
     {
-      label: text('accept.rowOwe'),
+      // With an interest schedule, part of this is paid at each checkpoint
+      // and credited, so the figure is the term's total, not the last payment.
+      label: text(cadence ? 'accept.rowOweTotal' : 'accept.rowOwe'),
       value: amount(lending, f.owedAtDue),
       binding: true,
     },
