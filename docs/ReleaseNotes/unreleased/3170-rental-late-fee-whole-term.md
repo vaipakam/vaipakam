@@ -1,4 +1,4 @@
-# A late rental's fee is sized on its whole agreed rent, and a fully prepaid rental can always settle (#3170)
+## A late rental's fee is sized on its whole agreed rent, and a fully prepaid rental can always settle (#3170) (PR #3193)
 
 A borrower could prepay every remaining day of an NFT rental through a partial repayment. Two things then went wrong. Full repayment reverted, because it refused any rental with nothing left in its prepayment. And the late fee, which was sized on the rent still owed, read zero for the whole grace window, while the lender's NFT stayed locked.
 

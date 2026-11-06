@@ -1,4 +1,4 @@
-# The next app's shared modules and its own verification tier
+## The next app's shared modules and its own verification tier (PR #3210)
 
 The next connected app now carries the modules every one of its pages is built on, before any page is. The shell shows a wallet control: connect, then the address and network every figure on the page belongs to, and a plain notice with a switch control when the wallet sits on a network the app does not serve. Every "Why?" opens the one help panel on the full explanation of the same line, with a link into the guide page for the reader's mode; the panel closes from its control, from Escape and from a click outside, and returns the keyboard to where it started.
 

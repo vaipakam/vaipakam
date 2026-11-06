@@ -1,4 +1,4 @@
-## Mesh watcher — carry only the views it reads (PR #<n>)
+## Mesh watcher — carry only the views it reads (PR #3168)
 
 The VPFI recycling mesh watcher used to bundle five complete facet ABI files,
 about 300 KB of its 1.1 MB Worker, almost all of it error and event

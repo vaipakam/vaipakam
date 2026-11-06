@@ -1,4 +1,4 @@
-# The next app's Home shows rewards and claims them
+## The next app's Home shows rewards and claims them (PR #3217)
 
 Home in the next connected app gains a rewards and VPFI section. Its headline is what a reward claim made now would pay, worked out by running the claim itself as a preview, so the figure is exactly what the claim pays. When that preview cannot run, Home shows the protocol's own lower bound instead, labelled as a lower bound, and does not offer the claim until the exact figure can be worked out. When a claim would be refused, the reason is named: a reward day still waiting to be finalised across networks or for its funding to reach the network (with the day), the programme not started yet, the protocol paused, or the wallet flagged by the sanctions screen. "No rewards available to claim on this chain" is said only when the claim itself reports nothing to claim.
 

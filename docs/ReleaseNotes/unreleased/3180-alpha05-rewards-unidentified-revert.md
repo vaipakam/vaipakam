@@ -1,4 +1,4 @@
-# The next app's rewards preview asks another source when a wallet drops the reason
+## The next app's rewards preview asks another source when a wallet drops the reason (PR #3219)
 
 The live review of the next app's Home found the rewards section saying a claim "would be refused (Unrecognised)" for a wallet with nothing to claim. The claim preview had been answered by a wallet provider that reported the revert without its reason, and the page treated that as a refusal it could not name.
 

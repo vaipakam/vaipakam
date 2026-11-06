@@ -1,4 +1,4 @@
-# A pending Telegram LOCK request holds only the keeper's releases (#3177)
+## A pending Telegram LOCK request holds only the keeper's releases (#3177) (PR #3192)
 
 The protected-vault spec said a pending Telegram LOCK request holds the account's payouts and NFT transfers. In practice the hold binds only the keeper: release stays permissionless, so anyone can release a payout or transfer that is already past its delay, in the short window before the keeper's lock lands on chain.
 

@@ -1,4 +1,4 @@
-# The next app is laid out for phones as well as desktops
+## The next app is laid out for phones as well as desktops (PR #3212)
 
 About half of the app's readers are on phones, so the next connected app now treats a phone as a first-class device rather than a narrow desktop. The first live review on a phone found three defects. The header spilled a few pixels sideways, so the page scrolled sideways. The wrapped navigation and controls covered more than a quarter of the screen. The wallet button read "Connecting…" while the wallet picker was merely open, before any wallet had been chosen.
 
