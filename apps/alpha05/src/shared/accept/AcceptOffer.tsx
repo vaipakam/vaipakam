@@ -1,46 +1,53 @@
 import { useEffect, useRef, useState } from 'react';
-import type { Abi } from 'viem';
+import type { Abi, Log } from 'viem';
 import { useConfig } from 'wagmi';
 import { signTypedData, writeContract } from 'wagmi/actions';
 import { OfferAcceptFacetABI } from '@vaipakam/contracts/abis';
 import type { OwnStateClient } from '../../chain/ownRail';
 import type { SupportedChain } from '../../chain/chains';
-import { useCopy } from '../../shared/copy/useCopy';
-import { refusalFromError, StatedRefusal } from '../../shared/eligibility/refusal';
-import { WhyLink } from '../../shared/help/WhyLink';
-import { GUIDE_ORIGIN, guideUrl } from '../../shared/help/guide';
+import { useCopy } from '../copy/useCopy';
+import { refusalFromError, StatedRefusal } from '../eligibility/refusal';
+import { WhyLink } from '../help/WhyLink';
+import { GUIDE_ORIGIN, guideUrl } from '../help/guide';
 import { useMode } from '../../app/ModeContext';
-import { ACCEPT_DEADLINE_SECONDS, ACCEPT_TERMS_DOMAIN_NAME, ACCEPT_TERMS_DOMAIN_VERSION, ACCEPT_TERMS_TYPES, buildAcceptTerms, freshNonce } from '../../shared/offers/acceptTerms';
-import { deliverySplit, legVerdict, moved, openedLoan } from '../../shared/offers/acceptOutcome';
-import { acceptFigures } from '../../shared/offers/model';
-import { readVault } from '../../shared/offers/reads';
-import { tokenAmount, type TokenMetaMap } from '../../shared/reads/tokens';
-import { readTerms, termsUrl, type TermsState } from '../../shared/terms/terms';
-import { askThrough } from '../../shared/tx/simulate';
-import { cleanUpLeg } from '../../shared/tx/cleanUp';
-import { useStoredValue, useTxNote } from '../../shared/tx/txStore';
-import { useMounted, useReviewRefresh } from '../../shared/tx/useReviewRefresh';
-import { useTrackedTx } from '../../shared/tx/useTrackedTx';
-import { allowanceSteps } from '../../shared/tx/approval';
-import { allowanceMoved, approvalFlow } from '../../shared/tx/approvalFlow';
-import type { LegOutcome } from '../../shared/tx/outcome';
-import { ActionFlow, reviewIdentity, type Recheck } from '../../shared/ui/ActionFlow';
-import { Notice } from '../../shared/ui/Notice';
-import { shortAddress } from '../../shared/ui/format';
-import { needFromAcceptCode, type RiskNeed } from '../../shared/risk/riskAccess';
-import { RiskGate, RiskStepFlow } from '../../shared/risk/RiskAccessStep';
-import { acceptReceipt, changedBetween, promptCount, readAcceptReview, reviewBlockers, type AcceptReview } from './acceptReview';
+import { ACCEPT_DEADLINE_SECONDS, ACCEPT_TERMS_DOMAIN_NAME, ACCEPT_TERMS_DOMAIN_VERSION, ACCEPT_TERMS_TYPES, buildAcceptTerms, freshNonce } from '../offers/acceptTerms';
+import { deliverySplit, legVerdict, moved, openedLoan } from '../offers/acceptOutcome';
+import { acceptFigures, lenderFigures } from '../offers/model';
+import { readVault } from '../offers/reads';
+import { tokenAmount, type TokenMetaMap } from '../reads/tokens';
+import { readTerms, termsUrl, type TermsState } from '../terms/terms';
+import { askThrough } from '../tx/simulate';
+import { cleanUpLeg } from '../tx/cleanUp';
+import { useStoredValue, useTxNote } from '../tx/txStore';
+import { useMounted, useReviewRefresh } from '../tx/useReviewRefresh';
+import { useTrackedTx } from '../tx/useTrackedTx';
+import type { AnchoredReader } from '../tx/anchored';
+import { allowanceSteps } from '../tx/approval';
+import { allowanceMoved, approvalFlow } from '../tx/approvalFlow';
+import type { LegOutcome } from '../tx/outcome';
+import { ActionFlow, reviewIdentity, type Recheck } from '../ui/ActionFlow';
+import { Notice } from '../ui/Notice';
+import { shortAddress } from '../ui/format';
+import { needFromAcceptCode, type RiskNeed } from '../risk/riskAccess';
+import { RiskGate, RiskStepFlow } from '../risk/RiskAccessStep';
+import { changedBetween, paid, promptCount, readAcceptReview, reviewBlockers, type AcceptReview } from './acceptReview';
+import { acceptReceipt } from './receipt';
 
 type Hex = `0x${string}`;
 
 const ACCEPT_ABI = OfferAcceptFacetABI as Abi;
 
-/** The store keys this flow keeps its state under, so a navigation or a
- *  wallet switch that unmounts the panel never drops a review, a consent or
- *  a transaction's hash (the tracker itself is under `borrow.accept`). */
+/** The store keys each page's acceptance keeps its state under, so a
+ *  navigation or a wallet switch that unmounts the panel never drops a
+ *  review, a consent or a transaction's hash (the tracker itself is under
+ *  the key). Each page has its own, so an acceptance in flight on one page
+ *  never shows on the other. */
 export const ACCEPT_KEY = 'borrow.accept';
+export const LEND_ACCEPT_KEY = 'lend.accept';
 
 interface AcceptOfferProps {
+  /** The page's store key (ACCEPT_KEY or LEND_ACCEPT_KEY). */
+  flowKey: string;
   offerId: bigint;
   chain: SupportedChain;
   own: OwnStateClient;
@@ -50,18 +57,21 @@ interface AcceptOfferProps {
 }
 
 /**
- * OFF-50 — a borrower takes a lender's offer whole. The review is built from
- * the protocol's own preview for this wallet and the offer as stored; the
- * single Risk and Terms consent is bound to the figures shown (a re-read
- * that moves any of them clears it); the wallet is asked to sign the exact
- * terms, then to approve exactly the collateral when needed, and the
+ * OFF-50 — an offer taken whole: a borrower takes a lender's offer, or a
+ * lender funds a borrow request; the side is the offer's own (the review's
+ * `role`). The review is built from the protocol's own preview for this
+ * wallet and the offer as stored; the single Risk and Terms consent is
+ * bound to the figures shown (a re-read that moves any of them clears it);
+ * the wallet is asked to sign the exact terms, then to approve exactly what
+ * it pays when needed (the collateral, or the amount lent), and the
  * acceptance is sent only after a dry run with that signature passes. If
  * anything stops it after an approval, the approval is put back (best
  * effort, stated either way). The outcome is measured from the
- * transaction's own logs: the loan it opened, what arrived in the wallet,
- * what moved into the vault.
+ * transaction's own logs: the loan it opened, and for a borrower what
+ * arrived in the wallet and what moved into the vault, for a lender what
+ * left the wallet and the fee share that came back.
  */
-export function AcceptOffer({ offerId, chain, own, meta, terms, onClose }: AcceptOfferProps) {
+export function AcceptOffer({ flowKey, offerId, chain, own, meta, terms, onClose }: AcceptOfferProps) {
   const copy = useCopy();
   const { text, format } = copy;
   const config = useConfig();
@@ -69,16 +79,16 @@ export function AcceptOffer({ offerId, chain, own, meta, terms, onClose }: Accep
   const diamond = chain.diamondAddress;
   const account = own.account;
   const identity = reviewIdentity(own);
-  const [review, setReview] = useStoredValue<AcceptReview>(`${ACCEPT_KEY}:review`);
+  const [review, setReview] = useStoredValue<AcceptReview>(`${flowKey}:review`);
   /** The review read the consent was given against (its `readAt`): a new
    *  read is a new set of figures, so the consent does not carry over. */
-  const [consentFor, setConsentFor] = useStoredValue<number>(`${ACCEPT_KEY}:consent`);
-  const [loanId, setLoanId] = useStoredValue<bigint>(`${ACCEPT_KEY}:loan`);
+  const [consentFor, setConsentFor] = useStoredValue<number>(`${flowKey}:consent`);
+  const [loanId, setLoanId] = useStoredValue<bigint>(`${flowKey}:loan`);
   /** The risk-access step open in the review's place, if any (ACC-RISK). */
-  const [riskOpen, setRiskOpen] = useStoredValue<RiskNeed>(`${ACCEPT_KEY}:risk`);
+  const [riskOpen, setRiskOpen] = useStoredValue<RiskNeed>(`${flowKey}:risk`);
   const [loadError, setLoadError] = useState<string | null>(null);
   /** The wallet step open now, kept with the tracker (it outlives the page). */
-  const setStep = useTxNote(ACCEPT_KEY);
+  const setStep = useTxNote(flowKey);
   /** The approval this flow made and has not yet seen used or put back: a
    *  submitted acceptance that reverts leaves it standing, so the receipt's
    *  measurement puts it back. A ref, because the measurement runs from the
@@ -90,7 +100,7 @@ export function AcceptOffer({ offerId, chain, own, meta, terms, onClose }: Accep
   const { readAllowance, allowanceIo, approveExactly, putBack } = approvalFlow({ own, config, chainId: chain.chainId, diamond, copy, amount: amt, setStep });
 
   const tx = useTrackedTx({
-    key: ACCEPT_KEY,
+    key: flowKey,
     chainId: chain.chainId,
     account,
     sources: own.sources,
@@ -107,8 +117,8 @@ export function AcceptOffer({ offerId, chain, own, meta, terms, onClose }: Accep
             what,
           }),
         );
-      const collateral = r.offer.collateralAsset;
-      const lock = r.preview.collateralAmount;
+      // What the wallet pays: the collateral, or the amount lent.
+      const { asset: collateral, amount: lock } = paid(r);
       approvalLeft.current = null;
 
       // The allowance is read again now: the value a stop puts back is the
@@ -224,83 +234,112 @@ export function AcceptOffer({ offerId, chain, own, meta, terms, onClose }: Accep
     },
     measure: async (receipt, at) => {
       if (!review) return [];
-      const r = review;
-      const f = acceptFigures(r.preview, r.offer.durationDays, r.matcherBps);
-      const legs: LegOutcome[] = [];
-      const opened = openedLoan(receipt.logs, diamond, offerId, account);
-      if (opened) {
-        setLoanId(opened.loanId);
-        legs.push({
-          status: 'done',
-          label: format('accept.legLoan', { id: opened.loanId.toString() }),
-        });
-      } else {
-        legs.push({
-          status: 'not-done',
-          label: format('accept.legNoLoan', { id: offerId.toString() }),
-          reason: text('accept.noLoan'),
-        });
-      }
-      // What reached the wallet (the principal less the fee, plus the fee
-      // share the protocol pays the sender) and what else left the lender's
-      // vault must add up to the principal the loan recorded, or the split
-      // is not substantiated. A figure other than the preview's (the
-      // discount tier is read again as the loan opens) is named beside it.
-      const lending = r.offer.lendingAsset;
-      const split = deliverySplit(receipt.logs, lending, account);
-      const shownLabel = format('accept.legReceived', { amount: amt(lending, f.received) });
-      if (split === null) {
-        legs.push({ status: 'not-done', label: shownLabel, reason: text('accept.receivedNone') });
-      } else if (opened && split.received + split.fee === opened.principal) {
-        legs.push({
-          status: 'done',
-          label:
-            split.received === f.received
-              ? format('accept.legReceived', { amount: amt(lending, split.received) })
-              : format('accept.legReceivedFee', { amount: amt(lending, split.received), shown: amt(lending, f.received), principal: amt(lending, opened.principal) }),
-        });
-      } else {
-        legs.push({
-          status: 'unknown',
-          label: shownLabel,
-          reason: format('accept.receivedOther', { amount: amt(lending, split.received), expected: amt(lending, f.received) }),
-        });
-      }
-      const collateral = r.offer.collateralAsset;
-      const lockLabel = format('accept.legLocked', {
-        amount: amt(collateral, f.collateral),
-      });
-      let vault: Hex | null = null;
-      try {
-        vault = await at.read((c, b) => readVault(c, diamond, account, b));
-      } catch {
-        vault = null;
-      }
-      if (vault === null) {
-        legs.push({
-          status: 'unknown',
-          label: lockLabel,
-          reason: text('accept.vaultUnknown'),
-        });
-      } else {
-        const locked = moved(receipt.logs, collateral, account, vault);
-        const lv = legVerdict(locked, f.collateral);
-        legs.push(
-          lv === 'done'
-            ? { status: 'done', label: lockLabel }
-            : {
-                status: lv,
-                label: lockLabel,
-                reason: format('accept.lockedOther', {
-                  amount: amt(collateral, locked),
-                  expected: amt(collateral, f.collateral),
-                }),
-              },
-        );
-      }
-      return legs;
+      return review.role === 'borrower' ? measureBorrower(review, receipt.logs, at) : measureLender(review, receipt.logs);
     },
   });
+
+  /** A borrower's acceptance: the loan, what reached the wallet, and the
+   *  collateral locked in the vault. */
+  const measureBorrower = async (r: AcceptReview, logs: readonly Log[], at: AnchoredReader): Promise<LegOutcome[]> => {
+    const f = acceptFigures(r.preview, r.offer.durationDays, r.matcherBps);
+    const legs: LegOutcome[] = [];
+    const opened = openedLoan(logs, diamond, offerId, account);
+    legs.push(loanLeg(opened, 'accept.legLoan'));
+    // What reached the wallet (the principal less the fee, plus the fee
+    // share the protocol pays the sender) and what else left the lender's
+    // vault must add up to the principal the loan recorded, or the split
+    // is not substantiated. A figure other than the preview's (the
+    // discount tier is read again as the loan opens) is named beside it.
+    const lending = r.offer.lendingAsset;
+    const split = deliverySplit(logs, lending, account);
+    const shownLabel = format('accept.legReceived', { amount: amt(lending, f.received) });
+    if (split === null) {
+      legs.push({ status: 'not-done', label: shownLabel, reason: text('accept.receivedNone') });
+    } else if (opened && split.received + split.fee === opened.principal) {
+      legs.push({
+        status: 'done',
+        label:
+          split.received === f.received
+            ? format('accept.legReceived', { amount: amt(lending, split.received) })
+            : format('accept.legReceivedFee', { amount: amt(lending, split.received), shown: amt(lending, f.received), principal: amt(lending, opened.principal) }),
+      });
+    } else {
+      legs.push({
+        status: 'unknown',
+        label: shownLabel,
+        reason: format('accept.receivedOther', { amount: amt(lending, split.received), expected: amt(lending, f.received) }),
+      });
+    }
+    const collateral = r.offer.collateralAsset;
+    const lockLabel = format('accept.legLocked', {
+      amount: amt(collateral, f.collateral),
+    });
+    let vault: Hex | null = null;
+    try {
+      vault = await at.read((c, b) => readVault(c, diamond, account, b));
+    } catch {
+      vault = null;
+    }
+    if (vault === null) {
+      legs.push({
+        status: 'unknown',
+        label: lockLabel,
+        reason: text('accept.vaultUnknown'),
+      });
+    } else {
+      const locked = moved(logs, collateral, account, vault);
+      const lv = legVerdict(locked, f.collateral);
+      legs.push(
+        lv === 'done'
+          ? { status: 'done', label: lockLabel }
+          : {
+              status: lv,
+              label: lockLabel,
+              reason: format('accept.lockedOther', {
+                amount: amt(collateral, locked),
+                expected: amt(collateral, f.collateral),
+              }),
+            },
+      );
+    }
+    return legs;
+  };
+
+  /** A lender's acceptance: the loan (recorded for the request's creator as
+   *  borrower), what left the wallet, and the fee share that came back. A
+   *  fee share other than the preview's (the borrower's discount or Full
+   *  tariff is settled as the loan opens) is named, never assumed. */
+  const measureLender = (r: AcceptReview, logs: readonly Log[]): LegOutcome[] => {
+    const f = lenderFigures(r.preview, r.offer.durationDays, r.matcherBps, 0n);
+    const lending = r.offer.lendingAsset;
+    const legs: LegOutcome[] = [loanLeg(openedLoan(logs, diamond, offerId, r.offer.creator), 'lendAccept.legLoan')];
+    const lent = moved(logs, lending, account, null);
+    const lentLabel = format('lendAccept.legLent', { amount: amt(lending, f.principal) });
+    const lv = legVerdict(lent, f.principal);
+    legs.push(
+      lv === 'done'
+        ? { status: 'done', label: lentLabel }
+        : { status: lv, label: lentLabel, reason: lv === 'not-done' ? text('lendAccept.lentNone') : format('lendAccept.lentOther', { amount: amt(lending, lent), expected: amt(lending, f.principal) }) },
+    );
+    const back = moved(logs, lending, null, account);
+    if (f.feeBack > 0n || back > 0n) {
+      const backLabel = format('lendAccept.legFeeBack', { amount: amt(lending, f.feeBack) });
+      legs.push(
+        back === f.feeBack
+          ? { status: 'done', label: backLabel }
+          : { status: back === 0n ? 'not-done' : 'unknown', label: backLabel, reason: format('lendAccept.feeBackOther', { amount: amt(lending, back), expected: amt(lending, f.feeBack) }) },
+      );
+    }
+    return legs;
+  };
+
+  const loanLeg = (opened: ReturnType<typeof openedLoan>, key: 'accept.legLoan' | 'lendAccept.legLoan'): LegOutcome => {
+    if (opened) {
+      setLoanId(opened.loanId);
+      return { status: 'done', label: format(key, { id: opened.loanId.toString() }) };
+    }
+    return { status: 'not-done', label: format('accept.legNoLoan', { id: offerId.toString() }), reason: text('accept.noLoan') };
+  };
 
   const mounted = useMounted();
   const load = async () => {
@@ -402,7 +441,8 @@ export function AcceptOffer({ offerId, chain, own, meta, terms, onClose }: Accep
   const blockers = review ? reviewBlockers(review, meta, copy) : [];
   const consented = review !== null && consentFor === review.readAt;
   const termsLink = terms && terms.kind !== 'none' ? termsUrl(terms.version) : `${GUIDE_ORIGIN}/terms`;
-  const riskLink = guideUrl(mode, 'borrow-risks');
+  const lender = review?.role === 'lender';
+  const riskLink = guideUrl(mode, lender ? 'lend-risks' : 'borrow-risks');
   // A risk-access block this wallet can clear itself: never the lender's own
   // (the protocol answers the creator's block first), and the step is the one
   // the protocol's answer names.
@@ -423,9 +463,9 @@ export function AcceptOffer({ offerId, chain, own, meta, terms, onClose }: Accep
             {riskNeed !== null && (
               <RiskGate chain={chain} own={own} need={riskNeed} source={{ kind: 'offer', offerId }} pairLabel={pairLabel} onOpen={() => setRiskOpen(riskNeed)} />
             )}
-            {review.consent === false && <p className="tier-b">{text('accept.feeOff')}</p>}
-            <WhyLink summaryKey="accept.feeSummary" detailKey="accept.feeWhy" />
-            <WhyLink summaryKey="accept.signSummary" detailKey="accept.signWhy" />
+            {review.consent === false && <p className="tier-b">{text(lender ? 'lendAccept.shareOff' : 'accept.feeOff')}</p>}
+            <WhyLink summaryKey={lender ? 'lendAccept.feeSummary' : 'accept.feeSummary'} detailKey={lender ? 'lendAccept.feeWhy' : 'accept.feeWhy'} />
+            <WhyLink summaryKey="accept.signSummary" detailKey={lender ? 'lendAccept.signWhy' : 'accept.signWhy'} />
             {blockers.length === 0 && (
               <p className="consent tier-a">
                 <label>
@@ -481,7 +521,7 @@ export function AcceptOffer({ offerId, chain, own, meta, terms, onClose }: Accep
           need={riskOpen}
           source={{ kind: 'offer', offerId }}
           pairLabel={pairLabel}
-          flowKey={ACCEPT_KEY}
+          flowKey={flowKey}
           onBack={() => {
             setRiskOpen(null);
             void load();

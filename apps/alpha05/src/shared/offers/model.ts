@@ -69,13 +69,31 @@ export function notTakeable(state: OfferState | null, preview: AcceptPreview | n
   return null;
 }
 
-/** Whether this offer is one the Borrow page's guided flow can take: a
- *  lender offer of an ERC-20 against ERC-20 collateral, posted by someone
- *  else. Everything else on the pair is counted, never silently dropped. */
-export type OfferFit = 'fits' | 'own' | 'not-lender' | 'not-erc20';
+/** The side the connected wallet takes when it accepts an offer: a lender
+ *  offer is taken by a borrower, a borrow request by a lender. */
+export type AcceptRole = 'borrower' | 'lender';
 
-export function borrowFit(o: Pick<StoredOffer, 'offerType' | 'assetType' | 'collateralAssetType' | 'creator'>, account: Hex): OfferFit {
-  if (o.offerType !== OFFER_LENDER) return 'not-lender';
+export function acceptorRole(o: Pick<StoredOffer, 'offerType'>): AcceptRole {
+  return o.offerType === OFFER_LENDER ? 'borrower' : 'lender';
+}
+
+/** The loan a borrow request refinances, or null. Funding such a request
+ *  does not deliver to the borrower: the amount less the borrower's fee
+ *  stays in the lender's vault and pays the old loan's lender in the same
+ *  transaction. The protocol's rule is a borrower-side offer naming a
+ *  target loan; this is the same rule, so the review and the chain agree. */
+export function refinancePayoff(o: Pick<StoredOffer, 'offerType' | 'refinanceTargetLoanId'>): bigint | null {
+  return o.offerType !== OFFER_LENDER && o.refinanceTargetLoanId !== 0n ? o.refinanceTargetLoanId : null;
+}
+
+/** Whether this offer is one a guided flow can take for `role`: an offer
+ *  from the other side (a lender offer for a borrower, a borrow request for
+ *  a lender) of an ERC-20 against ERC-20 collateral, posted by someone
+ *  else. Everything else on the pair is counted, never silently dropped. */
+export type OfferFit = 'fits' | 'own' | 'other-side' | 'not-erc20';
+
+export function offerFit(o: Pick<StoredOffer, 'offerType' | 'assetType' | 'collateralAssetType' | 'creator'>, account: Hex, role: AcceptRole): OfferFit {
+  if (acceptorRole(o) !== role) return 'other-side';
   if (o.assetType !== ASSET_ERC20 || o.collateralAssetType !== ASSET_ERC20) return 'not-erc20';
   if (o.creator.toLowerCase() === account.toLowerCase()) return 'own';
   return 'fits';
@@ -88,22 +106,33 @@ export interface Ranked {
 }
 
 /**
- * The order offers are suggested in for a borrower: ones that can be taken
- * first, then the lowest rate, then the larger amount, then the oldest id.
- * Stated on the page as the order, never as advice.
+ * The order offers are suggested in: ones that can be taken first, then
+ * the better rate for the reader (the lowest for a borrower, the highest
+ * for a lender), then the larger amount, then the oldest id. Stated on the
+ * page as the order, never as advice.
  */
-export function rankForBorrower<T extends Ranked>(rows: readonly T[]): T[] {
+export function rankFor<T extends Ranked>(role: AcceptRole, rows: readonly T[]): T[] {
   return [...rows].sort((a, b) => {
     if (Boolean(a.blocked) !== Boolean(b.blocked)) return a.blocked ? 1 : -1;
     const ra = roleTerms(a.offer);
     const rb = roleTerms(b.offer);
-    if (ra.rateBps !== rb.rateBps) return ra.rateBps < rb.rateBps ? -1 : 1;
+    if (ra.rateBps !== rb.rateBps) return ra.rateBps < rb.rateBps === (role === 'borrower') ? -1 : 1;
     if (ra.amount !== rb.amount) return ra.amount > rb.amount ? -1 : 1;
     return a.offer.id < b.offer.id ? -1 : a.offer.id > b.offer.id ? 1 : 0;
   });
 }
 
-/** What the borrower's wallet lacks to lock the collateral, or zero. */
+/** What the acceptor pays from the wallet: a borrower locks the collateral
+ *  in their vault, a lender funds the principal. */
+export function payLeg(
+  role: AcceptRole,
+  o: Pick<StoredOffer, 'lendingAsset' | 'collateralAsset'>,
+  p: Pick<AcceptPreview, 'effectivePrincipal' | 'collateralAmount'>,
+): { asset: Hex; amount: bigint } {
+  return role === 'borrower' ? { asset: o.collateralAsset, amount: p.collateralAmount } : { asset: o.lendingAsset, amount: p.effectivePrincipal };
+}
+
+/** What the acceptor's wallet lacks for what it pays, or zero. */
 export function shortfall(balance: bigint, needed: bigint): bigint {
   return balance >= needed ? 0n : needed - balance;
 }
@@ -141,6 +170,42 @@ export function acceptFigures(preview: AcceptPreview, durationDays: bigint, matc
     rateBps: preview.interestRateBps,
     interest,
     owedAtDue: preview.effectivePrincipal + interest,
+  };
+}
+
+/**
+ * The figures a lender's acceptance moves, from the protocol's preview: the
+ * principal leaves the wallet whole; the borrower's initiation fee is taken
+ * from it on the way to the borrower, and the share the protocol pays the
+ * submitter comes back to the lender's wallet. Interest at due is the
+ * borrower's, before the protocol keeps its share of it when it is paid
+ * (`protocolShareBps`, at most: a fee discount can lower it then).
+ */
+export interface LenderFigures {
+  principal: bigint;
+  fee: bigint;
+  feeBack: bigint;
+  collateral: bigint;
+  rateBps: bigint;
+  interest: bigint;
+  /** The most the protocol keeps of that interest. */
+  protocolShare: bigint;
+  /** Principal plus interest less the most the protocol keeps. */
+  backAtDue: bigint;
+}
+
+export function lenderFigures(preview: AcceptPreview, durationDays: bigint, matcherBps: bigint, protocolShareBps: bigint): LenderFigures {
+  const interest = interestAtDue(preview.effectivePrincipal, preview.interestRateBps, durationDays);
+  const protocolShare = (interest * protocolShareBps) / BPS;
+  return {
+    principal: preview.effectivePrincipal,
+    fee: preview.lifEstimate,
+    feeBack: (preview.lifEstimate * matcherBps) / BPS,
+    collateral: preview.collateralAmount,
+    rateBps: preview.interestRateBps,
+    interest,
+    protocolShare,
+    backAtDue: preview.effectivePrincipal + interest - protocolShare,
   };
 }
 

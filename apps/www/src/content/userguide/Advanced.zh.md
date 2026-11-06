@@ -1854,6 +1854,36 @@ Basic 发布单一数值的请求：`amount` = `amountMax`，`interestRateBps` =
 
 选择加入使用 `setOfferCreatorFullTariff(offerId, true, maxCStar, allowDowngrade)`，由创建者在 `createOffer` 之后发送；一旦有出借人接受请求，就会以 `OfferAlreadyAccepted` 拒绝；`maxCStar` 必须大于零（`FullTariffMaxCStarRequired`）。表单从 `getFeeEntitlementConfig()` 显示开关，从 `quoteCStar(lendingAsset, principal, durationDays)` 显示费用档，范围请求则在 `amount` 和 `amountMax` 处读取；上限默认取 `amountMax` 处的报价。每次接受时，收费按该笔贷款本金计算 `C*`，仅当开关开启、本金有价格且具流动性、`C* ≤ maxCStar`，并且金库的可用 VPFI 足以支付（金库余额以 `getTrackedVPFIBalance` 为上限，减去有效留置，经由 `getFreeBalance`）时才收取；否则以 `FeeEntitlementDisabled`、`FeeEntitlementFullOptInFailed` 或 `FeeEntitlementTariffAboveAuth` 回滚，除非 `allowDowngrade` 允许贷款不带费用档开立。借款人的贷款费用折扣提高 `FULL_MODE_FEE_DISCOUNT_BONUS_BPS`（1000），上限为 `MAX_FEE_DISCOUNT_BPS`（5000）。审阅会阻止导致每笔贷款都被拒绝的选择，选择加入通过重新读取 `getOffer` 来测量（`creatorFull`、`creatorMaxCStar`、`creatorAllowFullDowngrade`）。对于未成交的请求，本应用尚未提供兜底出借。
 
+<a id="lend-start"></a>
+
+### Lend: 如何运作
+
+Lend 通过出借人发送的 `acceptOffer(offerId, terms, signature)`，直接接受以 ERC-20 抵押的 ERC-20 借款请求（`offerType` 1）。在一笔交易中，本金在对 Diamond 的授权下从出借人的钱包转入出借人的金库；借款人收到扣除发起费后的金额；已在借款人金库中的抵押品成为贷款的抵押品；并发出 `LoanInitiated`，出借人和借款人各得一枚仓位 NFT。发布出借报价（`offerType` 0）、NFT 一方以及高级选项将在后续更新中推出；页面链接到现有应用。
+
+<a id="lend-offers"></a>
+
+### Lend: 选择请求
+
+`getActiveOffersByAssetPairRanked(lending, collateral, 0, 20)` 给出该交易对公开报价的 id。对每一个，页面读取 `getOffer`、`getOfferState`、`getOfferLinkedLoanId`，以及在连接钱包时读取 `previewAccept(offerId, wallet)`，其 `errorCode` 即协议的拒绝原因。直接接受按 `interestRateBpsMax` 锁定请求的 `amount`（其最小值），贷款价值比为该金额按今日价格计算的 `calculateLTV`。出借人报价、NFT 一方、读者自己的请求以及出借人仓位出售载体（`getOfferLinkedLoanId` 非零的借款方报价）只计数，不列出。排序：可出资的在前，然后按利率降序，再按金额降序。
+
+<a id="lend-review"></a>
+
+### Lend: 审核与签名
+
+审核读取与 Borrow 相同的内容（报价、其状态、`previewAccept`、`getOfferLinkedLoanId`、`getCurrentRiskTermsHash`、两种类别、`getEffectiveGraceSeconds(durationDays)`、`getLoanInitiationFeeBps`、`getLifMatcherFeeBps`、钱包的金库、`previewOfferAcceptBlock` 和费用折扣同意），外加 `getTreasuryFeeBps`，并在出借资产（出借人支付的一方）上测量余额和授权额度。该资产不足会阻止签名，出借人仓位出售载体同样如此。钱包签署 EIP-712 `AcceptTerms`（域 `Vaipakam AcceptOffer`，版本 1），仅在授权额度不足时精确批准本金（对拒绝在非零值之间变更的代币，先加一步归零），然后模拟并发送 `acceptOffer`；中止的流程留下的授权会像 Borrow 那样被重置。结果读取此报价的 `LoanInitiated`、本金从钱包转出的 `Transfer`，以及撮合份额返还的 `Transfer`。
+
+<a id="lend-fee"></a>
+
+### Lend: 费用与协议份额
+
+费用即 `previewAccept` 的 `lifEstimate`，由借款人承担：以出借资产计的本金的 `getLoanInitiationFeeBps`，从交付给借款人的金额中扣除，在接受时因借款人的持有等级折扣而降低，并在设置了 `creatorFull` 且收费成功时因全额费用档奖励而降低。提交者份额，即费用的 `getLifMatcherFeeBps`，支付给发送者，此处为出借人。协议在利息中的份额为 `getTreasuryFeeBps`，在每笔贷款开立时固定（`treasuryFeeBpsAtInit`）；同意开启时，出借人的持有等级折扣会在利息结算时降低它。审核显示今日费率，并以该费率下的份额作为上限。
+
+<a id="lend-risks"></a>
+
+### Lend: 风险
+
+超过宽限期结束（到期日后 `getEffectiveGraceSeconds`，暂停时间会使其推后）的贷款，任何人都可以将其违约：具流动性的抵押品为出借人出售，缺乏流动性的抵押品按原样转移。两方都具流动性时，健康因子低于 1 即可清算贷款，出售所得先支付出借人。任何一方缺乏流动性都会排除基于价格的清算，违约时出借人获得全部抵押品。`useFullTermInterest` 为提前还款设定利息下限；没有它则按比例计息。定期计息计划会通过强制出售抵押品向出借人结清错过的期次。出借人的仓位 NFT 承载债权：转让它就转让了贷款。
+
 <a id="risk-access"></a>
 
 ### Risk Access：你的风险等级

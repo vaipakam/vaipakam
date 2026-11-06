@@ -2498,6 +2498,36 @@ A range sends `amount` (the smallest) below `amountMax` (the largest), `interest
 
 The opt-in is `setOfferCreatorFullTariff(offerId, true, maxCStar, allowDowngrade)`, sent by the creator after `createOffer` and refused with `OfferAlreadyAccepted` once a lender has taken the request; `maxCStar` must be above zero (`FullTariffMaxCStarRequired`). The form shows the switch from `getFeeEntitlementConfig()` and the tariff from `quoteCStar(lendingAsset, principal, durationDays)`, at `amount` and `amountMax` for a range; the ceiling defaults to the quote at `amountMax`. At each accept the charge takes `C*`, priced at that loan's principal, only if the switch is on, the principal is priced and liquid, `C* ≤ maxCStar`, and the vault's free VPFI covers it (the vault balance capped by `getTrackedVPFIBalance`, less active liens, through `getFreeBalance`); otherwise it reverts `FeeEntitlementDisabled`, `FeeEntitlementFullOptInFailed` or `FeeEntitlementTariffAboveAuth`, unless `allowDowngrade` lets the loan open without it. The borrower's loan fee discount rises by `FULL_MODE_FEE_DISCOUNT_BONUS_BPS` (1000), capped at `MAX_FEE_DISCOUNT_BPS` (5000). The review blocks a choice under which every loan would be refused, and the opt-in is measured by reading `getOffer` back (`creatorFull`, `creatorMaxCStar`, `creatorAllowFullDowngrade`). Backstop lending for unfilled requests is not offered by this app yet.
 
+<a id="lend-start"></a>
+
+### Lend: How It Works
+
+Lend takes a borrow request (`offerType` 1) of an ERC-20 against ERC-20 collateral directly, with `acceptOffer(offerId, terms, signature)` sent by the lender. In one transaction the principal is pulled from the lender's wallet, under an allowance to the Diamond, into the lender's vault; the borrower receives it less the initiation fee; the collateral already in the borrower's vault becomes the loan's collateral; and `LoanInitiated` is emitted, with a lender and a borrower position NFT. Posting a lending offer (`offerType` 0), NFT legs and the Advanced options follow in later updates; the page links to the current app.
+
+<a id="lend-offers"></a>
+
+### Lend: Picking a Request
+
+`getActiveOffersByAssetPairRanked(lending, collateral, 0, 20)` gives the pair's open offer ids. For each, the page reads `getOffer`, `getOfferState`, `getOfferLinkedLoanId` and, with a wallet, `previewAccept(offerId, wallet)`, whose `errorCode` is the protocol's refusal. A direct take binds the request's `amount` (its minimum) at `interestRateBpsMax`, and the loan-to-value is `calculateLTV` on that amount at today's prices. Lender offers, NFT legs, the reader's own requests and lender-position sale vehicles (a borrow-side offer with a non-zero `getOfferLinkedLoanId`) are counted, not listed. The order is fundable first, then rate descending, then amount descending.
+
+<a id="lend-review"></a>
+
+### Lend: Review and Signing
+
+The review reads what Borrow's does (the offer, its state, `previewAccept`, `getOfferLinkedLoanId`, `getCurrentRiskTermsHash`, both classes, `getEffectiveGraceSeconds(durationDays)`, `getLoanInitiationFeeBps`, `getLifMatcherFeeBps`, the wallet's vault, `previewOfferAcceptBlock` and the fee-discount consent) plus `getTreasuryFeeBps`, and measures balance and allowance on the lending asset, the leg the lender pays. A shortfall in it blocks signing, as does a lender-position sale vehicle. The wallet signs EIP-712 `AcceptTerms` (domain `Vaipakam AcceptOffer`, version 1), approves exactly the principal only when the allowance is short (with a zero step first for a token that refuses a non-zero change), and `acceptOffer` is simulated and sent; an allowance left by a stopped flow is reset as on Borrow. The outcome reads `LoanInitiated` for this offer, the principal's `Transfer` out of the wallet and the matcher share's `Transfer` back to it.
+
+<a id="lend-fee"></a>
+
+### Lend: The Fee and the Protocol's Share
+
+The fee is `previewAccept`'s `lifEstimate`, and it is the borrower's: `getLoanInitiationFeeBps` of the principal in the lending asset, deducted from the borrower's delivery, lowered at acceptance by the borrower's hold-tier discount and, when `creatorFull` is set and the charge succeeds, by the Full tariff bonus. The submitter's share, `getLifMatcherFeeBps` of the fee, is paid to the sender, here the lender. The protocol's share of interest is `getTreasuryFeeBps`, fixed per loan when it opens (`treasuryFeeBpsAtInit`); the lender's hold-tier discount, with the consent on, lowers it when interest is settled. The review shows today's rate, and the share at that rate as an upper bound.
+
+<a id="lend-risks"></a>
+
+### Lend: Risks
+
+A loan past its grace end (`getEffectiveGraceSeconds` after the due date, which paused time moves) can be defaulted by anyone: liquid collateral is sold for the lender, illiquid collateral is transferred as-is. With both legs liquid the loan can be liquidated once the health factor is below 1, and the sale pays the lender first. An illiquid leg rules out price-based liquidation, and on default the lender receives all the collateral. `useFullTermInterest` floors the interest on early repayment; without it interest is pro-rata. A periodic-interest cadence settles a missed period by a forced sale of collateral to the lender. The lender's position NFT carries the claim: transferring it transfers the loan.
+
 <a id="risk-access"></a>
 
 ### Risk Access: Your Risk Level

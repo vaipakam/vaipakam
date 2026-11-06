@@ -2309,6 +2309,36 @@ Eine Spanne sendet `amount` (den kleinsten) unter `amountMax` (dem größten), `
 
 Die Zustimmung ist `setOfferCreatorFullTariff(offerId, true, maxCStar, allowDowngrade)`, vom Ersteller nach `createOffer` gesendet und mit `OfferAlreadyAccepted` abgelehnt, sobald ein Kreditgeber die Anfrage übernommen hat; `maxCStar` muss über null liegen (`FullTariffMaxCStarRequired`). Das Formular zeigt den Schalter aus `getFeeEntitlementConfig()` und den Tarif aus `quoteCStar(lendingAsset, principal, durationDays)`, bei einer Spanne zu `amount` und `amountMax`; die Obergrenze ist standardmäßig das Angebot zu `amountMax`. Bei jeder Annahme nimmt die Belastung `C*`, bewertet zum Kapital dieses Kredits, nur wenn der Schalter an ist, das Kapital einen Preis hat und liquide ist, `C* ≤ maxCStar` gilt und die freien VPFI des Tresors es decken (der Tresorsaldo, begrenzt durch `getTrackedVPFIBalance`, abzüglich aktiver Pfandrechte, über `getFreeBalance`); sonst revertiert sie mit `FeeEntitlementDisabled`, `FeeEntitlementFullOptInFailed` oder `FeeEntitlementTariffAboveAuth`, außer `allowDowngrade` lässt den Kredit ohne ihn eröffnen. Der Kreditgebührenrabatt des Kreditnehmers steigt um `FULL_MODE_FEE_DISCOUNT_BONUS_BPS` (1000), begrenzt auf `MAX_FEE_DISCOUNT_BPS` (5000). Die Prüfung blockiert eine Wahl, unter der jeder Kredit abgelehnt würde, und die Zustimmung wird durch erneutes Lesen von `getOffer` gemessen (`creatorFull`, `creatorMaxCStar`, `creatorAllowFullDowngrade`). Backstop-Kredite für nicht gefüllte Anfragen bietet diese App noch nicht an.
 
+<a id="lend-start"></a>
+
+### Lend: So funktioniert es
+
+Lend nimmt eine Kreditanfrage (`offerType` 1) eines ERC-20 gegen ERC-20-Sicherheiten direkt an, mit `acceptOffer(offerId, terms, signature)`, gesendet vom Kreditgeber. In einer Transaktion wird das Kapital aus der Wallet des Kreditgebers, über eine Freigabe an den Diamond, in den Tresor des Kreditgebers gezogen; der Kreditnehmer erhält es abzüglich der Eröffnungsgebühr; die bereits im Tresor des Kreditnehmers liegenden Sicherheiten werden zu den Sicherheiten des Kredits; und `LoanInitiated` wird ausgegeben, mit einem Positions-NFT für Kreditgeber und Kreditnehmer. Ein Kreditangebot veröffentlichen (`offerType` 0), NFT-Seiten und die erweiterten Optionen folgen in späteren Updates; die Seite verlinkt auf die aktuelle App.
+
+<a id="lend-offers"></a>
+
+### Lend: Eine Anfrage auswählen
+
+`getActiveOffersByAssetPairRanked(lending, collateral, 0, 20)` liefert die IDs der offenen Angebote des Paars. Für jedes liest die Seite `getOffer`, `getOfferState`, `getOfferLinkedLoanId` und, mit einer Wallet, `previewAccept(offerId, wallet)`, dessen `errorCode` die Ablehnung des Protokolls ist. Eine direkte Annahme bindet den `amount` der Anfrage (ihr Minimum) zu `interestRateBpsMax`, und der Beleihungswert ist `calculateLTV` auf diesen Betrag zu heutigen Preisen. Kreditgeberangebote, NFT-Seiten, die eigenen Anfragen des Lesers und Verkaufsvehikel für Kreditgeberpositionen (ein kreditnehmerseitiges Angebot mit einem `getOfferLinkedLoanId` ungleich null) werden gezählt, nicht gelistet. Die Reihenfolge: finanzierbar zuerst, dann Zinssatz absteigend, dann Betrag absteigend.
+
+<a id="lend-review"></a>
+
+### Lend: Prüfen und Signieren
+
+Die Prüfung liest dasselbe wie bei Borrow (das Angebot, seinen Zustand, `previewAccept`, `getOfferLinkedLoanId`, `getCurrentRiskTermsHash`, beide Klassen, `getEffectiveGraceSeconds(durationDays)`, `getLoanInitiationFeeBps`, `getLifMatcherFeeBps`, den Tresor der Wallet, `previewOfferAcceptBlock` und die Gebührenrabatt-Zustimmung) plus `getTreasuryFeeBps`, und misst Saldo und Freigabe am verliehenen Vermögenswert, der Seite, die der Kreditgeber zahlt. Ein Fehlbetrag dort blockiert das Signieren, ebenso ein Verkaufsvehikel für eine Kreditgeberposition. Die Wallet signiert EIP-712 `AcceptTerms` (Domain `Vaipakam AcceptOffer`, Version 1), gibt genau das Kapital nur frei, wenn die Freigabe zu knapp ist (mit einem Schritt auf null zuerst bei einem Token, das eine Änderung zwischen zwei Werten ungleich null ablehnt), und `acceptOffer` wird simuliert und gesendet; eine von einem gestoppten Ablauf hinterlassene Freigabe wird wie bei Borrow zurückgesetzt. Das Ergebnis liest `LoanInitiated` für dieses Angebot, den `Transfer` des Kapitals aus der Wallet und den `Transfer` des Matcher-Anteils zurück.
+
+<a id="lend-fee"></a>
+
+### Lend: Die Gebühr und der Anteil des Protokolls
+
+Die Gebühr ist `lifEstimate` aus `previewAccept` und gehört dem Kreditnehmer: `getLoanInitiationFeeBps` des Kapitals im verliehenen Vermögenswert, abgezogen von der Auszahlung an den Kreditnehmer, bei der Annahme gesenkt durch dessen Haltestufen-Rabatt und, wenn `creatorFull` gesetzt ist und die Belastung gelingt, durch den Bonus des Full-Tarifs. Der Anteil des Einreichers, `getLifMatcherFeeBps` der Gebühr, geht an den Absender, hier den Kreditgeber. Der Anteil des Protokolls an den Zinsen ist `getTreasuryFeeBps`, pro Kredit beim Eröffnen festgelegt (`treasuryFeeBpsAtInit`); der Haltestufen-Rabatt des Kreditgebers senkt ihn bei eingeschalteter Zustimmung, wenn Zinsen abgerechnet werden. Die Prüfung zeigt den heutigen Satz und den Anteil zu diesem Satz als Obergrenze.
+
+<a id="lend-risks"></a>
+
+### Lend: Risiken
+
+Ein Kredit nach Ende seiner Nachfrist (`getEffectiveGraceSeconds` nach dem Fälligkeitsdatum, das pausierte Zeit verschiebt) kann von jedem für ausgefallen erklärt werden: liquide Sicherheiten werden für den Kreditgeber verkauft, illiquide unverändert übertragen. Sind beide Seiten liquide, kann der Kredit liquidiert werden, sobald der Health Factor unter 1 liegt, und der Verkauf zahlt den Kreditgeber zuerst. Eine illiquide Seite schließt die preisbasierte Liquidation aus, und bei einem Ausfall erhält der Kreditgeber alle Sicherheiten. `useFullTermInterest` setzt bei vorzeitiger Rückzahlung eine Untergrenze für die Zinsen; ohne es sind die Zinsen anteilig. Ein periodischer Zinsrhythmus begleicht eine verpasste Periode durch einen Zwangsverkauf von Sicherheiten an den Kreditgeber. Das Positions-NFT des Kreditgebers trägt den Anspruch: Wer es überträgt, überträgt den Kredit.
+
 <a id="risk-access"></a>
 
 ### Risk Access: Ihre Risikostufe

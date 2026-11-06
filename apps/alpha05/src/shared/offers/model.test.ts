@@ -1,8 +1,22 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { OFFER_BORROWER } from './acceptTerms';
+import { OFFER_BORROWER, OFFER_LENDER } from './acceptTerms';
 import { offer } from './testOffer';
-import { acceptFigures, borrowFit, gateBlock, interestAtDue, listFee, movedBetween, notTakeable, rankForBorrower, shortfall } from './model';
+import {
+  acceptFigures,
+  gateBlock,
+  interestAtDue,
+  listFee,
+  movedBetween,
+  notTakeable,
+  rankFor,
+  lenderFigures,
+  acceptorRole,
+  offerFit,
+  payLeg,
+  refinancePayoff,
+  shortfall,
+} from './model';
 import { ACCEPT_ERRORS, type AcceptPreview } from './reads';
 
 const ME = '0x2222222222222222222222222222222222222222' as const;
@@ -50,11 +64,22 @@ describe('whether an offer can be taken', () => {
     expect(notTakeable(null, null, null)?.kind).toBe('unread');
   });
 
-  it('fits only someone else’s ERC-20 lender offer', () => {
-    expect(borrowFit(offer(), ME)).toBe('fits');
-    expect(borrowFit(offer({ creator: ME }), ME)).toBe('own');
-    expect(borrowFit(offer({ offerType: OFFER_BORROWER }), ME)).toBe('not-lender');
-    expect(borrowFit(offer({ collateralAssetType: 1 }), ME)).toBe('not-erc20');
+  it('fits only someone else’s ERC-20 offer from the other side', () => {
+    expect(offerFit(offer(), ME, 'borrower')).toBe('fits');
+    expect(offerFit(offer({ creator: ME }), ME, 'borrower')).toBe('own');
+    expect(offerFit(offer({ offerType: OFFER_BORROWER }), ME, 'borrower')).toBe('other-side');
+    expect(offerFit(offer({ collateralAssetType: 1 }), ME, 'borrower')).toBe('not-erc20');
+    expect(offerFit(offer({ offerType: OFFER_BORROWER }), ME, 'lender')).toBe('fits');
+    expect(offerFit(offer(), ME, 'lender')).toBe('other-side');
+    expect(offerFit(offer({ offerType: OFFER_BORROWER, creator: ME }), ME, 'lender')).toBe('own');
+  });
+
+  it('names the acceptor by the offer’s side and what it pays', () => {
+    expect(acceptorRole(offer())).toBe('borrower');
+    expect(acceptorRole(offer({ offerType: OFFER_BORROWER }))).toBe('lender');
+    const p = preview();
+    expect(payLeg('borrower', offer(), p)).toEqual({ asset: offer().collateralAsset, amount: p.collateralAmount });
+    expect(payLeg('lender', offer(), p)).toEqual({ asset: offer().lendingAsset, amount: p.effectivePrincipal });
   });
 });
 
@@ -67,7 +92,33 @@ describe('the suggested order', () => {
       { offer: offer({ id: 4n, interestRateBps: 500n }), blocked: null },
       { offer: offer({ id: 5n, interestRateBps: 500n }), blocked: null },
     ];
-    expect(rankForBorrower(rows).map((r) => r.offer.id)).toEqual([4n, 5n, 3n, 2n, 1n]);
+    expect(rankFor('borrower', rows).map((r) => r.offer.id)).toEqual([4n, 5n, 3n, 2n, 1n]);
+  });
+});
+
+describe('the suggested order for a lender', () => {
+  it('puts takeable requests first, then the higher rate, the larger amount, the older id', () => {
+    const req = (o: Parameters<typeof offer>[0]) => offer({ offerType: OFFER_BORROWER, ...o });
+    const rows = [
+      { offer: req({ id: 1n, interestRateBpsMax: 900n }), blocked: { kind: 'state' } },
+      { offer: req({ id: 2n, interestRateBpsMax: 300n }), blocked: null },
+      { offer: req({ id: 3n, interestRateBpsMax: 500n, amount: 1n }), blocked: null },
+      { offer: req({ id: 4n, interestRateBpsMax: 500n }), blocked: null },
+      { offer: req({ id: 5n, interestRateBpsMax: 700n }), blocked: null },
+    ];
+    expect(rankFor('lender', rows).map((r) => r.offer.id)).toEqual([5n, 4n, 3n, 2n, 1n]);
+  });
+});
+
+describe('the lender figures', () => {
+  it('fund the whole principal, return the fee share, and keep the protocol share out of interest', () => {
+    const p = preview();
+    const f = lenderFigures(p, 365n, 100n, 200n);
+    expect(f.principal).toBe(p.effectivePrincipal);
+    expect(f.feeBack).toBe((p.lifEstimate * 100n) / 10_000n);
+    expect(f.interest).toBe((p.effectivePrincipal * p.interestRateBps) / 10_000n);
+    expect(f.protocolShare).toBe((f.interest * 200n) / 10_000n);
+    expect(f.backAtDue).toBe(p.effectivePrincipal + f.interest - f.protocolShare);
   });
 });
 
@@ -94,7 +145,7 @@ describe('the acceptance figures', () => {
 });
 
 describe('gateBlock', () => {
-  it('blocks on the lender\'s code first, on this wallet\'s codes 1-3 and unknown ones, never on the acknowledgement-covered 4', () => {
+  it("blocks on the lender's code first, on this wallet's codes 1-3 and unknown ones, never on the acknowledgement-covered 4", () => {
     expect(gateBlock(2, 2)).toEqual({ creator: true, code: 2 });
     expect(gateBlock(1, 0)).toEqual({ creator: false, code: 1 });
     expect(gateBlock(9, 0)).toEqual({ creator: false, code: 9 });
@@ -105,5 +156,15 @@ describe('gateBlock', () => {
   it('marks a row the review would block as not takeable', () => {
     expect(notTakeable('open', preview(), null, gateBlock(3, 0))).toEqual({ kind: 'gate', block: { creator: false, code: 3 } });
     expect(notTakeable('open', preview(), null, gateBlock(4, 0))).toEqual({ kind: 'gate', block: { creator: false, code: 4 } });
+  });
+});
+
+describe('a refinance request', () => {
+  it('names the loan it pays off when a borrow request carries a target, as the protocol does', () => {
+    expect(refinancePayoff({ offerType: OFFER_BORROWER, refinanceTargetLoanId: 7n })).toBe(7n);
+    expect(refinancePayoff({ offerType: OFFER_BORROWER, refinanceTargetLoanId: 0n })).toBeNull();
+  });
+  it('never reads a lender offer as one, whatever it carries', () => {
+    expect(refinancePayoff({ offerType: OFFER_LENDER, refinanceTargetLoanId: 7n })).toBeNull();
   });
 });

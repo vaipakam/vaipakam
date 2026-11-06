@@ -1,17 +1,25 @@
 import { useId, useState } from 'react';
 import type { SupportedChain } from '../../chain/chains';
-import { useCopy } from '../../shared/copy/useCopy';
-import { WhyLink } from '../../shared/help/WhyLink';
-import { parsePasted, readAssetClass, suggestedAssets, suggestedCollateral } from '../../shared/offers/assets';
-import { useAssetStandard } from '../../shared/nft/useStandard';
-import { useChainRead } from '../../shared/reads/chainRead';
-import { assetName, type TokenMetaMap } from '../../shared/reads/tokens';
-import { FormField } from '../../shared/ui/FormField';
-import { Notice } from '../../shared/ui/Notice';
+import { useCopy, type CopyKey } from '../copy/useCopy';
+import type { AcceptRole } from './model';
+import { WhyLink } from '../help/WhyLink';
+import { parsePasted, readAssetClass, suggestedAssets, suggestedCollateral } from './assets';
+import { useAssetStandard } from '../nft/useStandard';
+import { useChainRead } from '../reads/chainRead';
+import { assetName, type TokenMetaMap } from '../reads/tokens';
+import { FormField } from '../ui/FormField';
+import { Notice } from '../ui/Notice';
 
 type Hex = `0x${string}`;
 
 const OTHER = 'other';
+
+/** The lines that name the reader's side; every other line of the picker
+ *  reads the same from either side. */
+const KEYS = {
+  borrower: { step: 'borrow.stepPair', lending: 'borrow.pickLending', collateral: 'borrow.pickCollateral', same: 'borrow.sameAsset', lendingNft: 'borrow.lendingNft' },
+  lender: { step: 'lend.stepPair', lending: 'lend.pickLending', collateral: 'lend.pickCollateral', same: 'lend.sameAsset', lendingNft: 'lend.lendingNft' },
+} as const satisfies Record<AcceptRole, Record<string, CopyKey>>;
 
 /** One leg of the pair: a suggested token, or a pasted address. */
 function AssetChoice({
@@ -22,19 +30,23 @@ function AssetChoice({
   onChange,
   testId,
   leg,
+  role,
 }: {
+  role: AcceptRole;
   label: string;
   value: Hex | null;
   chain: SupportedChain;
   meta: TokenMetaMap | null;
   onChange: (asset: Hex | null) => void;
   testId: string;
-  /** The collateral leg also offers the test NFT collections (NFT-13). */
+  /** The collateral leg also offers the test NFT collections (NFT-13) to a
+   *  borrower, who can lock one; a lender's guided flow funds token
+   *  collateral only. */
   leg: 'lending' | 'collateral';
 }) {
   const { text, format } = useCopy();
   const id = useId();
-  const suggested = leg === 'collateral' ? suggestedCollateral(chain) : suggestedAssets(chain).map((c) => ({ ...c, nft: false }));
+  const suggested = leg === 'collateral' && role === 'borrower' ? suggestedCollateral(chain) : suggestedAssets(chain).map((c) => ({ ...c, nft: false }));
   const isSuggested = value !== null && suggested.some((c) => c.address.toLowerCase() === value.toLowerCase());
   const [other, setOther] = useState(value !== null && !isSuggested);
   const [pasted, setPasted] = useState(value !== null && !isSuggested ? value : '');
@@ -88,7 +100,7 @@ function AssetChoice({
         </FormField>
       )}
       {suggested.length === 0 && <p className="tier-b">{text('borrow.pickNone')}</p>}
-      {value !== null && <AssetStandardLine asset={value} meta={meta} leg={leg} />}
+      {value !== null && <AssetStandardLine asset={value} meta={meta} leg={leg} role={role} />}
       {value !== null && <AssetClassLine asset={value} chain={chain} meta={meta} />}
       {value === null && !other && suggested.length > 0 && <p className="tier-b">{format('borrow.pickHint', { chain: chain.name })}</p>}
     </div>
@@ -97,7 +109,7 @@ function AssetChoice({
 
 /** NFT-13 — the standard the asset's contract claims, said only when it is
  *  an NFT (an ERC-20 needs no line) or could not be read. */
-function AssetStandardLine({ asset, meta, leg }: { asset: Hex; meta: TokenMetaMap | null; leg: 'lending' | 'collateral' }) {
+function AssetStandardLine({ asset, meta, leg, role }: { asset: Hex; meta: TokenMetaMap | null; leg: 'lending' | 'collateral'; role: AcceptRole }) {
   const { format } = useCopy();
   const std = useAssetStandard(asset);
   const name = assetName(asset, meta);
@@ -108,10 +120,10 @@ function AssetStandardLine({ asset, meta, leg }: { asset: Hex; meta: TokenMetaMa
         {format('borrow.standardFailed', { asset: name, reason: std.error ?? 'no answer' })}
       </Notice>
     );
-  if (leg === 'lending')
+  if (leg === 'lending' || role === 'lender')
     return (
       <Notice tone="warn" tier="A">
-        {format('borrow.lendingNft', { asset: name })}
+        {format(leg === 'lending' ? KEYS[role].lendingNft : 'lend.collateralNft', { asset: name })}
       </Notice>
     );
   return (
@@ -150,14 +162,17 @@ function AssetClassLine({ asset, chain, meta }: { asset: Hex; chain: SupportedCh
   );
 }
 
-/** OFF-02 — the pair a borrower picks: what to borrow, what to lock. */
+/** OFF-02 — the pair the reader picks: what to borrow and what to lock,
+ *  or what to lend and what collateral to accept. */
 export function PairPicker({
+  role,
   chain,
   meta,
   lending,
   collateral,
   onChange,
 }: {
+  role: AcceptRole;
   chain: SupportedChain;
   meta: TokenMetaMap | null;
   lending: Hex | null;
@@ -165,15 +180,17 @@ export function PairPicker({
   onChange: (pair: { lending: Hex | null; collateral: Hex | null }) => void;
 }) {
   const { text } = useCopy();
+  const k = KEYS[role];
   const same = lending !== null && collateral !== null && lending.toLowerCase() === collateral.toLowerCase();
   return (
     <section className="borrow-section pair-picker" aria-labelledby="borrow-pair">
       <h2 id="borrow-pair" className="sr-only">
-        {text('borrow.stepPair')}
+        {text(k.step)}
       </h2>
       <div className="pair-grid">
         <AssetChoice
-          label={text('borrow.pickLending')}
+          label={text(k.lending)}
+          role={role}
           value={lending}
           chain={chain}
           meta={meta}
@@ -182,7 +199,8 @@ export function PairPicker({
           leg="lending"
         />
         <AssetChoice
-          label={text('borrow.pickCollateral')}
+          label={text(k.collateral)}
+          role={role}
           value={collateral}
           chain={chain}
           meta={meta}
@@ -193,7 +211,7 @@ export function PairPicker({
       </div>
       {same && (
         <Notice tone="danger" tier="A">
-          {text('borrow.sameAsset')}
+          {text(k.same)}
         </Notice>
       )}
     </section>

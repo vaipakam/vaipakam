@@ -63,7 +63,8 @@ export const ACCEPT_TERMS_TYPES = {
   ],
 } as const;
 
-/** The stored offer's fields the signature binds, as `getOffer` returns them. */
+/** The stored offer's fields the signature binds, as `getOffer` returns
+ *  them, plus the creator's Full tariff opt-in, which it does not bind. */
 export interface StoredOffer {
   id: bigint;
   creator: Hex;
@@ -93,6 +94,9 @@ export interface StoredOffer {
   periodicInterestCadence: number;
   expiresAt: bigint;
   accepted: boolean;
+  /** Whether the creator opted into the Full fee tariff (OFF-22). Not in
+   *  the signature: the protocol confirms it as the loan opens. */
+  creatorFull: boolean;
 }
 
 export type AcceptTermsMessage = {

@@ -115,6 +115,7 @@ export function storedOfferFrom(raw: Raw): StoredOffer {
     periodicInterestCadence: Number(raw.periodicInterestCadence),
     expiresAt: BigInt(raw.expiresAt as bigint | number),
     accepted: Boolean(raw.accepted),
+    creatorFull: Boolean(raw.creatorFull),
   };
 }
 
@@ -255,6 +256,16 @@ export async function readLifBps(client: PublicClient, diamond: Hex): Promise<bi
     address: diamond,
     abi: CONFIG,
     functionName: 'getLoanInitiationFeeBps',
+  })) as bigint;
+}
+
+/** The protocol's share of the interest a lender earns, in basis points,
+ *  under today's setting: each loan fixes the figure in force when it opens. */
+export async function readTreasuryFeeBps(client: PublicClient, diamond: Hex): Promise<bigint> {
+  return (await client.readContract({
+    address: diamond,
+    abi: CONFIG,
+    functionName: 'getTreasuryFeeBps',
   })) as bigint;
 }
 

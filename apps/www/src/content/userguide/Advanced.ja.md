@@ -2121,6 +2121,36 @@ Basic は単一値のリクエストを出します。`amount` = `amountMax`、`
 
 オプトインは `setOfferCreatorFullTariff(offerId, true, maxCStar, allowDowngrade)` で、作成者が `createOffer` の後に送り、貸し手がリクエストを受けた後は `OfferAlreadyAccepted` で拒否されます。`maxCStar` はゼロより大きくなければなりません（`FullTariffMaxCStarRequired`）。フォームはスイッチを `getFeeEntitlementConfig()` から、タリフを `quoteCStar(lendingAsset, principal, durationDays)` から表示し、範囲では `amount` と `amountMax` で読みます。上限の既定値は `amountMax` での見積もりです。各受諾で、手数料はそのローンの元本で算定した `C*` を取りますが、それはスイッチがオンで、元本に価格と流動性があり、`C* ≤ maxCStar` で、保管庫の空き VPFI（`getTrackedVPFIBalance` で上限を付けた保管庫残高から有効な担保権を引いたもの、`getFreeBalance` 経由）で足りる場合だけです。そうでなければ `FeeEntitlementDisabled`、`FeeEntitlementFullOptInFailed`、`FeeEntitlementTariffAboveAuth` で巻き戻ります。ただし `allowDowngrade` ならタリフなしでローンが開きます。借り手のローン手数料割引は `FULL_MODE_FEE_DISCOUNT_BONUS_BPS`（1000）上がり、`MAX_FEE_DISCOUNT_BPS`（5000）が上限です。確認画面はすべてのローンが拒否される選択を止め、オプトインは `getOffer` を読み直して測ります（`creatorFull`、`creatorMaxCStar`、`creatorAllowFullDowngrade`）。未充足リクエストへのバックストップ融資は、このアプリではまだ提供していません。
 
+<a id="lend-start"></a>
+
+### Lend: 仕組み
+
+Lend は、ERC-20 担保に対する ERC-20 の借入リクエスト（`offerType` 1）を、貸し手が送る `acceptOffer(offerId, terms, signature)` で直接受けます。1回のトランザクションで、元本は Diamond への承認のもとで貸し手のウォレットから貸し手のボールトへ引き出され、借り手は組成手数料を差し引いた額を受け取り、借り手のボールトにすでにある担保がローンの担保となり、`LoanInitiated` が発行されて、貸し手と借り手にそれぞれポジション NFT が渡ります。貸出オファーの掲載（`offerType` 0）、NFT の側、高度なオプションは今後のアップデートで追加されます。ページは現行アプリにリンクしています。
+
+<a id="lend-offers"></a>
+
+### Lend: リクエストを選ぶ
+
+`getActiveOffersByAssetPairRanked(lending, collateral, 0, 20)` がペアの公開中オファーの id を返します。各オファーについて、ページは `getOffer`、`getOfferState`、`getOfferLinkedLoanId` と、ウォレットがあれば `previewAccept(offerId, wallet)` を読み取ります。その `errorCode` がプロトコルの拒否理由です。直接の受諾は、リクエストの `amount`（最小額）を `interestRateBpsMax` で確定し、ローン資産価値比率はその金額に対する今日の価格での `calculateLTV` です。貸し手のオファー、NFT の側、閲覧者自身のリクエスト、貸し手ポジションの売却手段（`getOfferLinkedLoanId` がゼロでない借り手側オファー）は件数のみで、一覧には出ません。並び順は、資金提供可能なものが先、次に利率の降順、次に金額の降順です。
+
+<a id="lend-review"></a>
+
+### Lend: 確認と署名
+
+確認画面は Borrow と同じもの（オファー、その状態、`previewAccept`、`getOfferLinkedLoanId`、`getCurrentRiskTermsHash`、両方の分類、`getEffectiveGraceSeconds(durationDays)`、`getLoanInitiationFeeBps`、`getLifMatcherFeeBps`、ウォレットのボールト、`previewOfferAcceptBlock`、手数料割引の同意）に加えて `getTreasuryFeeBps` を読み取り、残高と承認額は貸し手が支払う側である貸出資産で測ります。そこに不足があれば署名はブロックされ、貸し手ポジションの売却手段も同様です。ウォレットは EIP-712 `AcceptTerms`（ドメイン `Vaipakam AcceptOffer`、バージョン 1）に署名し、承認額が足りない場合にのみ元本ちょうどを承認し（ゼロでない値同士の変更を拒むトークンには先にゼロにする手順を入れます）、`acceptOffer` をシミュレーションしてから送信します。途中で止まったフローが残した承認は Borrow と同様にリセットされます。結果として、このオファーの `LoanInitiated`、ウォレットからの元本の `Transfer`、マッチャー取り分が戻る `Transfer` を読み取ります。
+
+<a id="lend-fee"></a>
+
+### Lend: 手数料とプロトコルの取り分
+
+手数料は `previewAccept` の `lifEstimate` で、借り手が負担します。貸出資産での元本の `getLoanInitiationFeeBps` で、借り手への受け渡し額から差し引かれ、受諾時に借り手の保有ティア割引で、また `creatorFull` が設定され課金が成功した場合は Full タリフのボーナスで下がります。送信者の取り分（手数料の `getLifMatcherFeeBps`）は送信者、ここでは貸し手に支払われます。利息に対するプロトコルの取り分は `getTreasuryFeeBps` で、ローン開始時にローンごとに固定されます（`treasuryFeeBpsAtInit`）。同意がオンなら、貸し手の保有ティア割引が利息の精算時にこれを下げます。確認画面には今日の料率と、その料率での取り分が上限として表示されます。
+
+<a id="lend-risks"></a>
+
+### Lend: リスク
+
+猶予の終わり（期日から `getEffectiveGraceSeconds` 後で、一時停止の時間だけ後ろにずれます）を過ぎたローンは、誰でもデフォルトにできます。流動性のある担保は貸し手のために売却され、流動性のない担保はそのまま移転されます。両側に流動性がある場合、ヘルスファクターが 1 を下回るとローンは清算でき、売却はまず貸し手に支払います。流動性のない側があると価格に基づく清算はなく、デフォルト時に貸し手は担保をすべて受け取ります。`useFullTermInterest` は早期返済時の利息に下限を設け、これがなければ利息は日割りです。定期利息のスケジュールでは、未払いの期間は担保の強制売却によって貸し手に支払われます。貸し手のポジション NFT が請求権を持ち、それを移転するとローンも移転します。
+
 <a id="risk-access"></a>
 
 ### Risk Access: あなたのリスクレベル
