@@ -1,5 +1,19 @@
 import { describe, expect, it } from 'vitest';
-import { bucketsWithin, createParams, DEFAULT_INPUT, durationOk, expiresAt, parseAmount, parseDays, parseRateBps, requestFigures } from './requestModel';
+import {
+  advancedSet,
+  bucketsWithin,
+  createParams,
+  DEFAULT_INPUT,
+  durationOk,
+  expiresAt,
+  fillModeBlock,
+  isRanged,
+  parseAmount,
+  parseDays,
+  parseRateBps,
+  rangeError,
+  requestFigures,
+} from './requestModel';
 
 type Hex = `0x${string}`;
 const lending = '0x00000000000000000000000000000000000000a1' as Hex;
@@ -60,7 +74,18 @@ describe('terms and expiry', () => {
 describe('createParams', () => {
   it('sends a single-value borrower request with every unoffered option at its default', () => {
     const p = createParams(
-      { amount: 10n, collateral: 20n, rateBps: 850n, durationDays: 30, expiry: '7d', fullTerm: DEFAULT_INPUT.fullTerm, allowsPartialRepay: false },
+      {
+        amount: 10n,
+        amountMax: 10n,
+        collateral: 20n,
+        collateralFloor: 20n,
+        fillMode: DEFAULT_INPUT.fillMode,
+        rateBps: 850n,
+        durationDays: 30,
+        expiry: '7d',
+        fullTerm: DEFAULT_INPUT.fullTerm,
+        allowsPartialRepay: false,
+      },
       { lending, collateral, leg: { kind: 'erc20' } },
       99n,
     );
@@ -73,13 +98,25 @@ describe('createParams', () => {
     expect(p.useFullTermInterest).toBe(true);
     expect([p.periodicInterestCadence, p.allowsPrepayListing, p.allowsParallelSale, p.refinanceTargetLoanId]).toEqual([0, false, false, 0n]);
     expect(p.creatorRiskAndTermsConsent).toBe(true);
+    expect(p.fillMode).toBe(0);
   });
 });
 
 describe('createParams for an NFT', () => {
   it('names the one ERC-721 token by its id and carries no collateral amount', () => {
     const p = createParams(
-      { amount: 10n, collateral: 1n, rateBps: 850n, durationDays: 30, expiry: '7d', fullTerm: true, allowsPartialRepay: false },
+      {
+        amount: 10n,
+        amountMax: 10n,
+        collateral: 1n,
+        collateralFloor: 1n,
+        fillMode: 'partial',
+        rateBps: 850n,
+        durationDays: 30,
+        expiry: '7d',
+        fullTerm: true,
+        allowsPartialRepay: false,
+      },
       { lending, collateral, leg: { kind: 'erc721', tokenId: 7n } },
       99n,
     );
@@ -96,5 +133,50 @@ describe('requestFigures', () => {
     expect(f.received).toBe(998_000n);
     expect(f.interest).toBe(100_000n);
     expect(f.owedAtDue).toBe(1_100_000n);
+  });
+});
+
+describe('a range and a fill mode (OFF-10 / OFF-11)', () => {
+  const ranged = {
+    amount: 10n,
+    amountMax: 40n,
+    collateral: 100n,
+    collateralFloor: 30n,
+    fillMode: 'ioc' as const,
+    rateBps: 850n,
+    durationDays: 30,
+    expiry: '7d' as const,
+    fullTerm: true,
+    allowsPartialRepay: false,
+  };
+  it('sends the smallest and largest amount, the floor and the locked collateral, one rate, and the fill mode', () => {
+    const p = createParams(ranged, { lending, collateral, leg: { kind: 'erc20' } }, 99n);
+    expect([p.amount, p.amountMax]).toEqual([10n, 40n]);
+    expect([p.collateralAmount, p.collateralAmountMax]).toEqual([30n, 100n]);
+    expect([p.interestRateBps, p.interestRateBpsMax]).toEqual([850n, 850n]);
+    expect(p.fillMode).toBe(2);
+    expect(isRanged(ranged)).toBe(true);
+    expect(isRanged({ ...ranged, amountMax: 10n, collateralFloor: 100n })).toBe(false);
+    expect(isRanged({ ...ranged, amountMax: 10n })).toBe(true);
+  });
+  it('never sends a floor for an NFT leg', () => {
+    const p = createParams({ ...ranged, collateral: 1n, collateralFloor: 1n }, { lending, collateral, leg: { kind: 'erc721', tokenId: 7n } }, 99n);
+    expect([p.collateralAmount, p.collateralAmountMax]).toEqual([0n, 0n]);
+  });
+  it('refuses a largest amount below the smallest and a floor above what is locked', () => {
+    expect(rangeError(10n, 9n, 100n, 30n)).toBe('max-below-min');
+    expect(rangeError(10n, 10n, 100n, 101n)).toBe('floor-above-lock');
+    expect(rangeError(10n, 10n, 100n, 100n)).toBeNull();
+  });
+  it('refuses all-or-none with a range and immediate-or-cancel without an expiry, as the protocol does', () => {
+    expect(fillModeBlock('aon', true, '7d')).toBe('aon-range');
+    expect(fillModeBlock('aon', false, 'never')).toBeNull();
+    expect(fillModeBlock('ioc', false, 'never')).toBe('ioc-open');
+    expect(fillModeBlock('ioc', true, '1d')).toBeNull();
+    expect(fillModeBlock('partial', true, 'never')).toBeNull();
+  });
+  it('names the Advanced options a request carries, so Basic can say they still apply', () => {
+    expect(advancedSet(DEFAULT_INPUT)).toEqual([]);
+    expect(advancedSet({ ...DEFAULT_INPUT, ranged: true, fillMode: 'aon' })).toEqual(['range', 'fill']);
   });
 });

@@ -472,6 +472,36 @@ above. Each resolves here, so a route reviewer needs no private file:
   already done. While the action's own receipt is unknown the grant still
   stands, and the page says so beside the transaction. A take-back that did
   not land or could not be read is stated with what to do in the wallet.
+- **RB-RANGE** — a ranged offer (OFF-10) is shown at both ends it can be
+  taken at, never as one figure: what a direct taker gets (for a borrower's
+  request, the smallest amount against the floor collateral, the rest of the
+  collateral back to the wallet) and the largest loan a match can make. The
+  risk at each end is the protocol's own figure at today's prices; a
+  collateral that values to nothing is said so, never shown as 0%. The
+  create dry run checks the protocol's limit at the largest end only, so the
+  direct end is asked as its own dry run, and an answer that says nothing
+  about the limit is stated as unknown. A match locks the collateral its
+  lender asks for, not what the request posts: at least the floor for a
+  collateral range (so the largest match is stated from all the collateral
+  down to only the floor), otherwise only the lender's requirement (so it is
+  stated as able to lock less). The collateral a match does not lock stays
+  committed to the request for later matches and comes back only when the
+  request closes or is cancelled, never per match, and the review says so
+  for every request a match can fill. Every request a
+  match can fill therefore warns, in Basic, that a matched loan can start
+  riskier than the figures shown, bounded only by the protocol's start-of-loan
+  limit; the Advanced row for that limit states a failed read rather than
+  dropping it. The matching switch (RB-SWITCH class
+  1a) is stated beside every range, with what the range does while it is
+  off. A fill mode (OFF-11) the protocol would refuse (all or none with a
+  range, immediate or cancel without an expiry) is not offered, and the
+  fill mode is said to be fixed once posted. The amounts, the rate and the
+  collateral are not fixed: the protocol lets the creator edit an open
+  request, never below what matches have already used. Until the app offers
+  that edit, the review says the protocol allows it and that the app does
+  not, so a missing screen is never presented as a protocol rule. They are Advanced
+  options; set in Advanced, they still apply in Basic, which says so and
+  offers to clear them, and every risk warning they cause stays in Basic.
 
 ## 3. Companion specifications
 

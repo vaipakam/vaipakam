@@ -1830,6 +1830,18 @@ Basic 发布单一数值的请求：`amount` = `amountMax`，`interestRateBps` =
 
 抵押品的标准通过 `supportsInterface` 读取（ERC-721 `0x80ac58cd`，ERC-1155 `0xd9b67a26`）；回滚视为两者都不是，读取失败则不提供请求。ERC-721 请求发送 `collateralAssetType` 1、`collateralTokenId` 为输入的 ID、`collateralQuantity` 1，以及 `collateralAmount` = `collateralAmountMax` = 0；风险交易对以该代币 ID 为键。审核在同一区块读取 `ownerOf`、`getApproved` 和 `isApprovedForAll(wallet, Diamond)`；由其他钱包持有的代币或回滚的 `ownerOf` 会阻止请求。在没有任何授权时，试运行会停在代币的 `ERC721InsufficientApproval`，显示为待完成的授权。授权为 `approve(Diamond, id)`，只有当回执所在区块的 `getApproved` 读到 Diamond 时才算完成；之后若停止，只有在授权仍指向 Diamond 且钱包仍持有该代币时，才会恢复为之前的地址。对于 ERC-721，从不请求 `setApprovalForAll`。结果读取 `OfferCreated` 以及该代币自身从钱包到金库的 `Transfer`（四个 topic）。ERC-1155 请求发送 `collateralAssetType` 2、代币 ID、等于所输入数量的 `collateralQuantity`（1 到 2^128−1），两个金额均为 0。审核在同一区块读取 `balanceOf(wallet, id)` 和 `isApprovedForAll(wallet, Diamond)`；余额低于数量会阻止请求，没有授权时试运行会停在 `ERC1155MissingApprovalForAll`。唯一的授权是 `setApprovalForAll(Diamond, true)`，在其回执所在区块读回时才算完成，并在请求上链或停止后以 `setApprovalForAll(Diamond, false)` 收回（从不早于授予所在区块读取），除非钱包此前已授予。结果汇总该代币从钱包到金库的 `TransferSingle`/`TransferBatch`。要求 NFT 的出借人报价仍转至当前应用。
 
+<a id="borrow-request-range"></a>
+
+### Borrow: 带范围的请求
+
+范围发送的 `amount`（最小）低于 `amountMax`（最大），`interestRateBps` = `interestRateBpsMax`（同一利率），`collateralAmount`（最小贷款的下限）不高于 `collateralAmountMax`（发布时转入金库）；下限留空则两者相同。范围仅对 ERC-20 抵押品提供。直接 `acceptOffer` 以 `collateralAmount` 为抵押、按 `interestRateBpsMax` 出借 `amount`，并把 `collateralAmountMax − collateralAmount` 退回钱包；`getPartialFillEnabled` 为 true 期间，`matchOffers` 在两端之间成交。`createOffer` 的模拟在最大端应用报价上限，并以 `MaxLendingAboveCeiling(provided, ceiling)` 拒绝，审核会显示其上限。直接端通过在 (`amount`, `collateralAmount`) 处对单值请求的第二次模拟来检查；在上限之前停止的回答标为未知。每一端的贷款价值比为 `calculateLTV(lending, amount, collateral, collateralAmount)`，`ZeroCollateral` 视为毫无价值的抵押品。显示的贷款起始健康因子在 `getDepthTieredLtvEnabled` 为 false 时为 `getMinHealthFactor`，为 true 时为 1.0。撮合锁定出借人按比例计算的要求额：抵押品为区间时提高到 `collateralAmount`，否则保持要求额；因此最大撮合会同时按 `collateralAmountMax` 和 `collateralAmount` 显示（若无抵押品区间，则显示为可能锁定更少）。只有贷款开始时的检查约束它；读取该检查失败时会明确说明，绝不省略。在分层体制下，该检查还会应用该层级的贷款价值比上限。`getPartialFillEnabled` 为 true 期间，撮合未锁定的抵押品会留在金库中供后续撮合使用，只有在请求关闭（剩余容量低于 `amount`）或执行 `cancelOffer` 时才会退还。
+
+<a id="borrow-request-fill"></a>
+
+### Borrow: 请求的成交方式
+
+`fillMode` 为 0（Partial）、1（AON）或 2（IOC），发布后不可更改。AON 要求 `amount` = `amountMax`（`AonRequiresSingleValueAmount`），IOC 要求 `expiresAt` ≠ 0（`IocRequiresExpiry`）；表单不会提供被拒绝的组合。金额、利率和抵押品可在请求开放期间通过 `setOfferAmount`、`setOfferRate`、`setOfferCollateral` 和 `modifyOffer` 更改，但不能低于 `amountFilled` 或 `collateralAmountFilled`；本应用尚未调用它们。
+
 <a id="risk-access"></a>
 
 ### Risk Access：你的风险等级

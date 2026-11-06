@@ -57,3 +57,18 @@ export function refusalFromError(err: unknown, remedy: Refusal['remedy'] = null)
     remedy,
   };
 }
+
+/**
+ * The arguments the protocol's custom error carried, as viem decoded them
+ * (a `ContractFunctionRevertedError` anywhere in the cause chain); null when
+ * the error was not decoded, so a figure is never invented from a message.
+ */
+export function revertArgs(err: unknown): readonly unknown[] | null {
+  let node: unknown = err;
+  for (let depth = 0; node && typeof node === 'object' && depth < 6; depth++) {
+    const n = node as { data?: { args?: unknown }; cause?: unknown };
+    if (n.data && Array.isArray(n.data.args)) return n.data.args as readonly unknown[];
+    node = n.cause;
+  }
+  return null;
+}

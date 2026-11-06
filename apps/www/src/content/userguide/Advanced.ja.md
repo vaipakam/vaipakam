@@ -2097,6 +2097,18 @@ Basic は単一値のリクエストを出します。`amount` = `amountMax`、`
 
 担保の規格は `supportsInterface` で読み取ります（ERC-721 `0x80ac58cd`、ERC-1155 `0xd9b67a26`）。revert はどちらでもないとみなし、読み取りの失敗ではリクエストを提示しません。ERC-721 のリクエストは `collateralAssetType` 1、`collateralTokenId` に入力した ID、`collateralQuantity` 1、`collateralAmount` = `collateralAmountMax` = 0 を送ります。リスクペアはそのトークン ID をキーにします。レビューは同じブロックで `ownerOf`、`getApproved`、`isApprovedForAll(wallet, Diamond)` を読みます。他のウォレットが保有するトークンや revert する `ownerOf` はリクエストをブロックします。どちらの承認もない場合、ドライランはトークンの `ERC721InsufficientApproval` で止まり、必要な承認として示されます。承認は `approve(Diamond, id)` で、レシートのブロックで `getApproved` が Diamond を読むときだけ完了とみなします。その後に止まった場合、承認がまだ Diamond を指し、ウォレットがまだトークンを保有している間だけ、以前のアドレスに戻します。ERC-721 では `setApprovalForAll` は決して求めません。結果は `OfferCreated` と、ウォレットから金庫へのトークン自身の `Transfer`（4 つの topic）を読みます。ERC-1155 のリクエストは `collateralAssetType` 2、トークン ID、入力した数量の `collateralQuantity`（1 から 2^128−1）、両方の金額 0 を送ります。確認では同じブロックで `balanceOf(wallet, id)` と `isApprovedForAll(wallet, Diamond)` を読み、残高が数量に満たなければリクエストをブロックします。承認がない場合、ドライランは `ERC1155MissingApprovalForAll` で止まります。唯一の承認は `setApprovalForAll(Diamond, true)` で、レシートのブロックで読み戻せたときに完了とみなし、リクエストがマイニングされるか止まった後に `setApprovalForAll(Diamond, false)` で取り消します（付与のブロックより前は決して読みません）。ただしウォレットが以前から承認していた場合は除きます。結果は、ウォレットから金庫へのトークンの `TransferSingle`/`TransferBatch` を合計します。NFT を求める貸し手のオファーは引き続き現在のアプリで扱います。
 
+<a id="borrow-request-range"></a>
+
+### Borrow: 範囲付きリクエスト
+
+範囲は `amount`（最小）を `amountMax`（最大）より小さく、`interestRateBps` = `interestRateBpsMax`（一つの金利）、`collateralAmount`（最小のローンの下限）を `collateralAmountMax`（投稿時に保管庫へ移される）以下で送ります。下限が空なら両者を同じ値で送ります。範囲は ERC-20 担保の場合だけ提供します。直接の `acceptOffer` は `collateralAmount` を担保に `amount` を `interestRateBpsMax` で貸し、`collateralAmountMax − collateralAmount` をウォレットに戻します。`getPartialFillEnabled` が true の間、`matchOffers` は両端の間で約定します。`createOffer` のドライランは最大の端でオファー上限を適用し、`MaxLendingAboveCeiling(provided, ceiling)` で拒否します。その上限はレビューに表示します。直接の端は (`amount`, `collateralAmount`) での単一値リクエストの二回目のドライランで確認し、上限より前で止まった応答は不明と表示します。各端の LTV は `calculateLTV(lending, amount, collateral, collateralAmount)` で、`ZeroCollateral` は価値のない担保として扱います。表示するローン開始時のヘルスファクターは、`getDepthTieredLtvEnabled` が false の間は `getMinHealthFactor`、true の間は 1.0 です。マッチはレンダーの按分要求額をロックします。担保がレンジのときは `collateralAmount` まで引き上げ、そうでないときは要求額のままです。そのため最大のマッチは `collateralAmountMax` と `collateralAmount` の両方で表示されます（担保レンジがない場合は、より少なくロックしうるものとして表示）。これを制限するのはローン開始時のチェックだけで、そのチェックの読み取りに失敗した場合はその旨を表示し、省略しません。段階制の体制では、チェックはティアのLTV上限も適用します。`getPartialFillEnabled` が true の間、マッチがロックしない担保は後のマッチのために保管庫に残り、リクエストが閉じたとき（残りの容量が `amount` を下回ったとき）または `cancelOffer` の実行時にのみ返金されます。
+
+<a id="borrow-request-fill"></a>
+
+### Borrow: リクエストの約定方法
+
+`fillMode` は 0（Partial）、1（AON）、2（IOC）のいずれかで、投稿後は変更できません。AON は `amount` = `amountMax` を必要とし（`AonRequiresSingleValueAmount`）、IOC は `expiresAt` ≠ 0 を必要とします（`IocRequiresExpiry`）。フォームは拒否される組み合わせを提示しません。金額、金利、担保は、開いているリクエストで `setOfferAmount`、`setOfferRate`、`setOfferCollateral`、`modifyOffer` により変更できますが、`amountFilled` や `collateralAmountFilled` を下回ることはできません。このアプリはまだこれらを呼び出しません。
+
 <a id="risk-access"></a>
 
 ### Risk Access: あなたのリスクレベル

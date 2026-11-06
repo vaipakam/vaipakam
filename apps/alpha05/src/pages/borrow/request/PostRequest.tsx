@@ -78,7 +78,7 @@ export function PostRequest({ draft, chain, own, meta, terms, onEdit, onClose }:
   const copy = useCopy();
   const { text, format } = copy;
   const config = useConfig();
-  const { mode } = useMode();
+  const { mode, isAdvanced } = useMode();
   const diamond = chain.diamondAddress;
   const account = own.account;
   const identity = reviewIdentity(own);
@@ -493,7 +493,7 @@ export function PostRequest({ draft, chain, own, meta, terms, onEdit, onClose }:
           tx={tx}
           identity={identity}
           reviewedFor={review?.identity ?? tx.frozen?.identity ?? identity}
-          receipt={review ? requestReceipt(review, meta, copy) : null}
+          receipt={review ? requestReceipt(review, meta, copy, isAdvanced) : null}
           recheck={recheck}
           describeAsset={describeAsset}
           explorer={chain.blockExplorer}
