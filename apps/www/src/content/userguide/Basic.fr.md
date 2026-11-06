@@ -1158,6 +1158,18 @@ Avant que votre wallet ne s'ouvre, l'app demande au protocole d'essayer votre de
 
 Une demande peut bloquer un NFT au lieu d'un jeton. Choisissez la collection comme ce que vous bloquez (les collections de test sont marquées comme NFT, ou collez une adresse) ; qu'une adresse soit un jeton ou une collection de NFT est lu dans son contrat. Saisissez ensuite le numéro du NFT, son identifiant de jeton, affiché dans votre portefeuille ou sur la page de la collection ; le formulaire indique aussitôt si votre portefeuille le détient. Le protocole évalue un NFT à zéro, quel que soit son prix ailleurs : un prêt garanti par un NFT n'a ni ratio prêt-valeur ni liquidation fondée sur un prix, et si vous ne remboursez pas avant la fin du délai de grâce, le prêteur reçoit le NFT lui-même. La publication demande à votre portefeuille d'autoriser le protocole pour ce seul NFT, jamais pour le reste de votre collection, et son transfert dans votre coffre efface cette autorisation de lui-même ; si la demande s'arrête après l'autorisation, l'application demande de la rétablir et dit si c'est fait. Les NFT qui existent en quantités (collections multi-jetons) fonctionnent de la même façon, avec une quantité : saisissez le numéro du jeton et combien en bloquer, et le formulaire indique combien votre portefeuille en détient. Une telle collection ne peut pas autoriser un seul jeton, seulement tous les vôtres qu'elle contient : la publication accorde donc cette autorisation pour cette demande seulement et la retire ensuite par une étape de plus dans le portefeuille, que la demande ait abouti ou non ; une autorisation que vous aviez déjà donnée reste telle que vous l'aviez réglée. Accepter l'offre d'un prêteur qui demande un NFT se fait encore dans l'application actuelle pour l'instant.
 
+<a id="borrow-request-range"></a>
+
+### Borrow: Une fourchette de montants (Avancé)
+
+En mode Avancé, une demande peut accepter une fourchette : le plus petit et le plus grand montant qu'un prêteur peut prêter, à votre taux unique, et, si vous le souhaitez, une garantie plus faible pour le plus petit prêt. Un prêteur qui accepte la demande directement prête le plus petit montant et ne bloque que la garantie fixée pour lui ; le reste revient à votre portefeuille. Les appariements peuvent prêter davantage, jusqu'au plus grand montant, tant que l'appariement est activé sur le réseau ; la vérification indique s'il l'est, et que tant qu'il est désactivé la fourchette n'est remplie qu'une fois. Le protocole refuse un plus grand montant que votre garantie ne couvre pas aux prix du jour, et la vérification indique le maximum qu'elle couvre. La vérification affiche le ratio prêt-valeur aux deux extrémités et avertit lorsqu'un prêteur ne pourrait pas accepter la demande directement aux prix du jour. Les options définies en mode Avancé s'appliquent encore si vous passez en mode Basique : le formulaire le dit et vous permet de les effacer.
+
+<a id="borrow-request-fill"></a>
+
+### Borrow: Comment une demande est remplie (Avancé)
+
+Partiel, le mode par défaut, laisse les appariements remplir la demande en un ou plusieurs prêts jusqu'à ce qu'elle soit remplie, annulée ou expirée. Tout ou rien n'admet qu'un seul remplissage du montant entier et ne peut donc pas servir avec une fourchette. Immédiat ou annulé remplit comme partiel, mais seulement jusqu'à l'expiration de la demande, et exige donc une date d'expiration. La fourchette et le mode de remplissage ne peuvent pas être modifiés après la publication ; pour les changer, annulez la demande et publiez-en une nouvelle.
+
 <a id="risk-access"></a>
 
 ### Risk Access : votre niveau de risque

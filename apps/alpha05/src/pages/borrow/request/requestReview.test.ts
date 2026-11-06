@@ -1,6 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import { createParams, ZERO } from './requestModel';
-import { changedBetween, judgeDryRun, needsApproval, promptCount, requestBlockers, requestReceipt, requestRiskNeed, type RequestReview } from './requestReview';
+import {
+  changedBetween,
+  judgeDryRun,
+  judgeLimit,
+  needsApproval,
+  rangeConsequences,
+  readLtv,
+  promptCount,
+  requestBlockers,
+  requestReceipt,
+  requestRiskNeed,
+  type RequestReview,
+} from './requestReview';
 
 type Hex = `0x${string}`;
 const lending = '0x00000000000000000000000000000000000000a1' as Hex;
@@ -13,7 +25,18 @@ const other = '0x00000000000000000000000000000000000000f1' as Hex;
 const copy = { text: (k: string) => k, format: (k: string) => k } as unknown as Parameters<typeof requestBlockers>[2];
 
 function review(over: Partial<RequestReview> = {}): RequestReview {
-  const parsed = { amount: 1_000n, collateral: 5_000n, rateBps: 800n, durationDays: 30, expiry: '7d' as const, fullTerm: true, allowsPartialRepay: false };
+  const parsed = {
+    amount: 1_000n,
+    amountMax: 1_000n,
+    collateral: 5_000n,
+    collateralFloor: 5_000n,
+    fillMode: 'partial' as const,
+    rateBps: 800n,
+    durationDays: 30,
+    expiry: '7d' as const,
+    fullTerm: true,
+    allowsPartialRepay: false,
+  };
   const draft = { parsed, pair: { lending, collateral, leg: { kind: 'erc20' as const } }, expiresAt: 1_000n };
   return {
     identity: 'w',
@@ -24,7 +47,7 @@ function review(over: Partial<RequestReview> = {}): RequestReview {
     verdict: { kind: 'needs-approval' },
     lendingClass: 'liquid',
     collateralClass: 'liquid',
-    ltvBps: 5_000n,
+    risk: { direct: { kind: 'value', bps: 5_000n }, largest: null, directWithinLimit: 'not-asked', directCeiling: null, hfFloor: 1_500_000_000_000_000_000n, partialFill: true },
     maxDurationDays: 365n,
     graceSeconds: 86_400n,
     lifBps: 20n,
@@ -111,7 +134,7 @@ describe('requestReceipt', () => {
     expect(never.consequences).toContain('request.loseOpen');
   });
   it('states no loan-to-value for an illiquid leg', () => {
-    const receipt = requestReceipt(review({ collateralClass: 'illiquid', ltvBps: null }), null, copy);
+    const receipt = requestReceipt(review({ collateralClass: 'illiquid', risk: { ...review().risk, direct: { kind: 'unpriced' } } }), null, copy);
     expect(receipt.consequences).toContain('accept.loseIlliquidCollateral');
     expect(receipt.consequences).not.toContain('accept.loseLiquidation');
   });
@@ -121,14 +144,14 @@ describe('requestReceipt', () => {
 function nftReview(state: { owner: Hex | null; approved?: Hex | null; forAll?: boolean }, over: Partial<RequestReview> = {}): RequestReview {
   const base = review();
   const leg = { kind: 'erc721' as const, tokenId: 7n };
-  const parsed = { ...base.draft.parsed, collateral: 1n };
+  const parsed = { ...base.draft.parsed, collateral: 1n, collateralFloor: 1n };
   const draft = { ...base.draft, parsed, pair: { lending, collateral, leg } };
   return {
     ...base,
     draft,
     params: createParams(parsed, draft.pair, draft.expiresAt),
     collateralClass: 'illiquid',
-    ltvBps: null,
+    risk: { ...base.risk, direct: { kind: 'unpriced' } },
     holding: { kind: 'erc721', tokenId: 7n, state: { owner: state.owner, approved: state.approved ?? null, approvedForAll: state.forAll ?? false, blockNumber: 1n } },
     ...over,
   };
@@ -170,14 +193,14 @@ describe('an ERC-721 collateral (NFT-13)', () => {
 function multiReview(state: { balance: bigint; forAll?: boolean }, quantity = 3n, over: Partial<RequestReview> = {}): RequestReview {
   const base = review();
   const leg = { kind: 'erc1155' as const, tokenId: 7n, quantity };
-  const parsed = { ...base.draft.parsed, collateral: 0n };
+  const parsed = { ...base.draft.parsed, collateral: quantity, collateralFloor: quantity };
   const draft = { ...base.draft, parsed, pair: { lending, collateral, leg } };
   return {
     ...base,
     draft,
     params: createParams(parsed, draft.pair, draft.expiresAt),
     collateralClass: 'illiquid',
-    ltvBps: null,
+    risk: { ...base.risk, direct: { kind: 'unpriced' } },
     holding: { kind: 'erc1155', tokenId: 7n, quantity, state: { balance: state.balance, approvedForAll: state.forAll ?? false, blockNumber: 1n } },
     ...over,
   };
@@ -219,5 +242,134 @@ describe('an ERC-1155 collateral (NFT-13)', () => {
   });
   it("classes the token's missing-operator error as the approval's to clear", () => {
     expect(judgeDryRun({ kind: 'reverted', error: revertWith('0xe237d922') }, false)).toEqual({ kind: 'needs-approval' });
+  });
+});
+
+/** A review of a ranged request: 1,000 to 4,000 against 5,000 locked, 2,000 of
+ *  it for the smallest loan. */
+function rangedReview(over: Partial<RequestReview> = {}, risk: Partial<RequestReview['risk']> = {}): RequestReview {
+  const base = review();
+  const parsed = { ...base.draft.parsed, amountMax: 4_000n, collateralFloor: 2_000n };
+  const draft = { ...base.draft, parsed };
+  return {
+    ...base,
+    draft,
+    params: createParams(parsed, draft.pair, draft.expiresAt),
+    risk: { ...base.risk, largest: { kind: 'value', bps: 8_000n }, directWithinLimit: 'within', ...risk },
+    ...over,
+  };
+}
+
+/** A viem-like decoded custom-error revert. */
+const decoded = (errorName: string, args: unknown[]) => Object.assign(new Error('execution reverted'), { cause: { data: { errorName, args } } });
+
+describe('a ranged request (OFF-10 / OFF-16)', () => {
+  it('states both ends, the floor and what returns, the fill mode and the matching switch', () => {
+    const receipt = requestReceipt(rangedReview(), null, copy);
+    const labels = receipt.rows.map((x) => x.label);
+    for (const k of [
+      'request.rowAmountMin',
+      'request.rowAmountMax',
+      'request.rowFloor',
+      'request.rowReturned',
+      'request.rowFill',
+      'request.rowMatching',
+      'request.rowOweDirect',
+      'request.rowOweLargest',
+      'request.rowLtvDirect',
+      'request.rowLtvLargest',
+    ])
+      expect(labels).toContain(k);
+    expect(labels).not.toContain('request.rowAmount');
+    expect(receipt.rows.find((x) => x.label === 'request.rowReturned')?.value).toEqual({ kind: 'amount', asset: collateral, amount: 3_000n });
+    expect(receipt.rows.find((x) => x.label === 'request.rowMatching')?.value).toEqual({ kind: 'text', text: 'request.matchingOn' });
+    expect(receipt.consequences).toContain('request.loseFillFixed');
+  });
+  it('keeps the health-factor floor to Advanced and every risk warning in Basic', () => {
+    const basic = requestReceipt(rangedReview({}, { directWithinLimit: 'over', directCeiling: 900n, partialFill: false }), null, copy);
+    expect(basic.rows.map((x) => x.label)).not.toContain('request.rowHfFloor');
+    expect(basic.consequences).toEqual(expect.arrayContaining(['request.loseDirectOver', 'request.loseMatchingOff']));
+    const advanced = requestReceipt(rangedReview(), null, copy, true);
+    expect(advanced.rows.map((x) => x.label)).toContain('request.rowHfFloor');
+  });
+  it('states an unknown limit and an unread switch rather than promising either', () => {
+    const r = rangedReview({}, { directWithinLimit: 'unknown', partialFill: null });
+    expect(rangeConsequences(r, null, copy)).toEqual(['request.loseDirectUnknown', 'request.loseMatchingUnread', 'request.loseFillFixed']);
+    expect(rangeConsequences(rangedReview({}, { directWithinLimit: 'over', directCeiling: null }), null, copy)).toContain('request.loseDirectOverPlain');
+  });
+  it('adds nothing for a single-value partial request, and fixes a chosen fill mode', () => {
+    expect(rangeConsequences(review(), null, copy)).toEqual([]);
+    const aon = review();
+    const parsed = { ...aon.draft.parsed, fillMode: 'aon' as const };
+    expect(rangeConsequences({ ...aon, draft: { ...aon.draft, parsed } }, null, copy)).toEqual(['request.loseFillFixed']);
+  });
+  it("names a refused collateral value as 'nothing', never 0%", () => {
+    const r = rangedReview({}, { direct: { kind: 'worthless' } });
+    expect(requestReceipt(r, null, copy).rows.find((x) => x.label === 'request.rowLtvDirect')?.value).toEqual({ kind: 'text', text: 'request.ltvWorthless' });
+  });
+  it('turns the ceiling the protocol names into the blocker, by the range it refused', () => {
+    const verdict = judgeDryRun({ kind: 'reverted', error: decoded('MaxLendingAboveCeiling', [4_000n, 3_100n]) }, true);
+    expect(verdict).toMatchObject({ kind: 'refused', code: 'MaxLendingAboveCeiling', ceiling: 3_100n });
+    expect(requestBlockers(rangedReview({ verdict }), null, copy)).toEqual(['request.blockCeilingRange']);
+    expect(requestBlockers(review({ verdict }), null, copy)).toEqual(['request.blockCeiling']);
+    // A bound on the request, so a shortfall never hides it.
+    const short = { kind: 'erc20' as const, funds: { balance: 0n, allowance: 0n }, approvalSteps: 1 };
+    expect(requestBlockers(rangedReview({ verdict, holding: short }), null, copy)).toEqual(['request.blockShortfall', 'request.blockCeilingRange']);
+  });
+  it('names a re-read whose risk moved', () => {
+    expect(changedBetween(rangedReview(), rangedReview(), copy)).toBeNull();
+    expect(changedBetween(rangedReview(), rangedReview({}, { partialFill: false }), copy)).toBe('accept.changedClass');
+    expect(changedBetween(rangedReview(), rangedReview({}, { largest: { kind: 'value', bps: 8_100n } }), copy)).toBe('accept.changedClass');
+  });
+});
+
+describe('judgeLimit (the direct point, asked as a single-value request)', () => {
+  it('reads the limit refusal with its ceiling, a pass or a later pull as within, and anything earlier as unknown', () => {
+    expect(judgeLimit({ kind: 'reverted', error: decoded('MaxLendingAboveCeiling', [1_000n, 900n]) }, true)).toEqual({ kind: 'over', ceiling: 900n });
+    expect(judgeLimit({ kind: 'reverted', error: revertWith('0xa46539d8') }, false)).toEqual({ kind: 'over', ceiling: null });
+    expect(judgeLimit({ kind: 'answered' }, true)).toEqual({ kind: 'within' });
+    expect(judgeLimit({ kind: 'reverted', error: revertWith('0xfb8f41b2') }, false)).toEqual({ kind: 'within' });
+    expect(judgeLimit({ kind: 'reverted', error: decoded('SanctionedAddress', [account]) }, false)).toEqual({ kind: 'unknown' });
+    expect(judgeLimit({ kind: 'unreadable', reason: 'x' }, false)).toEqual({ kind: 'unknown' });
+  });
+  it('never reads a pull error as within once the allowance covers the collateral', () => {
+    expect(judgeLimit({ kind: 'reverted', error: revertWith('0xfb8f41b2') }, true)).toEqual({ kind: 'unknown' });
+    expect(judgeLimit({ kind: 'reverted', error: new Error('execution reverted') }, true)).toEqual({ kind: 'unknown' });
+  });
+});
+
+describe('readLtv', () => {
+  const client = (answer: () => Promise<unknown>) => ({ readContract: answer }) as unknown as Parameters<typeof readLtv>[0];
+  it("reads the protocol's figure, and names a collateral worth nothing instead of 0%", async () => {
+    await expect(
+      readLtv(
+        client(async () => 6_000n),
+        diamond,
+        lending,
+        1n,
+        collateral,
+        1n,
+      ),
+    ).resolves.toEqual({ kind: 'value', bps: 6_000n });
+    await expect(
+      readLtv(
+        client(async () => Promise.reject(decoded('ZeroCollateral', []))),
+        diamond,
+        lending,
+        1n,
+        collateral,
+        1n,
+      ),
+    ).resolves.toEqual({ kind: 'worthless' });
+    await expect(
+      readLtv(
+        client(async () => Promise.reject(decoded('ZeroPrice', [collateral]))),
+        diamond,
+        lending,
+        1n,
+        collateral,
+        1n,
+      ),
+    ).rejects.toBeTruthy();
   });
 });

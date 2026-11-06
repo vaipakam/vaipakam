@@ -1988,6 +1988,18 @@ Basic은 단일 값 요청을 올립니다: `amount` = `amountMax`, `interestRat
 
 담보의 표준은 `supportsInterface`로 읽습니다(ERC-721 `0x80ac58cd`, ERC-1155 `0xd9b67a26`). revert는 어느 쪽도 아닌 것으로 보며, 읽기에 실패하면 요청을 제시하지 않습니다. ERC-721 요청은 `collateralAssetType` 1, `collateralTokenId`에 입력한 ID, `collateralQuantity` 1, `collateralAmount` = `collateralAmountMax` = 0을 보냅니다. 위험 페어는 그 토큰 ID를 키로 합니다. 검토는 한 블록에서 `ownerOf`, `getApproved`, `isApprovedForAll(wallet, Diamond)`를 읽으며, 다른 지갑이 보유한 토큰이나 revert하는 `ownerOf`는 요청을 막습니다. 어느 승인도 없으면 드라이 런은 토큰의 `ERC721InsufficientApproval`에서 멈추고, 이는 필요한 승인으로 표시됩니다. 승인은 `approve(Diamond, id)`이며, 영수증 블록에서 `getApproved`가 Diamond를 읽을 때만 완료로 봅니다. 그 뒤에 멈추면 승인이 여전히 Diamond를 가리키고 지갑이 여전히 토큰을 보유하는 동안에만 이전 주소로 되돌립니다. ERC-721에서는 `setApprovalForAll`을 결코 요청하지 않습니다. 결과는 `OfferCreated`와 지갑에서 금고로 가는 토큰 자체의 `Transfer`(topic 4개)를 읽습니다. ERC-1155 요청은 `collateralAssetType` 2, 토큰 ID, 입력한 수량의 `collateralQuantity`(1부터 2^128−1까지), 두 금액 모두 0을 보냅니다. 검토는 한 블록에서 `balanceOf(wallet, id)`와 `isApprovedForAll(wallet, Diamond)`를 읽으며, 잔고가 수량보다 적으면 요청을 막고, 승인이 없으면 드라이 런은 `ERC1155MissingApprovalForAll`에서 멈춥니다. 유일한 승인은 `setApprovalForAll(Diamond, true)`이며, 영수증 블록에서 다시 읽힐 때 완료로 보고, 요청이 채굴되거나 멈춘 뒤 `setApprovalForAll(Diamond, false)`로 거둡니다(부여 블록보다 이전은 결코 읽지 않음). 단, 지갑이 이전부터 승인해 둔 경우는 예외입니다. 결과는 지갑에서 금고로 가는 토큰의 `TransferSingle`/`TransferBatch`를 합산합니다. NFT를 요구하는 대출자 오퍼는 여전히 현재 앱으로 갑니다.
 
+<a id="borrow-request-range"></a>
+
+### Borrow: 범위가 있는 요청
+
+범위는 `amount`(최소)를 `amountMax`(최대)보다 작게, `interestRateBps` = `interestRateBpsMax`(하나의 이자율)로, `collateralAmount`(가장 작은 대출의 하한)를 `collateralAmountMax`(게시할 때 금고로 옮겨짐) 이하로 보냅니다. 하한이 비어 있으면 둘을 같게 보냅니다. 범위는 ERC-20 담보에서만 제공됩니다. 직접 `acceptOffer`는 `collateralAmount`를 담보로 `amount`를 `interestRateBpsMax`로 빌려주고 `collateralAmountMax − collateralAmount`를 지갑으로 돌려줍니다. `getPartialFillEnabled`가 true인 동안 `matchOffers`는 양 끝 사이에서 체결합니다. `createOffer` 모의 실행은 가장 큰 끝에서 오퍼 한도를 적용하고 `MaxLendingAboveCeiling(provided, ceiling)`으로 거부하며, 검토 화면이 그 상한을 보여 줍니다. 직접 수락 끝은 (`amount`, `collateralAmount`)에서 단일 값 요청의 두 번째 모의 실행으로 확인하고, 한도 이전에 멈춘 응답은 알 수 없음으로 표시합니다. 각 끝의 LTV는 `calculateLTV(lending, amount, collateral, collateralAmount)`이며, `ZeroCollateral`은 가치 없는 담보로 읽습니다. 표시되는 대출 시작 건전성 지수는 `getDepthTieredLtvEnabled`가 false인 동안 `getMinHealthFactor`, true인 동안 1.0입니다.
+
+<a id="borrow-request-fill"></a>
+
+### Borrow: 요청의 체결 방식
+
+`fillMode`는 0(Partial), 1(AON), 2(IOC) 중 하나이며 게시 후 바꿀 수 없습니다. AON은 `amount` = `amountMax`를 요구하고(`AonRequiresSingleValueAmount`), IOC는 `expiresAt` ≠ 0을 요구합니다(`IocRequiresExpiry`). 양식은 거부되는 조합을 제공하지 않습니다.
+
 <a id="risk-access"></a>
 
 ### Risk Access: 내 위험 등급

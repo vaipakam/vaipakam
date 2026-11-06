@@ -1,0 +1,13 @@
+# The next app lets a borrower post a ranged request with a fill mode, and shows its risk at both ends
+
+In Advanced mode, the borrow request on the next app's Borrow page gains its Advanced options. A borrower can accept a range: a smallest and a largest amount a lender may lend, at their one rate, with an optional, smaller amount of collateral for the smallest loan. They can also choose how matches may fill the request: partial (the default), all or none, or immediate or cancel. The form does not offer a shape the protocol would refuse: all or none takes one amount, so it is greyed out while a range is on, and immediate or cancel needs the request to lapse, so it is greyed out while the request stays open forever.
+
+The review states both ends of a range instead of one figure. It says what a lender taking the request directly lends (the smallest amount, against the floor collateral, with the rest of the collateral going back to the wallet) and what the largest loan a match can make is, with what is owed at the due date for each. The loan-to-value at today's prices is the protocol's own figure at each end. A collateral that the protocol values at nothing is said to support no loan, never shown as 0%. The fill mode is stated, along with the fact that the range and the fill mode cannot be changed after posting.
+
+The protocol's create check covers the largest end of a range only. When the largest amount asks for more than the collateral supports, the review blocks the request and names the protocol's own ceiling, so the borrower knows how far to lower it. The direct end is asked separately, as its own dry run. When a lender could not take the request directly at today's prices, the review warns that only a match locking more collateral can fill it. When that answer cannot be read, the review says so rather than promising either way. Every range states whether matching across several lenders is switched on for the network, and what the range does while it is off: it fills once, by a lender taking it directly, for the smallest amount. In Advanced mode, the review also states the health factor a loan must start at, read live from the protocol.
+
+The options are Advanced, but switching to Basic never drops them silently. Basic says which ones still apply and offers to clear them, and every risk warning they cause stays visible in Basic.
+
+The user guide's Basic and Advanced editions describe the range and the fill mode in every language.
+
+Rulebook: `docs/DesignsAndPlans/Alpha05AppDesign.md` RB-RANGE, RB-MODE, RB-SWITCH, RB-CONFIDENCE. Epic #3180.

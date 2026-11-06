@@ -10,19 +10,25 @@ import { useOwnRead } from '../../../shared/reads/useOwnRead';
 import { useStoredValue } from '../../../shared/tx/txStore';
 import { useMounted } from '../../../shared/tx/useReviewRefresh';
 import { FormField } from '../../../shared/ui/FormField';
+import { useMode } from '../../../app/ModeContext';
 import { Notice } from '../../../shared/ui/Notice';
 import {
+  advancedSet,
   bucketsWithin,
   DEFAULT_DURATION_DAYS,
   DEFAULT_INPUT,
   EXPIRY_CHOICES,
   expiresAt,
+  FILL_MODES,
+  fillModeBlock,
+  rangeError,
   MAX_EXPIRY_DAYS,
   parseAmount,
   parseDays,
   parseRateBps,
   requestFigures,
   type ExpiryChoice,
+  type FillMode,
   type ParseError,
   type RequestAssets,
   type RequestInput,
@@ -33,6 +39,12 @@ import { readRequestFormInputs, type RequestDraft } from './requestReview';
 /** The store key the typed request is kept under, so a navigation away and
  *  back, or a review closed to change a figure, keeps what was typed. */
 export const REQUEST_KEY = 'borrow.request';
+
+const FILL_LABEL: Readonly<Record<FillMode, CopyKey>> = {
+  partial: 'request.fillPartial',
+  aon: 'request.fillAon',
+  ioc: 'request.fillIoc',
+};
 
 const EXPIRY_LABEL: Readonly<Record<ExpiryChoice, CopyKey>> = {
   never: 'request.expiryNeverOption',
@@ -63,16 +75,22 @@ interface RequestFormProps {
  * protocol's list fee, so it is a floor the discount tier can only raise.
  * NFT-13: an ERC-721 collateral is one token, named by its id; the form
  * says live whether this wallet holds it, and the review checks it again.
+ * OFF-10 / OFF-11 (Advanced): an amount range with an optional floor
+ * collateral, and the fill mode. Set in Advanced, they still apply in Basic,
+ * which says so and offers to clear them (RB-MODE never drops a choice).
  */
 export function RequestForm({ chain, own, pair, meta, onReview, onCancel }: RequestFormProps) {
   const { text, format } = useCopy();
+  const { isAdvanced } = useMode();
   const [stored, setStored] = useStoredValue<RequestInput>(`${REQUEST_KEY}:input`);
   // A request kept from before a field existed reads that field's default.
   const input: RequestInput = { ...DEFAULT_INPUT, ...stored };
   const set = (patch: Partial<RequestInput>) => setStored({ ...input, ...patch });
   /** Errors show once a field has been left, or after a review was asked. */
-  const [touched, setTouched] = useState<Record<'amount' | 'collateral' | 'tokenId' | 'rate' | 'term' | 'expiry', boolean>>({
+  const [touched, setTouched] = useState<Record<'amount' | 'amountMax' | 'floor' | 'collateral' | 'tokenId' | 'rate' | 'term' | 'expiry', boolean>>({
     amount: false,
+    amountMax: false,
+    floor: false,
     collateral: false,
     tokenId: false,
     rate: false,
@@ -143,6 +161,18 @@ export function RequestForm({ chain, own, pair, meta, onReview, onCancel }: Requ
           ? { tone: 'ok' as const, text: text('request.tokenHeld') }
           : { tone: 'warn' as const, text: text('request.tokenNotHeld') };
   const rate = parseRateBps(input.rate);
+  // OFF-10: a range needs ERC-20 collateral; one kept from an ERC-20 pair
+  // does not carry over to a token.
+  const ranged = input.ranged && !named;
+  const amountMax = ranged && lendingDecimals !== null ? parseAmount(input.amountMax, lendingDecimals) : null;
+  const floorTyped = ranged && input.collateralFloor.trim() !== '';
+  const floor = floorTyped && collateralDecimals !== null ? parseAmount(input.collateralFloor, collateralDecimals) : null;
+  const shapeError =
+    ranged && amount?.ok && amountMax?.ok && collateral?.ok
+      ? rangeError(amount.value, amountMax.value, collateral.value, floor?.ok ? floor.value : collateral.value)
+      : null;
+  const fillBlock = fillModeBlock(input.fillMode, ranged, input.expiry);
+  const effective = advancedSet({ ...input, ranged });
 
   const amountError = (r: typeof amount, symbol: string, decimals: number | null): string | null => {
     if (r === null || r.ok) return null;
@@ -206,8 +236,11 @@ export function RequestForm({ chain, own, pair, meta, onReview, onCancel }: Requ
           : text('request.errDays');
 
   const figures = inputs.data && amount?.ok && rate.ok && durationDays !== null ? requestFigures(amount.value, rate.value, durationDays, inputs.data.lifBps) : null;
+  /** The largest amount, for the live summary of a range. */
+  const largest = ranged && amountMax?.ok ? amountMax.value : null;
   const collateralOk = nft ? tokenId !== null : multi ? tokenId !== null && quantity !== null : collateral?.ok === true;
-  const valid = amount?.ok === true && collateralOk && rate.ok && durationDays !== null && expiryOk && inputs.data !== null;
+  const rangeOk = !ranged || (amountMax?.ok === true && (!floorTyped || floor?.ok === true) && shapeError === null);
+  const valid = amount?.ok === true && collateralOk && rate.ok && durationDays !== null && expiryOk && rangeOk && fillBlock === null && inputs.data !== null;
 
   // Only the latest submission, from a form still on screen for the same
   // wallet and network, may open a review: a slow block read answered after
@@ -225,6 +258,8 @@ export function RequestForm({ chain, own, pair, meta, onReview, onCancel }: Requ
     if (!valid || !amount?.ok || !rate.ok || durationDays === null) return;
     const locked = nft ? (tokenId === null ? null : 1n) : multi ? quantity : collateral?.ok ? collateral.value : null;
     if (locked === null) return;
+    const max = ranged && amountMax?.ok ? amountMax.value : amount.value;
+    const floorValue = ranged && floor?.ok ? floor.value : locked;
     const leg =
       nft && tokenId !== null
         ? { kind: 'erc721' as const, tokenId }
@@ -243,7 +278,10 @@ export function RequestForm({ chain, own, pair, meta, onReview, onCancel }: Requ
       onReview({
         parsed: {
           amount: amount.value,
+          amountMax: max,
           collateral: locked,
+          collateralFloor: floorValue,
+          fillMode: input.fillMode,
           rateBps: rate.value,
           durationDays,
           expiry: input.expiry,
@@ -288,8 +326,8 @@ export function RequestForm({ chain, own, pair, meta, onReview, onCancel }: Requ
       )}
       <div className="request-grid">
         <FormField
-          label={format('request.amountLabel', { symbol: lendingSymbol })}
-          hint={text('request.amountHint')}
+          label={format(ranged ? 'request.amountMinLabel' : 'request.amountLabel', { symbol: lendingSymbol })}
+          hint={text(ranged ? 'request.amountMinHint' : 'request.amountHint')}
           error={show('amount') ? amountError(amount, lendingSymbol, lendingDecimals) : null}
         >
           {({ id, describedBy, invalid }) => (
@@ -513,6 +551,125 @@ export function RequestForm({ chain, own, pair, meta, onReview, onCancel }: Requ
         <WhyLink summaryKey="request.optionsSummary" detailKey="request.optionsWhy" />
       </fieldset>
 
+      {isAdvanced ? (
+        <section className="advanced-options" aria-labelledby="request-advanced" data-testid="request-advanced">
+          <h3 id="request-advanced">{text('request.advancedTitle')}</h3>
+          <fieldset className="choice-group">
+            <legend className="sr-only">{text('request.rangeOption')}</legend>
+            <label className="choice">
+              <input
+                type="checkbox"
+                checked={ranged}
+                disabled={named}
+                onChange={(e) => set({ ranged: e.target.checked, ...(e.target.checked && input.fillMode === 'aon' ? { fillMode: 'partial' as const } : {}) })}
+                data-testid="request-range"
+              />
+              <span>{text('request.rangeOption')}</span>
+            </label>
+            {named && <p className="tier-b field-hint">{text('request.rangeNft')}</p>}
+            {ranged && (
+              <div className="request-grid">
+                <FormField
+                  label={format('request.amountMaxLabel', { symbol: lendingSymbol })}
+                  hint={text('request.amountMaxHint')}
+                  error={
+                    show('amountMax')
+                      ? amountMax !== null && !amountMax.ok
+                        ? parseText(amountMax.error, lendingSymbol, lendingDecimals)
+                        : shapeError === 'max-below-min'
+                          ? text('request.errMaxBelowMin')
+                          : null
+                      : null
+                  }
+                >
+                  {({ id, describedBy, invalid }) => (
+                    <input
+                      id={id}
+                      inputMode="decimal"
+                      autoComplete="off"
+                      aria-describedby={describedBy}
+                      aria-invalid={invalid}
+                      value={input.amountMax}
+                      onChange={(e) => set({ amountMax: e.target.value })}
+                      onBlur={() => leave('amountMax')}
+                      data-testid="request-amount-max"
+                    />
+                  )}
+                </FormField>
+                <FormField
+                  label={format('request.floorLabel', { symbol: collateralSymbol })}
+                  hint={text('request.floorHint')}
+                  error={
+                    show('floor')
+                      ? floor !== null && !floor.ok
+                        ? parseText(floor.error, collateralSymbol, collateralDecimals)
+                        : shapeError === 'floor-above-lock'
+                          ? text('request.errFloorAbove')
+                          : null
+                      : null
+                  }
+                >
+                  {({ id, describedBy, invalid }) => (
+                    <input
+                      id={id}
+                      inputMode="decimal"
+                      autoComplete="off"
+                      aria-describedby={describedBy}
+                      aria-invalid={invalid}
+                      value={input.collateralFloor}
+                      onChange={(e) => set({ collateralFloor: e.target.value })}
+                      onBlur={() => leave('floor')}
+                      data-testid="request-floor"
+                    />
+                  )}
+                </FormField>
+              </div>
+            )}
+            <WhyLink summaryKey="request.rangeSummary" detailKey="request.rangeWhy" />
+          </fieldset>
+          <fieldset className="choice-group" data-testid="request-fill">
+            <legend>{text('request.fillLabel')}</legend>
+            {FILL_MODES.map((m) => {
+              const blocked = fillModeBlock(m, ranged, input.expiry);
+              return (
+                <label key={m} className="choice">
+                  <input type="radio" name="request-fill" value={m} checked={input.fillMode === m} disabled={blocked !== null && input.fillMode !== m} onChange={() => set({ fillMode: m })} />
+                  <span>{text(FILL_LABEL[m])}</span>
+                </label>
+              );
+            })}
+            {fillBlock !== null && (
+              <Notice tone="warn" tier="A">
+                {text(fillBlock === 'aon-range' ? 'request.fillAonRange' : 'request.fillIocOpen')}
+              </Notice>
+            )}
+            <WhyLink summaryKey="request.fillSummary" detailKey="request.fillWhy" />
+          </fieldset>
+        </section>
+      ) : (
+        effective.length > 0 && (
+          // RB-MODE: an Advanced choice still applies in Basic, and says so.
+          <Notice tone="warn" tier="A">
+            <span data-testid="request-advanced-set">
+              {format('request.advancedSetNote', {
+                list:
+                  effective.length === 2
+                    ? format('request.advancedList', { a: text('request.advancedRange'), b: text('request.advancedFill') })
+                    : text(effective[0] === 'range' ? 'request.advancedRange' : 'request.advancedFill'),
+              })}
+            </span>{' '}
+            <button type="button" className="btn" onClick={() => set({ ranged: false, amountMax: '', collateralFloor: '', fillMode: 'partial' })} data-testid="request-advanced-clear">
+              {text('request.advancedClear')}
+            </button>
+          </Notice>
+        )
+      )}
+      {fillBlock !== null && !isAdvanced && (
+        <Notice tone="warn" tier="A">
+          {text(fillBlock === 'aon-range' ? 'request.fillAonRange' : 'request.fillIocOpen')}
+        </Notice>
+      )}
+
       {opening !== null && (
         <Notice tone="warn" tier="A">
           {format('flow.unreadable', { reason: opening })}
@@ -522,7 +679,13 @@ export function RequestForm({ chain, own, pair, meta, onReview, onCancel }: Requ
       <div className="thumb-action">
         {figures && (
           <p className="tier-b request-summary" data-testid="request-summary" aria-live="polite">
-            {format('request.summary', { receive: tokenAmount(figures.received, pair.lending, meta, format), owe: tokenAmount(figures.owedAtDue, pair.lending, meta, format) })}
+            {largest !== null
+              ? format('request.rangeReceiveSummary', {
+                  receive: tokenAmount(figures.received, pair.lending, meta, format),
+                  owe: tokenAmount(figures.owedAtDue, pair.lending, meta, format),
+                  largest: tokenAmount(largest, pair.lending, meta, format),
+                })
+              : format('request.summary', { receive: tokenAmount(figures.received, pair.lending, meta, format), owe: tokenAmount(figures.owedAtDue, pair.lending, meta, format) })}
           </p>
         )}
         <div className="thumb-buttons">

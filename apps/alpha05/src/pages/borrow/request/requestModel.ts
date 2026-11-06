@@ -7,6 +7,14 @@
  * Basic posts a single-value request: the amount, the rate and the
  * collateral are each one figure (the protocol's minimum and maximum are
  * the same), so a lender lends exactly that amount or nothing.
+ *
+ * OFF-10 / OFF-11 (Advanced): a range lets a lender lend anywhere from the
+ * smallest to the largest amount, the rate stays the one most you pay, and
+ * the collateral is the most you lock with, optionally, a smaller amount for
+ * the smallest loan (the protocol's floor); a fill mode says how matches
+ * may fill it. A lender taking it directly lends the smallest amount at your
+ * rate against the floor, and the collateral above the floor goes back to
+ * your wallet (spec §4, direct-accept semantics).
  */
 import { interestAtDue, listFee } from '../../../shared/offers/model';
 
@@ -49,7 +57,20 @@ export interface RequestInput {
   /** OFF-13: the full-term interest floor (the default) or pro-rata. */
   fullTerm: boolean;
   allowsPartialRepay: boolean;
+  /** OFF-10 (Advanced): the amount is a range from `amount` to `amountMax`. */
+  ranged: boolean;
+  amountMax: string;
+  /** OFF-10 (Advanced): the collateral locked for the smallest loan, as
+   *  typed; blank means the same as `collateral` (no collateral range). */
+  collateralFloor: string;
+  /** OFF-11 (Advanced): how matches may fill the request. */
+  fillMode: FillMode;
 }
+
+/** OFF-11: the fill modes, in the protocol's `FillMode` order. */
+export const FILL_MODES = ['partial', 'aon', 'ioc'] as const;
+export type FillMode = (typeof FILL_MODES)[number];
+export const FILL_MODE_CODE: Readonly<Record<FillMode, number>> = { partial: 0, aon: 1, ioc: 2 };
 
 export const DEFAULT_INPUT: RequestInput = {
   amount: '',
@@ -63,7 +84,41 @@ export const DEFAULT_INPUT: RequestInput = {
   expiryDays: '',
   fullTerm: true,
   allowsPartialRepay: false,
+  ranged: false,
+  amountMax: '',
+  collateralFloor: '',
+  fillMode: 'partial',
 };
+
+/** Why a fill mode cannot go with the rest of the request: all-or-none
+ *  takes one amount, never a range, and immediate-or-cancel needs an
+ *  expiry (the protocol refuses both shapes). */
+export type FillModeBlock = 'aon-range' | 'ioc-open';
+
+export function fillModeBlock(mode: FillMode, ranged: boolean, expiry: ExpiryChoice): FillModeBlock | null {
+  if (mode === 'aon' && ranged) return 'aon-range';
+  if (mode === 'ioc' && expiry === 'never') return 'ioc-open';
+  return null;
+}
+
+/** Why a range is not well formed: the largest amount below the smallest,
+ *  or the floor collateral above what is locked. */
+export type RangeError = 'max-below-min' | 'floor-above-lock';
+
+export function rangeError(amount: bigint, amountMax: bigint, collateral: bigint, floor: bigint): RangeError | null {
+  if (amountMax < amount) return 'max-below-min';
+  if (floor > collateral) return 'floor-above-lock';
+  return null;
+}
+
+/** The Advanced options a request carries, named so a Basic reader is told
+ *  they still apply (RB-MODE: switching mode never drops what was set). */
+export function advancedSet(input: RequestInput): ('range' | 'fill')[] {
+  const out: ('range' | 'fill')[] = [];
+  if (input.ranged) out.push('range');
+  if (input.fillMode !== 'partial') out.push('fill');
+  return out;
+}
 
 export type ParseError = 'empty' | 'invalid' | 'zero' | 'decimals';
 
@@ -129,10 +184,18 @@ export function expiresAt(choice: ExpiryChoice, nowSeconds: bigint, customDays =
 
 /** The figures a request carries once parsed; null fields failed to parse. */
 export interface ParsedRequest {
+  /** The smallest amount a lender may lend (the whole amount when single). */
   amount: bigint;
-  /** The ERC-20 amount locked; for an ERC-721, the one token (1); for an
+  /** The largest amount a match may lend; equal to `amount` when single. */
+  amountMax: bigint;
+  /** The ERC-20 amount locked now; for an ERC-721, the one token (1); for an
    *  ERC-1155, the quantity of the one token. */
   collateral: bigint;
+  /** The ERC-20 collateral the smallest loan locks (the protocol's floor);
+   *  equal to `collateral` without a collateral range, and unused for an
+   *  NFT leg. */
+  collateralFloor: bigint;
+  fillMode: FillMode;
   rateBps: bigint;
   durationDays: number;
   expiry: ExpiryChoice;
@@ -163,10 +226,12 @@ export const ASSET_ERC721 = 1;
 export const ASSET_ERC1155 = 2;
 
 /**
- * The protocol call for this request (`createOffer`'s parameters). Every
- * range field carries the single value; every option this page does not
- * offer is sent at its stated default (no schedule, no listing rights, no
- * refinance target), and the review states each.
+ * The protocol call for this request (`createOffer`'s parameters). The
+ * range fields carry the request's range (equal ends for a single value);
+ * the rate's two ends are the one rate, the most the borrower pays. Every
+ * option this page does not offer is sent at its stated default (no
+ * schedule, no listing rights, no refinance target), and the review states
+ * each.
  */
 export function createParams(p: ParsedRequest, pair: RequestPair, expiry: bigint) {
   const leg = pair.leg;
@@ -179,7 +244,7 @@ export function createParams(p: ParsedRequest, pair: RequestPair, expiry: bigint
     collateralAsset: pair.collateral,
     // An NFT leg carries no amount: the token is named by its id, and an
     // ERC-1155 leg carries its quantity.
-    collateralAmount: nft ? 0n : p.collateral,
+    collateralAmount: nft ? 0n : p.collateralFloor,
     durationDays: BigInt(p.durationDays),
     assetType: ASSET_ERC20,
     tokenId: 0n,
@@ -190,12 +255,12 @@ export function createParams(p: ParsedRequest, pair: RequestPair, expiry: bigint
     collateralTokenId: leg.kind === 'erc20' ? 0n : leg.tokenId,
     collateralQuantity: leg.kind === 'erc721' ? 1n : leg.kind === 'erc1155' ? leg.quantity : 0n,
     allowsPartialRepay: p.allowsPartialRepay,
-    amountMax: p.amount,
+    amountMax: p.amountMax,
     interestRateBpsMax: p.rateBps,
     collateralAmountMax: nft ? 0n : p.collateral,
     periodicInterestCadence: 0,
     expiresAt: expiry,
-    fillMode: 0,
+    fillMode: FILL_MODE_CODE[p.fillMode],
     allowsPrepayListing: false,
     allowsParallelSale: false,
     refinanceTargetLoanId: 0n,
@@ -213,6 +278,12 @@ export interface RequestFigures {
   fee: bigint;
   interest: bigint;
   owedAtDue: bigint;
+}
+
+/** Whether the request is a range: a lender may lend less than the most it
+ *  asks, or the smallest loan locks less than everything posted. */
+export function isRanged(p: Pick<ParsedRequest, 'amount' | 'amountMax' | 'collateral' | 'collateralFloor'>): boolean {
+  return p.amountMax !== p.amount || p.collateralFloor !== p.collateral;
 }
 
 /** OFF-19: the fee is the list rate on the amount, charged once in the

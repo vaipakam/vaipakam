@@ -1326,6 +1326,43 @@ a.btn {
   gap: 8px;
   min-width: 0;
 }
+/* OFF-10 / OFF-11 — the request's Advanced options: one quiet panel set
+   apart from the Basic fields, so a reader sees at a glance which choices
+   are the optional ones. */
+.advanced-options {
+  margin: 12px 0 4px;
+  padding: 14px 16px 4px;
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  min-width: 0;
+  animation: advanced-in 250ms var(--ease-standard);
+}
+.advanced-options h3 {
+  margin: 0;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.advanced-options .choice-group:first-of-type {
+  margin-top: 8px;
+}
+.choice input:disabled + span {
+  color: var(--text-muted);
+}
+@keyframes advanced-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .advanced-options {
+    animation: none;
+  }
+}
 .choice-group legend {
   padding: 0;
   margin-bottom: 4px;

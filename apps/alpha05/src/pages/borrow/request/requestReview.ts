@@ -14,19 +14,19 @@
  * the protocol's verdict on the whole request.
  */
 import type { Abi, PublicClient } from 'viem';
-import { OfferCreateFacetABI } from '@vaipakam/contracts/abis';
+import { OfferCreateFacetABI, RiskFacetABI } from '@vaipakam/contracts/abis';
 import type { OwnStateClient } from '../../../chain/ownRail';
 import type { CopyAccess, CopyKey } from '../../../shared/copy/useCopy';
-import { refusalFromError, UNRECOGNISED } from '../../../shared/eligibility/refusal';
+import { refusalFromError, revertArgs, UNRECOGNISED } from '../../../shared/eligibility/refusal';
 import { readAssetClass, type AssetClass } from '../../../shared/offers/assets';
 import { shortfall } from '../../../shared/offers/model';
-import { CONFIG, readGraceSeconds, readLifBps, readPairLtvBps, readVault, readWalletFunds, tokenAcceptsApproval, type WalletFunds } from '../../../shared/offers/reads';
+import { CONFIG, ORACLE, readGraceSeconds, readLifBps, readVault, readWalletFunds, tokenAcceptsApproval, type WalletFunds } from '../../../shared/offers/reads';
 import type { Receipt } from '../../../shared/receipt/types';
 import { assetName, tokenAmount, type TokenMetaMap } from '../../../shared/reads/tokens';
 import { askThrough } from '../../../shared/tx/simulate';
 import { allowanceSteps } from '../../../shared/tx/approval';
-import { formatBps, formatSpan, formatUtc, shortAddress } from '../../../shared/ui/format';
-import { createParams, requestFigures, ZERO, type CollateralLeg, type CreateParams, type ParsedRequest, type RequestPair } from './requestModel';
+import { formatBps, formatScaled, formatSpan, formatUtc, shortAddress } from '../../../shared/ui/format';
+import { createParams, isRanged, requestFigures, ZERO, type CollateralLeg, type CreateParams, type ParsedRequest, type RequestPair } from './requestModel';
 import { pageHandoff } from '../../../routes/pageMap';
 import { needFromRefusal, type RiskNeed } from '../../../shared/risk/riskAccess';
 import { diamondMayMove, holds, readErc1155, readErc721, type Erc1155State, type Erc721State } from '../../../shared/nft/nft';
@@ -34,6 +34,12 @@ import { diamondMayMove, holds, readErc1155, readErc721, type Erc1155State, type
 type Hex = `0x${string}`;
 
 export const CREATE_ABI = OfferCreateFacetABI as Abi;
+const RISK = RiskFacetABI as Abi;
+
+/** The health factor the depth-tiered regime admits a loan at: the
+ *  liquidation threshold itself (1.0), as the protocol's start-of-loan check
+ *  uses it; only the untiered regime reads the tunable floor. */
+const HF_TIERED_FLOOR = 10n ** 18n;
 
 /** The request as the reader confirmed it on the form: the figures, the
  *  pair, and the expiry fixed when the review opened, so a re-read never
@@ -51,8 +57,10 @@ export type CreateVerdict =
   /** Every check passed up to pulling the collateral, which the approval
    *  step allows; the dry run after the approval decides. */
   | { kind: 'needs-approval' }
-  /** The protocol refused, with its own reason. */
-  | { kind: 'refused'; code: string; reason: string }
+  /** The protocol refused, with its own reason. `ceiling` is the largest
+   *  amount the posted collateral supports today, when the refusal is that
+   *  the largest amount asks for more (`MaxLendingAboveCeiling`). */
+  | { kind: 'refused'; code: string; reason: string; ceiling?: bigint }
   /** No answer could be read; the review says so instead of guessing. */
   | { kind: 'unreadable'; reason: string };
 
@@ -67,9 +75,9 @@ export interface RequestReview {
   verdict: CreateVerdict;
   lendingClass: AssetClass;
   collateralClass: AssetClass;
-  /** The loan-to-value at today's prices, in bps; null when a leg is
-   *  illiquid (no price) or it could not be read. */
-  ltvBps: bigint | null;
+  /** OFF-16: the request's risk at today's prices, at each point a lender
+   *  can take it, with the limits the protocol checks. */
+  risk: RequestRisk;
   maxDurationDays: bigint;
   graceSeconds: bigint;
   lifBps: bigint;
@@ -79,6 +87,35 @@ export interface RequestReview {
    *  move, read at the same time as the rest. */
   holding: Holding;
   readAt: number;
+}
+
+/** A loan-to-value read at today's prices: the figure in bps, a collateral
+ *  that values to nothing (OFF-16: refused, never shown as 0%), a pair with
+ *  no price (a token or an illiquid leg), or a read that failed. */
+export type LtvRead = { kind: 'value'; bps: bigint } | { kind: 'worthless' } | { kind: 'unpriced' } | { kind: 'unread'; reason: string };
+
+/**
+ * OFF-16 — the risk a request carries at each point a lender can take it.
+ * `direct` is what a lender taking it directly lends (the smallest amount
+ * against the floor collateral); `largest` is the largest loan a match can
+ * make (the largest amount against everything posted), only for a range.
+ * `directWithinLimit` is the protocol's own create-time limit applied at the
+ * direct point: the create dry run checks the largest point only, so the
+ * direct point is asked separately (a dry run of a single-value request
+ * there) and is 'unknown' when that answer says nothing about the limit.
+ * `hfFloor` is the health factor the start-of-loan check admits, read live.
+ * `partialFill` is the matching switch (RB-SWITCH class 1a): while it is off,
+ * a range fills once and the matchers refuse.
+ */
+export interface RequestRisk {
+  direct: LtvRead;
+  largest: LtvRead | null;
+  directWithinLimit: 'within' | 'over' | 'unknown' | 'not-asked';
+  /** The largest amount the floor collateral supports, when the direct
+   *  point is over the limit and the protocol said what it is. */
+  directCeiling: bigint | null;
+  hfFloor: bigint | null;
+  partialFill: boolean | null;
 }
 
 /** The collateral as the wallet stands on it. An ERC-20 leg: the balance and
@@ -122,7 +159,59 @@ export function judgeDryRun(
   if (outcome.kind === 'unreadable') return { kind: 'unreadable', reason: outcome.reason };
   const refusal = refusalFromError(outcome.error);
   if (!allowanceCovers && (PULL_ERRORS.has(refusal.code) || unnamed(refusal.code) || /allowance/i.test(refusal.reason))) return { kind: 'needs-approval' };
-  return { kind: 'refused', code: refusal.code, reason: refusal.reason };
+  return { kind: 'refused', code: refusal.code, reason: refusal.reason, ...ceilingOf(refusal.code, outcome.error) };
+}
+
+/** The ceiling a `MaxLendingAboveCeiling(provided, ceiling)` refusal names. */
+function ceilingOf(code: string, error: unknown): { ceiling?: bigint } {
+  if (code !== 'MaxLendingAboveCeiling') return {};
+  const args = revertArgs(error);
+  return typeof args?.[1] === 'bigint' ? { ceiling: args[1] } : {};
+}
+
+/**
+ * The protocol's create-time limit at the direct point, from a dry run of
+ * a single-value request there: `over` when it refuses with the limit (and
+ * the largest amount the floor supports, when it says), `within` when it
+ * passes or stops only at the collateral pull (which comes after the
+ * limit), and `unknown` when it stops for another reason. As in
+ * `judgeDryRun`, a revert without a protocol name counts as the pull only
+ * while the allowance is short; with the allowance covering, the pull cannot
+ * be what stopped it, so it says nothing about the limit.
+ */
+export function judgeLimit(
+  outcome: { kind: 'answered' } | { kind: 'reverted'; error: unknown } | { kind: 'unreadable'; reason: string },
+  allowanceCovers: boolean,
+): { kind: 'within' } | { kind: 'over'; ceiling: bigint | null } | { kind: 'unknown' } {
+  if (outcome.kind === 'answered') return { kind: 'within' };
+  if (outcome.kind === 'unreadable') return { kind: 'unknown' };
+  const refusal = refusalFromError(outcome.error);
+  if (refusal.code === 'MaxLendingAboveCeiling') return { kind: 'over', ceiling: ceilingOf(refusal.code, outcome.error).ceiling ?? null };
+  if (!allowanceCovers && (PULL_ERRORS.has(refusal.code) || unnamed(refusal.code) || /allowance/i.test(refusal.reason))) return { kind: 'within' };
+  return { kind: 'unknown' };
+}
+
+/** A pair's loan-to-value at today's prices, the protocol's own figure
+ *  (`calculateLTV`); a collateral that values to nothing is named, never
+ *  read as 0%. */
+export async function readLtv(client: PublicClient, diamond: Hex, borrowed: Hex, amount: bigint, collateral: Hex, collateralAmount: bigint): Promise<LtvRead> {
+  try {
+    const bps = (await client.readContract({ address: diamond, abi: ORACLE, functionName: 'calculateLTV', args: [borrowed, amount, collateral, collateralAmount] })) as bigint;
+    return { kind: 'value', bps };
+  } catch (e) {
+    if (refusalFromError(e).code === 'ZeroCollateral') return { kind: 'worthless' };
+    throw e;
+  }
+}
+
+/** The health factor the start-of-loan check admits, read live: the
+ *  tunable floor (`getMinHealthFactor`, 1.2 to 2.0) while the depth-tiered
+ *  regime is off, the liquidation threshold (1.0) while it is on, where the
+ *  tier's loan-to-value cap is the buffer instead. */
+export async function readHfFloor(client: PublicClient, diamond: Hex): Promise<bigint> {
+  const tiered = (await client.readContract({ address: diamond, abi: CONFIG, functionName: 'getDepthTieredLtvEnabled' })) as boolean;
+  if (tiered) return HF_TIERED_FLOOR;
+  return (await client.readContract({ address: diamond, abi: RISK, functionName: 'getMinHealthFactor' })) as bigint;
 }
 
 /** Whether a refusal carries no error name: a bare or unknown revert, or
@@ -150,11 +239,6 @@ export async function readRequestReview(own: OwnStateClient, diamond: Hex, draft
         ? r<Erc1155State>((c) => readErc1155(c, pair.collateral, leg.tokenId, account, diamond))
         : r<WalletFunds>((c) => readWalletFunds(c, pair.collateral, account, diamond)),
   ]);
-  // A token is never priced, so only an ERC-20 pair has a loan-to-value.
-  const ltvBps =
-    leg.kind === 'erc20' && lendingClass === 'liquid' && collateralClass === 'liquid'
-      ? await r<bigint>((c) => readPairLtvBps(c, diamond, pair.lending, parsed.amount, pair.collateral, parsed.collateral)).catch(() => null)
-      : null;
   let holding: Holding;
   if (leg.kind === 'erc721') {
     holding = { kind: 'erc721', tokenId: leg.tokenId, state: held as Erc721State };
@@ -169,9 +253,48 @@ export async function readRequestReview(own: OwnStateClient, diamond: Hex, draft
             .length;
     holding = { kind: 'erc20', funds, approvalSteps };
   }
+  const allowanceCovers = !needsApproval({ holding, draft, diamond });
   const dry = await askThrough(own, (c) => c.simulateContract({ address: diamond, abi: CREATE_ABI, functionName: 'createOffer', args: [params], account }));
-  const verdict = judgeDryRun(dry, !needsApproval({ holding, draft, diamond }));
-  return { identity, account, diamond, draft, params, verdict, lendingClass, collateralClass, ltvBps, maxDurationDays, graceSeconds, lifBps, vault, holding, readAt: Date.now() };
+  const verdict = judgeDryRun(dry, allowanceCovers);
+  // A token is never priced, so only a liquid ERC-20 pair has a risk figure.
+  const priced = leg.kind === 'erc20' && lendingClass === 'liquid' && collateralClass === 'liquid';
+  const ranged = isRanged(parsed);
+  const ltv = (amount: bigint, coll: bigint): Promise<LtvRead> =>
+    priced
+      ? own
+          .read((c) => readLtv(c, diamond, pair.lending, amount, pair.collateral, coll))
+          .then((x) => x.value)
+          .catch((e: unknown) => ({ kind: 'unread' as const, reason: refusalFromError(e).reason }))
+      : Promise.resolve({ kind: 'unpriced' as const });
+  const [direct, largest, probe, hfFloor, partialFill] = await Promise.all([
+    ltv(parsed.amount, parsed.collateralFloor),
+    ranged ? ltv(parsed.amountMax, parsed.collateral) : Promise.resolve(null),
+    // The create dry run applies the limit at the largest point only; the
+    // direct point is asked as a single-value request there.
+    priced && ranged
+      ? askThrough(own, (c) =>
+          c.simulateContract({
+            address: diamond,
+            abi: CREATE_ABI,
+            functionName: 'createOffer',
+            args: [{ ...params, amountMax: parsed.amount, collateralAmountMax: parsed.collateralFloor, fillMode: 0 }],
+            account,
+          }),
+        )
+      : Promise.resolve(null),
+    priced ? r<bigint>((c) => readHfFloor(c, diamond)).catch(() => null) : Promise.resolve(null),
+    r<boolean>((c) => c.readContract({ address: diamond, abi: CONFIG, functionName: 'getPartialFillEnabled' }) as Promise<boolean>).catch(() => null),
+  ]);
+  const probed = probe === null ? null : judgeLimit(probe, allowanceCovers);
+  const risk: RequestRisk = {
+    direct,
+    largest,
+    directWithinLimit: probed === null ? 'not-asked' : probed.kind,
+    directCeiling: probed?.kind === 'over' ? probed.ceiling : null,
+    hfFloor,
+    partialFill,
+  };
+  return { identity, account, diamond, draft, params, verdict, lendingClass, collateralClass, risk, maxDurationDays, graceSeconds, lifBps, vault, holding, readAt: Date.now() };
 }
 
 /** Whether the collateral needs an approval step before posting. */
@@ -243,6 +366,12 @@ export function requestBlockers(r: RequestReview, meta: TokenMetaMap | null, cop
   if (risk !== null) out.push(copy.text(RISK_BLOCK_KEYS[risk]));
   // The protocol's own refusal, unless what the wallet lacks already
   // explains it (a pull from a wallet that lacks the tokens or the token).
+  // The protocol's ceiling is a bound on the request itself, checked before
+  // any pull, so no shortfall explains it: it is named either way.
+  else if (r.verdict.kind === 'refused' && r.verdict.ceiling !== undefined)
+    out.push(
+      copy.format(isRanged(r.draft.parsed) ? 'request.blockCeilingRange' : 'request.blockCeiling', { ceiling: tokenAmount(r.verdict.ceiling, r.draft.pair.lending, meta, copy.format) }),
+    );
   else if (r.verdict.kind === 'refused' && lack.kind === 'none') out.push(copy.format('request.blockRefused', { reason: r.verdict.reason }));
   if (r.verdict.kind === 'unreadable') out.push(copy.format('request.blockUnread', { reason: r.verdict.reason }));
   return out;
@@ -261,7 +390,7 @@ export function requestRiskNeed(r: Pick<RequestReview, 'verdict'>): RiskNeed | n
 export function changedBetween(a: RequestReview, b: RequestReview, copy: Pick<CopyAccess, 'text'>): string | null {
   if (a.verdict.kind !== b.verdict.kind || (a.verdict.kind === 'refused' && b.verdict.kind === 'refused' && a.verdict.code !== b.verdict.code))
     return copy.text('request.changedVerdict');
-  if (a.lendingClass !== b.lendingClass || a.collateralClass !== b.collateralClass || a.ltvBps !== b.ltvBps) return copy.text('accept.changedClass');
+  if (a.lendingClass !== b.lendingClass || a.collateralClass !== b.collateralClass || riskKey(a.risk) !== riskKey(b.risk)) return copy.text('accept.changedClass');
   if (a.graceSeconds !== b.graceSeconds || a.lifBps !== b.lifBps || a.maxDurationDays !== b.maxDurationDays) return copy.text('request.changedConfig');
   if (lackKey(collateralLack(a)) !== lackKey(collateralLack(b)) || needsApproval(a) !== needsApproval(b) || approvalPrompts(a) !== approvalPrompts(b))
     return copy.text(a.holding.kind === 'erc20' ? 'accept.changedFunds' : 'request.changedToken');
@@ -269,17 +398,46 @@ export function changedBetween(a: RequestReview, b: RequestReview, copy: Pick<Co
   return null;
 }
 
+function ltvKey(l: LtvRead | null): string {
+  return l === null ? '-' : l.kind === 'value' ? String(l.bps) : l.kind;
+}
+
+/** What the risk figures stand on, for the "what changed" of a re-check. */
+function riskKey(r: RequestRisk): string {
+  return [ltvKey(r.direct), ltvKey(r.largest), r.directWithinLimit, String(r.directCeiling), String(r.hfFloor), String(r.partialFill)].join('|');
+}
+
 function lackKey(l: Lack): string {
   return l.kind === 'amount' || l.kind === 'units' ? `${l.kind}:${l.missing}` : l.kind;
 }
 
+const FILL_MODE_KEYS: Readonly<Record<ParsedRequest['fillMode'], CopyKey>> = {
+  partial: 'request.fillModePartial',
+  aon: 'request.fillModeAon',
+  ioc: 'request.fillModeIoc',
+};
+
+/** A loan-to-value read as the receipt states it. */
+function ltvText(l: LtvRead, copy: Pick<CopyAccess, 'text' | 'format'>): string {
+  if (l.kind === 'value') return copy.format('request.ltv', { ltv: formatBps(l.bps) });
+  if (l.kind === 'worthless') return copy.text('request.ltvWorthless');
+  if (l.kind === 'unpriced') return copy.text('request.ltvIlliquid');
+  return copy.text('request.ltvUnread');
+}
+
 /** The receipt (RB-CONFIDENCE): what is locked now, what a lender taking it
  *  would pay and ask back, every term the request binds, and every
- *  consequence. */
-export function requestReceipt(r: RequestReview, meta: TokenMetaMap | null, copy: Pick<CopyAccess, 'text' | 'format'>): Receipt {
+ *  consequence. For a range (OFF-10) it states both ends: what a lender
+ *  taking it directly lends and what the largest match can lend, with the
+ *  risk at each (OFF-16). `advanced` adds the panel detail, the live
+ *  start-of-loan health factor; every risk warning stays in Basic. */
+export function requestReceipt(r: RequestReview, meta: TokenMetaMap | null, copy: Pick<CopyAccess, 'text' | 'format'>, advanced = false): Receipt {
   const { text, format } = copy;
   const { parsed, pair } = r.draft;
   const f = requestFigures(parsed.amount, parsed.rateBps, parsed.durationDays, r.lifBps);
+  const ranged = isRanged(parsed);
+  const largest = ranged ? requestFigures(parsed.amountMax, parsed.rateBps, parsed.durationDays, r.lifBps) : null;
+  const returned = parsed.collateral - parsed.collateralFloor;
   const amount = (asset: Hex, value: bigint) => ({ kind: 'amount' as const, asset, amount: value });
   const textRow = (label: CopyKey, value: string, binding: boolean) => ({ label: text(label), value: { kind: 'text' as const, text: value }, binding });
   const illiquid = r.lendingClass === 'illiquid' || r.collateralClass === 'illiquid';
@@ -291,9 +449,24 @@ export function requestReceipt(r: RequestReview, meta: TokenMetaMap | null, copy
     h.kind === 'erc20'
       ? { label: text('request.rowLock'), value: amount(pair.collateral, parsed.collateral), binding: true, movesOut: true }
       : { label: text('request.rowLock'), value: { kind: 'text', text: tokenName }, binding: true, movesOut: true },
+    ...(h.kind === 'erc20' && returned > 0n
+      ? [
+          { label: text('request.rowFloor'), value: amount(pair.collateral, parsed.collateralFloor), binding: true },
+          { label: text('request.rowReturned'), value: amount(pair.collateral, returned), binding: true },
+        ]
+      : []),
     textRow('accept.rowVault', r.vault === ZERO ? text('accept.vaultNew') : r.vault, false),
-    { label: text('request.rowAmount'), value: amount(pair.lending, parsed.amount), binding: true },
-    textRow('request.rowWhole', text('request.whole'), true),
+    ...(ranged
+      ? [
+          { label: text('request.rowAmountMin'), value: amount(pair.lending, parsed.amount), binding: true },
+          { label: text('request.rowAmountMax'), value: amount(pair.lending, parsed.amountMax), binding: true },
+          textRow('request.rowWhole', text('request.rangeFill'), true),
+        ]
+      : [{ label: text('request.rowAmount'), value: amount(pair.lending, parsed.amount), binding: true }, textRow('request.rowWhole', text('request.whole'), true)]),
+    textRow('request.rowFill', text(FILL_MODE_KEYS[parsed.fillMode]), true),
+    ...(ranged
+      ? [textRow('request.rowMatching', text(r.risk.partialFill === null ? 'request.matchingUnread' : r.risk.partialFill ? 'request.matchingOn' : 'request.matchingOff'), false)]
+      : []),
     textRow('accept.rowRate', format('accept.rate', { rate: formatBps(parsed.rateBps) }), true),
     textRow('accept.rowDue', format('request.due', { days: String(parsed.durationDays) }), true),
     // Not bound by the request or the loan: the grace period is read from the
@@ -304,7 +477,8 @@ export function requestReceipt(r: RequestReview, meta: TokenMetaMap | null, copy
     { label: text('request.rowReceive'), value: amount(pair.lending, f.received), binding: false },
     { label: text('accept.rowFee'), value: amount(pair.lending, f.fee), binding: false },
     textRow('accept.rowFeeRule', format('request.feeRule', { rate: formatBps(r.lifBps) }), false),
-    { label: text('accept.rowOwe'), value: amount(pair.lending, f.owedAtDue), binding: true },
+    { label: text(ranged ? 'request.rowOweDirect' : 'accept.rowOwe'), value: amount(pair.lending, f.owedAtDue), binding: true },
+    ...(largest ? [{ label: text('request.rowOweLargest'), value: amount(pair.lending, largest.owedAtDue), binding: true }] : []),
     textRow('accept.rowInterest', text(parsed.fullTerm ? (parsed.allowsPartialRepay ? 'accept.fullTermPartial' : 'accept.fullTerm') : 'accept.proRata'), true),
     textRow('accept.rowSchedule', text('accept.scheduleNone'), true),
     textRow('accept.rowPartial', text(parsed.allowsPartialRepay ? 'accept.partialYes' : 'accept.partialNo'), true),
@@ -314,7 +488,9 @@ export function requestReceipt(r: RequestReview, meta: TokenMetaMap | null, copy
     r.draft.expiresAt === 0n
       ? textRow('request.rowExpiry', text('request.expiryNever'), true)
       : textRow('request.rowExpiry', format('request.expiryAt', { time: formatUtc(Number(r.draft.expiresAt)) }), true),
-    textRow('request.rowLtv', illiquid ? text('request.ltvIlliquid') : r.ltvBps === null ? text('request.ltvUnread') : format('request.ltv', { ltv: formatBps(r.ltvBps) }), false),
+    textRow(ranged ? 'request.rowLtvDirect' : 'request.rowLtv', illiquid ? text('request.ltvIlliquid') : ltvText(r.risk.direct, copy), false),
+    ...(r.risk.largest ? [textRow('request.rowLtvLargest', illiquid ? text('request.ltvIlliquid') : ltvText(r.risk.largest, copy), false)] : []),
+    ...(advanced && r.risk.hfFloor !== null ? [textRow('request.rowHfFloor', format('request.hfFloor', { hf: formatScaled(r.risk.hfFloor) }), false)] : []),
     {
       label: text('accept.rowApproval'),
       value: {
@@ -342,6 +518,7 @@ export function requestReceipt(r: RequestReview, meta: TokenMetaMap | null, copy
     ...(manage.kind === 'here' ? [] : [text(manage.kind === 'currentApp' ? 'request.manageElsewhere' : 'request.manageNowhere')]),
     text(r.draft.expiresAt === 0n ? 'request.loseOpen' : 'request.loseLapse'),
     text('request.loseTaken'),
+    ...rangeConsequences(r, meta, copy),
     text('accept.loseDefault'),
     ...(r.lendingClass === 'illiquid' ? [text('accept.loseIlliquidLending')] : []),
     ...(r.collateralClass === 'illiquid' ? [text('accept.loseIlliquidCollateral')] : []),
@@ -352,6 +529,32 @@ export function requestReceipt(r: RequestReview, meta: TokenMetaMap | null, copy
   ];
 
   return { title: text('request.title'), rows, consequences, prompts: promptCount(r), readAt: r.readAt };
+}
+
+/** OFF-10 / OFF-11 / OFF-16 — what a range and a fill mode add to the
+ *  "You can lose" list, all tier A and all in Basic: the direct point over
+ *  the protocol's limit (or not known to be within it), the matching switch
+ *  off, and a fill mode that cannot be changed later. */
+export function rangeConsequences(r: RequestReview, meta: TokenMetaMap | null, copy: Pick<CopyAccess, 'text' | 'format'>): string[] {
+  const { parsed, pair } = r.draft;
+  const out: string[] = [];
+  if (isRanged(parsed)) {
+    const risk = r.risk;
+    if (risk.directWithinLimit === 'over') {
+      out.push(
+        risk.directCeiling === null
+          ? copy.text('request.loseDirectOverPlain')
+          : copy.format('request.loseDirectOver', {
+              floor: tokenAmount(parsed.collateralFloor, pair.collateral, meta, copy.format),
+              ceiling: tokenAmount(risk.directCeiling, pair.lending, meta, copy.format),
+            }),
+      );
+    } else if (risk.directWithinLimit === 'unknown') out.push(copy.text('request.loseDirectUnknown'));
+    if (risk.partialFill === false) out.push(copy.text('request.loseMatchingOff'));
+    else if (risk.partialFill === null) out.push(copy.text('request.loseMatchingUnread'));
+  }
+  if (isRanged(parsed) || parsed.fillMode !== 'partial') out.push(copy.text('request.loseFillFixed'));
+  return out;
 }
 
 /** What the form needs before a review: the longest term open, the list

@@ -1113,6 +1113,18 @@ Before your wallet opens, the app asks the protocol to try your request as a dry
 
 A request can lock one NFT instead of a token. Pick the collection as what you lock (the test collections are marked as NFTs, or paste an address); whether an address is a token or an NFT collection is read from its contract. Then type the NFT's number, its token id, shown in your wallet or on the collection's page; the form says at once whether your wallet holds it. The protocol values an NFT at zero, whatever it sells for elsewhere: a loan against one has no loan-to-value and no price-based liquidation, and if you do not repay by the end of the grace period the lender receives the NFT itself. Posting asks your wallet to approve the protocol for that one NFT only, never the rest of your collection, and moving it into your vault clears that approval by itself; if the request stops after the approval, the app asks to put it back and says whether that happened. NFTs that come in quantities (multi-token collections) work the same way with a quantity: type the token's number and how many of it to lock, and the form says how many your wallet holds. Such a collection cannot approve one token, only all of yours in it, so posting grants that approval for this request alone and takes it back in one more wallet step afterwards, whether the request went through or not; an approval you had already given is left as you set it. Taking a lender's offer that asks for an NFT is still done in the current app for now.
 
+<a id="borrow-request-range"></a>
+
+### Borrow: An Amount Range (Advanced)
+
+In Advanced mode a request can accept a range: the smallest and the largest amount a lender may lend, at your one rate, and, if you like, a smaller amount of collateral for the smallest loan. A lender taking the request directly lends the smallest amount and locks only the collateral set for it; the rest goes back to your wallet. Matches may lend more, up to the largest amount, while matching is switched on for the network; the review says whether it is, and that while it is off the range fills once. The protocol refuses a largest amount your collateral does not support at today's prices, and the review names the most it supports. The review shows the loan-to-value at both ends, and warns when a lender could not take the request directly at today's prices. Options set in Advanced still apply if you switch to Basic: the form says so and lets you clear them.
+
+<a id="borrow-request-fill"></a>
+
+### Borrow: How a Request Fills (Advanced)
+
+Partial, the default, lets matches fill the request over one or more loans until it is filled, cancelled or lapses. All or none admits one fill of the whole amount, so it cannot be used with a range. Immediate or cancel fills like partial but only until the request lapses, so it needs an expiry. The range and the fill mode cannot be changed after posting; to change them, cancel the request and post a new one.
+
 <a id="risk-access"></a>
 
 ### Risk Access: Your Risk Level
