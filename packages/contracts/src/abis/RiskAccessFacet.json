@@ -537,30 +537,6 @@
   },
   {
     "type": "function",
-    "name": "riskAccessNonceUsed",
-    "inputs": [
-      {
-        "name": "vault",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "nonce",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "setIlliquidPairConsent",
     "inputs": [
       {
@@ -609,86 +585,6 @@
         "name": "consent",
         "type": "bool",
         "internalType": "bool"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "setIlliquidPairConsentBySig",
-    "inputs": [
-      {
-        "name": "m",
-        "type": "tuple",
-        "internalType": "struct LibRiskAccess.SetIlliquidPairConsent",
-        "components": [
-          {
-            "name": "vault",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "lendAsset",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "lendAssetType",
-            "type": "uint8",
-            "internalType": "uint8"
-          },
-          {
-            "name": "lendTokenId",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "collAsset",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "collAssetType",
-            "type": "uint8",
-            "internalType": "uint8"
-          },
-          {
-            "name": "collTokenId",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "prepayAsset",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "consent",
-            "type": "bool",
-            "internalType": "bool"
-          },
-          {
-            "name": "termsHash",
-            "type": "bytes32",
-            "internalType": "bytes32"
-          },
-          {
-            "name": "nonce",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "deadline",
-            "type": "uint256",
-            "internalType": "uint256"
-          }
-        ]
-      },
-      {
-        "name": "sig",
-        "type": "bytes",
-        "internalType": "bytes"
       }
     ],
     "outputs": [],
@@ -746,81 +642,6 @@
   },
   {
     "type": "function",
-    "name": "setMidTierPairAckBySig",
-    "inputs": [
-      {
-        "name": "m",
-        "type": "tuple",
-        "internalType": "struct LibRiskAccess.SetMidTierPairAck",
-        "components": [
-          {
-            "name": "vault",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "lendAsset",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "lendAssetType",
-            "type": "uint8",
-            "internalType": "uint8"
-          },
-          {
-            "name": "lendTokenId",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "collAsset",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "collAssetType",
-            "type": "uint8",
-            "internalType": "uint8"
-          },
-          {
-            "name": "collTokenId",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "prepayAsset",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "termsHash",
-            "type": "bytes32",
-            "internalType": "bytes32"
-          },
-          {
-            "name": "nonce",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "deadline",
-            "type": "uint256",
-            "internalType": "uint256"
-          }
-        ]
-      },
-      {
-        "name": "sig",
-        "type": "bytes",
-        "internalType": "bytes"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "setProtocolManagedVault",
     "inputs": [
       {
@@ -865,102 +686,12 @@
   },
   {
     "type": "function",
-    "name": "setRiskStrictModeBySig",
-    "inputs": [
-      {
-        "name": "m",
-        "type": "tuple",
-        "internalType": "struct LibRiskAccess.SetRiskStrictMode",
-        "components": [
-          {
-            "name": "vault",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "enabled",
-            "type": "bool",
-            "internalType": "bool"
-          },
-          {
-            "name": "termsHash",
-            "type": "bytes32",
-            "internalType": "bytes32"
-          },
-          {
-            "name": "nonce",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "deadline",
-            "type": "uint256",
-            "internalType": "uint256"
-          }
-        ]
-      },
-      {
-        "name": "sig",
-        "type": "bytes",
-        "internalType": "bytes"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "setVaultRiskTier",
     "inputs": [
       {
         "name": "level",
         "type": "uint8",
         "internalType": "uint8"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "setVaultRiskTierBySig",
-    "inputs": [
-      {
-        "name": "m",
-        "type": "tuple",
-        "internalType": "struct LibRiskAccess.SetVaultRiskTier",
-        "components": [
-          {
-            "name": "vault",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "level",
-            "type": "uint8",
-            "internalType": "uint8"
-          },
-          {
-            "name": "termsHash",
-            "type": "bytes32",
-            "internalType": "bytes32"
-          },
-          {
-            "name": "nonce",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "deadline",
-            "type": "uint256",
-            "internalType": "uint256"
-          }
-        ]
-      },
-      {
-        "name": "sig",
-        "type": "bytes",
-        "internalType": "bytes"
       }
     ],
     "outputs": [],
@@ -984,61 +715,6 @@
         "name": "expectedTermsVersion",
         "type": "uint64",
         "internalType": "uint64"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "setVaultRiskTierCheckedBySig",
-    "inputs": [
-      {
-        "name": "m",
-        "type": "tuple",
-        "internalType": "struct LibRiskAccess.SetVaultRiskTierChecked",
-        "components": [
-          {
-            "name": "vault",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "level",
-            "type": "uint8",
-            "internalType": "uint8"
-          },
-          {
-            "name": "expectedTierNonce",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "expectedTermsVersion",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "termsHash",
-            "type": "bytes32",
-            "internalType": "bytes32"
-          },
-          {
-            "name": "nonce",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "deadline",
-            "type": "uint256",
-            "internalType": "uint256"
-          }
-        ]
-      },
-      {
-        "name": "sig",
-        "type": "bytes",
-        "internalType": "bytes"
       }
     ],
     "outputs": [],
@@ -1229,17 +905,6 @@
   },
   {
     "type": "error",
-    "name": "RiskBadSignature",
-    "inputs": [
-      {
-        "name": "vault",
-        "type": "address",
-        "internalType": "address"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "RiskCooldownTooLong",
     "inputs": [
       {
@@ -1256,51 +921,8 @@
   },
   {
     "type": "error",
-    "name": "RiskNonceUsed",
-    "inputs": [
-      {
-        "name": "vault",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "nonce",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "RiskSigExpired",
-    "inputs": [
-      {
-        "name": "deadline",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "RiskTermsHashAlreadyUsed",
     "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "RiskTermsHashStale",
-    "inputs": [
-      {
-        "name": "signed",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "current",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ]
   },
   {
     "type": "error",

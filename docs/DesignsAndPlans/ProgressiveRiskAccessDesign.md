@@ -5,6 +5,12 @@ mitigation design for backlog #663). **Layers on top of** #662
 ([`OfferAcceptTermBindingDesign.md`](OfferAcceptTermBindingDesign.md)) —
 *complements, does not replace* it. **Sequenced after** #662.
 
+> **Update (#3238, 2026-11-06):** the relayed `*BySig` risk-access setters this
+> design describes were removed while prelive (owner decision): nothing used
+> them, and a signed grant that could be held and submitted later was a
+> standing phishing surface. Every risk-access change is now a direct call by
+> the vault owner. Passages below about relayed grants are history.
+
 > The card already carries RATIFIED resolved decisions (2026-06-21). This
 > doc does not re-decide them — it **grounds** each one against the
 > current code + FunctionalSpec and surfaces where the code does **not**
