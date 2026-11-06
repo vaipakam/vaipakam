@@ -131,6 +131,7 @@ import {
 } from './seedLoanExpected.mjs';
 import { createWritePlan } from './writePlan.mjs';
 import { readWatchedConfig } from './watchedConfig.mjs';
+import { readOfferGate, readRiskGateParties } from './riskGateReadiness.mjs';
 import { configChanges } from './observation.mjs';
 import { nonceBaseline, reconcileNonce } from './noWriteSettlement.mjs';
 
@@ -262,6 +263,18 @@ const FAUCET_ABI = [
 const { pub } = clientsFor(CHAIN_ID);
 const BORROWER = addressOf('borrower');
 const LENDER = addressOf(LENDER_ROLE);
+/** The risk-access pair the request and its loan carry (LibRiskAccess.PairId):
+ *  WETH lent against tILQ, both ERC-20 (asset type 0, token id 0), no
+ *  prepayment token. */
+const SEED_PAIR = {
+  lendAsset: WETH,
+  lendType: 0,
+  lendTokenId: 0n,
+  collAsset: TILQ,
+  collType: 0,
+  collTokenId: 0n,
+  prepayAsset: '0x0000000000000000000000000000000000000000',
+};
 /** The wallet that will FUND the refinance later — only read about, never
  *  signed for, so its absence is a note, not an exit. */
 const REFI_LENDER = optionalAddressOf('lender');
@@ -463,7 +476,19 @@ try {
     watched.principalPaused === false && watched.collateralPaused === false,
     `${watched.principalPaused} / ${watched.collateralPaused}`,
   );
-  want('risk-access gate disabled (no tier / pair-consent setup in the plan)', watched.riskAccessGate === false, watched.riskAccessGate);
+  // The plan carries no tier or pair-consent write, so with the gate ON both
+  // parties must ALREADY be allowed to transact the pair (riskGateReadiness.mjs).
+  // A party that is not is BLOCKED here, before anything is written.
+  const gate = await readRiskGateParties(read, {
+    gateEnabled: watched.riskAccessGate,
+    pair: SEED_PAIR,
+    parties: [
+      { label: 'borrower (request creator)', address: BORROWER },
+      { label: `lender (${LENDER_ROLE}, acceptor)`, address: LENDER },
+    ],
+    blockNumber: head,
+  });
+  for (const l of gate.lines) want(l.label, l.ok, l.observed);
   const maxDays = BigInt(watched.maxOfferDurationDays);
   want(`SEED_DAYS (${DAYS}) within the live maxOfferDurationDays (the menu hides longer lengths)`, DAYS <= maxDays, `${maxDays}`);
   // TRI-STATE screening (watchedConfig.mjs): a flagged participant and an
@@ -848,6 +873,18 @@ try {
   if (!lReady) stop('the deployed UI never enabled "Fund this borrower"');
   const before = await read('getOfferDetails', [REQUEST_ID]);
   if (before.accepted) stop(`request #${REQUEST_ID} was accepted by someone else before the lender was armed`);
+  // The contract's own accept-gate previews for THIS request, read right
+  // before the lender is armed: both the creator (re-gated at accept) and the
+  // acceptor must read 0, the exact rule the accept enforces (#3231).
+  const offerGate = await readOfferGate(read, {
+    gateEnabled: pre.watched.riskAccessGate,
+    offerId: REQUEST_ID,
+    acceptor: LENDER,
+    creatorLabel: 'borrower (request creator)',
+    acceptorLabel: `lender (${LENDER_ROLE})`,
+  });
+  for (const l of offerGate.lines) check(l.label, l.ok, l.observed);
+  if (!offerGate.ok) stop(`the risk-access gate would refuse the accept of request #${REQUEST_ID}`);
   LENDER_ANCHOR = await chainNow();
   await armedClick('lender', lp, fund, lp.getByRole('heading', { name: /loan opened/i }), 'funding the request');
   await session.shot('seed-04-lender-done');

@@ -320,6 +320,7 @@ import { expectedPostureFrom, postureCopyFrom } from './refinancePosture.mjs';
 import { createManifest, runVerdict } from './outcomeManifest.mjs';
 import { observationVerdict, observeAgainstChain } from './observation.mjs';
 import { readWatchedConfig } from './watchedConfig.mjs';
+import { readOfferGate, readRiskGateParties } from './riskGateReadiness.mjs';
 import { postureMisses } from './supportedPosture.mjs';
 import {
   checkRoleNonces,
@@ -482,6 +483,17 @@ const tokenBalance = (token, owner, blockNumber) =>
 
 /** `read` in the shape watchedConfig.mjs takes. */
 const diamondRead = (fn, args, blockNumber) => read(fn, args, blockNumber);
+/** The risk-access pair of a loan (LibRiskAccess.PairId), the shape the
+ *  accept gate builds from the request, which copies the loan's assets. */
+const pairOfLoan = (l) => ({
+  lendAsset: l.principalAsset,
+  lendType: Number(l.assetType),
+  lendTokenId: BigInt(l.tokenId),
+  collAsset: l.collateralAsset,
+  collType: Number(l.collateralAssetType),
+  collTokenId: BigInt(l.collateralTokenId),
+  prepayAsset: l.prepayAsset,
+});
 /** The loan's assets, which the per-asset pause entries are read for. */
 const watchedContextOf = (l, oldHolder) => ({
   principalAsset: l.principalAsset,
@@ -1570,7 +1582,21 @@ const pre = await precondition('reading the preconditions from chain', async () 
   // approval the borrower signs is the payoff at the end of it.
   const { graceBuckets } = watched;
   const posture = { paused, autoRefinance: autoRefi, partialFill };
+  // The plan carries no tier or pair-consent write, so with the gate ON both
+  // parties must ALREADY be allowed to transact the loan's pair
+  // (riskGateReadiness.mjs). The refinance request copies the loan's assets,
+  // so the loan's pair is the pair the accept is gated against.
+  const gateReadiness = await readRiskGateParties(read, {
+    gateEnabled: riskGate,
+    pair: pairOfLoan(loan),
+    parties: [
+      { label: 'borrower (request creator)', address: BORROWER },
+      { label: 'lender (acceptor)', address: LENDER },
+    ],
+    blockNumber: head,
+  });
   return {
+    gateReadiness,
     head,
     now: block.timestamp,
     loan,
@@ -1676,7 +1702,7 @@ if (LOAN_ID === 22n) {
     want(`loan 22 ${k}`, typeof v === 'string' ? eq(loan[k], v) : loan[k] === v, loan[k]);
   }
 }
-want('risk-access gate disabled (no tier / pair-consent setup needed)', pre.riskGate === false, pre.riskGate);
+for (const l of pre.gateReadiness.lines) want(l.label, l.ok, l.observed);
 want('protocol not paused', pre.paused === false, pre.paused);
 // An asset pause is an operational posture of the deployment: the form
 // refuses to post (and an accept could not complete) while either leg is
@@ -2361,6 +2387,18 @@ try {
   // UNDETERMINED and stops the run before the lender is armed.
   const armObs = await observeConfig('the lender\u2019s submit (risk-terms epoch, fees, grace, posture)', async () => null);
   if (armObs.undetermined) stop(`not arming the lender: ${armObs.undetermined}`);
+  // The contract's own accept-gate previews for THIS request, right before
+  // the lender is armed: the creator (re-gated at accept) and the acceptor
+  // must both read 0, the exact rule the accept enforces (#3231).
+  const offerGate = await readOfferGate(read, {
+    gateEnabled: pre.riskGate,
+    offerId: requestId,
+    acceptor: LENDER,
+    creatorLabel: 'borrower (request creator)',
+    acceptorLabel: 'lender (acceptor)',
+  });
+  for (const l of offerGate.lines) check(l.label, l.ok, l.observed);
+  if (!offerGate.ok) stop(`not arming the lender: the risk-access gate would refuse the accept of request #${requestId}`);
   LENDER_ANCHOR = await chainNow();
   console.log(`info  lender anchor (chain time at submit start): ${LENDER_ANCHOR}`);
   PLAN.arm('lender');
