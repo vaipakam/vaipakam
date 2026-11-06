@@ -2263,7 +2263,7 @@ La vérification lit l'offre, son état, `previewAccept`, `getOfferLinkedLoanId`
 
 ### Borrow: Les frais d'ouverture
 
-Les frais sont le `lifEstimate` de `previewAccept` : `getLoanInitiationFeeBps` du principal, dans le token emprunté, déduits de ce qui est livré, réduits par la remise de niveau de détention quand le consentement est actif et que le token emprunté est liquide, avec le niveau fixé à l'acceptation. Cette page ne choisit jamais le tarif Full. Aucun VPFI n'est prélevé pour les frais ni remboursé.
+Les frais sont le `lifEstimate` de `previewAccept` : `getLoanInitiationFeeBps` du principal, dans le token emprunté, déduits de ce qui est livré, réduits par la remise de niveau de détention quand le consentement est actif et que le token emprunté est liquide, avec le niveau fixé à l'acceptation. Cette page ne choisit jamais le tarif Full. Aucun VPFI n'est prélevé pour les frais ni remboursé. La part de l'émetteur, `getLifMatcherFeeBps` des frais, est versée à l'expéditeur, qui dans une acceptation directe est l'emprunteur ; le wallet reçoit donc le principal moins les frais plus cette part.
 
 <a id="borrow-risks"></a>
 

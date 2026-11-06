@@ -204,7 +204,7 @@ export function AcceptOffer({ offerId, chain, own, meta, terms, onClose }: Accep
     measure: async (receipt, at) => {
       if (!review) return [];
       const r = review;
-      const f = acceptFigures(r.preview, r.offer.durationDays);
+      const f = acceptFigures(r.preview, r.offer.durationDays, r.matcherBps);
       const legs: LegOutcome[] = [];
       const opened = openedLoan(receipt.logs, diamond, offerId, account);
       if (opened) {
@@ -220,10 +220,11 @@ export function AcceptOffer({ offerId, chain, own, meta, terms, onClose }: Accep
           reason: text('accept.noLoan'),
         });
       }
-      // What reached the wallet, and the fee as charged: the principal the
-      // loan recorded must equal the two, or the split is not substantiated.
-      // The fee can differ from the preview (the discount tier is read again
-      // as the loan opens); the label says so with both figures.
+      // What reached the wallet (the principal less the fee, plus the fee
+      // share the protocol pays the sender) and what else left the lender's
+      // vault must add up to the principal the loan recorded, or the split
+      // is not substantiated. A figure other than the preview's (the
+      // discount tier is read again as the loan opens) is named beside it.
       const lending = r.offer.lendingAsset;
       const split = deliverySplit(receipt.logs, lending, account);
       const shownLabel = format('accept.legReceived', { amount: amt(lending, f.received) });
@@ -233,9 +234,9 @@ export function AcceptOffer({ offerId, chain, own, meta, terms, onClose }: Accep
         legs.push({
           status: 'done',
           label:
-            split.fee === f.fee
+            split.received === f.received
               ? format('accept.legReceived', { amount: amt(lending, split.received) })
-              : format('accept.legReceivedFee', { amount: amt(lending, split.received), fee: amt(lending, split.fee), shown: amt(lending, f.fee) }),
+              : format('accept.legReceivedFee', { amount: amt(lending, split.received), shown: amt(lending, f.received), principal: amt(lending, opened.principal) }),
         });
       } else {
         legs.push({

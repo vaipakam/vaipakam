@@ -1081,7 +1081,7 @@ Before your wallet opens, the review shows every figure: what you receive, the f
 
 ### Borrow: The Initiation Fee
 
-Opening a loan costs a small share of the amount, charged once, in the token you borrow, and taken from what you receive; the review shows the rate in force. You owe interest on the whole amount. Your fee-discount tier lowers the fee when the fee discount is on and the borrowed token is liquid. No VPFI is taken or held for this fee, and nothing is refunded later.
+Opening a loan costs a small share of the amount, charged once, in the token you borrow, and taken from what you receive; the review shows the rate in force. You owe interest on the whole amount. Your fee-discount tier lowers the fee when the fee discount is on and the borrowed token is liquid. No VPFI is taken or held for this fee, and nothing is refunded later. Because you send the acceptance yourself, a small share of the fee, the share the protocol pays whoever submits a match, comes back to you with the amount; the review shows it.
 
 <a id="borrow-risks"></a>
 

@@ -23,12 +23,14 @@ export interface MatchesView {
  *  when the protocol says so. */
 function OfferRow({
   row,
+  matcherBps,
   meta,
   connected,
   onTake,
   takeDisabled,
 }: {
   row: MatchRow;
+  matcherBps: bigint | null;
   meta: TokenMetaMap | null;
   connected: boolean;
   onTake: (id: bigint) => void;
@@ -45,7 +47,7 @@ function OfferRow({
   if (blocked?.kind === 'state') blockedText = stateText(blocked.state, copy);
   else if (blocked?.kind === 'refused') blockedText = acceptErrorText(blocked.error, copy);
   else if (blocked?.kind === 'unread') blockedText = blocked.reason;
-  const f = row.preview ? acceptFigures(row.preview, o.durationDays) : null;
+  const f = row.preview && matcherBps !== null ? acceptFigures(row.preview, o.durationDays, matcherBps) : null;
 
   return (
     <li className="card offer-row" data-offer-id={o.id.toString()} data-takeable={blocked ? 'false' : 'true'}>
@@ -138,7 +140,7 @@ export function MatchingOffers({
           {live.length > 0 && (
             <ul className="rows offer-rows">
               {live.map((r) => (
-                <OfferRow key={r.offer.id.toString()} row={r} meta={meta} connected={connected} onTake={onTake} takeDisabled={takeDisabled} />
+                <OfferRow key={r.offer.id.toString()} row={r} matcherBps={m.matcherBps} meta={meta} connected={connected} onTake={onTake} takeDisabled={takeDisabled} />
               ))}
             </ul>
           )}

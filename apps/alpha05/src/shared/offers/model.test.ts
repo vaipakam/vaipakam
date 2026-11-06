@@ -73,8 +73,12 @@ describe('the suggested order', () => {
 
 describe('the acceptance figures', () => {
   it('net the initiation fee from the principal and add interest at due', () => {
-    const f = acceptFigures(preview(), 30n);
+    const f = acceptFigures(preview(), 30n, 0n);
     expect(f.received).toBe(2n * E18 - 4n * 10n ** 15n);
+    // The sender's share of the fee (1% here) reaches the wallet too.
+    const g = acceptFigures(preview(), 30n, 100n);
+    expect(g.feeBack).toBe(4n * 10n ** 13n);
+    expect(g.received).toBe(2n * E18 - 4n * 10n ** 15n + 4n * 10n ** 13n);
     expect(f.owedAtDue).toBe(2n * E18 + interestAtDue(2n * E18, 500n, 30n));
     expect(listFee(2n * E18, 20n)).toBe(4n * 10n ** 15n);
     expect(shortfall(10n, 4n)).toBe(0n);

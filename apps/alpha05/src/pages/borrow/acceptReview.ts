@@ -16,6 +16,7 @@ import {
   readAcceptGate,
   readGraceSeconds,
   readLifBps,
+  readLifMatcherBps,
   readLinkedLoanId,
   readOffer,
   readOfferState,
@@ -49,6 +50,8 @@ export interface AcceptReview {
   collateralClass: AssetClass;
   graceSeconds: bigint;
   lifBps: bigint;
+  /** The share of the fee paid back to the submitter (bps of the fee). */
+  matcherBps: bigint;
   /** The borrower's vault; the zero address when it is opened by this accept. */
   vault: Hex;
   funds: WalletFunds;
@@ -63,7 +66,7 @@ export async function readAcceptReview(own: OwnStateClient, diamond: Hex, offerI
   const account = own.account;
   const r = <T>(fn: Parameters<OwnStateClient['read']>[0]) => own.read(fn).then((x) => x.value as T);
   const offer = await r<StoredOffer>((c) => readOffer(c, diamond, offerId));
-  const [state, preview, linkedLoanId, riskTermsHash, lendingClass, collateralClass, graceSeconds, lifBps, vault, funds, gate, consent] = await Promise.all([
+  const [state, preview, linkedLoanId, riskTermsHash, lendingClass, collateralClass, graceSeconds, lifBps, matcherBps, vault, funds, gate, consent] = await Promise.all([
     r<OfferState>((c) => readOfferState(c, diamond, offerId)),
     r<AcceptPreview>((c) => readPreview(c, diamond, offerId, account)),
     r<bigint>((c) => readLinkedLoanId(c, diamond, offerId)),
@@ -72,6 +75,7 @@ export async function readAcceptReview(own: OwnStateClient, diamond: Hex, offerI
     r<AssetClass>((c) => readAssetClass(c, diamond, offer.collateralAsset)),
     r<bigint>((c) => readGraceSeconds(c, diamond, offer.durationDays)),
     r<bigint>((c) => readLifBps(c, diamond)),
+    r<bigint>((c) => readLifMatcherBps(c, diamond)),
     r<Hex>((c) => readVault(c, diamond, account)),
     r<WalletFunds>((c) => readWalletFunds(c, offer.collateralAsset, account, diamond)),
     r<number>((c) => readAcceptGate(c, diamond, offerId, account)),
@@ -89,6 +93,7 @@ export async function readAcceptReview(own: OwnStateClient, diamond: Hex, offerI
     collateralClass,
     graceSeconds,
     lifBps,
+    matcherBps,
     vault,
     funds,
     gate,
@@ -195,7 +200,14 @@ export function changedBetween(a: AcceptReview, b: AcceptReview, copy: Pick<Copy
     p.error !== q.error
   )
     return copy.text('accept.changedPreview');
-  if (a.lendingClass !== b.lendingClass || a.collateralClass !== b.collateralClass || a.gate !== b.gate || a.graceSeconds !== b.graceSeconds || a.lifBps !== b.lifBps)
+  if (
+    a.lendingClass !== b.lendingClass ||
+    a.collateralClass !== b.collateralClass ||
+    a.gate !== b.gate ||
+    a.graceSeconds !== b.graceSeconds ||
+    a.lifBps !== b.lifBps ||
+    a.matcherBps !== b.matcherBps
+  )
     return copy.text('accept.changedClass');
   if (shortfall(a.funds.balance, a.preview.collateralAmount) !== shortfall(b.funds.balance, b.preview.collateralAmount) || needsApproval(a) !== needsApproval(b))
     return copy.text('accept.changedFunds');
@@ -208,7 +220,7 @@ export function changedBetween(a: AcceptReview, b: AcceptReview, copy: Pick<Copy
 export function acceptReceipt(r: AcceptReview, meta: TokenMetaMap | null, copy: Pick<CopyAccess, 'text' | 'format'>): Receipt {
   const { text, format } = copy;
   const o = r.offer;
-  const f = acceptFigures(r.preview, o.durationDays);
+  const f = acceptFigures(r.preview, o.durationDays, r.matcherBps);
   const lending = o.lendingAsset;
   const collateral = o.collateralAsset;
   const amount = (asset: Hex, value: bigint) => ({
@@ -231,6 +243,15 @@ export function acceptReceipt(r: AcceptReview, meta: TokenMetaMap | null, copy: 
       value: amount(lending, f.fee),
       binding: true,
     },
+    ...(f.feeBack > 0n
+      ? [
+          {
+            label: text('accept.rowFeeBack'),
+            value: amount(lending, f.feeBack),
+            binding: true,
+          },
+        ]
+      : []),
     {
       label: text('accept.rowFeeRule'),
       value: {

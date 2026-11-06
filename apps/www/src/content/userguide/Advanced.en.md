@@ -2442,7 +2442,7 @@ The review reads the offer, its state, `previewAccept`, `getOfferLinkedLoanId`, 
 
 ### Borrow: The Initiation Fee
 
-The fee is `previewAccept`'s `lifEstimate`: `getLoanInitiationFeeBps` of the principal, in the lending asset, deducted from what is delivered, lowered by the hold-tier discount when the consent is on and the lending asset is liquid, with the tier fixed at acceptance. This page never opts into the Full tariff. No VPFI is collected for the fee and none is rebated.
+The fee is `previewAccept`'s `lifEstimate`: `getLoanInitiationFeeBps` of the principal, in the lending asset, deducted from what is delivered, lowered by the hold-tier discount when the consent is on and the lending asset is liquid, with the tier fixed at acceptance. This page never opts into the Full tariff. No VPFI is collected for the fee and none is rebated. The submitter's share, `getLifMatcherFeeBps` of the fee, is paid to the sender, which on a direct take is the borrower, so the wallet receives the principal less the fee plus that share.
 
 <a id="borrow-risks"></a>
 

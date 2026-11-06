@@ -2253,7 +2253,7 @@ Die Prüfung liest das Angebot, seinen Zustand, `previewAccept`, `getOfferLinked
 
 ### Borrow: Die Eröffnungsgebühr
 
-Die Gebühr ist `lifEstimate` aus `previewAccept`: `getLoanInitiationFeeBps` des Kapitalbetrags, im Leih-Token, vom Gelieferten abgezogen, gesenkt um den Haltestufen-Rabatt, wenn die Zustimmung an und der Leih-Token liquide ist, mit der Stufe zum Zeitpunkt der Annahme. Diese Seite wählt den Full-Tarif nie. Für die Gebühr wird kein VPFI eingezogen und keines erstattet.
+Die Gebühr ist `lifEstimate` aus `previewAccept`: `getLoanInitiationFeeBps` des Kapitalbetrags, im Leih-Token, vom Gelieferten abgezogen, gesenkt um den Haltestufen-Rabatt, wenn die Zustimmung an und der Leih-Token liquide ist, mit der Stufe zum Zeitpunkt der Annahme. Diese Seite wählt den Full-Tarif nie. Für die Gebühr wird kein VPFI eingezogen und keines erstattet. Der Anteil des Einreichers, `getLifMatcherFeeBps` der Gebühr, geht an den Absender, bei einer direkten Annahme also an den Leihenden; die Wallet erhält den Kapitalbetrag abzüglich der Gebühr plus diesen Anteil.
 
 <a id="borrow-risks"></a>
 

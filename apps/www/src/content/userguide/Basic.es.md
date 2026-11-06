@@ -1108,7 +1108,7 @@ Antes de que se abra tu wallet, la revisión muestra cada cifra: lo que recibes,
 
 ### Borrow: La comisión de apertura
 
-Abrir un préstamo cuesta una pequeña parte de la cantidad, cobrada una vez, en el token que pides prestado, y descontada de lo que recibes; la revisión muestra la tasa vigente. Debes intereses sobre la cantidad completa. Tu nivel de descuento reduce la comisión cuando el descuento de comisiones está activado y el token prestado es líquido. No se toma ni se retiene VPFI por esta comisión, y no se reembolsa nada después.
+Abrir un préstamo cuesta una pequeña parte de la cantidad, cobrada una vez, en el token que pides prestado, y descontada de lo que recibes; la revisión muestra la tasa vigente. Debes intereses sobre la cantidad completa. Tu nivel de descuento reduce la comisión cuando el descuento de comisiones está activado y el token prestado es líquido. No se toma ni se retiene VPFI por esta comisión, y no se reembolsa nada después. Como envías tú mismo la aceptación, una pequeña parte de la comisión, la que el protocolo paga a quien envía un emparejamiento, vuelve a ti junto con la cantidad; la revisión la muestra.
 
 <a id="borrow-risks"></a>
 

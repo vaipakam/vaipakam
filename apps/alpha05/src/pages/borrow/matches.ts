@@ -9,7 +9,7 @@
 import type { PublicClient } from 'viem';
 import { type StoredOffer } from '../../shared/offers/acceptTerms';
 import { borrowFit, notTakeable, rankForBorrower, type NotTakeable, type OfferFit } from '../../shared/offers/model';
-import { readOffer, readOfferState, readPairLtvBps, readPairOfferIds, readPreview, type AcceptPreview, type OfferState } from '../../shared/offers/reads';
+import { readLifMatcherBps, readOffer, readOfferState, readPairLtvBps, readPairOfferIds, readPreview, type AcceptPreview, type OfferState } from '../../shared/offers/reads';
 import { refusalFromError } from '../../shared/eligibility/refusal';
 
 type Hex = `0x${string}`;
@@ -42,6 +42,9 @@ export interface Matches {
   total: bigint;
   /** How many of them this read looked at. */
   scanned: number;
+  /** The share of the fee paid back to the submitter (bps), read with a
+   *  wallet; null without one, when no receive figure is shown. */
+  matcherBps: bigint | null;
 }
 
 function message(e: unknown): string {
@@ -49,7 +52,10 @@ function message(e: unknown): string {
 }
 
 export async function readMatches(client: PublicClient, diamond: Hex, lending: Hex, collateral: Hex, account: Hex | null): Promise<Matches> {
-  const { ids, total } = await readPairOfferIds(client, diamond, lending, collateral, MATCH_PAGE);
+  const [{ ids, total }, matcherBps] = await Promise.all([
+    readPairOfferIds(client, diamond, lending, collateral, MATCH_PAGE),
+    account ? readLifMatcherBps(client, diamond) : Promise.resolve(null),
+  ]);
   const skipped = { own: 0, 'not-lender': 0, 'not-erc20': 0 };
   const rows: MatchRow[] = [];
   const unread: UnreadRow[] = [];
@@ -90,6 +96,7 @@ export async function readMatches(client: PublicClient, diamond: Hex, lending: H
     skipped,
     total,
     scanned: ids.length,
+    matcherBps,
   };
 }
 

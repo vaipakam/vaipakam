@@ -66,11 +66,13 @@ export function moved(logs: readonly Log[], token: Hex, from: Hex | null, to: He
 }
 
 /** How an acceptance's principal was split, read from its own logs: what
- *  reached the borrower's wallet, and what left the same source (the
- *  lender's vault) for anyone else in the same token, which is the
- *  initiation fee as charged. Null when nothing reached the wallet. */
+ *  reached the borrower's wallet (on a direct take, the principal less the
+ *  fee plus the fee share paid to the sender), and what left the same
+ *  source (the lender's vault) for anyone else in the same token (the rest
+ *  of the fee). Null when nothing reached the wallet. */
 export interface DeliverySplit {
   received: bigint;
+  /** What the same source paid to anyone but the borrower. */
   fee: bigint;
 }
 

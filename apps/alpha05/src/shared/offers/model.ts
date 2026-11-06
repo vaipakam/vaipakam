@@ -84,6 +84,10 @@ export function shortfall(balance: bigint, needed: bigint): bigint {
 export interface AcceptFigures {
   principal: bigint;
   fee: bigint;
+  /** The part of the fee the protocol pays to whoever submits the
+   *  acceptance (the matcher's share), which on a direct take is the
+   *  borrower: it reaches the wallet with the principal. */
+  feeBack: bigint;
   received: bigint;
   collateral: bigint;
   refund: bigint;
@@ -92,12 +96,14 @@ export interface AcceptFigures {
   owedAtDue: bigint;
 }
 
-export function acceptFigures(preview: AcceptPreview, durationDays: bigint): AcceptFigures {
+export function acceptFigures(preview: AcceptPreview, durationDays: bigint, matcherBps: bigint): AcceptFigures {
   const interest = interestAtDue(preview.effectivePrincipal, preview.interestRateBps, durationDays);
+  const feeBack = (preview.lifEstimate * matcherBps) / BPS;
   return {
     principal: preview.effectivePrincipal,
     fee: preview.lifEstimate,
-    received: preview.effectivePrincipal - preview.lifEstimate,
+    feeBack,
+    received: preview.effectivePrincipal - preview.lifEstimate + feeBack,
     collateral: preview.collateralAmount,
     refund: preview.collateralResidualRefund,
     rateBps: preview.interestRateBps,

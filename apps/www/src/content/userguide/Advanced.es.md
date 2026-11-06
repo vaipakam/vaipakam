@@ -2243,7 +2243,7 @@ La revisión lee la oferta, su estado, `previewAccept`, `getOfferLinkedLoanId`, 
 
 ### Borrow: La comisión de apertura
 
-La comisión es el `lifEstimate` de `previewAccept`: `getLoanInitiationFeeBps` del principal, en el token prestado, descontada de lo entregado, reducida por el descuento por nivel de tenencia cuando el consentimiento está activo y el token prestado es líquido, con el nivel fijado al aceptar. Esta página nunca elige la tarifa Full. No se cobra VPFI por la comisión ni se reembolsa.
+La comisión es el `lifEstimate` de `previewAccept`: `getLoanInitiationFeeBps` del principal, en el token prestado, descontada de lo entregado, reducida por el descuento por nivel de tenencia cuando el consentimiento está activo y el token prestado es líquido, con el nivel fijado al aceptar. Esta página nunca elige la tarifa Full. No se cobra VPFI por la comisión ni se reembolsa. La parte del remitente, `getLifMatcherFeeBps` de la comisión, se paga a quien envía, que en una aceptación directa es el prestatario, así que la wallet recibe el principal menos la comisión más esa parte.
 
 <a id="borrow-risks"></a>
 

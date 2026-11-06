@@ -1126,7 +1126,7 @@ Avant que votre wallet ne s'ouvre, la vérification montre chaque chiffre : ce q
 
 ### Borrow: Les frais d'ouverture
 
-Ouvrir un prêt coûte une petite part du montant, prélevée une fois, dans le token emprunté, et déduite de ce que vous recevez ; la vérification montre le taux en vigueur. Vous devez des intérêts sur le montant entier. Votre niveau de remise réduit les frais quand la remise sur les frais est activée et que le token emprunté est liquide. Aucun VPFI n'est pris ni conservé pour ces frais, et rien n'est remboursé plus tard.
+Ouvrir un prêt coûte une petite part du montant, prélevée une fois, dans le token emprunté, et déduite de ce que vous recevez ; la vérification montre le taux en vigueur. Vous devez des intérêts sur le montant entier. Votre niveau de remise réduit les frais quand la remise sur les frais est activée et que le token emprunté est liquide. Aucun VPFI n'est pris ni conservé pour ces frais, et rien n'est remboursé plus tard. Comme vous envoyez vous-même l'acceptation, une petite part des frais, celle que le protocole verse à quiconque soumet un appariement, vous revient avec le montant ; la vérification l'indique.
 
 <a id="borrow-risks"></a>
 

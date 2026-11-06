@@ -242,6 +242,16 @@ export async function readLifBps(client: PublicClient, diamond: Hex): Promise<bi
   })) as bigint;
 }
 
+/** The share of an initiation fee paid to whoever submits the acceptance
+ *  or match, in basis points of the fee. */
+export async function readLifMatcherBps(client: PublicClient, diamond: Hex): Promise<bigint> {
+  return (await client.readContract({
+    address: diamond,
+    abi: CONFIG,
+    functionName: 'getLifMatcherFeeBps',
+  })) as bigint;
+}
+
 export async function readVault(client: PublicClient, diamond: Hex, account: Hex, b?: AtBlock): Promise<Hex> {
   return (await client.readContract({
     address: diamond,

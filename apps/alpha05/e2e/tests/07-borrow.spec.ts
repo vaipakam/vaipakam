@@ -62,6 +62,8 @@ test('a borrower takes a lender offer whole: signed terms, an exact approval, an
   await expect(receipt).toContainText('You receive in your wallet', { timeout: 60_000 });
   await expect(receipt).toContainText('Loan initiation fee, taken from the amount');
   await expect(receipt).toContainText('You lock in your vault');
+  // The protocol pays the sender a share of the fee; on a direct take that is the borrower.
+  await expect(receipt).toContainText('Of that fee, paid back to you as the sender');
   await expect(receipt).toContainText('2000');
   await expect(receipt).toContainText('You owe on the due date');
   // A first loan opens the vault in the same transaction; a later one (the
@@ -92,6 +94,7 @@ test('a borrower takes a lender offer whole: signed terms, an exact approval, an
   await expect(finish).toHaveAttribute('data-verdict', 'done', { timeout: 90_000 });
   await expect(finish).toContainText('with you as the borrower');
   await expect(finish).toContainText('arrived in your wallet');
+  await expect(finish).not.toContainText('previewed');
   await expect(finish).toContainText('locked in your vault');
   expect(flags.typedDataRequests.AcceptTerms ?? 0).toBe(signed + 1);
   expect(flags.sentTransactions).toBe(sent + 2);
