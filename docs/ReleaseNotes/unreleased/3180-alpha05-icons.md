@@ -1,0 +1,9 @@
+# The next app gains icons with fixed meanings
+
+The next connected app now uses a small set of icons. Each icon has one meaning and is never reused for anything else. An icon is there to catch the reader's eye. It never replaces the words: every icon sits beside text that says the same thing and is hidden from screen readers, so someone who cannot see it misses nothing. The closed list is: something to act on (warning notices), something blocked (refusals), done (confirmations), funds leaving the wallet (a review row that moves funds out, or an approval that lets them move), a wallet signature (the confirm button), waiting on the chain (signing, sent, mined), a figure the app could not read (beside the word "unknown"), and the info button. Plain information notices carry no icon, so an icon always means "look here".
+
+The info button "(i)" replaces the old "Why?" link. It shows only the icon, right after the sentence it explains, and opens the same help panel. Screen readers hear it as "Why?" followed by that sentence. Its tap area is 44 px square on every screen, though the icon is drawn small so lines keep their height. It opens on a tap, never on hover, because touch screens have no hover. The choice follows usability research: icons need visible labels, and the info button is the one shape whose label is the sentence it follows.
+
+On phones, each destination in the bottom bar shows its icon above its name, and the name always shows. The desktop header navigation stays text-only. Counts on navigation, such as how many claims are waiting, will come with the pages that own them. The rule is recorded as RB-ICONS in the alpha05 design rulebook. The shapes are from an open icon set (ISC licence), carried in the app as data, so the app adds no dependency. The user guide's Basic edition describes the info button in every language.
+
+Advances #3180.

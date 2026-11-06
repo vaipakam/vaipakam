@@ -48,6 +48,18 @@ test('"Why?" opens the help panel on the explanation and closes three ways, retu
   const { page } = await launchWallet('visitor');
   await page.goto('/');
   const why = page.locator('footer').getByRole('button', { name: 'Why?' });
+  // RB-ICONS: the info button shows the (i) alone, right after its sentence;
+  // its name is "Why?", and its tap area is 44 px square whatever its drawn size.
+  await expect(why).toHaveText('');
+  await expect(why.locator('svg.icon-why')).toHaveAttribute('aria-hidden', 'true');
+  const tap = await why.evaluate((b) => {
+    const before = getComputedStyle(b, '::before');
+    const r = b.getBoundingClientRect();
+    const grow = (v: string) => -parseFloat(v) * 2;
+    return { w: r.width + grow(before.left), h: r.height + grow(before.top) };
+  });
+  expect(tap.w).toBeGreaterThanOrEqual(44);
+  expect(tap.h).toBeGreaterThanOrEqual(44);
   await why.click();
   const dialog = page.getByRole('dialog');
   await expect(dialog).toBeVisible();
@@ -95,6 +107,13 @@ test('on a phone the header is one row and a bottom bar carries the first destin
   const bar = page.getByRole('navigation', { name: 'Quick access' });
   // The bar is derived from the same page map: its first four destinations.
   await expect(bar.getByRole('link')).toHaveText(BASIC_NAV.slice(0, 4));
+  // RB-ICONS: each place shows its icon above its name, and the name always shows.
+  for (const link of await bar.locator('a, button').all()) {
+    const icon = link.locator('svg.icon-place');
+    await expect(icon).toHaveAttribute('aria-hidden', 'true');
+    const [i, l] = [await icon.boundingBox(), await link.locator('span').boundingBox()];
+    expect(i && l && i.y + i.height <= l.y + 1).toBe(true);
+  }
   const barBox = await bar.boundingBox();
   expect(barBox && barBox.y + barBox.height).toBeCloseTo(viewportHeight, 0);
   // The full navigation is folded into More until asked for.

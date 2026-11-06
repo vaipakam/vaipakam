@@ -920,8 +920,8 @@ explains the pages that are already built.
 Basic shows what most people need. Advanced adds the exit and
 settlement tools, automation, signed orders, keeper status and
 accounting detail. Switching modes never hides a consent you have
-to give, something that blocks you, or the way to fix it. Every
-"Why?" link opens the full explanation, and its "Read more" link
+to give, something that blocks you, or the way to fix it. Every info button (i), after the sentence it explains,
+opens the full explanation, and its "Read more" link
 opens this guide in the mode you are using.
 
 <a id="wallet"></a>

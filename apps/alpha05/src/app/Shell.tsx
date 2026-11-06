@@ -9,6 +9,7 @@ import { HelpPanel } from '../shared/help/HelpPanel';
 import { WhyLink } from '../shared/help/WhyLink';
 import { useWorldRail } from '../shared/reads/world/WorldRailContext';
 import { FreshnessStamp } from '../shared/ui/FreshnessStamp';
+import { PlaceIcon } from '../shared/ui/Icon';
 import { OutstandingTx } from '../shared/tx/OutstandingTx';
 import { NAV_ADVANCED, NAV_BASIC } from '../routes/pageMap';
 
@@ -136,11 +137,13 @@ export function Shell() {
       <nav className="bottom-bar" aria-label="Quick access">
         {quick.map((e) => (
           <NavLink key={e.path} to={e.path} end={e.path === '/'} onClick={closeMenu}>
-            {e.name}
+            <PlaceIcon place={e.path} />
+            <span>{e.name}</span>
           </NavLink>
         ))}
         <button ref={menuButton} type="button" aria-expanded={menuOpen} aria-controls="site-menu" onClick={() => setMenuOpen((o) => !o)}>
-          {text('shell.more')}
+          <PlaceIcon place="more" />
+          <span>{text('shell.more')}</span>
         </button>
       </nav>
       <HelpPanel />

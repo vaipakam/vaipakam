@@ -178,6 +178,13 @@ code {
   text-decoration: none;
   cursor: pointer;
 }
+/* RB-ICONS: the place's icon above its name. The name always shows. */
+.bottom-bar a:has(.icon),
+.bottom-bar button:has(.icon) {
+  flex-direction: column;
+  gap: 2px;
+  font-size: 0.75rem;
+}
 .bottom-bar a.active,
 .bottom-bar button[aria-expanded='true'] {
   color: var(--brand-soft-text);
@@ -430,6 +437,77 @@ h1 {
   color: var(--brand);
   text-decoration: underline;
   cursor: pointer;
+}
+
+/* ── RB-ICONS: an icon always sits beside its words, never alone ────── */
+.icon {
+  flex-shrink: 0;
+  vertical-align: -0.15em;
+}
+.notice-with-icon {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}
+.notice-with-icon > .icon {
+  margin-top: 0.15em;
+}
+.notice-with-icon > span {
+  min-width: 0;
+}
+.with-icon {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.btn:has(.icon) {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: center;
+}
+dt[data-moves-out] {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+}
+dd.value-unknown {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+}
+dt[data-moves-out] > .icon,
+dd.value-unknown > .icon {
+  margin-top: 0.2em;
+}
+/* The info button "(i)": the icon alone, right after the sentence it
+   explains. Drawn small so the line keeps its height; the invisible
+   ::before makes the tap area 44 px square on every screen. */
+.why-link {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  margin: -4px 0;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+  color: var(--brand);
+  vertical-align: middle;
+  cursor: pointer;
+}
+.why-link::before {
+  content: '';
+  position: absolute;
+  inset: -10px;
+}
+.why-link:hover,
+.why-link:focus-visible {
+  background: var(--brand-soft);
+  color: var(--brand-soft-text);
 }
 
 /* ── Help panel: a side panel from 720px up, a bottom sheet below ───── */

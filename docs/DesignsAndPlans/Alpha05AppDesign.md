@@ -298,6 +298,34 @@ confirmation stay verbatim in every language; a language offered as
 translated shows it everywhere, and a new surface is translated in the change
 that ships it.
 
+### RB-ICONS — icons with fixed meanings
+
+An icon draws the eye to what a page needs from the reader; it never carries
+a meaning on its own. Every icon sits beside the words that say the same
+thing, and is hidden from screen readers, so the text is the whole message
+and a reader who cannot see the icon loses nothing. The one icon that stands
+without a word is the info button below, because the sentence it follows is
+its label. Two families only:
+
+- **Meanings** (a closed list; one shape each, never reused for anything
+  else): something to act on (the warn tone), something blocked (the danger
+  tone), done (the ok tone), funds leave your wallet (a receipt row that
+  moves funds out, or an approval that lets them move), a signature or
+  wallet prompt (the confirm button), waiting on the chain (signing,
+  submitted, mined), unknown (a figure the app cannot substantiate, beside
+  the word "unknown"), and more about this (the info button "(i)" right
+  after the sentence it explains, which opens the help panel of RB-HELP; its
+  accessible name is "Why?", its description is that sentence, and its tap
+  area is at least 44 px square; no hover tooltip, since touch has no hover).
+- **Places**: one icon per destination of the page map, shown on the phone
+  bottom bar above the destination's name, which always shows.
+
+A plain information notice carries no icon, so an icon always means the
+reader should look. A new meaning is a change to this rule, not a local
+choice. Counts on navigation (such as "Claims 2") arrive with the pages that
+own them. Shapes come from one open icon set (ISC licence), drawn inline in
+the current text colour, so they follow the theme and contrast of their text.
+
 ### RB-FUNDS — fund transparency
 
 Every fund-moving flow states the movement in plain words on the receipt

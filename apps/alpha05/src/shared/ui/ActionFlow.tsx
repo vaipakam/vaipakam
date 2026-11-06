@@ -8,6 +8,7 @@ import type { Refusal } from '../eligibility/types';
 import type { FinishCard as FinishCardModel, Receipt as ReceiptModel } from '../receipt/types';
 import type { TrackedTx } from '../tx/useTrackedTx';
 import { FinishCard } from './FinishCard';
+import { Icon } from './Icon';
 import { Notice } from './Notice';
 import { Receipt, type AssetInfo } from './Receipt';
 import { shortAddress } from './format';
@@ -209,6 +210,7 @@ export function ActionFlow({ tx, identity, reviewedFor, receipt, recheck, descri
           <p className="actions">
             {!blocked && (
               <button type="button" className="btn btn-primary" disabled={receipt === null || checking || (gate !== undefined && !gate.ready)} onClick={() => void confirm()}>
+                <Icon meaning="sign" />
                 {text('flow.confirm')}
               </button>
             )}
@@ -223,7 +225,8 @@ export function ActionFlow({ tx, identity, reviewedFor, receipt, recheck, descri
       return (
         <div className="action-flow" data-phase="signing">
           {senderNote}
-          <p className="tier-b" role="status">
+          <p className="tier-b with-icon" role="status">
+            <Icon meaning="pending" />
             {signingNote ?? text('flow.signing')}
           </p>
         </div>
@@ -232,7 +235,8 @@ export function ActionFlow({ tx, identity, reviewedFor, receipt, recheck, descri
       return (
         <div className="action-flow" data-phase="submitted">
           {senderNote}
-          <p className="tier-b" role="status">
+          <p className="tier-b with-icon" role="status">
+            <Icon meaning="pending" />
             {text('flow.submitted')} {txLink(phase.hash)}
           </p>
         </div>
@@ -241,7 +245,8 @@ export function ActionFlow({ tx, identity, reviewedFor, receipt, recheck, descri
       return (
         <div className="action-flow" data-phase="mined">
           {senderNote}
-          <p className="tier-b" role="status">
+          <p className="tier-b with-icon" role="status">
+            <Icon meaning="pending" />
             {format('flow.mined', { block: phase.blockNumber.toString() })} {txLink(phase.hash)}
           </p>
         </div>

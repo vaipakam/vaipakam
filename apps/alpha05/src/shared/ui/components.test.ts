@@ -40,6 +40,15 @@ describe('Receipt', () => {
     expect(out).toContain('Once paid, the loan closes');
     expect((out.match(/data-binding="true"/g) ?? []).length).toBe(3);
   });
+  it('marks money leaving the wallet and an unknown figure with their RB-ICONS icons, beside the words', () => {
+    const moving: ReceiptModel = { ...receipt, rows: [{ ...receipt.rows[0], movesOut: true }, receipt.rows[1], receipt.rows[2]] };
+    const out = html(createElement(Receipt, { receipt: moving, describeAsset, nowMs: 1_061_000 }));
+    expect(out.match(/icon-money-out/g)?.length).toBe(1);
+    expect(out).toMatch(/data-moves-out="true"><svg[^>]*icon-money-out[\s\S]*?<\/svg>You pay<\/dt>/);
+    // Both unknowns (an unreadable asset and an unread late fee) carry the icon.
+    expect(out.match(/icon-unknown/g)?.length).toBe(2);
+  });
+
   it('renderValue states a time in UTC', () => {
     expect(renderValue({ kind: 'time', unixSeconds: 1_700_000_000 }, describeAsset, 'Unknown')).toEqual({ text: '2023-11-14 22:13 UTC', unknown: false });
   });
@@ -88,7 +97,12 @@ describe('ActionList', () => {
           {
             id: 'sell',
             label: 'Sell',
-            verdict: closed([{ code: 'SaleListingActive', reason: 'A sale is already listed.', reopensAt: 1_700_000_000, remedy: { label: 'See the listing', to: '/offers/3' } }], null, 1, 'own'),
+            verdict: closed(
+              [{ code: 'SaleListingActive', reason: 'A sale is already listed.', reopensAt: 1_700_000_000, remedy: { label: 'See the listing', to: '/offers/3' } }],
+              null,
+              1,
+              'own',
+            ),
             onStart: () => {},
           },
         ],

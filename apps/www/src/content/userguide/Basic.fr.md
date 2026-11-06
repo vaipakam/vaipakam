@@ -977,8 +977,8 @@ Basic montre ce dont la plupart des gens ont besoin. Advanced ajoute
 les outils de sortie et de règlement, l'automatisation, les ordres
 signés, l'état des keepers et le détail comptable. Changer de mode ne
 masque jamais un consentement à donner, ce qui vous bloque, ni le
-moyen d'y remédier. Chaque lien « Pourquoi ? » ouvre l'explication
-complète, et son lien « En savoir plus » ouvre ce guide dans le mode
+moyen d'y remédier. Chaque bouton d'information (i), après la phrase qu'il explique,
+ouvre l'explication complète, et son lien « En savoir plus » ouvre ce guide dans le mode
 que vous utilisez.
 
 <a id="wallet"></a>

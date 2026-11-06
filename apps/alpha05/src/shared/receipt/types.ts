@@ -17,6 +17,9 @@ export interface ReceiptRow {
   value: ReceiptValue;
   /** Tier A: the row is a consequence the signature binds. */
   binding: boolean;
+  /** RB-ICONS: the row moves money or a token out of the wallet, or lets
+   *  the protocol do so (an approval); it carries the money-out icon. */
+  movesOut?: boolean;
 }
 
 export interface Receipt {

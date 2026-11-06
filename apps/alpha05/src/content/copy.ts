@@ -142,7 +142,7 @@ export const copy = {
     firstRunReceiptTitle: B('A receipt before every signature'),
     firstRunReceipt: B('Before you sign, the app shows what you receive, lock, may owe and can lose.'),
     firstRunHelpTitle: B('Answers in place'),
-    firstRunHelp: B('Every Why? opens the full explanation; Basic and Advanced change only how much is shown.'),
+    firstRunHelp: B('Every (i) opens the full explanation; Basic and Advanced change only how much is shown.'),
     firstRunDismiss: B('Got it'),
     firstRunDismissAll: B('Hide these'),
     statusRunning: B('Protocol status on {{chain}}: running.'),
