@@ -768,6 +768,15 @@ const copySource = {
       'Unlinked for {{network}}. A smart-account wallet is disconnected per network \u2014 if this wallet is linked on other networks, unlink each one from there with its own signature.',
       ['network'],
     ),
+    /* #3246 — protected mode is on, so removing the linked chat waits the
+       account's delay; the chat keeps getting alerts and was told it can
+       reply CANCEL. The card must not say "unlinked" when it is not. */
+    unlinkPending: tmpl(
+      'Not unlinked yet. Protected mode is on, so your Telegram chat keeps getting every alert until {{date}}, and then it stops. We told that chat, and it can reply CANCEL to keep its alerts.',
+      ['date'],
+    ),
+    unlinkProtectionUnknown:
+      'Nothing was changed: we could not check just now whether this wallet has protected mode on. Try again in a few minutes.',
     toggleRepayDue: 'Message me before an interest payment comes due',
     toggleRisky: 'Message me if my loan gets risky',
     riskyOffNote:

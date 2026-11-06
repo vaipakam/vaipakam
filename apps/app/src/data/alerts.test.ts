@@ -306,13 +306,14 @@ describe('unlinkTelegram scope (#2013 r4)', () => {
   // wallet-wide disconnect that did not happen.
   const WALLET = '0x1DAefA360ED370285f003Fa2d92DB75628088282' as const;
 
-  function stubUnlink(body: unknown) {
+  function stubUnlink(body: unknown, status = 200) {
     vi.stubEnv('VITE_AGENT_ORIGIN', 'https://agent.test');
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () => new Response(JSON.stringify(body), { status: 200 })),
+      vi.fn(async () => new Response(JSON.stringify(body), { status })),
     );
   }
+  const sign = async () => `0x${'ab'.repeat(65)}`;
 
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -321,18 +322,28 @@ describe('unlinkTelegram scope (#2013 r4)', () => {
 
   it("maps the service's scope through, defaulting a pre-scope agent to wallet-wide", async () => {
     stubUnlink({ ok: true, scope: 'chain' });
-    expect(await unlinkTelegram(WALLET, 84532, async () => `0x${'ab'.repeat(65)}`)).toBe(
-      'chain',
-    );
+    expect((await unlinkTelegram(WALLET, 84532, sign)).scope).toBe('chain');
     stubUnlink({ ok: true, scope: 'wallet' });
-    expect(await unlinkTelegram(WALLET, 84532, async () => `0x${'ab'.repeat(65)}`)).toBe(
-      'wallet',
-    );
+    expect((await unlinkTelegram(WALLET, 84532, sign)).scope).toBe('wallet');
     // An agent from before the scoped response: the old behaviour
     // WAS wallet-wide, so that is what the confirmation must say.
     stubUnlink({ ok: true });
-    expect(await unlinkTelegram(WALLET, 84532, async () => `0x${'ab'.repeat(65)}`)).toBe(
-      'wallet',
-    );
+    expect((await unlinkTelegram(WALLET, 84532, sign)).scope).toBe('wallet');
+  });
+
+  it('reports the chains whose removal waits under protected mode (#3246)', async () => {
+    stubUnlink({ ok: true, scope: 'wallet', pending: [{ chain_id: 84532, effective_at: 1_800_000_000 }, { bad: 1 }] });
+    expect(await unlinkTelegram(WALLET, 84532, sign)).toEqual({
+      scope: 'wallet',
+      pending: [{ chainId: 84532, effectiveAt: 1_800_000_000 }],
+      protectionUnknown: false,
+    });
+  });
+
+  it('says nothing changed when the service could not read protection (#3246)', async () => {
+    stubUnlink({ error: 'protection-unknown' }, 503);
+    expect((await unlinkTelegram(WALLET, 84532, sign)).protectionUnknown).toBe(true);
+    stubUnlink({ error: 'other' }, 503);
+    await expect(unlinkTelegram(WALLET, 84532, sign)).rejects.toThrow('503');
   });
 });

@@ -539,7 +539,7 @@ export async function unlinkTelegram(
   wallet: `0x${string}`,
   chainId: number,
   signMessage: (message: string) => Promise<string>,
-): Promise<'wallet' | 'chain'> {
+): Promise<TelegramUnlinkOutcome> {
   const issuedAt = Math.floor(Date.now() / 1000);
   const signature = await signMessage(
     buildTelegramUnlinkMessage(wallet, chainId, issuedAt),
@@ -550,12 +550,36 @@ export async function unlinkTelegram(
     issuedAt,
     signature,
   });
+  // #3246 — the service could not check whether the wallet has protected
+  // mode on, so it changed nothing (a failed read must never silence a
+  // protected account's alerts).
+  if (res.status === 503 && res.data?.error === 'protection-unknown') {
+    return { scope: 'wallet', pending: [], protectionUnknown: true };
+  }
   if (!res.ok) throw new Error(`unlinking Telegram failed (${res.status})`);
+  const pending = Array.isArray(res.data?.pending)
+    ? (res.data.pending as unknown[]).flatMap((p) => {
+        const r = p as { chain_id?: unknown; effective_at?: unknown };
+        return typeof r.chain_id === 'number' && typeof r.effective_at === 'number'
+          ? [{ chainId: r.chain_id, effectiveAt: r.effective_at }]
+          : [];
+      })
+    : [];
   // The service reports which SCOPE the clear applied to (#2013 r4):
   // 'wallet' for an ordinary key (the universal controller), 'chain'
   // for a smart account whose contract approved on the signed chain
   // only — the confirmation the card shows must match what actually
   // happened. A missing field (an agent from before the scoped
   // response) means the old wallet-wide behaviour.
-  return res.data?.scope === 'chain' ? 'chain' : 'wallet';
+  return { scope: res.data?.scope === 'chain' ? 'chain' : 'wallet', pending, protectionUnknown: false };
+}
+
+/** What an unlink did (#3246). `pending` lists the chains whose chat is NOT
+ *  removed yet: protected mode is on there, so the removal waits the account's
+ *  delay and that chat keeps getting alerts (and may cancel) until
+ *  `effectiveAt` (unix seconds). `protectionUnknown` means nothing changed. */
+export interface TelegramUnlinkOutcome {
+  scope: 'wallet' | 'chain';
+  pending: { chainId: number; effectiveAt: number }[];
+  protectionUnknown: boolean;
 }

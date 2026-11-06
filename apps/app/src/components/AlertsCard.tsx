@@ -261,14 +261,26 @@ export function AlertsCard() {
     try {
       // Signed like linking — otherwise anyone could silently switch
       // off another wallet's risk alerts.
-      const scope = await unlinkTelegram(address, forChain, (message) =>
+      const outcome = await unlinkTelegram(address, forChain, (message) =>
         signMessageAsync({ message }),
       );
+      if (outcome.protectionUnknown) {
+        setError(copy.alerts.unlinkProtectionUnknown);
+        return;
+      }
+      // #3246 — under protected mode the chat is not removed yet: it keeps
+      // getting alerts until the stated time, and was told it can cancel.
+      // So the card still shows it linked and says when it will stop.
+      if (outcome.pending.length > 0) {
+        const last = Math.max(...outcome.pending.map((p) => p.effectiveAt));
+        setNotice(copy.alerts.unlinkPending(new Date(last * 1000).toLocaleString()));
+        return;
+      }
       const next = { ...prefs, telegramLinked: false };
       storeAlertPrefs(forChain, address, next);
       setPrefs(next);
       setNotice(
-        scope === 'chain'
+        outcome.scope === 'chain'
           ? copy.alerts.unlinkedChainOnly(
               chainDisplayName(forChain) ?? String(forChain),
             )
