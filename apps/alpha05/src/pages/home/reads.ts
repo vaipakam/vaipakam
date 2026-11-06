@@ -18,7 +18,7 @@
  * (or 0 for the health factor, which the view's own convention reads as "no
  * reading"), never a made-up figure.
  */
-import { hexToString, type Abi, type PublicClient } from 'viem';
+import { type Abi, type PublicClient } from 'viem';
 import {
   LoanFacetABI,
   MetricsDashboardFacetABI,
@@ -259,11 +259,4 @@ export async function readOpenOffers(client: PublicClient, diamond: Hex, account
   );
   const rows = views.filter((v) => v.id !== 0n && v.state === OFFER_STATE_OPEN);
   return { rows: rows.sort((a, b) => (a.id > b.id ? -1 : a.id < b.id ? 1 : 0)), complete: inventory.complete };
-}
-
-/** The numeraire's display symbol ("USD"), or null when unset or unreadable. */
-export async function readNumeraireSymbol(client: PublicClient, diamond: Hex): Promise<string | null> {
-  const raw = (await client.readContract({ address: diamond, abi: NUMERAIRE, functionName: 'getNumeraireSymbol' })) as Hex;
-  const text = hexToString(raw, { size: 32 }).replace(/\0+$/, '');
-  return text.length > 0 ? text : null;
 }

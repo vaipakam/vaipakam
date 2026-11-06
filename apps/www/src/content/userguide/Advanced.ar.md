@@ -2005,6 +2005,12 @@ fallback، موعد غير مقروء، يستحق خلال ثلاثة أيام�
 
 قيمة `fillMode` هي 0 (Partial) أو 1 (AON) أو 2 (IOC) ولا تتغير بعد النشر. يتطلب AON أن يكون `amount` = `amountMax` (`AonRequiresSingleValueAmount`)، ويتطلب IOC أن يكون `expiresAt` ≠ 0 (`IocRequiresExpiry`)؛ ولا يعرض النموذج أيًّا من الصيغ المرفوضة. أما المبالغ والسعر والضمان فيمكن تغييرها على طلب مفتوح عبر `setOfferAmount` و`setOfferRate` و`setOfferCollateral` و`modifyOffer`، دون النزول أبدًا عن `amountFilled` أو `collateralAmountFilled`؛ ولا يستدعيها هذا التطبيق بعد.
 
+<a id="borrow-request-cadence"></a>
+
+### Borrow: جدول فائدة الطلب
+
+تتراوح `periodicInterestCadence` من 0 (None) إلى 4 (Annual)، بفترات مدتها 30 و90 و180 و365 يومًا. يعرض النموذج ما تقبله `previewCadenceAdmission(lendingAsset, amount, assetType, collateralAsset, collateralAssetType, durationDays)`، التي تشغّل القاعدة التي تفرضها `createOffer` مقيّمةً عند `amount` (الطرف الأصغر من النطاق). يُذكر كل رفض من بيانات التراجع الخاصة به: `PeriodicInterestDisabled` أو `CadenceNotAllowedForIlliquid` أو `CadenceNotAllowed(cadence, durationDays, principalNumeraire, threshold)`. فائدة الفترة الواحدة هي `principal × rate × intervalDays / (10000 × 365)`. يمكن لأي شخص تسوية فترة فائتة عبر `settlePeriodicInterest` بعد انقضاء المهلة `getEffectiveGraceSeconds(intervalDays − 1)`؛ فتُباع ضمانات ويبقى القرض مفتوحًا. تُعرض حالة تفعيل مرور الحارس `periodicSettle` كما تبلغ عنها خدمة القدرات، وهي غير معروفة افتراضيًا. لا يمكن تغيير الجدول بعد النشر.
+
 <a id="risk-access"></a>
 
 ### Risk Access: مستوى المخاطرة لديك

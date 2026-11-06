@@ -1326,7 +1326,7 @@ a.btn {
   gap: 8px;
   min-width: 0;
 }
-/* OFF-10 / OFF-11 — the request's Advanced options: one quiet panel set
+/* OFF-10 / OFF-11 / OFF-14 — the request's Advanced options: one quiet panel set
    apart from the Basic fields, so a reader sees at a glance which choices
    are the optional ones. */
 .advanced-options {
@@ -1350,6 +1350,14 @@ a.btn {
   margin-top: 8px;
 }
 .choice input:disabled + span {
+  color: var(--text-muted);
+}
+/* OFF-14: why a closed option is closed, under its name. */
+.choice-note {
+  display: block;
+  margin-top: 2px;
+  font-size: 0.8125rem;
+  line-height: 1.4;
   color: var(--text-muted);
 }
 @keyframes advanced-in {

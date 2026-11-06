@@ -3,7 +3,8 @@ import { getSupportedChain, type SupportedChain } from '../../chain/chains';
 import { useChainRead, type ChainRead } from '../../shared/reads/chainRead';
 import { useTokenMeta, type TokenMetaMap } from '../../shared/reads/tokens';
 import { useOwnRead, type OwnRead } from '../../shared/reads/useOwnRead';
-import { readNumeraireSymbol, readOpenOffers, readPositionBook, type LiveLoans, type OpenOffers, type Payouts } from './reads';
+import { readNumeraireSymbol } from '../../shared/reads/numeraire';
+import { readOpenOffers, readPositionBook, type LiveLoans, type OpenOffers, type Payouts } from './reads';
 import { ASSET_ERC20 } from './model';
 
 type Hex = `0x${string}`;

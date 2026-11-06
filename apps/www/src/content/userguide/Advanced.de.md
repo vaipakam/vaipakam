@@ -2297,6 +2297,12 @@ Eine Spanne sendet `amount` (den kleinsten) unter `amountMax` (dem größten), `
 
 `fillMode` ist 0 (Partial), 1 (AON) oder 2 (IOC) und ist nach dem Veröffentlichen unveränderlich. AON verlangt `amount` = `amountMax` (`AonRequiresSingleValueAmount`), IOC verlangt `expiresAt` ≠ 0 (`IocRequiresExpiry`); das Formular bietet keine der abgelehnten Formen an. Beträge, Zinssatz und Sicherheit lassen sich bei einer offenen Anfrage über `setOfferAmount`, `setOfferRate`, `setOfferCollateral` und `modifyOffer` ändern, nie unter `amountFilled` oder `collateralAmountFilled`; diese App ruft sie noch nicht auf.
 
+<a id="borrow-request-cadence"></a>
+
+### Borrow: Der Zinsplan einer Anfrage
+
+`periodicInterestCadence` reicht von 0 (None) bis 4 (Annual), mit Perioden von 30, 90, 180 und 365 Tagen. Das Formular bietet an, was `previewCadenceAdmission(lendingAsset, amount, assetType, collateralAsset, collateralAssetType, durationDays)` zulässt; es führt die Regel aus, die `createOffer` durchsetzt, bewertet zu `amount` (dem kleinsten Ende einer Spanne). Jede Ablehnung wird aus ihren Revert-Daten genannt: `PeriodicInterestDisabled`, `CadenceNotAllowedForIlliquid` oder `CadenceNotAllowed(cadence, durationDays, principalNumeraire, threshold)`. Die Zinsen einer Periode sind `principal × rate × intervalDays / (10000 × 365)`. Eine versäumte Periode kann jeder über `settlePeriodicInterest` begleichen, sobald die Nachfrist `getEffectiveGraceSeconds(intervalDays − 1)` verstrichen ist; dabei wird Sicherheit verkauft und der Kredit bleibt offen. Die Aktivierung des Keeper-Durchlaufs `periodicSettle` wird so gezeigt, wie der Fähigkeitsdienst sie meldet, standardmäßig unbekannt. Der Plan kann nach dem Veröffentlichen nicht geändert werden.
+
 <a id="risk-access"></a>
 
 ### Risk Access: Ihre Risikostufe

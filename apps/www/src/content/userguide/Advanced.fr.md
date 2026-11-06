@@ -2307,6 +2307,12 @@ Une fourchette envoie `amount` (le plus petit) en dessous de `amountMax` (le plu
 
 `fillMode` vaut 0 (Partial), 1 (AON) ou 2 (IOC) et ne peut plus changer après la publication. AON exige `amount` = `amountMax` (`AonRequiresSingleValueAmount`) et IOC exige `expiresAt` ≠ 0 (`IocRequiresExpiry`) ; le formulaire ne propose aucune des formes refusées. Les montants, le taux et la garantie peuvent changer sur une demande ouverte via `setOfferAmount`, `setOfferRate`, `setOfferCollateral` et `modifyOffer`, jamais en dessous de `amountFilled` ou `collateralAmountFilled` ; cette application ne les appelle pas encore.
 
+<a id="borrow-request-cadence"></a>
+
+### Borrow: L'échéancier d'intérêts d'une demande
+
+`periodicInterestCadence` va de 0 (None) à 4 (Annual), avec des périodes de 30, 90, 180 et 365 jours. Le formulaire propose ce qu'admet `previewCadenceAdmission(lendingAsset, amount, assetType, collateralAsset, collateralAssetType, durationDays)`, qui exécute la règle qu'applique `createOffer`, évaluée à `amount` (le plus petit bout d'une fourchette). Chaque refus est indiqué d'après ses données de revert : `PeriodicInterestDisabled`, `CadenceNotAllowedForIlliquid` ou `CadenceNotAllowed(cadence, durationDays, principalNumeraire, threshold)`. Les intérêts d'une période valent `principal × rate × intervalDays / (10000 × 365)`. N'importe qui peut régler une période manquée via `settlePeriodicInterest` une fois passé le délai de grâce `getEffectiveGraceSeconds(intervalDays − 1)` ; cela vend de la garantie et le prêt reste ouvert. L'armement de la passe keeper `periodicSettle` est affiché tel que le service de capacités le rapporte, inconnu par défaut. L'échéancier ne peut plus changer après publication.
+
 <a id="risk-access"></a>
 
 ### Risk Access : votre niveau de risque

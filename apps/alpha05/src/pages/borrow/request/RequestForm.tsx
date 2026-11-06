@@ -22,6 +22,9 @@ import {
   FILL_MODES,
   fillModeBlock,
   rangeError,
+  ASSET_ERC1155,
+  ASSET_ERC20,
+  ASSET_ERC721,
   MAX_EXPIRY_DAYS,
   parseAmount,
   parseDays,
@@ -35,6 +38,8 @@ import {
 } from './requestModel';
 import { holds, parseQuantity, parseTokenId, readErc1155, readErc721 } from '../../../shared/nft/nft';
 import { readRequestFormInputs, type RequestDraft } from './requestReview';
+import { CADENCES, cadenceOpen, cadenceRefusalText, isCadence, readCadenceAdmission, type Cadence } from '../../../shared/offers/cadence';
+import { readNumeraireSymbol } from '../../../shared/reads/numeraire';
 
 /** The store key the typed request is kept under, so a navigation away and
  *  back, or a review closed to change a figure, keeps what was typed. */
@@ -45,6 +50,16 @@ const FILL_LABEL: Readonly<Record<FillMode, CopyKey>> = {
   aon: 'request.fillAon',
   ioc: 'request.fillIoc',
 };
+
+const CADENCE_LABEL: Readonly<Record<Cadence, CopyKey>> = {
+  0: 'request.cadenceNone',
+  1: 'request.cadenceMonthly',
+  2: 'request.cadenceQuarterly',
+  3: 'request.cadenceSemiAnnual',
+  4: 'request.cadenceAnnual',
+};
+
+const ADVANCED_NAME = { range: 'request.advancedRange', fill: 'request.advancedFill', cadence: 'request.advancedCadence' } as const satisfies Record<string, CopyKey>;
 
 const EXPIRY_LABEL: Readonly<Record<ExpiryChoice, CopyKey>> = {
   never: 'request.expiryNeverOption',
@@ -75,8 +90,10 @@ interface RequestFormProps {
  * protocol's list fee, so it is a floor the discount tier can only raise.
  * NFT-13: an ERC-721 collateral is one token, named by its id; the form
  * says live whether this wallet holds it, and the review checks it again.
- * OFF-10 / OFF-11 (Advanced): an amount range with an optional floor
- * collateral, and the fill mode. Set in Advanced, they still apply in Basic,
+ * OFF-10 / OFF-11 / OFF-14 (Advanced): an amount range with an optional
+ * floor collateral, the fill mode, and the interest schedule, which offers
+ * only the schedules the protocol admits for the terms typed, each closed
+ * one with the protocol's reason. Set in Advanced, they still apply in Basic,
  * which says so and offers to clear them (RB-MODE never drops a choice).
  */
 export function RequestForm({ chain, own, pair, meta, onReview, onCancel }: RequestFormProps) {
@@ -173,6 +190,9 @@ export function RequestForm({ chain, own, pair, meta, onReview, onCancel }: Requ
       : null;
   const fillBlock = fillModeBlock(input.fillMode, ranged, input.expiry);
   const effective = advancedSet({ ...input, ranged });
+  /** Names joined as the catalog joins two: "a, b and c". */
+  const listOf = (names: string[]): string =>
+    names.length <= 1 ? (names[0] ?? '') : format('request.advancedList', { a: names.slice(0, -1).join(', '), b: names[names.length - 1]! });
 
   const amountError = (r: typeof amount, symbol: string, decimals: number | null): string | null => {
     if (r === null || r.ok) return null;
@@ -224,6 +244,42 @@ export function RequestForm({ chain, own, pair, meta, onReview, onCancel }: Requ
         : typedTerm.error === 'empty'
           ? text('request.errDaysEmpty')
           : text('request.errDays');
+  // OFF-14: the schedules the protocol admits for these terms, asked of the
+  // protocol's own rule (valued at the smallest amount, as creation values
+  // it). Read whenever a schedule can be chosen or one is already set; while
+  // it is unknown only interest at repayment is offered.
+  const cadence: Cadence = isCadence(input.cadence) ? input.cadence : 0;
+  const admissionTerms = amount?.ok && durationDays !== null ? { amount: amount.value, durationDays } : null;
+  const admission = useOwnRead(
+    ['borrow', 'request', 'cadence', pair.lending.toLowerCase(), pair.collateral.toLowerCase(), pair.standard, String(admissionTerms?.amount), String(admissionTerms?.durationDays)],
+    (c) =>
+      readCadenceAdmission(c, diamond, {
+        lendingAsset: pair.lending,
+        amount: admissionTerms!.amount,
+        assetType: ASSET_ERC20,
+        collateralAsset: pair.collateral,
+        collateralAssetType: pair.standard === 'erc721' ? ASSET_ERC721 : pair.standard === 'erc1155' ? ASSET_ERC1155 : ASSET_ERC20,
+        durationDays: admissionTerms!.durationDays,
+      }),
+    { enabled: admissionTerms !== null && (isAdvanced || cadence !== 0) },
+  );
+  const numeraire = useOwnRead(['numeraireSymbol', diamond], (c) => readNumeraireSymbol(c, diamond), { enabled: isAdvanced || cadence !== 0 });
+  const unit = numeraire.data ?? text('home.exposureUnit');
+  // The admission is used only while it answers for the terms on screen.
+  const admitted = admissionTerms !== null && admission.error === null ? admission.data : null;
+  const cadenceVerdict = admitted?.verdicts.find((v) => v.cadence === cadence) ?? null;
+  /** Why the chosen schedule cannot go to review: closed with the
+   *  protocol's reason, or not yet known for these terms. */
+  const cadenceBlock =
+    cadence === 0
+      ? null
+      : admitted === null
+        ? admissionTerms !== null && admission.error !== null
+          ? format('request.cadenceUnread', { reason: admission.error })
+          : text('request.cadenceClosedUnknown')
+        : cadenceOpen(admitted, cadence)
+          ? null
+          : format('request.cadenceClosed', { reason: cadenceVerdict?.refusal ? cadenceRefusalText(cadenceVerdict.refusal, unit, { text, format }) : '' });
   const typedExpiry = parseDays(input.expiryDays, MAX_EXPIRY_DAYS);
   const expiryOk = input.expiry !== 'custom' || typedExpiry.ok;
   const expiryError =
@@ -240,7 +296,7 @@ export function RequestForm({ chain, own, pair, meta, onReview, onCancel }: Requ
   const largest = ranged && amountMax?.ok ? amountMax.value : null;
   const collateralOk = nft ? tokenId !== null : multi ? tokenId !== null && quantity !== null : collateral?.ok === true;
   const rangeOk = !ranged || (amountMax?.ok === true && (!floorTyped || floor?.ok === true) && shapeError === null);
-  const valid = amount?.ok === true && collateralOk && rate.ok && durationDays !== null && expiryOk && rangeOk && fillBlock === null && inputs.data !== null;
+  const valid = amount?.ok === true && collateralOk && rate.ok && durationDays !== null && expiryOk && rangeOk && fillBlock === null && cadenceBlock === null && inputs.data !== null;
 
   // Only the latest submission, from a form still on screen for the same
   // wallet and network, may open a review: a slow block read answered after
@@ -282,6 +338,7 @@ export function RequestForm({ chain, own, pair, meta, onReview, onCancel }: Requ
           collateral: locked,
           collateralFloor: floorValue,
           fillMode: input.fillMode,
+          cadence,
           rateBps: rate.value,
           durationDays,
           expiry: input.expiry,
@@ -645,20 +702,48 @@ export function RequestForm({ chain, own, pair, meta, onReview, onCancel }: Requ
             )}
             <WhyLink summaryKey="request.fillSummary" detailKey="request.fillWhy" />
           </fieldset>
+          <fieldset className="choice-group" data-testid="request-cadence">
+            <legend>{text('request.cadenceLabel')}</legend>
+            {CADENCES.map((c) => {
+              const verdict = admitted?.verdicts.find((v) => v.cadence === c) ?? null;
+              const open = cadenceOpen(admitted, c);
+              return (
+                <label key={c} className="choice">
+                  <input type="radio" name="request-cadence" value={c} checked={cadence === c} disabled={!open && cadence !== c} onChange={() => set({ cadence: c })} />
+                  <span>
+                    {text(CADENCE_LABEL[c])}
+                    {verdict?.refusal && <small className="choice-note">{cadenceRefusalText(verdict.refusal, unit, { text, format })}</small>}
+                  </span>
+                </label>
+              );
+            })}
+            {admissionTerms === null ? (
+              <p className="tier-b field-hint">{text('request.cadenceNeedsTerms')}</p>
+            ) : admission.error !== null && cadence === 0 ? (
+              <Notice tone="warn" tier="A">
+                {format('request.cadenceUnread', { reason: admission.error })}
+              </Notice>
+            ) : admitted === null ? (
+              <p className="tier-b field-hint" aria-live="polite">
+                {text('request.cadenceReading')}
+              </p>
+            ) : null}
+            {cadenceBlock !== null && (
+              <Notice tone="warn" tier="A">
+                <span data-testid="request-cadence-block">{cadenceBlock}</span>
+              </Notice>
+            )}
+            <WhyLink summaryKey="request.cadenceSummary" detailKey="request.cadenceWhy" />
+          </fieldset>
         </section>
       ) : (
         effective.length > 0 && (
           // RB-MODE: an Advanced choice still applies in Basic, and says so.
           <Notice tone="warn" tier="A">
             <span data-testid="request-advanced-set">
-              {format('request.advancedSetNote', {
-                list:
-                  effective.length === 2
-                    ? format('request.advancedList', { a: text('request.advancedRange'), b: text('request.advancedFill') })
-                    : text(effective[0] === 'range' ? 'request.advancedRange' : 'request.advancedFill'),
-              })}
+              {format('request.advancedSetNote', { list: listOf(effective.map((o) => text(ADVANCED_NAME[o]))) })}
             </span>{' '}
-            <button type="button" className="btn" onClick={() => set({ ranged: false, amountMax: '', collateralFloor: '', fillMode: 'partial' })} data-testid="request-advanced-clear">
+            <button type="button" className="btn" onClick={() => set({ ranged: false, amountMax: '', collateralFloor: '', fillMode: 'partial', cadence: 0 })} data-testid="request-advanced-clear">
               {text('request.advancedClear')}
             </button>
           </Notice>
@@ -667,6 +752,11 @@ export function RequestForm({ chain, own, pair, meta, onReview, onCancel }: Requ
       {fillBlock !== null && !isAdvanced && (
         <Notice tone="warn" tier="A">
           {text(fillBlock === 'aon-range' ? 'request.fillAonRange' : 'request.fillIocOpen')}
+        </Notice>
+      )}
+      {cadenceBlock !== null && !isAdvanced && (
+        <Notice tone="warn" tier="A">
+          <span data-testid="request-cadence-block">{cadenceBlock}</span>
         </Notice>
       )}
 

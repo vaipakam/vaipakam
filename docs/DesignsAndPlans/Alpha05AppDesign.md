@@ -502,6 +502,23 @@ above. Each resolves here, so a route reviewer needs no private file:
   not, so a missing screen is never presented as a protocol rule. They are Advanced
   options; set in Advanced, they still apply in Basic, which says so and
   offers to clear them, and every risk warning they cause stays in Basic.
+- **RB-CADENCE** — an interest schedule (OFF-14) is offered only where the
+  protocol's own admission rule allows it for the terms typed, asked of the
+  protocol (its admission preview runs the rule offer creation enforces) and
+  never re-derived by the app. Every closed schedule says why under its
+  name: the switch (RB-SWITCH class 1a), an unpriced leg, a loan over a year
+  that must pay at least yearly, a principal under the threshold (both
+  figures, in the numeraire), or a period not shorter than the loan. While
+  that answer is loading or failed, only interest at repayment is offered,
+  and a schedule already chosen holds the review until it is known. The
+  review states the schedule, each period's interest as the protocol
+  expects it (at both ends of a range), the grace a missed period gets
+  (today's figure), and, in Basic, that a period not paid by its grace end
+  lets anyone sell part of the collateral to pay it, and that the schedule
+  is fixed once posted. Who settles a missed period is Advanced detail:
+  anyone may, and the keeper pass's arming is the capability service's
+  answer (RB-SWITCH class 4, unknown by default). A schedule is an Advanced
+  choice; set in Advanced, it still applies in Basic, which says so.
 
 ## 3. Companion specifications
 
