@@ -1,6 +1,7 @@
 import { useCopy } from '../copy/useCopy';
 import type { Receipt as ReceiptModel, ReceiptValue } from '../receipt/types';
 import { formatAge, formatUnits, shortAddress } from './format';
+import { Icon } from './Icon';
 
 /** What a surface knows about an asset; `null` when it has not identified it. */
 export interface AssetInfo {
@@ -49,10 +50,12 @@ export function Receipt({ receipt, describeAsset, nowMs }: ReceiptProps) {
         {receipt.rows.map((row) => {
           const v = renderValue(row.value, describeAsset, unknownWord);
           return [
-            <dt key={`${row.label}-t`} className={row.binding ? 'tier-a' : 'tier-b'}>
+            <dt key={`${row.label}-t`} className={row.binding ? 'tier-a' : 'tier-b'} data-moves-out={row.movesOut ? 'true' : undefined}>
+              {row.movesOut && <Icon meaning="money-out" size={16} />}
               {row.label}
             </dt>,
             <dd key={`${row.label}-d`} className={v.unknown ? 'value-unknown' : undefined} data-binding={row.binding ? 'true' : undefined}>
+              {v.unknown && <Icon meaning="unknown" size={16} />}
               {v.text}
             </dd>,
           ];

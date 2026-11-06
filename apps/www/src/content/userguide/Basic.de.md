@@ -981,7 +981,7 @@ Basic zeigt, was die meisten brauchen. Advanced ergänzt die Exit-
 und Settlement-Werkzeuge, Automatisierung, signierte Orders, den
 Keeper-Status und Details zur Abrechnung. Ein Moduswechsel blendet
 nie eine Zustimmung aus, die du geben musst, nichts, was dich
-blockiert, und nie den Weg, es zu beheben. Jeder „Warum?"-Link
+blockiert, und nie den Weg, es zu beheben. Jeder Info-Knopf (i) nach dem Satz, den er erklärt,
 öffnet die volle Erklärung, und sein „Mehr lesen"-Link öffnet
 diesen Guide in deinem Modus.
 

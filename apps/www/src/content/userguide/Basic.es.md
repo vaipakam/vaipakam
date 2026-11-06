@@ -961,8 +961,8 @@ Basic muestra lo que la mayoría necesita. Advanced añade las
 herramientas de salida y liquidación, la automatización, las órdenes
 firmadas, el estado de los keepers y el detalle contable. Cambiar de
 modo nunca oculta un consentimiento que debas dar, algo que te
-bloquee ni la forma de resolverlo. Cada enlace "¿Por qué?" abre la
-explicación completa, y su enlace "Leer más" abre esta guía en el
+bloquee ni la forma de resolverlo. Cada botón de información (i), tras la frase que explica,
+abre la explicación completa, y su enlace "Leer más" abre esta guía en el
 modo que usas.
 
 <a id="wallet"></a>

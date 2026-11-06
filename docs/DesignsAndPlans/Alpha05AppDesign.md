@@ -284,7 +284,22 @@ visitor" is an efficiency target for the world rail, not a prohibition.
 Keyboard and screen-reader operable, WCAG AA contrast, from the first route
 (a commitment of this design; the specifications are silent on it). Mobile
 first: the same destinations on phone and desktop, with bottom navigation on
-small screens and a persistent layout on larger ones; an unknown route shows
+small screens and a persistent layout on larger ones (below 720 px a bottom
+bar of the first four destinations and More; from 720 px a one-row header of
+brand and wallet over a left column, a rail of icons above short names up to
+1023 px and a panel of icons beside names from 1024 px, the pages only
+Advanced adds grouped under their own label after the Basic ones, and the mode
+and theme controls at the column's foot; from 1024 px the panel can be
+collapsed to its icons by an icon-only main-menu button (three lines) at
+the far left of the header, the pattern everyday web apps use, named "Main
+menu" for screen readers with a hover tip and stating whether the panel is
+expanded, the choice remembered per browser, and while collapsed a resting mouse (after about 0.3 s, hidden again
+0.5 s after it leaves) or keyboard focus reveals the full panel over the page
+without moving it, Escape hiding it; folding, revealing and unfolding
+slide the panel and the page beside it over a quarter second on the standard
+easing while the names fade and the icons stay put, with no motion at all for
+a reader whose device asks for reduced motion; the breakpoints follow the common
+compact, medium and expanded window classes); an unknown route shows
 a recovery page, and a display failure is contained to a recovery card that
 says funds and on-chain positions are unchanged. Every string in the copy
 catalog; locale bundles override per key, and the language rules of the
@@ -297,6 +312,42 @@ asset and network names) and any word the user must type back as a
 confirmation stay verbatim in every language; a language offered as
 translated shows it everywhere, and a new surface is translated in the change
 that ships it.
+
+### RB-ICONS — icons with fixed meanings
+
+An icon draws the eye to what a page needs from the reader; it never carries
+a meaning on its own. Every icon sits beside the words that say the same
+thing, and is hidden from screen readers, so the text is the whole message
+and a reader who cannot see the icon loses nothing. The one icon that stands
+without a word is the info button below, because the sentence it follows is
+its label. Two families only:
+
+- **Meanings** (a closed list; one shape each, never reused for anything
+  else): something to act on (the warn tone), something blocked (the danger
+  tone), done (the ok tone), funds leave your wallet (a receipt row that
+  moves funds out, or an approval that lets them move), a signature or
+  wallet prompt (the confirm button), waiting on the chain (signing,
+  submitted, mined), unknown (a figure the app cannot substantiate, beside
+  the word "unknown"), and more about this (the info button "(i)" right
+  after the sentence it explains, which opens the help panel of RB-HELP; its
+  accessible name is "Why?", its description is that sentence, and its tap
+  area is at least 44 px square; no hover tooltip, since touch has no hover).
+- **Places**: one icon per destination of the page map, beside or above the
+  destination's name on the phone bar and the desktop column. The one place
+  the names fold away is the desktop panel the reader has chosen to collapse:
+  each link keeps its name for screen readers, and a resting mouse or
+  keyboard focus brings the names back. The button that folds it is the
+  main-menu button (three lines) at the far left of the header, the one
+  control without a visible word: its name "Main menu" is spoken, with
+  whether the panel is expanded, and the browser shows that name as a hover
+  tip. The tip only names the control, never explains anything, so RB-HELP's
+  rule against tooltips for explanations is not touched.
+
+A plain information notice carries no icon, so an icon always means the
+reader should look. A new meaning is a change to this rule, not a local
+choice. Counts on navigation (such as "Claims 2") arrive with the pages that
+own them. Shapes come from one open icon set (ISC licence), drawn inline in
+the current text colour, so they follow the theme and contrast of their text.
 
 ### RB-FUNDS — fund transparency
 

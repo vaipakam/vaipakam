@@ -317,6 +317,7 @@ export function acceptReceipt(r: AcceptReview, meta: TokenMetaMap | null, copy: 
       label: text('accept.rowLock'),
       value: amount(collateral, f.collateral),
       binding: true,
+      movesOut: true,
     },
     ...(f.refund > 0n
       ? [
@@ -429,6 +430,8 @@ export function acceptReceipt(r: AcceptReview, meta: TokenMetaMap | null, copy: 
           : text('accept.approvalEnough'),
       },
       binding: false,
+      // An approval lets the protocol pull from the wallet; none asked, none marked.
+      movesOut: needsApproval(r),
     },
   ];
 
