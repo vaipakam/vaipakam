@@ -53,10 +53,11 @@ export function erc20Pair(lendAsset: Hex, collAsset: Hex): RiskPair {
   return { lendAsset, lendType: 0, lendTokenId: 0n, collAsset, collType: 0, collTokenId: 0n, prepayAsset: ZERO };
 }
 
-/** The pair of a loan of an ERC-20 against one ERC-721 token (NFT-13): the
- *  protocol keys a consent to the token's id, so each token is its own pair. */
-export function erc721CollateralPair(lendAsset: Hex, collAsset: Hex, tokenId: bigint): RiskPair {
-  return { lendAsset, lendType: 0, lendTokenId: 0n, collAsset, collType: 1, collTokenId: tokenId, prepayAsset: ZERO };
+/** The pair of a loan of an ERC-20 against an NFT (NFT-13; `collType` 1
+ *  for ERC-721, 2 for ERC-1155): the protocol keys a consent to the token's
+ *  id, so each token is its own pair. */
+export function nftCollateralPair(lendAsset: Hex, collAsset: Hex, collType: 1 | 2, tokenId: bigint): RiskPair {
+  return { lendAsset, lendType: 0, lendTokenId: 0n, collAsset, collType, collTokenId: tokenId, prepayAsset: ZERO };
 }
 
 /** A stable name for a pair, to key a flow's review of it. */

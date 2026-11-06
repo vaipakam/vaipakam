@@ -38,7 +38,8 @@ export function suggestedAssets(chain: SupportedChain): Candidate[] {
 export function suggestedCollateral(chain: SupportedChain): (Candidate & { nft: boolean })[] {
   const out: (Candidate & { nft: boolean })[] = suggestedAssets(chain).map((c) => ({ ...c, nft: false }));
   for (const a of faucetAssets(chain) ?? []) {
-    if (a.kind === 'nft' && !out.some((c) => c.address.toLowerCase() === a.address.toLowerCase())) out.push({ address: getAddress(a.address), test: true, nft: true });
+    if ((a.kind === 'nft' || a.kind === 'multi') && !out.some((c) => c.address.toLowerCase() === a.address.toLowerCase()))
+      out.push({ address: getAddress(a.address), test: true, nft: true });
   }
   return out;
 }

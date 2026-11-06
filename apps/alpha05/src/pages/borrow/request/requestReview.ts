@@ -29,7 +29,7 @@ import { formatBps, formatSpan, formatUtc, shortAddress } from '../../../shared/
 import { createParams, requestFigures, ZERO, type CollateralLeg, type CreateParams, type ParsedRequest, type RequestPair } from './requestModel';
 import { pageHandoff } from '../../../routes/pageMap';
 import { needFromRefusal, type RiskNeed } from '../../../shared/risk/riskAccess';
-import { diamondMayMove, holds, readErc721, type Erc721State } from '../../../shared/nft/nft';
+import { diamondMayMove, holds, readErc1155, readErc721, type Erc1155State, type Erc721State } from '../../../shared/nft/nft';
 
 type Hex = `0x${string}`;
 
@@ -85,14 +85,18 @@ export interface RequestReview {
  *  allowance, and the wallet prompts the approval takes (0 when the
  *  allowance covers it, 2 when the token must be set to zero first). An
  *  ERC-721 leg (NFT-13): who holds the token and whether the protocol may
- *  move it. */
-export type Holding = { kind: 'erc20'; funds: WalletFunds; approvalSteps: number } | { kind: 'erc721'; tokenId: bigint; state: Erc721State };
+ *  move it. An ERC-1155 leg: how many of the token the wallet holds and
+ *  whether the wallet already lets the protocol move the collection. */
+export type Holding =
+  | { kind: 'erc20'; funds: WalletFunds; approvalSteps: number }
+  | { kind: 'erc721'; tokenId: bigint; state: Erc721State }
+  | { kind: 'erc1155'; tokenId: bigint; quantity: bigint; state: Erc1155State };
 
 /** The token errors a pull without an approval ends in, by name and by
  *  selector (the protocol's ABI does not carry a token's errors, so viem
  *  reports them by selector): the transfer the approval step allows, not a
  *  protocol refusal. */
-const PULL_ERRORS = new Set(['ERC20InsufficientAllowance', 'SafeERC20FailedOperation', '0xfb8f41b2', '0x5274afe7', 'ERC721InsufficientApproval', '0x177e802f']);
+const PULL_ERRORS = new Set(['ERC20InsufficientAllowance', 'SafeERC20FailedOperation', '0xfb8f41b2', '0x5274afe7', 'ERC721InsufficientApproval', '0x177e802f', 'ERC1155MissingApprovalForAll', '0xe237d922']);
 
 /** Reads the configured longest term, in days. */
 export async function readMaxDurationDays(client: PublicClient, diamond: Hex): Promise<bigint> {
@@ -142,7 +146,9 @@ export async function readRequestReview(own: OwnStateClient, diamond: Hex, draft
     r<Hex>((c) => readVault(c, diamond, account)),
     leg.kind === 'erc721'
       ? r<Erc721State>((c) => readErc721(c, pair.collateral, leg.tokenId, account, diamond))
-      : r<WalletFunds>((c) => readWalletFunds(c, pair.collateral, account, diamond)),
+      : leg.kind === 'erc1155'
+        ? r<Erc1155State>((c) => readErc1155(c, pair.collateral, leg.tokenId, account, diamond))
+        : r<WalletFunds>((c) => readWalletFunds(c, pair.collateral, account, diamond)),
   ]);
   // A token is never priced, so only an ERC-20 pair has a loan-to-value.
   const ltvBps =
@@ -152,6 +158,8 @@ export async function readRequestReview(own: OwnStateClient, diamond: Hex, draft
   let holding: Holding;
   if (leg.kind === 'erc721') {
     holding = { kind: 'erc721', tokenId: leg.tokenId, state: held as Erc721State };
+  } else if (leg.kind === 'erc1155') {
+    holding = { kind: 'erc1155', tokenId: leg.tokenId, quantity: leg.quantity, state: held as Erc1155State };
   } else {
     const funds = held as WalletFunds;
     const approvalSteps =
@@ -171,29 +179,36 @@ type Standing = Pick<RequestReview, 'holding' | 'draft' | 'diamond'>;
 
 export function needsApproval(r: Standing): boolean {
   const h = r.holding;
-  return h.kind === 'erc721' ? !diamondMayMove(h.state, r.diamond) : h.funds.allowance < r.draft.parsed.collateral;
+  if (h.kind === 'erc721') return !diamondMayMove(h.state, r.diamond);
+  if (h.kind === 'erc1155') return !h.state.approvedForAll;
+  return h.funds.allowance < r.draft.parsed.collateral;
 }
 
-/** The wallet prompts the approval takes: one for a token, the allowance
- *  steps for an ERC-20. */
+/** The wallet prompts the approval takes: one for an ERC-721 token; for an
+ *  ERC-1155 collection, two (the operator approval, and taking it back
+ *  once the request settles); the allowance steps for an ERC-20. */
 export function approvalPrompts(r: Standing): number {
   const h = r.holding;
-  return h.kind === 'erc721' ? (needsApproval(r) ? 1 : 0) : h.approvalSteps;
+  if (h.kind === 'erc721') return needsApproval(r) ? 1 : 0;
+  if (h.kind === 'erc1155') return needsApproval(r) ? 2 : 0;
+  return h.approvalSteps;
 }
 
-/** The wallet prompts posting asks for: the approval when one is needed,
+/** The wallet prompts posting asks for: the approval steps when needed,
  *  and the request itself. */
 export function promptCount(r: Standing): number {
   return 1 + approvalPrompts(r);
 }
 
 /** What the wallet lacks of the collateral: an ERC-20 shortfall in base
- *  units, or, for a token, that it does not exist or is held elsewhere. */
-export type Lack = { kind: 'none' } | { kind: 'amount'; missing: bigint } | { kind: 'no-token' } | { kind: 'not-held' };
+ *  units, for an ERC-721 token that it does not exist or is held elsewhere,
+ *  or for an ERC-1155 token how many of it the wallet is short. */
+export type Lack = { kind: 'none' } | { kind: 'amount'; missing: bigint } | { kind: 'no-token' } | { kind: 'not-held' } | { kind: 'units'; missing: bigint };
 
 export function collateralLack(r: Pick<RequestReview, 'holding' | 'draft' | 'account'>): Lack {
   const h = r.holding;
   if (h.kind === 'erc721') return h.state.owner === null ? { kind: 'no-token' } : holds(h.state, r.account) ? { kind: 'none' } : { kind: 'not-held' };
+  if (h.kind === 'erc1155') return h.state.balance < h.quantity ? { kind: 'units', missing: h.quantity - h.state.balance } : { kind: 'none' };
   const missing = shortfall(h.funds.balance, r.draft.parsed.collateral);
   return missing > 0n ? { kind: 'amount', missing } : { kind: 'none' };
 }
@@ -219,6 +234,8 @@ export function requestBlockers(r: RequestReview, meta: TokenMetaMap | null, cop
     out.push(copy.format('request.blockShortfall', { have: amt(h.funds.balance), missing: amt(lack.missing), need: amt(r.draft.parsed.collateral) }));
   } else if ((lack.kind === 'no-token' || lack.kind === 'not-held') && h.kind === 'erc721') {
     out.push(copy.format(lack.kind === 'no-token' ? 'request.blockNoToken' : 'request.blockNotHeld', { id: String(h.tokenId) }));
+  } else if (lack.kind === 'units' && h.kind === 'erc1155') {
+    out.push(copy.format('request.blockUnits', { have: String(h.state.balance), need: String(h.quantity), id: String(h.tokenId) }));
   }
   // A risk-access refusal comes before the pull, so the shortfall never
   // explains it; it is named with the step that clears it (ACC-RISK).
@@ -247,13 +264,13 @@ export function changedBetween(a: RequestReview, b: RequestReview, copy: Pick<Co
   if (a.lendingClass !== b.lendingClass || a.collateralClass !== b.collateralClass || a.ltvBps !== b.ltvBps) return copy.text('accept.changedClass');
   if (a.graceSeconds !== b.graceSeconds || a.lifBps !== b.lifBps || a.maxDurationDays !== b.maxDurationDays) return copy.text('request.changedConfig');
   if (lackKey(collateralLack(a)) !== lackKey(collateralLack(b)) || needsApproval(a) !== needsApproval(b) || approvalPrompts(a) !== approvalPrompts(b))
-    return copy.text(a.holding.kind === 'erc721' ? 'request.changedToken' : 'accept.changedFunds');
+    return copy.text(a.holding.kind === 'erc20' ? 'accept.changedFunds' : 'request.changedToken');
   if (a.vault.toLowerCase() !== b.vault.toLowerCase()) return copy.text('accept.changedVault');
   return null;
 }
 
 function lackKey(l: Lack): string {
-  return l.kind === 'amount' ? `amount:${l.missing}` : l.kind;
+  return l.kind === 'amount' || l.kind === 'units' ? `${l.kind}:${l.missing}` : l.kind;
 }
 
 /** The receipt (RB-CONFIDENCE): what is locked now, what a lender taking it
@@ -267,12 +284,13 @@ export function requestReceipt(r: RequestReview, meta: TokenMetaMap | null, copy
   const textRow = (label: CopyKey, value: string, binding: boolean) => ({ label: text(label), value: { kind: 'text' as const, text: value }, binding });
   const illiquid = r.lendingClass === 'illiquid' || r.collateralClass === 'illiquid';
   const h = r.holding;
-  const tokenName = h.kind === 'erc721' ? format('asset.nft', { asset: assetName(pair.collateral, meta), id: String(h.tokenId) }) : '';
+  const tokenName = lockedName(h, pair.collateral, meta, format);
+  const collection = assetName(pair.collateral, meta);
 
   const rows: Receipt['rows'] = [
-    h.kind === 'erc721'
-      ? { label: text('request.rowLock'), value: { kind: 'text', text: tokenName }, binding: true, movesOut: true }
-      : { label: text('request.rowLock'), value: amount(pair.collateral, parsed.collateral), binding: true, movesOut: true },
+    h.kind === 'erc20'
+      ? { label: text('request.rowLock'), value: amount(pair.collateral, parsed.collateral), binding: true, movesOut: true }
+      : { label: text('request.rowLock'), value: { kind: 'text', text: tokenName }, binding: true, movesOut: true },
     textRow('accept.rowVault', r.vault === ZERO ? text('accept.vaultNew') : r.vault, false),
     { label: text('request.rowAmount'), value: amount(pair.lending, parsed.amount), binding: true },
     textRow('request.rowWhole', text('request.whole'), true),
@@ -302,10 +320,14 @@ export function requestReceipt(r: RequestReview, meta: TokenMetaMap | null, copy
       value: {
         kind: 'text',
         text: !needsApproval(r)
-          ? text(h.kind === 'erc721' ? 'request.approvalTokenEnough' : 'accept.approvalEnough')
+          ? h.kind === 'erc1155'
+            ? format('request.approvalOperatorEnough', { collection })
+            : text(h.kind === 'erc721' ? 'request.approvalTokenEnough' : 'accept.approvalEnough')
           : h.kind === 'erc721'
             ? format('request.approvalToken', { token: tokenName })
-            : format(h.approvalSteps === 2 ? 'request.approvalZeroFirst' : 'request.approvalNeeded', { amount: tokenAmount(parsed.collateral, pair.collateral, meta, format) }),
+            : h.kind === 'erc1155'
+              ? format('request.approvalOperator', { collection })
+              : format(h.approvalSteps === 2 ? 'request.approvalZeroFirst' : 'request.approvalNeeded', { amount: tokenAmount(parsed.collateral, pair.collateral, meta, format) }),
       },
       binding: false,
       movesOut: needsApproval(r),
@@ -349,3 +371,14 @@ export async function readRequestFormInputs(client: PublicClient, diamond: Hex, 
   ]);
   return { maxDurationDays, lifBps, balance };
 }
+
+/** The collateral as the review and the outcome name it: "NFT #7 of vRENT"
+ *  for an ERC-721 token, "3 of token #5 of vMULTI" for an ERC-1155 leg;
+ *  empty for an ERC-20 leg, which is named by its amount. */
+export function lockedName(h: Holding, collateral: Hex, meta: TokenMetaMap | null, format: CopyAccess['format']): string {
+  const asset = assetName(collateral, meta);
+  if (h.kind === 'erc721') return format('asset.nft', { asset, id: String(h.tokenId) });
+  if (h.kind === 'erc1155') return format('asset.nft1155', { asset, id: String(h.tokenId), amount: String(h.quantity) });
+  return '';
+}
+

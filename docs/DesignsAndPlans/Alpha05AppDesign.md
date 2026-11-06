@@ -461,9 +461,17 @@ above. Each resolves here, so a route reviewer needs no private file:
   the protocol and the wallet still holds the token; anything else is stated,
   never overwritten. The put-back reads the approval no earlier than the
   block the approval mined in (the same holds for an ERC-20 allowance), so a
-  node that has not caught up can never pass a skipped reset as done. An ERC-1155 token needs an operator approval over the
-  whole collection taken back after the action, so it is named and handed to
-  the current app until that step is built.
+  node that has not caught up can never pass a skipped reset as done.
+  An ERC-1155 token has no approval for one token, only an operator approval
+  over the whole collection. A flow that pledges a quantity of one grants it
+  for that action alone and takes it back on every ending, the action's
+  success included, as its own named wallet step (the review counts it); an
+  operator approval the wallet had granted before is left exactly as set.
+  The grant counts only when it reads back at its receipt's block, and the
+  take-back reads no earlier than that block, so it is never skipped as
+  already done. While the action's own receipt is unknown the grant still
+  stands, and the page says so beside the transaction. A take-back that did
+  not land or could not be read is stated with what to do in the wallet.
 
 ## 3. Companion specifications
 

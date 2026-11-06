@@ -28,6 +28,7 @@ vi.mock('../nft/nft', async (orig) => ({
 
 const { nftApproval } = await import('./nftApproval');
 const { readErc721 } = await import('../nft/nft');
+const { waitForTransactionReceipt } = await import('wagmi/actions');
 
 const at = (owner: Hex | null, approved: Hex | null): Erc721State => ({ owner, approved, approvedForAll: false, blockNumber: 1n });
 /** A client whose head is block 15, behind the approval's receipt (block 20). */
@@ -78,20 +79,28 @@ describe('an approval whose read-back fails', () => {
 describe('putting the approval back', () => {
   it('needs nothing once the token has left the wallet (a transfer clears it)', async () => {
     states = [at(OTHER, null)];
-    expect(await make().putBack(null, 1n)).toEqual({ ok: true, sentence: 'nftApproval.notHeld' });
+    expect(await make().putBack(null, 1n)).toEqual({ status: 'done', sentence: 'nftApproval.notHeld' });
     expect(sent).toEqual([]);
   });
   it('never overwrites an approval something else set since', async () => {
     states = [at(WALLET, OTHER)];
-    expect(await make().putBack(null, 1n)).toEqual({ ok: false, sentence: 'nftApproval.restoreChanged' });
+    expect(await make().putBack(null, 1n)).toEqual({ status: 'not-done', sentence: 'nftApproval.restoreChanged' });
     expect(sent).toEqual([]);
   });
   it('restores the prior approval while it still reads the protocol, judged by the read back', async () => {
     states = [at(WALLET, DIAMOND), at(WALLET, null)];
-    expect(await make().putBack(null, 1n)).toEqual({ ok: true, sentence: 'nftApproval.restored' });
+    expect(await make().putBack(null, 1n)).toEqual({ status: 'done', sentence: 'nftApproval.restored' });
     expect(sent).toEqual([{ to: '0x0000000000000000000000000000000000000000' }]);
     states = [at(WALLET, DIAMOND), at(WALLET, DIAMOND)];
-    expect(await make().putBack(null, 1n)).toEqual({ ok: false, sentence: 'nftApproval.restoreNotLanded' });
+    expect(await make().putBack(null, 1n)).toEqual({ status: 'not-done', sentence: 'nftApproval.restoreNotLanded' });
+  });
+});
+
+describe('a put-back whose effect could not be read', () => {
+  it('is unknown, never not done: the reset may have landed', async () => {
+    states = [at(WALLET, DIAMOND)];
+    vi.mocked(waitForTransactionReceipt).mockRejectedValueOnce(new Error('timeout'));
+    expect(await make().putBack(null, 1n)).toEqual({ status: 'unknown', sentence: 'nftApproval.restorePending' });
   });
 });
 

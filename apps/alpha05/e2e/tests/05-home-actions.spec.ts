@@ -19,7 +19,7 @@ async function fitsWidth(page: Page): Promise<void> {
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 }
 
-test('the faucet mints a test token and a test NFT, measures each, and offers the next jobs', async ({ launchWallet }) => {
+test('the faucet mints a test token, a test NFT and a multi-token, measures each, and offers the next jobs', async ({ launchWallet }) => {
   const sc = scenario();
   const { page, flags } = await launchWallet('visitor');
   await page.goto('/');
@@ -62,6 +62,17 @@ test('the faucet mints a test token and a test NFT, measures each, and offers th
   await expect(faucet.locator('.receipt')).toContainText(/NFT #\d+ of /);
   await faucet.getByRole('button', { name: 'Confirm in wallet' }).click();
   await expect(faucet.locator('[data-phase="measured"]')).toHaveAttribute('data-verdict', 'done', { timeout: 60_000 });
+  await faucet.getByRole('button', { name: 'Close' }).click();
+
+  // A multi-token (ERC-1155): ten of a fresh number, measured as the
+  // wallet's holding of it rising across the mint's block.
+  await expect(faucet.locator('[data-asset="multiToken"]')).toContainText('multi-token NFT, minted by quantity');
+  await faucet.locator('[data-asset="multiToken"]').getByRole('button', { name: 'Get 10' }).click();
+  await expect(faucet.locator('.receipt')).toContainText(/10 of token #\d+ of /);
+  await faucet.getByRole('button', { name: 'Confirm in wallet' }).click();
+  const minted = faucet.locator('[data-phase="measured"]');
+  await expect(minted).toHaveAttribute('data-verdict', 'done', { timeout: 60_000 });
+  await expect(minted).toContainText(/10 of \S+ token #\d+ received/);
   await faucet.getByRole('button', { name: 'Close' }).click();
 
   // A transaction outlives the page that sent it: leave Home right after

@@ -5,10 +5,10 @@
  * never assumed from a list; who holds a token and whether the protocol may
  * move it are read for the exact token, at one block.
  *
- * This slice pledges ERC-721 tokens. An ERC-1155 token needs an operator
- * approval over the whole collection, which must be taken back after the
- * action, so it is named and handed to the current app until that step is
- * built (the flow says so; it never offers a signing step it cannot finish).
+ * An ERC-721 token is approved alone. An ERC-1155 token can only be
+ * approved through an operator approval over the whole collection, so the
+ * flow grants it for the action alone and takes it back after
+ * (shared/tx/operatorApproval).
  */
 import { BaseError, ContractFunctionRevertedError, ContractFunctionZeroDataError, parseAbi, parseEventLogs, type Log, type PublicClient } from 'viem';
 
@@ -30,6 +30,8 @@ export const NFT_ABI = [
   { type: 'function', name: 'isApprovedForAll', stateMutability: 'view', inputs: [{ type: 'address' }, { type: 'address' }], outputs: [{ type: 'bool' }] },
   { type: 'function', name: 'approve', stateMutability: 'nonpayable', inputs: [{ type: 'address' }, { type: 'uint256' }], outputs: [] },
   { type: 'function', name: 'name', stateMutability: 'view', inputs: [], outputs: [{ type: 'string' }] },
+  { type: 'function', name: 'balanceOf', stateMutability: 'view', inputs: [{ type: 'address' }, { type: 'uint256' }], outputs: [{ type: 'uint256' }] },
+  { type: 'function', name: 'setApprovalForAll', stateMutability: 'nonpayable', inputs: [{ type: 'address' }, { type: 'bool' }], outputs: [] },
 ] as const;
 
 /** Whether an error is the contract's own answer (a revert, or no code /
@@ -129,3 +131,66 @@ export function tokenMoved(logs: readonly Log[], asset: Hex, tokenId: bigint, fr
     }
   });
 }
+
+/** An ERC-1155 token as the wallet and the protocol stand on it, at one
+ *  block. */
+export interface Erc1155State {
+  /** How many of the token the wallet holds. */
+  balance: bigint;
+  /** Whether the wallet lets the protocol move every token it holds in the
+   *  collection (the only approval ERC-1155 has). */
+  approvedForAll: boolean;
+  blockNumber: bigint;
+}
+
+/** The largest quantity the protocol's vault records for one ERC-1155 leg. */
+export const MAX_1155_QUANTITY = 2n ** 128n - 1n;
+
+/** A quantity as typed: whole digits, at least one, within the vault's range. */
+export function parseQuantity(text: string): bigint | null {
+  const t = text.trim();
+  if (!/^\d+$/.test(t)) return null;
+  const v = BigInt(t);
+  return v >= 1n && v <= MAX_1155_QUANTITY ? v : null;
+}
+
+export async function readErc1155(c: PublicClient, asset: Hex, tokenId: bigint, account: Hex, diamond: Hex, blockNumber?: bigint): Promise<Erc1155State> {
+  // A fresh head, as for an ERC-721 (viem caches a block number briefly).
+  const block = blockNumber ?? (await c.getBlockNumber({ cacheTime: 0 }));
+  const at = { blockNumber: block };
+  const [balance, forAll] = await Promise.all([
+    c.readContract({ address: asset, abi: NFT_ABI, functionName: 'balanceOf', args: [account, tokenId], ...at }) as Promise<bigint>,
+    c.readContract({ address: asset, abi: NFT_ABI, functionName: 'isApprovedForAll', args: [account, diamond], ...at }) as Promise<boolean>,
+  ]);
+  return { balance, approvedForAll: forAll, blockNumber: block };
+}
+
+const TRANSFER_1155 = parseAbi([
+  'event TransferSingle(address indexed operator, address indexed from, address indexed to, uint256 id, uint256 value)',
+  'event TransferBatch(address indexed operator, address indexed from, address indexed to, uint256[] ids, uint256[] values)',
+]);
+
+/** How many of `asset`'s token `tokenId` the transaction's own logs record
+ *  moving from `from` to `to`, single and batch transfers together. */
+export function quantityMoved(logs: readonly Log[], asset: Hex, tokenId: bigint, from: Hex, to: Hex): bigint {
+  let moved = 0n;
+  for (const l of logs) {
+    if (l.address.toLowerCase() !== asset.toLowerCase()) continue;
+    let ev;
+    try {
+      [ev] = parseEventLogs({ abi: TRANSFER_1155, logs: [l], strict: true });
+    } catch {
+      continue;
+    }
+    if (ev === undefined || ev.args.from.toLowerCase() !== from.toLowerCase() || ev.args.to.toLowerCase() !== to.toLowerCase()) continue;
+    if (ev.eventName === 'TransferSingle') {
+      if (ev.args.id === tokenId) moved += ev.args.value;
+    } else {
+      ev.args.ids.forEach((id, i) => {
+        if (id === tokenId) moved += ev.args.values[i] ?? 0n;
+      });
+    }
+  }
+  return moved;
+}
+

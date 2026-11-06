@@ -23,7 +23,7 @@ export type TxEvent =
   /** `submittedHash` names the transaction this flow sent; `hash` the one
    *  that mined. They may differ only with `repriced`. */
   | { type: 'mined'; submittedHash: `0x${string}`; hash: `0x${string}`; repriced: boolean; blockNumber: bigint; reverted: boolean }
-  | { type: 'superseded'; submittedHash: `0x${string}`; minedHash: `0x${string}`; reason: SupersededReason; blockNumber: bigint; unwound?: LegOutcome | null }
+  | { type: 'superseded'; submittedHash: `0x${string}`; minedHash: `0x${string}`; reason: SupersededReason; blockNumber: bigint; unwound?: readonly LegOutcome[] }
   | { type: 'measured'; hash: `0x${string}`; outcome: MeasuredOutcome }
   | { type: 'receipt-unknown'; hash: `0x${string}`; message: string }
   /** Track a `receipt-unknown` hash again: back to `submitted`, in flight. */
@@ -79,7 +79,7 @@ export function transition(phase: TxPhase, event: TxEvent): TxPhase {
           minedHash: event.minedHash,
           reason: event.reason,
           blockNumber: event.blockNumber,
-          unwound: event.unwound ?? null,
+          unwound: event.unwound ?? [],
         };
       }
       if (event.type === 'receipt-unknown' && event.hash === phase.hash) return { kind: 'receipt-unknown', hash: event.hash, at: phase.at, message: event.message };

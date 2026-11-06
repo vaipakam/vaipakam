@@ -476,6 +476,9 @@ export interface TestnetMocks {
   rentalNft?: HexAddress;
   /** Second ERC-4907 collection (vART) for two-sided rental demos. */
   rentalNft2?: HexAddress;
+  /** ERC-1155 collection (vMULTI) for the ERC-1155 collateral flows;
+   *  anyone may mint any id and amount. */
+  multiToken?: HexAddress;
   /** MockChainlinkAggregator ETH/USD anchor. */
   ethUsdFeed?: HexAddress;
   /** MockChainlinkAggregator liquidToken/USD. */

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { BaseError, ContractFunctionRevertedError, encodeEventTopics, parseAbi, type Log, type PublicClient } from 'viem';
-import { diamondMayMove, holds, NFT_ABI, parseTokenId, readErc721, readStandard, tokenMoved } from './nft';
+import { BaseError, ContractFunctionRevertedError, encodeAbiParameters, encodeEventTopics, parseAbi, type Log, type PublicClient } from 'viem';
+import { diamondMayMove, holds, MAX_1155_QUANTITY, NFT_ABI, parseQuantity, parseTokenId, quantityMoved, readErc1155, readErc721, readStandard, tokenMoved } from './nft';
 
 type Hex = `0x${string}`;
 const ASSET: Hex = '0x1111111111111111111111111111111111111111';
@@ -118,5 +118,64 @@ describe("the token's move, from the transaction's own logs", () => {
   it('never reads an ERC-20 transfer (three topics) as the token', () => {
     const erc20 = { address: ASSET, topics: encodeEventTopics({ abi, eventName: 'Transfer', args: { from: WALLET, to: VAULT } }), data: '0x07' } as unknown as Log;
     expect(tokenMoved([erc20], ASSET, 7n, WALLET, VAULT)).toBe(false);
+  });
+});
+
+describe('an ERC-1155 token as the wallet and the protocol stand on it', () => {
+  it('reads the balance and the operator approval at one fresh block', async () => {
+    const c = client({ balanceOf: ([who, id]) => (who === WALLET && id === 7n ? 5n : 0n), isApprovedForAll: ([, op]) => op === DIAMOND });
+    expect(await readErc1155(c, ASSET, 7n, WALLET, DIAMOND)).toEqual({ balance: 5n, approvedForAll: true, blockNumber: 10n });
+    expect(c.getBlockNumber).toHaveBeenCalledWith({ cacheTime: 0 });
+    for (const call of (c.readContract as ReturnType<typeof vi.fn>).mock.calls) expect(call[0].blockNumber).toBe(10n);
+  });
+  it('reads at the block it is given', async () => {
+    const c = client({ balanceOf: () => 1n, isApprovedForAll: () => false });
+    expect((await readErc1155(c, ASSET, 7n, WALLET, DIAMOND, 20n)).blockNumber).toBe(20n);
+    expect(c.getBlockNumber).not.toHaveBeenCalled();
+  });
+});
+
+describe('a quantity as typed', () => {
+  it('takes whole digits from one up to what the vault records', () => {
+    expect(parseQuantity(' 3 ')).toBe(3n);
+    expect(parseQuantity('0')).toBeNull();
+    expect(parseQuantity('1.5')).toBeNull();
+    expect(parseQuantity('-2')).toBeNull();
+    expect(parseQuantity('')).toBeNull();
+    expect(parseQuantity(MAX_1155_QUANTITY.toString())).toBe(MAX_1155_QUANTITY);
+    expect(parseQuantity((MAX_1155_QUANTITY + 1n).toString())).toBeNull();
+  });
+});
+
+describe("an ERC-1155 quantity's move, from the transaction's own logs", () => {
+  const abi = parseAbi([
+    'event TransferSingle(address indexed operator, address indexed from, address indexed to, uint256 id, uint256 value)',
+    'event TransferBatch(address indexed operator, address indexed from, address indexed to, uint256[] ids, uint256[] values)',
+  ]);
+  const single = (address: Hex, from: Hex, to: Hex, id: bigint, value: bigint): Log =>
+    ({
+      address,
+      topics: encodeEventTopics({ abi, eventName: 'TransferSingle', args: { operator: DIAMOND, from, to } }),
+      data: encodeAbiParameters([{ type: 'uint256' }, { type: 'uint256' }], [id, value]),
+    }) as unknown as Log;
+  const batch = (from: Hex, to: Hex, ids: bigint[], values: bigint[]): Log =>
+    ({
+      address: ASSET,
+      topics: encodeEventTopics({ abi, eventName: 'TransferBatch', args: { operator: DIAMOND, from, to } }),
+      data: encodeAbiParameters([{ type: 'uint256[]' }, { type: 'uint256[]' }], [ids, values]),
+    }) as unknown as Log;
+  it('sums the token moving from the wallet to the vault, single and batch together', () => {
+    const logs = [single(ASSET, WALLET, VAULT, 7n, 2n), batch(WALLET, VAULT, [7n, 8n], [3n, 9n])];
+    expect(quantityMoved(logs, ASSET, 7n, WALLET, VAULT)).toBe(5n);
+  });
+  it('ignores another token, another collection, another destination and an ERC-721 transfer', () => {
+    const t721 = parseAbi(['event Transfer(address indexed from, address indexed to, uint256 indexed tokenId)']);
+    const logs = [
+      single(ASSET, WALLET, VAULT, 8n, 2n),
+      single(DIAMOND, WALLET, VAULT, 7n, 2n),
+      single(ASSET, WALLET, DIAMOND, 7n, 2n),
+      { address: ASSET, topics: encodeEventTopics({ abi: t721, eventName: 'Transfer', args: { from: WALLET, to: VAULT, tokenId: 7n } }), data: '0x' } as unknown as Log,
+    ];
+    expect(quantityMoved(logs, ASSET, 7n, WALLET, VAULT)).toBe(0n);
   });
 });

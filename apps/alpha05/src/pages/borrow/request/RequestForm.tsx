@@ -27,7 +27,7 @@ import {
   type RequestAssets,
   type RequestInput,
 } from './requestModel';
-import { holds, parseTokenId, readErc721 } from '../../../shared/nft/nft';
+import { holds, parseQuantity, parseTokenId, readErc1155, readErc721 } from '../../../shared/nft/nft';
 import { readRequestFormInputs, type RequestDraft } from './requestReview';
 
 /** The store key the typed request is kept under, so a navigation away and
@@ -84,16 +84,25 @@ export function RequestForm({ chain, own, pair, meta, onReview, onCancel }: Requ
 
   const diamond = chain.diamondAddress;
   const nft = pair.standard === 'erc721';
+  /** An ERC-1155 collateral: a quantity of one token, named by its id. */
+  const multi = pair.standard === 'erc1155';
+  const named = nft || multi;
   const inputs = useOwnRead(['borrow', 'request', 'inputs', pair.collateral.toLowerCase(), pair.standard], (c) =>
     readRequestFormInputs(c, diamond, own.account, pair.collateral, pair.standard),
   );
-  const tokenId = nft ? parseTokenId(input.tokenId) : null;
+  const tokenId = named ? parseTokenId(input.tokenId) : null;
   // Who holds the typed token, read live so the reader learns before the
   // review whether it is theirs; the review reads it again at one block.
   const token = useOwnRead(
     ['borrow', 'request', 'token', pair.collateral.toLowerCase(), String(tokenId)],
     (c) => readErc721(c, pair.collateral, tokenId ?? 0n, own.account, diamond),
     { enabled: nft && tokenId !== null, perBlock: true },
+  );
+  // How many of the typed ERC-1155 token the wallet holds, read live too.
+  const units = useOwnRead(
+    ['borrow', 'request', 'units', pair.collateral.toLowerCase(), String(tokenId)],
+    (c) => readErc1155(c, pair.collateral, tokenId ?? 0n, own.account, diamond),
+    { enabled: multi && tokenId !== null, perBlock: true },
   );
 
   const lendingMeta = meta?.[pair.lending.toLowerCase()];
@@ -104,12 +113,25 @@ export function RequestForm({ chain, own, pair, meta, onReview, onCancel }: Requ
   const collateralSymbol = assetName(pair.collateral, meta);
 
   const amount = lendingDecimals === null ? null : parseAmount(input.amount, lendingDecimals);
-  const collateral = nft || collateralDecimals === null ? null : parseAmount(input.collateral, collateralDecimals);
-  const tokenIdError = !nft || tokenId !== null ? null : input.tokenId.trim() === '' ? text('request.errTokenIdEmpty') : text('request.errTokenId');
+  const collateral = named || collateralDecimals === null ? null : parseAmount(input.collateral, collateralDecimals);
+  const quantity = multi ? parseQuantity(input.collateral) : null;
+  const quantityError = !multi || quantity !== null ? null : input.collateral.trim() === '' ? text('request.errQuantityEmpty') : text('request.errQuantity');
+  const tokenIdError = !named || tokenId !== null ? null : input.tokenId.trim() === '' ? text('request.errTokenIdEmpty') : text('request.errTokenId');
   // A failed read, first or a refresh behind an earlier answer, is stated
   // as unknown: a cached holder is never shown as current.
-  const tokenStanding =
-    !nft || tokenId === null
+  const unitsStanding =
+    !multi || tokenId === null
+      ? null
+      : units.error !== null
+        ? { tone: 'warn' as const, text: format('request.tokenUnread', { reason: units.error }) }
+        : units.data === null
+          ? null
+          : units.data.balance === 0n
+            ? { tone: 'warn' as const, text: format('request.unitsNone', { id: String(tokenId) }) }
+            : { tone: 'ok' as const, text: format('request.unitsHeld', { have: String(units.data.balance) }) };
+  const tokenStanding = multi
+    ? unitsStanding
+    : !nft || tokenId === null
       ? null
       : token.error !== null
         ? { tone: 'warn' as const, text: format('request.tokenUnread', { reason: token.error }) }
@@ -184,7 +206,7 @@ export function RequestForm({ chain, own, pair, meta, onReview, onCancel }: Requ
           : text('request.errDays');
 
   const figures = inputs.data && amount?.ok && rate.ok && durationDays !== null ? requestFigures(amount.value, rate.value, durationDays, inputs.data.lifBps) : null;
-  const collateralOk = nft ? tokenId !== null : collateral?.ok === true;
+  const collateralOk = nft ? tokenId !== null : multi ? tokenId !== null && quantity !== null : collateral?.ok === true;
   const valid = amount?.ok === true && collateralOk && rate.ok && durationDays !== null && expiryOk && inputs.data !== null;
 
   // Only the latest submission, from a form still on screen for the same
@@ -201,9 +223,14 @@ export function RequestForm({ chain, own, pair, meta, onReview, onCancel }: Requ
   const review = async () => {
     setAsked(true);
     if (!valid || !amount?.ok || !rate.ok || durationDays === null) return;
-    const locked = nft ? (tokenId === null ? null : 1n) : collateral?.ok ? collateral.value : null;
+    const locked = nft ? (tokenId === null ? null : 1n) : multi ? quantity : collateral?.ok ? collateral.value : null;
     if (locked === null) return;
-    const leg = nft && tokenId !== null ? { kind: 'erc721' as const, tokenId } : { kind: 'erc20' as const };
+    const leg =
+      nft && tokenId !== null
+        ? { kind: 'erc721' as const, tokenId }
+        : multi && tokenId !== null
+          ? { kind: 'erc1155' as const, tokenId, quantity: locked }
+          : { kind: 'erc20' as const };
     setOpening(null);
     const mine = ++attempt.current;
     const askedFor = identity;
@@ -232,7 +259,7 @@ export function RequestForm({ chain, own, pair, meta, onReview, onCancel }: Requ
   };
 
   // A token's collection has no decimals; only an ERC-20 collateral needs them.
-  const metaMissing = meta !== null && (lendingDecimals === null || (!nft && collateralDecimals === null));
+  const metaMissing = meta !== null && (lendingDecimals === null || (!named && collateralDecimals === null));
 
   return (
     <form
@@ -279,7 +306,7 @@ export function RequestForm({ chain, own, pair, meta, onReview, onCancel }: Requ
             />
           )}
         </FormField>
-        {nft ? (
+        {named ? (
           <FormField label={format('request.tokenIdLabel', { symbol: collateralSymbol })} hint={text('request.tokenIdHint')} error={show('tokenId') ? tokenIdError : null}>
             {({ id, describedBy, invalid }) => (
               <>
@@ -307,7 +334,37 @@ export function RequestForm({ chain, own, pair, meta, onReview, onCancel }: Requ
               </>
             )}
           </FormField>
-        ) : (
+        ) : null}
+        {multi && (
+          <FormField
+            label={format('request.quantityLabel', { symbol: collateralSymbol })}
+            hint={units.data && tokenId !== null ? format('request.quantityHint', { have: String(units.data.balance) }) : text('request.quantityHintPlain')}
+            error={show('collateral') ? quantityError : null}
+          >
+            {({ id, describedBy, invalid }) => (
+              <div className="input-with-action">
+                <input
+                  id={id}
+                  inputMode="numeric"
+                  autoComplete="off"
+                  aria-describedby={describedBy}
+                  aria-invalid={invalid}
+                  value={input.collateral}
+                  onChange={(e) => set({ collateral: e.target.value })}
+                  onBlur={() => leave('collateral')}
+                  data-testid="request-quantity"
+                />
+                {units.data && tokenId !== null && units.data.balance > 0n && (
+                  // RB-CLICKS: Max fills everything the wallet holds of the token.
+                  <button type="button" className="btn" onClick={() => set({ collateral: units.data!.balance.toString() })} data-testid="request-quantity-max">
+                    {text('request.max')}
+                  </button>
+                )}
+              </div>
+            )}
+          </FormField>
+        )}
+        {!named && (
           <FormField
             label={format('request.collateralLabel', { symbol: collateralSymbol })}
             hint={

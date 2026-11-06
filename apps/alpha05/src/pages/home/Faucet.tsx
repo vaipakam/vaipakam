@@ -1,11 +1,24 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useConfig } from 'wagmi';
+import { zeroAddress } from 'viem';
 import { watchAsset, writeContract } from 'wagmi/actions';
 import { useOwnStateClient } from '../../chain/ownRail';
 import { getSupportedChain } from '../../chain/chains';
 import { useCopy } from '../../shared/copy/useCopy';
-import { ERC20_MINT_UNITS, FAUCET_ERC20_ABI, FAUCET_NFT_ABI, faucetAssets, freshTokenId, mintLogged, mintVerdict, type FaucetAsset } from '../../shared/faucet/faucet';
+import {
+  ERC20_MINT_UNITS,
+  FAUCET_ERC20_ABI,
+  FAUCET_MULTI_ABI,
+  FAUCET_NFT_ABI,
+  faucetAssets,
+  freshTokenId,
+  MULTI_MINT_UNITS,
+  mintLogged,
+  mintVerdict,
+  type FaucetAsset,
+} from '../../shared/faucet/faucet';
+import { quantityMoved } from '../../shared/nft/nft';
 import { WhyLink } from '../../shared/help/WhyLink';
 import type { Receipt } from '../../shared/receipt/types';
 import { assetName, useTokenMeta } from '../../shared/reads/tokens';
@@ -20,7 +33,8 @@ type Hex = `0x${string}`;
 /** The mint the open review was built for. */
 type MintPick =
   | { kind: 'erc20'; asset: Extract<FaucetAsset, { kind: 'erc20' }>; amount: bigint; readAt: number; identity: string }
-  | { kind: 'nft'; asset: Extract<FaucetAsset, { kind: 'nft' }>; tokenId: bigint; readAt: number; identity: string };
+  | { kind: 'nft'; asset: Extract<FaucetAsset, { kind: 'nft' }>; tokenId: bigint; readAt: number; identity: string }
+  | { kind: 'multi'; asset: Extract<FaucetAsset, { kind: 'multi' }>; tokenId: bigint; readAt: number; identity: string };
 
 /** The moment a review's inputs were read (called from event handlers). */
 const readNow = () => Date.now();
@@ -58,9 +72,18 @@ export function Faucet() {
     sources: own?.sources ?? [],
     send: () => {
       if (!pick || !chain) throw new Error('no mint under review');
-      return pick.kind === 'erc20'
-        ? writeContract(config, { address: pick.asset.address, abi: FAUCET_ERC20_ABI, functionName: 'mint', args: [account, pick.amount], chainId: chain.chainId, account })
-        : writeContract(config, { address: pick.asset.address, abi: FAUCET_NFT_ABI, functionName: 'mint', args: [account, pick.tokenId], chainId: chain.chainId, account });
+      if (pick.kind === 'erc20')
+        return writeContract(config, { address: pick.asset.address, abi: FAUCET_ERC20_ABI, functionName: 'mint', args: [account, pick.amount], chainId: chain.chainId, account });
+      if (pick.kind === 'multi')
+        return writeContract(config, {
+          address: pick.asset.address,
+          abi: FAUCET_MULTI_ABI,
+          functionName: 'mint',
+          args: [account, pick.tokenId, MULTI_MINT_UNITS],
+          chainId: chain.chainId,
+          account,
+        });
+      return writeContract(config, { address: pick.asset.address, abi: FAUCET_NFT_ABI, functionName: 'mint', args: [account, pick.tokenId], chainId: chain.chainId, account });
     },
     measure: async (receipt, at) => {
       if (!pick) return [];
@@ -78,6 +101,20 @@ export function Faucet() {
         if (verdict === 'done') return [{ status: 'done', label }];
         if (verdict === 'unknown') return [{ status: 'unknown', label, reason: format('faucet.roseWithLog', { amount: rose.toString() }) }];
         return [{ status: 'not-done', label, reason: format('faucet.roseBy', { amount: rose.toString() }) }];
+      }
+      if (pick.kind === 'multi') {
+        const token = pick.asset.address;
+        const id = pick.tokenId;
+        const label = format('faucet.legMulti', { amount: MULTI_MINT_UNITS.toString(), symbol: assetName(token, meta ?? null), id: id.toString() });
+        // Across the mint's own block only, as for a token.
+        const unitsAt = (blockNumber: bigint) =>
+          at.read((c) => c.readContract({ address: token, abi: FAUCET_MULTI_ABI, functionName: 'balanceOf', args: [account, id], blockNumber }));
+        const [prior, after] = await Promise.all([unitsAt(at.blockNumber - 1n), unitsAt(at.blockNumber)]);
+        const rose = after - prior;
+        const verdict = mintVerdict(rose, MULTI_MINT_UNITS, quantityMoved(receipt.logs, token, id, zeroAddress, account) >= MULTI_MINT_UNITS);
+        if (verdict === 'done') return [{ status: 'done', label }];
+        if (verdict === 'unknown') return [{ status: 'unknown', label, reason: format('faucet.unitsWithLog', { amount: rose.toString() }) }];
+        return [{ status: 'not-done', label, reason: format('faucet.unitsBy', { amount: rose.toString() }) }];
       }
       const tokenId = pick.tokenId;
       const label = format('faucet.legNft', { symbol: assetName(pick.asset.address, meta ?? null), id: tokenId.toString() });
@@ -100,6 +137,8 @@ export function Faucet() {
       const decimals = decimalsOf(asset.address);
       if (decimals === null) return;
       setPick({ kind: 'erc20', asset, amount: ERC20_MINT_UNITS * 10n ** BigInt(decimals), readAt: readNow(), identity: reviewIdentity(own) });
+    } else if (asset.kind === 'multi') {
+      setPick({ kind: 'multi', asset, tokenId: freshTokenId(), readAt: readNow(), identity: reviewIdentity(own) });
     } else {
       setPick({ kind: 'nft', asset, tokenId: freshTokenId(), readAt: readNow(), identity: reviewIdentity(own) });
     }
@@ -113,6 +152,10 @@ export function Faucet() {
     if (pick.kind === 'erc20') {
       return simulateCall(own, { address: pick.asset.address, abi: FAUCET_ERC20_ABI, functionName: 'mint', args: [account, pick.amount] });
     }
+    // A multi-token number may be shared (minting adds to it), so it needs
+    // no check; only the contract's verdict on the mint.
+    if (pick.kind === 'multi')
+      return simulateCall(own, { address: pick.asset.address, abi: FAUCET_MULTI_ABI, functionName: 'mint', args: [account, pick.tokenId, MULTI_MINT_UNITS] });
     // An NFT number already minted is replaced before the wallet opens.
     const tokenId = pick.tokenId;
     const owner = await askThrough(own, (c) => c.readContract({ address: pick.asset.address, abi: FAUCET_NFT_ABI, functionName: 'ownerOf', args: [tokenId] }));
@@ -133,7 +176,12 @@ export function Faucet() {
             value:
               pick.kind === 'erc20'
                 ? { kind: 'amount', asset: pick.asset.address, amount: pick.amount }
-                : { kind: 'text', text: format('asset.nft', { id: pick.tokenId.toString(), asset: assetName(pick.asset.address, meta ?? null) }) },
+                : pick.kind === 'multi'
+                  ? {
+                      kind: 'text',
+                      text: format('asset.nft1155', { amount: MULTI_MINT_UNITS.toString(), id: pick.tokenId.toString(), asset: assetName(pick.asset.address, meta ?? null) }),
+                    }
+                  : { kind: 'text', text: format('asset.nft', { id: pick.tokenId.toString(), asset: assetName(pick.asset.address, meta ?? null) }) },
             binding: true,
           },
           { label: text('faucet.rowFrom'), value: { kind: 'text', text: format('faucet.from', { address: pick.asset.address }) }, binding: false },
@@ -173,7 +221,7 @@ export function Faucet() {
         <ul className="faucet-assets">
           {assets.map((a) => {
             const name = assetName(a.address, meta ?? null);
-            const kindKey = a.kind === 'nft' ? 'faucet.kindNft' : a.priced ? 'faucet.kindPriced' : 'faucet.kindUnpriced';
+            const kindKey = a.kind === 'nft' ? 'faucet.kindNft' : a.kind === 'multi' ? 'faucet.kindMulti' : a.priced ? 'faucet.kindPriced' : 'faucet.kindUnpriced';
             const unreadable = a.kind === 'erc20' && meta !== null && decimalsOf(a.address) === null;
             return (
               <li key={a.key} data-asset={a.key}>
@@ -185,7 +233,11 @@ export function Faucet() {
                   <span className="tier-b">{text('faucet.decimalsUnknown')}</span>
                 ) : (
                   <button type="button" className="btn" disabled={a.kind === 'erc20' && meta === null} onClick={() => start(a)}>
-                    {a.kind === 'erc20' ? format('faucet.getToken', { amount: ERC20_MINT_UNITS.toString() }) : text('faucet.getNft')}
+                    {a.kind === 'erc20'
+                      ? format('faucet.getToken', { amount: ERC20_MINT_UNITS.toString() })
+                      : a.kind === 'multi'
+                        ? format('faucet.getMulti', { amount: MULTI_MINT_UNITS.toString() })
+                        : text('faucet.getNft')}
                   </button>
                 )}
               </li>

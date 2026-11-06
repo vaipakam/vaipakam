@@ -33,8 +33,9 @@ export const ASSET_ERC20 = 0;
 /** What the reader typed, kept as text so nothing is rounded on the way. */
 export interface RequestInput {
   amount: string;
+  /** The ERC-20 amount locked, or an ERC-1155 token's quantity, as typed. */
   collateral: string;
-  /** NFT-13: the id of the ERC-721 token pledged, as typed. */
+  /** NFT-13: the id of the NFT pledged (ERC-721 or ERC-1155), as typed. */
   tokenId: string;
   /** The yearly rate in percent, as typed ("8.5"). */
   rate: string;
@@ -129,7 +130,8 @@ export function expiresAt(choice: ExpiryChoice, nowSeconds: bigint, customDays =
 /** The figures a request carries once parsed; null fields failed to parse. */
 export interface ParsedRequest {
   amount: bigint;
-  /** The ERC-20 amount locked; for an NFT, the one token (1). */
+  /** The ERC-20 amount locked; for an ERC-721, the one token (1); for an
+   *  ERC-1155, the quantity of the one token. */
   collateral: bigint;
   rateBps: bigint;
   durationDays: number;
@@ -139,8 +141,8 @@ export interface ParsedRequest {
 }
 
 /** NFT-13: what the collateral leg is. An ERC-721 token is pledged whole,
- *  by its id; this slice does not pledge ERC-1155 tokens. */
-export type CollateralLeg = { kind: 'erc20' } | { kind: 'erc721'; tokenId: bigint };
+ *  by its id; an ERC-1155 leg is a quantity of one token, by its id. */
+export type CollateralLeg = { kind: 'erc20' } | { kind: 'erc721'; tokenId: bigint } | { kind: 'erc1155'; tokenId: bigint; quantity: bigint };
 
 export interface RequestPair {
   lending: Hex;
@@ -156,8 +158,9 @@ export interface RequestAssets {
   standard: CollateralLeg['kind'];
 }
 
-/** The protocol's `AssetType` position for an ERC-721 token. */
+/** The protocol's `AssetType` positions for the NFT standards. */
 export const ASSET_ERC721 = 1;
+export const ASSET_ERC1155 = 2;
 
 /**
  * The protocol call for this request (`createOffer`'s parameters). Every
@@ -166,14 +169,16 @@ export const ASSET_ERC721 = 1;
  * refinance target), and the review states each.
  */
 export function createParams(p: ParsedRequest, pair: RequestPair, expiry: bigint) {
-  const nft = pair.leg.kind === 'erc721';
+  const leg = pair.leg;
+  const nft = leg.kind !== 'erc20';
   return {
     offerType: OFFER_TYPE_BORROWER,
     lendingAsset: pair.lending,
     amount: p.amount,
     interestRateBps: p.rateBps,
     collateralAsset: pair.collateral,
-    // An NFT leg carries no amount: the token is named by its id.
+    // An NFT leg carries no amount: the token is named by its id, and an
+    // ERC-1155 leg carries its quantity.
     collateralAmount: nft ? 0n : p.collateral,
     durationDays: BigInt(p.durationDays),
     assetType: ASSET_ERC20,
@@ -181,9 +186,9 @@ export function createParams(p: ParsedRequest, pair: RequestPair, expiry: bigint
     quantity: 1n,
     creatorRiskAndTermsConsent: true,
     prepayAsset: ZERO,
-    collateralAssetType: nft ? ASSET_ERC721 : ASSET_ERC20,
-    collateralTokenId: pair.leg.kind === 'erc721' ? pair.leg.tokenId : 0n,
-    collateralQuantity: nft ? 1n : 0n,
+    collateralAssetType: leg.kind === 'erc721' ? ASSET_ERC721 : leg.kind === 'erc1155' ? ASSET_ERC1155 : ASSET_ERC20,
+    collateralTokenId: leg.kind === 'erc20' ? 0n : leg.tokenId,
+    collateralQuantity: leg.kind === 'erc721' ? 1n : leg.kind === 'erc1155' ? leg.quantity : 0n,
     allowsPartialRepay: p.allowsPartialRepay,
     amountMax: p.amount,
     interestRateBpsMax: p.rateBps,

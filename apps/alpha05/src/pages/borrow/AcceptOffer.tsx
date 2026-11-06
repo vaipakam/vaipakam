@@ -17,7 +17,8 @@ import { readVault } from '../../shared/offers/reads';
 import { tokenAmount, type TokenMetaMap } from '../../shared/reads/tokens';
 import { readTerms, termsUrl, type TermsState } from '../../shared/terms/terms';
 import { askThrough } from '../../shared/tx/simulate';
-import { useStoredValue } from '../../shared/tx/txStore';
+import { cleanUpLeg } from '../../shared/tx/cleanUp';
+import { useStoredValue, useTxNote } from '../../shared/tx/txStore';
 import { useMounted, useReviewRefresh } from '../../shared/tx/useReviewRefresh';
 import { useTrackedTx } from '../../shared/tx/useTrackedTx';
 import { allowanceSteps } from '../../shared/tx/approval';
@@ -76,7 +77,8 @@ export function AcceptOffer({ offerId, chain, own, meta, terms, onClose }: Accep
   /** The risk-access step open in the review's place, if any (ACC-RISK). */
   const [riskOpen, setRiskOpen] = useStoredValue<RiskNeed>(`${ACCEPT_KEY}:risk`);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [step, setStep] = useState<string | null>(null);
+  /** The wallet step open now, kept with the tracker (it outlives the page). */
+  const setStep = useTxNote(ACCEPT_KEY);
   /** The approval this flow made and has not yet seen used or put back: a
    *  submitted acceptance that reverts leaves it standing, so the receipt's
    *  measurement puts it back. A ref, because the measurement runs from the
@@ -218,8 +220,7 @@ export function AcceptOffer({ offerId, chain, own, meta, terms, onClose }: Accep
       approvalLeft.current = null;
       if (!left) return null;
       const after = await putBack(left.token, left.prior, left.amount, left.since);
-      const label = format('approval.legBack', { amount: amt(left.token, left.prior) });
-      return after.ok ? { status: 'done', label } : { status: 'not-done', label, reason: after.sentence };
+      return cleanUpLeg(after, format('approval.legBack', { amount: amt(left.token, left.prior) }));
     },
     measure: async (receipt, at) => {
       if (!review) return [];
@@ -504,7 +505,6 @@ export function AcceptOffer({ offerId, chain, own, meta, terms, onClose }: Accep
               : null
           }
           gate={gate}
-          signingNote={step}
           onClose={close}
         />
       )}

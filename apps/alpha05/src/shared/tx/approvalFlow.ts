@@ -18,6 +18,7 @@ import type { CopyAccess } from '../copy/useCopy';
 import { refusalFromError, StatedRefusal } from '../eligibility/refusal';
 import { tokenAcceptsApproval } from '../offers/reads';
 import { setAllowance, type AllowanceIo } from './approval';
+import type { CleanUpResult } from './cleanUp';
 
 type Hex = `0x${string}`;
 
@@ -34,10 +35,9 @@ export interface ApprovalFlowDeps {
   setStep: (what: string | null) => void;
 }
 
-export interface PutBack {
-  ok: boolean;
-  sentence: string;
-}
+/** A put-back's result (shared/tx/cleanUp): `unknown` when a reset was
+ *  sent but the allowance it left could not be read. */
+export type PutBack = CleanUpResult;
 
 export interface ApprovalFlow {
   /** The wallet's allowance to the Diamond for `token`, now or at `block`. */
@@ -116,7 +116,7 @@ export function approvalFlow(d: ApprovalFlowDeps): ApprovalFlow {
       prior,
       approvedAmount,
     ).catch((e: unknown) => ({ ok: false as const, why: 'refused' as const, sent: 0, now: null, last: null, at: null, pending: null, reason: refusalFromError(e).reason }));
-    if (set.ok) return { ok: true, sentence: format('approval.restored', { amount: d.amount(token, prior) }) };
+    if (set.ok) return { status: 'done', sentence: format('approval.restored', { amount: d.amount(token, prior) }) };
     const why =
       set.why === 'changed'
         ? text('approval.restoreChanged')
@@ -127,8 +127,11 @@ export function approvalFlow(d: ApprovalFlowDeps): ApprovalFlow {
             : text('approval.restoreNotLanded');
     // An allowance that could not be read is said to be unknown, never
     // filled in with the amount approved: the reset may have landed.
-    if (set.now === null) return { ok: false, sentence: format('approval.restoreUnverified', { why }) };
-    return { ok: false, sentence: format('approval.notRestored', { why, amount: d.amount(token, set.now) }) };
+    // Unknown only when a reset was sent and what it left is unread; with
+    // nothing sent, the allowance is still the one the flow approved.
+    const sentUnread = set.pending !== null || (set.now === null && set.sent > 0);
+    if (set.now === null) return { status: sentUnread ? 'unknown' : 'not-done', sentence: format('approval.restoreUnverified', { why }) };
+    return { status: sentUnread ? 'unknown' : 'not-done', sentence: format('approval.notRestored', { why, amount: d.amount(token, set.now) }) };
   }
 
   async function approveExactly(io: AllowanceIo, token: Hex, amount: bigint, prior: bigint): Promise<bigint | null> {
