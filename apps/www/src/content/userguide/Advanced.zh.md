@@ -1942,7 +1942,15 @@ Positions 通过一个共享读取器读取与 Home 相同的持仓清单：`get
 
 对有价格的贷款，它还读取 `getInternalMatchConfigBundle`。内部撮合开启时，贷款价值比处于其阈值到阈值加 `externalLiquidationPriorityWindowBps` 之间的贷款会保留给内部撮合，所有外部清算途径都会拒绝（`InternalMatchOnlyBand`），页面会说明这个区间。`loanInitiationFeeBpsAtInit` 为 0（费率被记录之前开立的贷款）显示为未记录，`treasuryFeeBpsAtInit` 为 0 显示为结算采用的 1% 旧费率。实物交付警告仅适用于 ERC-20 贷款：NFT 租赁没有抵押品，违约时租用方的使用权终止，预付租金扣除金库份额后付给出借人，缓冲金转入金库，页面会改为说明这一点。
 
-费率均为贷款快照：`treasuryFeeBpsAtInit`、`loanInitiationFeeBpsAtInit`（出售载体贷款为无）和 `liquidationLtvBpsAtInit`。任一方为 Illiquid（`principalLiquidity` 或 `collateralLiquidity`）的贷款没有基于价格的读数：协议会拒绝该贷款的 `calculateHealthFactor` 和 `calculateLTV`，页面会说明这一点而不是显示未知。`principal` 是尚欠的本金（部分还款会减少它），`interestRateBps` 和 `collateralAmount` 也可能变化，因此条款按当前状态显示；记录中没有本金的已结束贷款会说明是否由内部撮合覆盖，否则只说明没有记录；NFT 租赁会显示每日租金（`principal`，以 `prepayAsset` 计）以及提前归还是否仍按每个剩余天数收费（`useFullTermInterest`）。`getPeriodicInterestEnabled` 为 false 时，页面会说明在检查点不会出售抵押品。进行中贷款的 `collateralLiquidity` 为 Illiquid 时，会加上实物交割警告：违约时抵押品不经出售直接转给出借人。该页面目前不发送任何交易。
+费率均为贷款快照：`treasuryFeeBpsAtInit`、`loanInitiationFeeBpsAtInit`（出售载体贷款为无）和 `liquidationLtvBpsAtInit`。任一方为 Illiquid（`principalLiquidity` 或 `collateralLiquidity`）的贷款没有基于价格的读数：协议会拒绝该贷款的 `calculateHealthFactor` 和 `calculateLTV`，页面会说明这一点而不是显示未知。`principal` 是尚欠的本金（部分还款会减少它），`interestRateBps` 和 `collateralAmount` 也可能变化，因此条款按当前状态显示；记录中没有本金的已结束贷款会说明是否由内部撮合覆盖，否则只说明没有记录；NFT 租赁会显示每日租金（`principal`，以 `prepayAsset` 计）以及提前归还是否仍按每个剩余天数收费（`useFullTermInterest`）。`getPeriodicInterestEnabled` 为 false 时，页面会说明在检查点不会出售抵押品。进行中贷款的 `collateralLiquidity` 为 Illiquid 时，会加上实物交割警告：违约时抵押品不经出售直接转给出借人。它的第一笔交易是全额还款，见下文。
+
+<a id="repay"></a>
+
+### 全额还款：金额如何确定
+
+该操作遵循一条规则：对 Active 或 FallbackPending 的 ERC-20 贷款，`repayLoan` 提供给既不是 `loan.lender` 也不是 `ownerOf(lenderTokenId)` 的任何钱包（`LenderCannotRepayOwnLoan`）；Active 贷款过了实际宽限期结束时间后暂停（`RepaymentPastGracePeriod`），`positionLock(borrowerTokenId)` 为 `SwapToRepayIntent` 期间也暂停。出借人的出售挂单、再融资请求和全局暂停都不会暂停它。租赁暂不在此提供。
+
+确认页在最新区块读取 `calculateRepaymentAmount(loanId)`，再把区块时间覆盖为 `min(now + 30 分钟, 宽限期结束)` 读取一次；同一请求还会读取其实际运行的区块时间，忽略覆盖的连接会被跳过。批准额恰好是第二个数字，打开钱包前会模拟调用；收据之后，在其区块读取贷款状态，根据 `Transfer` 日志计量付款，当 allowance 显示为批准额减去付款时，将其恢复为之前的值。
 
 <a id="risk-access"></a>
 

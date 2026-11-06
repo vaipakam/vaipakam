@@ -1,8 +1,8 @@
 import type { ReactNode } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useAccount } from 'wagmi';
-import { getSupportedChain } from '../../chain/chains';
-import { useOwnStateClient } from '../../chain/ownRail';
+import { getSupportedChain, type SupportedChain } from '../../chain/chains';
+import { useOwnStateClient, type OwnStateClient } from '../../chain/ownRail';
 import { useCopy, type CopyKey } from '../../shared/copy/useCopy';
 import { CADENCE_NAME, isCadence } from '../../shared/offers/cadence';
 import { ASSET_ERC20, LOAN_STATUS_FALLBACK_PENDING, isLiveStatus, loanObligations, loanStatusName } from '../../shared/positions/model';
@@ -16,6 +16,7 @@ import { OwnStamp } from '../../shared/ui/OwnStamp';
 import { useNow } from '../../shared/ui/useNow';
 import { WhyLink } from '../../shared/help/WhyLink';
 import { Notice } from '../../shared/ui/Notice';
+import { LoanActions } from './LoanActions';
 
 /** What the page says when the timing allows a default but another gate
  *  of `triggerDefault` refuses it. */
@@ -39,8 +40,8 @@ function parseLoanId(raw: string | undefined): bigint | null {
  * their wallet holds now), any deadline that needs them, its dates with the
  * pause credit, its terms as the loan fixed them, its health, and where its
  * collateral is held. Every figure is read, and one that could not be read is
- * said to be unknown. The page is read-only until the loan's actions land;
- * it says so.
+ * said to be unknown. A running loan's actions follow its status (LN-21:
+ * repaying in full); the actions still to come are said to be coming.
  */
 export function PositionPage() {
   const { text, format } = useCopy();
@@ -79,7 +80,7 @@ export function PositionPage() {
               v === null ? (
                 <p className="tier-a">{format('position.notFound', { id: loanId.toString(), chain: chain.name })}</p>
               ) : (
-                <LoanBody view={v} account={own.account} meta={meta} />
+                <LoanBody loanId={loanId} view={v} own={own} chain={chain} meta={meta} />
               )
             }
           </ReadState>
@@ -89,8 +90,9 @@ export function PositionPage() {
   );
 }
 
-function LoanBody({ view: v, account, meta }: { view: LoanView; account: Hex; meta: TokenMetaMap | null }) {
+function LoanBody({ loanId, view: v, own, chain, meta }: { loanId: bigint; view: LoanView; own: OwnStateClient; chain: SupportedChain; meta: TokenMetaMap | null }) {
   const { text, format } = useCopy();
+  const account = own.account;
   const nowSec = Math.floor(useNow() / 1000);
   const l = v.loan;
   const role = roleOf(v.holders, account);
@@ -151,6 +153,8 @@ function LoanBody({ view: v, account, meta }: { view: LoanView; account: Hex; me
           </Notice>
         </div>
       )}
+
+      <LoanActions loanId={loanId} view={v} role={role} own={own} chain={chain} meta={meta} />
 
       {live && (
         <Facts title={text('position.datesTitle')} id="position-dates" lead={v.deadlines === null ? <p className="tier-a">{text('position.datesUnknown')}</p> : null}>
@@ -289,9 +293,11 @@ function LoanBody({ view: v, account, meta }: { view: LoanView; account: Hex; me
         )}
       </Facts>
 
-      <p className="tier-b" data-testid="position-actions-later">
-        {text('position.actionsLater')}
-      </p>
+      {!live && (
+        <p className="tier-b" data-testid="position-actions-later">
+          {text('position.actionsLater')}
+        </p>
+      )}
     </>
   );
 }

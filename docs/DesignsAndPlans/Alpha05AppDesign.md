@@ -723,7 +723,41 @@ above. Each resolves here, so a route reviewer needs no private file:
   collateral has no price, that a default hands the lender the collateral
   itself, while an NFT rental, which has no collateral, states its own
   default instead (the renter's use ends, the prepaid rent goes to the
-  lender less the protocol's share, the buffer to the treasury). Until the loan's actions land, the page says so and offers none.
+  lender less the protocol's share, the buffer to the treasury).
+  The loan's actions follow the "now" lines, each offered from its
+  eligibility rule; the actions still to come are said to be coming.
+- **RB-POSITION-REPAY** — repaying a loan in full (LN-21, LN-16) is offered
+  to anyone but the lender (recorded, or holding the lender position), and
+  is left out for a reader who holds only the lender side. Its one rule
+  (RB-ELIG) holds it on a running loan past its grace end (stated with the
+  time, and that the loan goes to default), while a swap-to-repay order is
+  pending on the borrower position, and for a rental (the app's own limit,
+  said so); it never holds for a lender listing, a refinance request, the
+  protocol pause, the Terms gate or the sanctions screen on the payer, and
+  a loan in fallback stays repayable past grace, since repaying cures it.
+  The hold LN-21 names while an ACCEPTED lender sale completes has no window
+  on this protocol: the sale completes inside the transaction that accepts
+  it, so the verdict reads nothing for it. A refinance request recorded for
+  the loan is named on the review: the repayment ends it, but its offer
+  stays posted until its creator cancels it (an unread request is stated
+  unread). The protocol's full repayment takes a plain approval; it has no
+  Permit2 route, so none is offered.
+  The review states two of the protocol's own payoff figures, now and as of
+  a moment about thirty minutes ahead (never later than the grace end),
+  the second read by asking the same view with the block time moved, on a
+  connection that is checked to have honoured the move (one that ignored it
+  is passed over, and if none honours it the repayment is not offered). The
+  approval is exactly the later figure; the review says that a repayment
+  confirming after that moment is refused with nothing moved, and that what
+  the repayment does not use is put back afterwards, to the allowance as it
+  stood before. A payer who does not hold the borrower position is told it
+  gains no right to the collateral. A re-read does not count the payoff
+  growing by the second as a change; the figure at the kept moment, the
+  holders, the dates, the approval steps or the verdict moving reopens the
+  review, and the kept moment moves forward once it is closer than ten
+  minutes. The finish card measures the loan's status at the receipt's
+  block, what left the wallet (within the two stated figures), and the
+  approval put back.
 
 ## 3. Companion specifications
 
