@@ -1152,6 +1152,12 @@ Un seul prêteur prend tout le montant, ou personne. Chaque chiffre est lu exact
 
 Avant que votre wallet ne s'ouvre, l'app demande au protocole d'essayer votre demande à blanc, si bien que la vérification montre la réponse du protocole lui-même. Elle indique ce que vous bloquez maintenant, le montant, le taux et la durée, ce que vous recevriez et comment les frais sont fixés (le taux de frais en vigueur quand un prêteur l'accepte, moins votre niveau de remise sur les frais à ce moment-là ; le chiffre affiché utilise le taux d'aujourd'hui), ce que vous devriez, chaque condition du prêt, quand la demande expire, le ratio prêt-valeur et si une approbation est nécessaire. Vous cochez une case pour accepter les Informations sur les risques et les Conditions. Votre wallet approuve exactement la garantie si nécessaire, l'app essaie de nouveau la demande, puis seulement la publie. Si cela s'arrête après une approbation, l'app demande de la remettre et dit si c'est fait. Ensuite, l'app vérifie sur la chaîne la demande enregistrée et la garantie bloquée.
 
+<a id="borrow-nft-collateral"></a>
+
+### Borrow : un NFT en garantie
+
+Une demande peut bloquer un NFT au lieu d'un jeton. Choisissez la collection comme ce que vous bloquez (les collections de test sont marquées comme NFT, ou collez une adresse) ; qu'une adresse soit un jeton ou une collection de NFT est lu dans son contrat. Saisissez ensuite le numéro du NFT, son identifiant de jeton, affiché dans votre portefeuille ou sur la page de la collection ; le formulaire indique aussitôt si votre portefeuille le détient. Le protocole évalue un NFT à zéro, quel que soit son prix ailleurs : un prêt garanti par un NFT n'a ni ratio prêt-valeur ni liquidation fondée sur un prix, et si vous ne remboursez pas avant la fin du délai de grâce, le prêteur reçoit le NFT lui-même. La publication demande à votre portefeuille d'autoriser le protocole pour ce seul NFT, jamais pour le reste de votre collection, et son transfert dans votre coffre efface cette autorisation de lui-même ; si la demande s'arrête après l'autorisation, l'application demande de la rétablir et dit si c'est fait. Les NFT qui existent en quantités demandent une autorisation sur toute la collection : pour l'instant, l'application vous envoie pour ceux-là vers la page Borrow de l'application actuelle ; accepter l'offre d'un prêteur qui demande un NFT se fait aussi là-bas pour l'instant.
+
 <a id="risk-access"></a>
 
 ### Risk Access : votre niveau de risque

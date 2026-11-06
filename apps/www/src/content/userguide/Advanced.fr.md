@@ -2289,6 +2289,12 @@ Basic publie une demande à valeur unique : `amount` = `amountMax`, `interestRat
 
 La vérification simule `createOffer` depuis le wallet et lit les deux classes, `getEffectiveGraceSeconds(durationDays)`, `getLoanInitiationFeeBps`, la durée maximale, le vault, le solde et l'allocation du wallet, et `calculateLTV` quand les deux côtés sont liquides ; elle est relue à chaque bloc et juste avant l'ouverture du wallet. Tant que l'allocation est insuffisante, la simulation n'atteint que le prélèvement de la garantie : une erreur de prélèvement du token ou un revert sans nom d'erreur du protocole est présenté comme l'approbation à donner, et une erreur nommée du protocole est un refus. Après une approbation exacte, `createOffer` est simulé de nouveau puis envoyé ; un arrêt après l'approbation la remet à sa valeur antérieure si rien d'autre ne l'a changée. Le résultat lit `OfferCreated` pour ce wallet et le `Transfer` de la garantie vers le vault.
 
+<a id="borrow-nft-collateral"></a>
+
+### Borrow : un NFT en garantie
+
+La norme de la garantie est lue avec `supportsInterface` (ERC-721 `0x80ac58cd`, ERC-1155 `0xd9b67a26`) ; un revert ne compte pour aucune, et une lecture échouée ne propose aucune demande. Une demande ERC-721 envoie `collateralAssetType` 1, `collateralTokenId` l'identifiant saisi, `collateralQuantity` 1 et `collateralAmount` = `collateralAmountMax` = 0 ; la paire de risque est liée à cet identifiant. La revue lit `ownerOf`, `getApproved` et `isApprovedForAll(wallet, Diamond)` dans un même bloc ; un jeton détenu ailleurs, ou un `ownerOf` qui revert, bloque la demande. Sans aucune autorisation, la simulation s'arrête au `ERC721InsufficientApproval` du jeton, présenté comme l'autorisation à donner. L'autorisation est `approve(Diamond, id)`, comptée seulement quand `getApproved` lit le Diamond au bloc du reçu ; un arrêt ensuite la remet à l'adresse antérieure seulement tant qu'elle lit encore le Diamond et que le portefeuille détient encore le jeton. `setApprovalForAll` n'est jamais demandé. Le résultat lit `OfferCreated` et le `Transfer` du jeton lui-même (quatre topics) du portefeuille vers le coffre. Les garanties ERC-1155 et les offres de prêteurs demandant un NFT passent par l'application actuelle.
+
 <a id="risk-access"></a>
 
 ### Risk Access : votre niveau de risque

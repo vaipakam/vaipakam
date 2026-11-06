@@ -2091,6 +2091,12 @@ Basic は単一値のリクエストを出します。`amount` = `amountMax`、`
 
 確認画面はウォレットから `createOffer` をシミュレートし、両方の区分、`getEffectiveGraceSeconds(durationDays)`、`getLoanInitiationFeeBps`、最長期間、ウォレットのボールト・残高・承認額、両側が流動的なら `calculateLTV` を読み、毎ブロックとウォレットが開く直前に読み直します。承認額が足りない間、シミュレーションは担保の引き出しまでしか進めないため、トークンの引き出しエラーやプロトコルのエラー名がない revert は解消すべき承認として示し、名前のあるプロトコルエラーは拒否として扱います。ちょうどの額を承認した後、`createOffer` を再度シミュレートして送信します。承認後に止まった場合、他に変更がなければ承認額を元の値に戻します。結果はこのウォレットの `OfferCreated` と、ボールトへの担保の `Transfer` から読みます。
 
+<a id="borrow-nft-collateral"></a>
+
+### Borrow: NFT を担保にする
+
+担保の規格は `supportsInterface` で読み取ります（ERC-721 `0x80ac58cd`、ERC-1155 `0xd9b67a26`）。revert はどちらでもないとみなし、読み取りの失敗ではリクエストを提示しません。ERC-721 のリクエストは `collateralAssetType` 1、`collateralTokenId` に入力した ID、`collateralQuantity` 1、`collateralAmount` = `collateralAmountMax` = 0 を送ります。リスクペアはそのトークン ID をキーにします。レビューは同じブロックで `ownerOf`、`getApproved`、`isApprovedForAll(wallet, Diamond)` を読みます。他のウォレットが保有するトークンや revert する `ownerOf` はリクエストをブロックします。どちらの承認もない場合、ドライランはトークンの `ERC721InsufficientApproval` で止まり、必要な承認として示されます。承認は `approve(Diamond, id)` で、レシートのブロックで `getApproved` が Diamond を読むときだけ完了とみなします。その後に止まった場合、承認がまだ Diamond を指し、ウォレットがまだトークンを保有している間だけ、以前のアドレスに戻します。`setApprovalForAll` は決して求めません。結果は `OfferCreated` と、ウォレットから金庫へのトークン自身の `Transfer`（4 つの topic）を読みます。ERC-1155 の担保と、NFT を求める貸し手のオファーは現在のアプリで扱います。
+
 <a id="risk-access"></a>
 
 ### Risk Access: あなたのリスクレベル

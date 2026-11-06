@@ -25,9 +25,13 @@ import { shortAddress } from '../../../shared/ui/format';
 import { pageHandoff } from '../../../routes/pageMap';
 import { REQUEST_KEY } from './RequestForm';
 import { createdRequest } from './requestOutcome';
-import { erc20Pair, type RiskNeed } from '../../../shared/risk/riskAccess';
+import { erc20Pair, erc721CollateralPair, type RiskNeed } from '../../../shared/risk/riskAccess';
+import { nftApproval } from '../../../shared/tx/nftApproval';
+import { tokenMoved } from '../../../shared/nft/nft';
+import { assetName } from '../../../shared/reads/tokens';
 import { RiskGate, RiskStepFlow } from '../../../shared/risk/RiskAccessStep';
 import {
+  approvalPrompts,
   changedBetween,
   CREATE_ABI,
   promptCount,
@@ -63,7 +67,9 @@ interface PostRequestProps {
  * again with the approval in place, and only then sent. If anything stops it
  * after an approval, the approval is put back (best effort, stated either
  * way). The outcome is measured from the transaction's own logs: the
- * request recorded, and the collateral that moved into the vault.
+ * request recorded, and the collateral that moved into the vault. An
+ * ERC-721 collateral (NFT-13) is approved for that one token only, never the
+ * collection, and moving it into the vault clears the approval by itself.
  */
 export function PostRequest({ draft, chain, own, meta, terms, onEdit, onClose }: PostRequestProps) {
   const copy = useCopy();
@@ -82,10 +88,17 @@ export function PostRequest({ draft, chain, own, meta, terms, onEdit, onClose }:
   const [step, setStep] = useState<string | null>(null);
   /** The approval this flow made and has not yet seen used or put back (see
    *  AcceptOffer): a sent request that reverts leaves it standing. */
-  const approvalLeft = useRef<{ token: Hex; prior: bigint; amount: bigint } | null>(null);
+  const approvalLeft = useRef<{ kind: 'erc20'; token: Hex; prior: bigint; amount: bigint } | { kind: 'erc721'; token: Hex; tokenId: bigint; prior: Hex | null } | null>(null);
 
   const amt = (asset: Hex, v: bigint) => tokenAmount(v, asset, meta, format);
   const { readAllowance, allowanceIo, approveExactly, putBack } = approvalFlow({ own, config, chainId: chain.chainId, diamond, copy, amount: amt, setStep });
+  /** The one-token approval for an ERC-721 collateral. */
+  const tokenApproval = (asset: Hex, tokenId: bigint) =>
+    nftApproval(
+      { own, config, chainId: chain.chainId, diamond, copy, tokenName: format('asset.nft', { asset: assetName(asset, meta), id: String(tokenId) }), setStep },
+      asset,
+      tokenId,
+    );
 
   const tx = useTrackedTx({
     key: REQUEST_KEY,
@@ -100,28 +113,43 @@ export function PostRequest({ draft, chain, own, meta, terms, onEdit, onClose }:
       const say = (what: string) => setStep(format('accept.stepOf', { n: String(++n), total: String(total), what }));
       const collateral = r.draft.pair.collateral;
       const lock = r.draft.parsed.collateral;
+      const h = r.holding;
       approvalLeft.current = null;
 
-      // The allowance is read again now: the value a stop puts back is the
-      // one the wallet holds right before this flow's approval, and a change
-      // that alters the steps stops before any prompt.
-      const io = allowanceIo(collateral, (amount, i, of) => say(of === 2 && i === 0 ? text('approval.stepZero') : format('approval.step', { amount: amt(collateral, amount) })));
-      const prior = await readAllowance(collateral);
-      const steps = prior < lock ? await allowanceSteps(io, prior, lock) : [];
-      const approved = steps.length > 0;
-      if (steps.length !== r.approvalSteps) throw allowanceMoved(copy);
-
-      // 1. The approval, for exactly the collateral, when needed. Each step
-      //    is judged by the allowance it leaves (shared/tx/approval).
-      if (approved) {
-        await approveExactly(io, collateral, lock, prior);
-        approvalLeft.current = { token: collateral, prior, amount: lock };
+      // 1. The approval, when needed: exactly the collateral for an ERC-20,
+      //    judged by the allowance each step leaves (shared/tx/approval), or
+      //    the one token for an ERC-721, judged by the approval it reads
+      //    after (shared/tx/nftApproval). Each is read again first, so a
+      //    change since the review stops before any prompt, and a stop puts
+      //    back exactly what the wallet had right before.
+      let putItBack: (() => Promise<{ sentence: string }>) | null = null;
+      if (h.kind === 'erc721') {
+        const ap = tokenApproval(collateral, h.tokenId);
+        const now = await ap.read();
+        const needed = !(now.approvedForAll || (now.approved !== null && now.approved.toLowerCase() === diamond.toLowerCase()));
+        if ((needed ? 1 : 0) !== approvalPrompts(r)) throw allowanceMoved(copy);
+        if (needed) {
+          say(format('nftApproval.step', { token: format('asset.nft', { asset: assetName(collateral, meta), id: String(h.tokenId) }) }));
+          await ap.approve(now.approved);
+          approvalLeft.current = { kind: 'erc721', token: collateral, tokenId: h.tokenId, prior: now.approved };
+          putItBack = () => ap.putBack(now.approved);
+        }
+      } else {
+        const io = allowanceIo(collateral, (amount, i, of) => say(of === 2 && i === 0 ? text('approval.stepZero') : format('approval.step', { amount: amt(collateral, amount) })));
+        const prior = await readAllowance(collateral);
+        const steps = prior < lock ? await allowanceSteps(io, prior, lock) : [];
+        if (steps.length !== h.approvalSteps) throw allowanceMoved(copy);
+        if (steps.length > 0) {
+          await approveExactly(io, collateral, lock, prior);
+          approvalLeft.current = { kind: 'erc20', token: collateral, prior, amount: lock };
+          putItBack = () => putBack(collateral, prior, lock);
+        }
       }
 
       const stop = async (reason: string): Promise<never> => {
-        if (!approved) throw new StatedRefusal({ code: 'RequestStopped', reason, reopensAt: null, remedy: null });
+        if (putItBack === null) throw new StatedRefusal({ code: 'RequestStopped', reason, reopensAt: null, remedy: null });
         approvalLeft.current = null;
-        const after = await putBack(collateral, prior, lock);
+        const after = await putItBack();
         throw new StatedRefusal({ code: 'RequestStopped', reason: `${reason} ${after.sentence}`, reopensAt: null, remedy: null });
       };
 
@@ -143,6 +171,11 @@ export function PostRequest({ draft, chain, own, meta, terms, onEdit, onClose }:
       const left = approvalLeft.current;
       approvalLeft.current = null;
       if (!left) return null;
+      if (left.kind === 'erc721') {
+        const after = await tokenApproval(left.token, left.tokenId).putBack(left.prior);
+        const label = text('nftApproval.legBack');
+        return after.ok ? { status: 'done', label } : { status: 'not-done', label, reason: after.sentence };
+      }
       const after = await putBack(left.token, left.prior, left.amount);
       const label = format('approval.legBack', { amount: amt(left.token, left.prior) });
       return after.ok ? { status: 'done', label } : { status: 'not-done', label, reason: after.sentence };
@@ -160,7 +193,9 @@ export function PostRequest({ draft, chain, own, meta, terms, onEdit, onClose }:
       }
       const collateral = r.draft.pair.collateral;
       const lock = r.draft.parsed.collateral;
-      const lockLabel = format('request.legLocked', { amount: amt(collateral, lock) });
+      const h = r.holding;
+      const tokenName = h.kind === 'erc721' ? format('asset.nft', { asset: assetName(collateral, meta), id: String(h.tokenId) }) : '';
+      const lockLabel = format('request.legLocked', { amount: h.kind === 'erc721' ? tokenName : amt(collateral, lock) });
       let vault: Hex | null = null;
       try {
         vault = await at.read((c, b) => readVault(c, diamond, account, b));
@@ -169,6 +204,13 @@ export function PostRequest({ draft, chain, own, meta, terms, onEdit, onClose }:
       }
       if (vault === null) {
         legs.push({ status: 'unknown', label: lockLabel, reason: text('accept.vaultUnknown') });
+      } else if (h.kind === 'erc721') {
+        // The token's own Transfer log, from this wallet to the vault.
+        legs.push(
+          tokenMoved(receipt.logs, collateral, h.tokenId, account, vault)
+            ? { status: 'done', label: lockLabel }
+            : { status: 'not-done', label: lockLabel, reason: format('request.tokenNotLocked', { token: tokenName }) },
+        );
       } else {
         const locked = moved(receipt.logs, collateral, account, vault);
         const lv = legVerdict(locked, lock);
@@ -294,8 +336,18 @@ export function PostRequest({ draft, chain, own, meta, terms, onEdit, onClose }:
   const riskLink = guideUrl(mode, 'borrow-risks');
   const riskNeed = review ? requestRiskNeed(review) : null;
   const symbol = (a: Hex) => meta?.[a.toLowerCase()]?.symbol ?? shortAddress(a);
-  const riskPair = review ? erc20Pair(review.draft.pair.lending, review.draft.pair.collateral) : null;
-  const pairLabel = review ? format('risk.pairName', { lend: symbol(review.draft.pair.lending), coll: symbol(review.draft.pair.collateral) }) : '';
+  const leg = review?.draft.pair.leg ?? null;
+  const riskPair = review
+    ? leg?.kind === 'erc721'
+      ? erc721CollateralPair(review.draft.pair.lending, review.draft.pair.collateral, leg.tokenId)
+      : erc20Pair(review.draft.pair.lending, review.draft.pair.collateral)
+    : null;
+  const collLabel = review
+    ? leg?.kind === 'erc721'
+      ? format('asset.nft', { asset: symbol(review.draft.pair.collateral), id: String(leg.tokenId) })
+      : symbol(review.draft.pair.collateral)
+    : '';
+  const pairLabel = review ? format('risk.pairName', { lend: symbol(review.draft.pair.lending), coll: collLabel }) : '';
 
   const gate = review
     ? {

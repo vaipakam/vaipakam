@@ -1156,6 +1156,12 @@ Ein Verleiher übernimmt den ganzen Betrag oder keiner. Jede Zahl wird genau so 
 
 Bevor sich deine Wallet öffnet, lässt die App das Protokoll deine Anfrage als Probelauf ausführen, sodass die Prüfung die eigene Antwort des Protokolls zeigt. Sie nennt, was du jetzt sperrst, Betrag, Zinssatz und Laufzeit, was du erhalten würdest und wie die Gebühr bestimmt wird (der bei der Annahme geltende Gebührensatz, abzüglich deiner Gebührenrabattstufe in diesem Moment; die angezeigte Zahl nutzt den heutigen Satz), was du schulden würdest, jede Laufzeitbedingung, wann die Anfrage abläuft, den Beleihungswert und ob eine Freigabe nötig ist. Du setzt ein Häkchen, um den Risikohinweisen und den Bedingungen zuzustimmen. Deine Wallet gibt, falls nötig, genau die Sicherheit frei, die App führt die Anfrage erneut als Probelauf aus und stellt sie erst dann. Stoppt es nach einer Freigabe, bittet die App darum, die Freigabe zurückzusetzen, und sagt, ob das geschah. Danach prüft die App auf der Chain die erfasste Anfrage und die gesperrte Sicherheit.
 
+<a id="borrow-nft-collateral"></a>
+
+### Borrow: Ein NFT als Sicherheit
+
+Eine Anfrage kann statt eines Tokens ein NFT sperren. Wählen Sie die Sammlung als das, was Sie sperren (die Test-Sammlungen sind als NFTs gekennzeichnet, oder fügen Sie eine Adresse ein); ob eine Adresse ein Token oder eine NFT-Sammlung ist, wird aus ihrem Vertrag gelesen. Geben Sie dann die Nummer des NFT ein, seine Token-ID, die Ihre Wallet oder die Seite der Sammlung zeigt; das Formular sagt sofort, ob Ihre Wallet es hält. Das Protokoll bewertet ein NFT mit null, egal wofür es anderswo verkauft wird: Ein Darlehen darauf hat keinen Beleihungswert und keine preisbasierte Liquidation, und zahlen Sie bis zum Ende der Kulanzfrist nicht zurück, erhält der Kreditgeber das NFT selbst. Beim Stellen bittet die App Ihre Wallet, dem Protokoll nur dieses eine NFT freizugeben, nie den Rest Ihrer Sammlung, und die Übertragung in Ihren Tresor hebt diese Freigabe von selbst auf; stoppt die Anfrage nach der Freigabe, bittet die App, sie zurückzusetzen, und sagt, ob das geschah. NFTs, die in Stückzahlen vorkommen, brauchen eine Freigabe für die ganze Sammlung, daher schickt die App Sie dafür vorerst zur Borrow-Seite der aktuellen App; auch das Annehmen eines Kreditgeberangebots, das ein NFT verlangt, geschieht vorerst dort.
+
 <a id="risk-access"></a>
 
 ### Risk Access: Ihre Risikostufe

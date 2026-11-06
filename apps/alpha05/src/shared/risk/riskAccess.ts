@@ -53,6 +53,12 @@ export function erc20Pair(lendAsset: Hex, collAsset: Hex): RiskPair {
   return { lendAsset, lendType: 0, lendTokenId: 0n, collAsset, collType: 0, collTokenId: 0n, prepayAsset: ZERO };
 }
 
+/** The pair of a loan of an ERC-20 against one ERC-721 token (NFT-13): the
+ *  protocol keys a consent to the token's id, so each token is its own pair. */
+export function erc721CollateralPair(lendAsset: Hex, collAsset: Hex, tokenId: bigint): RiskPair {
+  return { lendAsset, lendType: 0, lendTokenId: 0n, collAsset, collType: 1, collTokenId: tokenId, prepayAsset: ZERO };
+}
+
 /** A stable name for a pair, to key a flow's review of it. */
 export function pairName(p: RiskPair): string {
   return [p.lendAsset, p.lendType, p.lendTokenId, p.collAsset, p.collType, p.collTokenId, p.prepayAsset].map((x) => String(x).toLowerCase()).join(':');

@@ -2269,6 +2269,12 @@ Basic publica una solicitud de valor único: `amount` = `amountMax`, `interestRa
 
 La revisión simula `createOffer` desde la wallet y lee ambas clases, `getEffectiveGraceSeconds(durationDays)`, `getLoanInitiationFeeBps`, el plazo máximo, el vault, el saldo y la aprobación de la wallet, y `calculateLTV` cuando ambos lados son líquidos; se vuelve a leer en cada bloque y justo antes de abrir la wallet. Mientras la aprobación no alcanza, la simulación solo llega al cobro de la garantía: un error de cobro del token o una reversión sin nombre de error del protocolo se muestra como la aprobación pendiente, y un error con nombre del protocolo es un rechazo. Tras una aprobación exacta, `createOffer` se simula de nuevo y se envía; una parada tras la aprobación la restablece a su valor anterior si nada más la cambió. El resultado lee `OfferCreated` para esta wallet y el `Transfer` de la garantía al vault.
 
+<a id="borrow-nft-collateral"></a>
+
+### Borrow: un NFT como garantía
+
+El estándar de la garantía se lee con `supportsInterface` (ERC-721 `0x80ac58cd`, ERC-1155 `0xd9b67a26`); un revert no cuenta como ninguno, y una lectura fallida no ofrece solicitud. Una solicitud ERC-721 envía `collateralAssetType` 1, `collateralTokenId` el id escrito, `collateralQuantity` 1 y `collateralAmount` = `collateralAmountMax` = 0; el par de riesgo queda ligado a ese id. La revisión lee `ownerOf`, `getApproved` e `isApprovedForAll(wallet, Diamond)` en un mismo bloque; un token en otra billetera, o un `ownerOf` que revierte, bloquea la solicitud. Sin ninguna aprobación, la simulación se detiene en el `ERC721InsufficientApproval` del token, mostrado como la aprobación pendiente. La aprobación es `approve(Diamond, id)` y cuenta solo cuando `getApproved` lee el Diamond en el bloque del recibo; una parada posterior la devuelve a la dirección anterior solo mientras aún lea el Diamond y la billetera aún tenga el token. Nunca se pide `setApprovalForAll`. El resultado lee `OfferCreated` y el `Transfer` propio del token (cuatro topics) de la billetera a la bóveda. Las garantías ERC-1155 y las ofertas de prestamistas que piden un NFT van a la app actual.
+
 <a id="risk-access"></a>
 
 ### Risk Access: tu nivel de riesgo

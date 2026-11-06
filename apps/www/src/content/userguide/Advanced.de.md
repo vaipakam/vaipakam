@@ -2279,6 +2279,12 @@ Basic stellt eine Anfrage mit Einzelwerten: `amount` = `amountMax`, `interestRat
 
 Die Prüfung simuliert `createOffer` aus der Wallet und liest beide Klassen, `getEffectiveGraceSeconds(durationDays)`, `getLoanInitiationFeeBps`, die maximale Laufzeit, Vault, Guthaben und Freigabe der Wallet sowie `calculateLTV`, wenn beide Seiten liquide sind; sie wird jeden Block und direkt vor dem Öffnen der Wallet neu gelesen. Solange die Freigabe zu niedrig ist, erreicht die Simulation nur den Einzug der Sicherheit: Ein Einzugsfehler des Tokens oder ein Revert ohne Fehlernamen des Protokolls wird als die zu erteilende Freigabe gezeigt, ein benannter Protokollfehler ist eine Ablehnung. Nach einer exakten Freigabe wird `createOffer` erneut simuliert und gesendet; ein Stopp nach der Freigabe setzt sie auf den früheren Wert zurück, wenn nichts anderes sie geändert hat. Das Ergebnis liest `OfferCreated` für diese Wallet und den `Transfer` der Sicherheit in den Vault.
 
+<a id="borrow-nft-collateral"></a>
+
+### Borrow: Ein NFT als Sicherheit
+
+Der Standard der Sicherheit wird mit `supportsInterface` gelesen (ERC-721 `0x80ac58cd`, ERC-1155 `0xd9b67a26`); ein Revert zählt als keiner von beiden, ein fehlgeschlagener Lesevorgang bietet keine Anfrage an. Eine ERC-721-Anfrage sendet `collateralAssetType` 1, `collateralTokenId` die eingegebene ID, `collateralQuantity` 1 und `collateralAmount` = `collateralAmountMax` = 0; das Risikopaar ist an diese Token-ID gebunden. Die Prüfung liest `ownerOf`, `getApproved` und `isApprovedForAll(wallet, Diamond)` in einem Block; ein anderswo gehaltenes Token oder ein revertierendes `ownerOf` blockiert die Anfrage. Ohne eine der Freigaben endet der Probelauf am `ERC721InsufficientApproval` des Tokens, angezeigt als die zu erteilende Freigabe. Die Freigabe ist `approve(Diamond, id)` und zählt nur, wenn `getApproved` im Block der Quittung den Diamond liest; ein Stopp danach setzt sie nur auf die frühere Adresse zurück, solange sie noch den Diamond liest und die Wallet das Token noch hält. `setApprovalForAll` wird nie verlangt. Das Ergebnis liest `OfferCreated` und den eigenen `Transfer` des Tokens (vier Topics) von der Wallet in den Tresor. ERC-1155-Sicherheiten und Kreditgeberangebote, die ein NFT verlangen, gehen an die aktuelle App.
+
 <a id="risk-access"></a>
 
 ### Risk Access: Ihre Risikostufe

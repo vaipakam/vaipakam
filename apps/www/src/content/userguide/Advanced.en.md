@@ -2468,6 +2468,12 @@ Basic posts a single-value request: `amount` = `amountMax`, `interestRateBps` = 
 
 The review simulates `createOffer` from the wallet and reads both classes, `getEffectiveGraceSeconds(durationDays)`, `getLoanInitiationFeeBps`, the maximum term, the wallet's vault, balance and allowance, and `calculateLTV` when both legs are liquid; it is read again every block and right before the wallet opens. While the allowance is short the simulation can only reach the collateral pull, so a token's pull error or a revert without a protocol error name is shown as the approval to clear, and a named protocol error is a refusal. After an exact approval `createOffer` is simulated again and sent; a stop after the approval resets the allowance to its earlier value when nothing else changed it. The outcome reads `OfferCreated` for this wallet and the collateral `Transfer` into the vault.
 
+<a id="borrow-nft-collateral"></a>
+
+### Borrow: An NFT as Collateral
+
+The collateral's standard is read with `supportsInterface` (ERC-721 `0x80ac58cd`, ERC-1155 `0xd9b67a26`); a revert counts as neither, and a failed read offers no request. An ERC-721 request sends `collateralAssetType` 1, `collateralTokenId` the typed id, `collateralQuantity` 1 and `collateralAmount` = `collateralAmountMax` = 0; the risk pair is keyed to that token id. The review reads `ownerOf`, `getApproved` and `isApprovedForAll(wallet, Diamond)` at one block, and a token held elsewhere, or an `ownerOf` that reverts, blocks the request. Without either approval the dry run stops at the token's `ERC721InsufficientApproval`, shown as the approval to clear. The approval is `approve(Diamond, id)`, counted only when `getApproved` reads the Diamond at the receipt's block; a stop afterwards resets it to the earlier address only while it still reads the Diamond and the wallet still holds the token. `setApprovalForAll` is never asked. The outcome reads `OfferCreated` and the token's own `Transfer` (four topics) from the wallet to the vault. ERC-1155 collateral, and lender offers asking for an NFT, go to the current app.
+
 <a id="risk-access"></a>
 
 ### Risk Access: Your Risk Level

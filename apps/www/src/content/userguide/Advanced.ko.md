@@ -1982,6 +1982,12 @@ Basic은 단일 값 요청을 올립니다: `amount` = `amountMax`, `interestRat
 
 검토 화면은 지갑에서 `createOffer`를 시뮬레이션하고 양쪽 분류, `getEffectiveGraceSeconds(durationDays)`, `getLoanInitiationFeeBps`, 최장 기간, 지갑의 볼트·잔액·승인액, 양쪽이 유동적이면 `calculateLTV`를 읽으며, 매 블록과 지갑이 열리기 직전에 다시 읽습니다. 승인액이 부족한 동안 시뮬레이션은 담보 인출까지만 갈 수 있으므로, 토큰의 인출 오류나 프로토콜 오류 이름이 없는 revert는 해결할 승인으로 표시하고, 이름이 있는 프로토콜 오류는 거절로 봅니다. 정확한 금액을 승인한 뒤 `createOffer`를 다시 시뮬레이션하고 보냅니다. 승인 뒤 멈추면, 다른 변경이 없을 때 승인액을 이전 값으로 되돌립니다. 결과는 이 지갑의 `OfferCreated`와 볼트로의 담보 `Transfer`에서 읽습니다.
 
+<a id="borrow-nft-collateral"></a>
+
+### Borrow: NFT를 담보로
+
+담보의 표준은 `supportsInterface`로 읽습니다(ERC-721 `0x80ac58cd`, ERC-1155 `0xd9b67a26`). revert는 어느 쪽도 아닌 것으로 보며, 읽기에 실패하면 요청을 제시하지 않습니다. ERC-721 요청은 `collateralAssetType` 1, `collateralTokenId`에 입력한 ID, `collateralQuantity` 1, `collateralAmount` = `collateralAmountMax` = 0을 보냅니다. 위험 페어는 그 토큰 ID를 키로 합니다. 검토는 한 블록에서 `ownerOf`, `getApproved`, `isApprovedForAll(wallet, Diamond)`를 읽으며, 다른 지갑이 보유한 토큰이나 revert하는 `ownerOf`는 요청을 막습니다. 어느 승인도 없으면 드라이 런은 토큰의 `ERC721InsufficientApproval`에서 멈추고, 이는 필요한 승인으로 표시됩니다. 승인은 `approve(Diamond, id)`이며, 영수증 블록에서 `getApproved`가 Diamond를 읽을 때만 완료로 봅니다. 그 뒤에 멈추면 승인이 여전히 Diamond를 가리키고 지갑이 여전히 토큰을 보유하는 동안에만 이전 주소로 되돌립니다. `setApprovalForAll`은 결코 요청하지 않습니다. 결과는 `OfferCreated`와 지갑에서 금고로 가는 토큰 자체의 `Transfer`(topic 4개)를 읽습니다. ERC-1155 담보와 NFT를 요구하는 대출자 오퍼는 현재 앱으로 갑니다.
+
 <a id="risk-access"></a>
 
 ### Risk Access: 내 위험 등급

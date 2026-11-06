@@ -1824,6 +1824,12 @@ Basic 发布单一数值的请求：`amount` = `amountMax`，`interestRateBps` =
 
 审核从钱包模拟 `createOffer`，并读取两侧的类别、`getEffectiveGraceSeconds(durationDays)`、`getLoanInitiationFeeBps`、最长期限、钱包的金库、余额和授权额度，两侧均为流动资产时还读取 `calculateLTV`；每个区块以及钱包打开前都会重新读取。授权额度不足时，模拟只能走到划转抵押品这一步，因此代币的划转错误或没有协议错误名的回滚会显示为待完成的批准，而有名称的协议错误则视为拒绝。完成精确批准后，再次模拟 `createOffer` 并发送；批准后若中止，且没有其他改动，授权额度会恢复为原值。结果读取此钱包的 `OfferCreated` 以及抵押品转入金库的 `Transfer`。
 
+<a id="borrow-nft-collateral"></a>
+
+### Borrow：以 NFT 作为抵押品
+
+抵押品的标准通过 `supportsInterface` 读取（ERC-721 `0x80ac58cd`，ERC-1155 `0xd9b67a26`）；回滚视为两者都不是，读取失败则不提供请求。ERC-721 请求发送 `collateralAssetType` 1、`collateralTokenId` 为输入的 ID、`collateralQuantity` 1，以及 `collateralAmount` = `collateralAmountMax` = 0；风险交易对以该代币 ID 为键。审核在同一区块读取 `ownerOf`、`getApproved` 和 `isApprovedForAll(wallet, Diamond)`；由其他钱包持有的代币或回滚的 `ownerOf` 会阻止请求。在没有任何授权时，试运行会停在代币的 `ERC721InsufficientApproval`，显示为待完成的授权。授权为 `approve(Diamond, id)`，只有当回执所在区块的 `getApproved` 读到 Diamond 时才算完成；之后若停止，只有在授权仍指向 Diamond 且钱包仍持有该代币时，才会恢复为之前的地址。从不请求 `setApprovalForAll`。结果读取 `OfferCreated` 以及该代币自身从钱包到金库的 `Transfer`（四个 topic）。ERC-1155 抵押品以及要求 NFT 的出借人报价转至当前应用。
+
 <a id="risk-access"></a>
 
 ### Risk Access：你的风险等级
