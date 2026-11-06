@@ -12,6 +12,7 @@ export const copy = {
   shell: {
     brand: B('Vaipakam'),
     more: B('More'),
+    advancedPages: B('Advanced'),
     txOut: A('A transaction you confirmed from {{account}} is still out: {{title}}, on {{chain}}.'),
     txUnknown: A('A transaction you confirmed from {{account}} has no readable receipt yet: {{title}}, on {{chain}}. It may still execute.'),
     txOpen: B('Show it'),

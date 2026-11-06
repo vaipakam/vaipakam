@@ -236,24 +236,137 @@ code {
     min-height: 44px;
     display: flex;
     align-items: center;
+    gap: 10px;
+  }
+  .site-menu .nav-group {
+    grid-column: 1 / -1;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 4px;
+  }
+  .site-menu .nav-group-title {
+    grid-column: 1 / -1;
+    margin: 8px 0 0;
+    font-size: 0.8rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-muted);
   }
 }
+/* From 720px: a one-row header (brand, wallet) over a left column that
+   carries the navigation and, at its foot, the mode and theme controls. The
+   column is fixed below the header; the page makes room for it. A rail up to
+   1023px (icon above a short name), a panel from 1024px (icon beside the
+   name). The header carries no blur here: a filter would make it the
+   containing block of the fixed column inside it. */
 @media (min-width: 720px) {
+  :root {
+    --topbar-h: 64px;
+    --side-w: 96px;
+  }
   .bottom-bar {
     display: none;
   }
-  .site-menu {
-    flex: 1 1 auto;
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 12px 20px;
+  .shell {
+    padding-inline-start: var(--side-w);
   }
-  .site-menu .controls {
-    margin-inline-start: auto;
+  .topbar {
+    flex-wrap: nowrap;
+    height: var(--topbar-h);
+    margin-inline-start: calc(-1 * var(--side-w));
+    padding-block: 0;
+    backdrop-filter: none;
+    background: var(--surface-raised);
   }
   .wallet-slot {
-    margin-inline-start: 0;
+    margin-inline-start: auto;
+  }
+  .site-menu {
+    position: fixed;
+    top: var(--topbar-h);
+    bottom: 0;
+    inset-inline-start: 0;
+    width: var(--side-w);
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    padding: 12px 6px;
+    overflow-y: auto;
+    background: var(--surface-raised);
+    border-inline-end: 1px solid var(--border);
+  }
+  .site-menu nav,
+  .site-menu .nav-group {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .site-menu .nav-group {
+    margin-top: 12px;
+  }
+  .site-menu .nav-group-title {
+    margin: 0 0 4px;
+    padding-inline: 6px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    text-align: center;
+    color: var(--text-muted);
+  }
+  .site-menu nav a {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    min-height: 56px;
+    justify-content: center;
+    padding: 6px 4px;
+    font-size: 0.75rem;
+    text-align: center;
+  }
+  .site-menu .controls {
+    margin-top: auto;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+  }
+  .site-menu .segment {
+    flex-direction: column;
+  }
+  .site-menu .segment button,
+  .site-menu .select select {
+    width: 100%;
+    font-size: 0.8rem;
+  }
+}
+@media (min-width: 1024px) {
+  :root {
+    --side-w: 232px;
+  }
+  .site-menu {
+    padding: 16px 12px;
+  }
+  .site-menu .nav-group-title {
+    padding-inline: 12px;
+    text-align: start;
+  }
+  .site-menu nav a {
+    flex-direction: row;
+    justify-content: flex-start;
+    gap: 12px;
+    min-height: 44px;
+    padding: 8px 12px;
+    font-size: 0.95rem;
+    text-align: start;
+  }
+  .site-menu .segment {
+    flex-direction: row;
+  }
+  .site-menu .segment button {
+    flex: 1 1 0;
+    font-size: 0.9rem;
   }
 }
 .segment {

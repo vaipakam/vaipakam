@@ -284,7 +284,13 @@ visitor" is an efficiency target for the world rail, not a prohibition.
 Keyboard and screen-reader operable, WCAG AA contrast, from the first route
 (a commitment of this design; the specifications are silent on it). Mobile
 first: the same destinations on phone and desktop, with bottom navigation on
-small screens and a persistent layout on larger ones; an unknown route shows
+small screens and a persistent layout on larger ones (below 720 px a bottom
+bar of the first four destinations and More; from 720 px a one-row header of
+brand and wallet over a left column, a rail of icons above short names up to
+1023 px and a panel of icons beside names from 1024 px, the pages only
+Advanced adds grouped under their own label after the Basic ones, and the mode
+and theme controls at the column's foot; the breakpoints follow the common
+compact, medium and expanded window classes); an unknown route shows
 a recovery page, and a display failure is contained to a recovery card that
 says funds and on-chain positions are unchanged. Every string in the copy
 catalog; locale bundles override per key, and the language rules of the

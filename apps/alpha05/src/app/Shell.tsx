@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
 import { useMode } from './ModeContext';
 import { useTheme } from './ThemeContext';
@@ -37,9 +37,21 @@ export function Shell() {
   // bottom bar carries the first destinations of the same derived navigation
   // plus More, which opens every destination and the mode and theme
   // controls as a sheet. Choosing a page closes the sheet; Escape closes it
-  // and returns focus to More. From 720px up the bar goes and the whole
-  // navigation sits in the header.
+  // and returns focus to More. From 720px up the bar goes and the same
+  // navigation becomes a left column under a one-row header: a rail (icon
+  // above a short name) up to 1023px, a panel (icon beside the name) from
+  // 1024px, with the mode and theme controls at its foot. The pages only
+  // Advanced adds are grouped under their own label, after the Basic ones.
   const quick = nav.slice(0, QUICK_DESTINATIONS);
+  const basicNav = nav.filter((e) => e.tier === 'basic');
+  const advancedNav = nav.filter((e) => e.tier !== 'basic');
+  const advancedLabel = useId();
+  const navLink = (e: (typeof nav)[number]) => (
+    <NavLink key={e.path} to={e.path} end={e.path === '/'} onClick={closeMenu}>
+      <PlaceIcon place={e.path} />
+      <span>{e.name}</span>
+    </NavLink>
+  );
   const [menuOpen, setMenuOpen] = useState(false);
   const menuButton = useRef<HTMLButtonElement>(null);
   const sheet = useRef<HTMLDivElement>(null);
@@ -75,11 +87,15 @@ export function Shell() {
         </NavLink>
         <div id="site-menu" ref={sheet} className="site-menu" data-open={menuOpen}>
           <nav aria-label="Primary">
-            {nav.map((e) => (
-              <NavLink key={e.path} to={e.path} end={e.path === '/'} onClick={closeMenu}>
-                {e.name}
-              </NavLink>
-            ))}
+            {basicNav.map(navLink)}
+            {advancedNav.length > 0 && (
+              <div className="nav-group" role="group" aria-labelledby={advancedLabel}>
+                <p id={advancedLabel} className="nav-group-title">
+                  {text('shell.advancedPages')}
+                </p>
+                {advancedNav.map(navLink)}
+              </div>
+            )}
           </nav>
           <div className="controls">
             <div className="segment" role="group" aria-label="Mode">

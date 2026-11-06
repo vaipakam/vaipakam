@@ -163,3 +163,50 @@ test('on a phone the header is one row and a bottom bar carries the first destin
   const bar2 = await bar.boundingBox();
   expect((foot?.y ?? Infinity) + (foot?.height ?? 0)).toBeLessThanOrEqual((bar2?.y ?? 0) + 2);
 });
+
+test('from 720px the navigation is a left column under a one-row header: a rail, then a panel', async ({ launchWallet }, testInfo) => {
+  test.skip(onPhone(testInfo.project.name), 'the column exists from 720px only');
+  const { page } = await launchWallet('visitor', { advanced: true });
+  const header = page.locator('header.topbar');
+  const nav = page.getByRole('navigation', { name: 'Primary' });
+  const column = page.locator('.site-menu');
+  for (const [width, kind] of [
+    [1280, 'panel'],
+    [900, 'rail'],
+  ] as const) {
+    await page.setViewportSize({ width, height: 800 });
+    await page.goto('/');
+    await expect(page.getByRole('heading', { level: 1 })).toHaveText('Home');
+    // One row: brand and wallet only; the column starts where the header ends.
+    const h = (await header.boundingBox())!;
+    const c = (await column.boundingBox())!;
+    expect(h.height).toBeLessThanOrEqual(65);
+    expect(c.x).toBe(0);
+    expect(Math.abs(c.y - (h.y + h.height))).toBeLessThanOrEqual(1);
+    // Every destination, each with its hidden place icon; the Advanced pages after the Basic ones, under their label.
+    for (const name of [...BASIC_NAV, ...ADVANCED_ONLY]) {
+      const link = nav.getByRole('link', { name, exact: true });
+      await expect(link).toBeVisible();
+      await expect(link.locator('svg.icon-place')).toHaveAttribute('aria-hidden', 'true');
+    }
+    const advanced = nav.getByRole('group', { name: 'Advanced' });
+    for (const name of ADVANCED_ONLY) await expect(advanced.getByRole('link', { name, exact: true })).toBeVisible();
+    for (const name of BASIC_NAV) await expect(advanced.getByRole('link', { name, exact: true })).toHaveCount(0);
+    // The page sits beside the column, never under it.
+    const main = (await page.locator('#main').boundingBox())!;
+    expect(main.x).toBeGreaterThanOrEqual(c.x + c.width - 1);
+    // Rail: icon above a short name. Panel: icon beside the name.
+    const home = nav.getByRole('link', { name: 'Home', exact: true });
+    const [i, l] = [(await home.locator('svg').boundingBox())!, (await home.locator('span').boundingBox())!];
+    if (kind === 'rail') {
+      expect(c.width).toBeLessThan(110);
+      expect(i.y + i.height).toBeLessThanOrEqual(l.y + 1);
+    } else {
+      expect(c.width).toBeGreaterThan(200);
+      expect(i.x + i.width).toBeLessThanOrEqual(l.x + 1);
+    }
+    // The mode and theme controls are reachable at the column's foot.
+    await expect(column.getByRole('group', { name: 'Mode' })).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(0);
+  }
+});
