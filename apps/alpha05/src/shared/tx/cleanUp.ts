@@ -9,6 +9,18 @@ import type { LegOutcome } from './outcome';
 
 type Step = (() => Promise<LegOutcome | null>) | undefined;
 
+/** What a clean-up step found: done, confirmed not done, or `unknown` when
+ *  a step was sent but its effect could not be read (it may have landed). */
+export interface CleanUpResult {
+  status: 'done' | 'not-done' | 'unknown';
+  sentence: string;
+}
+
+/** A clean-up result as the finish card's leg. */
+export function cleanUpLeg(r: CleanUpResult, label: string): LegOutcome {
+  return r.status === 'done' ? { status: 'done', label } : { status: r.status, label, reason: r.sentence };
+}
+
 export interface CleanUpSteps {
   unwind?: Step;
   release?: Step;

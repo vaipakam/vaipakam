@@ -69,6 +69,10 @@ export interface TrackedTxOptions {
    *  `unwind` when it did not. Resolves with a leg saying what was taken
    *  back or why it was not, or null when nothing was granted. */
   release?: () => Promise<LegOutcome | null>;
+  /** Read once `send` returns: what it set up for the call that stands
+   *  until the call settles and `release` runs, as the page says it (kept
+   *  with the hash, shown while the receipt is pending or unknown). */
+  held?: () => string | null;
 }
 
 export interface TrackedTx {
@@ -76,6 +80,10 @@ export interface TrackedTx {
   phase: TxPhase;
   /** What the reader confirmed, from the moment the wallet was asked. */
   frozen: Frozen | null;
+  /** The wallet step the flow is asking for now (set with `useTxNote`). */
+  note: string | null;
+  /** What stands until the submitted call settles (`TrackedTxOptions.held`). */
+  held: string | null;
   /** From `idle`, `measured`, `failed` or `superseded`: start a review. */
   review: () => void;
   /** From `review`: freeze what was confirmed, sign, submit, wait, measure.
@@ -100,7 +108,7 @@ export function useTrackedTx(opts: TrackedTxOptions): TrackedTx {
   const apply = useCallback(
     (event: TxEvent) => {
       const next = transition(store.get(key).phase, event);
-      store.update(key, (e) => (next.kind === 'idle' ? { ...e, phase: next, frozen: null, submission: null } : { ...e, phase: next }));
+      store.update(key, (e) => (next.kind === 'idle' ? { ...e, phase: next, frozen: null, submission: null, note: null } : { ...e, phase: next }));
       return next;
     },
     [store, key],
@@ -165,7 +173,7 @@ export function useTrackedTx(opts: TrackedTxOptions): TrackedTx {
   const run = useCallback(
     async (frozen: Frozen) => {
       apply({ type: 'sign' });
-      store.update(key, (e) => ({ ...e, frozen }));
+      store.update(key, (e) => ({ ...e, frozen, note: null }));
       let hash: `0x${string}`;
       try {
         hash = await opts.send();
@@ -173,8 +181,17 @@ export function useTrackedTx(opts: TrackedTxOptions): TrackedTx {
         apply({ type: 'failed', message: refusalFromError(e).reason });
         return;
       }
-      const ctx: Submission = { chainId: opts.chainId, account: opts.account, sources: opts.sources, measure: opts.measure, unwind: opts.unwind, release: opts.release };
-      store.update(key, (e) => ({ ...e, submission: ctx }));
+      const ctx: Submission = {
+        chainId: opts.chainId,
+        account: opts.account,
+        sources: opts.sources,
+        measure: opts.measure,
+        unwind: opts.unwind,
+        release: opts.release,
+        held: opts.held?.() ?? null,
+      };
+      // The send's own steps are over; a clean-up after the hash names its own.
+      store.update(key, (e) => ({ ...e, submission: ctx, note: null }));
       apply({ type: 'submitted', hash, at: Date.now() });
       await track(hash, ctx);
     },
@@ -191,5 +208,5 @@ export function useTrackedTx(opts: TrackedTxOptions): TrackedTx {
     await track(current.phase.hash, ctx);
   }, [apply, store, key, track]);
 
-  return { key, phase: entry.phase, frozen: entry.frozen, review, run, resume, reset };
+  return { key, phase: entry.phase, frozen: entry.frozen, note: entry.note, held: entry.submission?.held ?? null, review, run, resume, reset };
 }

@@ -15,6 +15,7 @@ import { waitForTransactionReceipt, writeContract } from 'wagmi/actions';
 import type { OwnStateClient } from '../../chain/ownRail';
 import type { CopyAccess } from '../copy/useCopy';
 import { refusalFromError, StatedRefusal } from '../eligibility/refusal';
+import type { CleanUpResult } from './cleanUp';
 import { NFT_ABI, readErc1155, type Erc1155State } from '../nft/nft';
 
 type Hex = `0x${string}`;
@@ -39,7 +40,7 @@ export interface OperatorApproval {
   /** Takes the approval back, only while it still reads granted, reading
    *  no earlier than `since` (the block the grant mined in), and says what
    *  happened. */
-  revoke: (since: bigint) => Promise<{ ok: boolean; sentence: string }>;
+  revoke: (since: bigint) => Promise<CleanUpResult>;
 }
 
 export function operatorApproval(d: OperatorApprovalDeps, asset: Hex, tokenId: bigint): OperatorApproval {
@@ -83,19 +84,20 @@ export function operatorApproval(d: OperatorApprovalDeps, asset: Hex, tokenId: b
     });
   }
 
-  async function revoke(since: bigint): Promise<{ ok: boolean; sentence: string }> {
+  async function revoke(since: bigint): Promise<CleanUpResult> {
     try {
       const now = await readSince(since);
-      if (!now.approvedForAll) return { ok: true, sentence: format('operatorApproval.revoked', { collection: d.collection }) };
+      if (!now.approvedForAll) return { status: 'done', sentence: format('operatorApproval.revoked', { collection: d.collection }) };
       d.setStep(format('operatorApproval.stepRevoke', { collection: d.collection }));
       const r = await setTo(false);
-      if (r.landed) return { ok: true, sentence: format('operatorApproval.revoked', { collection: d.collection }) };
-      return {
-        ok: false,
-        sentence: r.hash !== null ? format('operatorApproval.revokePending', { hash: r.hash, collection: d.collection }) : format('operatorApproval.revokeNotLanded', { collection: d.collection }),
-      };
+      if (r.landed) return { status: 'done', sentence: format('operatorApproval.revoked', { collection: d.collection }) };
+      // A revoke that was sent but whose effect could not be read may have landed.
+      return r.hash !== null
+        ? { status: 'unknown', sentence: format('operatorApproval.revokePending', { hash: r.hash, collection: d.collection }) }
+        : { status: 'not-done', sentence: format('operatorApproval.revokeNotLanded', { collection: d.collection }) };
     } catch (e) {
-      return { ok: false, sentence: format('operatorApproval.revokeFailed', { collection: d.collection, reason: refusalFromError(e).reason }) };
+      // Thrown before anything landed: the read before, or the wallet's refusal.
+      return { status: 'not-done', sentence: format('operatorApproval.revokeFailed', { collection: d.collection, reason: refusalFromError(e).reason }) };
     } finally {
       d.setStep(null);
     }

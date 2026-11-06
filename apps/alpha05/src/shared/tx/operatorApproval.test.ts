@@ -25,6 +25,7 @@ vi.mock('../nft/nft', async (orig) => ({
 }));
 
 const { operatorApproval } = await import('./operatorApproval');
+const { waitForTransactionReceipt } = await import('wagmi/actions');
 const { readErc1155 } = await import('../nft/nft');
 
 const at = (approvedForAll: boolean): Erc1155State => ({ balance: 5n, approvedForAll, blockNumber: 1n });
@@ -73,16 +74,16 @@ describe('granting the operator approval for one action', () => {
 describe('taking it back', () => {
   it('needs no prompt when it already reads revoked', async () => {
     states = [at(false)];
-    expect(await make().revoke(20n)).toEqual({ ok: true, sentence: 'operatorApproval.revoked' });
+    expect(await make().revoke(20n)).toEqual({ status: 'done', sentence: 'operatorApproval.revoked' });
     expect(sent).toEqual([]);
   });
   it('revokes while it still reads granted, judged by the read back, naming the step', async () => {
     states = [at(true), at(false)];
-    expect(await make().revoke(20n)).toEqual({ ok: true, sentence: 'operatorApproval.revoked' });
+    expect(await make().revoke(20n)).toEqual({ status: 'done', sentence: 'operatorApproval.revoked' });
     expect(sent).toEqual([{ operator: DIAMOND, on: false }]);
     expect(steps).toEqual(['operatorApproval.stepRevoke', null]);
     states = [at(true), at(true)];
-    expect(await make().revoke(20n)).toEqual({ ok: false, sentence: 'operatorApproval.revokeNotLanded' });
+    expect(await make().revoke(20n)).toEqual({ status: 'not-done', sentence: 'operatorApproval.revokeNotLanded' });
   });
   it('never reads at a block before the grant, so a revoke is never skipped as already done', async () => {
     states = [at(true), at(false)];
@@ -92,9 +93,14 @@ describe('taking it back', () => {
     expect(vi.mocked(readErc1155).mock.calls[0]![5]).toBe(20n);
     expect(client.getBlockNumber).toHaveBeenCalledWith({ cacheTime: 0 });
   });
+  it('states a sent revoke whose receipt could not be read as unknown, never as not landed', async () => {
+    states = [at(true)];
+    vi.mocked(waitForTransactionReceipt).mockRejectedValueOnce(new Error('timeout'));
+    expect(await make().revoke(20n)).toEqual({ status: 'unknown', sentence: 'operatorApproval.revokePending' });
+  });
   it('states a revoke that failed outright instead of throwing', async () => {
     const broken = { account: WALLET, read: async () => Promise.reject(new Error('rpc down')) } as unknown as OwnStateClient;
     const ap = operatorApproval({ own: broken, config: {} as Config, chainId: 1, diamond: DIAMOND, copy, collection: 'vMULTI', setStep: () => {} }, ASSET, 7n);
-    await expect(ap.revoke(20n)).resolves.toMatchObject({ ok: false, sentence: 'operatorApproval.revokeFailed' });
+    await expect(ap.revoke(20n)).resolves.toMatchObject({ status: 'not-done', sentence: 'operatorApproval.revokeFailed' });
   });
 });

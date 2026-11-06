@@ -47,7 +47,7 @@ describe('putting an allowance back', () => {
     expect(reads[0]).toBe(20n);
     expect(client.getBlockNumber).toHaveBeenCalledWith({ cacheTime: 0 });
     expect(sent).toEqual([0n]);
-    expect(back.ok).toBe(true);
+    expect(back.status).toBe('done');
   });
   it('without a known block reads the latest state', async () => {
     allowance = 0n;

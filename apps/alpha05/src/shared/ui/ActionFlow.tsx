@@ -26,11 +26,7 @@ import { useNow } from './useNow';
  * - `unreadable`: a safety prerequisite could not be read; signing is
  *   withheld, and the reader can try again.
  */
-export type Recheck =
-  | { kind: 'ok' }
-  | { kind: 'changed'; what: string }
-  | { kind: 'refused'; refusal: Refusal }
-  | { kind: 'unreadable'; reason: string };
+export type Recheck = { kind: 'ok' } | { kind: 'changed'; what: string } | { kind: 'refused'; refusal: Refusal } | { kind: 'unreadable'; reason: string };
 
 /** The wallet and network a review is built under (`chainId:account`). */
 export function reviewIdentity(own: Pick<OwnStateClient, 'chainId' | 'account'>): string {
@@ -73,15 +69,6 @@ export interface ActionFlowProps {
    *  consent checkbox, a blocker stated in place), rendered under the
    *  receipt; confirming is withheld until `ready`. */
   gate?: { node: ReactNode; ready: boolean };
-  /** While the wallet is asked, which of several prompts is open ("Wallet
-   *  step 2 of 3: …"); the generic line otherwise. Also shown once the
-   *  transaction has mined, while a clean-up step asks the wallet again
-   *  (taking back an approval granted for the call alone). */
-  signingNote?: string | null;
-  /** What the flow still holds granted while the transaction's outcome is
-   *  unknown (an approval taken back only once it settles), stated with
-   *  the unknown receipt; null when nothing is held. */
-  heldNote?: string | null;
 }
 
 /**
@@ -92,12 +79,27 @@ export interface ActionFlowProps {
  * retried silently: a receipt that cannot be read keeps its hash on screen
  * and offers "Check again", and nothing new is offered until it is resolved.
  */
-export function ActionFlow({ tx, identity, reviewedFor, receipt, recheck, describeAsset, explorer, next, after, onClose, gate, signingNote, heldNote }: ActionFlowProps) {
+export function ActionFlow({ tx, identity, reviewedFor, receipt, recheck, describeAsset, explorer, next, after, onClose, gate }: ActionFlowProps) {
   const { text, format } = useCopy();
   const nowMs = useNow();
   const [checking, setChecking] = useState(false);
   const [found, setFound] = useState<Exclude<Recheck, { kind: 'ok' }> | null>(null);
   const { phase } = tx;
+  // The wallet step open now ("Step 2 of 3: ..."), from the tracker's store:
+  // asked by `send`, or by a clean-up after the hash (taking back an
+  // approval granted for the call alone), in whichever phase it falls.
+  const stepNote = tx.note ? (
+    <p className="tier-b with-icon" role="status" data-testid="flow-step">
+      <Icon meaning="pending" />
+      {tx.note}
+    </p>
+  ) : null;
+  // What the flow set up for the call that stands until it settles.
+  const heldNotice = tx.held ? (
+    <Notice tone="warn" tier="A">
+      {tx.held}
+    </Notice>
+  ) : null;
   const store = useTxStore();
   const location = useLocation();
   // While this flow is on screen the shell's "still in progress" line is not
@@ -172,7 +174,10 @@ export function ActionFlow({ tx, identity, reviewedFor, receipt, recheck, descri
   const senderNote =
     sender !== null && sender !== identity ? (
       <Notice tone="warn" tier="A">
-        {format('flow.sentFrom', { account: shortAddress(sender.split(':')[1] as `0x${string}`), chain: getSupportedChain(Number(sender.split(':')[0]))?.name ?? sender.split(':')[0]! })}
+        {format('flow.sentFrom', {
+          account: shortAddress(sender.split(':')[1] as `0x${string}`),
+          chain: getSupportedChain(Number(sender.split(':')[0]))?.name ?? sender.split(':')[0]!,
+        })}
       </Notice>
     ) : null;
 
@@ -212,7 +217,11 @@ export function ActionFlow({ tx, identity, reviewedFor, receipt, recheck, descri
             </Notice>
           )}
           {receipt !== null && gate?.node}
-          {checking && <p className="tier-b" role="status">{text('flow.checking')}</p>}
+          {checking && (
+            <p className="tier-b" role="status">
+              {text('flow.checking')}
+            </p>
+          )}
           <p className="actions">
             {!blocked && (
               <button type="button" className="btn btn-primary" disabled={receipt === null || checking || (gate !== undefined && !gate.ready)} onClick={() => void confirm()}>
@@ -233,7 +242,7 @@ export function ActionFlow({ tx, identity, reviewedFor, receipt, recheck, descri
           {senderNote}
           <p className="tier-b with-icon" role="status">
             <Icon meaning="pending" />
-            {signingNote ?? text('flow.signing')}
+            {tx.note ?? text('flow.signing')}
           </p>
         </div>
       );
@@ -245,6 +254,8 @@ export function ActionFlow({ tx, identity, reviewedFor, receipt, recheck, descri
             <Icon meaning="pending" />
             {text('flow.submitted')} {txLink(phase.hash)}
           </p>
+          {stepNote}
+          {heldNotice}
         </div>
       );
     case 'mined':
@@ -255,12 +266,7 @@ export function ActionFlow({ tx, identity, reviewedFor, receipt, recheck, descri
             <Icon meaning="pending" />
             {format('flow.mined', { block: phase.blockNumber.toString() })} {txLink(phase.hash)}
           </p>
-          {signingNote && (
-            <p className="tier-b with-icon" role="status">
-              <Icon meaning="pending" />
-              {signingNote}
-            </p>
-          )}
+          {stepNote}
         </div>
       );
     case 'measured':
@@ -286,11 +292,7 @@ export function ActionFlow({ tx, identity, reviewedFor, receipt, recheck, descri
           <Notice tone="warn" tier="A">
             {format('flow.receiptUnknown', { reason: phase.message })} {txLink(phase.hash)}
           </Notice>
-          {heldNote && (
-            <Notice tone="warn" tier="A">
-              {heldNote}
-            </Notice>
-          )}
+          {heldNotice}
           <p className="actions">
             <button type="button" className="btn btn-primary" onClick={() => void tx.resume()}>
               {text('flow.checkAgain')}

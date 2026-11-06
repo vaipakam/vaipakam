@@ -16,7 +16,8 @@ import { allowanceSteps } from '../../../shared/tx/approval';
 import { allowanceMoved, approvalFlow } from '../../../shared/tx/approvalFlow';
 import type { LegOutcome } from '../../../shared/tx/outcome';
 import { askThrough } from '../../../shared/tx/simulate';
-import { useStoredValue } from '../../../shared/tx/txStore';
+import { cleanUpLeg } from '../../../shared/tx/cleanUp';
+import { useStoredValue, useTxNote } from '../../../shared/tx/txStore';
 import { useMounted, useReviewRefresh } from '../../../shared/tx/useReviewRefresh';
 import { useTrackedTx } from '../../../shared/tx/useTrackedTx';
 import { ActionFlow, reviewIdentity, type Recheck } from '../../../shared/ui/ActionFlow';
@@ -87,7 +88,8 @@ export function PostRequest({ draft, chain, own, meta, terms, onEdit, onClose }:
   /** The risk-access step open in the review's place, if any (ACC-RISK). */
   const [riskOpen, setRiskOpen] = useStoredValue<RiskNeed>(`${REQUEST_KEY}:risk`);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [step, setStep] = useState<string | null>(null);
+  /** The wallet step open now, kept with the tracker (it outlives the page). */
+  const setStep = useTxNote(REQUEST_KEY);
   /** The approval this flow made and has not yet seen used or put back (see
    *  AcceptOffer): a sent request that reverts leaves it standing.
    *  `since` is the block the approval mined in, so a put-back never reads
@@ -99,12 +101,8 @@ export function PostRequest({ draft, chain, own, meta, terms, onEdit, onClose }:
    *  (NFT-13): taken back on every ending, the request's success included,
    *  by the tracker's release step. `since` is the block the grant mined in. */
   const grantLeft = useRef<{ token: Hex; tokenId: bigint; since: bigint } | null>(null);
-  /** The collection of a grant still standing, mirrored for render: the
-   *  receipt-unknown phase names it so the wallet knows what is still open. */
-  const [heldGrant, setHeldGrant] = useState<Hex | null>(null);
   const holdGrant = (v: { token: Hex; tokenId: bigint; since: bigint } | null) => {
     grantLeft.current = v;
-    setHeldGrant(v ? v.token : null);
   };
 
   const amt = (asset: Hex, v: bigint) => tokenAmount(v, asset, meta, format);
@@ -216,12 +214,10 @@ export function PostRequest({ draft, chain, own, meta, terms, onEdit, onClose }:
       if (!left) return null;
       if (left.kind === 'erc721') {
         const after = await tokenApproval(left.token, left.tokenId).putBack(left.prior, left.since);
-        const label = text('nftApproval.legBack');
-        return after.ok ? { status: 'done', label } : { status: 'not-done', label, reason: after.sentence };
+        return cleanUpLeg(after, text('nftApproval.legBack'));
       }
       const after = await putBack(left.token, left.prior, left.amount, left.since);
-      const label = format('approval.legBack', { amount: amt(left.token, left.prior) });
-      return after.ok ? { status: 'done', label } : { status: 'not-done', label, reason: after.sentence };
+      return cleanUpLeg(after, format('approval.legBack', { amount: amt(left.token, left.prior) }));
     },
     release: async () => {
       const left = grantLeft.current;
@@ -229,9 +225,9 @@ export function PostRequest({ draft, chain, own, meta, terms, onEdit, onClose }:
       if (!left) return null;
       const say = (what: string) => setStep(format('accept.stepOf', { n: String(++counter.current.n), total: String(counter.current.total), what }));
       const after = await operator(left.token, left.tokenId, say).revoke(left.since);
-      const label = format('operatorApproval.leg', { collection: assetName(left.token, meta) });
-      return after.ok ? { status: 'done', label } : { status: 'not-done', label, reason: after.sentence };
+      return cleanUpLeg(after, format('operatorApproval.leg', { collection: assetName(left.token, meta) }));
     },
+    held: () => (grantLeft.current ? format('operatorApproval.pendingNote', { collection: assetName(grantLeft.current.token, meta) }) : null),
     measure: async (receipt, at) => {
       if (!review) return [];
       const r = review;
@@ -509,8 +505,6 @@ export function PostRequest({ draft, chain, own, meta, terms, onEdit, onClose }:
                 : { label: text('request.openOffersCurrent'), href: offersPage.href }
           }
           gate={gate}
-          signingNote={step}
-          heldNote={heldGrant ? format('operatorApproval.pendingNote', { collection: assetName(heldGrant, meta) }) : null}
           onClose={close}
         />
       )}

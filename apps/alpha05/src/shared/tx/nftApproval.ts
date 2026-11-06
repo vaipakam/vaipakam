@@ -15,6 +15,7 @@ import { waitForTransactionReceipt, writeContract } from 'wagmi/actions';
 import type { OwnStateClient } from '../../chain/ownRail';
 import type { CopyAccess } from '../copy/useCopy';
 import { refusalFromError, StatedRefusal } from '../eligibility/refusal';
+import type { CleanUpResult } from './cleanUp';
 import { NFT_ABI, readErc721, type Erc721State } from '../nft/nft';
 
 type Hex = `0x${string}`;
@@ -44,7 +45,7 @@ export interface NftApproval {
    *  `since` is the block the approval mined in: the token is never read as
    *  it stood before it, whichever node answers, so a reset is never skipped
    *  as already done. */
-  putBack: (prior: Hex | null, since: bigint) => Promise<{ ok: boolean; sentence: string }>;
+  putBack: (prior: Hex | null, since: bigint) => Promise<CleanUpResult>;
 }
 
 function same(a: Hex | null, b: Hex | null): boolean {
@@ -96,18 +97,22 @@ export function nftApproval(d: NftApprovalDeps, asset: Hex, tokenId: bigint): Nf
     });
   }
 
-  async function putBack(prior: Hex | null, since: bigint): Promise<{ ok: boolean; sentence: string }> {
+  async function putBack(prior: Hex | null, since: bigint): Promise<CleanUpResult> {
     try {
       const now = await readSince(since);
-      if (now.owner === null || !same(now.owner, account)) return { ok: true, sentence: text('nftApproval.notHeld') };
-      if (same(now.approved, prior)) return { ok: true, sentence: text('nftApproval.restored') };
-      if (!same(now.approved, diamond)) return { ok: false, sentence: text('nftApproval.restoreChanged') };
+      if (now.owner === null || !same(now.owner, account)) return { status: 'done', sentence: text('nftApproval.notHeld') };
+      if (same(now.approved, prior)) return { status: 'done', sentence: text('nftApproval.restored') };
+      if (!same(now.approved, diamond)) return { status: 'not-done', sentence: text('nftApproval.restoreChanged') };
       d.setStep(text('nftApproval.stepRestore'));
       const r = await setTo(prior ?? NO_ADDRESS);
-      if (r.landed) return { ok: true, sentence: text('nftApproval.restored') };
-      return { ok: false, sentence: r.hash !== null ? format('nftApproval.restorePending', { hash: r.hash }) : text('nftApproval.restoreNotLanded') };
+      if (r.landed) return { status: 'done', sentence: text('nftApproval.restored') };
+      // A reset that was sent but whose effect could not be read may have landed.
+      return r.hash !== null
+        ? { status: 'unknown', sentence: format('nftApproval.restorePending', { hash: r.hash }) }
+        : { status: 'not-done', sentence: text('nftApproval.restoreNotLanded') };
     } catch (e) {
-      return { ok: false, sentence: format('nftApproval.restoreFailed', { reason: refusalFromError(e).reason }) };
+      // Thrown before anything landed: the read before, or the wallet's refusal.
+      return { status: 'not-done', sentence: format('nftApproval.restoreFailed', { reason: refusalFromError(e).reason }) };
     } finally {
       d.setStep(null);
     }
