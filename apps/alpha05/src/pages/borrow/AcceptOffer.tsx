@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Abi } from 'viem';
-import { useBlockNumber, useConfig } from 'wagmi';
+import { useConfig } from 'wagmi';
 import { signTypedData, writeContract } from 'wagmi/actions';
 import { OfferAcceptFacetABI } from '@vaipakam/contracts/abis';
 import type { OwnStateClient } from '../../chain/ownRail';
@@ -17,8 +17,8 @@ import { readVault } from '../../shared/offers/reads';
 import { tokenAmount, type TokenMetaMap } from '../../shared/reads/tokens';
 import { readTerms, termsUrl, type TermsState } from '../../shared/terms/terms';
 import { askThrough } from '../../shared/tx/simulate';
-import { useVisible } from '../../shared/reads/useVisible';
 import { useStoredValue } from '../../shared/tx/txStore';
+import { useMounted, useReviewRefresh } from '../../shared/tx/useReviewRefresh';
 import { useTrackedTx } from '../../shared/tx/useTrackedTx';
 import { allowanceSteps } from '../../shared/tx/approval';
 import { allowanceMoved, approvalFlow } from '../../shared/tx/approvalFlow';
@@ -295,9 +295,11 @@ export function AcceptOffer({ offerId, chain, own, meta, terms, onClose }: Accep
     },
   });
 
+  const mounted = useMounted();
   const load = async () => {
     try {
       const next = await readAcceptReview(own, diamond, offerId, identity);
+      if (!mounted.current) return;
       setLoadError(null);
       setReview(next);
     } catch (e) {
@@ -307,42 +309,19 @@ export function AcceptOffer({ offerId, chain, own, meta, terms, onClose }: Accep
 
   const reviewOpened = useRef<bigint | null>(null);
 
-  // RB-RAILS: the review gates an imminent money decision, so while it is on
-  // screen (and nothing has been signed) it is read again each block. A
-  // blocker that clears (the wallet funded, a vault upgraded, the protocol
-  // unpaused) lifts without reopening the panel; a change to the figures
-  // replaces the review and clears the consent given against the old ones.
-  const visible = useVisible();
+  // RB-RAILS: read again each block while the review is on screen; a late
+  // answer never lands on another offer's review (useReviewRefresh).
   const onReview = tx.phase.kind === 'review' && review !== null && review.offerId === offerId;
-  const onReviewNow = useRef(onReview);
-  useEffect(() => {
-    onReviewNow.current = onReview;
-  }, [onReview]);
-  const head = useBlockNumber({ chainId: chain.chainId, watch: onReview && visible, query: { enabled: onReview } });
-  const refreshing = useRef(false);
-  useEffect(() => {
-    if (!onReview || head.data === undefined || refreshing.current || review === null) return;
-    const before = review;
-    refreshing.current = true;
-    readAcceptReview(own, diamond, offerId, before.identity)
-      .then(
-        (next) => {
-          // Signing started meanwhile: the flow carries the review it began with.
-          if (!onReviewNow.current) return;
-          if (changedBetween(before, next, copy) !== null) {
-            setReview(next);
-            setConsentFor(null);
-          } else setReview({ ...next, readAt: before.readAt });
-        },
-        // A failed refresh leaves the last review standing; Confirm re-reads.
-        () => undefined,
-      )
-      .finally(() => {
-        refreshing.current = false;
-      });
-    // The block number is the signal; the review read is taken as it stands.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [head.data, onReview]);
+  useReviewRefresh<AcceptReview>({
+    chainId: chain.chainId,
+    active: onReview,
+    review,
+    read: (before) => readAcceptReview(own, diamond, before.offerId, before.identity),
+    sameSubject: (a, b) => a.offerId === b.offerId,
+    changed: (before, next) => changedBetween(before, next, copy) !== null,
+    setReview,
+    onChanged: () => setConsentFor(null),
+  });
 
   // Open the review for this offer when the panel opens on it: a review
   // kept for another offer (or none) is replaced; one in flight is kept.

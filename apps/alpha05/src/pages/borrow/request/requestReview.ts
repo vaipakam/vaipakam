@@ -216,8 +216,10 @@ export function requestReceipt(r: RequestReview, meta: TokenMetaMap | null, copy
     textRow('accept.rowRate', format('accept.rate', { rate: formatBps(parsed.rateBps) }), true),
     textRow('accept.rowDue', format('request.due', { days: String(parsed.durationDays) }), true),
     textRow('accept.rowGrace', format('accept.grace', { span: formatSpan(Number(r.graceSeconds)) }), true),
-    { label: text('request.rowReceive'), value: amount(pair.lending, f.received), binding: true },
-    { label: text('accept.rowFee'), value: amount(pair.lending, f.fee), binding: true },
+    // Not bound by the request: the fee is set when a lender takes it, at the
+    // rate in force then, so these are today's figures, labelled as such.
+    { label: text('request.rowReceive'), value: amount(pair.lending, f.received), binding: false },
+    { label: text('accept.rowFee'), value: amount(pair.lending, f.fee), binding: false },
     textRow('accept.rowFeeRule', format('request.feeRule', { rate: formatBps(r.lifBps) }), false),
     { label: text('accept.rowOwe'), value: amount(pair.lending, f.owedAtDue), binding: true },
     textRow('accept.rowInterest', text(parsed.fullTerm ? (parsed.allowsPartialRepay ? 'accept.fullTermPartial' : 'accept.fullTerm') : 'accept.proRata'), true),

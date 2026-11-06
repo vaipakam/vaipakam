@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { useBlockNumber, useConfig } from 'wagmi';
+import { useConfig } from 'wagmi';
 import { writeContract } from 'wagmi/actions';
 import type { OwnStateClient } from '../../../chain/ownRail';
 import type { SupportedChain } from '../../../chain/chains';
@@ -11,13 +11,13 @@ import { useMode } from '../../../app/ModeContext';
 import { legVerdict, moved } from '../../../shared/offers/acceptOutcome';
 import { readVault } from '../../../shared/offers/reads';
 import { tokenAmount, type TokenMetaMap } from '../../../shared/reads/tokens';
-import { useVisible } from '../../../shared/reads/useVisible';
 import { readTerms, termsUrl, type TermsState } from '../../../shared/terms/terms';
 import { allowanceSteps } from '../../../shared/tx/approval';
 import { allowanceMoved, approvalFlow } from '../../../shared/tx/approvalFlow';
 import type { LegOutcome } from '../../../shared/tx/outcome';
 import { askThrough } from '../../../shared/tx/simulate';
 import { useStoredValue } from '../../../shared/tx/txStore';
+import { useMounted, useReviewRefresh } from '../../../shared/tx/useReviewRefresh';
 import { useTrackedTx } from '../../../shared/tx/useTrackedTx';
 import { ActionFlow, reviewIdentity, type Recheck } from '../../../shared/ui/ActionFlow';
 import { Notice } from '../../../shared/ui/Notice';
@@ -167,9 +167,11 @@ export function PostRequest({ draft, chain, own, meta, terms, onEdit, onClose }:
     },
   });
 
+  const mounted = useMounted();
   const load = async () => {
     try {
       const next = await readRequestReview(own, diamond, draft, identity);
+      if (!mounted.current) return;
       setLoadError(null);
       setReview(next);
     } catch (e) {
@@ -177,37 +179,19 @@ export function PostRequest({ draft, chain, own, meta, terms, onEdit, onClose }:
     }
   };
 
-  // RB-RAILS: read again each block while the review is on screen (see
-  // AcceptOffer); a change to what the receipt stands on clears the consent.
-  const visible = useVisible();
+  // RB-RAILS: read again each block while the review is on screen; a late
+  // answer never lands on another draft's review (useReviewRefresh).
   const onReview = tx.phase.kind === 'review' && review !== null && review.draft === draft;
-  const onReviewNow = useRef(onReview);
-  useEffect(() => {
-    onReviewNow.current = onReview;
-  }, [onReview]);
-  const head = useBlockNumber({ chainId: chain.chainId, watch: onReview && visible, query: { enabled: onReview } });
-  const refreshing = useRef(false);
-  useEffect(() => {
-    if (!onReview || head.data === undefined || refreshing.current || review === null) return;
-    const before = review;
-    refreshing.current = true;
-    readRequestReview(own, diamond, before.draft, before.identity)
-      .then(
-        (next) => {
-          if (!onReviewNow.current) return;
-          if (changedBetween(before, next, copy) !== null) {
-            setReview(next);
-            setConsentFor(null);
-          } else setReview({ ...next, readAt: before.readAt });
-        },
-        () => undefined,
-      )
-      .finally(() => {
-        refreshing.current = false;
-      });
-    // The block number is the signal; the review read is taken as it stands.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [head.data, onReview]);
+  useReviewRefresh<RequestReview>({
+    chainId: chain.chainId,
+    active: onReview,
+    review,
+    read: (before) => readRequestReview(own, diamond, before.draft, before.identity),
+    sameSubject: (a, b) => a.draft === b.draft,
+    changed: (before, next) => changedBetween(before, next, copy) !== null,
+    setReview,
+    onChanged: () => setConsentFor(null),
+  });
 
   // Open the review for this draft when the panel opens on it: a review kept
   // for another draft (or none) is replaced; one in flight is kept.

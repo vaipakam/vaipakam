@@ -1099,13 +1099,13 @@ When no offer fits, you can post your own borrow request for your two tokens: th
 
 ### Borrow: The Request's Terms
 
-One lender takes the whole amount, or nobody does. Each figure is read exactly as you type it: more decimals than the token has are refused, never rounded, and the rate goes up to 100% a year with two decimals. The terms offered stop at the longest one the network allows; you can also type a term in days. The request stays open until taken or cancelled, or for the number of days you choose, up to a year. Full-term interest, the usual choice, is owed in full even if you repay early; pro-rata charges only for the time the loan is open. The form shows what you would receive at least and owe at the due date.
+One lender takes the whole amount, or nobody does. Each figure is read exactly as you type it: more decimals than the token has are refused, never rounded, and the rate goes up to 100% a year with two decimals. The terms offered stop at the longest one the network allows; you can also type a term in days. The request stays open until taken or cancelled, or for the number of days you choose, up to a year. Full-term interest, the usual choice, is owed in full even if you repay early; pro-rata charges only for the time the loan is open. The form shows what you would receive at today's fee rate and owe at the due date if a lender took it now.
 
 <a id="borrow-request-review"></a>
 
 ### Borrow: Reviewing and Posting a Request
 
-Before your wallet opens, the app asks the protocol to try your request as a dry run, so the review shows the protocol's own answer. It lists what you lock now, the amount, rate and term, what you would receive and how the fee is set (the list rate, which your fee-discount tier when a lender takes it can only lower), what you would owe, every lifecycle term, when the request lapses, the loan-to-value and whether an approval is needed. You tick a box to agree to the Risk Disclosures and Terms. Your wallet approves exactly the collateral if needed, the app tries the request again, and only then posts it. If it stops after an approval, the app asks to put the approval back and says whether that happened. Afterwards the app checks on the chain the request recorded and the collateral locked.
+Before your wallet opens, the app asks the protocol to try your request as a dry run, so the review shows the protocol's own answer. It lists what you lock now, the amount, rate and term, what you would receive and how the fee is set (the fee rate in force when a lender takes it, less your fee-discount tier at that moment; the figure shown uses today's rate), what you would owe, every lifecycle term, when the request lapses, the loan-to-value and whether an approval is needed. You tick a box to agree to the Risk Disclosures and Terms. Your wallet approves exactly the collateral if needed, the app tries the request again, and only then posts it. If it stops after an approval, the app asks to put the approval back and says whether that happened. Afterwards the app checks on the chain the request recorded and the collateral locked.
 
 <a id="terms-gate"></a>
 

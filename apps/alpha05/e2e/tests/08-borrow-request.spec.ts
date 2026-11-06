@@ -63,7 +63,7 @@ test('a borrower posts their own request: exact figures, an exact approval, and 
   await page.getByTestId('request-duration').getByRole('radio', { name: '14 days' }).check();
   await page.getByTestId('request-expiry').selectOption('1d');
   await page.getByTestId('request-partial').check();
-  await expect(page.getByTestId('request-summary')).toContainText('you receive at least');
+  await expect(page.getByTestId('request-summary')).toContainText("at today's fee");
   await fitsWidth(page);
 
   // On a phone the primary action rests above the bottom bar, full width.
@@ -84,7 +84,7 @@ test('a borrower posts their own request: exact figures, an exact approval, and 
   await expect(receipt).toContainText('All of it by one lender, or not at all');
   await expect(receipt).toContainText('7.25% a year');
   await expect(receipt).toContainText('14 days after a lender takes it');
-  await expect(receipt).toContainText('You receive in your wallet when a lender takes it, at least');
+  await expect(receipt).toContainText("You receive in your wallet if a lender takes it, at today's fee rate");
   await expect(receipt).toContainText('Full term, with partial repayments allowed');
   await expect(receipt).toContainText('Request open until');
   await expect(receipt).toContainText('Exactly 2000');
