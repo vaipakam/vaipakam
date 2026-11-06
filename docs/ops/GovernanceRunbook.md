@@ -930,11 +930,11 @@ contract-written tier/consent stamps) and `currentRiskTermsHash` (an
 Both start at zero.
 
 **Hard precondition — reveal a real anchor BEFORE enabling the gate.**
-While `currentRiskTermsHash == 0`, every relayed `*BySig` self-sovereign
-grant reverts `RiskTermsHashStale` (#737) and the acceptance-ack anchor
-would bind the guessable zero value. Enabling the gate before the first
-reveal therefore bricks the relayed path and ships no freshness guarantee.
-Always run the commit–reveal first.
+While `currentRiskTermsHash == 0`, the acceptance-ack anchor would bind
+the guessable zero value. Enabling the gate before the first reveal
+therefore ships no freshness guarantee. Always run the commit–reveal first.
+(The relayed `*BySig` grants this note also used to cover were removed
+in #3238; every risk-access change is now a direct call by the vault.)
 
 The anchor is published via a two-step commit–reveal split across two
 roles ON PURPOSE: the hiding commit goes through the slow/timelock
@@ -977,8 +977,7 @@ never parked in a public timelock queue. Steps:
    carries **no on-chain dependency on the reveal**, so once its delay elapses
    it can be executed first (especially with a permissionless Timelock
    executor) — turning the gate on while `currentRiskTermsHash` is still 0,
-   which bricks the relayed `*BySig` path (it reverts) and binds the accept
-   ack to the guessable zero. The cost of scheduling-after is the gate's own
+   which binds the accept ack to the guessable zero. The cost of scheduling-after is the gate's own
    48h delay following the reveal: during it the anchor is public and users
    can arm opt-ups, which is exactly why step 2 sets the cooldown **≥ this
    delay** — any window-armed opt-up stays locked until the gate is live.
