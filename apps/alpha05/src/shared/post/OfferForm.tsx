@@ -1,17 +1,17 @@
 import { useEffect, useRef, useState } from 'react';
 import { formatUnits } from 'viem';
-import type { OwnStateClient } from '../../../chain/ownRail';
-import type { SupportedChain } from '../../../chain/chains';
-import { useCopy, type CopyKey } from '../../../shared/copy/useCopy';
-import { WhyLink } from '../../../shared/help/WhyLink';
-import { refusalFromError } from '../../../shared/eligibility/refusal';
-import { assetName, tokenAmount, type TokenMetaMap } from '../../../shared/reads/tokens';
-import { useOwnRead } from '../../../shared/reads/useOwnRead';
-import { useStoredValue } from '../../../shared/tx/txStore';
-import { useMounted } from '../../../shared/tx/useReviewRefresh';
-import { FormField } from '../../../shared/ui/FormField';
-import { useMode } from '../../../app/ModeContext';
-import { Notice } from '../../../shared/ui/Notice';
+import type { OwnStateClient } from '../../chain/ownRail';
+import type { SupportedChain } from '../../chain/chains';
+import { useCopy, type CopyKey } from '../copy/useCopy';
+import { WhyLink } from '../help/WhyLink';
+import { refusalFromError } from '../eligibility/refusal';
+import { assetName, tokenAmount, type TokenMetaMap } from '../reads/tokens';
+import { useOwnRead } from '../reads/useOwnRead';
+import { useStoredValue } from '../tx/txStore';
+import { useMounted } from '../tx/useReviewRefresh';
+import { FormField } from '../ui/FormField';
+import { useMode } from '../../app/ModeContext';
+import { Notice } from '../ui/Notice';
 import {
   advancedSet,
   bucketsWithin,
@@ -29,18 +29,18 @@ import {
   parseAmount,
   parseDays,
   parseRateBps,
-  requestFigures,
+  postFigures,
   type ExpiryChoice,
   type FillMode,
   type ParseError,
-  type RequestAssets,
-  type RequestInput,
-} from './requestModel';
-import { holds, parseQuantity, parseTokenId, readErc1155, readErc721 } from '../../../shared/nft/nft';
-import { readRequestFormInputs, type RequestDraft } from './requestReview';
-import { CADENCES, cadenceOpen, cadenceRefusalText, isCadence, readCadenceAdmission, type Cadence } from '../../../shared/offers/cadence';
-import { readNumeraireSymbol } from '../../../shared/reads/numeraire';
-import { readTariffQuote, readTariffSwitch, suggestedCeiling, VPFI_DECIMALS } from '../../../shared/offers/fullTariff';
+  type PostAssets,
+  type PostInput,
+} from './postModel';
+import { holds, parseQuantity, parseTokenId, readErc1155, readErc721 } from '../nft/nft';
+import { readPostFormInputs, type PostDraft } from './postReview';
+import { CADENCES, cadenceOpen, cadenceRefusalText, isCadence, readCadenceAdmission, type Cadence } from '../offers/cadence';
+import { readNumeraireSymbol } from '../reads/numeraire';
+import { readTariffQuote, readTariffSwitch, suggestedCeiling, VPFI_DECIMALS } from '../offers/fullTariff';
 
 /** The store key the typed request is kept under, so a navigation away and
  *  back, or a review closed to change a figure, keeps what was typed. */
@@ -70,15 +70,15 @@ const EXPIRY_LABEL: Readonly<Record<ExpiryChoice, CopyKey>> = {
   custom: 'request.expiryOther',
 };
 
-interface RequestFormProps {
+interface OfferFormProps {
   chain: SupportedChain;
   own: OwnStateClient;
   /** The two assets, and the standard the collateral claims. */
-  pair: RequestAssets;
+  pair: PostAssets;
   meta: TokenMetaMap | null;
   /** The confirmed request, with its expiry fixed now; the page opens the
    *  review on it. */
-  onReview: (draft: RequestDraft) => void;
+  onReview: (draft: PostDraft) => void;
   onCancel: () => void;
 }
 
@@ -97,13 +97,13 @@ interface RequestFormProps {
  * one with the protocol's reason. Set in Advanced, they still apply in Basic,
  * which says so and offers to clear them (RB-MODE never drops a choice).
  */
-export function RequestForm({ chain, own, pair, meta, onReview, onCancel }: RequestFormProps) {
+export function OfferForm({ chain, own, pair, meta, onReview, onCancel }: OfferFormProps) {
   const { text, format } = useCopy();
   const { isAdvanced } = useMode();
-  const [stored, setStored] = useStoredValue<RequestInput>(`${REQUEST_KEY}:input`);
+  const [stored, setStored] = useStoredValue<PostInput>(`${REQUEST_KEY}:input`);
   // A request kept from before a field existed reads that field's default.
-  const input: RequestInput = { ...DEFAULT_INPUT, ...stored };
-  const set = (patch: Partial<RequestInput>) => setStored({ ...input, ...patch });
+  const input: PostInput = { ...DEFAULT_INPUT, ...stored };
+  const set = (patch: Partial<PostInput>) => setStored({ ...input, ...patch });
   /** Errors show once a field has been left, or after a review was asked. */
   const [touched, setTouched] = useState<Record<'amount' | 'amountMax' | 'floor' | 'collateral' | 'tokenId' | 'rate' | 'term' | 'expiry' | 'ceiling', boolean>>({
     ceiling: false,
@@ -125,7 +125,7 @@ export function RequestForm({ chain, own, pair, meta, onReview, onCancel }: Requ
   const multi = pair.standard === 'erc1155';
   const named = nft || multi;
   const inputs = useOwnRead(['borrow', 'request', 'inputs', pair.collateral.toLowerCase(), pair.standard], (c) =>
-    readRequestFormInputs(c, diamond, own.account, pair.collateral, pair.standard),
+    readPostFormInputs(c, diamond, own.account, pair.collateral, pair.standard),
   );
   const tokenId = named ? parseTokenId(input.tokenId) : null;
   // Who holds the typed token, read live so the reader learns before the
@@ -324,7 +324,7 @@ export function RequestForm({ chain, own, pair, meta, onReview, onCancel }: Requ
           ? text('request.errDaysEmpty')
           : text('request.errDays');
 
-  const figures = inputs.data && amount?.ok && rate.ok && durationDays !== null ? requestFigures(amount.value, rate.value, durationDays, inputs.data.lifBps) : null;
+  const figures = inputs.data && amount?.ok && rate.ok && durationDays !== null ? postFigures(amount.value, rate.value, durationDays, inputs.data.lifBps) : null;
   /** The largest amount, for the live summary of a range. */
   const largest = ranged && amountMax?.ok ? amountMax.value : null;
   const collateralOk = nft ? tokenId !== null : multi ? tokenId !== null && quantity !== null : collateral?.ok === true;

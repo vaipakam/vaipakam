@@ -11,9 +11,9 @@
  * principal, so a range is read at both ends. Every figure is today's: the
  * protocol re-prices and re-checks at each loan's opening.
  */
-import type { CopyAccess, CopyKey } from '../../../shared/copy/useCopy';
-import { refusalFromError } from '../../../shared/eligibility/refusal';
-import type { AssetClass } from '../../../shared/offers/assets';
+import type { CopyAccess, CopyKey } from '../copy/useCopy';
+import { refusalFromError } from '../eligibility/refusal';
+import type { AssetClass } from '../offers/assets';
 import {
   FAILS_EVERY_LOAN,
   readFreeVpfi,
@@ -25,17 +25,17 @@ import {
   type TariffIssue,
   type TariffQuote,
   type TariffRead,
-} from '../../../shared/offers/fullTariff';
-import type { Receipt } from '../../../shared/receipt/types';
-import type { OwnStateClient } from '../../../chain/ownRail';
+} from '../offers/fullTariff';
+import type { Receipt } from '../receipt/types';
+import type { OwnStateClient } from '../../chain/ownRail';
 import { formatUnits } from 'viem';
-import { isRanged, type ParsedRequest, type RequestPair } from './requestModel';
+import { isRanged, type ParsedPost, type PostPair } from './postModel';
 
 type Hex = `0x${string}`;
 
 /** The tariff's reads for a request that chose it, with why each failed one
  *  could not be read. */
-export interface RequestTariff {
+export interface PostTariff {
   choice: TariffChoice;
   read: TariffRead;
   /** The read failures, by what failed, for the stated unknowns. */
@@ -48,16 +48,16 @@ const reason = (e: unknown) => refusalFromError(e).reason;
  *  the vault's free VPFI, through the wallet's connection. Liquidity is the
  *  lending asset's class the review already read. Null when the request did
  *  not choose the tariff. */
-export async function readRequestTariff(
+export async function readPostTariff(
   own: OwnStateClient,
   diamond: Hex,
-  parsed: ParsedRequest,
-  pair: RequestPair,
+  parsed: ParsedPost,
+  pair: PostPair,
   lendingClass: AssetClass,
-): Promise<RequestTariff | null> {
+): Promise<PostTariff | null> {
   if (parsed.tariff === null) return null;
-  const why: RequestTariff['why'] = {};
-  const read = <T>(fn: Parameters<OwnStateClient['read']>[0], what: keyof RequestTariff['why']) =>
+  const why: PostTariff['why'] = {};
+  const read = <T>(fn: Parameters<OwnStateClient['read']>[0], what: keyof PostTariff['why']) =>
     own
       .read(fn)
       .then((x) => x.value as T)
@@ -80,14 +80,14 @@ export async function readRequestTariff(
 }
 
 /** The issues the protocol's reads raise against the opt-in. */
-export function requestTariffIssues(t: RequestTariff): TariffIssue[] {
+export function postTariffIssues(t: PostTariff): TariffIssue[] {
   return tariffIssues(t.choice, t.read);
 }
 
 /** Whether no loan could take the tariff now and none may open without it,
  *  so every loan the request opens would be refused: the review blocks. */
-export function tariffRefusesEveryLoan(t: RequestTariff | null): boolean {
-  return t !== null && !t.choice.allowDowngrade && requestTariffIssues(t).some((i) => FAILS_EVERY_LOAN.has(i.kind));
+export function tariffRefusesEveryLoan(t: PostTariff | null): boolean {
+  return t !== null && !t.choice.allowDowngrade && postTariffIssues(t).some((i) => FAILS_EVERY_LOAN.has(i.kind));
 }
 
 const vpfi = (v: bigint, format: CopyAccess['format']) => format('request.tariffVpfi', { amount: formatUnits(v, VPFI_DECIMALS) });
@@ -101,7 +101,7 @@ function quoteText(q: TariffQuote | null, why: string | undefined, copy: Pick<Co
 /** The receipt rows. The ceiling and what a failed condition does are
  *  stored on the request once armed (bound); the switch, the tariff and the
  *  vault's free VPFI are today's reads (not bound). */
-export function tariffRows(t: RequestTariff | null, parsed: ParsedRequest, copy: Pick<CopyAccess, 'text' | 'format'>): Receipt['rows'] {
+export function tariffRows(t: PostTariff | null, parsed: ParsedPost, copy: Pick<CopyAccess, 'text' | 'format'>): Receipt['rows'] {
   if (t === null) return [];
   const { text, format } = copy;
   const row = (label: CopyKey, value: string, binding: boolean) => ({ label: text(label), value: { kind: 'text' as const, text: value }, binding });
@@ -124,12 +124,12 @@ export function tariffRows(t: RequestTariff | null, parsed: ParsedRequest, copy:
 /** What the tariff adds to "You can lose", tier A and in Basic: what it
  *  costs and gives, the gap before the arm confirms, and each issue the
  *  reads raise, stated as what happens to a loan under the chosen rule. */
-export function tariffConsequences(t: RequestTariff | null, copy: Pick<CopyAccess, 'text' | 'format'>): string[] {
+export function tariffConsequences(t: PostTariff | null, copy: Pick<CopyAccess, 'text' | 'format'>): string[] {
   if (t === null) return [];
   const { text, format } = copy;
   const open = t.choice.allowDowngrade;
   const out = [text('request.loseTariffPaid'), text('request.loseTariffLif'), text('request.loseTariffGap')];
-  for (const i of requestTariffIssues(t)) {
+  for (const i of postTariffIssues(t)) {
     switch (i.kind) {
       case 'off':
         out.push(text(open ? 'request.loseTariffOffOpen' : 'request.loseTariffOffRefuse'));
@@ -171,12 +171,12 @@ const UNREAD_NAME: Readonly<Record<Extract<TariffIssue, { kind: 'unread' }>['wha
 };
 
 /** The blocker when every loan would be refused. */
-export function tariffBlockers(t: RequestTariff | null, copy: Pick<CopyAccess, 'text'>): string[] {
+export function tariffBlockers(t: PostTariff | null, copy: Pick<CopyAccess, 'text'>): string[] {
   return tariffRefusesEveryLoan(t) ? [copy.text('request.blockTariffEvery')] : [];
 }
 
 /** What the tariff's reads stand on, for the "what changed" of a re-check. */
-export function tariffKey(t: RequestTariff | null): string {
+export function tariffKey(t: PostTariff | null): string {
   if (t === null) return '-';
   const q = (x: TariffQuote | null) => (x === null ? '-' : `${x.cStar}:${x.numeraireOk}`);
   return [String(t.read.enabled), q(t.read.smallest), q(t.read.largest), String(t.read.liquid), String(t.read.freeVpfi)].join('|');

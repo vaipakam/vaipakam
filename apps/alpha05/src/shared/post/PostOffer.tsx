@@ -1,59 +1,59 @@
 import { useEffect, useRef, useState } from 'react';
 import { useConfig } from 'wagmi';
 import { writeContract } from 'wagmi/actions';
-import type { OwnStateClient } from '../../../chain/ownRail';
-import type { SupportedChain } from '../../../chain/chains';
-import { useCopy } from '../../../shared/copy/useCopy';
-import { refusalFromError, StatedRefusal } from '../../../shared/eligibility/refusal';
-import { WhyLink } from '../../../shared/help/WhyLink';
-import { GUIDE_ORIGIN, guideUrl } from '../../../shared/help/guide';
-import { useMode } from '../../../app/ModeContext';
-import { useCapabilities } from '../../../shared/capability/CapabilityContext';
-import { readNumeraireSymbol } from '../../../shared/reads/numeraire';
-import { useOwnRead } from '../../../shared/reads/useOwnRead';
-import { legVerdict, moved } from '../../../shared/offers/acceptOutcome';
-import { readVault } from '../../../shared/offers/reads';
-import { tokenAmount, type TokenMetaMap } from '../../../shared/reads/tokens';
-import { readTerms, termsUrl, type TermsState } from '../../../shared/terms/terms';
-import { allowanceSteps } from '../../../shared/tx/approval';
-import { allowanceMoved, approvalFlow } from '../../../shared/tx/approvalFlow';
-import type { LegOutcome } from '../../../shared/tx/outcome';
-import { askThrough } from '../../../shared/tx/simulate';
-import { cleanUpLeg } from '../../../shared/tx/cleanUp';
-import { useStoredValue, useTxNote } from '../../../shared/tx/txStore';
-import { useMounted, useReviewRefresh } from '../../../shared/tx/useReviewRefresh';
-import { useTrackedTx } from '../../../shared/tx/useTrackedTx';
-import { ActionFlow, reviewIdentity, type Recheck } from '../../../shared/ui/ActionFlow';
-import { Notice } from '../../../shared/ui/Notice';
-import { shortAddress } from '../../../shared/ui/format';
-import { pageHandoff } from '../../../routes/pageMap';
-import { REQUEST_KEY } from './RequestForm';
+import type { OwnStateClient } from '../../chain/ownRail';
+import type { SupportedChain } from '../../chain/chains';
+import { useCopy } from '../copy/useCopy';
+import { refusalFromError, StatedRefusal } from '../eligibility/refusal';
+import { WhyLink } from '../help/WhyLink';
+import { GUIDE_ORIGIN, guideUrl } from '../help/guide';
+import { useMode } from '../../app/ModeContext';
+import { useCapabilities } from '../capability/CapabilityContext';
+import { readNumeraireSymbol } from '../reads/numeraire';
+import { useOwnRead } from '../reads/useOwnRead';
+import { legVerdict, moved } from '../offers/acceptOutcome';
+import { readVault } from '../offers/reads';
+import { tokenAmount, type TokenMetaMap } from '../reads/tokens';
+import { readTerms, termsUrl, type TermsState } from '../terms/terms';
+import { allowanceSteps } from '../tx/approval';
+import { allowanceMoved, approvalFlow } from '../tx/approvalFlow';
+import type { LegOutcome } from '../tx/outcome';
+import { askThrough } from '../tx/simulate';
+import { cleanUpLeg } from '../tx/cleanUp';
+import { useStoredValue, useTxNote } from '../tx/txStore';
+import { useMounted, useReviewRefresh } from '../tx/useReviewRefresh';
+import { useTrackedTx } from '../tx/useTrackedTx';
+import { ActionFlow, reviewIdentity, type Recheck } from '../ui/ActionFlow';
+import { Notice } from '../ui/Notice';
+import { shortAddress } from '../ui/format';
+import { pageHandoff } from '../../routes/pageMap';
+import { REQUEST_KEY } from './OfferForm';
 import { TARIFF_CONTEXT_KEY, type ArmContext } from './ArmTariff';
-import { createdRequest } from './requestOutcome';
-import { erc20Pair, nftCollateralPair, type RiskNeed } from '../../../shared/risk/riskAccess';
-import { nftApproval } from '../../../shared/tx/nftApproval';
-import { operatorApproval } from '../../../shared/tx/operatorApproval';
-import { quantityMoved, tokenMoved } from '../../../shared/nft/nft';
-import { assetName } from '../../../shared/reads/tokens';
-import { RiskGate, RiskStepFlow } from '../../../shared/risk/RiskAccessStep';
+import { createdOffer } from './postOutcome';
+import { erc20Pair, nftCollateralPair, type RiskNeed } from '../risk/riskAccess';
+import { nftApproval } from '../tx/nftApproval';
+import { operatorApproval } from '../tx/operatorApproval';
+import { quantityMoved, tokenMoved } from '../nft/nft';
+import { assetName } from '../reads/tokens';
+import { RiskGate, RiskStepFlow } from '../risk/RiskAccessStep';
 import {
   approvalPrompts,
   changedBetween,
   CREATE_ABI,
   lockedName,
   promptCount,
-  readRequestReview,
-  requestBlockers,
-  requestReceipt,
-  requestRiskNeed,
-  type RequestDraft,
-  type RequestReview,
-} from './requestReview';
+  readPostReview,
+  postBlockers,
+  postReceipt,
+  postRiskNeed,
+  type PostDraft,
+  type PostReview,
+} from './postReview';
 
 type Hex = `0x${string}`;
 
-interface PostRequestProps {
-  draft: RequestDraft;
+interface PostOfferProps {
+  draft: PostDraft;
   chain: SupportedChain;
   own: OwnStateClient;
   meta: TokenMetaMap | null;
@@ -78,7 +78,7 @@ interface PostRequestProps {
  * ERC-721 collateral (NFT-13) is approved for that one token only, never the
  * collection, and moving it into the vault clears the approval by itself.
  */
-export function PostRequest({ draft, chain, own, meta, terms, onEdit, onClose }: PostRequestProps) {
+export function PostOffer({ draft, chain, own, meta, terms, onEdit, onClose }: PostOfferProps) {
   const copy = useCopy();
   const { text, format } = copy;
   const config = useConfig();
@@ -94,7 +94,7 @@ export function PostRequest({ draft, chain, own, meta, terms, onEdit, onClose }:
   const unit = numeraire.data ?? '';
   const { caps } = useCapabilities();
   const settleKeeper = caps?.keeper.find((k) => k.pass === 'periodicSettle')?.armed ?? 'unknown';
-  const [review, setReview] = useStoredValue<RequestReview>(`${REQUEST_KEY}:review`);
+  const [review, setReview] = useStoredValue<PostReview>(`${REQUEST_KEY}:review`);
   const [consentFor, setConsentFor] = useStoredValue<number>(`${REQUEST_KEY}:consent`);
   const [offerId, setOfferId] = useStoredValue<bigint>(`${REQUEST_KEY}:offer`);
   const [, setArmContext] = useStoredValue<ArmContext>(TARIFF_CONTEXT_KEY);
@@ -245,7 +245,7 @@ export function PostRequest({ draft, chain, own, meta, terms, onEdit, onClose }:
       if (!review) return [];
       const r = review;
       const legs: LegOutcome[] = [];
-      const id = createdRequest(receipt.logs, diamond, account);
+      const id = createdOffer(receipt.logs, diamond, account);
       if (id !== null) {
         setOfferId(id);
         // OFF-22: the tariff is armed by its own transaction once the
@@ -305,7 +305,7 @@ export function PostRequest({ draft, chain, own, meta, terms, onEdit, onClose }:
   const mounted = useMounted();
   const load = async () => {
     try {
-      const next = await readRequestReview(own, diamond, draft, identity);
+      const next = await readPostReview(own, diamond, draft, identity);
       if (!mounted.current) return;
       setLoadError(null);
       setReview(next);
@@ -317,11 +317,11 @@ export function PostRequest({ draft, chain, own, meta, terms, onEdit, onClose }:
   // RB-RAILS: read again each block while the review is on screen; a late
   // answer never lands on another draft's review (useReviewRefresh).
   const onReview = tx.phase.kind === 'review' && review !== null && review.draft === draft;
-  useReviewRefresh<RequestReview>({
+  useReviewRefresh<PostReview>({
     chainId: chain.chainId,
     active: onReview,
     review,
-    read: (before) => readRequestReview(own, diamond, before.draft, before.identity),
+    read: (before) => readPostReview(own, diamond, before.draft, before.identity),
     sameSubject: (a, b) => a.draft === b.draft,
     changed: (before, next) => changedBetween(before, next, copy) !== null,
     setReview,
@@ -330,7 +330,7 @@ export function PostRequest({ draft, chain, own, meta, terms, onEdit, onClose }:
 
   // Open the review for this draft when the panel opens on it: a review kept
   // for another draft (or none) is replaced; one in flight is kept.
-  const opened = useRef<RequestDraft | null>(null);
+  const opened = useRef<PostDraft | null>(null);
   useEffect(() => {
     const open = tx.phase.kind === 'idle' || tx.phase.kind === 'review';
     if (!open) return;
@@ -344,7 +344,7 @@ export function PostRequest({ draft, chain, own, meta, terms, onEdit, onClose }:
       setOfferId(null);
       setRiskOpen(null);
       let live = true;
-      readRequestReview(own, diamond, draft, identity).then(
+      readPostReview(own, diamond, draft, identity).then(
         (next) => {
           if (!live) return;
           setLoadError(null);
@@ -364,10 +364,10 @@ export function PostRequest({ draft, chain, own, meta, terms, onEdit, onClose }:
 
   const recheck = async (current: () => boolean): Promise<Recheck> => {
     if (!review) return { kind: 'unreadable', reason: text('flow.reading') };
-    let next: RequestReview;
+    let next: PostReview;
     let nowTerms: TermsState;
     try {
-      [next, nowTerms] = await Promise.all([readRequestReview(own, diamond, review.draft, review.identity), own.read((c) => readTerms(c, diamond, account)).then((x) => x.value)]);
+      [next, nowTerms] = await Promise.all([readPostReview(own, diamond, review.draft, review.identity), own.read((c) => readTerms(c, diamond, account)).then((x) => x.value)]);
     } catch (e) {
       return { kind: 'unreadable', reason: refusalFromError(e).reason };
     }
@@ -380,7 +380,7 @@ export function PostRequest({ draft, chain, own, meta, terms, onEdit, onClose }:
       }
       return { kind: 'changed', what };
     }
-    const blockers = requestBlockers(next, meta, copy, unit);
+    const blockers = postBlockers(next, meta, copy, unit);
     if (blockers.length > 0) return { kind: 'refused', refusal: { code: 'RequestBlocked', reason: blockers[0]!, reopensAt: null, remedy: null } };
     return { kind: 'ok' };
   };
@@ -408,11 +408,11 @@ export function PostRequest({ draft, chain, own, meta, terms, onEdit, onClose }:
   // Where the request is followed and cancelled once posted (built page or
   // the current app's), said before the collateral locks.
   const offersPage = pageHandoff('/offers');
-  const blockers = review ? requestBlockers(review, meta, copy, unit) : [];
+  const blockers = review ? postBlockers(review, meta, copy, unit) : [];
   const consented = review !== null && consentFor === review.readAt;
   const termsLink = terms && terms.kind !== 'none' ? termsUrl(terms.version) : `${GUIDE_ORIGIN}/terms`;
   const riskLink = guideUrl(mode, 'borrow-risks');
-  const riskNeed = review ? requestRiskNeed(review) : null;
+  const riskNeed = review ? postRiskNeed(review) : null;
   const symbol = (a: Hex) => meta?.[a.toLowerCase()]?.symbol ?? shortAddress(a);
   const leg = review?.draft.pair.leg ?? null;
   const riskPair = review
@@ -514,7 +514,7 @@ export function PostRequest({ draft, chain, own, meta, terms, onEdit, onClose }:
           tx={tx}
           identity={identity}
           reviewedFor={review?.identity ?? tx.frozen?.identity ?? identity}
-          receipt={review ? requestReceipt(review, meta, copy, isAdvanced, settleKeeper) : null}
+          receipt={review ? postReceipt(review, meta, copy, isAdvanced, settleKeeper) : null}
           recheck={recheck}
           describeAsset={describeAsset}
           explorer={chain.blockExplorer}

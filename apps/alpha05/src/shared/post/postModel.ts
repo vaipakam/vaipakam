@@ -16,10 +16,10 @@
  * rate against the floor, and the collateral above the floor goes back to
  * your wallet (spec §4, direct-accept semantics).
  */
-import { interestAtDue, listFee } from '../../../shared/offers/model';
+import { interestAtDue, listFee } from '../offers/model';
 
-import type { Cadence } from '../../../shared/offers/cadence';
-import type { TariffChoice } from '../../../shared/offers/fullTariff';
+import type { Cadence } from '../offers/cadence';
+import type { TariffChoice } from '../offers/fullTariff';
 
 type Hex = `0x${string}`;
 
@@ -42,7 +42,7 @@ export const OFFER_TYPE_BORROWER = 1;
 export const ASSET_ERC20 = 0;
 
 /** What the reader typed, kept as text so nothing is rounded on the way. */
-export interface RequestInput {
+export interface PostInput {
   amount: string;
   /** The ERC-20 amount locked, or an ERC-1155 token's quantity, as typed. */
   collateral: string;
@@ -85,7 +85,7 @@ export const FILL_MODES = ['partial', 'aon', 'ioc'] as const;
 export type FillMode = (typeof FILL_MODES)[number];
 export const FILL_MODE_CODE: Readonly<Record<FillMode, number>> = { partial: 0, aon: 1, ioc: 2 };
 
-export const DEFAULT_INPUT: RequestInput = {
+export const DEFAULT_INPUT: PostInput = {
   amount: '',
   collateral: '',
   tokenId: '',
@@ -132,7 +132,7 @@ export function rangeError(amount: bigint, amountMax: bigint, collateral: bigint
  *  they still apply (RB-MODE: switching mode never drops what was set). */
 export type AdvancedOption = 'range' | 'fill' | 'cadence' | 'tariff';
 
-export function advancedSet(input: RequestInput): AdvancedOption[] {
+export function advancedSet(input: PostInput): AdvancedOption[] {
   const out: AdvancedOption[] = [];
   if (input.ranged) out.push('range');
   if (input.fillMode !== 'partial') out.push('fill');
@@ -204,7 +204,7 @@ export function expiresAt(choice: ExpiryChoice, nowSeconds: bigint, customDays =
 }
 
 /** The figures a request carries once parsed; null fields failed to parse. */
-export interface ParsedRequest {
+export interface ParsedPost {
   /** The smallest amount a lender may lend (the whole amount when single). */
   amount: bigint;
   /** The largest amount a match may lend; equal to `amount` when single. */
@@ -233,7 +233,7 @@ export interface ParsedRequest {
  *  by its id; an ERC-1155 leg is a quantity of one token, by its id. */
 export type CollateralLeg = { kind: 'erc20' } | { kind: 'erc721'; tokenId: bigint } | { kind: 'erc1155'; tokenId: bigint; quantity: bigint };
 
-export interface RequestPair {
+export interface PostPair {
   lending: Hex;
   collateral: Hex;
   leg: CollateralLeg;
@@ -241,7 +241,7 @@ export interface RequestPair {
 
 /** The two assets the borrower picked, and the standard the collateral's
  *  contract claims; the form adds the token id for an ERC-721 leg. */
-export interface RequestAssets {
+export interface PostAssets {
   lending: Hex;
   collateral: Hex;
   standard: CollateralLeg['kind'];
@@ -258,7 +258,7 @@ export const ASSET_ERC1155 = 2;
  * option this page does not offer is sent at its stated default (no
  * listing rights, no refinance target), and the review states each.
  */
-export function createParams(p: ParsedRequest, pair: RequestPair, expiry: bigint) {
+export function createParams(p: ParsedPost, pair: PostPair, expiry: bigint) {
   const leg = pair.leg;
   const nft = leg.kind !== 'erc20';
   return {
@@ -297,7 +297,7 @@ export type CreateParams = ReturnType<typeof createParams>;
 
 /** What a request would pay the borrower and ask back, if a lender takes it
  *  at once and the protocol never pauses. */
-export interface RequestFigures {
+export interface PostFigures {
   /** The amount less the list-rate fee: the most the fee leaves you. */
   received: bigint;
   fee: bigint;
@@ -307,14 +307,14 @@ export interface RequestFigures {
 
 /** Whether the request is a range: a lender may lend less than the most it
  *  asks, or the smallest loan locks less than everything posted. */
-export function isRanged(p: Pick<ParsedRequest, 'amount' | 'amountMax' | 'collateral' | 'collateralFloor'>): boolean {
+export function isRanged(p: Pick<ParsedPost, 'amount' | 'amountMax' | 'collateral' | 'collateralFloor'>): boolean {
   return p.amountMax !== p.amount || p.collateralFloor !== p.collateral;
 }
 
 /** OFF-19: the fee is the list rate on the amount, charged once in the
  *  lending asset when a lender takes the request; a discount tier can only
  *  lower it, and the tier counts as of that moment. */
-export function requestFigures(amount: bigint, rateBps: bigint, durationDays: number, lifBps: bigint): RequestFigures {
+export function postFigures(amount: bigint, rateBps: bigint, durationDays: number, lifBps: bigint): PostFigures {
   const fee = listFee(amount, lifBps);
   const interest = interestAtDue(amount, rateBps, BigInt(durationDays));
   return { received: amount - fee, fee, interest, owedAtDue: amount + interest };

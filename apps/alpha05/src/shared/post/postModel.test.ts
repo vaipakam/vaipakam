@@ -12,8 +12,8 @@ import {
   parseDays,
   parseRateBps,
   rangeError,
-  requestFigures,
-} from './requestModel';
+  postFigures,
+} from './postModel';
 
 type Hex = `0x${string}`;
 const lending = '0x00000000000000000000000000000000000000a1' as Hex;
@@ -130,9 +130,9 @@ describe('createParams for an NFT', () => {
   });
 });
 
-describe('requestFigures', () => {
+describe('postFigures', () => {
   it('takes the list fee from the amount and adds the term interest to what is owed', () => {
-    const f = requestFigures(1_000_000n, 1_000n, 365, 20n);
+    const f = postFigures(1_000_000n, 1_000n, 365, 20n);
     expect(f.fee).toBe(2_000n);
     expect(f.received).toBe(998_000n);
     expect(f.interest).toBe(100_000n);

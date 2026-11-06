@@ -6,14 +6,14 @@
  * unknown, never assumed.
  */
 import { parseEventLogs, type Log } from 'viem';
-import { OFFER_TYPE_BORROWER } from './requestModel';
-import { CREATE_ABI } from './requestReview';
+import { OFFER_TYPE_BORROWER } from './postModel';
+import { CREATE_ABI } from './postReview';
 
 type Hex = `0x${string}`;
 
 /** The borrower's request this transaction recorded for `creator`, from the
  *  Diamond's own log; null when it recorded none. */
-export function createdRequest(logs: readonly Log[], diamond: Hex, creator: Hex): bigint | null {
+export function createdOffer(logs: readonly Log[], diamond: Hex, creator: Hex): bigint | null {
   const own = logs.filter((l) => l.address.toLowerCase() === diamond.toLowerCase());
   const events = parseEventLogs({ abi: CREATE_ABI, logs: [...own], eventName: 'OfferCreated', strict: false }) as unknown as {
     args: { offerId?: bigint; creator?: Hex; offerType?: number };

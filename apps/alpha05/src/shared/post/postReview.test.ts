@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createParams, ZERO } from './requestModel';
+import { createParams, ZERO } from './postModel';
 import {
   changedBetween,
   matchConsequences,
@@ -9,11 +9,11 @@ import {
   rangeConsequences,
   readLtv,
   promptCount,
-  requestBlockers,
-  requestReceipt,
-  requestRiskNeed,
-  type RequestReview,
-} from './requestReview';
+  postBlockers,
+  postReceipt,
+  postRiskNeed,
+  type PostReview,
+} from './postReview';
 
 type Hex = `0x${string}`;
 const lending = '0x00000000000000000000000000000000000000a1' as Hex;
@@ -23,9 +23,9 @@ const diamond = '0x00000000000000000000000000000000000000d1' as Hex;
 const other = '0x00000000000000000000000000000000000000f1' as Hex;
 
 /** A copy stand-in that returns the key, so a test reads which line was chosen. */
-const copy = { text: (k: string) => k, format: (k: string) => k } as unknown as Parameters<typeof requestBlockers>[2];
+const copy = { text: (k: string) => k, format: (k: string) => k } as unknown as Parameters<typeof postBlockers>[2];
 
-function review(over: Partial<RequestReview> = {}): RequestReview {
+function review(over: Partial<PostReview> = {}): PostReview {
   const parsed = {
     amount: 1_000n,
     amountMax: 1_000n,
@@ -80,25 +80,25 @@ describe('judgeDryRun', () => {
   });
 });
 
-describe('requestBlockers', () => {
+describe('postBlockers', () => {
   it('names a shortfall and keeps the protocol refusal it explains out', () => {
     const r = review({ holding: { kind: 'erc20', funds: { balance: 1_000n, allowance: 0n }, approvalSteps: 1 }, verdict: { kind: 'refused', code: 'X', reason: 'r' } });
-    expect(requestBlockers(r, null, copy)).toEqual(['request.blockShortfall']);
+    expect(postBlockers(r, null, copy)).toEqual(['request.blockShortfall']);
   });
   it("states the protocol's refusal and an unreadable answer", () => {
-    expect(requestBlockers(review({ verdict: { kind: 'refused', code: 'X', reason: 'r' } }), null, copy)).toEqual(['request.blockRefused']);
-    expect(requestBlockers(review({ verdict: { kind: 'unreadable', reason: 'r' } }), null, copy)).toEqual(['request.blockUnread']);
-    expect(requestBlockers(review(), null, copy)).toEqual([]);
+    expect(postBlockers(review({ verdict: { kind: 'refused', code: 'X', reason: 'r' } }), null, copy)).toEqual(['request.blockRefused']);
+    expect(postBlockers(review({ verdict: { kind: 'unreadable', reason: 'r' } }), null, copy)).toEqual(['request.blockUnread']);
+    expect(postBlockers(review(), null, copy)).toEqual([]);
   });
   it('names a risk-access refusal with its step, even beside a shortfall, and reads its need', () => {
     const r = review({ verdict: { kind: 'refused', code: 'RiskTierTooLow', reason: 'x' }, holding: { kind: 'erc20', funds: { balance: 0n, allowance: 0n }, approvalSteps: 1 } });
-    expect(requestBlockers(r, null, copy)).toEqual(['request.blockShortfall', 'risk.blockTier']);
-    expect(requestRiskNeed(r)).toBe('tier');
-    expect(requestRiskNeed(review({ verdict: { kind: 'refused', code: 'IlliquidPairNotConsented', reason: 'x' } }))).toBe('pair-consent');
-    expect(requestRiskNeed(review())).toBeNull();
+    expect(postBlockers(r, null, copy)).toEqual(['request.blockShortfall', 'risk.blockTier']);
+    expect(postRiskNeed(r)).toBe('tier');
+    expect(postRiskNeed(review({ verdict: { kind: 'refused', code: 'IlliquidPairNotConsented', reason: 'x' } }))).toBe('pair-consent');
+    expect(postRiskNeed(review())).toBeNull();
   });
   it('names a distrusted leg', () => {
-    expect(requestBlockers(review({ collateralClass: 'distrusted' }), null, copy)).toEqual(['accept.blockDistrusted']);
+    expect(postBlockers(review({ collateralClass: 'distrusted' }), null, copy)).toEqual(['accept.blockDistrusted']);
   });
 });
 
@@ -111,11 +111,11 @@ describe('changedBetween', () => {
   });
 });
 
-describe('requestReceipt', () => {
+describe('postReceipt', () => {
   it('counts the approval prompt and states every lifecycle term and the lapse rule', () => {
     const r = review();
     expect(promptCount(r)).toBe(2);
-    const receipt = requestReceipt(r, null, copy);
+    const receipt = postReceipt(r, null, copy);
     const labels = receipt.rows.map((x) => x.label);
     for (const k of [
       'request.rowLock',
@@ -135,18 +135,18 @@ describe('requestReceipt', () => {
       expect(labels).toContain(k);
     expect(receipt.consequences).toContain('request.loseLapse');
     expect(receipt.consequences).toContain('request.loseTaken');
-    const never = requestReceipt(review({ draft: { ...r.draft, expiresAt: 0n } }), null, copy);
+    const never = postReceipt(review({ draft: { ...r.draft, expiresAt: 0n } }), null, copy);
     expect(never.consequences).toContain('request.loseOpen');
   });
   it('states no loan-to-value for an illiquid leg', () => {
-    const receipt = requestReceipt(review({ collateralClass: 'illiquid', risk: { ...review().risk, direct: { kind: 'unpriced' } } }), null, copy);
+    const receipt = postReceipt(review({ collateralClass: 'illiquid', risk: { ...review().risk, direct: { kind: 'unpriced' } } }), null, copy);
     expect(receipt.consequences).toContain('accept.loseIlliquidCollateral');
     expect(receipt.consequences).not.toContain('accept.loseLiquidation');
   });
 });
 
 /** A review of a request locking ERC-721 token #7, as the wallet stands on it. */
-function nftReview(state: { owner: Hex | null; approved?: Hex | null; forAll?: boolean }, over: Partial<RequestReview> = {}): RequestReview {
+function nftReview(state: { owner: Hex | null; approved?: Hex | null; forAll?: boolean }, over: Partial<PostReview> = {}): PostReview {
   const base = review();
   const leg = { kind: 'erc721' as const, tokenId: 7n };
   const parsed = { ...base.draft.parsed, collateral: 1n, collateralFloor: 1n };
@@ -172,10 +172,10 @@ describe('an ERC-721 collateral (NFT-13)', () => {
   });
   it('names a token that does not exist or that another wallet holds, and keeps the pull refusal it explains out', () => {
     const refused = { verdict: { kind: 'refused' as const, code: 'X', reason: 'r' } };
-    expect(requestBlockers(nftReview({ owner: null }, refused), null, copy)).toEqual(['request.blockNoToken']);
-    expect(requestBlockers(nftReview({ owner: other }, refused), null, copy)).toEqual(['request.blockNotHeld']);
-    expect(requestBlockers(nftReview({ owner: account }, refused), null, copy)).toEqual(['request.blockRefused']);
-    expect(requestBlockers(nftReview({ owner: account }), null, copy)).toEqual([]);
+    expect(postBlockers(nftReview({ owner: null }, refused), null, copy)).toEqual(['request.blockNoToken']);
+    expect(postBlockers(nftReview({ owner: other }, refused), null, copy)).toEqual(['request.blockNotHeld']);
+    expect(postBlockers(nftReview({ owner: account }, refused), null, copy)).toEqual(['request.blockRefused']);
+    expect(postBlockers(nftReview({ owner: account }), null, copy)).toEqual([]);
   });
   it('names a move of the token or its approval between reads', () => {
     expect(changedBetween(nftReview({ owner: account }), nftReview({ owner: account }), copy)).toBeNull();
@@ -183,7 +183,7 @@ describe('an ERC-721 collateral (NFT-13)', () => {
     expect(changedBetween(nftReview({ owner: account }), nftReview({ owner: account, approved: diamond }), copy)).toBe('request.changedToken');
   });
   it('locks the token by name with a one-token approval row, and states the in-kind default', () => {
-    const receipt = requestReceipt(nftReview({ owner: account }), null, copy);
+    const receipt = postReceipt(nftReview({ owner: account }), null, copy);
     const lock = receipt.rows.find((x) => x.label === 'request.rowLock');
     expect(lock?.value).toEqual({ kind: 'text', text: 'asset.nft' });
     expect(lock?.movesOut).toBe(true);
@@ -195,7 +195,7 @@ describe('an ERC-721 collateral (NFT-13)', () => {
 });
 
 /** A review of a request locking `quantity` of ERC-1155 token #7. */
-function multiReview(state: { balance: bigint; forAll?: boolean }, quantity = 3n, over: Partial<RequestReview> = {}): RequestReview {
+function multiReview(state: { balance: bigint; forAll?: boolean }, quantity = 3n, over: Partial<PostReview> = {}): PostReview {
   const base = review();
   const leg = { kind: 'erc1155' as const, tokenId: 7n, quantity };
   const parsed = { ...base.draft.parsed, collateral: quantity, collateralFloor: quantity };
@@ -227,9 +227,9 @@ describe('an ERC-1155 collateral (NFT-13)', () => {
   });
   it('names a wallet holding too few, and keeps the pull refusal it explains out', () => {
     const refused = { verdict: { kind: 'refused' as const, code: 'X', reason: 'r' } };
-    expect(requestBlockers(multiReview({ balance: 2n }, 3n, refused), null, copy)).toEqual(['request.blockUnits']);
-    expect(requestBlockers(multiReview({ balance: 3n }, 3n, refused), null, copy)).toEqual(['request.blockRefused']);
-    expect(requestBlockers(multiReview({ balance: 3n }), null, copy)).toEqual([]);
+    expect(postBlockers(multiReview({ balance: 2n }, 3n, refused), null, copy)).toEqual(['request.blockUnits']);
+    expect(postBlockers(multiReview({ balance: 3n }, 3n, refused), null, copy)).toEqual(['request.blockRefused']);
+    expect(postBlockers(multiReview({ balance: 3n }), null, copy)).toEqual([]);
   });
   it('names a move of the balance or the approval between reads', () => {
     expect(changedBetween(multiReview({ balance: 5n }), multiReview({ balance: 5n }), copy)).toBeNull();
@@ -238,10 +238,10 @@ describe('an ERC-1155 collateral (NFT-13)', () => {
     expect(changedBetween(multiReview({ balance: 5n }), multiReview({ balance: 5n, forAll: true }), copy)).toBe('request.changedToken');
   });
   it('locks the quantity by name with a collection-wide approval row that says it is taken back', () => {
-    const receipt = requestReceipt(multiReview({ balance: 5n }), null, copy);
+    const receipt = postReceipt(multiReview({ balance: 5n }), null, copy);
     expect(receipt.rows.find((x) => x.label === 'request.rowLock')?.value).toEqual({ kind: 'text', text: 'asset.nft1155' });
     expect(receipt.rows.find((x) => x.label === 'accept.rowApproval')?.value).toEqual({ kind: 'text', text: 'request.approvalOperator' });
-    const already = requestReceipt(multiReview({ balance: 5n, forAll: true }), null, copy);
+    const already = postReceipt(multiReview({ balance: 5n, forAll: true }), null, copy);
     expect(already.rows.find((x) => x.label === 'accept.rowApproval')?.value).toEqual({ kind: 'text', text: 'request.approvalOperatorEnough' });
     expect(receipt.prompts).toBe(3);
   });
@@ -252,7 +252,7 @@ describe('an ERC-1155 collateral (NFT-13)', () => {
 
 /** A review of a ranged request: 1,000 to 4,000 against 5,000 locked, 2,000 of
  *  it for the smallest loan. */
-function rangedReview(over: Partial<RequestReview> = {}, risk: Partial<RequestReview['risk']> = {}): RequestReview {
+function rangedReview(over: Partial<PostReview> = {}, risk: Partial<PostReview['risk']> = {}): PostReview {
   const base = review();
   const parsed = { ...base.draft.parsed, amountMax: 4_000n, collateralFloor: 2_000n };
   const draft = { ...base.draft, parsed };
@@ -270,7 +270,7 @@ const decoded = (errorName: string, args: unknown[]) => Object.assign(new Error(
 
 describe('a ranged request (OFF-10 / OFF-16)', () => {
   it('states both ends, the floor and what returns, the fill mode and the matching switch', () => {
-    const receipt = requestReceipt(rangedReview(), null, copy);
+    const receipt = postReceipt(rangedReview(), null, copy);
     const labels = receipt.rows.map((x) => x.label);
     for (const k of [
       'request.rowAmountMin',
@@ -291,10 +291,10 @@ describe('a ranged request (OFF-10 / OFF-16)', () => {
     expect(receipt.consequences).toContain('request.loseFillFixed');
   });
   it('keeps the health-factor floor to Advanced and every risk warning in Basic', () => {
-    const basic = requestReceipt(rangedReview({}, { directWithinLimit: 'over', directCeiling: 900n, partialFill: false }), null, copy);
+    const basic = postReceipt(rangedReview({}, { directWithinLimit: 'over', directCeiling: 900n, partialFill: false }), null, copy);
     expect(basic.rows.map((x) => x.label)).not.toContain('request.rowHfFloor');
     expect(basic.consequences).toEqual(expect.arrayContaining(['request.loseDirectOver', 'request.loseMatchingOff']));
-    const advanced = requestReceipt(rangedReview(), null, copy, true);
+    const advanced = postReceipt(rangedReview(), null, copy, true);
     expect(advanced.rows.map((x) => x.label)).toContain('request.rowHfFloor');
   });
   it('states an unknown limit and an unread switch rather than promising either', () => {
@@ -310,16 +310,16 @@ describe('a ranged request (OFF-10 / OFF-16)', () => {
   });
   it("names a refused collateral value as 'nothing', never 0%", () => {
     const r = rangedReview({}, { direct: { kind: 'worthless' } });
-    expect(requestReceipt(r, null, copy).rows.find((x) => x.label === 'request.rowLtvDirect')?.value).toEqual({ kind: 'text', text: 'request.ltvWorthless' });
+    expect(postReceipt(r, null, copy).rows.find((x) => x.label === 'request.rowLtvDirect')?.value).toEqual({ kind: 'text', text: 'request.ltvWorthless' });
   });
   it('turns the ceiling the protocol names into the blocker, by the range it refused', () => {
     const verdict = judgeDryRun({ kind: 'reverted', error: decoded('MaxLendingAboveCeiling', [4_000n, 3_100n]) }, true);
     expect(verdict).toMatchObject({ kind: 'refused', code: 'MaxLendingAboveCeiling', ceiling: 3_100n });
-    expect(requestBlockers(rangedReview({ verdict }), null, copy)).toEqual(['request.blockCeilingRange']);
-    expect(requestBlockers(review({ verdict }), null, copy)).toEqual(['request.blockCeiling']);
+    expect(postBlockers(rangedReview({ verdict }), null, copy)).toEqual(['request.blockCeilingRange']);
+    expect(postBlockers(review({ verdict }), null, copy)).toEqual(['request.blockCeiling']);
     // A bound on the request, so a shortfall never hides it.
     const short = { kind: 'erc20' as const, funds: { balance: 0n, allowance: 0n }, approvalSteps: 1 };
-    expect(requestBlockers(rangedReview({ verdict, holding: short }), null, copy)).toEqual(['request.blockShortfall', 'request.blockCeilingRange']);
+    expect(postBlockers(rangedReview({ verdict, holding: short }), null, copy)).toEqual(['request.blockShortfall', 'request.blockCeilingRange']);
   });
   it('names a re-read whose risk moved', () => {
     expect(changedBetween(rangedReview(), rangedReview(), copy)).toBeNull();
@@ -381,7 +381,7 @@ describe('readLtv', () => {
 
 describe('what a match can lock (OFF-16)', () => {
   it('states the largest match from all the collateral to only the floor for a collateral range', () => {
-    const row = requestReceipt(rangedReview(), null, copy).rows.find((x) => x.label === 'request.rowLtvLargest');
+    const row = postReceipt(rangedReview(), null, copy).rows.find((x) => x.label === 'request.rowLtvLargest');
     expect(row?.value).toEqual({ kind: 'text', text: 'request.ltvSpan' });
     expect(matchConsequences(rangedReview(), null, copy)).toEqual(['request.loseMatchLocksFloor', 'request.loseMatchKeepsRest']);
   });
@@ -389,10 +389,10 @@ describe('what a match can lock (OFF-16)', () => {
     const base = rangedReview({}, { largestAtFloor: null });
     const parsed = { ...base.draft.parsed, collateralFloor: base.draft.parsed.collateral };
     const r = { ...base, draft: { ...base.draft, parsed } };
-    expect(requestReceipt(r, null, copy).rows.find((x) => x.label === 'request.rowLtvLargest')?.value).toEqual({ kind: 'text', text: 'request.ltvAllLocked' });
+    expect(postReceipt(r, null, copy).rows.find((x) => x.label === 'request.rowLtvLargest')?.value).toEqual({ kind: 'text', text: 'request.ltvAllLocked' });
     expect(matchConsequences(r, null, copy)).toEqual(['request.loseMatchLocksLess', 'request.loseMatchKeepsRest']);
     // A single-value request can be matched too, so the warning is not a range's alone.
-    expect(requestReceipt(review(), null, copy).consequences).toContain('request.loseMatchLocksLess');
+    expect(postReceipt(review(), null, copy).consequences).toContain('request.loseMatchLocksLess');
   });
   it('drops the risk warning where no loan-to-value applies, and both only where no match can fill it', () => {
     expect(matchConsequences(review({ risk: { ...review().risk, partialFill: false } }), null, copy)).toEqual([]);
@@ -401,28 +401,28 @@ describe('what a match can lock (OFF-16)', () => {
     expect(matchConsequences(review({ risk: { ...review().risk, partialFill: null } }), null, copy)).toEqual(['request.loseMatchLocksLess', 'request.loseMatchKeepsRest']);
   });
   it('states a start-of-loan limit that could not be read, never dropping the row', () => {
-    const unread = requestReceipt(review({ risk: { ...review().risk, start: { kind: 'unread' } } }), null, copy, true);
+    const unread = postReceipt(review({ risk: { ...review().risk, start: { kind: 'unread' } } }), null, copy, true);
     expect(unread.rows.find((x) => x.label === 'request.rowHfFloor')?.value).toEqual({ kind: 'text', text: 'request.hfFloorUnread' });
-    const tiered = requestReceipt(review({ risk: { ...review().risk, start: { kind: 'hf', floor: 10n ** 18n, tiered: true } } }), null, copy, true);
+    const tiered = postReceipt(review({ risk: { ...review().risk, start: { kind: 'hf', floor: 10n ** 18n, tiered: true } } }), null, copy, true);
     expect(tiered.rows.find((x) => x.label === 'request.rowHfFloor')?.value).toEqual({ kind: 'text', text: 'request.hfFloorTiered' });
-    const none = requestReceipt(review({ risk: { ...review().risk, start: { kind: 'none' } } }), null, copy, true);
+    const none = postReceipt(review({ risk: { ...review().risk, start: { kind: 'none' } } }), null, copy, true);
     expect(none.rows.map((x) => x.label)).not.toContain('request.rowHfFloor');
   });
 });
 
 describe('an interest schedule (OFF-14)', () => {
-  const scheduled = (cadence: 0 | 1 | 2 | 3 | 4, over: Partial<RequestReview> = {}, base = review()): RequestReview => {
+  const scheduled = (cadence: 0 | 1 | 2 | 3 | 4, over: Partial<PostReview> = {}, base = review()): PostReview => {
     const parsed = { ...base.draft.parsed, cadence };
     const draft = { ...base.draft, parsed };
     return { ...base, draft, params: createParams(parsed, draft.pair, draft.expiresAt), ...over };
   };
-  const row = (r: RequestReview, label: string, advanced = false) => requestReceipt(r, null, copy, advanced).rows.find((x) => x.label === label);
+  const row = (r: PostReview, label: string, advanced = false) => postReceipt(r, null, copy, advanced).rows.find((x) => x.label === label);
 
   it('states interest at repayment as one bound line, with no schedule consequence', () => {
     const r = scheduled(0);
     expect(row(r, 'accept.rowSchedule')?.value).toEqual({ kind: 'text', text: 'accept.scheduleNone' });
     expect(row(r, 'request.rowPeriod')).toBeUndefined();
-    expect(requestReceipt(r, null, copy).consequences).not.toContain('request.loseCadenceFixed');
+    expect(postReceipt(r, null, copy).consequences).not.toContain('request.loseCadenceFixed');
   });
   it('states the schedule, each period, its grace and the sale a missed period brings, in Basic', () => {
     const r = scheduled(1, { periodGraceSeconds: 86_400n });
@@ -431,7 +431,7 @@ describe('an interest schedule (OFF-14)', () => {
     expect(row(r, 'request.rowPeriod')?.binding).toBe(true);
     expect(row(r, 'request.rowPeriodGrace')?.binding).toBe(false);
     expect(row(r, 'request.rowPeriodSettle')).toBeUndefined();
-    expect(requestReceipt(r, null, copy).consequences).toEqual(expect.arrayContaining(['request.loseCadence', 'request.loseCadenceFixed']));
+    expect(postReceipt(r, null, copy).consequences).toEqual(expect.arrayContaining(['request.loseCadence', 'request.loseCadenceFixed']));
   });
   it('labels what is owed as the whole term with instalments counted, not as what is left at the due date', () => {
     expect(row(scheduled(0), 'accept.rowOwe')).toBeDefined();
@@ -445,9 +445,9 @@ describe('an interest schedule (OFF-14)', () => {
   it('says an unread grace instead of a figure, and states the keeper posture in Advanced only', () => {
     const r = scheduled(2);
     expect(row(r, 'request.rowPeriodGrace')?.value).toEqual({ kind: 'text', text: 'request.periodGraceUnread' });
-    expect(requestReceipt(r, null, copy).consequences).toContain('request.loseCadenceUnread');
-    expect(requestReceipt(r, null, copy, true).rows.find((x) => x.label === 'request.rowPeriodSettle')?.value).toEqual({ kind: 'text', text: 'request.settleUnknown' });
-    expect(requestReceipt(r, null, copy, true, 'present').rows.find((x) => x.label === 'request.rowPeriodSettle')?.value).toEqual({ kind: 'text', text: 'request.settleArmed' });
+    expect(postReceipt(r, null, copy).consequences).toContain('request.loseCadenceUnread');
+    expect(postReceipt(r, null, copy, true).rows.find((x) => x.label === 'request.rowPeriodSettle')?.value).toEqual({ kind: 'text', text: 'request.settleUnknown' });
+    expect(postReceipt(r, null, copy, true, 'present').rows.find((x) => x.label === 'request.rowPeriodSettle')?.value).toEqual({ kind: 'text', text: 'request.settleArmed' });
   });
   it('states each period at both ends of a range', () => {
     const r = scheduled(1, {}, rangedReview());
@@ -457,7 +457,7 @@ describe('an interest schedule (OFF-14)', () => {
   it("turns the protocol's schedule refusal into a blocker that says why", () => {
     const verdict = judgeDryRun({ kind: 'reverted', error: decoded('CadenceNotAllowed', [1, 30n, 5n, 1000n]) }, true);
     expect(verdict).toMatchObject({ kind: 'refused', code: 'CadenceNotAllowed', schedule: { kind: 'below-threshold', principal: 5n, threshold: 1000n } });
-    expect(requestBlockers(scheduled(1, { verdict }), null, copy, 'USD')).toEqual(['request.blockSchedule']);
+    expect(postBlockers(scheduled(1, { verdict }), null, copy, 'USD')).toEqual(['request.blockSchedule']);
     const off = judgeDryRun({ kind: 'reverted', error: decoded('PeriodicInterestDisabled', []) }, false);
     expect(off).toMatchObject({ kind: 'refused', schedule: { kind: 'switch-off' } });
   });
@@ -468,7 +468,7 @@ describe('an interest schedule (OFF-14)', () => {
 
 describe('the fill mode row', () => {
   it('is left out for one amount at the default mode, which the whole-amount row already states', () => {
-    const labels = requestReceipt(review(), null, copy).rows.map((x) => x.label);
+    const labels = postReceipt(review(), null, copy).rows.map((x) => x.label);
     expect(labels).toContain('request.rowWhole');
     expect(labels).not.toContain('request.rowFill');
   });
@@ -476,7 +476,7 @@ describe('the fill mode row', () => {
 
 describe('the Full fee tariff (OFF-22)', () => {
   const E = 10n ** 18n;
-  const withTariff = (over: { allowDowngrade?: boolean; maxCStar?: bigint; enabled?: boolean | null; freeVpfi?: bigint | null } = {}): RequestReview => {
+  const withTariff = (over: { allowDowngrade?: boolean; maxCStar?: bigint; enabled?: boolean | null; freeVpfi?: bigint | null } = {}): PostReview => {
     const base = review();
     const choice = { maxCStar: over.maxCStar ?? 6n * E, allowDowngrade: over.allowDowngrade ?? false };
     const parsed = { ...base.draft.parsed, tariff: choice };
@@ -491,7 +491,7 @@ describe('the Full fee tariff (OFF-22)', () => {
       },
     };
   };
-  const labels = (r: RequestReview) => requestReceipt(r, null, copy).rows.map((x) => x.label);
+  const labels = (r: PostReview) => postReceipt(r, null, copy).rows.map((x) => x.label);
 
   it('adds nothing without the tariff', () => {
     expect(labels(review())).not.toContain('request.rowTariff');
@@ -500,24 +500,24 @@ describe('the Full fee tariff (OFF-22)', () => {
   it('states the choice, the switch, the tariff, the ceiling, the rule and the free VPFI, and counts the arm prompt', () => {
     const r = withTariff();
     for (const k of ['request.rowTariff', 'request.rowTariffSwitch', 'request.rowTariffQuote', 'request.rowTariffCeiling', 'request.rowTariffFail', 'request.rowTariffVault']) expect(labels(r)).toContain(k);
-    const rows = requestReceipt(r, null, copy).rows;
+    const rows = postReceipt(r, null, copy).rows;
     expect(rows.find((x) => x.label === 'request.rowTariffCeiling')?.binding).toBe(true);
     expect(rows.find((x) => x.label === 'request.rowTariffQuote')?.binding).toBe(false);
     expect(promptCount(r)).toBe(3);
-    expect(requestReceipt(r, null, copy).consequences).toEqual(expect.arrayContaining(['request.loseTariffPaid', 'request.loseTariffLif', 'request.loseTariffGap']));
+    expect(postReceipt(r, null, copy).consequences).toEqual(expect.arrayContaining(['request.loseTariffPaid', 'request.loseTariffLif', 'request.loseTariffGap']));
   });
   it('blocks when every loan would be refused, and warns instead when loans may open without it', () => {
-    expect(requestBlockers(withTariff({ enabled: false }), null, copy)).toContain('request.blockTariffEvery');
-    expect(requestBlockers(withTariff({ maxCStar: E }), null, copy)).toContain('request.blockTariffEvery');
+    expect(postBlockers(withTariff({ enabled: false }), null, copy)).toContain('request.blockTariffEvery');
+    expect(postBlockers(withTariff({ maxCStar: E }), null, copy)).toContain('request.blockTariffEvery');
     const open = withTariff({ enabled: false, allowDowngrade: true });
-    expect(requestBlockers(open, null, copy)).not.toContain('request.blockTariffEvery');
-    expect(requestReceipt(open, null, copy).consequences).toContain('request.loseTariffOffOpen');
+    expect(postBlockers(open, null, copy)).not.toContain('request.blockTariffEvery');
+    expect(postReceipt(open, null, copy).consequences).toContain('request.loseTariffOffOpen');
   });
   it('states a vault short of the tariff as the rule chosen, and an unread vault as unknown', () => {
-    expect(requestReceipt(withTariff({ freeVpfi: E }), null, copy).consequences).toContain('request.loseTariffVaultAllRefuse');
-    expect(requestReceipt(withTariff({ freeVpfi: E, allowDowngrade: true }), null, copy).consequences).toContain('request.loseTariffVaultAllOpen');
-    expect(requestReceipt(withTariff({ freeVpfi: null }), null, copy).consequences).toContain('request.loseTariffUnread');
-    expect(requestBlockers(withTariff({ freeVpfi: E }), null, copy)).not.toContain('request.blockTariffEvery');
+    expect(postReceipt(withTariff({ freeVpfi: E }), null, copy).consequences).toContain('request.loseTariffVaultAllRefuse');
+    expect(postReceipt(withTariff({ freeVpfi: E, allowDowngrade: true }), null, copy).consequences).toContain('request.loseTariffVaultAllOpen');
+    expect(postReceipt(withTariff({ freeVpfi: null }), null, copy).consequences).toContain('request.loseTariffUnread');
+    expect(postBlockers(withTariff({ freeVpfi: E }), null, copy)).not.toContain('request.blockTariffEvery');
   });
   it('names a moved tariff read on a re-check', () => {
     expect(changedBetween(withTariff(), withTariff({ freeVpfi: E }), copy)).toBe('request.changedTariff');

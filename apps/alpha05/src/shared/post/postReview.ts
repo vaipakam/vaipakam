@@ -15,24 +15,24 @@
  */
 import type { Abi, PublicClient } from 'viem';
 import { OfferCreateFacetABI, RiskFacetABI } from '@vaipakam/contracts/abis';
-import type { OwnStateClient } from '../../../chain/ownRail';
-import type { CopyAccess, CopyKey } from '../../../shared/copy/useCopy';
-import { refusalFromError, revertArgs, UNRECOGNISED } from '../../../shared/eligibility/refusal';
-import { readAssetClass, type AssetClass } from '../../../shared/offers/assets';
-import { shortfall } from '../../../shared/offers/model';
-import { CONFIG, ORACLE, readGraceSeconds, readLifBps, readVault, readWalletFunds, tokenAcceptsApproval, type WalletFunds } from '../../../shared/offers/reads';
-import type { Receipt } from '../../../shared/receipt/types';
-import { assetName, tokenAmount, type TokenMetaMap } from '../../../shared/reads/tokens';
-import { askThrough } from '../../../shared/tx/simulate';
-import { allowanceSteps } from '../../../shared/tx/approval';
-import { formatBps, formatScaled, formatSpan, formatUtc, shortAddress } from '../../../shared/ui/format';
-import { createParams, isRanged, requestFigures, ZERO, type CollateralLeg, type CreateParams, type ParsedRequest, type RequestPair } from './requestModel';
-import { pageHandoff } from '../../../routes/pageMap';
-import { CADENCE_ERRORS, cadenceRefusalText, classifyCadenceError, INTERVAL_DAYS, periodGraceLookupDays, periodInterest, type CadenceRefusal } from '../../../shared/offers/cadence';
-import type { Posture } from '../../../shared/capability/types';
-import { needFromRefusal, type RiskNeed } from '../../../shared/risk/riskAccess';
-import { readRequestTariff, tariffBlockers, tariffConsequences, tariffKey, tariffRows, type RequestTariff } from './tariffReview';
-import { diamondMayMove, holds, readErc1155, readErc721, type Erc1155State, type Erc721State } from '../../../shared/nft/nft';
+import type { OwnStateClient } from '../../chain/ownRail';
+import type { CopyAccess, CopyKey } from '../copy/useCopy';
+import { refusalFromError, revertArgs, UNRECOGNISED } from '../eligibility/refusal';
+import { readAssetClass, type AssetClass } from '../offers/assets';
+import { shortfall } from '../offers/model';
+import { CONFIG, ORACLE, readGraceSeconds, readLifBps, readVault, readWalletFunds, tokenAcceptsApproval, type WalletFunds } from '../offers/reads';
+import type { Receipt } from '../receipt/types';
+import { assetName, tokenAmount, type TokenMetaMap } from '../reads/tokens';
+import { askThrough } from '../tx/simulate';
+import { allowanceSteps } from '../tx/approval';
+import { formatBps, formatScaled, formatSpan, formatUtc, shortAddress } from '../ui/format';
+import { createParams, isRanged, postFigures, ZERO, type CollateralLeg, type CreateParams, type ParsedPost, type PostPair } from './postModel';
+import { pageHandoff } from '../../routes/pageMap';
+import { CADENCE_ERRORS, cadenceRefusalText, classifyCadenceError, INTERVAL_DAYS, periodGraceLookupDays, periodInterest, type CadenceRefusal } from '../offers/cadence';
+import type { Posture } from '../capability/types';
+import { needFromRefusal, type RiskNeed } from '../risk/riskAccess';
+import { readPostTariff, tariffBlockers, tariffConsequences, tariffKey, tariffRows, type PostTariff } from './tariffReview';
+import { diamondMayMove, holds, readErc1155, readErc721, type Erc1155State, type Erc721State } from '../nft/nft';
 
 type Hex = `0x${string}`;
 
@@ -47,9 +47,9 @@ const HF_TIERED_FLOOR = 10n ** 18n;
 /** The request as the reader confirmed it on the form: the figures, the
  *  pair, and the expiry fixed when the review opened, so a re-read never
  *  moves the deadline under a consent. */
-export interface RequestDraft {
-  parsed: ParsedRequest;
-  pair: RequestPair;
+export interface PostDraft {
+  parsed: ParsedPost;
+  pair: PostPair;
   expiresAt: bigint;
 }
 
@@ -68,27 +68,27 @@ export type CreateVerdict =
   /** No answer could be read; the review says so instead of guessing. */
   | { kind: 'unreadable'; reason: string };
 
-export interface RequestReview {
+export interface PostReview {
   /** The wallet and network the review was read under (RB-REVIEW). */
   identity: string;
   /** The wallet the review was read for, and the protocol it would post to. */
   account: Hex;
   diamond: Hex;
-  draft: RequestDraft;
+  draft: PostDraft;
   params: CreateParams;
   verdict: CreateVerdict;
   lendingClass: AssetClass;
   collateralClass: AssetClass;
   /** OFF-16: the request's risk at today's prices, at each point a lender
    *  can take it, with the limits the protocol checks. */
-  risk: RequestRisk;
+  risk: PostRisk;
   maxDurationDays: bigint;
   graceSeconds: bigint;
   /** OFF-14: the grace a missed period gets before it can be settled, read
    *  live; null without a schedule, or when it could not be read. */
   periodGraceSeconds: bigint | null;
   /** OFF-22: the Full fee tariff's reads, when the request chose it. */
-  tariff: RequestTariff | null;
+  tariff: PostTariff | null;
   lifBps: bigint;
   /** The borrower's vault; the zero address when posting opens it. */
   vault: Hex;
@@ -125,7 +125,7 @@ export type LtvRead = { kind: 'value'; bps: bigint } | { kind: 'worthless' } | {
  * `partialFill` is the matching switch (RB-SWITCH class 1a): while it is off,
  * a range fills once and the matchers refuse.
  */
-export interface RequestRisk {
+export interface PostRisk {
   direct: LtvRead;
   largest: LtvRead | null;
   largestAtFloor: LtvRead | null;
@@ -252,7 +252,7 @@ export function unnamed(code: string): boolean {
   return code === UNRECOGNISED || /^0x[0-9a-fA-F]{8}$/.test(code);
 }
 
-export async function readRequestReview(own: OwnStateClient, diamond: Hex, draft: RequestDraft, identity: string): Promise<RequestReview> {
+export async function readPostReview(own: OwnStateClient, diamond: Hex, draft: PostDraft, identity: string): Promise<PostReview> {
   const account = own.account;
   const r = <T>(fn: Parameters<OwnStateClient['read']>[0]) => own.read(fn).then((x) => x.value as T);
   const { pair, parsed } = draft;
@@ -319,10 +319,10 @@ export async function readRequestReview(own: OwnStateClient, diamond: Hex, draft
     priced ? r<StartGate>((c) => readStartGate(c, diamond)).catch((): StartGate => ({ kind: 'unread' })) : Promise.resolve<StartGate>({ kind: 'none' }),
     r<boolean>((c) => c.readContract({ address: diamond, abi: CONFIG, functionName: 'getPartialFillEnabled' }) as Promise<boolean>).catch(() => null),
     parsed.cadence === 0 ? Promise.resolve(null) : r<bigint>((c) => readGraceSeconds(c, diamond, BigInt(periodGraceLookupDays(parsed.cadence)))).catch(() => null),
-    readRequestTariff(own, diamond, parsed, pair, lendingClass),
+    readPostTariff(own, diamond, parsed, pair, lendingClass),
   ]);
   const probed = probe === null ? null : judgeLimit(probe, allowanceCovers);
-  const risk: RequestRisk = {
+  const risk: PostRisk = {
     direct,
     largest,
     largestAtFloor,
@@ -335,7 +335,7 @@ export async function readRequestReview(own: OwnStateClient, diamond: Hex, draft
 }
 
 /** Whether the collateral needs an approval step before posting. */
-type Standing = Pick<RequestReview, 'holding' | 'draft' | 'diamond'>;
+type Standing = Pick<PostReview, 'holding' | 'draft' | 'diamond'>;
 
 export function needsApproval(r: Standing): boolean {
   const h = r.holding;
@@ -365,7 +365,7 @@ export function promptCount(r: Standing): number {
  *  or for an ERC-1155 token how many of it the wallet is short. */
 export type Lack = { kind: 'none' } | { kind: 'amount'; missing: bigint } | { kind: 'no-token' } | { kind: 'not-held' } | { kind: 'units'; missing: bigint };
 
-export function collateralLack(r: Pick<RequestReview, 'holding' | 'draft' | 'account'>): Lack {
+export function collateralLack(r: Pick<PostReview, 'holding' | 'draft' | 'account'>): Lack {
   const h = r.holding;
   if (h.kind === 'erc721') return h.state.owner === null ? { kind: 'no-token' } : holds(h.state, r.account) ? { kind: 'none' } : { kind: 'not-held' };
   if (h.kind === 'erc1155') return h.state.balance < h.quantity ? { kind: 'units', missing: h.quantity - h.state.balance } : { kind: 'none' };
@@ -378,7 +378,7 @@ export function collateralLack(r: Pick<RequestReview, 'holding' | 'draft' | 'acc
  * reader should meet them; empty when the protocol reports nothing and the
  * wallet holds the collateral.
  */
-export function requestBlockers(r: RequestReview, meta: TokenMetaMap | null, copy: Pick<CopyAccess, 'text' | 'format'>, unit = ''): string[] {
+export function postBlockers(r: PostReview, meta: TokenMetaMap | null, copy: Pick<CopyAccess, 'text' | 'format'>, unit = ''): string[] {
   const out: string[] = [];
   const name = (a: Hex) => meta?.[a.toLowerCase()]?.symbol ?? shortAddress(a);
   for (const [asset, cls] of [
@@ -399,7 +399,7 @@ export function requestBlockers(r: RequestReview, meta: TokenMetaMap | null, cop
   }
   // A risk-access refusal comes before the pull, so the shortfall never
   // explains it; it is named with the step that clears it (ACC-RISK).
-  const risk = requestRiskNeed(r);
+  const risk = postRiskNeed(r);
   if (risk !== null) out.push(copy.text(RISK_BLOCK_KEYS[risk]));
   // The protocol's own refusal, unless what the wallet lacks already
   // explains it (a pull from a wallet that lacks the tokens or the token).
@@ -422,13 +422,13 @@ const RISK_BLOCK_KEYS: Readonly<Record<RiskNeed, CopyKey>> = { tier: 'risk.block
 
 /** The risk-access step the protocol's dry run asks of this wallet, if its
  *  refusal is one (ACC-RISK). */
-export function requestRiskNeed(r: Pick<RequestReview, 'verdict'>): RiskNeed | null {
+export function postRiskNeed(r: Pick<PostReview, 'verdict'>): RiskNeed | null {
   return r.verdict.kind === 'refused' ? needFromRefusal(r.verdict.code) : null;
 }
 
 /** What moved between the review and a re-read of it, as the page names it,
  *  or null when nothing the receipt or the request stands on moved. */
-export function changedBetween(a: RequestReview, b: RequestReview, copy: Pick<CopyAccess, 'text'>): string | null {
+export function changedBetween(a: PostReview, b: PostReview, copy: Pick<CopyAccess, 'text'>): string | null {
   if (a.verdict.kind !== b.verdict.kind || (a.verdict.kind === 'refused' && b.verdict.kind === 'refused' && a.verdict.code !== b.verdict.code))
     return copy.text('request.changedVerdict');
   if (a.lendingClass !== b.lendingClass || a.collateralClass !== b.collateralClass || riskKey(a.risk) !== riskKey(b.risk)) return copy.text('accept.changedClass');
@@ -445,7 +445,7 @@ function ltvKey(l: LtvRead | null): string {
 }
 
 /** What the risk figures stand on, for the "what changed" of a re-check. */
-function riskKey(r: RequestRisk): string {
+function riskKey(r: PostRisk): string {
   const start = r.start.kind === 'hf' ? `${r.start.floor}:${r.start.tiered}` : r.start.kind;
   return [ltvKey(r.direct), ltvKey(r.largest), ltvKey(r.largestAtFloor), r.directWithinLimit, String(r.directCeiling), start, String(r.partialFill)].join('|');
 }
@@ -454,7 +454,7 @@ function lackKey(l: Lack): string {
   return l.kind === 'amount' || l.kind === 'units' ? `${l.kind}:${l.missing}` : l.kind;
 }
 
-const FILL_MODE_KEYS: Readonly<Record<ParsedRequest['fillMode'], CopyKey>> = {
+const FILL_MODE_KEYS: Readonly<Record<ParsedPost['fillMode'], CopyKey>> = {
   partial: 'request.fillModePartial',
   aon: 'request.fillModeAon',
   ioc: 'request.fillModeIoc',
@@ -493,12 +493,12 @@ function startRows(start: StartGate, copy: Pick<CopyAccess, 'text' | 'format'>):
  *  taking it directly lends and what the largest match can lend, with the
  *  risk at each (OFF-16). `advanced` adds the panel detail, the live
  *  start-of-loan health factor; every risk warning stays in Basic. */
-export function requestReceipt(r: RequestReview, meta: TokenMetaMap | null, copy: Pick<CopyAccess, 'text' | 'format'>, advanced = false, keeper: Posture = 'unknown'): Receipt {
+export function postReceipt(r: PostReview, meta: TokenMetaMap | null, copy: Pick<CopyAccess, 'text' | 'format'>, advanced = false, keeper: Posture = 'unknown'): Receipt {
   const { text, format } = copy;
   const { parsed, pair } = r.draft;
-  const f = requestFigures(parsed.amount, parsed.rateBps, parsed.durationDays, r.lifBps);
+  const f = postFigures(parsed.amount, parsed.rateBps, parsed.durationDays, r.lifBps);
   const ranged = isRanged(parsed);
-  const largest = ranged ? requestFigures(parsed.amountMax, parsed.rateBps, parsed.durationDays, r.lifBps) : null;
+  const largest = ranged ? postFigures(parsed.amountMax, parsed.rateBps, parsed.durationDays, r.lifBps) : null;
   const returned = parsed.collateral - parsed.collateralFloor;
   const amount = (asset: Hex, value: bigint) => ({ kind: 'amount' as const, asset, amount: value });
   const textRow = (label: CopyKey, value: string, binding: boolean) => ({ label: text(label), value: { kind: 'text' as const, text: value }, binding });
@@ -617,7 +617,7 @@ export function requestReceipt(r: RequestReview, meta: TokenMetaMap | null, copy
  * lock stays committed to the request for later matches: the protocol
  * returns it only when the request closes or is cancelled, never per match.
  */
-export function matchConsequences(r: RequestReview, meta: TokenMetaMap | null, copy: Pick<CopyAccess, 'text' | 'format'>): string[] {
+export function matchConsequences(r: PostReview, meta: TokenMetaMap | null, copy: Pick<CopyAccess, 'text' | 'format'>): string[] {
   const { parsed, pair } = r.draft;
   if (r.risk.partialFill === false || r.holding.kind !== 'erc20') return [];
   const out: string[] = [];
@@ -632,7 +632,7 @@ export function matchConsequences(r: RequestReview, meta: TokenMetaMap | null, c
   return out;
 }
 
-const CADENCE_NAME: Readonly<Record<Exclude<ParsedRequest['cadence'], 0>, CopyKey>> = {
+const CADENCE_NAME: Readonly<Record<Exclude<ParsedPost['cadence'], 0>, CopyKey>> = {
   1: 'borrow.cadenceMonthly',
   2: 'borrow.cadenceQuarterly',
   3: 'borrow.cadenceSemiAnnual',
@@ -648,7 +648,7 @@ const CADENCE_NAME: Readonly<Record<Exclude<ParsedRequest['cadence'], 0>, CopyKe
  * stated as the capability service reports it (RB-SWITCH class 4, unknown
  * by default).
  */
-function scheduleRows(r: RequestReview, meta: TokenMetaMap | null, copy: Pick<CopyAccess, 'text' | 'format'>, advanced: boolean, keeper: Posture): Receipt['rows'] {
+function scheduleRows(r: PostReview, meta: TokenMetaMap | null, copy: Pick<CopyAccess, 'text' | 'format'>, advanced: boolean, keeper: Posture): Receipt['rows'] {
   const { text, format } = copy;
   const { parsed, pair } = r.draft;
   const row = (label: CopyKey, value: string, binding: boolean) => ({ label: text(label), value: { kind: 'text' as const, text: value }, binding });
@@ -669,7 +669,7 @@ function scheduleRows(r: RequestReview, meta: TokenMetaMap | null, copy: Pick<Co
 /** OFF-14 — what a schedule adds to the "You can lose" list, tier A and in
  *  Basic: a missed period is settled by selling collateral (with the grace
  *  when it was read), and the schedule is fixed once posted. */
-export function scheduleConsequences(r: RequestReview, copy: Pick<CopyAccess, 'text' | 'format'>): string[] {
+export function scheduleConsequences(r: PostReview, copy: Pick<CopyAccess, 'text' | 'format'>): string[] {
   const { parsed } = r.draft;
   if (parsed.cadence === 0) return [];
   const cadence = copy.text(CADENCE_NAME[parsed.cadence]);
@@ -685,7 +685,7 @@ export function scheduleConsequences(r: RequestReview, copy: Pick<CopyAccess, 't
  *  "You can lose" list, all tier A and all in Basic: the direct point over
  *  the protocol's limit (or not known to be within it), the matching switch
  *  off, and a fill mode that cannot be changed later. */
-export function rangeConsequences(r: RequestReview, meta: TokenMetaMap | null, copy: Pick<CopyAccess, 'text' | 'format'>): string[] {
+export function rangeConsequences(r: PostReview, meta: TokenMetaMap | null, copy: Pick<CopyAccess, 'text' | 'format'>): string[] {
   const { parsed, pair } = r.draft;
   const out: string[] = [];
   if (isRanged(parsed)) {
@@ -710,13 +710,13 @@ export function rangeConsequences(r: RequestReview, meta: TokenMetaMap | null, c
 /** What the form needs before a review: the longest term open, the list
  *  fee for the live summary, and the wallet's collateral balance (none for
  *  an ERC-721 leg, whose token is checked by its id in the review). */
-export interface RequestFormInputs {
+export interface PostFormInputs {
   maxDurationDays: bigint;
   lifBps: bigint;
   balance: bigint | null;
 }
 
-export async function readRequestFormInputs(client: PublicClient, diamond: Hex, account: Hex, collateral: Hex, standard: CollateralLeg['kind']): Promise<RequestFormInputs> {
+export async function readPostFormInputs(client: PublicClient, diamond: Hex, account: Hex, collateral: Hex, standard: CollateralLeg['kind']): Promise<PostFormInputs> {
   const [maxDurationDays, lifBps, balance] = await Promise.all([
     readMaxDurationDays(client, diamond),
     readLifBps(client, diamond),
