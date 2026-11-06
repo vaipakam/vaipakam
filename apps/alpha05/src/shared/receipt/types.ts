@@ -37,5 +37,7 @@ export interface FinishCard {
   receipt: Receipt;
   outcome: MeasuredOutcome;
   /** The next action the position now has, if any. */
-  next: { label: string; to: string } | null;
+  /** `to` is a page of this app; `href` is another site (the current app),
+   *  opened in a new tab. */
+  next: { label: string; to: string } | { label: string; href: string } | null;
 }

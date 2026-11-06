@@ -1057,7 +1057,7 @@ If the sanctions screen flags your wallet, no rewards are paid to it while it st
 
 ### Borrow: How It Works
 
-To borrow, you take a lender's open offer: an amount of one token, a rate, a term and the collateral the lender asks for. Taking it opens a loan in one transaction. Your collateral moves from your wallet into your own vault, where it stays locked while the loan is open, and the amount, less a small initiation fee, arrives in your wallet. You repay the amount plus interest by the due date. Posting your own borrow request comes in a later update.
+To borrow, you take a lender's open offer: an amount of one token, a rate, a term and the collateral the lender asks for. Taking it opens a loan in one transaction. Your collateral moves from your wallet into your own vault, where it stays locked while the loan is open, and the amount, less a small initiation fee, arrives in your wallet. You repay the amount plus interest by the due date. When no offer fits, you can also post your own borrow request and wait for a lender.
 
 <a id="borrow-pair"></a>
 
@@ -1088,6 +1088,24 @@ Opening a loan costs a small share of the amount, charged once, in the token you
 ### Borrow: Risks
 
 A loan can cost you your collateral. If you have not repaid by the end of the grace period, the loan defaults and the lender is paid from your collateral: sold for them where the protocol can, handed over as-is where it cannot. With liquid collateral, if its value falls until the loan's health factor drops below 1, anyone can liquidate the loan and you lose collateral. With full-term interest you owe the whole term's interest even if you repay early. With an interest schedule, a missed period is paid by selling part of your collateral. Your collateral stays locked until the loan is repaid or settled.
+
+<a id="borrow-request"></a>
+
+### Borrow: Posting Your Own Request
+
+When no offer fits, you can post your own borrow request for your two tokens: the exact amount, the rate you will pay, the term and the collateral you lock. Posting moves the collateral from your wallet into your own vault, where it stays while the request is open. A lender who takes it opens the loan at once, on your terms, without asking you again; the amount, less the initiation fee, arrives in your wallet. You can cancel from five minutes after posting, and the collateral returns to your wallet. A lapsed request can no longer be taken; its collateral stays in your vault until you, or anyone, closes it, and then returns only to your wallet. Until the next app's Offers page is built, you follow, cancel and close a request on the current app's Offers page; the review says so before anything is locked.
+
+<a id="borrow-request-terms"></a>
+
+### Borrow: The Request's Terms
+
+One lender takes the whole amount, or nobody does. Each figure is read exactly as you type it: more decimals than the token has are refused, never rounded, and the rate goes up to 100% a year with two decimals. The terms offered stop at the longest one the network allows; you can also type a term in days. The request stays open until taken or cancelled, or for the number of days you choose, up to a year. Full-term interest, the usual choice, is owed in full even if you repay early; pro-rata charges only for the time the loan is open. The form shows what you would receive at today's fee rate and owe at the due date if a lender took it now.
+
+<a id="borrow-request-review"></a>
+
+### Borrow: Reviewing and Posting a Request
+
+Before your wallet opens, the app asks the protocol to try your request as a dry run, so the review shows the protocol's own answer. It lists what you lock now, the amount, rate and term, what you would receive and how the fee is set (the fee rate in force when a lender takes it, less your fee-discount tier at that moment; the figure shown uses today's rate), what you would owe, every lifecycle term, when the request lapses, the loan-to-value and whether an approval is needed. You tick a box to agree to the Risk Disclosures and Terms. Your wallet approves exactly the collateral if needed, the app tries the request again, and only then posts it. If it stops after an approval, the app asks to put the approval back and says whether that happened. Afterwards the app checks on the chain the request recorded and the collateral locked.
 
 <a id="terms-gate"></a>
 

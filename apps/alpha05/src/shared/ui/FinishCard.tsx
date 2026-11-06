@@ -50,9 +50,15 @@ export function FinishCard({ card, describeAsset, nowMs }: { card: FinishCardMod
       </ul>
       {card.next && (
         <p className="tier-b">
-          <Link className="btn btn-primary" to={card.next.to}>
-            {card.next.label}
-          </Link>
+          {'to' in card.next ? (
+            <Link className="btn btn-primary" to={card.next.to}>
+              {card.next.label}
+            </Link>
+          ) : (
+            <a className="btn btn-primary" href={card.next.href} target="_blank" rel="noreferrer">
+              {card.next.label}
+            </a>
+          )}
         </p>
       )}
       <Receipt receipt={card.receipt} describeAsset={describeAsset} nowMs={nowMs} />

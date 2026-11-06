@@ -1774,7 +1774,7 @@ health factor 是仪表盘视图中按 1e18 缩放的读数；读数为 0 表示
 
 ### Borrow: 如何运作
 
-Borrow 通过 `acceptOffer(offerId, terms, signature)` 直接接受以 ERC-20 抵押借入 ERC-20 的出借人报价（`offerType` 0）。一笔交易内：借款人没有金库时为其开立金库，将抵押品转入其中，把扣除发起费后的本金交付到钱包，并发出 `LoanInitiated`。借款请求、NFT 一侧、交易对同意和高级选项将在后续更新中提供。
+Borrow 通过 `acceptOffer(offerId, terms, signature)` 直接接受以 ERC-20 抵押借入 ERC-20 的出借人报价（`offerType` 0）。一笔交易内：借款人没有金库时为其开立金库，将抵押品转入其中，把扣除发起费后的本金交付到钱包，并发出 `LoanInitiated`。借款人也可以发布请求（`offerType` 1）；NFT 一侧、交易对同意和高级选项将在后续更新中提供。
 
 <a id="borrow-pair"></a>
 
@@ -1805,6 +1805,24 @@ Borrow 通过 `acceptOffer(offerId, terms, signature)` 直接接受以 ERC-20 �
 ### Borrow: 风险
 
 超过宽限期的贷款（到期后 `getEffectiveGraceSeconds`，暂停时间会使其顺延）任何人都可以触发违约：有流动性的抵押品为出借人出售，无流动性的抵押品原样转移。健康因子低于 1 时，有流动性的抵押品也可能被清算。`useFullTermInterest` 在提前还款时收取全期利息；付息计划通过强制出售抵押品来结清未付期次。
+
+<a id="borrow-request"></a>
+
+### Borrow：发布你自己的请求
+
+请求是从借款人钱包发送的 `createOffer`，`offerType` 为 1，两侧均为 ERC-20。它把 `collateralAmount` 转入借款人的金库（若没有金库则先创建），并发出 `OfferCreated(offerId, creator, 1)`。出借人用 `acceptOffer` 接受：扣除费用后的本金进入借款人钱包，费用中归发送者的份额归发送交易的出借人。`cancelOffer` 在创建后 `MIN_OFFER_CANCEL_DELAY`（5 分钟）起对创建者开放，请求过期后对任何人开放；抵押品始终退回创建者。
+
+<a id="borrow-request-terms"></a>
+
+### Borrow：请求的条款
+
+Basic 发布单一数值的请求：`amount` = `amountMax`，`interestRateBps` = `interestRateBpsMax`，`collateralAmount` = `collateralAmountMax`，`fillMode` 0，`periodicInterestCadence` 0，`allowsPrepayListing` 和 `allowsParallelSale` 为 false，`refinanceTargetLoanId` 0，`creatorRiskAndTermsConsent` 为 true。金额精确换算为基本单位，利率最多 10,000 bps。`durationDays` 以 `getProtocolConfigBundle` 中读取的配置上限为界。`expiresAt` 为 0（取消前一直有效），或在打开审核时依最新区块确定的时间，最多为 `MAX_OFFER_EXPIRY_HORIZON`（365 天）之后。`useFullTermInterest` 默认为 true，`allowsPartialRepay` 默认为 false。
+
+<a id="borrow-request-review"></a>
+
+### Borrow：审核并发布请求
+
+审核从钱包模拟 `createOffer`，并读取两侧的类别、`getEffectiveGraceSeconds(durationDays)`、`getLoanInitiationFeeBps`、最长期限、钱包的金库、余额和授权额度，两侧均为流动资产时还读取 `calculateLTV`；每个区块以及钱包打开前都会重新读取。授权额度不足时，模拟只能走到划转抵押品这一步，因此代币的划转错误或没有协议错误名的回滚会显示为待完成的批准，而有名称的协议错误则视为拒绝。完成精确批准后，再次模拟 `createOffer` 并发送；批准后若中止，且没有其他改动，授权额度会恢复为原值。结果读取此钱包的 `OfferCreated` 以及抵押品转入金库的 `Transfer`。
 
 <a id="terms-gate"></a>
 

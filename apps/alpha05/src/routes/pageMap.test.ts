@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { NAV_ADVANCED, NAV_BASIC, PAGES, currentAppHref } from './pageMap';
+import { NAV_ADVANCED, NAV_BASIC, PAGES, currentAppHref, pageHandoff } from './pageMap';
 
 describe('currentAppHref', () => {
-  it('maps a renamed page to the current app\'s own address, not the alpha05 path', () => {
+  it("maps a renamed page to the current app's own address, not the alpha05 path", () => {
     const byName = (n: string) => PAGES.find((p) => p.name === n)!;
     expect(currentAppHref(byName('Rewards'), {})).toBe('https://app.vaipakam.com/vpfi');
     expect(currentAppHref(byName('Protection'), {})).toBe('https://app.vaipakam.com/vault/protection');
@@ -45,4 +45,17 @@ describe('built pages', () => {
     for (const path of Object.keys(BUILT_PAGES)) expect(PAGES.some((p) => p.path === path)).toBe(true);
     // The import pulls in the wallet stack, which is slow to transform cold.
   }, 60_000);
+});
+
+describe('pageHandoff', () => {
+  it('keeps a built page in this app', () => {
+    expect(pageHandoff('/borrow')).toEqual({ kind: 'here', to: '/borrow' });
+  });
+  it("hands an unbuilt page on to the current app's page for the same job", () => {
+    const offers = PAGES.find((p) => p.path === '/offers')!;
+    expect(pageHandoff('/offers')).toEqual(offers.built ? { kind: 'here', to: '/offers' } : { kind: 'currentApp', href: 'https://app.vaipakam.com/offers' });
+  });
+  it('names no page for a path the map does not hold', () => {
+    expect(pageHandoff('/nowhere')).toEqual({ kind: 'none' });
+  });
 });

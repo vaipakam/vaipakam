@@ -2239,7 +2239,7 @@ Un `ConfigFacet.getRewardClaimHorizonDays()` égal à 0 signifie que l'horizon e
 
 ### Borrow: Comment ça marche
 
-Borrow accepte directement une offre de prêteur (`offerType` 0) d'un ERC-20 contre une garantie ERC-20, avec `acceptOffer(offerId, terms, signature)`. En une transaction, il ouvre le vault de l'emprunteur s'il n'en a pas, y place la garantie, livre au wallet le principal moins les frais d'ouverture et émet `LoanInitiated`. Les demandes d'emprunt, les côtés NFT, les consentements par paire et les options avancées suivront dans des mises à jour ultérieures.
+Borrow accepte directement une offre de prêteur (`offerType` 0) d'un ERC-20 contre une garantie ERC-20, avec `acceptOffer(offerId, terms, signature)`. En une transaction, il ouvre le vault de l'emprunteur s'il n'en a pas, y place la garantie, livre au wallet le principal moins les frais d'ouverture et émet `LoanInitiated`. Un emprunteur peut aussi publier une demande (`offerType` 1) ; les côtés NFT, les consentements par paire et les options avancées suivront dans des mises à jour ultérieures.
 
 <a id="borrow-pair"></a>
 
@@ -2270,6 +2270,24 @@ Les frais sont le `lifEstimate` de `previewAccept` : `getLoanInitiationFeeBps` d
 ### Borrow: Risques
 
 Un prêt passé la fin de son délai de grâce (`getEffectiveGraceSeconds` après l'échéance, que le temps de pause décale) peut être mis en défaut par n'importe qui : la garantie liquide est vendue pour le prêteur, la garantie illiquide est transférée telle quelle. Une garantie liquide peut aussi être liquidée dès que le facteur de santé passe sous 1. `useFullTermInterest` facture les intérêts de toute la durée en cas de remboursement anticipé ; un calendrier d'intérêts règle une période manquée par une vente forcée de garantie.
+
+<a id="borrow-request"></a>
+
+### Borrow : Publier votre propre demande
+
+Une demande est `createOffer` avec `offerType` 1, ERC-20 des deux côtés, envoyée depuis le wallet de l'emprunteur. Elle transfère `collateralAmount` dans le vault de l'emprunteur, en le créant s'il n'existe pas, et émet `OfferCreated(offerId, creator, 1)`. Un prêteur l'accepte avec `acceptOffer` : le principal moins les frais va au wallet de l'emprunteur, et la part des frais revenant à l'expéditeur va au prêteur qui l'a envoyée. `cancelOffer` est ouvert au créateur à partir de `MIN_OFFER_CANCEL_DELAY` (5 minutes) après la création, et à tout le monde une fois la demande expirée ; la garantie revient toujours au créateur.
+
+<a id="borrow-request-terms"></a>
+
+### Borrow : Les conditions de la demande
+
+Basic publie une demande à valeur unique : `amount` = `amountMax`, `interestRateBps` = `interestRateBpsMax`, `collateralAmount` = `collateralAmountMax`, `fillMode` 0, `periodicInterestCadence` 0, `allowsPrepayListing` et `allowsParallelSale` false, `refinanceTargetLoanId` 0, `creatorRiskAndTermsConsent` true. Les montants sont convertis exactement en unités de base et le taux vaut au plus 10 000 bps. `durationDays` est plafonné par le maximum configuré, lu dans `getProtocolConfigBundle`. `expiresAt` vaut 0 (ouverte jusqu'à annulation) ou une heure fixée depuis le dernier bloc à l'ouverture de la vérification, au plus `MAX_OFFER_EXPIRY_HORIZON` (365 jours) en avant. `useFullTermInterest` vaut true par défaut et `allowsPartialRepay` false.
+
+<a id="borrow-request-review"></a>
+
+### Borrow : Vérifier et publier une demande
+
+La vérification simule `createOffer` depuis le wallet et lit les deux classes, `getEffectiveGraceSeconds(durationDays)`, `getLoanInitiationFeeBps`, la durée maximale, le vault, le solde et l'allocation du wallet, et `calculateLTV` quand les deux côtés sont liquides ; elle est relue à chaque bloc et juste avant l'ouverture du wallet. Tant que l'allocation est insuffisante, la simulation n'atteint que le prélèvement de la garantie : une erreur de prélèvement du token ou un revert sans nom d'erreur du protocole est présenté comme l'approbation à donner, et une erreur nommée du protocole est un refus. Après une approbation exacte, `createOffer` est simulé de nouveau puis envoyé ; un arrêt après l'approbation la remet à sa valeur antérieure si rien d'autre ne l'a changée. Le résultat lit `OfferCreated` pour ce wallet et le `Transfer` de la garantie vers le vault.
 
 <a id="terms-gate"></a>
 

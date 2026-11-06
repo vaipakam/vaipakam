@@ -359,7 +359,9 @@ export function acceptReceipt(r: AcceptReview, meta: TokenMetaMap | null, copy: 
           span: formatSpan(Number(r.graceSeconds)),
         }),
       },
-      binding: true,
+      // Not bound by the loan: the protocol reads the grace period from the
+      // live configuration when it applies it, so this is today's figure.
+      binding: false,
     },
     {
       label: text('accept.rowInterest'),

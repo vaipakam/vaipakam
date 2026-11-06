@@ -1102,7 +1102,7 @@ Si le filtrage des sanctions signale votre portefeuille, rien ne lui est versé 
 
 ### Borrow: Comment ça marche
 
-Pour emprunter, vous acceptez l'offre ouverte d'un prêteur : un montant d'un token, un taux, une durée et la garantie que le prêteur demande. L'accepter ouvre le prêt en une seule transaction. Votre garantie passe de votre wallet à votre propre vault, où elle reste bloquée tant que le prêt est ouvert, et le montant, moins de petits frais d'ouverture, arrive dans votre wallet. Vous remboursez le montant plus les intérêts avant l'échéance. Publier votre propre demande d'emprunt viendra dans une mise à jour ultérieure.
+Pour emprunter, vous acceptez l'offre ouverte d'un prêteur : un montant d'un token, un taux, une durée et la garantie que le prêteur demande. L'accepter ouvre le prêt en une seule transaction. Votre garantie passe de votre wallet à votre propre vault, où elle reste bloquée tant que le prêt est ouvert, et le montant, moins de petits frais d'ouverture, arrive dans votre wallet. Vous remboursez le montant plus les intérêts avant l'échéance. Si aucune offre ne convient, vous pouvez aussi publier votre propre demande d'emprunt et attendre un prêteur.
 
 <a id="borrow-pair"></a>
 
@@ -1133,6 +1133,24 @@ Ouvrir un prêt coûte une petite part du montant, prélevée une fois, dans le 
 ### Borrow: Risques
 
 Un prêt peut vous coûter votre garantie. Si vous n'avez pas remboursé à la fin du délai de grâce, le prêt est en défaut et le prêteur est payé sur votre garantie : vendue pour lui là où le protocole le peut, remise telle quelle sinon. Avec une garantie liquide, si sa valeur baisse jusqu'à ce que le facteur de santé passe sous 1, n'importe qui peut liquider le prêt et vous perdez de la garantie. Avec des intérêts sur toute la durée, vous devez les intérêts de toute la durée même en remboursant tôt. Avec un calendrier d'intérêts, une période manquée est payée en vendant une partie de votre garantie. Votre garantie reste bloquée jusqu'au remboursement ou au règlement du prêt.
+
+<a id="borrow-request"></a>
+
+### Borrow : Publier votre propre demande
+
+Si aucune offre ne convient, vous pouvez publier votre propre demande d'emprunt pour vos deux tokens : le montant exact, le taux que vous paierez, la durée et la garantie que vous bloquez. La publication déplace la garantie de votre wallet vers votre propre vault, où elle reste tant que la demande est ouverte. Un prêteur qui l'accepte ouvre le prêt aussitôt, à vos conditions, sans vous redemander ; le montant, moins les frais d'ouverture, arrive dans votre wallet. Vous pouvez annuler à partir de cinq minutes après la publication, et la garantie revient dans votre wallet. Une demande expirée ne peut plus être acceptée ; sa garantie reste dans votre vault jusqu'à ce que vous, ou n'importe qui, la clôturiez, puis revient uniquement dans votre wallet. Tant que la page Offres de la prochaine app n'est pas construite, vous suivez, annulez et clôturez une demande sur la page Offres de l'app actuelle ; la vérification le dit avant que quoi que ce soit ne soit bloqué.
+
+<a id="borrow-request-terms"></a>
+
+### Borrow : Les conditions de la demande
+
+Un seul prêteur prend tout le montant, ou personne. Chaque chiffre est lu exactement comme vous le saisissez : plus de décimales que n'en a le token sont refusées, jamais arrondies, et le taux va jusqu'à 100 % par an avec deux décimales. Les durées proposées s'arrêtent à la plus longue que le réseau autorise ; vous pouvez aussi saisir une durée en jours. La demande reste ouverte jusqu'à son acceptation ou son annulation, ou pendant le nombre de jours choisi, jusqu'à un an. Les intérêts sur toute la durée, le choix habituel, sont dus en entier même si vous remboursez tôt ; au prorata, seule la période où le prêt est ouvert est facturée. Le formulaire montre ce que vous recevriez au taux de frais d'aujourd'hui et devriez à l'échéance si un prêteur l'acceptait maintenant.
+
+<a id="borrow-request-review"></a>
+
+### Borrow : Vérifier et publier une demande
+
+Avant que votre wallet ne s'ouvre, l'app demande au protocole d'essayer votre demande à blanc, si bien que la vérification montre la réponse du protocole lui-même. Elle indique ce que vous bloquez maintenant, le montant, le taux et la durée, ce que vous recevriez et comment les frais sont fixés (le taux de frais en vigueur quand un prêteur l'accepte, moins votre niveau de remise sur les frais à ce moment-là ; le chiffre affiché utilise le taux d'aujourd'hui), ce que vous devriez, chaque condition du prêt, quand la demande expire, le ratio prêt-valeur et si une approbation est nécessaire. Vous cochez une case pour accepter les Informations sur les risques et les Conditions. Votre wallet approuve exactement la garantie si nécessaire, l'app essaie de nouveau la demande, puis seulement la publie. Si cela s'arrête après une approbation, l'app demande de la remettre et dit si c'est fait. Ensuite, l'app vérifie sur la chaîne la demande enregistrée et la garantie bloquée.
 
 <a id="terms-gate"></a>
 

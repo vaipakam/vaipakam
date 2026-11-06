@@ -1084,7 +1084,7 @@ Si el control de sanciones marca tu billetera, no se le paga nada mientras siga 
 
 ### Borrow: Cómo funciona
 
-Para pedir prestado, aceptas la oferta abierta de un prestamista: una cantidad de un token, una tasa, un plazo y la garantía que pide el prestamista. Aceptarla abre el préstamo en una sola transacción. Tu garantía pasa de tu wallet a tu propio vault, donde queda bloqueada mientras el préstamo siga abierto, y la cantidad, menos una pequeña comisión de apertura, llega a tu wallet. Devuelves la cantidad más los intereses antes de la fecha de vencimiento. Publicar tu propia solicitud de préstamo llegará en una actualización posterior.
+Para pedir prestado, aceptas la oferta abierta de un prestamista: una cantidad de un token, una tasa, un plazo y la garantía que pide el prestamista. Aceptarla abre el préstamo en una sola transacción. Tu garantía pasa de tu wallet a tu propio vault, donde queda bloqueada mientras el préstamo siga abierto, y la cantidad, menos una pequeña comisión de apertura, llega a tu wallet. Devuelves la cantidad más los intereses antes de la fecha de vencimiento. Si ninguna oferta encaja, también puedes publicar tu propia solicitud de préstamo y esperar a un prestamista.
 
 <a id="borrow-pair"></a>
 
@@ -1115,6 +1115,24 @@ Abrir un préstamo cuesta una pequeña parte de la cantidad, cobrada una vez, en
 ### Borrow: Riesgos
 
 Un préstamo puede costarte tu garantía. Si no has devuelto al final del periodo de gracia, el préstamo entra en impago y el prestamista cobra de tu garantía: vendida para él donde el protocolo puede, entregada tal cual donde no. Con garantía líquida, si su valor cae hasta que el factor de salud baja de 1, cualquiera puede liquidar el préstamo y pierdes garantía. Con intereses de plazo completo debes los intereses de todo el plazo aunque devuelvas antes. Con un calendario de intereses, un periodo impagado se cubre vendiendo parte de tu garantía. Tu garantía queda bloqueada hasta que el préstamo se devuelva o se liquide.
+
+<a id="borrow-request"></a>
+
+### Borrow: Publicar tu propia solicitud
+
+Si ninguna oferta encaja, puedes publicar tu propia solicitud de préstamo para tus dos tokens: el importe exacto, la tasa que pagarás, el plazo y la garantía que bloqueas. Al publicarla, la garantía pasa de tu wallet a tu propio vault, donde queda mientras la solicitud esté abierta. Un prestamista que la acepte abre el préstamo al instante, con tus condiciones, sin volver a preguntarte; el importe, menos la comisión de apertura, llega a tu wallet. Puedes cancelarla a partir de cinco minutos después de publicarla, y la garantía vuelve a tu wallet. Una solicitud vencida ya no puede aceptarse; su garantía queda en tu vault hasta que tú, o cualquiera, la cierre, y entonces vuelve solo a tu wallet. Mientras la página de Ofertas de la próxima app no esté construida, sigues, cancelas y cierras una solicitud en la página de Ofertas de la app actual; la revisión lo dice antes de bloquear nada.
+
+<a id="borrow-request-terms"></a>
+
+### Borrow: Las condiciones de la solicitud
+
+Un prestamista toma el importe completo, o nadie lo toma. Cada cifra se lee exactamente como la escribes: más decimales de los que tiene el token se rechazan, nunca se redondean, y la tasa llega hasta el 100 % anual con dos decimales. Los plazos ofrecidos terminan en el más largo que permite la red; también puedes escribir un plazo en días. La solicitud sigue abierta hasta que se acepte o se cancele, o durante los días que elijas, hasta un año. El interés de plazo completo, la opción habitual, se debe entero aunque devuelvas antes; el prorrateado cobra solo por el tiempo que el préstamo está abierto. El formulario muestra lo que recibirías con la comisión de hoy y deberías en la fecha de vencimiento si un prestamista la aceptara ahora.
+
+<a id="borrow-request-review"></a>
+
+### Borrow: Revisar y publicar una solicitud
+
+Antes de que se abra tu wallet, la app pide al protocolo que pruebe tu solicitud como simulación, así que la revisión muestra la respuesta del propio protocolo. Indica lo que bloqueas ahora, el importe, la tasa y el plazo, lo que recibirías y cómo se fija la comisión (la tasa de comisión vigente cuando un prestamista la acepte, menos tu nivel de descuento de comisiones en ese momento; la cifra mostrada usa la tasa de hoy), lo que deberías, cada condición del préstamo, cuándo vence la solicitud, la relación préstamo-valor y si hace falta una aprobación. Marcas una casilla para aceptar las Divulgaciones de riesgos y los Términos. Tu wallet aprueba exactamente la garantía si hace falta, la app vuelve a probar la solicitud y solo entonces la publica. Si se detiene tras una aprobación, la app pide restablecerla y dice si lo logró. Después, la app comprueba en la cadena la solicitud registrada y la garantía bloqueada.
 
 <a id="terms-gate"></a>
 
