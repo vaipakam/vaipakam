@@ -440,6 +440,17 @@ above. Each resolves here, so a route reviewer needs no private file:
   simulation cannot give is stated unknown; a dedicated partial preview on
   the Diamond is a contract gap to file.
 
+- **RB-RISK-STEP** — a risk-access block the connected wallet can clear
+  itself (level too low, illiquid pair consent, strict-mode acknowledgement)
+  is cleared in the flow that hit it, never by sending the reader to
+  another page. Which step is the protocol's own answer for that flow (the
+  accept preview, the create dry run), never a rule the app restates; the
+  lender's own block is shown as the lender's. The step is one signed
+  transaction through RB-CONFIDENCE (its reach, when it counts, no funds
+  moved), a raise names the observed change counter and terms version, a
+  waiting period is stated from the chain and the step is never offered
+  twice while it runs, and the flow's review reads again afterwards.
+
 ## 3. Companion specifications
 
 ### 3.1 Deployment and service capabilities

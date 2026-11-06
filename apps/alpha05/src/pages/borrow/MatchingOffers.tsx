@@ -5,6 +5,7 @@ import { acceptFigures } from '../../shared/offers/model';
 import { tokenAmount, type TokenMetaMap } from '../../shared/reads/tokens';
 import { Notice } from '../../shared/ui/Notice';
 import { formatBps, formatUtc } from '../../shared/ui/format';
+import { needFromAcceptCode } from '../../shared/risk/riskAccess';
 import { acceptErrorText, cadenceText, gateBlockText, stateText } from './acceptReview';
 import { MATCH_PAGE, type Matches, type MatchRow } from './matches';
 
@@ -43,15 +44,19 @@ function OfferRow({
   const amt = (asset: Hex, v: bigint) => tokenAmount(v, asset, meta, format);
   const cadence = cadenceText(o.periodicInterestCadence, copy);
   const blocked = row.blocked;
+  // A risk-access block this wallet can clear itself in the review (never
+  // the lender's own): the row says so and the review stays one tap away.
+  const ownStep = blocked?.kind === 'gate' && !blocked.block.creator && needFromAcceptCode(blocked.block.code) !== null;
   let blockedText: string | null = null;
   if (blocked?.kind === 'state') blockedText = stateText(blocked.state, copy);
   else if (blocked?.kind === 'refused') blockedText = acceptErrorText(blocked.error, copy);
+  else if (ownStep) blockedText = text('borrow.rowRiskStep');
   else if (blocked?.kind === 'gate') blockedText = gateBlockText(blocked.block, copy);
   else if (blocked?.kind === 'unread') blockedText = blocked.reason;
   const f = row.preview && matcherBps !== null ? acceptFigures(row.preview, o.durationDays, matcherBps) : null;
 
   return (
-    <li className="card offer-row" data-offer-id={o.id.toString()} data-takeable={blocked ? 'false' : 'true'}>
+    <li className="card offer-row" data-offer-id={o.id.toString()} data-takeable={blocked ? 'false' : 'true'} data-risk-step={ownStep ? 'true' : undefined}>
       <h3>
         {format('borrow.rowTitle', {
           id: o.id.toString(),
@@ -65,11 +70,13 @@ function OfferRow({
           amount: amt(o.collateralAsset, o.collateralAmount),
         })}
       </p>
-      <p className="tier-b">{row.ltv.kind === 'bps'
+      <p className="tier-b">
+        {row.ltv.kind === 'bps'
           ? format('borrow.rowLtv', { ltv: formatBps(row.ltv.bps) })
           : row.ltv.kind === 'illiquid'
             ? text('borrow.rowLtvIlliquid')
-            : format('borrow.rowLtvNone', { reason: row.ltv.reason })}</p>
+            : format('borrow.rowLtvNone', { reason: row.ltv.reason })}
+      </p>
       <p className="tier-b">{text(o.useFullTermInterest ? (o.allowsPartialRepay ? 'borrow.rowFullTermPartial' : 'borrow.rowFullTerm') : 'borrow.rowProRata')}</p>
       {o.allowsPartialRepay && !o.useFullTermInterest && <p className="tier-b">{text('borrow.rowPartial')}</p>}
       {cadence && <p className="tier-a">{format('borrow.rowCadence', { cadence })}</p>}
@@ -80,7 +87,7 @@ function OfferRow({
               time: formatUtc(Number(o.expiresAt)),
             })}
       </p>
-      {f && !blocked && (
+      {f && (!blocked || ownStep) && (
         <p className="tier-b">
           {format('borrow.rowReceive', {
             amount: amt(o.lendingAsset, f.received),
@@ -89,14 +96,14 @@ function OfferRow({
         </p>
       )}
       {blockedText !== null && (
-        <Notice tone="warn" tier="A">
+        <Notice tone={ownStep ? 'info' : 'warn'} tier="A">
           {blockedText}
         </Notice>
       )}
-      {!blocked &&
+      {(!blocked || ownStep) &&
         (connected ? (
           <button type="button" className="btn btn-primary" disabled={takeDisabled} onClick={() => onTake(o.id)}>
-            {text('borrow.take')}
+            {text(ownStep ? 'borrow.takeWithStep' : 'borrow.take')}
           </button>
         ) : (
           <p className="tier-b">{text('borrow.takeConnect')}</p>

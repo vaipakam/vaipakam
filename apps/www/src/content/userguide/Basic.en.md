@@ -1107,6 +1107,12 @@ One lender takes the whole amount, or nobody does. Each figure is read exactly a
 
 Before your wallet opens, the app asks the protocol to try your request as a dry run, so the review shows the protocol's own answer. It lists what you lock now, the amount, rate and term, what you would receive and how the fee is set (the fee rate in force when a lender takes it, less your fee-discount tier at that moment; the figure shown uses today's rate), what you would owe, every lifecycle term, when the request lapses, the loan-to-value and whether an approval is needed. You tick a box to agree to the Risk Disclosures and Terms. Your wallet approves exactly the collateral if needed, the app tries the request again, and only then posts it. If it stops after an approval, the app asks to put the approval back and says whether that happened. Afterwards the app checks on the chain the request recorded and the collateral locked.
 
+<a id="risk-access"></a>
+
+### Risk Access: Your Risk Level
+
+Every account starts at the lowest risk level, blue-chip assets only, and only you can raise it. A pair needs the level of its riskier token: blue-chip tokens need nothing, other liquid tokens need “Liquid assets”, and an illiquid token needs “Any asset, including illiquid ones” plus your agreement to that exact pair. When taking an offer or posting a request needs a step like this, the review says so in place and offers it as one wallet confirmation with its own receipt: what changes, which pairs it reaches, when it takes effect, and that no funds move. Raising your level, or agreeing to a pair, can wait out a period the protocol sets; for a raised level the app shows the time it takes effect, read from the chain, for an agreement it says the protocol does not publish that time yet, and it never offers the same step twice, because a second one would start the wait over. Lowering your level always takes effect at once. When the protocol publishes new risk terms, your level and agreements stop counting until you confirm them again. If you turned on strict mode, each liquid pair also needs your acknowledgement. A block that comes from the lender's own risk level is shown as theirs: nothing in your account would change it.
+
 <a id="terms-gate"></a>
 
 ### The Terms Prompt

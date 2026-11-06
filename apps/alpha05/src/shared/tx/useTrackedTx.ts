@@ -24,6 +24,7 @@ import { useConfig } from 'wagmi';
 import { getPublicClient } from 'wagmi/actions';
 import type { ReplacementReason, TransactionReceipt } from 'viem';
 import { announceOwnChange } from '../reads/signals';
+import { useCopy } from '../copy/useCopy';
 import { refusalFromError } from '../eligibility/refusal';
 import { summarize, type LegOutcome } from './outcome';
 import { IllegalTransition, transition, type TxEvent } from './track';
@@ -49,7 +50,9 @@ export interface TrackedTxOptions {
    *  Every read goes through `at`, pinned to the receipt's block, never
    *  through a client at "latest" (a lagging node would answer with the
    *  state from before the transaction). A leg the read-back cannot
-   *  substantiate is `unknown`, never omitted. */
+   *  substantiate is `unknown`, never omitted. Not called for a reverted
+   *  receipt: that transaction changed nothing, so nothing the chain shows
+   *  afterwards (another transaction's work) can be read as its outcome. */
   measure: (receipt: TransactionReceipt, at: AnchoredReader) => Promise<readonly LegOutcome[]>;
   /** Undo what `send` left standing before the submitted call (an approval
    *  the call would have used), run by the tracker whenever that call did
@@ -93,6 +96,7 @@ export function useTrackedTx(opts: TrackedTxOptions): TrackedTx {
   const { key } = opts;
   const entry = useTxEntry(key);
   const config = useConfig();
+  const { text } = useCopy();
 
   // Every transition reads and writes the STORE, never a component's state,
   // so a promise still running after its page unmounted keeps recording.
@@ -143,18 +147,22 @@ export function useTrackedTx(opts: TrackedTxOptions): TrackedTx {
       });
       if (mined.kind !== 'mined') return;
       let legs: readonly LegOutcome[];
-      try {
-        legs = await ctx.measure(receipt, anchoredReader(ctx.sources, receipt.blockNumber));
-      } catch (e) {
-        legs = [{ status: 'unknown', label: 'outcome', reason: `The read-back failed: ${(e as Error).message}` }];
-      }
       if (receipt.status === 'reverted') {
+        // Reverted: one leg saying it changed nothing, whatever the chain
+        // now shows, plus what the flow's clean-up put back.
+        legs = [{ status: 'not-done', label: text('flow.revertedLabel'), reason: text('flow.reverted') }];
         const unwound = await runUnwind(ctx);
         if (unwound) legs = [...legs, unwound];
+      } else {
+        try {
+          legs = await ctx.measure(receipt, anchoredReader(ctx.sources, receipt.blockNumber));
+        } catch (e) {
+          legs = [{ status: 'unknown', label: 'outcome', reason: `The read-back failed: ${(e as Error).message}` }];
+        }
       }
       apply({ type: 'measured', hash: mined.hash, outcome: summarize(legs, Date.now()) });
     },
-    [apply, config],
+    [apply, config, text],
   );
 
   const run = useCallback(

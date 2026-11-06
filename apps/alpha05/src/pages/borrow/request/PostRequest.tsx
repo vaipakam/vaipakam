@@ -25,7 +25,19 @@ import { shortAddress } from '../../../shared/ui/format';
 import { pageHandoff } from '../../../routes/pageMap';
 import { REQUEST_KEY } from './RequestForm';
 import { createdRequest } from './requestOutcome';
-import { changedBetween, CREATE_ABI, promptCount, readRequestReview, requestBlockers, requestReceipt, type RequestDraft, type RequestReview } from './requestReview';
+import { erc20Pair, type RiskNeed } from '../../../shared/risk/riskAccess';
+import { RiskGate, RiskStepFlow } from '../../../shared/risk/RiskAccessStep';
+import {
+  changedBetween,
+  CREATE_ABI,
+  promptCount,
+  readRequestReview,
+  requestBlockers,
+  requestReceipt,
+  requestRiskNeed,
+  type RequestDraft,
+  type RequestReview,
+} from './requestReview';
 
 type Hex = `0x${string}`;
 
@@ -64,6 +76,8 @@ export function PostRequest({ draft, chain, own, meta, terms, onEdit, onClose }:
   const [review, setReview] = useStoredValue<RequestReview>(`${REQUEST_KEY}:review`);
   const [consentFor, setConsentFor] = useStoredValue<number>(`${REQUEST_KEY}:consent`);
   const [offerId, setOfferId] = useStoredValue<bigint>(`${REQUEST_KEY}:offer`);
+  /** The risk-access step open in the review's place, if any (ACC-RISK). */
+  const [riskOpen, setRiskOpen] = useStoredValue<RiskNeed>(`${REQUEST_KEY}:risk`);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [step, setStep] = useState<string | null>(null);
   /** The approval this flow made and has not yet seen used or put back (see
@@ -208,6 +222,7 @@ export function PostRequest({ draft, chain, own, meta, terms, onEdit, onClose }:
       setReview(null);
       setConsentFor(null);
       setOfferId(null);
+      setRiskOpen(null);
       let live = true;
       readRequestReview(own, diamond, draft, identity).then(
         (next) => {
@@ -255,6 +270,7 @@ export function PostRequest({ draft, chain, own, meta, terms, onEdit, onClose }:
     setConsentFor(null);
     setOfferId(null);
     setStep(null);
+    setRiskOpen(null);
   };
   const close = () => {
     const posted = offerId !== null;
@@ -276,6 +292,10 @@ export function PostRequest({ draft, chain, own, meta, terms, onEdit, onClose }:
   const consented = review !== null && consentFor === review.readAt;
   const termsLink = terms && terms.kind !== 'none' ? termsUrl(terms.version) : `${GUIDE_ORIGIN}/terms`;
   const riskLink = guideUrl(mode, 'borrow-risks');
+  const riskNeed = review ? requestRiskNeed(review) : null;
+  const symbol = (a: Hex) => meta?.[a.toLowerCase()]?.symbol ?? shortAddress(a);
+  const riskPair = review ? erc20Pair(review.draft.pair.lending, review.draft.pair.collateral) : null;
+  const pairLabel = review ? format('risk.pairName', { lend: symbol(review.draft.pair.lending), coll: symbol(review.draft.pair.collateral) }) : '';
 
   const gate = review
     ? {
@@ -287,6 +307,9 @@ export function PostRequest({ draft, chain, own, meta, terms, onEdit, onClose }:
                 {b}
               </Notice>
             ))}
+            {riskNeed !== null && riskPair !== null && (
+              <RiskGate chain={chain} own={own} need={riskNeed} source={{ kind: 'pair', pair: riskPair }} pairLabel={pairLabel} onOpen={() => setRiskOpen(riskNeed)} />
+            )}
             {offersPage.kind === 'currentApp' && (
               // The receipt's consequences say why; this is the way there.
               <p className="tier-b">
@@ -343,25 +366,40 @@ export function PostRequest({ draft, chain, own, meta, terms, onEdit, onClose }:
           </button>
         </Notice>
       )}
-      <ActionFlow
-        tx={tx}
-        identity={identity}
-        reviewedFor={review?.identity ?? tx.frozen?.identity ?? identity}
-        receipt={review ? requestReceipt(review, meta, copy) : null}
-        recheck={recheck}
-        describeAsset={describeAsset}
-        explorer={chain.blockExplorer}
-        next={
-          offerId === null || offersPage.kind === 'none'
-            ? null
-            : offersPage.kind === 'here'
-              ? { label: text('request.openOffers'), to: offersPage.to }
-              : { label: text('request.openOffersCurrent'), href: offersPage.href }
-        }
-        gate={gate}
-        signingNote={step}
-        onClose={close}
-      />
+      {riskOpen !== null && riskPair !== null ? (
+        <RiskStepFlow
+          chain={chain}
+          own={own}
+          need={riskOpen}
+          source={{ kind: 'pair', pair: riskPair }}
+          pairLabel={pairLabel}
+          flowKey={REQUEST_KEY}
+          onBack={() => {
+            setRiskOpen(null);
+            void load();
+          }}
+        />
+      ) : (
+        <ActionFlow
+          tx={tx}
+          identity={identity}
+          reviewedFor={review?.identity ?? tx.frozen?.identity ?? identity}
+          receipt={review ? requestReceipt(review, meta, copy) : null}
+          recheck={recheck}
+          describeAsset={describeAsset}
+          explorer={chain.blockExplorer}
+          next={
+            offerId === null || offersPage.kind === 'none'
+              ? null
+              : offersPage.kind === 'here'
+                ? { label: text('request.openOffers'), to: offersPage.to }
+                : { label: text('request.openOffersCurrent'), href: offersPage.href }
+          }
+          gate={gate}
+          signingNote={step}
+          onClose={close}
+        />
+      )}
     </div>
   );
 }

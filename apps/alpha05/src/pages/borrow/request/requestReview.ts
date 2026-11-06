@@ -28,6 +28,7 @@ import { allowanceSteps } from '../../../shared/tx/approval';
 import { formatBps, formatSpan, formatUtc, shortAddress } from '../../../shared/ui/format';
 import { createParams, requestFigures, ZERO, type CreateParams, type ParsedRequest, type RequestPair } from './requestModel';
 import { pageHandoff } from '../../../routes/pageMap';
+import { needFromRefusal, type RiskNeed } from '../../../shared/risk/riskAccess';
 
 type Hex = `0x${string}`;
 
@@ -174,11 +175,23 @@ export function requestBlockers(r: RequestReview, meta: TokenMetaMap | null, cop
     const amt = (v: bigint) => tokenAmount(v, r.draft.pair.collateral, meta, copy.format);
     out.push(copy.format('request.blockShortfall', { have: amt(r.funds.balance), missing: amt(missing), need: amt(r.draft.parsed.collateral) }));
   }
+  // A risk-access refusal comes before the pull, so the shortfall never
+  // explains it; it is named with the step that clears it (ACC-RISK).
+  const risk = requestRiskNeed(r);
+  if (risk !== null) out.push(copy.text(RISK_BLOCK_KEYS[risk]));
   // The protocol's own refusal, unless the wallet's shortfall already
   // explains it (a pull from a wallet that lacks the tokens).
-  if (r.verdict.kind === 'refused' && missing === 0n) out.push(copy.format('request.blockRefused', { reason: r.verdict.reason }));
+  else if (r.verdict.kind === 'refused' && missing === 0n) out.push(copy.format('request.blockRefused', { reason: r.verdict.reason }));
   if (r.verdict.kind === 'unreadable') out.push(copy.format('request.blockUnread', { reason: r.verdict.reason }));
   return out;
+}
+
+const RISK_BLOCK_KEYS: Readonly<Record<RiskNeed, CopyKey>> = { tier: 'risk.blockTier', 'pair-consent': 'risk.blockConsent', 'mid-tier-ack': 'risk.blockAck' };
+
+/** The risk-access step the protocol's dry run asks of this wallet, if its
+ *  refusal is one (ACC-RISK). */
+export function requestRiskNeed(r: Pick<RequestReview, 'verdict'>): RiskNeed | null {
+  return r.verdict.kind === 'refused' ? needFromRefusal(r.verdict.code) : null;
 }
 
 /** What moved between the review and a re-read of it, as the page names it,

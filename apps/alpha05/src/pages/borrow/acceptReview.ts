@@ -82,22 +82,23 @@ export async function readAcceptReview(own: OwnStateClient, diamond: Hex, offerI
   const account = own.account;
   const r = <T>(fn: Parameters<OwnStateClient['read']>[0]) => own.read(fn).then((x) => x.value as T);
   const offer = await r<StoredOffer>((c) => readOffer(c, diamond, offerId));
-  const [state, preview, linkedLoanId, riskTermsHash, lendingClass, collateralClass, graceSeconds, lifBps, matcherBps, vault, funds, gate, creatorGate, consent] = await Promise.all([
-    r<OfferState>((c) => readOfferState(c, diamond, offerId)),
-    r<AcceptPreview>((c) => readPreview(c, diamond, offerId, account)),
-    r<bigint>((c) => readLinkedLoanId(c, diamond, offerId)),
-    r<Hex>((c) => readRiskTermsHash(c, diamond)),
-    r<AssetClass>((c) => readAssetClass(c, diamond, offer.lendingAsset)),
-    r<AssetClass>((c) => readAssetClass(c, diamond, offer.collateralAsset)),
-    r<bigint>((c) => readGraceSeconds(c, diamond, offer.durationDays)),
-    r<bigint>((c) => readLifBps(c, diamond)),
-    r<bigint>((c) => readLifMatcherBps(c, diamond)),
-    r<Hex>((c) => readVault(c, diamond, account)),
-    r<WalletFunds>((c) => readWalletFunds(c, offer.collateralAsset, account, diamond)),
-    r<number>((c) => readAcceptGate(c, diamond, offerId, account)),
-    r<number>((c) => readCreatorGate(c, diamond, offerId)),
-    r<boolean>((c) => readFeeDiscountConsent(c, diamond, account)).catch(() => null),
-  ]);
+  const [state, preview, linkedLoanId, riskTermsHash, lendingClass, collateralClass, graceSeconds, lifBps, matcherBps, vault, funds, gate, creatorGate, consent] =
+    await Promise.all([
+      r<OfferState>((c) => readOfferState(c, diamond, offerId)),
+      r<AcceptPreview>((c) => readPreview(c, diamond, offerId, account)),
+      r<bigint>((c) => readLinkedLoanId(c, diamond, offerId)),
+      r<Hex>((c) => readRiskTermsHash(c, diamond)),
+      r<AssetClass>((c) => readAssetClass(c, diamond, offer.lendingAsset)),
+      r<AssetClass>((c) => readAssetClass(c, diamond, offer.collateralAsset)),
+      r<bigint>((c) => readGraceSeconds(c, diamond, offer.durationDays)),
+      r<bigint>((c) => readLifBps(c, diamond)),
+      r<bigint>((c) => readLifMatcherBps(c, diamond)),
+      r<Hex>((c) => readVault(c, diamond, account)),
+      r<WalletFunds>((c) => readWalletFunds(c, offer.collateralAsset, account, diamond)),
+      r<number>((c) => readAcceptGate(c, diamond, offerId, account)),
+      r<number>((c) => readCreatorGate(c, diamond, offerId)),
+      r<boolean>((c) => readFeeDiscountConsent(c, diamond, account)).catch(() => null),
+    ]);
   // The protocol refuses when EITHER party's vault is below the required
   // version; which one is read from this wallet's own vault, so the remedy
   // is never sent to the side that cannot act on it.
@@ -153,7 +154,7 @@ export function stateText(state: Exclude<OfferState, 'open'>, copy: Pick<CopyAcc
   return copy.text(STATE_KEYS[state]);
 }
 
-const GATE_KEYS: Readonly<Record<number, CopyKey>> = { 1: 'accept.blockGate1', 2: 'accept.blockGate2', 3: 'accept.blockGate3' };
+const GATE_KEYS: Readonly<Record<number, CopyKey>> = { 1: 'risk.blockTier', 2: 'risk.blockConsent', 3: 'risk.blockAck' };
 
 /** A risk-access block as the page states it: a lender-side block is named
  *  as the lender's and never sent to this wallet's settings, and a code
@@ -251,7 +252,11 @@ export function changedBetween(a: AcceptReview, b: AcceptReview, copy: Pick<Copy
     a.matcherBps !== b.matcherBps
   )
     return copy.text('accept.changedClass');
-  if (shortfall(a.funds.balance, a.preview.collateralAmount) !== shortfall(b.funds.balance, b.preview.collateralAmount) || needsApproval(a) !== needsApproval(b) || a.approvalSteps !== b.approvalSteps)
+  if (
+    shortfall(a.funds.balance, a.preview.collateralAmount) !== shortfall(b.funds.balance, b.preview.collateralAmount) ||
+    needsApproval(a) !== needsApproval(b) ||
+    a.approvalSteps !== b.approvalSteps
+  )
     return copy.text('accept.changedFunds');
   if (a.vault.toLowerCase() !== b.vault.toLowerCase()) return copy.text('accept.changedVault');
   return null;

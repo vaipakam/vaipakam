@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createParams, ZERO } from './requestModel';
-import { changedBetween, judgeDryRun, promptCount, requestBlockers, requestReceipt, type RequestReview } from './requestReview';
+import { changedBetween, judgeDryRun, promptCount, requestBlockers, requestReceipt, requestRiskNeed, type RequestReview } from './requestReview';
 
 type Hex = `0x${string}`;
 const lending = '0x00000000000000000000000000000000000000a1' as Hex;
@@ -57,6 +57,13 @@ describe('requestBlockers', () => {
     expect(requestBlockers(review({ verdict: { kind: 'refused', code: 'X', reason: 'r' } }), null, copy)).toEqual(['request.blockRefused']);
     expect(requestBlockers(review({ verdict: { kind: 'unreadable', reason: 'r' } }), null, copy)).toEqual(['request.blockUnread']);
     expect(requestBlockers(review(), null, copy)).toEqual([]);
+  });
+  it('names a risk-access refusal with its step, even beside a shortfall, and reads its need', () => {
+    const r = review({ verdict: { kind: 'refused', code: 'RiskTierTooLow', reason: 'x' }, funds: { balance: 0n, allowance: 0n } });
+    expect(requestBlockers(r, null, copy)).toEqual(['request.blockShortfall', 'risk.blockTier']);
+    expect(requestRiskNeed(r)).toBe('tier');
+    expect(requestRiskNeed(review({ verdict: { kind: 'refused', code: 'IlliquidPairNotConsented', reason: 'x' } }))).toBe('pair-consent');
+    expect(requestRiskNeed(review())).toBeNull();
   });
   it('names a distrusted leg', () => {
     expect(requestBlockers(review({ collateralClass: 'distrusted' }), null, copy)).toEqual(['accept.blockDistrusted']);

@@ -2091,6 +2091,12 @@ Basic は単一値のリクエストを出します。`amount` = `amountMax`、`
 
 確認画面はウォレットから `createOffer` をシミュレートし、両方の区分、`getEffectiveGraceSeconds(durationDays)`、`getLoanInitiationFeeBps`、最長期間、ウォレットのボールト・残高・承認額、両側が流動的なら `calculateLTV` を読み、毎ブロックとウォレットが開く直前に読み直します。承認額が足りない間、シミュレーションは担保の引き出しまでしか進めないため、トークンの引き出しエラーやプロトコルのエラー名がない revert は解消すべき承認として示し、名前のあるプロトコルエラーは拒否として扱います。ちょうどの額を承認した後、`createOffer` を再度シミュレートして送信します。承認後に止まった場合、他に変更がなければ承認額を元の値に戻します。結果はこのウォレットの `OfferCreated` と、ボールトへの担保の `Transfer` から読みます。
 
+<a id="risk-access"></a>
+
+### Risk Access: あなたのリスクレベル
+
+スイッチは `getRiskAccessGateEnabled` です。フローに必要な手順はプロトコル自身の回答で決まります。受諾では、`previewCreatorBlock` が貸し手のブロックなしを示したうえで `previewOfferAcceptBlock`（1 = レベル不足、2 = ペアへの同意、3 = 厳格モードの確認、4 = 受諾自体の確認でカバー済み、警告でありブロックではない）。リクエストでは、`createOffer` のドライランの `RiskTierTooLow`、`IlliquidPairNotConsented`、`MidTierPairNotAcknowledged` です。手順は一つのブロックで、ペアの `pairRequiredRiskLevel`（オファーでは `acceptMidTierAckPair`）、`getVaultRiskTier`、`getEffectiveRiskTier`、`getCurrentRiskTermsVersion` に対する `getVaultRiskTierVersion`、`getRiskTierUnlockAt`、`getRiskAccessUnlockCooldown`、`getRiskTierMutationNonce` を読み、ペアについては `isPairConsentPending` と `hasIlliquidPairConsent`、または `isMidTierAckPending` と `midTierStrictBlocked` を読みます。引き上げはペアに必要な最小レベルへの `setVaultRiskTierChecked(level, nonce, termsVersion)` で、確認後に別のレベル書き込みや条件変更があれば何も変えずに拒否されます。ペアの手順は `setIlliquidPairConsent(pair, true)` または `setMidTierPairAck(pair)` です。待機中の引き上げや保留中のペア手順は再提示しません。保留中のペア手順がいつ有効になるかを返す読み取りはないため、確認画面はその時刻を読めないと伝えます。その時刻を示すのは手順自体の完了カードだけで、明細のブロック時刻と待機期間の和から求めます。結果は明細のブロックで読み直します。
+
 <a id="terms-gate"></a>
 
 ### 利用規約の確認
