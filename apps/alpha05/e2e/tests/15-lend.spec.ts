@@ -7,7 +7,7 @@
  * and the phone project; each test posts its own request, so the second
  * project never depends on the first.
  */
-import { erc20Abi, parseEther, type Hex } from 'viem';
+import { erc20Abi, formatEther, parseEther, type Hex } from 'viem';
 import { WETH, postBorrowRequest } from '@vaipakam/anvil-harness/lending';
 import type { Page } from '@playwright/test';
 import { scenario } from '../lib/chain';
@@ -21,7 +21,7 @@ async function fitsWidth(page: Page): Promise<void> {
 
 const WETH_ABI = [
   { type: 'function', name: 'deposit', stateMutability: 'payable', inputs: [], outputs: [] },
-  { type: 'function', name: 'withdraw', stateMutability: 'nonpayable', inputs: [{ type: 'uint256' }], outputs: [] },
+  { type: 'function', name: 'transfer', stateMutability: 'nonpayable', inputs: [{ type: 'address' }, { type: 'uint256' }], outputs: [{ type: 'bool' }] },
 ] as const;
 
 async function pickPair(page: Page, lending: Hex, collateral: Hex): Promise<void> {
@@ -117,10 +117,10 @@ test('a wallet without the amount is told the shortfall and cannot confirm, unti
   const sc = scenario();
   const tliq = (sc.fixture.artifact.testnetMocks as Record<string, Hex>).liquidToken;
   const visitor = accountFor('visitor').address;
-  // Start from no WETH, whatever earlier specs left the wallet.
-  const held = await wethOf(sc, visitor);
-  if (held > 0n) await sc.write('visitor', WETH, WETH_ABI, 'withdraw', [held]);
-  const offerId = await postBorrowRequest(sc, { borrower: 'borrower', principalWeth: '0.02', collateralTliq: '100', rateBps: 300, days: 7 });
+  // Ask for 0.02 WETH more than the wallet holds, whatever earlier specs left it.
+  const short = parseEther('0.02');
+  const asked = (await wethOf(sc, visitor)) + short;
+  const offerId = await postBorrowRequest(sc, { borrower: 'borrower', principalWeth: formatEther(asked), collateralTliq: '100', rateBps: 300, days: 7 });
   const { page, flags } = await launchWallet('visitor');
   await page.goto('/lend');
   await connectWallet(page);
@@ -137,7 +137,8 @@ test('a wallet without the amount is told the shortfall and cannot confirm, unti
 
   // RB-RAILS: the review is read again each block, so funding the wallet
   // lifts the blocker without reopening the panel.
-  await sc.write('visitor', WETH, WETH_ABI, 'deposit', [], parseEther('0.02'));
+  await sc.write('other', WETH, WETH_ABI, 'deposit', [], short);
+  await sc.write('other', WETH, WETH_ABI, 'transfer', [visitor, short]);
   await expect(review).not.toContainText('this request asks you to lend', { timeout: 60_000 });
   await expect(review.getByTestId('accept-consent')).toBeVisible();
   expect(flags.sentTransactions).toBe(0);
