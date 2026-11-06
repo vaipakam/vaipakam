@@ -36,9 +36,11 @@ export type SendOutcome = 'accepted' | 'refused' | 'transient' | 'unknown';
 
 export interface ChannelDeps {
   db: D1Database;
-  /** Send a Telegram message; null when no bot is configured. Without a bot
-   *  no Telegram alert reaches any chat, so there is nothing a removal could
-   *  silence and the immediate paths apply. */
+  /** Send a Telegram message; null when the bot token is not available now
+   *  (unset, or its secret could not be read). Protection is read either
+   *  way: without a sender a protected removal still waits, untold, and the
+   *  tick tells the chat once a sender is back, so a missing secret can never
+   *  turn a protected removal into an immediate one. */
   send: ((chatId: string, text: string) => Promise<SendOutcome>) | null;
   read: ProtectionReader;
   now: number;
@@ -54,10 +56,10 @@ export interface PendingReport {
   effective_at: number | null;
 }
 
-/** Group by the chat a change would silence, so each chat gets one notice. */
-function byChat<T extends { chatId: string }>(rows: readonly T[]): Map<string, T[]> {
+/** Group rows under one key, so each group gets one notice. */
+function groupBy<T>(rows: readonly T[], key: (r: T) => string): Map<string, T[]> {
   const m = new Map<string, T[]>();
-  for (const r of rows) m.set(r.chatId, [...(m.get(r.chatId) ?? []), r]);
+  for (const r of rows) m.set(key(r), [...(m.get(key(r)) ?? []), r]);
   return m;
 }
 
@@ -75,7 +77,9 @@ async function notifyOldChat(
   newChat: { chatId: string; locale: string } | null,
 ): Promise<boolean> {
   if (!deps.send || chains.length === 0) return false;
-  const when = formatUtc(deps.now + Math.max(...chains.map((c) => c.delaySeconds)));
+  // Callers group by delay, so every chain in one notice has this deadline:
+  // the time each row's wait ends once `markNotified` starts it now.
+  const when = formatUtc(deps.now + chains[0]!.delaySeconds);
   const entries = chains.map((c) => ({ walletShort: shortWallet(wallet), chainId: c.chainId }));
   const text =
     kind === 'unlink'
@@ -108,7 +112,7 @@ export async function requestUnlink(
   unlinkNow: (chainIds: number[] | 'all') => Promise<void>,
 ): Promise<{ kind: 'done'; pending: PendingReport[] } | { kind: 'unknown' }> {
   const w = wallet.toLowerCase();
-  const rows = deps.send ? await linkedRows(deps.db, w, chainId) : [];
+  const rows = await linkedRows(deps.db, w, chainId);
   const delays = rows.length > 0 ? await protectionByRow(deps.read, w, rows) : new Map<number, number | null>();
   if (delays === null) return { kind: 'unknown' };
   const waiting = rows.filter((r) => delays.get(r.chainId) != null);
@@ -132,9 +136,10 @@ export async function requestUnlink(
       : deps.db.prepare(`DELETE FROM telegram_links WHERE wallet = ? AND chain_id = ?`).bind(w, chainId),
   ]);
   const told = new Set<number>();
-  for (const [chat, list] of byChat(waiting)) {
+  // One notice per (chat, delay), so each states its own chains' deadline.
+  for (const list of groupBy(waiting, (r) => `${r.chatId}|${delays.get(r.chainId)}`).values()) {
     const chains = list.map((r) => ({ chainId: r.chainId, delaySeconds: delays.get(r.chainId)! }));
-    if (await notifyOldChat(deps, w, chat, 'unlink', chains, list[0]!.locale, null)) {
+    if (await notifyOldChat(deps, w, list[0]!.chatId, 'unlink', chains, list[0]!.locale, null)) {
       for (const r of list) told.add(r.chainId);
     }
   }
@@ -167,7 +172,7 @@ export async function requestRelink(
     await linkNow();
     return 'linked' as const;
   };
-  const [current] = deps.send ? await linkedRows(deps.db, w, chainId) : [];
+  const [current] = await linkedRows(deps.db, w, chainId);
   if (!current || current.chatId === newChatId) return immediate();
   const delays = await protectionByRow(deps.read, w, [current]);
   if (delays === null) {
@@ -222,11 +227,8 @@ export async function cancelFromChat(
 export async function applyDueChannelChanges(deps: ChannelDeps): Promise<number> {
   if (deps.send) {
     const untold = await unnotifiedChanges(deps.db, deps.now - NOTICE_RETRY_SECONDS);
-    const groups = new Map<string, PendingChange[]>();
-    for (const c of untold) {
-      const key = `${c.oldChatId}|${c.wallet}|${c.kind}`;
-      groups.set(key, [...(groups.get(key) ?? []), c]);
-    }
+    // One notice per (chat, wallet, kind, delay): each states its deadline.
+    const groups = groupBy(untold, (c: PendingChange) => `${c.oldChatId}|${c.wallet}|${c.kind}|${c.delaySeconds}`);
     for (const list of groups.values()) {
       const first = list[0]!;
       for (const c of first.kind === 'replace' ? list : [first]) {

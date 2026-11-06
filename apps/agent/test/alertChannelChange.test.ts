@@ -287,4 +287,44 @@ describe('applyDueChannelChanges', () => {
     await requestUnlink(deps(d1, r).d, W, null, unlinkNow(d1, null));
     expect(db.prepare('SELECT COUNT(*) AS n FROM telegram_links').get()).toEqual({ n: 0 });
   });
+
+  it('keeps a protected removal waiting when no bot can send, and tells the chat once one can', async () => {
+    const { db, d1 } = sqliteD1();
+    db.exec(`INSERT INTO user_thresholds VALUES ('${W}', 84532, '42', 'en', 0)`);
+    const r = reader({ 84532: { enabled: true, delaySeconds: 2 * DAY } });
+    const noBot: ChannelDeps = { ...deps(d1, r).d, send: null };
+    expect(await requestUnlink(noBot, W, null, unlinkNow(d1, null))).toEqual({
+      kind: 'done',
+      pending: [{ chain_id: 84532, effective_at: null }],
+    });
+    expect(chat(db, 84532)).toBe('42');
+    expect(await applyDueChannelChanges({ ...noBot, now: NOW + 10 * DAY })).toBe(0);
+    expect(chat(db, 84532)).toBe('42');
+    // The bot is back: the tick tells the chat and starts the wait then.
+    const back = deps(d1, r, NOW + 10 * DAY);
+    expect(await applyDueChannelChanges(back.d)).toBe(0);
+    expect(back.sent.map((m) => m.chat)).toEqual(['42']);
+    expect(await applyDueChannelChanges(deps(d1, r, NOW + 12 * DAY).d)).toBe(1);
+  });
+
+  it("states each chain's own deadline when one chat waits different delays", async () => {
+    const { db, d1 } = sqliteD1();
+    db.exec(`INSERT INTO user_thresholds VALUES ('${W}', 84532, '42', 'en', 0), ('${W}', 421614, '42', 'en', 0)`);
+    const r = reader({ 84532: { enabled: true, delaySeconds: 2 * DAY }, 421614: { enabled: true, delaySeconds: 5 * DAY } });
+    const { d, sent } = deps(d1, r);
+    const out = await requestUnlink(d, W, null, unlinkNow(d1, null));
+    expect(out).toEqual({
+      kind: 'done',
+      pending: [
+        { chain_id: 84532, effective_at: NOW + 2 * DAY },
+        { chain_id: 421614, effective_at: NOW + 5 * DAY },
+      ],
+    });
+    expect(sent).toHaveLength(2);
+    const two = new Date((NOW + 2 * DAY) * 1000).toISOString().slice(0, 10);
+    const five = new Date((NOW + 5 * DAY) * 1000).toISOString().slice(0, 10);
+    expect(sent[0]!.text).toContain(two);
+    expect(sent[0]!.text).not.toContain(five);
+    expect(sent[1]!.text).toContain(five);
+  });
 });
