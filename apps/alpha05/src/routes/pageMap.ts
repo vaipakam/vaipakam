@@ -60,8 +60,24 @@ export const PAGES: readonly PageEntry[] = [
 export function currentAppHref(page: PageEntry, params: Readonly<Record<string, string | undefined>>): string | null {
   if (page.currentApp === null) return null;
   const path = page.currentApp.replace(/:(\w+)/g, (_, key: string) => params[key] ?? '');
-  if (path.includes('//') || path.endsWith('/') && path !== '/') return null;
+  if (path.includes('//') || (path.endsWith('/') && path !== '/')) return null;
   return `https://app.vaipakam.com${path}`;
+}
+
+/** Where a job lives today: this app's own page when it is built, otherwise
+ *  the current app's page for the same job (or nowhere, when it has none).
+ *  Flows that hand the reader on to another page (a finish card's next step,
+ *  a review's "where to manage this") ask here, so the link switches to this
+ *  app by itself the day the page is built, and never points at a
+ *  placeholder after money has moved. */
+export type PageHandoff = { kind: 'here'; to: string } | { kind: 'currentApp'; href: string } | { kind: 'none' };
+
+export function pageHandoff(path: string): PageHandoff {
+  const page = PAGES.find((p) => p.path === path);
+  if (!page) return { kind: 'none' };
+  if (page.built) return { kind: 'here', to: path };
+  const href = currentAppHref(page, {});
+  return href === null ? { kind: 'none' } : { kind: 'currentApp', href };
 }
 
 /** The primary navigation, DERIVED from the page map (RB-MODE): Basic shows

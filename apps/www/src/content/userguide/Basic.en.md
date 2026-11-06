@@ -1093,7 +1093,7 @@ A loan can cost you your collateral. If you have not repaid by the end of the gr
 
 ### Borrow: Posting Your Own Request
 
-When no offer fits, you can post your own borrow request for your two tokens: the exact amount, the rate you will pay, the term and the collateral you lock. Posting moves the collateral from your wallet into your own vault, where it stays while the request is open. A lender who takes it opens the loan at once, on your terms, without asking you again; the amount, less the initiation fee, arrives in your wallet. You can cancel from five minutes after posting, and the collateral returns to your wallet. A lapsed request can no longer be taken; its collateral stays in your vault until you, or anyone, closes it, and then returns only to your wallet.
+When no offer fits, you can post your own borrow request for your two tokens: the exact amount, the rate you will pay, the term and the collateral you lock. Posting moves the collateral from your wallet into your own vault, where it stays while the request is open. A lender who takes it opens the loan at once, on your terms, without asking you again; the amount, less the initiation fee, arrives in your wallet. You can cancel from five minutes after posting, and the collateral returns to your wallet. A lapsed request can no longer be taken; its collateral stays in your vault until you, or anyone, closes it, and then returns only to your wallet. Until the next app's Offers page is built, you follow, cancel and close a request on the current app's Offers page; the review says so before anything is locked.
 
 <a id="borrow-request-terms"></a>
 

@@ -27,6 +27,7 @@ import { askThrough } from '../../../shared/tx/simulate';
 import { allowanceSteps } from '../../../shared/tx/approval';
 import { formatBps, formatSpan, formatUtc, shortAddress } from '../../../shared/ui/format';
 import { createParams, requestFigures, ZERO, type CreateParams, type ParsedRequest, type RequestPair } from './requestModel';
+import { pageHandoff } from '../../../routes/pageMap';
 
 type Hex = `0x${string}`;
 
@@ -247,8 +248,12 @@ export function requestReceipt(r: RequestReview, meta: TokenMetaMap | null, copy
     },
   ];
 
+  // Where the request is followed and cancelled after posting: said before
+  // the collateral locks, not discovered afterwards (pageHandoff).
+  const manage = pageHandoff('/offers');
   const consequences = [
     text('request.loseLocked'),
+    ...(manage.kind === 'here' ? [] : [text(manage.kind === 'currentApp' ? 'request.manageElsewhere' : 'request.manageNowhere')]),
     text(r.draft.expiresAt === 0n ? 'request.loseOpen' : 'request.loseLapse'),
     text('request.loseTaken'),
     text('accept.loseDefault'),

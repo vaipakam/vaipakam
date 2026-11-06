@@ -22,6 +22,7 @@ import { useTrackedTx } from '../../../shared/tx/useTrackedTx';
 import { ActionFlow, reviewIdentity, type Recheck } from '../../../shared/ui/ActionFlow';
 import { Notice } from '../../../shared/ui/Notice';
 import { shortAddress } from '../../../shared/ui/format';
+import { pageHandoff } from '../../../routes/pageMap';
 import { REQUEST_KEY } from './RequestForm';
 import { createdRequest } from './requestOutcome';
 import { changedBetween, CREATE_ABI, promptCount, readRequestReview, requestBlockers, requestReceipt, type RequestDraft, type RequestReview } from './requestReview';
@@ -268,6 +269,9 @@ export function PostRequest({ draft, chain, own, meta, terms, onEdit, onClose }:
     onEdit();
   };
 
+  // Where the request is followed and cancelled once posted (built page or
+  // the current app's), said before the collateral locks.
+  const offersPage = pageHandoff('/offers');
   const blockers = review ? requestBlockers(review, meta, copy) : [];
   const consented = review !== null && consentFor === review.readAt;
   const termsLink = terms && terms.kind !== 'none' ? termsUrl(terms.version) : `${GUIDE_ORIGIN}/terms`;
@@ -283,6 +287,14 @@ export function PostRequest({ draft, chain, own, meta, terms, onEdit, onClose }:
                 {b}
               </Notice>
             ))}
+            {offersPage.kind === 'currentApp' && (
+              // The receipt's consequences say why; this is the way there.
+              <p className="tier-b">
+                <a href={offersPage.href} target="_blank" rel="noreferrer" data-testid="request-manage-link">
+                  {text('request.manageLink')}
+                </a>
+              </p>
+            )}
             <WhyLink summaryKey="accept.feeSummary" detailKey="accept.feeWhy" />
             <WhyLink summaryKey="request.postSummary" detailKey="request.postWhy" />
             {blockers.length === 0 && (
@@ -339,7 +351,13 @@ export function PostRequest({ draft, chain, own, meta, terms, onEdit, onClose }:
         recheck={recheck}
         describeAsset={describeAsset}
         explorer={chain.blockExplorer}
-        next={offerId !== null ? { label: text('request.openOffers'), to: '/offers' } : null}
+        next={
+          offerId === null || offersPage.kind === 'none'
+            ? null
+            : offersPage.kind === 'here'
+              ? { label: text('request.openOffers'), to: offersPage.to }
+              : { label: text('request.openOffersCurrent'), href: offersPage.href }
+        }
         gate={gate}
         signingNote={step}
         onClose={close}

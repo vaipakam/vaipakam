@@ -766,6 +766,10 @@ export const copy = {
     legLocked: B('{{amount}} locked in your vault'),
     lockedOther: B('{{amount}} moved from your wallet to your vault, not the {{expected}} the review showed.'),
     openOffers: B('See it under Offers'),
+    openOffersCurrent: B("Follow it on the current app's Offers page"),
+    manageElsewhere: A("This app cannot follow or cancel a request yet. Until its Offers page is built, you follow it, cancel it, or close it once lapsed on the current app's Offers page."),
+    manageNowhere: A('This app cannot follow or cancel a request yet, and no other page for it could be found. The protocol still lets you cancel it from five minutes after posting.'),
+    manageLink: B("Open the current app's Offers page"),
     postSummary: B('Your wallet approves the collateral if needed, then posts; nothing else is asked.'),
     postWhy: C(
       'Posting a request is one transaction, after an approval for exactly the collateral when your wallet\'s current approval does not cover it. Before your wallet opens, the app asks the protocol to try the request as a dry run, and after any approval it tries it again: only an answer that it would go through lets the request be sent. If anything stops it after an approval, the app asks your wallet to put the approval back to what it was, and says if that did not happen. Afterwards the app checks on the chain the request it recorded and the collateral that moved into your vault.',

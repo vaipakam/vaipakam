@@ -1120,7 +1120,7 @@ Un préstamo puede costarte tu garantía. Si no has devuelto al final del period
 
 ### Borrow: Publicar tu propia solicitud
 
-Si ninguna oferta encaja, puedes publicar tu propia solicitud de préstamo para tus dos tokens: el importe exacto, la tasa que pagarás, el plazo y la garantía que bloqueas. Al publicarla, la garantía pasa de tu wallet a tu propio vault, donde queda mientras la solicitud esté abierta. Un prestamista que la acepte abre el préstamo al instante, con tus condiciones, sin volver a preguntarte; el importe, menos la comisión de apertura, llega a tu wallet. Puedes cancelarla a partir de cinco minutos después de publicarla, y la garantía vuelve a tu wallet. Una solicitud vencida ya no puede aceptarse; su garantía queda en tu vault hasta que tú, o cualquiera, la cierre, y entonces vuelve solo a tu wallet.
+Si ninguna oferta encaja, puedes publicar tu propia solicitud de préstamo para tus dos tokens: el importe exacto, la tasa que pagarás, el plazo y la garantía que bloqueas. Al publicarla, la garantía pasa de tu wallet a tu propio vault, donde queda mientras la solicitud esté abierta. Un prestamista que la acepte abre el préstamo al instante, con tus condiciones, sin volver a preguntarte; el importe, menos la comisión de apertura, llega a tu wallet. Puedes cancelarla a partir de cinco minutos después de publicarla, y la garantía vuelve a tu wallet. Una solicitud vencida ya no puede aceptarse; su garantía queda en tu vault hasta que tú, o cualquiera, la cierre, y entonces vuelve solo a tu wallet. Mientras la página de Ofertas de la próxima app no esté construida, sigues, cancelas y cierras una solicitud en la página de Ofertas de la app actual; la revisión lo dice antes de bloquear nada.
 
 <a id="borrow-request-terms"></a>
 
