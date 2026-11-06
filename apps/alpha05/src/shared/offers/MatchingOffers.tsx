@@ -1,12 +1,12 @@
-import { useCopy } from '../../shared/copy/useCopy';
-import { WhyLink } from '../../shared/help/WhyLink';
-import { roleTerms } from '../../shared/offers/acceptTerms';
-import { acceptFigures } from '../../shared/offers/model';
-import { tokenAmount, type TokenMetaMap } from '../../shared/reads/tokens';
-import { Notice } from '../../shared/ui/Notice';
-import { formatBps, formatUtc } from '../../shared/ui/format';
-import { needFromAcceptCode } from '../../shared/risk/riskAccess';
-import { acceptErrorText, cadenceText, gateBlockText, stateText } from './acceptReview';
+import { useCopy } from '../copy/useCopy';
+import { WhyLink } from '../help/WhyLink';
+import { roleTerms } from './acceptTerms';
+import { acceptFigures } from './model';
+import { tokenAmount, type TokenMetaMap } from '../reads/tokens';
+import { Notice } from '../ui/Notice';
+import { formatBps, formatUtc } from '../ui/format';
+import { needFromAcceptCode } from '../risk/riskAccess';
+import { acceptErrorText, cadenceText, gateBlockText, stateText } from '../accept/acceptReview';
 import { MATCH_PAGE, type Matches, type MatchRow } from './matches';
 
 type Hex = `0x${string}`;

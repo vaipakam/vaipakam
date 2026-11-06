@@ -1,13 +1,13 @@
 import { useId, useState } from 'react';
 import type { SupportedChain } from '../../chain/chains';
-import { useCopy } from '../../shared/copy/useCopy';
-import { WhyLink } from '../../shared/help/WhyLink';
-import { parsePasted, readAssetClass, suggestedAssets, suggestedCollateral } from '../../shared/offers/assets';
-import { useAssetStandard } from '../../shared/nft/useStandard';
-import { useChainRead } from '../../shared/reads/chainRead';
-import { assetName, type TokenMetaMap } from '../../shared/reads/tokens';
-import { FormField } from '../../shared/ui/FormField';
-import { Notice } from '../../shared/ui/Notice';
+import { useCopy } from '../copy/useCopy';
+import { WhyLink } from '../help/WhyLink';
+import { parsePasted, readAssetClass, suggestedAssets, suggestedCollateral } from './assets';
+import { useAssetStandard } from '../nft/useStandard';
+import { useChainRead } from '../reads/chainRead';
+import { assetName, type TokenMetaMap } from '../reads/tokens';
+import { FormField } from '../ui/FormField';
+import { Notice } from '../ui/Notice';
 
 type Hex = `0x${string}`;
 

@@ -7,11 +7,11 @@
  * reports.
  */
 import type { OwnStateClient } from '../../chain/ownRail';
-import type { CopyAccess, CopyKey } from '../../shared/copy/useCopy';
-import { readFeeDiscountConsent } from '../../shared/consent/feeDiscount';
-import { readAssetClass, type AssetClass } from '../../shared/offers/assets';
-import { ASSET_ERC20, type StoredOffer } from '../../shared/offers/acceptTerms';
-import { acceptFigures, gateBlock, listFee, shortfall, type GateBlock } from '../../shared/offers/model';
+import type { CopyAccess, CopyKey } from '../copy/useCopy';
+import { readFeeDiscountConsent } from '../consent/feeDiscount';
+import { readAssetClass, type AssetClass } from '../offers/assets';
+import { ASSET_ERC20, type StoredOffer } from '../offers/acceptTerms';
+import { acceptFigures, gateBlock, listFee, shortfall, type GateBlock } from '../offers/model';
 import {
   readAcceptGate,
   readCreatorGate,
@@ -30,12 +30,12 @@ import {
   type AcceptPreview,
   type OfferState,
   type WalletFunds,
-} from '../../shared/offers/reads';
-import type { Receipt } from '../../shared/receipt/types';
-import { SWITCH_EFFECTS } from '../../shared/eligibility/switchClasses';
-import { tokenAmount, type TokenMetaMap } from '../../shared/reads/tokens';
-import { allowanceSteps } from '../../shared/tx/approval';
-import { formatBps, formatSpan, shortAddress } from '../../shared/ui/format';
+} from '../offers/reads';
+import type { Receipt } from '../receipt/types';
+import { SWITCH_EFFECTS } from '../eligibility/switchClasses';
+import { tokenAmount, type TokenMetaMap } from '../reads/tokens';
+import { allowanceSteps } from '../tx/approval';
+import { formatBps, formatSpan, shortAddress } from '../ui/format';
 
 type Hex = `0x${string}`;
 

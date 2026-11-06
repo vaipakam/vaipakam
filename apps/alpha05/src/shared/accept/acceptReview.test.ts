@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { offer } from '../../shared/offers/testOffer';
+import { offer } from '../offers/testOffer';
 import { acceptReceipt, changedBetween, promptCount, reviewBlockers, type AcceptReview } from './acceptReview';
 
 type Hex = `0x${string}`;

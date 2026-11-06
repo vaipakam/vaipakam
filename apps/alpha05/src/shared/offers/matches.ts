@@ -7,11 +7,11 @@
  * into a confident "nothing here".
  */
 import type { PublicClient } from 'viem';
-import { type StoredOffer } from '../../shared/offers/acceptTerms';
-import { borrowFit, gateBlock, notTakeable, rankForBorrower, type GateBlock, type NotTakeable, type OfferFit } from '../../shared/offers/model';
-import { readAcceptGate, readCreatorGate, readLifMatcherBps, readOffer, readOfferState, readPairLtvBps, readPairOfferIds, readPreview, type AcceptPreview, type OfferState } from '../../shared/offers/reads';
-import { refusalFromError } from '../../shared/eligibility/refusal';
-import { readAssetClass } from '../../shared/offers/assets';
+import { type StoredOffer } from './acceptTerms';
+import { borrowFit, gateBlock, notTakeable, rankForBorrower, type GateBlock, type NotTakeable, type OfferFit } from './model';
+import { readAcceptGate, readCreatorGate, readLifMatcherBps, readOffer, readOfferState, readPairLtvBps, readPairOfferIds, readPreview, type AcceptPreview, type OfferState } from './reads';
+import { refusalFromError } from '../eligibility/refusal';
+import { readAssetClass } from './assets';
 
 type Hex = `0x${string}`;
 
