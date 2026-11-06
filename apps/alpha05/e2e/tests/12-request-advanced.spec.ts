@@ -99,7 +99,10 @@ test('a ranged request posts both ends, the floor and the fill mode, with the ri
     await expect(receipt).toContainText('Immediate or cancel: matches until it lapses, then the rest lapses');
     await expect(receipt).toContainText(matching ? 'On now: the range can fill across several matches' : 'Off now: matchers refuse');
     await expect(receipt).toContainText(/Loan-to-value if a lender takes it directly, at today's prices\s*[\d.]+%/);
-    await expect(receipt).toContainText(/Loan-to-value of the largest loan a match can make, at today's prices\s*[\d.]+%/);
+    // A match locks what its lender asks for, at least the floor: the
+    // largest match is stated from all the collateral to only the floor.
+    await expect(receipt).toContainText(/Loan-to-value of the largest loan a match can make, at today's prices\s*[\d.]+% with all your collateral locked, up to [\d.]+% with only the floor/);
+    await expect(receipt).toContainText('A match locks only the collateral its lender asks for, at least 1000 tLIQ');
     await expect(receipt).toContainText('You owe at the due date on the largest loan a match can make');
     // Advanced detail: the health factor a loan must start at, read live.
     await expect(receipt).toContainText(/At least \d+\.\d\d, read now/);

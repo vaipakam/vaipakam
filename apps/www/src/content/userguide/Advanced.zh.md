@@ -1834,7 +1834,7 @@ Basic 发布单一数值的请求：`amount` = `amountMax`，`interestRateBps` =
 
 ### Borrow: 带范围的请求
 
-范围发送的 `amount`（最小）低于 `amountMax`（最大），`interestRateBps` = `interestRateBpsMax`（同一利率），`collateralAmount`（最小贷款的下限）不高于 `collateralAmountMax`（发布时转入金库）；下限留空则两者相同。范围仅对 ERC-20 抵押品提供。直接 `acceptOffer` 以 `collateralAmount` 为抵押、按 `interestRateBpsMax` 出借 `amount`，并把 `collateralAmountMax − collateralAmount` 退回钱包；`getPartialFillEnabled` 为 true 期间，`matchOffers` 在两端之间成交。`createOffer` 的模拟在最大端应用报价上限，并以 `MaxLendingAboveCeiling(provided, ceiling)` 拒绝，审核会显示其上限。直接端通过在 (`amount`, `collateralAmount`) 处对单值请求的第二次模拟来检查；在上限之前停止的回答标为未知。每一端的贷款价值比为 `calculateLTV(lending, amount, collateral, collateralAmount)`，`ZeroCollateral` 视为毫无价值的抵押品。显示的贷款起始健康因子在 `getDepthTieredLtvEnabled` 为 false 时为 `getMinHealthFactor`，为 true 时为 1.0。
+范围发送的 `amount`（最小）低于 `amountMax`（最大），`interestRateBps` = `interestRateBpsMax`（同一利率），`collateralAmount`（最小贷款的下限）不高于 `collateralAmountMax`（发布时转入金库）；下限留空则两者相同。范围仅对 ERC-20 抵押品提供。直接 `acceptOffer` 以 `collateralAmount` 为抵押、按 `interestRateBpsMax` 出借 `amount`，并把 `collateralAmountMax − collateralAmount` 退回钱包；`getPartialFillEnabled` 为 true 期间，`matchOffers` 在两端之间成交。`createOffer` 的模拟在最大端应用报价上限，并以 `MaxLendingAboveCeiling(provided, ceiling)` 拒绝，审核会显示其上限。直接端通过在 (`amount`, `collateralAmount`) 处对单值请求的第二次模拟来检查；在上限之前停止的回答标为未知。每一端的贷款价值比为 `calculateLTV(lending, amount, collateral, collateralAmount)`，`ZeroCollateral` 视为毫无价值的抵押品。显示的贷款起始健康因子在 `getDepthTieredLtvEnabled` 为 false 时为 `getMinHealthFactor`，为 true 时为 1.0。撮合锁定出借人按比例计算的要求额：抵押品为区间时提高到 `collateralAmount`，否则退还其余部分；因此最大撮合会同时按 `collateralAmountMax` 和 `collateralAmount` 显示（若无抵押品区间，则显示为可能锁定更少）。只有贷款开始时的检查约束它；读取该检查失败时会明确说明，绝不省略。在分层体制下，该检查还会应用该层级的贷款价值比上限。
 
 <a id="borrow-request-fill"></a>
 

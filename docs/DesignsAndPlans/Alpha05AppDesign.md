@@ -480,7 +480,15 @@ above. Each resolves here, so a route reviewer needs no private file:
   collateral that values to nothing is said so, never shown as 0%. The
   create dry run checks the protocol's limit at the largest end only, so the
   direct end is asked as its own dry run, and an answer that says nothing
-  about the limit is stated as unknown. The matching switch (RB-SWITCH class
+  about the limit is stated as unknown. A match locks the collateral its
+  lender asks for, not what the request posts: at least the floor for a
+  collateral range (so the largest match is stated from all the collateral
+  down to only the floor), otherwise only the lender's requirement with the
+  rest sent back (so it is stated as able to lock less). Every request a
+  match can fill therefore warns, in Basic, that a matched loan can start
+  riskier than the figures shown, bounded only by the protocol's start-of-loan
+  limit; the Advanced row for that limit states a failed read rather than
+  dropping it. The matching switch (RB-SWITCH class
   1a) is stated beside every range, with what the range does while it is
   off. A fill mode (OFF-11) the protocol would refuse (all or none with a
   range, immediate or cancel without an expiry) is not offered, and the

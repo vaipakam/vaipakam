@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { createParams, ZERO } from './requestModel';
 import {
   changedBetween,
+  matchConsequences,
   judgeDryRun,
   judgeLimit,
   needsApproval,
@@ -47,7 +48,7 @@ function review(over: Partial<RequestReview> = {}): RequestReview {
     verdict: { kind: 'needs-approval' },
     lendingClass: 'liquid',
     collateralClass: 'liquid',
-    risk: { direct: { kind: 'value', bps: 5_000n }, largest: null, directWithinLimit: 'not-asked', directCeiling: null, hfFloor: 1_500_000_000_000_000_000n, partialFill: true },
+    risk: { direct: { kind: 'value', bps: 5_000n }, largest: null, largestAtFloor: null, directWithinLimit: 'not-asked', directCeiling: null, start: { kind: 'hf', floor: 1_500_000_000_000_000_000n, tiered: false }, partialFill: true },
     maxDurationDays: 365n,
     graceSeconds: 86_400n,
     lifBps: 20n,
@@ -255,7 +256,7 @@ function rangedReview(over: Partial<RequestReview> = {}, risk: Partial<RequestRe
     ...base,
     draft,
     params: createParams(parsed, draft.pair, draft.expiresAt),
-    risk: { ...base.risk, largest: { kind: 'value', bps: 8_000n }, directWithinLimit: 'within', ...risk },
+    risk: { ...base.risk, largest: { kind: 'value', bps: 8_000n }, largestAtFloor: { kind: 'value', bps: 16_000n }, directWithinLimit: 'within', ...risk },
     ...over,
   };
 }
@@ -371,5 +372,35 @@ describe('readLtv', () => {
         1n,
       ),
     ).rejects.toBeTruthy();
+  });
+});
+
+describe('what a match can lock (OFF-16)', () => {
+  it('states the largest match from all the collateral to only the floor for a collateral range', () => {
+    const row = requestReceipt(rangedReview(), null, copy).rows.find((x) => x.label === 'request.rowLtvLargest');
+    expect(row?.value).toEqual({ kind: 'text', text: 'request.ltvSpan' });
+    expect(matchConsequences(rangedReview(), null, copy)).toEqual(['request.loseMatchLocksFloor']);
+  });
+  it('says a match may lock less than everything without a collateral range, and warns in Basic', () => {
+    const base = rangedReview({}, { largestAtFloor: null });
+    const parsed = { ...base.draft.parsed, collateralFloor: base.draft.parsed.collateral };
+    const r = { ...base, draft: { ...base.draft, parsed } };
+    expect(requestReceipt(r, null, copy).rows.find((x) => x.label === 'request.rowLtvLargest')?.value).toEqual({ kind: 'text', text: 'request.ltvAllLocked' });
+    expect(matchConsequences(r, null, copy)).toEqual(['request.loseMatchLocksLess']);
+    // A single-value request can be matched too, so the warning is not a range's alone.
+    expect(requestReceipt(review(), null, copy).consequences).toContain('request.loseMatchLocksLess');
+  });
+  it('drops the warning only where no match can fill it or no loan-to-value applies', () => {
+    expect(matchConsequences(review({ risk: { ...review().risk, partialFill: false } }), null, copy)).toEqual([]);
+    expect(matchConsequences(review({ risk: { ...review().risk, start: { kind: 'none' } } }), null, copy)).toEqual([]);
+    expect(matchConsequences(review({ risk: { ...review().risk, partialFill: null } }), null, copy)).toEqual(['request.loseMatchLocksLess']);
+  });
+  it('states a start-of-loan limit that could not be read, never dropping the row', () => {
+    const unread = requestReceipt(review({ risk: { ...review().risk, start: { kind: 'unread' } } }), null, copy, true);
+    expect(unread.rows.find((x) => x.label === 'request.rowHfFloor')?.value).toEqual({ kind: 'text', text: 'request.hfFloorUnread' });
+    const tiered = requestReceipt(review({ risk: { ...review().risk, start: { kind: 'hf', floor: 10n ** 18n, tiered: true } } }), null, copy, true);
+    expect(tiered.rows.find((x) => x.label === 'request.rowHfFloor')?.value).toEqual({ kind: 'text', text: 'request.hfFloorTiered' });
+    const none = requestReceipt(review({ risk: { ...review().risk, start: { kind: 'none' } } }), null, copy, true);
+    expect(none.rows.map((x) => x.label)).not.toContain('request.rowHfFloor');
   });
 });

@@ -97,26 +97,41 @@ export type LtvRead = { kind: 'value'; bps: bigint } | { kind: 'worthless' } | {
 /**
  * OFF-16 — the risk a request carries at each point a lender can take it.
  * `direct` is what a lender taking it directly lends (the smallest amount
- * against the floor collateral); `largest` is the largest loan a match can
- * make (the largest amount against everything posted), only for a range.
+ * against the floor collateral). A match locks the collateral its lender
+ * asks for, not what the request posts (`LibOfferMatch`): for a collateral
+ * range at least the floor, up to everything posted; otherwise only the
+ * lender's requirement, with the rest refunded. So `largest` (the largest
+ * amount against everything posted, only for a range) is the least risky a
+ * largest match can start, and `largestAtFloor` (the largest amount against
+ * the floor, only for a collateral range) the riskiest; without a collateral
+ * range a match can lock less than everything, down to the protocol's
+ * start-of-loan limit, which is what bounds it.
  * `directWithinLimit` is the protocol's own create-time limit applied at the
  * direct point: the create dry run checks the largest point only, so the
  * direct point is asked separately (a dry run of a single-value request
  * there) and is 'unknown' when that answer says nothing about the limit.
- * `hfFloor` is the health factor the start-of-loan check admits, read live.
+ * `start` is the start-of-loan limit every loan is checked against, read
+ * live; 'unread' when the read failed, 'none' for a pair it does not apply
+ * to (an unpriced leg).
  * `partialFill` is the matching switch (RB-SWITCH class 1a): while it is off,
  * a range fills once and the matchers refuse.
  */
 export interface RequestRisk {
   direct: LtvRead;
   largest: LtvRead | null;
+  largestAtFloor: LtvRead | null;
   directWithinLimit: 'within' | 'over' | 'unknown' | 'not-asked';
   /** The largest amount the floor collateral supports, when the direct
    *  point is over the limit and the protocol said what it is. */
   directCeiling: bigint | null;
-  hfFloor: bigint | null;
+  start: StartGate;
   partialFill: boolean | null;
 }
+
+/** The start-of-loan limit: the health factor a loan must start at (and,
+ *  in the depth-tiered regime, the tier's loan-to-value cap), a read that
+ *  failed, or no limit for a pair the check does not apply to. */
+export type StartGate = { kind: 'hf'; floor: bigint; tiered: boolean } | { kind: 'unread' } | { kind: 'none' };
 
 /** The collateral as the wallet stands on it. An ERC-20 leg: the balance and
  *  allowance, and the wallet prompts the approval takes (0 when the
@@ -204,14 +219,14 @@ export async function readLtv(client: PublicClient, diamond: Hex, borrowed: Hex,
   }
 }
 
-/** The health factor the start-of-loan check admits, read live: the
- *  tunable floor (`getMinHealthFactor`, 1.2 to 2.0) while the depth-tiered
- *  regime is off, the liquidation threshold (1.0) while it is on, where the
- *  tier's loan-to-value cap is the buffer instead. */
-export async function readHfFloor(client: PublicClient, diamond: Hex): Promise<bigint> {
+/** The start-of-loan limit, read live: the tunable health-factor floor
+ *  (`getMinHealthFactor`, 1.2 to 2.0) while the depth-tiered regime is off;
+ *  the liquidation threshold (1.0) and the tier's loan-to-value cap while it
+ *  is on. */
+export async function readStartGate(client: PublicClient, diamond: Hex): Promise<StartGate> {
   const tiered = (await client.readContract({ address: diamond, abi: CONFIG, functionName: 'getDepthTieredLtvEnabled' })) as boolean;
-  if (tiered) return HF_TIERED_FLOOR;
-  return (await client.readContract({ address: diamond, abi: RISK, functionName: 'getMinHealthFactor' })) as bigint;
+  if (tiered) return { kind: 'hf', floor: HF_TIERED_FLOOR, tiered: true };
+  return { kind: 'hf', floor: (await client.readContract({ address: diamond, abi: RISK, functionName: 'getMinHealthFactor' })) as bigint, tiered: false };
 }
 
 /** Whether a refusal carries no error name: a bare or unknown revert, or
@@ -266,9 +281,11 @@ export async function readRequestReview(own: OwnStateClient, diamond: Hex, draft
           .then((x) => x.value)
           .catch((e: unknown) => ({ kind: 'unread' as const, reason: refusalFromError(e).reason }))
       : Promise.resolve({ kind: 'unpriced' as const });
-  const [direct, largest, probe, hfFloor, partialFill] = await Promise.all([
+  const collateralRanged = parsed.collateralFloor < parsed.collateral;
+  const [direct, largest, largestAtFloor, probe, start, partialFill] = await Promise.all([
     ltv(parsed.amount, parsed.collateralFloor),
     ranged ? ltv(parsed.amountMax, parsed.collateral) : Promise.resolve(null),
+    ranged && collateralRanged ? ltv(parsed.amountMax, parsed.collateralFloor) : Promise.resolve(null),
     // The create dry run applies the limit at the largest point only; the
     // direct point is asked as a single-value request there.
     priced && ranged
@@ -282,16 +299,17 @@ export async function readRequestReview(own: OwnStateClient, diamond: Hex, draft
           }),
         )
       : Promise.resolve(null),
-    priced ? r<bigint>((c) => readHfFloor(c, diamond)).catch(() => null) : Promise.resolve(null),
+    priced ? r<StartGate>((c) => readStartGate(c, diamond)).catch((): StartGate => ({ kind: 'unread' })) : Promise.resolve<StartGate>({ kind: 'none' }),
     r<boolean>((c) => c.readContract({ address: diamond, abi: CONFIG, functionName: 'getPartialFillEnabled' }) as Promise<boolean>).catch(() => null),
   ]);
   const probed = probe === null ? null : judgeLimit(probe, allowanceCovers);
   const risk: RequestRisk = {
     direct,
     largest,
+    largestAtFloor,
     directWithinLimit: probed === null ? 'not-asked' : probed.kind,
     directCeiling: probed?.kind === 'over' ? probed.ceiling : null,
-    hfFloor,
+    start,
     partialFill,
   };
   return { identity, account, diamond, draft, params, verdict, lendingClass, collateralClass, risk, maxDurationDays, graceSeconds, lifBps, vault, holding, readAt: Date.now() };
@@ -404,7 +422,8 @@ function ltvKey(l: LtvRead | null): string {
 
 /** What the risk figures stand on, for the "what changed" of a re-check. */
 function riskKey(r: RequestRisk): string {
-  return [ltvKey(r.direct), ltvKey(r.largest), r.directWithinLimit, String(r.directCeiling), String(r.hfFloor), String(r.partialFill)].join('|');
+  const start = r.start.kind === 'hf' ? `${r.start.floor}:${r.start.tiered}` : r.start.kind;
+  return [ltvKey(r.direct), ltvKey(r.largest), ltvKey(r.largestAtFloor), r.directWithinLimit, String(r.directCeiling), start, String(r.partialFill)].join('|');
 }
 
 function lackKey(l: Lack): string {
@@ -423,6 +442,25 @@ function ltvText(l: LtvRead, copy: Pick<CopyAccess, 'text' | 'format'>): string 
   if (l.kind === 'worthless') return copy.text('request.ltvWorthless');
   if (l.kind === 'unpriced') return copy.text('request.ltvIlliquid');
   return copy.text('request.ltvUnread');
+}
+
+/** The largest match's loan-to-value as the collateral it may lock spans
+ *  it: from everything posted to only the floor for a collateral range, and
+ *  everything posted with "a match may lock less" otherwise. */
+function largestText(all: LtvRead, atFloor: LtvRead | null, copy: Pick<CopyAccess, 'text' | 'format'>): string {
+  if (all.kind !== 'value') return ltvText(all, copy);
+  if (atFloor === null) return copy.format('request.ltvAllLocked', { ltv: formatBps(all.bps) });
+  if (atFloor.kind !== 'value') return ltvText(atFloor, copy);
+  return copy.format('request.ltvSpan', { low: formatBps(all.bps), high: formatBps(atFloor.bps) });
+}
+
+/** The start-of-loan limit row (Advanced detail): the figure read now, or
+ *  that it could not be read; nothing for a pair it does not apply to. */
+function startRows(start: StartGate, copy: Pick<CopyAccess, 'text' | 'format'>): Receipt['rows'] {
+  if (start.kind === 'none') return [];
+  const value =
+    start.kind === 'unread' ? copy.text('request.hfFloorUnread') : copy.format(start.tiered ? 'request.hfFloorTiered' : 'request.hfFloor', { hf: formatScaled(start.floor) });
+  return [{ label: copy.text('request.rowHfFloor'), value: { kind: 'text', text: value }, binding: false }];
 }
 
 /** The receipt (RB-CONFIDENCE): what is locked now, what a lender taking it
@@ -488,9 +526,9 @@ export function requestReceipt(r: RequestReview, meta: TokenMetaMap | null, copy
     r.draft.expiresAt === 0n
       ? textRow('request.rowExpiry', text('request.expiryNever'), true)
       : textRow('request.rowExpiry', format('request.expiryAt', { time: formatUtc(Number(r.draft.expiresAt)) }), true),
-    textRow(ranged ? 'request.rowLtvDirect' : 'request.rowLtv', illiquid ? text('request.ltvIlliquid') : ltvText(r.risk.direct, copy), false),
-    ...(r.risk.largest ? [textRow('request.rowLtvLargest', illiquid ? text('request.ltvIlliquid') : ltvText(r.risk.largest, copy), false)] : []),
-    ...(advanced && r.risk.hfFloor !== null ? [textRow('request.rowHfFloor', format('request.hfFloor', { hf: formatScaled(r.risk.hfFloor) }), false)] : []),
+    textRow('request.rowLtvDirect', illiquid ? text('request.ltvIlliquid') : ltvText(r.risk.direct, copy), false),
+    ...(r.risk.largest ? [textRow('request.rowLtvLargest', illiquid ? text('request.ltvIlliquid') : largestText(r.risk.largest, r.risk.largestAtFloor, copy), false)] : []),
+    ...(advanced ? startRows(r.risk.start, copy) : []),
     {
       label: text('accept.rowApproval'),
       value: {
@@ -519,6 +557,7 @@ export function requestReceipt(r: RequestReview, meta: TokenMetaMap | null, copy
     text(r.draft.expiresAt === 0n ? 'request.loseOpen' : 'request.loseLapse'),
     text('request.loseTaken'),
     ...rangeConsequences(r, meta, copy),
+    ...matchConsequences(r, meta, copy),
     text('accept.loseDefault'),
     ...(r.lendingClass === 'illiquid' ? [text('accept.loseIlliquidLending')] : []),
     ...(r.collateralClass === 'illiquid' ? [text('accept.loseIlliquidCollateral')] : []),
@@ -529,6 +568,24 @@ export function requestReceipt(r: RequestReview, meta: TokenMetaMap | null, copy
   ];
 
   return { title: text('request.title'), rows, consequences, prompts: promptCount(r), readAt: r.readAt };
+}
+
+/**
+ * OFF-16 — what a match can do that a direct take cannot, tier A and in
+ * Basic: it locks only the collateral its lender asks for (at least the
+ * floor for a collateral range; otherwise only the requirement, with the
+ * rest sent back), so a matched loan can start riskier than the figures
+ * shown, bounded only by the protocol's start-of-loan limit. Stated for a
+ * priced pair while matching is on or not known to be off; with an unpriced
+ * leg no loan-to-value applies.
+ */
+export function matchConsequences(r: RequestReview, meta: TokenMetaMap | null, copy: Pick<CopyAccess, 'text' | 'format'>): string[] {
+  const { parsed, pair } = r.draft;
+  if (r.risk.start.kind === 'none' || r.risk.partialFill === false || r.holding.kind !== 'erc20') return [];
+  if (parsed.collateralFloor < parsed.collateral) {
+    return [copy.format('request.loseMatchLocksFloor', { floor: tokenAmount(parsed.collateralFloor, pair.collateral, meta, copy.format) })];
+  }
+  return [copy.text('request.loseMatchLocksLess')];
 }
 
 /** OFF-10 / OFF-11 / OFF-16 — what a range and a fill mode add to the
