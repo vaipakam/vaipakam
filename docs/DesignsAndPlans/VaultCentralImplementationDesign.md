@@ -32,7 +32,9 @@ owner's payouts).
 
 Owner, 2026-11-05: **one central pointer, beacon style.** Each vault proxy
 asks the Diamond which code to run, so one timelocked change reaches every
-vault.
+vault. (Section 3.1 proposes holding that pointer in a separate
+Timelock-owned beacon instead of the Diamond's storage, for the reason it
+gives.)
 
 - A **pin** means "stay on version N", recorded per vault.
 - Governance can **revoke** a version through the timelock, which moves every
@@ -51,71 +53,78 @@ vault.
 
 ### 3.1 How a vault finds its code
 
-Each new vault is an OpenZeppelin `BeaconProxy` whose beacon is **the
-Diamond**. On every call, the proxy calls `implementation()` on its beacon
-and delegatecalls the address it gets back.
+Each new vault is an OpenZeppelin `BeaconProxy` whose beacon is a **separate
+`VaultBeacon` contract**, not the Diamond. On every call, the proxy calls
+`implementation()` on its beacon and delegatecalls the address it gets back.
 
-The Diamond routes `implementation()` (selector `0x5c60da1b`) to the vault
-factory, which answers **for the calling proxy**:
+**Why not the Diamond (a change from the decision's wording, review round
+4).** The decision says each vault asks the Diamond. But every facet runs by
+`delegatecall` in the Diamond's storage, so a faulty or malicious facet
+could overwrite a version's implementation address directly, with no
+`diamondCut` and no Timelock, and every vault would then run its code. That
+would void #3205's vault-side checks, which exist precisely to bound what a
+facet can do. Keeping the decision's intent (one timelocked pointer that
+reaches every vault) needs the pointer to live where no facet can write it.
+**This is put to the owner** with the rest of this design.
 
-1. `user = vaultUserOf[msg.sender]`. A caller that is not a registered vault
-   gets the current version's code. That is harmless, because a non-vault
-   gains nothing from knowing it.
-2. If `user` has a pin and the pinned version is not revoked, return that
-   version's implementation.
-3. Otherwise return the **current** version's implementation.
+`VaultBeacon` holds the version registry and the pins, and answers **for
+the calling proxy**:
+1. If the calling vault has a pin and the pinned version is not revoked,
+   return that version's implementation.
+2. Otherwise return the **current** version's implementation. A caller that
+   is not a vault gets the current version, which tells it nothing useful.
 
-One function decides which code every vault runs, and it reads three storage
-slots. No vault can run code the registry does not hold.
+Its owner is the Timelock. The Diamond has no write path into it except
+the pin entries below, which can only choose among registered, non-revoked
+versions.
 
-**The fill lock must let this lookup through.** While a limit-order fill is
-between its pre-hook and post-hook, `VaipakamDiamond.fallback` refuses every
-caller except the Diamond itself and the post-hook selector (#1566 slice 3).
-A vault called during the fill, for example to move the lot or grant an
-allowance in the pre-hook, makes its proxy call `implementation()` on the
-Diamond, which the lock would refuse, so the fill would revert. The lock
-gains one exception: the `implementation()` selector. It is a view that
-only says which code a vault runs, so letting it through the lock opens no
-mutation path. A test runs a complete swap-to-repay fill with beacon
-vaults.
+Because the lookup goes to the beacon and not the Diamond, the Diamond's
+fill lock (#1566 slice 3) never sees it, and needs no exception.
 
 **Default: a stock `BeaconProxy`, not a custom proxy.** It is audited, and
-its only dependency is a beacon that answers `implementation()`. No other
-facet exposes that selector today (checked against `main`).
-`SelectorCoverageTest` keeps it unique.
+its only dependency is a beacon that answers `implementation()`.
 
-**Cost.** Every vault call adds one external view call into the Diamond:
-the fallback's selector lookup plus about three reads. That is roughly 7-10k
-gas cold, and much less when warm within the same transaction. It is measured
-in the build PR and reported against the current per-call cost. If it proves
-material for the heaviest paths (the batch payout loops), the fallback is to
-cache the answer in transient storage for the transaction, keyed by vault.
-Nothing is cached across transactions, because that would bring the lag back.
+**Cost.** Every vault call adds one external view call into the beacon:
+about three storage reads, roughly 5-8k gas cold and much less when warm in
+the same transaction. It is measured in the build PR and reported against
+the current per-call cost. If it proves material for the heaviest paths
+(the batch payout loops), the fallback is to cache the answer in transient
+storage for the transaction, keyed by vault. Nothing is cached across
+transactions, because that would bring the lag back.
 
 ### 3.2 The version registry
 
-New Diamond storage, appended at the tail per the storage-layout rules:
+Storage of `VaultBeacon` (not the Diamond):
 
 | Field | Meaning |
 | --- | --- |
-| `vaultVersions[id]` | `{implementation, status}`, where status is Registered or Revoked. Ids start at 1. |
-| `vaultVersionCount` | The highest id. |
-| `currentVaultVersionId` | The version every unpinned vault runs. |
-| `vaultPinnedVersion[user]` | 0 = not pinned. Otherwise the id the owner chose. |
+| `versions[id]` | `{implementation, status}`, where status is Registered or Revoked. Ids start at 1. |
+| `versionCount` | The highest id. |
+| `currentVersionId` | The version every unpinned vault runs. |
+| `pinnedVersion[vault]` | 0 = not pinned. Otherwise the id the owner chose. |
 
-Entry points, all on the vault factory:
+Entry points, on `VaultBeacon`:
 
 | Call | Who | Rule |
 | --- | --- | --- |
-| `registerVaultVersion(impl)` | VAULT_ADMIN_ROLE (the Timelock after handover) | `impl` must have code and report the vault layout identity (a constant the implementation exposes, so a non-vault contract cannot be registered by mistake). Its initializers must be disabled at construction. That cannot be read on-chain, so a test and the deploy script check it. Emits `VaultVersionRegistered(id, impl)`. |
-| `setCurrentVaultVersion(id)` | VAULT_ADMIN_ROLE | `id` must be registered and not revoked. Emits `CurrentVaultVersionSet(old, new)`. |
-| `revokeVaultVersion(id, successorId)` | VAULT_ADMIN_ROLE | See 3.3. |
-| `guardianRevokeVaultVersion(id, successorId)` | PAUSER_ROLE (the Pauser Safe), **only while paused** | Same effect as the timelock revoke. Can never register code. |
-| `pinVaultVersion(id)` | The vault's manager (`LibProtectedAccount.requireManager`) | `id` must be registered and not revoked. Replaces `pinVaultImplementation`. Without protected mode it takes effect at once. Under protected mode, **every** pin change (a first pin, a replacement, a removal) changes the code the vault runs, so it goes through protected mode's delayed, cancellable settings path and is refused while the account is locked. |
+| `registerVersion(impl)` | The Timelock (owner) | `impl` must have code and report the vault layout identity (a constant the implementation exposes, so a non-vault contract cannot be registered by mistake). Its initializers must be disabled at construction. That cannot be read on-chain, so a test and the deploy script check it. Emits `VaultVersionRegistered(id, impl)`. |
+| `setCurrentVersion(id)` | The Timelock | `id` must be registered and not revoked. Emits `CurrentVaultVersionSet(old, new)`. |
+| `revokeVersion(id, successorId)` | The Timelock | See 3.3. |
+| `guardianRevokeVersion(id, successorId)` | The Pauser Safe, **only while the Diamond reports paused** | Same effect as the timelock revoke. Can never register code. |
+| `setPin(vault, id)` / `clearPin(vault)` | The Diamond, on the vault manager's request | `id` must be registered and not revoked. The Diamond applies the manager check and, under protected mode, the delay and the lock (below). The beacon additionally verifies the owner's own authorization of the pin change, by the same mechanism #3205 §8 Q1 chooses for liens. |
+
+The Diamond's request entries keep today's rules for who asks:
+
+| Call | Who | Rule |
+| --- | --- | --- |
+| `pinVaultVersion(id)` | The vault's manager (`LibProtectedAccount.requireManager`) | Replaces `pinVaultImplementation`. Without protected mode it takes effect at once. Under protected mode, **every** pin change (a first pin, a replacement, a removal) changes the code the vault runs, so it goes through protected mode's delayed, cancellable settings path and is refused while the account is locked. |
 | `unpinVaultVersion(account)` | The manager | Same rule: immediate without protected mode, the delay (and the lock check) with it. |
 
-**Default: the guardian is `PAUSER_ROLE`.** The existing pause holder is the
-party the decision means. A separate role would add a key to protect and gain
+**Default: the guardian is the Pauser Safe**, the holder of `PAUSER_ROLE`.
+The existing pause holder is the party the decision means. The beacon
+reads the Diamond's pause state; a faulty facet could only set it to
+paused, which lets the guardian move vaults to registered code and
+nothing more. A separate role would add a key to protect and gain
 nothing.
 
 ### 3.3 Revocation
@@ -166,10 +175,14 @@ card if wanted. They are not folded in here.
 - **Every vault accepts calls only from the Diamond.** The implementation's
   `onlyDiamond` gate is unchanged, and the beacon changes only which code
   runs.
+- **No facet can change which code a vault runs**, because the registry
+  and pins live in `VaultBeacon`, which no facet's storage writes reach.
+  The Diamond can request a pin, only to registered non-revoked code, and
+  only with the owner's authorization.
 - **Vault storage stays one layout across versions.** Every registered
   version must keep the vault's storage append-only. The storage-layout
   guard's vault root changes from "UUPS implementation" to "beacon
-  implementation", with the same rule, and `registerVaultVersion` checks the
+  implementation", with the same rule, and `registerVersion` checks the
   layout identity constant.
 - **A pin change is a code change.** Under protected mode, a stolen primary
   key cannot move a vault to another version on the spot, whether by pinning,
@@ -227,15 +240,15 @@ puts those checks into every vault at once.
 
 ## 6. Tests (acceptance)
 
-- One `setCurrentVaultVersion` changes the code every unpinned vault runs,
+- One `setCurrentVersion` changes the code every unpinned vault runs,
   checked by a version marker the implementation reports.
 - A pinned vault keeps its version across a current-version change, and
   moves when its version is revoked.
 - The guardian revoke is refused while unpaused, and refused for an
   unregistered successor. The guardian can register nothing.
-- `registerVaultVersion` refuses:
+- `registerVersion` refuses:
   - a contract without the layout identity;
-  - a caller without VAULT_ADMIN_ROLE.
+  - a caller other than the Timelock.
 
   The deploy script refuses to register an implementation whose
   initializer can still be called.
@@ -243,11 +256,14 @@ puts those checks into every vault at once.
   delay, can be cancelled, and are refused while the account is locked.
 - `implementation()` answers per calling proxy. A pin by user A never
   affects user B.
+- A test facet that writes arbitrary Diamond storage cannot change any
+  vault's implementation, and a pin request without the owner's
+  authorization is refused by the beacon.
 - Every vault still refuses a non-Diamond caller, on every version.
 - Storage-layout guard: the beacon-implementation root, and a version that
   breaks layout fails the guard.
-- A complete swap-to-repay fill with beacon vaults succeeds under the fill
-  lock, and every other selector is still refused during the fill.
+- A complete swap-to-repay fill with beacon vaults succeeds, and the
+  Diamond's fill lock is unchanged.
 - Gas: the per-call cost of the beacon lookup on the heaviest paths,
   reported in the PR.
 - Deploy-sanity and targeted suites, as usual.

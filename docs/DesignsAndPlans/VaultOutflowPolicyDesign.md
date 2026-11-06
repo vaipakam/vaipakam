@@ -2,7 +2,7 @@
 
 Status: **design for owner review**. The owner's decisions of 2026-11-05/06
 are recorded on #3205 and repeated where they apply. Choices they did not
-settle are marked **Default**. The four questions in §8 need an answer
+settle are marked **Default**. The five questions in §8 need an answer
 before code starts. This builds on [#3204's central vault code
 design](VaultCentralImplementationDesign.md) and ships after it.
 
@@ -118,19 +118,19 @@ asks, without the indexer subscribing to every vault address.
 | --- | --- | --- |
 | **Owner** | Recipient is the owner's wallet or, with protected mode on, an allowlisted address after its delay. Version and pause rules apply. | `to == owner` (the owner wallet is recorded in the vault at creation), or `to` is on the vault's **own** allowlist with its delay elapsed. **And** the amount is at most the vault's free balance of that asset: its balance less the sum of its own open liens on it (§3.7), so an owner outflow can never take what a lien still holds |
 | **Counterparty** | `to` is the vault of THAT loan's other party (or the current holder of that position). The amount is drawn from that loan's lien and bounded by its claim records | `to` is a genuine Vaipakam vault (§3.4). The amount is at most the open lien this vault recorded for `ref`, and that lien is reduced by it |
-| **Treasury** | `to == s.treasury` | `to ==` the treasury address the registry holds (§3.6) |
+| **Treasury** | `to == s.treasury` | `to ==` the treasury address the registry holds (§3.6), **and** the amount is drawn from the lien for `ref` and its fee budget (§3.7). A vault with no open lien for `ref` pays the treasury nothing |
 | **Swap adapter / order taker** | A registered adapter for this action, against a lien | `to` is on the registry. The amount is at most the lien for `ref` |
 | **Marketplace conduit** | A recorded listing for `ref`, through a registered conduit | Grant only (§3.5), per amount or token id, and only to a registry conduit |
 | **Listing escrow** (ERC-1155) | A recorded listing for `ref` | `to` is an escrow this vault created for `ref` (known code hash), at most the lien for `ref`. The escrow alone holds the operator approval (§3.5) |
 | **Incentive** (liquidator, matcher, keeper) | The actor of THIS action, at the configured rate | The amount is drawn from the lien for `ref` and from that lien's **incentive budget**, a running total the vault sets when it records the lien (the cap fraction of the lien) and debits before each payment. Repeated payments against one `ref` cannot exceed the budget in sum. The recipient cannot be checked by the vault, so the budget is the bound |
 | **Seller claim** | A recorded seller of THIS loan | Genuine vault, or the seller's wallet, against the lien |
-| **Backstop** | The configured backstop | The registry's backstop |
+| **Backstop** | The configured backstop | The registry's backstop, drawn from the lien for `ref` and its backstop budget (§3.7) |
 | **Diamond (transient)** | Only inside one transaction, with an onward class declared | `to == diamond`, at most the lien for `ref` |
 
 ### 3.4 "A genuine Vaipakam vault", without asking the Diamond
 
-After #3204, every vault is the same `BeaconProxy` bytecode with the
-Diamond as its immutable beacon. In the stock proxy the beacon is an
+After #3204, every vault is the same `BeaconProxy` bytecode with
+`VaultBeacon` as its immutable beacon. In the stock proxy the beacon is an
 immutable, so it is part of the runtime code. Every genuine vault therefore
 has the **same code hash**.
 
@@ -166,10 +166,17 @@ time. While a reservation is open:
 
 Cleanup reconciles it, from the post-hook or from an open entry any caller
 may use, because it can only reduce what the vault has exposed. Cleanup
-sets the allowance to zero, measures what actually left (the balance at
-grant time minus the balance now, capped at the grant), debits the lien by
-exactly that, and closes the reservation. A grant that was never used
-leaves the lien whole.
+measures what actually left (the balance at grant time minus the balance
+now, capped at the grant), debits the lien by exactly that, and closes the
+reservation. A grant that was never used leaves the lien whole. Clearing
+the approval is per asset type:
+- ERC-20: set the allowance to zero;
+- ERC-721: if the vault still owns the token, clear its approval; if it no
+  longer does, the token contract already cleared the approval on
+  transfer, so the grant is recorded as consumed and nothing is called
+  (calling `approve` on a token the vault no longer owns would revert and
+  roll back a successful fill);
+- ERC-1155: none to clear, because the vault never grants one (rule 3).
 
 **3. No operator-wide approval on the vault.** An operator approval
 (`setApprovalForAll`) covers every token id of a collection the vault
@@ -179,9 +186,17 @@ it without asking the vault. So the vault never grants one:
 - an ERC-1155 listing first moves exactly the listed id and amount out of
   the vault, against its lien, into a **listing escrow**: a minimal
   contract for that one listing, created by the vault with a known code
-  hash. The escrow grants the operator approval, and holds nothing else.
-  On cancel or expiry it returns what is left to the vault, which re-opens
-  the lien for it.
+  hash. The escrow holds nothing else. On cancel or expiry it returns what
+  is left to the vault, which re-opens the lien for it.
+
+  The escrow is the listing's **offerer**, because the marketplace pulls
+  from the offerer and not from whoever granted the approval. So the
+  escrow grants the conduit approval, answers the order's ERC-1271 check
+  from the vault's record of the listing, and routes the sale proceeds to
+  the vault. The prepay-order builder (`LibPrepayOrder`) and the
+  executor's canonical-order and offerer checks accept the escrow of the
+  listing's vault as offerer, for ERC-1155 listings only. ERC-20 and
+  ERC-721 listings keep the vault as offerer.
 
 The standing approvals granted at listing time today (the ERC-1155
 `setApprovalForAll` for a collection, and the ERC-721 conduit approval)
@@ -206,7 +221,23 @@ two fails closed: the vault refuses.
   it. So does an incentive payment, which also debits that lien's
   incentive budget. The vault keeps a running sum of its open liens per
   asset and token id, which is what the owner class's free-balance check
-  reads. A close-out releases what is left to the owner's free balance.
+  reads.
+- **One rule for every protocol class.** Every outflow that is not the
+  owner's own draws from an open lien for its `ref`, and from that lien's
+  budget for its class where the class has one: fees (treasury), incentives
+  and backstop. The budgets are set when the lien is recorded, from the
+  owner-authorized terms (§8 Q1). So no protocol class can reach funds no
+  position committed, and the owner class can reach only what no lien
+  holds.
+- **Release.** A close-out releases what is left of a lien to the owner's
+  free balance. The vault cannot verify on its own that a loan was settled:
+  the lender's repayment lands in another vault or wallet. So a release is
+  trusted to the Diamond (layer 1 only), and that is bounded rather than
+  closed. A released lien's assets can leave only by the owner class: to
+  the owner's own wallet, or an allowlisted address after its delay, and
+  under the #3206 outflow delay for amounts above its threshold, which
+  gives the pause time to act. §7 states the residual and §8 Q5 asks
+  whether to close it.
 - **The allowlist** moves from Diamond storage into the vault, with its own
   delay counter.
 
@@ -273,6 +304,15 @@ opens by itself.
 - ERC-1155, with two token ids under separate liens: a listing of one id
   exposes nothing of the other, with layer 1 bypassed. The vault never
   holds an operator approval.
+- A complete escrow-backed ERC-1155 marketplace fill, with the escrow as
+  offerer, and a cancel that returns the rest and re-opens the lien.
+- ERC-721 cleanup after a fill (token gone, nothing called) and after an
+  unused grant (approval cleared).
+- Treasury and backstop: a forged payment from a vault with no open lien
+  for `ref` reverts, and one that would exceed its budget reverts, with
+  layer 1 bypassed.
+- A forged close-out: the released collateral can reach only the owner's
+  own wallet, and above the #3206 threshold only after its delay.
 - While paused:
   - every vault-signed order reads as unsigned;
   - close-outs still complete;
@@ -297,7 +337,12 @@ opens by itself.
   registry spender until someone runs the open cleanup, up to the granted
   amount, which never exceeds that one lien (§3.5). Cleanup debits the
   lien by what actually left.
-- **Incentive recipients** are checked only by the per-lien budget. Who acted is
+- **Incentive recipients** are checked only by the per-lien budget.
+- **A forged close-out.** A compromised Diamond can release a lien it
+  should not, and the collateral then reaches the borrower's own wallet,
+  never a third party's. The loss is the lender's, bounded by that one
+  lien, and is slowed by the #3206 delay above its threshold. This bites
+  where the borrower is the attacker. Who acted is
   not something a vault can verify.
 
 ## 8. Questions for the owner
@@ -320,9 +365,14 @@ opens by itself.
 3. **Diamond-transient legs.** Accept the residual now and file the direct
    vault-to-adapter routing as a follow-up (recommended), or do the routing
    in this change, which widens it a lot.
-4. **The incentive cap.** Default: the highest rate any incentive's
-   configuration bound allows today, applied to the lien. It is read from
-   `ConfigFacet`'s bounds in the build PR and stated there.
+4. **The class budgets.** Default: for incentives, fees and backstop, the
+   highest rate each configuration bound allows today, applied to the
+   lien. They are read from `ConfigFacet`'s bounds in the build PR and
+   stated there.
+5. **Lien release.** Accept the bounded residual above (recommended), or
+   require the counterparty's own authorization for a release (a lender
+   signature, or a receipt the lender's vault records), which adds a step
+   to every repayment.
 
 ## 9. Order of work
 
