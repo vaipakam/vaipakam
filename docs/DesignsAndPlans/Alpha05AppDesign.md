@@ -333,7 +333,12 @@ its label. Two families only:
   destination's name on the phone bar and the desktop column. The one place
   the names fold away is the desktop panel the reader has chosen to collapse:
   each link keeps its name for screen readers, and a resting mouse or
-  keyboard focus brings the names back.
+  keyboard focus brings the names back. The button that folds it is the
+  main-menu button (three lines) at the far left of the header, the one
+  control without a visible word: its name "Main menu" is spoken, with
+  whether the panel is expanded, and the browser shows that name as a hover
+  tip. The tip only names the control, never explains anything, so RB-HELP's
+  rule against tooltips for explanations is not touched.
 
 A plain information notice carries no icon, so an icon always means the
 reader should look. A new meaning is a change to this rule, not a local
