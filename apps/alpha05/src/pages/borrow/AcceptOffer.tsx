@@ -155,9 +155,12 @@ export function AcceptOffer({ offerId, chain, own, meta, terms, onClose }: Accep
           // The wallet refused the first prompt: nothing was sent.
           if (set.why === 'refused' && set.sent === 0) throw new Error(set.reason ?? 'refused');
           if (set.why === 'changed') throw new StatedRefusal({ code: 'AcceptChanged', reason: text('accept.allowanceMoved'), reopensAt: null, remedy: null });
-          // A step that landed (the one to zero, ahead of a refused or failed
-          // one) left the allowance away from `prior`: it is put back too.
-          const back = set.pending === null && set.now !== null && set.now !== prior ? ` ${(await putBack(collateral, prior, set.now)).sentence}` : '';
+          // A step of this flow that landed (the one to zero, ahead of a
+          // refused or failed one) left the allowance away from `prior`: it
+          // is put back, but only while the allowance still reads the value
+          // this flow set. Any other value (a replacement for a different
+          // amount, another transaction) is stated, never overwritten.
+          const back = set.pending === null && set.last !== null && set.now === set.last && set.now !== prior ? ` ${(await putBack(collateral, prior, set.last)).sentence}` : '';
           throw new StatedRefusal({
             code: 'ApprovalNotSet',
             reason:
@@ -361,7 +364,7 @@ export function AcceptOffer({ offerId, chain, own, meta, terms, onClose }: Accep
       allowanceIo(token, () => setStep(text('accept.stepRestore'))),
       prior,
       approvedAmount,
-    ).catch((e: unknown) => ({ ok: false as const, why: 'refused' as const, sent: 0, now: null, pending: null, reason: refusalFromError(e).reason }));
+    ).catch((e: unknown) => ({ ok: false as const, why: 'refused' as const, sent: 0, now: null, last: null, pending: null, reason: refusalFromError(e).reason }));
     if (set.ok) return { ok: true, sentence: format('accept.restored', { amount: amt(token, prior) }) };
     const why =
       set.why === 'changed'

@@ -10,7 +10,7 @@ import type { OwnStateClient } from '../../chain/ownRail';
 import type { CopyAccess, CopyKey } from '../../shared/copy/useCopy';
 import { readFeeDiscountConsent } from '../../shared/consent/feeDiscount';
 import { readAssetClass, type AssetClass } from '../../shared/offers/assets';
-import type { StoredOffer } from '../../shared/offers/acceptTerms';
+import { ASSET_ERC20, type StoredOffer } from '../../shared/offers/acceptTerms';
 import { acceptFigures, listFee, shortfall } from '../../shared/offers/model';
 import {
   readAcceptGate,
@@ -24,6 +24,7 @@ import {
   readPreview,
   readRiskTermsHash,
   readVault,
+  readVaultUpgradeRequired,
   readWalletFunds,
   tokenAcceptsApproval,
   type AcceptPreview,
@@ -62,6 +63,10 @@ export interface AcceptReview {
   /** Wallet prompts the approval takes: 0 when the allowance covers the
    *  collateral, 2 when the token must be set to zero first. */
   approvalSteps: number;
+  /** Read only when the protocol reports a vault below the required
+   *  version: whether it is this wallet's own (false: the lender's), or
+   *  null when that could not be read. */
+  vaultUpgradeYours: boolean | null;
   /** The risk-access gate's code for this acceptance (0 = open); it is the
    *  creator's code when the creator is blocked. */
   gate: number;
@@ -93,6 +98,10 @@ export async function readAcceptReview(own: OwnStateClient, diamond: Hex, offerI
     r<number>((c) => readCreatorGate(c, diamond, offerId)),
     r<boolean>((c) => readFeeDiscountConsent(c, diamond, account)).catch(() => null),
   ]);
+  // The protocol refuses when EITHER party's vault is below the required
+  // version; which one is read from this wallet's own vault, so the remedy
+  // is never sent to the side that cannot act on it.
+  const vaultUpgradeYours = preview.error === 'VaultUpgradeRequired' ? await r<boolean>((c) => readVaultUpgradeRequired(c, diamond, account)).catch(() => null) : null;
   const lock = preview.collateralAmount;
   const approvalSteps =
     funds.allowance >= lock
@@ -114,6 +123,7 @@ export async function readAcceptReview(own: OwnStateClient, diamond: Hex, offerI
     vault,
     funds,
     approvalSteps,
+    vaultUpgradeYours,
     gate,
     creatorGate,
     consent,
@@ -144,7 +154,10 @@ export function stateText(state: Exclude<OfferState, 'open'>, copy: Pick<CopyAcc
 }
 
 /** The protocol's first refusal, as the page states it. */
-export function acceptErrorText(error: AcceptPreview['error'], copy: Pick<CopyAccess, 'text' | 'format'>): string {
+export function acceptErrorText(error: AcceptPreview['error'], copy: Pick<CopyAccess, 'text' | 'format'>, vaultUpgradeYours: boolean | null = null): string {
+  // Either party's vault can be the one below the required version: the
+  // remedy goes to this wallet only when its own vault is the one.
+  if (error === 'VaultUpgradeRequired' && vaultUpgradeYours !== true) return copy.text(vaultUpgradeYours === false ? 'accept.vaultUpgradeLender' : 'accept.vaultUpgradeEither');
   if (error === 'ProtocolPaused')
     return copy.format('accept.err.ProtocolPaused', {
       staysOpen: SWITCH_EFFECTS['2'].staysOpen,
@@ -170,7 +183,7 @@ export function cadenceText(cadence: number, copy: Pick<CopyAccess, 'text'>): st
 export function reviewBlockers(r: AcceptReview, meta: TokenMetaMap | null, copy: Pick<CopyAccess, 'text' | 'format'>): string[] {
   const out: string[] = [];
   if (r.state !== 'open') out.push(copy.format('accept.blockState', { state: stateText(r.state, copy) }));
-  else if (r.preview.error !== 'None') out.push(acceptErrorText(r.preview.error, copy));
+  else if (r.preview.error !== 'None') out.push(acceptErrorText(r.preview.error, copy, r.vaultUpgradeYours));
   for (const [asset, cls] of [
     [r.offer.lendingAsset, r.lendingClass],
     [r.offer.collateralAsset, r.collateralClass],
@@ -360,10 +373,24 @@ export function acceptReceipt(r: AcceptReview, meta: TokenMetaMap | null, copy: 
     // The lifecycle terms the signature binds, each stated even when it is
     // the default (the acceptance review states every term it signs).
     textRow('accept.rowPartial', text(o.allowsPartialRepay ? 'accept.partialYes' : 'accept.partialNo'), true),
-    textRow('accept.rowPrepayListing', text(o.allowsPrepayListing ? 'accept.prepayListingYes' : 'accept.prepayListingNo'), true),
+    // Both sale routes list the collateral as an NFT: on token collateral a
+    // permission the terms grant is stated as one this loan cannot use.
+    textRow(
+      'accept.rowPrepayListing',
+      text(!o.allowsPrepayListing ? 'accept.prepayListingNo' : o.collateralAssetType === ASSET_ERC20 ? 'accept.prepayListingNotNft' : 'accept.prepayListingYes'),
+      true,
+    ),
     textRow(
       'accept.rowParallelSale',
-      text(!o.allowsParallelSale ? 'accept.parallelNo' : o.parallelSaleOrderHash === ZERO_HASH ? 'accept.parallelYes' : 'accept.parallelLive'),
+      text(
+        !o.allowsParallelSale
+          ? 'accept.parallelNo'
+          : o.collateralAssetType === ASSET_ERC20
+            ? 'accept.parallelNotNft'
+            : o.parallelSaleOrderHash === ZERO_HASH
+              ? 'accept.parallelYes'
+              : 'accept.parallelLive',
+      ),
       true,
     ),
     textRow(

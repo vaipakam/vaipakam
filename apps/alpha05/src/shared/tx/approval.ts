@@ -43,6 +43,10 @@ export type AllowanceResult =
       sent: number;
       /** The allowance as last read; null when it could not be read. */
       now: bigint | null;
+      /** The last value a step of this call verifiably set (the step to
+       *  zero ahead of a failed one); null when none did. A clean-up may
+       *  overwrite only this value, never one something else set. */
+      last: bigint | null;
       /** A sent step whose outcome is not known (its receipt and the
        *  allowance after it could not be read). */
       pending: Hex | null;
@@ -68,25 +72,27 @@ export async function setAllowance(io: AllowanceIo, target: bigint, expect?: big
   try {
     now = await io.read();
   } catch (e) {
-    return { ok: false, why: 'not-set', sent: 0, now: null, pending: null, reason: (e as Error).message };
+    return { ok: false, why: 'not-set', sent: 0, now: null, last: null, pending: null, reason: (e as Error).message };
   }
-  if (expect !== undefined && now !== expect) return { ok: false, why: 'changed', sent: 0, now, pending: null, reason: null };
+  if (expect !== undefined && now !== expect) return { ok: false, why: 'changed', sent: 0, now, last: null, pending: null, reason: null };
   const steps = await allowanceSteps(io, now, target);
+  let last: bigint | null = null;
   for (const [i, amount] of steps.entries()) {
     io.onStep?.(amount, i, steps.length);
     let hash: Hex;
     try {
       hash = await io.send(amount);
     } catch (e) {
-      return { ok: false, why: 'refused', sent: i, now, pending: null, reason: (e as Error).message };
+      return { ok: false, why: 'refused', sent: i, now, last, pending: null, reason: (e as Error).message };
     }
     const block = await io.wait(hash).catch(() => undefined);
     const after = await io.read(block).catch(() => null);
     if (after !== amount) {
       // Without a receipt the step may still land: its hash stays open.
-      return { ok: false, why: 'not-set', sent: i + 1, now: after, pending: block === undefined || after === null ? hash : null, reason: null };
+      return { ok: false, why: 'not-set', sent: i + 1, now: after, last, pending: block === undefined || after === null ? hash : null, reason: null };
     }
     now = after;
+    last = amount;
   }
   return { ok: true };
 }

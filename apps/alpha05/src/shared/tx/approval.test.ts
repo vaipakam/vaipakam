@@ -59,11 +59,22 @@ describe('setAllowance', () => {
   });
   it('says how far it got when the wallet refuses a later step', async () => {
     const t = token(10n, { zeroFirst: true, refuse: 1 });
-    expect(await setAllowance(t.io, 50n)).toMatchObject({ ok: false, why: 'refused', sent: 1, now: 0n });
+    expect(await setAllowance(t.io, 50n)).toMatchObject({ ok: false, why: 'refused', sent: 1, now: 0n, last: 0n });
   });
   it('touches nothing when the allowance is not the value expected', async () => {
     const t = token(70n);
     expect(await setAllowance(t.io, 0n, 50n)).toMatchObject({ ok: false, why: 'changed', sent: 0, now: 70n });
     expect(t.prompts).toEqual([]);
+  });
+  it('names only a value this call set as one a clean-up may overwrite', async () => {
+    // The step to zero lands; the second is replaced by an approval for a
+    // different amount. `last` stays 0 while the allowance reads 7.
+    let n = 0;
+    const t = token(10n, { zeroFirst: true, land: () => n++ === 0 });
+    const replaced: AllowanceIo = { ...t.io, read: async () => (n > 1 ? 7n : t.allowance) };
+    const res = await setAllowance(replaced, 50n);
+    expect(res).toMatchObject({ ok: false, why: 'not-set', sent: 2, now: 7n, last: 0n });
+    const none = token(50n, { land: () => false });
+    expect(await setAllowance(none.io, 0n)).toMatchObject({ last: null });
   });
 });

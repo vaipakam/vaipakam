@@ -34,6 +34,7 @@ function review(over: Partial<AcceptReview> = {}): AcceptReview {
     vault: '0x0000000000000000000000000000000000000000',
     funds: { balance: 10_000n * 10n ** 18n, allowance: 0n },
     approvalSteps: 1,
+    vaultUpgradeYours: null,
     gate: 0,
     creatorGate: 0,
     consent: true,
@@ -90,5 +91,22 @@ describe('approval steps', () => {
   });
   it('reads a change in the number of approval steps as a changed review', () => {
     expect(changedBetween(review(), review({ approvalSteps: 2 }), copy)).not.toBeNull();
+  });
+});
+
+describe('vault upgrade refusal', () => {
+  const preview = { ...review().preview, error: 'VaultUpgradeRequired' as const };
+  it('sends the remedy to this wallet only when its own vault is the one below the required version', () => {
+    expect(reviewBlockers(review({ preview, vaultUpgradeYours: true }), null, copy)).toEqual(['accept.err.VaultUpgradeRequired']);
+    expect(reviewBlockers(review({ preview, vaultUpgradeYours: false }), null, copy)).toEqual(['accept.vaultUpgradeLender']);
+    expect(reviewBlockers(review({ preview, vaultUpgradeYours: null }), null, copy)).toEqual(['accept.vaultUpgradeEither']);
+  });
+});
+
+describe('sale routes on token collateral', () => {
+  const value = (r: AcceptReview, key: string) => acceptReceipt(r, null, copy).rows.find((x) => x.label === key)?.value as { text?: string } | undefined;
+  it('states a granted listing permission as one a token-collateral loan cannot use', () => {
+    expect(value(review({ offer: { ...offer(), allowsPrepayListing: true } }), 'accept.rowPrepayListing')?.text).toBe('accept.prepayListingNotNft');
+    expect(value(review({ offer: { ...offer(), allowsPrepayListing: true, collateralAssetType: 1 } }), 'accept.rowPrepayListing')?.text).toBe('accept.prepayListingYes');
   });
 });
