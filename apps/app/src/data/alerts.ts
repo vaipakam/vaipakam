@@ -560,7 +560,11 @@ export async function unlinkTelegram(
   const pending = Array.isArray(res.data?.pending)
     ? (res.data.pending as unknown[]).flatMap((p) => {
         const r = p as { chain_id?: unknown; effective_at?: unknown };
-        return typeof r.chain_id === 'number' && typeof r.effective_at === 'number'
+        // `effective_at` is null while the chat being removed has not yet
+        // received the notice: the wait has not started, so there is no
+        // end time yet.
+        return typeof r.chain_id === 'number' &&
+          (typeof r.effective_at === 'number' || r.effective_at === null)
           ? [{ chainId: r.chain_id, effectiveAt: r.effective_at }]
           : [];
       })
@@ -580,6 +584,8 @@ export async function unlinkTelegram(
  *  `effectiveAt` (unix seconds). `protectionUnknown` means nothing changed. */
 export interface TelegramUnlinkOutcome {
   scope: 'wallet' | 'chain';
-  pending: { chainId: number; effectiveAt: number }[];
+  /** Chains whose removal waits under protected mode (#3246).
+   *  `effectiveAt` is null until the chat has been told (no end time yet). */
+  pending: { chainId: number; effectiveAt: number | null }[];
   protectionUnknown: boolean;
 }

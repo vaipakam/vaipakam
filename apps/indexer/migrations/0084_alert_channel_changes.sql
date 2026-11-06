@@ -9,11 +9,17 @@
 -- account is protected on a chain, the agent does not remove the chat linked
 -- for that chain at once. It records the change here and:
 --
---   - keeps sending every alert to the chat linked now until the change
---     takes effect (the account's own protected delay, 2 to 5 days);
---   - tells that chat at once, and the chat can reply CANCEL to stop the
---     change, or LOCK to lock the vault;
---   - applies the change on its scheduled tick once `effective_at` passes.
+--   - tells that chat, and starts the wait (the account's own protected
+--     delay, 2 to 5 days) only once Telegram ACCEPTED that notice; a notice
+--     not accepted is retried by the scheduled tick, and until one is the
+--     change never becomes due, so an outage cannot let it pass unseen;
+--   - keeps sending every alert to that chat until the change applies; the
+--     chat can reply CANCEL to stop it, or lock the vault;
+--   - applies the change on its scheduled tick once `effective_at` passes,
+--     and only while the chat it removes is still the linked one.
+--
+-- Any immediate change to the row (an unlink or link on an account that is
+-- not protected) supersedes its pending change.
 --
 -- Adding a chat where none is linked is still immediate: it only adds a
 -- listener. Accounts without protected mode keep the immediate unlink.
@@ -31,7 +37,13 @@
 --                   told, and the only one that may CANCEL.
 --   new_chat_id   — the chat that takes over; NULL for an unlink.
 --   requested_at  — unix seconds.
---   effective_at  — unix seconds; requested_at plus the account's delay.
+--   delay_seconds — the account's protected delay when asked (at most 5 days).
+--   notified_at   — unix seconds when Telegram accepted the notice to the old
+--                   chat; NULL until then.
+--   notice_attempt_at — unix seconds of the last notice attempt, so a retry
+--                   waits between attempts.
+--   effective_at  — unix seconds; notified_at plus delay_seconds. NULL until
+--                   the old chat was told: such a change is never due.
 --   state         — pending, applied, cancelled or superseded.
 --   closed_at     — unix seconds when it left 'pending'; NULL while pending.
 --
@@ -47,7 +59,10 @@ CREATE TABLE IF NOT EXISTS alert_channel_changes (
   old_chat_id   TEXT    NOT NULL,
   new_chat_id   TEXT,
   requested_at  INTEGER NOT NULL,
-  effective_at  INTEGER NOT NULL,
+  delay_seconds INTEGER NOT NULL,
+  notified_at   INTEGER,
+  notice_attempt_at INTEGER,
+  effective_at  INTEGER,
   state         TEXT    NOT NULL DEFAULT 'pending'
                 CHECK (state IN ('pending', 'applied', 'cancelled', 'superseded')),
   closed_at     INTEGER
@@ -58,6 +73,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_alert_channel_changes_one_pending
 
 CREATE INDEX IF NOT EXISTS idx_alert_channel_changes_due
   ON alert_channel_changes (state, effective_at);
+
+CREATE INDEX IF NOT EXISTS idx_alert_channel_changes_unnotified
+  ON alert_channel_changes (state, notified_at, notice_attempt_at);
 
 CREATE INDEX IF NOT EXISTS idx_alert_channel_changes_old_chat
   ON alert_channel_changes (old_chat_id, state);

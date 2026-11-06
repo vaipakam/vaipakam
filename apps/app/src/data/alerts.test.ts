@@ -332,10 +332,16 @@ describe('unlinkTelegram scope (#2013 r4)', () => {
   });
 
   it('reports the chains whose removal waits under protected mode (#3246)', async () => {
-    stubUnlink({ ok: true, scope: 'wallet', pending: [{ chain_id: 84532, effective_at: 1_800_000_000 }, { bad: 1 }] });
+    stubUnlink({ ok: true, scope: 'wallet', pending: [
+      { chain_id: 84532, effective_at: 1_800_000_000 },
+      // Not yet told: the wait has not started, so no end time.
+      { chain_id: 97, effective_at: null },
+      { bad: 1 },
+      { chain_id: 1, effective_at: 'soon' },
+    ] });
     expect(await unlinkTelegram(WALLET, 84532, sign)).toEqual({
       scope: 'wallet',
-      pending: [{ chainId: 84532, effectiveAt: 1_800_000_000 }],
+      pending: [{ chainId: 84532, effectiveAt: 1_800_000_000 }, { chainId: 97, effectiveAt: null }],
       protectionUnknown: false,
     });
   });

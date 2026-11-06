@@ -775,6 +775,17 @@ const copySource = {
       'Not unlinked yet. Protected mode is on, so your Telegram chat keeps getting every alert until {{date}}, and then it stops. We told that chat, and it can reply CANCEL to keep its alerts.',
       ['date'],
     ),
+    /* #3246 — the wait starts only once the chat being removed has
+       received our message about it; Telegram did not take it yet, so
+       there is no end time to state. */
+    unlinkPendingUntold:
+      'Not unlinked yet. Protected mode is on, so your Telegram chat keeps getting every alert. The wait before it stops starts only once that chat receives our message about it, and we keep trying to send it.',
+    /* #3246 — this network was unlinked at once (protected mode is off
+       here), but the same chat stays linked on networks where it is on. */
+    unlinkedOthersPending: tmpl(
+      'Unlinked on this network. On {{networks}} protected mode is on, so the chat keeps getting those alerts for the wait, and it can reply CANCEL there to keep them.',
+      ['networks'],
+    ),
     unlinkProtectionUnknown:
       'Nothing was changed: we could not check just now whether this wallet has protected mode on. Try again in a few minutes.',
     toggleRepayDue: 'Message me before an interest payment comes due',

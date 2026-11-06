@@ -431,7 +431,9 @@ export function lockStale(locale: string | null | undefined): string {
 // While a wallet's account is protected on a chain, removing the Telegram
 // chat linked for it (an unlink, or linking a different chat in its place)
 // waits the account's delay. The chat linked now is told at once, keeps every
-// alert until then, and may reply CANCEL. `list` names wallet-and-chain
+// alert until then, and may reply CANCEL. Lock advice names the app first,
+// since Telegram LOCK works only where the owner allowed it and a keeper is
+// running it (the bot's own LOCK reply says which). `list` names wallet-and-chain
 // entries (the LOCK catalogue's `lockEntry`), `when` a UTC time.
 
 type ChannelCatalogue = {
@@ -441,6 +443,9 @@ type ChannelCatalogue = {
   movePending: (list: string, when: string) => string;
   /** To the new chat: it takes over at `when`. */
   moveIncoming: (list: string, when: string) => string;
+  /** To the new chat: the move waits, but its wait has not started because
+   *  the chat linked now has not received the notice yet. */
+  moveWaitingForNotice: (list: string) => string;
   /** To the new chat: the protection status could not be read, nothing changed. */
   protectionUnknown: string;
   /** Reply to CANCEL that stopped the changes for `list`. */
@@ -458,15 +463,17 @@ type ChannelCatalogue = {
 const CHANNEL_CAT: Record<Locale, ChannelCatalogue> = {
   en: {
     removalPending: (list, when) =>
-      `Someone asked to stop sending alerts to this chat for ${list}. Protected mode is on, so this waits until ${when}, and this chat keeps getting every alert until then. If you did not ask for this, reply CANCEL to stop it, and send LOCK to lock the vault.`,
+      `Someone asked to stop sending alerts to this chat for ${list}. Protected mode is on, so this waits until ${when}, and this chat keeps getting every alert until then. If you did not ask for this, reply CANCEL to stop it, and lock the vault now in the Vaipakam app. Sending LOCK here works too if you allowed Telegram locking; the bot replies whether it was recorded.`,
     movePending: (list, when) =>
-      `Someone asked to move the alerts for ${list} from this chat to a different Telegram chat. Protected mode is on, so this waits until ${when}, and this chat keeps getting every alert until then. If you did not ask for this, reply CANCEL to stop it, and send LOCK to lock the vault.`,
+      `Someone asked to move the alerts for ${list} from this chat to a different Telegram chat. Protected mode is on, so this waits until ${when}, and this chat keeps getting every alert until then. If you did not ask for this, reply CANCEL to stop it, and lock the vault now in the Vaipakam app. Sending LOCK here works too if you allowed Telegram locking; the bot replies whether it was recorded.`,
     moveIncoming: (list, when) =>
       `This chat will start getting alerts for ${list} at ${when}. Protected mode is on, so moving alerts away from the chat linked now waits, and that chat has been told and can cancel the move.`,
+    moveWaitingForNotice: (list) =>
+      `A move of the alerts for ${list} to this chat is waiting: protected mode is on, and the wait starts once the chat linked now has received our notice about it. We will tell you here when it starts.`,
     protectionUnknown:
       'Nothing was changed: we could not check just now whether this wallet has protected mode on. Get a new link code from the Vaipakam app and try again later.',
     cancelDone: (list) =>
-      `Cancelled. This chat keeps getting alerts for ${list}. If you did not ask for that change, someone may hold your wallet key: send LOCK now and check your vault in the Vaipakam app.`,
+      `Cancelled. This chat keeps getting alerts for ${list}. If you did not ask for that change, someone may hold your wallet key: lock the vault now in the Vaipakam app (sending LOCK here works too if you allowed Telegram locking) and check it there.`,
     cancelNone: 'There is no pending change to cancel for this chat.',
     cancelPrivateOnly: 'CANCEL works only in your private chat with this bot. Nothing was cancelled.',
     removalApplied: (list) => `As requested, this chat no longer gets alerts for ${list}.`,
@@ -474,15 +481,17 @@ const CHANNEL_CAT: Record<Locale, ChannelCatalogue> = {
   },
   es: {
     removalPending: (list, when) =>
-      `Alguien pidió dejar de enviar alertas a este chat para ${list}. El modo protegido está activado, así que esto espera hasta ${when} y este chat sigue recibiendo todas las alertas hasta entonces. Si no lo pediste tú, responde CANCEL para detenerlo y envía LOCK para bloquear la bóveda.`,
+      `Alguien pidió dejar de enviar alertas a este chat para ${list}. El modo protegido está activado, así que esto espera hasta ${when} y este chat sigue recibiendo todas las alertas hasta entonces. Si no lo pediste tú, responde CANCEL para detenerlo y bloquea la bóveda ahora en la app de Vaipakam. Enviar LOCK aquí también funciona si permitiste el bloqueo por Telegram; el bot responde si quedó registrado.`,
     movePending: (list, when) =>
-      `Alguien pidió mover las alertas de ${list} de este chat a otro chat de Telegram. El modo protegido está activado, así que esto espera hasta ${when} y este chat sigue recibiendo todas las alertas hasta entonces. Si no lo pediste tú, responde CANCEL para detenerlo y envía LOCK para bloquear la bóveda.`,
+      `Alguien pidió mover las alertas de ${list} de este chat a otro chat de Telegram. El modo protegido está activado, así que esto espera hasta ${when} y este chat sigue recibiendo todas las alertas hasta entonces. Si no lo pediste tú, responde CANCEL para detenerlo y bloquea la bóveda ahora en la app de Vaipakam. Enviar LOCK aquí también funciona si permitiste el bloqueo por Telegram; el bot responde si quedó registrado.`,
     moveIncoming: (list, when) =>
       `Este chat empezará a recibir alertas de ${list} a las ${when}. El modo protegido está activado, así que quitar las alertas del chat vinculado ahora espera, y ese chat ha sido avisado y puede cancelar el cambio.`,
+    moveWaitingForNotice: (list) =>
+      `Mover las alertas de ${list} a este chat está en espera: el modo protegido está activado y la espera empieza cuando el chat vinculado ahora reciba nuestro aviso. Te diremos aquí cuándo empieza.`,
     protectionUnknown:
       'No se cambió nada: ahora mismo no pudimos comprobar si esta billetera tiene el modo protegido activado. Obtén un nuevo código de vinculación en la app de Vaipakam e inténtalo más tarde.',
     cancelDone: (list) =>
-      `Cancelado. Este chat sigue recibiendo alertas de ${list}. Si no pediste ese cambio, alguien podría tener la clave de tu billetera: envía LOCK ahora y revisa tu bóveda en la app de Vaipakam.`,
+      `Cancelado. Este chat sigue recibiendo alertas de ${list}. Si no pediste ese cambio, alguien podría tener la clave de tu billetera: bloquea la bóveda ahora en la app de Vaipakam (enviar LOCK aquí también funciona si permitiste el bloqueo por Telegram) y revísala allí.`,
     cancelNone: 'No hay ningún cambio pendiente que cancelar para este chat.',
     cancelPrivateOnly: 'CANCEL solo funciona en tu chat privado con este bot. No se canceló nada.',
     removalApplied: (list) => `Como se pidió, este chat ya no recibe alertas de ${list}.`,
@@ -490,15 +499,17 @@ const CHANNEL_CAT: Record<Locale, ChannelCatalogue> = {
   },
   fr: {
     removalPending: (list, when) =>
-      `Quelqu'un a demandé de ne plus envoyer d'alertes à ce chat pour ${list}. Le mode protégé est activé : cela attend jusqu'au ${when}, et ce chat reçoit toutes les alertes jusque-là. Si ce n'est pas vous, répondez CANCEL pour l'arrêter et envoyez LOCK pour verrouiller le coffre.`,
+      `Quelqu'un a demandé de ne plus envoyer d'alertes à ce chat pour ${list}. Le mode protégé est activé : cela attend jusqu'au ${when}, et ce chat reçoit toutes les alertes jusque-là. Si ce n'est pas vous, répondez CANCEL pour l'arrêter et verrouillez le coffre maintenant dans l'application Vaipakam. Envoyer LOCK ici fonctionne aussi si vous avez autorisé le verrouillage par Telegram ; le bot indique s'il a été enregistré.`,
     movePending: (list, when) =>
-      `Quelqu'un a demandé de déplacer les alertes de ${list} de ce chat vers un autre chat Telegram. Le mode protégé est activé : cela attend jusqu'au ${when}, et ce chat reçoit toutes les alertes jusque-là. Si ce n'est pas vous, répondez CANCEL pour l'arrêter et envoyez LOCK pour verrouiller le coffre.`,
+      `Quelqu'un a demandé de déplacer les alertes de ${list} de ce chat vers un autre chat Telegram. Le mode protégé est activé : cela attend jusqu'au ${when}, et ce chat reçoit toutes les alertes jusque-là. Si ce n'est pas vous, répondez CANCEL pour l'arrêter et verrouillez le coffre maintenant dans l'application Vaipakam. Envoyer LOCK ici fonctionne aussi si vous avez autorisé le verrouillage par Telegram ; le bot indique s'il a été enregistré.`,
     moveIncoming: (list, when) =>
       `Ce chat commencera à recevoir les alertes de ${list} le ${when}. Le mode protégé est activé : retirer les alertes du chat lié actuellement attend, et ce chat a été prévenu et peut annuler le changement.`,
+    moveWaitingForNotice: (list) =>
+      `Le déplacement des alertes de ${list} vers ce chat est en attente : le mode protégé est activé, et l'attente commence quand le chat lié actuellement aura reçu notre avis. Nous vous dirons ici quand elle commence.`,
     protectionUnknown:
       "Rien n'a été modifié : nous n'avons pas pu vérifier pour l'instant si ce portefeuille a le mode protégé activé. Obtenez un nouveau code de liaison dans l'application Vaipakam et réessayez plus tard.",
     cancelDone: (list) =>
-      `Annulé. Ce chat continue de recevoir les alertes de ${list}. Si vous n'avez pas demandé ce changement, quelqu'un détient peut-être la clé de votre portefeuille : envoyez LOCK maintenant et vérifiez votre coffre dans l'application Vaipakam.`,
+      `Annulé. Ce chat continue de recevoir les alertes de ${list}. Si vous n'avez pas demandé ce changement, quelqu'un détient peut-être la clé de votre portefeuille : verrouillez le coffre maintenant dans l'application Vaipakam (envoyer LOCK ici fonctionne aussi si vous avez autorisé le verrouillage par Telegram) et vérifiez-le là-bas.`,
     cancelNone: "Aucun changement en attente à annuler pour ce chat.",
     cancelPrivateOnly: "CANCEL ne fonctionne que dans votre conversation privée avec ce bot. Rien n'a été annulé.",
     removalApplied: (list) => `Comme demandé, ce chat ne reçoit plus les alertes de ${list}.`,
@@ -506,15 +517,17 @@ const CHANNEL_CAT: Record<Locale, ChannelCatalogue> = {
   },
   de: {
     removalPending: (list, when) =>
-      `Jemand hat verlangt, diesem Chat keine Warnungen mehr für ${list} zu senden. Der geschützte Modus ist aktiv, daher wartet dies bis ${when}, und dieser Chat erhält bis dahin jede Warnung. Wenn Sie das nicht verlangt haben, antworten Sie CANCEL, um es zu stoppen, und senden Sie LOCK, um den Tresor zu sperren.`,
+      `Jemand hat verlangt, diesem Chat keine Warnungen mehr für ${list} zu senden. Der geschützte Modus ist aktiv, daher wartet dies bis ${when}, und dieser Chat erhält bis dahin jede Warnung. Wenn Sie das nicht verlangt haben, antworten Sie CANCEL, um es zu stoppen, und sperren Sie den Tresor jetzt in der Vaipakam-App. LOCK hier zu senden funktioniert auch, wenn Sie das Sperren über Telegram erlaubt haben; der Bot antwortet, ob es erfasst wurde.`,
     movePending: (list, when) =>
-      `Jemand hat verlangt, die Warnungen für ${list} von diesem Chat in einen anderen Telegram-Chat zu verlegen. Der geschützte Modus ist aktiv, daher wartet dies bis ${when}, und dieser Chat erhält bis dahin jede Warnung. Wenn Sie das nicht verlangt haben, antworten Sie CANCEL, um es zu stoppen, und senden Sie LOCK, um den Tresor zu sperren.`,
+      `Jemand hat verlangt, die Warnungen für ${list} von diesem Chat in einen anderen Telegram-Chat zu verlegen. Der geschützte Modus ist aktiv, daher wartet dies bis ${when}, und dieser Chat erhält bis dahin jede Warnung. Wenn Sie das nicht verlangt haben, antworten Sie CANCEL, um es zu stoppen, und sperren Sie den Tresor jetzt in der Vaipakam-App. LOCK hier zu senden funktioniert auch, wenn Sie das Sperren über Telegram erlaubt haben; der Bot antwortet, ob es erfasst wurde.`,
     moveIncoming: (list, when) =>
       `Dieser Chat erhält ab ${when} Warnungen für ${list}. Der geschützte Modus ist aktiv, daher wartet das Entfernen der Warnungen aus dem jetzt verknüpften Chat, und dieser Chat wurde informiert und kann den Wechsel abbrechen.`,
+    moveWaitingForNotice: (list) =>
+      `Das Verlegen der Warnungen für ${list} in diesen Chat wartet: Der geschützte Modus ist aktiv, und die Wartezeit beginnt, sobald der jetzt verknüpfte Chat unsere Mitteilung erhalten hat. Wir sagen Ihnen hier, wann sie beginnt.`,
     protectionUnknown:
       'Es wurde nichts geändert: Wir konnten gerade nicht prüfen, ob für diese Wallet der geschützte Modus aktiv ist. Holen Sie sich in der Vaipakam-App einen neuen Verknüpfungscode und versuchen Sie es später erneut.',
     cancelDone: (list) =>
-      `Abgebrochen. Dieser Chat erhält weiter Warnungen für ${list}. Wenn Sie diese Änderung nicht verlangt haben, hat vielleicht jemand Ihren Wallet-Schlüssel: Senden Sie jetzt LOCK und prüfen Sie Ihren Tresor in der Vaipakam-App.`,
+      `Abgebrochen. Dieser Chat erhält weiter Warnungen für ${list}. Wenn Sie diese Änderung nicht verlangt haben, hat vielleicht jemand Ihren Wallet-Schlüssel: Sperren Sie den Tresor jetzt in der Vaipakam-App (LOCK hier zu senden funktioniert auch, wenn Sie das Sperren über Telegram erlaubt haben) und prüfen Sie ihn dort.`,
     cancelNone: 'Für diesen Chat gibt es keine ausstehende Änderung zum Abbrechen.',
     cancelPrivateOnly: 'CANCEL funktioniert nur in Ihrem privaten Chat mit diesem Bot. Es wurde nichts abgebrochen.',
     removalApplied: (list) => `Wie verlangt erhält dieser Chat keine Warnungen mehr für ${list}.`,
@@ -522,15 +535,17 @@ const CHANNEL_CAT: Record<Locale, ChannelCatalogue> = {
   },
   ja: {
     removalPending: (list, when) =>
-      `${list} のアラートをこのチャットに送るのをやめる依頼がありました。保護モードが有効なため、これは ${when} まで待機し、それまでこのチャットはすべてのアラートを受け取ります。心当たりがない場合は CANCEL と返信して止め、LOCK を送ってボールトをロックしてください。`,
+      `${list} のアラートをこのチャットに送るのをやめる依頼がありました。保護モードが有効なため、これは ${when} まで待機し、それまでこのチャットはすべてのアラートを受け取ります。心当たりがない場合は CANCEL と返信して止め、今すぐ Vaipakam アプリでボールトをロックしてください。Telegram からのロックを許可している場合は、ここで LOCK を送ることもでき、記録されたかどうかをボットが返信します。`,
     movePending: (list, when) =>
-      `${list} のアラートをこのチャットから別の Telegram チャットに移す依頼がありました。保護モードが有効なため、これは ${when} まで待機し、それまでこのチャットはすべてのアラートを受け取ります。心当たりがない場合は CANCEL と返信して止め、LOCK を送ってボールトをロックしてください。`,
+      `${list} のアラートをこのチャットから別の Telegram チャットに移す依頼がありました。保護モードが有効なため、これは ${when} まで待機し、それまでこのチャットはすべてのアラートを受け取ります。心当たりがない場合は CANCEL と返信して止め、今すぐ Vaipakam アプリでボールトをロックしてください。Telegram からのロックを許可している場合は、ここで LOCK を送ることもでき、記録されたかどうかをボットが返信します。`,
     moveIncoming: (list, when) =>
       `このチャットは ${when} から ${list} のアラートを受け取ります。保護モードが有効なため、現在連携しているチャットからアラートを外すには待機が必要で、そのチャットには通知済みで、変更を取り消せます。`,
+    moveWaitingForNotice: (list) =>
+      `${list} のアラートをこのチャットに移す変更は待機中です。保護モードが有効で、現在連携しているチャットが通知を受け取った時点から待機が始まります。開始したらここでお知らせします。`,
     protectionUnknown:
       '何も変更していません。このウォレットの保護モードが有効かどうかを今は確認できませんでした。Vaipakam アプリで新しい連携コードを取得し、後でもう一度お試しください。',
     cancelDone: (list) =>
-      `取り消しました。このチャットは引き続き ${list} のアラートを受け取ります。その変更に心当たりがない場合、誰かがウォレットの鍵を持っている可能性があります。今すぐ LOCK を送り、Vaipakam アプリでボールトを確認してください。`,
+      `取り消しました。このチャットは引き続き ${list} のアラートを受け取ります。その変更に心当たりがない場合、誰かがウォレットの鍵を持っている可能性があります。今すぐ Vaipakam アプリでボールトをロックし（Telegram からのロックを許可している場合はここで LOCK を送ることもできます）、そこで確認してください。`,
     cancelNone: 'このチャットには取り消せる保留中の変更はありません。',
     cancelPrivateOnly: 'CANCEL はこのボットとのプライベートチャットでのみ使えます。何も取り消されていません。',
     removalApplied: (list) => `ご依頼どおり、このチャットは ${list} のアラートを受け取らなくなりました。`,
@@ -538,14 +553,16 @@ const CHANNEL_CAT: Record<Locale, ChannelCatalogue> = {
   },
   zh: {
     removalPending: (list, when) =>
-      `有人请求停止向此聊天发送 ${list} 的提醒。保护模式已开启，因此这需要等到 ${when}，在此之前此聊天仍会收到所有提醒。如果不是你提出的，请回复 CANCEL 阻止它，并发送 LOCK 锁定金库。`,
+      `有人请求停止向此聊天发送 ${list} 的提醒。保护模式已开启，因此这需要等到 ${when}，在此之前此聊天仍会收到所有提醒。如果不是你提出的，请回复 CANCEL 阻止它，并立即在 Vaipakam 应用中锁定金库。如果你允许通过 Telegram 锁定，也可以在这里发送 LOCK，机器人会回复是否已记录。`,
     movePending: (list, when) =>
-      `有人请求把 ${list} 的提醒从此聊天移到另一个 Telegram 聊天。保护模式已开启，因此这需要等到 ${when}，在此之前此聊天仍会收到所有提醒。如果不是你提出的，请回复 CANCEL 阻止它，并发送 LOCK 锁定金库。`,
+      `有人请求把 ${list} 的提醒从此聊天移到另一个 Telegram 聊天。保护模式已开启，因此这需要等到 ${when}，在此之前此聊天仍会收到所有提醒。如果不是你提出的，请回复 CANCEL 阻止它，并立即在 Vaipakam 应用中锁定金库。如果你允许通过 Telegram 锁定，也可以在这里发送 LOCK，机器人会回复是否已记录。`,
     moveIncoming: (list, when) =>
       `此聊天将从 ${when} 起收到 ${list} 的提醒。保护模式已开启，因此从当前关联的聊天移走提醒需要等待，该聊天已收到通知并可以取消此更改。`,
+    moveWaitingForNotice: (list) =>
+      `把 ${list} 的提醒移到此聊天的更改正在等待：保护模式已开启，等待期从当前关联的聊天收到我们的通知时开始。开始时我们会在这里告诉你。`,
     protectionUnknown: '未做任何更改：目前无法确认此钱包是否开启了保护模式。请在 Vaipakam 应用中获取新的关联码，稍后再试。',
     cancelDone: (list) =>
-      `已取消。此聊天继续收到 ${list} 的提醒。如果你没有提出该更改，可能有人掌握了你的钱包密钥：请立即发送 LOCK，并在 Vaipakam 应用中检查你的金库。`,
+      `已取消。此聊天继续收到 ${list} 的提醒。如果你没有提出该更改，可能有人掌握了你的钱包密钥：请立即在 Vaipakam 应用中锁定金库（如果你允许通过 Telegram 锁定，也可以在这里发送 LOCK），并在那里检查。`,
     cancelNone: '此聊天没有可取消的待处理更改。',
     cancelPrivateOnly: 'CANCEL 只能在你与此机器人的私聊中使用。未取消任何内容。',
     removalApplied: (list) => `按你的请求，此聊天不再收到 ${list} 的提醒。`,
@@ -553,15 +570,17 @@ const CHANNEL_CAT: Record<Locale, ChannelCatalogue> = {
   },
   ko: {
     removalPending: (list, when) =>
-      `${list}의 알림을 이 채팅으로 보내지 않도록 요청이 있었습니다. 보호 모드가 켜져 있어 ${when}까지 기다리며, 그때까지 이 채팅은 모든 알림을 계속 받습니다. 직접 요청하지 않았다면 CANCEL로 답장해 중지하고, LOCK을 보내 볼트를 잠그세요.`,
+      `${list}의 알림을 이 채팅으로 보내지 않도록 요청이 있었습니다. 보호 모드가 켜져 있어 ${when}까지 기다리며, 그때까지 이 채팅은 모든 알림을 계속 받습니다. 직접 요청하지 않았다면 CANCEL로 답장해 중지하고, 지금 Vaipakam 앱에서 볼트를 잠그세요. Telegram 잠금을 허용했다면 여기서 LOCK을 보내도 되며, 봇이 기록 여부를 답장합니다.`,
     movePending: (list, when) =>
-      `${list}의 알림을 이 채팅에서 다른 Telegram 채팅으로 옮기도록 요청이 있었습니다. 보호 모드가 켜져 있어 ${when}까지 기다리며, 그때까지 이 채팅은 모든 알림을 계속 받습니다. 직접 요청하지 않았다면 CANCEL로 답장해 중지하고, LOCK을 보내 볼트를 잠그세요.`,
+      `${list}의 알림을 이 채팅에서 다른 Telegram 채팅으로 옮기도록 요청이 있었습니다. 보호 모드가 켜져 있어 ${when}까지 기다리며, 그때까지 이 채팅은 모든 알림을 계속 받습니다. 직접 요청하지 않았다면 CANCEL로 답장해 중지하고, 지금 Vaipakam 앱에서 볼트를 잠그세요. Telegram 잠금을 허용했다면 여기서 LOCK을 보내도 되며, 봇이 기록 여부를 답장합니다.`,
     moveIncoming: (list, when) =>
       `이 채팅은 ${when}부터 ${list}의 알림을 받습니다. 보호 모드가 켜져 있어 지금 연결된 채팅에서 알림을 옮기려면 기다려야 하며, 그 채팅에는 알림이 갔고 변경을 취소할 수 있습니다.`,
+    moveWaitingForNotice: (list) =>
+      `${list}의 알림을 이 채팅으로 옮기는 변경이 대기 중입니다. 보호 모드가 켜져 있으며, 지금 연결된 채팅이 알림을 받은 때부터 대기가 시작됩니다. 시작되면 여기서 알려 드립니다.`,
     protectionUnknown:
       '아무것도 바뀌지 않았습니다. 지금은 이 지갑에 보호 모드가 켜져 있는지 확인할 수 없었습니다. Vaipakam 앱에서 새 연결 코드를 받아 나중에 다시 시도하세요.',
     cancelDone: (list) =>
-      `취소했습니다. 이 채팅은 계속 ${list}의 알림을 받습니다. 그 변경을 요청하지 않았다면 누군가 지갑 키를 가지고 있을 수 있습니다. 지금 LOCK을 보내고 Vaipakam 앱에서 볼트를 확인하세요.`,
+      `취소했습니다. 이 채팅은 계속 ${list}의 알림을 받습니다. 그 변경을 요청하지 않았다면 누군가 지갑 키를 가지고 있을 수 있습니다. 지금 Vaipakam 앱에서 볼트를 잠그고(Telegram 잠금을 허용했다면 여기서 LOCK을 보내도 됩니다) 거기서 확인하세요.`,
     cancelNone: '이 채팅에는 취소할 대기 중인 변경이 없습니다.',
     cancelPrivateOnly: 'CANCEL은 이 봇과의 개인 채팅에서만 작동합니다. 아무것도 취소되지 않았습니다.',
     removalApplied: (list) => `요청하신 대로 이 채팅은 더 이상 ${list}의 알림을 받지 않습니다.`,
@@ -569,15 +588,17 @@ const CHANNEL_CAT: Record<Locale, ChannelCatalogue> = {
   },
   hi: {
     removalPending: (list, when) =>
-      `किसी ने ${list} के अलर्ट इस चैट पर भेजना बंद करने को कहा है। सुरक्षित मोड चालू है, इसलिए यह ${when} तक रुका रहेगा, और तब तक इस चैट को हर अलर्ट मिलता रहेगा। अगर यह आपने नहीं माँगा, तो रोकने के लिए CANCEL लिखकर जवाब दें, और वॉल्ट लॉक करने के लिए LOCK भेजें।`,
+      `किसी ने ${list} के अलर्ट इस चैट पर भेजना बंद करने को कहा है। सुरक्षित मोड चालू है, इसलिए यह ${when} तक रुका रहेगा, और तब तक इस चैट को हर अलर्ट मिलता रहेगा। अगर यह आपने नहीं माँगा, तो रोकने के लिए CANCEL लिखकर जवाब दें, और अभी Vaipakam ऐप में वॉल्ट लॉक करें। अगर आपने Telegram से लॉक करने की अनुमति दी है तो यहाँ LOCK भेजना भी काम करता है; बॉट बताता है कि वह दर्ज हुआ या नहीं।`,
     movePending: (list, when) =>
-      `किसी ने ${list} के अलर्ट इस चैट से किसी दूसरे Telegram चैट पर ले जाने को कहा है। सुरक्षित मोड चालू है, इसलिए यह ${when} तक रुका रहेगा, और तब तक इस चैट को हर अलर्ट मिलता रहेगा। अगर यह आपने नहीं माँगा, तो रोकने के लिए CANCEL लिखकर जवाब दें, और वॉल्ट लॉक करने के लिए LOCK भेजें।`,
+      `किसी ने ${list} के अलर्ट इस चैट से किसी दूसरे Telegram चैट पर ले जाने को कहा है। सुरक्षित मोड चालू है, इसलिए यह ${when} तक रुका रहेगा, और तब तक इस चैट को हर अलर्ट मिलता रहेगा। अगर यह आपने नहीं माँगा, तो रोकने के लिए CANCEL लिखकर जवाब दें, और अभी Vaipakam ऐप में वॉल्ट लॉक करें। अगर आपने Telegram से लॉक करने की अनुमति दी है तो यहाँ LOCK भेजना भी काम करता है; बॉट बताता है कि वह दर्ज हुआ या नहीं।`,
     moveIncoming: (list, when) =>
       `इस चैट को ${when} से ${list} के अलर्ट मिलने लगेंगे। सुरक्षित मोड चालू है, इसलिए अभी जुड़े चैट से अलर्ट हटाने में प्रतीक्षा होती है, और उस चैट को बता दिया गया है और वह बदलाव रद्द कर सकता है।`,
+    moveWaitingForNotice: (list) =>
+      `${list} के अलर्ट इस चैट पर लाने का बदलाव प्रतीक्षा में है: सुरक्षित मोड चालू है, और प्रतीक्षा तब शुरू होती है जब अभी जुड़ी चैट को हमारी सूचना मिल जाए। शुरू होने पर हम यहीं बताएँगे।`,
     protectionUnknown:
       'कुछ नहीं बदला गया: हम अभी जाँच नहीं पाए कि इस वॉलेट में सुरक्षित मोड चालू है या नहीं। Vaipakam ऐप से नया लिंक कोड लें और बाद में फिर कोशिश करें।',
     cancelDone: (list) =>
-      `रद्द कर दिया गया। इस चैट को ${list} के अलर्ट मिलते रहेंगे। अगर वह बदलाव आपने नहीं माँगा था, तो हो सकता है किसी के पास आपकी वॉलेट कुंजी हो: अभी LOCK भेजें और Vaipakam ऐप में अपना वॉल्ट जाँचें।`,
+      `रद्द कर दिया गया। इस चैट को ${list} के अलर्ट मिलते रहेंगे। अगर वह बदलाव आपने नहीं माँगा था, तो हो सकता है किसी के पास आपकी वॉलेट कुंजी हो: अभी Vaipakam ऐप में वॉल्ट लॉक करें (अगर आपने Telegram से लॉक करने की अनुमति दी है तो यहाँ LOCK भेजना भी काम करता है) और वहीं जाँचें।`,
     cancelNone: 'इस चैट के लिए रद्द करने को कोई लंबित बदलाव नहीं है।',
     cancelPrivateOnly: 'CANCEL केवल इस बॉट के साथ आपकी निजी चैट में काम करता है। कुछ भी रद्द नहीं हुआ।',
     removalApplied: (list) => `आपके अनुरोध के अनुसार, इस चैट को अब ${list} के अलर्ट नहीं मिलेंगे।`,
@@ -585,15 +606,17 @@ const CHANNEL_CAT: Record<Locale, ChannelCatalogue> = {
   },
   ta: {
     removalPending: (list, when) =>
-      `${list} க்கான எச்சரிக்கைகளை இந்த அரட்டைக்கு அனுப்புவதை நிறுத்தும்படி யாரோ கேட்டுள்ளனர். பாதுகாப்பு முறை இயக்கத்தில் உள்ளதால், இது ${when} வரை காத்திருக்கும், அதுவரை இந்த அரட்டை எல்லா எச்சரிக்கைகளையும் பெறும். இதை நீங்கள் கேட்கவில்லை என்றால், நிறுத்த CANCEL என்று பதிலளியுங்கள், பெட்டகத்தைப் பூட்ட LOCK அனுப்புங்கள்.`,
+      `${list} க்கான எச்சரிக்கைகளை இந்த அரட்டைக்கு அனுப்புவதை நிறுத்தும்படி யாரோ கேட்டுள்ளனர். பாதுகாப்பு முறை இயக்கத்தில் உள்ளதால், இது ${when} வரை காத்திருக்கும், அதுவரை இந்த அரட்டை எல்லா எச்சரிக்கைகளையும் பெறும். இதை நீங்கள் கேட்கவில்லை என்றால், நிறுத்த CANCEL என்று பதிலளியுங்கள், இப்போதே Vaipakam செயலியில் பெட்டகத்தைப் பூட்டுங்கள். Telegram மூலம் பூட்ட நீங்கள் அனுமதித்திருந்தால் இங்கே LOCK அனுப்புவதும் வேலை செய்யும்; அது பதிவானதா என்று பாட் பதிலளிக்கும்.`,
     movePending: (list, when) =>
-      `${list} க்கான எச்சரிக்கைகளை இந்த அரட்டையிலிருந்து வேறு Telegram அரட்டைக்கு மாற்றும்படி யாரோ கேட்டுள்ளனர். பாதுகாப்பு முறை இயக்கத்தில் உள்ளதால், இது ${when} வரை காத்திருக்கும், அதுவரை இந்த அரட்டை எல்லா எச்சரிக்கைகளையும் பெறும். இதை நீங்கள் கேட்கவில்லை என்றால், நிறுத்த CANCEL என்று பதிலளியுங்கள், பெட்டகத்தைப் பூட்ட LOCK அனுப்புங்கள்.`,
+      `${list} க்கான எச்சரிக்கைகளை இந்த அரட்டையிலிருந்து வேறு Telegram அரட்டைக்கு மாற்றும்படி யாரோ கேட்டுள்ளனர். பாதுகாப்பு முறை இயக்கத்தில் உள்ளதால், இது ${when} வரை காத்திருக்கும், அதுவரை இந்த அரட்டை எல்லா எச்சரிக்கைகளையும் பெறும். இதை நீங்கள் கேட்கவில்லை என்றால், நிறுத்த CANCEL என்று பதிலளியுங்கள், இப்போதே Vaipakam செயலியில் பெட்டகத்தைப் பூட்டுங்கள். Telegram மூலம் பூட்ட நீங்கள் அனுமதித்திருந்தால் இங்கே LOCK அனுப்புவதும் வேலை செய்யும்; அது பதிவானதா என்று பாட் பதிலளிக்கும்.`,
     moveIncoming: (list, when) =>
       `இந்த அரட்டை ${when} முதல் ${list} க்கான எச்சரிக்கைகளைப் பெறும். பாதுகாப்பு முறை இயக்கத்தில் உள்ளதால், இப்போது இணைக்கப்பட்ட அரட்டையிலிருந்து எச்சரிக்கைகளை மாற்றுவது காத்திருக்கும்; அந்த அரட்டைக்குத் தெரிவிக்கப்பட்டுள்ளது, அது இந்த மாற்றத்தை ரத்து செய்யலாம்.`,
+    moveWaitingForNotice: (list) =>
+      `${list} க்கான எச்சரிக்கைகளை இந்த அரட்டைக்கு மாற்றுவது காத்திருப்பில் உள்ளது: பாதுகாப்பு முறை இயக்கத்தில் உள்ளது, இப்போது இணைக்கப்பட்ட அரட்டை எங்கள் அறிவிப்பைப் பெற்றதும் காத்திருப்பு தொடங்கும். அது தொடங்கும்போது இங்கே சொல்வோம்.`,
     protectionUnknown:
       'எதுவும் மாற்றப்படவில்லை: இந்த வாலெட்டில் பாதுகாப்பு முறை இயக்கத்தில் உள்ளதா என்பதை இப்போது சரிபார்க்க முடியவில்லை. Vaipakam செயலியில் புதிய இணைப்புக் குறியீட்டைப் பெற்று பிறகு மீண்டும் முயலுங்கள்.',
     cancelDone: (list) =>
-      `ரத்து செய்யப்பட்டது. இந்த அரட்டை ${list} க்கான எச்சரிக்கைகளைத் தொடர்ந்து பெறும். அந்த மாற்றத்தை நீங்கள் கேட்கவில்லை என்றால், உங்கள் வாலெட் சாவி வேறொருவரிடம் இருக்கலாம்: இப்போதே LOCK அனுப்பி, Vaipakam செயலியில் உங்கள் பெட்டகத்தைச் சரிபாருங்கள்.`,
+      `ரத்து செய்யப்பட்டது. இந்த அரட்டை ${list} க்கான எச்சரிக்கைகளைத் தொடர்ந்து பெறும். அந்த மாற்றத்தை நீங்கள் கேட்கவில்லை என்றால், உங்கள் வாலெட் சாவி வேறொருவரிடம் இருக்கலாம்: இப்போதே Vaipakam செயலியில் பெட்டகத்தைப் பூட்டி (Telegram மூலம் பூட்ட அனுமதித்திருந்தால் இங்கே LOCK அனுப்புவதும் வேலை செய்யும்) அங்கே சரிபாருங்கள்.`,
     cancelNone: 'இந்த அரட்டைக்கு ரத்து செய்ய நிலுவையில் உள்ள மாற்றம் எதுவும் இல்லை.',
     cancelPrivateOnly: 'CANCEL இந்த பாட்டுடனான உங்கள் தனிப்பட்ட அரட்டையில் மட்டுமே வேலை செய்யும். எதுவும் ரத்து செய்யப்படவில்லை.',
     removalApplied: (list) => `கேட்டபடி, இந்த அரட்டை இனி ${list} க்கான எச்சரிக்கைகளைப் பெறாது.`,
@@ -601,15 +624,17 @@ const CHANNEL_CAT: Record<Locale, ChannelCatalogue> = {
   },
   ar: {
     removalPending: (list, when) =>
-      `طلب أحدهم إيقاف إرسال التنبيهات إلى هذه المحادثة لـ ${list}. الوضع المحمي مفعّل، لذا ينتظر ذلك حتى ${when}، وتستمر هذه المحادثة في تلقي كل التنبيهات حتى ذلك الحين. إن لم تطلب ذلك، فأرسل CANCEL لإيقافه، وأرسل LOCK لقفل الخزنة.`,
+      `طلب أحدهم إيقاف إرسال التنبيهات إلى هذه المحادثة لـ ${list}. الوضع المحمي مفعّل، لذا ينتظر ذلك حتى ${when}، وتستمر هذه المحادثة في تلقي كل التنبيهات حتى ذلك الحين. إن لم تطلب ذلك، فأرسل CANCEL لإيقافه، واقفل الخزنة الآن من تطبيق Vaipakam. يعمل إرسال LOCK هنا أيضًا إن سمحت بالقفل عبر Telegram؛ ويرد البوت بما إذا سُجّل الطلب.`,
     movePending: (list, when) =>
-      `طلب أحدهم نقل تنبيهات ${list} من هذه المحادثة إلى محادثة Telegram أخرى. الوضع المحمي مفعّل، لذا ينتظر ذلك حتى ${when}، وتستمر هذه المحادثة في تلقي كل التنبيهات حتى ذلك الحين. إن لم تطلب ذلك، فأرسل CANCEL لإيقافه، وأرسل LOCK لقفل الخزنة.`,
+      `طلب أحدهم نقل تنبيهات ${list} من هذه المحادثة إلى محادثة Telegram أخرى. الوضع المحمي مفعّل، لذا ينتظر ذلك حتى ${when}، وتستمر هذه المحادثة في تلقي كل التنبيهات حتى ذلك الحين. إن لم تطلب ذلك، فأرسل CANCEL لإيقافه، واقفل الخزنة الآن من تطبيق Vaipakam. يعمل إرسال LOCK هنا أيضًا إن سمحت بالقفل عبر Telegram؛ ويرد البوت بما إذا سُجّل الطلب.`,
     moveIncoming: (list, when) =>
       `ستبدأ هذه المحادثة بتلقي تنبيهات ${list} في ${when}. الوضع المحمي مفعّل، لذا ينتظر نقل التنبيهات من المحادثة المرتبطة الآن، وقد أُبلغت تلك المحادثة ويمكنها إلغاء النقل.`,
+    moveWaitingForNotice: (list) =>
+      `نقل تنبيهات ${list} إلى هذه المحادثة قيد الانتظار: الوضع المحمي مفعّل، وتبدأ مدة الانتظار عندما تتلقى المحادثة المرتبطة الآن إشعارنا. سنخبرك هنا عندما تبدأ.`,
     protectionUnknown:
       'لم يتغير شيء: تعذّر علينا الآن التحقق مما إذا كان الوضع المحمي مفعّلاً لهذه المحفظة. احصل على رمز ربط جديد من تطبيق Vaipakam وحاول مرة أخرى لاحقًا.',
     cancelDone: (list) =>
-      `تم الإلغاء. تستمر هذه المحادثة في تلقي تنبيهات ${list}. إن لم تطلب ذلك التغيير، فقد يملك أحدهم مفتاح محفظتك: أرسل LOCK الآن وتحقق من خزنتك في تطبيق Vaipakam.`,
+      `تم الإلغاء. تستمر هذه المحادثة في تلقي تنبيهات ${list}. إن لم تطلب ذلك التغيير، فقد يملك أحدهم مفتاح محفظتك: اقفل الخزنة الآن من تطبيق Vaipakam (يعمل إرسال LOCK هنا أيضًا إن سمحت بالقفل عبر Telegram) وتحقق منها هناك.`,
     cancelNone: 'لا يوجد تغيير معلّق لإلغائه لهذه المحادثة.',
     cancelPrivateOnly: 'يعمل CANCEL فقط في محادثتك الخاصة مع هذا البوت. لم يُلغَ أي شيء.',
     removalApplied: (list) => `كما طُلب، لم تعد هذه المحادثة تتلقى تنبيهات ${list}.`,
@@ -631,6 +656,8 @@ export const channelCopy = {
     CHANNEL_CAT[resolveLocale(locale)].movePending(channelList(locale, entries), when),
   moveIncoming: (locale: string | null | undefined, entries: readonly Entry[], when: string) =>
     CHANNEL_CAT[resolveLocale(locale)].moveIncoming(channelList(locale, entries), when),
+  moveWaitingForNotice: (locale: string | null | undefined, entries: readonly Entry[]) =>
+    CHANNEL_CAT[resolveLocale(locale)].moveWaitingForNotice(channelList(locale, entries)),
   protectionUnknown: (locale: string | null | undefined) => CHANNEL_CAT[resolveLocale(locale)].protectionUnknown,
   cancelDone: (locale: string | null | undefined, entries: readonly Entry[]) =>
     CHANNEL_CAT[resolveLocale(locale)].cancelDone(channelList(locale, entries)),

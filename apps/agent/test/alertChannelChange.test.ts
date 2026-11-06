@@ -13,7 +13,9 @@ import {
   cancelFromChat,
   requestRelink,
   requestUnlink,
+  NOTICE_RETRY_SECONDS,
   type ChannelDeps,
+  type SendOutcome,
 } from '../src/alertChannelFlow';
 import { MAX_PROTECTED_DELAY_SECONDS, type ProtectionReader } from '../src/alertChannelChange';
 import { unlinkTelegram, unlinkTelegramOnChain } from '../src/db';
@@ -59,9 +61,19 @@ const reader =
   async (_w, c) =>
     by[c] ?? null;
 
-function deps(d1: D1Database, read: ProtectionReader, now = NOW) {
+/** Deps whose send records each message and answers `outcome` (Telegram
+ *  accepted it, unless a test says otherwise). */
+function deps(d1: D1Database, read: ProtectionReader, now = NOW, outcome: SendOutcome = 'accepted') {
   const sent: { chat: string; text: string }[] = [];
-  const d: ChannelDeps = { db: d1, read, now, send: async (chat, text) => void sent.push({ chat, text }) };
+  const d: ChannelDeps = {
+    db: d1,
+    read,
+    now,
+    send: async (chat, text) => {
+      sent.push({ chat, text });
+      return outcome;
+    },
+  };
   return { d, sent };
 }
 
@@ -188,16 +200,17 @@ describe('cancelFromChat', () => {
 });
 
 describe('applyDueChannelChanges', () => {
-  it('clears only the chat the unlink was asked about, and its handshake codes', async () => {
+  it('clears only the chat the unlink was asked about', async () => {
     const { db, d1 } = sqliteD1();
     db.exec(`INSERT INTO user_thresholds VALUES ('${W}', 84532, '42', 'en', 0)`);
     db.exec(`INSERT INTO telegram_links VALUES ('CODE', '${W}', 84532)`);
     const { d } = deps(d1, reader({ 84532: { enabled: true, delaySeconds: 2 * DAY } }));
     await requestUnlink(d, W, null, unlinkNow(d1, null));
+    // The handshake codes go at the request: a code only links.
+    expect(db.prepare('SELECT COUNT(*) AS n FROM telegram_links').get()).toEqual({ n: 0 });
     const due = deps(d1, reader({}), NOW + 2 * DAY);
     expect(await applyDueChannelChanges(due.d)).toBe(1);
     expect(chat(db, 84532)).toBeNull();
-    expect(db.prepare('SELECT COUNT(*) AS n FROM telegram_links').get()).toEqual({ n: 0 });
     expect(due.sent.map((m) => m.chat)).toEqual(['42']);
     // Applied once: a second tick does nothing.
     expect(await applyDueChannelChanges(deps(d1, reader({}), NOW + 3 * DAY).d)).toBe(0);
@@ -215,5 +228,63 @@ describe('applyDueChannelChanges', () => {
       { state: 'superseded' },
       { state: 'applied' },
     ]);
+  });
+
+  it('never starts the wait until the chat being removed accepted the notice', async () => {
+    const { db, d1 } = sqliteD1();
+    db.exec(`INSERT INTO user_thresholds VALUES ('${W}', 84532, '42', 'en', 0)`);
+    const r = reader({ 84532: { enabled: true, delaySeconds: 2 * DAY } });
+    const out = await requestUnlink(deps(d1, r, NOW, 'transient').d, W, null, unlinkNow(d1, null));
+    expect(out).toEqual({ kind: 'done', pending: [{ chain_id: 84532, effective_at: null }] });
+    // Long past the delay, still untold: nothing is due, and a failed retry
+    // keeps it that way.
+    const failing = deps(d1, r, NOW + 10 * DAY, 'refused');
+    expect(await applyDueChannelChanges(failing.d)).toBe(0);
+    expect(failing.sent.map((m) => m.chat)).toEqual(['42']);
+    expect(chat(db, 84532)).toBe('42');
+    // A retry inside the back-off window sends nothing.
+    const soon = deps(d1, r, NOW + 10 * DAY + 60);
+    expect(await applyDueChannelChanges(soon.d)).toBe(0);
+    expect(soon.sent).toEqual([]);
+    // The retry Telegram accepts starts the wait from then.
+    const told = NOW + 10 * DAY + NOTICE_RETRY_SECONDS;
+    const ok = deps(d1, r, told);
+    expect(await applyDueChannelChanges(ok.d)).toBe(0);
+    expect(ok.sent.map((m) => m.chat)).toEqual(['42']);
+    expect(await applyDueChannelChanges(deps(d1, r, told + 2 * DAY - 1).d)).toBe(0);
+    expect(await applyDueChannelChanges(deps(d1, r, told + 2 * DAY).d)).toBe(1);
+    expect(chat(db, 84532)).toBeNull();
+  });
+
+  it('an immediate link closes the pending change, so it can never apply later', async () => {
+    const { db, d1 } = sqliteD1();
+    db.exec(`INSERT INTO user_thresholds VALUES ('${W}', 84532, '42', 'en', 0)`);
+    const r = reader({ 84532: { enabled: true, delaySeconds: 2 * DAY } });
+    expect(await requestRelink(deps(d1, r).d, W, 84532, '77', 'en', async () => {})).toBe('pending');
+    // The chat linked now links again (immediate): the move is superseded.
+    expect(await requestRelink(deps(d1, r, NOW + DAY).d, W, 84532, '42', 'en', async () => {})).toBe('linked');
+    expect(await applyDueChannelChanges(deps(d1, reader({}), NOW + 3 * DAY).d)).toBe(0);
+    expect(chat(db, 84532)).toBe('42');
+    expect(db.prepare(`SELECT state FROM alert_channel_changes`).all()).toEqual([{ state: 'superseded' }]);
+  });
+
+  it('a move applies only while the chat it replaces is still the linked one', async () => {
+    const { db, d1 } = sqliteD1();
+    db.exec(`INSERT INTO user_thresholds VALUES ('${W}', 84532, '42', 'en', 0)`);
+    const r = reader({ 84532: { enabled: true, delaySeconds: 2 * DAY } });
+    expect(await requestRelink(deps(d1, r).d, W, 84532, '77', 'en', async () => {})).toBe('pending');
+    // Something else changed the chat in between (outside these flows).
+    db.exec(`UPDATE user_thresholds SET tg_chat_id = '99'`);
+    expect(await applyDueChannelChanges(deps(d1, reader({}), NOW + 2 * DAY).d)).toBe(0);
+    expect(chat(db, 84532)).toBe('99');
+  });
+
+  it('a wallet-wide unlink revokes the codes of every chain at once', async () => {
+    const { db, d1 } = sqliteD1();
+    db.exec(`INSERT INTO user_thresholds VALUES ('${W}', 84532, '42', 'en', 0)`);
+    db.exec(`INSERT INTO telegram_links VALUES ('A', '${W}', 84532), ('B', '${W}', 97)`);
+    const r = reader({ 84532: { enabled: true, delaySeconds: 2 * DAY } });
+    await requestUnlink(deps(d1, r).d, W, null, unlinkNow(d1, null));
+    expect(db.prepare('SELECT COUNT(*) AS n FROM telegram_links').get()).toEqual({ n: 0 });
   });
 });

@@ -9,11 +9,17 @@
  * account is protected on that chain:
  *
  *   - an unlink, or a handshake from a DIFFERENT chat, is recorded as a
- *     pending change (`alert_channel_changes`) that takes effect after the
- *     account's own delay;
- *   - the chat linked now keeps every alert until then, is told at once, and
- *     may reply CANCEL (or LOCK);
- *   - the scheduled tick applies a change once it is due.
+ *     pending change (`alert_channel_changes`);
+ *   - its wait (the account's own delay) STARTS ONLY ONCE THE CHAT LINKED NOW
+ *     HAS ACCEPTED THE NOTICE about it. A notice Telegram did not accept is
+ *     retried by the scheduled tick, and until one is accepted the change
+ *     never becomes due, so an outage cannot let a removal pass unseen;
+ *   - that chat keeps every alert until the change applies, and may reply
+ *     CANCEL (or lock the vault);
+ *   - the scheduled tick applies a change once it is due;
+ *   - any immediate change to the row (an unprotected unlink or link)
+ *     supersedes a pending one, and a move applies only while the chat it
+ *     moves away from is still the linked one.
  *
  * Adding a chat where none is linked, re-linking the same chat, and every
  * change for an account that is not protected stay immediate. When the
@@ -50,7 +56,9 @@ export interface PendingChange {
   kind: 'unlink' | 'replace';
   oldChatId: string;
   newChatId: string | null;
-  effectiveAt: number;
+  delaySeconds: number;
+  /** Null until the old chat accepted the notice; then notice time + delay. */
+  effectiveAt: number | null;
   /** The row's locale, for the notices. */
   locale: string;
 }
@@ -142,8 +150,9 @@ export async function linkedRows(
   }));
 }
 
-/** Record a pending change for one row, superseding any pending one for the
- *  same (wallet, chain). Returns when it takes effect. */
+/** Statements that record a pending change for one row, superseding any
+ *  pending one for the same (wallet, chain). Its wait has not started: that
+ *  needs the old chat to accept the notice ({@link markNotified}). */
 export function pendingChangeStatements(
   db: D1Database,
   wallet: string,
@@ -152,24 +161,96 @@ export function pendingChangeStatements(
   oldChatId: string,
   newChatId: string | null,
   now: number,
-  effectiveAt: number,
+  delaySeconds: number,
 ): D1PreparedStatement[] {
   const w = wallet.toLowerCase();
   return [
-    db
-      .prepare(
-        `UPDATE alert_channel_changes SET state = 'superseded', closed_at = ?
-          WHERE wallet = ? AND chain_id = ? AND state = 'pending'`,
-      )
-      .bind(now, w, chainId),
+    supersedeStatement(db, w, chainId, now),
     db
       .prepare(
         `INSERT INTO alert_channel_changes
-           (wallet, chain_id, kind, old_chat_id, new_chat_id, requested_at, effective_at, state)
+           (wallet, chain_id, kind, old_chat_id, new_chat_id, requested_at, delay_seconds, state)
          VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')`,
       )
-      .bind(w, chainId, kind, oldChatId, newChatId, now, effectiveAt),
+      .bind(w, chainId, kind, oldChatId, newChatId, now, delaySeconds),
   ];
+}
+
+/** Supersede the pending change of (wallet, chain), or of every chain of the
+ *  wallet when `chainId` is null. Every immediate change to a row runs it, so
+ *  an older request can never undo a later unlink or link. */
+export function supersedeStatement(
+  db: D1Database,
+  wallet: string,
+  chainId: number | null,
+  now: number,
+): D1PreparedStatement {
+  const w = wallet.toLowerCase();
+  return chainId === null
+    ? db
+        .prepare(`UPDATE alert_channel_changes SET state = 'superseded', closed_at = ? WHERE wallet = ? AND state = 'pending'`)
+        .bind(now, w)
+    : db
+        .prepare(
+          `UPDATE alert_channel_changes SET state = 'superseded', closed_at = ?
+            WHERE wallet = ? AND chain_id = ? AND state = 'pending'`,
+        )
+        .bind(now, w, chainId);
+}
+
+/** The old chat accepted the notice for (wallet, `chainIds`): the wait starts
+ *  now. Only rows still waiting for their notice are touched. */
+export async function markNotified(
+  db: D1Database,
+  wallet: string,
+  chainIds: readonly number[],
+  oldChatId: string,
+  now: number,
+): Promise<void> {
+  if (chainIds.length === 0) return;
+  await db
+    .prepare(
+      `UPDATE alert_channel_changes
+          SET notified_at = ?1, effective_at = ?1 + delay_seconds, notice_attempt_at = ?1
+        WHERE wallet = ?2 AND old_chat_id = ?3 AND state = 'pending' AND notified_at IS NULL
+          AND chain_id IN (${chainIds.map(() => '?').join(', ')})`,
+    )
+    .bind(now, wallet.toLowerCase(), oldChatId, ...chainIds)
+    .run();
+}
+
+/** A notice attempt that Telegram did not accept: recorded so the retry waits. */
+export async function markNoticeAttempt(
+  db: D1Database,
+  wallet: string,
+  chainIds: readonly number[],
+  oldChatId: string,
+  now: number,
+): Promise<void> {
+  if (chainIds.length === 0) return;
+  await db
+    .prepare(
+      `UPDATE alert_channel_changes SET notice_attempt_at = ?1
+        WHERE wallet = ?2 AND old_chat_id = ?3 AND state = 'pending' AND notified_at IS NULL
+          AND chain_id IN (${chainIds.map(() => '?').join(', ')})`,
+    )
+    .bind(now, wallet.toLowerCase(), oldChatId, ...chainIds)
+    .run();
+}
+
+/** Pending changes whose notice still has to reach the old chat, last tried
+ *  before `retryBefore` (or never). */
+export async function unnotifiedChanges(
+  db: D1Database,
+  retryBefore: number,
+  limit = APPLY_BATCH,
+): Promise<PendingChange[]> {
+  return readChanges(
+    db,
+    `c.state = 'pending' AND c.notified_at IS NULL AND (c.notice_attempt_at IS NULL OR c.notice_attempt_at <= ?)`,
+    retryBefore,
+    limit,
+  );
 }
 
 /** Cancel every pending change whose chat being removed is `chatId`. Only
@@ -190,17 +271,21 @@ export async function cancelPendingForChat(
   return (res.results ?? []).map((r) => ({ wallet: r.wallet, chainId: Number(r.chain_id), kind: r.kind }));
 }
 
-/** The pending changes due at `now`, oldest first. */
+/** The pending changes due at `now` (told, and their wait passed), oldest first. */
 export async function dueChanges(db: D1Database, now: number, limit = APPLY_BATCH): Promise<PendingChange[]> {
+  return readChanges(db, `c.state = 'pending' AND c.effective_at IS NOT NULL AND c.effective_at <= ?`, now, limit);
+}
+
+async function readChanges(db: D1Database, where: string, arg: number, limit: number): Promise<PendingChange[]> {
   const res = await db
     .prepare(
-      `SELECT c.id, c.wallet, c.chain_id, c.kind, c.old_chat_id, c.new_chat_id, c.effective_at, t.locale
+      `SELECT c.id, c.wallet, c.chain_id, c.kind, c.old_chat_id, c.new_chat_id, c.delay_seconds, c.effective_at, t.locale
          FROM alert_channel_changes c
          LEFT JOIN user_thresholds t ON t.wallet = c.wallet AND t.chain_id = c.chain_id
-        WHERE c.state = 'pending' AND c.effective_at <= ?
-        ORDER BY c.effective_at, c.id LIMIT ?`,
+        WHERE ${where}
+        ORDER BY c.id LIMIT ?`,
     )
-    .bind(now, limit)
+    .bind(arg, limit)
     .all<{
       id: number;
       wallet: string;
@@ -208,7 +293,8 @@ export async function dueChanges(db: D1Database, now: number, limit = APPLY_BATC
       kind: 'unlink' | 'replace';
       old_chat_id: string;
       new_chat_id: string | null;
-      effective_at: number;
+      delay_seconds: number;
+      effective_at: number | null;
       locale: string | null;
     }>();
   return (res.results ?? []).map((r) => ({
@@ -218,16 +304,20 @@ export async function dueChanges(db: D1Database, now: number, limit = APPLY_BATC
     kind: r.kind,
     oldChatId: r.old_chat_id,
     newChatId: r.new_chat_id,
-    effectiveAt: Number(r.effective_at),
+    delaySeconds: Number(r.delay_seconds),
+    effectiveAt: r.effective_at === null ? null : Number(r.effective_at),
     locale: r.locale ?? 'en',
   }));
 }
 
 /** Apply one due change, atomically with marking it applied. Returns false
- *  when it was no longer pending (cancelled or applied meanwhile). */
+ *  when nothing changed (cancelled or applied meanwhile, or, for a move, the
+ *  chat it moves away from is no longer the linked one). */
 export async function applyChange(db: D1Database, c: PendingChange, now: number): Promise<boolean> {
   // The mark goes first and the row updates are guarded on it, so a change
-  // cancelled between the read and this batch changes nothing.
+  // cancelled between the read and this batch changes nothing. Both kinds act
+  // only while the old chat is still the linked one: anything else means a
+  // later immediate change already decided the row.
   const applied = `EXISTS (SELECT 1 FROM alert_channel_changes WHERE id = ? AND state = 'applied' AND closed_at = ?)`;
   const stmts: D1PreparedStatement[] = [
     db
@@ -235,8 +325,6 @@ export async function applyChange(db: D1Database, c: PendingChange, now: number)
       .bind(now, c.id),
   ];
   if (c.kind === 'unlink') {
-    // Only the chat the change was asked about: a chat linked since then by
-    // an immediate path is not this change's to remove.
     stmts.push(
       db
         .prepare(
@@ -255,13 +343,14 @@ export async function applyChange(db: D1Database, c: PendingChange, now: number)
       db
         .prepare(
           `UPDATE user_thresholds SET tg_chat_id = ?, updated_at = ?
-            WHERE wallet = ? AND chain_id = ? AND ${applied}`,
+            WHERE wallet = ? AND chain_id = ? AND tg_chat_id = ? AND ${applied}`,
         )
-        .bind(c.newChatId, now, c.wallet, c.chainId, c.id, now),
+        .bind(c.newChatId, now, c.wallet, c.chainId, c.oldChatId, c.id, now),
     );
   }
   const results = await db.batch(stmts);
-  return Number((results[0] as { meta?: { changes?: number } })?.meta?.changes ?? 0) > 0;
+  const changes = (i: number) => Number((results[i] as { meta?: { changes?: number } })?.meta?.changes ?? 0);
+  return changes(0) > 0 && changes(1) > 0;
 }
 
 /** Drop closed rows older than the retention window. */

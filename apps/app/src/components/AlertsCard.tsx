@@ -268,17 +268,32 @@ export function AlertsCard() {
         setError(copy.alerts.unlinkProtectionUnknown);
         return;
       }
-      // #3246 — under protected mode the chat is not removed yet: it keeps
-      // getting alerts until the stated time, and was told it can cancel.
-      // So the card still shows it linked and says when it will stop.
-      if (outcome.pending.length > 0) {
-        const last = Math.max(...outcome.pending.map((p) => p.effectiveAt));
-        setNotice(copy.alerts.unlinkPending(new Date(last * 1000).toLocaleString()));
+      // #3246 — under protected mode a chat is not removed at once: it
+      // keeps getting alerts for the account's delay, which starts only
+      // once that chat has received our notice. The card is about
+      // `forChain`, so it reads that chain's entry: still pending there →
+      // the card stays linked; cleared here but pending elsewhere → it
+      // says unlinked here and names the networks still waiting.
+      const here = outcome.pending.find((p) => p.chainId === forChain);
+      if (here) {
+        setNotice(
+          here.effectiveAt === null
+            ? copy.alerts.unlinkPendingUntold
+            : copy.alerts.unlinkPending(new Date(here.effectiveAt * 1000).toLocaleString()),
+        );
         return;
       }
       const next = { ...prefs, telegramLinked: false };
       storeAlertPrefs(forChain, address, next);
       setPrefs(next);
+      if (outcome.pending.length > 0) {
+        setNotice(
+          copy.alerts.unlinkedOthersPending(
+            outcome.pending.map((p) => chainDisplayName(p.chainId) ?? String(p.chainId)).join(', '),
+          ),
+        );
+        return;
+      }
       setNotice(
         outcome.scope === 'chain'
           ? copy.alerts.unlinkedChainOnly(
