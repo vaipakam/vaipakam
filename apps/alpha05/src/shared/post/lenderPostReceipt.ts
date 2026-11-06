@@ -11,15 +11,22 @@
  * figures are the whole amount's. OFF-10 / OFF-11 (Advanced): a range adds
  * the smallest part one match may lend and the least collateral that part
  * asks, and a fill mode other than the default is stated with what it
- * means; both are fixed once posted.
+ * means; both are fixed once posted. OFF-14 / OFF-22 (Advanced): an interest
+ * schedule states each period's interest on all of it and on the smallest
+ * part, and the Full fee tariff states what it costs and what it gives the
+ * lender (10 more points of discount on the protocol's share of the loan's
+ * interest, for its term), armed by its own transaction after posting.
  */
 import type { CopyAccess, CopyKey } from '../copy/useCopy';
+import type { Posture } from '../capability/types';
 import type { Receipt } from '../receipt/types';
 import { tokenAmount, type TokenMetaMap } from '../reads/tokens';
 import { formatBps, formatSpan, formatUtc } from '../ui/format';
 import { pageHandoff } from '../../routes/pageMap';
 import { isRanged, lenderPostFigures, partCollateral, ZERO, type ParsedPost } from './postModel';
 import { ltvText, needsApproval, promptCount, stakeOfDraft, type PostReview } from './postReview';
+import { scheduleConsequences, scheduleRows } from './scheduleReview';
+import { tariffConsequences, tariffRows } from './tariffReview';
 
 type Hex = `0x${string}`;
 
@@ -29,7 +36,7 @@ const FILL_MODE_KEYS: Readonly<Record<ParsedPost['fillMode'], CopyKey>> = {
   ioc: 'request.fillModeIoc',
 };
 
-export function lenderPostReceipt(r: PostReview, meta: TokenMetaMap | null, copy: Pick<CopyAccess, 'text' | 'format'>): Receipt {
+export function lenderPostReceipt(r: PostReview, meta: TokenMetaMap | null, copy: Pick<CopyAccess, 'text' | 'format'>, advanced = false, keeper: Posture = 'unknown'): Receipt {
   const { text, format } = copy;
   const { parsed, pair } = r.draft;
   const stake = stakeOfDraft(r.draft);
@@ -68,7 +75,15 @@ export function lenderPostReceipt(r: PostReview, meta: TokenMetaMap | null, copy
     { label: text(ranged ? 'lendOffer.rowBorrowerGetsWhole' : 'lendOffer.rowBorrowerGets'), value: amount(pair.lending, f.borrowerGets), binding: false },
     { label: text('lendAccept.rowFee'), value: amount(pair.lending, f.fee), binding: false },
     textRow('accept.rowFeeRule', format('lendOffer.feeRule', { rate: formatBps(r.lifBps) }), false),
-    { label: text(ranged ? 'lendOffer.rowInterestWhole' : 'lendAccept.rowInterestDue'), value: amount(pair.lending, f.interest), binding: true },
+    // With a schedule the figure is the whole term's interest, and the
+    // instalments paid along the way count toward it.
+    {
+      label: text(
+        parsed.cadence !== 0 ? (ranged ? 'lendOffer.rowInterestWholeTotal' : 'lendAccept.rowInterestTotal') : ranged ? 'lendOffer.rowInterestWhole' : 'lendAccept.rowInterestDue',
+      ),
+      value: amount(pair.lending, f.interest),
+      binding: true,
+    },
     // Today's setting: the loan fixes the share in force when it opens, and
     // a fee-discount tier can lower it when interest is paid. A share that
     // could not be read is said, never shown as zero.
@@ -77,7 +92,8 @@ export function lenderPostReceipt(r: PostReview, meta: TokenMetaMap | null, copy
       : textRow('lendAccept.rowShare', format('lendAccept.share', { rate: formatBps(shareBps), amount: tokenAmount(f.protocolShare, pair.lending, meta, format) }), false),
     ...(shareBps === null ? [] : [{ label: text(ranged ? 'lendOffer.rowBackWhole' : 'lendAccept.rowBack'), value: amount(pair.lending, f.backAtDue), binding: false }]),
     textRow('accept.rowInterest', text(parsed.fullTerm ? (parsed.allowsPartialRepay ? 'lendAccept.fullTermPartial' : 'lendAccept.fullTerm') : 'lendAccept.proRata'), true),
-    textRow('accept.rowSchedule', text('accept.scheduleNone'), true),
+    ...scheduleRows(r, meta, copy, advanced, keeper),
+    ...tariffRows(r.tariff, parsed, copy, 'lender'),
     textRow('accept.rowPartial', text(parsed.allowsPartialRepay ? 'lendAccept.partialYes' : 'lendAccept.partialNo'), true),
     textRow('accept.rowPrepayListing', text('accept.prepayListingNo'), true),
     textRow('accept.rowParallelSale', text('accept.parallelNo'), true),
@@ -108,6 +124,8 @@ export function lenderPostReceipt(r: PostReview, meta: TokenMetaMap | null, copy
     text(r.draft.expiresAt === 0n ? 'lendOffer.loseOpen' : 'lendOffer.loseLapse'),
     text('lendOffer.loseTaken'),
     ...matchConsequences(r, meta, copy),
+    ...scheduleConsequences(r, copy),
+    ...tariffConsequences(r.tariff, copy, 'lender'),
     text('lendAccept.loseDefault'),
     ...(r.lendingClass === 'illiquid' ? [text('lendAccept.loseIlliquidLending')] : []),
     ...(r.collateralClass === 'illiquid' ? [text('lendAccept.loseIlliquidCollateral')] : []),

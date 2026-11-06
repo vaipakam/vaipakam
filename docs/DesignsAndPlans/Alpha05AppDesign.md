@@ -620,9 +620,25 @@ above. Each resolves here, so a route reviewer needs no private file:
   smallest part returns to the wallet as the offer closes. One
   loan-to-value is shown, since a part carries the whole amount's ratio.
   The fill mode (OFF-11) is offered on both sides, worded for each, and is
-  stated as fixed once posted. The lender's interest schedule and fee
-  tariff are a later update, said in Advanced rather than hidden; an offer
-  that asks for an NFT is a later update too.
+  stated as fixed once posted. The interest schedule (OFF-14) and the Full
+  fee tariff (OFF-22) are offered on both sides in Advanced, through the
+  same fieldsets and the same reads. A lender's schedule is admitted at the
+  smallest part (or the whole amount without parts), the amount the
+  protocol checks at posting, so a schedule the whole amount would clear
+  stays closed with both figures while the part is under the threshold.
+  The receipt states each period's interest on the whole amount and on the
+  smallest part, the whole term's interest as a total the instalments count
+  toward, and that a missed period sells part of the borrower's collateral
+  to pay the lender while the loan stays open. The tariff is quoted in the
+  form at the whole amount (a direct take, the largest loan) and in the
+  review at both ends; the receipt states what it costs, what it gives the
+  lender (10 more points of discount on the protocol's share of interest,
+  up to the 50% cap, for the loan's term, lost on an extension, following
+  the lender position), the gap before it is set, and each refusal under
+  the chosen rule. It is set by its own measured transaction on the Lend
+  page after the offer posts, worded for an offer, and a new offer is held
+  back while that step is open. An offer that asks for an NFT is a later
+  update.
 
 ## 3. Companion specifications
 

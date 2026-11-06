@@ -658,3 +658,69 @@ describe('a lending offer with parts (OFF-10 / OFF-11)', () => {
     ]);
   });
 });
+
+describe("a lending offer's interest schedule and Full fee tariff (OFF-14 / OFF-22)", () => {
+  const E = 10n ** 18n;
+  /** The whole amount 1,000, optionally in parts of at least 250, with a monthly schedule. */
+  function scheduledOffer(parts: boolean, over: Partial<PostReview> = {}): PostReview {
+    const base = lenderReview();
+    const parsed = { ...base.draft.parsed, cadence: 1 as const, ...(parts ? { amount: 250n, amountMax: 1_000n } : {}) };
+    const draft = { ...base.draft, parsed };
+    return { ...base, draft, params: createParams(parsed, draft.pair, draft.expiresAt, 'lender'), periodGraceSeconds: 86_400n, ...over };
+  }
+  function tariffOffer(over: { allowDowngrade?: boolean; enabled?: boolean } = {}): PostReview {
+    const base = scheduledOffer(true);
+    const choice = { maxCStar: 6n * E, allowDowngrade: over.allowDowngrade ?? false };
+    const parsed = { ...base.draft.parsed, cadence: 0 as const, tariff: choice };
+    return {
+      ...base,
+      draft: { ...base.draft, parsed },
+      tariff: {
+        choice,
+        read: { enabled: over.enabled ?? true, smallest: { cStar: E, numeraireOk: true }, largest: { cStar: 4n * E, numeraireOk: true }, liquid: true, freeVpfi: 10n * E },
+        why: {},
+      },
+    };
+  }
+
+  it('states each period on all of it and on the smallest part, and words a missed period as paid to the lender', () => {
+    const r = postReceipt(scheduledOffer(true), null, copy, true, 'present');
+    const row = (label: string) => r.rows.find((x) => x.label === label);
+    expect(r.rows.find((x) => x.label === 'accept.rowSchedule')!.value).toMatchObject({ text: 'accept.scheduleEvery' });
+    expect(row('lendOffer.rowPeriodWhole')?.binding).toBe(true);
+    expect(row('lendOffer.rowPeriodPart')?.binding).toBe(true);
+    expect(row('request.rowPeriodDirect')).toBeUndefined();
+    expect(row('request.rowPeriodSettle')!.value).toMatchObject({ text: 'request.settleArmed' });
+    expect(row('lendOffer.rowInterestWholeTotal')).toBeDefined();
+    expect(row('lendOffer.rowInterestWhole')).toBeUndefined();
+    expect(r.consequences).toEqual(expect.arrayContaining(['lendOffer.loseCadence', 'lendOffer.loseCadenceFixed']));
+    expect(r.consequences).not.toContain('request.loseCadence');
+  });
+
+  it('states one period figure without parts, and the whole term as a total with instalments counted', () => {
+    const r = postReceipt(scheduledOffer(false), null, copy);
+    expect(r.rows.find((x) => x.label === 'request.rowPeriod')).toBeDefined();
+    expect(r.rows.find((x) => x.label === 'lendAccept.rowInterestTotal')).toBeDefined();
+    expect(r.rows.find((x) => x.label === 'lendAccept.rowInterestDue')).toBeUndefined();
+    expect(postReceipt(scheduledOffer(false, { periodGraceSeconds: null }), null, copy).consequences).toContain('lendOffer.loseCadenceUnread');
+  });
+
+  it("states the tariff at the smallest part and at the whole amount, with what it gives a lender and the offer's gap", () => {
+    const r = postReceipt(tariffOffer(), null, copy);
+    const labels = r.rows.map((x) => x.label);
+    expect(labels).toEqual(expect.arrayContaining(['request.rowTariff', 'request.rowTariffSmallest', 'request.rowTariffLargest', 'request.rowTariffCeiling']));
+    expect(r.rows.find((x) => x.label === 'request.rowTariff')!.value).toMatchObject({ text: 'lendOffer.tariffArmedAfter' });
+    expect(r.consequences).toEqual(expect.arrayContaining(['lendOffer.loseTariffPaid', 'lendOffer.loseTariffYield', 'lendOffer.loseTariffHolder', 'lendOffer.loseTariffGap']));
+    expect(r.consequences).not.toContain('request.loseTariffLif');
+    expect(promptCount(tariffOffer())).toBe(3);
+  });
+
+  it("refuses in the offer's words when every loan would be refused", () => {
+    const off = tariffOffer({ enabled: false });
+    expect(postBlockers(off, null, copy)).toContain('lendOffer.blockTariffEvery');
+    expect(postReceipt(off, null, copy).consequences).toContain('lendOffer.loseTariffOffRefuse');
+    const open = tariffOffer({ enabled: false, allowDowngrade: true });
+    expect(postBlockers(open, null, copy)).not.toContain('lendOffer.blockTariffEvery');
+    expect(postReceipt(open, null, copy).consequences).toContain('request.loseTariffOffOpen');
+  });
+});

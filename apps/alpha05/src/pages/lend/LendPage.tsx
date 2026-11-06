@@ -21,6 +21,7 @@ import { StepNav } from '../../shared/ui/StepNav';
 import { useAssetStandard } from '../../shared/nft/useStandard';
 import { LEND_OFFER_KEY, OfferForm } from '../../shared/post/OfferForm';
 import { PostOffer } from '../../shared/post/PostOffer';
+import { ArmTariff, tariffStoreKeys, type ArmContext } from '../../shared/post/ArmTariff';
 import type { PostAssets } from '../../shared/post/postModel';
 import type { PostDraft } from '../../shared/post/postReview';
 
@@ -47,9 +48,10 @@ function initialPair(chainId: number, suggested: readonly { address: Hex }[]): {
  * Terms gate. When no request fits, the lender posts their own offer for
  * the pair instead (OFF-06), through the shared posting flow the Borrow
  * page's request uses, from the other side: the amount lent is what locks.
- * A request that locks an NFT, an offer that asks for one, and the lender's
- * Advanced options follow in later updates; the page says so instead of
- * hiding them.
+ * In Advanced the lender may lend in parts, choose a fill mode, an interest
+ * schedule and the Full fee tariff, which is set by its own step here after
+ * posting. A request that locks an NFT and an offer that asks for one follow
+ * in later updates; the page says so instead of hiding them.
  */
 export function LendPage() {
   const { text, format } = useCopy();
@@ -72,6 +74,9 @@ export function LendPage() {
   const [draft, setDraft] = useStoredValue<PostDraft>(`${LEND_OFFER_KEY}:draft`);
   const [pendingDraft, setPendingDraft] = useStoredValue<PostDraft>(`${LEND_OFFER_KEY}:pending`);
   const [, setTyped] = useStoredValue<unknown>(`${LEND_OFFER_KEY}:input`);
+  /** OFF-22: the Full tariff step for an offer just posted, kept apart from
+   *  the offer's review so it outlives that card. */
+  const [armContext, setArmContext] = useStoredValue<ArmContext>(tariffStoreKeys(LEND_OFFER_KEY).ctx);
 
   const suggested = chain ? suggestedAssets(chain) : [];
   const [pairByChain, setPairByChain] = useState<Record<number, { lending: Hex | null; collateral: Hex | null }>>({});
@@ -165,7 +170,18 @@ export function LendPage() {
             {text('lend.postOpen')}
           </h2>
           <p className="tier-b">{text('lend.postLead')}</p>
-          <button type="button" className="btn" disabled={takeDisabled || offerPair === null} onClick={() => setComposing(true)} data-testid="lend-offer-open">
+          {armContext !== null && (
+            <p className="tier-b" data-testid="lend-offer-held-for-tariff">
+              {format('lendOffer.heldForTariff', { id: armContext.offerId.toString() })}
+            </p>
+          )}
+          <button
+            type="button"
+            className="btn"
+            disabled={takeDisabled || offerPair === null || armContext !== null}
+            onClick={() => setComposing(true)}
+            data-testid="lend-offer-open"
+          >
             {text('lend.postOpen')}
           </button>
         </section>
@@ -223,6 +239,11 @@ export function LendPage() {
               if (posted) setTyped(null);
             }}
           />
+        </section>
+      )}
+      {armContext !== null && own && (
+        <section className="borrow-section" aria-labelledby="arm-tariff-title">
+          <ArmTariff side="lender" flowKey={LEND_OFFER_KEY} ctx={armContext} own={own} onDone={() => setArmContext(null)} />
         </section>
       )}
     </main>

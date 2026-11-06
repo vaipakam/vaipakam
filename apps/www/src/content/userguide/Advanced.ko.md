@@ -2016,7 +2016,7 @@ Basic은 단일 값 요청을 올립니다: `amount` = `amountMax`, `interestRat
 
 ### Lend: 작동 방식
 
-Lend는 ERC-20 담보에 대한 ERC-20 차입 요청(`offerType` 1)을 대출자가 보내는 `acceptOffer(offerId, terms, signature)`로 직접 받습니다. 한 번의 트랜잭션으로 원금은 Diamond에 대한 승인 아래 대출자의 지갑에서 대출자의 볼트로 인출되고, 차입자는 개시 수수료를 뺀 금액을 받으며, 차입자의 볼트에 이미 있는 담보가 대출의 담보가 되고, `LoanInitiated`가 발생하며 대출자와 차입자에게 각각 포지션 NFT가 주어집니다. 대출 오퍼(`offerType` 0)는 같은 페이지에서 게시합니다. NFT 측과 대출 오퍼의 고급 옵션은 이후 업데이트에서 추가됩니다.
+Lend는 ERC-20 담보에 대한 ERC-20 차입 요청(`offerType` 1)을 대출자가 보내는 `acceptOffer(offerId, terms, signature)`로 직접 받습니다. 한 번의 트랜잭션으로 원금은 Diamond에 대한 승인 아래 대출자의 지갑에서 대출자의 볼트로 인출되고, 차입자는 개시 수수료를 뺀 금액을 받으며, 차입자의 볼트에 이미 있는 담보가 대출의 담보가 되고, `LoanInitiated`가 발생하며 대출자와 차입자에게 각각 포지션 NFT가 주어집니다. 대출 오퍼(`offerType` 0)는 같은 페이지에서 게시합니다. NFT 측은 이후 업데이트에서 추가됩니다.
 
 <a id="lend-offers"></a>
 
@@ -2052,13 +2052,25 @@ Lend는 ERC-20 담보에 대한 ERC-20 차입 요청(`offerType` 1)을 대출자
 
 ### Lend: 오퍼의 조건
 
-부분이 없는 대출 오퍼는 단일 값입니다. `amount` = `amountMax`, `interestRateBps` = `interestRateBpsMax`, `collateralAmount` = `collateralAmountMax`(차입자가 잠가야 할 유일한 담보량), `fillMode` 0(Advanced가 다른 방식을 정하지 않은 경우, 다음 절 참고), `periodicInterestCadence` 0, `allowsPrepayListing`과 `allowsParallelSale`은 false, `refinanceTargetLoanId` 0, `creatorRiskAndTermsConsent`는 true이며, Full 요금제는 설정하지 않습니다. 금액은 기본 단위로 정확히 파싱되고 이자율은 최대 10,000 bps입니다. `durationDays`는 `getProtocolConfigBundle`에서 읽은 설정 최댓값으로 제한됩니다. `expiresAt`은 0(취소할 때까지 열림)이거나 검토 화면이 열릴 때 최신 블록 기준으로 정한 시각이며, 최대 `MAX_OFFER_EXPIRY_HORIZON`(365일) 뒤까지입니다. `useFullTermInterest`의 기본값은 true, `allowsPartialRepay`의 기본값은 false입니다.
+부분이 없는 대출 오퍼는 단일 값입니다. `amount` = `amountMax`, `interestRateBps` = `interestRateBpsMax`, `collateralAmount` = `collateralAmountMax`(차입자가 잠가야 할 유일한 담보량), `fillMode` 0(Advanced가 다른 방식을 정하지 않은 경우, 다음 절 참고), `periodicInterestCadence` 0(고급에서 일정을 정하지 않는 한), `allowsPrepayListing`과 `allowsParallelSale`은 false, `refinanceTargetLoanId` 0, `creatorRiskAndTermsConsent`는 true이며, 고급에서 선택하지 않는 한 Full 요금제는 설정하지 않습니다. 금액은 기본 단위로 정확히 파싱되고 이자율은 최대 10,000 bps입니다. `durationDays`는 `getProtocolConfigBundle`에서 읽은 설정 최댓값으로 제한됩니다. `expiresAt`은 0(취소할 때까지 열림)이거나 검토 화면이 열릴 때 최신 블록 기준으로 정한 시각이며, 최대 `MAX_OFFER_EXPIRY_HORIZON`(365일) 뒤까지입니다. `useFullTermInterest`의 기본값은 true, `allowsPartialRepay`의 기본값은 false입니다.
 
 <a id="lend-offer-parts"></a>
 
 ### Lend: 부분으로 빌려주는 오퍼
 
 부분은 `amount`(한 번의 매칭이 빌려줄 수 있는 가장 작은 부분)를 `amountMax`(전체 금액, `createOffer`가 볼트로 가져감)보다 작게 보냅니다. `collateralAmount` = `collateralAmountMax`는 `amountMax` 기준의 유일한 요구 사항으로 남고(그렇지 않으면 `LenderCollateralRangeNotAllowed`), `interestRateBps` = `interestRateBpsMax`입니다. 대출 오퍼에 대한 직접 `acceptOffer`는 `collateralAmount`에 대해 `amountMax`를 빌려주며, `amountFilled`가 0인 동안에만 가능합니다(매칭 후에는 `OfferPartiallyFilled`). `getPartialFillEnabled`가 true인 동안 `matchOffers`는 금액 겹침 구간의 중간값(최소 `amount`)을 이자율 겹침 구간의 중간값으로, 적어도 `collateralAmount × matchAmount ÷ amountMax`(내림, 차입자의 담보 범위가 높일 수 있음)에 대해 빌려줍니다. `amountMax − amountFilled`가 `amount` 아래로 떨어지면 나머지는 대출자의 지갑으로 인출되고 오퍼는 닫힙니다(`OfferClosed`, 사유 `Dust` 또는 `FullyFilled`). 일부 체결된 오퍼에 대한 `cancelOffer`는 대기 시간을 건너뛰고 `amountMax − amountFilled`를 돌려줍니다. `fillMode`는 요청과 같이 0, 1, 2이며, AON은 `amount` = `amountMax`, IOC는 만료가 필요하고, 게시 후에는 바뀌지 않습니다. 두 레그가 모두 유동적이면 `createOffer`는 `amountMax`에서의 하한보다 낮은 `collateralAmount`를 `MinCollateralBelowFloor(provided, floor)`로 거부하며, 검토 화면이 그 하한을 보여 줍니다. LTV는 (`amountMax`, `collateralAmount`)에서의 `calculateLTV` 하나만 표시되며, 부분도 반올림을 빼면 같은 비율입니다.
+
+<a id="lend-offer-schedule"></a>
+
+### Lend: 오퍼의 이자 지급 일정
+
+대출 오퍼의 `periodicInterestCadence`는 요청의 규칙(위)을 따르며, `previewCadenceAdmission`는 오퍼의 `amount`, 즉 가장 작은 부분(부분이 없으면 전체 금액)으로 평가합니다. `createOffer`는 그 값으로 `requireCadenceAdmitted`를 통해 허용하고, 각 대출의 개시 시점에 자기 원금으로 다시 확인합니다(`requireOriginationCadenceAdmitted`). 검토 화면은 한 기간의 이자를 `amountMax`(직접 인수)로, 부분이 있으면 `amount`로도 보여 줍니다. 놓친 기간은 유예 기간 후 누구나 `settlePeriodicInterest`로 정산할 수 있습니다. 담보를 팔아 그 기간의 이자를 대출자에게 지급하며, 대출은 계속 열려 있습니다.
+
+<a id="lend-offer-tariff"></a>
+
+### Lend: 오퍼의 풀 수수료 요율
+
+대출자의 옵트인도 같은 `setOfferCreatorFullTariff(offerId, true, maxCStar, allowDowngrade)`이며, `createOffer` 후에 보냅니다. 오퍼가 전부 인수되거나 닫히면 `OfferAlreadyAccepted`로 거절됩니다. 일부만 매칭된 오퍼는 아직 받아들이며, 이후 대출에 적용됩니다. 견적은 `amount`와 `amountMax`에서의 `quoteCStar`이고, 최대치의 기본값은 `amountMax`에서의 견적입니다. 각 대출은 원금으로 가격이 매겨져 하나씩 `maxCStar`와 비교되며, 조건은 요청과 같습니다(`FeeEntitlementDisabled`, `FeeEntitlementFullOptInFailed`, `FeeEntitlementTariffAboveAuth`, 또는 허용된 경우 하향). 대출자 확인에는 금고의 현재 사용 가능한 VPFI를 씁니다. 요율이 부과되면 대출의 `lenderMode`가 Full로 기록되고, 이후 대출자 수익 수수료가 정산될 때마다 프로토콜 몫에 대한 포지션 보유자의 할인에 `FULL_MODE_FEE_DISCOUNT_BONUS_BPS`(1000)가 더해집니다. 상한은 `MAX_FEE_DISCOUNT_BPS`(5000)이며, 보유 할인 동의 여부와 관계없습니다. 제자리 연장(`repriceFeeEntitlementOnExtension`)은 새 기간에 대해 이 기록을 None으로 바꿉니다.
 
 <a id="lend-offer-review"></a>
 

@@ -265,7 +265,7 @@ export function BorrowPage() {
       )}
       {armContext !== null && own && (
         <section className="borrow-section" aria-labelledby="arm-tariff-title">
-          <ArmTariff ctx={armContext} own={own} onDone={() => setArmContext(null)} />
+          <ArmTariff side="borrower" flowKey={REQUEST_KEY} ctx={armContext} own={own} onDone={() => setArmContext(null)} />
         </section>
       )}
     </main>

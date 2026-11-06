@@ -13,5 +13,5 @@ import type { PostReview } from './postReview';
 import { requestReceipt } from './requestReceipt';
 
 export function postReceipt(r: PostReview, meta: TokenMetaMap | null, copy: Pick<CopyAccess, 'text' | 'format'>, advanced = false, keeper: Posture = 'unknown'): Receipt {
-  return r.draft.side === 'lender' ? lenderPostReceipt(r, meta, copy) : requestReceipt(r, meta, copy, advanced, keeper);
+  return r.draft.side === 'lender' ? lenderPostReceipt(r, meta, copy, advanced, keeper) : requestReceipt(r, meta, copy, advanced, keeper);
 }

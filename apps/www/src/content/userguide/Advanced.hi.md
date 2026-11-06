@@ -2209,7 +2209,7 @@ Basic एकल-मान अनुरोध पोस्ट करता है
 
 ### Lend: यह कैसे काम करता है
 
-Lend किसी ERC-20 के ERC-20 कोलैटरल वाले उधार अनुरोध (`offerType` 1) को सीधे लेता है, ऋणदाता द्वारा भेजे गए `acceptOffer(offerId, terms, signature)` से। एक ट्रांज़ैक्शन में मूलधन ऋणदाता के वॉलेट से, Diamond को दी गई अनुमति के तहत, ऋणदाता के वॉल्ट में खींचा जाता है; उधारकर्ता को वह इनिशिएशन फ़ीस घटाकर मिलता है; उधारकर्ता के वॉल्ट में पहले से रखा कोलैटरल लोन का कोलैटरल बन जाता है; और `LoanInitiated` जारी होता है, ऋणदाता और उधारकर्ता के एक-एक पोज़िशन NFT के साथ। लेंडिंग ऑफ़र (`offerType` 0) इसी पेज से पोस्ट होता है; NFT पक्ष और लेंडिंग ऑफ़र के उन्नत विकल्प बाद के अपडेट में आएँगे।
+Lend किसी ERC-20 के ERC-20 कोलैटरल वाले उधार अनुरोध (`offerType` 1) को सीधे लेता है, ऋणदाता द्वारा भेजे गए `acceptOffer(offerId, terms, signature)` से। एक ट्रांज़ैक्शन में मूलधन ऋणदाता के वॉलेट से, Diamond को दी गई अनुमति के तहत, ऋणदाता के वॉल्ट में खींचा जाता है; उधारकर्ता को वह इनिशिएशन फ़ीस घटाकर मिलता है; उधारकर्ता के वॉल्ट में पहले से रखा कोलैटरल लोन का कोलैटरल बन जाता है; और `LoanInitiated` जारी होता है, ऋणदाता और उधारकर्ता के एक-एक पोज़िशन NFT के साथ। लेंडिंग ऑफ़र (`offerType` 0) इसी पेज से पोस्ट होता है; NFT पक्ष बाद के अपडेट में आएँगे।
 
 <a id="lend-offers"></a>
 
@@ -2245,13 +2245,25 @@ Lend किसी ERC-20 के ERC-20 कोलैटरल वाले उध
 
 ### Lend: ऑफ़र की शर्तें
 
-हिस्सों के बिना लेंडिंग ऑफ़र एकल-मूल्य वाला होता है: `amount` = `amountMax`, `interestRateBps` = `interestRateBpsMax`, `collateralAmount` = `collateralAmountMax` (वह एक कोलैटरल जो उधारकर्ता को लॉक करना है), `fillMode` 0, जब तक Advanced कोई और तय न करे (अगला भाग), `periodicInterestCadence` 0, `allowsPrepayListing` और `allowsParallelSale` false, `refinanceTargetLoanId` 0, `creatorRiskAndTermsConsent` true, और कोई Full टैरिफ़ नहीं। राशियाँ ठीक-ठीक बेस यूनिट में पार्स होती हैं और दर अधिकतम 10,000 bps है। `durationDays` की सीमा `getProtocolConfigBundle` से पढ़े गए कॉन्फ़िगर किए अधिकतम से तय होती है। `expiresAt` 0 (रद्द होने तक खुला) या समीक्षा खुलते समय नवीनतम ब्लॉक से तय समय है, अधिकतम `MAX_OFFER_EXPIRY_HORIZON` (365 दिन) आगे। `useFullTermInterest` डिफ़ॉल्ट रूप से true और `allowsPartialRepay` false है।
+हिस्सों के बिना लेंडिंग ऑफ़र एकल-मूल्य वाला होता है: `amount` = `amountMax`, `interestRateBps` = `interestRateBpsMax`, `collateralAmount` = `collateralAmountMax` (वह एक कोलैटरल जो उधारकर्ता को लॉक करना है), `fillMode` 0, जब तक Advanced कोई और तय न करे (अगला भाग), `periodicInterestCadence` 0 (जब तक Advanced अनुसूची न तय करे), `allowsPrepayListing` और `allowsParallelSale` false, `refinanceTargetLoanId` 0, `creatorRiskAndTermsConsent` true, और कोई Full टैरिफ़ नहीं (जब तक Advanced इसे न चुने)। राशियाँ ठीक-ठीक बेस यूनिट में पार्स होती हैं और दर अधिकतम 10,000 bps है। `durationDays` की सीमा `getProtocolConfigBundle` से पढ़े गए कॉन्फ़िगर किए अधिकतम से तय होती है। `expiresAt` 0 (रद्द होने तक खुला) या समीक्षा खुलते समय नवीनतम ब्लॉक से तय समय है, अधिकतम `MAX_OFFER_EXPIRY_HORIZON` (365 दिन) आगे। `useFullTermInterest` डिफ़ॉल्ट रूप से true और `allowsPartialRepay` false है।
 
 <a id="lend-offer-parts"></a>
 
 ### Lend: हिस्सों में दिया जाने वाला ऑफ़र
 
 हिस्से `amount` (एक मैच द्वारा उधार दिया जा सकने वाला सबसे छोटा हिस्सा) को `amountMax` (पूरी राशि, जिसे `createOffer` वॉल्ट में खींचता है) से कम भेजते हैं; `collateralAmount` = `collateralAmountMax` एकमात्र शर्त बनी रहती है, `amountMax` के लिए (वरना `LenderCollateralRangeNotAllowed`), और `interestRateBps` = `interestRateBpsMax`। लेंडिंग ऑफ़र पर सीधा `acceptOffer` `collateralAmount` के बदले `amountMax` उधार देता है, और केवल तब तक जब तक `amountFilled` 0 है (मैच के बाद `OfferPartiallyFilled`)। जब तक `getPartialFillEnabled` true है, `matchOffers` राशि के ओवरलैप का मध्य बिंदु, कम से कम `amount`, दर के ओवरलैप के मध्य बिंदु पर, कम से कम `collateralAmount × matchAmount ÷ amountMax` (नीचे की ओर पूर्णांकित; उधारकर्ता की कोलैटरल रेंज इसे बढ़ा सकती है) के बदले उधार देता है। जब `amountMax − amountFilled` `amount` से नीचे जाता है, तो बाकी राशि ऋणदाता के वॉलेट में निकाल दी जाती है और ऑफ़र बंद होता है (`OfferClosed`, कारण `Dust` या `FullyFilled`)। आंशिक रूप से भरे ऑफ़र पर `cancelOffer` प्रतीक्षा अवधि छोड़ देता है और `amountMax − amountFilled` लौटाता है। `fillMode` अनुरोध की तरह 0, 1 या 2 है: AON के लिए `amount` = `amountMax` चाहिए, IOC के लिए समाप्ति चाहिए, और पोस्ट करने के बाद यह नहीं बदलता। दोनों पक्ष तरल हों तो `createOffer` `amountMax` पर न्यूनतम सीमा से कम `collateralAmount` को `MinCollateralBelowFloor(provided, floor)` से अस्वीकार करता है, जिसकी सीमा समीक्षा दिखाती है। एक ही लोन-टू-वैल्यू दिखाया जाता है, (`amountMax`, `collateralAmount`) पर `calculateLTV`: पूर्णांकन को छोड़कर हर हिस्से का अनुपात वही है।
+
+<a id="lend-offer-schedule"></a>
+
+### Lend: ऑफ़र पर ब्याज की अनुसूची
+
+लेंडिंग ऑफ़र का `periodicInterestCadence` अनुरोध के नियम (ऊपर) का पालन करता है, और `previewCadenceAdmission` ऑफ़र के `amount` पर आँका जाता है: उसका सबसे छोटा हिस्सा, या हिस्सों के बिना पूरी राशि। `createOffer` उसे वहीं `requireCadenceAdmitted` से स्वीकार करता है, और हर ऋण की शुरुआत उसके अपने मूलधन को फिर जाँचती है (`requireOriginationCadenceAdmitted`)। समीक्षा एक अवधि का ब्याज `amountMax` (सीधा लेना) पर और हिस्सों के साथ `amount` पर बताती है। छूटी अवधि को मोहलत के बाद कोई भी `settlePeriodicInterest` से निपटा सकता है: ऋणदाता को उस अवधि का ब्याज देने के लिए कोलैटरल बेचा जाता है, और ऋण खुला रहता है।
+
+<a id="lend-offer-tariff"></a>
+
+### Lend: ऑफ़र पर फुल फ़ीस टैरिफ़
+
+ऋणदाता की सहमति वही `setOfferCreatorFullTariff(offerId, true, maxCStar, allowDowngrade)` है, जो `createOffer` के बाद भेजी जाती है। ऑफ़र पूरा ले लिए जाने या बंद होने के बाद यह `OfferAlreadyAccepted` से अस्वीकार होती है; आंशिक रूप से मैच हुआ ऑफ़र इसे अब भी लेता है, अपने बाद के ऋणों के लिए। कोटेशन `amount` और `amountMax` पर `quoteCStar` है, और सीमा का डिफ़ॉल्ट `amountMax` पर कोटेशन है। हर ऋण अपने मूलधन पर आँका जाकर अलग से `maxCStar` से जाँचा जाता है, अनुरोध जैसी ही शर्तों पर (`FeeEntitlementDisabled`, `FeeEntitlementFullOptInFailed`, `FeeEntitlementTariffAboveAuth`, या अनुमति हो तो डाउनग्रेड); ऋणदाता की जाँच वॉल्ट के मौजूदा मुक्त VPFI का उपयोग करती है। लिया गया टैरिफ़ ऋण के `lenderMode` को Full दर्ज करता है, और फिर ऋणदाता की हर यील्ड-फ़ीस निपटान पर प्रोटोकॉल के हिस्से पर पोज़िशन धारक की छूट में `FULL_MODE_FEE_DISCOUNT_BONUS_BPS` (1000) जुड़ता है, `MAX_FEE_DISCOUNT_BPS` (5000) की सीमा तक, होल्ड-छूट सहमति हो या न हो। जगह पर अवधि बढ़ाना (`repriceFeeEntitlementOnExtension`) नई अवधि के लिए इस दर्ज को None कर देता है।
 
 <a id="lend-offer-review"></a>
 

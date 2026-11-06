@@ -18,29 +18,41 @@ import type { TxPhase } from '../tx/outcome';
 import { armEnding, armRead, type ArmContext, type ArmEnding } from './armState';
 import { Notice } from '../ui/Notice';
 import { REQUEST_KEY } from './OfferForm';
+import { TARIFF_KEYS } from './postCopy';
+import type { PostSide } from './postModel';
 
 type Hex = `0x${string}`;
 
-/** The arm step's own tracked transaction, beside the request's. */
-export const TARIFF_KEY = `${REQUEST_KEY}:tariff`;
-/** Where the arm step's context is kept: written when a posting with the
- *  tariff chosen measures its request, cleared when the reader dismisses
- *  the step's last word. It lives apart from the request's own review, so
- *  closing the request's finish card never drops a tariff transaction in
- *  flight or its outcome. */
+/** The arm step's store keys for one posting flow: its own tracked
+ *  transaction, beside the post's, and where its context is kept, written
+ *  when a posting with the tariff chosen measures its post and cleared when
+ *  the reader dismisses the step's last word. The context lives apart from
+ *  the post's own review, so closing the post's finish card never drops a
+ *  tariff transaction in flight or its outcome; and a request's step and an
+ *  offer's never share one. */
+export function tariffStoreKeys(flowKey: string): { tx: string; ctx: string } {
+  return { tx: `${flowKey}:tariff`, ctx: `${flowKey}:tariff:ctx` };
+}
+/** The borrower's request flow's keys, unchanged from before offers could
+ *  carry the tariff. */
+export const TARIFF_KEY = tariffStoreKeys(REQUEST_KEY).tx;
+export const TARIFF_CONTEXT_KEY = tariffStoreKeys(REQUEST_KEY).ctx;
 export type { ArmContext } from './armState';
-export const TARIFF_CONTEXT_KEY = `${TARIFF_KEY}:ctx`;
 
 const ENDING_KEYS = {
-  armed: 'request.tariffEndArmed',
-  'not-set': 'request.tariffLegMissing',
-  unknown: 'request.tariffEndUnknown',
-  skipped: 'request.tariffSkipped',
+  armed: 'tariffEndArmed',
+  'not-set': 'tariffLegMissing',
+  unknown: 'tariffEndUnknown',
+  skipped: 'tariffSkipped',
 } as const;
 
 type ReadNote = { kind: 'reading' } | { kind: 'switch' } | { kind: 'failed'; reason: string } | { kind: 'not-yet' | 'taken'; at: number };
 
 interface ArmTariffProps {
+  /** Who posted: a borrower's request, or a lender's offer. */
+  side: PostSide;
+  /** The posting flow's store key (REQUEST_KEY, LEND_OFFER_KEY). */
+  flowKey: string;
   ctx: ArmContext;
   /** The connected wallet's client; the step withholds signing while it is
    *  not the one that posted the request. */
@@ -64,9 +76,11 @@ interface ArmTariffProps {
  * leaves its last word in place (set, not set, not known, or skipped) until
  * the reader dismisses it.
  */
-export function ArmTariff({ ctx, own, onDone }: ArmTariffProps) {
+export function ArmTariff({ side, flowKey, ctx, own, onDone }: ArmTariffProps) {
   const copy = useCopy();
   const { text, format } = copy;
+  const k = TARIFF_KEYS[side];
+  const TX_KEY = tariffStoreKeys(flowKey).tx;
   const config = useConfig();
   const { offerId, choice } = ctx;
   const chainId = Number(ctx.identity.split(':')[0]);
@@ -75,15 +89,15 @@ export function ArmTariff({ ctx, own, onDone }: ArmTariffProps) {
   const diamond = (chain?.diamondAddress ?? '0x') as Hex;
   const identity = reviewIdentity(own);
   const { caps } = useCapabilities();
-  const routed = requireSelector(caps, selectorOf(SET_TARIFF_SIGNATURE), text('request.tariffCapabilityName'));
+  const routed = requireSelector(caps, selectorOf(SET_TARIFF_SIGNATURE), text(k.tariffCapabilityName));
   /** The request this arm step belongs to (identity and id): a step kept for
    *  an earlier request is started again for this one. */
   const subject = `${ctx.identity}#${offerId.toString()}`;
-  const [armedFor, setArmedFor] = useStoredValue<string>(`${TARIFF_KEY}:for`);
+  const [armedFor, setArmedFor] = useStoredValue<string>(`${TX_KEY}:for`);
   /** The step's ending, stored with the request it belongs to: an ending
    *  written for another request (a late read-back after its step was
    *  dismissed) is never read as this step's. */
-  const [storedEnding, setStoredEnding] = useStoredValue<{ for: string; ending: ArmEnding }>(`${TARIFF_KEY}:ended`);
+  const [storedEnding, setStoredEnding] = useStoredValue<{ for: string; ending: ArmEnding }>(`${TX_KEY}:ended`);
   const ended = storedEnding?.for === subject ? storedEnding.ending : null;
   const setEnded = (ending: ArmEnding | null) => setStoredEnding(ending === null ? null : { for: subject, ending });
   const [readAt] = useState(() => Date.now());
@@ -91,7 +105,7 @@ export function ArmTariff({ ctx, own, onDone }: ArmTariffProps) {
   const [readNote, setReadNote] = useState<ReadNote | null>(null);
 
   const tx = useTrackedTx({
-    key: TARIFF_KEY,
+    key: TX_KEY,
     chainId,
     account,
     sources: own.sources,
@@ -105,10 +119,10 @@ export function ArmTariff({ ctx, own, onDone }: ArmTariffProps) {
         account,
       }),
     measure: async (_receipt, at) => {
-      const label = format('request.tariffLeg', { id: offerId.toString() });
+      const label = format(k.tariffLeg, { id: offerId.toString() });
       const now = await at.read((c, b) => readOfferTariff(c, diamond, offerId, b));
       if (tariffMatches(now.stored, choice)) return [{ status: 'done', label }];
-      return [{ status: 'not-done', label, reason: text('request.tariffLegMissing') }];
+      return [{ status: 'not-done', label, reason: text(k.tariffLegMissing) }];
     },
   });
 
@@ -168,21 +182,21 @@ export function ArmTariff({ ctx, own, onDone }: ArmTariffProps) {
     // One reading of the request for the check and the read-back (armRead):
     // the choice already on it is set even if a lender has since taken it.
     const read = armRead(now, account, choice);
-    if (read === 'not-creator') return { kind: 'refused', refusal: { code: 'NotCreator', reason: text('request.tariffNotCreator'), reopensAt: null, remedy: null } };
+    if (read === 'not-creator') return { kind: 'refused', refusal: { code: 'NotCreator', reason: text(k.tariffNotCreator), reopensAt: null, remedy: null } };
     if (read === 'set') {
       // Read from the chain: the request already carries this choice (set
       // from another tab or app), so closing records it as set.
       readSet.current = true;
-      return { kind: 'refused', refusal: { code: 'AlreadySet', reason: text('request.tariffAlreadySet'), reopensAt: null, remedy: null } };
+      return { kind: 'refused', refusal: { code: 'AlreadySet', reason: text(k.tariffAlreadySet), reopensAt: null, remedy: null } };
     }
-    if (read === 'taken-unset') return { kind: 'refused', refusal: { code: 'OfferAlreadyAccepted', reason: text('request.tariffArmTaken'), reopensAt: null, remedy: null } };
+    if (read === 'taken-unset') return { kind: 'refused', refusal: { code: 'OfferAlreadyAccepted', reason: text(k.tariffArmTaken), reopensAt: null, remedy: null } };
     return simulateCall(own, { address: diamond, abi: PROFILE, functionName: 'setOfferCreatorFullTariff', args: [offerId, true, choice.maxCStar, choice.allowDowngrade] });
   };
 
   const receipt: Receipt = {
     title: text('request.tariffArmTitle'),
     rows: [
-      { label: text('request.rowTariffRequest'), value: { kind: 'text', text: format('request.tariffRequestId', { id: offerId.toString() }) }, binding: true },
+      { label: text(k.rowTariffPost), value: { kind: 'text', text: format(k.tariffPostId, { id: offerId.toString() }) }, binding: true },
       {
         label: text('request.rowTariffCeiling'),
         value: { kind: 'text', text: format('request.tariffVpfi', { amount: formatUnits(choice.maxCStar, VPFI_DECIMALS) }) },
@@ -190,7 +204,7 @@ export function ArmTariff({ ctx, own, onDone }: ArmTariffProps) {
       },
       { label: text('request.rowTariffFail'), value: { kind: 'text', text: text(choice.allowDowngrade ? 'request.tariffFailOpen' : 'request.tariffFailRefuse') }, binding: true },
     ],
-    consequences: [text('request.loseTariffPaid'), text('request.loseTariffArmGap'), text('request.loseTariffChecked')],
+    consequences: [text(k.loseTariffPaid), text(k.loseTariffArmGap), text('request.loseTariffChecked')],
     prompts: 1,
     readAt,
   };
@@ -218,7 +232,7 @@ export function ArmTariff({ ctx, own, onDone }: ArmTariffProps) {
         setEnded('armed');
         return;
       }
-      setReadNote(read === 'not-creator' ? { kind: 'failed', reason: text('request.tariffNotCreator') } : { kind: read === 'taken-unset' ? 'taken' : 'not-yet', at: Date.now() });
+      setReadNote(read === 'not-creator' ? { kind: 'failed', reason: text(k.tariffNotCreator) } : { kind: read === 'taken-unset' ? 'taken' : 'not-yet', at: Date.now() });
     } catch (e) {
       if (stale()) return;
       setReadNote({ kind: 'failed', reason: refusalFromError(e).reason });
@@ -230,19 +244,19 @@ export function ArmTariff({ ctx, own, onDone }: ArmTariffProps) {
     return (
       <section className="arm-tariff" data-testid="request-tariff-ended" data-ending={ended}>
         <Notice tone={ended === 'armed' ? 'ok' : 'warn'} tier="A">
-          {format(ENDING_KEYS[ended], { id })}
+          {format(k[ENDING_KEYS[ended]], { id })}
         </Notice>
         {(ended === 'unknown' || ended === 'skipped') && (
           <>
             {readNote !== null && (
               <p className="tier-a" role="status" data-testid="request-tariff-read">
                 {readNote.kind === 'reading'
-                  ? text('request.tariffReadingBack')
+                  ? text(k.tariffReadingBack)
                   : readNote.kind === 'switch'
-                    ? format('request.tariffReadSwitch', { id })
+                    ? format(k.tariffReadSwitch, { id })
                     : readNote.kind === 'failed'
-                      ? format('request.tariffReadFailed', { reason: readNote.reason })
-                      : format(readNote.kind === 'taken' ? 'request.tariffReadTaken' : ended === 'skipped' ? 'request.tariffReadNotSet' : 'request.tariffReadNotYet', {
+                      ? format(k.tariffReadFailed, { reason: readNote.reason })
+                      : format(readNote.kind === 'taken' ? k.tariffReadTaken : ended === 'skipped' ? k.tariffReadNotSet : k.tariffReadNotYet, {
                           id,
                           time: new Date(readNote.at).toLocaleTimeString(),
                         })}
@@ -250,7 +264,7 @@ export function ArmTariff({ ctx, own, onDone }: ArmTariffProps) {
             )}
             <p className="actions">
               <button type="button" className="btn" disabled={readNote?.kind === 'reading'} onClick={() => void readBack()}>
-                {text('request.tariffReadAgain')}
+                {text(k.tariffReadAgain)}
               </button>
             </p>
           </>
@@ -276,7 +290,7 @@ export function ArmTariff({ ctx, own, onDone }: ArmTariffProps) {
   return (
     <section className="arm-tariff" data-testid="request-tariff-arm" aria-labelledby="arm-tariff-title">
       <h3 id="arm-tariff-title">{text('request.tariffArmTitle')}</h3>
-      <p className="tier-b">{text('request.tariffArmLead')}</p>
+      <p className="tier-b">{text(k.tariffArmLead)}</p>
       {!routed.ok && <p className="tier-b">{routed.reason}</p>}
       <ActionFlow
         tx={tx}

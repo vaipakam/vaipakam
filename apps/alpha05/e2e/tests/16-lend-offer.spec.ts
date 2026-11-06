@@ -160,7 +160,7 @@ test('a lender posts their own offer: exact figures, an exact approval of the am
   }
 });
 
-test('an offer the wallet cannot fund is blocked in place, changing it keeps what was typed, and Advanced says what is still to come', async ({ launchWallet }) => {
+test('an offer the wallet cannot fund is blocked in place, changing it keeps what was typed, and Advanced offers the schedule and tariff', async ({ launchWallet }) => {
   const sc = scenario();
   const tliq = (sc.fixture.artifact.testnetMocks as Record<string, Hex>).liquidToken;
   const visitor = accountFor('visitor').address;
@@ -169,8 +169,9 @@ test('an offer the wallet cannot fund is blocked in place, changing it keeps wha
 
   const { page, flags } = await launchWallet('visitor', { advanced: true });
   await openForm(page, tliq);
-  // A lender's schedule and tariff are not built yet, and the form says so.
-  await expect(page.getByTestId('lend-offer-advanced-later')).toContainText('come in a later update');
+  // In Advanced a lender's form offers the interest schedule and the tariff.
+  await expect(page.getByTestId('request-cadence')).toContainText('Interest schedule');
+  await expect(page.getByTestId('request-tariff')).toContainText('Full fee tariff');
   // Errors wait until a review is asked; then every field names its own.
   await page.getByTestId('request-review').click();
   await expect(page.getByText('Enter an amount.').first()).toBeVisible();

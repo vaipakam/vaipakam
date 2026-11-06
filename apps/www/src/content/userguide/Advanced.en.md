@@ -2502,7 +2502,7 @@ The opt-in is `setOfferCreatorFullTariff(offerId, true, maxCStar, allowDowngrade
 
 ### Lend: How It Works
 
-Lend takes a borrow request (`offerType` 1) of an ERC-20 against ERC-20 collateral directly, with `acceptOffer(offerId, terms, signature)` sent by the lender. In one transaction the principal is pulled from the lender's wallet, under an allowance to the Diamond, into the lender's vault; the borrower receives it less the initiation fee; the collateral already in the borrower's vault becomes the loan's collateral; and `LoanInitiated` is emitted, with a lender and a borrower position NFT. A lending offer (`offerType` 0) is posted from the same page; NFT legs and a lending offer's Advanced options follow in later updates.
+Lend takes a borrow request (`offerType` 1) of an ERC-20 against ERC-20 collateral directly, with `acceptOffer(offerId, terms, signature)` sent by the lender. In one transaction the principal is pulled from the lender's wallet, under an allowance to the Diamond, into the lender's vault; the borrower receives it less the initiation fee; the collateral already in the borrower's vault becomes the loan's collateral; and `LoanInitiated` is emitted, with a lender and a borrower position NFT. A lending offer (`offerType` 0) is posted from the same page; NFT legs follow in a later update.
 
 <a id="lend-offers"></a>
 
@@ -2538,13 +2538,25 @@ A lending offer is `createOffer` with `offerType` 0, ERC-20 on both legs, sent f
 
 ### Lend: The Offer's Terms
 
-Without parts a lending offer is single-value: `amount` = `amountMax`, `interestRateBps` = `interestRateBpsMax`, `collateralAmount` = `collateralAmountMax` (the one collateral a borrower must lock), `fillMode` 0 unless Advanced sets another (next section), `periodicInterestCadence` 0, `allowsPrepayListing` and `allowsParallelSale` false, `refinanceTargetLoanId` 0, `creatorRiskAndTermsConsent` true, and no Full tariff. Amounts are parsed into base units exactly and the rate is at most 10,000 bps. `durationDays` is capped by the configured maximum read from `getProtocolConfigBundle`. `expiresAt` is 0 (open until cancelled) or a time fixed from the latest block when the review opens, at most `MAX_OFFER_EXPIRY_HORIZON` (365 days) ahead. `useFullTermInterest` defaults to true and `allowsPartialRepay` to false.
+Without parts a lending offer is single-value: `amount` = `amountMax`, `interestRateBps` = `interestRateBpsMax`, `collateralAmount` = `collateralAmountMax` (the one collateral a borrower must lock), `fillMode` 0 unless Advanced sets another (next section), `periodicInterestCadence` 0 unless Advanced sets a schedule, `allowsPrepayListing` and `allowsParallelSale` false, `refinanceTargetLoanId` 0, `creatorRiskAndTermsConsent` true, and no Full tariff unless Advanced chooses it. Amounts are parsed into base units exactly and the rate is at most 10,000 bps. `durationDays` is capped by the configured maximum read from `getProtocolConfigBundle`. `expiresAt` is 0 (open until cancelled) or a time fixed from the latest block when the review opens, at most `MAX_OFFER_EXPIRY_HORIZON` (365 days) ahead. `useFullTermInterest` defaults to true and `allowsPartialRepay` to false.
 
 <a id="lend-offer-parts"></a>
 
 ### Lend: An Offer in Parts
 
 Parts send `amount` (the smallest part one match may lend) below `amountMax` (the whole amount, which `createOffer` pulls into the vault); `collateralAmount` = `collateralAmountMax` stays the one requirement, stated at `amountMax` (`LenderCollateralRangeNotAllowed` otherwise), and `interestRateBps` = `interestRateBpsMax`. A direct `acceptOffer` of a lending offer lends `amountMax` against `collateralAmount`, and only while `amountFilled` is 0 (`OfferPartiallyFilled` after a match). While `getPartialFillEnabled` is true, `matchOffers` lends the midpoint of the amount overlap, at least `amount`, at the midpoint of the rate overlap, against at least `collateralAmount × matchAmount ÷ amountMax` (rounded down; a borrower's collateral range can raise it). When `amountMax − amountFilled` falls below `amount`, the remainder is withdrawn to the lender's wallet and the offer closes (`OfferClosed`, reason `Dust` or `FullyFilled`). `cancelOffer` on a partly filled offer skips the cooldown and returns `amountMax − amountFilled`. `fillMode` is 0, 1 or 2 as on a request: AON requires `amount` = `amountMax`, IOC requires an expiry, and it cannot change after posting. With both legs liquid, `createOffer` refuses a `collateralAmount` below the floor at `amountMax` with `MinCollateralBelowFloor(provided, floor)`, whose floor the review shows. One loan-to-value is shown, `calculateLTV` at (`amountMax`, `collateralAmount`): a part carries the same ratio, give or take the rounding.
+
+<a id="lend-offer-schedule"></a>
+
+### Lend: An Offer's Interest Schedule
+
+A lending offer's `periodicInterestCadence` follows the request's rule (above), with `previewCadenceAdmission` valued at the offer's `amount`: its smallest part, or the whole amount without parts. `createOffer` admits it there through `requireCadenceAdmitted`, and each loan's origination checks its own principal again (`requireOriginationCadenceAdmitted`). The review states one period's interest at `amountMax` (a direct take) and, with parts, at `amount`. A missed period can be settled by anyone through `settlePeriodicInterest` after its grace: collateral is sold to pay the lender that period's interest, and the loan stays open.
+
+<a id="lend-offer-tariff"></a>
+
+### Lend: The Full Fee Tariff on an Offer
+
+The lender's opt-in is the same `setOfferCreatorFullTariff(offerId, true, maxCStar, allowDowngrade)`, sent after `createOffer`. It is refused with `OfferAlreadyAccepted` once the offer is taken in full or closed; a partly matched offer still takes it, for its later loans. The quote is `quoteCStar` at `amount` and `amountMax`, and the ceiling defaults to the quote at `amountMax`. Each loan is checked against `maxCStar` on its own, priced at its principal, under the same conditions as a request (`FeeEntitlementDisabled`, `FeeEntitlementFullOptInFailed`, `FeeEntitlementTariffAboveAuth`, or a downgrade where allowed); the lender's check uses the vault's live free VPFI. A charged tariff stamps the loan's `lenderMode` as Full, and every lender yield-fee settlement then adds `FULL_MODE_FEE_DISCOUNT_BONUS_BPS` (1000) to the position holder's discount on the protocol's share, capped at `MAX_FEE_DISCOUNT_BPS` (5000), with or without the hold-discount consent. An extension in place (`repriceFeeEntitlementOnExtension`) sets the stamp to None for the new term.
 
 <a id="lend-offer-review"></a>
 

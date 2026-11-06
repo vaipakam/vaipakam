@@ -2125,7 +2125,7 @@ Basic は単一値のリクエストを出します。`amount` = `amountMax`、`
 
 ### Lend: 仕組み
 
-Lend は、ERC-20 担保に対する ERC-20 の借入リクエスト（`offerType` 1）を、貸し手が送る `acceptOffer(offerId, terms, signature)` で直接受けます。1回のトランザクションで、元本は Diamond への承認のもとで貸し手のウォレットから貸し手のボールトへ引き出され、借り手は組成手数料を差し引いた額を受け取り、借り手のボールトにすでにある担保がローンの担保となり、`LoanInitiated` が発行されて、貸し手と借り手にそれぞれポジション NFT が渡ります。貸出オファー（`offerType` 0）は同じページから掲載します。NFT の側と貸出オファーの高度なオプションは今後のアップデートで追加されます。
+Lend は、ERC-20 担保に対する ERC-20 の借入リクエスト（`offerType` 1）を、貸し手が送る `acceptOffer(offerId, terms, signature)` で直接受けます。1回のトランザクションで、元本は Diamond への承認のもとで貸し手のウォレットから貸し手のボールトへ引き出され、借り手は組成手数料を差し引いた額を受け取り、借り手のボールトにすでにある担保がローンの担保となり、`LoanInitiated` が発行されて、貸し手と借り手にそれぞれポジション NFT が渡ります。貸出オファー（`offerType` 0）は同じページから掲載します。NFT の側は今後のアップデートで追加されます。
 
 <a id="lend-offers"></a>
 
@@ -2161,13 +2161,25 @@ Lend は、ERC-20 担保に対する ERC-20 の借入リクエスト（`offerTyp
 
 ### Lend: オファーの条件
 
-パートがない貸出オファーは単一値です。`amount` = `amountMax`、`interestRateBps` = `interestRateBpsMax`、`collateralAmount` = `collateralAmountMax`（借り手がロックすべき唯一の担保額）、`fillMode` 0（Advanced で別の方式を指定しない場合。次の節を参照）、`periodicInterestCadence` 0、`allowsPrepayListing` と `allowsParallelSale` は false、`refinanceTargetLoanId` 0、`creatorRiskAndTermsConsent` は true で、Full タリフは設定しません。金額は基本単位に正確に解析され、金利は最大 10,000 bps です。`durationDays` は `getProtocolConfigBundle` から読む設定上の最大値で上限が決まります。`expiresAt` は 0（キャンセルまで有効）か、確認画面を開いた時点の最新ブロックから決めた時刻で、最長 `MAX_OFFER_EXPIRY_HORIZON`（365日）先までです。`useFullTermInterest` の既定は true、`allowsPartialRepay` の既定は false です。
+パートがない貸出オファーは単一値です。`amount` = `amountMax`、`interestRateBps` = `interestRateBpsMax`、`collateralAmount` = `collateralAmountMax`（借り手がロックすべき唯一の担保額）、`fillMode` 0（Advanced で別の方式を指定しない場合。次の節を参照）、`periodicInterestCadence` 0（Advanced でスケジュールを指定しない場合）、`allowsPrepayListing` と `allowsParallelSale` は false、`refinanceTargetLoanId` 0、`creatorRiskAndTermsConsent` は true で、Advanced で選ばない限り Full タリフは設定しません。金額は基本単位に正確に解析され、金利は最大 10,000 bps です。`durationDays` は `getProtocolConfigBundle` から読む設定上の最大値で上限が決まります。`expiresAt` は 0（キャンセルまで有効）か、確認画面を開いた時点の最新ブロックから決めた時刻で、最長 `MAX_OFFER_EXPIRY_HORIZON`（365日）先までです。`useFullTermInterest` の既定は true、`allowsPartialRepay` の既定は false です。
 
 <a id="lend-offer-parts"></a>
 
 ### Lend: パートに分けて貸すオファー
 
 パートでは `amount`（1回のマッチで貸せる最小パート）を `amountMax`（全額。`createOffer` がボールトに引き込む）より小さく送ります。`collateralAmount` = `collateralAmountMax` は `amountMax` に対する唯一の要件のままで（そうでなければ `LenderCollateralRangeNotAllowed`）、`interestRateBps` = `interestRateBpsMax` です。貸出オファーへの直接の `acceptOffer` は `collateralAmount` に対して `amountMax` を貸し、それができるのは `amountFilled` が 0 の間だけです（マッチ後は `OfferPartiallyFilled`）。`getPartialFillEnabled` が true の間、`matchOffers` は金額の重なりの中点（最低 `amount`）を、金利の重なりの中点で、少なくとも `collateralAmount × matchAmount ÷ amountMax`（切り捨て。借り手の担保レンジで増えることがあります）に対して貸します。`amountMax − amountFilled` が `amount` を下回ると、残額は貸し手のウォレットに引き出され、オファーは閉じます（`OfferClosed`、理由 `Dust` または `FullyFilled`）。一部約定したオファーへの `cancelOffer` はクールダウンを省き、`amountMax − amountFilled` を返します。`fillMode` はリクエストと同じく 0、1、2 で、AON は `amount` = `amountMax`、IOC は期限を要し、掲載後は変わりません。両方のレッグが流動的なとき、`createOffer` は `amountMax` での下限を下回る `collateralAmount` を `MinCollateralBelowFloor(provided, floor)` で拒否し、確認画面はその下限を示します。表示される LTV は (`amountMax`, `collateralAmount`) での `calculateLTV` ひとつで、パートも端数を除けば同じ比率です。
+
+<a id="lend-offer-schedule"></a>
+
+### Lend: オファーの利息の支払いスケジュール
+
+貸出オファーの `periodicInterestCadence` はリクエストのルール（上記）に従い、`previewCadenceAdmission` はオファーの `amount`、つまり最小パート（パートがなければ全額）で評価されます。`createOffer` はそこで `requireCadenceAdmitted` によって認め、各ローンの組成時には自身の元本で改めて確認します（`requireOriginationCadenceAdmitted`）。確認画面は1期分の利息を `amountMax`（直接の引き受け）で、パートがあれば `amount` でも示します。支払われなかった期は猶予期間の後、誰でも `settlePeriodicInterest` で精算できます。担保を売ってその期の利息を貸し手に支払い、ローンは続きます。
+
+<a id="lend-offer-tariff"></a>
+
+### Lend: オファーのフル手数料タリフ
+
+貸し手のオプトインも同じ `setOfferCreatorFullTariff(offerId, true, maxCStar, allowDowngrade)` で、`createOffer` の後に送ります。オファーが全額引き受けられるか閉じると `OfferAlreadyAccepted` で拒否されます。一部がマッチしたオファーはまだ受け付け、以後のローンに適用されます。見積もりは `amount` と `amountMax` での `quoteCStar` で、上限の既定値は `amountMax` での見積もりです。各ローンは元本で価格付けされ、個別に `maxCStar` と照合され、条件はリクエストと同じです（`FeeEntitlementDisabled`、`FeeEntitlementFullOptInFailed`、`FeeEntitlementTariffAboveAuth`、または許可されている場合の格下げ）。貸し手の確認には保管庫の現在の空き VPFI を使います。タリフが取られるとローンの `lenderMode` が Full になり、以後の貸し手の利回り手数料の精算ごとに、プロトコルの取り分に対するポジション保有者の割引に `FULL_MODE_FEE_DISCOUNT_BONUS_BPS`（1000）が加わります。上限は `MAX_FEE_DISCOUNT_BPS`（5000）で、保有割引の同意の有無は問いません。その場での延長（`repriceFeeEntitlementOnExtension`）は、新しい期間についてこの記録を None にします。
 
 <a id="lend-offer-review"></a>
 

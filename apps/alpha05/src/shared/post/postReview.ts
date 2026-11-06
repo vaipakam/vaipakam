@@ -504,7 +504,7 @@ export function postBlockers(r: PostReview, meta: TokenMetaMap | null, copy: Pic
     out.push(copy.format('request.blockSchedule', { reason: cadenceRefusalText(r.verdict.schedule, unit || copy.text('home.exposureUnit'), copy) }));
   else if (r.verdict.kind === 'refused' && lack.kind === 'none') out.push(copy.format(k.blockRefused, { reason: r.verdict.reason }));
   if (r.verdict.kind === 'unreadable') out.push(copy.format(k.blockUnread, { reason: r.verdict.reason }));
-  out.push(...tariffBlockers(r.tariff, copy));
+  out.push(...tariffBlockers(r.tariff, copy, r.draft.side));
   return out;
 }
 

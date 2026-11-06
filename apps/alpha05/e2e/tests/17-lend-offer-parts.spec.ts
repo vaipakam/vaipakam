@@ -50,8 +50,6 @@ test('a lender posts an offer in parts: the whole amount locked, the smallest pa
     await page.getByTestId('lend-offer-open').click();
     await expect(page.getByTestId('request-duration')).toContainText('30 days', { timeout: 60_000 });
 
-    // The schedule and the tariff are still to come, and Advanced says so.
-    await expect(page.getByTestId('lend-offer-advanced-later')).toContainText('An interest schedule and the fee tariff for offers come in a later update.');
     await page.getByTestId('request-amount').fill('0.2');
     await page.getByTestId('request-rate').fill('6');
     await page.getByTestId('request-range').check();
