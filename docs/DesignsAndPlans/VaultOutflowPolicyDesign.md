@@ -2,7 +2,7 @@
 
 Status: **design for owner review**. The owner's decisions of 2026-11-05/06
 are recorded on #3205 and repeated where they apply. Choices they did not
-settle are marked **Default**. The five questions in §8 need an answer
+settle are marked **Default**. Four questions in §8 still need an answer (the first is decided)
 before code starts. This builds on [#3204's central vault code
 design](VaultCentralImplementationDesign.md) and ships after it.
 
@@ -116,9 +116,9 @@ asks, without the indexer subscribing to every vault address.
 
 | Class | Layer 1 (Diamond: intent) | Layer 2 (vault: independent) |
 | --- | --- | --- |
-| **Owner** | Recipient is the owner's wallet or, with protected mode on, an allowlisted address after its delay. Version and pause rules apply. | `to == owner` (the owner wallet is recorded in the vault at creation), or `to` is on the vault's **own** allowlist with its delay elapsed. **And** the amount is at most the vault's free balance of that asset: its balance less the sum of its own open liens on it (§3.7), so an owner outflow can never take what a lien still holds |
+| **Owner** | Recipient is the owner's wallet or, with protected mode on, an allowlisted address after its delay. Version and pause rules apply. | `to == owner`, where `owner` is the vault's own record of its owner wallet (set at creation, changed only as §3.7 allows), or `to` is on the vault's **own** allowlist with its delay elapsed. **And** the amount is at most the vault's free balance of that asset: its balance less the sum of its own open liens on it (§3.7), so an owner outflow can never take what a lien still holds |
 | **Counterparty** | `to` is the vault of THAT loan's other party (or the current holder of that position). The amount is drawn from that loan's lien and bounded by its claim records | `to` is a genuine Vaipakam vault (§3.4). The amount is at most the open lien this vault recorded for `ref`, and that lien is reduced by it |
-| **Treasury** | `to == s.treasury` | `to ==` the treasury address the registry holds (§3.6), **and** the amount is drawn from the lien for `ref` and its fee budget (§3.7). A vault with no open lien for `ref` pays the treasury nothing |
+| **Treasury** | `to == s.treasury` | `to ==` the treasury address the registry holds (§3.6), **and** the amount is drawn either from the lien for `ref` and its fee budget, or from free balance under the owner's signed **fee authorization** for `ref` (§3.7). Without one of those, the vault pays the treasury nothing |
 | **Swap adapter / order taker** | A registered adapter for this action, against a lien | `to` is on the registry. The amount is at most the lien for `ref` |
 | **Marketplace conduit** | A recorded listing for `ref`, through a registered conduit | Grant only (§3.5), per amount or token id, and only to a registry conduit |
 | **Listing escrow** (ERC-1155) | A recorded listing for `ref` | `to` is an escrow this vault created for `ref` (known code hash), at most the lien for `ref`. The escrow alone holds the operator approval (§3.5) |
@@ -158,17 +158,20 @@ allowance moves nothing.
 **2. A grant reserves, and cleanup reconciles.** A grant never exceeds the
 open lien for `ref`. It does not debit the lien when it is made. It
 records a **reservation** in the vault's own storage: `ref`, asset, token
-id, spender, granted amount and the vault's balance of that asset at grant
-time. While a reservation is open:
+id, spender and granted amount. While a reservation is open:
 - the lien still counts in full, so the owner class's free-balance check
   (§3.3) cannot release it;
 - the vault refuses every other outflow and grant.
 
 Cleanup reconciles it, from the post-hook or from an open entry any caller
 may use, because it can only reduce what the vault has exposed. Cleanup
-measures what actually left (the balance at grant time minus the balance
-now, capped at the grant), debits the lien by exactly that, and closes the
-reservation. A grant that was never used leaves the lien whole. Clearing
+measures what the **spender consumed**, from the approval itself rather than
+from the vault's balance, so tokens sent into the vault in the meantime
+cannot mask spending or break the arithmetic: for ERC-20, the granted
+amount less the allowance that remains; for ERC-721, the whole token if the
+vault no longer owns it, else nothing. It debits the lien by exactly that
+and closes the reservation. A grant that was never used leaves the lien
+whole. The reservation no longer records a balance snapshot. Clearing
 the approval is per asset type:
 - ERC-20: set the allowance to zero;
 - ERC-721: if the vault still owns the token, clear its approval; if it no
@@ -229,6 +232,21 @@ two fails closed: the vault refuses.
   owner-authorized terms (§8 Q1). So no protocol class can reach funds no
   position committed, and the owner class can reach only what no lien
   holds.
+- **Fee authorizations.** Some fees are paid from free balance, not from a
+  lien: a lender who opts to pay the yield fee in VPFI pays it from VPFI
+  held freely. For those the owner's signature (§8 Q1) covers a fee
+  authorization: the asset, the `ref` and a cap. The vault records it and
+  debits it per payment, so the treasury class can draw from free balance
+  only within it.
+- **The owner record, and replacing it.** The vault records its owner wallet
+  and, under protected mode, its secondary keys, both from owner-signed
+  changes. A protected account's primary replacement (a majority of
+  secondaries, after the delay) is checked by the vault itself: it records
+  the proposal with its time, accepts the finalization only with a majority
+  of the recorded secondaries' signatures and after the delay, and then
+  sets the new owner wallet, which is both the payout destination and the
+  signer of later authorizations. The old wallet stops passing either
+  check at once.
 - **Release.** A close-out releases what is left of a lien to the owner's
   free balance. The vault cannot verify on its own that a loan was settled:
   the lender's repayment lands in another vault or wallet. So a release is
@@ -243,8 +261,8 @@ two fails closed: the vault refuses.
 
 Both are written through the Diamond, the only caller a vault accepts. So
 on its own, "the vault recorded it" would let a compromised Diamond record
-a fake lien or allowlist entry. **What makes the record independent is §8
-Q1:** the owner's own authorization, checked by the vault.
+a fake lien or allowlist entry. **What makes the record independent is the
+owner's own signature, checked by the vault** (§8 Q1, decided).
 
 ### 3.8 What stays as it is
 
@@ -298,7 +316,14 @@ opens by itself.
 - A grant with no fill and no post-hook: the next outflow is refused; the
   open cleanup restores the whole lien; an owner withdrawal then still
   cannot take the liened amount.
-- A partly used grant: cleanup debits the lien by exactly what left.
+- A partly used grant: cleanup debits the lien by exactly what was consumed.
+- An unused grant, then a direct donation of the same token, then the
+  open cleanup: it succeeds and leaves the lien whole.
+- A yield fee paid from free VPFI under a signed fee authorization passes;
+  the same payment without one, or over its cap, reverts at layer 2.
+- A protected primary replacement, then a queued withdrawal to the new
+  wallet passes; a payout to the old wallet reverts at layer 2; a
+  replacement finalized early or without the secondaries' majority reverts.
 - A full swap-to-repay fill, from the signature check through the
   post-hook, with the signature valid before the window opens.
 - ERC-1155, with two token ids under separate liens: a listing of one id
@@ -325,8 +350,9 @@ opens by itself.
 
 - **Funnelling through the attacker's own vault.** A destination check
   cannot tell an attacker's genuine vault from a counterparty's. The lien
-  binding limits this to one recorded lien. §8 Q1 decides whether a
-  compromised Diamond can create such a lien at all.
+  binding limits this to one recorded lien, and with the owner's signature
+  (§8 Q1) a compromised Diamond cannot create such a lien at all; only the
+  attacker's own signed positions are reachable.
 - **A bad price through a legitimate route.** Oracle floors, slippage caps,
   #3227's two-source rule and the #3206 rate limit cover it.
 - **Diamond-transient legs.** Once value is in the Diamond for a swap or a
@@ -347,18 +373,14 @@ opens by itself.
 
 ## 8. Questions for the owner
 
-1. **What makes a lien or allowlist entry the owner's?**
-   - **A (recommended):** the vault verifies the owner's EIP-712 signature
-     (or ERC-1271, for contract wallets) over the commitment: the offer or
-     accept terms, or the allowlist change. The app already signs the
-     accept terms; posting would add one signature. A compromised Diamond
-     then cannot open a lien or add an address at all.
-   - **B:** the vault accepts a record only in a transaction the owner sent
-     (`tx.origin == owner`). This adds no signature, but it breaks for Safe
-     and other contract wallets, and a malicious facet could still add a
-     record inside any transaction the owner sends.
-   - **C:** trust the Diamond for records (layer 2 checks only code identity
-     and amounts). This is the weakest option.
+1. **What makes a lien or allowlist entry the owner's?** **Decided
+   (owner, 2026-11-06): the owner's signature.** The vault verifies the
+   owner's EIP-712 signature (or ERC-1271, for contract wallets) over the
+   commitment: the offer or accept terms, an allowlist change, a fee
+   authorization or a pin. A compromised Diamond then cannot open a lien or
+   add an address at all. The options not taken were a `tx.origin` check
+   (breaks contract wallets, and a facet could still add records inside an
+   owner's transaction) and trusting the Diamond.
 2. **Where the registry lives.** A separate Timelock-owned contract
    (recommended, 3.6), or immutables in the vault implementation, which
    means a new vault version for every adapter change.

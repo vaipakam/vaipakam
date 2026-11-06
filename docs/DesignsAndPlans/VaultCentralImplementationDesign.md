@@ -111,7 +111,7 @@ Entry points, on `VaultBeacon`:
 | `setCurrentVersion(id)` | The Timelock | `id` must be registered and not revoked. Emits `CurrentVaultVersionSet(old, new)`. |
 | `revokeVersion(id, successorId)` | The Timelock | See 3.3. |
 | `guardianRevokeVersion(id, successorId)` | The Pauser Safe, **only while the Diamond reports paused** | Same effect as the timelock revoke. Can never register code. |
-| `setPin(vault, id)` / `clearPin(vault)` | The Diamond, on the vault manager's request | `id` must be registered and not revoked. The Diamond applies the manager check and, under protected mode, the delay and the lock (below). The beacon additionally verifies the owner's own authorization of the pin change, by the same mechanism #3205 §8 Q1 chooses for liens. |
+| `setPin(vault, id)` / `clearPin(vault)` | The Diamond, on the vault manager's request | `id` must be registered and not revoked. The Diamond applies the manager check and, under protected mode, the delay and the lock (below). The beacon additionally verifies the owner's signature over the pin change (#3205 §8 Q1, decided 2026-11-06), against the owner wallet the vault itself records. |
 
 The Diamond's request entries keep today's rules for who asks:
 
