@@ -65,7 +65,8 @@ could overwrite a version's implementation address directly, with no
 would void #3205's vault-side checks, which exist precisely to bound what a
 facet can do. Keeping the decision's intent (one timelocked pointer that
 reaches every vault) needs the pointer to live where no facet can write it.
-**This is put to the owner** with the rest of this design.
+**Decided (owner, 2026-11-06):** the separate contract, with the three
+tightenings below.
 
 `VaultBeacon` holds the version registry and the pins, and answers **for
 the calling proxy**:
@@ -76,7 +77,18 @@ the calling proxy**:
 
 Its owner is the Timelock. The Diamond has no write path into it except
 the pin entries below, which can only choose among registered, non-revoked
-versions.
+versions. Three properties, decided with it (owner, 2026-11-06):
+- **It is not upgradeable.** A new beacon would be a new deploy, never an
+  in-place change, so nothing can replace the rules it enforces.
+- **It holds its own delay.** Setting the current version and revoking one are
+  two steps, a proposal and then an execution no sooner than
+  `MIN_CODE_DELAY` (a constant, default 3 days, longer than the Timelock's
+  48h) after it. Each step emits an event. A later misconfiguration of the
+  Timelock therefore cannot shorten the window in which owners can see a
+  change coming and pin.
+- **The Pauser Safe can cancel a pending proposal**, and can never propose
+  one or speed one up. Its emergency revoke while paused (below) is the one
+  immediate step, and it can only move vaults to code already registered.
 
 Because the lookup goes to the beacon and not the Diamond, the Diamond's
 fill lock (#1566 slice 3) never sees it, and needs no exception.
@@ -110,8 +122,9 @@ Entry points, on `VaultBeacon`:
 | Call | Who | Rule |
 | --- | --- | --- |
 | `registerVersion(impl)` | The Timelock (owner) | `impl` must have code and report the vault layout identity (a constant the implementation exposes, so a non-vault contract cannot be registered by mistake). Its initializers must be disabled at construction. That cannot be read on-chain, so a test and the deploy script check it. Emits `VaultVersionRegistered(id, impl)`. |
-| `setCurrentVersion(id)` | The Timelock | `id` must be registered and not revoked. Emits `CurrentVaultVersionSet(old, new)`. |
-| `revokeVersion(id, successorId)` | The Timelock | See 3.3. |
+| `proposeCurrentVersion(id)` / `executeCurrentVersion()` | The Timelock proposes; anyone executes after `MIN_CODE_DELAY` | `id` must be registered and not revoked at both steps. Emits `CurrentVaultVersionProposed(id, executableAt)` and then `CurrentVaultVersionSet(old, new)`. |
+| `proposeRevoke(id, successorId)` / `executeRevoke()` | The Timelock proposes; anyone executes after `MIN_CODE_DELAY` | See 3.3. Emits `VaultRevokeProposed` and then `VaultVersionRevoked`. |
+| `cancelProposal()` | The Timelock or the Pauser Safe | Cancels a pending proposal. Emits `VaultCodeProposalCancelled`. |
 | `guardianRevokeVersion(id, successorId)` | The Pauser Safe, **only while the Diamond reports paused** | Same effect as the timelock revoke. Can never register code. |
 | `requestPin(vault, id)` / `requestUnpin(vault)` | The Diamond, on the vault manager's request | `id` must be registered and not revoked. The beacon verifies the owner's signature over the change (vault, target, nonce; #3205 §8 Q1, decided 2026-11-06) against the owner wallet the vault itself records, then **records the request in its own storage** with `executableAt = now + pinDelay[vault]`. Emits `VaultPinRequested`. |
 | `executePin(vault)` | Anyone | Applies the recorded request once `executableAt` has passed and it is not cancelled. With `pinDelay` zero, `requestPin` applies at once. Emits `VaultVersionPinned` or `VaultVersionUnpinned`. |
@@ -225,9 +238,12 @@ puts those checks into every vault at once.
 
 - **Vault page:** the version the vault runs, whether it is pinned and to
   which version, and whether that version is revoked. If a timelock change to
-  the current version or a revoke is scheduled, show what changes and when,
-  read from the Timelock schedule (Q2).
-- **Indexer:** `VaultVersionRegistered`, `CurrentVaultVersionSet`,
+  the current version or a revoke is scheduled or proposed, show what
+  changes and when, read from the Timelock schedule (Q2) and the beacon's
+  own proposal, so an owner who does not want the new code can pin during
+  the wait.
+- **Indexer:** `VaultVersionRegistered`, `CurrentVaultVersionProposed`,
+  `CurrentVaultVersionSet`, `VaultRevokeProposed`, `VaultCodeProposalCancelled`,
   `VaultVersionRevoked`, `VaultVersionPinned` and `VaultVersionUnpinned`.
   These replace the per-vault upgrade events.
 - **Remove:** every "upgrade your vault" prompt, and the #3178 "waits for
@@ -247,8 +263,12 @@ puts those checks into every vault at once.
 
 ## 6. Tests (acceptance)
 
-- One `setCurrentVersion` changes the code every unpinned vault runs,
-  checked by a version marker the implementation reports.
+- One executed current-version proposal changes the code every unpinned
+  vault runs, checked by a version marker the implementation reports.
+- A current-version or revoke proposal cannot execute before
+  `MIN_CODE_DELAY`, whatever delay the Timelock has, and not after a
+  cancel. The Pauser Safe can cancel one but cannot propose or execute
+  early. The beacon has no upgrade path.
 - A pinned vault keeps its version across a current-version change, and
   moves when its version is revoked.
 - The guardian revoke is refused while unpaused, and refused for an

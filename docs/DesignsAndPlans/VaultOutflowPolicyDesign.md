@@ -2,7 +2,7 @@
 
 Status: **design for owner review**. The owner's decisions of 2026-11-05/06
 are recorded on #3205 and repeated where they apply. Choices they did not
-settle are marked **Default**. Five questions in §8 still need an answer (the first is decided)
+settle are marked **Default**. Six questions in §8: Q1 and Q5 are decided, and the others still need an answer
 before code starts. This builds on [#3204's central vault code
 design](VaultCentralImplementationDesign.md) and ships after it.
 
@@ -270,14 +270,13 @@ two fails closed: the vault refuses.
   signer of later authorizations. The old wallet stops passing either
   check at once.
 - **Release.** A close-out releases what is left of a lien to the owner's
-  free balance. The vault cannot verify on its own that a loan was settled:
-  the lender's repayment lands in another vault or wallet. So a release is
-  trusted to the Diamond (layer 1 only), and that is bounded rather than
-  closed. A released lien's assets can leave only by the owner class: to
+  free balance. On repay, preclose and refinance the vault releases only
+  against a receipt the payee vault recorded for the same transaction
+  (§8 Q5, decided). On the listed exceptions a release is trusted to the
+  Diamond (layer 1 only), bounded rather than closed. A released lien's assets can leave only by the owner class: to
   the owner's own wallet, or an allowlisted address after its delay, and
   under the #3206 outflow delay for amounts above its threshold, which
-  gives the pause time to act. §7 states the residual and §8 Q5 asks
-  whether to close it.
+  gives the pause time to act. §7 states the residual.
 - **The allowlist** moves from Diamond storage into the vault, with its own
   delay counter.
 
@@ -364,8 +363,11 @@ opens by itself.
 - Treasury and backstop: a forged payment from a vault with no open lien
   for `ref` reverts, and one that would exceed its budget reverts, with
   layer 1 bypassed.
-- A forged close-out: the released collateral can reach only the owner's
-  own wallet, and above the #3206 threshold only after its delay.
+- A forged close-out: on repay, preclose and refinance, a release with no
+  payee-vault receipt, or one below the recorded principal, reverts at
+  layer 2. On a listed exception, the released collateral can reach only
+  the owner's own wallet, and above the #3206 threshold only after its
+  delay; the release event carries the loan, amount and transaction.
 - While paused:
   - every vault-signed order reads as unsigned;
   - close-outs still complete;
@@ -395,8 +397,8 @@ opens by itself.
   amount, which never exceeds that one lien (§3.5). Cleanup debits the
   lien by what actually left.
 - **Incentive recipients** are checked only by the per-lien budget.
-- **A forged close-out.** A compromised Diamond can release a lien it
-  should not, and the collateral then reaches the borrower's own wallet,
+- **A forged close-out, on the listed exceptions only** (§8 Q5). A
+  compromised Diamond can release a lien it should not, and the collateral then reaches the borrower's own wallet,
   never a third party's. The loss is the lender's, bounded by that one
   lien, and is slowed by the #3206 delay above its threshold. This bites
   where the borrower is the attacker. Who acted is
@@ -422,10 +424,32 @@ opens by itself.
    highest rate each configuration bound allows today, applied to the
    lien. They are read from `ConfigFacet`'s bounds in the build PR and
    stated there.
-5. **Lien release.** Accept the bounded residual above (recommended), or
-   require the counterparty's own authorization for a release (a lender
-   signature, or a receipt the lender's vault records), which adds a step
-   to every repayment.
+5. **Lien release.** **Decided (owner, 2026-11-06): the vault checks the
+   repayment where it can, and the rest is bounded and stated.** A refusal
+   checked by the Diamond would stop bugs but not a compromised Diamond, so
+   where the check binds, the vaults make it:
+   - **Repay, preclose and refinance** pay the lender's due into the lien's
+     recorded payee vault in the same transaction. That vault measures what
+     arrived (balance before and after) and records, in transient storage,
+     "received X for `ref`". The borrower's vault releases the lien only if
+     that receipt exists and X covers at least the principal the signed
+     terms record. A Diamond can fake it only by moving real tokens into
+     the lender's vault, which pays the lender.
+   - **The exceptions**, where the lender is not paid vault to vault at the
+     moment of release, are listed exactly and trusted to the Diamond:
+     liquidation, swap-to-repay and fallback custody (proceeds through an
+     adapter), a payout held as a claim for later, and a sanctioned or
+     parked holder. For these, every release emits one event with the loan,
+     the amount the Diamond says was repaid and the repaying transaction; a
+     watcher alerts on, and pauses for, any release with no matching
+     repayment movement; and the #3206 outflow brake covers collateral
+     leaving a vault right after a release.
+   - The spec states the residual: on the listed exceptions only, a
+     compromised Diamond can release a lien it should not, and the brake
+     and the pause bound how much can then leave.
+
+   **End state:** every release is vault-checked, once every payout goes
+   vault to vault. Filed as a follow-up.
 6. **A plain transfer of a position NFT.** The payee follows a position only
    with the current holder's signed assignment (§3.7). Default: while a
    position has an open lien, its NFT moves only through an entry that
