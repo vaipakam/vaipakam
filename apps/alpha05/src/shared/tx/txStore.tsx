@@ -41,6 +41,7 @@ export interface Submission {
   sources: readonly OwnStateSource[];
   measure: (receipt: TransactionReceipt, at: AnchoredReader) => Promise<readonly LegOutcome[]>;
   unwind?: () => Promise<LegOutcome | null>;
+  release?: () => Promise<LegOutcome | null>;
 }
 
 export interface TxEntry {

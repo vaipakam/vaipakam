@@ -29,9 +29,10 @@ export type TxPhase =
       minedHash: `0x${string}`;
       reason: SupersededReason;
       blockNumber: bigint;
-      /** What the flow's `unwind` put back (or could not), when it had
-       *  something standing; absent when there was nothing to undo. */
-      unwound?: LegOutcome | null;
+      /** What the flow's clean-up put back or took back (or could not),
+       *  one leg per step that had something standing; empty when there
+       *  was nothing to undo. */
+      unwound?: readonly LegOutcome[];
     }
   /** Submitted, but the receipt could not be read (the node timed out or
    *  went away): the transaction may still execute, so the hash is kept and

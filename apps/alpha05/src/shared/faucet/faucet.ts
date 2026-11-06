@@ -5,7 +5,8 @@
  * carries them. Two kinds of test token are offered so priced and unpriced
  * deals are both possible: ones the rig wired to a test price feed and pool,
  * and ones it deliberately left without (that absence is what makes them
- * unpriced), plus rentable test NFTs.
+ * unpriced), plus rentable test NFTs and a multi-token (ERC-1155)
+ * collection, which can be pledged by quantity.
  */
 import { parseAbi, parseEventLogs, zeroAddress, type Log } from 'viem';
 import { getDeployment } from '@vaipakam/contracts/deployments';
@@ -13,9 +14,7 @@ import type { SupportedChain } from '../../chain/chains';
 
 type Hex = `0x${string}`;
 
-export type FaucetAsset =
-  | { key: string; address: Hex; kind: 'erc20'; priced: boolean }
-  | { key: string; address: Hex; kind: 'nft' };
+export type FaucetAsset = { key: string; address: Hex; kind: 'erc20'; priced: boolean } | { key: string; address: Hex; kind: 'nft' } | { key: string; address: Hex; kind: 'multi' };
 
 /** The record's keys, in display order. */
 const ERC20_KEYS: readonly (readonly [key: string, priced: boolean])[] = [
@@ -26,6 +25,12 @@ const ERC20_KEYS: readonly (readonly [key: string, priced: boolean])[] = [
   ['illiquidToken2', false],
 ];
 const NFT_KEYS: readonly string[] = ['rentalNft', 'rentalNft2'];
+/** The multi-token (ERC-1155) collection, minted by quantity. */
+const MULTI_KEYS: readonly string[] = ['multiToken'];
+
+/** How many of a fresh multi-token one mint gives, so a quantity can be
+ *  pledged and some kept. */
+export const MULTI_MINT_UNITS = 10n;
 
 /** Whole units of a test token one mint gives. */
 export const ERC20_MINT_UNITS = 1000n;
@@ -59,6 +64,7 @@ export function mintVerdict(rose: bigint, amount: bigint, logged: boolean): 'don
 }
 
 export const FAUCET_NFT_ABI = parseAbi(['function mint(address to, uint256 tokenId)', 'function ownerOf(uint256 tokenId) view returns (address)']);
+export const FAUCET_MULTI_ABI = parseAbi(['function mint(address to, uint256 id, uint256 amount)', 'function balanceOf(address owner, uint256 id) view returns (uint256)']);
 
 /** The faucet's assets on `chain`, or null when it offers none: a mainnet,
  *  or a testnet whose deployment record publishes no test assets. */
@@ -78,6 +84,10 @@ export function faucetAssets(chain: SupportedChain): FaucetAsset[] | null {
   for (const key of NFT_KEYS) {
     const address = at(key);
     if (address) out.push({ key, address, kind: 'nft' });
+  }
+  for (const key of MULTI_KEYS) {
+    const address = at(key);
+    if (address) out.push({ key, address, kind: 'multi' });
   }
   return out.length > 0 ? out : null;
 }

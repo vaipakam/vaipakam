@@ -25,15 +25,17 @@ import { shortAddress } from '../../../shared/ui/format';
 import { pageHandoff } from '../../../routes/pageMap';
 import { REQUEST_KEY } from './RequestForm';
 import { createdRequest } from './requestOutcome';
-import { erc20Pair, erc721CollateralPair, type RiskNeed } from '../../../shared/risk/riskAccess';
+import { erc20Pair, nftCollateralPair, type RiskNeed } from '../../../shared/risk/riskAccess';
 import { nftApproval } from '../../../shared/tx/nftApproval';
-import { tokenMoved } from '../../../shared/nft/nft';
+import { operatorApproval } from '../../../shared/tx/operatorApproval';
+import { quantityMoved, tokenMoved } from '../../../shared/nft/nft';
 import { assetName } from '../../../shared/reads/tokens';
 import { RiskGate, RiskStepFlow } from '../../../shared/risk/RiskAccessStep';
 import {
   approvalPrompts,
   changedBetween,
   CREATE_ABI,
+  lockedName,
   promptCount,
   readRequestReview,
   requestBlockers,
@@ -93,6 +95,17 @@ export function PostRequest({ draft, chain, own, meta, terms, onEdit, onClose }:
   const approvalLeft = useRef<
     { kind: 'erc20'; token: Hex; prior: bigint; amount: bigint; since: bigint | null } | { kind: 'erc721'; token: Hex; tokenId: bigint; prior: Hex | null; since: bigint } | null
   >(null);
+  /** An ERC-1155 operator approval this flow granted for the request alone
+   *  (NFT-13): taken back on every ending, the request's success included,
+   *  by the tracker's release step. `since` is the block the grant mined in. */
+  const grantLeft = useRef<{ token: Hex; tokenId: bigint; since: bigint } | null>(null);
+  /** The collection of a grant still standing, mirrored for render: the
+   *  receipt-unknown phase names it so the wallet knows what is still open. */
+  const [heldGrant, setHeldGrant] = useState<Hex | null>(null);
+  const holdGrant = (v: { token: Hex; tokenId: bigint; since: bigint } | null) => {
+    grantLeft.current = v;
+    setHeldGrant(v ? v.token : null);
+  };
 
   const amt = (asset: Hex, v: bigint) => tokenAmount(v, asset, meta, format);
   const { readAllowance, allowanceIo, approveExactly, putBack } = approvalFlow({ own, config, chainId: chain.chainId, diamond, copy, amount: amt, setStep });
@@ -104,6 +117,17 @@ export function PostRequest({ draft, chain, own, meta, terms, onEdit, onClose }:
       tokenId,
     );
 
+  /** The collection-wide approval an ERC-1155 collateral needs. Its revoke
+   *  prompt is named as the last of the flow's numbered steps. */
+  const operator = (asset: Hex, tokenId: bigint, say?: (what: string) => void) =>
+    operatorApproval(
+      { own, config, chainId: chain.chainId, diamond, copy, collection: assetName(asset, meta), setStep: (what) => (what === null || !say ? setStep(what) : say(what)) },
+      asset,
+      tokenId,
+    );
+  /** The flow's numbered prompts, kept across the tracker's release step. */
+  const counter = useRef<{ n: number; total: number }>({ n: 0, total: 0 });
+
   const tx = useTrackedTx({
     key: REQUEST_KEY,
     chainId: chain.chainId,
@@ -112,20 +136,22 @@ export function PostRequest({ draft, chain, own, meta, terms, onEdit, onClose }:
     send: async () => {
       if (!review) throw new Error('no request under review');
       const r = review;
-      const total = promptCount(r);
-      let n = 0;
-      const say = (what: string) => setStep(format('accept.stepOf', { n: String(++n), total: String(total), what }));
+      counter.current = { n: 0, total: promptCount(r) };
+      const say = (what: string) => setStep(format('accept.stepOf', { n: String(++counter.current.n), total: String(counter.current.total), what }));
       const collateral = r.draft.pair.collateral;
       const lock = r.draft.parsed.collateral;
       const h = r.holding;
       approvalLeft.current = null;
+      holdGrant(null);
 
       // 1. The approval, when needed: exactly the collateral for an ERC-20,
       //    judged by the allowance each step leaves (shared/tx/approval), or
       //    the one token for an ERC-721, judged by the approval it reads
-      //    after (shared/tx/nftApproval). Each is read again first, so a
-      //    change since the review stops before any prompt, and a stop puts
-      //    back exactly what the wallet had right before.
+      //    after (shared/tx/nftApproval), or, for an ERC-1155 token, the
+      //    operator approval for this request alone, taken back on every
+      //    ending (shared/tx/operatorApproval). Each is read again first, so
+      //    a change since the review stops before any prompt, and a stop
+      //    puts back exactly what the wallet had right before.
       let putItBack: (() => Promise<{ sentence: string }>) | null = null;
       if (h.kind === 'erc721') {
         const ap = tokenApproval(collateral, h.tokenId);
@@ -137,6 +163,19 @@ export function PostRequest({ draft, chain, own, meta, terms, onEdit, onClose }:
           const since = await ap.approve(now.approved);
           approvalLeft.current = { kind: 'erc721', token: collateral, tokenId: h.tokenId, prior: now.approved, since };
           putItBack = () => ap.putBack(now.approved, since);
+        }
+      } else if (h.kind === 'erc1155') {
+        const ap = operator(collateral, h.tokenId, say);
+        const now = await ap.read();
+        if ((now.approvedForAll ? 0 : 2) !== approvalPrompts(r)) throw allowanceMoved(copy);
+        if (!now.approvedForAll) {
+          say(format('operatorApproval.step', { collection: assetName(collateral, meta) }));
+          const since = await ap.grant();
+          holdGrant({ token: collateral, tokenId: h.tokenId, since });
+          putItBack = () => {
+            holdGrant(null);
+            return ap.revoke(since);
+          };
         }
       } else {
         const io = allowanceIo(collateral, (amount, i, of) => say(of === 2 && i === 0 ? text('approval.stepZero') : format('approval.step', { amount: amt(collateral, amount) })));
@@ -184,6 +223,15 @@ export function PostRequest({ draft, chain, own, meta, terms, onEdit, onClose }:
       const label = format('approval.legBack', { amount: amt(left.token, left.prior) });
       return after.ok ? { status: 'done', label } : { status: 'not-done', label, reason: after.sentence };
     },
+    release: async () => {
+      const left = grantLeft.current;
+      holdGrant(null);
+      if (!left) return null;
+      const say = (what: string) => setStep(format('accept.stepOf', { n: String(++counter.current.n), total: String(counter.current.total), what }));
+      const after = await operator(left.token, left.tokenId, say).revoke(left.since);
+      const label = format('operatorApproval.leg', { collection: assetName(left.token, meta) });
+      return after.ok ? { status: 'done', label } : { status: 'not-done', label, reason: after.sentence };
+    },
     measure: async (receipt, at) => {
       if (!review) return [];
       const r = review;
@@ -198,8 +246,8 @@ export function PostRequest({ draft, chain, own, meta, terms, onEdit, onClose }:
       const collateral = r.draft.pair.collateral;
       const lock = r.draft.parsed.collateral;
       const h = r.holding;
-      const tokenName = h.kind === 'erc721' ? format('asset.nft', { asset: assetName(collateral, meta), id: String(h.tokenId) }) : '';
-      const lockLabel = format('request.legLocked', { amount: h.kind === 'erc721' ? tokenName : amt(collateral, lock) });
+      const tokenName = lockedName(h, collateral, meta, format);
+      const lockLabel = format('request.legLocked', { amount: h.kind === 'erc20' ? amt(collateral, lock) : tokenName });
       let vault: Hex | null = null;
       try {
         vault = await at.read((c, b) => readVault(c, diamond, account, b));
@@ -214,6 +262,15 @@ export function PostRequest({ draft, chain, own, meta, terms, onEdit, onClose }:
           tokenMoved(receipt.logs, collateral, h.tokenId, account, vault)
             ? { status: 'done', label: lockLabel }
             : { status: 'not-done', label: lockLabel, reason: format('request.tokenNotLocked', { token: tokenName }) },
+        );
+      } else if (h.kind === 'erc1155') {
+        // The token's own TransferSingle / TransferBatch logs, from this
+        // wallet to the vault, for exactly the quantity.
+        const units = quantityMoved(receipt.logs, collateral, h.tokenId, account, vault);
+        legs.push(
+          units === h.quantity
+            ? { status: 'done', label: lockLabel }
+            : { status: 'not-done', label: lockLabel, reason: format('request.unitsNotLocked', { moved: String(units), expected: String(h.quantity), id: String(h.tokenId) }) },
         );
       } else {
         const locked = moved(receipt.logs, collateral, account, vault);
@@ -342,13 +399,13 @@ export function PostRequest({ draft, chain, own, meta, terms, onEdit, onClose }:
   const symbol = (a: Hex) => meta?.[a.toLowerCase()]?.symbol ?? shortAddress(a);
   const leg = review?.draft.pair.leg ?? null;
   const riskPair = review
-    ? leg?.kind === 'erc721'
-      ? erc721CollateralPair(review.draft.pair.lending, review.draft.pair.collateral, leg.tokenId)
+    ? leg && leg.kind !== 'erc20'
+      ? nftCollateralPair(review.draft.pair.lending, review.draft.pair.collateral, leg.kind === 'erc721' ? 1 : 2, leg.tokenId)
       : erc20Pair(review.draft.pair.lending, review.draft.pair.collateral)
     : null;
   const collLabel = review
-    ? leg?.kind === 'erc721'
-      ? format('asset.nft', { asset: symbol(review.draft.pair.collateral), id: String(leg.tokenId) })
+    ? leg && leg.kind !== 'erc20'
+      ? format('asset.nftToken', { asset: symbol(review.draft.pair.collateral), id: String(leg.tokenId) })
       : symbol(review.draft.pair.collateral)
     : '';
   const pairLabel = review ? format('risk.pairName', { lend: symbol(review.draft.pair.lending), coll: collLabel }) : '';
@@ -453,6 +510,7 @@ export function PostRequest({ draft, chain, own, meta, terms, onEdit, onClose }:
           }
           gate={gate}
           signingNote={step}
+          heldNote={heldGrant ? format('operatorApproval.pendingNote', { collection: assetName(heldGrant, meta) }) : null}
           onClose={close}
         />
       )}

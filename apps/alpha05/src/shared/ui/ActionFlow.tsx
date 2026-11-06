@@ -74,8 +74,14 @@ export interface ActionFlowProps {
    *  receipt; confirming is withheld until `ready`. */
   gate?: { node: ReactNode; ready: boolean };
   /** While the wallet is asked, which of several prompts is open ("Wallet
-   *  step 2 of 3: …"); the generic line otherwise. */
+   *  step 2 of 3: …"); the generic line otherwise. Also shown once the
+   *  transaction has mined, while a clean-up step asks the wallet again
+   *  (taking back an approval granted for the call alone). */
   signingNote?: string | null;
+  /** What the flow still holds granted while the transaction's outcome is
+   *  unknown (an approval taken back only once it settles), stated with
+   *  the unknown receipt; null when nothing is held. */
+  heldNote?: string | null;
 }
 
 /**
@@ -86,7 +92,7 @@ export interface ActionFlowProps {
  * retried silently: a receipt that cannot be read keeps its hash on screen
  * and offers "Check again", and nothing new is offered until it is resolved.
  */
-export function ActionFlow({ tx, identity, reviewedFor, receipt, recheck, describeAsset, explorer, next, after, onClose, gate, signingNote }: ActionFlowProps) {
+export function ActionFlow({ tx, identity, reviewedFor, receipt, recheck, describeAsset, explorer, next, after, onClose, gate, signingNote, heldNote }: ActionFlowProps) {
   const { text, format } = useCopy();
   const nowMs = useNow();
   const [checking, setChecking] = useState(false);
@@ -249,6 +255,12 @@ export function ActionFlow({ tx, identity, reviewedFor, receipt, recheck, descri
             <Icon meaning="pending" />
             {format('flow.mined', { block: phase.blockNumber.toString() })} {txLink(phase.hash)}
           </p>
+          {signingNote && (
+            <p className="tier-b with-icon" role="status">
+              <Icon meaning="pending" />
+              {signingNote}
+            </p>
+          )}
         </div>
       );
     case 'measured':
@@ -274,6 +286,11 @@ export function ActionFlow({ tx, identity, reviewedFor, receipt, recheck, descri
           <Notice tone="warn" tier="A">
             {format('flow.receiptUnknown', { reason: phase.message })} {txLink(phase.hash)}
           </Notice>
+          {heldNote && (
+            <Notice tone="warn" tier="A">
+              {heldNote}
+            </Notice>
+          )}
           <p className="actions">
             <button type="button" className="btn btn-primary" onClick={() => void tx.resume()}>
               {text('flow.checkAgain')}
@@ -291,11 +308,11 @@ export function ActionFlow({ tx, identity, reviewedFor, receipt, recheck, descri
           <Notice tone="warn" tier="A">
             {text(phase.reason === 'cancelled' ? 'flow.cancelled' : 'flow.replaced')} {txLink(phase.minedHash)}
           </Notice>
-          {phase.unwound && (
-            <Notice tone={phase.unwound.status === 'done' ? 'ok' : 'warn'} tier="A">
-              {phase.unwound.status === 'done' ? phase.unwound.label : `${phase.unwound.label}: ${phase.unwound.reason}`}
+          {(phase.unwound ?? []).map((leg) => (
+            <Notice key={leg.label} tone={leg.status === 'done' ? 'ok' : 'warn'} tier="A">
+              {leg.status === 'done' ? leg.label : `${leg.label}: ${leg.reason}`}
             </Notice>
-          )}
+          ))}
           <p className="actions">
             <button type="button" className="btn" onClick={close}>
               {text('flow.close')}

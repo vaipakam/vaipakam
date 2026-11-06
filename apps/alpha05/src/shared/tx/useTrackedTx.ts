@@ -26,6 +26,7 @@ import type { ReplacementReason, TransactionReceipt } from 'viem';
 import { announceOwnChange } from '../reads/signals';
 import { useCopy } from '../copy/useCopy';
 import { refusalFromError } from '../eligibility/refusal';
+import { cleanUpAfterEffect, cleanUpAfterNoEffect } from './cleanUp';
 import { summarize, type LegOutcome } from './outcome';
 import { IllegalTransition, transition, type TxEvent } from './track';
 import { useTxEntry, useTxStore, type Frozen, type Submission } from './txStore';
@@ -61,6 +62,13 @@ export interface TrackedTxOptions {
    *  or why it was not, or null when nothing was left standing. One seam,
    *  so no ending of the transaction can skip the clean-up. */
   unwind?: () => Promise<LegOutcome | null>;
+  /** Take back what `send` granted for the call alone (an ERC-1155
+   *  operator approval, which covers the whole collection and which no
+   *  transfer clears), run by the tracker on EVERY ending the receipt
+   *  settles: after the measurement when the call took effect, and after
+   *  `unwind` when it did not. Resolves with a leg saying what was taken
+   *  back or why it was not, or null when nothing was granted. */
+  release?: () => Promise<LegOutcome | null>;
 }
 
 export interface TrackedTx {
@@ -78,17 +86,6 @@ export interface TrackedTx {
   /** From `review`, `measured`, `failed`, `superseded` or
    *  `receipt-unknown`: back to idle. */
   reset: () => void;
-}
-
-/** The flow's `unwind`, if any; a failure inside it is reported as a leg
- *  that did not land, never swallowed. */
-async function runUnwind(ctx: Submission): Promise<LegOutcome | null> {
-  if (!ctx.unwind) return null;
-  try {
-    return await ctx.unwind();
-  } catch (e) {
-    return { status: 'not-done', label: 'clean-up', reason: (e as Error).message };
-  }
 }
 
 export function useTrackedTx(opts: TrackedTxOptions): TrackedTx {
@@ -133,7 +130,7 @@ export function useTrackedTx(opts: TrackedTxOptions): TrackedTx {
       announceOwnChange({ chainId: ctx.chainId, account: ctx.account, cause: 'receipt' });
       const reason = replacement as ReplacementReason | null;
       if (reason === 'cancelled' || reason === 'replaced') {
-        const unwound = await runUnwind(ctx);
+        const unwound = await cleanUpAfterNoEffect(ctx);
         apply({ type: 'superseded', submittedHash: hash, minedHash: receipt.transactionHash, reason, blockNumber: receipt.blockNumber, unwound });
         return;
       }
@@ -151,14 +148,14 @@ export function useTrackedTx(opts: TrackedTxOptions): TrackedTx {
         // Reverted: one leg saying it changed nothing, whatever the chain
         // now shows, plus what the flow's clean-up put back.
         legs = [{ status: 'not-done', label: text('flow.revertedLabel'), reason: text('flow.reverted') }];
-        const unwound = await runUnwind(ctx);
-        if (unwound) legs = [...legs, unwound];
+        legs = [...legs, ...(await cleanUpAfterNoEffect(ctx))];
       } else {
         try {
           legs = await ctx.measure(receipt, anchoredReader(ctx.sources, receipt.blockNumber));
         } catch (e) {
           legs = [{ status: 'unknown', label: 'outcome', reason: `The read-back failed: ${(e as Error).message}` }];
         }
+        legs = [...legs, ...(await cleanUpAfterEffect(ctx))];
       }
       apply({ type: 'measured', hash: mined.hash, outcome: summarize(legs, Date.now()) });
     },
@@ -176,7 +173,7 @@ export function useTrackedTx(opts: TrackedTxOptions): TrackedTx {
         apply({ type: 'failed', message: refusalFromError(e).reason });
         return;
       }
-      const ctx: Submission = { chainId: opts.chainId, account: opts.account, sources: opts.sources, measure: opts.measure, unwind: opts.unwind };
+      const ctx: Submission = { chainId: opts.chainId, account: opts.account, sources: opts.sources, measure: opts.measure, unwind: opts.unwind, release: opts.release };
       store.update(key, (e) => ({ ...e, submission: ctx }));
       apply({ type: 'submitted', hash, at: Date.now() });
       await track(hash, ctx);

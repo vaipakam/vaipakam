@@ -165,3 +165,59 @@ describe('an ERC-721 collateral (NFT-13)', () => {
     expect(receipt.prompts).toBe(2);
   });
 });
+
+/** A review of a request locking `quantity` of ERC-1155 token #7. */
+function multiReview(state: { balance: bigint; forAll?: boolean }, quantity = 3n, over: Partial<RequestReview> = {}): RequestReview {
+  const base = review();
+  const leg = { kind: 'erc1155' as const, tokenId: 7n, quantity };
+  const parsed = { ...base.draft.parsed, collateral: 0n };
+  const draft = { ...base.draft, parsed, pair: { lending, collateral, leg } };
+  return {
+    ...base,
+    draft,
+    params: createParams(parsed, draft.pair, draft.expiresAt),
+    collateralClass: 'illiquid',
+    ltvBps: null,
+    holding: { kind: 'erc1155', tokenId: 7n, quantity, state: { balance: state.balance, approvedForAll: state.forAll ?? false, blockNumber: 1n } },
+    ...over,
+  };
+}
+
+describe('an ERC-1155 collateral (NFT-13)', () => {
+  it('posts the token, its id and its quantity, with no fungible amount', () => {
+    const p = multiReview({ balance: 5n }).params;
+    expect(p.collateralAssetType).toBe(2);
+    expect(p.collateralTokenId).toBe(7n);
+    expect(p.collateralQuantity).toBe(3n);
+    expect(p.collateralAmount).toBe(0n);
+  });
+  it('needs the grant and the revoke, two prompts, unless the collection is already approved (then left alone)', () => {
+    expect(needsApproval(multiReview({ balance: 5n }))).toBe(true);
+    expect(promptCount(multiReview({ balance: 5n }))).toBe(3);
+    expect(needsApproval(multiReview({ balance: 5n, forAll: true }))).toBe(false);
+    expect(promptCount(multiReview({ balance: 5n, forAll: true }))).toBe(1);
+  });
+  it('names a wallet holding too few, and keeps the pull refusal it explains out', () => {
+    const refused = { verdict: { kind: 'refused' as const, code: 'X', reason: 'r' } };
+    expect(requestBlockers(multiReview({ balance: 2n }, 3n, refused), null, copy)).toEqual(['request.blockUnits']);
+    expect(requestBlockers(multiReview({ balance: 3n }, 3n, refused), null, copy)).toEqual(['request.blockRefused']);
+    expect(requestBlockers(multiReview({ balance: 3n }), null, copy)).toEqual([]);
+  });
+  it('names a move of the balance or the approval between reads', () => {
+    expect(changedBetween(multiReview({ balance: 5n }), multiReview({ balance: 5n }), copy)).toBeNull();
+    expect(changedBetween(multiReview({ balance: 5n }), multiReview({ balance: 1n }), copy)).toBe('request.changedToken');
+    expect(changedBetween(multiReview({ balance: 1n }), multiReview({ balance: 2n }), copy)).toBe('request.changedToken');
+    expect(changedBetween(multiReview({ balance: 5n }), multiReview({ balance: 5n, forAll: true }), copy)).toBe('request.changedToken');
+  });
+  it('locks the quantity by name with a collection-wide approval row that says it is taken back', () => {
+    const receipt = requestReceipt(multiReview({ balance: 5n }), null, copy);
+    expect(receipt.rows.find((x) => x.label === 'request.rowLock')?.value).toEqual({ kind: 'text', text: 'asset.nft1155' });
+    expect(receipt.rows.find((x) => x.label === 'accept.rowApproval')?.value).toEqual({ kind: 'text', text: 'request.approvalOperator' });
+    const already = requestReceipt(multiReview({ balance: 5n, forAll: true }), null, copy);
+    expect(already.rows.find((x) => x.label === 'accept.rowApproval')?.value).toEqual({ kind: 'text', text: 'request.approvalOperatorEnough' });
+    expect(receipt.prompts).toBe(3);
+  });
+  it("classes the token's missing-operator error as the approval's to clear", () => {
+    expect(judgeDryRun({ kind: 'reverted', error: revertWith('0xe237d922') }, false)).toEqual({ kind: 'needs-approval' });
+  });
+});
