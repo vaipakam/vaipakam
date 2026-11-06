@@ -1,4 +1,4 @@
-## Security — risk-access changes can no longer be relayed or pre-signed (PR #<n>)
+## Security — risk-access changes can no longer be relayed or pre-signed (PR #3244)
 
 The risk-access facet used to accept five relayed, signed grants: a tier
 change, a checked tier change, an illiquid-pair consent, a strict-mode toggle
