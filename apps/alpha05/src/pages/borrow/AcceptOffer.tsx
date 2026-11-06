@@ -103,16 +103,7 @@ export function AcceptOffer({ offerId, chain, own, meta, terms, onClose }: Accep
       // The allowance is read again now: the value a stop puts back is the
       // one the wallet holds right before this flow's approval, never the
       // review's, and a change that alters the steps stops before any prompt.
-      const prior = (
-        await own.read((c) =>
-          c.readContract({
-            address: collateral,
-            abi: erc20Abi,
-            functionName: 'allowance',
-            args: [account, diamond],
-          }),
-        )
-      ).value;
+      const prior = await readAllowance(collateral);
       const approved = prior < lock;
       if (approved !== needsApproval(r))
         throw new StatedRefusal({
@@ -159,11 +150,25 @@ export function AcceptOffer({ offerId, chain, own, meta, terms, onClose }: Accep
           chainId: chain.chainId,
           account,
         });
-        const mined = await waitForTransactionReceipt(config, {
+        // A receipt that cannot be read does not mean nothing was sent: the
+        // allowance itself says whether the approval landed, and if that is
+        // not known either, the refusal names the approval's hash and what it
+        // would allow, so it is never reported as "not sent" and forgotten.
+        const status = await waitForTransactionReceipt(config, {
           hash,
           chainId: chain.chainId,
-        });
-        if (mined.status !== 'success')
+        }).then(
+          (m) => m.status,
+          async () => ((await readAllowance(collateral).catch(() => null)) === lock ? ('success' as const) : null),
+        );
+        if (status === null)
+          throw new StatedRefusal({
+            code: 'ApprovalUnread',
+            reason: format('accept.approvalUnread', { hash, amount: amt(collateral, lock) }),
+            reopensAt: null,
+            remedy: null,
+          });
+        if (status !== 'success')
           throw new StatedRefusal({
             code: 'ApprovalFailed',
             reason: text('accept.approvalFailed'),
@@ -321,22 +326,23 @@ export function AcceptOffer({ offerId, chain, own, meta, terms, onClose }: Accep
     },
   });
 
+  /** The wallet's allowance to the Diamond for `token`, read now. */
+  async function readAllowance(token: Hex): Promise<bigint> {
+    const x = await own.read((c) =>
+      c.readContract({
+        address: token,
+        abi: erc20Abi,
+        functionName: 'allowance',
+        args: [account, diamond],
+      }),
+    );
+    return x.value;
+  }
+
   /** Puts the allowance back to `prior` (best effort, and only if nothing
    *  else changed it since the approval), and says what happened. */
   async function putBack(token: Hex, prior: bigint, approvedAmount: bigint): Promise<{ ok: boolean; sentence: string }> {
-    const now = await own
-      .read((c) =>
-        c.readContract({
-          address: token,
-          abi: erc20Abi,
-          functionName: 'allowance',
-          args: [account, diamond],
-        }),
-      )
-      .then(
-        (x) => x.value,
-        () => null,
-      );
+    const now = await readAllowance(token).catch(() => null);
     if (now !== approvedAmount)
       return {
         ok: false,

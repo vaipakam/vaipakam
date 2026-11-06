@@ -14,6 +14,7 @@ import type { StoredOffer } from '../../shared/offers/acceptTerms';
 import { acceptFigures, listFee, shortfall } from '../../shared/offers/model';
 import {
   readAcceptGate,
+  readCreatorGate,
   readGraceSeconds,
   readLifBps,
   readLifMatcherBps,
@@ -56,8 +57,12 @@ export interface AcceptReview {
   /** The borrower's vault; the zero address when it is opened by this accept. */
   vault: Hex;
   funds: WalletFunds;
-  /** The risk-access gate's code for this acceptor (0 = open). */
+  /** The risk-access gate's code for this acceptance (0 = open); it is the
+   *  creator's code when the creator is blocked. */
   gate: number;
+  /** The creator's own block on this offer (0 = none): a lender-side block
+   *  the connected wallet cannot fix. */
+  creatorGate: number;
   /** The fee-discount setting; null when it could not be read. */
   consent: boolean | null;
   readAt: number;
@@ -67,7 +72,7 @@ export async function readAcceptReview(own: OwnStateClient, diamond: Hex, offerI
   const account = own.account;
   const r = <T>(fn: Parameters<OwnStateClient['read']>[0]) => own.read(fn).then((x) => x.value as T);
   const offer = await r<StoredOffer>((c) => readOffer(c, diamond, offerId));
-  const [state, preview, linkedLoanId, riskTermsHash, lendingClass, collateralClass, graceSeconds, lifBps, matcherBps, vault, funds, gate, consent] = await Promise.all([
+  const [state, preview, linkedLoanId, riskTermsHash, lendingClass, collateralClass, graceSeconds, lifBps, matcherBps, vault, funds, gate, creatorGate, consent] = await Promise.all([
     r<OfferState>((c) => readOfferState(c, diamond, offerId)),
     r<AcceptPreview>((c) => readPreview(c, diamond, offerId, account)),
     r<bigint>((c) => readLinkedLoanId(c, diamond, offerId)),
@@ -80,6 +85,7 @@ export async function readAcceptReview(own: OwnStateClient, diamond: Hex, offerI
     r<Hex>((c) => readVault(c, diamond, account)),
     r<WalletFunds>((c) => readWalletFunds(c, offer.collateralAsset, account, diamond)),
     r<number>((c) => readAcceptGate(c, diamond, offerId, account)),
+    r<number>((c) => readCreatorGate(c, diamond, offerId)),
     r<boolean>((c) => readFeeDiscountConsent(c, diamond, account)).catch(() => null),
   ]);
   return {
@@ -98,6 +104,7 @@ export async function readAcceptReview(own: OwnStateClient, diamond: Hex, offerI
     vault,
     funds,
     gate,
+    creatorGate,
     consent,
     readAt: Date.now(),
   };
@@ -164,9 +171,12 @@ export function reviewBlockers(r: AcceptReview, meta: TokenMetaMap | null, copy:
         }),
       );
   }
-  if (r.gate === 1) out.push(copy.text('accept.blockGate1'));
-  if (r.gate === 2) out.push(copy.text('accept.blockGate2'));
-  if (r.gate === 3) out.push(copy.text('accept.blockGate3'));
+  // The combined gate reports the lender's block first, so a lender-side
+  // block is named as the lender's and never sent to this wallet's settings.
+  if (r.creatorGate !== 0) out.push(copy.text('accept.blockCreatorGate'));
+  else if (r.gate === 1) out.push(copy.text('accept.blockGate1'));
+  else if (r.gate === 2) out.push(copy.text('accept.blockGate2'));
+  else if (r.gate === 3) out.push(copy.text('accept.blockGate3'));
   const missing = shortfall(r.funds.balance, r.preview.collateralAmount);
   if (missing > 0n) {
     const amt = (v: bigint) => tokenAmount(v, r.offer.collateralAsset, meta, copy.format);
@@ -205,6 +215,7 @@ export function changedBetween(a: AcceptReview, b: AcceptReview, copy: Pick<Copy
     a.lendingClass !== b.lendingClass ||
     a.collateralClass !== b.collateralClass ||
     a.gate !== b.gate ||
+    a.creatorGate !== b.creatorGate ||
     a.graceSeconds !== b.graceSeconds ||
     a.lifBps !== b.lifBps ||
     a.matcherBps !== b.matcherBps

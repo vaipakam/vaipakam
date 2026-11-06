@@ -135,7 +135,14 @@ export function MatchingOffers({
       {m && (
         <>
           {view.error !== null && <p className="tier-b">{text('borrow.matchesStale')}</p>}
-          {live.length === 0 && m.unread.length === 0 && <p className="tier-b">{text('borrow.matchesEmpty')}</p>}
+          {live.length === 0 &&
+            m.unread.length === 0 &&
+            (BigInt(m.scanned) < m.total ? (
+              // Only part of the pair was read: say what was read, never that no offer exists.
+              <p className="tier-b">{format('borrow.matchesEmptyPart', { shown: String(m.scanned), total: m.total.toString() })}</p>
+            ) : (
+              <p className="tier-b">{text('borrow.matchesEmpty')}</p>
+            ))}
           {live.length > 1 && <p className="tier-b">{text('borrow.matchesOrder')}</p>}
           {live.length > 0 && (
             <ul className="rows offer-rows">
@@ -152,7 +159,7 @@ export function MatchingOffers({
               })}
             </Notice>
           ))}
-          {BigInt(m.scanned) < m.total && (
+          {BigInt(m.scanned) < m.total && live.length > 0 && (
             <p className="tier-b">
               {format('borrow.matchesMore', {
                 shown: String(Math.min(m.scanned, MATCH_PAGE)),

@@ -191,6 +191,21 @@ export async function readAcceptGate(client: PublicClient, diamond: Hex, offerId
   );
 }
 
+/** The risk-access block the offer's CREATOR faces on this offer now (the
+ *  accept gate re-checks the creator first, and the combined preview returns
+ *  the creator's code before the acceptor's), so a page can tell a lender-side
+ *  block from one the connected wallet could act on. 0 = none. */
+export async function readCreatorGate(client: PublicClient, diamond: Hex, offerId: bigint): Promise<number> {
+  return Number(
+    await client.readContract({
+      address: diamond,
+      abi: RISK_PREVIEW,
+      functionName: 'previewCreatorBlock',
+      args: [offerId],
+    }),
+  );
+}
+
 export async function readRiskTermsHash(client: PublicClient, diamond: Hex): Promise<Hex> {
   return (await client.readContract({
     address: diamond,
