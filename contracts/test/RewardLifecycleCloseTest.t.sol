@@ -15,6 +15,7 @@ import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol";
 import {InteractionRewardsLensFacet} from "../src/facets/InteractionRewardsLensFacet.sol";
 import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
+import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 
 /**
  * @notice #1002 (S4) + #969 (S5) — interaction-reward lifecycle.
@@ -211,6 +212,160 @@ contract RewardLifecycleCloseTest is SetupTest {
         vm.expectRevert(PrecloseFacet.RepaymentPastGracePeriod.selector);
         PrecloseFacet(address(diamond)).precloseDirect(loanId);
         vm.stopPrank();
+    }
+
+    // ─── #3171: the day a loan ends earns no reward day ──────────────────────
+
+    function _today() internal view returns (uint256 day) {
+        (day,) = InteractionRewardsLensFacet(address(diamond)).getInteractionCurrentDay();
+    }
+
+    function _repay(uint256 loanId) internal {
+        vm.startPrank(borrower);
+        IERC20Mint(mockERC20).approve(address(diamond), type(uint256).max);
+        RepayFacet(address(diamond)).repayLoan(loanId);
+        vm.stopPrank();
+    }
+
+    /// @dev A loan repaid mid-term earns its reward days from the day after
+    ///      it opened up to, NOT including, the day it closed.
+    function testClosingDayEarnsNothing() public {
+        uint256 opened = _today();
+        uint256 loanId = _createLoan();
+        vm.warp(block.timestamp + 5 days);
+        uint256 closedOn = _today();
+        assertEq(closedOn, opened + 5, "five reward days later");
+        _repay(loanId);
+
+        LibVaipakam.RewardEntry memory le = _entries(lender)[0];
+        LibVaipakam.RewardEntry memory be = _entries(borrower)[0];
+        assertEq(le.startDay, opened + 1, "earns from the day after opening");
+        assertEq(le.endDay, closedOn, "lender: the closing day is excluded");
+        assertEq(be.endDay, closedOn, "borrower: the closing day is excluded");
+        assertEq(le.endDay - le.startDay, 4, "four whole days earned");
+    }
+
+    /// @dev The round trip #3171 names: opened late one day, repaid early the
+    ///      next. The entry closes empty — no reward day for minutes of interest.
+    function testLoanAcrossOneDayBoundaryEarnsNoDay() public {
+        // Move to the last minute of the current reward day.
+        (uint256 day,) = InteractionRewardsLensFacet(address(diamond)).getInteractionCurrentDay();
+        uint256 loanId;
+        {
+            uint256 secondsIntoDay = (block.timestamp - _launch()) % 1 days;
+            vm.warp(block.timestamp + (1 days - secondsIntoDay) - 60);
+            assertEq(_today(), day, "still the opening day");
+            loanId = _createLoan();
+        }
+        vm.warp(block.timestamp + 120);
+        assertEq(_today(), day + 1, "the next day");
+        _repay(loanId);
+
+        LibVaipakam.RewardEntry memory le = _entries(lender)[0];
+        LibVaipakam.RewardEntry memory be = _entries(borrower)[0];
+        assertEq(le.endDay, le.startDay, "lender entry closes empty");
+        assertEq(be.endDay, be.startDay, "borrower entry closes empty");
+    }
+
+    /// @dev A close at or after the term's end keeps the full contracted window.
+    function testCloseAfterTermKeepsTheWholeWindow() public {
+        uint256 opened = _today();
+        uint256 loanId = _createLoan();
+        vm.warp(block.timestamp + 31 days);
+        _repay(loanId);
+        LibVaipakam.RewardEntry memory le = _entries(lender)[0];
+        assertEq(le.startDay, opened + 1, "start");
+        assertEq(le.endDay, opened + 31, "the whole 30-day window");
+    }
+
+    /// @dev The same loan continuing (preclose obligation handover) loses no
+    ///      day: the outgoing entries stop at the start of today and the
+    ///      re-registered ones carry today.
+    function testContinuingLoanLosesNoDay() public {
+        uint256 loanId = _createLoan();
+        vm.warp(block.timestamp + 3 days);
+        uint256 today = _today();
+        vm.prank(address(diamond));
+        InteractionRewardsFacet(address(diamond)).precloseRewardTransferObligation(loanId);
+
+        LibVaipakam.RewardEntry[] memory le = _entries(lender);
+        assertEq(le.length, 2, "old and re-registered lender entries");
+        assertTrue(le[0].closed, "old entry closed");
+        assertEq(le[0].endDay, today, "outgoing entry stops at the start of today");
+        assertEq(le[1].startDay, today, "continuing entry carries today");
+        assertFalse(le[1].closed, "continuing entry open");
+    }
+
+    /// @dev Codex #3203 r1 P1 — a continuation earlier on the closing day
+    ///      cannot carry that day out of the rule: a loan handed over and then
+    ///      repaid on the same day earns nothing for that day on any slice.
+    ///      Kills: a continuation that leaves today on the outgoing slice.
+    function testContinuationThenRepaySameDayEarnsNoClosingDay() public {
+        uint256 opened = _today();
+        uint256 loanId = _createLoan();
+        vm.warp(block.timestamp + 3 days);
+        uint256 closedOn = _today();
+        vm.prank(address(diamond));
+        InteractionRewardsFacet(address(diamond)).precloseRewardTransferObligation(loanId);
+        _repay(loanId);
+
+        uint256 earned;
+        LibVaipakam.RewardEntry[] memory le = _entries(lender);
+        for (uint256 i; i < le.length; ++i) {
+            assertTrue(le[i].closed, "every slice closed");
+            assertLe(le[i].endDay, closedOn, "no slice reaches the closing day");
+            earned += le[i].endDay - le[i].startDay;
+        }
+        assertEq(earned, closedOn - (opened + 1), "the whole days strictly between opening and closing");
+    }
+
+    /// @dev Codex #3203 r1 P1 — a continuation on the OPENING day never credits
+    ///      the opening day: the continuing slice resumes tomorrow.
+    function testContinuationOnOpeningDayStartsTomorrow() public {
+        uint256 opened = _today();
+        uint256 loanId = _createLoan();
+        vm.prank(address(diamond));
+        InteractionRewardsFacet(address(diamond)).precloseRewardTransferObligation(loanId);
+        LibVaipakam.RewardEntry[] memory le = _entries(lender);
+        assertEq(le[le.length - 1].startDay, opened + 1, "the opening day earns nothing");
+    }
+
+    /// @dev Codex #3203 r2 P2 — a loan with NO reward entries (opened before
+    ///      the programme launched) that is continued must still be registered
+    ///      for the continuing term, starting tomorrow like any first
+    ///      registration. Kills: a resume day of `today` for an entryless loan
+    ///      (which on launch day 0 skipped the registration altogether).
+    function testEntrylessLoanContinuedRegistersFromTomorrow() public {
+        uint256 loanId = _createLoan();
+        // Simulate a loan opened before the launch: no entry pointers.
+        TestMutatorFacet(address(diamond)).setLoanActiveLenderEntryId(loanId, 0);
+        TestMutatorFacet(address(diamond)).setLoanBorrowerEntryId(loanId, 0);
+        uint256 before = _entries(lender).length;
+        uint256 today = _today();
+        vm.prank(address(diamond));
+        InteractionRewardsFacet(address(diamond)).precloseRewardTransferObligation(loanId);
+        LibVaipakam.RewardEntry[] memory le = _entries(lender);
+        assertEq(le.length, before + 1, "the continuing term is registered");
+        assertEq(le[le.length - 1].startDay, today + 1, "starting tomorrow");
+        assertFalse(le[le.length - 1].closed, "open");
+    }
+
+    /// @dev Codex #3203 r1 P2 — a loan repaid at its maturity, on the reward
+    ///      day its term ends, also earns nothing for that closing day: a
+    ///      30-day loan opened on day D and repaid on day D+30 earns 29 days.
+    ///      Only a close on a later day keeps the whole contracted window.
+    function testRepayAtMaturityEarnsAllButTheClosingDay() public {
+        uint256 opened = _today();
+        uint256 loanId = _createLoan();
+        vm.warp(block.timestamp + 30 days);
+        assertEq(_today(), opened + 30, "fixture: the maturity day");
+        _repay(loanId);
+        LibVaipakam.RewardEntry memory le = _entries(lender)[0];
+        assertEq(le.endDay - le.startDay, 29, "29 of the contracted 30 days");
+    }
+
+    function _launch() internal view returns (uint256) {
+        return InteractionRewardsLensFacet(address(diamond)).getInteractionLaunchTimestamp();
     }
 }
 
