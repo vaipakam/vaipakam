@@ -79,9 +79,14 @@ export function Shell() {
   const [collapsed, setCollapsed] = useState(readCollapsed);
   const [peek, setPeek] = useState(false);
   const peekTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const focusInside = () => !!sheet.current?.contains(document.activeElement);
   const schedulePeek = (open: boolean) => {
     clearTimeout(peekTimer.current);
-    peekTimer.current = setTimeout(() => setPeek(open), open ? PEEK_OPEN_MS : PEEK_CLOSE_MS);
+    // The pointer leaving never folds a panel that holds keyboard focus
+    // (folding would hide the focused control); checked again when the
+    // timer fires, since focus may have moved in meanwhile.
+    if (!open && focusInside()) return;
+    peekTimer.current = setTimeout(() => setPeek(open || focusInside()), open ? PEEK_OPEN_MS : PEEK_CLOSE_MS);
   };
   useEffect(() => () => clearTimeout(peekTimer.current), []);
   const toggleCollapsed = () => {
@@ -130,7 +135,13 @@ export function Shell() {
           closeMenu();
           menuButton.current?.focus();
         }
-        if (e.key === 'Escape' && peek) setPeek(false);
+        if (e.key === 'Escape' && peek) {
+          // Folding hides the names and the controls; focus moves to the
+          // toggle, which stays in view, so it is never left on a hidden one.
+          if (focusInside()) sheet.current?.querySelector<HTMLElement>('.nav-toggle')?.focus();
+          clearTimeout(peekTimer.current);
+          setPeek(false);
+        }
       }}
     >
       <a className="skip" href="#main">

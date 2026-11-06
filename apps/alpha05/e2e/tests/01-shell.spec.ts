@@ -234,9 +234,20 @@ test('from 1024px the panel collapses to its icons, reveals itself over the page
   await expect.poll(width).toBeGreaterThan(200);
   expect(await pageX()).toBe(collapsedX);
   await expect(nav.getByRole('link', { name: 'Borrow', exact: true }).locator('span')).toHaveCSS('clip-path', 'none');
-  // Leaving hides it again.
+  // Leaving hides it again, unless keyboard focus is inside it: focus a
+  // control at its foot, leave, and it stays revealed with the control in view.
+  const advancedButton = column.getByRole('group', { name: 'Mode' }).getByRole('button', { name: 'Advanced' });
+  await advancedButton.focus();
   await page.mouse.move(1000, 400);
+  await page.waitForTimeout(900);
+  expect(await width()).toBeGreaterThan(200);
+  await expect(advancedButton).toBeVisible();
+  await expect(advancedButton).toBeFocused();
+  // Escape folds it and hands focus to the toggle, which stays in view.
+  await page.keyboard.press('Escape');
   await expect.poll(width).toBeLessThan(80);
+  await expect(page.getByRole('button', { name: 'Expand the menu' })).toBeFocused();
+  await page.getByRole('button', { name: 'Expand the menu' }).blur();
   // The choice is remembered.
   await page.reload();
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('Home');
