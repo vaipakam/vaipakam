@@ -38,6 +38,8 @@ const ENDING_KEYS = {
   skipped: 'request.tariffSkipped',
 } as const;
 
+type ReadNote = { kind: 'reading' } | { kind: 'switch' } | { kind: 'failed'; reason: string } | { kind: 'not-yet' | 'taken'; at: number };
+
 interface ArmTariffProps {
   ctx: ArmContext;
   /** The connected wallet's client; the step withholds signing while it is
@@ -80,6 +82,8 @@ export function ArmTariff({ ctx, own, onDone }: ArmTariffProps) {
   const [armedFor, setArmedFor] = useStoredValue<string>(`${TARIFF_KEY}:for`);
   const [ended, setEnded] = useStoredValue<ArmEnding>(`${TARIFF_KEY}:ended`);
   const [readAt] = useState(() => Date.now());
+  /** The last read-back of an unknown ending, as stated under it. */
+  const [readNote, setReadNote] = useState<ReadNote | null>(null);
 
   const tx = useTrackedTx({
     key: TARIFF_KEY,
@@ -129,6 +133,9 @@ export function ArmTariff({ ctx, own, onDone }: ArmTariffProps) {
   }, [tx.phase]);
 
   const recheck = async (): Promise<Recheck> => {
+    // A routing table still loading (or failing to load) is not a refusal:
+    // signing is withheld until it is read, and the check can run again.
+    if (!caps || caps.routedSelectors === null) return { kind: 'unreadable', reason: routed.reason };
     if (!routed.ok) return { kind: 'refused', refusal: { code: 'NotRouted', reason: routed.reason, reopensAt: null, remedy: null } };
     // The request's own network and wallet, never the connected ones: the
     // flow already withholds signing when they differ, and this holds it
@@ -163,12 +170,56 @@ export function ArmTariff({ ctx, own, onDone }: ArmTariffProps) {
     readAt,
   };
 
+  /** An unknown ending is resolved by reading the request back from its own
+   *  network: a match sets the ending to armed; anything else is stated as
+   *  read, with its time, and never settles the ending on its own, since a
+   *  transaction still pending can still set the tariff. */
+  const readBack = async () => {
+    if (identity !== ctx.identity) {
+      setReadNote({ kind: 'switch' });
+      return;
+    }
+    setReadNote({ kind: 'reading' });
+    try {
+      const now = (await own.read((c) => readOfferTariff(c, diamond, offerId))).value;
+      if (now.creator.toLowerCase() === account.toLowerCase() && tariffMatches(now.stored, choice)) {
+        setReadNote(null);
+        setEnded('armed');
+        return;
+      }
+      setReadNote({ kind: now.accepted ? 'taken' : 'not-yet', at: Date.now() });
+    } catch (e) {
+      setReadNote({ kind: 'failed', reason: refusalFromError(e).reason });
+    }
+  };
+
   if (ended !== null) {
+    const id = offerId.toString();
     return (
       <section className="arm-tariff" data-testid="request-tariff-ended" data-ending={ended}>
         <Notice tone={ended === 'armed' ? 'ok' : 'warn'} tier="A">
-          {format(ENDING_KEYS[ended], { id: offerId.toString() })}
+          {format(ENDING_KEYS[ended], { id })}
         </Notice>
+        {ended === 'unknown' && (
+          <>
+            {readNote !== null && (
+              <p className="tier-a" role="status" data-testid="request-tariff-read">
+                {readNote.kind === 'reading'
+                  ? text('request.tariffReadingBack')
+                  : readNote.kind === 'switch'
+                    ? format('request.tariffReadSwitch', { id })
+                    : readNote.kind === 'failed'
+                      ? format('request.tariffReadFailed', { reason: readNote.reason })
+                      : format(readNote.kind === 'taken' ? 'request.tariffReadTaken' : 'request.tariffReadNotYet', { id, time: new Date(readNote.at).toLocaleTimeString() })}
+              </p>
+            )}
+            <p className="actions">
+              <button type="button" className="btn" disabled={readNote?.kind === 'reading'} onClick={() => void readBack()}>
+                {text('request.tariffReadAgain')}
+              </button>
+            </p>
+          </>
+        )}
         <p className="actions">
           <button
             type="button"

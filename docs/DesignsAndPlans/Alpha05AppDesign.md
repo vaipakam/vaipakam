@@ -540,10 +540,18 @@ above. Each resolves here, so a route reviewer needs no private file:
   under the chosen rule; a choice under which every loan would be refused
   (switch off, unpriced or illiquid lending asset, a ceiling below the
   smallest loan's tariff, with loans not allowed to open without it) blocks
-  the review. After posting, the opt-in opens as its own step under the
-  request's finish card, re-reads the request before the wallet opens
-  (taken, not the creator, already set), and is measured by reading the
-  request back. The tariff is an Advanced choice; set there, it still
+  the review. After posting, the opt-in opens as its own step below the
+  request's finish card, bound to the network and wallet that posted the
+  request (signing is withheld on any other), kept apart from that card so
+  closing it never drops the step, and holding a second posting back while
+  it is open. It re-reads the request before the wallet opens (taken, not
+  the creator, already set), treats a routing table still loading as
+  unreadable rather than refused, and is measured by reading the request
+  back. Closing the step leaves its ending in place until dismissed: set,
+  not set, skipped (only when nothing was sent), or not known, which offers
+  a read of the request that settles it as set on a match and otherwise
+  states what it read and when, since a pending transaction can still land.
+  The tariff is an Advanced choice; set there, it still
   applies in Basic, which says so. The backstop for requests nobody takes
   (OFF-26) is stated as not offered (#3181), never as a step.
 
