@@ -608,10 +608,14 @@ contract RiskAccessAcceptGateTest is SetupTest {
         uint256 offerId = _lenderOffer(mockERC20, mockIlliquidERC20);
         ConfigFacet(address(diamond)).setRiskAccessGateEnabled(true);
 
-        // Fully arm the ACCEPTOR (tier; the #662 ack covers the illiquid coll
-        // leg) so the acceptor gate would pass — isolating the creator re-check.
+        // Fully arm the ACCEPTOR (tier + standing pair consent, #3231) so the
+        // acceptor gate would pass — isolating the creator re-check.
         vm.prank(borrower);
         RiskAccessFacet(address(diamond)).setVaultRiskTier(ILLIQUID);
+        vm.prank(borrower);
+        RiskAccessFacet(address(diamond)).setIlliquidPairConsent(
+            _offerPair(mockERC20, mockIlliquidERC20), true
+        );
 
         // The stored creator is still BlueChipOnly => accept reverts on the
         // CREATOR re-check (RiskTierTooLow names the LENDER, not the borrower).
