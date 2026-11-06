@@ -1,19 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { createParams, ZERO } from './postModel';
-import {
-  changedBetween,
-  matchConsequences,
-  judgeDryRun,
-  judgeLimit,
-  needsApproval,
-  rangeConsequences,
-  readLtv,
-  promptCount,
-  postBlockers,
-  postReceipt,
-  postRiskNeed,
-  type PostReview,
-} from './postReview';
+import { changedBetween, judgeDryRun, judgeLimit, needsApproval, readLtv, promptCount, postBlockers, postRiskNeed, type PostReview } from './postReview';
+import { postReceipt } from './postReceipt';
+import { matchConsequences, rangeConsequences } from './requestReceipt';
 
 type Hex = `0x${string}`;
 const lending = '0x00000000000000000000000000000000000000a1' as Hex;
@@ -40,28 +29,40 @@ function review(over: Partial<PostReview> = {}): PostReview {
     allowsPartialRepay: false,
     tariff: null,
   };
-  const draft = { parsed, pair: { lending, collateral, leg: { kind: 'erc20' as const } }, expiresAt: 1_000n };
+  const draft = { side: 'borrower' as const, parsed, pair: { lending, collateral, leg: { kind: 'erc20' as const } }, expiresAt: 1_000n };
   return {
     identity: 'w',
     account,
     diamond,
     draft,
-    params: createParams(parsed, draft.pair, draft.expiresAt),
+    params: createParams(parsed, draft.pair, draft.expiresAt, draft.side),
     verdict: { kind: 'needs-approval' },
     lendingClass: 'liquid',
     collateralClass: 'liquid',
-    risk: { direct: { kind: 'value', bps: 5_000n }, largest: null, largestAtFloor: null, directWithinLimit: 'not-asked', directCeiling: null, start: { kind: 'hf', floor: 1_500_000_000_000_000_000n, tiered: false }, partialFill: true },
+    risk: {
+      direct: { kind: 'value', bps: 5_000n },
+      largest: null,
+      largestAtFloor: null,
+      directWithinLimit: 'not-asked',
+      directCeiling: null,
+      start: { kind: 'hf', floor: 1_500_000_000_000_000_000n, tiered: false },
+      partialFill: true,
+    },
     maxDurationDays: 365n,
     graceSeconds: 86_400n,
     periodGraceSeconds: null,
     tariff: null,
     lifBps: 20n,
+    protocolShareBps: null,
     vault: ZERO,
     holding: { kind: 'erc20', funds: { balance: 10_000n, allowance: 0n }, approvalSteps: 1 },
     readAt: 1,
     ...over,
   };
 }
+
+/** `VaultDepositFailed()`'s selector. */
+const VAULT_DEPOSIT_FAILED = '0xa81e042f' as Hex;
 
 /** A viem-like revert carrying raw revert data. */
 const revertWith = (data: Hex) => Object.assign(new Error('execution reverted'), { data, cause: { data } });
@@ -74,6 +75,10 @@ describe('judgeDryRun', () => {
   it("classes the token's pull error, or a revert it cannot name, as the approval's to clear while the allowance is short", () => {
     expect(judgeDryRun({ kind: 'reverted', error: revertWith('0xfb8f41b2') }, false)).toEqual({ kind: 'needs-approval' });
     expect(judgeDryRun({ kind: 'reverted', error: new Error('execution reverted') }, false)).toEqual({ kind: 'needs-approval' });
+  });
+  it("reads the protocol's wrap of a bare pull revert (a lender's WETH) as the pull while the allowance is short, and as a refusal once it covers", () => {
+    expect(judgeDryRun({ kind: 'reverted', error: revertWith(VAULT_DEPOSIT_FAILED) }, false)).toEqual({ kind: 'needs-approval' });
+    expect(judgeDryRun({ kind: 'reverted', error: revertWith(VAULT_DEPOSIT_FAILED) }, true).kind).toBe('refused');
   });
   it('never excuses a revert once the allowance covers the collateral', () => {
     expect(judgeDryRun({ kind: 'reverted', error: revertWith('0xfb8f41b2') }, true).kind).toBe('refused');
@@ -154,7 +159,7 @@ function nftReview(state: { owner: Hex | null; approved?: Hex | null; forAll?: b
   return {
     ...base,
     draft,
-    params: createParams(parsed, draft.pair, draft.expiresAt),
+    params: createParams(parsed, draft.pair, draft.expiresAt, draft.side),
     collateralClass: 'illiquid',
     risk: { ...base.risk, direct: { kind: 'unpriced' } },
     holding: { kind: 'erc721', tokenId: 7n, state: { owner: state.owner, approved: state.approved ?? null, approvedForAll: state.forAll ?? false, blockNumber: 1n } },
@@ -203,7 +208,7 @@ function multiReview(state: { balance: bigint; forAll?: boolean }, quantity = 3n
   return {
     ...base,
     draft,
-    params: createParams(parsed, draft.pair, draft.expiresAt),
+    params: createParams(parsed, draft.pair, draft.expiresAt, draft.side),
     collateralClass: 'illiquid',
     risk: { ...base.risk, direct: { kind: 'unpriced' } },
     holding: { kind: 'erc1155', tokenId: 7n, quantity, state: { balance: state.balance, approvedForAll: state.forAll ?? false, blockNumber: 1n } },
@@ -259,7 +264,7 @@ function rangedReview(over: Partial<PostReview> = {}, risk: Partial<PostReview['
   return {
     ...base,
     draft,
-    params: createParams(parsed, draft.pair, draft.expiresAt),
+    params: createParams(parsed, draft.pair, draft.expiresAt, draft.side),
     risk: { ...base.risk, largest: { kind: 'value', bps: 8_000n }, largestAtFloor: { kind: 'value', bps: 16_000n }, directWithinLimit: 'within', ...risk },
     ...over,
   };
@@ -414,7 +419,7 @@ describe('an interest schedule (OFF-14)', () => {
   const scheduled = (cadence: 0 | 1 | 2 | 3 | 4, over: Partial<PostReview> = {}, base = review()): PostReview => {
     const parsed = { ...base.draft.parsed, cadence };
     const draft = { ...base.draft, parsed };
-    return { ...base, draft, params: createParams(parsed, draft.pair, draft.expiresAt), ...over };
+    return { ...base, draft, params: createParams(parsed, draft.pair, draft.expiresAt, draft.side), ...over };
   };
   const row = (r: PostReview, label: string, advanced = false) => postReceipt(r, null, copy, advanced).rows.find((x) => x.label === label);
 
@@ -486,7 +491,13 @@ describe('the Full fee tariff (OFF-22)', () => {
       draft: { ...base.draft, parsed },
       tariff: {
         choice,
-        read: { enabled: over.enabled === undefined ? true : over.enabled, smallest: quote, largest: quote, liquid: true, freeVpfi: over.freeVpfi === undefined ? 10n * E : over.freeVpfi },
+        read: {
+          enabled: over.enabled === undefined ? true : over.enabled,
+          smallest: quote,
+          largest: quote,
+          liquid: true,
+          freeVpfi: over.freeVpfi === undefined ? 10n * E : over.freeVpfi,
+        },
         why: {},
       },
     };
@@ -499,7 +510,8 @@ describe('the Full fee tariff (OFF-22)', () => {
   });
   it('states the choice, the switch, the tariff, the ceiling, the rule and the free VPFI, and counts the arm prompt', () => {
     const r = withTariff();
-    for (const k of ['request.rowTariff', 'request.rowTariffSwitch', 'request.rowTariffQuote', 'request.rowTariffCeiling', 'request.rowTariffFail', 'request.rowTariffVault']) expect(labels(r)).toContain(k);
+    for (const k of ['request.rowTariff', 'request.rowTariffSwitch', 'request.rowTariffQuote', 'request.rowTariffCeiling', 'request.rowTariffFail', 'request.rowTariffVault'])
+      expect(labels(r)).toContain(k);
     const rows = postReceipt(r, null, copy).rows;
     expect(rows.find((x) => x.label === 'request.rowTariffCeiling')?.binding).toBe(true);
     expect(rows.find((x) => x.label === 'request.rowTariffQuote')?.binding).toBe(false);
@@ -522,5 +534,61 @@ describe('the Full fee tariff (OFF-22)', () => {
   it('names a moved tariff read on a re-check', () => {
     expect(changedBetween(withTariff(), withTariff({ freeVpfi: E }), copy)).toBe('request.changedTariff');
     expect(changedBetween(withTariff(), withTariff(), copy)).toBeNull();
+  });
+});
+
+/** A lender's own offer: posting locks the amount lent, not the collateral. */
+function lenderReview(over: Partial<PostReview> = {}): PostReview {
+  const base = review();
+  const draft = { ...base.draft, side: 'lender' as const };
+  return { ...base, draft, params: createParams(draft.parsed, draft.pair, draft.expiresAt, 'lender'), protocolShareBps: 200n, ...over };
+}
+
+describe('a lender posting an offer', () => {
+  const labels = (r: PostReview) => postReceipt(r, null, copy).rows.map((x) => x.label);
+
+  it('measures the approval and the shortfall against the amount lent, not the collateral', () => {
+    // The base wallet holds 10,000 of the stake; the offer lends 1,000 and asks for 5,000 collateral.
+    const short = lenderReview({ holding: { kind: 'erc20', funds: { balance: 999n, allowance: 0n }, approvalSteps: 1 } });
+    expect(postBlockers(short, null, copy)).toEqual(['lendOffer.blockShortfall']);
+    const enough = lenderReview({ holding: { kind: 'erc20', funds: { balance: 1_000n, allowance: 1_000n }, approvalSteps: 0 } });
+    expect(needsApproval(enough)).toBe(false);
+    expect(postBlockers(enough, null, copy)).toEqual([]);
+    // The same allowance would not cover a borrower's 5,000 collateral.
+    expect(needsApproval(review({ holding: enough.holding }))).toBe(true);
+  });
+
+  it('names a refusal and a change as the offer, and never the collateral ceiling remedy', () => {
+    const refused = lenderReview({ verdict: { kind: 'refused', code: 'MaxLendingAboveCeiling', reason: 'r', ceiling: 1n } });
+    expect(postBlockers(refused, null, copy)).toEqual(['lendOffer.blockRefused']);
+    expect(changedBetween(lenderReview(), lenderReview({ verdict: { kind: 'ok' } }), copy)).toBe('lendOffer.changedVerdict');
+    expect(changedBetween(lenderReview(), lenderReview({ protocolShareBps: 300n }), copy)).toBe('request.changedConfig');
+  });
+
+  it("states what locks, what the borrower must lock, the protocol's share as today's figure, and the lender's consequences", () => {
+    const r = postReceipt(lenderReview(), null, copy);
+    const lock = r.rows.find((x) => x.label === 'lendOffer.rowLock')!;
+    expect(lock.movesOut).toBe(true);
+    expect(lock.value).toMatchObject({ kind: 'amount', asset: lending, amount: 1_000n });
+    expect(r.rows.find((x) => x.label === 'lendOffer.rowCollateral')!.value).toMatchObject({ asset: collateral, amount: 5_000n });
+    expect(r.rows.find((x) => x.label === 'lendAccept.rowShare')!.binding).toBe(false);
+    expect(r.rows.find((x) => x.label === 'lendAccept.rowBack')!.binding).toBe(false);
+    expect(labels(lenderReview())).not.toContain('request.rowLock');
+    expect(labels(lenderReview())).not.toContain('request.rowReceive');
+    expect(r.consequences).toEqual(
+      expect.arrayContaining(['lendOffer.loseLocked', 'lendOffer.loseTaken', 'lendOffer.loseMatch', 'lendAccept.loseDefault', 'lendAccept.losePosition', 'lendOffer.loseBinding']),
+    );
+    expect(r.consequences).not.toContain('accept.loseDefault');
+    expect(r.title).toBe('lendOffer.title');
+  });
+
+  it('says an unread share is unread, never zero, and drops the figure built on it', () => {
+    const r = postReceipt(lenderReview({ protocolShareBps: null }), null, copy);
+    expect(r.rows.find((x) => x.label === 'lendAccept.rowShare')!.value).toMatchObject({ text: 'lendOffer.shareUnread' });
+    expect(r.rows.map((x) => x.label)).not.toContain('lendAccept.rowBack');
+  });
+
+  it('drops the match line while matching is switched off', () => {
+    expect(postReceipt(lenderReview({ risk: { ...review().risk, partialFill: false } }), null, copy).consequences).not.toContain('lendOffer.loseMatch');
   });
 });

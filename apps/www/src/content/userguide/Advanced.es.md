@@ -2303,7 +2303,7 @@ La adhesión es `setOfferCreatorFullTariff(offerId, true, maxCStar, allowDowngra
 
 ### Lend: Cómo funciona
 
-Lend toma directamente una solicitud de préstamo (`offerType` 1) de un ERC-20 contra garantía ERC-20, con `acceptOffer(offerId, terms, signature)` enviado por el prestamista. En una transacción, el principal se extrae de la billetera del prestamista, mediante una autorización al Diamond, hacia la bóveda del prestamista; el prestatario lo recibe menos la comisión de apertura; la garantía que ya está en la bóveda del prestatario pasa a ser la garantía del préstamo; y se emite `LoanInitiated`, con un NFT de posición para el prestamista y otro para el prestatario. Publicar una oferta de préstamo (`offerType` 0), los lados NFT y las opciones avanzadas llegarán en actualizaciones posteriores; la página enlaza a la app actual.
+Lend toma directamente una solicitud de préstamo (`offerType` 1) de un ERC-20 contra garantía ERC-20, con `acceptOffer(offerId, terms, signature)` enviado por el prestamista. En una transacción, el principal se extrae de la billetera del prestamista, mediante una autorización al Diamond, hacia la bóveda del prestamista; el prestatario lo recibe menos la comisión de apertura; la garantía que ya está en la bóveda del prestatario pasa a ser la garantía del préstamo; y se emite `LoanInitiated`, con un NFT de posición para el prestamista y otro para el prestatario. Una oferta de préstamo (`offerType` 0) se publica desde la misma página; los lados NFT y las opciones avanzadas de una oferta de préstamo llegarán en actualizaciones posteriores.
 
 <a id="lend-offers"></a>
 
@@ -2328,6 +2328,30 @@ La comisión es el `lifEstimate` de `previewAccept`, y es del prestatario: `getL
 ### Lend: Riesgos
 
 Un préstamo pasado el fin de su gracia (`getEffectiveGraceSeconds` después de la fecha de vencimiento, que el tiempo en pausa desplaza) puede declararse en impago por cualquiera: la garantía líquida se vende para el prestamista y la ilíquida se transfiere tal cual. Con ambos lados líquidos, el préstamo puede liquidarse cuando el factor de salud baja de 1, y la venta paga primero al prestamista. Un lado ilíquido excluye la liquidación por precio, y en caso de impago el prestamista recibe toda la garantía. `useFullTermInterest` fija un mínimo de intereses en el pago anticipado; sin él, los intereses son prorrateados. Un calendario de intereses periódicos liquida un período impagado mediante una venta forzosa de garantía al prestamista. El NFT de posición del prestamista lleva el derecho de cobro: transferirlo transfiere el préstamo.
+
+<a id="lend-offer"></a>
+
+### Lend: Publicar su propia oferta
+
+Una oferta de préstamo es `createOffer` con `offerType` 0, ERC-20 en ambos lados, enviada desde la billetera del prestamista. Retira `amountMax` del activo prestado a la bóveda del prestamista, creando la bóveda si no existe, y emite `OfferCreated(offerId, creator, 0)`. Un prestatario la acepta con `acceptOffer`: su garantía pasa a su bóveda, el principal menos la comisión va a su billetera, y la parte de la comisión para quien envía le llega a él como remitente. Mientras `getPartialFillEnabled` sea true, `matchOffers` también puede emparejarla con la solicitud de un prestatario; una oferta de prestamista de valor único presta entonces todo su importe a su tasa, contra al menos su `collateralAmount`. `cancelOffer` está abierto al creador desde `MIN_OFFER_CANCEL_DELAY` (5 minutos) después de la creación, y a cualquiera una vez vencida la oferta; el importe siempre vuelve al creador.
+
+<a id="lend-offer-terms"></a>
+
+### Lend: Las condiciones de la oferta
+
+Por ahora, Basic y Advanced publican una oferta de préstamo de valor único: `amount` = `amountMax`, `interestRateBps` = `interestRateBpsMax`, `collateralAmount` = `collateralAmountMax` (la única garantía que un prestatario debe bloquear), `fillMode` 0, `periodicInterestCadence` 0, `allowsPrepayListing` y `allowsParallelSale` en false, `refinanceTargetLoanId` 0, `creatorRiskAndTermsConsent` en true, y sin tarifa Full. Los importes se convierten exactamente a unidades base y la tasa es como máximo 10.000 bps. `durationDays` está limitado por el máximo configurado leído de `getProtocolConfigBundle`. `expiresAt` es 0 (abierta hasta cancelarla) o una hora fijada desde el último bloque al abrirse la revisión, como mucho `MAX_OFFER_EXPIRY_HORIZON` (365 días) después. `useFullTermInterest` es true por defecto y `allowsPartialRepay` false.
+
+<a id="lend-offer-review"></a>
+
+### Lend: Revisar y publicar una oferta
+
+La revisión simula `createOffer` desde la billetera y lee ambas clases, `getEffectiveGraceSeconds(durationDays)`, `getLoanInitiationFeeBps`, `getTreasuryFeeBps`, el plazo máximo, la bóveda de la billetera, su saldo y su autorización sobre el activo prestado (el lado que bloquea el prestamista), y `calculateLTV` cuando ambos lados son líquidos; se vuelve a leer en cada bloque y justo antes de abrir la billetera. Mientras la autorización es insuficiente, la simulación solo puede llegar al retiro del importe, así que un error de retiro del token, `VaultDepositFailed` (el envoltorio del protocolo para un retiro revertido sin datos, como hace WETH con una autorización insuficiente) o una reversión sin nombre de error del protocolo se muestra como la aprobación pendiente, con la misma regla que la revisión de una solicitud; cualquier otro error con nombre del protocolo es un rechazo. Tras una aprobación exacta, `createOffer` se simula de nuevo y se envía; una parada tras la aprobación devuelve la autorización a su valor anterior si nada más la cambió. El resultado lee `OfferCreated` para esta billetera con `offerType` 0 y la `Transfer` del importe a la bóveda.
+
+<a id="lend-offer-fee"></a>
+
+### Lend: Las comisiones de su oferta
+
+`createOffer` no cobra nada al prestamista. La comisión mostrada es del prestatario: `getLoanInitiationFeeBps` del importe en el activo prestado, a la tasa vigente cuando se ejecuta `acceptOffer`, reducida entonces por el descuento de nivel de tenencia del prestatario y descontada de lo que se le entrega; la cifra mostrada usa la tasa de hoy. La parte del protocolo sobre los intereses es `getTreasuryFeeBps`, fijada por préstamo al abrirse (`treasuryFeeBpsAtInit`); el descuento de nivel de tenencia del prestamista, con el consentimiento activado, la reduce al liquidar los intereses. La revisión muestra la tasa de hoy y la parte a esa tasa como límite superior; una lectura fallida de `getTreasuryFeeBps` se indica, y no se muestra ninguna parte ni importe de vuelta.
 
 <a id="risk-access"></a>
 

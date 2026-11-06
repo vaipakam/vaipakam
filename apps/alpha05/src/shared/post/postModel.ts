@@ -1,8 +1,11 @@
 /**
- * OFF-04 / OFF-07 / OFF-12 / OFF-13 / OFF-18 — the borrow request a reader
- * types, as plain rules: what each field accepts, what the protocol is sent
- * for it, and what it promises the reader. Nothing here reads the chain;
- * the review (requestReview.ts) adds the protocol's own figures and verdict.
+ * OFF-04 / OFF-06 / OFF-07 / OFF-12 / OFF-13 / OFF-18 — the borrow request or
+ * lending offer a reader types, as plain rules: what each field accepts, what
+ * the protocol is sent for it, and what it promises the reader. Nothing here
+ * reads the chain; the review (postReview.ts) adds the protocol's own figures
+ * and verdict. A lending offer (OFF-06) is the same shape from the other
+ * side: the amount it lends is what posting locks, and its collateral is the
+ * one figure every borrower must lock.
  *
  * Basic posts a single-value request: the amount, the rate and the
  * collateral are each one figure (the protocol's minimum and maximum are
@@ -37,9 +40,20 @@ const EXPIRY_DAYS: Readonly<Record<Exclude<ExpiryChoice, 'never' | 'custom'>, nu
 /** The furthest expiry the protocol accepts: one year ahead. */
 export const MAX_EXPIRY_DAYS = 365;
 
-/** The protocol's offer type for a borrower's request, and its ERC-20 leg. */
+/** The protocol's offer types, by side, and its ERC-20 leg. */
+export const OFFER_TYPE_LENDER = 0;
 export const OFFER_TYPE_BORROWER = 1;
 export const ASSET_ERC20 = 0;
+
+/**
+ * Which side posts: a borrower's request (OFF-04), which locks the
+ * collateral, or a lender's offer (OFF-06), which locks the amount lent.
+ * The form, the review and the signing flow are one module keyed by it, so
+ * the two sides cannot drift apart on a shared rule.
+ */
+export type PostSide = 'borrower' | 'lender';
+
+export const OFFER_TYPE: Readonly<Record<PostSide, number>> = { borrower: OFFER_TYPE_BORROWER, lender: OFFER_TYPE_LENDER };
 
 /** What the reader typed, kept as text so nothing is rounded on the way. */
 export interface PostInput {
@@ -252,24 +266,38 @@ export const ASSET_ERC721 = 1;
 export const ASSET_ERC1155 = 2;
 
 /**
- * The protocol call for this request (`createOffer`'s parameters). The
- * range fields carry the request's range (equal ends for a single value);
- * the rate's two ends are the one rate, the most the borrower pays. Every
- * option this page does not offer is sent at its stated default (no
- * listing rights, no refinance target), and the review states each.
+ * What posting moves from the wallet into the vault, for an ERC-20 stake: a
+ * borrower's request locks its collateral; a lender's offer locks its
+ * largest amount, which the protocol escrows whole when the offer is
+ * posted (`createOffer` pulls `amountMax` and liens it in the vault).
  */
-export function createParams(p: ParsedPost, pair: PostPair, expiry: bigint) {
+export function stakeOf(side: PostSide, p: Pick<ParsedPost, 'collateral' | 'amountMax'>, pair: Pick<PostPair, 'lending' | 'collateral'>): { asset: Hex; amount: bigint } {
+  return side === 'lender' ? { asset: pair.lending, amount: p.amountMax } : { asset: pair.collateral, amount: p.collateral };
+}
+
+/**
+ * The protocol call for this request or offer (`createOffer`'s
+ * parameters). The range fields carry the range (equal ends for a single
+ * value); the rate's two ends are the one rate: the most a borrower pays,
+ * or the least a lender takes. A lender's offer states the one collateral
+ * every borrower must lock, so both collateral fields carry it (the
+ * protocol requires that of a lender's offer). Every option this page does
+ * not offer is sent at its stated default (no listing rights, no refinance
+ * target), and the review states each.
+ */
+export function createParams(p: ParsedPost, pair: PostPair, expiry: bigint, side: PostSide) {
   const leg = pair.leg;
   const nft = leg.kind !== 'erc20';
   return {
-    offerType: OFFER_TYPE_BORROWER,
+    offerType: OFFER_TYPE[side],
     lendingAsset: pair.lending,
     amount: p.amount,
     interestRateBps: p.rateBps,
     collateralAsset: pair.collateral,
     // An NFT leg carries no amount: the token is named by its id, and an
-    // ERC-1155 leg carries its quantity.
-    collateralAmount: nft ? 0n : p.collateralFloor,
+    // ERC-1155 leg carries its quantity. A lender's requirement is one
+    // figure, never a floor.
+    collateralAmount: nft ? 0n : side === 'lender' ? p.collateral : p.collateralFloor,
     durationDays: BigInt(p.durationDays),
     assetType: ASSET_ERC20,
     tokenId: 0n,
@@ -318,4 +346,27 @@ export function postFigures(amount: bigint, rateBps: bigint, durationDays: numbe
   const fee = listFee(amount, lifBps);
   const interest = interestAtDue(amount, rateBps, BigInt(durationDays));
   return { received: amount - fee, fee, interest, owedAtDue: amount + interest };
+}
+
+/** What a lending offer would do for its lender, if a borrower takes it at
+ *  once and the protocol never pauses: the borrower's list-rate fee comes
+ *  out of what the borrower receives, never out of the amount lent; the
+ *  interest at the due date; and the most the protocol keeps of it at
+ *  today's share (`shareBps`; the loan fixes the share in force when it
+ *  opens, and a fee-discount tier can only lower it). */
+export interface LenderPostFigures {
+  /** What the borrower receives: the amount less the list-rate fee. */
+  borrowerGets: bigint;
+  fee: bigint;
+  interest: bigint;
+  /** The most the protocol keeps of that interest, at today's share. */
+  protocolShare: bigint;
+  /** The amount plus the interest, less that share. */
+  backAtDue: bigint;
+}
+
+export function lenderPostFigures(amount: bigint, rateBps: bigint, durationDays: number, lifBps: bigint, shareBps: bigint): LenderPostFigures {
+  const { received, fee, interest } = postFigures(amount, rateBps, durationDays, lifBps);
+  const protocolShare = (interest * shareBps) / 10_000n;
+  return { borrowerGets: received, fee, interest, protocolShare, backAtDue: amount + interest - protocolShare };
 }

@@ -48,13 +48,7 @@ const reason = (e: unknown) => refusalFromError(e).reason;
  *  the vault's free VPFI, through the wallet's connection. Liquidity is the
  *  lending asset's class the review already read. Null when the request did
  *  not choose the tariff. */
-export async function readPostTariff(
-  own: OwnStateClient,
-  diamond: Hex,
-  parsed: ParsedPost,
-  pair: PostPair,
-  lendingClass: AssetClass,
-): Promise<PostTariff | null> {
+export async function readPostTariff(own: OwnStateClient, diamond: Hex, parsed: ParsedPost, pair: PostPair, lendingClass: AssetClass): Promise<PostTariff | null> {
   if (parsed.tariff === null) return null;
   const why: PostTariff['why'] = {};
   const read = <T>(fn: Parameters<OwnStateClient['read']>[0], what: keyof PostTariff['why']) =>
@@ -113,11 +107,7 @@ export function tariffRows(t: PostTariff | null, parsed: ParsedPost, copy: Pick<
     ...(ranged ? [row('request.rowTariffLargest', quoteText(t.read.largest, t.why.quote, copy), false)] : []),
     row('request.rowTariffCeiling', vpfi(t.choice.maxCStar, format), true),
     row('request.rowTariffFail', text(t.choice.allowDowngrade ? 'request.tariffFailOpen' : 'request.tariffFailRefuse'), true),
-    row(
-      'request.rowTariffVault',
-      t.read.freeVpfi === null ? format('request.tariffVaultUnread', { reason: t.why.vault ?? '' }) : vpfi(t.read.freeVpfi, format),
-      false,
-    ),
+    row('request.rowTariffVault', t.read.freeVpfi === null ? format('request.tariffVaultUnread', { reason: t.why.vault ?? '' }) : vpfi(t.read.freeVpfi, format), false),
   ];
 }
 

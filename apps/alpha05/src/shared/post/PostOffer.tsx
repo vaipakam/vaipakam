@@ -27,7 +27,6 @@ import { ActionFlow, reviewIdentity, type Recheck } from '../ui/ActionFlow';
 import { Notice } from '../ui/Notice';
 import { shortAddress } from '../ui/format';
 import { pageHandoff } from '../../routes/pageMap';
-import { REQUEST_KEY } from './OfferForm';
 import { TARIFF_CONTEXT_KEY, type ArmContext } from './ArmTariff';
 import { createdOffer } from './postOutcome';
 import { erc20Pair, nftCollateralPair, type RiskNeed } from '../risk/riskAccess';
@@ -44,15 +43,21 @@ import {
   promptCount,
   readPostReview,
   postBlockers,
-  postReceipt,
   postRiskNeed,
+  stakeOfDraft,
   type PostDraft,
   type PostReview,
 } from './postReview';
+import { postReceipt } from './postReceipt';
+import { POST_KEYS, RISK_GUIDE } from './postCopy';
+import { OFFER_TYPE } from './postModel';
 
 type Hex = `0x${string}`;
 
 interface PostOfferProps {
+  /** The store key this flow's review, consent and tracker live under: one
+   *  per page, so a request on Borrow and an offer on Lend never share one. */
+  flowKey: string;
   draft: PostDraft;
   chain: SupportedChain;
   own: OwnStateClient;
@@ -66,20 +71,22 @@ interface PostOfferProps {
 }
 
 /**
- * OFF-05 / OFF-16 / OFF-17 / OFF-19 — a borrower posts their own request.
- * The review is the protocol's own verdict on the request as a dry run from
+ * OFF-05 / OFF-06 / OFF-16 / OFF-17 / OFF-19 — a borrower posts their own
+ * request, or a lender their own offer (the draft's side). The review is the protocol's own verdict on the request as a dry run from
  * this wallet, with every figure it binds; the single Risk and Terms
  * consent is bound to that read. The wallet is asked to approve exactly the
- * collateral when its allowance does not cover it, the request is dry-run
+ * stake (the collateral for a request, the amount for an offer: `stakeOf`)
+ * when its allowance does not cover it, the request is dry-run
  * again with the approval in place, and only then sent. If anything stops it
  * after an approval, the approval is put back (best effort, stated either
  * way). The outcome is measured from the transaction's own logs: the
- * request recorded, and the collateral that moved into the vault. An
+ * request or offer recorded, and the stake that moved into the vault. An
  * ERC-721 collateral (NFT-13) is approved for that one token only, never the
  * collection, and moving it into the vault clears the approval by itself.
  */
-export function PostOffer({ draft, chain, own, meta, terms, onEdit, onClose }: PostOfferProps) {
+export function PostOffer({ flowKey, draft, chain, own, meta, terms, onEdit, onClose }: PostOfferProps) {
   const copy = useCopy();
+  const k = POST_KEYS[draft.side];
   const { text, format } = copy;
   const config = useConfig();
   const { mode, isAdvanced } = useMode();
@@ -94,15 +101,15 @@ export function PostOffer({ draft, chain, own, meta, terms, onEdit, onClose }: P
   const unit = numeraire.data ?? '';
   const { caps } = useCapabilities();
   const settleKeeper = caps?.keeper.find((k) => k.pass === 'periodicSettle')?.armed ?? 'unknown';
-  const [review, setReview] = useStoredValue<PostReview>(`${REQUEST_KEY}:review`);
-  const [consentFor, setConsentFor] = useStoredValue<number>(`${REQUEST_KEY}:consent`);
-  const [offerId, setOfferId] = useStoredValue<bigint>(`${REQUEST_KEY}:offer`);
+  const [review, setReview] = useStoredValue<PostReview>(`${flowKey}:review`);
+  const [consentFor, setConsentFor] = useStoredValue<number>(`${flowKey}:consent`);
+  const [offerId, setOfferId] = useStoredValue<bigint>(`${flowKey}:offer`);
   const [, setArmContext] = useStoredValue<ArmContext>(TARIFF_CONTEXT_KEY);
   /** The risk-access step open in the review's place, if any (ACC-RISK). */
-  const [riskOpen, setRiskOpen] = useStoredValue<RiskNeed>(`${REQUEST_KEY}:risk`);
+  const [riskOpen, setRiskOpen] = useStoredValue<RiskNeed>(`${flowKey}:risk`);
   const [loadError, setLoadError] = useState<string | null>(null);
   /** The wallet step open now, kept with the tracker (it outlives the page). */
-  const setStep = useTxNote(REQUEST_KEY);
+  const setStep = useTxNote(flowKey);
   /** The approval this flow made and has not yet seen used or put back (see
    *  AcceptOffer): a sent request that reverts leaves it standing.
    *  `since` is the block the approval mined in, so a put-back never reads
@@ -140,7 +147,7 @@ export function PostOffer({ draft, chain, own, meta, terms, onEdit, onClose }: P
   const counter = useRef<{ n: number; total: number }>({ n: 0, total: 0 });
 
   const tx = useTrackedTx({
-    key: REQUEST_KEY,
+    key: flowKey,
     chainId: chain.chainId,
     account,
     sources: own.sources,
@@ -150,7 +157,7 @@ export function PostOffer({ draft, chain, own, meta, terms, onEdit, onClose }: P
       counter.current = { n: 0, total: promptCount(r) };
       const say = (what: string) => setStep(format('accept.stepOf', { n: String(++counter.current.n), total: String(counter.current.total), what }));
       const collateral = r.draft.pair.collateral;
-      const lock = r.draft.parsed.collateral;
+      const stake = stakeOfDraft(r.draft);
       const h = r.holding;
       approvalLeft.current = null;
       holdGrant(null);
@@ -189,14 +196,17 @@ export function PostOffer({ draft, chain, own, meta, terms, onEdit, onClose }: P
           };
         }
       } else {
-        const io = allowanceIo(collateral, (amount, i, of) => say(of === 2 && i === 0 ? text('approval.stepZero') : format('approval.step', { amount: amt(collateral, amount) })));
-        const prior = await readAllowance(collateral);
+        // An ERC-20 stake: the collateral for a request, the amount for an offer.
+        const token = stake.asset;
+        const lock = stake.amount;
+        const io = allowanceIo(token, (amount, i, of) => say(of === 2 && i === 0 ? text('approval.stepZero') : format('approval.step', { amount: amt(token, amount) })));
+        const prior = await readAllowance(token);
         const steps = prior < lock ? await allowanceSteps(io, prior, lock) : [];
         if (steps.length !== h.approvalSteps) throw allowanceMoved(copy);
         if (steps.length > 0) {
-          const since = await approveExactly(io, collateral, lock, prior);
-          approvalLeft.current = { kind: 'erc20', token: collateral, prior, amount: lock, since };
-          putItBack = () => putBack(collateral, prior, lock, since);
+          const since = await approveExactly(io, token, lock, prior);
+          approvalLeft.current = { kind: 'erc20', token, prior, amount: lock, since };
+          putItBack = () => putBack(token, prior, lock, since);
         }
       }
 
@@ -210,15 +220,15 @@ export function PostOffer({ draft, chain, own, meta, terms, onEdit, onClose }: P
       // 2. The dry run with the approval in place: the protocol's verdict
       //    on the whole request, collateral pull included.
       const dry = await askThrough(own, (c) => c.simulateContract({ address: diamond, abi: CREATE_ABI, functionName: 'createOffer', args: [r.params], account }));
-      if (dry.kind === 'reverted') return stop(format('request.dryRunRefused', { reason: refusalFromError(dry.error).reason }));
+      if (dry.kind === 'reverted') return stop(format(k.dryRunRefused, { reason: refusalFromError(dry.error).reason }));
       if (dry.kind === 'unreadable') return stop(format('flow.unreadable', { reason: dry.reason }));
 
-      // 3. The request.
-      say(text('request.stepSend'));
+      // 3. The request or offer.
+      say(text(k.stepSend));
       try {
         return await writeContract(config, { address: diamond, abi: CREATE_ABI, functionName: 'createOffer', args: [r.params], chainId: chain.chainId, account });
       } catch (e) {
-        return stop(format('request.stoppedAfterApproval', { reason: refusalFromError(e).reason }));
+        return stop(format(k.stoppedAfterApproval, { reason: refusalFromError(e).reason }));
       }
     },
     unwind: async () => {
@@ -245,7 +255,7 @@ export function PostOffer({ draft, chain, own, meta, terms, onEdit, onClose }: P
       if (!review) return [];
       const r = review;
       const legs: LegOutcome[] = [];
-      const id = createdOffer(receipt.logs, diamond, account);
+      const id = createdOffer(receipt.logs, diamond, account, OFFER_TYPE[r.draft.side]);
       if (id !== null) {
         setOfferId(id);
         // OFF-22: the tariff is armed by its own transaction once the
@@ -256,15 +266,15 @@ export function PostOffer({ draft, chain, own, meta, terms, onEdit, onClose }: P
         // holds new requests back while a step is open, so one request's
         // posting can never replace or drop another's tariff step.
         if (r.draft.parsed.tariff) setArmContext({ identity: r.identity, offerId: id, choice: r.draft.parsed.tariff });
-        legs.push({ status: 'done', label: format('request.legOffer', { id: id.toString() }) });
+        legs.push({ status: 'done', label: format(POST_KEYS[r.draft.side].legOffer, { id: id.toString() }) });
       } else {
-        legs.push({ status: 'not-done', label: text('request.legNoOffer'), reason: text('request.noOffer') });
+        legs.push({ status: 'not-done', label: text(POST_KEYS[r.draft.side].legNoOffer), reason: text(POST_KEYS[r.draft.side].noOffer) });
       }
       const collateral = r.draft.pair.collateral;
-      const lock = r.draft.parsed.collateral;
+      const stake = stakeOfDraft(r.draft);
       const h = r.holding;
       const tokenName = lockedName(h, collateral, meta, format);
-      const lockLabel = format('request.legLocked', { amount: h.kind === 'erc20' ? amt(collateral, lock) : tokenName });
+      const lockLabel = format('request.legLocked', { amount: h.kind === 'erc20' ? amt(stake.asset, stake.amount) : tokenName });
       let vault: Hex | null = null;
       try {
         vault = await at.read((c, b) => readVault(c, diamond, account, b));
@@ -290,12 +300,12 @@ export function PostOffer({ draft, chain, own, meta, terms, onEdit, onClose }: P
             : { status: 'not-done', label: lockLabel, reason: format('request.unitsNotLocked', { moved: String(units), expected: String(h.quantity), id: String(h.tokenId) }) },
         );
       } else {
-        const locked = moved(receipt.logs, collateral, account, vault);
-        const lv = legVerdict(locked, lock);
+        const locked = moved(receipt.logs, stake.asset, account, vault);
+        const lv = legVerdict(locked, stake.amount);
         legs.push(
           lv === 'done'
             ? { status: 'done', label: lockLabel }
-            : { status: lv, label: lockLabel, reason: format('request.lockedOther', { amount: amt(collateral, locked), expected: amt(collateral, lock) }) },
+            : { status: lv, label: lockLabel, reason: format('request.lockedOther', { amount: amt(stake.asset, locked), expected: amt(stake.asset, stake.amount) }) },
         );
       }
       return legs;
@@ -371,7 +381,7 @@ export function PostOffer({ draft, chain, own, meta, terms, onEdit, onClose }: P
     } catch (e) {
       return { kind: 'unreadable', reason: refusalFromError(e).reason };
     }
-    if (nowTerms.kind === 'needed') return { kind: 'refused', refusal: { code: 'TermsNotAccepted', reason: text('request.termsNewer'), reopensAt: null, remedy: null } };
+    if (nowTerms.kind === 'needed') return { kind: 'refused', refusal: { code: 'TermsNotAccepted', reason: text(k.termsNewer), reopensAt: null, remedy: null } };
     const what = changedBetween(review, next, copy);
     if (what !== null) {
       if (current()) {
@@ -411,7 +421,7 @@ export function PostOffer({ draft, chain, own, meta, terms, onEdit, onClose }: P
   const blockers = review ? postBlockers(review, meta, copy, unit) : [];
   const consented = review !== null && consentFor === review.readAt;
   const termsLink = terms && terms.kind !== 'none' ? termsUrl(terms.version) : `${GUIDE_ORIGIN}/terms`;
-  const riskLink = guideUrl(mode, 'borrow-risks');
+  const riskLink = guideUrl(mode, RISK_GUIDE[draft.side]);
   const riskNeed = review ? postRiskNeed(review) : null;
   const symbol = (a: Hex) => meta?.[a.toLowerCase()]?.symbol ?? shortAddress(a);
   const leg = review?.draft.pair.leg ?? null;
@@ -448,8 +458,8 @@ export function PostOffer({ draft, chain, own, meta, terms, onEdit, onClose }: P
                 </a>
               </p>
             )}
-            <WhyLink summaryKey="accept.feeSummary" detailKey="accept.feeWhy" />
-            <WhyLink summaryKey="request.postSummary" detailKey="request.postWhy" />
+            <WhyLink summaryKey={k.feeSummary} detailKey={k.feeWhy} />
+            <WhyLink summaryKey={k.postSummary} detailKey={k.postWhy} />
             {blockers.length === 0 && (
               <p className="consent tier-a">
                 <label>
@@ -472,7 +482,7 @@ export function PostOffer({ draft, chain, own, meta, terms, onEdit, onClose }: P
             {tx.phase.kind === 'review' && (
               <p>
                 <button type="button" className="btn btn-link" onClick={edit} data-testid="request-edit">
-                  {text('request.edit')}
+                  {text(k.edit)}
                 </button>
               </p>
             )}
@@ -503,7 +513,7 @@ export function PostOffer({ draft, chain, own, meta, terms, onEdit, onClose }: P
           need={riskOpen}
           source={{ kind: 'pair', pair: riskPair }}
           pairLabel={pairLabel}
-          flowKey={REQUEST_KEY}
+          flowKey={flowKey}
           onBack={() => {
             setRiskOpen(null);
             void load();

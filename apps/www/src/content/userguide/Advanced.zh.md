@@ -1858,7 +1858,7 @@ Basic 发布单一数值的请求：`amount` = `amountMax`，`interestRateBps` =
 
 ### Lend: 如何运作
 
-Lend 通过出借人发送的 `acceptOffer(offerId, terms, signature)`，直接接受以 ERC-20 抵押的 ERC-20 借款请求（`offerType` 1）。在一笔交易中，本金在对 Diamond 的授权下从出借人的钱包转入出借人的金库；借款人收到扣除发起费后的金额；已在借款人金库中的抵押品成为贷款的抵押品；并发出 `LoanInitiated`，出借人和借款人各得一枚仓位 NFT。发布出借报价（`offerType` 0）、NFT 一方以及高级选项将在后续更新中推出；页面链接到现有应用。
+Lend 通过出借人发送的 `acceptOffer(offerId, terms, signature)`，直接接受以 ERC-20 抵押的 ERC-20 借款请求（`offerType` 1）。在一笔交易中，本金在对 Diamond 的授权下从出借人的钱包转入出借人的金库；借款人收到扣除发起费后的金额；已在借款人金库中的抵押品成为贷款的抵押品；并发出 `LoanInitiated`，出借人和借款人各得一枚仓位 NFT。出借报价（`offerType` 0）在同一页面发布；NFT 一方以及出借报价的高级选项将在后续更新中推出。
 
 <a id="lend-offers"></a>
 
@@ -1883,6 +1883,30 @@ Lend 通过出借人发送的 `acceptOffer(offerId, terms, signature)`，直接�
 ### Lend: 风险
 
 超过宽限期结束（到期日后 `getEffectiveGraceSeconds`，暂停时间会使其推后）的贷款，任何人都可以将其违约：具流动性的抵押品为出借人出售，缺乏流动性的抵押品按原样转移。两方都具流动性时，健康因子低于 1 即可清算贷款，出售所得先支付出借人。任何一方缺乏流动性都会排除基于价格的清算，违约时出借人获得全部抵押品。`useFullTermInterest` 为提前还款设定利息下限；没有它则按比例计息。定期计息计划会通过强制出售抵押品向出借人结清错过的期次。出借人的仓位 NFT 承载债权：转让它就转让了贷款。
+
+<a id="lend-offer"></a>
+
+### Lend：发布您自己的报价
+
+出借报价是出借人钱包发送的 `createOffer`，`offerType` 为 0，两侧均为 ERC-20。它把出借资产的 `amountMax` 转入出借人的金库（若无金库则先创建），并发出 `OfferCreated(offerId, creator, 0)`。借款人以 `acceptOffer` 接受：其抵押品转入其金库，扣除费用后的本金进入其钱包，费用中发送者的份额作为发送者支付给借款人。当 `getPartialFillEnabled` 为 true 时，`matchOffers` 也可以把它与借款人的请求配对；此时单一数值的出借报价按其利率出借全部金额，抵押品至少为其 `collateralAmount`。创建后 `MIN_OFFER_CANCEL_DELAY`（5 分钟）起创建者可调用 `cancelOffer`，报价过期后任何人都可调用；金额始终退回创建者。
+
+<a id="lend-offer-terms"></a>
+
+### Lend：报价的条款
+
+目前 Basic 和 Advanced 都发布单一数值的出借报价：`amount` = `amountMax`，`interestRateBps` = `interestRateBpsMax`，`collateralAmount` = `collateralAmountMax`（借款人必须锁定的唯一抵押品数量），`fillMode` 0，`periodicInterestCadence` 0，`allowsPrepayListing` 和 `allowsParallelSale` 为 false，`refinanceTargetLoanId` 0，`creatorRiskAndTermsConsent` 为 true，且不设 Full 方案。金额被精确解析为基础单位，利率最多 10,000 bps。`durationDays` 受从 `getProtocolConfigBundle` 读取的配置最大值限制。`expiresAt` 为 0（取消前一直开放），或在审核打开时从最新区块确定的时间，最多提前 `MAX_OFFER_EXPIRY_HORIZON`（365 天）。`useFullTermInterest` 默认为 true，`allowsPartialRepay` 默认为 false。
+
+<a id="lend-offer-review"></a>
+
+### Lend：审核并发布报价
+
+审核从钱包模拟 `createOffer`，并读取两种资产的类别、`getEffectiveGraceSeconds(durationDays)`、`getLoanInitiationFeeBps`、`getTreasuryFeeBps`、最长期限、钱包的金库、钱包在出借资产（出借人锁定的一侧）上的余额和授权，以及两侧均为流动资产时的 `calculateLTV`；每个区块以及钱包打开前都会重新读取。授权不足时，模拟只能到达金额的转入，因此代币的转入错误、`VaultDepositFailed`（协议对无数据回退的转入的包装，WETH 在授权不足时就是这样）或没有协议错误名的回退，都显示为需要清除的批准，与请求的审核规则相同；其他任何具名协议错误都是拒绝。精确批准后再次模拟 `createOffer` 并发送；批准后中止时，若授权未被其他操作改变，则把授权恢复为之前的值。结果读取该钱包 `offerType` 为 0 的 `OfferCreated`，以及金额转入金库的 `Transfer`。
+
+<a id="lend-offer-fee"></a>
+
+### Lend：您报价的费用
+
+`createOffer` 不向出借人收取任何费用。显示的费用由借款人承担：出借资产金额的 `getLoanInitiationFeeBps`，按 `acceptOffer` 执行时生效的费率计算，届时由借款人的持有等级折扣降低，并从其到账金额中扣除；显示的数字按今天的费率计算。协议在利息中的份额为 `getTreasuryFeeBps`，在每笔贷款开立时固定（`treasuryFeeBpsAtInit`）；在同意开启时，出借人的持有等级折扣会在结算利息时降低该份额。审核显示今天的费率，以及按该费率计算的份额作为上限；`getTreasuryFeeBps` 读取失败时会说明，且不显示份额或返还金额。
 
 <a id="risk-access"></a>
 

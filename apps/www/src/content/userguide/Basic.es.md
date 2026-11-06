@@ -1168,7 +1168,7 @@ En el modo Avanzado una solicitud puede tomar la tarifa de comisión Full: una c
 
 ### Lend: Cómo funciona
 
-Para prestar, usted financia la solicitud abierta de un prestatario: un importe de un token, la tasa que pagará, un plazo y una garantía que el prestatario ya ha bloqueado en su propia bóveda. Financiarla abre el préstamo en una sola transacción. El importe sale de su billetera, el prestatario lo recibe menos su comisión de apertura y la garantía queda bloqueada para usted hasta que el préstamo termine. Su lado del préstamo es un token de posición en su billetera, y quien lo tenga es quien cobra. El prestatario devuelve el importe más los intereses antes de la fecha de vencimiento, y el protocolo se queda con su parte de los intereses. Por ahora, publicar su propia oferta de préstamo se hace en la app actual; la página enlaza a ella.
+Para prestar, usted financia la solicitud abierta de un prestatario: un importe de un token, la tasa que pagará, un plazo y una garantía que el prestatario ya ha bloqueado en su propia bóveda. Financiarla abre el préstamo en una sola transacción. El importe sale de su billetera, el prestatario lo recibe menos su comisión de apertura y la garantía queda bloqueada para usted hasta que el préstamo termine. Su lado del préstamo es un token de posición en su billetera, y quien lo tenga es quien cobra. El prestatario devuelve el importe más los intereses antes de la fecha de vencimiento, y el protocolo se queda con su parte de los intereses. Si ninguna solicitud le conviene, puede publicar su propia oferta de préstamo desde la misma página.
 
 <a id="lend-offers"></a>
 
@@ -1193,6 +1193,30 @@ La comisión de apertura es del prestatario: una pequeña parte del importe, cob
 ### Lend: Riesgos
 
 Prestar puede hacerle perder dinero. Si el prestatario no ha pagado al final del período de gracia, el préstamo entra en impago y se le paga con la garantía: vendida para usted donde el protocolo puede, entregada tal cual donde no, y una venta puede obtener menos de lo que se le debe. Con garantía líquida, cualquiera puede liquidar el préstamo cuando su factor de salud baja de 1; la venta le paga a usted primero, pero una caída brusca puede dejar menos de lo que se le debe. Un token ilíquido se valora en cero, así que no hay liquidación por precio, y en caso de impago usted recibe toda la garantía, valga lo que valga. No puede recuperar el importe antes de que termine el préstamo; salir antes significa vender su posición a otro prestamista. Con intereses prorrateados, un pago anticipado le rinde menos. Una pausa aplaza la fecha de vencimiento, y los intereses siguen acumulándose durante ella.
+
+<a id="lend-offer"></a>
+
+### Lend: Publicar su propia oferta
+
+Si ninguna solicitud le conviene, puede publicar su propia oferta de préstamo para sus dos tokens: el importe exacto que presta, la tasa que pide, el plazo y la garantía que un prestatario debe bloquear. Al publicarla, el importe pasa de su billetera a su propia bóveda, donde queda bloqueado mientras la oferta esté abierta. Un prestatario que la acepta abre el préstamo de inmediato, en sus condiciones, sin volver a preguntarle: recibe el importe menos su comisión de apertura, y su garantía queda bloqueada en su bóveda para usted. Cualquiera puede además emparejar su oferta con la solicitud de un prestatario; ese préstamo presta todo su importe a su tasa, contra al menos la garantía que usted pide. Puede cancelar a partir de cinco minutos después de publicar, y el importe vuelve a su billetera. Una oferta vencida ya no se puede aceptar; su importe queda en su bóveda hasta que usted, o cualquiera, la cierre, y luego vuelve solo a su billetera. Hasta que exista la página de Ofertas de la próxima app, usted sigue, cancela y cierra una oferta en la página de Ofertas de la app actual; la revisión lo dice antes de que se bloquee nada.
+
+<a id="lend-offer-terms"></a>
+
+### Lend: Las condiciones de la oferta
+
+Un solo prestatario toma todo el importe, o nadie, y debe bloquear exactamente la garantía que usted fija. El formulario muestra cuánto del token prestado tiene su billetera. Cada cifra se lee exactamente como la escribe: más decimales de los que tiene el token se rechazan, nunca se redondean, y la tasa llega hasta el 100 % anual con dos decimales. Los plazos ofrecidos terminan en el más largo que permite la red. La oferta sigue abierta hasta que se acepte o se cancele, o durante los días que elija, hasta un año. Los intereses de plazo completo, la opción habitual, significan que un reembolso anticipado no reduce lo que usted gana; a prorrata se le paga solo por el tiempo que el préstamo está abierto. También puede permitir que el prestatario reembolse una parte antes. El formulario muestra lo que el prestatario le debería en la fecha de vencimiento si aceptara la oferta ahora. Un rango, un modo de ejecución, un calendario de intereses y la tarifa de comisiones para ofertas llegarán en una actualización posterior, y el modo avanzado lo indica.
+
+<a id="lend-offer-review"></a>
+
+### Lend: Revisar y publicar una oferta
+
+Antes de que se abra su billetera, la app pide al protocolo que pruebe su oferta en simulación, así que la revisión muestra la respuesta del propio protocolo. Indica lo que bloquea ahora, el importe que toma un prestatario, la garantía que debe bloquear, la tasa y el plazo, lo que el prestatario recibiría con la comisión de hoy, los intereses a la fecha de vencimiento, la parte del protocolo y lo que vuelve a usted, cada condición del ciclo de vida, cuándo vence la oferta, la relación préstamo-valor a los precios de hoy y si hace falta una aprobación. Si su billetera tiene menos que el importe, la revisión dice cuánto falta y no ofrece firma. Marca una casilla para aceptar las Advertencias de riesgo y los Términos. Su billetera aprueba exactamente el importe si hace falta, la app prueba la oferta de nuevo, y solo entonces la publica. Si se detiene tras una aprobación, la app pide devolver la aprobación a su estado anterior e indica si ocurrió. Después, la app comprueba en la cadena la oferta registrada y el importe bloqueado en su bóveda.
+
+<a id="lend-offer-fee"></a>
+
+### Lend: Las comisiones de su oferta
+
+Publicar una oferta no le cobra ninguna comisión. La comisión de apertura es del prestatario: una pequeña parte del importe, cobrada una vez en el activo prestado cuando un prestatario acepta su oferta, a la tasa vigente entonces, y descontada de lo que recibe. Usted presta todo el importe, y el prestatario se lo devuelve completo con intereses. Cuando se pagan los intereses, el protocolo se queda con su parte, a la tasa vigente al abrirse el préstamo; su nivel de descuento de comisiones puede reducir esa parte mientras su ajuste de descuento esté activado. La revisión muestra la tasa de hoy y lo máximo que puede tomar esa parte; si esa tasa no se puede leer, la revisión lo dice en lugar de mostrar una cifra.
 
 <a id="risk-access"></a>
 

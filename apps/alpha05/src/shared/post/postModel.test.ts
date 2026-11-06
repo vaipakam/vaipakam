@@ -13,6 +13,8 @@ import {
   parseRateBps,
   rangeError,
   postFigures,
+  lenderPostFigures,
+  stakeOf,
 } from './postModel';
 
 type Hex = `0x${string}`;
@@ -90,6 +92,7 @@ describe('createParams', () => {
       },
       { lending, collateral, leg: { kind: 'erc20' } },
       99n,
+      'borrower',
     );
     expect(p.offerType).toBe(1);
     expect([p.amount, p.amountMax]).toEqual([10n, 10n]);
@@ -101,6 +104,44 @@ describe('createParams', () => {
     expect([p.periodicInterestCadence, p.allowsPrepayListing, p.allowsParallelSale, p.refinanceTargetLoanId]).toEqual([0, false, false, 0n]);
     expect(p.creatorRiskAndTermsConsent).toBe(true);
     expect(p.fillMode).toBe(0);
+  });
+});
+
+describe('createParams for a lending offer', () => {
+  it('sends a lender offer whose one collateral figure is both ends, and escrows the amount', () => {
+    const parsed = {
+      amount: 10n,
+      amountMax: 10n,
+      collateral: 20n,
+      collateralFloor: 20n,
+      fillMode: 'partial' as const,
+      cadence: 0 as const,
+      rateBps: 850n,
+      durationDays: 30,
+      expiry: '7d' as const,
+      fullTerm: true,
+      allowsPartialRepay: true,
+      tariff: null,
+    };
+    const p = createParams(parsed, { lending, collateral, leg: { kind: 'erc20' } }, 99n, 'lender');
+    expect(p.offerType).toBe(0);
+    expect([p.amount, p.amountMax]).toEqual([10n, 10n]);
+    expect([p.interestRateBps, p.interestRateBpsMax]).toEqual([850n, 850n]);
+    expect([p.collateralAmount, p.collateralAmountMax]).toEqual([20n, 20n]);
+    expect(p.allowsPartialRepay).toBe(true);
+    expect(stakeOf('lender', parsed, { lending, collateral })).toEqual({ asset: lending, amount: 10n });
+    expect(stakeOf('borrower', parsed, { lending, collateral })).toEqual({ asset: collateral, amount: 20n });
+  });
+});
+
+describe('lenderPostFigures', () => {
+  it("takes the borrower's fee from what they receive, never from the amount lent, and keeps at most today's share of the interest", () => {
+    const f = lenderPostFigures(365_000n, 1_000n, 365, 20n, 200n);
+    expect(f.fee).toBe(730n);
+    expect(f.borrowerGets).toBe(365_000n - 730n);
+    expect(f.interest).toBe(36_500n);
+    expect(f.protocolShare).toBe(730n);
+    expect(f.backAtDue).toBe(365_000n + 36_500n - 730n);
   });
 });
 
@@ -123,6 +164,7 @@ describe('createParams for an NFT', () => {
       },
       { lending, collateral, leg: { kind: 'erc721', tokenId: 7n } },
       99n,
+      'borrower',
     );
     expect([p.collateralAssetType, p.collateralTokenId, p.collateralQuantity]).toEqual([1, 7n, 1n]);
     expect([p.collateralAmount, p.collateralAmountMax]).toEqual([0n, 0n]);
@@ -156,7 +198,7 @@ describe('a range and a fill mode (OFF-10 / OFF-11)', () => {
     tariff: null,
   };
   it('sends the smallest and largest amount, the floor and the locked collateral, one rate, and the fill mode', () => {
-    const p = createParams(ranged, { lending, collateral, leg: { kind: 'erc20' } }, 99n);
+    const p = createParams(ranged, { lending, collateral, leg: { kind: 'erc20' } }, 99n, 'borrower');
     expect([p.amount, p.amountMax]).toEqual([10n, 40n]);
     expect([p.collateralAmount, p.collateralAmountMax]).toEqual([30n, 100n]);
     expect([p.interestRateBps, p.interestRateBpsMax]).toEqual([850n, 850n]);
@@ -167,7 +209,7 @@ describe('a range and a fill mode (OFF-10 / OFF-11)', () => {
     expect(isRanged({ ...ranged, amountMax: 10n })).toBe(true);
   });
   it('never sends a floor for an NFT leg', () => {
-    const p = createParams({ ...ranged, collateral: 1n, collateralFloor: 1n }, { lending, collateral, leg: { kind: 'erc721', tokenId: 7n } }, 99n);
+    const p = createParams({ ...ranged, collateral: 1n, collateralFloor: 1n }, { lending, collateral, leg: { kind: 'erc721', tokenId: 7n } }, 99n, 'borrower');
     expect([p.collateralAmount, p.collateralAmountMax]).toEqual([0n, 0n]);
   });
   it('refuses a largest amount below the smallest and a floor above what is locked', () => {

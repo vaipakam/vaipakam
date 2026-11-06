@@ -94,12 +94,20 @@ export function BorrowPage() {
   const diamond = (chain?.diamondAddress ?? '0x') as Hex;
   const lending = pair.lending ?? ('0x' as Hex);
   const collateral = pair.collateral ?? ('0x' as Hex);
-  const ownMatches = useOwnRead(['borrow', 'matches', lending.toLowerCase(), collateral.toLowerCase()], (c) => readMatches(c, diamond, lending, collateral, own!.account, 'borrower'), {
-    enabled: ready && walletChain !== null,
-  });
-  const publicMatches = useChainRead(['borrow', 'matches', diamond, lending.toLowerCase(), collateral.toLowerCase()], (c) => readMatches(c, diamond, lending, collateral, null, 'borrower'), {
-    enabled: ready && !connected,
-  });
+  const ownMatches = useOwnRead(
+    ['borrow', 'matches', lending.toLowerCase(), collateral.toLowerCase()],
+    (c) => readMatches(c, diamond, lending, collateral, own!.account, 'borrower'),
+    {
+      enabled: ready && walletChain !== null,
+    },
+  );
+  const publicMatches = useChainRead(
+    ['borrow', 'matches', diamond, lending.toLowerCase(), collateral.toLowerCase()],
+    (c) => readMatches(c, diamond, lending, collateral, null, 'borrower'),
+    {
+      enabled: ready && !connected,
+    },
+  );
   const view: MatchesView = connected ? ownMatches : publicMatches;
 
   const assets: Hex[] = [...suggested.map((s) => s.address), ...(pair.lending ? [pair.lending] : []), ...(pair.collateral ? [pair.collateral] : [])];
@@ -166,7 +174,9 @@ export function BorrowPage() {
         </Notice>
       )}
       {chain && !flowOpen && <PairPicker key={chain.chainId} role="borrower" chain={chain} meta={meta} lending={pair.lending} collateral={pair.collateral} onChange={setPair} />}
-      {chain && ready && !flowOpen && <MatchingOffers role="borrower" view={view} meta={meta} connected={connected && walletChain !== null} onTake={take} takeDisabled={takeDisabled} />}
+      {chain && ready && !flowOpen && (
+        <MatchingOffers role="borrower" view={view} meta={meta} connected={connected && walletChain !== null} onTake={take} takeDisabled={takeDisabled} />
+      )}
       {chain && ready && !flowOpen && connected && walletChain !== null && (
         <section className="borrow-section request-open" aria-labelledby="borrow-request-open">
           <h2 id="borrow-request-open" className="sr-only">
@@ -178,14 +188,29 @@ export function BorrowPage() {
               {format('request.heldForTariff', { id: armContext.offerId.toString() })}
             </p>
           )}
-          <button type="button" className="btn" disabled={takeDisabled || requestPair === null || armContext !== null} onClick={() => setComposing(true)} data-testid="request-open">
+          <button
+            type="button"
+            className="btn"
+            disabled={takeDisabled || requestPair === null || armContext !== null}
+            onClick={() => setComposing(true)}
+            data-testid="request-open"
+          >
             {text('request.open')}
           </button>
         </section>
       )}
       {composing === true && draft === null && armContext === null && !termsOpen && walletChain && own && requestPair && (
         <section className="borrow-section" aria-labelledby="borrow-request-form">
-          <OfferForm chain={walletChain} own={own} pair={requestPair} meta={meta} onReview={reviewRequest} onCancel={() => setComposing(null)} />
+          <OfferForm
+            side="borrower"
+            flowKey={REQUEST_KEY}
+            chain={walletChain}
+            own={own}
+            pair={requestPair}
+            meta={meta}
+            onReview={reviewRequest}
+            onCancel={() => setComposing(null)}
+          />
         </section>
       )}
       {termsOpen && termsGate.session && walletChain && own && (
@@ -223,6 +248,7 @@ export function BorrowPage() {
             {text('borrow.stepSign')}
           </h2>
           <PostOffer
+            flowKey={REQUEST_KEY}
             draft={draft}
             chain={walletChain}
             own={own}

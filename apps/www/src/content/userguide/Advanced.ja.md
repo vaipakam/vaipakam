@@ -2125,7 +2125,7 @@ Basic は単一値のリクエストを出します。`amount` = `amountMax`、`
 
 ### Lend: 仕組み
 
-Lend は、ERC-20 担保に対する ERC-20 の借入リクエスト（`offerType` 1）を、貸し手が送る `acceptOffer(offerId, terms, signature)` で直接受けます。1回のトランザクションで、元本は Diamond への承認のもとで貸し手のウォレットから貸し手のボールトへ引き出され、借り手は組成手数料を差し引いた額を受け取り、借り手のボールトにすでにある担保がローンの担保となり、`LoanInitiated` が発行されて、貸し手と借り手にそれぞれポジション NFT が渡ります。貸出オファーの掲載（`offerType` 0）、NFT の側、高度なオプションは今後のアップデートで追加されます。ページは現行アプリにリンクしています。
+Lend は、ERC-20 担保に対する ERC-20 の借入リクエスト（`offerType` 1）を、貸し手が送る `acceptOffer(offerId, terms, signature)` で直接受けます。1回のトランザクションで、元本は Diamond への承認のもとで貸し手のウォレットから貸し手のボールトへ引き出され、借り手は組成手数料を差し引いた額を受け取り、借り手のボールトにすでにある担保がローンの担保となり、`LoanInitiated` が発行されて、貸し手と借り手にそれぞれポジション NFT が渡ります。貸出オファー（`offerType` 0）は同じページから掲載します。NFT の側と貸出オファーの高度なオプションは今後のアップデートで追加されます。
 
 <a id="lend-offers"></a>
 
@@ -2150,6 +2150,30 @@ Lend は、ERC-20 担保に対する ERC-20 の借入リクエスト（`offerTyp
 ### Lend: リスク
 
 猶予の終わり（期日から `getEffectiveGraceSeconds` 後で、一時停止の時間だけ後ろにずれます）を過ぎたローンは、誰でもデフォルトにできます。流動性のある担保は貸し手のために売却され、流動性のない担保はそのまま移転されます。両側に流動性がある場合、ヘルスファクターが 1 を下回るとローンは清算でき、売却はまず貸し手に支払います。流動性のない側があると価格に基づく清算はなく、デフォルト時に貸し手は担保をすべて受け取ります。`useFullTermInterest` は早期返済時の利息に下限を設け、これがなければ利息は日割りです。定期利息のスケジュールでは、未払いの期間は担保の強制売却によって貸し手に支払われます。貸し手のポジション NFT が請求権を持ち、それを移転するとローンも移転します。
+
+<a id="lend-offer"></a>
+
+### Lend: 自分のオファーを出す
+
+貸出オファーは、貸し手のウォレットから送る `offerType` 0 の `createOffer` で、両側とも ERC-20 です。貸出資産の `amountMax` を貸し手のボールトに引き出し（ボールトがなければ作成し）、`OfferCreated(offerId, creator, 0)` を発行します。借り手は `acceptOffer` で受けます。借り手の担保は借り手のボールトに引き出され、手数料を差し引いた元本が借り手のウォレットに届き、手数料のうち送信者の取り分は送信者である借り手に渡ります。`getPartialFillEnabled` が true の間は、`matchOffers` が借り手のリクエストと組み合わせることもあり、その場合、単一値の貸出オファーは自らの金利で全額を貸し、担保は少なくとも `collateralAmount` になります。`cancelOffer` は作成から `MIN_OFFER_CANCEL_DELAY`（5分）後に作成者が、期限切れ後は誰でも呼べます。金額は常に作成者に戻ります。
+
+<a id="lend-offer-terms"></a>
+
+### Lend: オファーの条件
+
+現時点では Basic も Advanced も単一値の貸出オファーを掲載します。`amount` = `amountMax`、`interestRateBps` = `interestRateBpsMax`、`collateralAmount` = `collateralAmountMax`（借り手がロックすべき唯一の担保額）、`fillMode` 0、`periodicInterestCadence` 0、`allowsPrepayListing` と `allowsParallelSale` は false、`refinanceTargetLoanId` 0、`creatorRiskAndTermsConsent` は true で、Full タリフは設定しません。金額は基本単位に正確に解析され、金利は最大 10,000 bps です。`durationDays` は `getProtocolConfigBundle` から読む設定上の最大値で上限が決まります。`expiresAt` は 0（キャンセルまで有効）か、確認画面を開いた時点の最新ブロックから決めた時刻で、最長 `MAX_OFFER_EXPIRY_HORIZON`（365日）先までです。`useFullTermInterest` の既定は true、`allowsPartialRepay` の既定は false です。
+
+<a id="lend-offer-review"></a>
+
+### Lend: オファーの確認と掲載
+
+確認画面はウォレットから `createOffer` をシミュレートし、両資産の区分、`getEffectiveGraceSeconds(durationDays)`、`getLoanInitiationFeeBps`、`getTreasuryFeeBps`、最長期間、ウォレットのボールト、貸出資産（貸し手がロックする側）の残高と承認額、両側が流動的な場合の `calculateLTV` を読みます。毎ブロック、およびウォレットが開く直前に読み直します。承認額が足りない間、シミュレーションは金額の引き出しまでしか届かないため、トークンの引き出しエラー、`VaultDepositFailed`（データなしで巻き戻った引き出しをプロトコルが包んだもので、WETH は承認不足でこうなります）、プロトコルのエラー名のない巻き戻しは、解消すべき承認として示されます。これはリクエストの確認と同じ規則で、それ以外の名前付きプロトコルエラーは拒否です。金額ちょうどの承認の後、`createOffer` を再びシミュレートして送信します。承認の後に止まった場合、ほかに変更がなければ承認額を以前の値に戻します。結果として、このウォレットの `offerType` 0 の `OfferCreated` と、金額のボールトへの `Transfer` を読みます。
+
+<a id="lend-offer-fee"></a>
+
+### Lend: オファーにかかる手数料
+
+`createOffer` は貸し手に何も課しません。表示される手数料は借り手のもので、貸出資産での金額の `getLoanInitiationFeeBps` です。`acceptOffer` 実行時に有効な料率で計算され、その時点の借り手の保有ティア割引で下がり、借り手への送金額から差し引かれます。表示額は今日の料率によります。利息のうちプロトコルの取り分は `getTreasuryFeeBps` で、ローン開始時にローンごとに固定されます（`treasuryFeeBpsAtInit`）。同意がオンなら、利息の精算時に貸し手の保有ティア割引がそれを下げます。確認画面は今日の料率と、その料率での取り分を上限として示します。`getTreasuryFeeBps` の読み取りに失敗した場合はそう示し、取り分も戻る額も表示しません。
 
 <a id="risk-access"></a>
 
