@@ -3,8 +3,8 @@
  * the posted request it is bound to, and how the step ended when its card
  * was closed.
  */
-import { tariffMatches, type OfferTariffState, type TariffChoice } from '../../../shared/offers/fullTariff';
-import type { TxPhase } from '../../../shared/tx/outcome';
+import { tariffMatches, type OfferTariffState, type TariffChoice } from '../offers/fullTariff';
+import type { TxPhase } from '../tx/outcome';
 
 /** The posted request the tariff is armed on: the wallet and network that
  *  posted it (the review identity), its id, and the choice it was posted

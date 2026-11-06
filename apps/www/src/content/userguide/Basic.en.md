@@ -1141,7 +1141,7 @@ In Advanced mode a request can take the Full fee tariff: a fee in VPFI, taken fr
 
 ### Lend: How It Works
 
-To lend, you fund a borrower's open request: an amount of one token, the rate they will pay, a term, and collateral the borrower has already locked in their own vault. Funding it opens a loan in one transaction. The amount leaves your wallet, the borrower receives it less their initiation fee, and the collateral stays locked for you until the loan ends. Your side of the loan is a position token in your wallet, and whoever holds it is the one repaid. The borrower repays the amount plus interest by the due date, and the protocol keeps its share of the interest. Posting your own lending offer is done in the current app for now; the page links to it.
+To lend, you fund a borrower's open request: an amount of one token, the rate they will pay, a term, and collateral the borrower has already locked in their own vault. Funding it opens a loan in one transaction. The amount leaves your wallet, the borrower receives it less their initiation fee, and the collateral stays locked for you until the loan ends. Your side of the loan is a position token in your wallet, and whoever holds it is the one repaid. The borrower repays the amount plus interest by the due date, and the protocol keeps its share of the interest. When no request fits, you can post your own lending offer instead, from the same page.
 
 <a id="lend-offers"></a>
 
@@ -1166,6 +1166,30 @@ The initiation fee is the borrower's: a small share of the amount, charged once 
 ### Lend: Risks
 
 Lending can lose you money. If the borrower has not repaid by the end of the grace period, the loan defaults and you are paid from the collateral: sold for you where the protocol can, handed to you as-is where it cannot, and a sale can bring in less than you are owed. With liquid collateral, anyone can liquidate the loan once its health factor drops below 1; the sale repays you first, but a sharp fall can leave less than you are owed. An illiquid token is valued at zero, so there is no price-based liquidation, and on default you receive all the collateral, whatever it is worth. You cannot take the amount back before the loan ends; leaving early means selling your position to another lender. With pro-rata interest, an early repayment earns you less. A pause moves the due date later, and interest keeps accruing through it.
+
+<a id="lend-offer"></a>
+
+### Lend: Posting Your Own Offer
+
+When no request fits, you can post your own lending offer for your two tokens: the exact amount you lend, the rate you ask, the term and the collateral a borrower must lock. Posting moves the amount from your wallet into your own vault, where it stays locked while the offer is open. A borrower who takes it opens the loan at once, on your terms, without asking you again: they receive the amount less their initiation fee, and their collateral is locked in their vault for you. While matching is switched on for the network, anyone may also match your offer with a borrower's request; that loan lends your whole amount at your rate, against at least the collateral you ask for. The review says whether matching is on now. You can cancel from five minutes after posting, and the amount returns to your wallet. A lapsed offer can no longer be taken; its amount stays in your vault until you, or anyone, closes it, and then returns only to your wallet. Until the next app's Offers page is built, you follow, cancel and close an offer on the current app's Offers page; the review says so before anything is locked.
+
+<a id="lend-offer-terms"></a>
+
+### Lend: The Offer's Terms
+
+One borrower takes the whole amount, or nobody does, and must lock exactly the collateral you set. The form shows how much of the lending token your wallet holds. Each figure is read exactly as you type it: more decimals than the token has are refused, never rounded, and the rate goes up to 100% a year with two decimals. The terms offered stop at the longest one the network allows. The offer stays open until taken or cancelled, or for the number of days you choose, up to a year. Full-term interest, the usual choice, means an early repayment does not lower what you earn; pro-rata pays you only for the time the loan is open. You can also let the borrower repay part early. The form shows what the borrower would owe you at the due date if they took the offer now. A range, a fill mode, an interest schedule and the fee tariff for offers come in a later update, and Advanced mode says so.
+
+<a id="lend-offer-review"></a>
+
+### Lend: Reviewing and Posting an Offer
+
+Before your wallet opens, the app asks the protocol to try your offer as a dry run, so the review shows the protocol's own answer. It lists what you lock now, the amount a borrower takes, the collateral they must lock, the rate and term, what the borrower would receive at today's fee rate, the interest at the due date, the protocol's share of it and what comes back to you, every lifecycle term, when the offer lapses, the loan-to-value at today's prices and whether an approval is needed. If your wallet holds less than the amount, the review says how much is missing and offers no signature. You tick a box to agree to the Risk Disclosures and Terms. Your wallet approves exactly the amount if needed, the app tries the offer again, and only then posts it. If it stops after an approval, the app asks to put the approval back and says whether that happened. Afterwards the app checks on the chain the offer recorded and the amount locked in your vault.
+
+<a id="lend-offer-fee"></a>
+
+### Lend: Fees on Your Offer
+
+Posting an offer charges you no fee. The initiation fee is the borrower's: a small share of the amount, charged once in the lending asset when a borrower takes your offer, at the rate in force then, and taken from what they receive. You lend the whole amount, and the borrower owes it back in full with interest. When interest is paid, the protocol keeps its share of it, at the rate in force when the loan opens; your fee-discount tier can lower that share while your fee-discount setting is on. The review shows today's rate and the most that share can take; if that rate cannot be read, the review says so instead of showing a figure.
 
 <a id="risk-access"></a>
 

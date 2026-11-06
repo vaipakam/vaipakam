@@ -581,8 +581,33 @@ above. Each resolves here, so a route reviewer needs no private file:
   sale of that loan's lender position, not a request: the list counts it
   apart and the review blocks it, because buying a running loan has its own
   terms and is not this flow. A request is funded whole, at its smallest
-  amount and highest rate; matching and posting one's own lending offer are
-  later updates, linked to the current app until then.
+  amount and highest rate; matching is a later update.
+- **RB-LEND-POST** — Borrow and Lend post the reader's own offer through
+  one shared flow (form, review, signing, measured outcome) whose side is
+  the poster's: a borrower posts a request, a lender posts an offer. The
+  side decides what posting locks in the poster's vault, and so where the
+  balance, the allowance, the approval, the shortfall and the measured
+  lock are read: the collateral for a request, the amount lent for an offer
+  (the protocol escrows the offer's largest amount when it is posted). A
+  lender's offer states one collateral figure that every borrower must
+  lock; it is sent as both ends of the protocol's collateral range, as the
+  protocol requires of a lender's offer. The lender's receipt states what
+  locks now, the amount a borrower takes and the collateral they must lock,
+  what the borrower would receive at today's fee and the fee itself (the
+  borrower's, never taken from the amount lent), the interest at the due
+  date, the protocol's share of it at today's setting as an upper bound
+  (stated as unread, never as zero, when it cannot be read, and then no
+  figure built on it is shown), what comes back if repaid on the due date,
+  every term it binds, the loan-to-value at today's prices, and the
+  lender's consequences: the lock while open, the lapse, a taker opening
+  the loan at once, a match lending the whole amount at the offer's rate
+  against at least the collateral asked (said only while matching is not
+  known to be off), default, liquidation, the position token and the
+  binding offer. A refusal whose remedy is the borrower's (lock more
+  collateral) is never offered to a lender; the protocol's own reason is
+  shown instead. The lender's Advanced options (range, fill mode, schedule,
+  tariff) are a later update, said in Advanced rather than hidden; an
+  offer that asks for an NFT is a later update too.
 
 ## 3. Companion specifications
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { TxPhase } from '../../../shared/tx/outcome';
+import type { TxPhase } from '../tx/outcome';
 import { armEnding, armRead } from './armState';
 
 const HASH = '0x0000000000000000000000000000000000000000000000000000000000000001' as const;

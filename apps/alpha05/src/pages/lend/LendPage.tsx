@@ -18,7 +18,11 @@ import { useTermsGate } from '../../shared/terms/useTermsGate';
 import { useStoredValue } from '../../shared/tx/txStore';
 import { Notice } from '../../shared/ui/Notice';
 import { StepNav } from '../../shared/ui/StepNav';
-import { currentAppHref, PAGES } from '../../routes/pageMap';
+import { useAssetStandard } from '../../shared/nft/useStandard';
+import { LEND_OFFER_KEY, OfferForm } from '../../shared/post/OfferForm';
+import { PostOffer } from '../../shared/post/PostOffer';
+import type { PostAssets } from '../../shared/post/postModel';
+import type { PostDraft } from '../../shared/post/postReview';
 
 type Hex = `0x${string}`;
 
@@ -40,9 +44,12 @@ function initialPair(chainId: number, suggested: readonly { address: Hex }[]): {
  * lender: choose what to lend and what collateral to accept, see the
  * borrow requests open for that pair (read from the protocol through the
  * wallet), and fund one whole through the shared signing flow, behind the
- * Terms gate. Posting one's own lending offer, a request that locks an NFT,
- * and the Advanced options follow in later updates; the page says so and
- * links to the current app instead of hiding them.
+ * Terms gate. When no request fits, the lender posts their own offer for
+ * the pair instead (OFF-06), through the shared posting flow the Borrow
+ * page's request uses, from the other side: the amount lent is what locks.
+ * A request that locks an NFT, an offer that asks for one, and the lender's
+ * Advanced options follow in later updates; the page says so instead of
+ * hiding them.
  */
 export function LendPage() {
   const { text, format } = useCopy();
@@ -59,6 +66,12 @@ export function LendPage() {
   const [taking, setTaking] = useStoredValue<bigint>(`${LEND_ACCEPT_KEY}:offer`);
   /** The request a Terms acceptance was asked for, taken once it is recorded. */
   const [pendingTake, setPendingTake] = useStoredValue<bigint>(`${LEND_ACCEPT_KEY}:pending`);
+  /** The lender's own offer: the form is open (`composing`), and the
+   *  confirmed draft under review, each kept like the request above. */
+  const [composing, setComposing] = useStoredValue<boolean>(`${LEND_OFFER_KEY}:composing`);
+  const [draft, setDraft] = useStoredValue<PostDraft>(`${LEND_OFFER_KEY}:draft`);
+  const [pendingDraft, setPendingDraft] = useStoredValue<PostDraft>(`${LEND_OFFER_KEY}:pending`);
+  const [, setTyped] = useStoredValue<unknown>(`${LEND_OFFER_KEY}:input`);
 
   const suggested = chain ? suggestedAssets(chain) : [];
   const [pairByChain, setPairByChain] = useState<Record<number, { lending: Hex | null; collateral: Hex | null }>>({});
@@ -77,15 +90,21 @@ export function LendPage() {
   const ownMatches = useOwnRead(['lend', 'matches', lending.toLowerCase(), collateral.toLowerCase()], (c) => readMatches(c, diamond, lending, collateral, own!.account, 'lender'), {
     enabled: ready && walletChain !== null,
   });
-  const publicMatches = useChainRead(['lend', 'matches', diamond, lending.toLowerCase(), collateral.toLowerCase()], (c) => readMatches(c, diamond, lending, collateral, null, 'lender'), {
-    enabled: ready && !connected,
-  });
+  const publicMatches = useChainRead(
+    ['lend', 'matches', diamond, lending.toLowerCase(), collateral.toLowerCase()],
+    (c) => readMatches(c, diamond, lending, collateral, null, 'lender'),
+    {
+      enabled: ready && !connected,
+    },
+  );
   const view: MatchesView = connected ? ownMatches : publicMatches;
 
   const assets: Hex[] = [...suggested.map((s) => s.address), ...(pair.lending ? [pair.lending] : []), ...(pair.collateral ? [pair.collateral] : [])];
   const meta = useTokenMeta(assets).data;
 
   const termsOpen = termsGate.session !== null;
+  const offering = composing === true || draft !== null;
+  const flowOpen = taking !== null || offering;
 
   // OFF-35: funding a request is new exposure, so an unaccepted Terms
   // version is accepted first; the request is taken once that is recorded.
@@ -98,13 +117,27 @@ export function LendPage() {
     setTaking(id);
   };
 
+  // OFF-35 holds for an offer too: it is new exposure, so an unaccepted
+  // Terms version is accepted before its review opens.
+  const reviewOffer = (next: PostDraft) => {
+    if (terms.data?.kind === 'needed') {
+      setPendingDraft(next);
+      termsGate.start(terms.data);
+      return;
+    }
+    setDraft(next);
+  };
+
   const termsUnknown = connected && walletChain !== null && terms.state === 'failed';
   const takeDisabled = !connected || walletChain === null || terms.state !== 'ready' || termsOpen;
-  const step = taking !== null ? 2 : ready ? 1 : 0;
-  // Posting one's own lending offer is not built here yet: the current
-  // app's Lend page does it, and the page says so rather than hiding it.
-  const lendPage = PAGES.find((p) => p.path === '/lend');
-  const postHref = lendPage ? currentAppHref(lendPage, {}) : null;
+  const step = taking !== null || draft !== null ? 2 : ready ? 1 : 0;
+  // OFF-06: an offer lends an ERC-20 against ERC-20 collateral here; what
+  // each leg's contract claims is read, and an unread standard offers no
+  // offer rather than a guessed one.
+  const lendingStandard = useAssetStandard(ready ? pair.lending : null).data;
+  const collateralStandard = useAssetStandard(ready ? pair.collateral : null).data;
+  const offerPair: PostAssets | null =
+    ready && lendingStandard === 'erc20' && collateralStandard === 'erc20' ? { lending: pair.lending!, collateral: pair.collateral!, standard: 'erc20' } : null;
 
   return (
     <main className="page lend" aria-labelledby="lend-title">
@@ -122,21 +155,24 @@ export function LendPage() {
           </button>
         </Notice>
       )}
-      {chain && taking === null && <PairPicker key={chain.chainId} role="lender" chain={chain} meta={meta} lending={pair.lending} collateral={pair.collateral} onChange={setPair} />}
-      {chain && ready && taking === null && (
+      {chain && !flowOpen && <PairPicker key={chain.chainId} role="lender" chain={chain} meta={meta} lending={pair.lending} collateral={pair.collateral} onChange={setPair} />}
+      {chain && ready && !flowOpen && (
         <MatchingOffers role="lender" view={view} meta={meta} connected={connected && walletChain !== null} onTake={take} takeDisabled={takeDisabled} />
       )}
-      {chain && taking === null && (
-        <section className="borrow-section lend-post-later" aria-labelledby="lend-post-later">
-          <h2 id="lend-post-later" className="sr-only">
-            {text('lend.postLaterLink')}
+      {chain && ready && !flowOpen && connected && walletChain !== null && (
+        <section className="borrow-section request-open" aria-labelledby="lend-offer-open">
+          <h2 id="lend-offer-open" className="sr-only">
+            {text('lend.postOpen')}
           </h2>
-          <p className="tier-b">{text('lend.postLater')}</p>
-          {postHref !== null && (
-            <a className="btn" href={postHref} target="_blank" rel="noreferrer" data-testid="lend-post-current">
-              {text('lend.postLaterLink')}
-            </a>
-          )}
+          <p className="tier-b">{text('lend.postLead')}</p>
+          <button type="button" className="btn" disabled={takeDisabled || offerPair === null} onClick={() => setComposing(true)} data-testid="lend-offer-open">
+            {text('lend.postOpen')}
+          </button>
+        </section>
+      )}
+      {composing === true && draft === null && !termsOpen && walletChain && own && offerPair && (
+        <section className="borrow-section" aria-labelledby="lend-offer-form">
+          <OfferForm side="lender" flowKey={LEND_OFFER_KEY} chain={walletChain} own={own} pair={offerPair} meta={meta} onReview={reviewOffer} onCancel={() => setComposing(null)} />
         </section>
       )}
       {termsOpen && termsGate.session && walletChain && own && (
@@ -149,10 +185,13 @@ export function LendPage() {
           onAccepted={() => {
             termsGate.end();
             if (pendingTake !== null) setTaking(pendingTake);
+            if (pendingDraft !== null) setDraft(pendingDraft);
             setPendingTake(null);
+            setPendingDraft(null);
           }}
           onClose={() => {
             setPendingTake(null);
+            setPendingDraft(null);
             termsGate.end();
           }}
         />
@@ -163,6 +202,27 @@ export function LendPage() {
             {text('lend.stepSign')}
           </h2>
           <AcceptOffer flowKey={LEND_ACCEPT_KEY} offerId={taking} chain={walletChain} own={own} meta={meta} terms={terms.data} onClose={() => setTaking(null)} />
+        </section>
+      )}
+      {draft !== null && walletChain && own && (
+        <section className="borrow-section" aria-labelledby="lend-offer-review">
+          <h2 id="lend-offer-review" className="sr-only">
+            {text('lend.stepSign')}
+          </h2>
+          <PostOffer
+            flowKey={LEND_OFFER_KEY}
+            draft={draft}
+            chain={walletChain}
+            own={own}
+            meta={meta}
+            terms={terms.data}
+            onEdit={() => setDraft(null)}
+            onClose={(posted) => {
+              setDraft(null);
+              setComposing(null);
+              if (posted) setTyped(null);
+            }}
+          />
         </section>
       )}
     </main>

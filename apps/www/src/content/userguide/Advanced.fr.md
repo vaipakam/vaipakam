@@ -2323,7 +2323,7 @@ L'adhésion est `setOfferCreatorFullTariff(offerId, true, maxCStar, allowDowngra
 
 ### Lend: Comment ça marche
 
-Lend prend directement une demande d'emprunt (`offerType` 1) d'un ERC-20 contre une garantie ERC-20, avec `acceptOffer(offerId, terms, signature)` envoyé par le prêteur. En une transaction, le principal est prélevé du portefeuille du prêteur, via une autorisation au Diamond, vers le coffre du prêteur ; l'emprunteur le reçoit moins les frais d'ouverture ; la garantie déjà dans le coffre de l'emprunteur devient celle du prêt ; et `LoanInitiated` est émis, avec un NFT de position pour le prêteur et un pour l'emprunteur. Publier une offre de prêt (`offerType` 0), les côtés NFT et les options avancées arriveront dans des mises à jour ultérieures ; la page renvoie à l'application actuelle.
+Lend prend directement une demande d'emprunt (`offerType` 1) d'un ERC-20 contre une garantie ERC-20, avec `acceptOffer(offerId, terms, signature)` envoyé par le prêteur. En une transaction, le principal est prélevé du portefeuille du prêteur, via une autorisation au Diamond, vers le coffre du prêteur ; l'emprunteur le reçoit moins les frais d'ouverture ; la garantie déjà dans le coffre de l'emprunteur devient celle du prêt ; et `LoanInitiated` est émis, avec un NFT de position pour le prêteur et un pour l'emprunteur. Une offre de prêt (`offerType` 0) se publie depuis la même page ; les côtés NFT et les options avancées d'une offre de prêt arriveront dans des mises à jour ultérieures.
 
 <a id="lend-offers"></a>
 
@@ -2348,6 +2348,30 @@ Les frais sont le `lifEstimate` de `previewAccept`, et ils sont à l'emprunteur 
 ### Lend: Risques
 
 Un prêt passé la fin de sa grâce (`getEffectiveGraceSeconds` après l'échéance, que le temps en pause décale) peut être mis en défaut par n'importe qui : la garantie liquide est vendue pour le prêteur, la garantie illiquide est transférée telle quelle. Si les deux côtés sont liquides, le prêt peut être liquidé dès que le facteur de santé passe sous 1, et la vente paie le prêteur en premier. Un côté illiquide exclut la liquidation fondée sur le prix, et en cas de défaut le prêteur reçoit toute la garantie. `useFullTermInterest` impose un plancher d'intérêts en cas de remboursement anticipé ; sans lui, les intérêts sont au prorata. Un calendrier d'intérêts périodiques règle une période manquée par une vente forcée de garantie au prêteur. Le NFT de position du prêteur porte la créance : le transférer transfère le prêt.
+
+<a id="lend-offer"></a>
+
+### Lend : Publier votre propre offre
+
+Une offre de prêt est un `createOffer` avec `offerType` 0, ERC-20 des deux côtés, envoyé depuis le portefeuille du prêteur. Il prélève `amountMax` de l'actif prêté dans le coffre du prêteur, en créant le coffre s'il n'existe pas, et émet `OfferCreated(offerId, creator, 0)`. Un emprunteur l'accepte avec `acceptOffer` : sa garantie est prélevée dans son coffre, le principal moins les frais va dans son portefeuille, et la part des frais revenant à l'expéditeur lui va en tant qu'expéditeur. Tant que `getPartialFillEnabled` vaut true, `matchOffers` peut aussi l'associer à la demande d'un emprunteur ; une offre de prêteur à valeur unique prête alors tout son montant à son taux, contre au moins son `collateralAmount`. `cancelOffer` est ouvert au créateur à partir de `MIN_OFFER_CANCEL_DELAY` (5 minutes) après la création, et à tous une fois l'offre expirée ; le montant revient toujours au créateur.
+
+<a id="lend-offer-terms"></a>
+
+### Lend : Les conditions de l'offre
+
+Basic et Advanced publient tous deux, pour l'instant, une offre de prêt à valeur unique : `amount` = `amountMax`, `interestRateBps` = `interestRateBpsMax`, `collateralAmount` = `collateralAmountMax` (l'unique garantie qu'un emprunteur doit bloquer), `fillMode` 0, `periodicInterestCadence` 0, `allowsPrepayListing` et `allowsParallelSale` à false, `refinanceTargetLoanId` 0, `creatorRiskAndTermsConsent` à true, et aucun tarif Full. Les montants sont convertis exactement en unités de base et le taux est d'au plus 10 000 bps. `durationDays` est plafonné par le maximum configuré lu dans `getProtocolConfigBundle`. `expiresAt` vaut 0 (ouverte jusqu'à l'annulation) ou une heure fixée depuis le dernier bloc à l'ouverture de la vérification, au plus `MAX_OFFER_EXPIRY_HORIZON` (365 jours) plus tard. `useFullTermInterest` vaut true par défaut et `allowsPartialRepay` false.
+
+<a id="lend-offer-review"></a>
+
+### Lend : Vérifier et publier une offre
+
+La vérification simule `createOffer` depuis le portefeuille et lit les deux classes, `getEffectiveGraceSeconds(durationDays)`, `getLoanInitiationFeeBps`, `getTreasuryFeeBps`, la durée maximale, le coffre du portefeuille, son solde et son autorisation sur l'actif prêté (le côté que le prêteur bloque), et `calculateLTV` quand les deux côtés sont liquides ; elle est relue à chaque bloc et juste avant l'ouverture du portefeuille. Tant que l'autorisation est insuffisante, la simulation ne peut atteindre que le prélèvement du montant : une erreur de prélèvement du jeton, `VaultDepositFailed` (l'enveloppe du protocole autour d'un prélèvement annulé sans données, comme le fait WETH quand l'autorisation est insuffisante) ou une annulation sans nom d'erreur du protocole est donc montrée comme l'approbation à donner, selon la même règle que la vérification d'une demande ; toute autre erreur nommée du protocole est un refus. Après une approbation exacte, `createOffer` est simulé de nouveau puis envoyé ; un arrêt après l'approbation remet l'autorisation à sa valeur antérieure si rien d'autre ne l'a modifiée. Le résultat lit `OfferCreated` pour ce portefeuille avec `offerType` 0 et le `Transfer` du montant vers le coffre.
+
+<a id="lend-offer-fee"></a>
+
+### Lend : Les frais de votre offre
+
+`createOffer` ne facture rien au prêteur. Les frais affichés sont ceux de l'emprunteur : `getLoanInitiationFeeBps` du montant dans l'actif prêté, au taux en vigueur quand `acceptOffer` s'exécute, réduits alors par la remise de palier de détention de l'emprunteur et déduits de ce qui lui est versé ; le chiffre affiché utilise le taux d'aujourd'hui. La part du protocole sur les intérêts est `getTreasuryFeeBps`, fixée par prêt à son ouverture (`treasuryFeeBpsAtInit`) ; la remise de palier de détention du prêteur, avec le consentement activé, la réduit au règlement des intérêts. La vérification montre le taux d'aujourd'hui et la part à ce taux comme plafond ; une lecture échouée de `getTreasuryFeeBps` est signalée, et aucune part ni aucun montant de retour n'est affiché.
 
 <a id="risk-access"></a>
 

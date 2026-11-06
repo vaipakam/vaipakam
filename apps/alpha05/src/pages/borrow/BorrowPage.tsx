@@ -18,11 +18,11 @@ import { AcceptOffer, ACCEPT_KEY } from '../../shared/accept/AcceptOffer';
 import { MatchingOffers, type MatchesView } from '../../shared/offers/MatchingOffers';
 import { PairPicker } from '../../shared/offers/PairPicker';
 import { readMatches } from '../../shared/offers/matches';
-import { ArmTariff, TARIFF_CONTEXT_KEY, type ArmContext } from './request/ArmTariff';
-import { PostRequest } from './request/PostRequest';
-import { RequestForm, REQUEST_KEY } from './request/RequestForm';
-import type { RequestDraft } from './request/requestReview';
-import type { RequestAssets } from './request/requestModel';
+import { ArmTariff, TARIFF_CONTEXT_KEY, type ArmContext } from '../../shared/post/ArmTariff';
+import { PostOffer } from '../../shared/post/PostOffer';
+import { OfferForm, REQUEST_KEY } from '../../shared/post/OfferForm';
+import type { PostDraft } from '../../shared/post/postReview';
+import type { PostAssets } from '../../shared/post/postModel';
 import { useAssetStandard } from '../../shared/nft/useStandard';
 
 type Hex = `0x${string}`;
@@ -70,8 +70,8 @@ export function BorrowPage() {
   /** The borrower's own request: the form is open (`composing`), and the
    *  confirmed draft under review, each kept like the offer above. */
   const [composing, setComposing] = useStoredValue<boolean>(`${REQUEST_KEY}:composing`);
-  const [draft, setDraft] = useStoredValue<RequestDraft>(`${REQUEST_KEY}:draft`);
-  const [pendingDraft, setPendingDraft] = useStoredValue<RequestDraft>(`${REQUEST_KEY}:pending`);
+  const [draft, setDraft] = useStoredValue<PostDraft>(`${REQUEST_KEY}:draft`);
+  const [pendingDraft, setPendingDraft] = useStoredValue<PostDraft>(`${REQUEST_KEY}:pending`);
   const [, setTyped] = useStoredValue<unknown>(`${REQUEST_KEY}:input`);
   /** OFF-22: the Full tariff step for a request just posted, kept apart from
    *  the request's review so it outlives that card. */
@@ -94,12 +94,20 @@ export function BorrowPage() {
   const diamond = (chain?.diamondAddress ?? '0x') as Hex;
   const lending = pair.lending ?? ('0x' as Hex);
   const collateral = pair.collateral ?? ('0x' as Hex);
-  const ownMatches = useOwnRead(['borrow', 'matches', lending.toLowerCase(), collateral.toLowerCase()], (c) => readMatches(c, diamond, lending, collateral, own!.account, 'borrower'), {
-    enabled: ready && walletChain !== null,
-  });
-  const publicMatches = useChainRead(['borrow', 'matches', diamond, lending.toLowerCase(), collateral.toLowerCase()], (c) => readMatches(c, diamond, lending, collateral, null, 'borrower'), {
-    enabled: ready && !connected,
-  });
+  const ownMatches = useOwnRead(
+    ['borrow', 'matches', lending.toLowerCase(), collateral.toLowerCase()],
+    (c) => readMatches(c, diamond, lending, collateral, own!.account, 'borrower'),
+    {
+      enabled: ready && walletChain !== null,
+    },
+  );
+  const publicMatches = useChainRead(
+    ['borrow', 'matches', diamond, lending.toLowerCase(), collateral.toLowerCase()],
+    (c) => readMatches(c, diamond, lending, collateral, null, 'borrower'),
+    {
+      enabled: ready && !connected,
+    },
+  );
   const view: MatchesView = connected ? ownMatches : publicMatches;
 
   const assets: Hex[] = [...suggested.map((s) => s.address), ...(pair.lending ? [pair.lending] : []), ...(pair.collateral ? [pair.collateral] : [])];
@@ -122,7 +130,7 @@ export function BorrowPage() {
 
   // OFF-35 holds for a request too: it is new exposure, so an unaccepted
   // Terms version is accepted before its review opens.
-  const reviewRequest = (next: RequestDraft) => {
+  const reviewRequest = (next: PostDraft) => {
     if (terms.data?.kind === 'needed') {
       setPendingDraft(next);
       termsGate.start(terms.data);
@@ -141,7 +149,7 @@ export function BorrowPage() {
   // unread standard offers no request rather than a guessed one.
   const lendingStandard = useAssetStandard(ready ? pair.lending : null).data;
   const collateralStandard = useAssetStandard(ready ? pair.collateral : null).data;
-  const requestPair: RequestAssets | null =
+  const requestPair: PostAssets | null =
     ready && lendingStandard === 'erc20' && collateralStandard !== null && collateralStandard !== undefined
       ? { lending: pair.lending!, collateral: pair.collateral!, standard: collateralStandard }
       : null;
@@ -166,7 +174,9 @@ export function BorrowPage() {
         </Notice>
       )}
       {chain && !flowOpen && <PairPicker key={chain.chainId} role="borrower" chain={chain} meta={meta} lending={pair.lending} collateral={pair.collateral} onChange={setPair} />}
-      {chain && ready && !flowOpen && <MatchingOffers role="borrower" view={view} meta={meta} connected={connected && walletChain !== null} onTake={take} takeDisabled={takeDisabled} />}
+      {chain && ready && !flowOpen && (
+        <MatchingOffers role="borrower" view={view} meta={meta} connected={connected && walletChain !== null} onTake={take} takeDisabled={takeDisabled} />
+      )}
       {chain && ready && !flowOpen && connected && walletChain !== null && (
         <section className="borrow-section request-open" aria-labelledby="borrow-request-open">
           <h2 id="borrow-request-open" className="sr-only">
@@ -178,14 +188,29 @@ export function BorrowPage() {
               {format('request.heldForTariff', { id: armContext.offerId.toString() })}
             </p>
           )}
-          <button type="button" className="btn" disabled={takeDisabled || requestPair === null || armContext !== null} onClick={() => setComposing(true)} data-testid="request-open">
+          <button
+            type="button"
+            className="btn"
+            disabled={takeDisabled || requestPair === null || armContext !== null}
+            onClick={() => setComposing(true)}
+            data-testid="request-open"
+          >
             {text('request.open')}
           </button>
         </section>
       )}
       {composing === true && draft === null && armContext === null && !termsOpen && walletChain && own && requestPair && (
         <section className="borrow-section" aria-labelledby="borrow-request-form">
-          <RequestForm chain={walletChain} own={own} pair={requestPair} meta={meta} onReview={reviewRequest} onCancel={() => setComposing(null)} />
+          <OfferForm
+            side="borrower"
+            flowKey={REQUEST_KEY}
+            chain={walletChain}
+            own={own}
+            pair={requestPair}
+            meta={meta}
+            onReview={reviewRequest}
+            onCancel={() => setComposing(null)}
+          />
         </section>
       )}
       {termsOpen && termsGate.session && walletChain && own && (
@@ -222,7 +247,8 @@ export function BorrowPage() {
           <h2 id="borrow-request-review" className="sr-only">
             {text('borrow.stepSign')}
           </h2>
-          <PostRequest
+          <PostOffer
+            flowKey={REQUEST_KEY}
             draft={draft}
             chain={walletChain}
             own={own}

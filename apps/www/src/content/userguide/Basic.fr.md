@@ -1186,7 +1186,7 @@ En mode Avancé, une demande peut prendre le tarif de frais Full : des frais en 
 
 ### Lend: Comment ça marche
 
-Pour prêter, vous financez la demande ouverte d'un emprunteur : un montant d'un jeton, le taux qu'il paiera, une durée et une garantie que l'emprunteur a déjà bloquée dans son propre coffre. La financer ouvre le prêt en une seule transaction. Le montant quitte votre portefeuille, l'emprunteur le reçoit moins ses frais d'ouverture, et la garantie reste bloquée pour vous jusqu'à la fin du prêt. Votre côté du prêt est un jeton de position dans votre portefeuille, et c'est son détenteur qui est remboursé. L'emprunteur rembourse le montant plus les intérêts avant l'échéance, et le protocole garde sa part des intérêts. Pour l'instant, publier votre propre offre de prêt se fait dans l'application actuelle ; la page y renvoie.
+Pour prêter, vous financez la demande ouverte d'un emprunteur : un montant d'un jeton, le taux qu'il paiera, une durée et une garantie que l'emprunteur a déjà bloquée dans son propre coffre. La financer ouvre le prêt en une seule transaction. Le montant quitte votre portefeuille, l'emprunteur le reçoit moins ses frais d'ouverture, et la garantie reste bloquée pour vous jusqu'à la fin du prêt. Votre côté du prêt est un jeton de position dans votre portefeuille, et c'est son détenteur qui est remboursé. L'emprunteur rembourse le montant plus les intérêts avant l'échéance, et le protocole garde sa part des intérêts. Si aucune demande ne convient, vous pouvez publier votre propre offre de prêt depuis la même page.
 
 <a id="lend-offers"></a>
 
@@ -1211,6 +1211,30 @@ Les frais d'ouverture sont à la charge de l'emprunteur : une petite part du mon
 ### Lend: Risques
 
 Prêter peut vous faire perdre de l'argent. Si l'emprunteur n'a pas remboursé à la fin du délai de grâce, le prêt est en défaut et vous êtes payé sur la garantie : vendue pour vous là où le protocole le peut, remise telle quelle sinon, et une vente peut rapporter moins que ce qui vous est dû. Avec une garantie liquide, n'importe qui peut liquider le prêt dès que son facteur de santé passe sous 1 ; la vente vous rembourse en premier, mais une forte baisse peut laisser moins que ce qui vous est dû. Un jeton illiquide est valorisé à zéro, il n'y a donc pas de liquidation fondée sur le prix, et en cas de défaut vous recevez toute la garantie, quelle que soit sa valeur. Vous ne pouvez pas reprendre le montant avant la fin du prêt ; sortir plus tôt signifie vendre votre position à un autre prêteur. Avec des intérêts au prorata, un remboursement anticipé vous rapporte moins. Une pause repousse l'échéance, et les intérêts continuent de courir pendant celle-ci.
+
+<a id="lend-offer"></a>
+
+### Lend : Publier votre propre offre
+
+Si aucune demande ne convient, vous pouvez publier votre propre offre de prêt pour vos deux jetons : le montant exact que vous prêtez, le taux que vous demandez, la durée et la garantie qu'un emprunteur doit bloquer. La publication déplace le montant de votre portefeuille vers votre propre coffre, où il reste bloqué tant que l'offre est ouverte. Un emprunteur qui l'accepte ouvre le prêt aussitôt, à vos conditions, sans vous redemander : il reçoit le montant moins ses frais d'ouverture, et sa garantie est bloquée dans son coffre pour vous. Tant que l'appariement est activé sur le réseau, n'importe qui peut aussi associer votre offre à la demande d'un emprunteur ; ce prêt prête tout votre montant à votre taux, contre au moins la garantie que vous demandez. La vérification indique si l'appariement est activé en ce moment. Vous pouvez annuler à partir de cinq minutes après la publication, et le montant revient dans votre portefeuille. Une offre expirée ne peut plus être acceptée ; son montant reste dans votre coffre jusqu'à ce que vous, ou n'importe qui, la fermiez, puis revient uniquement dans votre portefeuille. Tant que la page Offres de la prochaine application n'est pas construite, vous suivez, annulez et fermez une offre sur la page Offres de l'application actuelle ; la vérification le dit avant que rien ne soit bloqué.
+
+<a id="lend-offer-terms"></a>
+
+### Lend : Les conditions de l'offre
+
+Un seul emprunteur prend tout le montant, ou personne, et doit bloquer exactement la garantie que vous fixez. Le formulaire indique combien du jeton prêté votre portefeuille détient. Chaque chiffre est lu exactement comme vous le saisissez : plus de décimales que le jeton n'en a sont refusées, jamais arrondies, et le taux va jusqu'à 100 % par an avec deux décimales. Les durées proposées s'arrêtent à la plus longue que le réseau autorise. L'offre reste ouverte jusqu'à son acceptation ou son annulation, ou pendant le nombre de jours que vous choisissez, jusqu'à un an. Les intérêts sur toute la durée, le choix habituel, signifient qu'un remboursement anticipé ne réduit pas ce que vous gagnez ; au prorata, vous n'êtes payé que pour le temps où le prêt est ouvert. Vous pouvez aussi permettre à l'emprunteur de rembourser une partie en avance. Le formulaire montre ce que l'emprunteur vous devrait à l'échéance s'il acceptait l'offre maintenant. Une fourchette, un mode d'exécution, un calendrier d'intérêts et le tarif de frais pour les offres arriveront dans une mise à jour ultérieure, et le mode avancé le dit.
+
+<a id="lend-offer-review"></a>
+
+### Lend : Vérifier et publier une offre
+
+Avant l'ouverture de votre portefeuille, l'application demande au protocole d'essayer votre offre à blanc, si bien que la vérification montre la réponse du protocole lui-même. Elle indique ce que vous bloquez maintenant, le montant qu'un emprunteur prend, la garantie qu'il doit bloquer, le taux et la durée, ce que l'emprunteur recevrait au taux de frais d'aujourd'hui, les intérêts à l'échéance, la part du protocole et ce qui vous revient, chaque condition du cycle de vie, quand l'offre expire, le ratio prêt-valeur aux prix d'aujourd'hui et si une approbation est nécessaire. Si votre portefeuille détient moins que le montant, la vérification indique ce qui manque et ne propose aucune signature. Vous cochez une case pour accepter les Avertissements sur les risques et les Conditions. Votre portefeuille approuve exactement le montant si nécessaire, l'application essaie de nouveau l'offre, et seulement alors la publie. Si tout s'arrête après une approbation, l'application demande de remettre l'approbation en l'état et dit si c'est fait. Ensuite, l'application vérifie sur la chaîne l'offre enregistrée et le montant bloqué dans votre coffre.
+
+<a id="lend-offer-fee"></a>
+
+### Lend : Les frais de votre offre
+
+Publier une offre ne vous coûte aucuns frais. Les frais d'ouverture sont ceux de l'emprunteur : une petite part du montant, prélevée une fois dans l'actif prêté quand un emprunteur accepte votre offre, au taux en vigueur à ce moment, et retirée de ce qu'il reçoit. Vous prêtez tout le montant, et l'emprunteur vous le doit en entier avec les intérêts. Quand les intérêts sont payés, le protocole garde sa part, au taux en vigueur à l'ouverture du prêt ; votre palier de réduction des frais peut baisser cette part tant que votre réglage de réduction est activé. La vérification montre le taux d'aujourd'hui et le maximum que cette part peut prendre ; si ce taux ne peut pas être lu, la vérification le dit au lieu d'afficher un chiffre.
 
 <a id="risk-access"></a>
 

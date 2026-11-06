@@ -2502,7 +2502,7 @@ The opt-in is `setOfferCreatorFullTariff(offerId, true, maxCStar, allowDowngrade
 
 ### Lend: How It Works
 
-Lend takes a borrow request (`offerType` 1) of an ERC-20 against ERC-20 collateral directly, with `acceptOffer(offerId, terms, signature)` sent by the lender. In one transaction the principal is pulled from the lender's wallet, under an allowance to the Diamond, into the lender's vault; the borrower receives it less the initiation fee; the collateral already in the borrower's vault becomes the loan's collateral; and `LoanInitiated` is emitted, with a lender and a borrower position NFT. Posting a lending offer (`offerType` 0), NFT legs and the Advanced options follow in later updates; the page links to the current app.
+Lend takes a borrow request (`offerType` 1) of an ERC-20 against ERC-20 collateral directly, with `acceptOffer(offerId, terms, signature)` sent by the lender. In one transaction the principal is pulled from the lender's wallet, under an allowance to the Diamond, into the lender's vault; the borrower receives it less the initiation fee; the collateral already in the borrower's vault becomes the loan's collateral; and `LoanInitiated` is emitted, with a lender and a borrower position NFT. A lending offer (`offerType` 0) is posted from the same page; NFT legs and a lending offer's Advanced options follow in later updates.
 
 <a id="lend-offers"></a>
 
@@ -2527,6 +2527,30 @@ The fee is `previewAccept`'s `lifEstimate`, and it is the borrower's: `getLoanIn
 ### Lend: Risks
 
 A loan past its grace end (`getEffectiveGraceSeconds` after the due date, which paused time moves) can be defaulted by anyone: liquid collateral is sold for the lender, illiquid collateral is transferred as-is. With both legs liquid the loan can be liquidated once the health factor is below 1, and the sale pays the lender first. An illiquid leg rules out price-based liquidation, and on default the lender receives all the collateral. `useFullTermInterest` floors the interest on early repayment; without it interest is pro-rata. A periodic-interest cadence settles a missed period by a forced sale of collateral to the lender. The lender's position NFT carries the claim: transferring it transfers the loan.
+
+<a id="lend-offer"></a>
+
+### Lend: Posting Your Own Offer
+
+A lending offer is `createOffer` with `offerType` 0, ERC-20 on both legs, sent from the lender's wallet. It pulls `amountMax` of the lending asset into the lender's vault, creating the vault if there is none, and emits `OfferCreated(offerId, creator, 0)`. A borrower takes it with `acceptOffer`: their collateral is pulled into their vault, the principal less the fee goes to their wallet, and the sender's share of the fee goes to them as the sender. While `getPartialFillEnabled` is true, `matchOffers` may also pair it with a borrower's request; a single-value lender offer then lends its whole amount at its rate, against at least its `collateralAmount`. `cancelOffer` is open to the creator from `MIN_OFFER_CANCEL_DELAY` (5 minutes) after creation, and to anyone once the offer has expired; the amount always returns to the creator.
+
+<a id="lend-offer-terms"></a>
+
+### Lend: The Offer's Terms
+
+Basic and Advanced both post a single-value lending offer for now: `amount` = `amountMax`, `interestRateBps` = `interestRateBpsMax`, `collateralAmount` = `collateralAmountMax` (the one collateral a borrower must lock), `fillMode` 0, `periodicInterestCadence` 0, `allowsPrepayListing` and `allowsParallelSale` false, `refinanceTargetLoanId` 0, `creatorRiskAndTermsConsent` true, and no Full tariff. Amounts are parsed into base units exactly and the rate is at most 10,000 bps. `durationDays` is capped by the configured maximum read from `getProtocolConfigBundle`. `expiresAt` is 0 (open until cancelled) or a time fixed from the latest block when the review opens, at most `MAX_OFFER_EXPIRY_HORIZON` (365 days) ahead. `useFullTermInterest` defaults to true and `allowsPartialRepay` to false.
+
+<a id="lend-offer-review"></a>
+
+### Lend: Reviewing and Posting an Offer
+
+The review simulates `createOffer` from the wallet and reads both classes, `getEffectiveGraceSeconds(durationDays)`, `getLoanInitiationFeeBps`, `getTreasuryFeeBps`, the maximum term, the wallet's vault, its balance and allowance on the lending asset (the leg the lender locks), and `calculateLTV` when both legs are liquid; it is read again every block and right before the wallet opens. While the allowance is short the simulation can only reach the pull of the amount, so a token's pull error, `VaultDepositFailed` (the protocol's wrap of a pull that reverted without data, as WETH does on a short allowance) or a revert without a protocol error name is shown as the approval to clear, the same rule a request's review uses; any other named protocol error is a refusal. After an exact approval `createOffer` is simulated again and sent; a stop after the approval resets the allowance to its earlier value when nothing else changed it. The outcome reads `OfferCreated` for this wallet with `offerType` 0 and the amount's `Transfer` into the vault.
+
+<a id="lend-offer-fee"></a>
+
+### Lend: Fees on Your Offer
+
+`createOffer` charges the lender nothing. The fee shown is the borrower's: `getLoanInitiationFeeBps` of the amount in the lending asset, at the rate in force when `acceptOffer` runs, lowered then by the borrower's hold-tier discount and deducted from their delivery; the figure shown uses today's rate. The protocol's share of interest is `getTreasuryFeeBps`, fixed per loan when it opens (`treasuryFeeBpsAtInit`); the lender's hold-tier discount, with the consent on, lowers it when interest is settled. The review shows today's rate and the share at that rate as an upper bound; a failed read of `getTreasuryFeeBps` is stated, and no share or amount back is shown.
 
 <a id="risk-access"></a>
 

@@ -2313,7 +2313,7 @@ Die Zustimmung ist `setOfferCreatorFullTariff(offerId, true, maxCStar, allowDown
 
 ### Lend: So funktioniert es
 
-Lend nimmt eine Kreditanfrage (`offerType` 1) eines ERC-20 gegen ERC-20-Sicherheiten direkt an, mit `acceptOffer(offerId, terms, signature)`, gesendet vom Kreditgeber. In einer Transaktion wird das Kapital aus der Wallet des Kreditgebers, über eine Freigabe an den Diamond, in den Tresor des Kreditgebers gezogen; der Kreditnehmer erhält es abzüglich der Eröffnungsgebühr; die bereits im Tresor des Kreditnehmers liegenden Sicherheiten werden zu den Sicherheiten des Kredits; und `LoanInitiated` wird ausgegeben, mit einem Positions-NFT für Kreditgeber und Kreditnehmer. Ein Kreditangebot veröffentlichen (`offerType` 0), NFT-Seiten und die erweiterten Optionen folgen in späteren Updates; die Seite verlinkt auf die aktuelle App.
+Lend nimmt eine Kreditanfrage (`offerType` 1) eines ERC-20 gegen ERC-20-Sicherheiten direkt an, mit `acceptOffer(offerId, terms, signature)`, gesendet vom Kreditgeber. In einer Transaktion wird das Kapital aus der Wallet des Kreditgebers, über eine Freigabe an den Diamond, in den Tresor des Kreditgebers gezogen; der Kreditnehmer erhält es abzüglich der Eröffnungsgebühr; die bereits im Tresor des Kreditnehmers liegenden Sicherheiten werden zu den Sicherheiten des Kredits; und `LoanInitiated` wird ausgegeben, mit einem Positions-NFT für Kreditgeber und Kreditnehmer. Ein Kreditangebot (`offerType` 0) wird auf derselben Seite veröffentlicht; NFT-Seiten und die erweiterten Optionen eines Kreditangebots folgen in späteren Updates.
 
 <a id="lend-offers"></a>
 
@@ -2338,6 +2338,30 @@ Die Gebühr ist `lifEstimate` aus `previewAccept` und gehört dem Kreditnehmer: 
 ### Lend: Risiken
 
 Ein Kredit nach Ende seiner Nachfrist (`getEffectiveGraceSeconds` nach dem Fälligkeitsdatum, das pausierte Zeit verschiebt) kann von jedem für ausgefallen erklärt werden: liquide Sicherheiten werden für den Kreditgeber verkauft, illiquide unverändert übertragen. Sind beide Seiten liquide, kann der Kredit liquidiert werden, sobald der Health Factor unter 1 liegt, und der Verkauf zahlt den Kreditgeber zuerst. Eine illiquide Seite schließt die preisbasierte Liquidation aus, und bei einem Ausfall erhält der Kreditgeber alle Sicherheiten. `useFullTermInterest` setzt bei vorzeitiger Rückzahlung eine Untergrenze für die Zinsen; ohne es sind die Zinsen anteilig. Ein periodischer Zinsrhythmus begleicht eine verpasste Periode durch einen Zwangsverkauf von Sicherheiten an den Kreditgeber. Das Positions-NFT des Kreditgebers trägt den Anspruch: Wer es überträgt, überträgt den Kredit.
+
+<a id="lend-offer"></a>
+
+### Lend: Ein eigenes Angebot veröffentlichen
+
+Ein Kreditangebot ist `createOffer` mit `offerType` 0, ERC-20 auf beiden Seiten, gesendet aus der Wallet des Kreditgebers. Es zieht `amountMax` des verliehenen Assets in den Vault des Kreditgebers, legt den Vault an, falls keiner existiert, und gibt `OfferCreated(offerId, creator, 0)` aus. Ein Kreditnehmer nimmt es mit `acceptOffer` an: Seine Sicherheit wird in seinen Vault gezogen, der Kapitalbetrag abzüglich der Gebühr geht in seine Wallet, und der Anteil des Absenders an der Gebühr geht an ihn als Absender. Solange `getPartialFillEnabled` true ist, kann `matchOffers` es außerdem mit der Anfrage eines Kreditnehmers paaren; ein Einzelwert-Kreditangebot verleiht dann seinen ganzen Betrag zu seinem Zinssatz, gegen mindestens seinen `collateralAmount`. `cancelOffer` steht dem Ersteller ab `MIN_OFFER_CANCEL_DELAY` (5 Minuten) nach der Erstellung offen und jedem, sobald das Angebot abgelaufen ist; der Betrag kehrt immer zum Ersteller zurück.
+
+<a id="lend-offer-terms"></a>
+
+### Lend: Die Bedingungen des Angebots
+
+Basic und Advanced veröffentlichen vorerst beide ein Einzelwert-Kreditangebot: `amount` = `amountMax`, `interestRateBps` = `interestRateBpsMax`, `collateralAmount` = `collateralAmountMax` (die eine Sicherheit, die ein Kreditnehmer sperren muss), `fillMode` 0, `periodicInterestCadence` 0, `allowsPrepayListing` und `allowsParallelSale` false, `refinanceTargetLoanId` 0, `creatorRiskAndTermsConsent` true, und kein Full-Tarif. Beträge werden exakt in Basiseinheiten geparst, und der Zinssatz beträgt höchstens 10.000 bps. `durationDays` ist durch das konfigurierte Maximum aus `getProtocolConfigBundle` begrenzt. `expiresAt` ist 0 (offen bis zur Stornierung) oder ein Zeitpunkt, der beim Öffnen der Prüfung vom neuesten Block aus festgelegt wird, höchstens `MAX_OFFER_EXPIRY_HORIZON` (365 Tage) voraus. `useFullTermInterest` ist standardmäßig true und `allowsPartialRepay` false.
+
+<a id="lend-offer-review"></a>
+
+### Lend: Angebot prüfen und veröffentlichen
+
+Die Prüfung simuliert `createOffer` aus der Wallet und liest beide Klassen, `getEffectiveGraceSeconds(durationDays)`, `getLoanInitiationFeeBps`, `getTreasuryFeeBps`, die maximale Laufzeit, den Vault der Wallet, deren Saldo und Freigabe auf dem verliehenen Asset (der Seite, die der Kreditgeber sperrt) und `calculateLTV`, wenn beide Seiten liquide sind; sie wird in jedem Block und direkt vor dem Öffnen der Wallet neu gelesen. Solange die Freigabe zu knapp ist, erreicht die Simulation nur den Einzug des Betrags, daher werden ein Einzugsfehler des Tokens, `VaultDepositFailed` (die Hülle des Protokolls um einen Einzug, der ohne Daten zurückgesetzt wurde, wie WETH es bei zu knapper Freigabe tut) oder ein Revert ohne Fehlernamen des Protokolls als zu erteilende Freigabe gezeigt, nach derselben Regel wie bei der Prüfung einer Anfrage; jeder andere benannte Protokollfehler ist eine Ablehnung. Nach einer exakten Freigabe wird `createOffer` erneut simuliert und gesendet; ein Abbruch nach der Freigabe setzt die Freigabe auf ihren früheren Wert zurück, wenn nichts anderes sie geändert hat. Das Ergebnis liest `OfferCreated` für diese Wallet mit `offerType` 0 und den `Transfer` des Betrags in den Vault.
+
+<a id="lend-offer-fee"></a>
+
+### Lend: Gebühren bei Ihrem Angebot
+
+`createOffer` berechnet dem Kreditgeber nichts. Die gezeigte Gebühr ist die des Kreditnehmers: `getLoanInitiationFeeBps` des Betrags im verliehenen Asset, zum Satz, der gilt, wenn `acceptOffer` läuft, dann um den Haltestufen-Rabatt des Kreditnehmers gesenkt und von seiner Auszahlung abgezogen; die gezeigte Zahl nutzt den heutigen Satz. Der Anteil des Protokolls an den Zinsen ist `getTreasuryFeeBps`, je Kredit bei Eröffnung festgelegt (`treasuryFeeBpsAtInit`); der Haltestufen-Rabatt des Kreditgebers senkt ihn bei aktiver Einwilligung, wenn Zinsen abgerechnet werden. Die Prüfung zeigt den heutigen Satz und den Anteil zu diesem Satz als Obergrenze; ein fehlgeschlagenes Lesen von `getTreasuryFeeBps` wird genannt, und weder Anteil noch Rückfluss werden gezeigt.
 
 <a id="risk-access"></a>
 

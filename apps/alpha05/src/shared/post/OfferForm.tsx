@@ -1,17 +1,17 @@
 import { useEffect, useRef, useState } from 'react';
 import { formatUnits } from 'viem';
-import type { OwnStateClient } from '../../../chain/ownRail';
-import type { SupportedChain } from '../../../chain/chains';
-import { useCopy, type CopyKey } from '../../../shared/copy/useCopy';
-import { WhyLink } from '../../../shared/help/WhyLink';
-import { refusalFromError } from '../../../shared/eligibility/refusal';
-import { assetName, tokenAmount, type TokenMetaMap } from '../../../shared/reads/tokens';
-import { useOwnRead } from '../../../shared/reads/useOwnRead';
-import { useStoredValue } from '../../../shared/tx/txStore';
-import { useMounted } from '../../../shared/tx/useReviewRefresh';
-import { FormField } from '../../../shared/ui/FormField';
-import { useMode } from '../../../app/ModeContext';
-import { Notice } from '../../../shared/ui/Notice';
+import type { OwnStateClient } from '../../chain/ownRail';
+import type { SupportedChain } from '../../chain/chains';
+import { useCopy, type CopyKey } from '../copy/useCopy';
+import { WhyLink } from '../help/WhyLink';
+import { refusalFromError } from '../eligibility/refusal';
+import { assetName, tokenAmount, type TokenMetaMap } from '../reads/tokens';
+import { useOwnRead } from '../reads/useOwnRead';
+import { useStoredValue } from '../tx/txStore';
+import { useMounted } from '../tx/useReviewRefresh';
+import { FormField } from '../ui/FormField';
+import { useMode } from '../../app/ModeContext';
+import { Notice } from '../ui/Notice';
 import {
   advancedSet,
   bucketsWithin,
@@ -29,22 +29,27 @@ import {
   parseAmount,
   parseDays,
   parseRateBps,
-  requestFigures,
+  postFigures,
   type ExpiryChoice,
   type FillMode,
   type ParseError,
-  type RequestAssets,
-  type RequestInput,
-} from './requestModel';
-import { holds, parseQuantity, parseTokenId, readErc1155, readErc721 } from '../../../shared/nft/nft';
-import { readRequestFormInputs, type RequestDraft } from './requestReview';
-import { CADENCES, cadenceOpen, cadenceRefusalText, isCadence, readCadenceAdmission, type Cadence } from '../../../shared/offers/cadence';
-import { readNumeraireSymbol } from '../../../shared/reads/numeraire';
-import { readTariffQuote, readTariffSwitch, suggestedCeiling, VPFI_DECIMALS } from '../../../shared/offers/fullTariff';
+  type PostAssets,
+  type PostInput,
+  type PostSide,
+} from './postModel';
+import { POST_KEYS } from './postCopy';
+import { holds, parseQuantity, parseTokenId, readErc1155, readErc721 } from '../nft/nft';
+import { readPostFormInputs, type PostDraft } from './postReview';
+import { CADENCES, cadenceOpen, cadenceRefusalText, isCadence, readCadenceAdmission, type Cadence } from '../offers/cadence';
+import { readNumeraireSymbol } from '../reads/numeraire';
+import { readTariffQuote, readTariffSwitch, suggestedCeiling, VPFI_DECIMALS } from '../offers/fullTariff';
 
-/** The store key the typed request is kept under, so a navigation away and
- *  back, or a review closed to change a figure, keeps what was typed. */
+/** The store keys each page's posting flow is kept under (the typed form,
+ *  the draft, the review and its tracker), so a navigation away and back, or
+ *  a review closed to change a figure, keeps what was typed; and a borrower's
+ *  request and a lender's offer never share one. */
 export const REQUEST_KEY = 'borrow.request';
+export const LEND_OFFER_KEY = 'lend.offer';
 
 const FILL_LABEL: Readonly<Record<FillMode, CopyKey>> = {
   partial: 'request.fillPartial',
@@ -60,7 +65,12 @@ const CADENCE_LABEL: Readonly<Record<Cadence, CopyKey>> = {
   4: 'request.cadenceAnnual',
 };
 
-const ADVANCED_NAME = { range: 'request.advancedRange', fill: 'request.advancedFill', cadence: 'request.advancedCadence', tariff: 'request.advancedTariff' } as const satisfies Record<string, CopyKey>;
+const ADVANCED_NAME = {
+  range: 'request.advancedRange',
+  fill: 'request.advancedFill',
+  cadence: 'request.advancedCadence',
+  tariff: 'request.advancedTariff',
+} as const satisfies Record<string, CopyKey>;
 
 const EXPIRY_LABEL: Readonly<Record<ExpiryChoice, CopyKey>> = {
   never: 'request.expiryNeverOption',
@@ -70,15 +80,20 @@ const EXPIRY_LABEL: Readonly<Record<ExpiryChoice, CopyKey>> = {
   custom: 'request.expiryOther',
 };
 
-interface RequestFormProps {
+interface OfferFormProps {
+  /** Who posts: a borrower's request, or a lender's offer (OFF-06). */
+  side: PostSide;
+  /** The store key the typed form is kept under (REQUEST_KEY, LEND_OFFER_KEY). */
+  flowKey: string;
   chain: SupportedChain;
   own: OwnStateClient;
-  /** The two assets, and the standard the collateral claims. */
-  pair: RequestAssets;
+  /** The two assets, and the standard the collateral claims; a lender's
+   *  offer is posted on an ERC-20 pair only (its NFT collateral is later). */
+  pair: PostAssets;
   meta: TokenMetaMap | null;
   /** The confirmed request, with its expiry fixed now; the page opens the
    *  review on it. */
-  onReview: (draft: RequestDraft) => void;
+  onReview: (draft: PostDraft) => void;
   onCancel: () => void;
 }
 
@@ -96,14 +111,21 @@ interface RequestFormProps {
  * only the schedules the protocol admits for the terms typed, each closed
  * one with the protocol's reason. Set in Advanced, they still apply in Basic,
  * which says so and offers to clear them (RB-MODE never drops a choice).
+ * OFF-06: a lender types the same shape from the other side: the exact
+ * amount they lend (which posting locks in their vault, so the form shows
+ * their balance of it), the one collateral every borrower must lock, the
+ * rate, the term, the expiry and the interest mode. A lender's Advanced
+ * options come in a later update, and the form says so in Advanced.
  */
-export function RequestForm({ chain, own, pair, meta, onReview, onCancel }: RequestFormProps) {
+export function OfferForm({ side, flowKey, chain, own, pair, meta, onReview, onCancel }: OfferFormProps) {
   const { text, format } = useCopy();
   const { isAdvanced } = useMode();
-  const [stored, setStored] = useStoredValue<RequestInput>(`${REQUEST_KEY}:input`);
+  const k = POST_KEYS[side];
+  const lender = side === 'lender';
+  const [stored, setStored] = useStoredValue<PostInput>(`${flowKey}:input`);
   // A request kept from before a field existed reads that field's default.
-  const input: RequestInput = { ...DEFAULT_INPUT, ...stored };
-  const set = (patch: Partial<RequestInput>) => setStored({ ...input, ...patch });
+  const input: PostInput = { ...DEFAULT_INPUT, ...stored };
+  const set = (patch: Partial<PostInput>) => setStored({ ...input, ...patch });
   /** Errors show once a field has been left, or after a review was asked. */
   const [touched, setTouched] = useState<Record<'amount' | 'amountMax' | 'floor' | 'collateral' | 'tokenId' | 'rate' | 'term' | 'expiry' | 'ceiling', boolean>>({
     ceiling: false,
@@ -120,27 +142,26 @@ export function RequestForm({ chain, own, pair, meta, onReview, onCancel }: Requ
   const [opening, setOpening] = useState<string | null>(null);
 
   const diamond = chain.diamondAddress;
-  const nft = pair.standard === 'erc721';
+  const nft = !lender && pair.standard === 'erc721';
   /** An ERC-1155 collateral: a quantity of one token, named by its id. */
-  const multi = pair.standard === 'erc1155';
+  const multi = !lender && pair.standard === 'erc1155';
   const named = nft || multi;
-  const inputs = useOwnRead(['borrow', 'request', 'inputs', pair.collateral.toLowerCase(), pair.standard], (c) =>
-    readRequestFormInputs(c, diamond, own.account, pair.collateral, pair.standard),
-  );
+  /** The ERC-20 posting locks: the lending asset for an offer, the
+   *  collateral for a request (none for a token, checked by its id). */
+  const stakeAsset = lender ? pair.lending : named ? null : pair.collateral;
+  const inputs = useOwnRead([flowKey, 'inputs', String(stakeAsset).toLowerCase()], (c) => readPostFormInputs(c, diamond, own.account, stakeAsset));
   const tokenId = named ? parseTokenId(input.tokenId) : null;
   // Who holds the typed token, read live so the reader learns before the
   // review whether it is theirs; the review reads it again at one block.
-  const token = useOwnRead(
-    ['borrow', 'request', 'token', pair.collateral.toLowerCase(), String(tokenId)],
-    (c) => readErc721(c, pair.collateral, tokenId ?? 0n, own.account, diamond),
-    { enabled: nft && tokenId !== null, perBlock: true },
-  );
+  const token = useOwnRead([flowKey, 'token', pair.collateral.toLowerCase(), String(tokenId)], (c) => readErc721(c, pair.collateral, tokenId ?? 0n, own.account, diamond), {
+    enabled: nft && tokenId !== null,
+    perBlock: true,
+  });
   // How many of the typed ERC-1155 token the wallet holds, read live too.
-  const units = useOwnRead(
-    ['borrow', 'request', 'units', pair.collateral.toLowerCase(), String(tokenId)],
-    (c) => readErc1155(c, pair.collateral, tokenId ?? 0n, own.account, diamond),
-    { enabled: multi && tokenId !== null, perBlock: true },
-  );
+  const units = useOwnRead([flowKey, 'units', pair.collateral.toLowerCase(), String(tokenId)], (c) => readErc1155(c, pair.collateral, tokenId ?? 0n, own.account, diamond), {
+    enabled: multi && tokenId !== null,
+    perBlock: true,
+  });
 
   const lendingMeta = meta?.[pair.lending.toLowerCase()];
   const collateralMeta = meta?.[pair.collateral.toLowerCase()];
@@ -175,23 +196,25 @@ export function RequestForm({ chain, own, pair, meta, onReview, onCancel }: Requ
         : token.data === null
           ? null
           : token.data.owner === null
-        ? { tone: 'warn' as const, text: format('request.tokenMissing', { id: String(tokenId) }) }
-        : holds(token.data, own.account)
-          ? { tone: 'ok' as const, text: text('request.tokenHeld') }
-          : { tone: 'warn' as const, text: text('request.tokenNotHeld') };
+            ? { tone: 'warn' as const, text: format('request.tokenMissing', { id: String(tokenId) }) }
+            : holds(token.data, own.account)
+              ? { tone: 'ok' as const, text: text('request.tokenHeld') }
+              : { tone: 'warn' as const, text: text('request.tokenNotHeld') };
   const rate = parseRateBps(input.rate);
   // OFF-10: a range needs ERC-20 collateral; one kept from an ERC-20 pair
-  // does not carry over to a token.
-  const ranged = input.ranged && !named;
+  // does not carry over to a token. A lender's range is a later update.
+  const ranged = input.ranged && !named && !lender;
+  /** The fill mode the offer carries: a lender's is the default for now. */
+  const fillMode: FillMode = lender ? 'partial' : input.fillMode;
+  /** The Full tariff, chosen only on a request for now. */
+  const tariffChosen = !lender && input.tariff;
   const amountMax = ranged && lendingDecimals !== null ? parseAmount(input.amountMax, lendingDecimals) : null;
   const floorTyped = ranged && input.collateralFloor.trim() !== '';
   const floor = floorTyped && collateralDecimals !== null ? parseAmount(input.collateralFloor, collateralDecimals) : null;
   const shapeError =
-    ranged && amount?.ok && amountMax?.ok && collateral?.ok
-      ? rangeError(amount.value, amountMax.value, collateral.value, floor?.ok ? floor.value : collateral.value)
-      : null;
-  const fillBlock = fillModeBlock(input.fillMode, ranged, input.expiry);
-  const effective = advancedSet({ ...input, ranged });
+    ranged && amount?.ok && amountMax?.ok && collateral?.ok ? rangeError(amount.value, amountMax.value, collateral.value, floor?.ok ? floor.value : collateral.value) : null;
+  const fillBlock = fillModeBlock(fillMode, ranged, input.expiry);
+  const effective = lender ? [] : advancedSet({ ...input, ranged });
   /** Names joined as the catalog joins two: "a, b and c". */
   const listOf = (names: string[]): string =>
     names.length <= 1 ? (names[0] ?? '') : format('request.advancedList', { a: names.slice(0, -1).join(', '), b: names[names.length - 1]! });
@@ -217,7 +240,7 @@ export function RequestForm({ chain, own, pair, meta, onReview, onCancel }: Requ
         : rate.error === 'decimals'
           ? text('request.errRateDecimals')
           : rate.error === 'high'
-            ? text('request.errRateHigh')
+            ? text(k.errRateHigh)
             : text('request.errInvalid');
 
   const show = (field: keyof typeof touched) => touched[field] || asked;
@@ -250,10 +273,10 @@ export function RequestForm({ chain, own, pair, meta, onReview, onCancel }: Requ
   // protocol's own rule (valued at the smallest amount, as creation values
   // it). Read whenever a schedule can be chosen or one is already set; while
   // it is unknown only interest at repayment is offered.
-  const cadence: Cadence = isCadence(input.cadence) ? input.cadence : 0;
+  const cadence: Cadence = !lender && isCadence(input.cadence) ? input.cadence : 0;
   const admissionTerms = amount?.ok && durationDays !== null ? { amount: amount.value, durationDays } : null;
   const admission = useOwnRead(
-    ['borrow', 'request', 'cadence', pair.lending.toLowerCase(), pair.collateral.toLowerCase(), pair.standard, String(admissionTerms?.amount), String(admissionTerms?.durationDays)],
+    [flowKey, 'cadence', pair.lending.toLowerCase(), pair.collateral.toLowerCase(), pair.standard, String(admissionTerms?.amount), String(admissionTerms?.durationDays)],
     (c) =>
       readCadenceAdmission(c, diamond, {
         lendingAsset: pair.lending,
@@ -263,9 +286,9 @@ export function RequestForm({ chain, own, pair, meta, onReview, onCancel }: Requ
         collateralAssetType: pair.standard === 'erc721' ? ASSET_ERC721 : pair.standard === 'erc1155' ? ASSET_ERC1155 : ASSET_ERC20,
         durationDays: admissionTerms!.durationDays,
       }),
-    { enabled: admissionTerms !== null && (isAdvanced || cadence !== 0) },
+    { enabled: !lender && admissionTerms !== null && (isAdvanced || cadence !== 0) },
   );
-  const numeraire = useOwnRead(['numeraireSymbol', diamond], (c) => readNumeraireSymbol(c, diamond), { enabled: isAdvanced || cadence !== 0 });
+  const numeraire = useOwnRead(['numeraireSymbol', diamond], (c) => readNumeraireSymbol(c, diamond), { enabled: !lender && (isAdvanced || cadence !== 0) });
   const unit = numeraire.data ?? text('home.exposureUnit');
   // The admission is used only while it answers for the terms on screen.
   const admitted = admissionTerms !== null && admission.error === null ? admission.data : null;
@@ -288,11 +311,11 @@ export function RequestForm({ chain, own, pair, meta, onReview, onCancel }: Requ
   // ceiling takes that figure, which no loan of this request exceeds at
   // today's figures. The opt-in is armed by its own transaction after
   // posting, so it never enters the create call.
-  const tariffShown = isAdvanced || input.tariff;
+  const tariffShown = !lender && (isAdvanced || input.tariff);
   const tariffSwitch = useOwnRead(['feeEntitlementSwitch', diamond], (c) => readTariffSwitch(c, diamond), { enabled: tariffShown });
   const tariffPrincipal = ranged && amountMax?.ok ? amountMax.value : amount?.ok ? amount.value : null;
   const tariffQuote = useOwnRead(
-    ['borrow', 'request', 'tariff', pair.lending.toLowerCase(), String(tariffPrincipal), String(durationDays)],
+    [flowKey, 'tariff', pair.lending.toLowerCase(), String(tariffPrincipal), String(durationDays)],
     (c) => readTariffQuote(c, diamond, pair.lending, tariffPrincipal!, durationDays!),
     { enabled: tariffShown && tariffSwitch.data === true && tariffPrincipal !== null && durationDays !== null },
   );
@@ -304,7 +327,7 @@ export function RequestForm({ chain, own, pair, meta, onReview, onCancel }: Requ
   const vpfi = (v: bigint) => format('request.tariffVpfi', { amount: formatUnits(v, VPFI_DECIMALS) });
   /** Why the chosen tariff cannot go to review: switched off now, or no
    *  ceiling to authorize (none typed, and no quote to take it from). */
-  const tariffBlock = !input.tariff
+  const tariffBlock = !tariffChosen
     ? null
     : tariffSwitch.data === false
       ? text('request.tariffOffBlock')
@@ -319,17 +342,27 @@ export function RequestForm({ chain, own, pair, meta, onReview, onCancel }: Requ
     input.expiry !== 'custom' || typedExpiry.ok
       ? null
       : typedExpiry.error === 'high'
-        ? format('request.errExpiryHigh', { max: String(MAX_EXPIRY_DAYS) })
+        ? format(k.errExpiryHigh, { max: String(MAX_EXPIRY_DAYS) })
         : typedExpiry.error === 'empty'
           ? text('request.errDaysEmpty')
           : text('request.errDays');
 
-  const figures = inputs.data && amount?.ok && rate.ok && durationDays !== null ? requestFigures(amount.value, rate.value, durationDays, inputs.data.lifBps) : null;
+  const figures = inputs.data && amount?.ok && rate.ok && durationDays !== null ? postFigures(amount.value, rate.value, durationDays, inputs.data.lifBps) : null;
   /** The largest amount, for the live summary of a range. */
   const largest = ranged && amountMax?.ok ? amountMax.value : null;
   const collateralOk = nft ? tokenId !== null : multi ? tokenId !== null && quantity !== null : collateral?.ok === true;
   const rangeOk = !ranged || (amountMax?.ok === true && (!floorTyped || floor?.ok === true) && shapeError === null);
-  const valid = amount?.ok === true && collateralOk && rate.ok && durationDays !== null && expiryOk && rangeOk && fillBlock === null && cadenceBlock === null && tariffBlock === null && inputs.data !== null;
+  const valid =
+    amount?.ok === true &&
+    collateralOk &&
+    rate.ok &&
+    durationDays !== null &&
+    expiryOk &&
+    rangeOk &&
+    fillBlock === null &&
+    cadenceBlock === null &&
+    tariffBlock === null &&
+    inputs.data !== null;
 
   // Only the latest submission, from a form still on screen for the same
   // wallet and network, may open a review: a slow block read answered after
@@ -365,14 +398,15 @@ export function RequestForm({ chain, own, pair, meta, onReview, onCancel }: Requ
       const block = await own.read((c) => c.getBlock({ blockTag: 'latest' }));
       if (!current()) return;
       onReview({
+        side,
         parsed: {
           amount: amount.value,
           amountMax: max,
           collateral: locked,
           collateralFloor: floorValue,
-          fillMode: input.fillMode,
+          fillMode,
           cadence,
-          tariff: input.tariff && ceilingValue !== null ? { maxCStar: ceilingValue, allowDowngrade: input.tariffDowngrade } : null,
+          tariff: tariffChosen && ceilingValue !== null ? { maxCStar: ceilingValue, allowDowngrade: input.tariffDowngrade } : null,
           rateBps: rate.value,
           durationDays,
           expiry: input.expiry,
@@ -399,8 +433,8 @@ export function RequestForm({ chain, own, pair, meta, onReview, onCancel }: Requ
         void review();
       }}
     >
-      <h2 id="borrow-request-form">{text('request.formTitle')}</h2>
-      <WhyLink summaryKey="request.openSummary" detailKey="request.openWhy" />
+      <h2 id={lender ? 'lend-offer-form' : 'borrow-request-form'}>{text(k.formTitle)}</h2>
+      <WhyLink summaryKey={k.openSummary} detailKey={k.openWhy} />
       {metaMissing && (
         <Notice tone="warn" tier="A">
           {text('request.metaUnread')}
@@ -417,22 +451,36 @@ export function RequestForm({ chain, own, pair, meta, onReview, onCancel }: Requ
       )}
       <div className="request-grid">
         <FormField
-          label={format(ranged ? 'request.amountMinLabel' : 'request.amountLabel', { symbol: lendingSymbol })}
-          hint={text(ranged ? 'request.amountMinHint' : 'request.amountHint')}
+          label={format(ranged ? 'request.amountMinLabel' : k.amountLabel, { symbol: lendingSymbol })}
+          hint={
+            lender
+              ? inputs.data && inputs.data.balance !== null
+                ? format('lendOffer.amountHint', { have: tokenAmount(inputs.data.balance, pair.lending, meta, format) })
+                : text('lendOffer.amountHintPlain')
+              : text(ranged ? 'request.amountMinHint' : 'request.amountHint')
+          }
           error={show('amount') ? amountError(amount, lendingSymbol, lendingDecimals) : null}
         >
           {({ id, describedBy, invalid }) => (
-            <input
-              id={id}
-              inputMode="decimal"
-              autoComplete="off"
-              aria-describedby={describedBy}
-              aria-invalid={invalid}
-              value={input.amount}
-              onChange={(e) => set({ amount: e.target.value })}
-              onBlur={() => leave('amount')}
-              data-testid="request-amount"
-            />
+            <div className="input-with-action">
+              <input
+                id={id}
+                inputMode="decimal"
+                autoComplete="off"
+                aria-describedby={describedBy}
+                aria-invalid={invalid}
+                value={input.amount}
+                onChange={(e) => set({ amount: e.target.value })}
+                onBlur={() => leave('amount')}
+                data-testid="request-amount"
+              />
+              {lender && inputs.data && inputs.data.balance !== null && lendingDecimals !== null && inputs.data.balance > 0n && (
+                // RB-CLICKS: Max lends the whole wallet balance, exactly.
+                <button type="button" className="btn" onClick={() => set({ amount: formatUnits(inputs.data!.balance!, lendingDecimals) })} data-testid="request-amount-all">
+                  {text('request.max')}
+                </button>
+              )}
+            </div>
           )}
         </FormField>
         {named ? (
@@ -495,11 +543,13 @@ export function RequestForm({ chain, own, pair, meta, onReview, onCancel }: Requ
         )}
         {!named && (
           <FormField
-            label={format('request.collateralLabel', { symbol: collateralSymbol })}
+            label={format(k.collateralLabel, { symbol: collateralSymbol })}
             hint={
-              inputs.data && inputs.data.balance !== null
-                ? format('request.collateralHint', { have: tokenAmount(inputs.data.balance, pair.collateral, meta, format) })
-                : text('request.collateralHintPlain')
+              lender
+                ? text('lendOffer.collateralHint')
+                : inputs.data && inputs.data.balance !== null
+                  ? format('request.collateralHint', { have: tokenAmount(inputs.data.balance, pair.collateral, meta, format) })
+                  : text('request.collateralHintPlain')
             }
             error={show('collateral') ? amountError(collateral, collateralSymbol, collateralDecimals) : null}
           >
@@ -516,7 +566,7 @@ export function RequestForm({ chain, own, pair, meta, onReview, onCancel }: Requ
                   onBlur={() => leave('collateral')}
                   data-testid="request-collateral"
                 />
-                {inputs.data && inputs.data.balance !== null && collateralDecimals !== null && inputs.data.balance > 0n && (
+                {!lender && inputs.data && inputs.data.balance !== null && collateralDecimals !== null && inputs.data.balance > 0n && (
                   // RB-CLICKS: Max fills the whole wallet balance, exactly.
                   <button
                     type="button"
@@ -552,7 +602,7 @@ export function RequestForm({ chain, own, pair, meta, onReview, onCancel }: Requ
         <legend>{text('request.durationLabel')}</legend>
         {inputs.data && maxDays < 1 ? (
           <Notice tone="warn" tier="A">
-            {text('request.durationNone')}
+            {text(k.durationNone)}
           </Notice>
         ) : (
           <div className="chips" data-testid="request-duration">
@@ -596,7 +646,7 @@ export function RequestForm({ chain, own, pair, meta, onReview, onCancel }: Requ
         {inputs.data && maxDays >= 1 && <p className="tier-b field-hint">{format('request.durationHint', { max: String(maxDays) })}</p>}
       </fieldset>
 
-      <FormField label={text('request.expiryLabel')}>
+      <FormField label={text(k.expiryLabel)}>
         {({ id }) => (
           <select id={id} value={input.expiry} onChange={(e) => set({ expiry: e.target.value as ExpiryChoice })} data-testid="request-expiry">
             {EXPIRY_CHOICES.map((c) => (
@@ -608,7 +658,7 @@ export function RequestForm({ chain, own, pair, meta, onReview, onCancel }: Requ
         )}
       </FormField>
       {input.expiry === 'custom' && (
-        <FormField label={text('request.expiryDaysLabel')} hint={format('request.expiryDaysHint', { max: String(MAX_EXPIRY_DAYS) })} error={show('expiry') ? expiryError : null}>
+        <FormField label={text(k.expiryDaysLabel)} hint={format('request.expiryDaysHint', { max: String(MAX_EXPIRY_DAYS) })} error={show('expiry') ? expiryError : null}>
           {({ id, describedBy, invalid }) => (
             <input
               id={id}
@@ -626,10 +676,10 @@ export function RequestForm({ chain, own, pair, meta, onReview, onCancel }: Requ
       )}
 
       <fieldset className="choice-group">
-        <legend>{text('request.interestLabel')}</legend>
+        <legend>{text(k.interestLabel)}</legend>
         <label className="choice">
           <input type="radio" name="request-interest" checked={input.fullTerm} onChange={() => set({ fullTerm: true })} />
-          <span>{text('request.fullTermOption')}</span>
+          <span>{text(k.fullTermOption)}</span>
         </label>
         <label className="choice">
           <input type="radio" name="request-interest" checked={!input.fullTerm} onChange={() => set({ fullTerm: false })} data-testid="request-prorata" />
@@ -637,12 +687,22 @@ export function RequestForm({ chain, own, pair, meta, onReview, onCancel }: Requ
         </label>
         <label className="choice">
           <input type="checkbox" checked={input.allowsPartialRepay} onChange={(e) => set({ allowsPartialRepay: e.target.checked })} data-testid="request-partial" />
-          <span>{text('request.partialOption')}</span>
+          <span>{text(k.partialOption)}</span>
         </label>
-        <WhyLink summaryKey="request.optionsSummary" detailKey="request.optionsWhy" />
+        <WhyLink summaryKey={k.optionsSummary} detailKey={k.optionsWhy} />
       </fieldset>
 
-      {isAdvanced ? (
+      {lender ? (
+        isAdvanced && (
+          // RB-MODE: a lender's Advanced options are not built yet; said, not hidden.
+          <section className="advanced-options" aria-labelledby="request-advanced" data-testid="request-advanced">
+            <h3 id="request-advanced">{text('request.advancedTitle')}</h3>
+            <p className="tier-b field-hint" data-testid="lend-offer-advanced-later">
+              {text('lendOffer.advancedLater')}
+            </p>
+          </section>
+        )
+      ) : isAdvanced ? (
         <section className="advanced-options" aria-labelledby="request-advanced" data-testid="request-advanced">
           <h3 id="request-advanced">{text('request.advancedTitle')}</h3>
           <fieldset className="choice-group">
@@ -724,7 +784,14 @@ export function RequestForm({ chain, own, pair, meta, onReview, onCancel }: Requ
               const blocked = fillModeBlock(m, ranged, input.expiry);
               return (
                 <label key={m} className="choice">
-                  <input type="radio" name="request-fill" value={m} checked={input.fillMode === m} disabled={blocked !== null && input.fillMode !== m} onChange={() => set({ fillMode: m })} />
+                  <input
+                    type="radio"
+                    name="request-fill"
+                    value={m}
+                    checked={input.fillMode === m}
+                    disabled={blocked !== null && input.fillMode !== m}
+                    onChange={() => set({ fillMode: m })}
+                  />
                   <span>{text(FILL_LABEL[m])}</span>
                 </label>
               );
@@ -855,10 +922,13 @@ export function RequestForm({ chain, own, pair, meta, onReview, onCancel }: Requ
         effective.length > 0 && (
           // RB-MODE: an Advanced choice still applies in Basic, and says so.
           <Notice tone="warn" tier="A">
-            <span data-testid="request-advanced-set">
-              {format('request.advancedSetNote', { list: listOf(effective.map((o) => text(ADVANCED_NAME[o]))) })}
-            </span>{' '}
-            <button type="button" className="btn" onClick={() => set({ ranged: false, amountMax: '', collateralFloor: '', fillMode: 'partial', cadence: 0, tariff: false, tariffCeiling: '', tariffDowngrade: false })} data-testid="request-advanced-clear">
+            <span data-testid="request-advanced-set">{format('request.advancedSetNote', { list: listOf(effective.map((o) => text(ADVANCED_NAME[o]))) })}</span>{' '}
+            <button
+              type="button"
+              className="btn"
+              onClick={() => set({ ranged: false, amountMax: '', collateralFloor: '', fillMode: 'partial', cadence: 0, tariff: false, tariffCeiling: '', tariffDowngrade: false })}
+              data-testid="request-advanced-clear"
+            >
               {text('request.advancedClear')}
             </button>
           </Notice>
@@ -889,21 +959,29 @@ export function RequestForm({ chain, own, pair, meta, onReview, onCancel }: Requ
       <div className="thumb-action">
         {figures && (
           <p className="tier-b request-summary" data-testid="request-summary" aria-live="polite">
-            {largest !== null
-              ? format(cadence !== 0 ? 'request.rangeReceiveSummaryScheduled' : 'request.rangeReceiveSummary', {
-                  receive: tokenAmount(figures.received, pair.lending, meta, format),
+            {lender
+              ? format(k.summary, {
+                  amount: amount?.ok ? tokenAmount(amount.value, pair.lending, meta, format) : '',
                   owe: tokenAmount(figures.owedAtDue, pair.lending, meta, format),
-                  largest: tokenAmount(largest, pair.lending, meta, format),
                 })
-              : format(cadence !== 0 ? 'request.summaryScheduled' : 'request.summary', { receive: tokenAmount(figures.received, pair.lending, meta, format), owe: tokenAmount(figures.owedAtDue, pair.lending, meta, format) })}
+              : largest !== null
+                ? format(cadence !== 0 ? 'request.rangeReceiveSummaryScheduled' : 'request.rangeReceiveSummary', {
+                    receive: tokenAmount(figures.received, pair.lending, meta, format),
+                    owe: tokenAmount(figures.owedAtDue, pair.lending, meta, format),
+                    largest: tokenAmount(largest, pair.lending, meta, format),
+                  })
+                : format(cadence !== 0 ? 'request.summaryScheduled' : 'request.summary', {
+                    receive: tokenAmount(figures.received, pair.lending, meta, format),
+                    owe: tokenAmount(figures.owedAtDue, pair.lending, meta, format),
+                  })}
           </p>
         )}
         <div className="thumb-buttons">
           <button type="submit" className="btn btn-primary" disabled={inputs.data === null} data-testid="request-review">
-            {text('request.review')}
+            {text(k.review)}
           </button>
           <button type="button" className="btn" onClick={onCancel}>
-            {text('request.cancelForm')}
+            {text(k.cancelForm)}
           </button>
         </div>
       </div>

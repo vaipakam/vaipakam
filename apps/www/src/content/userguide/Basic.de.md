@@ -1190,7 +1190,7 @@ Im erweiterten Modus kann eine Anfrage den Full-Gebührentarif nehmen: eine Geb�
 
 ### Lend: So funktioniert es
 
-Um zu verleihen, finanzieren Sie die offene Anfrage eines Kreditnehmers: einen Betrag eines Tokens, den Zinssatz, den er zahlt, eine Laufzeit und Sicherheiten, die der Kreditnehmer bereits in seinem eigenen Tresor gesperrt hat. Die Finanzierung eröffnet den Kredit in einer Transaktion. Der Betrag verlässt Ihre Wallet, der Kreditnehmer erhält ihn abzüglich seiner Eröffnungsgebühr, und die Sicherheiten bleiben bis zum Ende des Kredits für Sie gesperrt. Ihre Seite des Kredits ist ein Positions-Token in Ihrer Wallet; wer es hält, wird zurückgezahlt. Der Kreditnehmer zahlt den Betrag plus Zinsen bis zum Fälligkeitsdatum zurück, und das Protokoll behält seinen Anteil an den Zinsen. Ein eigenes Kreditangebot veröffentlichen Sie vorerst in der aktuellen App; die Seite verlinkt dorthin.
+Um zu verleihen, finanzieren Sie die offene Anfrage eines Kreditnehmers: einen Betrag eines Tokens, den Zinssatz, den er zahlt, eine Laufzeit und Sicherheiten, die der Kreditnehmer bereits in seinem eigenen Tresor gesperrt hat. Die Finanzierung eröffnet den Kredit in einer Transaktion. Der Betrag verlässt Ihre Wallet, der Kreditnehmer erhält ihn abzüglich seiner Eröffnungsgebühr, und die Sicherheiten bleiben bis zum Ende des Kredits für Sie gesperrt. Ihre Seite des Kredits ist ein Positions-Token in Ihrer Wallet; wer es hält, wird zurückgezahlt. Der Kreditnehmer zahlt den Betrag plus Zinsen bis zum Fälligkeitsdatum zurück, und das Protokoll behält seinen Anteil an den Zinsen. Passt keine Anfrage, können Sie stattdessen auf derselben Seite ein eigenes Kreditangebot veröffentlichen.
 
 <a id="lend-offers"></a>
 
@@ -1215,6 +1215,30 @@ Die Eröffnungsgebühr trägt der Kreditnehmer: ein kleiner Anteil des Betrags, 
 ### Lend: Risiken
 
 Beim Verleihen können Sie Geld verlieren. Hat der Kreditnehmer bis zum Ende der Nachfrist nicht zurückgezahlt, fällt der Kredit aus und Sie werden aus den Sicherheiten bezahlt: für Sie verkauft, wo das Protokoll es kann, unverändert übergeben, wo nicht; ein Verkauf kann weniger einbringen, als Ihnen geschuldet wird. Bei liquiden Sicherheiten kann jeder den Kredit liquidieren, sobald sein Health Factor unter 1 fällt; der Verkauf zahlt Sie zuerst, aber ein starker Kursrückgang kann weniger übrig lassen, als Ihnen geschuldet wird. Ein illiquider Token wird mit null bewertet, daher gibt es keine preisbasierte Liquidation, und bei einem Ausfall erhalten Sie alle Sicherheiten, was immer sie wert sind. Sie können den Betrag nicht vor Ende des Kredits zurücknehmen; früher aussteigen heißt, Ihre Position an einen anderen Kreditgeber zu verkaufen. Bei anteiligen Zinsen bringt eine vorzeitige Rückzahlung Ihnen weniger. Eine Pause verschiebt das Fälligkeitsdatum nach hinten, und die Zinsen laufen währenddessen weiter.
+
+<a id="lend-offer"></a>
+
+### Lend: Ein eigenes Angebot veröffentlichen
+
+Passt keine Anfrage, können Sie für Ihre zwei Token ein eigenes Kreditangebot veröffentlichen: den genauen Betrag, den Sie verleihen, den Zinssatz, den Sie verlangen, die Laufzeit und die Sicherheit, die ein Kreditnehmer sperren muss. Beim Veröffentlichen wandert der Betrag aus Ihrer Wallet in Ihren eigenen Vault und bleibt dort gesperrt, solange das Angebot offen ist. Ein Kreditnehmer, der es annimmt, eröffnet den Kredit sofort zu Ihren Bedingungen, ohne Sie erneut zu fragen: Er erhält den Betrag abzüglich seiner Eröffnungsgebühr, und seine Sicherheit wird in seinem Vault für Sie gesperrt. Solange das Matching im Netzwerk eingeschaltet ist, kann jeder Ihr Angebot außerdem mit der Anfrage eines Kreditnehmers zusammenführen; ein solcher Kredit verleiht Ihren gesamten Betrag zu Ihrem Zinssatz, gegen mindestens die Sicherheit, die Sie verlangen. Die Prüfung sagt, ob das Matching gerade eingeschaltet ist. Ab fünf Minuten nach dem Veröffentlichen können Sie stornieren, und der Betrag kehrt in Ihre Wallet zurück. Ein abgelaufenes Angebot kann nicht mehr angenommen werden; sein Betrag bleibt in Ihrem Vault, bis Sie oder irgendjemand es schließt, und kehrt dann nur in Ihre Wallet zurück. Bis die Angebotsseite der nächsten App gebaut ist, verfolgen, stornieren und schließen Sie ein Angebot auf der Angebotsseite der aktuellen App; die Prüfung sagt das, bevor etwas gesperrt wird.
+
+<a id="lend-offer-terms"></a>
+
+### Lend: Die Bedingungen des Angebots
+
+Ein Kreditnehmer übernimmt den ganzen Betrag, oder niemand, und muss genau die Sicherheit sperren, die Sie festlegen. Das Formular zeigt, wie viel des verliehenen Tokens Ihre Wallet hält. Jede Zahl wird genau so gelesen, wie Sie sie eingeben: Mehr Nachkommastellen, als der Token hat, werden abgelehnt, nie gerundet, und der Zinssatz reicht bis 100 % pro Jahr mit zwei Nachkommastellen. Die angebotenen Laufzeiten enden bei der längsten, die das Netzwerk erlaubt. Das Angebot bleibt offen, bis es angenommen oder storniert wird, oder für die Zahl von Tagen, die Sie wählen, höchstens ein Jahr. Zinsen für die volle Laufzeit, die übliche Wahl, bedeuten, dass eine vorzeitige Rückzahlung Ihren Ertrag nicht senkt; anteilige Zinsen zahlen Ihnen nur die Zeit, in der der Kredit läuft. Sie können dem Kreditnehmer auch Teilrückzahlungen erlauben. Das Formular zeigt, was der Kreditnehmer Ihnen am Fälligkeitsdatum schulden würde, wenn er das Angebot jetzt annähme. Eine Spanne, ein Ausführungsmodus, ein Zinsplan und der Gebührentarif für Angebote kommen in einem späteren Update, und der Advanced-Modus sagt das.
+
+<a id="lend-offer-review"></a>
+
+### Lend: Angebot prüfen und veröffentlichen
+
+Bevor sich Ihre Wallet öffnet, lässt die App das Protokoll Ihr Angebot probeweise ausführen, sodass die Prüfung die eigene Antwort des Protokolls zeigt. Sie nennt, was Sie jetzt sperren, den Betrag, den ein Kreditnehmer übernimmt, die Sicherheit, die er sperren muss, Zinssatz und Laufzeit, was der Kreditnehmer zum heutigen Gebührensatz erhielte, die Zinsen am Fälligkeitsdatum, den Anteil des Protokolls daran und was an Sie zurückfließt, jede Bedingung für die Laufzeit des Kredits, wann das Angebot abläuft, den Beleihungsauslauf zu heutigen Preisen und ob eine Freigabe nötig ist. Hält Ihre Wallet weniger als den Betrag, sagt die Prüfung, wie viel fehlt, und bietet keine Signatur an. Sie setzen ein Häkchen, um den Risikohinweisen und den Bedingungen zuzustimmen. Ihre Wallet gibt bei Bedarf genau den Betrag frei, die App führt das Angebot erneut probeweise aus und veröffentlicht es erst dann. Bricht es nach einer Freigabe ab, bittet die App, die Freigabe zurückzusetzen, und sagt, ob das geschehen ist. Danach prüft die App auf der Chain das erfasste Angebot und den in Ihrem Vault gesperrten Betrag.
+
+<a id="lend-offer-fee"></a>
+
+### Lend: Gebühren bei Ihrem Angebot
+
+Das Veröffentlichen eines Angebots kostet Sie keine Gebühr. Die Eröffnungsgebühr trägt der Kreditnehmer: ein kleiner Anteil des Betrags, einmal im verliehenen Asset erhoben, wenn ein Kreditnehmer Ihr Angebot annimmt, zum dann geltenden Satz, und von dem abgezogen, was er erhält. Sie verleihen den ganzen Betrag, und der Kreditnehmer schuldet ihn vollständig mit Zinsen zurück. Werden Zinsen gezahlt, behält das Protokoll seinen Anteil daran, zum Satz, der bei Eröffnung des Kredits gilt; Ihre Gebührenrabattstufe kann diesen Anteil senken, solange Ihre Gebührenrabatt-Einstellung aktiv ist. Die Prüfung zeigt den heutigen Satz und das Höchste, was dieser Anteil nehmen kann; lässt sich der Satz nicht lesen, sagt die Prüfung das, statt eine Zahl zu zeigen.
 
 <a id="risk-access"></a>
 
