@@ -17,7 +17,12 @@ body {
   margin: 0;
   background: var(--surface-page);
   color: var(--text-body);
-  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  font-family:
+    system-ui,
+    -apple-system,
+    'Segoe UI',
+    Roboto,
+    sans-serif;
   font-size: 16px;
   line-height: 1.5;
 }
@@ -358,6 +363,26 @@ code {
     padding-inline: 12px;
     text-align: start;
   }
+  /* Motion: folding, revealing and unfolding slide the panel's width (and
+     the page beside it, with the header held in place) over a quarter
+     second on the standard easing, and the names fade. The icons never move:
+     the panel's inset is the same folded and unfolded. Reduced motion (the
+     rule at the end of the sheet) turns every transition off. */
+  .shell {
+    transition: padding-inline-start 250ms var(--ease-standard);
+  }
+  .topbar {
+    transition: margin-inline-start 250ms var(--ease-standard);
+  }
+  .site-menu {
+    transition:
+      width 250ms var(--ease-standard),
+      box-shadow 250ms var(--ease-standard);
+  }
+  .site-menu nav a > span {
+    white-space: nowrap;
+    transition: opacity 150ms var(--ease-standard);
+  }
   .site-menu nav a {
     flex-direction: row;
     justify-content: flex-start;
@@ -376,9 +401,9 @@ code {
   }
   /* The main-menu button, icon only, at the far left of the header: it
      folds the panel to its icons and unfolds it again. Its centre sits over
-     the collapsed column's icons (14px inset + 22px = 36px, half of 72). */
+     the column's icons (12px inset + 22px = 34px, the icons' centre). */
   .topbar {
-    padding-inline-start: 14px;
+    padding-inline-start: 12px;
   }
   .nav-toggle {
     display: inline-flex;
@@ -397,26 +422,23 @@ code {
   .nav-toggle:hover {
     background: var(--surface-hover);
   }
-  /* Collapsed: icons only, the names kept for screen readers (each link
-     keeps its accessible name), the group label a rule, the controls folded
-     away until the panel is revealed. The page takes the narrow width. */
+  /* Collapsed: icons only, the names faded out but kept for screen readers
+     (each link keeps its accessible name), the group label a rule, the
+     controls folded away until the panel is revealed. The page takes the
+     narrow width. */
   .shell[data-nav-collapsed='true'] {
     --side-w: 72px;
   }
   .shell[data-nav-collapsed='true'] .site-menu {
     width: 232px;
-    transition: box-shadow 120ms ease;
+    overflow-x: hidden;
   }
   .shell[data-nav-collapsed='true']:not([data-nav-peek='true']) .site-menu {
     width: var(--side-w);
-    padding-inline: 8px;
-    overflow-x: hidden;
   }
-  .shell[data-nav-collapsed='true']:not([data-nav-peek='true']) .site-menu nav a {
-    justify-content: center;
-    padding-inline: 0;
+  .shell[data-nav-collapsed='true']:not([data-nav-peek='true']) .site-menu nav a > span {
+    opacity: 0;
   }
-  .shell[data-nav-collapsed='true']:not([data-nav-peek='true']) .site-menu nav a > span,
   .shell[data-nav-collapsed='true']:not([data-nav-peek='true']) .nav-group-title {
     position: absolute;
     width: 1px;
@@ -517,7 +539,6 @@ h1 {
 .facts dd {
   margin: 0;
 }
-
 
 .btn {
   font: inherit;

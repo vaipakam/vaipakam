@@ -222,6 +222,11 @@ test('from 1024px the panel collapses to its icons, reveals itself over the page
   const nav = page.getByRole('navigation', { name: 'Primary' });
   const width = async () => (await column.boundingBox())!.width;
   const pageX = async () => (await page.locator('#main').boundingBox())!.x;
+  // Every move of the panel animates; measure once the motion has settled.
+  const settled = () => page.waitForFunction(() => document.getAnimations().every((a) => a.playState !== 'running'));
+  // The panel's width and the page beside it slide, on a quarter second.
+  expect(await column.evaluate((el) => getComputedStyle(el).transitionProperty)).toContain('width');
+  expect(await page.locator('.shell').evaluate((el) => getComputedStyle(el).transitionDuration)).toBe('0.25s');
   const expanded = await pageX();
   // The main-menu button: icon only at the far left of the header, named
   // "Main menu" with a hover tip, saying whether the panel shows its names.
@@ -232,12 +237,17 @@ test('from 1024px the panel collapses to its icons, reveals itself over the page
   const mb = (await menu.boundingBox())!;
   expect(Math.min(mb.width, mb.height)).toBeGreaterThanOrEqual(44);
   expect(mb.x).toBeLessThan((await page.getByRole('banner').getByRole('link', { name: 'Vaipakam home' }).boundingBox())!.x);
+  const iconX = async () => (await nav.getByRole('link', { name: 'Borrow', exact: true }).locator('svg').boundingBox())!.x;
+  const iconBefore = await iconX();
   await menu.click();
   await expect(menu).toHaveAttribute('aria-expanded', 'false');
+  // The icons do not move when the panel folds.
+  await settled();
+  expect(await iconX()).toBe(iconBefore);
   // Icons only; every destination still a named link; the page takes the room.
   await expect.poll(width).toBeLessThan(80);
   for (const name of [...BASIC_NAV, ...ADVANCED_ONLY]) await expect(nav.getByRole('link', { name, exact: true })).toBeVisible();
-  await expect(nav.getByRole('link', { name: 'Borrow', exact: true }).locator('span')).toHaveCSS('clip-path', 'inset(50%)');
+  await expect(nav.getByRole('link', { name: 'Borrow', exact: true }).locator('span')).toHaveCSS('opacity', '0');
   // The button sits over the column of icons.
   const icon = (await nav.getByRole('link', { name: 'Borrow', exact: true }).locator('svg').boundingBox())!;
   expect(Math.abs(mb.x + mb.width / 2 - (icon.x + icon.width / 2))).toBeLessThanOrEqual(4);
@@ -247,8 +257,9 @@ test('from 1024px the panel collapses to its icons, reveals itself over the page
   const box = (await column.boundingBox())!;
   await page.mouse.move(box.x + box.width / 2, box.y + 200);
   await expect.poll(width).toBeGreaterThan(200);
+  await settled();
   expect(await pageX()).toBe(collapsedX);
-  await expect(nav.getByRole('link', { name: 'Borrow', exact: true }).locator('span')).toHaveCSS('clip-path', 'none');
+  await expect(nav.getByRole('link', { name: 'Borrow', exact: true }).locator('span')).toHaveCSS('opacity', '1');
   // Leaving hides it again, unless keyboard focus is inside it: focus a
   // control at its foot, leave, and it stays revealed with the control in view.
   const advancedButton = column.getByRole('group', { name: 'Mode' }).getByRole('button', { name: 'Advanced' });
@@ -281,4 +292,7 @@ test('from 1024px the panel collapses to its icons, reveals itself over the page
   await expect(menu).toHaveAttribute('aria-expanded', 'true');
   await expect.poll(width).toBeGreaterThan(200);
   await expect.poll(pageX).toBe(expanded);
+  // A reader who asks for less motion gets none.
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  expect(await column.evaluate((el) => getComputedStyle(el).transitionDuration)).toBe('0s');
 });

@@ -295,7 +295,10 @@ the far left of the header, the pattern everyday web apps use, named "Main
 menu" for screen readers with a hover tip and stating whether the panel is
 expanded, the choice remembered per browser, and while collapsed a resting mouse (after about 0.3 s, hidden again
 0.5 s after it leaves) or keyboard focus reveals the full panel over the page
-without moving it, Escape hiding it; the breakpoints follow the common
+without moving it, Escape hiding it; folding, revealing and unfolding
+slide the panel and the page beside it over a quarter second on the standard
+easing while the names fade and the icons stay put, with no motion at all for
+a reader whose device asks for reduced motion; the breakpoints follow the common
 compact, medium and expanded window classes); an unknown route shows
 a recovery page, and a display failure is contained to a recovery card that
 says funds and on-chain positions are unchanged. Every string in the copy
