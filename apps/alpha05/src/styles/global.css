@@ -76,6 +76,12 @@ code {
   border-bottom: 1px solid var(--border);
   position: sticky;
   top: 0;
+  /* A sticky header is its own stacking context, so the More sheet inside
+     it can rise only as high as the header itself: above the page (whose
+     positioned controls, like the info button, come later in the page and
+     would otherwise paint over the sheet) and the bottom bar, below the
+     help panel's scrim. */
+  z-index: 41;
   backdrop-filter: blur(8px);
 }
 

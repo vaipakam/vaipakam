@@ -121,8 +121,20 @@ test('on a phone the header is one row and a bottom bar carries the first destin
   await expect(nav).toBeHidden();
   const more = bar.getByRole('button', { name: 'More' });
   await expect(more).toHaveAttribute('aria-expanded', 'false');
+  // Put an info button where the sheet will open, just above the bar.
+  const why = page.locator('main .why-link').first();
+  await why.evaluate((b) => window.scrollBy(0, b.getBoundingClientRect().top - (window.innerHeight - 56 - 120)));
   await more.click();
   await expect(more).toHaveAttribute('aria-expanded', 'true');
+  // The open sheet covers the page: the info button behind it does not paint over it.
+  const behind = await why.evaluate((b) => {
+    const r = b.getBoundingClientRect();
+    const sheet = document.querySelector('.site-menu[data-open="true"]')!;
+    const s = sheet.getBoundingClientRect();
+    const [x, y] = [r.left + r.width / 2, r.top + r.height / 2];
+    return { under: y > s.top && y < s.bottom, onTop: sheet.contains(document.elementFromPoint(x, y)) };
+  });
+  expect(behind).toEqual({ under: true, onTop: true });
   for (const name of BASIC_NAV) await expect(nav.getByRole('link', { name, exact: true })).toBeVisible();
   await expect(page.getByRole('group', { name: 'Mode' })).toBeVisible();
   // Choosing a page closes the sheet.
