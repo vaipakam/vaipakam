@@ -212,6 +212,8 @@ CONTRACTS_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 source "$SCRIPT_DIR/lib/load-env.sh"
 # shellcheck source=lib/sentinel-reads.sh
 source "$SCRIPT_DIR/lib/sentinel-reads.sh"
+# shellcheck source=lib/reward-funding.sh
+source "$SCRIPT_DIR/lib/reward-funding.sh"
 # The one Worker RPC-secret check (#2763, #1492).
 source "$SCRIPT_DIR/lib/worker-secrets.sh"
 # shellcheck source=lib/ccip-lanes.sh
@@ -2197,6 +2199,19 @@ phase_verify() {
     VERIFY_LAUNCH="a launch run would proceed, or has launched (see the report above)"
   else
     VERIFY_LAUNCH="NOT launchable yet - --phase launch refuses for the reason the report above prints"
+  fi
+
+  echo
+  echo "[6] Reward pool funding (#3253)"
+  # The 69M interaction pool is an allocation, not a balance: on the
+  # canonical chain the remittances to the mirrors draw on what
+  # fundRewardPool has delivered, so a launched, unfunded Base sends
+  # nothing. Unreadable is a failure, never "funded".
+  local funding_rc=0
+  reward_pool_funding "$DIAMOND" "$RPC" || funding_rc=$?
+  if [ "$funding_rc" -ne 0 ]; then
+    [ "$funding_rc" -eq 2 ] && echo "  ✗ FAIL: the reward funding could not be read on $DIAMOND." >&2
+    exit 1
   fi
 
   echo

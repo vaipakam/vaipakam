@@ -1419,6 +1419,23 @@ jobs:
       - name: Function drift is never classified as decode-only
         run: bash contracts/script/lib/abi-drift.test.sh
 
+  # The deploy verify's reward-funding read (#3253): a launched canonical
+  # chain with no delivered-fresh headroom must fail, and an unreadable
+  # answer must never pass as funded. Bash only, `cast` stubbed.
+  reward-funding:
+    name: Reward-funding verify read (unconditional)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 1
+
+      - name: A launched, unfunded canonical chain fails verify
+        run: bash contracts/script/lib/reward-funding.test.sh
+
   offchain-data-warm:
     name: ops/offchain-data-warm (typecheck + tests)
     needs: detect-changes

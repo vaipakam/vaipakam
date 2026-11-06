@@ -19,7 +19,7 @@
  *      router, RMN and token admin registry, and the two ramps the relay
  *      drives (`ccipLane.ts`);
  *   2. `DeployVPFIToken` on Base (initial supply to the admin, who funds the
- *      reward pool from it in step 8);
+ *      reward pool from it in step 7);
  *   3. `DeployCrosschain` on both: messenger, VPFI pool (lock/release on
  *      Base, burn/mint over a fresh mirror token on the mirror), rate
  *      governor, reward messenger, the remittance receivers;
@@ -28,11 +28,12 @@
  *      the admin as the incident guardian;
  *   6. `ConfigureRewardReporter` on both: Base canonical, expecting reports
  *      from both chains; the mirror reporting to Base;
- *   7. `SetInteractionLaunch` on both, with ONE launch timestamp (every
- *      chain of a mesh must share day 0);
- *   8. the admin steps no script performs (`ConfigureMeshRewardsFixture`):
+ *   7. the admin steps no script performs (`ConfigureMeshRewardsFixture`):
  *      reward custody activated on both; on Base, the reward pool funded and
- *      the suite's named remitter authorized to remit.
+ *      the suite's named remitter authorized to remit;
+ *   8. `SetInteractionLaunch` on both, with ONE launch timestamp (every
+ *      chain of a mesh must share day 0). After the funding, because the
+ *      script refuses to launch an unfunded canonical chain (#3253).
  *
  * Each node's artifact lives under the store's gitignored artifact root in
  * `contracts/deployments/.forge-test/`, which is where every script reads its
@@ -284,16 +285,10 @@ export class MeshFixtureStore {
         BASE_REWARD_DEPLOYMENT: base.diamond,
       });
 
-      // 7. One day 0 for the whole mesh: the later of the two heads.
-      const launch = Math.max(
-        await anvilControl(baseUrl).latestTimestamp(),
-        await anvilControl(mirrorUrl).latestTimestamp(),
-      );
-      for (const c of each) {
-        op('E2ESetInteractionLaunch', c.url, { ADMIN_PRIVATE_KEY: c.d.adminKey, INTERACTION_LAUNCH_TIMESTAMP: String(launch) });
-      }
-
-      // 8. Custody on both; Base's pool funded and its remitter authorized.
+      // 7. Custody on both; Base's pool funded and its remitter authorized.
+      //    Before the launch anchor: SetInteractionLaunch refuses to open the
+      //    schedule on a canonical chain with no delivered-fresh headroom
+      //    (#3253), as a fresh Base must not launch unfunded.
       const baseArtifactNow = readContractsJson<Record<string, unknown>>(this.artifactRelative(BASE_ID));
       const vpfiToken = baseArtifactNow.vpfiToken as Address;
       log(`[${label}] custody, funding and the remitter (ConfigureMeshRewardsFixture)…`);
@@ -305,6 +300,15 @@ export class MeshFixtureStore {
         REWARD_REMITTANCE_KEEPER: seed.rewardRemitter,
       });
       runForgeScript(MESH_SCRIPT, mirrorUrl, { ADMIN_PRIVATE_KEY: mirror.adminKey, DIAMOND_ADDRESS: mirror.diamond });
+
+      // 8. One day 0 for the whole mesh: the later of the two heads.
+      const launch = Math.max(
+        await anvilControl(baseUrl).latestTimestamp(),
+        await anvilControl(mirrorUrl).latestTimestamp(),
+      );
+      for (const c of each) {
+        op('E2ESetInteractionLaunch', c.url, { ADMIN_PRIVATE_KEY: c.d.adminKey, INTERACTION_LAUNCH_TIMESTAMP: String(launch) });
+      }
 
       const chainFixture = (id: number, d: FixtureDeployment): MeshChainFixture => {
         const artifact = readContractsJson<Record<string, unknown>>(this.artifactRelative(id));

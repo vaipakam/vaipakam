@@ -1805,6 +1805,7 @@ Then, once per chain:
 
 7. `InteractionRewardsFacet.setInteractionLaunchTimestamp(<unix ts of launch day 00:00 UTC>)` — `SetInteractionLaunch.s.sol`, same value on every chain
    — **Base first.** Base refuses a mirror's day report while its own clock is unset (#2620), and a refused delivery has to be re-executed by hand in CCIP once Base's clock runs. Base also counts a report's day figures only when the mirror's value equals its own: a mirror launched on another value has every day zeroed on Base, permanently, since the value is one-shot.
+   — **Fund Base's reward pool before Base's anchor** (#3253). The 69M interaction pool is an allocation, not a balance. On Base the remittances to the mirrors draw only on what `RewardCustodyFacet.fundRewardPool` (ADMIN, after reward custody is activated) has delivered, so a fresh Base starts with nothing to send: every remittance refuses `DeliveredFreshBoundExceeded(…, 0)` and no day reaches a mirror. `SetInteractionLaunch` refuses Base's anchor while `getDeliveredFreshBound()` reports no headroom, and `--phase verify` fails a launched, unfunded Base ("[6] Reward pool funding"). The amount is the operator's decision; the check asks only that some headroom exists, so read the figures it prints. A mirror is funded by those remittances and needs no step here.
 
 **Post-step verification.** The script sanity-checks the messenger candidate
 before it broadcasts, but reads none of the configuration back afterwards, and

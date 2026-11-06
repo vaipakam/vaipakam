@@ -1451,8 +1451,8 @@ contract RewardCustodyFacet is DiamondAccessControl {
 
     /// @notice The delivered-fresh ledger's two counters, raw. The bound
     ///         (`RewardRemittanceLensFacet.getDeliveredFreshBound`) reports
-    ///         paid and REMAINING, which is `max` on a canonical chain and
-    ///         saturates at zero on an over-paid mirror — so neither
+    ///         paid and REMAINING, which saturates at zero on an over-paid
+    ///         chain (and is `max` only on an Unconfigured one) — so neither
     ///         `received` nor a deficit can be read back from it. The
     ///         activation ceremony (design §5d) verifies `received == paid`
     ///         on the canonical chain, and an over-paid mirror's deficit is what
