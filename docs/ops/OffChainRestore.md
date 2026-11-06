@@ -1676,6 +1676,7 @@ DELETE FROM push_rail_status; \
 DELETE FROM signed_request_use; \
 DELETE FROM protected_lock_requests; \
 DELETE FROM protected_lock_readiness; \
+DELETE FROM alert_channel_changes; \
 DELETE FROM indexer_deployment; \
 DELETE FROM indexer_cursor"
 ```
@@ -1710,6 +1711,13 @@ table cannot leave new requests below a stale position. Clearing it has one
 stated cost: a `LOCK` sent in the last minute or so before the clear, not yet
 handled, is lost, and the owner gets no answer for it; the owner can send it
 again or lock from the app.
+
+`alert_channel_changes` (#3246) holds the pending removals of a Telegram
+alert chat under protected mode. Clearing it only cancels a pending change,
+which keeps the chat linked now: the safe direction, since the change it
+cancels is the one that could silence a protected account's alerts. Its
+stated cost: an owner whose unlink or chat move was pending must ask again,
+and is not told that the earlier request was dropped.
 
 `protected_lock_readiness` (#3088) is the keeper's heartbeat for the
 Telegram `LOCK` step: it says, per chain, when a keeper able to sign last

@@ -261,14 +261,41 @@ export function AlertsCard() {
     try {
       // Signed like linking — otherwise anyone could silently switch
       // off another wallet's risk alerts.
-      const scope = await unlinkTelegram(address, forChain, (message) =>
+      const outcome = await unlinkTelegram(address, forChain, (message) =>
         signMessageAsync({ message }),
       );
+      if (outcome.protectionUnknown) {
+        setError(copy.alerts.unlinkProtectionUnknown);
+        return;
+      }
+      // #3246 — under protected mode a chat is not removed at once: it
+      // keeps getting alerts for the account's delay, which starts only
+      // once that chat has received our notice. The card is about
+      // `forChain`, so it reads that chain's entry: still pending there →
+      // the card stays linked; cleared here but pending elsewhere → it
+      // says unlinked here and names the networks still waiting.
+      const here = outcome.pending.find((p) => p.chainId === forChain);
+      if (here) {
+        setNotice(
+          here.effectiveAt === null
+            ? copy.alerts.unlinkPendingUntold
+            : copy.alerts.unlinkPending(new Date(here.effectiveAt * 1000).toLocaleString()),
+        );
+        return;
+      }
       const next = { ...prefs, telegramLinked: false };
       storeAlertPrefs(forChain, address, next);
       setPrefs(next);
+      if (outcome.pending.length > 0) {
+        setNotice(
+          copy.alerts.unlinkedOthersPending(
+            outcome.pending.map((p) => chainDisplayName(p.chainId) ?? String(p.chainId)).join(', '),
+          ),
+        );
+        return;
+      }
       setNotice(
-        scope === 'chain'
+        outcome.scope === 'chain'
           ? copy.alerts.unlinkedChainOnly(
               chainDisplayName(forChain) ?? String(forChain),
             )
