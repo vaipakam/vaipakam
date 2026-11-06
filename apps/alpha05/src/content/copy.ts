@@ -702,7 +702,7 @@ export const copy = {
     formTitle: B('Your lending offer'),
     openSummary: B('The amount you lend is locked in your vault while the offer is open.'),
     openWhy: C(
-      "A lending offer is an offer from you to every borrower: the exact amount you lend, the rate you ask, the term and the collateral a borrower must lock. Posting it moves the amount from your wallet into your own vault, where it stays locked while the offer is open. A borrower who takes the offer opens the loan at once, on these terms: the amount goes to them less their loan initiation fee, and their collateral is locked in their vault for you until the loan ends. Anyone may also match your offer with a borrower's request; that loan lends your whole amount at your rate, against at least the collateral you ask for. You can cancel the offer from five minutes after posting, and the amount returns to your wallet. An offer that lapses unaccepted can no longer be taken, and its amount returns to your wallet when you, or anyone, closes it.",
+      "A lending offer is an offer from you to every borrower: the exact amount you lend, the rate you ask, the term and the collateral a borrower must lock. Posting it moves the amount from your wallet into your own vault, where it stays locked while the offer is open. A borrower who takes the offer opens the loan at once, on these terms: the amount goes to them less their loan initiation fee, and their collateral is locked in their vault for you until the loan ends. While matching is switched on for the network, anyone may also match your offer with a borrower's request; that loan lends your whole amount at your rate, against at least the collateral you ask for, and the review says whether matching is on now. You can cancel the offer from five minutes after posting, and the amount returns to your wallet. An offer that lapses unaccepted can no longer be taken, and its amount returns to your wallet when you, or anyone, closes it.",
       'lend-offer',
     ),
     amountLabel: B('Amount to lend ({{symbol}})'),
@@ -738,6 +738,9 @@ export const copy = {
     rowBorrowerGets: B("The borrower receives, at today's fee rate"),
     feeRule: B('{{rate}}% today, paid by the borrower; the rate in force when they take it applies'),
     shareUnread: B('Could not be read now, so the share is not stated'),
+    rowMatching: B("Matching with borrowers' requests on this network"),
+    matchingOn: B('On now: anyone may match your offer with a request'),
+    matchingOff: B('Off now: only a borrower taking your offer directly opens a loan'),
     rowExpiry: B('Offer open until'),
     rowLtv: B("Loan-to-value when a borrower takes it, at today's prices"),
     ltvWorthless: A("None: this collateral values to nothing at today's prices, so no loan can start against it"),
@@ -753,7 +756,15 @@ export const copy = {
     loseOpen: A('The offer never lapses: it stays takeable until a borrower takes it or you cancel it.'),
     loseLapse: A('When the offer lapses it can no longer be taken, but the amount stays in your vault until you, or anyone, closes it; it then returns only to your wallet.'),
     loseTaken: A('A borrower who takes the offer opens the loan at once, on these terms, without asking you again.'),
-    loseMatch: A("Anyone may also match your offer with a borrower's request: that loan lends your whole amount at your rate, against at least the collateral you ask for."),
+    loseMatch: A(
+      "Matching is switched on for this network now, so anyone may also match your offer with a borrower's request: that loan lends your whole amount at your rate, against at least the collateral you ask for.",
+    ),
+    loseMatchOff: A(
+      'Matching is switched off on this network now, so only a borrower taking your offer directly opens a loan. If it is switched on while the offer is open, anyone may then match it with a request, lending your whole amount at your rate against at least the collateral you ask for.',
+    ),
+    loseMatchUnread: A(
+      'Whether matching is switched on for this network could not be read. While it is on, anyone may match your offer with a request, lending your whole amount at your rate against at least the collateral you ask for.',
+    ),
     loseBinding: A('Posting records a binding offer: any borrower may take it on these terms while it is open.'),
     blockShortfall: A('Your wallet holds {{have}}, which is {{missing}} short of the {{need}} this offer locks.'),
     blockRefused: A('The protocol refuses this offer: {{reason}}'),

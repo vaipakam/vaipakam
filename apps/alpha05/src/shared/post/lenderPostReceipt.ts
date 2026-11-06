@@ -34,6 +34,7 @@ export function lenderPostReceipt(r: PostReview, meta: TokenMetaMap | null, copy
     textRow('accept.rowVault', r.vault === ZERO ? text('accept.vaultNew') : r.vault, false),
     { label: text('lendOffer.rowAmount'), value: amount(pair.lending, parsed.amount), binding: true },
     textRow('request.rowWhole', text('lendOffer.whole'), true),
+    textRow('lendOffer.rowMatching', text(r.risk.partialFill === null ? 'request.matchingUnread' : r.risk.partialFill ? 'lendOffer.matchingOn' : 'lendOffer.matchingOff'), false),
     { label: text('lendOffer.rowCollateral'), value: amount(pair.collateral, parsed.collateral), binding: true },
     textRow('accept.rowRate', format('accept.rate', { rate: formatBps(parsed.rateBps) }), true),
     textRow('accept.rowDue', format('lendOffer.due', { days: String(parsed.durationDays) }), true),
@@ -86,8 +87,10 @@ export function lenderPostReceipt(r: PostReview, meta: TokenMetaMap | null, copy
     text('lendOffer.loseTaken'),
     // A single-amount offer matched against a request lends its whole
     // amount at its one rate, against at least the collateral it asks for
-    // (`LibOfferMatch`); while matching is off, matchers refuse.
-    ...(r.risk.partialFill === false ? [] : [text('lendOffer.loseMatch')]),
+    // (`LibOfferMatch`); while matching is off, matchers refuse. The switch
+    // is stated in each state (on, off, unread), since it can change while
+    // the offer is open (RB-SWITCH).
+    text(r.risk.partialFill === null ? 'lendOffer.loseMatchUnread' : r.risk.partialFill ? 'lendOffer.loseMatch' : 'lendOffer.loseMatchOff'),
     text('lendAccept.loseDefault'),
     ...(r.lendingClass === 'illiquid' ? [text('lendAccept.loseIlliquidLending')] : []),
     ...(r.collateralClass === 'illiquid' ? [text('lendAccept.loseIlliquidCollateral')] : []),

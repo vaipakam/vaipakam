@@ -588,7 +588,15 @@ describe('a lender posting an offer', () => {
     expect(r.rows.map((x) => x.label)).not.toContain('lendAccept.rowBack');
   });
 
-  it('drops the match line while matching is switched off', () => {
-    expect(postReceipt(lenderReview({ risk: { ...review().risk, partialFill: false } }), null, copy).consequences).not.toContain('lendOffer.loseMatch');
+  it('states the matching switch in every state: on, off and unread', () => {
+    const on = postReceipt(lenderReview(), null, copy);
+    expect(on.rows.find((x) => x.label === 'lendOffer.rowMatching')?.value).toEqual({ kind: 'text', text: 'lendOffer.matchingOn' });
+    const off = postReceipt(lenderReview({ risk: { ...review().risk, partialFill: false } }), null, copy);
+    expect(off.consequences).toContain('lendOffer.loseMatchOff');
+    expect(off.consequences).not.toContain('lendOffer.loseMatch');
+    expect(off.rows.find((x) => x.label === 'lendOffer.rowMatching')?.value).toEqual({ kind: 'text', text: 'lendOffer.matchingOff' });
+    const unread = postReceipt(lenderReview({ risk: { ...review().risk, partialFill: null } }), null, copy);
+    expect(unread.consequences).toContain('lendOffer.loseMatchUnread');
+    expect(unread.rows.find((x) => x.label === 'lendOffer.rowMatching')?.value).toEqual({ kind: 'text', text: 'request.matchingUnread' });
   });
 });
