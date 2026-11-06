@@ -51,7 +51,7 @@ describe('transition', () => {
     const submitted = transition({ kind: 'signing' }, { type: 'submitted', hash: HASH, at: 1 });
     for (const reason of ['cancelled', 'replaced'] as const) {
       const p = transition(submitted, { type: 'superseded', submittedHash: HASH, minedHash: OTHER, reason, blockNumber: 4n });
-      expect(p).toEqual({ kind: 'superseded', submittedHash: HASH, minedHash: OTHER, reason, blockNumber: 4n });
+      expect(p).toEqual({ kind: 'superseded', submittedHash: HASH, minedHash: OTHER, reason, blockNumber: 4n, unwound: null });
       expect(() => transition(p, { type: 'measured', hash: OTHER, outcome: summarize([], 1) })).toThrow(IllegalTransition);
       expect(transition(p, { type: 'review' })).toEqual({ kind: 'review' });
       expect(transition(p, { type: 'reset' })).toEqual({ kind: 'idle' });
@@ -60,6 +60,12 @@ describe('transition', () => {
     const unknown = transition(submitted, { type: 'receipt-unknown', hash: HASH, message: 'timed out' });
     expect(transition(unknown, { type: 'superseded', submittedHash: HASH, minedHash: OTHER, reason: 'cancelled', blockNumber: 5n }).kind).toBe('superseded');
     expect(() => transition(submitted, { type: 'superseded', submittedHash: OTHER, minedHash: OTHER, reason: 'cancelled', blockNumber: 5n })).toThrow(IllegalTransition);
+  });
+  it('keeps what the flow put back when the transaction was superseded', () => {
+    const submitted = transition({ kind: 'signing' }, { type: 'submitted', hash: HASH, at: 1 });
+    const unwound = { status: 'not-done', label: 'Approval put back', reason: 'the wallet refused' } as const;
+    const p = transition(submitted, { type: 'superseded', submittedHash: HASH, minedHash: OTHER, reason: 'cancelled', blockNumber: 4n, unwound });
+    expect(p).toMatchObject({ kind: 'superseded', unwound });
   });
   it('refuses a different mined hash that is not a reprice', () => {
     const submitted = transition({ kind: 'signing' }, { type: 'submitted', hash: HASH, at: 1 });

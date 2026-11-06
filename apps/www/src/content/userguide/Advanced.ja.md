@@ -2037,6 +2037,42 @@ factor を示し、価格のないものは件数を示します。
 
 `getSanctionsHeldReward(user)` が保留残高、`getRewardSanctionsStatus(user)` がその判定（Deliver、Hold、Confirmed）です。残高があり判定が Deliver のとき、Home は `claimHeldInteractionRewards(2)` を提示します。これは新たな未払い分を精算せずに保留残高そのものを支払い、`InteractionRewardsClaimed(user, 0, 0, paid)` を発行します。ウォレットが禁止されている間は `SanctionedAddress` で revert します。署名前の再確認では両方を読み直し、送信者として呼び出しをシミュレートします。フラグ確定中に得た日数分は永久に没収されます。
 
+<a id="borrow-start"></a>
+
+### Borrow: 仕組み
+
+Borrow は、ERC-20 担保に対する ERC-20 の貸し手オファー（`offerType` 0）を `acceptOffer(offerId, terms, signature)` で直接受けます。1回のトランザクションで、借り手のボールトがなければ開設し、担保をそこへ移し、組成手数料を差し引いた元本をウォレットに渡し、`LoanInitiated` を発行します。借入リクエスト、NFT の側、ペアの同意、詳細オプションは今後のアップデートで追加されます。
+
+<a id="borrow-pair"></a>
+
+### Borrow: トークンを選ぶ
+
+各トークンの区分はその場で読み取ります。まず `getAssetPriceStatus(asset)`（Divergent は信頼されていないと読み、新規ローンを止めます）、次に `checkLiquidityOnActiveNetwork(asset)`（0 は流動、1 は非流動）。`OraclePriceDivergence` または `OracleCrossCheckDivergence` での revert は信頼されていないと読み、それ以外の失敗は理由とともに読み取り不能と表示します。提案リストはデプロイ記録のラップドネイティブトークンとテストトークンで、貼り付けたアドレスは形式のみ確認します。
+
+<a id="borrow-offers"></a>
+
+### Borrow: オファーを選ぶ
+
+`getActiveOffersByAssetPairRanked(lending, collateral, 0, 20)` がペアの公開オファー ID と総数を返します。各 ID について `getOffer`、`getOfferState`、ウォレットがあれば `previewAccept(offerId, wallet)` を読みます。その `errorCode` がプロトコルの拒否理由です。ローン・トゥ・バリューは現在価格での `calculateLTV` で、非流動または価格のない側はない理由を示します。直接の受諾は貸し手の `amountMax` を `interestRateBps` で拘束します。借入リクエスト、NFT の側を持つオファー、自分のオファーは数えますが一覧には出しません。
+
+<a id="borrow-review"></a>
+
+### Borrow: 確認と署名
+
+確認画面は、オファー、その状態、`previewAccept`、`getOfferLinkedLoanId`、`getCurrentRiskTermsHash`、両方の区分、`getEffectiveGraceSeconds(durationDays)`、`getLoanInitiationFeeBps`、ウォレットのボールト・残高・承認額、`previewOfferAcceptBlock`、割引の同意を読み、ウォレットが開く直前にもう一度読みます。ウォレットは保存されたオファーから作った EIP-712 `AcceptTerms`（ドメイン `Vaipakam AcceptOffer`、バージョン 1）に、新しい 128 ビットの nonce と 30 分の期限で署名します。非流動の確認は、確認画面が非流動と示した側だけを指定します。承認額が足りないときだけ担保額ちょうどの承認を行い、署名付きで `acceptOffer` を試行してから送信します。承認後に止まった場合、ほかに変更がなければアプリは承認額を元の値に戻します。結果は、このオファーとウォレットの `LoanInitiated` とレシートの `Transfer` ログから読みます。許可額は最初のウォレット確認の直前に読み直され、リセット時にはその値に戻します。送信後にリバートした承諾や、ウォレットが取り消しまたは置き換えた承諾にも、トランザクション追跡が同じリセットを行います。レビューには `allowsPartialRepay`、`allowsPrepayListing`、`parallelSaleOrderHash` を伴う `allowsParallelSale`、`refinanceTargetLoanId`、関連ローンを示し、返済額は一時停止がない場合の金額と明記します。一時停止中も利息は発生し、期日だけが後ろにずれるためです。 各承認ステップは、レシートが含まれたブロックで読み直した許可額で判定し、レシートのステータスでは判定しません。ゼロでない許可額から別のゼロでない値への変更を拒むトークン（`approve` のドライランで判別）には先にゼロへのステップが入り、確認画面ではそれを追加のプロンプトとして数えます。規約の同意はウォレットが開く直前に再度読み取られます。 どちらの売却経路も担保を NFT として出品するため、トークン担保では、付与された出品・売却の許可はこのローンでは使えないものとして表示されます。`VaultUpgradeRequired` の拒否は、ウォレット自身のボールトに対する `getVaultVersionInfo` で帰属を判定し、そのボールトが下限を下回る場合にだけ対処を案内し、そうでなければ貸し手のボールトを示します。
+
+<a id="borrow-fee"></a>
+
+### Borrow: 組成手数料
+
+手数料は `previewAccept` の `lifEstimate` です。元本に対する `getLoanInitiationFeeBps` を借りるトークンで、渡される額から差し引きます。同意がオンで借りるトークンが流動であれば保有ティア割引で下がり、ティアは受諾時点で決まります。このページが Full 料金を選ぶことはありません。手数料のために VPFI を徴収することも返金することもありません。 送信者の取り分（手数料の `getLifMatcherFeeBps`）は送信者に支払われ、直接の受諾では借り手がそれにあたるため、ウォレットには手数料を差し引いた元本にその取り分を加えた額が届きます。
+
+<a id="borrow-risks"></a>
+
+### Borrow: リスク
+
+猶予期間を過ぎたローン（期日から `getEffectiveGraceSeconds` 後。一時停止の時間だけ後ろにずれます）は誰でもデフォルトにできます。流動担保は貸し手のために売却され、非流動担保はそのまま移転されます。流動担保はヘルスファクターが 1 を下回ると清算されることもあります。`useFullTermInterest` は早期返済時に全期間の利息を課し、利払いスケジュールは支払われなかった期間を担保の強制売却で精算します。
+
 <a id="terms-gate"></a>
 
 ### 利用規約の確認

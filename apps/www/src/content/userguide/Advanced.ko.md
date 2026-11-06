@@ -1928,6 +1928,42 @@ health factor를 보여 주고, 가격이 없는 것은 개수를 셉니다.
 
 `getSanctionsHeldReward(user)`는 보류 잔액이고 `getRewardSanctionsStatus(user)`는 그 판정(Deliver, Hold, Confirmed)입니다. 잔액이 있고 판정이 Deliver이면 Home은 `claimHeldInteractionRewards(2)`을 제시합니다. 이 호출은 새로 발생한 미지급분을 정산하지 않고 보류 잔액만 정확히 지급하며 `InteractionRewardsClaimed(user, 0, 0, paid)`를 발생시킵니다. 지갑이 금지된 동안에는 `SanctionedAddress`로 revert합니다. 서명 전 재확인은 둘 다 다시 읽고 발신자로서 호출을 시뮬레이션합니다. 플래그가 확정된 동안 얻은 날은 영구히 몰수됩니다.
 
+<a id="borrow-start"></a>
+
+### Borrow: 작동 방식
+
+Borrow는 ERC-20 담보에 대한 ERC-20 대출자 오퍼(`offerType` 0)를 `acceptOffer(offerId, terms, signature)`로 직접 수락합니다. 한 번의 트랜잭션으로 차입자의 볼트가 없으면 열고, 담보를 그 안으로 옮기고, 개시 수수료를 뺀 원금을 지갑으로 보내며, `LoanInitiated`를 발생시킵니다. 차입 요청, NFT 측, 페어 동의, 고급 옵션은 이후 업데이트에서 제공됩니다.
+
+<a id="borrow-pair"></a>
+
+### Borrow: 토큰 고르기
+
+각 토큰의 분류는 실시간으로 읽습니다. 먼저 `getAssetPriceStatus(asset)`(Divergent는 불신으로 읽고 새 대출을 막음), 다음으로 `checkLiquidityOnActiveNetwork(asset)`(0 유동, 1 비유동). `OraclePriceDivergence` 또는 `OracleCrossCheckDivergence` revert는 불신으로 읽고, 그 밖의 실패는 이유와 함께 읽을 수 없음으로 표시합니다. 추천 목록은 배포 기록의 래핑된 네이티브 토큰과 테스트 토큰이며, 붙여 넣은 주소는 형식만 확인합니다.
+
+<a id="borrow-offers"></a>
+
+### Borrow: 오퍼 고르기
+
+`getActiveOffersByAssetPairRanked(lending, collateral, 0, 20)`가 페어의 열린 오퍼 ID와 총수를 줍니다. 각 ID에 대해 페이지는 `getOffer`, `getOfferState`, 지갑이 있으면 `previewAccept(offerId, wallet)`를 읽으며, 그 `errorCode`가 프로토콜의 거절입니다. LTV는 오늘 가격 기준 `calculateLTV`이며, 비유동이거나 가격이 없는 측은 없는 이유를 밝힙니다. 직접 수락은 대출자의 `amountMax`를 `interestRateBps`로 묶습니다. 차입 요청, NFT 측이 있는 오퍼, 본인 오퍼는 세기만 하고 목록에 넣지 않습니다.
+
+<a id="borrow-review"></a>
+
+### Borrow: 검토와 서명
+
+검토는 오퍼, 그 상태, `previewAccept`, `getOfferLinkedLoanId`, `getCurrentRiskTermsHash`, 두 분류, `getEffectiveGraceSeconds(durationDays)`, `getLoanInitiationFeeBps`, 지갑의 볼트·잔액·승인액, `previewOfferAcceptBlock`, 할인 동의를 읽고, 지갑이 열리기 직전에 다시 읽습니다. 지갑은 저장된 오퍼로 만든 EIP-712 `AcceptTerms`(도메인 `Vaipakam AcceptOffer`, 버전 1)에 새 128비트 nonce와 30분 기한으로 서명합니다. 비유동 확인은 검토가 비유동으로 보여 준 측만 지정합니다. 승인액이 부족할 때만 담보 금액만큼 정확히 승인하고, 서명과 함께 `acceptOffer`를 모의 실행한 뒤 보냅니다. 승인 뒤에 멈추면 다른 변경이 없는 한 앱은 승인액을 이전 값으로 되돌립니다. 결과는 이 오퍼와 지갑의 `LoanInitiated`와 영수증의 `Transfer` 로그에서 읽습니다. 허용량은 첫 지갑 요청 직전에 다시 읽으며, 재설정은 그 값으로 되돌립니다. 전송된 수락이 revert되거나 지갑이 취소 또는 대체하면 거래 추적기가 같은 재설정을 합니다. 검토 화면은 `allowsPartialRepay`, `allowsPrepayListing`, `parallelSaleOrderHash`와 함께 `allowsParallelSale`, `refinanceTargetLoanId`, 연결된 대출을 표시하고, 갚을 금액을 일시 중지가 없는 경우로 표시합니다. 일시 중지 동안에도 이자는 붙고 만기일만 늦춰지기 때문입니다. 각 승인 단계는 영수증이 포함된 블록에서 다시 읽은 허용량으로 판단하며, 영수증 상태로는 판단하지 않습니다. 0이 아닌 허용량을 다른 0이 아닌 값으로 바꾸는 것을 거부하는 토큰(`approve` 시험 실행으로 확인)에는 먼저 0으로 가는 단계가 들어가며, 검토 화면은 이를 추가 프롬프트로 셉니다. 약관 동의는 지갑이 열리기 직전에 다시 읽습니다. 두 판매 경로 모두 담보를 NFT로 등록하므로, 토큰 담보에서는 부여된 등록·판매 허가가 이 대출이 쓸 수 없는 것으로 표시됩니다. `VaultUpgradeRequired` 거부는 지갑 자신의 볼트에 대한 `getVaultVersionInfo`로 귀속을 판단하며, 그 볼트가 최소 버전 아래일 때만 해결 방법을 안내하고 그렇지 않으면 대출자의 볼트를 명시합니다.
+
+<a id="borrow-fee"></a>
+
+### Borrow: 개시 수수료
+
+수수료는 `previewAccept`의 `lifEstimate`입니다. 원금에 대한 `getLoanInitiationFeeBps`를 빌리는 토큰으로 받아 전달액에서 차감하며, 동의가 켜져 있고 빌리는 토큰이 유동이면 보유 티어 할인으로 낮아지고, 티어는 수락 시점에 고정됩니다. 이 페이지는 Full 요금제를 선택하지 않습니다. 수수료를 위해 VPFI를 징수하거나 환불하지 않습니다. 제출자 몫(수수료의 `getLifMatcherFeeBps`)은 보낸 사람에게 지급되며, 직접 수락에서는 차입자이므로 지갑은 수수료를 뺀 원금에 그 몫을 더해 받습니다.
+
+<a id="borrow-risks"></a>
+
+### Borrow: 위험
+
+유예 기간이 끝난 대출(만기일 뒤 `getEffectiveGraceSeconds`, 일시 정지 시간만큼 늦춰짐)은 누구나 연체 처리할 수 있습니다. 유동 담보는 대출자를 위해 매각되고 비유동 담보는 그대로 이전됩니다. 유동 담보는 헬스 팩터가 1 아래로 내려가면 청산될 수도 있습니다. `useFullTermInterest`는 조기 상환 시 전체 기간 이자를 부과하고, 이자 일정은 놓친 기간을 담보 강제 매각으로 정산합니다.
+
 <a id="terms-gate"></a>
 
 ### 이용약관 확인

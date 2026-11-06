@@ -40,6 +40,7 @@ export interface Submission {
   /** The sender's own-rail sources, which the measurement reads through. */
   sources: readonly OwnStateSource[];
   measure: (receipt: TransactionReceipt, at: AnchoredReader) => Promise<readonly LegOutcome[]>;
+  unwind?: () => Promise<LegOutcome | null>;
 }
 
 export interface TxEntry {

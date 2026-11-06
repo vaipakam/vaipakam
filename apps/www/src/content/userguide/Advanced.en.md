@@ -2414,6 +2414,42 @@ The headline is `RewardClaimFacet.simulateClaimInteractionRewards(user, 2)`, whi
 
 `getSanctionsHeldReward(user)` is the held balance and `getRewardSanctionsStatus(user)` its decision (Deliver, Hold or Confirmed). With a balance and a Deliver decision, Home offers `claimHeldInteractionRewards(2)`, which pays exactly the held balance without settling anything newly owed and emits `InteractionRewardsClaimed(user, 0, 0, paid)`; it reverts `SanctionedAddress` while the wallet is barred. The re-check before signing re-reads both and simulates the call as the sender. Days earned while a flag is confirmed are forfeited permanently.
 
+<a id="borrow-start"></a>
+
+### Borrow: How It Works
+
+Borrow takes a lender offer (`offerType` 0) of an ERC-20 against ERC-20 collateral directly, with `acceptOffer(offerId, terms, signature)`. In one transaction it opens the borrower's vault if there is none, pulls the collateral into it and delivers the principal less the initiation fee to the wallet, and emits `LoanInitiated`. Borrow requests, NFT legs, pair consents and the Advanced options follow in later updates.
+
+<a id="borrow-pair"></a>
+
+### Borrow: Choosing the Tokens
+
+Each token's class is read live: `getAssetPriceStatus(asset)` first (Divergent reads as distrusted and closes new loans), then `checkLiquidityOnActiveNetwork(asset)` (0 liquid, 1 illiquid). A revert of `OraclePriceDivergence` or `OracleCrossCheckDivergence` reads as distrusted; any other failure is shown as unreadable, with its reason. The suggested list is the deployment record's wrapped native token and test tokens; a pasted address is checked for shape only.
+
+<a id="borrow-offers"></a>
+
+### Borrow: Picking an Offer
+
+`getActiveOffersByAssetPairRanked(lending, collateral, 0, 20)` gives the pair's open offer ids and total. For each, the page reads `getOffer`, `getOfferState` and, with a wallet, `previewAccept(offerId, wallet)`, whose `errorCode` is the protocol's refusal. The loan-to-value is `calculateLTV` at today's prices; an illiquid or unpriced leg says why there is none. A direct take binds the lender's `amountMax` at `interestRateBps`. Offers that are borrow requests, carry an NFT leg or are the reader's own are counted, not listed.
+
+<a id="borrow-review"></a>
+
+### Borrow: Review and Signing
+
+The review reads the offer, its state, `previewAccept`, `getOfferLinkedLoanId`, `getCurrentRiskTermsHash`, both classes, `getEffectiveGraceSeconds(durationDays)`, `getLoanInitiationFeeBps`, the wallet's vault, balance and allowance, `previewOfferAcceptBlock` and the fee-discount consent, and reads them again right before the wallet opens. The wallet signs EIP-712 `AcceptTerms` (domain `Vaipakam AcceptOffer`, version 1) built from the stored offer, with a fresh 128-bit nonce and a 30-minute deadline; an illiquid acknowledgement names only a leg the review showed as illiquid. An approval of exactly the collateral follows only when the allowance is short, then `acceptOffer` is simulated with the signature and sent. If it stops after the approval, the app resets the allowance to its earlier value when nothing else changed it. The outcome reads `LoanInitiated` for this offer and wallet and the `Transfer` logs of the receipt. The allowance is read again just before the first prompt, and that value is what a reset restores; a submitted acceptance that reverts, or that the wallet cancels or replaces, gets the same reset from the transaction tracker. The review states `allowsPartialRepay`, `allowsPrepayListing`, `allowsParallelSale` with `parallelSaleOrderHash`, `refinanceTargetLoanId` and the linked loan, and labels the owed figure as the no-pause case, since interest accrues through a pause while the due date moves. Each approval step is judged by the allowance read back at the block its receipt mined in, never by the receipt's status. A token that refuses a change from one non-zero allowance to another, found by a dry run of `approve`, gets a step to zero first, which the review counts as an extra prompt. The Terms acceptance is read again right before the wallet opens. Both sale routes list the collateral as an NFT, so on token collateral a granted listing or sale permission is stated as one the loan cannot use. A `VaultUpgradeRequired` refusal is attributed with `getVaultVersionInfo` on the wallet's own vault: the remedy is offered only when that vault is the one below the floor, and otherwise the lender's vault is named.
+
+<a id="borrow-fee"></a>
+
+### Borrow: The Initiation Fee
+
+The fee is `previewAccept`'s `lifEstimate`: `getLoanInitiationFeeBps` of the principal, in the lending asset, deducted from what is delivered, lowered by the hold-tier discount when the consent is on and the lending asset is liquid, with the tier fixed at acceptance. This page never opts into the Full tariff. No VPFI is collected for the fee and none is rebated. The submitter's share, `getLifMatcherFeeBps` of the fee, is paid to the sender, which on a direct take is the borrower, so the wallet receives the principal less the fee plus that share.
+
+<a id="borrow-risks"></a>
+
+### Borrow: Risks
+
+A loan past its grace end (`getEffectiveGraceSeconds` after the due date, which paused time moves) can be defaulted by anyone: liquid collateral is sold for the lender, illiquid collateral is transferred as-is. Liquid collateral can also be liquidated once the health factor is below 1. `useFullTermInterest` charges the full term's interest on early repayment; a periodic-interest cadence settles a missed period by a forced sale of collateral.
+
 <a id="terms-gate"></a>
 
 ### The Terms Prompt

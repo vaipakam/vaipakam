@@ -1102,6 +1102,42 @@ In einem Netzwerk, in dem nicht beanspruchte Belohnungen entfernt werden können
 
 Markiert die Sanktionsprüfung Ihre Wallet, wird ihr nichts ausgezahlt, solange die Markierung besteht. Vor der Markierung verdiente Belohnungen werden für sie zurückgehalten, gesperrt, aber nicht verloren, und freigegeben, sobald die Wallet nicht mehr markiert ist; Home bietet dann an, genau diesen Betrag allein zu beanspruchen. Solange eine Markierung bestätigt ist, verfallen verdiente Belohnungen endgültig, und VPFI in Ihrem Vault kann nicht bewegt werden. Kann nicht gelesen werden, ob die Wallet noch markiert ist, wird nichts freigegeben.
 
+<a id="borrow-start"></a>
+
+### Borrow: So funktioniert es
+
+Zum Leihen nimmst du das offene Angebot eines Verleihers an: einen Betrag eines Tokens, einen Zinssatz, eine Laufzeit und die Sicherheit, die der Verleiher verlangt. Die Annahme eröffnet den Kredit in einer Transaktion. Deine Sicherheit wandert aus deiner Wallet in deinen eigenen Vault und bleibt dort gesperrt, solange der Kredit läuft; der Betrag, abzüglich einer kleinen Eröffnungsgebühr, kommt in deiner Wallet an. Du zahlst Betrag und Zinsen bis zum Fälligkeitstag zurück. Eine eigene Kreditanfrage zu stellen, kommt in einem späteren Update.
+
+<a id="borrow-pair"></a>
+
+### Borrow: Die Tokens wählen
+
+Wähle zuerst, was du leihen und was du sperren willst. Die App schlägt Tokens im Netzwerk vor, oder du fügst eine Token-Adresse ein; es läuft keine Sicherheitsprüfung für Tokens, prüfe eine eingefügte Adresse also selbst. Für jeden Token liest die App, was das Protokoll jetzt dazu sagt. Ein liquider Token hat einen Preis, der Kredit hat also einen Health Factor und kann liquidiert werden, wenn die Sicherheit an Wert verliert. Ein illiquider Token wird mit null bewertet, und bei einem Ausfall erhält der Verleiher die Sicherheit selbst. Traut das Protokoll dem Preis eines Tokens nicht, sind neue Kredite darauf geschlossen, bis es wieder vertraut; offene Kredite sind nicht betroffen.
+
+<a id="borrow-offers"></a>
+
+### Borrow: Ein Angebot auswählen
+
+Die Seite listet die offenen Angebote von Verleihern für deine beiden Tokens, direkt aus dem Protokoll gelesen. Jedes zeigt Betrag, Zinssatz und Laufzeit, die verlangte Sicherheit, den Beleihungswert zu heutigen Preisen, wie Zinsen berechnet werden, einen etwaigen Zinsplan, wann das Angebot endet und was du nach der Gebühr erhalten würdest. Ein Angebot wird ganz angenommen, zum vollen Betrag und niedrigsten Zinssatz des Verleihers. Würde das Protokoll ein Angebot ablehnen, sagt die Seite warum und zeigt keine Schaltfläche. Die Reihenfolge ist eine Hilfe, keine Empfehlung.
+
+<a id="borrow-review"></a>
+
+### Borrow: Prüfen und Signieren
+
+Bevor sich deine Wallet öffnet, zeigt die Prüfung jede Zahl: was du erhältst, die Gebühr, was du sperrst, den Zinssatz, was du am Fälligkeitstag schuldest, die Nachfrist und was du verlieren kannst. Du setzt ein Häkchen, um den Risikohinweisen und den Bedingungen zuzustimmen; ändern sich die Zahlen vor der Bestätigung, wird es entfernt. Dann bittet dich deine Wallet, die Bedingungen zu signieren (das kostet nichts), falls nötig genau die Sicherheit freizugeben und die Annahme zu senden, die die App zuerst als Probelauf ausführt. Stoppt es nach einer Freigabe, bittet die App darum, die Freigabe zurückzusetzen, und sagt, ob das geschah. Danach prüft die App auf der Chain den eröffneten Kredit, was ankam und was gesperrt wurde. Sie nennt auch die Laufzeitbedingungen des Kredits, jede auch dann, wenn sie dem Standard entspricht: Teilrückzahlung, Verkauf der Sicherheit sowie eine etwaige Refinanzierung oder ein verknüpfter Kredit. Der geschuldete Betrag gilt ohne Pause: Eine Pause verschiebt das Fälligkeitsdatum nach hinten, und die Zinsen laufen währenddessen weiter.
+
+<a id="borrow-fee"></a>
+
+### Borrow: Die Eröffnungsgebühr
+
+Die Eröffnung eines Kredits kostet einen kleinen Anteil des Betrags, einmalig, im geliehenen Token, abgezogen von dem, was du erhältst; die Prüfung zeigt den geltenden Satz. Zinsen schuldest du auf den ganzen Betrag. Deine Rabattstufe senkt die Gebühr, wenn der Gebührenrabatt an ist und der geliehene Token liquide ist. Für diese Gebühr wird kein VPFI genommen oder gehalten, und später wird nichts erstattet. Da du die Annahme selbst sendest, kommt ein kleiner Anteil der Gebühr, den das Protokoll jedem zahlt, der ein Matching einreicht, mit dem Betrag zu dir zurück; die Prüfung zeigt ihn.
+
+<a id="borrow-risks"></a>
+
+### Borrow: Risiken
+
+Ein Kredit kann dich deine Sicherheit kosten. Hast du bis zum Ende der Nachfrist nicht zurückgezahlt, fällt der Kredit aus und der Verleiher wird aus deiner Sicherheit bezahlt: für ihn verkauft, wo das Protokoll es kann, unverändert übergeben, wo nicht. Bei liquider Sicherheit kann jeder den Kredit liquidieren, wenn ihr Wert fällt, bis der Health Factor unter 1 sinkt, und du verlierst Sicherheit. Bei Zinsen für die volle Laufzeit schuldest du die Zinsen der ganzen Laufzeit auch bei früher Rückzahlung. Mit einem Zinsplan wird eine verpasste Periode durch den Verkauf eines Teils deiner Sicherheit bezahlt. Deine Sicherheit bleibt gesperrt, bis der Kredit zurückgezahlt oder abgewickelt ist.
+
 <a id="terms-gate"></a>
 
 ### Die Abfrage der Nutzungsbedingungen

@@ -1053,6 +1053,42 @@ On a network where unclaimed rewards can be removed, Home shows the soonest esti
 
 If the sanctions screen flags your wallet, no rewards are paid to it while it stays flagged. Rewards it earned before the flag are held for it, locked but not lost, and are released once the wallet is no longer flagged; Home then offers to claim exactly that balance on its own. While a flag is confirmed, rewards earned are forfeited for good and VPFI in your vault cannot be moved. If whether the wallet is still flagged cannot be read, nothing is released.
 
+<a id="borrow-start"></a>
+
+### Borrow: How It Works
+
+To borrow, you take a lender's open offer: an amount of one token, a rate, a term and the collateral the lender asks for. Taking it opens a loan in one transaction. Your collateral moves from your wallet into your own vault, where it stays locked while the loan is open, and the amount, less a small initiation fee, arrives in your wallet. You repay the amount plus interest by the due date. Posting your own borrow request comes in a later update.
+
+<a id="borrow-pair"></a>
+
+### Borrow: Choosing the Tokens
+
+First choose what to borrow and what to lock. The app suggests tokens on the network, or you can paste a token address; no token-safety screening runs, so check a pasted address yourself. For each token the app reads what the protocol says about it now. A liquid token is priced, so the loan has a health factor and can be liquidated if the collateral loses value. An illiquid token is valued at zero, and on default the lender receives the collateral itself. When the protocol does not trust a token's price, new loans on it are closed until it does; loans already open are not affected.
+
+<a id="borrow-offers"></a>
+
+### Borrow: Picking an Offer
+
+The page lists the lender offers open for your two tokens, read from the protocol itself. Each shows the amount, rate and term, the collateral asked, the loan-to-value at today's prices, how interest is charged, any interest schedule, when the offer ends and what you would receive after the fee. An offer is taken whole, at the lender's full amount and lowest rate. When the protocol would refuse an offer, the page says why and offers no button. The order is a convenience, not advice.
+
+<a id="borrow-review"></a>
+
+### Borrow: Review and Signing
+
+Before your wallet opens, the review shows every figure: what you receive, the fee, what you lock, the rate, what you owe on the due date, the grace period and what you can lose. You tick a box to agree to the Risk Disclosures and Terms; if the figures change before you confirm, the box clears. Your wallet then asks you to sign the terms, which costs nothing, to approve exactly the collateral if that is needed, and to send the acceptance, which the app first tries as a dry run. If it stops after an approval, the app asks to put the approval back and says whether that happened. Afterwards the app checks on the chain the loan it opened, what arrived and what was locked. It also states the loan's lifecycle terms, each even when it is the default: partial repayment, selling the collateral, and any refinance or linked loan. The amount owed assumes no pause: a pause moves the due date later and interest keeps running through it.
+
+<a id="borrow-fee"></a>
+
+### Borrow: The Initiation Fee
+
+Opening a loan costs a small share of the amount, charged once, in the token you borrow, and taken from what you receive; the review shows the rate in force. You owe interest on the whole amount. Your fee-discount tier lowers the fee when the fee discount is on and the borrowed token is liquid. No VPFI is taken or held for this fee, and nothing is refunded later. Because you send the acceptance yourself, a small share of the fee, the share the protocol pays whoever submits a match, comes back to you with the amount; the review shows it.
+
+<a id="borrow-risks"></a>
+
+### Borrow: Risks
+
+A loan can cost you your collateral. If you have not repaid by the end of the grace period, the loan defaults and the lender is paid from your collateral: sold for them where the protocol can, handed over as-is where it cannot. With liquid collateral, if its value falls until the loan's health factor drops below 1, anyone can liquidate the loan and you lose collateral. With full-term interest you owe the whole term's interest even if you repay early. With an interest schedule, a missed period is paid by selling part of your collateral. Your collateral stays locked until the loan is repaid or settled.
+
 <a id="terms-gate"></a>
 
 ### The Terms Prompt

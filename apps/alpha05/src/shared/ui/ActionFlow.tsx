@@ -68,6 +68,13 @@ export interface ActionFlowProps {
   after?: (outcome: FinishCardModel['outcome']) => ReactNode;
   /** Back to idle; the caller closes its panel. */
   onClose: () => void;
+  /** What the review needs from the reader before the wallet may open (a
+   *  consent checkbox, a blocker stated in place), rendered under the
+   *  receipt; confirming is withheld until `ready`. */
+  gate?: { node: ReactNode; ready: boolean };
+  /** While the wallet is asked, which of several prompts is open ("Wallet
+   *  step 2 of 3: …"); the generic line otherwise. */
+  signingNote?: string | null;
 }
 
 /**
@@ -78,7 +85,7 @@ export interface ActionFlowProps {
  * retried silently: a receipt that cannot be read keeps its hash on screen
  * and offers "Check again", and nothing new is offered until it is resolved.
  */
-export function ActionFlow({ tx, identity, reviewedFor, receipt, recheck, describeAsset, explorer, next, after, onClose }: ActionFlowProps) {
+export function ActionFlow({ tx, identity, reviewedFor, receipt, recheck, describeAsset, explorer, next, after, onClose, gate, signingNote }: ActionFlowProps) {
   const { text, format } = useCopy();
   const nowMs = useNow();
   const [checking, setChecking] = useState(false);
@@ -112,6 +119,12 @@ export function ActionFlow({ tx, identity, reviewedFor, receipt, recheck, descri
   useEffect(() => {
     live.current = identity;
   }, [identity]);
+  /** The gate (a consent) as of the latest render: a reader who withdraws it
+   *  while the re-check runs never has the wallet opened on the old answer. */
+  const gateReady = useRef(gate === undefined || gate.ready);
+  useEffect(() => {
+    gateReady.current = gate === undefined || gate.ready;
+  }, [gate]);
 
   const close = () => {
     attempt.current += 1;
@@ -135,6 +148,9 @@ export function ActionFlow({ tx, identity, reviewedFor, receipt, recheck, descri
     setChecking(false);
     // Moved while the re-check ran: the render now withholds signing.
     if (live.current !== reviewedFor) return;
+    // The gate was withdrawn while the re-check ran: the render now holds
+    // Confirm until it is given again.
+    if (!gateReady.current) return;
     if (result.kind !== 'ok') {
       setFound(result);
       return;
@@ -188,10 +204,11 @@ export function ActionFlow({ tx, identity, reviewedFor, receipt, recheck, descri
               {text('flow.identityChanged')}
             </Notice>
           )}
+          {receipt !== null && gate?.node}
           {checking && <p className="tier-b" role="status">{text('flow.checking')}</p>}
           <p className="actions">
             {!blocked && (
-              <button type="button" className="btn btn-primary" disabled={receipt === null || checking} onClick={() => void confirm()}>
+              <button type="button" className="btn btn-primary" disabled={receipt === null || checking || (gate !== undefined && !gate.ready)} onClick={() => void confirm()}>
                 {text('flow.confirm')}
               </button>
             )}
@@ -207,7 +224,7 @@ export function ActionFlow({ tx, identity, reviewedFor, receipt, recheck, descri
         <div className="action-flow" data-phase="signing">
           {senderNote}
           <p className="tier-b" role="status">
-            {text('flow.signing')}
+            {signingNote ?? text('flow.signing')}
           </p>
         </div>
       );
@@ -269,6 +286,11 @@ export function ActionFlow({ tx, identity, reviewedFor, receipt, recheck, descri
           <Notice tone="warn" tier="A">
             {text(phase.reason === 'cancelled' ? 'flow.cancelled' : 'flow.replaced')} {txLink(phase.minedHash)}
           </Notice>
+          {phase.unwound && (
+            <Notice tone={phase.unwound.status === 'done' ? 'ok' : 'warn'} tier="A">
+              {phase.unwound.status === 'done' ? phase.unwound.label : `${phase.unwound.label}: ${phase.unwound.reason}`}
+            </Notice>
+          )}
           <p className="actions">
             <button type="button" className="btn" onClick={close}>
               {text('flow.close')}

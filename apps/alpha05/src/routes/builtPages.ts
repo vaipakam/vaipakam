@@ -1,4 +1,5 @@
 import type { ComponentType } from 'react';
+import { BorrowPage } from '../pages/borrow/BorrowPage';
 import { HomePage } from '../pages/home/HomePage';
 
 /** The page each BUILT route renders, by page-map path. A route not listed
@@ -6,4 +7,5 @@ import { HomePage } from '../pages/home/HomePage';
  *  page map's `built` flags to one another. */
 export const BUILT_PAGES: Readonly<Record<string, ComponentType>> = {
   '/': HomePage,
+  '/borrow': BorrowPage,
 };

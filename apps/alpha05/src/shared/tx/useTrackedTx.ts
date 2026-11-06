@@ -51,6 +51,13 @@ export interface TrackedTxOptions {
    *  state from before the transaction). A leg the read-back cannot
    *  substantiate is `unknown`, never omitted. */
   measure: (receipt: TransactionReceipt, at: AnchoredReader) => Promise<readonly LegOutcome[]>;
+  /** Undo what `send` left standing before the submitted call (an approval
+   *  the call would have used), run by the tracker whenever that call did
+   *  NOT take effect: the receipt reverted, or the wallet cancelled or
+   *  replaced the transaction. Resolves with a leg saying what was put back
+   *  or why it was not, or null when nothing was left standing. One seam,
+   *  so no ending of the transaction can skip the clean-up. */
+  unwind?: () => Promise<LegOutcome | null>;
 }
 
 export interface TrackedTx {
@@ -68,6 +75,17 @@ export interface TrackedTx {
   /** From `review`, `measured`, `failed`, `superseded` or
    *  `receipt-unknown`: back to idle. */
   reset: () => void;
+}
+
+/** The flow's `unwind`, if any; a failure inside it is reported as a leg
+ *  that did not land, never swallowed. */
+async function runUnwind(ctx: Submission): Promise<LegOutcome | null> {
+  if (!ctx.unwind) return null;
+  try {
+    return await ctx.unwind();
+  } catch (e) {
+    return { status: 'not-done', label: 'clean-up', reason: (e as Error).message };
+  }
 }
 
 export function useTrackedTx(opts: TrackedTxOptions): TrackedTx {
@@ -111,7 +129,8 @@ export function useTrackedTx(opts: TrackedTxOptions): TrackedTx {
       announceOwnChange({ chainId: ctx.chainId, account: ctx.account, cause: 'receipt' });
       const reason = replacement as ReplacementReason | null;
       if (reason === 'cancelled' || reason === 'replaced') {
-        apply({ type: 'superseded', submittedHash: hash, minedHash: receipt.transactionHash, reason, blockNumber: receipt.blockNumber });
+        const unwound = await runUnwind(ctx);
+        apply({ type: 'superseded', submittedHash: hash, minedHash: receipt.transactionHash, reason, blockNumber: receipt.blockNumber, unwound });
         return;
       }
       const mined = apply({
@@ -129,6 +148,10 @@ export function useTrackedTx(opts: TrackedTxOptions): TrackedTx {
       } catch (e) {
         legs = [{ status: 'unknown', label: 'outcome', reason: `The read-back failed: ${(e as Error).message}` }];
       }
+      if (receipt.status === 'reverted') {
+        const unwound = await runUnwind(ctx);
+        if (unwound) legs = [...legs, unwound];
+      }
       apply({ type: 'measured', hash: mined.hash, outcome: summarize(legs, Date.now()) });
     },
     [apply, config],
@@ -145,7 +168,7 @@ export function useTrackedTx(opts: TrackedTxOptions): TrackedTx {
         apply({ type: 'failed', message: refusalFromError(e).reason });
         return;
       }
-      const ctx: Submission = { chainId: opts.chainId, account: opts.account, sources: opts.sources, measure: opts.measure };
+      const ctx: Submission = { chainId: opts.chainId, account: opts.account, sources: opts.sources, measure: opts.measure, unwind: opts.unwind };
       store.update(key, (e) => ({ ...e, submission: ctx }));
       apply({ type: 'submitted', hash, at: Date.now() });
       await track(hash, ctx);
