@@ -2011,6 +2011,12 @@ fallback، موعد غير مقروء، يستحق خلال ثلاثة أيام�
 
 تتراوح `periodicInterestCadence` من 0 (None) إلى 4 (Annual)، بفترات مدتها 30 و90 و180 و365 يومًا. يعرض النموذج ما تقبله `previewCadenceAdmission(lendingAsset, amount, assetType, collateralAsset, collateralAssetType, durationDays)`، التي تشغّل القاعدة التي تفرضها `createOffer` مقيّمةً عند `amount` (الطرف الأصغر من النطاق). يُذكر كل رفض من بيانات التراجع الخاصة به: `PeriodicInterestDisabled` أو `CadenceNotAllowedForIlliquid` أو `CadenceNotAllowed(cadence, durationDays, principalNumeraire, threshold)`. فائدة الفترة الواحدة هي `principal × rate × intervalDays / (10000 × 365)`. يمكن لأي شخص تسوية فترة فائتة عبر `settlePeriodicInterest` بعد انقضاء المهلة `getEffectiveGraceSeconds(intervalDays − 1)`؛ فتُباع ضمانات ويبقى القرض مفتوحًا. تُعرض حالة تفعيل مرور الحارس `periodicSettle` كما تبلغ عنها خدمة القدرات، وهي غير معروفة افتراضيًا. لا يمكن تغيير الجدول بعد النشر.
 
+<a id="borrow-request-tariff"></a>
+
+### Borrow: تعرفة الرسوم الكاملة للطلب
+
+الاشتراك هو `setOfferCreatorFullTariff(offerId, true, maxCStar, allowDowngrade)`، يرسله المنشئ بعد `createOffer`، ويُرفض بـ `OfferAlreadyAccepted` متى أخذ مُقرِض الطلب؛ ويجب أن يكون `maxCStar` أكبر من صفر (`FullTariffMaxCStarRequired`). يعرض النموذج المفتاح من `getFeeEntitlementConfig()` والتعرفة من `quoteCStar(lendingAsset, principal, durationDays)`، عند `amount` و`amountMax` للنطاق؛ والسقف الافتراضي هو التسعير عند `amountMax`. عند كل قبول يأخذ التحصيل `C*` مسعّرًا على أصل ذلك القرض، فقط إذا كان المفتاح مفعّلًا، وللأصل سعر وسيولة، و`C* ≤ maxCStar`، وكان VPFI الحرّ في الخزنة يغطيه (رصيد الخزنة محدودًا بـ `getTrackedVPFIBalance`، ناقص الرهون النشطة، عبر `getFreeBalance`)؛ وإلا فيرتد بـ `FeeEntitlementDisabled` أو `FeeEntitlementFullOptInFailed` أو `FeeEntitlementTariffAboveAuth`، ما لم يسمح `allowDowngrade` بفتح القرض بدونها. يرتفع خصم رسوم قرض المقترض بمقدار `FULL_MODE_FEE_DISCOUNT_BONUS_BPS` (1000)، بسقف `MAX_FEE_DISCOUNT_BPS` (5000). تمنع المراجعة اختيارًا يُرفض بموجبه كل قرض، ويُقاس الاشتراك بقراءة `getOffer` من جديد (`creatorFull` و`creatorMaxCStar` و`creatorAllowFullDowngrade`). لا يتيح هذا التطبيق بعد الإقراض الاحتياطي للطلبات غير المملوءة.
+
 <a id="risk-access"></a>
 
 ### Risk Access: مستوى المخاطرة لديك

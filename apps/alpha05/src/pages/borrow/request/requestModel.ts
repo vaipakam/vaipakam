@@ -19,6 +19,7 @@
 import { interestAtDue, listFee } from '../../../shared/offers/model';
 
 import type { Cadence } from '../../../shared/offers/cadence';
+import type { TariffChoice } from '../../../shared/offers/fullTariff';
 
 type Hex = `0x${string}`;
 
@@ -70,6 +71,13 @@ export interface RequestInput {
   /** OFF-14 (Advanced): the periodic-interest schedule, by the protocol's
    *  cadence position; 0 is interest at repayment. */
   cadence: Cadence;
+  /** OFF-22 (Advanced): pay the Full VPFI fee tariff on each loan. */
+  tariff: boolean;
+  /** The most VPFI one loan may take, as typed; blank means today's tariff
+   *  for the largest loan, filled in by the form. */
+  tariffCeiling: string;
+  /** Whether a loan the tariff cannot be taken on opens without it. */
+  tariffDowngrade: boolean;
 }
 
 /** OFF-11: the fill modes, in the protocol's `FillMode` order. */
@@ -94,6 +102,9 @@ export const DEFAULT_INPUT: RequestInput = {
   collateralFloor: '',
   fillMode: 'partial',
   cadence: 0,
+  tariff: false,
+  tariffCeiling: '',
+  tariffDowngrade: false,
 };
 
 /** Why a fill mode cannot go with the rest of the request: all-or-none
@@ -119,13 +130,14 @@ export function rangeError(amount: bigint, amountMax: bigint, collateral: bigint
 
 /** The Advanced options a request carries, named so a Basic reader is told
  *  they still apply (RB-MODE: switching mode never drops what was set). */
-export type AdvancedOption = 'range' | 'fill' | 'cadence';
+export type AdvancedOption = 'range' | 'fill' | 'cadence' | 'tariff';
 
 export function advancedSet(input: RequestInput): AdvancedOption[] {
   const out: AdvancedOption[] = [];
   if (input.ranged) out.push('range');
   if (input.fillMode !== 'partial') out.push('fill');
   if (input.cadence !== 0) out.push('cadence');
+  if (input.tariff) out.push('tariff');
   return out;
 }
 
@@ -207,6 +219,9 @@ export interface ParsedRequest {
   fillMode: FillMode;
   /** OFF-14: the schedule; 0 is interest at repayment. */
   cadence: Cadence;
+  /** OFF-22: the Full tariff opt-in, armed by its own transaction after
+   *  posting; null when not chosen. */
+  tariff: TariffChoice | null;
   rateBps: bigint;
   durationDays: number;
   expiry: ExpiryChoice;

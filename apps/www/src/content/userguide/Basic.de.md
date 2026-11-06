@@ -1180,6 +1180,12 @@ Teilweise, die Voreinstellung, lässt Matches die Anfrage über einen oder mehre
 
 Im erweiterten Modus kann eine Anfrage die Zinsen nach einem Plan zahlen statt alles bei der Rückzahlung: jeden Monat, jedes Quartal, alle sechs Monate oder jedes Jahr. Das Formular bietet nur die Pläne an, die das Protokoll für deine Bedingungen zulässt, und nennt unter jedem geschlossenen den Grund: periodische Zinsen sind im Netzwerk abgeschaltet, ein Asset hat keinen Preis, der Kredit ist weniger wert als die Schwelle des Protokolls (beide Zahlen werden gezeigt), oder die Periode ist nicht kürzer als der Kredit. Die Prüfung zeigt die Zinsen jeder Periode und die Nachfrist einer versäumten Periode. Wird eine Periode bis zum Ende ihrer Nachfrist nicht bezahlt, darf jeder einen Teil deiner Sicherheit verkaufen, um sie zu bezahlen, und der Kredit bleibt offen. Der Plan lässt sich nach dem Veröffentlichen nicht mehr ändern. Wie die anderen erweiterten Optionen gilt er auch nach dem Wechsel zu Basis weiter, und das Formular sagt es.
 
+<a id="borrow-request-tariff"></a>
+
+### Borrow: Der Full-Gebührentarif (Erweitert)
+
+Im erweiterten Modus kann eine Anfrage den Full-Gebührentarif nehmen: eine Gebühr in VPFI, die beim Eröffnen jedes Kredits aus Ihrem Tresor genommen wird und den Rabatt auf die Kreditgebühr um zehn Punkte erhöht, bis zur Obergrenze des Protokolls von 50 %. Die Kreditgebühr selbst wird weiterhin im verliehenen Vermögenswert berechnet, und der Tarif wird nicht erstattet. Das Formular bietet ihn nur an, solange das Protokoll ihn eingeschaltet hat, und zeigt den heutigen Tarif für Betrag und Laufzeit. Sie legen fest, wie viel VPFI ein Kredit höchstens nehmen darf (leer gelassen: der heutige Tarif für den größten Kredit), und was mit einem Kredit geschieht, der den Tarif beim Eröffnen nicht nehmen kann: Er wird abgelehnt oder ohne ihn eröffnet. Ein Kredit kann ihn nur nehmen, wenn in diesem Moment der Tarif eingeschaltet ist, der verliehene Vermögenswert einen Preis hat und liquide ist, sein Tarif innerhalb Ihres Höchstwerts liegt und Ihr Tresor genug freie VPFI hält. Der Tarif wird mit einer zweiten Transaktion nach dem Veröffentlichen gesetzt; ein Kreditgeber, der die Anfrage vorher übernimmt, eröffnet einen Kredit ohne ihn. Backstop-Kredite für Anfragen, die niemand übernimmt, bietet diese App noch nicht an.
+
 <a id="risk-access"></a>
 
 ### Risk Access: Ihre Risikostufe

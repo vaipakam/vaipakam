@@ -1158,6 +1158,12 @@ Parcial, el valor predeterminado, permite que los emparejamientos llenen la soli
 
 En el modo Avanzado una solicitud puede pagar los intereses según un calendario en lugar de todo al reembolsar: cada mes, trimestre, seis meses o año. El formulario ofrece solo los calendarios que el protocolo permite para tus condiciones y, bajo cada uno cerrado, dice por qué: los intereses periódicos están desactivados en la red, un activo no tiene precio, el préstamo vale menos que el umbral del protocolo (se muestran ambas cifras) o el periodo no es más corto que el préstamo. La revisión muestra los intereses de cada periodo y la gracia que recibe un periodo impagado. Si un periodo no se paga antes de que termine su gracia, cualquiera puede vender parte de tu garantía para pagarlo, y el préstamo sigue abierto. El calendario no se puede cambiar después de publicar. Como las demás opciones avanzadas, sigue aplicándose si cambias a Básico, y el formulario lo dice.
 
+<a id="borrow-request-tariff"></a>
+
+### Borrow: La tarifa de comisión Full (Avanzado)
+
+En el modo Avanzado una solicitud puede tomar la tarifa de comisión Full: una comisión en VPFI, tomada de su bóveda al abrirse cada préstamo, que añade diez puntos al descuento de la comisión del préstamo, hasta el tope del 50 % del protocolo. La comisión del préstamo se sigue cobrando en el activo prestado, y la tarifa no se reembolsa. El formulario la ofrece solo mientras el protocolo la tiene activada y muestra la tarifa de hoy para su importe y plazo. Usted fija lo máximo en VPFI que puede tomar un préstamo (en blanco, la tarifa de hoy para el préstamo más grande) y qué ocurre con un préstamo que no puede tomar la tarifa al abrirse: se rechaza, o se abre sin ella. Un préstamo solo puede tomarla si, en ese momento, la tarifa está activada, el activo prestado tiene precio y es líquido, su tarifa está dentro de su máximo y su bóveda tiene suficiente VPFI libre. La tarifa se fija con una segunda transacción después de publicar, así que un prestamista que tome la solicitud antes de que esa transacción se confirme abre un préstamo sin ella. Esta aplicación aún no ofrece préstamos de respaldo para solicitudes que nadie toma.
+
 <a id="risk-access"></a>
 
 ### Risk Access: tu nivel de riesgo

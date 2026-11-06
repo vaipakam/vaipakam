@@ -2199,6 +2199,12 @@ Basic एकल-मान अनुरोध पोस्ट करता है
 
 `periodicInterestCadence` 0 (None) से 4 (Annual) तक होता है, जिनकी अवधियाँ 30, 90, 180 और 365 दिन हैं। फ़ॉर्म वही देता है जिसकी `previewCadenceAdmission(lendingAsset, amount, assetType, collateralAsset, collateralAssetType, durationDays)` अनुमति देता है; यह वही नियम चलाता है जिसे `createOffer` लागू करता है, `amount` (रेंज के सबसे छोटे सिरे) पर मूल्यांकित। हर अस्वीकृति उसके रिवर्ट डेटा से बताई जाती है: `PeriodicInterestDisabled`, `CadenceNotAllowedForIlliquid`, या `CadenceNotAllowed(cadence, durationDays, principalNumeraire, threshold)`। एक अवधि का ब्याज `principal × rate × intervalDays / (10000 × 365)` है। मोहलत `getEffectiveGraceSeconds(intervalDays − 1)` बीतने के बाद कोई भी `settlePeriodicInterest` से छूटी अवधि का निपटान कर सकता है; इसमें कोलैटरल बिकता है और ऋण खुला रहता है। कीपर पास `periodicSettle` की सक्रियता वैसी दिखाई जाती है जैसी क्षमता सेवा बताती है, डिफ़ॉल्ट रूप से अज्ञात। पोस्ट करने के बाद अनुसूची बदली नहीं जा सकती।
 
+<a id="borrow-request-tariff"></a>
+
+### Borrow: अनुरोध का फुल फ़ीस टैरिफ़
+
+ऑप्ट-इन `setOfferCreatorFullTariff(offerId, true, maxCStar, allowDowngrade)` है, जिसे निर्माता `createOffer` के बाद भेजता है, और कोई ऋणदाता अनुरोध ले ले तो यह `OfferAlreadyAccepted` से अस्वीकार होता है; `maxCStar` शून्य से अधिक होना चाहिए (`FullTariffMaxCStarRequired`)। फ़ॉर्म स्विच `getFeeEntitlementConfig()` से और टैरिफ़ `quoteCStar(lendingAsset, principal, durationDays)` से दिखाता है, सीमा के लिए `amount` और `amountMax` पर; सीमा का डिफ़ॉल्ट `amountMax` पर का कोट है। हर स्वीकृति पर शुल्क `C*` लेता है, उस ऋण के मूलधन पर आँका गया, केवल तब जब स्विच चालू हो, मूलधन का मूल्य हो और वह तरल हो, `C* ≤ maxCStar` हो, और वॉल्ट का मुक्त VPFI उसे पूरा करे (`getTrackedVPFIBalance` से सीमित वॉल्ट शेष, सक्रिय ग्रहणाधिकार घटाकर, `getFreeBalance` द्वारा); वरना यह `FeeEntitlementDisabled`, `FeeEntitlementFullOptInFailed` या `FeeEntitlementTariffAboveAuth` से रिवर्ट होता है, जब तक `allowDowngrade` ऋण को इसके बिना खुलने न दे। उधारकर्ता की ऋण शुल्क छूट `FULL_MODE_FEE_DISCOUNT_BONUS_BPS` (1000) बढ़ती है, `MAX_FEE_DISCOUNT_BPS` (5000) तक सीमित। समीक्षा ऐसा चुनाव रोकती है जिसमें हर ऋण अस्वीकार होगा, और ऑप्ट-इन `getOffer` दोबारा पढ़कर मापा जाता है (`creatorFull`, `creatorMaxCStar`, `creatorAllowFullDowngrade`)। अधूरे अनुरोधों के लिए बैकस्टॉप ऋण यह ऐप अभी नहीं देता।
+
 <a id="risk-access"></a>
 
 ### Risk Access: आपका जोखिम स्तर

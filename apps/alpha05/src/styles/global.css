@@ -1352,6 +1352,28 @@ a.btn {
 .choice input:disabled + span {
   color: var(--text-muted);
 }
+/* OFF-22: the tariff's quote, ceiling and failure choice, indented under
+   the opt-in so they read as its own settings. */
+.tariff-detail {
+  display: grid;
+  gap: 10px;
+  margin: 4px 0 4px 28px;
+  min-width: 0;
+  animation: advanced-in 250ms var(--ease-standard);
+}
+.tariff-detail .choice-group legend {
+  font-weight: 500;
+}
+@media (max-width: 480px) {
+  .tariff-detail {
+    margin-left: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tariff-detail {
+    animation: none;
+  }
+}
 /* OFF-14: why a closed option is closed, under its name. */
 .choice-note {
   display: block;
@@ -1499,4 +1521,18 @@ a.btn {
 .input-with-action .btn {
   flex: none;
   min-height: var(--taptarget);
+}
+
+/* OFF-22: the tariff's own step under the request's finish card. */
+.arm-tariff {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+  display: grid;
+  gap: 10px;
+}
+.arm-tariff h3 {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 600;
 }

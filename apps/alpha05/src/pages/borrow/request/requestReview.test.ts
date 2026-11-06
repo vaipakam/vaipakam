@@ -38,6 +38,7 @@ function review(over: Partial<RequestReview> = {}): RequestReview {
     expiry: '7d' as const,
     fullTerm: true,
     allowsPartialRepay: false,
+    tariff: null,
   };
   const draft = { parsed, pair: { lending, collateral, leg: { kind: 'erc20' as const } }, expiresAt: 1_000n };
   return {
@@ -53,6 +54,7 @@ function review(over: Partial<RequestReview> = {}): RequestReview {
     maxDurationDays: 365n,
     graceSeconds: 86_400n,
     periodGraceSeconds: null,
+    tariff: null,
     lifBps: 20n,
     vault: ZERO,
     holding: { kind: 'erc20', funds: { balance: 10_000n, allowance: 0n }, approvalSteps: 1 },
@@ -461,5 +463,64 @@ describe('an interest schedule (OFF-14)', () => {
   });
   it('names a re-read whose period grace moved', () => {
     expect(changedBetween(scheduled(1, { periodGraceSeconds: 86_400n }), scheduled(1, { periodGraceSeconds: 172_800n }), copy)).toBe('request.changedConfig');
+  });
+});
+
+describe('the fill mode row', () => {
+  it('is left out for one amount at the default mode, which the whole-amount row already states', () => {
+    const labels = requestReceipt(review(), null, copy).rows.map((x) => x.label);
+    expect(labels).toContain('request.rowWhole');
+    expect(labels).not.toContain('request.rowFill');
+  });
+});
+
+describe('the Full fee tariff (OFF-22)', () => {
+  const E = 10n ** 18n;
+  const withTariff = (over: { allowDowngrade?: boolean; maxCStar?: bigint; enabled?: boolean | null; freeVpfi?: bigint | null } = {}): RequestReview => {
+    const base = review();
+    const choice = { maxCStar: over.maxCStar ?? 6n * E, allowDowngrade: over.allowDowngrade ?? false };
+    const parsed = { ...base.draft.parsed, tariff: choice };
+    const quote = { cStar: 5n * E, numeraireOk: true };
+    return {
+      ...base,
+      draft: { ...base.draft, parsed },
+      tariff: {
+        choice,
+        read: { enabled: over.enabled === undefined ? true : over.enabled, smallest: quote, largest: quote, liquid: true, freeVpfi: over.freeVpfi === undefined ? 10n * E : over.freeVpfi },
+        why: {},
+      },
+    };
+  };
+  const labels = (r: RequestReview) => requestReceipt(r, null, copy).rows.map((x) => x.label);
+
+  it('adds nothing without the tariff', () => {
+    expect(labels(review())).not.toContain('request.rowTariff');
+    expect(promptCount(review())).toBe(2);
+  });
+  it('states the choice, the switch, the tariff, the ceiling, the rule and the free VPFI, and counts the arm prompt', () => {
+    const r = withTariff();
+    for (const k of ['request.rowTariff', 'request.rowTariffSwitch', 'request.rowTariffQuote', 'request.rowTariffCeiling', 'request.rowTariffFail', 'request.rowTariffVault']) expect(labels(r)).toContain(k);
+    const rows = requestReceipt(r, null, copy).rows;
+    expect(rows.find((x) => x.label === 'request.rowTariffCeiling')?.binding).toBe(true);
+    expect(rows.find((x) => x.label === 'request.rowTariffQuote')?.binding).toBe(false);
+    expect(promptCount(r)).toBe(3);
+    expect(requestReceipt(r, null, copy).consequences).toEqual(expect.arrayContaining(['request.loseTariffPaid', 'request.loseTariffLif', 'request.loseTariffGap']));
+  });
+  it('blocks when every loan would be refused, and warns instead when loans may open without it', () => {
+    expect(requestBlockers(withTariff({ enabled: false }), null, copy)).toContain('request.blockTariffEvery');
+    expect(requestBlockers(withTariff({ maxCStar: E }), null, copy)).toContain('request.blockTariffEvery');
+    const open = withTariff({ enabled: false, allowDowngrade: true });
+    expect(requestBlockers(open, null, copy)).not.toContain('request.blockTariffEvery');
+    expect(requestReceipt(open, null, copy).consequences).toContain('request.loseTariffOffOpen');
+  });
+  it('states a vault short of the tariff as the rule chosen, and an unread vault as unknown', () => {
+    expect(requestReceipt(withTariff({ freeVpfi: E }), null, copy).consequences).toContain('request.loseTariffVaultAllRefuse');
+    expect(requestReceipt(withTariff({ freeVpfi: E, allowDowngrade: true }), null, copy).consequences).toContain('request.loseTariffVaultAllOpen');
+    expect(requestReceipt(withTariff({ freeVpfi: null }), null, copy).consequences).toContain('request.loseTariffUnread');
+    expect(requestBlockers(withTariff({ freeVpfi: E }), null, copy)).not.toContain('request.blockTariffEvery');
+  });
+  it('names a moved tariff read on a re-check', () => {
+    expect(changedBetween(withTariff(), withTariff({ freeVpfi: E }), copy)).toBe('request.changedTariff');
+    expect(changedBetween(withTariff(), withTariff(), copy)).toBeNull();
   });
 });

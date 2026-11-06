@@ -522,6 +522,43 @@ above. Each resolves here, so a route reviewer needs no private file:
   anyone may, and the keeper pass's arming is the capability service's
   answer (RB-SWITCH class 4, unknown by default). A schedule is an Advanced
   choice; set in Advanced, it still applies in Basic, which says so.
+- **RB-TARIFF** — the creator's opt-in to the Full fee tariff on a request
+  (OFF-22) is offered only while the protocol's switch is on (RB-SWITCH
+  class 1a), and the form states the switch either way. Every figure is the
+  protocol's: today's tariff from its own quote, at the smallest and the
+  largest loan of a range, never re-derived. The creator sets the most VPFI
+  one loan may take (left blank, today's tariff for the largest loan) and
+  what a loan that cannot take the tariff does: it is refused, or it opens
+  without it. The review states the choice, the switch, the tariff, the
+  ceiling, the rule and the vault's free VPFI as the charge reads it, and,
+  in Basic, that each loan pays its own non-refundable tariff priced at
+  that loan's amount, that the loan fee is still charged in the lending
+  asset with ten more points of discount up to the cap, and that the
+  opt-in is a second transaction after posting, so a lender who takes the
+  request before it confirms opens a loan without the tariff. Each
+  condition the reads show failing is stated as what it does to a loan
+  under the chosen rule; a choice under which every loan would be refused
+  (switch off, unpriced or illiquid lending asset, a ceiling below the
+  smallest loan's tariff, with loans not allowed to open without it) blocks
+  the review. After posting, the opt-in opens as its own step below the
+  request's finish card, bound to the network and wallet that posted the
+  request (signing is withheld on any other), kept apart from that card so
+  closing it never drops the step, and holding a second posting back while
+  it is open. It re-reads the request before the wallet opens (taken, not
+  the creator, already set), treats a routing table still loading as
+  unreadable rather than refused, and is measured by reading the request
+  back. Closing the step leaves its ending in place until dismissed: set,
+  not set, skipped (the step sent nothing, so the tariff is off unless set
+  some other way), or not known; a re-check that already read the choice on
+  the request ends as set. Skipped and not known are read from the chain
+  as the step closes, and offer that read again: one rule reads the request
+  for the check and the read (another wallet's request, the choice already
+  on it even if since taken, taken without it, open without it); a match
+  settles the ending as set, anything else is stated with the time it was
+  read, since a pending transaction can still land.
+  The tariff is an Advanced choice; set there, it still
+  applies in Basic, which says so. The backstop for requests nobody takes
+  (OFF-26) is stated as not offered (#3181), never as a step.
 
 ## 3. Companion specifications
 

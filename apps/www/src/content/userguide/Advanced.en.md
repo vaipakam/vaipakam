@@ -2492,6 +2492,12 @@ A range sends `amount` (the smallest) below `amountMax` (the largest), `interest
 
 `periodicInterestCadence` is 0 (None) to 4 (Annual), with periods of 30, 90, 180 and 365 days. The form offers what `previewCadenceAdmission(lendingAsset, amount, assetType, collateralAsset, collateralAssetType, durationDays)` admits, which runs the rule `createOffer` enforces, valued at `amount` (the smallest end of a range). Each refusal is stated from its revert data: `PeriodicInterestDisabled`, `CadenceNotAllowedForIlliquid`, or `CadenceNotAllowed(cadence, durationDays, principalNumeraire, threshold)`. One period's interest is `principal × rate × intervalDays / (10000 × 365)`. A missed period can be settled by anyone through `settlePeriodicInterest` once the grace `getEffectiveGraceSeconds(intervalDays − 1)` has passed; it sells collateral and the loan stays open. The `periodicSettle` keeper pass's arming is shown as the capability service reports it, unknown by default. The schedule cannot change after posting.
 
+<a id="borrow-request-tariff"></a>
+
+### Borrow: A Request's Full Fee Tariff
+
+The opt-in is `setOfferCreatorFullTariff(offerId, true, maxCStar, allowDowngrade)`, sent by the creator after `createOffer` and refused with `OfferAlreadyAccepted` once a lender has taken the request; `maxCStar` must be above zero (`FullTariffMaxCStarRequired`). The form shows the switch from `getFeeEntitlementConfig()` and the tariff from `quoteCStar(lendingAsset, principal, durationDays)`, at `amount` and `amountMax` for a range; the ceiling defaults to the quote at `amountMax`. At each accept the charge takes `C*`, priced at that loan's principal, only if the switch is on, the principal is priced and liquid, `C* ≤ maxCStar`, and the vault's free VPFI covers it (the vault balance capped by `getTrackedVPFIBalance`, less active liens, through `getFreeBalance`); otherwise it reverts `FeeEntitlementDisabled`, `FeeEntitlementFullOptInFailed` or `FeeEntitlementTariffAboveAuth`, unless `allowDowngrade` lets the loan open without it. The borrower's loan fee discount rises by `FULL_MODE_FEE_DISCOUNT_BONUS_BPS` (1000), capped at `MAX_FEE_DISCOUNT_BPS` (5000). The review blocks a choice under which every loan would be refused, and the opt-in is measured by reading `getOffer` back (`creatorFull`, `creatorMaxCStar`, `creatorAllowFullDowngrade`). Backstop lending for unfilled requests is not offered by this app yet.
+
 <a id="risk-access"></a>
 
 ### Risk Access: Your Risk Level

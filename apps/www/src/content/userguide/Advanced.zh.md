@@ -1848,6 +1848,12 @@ Basic 发布单一数值的请求：`amount` = `amountMax`，`interestRateBps` =
 
 `periodicInterestCadence` 取值 0（None）到 4（Annual），周期分别为 30、90、180 和 365 天。表单提供 `previewCadenceAdmission(lendingAsset, amount, assetType, collateralAsset, collateralAssetType, durationDays)` 允许的计划；它执行 `createOffer` 强制的规则，并按 `amount`（区间的最小端）估值。每个拒绝都根据其回滚数据说明：`PeriodicInterestDisabled`、`CadenceNotAllowedForIlliquid` 或 `CadenceNotAllowed(cadence, durationDays, principalNumeraire, threshold)`。一个周期的利息为 `principal × rate × intervalDays / (10000 × 365)`。宽限期 `getEffectiveGraceSeconds(intervalDays − 1)` 过后，任何人都可以通过 `settlePeriodicInterest` 结算逾期周期；它会出售抵押品，贷款继续有效。keeper 流程 `periodicSettle` 的启用状态按能力服务的报告显示，默认为未知。计划在发布后不能更改。
 
+<a id="borrow-request-tariff"></a>
+
+### Borrow: 请求的全额费用档
+
+选择加入使用 `setOfferCreatorFullTariff(offerId, true, maxCStar, allowDowngrade)`，由创建者在 `createOffer` 之后发送；一旦有出借人接受请求，就会以 `OfferAlreadyAccepted` 拒绝；`maxCStar` 必须大于零（`FullTariffMaxCStarRequired`）。表单从 `getFeeEntitlementConfig()` 显示开关，从 `quoteCStar(lendingAsset, principal, durationDays)` 显示费用档，范围请求则在 `amount` 和 `amountMax` 处读取；上限默认取 `amountMax` 处的报价。每次接受时，收费按该笔贷款本金计算 `C*`，仅当开关开启、本金有价格且具流动性、`C* ≤ maxCStar`，并且金库的可用 VPFI 足以支付（金库余额以 `getTrackedVPFIBalance` 为上限，减去有效留置，经由 `getFreeBalance`）时才收取；否则以 `FeeEntitlementDisabled`、`FeeEntitlementFullOptInFailed` 或 `FeeEntitlementTariffAboveAuth` 回滚，除非 `allowDowngrade` 允许贷款不带费用档开立。借款人的贷款费用折扣提高 `FULL_MODE_FEE_DISCOUNT_BONUS_BPS`（1000），上限为 `MAX_FEE_DISCOUNT_BPS`（5000）。审阅会阻止导致每笔贷款都被拒绝的选择，选择加入通过重新读取 `getOffer` 来测量（`creatorFull`、`creatorMaxCStar`、`creatorAllowFullDowngrade`）。对于未成交的请求，本应用尚未提供兜底出借。
+
 <a id="risk-access"></a>
 
 ### Risk Access：你的风险等级
