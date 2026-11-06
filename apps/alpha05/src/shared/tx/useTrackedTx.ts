@@ -24,7 +24,9 @@ import { useConfig } from 'wagmi';
 import { getPublicClient } from 'wagmi/actions';
 import type { ReplacementReason, TransactionReceipt } from 'viem';
 import { announceOwnChange } from '../reads/signals';
+import { useCopy } from '../copy/useCopy';
 import { refusalFromError } from '../eligibility/refusal';
+import { cleanUpAfterEffect, cleanUpAfterNoEffect } from './cleanUp';
 import { summarize, type LegOutcome } from './outcome';
 import { IllegalTransition, transition, type TxEvent } from './track';
 import { useTxEntry, useTxStore, type Frozen, type Submission } from './txStore';
@@ -49,8 +51,28 @@ export interface TrackedTxOptions {
    *  Every read goes through `at`, pinned to the receipt's block, never
    *  through a client at "latest" (a lagging node would answer with the
    *  state from before the transaction). A leg the read-back cannot
-   *  substantiate is `unknown`, never omitted. */
+   *  substantiate is `unknown`, never omitted. Not called for a reverted
+   *  receipt: that transaction changed nothing, so nothing the chain shows
+   *  afterwards (another transaction's work) can be read as its outcome. */
   measure: (receipt: TransactionReceipt, at: AnchoredReader) => Promise<readonly LegOutcome[]>;
+  /** Undo what `send` left standing before the submitted call (an approval
+   *  the call would have used), run by the tracker whenever that call did
+   *  NOT take effect: the receipt reverted, or the wallet cancelled or
+   *  replaced the transaction. Resolves with a leg saying what was put back
+   *  or why it was not, or null when nothing was left standing. One seam,
+   *  so no ending of the transaction can skip the clean-up. */
+  unwind?: () => Promise<LegOutcome | null>;
+  /** Take back what `send` granted for the call alone (an ERC-1155
+   *  operator approval, which covers the whole collection and which no
+   *  transfer clears), run by the tracker on EVERY ending the receipt
+   *  settles: after the measurement when the call took effect, and after
+   *  `unwind` when it did not. Resolves with a leg saying what was taken
+   *  back or why it was not, or null when nothing was granted. */
+  release?: () => Promise<LegOutcome | null>;
+  /** Read once `send` returns: what it set up for the call that stands
+   *  until the call settles and `release` runs, as the page says it (kept
+   *  with the hash, shown while the receipt is pending or unknown). */
+  held?: () => string | null;
 }
 
 export interface TrackedTx {
@@ -58,6 +80,10 @@ export interface TrackedTx {
   phase: TxPhase;
   /** What the reader confirmed, from the moment the wallet was asked. */
   frozen: Frozen | null;
+  /** The wallet step the flow is asking for now (set with `useTxNote`). */
+  note: string | null;
+  /** What stands until the submitted call settles (`TrackedTxOptions.held`). */
+  held: string | null;
   /** From `idle`, `measured`, `failed` or `superseded`: start a review. */
   review: () => void;
   /** From `review`: freeze what was confirmed, sign, submit, wait, measure.
@@ -75,13 +101,14 @@ export function useTrackedTx(opts: TrackedTxOptions): TrackedTx {
   const { key } = opts;
   const entry = useTxEntry(key);
   const config = useConfig();
+  const { text } = useCopy();
 
   // Every transition reads and writes the STORE, never a component's state,
   // so a promise still running after its page unmounted keeps recording.
   const apply = useCallback(
     (event: TxEvent) => {
       const next = transition(store.get(key).phase, event);
-      store.update(key, (e) => (next.kind === 'idle' ? { ...e, phase: next, frozen: null, submission: null } : { ...e, phase: next }));
+      store.update(key, (e) => (next.kind === 'idle' ? { ...e, phase: next, frozen: null, submission: null, note: null } : { ...e, phase: next }));
       return next;
     },
     [store, key],
@@ -111,7 +138,8 @@ export function useTrackedTx(opts: TrackedTxOptions): TrackedTx {
       announceOwnChange({ chainId: ctx.chainId, account: ctx.account, cause: 'receipt' });
       const reason = replacement as ReplacementReason | null;
       if (reason === 'cancelled' || reason === 'replaced') {
-        apply({ type: 'superseded', submittedHash: hash, minedHash: receipt.transactionHash, reason, blockNumber: receipt.blockNumber });
+        const unwound = await cleanUpAfterNoEffect(ctx);
+        apply({ type: 'superseded', submittedHash: hash, minedHash: receipt.transactionHash, reason, blockNumber: receipt.blockNumber, unwound });
         return;
       }
       const mined = apply({
@@ -124,20 +152,28 @@ export function useTrackedTx(opts: TrackedTxOptions): TrackedTx {
       });
       if (mined.kind !== 'mined') return;
       let legs: readonly LegOutcome[];
-      try {
-        legs = await ctx.measure(receipt, anchoredReader(ctx.sources, receipt.blockNumber));
-      } catch (e) {
-        legs = [{ status: 'unknown', label: 'outcome', reason: `The read-back failed: ${(e as Error).message}` }];
+      if (receipt.status === 'reverted') {
+        // Reverted: one leg saying it changed nothing, whatever the chain
+        // now shows, plus what the flow's clean-up put back.
+        legs = [{ status: 'not-done', label: text('flow.revertedLabel'), reason: text('flow.reverted') }];
+        legs = [...legs, ...(await cleanUpAfterNoEffect(ctx))];
+      } else {
+        try {
+          legs = await ctx.measure(receipt, anchoredReader(ctx.sources, receipt.blockNumber));
+        } catch (e) {
+          legs = [{ status: 'unknown', label: 'outcome', reason: `The read-back failed: ${(e as Error).message}` }];
+        }
+        legs = [...legs, ...(await cleanUpAfterEffect(ctx))];
       }
       apply({ type: 'measured', hash: mined.hash, outcome: summarize(legs, Date.now()) });
     },
-    [apply, config],
+    [apply, config, text],
   );
 
   const run = useCallback(
     async (frozen: Frozen) => {
       apply({ type: 'sign' });
-      store.update(key, (e) => ({ ...e, frozen }));
+      store.update(key, (e) => ({ ...e, frozen, note: null }));
       let hash: `0x${string}`;
       try {
         hash = await opts.send();
@@ -145,8 +181,17 @@ export function useTrackedTx(opts: TrackedTxOptions): TrackedTx {
         apply({ type: 'failed', message: refusalFromError(e).reason });
         return;
       }
-      const ctx: Submission = { chainId: opts.chainId, account: opts.account, sources: opts.sources, measure: opts.measure };
-      store.update(key, (e) => ({ ...e, submission: ctx }));
+      const ctx: Submission = {
+        chainId: opts.chainId,
+        account: opts.account,
+        sources: opts.sources,
+        measure: opts.measure,
+        unwind: opts.unwind,
+        release: opts.release,
+        held: opts.held?.() ?? null,
+      };
+      // The send's own steps are over; a clean-up after the hash names its own.
+      store.update(key, (e) => ({ ...e, submission: ctx, note: null }));
       apply({ type: 'submitted', hash, at: Date.now() });
       await track(hash, ctx);
     },
@@ -163,5 +208,5 @@ export function useTrackedTx(opts: TrackedTxOptions): TrackedTx {
     await track(current.phase.hash, ctx);
   }, [apply, store, key, track]);
 
-  return { key, phase: entry.phase, frozen: entry.frozen, review, run, resume, reset };
+  return { key, phase: entry.phase, frozen: entry.frozen, note: entry.note, held: entry.submission?.held ?? null, review, run, resume, reset };
 }

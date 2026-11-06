@@ -2215,6 +2215,168 @@ Un `ConfigFacet.getRewardClaimHorizonDays()` igual a 0 significa que el horizont
 
 `getSanctionsHeldReward(user)` es el saldo retenido y `getRewardSanctionsStatus(user)` su decisión (Deliver, Hold o Confirmed). Con saldo y decisión Deliver, Home ofrece `claimHeldInteractionRewards(2)`, que paga exactamente el saldo retenido sin liquidar nada nuevo adeudado y emite `InteractionRewardsClaimed(user, 0, 0, paid)`; revierte con `SanctionedAddress` mientras la billetera esté vetada. La comprobación antes de firmar vuelve a leer ambos y simula la llamada como el remitente. Los días ganados con una marca confirmada se pierden para siempre.
 
+<a id="borrow-start"></a>
+
+### Borrow: Cómo funciona
+
+Borrow acepta directamente una oferta de prestamista (`offerType` 0) de un ERC-20 contra garantía ERC-20, con `acceptOffer(offerId, terms, signature)`. En una transacción abre el vault del prestatario si no existe, mete en él la garantía, entrega a la wallet el principal menos la comisión de apertura y emite `LoanInitiated`. Un prestatario también puede publicar una solicitud (`offerType` 1); los lados NFT, los consentimientos por par y las opciones avanzadas llegan en actualizaciones posteriores.
+
+<a id="borrow-pair"></a>
+
+### Borrow: Elegir los tokens
+
+La clase de cada token se lee en vivo: primero `getAssetPriceStatus(asset)` (Divergent se lee como desconfiado y cierra préstamos nuevos), luego `checkLiquidityOnActiveNetwork(asset)` (0 líquido, 1 ilíquido). Un revert `OraclePriceDivergence` u `OracleCrossCheckDivergence` se lee como desconfiado; cualquier otro fallo se muestra como ilegible, con su motivo. La lista sugerida es el token nativo envuelto y los tokens de prueba del registro de despliegue; una dirección pegada solo se comprueba en su forma.
+
+<a id="borrow-offers"></a>
+
+### Borrow: Elegir una oferta
+
+`getActiveOffersByAssetPairRanked(lending, collateral, 0, 20)` da los ids de ofertas abiertas del par y el total. Para cada una, la página lee `getOffer`, `getOfferState` y, con wallet, `previewAccept(offerId, wallet)`, cuyo `errorCode` es el rechazo del protocolo. La relación préstamo-valor es `calculateLTV` a los precios de hoy; un lado ilíquido o sin precio dice por qué no la hay. Una aceptación directa fija el `amountMax` del prestamista a `interestRateBps`. Las solicitudes de préstamo, las ofertas con lado NFT y las propias se cuentan, no se listan.
+
+<a id="borrow-review"></a>
+
+### Borrow: Revisar y firmar
+
+La revisión lee la oferta, su estado, `previewAccept`, `getOfferLinkedLoanId`, `getCurrentRiskTermsHash`, ambas clases, `getEffectiveGraceSeconds(durationDays)`, `getLoanInitiationFeeBps`, el vault, el saldo y la aprobación de la wallet, `previewOfferAcceptBlock` y el consentimiento de descuento, y los vuelve a leer justo antes de abrir la wallet. La wallet firma EIP-712 `AcceptTerms` (dominio `Vaipakam AcceptOffer`, versión 1) construido con la oferta guardada, con un nonce nuevo de 128 bits y un plazo de 30 minutos; un reconocimiento de iliquidez nombra solo un lado que la revisión mostró como ilíquido. Una aprobación de exactamente la garantía sigue solo si la aprobación no alcanza; luego `acceptOffer` se simula con la firma y se envía. Si se detiene tras la aprobación, la app la restablece a su valor anterior cuando nada más la cambió. El resultado lee `LoanInitiated` para esta oferta y esta wallet y los logs `Transfer` del recibo. La autorización se vuelve a leer justo antes del primer aviso, y ese valor es el que restaura un restablecimiento; una aceptación enviada que revierte, o que el wallet cancela o sustituye, recibe el mismo restablecimiento del seguimiento de transacciones. La revisión indica `allowsPartialRepay`, `allowsPrepayListing`, `allowsParallelSale` con `parallelSaleOrderHash`, `refinanceTargetLoanId` y el préstamo vinculado, y marca el importe adeudado como el caso sin pausa, ya que los intereses se acumulan durante una pausa mientras la fecha de vencimiento se desplaza. Cada paso de aprobación se juzga por la asignación leída de nuevo en el bloque de su recibo, nunca por el estado del recibo. Un token que rechaza pasar de una asignación distinta de cero a otra, detectado con una ejecución de prueba de `approve`, recibe primero un paso a cero, que la revisión cuenta como una solicitud más. La aceptación de los Términos se vuelve a leer justo antes de abrir la cartera. Ambas vías de venta listan la garantía como un NFT, así que con garantía en tokens un permiso de listado o venta concedido se indica como uno que el préstamo no puede usar. Un rechazo `VaultUpgradeRequired` se atribuye con `getVaultVersionInfo` sobre la bóveda propia de la cartera: el remedio se ofrece solo cuando esa bóveda es la que está por debajo del mínimo; si no, se nombra la bóveda del prestamista.
+
+<a id="borrow-fee"></a>
+
+### Borrow: La comisión de apertura
+
+La comisión es el `lifEstimate` de `previewAccept`: `getLoanInitiationFeeBps` del principal, en el token prestado, descontada de lo entregado, reducida por el descuento por nivel de tenencia cuando el consentimiento está activo y el token prestado es líquido, con el nivel fijado al aceptar. Esta página nunca elige la tarifa Full. No se cobra VPFI por la comisión ni se reembolsa. La parte del remitente, `getLifMatcherFeeBps` de la comisión, se paga a quien envía, que en una aceptación directa es el prestatario, así que la wallet recibe el principal menos la comisión más esa parte.
+
+<a id="borrow-risks"></a>
+
+### Borrow: Riesgos
+
+Un préstamo pasado el fin de su gracia (`getEffectiveGraceSeconds` tras el vencimiento, que el tiempo en pausa desplaza) puede declararlo en impago cualquiera: la garantía líquida se vende para el prestamista y la ilíquida se transfiere tal cual. La garantía líquida también puede liquidarse cuando el factor de salud baja de 1. `useFullTermInterest` cobra los intereses del plazo completo al devolver antes; un calendario de intereses salda un periodo impagado con una venta forzosa de garantía.
+
+<a id="borrow-request"></a>
+
+### Borrow: Publicar tu propia solicitud
+
+Una solicitud es `createOffer` con `offerType` 1, ERC-20 en ambos lados, enviada desde la wallet del prestatario. Mueve `collateralAmount` al vault del prestatario, creándolo si no existe, y emite `OfferCreated(offerId, creator, 1)`. Un prestamista la acepta con `acceptOffer`: el principal menos la comisión va a la wallet del prestatario, y la parte de la comisión para quien envía va al prestamista que la envió. `cancelOffer` está abierto al creador desde `MIN_OFFER_CANCEL_DELAY` (5 minutos) tras la creación, y a cualquiera una vez vencida la solicitud; la garantía siempre vuelve al creador.
+
+<a id="borrow-request-terms"></a>
+
+### Borrow: Las condiciones de la solicitud
+
+Basic publica una solicitud de valor único: `amount` = `amountMax`, `interestRateBps` = `interestRateBpsMax`, `collateralAmount` = `collateralAmountMax`, `fillMode` 0, `periodicInterestCadence` 0, `allowsPrepayListing` y `allowsParallelSale` false, `refinanceTargetLoanId` 0, `creatorRiskAndTermsConsent` true. Los importes se convierten exactamente a unidades base y la tasa es como máximo 10.000 bps. `durationDays` está limitado por el máximo configurado que se lee de `getProtocolConfigBundle`. `expiresAt` es 0 (abierta hasta cancelarse) o un momento fijado desde el último bloque al abrir la revisión, como mucho `MAX_OFFER_EXPIRY_HORIZON` (365 días) por delante. `useFullTermInterest` es true por defecto y `allowsPartialRepay` false.
+
+<a id="borrow-request-review"></a>
+
+### Borrow: Revisar y publicar una solicitud
+
+La revisión simula `createOffer` desde la wallet y lee ambas clases, `getEffectiveGraceSeconds(durationDays)`, `getLoanInitiationFeeBps`, el plazo máximo, el vault, el saldo y la aprobación de la wallet, y `calculateLTV` cuando ambos lados son líquidos; se vuelve a leer en cada bloque y justo antes de abrir la wallet. Mientras la aprobación no alcanza, la simulación solo llega al cobro de la garantía: un error de cobro del token o una reversión sin nombre de error del protocolo se muestra como la aprobación pendiente, y un error con nombre del protocolo es un rechazo. Tras una aprobación exacta, `createOffer` se simula de nuevo y se envía; una parada tras la aprobación la restablece a su valor anterior si nada más la cambió. El resultado lee `OfferCreated` para esta wallet y el `Transfer` de la garantía al vault.
+
+<a id="borrow-nft-collateral"></a>
+
+### Borrow: un NFT como garantía
+
+El estándar de la garantía se lee con `supportsInterface` (ERC-721 `0x80ac58cd`, ERC-1155 `0xd9b67a26`); un revert no cuenta como ninguno, y una lectura fallida no ofrece solicitud. Una solicitud ERC-721 envía `collateralAssetType` 1, `collateralTokenId` el id escrito, `collateralQuantity` 1 y `collateralAmount` = `collateralAmountMax` = 0; el par de riesgo queda ligado a ese id. La revisión lee `ownerOf`, `getApproved` e `isApprovedForAll(wallet, Diamond)` en un mismo bloque; un token en otra billetera, o un `ownerOf` que revierte, bloquea la solicitud. Sin ninguna aprobación, la simulación se detiene en el `ERC721InsufficientApproval` del token, mostrado como la aprobación pendiente. La aprobación es `approve(Diamond, id)` y cuenta solo cuando `getApproved` lee el Diamond en el bloque del recibo; una parada posterior la devuelve a la dirección anterior solo mientras aún lea el Diamond y la billetera aún tenga el token. Para un ERC-721 nunca se pide `setApprovalForAll`. El resultado lee `OfferCreated` y el `Transfer` propio del token (cuatro topics) de la billetera a la bóveda. Una solicitud ERC-1155 envía `collateralAssetType` 2, el id del token, `collateralQuantity` con la cantidad escrita (de 1 a 2^128−1) y ambos importes en 0. La revisión lee `balanceOf(wallet, id)` e `isApprovedForAll(wallet, Diamond)` en un mismo bloque; un saldo menor que la cantidad bloquea la solicitud, y sin la aprobación la simulación se detiene en `ERC1155MissingApprovalForAll`. La única aprobación es `setApprovalForAll(Diamond, true)`, contada cuando se relee en el bloque de su recibo, y retirada con `setApprovalForAll(Diamond, false)` después de que la solicitud se mine o se detenga (sin leer nunca antes del bloque de la concesión), salvo que la billetera ya la hubiera concedido. El resultado suma los `TransferSingle`/`TransferBatch` del token de la billetera a la bóveda. Las ofertas de prestamistas que piden un NFT siguen yendo a la app actual.
+
+<a id="borrow-request-range"></a>
+
+### Borrow: Una solicitud con rango
+
+Un rango envía `amount` (el más pequeño) por debajo de `amountMax` (el más grande), `interestRateBps` = `interestRateBpsMax` (la única tasa) y `collateralAmount` (el mínimo para el préstamo más pequeño) igual o por debajo de `collateralAmountMax` (que se lleva a la bóveda al publicar); un mínimo vacío envía ambos iguales. Los rangos solo se ofrecen con garantía ERC-20. Un `acceptOffer` directo presta `amount` a `interestRateBpsMax` contra `collateralAmount` y devuelve `collateralAmountMax − collateralAmount` a la billetera; `matchOffers` llena entre los extremos mientras `getPartialFillEnabled` sea verdadero. La simulación de `createOffer` aplica el límite de la oferta en el extremo mayor y rechaza con `MaxLendingAboveCeiling(provided, ceiling)`, cuyo techo muestra la revisión. El extremo directo se comprueba con una segunda simulación de una solicitud de valor único en (`amount`, `collateralAmount`); una respuesta que se detiene antes del límite se indica como desconocida. La relación préstamo-valor de cada extremo es `calculateLTV(lending, amount, collateral, collateralAmount)`, y `ZeroCollateral` se lee como una garantía sin valor. El factor de salud de inicio que se muestra es `getMinHealthFactor` mientras `getDepthTieredLtvEnabled` es falso, y 1,0 mientras es verdadero. Un emparejamiento bloquea el requisito prorrateado del prestamista, elevado a `collateralAmount` cuando la garantía es un rango y, si no, dejado en el requisito; por eso el mayor emparejamiento se muestra tanto en `collateralAmountMax` como en `collateralAmount` (o, sin rango de garantía, como capaz de bloquear menos); solo lo limita la comprobación al inicio del préstamo, y una lectura fallida de esa comprobación se indica, nunca se omite. En el régimen escalonado, la comprobación aplica además el tope de préstamo sobre valor del nivel. Mientras `getPartialFillEnabled` sea verdadero, la garantía que un emparejamiento no bloquea queda en la bóveda para emparejamientos posteriores y solo se reembolsa cuando la solicitud se cierra (su capacidad restante cae por debajo de `amount`) o se ejecuta `cancelOffer`.
+
+<a id="borrow-request-fill"></a>
+
+### Borrow: El modo de llenado de una solicitud
+
+`fillMode` es 0 (Partial), 1 (AON) o 2 (IOC) y no puede cambiar después de publicar. AON exige `amount` = `amountMax` (`AonRequiresSingleValueAmount`) e IOC exige `expiresAt` ≠ 0 (`IocRequiresExpiry`); el formulario no ofrece ninguna de las formas rechazadas. Los importes, la tasa y la garantía pueden cambiar en una solicitud abierta mediante `setOfferAmount`, `setOfferRate`, `setOfferCollateral` y `modifyOffer`, nunca por debajo de `amountFilled` o `collateralAmountFilled`; esta aplicación aún no los llama.
+
+<a id="borrow-request-cadence"></a>
+
+### Borrow: El calendario de intereses de una solicitud
+
+`periodicInterestCadence` va de 0 (None) a 4 (Annual), con periodos de 30, 90, 180 y 365 días. El formulario ofrece lo que admite `previewCadenceAdmission(lendingAsset, amount, assetType, collateralAsset, collateralAssetType, durationDays)`, que ejecuta la regla que aplica `createOffer`, valorada en `amount` (el extremo menor de un rango). Cada rechazo se indica a partir de sus datos de reversión: `PeriodicInterestDisabled`, `CadenceNotAllowedForIlliquid` o `CadenceNotAllowed(cadence, durationDays, principalNumeraire, threshold)`. Los intereses de un periodo son `principal × rate × intervalDays / (10000 × 365)`. Cualquiera puede liquidar un periodo impagado mediante `settlePeriodicInterest` cuando pasa la gracia `getEffectiveGraceSeconds(intervalDays − 1)`; vende garantía y el préstamo sigue abierto. La activación del paso de keeper `periodicSettle` se muestra tal como la informa el servicio de capacidades, desconocida por defecto. El calendario no puede cambiar después de publicar.
+
+<a id="borrow-request-tariff"></a>
+
+### Borrow: La tarifa de comisión Full de una solicitud
+
+La adhesión es `setOfferCreatorFullTariff(offerId, true, maxCStar, allowDowngrade)`, enviada por el creador después de `createOffer` y rechazada con `OfferAlreadyAccepted` cuando un prestamista ya tomó la solicitud; `maxCStar` debe ser mayor que cero (`FullTariffMaxCStarRequired`). El formulario muestra el interruptor de `getFeeEntitlementConfig()` y la tarifa de `quoteCStar(lendingAsset, principal, durationDays)`, en `amount` y `amountMax` para un rango; el tope por defecto es la cotización en `amountMax`. En cada aceptación el cobro toma `C*`, calculado sobre el principal de ese préstamo, solo si el interruptor está activado, el principal tiene precio y es líquido, `C* ≤ maxCStar` y el VPFI libre de la bóveda lo cubre (el saldo de la bóveda limitado por `getTrackedVPFIBalance`, menos los gravámenes activos, mediante `getFreeBalance`); si no, revierte con `FeeEntitlementDisabled`, `FeeEntitlementFullOptInFailed` o `FeeEntitlementTariffAboveAuth`, salvo que `allowDowngrade` deje abrir el préstamo sin ella. El descuento de la comisión del prestatario sube `FULL_MODE_FEE_DISCOUNT_BONUS_BPS` (1000), con tope en `MAX_FEE_DISCOUNT_BPS` (5000). La revisión bloquea una elección bajo la que todo préstamo sería rechazado, y la adhesión se mide leyendo de nuevo `getOffer` (`creatorFull`, `creatorMaxCStar`, `creatorAllowFullDowngrade`). Esta aplicación aún no ofrece préstamos de respaldo para solicitudes no cubiertas.
+
+<a id="lend-start"></a>
+
+### Lend: Cómo funciona
+
+Lend toma directamente una solicitud de préstamo (`offerType` 1) de un ERC-20 contra garantía ERC-20, con `acceptOffer(offerId, terms, signature)` enviado por el prestamista. En una transacción, el principal se extrae de la billetera del prestamista, mediante una autorización al Diamond, hacia la bóveda del prestamista; el prestatario lo recibe menos la comisión de apertura; la garantía que ya está en la bóveda del prestatario pasa a ser la garantía del préstamo; y se emite `LoanInitiated`, con un NFT de posición para el prestamista y otro para el prestatario. Una oferta de préstamo (`offerType` 0) se publica desde la misma página; los lados NFT llegarán en una actualización posterior.
+
+<a id="lend-offers"></a>
+
+### Lend: Elegir una solicitud
+
+`getActiveOffersByAssetPairRanked(lending, collateral, 0, 20)` da los ids de las ofertas abiertas del par. Para cada una, la página lee `getOffer`, `getOfferState`, `getOfferLinkedLoanId` y, con billetera, `previewAccept(offerId, wallet)`, cuyo `errorCode` es el rechazo del protocolo. Una toma directa fija el `amount` de la solicitud (su mínimo) a `interestRateBpsMax`, y la relación préstamo-valor es `calculateLTV` sobre ese importe a los precios de hoy. Las ofertas de prestamistas, los lados NFT, las solicitudes propias del lector y los vehículos de venta de posiciones de prestamista (una oferta del lado prestatario con un `getOfferLinkedLoanId` distinto de cero) se cuentan, no se listan. El orden: financiables primero, luego tasa descendente, luego importe descendente.
+
+<a id="lend-review"></a>
+
+### Lend: Revisar y firmar
+
+La revisión lee lo mismo que la de Borrow (la oferta, su estado, `previewAccept`, `getOfferLinkedLoanId`, `getCurrentRiskTermsHash`, ambas clases, `getEffectiveGraceSeconds(durationDays)`, `getLoanInitiationFeeBps`, `getLifMatcherFeeBps`, la bóveda de la billetera, `previewOfferAcceptBlock` y el consentimiento de descuento de comisiones) más `getTreasuryFeeBps`, y mide saldo y autorización sobre el activo prestado, el lado que paga el prestamista. Un déficit en él bloquea la firma, igual que un vehículo de venta de posición de prestamista. La billetera firma EIP-712 `AcceptTerms` (dominio `Vaipakam AcceptOffer`, versión 1), aprueba exactamente el principal solo cuando la autorización no alcanza (con un paso a cero antes para un token que rechaza un cambio entre valores no nulos), y `acceptOffer` se simula y se envía; una autorización dejada por un flujo detenido se restablece como en Borrow. El resultado lee `LoanInitiated` para esta oferta, el `Transfer` del principal desde la billetera y el `Transfer` de vuelta de la parte del emparejador.
+
+<a id="lend-fee"></a>
+
+### Lend: La comisión y la parte del protocolo
+
+La comisión es el `lifEstimate` de `previewAccept`, y es del prestatario: `getLoanInitiationFeeBps` del principal en el activo prestado, descontada de la entrega al prestatario, reducida en la aceptación por el descuento por nivel de tenencia del prestatario y, cuando `creatorFull` está activo y el cargo se realiza, por la bonificación de la tarifa Full. La parte de quien envía, `getLifMatcherFeeBps` de la comisión, se paga al remitente, aquí el prestamista. La parte del protocolo en los intereses es `getTreasuryFeeBps`, fijada por préstamo al abrirse (`treasuryFeeBpsAtInit`); el descuento por nivel de tenencia del prestamista, con el consentimiento activado, la reduce al liquidarse los intereses. La revisión muestra la tasa de hoy y la parte a esa tasa como límite superior.
+
+<a id="lend-risks"></a>
+
+### Lend: Riesgos
+
+Un préstamo pasado el fin de su gracia (`getEffectiveGraceSeconds` después de la fecha de vencimiento, que el tiempo en pausa desplaza) puede declararse en impago por cualquiera: la garantía líquida se vende para el prestamista y la ilíquida se transfiere tal cual. Con ambos lados líquidos, el préstamo puede liquidarse cuando el factor de salud baja de 1, y la venta paga primero al prestamista. Un lado ilíquido excluye la liquidación por precio, y en caso de impago el prestamista recibe toda la garantía. `useFullTermInterest` fija un mínimo de intereses en el pago anticipado; sin él, los intereses son prorrateados. Un calendario de intereses periódicos liquida un período impagado mediante una venta forzosa de garantía al prestamista. El NFT de posición del prestamista lleva el derecho de cobro: transferirlo transfiere el préstamo.
+
+<a id="lend-offer"></a>
+
+### Lend: Publicar su propia oferta
+
+Una oferta de préstamo es `createOffer` con `offerType` 0, ERC-20 en ambos lados, enviada desde la billetera del prestamista. Retira `amountMax` del activo prestado a la bóveda del prestamista, creando la bóveda si no existe, y emite `OfferCreated(offerId, creator, 0)`. Un prestatario la acepta con `acceptOffer`: su garantía pasa a su bóveda, el principal menos la comisión va a su billetera, y la parte de la comisión para quien envía le llega a él como remitente. Mientras `getPartialFillEnabled` sea true, `matchOffers` también puede emparejarla con la solicitud de un prestatario; una oferta de prestamista de valor único presta entonces todo su importe a su tasa, contra al menos su `collateralAmount`. `cancelOffer` está abierto al creador desde `MIN_OFFER_CANCEL_DELAY` (5 minutos) después de la creación, y a cualquiera una vez vencida la oferta; el importe siempre vuelve al creador.
+
+<a id="lend-offer-terms"></a>
+
+### Lend: Las condiciones de la oferta
+
+Sin partes, una oferta de préstamo es de valor único: `amount` = `amountMax`, `interestRateBps` = `interestRateBpsMax`, `collateralAmount` = `collateralAmountMax` (la única garantía que un prestatario debe bloquear), `fillMode` 0 salvo que Advanced fije otro (sección siguiente), `periodicInterestCadence` 0 salvo que Advanced fije un calendario, `allowsPrepayListing` y `allowsParallelSale` en false, `refinanceTargetLoanId` 0, `creatorRiskAndTermsConsent` en true, y sin tarifa Full salvo que Advanced la elija. Los importes se convierten exactamente a unidades base y la tasa es como máximo 10.000 bps. `durationDays` está limitado por el máximo configurado leído de `getProtocolConfigBundle`. `expiresAt` es 0 (abierta hasta cancelarla) o una hora fijada desde el último bloque al abrirse la revisión, como mucho `MAX_OFFER_EXPIRY_HORIZON` (365 días) después. `useFullTermInterest` es true por defecto y `allowsPartialRepay` false.
+
+<a id="lend-offer-parts"></a>
+
+### Lend: Una oferta en partes
+
+Las partes envían `amount` (la parte más pequeña que un emparejamiento puede prestar) por debajo de `amountMax` (el importe entero, que `createOffer` mueve a la bóveda); `collateralAmount` = `collateralAmountMax` sigue siendo el único requisito, expresado para `amountMax` (si no, `LenderCollateralRangeNotAllowed`), e `interestRateBps` = `interestRateBpsMax`. Un `acceptOffer` directo de una oferta de préstamo presta `amountMax` contra `collateralAmount`, y solo mientras `amountFilled` sea 0 (`OfferPartiallyFilled` tras un emparejamiento). Mientras `getPartialFillEnabled` sea true, `matchOffers` presta el punto medio del solapamiento de importes, al menos `amount`, al punto medio del solapamiento de tasas, contra al menos `collateralAmount × matchAmount ÷ amountMax` (redondeado hacia abajo; el rango de garantía de un prestatario puede subirlo). Cuando `amountMax − amountFilled` cae por debajo de `amount`, el resto se retira a la billetera del prestamista y la oferta se cierra (`OfferClosed`, motivo `Dust` o `FullyFilled`). `cancelOffer` sobre una oferta parcialmente llena omite la espera y devuelve `amountMax − amountFilled`. `fillMode` es 0, 1 o 2 como en una solicitud: AON exige `amount` = `amountMax`, IOC exige un vencimiento, y no cambia después de publicar. Con ambas patas líquidas, `createOffer` rechaza un `collateralAmount` por debajo del mínimo en `amountMax` con `MinCollateralBelowFloor(provided, floor)`, cuyo mínimo muestra la revisión. Se muestra una sola relación préstamo-valor, `calculateLTV` en (`amountMax`, `collateralAmount`): una parte tiene la misma relación, salvo el redondeo.
+
+<a id="lend-offer-schedule"></a>
+
+### Lend: Un calendario de intereses en una oferta
+
+El `periodicInterestCadence` de una oferta de préstamo sigue la regla de la solicitud (arriba), con `previewCadenceAdmission` valorado en el `amount` de la oferta: su parte más pequeña, o el importe entero sin partes. `createOffer` lo admite ahí mediante `requireCadenceAdmitted`, y la originación de cada préstamo comprueba de nuevo su propio principal (`requireOriginationCadenceAdmitted`). La revisión indica los intereses de un periodo en `amountMax` (una toma directa) y, con partes, en `amount`. Un periodo impagado puede liquidarlo cualquiera mediante `settlePeriodicInterest` tras su gracia: se vende garantía para pagar al prestamista los intereses de ese periodo, y el préstamo sigue abierto.
+
+<a id="lend-offer-tariff"></a>
+
+### Lend: La tarifa de comisión Full en una oferta
+
+La adhesión del prestamista es el mismo `setOfferCreatorFullTariff(offerId, true, maxCStar, allowDowngrade)`, enviado después de `createOffer`. Se rechaza con `OfferAlreadyAccepted` una vez que la oferta se toma entera o se cierra; una oferta emparejada en parte todavía la acepta, para sus préstamos posteriores. La cotización es `quoteCStar` en `amount` y `amountMax`, y el tope toma por defecto la cotización en `amountMax`. Cada préstamo se comprueba por sí solo contra `maxCStar`, al precio de su principal, con las mismas condiciones que una solicitud (`FeeEntitlementDisabled`, `FeeEntitlementFullOptInFailed`, `FeeEntitlementTariffAboveAuth`, o una degradación donde se permita); la comprobación del prestamista usa el VPFI libre actual de la bóveda. Una tarifa cobrada marca el `lenderMode` del préstamo como Full, y cada liquidación de la comisión de rendimiento del prestamista suma entonces `FULL_MODE_FEE_DISCOUNT_BONUS_BPS` (1000) al descuento del titular de la posición sobre la parte del protocolo, con tope en `MAX_FEE_DISCOUNT_BPS` (5000), con o sin el consentimiento al descuento por tenencia. Una prórroga en el sitio (`repriceFeeEntitlementOnExtension`) pone la marca en None para el nuevo plazo.
+
+<a id="lend-offer-review"></a>
+
+### Lend: Revisar y publicar una oferta
+
+La revisión simula `createOffer` desde la billetera y lee ambas clases, `getEffectiveGraceSeconds(durationDays)`, `getLoanInitiationFeeBps`, `getTreasuryFeeBps`, el plazo máximo, la bóveda de la billetera, su saldo y su autorización sobre el activo prestado (el lado que bloquea el prestamista), y `calculateLTV` cuando ambos lados son líquidos; se vuelve a leer en cada bloque y justo antes de abrir la billetera. Mientras la autorización es insuficiente, la simulación solo puede llegar al retiro del importe, así que un error de retiro del token, `VaultDepositFailed` (el envoltorio del protocolo para un retiro revertido sin datos, como hace WETH con una autorización insuficiente) o una reversión sin nombre de error del protocolo se muestra como la aprobación pendiente, con la misma regla que la revisión de una solicitud; cualquier otro error con nombre del protocolo es un rechazo. Tras una aprobación exacta, `createOffer` se simula de nuevo y se envía; una parada tras la aprobación devuelve la autorización a su valor anterior si nada más la cambió. El resultado lee `OfferCreated` para esta billetera con `offerType` 0 y la `Transfer` del importe a la bóveda.
+
+<a id="lend-offer-fee"></a>
+
+### Lend: Las comisiones de su oferta
+
+`createOffer` no cobra nada al prestamista. La comisión mostrada es del prestatario: `getLoanInitiationFeeBps` del importe en el activo prestado, a la tasa vigente cuando se ejecuta `acceptOffer`, reducida entonces por el descuento de nivel de tenencia del prestatario y descontada de lo que se le entrega; la cifra mostrada usa la tasa de hoy. La parte del protocolo sobre los intereses es `getTreasuryFeeBps`, fijada por préstamo al abrirse (`treasuryFeeBpsAtInit`); el descuento de nivel de tenencia del prestamista, con el consentimiento activado, la reduce al liquidar los intereses. La revisión muestra la tasa de hoy y la parte a esa tasa como límite superior; una lectura fallida de `getTreasuryFeeBps` se indica, y no se muestra ninguna parte ni importe de vuelta.
+
+<a id="risk-access"></a>
+
+### Risk Access: tu nivel de riesgo
+
+El interruptor es `getRiskAccessGateEnabled`. Qué paso necesita un flujo es la propia respuesta del protocolo: para una aceptación, `previewOfferAcceptBlock` (1 = nivel demasiado bajo, 2 = acuerdo con el par, 3 = reconocimiento del modo estricto, 4 = el par ilíquido que antes cubría el reconocimiento de la aceptación; bloquea como 2 y un consentimiento al par lo despeja) una vez que `previewCreatorBlock` muestra que el prestamista no está bloqueado; para una solicitud, `RiskTierTooLow`, `IlliquidPairNotConsented` o `MidTierPairNotAcknowledged` de la simulación de `createOffer`. El paso lee en un solo bloque `pairRequiredRiskLevel` para el par (`acceptMidTierAckPair` para una oferta), `getVaultRiskTier`, `getEffectiveRiskTier`, `getVaultRiskTierVersion` frente a `getCurrentRiskTermsVersion`, `getRiskTierUnlockAt`, `getRiskAccessUnlockCooldown` y `getRiskTierMutationNonce`, y para un par `isPairConsentPending` con `hasIlliquidPairConsent`, o `isMidTierAckPending` con `midTierStrictBlocked`. Una subida es `setVaultRiskTierChecked(level, nonce, termsVersion)` al nivel mínimo que necesita el par, así que se rechaza sin cambiar nada si otra escritura de nivel o un cambio de términos llegó después de la revisión. Un paso de par es `setIlliquidPairConsent(pair, true)` o `setMidTierPairAck(pair)`. Una subida aún en espera, o un paso de par aún pendiente, no se ofrece de nuevo. Ninguna lectura devuelve cuándo entra en vigor un paso de par pendiente, así que la revisión dice que no puede leer esa hora; solo la tarjeta final del propio paso la da, a partir de la hora del bloque del recibo más la espera. El resultado se lee en el bloque del recibo.
+
 <a id="terms-gate"></a>
 
 ### El aviso de los Términos

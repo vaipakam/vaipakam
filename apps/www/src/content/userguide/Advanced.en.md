@@ -2414,6 +2414,168 @@ The headline is `RewardClaimFacet.simulateClaimInteractionRewards(user, 2)`, whi
 
 `getSanctionsHeldReward(user)` is the held balance and `getRewardSanctionsStatus(user)` its decision (Deliver, Hold or Confirmed). With a balance and a Deliver decision, Home offers `claimHeldInteractionRewards(2)`, which pays exactly the held balance without settling anything newly owed and emits `InteractionRewardsClaimed(user, 0, 0, paid)`; it reverts `SanctionedAddress` while the wallet is barred. The re-check before signing re-reads both and simulates the call as the sender. Days earned while a flag is confirmed are forfeited permanently.
 
+<a id="borrow-start"></a>
+
+### Borrow: How It Works
+
+Borrow takes a lender offer (`offerType` 0) of an ERC-20 against ERC-20 collateral directly, with `acceptOffer(offerId, terms, signature)`. In one transaction it opens the borrower's vault if there is none, pulls the collateral into it and delivers the principal less the initiation fee to the wallet, and emits `LoanInitiated`. A borrower can also post a request (`offerType` 1); NFT legs, pair consents and the Advanced options follow in later updates.
+
+<a id="borrow-pair"></a>
+
+### Borrow: Choosing the Tokens
+
+Each token's class is read live: `getAssetPriceStatus(asset)` first (Divergent reads as distrusted and closes new loans), then `checkLiquidityOnActiveNetwork(asset)` (0 liquid, 1 illiquid). A revert of `OraclePriceDivergence` or `OracleCrossCheckDivergence` reads as distrusted; any other failure is shown as unreadable, with its reason. The suggested list is the deployment record's wrapped native token and test tokens; a pasted address is checked for shape only.
+
+<a id="borrow-offers"></a>
+
+### Borrow: Picking an Offer
+
+`getActiveOffersByAssetPairRanked(lending, collateral, 0, 20)` gives the pair's open offer ids and total. For each, the page reads `getOffer`, `getOfferState` and, with a wallet, `previewAccept(offerId, wallet)`, whose `errorCode` is the protocol's refusal. The loan-to-value is `calculateLTV` at today's prices; an illiquid or unpriced leg says why there is none. A direct take binds the lender's `amountMax` at `interestRateBps`. Offers that are borrow requests, carry an NFT leg or are the reader's own are counted, not listed.
+
+<a id="borrow-review"></a>
+
+### Borrow: Review and Signing
+
+The review reads the offer, its state, `previewAccept`, `getOfferLinkedLoanId`, `getCurrentRiskTermsHash`, both classes, `getEffectiveGraceSeconds(durationDays)`, `getLoanInitiationFeeBps`, the wallet's vault, balance and allowance, `previewOfferAcceptBlock` and the fee-discount consent, and reads them again right before the wallet opens. The wallet signs EIP-712 `AcceptTerms` (domain `Vaipakam AcceptOffer`, version 1) built from the stored offer, with a fresh 128-bit nonce and a 30-minute deadline; an illiquid acknowledgement names only a leg the review showed as illiquid. An approval of exactly the collateral follows only when the allowance is short, then `acceptOffer` is simulated with the signature and sent. If it stops after the approval, the app resets the allowance to its earlier value when nothing else changed it. The outcome reads `LoanInitiated` for this offer and wallet and the `Transfer` logs of the receipt. The allowance is read again just before the first prompt, and that value is what a reset restores; a submitted acceptance that reverts, or that the wallet cancels or replaces, gets the same reset from the transaction tracker. The review states `allowsPartialRepay`, `allowsPrepayListing`, `allowsParallelSale` with `parallelSaleOrderHash`, `refinanceTargetLoanId` and the linked loan, and labels the owed figure as the no-pause case, since interest accrues through a pause while the due date moves. Each approval step is judged by the allowance read back at the block its receipt mined in, never by the receipt's status. A token that refuses a change from one non-zero allowance to another, found by a dry run of `approve`, gets a step to zero first, which the review counts as an extra prompt. The Terms acceptance is read again right before the wallet opens. Both sale routes list the collateral as an NFT, so on token collateral a granted listing or sale permission is stated as one the loan cannot use. A `VaultUpgradeRequired` refusal is attributed with `getVaultVersionInfo` on the wallet's own vault: the remedy is offered only when that vault is the one below the floor, and otherwise the lender's vault is named.
+
+<a id="borrow-fee"></a>
+
+### Borrow: The Initiation Fee
+
+The fee is `previewAccept`'s `lifEstimate`: `getLoanInitiationFeeBps` of the principal, in the lending asset, deducted from what is delivered, lowered by the hold-tier discount when the consent is on and the lending asset is liquid, with the tier fixed at acceptance. This page never opts into the Full tariff. No VPFI is collected for the fee and none is rebated. The submitter's share, `getLifMatcherFeeBps` of the fee, is paid to the sender, which on a direct take is the borrower, so the wallet receives the principal less the fee plus that share.
+
+<a id="borrow-risks"></a>
+
+### Borrow: Risks
+
+A loan past its grace end (`getEffectiveGraceSeconds` after the due date, which paused time moves) can be defaulted by anyone: liquid collateral is sold for the lender, illiquid collateral is transferred as-is. Liquid collateral can also be liquidated once the health factor is below 1. `useFullTermInterest` charges the full term's interest on early repayment; a periodic-interest cadence settles a missed period by a forced sale of collateral.
+
+<a id="borrow-request"></a>
+
+### Borrow: Posting Your Own Request
+
+A request is `createOffer` with `offerType` 1, ERC-20 on both legs, sent from the borrower's wallet. It pulls `collateralAmount` into the borrower's vault, creating the vault if there is none, and emits `OfferCreated(offerId, creator, 1)`. A lender takes it with `acceptOffer`: the principal less the fee goes to the borrower's wallet, and the sender's share of the fee goes to the lender who sent it. `cancelOffer` is open to the creator from `MIN_OFFER_CANCEL_DELAY` (5 minutes) after creation, and to anyone once the request has expired; the collateral always returns to the creator.
+
+<a id="borrow-request-terms"></a>
+
+### Borrow: The Request's Terms
+
+Basic posts a single-value request: `amount` = `amountMax`, `interestRateBps` = `interestRateBpsMax`, `collateralAmount` = `collateralAmountMax`, `fillMode` 0, `periodicInterestCadence` 0, `allowsPrepayListing` and `allowsParallelSale` false, `refinanceTargetLoanId` 0, `creatorRiskAndTermsConsent` true. Amounts are parsed into base units exactly and the rate is at most 10,000 bps. `durationDays` is capped by the configured maximum read from `getProtocolConfigBundle`. `expiresAt` is 0 (open until cancelled) or a time fixed from the latest block when the review opens, at most `MAX_OFFER_EXPIRY_HORIZON` (365 days) ahead. `useFullTermInterest` defaults to true and `allowsPartialRepay` to false.
+
+<a id="borrow-request-review"></a>
+
+### Borrow: Reviewing and Posting a Request
+
+The review simulates `createOffer` from the wallet and reads both classes, `getEffectiveGraceSeconds(durationDays)`, `getLoanInitiationFeeBps`, the maximum term, the wallet's vault, balance and allowance, and `calculateLTV` when both legs are liquid; it is read again every block and right before the wallet opens. While the allowance is short the simulation can only reach the collateral pull, so a token's pull error or a revert without a protocol error name is shown as the approval to clear, and a named protocol error is a refusal. After an exact approval `createOffer` is simulated again and sent; a stop after the approval resets the allowance to its earlier value when nothing else changed it. The outcome reads `OfferCreated` for this wallet and the collateral `Transfer` into the vault.
+
+<a id="borrow-nft-collateral"></a>
+
+### Borrow: An NFT as Collateral
+
+The collateral's standard is read with `supportsInterface` (ERC-721 `0x80ac58cd`, ERC-1155 `0xd9b67a26`); a revert counts as neither, and a failed read offers no request. An ERC-721 request sends `collateralAssetType` 1, `collateralTokenId` the typed id, `collateralQuantity` 1 and `collateralAmount` = `collateralAmountMax` = 0; the risk pair is keyed to that token id. The review reads `ownerOf`, `getApproved` and `isApprovedForAll(wallet, Diamond)` at one block, and a token held elsewhere, or an `ownerOf` that reverts, blocks the request. Without either approval the dry run stops at the token's `ERC721InsufficientApproval`, shown as the approval to clear. The approval is `approve(Diamond, id)`, counted only when `getApproved` reads the Diamond at the receipt's block; a stop afterwards resets it to the earlier address only while it still reads the Diamond and the wallet still holds the token. For an ERC-721, `setApprovalForAll` is never asked. The outcome reads `OfferCreated` and the token's own `Transfer` (four topics) from the wallet to the vault. An ERC-1155 request sends `collateralAssetType` 2, the token id, `collateralQuantity` the typed quantity (1 to 2^128−1) and both amounts 0. The review reads `balanceOf(wallet, id)` and `isApprovedForAll(wallet, Diamond)` at one block; a balance below the quantity blocks the request, and without the approval the dry run stops at `ERC1155MissingApprovalForAll`. The only approval is `setApprovalForAll(Diamond, true)`, counted when it reads back at its receipt's block, and taken back with `setApprovalForAll(Diamond, false)` after the request mines or stops (reading no earlier than the grant's block), unless the wallet had granted it before. The outcome sums the token's `TransferSingle`/`TransferBatch` from the wallet to the vault. Lender offers asking for an NFT still go to the current app.
+
+<a id="borrow-request-range"></a>
+
+### Borrow: A Ranged Request
+
+A range sends `amount` (the smallest) below `amountMax` (the largest), `interestRateBps` = `interestRateBpsMax` (the one rate), and `collateralAmount` (the floor for the smallest loan) at or below `collateralAmountMax` (pulled into the vault at posting); an empty floor sends the two equal. Ranges are offered for ERC-20 collateral only. A direct `acceptOffer` lends `amount` at `interestRateBpsMax` against `collateralAmount` and returns `collateralAmountMax − collateralAmount` to the wallet; `matchOffers` fills between the ends while `getPartialFillEnabled` is true. The `createOffer` dry run applies the offer bound at the largest end and refuses with `MaxLendingAboveCeiling(provided, ceiling)`, whose ceiling the review shows. The direct end is checked by a second dry run of a single-value request at (`amount`, `collateralAmount`); an answer that stops before the bound is stated as unknown. Each end's loan-to-value is `calculateLTV(lending, amount, collateral, collateralAmount)`, and `ZeroCollateral` reads as a collateral worth nothing. The start-of-loan health factor shown is `getMinHealthFactor` while `getDepthTieredLtvEnabled` is false, and 1.0 while it is true. A match locks the lender's pro-rated requirement, raised to `collateralAmount` when the collateral is a range and otherwise left at the requirement, so the largest match is shown at both `collateralAmountMax` and `collateralAmount` (or, without a collateral range, as able to lock less); only the start-of-loan check bounds it, and a failed read of that check is stated, never dropped. In the depth-tiered regime the check also applies the tier's loan-to-value cap. While `getPartialFillEnabled` is true, the collateral a match does not lock stays in the vault for later matches and is refunded only when the request closes (its remaining capacity falls below `amount`) or `cancelOffer` runs.
+
+<a id="borrow-request-fill"></a>
+
+### Borrow: A Request's Fill Mode
+
+`fillMode` is 0 (Partial), 1 (AON) or 2 (IOC) and cannot change after posting. AON requires `amount` = `amountMax` (`AonRequiresSingleValueAmount`), and IOC requires `expiresAt` ≠ 0 (`IocRequiresExpiry`); the form does not offer either refused shape. The amounts, the rate and the collateral can change on an open request through `setOfferAmount`, `setOfferRate`, `setOfferCollateral` and `modifyOffer`, never below `amountFilled` or `collateralAmountFilled`; this app does not call them yet.
+
+<a id="borrow-request-cadence"></a>
+
+### Borrow: A Request's Interest Schedule
+
+`periodicInterestCadence` is 0 (None) to 4 (Annual), with periods of 30, 90, 180 and 365 days. The form offers what `previewCadenceAdmission(lendingAsset, amount, assetType, collateralAsset, collateralAssetType, durationDays)` admits, which runs the rule `createOffer` enforces, valued at `amount` (the smallest end of a range). Each refusal is stated from its revert data: `PeriodicInterestDisabled`, `CadenceNotAllowedForIlliquid`, or `CadenceNotAllowed(cadence, durationDays, principalNumeraire, threshold)`. One period's interest is `principal × rate × intervalDays / (10000 × 365)`. A missed period can be settled by anyone through `settlePeriodicInterest` once the grace `getEffectiveGraceSeconds(intervalDays − 1)` has passed; it sells collateral and the loan stays open. The `periodicSettle` keeper pass's arming is shown as the capability service reports it, unknown by default. The schedule cannot change after posting.
+
+<a id="borrow-request-tariff"></a>
+
+### Borrow: A Request's Full Fee Tariff
+
+The opt-in is `setOfferCreatorFullTariff(offerId, true, maxCStar, allowDowngrade)`, sent by the creator after `createOffer` and refused with `OfferAlreadyAccepted` once a lender has taken the request; `maxCStar` must be above zero (`FullTariffMaxCStarRequired`). The form shows the switch from `getFeeEntitlementConfig()` and the tariff from `quoteCStar(lendingAsset, principal, durationDays)`, at `amount` and `amountMax` for a range; the ceiling defaults to the quote at `amountMax`. At each accept the charge takes `C*`, priced at that loan's principal, only if the switch is on, the principal is priced and liquid, `C* ≤ maxCStar`, and the vault's free VPFI covers it (the vault balance capped by `getTrackedVPFIBalance`, less active liens, through `getFreeBalance`); otherwise it reverts `FeeEntitlementDisabled`, `FeeEntitlementFullOptInFailed` or `FeeEntitlementTariffAboveAuth`, unless `allowDowngrade` lets the loan open without it. The borrower's loan fee discount rises by `FULL_MODE_FEE_DISCOUNT_BONUS_BPS` (1000), capped at `MAX_FEE_DISCOUNT_BPS` (5000). The review blocks a choice under which every loan would be refused, and the opt-in is measured by reading `getOffer` back (`creatorFull`, `creatorMaxCStar`, `creatorAllowFullDowngrade`). Backstop lending for unfilled requests is not offered by this app yet.
+
+<a id="lend-start"></a>
+
+### Lend: How It Works
+
+Lend takes a borrow request (`offerType` 1) of an ERC-20 against ERC-20 collateral directly, with `acceptOffer(offerId, terms, signature)` sent by the lender. In one transaction the principal is pulled from the lender's wallet, under an allowance to the Diamond, into the lender's vault; the borrower receives it less the initiation fee; the collateral already in the borrower's vault becomes the loan's collateral; and `LoanInitiated` is emitted, with a lender and a borrower position NFT. A lending offer (`offerType` 0) is posted from the same page; NFT legs follow in a later update.
+
+<a id="lend-offers"></a>
+
+### Lend: Picking a Request
+
+`getActiveOffersByAssetPairRanked(lending, collateral, 0, 20)` gives the pair's open offer ids. For each, the page reads `getOffer`, `getOfferState`, `getOfferLinkedLoanId` and, with a wallet, `previewAccept(offerId, wallet)`, whose `errorCode` is the protocol's refusal. A direct take binds the request's `amount` (its minimum) at `interestRateBpsMax`, and the loan-to-value is `calculateLTV` on that amount at today's prices. Lender offers, NFT legs, the reader's own requests and lender-position sale vehicles (a borrow-side offer with a non-zero `getOfferLinkedLoanId`) are counted, not listed. The order is fundable first, then rate descending, then amount descending.
+
+<a id="lend-review"></a>
+
+### Lend: Review and Signing
+
+The review reads what Borrow's does (the offer, its state, `previewAccept`, `getOfferLinkedLoanId`, `getCurrentRiskTermsHash`, both classes, `getEffectiveGraceSeconds(durationDays)`, `getLoanInitiationFeeBps`, `getLifMatcherFeeBps`, the wallet's vault, `previewOfferAcceptBlock` and the fee-discount consent) plus `getTreasuryFeeBps`, and measures balance and allowance on the lending asset, the leg the lender pays. A shortfall in it blocks signing, as does a lender-position sale vehicle. The wallet signs EIP-712 `AcceptTerms` (domain `Vaipakam AcceptOffer`, version 1), approves exactly the principal only when the allowance is short (with a zero step first for a token that refuses a non-zero change), and `acceptOffer` is simulated and sent; an allowance left by a stopped flow is reset as on Borrow. The outcome reads `LoanInitiated` for this offer, the principal's `Transfer` out of the wallet and the matcher share's `Transfer` back to it.
+
+<a id="lend-fee"></a>
+
+### Lend: The Fee and the Protocol's Share
+
+The fee is `previewAccept`'s `lifEstimate`, and it is the borrower's: `getLoanInitiationFeeBps` of the principal in the lending asset, deducted from the borrower's delivery, lowered at acceptance by the borrower's hold-tier discount and, when `creatorFull` is set and the charge succeeds, by the Full tariff bonus. The submitter's share, `getLifMatcherFeeBps` of the fee, is paid to the sender, here the lender. The protocol's share of interest is `getTreasuryFeeBps`, fixed per loan when it opens (`treasuryFeeBpsAtInit`); the lender's hold-tier discount, with the consent on, lowers it when interest is settled. The review shows today's rate, and the share at that rate as an upper bound.
+
+<a id="lend-risks"></a>
+
+### Lend: Risks
+
+A loan past its grace end (`getEffectiveGraceSeconds` after the due date, which paused time moves) can be defaulted by anyone: liquid collateral is sold for the lender, illiquid collateral is transferred as-is. With both legs liquid the loan can be liquidated once the health factor is below 1, and the sale pays the lender first. An illiquid leg rules out price-based liquidation, and on default the lender receives all the collateral. `useFullTermInterest` floors the interest on early repayment; without it interest is pro-rata. A periodic-interest cadence settles a missed period by a forced sale of collateral to the lender. The lender's position NFT carries the claim: transferring it transfers the loan.
+
+<a id="lend-offer"></a>
+
+### Lend: Posting Your Own Offer
+
+A lending offer is `createOffer` with `offerType` 0, ERC-20 on both legs, sent from the lender's wallet. It pulls `amountMax` of the lending asset into the lender's vault, creating the vault if there is none, and emits `OfferCreated(offerId, creator, 0)`. A borrower takes it with `acceptOffer`: their collateral is pulled into their vault, the principal less the fee goes to their wallet, and the sender's share of the fee goes to them as the sender. While `getPartialFillEnabled` is true, `matchOffers` may also pair it with a borrower's request; a single-value lender offer then lends its whole amount at its rate, against at least its `collateralAmount`. `cancelOffer` is open to the creator from `MIN_OFFER_CANCEL_DELAY` (5 minutes) after creation, and to anyone once the offer has expired; the amount always returns to the creator.
+
+<a id="lend-offer-terms"></a>
+
+### Lend: The Offer's Terms
+
+Without parts a lending offer is single-value: `amount` = `amountMax`, `interestRateBps` = `interestRateBpsMax`, `collateralAmount` = `collateralAmountMax` (the one collateral a borrower must lock), `fillMode` 0 unless Advanced sets another (next section), `periodicInterestCadence` 0 unless Advanced sets a schedule, `allowsPrepayListing` and `allowsParallelSale` false, `refinanceTargetLoanId` 0, `creatorRiskAndTermsConsent` true, and no Full tariff unless Advanced chooses it. Amounts are parsed into base units exactly and the rate is at most 10,000 bps. `durationDays` is capped by the configured maximum read from `getProtocolConfigBundle`. `expiresAt` is 0 (open until cancelled) or a time fixed from the latest block when the review opens, at most `MAX_OFFER_EXPIRY_HORIZON` (365 days) ahead. `useFullTermInterest` defaults to true and `allowsPartialRepay` to false.
+
+<a id="lend-offer-parts"></a>
+
+### Lend: An Offer in Parts
+
+Parts send `amount` (the smallest part one match may lend) below `amountMax` (the whole amount, which `createOffer` pulls into the vault); `collateralAmount` = `collateralAmountMax` stays the one requirement, stated at `amountMax` (`LenderCollateralRangeNotAllowed` otherwise), and `interestRateBps` = `interestRateBpsMax`. A direct `acceptOffer` of a lending offer lends `amountMax` against `collateralAmount`, and only while `amountFilled` is 0 (`OfferPartiallyFilled` after a match). While `getPartialFillEnabled` is true, `matchOffers` lends the midpoint of the amount overlap, at least `amount`, at the midpoint of the rate overlap, against at least `collateralAmount × matchAmount ÷ amountMax` (rounded down; a borrower's collateral range can raise it). When `amountMax − amountFilled` falls below `amount`, the remainder is withdrawn to the lender's wallet and the offer closes (`OfferClosed`, reason `Dust` or `FullyFilled`). `cancelOffer` on a partly filled offer skips the cooldown and returns `amountMax − amountFilled`. `fillMode` is 0, 1 or 2 as on a request: AON requires `amount` = `amountMax`, IOC requires an expiry, and it cannot change after posting. With both legs liquid, `createOffer` refuses a `collateralAmount` below the floor at `amountMax` with `MinCollateralBelowFloor(provided, floor)`, whose floor the review shows. One loan-to-value is shown, `calculateLTV` at (`amountMax`, `collateralAmount`): a part carries the same ratio, give or take the rounding.
+
+<a id="lend-offer-schedule"></a>
+
+### Lend: An Offer's Interest Schedule
+
+A lending offer's `periodicInterestCadence` follows the request's rule (above), with `previewCadenceAdmission` valued at the offer's `amount`: its smallest part, or the whole amount without parts. `createOffer` admits it there through `requireCadenceAdmitted`, and each loan's origination checks its own principal again (`requireOriginationCadenceAdmitted`). The review states one period's interest at `amountMax` (a direct take) and, with parts, at `amount`. A missed period can be settled by anyone through `settlePeriodicInterest` after its grace: collateral is sold to pay the lender that period's interest, and the loan stays open.
+
+<a id="lend-offer-tariff"></a>
+
+### Lend: The Full Fee Tariff on an Offer
+
+The lender's opt-in is the same `setOfferCreatorFullTariff(offerId, true, maxCStar, allowDowngrade)`, sent after `createOffer`. It is refused with `OfferAlreadyAccepted` once the offer is taken in full or closed; a partly matched offer still takes it, for its later loans. The quote is `quoteCStar` at `amount` and `amountMax`, and the ceiling defaults to the quote at `amountMax`. Each loan is checked against `maxCStar` on its own, priced at its principal, under the same conditions as a request (`FeeEntitlementDisabled`, `FeeEntitlementFullOptInFailed`, `FeeEntitlementTariffAboveAuth`, or a downgrade where allowed); the lender's check uses the vault's live free VPFI. A charged tariff stamps the loan's `lenderMode` as Full, and every lender yield-fee settlement then adds `FULL_MODE_FEE_DISCOUNT_BONUS_BPS` (1000) to the position holder's discount on the protocol's share, capped at `MAX_FEE_DISCOUNT_BPS` (5000), with or without the hold-discount consent. An extension in place (`repriceFeeEntitlementOnExtension`) sets the stamp to None for the new term.
+
+<a id="lend-offer-review"></a>
+
+### Lend: Reviewing and Posting an Offer
+
+The review simulates `createOffer` from the wallet and reads both classes, `getEffectiveGraceSeconds(durationDays)`, `getLoanInitiationFeeBps`, `getTreasuryFeeBps`, the maximum term, the wallet's vault, its balance and allowance on the lending asset (the leg the lender locks), and `calculateLTV` when both legs are liquid; it is read again every block and right before the wallet opens. While the allowance is short the simulation can only reach the pull of the amount, so a token's pull error, `VaultDepositFailed` (the protocol's wrap of a pull that reverted without data, as WETH does on a short allowance) or a revert without a protocol error name is shown as the approval to clear, the same rule a request's review uses; any other named protocol error is a refusal. After an exact approval `createOffer` is simulated again and sent; a stop after the approval resets the allowance to its earlier value when nothing else changed it. The outcome reads `OfferCreated` for this wallet with `offerType` 0 and the amount's `Transfer` into the vault.
+
+<a id="lend-offer-fee"></a>
+
+### Lend: Fees on Your Offer
+
+`createOffer` charges the lender nothing. The fee shown is the borrower's: `getLoanInitiationFeeBps` of the amount in the lending asset, at the rate in force when `acceptOffer` runs, lowered then by the borrower's hold-tier discount and deducted from their delivery; the figure shown uses today's rate. The protocol's share of interest is `getTreasuryFeeBps`, fixed per loan when it opens (`treasuryFeeBpsAtInit`); the lender's hold-tier discount, with the consent on, lowers it when interest is settled. The review shows today's rate and the share at that rate as an upper bound; a failed read of `getTreasuryFeeBps` is stated, and no share or amount back is shown.
+
+<a id="risk-access"></a>
+
+### Risk Access: Your Risk Level
+
+The gate is `getRiskAccessGateEnabled`. Which step a flow needs is the protocol's own answer: for an acceptance, `previewOfferAcceptBlock` (1 = level too low, 2 = pair consent, 3 = strict-mode acknowledgement, 4 = the illiquid pair the acceptance's acknowledgement once covered; it blocks like 2 and a pair consent clears it) once `previewCreatorBlock` shows the lender is not blocked; for a request, the `createOffer` dry run's `RiskTierTooLow`, `IlliquidPairNotConsented` or `MidTierPairNotAcknowledged`. The step reads in one block `pairRequiredRiskLevel` for the pair (`acceptMidTierAckPair` for an offer), `getVaultRiskTier`, `getEffectiveRiskTier`, `getVaultRiskTierVersion` against `getCurrentRiskTermsVersion`, `getRiskTierUnlockAt`, `getRiskAccessUnlockCooldown` and `getRiskTierMutationNonce`, and for a pair `isPairConsentPending` with `hasIlliquidPairConsent`, or `isMidTierAckPending` with `midTierStrictBlocked`. A raise is `setVaultRiskTierChecked(level, nonce, termsVersion)` to the least level the pair needs, so it is refused, changing nothing, if another tier write or a terms change landed after the review. A pair step is `setIlliquidPairConsent(pair, true)` or `setMidTierPairAck(pair)`. A raise still cooling down, or a pair step still pending, is not offered again. No read returns when a pending pair step takes effect, so the review says it cannot read that time; only the step's own finish card gives it, from the receipt block's time plus the cooldown. The outcome is read back at the receipt's block.
+
 <a id="terms-gate"></a>
 
 ### The Terms Prompt

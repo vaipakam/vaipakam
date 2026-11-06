@@ -2121,6 +2121,168 @@ prices पर numeraire में आँका जाता है: कर्ज
 
 `getSanctionsHeldReward(user)` रोका गया बैलेंस है और `getRewardSanctionsStatus(user)` उसका फ़ैसला (Deliver, Hold या Confirmed)। बैलेंस और Deliver फ़ैसले के साथ Home `claimHeldInteractionRewards(2)` देता है, जो कोई नया बकाया निपटाए बिना ठीक रोका गया बैलेंस देता है और `InteractionRewardsClaimed(user, 0, 0, paid)` एमिट करता है; वॉलेट प्रतिबंधित रहने तक यह `SanctionedAddress` के साथ revert करता है। साइन करने से पहले की जाँच दोनों को फिर पढ़ती है और कॉल को भेजने वाले के रूप में सिम्युलेट करती है। पक्के फ़्लैग के दौरान कमाए गए दिन हमेशा के लिए ज़ब्त हो जाते हैं।
 
+<a id="borrow-start"></a>
+
+### Borrow: यह कैसे काम करता है
+
+Borrow ERC-20 कोलैटरल के बदले ERC-20 के लेंडर ऑफ़र (`offerType` 0) को सीधे `acceptOffer(offerId, terms, signature)` से स्वीकार करता है। एक ट्रांज़ैक्शन में यह उधारकर्ता का वॉल्ट न हो तो खोलता है, कोलैटरल उसमें खींचता है, इनिशिएशन फ़ीस घटाकर प्रिंसिपल वॉलेट को देता है, और `LoanInitiated` उत्सर्जित करता है। उधारकर्ता अनुरोध (`offerType` 1) भी पोस्ट कर सकता है; NFT पक्ष, पेयर सहमतियाँ और एडवांस्ड विकल्प बाद के अपडेट में आएँगे।
+
+<a id="borrow-pair"></a>
+
+### Borrow: टोकन चुनना
+
+हर टोकन की श्रेणी लाइव पढ़ी जाती है: पहले `getAssetPriceStatus(asset)` (Divergent अविश्वसनीय माना जाता है और नए लोन बंद करता है), फिर `checkLiquidityOnActiveNetwork(asset)` (0 लिक्विड, 1 इलिक्विड)। `OraclePriceDivergence` या `OracleCrossCheckDivergence` का revert अविश्वसनीय माना जाता है; कोई और विफलता कारण सहित अपठनीय दिखती है। सुझाई सूची डिप्लॉयमेंट रिकॉर्ड का रैप्ड नेटिव टोकन और टेस्ट टोकन है; पेस्ट किया पता केवल रूप के लिए जाँचा जाता है।
+
+<a id="borrow-offers"></a>
+
+### Borrow: ऑफ़र चुनना
+
+`getActiveOffersByAssetPairRanked(lending, collateral, 0, 20)` पेयर के खुले ऑफ़र id और कुल संख्या देता है। हर एक के लिए पेज `getOffer`, `getOfferState` और वॉलेट होने पर `previewAccept(offerId, wallet)` पढ़ता है, जिसका `errorCode` प्रोटोकॉल का इनकार है। लोन-टू-वैल्यू आज की क़ीमतों पर `calculateLTV` है; इलिक्विड या बिना क़ीमत वाला पक्ष बताता है कि क्यों नहीं है। सीधी स्वीकृति लेंडर का `amountMax` `interestRateBps` पर बाँधती है। उधार अनुरोध, NFT पक्ष वाले और अपने ऑफ़र गिने जाते हैं, सूचीबद्ध नहीं होते।
+
+<a id="borrow-review"></a>
+
+### Borrow: समीक्षा और साइन करना
+
+समीक्षा ऑफ़र, उसकी स्थिति, `previewAccept`, `getOfferLinkedLoanId`, `getCurrentRiskTermsHash`, दोनों श्रेणियाँ, `getEffectiveGraceSeconds(durationDays)`, `getLoanInitiationFeeBps`, वॉलेट का वॉल्ट, बैलेंस और मंज़ूरी, `previewOfferAcceptBlock` और डिस्काउंट सहमति पढ़ती है, और वॉलेट खुलने से ठीक पहले फिर पढ़ती है। वॉलेट संग्रहीत ऑफ़र से बना EIP-712 `AcceptTerms` (डोमेन `Vaipakam AcceptOffer`, संस्करण 1) नए 128-बिट nonce और 30 मिनट की समय-सीमा के साथ साइन करता है; इलिक्विड स्वीकारोक्ति केवल उस पक्ष का नाम लेती है जिसे समीक्षा ने इलिक्विड दिखाया। मंज़ूरी कम हो तभी ठीक कोलैटरल जितनी मंज़ूरी आती है, फिर `acceptOffer` सिग्नेचर के साथ सिम्युलेट होकर भेजा जाता है। मंज़ूरी के बाद रुकने पर, अगर किसी और ने उसे नहीं बदला, तो ऐप उसे पिछले मूल्य पर लौटाता है। परिणाम इस ऑफ़र और वॉलेट के लिए `LoanInitiated` और रसीद के `Transfer` लॉग पढ़ता है। पहले वॉलेट संकेत से ठीक पहले अनुमति (allowance) फिर से पढ़ी जाती है, और रीसेट वही मान बहाल करता है; भेजी गई स्वीकृति जो revert हो जाए, या जिसे वॉलेट रद्द कर दे या बदल दे, उसे भी लेनदेन ट्रैकर से वही रीसेट मिलता है। समीक्षा `allowsPartialRepay`, `allowsPrepayListing`, `parallelSaleOrderHash` के साथ `allowsParallelSale`, `refinanceTargetLoanId` और जुड़ा हुआ ऋण बताती है, और देय राशि को बिना विराम वाला मामला बताती है, क्योंकि विराम के दौरान ब्याज बढ़ता रहता है जबकि नियत तारीख खिसकती है। हर अनुमोदन चरण को उसकी रसीद वाले ब्लॉक पर दोबारा पढ़ी गई अनुमति से आँका जाता है, रसीद की स्थिति से कभी नहीं। जो टोकन एक गैर-शून्य अनुमति को दूसरी गैर-शून्य अनुमति में बदलने से मना करता है (यह `approve` के ड्राई रन से पता चलता है), उसके लिए पहले शून्य का एक चरण होता है, जिसे समीक्षा एक अतिरिक्त प्रॉम्प्ट के रूप में गिनती है। वॉलेट खुलने से ठीक पहले शर्तों की स्वीकृति फिर से पढ़ी जाती है। दोनों बिक्री मार्ग संपार्श्विक को NFT के रूप में सूचीबद्ध करते हैं, इसलिए टोकन संपार्श्विक पर दी गई लिस्टिंग या बिक्री की अनुमति को ऐसी अनुमति बताया जाता है जिसका यह ऋण उपयोग नहीं कर सकता। `VaultUpgradeRequired` अस्वीकृति को वॉलेट की अपनी वॉल्ट पर `getVaultVersionInfo` से तय किया जाता है: उपाय तभी दिया जाता है जब वही वॉल्ट न्यूनतम संस्करण से नीचे हो, वरना ऋणदाता की वॉल्ट का नाम लिया जाता है।
+
+<a id="borrow-fee"></a>
+
+### Borrow: इनिशिएशन फ़ीस
+
+फ़ीस `previewAccept` का `lifEstimate` है: प्रिंसिपल का `getLoanInitiationFeeBps`, उधार टोकन में, दी गई राशि से कटी हुई, सहमति चालू हो और उधार टोकन लिक्विड हो तो होल्ड-टियर डिस्काउंट से घटी हुई, टियर स्वीकृति के समय तय। यह पेज कभी Full टैरिफ़ नहीं चुनता। फ़ीस के लिए कोई VPFI न लिया जाता है न लौटाया जाता है। भेजने वाले का हिस्सा, फ़ीस का `getLifMatcherFeeBps`, प्रेषक को जाता है, जो सीधी स्वीकृति में उधारकर्ता है, इसलिए वॉलेट को फ़ीस घटाकर प्रिंसिपल और यह हिस्सा मिलता है।
+
+<a id="borrow-risks"></a>
+
+### Borrow: जोखिम
+
+ग्रेस समाप्ति के बाद का लोन (नियत तारीख़ के बाद `getEffectiveGraceSeconds`, जिसे पॉज़ का समय आगे खिसकाता है) कोई भी डिफ़ॉल्ट करवा सकता है: लिक्विड कोलैटरल लेंडर के लिए बेचा जाता है, इलिक्विड जैसा है वैसा ट्रांसफ़र होता है। हेल्थ फ़ैक्टर 1 से नीचे होने पर लिक्विड कोलैटरल लिक्विडेट भी हो सकता है। `useFullTermInterest` जल्दी चुकाने पर पूरी अवधि का ब्याज लेता है; ब्याज शेड्यूल छूटी अवधि को कोलैटरल की ज़बरन बिक्री से निपटाता है।
+
+<a id="borrow-request"></a>
+
+### Borrow: अपना अनुरोध पोस्ट करना
+
+अनुरोध उधारकर्ता के वॉलेट से भेजा गया `createOffer` है, `offerType` 1 के साथ, दोनों पक्ष ERC-20। यह `collateralAmount` को उधारकर्ता के वॉल्ट में ले जाता है, वॉल्ट न हो तो बनाता है, और `OfferCreated(offerId, creator, 1)` जारी करता है। लेंडर इसे `acceptOffer` से स्वीकार करता है: फ़ीस घटाकर मूलधन उधारकर्ता के वॉलेट में जाता है, और फ़ीस में भेजने वाले का हिस्सा उस लेंडर को जाता है जिसने इसे भेजा। `cancelOffer` निर्माता के लिए बनने के `MIN_OFFER_CANCEL_DELAY` (5 मिनट) बाद से खुला है, और अनुरोध समाप्त होने पर किसी के लिए भी; कोलैटरल हमेशा निर्माता को लौटता है।
+
+<a id="borrow-request-terms"></a>
+
+### Borrow: अनुरोध की शर्तें
+
+Basic एकल-मान अनुरोध पोस्ट करता है: `amount` = `amountMax`, `interestRateBps` = `interestRateBpsMax`, `collateralAmount` = `collateralAmountMax`, `fillMode` 0, `periodicInterestCadence` 0, `allowsPrepayListing` और `allowsParallelSale` false, `refinanceTargetLoanId` 0, `creatorRiskAndTermsConsent` true। राशियाँ बेस इकाइयों में सटीक बदली जाती हैं और दर अधिकतम 10,000 bps है। `durationDays` की सीमा `getProtocolConfigBundle` से पढ़ा गया कॉन्फ़िगर किया गया अधिकतम है। `expiresAt` 0 है (रद्द होने तक खुला) या समीक्षा खुलते समय नवीनतम ब्लॉक से तय समय, अधिकतम `MAX_OFFER_EXPIRY_HORIZON` (365 दिन) आगे। `useFullTermInterest` डिफ़ॉल्ट रूप से true है और `allowsPartialRepay` false।
+
+<a id="borrow-request-review"></a>
+
+### Borrow: अनुरोध की समीक्षा और पोस्ट करना
+
+समीक्षा वॉलेट से `createOffer` का सिमुलेशन करती है और दोनों वर्ग, `getEffectiveGraceSeconds(durationDays)`, `getLoanInitiationFeeBps`, अधिकतम अवधि, वॉलेट का वॉल्ट, बैलेंस और अलाउंस, और दोनों पक्ष लिक्विड हों तो `calculateLTV` पढ़ती है; हर ब्लॉक और वॉलेट खुलने से ठीक पहले यह फिर पढ़ी जाती है। अलाउंस कम रहने तक सिमुलेशन केवल कोलैटरल खींचने तक पहुँचता है, इसलिए टोकन की खींचने की त्रुटि या बिना प्रोटोकॉल त्रुटि-नाम वाला revert पूरी करनी वाली मंज़ूरी के रूप में दिखता है, और नामित प्रोटोकॉल त्रुटि अस्वीकृति है। सटीक मंज़ूरी के बाद `createOffer` का फिर सिमुलेशन होता है और उसे भेजा जाता है; मंज़ूरी के बाद रुकने पर, अगर कुछ और न बदला हो, अलाउंस पिछले मान पर लौटाया जाता है। परिणाम इस वॉलेट के `OfferCreated` और वॉल्ट में कोलैटरल के `Transfer` से पढ़ा जाता है।
+
+<a id="borrow-nft-collateral"></a>
+
+### Borrow: NFT को कोलैटरल के रूप में
+
+कोलैटरल का स्टैंडर्ड `supportsInterface` से पढ़ा जाता है (ERC-721 `0x80ac58cd`, ERC-1155 `0xd9b67a26`); revert को दोनों में से कोई नहीं माना जाता, और विफल रीड पर कोई अनुरोध नहीं दिया जाता। ERC-721 अनुरोध `collateralAssetType` 1, `collateralTokenId` में लिखी गई आईडी, `collateralQuantity` 1 और `collateralAmount` = `collateralAmountMax` = 0 भेजता है; रिस्क पेयर उसी टोकन आईडी से बंधा है। समीक्षा एक ही ब्लॉक पर `ownerOf`, `getApproved` और `isApprovedForAll(wallet, Diamond)` पढ़ती है; किसी और के पास रखा टोकन, या revert करने वाला `ownerOf`, अनुरोध रोकता है। किसी भी मंज़ूरी के बिना ड्राई रन टोकन के `ERC721InsufficientApproval` पर रुकता है, जिसे देने वाली मंज़ूरी के रूप में दिखाया जाता है। मंज़ूरी `approve(Diamond, id)` है, जो तभी गिनी जाती है जब रसीद के ब्लॉक पर `getApproved` Diamond पढ़े; बाद में रुकने पर उसे पिछले पते पर तभी लौटाया जाता है जब वह अब भी Diamond पढ़े और वॉलेट के पास टोकन हो। ERC-721 के लिए `setApprovalForAll` कभी नहीं माँगा जाता। परिणाम `OfferCreated` और टोकन का अपना `Transfer` (चार topics) वॉलेट से वॉल्ट तक पढ़ता है। ERC-1155 अनुरोध `collateralAssetType` 2, टोकन id, लिखी गई मात्रा के रूप में `collateralQuantity` (1 से 2^128−1) और दोनों राशियाँ 0 भेजता है। समीक्षा एक ही ब्लॉक पर `balanceOf(wallet, id)` और `isApprovedForAll(wallet, Diamond)` पढ़ती है; मात्रा से कम बैलेंस अनुरोध रोक देता है, और मंज़ूरी के बिना ड्राई रन `ERC1155MissingApprovalForAll` पर रुकता है। एकमात्र मंज़ूरी `setApprovalForAll(Diamond, true)` है, जो अपनी रसीद के ब्लॉक पर वापस पढ़ी जाने पर गिनी जाती है, और अनुरोध के माइन होने या रुकने के बाद `setApprovalForAll(Diamond, false)` से वापस ली जाती है (मंज़ूरी के ब्लॉक से पहले कभी नहीं पढ़ते हुए), जब तक वॉलेट ने उसे पहले से न दिया हो। परिणाम वॉलेट से वॉल्ट तक टोकन के `TransferSingle`/`TransferBatch` को जोड़ता है। NFT माँगने वाले लेंडर ऑफ़र अब भी मौजूदा ऐप पर जाते हैं।
+
+<a id="borrow-request-range"></a>
+
+### Borrow: सीमा वाला अनुरोध
+
+सीमा `amount` (सबसे छोटी) को `amountMax` (सबसे बड़ी) से कम, `interestRateBps` = `interestRateBpsMax` (एक ही दर), और `collateralAmount` (सबसे छोटे ऋण की न्यूनतम सीमा) को `collateralAmountMax` (पोस्ट करते समय वॉल्ट में लिया जाता है) के बराबर या कम भेजती है; खाली न्यूनतम सीमा दोनों को बराबर भेजती है। सीमाएँ केवल ERC-20 संपार्श्विक के लिए दी जाती हैं। सीधा `acceptOffer` `collateralAmount` के बदले `interestRateBpsMax` पर `amount` उधार देता है और `collateralAmountMax − collateralAmount` वॉलेट में लौटाता है; `getPartialFillEnabled` true रहने तक `matchOffers` दोनों सिरों के बीच भरता है। `createOffer` का ड्राई रन सबसे बड़े सिरे पर ऑफ़र सीमा लागू करता है और `MaxLendingAboveCeiling(provided, ceiling)` से अस्वीकार करता है, जिसकी ऊपरी सीमा समीक्षा दिखाती है। सीधे सिरे की जाँच (`amount`, `collateralAmount`) पर एकल-मान अनुरोध के दूसरे ड्राई रन से होती है; सीमा से पहले रुकने वाला उत्तर अज्ञात बताया जाता है। हर सिरे का ऋण-से-मूल्य `calculateLTV(lending, amount, collateral, collateralAmount)` है, और `ZeroCollateral` को मूल्यहीन संपार्श्विक पढ़ा जाता है। दिखाया गया ऋण-आरंभ हेल्थ फ़ैक्टर `getDepthTieredLtvEnabled` false रहने पर `getMinHealthFactor` है, और true रहने पर 1.0। मैच ऋणदाता की आनुपातिक आवश्यकता लॉक करता है, कोलैटरल रेंज होने पर `collateralAmount` तक बढ़ाकर, वरना आवश्यकता पर ही छोड़कर; इसलिए सबसे बड़ा मैच `collateralAmountMax` और `collateralAmount` दोनों पर दिखाया जाता है (या, कोलैटरल रेंज के बिना, कम लॉक कर सकने वाला); इसे केवल ऋण-आरंभ जाँच सीमित करती है, और उस जाँच को पढ़ने में विफलता बताई जाती है, कभी छोड़ी नहीं जाती। स्तरीकृत व्यवस्था में जाँच स्तर की लोन-टू-वैल्यू सीमा भी लागू करती है। `getPartialFillEnabled` true रहने तक, जो संपार्श्विक मैच लॉक नहीं करता वह बाद के मैचों के लिए वॉल्ट में रहता है और केवल तब लौटाया जाता है जब अनुरोध बंद हो (उसकी शेष क्षमता `amount` से कम हो जाए) या `cancelOffer` चले।
+
+<a id="borrow-request-fill"></a>
+
+### Borrow: अनुरोध का भराई मोड
+
+`fillMode` 0 (Partial), 1 (AON) या 2 (IOC) है और पोस्ट करने के बाद नहीं बदलता। AON के लिए `amount` = `amountMax` चाहिए (`AonRequiresSingleValueAmount`), और IOC के लिए `expiresAt` ≠ 0 चाहिए (`IocRequiresExpiry`); फ़ॉर्म अस्वीकार होने वाला कोई रूप नहीं देता। खुले अनुरोध पर राशियाँ, दर और संपार्श्विक `setOfferAmount`, `setOfferRate`, `setOfferCollateral` और `modifyOffer` से बदले जा सकते हैं, पर कभी `amountFilled` या `collateralAmountFilled` से नीचे नहीं; यह ऐप अभी इन्हें कॉल नहीं करता।
+
+<a id="borrow-request-cadence"></a>
+
+### Borrow: अनुरोध की ब्याज अनुसूची
+
+`periodicInterestCadence` 0 (None) से 4 (Annual) तक होता है, जिनकी अवधियाँ 30, 90, 180 और 365 दिन हैं। फ़ॉर्म वही देता है जिसकी `previewCadenceAdmission(lendingAsset, amount, assetType, collateralAsset, collateralAssetType, durationDays)` अनुमति देता है; यह वही नियम चलाता है जिसे `createOffer` लागू करता है, `amount` (रेंज के सबसे छोटे सिरे) पर मूल्यांकित। हर अस्वीकृति उसके रिवर्ट डेटा से बताई जाती है: `PeriodicInterestDisabled`, `CadenceNotAllowedForIlliquid`, या `CadenceNotAllowed(cadence, durationDays, principalNumeraire, threshold)`। एक अवधि का ब्याज `principal × rate × intervalDays / (10000 × 365)` है। मोहलत `getEffectiveGraceSeconds(intervalDays − 1)` बीतने के बाद कोई भी `settlePeriodicInterest` से छूटी अवधि का निपटान कर सकता है; इसमें कोलैटरल बिकता है और ऋण खुला रहता है। कीपर पास `periodicSettle` की सक्रियता वैसी दिखाई जाती है जैसी क्षमता सेवा बताती है, डिफ़ॉल्ट रूप से अज्ञात। पोस्ट करने के बाद अनुसूची बदली नहीं जा सकती।
+
+<a id="borrow-request-tariff"></a>
+
+### Borrow: अनुरोध का फुल फ़ीस टैरिफ़
+
+ऑप्ट-इन `setOfferCreatorFullTariff(offerId, true, maxCStar, allowDowngrade)` है, जिसे निर्माता `createOffer` के बाद भेजता है, और कोई ऋणदाता अनुरोध ले ले तो यह `OfferAlreadyAccepted` से अस्वीकार होता है; `maxCStar` शून्य से अधिक होना चाहिए (`FullTariffMaxCStarRequired`)। फ़ॉर्म स्विच `getFeeEntitlementConfig()` से और टैरिफ़ `quoteCStar(lendingAsset, principal, durationDays)` से दिखाता है, सीमा के लिए `amount` और `amountMax` पर; सीमा का डिफ़ॉल्ट `amountMax` पर का कोट है। हर स्वीकृति पर शुल्क `C*` लेता है, उस ऋण के मूलधन पर आँका गया, केवल तब जब स्विच चालू हो, मूलधन का मूल्य हो और वह तरल हो, `C* ≤ maxCStar` हो, और वॉल्ट का मुक्त VPFI उसे पूरा करे (`getTrackedVPFIBalance` से सीमित वॉल्ट शेष, सक्रिय ग्रहणाधिकार घटाकर, `getFreeBalance` द्वारा); वरना यह `FeeEntitlementDisabled`, `FeeEntitlementFullOptInFailed` या `FeeEntitlementTariffAboveAuth` से रिवर्ट होता है, जब तक `allowDowngrade` ऋण को इसके बिना खुलने न दे। उधारकर्ता की ऋण शुल्क छूट `FULL_MODE_FEE_DISCOUNT_BONUS_BPS` (1000) बढ़ती है, `MAX_FEE_DISCOUNT_BPS` (5000) तक सीमित। समीक्षा ऐसा चुनाव रोकती है जिसमें हर ऋण अस्वीकार होगा, और ऑप्ट-इन `getOffer` दोबारा पढ़कर मापा जाता है (`creatorFull`, `creatorMaxCStar`, `creatorAllowFullDowngrade`)। अधूरे अनुरोधों के लिए बैकस्टॉप ऋण यह ऐप अभी नहीं देता।
+
+<a id="lend-start"></a>
+
+### Lend: यह कैसे काम करता है
+
+Lend किसी ERC-20 के ERC-20 कोलैटरल वाले उधार अनुरोध (`offerType` 1) को सीधे लेता है, ऋणदाता द्वारा भेजे गए `acceptOffer(offerId, terms, signature)` से। एक ट्रांज़ैक्शन में मूलधन ऋणदाता के वॉलेट से, Diamond को दी गई अनुमति के तहत, ऋणदाता के वॉल्ट में खींचा जाता है; उधारकर्ता को वह इनिशिएशन फ़ीस घटाकर मिलता है; उधारकर्ता के वॉल्ट में पहले से रखा कोलैटरल लोन का कोलैटरल बन जाता है; और `LoanInitiated` जारी होता है, ऋणदाता और उधारकर्ता के एक-एक पोज़िशन NFT के साथ। लेंडिंग ऑफ़र (`offerType` 0) इसी पेज से पोस्ट होता है; NFT पक्ष बाद के अपडेट में आएँगे।
+
+<a id="lend-offers"></a>
+
+### Lend: अनुरोध चुनना
+
+`getActiveOffersByAssetPairRanked(lending, collateral, 0, 20)` जोड़ी के खुले ऑफ़र की ids देता है। हर एक के लिए पेज `getOffer`, `getOfferState`, `getOfferLinkedLoanId` और, वॉलेट होने पर, `previewAccept(offerId, wallet)` पढ़ता है, जिसका `errorCode` प्रोटोकॉल का इनकार है। सीधा लेना अनुरोध के `amount` (उसका न्यूनतम) को `interestRateBpsMax` पर बाँधता है, और लोन-टू-वैल्यू उस राशि पर आज की कीमतों से `calculateLTV` है। ऋणदाता ऑफ़र, NFT पक्ष, पाठक के अपने अनुरोध और ऋणदाता-पोज़िशन बिक्री वाहन (शून्य से भिन्न `getOfferLinkedLoanId` वाला उधारकर्ता-पक्ष ऑफ़र) गिने जाते हैं, सूचीबद्ध नहीं। क्रम: फ़ंड करने योग्य पहले, फिर दर घटते क्रम में, फिर राशि घटते क्रम में।
+
+<a id="lend-review"></a>
+
+### Lend: समीक्षा और साइन करना
+
+समीक्षा वही पढ़ती है जो Borrow की (ऑफ़र, उसकी स्थिति, `previewAccept`, `getOfferLinkedLoanId`, `getCurrentRiskTermsHash`, दोनों वर्ग, `getEffectiveGraceSeconds(durationDays)`, `getLoanInitiationFeeBps`, `getLifMatcherFeeBps`, वॉलेट का वॉल्ट, `previewOfferAcceptBlock` और फ़ीस-डिस्काउंट सहमति), साथ में `getTreasuryFeeBps`, और बैलेंस व अनुमति उधार दी गई संपत्ति पर मापती है, वह पक्ष जो ऋणदाता चुकाता है। उसमें कमी साइन रोकती है, वैसे ही ऋणदाता-पोज़िशन बिक्री वाहन भी। वॉलेट EIP-712 `AcceptTerms` (डोमेन `Vaipakam AcceptOffer`, संस्करण 1) साइन करता है, अनुमति कम होने पर ही ठीक मूलधन की अनुमति देता है (ऐसे टोकन के लिए पहले शून्य का चरण जो एक गैर-शून्य मान से दूसरे में बदलाव मना करता है), और `acceptOffer` सिम्युलेट करके भेजा जाता है; रुके हुए फ़्लो से बची अनुमति Borrow की तरह रीसेट होती है। परिणाम इस ऑफ़र के लिए `LoanInitiated`, वॉलेट से मूलधन का `Transfer` और मैचर हिस्से का वापसी `Transfer` पढ़ता है।
+
+<a id="lend-fee"></a>
+
+### Lend: फ़ीस और प्रोटोकॉल का हिस्सा
+
+फ़ीस `previewAccept` का `lifEstimate` है, और यह उधारकर्ता की है: उधार दी गई संपत्ति में मूलधन का `getLoanInitiationFeeBps`, उधारकर्ता को दी जाने वाली राशि से काटा गया, स्वीकृति पर उधारकर्ता के होल्ड-टियर डिस्काउंट से और, जब `creatorFull` सेट हो और शुल्क सफल हो, Full टैरिफ़ बोनस से घटाया गया। भेजने वाले का हिस्सा, फ़ीस का `getLifMatcherFeeBps`, प्रेषक को मिलता है, यहाँ ऋणदाता को। ब्याज में प्रोटोकॉल का हिस्सा `getTreasuryFeeBps` है, हर लोन के लिए खुलते समय तय (`treasuryFeeBpsAtInit`); सहमति चालू होने पर ऋणदाता का होल्ड-टियर डिस्काउंट ब्याज निपटान के समय इसे घटाता है। समीक्षा आज की दर दिखाती है, और उस दर पर हिस्से को ऊपरी सीमा के रूप में।
+
+<a id="lend-risks"></a>
+
+### Lend: जोखिम
+
+ग्रेस के अंत के बाद का लोन (`getEffectiveGraceSeconds` नियत तारीख के बाद, जिसे विराम का समय आगे खिसकाता है) कोई भी डिफ़ॉल्ट कर सकता है: लिक्विड कोलैटरल ऋणदाता के लिए बेचा जाता है, इलिक्विड कोलैटरल जैसा है वैसा स्थानांतरित होता है। दोनों पक्ष लिक्विड हों तो हेल्थ फ़ैक्टर 1 से नीचे होते ही लोन लिक्विडेट हो सकता है, और बिक्री पहले ऋणदाता को चुकाती है। इलिक्विड पक्ष कीमत-आधारित लिक्विडेशन को रोकता है, और डिफ़ॉल्ट पर ऋणदाता को पूरा कोलैटरल मिलता है। `useFullTermInterest` जल्दी चुकाने पर ब्याज की न्यूनतम सीमा लगाता है; इसके बिना ब्याज प्रो-राटा है। आवधिक-ब्याज शेड्यूल छूटी हुई अवधि को कोलैटरल की ज़बरन बिक्री से ऋणदाता को चुकाता है। ऋणदाता का पोज़िशन NFT दावा रखता है: उसे स्थानांतरित करना लोन को स्थानांतरित करना है।
+
+<a id="lend-offer"></a>
+
+### Lend: अपना ऑफ़र पोस्ट करना
+
+लेंडिंग ऑफ़र `offerType` 0 वाला `createOffer` है, दोनों पक्ष ERC-20, जो ऋणदाता के वॉलेट से भेजा जाता है। यह उधार दी गई संपत्ति का `amountMax` ऋणदाता के वॉल्ट में खींचता है, वॉल्ट न हो तो बनाता है, और `OfferCreated(offerId, creator, 0)` जारी करता है। उधारकर्ता इसे `acceptOffer` से स्वीकार करता है: उसका कोलैटरल उसके वॉल्ट में खिंचता है, फ़ीस घटाकर मूलधन उसके वॉलेट में जाता है, और फ़ीस में भेजने वाले का हिस्सा भेजने वाले के रूप में उसे मिलता है। जब तक `getPartialFillEnabled` true है, `matchOffers` इसे किसी उधारकर्ता के अनुरोध से जोड़ भी सकता है; तब एकल-मूल्य वाला लेंडर ऑफ़र अपनी दर पर अपनी पूरी राशि उधार देता है, कम से कम अपने `collateralAmount` के बदले। `cancelOffer` निर्माण के `MIN_OFFER_CANCEL_DELAY` (5 मिनट) बाद से निर्माता के लिए, और ऑफ़र समाप्त होने के बाद किसी के भी लिए खुला है; राशि हमेशा निर्माता को लौटती है।
+
+<a id="lend-offer-terms"></a>
+
+### Lend: ऑफ़र की शर्तें
+
+हिस्सों के बिना लेंडिंग ऑफ़र एकल-मूल्य वाला होता है: `amount` = `amountMax`, `interestRateBps` = `interestRateBpsMax`, `collateralAmount` = `collateralAmountMax` (वह एक कोलैटरल जो उधारकर्ता को लॉक करना है), `fillMode` 0, जब तक Advanced कोई और तय न करे (अगला भाग), `periodicInterestCadence` 0 (जब तक Advanced अनुसूची न तय करे), `allowsPrepayListing` और `allowsParallelSale` false, `refinanceTargetLoanId` 0, `creatorRiskAndTermsConsent` true, और कोई Full टैरिफ़ नहीं (जब तक Advanced इसे न चुने)। राशियाँ ठीक-ठीक बेस यूनिट में पार्स होती हैं और दर अधिकतम 10,000 bps है। `durationDays` की सीमा `getProtocolConfigBundle` से पढ़े गए कॉन्फ़िगर किए अधिकतम से तय होती है। `expiresAt` 0 (रद्द होने तक खुला) या समीक्षा खुलते समय नवीनतम ब्लॉक से तय समय है, अधिकतम `MAX_OFFER_EXPIRY_HORIZON` (365 दिन) आगे। `useFullTermInterest` डिफ़ॉल्ट रूप से true और `allowsPartialRepay` false है।
+
+<a id="lend-offer-parts"></a>
+
+### Lend: हिस्सों में दिया जाने वाला ऑफ़र
+
+हिस्से `amount` (एक मैच द्वारा उधार दिया जा सकने वाला सबसे छोटा हिस्सा) को `amountMax` (पूरी राशि, जिसे `createOffer` वॉल्ट में खींचता है) से कम भेजते हैं; `collateralAmount` = `collateralAmountMax` एकमात्र शर्त बनी रहती है, `amountMax` के लिए (वरना `LenderCollateralRangeNotAllowed`), और `interestRateBps` = `interestRateBpsMax`। लेंडिंग ऑफ़र पर सीधा `acceptOffer` `collateralAmount` के बदले `amountMax` उधार देता है, और केवल तब तक जब तक `amountFilled` 0 है (मैच के बाद `OfferPartiallyFilled`)। जब तक `getPartialFillEnabled` true है, `matchOffers` राशि के ओवरलैप का मध्य बिंदु, कम से कम `amount`, दर के ओवरलैप के मध्य बिंदु पर, कम से कम `collateralAmount × matchAmount ÷ amountMax` (नीचे की ओर पूर्णांकित; उधारकर्ता की कोलैटरल रेंज इसे बढ़ा सकती है) के बदले उधार देता है। जब `amountMax − amountFilled` `amount` से नीचे जाता है, तो बाकी राशि ऋणदाता के वॉलेट में निकाल दी जाती है और ऑफ़र बंद होता है (`OfferClosed`, कारण `Dust` या `FullyFilled`)। आंशिक रूप से भरे ऑफ़र पर `cancelOffer` प्रतीक्षा अवधि छोड़ देता है और `amountMax − amountFilled` लौटाता है। `fillMode` अनुरोध की तरह 0, 1 या 2 है: AON के लिए `amount` = `amountMax` चाहिए, IOC के लिए समाप्ति चाहिए, और पोस्ट करने के बाद यह नहीं बदलता। दोनों पक्ष तरल हों तो `createOffer` `amountMax` पर न्यूनतम सीमा से कम `collateralAmount` को `MinCollateralBelowFloor(provided, floor)` से अस्वीकार करता है, जिसकी सीमा समीक्षा दिखाती है। एक ही लोन-टू-वैल्यू दिखाया जाता है, (`amountMax`, `collateralAmount`) पर `calculateLTV`: पूर्णांकन को छोड़कर हर हिस्से का अनुपात वही है।
+
+<a id="lend-offer-schedule"></a>
+
+### Lend: ऑफ़र पर ब्याज की अनुसूची
+
+लेंडिंग ऑफ़र का `periodicInterestCadence` अनुरोध के नियम (ऊपर) का पालन करता है, और `previewCadenceAdmission` ऑफ़र के `amount` पर आँका जाता है: उसका सबसे छोटा हिस्सा, या हिस्सों के बिना पूरी राशि। `createOffer` उसे वहीं `requireCadenceAdmitted` से स्वीकार करता है, और हर ऋण की शुरुआत उसके अपने मूलधन को फिर जाँचती है (`requireOriginationCadenceAdmitted`)। समीक्षा एक अवधि का ब्याज `amountMax` (सीधा लेना) पर और हिस्सों के साथ `amount` पर बताती है। छूटी अवधि को मोहलत के बाद कोई भी `settlePeriodicInterest` से निपटा सकता है: ऋणदाता को उस अवधि का ब्याज देने के लिए कोलैटरल बेचा जाता है, और ऋण खुला रहता है।
+
+<a id="lend-offer-tariff"></a>
+
+### Lend: ऑफ़र पर फुल फ़ीस टैरिफ़
+
+ऋणदाता की सहमति वही `setOfferCreatorFullTariff(offerId, true, maxCStar, allowDowngrade)` है, जो `createOffer` के बाद भेजी जाती है। ऑफ़र पूरा ले लिए जाने या बंद होने के बाद यह `OfferAlreadyAccepted` से अस्वीकार होती है; आंशिक रूप से मैच हुआ ऑफ़र इसे अब भी लेता है, अपने बाद के ऋणों के लिए। कोटेशन `amount` और `amountMax` पर `quoteCStar` है, और सीमा का डिफ़ॉल्ट `amountMax` पर कोटेशन है। हर ऋण अपने मूलधन पर आँका जाकर अलग से `maxCStar` से जाँचा जाता है, अनुरोध जैसी ही शर्तों पर (`FeeEntitlementDisabled`, `FeeEntitlementFullOptInFailed`, `FeeEntitlementTariffAboveAuth`, या अनुमति हो तो डाउनग्रेड); ऋणदाता की जाँच वॉल्ट के मौजूदा मुक्त VPFI का उपयोग करती है। लिया गया टैरिफ़ ऋण के `lenderMode` को Full दर्ज करता है, और फिर ऋणदाता की हर यील्ड-फ़ीस निपटान पर प्रोटोकॉल के हिस्से पर पोज़िशन धारक की छूट में `FULL_MODE_FEE_DISCOUNT_BONUS_BPS` (1000) जुड़ता है, `MAX_FEE_DISCOUNT_BPS` (5000) की सीमा तक, होल्ड-छूट सहमति हो या न हो। जगह पर अवधि बढ़ाना (`repriceFeeEntitlementOnExtension`) नई अवधि के लिए इस दर्ज को None कर देता है।
+
+<a id="lend-offer-review"></a>
+
+### Lend: ऑफ़र की समीक्षा और पोस्ट करना
+
+समीक्षा वॉलेट से `createOffer` का सिमुलेशन करती है और दोनों वर्ग, `getEffectiveGraceSeconds(durationDays)`, `getLoanInitiationFeeBps`, `getTreasuryFeeBps`, अधिकतम अवधि, वॉलेट का वॉल्ट, उधार दी गई संपत्ति (वह पक्ष जिसे ऋणदाता लॉक करता है) पर उसका बैलेंस और अलाउंस, और दोनों पक्ष लिक्विड हों तो `calculateLTV` पढ़ती है; हर ब्लॉक और वॉलेट खुलने से ठीक पहले यह फिर पढ़ी जाती है। अलाउंस कम रहने तक सिमुलेशन केवल राशि खींचने तक पहुँचता है, इसलिए टोकन की खींचने की त्रुटि, `VaultDepositFailed` (बिना डेटा revert हुए खिंचाव पर प्रोटोकॉल का आवरण, जैसा WETH कम अलाउंस पर करता है) या बिना प्रोटोकॉल त्रुटि-नाम वाला revert पूरी करनी वाली मंज़ूरी के रूप में दिखता है, वही नियम जो अनुरोध की समीक्षा में है; कोई भी दूसरी नामित प्रोटोकॉल त्रुटि अस्वीकृति है। सटीक मंज़ूरी के बाद `createOffer` का फिर सिमुलेशन होता है और उसे भेजा जाता है; मंज़ूरी के बाद रुकने पर, अगर कुछ और न बदला हो, अलाउंस पिछले मान पर लौटाया जाता है। परिणाम इस वॉलेट के `offerType` 0 वाले `OfferCreated` और वॉल्ट में राशि के `Transfer` से पढ़ा जाता है।
+
+<a id="lend-offer-fee"></a>
+
+### Lend: आपके ऑफ़र पर फ़ीस
+
+`createOffer` ऋणदाता से कुछ नहीं लेता। दिखाई गई फ़ीस उधारकर्ता की है: उधार दी गई संपत्ति में राशि का `getLoanInitiationFeeBps`, उस दर पर जो `acceptOffer` चलने के समय लागू हो, तब उधारकर्ता के होल्ड-टियर डिस्काउंट से घटाई जाती है और उसकी डिलीवरी से काटी जाती है; दिखाया गया अंक आज की दर पर है। ब्याज में प्रोटोकॉल का हिस्सा `getTreasuryFeeBps` है, जो हर लोन के खुलने पर तय होता है (`treasuryFeeBpsAtInit`); सहमति चालू हो तो ब्याज निपटाते समय ऋणदाता का होल्ड-टियर डिस्काउंट उसे घटाता है। समीक्षा आज की दर और उस दर पर हिस्सा ऊपरी सीमा के रूप में दिखाती है; `getTreasuryFeeBps` पढ़ने में विफलता बताई जाती है, और न हिस्सा न वापसी राशि दिखाई जाती है।
+
+<a id="risk-access"></a>
+
+### Risk Access: आपका जोखिम स्तर
+
+स्विच `getRiskAccessGateEnabled` है। किसी प्रवाह को कौन-सा कदम चाहिए, यह प्रोटोकॉल का अपना उत्तर है: स्वीकृति के लिए `previewOfferAcceptBlock` (1 = स्तर बहुत कम, 2 = जोड़ी सहमति, 3 = सख़्त मोड स्वीकृति, 4 = वह इलिक्विड पेयर जिसे पहले स्वीकृति की स्वीकारोक्ति कवर करती थी; यह 2 की तरह रोकता है और पेयर सहमति इसे हटाती है), जब `previewCreatorBlock` दिखाए कि ऋणदाता रुका नहीं है; अनुरोध के लिए `createOffer` के ड्राई रन का `RiskTierTooLow`, `IlliquidPairNotConsented` या `MidTierPairNotAcknowledged`। कदम एक ही ब्लॉक में पढ़ता है: जोड़ी के लिए `pairRequiredRiskLevel` (ऑफ़र के लिए `acceptMidTierAckPair`), `getVaultRiskTier`, `getEffectiveRiskTier`, `getCurrentRiskTermsVersion` के सामने `getVaultRiskTierVersion`, `getRiskTierUnlockAt`, `getRiskAccessUnlockCooldown` और `getRiskTierMutationNonce`, और जोड़ी के लिए `hasIlliquidPairConsent` के साथ `isPairConsentPending`, या `midTierStrictBlocked` के साथ `isMidTierAckPending`। स्तर बढ़ाना `setVaultRiskTierChecked(level, nonce, termsVersion)` है, जोड़ी की ज़रूरत के न्यूनतम स्तर तक, इसलिए समीक्षा के बाद कोई और स्तर-लेखन या शर्तों का बदलाव आ गया हो तो यह बिना कुछ बदले अस्वीकार होता है। जोड़ी का कदम `setIlliquidPairConsent(pair, true)` या `setMidTierPairAck(pair)` है। प्रतीक्षा में चल रही वृद्धि या लंबित जोड़ी कदम दोबारा नहीं दिया जाता। कोई रीड यह नहीं बताता कि लंबित जोड़ी कदम कब प्रभावी होगा, इसलिए समीक्षा बताती है कि वह यह समय नहीं पढ़ सकती; केवल उसी कदम का समापन कार्ड इसे देता है, रसीद के ब्लॉक के समय और प्रतीक्षा अवधि से। परिणाम रसीद के ब्लॉक पर वापस पढ़ा जाता है।
+
 <a id="terms-gate"></a>
 
 ### शर्तों की पुष्टि

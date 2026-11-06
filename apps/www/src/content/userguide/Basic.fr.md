@@ -977,8 +977,8 @@ Basic montre ce dont la plupart des gens ont besoin. Advanced ajoute
 les outils de sortie et de règlement, l'automatisation, les ordres
 signés, l'état des keepers et le détail comptable. Changer de mode ne
 masque jamais un consentement à donner, ce qui vous bloque, ni le
-moyen d'y remédier. Chaque lien « Pourquoi ? » ouvre l'explication
-complète, et son lien « En savoir plus » ouvre ce guide dans le mode
+moyen d'y remédier. Chaque bouton d'information (i), après la phrase qu'il explique,
+ouvre l'explication complète, et son lien « En savoir plus » ouvre ce guide dans le mode
 que vous utilisez.
 
 <a id="wallet"></a>
@@ -1097,6 +1097,168 @@ Sur un réseau où les récompenses non réclamées peuvent être retirées, Hom
 ### Home: Récompenses retenues
 
 Si le filtrage des sanctions signale votre portefeuille, rien ne lui est versé tant que le signalement demeure. Les récompenses gagnées avant le signalement sont retenues pour lui, bloquées mais pas perdues, et libérées dès que le portefeuille n'est plus signalé ; Home propose alors de réclamer exactement ce solde seul. Tant qu'un signalement est confirmé, les récompenses gagnées sont perdues définitivement et le VPFI de votre coffre ne peut pas être déplacé. S'il est impossible de lire si le portefeuille est toujours signalé, rien n'est libéré.
+
+<a id="borrow-start"></a>
+
+### Borrow: Comment ça marche
+
+Pour emprunter, vous acceptez l'offre ouverte d'un prêteur : un montant d'un token, un taux, une durée et la garantie que le prêteur demande. L'accepter ouvre le prêt en une seule transaction. Votre garantie passe de votre wallet à votre propre vault, où elle reste bloquée tant que le prêt est ouvert, et le montant, moins de petits frais d'ouverture, arrive dans votre wallet. Vous remboursez le montant plus les intérêts avant l'échéance. Si aucune offre ne convient, vous pouvez aussi publier votre propre demande d'emprunt et attendre un prêteur.
+
+<a id="borrow-pair"></a>
+
+### Borrow: Choisir les tokens
+
+Choisissez d'abord ce que vous empruntez et ce que vous bloquez. L'app suggère des tokens du réseau, ou vous pouvez coller une adresse de token ; aucun contrôle de sécurité des tokens n'est fait, vérifiez donc vous-même une adresse collée. Pour chaque token, l'app lit ce que le protocole en dit maintenant. Un token liquide a un prix : le prêt a un facteur de santé et peut être liquidé si la garantie perd de la valeur. Un token illiquide est évalué à zéro, et en cas de défaut le prêteur reçoit la garantie elle-même. Quand le protocole ne fait pas confiance au prix d'un token, les nouveaux prêts sur celui-ci sont fermés jusqu'à ce qu'il lui fasse de nouveau confiance ; les prêts déjà ouverts ne sont pas concernés.
+
+<a id="borrow-offers"></a>
+
+### Borrow: Choisir une offre
+
+La page liste les offres ouvertes des prêteurs pour vos deux tokens, lues dans le protocole lui-même. Chacune indique le montant, le taux et la durée, la garantie demandée, le ratio prêt-valeur aux prix du jour, le mode de calcul des intérêts, l'éventuel calendrier d'intérêts, la fin de l'offre et ce que vous recevriez après les frais. Une offre s'accepte en entier, au montant complet du prêteur et à son taux le plus bas. Si le protocole refuserait une offre, la page dit pourquoi et n'affiche pas de bouton. L'ordre est une commodité, pas un conseil.
+
+<a id="borrow-review"></a>
+
+### Borrow: Vérifier et signer
+
+Avant que votre wallet ne s'ouvre, la vérification montre chaque chiffre : ce que vous recevez, les frais, ce que vous bloquez, le taux, ce que vous devez à l'échéance, le délai de grâce et ce que vous pouvez perdre. Vous cochez une case pour accepter les Informations sur les risques et les Conditions ; si les chiffres changent avant votre confirmation, la case se décoche. Votre wallet vous demande ensuite de signer les conditions, ce qui ne coûte rien, d'approuver exactement la garantie si nécessaire, puis d'envoyer l'acceptation, que l'app essaie d'abord à blanc. Si cela s'arrête après une approbation, l'app demande de la remettre et dit si c'est fait. Ensuite, l'app vérifie sur la chaîne le prêt ouvert, ce qui est arrivé et ce qui a été bloqué. Il indique aussi les conditions du prêt sur sa durée, chacune même lorsqu'elle est celle par défaut : remboursement partiel, vente de la garantie, et tout refinancement ou prêt lié. Le montant dû suppose aucune pause : une pause repousse l'échéance et les intérêts continuent de courir pendant celle-ci.
+
+<a id="borrow-fee"></a>
+
+### Borrow: Les frais d'ouverture
+
+Ouvrir un prêt coûte une petite part du montant, prélevée une fois, dans le token emprunté, et déduite de ce que vous recevez ; la vérification montre le taux en vigueur. Vous devez des intérêts sur le montant entier. Votre niveau de remise réduit les frais quand la remise sur les frais est activée et que le token emprunté est liquide. Aucun VPFI n'est pris ni conservé pour ces frais, et rien n'est remboursé plus tard. Comme vous envoyez vous-même l'acceptation, une petite part des frais, celle que le protocole verse à quiconque soumet un appariement, vous revient avec le montant ; la vérification l'indique.
+
+<a id="borrow-risks"></a>
+
+### Borrow: Risques
+
+Un prêt peut vous coûter votre garantie. Si vous n'avez pas remboursé à la fin du délai de grâce, le prêt est en défaut et le prêteur est payé sur votre garantie : vendue pour lui là où le protocole le peut, remise telle quelle sinon. Avec une garantie liquide, si sa valeur baisse jusqu'à ce que le facteur de santé passe sous 1, n'importe qui peut liquider le prêt et vous perdez de la garantie. Avec des intérêts sur toute la durée, vous devez les intérêts de toute la durée même en remboursant tôt. Avec un calendrier d'intérêts, une période manquée est payée en vendant une partie de votre garantie. Votre garantie reste bloquée jusqu'au remboursement ou au règlement du prêt.
+
+<a id="borrow-request"></a>
+
+### Borrow : Publier votre propre demande
+
+Si aucune offre ne convient, vous pouvez publier votre propre demande d'emprunt pour vos deux tokens : le montant exact, le taux que vous paierez, la durée et la garantie que vous bloquez. La publication déplace la garantie de votre wallet vers votre propre vault, où elle reste tant que la demande est ouverte. Un prêteur qui l'accepte ouvre le prêt aussitôt, à vos conditions, sans vous redemander ; le montant, moins les frais d'ouverture, arrive dans votre wallet. Vous pouvez annuler à partir de cinq minutes après la publication, et la garantie revient dans votre wallet. Une demande expirée ne peut plus être acceptée ; sa garantie reste dans votre vault jusqu'à ce que vous, ou n'importe qui, la clôturiez, puis revient uniquement dans votre wallet. Tant que la page Offres de la prochaine app n'est pas construite, vous suivez, annulez et clôturez une demande sur la page Offres de l'app actuelle ; la vérification le dit avant que quoi que ce soit ne soit bloqué.
+
+<a id="borrow-request-terms"></a>
+
+### Borrow : Les conditions de la demande
+
+Un seul prêteur prend tout le montant, ou personne. Chaque chiffre est lu exactement comme vous le saisissez : plus de décimales que n'en a le token sont refusées, jamais arrondies, et le taux va jusqu'à 100 % par an avec deux décimales. Les durées proposées s'arrêtent à la plus longue que le réseau autorise ; vous pouvez aussi saisir une durée en jours. La demande reste ouverte jusqu'à son acceptation ou son annulation, ou pendant le nombre de jours choisi, jusqu'à un an. Les intérêts sur toute la durée, le choix habituel, sont dus en entier même si vous remboursez tôt ; au prorata, seule la période où le prêt est ouvert est facturée. Le formulaire montre ce que vous recevriez au taux de frais d'aujourd'hui et devriez à l'échéance si un prêteur l'acceptait maintenant.
+
+<a id="borrow-request-review"></a>
+
+### Borrow : Vérifier et publier une demande
+
+Avant que votre wallet ne s'ouvre, l'app demande au protocole d'essayer votre demande à blanc, si bien que la vérification montre la réponse du protocole lui-même. Elle indique ce que vous bloquez maintenant, le montant, le taux et la durée, ce que vous recevriez et comment les frais sont fixés (le taux de frais en vigueur quand un prêteur l'accepte, moins votre niveau de remise sur les frais à ce moment-là ; le chiffre affiché utilise le taux d'aujourd'hui), ce que vous devriez, chaque condition du prêt, quand la demande expire, le ratio prêt-valeur et si une approbation est nécessaire. Vous cochez une case pour accepter les Informations sur les risques et les Conditions. Votre wallet approuve exactement la garantie si nécessaire, l'app essaie de nouveau la demande, puis seulement la publie. Si cela s'arrête après une approbation, l'app demande de la remettre et dit si c'est fait. Ensuite, l'app vérifie sur la chaîne la demande enregistrée et la garantie bloquée.
+
+<a id="borrow-nft-collateral"></a>
+
+### Borrow : un NFT en garantie
+
+Une demande peut bloquer un NFT au lieu d'un jeton. Choisissez la collection comme ce que vous bloquez (les collections de test sont marquées comme NFT, ou collez une adresse) ; qu'une adresse soit un jeton ou une collection de NFT est lu dans son contrat. Saisissez ensuite le numéro du NFT, son identifiant de jeton, affiché dans votre portefeuille ou sur la page de la collection ; le formulaire indique aussitôt si votre portefeuille le détient. Le protocole évalue un NFT à zéro, quel que soit son prix ailleurs : un prêt garanti par un NFT n'a ni ratio prêt-valeur ni liquidation fondée sur un prix, et si vous ne remboursez pas avant la fin du délai de grâce, le prêteur reçoit le NFT lui-même. La publication demande à votre portefeuille d'autoriser le protocole pour ce seul NFT, jamais pour le reste de votre collection, et son transfert dans votre coffre efface cette autorisation de lui-même ; si la demande s'arrête après l'autorisation, l'application demande de la rétablir et dit si c'est fait. Les NFT qui existent en quantités (collections multi-jetons) fonctionnent de la même façon, avec une quantité : saisissez le numéro du jeton et combien en bloquer, et le formulaire indique combien votre portefeuille en détient. Une telle collection ne peut pas autoriser un seul jeton, seulement tous les vôtres qu'elle contient : la publication accorde donc cette autorisation pour cette demande seulement et la retire ensuite par une étape de plus dans le portefeuille, que la demande ait abouti ou non ; une autorisation que vous aviez déjà donnée reste telle que vous l'aviez réglée. Accepter l'offre d'un prêteur qui demande un NFT se fait encore dans l'application actuelle pour l'instant.
+
+<a id="borrow-request-range"></a>
+
+### Borrow: Une fourchette de montants (Avancé)
+
+En mode Avancé, une demande peut accepter une fourchette : le plus petit et le plus grand montant qu'un prêteur peut prêter, à votre taux unique, et, si vous le souhaitez, une garantie plus faible pour le plus petit prêt. Un prêteur qui accepte la demande directement prête le plus petit montant et ne bloque que la garantie fixée pour lui ; le reste revient à votre portefeuille. Les appariements peuvent prêter davantage, jusqu'au plus grand montant, tant que l'appariement est activé sur le réseau ; la vérification indique s'il l'est, et que tant qu'il est désactivé la fourchette n'est remplie qu'une fois. Le protocole refuse un plus grand montant que votre garantie ne couvre pas aux prix du jour, et la vérification indique le maximum qu'elle couvre. La vérification affiche le ratio prêt-valeur aux deux extrémités et avertit lorsqu'un prêteur ne pourrait pas accepter la demande directement aux prix du jour. Les options définies en mode Avancé s'appliquent encore si vous passez en mode Basique : le formulaire le dit et vous permet de les effacer. Un appariement ne bloque que la garantie que demande son prêteur, au moins le plancher ; la revue indique donc le plus grand appariement de toute votre garantie jusqu'au seul plancher, et avertit qu'un prêt apparié peut démarrer plus risqué qu'un prêt direct. Tant que l'appariement est activé, la garantie qu'un appariement ne bloque pas reste avec la demande pour les appariements suivants et ne revient à votre portefeuille qu'à la clôture de la demande ou quand vous l'annulez.
+
+<a id="borrow-request-fill"></a>
+
+### Borrow: Comment une demande est remplie (Avancé)
+
+Partiel, le mode par défaut, laisse les appariements remplir la demande en un ou plusieurs prêts jusqu'à ce qu'elle soit remplie, annulée ou expirée. Tout ou rien n'admet qu'un seul remplissage du montant entier et ne peut donc pas servir avec une fourchette. Immédiat ou annulé remplit comme partiel, mais seulement jusqu'à l'expiration de la demande, et exige donc une date d'expiration. Le mode de remplissage ne peut pas être modifié après la publication ; pour le changer, annulez la demande et publiez-en une nouvelle. Le protocole permet de modifier les montants, le taux et la garantie tant que la demande est ouverte, jamais en dessous de ce que les appariements ont déjà utilisé, mais cette application ne le propose pas encore : pour l'instant, un changement implique d'annuler et de republier.
+
+<a id="borrow-request-cadence"></a>
+
+### Borrow: Un échéancier d'intérêts (Avancé)
+
+En mode Avancé, une demande peut payer les intérêts selon un échéancier plutôt que tout au remboursement : chaque mois, trimestre, semestre ou année. Le formulaire ne propose que les échéanciers que le protocole autorise pour vos conditions et indique sous chacun de ceux qui sont fermés pourquoi : les intérêts périodiques sont désactivés sur le réseau, un actif n'a pas de prix, le prêt vaut moins que le seuil du protocole (les deux chiffres sont affichés), ou la période n'est pas plus courte que le prêt. La revue montre les intérêts de chaque période et le délai de grâce d'une période manquée. Si une période n'est pas payée avant la fin de son délai de grâce, n'importe qui peut vendre une partie de votre garantie pour la payer, et le prêt reste ouvert. L'échéancier ne peut plus être modifié après publication. Comme les autres options avancées, il continue de s'appliquer si vous passez en mode Basique, et le formulaire le dit.
+
+<a id="borrow-request-tariff"></a>
+
+### Borrow: Le tarif de frais Full (Avancé)
+
+En mode Avancé, une demande peut prendre le tarif de frais Full : des frais en VPFI, prélevés dans votre coffre à l'ouverture de chaque prêt, qui ajoutent dix points à la remise sur les frais de prêt, jusqu'au plafond de 50 % du protocole. Les frais de prêt restent facturés dans l'actif prêté, et le tarif n'est pas remboursé. Le formulaire ne le propose que tant que le protocole l'a activé, et affiche le tarif du jour pour votre montant et votre durée. Vous fixez le maximum de VPFI qu'un prêt peut prendre (laissé vide : le tarif du jour pour le plus grand prêt) et ce qui arrive à un prêt qui ne peut pas prendre le tarif à son ouverture : il est refusé, ou il s'ouvre sans lui. Un prêt ne peut le prendre que si, à ce moment, le tarif est activé, l'actif prêté a un prix et est liquide, son tarif reste dans votre maximum et votre coffre détient assez de VPFI libres. Le tarif est fixé par une seconde transaction après la publication ; un prêteur qui prend la demande avant sa confirmation ouvre donc un prêt sans lui. Cette application ne propose pas encore de prêt de secours pour les demandes que personne ne prend.
+
+<a id="lend-start"></a>
+
+### Lend: Comment ça marche
+
+Pour prêter, vous financez la demande ouverte d'un emprunteur : un montant d'un jeton, le taux qu'il paiera, une durée et une garantie que l'emprunteur a déjà bloquée dans son propre coffre. La financer ouvre le prêt en une seule transaction. Le montant quitte votre portefeuille, l'emprunteur le reçoit moins ses frais d'ouverture, et la garantie reste bloquée pour vous jusqu'à la fin du prêt. Votre côté du prêt est un jeton de position dans votre portefeuille, et c'est son détenteur qui est remboursé. L'emprunteur rembourse le montant plus les intérêts avant l'échéance, et le protocole garde sa part des intérêts. Si aucune demande ne convient, vous pouvez publier votre propre offre de prêt depuis la même page.
+
+<a id="lend-offers"></a>
+
+### Lend: Choisir une demande
+
+Choisissez d'abord ce que vous prêtez et la garantie que vous acceptez ; ce doivent être des jetons différents, et cette page ne propose que des jetons. La page liste les demandes d'emprunt ouvertes pour cette paire, lues dans le protocole lui-même. Chacune indique le montant, le taux et la durée, la garantie bloquée, le ratio prêt-valeur aux prix du jour, le mode de calcul des intérêts, un éventuel calendrier d'intérêts et la part des frais de l'emprunteur qui vous revient. Une demande se finance en entier : si elle indique une fourchette, vous prêtez le plus petit montant de l'emprunteur à son taux le plus élevé. Quand le protocole refuserait une demande, la page dit pourquoi et ne propose aucun bouton. Vos propres demandes, les demandes avec un NFT et les ventes de prêts en cours sont comptées, pas listées. L'ordre (d'abord les demandes que vous pouvez financer, puis le taux le plus élevé) est une commodité, pas un conseil.
+
+<a id="lend-review"></a>
+
+### Lend: Vérifier et signer
+
+Avant l'ouverture de votre portefeuille, la vérification affiche chaque chiffre : ce qui quitte votre portefeuille, ce que reçoit l'emprunteur, les frais et votre part de ceux-ci, la garantie détenue pour vous, le taux, les intérêts dus à l'échéance, la part du protocole sur ceux-ci, ce qui vous revient, le délai de grâce et ce que vous pouvez perdre. Elle indique aussi chaque condition du cycle de vie, même quand c'est la valeur par défaut. Si votre portefeuille détient moins que le montant, la vérification dit combien il manque et ne propose aucune signature. Vous cochez une case pour accepter les Avertissements sur les risques et les Conditions ; si les chiffres changent avant votre confirmation, la case se décoche. Votre portefeuille vous demande ensuite de signer les conditions, ce qui ne coûte rien, d'approuver exactement le montant si nécessaire, et d'envoyer l'acceptation, que l'application essaie d'abord à blanc. Si cela s'arrête après une approbation, l'application propose de rétablir l'approbation et dit si c'est fait. Ensuite, l'application vérifie sur la chaîne le prêt ouvert, ce qui a quitté votre portefeuille et ce qui y est revenu.
+
+<a id="lend-fee"></a>
+
+### Lend: Les frais et la part du protocole
+
+Les frais d'ouverture sont à la charge de l'emprunteur : une petite part du montant, prélevée une fois dans l'actif prêté et déduite de ce que reçoit l'emprunteur. Vous prêtez le montant entier, et l'emprunteur le doit en totalité avec les intérêts. Comme vous envoyez vous-même l'acceptation, une petite part de ces frais, celle que le protocole verse à qui soumet un appariement, revient à votre portefeuille ; la vérification l'affiche. Si l'emprunteur a choisi le tarif de frais Full et qu'il s'applique à l'ouverture du prêt, les frais sont plus bas, et cette part aussi. Quand des intérêts sont payés, le protocole garde sa part, au taux en vigueur à l'ouverture du prêt ; votre palier de remise sur les frais peut réduire cette part tant que votre réglage de remise est activé. La vérification affiche le taux du jour et le maximum que cette part peut prendre.
+
+<a id="lend-risks"></a>
+
+### Lend: Risques
+
+Prêter peut vous faire perdre de l'argent. Si l'emprunteur n'a pas remboursé à la fin du délai de grâce, le prêt est en défaut et vous êtes payé sur la garantie : vendue pour vous là où le protocole le peut, remise telle quelle sinon, et une vente peut rapporter moins que ce qui vous est dû. Avec une garantie liquide, n'importe qui peut liquider le prêt dès que son facteur de santé passe sous 1 ; la vente vous rembourse en premier, mais une forte baisse peut laisser moins que ce qui vous est dû. Un jeton illiquide est valorisé à zéro, il n'y a donc pas de liquidation fondée sur le prix, et en cas de défaut vous recevez toute la garantie, quelle que soit sa valeur. Vous ne pouvez pas reprendre le montant avant la fin du prêt ; sortir plus tôt signifie vendre votre position à un autre prêteur. Avec des intérêts au prorata, un remboursement anticipé vous rapporte moins. Une pause repousse l'échéance, et les intérêts continuent de courir pendant celle-ci.
+
+<a id="lend-offer"></a>
+
+### Lend : Publier votre propre offre
+
+Si aucune demande ne convient, vous pouvez publier votre propre offre de prêt pour vos deux jetons : le montant exact que vous prêtez, le taux que vous demandez, la durée et la garantie qu'un emprunteur doit bloquer. La publication déplace le montant de votre portefeuille vers votre propre coffre, où il reste bloqué tant que l'offre est ouverte. Un emprunteur qui l'accepte ouvre le prêt aussitôt, à vos conditions, sans vous redemander : il reçoit le montant moins ses frais d'ouverture, et sa garantie est bloquée dans son coffre pour vous. Tant que l'appariement est activé sur le réseau, n'importe qui peut aussi associer votre offre à la demande d'un emprunteur ; sans parts, ce prêt prête tout votre montant à votre taux, contre au moins la garantie que vous demandez. La vérification indique si l'appariement est activé en ce moment. Vous pouvez annuler à partir de cinq minutes après la publication, et le montant revient dans votre portefeuille. Une offre expirée ne peut plus être acceptée ; son montant reste dans votre coffre jusqu'à ce que vous, ou n'importe qui, la fermiez, puis revient uniquement dans votre portefeuille. Tant que la page Offres de la prochaine application n'est pas construite, vous suivez, annulez et fermez une offre sur la page Offres de l'application actuelle ; la vérification le dit avant que rien ne soit bloqué.
+
+<a id="lend-offer-terms"></a>
+
+### Lend : Les conditions de l'offre
+
+Sauf si vous fixez des parts en mode avancé, un seul emprunteur prend tout le montant, ou personne, et doit bloquer exactement la garantie que vous fixez. Le formulaire indique combien du jeton prêté votre portefeuille détient. Chaque chiffre est lu exactement comme vous le saisissez : plus de décimales que le jeton n'en a sont refusées, jamais arrondies, et le taux va jusqu'à 100 % par an avec deux décimales. Les durées proposées s'arrêtent à la plus longue que le réseau autorise. L'offre reste ouverte jusqu'à son acceptation ou son annulation, ou pendant le nombre de jours que vous choisissez, jusqu'à un an. Les intérêts sur toute la durée, le choix habituel, signifient qu'un remboursement anticipé ne réduit pas ce que vous gagnez ; au prorata, vous n'êtes payé que pour le temps où le prêt est ouvert. Vous pouvez aussi permettre à l'emprunteur de rembourser une partie en avance. Le formulaire montre ce que l'emprunteur vous devrait à l'échéance s'il acceptait l'offre maintenant. En mode avancé, une offre peut aussi être prêtée en parts, porter un mode d'exécution, payer les intérêts selon un échéancier et prendre le tarif de frais Full.
+
+<a id="lend-offer-parts"></a>
+
+### Lend : Une offre en parts (Avancé)
+
+En mode avancé, une offre de prêt peut être prêtée en parts. Le montant saisi reste le montant entier : la publication bloque tout, et un emprunteur qui prend votre offre directement emprunte tout. Vous ajoutez la plus petite part qu'un appariement peut prêter. Tant que l'appariement est activé sur le réseau, les apparieurs peuvent prêter votre offre à plusieurs emprunteurs, chaque prêt entre la plus petite part et ce qui reste, à votre taux. Chacun demande au moins la part de votre garantie qui correspond à sa part, arrondie vers le bas, et la vérification montre ce que demande la plus petite part. Dès qu'un appariement a prêté une part, aucun emprunteur ne peut prendre le reste directement ; seuls d'autres appariements le peuvent, et vous pouvez annuler l'offre pour reprendre le reste. Quand il reste moins que la plus petite part, le protocole le renvoie à votre portefeuille et ferme l'offre. La vérification indique si l'appariement est activé en ce moment ; tant qu'il est désactivé, seul un emprunteur qui prend tout ouvre un prêt. Le mode d'exécution fonctionne comme pour une demande : partiel par défaut, tout ou rien pour un seul prêt du montant entier (donc sans parts), ou immédiat ou annulé, qui exige une expiration ; il ne peut pas être modifié après la publication. Le protocole refuse une offre qui demande moins de garantie que le montant entier n'en exige aux prix du jour, et la vérification indique le minimum demandé. Les options fixées en mode avancé s'appliquent toujours si vous passez en mode Basic : le formulaire le dit et vous permet de les effacer.
+
+<a id="lend-offer-schedule"></a>
+
+### Lend : Un échéancier d'intérêts sur une offre (Avancé)
+
+En mode Avancé, une offre de prêt peut porter un échéancier d'intérêts, comme une demande : chaque mois, trimestre, semestre ou année. Le formulaire ne propose que les échéanciers que le protocole autorise pour vos conditions, et indique sous chaque échéancier fermé pourquoi. Avec des parts, le protocole vérifie la plus petite part à la publication, donc une plus petite part sous son seuil ferme les échéanciers plus fins ; chaque prêt est vérifié à nouveau à son ouverture. La revue montre les intérêts de chaque période si un emprunteur prend tout et, avec des parts, sur un prêt de la plus petite part, ainsi que le délai de grâce d'une période manquée. Si une période n'est pas payée à la fin de son délai de grâce, n'importe qui peut vendre une partie de la garantie de l'emprunteur pour vous la payer, et le prêt reste ouvert. L'échéancier ne peut pas être modifié après la publication.
+
+<a id="lend-offer-tariff"></a>
+
+### Lend : Le tarif de frais Full sur une offre (Avancé)
+
+En mode Avancé, une offre de prêt peut prendre le tarif de frais Full : des frais en VPFI, prélevés dans votre coffre à l'ouverture de chaque prêt issu de l'offre, calculés selon le montant et la durée de ce prêt. En échange, la part du protocole sur les intérêts de ce prêt reçoit dix points de remise de plus, jusqu'à son plafond de 50 % ; la part reste prélevée dans l'actif prêté. Les points supplémentaires valent pour la durée du prêt : si le prêt est prolongé pour une nouvelle durée, ils cessent pour celle-ci. Ils appartiennent à la position de prêteur, donc celui qui la détient au paiement des intérêts les reçoit. Le tarif n'est pas remboursé. Le formulaire affiche le tarif du jour pour le montant entier, le plus grand prêt que l'offre ouvre. Vous fixez le maximum de VPFI qu'un prêt peut prendre, et si un prêt qui ne peut pas prendre le tarif est refusé ou s'ouvre sans lui. Un prêt ne peut le prendre que si, à ce moment, le tarif est activé, l'actif prêté a un prix et est liquide, son tarif est dans votre maximum et votre coffre détient assez de VPFI libre. Le tarif est fixé par une seconde transaction après la publication, donc un prêt ouvert depuis l'offre avant sa confirmation, par un emprunteur ou par un appariement, s'ouvre sans lui.
+
+<a id="lend-offer-review"></a>
+
+### Lend : Vérifier et publier une offre
+
+Avant l'ouverture de votre portefeuille, l'application demande au protocole d'essayer votre offre à blanc, si bien que la vérification montre la réponse du protocole lui-même. Elle indique ce que vous bloquez maintenant, le montant qu'un emprunteur prend, la garantie qu'il doit bloquer, le taux et la durée, ce que l'emprunteur recevrait au taux de frais d'aujourd'hui, les intérêts à l'échéance, la part du protocole et ce qui vous revient, chaque condition du cycle de vie, quand l'offre expire, le ratio prêt-valeur aux prix d'aujourd'hui et si une approbation est nécessaire. Si votre portefeuille détient moins que le montant, la vérification indique ce qui manque et ne propose aucune signature. Vous cochez une case pour accepter les Avertissements sur les risques et les Conditions. Votre portefeuille approuve exactement le montant si nécessaire, l'application essaie de nouveau l'offre, et seulement alors la publie. Si tout s'arrête après une approbation, l'application demande de remettre l'approbation en l'état et dit si c'est fait. Ensuite, l'application vérifie sur la chaîne l'offre enregistrée et le montant bloqué dans votre coffre.
+
+<a id="lend-offer-fee"></a>
+
+### Lend : Les frais de votre offre
+
+Publier une offre ne vous coûte aucuns frais. Les frais d'ouverture sont ceux de l'emprunteur : une petite part du montant, prélevée une fois dans l'actif prêté quand un emprunteur accepte votre offre, au taux en vigueur à ce moment, et retirée de ce qu'il reçoit. Vous prêtez tout le montant, et l'emprunteur vous le doit en entier avec les intérêts. Quand les intérêts sont payés, le protocole garde sa part, au taux en vigueur à l'ouverture du prêt ; votre palier de réduction des frais peut baisser cette part tant que votre réglage de réduction est activé. La vérification montre le taux d'aujourd'hui et le maximum que cette part peut prendre ; si ce taux ne peut pas être lu, la vérification le dit au lieu d'afficher un chiffre.
+
+<a id="risk-access"></a>
+
+### Risk Access : votre niveau de risque
+
+Chaque compte commence au niveau de risque le plus bas, actifs blue-chip uniquement, et vous seul pouvez le relever. Une paire exige le niveau de son jeton le plus risqué : les jetons blue-chip n'exigent rien, les autres jetons liquides exigent « Actifs liquides », et un jeton illiquide exige « Tout actif, y compris illiquide » ainsi que votre accord pour cette paire précise. Quand accepter une offre ou publier une demande exige une telle étape, la vérification l'indique sur place et la propose en une seule confirmation de portefeuille avec son propre reçu : ce qui change, quelles paires elle couvre, quand elle prend effet et qu'aucun fonds ne bouge. Relever votre niveau, ou donner votre accord pour une paire, peut attendre un délai fixé par le protocole ; pour un niveau relevé, l'application affiche l'heure de prise d'effet, lue sur la chaîne ; pour un accord, elle indique que le protocole ne publie pas encore cette heure ; et elle ne propose jamais deux fois la même étape, car une seconde relancerait l'attente. Abaisser votre niveau prend toujours effet immédiatement. Quand le protocole publie de nouvelles conditions de risque, votre niveau et vos accords cessent de compter jusqu'à ce que vous les confirmiez à nouveau. Si vous avez activé le mode strict, chaque paire liquide exige aussi votre reconnaissance. Un blocage dû au niveau de risque du prêteur est présenté comme le sien : rien dans votre compte ne le changerait.
 
 <a id="terms-gate"></a>
 

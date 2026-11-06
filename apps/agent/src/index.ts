@@ -136,17 +136,15 @@ import {
   getTelegramChatId,
   recordLockRequests,
   issueTelegramLinkCode,
-  linkTelegram,
+  linkTelegramStatement,
   OptOutStorageUnavailableError,
   reserveTestAlert,
   sweepExpiredLinks,
-  unlinkTelegram,
-  unlinkTelegramOnChain,
   hasStoredPushOptIn,
   upsertThresholds,
 } from './db';
-import { extractLinkCode, extractLockCommand, isTelegramDelivery, sendMessage, type TelegramUpdate } from './telegram';
-import { handshakeExpired, handshakeLinked, lockNotLinked, lockNotRecorded, lockNotRunning, lockPrivateOnly, lockRecorded, lockStale, testAlert } from './i18n';
+import { extractCancelCommand, extractLinkCode, extractLockCommand, isTelegramDelivery, sendMessage, type TelegramUpdate } from './telegram';
+import { channelCopy, handshakeExpired, handshakeLinked, lockNotLinked, lockNotRecorded, lockNotRunning, lockPrivateOnly, lockRecorded, lockStale, testAlert } from './i18n';
 import {
   authoriseAlertRequest,
   parseSignedLinkRequest,
@@ -156,6 +154,14 @@ import type { AlertSettingsChange } from '@vaipakam/lib/alertsMessage';
 import { isTickDue } from '@vaipakam/lib/cronCadence';
 import { AGENT_TICK_CADENCE_MINUTES } from './tickCadence';
 import { readJsonBody } from '@vaipakam/lib/requestBody';
+import { chainProtectionReader, chatLocale } from './alertChannelChange';
+import {
+  applyDueChannelChanges,
+  cancelFromChat,
+  requestRelink,
+  requestUnlink,
+  type ChannelDeps,
+} from './alertChannelFlow';
 import { redactedError } from '@vaipakam/lib/errorDescription';
 
 /** A signed alert request: a few fields plus a wallet signature. A
@@ -296,6 +302,14 @@ export default {
     // stops it, on every route including Workers Builds; the package script's
     // `--keep-vars` is belt-and-braces for a hand-run deploy. See CLAUDE.md,
     // "Dashboard-managed vars survive a deploy — declared, not remembered".
+    // #3246 — apply the Telegram chat removals whose protected-mode wait has
+    // passed, and tell the chats.
+    ctx.waitUntil(
+      applyDueChannelChanges(channelDeps(resolved)).catch((err) => {
+        // eslint-disable-next-line no-console
+        console.error('[agent] applyDueChannelChanges pass failed:', redactedError(err));
+      }),
+    );
     ctx.waitUntil(
       sweepExpiredLinks(resolved.DB).catch((err) => {
         // eslint-disable-next-line no-console
@@ -776,6 +790,18 @@ async function handleIssueTelegramLink(
   return json({ ok: true, code, bot_url: botUrl }, 200, corsOrigin);
 }
 
+/** #3246 — what the alert-channel flows need: the database, a Telegram send
+ *  (none without a bot token), the chain protection reader and the clock. */
+function channelDeps(env: Env): ChannelDeps {
+  const token = env.TG_BOT_TOKEN;
+  return {
+    db: env.DB,
+    send: token ? (chatId, text) => sendMessage(token, chatId, text) : null,
+    read: chainProtectionReader(env),
+    now: Math.floor(Date.now() / 1000),
+  };
+}
+
 /** #1033 — clear a stored wallet ↔ Telegram link. Requires the same
  *  EIP-191 wallet-ownership proof as link issuance, over the unlink-
  *  scoped message (round 5): the Origin gate is not authentication —
@@ -804,22 +830,45 @@ async function handleUnlinkTelegram(
   // The clear's SCOPE follows the authority that signed (#2013 round
   // 3 P1). An ECDSA key is the wallet's universal controller, so its
   // unlink honours the privacy promise wallet-wide (see
-  // unlinkTelegram). A smart account verified via its contract has
+  // requestUnlink). A smart account verified via its contract has
   // authority only on the chain whose contract approved — divergent
   // per-chain controllers are real (Safe owners drift apart) — so a
   // chain-verified unlink clears exactly the signed chain_id's rows,
   // and silencing the wallet's other chains needs each chain's own
   // controller to sign.
-  if (verified.via === 'chain') {
-    await unlinkTelegramOnChain(env.DB, parsed.req.wallet, parsed.req.chain_id);
-  } else {
-    await unlinkTelegram(env.DB, parsed.req.wallet);
+  //
+  // #3246 — while the wallet's account is protected on a row's chain, that
+  // row's chat is not removed at once: the removal waits the account's delay,
+  // the chat keeps every alert until then and is told, and it may CANCEL.
+  // Rows on chains without protection clear at once, as before. When any
+  // row's protection cannot be read, nothing changes (503), so a failed read
+  // never silences a protected account.
+  const wallet = parsed.req.wallet;
+  const outcome = await requestUnlink(
+    channelDeps(env),
+    wallet,
+    verified.via === 'chain' ? parsed.req.chain_id : null,
+  );
+  if (outcome.kind === 'unknown') {
+    return json(
+      {
+        error: 'protection-unknown',
+        reason: 'could not check whether this wallet has protected mode on; nothing was changed, try again later',
+      },
+      503,
+      corsOrigin,
+    );
   }
   // The response NAMES the scope that applied (#2013 round 4 P1), so
   // the app can confirm honestly instead of announcing a wallet-wide
-  // disconnect a chain-scoped authority did not buy.
+  // disconnect a chain-scoped authority did not buy. `pending` lists the
+  // chains whose removal waits (#3246); those chats still get alerts.
   return json(
-    { ok: true, scope: verified.via === 'chain' ? 'chain' : 'wallet' },
+    {
+      ok: true,
+      scope: verified.via === 'chain' ? 'chain' : 'wallet',
+      ...(outcome.pending.length > 0 ? { pending: outcome.pending } : {}),
+    },
     200,
     corsOrigin,
   );
@@ -968,6 +1017,26 @@ async function handleTelegramWebhook(
     return new Response('ok', { status: 200 });
   }
 
+  // #3246 — CANCEL stops every pending removal of this chat. Only the chat
+  // a change would silence may cancel it, and only from a private chat.
+  const cancel = extractCancelCommand(update);
+  if (cancel) {
+    let locale: string | null = null;
+    try {
+      locale = await chatLocale(env.DB, cancel.chatId);
+      await cancelFromChat(channelDeps(env), cancel.chatId, cancel.isPrivate, locale);
+    } catch (err) {
+      // Nothing was cancelled (a D1 failure, or the table not there yet).
+      // Say so, like LOCK does, so the owner sends it again instead of
+      // believing the change was stopped.
+      console.error('[agent] CANCEL not handled:', redactedError(err));
+      if (env.TG_BOT_TOKEN) {
+        await sendMessage(env.TG_BOT_TOKEN, cancel.chatId, channelCopy.cancelNotRecorded(locale)).catch(() => undefined);
+      }
+    }
+    return new Response('ok', { status: 200 });
+  }
+
   const extracted = extractLinkCode(update);
   if (!extracted) {
     // Not a code — ignore silently. Telegram expects 200 for acked
@@ -982,7 +1051,18 @@ async function handleTelegramWebhook(
     return new Response('ok', { status: 200 });
   }
 
-  await linkTelegram(env.DB, match.wallet, match.chainId, chatId);
+  // #3246 — a different chat taking over from the one linked now waits
+  // the account's delay while it is protected; `requestRelink` tells both
+  // chats. Linking where none is linked, or the same chat again, is at once.
+  const relink = await requestRelink(
+    channelDeps(env),
+    match.wallet,
+    match.chainId,
+    chatId,
+    match.locale,
+    (expected) => linkTelegramStatement(env.DB, match.wallet, match.chainId, chatId, expected),
+  );
+  if (relink !== 'linked') return new Response('ok', { status: 200 });
   const walletShort = `${match.wallet.slice(0, 8)}…${match.wallet.slice(-6)}`;
   await sendMessage(
     env.TG_BOT_TOKEN,

@@ -86,9 +86,9 @@ library LibAcceptTestSigner {
         t.acknowledgedIlliquidCollateralAsset = _ack(diamond, o.collateralAsset);
         t.nonce = offerId; // collision-free per acceptor (offer accepted once)
         t.deadline = block.timestamp + 1 hours;
-        // #730 — stamp the live risk-terms HASH so the #662⇄#671 illiquid
-        // ack-substitution gate sees a FRESH acknowledgement (a governance bump
-        // re-derives the hash and re-locks any ack signed against the old one).
+        // #730 — stamp the live risk-terms HASH the way the apps do. Since #3231
+        // the gate no longer reads it (the ack no longer substitutes for a pair
+        // consent), but it is still part of the signed AcceptTerms.
         t.riskTermsHash = _currentRiskTermsHash(diamond);
     }
 

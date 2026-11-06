@@ -199,7 +199,8 @@ Every common job within three decisions from Home; a screen that only asks
 the user to confirm what the app already knows is a wasted click. Home shows
 each position with its next action as a button; Borrow and Lend open
 prefilled from the last pair used; forms validate as the user types with the
-fix stated inline; amounts carry a Max button and a numeraire equivalent;
+fix stated inline (a field's error appears once the reader leaves it or asks
+for the review, then follows each keystroke, so nobody is told off mid-entry); amounts carry a Max button and a numeraire equivalent;
 impossible choices are greyed out with a count of what remains rather than
 refused later. Where the wallet supports call batching or a permit the
 contract path accepts, approval and action are one wallet prompt, with the
@@ -284,7 +285,25 @@ visitor" is an efficiency target for the world rail, not a prohibition.
 Keyboard and screen-reader operable, WCAG AA contrast, from the first route
 (a commitment of this design; the specifications are silent on it). Mobile
 first: the same destinations on phone and desktop, with bottom navigation on
-small screens and a persistent layout on larger ones; an unknown route shows
+small screens and a persistent layout on larger ones (below 720 px a bottom
+bar of the first four destinations and More; from 720 px a one-row header of
+brand and wallet over a left column, a rail of icons above short names up to
+1023 px and a panel of icons beside names from 1024 px, the pages only
+Advanced adds grouped under their own label after the Basic ones, and the mode
+and theme controls at the column's foot; from 1024 px the panel can be
+collapsed to its icons by an icon-only main-menu button (three lines) at
+the far left of the header, the pattern everyday web apps use, named "Main
+menu" for screen readers with a hover tip and stating whether the panel is
+expanded, the choice remembered per browser, and while collapsed a resting mouse (after about 0.3 s, hidden again
+0.5 s after it leaves) or keyboard focus reveals the full panel over the page
+without moving it, Escape hiding it; folding, revealing and unfolding
+slide the panel and the page beside it over a quarter second on the standard
+easing while the names fade and the icons stay put, with no motion at all for
+a reader whose device asks for reduced motion; the breakpoints follow the common
+compact, medium and expanded window classes); on a phone a form's primary
+action, with its live summary, and a review's Confirm rest just above the
+bottom bar at full width, where the thumb reaches, while the rest of the page
+scrolls under them; an unknown route shows
 a recovery page, and a display failure is contained to a recovery card that
 says funds and on-chain positions are unchanged. Every string in the copy
 catalog; locale bundles override per key, and the language rules of the
@@ -298,6 +317,42 @@ confirmation stay verbatim in every language; a language offered as
 translated shows it everywhere, and a new surface is translated in the change
 that ships it.
 
+### RB-ICONS — icons with fixed meanings
+
+An icon draws the eye to what a page needs from the reader; it never carries
+a meaning on its own. Every icon sits beside the words that say the same
+thing, and is hidden from screen readers, so the text is the whole message
+and a reader who cannot see the icon loses nothing. The one icon that stands
+without a word is the info button below, because the sentence it follows is
+its label. Two families only:
+
+- **Meanings** (a closed list; one shape each, never reused for anything
+  else): something to act on (the warn tone), something blocked (the danger
+  tone), done (the ok tone), funds leave your wallet (a receipt row that
+  moves funds out, or an approval that lets them move), a signature or
+  wallet prompt (the confirm button), waiting on the chain (signing,
+  submitted, mined), unknown (a figure the app cannot substantiate, beside
+  the word "unknown"), and more about this (the info button "(i)" right
+  after the sentence it explains, which opens the help panel of RB-HELP; its
+  accessible name is "Why?", its description is that sentence, and its tap
+  area is at least 44 px square; no hover tooltip, since touch has no hover).
+- **Places**: one icon per destination of the page map, beside or above the
+  destination's name on the phone bar and the desktop column. The one place
+  the names fold away is the desktop panel the reader has chosen to collapse:
+  each link keeps its name for screen readers, and a resting mouse or
+  keyboard focus brings the names back. The button that folds it is the
+  main-menu button (three lines) at the far left of the header, the one
+  control without a visible word: its name "Main menu" is spoken, with
+  whether the panel is expanded, and the browser shows that name as a hover
+  tip. The tip only names the control, never explains anything, so RB-HELP's
+  rule against tooltips for explanations is not touched.
+
+A plain information notice carries no icon, so an icon always means the
+reader should look. A new meaning is a change to this rule, not a local
+choice. Counts on navigation (such as "Claims 2") arrive with the pages that
+own them. Shapes come from one open icon set (ISC licence), drawn inline in
+the current text colour, so they follow the theme and contrast of their text.
+
 ### RB-FUNDS — fund transparency
 
 Every fund-moving flow states the movement in plain words on the receipt
@@ -308,6 +363,21 @@ A route the app cannot drive says so instead of offering a
 button that would fail. A feature whose prerequisite cannot be verified is
 never an actionable signing step; an unavailable convenience may ship with
 its gap disclosed.
+
+A token amount is written for reading: digit groups, and a fraction
+shortened to four places once there is a whole part, or to four significant
+digits below one, cut toward zero and never rounded up, so a small amount
+never reads as zero. A figure that lost digits is marked approximate (≈),
+and every receipt with such a figure offers its exact figures, every digit,
+in place: its amount rows, and every figure written inside a sentence of it
+(a row's text or a "You can lose" line), switch together. A figure the protocol will act on exactly as written (an approval,
+a tariff ceiling) is always shown exact, in the review, in the wallet step
+and in what a stop reports about putting it back; so are the two figures a
+measured outcome compares when they differ, since shortened they could read
+the same. In a receipt, labels and values
+sit in two even columns so a long label never squeezes its value, with a
+hairline between rows, the label above its value on a phone, and a number
+is never broken across lines.
 
 ### RB-INTEGRITY — page integrity
 
@@ -384,6 +454,206 @@ above. Each resolves here, so a route reviewer needs no private file:
   remaining debt), never from the full-settlement preview; a figure the
   simulation cannot give is stated unknown; a dedicated partial preview on
   the Diamond is a contract gap to file.
+
+- **RB-RISK-STEP** — a risk-access block the connected wallet can clear
+  itself (level too low, illiquid pair consent, strict-mode acknowledgement)
+  is cleared in the flow that hit it, never by sending the reader to
+  another page. Which step is the protocol's own answer for that flow (the
+  accept preview, the create dry run), never a rule the app restates; the
+  lender's own block is shown as the lender's. The step is one signed
+  transaction through RB-CONFIDENCE (its reach, when it counts, no funds
+  moved), a raise names the observed change counter and terms version, a
+  waiting period is stated from the chain and the step is never offered
+  twice while it runs, and the flow's review reads again afterwards.
+- **RB-NFT-APPROVAL** — a flow that pledges an NFT asks the wallet to
+  approve that one token, never the collection, and only when the token's
+  own approval (or a collection approval the wallet set before) does not
+  already let the protocol move it. Which standard a collection follows is
+  the contract's own answer (ERC-165); a read that failed says the standard
+  is unknown and offers nothing, never a guess. The approval counts only
+  when it reads the protocol at the block its receipt mined in. When what it
+  was for does not go through, it is put back, but only while it still reads
+  the protocol and the wallet still holds the token; anything else is stated,
+  never overwritten. The put-back reads the approval no earlier than the
+  block the approval mined in (the same holds for an ERC-20 allowance), so a
+  node that has not caught up can never pass a skipped reset as done.
+  An ERC-1155 token has no approval for one token, only an operator approval
+  over the whole collection. A flow that pledges a quantity of one grants it
+  for that action alone and takes it back on every ending, the action's
+  success included, as its own named wallet step (the review counts it); an
+  operator approval the wallet had granted before is left exactly as set.
+  The grant counts only when it reads back at its receipt's block, and the
+  take-back reads no earlier than that block, so it is never skipped as
+  already done. While the action's own receipt is unknown the grant still
+  stands, and the page says so beside the transaction. A take-back that did
+  not land or could not be read is stated with what to do in the wallet.
+- **RB-RANGE** — a ranged offer (OFF-10) is shown at both ends it can be
+  taken at, never as one figure: what a direct taker gets (for a borrower's
+  request, the smallest amount against the floor collateral, the rest of the
+  collateral back to the wallet) and the largest loan a match can make. The
+  risk at each end is the protocol's own figure at today's prices; a
+  collateral that values to nothing is said so, never shown as 0%. The
+  create dry run checks the protocol's limit at the largest end only, so the
+  direct end is asked as its own dry run, and an answer that says nothing
+  about the limit is stated as unknown. A match locks the collateral its
+  lender asks for, not what the request posts: at least the floor for a
+  collateral range (so the largest match is stated from all the collateral
+  down to only the floor), otherwise only the lender's requirement (so it is
+  stated as able to lock less). The collateral a match does not lock stays
+  committed to the request for later matches and comes back only when the
+  request closes or is cancelled, never per match, and the review says so
+  for every request a match can fill. Every request a
+  match can fill therefore warns, in Basic, that a matched loan can start
+  riskier than the figures shown, bounded only by the protocol's start-of-loan
+  limit; the Advanced row for that limit states a failed read rather than
+  dropping it. The matching switch (RB-SWITCH class
+  1a) is stated beside every range, with what the range does while it is
+  off. A fill mode (OFF-11) the protocol would refuse (all or none with a
+  range, immediate or cancel without an expiry) is not offered, and the
+  fill mode is said to be fixed once posted. The amounts, the rate and the
+  collateral are not fixed: the protocol lets the creator edit an open
+  request, never below what matches have already used. Until the app offers
+  that edit, the review says the protocol allows it and that the app does
+  not, so a missing screen is never presented as a protocol rule. They are Advanced
+  options; set in Advanced, they still apply in Basic, which says so and
+  offers to clear them, and every risk warning they cause stays in Basic.
+- **RB-CADENCE** — an interest schedule (OFF-14) is offered only where the
+  protocol's own admission rule allows it for the terms typed, asked of the
+  protocol (its admission preview runs the rule offer creation enforces) and
+  never re-derived by the app. Every closed schedule says why under its
+  name: the switch (RB-SWITCH class 1a), an unpriced leg, a loan over a year
+  that must pay at least yearly, a principal under the threshold (both
+  figures, in the numeraire), or a period not shorter than the loan. While
+  that answer is loading or failed, only interest at repayment is offered,
+  and a schedule already chosen holds the review until it is known. The
+  review states the schedule, each period's interest as the protocol
+  expects it (at both ends of a range), the grace a missed period gets
+  (today's figure, or a plain "could not be read" when the read failed,
+  never a silently missing row), that the amount owed is the whole term's
+  interest plus principal with the instalments counting toward it (not a
+  sum still due at the end), and, in Basic, that a period not paid by its grace end
+  lets anyone sell part of the collateral to pay it, and that the schedule
+  is fixed once posted. Who settles a missed period is Advanced detail:
+  anyone may, and the keeper pass's arming is the capability service's
+  answer (RB-SWITCH class 4, unknown by default). A schedule is an Advanced
+  choice; set in Advanced, it still applies in Basic, which says so.
+- **RB-TARIFF** — the creator's opt-in to the Full fee tariff on a request
+  (OFF-22) is offered only while the protocol's switch is on (RB-SWITCH
+  class 1a), and the form states the switch either way. Every figure is the
+  protocol's: today's tariff from its own quote, at the smallest and the
+  largest loan of a range, never re-derived. The creator sets the most VPFI
+  one loan may take (left blank, today's tariff for the largest loan) and
+  what a loan that cannot take the tariff does: it is refused, or it opens
+  without it. The review states the choice, the switch, the tariff, the
+  ceiling, the rule and the vault's free VPFI as the charge reads it, and,
+  in Basic, that each loan pays its own non-refundable tariff priced at
+  that loan's amount, that the loan fee is still charged in the lending
+  asset with ten more points of discount up to the cap, and that the
+  opt-in is a second transaction after posting, so a lender who takes the
+  request before it confirms opens a loan without the tariff. Each
+  condition the reads show failing is stated as what it does to a loan
+  under the chosen rule; a choice under which every loan would be refused
+  (switch off, unpriced or illiquid lending asset, a ceiling below the
+  smallest loan's tariff, with loans not allowed to open without it) blocks
+  the review. After posting, the opt-in opens as its own step below the
+  request's finish card, bound to the network and wallet that posted the
+  request (signing is withheld on any other), kept apart from that card so
+  closing it never drops the step, and holding a second posting back while
+  it is open. It re-reads the request before the wallet opens (taken, not
+  the creator, already set), treats a routing table still loading as
+  unreadable rather than refused, and is measured by reading the request
+  back. Closing the step leaves its ending in place until dismissed: set,
+  not set, skipped (the step sent nothing, so the tariff is off unless set
+  some other way), or not known; a re-check that already read the choice on
+  the request ends as set. Skipped and not known are read from the chain
+  as the step closes, and offer that read again: one rule reads the request
+  for the check and the read (another wallet's request, the choice already
+  on it even if since taken, taken without it, open without it); a match
+  settles the ending as set, anything else is stated with the time it was
+  read, since a pending transaction can still land.
+  The tariff is an Advanced choice; set there, it still
+  applies in Basic, which says so. The backstop for requests nobody takes
+  (OFF-26) is stated as not offered (#3181), never as a step.
+- **RB-LEND-ACCEPT** — Borrow and Lend take an offer through one shared
+  flow (matching list, review, signing, measured outcome) whose role is the
+  acceptor's side: a borrower takes a lender offer, a lender funds a borrow
+  request. The role decides which leg the wallet pays and so where funds,
+  allowance and approval are measured (the collateral for a borrower, the
+  lending asset for a lender), which offers are listed (the other side's,
+  ERC-20 on both legs, not the reader's own), the order (lowest rate first
+  for a borrower, highest for a lender) and the receipt. A lender's receipt
+  states what leaves the wallet, what the borrower receives, the borrower's
+  initiation fee and the share of it paid back to the sender, the
+  collateral held for the lender, the interest owed at the due date, the
+  protocol's share of interest at today's rate as an upper bound (fixed when
+  the loan opens, lowered by the lender's fee-discount tier while the
+  consent is on, and stated as off when it is), and what comes back if
+  repaid on the due date. A request that refinances a loan does not pay the
+  borrower: the amount less the fee pays the old loan's lender in the same
+  transaction, so the list row and the receipt say whose loan it pays and
+  never show it as the borrower's proceeds (the protocol's own rule, a
+  borrow-side offer naming a target loan, read once). A borrow-side offer linked to a running loan is a
+  sale of that loan's lender position, not a request: the list counts it
+  apart and the review blocks it, because buying a running loan has its own
+  terms and is not this flow. A request is funded whole, at its smallest
+  amount and highest rate; matching is a later update.
+- **RB-LEND-POST** — Borrow and Lend post the reader's own offer through
+  one shared flow (form, review, signing, measured outcome) whose side is
+  the poster's: a borrower posts a request, a lender posts an offer. The
+  side decides what posting locks in the poster's vault, and so where the
+  balance, the allowance, the approval, the shortfall and the measured
+  lock are read: the collateral for a request, the amount lent for an offer
+  (the protocol escrows the offer's largest amount when it is posted). A
+  lender's offer states one collateral figure that every borrower must
+  lock; it is sent as both ends of the protocol's collateral range, as the
+  protocol requires of a lender's offer. The lender's receipt states what
+  locks now, the amount a borrower takes and the collateral they must lock,
+  what the borrower would receive at today's fee and the fee itself (the
+  borrower's, never taken from the amount lent), the interest at the due
+  date, the protocol's share of it at today's setting as an upper bound
+  (stated as unread, never as zero, when it cannot be read, and then no
+  figure built on it is shown), what comes back if repaid on the due date,
+  every term it binds, the loan-to-value at today's prices, and the
+  lender's consequences: the lock while open, the lapse, a taker opening
+  the loan at once, a match lending the whole amount at the offer's rate
+  against at least the collateral asked (said only while matching is not
+  known to be off), default, liquidation, the position token and the
+  binding offer. A refusal whose remedy is the borrower's (lock more
+  collateral) is never offered to a lender; the protocol's own reason is
+  shown instead, except the protocol's collateral floor, whose remedy (ask
+  for more collateral, or lend less) is the lender's and is named with the
+  least collateral it asks. In Advanced a lender may lend the offer in
+  parts (OFF-10): the amount typed stays the whole amount, which posting
+  locks and a direct take borrows (the protocol sizes a direct take of a
+  lending offer at its largest amount), and the lender adds the smallest
+  part one match may lend. The receipt's figures are the whole amount's; it
+  states the smallest part, the least collateral that part asks (the
+  requirement pro-rated, rounded down, as the protocol does), that matches
+  lend parts at the offer's rate while matching is on (the switch said in
+  each state), that no borrower can take the rest directly once a match has
+  lent a part (cancelling takes it back), and that the rest below the
+  smallest part returns to the wallet as the offer closes. One
+  loan-to-value is shown, since a part carries the whole amount's ratio.
+  The fill mode (OFF-11) is offered on both sides, worded for each, and is
+  stated as fixed once posted. The interest schedule (OFF-14) and the Full
+  fee tariff (OFF-22) are offered on both sides in Advanced, through the
+  same fieldsets and the same reads. A lender's schedule is admitted at the
+  smallest part (or the whole amount without parts), the amount the
+  protocol checks at posting, so a schedule the whole amount would clear
+  stays closed with both figures while the part is under the threshold.
+  The receipt states each period's interest on the whole amount and on the
+  smallest part, the whole term's interest as a total the instalments count
+  toward, and that a missed period sells part of the borrower's collateral
+  to pay the lender while the loan stays open. The tariff is quoted in the
+  form at the whole amount (a direct take, the largest loan) and in the
+  review at both ends; the receipt states what it costs, what it gives the
+  lender (10 more points of discount on the protocol's share of interest,
+  up to the 50% cap, for the loan's term, lost on an extension, following
+  the lender position), the gap before it is set, and each refusal under
+  the chosen rule. It is set by its own measured transaction on the Lend
+  page after the offer posts, worded for an offer, and a new offer is held
+  back while that step is open. An offer that asks for an NFT is a later
+  update.
 
 ## 3. Companion specifications
 

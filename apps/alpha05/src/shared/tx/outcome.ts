@@ -23,7 +23,17 @@ export type TxPhase =
    *  self-transfer) or `replaced` (a different call took its place). The
    *  intended effects are not measured, because they cannot have happened
    *  through this flow; both hashes are kept so the page can say so. */
-  | { kind: 'superseded'; submittedHash: `0x${string}`; minedHash: `0x${string}`; reason: SupersededReason; blockNumber: bigint }
+  | {
+      kind: 'superseded';
+      submittedHash: `0x${string}`;
+      minedHash: `0x${string}`;
+      reason: SupersededReason;
+      blockNumber: bigint;
+      /** What the flow's clean-up put back or took back (or could not),
+       *  one leg per step that had something standing; empty when there
+       *  was nothing to undo. */
+      unwound?: readonly LegOutcome[];
+    }
   /** Submitted, but the receipt could not be read (the node timed out or
    *  went away): the transaction may still execute, so the hash is kept and
    *  shown, tracking can resume, and no new review starts from here. */

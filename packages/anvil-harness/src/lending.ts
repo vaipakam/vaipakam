@@ -132,6 +132,59 @@ export async function postLenderOffer(sc: ScenarioChain, t: OfferTerms): Promise
   return BigInt(offerEv.args.offerId as bigint);
 }
 
+export interface RequestTerms {
+  borrower: Party;
+  /** WETH asked, decimal string. */
+  principalWeth: string;
+  /** tLIQ locked as collateral, decimal string (minted to the borrower). */
+  collateralTliq: string;
+  rateBps: number;
+  days: number;
+}
+
+/** The borrower posts a borrow request for WETH, locking tLIQ it mints for
+ *  itself in its own vault, and leaves it open. Returns the offer id. */
+export async function postBorrowRequest(sc: ScenarioChain, t: RequestTerms): Promise<bigint> {
+  const principal = parseEther(t.principalWeth);
+  const collateral = parseEther(t.collateralTliq);
+  const collateralAsset = tliq(sc);
+  await sc.write(t.borrower, collateralAsset, TOKEN_ABI, 'mint', [sc.address(t.borrower), collateral]);
+  await sc.write(t.borrower, collateralAsset, TOKEN_ABI, 'approve', [sc.diamond, collateral]);
+  const created = await sc.diamondWrite(t.borrower, 'createOffer', [
+    {
+      offerType: 1,
+      lendingAsset: WETH,
+      amount: principal,
+      interestRateBps: BigInt(t.rateBps),
+      collateralAsset,
+      collateralAmount: collateral,
+      durationDays: BigInt(t.days),
+      assetType: 0,
+      tokenId: 0n,
+      quantity: 1n,
+      creatorRiskAndTermsConsent: true,
+      prepayAsset: ZERO,
+      collateralAssetType: 0,
+      collateralTokenId: 0n,
+      collateralQuantity: 0n,
+      allowsPartialRepay: true,
+      amountMax: principal,
+      interestRateBpsMax: BigInt(t.rateBps),
+      collateralAmountMax: collateral,
+      periodicInterestCadence: 0,
+      expiresAt: 0n,
+      fillMode: 0,
+      allowsPrepayListing: false,
+      allowsParallelSale: false,
+      refinanceTargetLoanId: 0n,
+      useFullTermInterest: false,
+    },
+  ]);
+  const offerEv = sc.decodeDiamondLogs(created.logs).find((e) => e.eventName === 'OfferCreated');
+  if (!offerEv) throw new Error('createOffer emitted no OfferCreated');
+  return BigInt(offerEv.args.offerId as bigint);
+}
+
 /** The lender posts a lender offer; the borrower accepts it with a signed
  *  AcceptTerms. Returns the loan the accept initiated. */
 export async function openLoan(sc: ScenarioChain, t: LoanTerms): Promise<OpenedLoan> {

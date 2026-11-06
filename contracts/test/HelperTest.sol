@@ -1232,39 +1232,33 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](32);
+        selectors = new bytes4[](26);
         selectors[0] = RiskAccessFacet.setVaultRiskTier.selector;
         selectors[1] = RiskAccessFacet.setIlliquidPairConsent.selector;
-        selectors[2] = RiskAccessFacet.setVaultRiskTierBySig.selector;
-        selectors[3] = RiskAccessFacet.setIlliquidPairConsentBySig.selector;
-        selectors[4] = RiskAccessFacet.commitRiskTermsBump.selector; // #730 r5
-        selectors[5] = RiskAccessFacet.setRiskAccessUnlockCooldown.selector;
-        selectors[6] = RiskAccessFacet.setProtocolManagedVault.selector;
-        selectors[7] = RiskAccessFacet.getVaultRiskTier.selector;
-        selectors[8] = RiskAccessFacet.getEffectiveRiskTier.selector;
-        selectors[9] = RiskAccessFacet.getCurrentRiskTermsVersion.selector;
-        selectors[10] = RiskAccessFacet.getRiskAccessUnlockCooldown.selector;
-        selectors[11] = RiskAccessFacet.getRiskTierUnlockAt.selector;
-        selectors[12] = RiskAccessFacet.isProtocolManagedVault.selector;
-        selectors[13] = RiskAccessFacet.riskAccessNonceUsed.selector;
-        selectors[14] = RiskAccessFacet.hasIlliquidPairConsent.selector;
-        selectors[15] = RiskAccessFacet.pairRequiredRiskLevel.selector;
-        selectors[16] = RiskAccessFacet.setRiskStrictMode.selector;
-        selectors[17] = RiskAccessFacet.setRiskStrictModeBySig.selector;
-        selectors[18] = RiskAccessFacet.setMidTierPairAck.selector;
-        selectors[19] = RiskAccessFacet.setMidTierPairAckBySig.selector;
-        selectors[20] = RiskAccessFacet.getRiskStrictMode.selector;
-        selectors[21] = RiskAccessFacet.getStrictModeStrictUntil.selector;
-        selectors[22] = RiskAccessFacet.midTierStrictBlocked.selector;
-        selectors[23] = RiskAccessFacet.getCurrentRiskTermsHash.selector; // #730 r3
-        selectors[24] = RiskAccessFacet.revealRiskTermsBump.selector; // #730 r5
-        selectors[25] = RiskAccessFacet.getPendingRiskTermsCommitment.selector; // #730 r5
-        selectors[26] = RiskAccessFacet.getVaultRiskTierVersion.selector; // #735
-        selectors[27] = RiskAccessFacet.isPairConsentPending.selector; // #735 item 3
-        selectors[28] = RiskAccessFacet.isMidTierAckPending.selector; // #735 item 3
-        selectors[29] = RiskAccessFacet.setVaultRiskTierChecked.selector; // #1522
-        selectors[30] = RiskAccessFacet.setVaultRiskTierCheckedBySig.selector; // #1522
-        selectors[31] = RiskAccessFacet.getRiskTierMutationNonce.selector; // #1522
+        selectors[2] = RiskAccessFacet.commitRiskTermsBump.selector; // #730 r5
+        selectors[3] = RiskAccessFacet.setRiskAccessUnlockCooldown.selector;
+        selectors[4] = RiskAccessFacet.setProtocolManagedVault.selector;
+        selectors[5] = RiskAccessFacet.getVaultRiskTier.selector;
+        selectors[6] = RiskAccessFacet.getEffectiveRiskTier.selector;
+        selectors[7] = RiskAccessFacet.getCurrentRiskTermsVersion.selector;
+        selectors[8] = RiskAccessFacet.getRiskAccessUnlockCooldown.selector;
+        selectors[9] = RiskAccessFacet.getRiskTierUnlockAt.selector;
+        selectors[10] = RiskAccessFacet.isProtocolManagedVault.selector;
+        selectors[11] = RiskAccessFacet.hasIlliquidPairConsent.selector;
+        selectors[12] = RiskAccessFacet.pairRequiredRiskLevel.selector;
+        selectors[13] = RiskAccessFacet.setRiskStrictMode.selector;
+        selectors[14] = RiskAccessFacet.setMidTierPairAck.selector;
+        selectors[15] = RiskAccessFacet.getRiskStrictMode.selector;
+        selectors[16] = RiskAccessFacet.getStrictModeStrictUntil.selector;
+        selectors[17] = RiskAccessFacet.midTierStrictBlocked.selector;
+        selectors[18] = RiskAccessFacet.getCurrentRiskTermsHash.selector; // #730 r3
+        selectors[19] = RiskAccessFacet.revealRiskTermsBump.selector; // #730 r5
+        selectors[20] = RiskAccessFacet.getPendingRiskTermsCommitment.selector; // #730 r5
+        selectors[21] = RiskAccessFacet.getVaultRiskTierVersion.selector; // #735
+        selectors[22] = RiskAccessFacet.isPairConsentPending.selector; // #735 item 3
+        selectors[23] = RiskAccessFacet.isMidTierAckPending.selector; // #735 item 3
+        selectors[24] = RiskAccessFacet.setVaultRiskTierChecked.selector; // #1522
+        selectors[25] = RiskAccessFacet.getRiskTierMutationNonce.selector; // #1522
     }
 
     /// @dev #1104 — preview cluster + cross-facet gate asserts split into

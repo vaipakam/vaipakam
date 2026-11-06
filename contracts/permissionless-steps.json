@@ -641,41 +641,21 @@
       "class": "user",
       "why": "the vault owner's own risk setting"
     },
-    "RiskAccessFacet.setIlliquidPairConsentBySig(struct:LibRiskAccess.SetIlliquidPairConsent,bytes)": {
-      "class": "gated",
-      "gate": "an EIP-712 signature by the vault owner; anyone may relay it, and it sets only what the owner signed"
-    },
     "RiskAccessFacet.setMidTierPairAck(struct:LibRiskAccess.PairId)": {
       "class": "user",
       "why": "the vault owner's own risk setting"
-    },
-    "RiskAccessFacet.setMidTierPairAckBySig(struct:LibRiskAccess.SetMidTierPairAck,bytes)": {
-      "class": "gated",
-      "gate": "an EIP-712 signature by the vault owner; anyone may relay it, and it sets only what the owner signed"
     },
     "RiskAccessFacet.setRiskStrictMode(bool)": {
       "class": "user",
       "why": "the vault owner's own risk setting"
     },
-    "RiskAccessFacet.setRiskStrictModeBySig(struct:LibRiskAccess.SetRiskStrictMode,bytes)": {
-      "class": "gated",
-      "gate": "an EIP-712 signature by the vault owner; anyone may relay it, and it sets only what the owner signed"
-    },
     "RiskAccessFacet.setVaultRiskTier(uint8)": {
       "class": "user",
       "why": "the vault owner's own risk setting"
     },
-    "RiskAccessFacet.setVaultRiskTierBySig(struct:LibRiskAccess.SetVaultRiskTier,bytes)": {
-      "class": "gated",
-      "gate": "an EIP-712 signature by the vault owner; anyone may relay it, and it sets only what the owner signed"
-    },
     "RiskAccessFacet.setVaultRiskTierChecked(uint8,uint64,uint64)": {
       "class": "user",
       "why": "the vault owner's own risk setting"
-    },
-    "RiskAccessFacet.setVaultRiskTierCheckedBySig(struct:LibRiskAccess.SetVaultRiskTierChecked,bytes)": {
-      "class": "gated",
-      "gate": "an EIP-712 signature by the vault owner; anyone may relay it, and it sets only what the owner signed"
     },
     "RiskDiscountedLiquidationFacet.triggerLiquidationDiscounted(uint256,address,bytes)": {
       "class": "alternative",

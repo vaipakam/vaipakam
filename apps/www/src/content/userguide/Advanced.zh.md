@@ -1770,6 +1770,168 @@ health factor 是仪表盘视图中按 1e18 缩放的读数；读数为 0 表示
 
 `getSanctionsHeldReward(user)` 是暂扣余额，`getRewardSanctionsStatus(user)` 是其判定（Deliver、Hold 或 Confirmed）。有余额且判定为 Deliver 时，Home 提供 `claimHeldInteractionRewards(2)`，它只支付恰好的暂扣余额而不结算任何新欠款，并发出 `InteractionRewardsClaimed(user, 0, 0, paid)`；钱包被禁止期间它会以 `SanctionedAddress` revert。签名前的复核会重新读取二者，并以发送者身份模拟该调用。标记确认期间赚得的天数将被永久没收。
 
+<a id="borrow-start"></a>
+
+### Borrow: 如何运作
+
+Borrow 通过 `acceptOffer(offerId, terms, signature)` 直接接受以 ERC-20 抵押借入 ERC-20 的出借人报价（`offerType` 0）。一笔交易内：借款人没有金库时为其开立金库，将抵押品转入其中，把扣除发起费后的本金交付到钱包，并发出 `LoanInitiated`。借款人也可以发布请求（`offerType` 1）；NFT 一侧、交易对同意和高级选项将在后续更新中提供。
+
+<a id="borrow-pair"></a>
+
+### Borrow: 选择代币
+
+每种代币的类别实时读取：先读 `getAssetPriceStatus(asset)`（Divergent 视为不受信任并关闭新贷款），再读 `checkLiquidityOnActiveNetwork(asset)`（0 为有流动性，1 为无流动性）。以 `OraclePriceDivergence` 或 `OracleCrossCheckDivergence` 回滚视为不受信任；其他任何失败都显示为无法读取并附上原因。推荐列表为部署记录中的包装原生代币和测试代币；粘贴的地址只检查格式。
+
+<a id="borrow-offers"></a>
+
+### Borrow: 选择报价
+
+`getActiveOffersByAssetPairRanked(lending, collateral, 0, 20)` 返回该交易对的公开报价 id 和总数。对每个 id，页面读取 `getOffer`、`getOfferState`，有钱包时还读取 `previewAccept(offerId, wallet)`，其中 `errorCode` 即协议的拒绝原因。贷款价值比为按今日价格计算的 `calculateLTV`；无流动性或无价格的一侧会说明为何没有。直接接受按出借人的 `amountMax` 和 `interestRateBps` 绑定。借款请求、带 NFT 一侧的报价和自己的报价只计数，不列出。
+
+<a id="borrow-review"></a>
+
+### Borrow: 审核与签名
+
+审核读取报价、其状态、`previewAccept`、`getOfferLinkedLoanId`、`getCurrentRiskTermsHash`、两种类别、`getEffectiveGraceSeconds(durationDays)`、`getLoanInitiationFeeBps`、钱包的金库、余额和授权额度、`previewOfferAcceptBlock` 以及折扣同意，并在钱包打开前再读一次。钱包签署由已存储报价构建的 EIP-712 `AcceptTerms`（域 `Vaipakam AcceptOffer`，版本 1），附带新的 128 位 nonce 和 30 分钟期限；无流动性确认只指明审核中显示为无流动性的一侧。仅当授权额度不足时才批准与抵押品完全相同的额度，然后用签名模拟 `acceptOffer` 再发送。若在批准后中止，且额度未被其他操作改变，应用会把它恢复为原值。结果从该报价和钱包的 `LoanInitiated` 以及收据中的 `Transfer` 日志读取。授权额度会在第一次钱包请求之前重新读取，重置时恢复的就是这个值；已发送但回滚（revert）的接受交易，或被钱包取消或替换的接受交易，也会由交易跟踪器做同样的重置。审核页列出 `allowsPartialRepay`、`allowsPrepayListing`、带 `parallelSaleOrderHash` 的 `allowsParallelSale`、`refinanceTargetLoanId` 以及关联贷款，并将应还金额标注为无暂停情形，因为暂停期间利息照常累计，只是到期日后移。 每个授权步骤都以在其回执所在区块读回的授权额度来判断，从不依据回执状态。对于拒绝把一个非零授权额度改为另一个非零值的代币（通过 `approve` 的试运行判断），会先加一步归零，审核界面将其计为一次额外提示。条款接受情况会在钱包打开前再次读取。 两种出售途径都以 NFT 形式挂出抵押品，因此在代币抵押品上，已授予的挂单或出售许可会被说明为该贷款无法使用。`VaultUpgradeRequired` 拒绝通过对钱包自身金库调用 `getVaultVersionInfo` 来归属：只有当该金库低于最低版本时才给出处理办法，否则指明是出借人的金库。
+
+<a id="borrow-fee"></a>
+
+### Borrow: 发起费
+
+费用为 `previewAccept` 的 `lifEstimate`：本金乘以 `getLoanInitiationFeeBps`，以所借代币收取，从交付金额中扣除；同意开启且所借代币有流动性时按持有等级折扣降低，等级在接受时确定。本页从不选择 Full 费率。该费用不收取 VPFI，也不返还。 提交者份额（费用的 `getLifMatcherFeeBps`）支付给发送交易的一方，在直接接受中即借款人，因此钱包收到扣除费用后的本金再加上这部分份额。
+
+<a id="borrow-risks"></a>
+
+### Borrow: 风险
+
+超过宽限期的贷款（到期后 `getEffectiveGraceSeconds`，暂停时间会使其顺延）任何人都可以触发违约：有流动性的抵押品为出借人出售，无流动性的抵押品原样转移。健康因子低于 1 时，有流动性的抵押品也可能被清算。`useFullTermInterest` 在提前还款时收取全期利息；付息计划通过强制出售抵押品来结清未付期次。
+
+<a id="borrow-request"></a>
+
+### Borrow：发布你自己的请求
+
+请求是从借款人钱包发送的 `createOffer`，`offerType` 为 1，两侧均为 ERC-20。它把 `collateralAmount` 转入借款人的金库（若没有金库则先创建），并发出 `OfferCreated(offerId, creator, 1)`。出借人用 `acceptOffer` 接受：扣除费用后的本金进入借款人钱包，费用中归发送者的份额归发送交易的出借人。`cancelOffer` 在创建后 `MIN_OFFER_CANCEL_DELAY`（5 分钟）起对创建者开放，请求过期后对任何人开放；抵押品始终退回创建者。
+
+<a id="borrow-request-terms"></a>
+
+### Borrow：请求的条款
+
+Basic 发布单一数值的请求：`amount` = `amountMax`，`interestRateBps` = `interestRateBpsMax`，`collateralAmount` = `collateralAmountMax`，`fillMode` 0，`periodicInterestCadence` 0，`allowsPrepayListing` 和 `allowsParallelSale` 为 false，`refinanceTargetLoanId` 0，`creatorRiskAndTermsConsent` 为 true。金额精确换算为基本单位，利率最多 10,000 bps。`durationDays` 以 `getProtocolConfigBundle` 中读取的配置上限为界。`expiresAt` 为 0（取消前一直有效），或在打开审核时依最新区块确定的时间，最多为 `MAX_OFFER_EXPIRY_HORIZON`（365 天）之后。`useFullTermInterest` 默认为 true，`allowsPartialRepay` 默认为 false。
+
+<a id="borrow-request-review"></a>
+
+### Borrow：审核并发布请求
+
+审核从钱包模拟 `createOffer`，并读取两侧的类别、`getEffectiveGraceSeconds(durationDays)`、`getLoanInitiationFeeBps`、最长期限、钱包的金库、余额和授权额度，两侧均为流动资产时还读取 `calculateLTV`；每个区块以及钱包打开前都会重新读取。授权额度不足时，模拟只能走到划转抵押品这一步，因此代币的划转错误或没有协议错误名的回滚会显示为待完成的批准，而有名称的协议错误则视为拒绝。完成精确批准后，再次模拟 `createOffer` 并发送；批准后若中止，且没有其他改动，授权额度会恢复为原值。结果读取此钱包的 `OfferCreated` 以及抵押品转入金库的 `Transfer`。
+
+<a id="borrow-nft-collateral"></a>
+
+### Borrow：以 NFT 作为抵押品
+
+抵押品的标准通过 `supportsInterface` 读取（ERC-721 `0x80ac58cd`，ERC-1155 `0xd9b67a26`）；回滚视为两者都不是，读取失败则不提供请求。ERC-721 请求发送 `collateralAssetType` 1、`collateralTokenId` 为输入的 ID、`collateralQuantity` 1，以及 `collateralAmount` = `collateralAmountMax` = 0；风险交易对以该代币 ID 为键。审核在同一区块读取 `ownerOf`、`getApproved` 和 `isApprovedForAll(wallet, Diamond)`；由其他钱包持有的代币或回滚的 `ownerOf` 会阻止请求。在没有任何授权时，试运行会停在代币的 `ERC721InsufficientApproval`，显示为待完成的授权。授权为 `approve(Diamond, id)`，只有当回执所在区块的 `getApproved` 读到 Diamond 时才算完成；之后若停止，只有在授权仍指向 Diamond 且钱包仍持有该代币时，才会恢复为之前的地址。对于 ERC-721，从不请求 `setApprovalForAll`。结果读取 `OfferCreated` 以及该代币自身从钱包到金库的 `Transfer`（四个 topic）。ERC-1155 请求发送 `collateralAssetType` 2、代币 ID、等于所输入数量的 `collateralQuantity`（1 到 2^128−1），两个金额均为 0。审核在同一区块读取 `balanceOf(wallet, id)` 和 `isApprovedForAll(wallet, Diamond)`；余额低于数量会阻止请求，没有授权时试运行会停在 `ERC1155MissingApprovalForAll`。唯一的授权是 `setApprovalForAll(Diamond, true)`，在其回执所在区块读回时才算完成，并在请求上链或停止后以 `setApprovalForAll(Diamond, false)` 收回（从不早于授予所在区块读取），除非钱包此前已授予。结果汇总该代币从钱包到金库的 `TransferSingle`/`TransferBatch`。要求 NFT 的出借人报价仍转至当前应用。
+
+<a id="borrow-request-range"></a>
+
+### Borrow: 带范围的请求
+
+范围发送的 `amount`（最小）低于 `amountMax`（最大），`interestRateBps` = `interestRateBpsMax`（同一利率），`collateralAmount`（最小贷款的下限）不高于 `collateralAmountMax`（发布时转入金库）；下限留空则两者相同。范围仅对 ERC-20 抵押品提供。直接 `acceptOffer` 以 `collateralAmount` 为抵押、按 `interestRateBpsMax` 出借 `amount`，并把 `collateralAmountMax − collateralAmount` 退回钱包；`getPartialFillEnabled` 为 true 期间，`matchOffers` 在两端之间成交。`createOffer` 的模拟在最大端应用报价上限，并以 `MaxLendingAboveCeiling(provided, ceiling)` 拒绝，审核会显示其上限。直接端通过在 (`amount`, `collateralAmount`) 处对单值请求的第二次模拟来检查；在上限之前停止的回答标为未知。每一端的贷款价值比为 `calculateLTV(lending, amount, collateral, collateralAmount)`，`ZeroCollateral` 视为毫无价值的抵押品。显示的贷款起始健康因子在 `getDepthTieredLtvEnabled` 为 false 时为 `getMinHealthFactor`，为 true 时为 1.0。撮合锁定出借人按比例计算的要求额：抵押品为区间时提高到 `collateralAmount`，否则保持要求额；因此最大撮合会同时按 `collateralAmountMax` 和 `collateralAmount` 显示（若无抵押品区间，则显示为可能锁定更少）。只有贷款开始时的检查约束它；读取该检查失败时会明确说明，绝不省略。在分层体制下，该检查还会应用该层级的贷款价值比上限。`getPartialFillEnabled` 为 true 期间，撮合未锁定的抵押品会留在金库中供后续撮合使用，只有在请求关闭（剩余容量低于 `amount`）或执行 `cancelOffer` 时才会退还。
+
+<a id="borrow-request-fill"></a>
+
+### Borrow: 请求的成交方式
+
+`fillMode` 为 0（Partial）、1（AON）或 2（IOC），发布后不可更改。AON 要求 `amount` = `amountMax`（`AonRequiresSingleValueAmount`），IOC 要求 `expiresAt` ≠ 0（`IocRequiresExpiry`）；表单不会提供被拒绝的组合。金额、利率和抵押品可在请求开放期间通过 `setOfferAmount`、`setOfferRate`、`setOfferCollateral` 和 `modifyOffer` 更改，但不能低于 `amountFilled` 或 `collateralAmountFilled`；本应用尚未调用它们。
+
+<a id="borrow-request-cadence"></a>
+
+### Borrow: 请求的利息计划
+
+`periodicInterestCadence` 取值 0（None）到 4（Annual），周期分别为 30、90、180 和 365 天。表单提供 `previewCadenceAdmission(lendingAsset, amount, assetType, collateralAsset, collateralAssetType, durationDays)` 允许的计划；它执行 `createOffer` 强制的规则，并按 `amount`（区间的最小端）估值。每个拒绝都根据其回滚数据说明：`PeriodicInterestDisabled`、`CadenceNotAllowedForIlliquid` 或 `CadenceNotAllowed(cadence, durationDays, principalNumeraire, threshold)`。一个周期的利息为 `principal × rate × intervalDays / (10000 × 365)`。宽限期 `getEffectiveGraceSeconds(intervalDays − 1)` 过后，任何人都可以通过 `settlePeriodicInterest` 结算逾期周期；它会出售抵押品，贷款继续有效。keeper 流程 `periodicSettle` 的启用状态按能力服务的报告显示，默认为未知。计划在发布后不能更改。
+
+<a id="borrow-request-tariff"></a>
+
+### Borrow: 请求的全额费用档
+
+选择加入使用 `setOfferCreatorFullTariff(offerId, true, maxCStar, allowDowngrade)`，由创建者在 `createOffer` 之后发送；一旦有出借人接受请求，就会以 `OfferAlreadyAccepted` 拒绝；`maxCStar` 必须大于零（`FullTariffMaxCStarRequired`）。表单从 `getFeeEntitlementConfig()` 显示开关，从 `quoteCStar(lendingAsset, principal, durationDays)` 显示费用档，范围请求则在 `amount` 和 `amountMax` 处读取；上限默认取 `amountMax` 处的报价。每次接受时，收费按该笔贷款本金计算 `C*`，仅当开关开启、本金有价格且具流动性、`C* ≤ maxCStar`，并且金库的可用 VPFI 足以支付（金库余额以 `getTrackedVPFIBalance` 为上限，减去有效留置，经由 `getFreeBalance`）时才收取；否则以 `FeeEntitlementDisabled`、`FeeEntitlementFullOptInFailed` 或 `FeeEntitlementTariffAboveAuth` 回滚，除非 `allowDowngrade` 允许贷款不带费用档开立。借款人的贷款费用折扣提高 `FULL_MODE_FEE_DISCOUNT_BONUS_BPS`（1000），上限为 `MAX_FEE_DISCOUNT_BPS`（5000）。审阅会阻止导致每笔贷款都被拒绝的选择，选择加入通过重新读取 `getOffer` 来测量（`creatorFull`、`creatorMaxCStar`、`creatorAllowFullDowngrade`）。对于未成交的请求，本应用尚未提供兜底出借。
+
+<a id="lend-start"></a>
+
+### Lend: 如何运作
+
+Lend 通过出借人发送的 `acceptOffer(offerId, terms, signature)`，直接接受以 ERC-20 抵押的 ERC-20 借款请求（`offerType` 1）。在一笔交易中，本金在对 Diamond 的授权下从出借人的钱包转入出借人的金库；借款人收到扣除发起费后的金额；已在借款人金库中的抵押品成为贷款的抵押品；并发出 `LoanInitiated`，出借人和借款人各得一枚仓位 NFT。出借报价（`offerType` 0）在同一页面发布；NFT 一方将在后续更新中推出。
+
+<a id="lend-offers"></a>
+
+### Lend: 选择请求
+
+`getActiveOffersByAssetPairRanked(lending, collateral, 0, 20)` 给出该交易对公开报价的 id。对每一个，页面读取 `getOffer`、`getOfferState`、`getOfferLinkedLoanId`，以及在连接钱包时读取 `previewAccept(offerId, wallet)`，其 `errorCode` 即协议的拒绝原因。直接接受按 `interestRateBpsMax` 锁定请求的 `amount`（其最小值），贷款价值比为该金额按今日价格计算的 `calculateLTV`。出借人报价、NFT 一方、读者自己的请求以及出借人仓位出售载体（`getOfferLinkedLoanId` 非零的借款方报价）只计数，不列出。排序：可出资的在前，然后按利率降序，再按金额降序。
+
+<a id="lend-review"></a>
+
+### Lend: 审核与签名
+
+审核读取与 Borrow 相同的内容（报价、其状态、`previewAccept`、`getOfferLinkedLoanId`、`getCurrentRiskTermsHash`、两种类别、`getEffectiveGraceSeconds(durationDays)`、`getLoanInitiationFeeBps`、`getLifMatcherFeeBps`、钱包的金库、`previewOfferAcceptBlock` 和费用折扣同意），外加 `getTreasuryFeeBps`，并在出借资产（出借人支付的一方）上测量余额和授权额度。该资产不足会阻止签名，出借人仓位出售载体同样如此。钱包签署 EIP-712 `AcceptTerms`（域 `Vaipakam AcceptOffer`，版本 1），仅在授权额度不足时精确批准本金（对拒绝在非零值之间变更的代币，先加一步归零），然后模拟并发送 `acceptOffer`；中止的流程留下的授权会像 Borrow 那样被重置。结果读取此报价的 `LoanInitiated`、本金从钱包转出的 `Transfer`，以及撮合份额返还的 `Transfer`。
+
+<a id="lend-fee"></a>
+
+### Lend: 费用与协议份额
+
+费用即 `previewAccept` 的 `lifEstimate`，由借款人承担：以出借资产计的本金的 `getLoanInitiationFeeBps`，从交付给借款人的金额中扣除，在接受时因借款人的持有等级折扣而降低，并在设置了 `creatorFull` 且收费成功时因全额费用档奖励而降低。提交者份额，即费用的 `getLifMatcherFeeBps`，支付给发送者，此处为出借人。协议在利息中的份额为 `getTreasuryFeeBps`，在每笔贷款开立时固定（`treasuryFeeBpsAtInit`）；同意开启时，出借人的持有等级折扣会在利息结算时降低它。审核显示今日费率，并以该费率下的份额作为上限。
+
+<a id="lend-risks"></a>
+
+### Lend: 风险
+
+超过宽限期结束（到期日后 `getEffectiveGraceSeconds`，暂停时间会使其推后）的贷款，任何人都可以将其违约：具流动性的抵押品为出借人出售，缺乏流动性的抵押品按原样转移。两方都具流动性时，健康因子低于 1 即可清算贷款，出售所得先支付出借人。任何一方缺乏流动性都会排除基于价格的清算，违约时出借人获得全部抵押品。`useFullTermInterest` 为提前还款设定利息下限；没有它则按比例计息。定期计息计划会通过强制出售抵押品向出借人结清错过的期次。出借人的仓位 NFT 承载债权：转让它就转让了贷款。
+
+<a id="lend-offer"></a>
+
+### Lend：发布您自己的报价
+
+出借报价是出借人钱包发送的 `createOffer`，`offerType` 为 0，两侧均为 ERC-20。它把出借资产的 `amountMax` 转入出借人的金库（若无金库则先创建），并发出 `OfferCreated(offerId, creator, 0)`。借款人以 `acceptOffer` 接受：其抵押品转入其金库，扣除费用后的本金进入其钱包，费用中发送者的份额作为发送者支付给借款人。当 `getPartialFillEnabled` 为 true 时，`matchOffers` 也可以把它与借款人的请求配对；此时单一数值的出借报价按其利率出借全部金额，抵押品至少为其 `collateralAmount`。创建后 `MIN_OFFER_CANCEL_DELAY`（5 分钟）起创建者可调用 `cancelOffer`，报价过期后任何人都可调用；金额始终退回创建者。
+
+<a id="lend-offer-terms"></a>
+
+### Lend：报价的条款
+
+未设部分时，出借报价为单一数值：`amount` = `amountMax`，`interestRateBps` = `interestRateBpsMax`，`collateralAmount` = `collateralAmountMax`（借款人必须锁定的唯一抵押品数量），`fillMode` 0（除非 Advanced 设置了其他方式，见下一节），`periodicInterestCadence` 0（除非 Advanced 设置了付息计划），`allowsPrepayListing` 和 `allowsParallelSale` 为 false，`refinanceTargetLoanId` 0，`creatorRiskAndTermsConsent` 为 true，且不设 Full 方案（除非 Advanced 选择了它）。金额被精确解析为基础单位，利率最多 10,000 bps。`durationDays` 受从 `getProtocolConfigBundle` 读取的配置最大值限制。`expiresAt` 为 0（取消前一直开放），或在审核打开时从最新区块确定的时间，最多提前 `MAX_OFFER_EXPIRY_HORIZON`（365 天）。`useFullTermInterest` 默认为 true，`allowsPartialRepay` 默认为 false。
+
+<a id="lend-offer-parts"></a>
+
+### Lend：分部分出借的报价
+
+分部分时发送的 `amount`（一次撮合可出借的最小部分）小于 `amountMax`（全部金额，由 `createOffer` 拉入金库）；`collateralAmount` = `collateralAmountMax` 仍是唯一要求，按 `amountMax` 计（否则为 `LenderCollateralRangeNotAllowed`），且 `interestRateBps` = `interestRateBpsMax`。直接对出借报价调用 `acceptOffer` 时，以 `collateralAmount` 出借 `amountMax`，且仅在 `amountFilled` 为 0 时可行（撮合后为 `OfferPartiallyFilled`）。当 `getPartialFillEnabled` 为 true 时，`matchOffers` 出借金额重叠区间的中点（至少为 `amount`），利率取利率重叠区间的中点，抵押品至少为 `collateralAmount × matchAmount ÷ amountMax`（向下取整；借款人的抵押品区间可能提高它）。当 `amountMax − amountFilled` 低于 `amount` 时，剩余部分被提取到出借人的钱包，报价关闭（`OfferClosed`，原因为 `Dust` 或 `FullyFilled`）。对部分成交的报价调用 `cancelOffer` 不受冷却期限制，并退回 `amountMax − amountFilled`。`fillMode` 与请求相同，为 0、1 或 2：AON 要求 `amount` = `amountMax`，IOC 要求设置到期时间，发布后不可更改。两边都为流动资产时，若 `collateralAmount` 低于 `amountMax` 对应的下限，`createOffer` 以 `MinCollateralBelowFloor(provided, floor)` 拒绝，审核会显示该下限。审核只显示一个贷款价值比，即 (`amountMax`, `collateralAmount`) 处的 `calculateLTV`：任一部分的比率相同，仅有取整差异。
+
+<a id="lend-offer-schedule"></a>
+
+### Lend：报价的利息支付计划
+
+出借报价的 `periodicInterestCadence` 遵循请求的规则（见上文），`previewCadenceAdmission` 按报价的 `amount` 估值：即最小部分，未设部分时为全部金额。`createOffer` 在此通过 `requireCadenceAdmitted` 准入，每笔贷款开立时还会再次检查其自身本金（`requireOriginationCadenceAdmitted`）。审核按 `amountMax`（直接承接）列出一期利息，分部分时还按 `amount` 列出。错过的一期在宽限期后可由任何人通过 `settlePeriodicInterest` 结算：出售抵押品向出借人支付该期利息，贷款保持开放。
+
+<a id="lend-offer-tariff"></a>
+
+### Lend：报价的全额费用档
+
+出借人的选择同样是 `setOfferCreatorFullTariff(offerId, true, maxCStar, allowDowngrade)`，在 `createOffer` 之后发送。一旦报价被全部承接或关闭，它会以 `OfferAlreadyAccepted` 被拒绝；部分撮合的报价仍可设置，适用于其之后的贷款。报价按 `quoteCStar` 在 `amount` 和 `amountMax` 计价，上限默认取 `amountMax` 处的报价。每笔贷款单独按其本金计价并对照 `maxCStar` 检查，条件与请求相同（`FeeEntitlementDisabled`、`FeeEntitlementFullOptInFailed`、`FeeEntitlementTariffAboveAuth`，或在允许时降级）；出借人的检查使用金库当前的可用 VPFI。收取费用档后，贷款的 `lenderMode` 被标记为 Full，此后每次出借人收益费结算都会把 `FULL_MODE_FEE_DISCOUNT_BONUS_BPS`（1000）加到仓位持有人对协议份额的折扣上，上限为 `MAX_FEE_DISCOUNT_BPS`（5000），无论是否开启持有折扣同意。原地延期（`repriceFeeEntitlementOnExtension`）会在新期限内把标记设为 None。
+
+<a id="lend-offer-review"></a>
+
+### Lend：审核并发布报价
+
+审核从钱包模拟 `createOffer`，并读取两种资产的类别、`getEffectiveGraceSeconds(durationDays)`、`getLoanInitiationFeeBps`、`getTreasuryFeeBps`、最长期限、钱包的金库、钱包在出借资产（出借人锁定的一侧）上的余额和授权，以及两侧均为流动资产时的 `calculateLTV`；每个区块以及钱包打开前都会重新读取。授权不足时，模拟只能到达金额的转入，因此代币的转入错误、`VaultDepositFailed`（协议对无数据回退的转入的包装，WETH 在授权不足时就是这样）或没有协议错误名的回退，都显示为需要清除的批准，与请求的审核规则相同；其他任何具名协议错误都是拒绝。精确批准后再次模拟 `createOffer` 并发送；批准后中止时，若授权未被其他操作改变，则把授权恢复为之前的值。结果读取该钱包 `offerType` 为 0 的 `OfferCreated`，以及金额转入金库的 `Transfer`。
+
+<a id="lend-offer-fee"></a>
+
+### Lend：您报价的费用
+
+`createOffer` 不向出借人收取任何费用。显示的费用由借款人承担：出借资产金额的 `getLoanInitiationFeeBps`，按 `acceptOffer` 执行时生效的费率计算，届时由借款人的持有等级折扣降低，并从其到账金额中扣除；显示的数字按今天的费率计算。协议在利息中的份额为 `getTreasuryFeeBps`，在每笔贷款开立时固定（`treasuryFeeBpsAtInit`）；在同意开启时，出借人的持有等级折扣会在结算利息时降低该份额。审核显示今天的费率，以及按该费率计算的份额作为上限；`getTreasuryFeeBps` 读取失败时会说明，且不显示份额或返还金额。
+
+<a id="risk-access"></a>
+
+### Risk Access：你的风险等级
+
+开关是 `getRiskAccessGateEnabled`。一个流程需要哪一步，由协议自身的回答决定：接受报价时，在 `previewCreatorBlock` 显示贷方未被阻挡之后，看 `previewOfferAcceptBlock`（1 = 等级过低，2 = 交易对同意，3 = 严格模式确认，4 = 过去由接受时的确认覆盖的非流动交易对；它与 2 一样构成阻止，交易对同意可解除）；发布请求时，看 `createOffer` 模拟执行返回的 `RiskTierTooLow`、`IlliquidPairNotConsented` 或 `MidTierPairNotAcknowledged`。该步骤在同一区块内读取交易对的 `pairRequiredRiskLevel`（报价则用 `acceptMidTierAckPair`）、`getVaultRiskTier`、`getEffectiveRiskTier`、对照 `getCurrentRiskTermsVersion` 的 `getVaultRiskTierVersion`、`getRiskTierUnlockAt`、`getRiskAccessUnlockCooldown` 和 `getRiskTierMutationNonce`，对交易对则读取 `isPairConsentPending` 与 `hasIlliquidPairConsent`，或 `isMidTierAckPending` 与 `midTierStrictBlocked`。提高等级使用 `setVaultRiskTierChecked(level, nonce, termsVersion)`，提高到该交易对所需的最低等级；若审核之后有其他等级写入或条款变更，交易会被拒绝且不改变任何内容。交易对步骤是 `setIlliquidPairConsent(pair, true)` 或 `setMidTierPairAck(pair)`。仍在等待中的等级提高或仍待生效的交易对步骤不会再次提供。没有任何读取接口返回待生效交易对步骤的生效时间，因此审核界面会说明无法读取该时间；只有该步骤本身的完成卡片会给出它，即收据所在区块时间加等待期。结果在收据所在区块读回。
+
 <a id="terms-gate"></a>
 
 ### 服务条款确认

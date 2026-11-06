@@ -2117,45 +2117,39 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     function _getRiskAccessFacetSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](32);
+        s = new bytes4[](26);
         s[0] = RiskAccessFacet.setVaultRiskTier.selector;
         s[1] = RiskAccessFacet.setIlliquidPairConsent.selector;
-        s[2] = RiskAccessFacet.setVaultRiskTierBySig.selector;
-        s[3] = RiskAccessFacet.setIlliquidPairConsentBySig.selector;
         // #730 r5 — terms changes are a commit-reveal (commit+reveal selectors),
         // replacing the removed single-call `bumpRiskTermsVersion`. A fresh deploy
         // routes only these. UPGRADE NOTE: any diamond upgraded from a build that
         // routed `bumpRiskTermsVersion()`/`(bytes32)` MUST REMOVE that selector when
         // adding these — else the legacy path could advance the version without the
         // hash. See docs/DesignsAndPlans/AcceptAckFreshnessAnchorDesign.md §5.
-        s[4] = RiskAccessFacet.commitRiskTermsBump.selector;
-        s[5] = RiskAccessFacet.setRiskAccessUnlockCooldown.selector;
-        s[6] = RiskAccessFacet.setProtocolManagedVault.selector;
-        s[7] = RiskAccessFacet.getVaultRiskTier.selector;
-        s[8] = RiskAccessFacet.getEffectiveRiskTier.selector;
-        s[9] = RiskAccessFacet.getCurrentRiskTermsVersion.selector;
-        s[10] = RiskAccessFacet.getRiskAccessUnlockCooldown.selector;
-        s[11] = RiskAccessFacet.getRiskTierUnlockAt.selector;
-        s[12] = RiskAccessFacet.isProtocolManagedVault.selector;
-        s[13] = RiskAccessFacet.riskAccessNonceUsed.selector;
-        s[14] = RiskAccessFacet.hasIlliquidPairConsent.selector;
-        s[15] = RiskAccessFacet.pairRequiredRiskLevel.selector;
-        s[16] = RiskAccessFacet.setRiskStrictMode.selector;
-        s[17] = RiskAccessFacet.setRiskStrictModeBySig.selector;
-        s[18] = RiskAccessFacet.setMidTierPairAck.selector;
-        s[19] = RiskAccessFacet.setMidTierPairAckBySig.selector;
-        s[20] = RiskAccessFacet.getRiskStrictMode.selector;
-        s[21] = RiskAccessFacet.getStrictModeStrictUntil.selector;
-        s[22] = RiskAccessFacet.midTierStrictBlocked.selector;
-        s[23] = RiskAccessFacet.getCurrentRiskTermsHash.selector; // #730 r3
-        s[24] = RiskAccessFacet.revealRiskTermsBump.selector; // #730 r5 commit-reveal
-        s[25] = RiskAccessFacet.getPendingRiskTermsCommitment.selector; // #730 r5
-        s[26] = RiskAccessFacet.getVaultRiskTierVersion.selector; // #735 in-place re-affirm
-        s[27] = RiskAccessFacet.isPairConsentPending.selector; // #735 item 3 pending-consent
-        s[28] = RiskAccessFacet.isMidTierAckPending.selector; // #735 item 3 pending-ack
-        s[29] = RiskAccessFacet.setVaultRiskTierChecked.selector; // #1522 TOCTOU guard
-        s[30] = RiskAccessFacet.setVaultRiskTierCheckedBySig.selector; // #1522 gasless
-        s[31] = RiskAccessFacet.getRiskTierMutationNonce.selector; // #1522 nonce view
+        s[2] = RiskAccessFacet.commitRiskTermsBump.selector;
+        s[3] = RiskAccessFacet.setRiskAccessUnlockCooldown.selector;
+        s[4] = RiskAccessFacet.setProtocolManagedVault.selector;
+        s[5] = RiskAccessFacet.getVaultRiskTier.selector;
+        s[6] = RiskAccessFacet.getEffectiveRiskTier.selector;
+        s[7] = RiskAccessFacet.getCurrentRiskTermsVersion.selector;
+        s[8] = RiskAccessFacet.getRiskAccessUnlockCooldown.selector;
+        s[9] = RiskAccessFacet.getRiskTierUnlockAt.selector;
+        s[10] = RiskAccessFacet.isProtocolManagedVault.selector;
+        s[11] = RiskAccessFacet.hasIlliquidPairConsent.selector;
+        s[12] = RiskAccessFacet.pairRequiredRiskLevel.selector;
+        s[13] = RiskAccessFacet.setRiskStrictMode.selector;
+        s[14] = RiskAccessFacet.setMidTierPairAck.selector;
+        s[15] = RiskAccessFacet.getRiskStrictMode.selector;
+        s[16] = RiskAccessFacet.getStrictModeStrictUntil.selector;
+        s[17] = RiskAccessFacet.midTierStrictBlocked.selector;
+        s[18] = RiskAccessFacet.getCurrentRiskTermsHash.selector; // #730 r3
+        s[19] = RiskAccessFacet.revealRiskTermsBump.selector; // #730 r5 commit-reveal
+        s[20] = RiskAccessFacet.getPendingRiskTermsCommitment.selector; // #730 r5
+        s[21] = RiskAccessFacet.getVaultRiskTierVersion.selector; // #735 in-place re-affirm
+        s[22] = RiskAccessFacet.isPairConsentPending.selector; // #735 item 3 pending-consent
+        s[23] = RiskAccessFacet.isMidTierAckPending.selector; // #735 item 3 pending-ack
+        s[24] = RiskAccessFacet.setVaultRiskTierChecked.selector; // #1522 TOCTOU guard
+        s[25] = RiskAccessFacet.getRiskTierMutationNonce.selector; // #1522 nonce view
     }
 
     /// @dev #1104 — the read-only preview cluster + the two cross-facet gate

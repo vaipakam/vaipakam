@@ -981,7 +981,7 @@ Basic zeigt, was die meisten brauchen. Advanced ergänzt die Exit-
 und Settlement-Werkzeuge, Automatisierung, signierte Orders, den
 Keeper-Status und Details zur Abrechnung. Ein Moduswechsel blendet
 nie eine Zustimmung aus, die du geben musst, nichts, was dich
-blockiert, und nie den Weg, es zu beheben. Jeder „Warum?"-Link
+blockiert, und nie den Weg, es zu beheben. Jeder Info-Knopf (i) nach dem Satz, den er erklärt,
 öffnet die volle Erklärung, und sein „Mehr lesen"-Link öffnet
 diesen Guide in deinem Modus.
 
@@ -1101,6 +1101,168 @@ In einem Netzwerk, in dem nicht beanspruchte Belohnungen entfernt werden können
 ### Home: Zurückgehaltene Belohnungen
 
 Markiert die Sanktionsprüfung Ihre Wallet, wird ihr nichts ausgezahlt, solange die Markierung besteht. Vor der Markierung verdiente Belohnungen werden für sie zurückgehalten, gesperrt, aber nicht verloren, und freigegeben, sobald die Wallet nicht mehr markiert ist; Home bietet dann an, genau diesen Betrag allein zu beanspruchen. Solange eine Markierung bestätigt ist, verfallen verdiente Belohnungen endgültig, und VPFI in Ihrem Vault kann nicht bewegt werden. Kann nicht gelesen werden, ob die Wallet noch markiert ist, wird nichts freigegeben.
+
+<a id="borrow-start"></a>
+
+### Borrow: So funktioniert es
+
+Zum Leihen nimmst du das offene Angebot eines Verleihers an: einen Betrag eines Tokens, einen Zinssatz, eine Laufzeit und die Sicherheit, die der Verleiher verlangt. Die Annahme eröffnet den Kredit in einer Transaktion. Deine Sicherheit wandert aus deiner Wallet in deinen eigenen Vault und bleibt dort gesperrt, solange der Kredit läuft; der Betrag, abzüglich einer kleinen Eröffnungsgebühr, kommt in deiner Wallet an. Du zahlst Betrag und Zinsen bis zum Fälligkeitstag zurück. Passt kein Angebot, kannst du auch eine eigene Kreditanfrage stellen und auf einen Verleiher warten.
+
+<a id="borrow-pair"></a>
+
+### Borrow: Die Tokens wählen
+
+Wähle zuerst, was du leihen und was du sperren willst. Die App schlägt Tokens im Netzwerk vor, oder du fügst eine Token-Adresse ein; es läuft keine Sicherheitsprüfung für Tokens, prüfe eine eingefügte Adresse also selbst. Für jeden Token liest die App, was das Protokoll jetzt dazu sagt. Ein liquider Token hat einen Preis, der Kredit hat also einen Health Factor und kann liquidiert werden, wenn die Sicherheit an Wert verliert. Ein illiquider Token wird mit null bewertet, und bei einem Ausfall erhält der Verleiher die Sicherheit selbst. Traut das Protokoll dem Preis eines Tokens nicht, sind neue Kredite darauf geschlossen, bis es wieder vertraut; offene Kredite sind nicht betroffen.
+
+<a id="borrow-offers"></a>
+
+### Borrow: Ein Angebot auswählen
+
+Die Seite listet die offenen Angebote von Verleihern für deine beiden Tokens, direkt aus dem Protokoll gelesen. Jedes zeigt Betrag, Zinssatz und Laufzeit, die verlangte Sicherheit, den Beleihungswert zu heutigen Preisen, wie Zinsen berechnet werden, einen etwaigen Zinsplan, wann das Angebot endet und was du nach der Gebühr erhalten würdest. Ein Angebot wird ganz angenommen, zum vollen Betrag und niedrigsten Zinssatz des Verleihers. Würde das Protokoll ein Angebot ablehnen, sagt die Seite warum und zeigt keine Schaltfläche. Die Reihenfolge ist eine Hilfe, keine Empfehlung.
+
+<a id="borrow-review"></a>
+
+### Borrow: Prüfen und Signieren
+
+Bevor sich deine Wallet öffnet, zeigt die Prüfung jede Zahl: was du erhältst, die Gebühr, was du sperrst, den Zinssatz, was du am Fälligkeitstag schuldest, die Nachfrist und was du verlieren kannst. Du setzt ein Häkchen, um den Risikohinweisen und den Bedingungen zuzustimmen; ändern sich die Zahlen vor der Bestätigung, wird es entfernt. Dann bittet dich deine Wallet, die Bedingungen zu signieren (das kostet nichts), falls nötig genau die Sicherheit freizugeben und die Annahme zu senden, die die App zuerst als Probelauf ausführt. Stoppt es nach einer Freigabe, bittet die App darum, die Freigabe zurückzusetzen, und sagt, ob das geschah. Danach prüft die App auf der Chain den eröffneten Kredit, was ankam und was gesperrt wurde. Sie nennt auch die Laufzeitbedingungen des Kredits, jede auch dann, wenn sie dem Standard entspricht: Teilrückzahlung, Verkauf der Sicherheit sowie eine etwaige Refinanzierung oder ein verknüpfter Kredit. Der geschuldete Betrag gilt ohne Pause: Eine Pause verschiebt das Fälligkeitsdatum nach hinten, und die Zinsen laufen währenddessen weiter.
+
+<a id="borrow-fee"></a>
+
+### Borrow: Die Eröffnungsgebühr
+
+Die Eröffnung eines Kredits kostet einen kleinen Anteil des Betrags, einmalig, im geliehenen Token, abgezogen von dem, was du erhältst; die Prüfung zeigt den geltenden Satz. Zinsen schuldest du auf den ganzen Betrag. Deine Rabattstufe senkt die Gebühr, wenn der Gebührenrabatt an ist und der geliehene Token liquide ist. Für diese Gebühr wird kein VPFI genommen oder gehalten, und später wird nichts erstattet. Da du die Annahme selbst sendest, kommt ein kleiner Anteil der Gebühr, den das Protokoll jedem zahlt, der ein Matching einreicht, mit dem Betrag zu dir zurück; die Prüfung zeigt ihn.
+
+<a id="borrow-risks"></a>
+
+### Borrow: Risiken
+
+Ein Kredit kann dich deine Sicherheit kosten. Hast du bis zum Ende der Nachfrist nicht zurückgezahlt, fällt der Kredit aus und der Verleiher wird aus deiner Sicherheit bezahlt: für ihn verkauft, wo das Protokoll es kann, unverändert übergeben, wo nicht. Bei liquider Sicherheit kann jeder den Kredit liquidieren, wenn ihr Wert fällt, bis der Health Factor unter 1 sinkt, und du verlierst Sicherheit. Bei Zinsen für die volle Laufzeit schuldest du die Zinsen der ganzen Laufzeit auch bei früher Rückzahlung. Mit einem Zinsplan wird eine verpasste Periode durch den Verkauf eines Teils deiner Sicherheit bezahlt. Deine Sicherheit bleibt gesperrt, bis der Kredit zurückgezahlt oder abgewickelt ist.
+
+<a id="borrow-request"></a>
+
+### Borrow: Eine eigene Anfrage stellen
+
+Passt kein Angebot, kannst du für deine beiden Tokens eine eigene Kreditanfrage stellen: den genauen Betrag, den Zinssatz, den du zahlst, die Laufzeit und die Sicherheit, die du sperrst. Beim Stellen wandert die Sicherheit aus deiner Wallet in deinen eigenen Vault und bleibt dort, solange die Anfrage offen ist. Ein Verleiher, der sie annimmt, eröffnet den Kredit sofort zu deinen Bedingungen, ohne dich noch einmal zu fragen; der Betrag, abzüglich der Eröffnungsgebühr, kommt in deiner Wallet an. Ab fünf Minuten nach dem Stellen kannst du stornieren, und die Sicherheit kehrt in deine Wallet zurück. Eine abgelaufene Anfrage kann nicht mehr angenommen werden; ihre Sicherheit bleibt in deinem Vault, bis du oder jemand anderes sie schließt, und geht dann nur an deine Wallet zurück. Solange die Angebotsseite der nächsten App noch nicht gebaut ist, verfolgst, stornierst und schließt du eine Anfrage auf der Angebotsseite der aktuellen App; die Prüfung sagt das, bevor etwas gesperrt wird.
+
+<a id="borrow-request-terms"></a>
+
+### Borrow: Die Bedingungen der Anfrage
+
+Ein Verleiher übernimmt den ganzen Betrag oder keiner. Jede Zahl wird genau so gelesen, wie du sie eingibst: mehr Nachkommastellen, als der Token hat, werden abgelehnt, nie gerundet, und der Zinssatz geht bis 100 % im Jahr mit zwei Nachkommastellen. Die angebotenen Laufzeiten enden bei der längsten, die das Netzwerk erlaubt; du kannst eine Laufzeit auch in Tagen eingeben. Die Anfrage bleibt offen, bis sie angenommen oder storniert wird, oder so viele Tage, wie du wählst, höchstens ein Jahr. Zinsen für die volle Laufzeit, die übliche Wahl, sind auch bei früher Rückzahlung ganz geschuldet; anteilige Zinsen fallen nur für die Zeit an, in der der Kredit läuft. Das Formular zeigt, was du zum heutigen Gebührensatz erhalten und am Fälligkeitstag schulden würdest, wenn ein Verleiher jetzt annähme.
+
+<a id="borrow-request-review"></a>
+
+### Borrow: Anfrage prüfen und stellen
+
+Bevor sich deine Wallet öffnet, lässt die App das Protokoll deine Anfrage als Probelauf ausführen, sodass die Prüfung die eigene Antwort des Protokolls zeigt. Sie nennt, was du jetzt sperrst, Betrag, Zinssatz und Laufzeit, was du erhalten würdest und wie die Gebühr bestimmt wird (der bei der Annahme geltende Gebührensatz, abzüglich deiner Gebührenrabattstufe in diesem Moment; die angezeigte Zahl nutzt den heutigen Satz), was du schulden würdest, jede Laufzeitbedingung, wann die Anfrage abläuft, den Beleihungswert und ob eine Freigabe nötig ist. Du setzt ein Häkchen, um den Risikohinweisen und den Bedingungen zuzustimmen. Deine Wallet gibt, falls nötig, genau die Sicherheit frei, die App führt die Anfrage erneut als Probelauf aus und stellt sie erst dann. Stoppt es nach einer Freigabe, bittet die App darum, die Freigabe zurückzusetzen, und sagt, ob das geschah. Danach prüft die App auf der Chain die erfasste Anfrage und die gesperrte Sicherheit.
+
+<a id="borrow-nft-collateral"></a>
+
+### Borrow: Ein NFT als Sicherheit
+
+Eine Anfrage kann statt eines Tokens ein NFT sperren. Wählen Sie die Sammlung als das, was Sie sperren (die Test-Sammlungen sind als NFTs gekennzeichnet, oder fügen Sie eine Adresse ein); ob eine Adresse ein Token oder eine NFT-Sammlung ist, wird aus ihrem Vertrag gelesen. Geben Sie dann die Nummer des NFT ein, seine Token-ID, die Ihre Wallet oder die Seite der Sammlung zeigt; das Formular sagt sofort, ob Ihre Wallet es hält. Das Protokoll bewertet ein NFT mit null, egal wofür es anderswo verkauft wird: Ein Darlehen darauf hat keinen Beleihungswert und keine preisbasierte Liquidation, und zahlen Sie bis zum Ende der Kulanzfrist nicht zurück, erhält der Kreditgeber das NFT selbst. Beim Stellen bittet die App Ihre Wallet, dem Protokoll nur dieses eine NFT freizugeben, nie den Rest Ihrer Sammlung, und die Übertragung in Ihren Tresor hebt diese Freigabe von selbst auf; stoppt die Anfrage nach der Freigabe, bittet die App, sie zurückzusetzen, und sagt, ob das geschah. NFTs, die in Stückzahlen vorkommen (Multi-Token-Sammlungen), funktionieren genauso, mit einer Menge: Geben Sie die Nummer des Tokens ein und wie viele davon Sie sperren, und das Formular sagt, wie viele Ihre Wallet hält. Eine solche Sammlung kann kein einzelnes Token freigeben, nur alle Ihre Tokens darin; daher erteilt das Einstellen diese Freigabe nur für diese Anfrage und nimmt sie danach in einem weiteren Wallet-Schritt zurück, ob die Anfrage durchging oder nicht; eine Freigabe, die Sie schon vorher erteilt hatten, bleibt, wie Sie sie gesetzt haben. Das Annehmen eines Kreditgeberangebots, das ein NFT verlangt, geschieht vorerst weiterhin in der aktuellen App.
+
+<a id="borrow-request-range"></a>
+
+### Borrow: Eine Betragsspanne (Erweitert)
+
+Im erweiterten Modus kann eine Anfrage eine Spanne annehmen: den kleinsten und den größten Betrag, den ein Kreditgeber verleihen darf, zu Ihrem einen Zinssatz, und auf Wunsch eine kleinere Sicherheit für den kleinsten Kredit. Ein Kreditgeber, der die Anfrage direkt annimmt, verleiht den kleinsten Betrag und sperrt nur die dafür festgelegte Sicherheit; der Rest geht an Ihre Wallet zurück. Matches dürfen mehr verleihen, bis zum größten Betrag, solange das Matching im Netzwerk eingeschaltet ist; die Prüfung sagt, ob es das ist, und dass die Spanne bei ausgeschaltetem Matching nur einmal gefüllt wird. Das Protokoll lehnt einen größten Betrag ab, den Ihre Sicherheit zu heutigen Preisen nicht trägt, und die Prüfung nennt das Höchste, was sie trägt. Die Prüfung zeigt den Beleihungswert an beiden Enden und warnt, wenn ein Kreditgeber die Anfrage zu heutigen Preisen nicht direkt annehmen könnte. Im erweiterten Modus gesetzte Optionen gelten weiter, wenn Sie zu Basis wechseln: Das Formular sagt es und lässt Sie sie löschen. Ein Match sperrt nur die Sicherheit, die sein Kreditgeber verlangt, mindestens aber den Boden; daher nennt die Prüfung den größten Match von deiner ganzen Sicherheit bis hinunter zum Boden und warnt, dass ein gematchter Kredit riskanter starten kann als ein direkter. Solange das Matching eingeschaltet ist, bleibt die Sicherheit, die ein Match nicht sperrt, für spätere Matches bei der Anfrage und kommt erst an Ihre Wallet zurück, wenn die Anfrage schließt oder Sie sie stornieren.
+
+<a id="borrow-request-fill"></a>
+
+### Borrow: Wie eine Anfrage gefüllt wird (Erweitert)
+
+Teilweise, die Voreinstellung, lässt Matches die Anfrage über einen oder mehrere Kredite füllen, bis sie gefüllt, storniert oder abgelaufen ist. Alles oder nichts erlaubt eine einzige Füllung des ganzen Betrags und geht daher nicht mit einer Spanne. Sofort oder stornieren füllt wie teilweise, aber nur bis die Anfrage abläuft, und braucht daher ein Ablaufdatum. Der Füllmodus lässt sich nach dem Veröffentlichen nicht ändern; um ihn zu ändern, stornieren Sie die Anfrage und veröffentlichen eine neue. Das Protokoll erlaubt, Beträge, Zinssatz und Sicherheit zu ändern, solange die Anfrage offen ist, nie unter das, was Matches schon genutzt haben; diese App bietet das noch nicht an, daher bedeutet eine Änderung vorerst Stornieren und neu Veröffentlichen.
+
+<a id="borrow-request-cadence"></a>
+
+### Borrow: Ein Zinsplan (Erweitert)
+
+Im erweiterten Modus kann eine Anfrage die Zinsen nach einem Plan zahlen statt alles bei der Rückzahlung: jeden Monat, jedes Quartal, alle sechs Monate oder jedes Jahr. Das Formular bietet nur die Pläne an, die das Protokoll für deine Bedingungen zulässt, und nennt unter jedem geschlossenen den Grund: periodische Zinsen sind im Netzwerk abgeschaltet, ein Asset hat keinen Preis, der Kredit ist weniger wert als die Schwelle des Protokolls (beide Zahlen werden gezeigt), oder die Periode ist nicht kürzer als der Kredit. Die Prüfung zeigt die Zinsen jeder Periode und die Nachfrist einer versäumten Periode. Wird eine Periode bis zum Ende ihrer Nachfrist nicht bezahlt, darf jeder einen Teil deiner Sicherheit verkaufen, um sie zu bezahlen, und der Kredit bleibt offen. Der Plan lässt sich nach dem Veröffentlichen nicht mehr ändern. Wie die anderen erweiterten Optionen gilt er auch nach dem Wechsel zu Basis weiter, und das Formular sagt es.
+
+<a id="borrow-request-tariff"></a>
+
+### Borrow: Der Full-Gebührentarif (Erweitert)
+
+Im erweiterten Modus kann eine Anfrage den Full-Gebührentarif nehmen: eine Gebühr in VPFI, die beim Eröffnen jedes Kredits aus Ihrem Tresor genommen wird und den Rabatt auf die Kreditgebühr um zehn Punkte erhöht, bis zur Obergrenze des Protokolls von 50 %. Die Kreditgebühr selbst wird weiterhin im verliehenen Vermögenswert berechnet, und der Tarif wird nicht erstattet. Das Formular bietet ihn nur an, solange das Protokoll ihn eingeschaltet hat, und zeigt den heutigen Tarif für Betrag und Laufzeit. Sie legen fest, wie viel VPFI ein Kredit höchstens nehmen darf (leer gelassen: der heutige Tarif für den größten Kredit), und was mit einem Kredit geschieht, der den Tarif beim Eröffnen nicht nehmen kann: Er wird abgelehnt oder ohne ihn eröffnet. Ein Kredit kann ihn nur nehmen, wenn in diesem Moment der Tarif eingeschaltet ist, der verliehene Vermögenswert einen Preis hat und liquide ist, sein Tarif innerhalb Ihres Höchstwerts liegt und Ihr Tresor genug freie VPFI hält. Der Tarif wird mit einer zweiten Transaktion nach dem Veröffentlichen gesetzt; ein Kreditgeber, der die Anfrage vorher übernimmt, eröffnet einen Kredit ohne ihn. Backstop-Kredite für Anfragen, die niemand übernimmt, bietet diese App noch nicht an.
+
+<a id="lend-start"></a>
+
+### Lend: So funktioniert es
+
+Um zu verleihen, finanzieren Sie die offene Anfrage eines Kreditnehmers: einen Betrag eines Tokens, den Zinssatz, den er zahlt, eine Laufzeit und Sicherheiten, die der Kreditnehmer bereits in seinem eigenen Tresor gesperrt hat. Die Finanzierung eröffnet den Kredit in einer Transaktion. Der Betrag verlässt Ihre Wallet, der Kreditnehmer erhält ihn abzüglich seiner Eröffnungsgebühr, und die Sicherheiten bleiben bis zum Ende des Kredits für Sie gesperrt. Ihre Seite des Kredits ist ein Positions-Token in Ihrer Wallet; wer es hält, wird zurückgezahlt. Der Kreditnehmer zahlt den Betrag plus Zinsen bis zum Fälligkeitsdatum zurück, und das Protokoll behält seinen Anteil an den Zinsen. Passt keine Anfrage, können Sie stattdessen auf derselben Seite ein eigenes Kreditangebot veröffentlichen.
+
+<a id="lend-offers"></a>
+
+### Lend: Eine Anfrage auswählen
+
+Wählen Sie zuerst, was Sie verleihen und welche Sicherheiten Sie akzeptieren; es müssen verschiedene Token sein, und diese Seite bietet nur Token an. Die Seite listet die für dieses Paar offenen Kreditanfragen, direkt aus dem Protokoll gelesen. Jede zeigt Betrag, Zinssatz und Laufzeit, die gesperrten Sicherheiten, den Beleihungswert zu heutigen Preisen, wie Zinsen berechnet werden, einen etwaigen Zinsplan und wie viel von der Gebühr des Kreditnehmers an Sie zurückfließt. Eine Anfrage wird vollständig finanziert: Nennt sie eine Spanne, verleihen Sie den kleinsten Betrag des Kreditnehmers zu seinem höchsten Zinssatz. Würde das Protokoll eine Anfrage ablehnen, sagt die Seite warum und bietet keine Schaltfläche an. Ihre eigenen Anfragen, Anfragen mit einem NFT und Verkäufe laufender Kredite werden gezählt, nicht gelistet. Die Reihenfolge (finanzierbare Anfragen zuerst, dann der höchste Zinssatz) ist eine Hilfe, keine Empfehlung.
+
+<a id="lend-review"></a>
+
+### Lend: Prüfen und Signieren
+
+Bevor Ihre Wallet sich öffnet, zeigt die Prüfung jede Zahl: was Ihre Wallet verlässt, was der Kreditnehmer erhält, die Gebühr und Ihren Anteil daran, die für Sie gehaltenen Sicherheiten, den Zinssatz, die am Fälligkeitsdatum geschuldeten Zinsen, den Anteil des Protokolls daran, was an Sie zurückfließt, die Nachfrist und was Sie verlieren können. Sie nennt außerdem jede Lebenszyklus-Bedingung, auch wenn sie der Standard ist. Hält Ihre Wallet weniger als den Betrag, sagt die Prüfung, wie viel fehlt, und bietet keine Signatur an. Sie setzen ein Häkchen, um den Risikohinweisen und Bedingungen zuzustimmen; ändern sich die Zahlen vor der Bestätigung, wird das Häkchen entfernt. Ihre Wallet bittet Sie dann, die Bedingungen zu signieren, was nichts kostet, genau den Betrag freizugeben, falls nötig, und die Annahme zu senden, die die App zuerst als Probelauf ausführt. Stoppt der Ablauf nach einer Freigabe, bietet die App an, die Freigabe zurückzusetzen, und sagt, ob das geschehen ist. Danach prüft die App auf der Chain den eröffneten Kredit, was Ihre Wallet verlassen hat und was zurückgekommen ist.
+
+<a id="lend-fee"></a>
+
+### Lend: Die Gebühr und der Anteil des Protokolls
+
+Die Eröffnungsgebühr trägt der Kreditnehmer: ein kleiner Anteil des Betrags, einmal im verliehenen Vermögenswert berechnet und von dem abgezogen, was der Kreditnehmer erhält. Sie verleihen den ganzen Betrag, und der Kreditnehmer schuldet ihn vollständig mit Zinsen zurück. Weil Sie die Annahme selbst senden, fließt ein kleiner Teil dieser Gebühr, der Anteil, den das Protokoll dem Einreicher eines Matches zahlt, in Ihre Wallet zurück; die Prüfung zeigt ihn. Hat der Kreditnehmer den Full-Gebührentarif gewählt und greift er beim Eröffnen, ist die Gebühr niedriger und damit auch dieser Anteil. Werden Zinsen gezahlt, behält das Protokoll seinen Anteil daran, zu dem Satz, der beim Eröffnen des Kredits gilt; Ihre Gebührenrabattstufe kann diesen Anteil senken, solange Ihre Gebührenrabatt-Einstellung an ist. Die Prüfung zeigt den heutigen Satz und das Höchste, was dieser Anteil nehmen kann.
+
+<a id="lend-risks"></a>
+
+### Lend: Risiken
+
+Beim Verleihen können Sie Geld verlieren. Hat der Kreditnehmer bis zum Ende der Nachfrist nicht zurückgezahlt, fällt der Kredit aus und Sie werden aus den Sicherheiten bezahlt: für Sie verkauft, wo das Protokoll es kann, unverändert übergeben, wo nicht; ein Verkauf kann weniger einbringen, als Ihnen geschuldet wird. Bei liquiden Sicherheiten kann jeder den Kredit liquidieren, sobald sein Health Factor unter 1 fällt; der Verkauf zahlt Sie zuerst, aber ein starker Kursrückgang kann weniger übrig lassen, als Ihnen geschuldet wird. Ein illiquider Token wird mit null bewertet, daher gibt es keine preisbasierte Liquidation, und bei einem Ausfall erhalten Sie alle Sicherheiten, was immer sie wert sind. Sie können den Betrag nicht vor Ende des Kredits zurücknehmen; früher aussteigen heißt, Ihre Position an einen anderen Kreditgeber zu verkaufen. Bei anteiligen Zinsen bringt eine vorzeitige Rückzahlung Ihnen weniger. Eine Pause verschiebt das Fälligkeitsdatum nach hinten, und die Zinsen laufen währenddessen weiter.
+
+<a id="lend-offer"></a>
+
+### Lend: Ein eigenes Angebot veröffentlichen
+
+Passt keine Anfrage, können Sie für Ihre zwei Token ein eigenes Kreditangebot veröffentlichen: den genauen Betrag, den Sie verleihen, den Zinssatz, den Sie verlangen, die Laufzeit und die Sicherheit, die ein Kreditnehmer sperren muss. Beim Veröffentlichen wandert der Betrag aus Ihrer Wallet in Ihren eigenen Vault und bleibt dort gesperrt, solange das Angebot offen ist. Ein Kreditnehmer, der es annimmt, eröffnet den Kredit sofort zu Ihren Bedingungen, ohne Sie erneut zu fragen: Er erhält den Betrag abzüglich seiner Eröffnungsgebühr, und seine Sicherheit wird in seinem Vault für Sie gesperrt. Solange das Matching im Netzwerk eingeschaltet ist, kann jeder Ihr Angebot außerdem mit der Anfrage eines Kreditnehmers zusammenführen; ohne Teile verleiht ein solcher Kredit Ihren gesamten Betrag zu Ihrem Zinssatz, gegen mindestens die Sicherheit, die Sie verlangen. Die Prüfung sagt, ob das Matching gerade eingeschaltet ist. Ab fünf Minuten nach dem Veröffentlichen können Sie stornieren, und der Betrag kehrt in Ihre Wallet zurück. Ein abgelaufenes Angebot kann nicht mehr angenommen werden; sein Betrag bleibt in Ihrem Vault, bis Sie oder irgendjemand es schließt, und kehrt dann nur in Ihre Wallet zurück. Bis die Angebotsseite der nächsten App gebaut ist, verfolgen, stornieren und schließen Sie ein Angebot auf der Angebotsseite der aktuellen App; die Prüfung sagt das, bevor etwas gesperrt wird.
+
+<a id="lend-offer-terms"></a>
+
+### Lend: Die Bedingungen des Angebots
+
+Sofern Sie im Advanced-Modus keine Teile festlegen, übernimmt ein Kreditnehmer den ganzen Betrag, oder niemand, und muss genau die Sicherheit sperren, die Sie festlegen. Das Formular zeigt, wie viel des verliehenen Tokens Ihre Wallet hält. Jede Zahl wird genau so gelesen, wie Sie sie eingeben: Mehr Nachkommastellen, als der Token hat, werden abgelehnt, nie gerundet, und der Zinssatz reicht bis 100 % pro Jahr mit zwei Nachkommastellen. Die angebotenen Laufzeiten enden bei der längsten, die das Netzwerk erlaubt. Das Angebot bleibt offen, bis es angenommen oder storniert wird, oder für die Zahl von Tagen, die Sie wählen, höchstens ein Jahr. Zinsen für die volle Laufzeit, die übliche Wahl, bedeuten, dass eine vorzeitige Rückzahlung Ihren Ertrag nicht senkt; anteilige Zinsen zahlen Ihnen nur die Zeit, in der der Kredit läuft. Sie können dem Kreditnehmer auch Teilrückzahlungen erlauben. Das Formular zeigt, was der Kreditnehmer Ihnen am Fälligkeitsdatum schulden würde, wenn er das Angebot jetzt annähme. Im Advanced-Modus kann ein Angebot auch in Teilen verliehen werden, einen Ausführungsmodus tragen, Zinsen nach Plan zahlen und den Full-Gebührentarif nehmen.
+
+<a id="lend-offer-parts"></a>
+
+### Lend: Ein Angebot in Teilen (Erweitert)
+
+Im Advanced-Modus kann ein Kreditangebot in Teilen verliehen werden. Der eingegebene Betrag bleibt der ganze Betrag: Beim Veröffentlichen wird alles gesperrt, und ein Kreditnehmer, der Ihr Angebot direkt annimmt, leiht alles. Sie geben den kleinsten Teil an, den ein Match verleihen darf. Solange das Matching im Netzwerk eingeschaltet ist, dürfen Matcher Ihr Angebot an mehrere Kreditnehmer verleihen, jeden Kredit zwischen dem kleinsten Teil und dem Rest, zu Ihrem Zinssatz. Jeder verlangt mindestens den Anteil Ihrer Sicherheit, der zu seinem Teil passt, abgerundet, und die Prüfung zeigt, was der kleinste Teil verlangt. Hat ein Match einen Teil verliehen, kann kein Kreditnehmer den Rest direkt annehmen; nur weitere Matches können das, und Sie können das Angebot stornieren, um den Rest zurückzunehmen. Bleibt weniger als der kleinste Teil übrig, gibt das Protokoll ihn an Ihre Wallet zurück und schließt das Angebot. Die Prüfung sagt, ob das Matching gerade eingeschaltet ist; solange es aus ist, eröffnet nur ein Kreditnehmer, der alles annimmt, einen Kredit. Der Ausführungsmodus wirkt wie bei einer Anfrage: standardmäßig teilweise, alles oder nichts für einen Kredit über den ganzen Betrag (also keine Teile) oder sofort oder storniert, was einen Ablauf braucht; er lässt sich nach dem Veröffentlichen nicht ändern. Das Protokoll lehnt ein Angebot ab, das weniger Sicherheit verlangt, als der ganze Betrag zu heutigen Preisen braucht, und die Prüfung nennt das Mindeste, das es verlangt. Im Advanced-Modus gesetzte Optionen gelten weiter, wenn Sie zu Basic wechseln: Das Formular sagt das und lässt Sie sie löschen.
+
+<a id="lend-offer-schedule"></a>
+
+### Lend: Ein Zinsplan für ein Angebot (Erweitert)
+
+Im erweiterten Modus kann ein Kreditangebot wie eine Anfrage einen Zinsplan tragen: jeden Monat, jedes Quartal, alle sechs Monate oder jedes Jahr. Das Formular bietet nur die Pläne an, die das Protokoll für Ihre Bedingungen erlaubt, und sagt unter jedem geschlossenen, warum. Mit Teilen prüft das Protokoll beim Veröffentlichen den kleinsten Teil, sodass ein kleinster Teil unter seiner Schwelle die feineren Pläne schließt; jeder Kredit wird bei seiner Eröffnung erneut geprüft. Die Prüfung zeigt die Zinsen jeder Periode, wenn ein Kreditnehmer alles übernimmt, und mit Teilen für einen Kredit über den kleinsten Teil, sowie die Nachfrist einer versäumten Periode. Wird eine Periode bis zum Ende ihrer Nachfrist nicht bezahlt, darf jeder einen Teil der Sicherheit des Kreditnehmers verkaufen, um sie Ihnen zu zahlen, und der Kredit bleibt offen. Der Plan kann nach dem Veröffentlichen nicht geändert werden.
+
+<a id="lend-offer-tariff"></a>
+
+### Lend: Der Full-Gebührentarif für ein Angebot (Erweitert)
+
+Im erweiterten Modus kann ein Kreditangebot den Full-Gebührentarif nehmen: eine Gebühr in VPFI, die beim Eröffnen jedes Kredits aus dem Angebot aus Ihrem Tresor genommen wird, bemessen nach Betrag und Laufzeit dieses Kredits. Dafür erhält der Anteil des Protokolls an den Zinsen dieses Kredits zehn Punkte mehr Rabatt, bis zu seiner Obergrenze von 50 %; der Anteil wird weiterhin im verliehenen Vermögenswert genommen. Die zusätzlichen Punkte gelten für die Laufzeit des Kredits: Wird der Kredit um eine neue Laufzeit verlängert, enden sie für diese. Sie gehören zur Kreditgeberposition, also erhält sie, wer diese hält, wenn Zinsen gezahlt werden. Der Tarif wird nicht erstattet. Das Formular zeigt den heutigen Tarif für den ganzen Betrag, den größten Kredit, den das Angebot eröffnet. Sie legen fest, wie viel VPFI ein Kredit höchstens nehmen darf und ob ein Kredit, der den Tarif nicht nehmen kann, abgelehnt wird oder ohne ihn eröffnet. Ein Kredit kann ihn nur nehmen, wenn in diesem Moment der Tarif eingeschaltet ist, der verliehene Vermögenswert bepreist und liquide ist, sein Tarif innerhalb Ihres Höchstwerts liegt und Ihr Tresor genug freies VPFI hält. Der Tarif wird durch eine zweite Transaktion nach dem Veröffentlichen gesetzt; ein Kredit, der vor deren Bestätigung aus dem Angebot eröffnet wird, durch einen Kreditnehmer oder ein Match, eröffnet ohne ihn.
+
+<a id="lend-offer-review"></a>
+
+### Lend: Angebot prüfen und veröffentlichen
+
+Bevor sich Ihre Wallet öffnet, lässt die App das Protokoll Ihr Angebot probeweise ausführen, sodass die Prüfung die eigene Antwort des Protokolls zeigt. Sie nennt, was Sie jetzt sperren, den Betrag, den ein Kreditnehmer übernimmt, die Sicherheit, die er sperren muss, Zinssatz und Laufzeit, was der Kreditnehmer zum heutigen Gebührensatz erhielte, die Zinsen am Fälligkeitsdatum, den Anteil des Protokolls daran und was an Sie zurückfließt, jede Bedingung für die Laufzeit des Kredits, wann das Angebot abläuft, den Beleihungsauslauf zu heutigen Preisen und ob eine Freigabe nötig ist. Hält Ihre Wallet weniger als den Betrag, sagt die Prüfung, wie viel fehlt, und bietet keine Signatur an. Sie setzen ein Häkchen, um den Risikohinweisen und den Bedingungen zuzustimmen. Ihre Wallet gibt bei Bedarf genau den Betrag frei, die App führt das Angebot erneut probeweise aus und veröffentlicht es erst dann. Bricht es nach einer Freigabe ab, bittet die App, die Freigabe zurückzusetzen, und sagt, ob das geschehen ist. Danach prüft die App auf der Chain das erfasste Angebot und den in Ihrem Vault gesperrten Betrag.
+
+<a id="lend-offer-fee"></a>
+
+### Lend: Gebühren bei Ihrem Angebot
+
+Das Veröffentlichen eines Angebots kostet Sie keine Gebühr. Die Eröffnungsgebühr trägt der Kreditnehmer: ein kleiner Anteil des Betrags, einmal im verliehenen Asset erhoben, wenn ein Kreditnehmer Ihr Angebot annimmt, zum dann geltenden Satz, und von dem abgezogen, was er erhält. Sie verleihen den ganzen Betrag, und der Kreditnehmer schuldet ihn vollständig mit Zinsen zurück. Werden Zinsen gezahlt, behält das Protokoll seinen Anteil daran, zum Satz, der bei Eröffnung des Kredits gilt; Ihre Gebührenrabattstufe kann diesen Anteil senken, solange Ihre Gebührenrabatt-Einstellung aktiv ist. Die Prüfung zeigt den heutigen Satz und das Höchste, was dieser Anteil nehmen kann; lässt sich der Satz nicht lesen, sagt die Prüfung das, statt eine Zahl zu zeigen.
+
+<a id="risk-access"></a>
+
+### Risk Access: Ihre Risikostufe
+
+Jedes Konto beginnt auf der niedrigsten Risikostufe, nur Blue-Chip-Assets, und nur Sie können sie anheben. Ein Paar braucht die Stufe seines riskanteren Tokens: Blue-Chip-Tokens brauchen nichts, andere liquide Tokens brauchen „Liquide Assets“, und ein illiquider Token braucht „Jedes Asset, auch illiquide“ sowie Ihre Zustimmung zu genau diesem Paar. Wenn das Annehmen eines Angebots oder das Stellen einer Anfrage einen solchen Schritt braucht, sagt die Prüfung das an Ort und Stelle und bietet ihn als eine Wallet-Bestätigung mit eigenem Beleg an: was sich ändert, welche Paare es betrifft, wann es wirksam wird und dass keine Mittel bewegt werden. Das Anheben der Stufe oder die Zustimmung zu einem Paar kann eine vom Protokoll festgelegte Wartezeit haben; für eine angehobene Stufe zeigt die App den Zeitpunkt des Inkrafttretens, von der Chain gelesen, für eine Zustimmung sagt sie, dass das Protokoll diese Zeit noch nicht veröffentlicht, und sie bietet denselben Schritt nie zweimal an, weil ein zweiter die Wartezeit neu starten würde. Das Senken der Stufe wirkt immer sofort. Veröffentlicht das Protokoll neue Risikobedingungen, zählen Ihre Stufe und Zustimmungen erst wieder, wenn Sie sie erneut bestätigen. Haben Sie den strengen Modus eingeschaltet, braucht auch jedes liquide Paar Ihre Bestätigung. Eine Sperre durch die Risikostufe des Kreditgebers wird als seine gezeigt: Nichts in Ihrem Konto würde sie ändern.
 
 <a id="terms-gate"></a>
 

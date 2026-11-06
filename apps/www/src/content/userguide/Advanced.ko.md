@@ -1928,6 +1928,168 @@ health factor를 보여 주고, 가격이 없는 것은 개수를 셉니다.
 
 `getSanctionsHeldReward(user)`는 보류 잔액이고 `getRewardSanctionsStatus(user)`는 그 판정(Deliver, Hold, Confirmed)입니다. 잔액이 있고 판정이 Deliver이면 Home은 `claimHeldInteractionRewards(2)`을 제시합니다. 이 호출은 새로 발생한 미지급분을 정산하지 않고 보류 잔액만 정확히 지급하며 `InteractionRewardsClaimed(user, 0, 0, paid)`를 발생시킵니다. 지갑이 금지된 동안에는 `SanctionedAddress`로 revert합니다. 서명 전 재확인은 둘 다 다시 읽고 발신자로서 호출을 시뮬레이션합니다. 플래그가 확정된 동안 얻은 날은 영구히 몰수됩니다.
 
+<a id="borrow-start"></a>
+
+### Borrow: 작동 방식
+
+Borrow는 ERC-20 담보에 대한 ERC-20 대출자 오퍼(`offerType` 0)를 `acceptOffer(offerId, terms, signature)`로 직접 수락합니다. 한 번의 트랜잭션으로 차입자의 볼트가 없으면 열고, 담보를 그 안으로 옮기고, 개시 수수료를 뺀 원금을 지갑으로 보내며, `LoanInitiated`를 발생시킵니다. 차입자는 요청(`offerType` 1)을 올릴 수도 있습니다. NFT 측, 페어 동의, 고급 옵션은 이후 업데이트에서 제공됩니다.
+
+<a id="borrow-pair"></a>
+
+### Borrow: 토큰 고르기
+
+각 토큰의 분류는 실시간으로 읽습니다. 먼저 `getAssetPriceStatus(asset)`(Divergent는 불신으로 읽고 새 대출을 막음), 다음으로 `checkLiquidityOnActiveNetwork(asset)`(0 유동, 1 비유동). `OraclePriceDivergence` 또는 `OracleCrossCheckDivergence` revert는 불신으로 읽고, 그 밖의 실패는 이유와 함께 읽을 수 없음으로 표시합니다. 추천 목록은 배포 기록의 래핑된 네이티브 토큰과 테스트 토큰이며, 붙여 넣은 주소는 형식만 확인합니다.
+
+<a id="borrow-offers"></a>
+
+### Borrow: 오퍼 고르기
+
+`getActiveOffersByAssetPairRanked(lending, collateral, 0, 20)`가 페어의 열린 오퍼 ID와 총수를 줍니다. 각 ID에 대해 페이지는 `getOffer`, `getOfferState`, 지갑이 있으면 `previewAccept(offerId, wallet)`를 읽으며, 그 `errorCode`가 프로토콜의 거절입니다. LTV는 오늘 가격 기준 `calculateLTV`이며, 비유동이거나 가격이 없는 측은 없는 이유를 밝힙니다. 직접 수락은 대출자의 `amountMax`를 `interestRateBps`로 묶습니다. 차입 요청, NFT 측이 있는 오퍼, 본인 오퍼는 세기만 하고 목록에 넣지 않습니다.
+
+<a id="borrow-review"></a>
+
+### Borrow: 검토와 서명
+
+검토는 오퍼, 그 상태, `previewAccept`, `getOfferLinkedLoanId`, `getCurrentRiskTermsHash`, 두 분류, `getEffectiveGraceSeconds(durationDays)`, `getLoanInitiationFeeBps`, 지갑의 볼트·잔액·승인액, `previewOfferAcceptBlock`, 할인 동의를 읽고, 지갑이 열리기 직전에 다시 읽습니다. 지갑은 저장된 오퍼로 만든 EIP-712 `AcceptTerms`(도메인 `Vaipakam AcceptOffer`, 버전 1)에 새 128비트 nonce와 30분 기한으로 서명합니다. 비유동 확인은 검토가 비유동으로 보여 준 측만 지정합니다. 승인액이 부족할 때만 담보 금액만큼 정확히 승인하고, 서명과 함께 `acceptOffer`를 모의 실행한 뒤 보냅니다. 승인 뒤에 멈추면 다른 변경이 없는 한 앱은 승인액을 이전 값으로 되돌립니다. 결과는 이 오퍼와 지갑의 `LoanInitiated`와 영수증의 `Transfer` 로그에서 읽습니다. 허용량은 첫 지갑 요청 직전에 다시 읽으며, 재설정은 그 값으로 되돌립니다. 전송된 수락이 revert되거나 지갑이 취소 또는 대체하면 거래 추적기가 같은 재설정을 합니다. 검토 화면은 `allowsPartialRepay`, `allowsPrepayListing`, `parallelSaleOrderHash`와 함께 `allowsParallelSale`, `refinanceTargetLoanId`, 연결된 대출을 표시하고, 갚을 금액을 일시 중지가 없는 경우로 표시합니다. 일시 중지 동안에도 이자는 붙고 만기일만 늦춰지기 때문입니다. 각 승인 단계는 영수증이 포함된 블록에서 다시 읽은 허용량으로 판단하며, 영수증 상태로는 판단하지 않습니다. 0이 아닌 허용량을 다른 0이 아닌 값으로 바꾸는 것을 거부하는 토큰(`approve` 시험 실행으로 확인)에는 먼저 0으로 가는 단계가 들어가며, 검토 화면은 이를 추가 프롬프트로 셉니다. 약관 동의는 지갑이 열리기 직전에 다시 읽습니다. 두 판매 경로 모두 담보를 NFT로 등록하므로, 토큰 담보에서는 부여된 등록·판매 허가가 이 대출이 쓸 수 없는 것으로 표시됩니다. `VaultUpgradeRequired` 거부는 지갑 자신의 볼트에 대한 `getVaultVersionInfo`로 귀속을 판단하며, 그 볼트가 최소 버전 아래일 때만 해결 방법을 안내하고 그렇지 않으면 대출자의 볼트를 명시합니다.
+
+<a id="borrow-fee"></a>
+
+### Borrow: 개시 수수료
+
+수수료는 `previewAccept`의 `lifEstimate`입니다. 원금에 대한 `getLoanInitiationFeeBps`를 빌리는 토큰으로 받아 전달액에서 차감하며, 동의가 켜져 있고 빌리는 토큰이 유동이면 보유 티어 할인으로 낮아지고, 티어는 수락 시점에 고정됩니다. 이 페이지는 Full 요금제를 선택하지 않습니다. 수수료를 위해 VPFI를 징수하거나 환불하지 않습니다. 제출자 몫(수수료의 `getLifMatcherFeeBps`)은 보낸 사람에게 지급되며, 직접 수락에서는 차입자이므로 지갑은 수수료를 뺀 원금에 그 몫을 더해 받습니다.
+
+<a id="borrow-risks"></a>
+
+### Borrow: 위험
+
+유예 기간이 끝난 대출(만기일 뒤 `getEffectiveGraceSeconds`, 일시 정지 시간만큼 늦춰짐)은 누구나 연체 처리할 수 있습니다. 유동 담보는 대출자를 위해 매각되고 비유동 담보는 그대로 이전됩니다. 유동 담보는 헬스 팩터가 1 아래로 내려가면 청산될 수도 있습니다. `useFullTermInterest`는 조기 상환 시 전체 기간 이자를 부과하고, 이자 일정은 놓친 기간을 담보 강제 매각으로 정산합니다.
+
+<a id="borrow-request"></a>
+
+### Borrow: 직접 요청 올리기
+
+요청은 차입자의 지갑에서 보내는 `offerType` 1, 양쪽 ERC-20의 `createOffer`입니다. `collateralAmount`를 차입자의 볼트로 옮기고(볼트가 없으면 만들고) `OfferCreated(offerId, creator, 1)`를 발생시킵니다. 대출자는 `acceptOffer`로 받습니다. 수수료를 뺀 원금은 차입자의 지갑으로, 수수료 중 송신자 몫은 보낸 대출자에게 갑니다. `cancelOffer`는 생성자에게는 생성 후 `MIN_OFFER_CANCEL_DELAY`(5분)부터, 누구에게나 요청이 만료된 뒤 열려 있으며, 담보는 항상 생성자에게 돌아갑니다.
+
+<a id="borrow-request-terms"></a>
+
+### Borrow: 요청의 조건
+
+Basic은 단일 값 요청을 올립니다: `amount` = `amountMax`, `interestRateBps` = `interestRateBpsMax`, `collateralAmount` = `collateralAmountMax`, `fillMode` 0, `periodicInterestCadence` 0, `allowsPrepayListing`과 `allowsParallelSale`은 false, `refinanceTargetLoanId` 0, `creatorRiskAndTermsConsent` true. 금액은 기본 단위로 정확히 변환되고 이자율은 최대 10,000 bps입니다. `durationDays`는 `getProtocolConfigBundle`에서 읽은 설정 최대값으로 제한됩니다. `expiresAt`은 0(취소할 때까지 유효)이거나, 검토를 열 때 최신 블록에서 정한 시각으로 최대 `MAX_OFFER_EXPIRY_HORIZON`(365일) 뒤까지입니다. `useFullTermInterest` 기본값은 true, `allowsPartialRepay`는 false입니다.
+
+<a id="borrow-request-review"></a>
+
+### Borrow: 요청 검토와 게시
+
+검토 화면은 지갑에서 `createOffer`를 시뮬레이션하고 양쪽 분류, `getEffectiveGraceSeconds(durationDays)`, `getLoanInitiationFeeBps`, 최장 기간, 지갑의 볼트·잔액·승인액, 양쪽이 유동적이면 `calculateLTV`를 읽으며, 매 블록과 지갑이 열리기 직전에 다시 읽습니다. 승인액이 부족한 동안 시뮬레이션은 담보 인출까지만 갈 수 있으므로, 토큰의 인출 오류나 프로토콜 오류 이름이 없는 revert는 해결할 승인으로 표시하고, 이름이 있는 프로토콜 오류는 거절로 봅니다. 정확한 금액을 승인한 뒤 `createOffer`를 다시 시뮬레이션하고 보냅니다. 승인 뒤 멈추면, 다른 변경이 없을 때 승인액을 이전 값으로 되돌립니다. 결과는 이 지갑의 `OfferCreated`와 볼트로의 담보 `Transfer`에서 읽습니다.
+
+<a id="borrow-nft-collateral"></a>
+
+### Borrow: NFT를 담보로
+
+담보의 표준은 `supportsInterface`로 읽습니다(ERC-721 `0x80ac58cd`, ERC-1155 `0xd9b67a26`). revert는 어느 쪽도 아닌 것으로 보며, 읽기에 실패하면 요청을 제시하지 않습니다. ERC-721 요청은 `collateralAssetType` 1, `collateralTokenId`에 입력한 ID, `collateralQuantity` 1, `collateralAmount` = `collateralAmountMax` = 0을 보냅니다. 위험 페어는 그 토큰 ID를 키로 합니다. 검토는 한 블록에서 `ownerOf`, `getApproved`, `isApprovedForAll(wallet, Diamond)`를 읽으며, 다른 지갑이 보유한 토큰이나 revert하는 `ownerOf`는 요청을 막습니다. 어느 승인도 없으면 드라이 런은 토큰의 `ERC721InsufficientApproval`에서 멈추고, 이는 필요한 승인으로 표시됩니다. 승인은 `approve(Diamond, id)`이며, 영수증 블록에서 `getApproved`가 Diamond를 읽을 때만 완료로 봅니다. 그 뒤에 멈추면 승인이 여전히 Diamond를 가리키고 지갑이 여전히 토큰을 보유하는 동안에만 이전 주소로 되돌립니다. ERC-721에서는 `setApprovalForAll`을 결코 요청하지 않습니다. 결과는 `OfferCreated`와 지갑에서 금고로 가는 토큰 자체의 `Transfer`(topic 4개)를 읽습니다. ERC-1155 요청은 `collateralAssetType` 2, 토큰 ID, 입력한 수량의 `collateralQuantity`(1부터 2^128−1까지), 두 금액 모두 0을 보냅니다. 검토는 한 블록에서 `balanceOf(wallet, id)`와 `isApprovedForAll(wallet, Diamond)`를 읽으며, 잔고가 수량보다 적으면 요청을 막고, 승인이 없으면 드라이 런은 `ERC1155MissingApprovalForAll`에서 멈춥니다. 유일한 승인은 `setApprovalForAll(Diamond, true)`이며, 영수증 블록에서 다시 읽힐 때 완료로 보고, 요청이 채굴되거나 멈춘 뒤 `setApprovalForAll(Diamond, false)`로 거둡니다(부여 블록보다 이전은 결코 읽지 않음). 단, 지갑이 이전부터 승인해 둔 경우는 예외입니다. 결과는 지갑에서 금고로 가는 토큰의 `TransferSingle`/`TransferBatch`를 합산합니다. NFT를 요구하는 대출자 오퍼는 여전히 현재 앱으로 갑니다.
+
+<a id="borrow-request-range"></a>
+
+### Borrow: 범위가 있는 요청
+
+범위는 `amount`(최소)를 `amountMax`(최대)보다 작게, `interestRateBps` = `interestRateBpsMax`(하나의 이자율)로, `collateralAmount`(가장 작은 대출의 하한)를 `collateralAmountMax`(게시할 때 금고로 옮겨짐) 이하로 보냅니다. 하한이 비어 있으면 둘을 같게 보냅니다. 범위는 ERC-20 담보에서만 제공됩니다. 직접 `acceptOffer`는 `collateralAmount`를 담보로 `amount`를 `interestRateBpsMax`로 빌려주고 `collateralAmountMax − collateralAmount`를 지갑으로 돌려줍니다. `getPartialFillEnabled`가 true인 동안 `matchOffers`는 양 끝 사이에서 체결합니다. `createOffer` 모의 실행은 가장 큰 끝에서 오퍼 한도를 적용하고 `MaxLendingAboveCeiling(provided, ceiling)`으로 거부하며, 검토 화면이 그 상한을 보여 줍니다. 직접 수락 끝은 (`amount`, `collateralAmount`)에서 단일 값 요청의 두 번째 모의 실행으로 확인하고, 한도 이전에 멈춘 응답은 알 수 없음으로 표시합니다. 각 끝의 LTV는 `calculateLTV(lending, amount, collateral, collateralAmount)`이며, `ZeroCollateral`은 가치 없는 담보로 읽습니다. 표시되는 대출 시작 건전성 지수는 `getDepthTieredLtvEnabled`가 false인 동안 `getMinHealthFactor`, true인 동안 1.0입니다. 매칭은 대출자의 비례 요구량을 잠그며, 담보가 범위이면 `collateralAmount` 까지 올리고 그렇지 않으면 요구량 그대로입니다. 그래서 가장 큰 매칭은 `collateralAmountMax` 와 `collateralAmount` 두 경우 모두로 표시됩니다(담보 범위가 없으면 더 적게 잠글 수 있다고 표시). 이를 제한하는 것은 대출 시작 시점의 검사뿐이며, 그 검사를 읽지 못하면 그 사실을 표시하고 빼지 않습니다. 계층형 체계에서는 검사가 등급의 LTV 상한도 적용합니다. `getPartialFillEnabled`가 true인 동안 매칭이 잠그지 않은 담보는 이후 매칭을 위해 금고에 남으며, 요청이 닫힐 때(남은 용량이 `amount` 아래로 떨어질 때)나 `cancelOffer`가 실행될 때에만 환불됩니다.
+
+<a id="borrow-request-fill"></a>
+
+### Borrow: 요청의 체결 방식
+
+`fillMode`는 0(Partial), 1(AON), 2(IOC) 중 하나이며 게시 후 바꿀 수 없습니다. AON은 `amount` = `amountMax`를 요구하고(`AonRequiresSingleValueAmount`), IOC는 `expiresAt` ≠ 0을 요구합니다(`IocRequiresExpiry`). 양식은 거부되는 조합을 제공하지 않습니다. 금액, 이자율, 담보는 열린 요청에서 `setOfferAmount`, `setOfferRate`, `setOfferCollateral`, `modifyOffer`로 바꿀 수 있지만 `amountFilled`나 `collateralAmountFilled` 아래로는 바꿀 수 없습니다. 이 앱은 아직 이를 호출하지 않습니다.
+
+<a id="borrow-request-cadence"></a>
+
+### Borrow: 요청의 이자 일정
+
+`periodicInterestCadence` 는 0(None)부터 4(Annual)까지이며, 기간은 30·90·180·365일입니다. 양식은 `previewCadenceAdmission(lendingAsset, amount, assetType, collateralAsset, collateralAssetType, durationDays)` 가 허용하는 것을 제시합니다. 이 함수는 `createOffer` 가 적용하는 규칙을 `amount`(범위의 최소값)로 평가해 실행합니다. 각 거부는 리버트 데이터에서 표시됩니다: `PeriodicInterestDisabled`, `CadenceNotAllowedForIlliquid`, 또는 `CadenceNotAllowed(cadence, durationDays, principalNumeraire, threshold)`. 한 기간의 이자는 `principal × rate × intervalDays / (10000 × 365)` 입니다. 미납 기간은 유예 `getEffectiveGraceSeconds(intervalDays − 1)` 가 지나면 누구나 `settlePeriodicInterest` 로 정산할 수 있으며, 담보를 팔고 대출은 유지됩니다. 키퍼 패스 `periodicSettle` 의 활성 상태는 기능 서비스가 보고하는 대로 표시되며 기본값은 알 수 없음입니다. 일정은 게시 후 바꿀 수 없습니다.
+
+<a id="borrow-request-tariff"></a>
+
+### Borrow: 요청의 풀 수수료 요율
+
+옵트인은 `setOfferCreatorFullTariff(offerId, true, maxCStar, allowDowngrade)`로, 작성자가 `createOffer` 뒤에 보내며, 대출자가 요청을 받은 뒤에는 `OfferAlreadyAccepted`로 거절됩니다. `maxCStar`는 0보다 커야 합니다(`FullTariffMaxCStarRequired`). 양식은 스위치를 `getFeeEntitlementConfig()`에서, 요율을 `quoteCStar(lendingAsset, principal, durationDays)`에서 보여 주며, 범위라면 `amount`와 `amountMax`에서 읽습니다. 최대치의 기본값은 `amountMax`에서의 견적입니다. 각 수락에서 부과는 그 대출의 원금으로 산정한 `C*`를 가져가지만, 스위치가 켜져 있고, 원금에 가격과 유동성이 있으며, `C* ≤ maxCStar`이고, 금고의 자유 VPFI(`getTrackedVPFIBalance`로 상한을 둔 금고 잔액에서 유효한 담보권을 뺀 값, `getFreeBalance` 경유)로 충당될 때만입니다. 그렇지 않으면 `FeeEntitlementDisabled`, `FeeEntitlementFullOptInFailed`, `FeeEntitlementTariffAboveAuth`로 되돌려지며, `allowDowngrade`라면 요율 없이 대출이 열립니다. 차입자의 대출 수수료 할인은 `FULL_MODE_FEE_DISCOUNT_BONUS_BPS`(1000)만큼 오르고 `MAX_FEE_DISCOUNT_BPS`(5000)가 상한입니다. 검토 화면은 모든 대출이 거절될 선택을 막고, 옵트인은 `getOffer`를 다시 읽어 측정합니다(`creatorFull`, `creatorMaxCStar`, `creatorAllowFullDowngrade`). 채워지지 않은 요청에 대한 백스톱 대출은 이 앱에서 아직 제공하지 않습니다.
+
+<a id="lend-start"></a>
+
+### Lend: 작동 방식
+
+Lend는 ERC-20 담보에 대한 ERC-20 차입 요청(`offerType` 1)을 대출자가 보내는 `acceptOffer(offerId, terms, signature)`로 직접 받습니다. 한 번의 트랜잭션으로 원금은 Diamond에 대한 승인 아래 대출자의 지갑에서 대출자의 볼트로 인출되고, 차입자는 개시 수수료를 뺀 금액을 받으며, 차입자의 볼트에 이미 있는 담보가 대출의 담보가 되고, `LoanInitiated`가 발생하며 대출자와 차입자에게 각각 포지션 NFT가 주어집니다. 대출 오퍼(`offerType` 0)는 같은 페이지에서 게시합니다. NFT 측은 이후 업데이트에서 추가됩니다.
+
+<a id="lend-offers"></a>
+
+### Lend: 요청 고르기
+
+`getActiveOffersByAssetPairRanked(lending, collateral, 0, 20)`가 쌍의 열린 오퍼 id를 줍니다. 각각에 대해 페이지는 `getOffer`, `getOfferState`, `getOfferLinkedLoanId`와, 지갑이 있으면 `previewAccept(offerId, wallet)`를 읽으며, 그 `errorCode`가 프로토콜의 거절 사유입니다. 직접 수락은 요청의 `amount`(최소치)를 `interestRateBpsMax`로 확정하고, 담보인정비율은 그 금액에 대한 오늘 가격 기준 `calculateLTV`입니다. 대출자 오퍼, NFT 측, 읽는 사람 자신의 요청, 대출자 포지션 매각 수단(`getOfferLinkedLoanId`가 0이 아닌 차입자 측 오퍼)은 개수만 세고 목록에 넣지 않습니다. 순서는 자금 제공 가능 먼저, 그다음 이율 내림차순, 그다음 금액 내림차순입니다.
+
+<a id="lend-review"></a>
+
+### Lend: 검토와 서명
+
+검토 화면은 Borrow와 같은 것(오퍼, 그 상태, `previewAccept`, `getOfferLinkedLoanId`, `getCurrentRiskTermsHash`, 두 분류, `getEffectiveGraceSeconds(durationDays)`, `getLoanInitiationFeeBps`, `getLifMatcherFeeBps`, 지갑의 볼트, `previewOfferAcceptBlock`, 수수료 할인 동의)에 더해 `getTreasuryFeeBps`를 읽고, 잔액과 승인액은 대출자가 내는 쪽인 대출 자산에서 측정합니다. 그 자산이 부족하면 서명이 막히며, 대출자 포지션 매각 수단도 마찬가지입니다. 지갑은 EIP-712 `AcceptTerms`(도메인 `Vaipakam AcceptOffer`, 버전 1)에 서명하고, 승인액이 모자랄 때만 원금만큼 정확히 승인하며(0이 아닌 값끼리의 변경을 거부하는 토큰은 먼저 0으로 바꾸는 단계를 둡니다), `acceptOffer`를 시뮬레이션한 뒤 보냅니다. 중간에 멈춘 흐름이 남긴 승인은 Borrow와 같이 재설정됩니다. 결과로 이 오퍼의 `LoanInitiated`, 지갑에서 나간 원금의 `Transfer`, 매처 몫이 돌아오는 `Transfer`를 읽습니다.
+
+<a id="lend-fee"></a>
+
+### Lend: 수수료와 프로토콜의 몫
+
+수수료는 `previewAccept`의 `lifEstimate`이며 차입자가 부담합니다. 대출 자산으로 원금의 `getLoanInitiationFeeBps`이고, 차입자에게 전달되는 금액에서 빠지며, 수락 시 차입자의 보유 등급 할인으로, 그리고 `creatorFull`이 설정되고 부과가 성공하면 Full 요율 보너스로 낮아집니다. 제출자의 몫(수수료의 `getLifMatcherFeeBps`)은 보낸 사람, 여기서는 대출자에게 지급됩니다. 이자에 대한 프로토콜의 몫은 `getTreasuryFeeBps`로, 대출이 열릴 때 대출별로 고정됩니다(`treasuryFeeBpsAtInit`). 동의가 켜져 있으면 대출자의 보유 등급 할인이 이자 정산 시 이를 낮춥니다. 검토 화면은 오늘의 요율과, 그 요율에서의 몫을 상한으로 보여 줍니다.
+
+<a id="lend-risks"></a>
+
+### Lend: 위험
+
+유예 종료(만기일로부터 `getEffectiveGraceSeconds` 후이며, 일시 정지 시간만큼 뒤로 밀립니다)가 지난 대출은 누구나 디폴트 처리할 수 있습니다. 유동 담보는 대출자를 위해 매각되고, 비유동 담보는 그대로 이전됩니다. 양쪽이 모두 유동적이면 건전성 지수가 1 아래일 때 대출을 청산할 수 있으며, 매각은 대출자에게 먼저 지급합니다. 비유동인 쪽이 있으면 가격 기반 청산이 없고, 디폴트 시 대출자가 담보 전부를 받습니다. `useFullTermInterest`는 조기 상환 시 이자의 하한을 두며, 없으면 이자는 일할 계산입니다. 정기 이자 일정에서는 놓친 기간을 담보의 강제 매각으로 대출자에게 지급합니다. 대출자의 포지션 NFT가 청구권을 지니며, 이를 이전하면 대출도 이전됩니다.
+
+<a id="lend-offer"></a>
+
+### Lend: 직접 오퍼 올리기
+
+대출 오퍼는 대출자의 지갑에서 보내는 `offerType` 0의 `createOffer`이며, 양쪽 모두 ERC-20입니다. 대출 자산의 `amountMax`를 대출자의 볼트로 인출하고(볼트가 없으면 만들고), `OfferCreated(offerId, creator, 0)`를 발생시킵니다. 차입자는 `acceptOffer`로 받습니다. 차입자의 담보는 차입자의 볼트로 인출되고, 수수료를 뺀 원금이 차입자의 지갑으로 가며, 수수료 중 전송자의 몫은 전송자인 차입자에게 갑니다. `getPartialFillEnabled`가 true인 동안에는 `matchOffers`가 차입자의 요청과 짝지을 수도 있으며, 이때 단일 값 대출 오퍼는 자신의 이자율로 금액 전부를 빌려주고 담보는 적어도 `collateralAmount`입니다. `cancelOffer`는 생성 후 `MIN_OFFER_CANCEL_DELAY`(5분)부터 생성자가, 오퍼가 만료된 뒤에는 누구나 호출할 수 있으며, 금액은 항상 생성자에게 돌아갑니다.
+
+<a id="lend-offer-terms"></a>
+
+### Lend: 오퍼의 조건
+
+부분이 없는 대출 오퍼는 단일 값입니다. `amount` = `amountMax`, `interestRateBps` = `interestRateBpsMax`, `collateralAmount` = `collateralAmountMax`(차입자가 잠가야 할 유일한 담보량), `fillMode` 0(Advanced가 다른 방식을 정하지 않은 경우, 다음 절 참고), `periodicInterestCadence` 0(고급에서 일정을 정하지 않는 한), `allowsPrepayListing`과 `allowsParallelSale`은 false, `refinanceTargetLoanId` 0, `creatorRiskAndTermsConsent`는 true이며, 고급에서 선택하지 않는 한 Full 요금제는 설정하지 않습니다. 금액은 기본 단위로 정확히 파싱되고 이자율은 최대 10,000 bps입니다. `durationDays`는 `getProtocolConfigBundle`에서 읽은 설정 최댓값으로 제한됩니다. `expiresAt`은 0(취소할 때까지 열림)이거나 검토 화면이 열릴 때 최신 블록 기준으로 정한 시각이며, 최대 `MAX_OFFER_EXPIRY_HORIZON`(365일) 뒤까지입니다. `useFullTermInterest`의 기본값은 true, `allowsPartialRepay`의 기본값은 false입니다.
+
+<a id="lend-offer-parts"></a>
+
+### Lend: 부분으로 빌려주는 오퍼
+
+부분은 `amount`(한 번의 매칭이 빌려줄 수 있는 가장 작은 부분)를 `amountMax`(전체 금액, `createOffer`가 볼트로 가져감)보다 작게 보냅니다. `collateralAmount` = `collateralAmountMax`는 `amountMax` 기준의 유일한 요구 사항으로 남고(그렇지 않으면 `LenderCollateralRangeNotAllowed`), `interestRateBps` = `interestRateBpsMax`입니다. 대출 오퍼에 대한 직접 `acceptOffer`는 `collateralAmount`에 대해 `amountMax`를 빌려주며, `amountFilled`가 0인 동안에만 가능합니다(매칭 후에는 `OfferPartiallyFilled`). `getPartialFillEnabled`가 true인 동안 `matchOffers`는 금액 겹침 구간의 중간값(최소 `amount`)을 이자율 겹침 구간의 중간값으로, 적어도 `collateralAmount × matchAmount ÷ amountMax`(내림, 차입자의 담보 범위가 높일 수 있음)에 대해 빌려줍니다. `amountMax − amountFilled`가 `amount` 아래로 떨어지면 나머지는 대출자의 지갑으로 인출되고 오퍼는 닫힙니다(`OfferClosed`, 사유 `Dust` 또는 `FullyFilled`). 일부 체결된 오퍼에 대한 `cancelOffer`는 대기 시간을 건너뛰고 `amountMax − amountFilled`를 돌려줍니다. `fillMode`는 요청과 같이 0, 1, 2이며, AON은 `amount` = `amountMax`, IOC는 만료가 필요하고, 게시 후에는 바뀌지 않습니다. 두 레그가 모두 유동적이면 `createOffer`는 `amountMax`에서의 하한보다 낮은 `collateralAmount`를 `MinCollateralBelowFloor(provided, floor)`로 거부하며, 검토 화면이 그 하한을 보여 줍니다. LTV는 (`amountMax`, `collateralAmount`)에서의 `calculateLTV` 하나만 표시되며, 부분도 반올림을 빼면 같은 비율입니다.
+
+<a id="lend-offer-schedule"></a>
+
+### Lend: 오퍼의 이자 지급 일정
+
+대출 오퍼의 `periodicInterestCadence`는 요청의 규칙(위)을 따르며, `previewCadenceAdmission`는 오퍼의 `amount`, 즉 가장 작은 부분(부분이 없으면 전체 금액)으로 평가합니다. `createOffer`는 그 값으로 `requireCadenceAdmitted`를 통해 허용하고, 각 대출의 개시 시점에 자기 원금으로 다시 확인합니다(`requireOriginationCadenceAdmitted`). 검토 화면은 한 기간의 이자를 `amountMax`(직접 인수)로, 부분이 있으면 `amount`로도 보여 줍니다. 놓친 기간은 유예 기간 후 누구나 `settlePeriodicInterest`로 정산할 수 있습니다. 담보를 팔아 그 기간의 이자를 대출자에게 지급하며, 대출은 계속 열려 있습니다.
+
+<a id="lend-offer-tariff"></a>
+
+### Lend: 오퍼의 풀 수수료 요율
+
+대출자의 옵트인도 같은 `setOfferCreatorFullTariff(offerId, true, maxCStar, allowDowngrade)`이며, `createOffer` 후에 보냅니다. 오퍼가 전부 인수되거나 닫히면 `OfferAlreadyAccepted`로 거절됩니다. 일부만 매칭된 오퍼는 아직 받아들이며, 이후 대출에 적용됩니다. 견적은 `amount`와 `amountMax`에서의 `quoteCStar`이고, 최대치의 기본값은 `amountMax`에서의 견적입니다. 각 대출은 원금으로 가격이 매겨져 하나씩 `maxCStar`와 비교되며, 조건은 요청과 같습니다(`FeeEntitlementDisabled`, `FeeEntitlementFullOptInFailed`, `FeeEntitlementTariffAboveAuth`, 또는 허용된 경우 하향). 대출자 확인에는 금고의 현재 사용 가능한 VPFI를 씁니다. 요율이 부과되면 대출의 `lenderMode`가 Full로 기록되고, 이후 대출자 수익 수수료가 정산될 때마다 프로토콜 몫에 대한 포지션 보유자의 할인에 `FULL_MODE_FEE_DISCOUNT_BONUS_BPS`(1000)가 더해집니다. 상한은 `MAX_FEE_DISCOUNT_BPS`(5000)이며, 보유 할인 동의 여부와 관계없습니다. 제자리 연장(`repriceFeeEntitlementOnExtension`)은 새 기간에 대해 이 기록을 None으로 바꿉니다.
+
+<a id="lend-offer-review"></a>
+
+### Lend: 오퍼 검토와 게시
+
+검토 화면은 지갑에서 `createOffer`를 시뮬레이션하고, 두 자산의 분류, `getEffectiveGraceSeconds(durationDays)`, `getLoanInitiationFeeBps`, `getTreasuryFeeBps`, 최장 기간, 지갑의 볼트, 대출 자산(대출자가 잠그는 쪽)의 잔액과 승인액, 양쪽이 유동적일 때의 `calculateLTV`를 읽습니다. 매 블록과 지갑이 열리기 직전에 다시 읽습니다. 승인액이 부족한 동안 시뮬레이션은 금액 인출까지만 닿으므로, 토큰의 인출 오류, `VaultDepositFailed`(데이터 없이 되돌려진 인출을 프로토콜이 감싼 것으로, WETH가 승인 부족일 때 그렇습니다), 또는 프로토콜 오류 이름이 없는 되돌림은 해결할 승인으로 표시됩니다. 요청 검토와 같은 규칙이며, 그 밖의 이름 있는 프로토콜 오류는 거부입니다. 정확한 승인 뒤 `createOffer`를 다시 시뮬레이션하고 보냅니다. 승인 뒤에 멈추면, 다른 변경이 없을 때 승인액을 이전 값으로 되돌립니다. 결과로 이 지갑의 `offerType` 0 `OfferCreated`와 금액이 볼트로 들어간 `Transfer`를 읽습니다.
+
+<a id="lend-offer-fee"></a>
+
+### Lend: 오퍼에 붙는 수수료
+
+`createOffer`는 대출자에게 아무것도 부과하지 않습니다. 표시되는 수수료는 차입자의 것으로, 대출 자산 기준 금액의 `getLoanInitiationFeeBps`입니다. `acceptOffer`가 실행될 때 적용되는 요율로 계산되고, 그때 차입자의 보유 등급 할인만큼 낮아지며, 차입자에게 보내는 금액에서 빠집니다. 표시된 금액은 오늘의 요율 기준입니다. 이자 중 프로토콜의 몫은 `getTreasuryFeeBps`이며, 대출이 열릴 때 대출별로 고정됩니다(`treasuryFeeBpsAtInit`). 동의가 켜져 있으면 이자 정산 때 대출자의 보유 등급 할인이 이를 낮춥니다. 검토 화면은 오늘의 요율과 그 요율에서의 몫을 상한으로 보여 줍니다. `getTreasuryFeeBps`를 읽지 못하면 그렇다고 밝히고, 몫이나 돌아올 금액은 표시하지 않습니다.
+
+<a id="risk-access"></a>
+
+### Risk Access: 내 위험 등급
+
+스위치는 `getRiskAccessGateEnabled`입니다. 흐름에 필요한 단계는 프로토콜 자체의 답입니다. 수락에서는 `previewCreatorBlock`이 대출자가 차단되지 않았음을 보인 뒤 `previewOfferAcceptBlock`(1 = 등급 부족, 2 = 쌍 동의, 3 = 엄격 모드 확인, 4 = 예전에는 수락 시 확인이 대신하던 비유동 페어로, 2와 같이 차단하며 페어 동의로 해제됩니다), 요청에서는 `createOffer` 모의 실행의 `RiskTierTooLow`, `IlliquidPairNotConsented`, `MidTierPairNotAcknowledged`입니다. 단계는 한 블록에서 쌍의 `pairRequiredRiskLevel`(오퍼는 `acceptMidTierAckPair`), `getVaultRiskTier`, `getEffectiveRiskTier`, `getCurrentRiskTermsVersion`과 비교한 `getVaultRiskTierVersion`, `getRiskTierUnlockAt`, `getRiskAccessUnlockCooldown`, `getRiskTierMutationNonce`를 읽고, 쌍에 대해서는 `isPairConsentPending`과 `hasIlliquidPairConsent`, 또는 `isMidTierAckPending`과 `midTierStrictBlocked`를 읽습니다. 등급 올리기는 쌍에 필요한 최소 등급으로의 `setVaultRiskTierChecked(level, nonce, termsVersion)`이며, 검토 후 다른 등급 쓰기나 약관 변경이 있었다면 아무것도 바꾸지 않고 거부됩니다. 쌍 단계는 `setIlliquidPairConsent(pair, true)` 또는 `setMidTierPairAck(pair)`입니다. 대기 중인 등급 올리기나 보류 중인 쌍 단계는 다시 제시하지 않습니다. 보류 중인 쌍 단계가 언제 효력이 생기는지 돌려주는 읽기는 없으므로, 검토 화면은 그 시각을 읽을 수 없다고 알립니다. 그 시각은 단계 자체의 완료 카드만 영수증 블록 시각과 대기 기간의 합으로 보여 줍니다. 결과는 영수증 블록에서 다시 읽습니다.
+
 <a id="terms-gate"></a>
 
 ### 이용약관 확인

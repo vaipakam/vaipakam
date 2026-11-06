@@ -40,17 +40,29 @@ export interface Submission {
   /** The sender's own-rail sources, which the measurement reads through. */
   sources: readonly OwnStateSource[];
   measure: (receipt: TransactionReceipt, at: AnchoredReader) => Promise<readonly LegOutcome[]>;
+  unwind?: () => Promise<LegOutcome | null>;
+  release?: () => Promise<LegOutcome | null>;
+  /** What the flow set up for the call that stands until the call settles
+   *  and its clean-up runs (an ERC-1155 operator approval), as the page
+   *  says it; null when nothing does. Kept here, with the hash, so a page
+   *  mounted again while the receipt is unknown still says it. */
+  held: string | null;
 }
 
 export interface TxEntry {
   phase: TxPhase;
   frozen: Frozen | null;
   submission: Submission | null;
+  /** The wallet step the flow is asking for now, as the page names it
+   *  ("Step 2 of 3: ..."), whether `send` or a clean-up after the hash asks
+   *  it; null between steps. Kept here, not in the page, so it is shown in
+   *  every phase a step can happen in and survives the page unmounting. */
+  note: string | null;
   /** How many flows on screen show this entry right now. */
   shown: number;
 }
 
-const IDLE: TxEntry = { phase: { kind: 'idle' }, frozen: null, submission: null, shown: 0 };
+const IDLE: TxEntry = { phase: { kind: 'idle' }, frozen: null, submission: null, note: null, shown: 0 };
 
 /** Out with the wallet or the chain: never reset, never re-opened. */
 export function inFlight(phase: TxPhase): boolean {
@@ -120,6 +132,12 @@ export function useTxStore(): TxStore {
 export function useTxEntry(key: string): TxEntry {
   const store = useTxStore();
   return useSyncExternalStore(store.subscribe, () => store.get(key));
+}
+
+/** The setter for the wallet step a flow is asking for (`TxEntry.note`). */
+export function useTxNote(key: string): (note: string | null) => void {
+  const store = useTxStore();
+  return (note) => void store.update(key, (e) => (e.note === note ? e : { ...e, note }));
 }
 
 export function useTxEntries(): readonly [string, TxEntry][] {

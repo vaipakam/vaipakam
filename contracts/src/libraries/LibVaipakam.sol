@@ -868,8 +868,8 @@ library LibVaipakam {
      * @notice #671 — per-vault progressive risk-access tier.
      * @dev Default-init `0 == BlueChipOnly`, so every fresh vault starts at
      *      the safest tier with NO migration (zero-init storage = the strictest
-     *      gate). A user opts UP — never down by accident — only via the
-     *      EIP-712 self-submit setter in `RiskAccessFacet`. An offer's required
+     *      gate). A user opts UP — never down by accident — only by its
+     *      owner's direct call to `RiskAccessFacet`. An offer's required
      *      level is the MAX (riskier) of its two legs' required levels — a
      *      blue-chip leg needs `BlueChipOnly` (0), an illiquid leg needs
      *      `IlliquidCustom` (2) — so the riskier leg governs and a vault must
@@ -5286,8 +5286,8 @@ library LibVaipakam {
         // docs/DesignsAndPlans/ProgressiveRiskAccessDesign.md.
         bool riskAccessGateEnabled;
         // Per-vault risk tier (`RiskAccessLevel`). Zero-init `0 == BlueChipOnly`
-        // is the default for every vault; opted up only via the EIP-712
-        // self-submit setter in `RiskAccessFacet`.
+        // is the default for every vault; opted up only by the owner's
+        // direct call to `RiskAccessFacet`.
         mapping(address => RiskAccessLevel) userRiskAccess;
         // Per-(user, pairKey) explicit consent to a specific ILLIQUID asset pair,
         // required for an `IlliquidCustom` vault to transact that pair. This is
@@ -5296,7 +5296,7 @@ library LibVaipakam {
         // quantitative LTV/HF check still applies (design RD-1; Codex #727 r4).
         // pairKey == `LibRiskAccess.pairKey(PairId)`.
         mapping(address => mapping(bytes32 => bool)) illiquidPairConsent;
-        // Monotonic terms-version ledger. A self-submit setter stamps the user's
+        // Monotonic terms-version ledger. A risk-access setter stamps the user's
         // anchor to `currentRiskTermsVersion` at unlock; a governance bump of
         // `currentRiskTermsVersion` re-locks every level whose anchor is now stale
         // (reject-stale + refresh-all-held). Revocations are exempt from the
@@ -5328,11 +5328,11 @@ library LibVaipakam {
         // `acceptAckActive`).
         bool saleVehicleCreate;
         // Allow-set of protocol-managed vaults (sale vehicles / backstop) that are
-        // exempt from the self-submit signature requirement for tier opt-up.
+        // read at their raw tier (a terms bump does not re-lock them).
         mapping(address => bool) protocolManagedVault;
-        // Per-vault EIP-712 replay nonce for the gasless self-submit setters in
-        // `RiskAccessFacet` (see `LibRiskAccess`). Separate from the #662
-        // `acceptNonceUsed` ledger so the two signature surfaces never collide.
+        // RETIRED (#3238): the replay nonce of the relayed `*BySig` risk-access
+        // setters, which were removed while prelive. Nothing reads or writes it;
+        // the slot stays so the layout remains append-only. Do not reuse it.
         mapping(address => mapping(uint256 => bool)) riskAccessNonceUsed;
         // #671 (Codex #727 r1 P1) — per-(vault, pairKey) arming anchor for a
         // pair consent/ack: the grant is effective only at/after this time
@@ -5363,20 +5363,13 @@ library LibVaipakam {
         // (Codex #733 P2). Zero (never disabled, or re-enabled) ⇒ no lingering
         // requirement.
         mapping(address => uint64) strictModeStrictUntil;
-        // #730 — the `currentRiskTermsHash` the acceptor's signed #662
-        // `AcceptTerms.riskTermsHash` named, injected by
-        // `OfferAcceptFacet._verifyAndBindAccept` for the gate to read. Lets the
-        // #662⇄#671 ack-substitution (`LibRiskAccess.assertAcceptorMayTransact`)
-        // require the SIGNED acknowledgement — not just the vault's tier anchor —
-        // to be fresh, so an ack signed before a governance `bumpRiskTermsVersion`
-        // can't be submitted afterward as fresh per-pair illiquid consent. We bind
-        // the unguessable HASH, not the numeric version: the version counter is
-        // predictable, so a malicious UI could pre-stamp `N+1` and have it activate
-        // on the next bump (Codex #736 r3). `currentRiskTermsHash` is derived from
-        // bump-time block entropy a pre-signing UI can't predict. Set on every
-        // accept entry and cleared alongside `acceptAckActive`; only read on the
-        // direct-accept illiquid-substitution path (the keeper-match path leaves
-        // `acceptAckActive == false`).
+        // RETIRED (#3231) — neither written nor read. It held the
+        // `AcceptTerms.riskTermsHash` the acceptor signed, for the #662⇄#671
+        // ack-substitution that let an accept acknowledgement stand in for a
+        // standing illiquid pair consent. #3231 removed that substitution (every
+        // illiquid pair now needs a consent armed after the unlock cooldown), so
+        // nothing injects this slot any more. Kept only because Storage is
+        // append-only: removing or reusing it would shift every later field.
         bytes32 acceptAckTermsHash;
         // #730 (Codex #736 r3–r7) — the live risk-terms ANCHOR, paired with
         // `currentRiskTermsVersion`. Set by `revealRiskTermsBump` to a fresh RANDOM
@@ -5837,12 +5830,12 @@ library LibVaipakam {
         // signed `AcceptTerms.acceptorFull` / `acceptorMaxCStar` /
         // `acceptorAllowFullDowngrade` for the post-mint `chargeFullTariff` +
         // the pre-mint borrower-LIF +10% fold to read. Same transient-injection
-        // model as `acceptAckTermsHash`: written on every DIRECT accept entry,
+        // model as `acceptAckIlliquidLend`: written on every DIRECT accept entry,
         // read ONLY while `acceptAckActive == true` (so a stale value from a
         // prior accept can never leak into a keeper-match fill, which leaves
         // `acceptAckActive == false` — matcher fills carry no acceptor-signed
         // Full, so the acceptor's side stays non-Full there by construction).
-        // Not cleared on exit (like `acceptAckTermsHash`) — the `acceptAckActive`
+        // Not cleared on exit (like `acceptAckIlliquidLend`) — the `acceptAckActive`
         // gate is the load-bearing reset, saving the high-offset SSTOREs the
         // at-EIP-170 accept facet can't spare. Zero-default ⇒ non-Full.
         // APPEND-ONLY TAIL: these MUST stay at the very end of Storage so an

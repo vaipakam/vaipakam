@@ -1933,6 +1933,168 @@ fallback، موعد غير مقروء، يستحق خلال ثلاثة أيام�
 
 `getSanctionsHeldReward(user)` هو الرصيد المحتجز و`getRewardSanctionsStatus(user)` قراره (Deliver أو Hold أو Confirmed). مع وجود رصيد وقرار Deliver، تعرض Home `claimHeldInteractionRewards(2)`، الذي يدفع الرصيد المحتجز بالضبط دون تسوية أي مستحق جديد ويُصدر `InteractionRewardsClaimed(user, 0, 0, paid)`؛ ويرتد بـ `SanctionedAddress` ما دامت المحفظة محظورة. يعيد الفحص قبل التوقيع قراءة الاثنين ويحاكي الاستدعاء بصفة المرسِل. الأيام المكتسبة أثناء وسم مؤكد تُصادر نهائيًا.
 
+<a id="borrow-start"></a>
+
+### Borrow: كيف يعمل
+
+يقبل Borrow مباشرةً عرض مُقرض (`offerType` 0) لرمز ERC-20 مقابل ضمان ERC-20، عبر `acceptOffer(offerId, terms, signature)`. في معاملة واحدة يفتح خزنة المقترض إن لم تكن موجودة، ويسحب الضمان إليها، ويسلّم المحفظة أصل القرض بعد خصم رسم الافتتاح، ويُصدر `LoanInitiated`. يمكن للمقترض أيضًا نشر طلب (`offerType` 1)؛ وجوانب NFT وموافقات الأزواج والخيارات المتقدمة تأتي في تحديثات لاحقة.
+
+<a id="borrow-pair"></a>
+
+### Borrow: اختيار الرموز
+
+تُقرأ فئة كل رمز مباشرةً: أولًا `getAssetPriceStatus(asset)` (تُقرأ Divergent على أنها غير موثوقة وتغلق القروض الجديدة)، ثم `checkLiquidityOnActiveNetwork(asset)` (0 سائل، 1 غير سائل). يُقرأ revert بـ`OraclePriceDivergence` أو `OracleCrossCheckDivergence` على أنه غير موثوق؛ وأي فشل آخر يظهر غير مقروء مع سببه. القائمة المقترحة هي الرمز الأصلي المغلّف ورموز الاختبار في سجل النشر؛ والعنوان الملصق يُفحص شكله فقط.
+
+<a id="borrow-offers"></a>
+
+### Borrow: اختيار عرض
+
+يعطي `getActiveOffersByAssetPairRanked(lending, collateral, 0, 20)` معرّفات العروض المفتوحة للزوج والإجمالي. لكل منها تقرأ الصفحة `getOffer` و`getOfferState`، ومع محفظة `previewAccept(offerId, wallet)` الذي يمثّل `errorCode` فيه رفض البروتوكول. نسبة القرض إلى القيمة هي `calculateLTV` بأسعار اليوم؛ والجانب غير السائل أو بلا سعر يقول لماذا لا توجد. القبول المباشر يُلزم بـ`amountMax` للمُقرض عند `interestRateBps`. طلبات الاقتراض والعروض ذات جانب NFT وعروضك تُعدّ ولا تُدرج.
+
+<a id="borrow-review"></a>
+
+### Borrow: المراجعة والتوقيع
+
+تقرأ المراجعة العرض وحالته و`previewAccept` و`getOfferLinkedLoanId` و`getCurrentRiskTermsHash` والفئتين و`getEffectiveGraceSeconds(durationDays)` و`getLoanInitiationFeeBps` وخزنة المحفظة ورصيدها وموافقتها و`previewOfferAcceptBlock` وموافقة الخصم، وتعيد قراءتها قبيل فتح المحفظة. توقّع المحفظة EIP-712 `AcceptTerms` (النطاق `Vaipakam AcceptOffer`، الإصدار 1) المبني من العرض المخزّن، مع nonce جديد بطول 128 بت ومهلة 30 دقيقة؛ ولا يسمّي إقرار عدم السيولة إلا جانبًا أظهرته المراجعة غير سائل. تأتي موافقة على مقدار الضمان بالضبط فقط إذا قصرت الموافقة الحالية، ثم يُحاكى `acceptOffer` بالتوقيع ويُرسل. إذا توقف بعد الموافقة يعيدها التطبيق إلى قيمتها السابقة ما لم يغيّرها شيء آخر. تقرأ النتيجة `LoanInitiated` لهذا العرض وهذه المحفظة وسجلات `Transfer` في الإيصال. تُقرأ الموافقة من جديد قبل أول طلب من المحفظة مباشرة، وهذه القيمة هي ما تعيده عملية الإرجاع؛ والقبول المُرسَل الذي يُرفض (revert)، أو الذي تلغيه المحفظة أو تستبدله، يحصل على الإرجاع نفسه من متتبع المعاملات. وتذكر المراجعة `allowsPartialRepay` و`allowsPrepayListing` و`allowsParallelSale` مع `parallelSaleOrderHash` و`refinanceTargetLoanId` والقرض المرتبط، وتصف المبلغ المستحق بأنه حالة عدم التوقف، لأن الفائدة تتراكم أثناء التوقف بينما يتأخر تاريخ الاستحقاق. يُحكم على كل خطوة موافقة بالسماح المقروء مجددًا عند كتلة إيصالها، لا بحالة الإيصال أبدًا. والرمز الذي يرفض تغيير سماح غير صفري إلى آخر غير صفري، ويُكتشف ذلك بتشغيل تجريبي لـ `approve`، تسبقه خطوة إلى الصفر تحسبها المراجعة طلبًا إضافيًا. ويُقرأ قبول الشروط مجددًا قبيل فتح المحفظة. يُدرج كلا مساري البيع الضمان على أنه NFT، لذا فمع ضمان من الرموز يُذكر إذن الإدراج أو البيع الممنوح على أنه إذن لا يستطيع القرض استخدامه. ويُنسب رفض `VaultUpgradeRequired` عبر `getVaultVersionInfo` على خزنة المحفظة نفسها: لا يُعرض العلاج إلا إذا كانت تلك الخزنة هي التي دون الحد الأدنى، وإلا تُسمّى خزنة المُقرض.
+
+<a id="borrow-fee"></a>
+
+### Borrow: رسم الافتتاح
+
+الرسم هو `lifEstimate` من `previewAccept`: `getLoanInitiationFeeBps` من أصل القرض، بالرمز المقترض، مخصومًا مما يُسلَّم، ومخفّضًا بخصم مستوى الحيازة عندما تكون الموافقة مفعّلة والرمز المقترض سائلًا، مع تثبيت المستوى عند القبول. لا تختار هذه الصفحة تعرفة Full أبدًا. لا يُحصَّل VPFI للرسم ولا يُردّ. حصة المُرسِل، أي `getLifMatcherFeeBps` من الرسم، تُدفع لمن يرسل المعاملة، وهو المقترض في القبول المباشر، فتتسلم المحفظة أصل القرض ناقص الرسم مضافًا إليه تلك الحصة.
+
+<a id="borrow-risks"></a>
+
+### Borrow: المخاطر
+
+القرض الذي تجاوز نهاية سماحه (`getEffectiveGraceSeconds` بعد الاستحقاق، ويؤخّره وقت الإيقاف المؤقت) يمكن لأي أحد إعلان تعثره: يُباع الضمان السائل للمُقرض ويُنقل غير السائل كما هو. ويمكن أيضًا تصفية الضمان السائل متى انخفض عامل الصحة عن 1. يفرض `useFullTermInterest` فائدة المدة كاملة عند السداد المبكر؛ ويسوّي جدول الفائدة الفترة الفائتة ببيع قسري للضمان.
+
+<a id="borrow-request"></a>
+
+### Borrow: نشر طلبك الخاص
+
+الطلب هو `createOffer` بقيمة `offerType` 1، وERC-20 في الجانبين، يُرسَل من محفظة المقترض. ينقل `collateralAmount` إلى خزنة المقترض، وينشئ الخزنة إن لم تكن موجودة، ويُصدر `OfferCreated(offerId, creator, 1)`. يقبله المُقرض بـ `acceptOffer`: يذهب الأصل بعد خصم الرسم إلى محفظة المقترض، وتذهب حصة المُرسِل من الرسم إلى المُقرض الذي أرسله. `cancelOffer` متاح للمنشئ بعد `MIN_OFFER_CANCEL_DELAY` (5 دقائق) من الإنشاء، ولأي شخص بعد انتهاء الطلب؛ ويعود الضمان دائمًا إلى المنشئ.
+
+<a id="borrow-request-terms"></a>
+
+### Borrow: شروط الطلب
+
+ينشر Basic طلبًا بقيمة واحدة: `amount` = `amountMax`، و`interestRateBps` = `interestRateBpsMax`، و`collateralAmount` = `collateralAmountMax`، و`fillMode` 0، و`periodicInterestCadence` 0، و`allowsPrepayListing` و`allowsParallelSale` false، و`refinanceTargetLoanId` 0، و`creatorRiskAndTermsConsent` true. تُحوَّل المبالغ إلى الوحدات الأساسية بدقة، والسعر 10,000 bps على الأكثر. يُحدّ `durationDays` بالحد الأقصى المضبوط المقروء من `getProtocolConfigBundle`. وقيمة `expiresAt` إما 0 (مفتوح حتى الإلغاء) وإما وقت يُحدَّد من أحدث كتلة عند فتح المراجعة، لا يتجاوز `MAX_OFFER_EXPIRY_HORIZON` (365 يومًا). القيمة الافتراضية لـ `useFullTermInterest` هي true ولـ `allowsPartialRepay` هي false.
+
+<a id="borrow-request-review"></a>
+
+### Borrow: مراجعة الطلب ونشره
+
+تحاكي المراجعة `createOffer` من المحفظة وتقرأ فئتي الجانبين، و`getEffectiveGraceSeconds(durationDays)`، و`getLoanInitiationFeeBps`، وأطول مدة، وخزنة المحفظة ورصيدها وسماحها، و`calculateLTV` حين يكون الجانبان سائلين؛ وتُقرأ من جديد في كل كتلة وقبيل فتح المحفظة. ما دام السماح ناقصًا لا تبلغ المحاكاة إلا سحب الضمان، فيُعرض خطأ السحب من الرمز أو أي ارتداد بلا اسم خطأ من البروتوكول على أنه الموافقة المطلوبة، ويُعد خطأ البروتوكول المسمّى رفضًا. بعد موافقة بالمقدار الدقيق تُحاكى `createOffer` مجددًا ثم تُرسل؛ وإذا توقف الأمر بعد الموافقة يُعاد السماح إلى قيمته السابقة ما لم يغيّره شيء آخر. تُقرأ النتيجة من `OfferCreated` لهذه المحفظة ومن `Transfer` الضمان إلى الخزنة.
+
+<a id="borrow-nft-collateral"></a>
+
+### Borrow: رمز NFT كضمان
+
+يُقرأ معيار الضمان عبر `supportsInterface` (ERC-721 `0x80ac58cd`، ERC-1155 `0xd9b67a26`)؛ ويُعدّ الـrevert لا هذا ولا ذاك، والقراءة الفاشلة لا تعرض أي طلب. يرسل طلب ERC-721 القيم `collateralAssetType` 1 و`collateralTokenId` المعرّف المكتوب و`collateralQuantity` 1 و`collateralAmount` = `collateralAmountMax` = 0؛ ويرتبط زوج المخاطرة بمعرّف الرمز ذاك. تقرأ المراجعة `ownerOf` و`getApproved` و`isApprovedForAll(wallet, Diamond)` في كتلة واحدة؛ والرمز الذي تحمله محفظة أخرى، أو `ownerOf` الذي يعيد revert، يمنع الطلب. ومن دون أي موافقة يتوقف التشغيل التجريبي عند `ERC721InsufficientApproval` الخاص بالرمز، ويُعرض على أنه الموافقة المطلوبة. الموافقة هي `approve(Diamond, id)`، ولا تُحتسب إلا عندما يقرأ `getApproved` الـDiamond في كتلة الإيصال؛ وإذا توقف الطلب بعدها تُعاد إلى العنوان السابق فقط ما دامت تقرأ الـDiamond وما دامت المحفظة تحمل الرمز. ولا يُطلب `setApprovalForAll` أبدًا لرمز ERC-721. تقرأ النتيجة `OfferCreated` و`Transfer` الخاص بالرمز نفسه (أربعة topics) من المحفظة إلى الخزنة. يرسل طلب ERC-1155 القيمة 2 في `collateralAssetType`، ومعرّف الرمز، و`collateralQuantity` بالكمية المكتوبة (من 1 إلى 2^128−1)، والمبلغين كليهما 0. تقرأ المراجعة `balanceOf(wallet, id)` و`isApprovedForAll(wallet, Diamond)` في كتلة واحدة؛ ورصيد أقل من الكمية يمنع الطلب، ومن دون الموافقة يتوقف التشغيل التجريبي عند `ERC1155MissingApprovalForAll`. الموافقة الوحيدة هي `setApprovalForAll(Diamond, true)`، وتُحتسب عندما تُقرأ مجددًا في كتلة إيصالها، وتُسحب بـ`setApprovalForAll(Diamond, false)` بعد تعدين الطلب أو توقفه (من دون القراءة أبدًا قبل كتلة المنح)، إلا إذا كانت المحفظة قد منحتها من قبل. تجمع النتيجة `TransferSingle`/`TransferBatch` الخاصة بالرمز من المحفظة إلى الخزنة. ولا تزال عروض المُقرضين التي تطلب NFT تذهب إلى التطبيق الحالي.
+
+<a id="borrow-request-range"></a>
+
+### Borrow: طلب بنطاق
+
+يرسل النطاق `amount` (الأصغر) أدنى من `amountMax` (الأكبر)، و`interestRateBps` = `interestRateBpsMax` (السعر الواحد)، و`collateralAmount` (الحد الأدنى لأصغر قرض) مساويًا لـ`collateralAmountMax` أو أدنى منه (يُسحب إلى الخزنة عند النشر)؛ والحد الأدنى الفارغ يرسل القيمتين متساويتين. تُتاح النطاقات لضمان ERC-20 فقط. يُقرض `acceptOffer` المباشر `amount` بسعر `interestRateBpsMax` مقابل `collateralAmount` ويعيد `collateralAmountMax − collateralAmount` إلى المحفظة؛ ويملأ `matchOffers` بين الطرفين ما دام `getPartialFillEnabled` صحيحًا. تطبّق المحاكاة لـ`createOffer` حدّ العرض عند الطرف الأكبر وترفض بـ`MaxLendingAboveCeiling(provided, ceiling)`، وتعرض المراجعة سقفه. يُفحص الطرف المباشر بمحاكاة ثانية لطلب ذي قيمة واحدة عند (`amount`، `collateralAmount`)؛ والجواب الذي يتوقف قبل الحد يُذكر على أنه مجهول. نسبة القرض إلى القيمة لكل طرف هي `calculateLTV(lending, amount, collateral, collateralAmount)`، ويُقرأ `ZeroCollateral` على أنه ضمان بلا قيمة. عامل الصحة عند بدء القرض المعروض هو `getMinHealthFactor` ما دام `getDepthTieredLtvEnabled` خاطئًا، و1.0 ما دام صحيحًا. تقفل المطابقة متطلب المقرض النسبي، مرفوعًا إلى `collateralAmount` عندما يكون الضمان نطاقًا، وإلا فيبقى عند المتطلب؛ لذا تُعرض أكبر مطابقة عند `collateralAmountMax` وعند `collateralAmount` معًا (أو، دون نطاق ضمان، على أنها قد تقفل أقل)؛ ولا يحدّها إلا فحص بدء القرض، وتُذكر قراءة ذلك الفحص الفاشلة ولا تُحذف أبدًا. وفي النظام المتدرّج يطبّق الفحص أيضًا سقف نسبة القرض إلى القيمة للمستوى. ما دام `getPartialFillEnabled` صحيحًا، يبقى الضمان الذي لا تقفله المطابقة في الخزنة للمطابقات اللاحقة، ولا يُردّ إلا عند إغلاق الطلب (حين تنخفض سعته المتبقية عن `amount`) أو عند تنفيذ `cancelOffer`.
+
+<a id="borrow-request-fill"></a>
+
+### Borrow: وضع ملء الطلب
+
+قيمة `fillMode` هي 0 (Partial) أو 1 (AON) أو 2 (IOC) ولا تتغير بعد النشر. يتطلب AON أن يكون `amount` = `amountMax` (`AonRequiresSingleValueAmount`)، ويتطلب IOC أن يكون `expiresAt` ≠ 0 (`IocRequiresExpiry`)؛ ولا يعرض النموذج أيًّا من الصيغ المرفوضة. أما المبالغ والسعر والضمان فيمكن تغييرها على طلب مفتوح عبر `setOfferAmount` و`setOfferRate` و`setOfferCollateral` و`modifyOffer`، دون النزول أبدًا عن `amountFilled` أو `collateralAmountFilled`؛ ولا يستدعيها هذا التطبيق بعد.
+
+<a id="borrow-request-cadence"></a>
+
+### Borrow: جدول فائدة الطلب
+
+تتراوح `periodicInterestCadence` من 0 (None) إلى 4 (Annual)، بفترات مدتها 30 و90 و180 و365 يومًا. يعرض النموذج ما تقبله `previewCadenceAdmission(lendingAsset, amount, assetType, collateralAsset, collateralAssetType, durationDays)`، التي تشغّل القاعدة التي تفرضها `createOffer` مقيّمةً عند `amount` (الطرف الأصغر من النطاق). يُذكر كل رفض من بيانات التراجع الخاصة به: `PeriodicInterestDisabled` أو `CadenceNotAllowedForIlliquid` أو `CadenceNotAllowed(cadence, durationDays, principalNumeraire, threshold)`. فائدة الفترة الواحدة هي `principal × rate × intervalDays / (10000 × 365)`. يمكن لأي شخص تسوية فترة فائتة عبر `settlePeriodicInterest` بعد انقضاء المهلة `getEffectiveGraceSeconds(intervalDays − 1)`؛ فتُباع ضمانات ويبقى القرض مفتوحًا. تُعرض حالة تفعيل مرور الحارس `periodicSettle` كما تبلغ عنها خدمة القدرات، وهي غير معروفة افتراضيًا. لا يمكن تغيير الجدول بعد النشر.
+
+<a id="borrow-request-tariff"></a>
+
+### Borrow: تعرفة الرسوم الكاملة للطلب
+
+الاشتراك هو `setOfferCreatorFullTariff(offerId, true, maxCStar, allowDowngrade)`، يرسله المنشئ بعد `createOffer`، ويُرفض بـ `OfferAlreadyAccepted` متى أخذ مُقرِض الطلب؛ ويجب أن يكون `maxCStar` أكبر من صفر (`FullTariffMaxCStarRequired`). يعرض النموذج المفتاح من `getFeeEntitlementConfig()` والتعرفة من `quoteCStar(lendingAsset, principal, durationDays)`، عند `amount` و`amountMax` للنطاق؛ والسقف الافتراضي هو التسعير عند `amountMax`. عند كل قبول يأخذ التحصيل `C*` مسعّرًا على أصل ذلك القرض، فقط إذا كان المفتاح مفعّلًا، وللأصل سعر وسيولة، و`C* ≤ maxCStar`، وكان VPFI الحرّ في الخزنة يغطيه (رصيد الخزنة محدودًا بـ `getTrackedVPFIBalance`، ناقص الرهون النشطة، عبر `getFreeBalance`)؛ وإلا فيرتد بـ `FeeEntitlementDisabled` أو `FeeEntitlementFullOptInFailed` أو `FeeEntitlementTariffAboveAuth`، ما لم يسمح `allowDowngrade` بفتح القرض بدونها. يرتفع خصم رسوم قرض المقترض بمقدار `FULL_MODE_FEE_DISCOUNT_BONUS_BPS` (1000)، بسقف `MAX_FEE_DISCOUNT_BPS` (5000). تمنع المراجعة اختيارًا يُرفض بموجبه كل قرض، ويُقاس الاشتراك بقراءة `getOffer` من جديد (`creatorFull` و`creatorMaxCStar` و`creatorAllowFullDowngrade`). لا يتيح هذا التطبيق بعد الإقراض الاحتياطي للطلبات غير المملوءة.
+
+<a id="lend-start"></a>
+
+### Lend: كيف يعمل
+
+يأخذ Lend طلب اقتراض (`offerType` 1) لرمز ERC-20 مقابل ضمان ERC-20 مباشرة، عبر `acceptOffer(offerId, terms, signature)` الذي يرسله المُقرض. في معاملة واحدة يُسحب أصل القرض من محفظة المُقرض، بموجب إذن للـ Diamond، إلى خزنة المُقرض؛ ويستلمه المقترض بعد خصم رسم الافتتاح؛ ويصبح الضمان الموجود في خزنة المقترض ضمان القرض؛ ويُصدر `LoanInitiated`، مع NFT مركز للمُقرض وآخر للمقترض. يُنشر عرض الإقراض (`offerType` 0) من الصفحة نفسها؛ وتأتي جوانب NFT في تحديث لاحق.
+
+<a id="lend-offers"></a>
+
+### Lend: اختيار طلب
+
+يعطي `getActiveOffersByAssetPairRanked(lending, collateral, 0, 20)` معرّفات العروض المفتوحة للزوج. لكل عرض تقرأ الصفحة `getOffer` و`getOfferState` و`getOfferLinkedLoanId`، ومع وجود محفظة `previewAccept(offerId, wallet)`، الذي يمثل `errorCode` فيه رفض البروتوكول. يثبّت الأخذ المباشر `amount` الطلب (حده الأدنى) عند `interestRateBpsMax`، ونسبة القرض إلى القيمة هي `calculateLTV` على ذلك المبلغ بأسعار اليوم. عروض المُقرضين، وجوانب NFT، وطلبات القارئ نفسه، ووسائل بيع مراكز المُقرضين (عرض من جانب المقترض له `getOfferLinkedLoanId` غير صفري) تُعَدّ ولا تُسرَد. الترتيب: القابل للتمويل أولًا، ثم السعر تنازليًا، ثم المبلغ تنازليًا.
+
+<a id="lend-review"></a>
+
+### Lend: المراجعة والتوقيع
+
+تقرأ المراجعة ما تقرؤه مراجعة Borrow (العرض، وحالته، و`previewAccept`، و`getOfferLinkedLoanId`، و`getCurrentRiskTermsHash`، والفئتين، و`getEffectiveGraceSeconds(durationDays)`، و`getLoanInitiationFeeBps`، و`getLifMatcherFeeBps`، وخزنة المحفظة، و`previewOfferAcceptBlock`، وموافقة خصم الرسوم) إضافة إلى `getTreasuryFeeBps`، وتقيس الرصيد والإذن على الأصل المُقرَض، وهو الجانب الذي يدفعه المُقرض. أي نقص فيه يمنع التوقيع، وكذلك وسيلة بيع مركز مُقرض. توقّع المحفظة EIP-712 `AcceptTerms` (النطاق `Vaipakam AcceptOffer`، الإصدار 1)، وتوافق على أصل القرض بالضبط فقط عندما يكون الإذن ناقصًا (مع خطوة إلى الصفر أولًا لرمز يرفض التغيير بين قيمتين غير صفريتين)، ثم يُحاكى `acceptOffer` ويُرسل؛ ويُعاد ضبط إذن تركه مسار متوقف كما في Borrow. تقرأ النتيجة `LoanInitiated` لهذا العرض، و`Transfer` أصل القرض من المحفظة، و`Transfer` عودة حصة المطابِق إليها.
+
+<a id="lend-fee"></a>
+
+### Lend: الرسم وحصة البروتوكول
+
+الرسم هو `lifEstimate` من `previewAccept`، وهو على المقترض: `getLoanInitiationFeeBps` من أصل القرض بالأصل المُقرَض، يُخصم مما يُسلَّم للمقترض، ويُخفَّض عند القبول بخصم مستوى الحيازة للمقترض، وعندما يكون `creatorFull` مفعّلًا وينجح التحصيل، بمكافأة تعرفة Full. حصة المُقدِّم، `getLifMatcherFeeBps` من الرسم، تُدفع للمرسل، وهو هنا المُقرض. حصة البروتوكول من الفائدة هي `getTreasuryFeeBps`، تُثبَّت لكل قرض عند فتحه (`treasuryFeeBpsAtInit`)؛ ويخفضها خصم مستوى الحيازة للمُقرض، مع تفعيل الموافقة، عند تسوية الفائدة. تعرض المراجعة معدل اليوم، والحصة بذلك المعدل كحد أعلى.
+
+<a id="lend-risks"></a>
+
+### Lend: المخاطر
+
+القرض الذي تجاوز نهاية سماحه (`getEffectiveGraceSeconds` بعد تاريخ الاستحقاق، الذي يؤخره وقت الإيقاف المؤقت) يمكن لأي أحد إعلان تعثره: يُباع الضمان السائل لصالح المُقرض، ويُنقل الضمان غير السائل كما هو. عندما يكون الجانبان سائلين يمكن تصفية القرض حين يكون عامل الصحة دون 1، ويدفع البيع للمُقرض أولًا. الجانب غير السائل يستبعد التصفية القائمة على السعر، وعند التعثر يستلم المُقرض الضمان كله. يضع `useFullTermInterest` حدًا أدنى للفائدة عند السداد المبكر؛ ومن دونه تكون الفائدة تناسبية. يسوّي جدول الفائدة الدورية الفترة الفائتة ببيع قسري للضمان لصالح المُقرض. يحمل NFT مركز المُقرض الحق: نقله ينقل القرض.
+
+<a id="lend-offer"></a>
+
+### Lend: نشر عرضك الخاص
+
+عرض الإقراض هو `createOffer` مع `offerType` 0، وERC-20 على الجانبين، يُرسل من محفظة المُقرض. يسحب `amountMax` من الأصل المُقرَض إلى خزنة المُقرض، وينشئ الخزنة إن لم توجد، ويُصدر `OfferCreated(offerId, creator, 0)`. يقبله المقترض عبر `acceptOffer`: يُسحب ضمانه إلى خزنته، ويذهب الأصل بعد خصم الرسم إلى محفظته، وتذهب حصة المُرسِل من الرسم إليه بصفته المُرسِل. ما دام `getPartialFillEnabled` يساوي true، يمكن لـ `matchOffers` أيضًا أن يقرنه بطلب أحد المقترضين؛ وعندها يُقرض عرض المُقرض ذو القيمة الواحدة مبلغه كاملًا بسعره، مقابل `collateralAmount` الخاص به على الأقل. `cancelOffer` متاح للمنشئ بدءًا من `MIN_OFFER_CANCEL_DELAY` (5 دقائق) بعد الإنشاء، ولأي شخص بعد انتهاء العرض؛ ويعود المبلغ دائمًا إلى المنشئ.
+
+<a id="lend-offer-terms"></a>
+
+### Lend: شروط العرض
+
+من دون أجزاء يكون عرض الإقراض ذا قيمة واحدة: `amount` = `amountMax`، و`interestRateBps` = `interestRateBpsMax`، و`collateralAmount` = `collateralAmountMax` (الضمان الوحيد الذي يجب أن يقفله المقترض)، و`fillMode` 0 ما لم يحدد Advanced غيره (القسم التالي)، و`periodicInterestCadence` 0 ما لم يحدد الوضع المتقدم جدولًا، و`allowsPrepayListing` و`allowsParallelSale` بقيمة false، و`refinanceTargetLoanId` 0، و`creatorRiskAndTermsConsent` بقيمة true، ومن دون تعرفة Full ما لم يخترها الوضع المتقدم. تُحلَّل المبالغ إلى الوحدات الأساسية بدقة، والسعر 10,000 bps على الأكثر. `durationDays` محدود بالحد الأقصى المهيّأ المقروء من `getProtocolConfigBundle`. `expiresAt` إما 0 (مفتوح حتى الإلغاء) أو وقت يُحدَّد من أحدث كتلة عند فتح المراجعة، وعلى الأكثر `MAX_OFFER_EXPIRY_HORIZON` (365 يومًا) إلى الأمام. القيمة الافتراضية لـ `useFullTermInterest` هي true ولـ `allowsPartialRepay` هي false.
+
+<a id="lend-offer-parts"></a>
+
+### Lend: عرض على أجزاء
+
+ترسل الأجزاء `amount` (أصغر جزء يمكن لمطابقة واحدة إقراضه) أقل من `amountMax` (المبلغ كله، الذي يسحبه `createOffer` إلى الخزنة)؛ ويبقى `collateralAmount` = `collateralAmountMax` المتطلب الوحيد، محسوبًا عند `amountMax` (وإلا `LenderCollateralRangeNotAllowed`)، و`interestRateBps` = `interestRateBpsMax`. استدعاء `acceptOffer` المباشر لعرض إقراض يُقرض `amountMax` مقابل `collateralAmount`، وفقط ما دام `amountFilled` يساوي 0 (`OfferPartiallyFilled` بعد مطابقة). وما دام `getPartialFillEnabled` بقيمة true، يُقرض `matchOffers` منتصف تداخل المبالغ، و`amount` على الأقل، بمنتصف تداخل الأسعار، مقابل `collateralAmount × matchAmount ÷ amountMax` على الأقل (مقرّبًا إلى الأدنى؛ وقد يرفعه نطاق ضمان المقترض). وحين ينخفض `amountMax − amountFilled` عن `amount`، يُسحب الباقي إلى محفظة المُقرض ويُغلق العرض (`OfferClosed`، بسبب `Dust` أو `FullyFilled`). واستدعاء `cancelOffer` على عرض مملوء جزئيًا يتجاوز فترة الانتظار ويعيد `amountMax − amountFilled`. و`fillMode` هو 0 أو 1 أو 2 كما في الطلب: يتطلب AON أن يكون `amount` = `amountMax`، ويتطلب IOC انتهاء صلاحية، ولا يتغير بعد النشر. وحين يكون الطرفان سائلين، يرفض `createOffer` قيمة `collateralAmount` أدنى من الحد عند `amountMax` بالخطأ `MinCollateralBelowFloor(provided, floor)`، وتعرض المراجعة ذلك الحد. وتُعرض نسبة قرض إلى قيمة واحدة، `calculateLTV` عند (`amountMax`، `collateralAmount`): ويحمل كل جزء النسبة نفسها عدا فرق التقريب.
+
+<a id="lend-offer-schedule"></a>
+
+### Lend: جدول دفع الفائدة في عرض
+
+يتبع `periodicInterestCadence` لعرض الإقراض قاعدة الطلب (أعلاه)، مع تقييم `previewCadenceAdmission` عند `amount` العرض: أصغر أجزائه، أو المبلغ كله من دون أجزاء. يقبله `createOffer` هناك عبر `requireCadenceAdmitted`، ويعيد إنشاء كل قرض فحص أصل مبلغه (`requireOriginationCadenceAdmitted`). تذكر المراجعة فائدة فترة واحدة عند `amountMax` (أخذ مباشر)، ومع الأجزاء عند `amount`. يمكن لأي شخص تسوية الفترة الفائتة عبر `settlePeriodicInterest` بعد مهلتها: يُباع ضمان لدفع فائدة تلك الفترة إلى المُقرض، ويبقى القرض مفتوحًا.
+
+<a id="lend-offer-tariff"></a>
+
+### Lend: تعرفة الرسوم الكاملة في عرض
+
+اشتراك المُقرض هو نفسه `setOfferCreatorFullTariff(offerId, true, maxCStar, allowDowngrade)`، ويُرسل بعد `createOffer`. ويُرفض بـ `OfferAlreadyAccepted` بعد أخذ العرض كاملًا أو إغلاقه؛ أما العرض المطابَق جزئيًا فما زال يقبله لقروضه اللاحقة. التسعير هو `quoteCStar` عند `amount` و`amountMax`، والحد الأقصى افتراضيًا هو التسعير عند `amountMax`. يُفحص كل قرض وحده مقابل `maxCStar`، مسعّرًا بأصل مبلغه، بالشروط نفسها للطلب (`FeeEntitlementDisabled` أو `FeeEntitlementFullOptInFailed` أو `FeeEntitlementTariffAboveAuth`، أو خفض حيث يُسمح به)؛ ويستخدم فحص المُقرض رصيد VPFI الحر الحالي في الخزنة. التعرفة المحصّلة تَسِم `lenderMode` للقرض بأنه Full، ثم تضيف كل تسوية لرسوم عائد المُقرض `FULL_MODE_FEE_DISCOUNT_BONUS_BPS` (1000) إلى خصم حامل المركز على حصة البروتوكول، بسقف `MAX_FEE_DISCOUNT_BPS` (5000)، مع موافقة خصم الحيازة أو من دونها. والتمديد في المكان (`repriceFeeEntitlementOnExtension`) يجعل الوسم None للمدة الجديدة.
+
+<a id="lend-offer-review"></a>
+
+### Lend: مراجعة العرض ونشره
+
+تحاكي المراجعة `createOffer` من المحفظة وتقرأ فئتي الجانبين، و`getEffectiveGraceSeconds(durationDays)`، و`getLoanInitiationFeeBps`، و`getTreasuryFeeBps`، وأطول مدة، وخزنة المحفظة، ورصيدها وسماحها على الأصل المُقرَض (الجانب الذي يقفله المُقرض)، و`calculateLTV` حين يكون الجانبان سائلين؛ وتُقرأ من جديد في كل كتلة وقبيل فتح المحفظة. ما دام السماح ناقصًا لا تبلغ المحاكاة إلا سحب المبلغ، فيُعرض خطأ السحب من الرمز، أو `VaultDepositFailed` (غلاف البروتوكول لسحب ارتدّ بلا بيانات، كما يفعل WETH عند نقص السماح)، أو أي ارتداد بلا اسم خطأ من البروتوكول على أنه الموافقة المطلوبة، وهي القاعدة نفسها في مراجعة الطلب؛ وأي خطأ آخر مسمّى من البروتوكول يُعد رفضًا. بعد موافقة بالمقدار الدقيق تُحاكى `createOffer` مجددًا ثم تُرسل؛ وإذا توقف الأمر بعد الموافقة يُعاد السماح إلى قيمته السابقة ما لم يغيّره شيء آخر. تُقرأ النتيجة من `OfferCreated` لهذه المحفظة مع `offerType` 0 ومن `Transfer` المبلغ إلى الخزنة.
+
+<a id="lend-offer-fee"></a>
+
+### Lend: الرسوم على عرضك
+
+لا يفرض `createOffer` على المُقرض شيئًا. الرسم المعروض هو رسم المقترض: `getLoanInitiationFeeBps` من المبلغ بالأصل المُقرَض، بالمعدل السائد حين يُنفَّذ `acceptOffer`، ويُخفَّض حينها بخصم مستوى الحيازة للمقترض ويُقتطع مما يُسلَّم إليه؛ والرقم المعروض يستخدم معدل اليوم. حصة البروتوكول من الفائدة هي `getTreasuryFeeBps`، وتُثبَّت لكل قرض عند فتحه (`treasuryFeeBpsAtInit`)؛ ويخفضها خصم مستوى الحيازة للمُقرض، مع تفعيل الموافقة، عند تسوية الفائدة. تعرض المراجعة معدل اليوم والحصة بهذا المعدل حدًا أعلى؛ ويُذكر فشل قراءة `getTreasuryFeeBps`، ولا تُعرض حصة ولا مبلغ عائد.
+
+<a id="risk-access"></a>
+
+### Risk Access: مستوى المخاطرة لديك
+
+المفتاح هو `getRiskAccessGateEnabled`. الخطوة التي يحتاجها مسار ما هي إجابة البروتوكول نفسه: عند القبول، `previewOfferAcceptBlock` (1 = المستوى منخفض جدًا، 2 = موافقة على الزوج، 3 = إقرار الوضع الصارم، 4 = الزوج غير السائل الذي كان إقرار القبول يغطيه سابقًا؛ وهو يمنع مثل 2 وتزيله الموافقة على الزوج) بعد أن يُظهر `previewCreatorBlock` أن المُقرض غير محظور؛ وعند الطلب، `RiskTierTooLow` أو `IlliquidPairNotConsented` أو `MidTierPairNotAcknowledged` من التشغيل التجريبي لـ `createOffer`. تقرأ الخطوة في كتلة واحدة `pairRequiredRiskLevel` للزوج (`acceptMidTierAckPair` للعرض)، و`getVaultRiskTier`، و`getEffectiveRiskTier`، و`getVaultRiskTierVersion` مقابل `getCurrentRiskTermsVersion`، و`getRiskTierUnlockAt`، و`getRiskAccessUnlockCooldown`، و`getRiskTierMutationNonce`، وللزوج `isPairConsentPending` مع `hasIlliquidPairConsent`، أو `isMidTierAckPending` مع `midTierStrictBlocked`. الرفع هو `setVaultRiskTierChecked(level, nonce, termsVersion)` إلى أدنى مستوى يحتاجه الزوج، فيُرفض دون أي تغيير إذا وصل بعد المراجعة تعديل آخر للمستوى أو تغيير في الشروط. خطوة الزوج هي `setIlliquidPairConsent(pair, true)` أو `setMidTierPairAck(pair)`. لا يُعرض مجددًا رفع ما زال في فترة الانتظار، ولا خطوة زوج ما زالت معلّقة. لا توجد قراءة تُرجع متى تسري خطوة زوج معلّقة، لذا تقول المراجعة إنها لا تستطيع قراءة ذلك الوقت؛ ولا تذكره إلا بطاقة الإنهاء الخاصة بالخطوة نفسها، من وقت كتلة الإيصال مضافًا إليه فترة الانتظار. تُقرأ النتيجة مجددًا عند كتلة الإيصال.
+
 <a id="terms-gate"></a>
 
 ### طلب قبول الشروط

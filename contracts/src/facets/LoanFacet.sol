@@ -694,15 +694,11 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         // NOT the creator (the offer's counterparty). We derive it from the loan
         // rather than `ctx.acceptor`, whose value is the funds-mover and for a
         // lender offer coincides with the creator (which would wrongly re-gate the
-        // already-gated creator). The #662 acks (`s.acceptAck*`) are the
-        // accepting caller's, so they line up with this same party. Behind the
-        // off-by-default `riskAccessGateEnabled` kill-switch, scoped to the
-        // direct-accept path (`acceptAckActive`). For an illiquid pair the
-        // per-pair consent is satisfied by a standing consent OR — the #662⇄#671
-        // unification — by the acceptor's signed #662 illiquid acknowledgement,
-        // but only when that ack names EXACTLY the gate's illiquid legs and risk
-        // terms are fresh (Codex #729 r1; a rental's illiquid prepay leg, which
-        // the #662 ack doesn't name, then falls back to a standing consent). The
+        // already-gated creator). Behind the off-by-default
+        // `riskAccessGateEnabled` kill-switch, scoped to the direct-accept path
+        // (`acceptAckActive`). For an illiquid pair the per-pair consent is a
+        // standing consent only, armed after the unlock cooldown (#3231: the
+        // #662 accept acknowledgement no longer substitutes for it). The
         // keeper-match path (`acceptAckActive == false`) re-asserts each offer's
         // own creator at the matcher (#728 PR-2b).
         if (s.acceptAckActive && LibVaipakam.cfgRiskAccessGateEnabled()) {
@@ -728,21 +724,12 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
             address acceptingParty = offer.creator == gateLoan.lender
                 ? gateLoan.borrower
                 : gateLoan.lender;
-            // The trailing `*AckVerified` flags say whether the #662 check above
-            // ACTUALLY validated each leg's ack (i.e. saw it `Illiquid` via
-            // `checkLiquidity`). Only a verified ack may substitute for a standing
-            // illiquid-pair consent (Codex #729 r3) — a leg the gate deems
-            // illiquid for another reason (derived tier 0, rental prepay) was
-            // never validated and must fall back to standing consent.
-            LibRiskAccess.assertAcceptorMayTransact(
-                s,
-                acceptingParty,
-                pair,
-                s.acceptAckIlliquidLend,
-                s.acceptAckIlliquidColl,
-                ctx.lendingAssetLiquidity == LibVaipakam.LiquidityStatus.Illiquid,
-                ctx.collateralLiquidity == LibVaipakam.LiquidityStatus.Illiquid
-            );
+            // The acceptor faces the SAME rule as the creator (#3231): an
+            // illiquid pair needs a standing per-pair consent armed before the
+            // deal. Nothing signed at accept time substitutes for it — a
+            // consent recorded in the accept transaction would otherwise skip
+            // the cooldown that lets the owner notice and revoke it.
+            LibRiskAccess.assertActorMayTransact(s, acceptingParty, pair);
         }
         // #2956 — the one rule every admitting path and preview reads. The
         // illiquid consent is not a term of it: `initiateLoan` has already

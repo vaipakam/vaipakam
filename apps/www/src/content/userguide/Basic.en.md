@@ -920,8 +920,8 @@ explains the pages that are already built.
 Basic shows what most people need. Advanced adds the exit and
 settlement tools, automation, signed orders, keeper status and
 accounting detail. Switching modes never hides a consent you have
-to give, something that blocks you, or the way to fix it. Every
-"Why?" link opens the full explanation, and its "Read more" link
+to give, something that blocks you, or the way to fix it. Every info button (i), after the sentence it explains,
+opens the full explanation, and its "Read more" link
 opens this guide in the mode you are using.
 
 <a id="wallet"></a>
@@ -1052,6 +1052,168 @@ On a network where unclaimed rewards can be removed, Home shows the soonest esti
 ### Home: Held Rewards
 
 If the sanctions screen flags your wallet, no rewards are paid to it while it stays flagged. Rewards it earned before the flag are held for it, locked but not lost, and are released once the wallet is no longer flagged; Home then offers to claim exactly that balance on its own. While a flag is confirmed, rewards earned are forfeited for good and VPFI in your vault cannot be moved. If whether the wallet is still flagged cannot be read, nothing is released.
+
+<a id="borrow-start"></a>
+
+### Borrow: How It Works
+
+To borrow, you take a lender's open offer: an amount of one token, a rate, a term and the collateral the lender asks for. Taking it opens a loan in one transaction. Your collateral moves from your wallet into your own vault, where it stays locked while the loan is open, and the amount, less a small initiation fee, arrives in your wallet. You repay the amount plus interest by the due date. When no offer fits, you can also post your own borrow request and wait for a lender.
+
+<a id="borrow-pair"></a>
+
+### Borrow: Choosing the Tokens
+
+First choose what to borrow and what to lock. The app suggests tokens on the network, or you can paste a token address; no token-safety screening runs, so check a pasted address yourself. For each token the app reads what the protocol says about it now. A liquid token is priced, so the loan has a health factor and can be liquidated if the collateral loses value. An illiquid token is valued at zero, and on default the lender receives the collateral itself. When the protocol does not trust a token's price, new loans on it are closed until it does; loans already open are not affected.
+
+<a id="borrow-offers"></a>
+
+### Borrow: Picking an Offer
+
+The page lists the lender offers open for your two tokens, read from the protocol itself. Each shows the amount, rate and term, the collateral asked, the loan-to-value at today's prices, how interest is charged, any interest schedule, when the offer ends and what you would receive after the fee. An offer is taken whole, at the lender's full amount and lowest rate. When the protocol would refuse an offer, the page says why and offers no button. The order is a convenience, not advice.
+
+<a id="borrow-review"></a>
+
+### Borrow: Review and Signing
+
+Before your wallet opens, the review shows every figure: what you receive, the fee, what you lock, the rate, what you owe on the due date, the grace period and what you can lose. You tick a box to agree to the Risk Disclosures and Terms; if the figures change before you confirm, the box clears. Your wallet then asks you to sign the terms, which costs nothing, to approve exactly the collateral if that is needed, and to send the acceptance, which the app first tries as a dry run. If it stops after an approval, the app asks to put the approval back and says whether that happened. Afterwards the app checks on the chain the loan it opened, what arrived and what was locked. It also states the loan's lifecycle terms, each even when it is the default: partial repayment, selling the collateral, and any refinance or linked loan. The amount owed assumes no pause: a pause moves the due date later and interest keeps running through it.
+
+<a id="borrow-fee"></a>
+
+### Borrow: The Initiation Fee
+
+Opening a loan costs a small share of the amount, charged once, in the token you borrow, and taken from what you receive; the review shows the rate in force. You owe interest on the whole amount. Your fee-discount tier lowers the fee when the fee discount is on and the borrowed token is liquid. No VPFI is taken or held for this fee, and nothing is refunded later. Because you send the acceptance yourself, a small share of the fee, the share the protocol pays whoever submits a match, comes back to you with the amount; the review shows it.
+
+<a id="borrow-risks"></a>
+
+### Borrow: Risks
+
+A loan can cost you your collateral. If you have not repaid by the end of the grace period, the loan defaults and the lender is paid from your collateral: sold for them where the protocol can, handed over as-is where it cannot. With liquid collateral, if its value falls until the loan's health factor drops below 1, anyone can liquidate the loan and you lose collateral. With full-term interest you owe the whole term's interest even if you repay early. With an interest schedule, a missed period is paid by selling part of your collateral. Your collateral stays locked until the loan is repaid or settled.
+
+<a id="borrow-request"></a>
+
+### Borrow: Posting Your Own Request
+
+When no offer fits, you can post your own borrow request for your two tokens: the exact amount, the rate you will pay, the term and the collateral you lock. Posting moves the collateral from your wallet into your own vault, where it stays while the request is open. A lender who takes it opens the loan at once, on your terms, without asking you again; the amount, less the initiation fee, arrives in your wallet. You can cancel from five minutes after posting, and the collateral returns to your wallet. A lapsed request can no longer be taken; its collateral stays in your vault until you, or anyone, closes it, and then returns only to your wallet. Until the next app's Offers page is built, you follow, cancel and close a request on the current app's Offers page; the review says so before anything is locked.
+
+<a id="borrow-request-terms"></a>
+
+### Borrow: The Request's Terms
+
+One lender takes the whole amount, or nobody does. Each figure is read exactly as you type it: more decimals than the token has are refused, never rounded, and the rate goes up to 100% a year with two decimals. The terms offered stop at the longest one the network allows; you can also type a term in days. The request stays open until taken or cancelled, or for the number of days you choose, up to a year. Full-term interest, the usual choice, is owed in full even if you repay early; pro-rata charges only for the time the loan is open. The form shows what you would receive at today's fee rate and owe at the due date if a lender took it now.
+
+<a id="borrow-request-review"></a>
+
+### Borrow: Reviewing and Posting a Request
+
+Before your wallet opens, the app asks the protocol to try your request as a dry run, so the review shows the protocol's own answer. It lists what you lock now, the amount, rate and term, what you would receive and how the fee is set (the fee rate in force when a lender takes it, less your fee-discount tier at that moment; the figure shown uses today's rate), what you would owe, every lifecycle term, when the request lapses, the loan-to-value and whether an approval is needed. You tick a box to agree to the Risk Disclosures and Terms. Your wallet approves exactly the collateral if needed, the app tries the request again, and only then posts it. If it stops after an approval, the app asks to put the approval back and says whether that happened. Afterwards the app checks on the chain the request recorded and the collateral locked.
+
+<a id="borrow-nft-collateral"></a>
+
+### Borrow: An NFT as Collateral
+
+A request can lock one NFT instead of a token. Pick the collection as what you lock (the test collections are marked as NFTs, or paste an address); whether an address is a token or an NFT collection is read from its contract. Then type the NFT's number, its token id, shown in your wallet or on the collection's page; the form says at once whether your wallet holds it. The protocol values an NFT at zero, whatever it sells for elsewhere: a loan against one has no loan-to-value and no price-based liquidation, and if you do not repay by the end of the grace period the lender receives the NFT itself. Posting asks your wallet to approve the protocol for that one NFT only, never the rest of your collection, and moving it into your vault clears that approval by itself; if the request stops after the approval, the app asks to put it back and says whether that happened. NFTs that come in quantities (multi-token collections) work the same way with a quantity: type the token's number and how many of it to lock, and the form says how many your wallet holds. Such a collection cannot approve one token, only all of yours in it, so posting grants that approval for this request alone and takes it back in one more wallet step afterwards, whether the request went through or not; an approval you had already given is left as you set it. Taking a lender's offer that asks for an NFT is still done in the current app for now.
+
+<a id="borrow-request-range"></a>
+
+### Borrow: An Amount Range (Advanced)
+
+In Advanced mode a request can accept a range: the smallest and the largest amount a lender may lend, at your one rate, and, if you like, a smaller amount of collateral for the smallest loan. A lender taking the request directly lends the smallest amount and locks only the collateral set for it; the rest goes back to your wallet. Matches may lend more, up to the largest amount, while matching is switched on for the network; the review says whether it is, and that while it is off the range fills once. The protocol refuses a largest amount your collateral does not support at today's prices, and the review names the most it supports. The review shows the loan-to-value at both ends, and warns when a lender could not take the request directly at today's prices. Options set in Advanced still apply if you switch to Basic: the form says so and lets you clear them. A match locks only the collateral its lender asks for, at least the floor, so the review states the largest match from all your collateral down to only the floor, and warns that a matched loan can start riskier than a direct one. While matching is on, the collateral a match does not lock stays with the request for later matches and comes back to your wallet only when the request closes or you cancel it.
+
+<a id="borrow-request-fill"></a>
+
+### Borrow: How a Request Fills (Advanced)
+
+Partial, the default, lets matches fill the request over one or more loans until it is filled, cancelled or lapses. All or none admits one fill of the whole amount, so it cannot be used with a range. Immediate or cancel fills like partial but only until the request lapses, so it needs an expiry. The fill mode cannot be changed after posting; to change it, cancel the request and post a new one. The protocol lets you change the amounts, the rate and the collateral while the request is open, never below what matches have already used, but this app does not offer that yet, so for now a change means cancelling and posting again.
+
+<a id="borrow-request-cadence"></a>
+
+### Borrow: An Interest Schedule (Advanced)
+
+In Advanced mode a request can pay interest on a schedule instead of all at repayment: every month, quarter, six months or year. The form offers only the schedules the protocol allows for your terms, and says under each closed one why: periodic interest is switched off on the network, an asset has no price, the loan is worth less than the protocol's threshold (both figures are shown), or the period is not shorter than the loan. The review shows each period's interest and the grace a missed period gets. If a period is not paid by the end of its grace, anyone may sell part of your collateral to pay it, and the loan stays open. The schedule cannot be changed after posting. Like the other Advanced options, it still applies if you switch to Basic, and the form says so.
+
+<a id="borrow-request-tariff"></a>
+
+### Borrow: The Full Fee Tariff (Advanced)
+
+In Advanced mode a request can take the Full fee tariff: a fee in VPFI, taken from your vault when each loan opens, that adds ten points to the discount on the loan fee, up to the protocol's 50% cap. The loan fee itself is still charged in the lending asset, and the tariff is not refunded. The form offers it only while the protocol has it switched on, and shows today's tariff for your amount and term. You set the most VPFI one loan may take (left blank, today's tariff for the largest loan) and what happens to a loan that cannot take the tariff when it opens: it is refused, or it opens without it. A loan can take it only if, at that moment, the tariff is switched on, the lending asset is priced and liquid, its tariff is within your most, and your vault holds enough free VPFI. The tariff is set by a second transaction after the request posts, so a lender who takes the request before that transaction confirms opens a loan without it. Backstop lending for requests nobody takes is not offered in this app yet.
+
+<a id="lend-start"></a>
+
+### Lend: How It Works
+
+To lend, you fund a borrower's open request: an amount of one token, the rate they will pay, a term, and collateral the borrower has already locked in their own vault. Funding it opens a loan in one transaction. The amount leaves your wallet, the borrower receives it less their initiation fee, and the collateral stays locked for you until the loan ends. Your side of the loan is a position token in your wallet, and whoever holds it is the one repaid. The borrower repays the amount plus interest by the due date, and the protocol keeps its share of the interest. When no request fits, you can post your own lending offer instead, from the same page.
+
+<a id="lend-offers"></a>
+
+### Lend: Picking a Request
+
+First choose what to lend and what collateral you accept; they must be different tokens, and this page offers tokens only. The page lists the borrow requests open for that pair, read from the protocol itself. Each shows the amount, rate and term, the collateral locked, the loan-to-value at today's prices, how interest is charged, any interest schedule, and how much of the borrower's fee comes back to you. A request is funded whole: when it names a range, you lend the borrower's smallest amount at their highest rate. When the protocol would refuse a request, the page says why and offers no button. Your own requests, requests with an NFT and sales of running loans are counted, not listed. The order (requests you can fund first, then the highest rate) is a convenience, not advice.
+
+<a id="lend-review"></a>
+
+### Lend: Review and Signing
+
+Before your wallet opens, the review shows every figure: what leaves your wallet, what the borrower receives, the fee and your share of it, the collateral held for you, the rate, the interest owed at the due date, the protocol's share of it, what comes back to you, the grace period and what you can lose. It also states each lifecycle term, even when it is the default. If your wallet holds less than the amount, the review says how much is missing and offers no signature. You tick a box to agree to the Risk Disclosures and Terms; if the figures change before you confirm, the box clears. Your wallet then asks you to sign the terms, which costs nothing, to approve exactly the amount if that is needed, and to send the acceptance, which the app first tries as a dry run. If it stops after an approval, the app asks to put the approval back and says whether that happened. Afterwards the app checks on the chain the loan it opened, what left your wallet and what came back.
+
+<a id="lend-fee"></a>
+
+### Lend: The Fee and the Protocol's Share
+
+The initiation fee is the borrower's: a small share of the amount, charged once in the lending asset and taken from what the borrower receives. You lend the whole amount, and the borrower owes it back in full with interest. Because you send the acceptance yourself, a small share of that fee, the share the protocol pays whoever submits a match, comes back to your wallet; the review shows it. If the borrower chose the Full fee tariff and it applies when the loan opens, the fee is lower, and so is that share. When interest is paid, the protocol keeps its share of it, at the rate in force when the loan opens; your fee-discount tier can lower that share while your fee-discount setting is on. The review shows today's rate and the most that share can take.
+
+<a id="lend-risks"></a>
+
+### Lend: Risks
+
+Lending can lose you money. If the borrower has not repaid by the end of the grace period, the loan defaults and you are paid from the collateral: sold for you where the protocol can, handed to you as-is where it cannot, and a sale can bring in less than you are owed. With liquid collateral, anyone can liquidate the loan once its health factor drops below 1; the sale repays you first, but a sharp fall can leave less than you are owed. An illiquid token is valued at zero, so there is no price-based liquidation, and on default you receive all the collateral, whatever it is worth. You cannot take the amount back before the loan ends; leaving early means selling your position to another lender. With pro-rata interest, an early repayment earns you less. A pause moves the due date later, and interest keeps accruing through it.
+
+<a id="lend-offer"></a>
+
+### Lend: Posting Your Own Offer
+
+When no request fits, you can post your own lending offer for your two tokens: the exact amount you lend, the rate you ask, the term and the collateral a borrower must lock. Posting moves the amount from your wallet into your own vault, where it stays locked while the offer is open. A borrower who takes it opens the loan at once, on your terms, without asking you again: they receive the amount less their initiation fee, and their collateral is locked in their vault for you. While matching is switched on for the network, anyone may also match your offer with a borrower's request; without parts, that loan lends your whole amount at your rate, against at least the collateral you ask for. The review says whether matching is on now. You can cancel from five minutes after posting, and the amount returns to your wallet. A lapsed offer can no longer be taken; its amount stays in your vault until you, or anyone, closes it, and then returns only to your wallet. Until the next app's Offers page is built, you follow, cancel and close an offer on the current app's Offers page; the review says so before anything is locked.
+
+<a id="lend-offer-terms"></a>
+
+### Lend: The Offer's Terms
+
+Unless you set parts in Advanced mode, one borrower takes the whole amount, or nobody does, and must lock exactly the collateral you set. The form shows how much of the lending token your wallet holds. Each figure is read exactly as you type it: more decimals than the token has are refused, never rounded, and the rate goes up to 100% a year with two decimals. The terms offered stop at the longest one the network allows. The offer stays open until taken or cancelled, or for the number of days you choose, up to a year. Full-term interest, the usual choice, means an early repayment does not lower what you earn; pro-rata pays you only for the time the loan is open. You can also let the borrower repay part early. The form shows what the borrower would owe you at the due date if they took the offer now. In Advanced mode an offer can also be lent in parts, carry a fill mode, pay interest on a schedule and take the Full fee tariff.
+
+<a id="lend-offer-parts"></a>
+
+### Lend: An Offer in Parts (Advanced)
+
+In Advanced mode a lending offer can be lent in parts. The amount you type stays the whole amount: posting locks all of it, and a borrower taking your offer directly borrows all of it. You add the smallest part one match may lend. While matching is switched on for the network, matchers may lend your offer to several borrowers, each loan between the smallest part and what is left, at your rate. Each asks at least the share of your collateral that matches its part, rounded down, and the review shows what the smallest part asks. Once a match has lent a part, no borrower can take the rest directly; only more matches can, and you can cancel the offer to take the rest back. When less than the smallest part is left, the protocol returns it to your wallet and closes the offer. The review says whether matching is on now; while it is off, only a borrower taking all of it opens a loan. The fill mode works as on a request: partial by default, all or none for one loan of the whole amount (so no parts), or immediate or cancel, which needs an expiry; it cannot be changed after posting. The protocol refuses an offer that asks for less collateral than the whole amount needs at today's prices, and the review names the least it asks. Options set in Advanced still apply if you switch to Basic: the form says so and lets you clear them.
+
+<a id="lend-offer-schedule"></a>
+
+### Lend: An Offer's Interest Schedule (Advanced)
+
+In Advanced mode a lending offer can carry an interest schedule, as a request can: every month, quarter, six months or year. The form offers only the schedules the protocol allows for your terms, and says under each closed one why. With parts, the protocol checks the smallest part when you post, so a smallest part below its threshold closes the finer schedules; each loan is checked again when it opens. The review shows each period's interest if a borrower takes all of it and, with parts, on a loan of the smallest part, and the grace a missed period gets. If a period is not paid by the end of its grace, anyone may sell part of the borrower's collateral to pay it to you, and the loan stays open. The schedule cannot be changed after posting.
+
+<a id="lend-offer-tariff"></a>
+
+### Lend: The Full Fee Tariff on an Offer (Advanced)
+
+In Advanced mode a lending offer can take the Full fee tariff: a fee in VPFI, taken from your vault when each loan from the offer opens, priced for that loan's amount and term. In return, the protocol's share of that loan's interest gets ten more points of discount, up to its 50% cap; the share is still taken in the lending asset. The extra points last for the loan's term: if the loan is extended for a new term, they end for that term. They belong to the lender position, so whoever holds it when interest is paid receives them. The tariff is not refunded. The form shows today's tariff for the whole amount, the largest loan the offer opens. You set the most VPFI one loan may take, and whether a loan that cannot take the tariff is refused or opens without it. A loan can take it only if, at that moment, the tariff is switched on, the lending asset is priced and liquid, its tariff is within your most, and your vault holds enough free VPFI. The tariff is set by a second transaction after the offer posts, so a loan opened from the offer before that transaction confirms, by a borrower or by a match, opens without it.
+
+<a id="lend-offer-review"></a>
+
+### Lend: Reviewing and Posting an Offer
+
+Before your wallet opens, the app asks the protocol to try your offer as a dry run, so the review shows the protocol's own answer. It lists what you lock now, the amount a borrower takes, the collateral they must lock, the rate and term, what the borrower would receive at today's fee rate, the interest at the due date, the protocol's share of it and what comes back to you, every lifecycle term, when the offer lapses, the loan-to-value at today's prices and whether an approval is needed. If your wallet holds less than the amount, the review says how much is missing and offers no signature. You tick a box to agree to the Risk Disclosures and Terms. Your wallet approves exactly the amount if needed, the app tries the offer again, and only then posts it. If it stops after an approval, the app asks to put the approval back and says whether that happened. Afterwards the app checks on the chain the offer recorded and the amount locked in your vault.
+
+<a id="lend-offer-fee"></a>
+
+### Lend: Fees on Your Offer
+
+Posting an offer charges you no fee. The initiation fee is the borrower's: a small share of the amount, charged once in the lending asset when a borrower takes your offer, at the rate in force then, and taken from what they receive. You lend the whole amount, and the borrower owes it back in full with interest. When interest is paid, the protocol keeps its share of it, at the rate in force when the loan opens; your fee-discount tier can lower that share while your fee-discount setting is on. The review shows today's rate and the most that share can take; if that rate cannot be read, the review says so instead of showing a figure.
+
+<a id="risk-access"></a>
+
+### Risk Access: Your Risk Level
+
+Every account starts at the lowest risk level, blue-chip assets only, and only you can raise it. A pair needs the level of its riskier token: blue-chip tokens need nothing, other liquid tokens need “Liquid assets”, and an illiquid token needs “Any asset, including illiquid ones” plus your agreement to that exact pair. When taking an offer or posting a request needs a step like this, the review says so in place and offers it as one wallet confirmation with its own receipt: what changes, which pairs it reaches, when it takes effect, and that no funds move. Raising your level, or agreeing to a pair, can wait out a period the protocol sets; for a raised level the app shows the time it takes effect, read from the chain, for an agreement it says the protocol does not publish that time yet, and it never offers the same step twice, because a second one would start the wait over. Lowering your level always takes effect at once. When the protocol publishes new risk terms, your level and agreements stop counting until you confirm them again. If you turned on strict mode, each liquid pair also needs your acknowledgement. A block that comes from the lender's own risk level is shown as theirs: nothing in your account would change it.
 
 <a id="terms-gate"></a>
 

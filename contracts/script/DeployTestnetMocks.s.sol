@@ -5,6 +5,7 @@ import {Script} from "forge-std/Script.sol";
 import {console} from "forge-std/console.sol";
 import {ERC20Mock} from "../test/mocks/ERC20Mock.sol";
 import {ERC4907Mock} from "../test/mocks/ERC4907Mock.sol";
+import {TestnetMultiToken} from "./mocks/TestnetMultiToken.sol";
 import {ZeroExProxyMock} from "../test/mocks/ZeroExProxyMock.sol";
 import {MockSwapAdapter} from "../test/mocks/MockSwapAdapter.sol";
 import {OracleAdminFacet} from "../src/facets/OracleAdminFacet.sol";
@@ -65,7 +66,7 @@ import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
  *         All addresses are written to
  *         `deployments/<chain-slug>/addresses.json` under a single
  *         `.testnetMocks` object (`liquidToken`, `liquidToken2`,
- *         `illiquidToken`, `illiquidToken2`, `rentalNft`, `feedRegistry`,
+ *         `illiquidToken`, `illiquidToken2`, `rentalNft`, `multiToken`, `feedRegistry`,
  *         `liquidTokenUsdFeed`, `liquidToken2UsdFeed`, `ethUsdFeed`,
  *         `uniswapV3Factory`, `liquidTokenWethPool`,
  *         `liquidToken2WethPool`, `zeroExProxy`, `mockSwapAdapter`)
@@ -419,6 +420,16 @@ contract DeployTestnetMocks is Script {
             console.log("Reusing vART:   ", rentalNft2);
         }
 
+        // An ERC-1155 collection, so a wallet can try a request that locks a
+        // quantity of one token (the app's ERC-1155 collateral flow).
+        address multiToken = vm.envOr("FAUCET_MULTI_TOKEN", address(0));
+        if (multiToken == address(0)) {
+            multiToken = address(new TestnetMultiToken("Vaipakam Test Multi Token", "vMULTI"));
+            console.log("Deployed vMULTI:", multiToken);
+        } else {
+            console.log("Reusing vMULTI: ", multiToken);
+        }
+
         // Oracle mocks for the LIQUID tokens only (Tier 1). Each liquid
         // token carries a DISTINCT USD price (tLIQ $2,000 / mUSDC $1 /
         // mWETH `mWethUsdPrice`); WETH is priced at `mWethUsdPrice` too so
@@ -639,6 +650,7 @@ contract DeployTestnetMocks is Script {
         vm.serializeAddress(obj, "illiquidToken2", illiquidToken2);
         vm.serializeAddress(obj, "rentalNft", rentalNft);
         vm.serializeAddress(obj, "rentalNft2", rentalNft2);
+        vm.serializeAddress(obj, "multiToken", multiToken);
         vm.serializeAddress(obj, "liquidTokenUsdFeed", address(liquidFeed));
         // liquidToken2UsdFeed now prices mUSDC at $1 (was tLQ2 at $2,000).
         vm.serializeAddress(obj, "liquidToken2UsdFeed", address(liquid2Feed));

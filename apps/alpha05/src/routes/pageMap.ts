@@ -32,8 +32,8 @@ export interface PageEntry {
 
 export const PAGES: readonly PageEntry[] = [
   { path: '/', name: 'Home', tier: 'basic', rows: 'positions with next action, deadlines, first-run cards', order: 1, built: true, nav: true, currentApp: '/' },
-  { path: '/borrow', name: 'Borrow', tier: 'basic', rows: 'OFF (borrow side), LN origination', order: 2, built: false, nav: true, currentApp: '/borrow' },
-  { path: '/lend', name: 'Lend', tier: 'basic', rows: 'OFF (lend side), auto-lend intents', order: 3, built: false, nav: true, currentApp: '/lend' },
+  { path: '/borrow', name: 'Borrow', tier: 'basic', rows: 'OFF (borrow side), LN origination', order: 2, built: true, nav: true, currentApp: '/borrow' },
+  { path: '/lend', name: 'Lend', tier: 'basic', rows: 'OFF (lend side), auto-lend intents', order: 3, built: true, nav: true, currentApp: '/lend' },
   { path: '/positions', name: 'Positions', tier: 'basic', rows: 'LN list, quick actions', order: 4, built: false, nav: true, currentApp: '/positions' },
   { path: '/positions/:id', name: 'Position', tier: 'basic', rows: 'LN, EX (113 rows, action-first)', order: 5, built: false, nav: false, currentApp: '/positions/:id' },
   { path: '/claims', name: 'Claims', tier: 'basic', rows: 'RW claims, EX settlements, extension reserve', order: 6, built: false, nav: true, currentApp: '/claims' },
@@ -60,8 +60,24 @@ export const PAGES: readonly PageEntry[] = [
 export function currentAppHref(page: PageEntry, params: Readonly<Record<string, string | undefined>>): string | null {
   if (page.currentApp === null) return null;
   const path = page.currentApp.replace(/:(\w+)/g, (_, key: string) => params[key] ?? '');
-  if (path.includes('//') || path.endsWith('/') && path !== '/') return null;
+  if (path.includes('//') || (path.endsWith('/') && path !== '/')) return null;
   return `https://app.vaipakam.com${path}`;
+}
+
+/** Where a job lives today: this app's own page when it is built, otherwise
+ *  the current app's page for the same job (or nowhere, when it has none).
+ *  Flows that hand the reader on to another page (a finish card's next step,
+ *  a review's "where to manage this") ask here, so the link switches to this
+ *  app by itself the day the page is built, and never points at a
+ *  placeholder after money has moved. */
+export type PageHandoff = { kind: 'here'; to: string } | { kind: 'currentApp'; href: string } | { kind: 'none' };
+
+export function pageHandoff(path: string): PageHandoff {
+  const page = PAGES.find((p) => p.path === path);
+  if (!page) return { kind: 'none' };
+  if (page.built) return { kind: 'here', to: path };
+  const href = currentAppHref(page, {});
+  return href === null ? { kind: 'none' } : { kind: 'currentApp', href };
 }
 
 /** The primary navigation, DERIVED from the page map (RB-MODE): Basic shows

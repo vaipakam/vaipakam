@@ -21,7 +21,20 @@ function isUserRejection(err: unknown): boolean {
   return false;
 }
 
+/** An error that already carries the refusal to state, written by the app
+ *  where it knows more than the error does (a multi-step flow that stopped
+ *  after an approval and says whether the approval was put back). */
+export class StatedRefusal extends Error {
+  readonly refusal: Refusal;
+  constructor(refusal: Refusal) {
+    super(refusal.reason);
+    this.name = 'StatedRefusal';
+    this.refusal = refusal;
+  }
+}
+
 export function refusalFromError(err: unknown, remedy: Refusal['remedy'] = null): Refusal {
+  if (err instanceof StatedRefusal) return remedy ? { ...err.refusal, remedy } : err.refusal;
   if (isUserRejection(err)) {
     return { code: USER_REJECTED, reason: 'You declined in the wallet. Nothing was sent.', reopensAt: null, remedy };
   }
@@ -43,4 +56,19 @@ export function refusalFromError(err: unknown, remedy: Refusal['remedy'] = null)
     reopensAt: null,
     remedy,
   };
+}
+
+/**
+ * The arguments the protocol's custom error carried, as viem decoded them
+ * (a `ContractFunctionRevertedError` anywhere in the cause chain); null when
+ * the error was not decoded, so a figure is never invented from a message.
+ */
+export function revertArgs(err: unknown): readonly unknown[] | null {
+  let node: unknown = err;
+  for (let depth = 0; node && typeof node === 'object' && depth < 6; depth++) {
+    const n = node as { data?: { args?: unknown }; cause?: unknown };
+    if (n.data && Array.isArray(n.data.args)) return n.data.args as readonly unknown[];
+    node = n.cause;
+  }
+  return null;
 }

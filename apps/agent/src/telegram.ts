@@ -172,6 +172,26 @@ export function extractLockCommand(update: TelegramUpdate): {
   return { chatId: String(chatId), updateId, sentAt, isPrivate: update.message?.chat?.type === 'private' };
 }
 
+const CANCEL_RE = /^\/?cancel(?:@\w+)?$/i;
+
+/**
+ * #3246 — the CANCEL command: `CANCEL`, `/cancel` or `/cancel@BotName`, read
+ * case-blind. It stops every pending removal of this chat as an alert chat
+ * (an unlink, or a move to another chat, waiting under protected mode).
+ * Returns the chat and whether it is a private one; null for anything else.
+ * A group's CANCEL is returned so the caller can answer that it works only in
+ * the owner's private chat.
+ */
+export function extractCancelCommand(update: TelegramUpdate): {
+  chatId: string;
+  isPrivate: boolean;
+} | null {
+  const chatId = update?.message?.chat?.id;
+  const text = update?.message?.text?.trim() ?? '';
+  if (!chatId || !CANCEL_RE.test(text)) return null;
+  return { chatId: String(chatId), isPrivate: update.message?.chat?.type === 'private' };
+}
+
 /**
  * The secret Telegram sends back on every webhook delivery (#2753).
  *

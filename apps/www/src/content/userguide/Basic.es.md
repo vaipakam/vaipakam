@@ -961,8 +961,8 @@ Basic muestra lo que la mayoría necesita. Advanced añade las
 herramientas de salida y liquidación, la automatización, las órdenes
 firmadas, el estado de los keepers y el detalle contable. Cambiar de
 modo nunca oculta un consentimiento que debas dar, algo que te
-bloquee ni la forma de resolverlo. Cada enlace "¿Por qué?" abre la
-explicación completa, y su enlace "Leer más" abre esta guía en el
+bloquee ni la forma de resolverlo. Cada botón de información (i), tras la frase que explica,
+abre la explicación completa, y su enlace "Leer más" abre esta guía en el
 modo que usas.
 
 <a id="wallet"></a>
@@ -1079,6 +1079,168 @@ En una red donde las recompensas no reclamadas pueden retirarse, Home muestra la
 ### Home: Recompensas retenidas
 
 Si el control de sanciones marca tu billetera, no se le paga nada mientras siga marcada. Las recompensas que ganó antes de la marca se retienen para ella, bloqueadas pero no perdidas, y se liberan cuando la billetera deja de estar marcada; entonces Home ofrece reclamar exactamente ese saldo por separado. Mientras una marca esté confirmada, las recompensas ganadas se pierden para siempre y el VPFI de tu bóveda no puede moverse. Si no puede leerse si la billetera sigue marcada, no se libera nada.
+
+<a id="borrow-start"></a>
+
+### Borrow: Cómo funciona
+
+Para pedir prestado, aceptas la oferta abierta de un prestamista: una cantidad de un token, una tasa, un plazo y la garantía que pide el prestamista. Aceptarla abre el préstamo en una sola transacción. Tu garantía pasa de tu wallet a tu propio vault, donde queda bloqueada mientras el préstamo siga abierto, y la cantidad, menos una pequeña comisión de apertura, llega a tu wallet. Devuelves la cantidad más los intereses antes de la fecha de vencimiento. Si ninguna oferta encaja, también puedes publicar tu propia solicitud de préstamo y esperar a un prestamista.
+
+<a id="borrow-pair"></a>
+
+### Borrow: Elegir los tokens
+
+Primero elige qué pedir prestado y qué bloquear. La app sugiere tokens de la red, o puedes pegar una dirección de token; no se hace ninguna revisión de seguridad de tokens, así que revisa tú mismo una dirección pegada. Para cada token, la app lee lo que el protocolo dice de él ahora. Un token líquido tiene precio, así que el préstamo tiene un factor de salud y puede liquidarse si la garantía pierde valor. Un token ilíquido se valora en cero y, en caso de impago, el prestamista recibe la propia garantía. Cuando el protocolo no confía en el precio de un token, los préstamos nuevos sobre él se cierran hasta que vuelva a confiar; los préstamos ya abiertos no se ven afectados.
+
+<a id="borrow-offers"></a>
+
+### Borrow: Elegir una oferta
+
+La página muestra las ofertas abiertas de prestamistas para tus dos tokens, leídas del propio protocolo. Cada una indica la cantidad, la tasa y el plazo, la garantía pedida, la relación préstamo-valor a los precios de hoy, cómo se cobran los intereses, el calendario de intereses si lo hay, cuándo termina la oferta y lo que recibirías tras la comisión. Una oferta se acepta entera, por la cantidad completa del prestamista y su tasa más baja. Si el protocolo rechazaría una oferta, la página dice por qué y no muestra botón. El orden es una ayuda, no un consejo.
+
+<a id="borrow-review"></a>
+
+### Borrow: Revisar y firmar
+
+Antes de que se abra tu wallet, la revisión muestra cada cifra: lo que recibes, la comisión, lo que bloqueas, la tasa, lo que debes en la fecha de vencimiento, el periodo de gracia y lo que puedes perder. Marcas una casilla para aceptar las Divulgaciones de riesgos y los Términos; si las cifras cambian antes de confirmar, la casilla se desmarca. Luego tu wallet te pide firmar los términos, lo que no cuesta nada, aprobar exactamente la garantía si hace falta, y enviar la aceptación, que la app prueba antes como simulación. Si se detiene tras una aprobación, la app pide restablecerla y dice si lo logró. Después, la app comprueba en la cadena el préstamo abierto, lo que llegó y lo que se bloqueó. También indica las condiciones del préstamo durante su vida, cada una aunque sea la predeterminada: el reembolso parcial, la venta de la garantía y cualquier refinanciación o préstamo vinculado. El importe adeudado supone que no hay pausa: una pausa retrasa la fecha de vencimiento y los intereses siguen corriendo durante ella.
+
+<a id="borrow-fee"></a>
+
+### Borrow: La comisión de apertura
+
+Abrir un préstamo cuesta una pequeña parte de la cantidad, cobrada una vez, en el token que pides prestado, y descontada de lo que recibes; la revisión muestra la tasa vigente. Debes intereses sobre la cantidad completa. Tu nivel de descuento reduce la comisión cuando el descuento de comisiones está activado y el token prestado es líquido. No se toma ni se retiene VPFI por esta comisión, y no se reembolsa nada después. Como envías tú mismo la aceptación, una pequeña parte de la comisión, la que el protocolo paga a quien envía un emparejamiento, vuelve a ti junto con la cantidad; la revisión la muestra.
+
+<a id="borrow-risks"></a>
+
+### Borrow: Riesgos
+
+Un préstamo puede costarte tu garantía. Si no has devuelto al final del periodo de gracia, el préstamo entra en impago y el prestamista cobra de tu garantía: vendida para él donde el protocolo puede, entregada tal cual donde no. Con garantía líquida, si su valor cae hasta que el factor de salud baja de 1, cualquiera puede liquidar el préstamo y pierdes garantía. Con intereses de plazo completo debes los intereses de todo el plazo aunque devuelvas antes. Con un calendario de intereses, un periodo impagado se cubre vendiendo parte de tu garantía. Tu garantía queda bloqueada hasta que el préstamo se devuelva o se liquide.
+
+<a id="borrow-request"></a>
+
+### Borrow: Publicar tu propia solicitud
+
+Si ninguna oferta encaja, puedes publicar tu propia solicitud de préstamo para tus dos tokens: el importe exacto, la tasa que pagarás, el plazo y la garantía que bloqueas. Al publicarla, la garantía pasa de tu wallet a tu propio vault, donde queda mientras la solicitud esté abierta. Un prestamista que la acepte abre el préstamo al instante, con tus condiciones, sin volver a preguntarte; el importe, menos la comisión de apertura, llega a tu wallet. Puedes cancelarla a partir de cinco minutos después de publicarla, y la garantía vuelve a tu wallet. Una solicitud vencida ya no puede aceptarse; su garantía queda en tu vault hasta que tú, o cualquiera, la cierre, y entonces vuelve solo a tu wallet. Mientras la página de Ofertas de la próxima app no esté construida, sigues, cancelas y cierras una solicitud en la página de Ofertas de la app actual; la revisión lo dice antes de bloquear nada.
+
+<a id="borrow-request-terms"></a>
+
+### Borrow: Las condiciones de la solicitud
+
+Un prestamista toma el importe completo, o nadie lo toma. Cada cifra se lee exactamente como la escribes: más decimales de los que tiene el token se rechazan, nunca se redondean, y la tasa llega hasta el 100 % anual con dos decimales. Los plazos ofrecidos terminan en el más largo que permite la red; también puedes escribir un plazo en días. La solicitud sigue abierta hasta que se acepte o se cancele, o durante los días que elijas, hasta un año. El interés de plazo completo, la opción habitual, se debe entero aunque devuelvas antes; el prorrateado cobra solo por el tiempo que el préstamo está abierto. El formulario muestra lo que recibirías con la comisión de hoy y deberías en la fecha de vencimiento si un prestamista la aceptara ahora.
+
+<a id="borrow-request-review"></a>
+
+### Borrow: Revisar y publicar una solicitud
+
+Antes de que se abra tu wallet, la app pide al protocolo que pruebe tu solicitud como simulación, así que la revisión muestra la respuesta del propio protocolo. Indica lo que bloqueas ahora, el importe, la tasa y el plazo, lo que recibirías y cómo se fija la comisión (la tasa de comisión vigente cuando un prestamista la acepte, menos tu nivel de descuento de comisiones en ese momento; la cifra mostrada usa la tasa de hoy), lo que deberías, cada condición del préstamo, cuándo vence la solicitud, la relación préstamo-valor y si hace falta una aprobación. Marcas una casilla para aceptar las Divulgaciones de riesgos y los Términos. Tu wallet aprueba exactamente la garantía si hace falta, la app vuelve a probar la solicitud y solo entonces la publica. Si se detiene tras una aprobación, la app pide restablecerla y dice si lo logró. Después, la app comprueba en la cadena la solicitud registrada y la garantía bloqueada.
+
+<a id="borrow-nft-collateral"></a>
+
+### Borrow: un NFT como garantía
+
+Una solicitud puede bloquear un NFT en lugar de un token. Elige la colección como lo que bloqueas (las colecciones de prueba están marcadas como NFT, o pega una dirección); si una dirección es un token o una colección de NFT se lee de su contrato. Luego escribe el número del NFT, su id de token, que muestra tu billetera o la página de la colección; el formulario dice al momento si tu billetera lo tiene. El protocolo valora un NFT en cero, sea cual sea su precio en otro lugar: un préstamo con él no tiene relación préstamo-valor ni liquidación por precio, y si no pagas antes del fin del periodo de gracia, el prestamista recibe el propio NFT. Al publicar, tu billetera aprueba al protocolo solo para ese NFT, nunca para el resto de tu colección, y moverlo a tu bóveda borra esa aprobación por sí solo; si la solicitud se detiene tras la aprobación, la app pide restablecerla y dice si ocurrió. Los NFT que vienen en cantidades (colecciones multitoken) funcionan igual, con una cantidad: escribe el número del token y cuántos bloquear, y el formulario dice cuántos tiene tu billetera. Una colección así no puede aprobar un solo token, solo todos los tuyos en ella, así que publicar concede esa aprobación solo para esta solicitud y la retira con un paso más de la billetera después, se haya completado la solicitud o no; una aprobación que ya habías dado se deja como la dejaste. Aceptar la oferta de un prestamista que pide un NFT todavía se hace en la app actual por ahora.
+
+<a id="borrow-request-range"></a>
+
+### Borrow: Un rango de importes (Avanzado)
+
+En el modo Avanzado una solicitud puede aceptar un rango: el importe más pequeño y el más grande que un prestamista puede prestar, a su única tasa, y, si lo desea, una garantía menor para el préstamo más pequeño. Un prestamista que acepta la solicitud directamente presta el importe más pequeño y bloquea solo la garantía fijada para él; el resto vuelve a su billetera. Los emparejamientos pueden prestar más, hasta el importe más grande, mientras el emparejamiento esté activado en la red; la revisión dice si lo está, y que mientras esté desactivado el rango se llena una sola vez. El protocolo rechaza un importe más grande que su garantía no respalda a los precios de hoy, y la revisión indica el máximo que respalda. La revisión muestra la relación préstamo-valor en ambos extremos y avisa cuando un prestamista no podría aceptar la solicitud directamente a los precios de hoy. Las opciones fijadas en Avanzado siguen aplicándose si cambia a Básico: el formulario lo dice y le permite borrarlas. Un emparejamiento bloquea solo la garantía que pide su prestamista, como mínimo el piso, así que la revisión indica el mayor emparejamiento desde toda tu garantía hasta solo el piso, y advierte que un préstamo emparejado puede empezar con más riesgo que uno directo. Mientras el emparejamiento esté activado, la garantía que un emparejamiento no bloquea queda con la solicitud para emparejamientos posteriores y vuelve a su billetera solo cuando la solicitud se cierra o usted la cancela.
+
+<a id="borrow-request-fill"></a>
+
+### Borrow: Cómo se llena una solicitud (Avanzado)
+
+Parcial, el valor predeterminado, permite que los emparejamientos llenen la solicitud en uno o más préstamos hasta que se llene, se cancele o caduque. Todo o nada admite un único llenado del importe completo, por lo que no puede usarse con un rango. Inmediato o cancelar llena como parcial, pero solo hasta que la solicitud caduca, por lo que necesita una caducidad. El modo de llenado no puede cambiarse después de publicar; para cambiarlo, cancele la solicitud y publique una nueva. El protocolo permite cambiar los importes, la tasa y la garantía mientras la solicitud está abierta, nunca por debajo de lo que ya usaron los emparejamientos, pero esta aplicación aún no lo ofrece, así que por ahora un cambio implica cancelar y publicar de nuevo.
+
+<a id="borrow-request-cadence"></a>
+
+### Borrow: Un calendario de intereses (Avanzado)
+
+En el modo Avanzado una solicitud puede pagar los intereses según un calendario en lugar de todo al reembolsar: cada mes, trimestre, seis meses o año. El formulario ofrece solo los calendarios que el protocolo permite para tus condiciones y, bajo cada uno cerrado, dice por qué: los intereses periódicos están desactivados en la red, un activo no tiene precio, el préstamo vale menos que el umbral del protocolo (se muestran ambas cifras) o el periodo no es más corto que el préstamo. La revisión muestra los intereses de cada periodo y la gracia que recibe un periodo impagado. Si un periodo no se paga antes de que termine su gracia, cualquiera puede vender parte de tu garantía para pagarlo, y el préstamo sigue abierto. El calendario no se puede cambiar después de publicar. Como las demás opciones avanzadas, sigue aplicándose si cambias a Básico, y el formulario lo dice.
+
+<a id="borrow-request-tariff"></a>
+
+### Borrow: La tarifa de comisión Full (Avanzado)
+
+En el modo Avanzado una solicitud puede tomar la tarifa de comisión Full: una comisión en VPFI, tomada de su bóveda al abrirse cada préstamo, que añade diez puntos al descuento de la comisión del préstamo, hasta el tope del 50 % del protocolo. La comisión del préstamo se sigue cobrando en el activo prestado, y la tarifa no se reembolsa. El formulario la ofrece solo mientras el protocolo la tiene activada y muestra la tarifa de hoy para su importe y plazo. Usted fija lo máximo en VPFI que puede tomar un préstamo (en blanco, la tarifa de hoy para el préstamo más grande) y qué ocurre con un préstamo que no puede tomar la tarifa al abrirse: se rechaza, o se abre sin ella. Un préstamo solo puede tomarla si, en ese momento, la tarifa está activada, el activo prestado tiene precio y es líquido, su tarifa está dentro de su máximo y su bóveda tiene suficiente VPFI libre. La tarifa se fija con una segunda transacción después de publicar, así que un prestamista que tome la solicitud antes de que esa transacción se confirme abre un préstamo sin ella. Esta aplicación aún no ofrece préstamos de respaldo para solicitudes que nadie toma.
+
+<a id="lend-start"></a>
+
+### Lend: Cómo funciona
+
+Para prestar, usted financia la solicitud abierta de un prestatario: un importe de un token, la tasa que pagará, un plazo y una garantía que el prestatario ya ha bloqueado en su propia bóveda. Financiarla abre el préstamo en una sola transacción. El importe sale de su billetera, el prestatario lo recibe menos su comisión de apertura y la garantía queda bloqueada para usted hasta que el préstamo termine. Su lado del préstamo es un token de posición en su billetera, y quien lo tenga es quien cobra. El prestatario devuelve el importe más los intereses antes de la fecha de vencimiento, y el protocolo se queda con su parte de los intereses. Si ninguna solicitud le conviene, puede publicar su propia oferta de préstamo desde la misma página.
+
+<a id="lend-offers"></a>
+
+### Lend: Elegir una solicitud
+
+Primero elija qué prestar y qué garantía acepta; deben ser tokens distintos, y esta página solo ofrece tokens. La página lista las solicitudes de préstamo abiertas para ese par, leídas del propio protocolo. Cada una muestra el importe, la tasa y el plazo, la garantía bloqueada, la relación préstamo-valor a los precios de hoy, cómo se cobran los intereses, cualquier calendario de intereses y cuánto de la comisión del prestatario vuelve a usted. Una solicitud se financia completa: si indica un rango, usted presta el importe mínimo del prestatario a su tasa más alta. Cuando el protocolo rechazaría una solicitud, la página dice por qué y no ofrece botón. Sus propias solicitudes, las solicitudes con un NFT y las ventas de préstamos en curso se cuentan, no se listan. El orden (primero las solicitudes que puede financiar, luego la tasa más alta) es una ayuda, no un consejo.
+
+<a id="lend-review"></a>
+
+### Lend: Revisar y firmar
+
+Antes de que se abra su billetera, la revisión muestra cada cifra: lo que sale de su billetera, lo que recibe el prestatario, la comisión y su parte de ella, la garantía retenida para usted, la tasa, los intereses debidos en la fecha de vencimiento, la parte del protocolo en ellos, lo que vuelve a usted, el período de gracia y lo que puede perder. También indica cada condición del ciclo de vida, incluso cuando es la predeterminada. Si su billetera tiene menos que el importe, la revisión dice cuánto falta y no ofrece firma. Marca una casilla para aceptar las Divulgaciones de Riesgo y los Términos; si las cifras cambian antes de confirmar, la casilla se desmarca. Luego su billetera le pide firmar los términos, lo que no cuesta nada, aprobar exactamente el importe si hace falta y enviar la aceptación, que la app primero prueba como simulación. Si se detiene después de una aprobación, la app ofrece revertir la aprobación y dice si ocurrió. Después, la app comprueba en la cadena el préstamo que abrió, lo que salió de su billetera y lo que volvió.
+
+<a id="lend-fee"></a>
+
+### Lend: La comisión y la parte del protocolo
+
+La comisión de apertura es del prestatario: una pequeña parte del importe, cobrada una vez en el activo prestado y descontada de lo que recibe el prestatario. Usted presta el importe completo, y el prestatario lo debe íntegro con intereses. Como usted mismo envía la aceptación, una pequeña parte de esa comisión, la que el protocolo paga a quien envía un emparejamiento, vuelve a su billetera; la revisión la muestra. Si el prestatario eligió la tarifa de comisión Full y se aplica al abrirse el préstamo, la comisión es menor, y también esa parte. Cuando se pagan intereses, el protocolo se queda con su parte, a la tasa vigente al abrirse el préstamo; su nivel de descuento de comisiones puede reducir esa parte mientras su ajuste de descuento esté activado. La revisión muestra la tasa de hoy y lo máximo que puede tomar esa parte.
+
+<a id="lend-risks"></a>
+
+### Lend: Riesgos
+
+Prestar puede hacerle perder dinero. Si el prestatario no ha pagado al final del período de gracia, el préstamo entra en impago y se le paga con la garantía: vendida para usted donde el protocolo puede, entregada tal cual donde no, y una venta puede obtener menos de lo que se le debe. Con garantía líquida, cualquiera puede liquidar el préstamo cuando su factor de salud baja de 1; la venta le paga a usted primero, pero una caída brusca puede dejar menos de lo que se le debe. Un token ilíquido se valora en cero, así que no hay liquidación por precio, y en caso de impago usted recibe toda la garantía, valga lo que valga. No puede recuperar el importe antes de que termine el préstamo; salir antes significa vender su posición a otro prestamista. Con intereses prorrateados, un pago anticipado le rinde menos. Una pausa aplaza la fecha de vencimiento, y los intereses siguen acumulándose durante ella.
+
+<a id="lend-offer"></a>
+
+### Lend: Publicar su propia oferta
+
+Si ninguna solicitud le conviene, puede publicar su propia oferta de préstamo para sus dos tokens: el importe exacto que presta, la tasa que pide, el plazo y la garantía que un prestatario debe bloquear. Al publicarla, el importe pasa de su billetera a su propia bóveda, donde queda bloqueado mientras la oferta esté abierta. Un prestatario que la acepta abre el préstamo de inmediato, en sus condiciones, sin volver a preguntarle: recibe el importe menos su comisión de apertura, y su garantía queda bloqueada en su bóveda para usted. Mientras el emparejamiento esté activado en la red, cualquiera puede además emparejar su oferta con la solicitud de un prestatario; sin partes, ese préstamo presta todo su importe a su tasa, contra al menos la garantía que usted pide. La revisión indica si el emparejamiento está activado ahora. Puede cancelar a partir de cinco minutos después de publicar, y el importe vuelve a su billetera. Una oferta vencida ya no se puede aceptar; su importe queda en su bóveda hasta que usted, o cualquiera, la cierre, y luego vuelve solo a su billetera. Hasta que exista la página de Ofertas de la próxima app, usted sigue, cancela y cierra una oferta en la página de Ofertas de la app actual; la revisión lo dice antes de que se bloquee nada.
+
+<a id="lend-offer-terms"></a>
+
+### Lend: Las condiciones de la oferta
+
+Salvo que fije partes en el modo avanzado, un solo prestatario toma todo el importe, o nadie, y debe bloquear exactamente la garantía que usted fija. El formulario muestra cuánto del token prestado tiene su billetera. Cada cifra se lee exactamente como la escribe: más decimales de los que tiene el token se rechazan, nunca se redondean, y la tasa llega hasta el 100 % anual con dos decimales. Los plazos ofrecidos terminan en el más largo que permite la red. La oferta sigue abierta hasta que se acepte o se cancele, o durante los días que elija, hasta un año. Los intereses de plazo completo, la opción habitual, significan que un reembolso anticipado no reduce lo que usted gana; a prorrata se le paga solo por el tiempo que el préstamo está abierto. También puede permitir que el prestatario reembolse una parte antes. El formulario muestra lo que el prestatario le debería en la fecha de vencimiento si aceptara la oferta ahora. En el modo avanzado una oferta también puede prestarse en partes, llevar un modo de ejecución, pagar intereses según un calendario y tomar la tarifa de comisión Full.
+
+<a id="lend-offer-parts"></a>
+
+### Lend: Una oferta en partes (Avanzado)
+
+En el modo avanzado una oferta de préstamo puede prestarse en partes. El importe que escribe sigue siendo el importe entero: publicar bloquea todo, y un prestatario que toma su oferta directamente toma prestado todo. Usted añade la parte más pequeña que un emparejamiento puede prestar. Mientras el emparejamiento esté activado en la red, los emparejadores pueden prestar su oferta a varios prestatarios, cada préstamo entre la parte más pequeña y lo que queda, a su tasa. Cada uno pide al menos la parte de su garantía que corresponde a su parte, redondeada hacia abajo, y la revisión muestra lo que pide la parte más pequeña. Cuando un emparejamiento ha prestado una parte, ningún prestatario puede tomar el resto directamente; solo más emparejamientos pueden, y usted puede cancelar la oferta para recuperar el resto. Cuando queda menos que la parte más pequeña, el protocolo lo devuelve a su billetera y cierra la oferta. La revisión indica si el emparejamiento está activado ahora; mientras esté desactivado, solo un prestatario que toma todo abre un préstamo. El modo de ejecución funciona como en una solicitud: parcial por defecto, todo o nada para un solo préstamo del importe entero (así que sin partes), o inmediato o cancelado, que necesita un vencimiento; no puede cambiarse después de publicar. El protocolo rechaza una oferta que pide menos garantía de la que el importe entero necesita a los precios de hoy, y la revisión indica el mínimo que pide. Las opciones fijadas en Avanzado siguen aplicándose si cambia a Basic: el formulario lo dice y le deja borrarlas.
+
+<a id="lend-offer-schedule"></a>
+
+### Lend: Un calendario de intereses en una oferta (Avanzado)
+
+En el modo Avanzado una oferta de préstamo puede llevar un calendario de intereses, como una solicitud: cada mes, trimestre, seis meses o año. El formulario ofrece solo los calendarios que el protocolo permite para sus condiciones, y dice bajo cada uno cerrado por qué. Con partes, el protocolo comprueba la parte más pequeña al publicar, así que una parte más pequeña por debajo de su umbral cierra los calendarios más finos; cada préstamo se comprueba de nuevo al abrirse. La revisión muestra los intereses de cada periodo si un prestatario toma todo y, con partes, en un préstamo de la parte más pequeña, y la gracia de un periodo impagado. Si un periodo no se paga al final de su gracia, cualquiera puede vender parte de la garantía del prestatario para pagárselo a usted, y el préstamo sigue abierto. El calendario no puede cambiarse después de publicar.
+
+<a id="lend-offer-tariff"></a>
+
+### Lend: La tarifa de comisión Full en una oferta (Avanzado)
+
+En el modo Avanzado una oferta de préstamo puede tomar la tarifa de comisión Full: una comisión en VPFI, tomada de su bóveda al abrirse cada préstamo de la oferta, calculada según el importe y el plazo de ese préstamo. A cambio, la parte del protocolo sobre los intereses de ese préstamo recibe diez puntos más de descuento, hasta su tope del 50 %; la parte se sigue tomando en el activo prestado. Los puntos extra duran el plazo del préstamo: si el préstamo se prorroga por un nuevo plazo, terminan para ese plazo. Pertenecen a la posición de prestamista, así que los recibe quien la tenga cuando se pagan intereses. La tarifa no se reembolsa. El formulario muestra la tarifa de hoy para el importe entero, el mayor préstamo que abre la oferta. Usted fija lo máximo en VPFI que puede tomar un préstamo, y si un préstamo que no puede tomar la tarifa se rechaza o se abre sin ella. Un préstamo solo puede tomarla si, en ese momento, la tarifa está activada, el activo prestado tiene precio y es líquido, su tarifa está dentro de su máximo y su bóveda tiene suficiente VPFI libre. La tarifa se fija con una segunda transacción después de publicar, así que un préstamo abierto desde la oferta antes de que se confirme, por un prestatario o por un emparejamiento, se abre sin ella.
+
+<a id="lend-offer-review"></a>
+
+### Lend: Revisar y publicar una oferta
+
+Antes de que se abra su billetera, la app pide al protocolo que pruebe su oferta en simulación, así que la revisión muestra la respuesta del propio protocolo. Indica lo que bloquea ahora, el importe que toma un prestatario, la garantía que debe bloquear, la tasa y el plazo, lo que el prestatario recibiría con la comisión de hoy, los intereses a la fecha de vencimiento, la parte del protocolo y lo que vuelve a usted, cada condición del ciclo de vida, cuándo vence la oferta, la relación préstamo-valor a los precios de hoy y si hace falta una aprobación. Si su billetera tiene menos que el importe, la revisión dice cuánto falta y no ofrece firma. Marca una casilla para aceptar las Advertencias de riesgo y los Términos. Su billetera aprueba exactamente el importe si hace falta, la app prueba la oferta de nuevo, y solo entonces la publica. Si se detiene tras una aprobación, la app pide devolver la aprobación a su estado anterior e indica si ocurrió. Después, la app comprueba en la cadena la oferta registrada y el importe bloqueado en su bóveda.
+
+<a id="lend-offer-fee"></a>
+
+### Lend: Las comisiones de su oferta
+
+Publicar una oferta no le cobra ninguna comisión. La comisión de apertura es del prestatario: una pequeña parte del importe, cobrada una vez en el activo prestado cuando un prestatario acepta su oferta, a la tasa vigente entonces, y descontada de lo que recibe. Usted presta todo el importe, y el prestatario se lo devuelve completo con intereses. Cuando se pagan los intereses, el protocolo se queda con su parte, a la tasa vigente al abrirse el préstamo; su nivel de descuento de comisiones puede reducir esa parte mientras su ajuste de descuento esté activado. La revisión muestra la tasa de hoy y lo máximo que puede tomar esa parte; si esa tasa no se puede leer, la revisión lo dice en lugar de mostrar una cifra.
+
+<a id="risk-access"></a>
+
+### Risk Access: tu nivel de riesgo
+
+Toda cuenta empieza en el nivel de riesgo más bajo, solo activos blue-chip, y solo tú puedes subirlo. Un par necesita el nivel de su token más arriesgado: los tokens blue-chip no necesitan nada, otros tokens líquidos necesitan «Activos líquidos» y un token ilíquido necesita «Cualquier activo, incluidos los ilíquidos» más tu acuerdo con ese par exacto. Cuando aceptar una oferta o publicar una solicitud necesita un paso así, la revisión lo dice en el mismo lugar y lo ofrece como una sola confirmación en la billetera con su propio recibo: qué cambia, a qué pares alcanza, cuándo entra en vigor y que no se mueven fondos. Subir tu nivel, o aceptar un par, puede esperar un periodo que fija el protocolo; para un nivel subido la app muestra la hora en que entra en vigor, leída de la cadena; para un acuerdo dice que el protocolo aún no publica esa hora; y nunca ofrece el mismo paso dos veces, porque un segundo reiniciaría la espera. Bajar tu nivel siempre surte efecto al instante. Cuando el protocolo publica nuevos términos de riesgo, tu nivel y tus acuerdos dejan de contar hasta que los confirmes de nuevo. Si activaste el modo estricto, cada par líquido también necesita tu reconocimiento. Un bloqueo que viene del nivel de riesgo del prestamista se muestra como suyo: nada en tu cuenta lo cambiaría.
 
 <a id="terms-gate"></a>
 

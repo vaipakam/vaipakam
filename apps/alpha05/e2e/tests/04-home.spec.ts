@@ -68,7 +68,7 @@ test('each side sees its live loan with its side, terms, due date and a button t
     await expect(card).toBeVisible({ timeout: 60_000 });
     await expect(card.getByRole('heading')).toHaveText(`Loan #${loanId}: you are the ${role}`);
     await expect(card).toContainText('1 WETH at 5% a year, on a 30-day term.');
-    await expect(card).toContainText('Collateral: 5000 tLIQ.');
+    await expect(card).toContainText('Collateral: 5,000 tLIQ.');
     await expect(card).toContainText(/Repayment due .* UTC\./);
     await expect(card).toContainText(/Health factor \d/);
     const open = card.getByRole('link', { name: `Open loan #${loanId}` });
@@ -92,7 +92,9 @@ test('each side sees its live loan with its side, terms, due date and a button t
       await expect(offers.locator(`[data-offer-id="${offerId}"]`)).toHaveText(`Offer #${offerId}: lend 0.3 WETH at 6.5% a year, on a 14-day term.`);
       await expect(offers.getByRole('link', { name: 'See your offers' })).toHaveAttribute('href', '/offers');
     } else {
-      await expect(offers).toHaveCount(0);
+      // The lender's offer is never the borrower's. Other specs may leave the
+      // borrower's own requests open, so only this offer is checked.
+      await expect(offers.locator(`[data-offer-id="${offerId}"]`)).toHaveCount(0);
     }
     await ctx.close();
   }

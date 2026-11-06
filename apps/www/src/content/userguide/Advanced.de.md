@@ -2225,6 +2225,168 @@ Die Hauptzahl ist `RewardClaimFacet.simulateClaimInteractionRewards(user, 2)`, d
 
 `getSanctionsHeldReward(user)` ist das zurückgehaltene Guthaben und `getRewardSanctionsStatus(user)` seine Entscheidung (Deliver, Hold oder Confirmed). Mit einem Guthaben und der Entscheidung Deliver bietet Home `claimHeldInteractionRewards(2)` an, das genau das zurückgehaltene Guthaben auszahlt, ohne neu Geschuldetes abzurechnen, und `InteractionRewardsClaimed(user, 0, 0, paid)` emittiert; solange die Wallet gesperrt ist, revertiert es mit `SanctionedAddress`. Die Prüfung vor dem Signieren liest beides erneut und simuliert den Aufruf als Absender. Tage, die bei bestätigter Markierung verdient wurden, verfallen endgültig.
 
+<a id="borrow-start"></a>
+
+### Borrow: So funktioniert es
+
+Borrow nimmt ein Verleiherangebot (`offerType` 0) eines ERC-20 gegen ERC-20-Sicherheit direkt an, mit `acceptOffer(offerId, terms, signature)`. In einer Transaktion eröffnet es den Vault des Leihenden, falls keiner existiert, zieht die Sicherheit hinein, liefert den Kapitalbetrag abzüglich der Eröffnungsgebühr an die Wallet und emittiert `LoanInitiated`. Ein Leihender kann auch eine Anfrage stellen (`offerType` 1); NFT-Seiten, Paar-Zustimmungen und die erweiterten Optionen folgen in späteren Updates.
+
+<a id="borrow-pair"></a>
+
+### Borrow: Die Tokens wählen
+
+Die Klasse jedes Tokens wird live gelesen: zuerst `getAssetPriceStatus(asset)` (Divergent gilt als misstraut und schließt neue Kredite), dann `checkLiquidityOnActiveNetwork(asset)` (0 liquide, 1 illiquide). Ein Revert mit `OraclePriceDivergence` oder `OracleCrossCheckDivergence` gilt als misstraut; jeder andere Fehler wird mit Grund als nicht lesbar gezeigt. Die Vorschlagsliste ist der Wrapped-Native-Token und die Test-Tokens des Deployment-Datensatzes; eine eingefügte Adresse wird nur auf Form geprüft.
+
+<a id="borrow-offers"></a>
+
+### Borrow: Ein Angebot auswählen
+
+`getActiveOffersByAssetPairRanked(lending, collateral, 0, 20)` liefert die offenen Angebots-IDs des Paars und die Gesamtzahl. Für jede liest die Seite `getOffer`, `getOfferState` und, mit Wallet, `previewAccept(offerId, wallet)`, dessen `errorCode` die Ablehnung des Protokolls ist. Der Beleihungswert ist `calculateLTV` zu heutigen Preisen; eine illiquide oder preislose Seite sagt, warum es keinen gibt. Eine direkte Annahme bindet `amountMax` des Verleihers zu `interestRateBps`. Kreditanfragen, Angebote mit NFT-Seite und eigene Angebote werden gezählt, nicht gelistet.
+
+<a id="borrow-review"></a>
+
+### Borrow: Prüfen und Signieren
+
+Die Prüfung liest das Angebot, seinen Zustand, `previewAccept`, `getOfferLinkedLoanId`, `getCurrentRiskTermsHash`, beide Klassen, `getEffectiveGraceSeconds(durationDays)`, `getLoanInitiationFeeBps`, Vault, Saldo und Freigabe der Wallet, `previewOfferAcceptBlock` und die Rabattzustimmung, und liest sie direkt vor dem Öffnen der Wallet erneut. Die Wallet signiert EIP-712 `AcceptTerms` (Domain `Vaipakam AcceptOffer`, Version 1) aus dem gespeicherten Angebot, mit frischer 128-Bit-Nonce und 30 Minuten Frist; eine Illiquiditäts-Bestätigung nennt nur eine Seite, die die Prüfung als illiquide zeigte. Eine Freigabe von genau der Sicherheit folgt nur, wenn die Freigabe nicht reicht; dann wird `acceptOffer` mit der Signatur simuliert und gesendet. Stoppt es nach der Freigabe, setzt die App sie auf den früheren Wert zurück, wenn nichts anderes sie geändert hat. Das Ergebnis liest `LoanInitiated` für dieses Angebot und diese Wallet und die `Transfer`-Logs des Belegs. Die Freigabe wird direkt vor der ersten Wallet-Abfrage erneut gelesen, und genau dieser Wert wird bei einem Zurücksetzen wiederhergestellt; eine gesendete Annahme, die zurückgesetzt wird (revert) oder die die Wallet abbricht oder ersetzt, erhält vom Transaktions-Tracker dasselbe Zurücksetzen. Die Prüfung nennt `allowsPartialRepay`, `allowsPrepayListing`, `allowsParallelSale` mit `parallelSaleOrderHash`, `refinanceTargetLoanId` und den verknüpften Kredit und kennzeichnet den geschuldeten Betrag als Fall ohne Pause, da Zinsen während einer Pause weiterlaufen, während sich das Fälligkeitsdatum verschiebt. Jeder Freigabeschritt wird an der Freigabe gemessen, die im Block seiner Quittung zurückgelesen wird, nie am Status der Quittung. Ein Token, das eine Änderung von einer Freigabe ungleich null auf eine andere ablehnt (per Probelauf von `approve` ermittelt), erhält zuerst einen Schritt auf null, den die Prüfung als zusätzliche Abfrage zählt. Die Annahme der Bedingungen wird unmittelbar vor dem Öffnen der Wallet erneut gelesen. Beide Verkaufswege listen die Sicherheit als NFT; bei Token-Sicherheiten wird eine gewährte Listing- oder Verkaufserlaubnis daher als für dieses Darlehen nicht nutzbar angegeben. Eine Ablehnung `VaultUpgradeRequired` wird per `getVaultVersionInfo` auf dem eigenen Vault der Wallet zugeordnet: Die Abhilfe wird nur angeboten, wenn dieser Vault unter der Mindestversion liegt, sonst wird der Vault des Kreditgebers genannt.
+
+<a id="borrow-fee"></a>
+
+### Borrow: Die Eröffnungsgebühr
+
+Die Gebühr ist `lifEstimate` aus `previewAccept`: `getLoanInitiationFeeBps` des Kapitalbetrags, im Leih-Token, vom Gelieferten abgezogen, gesenkt um den Haltestufen-Rabatt, wenn die Zustimmung an und der Leih-Token liquide ist, mit der Stufe zum Zeitpunkt der Annahme. Diese Seite wählt den Full-Tarif nie. Für die Gebühr wird kein VPFI eingezogen und keines erstattet. Der Anteil des Einreichers, `getLifMatcherFeeBps` der Gebühr, geht an den Absender, bei einer direkten Annahme also an den Leihenden; die Wallet erhält den Kapitalbetrag abzüglich der Gebühr plus diesen Anteil.
+
+<a id="borrow-risks"></a>
+
+### Borrow: Risiken
+
+Ein Kredit nach dem Ende seiner Nachfrist (`getEffectiveGraceSeconds` nach dem Fälligkeitstag, den pausierte Zeit verschiebt) kann von jedem als ausgefallen ausgelöst werden: liquide Sicherheit wird für den Verleiher verkauft, illiquide unverändert übertragen. Liquide Sicherheit kann auch liquidiert werden, sobald der Health Factor unter 1 liegt. `useFullTermInterest` berechnet bei früher Rückzahlung die Zinsen der vollen Laufzeit; ein Zinsplan begleicht eine verpasste Periode durch einen Zwangsverkauf von Sicherheit.
+
+<a id="borrow-request"></a>
+
+### Borrow: Eine eigene Anfrage stellen
+
+Eine Anfrage ist `createOffer` mit `offerType` 1, ERC-20 auf beiden Seiten, gesendet aus der Wallet des Leihenden. Sie zieht `collateralAmount` in den Vault des Leihenden, legt ihn an, falls keiner existiert, und emittiert `OfferCreated(offerId, creator, 1)`. Ein Verleiher nimmt sie mit `acceptOffer` an: der Kapitalbetrag abzüglich der Gebühr geht an die Wallet des Leihenden, der Absenderanteil der Gebühr an den Verleiher, der sie gesendet hat. `cancelOffer` steht dem Ersteller ab `MIN_OFFER_CANCEL_DELAY` (5 Minuten) nach der Erstellung offen und jedem, sobald die Anfrage abgelaufen ist; die Sicherheit geht immer an den Ersteller zurück.
+
+<a id="borrow-request-terms"></a>
+
+### Borrow: Die Bedingungen der Anfrage
+
+Basic stellt eine Anfrage mit Einzelwerten: `amount` = `amountMax`, `interestRateBps` = `interestRateBpsMax`, `collateralAmount` = `collateralAmountMax`, `fillMode` 0, `periodicInterestCadence` 0, `allowsPrepayListing` und `allowsParallelSale` false, `refinanceTargetLoanId` 0, `creatorRiskAndTermsConsent` true. Beträge werden exakt in Basiseinheiten umgerechnet, der Zinssatz beträgt höchstens 10.000 bps. `durationDays` ist durch das konfigurierte Maximum aus `getProtocolConfigBundle` begrenzt. `expiresAt` ist 0 (offen bis zur Stornierung) oder ein Zeitpunkt, der beim Öffnen der Prüfung aus dem letzten Block festgelegt wird, höchstens `MAX_OFFER_EXPIRY_HORIZON` (365 Tage) voraus. `useFullTermInterest` ist standardmäßig true, `allowsPartialRepay` false.
+
+<a id="borrow-request-review"></a>
+
+### Borrow: Anfrage prüfen und stellen
+
+Die Prüfung simuliert `createOffer` aus der Wallet und liest beide Klassen, `getEffectiveGraceSeconds(durationDays)`, `getLoanInitiationFeeBps`, die maximale Laufzeit, Vault, Guthaben und Freigabe der Wallet sowie `calculateLTV`, wenn beide Seiten liquide sind; sie wird jeden Block und direkt vor dem Öffnen der Wallet neu gelesen. Solange die Freigabe zu niedrig ist, erreicht die Simulation nur den Einzug der Sicherheit: Ein Einzugsfehler des Tokens oder ein Revert ohne Fehlernamen des Protokolls wird als die zu erteilende Freigabe gezeigt, ein benannter Protokollfehler ist eine Ablehnung. Nach einer exakten Freigabe wird `createOffer` erneut simuliert und gesendet; ein Stopp nach der Freigabe setzt sie auf den früheren Wert zurück, wenn nichts anderes sie geändert hat. Das Ergebnis liest `OfferCreated` für diese Wallet und den `Transfer` der Sicherheit in den Vault.
+
+<a id="borrow-nft-collateral"></a>
+
+### Borrow: Ein NFT als Sicherheit
+
+Der Standard der Sicherheit wird mit `supportsInterface` gelesen (ERC-721 `0x80ac58cd`, ERC-1155 `0xd9b67a26`); ein Revert zählt als keiner von beiden, ein fehlgeschlagener Lesevorgang bietet keine Anfrage an. Eine ERC-721-Anfrage sendet `collateralAssetType` 1, `collateralTokenId` die eingegebene ID, `collateralQuantity` 1 und `collateralAmount` = `collateralAmountMax` = 0; das Risikopaar ist an diese Token-ID gebunden. Die Prüfung liest `ownerOf`, `getApproved` und `isApprovedForAll(wallet, Diamond)` in einem Block; ein anderswo gehaltenes Token oder ein revertierendes `ownerOf` blockiert die Anfrage. Ohne eine der Freigaben endet der Probelauf am `ERC721InsufficientApproval` des Tokens, angezeigt als die zu erteilende Freigabe. Die Freigabe ist `approve(Diamond, id)` und zählt nur, wenn `getApproved` im Block der Quittung den Diamond liest; ein Stopp danach setzt sie nur auf die frühere Adresse zurück, solange sie noch den Diamond liest und die Wallet das Token noch hält. Bei ERC-721 wird `setApprovalForAll` nie verlangt. Das Ergebnis liest `OfferCreated` und den eigenen `Transfer` des Tokens (vier Topics) von der Wallet in den Tresor. Eine ERC-1155-Anfrage sendet `collateralAssetType` 2, die Token-ID, `collateralQuantity` als eingegebene Menge (1 bis 2^128−1) und beide Beträge 0. Die Prüfung liest `balanceOf(wallet, id)` und `isApprovedForAll(wallet, Diamond)` an einem Block; ein Bestand unter der Menge blockiert die Anfrage, und ohne Freigabe stoppt der Probelauf bei `ERC1155MissingApprovalForAll`. Die einzige Freigabe ist `setApprovalForAll(Diamond, true)`, gezählt, wenn sie am Block ihrer Quittung zurückgelesen wird, und mit `setApprovalForAll(Diamond, false)` zurückgenommen, nachdem die Anfrage gemined ist oder stoppt (gelesen nie vor dem Block der Freigabe), außer die Wallet hatte sie schon vorher erteilt. Das Ergebnis summiert `TransferSingle`/`TransferBatch` des Tokens von der Wallet in den Tresor. Kreditgeberangebote, die ein NFT verlangen, gehen weiterhin an die aktuelle App.
+
+<a id="borrow-request-range"></a>
+
+### Borrow: Eine Anfrage mit Spanne
+
+Eine Spanne sendet `amount` (den kleinsten) unter `amountMax` (dem größten), `interestRateBps` = `interestRateBpsMax` (den einen Zinssatz) und `collateralAmount` (die Untergrenze für den kleinsten Kredit) höchstens gleich `collateralAmountMax` (beim Veröffentlichen in den Tresor gezogen); eine leere Untergrenze sendet beide gleich. Spannen gibt es nur für ERC-20-Sicherheiten. Ein direktes `acceptOffer` verleiht `amount` zu `interestRateBpsMax` gegen `collateralAmount` und gibt `collateralAmountMax − collateralAmount` an die Wallet zurück; `matchOffers` füllt zwischen den Enden, solange `getPartialFillEnabled` wahr ist. Der Probelauf von `createOffer` wendet die Angebotsgrenze am größten Ende an und lehnt mit `MaxLendingAboveCeiling(provided, ceiling)` ab, dessen Obergrenze die Prüfung zeigt. Das direkte Ende wird mit einem zweiten Probelauf einer Anfrage mit einem Wert bei (`amount`, `collateralAmount`) geprüft; eine Antwort, die vor der Grenze stoppt, wird als unbekannt angegeben. Der Beleihungswert jedes Endes ist `calculateLTV(lending, amount, collateral, collateralAmount)`, und `ZeroCollateral` gilt als wertlose Sicherheit. Der angezeigte Gesundheitsfaktor zu Kreditbeginn ist `getMinHealthFactor`, solange `getDepthTieredLtvEnabled` falsch ist, und 1,0, solange es wahr ist. Ein Match sperrt die anteilige Anforderung des Kreditgebers, angehoben auf `collateralAmount`, wenn die Sicherheit eine Spanne ist, und sonst bei der Anforderung belassen; daher wird der größte Match sowohl bei `collateralAmountMax` als auch bei `collateralAmount` gezeigt (oder, ohne Sicherheitenspanne, als möglicherweise weniger sperrend); begrenzt wird er nur durch die Prüfung beim Kreditstart, und ein fehlgeschlagenes Lesen dieser Prüfung wird genannt, nie weggelassen. Im gestuften Regime wendet die Prüfung zusätzlich die Beleihungsobergrenze der Stufe an. Solange `getPartialFillEnabled` wahr ist, bleibt die Sicherheit, die ein Match nicht sperrt, für spätere Matches im Tresor und wird erst erstattet, wenn die Anfrage schließt (ihre verbleibende Kapazität fällt unter `amount`) oder `cancelOffer` läuft.
+
+<a id="borrow-request-fill"></a>
+
+### Borrow: Der Füllmodus einer Anfrage
+
+`fillMode` ist 0 (Partial), 1 (AON) oder 2 (IOC) und ist nach dem Veröffentlichen unveränderlich. AON verlangt `amount` = `amountMax` (`AonRequiresSingleValueAmount`), IOC verlangt `expiresAt` ≠ 0 (`IocRequiresExpiry`); das Formular bietet keine der abgelehnten Formen an. Beträge, Zinssatz und Sicherheit lassen sich bei einer offenen Anfrage über `setOfferAmount`, `setOfferRate`, `setOfferCollateral` und `modifyOffer` ändern, nie unter `amountFilled` oder `collateralAmountFilled`; diese App ruft sie noch nicht auf.
+
+<a id="borrow-request-cadence"></a>
+
+### Borrow: Der Zinsplan einer Anfrage
+
+`periodicInterestCadence` reicht von 0 (None) bis 4 (Annual), mit Perioden von 30, 90, 180 und 365 Tagen. Das Formular bietet an, was `previewCadenceAdmission(lendingAsset, amount, assetType, collateralAsset, collateralAssetType, durationDays)` zulässt; es führt die Regel aus, die `createOffer` durchsetzt, bewertet zu `amount` (dem kleinsten Ende einer Spanne). Jede Ablehnung wird aus ihren Revert-Daten genannt: `PeriodicInterestDisabled`, `CadenceNotAllowedForIlliquid` oder `CadenceNotAllowed(cadence, durationDays, principalNumeraire, threshold)`. Die Zinsen einer Periode sind `principal × rate × intervalDays / (10000 × 365)`. Eine versäumte Periode kann jeder über `settlePeriodicInterest` begleichen, sobald die Nachfrist `getEffectiveGraceSeconds(intervalDays − 1)` verstrichen ist; dabei wird Sicherheit verkauft und der Kredit bleibt offen. Die Aktivierung des Keeper-Durchlaufs `periodicSettle` wird so gezeigt, wie der Fähigkeitsdienst sie meldet, standardmäßig unbekannt. Der Plan kann nach dem Veröffentlichen nicht geändert werden.
+
+<a id="borrow-request-tariff"></a>
+
+### Borrow: Der Full-Gebührentarif einer Anfrage
+
+Die Zustimmung ist `setOfferCreatorFullTariff(offerId, true, maxCStar, allowDowngrade)`, vom Ersteller nach `createOffer` gesendet und mit `OfferAlreadyAccepted` abgelehnt, sobald ein Kreditgeber die Anfrage übernommen hat; `maxCStar` muss über null liegen (`FullTariffMaxCStarRequired`). Das Formular zeigt den Schalter aus `getFeeEntitlementConfig()` und den Tarif aus `quoteCStar(lendingAsset, principal, durationDays)`, bei einer Spanne zu `amount` und `amountMax`; die Obergrenze ist standardmäßig das Angebot zu `amountMax`. Bei jeder Annahme nimmt die Belastung `C*`, bewertet zum Kapital dieses Kredits, nur wenn der Schalter an ist, das Kapital einen Preis hat und liquide ist, `C* ≤ maxCStar` gilt und die freien VPFI des Tresors es decken (der Tresorsaldo, begrenzt durch `getTrackedVPFIBalance`, abzüglich aktiver Pfandrechte, über `getFreeBalance`); sonst revertiert sie mit `FeeEntitlementDisabled`, `FeeEntitlementFullOptInFailed` oder `FeeEntitlementTariffAboveAuth`, außer `allowDowngrade` lässt den Kredit ohne ihn eröffnen. Der Kreditgebührenrabatt des Kreditnehmers steigt um `FULL_MODE_FEE_DISCOUNT_BONUS_BPS` (1000), begrenzt auf `MAX_FEE_DISCOUNT_BPS` (5000). Die Prüfung blockiert eine Wahl, unter der jeder Kredit abgelehnt würde, und die Zustimmung wird durch erneutes Lesen von `getOffer` gemessen (`creatorFull`, `creatorMaxCStar`, `creatorAllowFullDowngrade`). Backstop-Kredite für nicht gefüllte Anfragen bietet diese App noch nicht an.
+
+<a id="lend-start"></a>
+
+### Lend: So funktioniert es
+
+Lend nimmt eine Kreditanfrage (`offerType` 1) eines ERC-20 gegen ERC-20-Sicherheiten direkt an, mit `acceptOffer(offerId, terms, signature)`, gesendet vom Kreditgeber. In einer Transaktion wird das Kapital aus der Wallet des Kreditgebers, über eine Freigabe an den Diamond, in den Tresor des Kreditgebers gezogen; der Kreditnehmer erhält es abzüglich der Eröffnungsgebühr; die bereits im Tresor des Kreditnehmers liegenden Sicherheiten werden zu den Sicherheiten des Kredits; und `LoanInitiated` wird ausgegeben, mit einem Positions-NFT für Kreditgeber und Kreditnehmer. Ein Kreditangebot (`offerType` 0) wird auf derselben Seite veröffentlicht; NFT-Seiten folgen in einem späteren Update.
+
+<a id="lend-offers"></a>
+
+### Lend: Eine Anfrage auswählen
+
+`getActiveOffersByAssetPairRanked(lending, collateral, 0, 20)` liefert die IDs der offenen Angebote des Paars. Für jedes liest die Seite `getOffer`, `getOfferState`, `getOfferLinkedLoanId` und, mit einer Wallet, `previewAccept(offerId, wallet)`, dessen `errorCode` die Ablehnung des Protokolls ist. Eine direkte Annahme bindet den `amount` der Anfrage (ihr Minimum) zu `interestRateBpsMax`, und der Beleihungswert ist `calculateLTV` auf diesen Betrag zu heutigen Preisen. Kreditgeberangebote, NFT-Seiten, die eigenen Anfragen des Lesers und Verkaufsvehikel für Kreditgeberpositionen (ein kreditnehmerseitiges Angebot mit einem `getOfferLinkedLoanId` ungleich null) werden gezählt, nicht gelistet. Die Reihenfolge: finanzierbar zuerst, dann Zinssatz absteigend, dann Betrag absteigend.
+
+<a id="lend-review"></a>
+
+### Lend: Prüfen und Signieren
+
+Die Prüfung liest dasselbe wie bei Borrow (das Angebot, seinen Zustand, `previewAccept`, `getOfferLinkedLoanId`, `getCurrentRiskTermsHash`, beide Klassen, `getEffectiveGraceSeconds(durationDays)`, `getLoanInitiationFeeBps`, `getLifMatcherFeeBps`, den Tresor der Wallet, `previewOfferAcceptBlock` und die Gebührenrabatt-Zustimmung) plus `getTreasuryFeeBps`, und misst Saldo und Freigabe am verliehenen Vermögenswert, der Seite, die der Kreditgeber zahlt. Ein Fehlbetrag dort blockiert das Signieren, ebenso ein Verkaufsvehikel für eine Kreditgeberposition. Die Wallet signiert EIP-712 `AcceptTerms` (Domain `Vaipakam AcceptOffer`, Version 1), gibt genau das Kapital nur frei, wenn die Freigabe zu knapp ist (mit einem Schritt auf null zuerst bei einem Token, das eine Änderung zwischen zwei Werten ungleich null ablehnt), und `acceptOffer` wird simuliert und gesendet; eine von einem gestoppten Ablauf hinterlassene Freigabe wird wie bei Borrow zurückgesetzt. Das Ergebnis liest `LoanInitiated` für dieses Angebot, den `Transfer` des Kapitals aus der Wallet und den `Transfer` des Matcher-Anteils zurück.
+
+<a id="lend-fee"></a>
+
+### Lend: Die Gebühr und der Anteil des Protokolls
+
+Die Gebühr ist `lifEstimate` aus `previewAccept` und gehört dem Kreditnehmer: `getLoanInitiationFeeBps` des Kapitals im verliehenen Vermögenswert, abgezogen von der Auszahlung an den Kreditnehmer, bei der Annahme gesenkt durch dessen Haltestufen-Rabatt und, wenn `creatorFull` gesetzt ist und die Belastung gelingt, durch den Bonus des Full-Tarifs. Der Anteil des Einreichers, `getLifMatcherFeeBps` der Gebühr, geht an den Absender, hier den Kreditgeber. Der Anteil des Protokolls an den Zinsen ist `getTreasuryFeeBps`, pro Kredit beim Eröffnen festgelegt (`treasuryFeeBpsAtInit`); der Haltestufen-Rabatt des Kreditgebers senkt ihn bei eingeschalteter Zustimmung, wenn Zinsen abgerechnet werden. Die Prüfung zeigt den heutigen Satz und den Anteil zu diesem Satz als Obergrenze.
+
+<a id="lend-risks"></a>
+
+### Lend: Risiken
+
+Ein Kredit nach Ende seiner Nachfrist (`getEffectiveGraceSeconds` nach dem Fälligkeitsdatum, das pausierte Zeit verschiebt) kann von jedem für ausgefallen erklärt werden: liquide Sicherheiten werden für den Kreditgeber verkauft, illiquide unverändert übertragen. Sind beide Seiten liquide, kann der Kredit liquidiert werden, sobald der Health Factor unter 1 liegt, und der Verkauf zahlt den Kreditgeber zuerst. Eine illiquide Seite schließt die preisbasierte Liquidation aus, und bei einem Ausfall erhält der Kreditgeber alle Sicherheiten. `useFullTermInterest` setzt bei vorzeitiger Rückzahlung eine Untergrenze für die Zinsen; ohne es sind die Zinsen anteilig. Ein periodischer Zinsrhythmus begleicht eine verpasste Periode durch einen Zwangsverkauf von Sicherheiten an den Kreditgeber. Das Positions-NFT des Kreditgebers trägt den Anspruch: Wer es überträgt, überträgt den Kredit.
+
+<a id="lend-offer"></a>
+
+### Lend: Ein eigenes Angebot veröffentlichen
+
+Ein Kreditangebot ist `createOffer` mit `offerType` 0, ERC-20 auf beiden Seiten, gesendet aus der Wallet des Kreditgebers. Es zieht `amountMax` des verliehenen Assets in den Vault des Kreditgebers, legt den Vault an, falls keiner existiert, und gibt `OfferCreated(offerId, creator, 0)` aus. Ein Kreditnehmer nimmt es mit `acceptOffer` an: Seine Sicherheit wird in seinen Vault gezogen, der Kapitalbetrag abzüglich der Gebühr geht in seine Wallet, und der Anteil des Absenders an der Gebühr geht an ihn als Absender. Solange `getPartialFillEnabled` true ist, kann `matchOffers` es außerdem mit der Anfrage eines Kreditnehmers paaren; ein Einzelwert-Kreditangebot verleiht dann seinen ganzen Betrag zu seinem Zinssatz, gegen mindestens seinen `collateralAmount`. `cancelOffer` steht dem Ersteller ab `MIN_OFFER_CANCEL_DELAY` (5 Minuten) nach der Erstellung offen und jedem, sobald das Angebot abgelaufen ist; der Betrag kehrt immer zum Ersteller zurück.
+
+<a id="lend-offer-terms"></a>
+
+### Lend: Die Bedingungen des Angebots
+
+Ohne Teile ist ein Kreditangebot ein Einzelwert-Angebot: `amount` = `amountMax`, `interestRateBps` = `interestRateBpsMax`, `collateralAmount` = `collateralAmountMax` (die eine Sicherheit, die ein Kreditnehmer sperren muss), `fillMode` 0, sofern Advanced keinen anderen setzt (nächster Abschnitt), `periodicInterestCadence` 0, sofern Advanced keinen Plan setzt, `allowsPrepayListing` und `allowsParallelSale` false, `refinanceTargetLoanId` 0, `creatorRiskAndTermsConsent` true, und kein Full-Tarif, sofern Advanced ihn nicht wählt. Beträge werden exakt in Basiseinheiten geparst, und der Zinssatz beträgt höchstens 10.000 bps. `durationDays` ist durch das konfigurierte Maximum aus `getProtocolConfigBundle` begrenzt. `expiresAt` ist 0 (offen bis zur Stornierung) oder ein Zeitpunkt, der beim Öffnen der Prüfung vom neuesten Block aus festgelegt wird, höchstens `MAX_OFFER_EXPIRY_HORIZON` (365 Tage) voraus. `useFullTermInterest` ist standardmäßig true und `allowsPartialRepay` false.
+
+<a id="lend-offer-parts"></a>
+
+### Lend: Ein Angebot in Teilen
+
+Teile senden `amount` (den kleinsten Teil, den ein Match verleihen darf) unter `amountMax` (dem ganzen Betrag, den `createOffer` in den Vault zieht); `collateralAmount` = `collateralAmountMax` bleibt die eine Anforderung, bezogen auf `amountMax` (sonst `LenderCollateralRangeNotAllowed`), und `interestRateBps` = `interestRateBpsMax`. Ein direktes `acceptOffer` eines Kreditangebots verleiht `amountMax` gegen `collateralAmount`, und nur solange `amountFilled` 0 ist (`OfferPartiallyFilled` nach einem Match). Solange `getPartialFillEnabled` true ist, verleiht `matchOffers` die Mitte der Betragsüberschneidung, mindestens `amount`, zur Mitte der Zinsüberschneidung, gegen mindestens `collateralAmount × matchAmount ÷ amountMax` (abgerundet; die Sicherheitsspanne eines Kreditnehmers kann ihn erhöhen). Fällt `amountMax − amountFilled` unter `amount`, wird der Rest an die Wallet des Kreditgebers ausgezahlt und das Angebot geschlossen (`OfferClosed`, Grund `Dust` oder `FullyFilled`). `cancelOffer` auf einem teilweise gefüllten Angebot überspringt die Wartezeit und gibt `amountMax − amountFilled` zurück. `fillMode` ist 0, 1 oder 2 wie bei einer Anfrage: AON verlangt `amount` = `amountMax`, IOC verlangt einen Ablauf, und er ändert sich nach dem Veröffentlichen nicht. Sind beide Seiten liquide, lehnt `createOffer` ein `collateralAmount` unter der Untergrenze bei `amountMax` mit `MinCollateralBelowFloor(provided, floor)` ab, deren Untergrenze die Prüfung zeigt. Es wird ein Beleihungswert gezeigt, `calculateLTV` bei (`amountMax`, `collateralAmount`): Ein Teil hat bis auf die Rundung dasselbe Verhältnis.
+
+<a id="lend-offer-schedule"></a>
+
+### Lend: Ein Zinsplan für ein Angebot
+
+`periodicInterestCadence` eines Kreditangebots folgt der Regel der Anfrage (oben), wobei `previewCadenceAdmission` mit dem `amount` des Angebots bewertet wird: seinem kleinsten Teil, oder ohne Teile dem ganzen Betrag. `createOffer` lässt ihn dort über `requireCadenceAdmitted` zu, und die Eröffnung jedes Kredits prüft dessen eigenen Kreditbetrag erneut (`requireOriginationCadenceAdmitted`). Die Prüfung nennt die Zinsen einer Periode bei `amountMax` (eine direkte Übernahme) und mit Teilen bei `amount`. Eine versäumte Periode kann nach ihrer Nachfrist von jedem über `settlePeriodicInterest` abgewickelt werden: Sicherheit wird verkauft, um dem Kreditgeber die Zinsen dieser Periode zu zahlen, und der Kredit bleibt offen.
+
+<a id="lend-offer-tariff"></a>
+
+### Lend: Der Full-Gebührentarif für ein Angebot
+
+Das Opt-in des Kreditgebers ist dasselbe `setOfferCreatorFullTariff(offerId, true, maxCStar, allowDowngrade)`, gesendet nach `createOffer`. Es wird mit `OfferAlreadyAccepted` abgelehnt, sobald das Angebot vollständig übernommen oder geschlossen ist; ein teilweise gematchtes Angebot nimmt es noch an, für seine späteren Kredite. Das Angebot wird mit `quoteCStar` bei `amount` und `amountMax` bepreist, und die Obergrenze ist standardmäßig das Angebot bei `amountMax`. Jeder Kredit wird einzeln gegen `maxCStar` geprüft, bepreist nach seinem Kreditbetrag, unter denselben Bedingungen wie eine Anfrage (`FeeEntitlementDisabled`, `FeeEntitlementFullOptInFailed`, `FeeEntitlementTariffAboveAuth` oder eine Herabstufung, wo erlaubt); die Prüfung des Kreditgebers nutzt das aktuelle freie VPFI des Tresors. Ein erhobener Tarif markiert den `lenderMode` des Kredits als Full, und jede Abrechnung der Ertragsgebühr des Kreditgebers addiert dann `FULL_MODE_FEE_DISCOUNT_BONUS_BPS` (1000) zum Rabatt des Positionsinhabers auf den Anteil des Protokolls, begrenzt auf `MAX_FEE_DISCOUNT_BPS` (5000), mit oder ohne die Zustimmung zum Halte-Rabatt. Eine Verlängerung an Ort und Stelle (`repriceFeeEntitlementOnExtension`) setzt die Markierung für die neue Laufzeit auf None.
+
+<a id="lend-offer-review"></a>
+
+### Lend: Angebot prüfen und veröffentlichen
+
+Die Prüfung simuliert `createOffer` aus der Wallet und liest beide Klassen, `getEffectiveGraceSeconds(durationDays)`, `getLoanInitiationFeeBps`, `getTreasuryFeeBps`, die maximale Laufzeit, den Vault der Wallet, deren Saldo und Freigabe auf dem verliehenen Asset (der Seite, die der Kreditgeber sperrt) und `calculateLTV`, wenn beide Seiten liquide sind; sie wird in jedem Block und direkt vor dem Öffnen der Wallet neu gelesen. Solange die Freigabe zu knapp ist, erreicht die Simulation nur den Einzug des Betrags, daher werden ein Einzugsfehler des Tokens, `VaultDepositFailed` (die Hülle des Protokolls um einen Einzug, der ohne Daten zurückgesetzt wurde, wie WETH es bei zu knapper Freigabe tut) oder ein Revert ohne Fehlernamen des Protokolls als zu erteilende Freigabe gezeigt, nach derselben Regel wie bei der Prüfung einer Anfrage; jeder andere benannte Protokollfehler ist eine Ablehnung. Nach einer exakten Freigabe wird `createOffer` erneut simuliert und gesendet; ein Abbruch nach der Freigabe setzt die Freigabe auf ihren früheren Wert zurück, wenn nichts anderes sie geändert hat. Das Ergebnis liest `OfferCreated` für diese Wallet mit `offerType` 0 und den `Transfer` des Betrags in den Vault.
+
+<a id="lend-offer-fee"></a>
+
+### Lend: Gebühren bei Ihrem Angebot
+
+`createOffer` berechnet dem Kreditgeber nichts. Die gezeigte Gebühr ist die des Kreditnehmers: `getLoanInitiationFeeBps` des Betrags im verliehenen Asset, zum Satz, der gilt, wenn `acceptOffer` läuft, dann um den Haltestufen-Rabatt des Kreditnehmers gesenkt und von seiner Auszahlung abgezogen; die gezeigte Zahl nutzt den heutigen Satz. Der Anteil des Protokolls an den Zinsen ist `getTreasuryFeeBps`, je Kredit bei Eröffnung festgelegt (`treasuryFeeBpsAtInit`); der Haltestufen-Rabatt des Kreditgebers senkt ihn bei aktiver Einwilligung, wenn Zinsen abgerechnet werden. Die Prüfung zeigt den heutigen Satz und den Anteil zu diesem Satz als Obergrenze; ein fehlgeschlagenes Lesen von `getTreasuryFeeBps` wird genannt, und weder Anteil noch Rückfluss werden gezeigt.
+
+<a id="risk-access"></a>
+
+### Risk Access: Ihre Risikostufe
+
+Der Schalter ist `getRiskAccessGateEnabled`. Welchen Schritt ein Ablauf braucht, ist die eigene Antwort des Protokolls: bei einer Annahme `previewOfferAcceptBlock` (1 = Stufe zu niedrig, 2 = Paarzustimmung, 3 = Bestätigung im strengen Modus, 4 = das illiquide Paar, das früher die Bestätigung der Annahme abdeckte; es sperrt wie 2, und eine Paarzustimmung hebt es auf), sobald `previewCreatorBlock` zeigt, dass der Kreditgeber nicht gesperrt ist; bei einer Anfrage `RiskTierTooLow`, `IlliquidPairNotConsented` oder `MidTierPairNotAcknowledged` aus dem Probelauf von `createOffer`. Der Schritt liest in einem Block `pairRequiredRiskLevel` für das Paar (`acceptMidTierAckPair` für ein Angebot), `getVaultRiskTier`, `getEffectiveRiskTier`, `getVaultRiskTierVersion` gegen `getCurrentRiskTermsVersion`, `getRiskTierUnlockAt`, `getRiskAccessUnlockCooldown` und `getRiskTierMutationNonce`, und für ein Paar `isPairConsentPending` mit `hasIlliquidPairConsent` oder `isMidTierAckPending` mit `midTierStrictBlocked`. Eine Anhebung ist `setVaultRiskTierChecked(level, nonce, termsVersion)` auf die niedrigste Stufe, die das Paar braucht, und wird ohne Änderung abgelehnt, wenn nach der Prüfung ein anderer Stufenwechsel oder eine Bedingungsänderung eingetroffen ist. Ein Paarschritt ist `setIlliquidPairConsent(pair, true)` oder `setMidTierPairAck(pair)`. Eine noch wartende Anhebung oder ein noch ausstehender Paarschritt wird nicht erneut angeboten. Kein Lesezugriff liefert, wann ein ausstehender Paarschritt wirksam wird; die Prüfung sagt daher, dass sie diese Zeit nicht lesen kann; nur die Abschlusskarte des Schritts selbst nennt sie, aus der Blockzeit des Belegs plus der Wartezeit. Das Ergebnis wird am Block des Belegs zurückgelesen.
+
 <a id="terms-gate"></a>
 
 ### Die Abfrage der Nutzungsbedingungen

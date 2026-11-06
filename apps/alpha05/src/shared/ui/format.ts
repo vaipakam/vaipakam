@@ -27,6 +27,48 @@ export function formatUnits(amount: bigint, decimals: number): string {
   return `${negative ? '-' : ''}${whole}${frac ? `.${frac}` : ''}`;
 }
 
+/** Digit groups on a whole number written in base 10: "1234567" → "1,234,567". */
+function group(whole: string): string {
+  return whole.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+}
+
+/**
+ * A token amount for reading (RB-FUNDS): digit groups, and the fraction
+ * shortened to four places once there is a whole part, or to four
+ * significant digits below one, cut toward zero and never rounded up.
+ * `cut` says whether any digit was dropped, so the surface marks the figure
+ * approximate and can still show the exact one (`formatUnits`). An amount
+ * too small to show in that many places keeps its first four significant
+ * digits however far right they sit, so it never reads as zero.
+ */
+export function formatFigure(amount: bigint, decimals: number): { text: string; cut: boolean } {
+  const exact = formatUnits(amount, decimals);
+  const negative = exact.startsWith('-');
+  const [whole, frac = ''] = (negative ? exact.slice(1) : exact).split('.');
+  let keep = frac.length;
+  if (whole !== '0') keep = Math.min(frac.length, 4);
+  else if (frac.length > 0) keep = Math.min(frac.length, frac.search(/[1-9]/) + 4);
+  const shown = frac.slice(0, keep).replace(/0+$/, '');
+  return { text: `${negative ? '-' : ''}${group(whole!)}${shown ? `.${shown}` : ''}`, cut: keep < frac.length };
+}
+
+/** A token amount with every digit (`formatUnits`) and digit groups on the
+ *  whole part: for a figure the protocol acts on exactly as written, such as
+ *  an approval. */
+export function formatExact(amount: bigint, decimals: number): string {
+  const exact = formatUnits(amount, decimals);
+  const negative = exact.startsWith('-');
+  const [whole, frac] = (negative ? exact.slice(1) : exact).split('.');
+  return `${negative ? '-' : ''}${group(whole!)}${frac ? `.${frac}` : ''}`;
+}
+
+/** A token amount for reading in a sentence: `formatFigure` with "≈ " in
+ *  front when digits were dropped. */
+export function formatFigureText(amount: bigint, decimals: number): string {
+  const f = formatFigure(amount, decimals);
+  return f.cut ? `≈ ${f.text}` : f.text;
+}
+
 /** A rate in basis points as a percentage, exact: 500 → "5", 525 → "5.25". */
 export function formatBps(bps: bigint): string {
   return formatUnits(bps, 2);

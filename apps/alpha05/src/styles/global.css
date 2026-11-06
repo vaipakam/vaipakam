@@ -17,7 +17,12 @@ body {
   margin: 0;
   background: var(--surface-page);
   color: var(--text-body);
-  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  font-family:
+    system-ui,
+    -apple-system,
+    'Segoe UI',
+    Roboto,
+    sans-serif;
   font-size: 16px;
   line-height: 1.5;
 }
@@ -76,6 +81,12 @@ code {
   border-bottom: 1px solid var(--border);
   position: sticky;
   top: 0;
+  /* A sticky header is its own stacking context, so the More sheet inside
+     it can rise only as high as the header itself: above the page (whose
+     positioned controls, like the info button, come later in the page and
+     would otherwise paint over the sheet) and the bottom bar, below the
+     help panel's scrim. */
+  z-index: 41;
   backdrop-filter: blur(8px);
 }
 
@@ -178,6 +189,13 @@ code {
   text-decoration: none;
   cursor: pointer;
 }
+/* RB-ICONS: the place's icon above its name. The name always shows. */
+.bottom-bar a:has(.icon),
+.bottom-bar button:has(.icon) {
+  flex-direction: column;
+  gap: 2px;
+  font-size: 0.75rem;
+}
 .bottom-bar a.active,
 .bottom-bar button[aria-expanded='true'] {
   color: var(--brand-soft-text);
@@ -223,24 +241,222 @@ code {
     min-height: 44px;
     display: flex;
     align-items: center;
+    gap: 10px;
+  }
+  .site-menu .nav-group {
+    grid-column: 1 / -1;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 4px;
+  }
+  .site-menu .nav-group-title {
+    grid-column: 1 / -1;
+    margin: 8px 0 0;
+    font-size: 0.8rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-muted);
   }
 }
+/* From 720px: a one-row header (brand, wallet) over a left column that
+   carries the navigation and, at its foot, the mode and theme controls. The
+   column is fixed below the header; the page makes room for it. A rail up to
+   1023px (icon above a short name), a panel from 1024px (icon beside the
+   name). The header carries no blur here: a filter would make it the
+   containing block of the fixed column inside it. */
 @media (min-width: 720px) {
+  :root {
+    --side-w: 96px;
+  }
   .bottom-bar {
     display: none;
   }
-  .site-menu {
-    flex: 1 1 auto;
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 12px 20px;
+  .shell {
+    padding-inline-start: var(--side-w);
   }
-  .site-menu .controls {
-    margin-inline-start: auto;
+  .topbar {
+    flex-wrap: nowrap;
+    /* One row normally; it grows when the wallet control carries a notice,
+       and the column below follows its measured height (--topbar-h, set by
+       the shell; 64px until measured). */
+    min-height: 64px;
+    margin-inline-start: calc(-1 * var(--side-w));
+    padding-block: 8px;
+    backdrop-filter: none;
+    background: var(--surface-raised);
   }
   .wallet-slot {
-    margin-inline-start: 0;
+    margin-inline-start: auto;
+  }
+  .site-menu {
+    position: fixed;
+    top: var(--topbar-h, 64px);
+    bottom: 0;
+    inset-inline-start: 0;
+    width: var(--side-w);
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    padding: 12px 6px;
+    overflow-y: auto;
+    background: var(--surface-raised);
+    border-inline-end: 1px solid var(--border);
+  }
+  .site-menu nav,
+  .site-menu .nav-group {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .site-menu .nav-group {
+    margin-top: 12px;
+  }
+  .site-menu .nav-group-title {
+    margin: 0 0 4px;
+    padding-inline: 6px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    text-align: center;
+    color: var(--text-muted);
+  }
+  .site-menu nav a {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    min-height: 56px;
+    justify-content: center;
+    padding: 6px 4px;
+    font-size: 0.75rem;
+    text-align: center;
+  }
+  .site-menu .controls {
+    margin-top: auto;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+  }
+  .site-menu .segment {
+    flex-direction: column;
+  }
+  .site-menu .segment button,
+  .site-menu .select select {
+    width: 100%;
+    font-size: 0.8rem;
+  }
+}
+/* The main-menu button exists only where the panel can collapse (1024px up). */
+.nav-toggle {
+  display: none;
+}
+@media (min-width: 1024px) {
+  :root {
+    --side-w: 232px;
+  }
+  .site-menu {
+    padding: 16px 12px;
+  }
+  .site-menu .nav-group-title {
+    padding-inline: 12px;
+    text-align: start;
+  }
+  /* Motion: folding, revealing and unfolding slide the panel's width (and
+     the page beside it, with the header held in place) over a quarter
+     second on the standard easing, and the names fade. The icons never move:
+     the panel's inset is the same folded and unfolded. Reduced motion (the
+     rule at the end of the sheet) turns every transition off. */
+  .shell {
+    transition: padding-inline-start 250ms var(--ease-standard);
+  }
+  .topbar {
+    transition: margin-inline-start 250ms var(--ease-standard);
+  }
+  .site-menu {
+    transition:
+      width 250ms var(--ease-standard),
+      box-shadow 250ms var(--ease-standard);
+  }
+  .site-menu nav a > span {
+    white-space: nowrap;
+    transition: opacity 150ms var(--ease-standard);
+  }
+  .site-menu nav a {
+    flex-direction: row;
+    justify-content: flex-start;
+    gap: 12px;
+    min-height: 44px;
+    padding: 8px 12px;
+    font-size: 0.95rem;
+    text-align: start;
+  }
+  .site-menu .segment {
+    flex-direction: row;
+  }
+  .site-menu .segment button {
+    flex: 1 1 0;
+    font-size: 0.9rem;
+  }
+  /* The main-menu button, icon only, at the far left of the header: it
+     folds the panel to its icons and unfolds it again. Its centre sits over
+     the column's icons (12px inset + 22px = 34px, the icons' centre). */
+  .topbar {
+    padding-inline-start: 12px;
+  }
+  .nav-toggle {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    background: none;
+    color: var(--text-body);
+    cursor: pointer;
+  }
+  .nav-toggle:hover {
+    background: var(--surface-hover);
+  }
+  /* Collapsed: icons only, the names faded out but kept for screen readers
+     (each link keeps its accessible name), the group label a rule, the
+     controls folded away until the panel is revealed. The page takes the
+     narrow width. */
+  .shell[data-nav-collapsed='true'] {
+    --side-w: 72px;
+  }
+  .shell[data-nav-collapsed='true'] .site-menu {
+    width: 232px;
+    overflow-x: hidden;
+  }
+  .shell[data-nav-collapsed='true']:not([data-nav-peek='true']) .site-menu {
+    width: var(--side-w);
+  }
+  .shell[data-nav-collapsed='true']:not([data-nav-peek='true']) .site-menu nav a > span {
+    opacity: 0;
+  }
+  .shell[data-nav-collapsed='true']:not([data-nav-peek='true']) .nav-group-title {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  .shell[data-nav-collapsed='true']:not([data-nav-peek='true']) .nav-group {
+    border-top: 1px solid var(--border);
+    padding-top: 8px;
+  }
+  .shell[data-nav-collapsed='true']:not([data-nav-peek='true']) .site-menu .controls {
+    display: none;
+  }
+  /* Revealed while collapsed: the full panel over the page, which stays put. */
+  .shell[data-nav-peek='true'] .site-menu {
+    box-shadow: var(--shadow-pop);
   }
 }
 .segment {
@@ -307,23 +523,50 @@ h1 {
 .tier-b {
   color: var(--text-body);
 }
+/* A list of facts: label and value side by side, in two even columns so a
+   long label never starves its value, one hairline between rows. */
 .facts {
   display: grid;
-  grid-template-columns: max-content 1fr;
-  gap: 6px 16px;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   margin: 16px 0;
-  padding: 12px 14px;
+  padding: 4px 16px;
   background: var(--surface-raised);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: 12px;
+}
+.facts dt,
+.facts dd {
+  padding: 10px 0;
+  border-top: 1px solid var(--border);
+}
+.facts dt:first-of-type,
+.facts dd:first-of-type {
+  border-top: 0;
 }
 .facts dt {
+  /* The space between the columns sits inside the label, so each row's
+     hairline runs unbroken across both. */
+  padding-inline-end: 24px;
   color: var(--text-muted);
 }
 .facts dd {
   margin: 0;
+  color: var(--text-body);
 }
-
+/* Figures line up digit for digit and never break inside a number. */
+.facts dd.value-amount {
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: normal;
+  word-break: keep-all;
+}
+.facts dd[data-binding='true'] {
+  color: var(--text-strong);
+  font-weight: 500;
+}
+.receipt-exact {
+  margin: -8px 0 8px;
+  font-size: 0.9rem;
+}
 
 .btn {
   font: inherit;
@@ -430,6 +673,77 @@ h1 {
   color: var(--brand);
   text-decoration: underline;
   cursor: pointer;
+}
+
+/* ── RB-ICONS: an icon always sits beside its words, never alone ────── */
+.icon {
+  flex-shrink: 0;
+  vertical-align: -0.15em;
+}
+.notice-with-icon {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}
+.notice-with-icon > .icon {
+  margin-top: 0.15em;
+}
+.notice-with-icon > span {
+  min-width: 0;
+}
+.with-icon {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.btn:has(.icon) {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: center;
+}
+dt[data-moves-out] {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+}
+dd.value-unknown {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+}
+dt[data-moves-out] > .icon,
+dd.value-unknown > .icon {
+  margin-top: 0.2em;
+}
+/* The info button "(i)": the icon alone, right after the sentence it
+   explains. Drawn small so the line keeps its height; the invisible
+   ::before makes the tap area 44 px square on every screen. */
+.why-link {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  margin: -4px 0;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+  color: var(--brand);
+  vertical-align: middle;
+  cursor: pointer;
+}
+.why-link::before {
+  content: '';
+  position: absolute;
+  inset: -10px;
+}
+.why-link:hover,
+.why-link:focus-visible {
+  background: var(--brand-soft);
+  color: var(--brand-soft-text);
 }
 
 /* ── Help panel: a side panel from 720px up, a bottom sheet below ───── */
@@ -568,6 +882,44 @@ h1 {
 .field-error {
   margin: 0;
   color: var(--danger);
+}
+/* NFT-13: who holds the typed token, said under the field as it is read. */
+.token-standing {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-top: 6px;
+  animation: standing-in 180ms ease-out;
+}
+.token-standing::before {
+  font-weight: 600;
+}
+.token-standing-ok {
+  color: var(--ok);
+}
+.token-standing-ok::before {
+  content: '✓';
+}
+.token-standing-warn {
+  color: var(--warn);
+}
+.token-standing-warn::before {
+  content: '!';
+}
+@keyframes standing-in {
+  from {
+    opacity: 0;
+    transform: translateY(-2px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .token-standing {
+    animation: none;
+  }
 }
 .steps {
   display: flex;
@@ -727,17 +1079,22 @@ a.btn {
 .facts dt,
 .facts dd {
   min-width: 0;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
 }
-@media (max-width: 479px) {
+@media (max-width: 599px) {
   /* A label and its value stacked: a fingerprint or an address never
-     pushes the page sideways on a phone. */
+     pushes the page sideways on a phone. The hairline sits above each
+     label, so a label and its value read as one fact. */
   .facts {
     grid-template-columns: 1fr;
-    gap: 2px;
+  }
+  .facts dt {
+    padding: 10px 0 2px;
+    font-size: 0.9rem;
   }
   .facts dd {
-    margin-bottom: 8px;
+    padding: 0 0 10px;
+    border-top: 0;
   }
 }
 .action-flow {
@@ -819,4 +1176,396 @@ a.btn {
   display: grid;
   gap: 0.5rem;
   margin-bottom: 1rem;
+}
+
+/* ── Borrow: the pair, the matching offers, the accept review ────────── */
+.borrow-section {
+  margin: 20px 0 0;
+}
+.borrow-section h2 {
+  margin: 0 0 8px;
+  font-size: 1.15rem;
+  color: var(--text-strong);
+}
+.pair-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 16px;
+}
+.asset-choice {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.asset-choice > label {
+  font-weight: 600;
+  color: var(--text-strong);
+}
+.asset-choice > select {
+  font: inherit;
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface-raised);
+  color: var(--text-body);
+  min-height: var(--taptarget);
+}
+.asset-choice .field input {
+  width: 100%;
+  box-sizing: border-box;
+}
+.asset-choice .notice,
+.borrow-section .notice,
+.accept-gate .notice {
+  margin: 8px 0 0;
+}
+.offer-row h3 {
+  overflow-wrap: anywhere;
+}
+.offer-row .btn {
+  width: 100%;
+  justify-content: center;
+  min-height: var(--taptarget);
+}
+.accept-gate {
+  display: grid;
+  gap: 8px;
+  margin: 12px 0 0;
+}
+.risk-gate {
+  display: grid;
+  gap: 8px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-inline-start: 3px solid var(--brand-fill);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-card);
+  animation: risk-in 220ms var(--ease-standard);
+}
+.risk-gate p {
+  margin: 0;
+}
+.risk-gate .actions .btn {
+  min-height: var(--taptarget);
+}
+.risk-step {
+  animation: risk-in 220ms var(--ease-standard);
+}
+@keyframes risk-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@media (max-width: 719px) {
+  .risk-gate .actions .btn {
+    width: 100%;
+    justify-content: center;
+  }
+}
+.consent label {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-height: var(--taptarget);
+  cursor: pointer;
+}
+.consent input[type='checkbox'] {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  margin: 2px 0 0;
+}
+@media (min-width: 720px) {
+  .pair-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .offer-row .btn {
+    width: auto;
+  }
+}
+
+/* ── Buttons: hover and press (RB polish) ────────────────────────────── */
+.btn {
+  transition:
+    background-color 150ms var(--ease-standard),
+    border-color 150ms var(--ease-standard),
+    box-shadow 150ms var(--ease-standard);
+}
+.btn:hover:not(:disabled) {
+  background: var(--surface-hover);
+}
+.btn-primary:hover:not(:disabled) {
+  background: var(--brand-strong);
+  border-color: var(--brand-strong);
+  box-shadow: var(--shadow-card);
+}
+.btn-link {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--brand-soft-text);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  min-height: var(--taptarget);
+}
+.btn-link:hover:not(:disabled) {
+  background: transparent;
+  color: var(--brand-strong);
+}
+
+/* ── Borrow: the borrower's own request ──────────────────────────────── */
+.request-open {
+  display: grid;
+  gap: 8px;
+  justify-items: start;
+  padding: 16px;
+  border: 1px dashed var(--border-strong);
+  border-radius: 14px;
+  background: var(--surface-raised);
+}
+.request-open p {
+  margin: 0;
+}
+.request-form {
+  display: grid;
+  gap: 4px;
+}
+.request-form h2 {
+  margin: 0 0 4px;
+}
+.request-form .field input,
+.request-form .field select {
+  width: 100%;
+  box-sizing: border-box;
+}
+.request-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0 16px;
+}
+.choice-group {
+  margin: 12px 0;
+  padding: 0;
+  border: 0;
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+/* OFF-10 / OFF-11 / OFF-14 — the request's Advanced options: one quiet panel set
+   apart from the Basic fields, so a reader sees at a glance which choices
+   are the optional ones. */
+.advanced-options {
+  margin: 12px 0 4px;
+  padding: 14px 16px 4px;
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  min-width: 0;
+  animation: advanced-in 250ms var(--ease-standard);
+}
+.advanced-options h3 {
+  margin: 0;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.advanced-options .choice-group:first-of-type {
+  margin-top: 8px;
+}
+.choice input:disabled + span {
+  color: var(--text-muted);
+}
+/* OFF-22: the tariff's quote, ceiling and failure choice, indented under
+   the opt-in so they read as its own settings. */
+.tariff-detail {
+  display: grid;
+  gap: 10px;
+  margin: 4px 0 4px 28px;
+  min-width: 0;
+  animation: advanced-in 250ms var(--ease-standard);
+}
+.tariff-detail .choice-group legend {
+  font-weight: 500;
+}
+@media (max-width: 480px) {
+  .tariff-detail {
+    margin-left: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tariff-detail {
+    animation: none;
+  }
+}
+/* OFF-14: why a closed option is closed, under its name. */
+.choice-note {
+  display: block;
+  margin-top: 2px;
+  font-size: 0.8125rem;
+  line-height: 1.4;
+  color: var(--text-muted);
+}
+@keyframes advanced-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .advanced-options {
+    animation: none;
+  }
+}
+.choice-group legend {
+  padding: 0;
+  margin-bottom: 4px;
+  font-weight: 600;
+  color: var(--text-strong);
+}
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.chip {
+  position: relative;
+}
+.chip input {
+  position: absolute;
+  opacity: 0;
+  inset: 0;
+  margin: 0;
+  cursor: pointer;
+}
+.chip span {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--taptarget);
+  padding: 0 16px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: var(--surface-raised);
+  color: var(--text-body);
+  transition:
+    background-color 150ms var(--ease-standard),
+    border-color 150ms var(--ease-standard),
+    color 150ms var(--ease-standard);
+}
+.chip:hover span {
+  background: var(--surface-hover);
+}
+.chip input:checked + span {
+  background: var(--brand-soft);
+  border-color: var(--brand-fill);
+  color: var(--brand-soft-text);
+  font-weight: 600;
+}
+.chip input:focus-visible + span {
+  outline: 3px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+.choice {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-height: var(--taptarget);
+  cursor: pointer;
+}
+.choice input {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  margin: 2px 0 0;
+  accent-color: var(--brand-fill);
+}
+/* The form's primary action, with the live summary above it. On a phone it
+   is pinned just above the bottom bar, full width, where the thumb rests;
+   from 720px it sits in the flow under the form. */
+.thumb-action {
+  display: grid;
+  gap: 8px;
+  margin: 12px 0 0;
+}
+.thumb-action .request-summary {
+  margin: 0;
+  color: var(--text-strong);
+}
+.thumb-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+@media (max-width: 719px) {
+  .thumb-action,
+  .action-flow[data-phase='review'] > .actions {
+    position: sticky;
+    bottom: calc(56px + env(safe-area-inset-bottom));
+    z-index: 5;
+    margin-inline: -16px;
+    padding: 12px 16px;
+    background: var(--surface-raised);
+    border-top: 1px solid var(--border);
+    box-shadow: 0 -6px 16px rgba(16, 24, 40, 0.08);
+  }
+  .thumb-buttons {
+    flex-direction: column;
+  }
+  .thumb-buttons .btn,
+  .action-flow[data-phase='review'] > .actions .btn {
+    width: 100%;
+    min-height: 52px;
+    font-weight: 600;
+  }
+  .thumb-buttons .btn:not(.btn-primary),
+  .action-flow[data-phase='review'] > .actions .btn:not(.btn-primary) {
+    min-height: var(--taptarget);
+    font-weight: 400;
+    background: transparent;
+    border-color: transparent;
+    color: var(--brand);
+  }
+}
+@media (min-width: 720px) {
+  .request-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    align-items: start;
+  }
+}
+.input-with-action {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+.request-form .input-with-action input {
+  flex: 1 1 auto;
+  width: auto;
+  min-width: 0;
+}
+.input-with-action .btn {
+  flex: none;
+  min-height: var(--taptarget);
+}
+
+/* OFF-22: the tariff's own step under the request's finish card. */
+.arm-tariff {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+  display: grid;
+  gap: 10px;
+}
+.arm-tariff h3 {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 600;
 }

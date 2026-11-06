@@ -5,13 +5,25 @@ import { useOwnStateClient } from '../../chain/ownRail';
 import { getSupportedChain } from '../../chain/chains';
 import { useCopy, type CopyAccess } from '../copy/useCopy';
 import type { Receipt } from '../receipt/types';
-import { tokenAmount, type TokenMetaMap } from '../reads/tokens';
+import { exactTokenAmount, tokenAmount, type TokenMetaMap } from '../reads/tokens';
 import { simulateCall } from '../tx/simulate';
 import { holdsFlow } from '../tx/txStore';
 import { useTrackedTx } from '../tx/useTrackedTx';
 import { ActionFlow, reviewIdentity, type Recheck } from '../ui/ActionFlow';
 import { shortAddress } from '../ui/format';
-import { REWARD_CLAIM_ABI, VENUE_VAULT, claimRecord, deliveryOutcome, moreRemains, readHeldRewards, readPendingRewards, readVaultAddress, readVpfiToken, vpfiArrivals, type PendingRewards } from './rewards';
+import {
+  REWARD_CLAIM_ABI,
+  VENUE_VAULT,
+  claimRecord,
+  deliveryOutcome,
+  moreRemains,
+  readHeldRewards,
+  readPendingRewards,
+  readVaultAddress,
+  readVpfiToken,
+  vpfiArrivals,
+  type PendingRewards,
+} from './rewards';
 
 type Hex = `0x${string}`;
 
@@ -117,8 +129,9 @@ export function RewardClaim({ kind, ready, token, meta }: RewardClaimProps) {
       return [
         {
           status: 'unknown',
-          label: format('claim.legLogged', { amount: tokenAmount(paid, vpfi, meta, format) }),
-          reason: format('claim.arrivedOther', { amount: tokenAmount(arrived.wallet + arrived.vault, vpfi, meta, format) }),
+          label: format('claim.legLogged', { amount: exactTokenAmount(paid, vpfi, meta, format) }),
+          // A mismatch is stated in every digit, so the two figures cannot read the same.
+          reason: format('claim.arrivedOther', { amount: exactTokenAmount(arrived.wallet + arrived.vault, vpfi, meta, format) }),
         },
       ];
     },
@@ -167,7 +180,14 @@ export function RewardClaim({ kind, ready, token, meta }: RewardClaimProps) {
           rows: [
             { label: text('claim.rowReceive'), value: { kind: 'amount', asset: token, amount: reviewed.amount }, binding: true },
             kind === 'interaction'
-              ? { label: text('claim.rowDays'), value: { kind: 'text', text: reviewed.toDay === 0n ? text('claim.daysEntries') : format('claim.days', { from: reviewed.fromDay.toString(), to: reviewed.toDay.toString() }) }, binding: false }
+              ? {
+                  label: text('claim.rowDays'),
+                  value: {
+                    kind: 'text',
+                    text: reviewed.toDay === 0n ? text('claim.daysEntries') : format('claim.days', { from: reviewed.fromDay.toString(), to: reviewed.toDay.toString() }),
+                  },
+                  binding: false,
+                }
               : { label: text('claim.rowFrom'), value: { kind: 'text', text: text('claim.heldFrom') }, binding: false },
             { label: text('claim.rowTo'), value: { kind: 'text', text: text('claim.to') }, binding: true },
             { label: text('claim.rowNetwork'), value: { kind: 'text', text: format('claim.network', { chain: chain.name }) }, binding: false },
@@ -187,7 +207,10 @@ export function RewardClaim({ kind, ready, token, meta }: RewardClaimProps) {
   // or after the finished claim's block still answers with a figure, the
   // remainder is offered at once.
   const more =
-    kind === 'interaction' && tx.phase.kind === 'measured' && ready?.atBlock !== undefined && moreRemains({ kind: 'exact', ...ready, atBlock: ready.atBlock }, tx.phase.blockNumber);
+    kind === 'interaction' &&
+    tx.phase.kind === 'measured' &&
+    ready?.atBlock !== undefined &&
+    moreRemains({ kind: 'exact', ...ready, atBlock: ready.atBlock }, tx.phase.blockNumber);
 
   return (
     <>
