@@ -473,24 +473,36 @@ export async function reserveTestAlert(
  *  only be issued to a caller who proved ownership of the wallet with
  *  an EIP-191 signature (`linkAuth.ts`) — by the time this runs, the
  *  wallet holder authorised the link. */
-export async function linkTelegram(
+/** #3246 — the link write, as a statement for the caller's batch. There is
+ *  deliberately no unguarded link helper: every link goes through
+ *  `requestRelink`, which passes `expectedChatId`. With it given (null
+ *  = no chat linked), it writes only while the row's chat is still that one
+ *  (or already `chatId`), so a link decided on an observed state can never
+ *  overwrite a chat another request linked meanwhile; the caller reads
+ *  `meta.changes` (0 = the state moved, decide again). */
+export function linkTelegramStatement(
   db: D1Database,
   wallet: string,
   chainId: number,
   chatId: string,
-): Promise<void> {
+  expectedChatId?: string | null,
+): D1PreparedStatement {
   const now = Math.floor(Date.now() / 1000);
-  await db
-    .prepare(
-      `INSERT INTO user_thresholds
-         (wallet, chain_id, warn_hf, alert_hf, critical_hf, tg_chat_id, push_channel, locale, created_at, updated_at)
-       VALUES (?, ?, 1.5, 1.2, 1.05, ?, NULL, 'en', ?, ?)
-       ON CONFLICT(wallet, chain_id) DO UPDATE SET
-         tg_chat_id = excluded.tg_chat_id,
-         updated_at = excluded.updated_at`,
-    )
-    .bind(wallet.toLowerCase(), chainId, chatId, now, now)
-    .run();
+  const guard =
+    expectedChatId === undefined
+      ? ''
+      : `WHERE COALESCE(user_thresholds.tg_chat_id, '') IN (COALESCE(?6, ''), excluded.tg_chat_id)`;
+  const stmt = db.prepare(
+    `INSERT INTO user_thresholds
+       (wallet, chain_id, warn_hf, alert_hf, critical_hf, tg_chat_id, push_channel, locale, created_at, updated_at)
+     VALUES (?1, ?2, 1.5, 1.2, 1.05, ?3, NULL, 'en', ?4, ?5)
+     ON CONFLICT(wallet, chain_id) DO UPDATE SET
+       tg_chat_id = excluded.tg_chat_id,
+       updated_at = excluded.updated_at
+     ${guard}`,
+  );
+  const args: (string | number | null)[] = [wallet.toLowerCase(), chainId, chatId, now, now];
+  return expectedChatId === undefined ? stmt.bind(...args) : stmt.bind(...args, expectedChatId);
 }
 
 /** #1033 — clear the stored Telegram chat id for a wallet, stopping

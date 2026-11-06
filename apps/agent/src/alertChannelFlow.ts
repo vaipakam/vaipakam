@@ -23,6 +23,7 @@ import {
   pendingChangeStatements,
   protectionByRow,
   pruneClosedChanges,
+  supersedeIfChatStatement,
   shortWallet,
   supersedeStatement,
   unnotifiedChanges,
@@ -155,13 +156,22 @@ export async function requestUnlink(
   return { kind: 'done', pending };
 }
 
+/** How many times a link re-decides when another request moved the row
+ *  between its read and its write. */
+const RELINK_ATTEMPTS = 3;
+
 /**
  * A chat completed the link handshake for (`wallet`, `chainId`). Linking where
- * no chat is linked, or the same chat again, is immediate (`linkNow`) and
- * supersedes any pending change of the row. Linking a DIFFERENT chat in place
- * of the one linked now waits the account's delay when the account is
- * protected on that chain: the chat linked now keeps the alerts and is told,
- * and the new chat is told when it takes over once the wait has started.
+ * no chat is linked, or the same chat again, is immediate and supersedes any
+ * pending change of the row. Linking a DIFFERENT chat in place of the one
+ * linked now waits the account's delay when the account is protected on that
+ * chain: the chat linked now keeps the alerts and is told, and the new chat is
+ * told when it takes over once the wait has started.
+ *
+ * Every immediate write is conditional on the chat it decided against
+ * (`linkStatement(expected)`), so two handshakes completing together can never
+ * let the second overwrite the first without the protection check: when the
+ * row moved, the decision is taken again from the new state.
  */
 export async function requestRelink(
   deps: ChannelDeps,
@@ -169,23 +179,45 @@ export async function requestRelink(
   chainId: number,
   newChatId: string,
   locale: string,
-  linkNow: () => Promise<void>,
+  linkStatement: (expectedChatId: string | null) => D1PreparedStatement,
 ): Promise<'linked' | 'pending' | 'unknown'> {
   const w = wallet.toLowerCase();
-  const immediate = async () => {
-    await deps.db.batch([supersedeStatement(deps.db, w, chainId, deps.now)]);
-    await linkNow();
-    return 'linked' as const;
+  /** Link now if the row's chat is still `expected`; false when it moved. */
+  const immediate = async (expected: string | null): Promise<boolean> => {
+    const [, write] = await deps.db.batch([
+      supersedeIfChatStatement(deps.db, w, chainId, expected, newChatId, deps.now),
+      linkStatement(expected),
+    ]);
+    return (write?.meta?.changes ?? 0) > 0;
   };
+  for (let attempt = 0; attempt < RELINK_ATTEMPTS; attempt++) {
+    const outcome = await decideRelink(deps, w, chainId, newChatId, locale, immediate);
+    if (outcome !== 'moved') return outcome;
+  }
+  // The row kept moving under us: change nothing and say so.
+  await deps.send?.(newChatId, channelCopy.protectionUnknown(locale));
+  return 'unknown';
+}
+
+async function decideRelink(
+  deps: ChannelDeps,
+  w: string,
+  chainId: number,
+  newChatId: string,
+  locale: string,
+  immediate: (expected: string | null) => Promise<boolean>,
+): Promise<'linked' | 'pending' | 'unknown' | 'moved'> {
   const [current] = await linkedRows(deps.db, w, chainId);
-  if (!current || current.chatId === newChatId) return immediate();
+  if (!current || current.chatId === newChatId) {
+    return (await immediate(current?.chatId ?? null)) ? 'linked' : 'moved';
+  }
   const delays = await protectionByRow(deps.read, w, [current]);
   if (delays === null) {
     await deps.send?.(newChatId, channelCopy.protectionUnknown(locale));
     return 'unknown';
   }
   const delay = delays.get(chainId);
-  if (delay == null) return immediate();
+  if (delay == null) return (await immediate(current.chatId)) ? 'linked' : 'moved';
   const [id] = insertedIds(
     await deps.db.batch(
       pendingChangeStatements(deps.db, w, chainId, 'replace', current.chatId, newChatId, deps.now, delay),

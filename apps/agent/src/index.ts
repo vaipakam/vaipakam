@@ -136,7 +136,7 @@ import {
   getTelegramChatId,
   recordLockRequests,
   issueTelegramLinkCode,
-  linkTelegram,
+  linkTelegramStatement,
   OptOutStorageUnavailableError,
   reserveTestAlert,
   sweepExpiredLinks,
@@ -1070,7 +1070,7 @@ async function handleTelegramWebhook(
     match.chainId,
     chatId,
     match.locale,
-    () => linkTelegram(env.DB, match.wallet, match.chainId, chatId),
+    (expected) => linkTelegramStatement(env.DB, match.wallet, match.chainId, chatId, expected),
   );
   if (relink !== 'linked') return new Response('ok', { status: 200 });
   const walletShort = `${match.wallet.slice(0, 8)}…${match.wallet.slice(-6)}`;

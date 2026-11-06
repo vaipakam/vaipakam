@@ -199,6 +199,29 @@ export function supersedeStatement(
         .bind(now, w, chainId);
 }
 
+/** Supersede the pending change of (wallet, chain) only while the row's chat
+ *  is still `expectedChatId` (null = none) or already `newChatId`: the same
+ *  condition the guarded link write checks, in the same batch, so the two
+ *  happen together or not at all. */
+export function supersedeIfChatStatement(
+  db: D1Database,
+  wallet: string,
+  chainId: number,
+  expectedChatId: string | null,
+  newChatId: string,
+  now: number,
+): D1PreparedStatement {
+  const w = wallet.toLowerCase();
+  return db
+    .prepare(
+      `UPDATE alert_channel_changes SET state = 'superseded', closed_at = ?1
+        WHERE wallet = ?2 AND chain_id = ?3 AND state = 'pending'
+          AND COALESCE((SELECT tg_chat_id FROM user_thresholds WHERE wallet = ?2 AND chain_id = ?3), '')
+              IN (COALESCE(?4, ''), ?5)`,
+    )
+    .bind(now, w, chainId, expectedChatId, newChatId);
+}
+
 /** The ids the INSERTs of a `pendingChangeStatements` batch returned, in
  *  statement order (an INSERT carries `RETURNING id`; others return none). */
 export function insertedIds(results: readonly D1Result[]): number[] {
