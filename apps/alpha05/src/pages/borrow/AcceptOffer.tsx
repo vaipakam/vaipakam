@@ -1,0 +1,491 @@
+import { useEffect, useRef, useState } from 'react';
+import { erc20Abi, type Abi } from 'viem';
+import { useConfig } from 'wagmi';
+import { signTypedData, waitForTransactionReceipt, writeContract } from 'wagmi/actions';
+import { OfferAcceptFacetABI } from '@vaipakam/contracts/abis';
+import type { OwnStateClient } from '../../chain/ownRail';
+import type { SupportedChain } from '../../chain/chains';
+import { useCopy } from '../../shared/copy/useCopy';
+import { refusalFromError, StatedRefusal } from '../../shared/eligibility/refusal';
+import { WhyLink } from '../../shared/help/WhyLink';
+import { GUIDE_ORIGIN, guideUrl } from '../../shared/help/guide';
+import { useMode } from '../../app/ModeContext';
+import { ACCEPT_DEADLINE_SECONDS, ACCEPT_TERMS_DOMAIN_NAME, ACCEPT_TERMS_DOMAIN_VERSION, ACCEPT_TERMS_TYPES, buildAcceptTerms, freshNonce } from '../../shared/offers/acceptTerms';
+import { deliverySplit, legVerdict, moved, openedLoan } from '../../shared/offers/acceptOutcome';
+import { acceptFigures } from '../../shared/offers/model';
+import { readVault } from '../../shared/offers/reads';
+import { tokenAmount, type TokenMetaMap } from '../../shared/reads/tokens';
+import { termsUrl, type TermsState } from '../../shared/terms/terms';
+import { askThrough } from '../../shared/tx/simulate';
+import { useStoredValue } from '../../shared/tx/txStore';
+import { useTrackedTx } from '../../shared/tx/useTrackedTx';
+import type { LegOutcome } from '../../shared/tx/outcome';
+import { ActionFlow, reviewIdentity, type Recheck } from '../../shared/ui/ActionFlow';
+import { Notice } from '../../shared/ui/Notice';
+import { shortAddress } from '../../shared/ui/format';
+import { acceptReceipt, changedBetween, needsApproval, promptCount, readAcceptReview, reviewBlockers, type AcceptReview } from './acceptReview';
+
+type Hex = `0x${string}`;
+
+const ACCEPT_ABI = OfferAcceptFacetABI as Abi;
+
+/** The store keys this flow keeps its state under, so a navigation or a
+ *  wallet switch that unmounts the panel never drops a review, a consent or
+ *  a transaction's hash (the tracker itself is under `borrow.accept`). */
+export const ACCEPT_KEY = 'borrow.accept';
+
+interface AcceptOfferProps {
+  offerId: bigint;
+  chain: SupportedChain;
+  own: OwnStateClient;
+  meta: TokenMetaMap | null;
+  terms: TermsState | null;
+  onClose: () => void;
+}
+
+/**
+ * OFF-50 — a borrower takes a lender's offer whole. The review is built from
+ * the protocol's own preview for this wallet and the offer as stored; the
+ * single Risk and Terms consent is bound to the figures shown (a re-read
+ * that moves any of them clears it); the wallet is asked to sign the exact
+ * terms, then to approve exactly the collateral when needed, and the
+ * acceptance is sent only after a dry run with that signature passes. If
+ * anything stops it after an approval, the approval is put back (best
+ * effort, stated either way). The outcome is measured from the
+ * transaction's own logs: the loan it opened, what arrived in the wallet,
+ * what moved into the vault.
+ */
+export function AcceptOffer({ offerId, chain, own, meta, terms, onClose }: AcceptOfferProps) {
+  const copy = useCopy();
+  const { text, format } = copy;
+  const config = useConfig();
+  const { mode } = useMode();
+  const diamond = chain.diamondAddress;
+  const account = own.account;
+  const identity = reviewIdentity(own);
+  const [review, setReview] = useStoredValue<AcceptReview>(`${ACCEPT_KEY}:review`);
+  /** The review read the consent was given against (its `readAt`): a new
+   *  read is a new set of figures, so the consent does not carry over. */
+  const [consentFor, setConsentFor] = useStoredValue<number>(`${ACCEPT_KEY}:consent`);
+  const [loanId, setLoanId] = useStoredValue<bigint>(`${ACCEPT_KEY}:loan`);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [step, setStep] = useState<string | null>(null);
+
+  const amt = (asset: Hex, v: bigint) => tokenAmount(v, asset, meta, format);
+
+  const tx = useTrackedTx({
+    key: ACCEPT_KEY,
+    chainId: chain.chainId,
+    account,
+    sources: own.sources,
+    send: async () => {
+      if (!review) throw new Error('no acceptance under review');
+      const r = review;
+      const total = promptCount(r);
+      let n = 0;
+      const say = (what: string) =>
+        setStep(
+          format('accept.stepOf', {
+            n: String(++n),
+            total: String(total),
+            what,
+          }),
+        );
+      const collateral = r.offer.collateralAsset;
+      const lock = r.preview.collateralAmount;
+
+      // 1. The signed terms, built from the offer as stored. No chain effect.
+      const block = await own.read((c) => c.getBlock({ blockTag: 'latest' }));
+      const message = buildAcceptTerms(r.offer, {
+        acceptor: account,
+        linkedLoanId: r.linkedLoanId,
+        riskTermsHash: r.riskTermsHash,
+        nonce: freshNonce(),
+        deadline: block.value.timestamp + BigInt(ACCEPT_DEADLINE_SECONDS),
+        illiquidLending: r.lendingClass === 'illiquid',
+        illiquidCollateral: r.collateralClass === 'illiquid',
+      });
+      say(text('accept.stepSign'));
+      const signature = await signTypedData(config, {
+        account,
+        domain: {
+          name: ACCEPT_TERMS_DOMAIN_NAME,
+          version: ACCEPT_TERMS_DOMAIN_VERSION,
+          chainId: chain.chainId,
+          verifyingContract: diamond,
+        },
+        types: ACCEPT_TERMS_TYPES,
+        primaryType: 'AcceptTerms',
+        message,
+      });
+
+      // 2. The approval, for exactly what is locked, when the wallet's
+      //    current allowance does not cover it.
+      const prior = r.funds.allowance;
+      const approved = needsApproval(r);
+      if (approved) {
+        say(format('accept.stepApprove', { amount: amt(collateral, lock) }));
+        const hash = await writeContract(config, {
+          address: collateral,
+          abi: erc20Abi,
+          functionName: 'approve',
+          args: [diamond, lock],
+          chainId: chain.chainId,
+          account,
+        });
+        const mined = await waitForTransactionReceipt(config, {
+          hash,
+          chainId: chain.chainId,
+        });
+        if (mined.status !== 'success')
+          throw new StatedRefusal({
+            code: 'ApprovalFailed',
+            reason: text('accept.approvalFailed'),
+            reopensAt: null,
+            remedy: null,
+          });
+      }
+
+      // Anything that stops the acceptance after the approval puts it back.
+      const stop = async (reason: string): Promise<never> => {
+        if (!approved)
+          throw new StatedRefusal({
+            code: 'AcceptStopped',
+            reason,
+            reopensAt: null,
+            remedy: null,
+          });
+        const after = await putBack(collateral, prior, lock);
+        throw new StatedRefusal({
+          code: 'AcceptStopped',
+          reason: `${reason} ${after}`,
+          reopensAt: null,
+          remedy: null,
+        });
+      };
+
+      // 3. The dry run with the real signature: the protocol's own verdict.
+      const dry = await askThrough(own, (c) =>
+        c.simulateContract({
+          address: diamond,
+          abi: ACCEPT_ABI,
+          functionName: 'acceptOffer',
+          args: [offerId, message, signature],
+          account,
+        }),
+      );
+      if (dry.kind === 'reverted')
+        return stop(
+          format('accept.dryRunRefused', {
+            reason: refusalFromError(dry.error).reason,
+          }),
+        );
+      if (dry.kind === 'unreadable') return stop(format('flow.unreadable', { reason: dry.reason }));
+
+      // 4. The acceptance.
+      say(text('accept.stepSend'));
+      try {
+        return await writeContract(config, {
+          address: diamond,
+          abi: ACCEPT_ABI,
+          functionName: 'acceptOffer',
+          args: [offerId, message, signature],
+          chainId: chain.chainId,
+          account,
+        });
+      } catch (e) {
+        return stop(
+          format('accept.stoppedAfterApproval', {
+            reason: refusalFromError(e).reason,
+          }),
+        );
+      }
+    },
+    measure: async (receipt, at) => {
+      if (!review) return [];
+      const r = review;
+      const f = acceptFigures(r.preview, r.offer.durationDays);
+      const legs: LegOutcome[] = [];
+      const opened = openedLoan(receipt.logs, diamond, offerId, account);
+      if (opened) {
+        setLoanId(opened.loanId);
+        legs.push({
+          status: 'done',
+          label: format('accept.legLoan', { id: opened.loanId.toString() }),
+        });
+      } else {
+        legs.push({
+          status: 'not-done',
+          label: format('accept.legNoLoan', { id: offerId.toString() }),
+          reason: text('accept.noLoan'),
+        });
+      }
+      // What reached the wallet, and the fee as charged: the principal the
+      // loan recorded must equal the two, or the split is not substantiated.
+      // The fee can differ from the preview (the discount tier is read again
+      // as the loan opens); the label says so with both figures.
+      const lending = r.offer.lendingAsset;
+      const split = deliverySplit(receipt.logs, lending, account);
+      const shownLabel = format('accept.legReceived', { amount: amt(lending, f.received) });
+      if (split === null) {
+        legs.push({ status: 'not-done', label: shownLabel, reason: text('accept.receivedNone') });
+      } else if (opened && split.received + split.fee === opened.principal) {
+        legs.push({
+          status: 'done',
+          label:
+            split.fee === f.fee
+              ? format('accept.legReceived', { amount: amt(lending, split.received) })
+              : format('accept.legReceivedFee', { amount: amt(lending, split.received), fee: amt(lending, split.fee), shown: amt(lending, f.fee) }),
+        });
+      } else {
+        legs.push({
+          status: 'unknown',
+          label: shownLabel,
+          reason: format('accept.receivedOther', { amount: amt(lending, split.received), expected: amt(lending, f.received) }),
+        });
+      }
+      const collateral = r.offer.collateralAsset;
+      const lockLabel = format('accept.legLocked', {
+        amount: amt(collateral, f.collateral),
+      });
+      let vault: Hex | null = null;
+      try {
+        vault = await at.read((c, b) => readVault(c, diamond, account, b));
+      } catch {
+        vault = null;
+      }
+      if (vault === null) {
+        legs.push({
+          status: 'unknown',
+          label: lockLabel,
+          reason: text('accept.vaultUnknown'),
+        });
+      } else {
+        const locked = moved(receipt.logs, collateral, account, vault);
+        const lv = legVerdict(locked, f.collateral);
+        legs.push(
+          lv === 'done'
+            ? { status: 'done', label: lockLabel }
+            : {
+                status: lv,
+                label: lockLabel,
+                reason: format('accept.lockedOther', {
+                  amount: amt(collateral, locked),
+                  expected: amt(collateral, f.collateral),
+                }),
+              },
+        );
+      }
+      return legs;
+    },
+  });
+
+  /** Puts the allowance back to `prior` (best effort, and only if nothing
+   *  else changed it since the approval), and says what happened. */
+  async function putBack(token: Hex, prior: bigint, approvedAmount: bigint): Promise<string> {
+    const now = await own
+      .read((c) =>
+        c.readContract({
+          address: token,
+          abi: erc20Abi,
+          functionName: 'allowance',
+          args: [account, diamond],
+        }),
+      )
+      .then(
+        (x) => x.value,
+        () => null,
+      );
+    if (now !== approvedAmount)
+      return format('accept.notRestored', {
+        why: text('accept.restoreChanged'),
+        amount: amt(token, now ?? approvedAmount),
+      });
+    try {
+      setStep(text('accept.stepRestore'));
+      const hash = await writeContract(config, {
+        address: token,
+        abi: erc20Abi,
+        functionName: 'approve',
+        args: [diamond, prior],
+        chainId: chain.chainId,
+        account,
+      });
+      const mined = await waitForTransactionReceipt(config, {
+        hash,
+        chainId: chain.chainId,
+      });
+      if (mined.status !== 'success') throw new Error('the approval reset reverted');
+      return format('accept.restored', { amount: amt(token, prior) });
+    } catch (e) {
+      return format('accept.notRestored', {
+        why: refusalFromError(e).reason,
+        amount: amt(token, approvedAmount),
+      });
+    }
+  }
+
+  const load = async () => {
+    try {
+      const next = await readAcceptReview(own, diamond, offerId, identity);
+      setLoadError(null);
+      setReview(next);
+    } catch (e) {
+      setLoadError(refusalFromError(e).reason);
+    }
+  };
+
+  const reviewOpened = useRef<bigint | null>(null);
+
+  // Open the review for this offer when the panel opens on it: a review
+  // kept for another offer (or none) is replaced; one in flight is kept.
+  useEffect(() => {
+    const open = tx.phase.kind === 'idle' || tx.phase.kind === 'review';
+    if (!open) return;
+    // Once per offer: a development double-run of this effect sees the
+    // same (stale) idle phase and must not ask for the review twice.
+    if (tx.phase.kind === 'idle' && reviewOpened.current !== offerId) {
+      reviewOpened.current = offerId;
+      tx.review();
+    }
+    if (review === null || review.offerId !== offerId) {
+      setReview(null);
+      setConsentFor(null);
+      setLoanId(null);
+      let live = true;
+      readAcceptReview(own, diamond, offerId, identity).then(
+        (next) => {
+          if (!live) return;
+          setLoadError(null);
+          setReview(next);
+        },
+        (e: unknown) => {
+          if (live) setLoadError(refusalFromError(e).reason);
+        },
+      );
+      return () => {
+        live = false;
+      };
+    }
+    // Opened once per offer; the tracker and the stored review carry the rest.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [offerId]);
+
+  const recheck = async (current: () => boolean): Promise<Recheck> => {
+    if (!review) return { kind: 'unreadable', reason: text('flow.reading') };
+    let next: AcceptReview;
+    try {
+      next = await readAcceptReview(own, diamond, offerId, review.identity);
+    } catch (e) {
+      return { kind: 'unreadable', reason: refusalFromError(e).reason };
+    }
+    const what = changedBetween(review, next, copy);
+    if (what !== null) {
+      if (current()) {
+        setReview(next);
+        setConsentFor(null);
+      }
+      return { kind: 'changed', what };
+    }
+    const blockers = reviewBlockers(next, meta, copy);
+    if (blockers.length > 0)
+      return {
+        kind: 'refused',
+        refusal: {
+          code: 'AcceptBlocked',
+          reason: blockers[0]!,
+          reopensAt: null,
+          remedy: null,
+        },
+      };
+    return { kind: 'ok' };
+  };
+
+  const blockers = review ? reviewBlockers(review, meta, copy) : [];
+  const consented = review !== null && consentFor === review.readAt;
+  const termsLink = terms && terms.kind !== 'none' ? termsUrl(terms.version) : `${GUIDE_ORIGIN}/terms`;
+  const riskLink = guideUrl(mode, 'borrow-risks');
+
+  const gate = review
+    ? {
+        ready: consented && blockers.length === 0,
+        node: (
+          <div className="accept-gate">
+            {blockers.map((b) => (
+              <Notice key={b} tone="danger" tier="A">
+                {b}
+              </Notice>
+            ))}
+            {review.consent === false && <p className="tier-b">{text('accept.feeOff')}</p>}
+            <WhyLink summaryKey="accept.feeSummary" detailKey="accept.feeWhy" />
+            <WhyLink summaryKey="accept.signSummary" detailKey="accept.signWhy" />
+            {blockers.length === 0 && (
+              <p className="consent tier-a">
+                <label>
+                  <input type="checkbox" checked={consented} onChange={(e) => setConsentFor(e.target.checked ? review.readAt : null)} data-testid="accept-consent" />
+                  <span>
+                    {text('accept.consentLead')}
+                    <a href={riskLink} target="_blank" rel="noreferrer">
+                      {text('accept.consentRisk')}
+                    </a>
+                    {text('accept.consentAnd')}
+                    <a href={termsLink} target="_blank" rel="noreferrer">
+                      {text('accept.consentTerms')}
+                    </a>
+                    {text('accept.consentEnd')}
+                  </span>
+                </label>
+              </p>
+            )}
+            {blockers.length === 0 && !consented && <p className="tier-b">{text('accept.consentNeeded')}</p>}
+          </div>
+        ),
+      }
+    : undefined;
+
+  const describeAsset = (a: Hex) => {
+    const m = meta?.[a.toLowerCase()];
+    return m && m.decimals !== null ? { symbol: m.symbol ?? shortAddress(a), decimals: m.decimals } : null;
+  };
+
+  const close = () => {
+    setReview(null);
+    setConsentFor(null);
+    setLoanId(null);
+    setStep(null);
+    onClose();
+  };
+
+  return (
+    <div className="accept-offer" data-offer-id={offerId.toString()}>
+      {loadError !== null && (
+        <Notice tone="warn" tier="A">
+          {format('flow.unreadable', { reason: loadError })}{' '}
+          <button type="button" className="btn" onClick={() => void load()}>
+            {text('consent.retry')}
+          </button>
+        </Notice>
+      )}
+      <ActionFlow
+        tx={tx}
+        identity={identity}
+        reviewedFor={review?.identity ?? tx.frozen?.identity ?? identity}
+        receipt={review ? acceptReceipt(review, meta, copy) : null}
+        recheck={recheck}
+        describeAsset={describeAsset}
+        explorer={chain.blockExplorer}
+        next={
+          loanId !== null
+            ? {
+                label: format('accept.openLoan', { id: loanId.toString() }),
+                to: `/positions/${loanId.toString()}`,
+              }
+            : null
+        }
+        gate={gate}
+        signingNote={step}
+        onClose={close}
+      />
+    </div>
+  );
+}

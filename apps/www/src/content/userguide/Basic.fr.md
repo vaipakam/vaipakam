@@ -1098,6 +1098,42 @@ Sur un réseau où les récompenses non réclamées peuvent être retirées, Hom
 
 Si le filtrage des sanctions signale votre portefeuille, rien ne lui est versé tant que le signalement demeure. Les récompenses gagnées avant le signalement sont retenues pour lui, bloquées mais pas perdues, et libérées dès que le portefeuille n'est plus signalé ; Home propose alors de réclamer exactement ce solde seul. Tant qu'un signalement est confirmé, les récompenses gagnées sont perdues définitivement et le VPFI de votre coffre ne peut pas être déplacé. S'il est impossible de lire si le portefeuille est toujours signalé, rien n'est libéré.
 
+<a id="borrow-start"></a>
+
+### Borrow: Comment ça marche
+
+Pour emprunter, vous acceptez l'offre ouverte d'un prêteur : un montant d'un token, un taux, une durée et la garantie que le prêteur demande. L'accepter ouvre le prêt en une seule transaction. Votre garantie passe de votre wallet à votre propre vault, où elle reste bloquée tant que le prêt est ouvert, et le montant, moins de petits frais d'ouverture, arrive dans votre wallet. Vous remboursez le montant plus les intérêts avant l'échéance. Publier votre propre demande d'emprunt viendra dans une mise à jour ultérieure.
+
+<a id="borrow-pair"></a>
+
+### Borrow: Choisir les tokens
+
+Choisissez d'abord ce que vous empruntez et ce que vous bloquez. L'app suggère des tokens du réseau, ou vous pouvez coller une adresse de token ; aucun contrôle de sécurité des tokens n'est fait, vérifiez donc vous-même une adresse collée. Pour chaque token, l'app lit ce que le protocole en dit maintenant. Un token liquide a un prix : le prêt a un facteur de santé et peut être liquidé si la garantie perd de la valeur. Un token illiquide est évalué à zéro, et en cas de défaut le prêteur reçoit la garantie elle-même. Quand le protocole ne fait pas confiance au prix d'un token, les nouveaux prêts sur celui-ci sont fermés jusqu'à ce qu'il lui fasse de nouveau confiance ; les prêts déjà ouverts ne sont pas concernés.
+
+<a id="borrow-offers"></a>
+
+### Borrow: Choisir une offre
+
+La page liste les offres ouvertes des prêteurs pour vos deux tokens, lues dans le protocole lui-même. Chacune indique le montant, le taux et la durée, la garantie demandée, le ratio prêt-valeur aux prix du jour, le mode de calcul des intérêts, l'éventuel calendrier d'intérêts, la fin de l'offre et ce que vous recevriez après les frais. Une offre s'accepte en entier, au montant complet du prêteur et à son taux le plus bas. Si le protocole refuserait une offre, la page dit pourquoi et n'affiche pas de bouton. L'ordre est une commodité, pas un conseil.
+
+<a id="borrow-review"></a>
+
+### Borrow: Vérifier et signer
+
+Avant que votre wallet ne s'ouvre, la vérification montre chaque chiffre : ce que vous recevez, les frais, ce que vous bloquez, le taux, ce que vous devez à l'échéance, le délai de grâce et ce que vous pouvez perdre. Vous cochez une case pour accepter les Informations sur les risques et les Conditions ; si les chiffres changent avant votre confirmation, la case se décoche. Votre wallet vous demande ensuite de signer les conditions, ce qui ne coûte rien, d'approuver exactement la garantie si nécessaire, puis d'envoyer l'acceptation, que l'app essaie d'abord à blanc. Si cela s'arrête après une approbation, l'app demande de la remettre et dit si c'est fait. Ensuite, l'app vérifie sur la chaîne le prêt ouvert, ce qui est arrivé et ce qui a été bloqué.
+
+<a id="borrow-fee"></a>
+
+### Borrow: Les frais d'ouverture
+
+Ouvrir un prêt coûte une petite part du montant, prélevée une fois, dans le token emprunté, et déduite de ce que vous recevez ; la vérification montre le taux en vigueur. Vous devez des intérêts sur le montant entier. Votre niveau de remise réduit les frais quand la remise sur les frais est activée et que le token emprunté est liquide. Aucun VPFI n'est pris ni conservé pour ces frais, et rien n'est remboursé plus tard.
+
+<a id="borrow-risks"></a>
+
+### Borrow: Risques
+
+Un prêt peut vous coûter votre garantie. Si vous n'avez pas remboursé à la fin du délai de grâce, le prêt est en défaut et le prêteur est payé sur votre garantie : vendue pour lui là où le protocole le peut, remise telle quelle sinon. Avec une garantie liquide, si sa valeur baisse jusqu'à ce que le facteur de santé passe sous 1, n'importe qui peut liquider le prêt et vous perdez de la garantie. Avec des intérêts sur toute la durée, vous devez les intérêts de toute la durée même en remboursant tôt. Avec un calendrier d'intérêts, une période manquée est payée en vendant une partie de votre garantie. Votre garantie reste bloquée jusqu'au remboursement ou au règlement du prêt.
+
 <a id="terms-gate"></a>
 
 ### La demande d'acceptation des Conditions

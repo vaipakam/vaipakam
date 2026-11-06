@@ -1770,6 +1770,42 @@ health factor 是仪表盘视图中按 1e18 缩放的读数；读数为 0 表示
 
 `getSanctionsHeldReward(user)` 是暂扣余额，`getRewardSanctionsStatus(user)` 是其判定（Deliver、Hold 或 Confirmed）。有余额且判定为 Deliver 时，Home 提供 `claimHeldInteractionRewards(2)`，它只支付恰好的暂扣余额而不结算任何新欠款，并发出 `InteractionRewardsClaimed(user, 0, 0, paid)`；钱包被禁止期间它会以 `SanctionedAddress` revert。签名前的复核会重新读取二者，并以发送者身份模拟该调用。标记确认期间赚得的天数将被永久没收。
 
+<a id="borrow-start"></a>
+
+### Borrow: 如何运作
+
+Borrow 通过 `acceptOffer(offerId, terms, signature)` 直接接受以 ERC-20 抵押借入 ERC-20 的出借人报价（`offerType` 0）。一笔交易内：借款人没有金库时为其开立金库，将抵押品转入其中，把扣除发起费后的本金交付到钱包，并发出 `LoanInitiated`。借款请求、NFT 一侧、交易对同意和高级选项将在后续更新中提供。
+
+<a id="borrow-pair"></a>
+
+### Borrow: 选择代币
+
+每种代币的类别实时读取：先读 `getAssetPriceStatus(asset)`（Divergent 视为不受信任并关闭新贷款），再读 `checkLiquidityOnActiveNetwork(asset)`（0 为有流动性，1 为无流动性）。以 `OraclePriceDivergence` 或 `OracleCrossCheckDivergence` 回滚视为不受信任；其他任何失败都显示为无法读取并附上原因。推荐列表为部署记录中的包装原生代币和测试代币；粘贴的地址只检查格式。
+
+<a id="borrow-offers"></a>
+
+### Borrow: 选择报价
+
+`getActiveOffersByAssetPairRanked(lending, collateral, 0, 20)` 返回该交易对的公开报价 id 和总数。对每个 id，页面读取 `getOffer`、`getOfferState`，有钱包时还读取 `previewAccept(offerId, wallet)`，其中 `errorCode` 即协议的拒绝原因。贷款价值比为按今日价格计算的 `calculateLTV`；无流动性或无价格的一侧会说明为何没有。直接接受按出借人的 `amountMax` 和 `interestRateBps` 绑定。借款请求、带 NFT 一侧的报价和自己的报价只计数，不列出。
+
+<a id="borrow-review"></a>
+
+### Borrow: 审核与签名
+
+审核读取报价、其状态、`previewAccept`、`getOfferLinkedLoanId`、`getCurrentRiskTermsHash`、两种类别、`getEffectiveGraceSeconds(durationDays)`、`getLoanInitiationFeeBps`、钱包的金库、余额和授权额度、`previewOfferAcceptBlock` 以及折扣同意，并在钱包打开前再读一次。钱包签署由已存储报价构建的 EIP-712 `AcceptTerms`（域 `Vaipakam AcceptOffer`，版本 1），附带新的 128 位 nonce 和 30 分钟期限；无流动性确认只指明审核中显示为无流动性的一侧。仅当授权额度不足时才批准与抵押品完全相同的额度，然后用签名模拟 `acceptOffer` 再发送。若在批准后中止，且额度未被其他操作改变，应用会把它恢复为原值。结果从该报价和钱包的 `LoanInitiated` 以及收据中的 `Transfer` 日志读取。
+
+<a id="borrow-fee"></a>
+
+### Borrow: 发起费
+
+费用为 `previewAccept` 的 `lifEstimate`：本金乘以 `getLoanInitiationFeeBps`，以所借代币收取，从交付金额中扣除；同意开启且所借代币有流动性时按持有等级折扣降低，等级在接受时确定。本页从不选择 Full 费率。该费用不收取 VPFI，也不返还。
+
+<a id="borrow-risks"></a>
+
+### Borrow: 风险
+
+超过宽限期的贷款（到期后 `getEffectiveGraceSeconds`，暂停时间会使其顺延）任何人都可以触发违约：有流动性的抵押品为出借人出售，无流动性的抵押品原样转移。健康因子低于 1 时，有流动性的抵押品也可能被清算。`useFullTermInterest` 在提前还款时收取全期利息；付息计划通过强制出售抵押品来结清未付期次。
+
 <a id="terms-gate"></a>
 
 ### 服务条款确认

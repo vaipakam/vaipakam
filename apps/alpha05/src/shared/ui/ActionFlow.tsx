@@ -68,6 +68,13 @@ export interface ActionFlowProps {
   after?: (outcome: FinishCardModel['outcome']) => ReactNode;
   /** Back to idle; the caller closes its panel. */
   onClose: () => void;
+  /** What the review needs from the reader before the wallet may open (a
+   *  consent checkbox, a blocker stated in place), rendered under the
+   *  receipt; confirming is withheld until `ready`. */
+  gate?: { node: ReactNode; ready: boolean };
+  /** While the wallet is asked, which of several prompts is open ("Wallet
+   *  step 2 of 3: …"); the generic line otherwise. */
+  signingNote?: string | null;
 }
 
 /**
@@ -78,7 +85,7 @@ export interface ActionFlowProps {
  * retried silently: a receipt that cannot be read keeps its hash on screen
  * and offers "Check again", and nothing new is offered until it is resolved.
  */
-export function ActionFlow({ tx, identity, reviewedFor, receipt, recheck, describeAsset, explorer, next, after, onClose }: ActionFlowProps) {
+export function ActionFlow({ tx, identity, reviewedFor, receipt, recheck, describeAsset, explorer, next, after, onClose, gate, signingNote }: ActionFlowProps) {
   const { text, format } = useCopy();
   const nowMs = useNow();
   const [checking, setChecking] = useState(false);
@@ -188,10 +195,11 @@ export function ActionFlow({ tx, identity, reviewedFor, receipt, recheck, descri
               {text('flow.identityChanged')}
             </Notice>
           )}
+          {receipt !== null && gate?.node}
           {checking && <p className="tier-b" role="status">{text('flow.checking')}</p>}
           <p className="actions">
             {!blocked && (
-              <button type="button" className="btn btn-primary" disabled={receipt === null || checking} onClick={() => void confirm()}>
+              <button type="button" className="btn btn-primary" disabled={receipt === null || checking || (gate !== undefined && !gate.ready)} onClick={() => void confirm()}>
                 {text('flow.confirm')}
               </button>
             )}
@@ -207,7 +215,7 @@ export function ActionFlow({ tx, identity, reviewedFor, receipt, recheck, descri
         <div className="action-flow" data-phase="signing">
           {senderNote}
           <p className="tier-b" role="status">
-            {text('flow.signing')}
+            {signingNote ?? text('flow.signing')}
           </p>
         </div>
       );

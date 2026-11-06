@@ -2215,6 +2215,42 @@ Un `ConfigFacet.getRewardClaimHorizonDays()` igual a 0 significa que el horizont
 
 `getSanctionsHeldReward(user)` es el saldo retenido y `getRewardSanctionsStatus(user)` su decisión (Deliver, Hold o Confirmed). Con saldo y decisión Deliver, Home ofrece `claimHeldInteractionRewards(2)`, que paga exactamente el saldo retenido sin liquidar nada nuevo adeudado y emite `InteractionRewardsClaimed(user, 0, 0, paid)`; revierte con `SanctionedAddress` mientras la billetera esté vetada. La comprobación antes de firmar vuelve a leer ambos y simula la llamada como el remitente. Los días ganados con una marca confirmada se pierden para siempre.
 
+<a id="borrow-start"></a>
+
+### Borrow: Cómo funciona
+
+Borrow acepta directamente una oferta de prestamista (`offerType` 0) de un ERC-20 contra garantía ERC-20, con `acceptOffer(offerId, terms, signature)`. En una transacción abre el vault del prestatario si no existe, mete en él la garantía, entrega a la wallet el principal menos la comisión de apertura y emite `LoanInitiated`. Las solicitudes de préstamo, los lados NFT, los consentimientos por par y las opciones avanzadas llegan en actualizaciones posteriores.
+
+<a id="borrow-pair"></a>
+
+### Borrow: Elegir los tokens
+
+La clase de cada token se lee en vivo: primero `getAssetPriceStatus(asset)` (Divergent se lee como desconfiado y cierra préstamos nuevos), luego `checkLiquidityOnActiveNetwork(asset)` (0 líquido, 1 ilíquido). Un revert `OraclePriceDivergence` u `OracleCrossCheckDivergence` se lee como desconfiado; cualquier otro fallo se muestra como ilegible, con su motivo. La lista sugerida es el token nativo envuelto y los tokens de prueba del registro de despliegue; una dirección pegada solo se comprueba en su forma.
+
+<a id="borrow-offers"></a>
+
+### Borrow: Elegir una oferta
+
+`getActiveOffersByAssetPairRanked(lending, collateral, 0, 20)` da los ids de ofertas abiertas del par y el total. Para cada una, la página lee `getOffer`, `getOfferState` y, con wallet, `previewAccept(offerId, wallet)`, cuyo `errorCode` es el rechazo del protocolo. La relación préstamo-valor es `calculateLTV` a los precios de hoy; un lado ilíquido o sin precio dice por qué no la hay. Una aceptación directa fija el `amountMax` del prestamista a `interestRateBps`. Las solicitudes de préstamo, las ofertas con lado NFT y las propias se cuentan, no se listan.
+
+<a id="borrow-review"></a>
+
+### Borrow: Revisar y firmar
+
+La revisión lee la oferta, su estado, `previewAccept`, `getOfferLinkedLoanId`, `getCurrentRiskTermsHash`, ambas clases, `getEffectiveGraceSeconds(durationDays)`, `getLoanInitiationFeeBps`, el vault, el saldo y la aprobación de la wallet, `previewOfferAcceptBlock` y el consentimiento de descuento, y los vuelve a leer justo antes de abrir la wallet. La wallet firma EIP-712 `AcceptTerms` (dominio `Vaipakam AcceptOffer`, versión 1) construido con la oferta guardada, con un nonce nuevo de 128 bits y un plazo de 30 minutos; un reconocimiento de iliquidez nombra solo un lado que la revisión mostró como ilíquido. Una aprobación de exactamente la garantía sigue solo si la aprobación no alcanza; luego `acceptOffer` se simula con la firma y se envía. Si se detiene tras la aprobación, la app la restablece a su valor anterior cuando nada más la cambió. El resultado lee `LoanInitiated` para esta oferta y esta wallet y los logs `Transfer` del recibo.
+
+<a id="borrow-fee"></a>
+
+### Borrow: La comisión de apertura
+
+La comisión es el `lifEstimate` de `previewAccept`: `getLoanInitiationFeeBps` del principal, en el token prestado, descontada de lo entregado, reducida por el descuento por nivel de tenencia cuando el consentimiento está activo y el token prestado es líquido, con el nivel fijado al aceptar. Esta página nunca elige la tarifa Full. No se cobra VPFI por la comisión ni se reembolsa.
+
+<a id="borrow-risks"></a>
+
+### Borrow: Riesgos
+
+Un préstamo pasado el fin de su gracia (`getEffectiveGraceSeconds` tras el vencimiento, que el tiempo en pausa desplaza) puede declararlo en impago cualquiera: la garantía líquida se vende para el prestamista y la ilíquida se transfiere tal cual. La garantía líquida también puede liquidarse cuando el factor de salud baja de 1. `useFullTermInterest` cobra los intereses del plazo completo al devolver antes; un calendario de intereses salda un periodo impagado con una venta forzosa de garantía.
+
 <a id="terms-gate"></a>
 
 ### El aviso de los Términos

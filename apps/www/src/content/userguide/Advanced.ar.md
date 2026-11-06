@@ -1933,6 +1933,42 @@ fallback، موعد غير مقروء، يستحق خلال ثلاثة أيام�
 
 `getSanctionsHeldReward(user)` هو الرصيد المحتجز و`getRewardSanctionsStatus(user)` قراره (Deliver أو Hold أو Confirmed). مع وجود رصيد وقرار Deliver، تعرض Home `claimHeldInteractionRewards(2)`، الذي يدفع الرصيد المحتجز بالضبط دون تسوية أي مستحق جديد ويُصدر `InteractionRewardsClaimed(user, 0, 0, paid)`؛ ويرتد بـ `SanctionedAddress` ما دامت المحفظة محظورة. يعيد الفحص قبل التوقيع قراءة الاثنين ويحاكي الاستدعاء بصفة المرسِل. الأيام المكتسبة أثناء وسم مؤكد تُصادر نهائيًا.
 
+<a id="borrow-start"></a>
+
+### Borrow: كيف يعمل
+
+يقبل Borrow مباشرةً عرض مُقرض (`offerType` 0) لرمز ERC-20 مقابل ضمان ERC-20، عبر `acceptOffer(offerId, terms, signature)`. في معاملة واحدة يفتح خزنة المقترض إن لم تكن موجودة، ويسحب الضمان إليها، ويسلّم المحفظة أصل القرض بعد خصم رسم الافتتاح، ويُصدر `LoanInitiated`. طلبات الاقتراض وجوانب NFT وموافقات الأزواج والخيارات المتقدمة تأتي في تحديثات لاحقة.
+
+<a id="borrow-pair"></a>
+
+### Borrow: اختيار الرموز
+
+تُقرأ فئة كل رمز مباشرةً: أولًا `getAssetPriceStatus(asset)` (تُقرأ Divergent على أنها غير موثوقة وتغلق القروض الجديدة)، ثم `checkLiquidityOnActiveNetwork(asset)` (0 سائل، 1 غير سائل). يُقرأ revert بـ`OraclePriceDivergence` أو `OracleCrossCheckDivergence` على أنه غير موثوق؛ وأي فشل آخر يظهر غير مقروء مع سببه. القائمة المقترحة هي الرمز الأصلي المغلّف ورموز الاختبار في سجل النشر؛ والعنوان الملصق يُفحص شكله فقط.
+
+<a id="borrow-offers"></a>
+
+### Borrow: اختيار عرض
+
+يعطي `getActiveOffersByAssetPairRanked(lending, collateral, 0, 20)` معرّفات العروض المفتوحة للزوج والإجمالي. لكل منها تقرأ الصفحة `getOffer` و`getOfferState`، ومع محفظة `previewAccept(offerId, wallet)` الذي يمثّل `errorCode` فيه رفض البروتوكول. نسبة القرض إلى القيمة هي `calculateLTV` بأسعار اليوم؛ والجانب غير السائل أو بلا سعر يقول لماذا لا توجد. القبول المباشر يُلزم بـ`amountMax` للمُقرض عند `interestRateBps`. طلبات الاقتراض والعروض ذات جانب NFT وعروضك تُعدّ ولا تُدرج.
+
+<a id="borrow-review"></a>
+
+### Borrow: المراجعة والتوقيع
+
+تقرأ المراجعة العرض وحالته و`previewAccept` و`getOfferLinkedLoanId` و`getCurrentRiskTermsHash` والفئتين و`getEffectiveGraceSeconds(durationDays)` و`getLoanInitiationFeeBps` وخزنة المحفظة ورصيدها وموافقتها و`previewOfferAcceptBlock` وموافقة الخصم، وتعيد قراءتها قبيل فتح المحفظة. توقّع المحفظة EIP-712 `AcceptTerms` (النطاق `Vaipakam AcceptOffer`، الإصدار 1) المبني من العرض المخزّن، مع nonce جديد بطول 128 بت ومهلة 30 دقيقة؛ ولا يسمّي إقرار عدم السيولة إلا جانبًا أظهرته المراجعة غير سائل. تأتي موافقة على مقدار الضمان بالضبط فقط إذا قصرت الموافقة الحالية، ثم يُحاكى `acceptOffer` بالتوقيع ويُرسل. إذا توقف بعد الموافقة يعيدها التطبيق إلى قيمتها السابقة ما لم يغيّرها شيء آخر. تقرأ النتيجة `LoanInitiated` لهذا العرض وهذه المحفظة وسجلات `Transfer` في الإيصال.
+
+<a id="borrow-fee"></a>
+
+### Borrow: رسم الافتتاح
+
+الرسم هو `lifEstimate` من `previewAccept`: `getLoanInitiationFeeBps` من أصل القرض، بالرمز المقترض، مخصومًا مما يُسلَّم، ومخفّضًا بخصم مستوى الحيازة عندما تكون الموافقة مفعّلة والرمز المقترض سائلًا، مع تثبيت المستوى عند القبول. لا تختار هذه الصفحة تعرفة Full أبدًا. لا يُحصَّل VPFI للرسم ولا يُردّ.
+
+<a id="borrow-risks"></a>
+
+### Borrow: المخاطر
+
+القرض الذي تجاوز نهاية سماحه (`getEffectiveGraceSeconds` بعد الاستحقاق، ويؤخّره وقت الإيقاف المؤقت) يمكن لأي أحد إعلان تعثره: يُباع الضمان السائل للمُقرض ويُنقل غير السائل كما هو. ويمكن أيضًا تصفية الضمان السائل متى انخفض عامل الصحة عن 1. يفرض `useFullTermInterest` فائدة المدة كاملة عند السداد المبكر؛ ويسوّي جدول الفائدة الفترة الفائتة ببيع قسري للضمان.
+
 <a id="terms-gate"></a>
 
 ### طلب قبول الشروط

@@ -21,7 +21,20 @@ function isUserRejection(err: unknown): boolean {
   return false;
 }
 
+/** An error that already carries the refusal to state, written by the app
+ *  where it knows more than the error does (a multi-step flow that stopped
+ *  after an approval and says whether the approval was put back). */
+export class StatedRefusal extends Error {
+  readonly refusal: Refusal;
+  constructor(refusal: Refusal) {
+    super(refusal.reason);
+    this.name = 'StatedRefusal';
+    this.refusal = refusal;
+  }
+}
+
 export function refusalFromError(err: unknown, remedy: Refusal['remedy'] = null): Refusal {
+  if (err instanceof StatedRefusal) return remedy ? { ...err.refusal, remedy } : err.refusal;
   if (isUserRejection(err)) {
     return { code: USER_REJECTED, reason: 'You declined in the wallet. Nothing was sent.', reopensAt: null, remedy };
   }

@@ -2235,6 +2235,42 @@ Un `ConfigFacet.getRewardClaimHorizonDays()` égal à 0 signifie que l'horizon e
 
 `getSanctionsHeldReward(user)` est le solde retenu et `getRewardSanctionsStatus(user)` sa décision (Deliver, Hold ou Confirmed). Avec un solde et la décision Deliver, Home propose `claimHeldInteractionRewards(2)`, qui paie exactement le solde retenu sans régler quoi que ce soit de nouvellement dû et émet `InteractionRewardsClaimed(user, 0, 0, paid)` ; il revert avec `SanctionedAddress` tant que le portefeuille est interdit. La vérification avant signature relit les deux et simule l'appel en tant qu'expéditeur. Les jours gagnés sous un signalement confirmé sont perdus définitivement.
 
+<a id="borrow-start"></a>
+
+### Borrow: Comment ça marche
+
+Borrow accepte directement une offre de prêteur (`offerType` 0) d'un ERC-20 contre une garantie ERC-20, avec `acceptOffer(offerId, terms, signature)`. En une transaction, il ouvre le vault de l'emprunteur s'il n'en a pas, y place la garantie, livre au wallet le principal moins les frais d'ouverture et émet `LoanInitiated`. Les demandes d'emprunt, les côtés NFT, les consentements par paire et les options avancées suivront dans des mises à jour ultérieures.
+
+<a id="borrow-pair"></a>
+
+### Borrow: Choisir les tokens
+
+La classe de chaque token est lue en direct : d'abord `getAssetPriceStatus(asset)` (Divergent est lu comme non fiable et ferme les nouveaux prêts), puis `checkLiquidityOnActiveNetwork(asset)` (0 liquide, 1 illiquide). Un revert `OraclePriceDivergence` ou `OracleCrossCheckDivergence` est lu comme non fiable ; tout autre échec est affiché comme illisible, avec sa raison. La liste suggérée est le token natif enveloppé et les tokens de test du registre de déploiement ; une adresse collée n'est vérifiée que dans sa forme.
+
+<a id="borrow-offers"></a>
+
+### Borrow: Choisir une offre
+
+`getActiveOffersByAssetPairRanked(lending, collateral, 0, 20)` donne les ids d'offres ouvertes de la paire et le total. Pour chacune, la page lit `getOffer`, `getOfferState` et, avec un wallet, `previewAccept(offerId, wallet)`, dont le `errorCode` est le refus du protocole. Le ratio prêt-valeur est `calculateLTV` aux prix du jour ; un côté illiquide ou sans prix dit pourquoi il n'y en a pas. Une acceptation directe fixe le `amountMax` du prêteur à `interestRateBps`. Les demandes d'emprunt, les offres avec un côté NFT et les siennes sont comptées, pas listées.
+
+<a id="borrow-review"></a>
+
+### Borrow: Vérifier et signer
+
+La vérification lit l'offre, son état, `previewAccept`, `getOfferLinkedLoanId`, `getCurrentRiskTermsHash`, les deux classes, `getEffectiveGraceSeconds(durationDays)`, `getLoanInitiationFeeBps`, le vault, le solde et l'autorisation du wallet, `previewOfferAcceptBlock` et le consentement de remise, et les relit juste avant l'ouverture du wallet. Le wallet signe l'EIP-712 `AcceptTerms` (domaine `Vaipakam AcceptOffer`, version 1) construit à partir de l'offre enregistrée, avec un nonce neuf de 128 bits et un délai de 30 minutes ; une reconnaissance d'illiquidité ne nomme qu'un côté que la vérification a montré illiquide. Une approbation d'exactement la garantie ne suit que si l'autorisation est insuffisante ; puis `acceptOffer` est simulé avec la signature et envoyé. Si cela s'arrête après l'approbation, l'app remet l'autorisation à sa valeur antérieure si rien d'autre ne l'a changée. Le résultat lit `LoanInitiated` pour cette offre et ce wallet et les logs `Transfer` du reçu.
+
+<a id="borrow-fee"></a>
+
+### Borrow: Les frais d'ouverture
+
+Les frais sont le `lifEstimate` de `previewAccept` : `getLoanInitiationFeeBps` du principal, dans le token emprunté, déduits de ce qui est livré, réduits par la remise de niveau de détention quand le consentement est actif et que le token emprunté est liquide, avec le niveau fixé à l'acceptation. Cette page ne choisit jamais le tarif Full. Aucun VPFI n'est prélevé pour les frais ni remboursé.
+
+<a id="borrow-risks"></a>
+
+### Borrow: Risques
+
+Un prêt passé la fin de son délai de grâce (`getEffectiveGraceSeconds` après l'échéance, que le temps de pause décale) peut être mis en défaut par n'importe qui : la garantie liquide est vendue pour le prêteur, la garantie illiquide est transférée telle quelle. Une garantie liquide peut aussi être liquidée dès que le facteur de santé passe sous 1. `useFullTermInterest` facture les intérêts de toute la durée en cas de remboursement anticipé ; un calendrier d'intérêts règle une période manquée par une vente forcée de garantie.
+
 <a id="terms-gate"></a>
 
 ### La demande d'acceptation des Conditions

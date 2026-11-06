@@ -1080,6 +1080,42 @@ En una red donde las recompensas no reclamadas pueden retirarse, Home muestra la
 
 Si el control de sanciones marca tu billetera, no se le paga nada mientras siga marcada. Las recompensas que ganó antes de la marca se retienen para ella, bloqueadas pero no perdidas, y se liberan cuando la billetera deja de estar marcada; entonces Home ofrece reclamar exactamente ese saldo por separado. Mientras una marca esté confirmada, las recompensas ganadas se pierden para siempre y el VPFI de tu bóveda no puede moverse. Si no puede leerse si la billetera sigue marcada, no se libera nada.
 
+<a id="borrow-start"></a>
+
+### Borrow: Cómo funciona
+
+Para pedir prestado, aceptas la oferta abierta de un prestamista: una cantidad de un token, una tasa, un plazo y la garantía que pide el prestamista. Aceptarla abre el préstamo en una sola transacción. Tu garantía pasa de tu wallet a tu propio vault, donde queda bloqueada mientras el préstamo siga abierto, y la cantidad, menos una pequeña comisión de apertura, llega a tu wallet. Devuelves la cantidad más los intereses antes de la fecha de vencimiento. Publicar tu propia solicitud de préstamo llegará en una actualización posterior.
+
+<a id="borrow-pair"></a>
+
+### Borrow: Elegir los tokens
+
+Primero elige qué pedir prestado y qué bloquear. La app sugiere tokens de la red, o puedes pegar una dirección de token; no se hace ninguna revisión de seguridad de tokens, así que revisa tú mismo una dirección pegada. Para cada token, la app lee lo que el protocolo dice de él ahora. Un token líquido tiene precio, así que el préstamo tiene un factor de salud y puede liquidarse si la garantía pierde valor. Un token ilíquido se valora en cero y, en caso de impago, el prestamista recibe la propia garantía. Cuando el protocolo no confía en el precio de un token, los préstamos nuevos sobre él se cierran hasta que vuelva a confiar; los préstamos ya abiertos no se ven afectados.
+
+<a id="borrow-offers"></a>
+
+### Borrow: Elegir una oferta
+
+La página muestra las ofertas abiertas de prestamistas para tus dos tokens, leídas del propio protocolo. Cada una indica la cantidad, la tasa y el plazo, la garantía pedida, la relación préstamo-valor a los precios de hoy, cómo se cobran los intereses, el calendario de intereses si lo hay, cuándo termina la oferta y lo que recibirías tras la comisión. Una oferta se acepta entera, por la cantidad completa del prestamista y su tasa más baja. Si el protocolo rechazaría una oferta, la página dice por qué y no muestra botón. El orden es una ayuda, no un consejo.
+
+<a id="borrow-review"></a>
+
+### Borrow: Revisar y firmar
+
+Antes de que se abra tu wallet, la revisión muestra cada cifra: lo que recibes, la comisión, lo que bloqueas, la tasa, lo que debes en la fecha de vencimiento, el periodo de gracia y lo que puedes perder. Marcas una casilla para aceptar las Divulgaciones de riesgos y los Términos; si las cifras cambian antes de confirmar, la casilla se desmarca. Luego tu wallet te pide firmar los términos, lo que no cuesta nada, aprobar exactamente la garantía si hace falta, y enviar la aceptación, que la app prueba antes como simulación. Si se detiene tras una aprobación, la app pide restablecerla y dice si lo logró. Después, la app comprueba en la cadena el préstamo abierto, lo que llegó y lo que se bloqueó.
+
+<a id="borrow-fee"></a>
+
+### Borrow: La comisión de apertura
+
+Abrir un préstamo cuesta una pequeña parte de la cantidad, cobrada una vez, en el token que pides prestado, y descontada de lo que recibes; la revisión muestra la tasa vigente. Debes intereses sobre la cantidad completa. Tu nivel de descuento reduce la comisión cuando el descuento de comisiones está activado y el token prestado es líquido. No se toma ni se retiene VPFI por esta comisión, y no se reembolsa nada después.
+
+<a id="borrow-risks"></a>
+
+### Borrow: Riesgos
+
+Un préstamo puede costarte tu garantía. Si no has devuelto al final del periodo de gracia, el préstamo entra en impago y el prestamista cobra de tu garantía: vendida para él donde el protocolo puede, entregada tal cual donde no. Con garantía líquida, si su valor cae hasta que el factor de salud baja de 1, cualquiera puede liquidar el préstamo y pierdes garantía. Con intereses de plazo completo debes los intereses de todo el plazo aunque devuelvas antes. Con un calendario de intereses, un periodo impagado se cubre vendiendo parte de tu garantía. Tu garantía queda bloqueada hasta que el préstamo se devuelva o se liquide.
+
 <a id="terms-gate"></a>
 
 ### El aviso de los Términos

@@ -2225,6 +2225,42 @@ Die Hauptzahl ist `RewardClaimFacet.simulateClaimInteractionRewards(user, 2)`, d
 
 `getSanctionsHeldReward(user)` ist das zurückgehaltene Guthaben und `getRewardSanctionsStatus(user)` seine Entscheidung (Deliver, Hold oder Confirmed). Mit einem Guthaben und der Entscheidung Deliver bietet Home `claimHeldInteractionRewards(2)` an, das genau das zurückgehaltene Guthaben auszahlt, ohne neu Geschuldetes abzurechnen, und `InteractionRewardsClaimed(user, 0, 0, paid)` emittiert; solange die Wallet gesperrt ist, revertiert es mit `SanctionedAddress`. Die Prüfung vor dem Signieren liest beides erneut und simuliert den Aufruf als Absender. Tage, die bei bestätigter Markierung verdient wurden, verfallen endgültig.
 
+<a id="borrow-start"></a>
+
+### Borrow: So funktioniert es
+
+Borrow nimmt ein Verleiherangebot (`offerType` 0) eines ERC-20 gegen ERC-20-Sicherheit direkt an, mit `acceptOffer(offerId, terms, signature)`. In einer Transaktion eröffnet es den Vault des Leihenden, falls keiner existiert, zieht die Sicherheit hinein, liefert den Kapitalbetrag abzüglich der Eröffnungsgebühr an die Wallet und emittiert `LoanInitiated`. Kreditanfragen, NFT-Seiten, Paar-Zustimmungen und die erweiterten Optionen folgen in späteren Updates.
+
+<a id="borrow-pair"></a>
+
+### Borrow: Die Tokens wählen
+
+Die Klasse jedes Tokens wird live gelesen: zuerst `getAssetPriceStatus(asset)` (Divergent gilt als misstraut und schließt neue Kredite), dann `checkLiquidityOnActiveNetwork(asset)` (0 liquide, 1 illiquide). Ein Revert mit `OraclePriceDivergence` oder `OracleCrossCheckDivergence` gilt als misstraut; jeder andere Fehler wird mit Grund als nicht lesbar gezeigt. Die Vorschlagsliste ist der Wrapped-Native-Token und die Test-Tokens des Deployment-Datensatzes; eine eingefügte Adresse wird nur auf Form geprüft.
+
+<a id="borrow-offers"></a>
+
+### Borrow: Ein Angebot auswählen
+
+`getActiveOffersByAssetPairRanked(lending, collateral, 0, 20)` liefert die offenen Angebots-IDs des Paars und die Gesamtzahl. Für jede liest die Seite `getOffer`, `getOfferState` und, mit Wallet, `previewAccept(offerId, wallet)`, dessen `errorCode` die Ablehnung des Protokolls ist. Der Beleihungswert ist `calculateLTV` zu heutigen Preisen; eine illiquide oder preislose Seite sagt, warum es keinen gibt. Eine direkte Annahme bindet `amountMax` des Verleihers zu `interestRateBps`. Kreditanfragen, Angebote mit NFT-Seite und eigene Angebote werden gezählt, nicht gelistet.
+
+<a id="borrow-review"></a>
+
+### Borrow: Prüfen und Signieren
+
+Die Prüfung liest das Angebot, seinen Zustand, `previewAccept`, `getOfferLinkedLoanId`, `getCurrentRiskTermsHash`, beide Klassen, `getEffectiveGraceSeconds(durationDays)`, `getLoanInitiationFeeBps`, Vault, Saldo und Freigabe der Wallet, `previewOfferAcceptBlock` und die Rabattzustimmung, und liest sie direkt vor dem Öffnen der Wallet erneut. Die Wallet signiert EIP-712 `AcceptTerms` (Domain `Vaipakam AcceptOffer`, Version 1) aus dem gespeicherten Angebot, mit frischer 128-Bit-Nonce und 30 Minuten Frist; eine Illiquiditäts-Bestätigung nennt nur eine Seite, die die Prüfung als illiquide zeigte. Eine Freigabe von genau der Sicherheit folgt nur, wenn die Freigabe nicht reicht; dann wird `acceptOffer` mit der Signatur simuliert und gesendet. Stoppt es nach der Freigabe, setzt die App sie auf den früheren Wert zurück, wenn nichts anderes sie geändert hat. Das Ergebnis liest `LoanInitiated` für dieses Angebot und diese Wallet und die `Transfer`-Logs des Belegs.
+
+<a id="borrow-fee"></a>
+
+### Borrow: Die Eröffnungsgebühr
+
+Die Gebühr ist `lifEstimate` aus `previewAccept`: `getLoanInitiationFeeBps` des Kapitalbetrags, im Leih-Token, vom Gelieferten abgezogen, gesenkt um den Haltestufen-Rabatt, wenn die Zustimmung an und der Leih-Token liquide ist, mit der Stufe zum Zeitpunkt der Annahme. Diese Seite wählt den Full-Tarif nie. Für die Gebühr wird kein VPFI eingezogen und keines erstattet.
+
+<a id="borrow-risks"></a>
+
+### Borrow: Risiken
+
+Ein Kredit nach dem Ende seiner Nachfrist (`getEffectiveGraceSeconds` nach dem Fälligkeitstag, den pausierte Zeit verschiebt) kann von jedem als ausgefallen ausgelöst werden: liquide Sicherheit wird für den Verleiher verkauft, illiquide unverändert übertragen. Liquide Sicherheit kann auch liquidiert werden, sobald der Health Factor unter 1 liegt. `useFullTermInterest` berechnet bei früher Rückzahlung die Zinsen der vollen Laufzeit; ein Zinsplan begleicht eine verpasste Periode durch einen Zwangsverkauf von Sicherheit.
+
 <a id="terms-gate"></a>
 
 ### Die Abfrage der Nutzungsbedingungen
