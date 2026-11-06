@@ -178,8 +178,9 @@ export async function readLinkedLoanId(client: PublicClient, diamond: Hex, offer
 
 /** The risk-access gate's answer for this acceptor (0 = open or the gate is
  *  off; 1 = risk tier too low; 2 = this pair needs a recorded consent; 3 =
- *  a strict-mode acknowledgement is missing; 4 = the signed acceptance's own
- *  acknowledgement covers it). */
+ *  a strict-mode acknowledgement is missing; 4 = an illiquid pair the signed
+ *  acceptance's acknowledgement once covered, which this app treats as 2:
+ *  only a pair consent clears it, owner decision 2026-11-06). */
 export async function readAcceptGate(client: PublicClient, diamond: Hex, offerId: bigint, acceptor: Hex): Promise<number> {
   return Number(
     await client.readContract({

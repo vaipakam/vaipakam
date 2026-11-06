@@ -2,7 +2,8 @@ import { useId, useState } from 'react';
 import type { SupportedChain } from '../../chain/chains';
 import { useCopy } from '../../shared/copy/useCopy';
 import { WhyLink } from '../../shared/help/WhyLink';
-import { parsePasted, readAssetClass, suggestedAssets } from '../../shared/offers/assets';
+import { parsePasted, readAssetClass, suggestedAssets, suggestedCollateral } from '../../shared/offers/assets';
+import { useAssetStandard } from '../../shared/nft/useStandard';
 import { useChainRead } from '../../shared/reads/chainRead';
 import { assetName, type TokenMetaMap } from '../../shared/reads/tokens';
 import { FormField } from '../../shared/ui/FormField';
@@ -20,6 +21,7 @@ function AssetChoice({
   meta,
   onChange,
   testId,
+  leg,
 }: {
   label: string;
   value: Hex | null;
@@ -27,10 +29,12 @@ function AssetChoice({
   meta: TokenMetaMap | null;
   onChange: (asset: Hex | null) => void;
   testId: string;
+  /** The collateral leg also offers the test NFT collections (NFT-13). */
+  leg: 'lending' | 'collateral';
 }) {
   const { text, format } = useCopy();
   const id = useId();
-  const suggested = suggestedAssets(chain);
+  const suggested = leg === 'collateral' ? suggestedCollateral(chain) : suggestedAssets(chain).map((c) => ({ ...c, nft: false }));
   const isSuggested = value !== null && suggested.some((c) => c.address.toLowerCase() === value.toLowerCase());
   const [other, setOther] = useState(value !== null && !isSuggested);
   const [pasted, setPasted] = useState(value !== null && !isSuggested ? value : '');
@@ -57,7 +61,7 @@ function AssetChoice({
         {suggested.map((c) => (
           <option key={c.address} value={c.address}>
             {assetName(c.address, meta)}
-            {c.test ? ` (${text('borrow.testBadge')})` : ''}
+            {c.nft ? ` (${text('borrow.testNftBadge')})` : c.test ? ` (${text('borrow.testBadge')})` : ''}
           </option>
         ))}
         <option value={OTHER}>{text('borrow.pickOther')}</option>
@@ -84,8 +88,35 @@ function AssetChoice({
         </FormField>
       )}
       {suggested.length === 0 && <p className="tier-b">{text('borrow.pickNone')}</p>}
+      {value !== null && <AssetStandardLine asset={value} meta={meta} leg={leg} />}
       {value !== null && <AssetClassLine asset={value} chain={chain} meta={meta} />}
       {value === null && !other && suggested.length > 0 && <p className="tier-b">{format('borrow.pickHint', { chain: chain.name })}</p>}
+    </div>
+  );
+}
+
+/** NFT-13 — the standard the asset's contract claims, said only when it is
+ *  an NFT (an ERC-20 needs no line) or could not be read. */
+function AssetStandardLine({ asset, meta, leg }: { asset: Hex; meta: TokenMetaMap | null; leg: 'lending' | 'collateral' }) {
+  const { format } = useCopy();
+  const std = useAssetStandard(asset);
+  const name = assetName(asset, meta);
+  if (std.state === 'reading' || std.data === 'erc20') return null;
+  if (std.state === 'failed' || std.data === null)
+    return (
+      <Notice tone="warn" tier="A">
+        {format('borrow.standardFailed', { asset: name, reason: std.error ?? 'no answer' })}
+      </Notice>
+    );
+  if (leg === 'lending')
+    return (
+      <Notice tone="warn" tier="A">
+        {format('borrow.lendingNft', { asset: name })}
+      </Notice>
+    );
+  return (
+    <div data-asset-standard={std.data}>
+      <WhyLink summaryKey={std.data === 'erc721' ? 'borrow.nft721' : 'borrow.nft1155'} detailKey="borrow.nftWhy" vars={{ asset: name }} />
     </div>
   );
 }
@@ -141,7 +172,15 @@ export function PairPicker({
         {text('borrow.stepPair')}
       </h2>
       <div className="pair-grid">
-        <AssetChoice label={text('borrow.pickLending')} value={lending} chain={chain} meta={meta} onChange={(a) => onChange({ lending: a, collateral })} testId="pick-lending" />
+        <AssetChoice
+          label={text('borrow.pickLending')}
+          value={lending}
+          chain={chain}
+          meta={meta}
+          onChange={(a) => onChange({ lending: a, collateral })}
+          testId="pick-lending"
+          leg="lending"
+        />
         <AssetChoice
           label={text('borrow.pickCollateral')}
           value={collateral}
@@ -149,6 +188,7 @@ export function PairPicker({
           meta={meta}
           onChange={(a) => onChange({ lending, collateral: a })}
           testId="pick-collateral"
+          leg="collateral"
         />
       </div>
       {same && (

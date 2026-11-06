@@ -80,8 +80,9 @@ export function AcceptOffer({ offerId, chain, own, meta, terms, onClose }: Accep
   /** The approval this flow made and has not yet seen used or put back: a
    *  submitted acceptance that reverts leaves it standing, so the receipt's
    *  measurement puts it back. A ref, because the measurement runs from the
-   *  closure the tracker froze at submission. */
-  const approvalLeft = useRef<{ token: Hex; prior: bigint; amount: bigint } | null>(null);
+   *  closure the tracker froze at submission. `since` is the block the
+   *  approval mined in, so a put-back never reads it as it stood before. */
+  const approvalLeft = useRef<{ token: Hex; prior: bigint; amount: bigint; since: bigint | null } | null>(null);
 
   const amt = (asset: Hex, v: bigint) => tokenAmount(v, asset, meta, format);
   const { readAllowance, allowanceIo, approveExactly, putBack } = approvalFlow({ own, config, chainId: chain.chainId, diamond, copy, amount: amt, setStep });
@@ -146,9 +147,10 @@ export function AcceptOffer({ offerId, chain, own, meta, terms, onClose }: Accep
       //    current allowance does not cover it.
       //    Each step is judged by the allowance it leaves (shared/tx/approval):
       //    a cancelled, replaced or unreadable step is never taken as done.
+      let since: bigint | null = null;
       if (approved) {
-        await approveExactly(io, collateral, lock, prior);
-        approvalLeft.current = { token: collateral, prior, amount: lock };
+        since = await approveExactly(io, collateral, lock, prior);
+        approvalLeft.current = { token: collateral, prior, amount: lock, since };
       }
 
       // Anything that stops the acceptance after the approval puts it back.
@@ -161,7 +163,7 @@ export function AcceptOffer({ offerId, chain, own, meta, terms, onClose }: Accep
             remedy: null,
           });
         approvalLeft.current = null;
-        const after = await putBack(collateral, prior, lock);
+        const after = await putBack(collateral, prior, lock, since);
         throw new StatedRefusal({
           code: 'AcceptStopped',
           reason: `${reason} ${after.sentence}`,
@@ -215,7 +217,7 @@ export function AcceptOffer({ offerId, chain, own, meta, terms, onClose }: Accep
       const left = approvalLeft.current;
       approvalLeft.current = null;
       if (!left) return null;
-      const after = await putBack(left.token, left.prior, left.amount);
+      const after = await putBack(left.token, left.prior, left.amount, left.since);
       const label = format('approval.legBack', { amount: amt(left.token, left.prior) });
       return after.ok ? { status: 'done', label } : { status: 'not-done', label, reason: after.sentence };
     },

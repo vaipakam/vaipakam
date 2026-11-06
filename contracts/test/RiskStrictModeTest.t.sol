@@ -18,8 +18,7 @@ import {OracleFacet} from "../src/facets/OracleFacet.sol";
  *         something. Default-off: a normal vault never sees the requirement.
  *
  *         Enforcement lives in `LibRiskAccess.assertActorMayTransact` (shared by
- *         the create / match / obligation gates) + `assertAcceptorMayTransact`
- *         (accept) — exercised here through the CREATE chokepoint
+ *         the create / match / obligation / accept gates) — exercised here through the CREATE chokepoint
  *         (`OfferCreateFacet` gates the creator). The explicit ack is keyed +
  *         version-anchored exactly like the illiquid consent, so a terms bump
  *         re-locks it; turning strict mode OFF stamps a disable-cooldown anchor

@@ -450,6 +450,20 @@ above. Each resolves here, so a route reviewer needs no private file:
   moved), a raise names the observed change counter and terms version, a
   waiting period is stated from the chain and the step is never offered
   twice while it runs, and the flow's review reads again afterwards.
+- **RB-NFT-APPROVAL** — a flow that pledges an NFT asks the wallet to
+  approve that one token, never the collection, and only when the token's
+  own approval (or a collection approval the wallet set before) does not
+  already let the protocol move it. Which standard a collection follows is
+  the contract's own answer (ERC-165); a read that failed says the standard
+  is unknown and offers nothing, never a guess. The approval counts only
+  when it reads the protocol at the block its receipt mined in. When what it
+  was for does not go through, it is put back, but only while it still reads
+  the protocol and the wallet still holds the token; anything else is stated,
+  never overwritten. The put-back reads the approval no earlier than the
+  block the approval mined in (the same holds for an ERC-20 allowance), so a
+  node that has not caught up can never pass a skipped reset as done. An ERC-1155 token needs an operator approval over the
+  whole collection taken back after the action, so it is named and handed to
+  the current app until that step is built.
 
 ## 3. Companion specifications
 

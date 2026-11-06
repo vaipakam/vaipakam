@@ -42,21 +42,21 @@ export interface GateBlock {
   code: number;
 }
 
-/** The code the accept gate softens with the acceptor's acknowledgement,
- *  which every acceptance carries: a warning, never a block. */
-export const GATE_ACK_COVERED = 4;
-
 /**
  * The risk-access verdict for an acceptance, from the combined preview
  * (`previewOfferAcceptBlock`, the creator's code first) and the creator's
  * own (`previewCreatorBlock`). The one rule both the offer list and the
  * acceptance review read, so a row is never marked takeable that the
- * review then blocks. Any code other than none and the acknowledgement-
- * covered one blocks.
+ * review then blocks. Every code other than none blocks, the soft
+ * illiquid-pair code (4) included: the acceptance's own acknowledgement no
+ * longer stands in for the pair consent (owner decision 2026-11-06), so the
+ * acceptor's standing consent, armed past any waiting period, is the only
+ * way through, the same as the lender's. On a protocol that still softens
+ * it, a consent clears it all the same, so nothing is wrongly blocked.
  */
 export function gateBlock(gate: number, creatorGate: number): GateBlock | null {
   if (creatorGate !== 0) return { creator: true, code: creatorGate };
-  if (gate !== 0 && gate !== GATE_ACK_COVERED) return { creator: false, code: gate };
+  if (gate !== 0) return { creator: false, code: gate };
   return null;
 }
 

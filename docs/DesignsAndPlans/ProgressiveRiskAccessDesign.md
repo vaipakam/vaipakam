@@ -11,6 +11,13 @@ mitigation design for backlog #663). **Layers on top of** #662
 > standing phishing surface. Every risk-access change is now a direct call by
 > the vault owner. Passages below about relayed grants are history.
 
+> **Update (#3231, owner decision 2026-11-06):** the later #729 rule that let
+> an acceptor's #662 acceptance acknowledgement stand in for a standing
+> illiquid-pair consent is retired. Every party to an illiquid pair now needs
+> a standing consent that has already cleared the unlock cooldown when the
+> deal lands, so a stolen key cannot consent and deal in one sitting. The
+> accept preview no longer returns its soft code 4.
+
 > The card already carries RATIFIED resolved decisions (2026-06-21). This
 > doc does not re-decide them — it **grounds** each one against the
 > current code + FunctionalSpec and surfaces where the code does **not**

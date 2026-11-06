@@ -1107,6 +1107,12 @@ One lender takes the whole amount, or nobody does. Each figure is read exactly a
 
 Before your wallet opens, the app asks the protocol to try your request as a dry run, so the review shows the protocol's own answer. It lists what you lock now, the amount, rate and term, what you would receive and how the fee is set (the fee rate in force when a lender takes it, less your fee-discount tier at that moment; the figure shown uses today's rate), what you would owe, every lifecycle term, when the request lapses, the loan-to-value and whether an approval is needed. You tick a box to agree to the Risk Disclosures and Terms. Your wallet approves exactly the collateral if needed, the app tries the request again, and only then posts it. If it stops after an approval, the app asks to put the approval back and says whether that happened. Afterwards the app checks on the chain the request recorded and the collateral locked.
 
+<a id="borrow-nft-collateral"></a>
+
+### Borrow: An NFT as Collateral
+
+A request can lock one NFT instead of a token. Pick the collection as what you lock (the test collections are marked as NFTs, or paste an address); whether an address is a token or an NFT collection is read from its contract. Then type the NFT's number, its token id, shown in your wallet or on the collection's page; the form says at once whether your wallet holds it. The protocol values an NFT at zero, whatever it sells for elsewhere: a loan against one has no loan-to-value and no price-based liquidation, and if you do not repay by the end of the grace period the lender receives the NFT itself. Posting asks your wallet to approve the protocol for that one NFT only, never the rest of your collection, and moving it into your vault clears that approval by itself; if the request stops after the approval, the app asks to put it back and says whether that happened. NFTs that come in quantities need an approval over the whole collection, so for now the app sends you to the current app's Borrow page for those; taking a lender's offer that asks for an NFT is also done there for now.
+
 <a id="risk-access"></a>
 
 ### Risk Access: Your Risk Level

@@ -33,6 +33,16 @@ export function suggestedAssets(chain: SupportedChain): Candidate[] {
   return out;
 }
 
+/** The suggested collateral on `chain`: the ERC-20s above, then the test
+ *  NFT collections a testnet publishes (NFT-13), marked as such. */
+export function suggestedCollateral(chain: SupportedChain): (Candidate & { nft: boolean })[] {
+  const out: (Candidate & { nft: boolean })[] = suggestedAssets(chain).map((c) => ({ ...c, nft: false }));
+  for (const a of faucetAssets(chain) ?? []) {
+    if (a.kind === 'nft' && !out.some((c) => c.address.toLowerCase() === a.address.toLowerCase())) out.push({ address: getAddress(a.address), test: true, nft: true });
+  }
+  return out;
+}
+
 /** A pasted address, checked for shape only; whether it is a token the
  *  protocol can use is the protocol's answer, read next. */
 export function parsePasted(text: string): Hex | null {

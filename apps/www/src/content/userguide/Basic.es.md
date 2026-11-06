@@ -1134,6 +1134,12 @@ Un prestamista toma el importe completo, o nadie lo toma. Cada cifra se lee exac
 
 Antes de que se abra tu wallet, la app pide al protocolo que pruebe tu solicitud como simulación, así que la revisión muestra la respuesta del propio protocolo. Indica lo que bloqueas ahora, el importe, la tasa y el plazo, lo que recibirías y cómo se fija la comisión (la tasa de comisión vigente cuando un prestamista la acepte, menos tu nivel de descuento de comisiones en ese momento; la cifra mostrada usa la tasa de hoy), lo que deberías, cada condición del préstamo, cuándo vence la solicitud, la relación préstamo-valor y si hace falta una aprobación. Marcas una casilla para aceptar las Divulgaciones de riesgos y los Términos. Tu wallet aprueba exactamente la garantía si hace falta, la app vuelve a probar la solicitud y solo entonces la publica. Si se detiene tras una aprobación, la app pide restablecerla y dice si lo logró. Después, la app comprueba en la cadena la solicitud registrada y la garantía bloqueada.
 
+<a id="borrow-nft-collateral"></a>
+
+### Borrow: un NFT como garantía
+
+Una solicitud puede bloquear un NFT en lugar de un token. Elige la colección como lo que bloqueas (las colecciones de prueba están marcadas como NFT, o pega una dirección); si una dirección es un token o una colección de NFT se lee de su contrato. Luego escribe el número del NFT, su id de token, que muestra tu billetera o la página de la colección; el formulario dice al momento si tu billetera lo tiene. El protocolo valora un NFT en cero, sea cual sea su precio en otro lugar: un préstamo con él no tiene relación préstamo-valor ni liquidación por precio, y si no pagas antes del fin del periodo de gracia, el prestamista recibe el propio NFT. Al publicar, tu billetera aprueba al protocolo solo para ese NFT, nunca para el resto de tu colección, y moverlo a tu bóveda borra esa aprobación por sí solo; si la solicitud se detiene tras la aprobación, la app pide restablecerla y dice si ocurrió. Los NFT que vienen en cantidades necesitan una aprobación sobre toda la colección, así que por ahora la app te envía a la página Borrow de la app actual para esos; aceptar la oferta de un prestamista que pide un NFT también se hace allí por ahora.
+
 <a id="risk-access"></a>
 
 ### Risk Access: tu nivel de riesgo

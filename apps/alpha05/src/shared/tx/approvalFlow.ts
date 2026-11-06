@@ -42,19 +42,24 @@ export interface PutBack {
 export interface ApprovalFlow {
   /** The wallet's allowance to the Diamond for `token`, now or at `block`. */
   readAllowance: (token: Hex, block?: bigint) => Promise<bigint>;
-  /** The wallet and chain operations the shared allowance rule runs on. */
-  allowanceIo: (token: Hex, onStep?: AllowanceIo['onStep']) => AllowanceIo;
+  /** The wallet and chain operations the shared allowance rule runs on.
+   *  With `since`, a read without a named block reads no earlier than it. */
+  allowanceIo: (token: Hex, onStep?: AllowanceIo['onStep'], since?: bigint | null) => AllowanceIo;
   /**
    * Approves exactly `amount` of `token`, overwriting `prior` (the value the
    * review counted the steps from). Throws a stated refusal when the
    * allowance moved meanwhile, a step did not land, or the wallet declined
    * after a step had landed; a step of this flow that landed ahead of the
    * failure is put back while the allowance still reads the value it set.
+   * Resolves with the block the approval mined in, which a put-back needs.
    */
-  approveExactly: (io: AllowanceIo, token: Hex, amount: bigint, prior: bigint) => Promise<void>;
+  approveExactly: (io: AllowanceIo, token: Hex, amount: bigint, prior: bigint) => Promise<bigint | null>;
   /** Puts the allowance back to `prior` (best effort, and only if nothing
-   *  else changed it since the approval), and says what happened. */
-  putBack: (token: Hex, prior: bigint, approvedAmount: bigint) => Promise<PutBack>;
+   *  else changed it since the approval), and says what happened. `since`
+   *  is the block the approval mined in: the allowance is never read as it
+   *  stood before it, whichever node answers, so a reset is never skipped
+   *  as already done. */
+  putBack: (token: Hex, prior: bigint, approvedAmount: bigint, since: bigint | null) => Promise<PutBack>;
 }
 
 /** The refusal a flow raises when the allowance it counted on moved. */
@@ -67,22 +72,27 @@ export function approvalFlow(d: ApprovalFlowDeps): ApprovalFlow {
   const { text, format } = copy;
   const account = own.account;
 
-  async function readAllowance(token: Hex, block?: bigint): Promise<bigint> {
-    const x = await own.read((c) =>
-      c.readContract({
+  async function readAllowance(token: Hex, block?: bigint, since?: bigint | null): Promise<bigint> {
+    const x = await own.read(async (c) => {
+      let at = block;
+      if (at === undefined && since !== undefined && since !== null) {
+        const head = await c.getBlockNumber({ cacheTime: 0 });
+        at = head < since ? since : head;
+      }
+      return c.readContract({
         address: token,
         abi: erc20Abi,
         functionName: 'allowance',
         args: [account, diamond],
-        blockNumber: block,
-      }),
-    );
+        blockNumber: at,
+      });
+    });
     return x.value;
   }
 
-  function allowanceIo(token: Hex, onStep?: AllowanceIo['onStep']): AllowanceIo {
+  function allowanceIo(token: Hex, onStep?: AllowanceIo['onStep'], since?: bigint | null): AllowanceIo {
     return {
-      read: (block) => readAllowance(token, block),
+      read: (block) => readAllowance(token, block, since),
       accepts: (amount) => own.read((c) => tokenAcceptsApproval(c, token, account, diamond, amount)).then((x) => x.value),
       send: (amount) =>
         writeContract(config, {
@@ -98,14 +108,14 @@ export function approvalFlow(d: ApprovalFlowDeps): ApprovalFlow {
     };
   }
 
-  async function putBack(token: Hex, prior: bigint, approvedAmount: bigint): Promise<PutBack> {
+  async function putBack(token: Hex, prior: bigint, approvedAmount: bigint, since: bigint | null): Promise<PutBack> {
     // The same rule as the approval: the reset counts only when the
     // allowance reads `prior` after it, whatever the wallet did with it.
     const set = await setAllowance(
-      allowanceIo(token, () => d.setStep(text('approval.stepRestore'))),
+      allowanceIo(token, () => d.setStep(text('approval.stepRestore')), since),
       prior,
       approvedAmount,
-    ).catch((e: unknown) => ({ ok: false as const, why: 'refused' as const, sent: 0, now: null, last: null, pending: null, reason: refusalFromError(e).reason }));
+    ).catch((e: unknown) => ({ ok: false as const, why: 'refused' as const, sent: 0, now: null, last: null, at: null, pending: null, reason: refusalFromError(e).reason }));
     if (set.ok) return { ok: true, sentence: format('approval.restored', { amount: d.amount(token, prior) }) };
     const why =
       set.why === 'changed'
@@ -121,11 +131,11 @@ export function approvalFlow(d: ApprovalFlowDeps): ApprovalFlow {
     return { ok: false, sentence: format('approval.notRestored', { why, amount: d.amount(token, set.now) }) };
   }
 
-  async function approveExactly(io: AllowanceIo, token: Hex, amount: bigint, prior: bigint): Promise<void> {
+  async function approveExactly(io: AllowanceIo, token: Hex, amount: bigint, prior: bigint): Promise<bigint | null> {
     // `prior` is the allowance this flow overwrites and a stop restores, so
     // nothing is sent if it moved since it was read.
     const set = await setAllowance(io, amount, prior);
-    if (set.ok) return;
+    if (set.ok) return set.at;
     // The wallet refused the first prompt: nothing was sent.
     if (set.why === 'refused' && set.sent === 0) throw new Error(set.reason ?? 'refused');
     if (set.why === 'changed') throw allowanceMoved(copy);
@@ -134,7 +144,7 @@ export function approvalFlow(d: ApprovalFlowDeps): ApprovalFlow {
     // only while the allowance still reads the value this flow set. Any other
     // value (a replacement for a different amount, another transaction) is
     // stated, never overwritten.
-    const back = set.pending === null && set.last !== null && set.now === set.last && set.now !== prior ? ` ${(await putBack(token, prior, set.last)).sentence}` : '';
+    const back = set.pending === null && set.last !== null && set.now === set.last && set.now !== prior ? ` ${(await putBack(token, prior, set.last, set.at)).sentence}` : '';
     throw new StatedRefusal({
       code: 'ApprovalNotSet',
       reason:

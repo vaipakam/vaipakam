@@ -1824,11 +1824,17 @@ Basic 发布单一数值的请求：`amount` = `amountMax`，`interestRateBps` =
 
 审核从钱包模拟 `createOffer`，并读取两侧的类别、`getEffectiveGraceSeconds(durationDays)`、`getLoanInitiationFeeBps`、最长期限、钱包的金库、余额和授权额度，两侧均为流动资产时还读取 `calculateLTV`；每个区块以及钱包打开前都会重新读取。授权额度不足时，模拟只能走到划转抵押品这一步，因此代币的划转错误或没有协议错误名的回滚会显示为待完成的批准，而有名称的协议错误则视为拒绝。完成精确批准后，再次模拟 `createOffer` 并发送；批准后若中止，且没有其他改动，授权额度会恢复为原值。结果读取此钱包的 `OfferCreated` 以及抵押品转入金库的 `Transfer`。
 
+<a id="borrow-nft-collateral"></a>
+
+### Borrow：以 NFT 作为抵押品
+
+抵押品的标准通过 `supportsInterface` 读取（ERC-721 `0x80ac58cd`，ERC-1155 `0xd9b67a26`）；回滚视为两者都不是，读取失败则不提供请求。ERC-721 请求发送 `collateralAssetType` 1、`collateralTokenId` 为输入的 ID、`collateralQuantity` 1，以及 `collateralAmount` = `collateralAmountMax` = 0；风险交易对以该代币 ID 为键。审核在同一区块读取 `ownerOf`、`getApproved` 和 `isApprovedForAll(wallet, Diamond)`；由其他钱包持有的代币或回滚的 `ownerOf` 会阻止请求。在没有任何授权时，试运行会停在代币的 `ERC721InsufficientApproval`，显示为待完成的授权。授权为 `approve(Diamond, id)`，只有当回执所在区块的 `getApproved` 读到 Diamond 时才算完成；之后若停止，只有在授权仍指向 Diamond 且钱包仍持有该代币时，才会恢复为之前的地址。从不请求 `setApprovalForAll`。结果读取 `OfferCreated` 以及该代币自身从钱包到金库的 `Transfer`（四个 topic）。ERC-1155 抵押品以及要求 NFT 的出借人报价转至当前应用。
+
 <a id="risk-access"></a>
 
 ### Risk Access：你的风险等级
 
-开关是 `getRiskAccessGateEnabled`。一个流程需要哪一步，由协议自身的回答决定：接受报价时，在 `previewCreatorBlock` 显示贷方未被阻挡之后，看 `previewOfferAcceptBlock`（1 = 等级过低，2 = 交易对同意，3 = 严格模式确认，4 = 已由接受本身的确认覆盖，属于提醒而非阻挡）；发布请求时，看 `createOffer` 模拟执行返回的 `RiskTierTooLow`、`IlliquidPairNotConsented` 或 `MidTierPairNotAcknowledged`。该步骤在同一区块内读取交易对的 `pairRequiredRiskLevel`（报价则用 `acceptMidTierAckPair`）、`getVaultRiskTier`、`getEffectiveRiskTier`、对照 `getCurrentRiskTermsVersion` 的 `getVaultRiskTierVersion`、`getRiskTierUnlockAt`、`getRiskAccessUnlockCooldown` 和 `getRiskTierMutationNonce`，对交易对则读取 `isPairConsentPending` 与 `hasIlliquidPairConsent`，或 `isMidTierAckPending` 与 `midTierStrictBlocked`。提高等级使用 `setVaultRiskTierChecked(level, nonce, termsVersion)`，提高到该交易对所需的最低等级；若审核之后有其他等级写入或条款变更，交易会被拒绝且不改变任何内容。交易对步骤是 `setIlliquidPairConsent(pair, true)` 或 `setMidTierPairAck(pair)`。仍在等待中的等级提高或仍待生效的交易对步骤不会再次提供。没有任何读取接口返回待生效交易对步骤的生效时间，因此审核界面会说明无法读取该时间；只有该步骤本身的完成卡片会给出它，即收据所在区块时间加等待期。结果在收据所在区块读回。
+开关是 `getRiskAccessGateEnabled`。一个流程需要哪一步，由协议自身的回答决定：接受报价时，在 `previewCreatorBlock` 显示贷方未被阻挡之后，看 `previewOfferAcceptBlock`（1 = 等级过低，2 = 交易对同意，3 = 严格模式确认，4 = 过去由接受时的确认覆盖的非流动交易对；它与 2 一样构成阻止，交易对同意可解除）；发布请求时，看 `createOffer` 模拟执行返回的 `RiskTierTooLow`、`IlliquidPairNotConsented` 或 `MidTierPairNotAcknowledged`。该步骤在同一区块内读取交易对的 `pairRequiredRiskLevel`（报价则用 `acceptMidTierAckPair`）、`getVaultRiskTier`、`getEffectiveRiskTier`、对照 `getCurrentRiskTermsVersion` 的 `getVaultRiskTierVersion`、`getRiskTierUnlockAt`、`getRiskAccessUnlockCooldown` 和 `getRiskTierMutationNonce`，对交易对则读取 `isPairConsentPending` 与 `hasIlliquidPairConsent`，或 `isMidTierAckPending` 与 `midTierStrictBlocked`。提高等级使用 `setVaultRiskTierChecked(level, nonce, termsVersion)`，提高到该交易对所需的最低等级；若审核之后有其他等级写入或条款变更，交易会被拒绝且不改变任何内容。交易对步骤是 `setIlliquidPairConsent(pair, true)` 或 `setMidTierPairAck(pair)`。仍在等待中的等级提高或仍待生效的交易对步骤不会再次提供。没有任何读取接口返回待生效交易对步骤的生效时间，因此审核界面会说明无法读取该时间；只有该步骤本身的完成卡片会给出它，即收据所在区块时间加等待期。结果在收据所在区块读回。
 
 <a id="terms-gate"></a>
 

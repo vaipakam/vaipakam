@@ -10,15 +10,6 @@ import {LibVaipakam} from "./LibVaipakam.sol";
 ///      an asset is. A `staticcall` (view) — no state, no reentrancy surface.
 interface IRiskAccessOracle {
     function getEffectiveLiquidityTier(address asset) external view returns (uint8);
-    /// @dev The SAME liquidity classification the accept-time #662 check feeds to
-    ///      `_ackCoversIlliquidLegs` (`ctx.{lending,collateral}Liquidity ==
-    ///      Illiquid`, both from `OracleFacet.checkLiquidity`). The ack-aware
-    ///      accept preview (#735) reuses it so it models the gate's ack
-    ///      substitution with zero drift.
-    function checkLiquidity(address asset)
-        external
-        view
-        returns (LibVaipakam.LiquidityStatus);
 }
 
 /**
@@ -114,9 +105,8 @@ library LibRiskAccess {
         return LibVaipakam.RiskAccessLevel.IlliquidCustom;
     }
 
-    /// @notice Per-leg classification — the SINGLE source of truth reused by the
-    ///         gate AND the accept-time #662-ack coverage check (Codex #729 r1),
-    ///         so the two can never diverge. Returns the required level + the
+    /// @notice Per-leg classification — the SINGLE source of truth the gate and
+    ///         its previews share. Returns the required level + the
     ///         CLASSIFICATION ASSET that level was derived from.
     /// @dev    Forces any NFT-typed leg to `IlliquidCustom` by AssetType BEFORE
     ///         consulting ERC-20 liquidity (#727 r4) — except a rental's NFT
@@ -347,142 +337,14 @@ library LibRiskAccess {
         }
     }
 
-    /// @notice Accept-path gate (#671 phase 2 / #728) — the acceptor's tier must
-    ///         cover the pair, and for an `IlliquidCustom` pair the acceptor must
-    ///         have consented to it.
-    /// @dev    The #662⇄#671 UNIFICATION (Codex #729 r1): the illiquid consent is
-    ///         satisfied by EITHER a standing fresh per-pair `illiquidPairConsent`
-    ///         OR the acceptor's #662 acceptance acknowledgement — but ONLY when
-    ///         that ack names EXACTLY the assets this gate classifies illiquid for
-    ///         the pair (`_ackCoversIlliquidLegs`, reusing the SAME per-leg
-    ///         classification so #662 and #671 can't diverge) AND the acceptor's
-    ///         risk terms are still fresh. The two classifications differ for an
-    ///         NFT RENTAL (this gate keys the lend leg off `prepayAsset`, while the
-    ///         #662 ack names the rented NFT), so a rental with an illiquid prepay
-    ///         token correctly falls back to requiring a standing per-pair consent.
-    ///         `ackLend` / `ackColl` are the acceptor's signed
-    ///         `acknowledgedIlliquid{Lending,Collateral}Asset` (already injected
-    ///         + verified at the call site). `lendAckVerified` / `collAckVerified`
-    ///         say whether the #662 check at the call site ACTUALLY validated that
-    ///         leg's ack against the live liquidity read — only a verified ack may
-    ///         substitute for standing consent (Codex #729 r3; see
-    ///         `_ackCoversIlliquidLegs`).
-    function assertAcceptorMayTransact(
-        LibVaipakam.Storage storage s,
-        address actor,
-        PairId memory p,
-        address ackLend,
-        address ackColl,
-        bool lendAckVerified,
-        bool collAckVerified
-    ) internal view {
-        LibVaipakam.RiskAccessLevel required = _pairRequiredLevel(s, p);
-        LibVaipakam.RiskAccessLevel actorTier = effectiveTier(s, actor);
-        if (uint8(actorTier) < uint8(required)) {
-            revert RiskTierTooLow(actor, uint8(required), uint8(actorTier));
-        }
-        if (required != LibVaipakam.RiskAccessLevel.IlliquidCustom) {
-            // RD-1 strict mode (#728 PR-2d): a strict-mode acceptor must hold a
-            // fresh EXPLICIT ack for a mid-tier pair too — and the #662 acceptance
-            // acknowledgement does NOT substitute (that ack is illiquid-asset
-            // identity, not the deliberate per-pair mid-tier attestation strict
-            // mode requires). No-op when the acceptor isn't in strict mode.
-            if (midTierStrictBlock(s, actor, p)) {
-                revert MidTierPairNotAcknowledged(actor, pairKey(p));
-            }
-            return;
-        }
-        bytes32 pk = pairKey(p);
-        if (_illiquidConsentEffective(s, actor, pk)) return; // standing fresh consent
-        // #662 ack-substitution — only with FRESH risk terms (a governance terms
-        // bump re-locks the substitution just like a standing consent; Codex #729
-        // r1) AND an ack that covers exactly the gate's illiquid legs.
-        //
-        // TWO freshness anchors, both required (#730): the vault's TIER anchor
-        // (`riskTierVersionAt`, refreshed by re-affirming the tier) AND the
-        // version named INSIDE the signed acknowledgement (`acceptAckTermsVersion`,
-        // injected by `_verifyAndBindAccept`). Anchoring only on the tier let an
-        // ack signed before a `bumpRiskTermsVersion` be submitted afterward as
-        // fresh per-pair consent once the user refreshed merely their tier (the
-        // signature itself was never re-bound to the new terms).
-        //
-        // The two anchors are DIFFERENT KINDS on purpose (Codex #736 r1+r3):
-        //  - the tier anchor is CONTRACT-written (`setVaultRiskTier` stamps it to
-        //    the live version), so it is monotonic and can never run ahead — `>=`
-        //    on the numeric version is safe and matches the read-time re-lock.
-        //  - the ack anchor is SIGNER-controlled (`_verifyAndBindAccept` copies the
-        //    acceptor's value verbatim). A NUMERIC version is predictable, so even
-        //    an exact `==` lets a UI pre-stamp `N+1` and have the stale ack activate
-        //    on the next bump. So the ack binds the UNGUESSABLE `currentRiskTermsHash`
-        //    (a commit-reveal random SECRET — `revealRiskTermsBump`, never the public
-        //    terms-doc hash) and must match it EXACTLY — a value a pre-signing UI
-        //    cannot predict, proving the ack was signed after the live terms were
-        //    published.
-        if (
-            s.riskTierVersionAt[actor] >= s.currentRiskTermsVersion
-                && s.acceptAckTermsHash == s.currentRiskTermsHash
-                && _ackCoversIlliquidLegs(
-                    s, p, ackLend, ackColl, lendAckVerified, collAckVerified
-                )
-        ) {
-            return;
-        }
-        revert IlliquidPairNotConsented(actor, pk);
-    }
-
-    /// @dev True iff the acceptor's #662 acknowledgement names the classification
-    ///      asset of EVERY leg this gate deems `IlliquidCustom` — AND that ack was
-    ///      actually VERIFIED by the call-site #662 check (`*AckVerified`). Reuses
-    ///      `_lendLegLevel` / `_collLegLevel` (the single classification source),
-    ///      so a rental's prepay-substituted lend leg (classAsset == prepay) is
-    ///      NOT covered by the #662 ack (which names the rented NFT) — that case
-    ///      falls through to requiring a standing consent.
-    ///
-    ///      The `*AckVerified` gate (Codex #729 r3) closes a substitution bypass:
-    ///      the #662 check only validates `ack == lendingAsset` for legs it sees
-    ///      as `Illiquid` via `checkLiquidity`. A leg that this gate deems
-    ///      `IlliquidCustom` for a DIFFERENT reason — a liquid-looking ERC-20
-    ///      demoted to effective tier 0, or a rental's illiquid `prepayAsset` — was
-    ///      never validated, so its `ack*` slot is attacker-chosen and must NOT be
-    ///      allowed to satisfy the equality. Those derived-tier / prepay cases are
-    ///      forced back to a standing `illiquidPairConsent`.
-    function _ackCoversIlliquidLegs(
-        LibVaipakam.Storage storage s,
-        PairId memory p,
-        address ackLend,
-        address ackColl,
-        bool lendAckVerified,
-        bool collAckVerified
-    ) private view returns (bool) {
-        (LibVaipakam.RiskAccessLevel lendLvl, address lendClass) =
-            _lendLegLevel(s, p);
-        if (
-            lendLvl == LibVaipakam.RiskAccessLevel.IlliquidCustom
-                && !(lendAckVerified && ackLend == lendClass)
-        ) {
-            return false;
-        }
-        (LibVaipakam.RiskAccessLevel collLvl, address collClass) =
-            _collLegLevel(s, p);
-        if (
-            collLvl == LibVaipakam.RiskAccessLevel.IlliquidCustom
-                && !(collAckVerified && ackColl == collClass)
-        ) {
-            return false;
-        }
-        return true;
-    }
-
     /// @notice Non-reverting mirror of `assertActorMayTransact` for dry-run
     ///         surfaces (`OfferAcceptFacet.previewAccept`, Codex #729 r3).
     /// @return 0 = OK, 1 = tier too low, 2 = illiquid pair needs standing consent,
     ///         3 = strict-mode mid-tier pair needs a fresh explicit ack (PR-2d).
-    /// @dev    Standing-consent semantics: a preview has no #662 accept ack to
-    ///         substitute, so an acceptor who WOULD clear the illiquid boundary by
-    ///         acknowledging at sign-time still surfaces code 2 here. That is the
-    ///         correct conservative UX hint — the frontend then collects the
-    ///         matching acknowledgement (or a standing consent) before enabling
-    ///         Accept, rather than the dry-run silently reporting success.
+    /// @dev    Standing consent only, for every party (#3231): nothing signed
+    ///         at accept time stands in for the per-pair illiquid consent, so
+    ///         the preview and the gate read the same rule and code 2 means the
+    ///         party must record a consent and wait out its cooldown first.
     function previewActorBlock(
         LibVaipakam.Storage storage s,
         address actor,
@@ -501,68 +363,6 @@ library LibRiskAccess {
         // frontend collects the ack first instead of letting the tx revert.
         if (midTierStrictBlock(s, actor, p)) return 3;
         return 0;
-    }
-
-    /// @notice Ack-AWARE variant of {previewActorBlock} for the ACCEPTOR leg of an
-    ///         accept preview (#735 item 1). An accept ALWAYS carries the
-    ///         acceptor's #662 acknowledgement, so — unlike the conservative
-    ///         standing-consent mirror — this models the ack substitution and
-    ///         REFINES an illiquid-pair code 2 to code 4 ("the acceptor's standard
-    ///         #662 ack, which the dapp's accept-signing flow always produces, WILL
-    ///         clear this boundary at sign-time") whenever BOTH hold:
-    ///           - the acceptor's TIER anchor is still fresh
-    ///             (`riskTierVersionAt >= currentRiskTermsVersion`) — a terms bump
-    ///             re-locks the substitution exactly as it re-locks a standing
-    ///             consent, so a stale anchor stays a hard code 2; AND
-    ///           - every illiquid leg is ACK-COVERABLE under the SAME
-    ///             `_ackCoversIlliquidLegs` predicate the gate enforces, fed the
-    ///             ack the dapp signs (`ackLend = lendAsset`, `ackColl = collAsset`)
-    ///             and the verified flags derived the SAME way the call site does
-    ///             (`checkLiquidity(leg) == Illiquid`). The derived-tier-0 and
-    ///             rental-prepay legs the gate forces to a standing consent are
-    ///             therefore NOT softened — they stay code 2.
-    /// @return Same codes as {previewActorBlock} plus 4 (illiquid, but the #662
-    ///         ack will cover it — a SOFT warning the dapp may proceed past).
-    /// @dev    Codes 1 (tier too low) and 3 (strict mid-tier) are returned
-    ///         unchanged — no #662 illiquid ack can heal those. The ack HASH anchor
-    ///         (`acceptAckTermsHash == currentRiskTermsHash`) is NOT modeled here:
-    ///         there is no signature yet, and the signing flow stamps the LIVE
-    ///         `currentRiskTermsHash` immediately before signing, so that anchor
-    ///         holds by construction at accept time.
-    function previewAcceptorBlockAckAware(
-        LibVaipakam.Storage storage s,
-        address actor,
-        PairId memory p
-    ) internal view returns (uint8) {
-        uint8 base = previewActorBlock(s, actor, p);
-        if (base != 2) return base; // only an illiquid-consent gap can self-heal
-        // A terms bump re-locks the ack substitution just like a standing consent
-        // (Codex #729 r1); a stale tier anchor can't be cleared by re-signing alone.
-        if (s.riskTierVersionAt[actor] < s.currentRiskTermsVersion) return 2;
-        if (
-            _ackCoversIlliquidLegs(
-                s,
-                p,
-                p.lendAsset, // the dapp acks the literal lending asset…
-                p.collAsset, // …and the literal collateral asset
-                _legReadsIlliquid(p.lendAsset),
-                _legReadsIlliquid(p.collAsset)
-            )
-        ) {
-            return 4;
-        }
-        return 2;
-    }
-
-    /// @dev Models the accept call site's per-leg `*AckVerified` flag: the #662
-    ///      check only validates a leg's ack when that leg reads `Illiquid` via
-    ///      `OracleFacet.checkLiquidity` (LoanFacet `_maybeRunInitialRiskGates`).
-    ///      A zero / non-ERC20 address can't be liquidity-classified, so it is
-    ///      treated as unverified (false) rather than reverting the preview.
-    function _legReadsIlliquid(address asset) private view returns (bool) {
-        if (asset == address(0)) return false;
-        return IRiskAccessOracle(address(this)).checkLiquidity(asset)
-            == LibVaipakam.LiquidityStatus.Illiquid;
     }
 
     /// @notice Risk-gate revert reasons (carried in the facet ABI).
