@@ -7,7 +7,7 @@
  */
 import type { CopyAccess, CopyKey } from '../copy/useCopy';
 import type { Posture } from '../capability/types';
-import type { Receipt } from '../receipt/types';
+import { figured, textValue, type Receipt, type ReceiptText } from '../receipt/types';
 import { assetName, exactTokenAmount, tokenAmount, type TokenMetaMap } from '../reads/tokens';
 import { formatBps, formatScaled, formatSpan, formatUtc } from '../ui/format';
 import { pageHandoff } from '../../routes/pageMap';
@@ -57,7 +57,7 @@ export function requestReceipt(r: PostReview, meta: TokenMetaMap | null, copy: P
   const largest = ranged ? postFigures(parsed.amountMax, parsed.rateBps, parsed.durationDays, r.lifBps) : null;
   const returned = parsed.collateral - parsed.collateralFloor;
   const amount = (asset: Hex, value: bigint) => ({ kind: 'amount' as const, asset, amount: value });
-  const textRow = (label: CopyKey, value: string, binding: boolean) => ({ label: text(label), value: { kind: 'text' as const, text: value }, binding });
+  const textRow = (label: CopyKey, value: ReceiptText, binding: boolean) => ({ label: text(label), value: textValue(value), binding });
   const illiquid = r.lendingClass === 'illiquid' || r.collateralClass === 'illiquid';
   const h = r.holding;
   const tokenName = lockedName(h, pair.collateral, meta, format);
@@ -133,7 +133,9 @@ export function requestReceipt(r: PostReview, meta: TokenMetaMap | null, copy: P
             ? format('request.approvalToken', { token: tokenName })
             : h.kind === 'erc1155'
               ? format('request.approvalOperator', { collection })
-              : format(h.approvalSteps === 2 ? 'request.approvalZeroFirst' : 'request.approvalNeeded', { amount: exactTokenAmount(parsed.collateral, pair.collateral, meta, format) }),
+              : format(h.approvalSteps === 2 ? 'request.approvalZeroFirst' : 'request.approvalNeeded', {
+                  amount: exactTokenAmount(parsed.collateral, pair.collateral, meta, format),
+                }),
       },
       binding: false,
       movesOut: needsApproval(r),
@@ -143,7 +145,7 @@ export function requestReceipt(r: PostReview, meta: TokenMetaMap | null, copy: P
   // Where the request is followed and cancelled after posting: said before
   // the collateral locks, not discovered afterwards (pageHandoff).
   const manage = pageHandoff('/offers');
-  const consequences = [
+  const consequences: ReceiptText[] = [
     text('request.loseLocked'),
     ...(manage.kind === 'here' ? [] : [text(manage.kind === 'currentApp' ? 'request.manageElsewhere' : 'request.manageNowhere')]),
     text(r.draft.expiresAt === 0n ? 'request.loseOpen' : 'request.loseLapse'),
@@ -175,14 +177,14 @@ export function requestReceipt(r: PostReview, meta: TokenMetaMap | null, copy: P
  * lock stays committed to the request for later matches: the protocol
  * returns it only when the request closes or is cancelled, never per match.
  */
-export function matchConsequences(r: PostReview, meta: TokenMetaMap | null, copy: Pick<CopyAccess, 'text' | 'format'>): string[] {
+export function matchConsequences(r: PostReview, meta: TokenMetaMap | null, copy: Pick<CopyAccess, 'text' | 'format'>): ReceiptText[] {
   const { parsed, pair } = r.draft;
   if (r.risk.partialFill === false || r.holding.kind !== 'erc20') return [];
-  const out: string[] = [];
+  const out: ReceiptText[] = [];
   if (r.risk.start.kind !== 'none') {
     out.push(
       parsed.collateralFloor < parsed.collateral
-        ? copy.format('request.loseMatchLocksFloor', { floor: tokenAmount(parsed.collateralFloor, pair.collateral, meta, copy.format) })
+        ? figured((x) => copy.format('request.loseMatchLocksFloor', { floor: tokenAmount(parsed.collateralFloor, pair.collateral, meta, copy.format, x) }))
         : copy.text('request.loseMatchLocksLess'),
     );
   }
@@ -194,19 +196,22 @@ export function matchConsequences(r: PostReview, meta: TokenMetaMap | null, copy
  *  "You can lose" list, all tier A and all in Basic: the direct point over
  *  the protocol's limit (or not known to be within it), the matching switch
  *  off, and a fill mode that cannot be changed later. */
-export function rangeConsequences(r: PostReview, meta: TokenMetaMap | null, copy: Pick<CopyAccess, 'text' | 'format'>): string[] {
+export function rangeConsequences(r: PostReview, meta: TokenMetaMap | null, copy: Pick<CopyAccess, 'text' | 'format'>): ReceiptText[] {
   const { parsed, pair } = r.draft;
-  const out: string[] = [];
+  const out: ReceiptText[] = [];
   if (isRanged(parsed)) {
     const risk = r.risk;
     if (risk.directWithinLimit === 'over') {
+      const ceiling = risk.directCeiling;
       out.push(
-        risk.directCeiling === null
+        ceiling === null
           ? copy.text('request.loseDirectOverPlain')
-          : copy.format('request.loseDirectOver', {
-              floor: tokenAmount(parsed.collateralFloor, pair.collateral, meta, copy.format),
-              ceiling: tokenAmount(risk.directCeiling, pair.lending, meta, copy.format),
-            }),
+          : figured((x) =>
+              copy.format('request.loseDirectOver', {
+                floor: tokenAmount(parsed.collateralFloor, pair.collateral, meta, copy.format, x),
+                ceiling: tokenAmount(ceiling, pair.lending, meta, copy.format, x),
+              }),
+            ),
       );
     } else if (risk.directWithinLimit === 'unknown') out.push(copy.text('request.loseDirectUnknown'));
     if (risk.partialFill === false) out.push(copy.text('request.loseMatchingOff'));

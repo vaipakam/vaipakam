@@ -6,9 +6,45 @@
  */
 import type { MeasuredOutcome } from '../tx/outcome';
 
+/** Text that embeds amounts, written both ways (RB-FUNDS): `text` with
+ *  short figures, `exact` with every digit. A receipt's "Show exact figures"
+ *  switches every such text with its amount rows, so no figure in a receipt
+ *  is left short. */
+export interface FiguredText {
+  text: string;
+  exact: string;
+}
+
+/** A receipt's text: plain, or carrying figures written both ways. */
+export type ReceiptText = string | FiguredText;
+
+/** Builds a text twice, with short and with exact figures (`build(exact)`);
+ *  a plain string when the two read the same, so nothing was shortened. */
+export function figured(build: (exact: boolean) => string): ReceiptText {
+  const text = build(false);
+  const exact = build(true);
+  return exact === text ? text : { text, exact };
+}
+
+/** The text a reader sees: the exact version when asked for. */
+export function readText(t: ReceiptText, exact: boolean): string {
+  return typeof t === 'string' ? t : exact ? t.exact : t.text;
+}
+
+/** Whether a text shortened any figure. */
+export function textCut(t: ReceiptText): boolean {
+  return typeof t !== 'string';
+}
+
+/** A receipt value for a text. */
+export function textValue(t: ReceiptText): ReceiptValue {
+  return typeof t === 'string' ? { kind: 'text', text: t } : { kind: 'text', text: t.text, exact: t.exact };
+}
+
 export type ReceiptValue =
   | { kind: 'amount'; asset: `0x${string}`; amount: bigint }
-  | { kind: 'text'; text: string }
+  /** `exact`: the same text with every digit, when `text` shortened a figure. */
+  | { kind: 'text'; text: string; exact?: string }
   | { kind: 'time'; unixSeconds: number }
   | { kind: 'unknown'; why: string };
 
@@ -26,7 +62,7 @@ export interface Receipt {
   title: string;
   rows: readonly ReceiptRow[];
   /** Every "You can lose" and every stated unknown, tier A, always shown. */
-  consequences: readonly string[];
+  consequences: readonly ReceiptText[];
   /** The wallet prompts this flow needs (RB-CLICKS: one where possible). */
   prompts: number;
   /** When the receipt's inputs were last re-read (RB-REVIEW). */

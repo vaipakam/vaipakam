@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useCopy } from '../copy/useCopy';
-import type { Receipt as ReceiptModel, ReceiptValue } from '../receipt/types';
+import { readText, textCut, type Receipt as ReceiptModel, type ReceiptValue } from '../receipt/types';
 import { formatAge, formatFigure, formatUnits, shortAddress } from './format';
 import { Icon } from './Icon';
 
@@ -38,7 +38,9 @@ export function renderValue(
       return { text: exact ? full : short, unknown: false, cut: f.cut, full };
     }
     case 'text':
-      return { text: value.text, unknown: false, cut: false, full: null };
+      // A text that embeds a shortened figure carries its exact version.
+      if (value.exact === undefined || value.exact === value.text) return { text: value.text, unknown: false, cut: false, full: null };
+      return { text: exact ? value.exact : value.text, unknown: false, cut: true, full: value.exact };
     case 'time':
       return { text: new Date(value.unixSeconds * 1000).toISOString().replace('T', ' ').slice(0, 16) + ' UTC', unknown: false, cut: false, full: null };
     case 'unknown':
@@ -56,7 +58,7 @@ export function Receipt({ receipt, describeAsset, nowMs }: ReceiptProps) {
   const unknownWord = text('receipt.unknown');
   const [exact, setExact] = useState(false);
   const values = receipt.rows.map((row) => renderValue(row.value, describeAsset, unknownWord, exact));
-  const anyCut = values.some((v) => v.cut);
+  const anyCut = values.some((v) => v.cut) || receipt.consequences.some(textCut);
   return (
     <section className="receipt" aria-label={receipt.title}>
       <h2>{receipt.title}</h2>
@@ -87,9 +89,14 @@ export function Receipt({ receipt, describeAsset, nowMs }: ReceiptProps) {
       )}
       {receipt.consequences.length > 0 && (
         <ul className="consequences tier-a" aria-label={text('receipt.consequences')}>
-          {receipt.consequences.map((c) => (
-            <li key={c}>{c}</li>
-          ))}
+          {receipt.consequences.map((c) => {
+            const line = readText(c, exact);
+            return (
+              <li key={readText(c, false)} title={textCut(c) && !exact ? readText(c, true) : undefined}>
+                {line}
+              </li>
+            );
+          })}
         </ul>
       )}
       <p className="tier-b">

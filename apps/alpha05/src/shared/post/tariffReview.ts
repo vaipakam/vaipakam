@@ -32,7 +32,7 @@ import {
   type TariffQuote,
   type TariffRead,
 } from '../offers/fullTariff';
-import type { Receipt } from '../receipt/types';
+import { figured, textValue, type Receipt, type ReceiptText } from '../receipt/types';
 import type { OwnStateClient } from '../../chain/ownRail';
 import { formatUnits } from 'viem';
 import { formatFigureText } from '../ui/format';
@@ -97,10 +97,13 @@ export function tariffRefusesEveryLoan(t: PostTariff | null): boolean {
 const vpfi = (v: bigint, format: CopyAccess['format'], exact = false) =>
   format('request.tariffVpfi', { amount: exact ? formatUnits(v, VPFI_DECIMALS) : formatFigureText(v, VPFI_DECIMALS) });
 
-function quoteText(q: TariffQuote | null, why: string | undefined, copy: Pick<CopyAccess, 'text' | 'format'>, side: PostSide): string {
+/** A VPFI figure inside a receipt text, written both ways (`figured`). */
+const vpfiText = (v: bigint, format: CopyAccess['format']): ReceiptText => figured((x) => vpfi(v, format, x));
+
+function quoteText(q: TariffQuote | null, why: string | undefined, copy: Pick<CopyAccess, 'text' | 'format'>, side: PostSide): ReceiptText {
   if (q === null) return copy.format('request.tariffQuoteUnread', { reason: why ?? '' });
   if (!q.numeraireOk) return copy.text(TARIFF_KEYS[side].tariffUnpriced);
-  return vpfi(q.cStar, copy.format);
+  return vpfiText(q.cStar, copy.format);
 }
 
 /** The receipt rows. The ceiling and what a failed condition does are
@@ -110,7 +113,7 @@ export function tariffRows(t: PostTariff | null, parsed: ParsedPost, copy: Pick<
   if (t === null) return [];
   const { text, format } = copy;
   const k = TARIFF_KEYS[side];
-  const row = (label: CopyKey, value: string, binding: boolean) => ({ label: text(label), value: { kind: 'text' as const, text: value }, binding });
+  const row = (label: CopyKey, value: ReceiptText, binding: boolean) => ({ label: text(label), value: textValue(value), binding });
   const ranged = isRanged(parsed);
   return [
     row('request.rowTariff', text(k.tariffArmedAfter), true),
@@ -119,7 +122,7 @@ export function tariffRows(t: PostTariff | null, parsed: ParsedPost, copy: Pick<
     ...(ranged ? [row('request.rowTariffLargest', quoteText(t.read.largest, t.why.quote, copy, side), false)] : []),
     row('request.rowTariffCeiling', vpfi(t.choice.maxCStar, format, true), true),
     row('request.rowTariffFail', text(t.choice.allowDowngrade ? 'request.tariffFailOpen' : 'request.tariffFailRefuse'), true),
-    row('request.rowTariffVault', t.read.freeVpfi === null ? format('request.tariffVaultUnread', { reason: t.why.vault ?? '' }) : vpfi(t.read.freeVpfi, format), false),
+    row('request.rowTariffVault', t.read.freeVpfi === null ? format('request.tariffVaultUnread', { reason: t.why.vault ?? '' }) : vpfiText(t.read.freeVpfi, format), false),
   ];
 }
 
@@ -127,13 +130,13 @@ export function tariffRows(t: PostTariff | null, parsed: ParsedPost, copy: Pick<
  *  costs and gives (a lender's discount lasts the loan's term and goes with
  *  the lender position), the gap before the arm confirms, and each issue the
  *  reads raise, stated as what happens to a loan under the chosen rule. */
-export function tariffConsequences(t: PostTariff | null, copy: Pick<CopyAccess, 'text' | 'format'>, side: PostSide = 'borrower'): string[] {
+export function tariffConsequences(t: PostTariff | null, copy: Pick<CopyAccess, 'text' | 'format'>, side: PostSide = 'borrower'): ReceiptText[] {
   if (t === null) return [];
   const { text, format } = copy;
   const k = TARIFF_KEYS[side];
   const open = t.choice.allowDowngrade;
   const gives = side === 'lender' ? [text('lendOffer.loseTariffYield'), text('lendOffer.loseTariffHolder')] : [text('request.loseTariffLif')];
-  const out = [text(k.loseTariffPaid), ...gives, text(k.loseTariffGap)];
+  const out: ReceiptText[] = [text(k.loseTariffPaid), ...gives, text(k.loseTariffGap)];
   for (const i of postTariffIssues(t)) {
     switch (i.kind) {
       case 'off':
@@ -146,10 +149,22 @@ export function tariffConsequences(t: PostTariff | null, copy: Pick<CopyAccess, 
         out.push(text(open ? 'request.loseTariffIlliquidOpen' : k.loseTariffIlliquidRefuse));
         break;
       case 'ceiling-below-all':
-        out.push(format(open ? 'request.loseTariffCeilingAllOpen' : k.loseTariffCeilingAllRefuse, { ceiling: vpfi(i.ceiling, format), tariff: vpfi(i.smallest, format) }));
+        // The ceiling is signed as written, so it is always exact.
+        out.push(
+          figured((x) =>
+            format(open ? 'request.loseTariffCeilingAllOpen' : k.loseTariffCeilingAllRefuse, { ceiling: vpfi(i.ceiling, format, true), tariff: vpfi(i.smallest, format, x) }),
+          ),
+        );
         break;
       case 'ceiling-below-largest':
-        out.push(format(open ? 'request.loseTariffCeilingSomeOpen' : 'request.loseTariffCeilingSomeRefuse', { ceiling: vpfi(i.ceiling, format), tariff: vpfi(i.largest, format) }));
+        out.push(
+          figured((x) =>
+            format(open ? 'request.loseTariffCeilingSomeOpen' : 'request.loseTariffCeilingSomeRefuse', {
+              ceiling: vpfi(i.ceiling, format, true),
+              tariff: vpfi(i.largest, format, x),
+            }),
+          ),
+        );
         break;
       case 'vault-short': {
         // Short of even the smallest loan's tariff, every loan is affected
@@ -157,7 +172,7 @@ export function tariffConsequences(t: PostTariff | null, copy: Pick<CopyAccess, 
         const smallest = t.read.smallest?.cStar ?? null;
         const all = smallest !== null && i.free < smallest;
         const key = all ? (open ? 'request.loseTariffVaultAllOpen' : k.loseTariffVaultAllRefuse) : open ? 'request.loseTariffVaultOpen' : 'request.loseTariffVaultRefuse';
-        out.push(format(key, { free: vpfi(i.free, format), needed: vpfi(all ? smallest : i.needed, format) }));
+        out.push(figured((x) => format(key, { free: vpfi(i.free, format, x), needed: vpfi(all ? smallest : i.needed, format, x) })));
         break;
       }
       case 'unread':

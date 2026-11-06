@@ -8,7 +8,7 @@
 import type { CopyAccess, CopyKey } from '../copy/useCopy';
 import type { Posture } from '../capability/types';
 import { INTERVAL_DAYS, periodInterest } from '../offers/cadence';
-import type { Receipt } from '../receipt/types';
+import { figured, textValue, type Receipt, type ReceiptText } from '../receipt/types';
 import { tokenAmount, type TokenMetaMap } from '../reads/tokens';
 import { formatSpan } from '../ui/format';
 import { isRanged, type ParsedPost } from './postModel';
@@ -36,11 +36,11 @@ const CADENCE_NAME: Readonly<Record<Exclude<ParsedPost['cadence'], 0>, CopyKey>>
 export function scheduleRows(r: PostReview, meta: TokenMetaMap | null, copy: Pick<CopyAccess, 'text' | 'format'>, advanced: boolean, keeper: Posture): Receipt['rows'] {
   const { text, format } = copy;
   const { parsed, pair } = r.draft;
-  const row = (label: CopyKey, value: string, binding: boolean) => ({ label: text(label), value: { kind: 'text' as const, text: value }, binding });
+  const row = (label: CopyKey, value: ReceiptText, binding: boolean) => ({ label: text(label), value: textValue(value), binding });
   if (parsed.cadence === 0) return [row('accept.rowSchedule', text('accept.scheduleNone'), true)];
   const days = String(INTERVAL_DAYS[parsed.cadence]);
   const owe = (principal: bigint) =>
-    format('request.periodOwe', { amount: tokenAmount(periodInterest(principal, parsed.rateBps, parsed.cadence), pair.lending, meta, format), days });
+    figured((x) => format('request.periodOwe', { amount: tokenAmount(periodInterest(principal, parsed.rateBps, parsed.cadence), pair.lending, meta, format, x), days }));
   const ranged = isRanged(parsed);
   const periods =
     r.draft.side === 'lender'

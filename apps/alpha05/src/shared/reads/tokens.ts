@@ -50,9 +50,11 @@ export function assetName(address: string, meta: TokenMetaMap | null): string {
   return meta?.[address.toLowerCase()]?.symbol ?? shortAddress(address);
 }
 
-/** An ERC-20 amount as an exact figure with its symbol; in base units with
- *  the token's address when its decimals could not be read. */
-export function tokenAmount(amount: bigint, address: string, meta: TokenMetaMap | null, format: CopyAccess['format']): string {
+/** An ERC-20 amount with its symbol, shortened for reading (RB-FUNDS:
+ *  `formatFigureText`, "≈" when digits were dropped) unless `exact`; in base
+ *  units with the token's address when its decimals could not be read. */
+export function tokenAmount(amount: bigint, address: string, meta: TokenMetaMap | null, format: CopyAccess['format'], exact = false): string {
+  if (exact) return exactTokenAmount(amount, address, meta, format);
   const m = meta?.[address.toLowerCase()];
   if (!m || m.decimals === null) return format('asset.baseUnits', { amount: amount.toString(), token: shortAddress(address) });
   return `${formatFigureText(amount, m.decimals)} ${m.symbol ?? shortAddress(address)}`;
