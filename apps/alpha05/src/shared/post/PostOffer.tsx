@@ -27,7 +27,7 @@ import { ActionFlow, reviewIdentity, type Recheck } from '../ui/ActionFlow';
 import { Notice } from '../ui/Notice';
 import { shortAddress } from '../ui/format';
 import { pageHandoff } from '../../routes/pageMap';
-import { TARIFF_CONTEXT_KEY, type ArmContext } from './ArmTariff';
+import { tariffStoreKeys, type ArmContext } from './ArmTariff';
 import { createdOffer } from './postOutcome';
 import { erc20Pair, nftCollateralPair, type RiskNeed } from '../risk/riskAccess';
 import { nftApproval } from '../tx/nftApproval';
@@ -104,7 +104,7 @@ export function PostOffer({ flowKey, draft, chain, own, meta, terms, onEdit, onC
   const [review, setReview] = useStoredValue<PostReview>(`${flowKey}:review`);
   const [consentFor, setConsentFor] = useStoredValue<number>(`${flowKey}:consent`);
   const [offerId, setOfferId] = useStoredValue<bigint>(`${flowKey}:offer`);
-  const [, setArmContext] = useStoredValue<ArmContext>(TARIFF_CONTEXT_KEY);
+  const [, setArmContext] = useStoredValue<ArmContext>(tariffStoreKeys(flowKey).ctx);
   /** The risk-access step open in the review's place, if any (ACC-RISK). */
   const [riskOpen, setRiskOpen] = useStoredValue<RiskNeed>(`${flowKey}:risk`);
   const [loadError, setLoadError] = useState<string | null>(null);

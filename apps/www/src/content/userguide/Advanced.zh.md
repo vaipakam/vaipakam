@@ -1858,7 +1858,7 @@ Basic 发布单一数值的请求：`amount` = `amountMax`，`interestRateBps` =
 
 ### Lend: 如何运作
 
-Lend 通过出借人发送的 `acceptOffer(offerId, terms, signature)`，直接接受以 ERC-20 抵押的 ERC-20 借款请求（`offerType` 1）。在一笔交易中，本金在对 Diamond 的授权下从出借人的钱包转入出借人的金库；借款人收到扣除发起费后的金额；已在借款人金库中的抵押品成为贷款的抵押品；并发出 `LoanInitiated`，出借人和借款人各得一枚仓位 NFT。出借报价（`offerType` 0）在同一页面发布；NFT 一方以及出借报价的高级选项将在后续更新中推出。
+Lend 通过出借人发送的 `acceptOffer(offerId, terms, signature)`，直接接受以 ERC-20 抵押的 ERC-20 借款请求（`offerType` 1）。在一笔交易中，本金在对 Diamond 的授权下从出借人的钱包转入出借人的金库；借款人收到扣除发起费后的金额；已在借款人金库中的抵押品成为贷款的抵押品；并发出 `LoanInitiated`，出借人和借款人各得一枚仓位 NFT。出借报价（`offerType` 0）在同一页面发布；NFT 一方将在后续更新中推出。
 
 <a id="lend-offers"></a>
 
@@ -1894,13 +1894,25 @@ Lend 通过出借人发送的 `acceptOffer(offerId, terms, signature)`，直接�
 
 ### Lend：报价的条款
 
-未设部分时，出借报价为单一数值：`amount` = `amountMax`，`interestRateBps` = `interestRateBpsMax`，`collateralAmount` = `collateralAmountMax`（借款人必须锁定的唯一抵押品数量），`fillMode` 0（除非 Advanced 设置了其他方式，见下一节），`periodicInterestCadence` 0，`allowsPrepayListing` 和 `allowsParallelSale` 为 false，`refinanceTargetLoanId` 0，`creatorRiskAndTermsConsent` 为 true，且不设 Full 方案。金额被精确解析为基础单位，利率最多 10,000 bps。`durationDays` 受从 `getProtocolConfigBundle` 读取的配置最大值限制。`expiresAt` 为 0（取消前一直开放），或在审核打开时从最新区块确定的时间，最多提前 `MAX_OFFER_EXPIRY_HORIZON`（365 天）。`useFullTermInterest` 默认为 true，`allowsPartialRepay` 默认为 false。
+未设部分时，出借报价为单一数值：`amount` = `amountMax`，`interestRateBps` = `interestRateBpsMax`，`collateralAmount` = `collateralAmountMax`（借款人必须锁定的唯一抵押品数量），`fillMode` 0（除非 Advanced 设置了其他方式，见下一节），`periodicInterestCadence` 0（除非 Advanced 设置了付息计划），`allowsPrepayListing` 和 `allowsParallelSale` 为 false，`refinanceTargetLoanId` 0，`creatorRiskAndTermsConsent` 为 true，且不设 Full 方案（除非 Advanced 选择了它）。金额被精确解析为基础单位，利率最多 10,000 bps。`durationDays` 受从 `getProtocolConfigBundle` 读取的配置最大值限制。`expiresAt` 为 0（取消前一直开放），或在审核打开时从最新区块确定的时间，最多提前 `MAX_OFFER_EXPIRY_HORIZON`（365 天）。`useFullTermInterest` 默认为 true，`allowsPartialRepay` 默认为 false。
 
 <a id="lend-offer-parts"></a>
 
 ### Lend：分部分出借的报价
 
 分部分时发送的 `amount`（一次撮合可出借的最小部分）小于 `amountMax`（全部金额，由 `createOffer` 拉入金库）；`collateralAmount` = `collateralAmountMax` 仍是唯一要求，按 `amountMax` 计（否则为 `LenderCollateralRangeNotAllowed`），且 `interestRateBps` = `interestRateBpsMax`。直接对出借报价调用 `acceptOffer` 时，以 `collateralAmount` 出借 `amountMax`，且仅在 `amountFilled` 为 0 时可行（撮合后为 `OfferPartiallyFilled`）。当 `getPartialFillEnabled` 为 true 时，`matchOffers` 出借金额重叠区间的中点（至少为 `amount`），利率取利率重叠区间的中点，抵押品至少为 `collateralAmount × matchAmount ÷ amountMax`（向下取整；借款人的抵押品区间可能提高它）。当 `amountMax − amountFilled` 低于 `amount` 时，剩余部分被提取到出借人的钱包，报价关闭（`OfferClosed`，原因为 `Dust` 或 `FullyFilled`）。对部分成交的报价调用 `cancelOffer` 不受冷却期限制，并退回 `amountMax − amountFilled`。`fillMode` 与请求相同，为 0、1 或 2：AON 要求 `amount` = `amountMax`，IOC 要求设置到期时间，发布后不可更改。两边都为流动资产时，若 `collateralAmount` 低于 `amountMax` 对应的下限，`createOffer` 以 `MinCollateralBelowFloor(provided, floor)` 拒绝，审核会显示该下限。审核只显示一个贷款价值比，即 (`amountMax`, `collateralAmount`) 处的 `calculateLTV`：任一部分的比率相同，仅有取整差异。
+
+<a id="lend-offer-schedule"></a>
+
+### Lend：报价的利息支付计划
+
+出借报价的 `periodicInterestCadence` 遵循请求的规则（见上文），`previewCadenceAdmission` 按报价的 `amount` 估值：即最小部分，未设部分时为全部金额。`createOffer` 在此通过 `requireCadenceAdmitted` 准入，每笔贷款开立时还会再次检查其自身本金（`requireOriginationCadenceAdmitted`）。审核按 `amountMax`（直接承接）列出一期利息，分部分时还按 `amount` 列出。错过的一期在宽限期后可由任何人通过 `settlePeriodicInterest` 结算：出售抵押品向出借人支付该期利息，贷款保持开放。
+
+<a id="lend-offer-tariff"></a>
+
+### Lend：报价的全额费用档
+
+出借人的选择同样是 `setOfferCreatorFullTariff(offerId, true, maxCStar, allowDowngrade)`，在 `createOffer` 之后发送。一旦报价被全部承接或关闭，它会以 `OfferAlreadyAccepted` 被拒绝；部分撮合的报价仍可设置，适用于其之后的贷款。报价按 `quoteCStar` 在 `amount` 和 `amountMax` 计价，上限默认取 `amountMax` 处的报价。每笔贷款单独按其本金计价并对照 `maxCStar` 检查，条件与请求相同（`FeeEntitlementDisabled`、`FeeEntitlementFullOptInFailed`、`FeeEntitlementTariffAboveAuth`，或在允许时降级）；出借人的检查使用金库当前的可用 VPFI。收取费用档后，贷款的 `lenderMode` 被标记为 Full，此后每次出借人收益费结算都会把 `FULL_MODE_FEE_DISCOUNT_BONUS_BPS`（1000）加到仓位持有人对协议份额的折扣上，上限为 `MAX_FEE_DISCOUNT_BPS`（5000），无论是否开启持有折扣同意。原地延期（`repriceFeeEntitlementOnExtension`）会在新期限内把标记设为 None。
 
 <a id="lend-offer-review"></a>
 

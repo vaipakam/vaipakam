@@ -118,8 +118,11 @@ interface OfferFormProps {
  * rate, the term, the expiry and the interest mode. OFF-10 / OFF-11 for a
  * lender (Advanced): parts, the smallest of which one match may lend (the
  * amount typed stays the whole amount locked, which a direct take borrows),
- * and the fill mode. A lender's interest schedule and fee tariff come in a
- * later update, and the form says so in Advanced.
+ * and the fill mode. OFF-14 / OFF-22 for a lender (Advanced): the interest
+ * schedule, admitted at the smallest amount one loan may lend (the smallest
+ * part, or the whole amount without parts), as creation admits it; and the
+ * Full fee tariff, quoted at the whole amount, the largest loan the offer
+ * opens (a direct take).
  */
 export function OfferForm({ side, flowKey, chain, own, pair, meta, onReview, onCancel }: OfferFormProps) {
   const { text, format } = useCopy();
@@ -213,8 +216,8 @@ export function OfferForm({ side, flowKey, chain, own, pair, meta, onReview, onC
   // whole amount locked.
   const ranged = input.ranged && !named;
   const fillMode: FillMode = input.fillMode;
-  /** The Full tariff, chosen only on a request for now. */
-  const tariffChosen = !lender && input.tariff;
+  /** The Full tariff, chosen on either side. */
+  const tariffChosen = input.tariff;
   const amountMax = ranged && !lender && lendingDecimals !== null ? parseAmount(input.amountMax, lendingDecimals) : null;
   const minPart = ranged && lender && lendingDecimals !== null ? parseAmount(input.minPart, lendingDecimals) : null;
   const floorTyped = ranged && !lender && input.collateralFloor.trim() !== '';
@@ -225,8 +228,7 @@ export function OfferForm({ side, flowKey, chain, own, pair, meta, onReview, onC
       : null;
   const partShape = lender && amount?.ok && minPart?.ok ? partError(minPart.value, amount.value) : null;
   const fillBlock = fillModeBlock(fillMode, ranged, input.expiry);
-  // A lender's schedule and tariff are not offered yet, so none is counted.
-  const effective = advancedSet({ ...input, ranged, ...(lender ? { cadence: 0 as const, tariff: false } : {}) });
+  const effective = advancedSet({ ...input, ranged });
   /** Names joined as the catalog joins two: "a, b and c". */
   const listOf = (names: string[]): string =>
     names.length <= 1 ? (names[0] ?? '') : format('request.advancedList', { a: names.slice(0, -1).join(', '), b: names[names.length - 1]! });
@@ -285,8 +287,11 @@ export function OfferForm({ side, flowKey, chain, own, pair, meta, onReview, onC
   // protocol's own rule (valued at the smallest amount, as creation values
   // it). Read whenever a schedule can be chosen or one is already set; while
   // it is unknown only interest at repayment is offered.
-  const cadence: Cadence = !lender && isCadence(input.cadence) ? input.cadence : 0;
-  const admissionTerms = amount?.ok && durationDays !== null ? { amount: amount.value, durationDays } : null;
+  // A lender's offer is created with its smallest part as the amount, so
+  // that is what creation admits; without parts it is the whole amount.
+  const cadence: Cadence = isCadence(input.cadence) ? input.cadence : 0;
+  const admissionAmount = lender && ranged ? (minPart?.ok && partShape === null ? minPart.value : null) : amount?.ok ? amount.value : null;
+  const admissionTerms = admissionAmount !== null && durationDays !== null ? { amount: admissionAmount, durationDays } : null;
   const admission = useOwnRead(
     [flowKey, 'cadence', pair.lending.toLowerCase(), pair.collateral.toLowerCase(), pair.standard, String(admissionTerms?.amount), String(admissionTerms?.durationDays)],
     (c) =>
@@ -298,9 +303,9 @@ export function OfferForm({ side, flowKey, chain, own, pair, meta, onReview, onC
         collateralAssetType: pair.standard === 'erc721' ? ASSET_ERC721 : pair.standard === 'erc1155' ? ASSET_ERC1155 : ASSET_ERC20,
         durationDays: admissionTerms!.durationDays,
       }),
-    { enabled: !lender && admissionTerms !== null && (isAdvanced || cadence !== 0) },
+    { enabled: admissionTerms !== null && (isAdvanced || cadence !== 0) },
   );
-  const numeraire = useOwnRead(['numeraireSymbol', diamond], (c) => readNumeraireSymbol(c, diamond), { enabled: !lender && (isAdvanced || cadence !== 0) });
+  const numeraire = useOwnRead(['numeraireSymbol', diamond], (c) => readNumeraireSymbol(c, diamond), { enabled: isAdvanced || cadence !== 0 });
   const unit = numeraire.data ?? text('home.exposureUnit');
   // The admission is used only while it answers for the terms on screen.
   const admitted = admissionTerms !== null && admission.error === null ? admission.data : null;
@@ -323,7 +328,7 @@ export function OfferForm({ side, flowKey, chain, own, pair, meta, onReview, onC
   // ceiling takes that figure, which no loan of this request exceeds at
   // today's figures. The opt-in is armed by its own transaction after
   // posting, so it never enters the create call.
-  const tariffShown = !lender && (isAdvanced || input.tariff);
+  const tariffShown = isAdvanced || input.tariff;
   const tariffSwitch = useOwnRead(['feeEntitlementSwitch', diamond], (c) => readTariffSwitch(c, diamond), { enabled: tariffShown });
   const tariffPrincipal = ranged && amountMax?.ok ? amountMax.value : amount?.ok ? amount.value : null;
   const tariffQuote = useOwnRead(
@@ -467,6 +472,125 @@ export function OfferForm({ side, flowKey, chain, own, pair, meta, onReview, onC
   );
   /** The range switch: the same box on both sides; turning it on drops an
    *  all-or-none choice, which takes one amount. */
+  /** OFF-14: the interest schedule, for either side; only the schedules
+   *  the protocol admits for the terms typed can be chosen. */
+  const cadenceFieldset = (
+    <fieldset className="choice-group" data-testid="request-cadence">
+      <legend>{text('request.cadenceLabel')}</legend>
+      {CADENCES.map((c) => {
+        const verdict = admitted?.verdicts.find((v) => v.cadence === c) ?? null;
+        const open = cadenceOpen(admitted, c);
+        return (
+          <label key={c} className="choice">
+            <input type="radio" name="request-cadence" value={c} checked={cadence === c} disabled={!open && cadence !== c} onChange={() => set({ cadence: c })} />
+            <span>
+              {text(CADENCE_LABEL[c])}
+              {verdict?.refusal && <small className="choice-note">{cadenceRefusalText(verdict.refusal, unit, { text, format })}</small>}
+            </span>
+          </label>
+        );
+      })}
+      {admissionTerms === null ? (
+        <p className="tier-b field-hint">{text('request.cadenceNeedsTerms')}</p>
+      ) : admission.error !== null && cadence === 0 ? (
+        <Notice tone="warn" tier="A">
+          {format('request.cadenceUnread', { reason: admission.error })}
+        </Notice>
+      ) : admitted === null ? (
+        <p className="tier-b field-hint" aria-live="polite">
+          {text('request.cadenceReading')}
+        </p>
+      ) : null}
+      {cadenceBlock !== null && (
+        <Notice tone="warn" tier="A">
+          <span data-testid="request-cadence-block">{cadenceBlock}</span>
+        </Notice>
+      )}
+      <WhyLink summaryKey="request.cadenceSummary" detailKey={k.cadenceWhy} />
+    </fieldset>
+  );
+  /** OFF-22: the Full fee tariff, for either side, said either way while
+   *  the switch is off or unread (RB-SWITCH class 1a). */
+  const tariffFieldset = (
+    <fieldset className="choice-group" data-testid="request-tariff">
+      <legend>{text('request.tariffLabel')}</legend>
+      {tariffSwitch.error !== null ? (
+        <Notice tone="warn" tier="A">
+          {format('request.tariffSwitchUnread', { reason: tariffSwitch.error })}
+        </Notice>
+      ) : tariffSwitch.data === false ? (
+        <p className="tier-b field-hint" data-testid="request-tariff-off">
+          {text('request.tariffOff')}
+        </p>
+      ) : tariffSwitch.data === null ? (
+        <p className="tier-b field-hint" aria-live="polite">
+          {text('request.tariffReading')}
+        </p>
+      ) : null}
+      <label className="choice">
+        <input
+          type="checkbox"
+          checked={input.tariff}
+          disabled={tariffSwitch.data !== true && !input.tariff}
+          onChange={(e) => set({ tariff: e.target.checked })}
+          data-testid="request-tariff-opt"
+        />
+        <span>{text(k.tariffOption)}</span>
+      </label>
+      {input.tariff && (
+        <div className="tariff-detail">
+          <p className="tier-b field-hint" data-testid="request-tariff-quote" aria-live="polite">
+            {tariffPrincipal === null || durationDays === null
+              ? text('request.tariffNeedsTerms')
+              : tariffQuote.error !== null
+                ? format('request.tariffQuoteUnread', { reason: tariffQuote.error })
+                : quoteNow === null
+                  ? text('request.tariffReading')
+                  : !quoteNow.numeraireOk
+                    ? text(k.tariffUnpriced)
+                    : format('request.tariffQuote', { tariff: vpfi(quoteNow.cStar), amount: tokenAmount(tariffPrincipal, pair.lending, meta, format) })}
+          </p>
+          <FormField
+            label={text('request.tariffCeilingLabel')}
+            hint={suggested !== null ? format('request.tariffCeilingHint', { tariff: vpfi(suggested) }) : text('request.tariffCeilingHintNone')}
+            error={show('ceiling') && ceiling !== null && !ceiling.ok ? parseText(ceiling.error, 'VPFI', VPFI_DECIMALS) : null}
+          >
+            {({ id, describedBy, invalid }) => (
+              <input
+                id={id}
+                inputMode="decimal"
+                autoComplete="off"
+                aria-describedby={describedBy}
+                aria-invalid={invalid}
+                placeholder={suggested !== null ? formatUnits(suggested, VPFI_DECIMALS) : undefined}
+                value={input.tariffCeiling}
+                onChange={(e) => set({ tariffCeiling: e.target.value })}
+                onBlur={() => leave('ceiling')}
+                data-testid="request-tariff-ceiling"
+              />
+            )}
+          </FormField>
+          <fieldset className="choice-group" data-testid="request-tariff-fail">
+            <legend>{text('request.tariffFailLabel')}</legend>
+            <label className="choice">
+              <input type="radio" name="request-tariff-fail" checked={!input.tariffDowngrade} onChange={() => set({ tariffDowngrade: false })} />
+              <span>{text('request.tariffFailRefuse')}</span>
+            </label>
+            <label className="choice">
+              <input type="radio" name="request-tariff-fail" checked={input.tariffDowngrade} onChange={() => set({ tariffDowngrade: true })} />
+              <span>{text('request.tariffFailOpen')}</span>
+            </label>
+          </fieldset>
+        </div>
+      )}
+      {tariffBlock !== null && (
+        <Notice tone="warn" tier="A">
+          <span data-testid="request-tariff-block">{tariffBlock}</span>
+        </Notice>
+      )}
+      <WhyLink summaryKey={k.tariffSummary} detailKey={k.tariffWhy} />
+    </fieldset>
+  );
   const rangeToggle = (
     <label className="choice">
       <input
@@ -791,10 +915,8 @@ export function OfferForm({ side, flowKey, chain, own, pair, meta, onReview, onC
             <WhyLink summaryKey={k.rangeSummary} detailKey={k.rangeWhy} />
           </fieldset>
           {fillFieldset}
-          {/* RB-MODE: a lender's schedule and tariff are not built yet; said, not hidden. */}
-          <p className="tier-b field-hint" data-testid="lend-offer-advanced-later">
-            {text('lendOffer.advancedLater')}
-          </p>
+          {cadenceFieldset}
+          {tariffFieldset}
         </section>
       ) : !lender && isAdvanced ? (
         <section className="advanced-options" aria-labelledby="request-advanced" data-testid="request-advanced">
@@ -864,117 +986,8 @@ export function OfferForm({ side, flowKey, chain, own, pair, meta, onReview, onC
             <WhyLink summaryKey={k.rangeSummary} detailKey={k.rangeWhy} />
           </fieldset>
           {fillFieldset}
-          <fieldset className="choice-group" data-testid="request-cadence">
-            <legend>{text('request.cadenceLabel')}</legend>
-            {CADENCES.map((c) => {
-              const verdict = admitted?.verdicts.find((v) => v.cadence === c) ?? null;
-              const open = cadenceOpen(admitted, c);
-              return (
-                <label key={c} className="choice">
-                  <input type="radio" name="request-cadence" value={c} checked={cadence === c} disabled={!open && cadence !== c} onChange={() => set({ cadence: c })} />
-                  <span>
-                    {text(CADENCE_LABEL[c])}
-                    {verdict?.refusal && <small className="choice-note">{cadenceRefusalText(verdict.refusal, unit, { text, format })}</small>}
-                  </span>
-                </label>
-              );
-            })}
-            {admissionTerms === null ? (
-              <p className="tier-b field-hint">{text('request.cadenceNeedsTerms')}</p>
-            ) : admission.error !== null && cadence === 0 ? (
-              <Notice tone="warn" tier="A">
-                {format('request.cadenceUnread', { reason: admission.error })}
-              </Notice>
-            ) : admitted === null ? (
-              <p className="tier-b field-hint" aria-live="polite">
-                {text('request.cadenceReading')}
-              </p>
-            ) : null}
-            {cadenceBlock !== null && (
-              <Notice tone="warn" tier="A">
-                <span data-testid="request-cadence-block">{cadenceBlock}</span>
-              </Notice>
-            )}
-            <WhyLink summaryKey="request.cadenceSummary" detailKey="request.cadenceWhy" />
-          </fieldset>
-          <fieldset className="choice-group" data-testid="request-tariff">
-            <legend>{text('request.tariffLabel')}</legend>
-            {tariffSwitch.error !== null ? (
-              <Notice tone="warn" tier="A">
-                {format('request.tariffSwitchUnread', { reason: tariffSwitch.error })}
-              </Notice>
-            ) : tariffSwitch.data === false ? (
-              <p className="tier-b field-hint" data-testid="request-tariff-off">
-                {text('request.tariffOff')}
-              </p>
-            ) : tariffSwitch.data === null ? (
-              <p className="tier-b field-hint" aria-live="polite">
-                {text('request.tariffReading')}
-              </p>
-            ) : null}
-            <label className="choice">
-              <input
-                type="checkbox"
-                checked={input.tariff}
-                disabled={tariffSwitch.data !== true && !input.tariff}
-                onChange={(e) => set({ tariff: e.target.checked })}
-                data-testid="request-tariff-opt"
-              />
-              <span>{text('request.tariffOption')}</span>
-            </label>
-            {input.tariff && (
-              <div className="tariff-detail">
-                <p className="tier-b field-hint" data-testid="request-tariff-quote" aria-live="polite">
-                  {tariffPrincipal === null || durationDays === null
-                    ? text('request.tariffNeedsTerms')
-                    : tariffQuote.error !== null
-                      ? format('request.tariffQuoteUnread', { reason: tariffQuote.error })
-                      : quoteNow === null
-                        ? text('request.tariffReading')
-                        : !quoteNow.numeraireOk
-                          ? text('request.tariffUnpriced')
-                          : format('request.tariffQuote', { tariff: vpfi(quoteNow.cStar), amount: tokenAmount(tariffPrincipal, pair.lending, meta, format) })}
-                </p>
-                <FormField
-                  label={text('request.tariffCeilingLabel')}
-                  hint={suggested !== null ? format('request.tariffCeilingHint', { tariff: vpfi(suggested) }) : text('request.tariffCeilingHintNone')}
-                  error={show('ceiling') && ceiling !== null && !ceiling.ok ? parseText(ceiling.error, 'VPFI', VPFI_DECIMALS) : null}
-                >
-                  {({ id, describedBy, invalid }) => (
-                    <input
-                      id={id}
-                      inputMode="decimal"
-                      autoComplete="off"
-                      aria-describedby={describedBy}
-                      aria-invalid={invalid}
-                      placeholder={suggested !== null ? formatUnits(suggested, VPFI_DECIMALS) : undefined}
-                      value={input.tariffCeiling}
-                      onChange={(e) => set({ tariffCeiling: e.target.value })}
-                      onBlur={() => leave('ceiling')}
-                      data-testid="request-tariff-ceiling"
-                    />
-                  )}
-                </FormField>
-                <fieldset className="choice-group" data-testid="request-tariff-fail">
-                  <legend>{text('request.tariffFailLabel')}</legend>
-                  <label className="choice">
-                    <input type="radio" name="request-tariff-fail" checked={!input.tariffDowngrade} onChange={() => set({ tariffDowngrade: false })} />
-                    <span>{text('request.tariffFailRefuse')}</span>
-                  </label>
-                  <label className="choice">
-                    <input type="radio" name="request-tariff-fail" checked={input.tariffDowngrade} onChange={() => set({ tariffDowngrade: true })} />
-                    <span>{text('request.tariffFailOpen')}</span>
-                  </label>
-                </fieldset>
-              </div>
-            )}
-            {tariffBlock !== null && (
-              <Notice tone="warn" tier="A">
-                <span data-testid="request-tariff-block">{tariffBlock}</span>
-              </Notice>
-            )}
-            <WhyLink summaryKey="request.tariffSummary" detailKey="request.tariffWhy" />
-          </fieldset>
+          {cadenceFieldset}
+          {tariffFieldset}
           <p className="tier-b field-hint" data-testid="request-backstop">
             {text('request.backstopGap')}
           </p>
@@ -1025,7 +1038,7 @@ export function OfferForm({ side, flowKey, chain, own, pair, meta, onReview, onC
         {figures && (
           <p className="tier-b request-summary" data-testid="request-summary" aria-live="polite">
             {lender
-              ? format(k.summary, {
+              ? format(cadence !== 0 ? k.summaryScheduled : k.summary, {
                   amount: amount?.ok ? tokenAmount(amount.value, pair.lending, meta, format) : '',
                   owe: tokenAmount(figures.owedAtDue, pair.lending, meta, format),
                 })

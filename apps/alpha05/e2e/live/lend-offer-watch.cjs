@@ -10,6 +10,10 @@
 // With LIVE_PARTS=1 the run is in Advanced mode and lends the offer in parts
 // (OFF-10 / OFF-11 from the lender's side, 17-lend-offer-parts.spec.ts in
 // CI): a smallest part of a quarter of the amount and immediate or cancel.
+// With LIVE_SCHEDULE=1 (Advanced too) the run takes a 60-day term, reads the
+// interest schedule and Full fee tariff fieldsets, and chooses a monthly
+// schedule and the tariff where they are open (OFF-14 / OFF-22 from the
+// lender's side, 18-lend-offer-schedule-tariff.spec.ts in CI).
 // Usage: node e2e/live/lend-offer-watch.cjs <address>  (screenshots go to
 // $LIVE_OUT or /tmp; $LIVE_URL overrides the deployed origin)
 const { chromium, devices } = require('playwright');
@@ -18,11 +22,12 @@ const ADDR = process.argv[2];
 const URL = (process.env.LIVE_URL ?? 'https://alpha05.vaipakam.com/').replace(/\/?$/, '/lend');
 const OUT = process.env.LIVE_OUT ?? '/tmp';
 const PARTS = process.env.LIVE_PARTS === '1';
-const TAG = PARTS ? 'lend-parts' : 'lend-offer';
+const SCHEDULE = process.env.LIVE_SCHEDULE === '1';
+const TAG = SCHEDULE ? 'lend-schedule' : PARTS ? 'lend-parts' : 'lend-offer';
 
 async function session(b, opts, label) {
   const { ctx, p, errs } = await watchedPage(b, opts, ADDR);
-  if (PARTS) {
+  if (PARTS || SCHEDULE) {
     await ctx.addInitScript(() => {
       try {
         localStorage.setItem('app.mode', 'advanced');
@@ -64,6 +69,17 @@ async function session(b, opts, label) {
       .getByRole('radio', { name: /Immediate or cancel/ })
       .check();
     console.log(`--- advanced: ${(await p.getByTestId('request-advanced').innerText()).replace(/\n+/g, ' | ')}`);
+  }
+  if (SCHEDULE) {
+    await p.getByTestId('request-duration').getByRole('radio', { name: '60 days' }).check();
+    await p.waitForTimeout(4000);
+    const monthly = p.getByTestId('request-cadence').getByRole('radio', { name: /Every month/ });
+    if (await monthly.isEnabled()) await monthly.check();
+    console.log(`--- schedule: ${(await p.getByTestId('request-cadence').innerText()).replace(/\n+/g, ' | ')}`);
+    const opt = p.getByTestId('request-tariff-opt');
+    if ((await opt.count()) > 0 && (await opt.isEnabled())) await opt.check();
+    await p.waitForTimeout(3000);
+    console.log(`--- tariff: ${(await p.getByTestId('request-tariff').innerText()).replace(/\n+/g, ' | ')}`);
   }
   await p.waitForTimeout(1500);
   console.log(`--- summary: ${await p.getByTestId('request-summary').innerText()}`);

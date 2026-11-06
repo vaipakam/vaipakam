@@ -2021,7 +2021,7 @@ fallback، موعد غير مقروء، يستحق خلال ثلاثة أيام�
 
 ### Lend: كيف يعمل
 
-يأخذ Lend طلب اقتراض (`offerType` 1) لرمز ERC-20 مقابل ضمان ERC-20 مباشرة، عبر `acceptOffer(offerId, terms, signature)` الذي يرسله المُقرض. في معاملة واحدة يُسحب أصل القرض من محفظة المُقرض، بموجب إذن للـ Diamond، إلى خزنة المُقرض؛ ويستلمه المقترض بعد خصم رسم الافتتاح؛ ويصبح الضمان الموجود في خزنة المقترض ضمان القرض؛ ويُصدر `LoanInitiated`، مع NFT مركز للمُقرض وآخر للمقترض. يُنشر عرض الإقراض (`offerType` 0) من الصفحة نفسها؛ وتأتي جوانب NFT والخيارات المتقدمة لعرض الإقراض في تحديثات لاحقة.
+يأخذ Lend طلب اقتراض (`offerType` 1) لرمز ERC-20 مقابل ضمان ERC-20 مباشرة، عبر `acceptOffer(offerId, terms, signature)` الذي يرسله المُقرض. في معاملة واحدة يُسحب أصل القرض من محفظة المُقرض، بموجب إذن للـ Diamond، إلى خزنة المُقرض؛ ويستلمه المقترض بعد خصم رسم الافتتاح؛ ويصبح الضمان الموجود في خزنة المقترض ضمان القرض؛ ويُصدر `LoanInitiated`، مع NFT مركز للمُقرض وآخر للمقترض. يُنشر عرض الإقراض (`offerType` 0) من الصفحة نفسها؛ وتأتي جوانب NFT في تحديث لاحق.
 
 <a id="lend-offers"></a>
 
@@ -2057,13 +2057,25 @@ fallback، موعد غير مقروء، يستحق خلال ثلاثة أيام�
 
 ### Lend: شروط العرض
 
-من دون أجزاء يكون عرض الإقراض ذا قيمة واحدة: `amount` = `amountMax`، و`interestRateBps` = `interestRateBpsMax`، و`collateralAmount` = `collateralAmountMax` (الضمان الوحيد الذي يجب أن يقفله المقترض)، و`fillMode` 0 ما لم يحدد Advanced غيره (القسم التالي)، و`periodicInterestCadence` 0، و`allowsPrepayListing` و`allowsParallelSale` بقيمة false، و`refinanceTargetLoanId` 0، و`creatorRiskAndTermsConsent` بقيمة true، ومن دون تعرفة Full. تُحلَّل المبالغ إلى الوحدات الأساسية بدقة، والسعر 10,000 bps على الأكثر. `durationDays` محدود بالحد الأقصى المهيّأ المقروء من `getProtocolConfigBundle`. `expiresAt` إما 0 (مفتوح حتى الإلغاء) أو وقت يُحدَّد من أحدث كتلة عند فتح المراجعة، وعلى الأكثر `MAX_OFFER_EXPIRY_HORIZON` (365 يومًا) إلى الأمام. القيمة الافتراضية لـ `useFullTermInterest` هي true ولـ `allowsPartialRepay` هي false.
+من دون أجزاء يكون عرض الإقراض ذا قيمة واحدة: `amount` = `amountMax`، و`interestRateBps` = `interestRateBpsMax`، و`collateralAmount` = `collateralAmountMax` (الضمان الوحيد الذي يجب أن يقفله المقترض)، و`fillMode` 0 ما لم يحدد Advanced غيره (القسم التالي)، و`periodicInterestCadence` 0 ما لم يحدد الوضع المتقدم جدولًا، و`allowsPrepayListing` و`allowsParallelSale` بقيمة false، و`refinanceTargetLoanId` 0، و`creatorRiskAndTermsConsent` بقيمة true، ومن دون تعرفة Full ما لم يخترها الوضع المتقدم. تُحلَّل المبالغ إلى الوحدات الأساسية بدقة، والسعر 10,000 bps على الأكثر. `durationDays` محدود بالحد الأقصى المهيّأ المقروء من `getProtocolConfigBundle`. `expiresAt` إما 0 (مفتوح حتى الإلغاء) أو وقت يُحدَّد من أحدث كتلة عند فتح المراجعة، وعلى الأكثر `MAX_OFFER_EXPIRY_HORIZON` (365 يومًا) إلى الأمام. القيمة الافتراضية لـ `useFullTermInterest` هي true ولـ `allowsPartialRepay` هي false.
 
 <a id="lend-offer-parts"></a>
 
 ### Lend: عرض على أجزاء
 
 ترسل الأجزاء `amount` (أصغر جزء يمكن لمطابقة واحدة إقراضه) أقل من `amountMax` (المبلغ كله، الذي يسحبه `createOffer` إلى الخزنة)؛ ويبقى `collateralAmount` = `collateralAmountMax` المتطلب الوحيد، محسوبًا عند `amountMax` (وإلا `LenderCollateralRangeNotAllowed`)، و`interestRateBps` = `interestRateBpsMax`. استدعاء `acceptOffer` المباشر لعرض إقراض يُقرض `amountMax` مقابل `collateralAmount`، وفقط ما دام `amountFilled` يساوي 0 (`OfferPartiallyFilled` بعد مطابقة). وما دام `getPartialFillEnabled` بقيمة true، يُقرض `matchOffers` منتصف تداخل المبالغ، و`amount` على الأقل، بمنتصف تداخل الأسعار، مقابل `collateralAmount × matchAmount ÷ amountMax` على الأقل (مقرّبًا إلى الأدنى؛ وقد يرفعه نطاق ضمان المقترض). وحين ينخفض `amountMax − amountFilled` عن `amount`، يُسحب الباقي إلى محفظة المُقرض ويُغلق العرض (`OfferClosed`، بسبب `Dust` أو `FullyFilled`). واستدعاء `cancelOffer` على عرض مملوء جزئيًا يتجاوز فترة الانتظار ويعيد `amountMax − amountFilled`. و`fillMode` هو 0 أو 1 أو 2 كما في الطلب: يتطلب AON أن يكون `amount` = `amountMax`، ويتطلب IOC انتهاء صلاحية، ولا يتغير بعد النشر. وحين يكون الطرفان سائلين، يرفض `createOffer` قيمة `collateralAmount` أدنى من الحد عند `amountMax` بالخطأ `MinCollateralBelowFloor(provided, floor)`، وتعرض المراجعة ذلك الحد. وتُعرض نسبة قرض إلى قيمة واحدة، `calculateLTV` عند (`amountMax`، `collateralAmount`): ويحمل كل جزء النسبة نفسها عدا فرق التقريب.
+
+<a id="lend-offer-schedule"></a>
+
+### Lend: جدول دفع الفائدة في عرض
+
+يتبع `periodicInterestCadence` لعرض الإقراض قاعدة الطلب (أعلاه)، مع تقييم `previewCadenceAdmission` عند `amount` العرض: أصغر أجزائه، أو المبلغ كله من دون أجزاء. يقبله `createOffer` هناك عبر `requireCadenceAdmitted`، ويعيد إنشاء كل قرض فحص أصل مبلغه (`requireOriginationCadenceAdmitted`). تذكر المراجعة فائدة فترة واحدة عند `amountMax` (أخذ مباشر)، ومع الأجزاء عند `amount`. يمكن لأي شخص تسوية الفترة الفائتة عبر `settlePeriodicInterest` بعد مهلتها: يُباع ضمان لدفع فائدة تلك الفترة إلى المُقرض، ويبقى القرض مفتوحًا.
+
+<a id="lend-offer-tariff"></a>
+
+### Lend: تعرفة الرسوم الكاملة في عرض
+
+اشتراك المُقرض هو نفسه `setOfferCreatorFullTariff(offerId, true, maxCStar, allowDowngrade)`، ويُرسل بعد `createOffer`. ويُرفض بـ `OfferAlreadyAccepted` بعد أخذ العرض كاملًا أو إغلاقه؛ أما العرض المطابَق جزئيًا فما زال يقبله لقروضه اللاحقة. التسعير هو `quoteCStar` عند `amount` و`amountMax`، والحد الأقصى افتراضيًا هو التسعير عند `amountMax`. يُفحص كل قرض وحده مقابل `maxCStar`، مسعّرًا بأصل مبلغه، بالشروط نفسها للطلب (`FeeEntitlementDisabled` أو `FeeEntitlementFullOptInFailed` أو `FeeEntitlementTariffAboveAuth`، أو خفض حيث يُسمح به)؛ ويستخدم فحص المُقرض رصيد VPFI الحر الحالي في الخزنة. التعرفة المحصّلة تَسِم `lenderMode` للقرض بأنه Full، ثم تضيف كل تسوية لرسوم عائد المُقرض `FULL_MODE_FEE_DISCOUNT_BONUS_BPS` (1000) إلى خصم حامل المركز على حصة البروتوكول، بسقف `MAX_FEE_DISCOUNT_BPS` (5000)، مع موافقة خصم الحيازة أو من دونها. والتمديد في المكان (`repriceFeeEntitlementOnExtension`) يجعل الوسم None للمدة الجديدة.
 
 <a id="lend-offer-review"></a>
 

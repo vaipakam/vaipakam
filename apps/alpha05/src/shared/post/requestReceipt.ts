@@ -7,7 +7,6 @@
  */
 import type { CopyAccess, CopyKey } from '../copy/useCopy';
 import type { Posture } from '../capability/types';
-import { INTERVAL_DAYS, periodInterest } from '../offers/cadence';
 import type { Receipt } from '../receipt/types';
 import { assetName, tokenAmount, type TokenMetaMap } from '../reads/tokens';
 import { formatBps, formatScaled, formatSpan, formatUtc } from '../ui/format';
@@ -15,6 +14,7 @@ import { pageHandoff } from '../../routes/pageMap';
 import { isRanged, postFigures, ZERO, type ParsedPost } from './postModel';
 import { lockedName, ltvText, needsApproval, promptCount, type LtvRead, type PostReview, type StartGate } from './postReview';
 import { tariffConsequences, tariffRows } from './tariffReview';
+import { scheduleConsequences, scheduleRows } from './scheduleReview';
 
 type Hex = `0x${string}`;
 
@@ -188,62 +188,6 @@ export function matchConsequences(r: PostReview, meta: TokenMetaMap | null, copy
   }
   out.push(copy.text('request.loseMatchKeepsRest'));
   return out;
-}
-
-const CADENCE_NAME: Readonly<Record<Exclude<ParsedPost['cadence'], 0>, CopyKey>> = {
-  1: 'borrow.cadenceMonthly',
-  2: 'borrow.cadenceQuarterly',
-  3: 'borrow.cadenceSemiAnnual',
-  4: 'borrow.cadenceAnnual',
-};
-
-/**
- * OFF-14 — the schedule rows. Interest at repayment is one bound line. A
- * schedule states each period's interest as the protocol expects it (on the
- * direct loan, and on the largest loan a match can make for a range), the
- * grace a missed period gets (today's figure, read live), and, in Advanced,
- * who may settle a missed period: anyone, with the keeper service's arming
- * stated as the capability service reports it (RB-SWITCH class 4, unknown
- * by default).
- */
-function scheduleRows(r: PostReview, meta: TokenMetaMap | null, copy: Pick<CopyAccess, 'text' | 'format'>, advanced: boolean, keeper: Posture): Receipt['rows'] {
-  const { text, format } = copy;
-  const { parsed, pair } = r.draft;
-  const row = (label: CopyKey, value: string, binding: boolean) => ({ label: text(label), value: { kind: 'text' as const, text: value }, binding });
-  if (parsed.cadence === 0) return [row('accept.rowSchedule', text('accept.scheduleNone'), true)];
-  const days = String(INTERVAL_DAYS[parsed.cadence]);
-  const owe = (principal: bigint) =>
-    format('request.periodOwe', { amount: tokenAmount(periodInterest(principal, parsed.rateBps, parsed.cadence), pair.lending, meta, format), days });
-  return [
-    row('accept.rowSchedule', format('accept.scheduleEvery', { cadence: text(CADENCE_NAME[parsed.cadence]) }), true),
-    row(isRanged(parsed) ? 'request.rowPeriodDirect' : 'request.rowPeriod', owe(parsed.amount), true),
-    ...(isRanged(parsed) ? [row('request.rowPeriodLargest', owe(parsed.amountMax), true)] : []),
-    // Today's figure: the grace is read from the live configuration when a
-    // period is settled, so the request does not bind it.
-    row(
-      'request.rowPeriodGrace',
-      r.periodGraceSeconds !== null ? format('accept.grace', { span: formatSpan(Number(r.periodGraceSeconds)) }) : text('request.periodGraceUnread'),
-      false,
-    ),
-    ...(advanced
-      ? [row('request.rowPeriodSettle', text(keeper === 'present' ? 'request.settleArmed' : keeper === 'absent' ? 'request.settleOff' : 'request.settleUnknown'), false)]
-      : []),
-  ];
-}
-
-/** OFF-14 — what a schedule adds to the "You can lose" list, tier A and in
- *  Basic: a missed period is settled by selling collateral (with the grace
- *  when it was read), and the schedule is fixed once posted. */
-export function scheduleConsequences(r: PostReview, copy: Pick<CopyAccess, 'text' | 'format'>): string[] {
-  const { parsed } = r.draft;
-  if (parsed.cadence === 0) return [];
-  const cadence = copy.text(CADENCE_NAME[parsed.cadence]);
-  return [
-    r.periodGraceSeconds === null
-      ? copy.format('request.loseCadenceUnread', { cadence })
-      : copy.format('request.loseCadence', { cadence, grace: formatSpan(Number(r.periodGraceSeconds)) }),
-    copy.text('request.loseCadenceFixed'),
-  ];
 }
 
 /** OFF-10 / OFF-11 / OFF-16 — what a range and a fill mode add to the
