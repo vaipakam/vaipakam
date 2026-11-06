@@ -365,8 +365,13 @@ contract RewardRemittanceLensFacet {
      *             delivery. Recovery is re-attachment (`setBaseChainId`),
      *             not funding — a remittance sent to a Detached chain
      *             changes nothing this lens reports.
-     *         On the canonical chain, and on an `Unconfigured` one, the
-     *         bound does not apply and `remaining` reads
+     *         On the canonical chain (#1566 slice 4 PR B) it means the
+     *         reward pool has no delivered-fresh headroom left: `received`
+     *         there is credited only by `RewardCustodyFacet.fundRewardPool`
+     *         and the custody era transfers, so a fresh Base reads zero until
+     *         it is funded, and every reward-budget remittance to the mirrors
+     *         refuses meanwhile (#3253). Only on an `Unconfigured` chain does
+     *         the bound not apply, and there `remaining` reads
      *         `type(uint256).max`.
      * @return paid      Fresh reward value this chain has paid out of its
      *                   delivered funding, whatever the day's vintage
