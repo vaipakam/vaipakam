@@ -15,7 +15,7 @@ import { useStoredValue } from '../../../shared/tx/txStore';
 import { useTrackedTx } from '../../../shared/tx/useTrackedTx';
 import { ActionFlow, reviewIdentity, type Recheck } from '../../../shared/ui/ActionFlow';
 import type { TxPhase } from '../../../shared/tx/outcome';
-import { armEnding, type ArmContext, type ArmEnding } from './armState';
+import { armEnding, armRead, type ArmContext, type ArmEnding } from './armState';
 import { Notice } from '../../../shared/ui/Notice';
 import { REQUEST_KEY } from './RequestForm';
 
@@ -165,15 +165,17 @@ export function ArmTariff({ ctx, own, onDone }: ArmTariffProps) {
     } catch (e) {
       return { kind: 'unreadable', reason: refusalFromError(e).reason };
     }
-    if (now.creator.toLowerCase() !== account.toLowerCase())
-      return { kind: 'refused', refusal: { code: 'NotCreator', reason: text('request.tariffNotCreator'), reopensAt: null, remedy: null } };
-    if (now.accepted) return { kind: 'refused', refusal: { code: 'OfferAlreadyAccepted', reason: text('request.tariffArmTaken'), reopensAt: null, remedy: null } };
-    if (tariffMatches(now.stored, choice)) {
+    // One reading of the request for the check and the read-back (armRead):
+    // the choice already on it is set even if a lender has since taken it.
+    const read = armRead(now, account, choice);
+    if (read === 'not-creator') return { kind: 'refused', refusal: { code: 'NotCreator', reason: text('request.tariffNotCreator'), reopensAt: null, remedy: null } };
+    if (read === 'set') {
       // Read from the chain: the request already carries this choice (set
       // from another tab or app), so closing records it as set.
       readSet.current = true;
       return { kind: 'refused', refusal: { code: 'AlreadySet', reason: text('request.tariffAlreadySet'), reopensAt: null, remedy: null } };
     }
+    if (read === 'taken-unset') return { kind: 'refused', refusal: { code: 'OfferAlreadyAccepted', reason: text('request.tariffArmTaken'), reopensAt: null, remedy: null } };
     return simulateCall(own, { address: diamond, abi: PROFILE, functionName: 'setOfferCreatorFullTariff', args: [offerId, true, choice.maxCStar, choice.allowDowngrade] });
   };
 
@@ -210,12 +212,13 @@ export function ArmTariff({ ctx, own, onDone }: ArmTariffProps) {
     try {
       const now = (await own.read((c) => readOfferTariff(c, diamond, offerId))).value;
       if (stale()) return;
-      if (now.creator.toLowerCase() === account.toLowerCase() && tariffMatches(now.stored, choice)) {
+      const read = armRead(now, account, choice);
+      if (read === 'set') {
         setReadNote(null);
         setEnded('armed');
         return;
       }
-      setReadNote({ kind: now.accepted ? 'taken' : 'not-yet', at: Date.now() });
+      setReadNote(read === 'not-creator' ? { kind: 'failed', reason: text('request.tariffNotCreator') } : { kind: read === 'taken-unset' ? 'taken' : 'not-yet', at: Date.now() });
     } catch (e) {
       if (stale()) return;
       setReadNote({ kind: 'failed', reason: refusalFromError(e).reason });

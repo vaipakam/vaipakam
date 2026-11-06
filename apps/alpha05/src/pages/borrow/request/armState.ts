@@ -3,7 +3,7 @@
  * the posted request it is bound to, and how the step ended when its card
  * was closed.
  */
-import type { TariffChoice } from '../../../shared/offers/fullTariff';
+import { tariffMatches, type OfferTariffState, type TariffChoice } from '../../../shared/offers/fullTariff';
 import type { TxPhase } from '../../../shared/tx/outcome';
 
 /** The posted request the tariff is armed on: the wallet and network that
@@ -42,4 +42,19 @@ export function armEnding(phase: TxPhase, readSet = false): ArmEnding {
     default:
       return 'skipped';
   }
+}
+
+/** What a read of the request says about this step's choice, in the order
+ *  that keeps every statement substantiated: another wallet's request first
+ *  (nothing about it is this step's to say), then the choice already on it
+ *  (whether or not a lender has since taken it, since the protocol fixes the
+ *  tariff a loan opens under at the accept), then taken without it (the
+ *  protocol no longer lets it be set, and that loan did not open under this
+ *  choice), then open without it. */
+export type ArmRead = 'not-creator' | 'set' | 'taken-unset' | 'open-unset';
+
+export function armRead(now: OfferTariffState, account: string, choice: TariffChoice): ArmRead {
+  if (now.creator.toLowerCase() !== account.toLowerCase()) return 'not-creator';
+  if (tariffMatches(now.stored, choice)) return 'set';
+  return now.accepted ? 'taken-unset' : 'open-unset';
 }
