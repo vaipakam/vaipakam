@@ -5,7 +5,7 @@ import { acceptFigures } from '../../shared/offers/model';
 import { tokenAmount, type TokenMetaMap } from '../../shared/reads/tokens';
 import { Notice } from '../../shared/ui/Notice';
 import { formatBps, formatUtc } from '../../shared/ui/format';
-import { acceptErrorText, cadenceText, stateText } from './acceptReview';
+import { acceptErrorText, cadenceText, gateBlockText, stateText } from './acceptReview';
 import { MATCH_PAGE, type Matches, type MatchRow } from './matches';
 
 type Hex = `0x${string}`;
@@ -46,6 +46,7 @@ function OfferRow({
   let blockedText: string | null = null;
   if (blocked?.kind === 'state') blockedText = stateText(blocked.state, copy);
   else if (blocked?.kind === 'refused') blockedText = acceptErrorText(blocked.error, copy);
+  else if (blocked?.kind === 'gate') blockedText = gateBlockText(blocked.block, copy);
   else if (blocked?.kind === 'unread') blockedText = blocked.reason;
   const f = row.preview && matcherBps !== null ? acceptFigures(row.preview, o.durationDays, matcherBps) : null;
 

@@ -29,13 +29,43 @@ export function interestAtDue(principal: bigint, rateBps: bigint, durationDays: 
 
 /** Why an offer cannot be taken now, or null when the protocol reports
  *  nothing against it. The offer's own state outranks the preview. */
-export type NotTakeable = { kind: 'state'; state: Exclude<OfferState, 'open'> } | { kind: 'refused'; error: Exclude<AcceptErrorName, 'None'> } | { kind: 'unread'; reason: string };
+export type NotTakeable =
+  | { kind: 'state'; state: Exclude<OfferState, 'open'> }
+  | { kind: 'refused'; error: Exclude<AcceptErrorName, 'None'> }
+  | { kind: 'gate'; block: GateBlock }
+  | { kind: 'unread'; reason: string };
 
-export function notTakeable(state: OfferState | null, preview: AcceptPreview | null, readError: string | null): NotTakeable | null {
+/** A risk-access block on this acceptance: the lender's own (`creator`,
+ *  which this wallet cannot fix) or this wallet's, with the gate's code. */
+export interface GateBlock {
+  creator: boolean;
+  code: number;
+}
+
+/** The code the accept gate softens with the acceptor's acknowledgement,
+ *  which every acceptance carries: a warning, never a block. */
+export const GATE_ACK_COVERED = 4;
+
+/**
+ * The risk-access verdict for an acceptance, from the combined preview
+ * (`previewOfferAcceptBlock`, the creator's code first) and the creator's
+ * own (`previewCreatorBlock`). The one rule both the offer list and the
+ * acceptance review read, so a row is never marked takeable that the
+ * review then blocks. Any code other than none and the acknowledgement-
+ * covered one blocks.
+ */
+export function gateBlock(gate: number, creatorGate: number): GateBlock | null {
+  if (creatorGate !== 0) return { creator: true, code: creatorGate };
+  if (gate !== 0 && gate !== GATE_ACK_COVERED) return { creator: false, code: gate };
+  return null;
+}
+
+export function notTakeable(state: OfferState | null, preview: AcceptPreview | null, readError: string | null, gate: GateBlock | null = null): NotTakeable | null {
   if (readError !== null) return { kind: 'unread', reason: readError };
   if (state === null || preview === null) return { kind: 'unread', reason: 'not read yet' };
   if (state !== 'open') return { kind: 'state', state };
   if (preview.error !== 'None') return { kind: 'refused', error: preview.error };
+  if (gate !== null) return { kind: 'gate', block: gate };
   return null;
 }
 

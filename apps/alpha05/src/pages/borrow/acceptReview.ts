@@ -11,7 +11,7 @@ import type { CopyAccess, CopyKey } from '../../shared/copy/useCopy';
 import { readFeeDiscountConsent } from '../../shared/consent/feeDiscount';
 import { readAssetClass, type AssetClass } from '../../shared/offers/assets';
 import { ASSET_ERC20, type StoredOffer } from '../../shared/offers/acceptTerms';
-import { acceptFigures, listFee, shortfall } from '../../shared/offers/model';
+import { acceptFigures, gateBlock, listFee, shortfall, type GateBlock } from '../../shared/offers/model';
 import {
   readAcceptGate,
   readCreatorGate,
@@ -153,6 +153,16 @@ export function stateText(state: Exclude<OfferState, 'open'>, copy: Pick<CopyAcc
   return copy.text(STATE_KEYS[state]);
 }
 
+const GATE_KEYS: Readonly<Record<number, CopyKey>> = { 1: 'accept.blockGate1', 2: 'accept.blockGate2', 3: 'accept.blockGate3' };
+
+/** A risk-access block as the page states it: a lender-side block is named
+ *  as the lender's and never sent to this wallet's settings, and a code
+ *  this build cannot name is still a block. */
+export function gateBlockText(b: GateBlock, copy: Pick<CopyAccess, 'text'>): string {
+  if (b.creator) return copy.text('accept.blockCreatorGate');
+  return copy.text(GATE_KEYS[b.code] ?? 'accept.blockGateOther');
+}
+
 /** The protocol's first refusal, as the page states it. */
 export function acceptErrorText(error: AcceptPreview['error'], copy: Pick<CopyAccess, 'text' | 'format'>, vaultUpgradeYours: boolean | null = null): string {
   // Either party's vault can be the one below the required version: the
@@ -195,12 +205,8 @@ export function reviewBlockers(r: AcceptReview, meta: TokenMetaMap | null, copy:
         }),
       );
   }
-  // The combined gate reports the lender's block first, so a lender-side
-  // block is named as the lender's and never sent to this wallet's settings.
-  if (r.creatorGate !== 0) out.push(copy.text('accept.blockCreatorGate'));
-  else if (r.gate === 1) out.push(copy.text('accept.blockGate1'));
-  else if (r.gate === 2) out.push(copy.text('accept.blockGate2'));
-  else if (r.gate === 3) out.push(copy.text('accept.blockGate3'));
+  const gate = gateBlock(r.gate, r.creatorGate);
+  if (gate !== null) out.push(gateBlockText(gate, copy));
   const missing = shortfall(r.funds.balance, r.preview.collateralAmount);
   if (missing > 0n) {
     const amt = (v: bigint) => tokenAmount(v, r.offer.collateralAsset, meta, copy.format);

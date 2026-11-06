@@ -47,9 +47,11 @@ export type AllowanceResult =
        *  zero ahead of a failed one); null when none did. A clean-up may
        *  overwrite only this value, never one something else set. */
       last: bigint | null;
-      /** A sent step whose outcome is not known (its receipt and the
-       *  allowance after it could not be read). */
-      pending: Hex | null;
+      /** A sent step whose outcome is not known (its receipt or the
+       *  allowance after it could not be read), with the amount that step
+       *  sets: on a token that goes through zero it may be the step to
+       *  zero, so its effect is never described as the final target's. */
+      pending: { hash: Hex; amount: bigint } | null;
       /** The wallet's or the chain's own words, when there are any. */
       reason: string | null;
     };
@@ -89,7 +91,7 @@ export async function setAllowance(io: AllowanceIo, target: bigint, expect?: big
     const after = await io.read(block).catch(() => null);
     if (after !== amount) {
       // Without a receipt the step may still land: its hash stays open.
-      return { ok: false, why: 'not-set', sent: i + 1, now: after, last, pending: block === undefined || after === null ? hash : null, reason: null };
+      return { ok: false, why: 'not-set', sent: i + 1, now: after, last, pending: block === undefined || after === null ? { hash, amount } : null, reason: null };
     }
     now = after;
     last = amount;

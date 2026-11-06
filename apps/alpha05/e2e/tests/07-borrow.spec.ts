@@ -120,11 +120,14 @@ test('a borrower takes a lender offer whole: signed terms, an exact approval, an
   await expect(page.getByRole('region', { name: 'Offers you can take' }).locator(`[data-offer-id="${offerId}"]`)).toHaveCount(0);
 });
 
-test('a wallet without the collateral is told the shortfall and cannot confirm', async ({ launchWallet }) => {
+test('a wallet without the collateral is told the shortfall and cannot confirm, until it is funded', async ({ launchWallet }) => {
   const sc = scenario();
   const tliq = (sc.fixture.artifact.testnetMocks as Record<string, Hex>).liquidToken;
-  // More collateral than the faucet wallet could hold from any earlier spec.
-  const offerId = await postLenderOffer(sc, { lender: 'lender', principalWeth: '0.05', collateralTliq: '9000000', rateBps: 300, days: 7 });
+  // More collateral than the wallet holds now, whatever earlier specs left it.
+  const visitor = accountFor('visitor').address;
+  const held = (await sc.pub.readContract({ address: tliq, abi: erc20Abi, functionName: 'balanceOf', args: [visitor] })) / 10n ** 18n;
+  const needed = held + 9_000_000n;
+  const offerId = await postLenderOffer(sc, { lender: 'lender', principalWeth: '0.05', collateralTliq: needed.toString(), rateBps: 300, days: 7 });
   const { page, flags } = await launchWallet('visitor');
   await page.goto('/borrow');
   await connectWallet(page);
@@ -139,6 +142,13 @@ test('a wallet without the collateral is told the shortfall and cannot confirm',
   expect(flags.sentTransactions).toBe(0);
   expect(flags.typedDataRequests.AcceptTerms ?? 0).toBe(0);
   await fitsWidth(page);
+
+  // RB-RAILS: the review is read again each block, so funding the wallet
+  // lifts the blocker without reopening the panel.
+  await sc.write('other', tliq, MINT_ABI, 'mint', [visitor, parseEther(needed.toString())]);
+  await expect(review).not.toContainText('short of the', { timeout: 60_000 });
+  await expect(review.getByTestId('accept-consent')).toBeVisible();
+  expect(flags.sentTransactions).toBe(0);
 });
 
 test('without a wallet the offers are listed, and taking one asks for a wallet', async ({ launchWallet }) => {

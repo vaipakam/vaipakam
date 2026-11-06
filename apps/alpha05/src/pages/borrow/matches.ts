@@ -8,8 +8,8 @@
  */
 import type { PublicClient } from 'viem';
 import { type StoredOffer } from '../../shared/offers/acceptTerms';
-import { borrowFit, notTakeable, rankForBorrower, type NotTakeable, type OfferFit } from '../../shared/offers/model';
-import { readLifMatcherBps, readOffer, readOfferState, readPairLtvBps, readPairOfferIds, readPreview, type AcceptPreview, type OfferState } from '../../shared/offers/reads';
+import { borrowFit, gateBlock, notTakeable, rankForBorrower, type GateBlock, type NotTakeable, type OfferFit } from '../../shared/offers/model';
+import { readAcceptGate, readCreatorGate, readLifMatcherBps, readOffer, readOfferState, readPairLtvBps, readPairOfferIds, readPreview, type AcceptPreview, type OfferState } from '../../shared/offers/reads';
 import { refusalFromError } from '../../shared/eligibility/refusal';
 import { readAssetClass } from '../../shared/offers/assets';
 
@@ -84,16 +84,21 @@ export async function readMatches(client: PublicClient, diamond: Hex, lending: H
         return;
       }
       try {
-        const [state, preview, ltv] = await Promise.all([
+        const [state, preview, gate, ltv] = await Promise.all([
           readOfferState(client, diamond, id),
           account ? readPreview(client, diamond, id, account) : Promise.resolve(null),
+          // The same risk-access verdict the review reads: the preview leaves
+          // the tier, consent and acknowledgement checks to this gate.
+          account
+            ? readAcceptGate(client, diamond, id, account).then(async (g): Promise<GateBlock | null> => gateBlock(g, g === 0 ? 0 : await readCreatorGate(client, diamond, id)))
+            : Promise.resolve(null),
           pairLtv ??
             readPairLtvBps(client, diamond, offer.lendingAsset, offer.amountMax, offer.collateralAsset, offer.collateralAmount).then(
               (bps): Ltv => ({ kind: 'bps', bps }),
               (e): Ltv => ({ kind: 'not-worked-out', reason: message(e) }),
             ),
         ]);
-        const blocked = account ? notTakeable(state, preview, null) : state === 'open' ? null : { kind: 'state' as const, state };
+        const blocked = account ? notTakeable(state, preview, null, gate) : state === 'open' ? null : { kind: 'state' as const, state };
         rows.push({ offer, state, preview, ltv, blocked });
       } catch (e) {
         unread.push({ id, reason: message(e) });

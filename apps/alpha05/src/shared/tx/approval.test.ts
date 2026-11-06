@@ -53,7 +53,7 @@ describe('setAllowance', () => {
   });
   it('keeps the hash of a step whose receipt could not be read and that has not landed yet', async () => {
     const t = token(50n, { land: () => false, unreadable: 0 });
-    expect(await setAllowance(t.io, 0n)).toMatchObject({ ok: false, why: 'not-set', pending: H(1) });
+    expect(await setAllowance(t.io, 0n)).toMatchObject({ ok: false, why: 'not-set', pending: { hash: H(1), amount: 0n } });
     const landed = token(50n, { unreadable: 0 });
     expect(await setAllowance(landed.io, 0n)).toEqual({ ok: true });
   });
@@ -76,5 +76,9 @@ describe('setAllowance', () => {
     expect(res).toMatchObject({ ok: false, why: 'not-set', sent: 2, now: 7n, last: 0n });
     const none = token(50n, { land: () => false });
     expect(await setAllowance(none.io, 0n)).toMatchObject({ last: null });
+  });
+  it('keeps the amount of an open step, which on a zero-first token can be the step to zero', async () => {
+    const t = token(10n, { zeroFirst: true, land: () => false, unreadable: 0 });
+    expect(await setAllowance(t.io, 50n)).toMatchObject({ ok: false, why: 'not-set', sent: 1, now: 10n, pending: { hash: H(1), amount: 0n } });
   });
 });

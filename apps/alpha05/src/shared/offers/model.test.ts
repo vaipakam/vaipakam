@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { OFFER_BORROWER } from './acceptTerms';
 import { offer } from './testOffer';
-import { acceptFigures, borrowFit, interestAtDue, listFee, movedBetween, notTakeable, rankForBorrower, shortfall } from './model';
+import { acceptFigures, borrowFit, gateBlock, interestAtDue, listFee, movedBetween, notTakeable, rankForBorrower, shortfall } from './model';
 import { ACCEPT_ERRORS, type AcceptPreview } from './reads';
 
 const ME = '0x2222222222222222222222222222222222222222' as const;
@@ -90,5 +90,19 @@ describe('the acceptance figures', () => {
     expect(movedBetween(preview(), preview({ interestRateBps: 501n }))).toBe('rate');
     expect(movedBetween(preview(), preview({ lifEstimate: 0n }))).toBe('fee');
     expect(movedBetween(preview(), preview({ error: 'ProtocolPaused' as AcceptPreview['error'] }))).toBe('refusal');
+  });
+});
+
+describe('gateBlock', () => {
+  it('blocks on the lender\'s code first, on this wallet\'s codes 1-3 and unknown ones, never on the acknowledgement-covered 4', () => {
+    expect(gateBlock(2, 2)).toEqual({ creator: true, code: 2 });
+    expect(gateBlock(1, 0)).toEqual({ creator: false, code: 1 });
+    expect(gateBlock(9, 0)).toEqual({ creator: false, code: 9 });
+    expect(gateBlock(4, 0)).toBeNull();
+    expect(gateBlock(0, 0)).toBeNull();
+  });
+  it('marks a row the review would block as not takeable', () => {
+    expect(notTakeable('open', preview(), null, gateBlock(3, 0))).toEqual({ kind: 'gate', block: { creator: false, code: 3 } });
+    expect(notTakeable('open', preview(), null, gateBlock(4, 0))).toBeNull();
   });
 });
