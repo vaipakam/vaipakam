@@ -71,11 +71,12 @@ export function Shell() {
   const menuButton = useRef<HTMLButtonElement>(null);
   const sheet = useRef<HTMLDivElement>(null);
   const header = useRef<HTMLElement>(null);
-  // From 1024px the panel can be collapsed to its icons (the toggle at its
-  // top; the choice remembered). While collapsed, resting a mouse on it, or
+  const navToggle = useRef<HTMLButtonElement>(null);
+  // From 1024px the panel can be collapsed to its icons (the main-menu
+  // button at the left of the header; the choice remembered). While collapsed, resting a mouse on it, or
   // moving keyboard focus into it, reveals the full panel OVER the page (the
   // page does not move); leaving it, focus leaving it, or Escape hides it
-  // again. Touch has no hover: the toggle is the way there.
+  // again. Touch has no hover: the menu button is the way there.
   const [collapsed, setCollapsed] = useState(readCollapsed);
   const [peek, setPeek] = useState(false);
   const peekTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -137,8 +138,8 @@ export function Shell() {
         }
         if (e.key === 'Escape' && peek) {
           // Folding hides the names and the controls; focus moves to the
-          // toggle, which stays in view, so it is never left on a hidden one.
-          if (focusInside()) sheet.current?.querySelector<HTMLElement>('.nav-toggle')?.focus();
+          // menu button, which stays in view, so it is never left on a hidden one.
+          if (focusInside()) navToggle.current?.focus();
           clearTimeout(peekTimer.current);
           setPeek(false);
         }
@@ -148,6 +149,22 @@ export function Shell() {
         Skip to content
       </a>
       <header className="topbar" ref={header}>
+        {/* From 1024px: the main-menu button, icon only, at the far left of
+            the header above the panel it folds (the pattern everyday web
+            apps use). Its spoken name is "Main menu" and aria-expanded says
+            whether the panel shows its names; the title is the hover tip. */}
+        <button
+          type="button"
+          ref={navToggle}
+          className="nav-toggle"
+          aria-label={text('shell.mainMenu')}
+          title={text('shell.mainMenu')}
+          aria-controls="site-menu"
+          aria-expanded={!collapsed}
+          onClick={toggleCollapsed}
+        >
+          <ControlIcon control="menu" size={24} />
+        </button>
         <NavLink to="/" className="brand" aria-label="Vaipakam home">
           {/* The www brand set: the shield mark on phones, the full wordmark
               from 720px up, each in the resolved theme's colourway. The text
@@ -172,10 +189,6 @@ export function Shell() {
             if (collapsed && !e.currentTarget.contains(e.relatedTarget as Node | null)) setPeek(false);
           }}
         >
-          <button type="button" className="nav-toggle" aria-controls="site-menu" onClick={toggleCollapsed}>
-            <ControlIcon control={collapsed ? 'expand' : 'collapse'} />
-            <span>{text(collapsed ? 'shell.navExpand' : 'shell.navCollapse')}</span>
-          </button>
           <nav aria-label="Primary">
             {basicNav.map(navLink)}
             {advancedNav.length > 0 && (

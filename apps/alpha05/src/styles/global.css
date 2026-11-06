@@ -343,6 +343,10 @@ code {
     font-size: 0.8rem;
   }
 }
+/* The main-menu button exists only where the panel can collapse (1024px up). */
+.nav-toggle {
+  display: none;
+}
 @media (min-width: 1024px) {
   :root {
     --side-w: 232px;
@@ -370,24 +374,28 @@ code {
     flex: 1 1 0;
     font-size: 0.9rem;
   }
-  /* The panel's toggle, at its top: collapse to icons, or expand again. */
-  .site-menu .nav-toggle {
-    display: flex;
+  /* The main-menu button, icon only, at the far left of the header: it
+     folds the panel to its icons and unfolds it again. Its centre sits over
+     the collapsed column's icons (14px inset + 22px = 36px, half of 72). */
+  .topbar {
+    padding-inline-start: 14px;
+  }
+  .nav-toggle {
+    display: inline-flex;
+    flex: none;
     align-items: center;
-    gap: 12px;
-    min-height: 40px;
-    padding: 8px 12px;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    padding: 0;
     border: 0;
-    border-radius: 8px;
+    border-radius: 50%;
     background: none;
-    color: var(--text-muted);
-    font: inherit;
-    font-size: 0.85rem;
+    color: var(--text-body);
     cursor: pointer;
   }
-  .site-menu .nav-toggle:hover {
-    background: var(--brand-soft);
-    color: var(--brand-soft-text);
+  .nav-toggle:hover {
+    background: var(--surface-hover);
   }
   /* Collapsed: icons only, the names kept for screen readers (each link
      keeps its accessible name), the group label a rule, the controls folded
@@ -404,13 +412,11 @@ code {
     padding-inline: 8px;
     overflow-x: hidden;
   }
-  .shell[data-nav-collapsed='true']:not([data-nav-peek='true']) .site-menu nav a,
-  .shell[data-nav-collapsed='true']:not([data-nav-peek='true']) .site-menu .nav-toggle {
+  .shell[data-nav-collapsed='true']:not([data-nav-peek='true']) .site-menu nav a {
     justify-content: center;
     padding-inline: 0;
   }
   .shell[data-nav-collapsed='true']:not([data-nav-peek='true']) .site-menu nav a > span,
-  .shell[data-nav-collapsed='true']:not([data-nav-peek='true']) .nav-toggle > span,
   .shell[data-nav-collapsed='true']:not([data-nav-peek='true']) .nav-group-title {
     position: absolute;
     width: 1px;
@@ -430,9 +436,6 @@ code {
   .shell[data-nav-peek='true'] .site-menu {
     box-shadow: var(--shadow-pop);
   }
-}
-.nav-toggle {
-  display: none;
 }
 .segment {
   display: inline-flex;

@@ -290,8 +290,10 @@ brand and wallet over a left column, a rail of icons above short names up to
 1023 px and a panel of icons beside names from 1024 px, the pages only
 Advanced adds grouped under their own label after the Basic ones, and the mode
 and theme controls at the column's foot; from 1024 px the panel can be
-collapsed to its icons by a toggle at its top, the choice remembered per
-browser, and while collapsed a resting mouse (after about 0.3 s, hidden again
+collapsed to its icons by an icon-only main-menu button (three lines) at
+the far left of the header, the pattern everyday web apps use, named "Main
+menu" for screen readers with a hover tip and stating whether the panel is
+expanded, the choice remembered per browser, and while collapsed a resting mouse (after about 0.3 s, hidden again
 0.5 s after it leaves) or keyboard focus reveals the full panel over the page
 without moving it, Escape hiding it; the breakpoints follow the common
 compact, medium and expanded window classes); an unknown route shows

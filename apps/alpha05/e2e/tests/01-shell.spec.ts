@@ -198,6 +198,8 @@ test('from 720px the navigation is a left column under a one-row header: a rail,
     // Rail: icon above a short name. Panel: icon beside the name.
     const home = nav.getByRole('link', { name: 'Home', exact: true });
     const [i, l] = [(await home.locator('svg').boundingBox())!, (await home.locator('span').boundingBox())!];
+    // The main-menu button exists only where the panel can collapse.
+    await expect(header.getByRole('button', { name: 'Main menu' })).toBeVisible({ visible: kind === 'panel' });
     if (kind === 'rail') {
       expect(c.width).toBeLessThan(110);
       expect(i.y + i.height).toBeLessThanOrEqual(l.y + 1);
@@ -221,11 +223,24 @@ test('from 1024px the panel collapses to its icons, reveals itself over the page
   const width = async () => (await column.boundingBox())!.width;
   const pageX = async () => (await page.locator('#main').boundingBox())!.x;
   const expanded = await pageX();
-  await page.getByRole('button', { name: 'Collapse the menu' }).click();
+  // The main-menu button: icon only at the far left of the header, named
+  // "Main menu" with a hover tip, saying whether the panel shows its names.
+  const menu = page.getByRole('banner').getByRole('button', { name: 'Main menu' });
+  await expect(menu).toHaveAttribute('aria-expanded', 'true');
+  await expect(menu).toHaveAttribute('title', 'Main menu');
+  expect((await menu.innerText()).trim()).toBe('');
+  const mb = (await menu.boundingBox())!;
+  expect(Math.min(mb.width, mb.height)).toBeGreaterThanOrEqual(44);
+  expect(mb.x).toBeLessThan((await page.getByRole('banner').getByRole('link', { name: 'Vaipakam home' }).boundingBox())!.x);
+  await menu.click();
+  await expect(menu).toHaveAttribute('aria-expanded', 'false');
   // Icons only; every destination still a named link; the page takes the room.
   await expect.poll(width).toBeLessThan(80);
   for (const name of [...BASIC_NAV, ...ADVANCED_ONLY]) await expect(nav.getByRole('link', { name, exact: true })).toBeVisible();
   await expect(nav.getByRole('link', { name: 'Borrow', exact: true }).locator('span')).toHaveCSS('clip-path', 'inset(50%)');
+  // The button sits over the column of icons.
+  const icon = (await nav.getByRole('link', { name: 'Borrow', exact: true }).locator('svg').boundingBox())!;
+  expect(Math.abs(mb.x + mb.width / 2 - (icon.x + icon.width / 2))).toBeLessThanOrEqual(4);
   const collapsedX = await pageX();
   expect(collapsedX).toBeLessThan(expanded);
   // A resting pointer reveals the full panel OVER the page, which does not move.
@@ -243,22 +258,27 @@ test('from 1024px the panel collapses to its icons, reveals itself over the page
   expect(await width()).toBeGreaterThan(200);
   await expect(advancedButton).toBeVisible();
   await expect(advancedButton).toBeFocused();
-  // Escape folds it and hands focus to the toggle, which stays in view.
+  // Escape folds it and hands focus to the menu button, which stays in view.
   await page.keyboard.press('Escape');
   await expect.poll(width).toBeLessThan(80);
-  await expect(page.getByRole('button', { name: 'Expand the menu' })).toBeFocused();
-  await page.getByRole('button', { name: 'Expand the menu' }).blur();
+  await expect(menu).toBeFocused();
+  await menu.blur();
   // The choice is remembered.
   await page.reload();
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('Home');
   await expect.poll(width).toBeLessThan(80);
-  // Keyboard: focus inside reveals it at once; Escape hides it.
-  await page.getByRole('button', { name: 'Expand the menu' }).focus();
+  await expect(menu).toHaveAttribute('aria-expanded', 'false');
+  // Keyboard: Tab from the menu button reaches the panel, which reveals
+  // itself at once; Escape hides it and returns focus to the button.
+  await menu.focus();
+  await nav.getByRole('link', { name: 'Home', exact: true }).focus();
   await expect.poll(width).toBeGreaterThan(200);
   await page.keyboard.press('Escape');
   await expect.poll(width).toBeLessThan(80);
+  await expect(menu).toBeFocused();
   // Expanding again restores the panel and the page beside it.
-  await page.getByRole('button', { name: 'Expand the menu' }).click();
+  await menu.click();
+  await expect(menu).toHaveAttribute('aria-expanded', 'true');
   await expect.poll(width).toBeGreaterThan(200);
   await expect.poll(pageX).toBe(expanded);
 });

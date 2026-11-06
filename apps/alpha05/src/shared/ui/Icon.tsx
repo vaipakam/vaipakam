@@ -212,15 +212,12 @@ export const PLACES: Readonly<Record<string, Shape>> = {
 /** The desktop panel's own toggle: collapse to icons, or expand to names.
  *  A control of the navigation, not a destination and not a meaning. */
 export const CONTROLS = {
-  collapse: [
-    ['rect', { width: '18', height: '18', x: '3', y: '3', rx: '2' }],
-    ['path', { d: 'M9 3v18' }],
-    ['path', { d: 'm16 15-3-3 3-3' }],
-  ],
-  expand: [
-    ['rect', { width: '18', height: '18', x: '3', y: '3', rx: '2' }],
-    ['path', { d: 'M9 3v18' }],
-    ['path', { d: 'm14 9 3 3-3 3' }],
+  // The main-menu button (three lines), the familiar control at the far left
+  // of a web app's header that folds and unfolds its side panel.
+  menu: [
+    ['path', { d: 'M4 12h16' }],
+    ['path', { d: 'M4 18h16' }],
+    ['path', { d: 'M4 6h16' }],
   ],
 } as const satisfies Record<string, Shape>;
 
