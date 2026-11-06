@@ -3,7 +3,7 @@
  * pair on Anvil, against the contracts' own closure proof.
  *
  * The cycle is the real one (`rewardCycle.ts`): a mirror loan accrues over
- * days 0 and 1 and is repaid on day 1; the keeper's day-close pass closes,
+ * days 0 and 1 and is repaid as day 2 begins (the closing day earns nothing, #3171); the keeper's day-close pass closes,
  * finalizes and broadcasts both days; the keeper's remit pass funds day 1 on
  * the mirror, whose ingress admits the delivery's epoch under its one day
  * (#2828). No chain state is doctored. What it proves, in order:
@@ -84,7 +84,9 @@ function expectKeeperOnly(txs: { from: string; to: string | null }[], sc: MeshCh
 describe('the close-out pass on a Base/mirror pair', () => {
   it('runs the real cycle: a repaid mirror loan, days closed and finalized, day 1 delivered and admitted under its day', async () => {
     const loan = await openLoan(m.mirror, { lender: 'lender', borrower: 'borrower', principalWeth: '1', collateralTliq: '5', rateBps: 1000, days: 30 });
-    await warpToDay(1, 20);
+    // Repaid just after day 2 begins: the closing day earns nothing
+    // (#3171), so the loan earns day 1 whole, the day this scenario remits.
+    await warpToDay(2, 0, 30);
     await repayInFull(m.mirror, 'borrower', loan.loanId);
     await warpToDay(2, 0, 60);
     await closeAndFinalizeDays(m, k);
