@@ -2381,6 +2381,14 @@ Die Prüfung simuliert `createOffer` aus der Wallet und liest beide Klassen, `ge
 
 `createOffer` berechnet dem Kreditgeber nichts. Die gezeigte Gebühr ist die des Kreditnehmers: `getLoanInitiationFeeBps` des Betrags im verliehenen Asset, zum Satz, der gilt, wenn `acceptOffer` läuft, dann um den Haltestufen-Rabatt des Kreditnehmers gesenkt und von seiner Auszahlung abgezogen; die gezeigte Zahl nutzt den heutigen Satz. Der Anteil des Protokolls an den Zinsen ist `getTreasuryFeeBps`, je Kredit bei Eröffnung festgelegt (`treasuryFeeBpsAtInit`); der Haltestufen-Rabatt des Kreditgebers senkt ihn bei aktiver Einwilligung, wenn Zinsen abgerechnet werden. Die Prüfung zeigt den heutigen Satz und den Anteil zu diesem Satz als Obergrenze; ein fehlgeschlagenes Lesen von `getTreasuryFeeBps` wird genannt, und weder Anteil noch Rückfluss werden gezeigt.
 
+<a id="positions"></a>
+
+### Positions: Wie die Liste gelesen wird
+
+Positions liest denselben Bestand wie Home über einen gemeinsamen Leser: `getUserPositionLoansPaginated` durchläuft die Positions-NFTs, die die Wallet hält, `getLoansBatch` lädt sie, und jede Seite ergibt sich aus dem gehaltenen Token (`lenderTokenId` oder `borrowerTokenId`), nie aus der bei der Entstehung erfassten Partei. Kredite mit Status Active oder FallbackPending sind laufend, mit den Fristen, dem Health Factor und der Gruppierung wie unter Home beschrieben. Jeder andere Status gilt als beendet, neueste Kredit-ID zuerst, benannt nach `LoanStatus`: Repaid, Defaulted, Settled oder InternalMatched (durch ein Matching geschlossen); eine Statusnummer, die die App nicht kennt, wird als Nummer angezeigt. Auszahlungen folgen der unter Home beschriebenen Claimables-Regel: Eine gehaltene Position auf einem beendeten Kredit, die die Wallet von jemand anderem erhalten hat, wird gezählt, nicht geraten.
+
+Die Seitenauswahl filtert Auszahlungen, laufende und beendete Zeilen nach der gehaltenen Seite. „Nichts“ wird nur gesagt, wenn der Positions- und der Auszahlungsdurchlauf vollständig waren und das letzte Lesen gelang; ein an seiner Obergrenze gestoppter Durchlauf wird als unvollständig angegeben. Eine Zeile öffnet `/positions/<id>`, wo das Eignungsurteil jede Aktion entscheidet; die Liste sendet keine Transaktion.
+
 <a id="risk-access"></a>
 
 ### Risk Access: Ihre Risikostufe

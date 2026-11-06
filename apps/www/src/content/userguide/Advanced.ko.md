@@ -2084,6 +2084,14 @@ Lend는 ERC-20 담보에 대한 ERC-20 차입 요청(`offerType` 1)을 대출자
 
 `createOffer`는 대출자에게 아무것도 부과하지 않습니다. 표시되는 수수료는 차입자의 것으로, 대출 자산 기준 금액의 `getLoanInitiationFeeBps`입니다. `acceptOffer`가 실행될 때 적용되는 요율로 계산되고, 그때 차입자의 보유 등급 할인만큼 낮아지며, 차입자에게 보내는 금액에서 빠집니다. 표시된 금액은 오늘의 요율 기준입니다. 이자 중 프로토콜의 몫은 `getTreasuryFeeBps`이며, 대출이 열릴 때 대출별로 고정됩니다(`treasuryFeeBpsAtInit`). 동의가 켜져 있으면 이자 정산 때 대출자의 보유 등급 할인이 이를 낮춥니다. 검토 화면은 오늘의 요율과 그 요율에서의 몫을 상한으로 보여 줍니다. `getTreasuryFeeBps`를 읽지 못하면 그렇다고 밝히고, 몫이나 돌아올 금액은 표시하지 않습니다.
 
+<a id="positions"></a>
+
+### Positions: 목록을 읽는 방법
+
+Positions는 하나의 공유 리더로 Home과 같은 보유 목록을 읽습니다. `getUserPositionLoansPaginated`가 지갑이 보유한 포지션 NFT를 순회하고, `getLoansBatch`가 이를 불러오며, 각 측은 보유한 토큰(`lenderTokenId` 또는 `borrowerTokenId`)으로 정해지고 대출 생성 시 기록된 당사자로 정하지 않습니다. 상태가 Active 또는 FallbackPending인 대출은 진행 중이며, 기한, 건전성 지수, 그룹화는 Home에서 설명한 대로입니다. 그 밖의 모든 상태는 종료로, 최신 대출 id부터 `LoanStatus` 이름으로 표시합니다: Repaid, Defaulted, Settled, InternalMatched(매칭으로 종료). 앱이 모르는 상태 번호는 번호 그대로 표시합니다. 지급금은 Home에서 설명한 claimables 규칙을 따릅니다: 다른 사람에게서 받은 종료 대출의 보유 포지션은 개수로 세며 추측하지 않습니다.
+
+측 선택은 지급금, 진행 중, 종료 행을 보유한 측으로 거릅니다. "없음"은 포지션 순회와 지급금 순회가 모두 끝나고 최신 읽기가 성공했을 때만 표시합니다. 한도에서 멈춘 순회는 불완전하다고 알립니다. 행은 `/positions/<id>`를 열고, 그곳에서 자격 판정이 각 작업을 결정합니다. 목록은 트랜잭션을 보내지 않습니다.
+
 <a id="risk-access"></a>
 
 ### Risk Access: 내 위험 등급

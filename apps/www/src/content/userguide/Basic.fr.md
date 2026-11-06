@@ -1254,6 +1254,14 @@ Avant l'ouverture de votre portefeuille, l'application demande au protocole d'es
 
 Publier une offre ne vous coûte aucuns frais. Les frais d'ouverture sont ceux de l'emprunteur : une petite part du montant, prélevée une fois dans l'actif prêté quand un emprunteur accepte votre offre, au taux en vigueur à ce moment, et retirée de ce qu'il reçoit. Vous prêtez tout le montant, et l'emprunteur vous le doit en entier avec les intérêts. Quand les intérêts sont payés, le protocole garde sa part, au taux en vigueur à l'ouverture du prêt ; votre palier de réduction des frais peut baisser cette part tant que votre réglage de réduction est activé. La vérification montre le taux d'aujourd'hui et le maximum que cette part peut prendre ; si ce taux ne peut pas être lu, la vérification le dit au lieu d'afficher un chiffre.
 
+<a id="positions"></a>
+
+### Positions : vos positions de prêt
+
+Positions liste chaque prêt que vous avez accordé ou contracté sur ce réseau, à partir des jetons de position détenus par votre wallet ; une position transférée à quelqu'un d'autre quitte donc votre liste. Les paiements prêts à être récupérés viennent d'abord et ouvrent Claims. Viennent ensuite les prêts en cours, l'échéance la plus urgente d'abord, comme sur Home. Les prêts terminés viennent en dernier, chacun avec sa fin : remboursé, en défaut, réglé ou clos par un appariement. Un prêt terminé dont le paiement attend encore vous renvoie vers Claims.
+
+Tous, Prêtés et Empruntés filtrent les trois listes à la fois. Positions n'affirme que vous n'avez rien qu'après avoir tout lu ; si une liste n'a pas pu être lue en entier, il le dit. Chaque prêt ouvre sa propre page, qui montre les actions qui vous sont ouvertes. La liste elle-même ne signe jamais rien.
+
 <a id="risk-access"></a>
 
 ### Risk Access : votre niveau de risque

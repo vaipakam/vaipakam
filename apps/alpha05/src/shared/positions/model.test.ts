@@ -52,7 +52,12 @@ const dl = (maturity: number, graceEnd: number, periodic: Deadlines['periodic'] 
   pauseCredit: 0n,
   periodic,
 });
-const cp = (periodEndAt: number, graceEndsAt: number, shortfall = 10n, enforced = true) => ({ periodEndAt: BigInt(periodEndAt), graceEndsAt: BigInt(graceEndsAt), shortfall, enforced });
+const cp = (periodEndAt: number, graceEndsAt: number, shortfall = 10n, enforced = true) => ({
+  periodEndAt: BigInt(periodEndAt),
+  graceEndsAt: BigInt(graceEndsAt),
+  shortfall,
+  enforced,
+});
 
 describe('loanStage', () => {
   it('names a fallback before reading any date', () => {
@@ -88,7 +93,7 @@ describe('loanObligations', () => {
     expect(o.stage.kind).toBe('in-grace');
     expect(o.interest?.kind).toBe('interest-soon');
   });
-  it('keeps a checkpoint on the due date, whose shorter grace ends before the loan\'s', () => {
+  it("keeps a checkpoint on the due date, whose shorter grace ends before the loan's", () => {
     const o = ob(dl(NOW - 100, NOW + 7 * 86_400, cp(NOW - 100, NOW - 1)));
     expect(o).toMatchObject({ stage: { kind: 'in-grace' }, interest: { kind: 'interest-overdue' } });
     expect(mostUrgent(o).kind).toBe('interest-overdue');

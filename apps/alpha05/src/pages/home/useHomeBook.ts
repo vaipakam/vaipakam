@@ -1,11 +1,10 @@
-import { useOwnStateClient } from '../../chain/ownRail';
-import { getSupportedChain, type SupportedChain } from '../../chain/chains';
-import { useChainRead, type ChainRead } from '../../shared/reads/chainRead';
+import type { SupportedChain } from '../../chain/chains';
+import type { ChainRead } from '../../shared/reads/chainRead';
 import { useTokenMeta, type TokenMetaMap } from '../../shared/reads/tokens';
 import { useOwnRead, type OwnRead } from '../../shared/reads/useOwnRead';
-import { readNumeraireSymbol } from '../../shared/reads/numeraire';
-import { readOpenOffers, readPositionBook, type LiveLoans, type OpenOffers, type Payouts } from './reads';
-import { ASSET_ERC20 } from './model';
+import { readOpenOffers, type LiveLoans, type OpenOffers, type Payouts } from '../../shared/positions/reads';
+import { ASSET_ERC20 } from '../../shared/positions/model';
+import { usePositionBook } from '../../shared/positions/usePositionBook';
 
 type Hex = `0x${string}`;
 
@@ -23,27 +22,13 @@ export interface HomeBook {
   empty: boolean;
 }
 
-/** One part of an own read, with the read's state, age and source. */
-function part<T, U>(read: OwnRead<T>, pick: (data: T) => U): OwnRead<U> {
-  return { ...read, data: read.data === null ? null : pick(read.data) };
-}
-
 /** The connected wallet's book on its chain (RW-70): the loan positions it
  *  holds (live loans and payouts come from that one inventory) and the offers
  *  it holds, as two own reads so a failure of one never hides the other, plus
  *  the token and numeraire metadata the rows are written with. */
 export function useHomeBook(): HomeBook {
-  const own = useOwnStateClient();
-  const chain = getSupportedChain(own?.chainId);
-  const diamond = (chain?.diamondAddress ?? '0x') as Hex;
-  const account = (own?.account ?? '0x') as Hex;
-  const enabled = chain !== null;
-
-  const positions = useOwnRead(['home', 'positions'], (c) => readPositionBook(c, diamond, account), { enabled });
-  const loans = part(positions, (d) => d.loans);
-  const payouts = part(positions, (d) => d.payouts);
-  const offers = useOwnRead(['home', 'offers'], (c) => readOpenOffers(c, diamond, account), { enabled });
-  const numeraire = useChainRead(['numeraireSymbol', diamond], (c) => readNumeraireSymbol(c, diamond), { enabled });
+  const { chain, read: positions, loans, payouts, numeraire, diamond, account } = usePositionBook();
+  const offers = useOwnRead(['home', 'offers'], (c) => readOpenOffers(c, diamond, account), { enabled: chain !== null });
 
   const assets: Hex[] = [
     ...(loans.data?.rows.flatMap((r) => [r.loan.principalAsset, r.loan.collateralAsset]) ?? []),

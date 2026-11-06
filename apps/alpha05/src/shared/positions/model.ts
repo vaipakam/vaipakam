@@ -1,10 +1,12 @@
 /**
- * Home's rules (RW-70, RB-CLICKS), kept out of the components so they are
- * written once and tested: what stage each live loan is in and which loans
- * come first, how the children of one offer are grouped, and what can be
- * honestly said about which side of the wallet's book is larger.
+ * The rules for a wallet's loan positions (RW-70, LN-05, RB-CLICKS), shared
+ * by Home and Positions and kept out of the components so they are written
+ * once and tested: what stage each live loan is in and which loans come
+ * first, how the children of one offer are grouped, what an ended loan's
+ * status is called, and what can be honestly said about which side of the
+ * wallet's book is larger.
  *
- * Nothing here decides whether an action is OPEN (RB-ELIG): Home names each
+ * Nothing here decides whether an action is OPEN (RB-ELIG): a list names each
  * position's next step and opens the position, whose page reads the verdict.
  */
 
@@ -12,6 +14,16 @@
  *  Active and FallbackPending as live). */
 export const LOAN_STATUS_ACTIVE = 0;
 export const LOAN_STATUS_FALLBACK_PENDING = 4;
+
+/** The protocol's `LoanStatus` members in order (the enum is append-only),
+ *  each with the name a list shows. A member this build does not know is
+ *  named by its number, never guessed. */
+export const LOAN_STATUS_NAMES = ['active', 'repaid', 'defaulted', 'settled', 'fallback', 'matched'] as const;
+export type LoanStatusName = (typeof LOAN_STATUS_NAMES)[number] | 'unknown';
+
+export function loanStatusName(status: number): LoanStatusName {
+  return LOAN_STATUS_NAMES[status] ?? 'unknown';
+}
 
 /** Live = Active or FallbackPending, the protocol's own active set (#940):
  *  a FallbackPending loan is still curable by the borrower. */
@@ -52,6 +64,12 @@ export interface LoanSummary {
   collateralTokenId: bigint;
   lenderTokenId: bigint;
   borrowerTokenId: bigint;
+}
+
+/** A held position on a loan that has ended. */
+export interface EndedLoanRow {
+  loan: LoanSummary;
+  borrowerSide: boolean;
 }
 
 export interface LiveLoanRow {

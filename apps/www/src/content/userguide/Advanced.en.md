@@ -2570,6 +2570,14 @@ The review simulates `createOffer` from the wallet and reads both classes, `getE
 
 `createOffer` charges the lender nothing. The fee shown is the borrower's: `getLoanInitiationFeeBps` of the amount in the lending asset, at the rate in force when `acceptOffer` runs, lowered then by the borrower's hold-tier discount and deducted from their delivery; the figure shown uses today's rate. The protocol's share of interest is `getTreasuryFeeBps`, fixed per loan when it opens (`treasuryFeeBpsAtInit`); the lender's hold-tier discount, with the consent on, lowers it when interest is settled. The review shows today's rate and the share at that rate as an upper bound; a failed read of `getTreasuryFeeBps` is stated, and no share or amount back is shown.
 
+<a id="positions"></a>
+
+### Positions: How the List Is Read
+
+Positions reads the same inventory as Home through one shared reader: `getUserPositionLoansPaginated` walks the position NFTs the wallet holds, `getLoansBatch` hydrates them, and each side comes from the token held (`lenderTokenId` or `borrowerTokenId`), never from the party recorded at origination. Loans with status Active or FallbackPending are live, with the deadlines, health factor and grouping described under Home. Every other status is ended, newest loan id first, named from `LoanStatus`: Repaid, Defaulted, Settled, or InternalMatched (closed by a match); a status number the app does not know is shown as its number. Payouts follow the claimables rule described under Home: a held position on an ended loan the wallet received from someone else is counted, not guessed.
+
+The side choice filters payouts, live and ended rows by the side held. "Nothing" is said only when the position walk and the payout walk completed and the latest read succeeded; a walk stopped at its cap is stated as incomplete. A row opens `/positions/<id>`, where the eligibility verdict decides each action; the list sends no transaction.
+
 <a id="risk-access"></a>
 
 ### Risk Access: Your Risk Level

@@ -2391,6 +2391,14 @@ La vérification simule `createOffer` depuis le portefeuille et lit les deux cla
 
 `createOffer` ne facture rien au prêteur. Les frais affichés sont ceux de l'emprunteur : `getLoanInitiationFeeBps` du montant dans l'actif prêté, au taux en vigueur quand `acceptOffer` s'exécute, réduits alors par la remise de palier de détention de l'emprunteur et déduits de ce qui lui est versé ; le chiffre affiché utilise le taux d'aujourd'hui. La part du protocole sur les intérêts est `getTreasuryFeeBps`, fixée par prêt à son ouverture (`treasuryFeeBpsAtInit`) ; la remise de palier de détention du prêteur, avec le consentement activé, la réduit au règlement des intérêts. La vérification montre le taux d'aujourd'hui et la part à ce taux comme plafond ; une lecture échouée de `getTreasuryFeeBps` est signalée, et aucune part ni aucun montant de retour n'est affiché.
 
+<a id="positions"></a>
+
+### Positions : comment la liste est lue
+
+Positions lit le même inventaire que Home via un lecteur partagé : `getUserPositionLoansPaginated` parcourt les NFT de position détenus par le wallet, `getLoansBatch` les charge, et chaque côté vient du jeton détenu (`lenderTokenId` ou `borrowerTokenId`), jamais de la partie enregistrée à l'origine. Les prêts au statut Active ou FallbackPending sont en cours, avec les échéances, le facteur de santé et le regroupement décrits sous Home. Tout autre statut est terminé, l'id de prêt le plus récent d'abord, nommé d'après `LoanStatus` : Repaid, Defaulted, Settled ou InternalMatched (clos par un appariement) ; un numéro de statut que l'app ne connaît pas est affiché comme numéro. Les paiements suivent la règle des réclamables décrite sous Home : une position détenue sur un prêt terminé, reçue d'une autre personne, est comptée, pas devinée.
+
+Le choix du côté filtre les paiements et les lignes en cours et terminées selon le côté détenu. « Rien » n'est affiché que lorsque le parcours des positions et celui des paiements sont complets et que la dernière lecture a réussi ; un parcours arrêté à son plafond est déclaré incomplet. Une ligne ouvre `/positions/<id>`, où le verdict d'éligibilité décide de chaque action ; la liste n'envoie aucune transaction.
+
 <a id="risk-access"></a>
 
 ### Risk Access : votre niveau de risque

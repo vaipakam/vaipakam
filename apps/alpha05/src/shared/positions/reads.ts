@@ -1,5 +1,6 @@
 /**
- * Home's reads (RW-70, ACC-31). The wallet's positions, payouts and offers
+ * The position book (RW-70, ACC-31, LN-05, LN-11), read by Home and Positions
+ * through one reader. The wallet's positions, payouts and offers
  * are OWN state: read through the own rail (`useOwnRead`), bound to the
  * connected identity and chain. The protocol's pause posture and numeraire
  * are chain reads that belong to no one (`useChainRead`).
@@ -28,8 +29,8 @@ import {
   RepayPeriodicFacetABI,
   RiskFacetABI,
 } from '@vaipakam/contracts/abis';
-import { scanAll } from '../../shared/reads/scan';
-import { ASSET_ERC20, LOAN_STATUS_ACTIVE, isLiveStatus, positionKey, type Deadlines, type LiveLoanRow, type LoanSummary } from './model';
+import { scanAll } from '../reads/scan';
+import { ASSET_ERC20, LOAN_STATUS_ACTIVE, isLiveStatus, positionKey, type Deadlines, type EndedLoanRow, type LiveLoanRow, type LoanSummary } from './model';
 
 const DASHBOARD = MetricsDashboardFacetABI as Abi;
 const METRICS = MetricsFacetABI as Abi;
@@ -115,9 +116,17 @@ export interface Payouts {
   unlisted: number;
 }
 
+/** Held positions on loans that have ended (repaid, defaulted, settled or
+ *  internally matched), most recent loan first. */
+export interface EndedLoans {
+  rows: EndedLoanRow[];
+  complete: boolean;
+}
+
 export interface PositionBook {
   loans: LiveLoans;
   payouts: Payouts;
+  ended: EndedLoans;
 }
 
 /**
@@ -153,7 +162,8 @@ export async function readPositionBook(client: PublicClient, diamond: Hex, accou
   // Read once: whether periodic settlement is switched on. Unread, a loan
   // with a cadence has an unknown deadline (its checkpoint may or may not
   // let collateral be sold); a loan without one is unaffected.
-  const periodicOn = live.length === 0 ? Promise.resolve(false) : (client.readContract({ address: diamond, abi: NUMERAIRE, functionName: 'getPeriodicInterestEnabled' }) as Promise<boolean>);
+  const periodicOn =
+    live.length === 0 ? Promise.resolve(false) : (client.readContract({ address: diamond, abi: NUMERAIRE, functionName: 'getPeriodicInterestEnabled' }) as Promise<boolean>);
   periodicOn.catch(() => undefined);
 
   const [healthList, deadlineList, valueList, payouts] = await Promise.all([
@@ -192,7 +202,11 @@ export async function readPositionBook(client: PublicClient, diamond: Hex, accou
     deadlines[positionKey(r)] = deadlineList[i] ?? null;
     values[positionKey(r)] = valueList[i] ?? null;
   });
-  return { loans: { rows, complete: inventory.complete, deadlines, values }, payouts };
+  const ended: EndedLoanRow[] = held
+    .filter((h) => !isLiveStatus(h.loan.status))
+    .map((h) => ({ loan: h.loan, borrowerSide: h.borrowerSide }))
+    .sort((a, b) => (a.loan.id < b.loan.id ? 1 : a.loan.id > b.loan.id ? -1 : a.borrowerSide === b.borrowerSide ? 0 : a.borrowerSide ? 1 : -1));
+  return { loans: { rows, complete: inventory.complete, deadlines, values }, payouts, ended: { rows: ended, complete: inventory.complete } };
 }
 
 /** A claim can be open on a loan that is still live (a lender's claim on a
