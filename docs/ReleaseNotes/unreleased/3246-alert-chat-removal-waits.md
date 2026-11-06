@@ -1,4 +1,4 @@
-## Security — removing a Telegram alert chat waits under protected mode (PR #TBD)
+## Security — removing a Telegram alert chat waits under protected mode (PR #3247)
 
 Protected account mode makes every payout wait a delay. Its alerts, and the Telegram LOCK command, are how the owner sees a payout in time to lock the vault. Until now a thief holding only the owner key could silence them first: an unlink, or linking the thief's own chat in place of the owner's, took effect at once.
 
