@@ -52,7 +52,18 @@ export function nftApproval(d: NftApprovalDeps, asset: Hex, tokenId: bigint): Nf
   const { text, format } = copy;
   const account = own.account;
 
-  const read = (block?: bigint) => own.read((c) => readErc721(c, asset, tokenId, account, diamond, block)).then((x) => x.value);
+  // The newest block this flow saw its own approval step mine in. A later
+  // read without a named block never describes the token as it stood before
+  // that block, whichever node answers: put-back would otherwise read the
+  // approval as already restored and leave the protocol approved.
+  let floor = 0n;
+  const read = (block?: bigint) =>
+    own
+      .read(async (c) => {
+        const head = block ?? (await c.getBlockNumber({ cacheTime: 0 }));
+        return readErc721(c, asset, tokenId, account, diamond, head < floor ? floor : head);
+      })
+      .then((x) => x.value);
 
   async function setTo(to: Hex): Promise<{ landed: boolean; hash: Hex | null; now: Erc721State | null }> {
     const hash = await writeContract(config, { address: asset, abi: NFT_ABI, functionName: 'approve', args: [to, tokenId], chainId, account });
@@ -62,6 +73,7 @@ export function nftApproval(d: NftApprovalDeps, asset: Hex, tokenId: bigint): Nf
     } catch {
       return { landed: false, hash, now: null };
     }
+    if (block > floor) floor = block;
     // A read-back that fails is missing evidence, not a failure: the hash is
     // kept, so the caller states the step as unverified (it may have landed).
     const now = await read(block).catch(() => null);

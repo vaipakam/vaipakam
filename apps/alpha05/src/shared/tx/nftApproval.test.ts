@@ -7,6 +7,7 @@ type Hex = `0x${string}`;
 const ASSET: Hex = '0x1111111111111111111111111111111111111111';
 const WALLET: Hex = '0x2222222222222222222222222222222222222222';
 const DIAMOND: Hex = '0x3333333333333333333333333333333333333333';
+const NO_ADDRESS_HEX: Hex = '0x0000000000000000000000000000000000000000';
 const OTHER: Hex = '0x4444444444444444444444444444444444444444';
 
 const sent: { to: Hex }[] = [];
@@ -26,9 +27,12 @@ vi.mock('../nft/nft', async (orig) => ({
 }));
 
 const { nftApproval } = await import('./nftApproval');
+const { readErc721 } = await import('../nft/nft');
 
 const at = (owner: Hex | null, approved: Hex | null): Erc721State => ({ owner, approved, approvedForAll: false, blockNumber: 1n });
-const own = { account: WALLET, read: async <T>(fn: (c: never) => Promise<T>) => ({ value: await fn(undefined as never), via: 'wallet' }) } as unknown as OwnStateClient;
+/** A client whose head is block 15, behind the approval's receipt (block 20). */
+const client = { getBlockNumber: vi.fn(async () => 15n) };
+const own = { account: WALLET, read: async <T>(fn: (c: never) => Promise<T>) => ({ value: await fn(client as never), via: 'wallet' }) } as unknown as OwnStateClient;
 const copy = { text: (k: string) => k, format: (k: string) => k } as never;
 const make = () => nftApproval({ own, config: {} as Config, chainId: 1, diamond: DIAMOND, copy, tokenName: 'T #7', setStep: () => {} }, ASSET, 7n);
 
@@ -62,7 +66,7 @@ describe('an approval whose read-back fails', () => {
       account: WALLET,
       read: async <T>(fn: (c: never) => Promise<T>) => {
         if (++calls > 1) throw new Error('rpc down');
-        return { value: await fn(undefined as never), via: 'wallet' };
+        return { value: await fn(client as never), via: 'wallet' };
       },
     } as unknown as OwnStateClient;
     states = [at(WALLET, null)];
@@ -88,5 +92,19 @@ describe('putting the approval back', () => {
     expect(sent).toEqual([{ to: '0x0000000000000000000000000000000000000000' }]);
     states = [at(WALLET, DIAMOND), at(WALLET, DIAMOND)];
     expect(await make().putBack(null)).toEqual({ ok: false, sentence: 'nftApproval.restoreNotLanded' });
+  });
+});
+
+describe('reads after the approval mined', () => {
+  it('never read the token at a block before the approval, so put-back cannot mistake it for restored', async () => {
+    states = [at(WALLET, null), at(WALLET, DIAMOND), at(WALLET, DIAMOND), at(WALLET, null)];
+    const ap = make();
+    await ap.approve(null);
+    vi.mocked(readErc721).mockClear();
+    await ap.putBack(null);
+    // The head reads 15, the approval mined at 20: the put-back reads at 20.
+    expect(vi.mocked(readErc721).mock.calls[0]![5]).toBe(20n);
+    expect(client.getBlockNumber).toHaveBeenCalledWith({ cacheTime: 0 });
+    expect(sent).toEqual([{ to: DIAMOND }, { to: NO_ADDRESS_HEX }]);
   });
 });

@@ -82,7 +82,10 @@ export interface Erc721State {
 }
 
 export async function readErc721(c: PublicClient, asset: Hex, tokenId: bigint, account: Hex, diamond: Hex, blockNumber?: bigint): Promise<Erc721State> {
-  const block = blockNumber ?? (await c.getBlockNumber());
+  // The head is fetched fresh (cacheTime 0): viem otherwise reuses a block
+  // number for a few seconds, and a read right after a transaction mined
+  // would then describe the token as it stood before it.
+  const block = blockNumber ?? (await c.getBlockNumber({ cacheTime: 0 }));
   const at = { blockNumber: block };
   let owner: Hex | null = null;
   try {
