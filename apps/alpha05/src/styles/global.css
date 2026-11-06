@@ -262,7 +262,6 @@ code {
    containing block of the fixed column inside it. */
 @media (min-width: 720px) {
   :root {
-    --topbar-h: 64px;
     --side-w: 96px;
   }
   .bottom-bar {
@@ -273,9 +272,12 @@ code {
   }
   .topbar {
     flex-wrap: nowrap;
-    height: var(--topbar-h);
+    /* One row normally; it grows when the wallet control carries a notice,
+       and the column below follows its measured height (--topbar-h, set by
+       the shell; 64px until measured). */
+    min-height: 64px;
     margin-inline-start: calc(-1 * var(--side-w));
-    padding-block: 0;
+    padding-block: 8px;
     backdrop-filter: none;
     background: var(--surface-raised);
   }
@@ -284,7 +286,7 @@ code {
   }
   .site-menu {
     position: fixed;
-    top: var(--topbar-h);
+    top: var(--topbar-h, 64px);
     bottom: 0;
     inset-inline-start: 0;
     width: var(--side-w);

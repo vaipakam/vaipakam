@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
 import { useMode } from './ModeContext';
 import { useTheme } from './ThemeContext';
@@ -55,6 +55,24 @@ export function Shell() {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuButton = useRef<HTMLButtonElement>(null);
   const sheet = useRef<HTMLDivElement>(null);
+  const header = useRef<HTMLElement>(null);
+  // From 720px the navigation column sits below the header. The header is
+  // one row normally but grows when the wallet control has more to say (an
+  // unsupported network and its remedy), so its measured height, not a fixed
+  // figure, places the column: nothing in the header is ever covered or cut.
+  useLayoutEffect(() => {
+    const el = header.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const root = document.documentElement;
+    const publish = () => root.style.setProperty('--topbar-h', `${el.offsetHeight}px`);
+    publish();
+    const ro = new ResizeObserver(publish);
+    ro.observe(el);
+    return () => {
+      ro.disconnect();
+      root.style.removeProperty('--topbar-h');
+    };
+  }, []);
   const closeMenu = () => setMenuOpen(false);
   // Opening the sheet moves focus into it: the sheet sits earlier in the
   // document than More, so without this a keyboard user's Tab would leave
@@ -76,7 +94,7 @@ export function Shell() {
       <a className="skip" href="#main">
         Skip to content
       </a>
-      <header className="topbar">
+      <header className="topbar" ref={header}>
         <NavLink to="/" className="brand" aria-label="Vaipakam home">
           {/* The www brand set: the shield mark on phones, the full wordmark
               from 720px up, each in the resolved theme's colourway. The text

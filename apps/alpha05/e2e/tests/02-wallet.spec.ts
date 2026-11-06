@@ -27,7 +27,10 @@ test('the capability line states what was read from the protocol contract', asyn
   // Read through the stand-in proxy route to the fixture Diamond: a count of
   // routed functions, never a guess. The unreadable wording must not appear.
   await expect(page.locator('.posture').getByText(/^Chain 84532: \d+ routed functions read from the protocol contract\./)).toBeVisible({ timeout: 60_000 });
-  const line = await page.locator('.posture').getByText(/routed functions read/).textContent();
+  const line = await page
+    .locator('.posture')
+    .getByText(/routed functions read/)
+    .textContent();
   expect(Number(/: (\d+) routed/.exec(line ?? '')?.[1])).toBeGreaterThan(100);
   await expect(page.getByText('could not be read, so this build cannot tell', { exact: false })).toHaveCount(0);
 });
@@ -39,6 +42,15 @@ test('a wallet on a network this app does not serve gets a tier-A notice and the
   const notice = page.getByText('Your wallet is on a network this app does not serve', { exact: false });
   await expect(notice).toBeVisible();
   await expect(notice).toContainText('Supported: Base Sepolia');
+  // From 720px the header grows to hold the notice, and the navigation
+  // column below follows it: the notice is neither cut off nor covered.
+  if ((page.viewportSize()?.width ?? 0) >= 720) {
+    const header = (await page.locator('header.topbar').boundingBox())!;
+    const box = (await notice.boundingBox())!;
+    expect(box.y).toBeGreaterThanOrEqual(header.y);
+    expect(box.y + box.height).toBeLessThanOrEqual(header.y + header.height + 1);
+    await expect.poll(async () => (await page.locator('.site-menu').boundingBox())!.y).toBeCloseTo(header.y + header.height, 0);
+  }
   // Nothing of the visitor's is shown while unsupported: no identity line.
   await expect(page.locator('.posture').getByText(/ on Base Sepolia$/)).toHaveCount(0);
   await page.getByRole('button', { name: 'Switch to Base Sepolia' }).click();
