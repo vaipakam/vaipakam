@@ -169,9 +169,8 @@ test('an offer the wallet cannot fund is blocked in place, changing it keeps wha
 
   const { page, flags } = await launchWallet('visitor', { advanced: true });
   await openForm(page, tliq);
-  // A lender's Advanced options are not built yet, and the form says so.
+  // A lender's schedule and tariff are not built yet, and the form says so.
   await expect(page.getByTestId('lend-offer-advanced-later')).toContainText('come in a later update');
-  await expect(page.getByTestId('request-range')).toHaveCount(0);
   // Errors wait until a review is asked; then every field names its own.
   await page.getByTestId('request-review').click();
   await expect(page.getByText('Enter an amount.').first()).toBeVisible();

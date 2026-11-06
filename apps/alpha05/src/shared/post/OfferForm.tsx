@@ -21,6 +21,7 @@ import {
   expiresAt,
   FILL_MODES,
   fillModeBlock,
+  partError,
   rangeError,
   ASSET_ERC1155,
   ASSET_ERC20,
@@ -114,8 +115,11 @@ interface OfferFormProps {
  * OFF-06: a lender types the same shape from the other side: the exact
  * amount they lend (which posting locks in their vault, so the form shows
  * their balance of it), the one collateral every borrower must lock, the
- * rate, the term, the expiry and the interest mode. A lender's Advanced
- * options come in a later update, and the form says so in Advanced.
+ * rate, the term, the expiry and the interest mode. OFF-10 / OFF-11 for a
+ * lender (Advanced): parts, the smallest of which one match may lend (the
+ * amount typed stays the whole amount locked, which a direct take borrows),
+ * and the fill mode. A lender's interest schedule and fee tariff come in a
+ * later update, and the form says so in Advanced.
  */
 export function OfferForm({ side, flowKey, chain, own, pair, meta, onReview, onCancel }: OfferFormProps) {
   const { text, format } = useCopy();
@@ -127,8 +131,9 @@ export function OfferForm({ side, flowKey, chain, own, pair, meta, onReview, onC
   const input: PostInput = { ...DEFAULT_INPUT, ...stored };
   const set = (patch: Partial<PostInput>) => setStored({ ...input, ...patch });
   /** Errors show once a field has been left, or after a review was asked. */
-  const [touched, setTouched] = useState<Record<'amount' | 'amountMax' | 'floor' | 'collateral' | 'tokenId' | 'rate' | 'term' | 'expiry' | 'ceiling', boolean>>({
+  const [touched, setTouched] = useState<Record<'amount' | 'amountMax' | 'part' | 'floor' | 'collateral' | 'tokenId' | 'rate' | 'term' | 'expiry' | 'ceiling', boolean>>({
     ceiling: false,
+    part: false,
     amount: false,
     amountMax: false,
     floor: false,
@@ -202,19 +207,26 @@ export function OfferForm({ side, flowKey, chain, own, pair, meta, onReview, onC
               : { tone: 'warn' as const, text: text('request.tokenNotHeld') };
   const rate = parseRateBps(input.rate);
   // OFF-10: a range needs ERC-20 collateral; one kept from an ERC-20 pair
-  // does not carry over to a token. A lender's range is a later update.
-  const ranged = input.ranged && !named && !lender;
-  /** The fill mode the offer carries: a lender's is the default for now. */
-  const fillMode: FillMode = lender ? 'partial' : input.fillMode;
+  // does not carry over to a token. A request's range is its smallest and
+  // largest amount, with an optional floor collateral; a lending offer's is
+  // the smallest part one match may lend, the amount typed staying the
+  // whole amount locked.
+  const ranged = input.ranged && !named;
+  const fillMode: FillMode = input.fillMode;
   /** The Full tariff, chosen only on a request for now. */
   const tariffChosen = !lender && input.tariff;
-  const amountMax = ranged && lendingDecimals !== null ? parseAmount(input.amountMax, lendingDecimals) : null;
-  const floorTyped = ranged && input.collateralFloor.trim() !== '';
+  const amountMax = ranged && !lender && lendingDecimals !== null ? parseAmount(input.amountMax, lendingDecimals) : null;
+  const minPart = ranged && lender && lendingDecimals !== null ? parseAmount(input.minPart, lendingDecimals) : null;
+  const floorTyped = ranged && !lender && input.collateralFloor.trim() !== '';
   const floor = floorTyped && collateralDecimals !== null ? parseAmount(input.collateralFloor, collateralDecimals) : null;
   const shapeError =
-    ranged && amount?.ok && amountMax?.ok && collateral?.ok ? rangeError(amount.value, amountMax.value, collateral.value, floor?.ok ? floor.value : collateral.value) : null;
+    ranged && !lender && amount?.ok && amountMax?.ok && collateral?.ok
+      ? rangeError(amount.value, amountMax.value, collateral.value, floor?.ok ? floor.value : collateral.value)
+      : null;
+  const partShape = lender && amount?.ok && minPart?.ok ? partError(minPart.value, amount.value) : null;
   const fillBlock = fillModeBlock(fillMode, ranged, input.expiry);
-  const effective = lender ? [] : advancedSet({ ...input, ranged });
+  // A lender's schedule and tariff are not offered yet, so none is counted.
+  const effective = advancedSet({ ...input, ranged, ...(lender ? { cadence: 0 as const, tariff: false } : {}) });
   /** Names joined as the catalog joins two: "a, b and c". */
   const listOf = (names: string[]): string =>
     names.length <= 1 ? (names[0] ?? '') : format('request.advancedList', { a: names.slice(0, -1).join(', '), b: names[names.length - 1]! });
@@ -349,9 +361,9 @@ export function OfferForm({ side, flowKey, chain, own, pair, meta, onReview, onC
 
   const figures = inputs.data && amount?.ok && rate.ok && durationDays !== null ? postFigures(amount.value, rate.value, durationDays, inputs.data.lifBps) : null;
   /** The largest amount, for the live summary of a range. */
-  const largest = ranged && amountMax?.ok ? amountMax.value : null;
+  const largest = ranged && !lender && amountMax?.ok ? amountMax.value : null;
   const collateralOk = nft ? tokenId !== null : multi ? tokenId !== null && quantity !== null : collateral?.ok === true;
-  const rangeOk = !ranged || (amountMax?.ok === true && (!floorTyped || floor?.ok === true) && shapeError === null);
+  const rangeOk = !ranged || (lender ? minPart?.ok === true && partShape === null : amountMax?.ok === true && (!floorTyped || floor?.ok === true) && shapeError === null);
   const valid =
     amount?.ok === true &&
     collateralOk &&
@@ -380,8 +392,11 @@ export function OfferForm({ side, flowKey, chain, own, pair, meta, onReview, onC
     if (!valid || !amount?.ok || !rate.ok || durationDays === null) return;
     const locked = nft ? (tokenId === null ? null : 1n) : multi ? quantity : collateral?.ok ? collateral.value : null;
     if (locked === null) return;
-    const max = ranged && amountMax?.ok ? amountMax.value : amount.value;
-    const floorValue = ranged && floor?.ok ? floor.value : locked;
+    // A lending offer's typed amount is its whole amount (what posting locks
+    // and a direct take borrows); its smallest part is the protocol's minimum.
+    const max = lender ? amount.value : ranged && amountMax?.ok ? amountMax.value : amount.value;
+    const min = lender && ranged && minPart?.ok ? minPart.value : amount.value;
+    const floorValue = !lender && ranged && floor?.ok ? floor.value : locked;
     const leg =
       nft && tokenId !== null
         ? { kind: 'erc721' as const, tokenId }
@@ -400,7 +415,7 @@ export function OfferForm({ side, flowKey, chain, own, pair, meta, onReview, onC
       onReview({
         side,
         parsed: {
-          amount: amount.value,
+          amount: min,
           amountMax: max,
           collateral: locked,
           collateralFloor: floorValue,
@@ -420,6 +435,50 @@ export function OfferForm({ side, flowKey, chain, own, pair, meta, onReview, onC
       if (current()) setOpening(refusalFromError(e).reason);
     }
   };
+
+  /** OFF-11: how matches may fill the request or offer; the same choice on
+   *  both sides, worded for each. */
+  const fillFieldset = (
+    <fieldset className="choice-group" data-testid="request-fill">
+      <legend>{text('request.fillLabel')}</legend>
+      {FILL_MODES.map((m) => {
+        const blocked = fillModeBlock(m, ranged, input.expiry);
+        return (
+          <label key={m} className="choice">
+            <input
+              type="radio"
+              name="request-fill"
+              value={m}
+              checked={input.fillMode === m}
+              disabled={blocked !== null && input.fillMode !== m}
+              onChange={() => set({ fillMode: m })}
+            />
+            <span>{text(m === 'aon' ? k.fillAon : FILL_LABEL[m])}</span>
+          </label>
+        );
+      })}
+      {fillBlock !== null && (
+        <Notice tone="warn" tier="A">
+          {text(fillBlock === 'aon-range' ? 'request.fillAonRange' : k.fillIocOpen)}
+        </Notice>
+      )}
+      <WhyLink summaryKey={k.fillSummary} detailKey={k.fillWhy} />
+    </fieldset>
+  );
+  /** The range switch: the same box on both sides; turning it on drops an
+   *  all-or-none choice, which takes one amount. */
+  const rangeToggle = (
+    <label className="choice">
+      <input
+        type="checkbox"
+        checked={ranged}
+        disabled={named}
+        onChange={(e) => set({ ranged: e.target.checked, ...(e.target.checked && input.fillMode === 'aon' ? { fillMode: 'partial' as const } : {}) })}
+        data-testid="request-range"
+      />
+      <span>{text(k.rangeOption)}</span>
+    </label>
+  );
 
   // A token's collection has no decimals; only an ERC-20 collateral needs them.
   const metaMissing = meta !== null && (lendingDecimals === null || (!named && collateralDecimals === null));
@@ -451,7 +510,7 @@ export function OfferForm({ side, flowKey, chain, own, pair, meta, onReview, onC
       )}
       <div className="request-grid">
         <FormField
-          label={format(ranged ? 'request.amountMinLabel' : k.amountLabel, { symbol: lendingSymbol })}
+          label={format(ranged && !lender ? 'request.amountMinLabel' : k.amountLabel, { symbol: lendingSymbol })}
           hint={
             lender
               ? inputs.data && inputs.data.balance !== null
@@ -546,7 +605,7 @@ export function OfferForm({ side, flowKey, chain, own, pair, meta, onReview, onC
             label={format(k.collateralLabel, { symbol: collateralSymbol })}
             hint={
               lender
-                ? text('lendOffer.collateralHint')
+                ? text(ranged ? 'lendOffer.collateralHintRange' : 'lendOffer.collateralHint')
                 : inputs.data && inputs.data.balance !== null
                   ? format('request.collateralHint', { have: tokenAmount(inputs.data.balance, pair.collateral, meta, format) })
                   : text('request.collateralHintPlain')
@@ -692,31 +751,57 @@ export function OfferForm({ side, flowKey, chain, own, pair, meta, onReview, onC
         <WhyLink summaryKey={k.optionsSummary} detailKey={k.optionsWhy} />
       </fieldset>
 
-      {lender ? (
-        isAdvanced && (
-          // RB-MODE: a lender's Advanced options are not built yet; said, not hidden.
-          <section className="advanced-options" aria-labelledby="request-advanced" data-testid="request-advanced">
-            <h3 id="request-advanced">{text('request.advancedTitle')}</h3>
-            <p className="tier-b field-hint" data-testid="lend-offer-advanced-later">
-              {text('lendOffer.advancedLater')}
-            </p>
-          </section>
-        )
-      ) : isAdvanced ? (
+      {lender && isAdvanced ? (
         <section className="advanced-options" aria-labelledby="request-advanced" data-testid="request-advanced">
           <h3 id="request-advanced">{text('request.advancedTitle')}</h3>
           <fieldset className="choice-group">
-            <legend className="sr-only">{text('request.rangeOption')}</legend>
-            <label className="choice">
-              <input
-                type="checkbox"
-                checked={ranged}
-                disabled={named}
-                onChange={(e) => set({ ranged: e.target.checked, ...(e.target.checked && input.fillMode === 'aon' ? { fillMode: 'partial' as const } : {}) })}
-                data-testid="request-range"
-              />
-              <span>{text('request.rangeOption')}</span>
-            </label>
+            <legend className="sr-only">{text(k.rangeOption)}</legend>
+            {rangeToggle}
+            {ranged && (
+              <div className="request-grid">
+                <FormField
+                  label={format('lendOffer.partLabel', { symbol: lendingSymbol })}
+                  hint={text('lendOffer.partHint')}
+                  error={
+                    show('part')
+                      ? minPart !== null && !minPart.ok
+                        ? parseText(minPart.error, lendingSymbol, lendingDecimals)
+                        : partShape === 'part-above-amount'
+                          ? text('lendOffer.errPartAbove')
+                          : null
+                      : null
+                  }
+                >
+                  {({ id, describedBy, invalid }) => (
+                    <input
+                      id={id}
+                      inputMode="decimal"
+                      autoComplete="off"
+                      aria-describedby={describedBy}
+                      aria-invalid={invalid}
+                      value={input.minPart}
+                      onChange={(e) => set({ minPart: e.target.value })}
+                      onBlur={() => leave('part')}
+                      data-testid="lend-offer-part"
+                    />
+                  )}
+                </FormField>
+              </div>
+            )}
+            <WhyLink summaryKey={k.rangeSummary} detailKey={k.rangeWhy} />
+          </fieldset>
+          {fillFieldset}
+          {/* RB-MODE: a lender's schedule and tariff are not built yet; said, not hidden. */}
+          <p className="tier-b field-hint" data-testid="lend-offer-advanced-later">
+            {text('lendOffer.advancedLater')}
+          </p>
+        </section>
+      ) : !lender && isAdvanced ? (
+        <section className="advanced-options" aria-labelledby="request-advanced" data-testid="request-advanced">
+          <h3 id="request-advanced">{text('request.advancedTitle')}</h3>
+          <fieldset className="choice-group">
+            <legend className="sr-only">{text(k.rangeOption)}</legend>
+            {rangeToggle}
             {named && <p className="tier-b field-hint">{text('request.rangeNft')}</p>}
             {ranged && (
               <div className="request-grid">
@@ -776,33 +861,9 @@ export function OfferForm({ side, flowKey, chain, own, pair, meta, onReview, onC
                 </FormField>
               </div>
             )}
-            <WhyLink summaryKey="request.rangeSummary" detailKey="request.rangeWhy" />
+            <WhyLink summaryKey={k.rangeSummary} detailKey={k.rangeWhy} />
           </fieldset>
-          <fieldset className="choice-group" data-testid="request-fill">
-            <legend>{text('request.fillLabel')}</legend>
-            {FILL_MODES.map((m) => {
-              const blocked = fillModeBlock(m, ranged, input.expiry);
-              return (
-                <label key={m} className="choice">
-                  <input
-                    type="radio"
-                    name="request-fill"
-                    value={m}
-                    checked={input.fillMode === m}
-                    disabled={blocked !== null && input.fillMode !== m}
-                    onChange={() => set({ fillMode: m })}
-                  />
-                  <span>{text(FILL_LABEL[m])}</span>
-                </label>
-              );
-            })}
-            {fillBlock !== null && (
-              <Notice tone="warn" tier="A">
-                {text(fillBlock === 'aon-range' ? 'request.fillAonRange' : 'request.fillIocOpen')}
-              </Notice>
-            )}
-            <WhyLink summaryKey="request.fillSummary" detailKey="request.fillWhy" />
-          </fieldset>
+          {fillFieldset}
           <fieldset className="choice-group" data-testid="request-cadence">
             <legend>{text('request.cadenceLabel')}</legend>
             {CADENCES.map((c) => {
@@ -922,11 +983,15 @@ export function OfferForm({ side, flowKey, chain, own, pair, meta, onReview, onC
         effective.length > 0 && (
           // RB-MODE: an Advanced choice still applies in Basic, and says so.
           <Notice tone="warn" tier="A">
-            <span data-testid="request-advanced-set">{format('request.advancedSetNote', { list: listOf(effective.map((o) => text(ADVANCED_NAME[o]))) })}</span>{' '}
+            <span data-testid="request-advanced-set">
+              {format(k.advancedSetNote, { list: listOf(effective.map((o) => text(o === 'range' ? k.advancedRange : ADVANCED_NAME[o]))) })}
+            </span>{' '}
             <button
               type="button"
               className="btn"
-              onClick={() => set({ ranged: false, amountMax: '', collateralFloor: '', fillMode: 'partial', cadence: 0, tariff: false, tariffCeiling: '', tariffDowngrade: false })}
+              onClick={() =>
+                set({ ranged: false, amountMax: '', minPart: '', collateralFloor: '', fillMode: 'partial', cadence: 0, tariff: false, tariffCeiling: '', tariffDowngrade: false })
+              }
               data-testid="request-advanced-clear"
             >
               {text('request.advancedClear')}
@@ -936,7 +1001,7 @@ export function OfferForm({ side, flowKey, chain, own, pair, meta, onReview, onC
       )}
       {fillBlock !== null && !isAdvanced && (
         <Notice tone="warn" tier="A">
-          {text(fillBlock === 'aon-range' ? 'request.fillAonRange' : 'request.fillIocOpen')}
+          {text(fillBlock === 'aon-range' ? 'request.fillAonRange' : k.fillIocOpen)}
         </Notice>
       )}
       {cadenceBlock !== null && !isAdvanced && (

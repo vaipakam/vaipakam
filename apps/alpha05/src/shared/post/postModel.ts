@@ -18,6 +18,12 @@
  * may fill it. A lender taking it directly lends the smallest amount at your
  * rate against the floor, and the collateral above the floor goes back to
  * your wallet (spec §4, direct-accept semantics).
+ *
+ * A lending offer's range (OFF-10, Advanced) runs the other way: the whole
+ * amount is locked and a borrower taking the offer directly borrows all of
+ * it, while matches may lend it in parts of at least the smallest part,
+ * each asking a matching share of the collateral, until less than that
+ * part is left; that rest then returns to the lender's wallet.
  */
 import { interestAtDue, listFee } from '../offers/model';
 
@@ -74,9 +80,14 @@ export interface PostInput {
   /** OFF-13: the full-term interest floor (the default) or pro-rata. */
   fullTerm: boolean;
   allowsPartialRepay: boolean;
-  /** OFF-10 (Advanced): the amount is a range from `amount` to `amountMax`. */
+  /** OFF-10 (Advanced): the amount is a range. For a request it runs from
+   *  `amount` to `amountMax`; for a lending offer `amount` stays the whole
+   *  amount locked and `minPart` is the smallest part one match may lend. */
   ranged: boolean;
   amountMax: string;
+  /** OFF-10 (Advanced, a lending offer): the smallest part one match may
+   *  lend, as typed. */
+  minPart: string;
   /** OFF-10 (Advanced): the collateral locked for the smallest loan, as
    *  typed; blank means the same as `collateral` (no collateral range). */
   collateralFloor: string;
@@ -113,6 +124,7 @@ export const DEFAULT_INPUT: PostInput = {
   allowsPartialRepay: false,
   ranged: false,
   amountMax: '',
+  minPart: '',
   collateralFloor: '',
   fillMode: 'partial',
   cadence: 0,
@@ -140,6 +152,23 @@ export function rangeError(amount: bigint, amountMax: bigint, collateral: bigint
   if (amountMax < amount) return 'max-below-min';
   if (floor > collateral) return 'floor-above-lock';
   return null;
+}
+
+/** Why a lending offer's range is not well formed: the smallest part one
+ *  match may lend is more than the whole amount. */
+export function partError(minPart: bigint, amount: bigint): 'part-above-amount' | null {
+  return minPart > amount ? 'part-above-amount' : null;
+}
+
+/**
+ * OFF-10 for a lending offer: the least collateral a match lending `part`
+ * asks of the borrower. The protocol pro-rates the requirement, stated for
+ * the whole amount, to the part matched, rounding down
+ * (`collateral × part ÷ amountMax`); a borrower who posted a collateral
+ * range may lock more.
+ */
+export function partCollateral(collateral: bigint, part: bigint, amountMax: bigint): bigint {
+  return amountMax === 0n ? collateral : (collateral * part) / amountMax;
 }
 
 /** The Advanced options a request carries, named so a Basic reader is told

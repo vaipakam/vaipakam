@@ -600,3 +600,61 @@ describe('a lender posting an offer', () => {
     expect(unread.rows.find((x) => x.label === 'lendOffer.rowMatching')?.value).toEqual({ kind: 'text', text: 'request.matchingUnread' });
   });
 });
+
+describe('a lending offer with parts (OFF-10 / OFF-11)', () => {
+  /** The whole amount 1,000, lent in parts of at least 250, against 5,000 of collateral. */
+  function partsReview(over: Partial<PostReview> = {}): PostReview {
+    const base = lenderReview();
+    const parsed = { ...base.draft.parsed, amount: 250n, amountMax: 1_000n };
+    const draft = { ...base.draft, parsed };
+    return { ...base, draft, params: createParams(parsed, draft.pair, draft.expiresAt, 'lender'), ...over };
+  }
+
+  it('sizes every figure on the whole amount a direct take borrows, and states the smallest part and the share of collateral it asks', () => {
+    const r = postReceipt(partsReview(), null, copy);
+    const row = (label: string) => r.rows.find((x) => x.label === label);
+    expect(row('lendOffer.rowLock')!.value).toMatchObject({ amount: 1_000n });
+    expect(row('lendOffer.rowAmount')!.value).toMatchObject({ amount: 1_000n });
+    expect(row('lendOffer.rowPartMin')!.value).toMatchObject({ amount: 250n });
+    expect(row('request.rowWhole')!.value).toMatchObject({ text: 'lendOffer.rangeFill' });
+    expect(row('request.rowFill')!.value).toMatchObject({ text: 'request.fillModePartial' });
+    expect(row('lendOffer.rowCollateralWhole')!.value).toMatchObject({ amount: 5_000n });
+    expect(row('lendOffer.rowCollateralPart')!.value).toMatchObject({ amount: 1_250n });
+    expect(row('lendOffer.rowCollateral')).toBeUndefined();
+    // 0.2% of the whole 1,000 is 2; a part would have shown 0.
+    expect(row('lendAccept.rowFee')!.value).toMatchObject({ amount: 2n });
+    expect(row('lendOffer.rowBorrowerGetsWhole')!.value).toMatchObject({ amount: 998n });
+    expect(row('lendOffer.rowInterestWhole')).toBeDefined();
+    expect(row('lendOffer.rowBackWhole')).toBeDefined();
+    expect(row('lendOffer.rowLtvAny')).toBeDefined();
+  });
+
+  it('states the parts, the switch, the end of a direct take, the share of collateral and the fixed fill mode', () => {
+    const r = postReceipt(partsReview(), null, copy);
+    expect(r.consequences).toEqual(
+      expect.arrayContaining(['lendOffer.loseRangeParts', 'lendOffer.loseRangeMatch', 'lendOffer.loseRangeNoDirect', 'lendOffer.loseRangeShare', 'lendOffer.loseFillFixed']),
+    );
+    expect(r.consequences).not.toContain('lendOffer.loseMatch');
+    const off = postReceipt(partsReview({ risk: { ...review().risk, partialFill: false } }), null, copy);
+    expect(off.consequences).toContain('lendOffer.loseRangeMatchOff');
+    const unread = postReceipt(partsReview({ risk: { ...review().risk, partialFill: null } }), null, copy);
+    expect(unread.consequences).toContain('lendOffer.loseRangeMatchUnread');
+  });
+
+  it('fixes a chosen fill mode on a single amount too, and states it', () => {
+    const r = postReceipt(lenderReview({ draft: { ...lenderReview().draft, parsed: { ...lenderReview().draft.parsed, fillMode: 'aon' } } }), null, copy);
+    expect(r.rows.find((x) => x.label === 'request.rowFill')!.value).toMatchObject({ text: 'request.fillModeAon' });
+    expect(r.consequences).toEqual(expect.arrayContaining(['lendOffer.loseMatch', 'lendOffer.loseFillFixed']));
+    expect(postReceipt(lenderReview(), null, copy).consequences).not.toContain('lendOffer.loseFillFixed');
+  });
+
+  it("turns the protocol's collateral floor into the lender's blocker, with the least collateral it asks", () => {
+    const verdict = judgeDryRun({ kind: 'reverted', error: decoded('MinCollateralBelowFloor', [4_000n, 4_500n]) }, true);
+    expect(verdict).toMatchObject({ kind: 'refused', code: 'MinCollateralBelowFloor', minCollateral: 4_500n });
+    expect(postBlockers(partsReview({ verdict }), null, copy)).toEqual(['lendOffer.blockCollateralFloor']);
+    // A request is never told to ask for more collateral.
+    expect(postBlockers(review({ verdict, holding: { kind: 'erc20', funds: { balance: 10_000n, allowance: 10_000n }, approvalSteps: 0 } }), null, copy)).toEqual([
+      'request.blockRefused',
+    ]);
+  });
+});

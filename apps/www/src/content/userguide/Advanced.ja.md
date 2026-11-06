@@ -2161,7 +2161,13 @@ Lend は、ERC-20 担保に対する ERC-20 の借入リクエスト（`offerTyp
 
 ### Lend: オファーの条件
 
-現時点では Basic も Advanced も単一値の貸出オファーを掲載します。`amount` = `amountMax`、`interestRateBps` = `interestRateBpsMax`、`collateralAmount` = `collateralAmountMax`（借り手がロックすべき唯一の担保額）、`fillMode` 0、`periodicInterestCadence` 0、`allowsPrepayListing` と `allowsParallelSale` は false、`refinanceTargetLoanId` 0、`creatorRiskAndTermsConsent` は true で、Full タリフは設定しません。金額は基本単位に正確に解析され、金利は最大 10,000 bps です。`durationDays` は `getProtocolConfigBundle` から読む設定上の最大値で上限が決まります。`expiresAt` は 0（キャンセルまで有効）か、確認画面を開いた時点の最新ブロックから決めた時刻で、最長 `MAX_OFFER_EXPIRY_HORIZON`（365日）先までです。`useFullTermInterest` の既定は true、`allowsPartialRepay` の既定は false です。
+パートがない貸出オファーは単一値です。`amount` = `amountMax`、`interestRateBps` = `interestRateBpsMax`、`collateralAmount` = `collateralAmountMax`（借り手がロックすべき唯一の担保額）、`fillMode` 0（Advanced で別の方式を指定しない場合。次の節を参照）、`periodicInterestCadence` 0、`allowsPrepayListing` と `allowsParallelSale` は false、`refinanceTargetLoanId` 0、`creatorRiskAndTermsConsent` は true で、Full タリフは設定しません。金額は基本単位に正確に解析され、金利は最大 10,000 bps です。`durationDays` は `getProtocolConfigBundle` から読む設定上の最大値で上限が決まります。`expiresAt` は 0（キャンセルまで有効）か、確認画面を開いた時点の最新ブロックから決めた時刻で、最長 `MAX_OFFER_EXPIRY_HORIZON`（365日）先までです。`useFullTermInterest` の既定は true、`allowsPartialRepay` の既定は false です。
+
+<a id="lend-offer-parts"></a>
+
+### Lend: パートに分けて貸すオファー
+
+パートでは `amount`（1回のマッチで貸せる最小パート）を `amountMax`（全額。`createOffer` がボールトに引き込む）より小さく送ります。`collateralAmount` = `collateralAmountMax` は `amountMax` に対する唯一の要件のままで（そうでなければ `LenderCollateralRangeNotAllowed`）、`interestRateBps` = `interestRateBpsMax` です。貸出オファーへの直接の `acceptOffer` は `collateralAmount` に対して `amountMax` を貸し、それができるのは `amountFilled` が 0 の間だけです（マッチ後は `OfferPartiallyFilled`）。`getPartialFillEnabled` が true の間、`matchOffers` は金額の重なりの中点（最低 `amount`）を、金利の重なりの中点で、少なくとも `collateralAmount × matchAmount ÷ amountMax`（切り捨て。借り手の担保レンジで増えることがあります）に対して貸します。`amountMax − amountFilled` が `amount` を下回ると、残額は貸し手のウォレットに引き出され、オファーは閉じます（`OfferClosed`、理由 `Dust` または `FullyFilled`）。一部約定したオファーへの `cancelOffer` はクールダウンを省き、`amountMax − amountFilled` を返します。`fillMode` はリクエストと同じく 0、1、2 で、AON は `amount` = `amountMax`、IOC は期限を要し、掲載後は変わりません。両方のレッグが流動的なとき、`createOffer` は `amountMax` での下限を下回る `collateralAmount` を `MinCollateralBelowFloor(provided, floor)` で拒否し、確認画面はその下限を示します。表示される LTV は (`amountMax`, `collateralAmount`) での `calculateLTV` ひとつで、パートも端数を除けば同じ比率です。
 
 <a id="lend-offer-review"></a>
 
