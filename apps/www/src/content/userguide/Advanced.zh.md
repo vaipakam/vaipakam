@@ -1894,7 +1894,13 @@ Lend 通过出借人发送的 `acceptOffer(offerId, terms, signature)`，直接�
 
 ### Lend：报价的条款
 
-目前 Basic 和 Advanced 都发布单一数值的出借报价：`amount` = `amountMax`，`interestRateBps` = `interestRateBpsMax`，`collateralAmount` = `collateralAmountMax`（借款人必须锁定的唯一抵押品数量），`fillMode` 0，`periodicInterestCadence` 0，`allowsPrepayListing` 和 `allowsParallelSale` 为 false，`refinanceTargetLoanId` 0，`creatorRiskAndTermsConsent` 为 true，且不设 Full 方案。金额被精确解析为基础单位，利率最多 10,000 bps。`durationDays` 受从 `getProtocolConfigBundle` 读取的配置最大值限制。`expiresAt` 为 0（取消前一直开放），或在审核打开时从最新区块确定的时间，最多提前 `MAX_OFFER_EXPIRY_HORIZON`（365 天）。`useFullTermInterest` 默认为 true，`allowsPartialRepay` 默认为 false。
+未设部分时，出借报价为单一数值：`amount` = `amountMax`，`interestRateBps` = `interestRateBpsMax`，`collateralAmount` = `collateralAmountMax`（借款人必须锁定的唯一抵押品数量），`fillMode` 0（除非 Advanced 设置了其他方式，见下一节），`periodicInterestCadence` 0，`allowsPrepayListing` 和 `allowsParallelSale` 为 false，`refinanceTargetLoanId` 0，`creatorRiskAndTermsConsent` 为 true，且不设 Full 方案。金额被精确解析为基础单位，利率最多 10,000 bps。`durationDays` 受从 `getProtocolConfigBundle` 读取的配置最大值限制。`expiresAt` 为 0（取消前一直开放），或在审核打开时从最新区块确定的时间，最多提前 `MAX_OFFER_EXPIRY_HORIZON`（365 天）。`useFullTermInterest` 默认为 true，`allowsPartialRepay` 默认为 false。
+
+<a id="lend-offer-parts"></a>
+
+### Lend：分部分出借的报价
+
+分部分时发送的 `amount`（一次撮合可出借的最小部分）小于 `amountMax`（全部金额，由 `createOffer` 拉入金库）；`collateralAmount` = `collateralAmountMax` 仍是唯一要求，按 `amountMax` 计（否则为 `LenderCollateralRangeNotAllowed`），且 `interestRateBps` = `interestRateBpsMax`。直接对出借报价调用 `acceptOffer` 时，以 `collateralAmount` 出借 `amountMax`，且仅在 `amountFilled` 为 0 时可行（撮合后为 `OfferPartiallyFilled`）。当 `getPartialFillEnabled` 为 true 时，`matchOffers` 出借金额重叠区间的中点（至少为 `amount`），利率取利率重叠区间的中点，抵押品至少为 `collateralAmount × matchAmount ÷ amountMax`（向下取整；借款人的抵押品区间可能提高它）。当 `amountMax − amountFilled` 低于 `amount` 时，剩余部分被提取到出借人的钱包，报价关闭（`OfferClosed`，原因为 `Dust` 或 `FullyFilled`）。对部分成交的报价调用 `cancelOffer` 不受冷却期限制，并退回 `amountMax − amountFilled`。`fillMode` 与请求相同，为 0、1 或 2：AON 要求 `amount` = `amountMax`，IOC 要求设置到期时间，发布后不可更改。两边都为流动资产时，若 `collateralAmount` 低于 `amountMax` 对应的下限，`createOffer` 以 `MinCollateralBelowFloor(provided, floor)` 拒绝，审核会显示该下限。审核只显示一个贷款价值比，即 (`amountMax`, `collateralAmount`) 处的 `calculateLTV`：任一部分的比率相同，仅有取整差异。
 
 <a id="lend-offer-review"></a>
 

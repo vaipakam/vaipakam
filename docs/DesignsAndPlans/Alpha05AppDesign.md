@@ -605,9 +605,24 @@ above. Each resolves here, so a route reviewer needs no private file:
   known to be off), default, liquidation, the position token and the
   binding offer. A refusal whose remedy is the borrower's (lock more
   collateral) is never offered to a lender; the protocol's own reason is
-  shown instead. The lender's Advanced options (range, fill mode, schedule,
-  tariff) are a later update, said in Advanced rather than hidden; an
-  offer that asks for an NFT is a later update too.
+  shown instead, except the protocol's collateral floor, whose remedy (ask
+  for more collateral, or lend less) is the lender's and is named with the
+  least collateral it asks. In Advanced a lender may lend the offer in
+  parts (OFF-10): the amount typed stays the whole amount, which posting
+  locks and a direct take borrows (the protocol sizes a direct take of a
+  lending offer at its largest amount), and the lender adds the smallest
+  part one match may lend. The receipt's figures are the whole amount's; it
+  states the smallest part, the least collateral that part asks (the
+  requirement pro-rated, rounded down, as the protocol does), that matches
+  lend parts at the offer's rate while matching is on (the switch said in
+  each state), that no borrower can take the rest directly once a match has
+  lent a part (cancelling takes it back), and that the rest below the
+  smallest part returns to the wallet as the offer closes. One
+  loan-to-value is shown, since a part carries the whole amount's ratio.
+  The fill mode (OFF-11) is offered on both sides, worded for each, and is
+  stated as fixed once posted. The lender's interest schedule and fee
+  tariff are a later update, said in Advanced rather than hidden; an offer
+  that asks for an NFT is a later update too.
 
 ## 3. Companion specifications
 

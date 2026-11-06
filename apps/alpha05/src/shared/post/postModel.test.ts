@@ -11,6 +11,8 @@ import {
   parseAmount,
   parseDays,
   parseRateBps,
+  partCollateral,
+  partError,
   rangeError,
   postFigures,
   lenderPostFigures,
@@ -228,5 +230,44 @@ describe('a range and a fill mode (OFF-10 / OFF-11)', () => {
     expect(advancedSet(DEFAULT_INPUT)).toEqual([]);
     expect(advancedSet({ ...DEFAULT_INPUT, ranged: true, fillMode: 'aon' })).toEqual(['range', 'fill']);
     expect(advancedSet({ ...DEFAULT_INPUT, cadence: 1 })).toEqual(['cadence']);
+  });
+});
+
+describe("a lending offer's parts (OFF-10 / OFF-11)", () => {
+  // The whole amount is 40, the smallest part one match may lend 10, and the
+  // borrower must lock 100 for the whole amount.
+  const parts = {
+    amount: 10n,
+    amountMax: 40n,
+    collateral: 100n,
+    collateralFloor: 100n,
+    fillMode: 'ioc' as const,
+    cadence: 0 as const,
+    rateBps: 850n,
+    durationDays: 30,
+    expiry: '7d' as const,
+    fullTerm: true,
+    allowsPartialRepay: false,
+    tariff: null,
+  };
+  it('sends the smallest part as the minimum, the whole amount as the maximum and escrow, one collateral figure, and the fill mode', () => {
+    const p = createParams(parts, { lending, collateral, leg: { kind: 'erc20' } }, 99n, 'lender');
+    expect([p.amount, p.amountMax]).toEqual([10n, 40n]);
+    expect([p.collateralAmount, p.collateralAmountMax]).toEqual([100n, 100n]);
+    expect([p.interestRateBps, p.interestRateBpsMax]).toEqual([850n, 850n]);
+    expect(p.fillMode).toBe(2);
+    expect(stakeOf('lender', parts, { lending, collateral })).toEqual({ asset: lending, amount: 40n });
+    expect(isRanged(parts)).toBe(true);
+  });
+  it('refuses a smallest part above the whole amount, and allows it equal', () => {
+    expect(partError(41n, 40n)).toBe('part-above-amount');
+    expect(partError(40n, 40n)).toBeNull();
+    expect(partError(1n, 40n)).toBeNull();
+  });
+  it('pro-rates the collateral a part asks as the protocol does, rounding down', () => {
+    expect(partCollateral(100n, 10n, 40n)).toBe(25n);
+    expect(partCollateral(100n, 13n, 40n)).toBe(32n);
+    expect(partCollateral(100n, 40n, 40n)).toBe(100n);
+    expect(partCollateral(100n, 10n, 0n)).toBe(100n);
   });
 });

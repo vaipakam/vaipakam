@@ -65,9 +65,12 @@ export type CreateVerdict =
   | { kind: 'needs-approval' }
   /** The protocol refused, with its own reason. `ceiling` is the largest
    *  amount the posted collateral supports today, when the refusal is that
-   *  the largest amount asks for more (`MaxLendingAboveCeiling`); `schedule`
-   *  is why the interest schedule is closed, when that is the refusal. */
-  | { kind: 'refused'; code: string; reason: string; ceiling?: bigint; schedule?: CadenceRefusal }
+   *  the largest amount asks for more (`MaxLendingAboveCeiling`); `minCollateral`
+   *  is the least collateral a lending offer must ask for its whole amount
+   *  today, when the refusal is that it asks for less
+   *  (`MinCollateralBelowFloor`); `schedule` is why the interest schedule
+   *  is closed, when that is the refusal. */
+  | { kind: 'refused'; code: string; reason: string; ceiling?: bigint; minCollateral?: bigint; schedule?: CadenceRefusal }
   /** No answer could be read; the review says so instead of guessing. */
   | { kind: 'unreadable'; reason: string };
 
@@ -132,6 +135,11 @@ export type LtvRead = { kind: 'value'; bps: bigint } | { kind: 'worthless' } | {
  * to (an unpriced leg).
  * `partialFill` is the matching switch (RB-SWITCH class 1a): while it is off,
  * a range fills once and the matchers refuse.
+ * A lending offer is taken directly for its whole amount against the
+ * collateral it asks, and each match asks a share of that collateral
+ * matching the part it lends, so one figure states its risk: `direct` is
+ * the whole amount against the collateral, and `largest`,
+ * `largestAtFloor` and the direct probe are not asked.
  */
 export interface PostRisk {
   direct: LtvRead;
@@ -205,7 +213,14 @@ export function judgeDryRun(
   if (outcome.kind === 'unreadable') return { kind: 'unreadable', reason: outcome.reason };
   const refusal = refusalFromError(outcome.error);
   if (!allowanceCovers && (PULL_ERRORS.has(refusal.code) || unnamed(refusal.code) || /allowance/i.test(refusal.reason))) return { kind: 'needs-approval' };
-  return { kind: 'refused', code: refusal.code, reason: refusal.reason, ...ceilingOf(refusal.code, outcome.error), ...scheduleOf(refusal.code, outcome.error) };
+  return {
+    kind: 'refused',
+    code: refusal.code,
+    reason: refusal.reason,
+    ...ceilingOf(refusal.code, outcome.error),
+    ...minCollateralOf(refusal.code, outcome.error),
+    ...scheduleOf(refusal.code, outcome.error),
+  };
 }
 
 /** Why the interest schedule is closed, when the protocol's refusal is one
@@ -221,6 +236,15 @@ function ceilingOf(code: string, error: unknown): { ceiling?: bigint } {
   if (code !== 'MaxLendingAboveCeiling') return {};
   const args = revertArgs(error);
   return typeof args?.[1] === 'bigint' ? { ceiling: args[1] } : {};
+}
+
+/** The least collateral a `MinCollateralBelowFloor(provided, floor)`
+ *  refusal names: what a lending offer must ask for its whole amount at
+ *  today's prices. */
+function minCollateralOf(code: string, error: unknown): { minCollateral?: bigint } {
+  if (code !== 'MinCollateralBelowFloor') return {};
+  const args = revertArgs(error);
+  return typeof args?.[1] === 'bigint' ? { minCollateral: args[1] } : {};
 }
 
 /**
@@ -314,7 +338,10 @@ export async function readPostReview(own: OwnStateClient, diamond: Hex, draft: P
   const verdict = judgeDryRun(dry, allowanceCovers);
   // A token is never priced, so only a liquid ERC-20 pair has a risk figure.
   const priced = leg.kind === 'erc20' && lendingClass === 'liquid' && collateralClass === 'liquid';
-  const ranged = isRanged(parsed);
+  // Only a request's range has a second point to read: a lending offer's
+  // parts carry the same ratio as its whole amount (PostRisk).
+  const lender = draft.side === 'lender';
+  const ranged = !lender && isRanged(parsed);
   const ltv = (amount: bigint, coll: bigint): Promise<LtvRead> =>
     priced
       ? own
@@ -324,7 +351,7 @@ export async function readPostReview(own: OwnStateClient, diamond: Hex, draft: P
       : Promise.resolve({ kind: 'unpriced' as const });
   const collateralRanged = parsed.collateralFloor < parsed.collateral;
   const [direct, largest, largestAtFloor, probe, start, partialFill, periodGraceSeconds, tariff] = await Promise.all([
-    ltv(parsed.amount, parsed.collateralFloor),
+    lender ? ltv(parsed.amountMax, parsed.collateral) : ltv(parsed.amount, parsed.collateralFloor),
     ranged ? ltv(parsed.amountMax, parsed.collateral) : Promise.resolve(null),
     ranged && collateralRanged ? ltv(parsed.amountMax, parsed.collateralFloor) : Promise.resolve(null),
     // The create dry run applies the limit at the largest point only; the
@@ -461,6 +488,15 @@ export function postBlockers(r: PostReview, meta: TokenMetaMap | null, copy: Pic
     out.push(
       copy.format(isRanged(r.draft.parsed) ? 'request.blockCeilingRange' : 'request.blockCeiling', {
         ceiling: tokenAmount(r.verdict.ceiling, r.draft.pair.lending, meta, copy.format),
+      }),
+    );
+  // A lending offer's collateral floor is a bound on the offer itself,
+  // checked before the pull as well; its remedy (ask for more collateral,
+  // or lend less) is the lender's, so only an offer names it.
+  else if (r.verdict.kind === 'refused' && r.verdict.minCollateral !== undefined && r.draft.side === 'lender')
+    out.push(
+      copy.format('lendOffer.blockCollateralFloor', {
+        floor: tokenAmount(r.verdict.minCollateral, r.draft.pair.collateral, meta, copy.format),
       }),
     );
   // A closed schedule is refused before any pull too, and named with why.
