@@ -120,7 +120,8 @@ asks, without the indexer subscribing to every vault address.
 | **Counterparty** | `to` is the vault of THAT loan's other party (or the current holder of that position). The amount is drawn from that loan's lien and bounded by its claim records | `to` is a genuine Vaipakam vault (§3.4). The amount is at most the open lien this vault recorded for `ref`, and that lien is reduced by it |
 | **Treasury** | `to == s.treasury` | `to ==` the treasury address the registry holds (§3.6) |
 | **Swap adapter / order taker** | A registered adapter for this action, against a lien | `to` is on the registry. The amount is at most the lien for `ref` |
-| **Marketplace conduit** | A recorded listing for `ref`, through a registered conduit | Grant only (§3.5), and only to a registry conduit |
+| **Marketplace conduit** | A recorded listing for `ref`, through a registered conduit | Grant only (§3.5), per amount or token id, and only to a registry conduit |
+| **Listing escrow** (ERC-1155) | A recorded listing for `ref` | `to` is an escrow this vault created for `ref` (known code hash), at most the lien for `ref`. The escrow alone holds the operator approval (§3.5) |
 | **Incentive** (liquidator, matcher, keeper) | The actor of THIS action, at the configured rate | The amount is drawn from the lien for `ref` and from that lien's **incentive budget**, a running total the vault sets when it records the lien (the cap fraction of the lien) and debits before each payment. Repeated payments against one `ref` cannot exceed the budget in sum. The recipient cannot be checked by the vault, so the budget is the bound |
 | **Seller claim** | A recorded seller of THIS loan | Genuine vault, or the seller's wallet, against the lien |
 | **Backstop** | The configured backstop | The registry's backstop |
@@ -141,42 +142,51 @@ residual (§7), bounded by the lien.
 
 ### 3.5 Just-in-time approvals
 
-`grantAllowance` succeeds only inside a fill window the Diamond opens,
-which the vault records in transient storage:
-- for the swap-to-repay limit order, the pre-fill hook;
-- for marketplace listings, the executor's authorize and validate hooks.
+Three rules, each enforced by the vault without trusting the Diamond to
+pair its hooks.
 
-The matching post-hook sets the allowance back to zero and asserts it is
-zero. But the vault cannot rely on the Diamond to call that post-hook: a
-faulty Diamond could open the window, grant, and return. The fill itself
-cannot run inside one vault frame either, because the external protocol
-pulls the tokens between the two hooks. So the vault bounds a grant
-independently, in three ways:
+**1. Signatures and allowances are separate.** An external order protocol
+checks the vault's ERC-1271 signature *before* it calls the pre-fill hook,
+so signature validity cannot depend on an open window. The vault answers
+`isValidSignature` from its own record of the order (the owner-authorized
+commitment of §8 Q1, the same record that creates the lien), with no
+window. What the window gates is only `grantAllowance`, which the Diamond
+calls from the pre-fill hook (swap-to-repay) or the executor's authorize
+and validate hooks (marketplace listings). A valid signature with no
+allowance moves nothing.
 
-1. **A grant spends the lien when it is made.** The vault debits the lien
-   for `ref` by the granted amount at grant time, and the grant can never
-   exceed it. An allowance left standing can move at most what the lien
-   already counts as gone, so it cannot reach a lien's other funds or the
-   owner's free balance.
-2. **An outstanding grant is recorded in the vault's own storage**, not
-   only in the token. While one is recorded, the vault refuses every other
-   outflow and grant. A revoke entry that only sets allowances to zero
-   clears it. It is open to any caller, because it can only reduce what
-   the vault has exposed.
-3. **The spender is a registry contract** (§3.6), which moves a vault's
-   tokens only for an order the vault validates, and the vault validates
-   an order only inside an open fill window. A standing allowance therefore
-   has no order to serve once the transaction ends.
+**2. A grant reserves, and cleanup reconciles.** A grant never exceeds the
+open lien for `ref`. It does not debit the lien when it is made. It
+records a **reservation** in the vault's own storage: `ref`, asset, token
+id, spender, granted amount and the vault's balance of that asset at grant
+time. While a reservation is open:
+- the lien still counts in full, so the owner class's free-balance check
+  (§3.3) cannot release it;
+- the vault refuses every other outflow and grant.
 
-A test drives the faulty-Diamond case: grant without the post-hook, then
-show that the lien was already debited, that the next outflow is refused,
-and that the open revoke clears it.
+Cleanup reconciles it, from the post-hook or from an open entry any caller
+may use, because it can only reduce what the vault has exposed. Cleanup
+sets the allowance to zero, measures what actually left (the balance at
+grant time minus the balance now, capped at the grant), debits the lien by
+exactly that, and closes the reservation. A grant that was never used
+leaves the lien whole.
+
+**3. No operator-wide approval on the vault.** An operator approval
+(`setApprovalForAll`) covers every token id of a collection the vault
+holds, including ones backing other liens, and the token contract honours
+it without asking the vault. So the vault never grants one:
+- ERC-20 and ERC-721 grants are per amount or per token id;
+- an ERC-1155 listing first moves exactly the listed id and amount out of
+  the vault, against its lien, into a **listing escrow**: a minimal
+  contract for that one listing, created by the vault with a known code
+  hash. The escrow grants the operator approval, and holds nothing else.
+  On cancel or expiry it returns what is left to the vault, which re-opens
+  the lien for it.
 
 The standing approvals granted at listing time today (the ERC-1155
-`setApprovalForAll` for a collection, and the ERC-721 conduit approval) move
-into those hooks. `setApprovalForAll` cannot be bounded to an amount, so for
-ERC-1155 the grant is made only while the lien covers the vault's whole
-balance of that token id, and point 2 holds the vault until it is revoked.
+`setApprovalForAll` for a collection, and the ERC-721 conduit approval)
+become, respectively, the escrow and a per-token approval made in the
+hooks.
 
 ### 3.6 The registry (adapters, conduits, treasury, backstop)
 
@@ -253,9 +263,16 @@ opens by itself.
   would dip into an open lien reverts at layer 2, with layer 1 bypassed.
 - Incentive: repeated payments against one `ref` revert once their sum
   reaches that lien's incentive budget.
-- After every fill and teardown path, no allowance remains. A grant made
-  without its post-hook leaves the lien already debited, blocks the next
-  outflow, and is cleared by the open revoke.
+- After every fill and teardown path, no allowance remains.
+- A grant with no fill and no post-hook: the next outflow is refused; the
+  open cleanup restores the whole lien; an owner withdrawal then still
+  cannot take the liened amount.
+- A partly used grant: cleanup debits the lien by exactly what left.
+- A full swap-to-repay fill, from the signature check through the
+  post-hook, with the signature valid before the window opens.
+- ERC-1155, with two token ids under separate liens: a listing of one id
+  exposes nothing of the other, with layer 1 bypassed. The vault never
+  holds an operator approval.
 - While paused:
   - every vault-signed order reads as unsigned;
   - close-outs still complete;
@@ -277,8 +294,9 @@ opens by itself.
   amount to the lien. Routing vault-to-adapter directly, where the route
   allows it, would remove the transient leg and is a follow-up.
 - **A grant left standing by a faulty Diamond** can be used by its
-  registry spender until someone calls the open revoke, but only up to the
-  lien it already debited (§3.5).
+  registry spender until someone runs the open cleanup, up to the granted
+  amount, which never exceeds that one lien (§3.5). Cleanup debits the
+  lien by what actually left.
 - **Incentive recipients** are checked only by the per-lien budget. Who acted is
   not something a vault can verify.
 
