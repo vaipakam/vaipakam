@@ -102,6 +102,8 @@ Storage of `VaultBeacon` (not the Diamond):
 | `versionCount` | The highest id. |
 | `currentVersionId` | The version every unpinned vault runs. |
 | `pinnedVersion[vault]` | 0 = not pinned. Otherwise the id the owner chose. |
+| `pinDelay[vault]` | How long a pin change waits. 0 by default; under protected mode, at least the protected-mode delay. |
+| `pendingPin[vault]` | `{target, executableAt, nonce}` of a requested change, or empty. |
 
 Entry points, on `VaultBeacon`:
 
@@ -111,13 +113,16 @@ Entry points, on `VaultBeacon`:
 | `setCurrentVersion(id)` | The Timelock | `id` must be registered and not revoked. Emits `CurrentVaultVersionSet(old, new)`. |
 | `revokeVersion(id, successorId)` | The Timelock | See 3.3. |
 | `guardianRevokeVersion(id, successorId)` | The Pauser Safe, **only while the Diamond reports paused** | Same effect as the timelock revoke. Can never register code. |
-| `setPin(vault, id)` / `clearPin(vault)` | The Diamond, on the vault manager's request | `id` must be registered and not revoked. The Diamond applies the manager check and, under protected mode, the delay and the lock (below). The beacon additionally verifies the owner's signature over the pin change (#3205 §8 Q1, decided 2026-11-06), against the owner wallet the vault itself records. |
+| `requestPin(vault, id)` / `requestUnpin(vault)` | The Diamond, on the vault manager's request | `id` must be registered and not revoked. The beacon verifies the owner's signature over the change (vault, target, nonce; #3205 §8 Q1, decided 2026-11-06) against the owner wallet the vault itself records, then **records the request in its own storage** with `executableAt = now + pinDelay[vault]`. Emits `VaultPinRequested`. |
+| `executePin(vault)` | Anyone | Applies the recorded request once `executableAt` has passed and it is not cancelled. With `pinDelay` zero, `requestPin` applies at once. Emits `VaultVersionPinned` or `VaultVersionUnpinned`. |
+| `cancelPin(vault)` | The owner or a recorded secondary key, by signature verified at the beacon; or the Diamond | Cancels a pending request. Cancelling only refuses a change, so the Diamond's own cancel path may call it too. |
+| `setPinDelay(vault, d)` | The owner, by signature | Raising `pinDelay` takes effect at once. Lowering it takes effect only after the current delay has passed, so a stolen key cannot shorten it before using it. Turning protected mode on raises it to the protected-mode delay. |
 
 The Diamond's request entries keep today's rules for who asks:
 
 | Call | Who | Rule |
 | --- | --- | --- |
-| `pinVaultVersion(id)` | The vault's manager (`LibProtectedAccount.requireManager`) | Replaces `pinVaultImplementation`. Without protected mode it takes effect at once. Under protected mode, **every** pin change (a first pin, a replacement, a removal) changes the code the vault runs, so it goes through protected mode's delayed, cancellable settings path and is refused while the account is locked. |
+| `pinVaultVersion(id)` | The vault's manager (`LibProtectedAccount.requireManager`) | Replaces `pinVaultImplementation` and forwards to `requestPin`. Under protected mode, **every** pin change (a first pin, a replacement, a removal) changes the code the vault runs. The delay that holds it is the beacon's own `pinDelay`, which no facet can shorten or skip. The Diamond additionally refuses a request while the account is locked; a faulty facet could skip that refusal, but not the beacon's delay or a direct cancel at the beacon. |
 | `unpinVaultVersion(account)` | The manager | Same rule: immediate without protected mode, the delay (and the lock check) with it. |
 
 **Default: the guardian is the Pauser Safe**, the holder of `PAUSER_ROLE`.
@@ -186,7 +191,9 @@ card if wanted. They are not folded in here.
   layout identity constant.
 - **A pin change is a code change.** Under protected mode, a stolen primary
   key cannot move a vault to another version on the spot, whether by pinning,
-  re-pinning or unpinning. Today's `upgradeUserVault` refuses a protected
+  re-pinning or unpinning. The wait is held by the beacon, not the Diamond,
+  so a faulty facet holding a valid owner signature can neither execute it
+  early nor execute it after a cancel. Today's `upgradeUserVault` refuses a protected
   pinned vault for the same reason.
 - **Who can change vault code does not widen.** Today the same role can swap
   the template and anyone can push unpinned vaults onto it, with no delay.
@@ -254,6 +261,9 @@ puts those checks into every vault at once.
   initializer can still be called.
 - Under protected mode, a first pin, a re-pin and an unpin each wait the
   delay, can be cancelled, and are refused while the account is locked.
+- A test facet calling the beacon directly with a valid owner signature
+  cannot execute a pin before `executableAt`, or after a cancel, and cannot
+  lower `pinDelay` before the current delay has passed.
 - `implementation()` answers per calling proxy. A pin by user A never
   affects user B.
 - A test facet that writes arbitrary Diamond storage cannot change any

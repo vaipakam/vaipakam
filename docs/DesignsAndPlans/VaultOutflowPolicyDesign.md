@@ -124,7 +124,7 @@ asks, without the indexer subscribing to every vault address.
 | **Marketplace conduit** | A recorded listing for `ref`, through a registered conduit | Grant only (§3.5), per amount or token id, and only to a registry conduit |
 | **Listing escrow** (ERC-1155) | A recorded listing for `ref` | `to` is an escrow this vault created for `ref` (known code hash), at most the lien for `ref`. The escrow alone holds the operator approval (§3.5) |
 | **Incentive** (liquidator, matcher, keeper) | The actor of THIS action, at the configured rate | The amount is drawn from the lien for `ref` and from that lien's **incentive budget**, a running total the vault sets when it records the lien (the cap fraction of the lien) and debits before each payment. Repeated payments against one `ref` cannot exceed the budget in sum. The recipient cannot be checked by the vault, so the budget is the bound |
-| **Seller claim** | A recorded seller of THIS loan | Genuine vault, or the seller's wallet, against the lien |
+| **Seller claim** | A recorded seller of THIS loan | `to` is a seller this vault recorded on the lien for `ref` when the position was assigned (§3.7), and the amount is at most that seller's recorded claim, which each payment debits |
 | **Backstop** | The configured backstop | The registry's backstop, drawn from the lien for `ref` and its backstop budget (§3.7) |
 | **Diamond (transient)** | Only inside one transaction, with an onward class declared | `to == diamond`, at most the lien for `ref` |
 
@@ -233,7 +233,18 @@ two fails closed: the vault refuses.
   when the position changes hands, and only with an **assignment** the
   current payee's owner signed (the new holder's vault, the `ref`, a
   nonce), verified the same way. A sale route already collects the
-  seller's signature; §8 Q6 covers a plain transfer of the position NFT. The vault keeps a running sum of its open liens per
+  seller's signature; §8 Q6 covers a plain transfer of the position NFT.
+- **Seller claims.** When an assignment moves the payee, whatever the old
+  payee is still owed under the signed sale is recorded on the lien as a
+  seller claim: the old payee's vault and the amount, both from the
+  assignment the old payee's owner signed. The seller-claim class pays only
+  such a recorded seller, up to that claim.
+- **The rule behind both.** Every protocol class that names a recipient
+  pays only one the vault recorded itself: from a counterparty's signature
+  (payee, seller claim), from the registry (treasury, adapter, conduit,
+  backstop) or from its own creation (listing escrow). Only the incentive
+  class and the Diamond transient leg have a recipient the vault cannot
+  check, and both are bounded by their per-lien budgets (§7). The vault keeps a running sum of its open liens per
   asset and token id, which is what the owner class's free-balance check
   reads.
 - **One rule for every protocol class.** Every outflow that is not the
@@ -319,6 +330,8 @@ opens by itself.
     vault against an honest user's existing lien;
   - a payee change without the current payee owner's signed assignment
     reverts, and a replayed assignment reverts on its nonce;
+  - a forged seller claim against an honest user's lien, to any vault but
+    a recorded seller or above its recorded claim, reverts at layer 2;
   - paying more than the recorded lien reverts;
   - paying a non-vault reverts on the code hash.
 - Owner, without protected mode: any address but the owner's wallet
