@@ -32,7 +32,7 @@ const client = {
 };
 const own = { account: WALLET, read: async <T>(fn: (c: never) => Promise<T>) => ({ value: await fn(client as never), via: 'wallet' }) } as unknown as OwnStateClient;
 const copy = { text: (k: string) => k, format: (k: string) => k } as never;
-const flow = () => approvalFlow({ own, config: {} as Config, chainId: 1, diamond: DIAMOND, copy, amount: (_t, v) => String(v), setStep: () => {} });
+const flow = () => approvalFlow({ own, config: {} as Config, chainId: 1, diamond: DIAMOND, copy, exactAmount: (_t, v) => String(v), setStep: () => {} });
 
 beforeEach(() => {
   sent.length = 0;

@@ -371,7 +371,10 @@ never reads as zero. A figure that lost digits is marked approximate (≈),
 and every receipt with such a figure offers its exact figures, every digit,
 in place: its amount rows, and every figure written inside a sentence of it
 (a row's text or a "You can lose" line), switch together. A figure the protocol will act on exactly as written (an approval,
-a tariff ceiling) is always shown exact. In a receipt, labels and values
+a tariff ceiling) is always shown exact, in the review, in the wallet step
+and in what a stop reports about putting it back; so are the two figures a
+measured outcome compares when they differ, since shortened they could read
+the same. In a receipt, labels and values
 sit in two even columns so a long label never squeezes its value, with a
 hairline between rows, the label above its value on a phone, and a number
 is never broken across lines.

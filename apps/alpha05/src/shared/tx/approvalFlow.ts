@@ -29,8 +29,10 @@ export interface ApprovalFlowDeps {
   /** The spender: the protocol's Diamond. */
   diamond: Hex;
   copy: Pick<CopyAccess, 'text' | 'format'>;
-  /** A token amount as the page writes it ("12.5 WETH"). */
-  amount: (token: Hex, value: bigint) => string;
+  /** A token amount with every digit ("12.500001 WETH"): an approval is
+   *  sent for an exact figure, so every sentence naming one states it exactly
+   *  (RB-FUNDS), never shortened. */
+  exactAmount: (token: Hex, value: bigint) => string;
   /** Names the wallet step in progress, or clears it. */
   setStep: (what: string | null) => void;
 }
@@ -116,7 +118,7 @@ export function approvalFlow(d: ApprovalFlowDeps): ApprovalFlow {
       prior,
       approvedAmount,
     ).catch((e: unknown) => ({ ok: false as const, why: 'refused' as const, sent: 0, now: null, last: null, at: null, pending: null, reason: refusalFromError(e).reason }));
-    if (set.ok) return { status: 'done', sentence: format('approval.restored', { amount: d.amount(token, prior) }) };
+    if (set.ok) return { status: 'done', sentence: format('approval.restored', { amount: d.exactAmount(token, prior) }) };
     const why =
       set.why === 'changed'
         ? text('approval.restoreChanged')
@@ -131,7 +133,7 @@ export function approvalFlow(d: ApprovalFlowDeps): ApprovalFlow {
     // nothing sent, the allowance is still the one the flow approved.
     const sentUnread = set.pending !== null || (set.now === null && set.sent > 0);
     if (set.now === null) return { status: sentUnread ? 'unknown' : 'not-done', sentence: format('approval.restoreUnverified', { why }) };
-    return { status: sentUnread ? 'unknown' : 'not-done', sentence: format('approval.notRestored', { why, amount: d.amount(token, set.now) }) };
+    return { status: sentUnread ? 'unknown' : 'not-done', sentence: format('approval.notRestored', { why, amount: d.exactAmount(token, set.now) }) };
   }
 
   async function approveExactly(io: AllowanceIo, token: Hex, amount: bigint, prior: bigint): Promise<bigint | null> {
@@ -154,8 +156,8 @@ export function approvalFlow(d: ApprovalFlowDeps): ApprovalFlow {
         (set.pending !== null
           ? set.pending.amount === 0n
             ? format('approval.zeroUnread', { hash: set.pending.hash })
-            : format('approval.unread', { hash: set.pending.hash, amount: d.amount(token, set.pending.amount) })
-          : format('approval.notSet', { amount: d.amount(token, amount), now: set.now === null ? text('approval.allowanceUnknown') : d.amount(token, set.now) })) + back,
+            : format('approval.unread', { hash: set.pending.hash, amount: d.exactAmount(token, set.pending.amount) })
+          : format('approval.notSet', { amount: d.exactAmount(token, amount), now: set.now === null ? text('approval.allowanceUnknown') : d.exactAmount(token, set.now) })) + back,
       reopensAt: null,
       remedy: null,
     });
