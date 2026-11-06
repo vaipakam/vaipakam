@@ -2092,6 +2092,14 @@ Positions는 하나의 공유 리더로 Home과 같은 보유 목록을 읽습�
 
 측 선택은 지급금, 진행 중, 종료 행을 보유한 측으로 거릅니다. "없음"은 포지션 순회와 지급금 순회가 모두 끝나고 최신 읽기가 성공했을 때만 표시합니다. 한도에서 멈춘 순회는 불완전하다고 알립니다. 행은 `/positions/<id>`를 열고, 그곳에서 자격 판정이 각 작업을 결정합니다. 목록은 트랜잭션을 보내지 않습니다.
 
+<a id="position"></a>
+
+### Position: 대출을 읽는 방법
+
+페이지는 `getLoanDetails(loanId)`와 대출자·차입자 포지션 NFT의 `ownerOf`를 읽습니다. 역할은 지갑이 지금 보유한 토큰입니다. 진행 중인 대출(Active 또는 FallbackPending)에 대해서는 `getLoanDeadlines`(원래 만기, 일시 중지 크레딧, 만기, 유예 종료), 상환 주기가 있으면 `getPeriodicInterestEnabled`와 함께 `previewPeriodicSettle`, `isLoanDefaultable`, `calculateHealthFactor`, `calculateLTV`를 읽고, 모든 대출에 대해 `getLoanCollateralLien`과 `isSaleVehicleLoan`을 읽습니다. 각 읽기는 독립적이며, 실패한 읽기는 0이 아니라 알 수 없음으로 표시하고, 날짜를 `startTime`과 `durationDays`로 계산하지 않습니다.
+
+요율은 대출의 스냅샷입니다: `treasuryFeeBpsAtInit`, `loanInitiationFeeBpsAtInit`(판매용 대출에는 없음), `liquidationLtvBpsAtInit`. 건전성 지수 0은 가격이 없는 측에 대한 프로토콜의 "가격 기반 수치 없음"입니다. 진행 중인 대출에서 `collateralLiquidity`가 Illiquid이면 현물 경고가 추가됩니다: 채무 불이행 시 판매 없이 담보가 대출자에게 이전됩니다. 이 페이지는 아직 트랜잭션을 보내지 않습니다.
+
 <a id="risk-access"></a>
 
 ### Risk Access: 내 위험 등급

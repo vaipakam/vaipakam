@@ -248,7 +248,7 @@ function LoanCard({ row, meta, obligations, deadlines }: { row: LiveLoanRow; met
 /** The loan's final due date and, for the side that bears it, the
  *  consequence of missing it. An NFT rental has no collateral, so its renter
  *  is told what a default does to the prepaid rent instead. */
-function StageLine({ stage, borrowerSide, rental }: { stage: LoanStage; borrowerSide: boolean; rental: boolean }) {
+export function StageLine({ stage, borrowerSide, rental }: { stage: LoanStage; borrowerSide: boolean; rental: boolean }) {
   const { text, format } = useCopy();
   const nowSec = Math.floor(useNow() / 1000);
   switch (stage.kind) {
@@ -278,7 +278,7 @@ function StageLine({ stage, borrowerSide, rental }: { stage: LoanStage; borrower
 /** An owed periodic-interest checkpoint, named with the interest still owed
  *  in the principal asset and, for the borrower, the sale that follows its
  *  grace. Shown beside the due date, whichever comes first. */
-function InterestLine({ stage, borrowerSide, amountOf }: { stage: InterestStage; borrowerSide: boolean; amountOf: (v: bigint) => string }) {
+export function InterestLine({ stage, borrowerSide, amountOf }: { stage: InterestStage; borrowerSide: boolean; amountOf: (v: bigint) => string }) {
   const { format } = useCopy();
   const nowSec = Math.floor(useNow() / 1000);
   switch (stage.kind) {

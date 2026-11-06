@@ -11,7 +11,7 @@ import { decodeErrorResult, type Abi, type PublicClient } from 'viem';
 import { OFFER_PREVIEW } from './reads';
 import { interestAtDue } from './model';
 import { formatScaled } from '../ui/format';
-import type { CopyAccess } from '../copy/useCopy';
+import type { CopyAccess, CopyKey } from '../copy/useCopy';
 
 type Hex = `0x${string}`;
 
@@ -21,6 +21,14 @@ export const CADENCES = [0, 1, 2, 3, 4] as const;
 export type Cadence = (typeof CADENCES)[number];
 /** Each schedule's period in days (`LibVaipakam.intervalDays`). */
 export const INTERVAL_DAYS: Readonly<Record<Cadence, number>> = { 0: 0, 1: 30, 2: 90, 3: 180, 4: 365 };
+
+/** The copy key naming each schedule ("monthly"…). */
+export const CADENCE_NAME: Readonly<Record<Exclude<Cadence, 0>, CopyKey>> = {
+  1: 'borrow.cadenceMonthly',
+  2: 'borrow.cadenceQuarterly',
+  3: 'borrow.cadenceSemiAnnual',
+  4: 'borrow.cadenceAnnual',
+};
 
 export function isCadence(n: number): n is Cadence {
   return (CADENCES as readonly number[]).includes(n);

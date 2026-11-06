@@ -2578,6 +2578,14 @@ Positions reads the same inventory as Home through one shared reader: `getUserPo
 
 The side choice filters payouts, live and ended rows by the side held. "Nothing" is said only when the position walk and the payout walk completed and the latest read succeeded; a walk stopped at its cap is stated as incomplete. A row opens `/positions/<id>`, where the eligibility verdict decides each action; the list sends no transaction.
 
+<a id="position"></a>
+
+### Position: How a Loan Is Read
+
+The page reads `getLoanDetails(loanId)` and `ownerOf` for the lender and borrower position NFTs; the role is the token the wallet holds now. For a live loan (Active or FallbackPending) it reads `getLoanDeadlines` (original maturity, pause credit, maturity, grace end), `previewPeriodicSettle` with `getPeriodicInterestEnabled` when the loan has a cadence, `isLoanDefaultable`, `calculateHealthFactor` and `calculateLTV`; for every loan, `getLoanCollateralLien` and `isSaleVehicleLoan`. Each read stands alone: one that fails is shown as unknown, never as zero, and no date is computed from `startTime` and `durationDays`.
+
+Rates are the loan's snapshots: `treasuryFeeBpsAtInit`, `loanInitiationFeeBpsAtInit` (none on a sale vehicle) and `liquidationLtvBpsAtInit`. A health factor of 0 is the protocol's "no price-based reading" for an unpriced leg. `collateralLiquidity` Illiquid on a live loan adds the in-kind warning: a default transfers the collateral to the lender without a sale. The page sends no transaction yet.
+
 <a id="risk-access"></a>
 
 ### Risk Access: Your Risk Level

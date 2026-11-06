@@ -2097,6 +2097,14 @@ fallback، موعد غير مقروء، يستحق خلال ثلاثة أيام�
 
 يصفّي اختيار الطرف المدفوعات والصفوف الجارية والمنتهية حسب الطرف المحمول. لا تُقال "لا شيء" إلا عند اكتمال المرور على المراكز والمرور على المدفوعات ونجاح آخر قراءة؛ والمرور الذي توقّف عند حدّه يُذكر أنه غير مكتمل. يفتح الصف `/positions/<id>` حيث يقرّر حكم الأهلية كل إجراء؛ ولا ترسل القائمة أي معاملة.
 
+<a id="position"></a>
+
+### Position: كيف يُقرأ القرض
+
+تقرأ الصفحة `getLoanDetails(loanId)` و`ownerOf` لرموز NFT لمركزَي المُقرض والمقترض؛ والدور هو الرمز الذي تحمله المحفظة الآن. وللقرض الجاري (Active أو FallbackPending) تقرأ `getLoanDeadlines` (الاستحقاق الأصلي، ورصيد الإيقاف، والاستحقاق، ونهاية السماح)، و`previewPeriodicSettle` مع `getPeriodicInterestEnabled` عندما يكون للقرض جدول، و`isLoanDefaultable` و`calculateHealthFactor` و`calculateLTV`؛ ولكل قرض `getLoanCollateralLien` و`isSaleVehicleLoan`. كل قراءة مستقلة: ما يفشل منها يُعرض غير معروف، لا صفرًا أبدًا، ولا يُحسب أي تاريخ من `startTime` و`durationDays`.
+
+المعدلات لقطات القرض: `treasuryFeeBpsAtInit` و`loanInitiationFeeBpsAtInit` (لا شيء لقرض بيع) و`liquidationLtvBpsAtInit`. ومعامل صحة 0 هو "لا قراءة مبنية على السعر" لدى البروتوكول لطرف بلا سعر. وإذا كان `collateralLiquidity` غير سائل (Illiquid) في قرض جارٍ أُضيف تحذير التسوية العينية: التعثّر ينقل الضمان إلى المُقرض دون بيع. لا ترسل الصفحة أي معاملة بعد.
+
 <a id="risk-access"></a>
 
 ### Risk Access: مستوى المخاطرة لديك

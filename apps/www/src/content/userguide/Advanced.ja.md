@@ -2201,6 +2201,14 @@ Positions は共通のリーダーを通して Home と同じ保有一覧を読�
 
 サイドの選択は、支払い・進行中・終了の各行を保有サイドで絞り込みます。「何もない」と表示するのは、ポジションと支払いのたどりが両方完了し、最新の読み取りが成功したときだけです。上限で止まったたどりは不完全と表示します。行は `/positions/<id>` を開き、そこで適格性の判定が各操作を決めます。一覧はトランザクションを送りません。
 
+<a id="position"></a>
+
+### Position: ローンの読み方
+
+ページは `getLoanDetails(loanId)` と、貸し手・借り手のポジション NFT の `ownerOf` を読みます。役割はウォレットが今保有しているトークンです。進行中のローン（Active または FallbackPending）では、`getLoanDeadlines`（当初の満期、停止クレジット、満期、猶予期間の終了）、利払いスケジュールがあれば `getPeriodicInterestEnabled` とともに `previewPeriodicSettle`、`isLoanDefaultable`、`calculateHealthFactor`、`calculateLTV` を読みます。すべてのローンで `getLoanCollateralLien` と `isSaleVehicleLoan` を読みます。各読み取りは独立しており、失敗したものは 0 ではなく不明と表示し、日付を `startTime` と `durationDays` から計算することはありません。
+
+料率はローンのスナップショットです: `treasuryFeeBpsAtInit`、`loanInitiationFeeBpsAtInit`（売却用ローンではなし）、`liquidationLtvBpsAtInit`。ヘルスファクター 0 は、価格のない側に対するプロトコルの「価格に基づく値なし」です。進行中のローンで `collateralLiquidity` が Illiquid の場合は現物決済の警告を加えます: デフォルト時は売却せずに担保を貸し手へ移転します。このページはまだトランザクションを送りません。
+
 <a id="risk-access"></a>
 
 ### Risk Access: あなたのリスクレベル

@@ -1262,6 +1262,14 @@ Positions liste chaque prêt que vous avez accordé ou contracté sur ce réseau
 
 Tous, Prêtés et Empruntés filtrent les trois listes à la fois. Positions n'affirme que vous n'avez rien qu'après avoir tout lu ; si une liste n'a pas pu être lue en entier, il le dit. Chaque prêt ouvre sa propre page, qui montre les actions qui vous sont ouvertes. La liste elle-même ne signe jamais rien.
 
+<a id="position"></a>
+
+### Position : un prêt
+
+Chaque prêt a sa propre page. Elle commence par le statut du prêt, puis votre rôle : le côté que votre wallet détient maintenant, car les jetons de position peuvent être vendus ou transférés. Si vous ne détenez aucun côté, vous consultez le prêt. Une échéance qui vous concerne est formulée pour votre côté. Une fois le délai de grâce écoulé, la page indique que n'importe qui peut lancer le défaut, et seulement quand le protocole le confirme.
+
+Viennent ensuite les dates du prêt (l'échéance fixée à l'ouverture, le temps ajouté pendant une pause du protocole, l'échéance et la fin du délai de grâce), ses conditions fixées à l'ouverture, son facteur de santé et l'endroit où sa garantie est détenue. Un chiffre qui n'a pas pu être lu est affiché comme inconnu. Si la garantie n'a pas de prix, un défaut remet au prêteur la garantie elle-même, et la page le dit. Pour l'instant la page est en lecture seule ; ses actions arrivent dans de prochaines mises à jour.
+
 <a id="risk-access"></a>
 
 ### Risk Access : votre niveau de risque

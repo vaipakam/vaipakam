@@ -2379,6 +2379,14 @@ Positions lee el mismo inventario que Home mediante un lector compartido: `getUs
 
 La elección de lado filtra los pagos y las filas activas y terminadas por el lado que se guarda. "Nada" se dice solo cuando el recorrido de posiciones y el de pagos se completaron y la última lectura tuvo éxito; un recorrido detenido en su tope se indica como incompleto. Una fila abre `/positions/<id>`, donde el veredicto de elegibilidad decide cada acción; la lista no envía ninguna transacción.
 
+<a id="position"></a>
+
+### Position: cómo se lee un préstamo
+
+La página lee `getLoanDetails(loanId)` y `ownerOf` para los NFT de posición del prestamista y del prestatario; el papel es el token que la wallet guarda ahora. Para un préstamo activo (Active o FallbackPending) lee `getLoanDeadlines` (vencimiento original, crédito por pausa, vencimiento, fin de la gracia), `previewPeriodicSettle` con `getPeriodicInterestEnabled` cuando tiene calendario, `isLoanDefaultable`, `calculateHealthFactor` y `calculateLTV`; para todo préstamo, `getLoanCollateralLien` e `isSaleVehicleLoan`. Cada lectura es independiente: una que falla se muestra como desconocida, nunca como cero, y ninguna fecha se calcula a partir de `startTime` y `durationDays`.
+
+Las tasas son instantáneas del préstamo: `treasuryFeeBpsAtInit`, `loanInitiationFeeBpsAtInit` (ninguna en un vehículo de venta) y `liquidationLtvBpsAtInit`. Un factor de salud de 0 es el "sin lectura basada en precio" del protocolo para un lado sin precio. `collateralLiquidity` Illiquid en un préstamo activo añade el aviso en especie: un impago transfiere la garantía al prestamista sin venta. La página aún no envía transacciones.
+
 <a id="risk-access"></a>
 
 ### Risk Access: tu nivel de riesgo

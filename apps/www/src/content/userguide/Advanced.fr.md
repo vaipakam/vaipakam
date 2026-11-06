@@ -2399,6 +2399,14 @@ Positions lit le même inventaire que Home via un lecteur partagé : `getUserPos
 
 Le choix du côté filtre les paiements et les lignes en cours et terminées selon le côté détenu. « Rien » n'est affiché que lorsque le parcours des positions et celui des paiements sont complets et que la dernière lecture a réussi ; un parcours arrêté à son plafond est déclaré incomplet. Une ligne ouvre `/positions/<id>`, où le verdict d'éligibilité décide de chaque action ; la liste n'envoie aucune transaction.
 
+<a id="position"></a>
+
+### Position : comment un prêt est lu
+
+La page lit `getLoanDetails(loanId)` et `ownerOf` pour les NFT de position du prêteur et de l'emprunteur ; le rôle est le jeton que le wallet détient maintenant. Pour un prêt en cours (Active ou FallbackPending), elle lit `getLoanDeadlines` (échéance d'origine, crédit de pause, échéance, fin du délai de grâce), `previewPeriodicSettle` avec `getPeriodicInterestEnabled` quand le prêt a un calendrier, `isLoanDefaultable`, `calculateHealthFactor` et `calculateLTV` ; pour tout prêt, `getLoanCollateralLien` et `isSaleVehicleLoan`. Chaque lecture est indépendante : une lecture échouée est affichée comme inconnue, jamais comme zéro, et aucune date n'est calculée à partir de `startTime` et `durationDays`.
+
+Les taux sont des instantanés du prêt : `treasuryFeeBpsAtInit`, `loanInitiationFeeBpsAtInit` (aucun pour un véhicule de vente) et `liquidationLtvBpsAtInit`. Un facteur de santé de 0 est le « pas de lecture fondée sur un prix » du protocole pour un côté sans prix. `collateralLiquidity` Illiquid sur un prêt en cours ajoute l'avertissement en nature : un défaut transfère la garantie au prêteur sans vente. La page n'envoie encore aucune transaction.
+
 <a id="risk-access"></a>
 
 ### Risk Access : votre niveau de risque

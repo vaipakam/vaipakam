@@ -672,6 +672,27 @@ above. Each resolves here, so a route reviewer needs no private file:
   could not be read in full says so. Every row opens its position, where
   the protocol's verdict decides which actions are open (RB-ELIG): the list
   signs nothing and offers no action of its own.
+- **RB-POSITION-VIEW** — a loan's own page states, in this order: its
+  status in words (an adverse one, fallback or default, as a warning; an
+  internal match as closed, with each side collecting on Claims); the
+  reader's role, from the position tokens their wallet holds now (both
+  holders read; "confirming your role" until they are, and a reader who
+  holds neither is told they are viewing); the deadline that needs them,
+  worded for the side they hold, with "anyone may now start the default"
+  only when the protocol says the loan is defaultable, never "will be";
+  the dates from the protocol's loan clock alone (the due date it opened
+  with, the pause credit, the due date and the grace end; an unread date
+  is unknown, never computed from the start and the term); the terms as
+  the loan fixed them (the amount lent when it started, never "you lent";
+  the protocol's share and the initiation fee rate as the loan's own
+  snapshots, none for a loan that carries a lender sale); its health (a
+  failed reading is unknown, an unpriced asset is "no price-based
+  reading", never 0, and the liquidation threshold is the loan's stored
+  snapshot); where its collateral is held (the protocol's lien: held in
+  the borrower's vault, on an ended loan until its claim is collected,
+  released, or none); and, for a loan whose
+  collateral has no price, that a default hands the lender the collateral
+  itself. Until the loan's actions land, the page says so and offers none.
 
 ## 3. Companion specifications
 

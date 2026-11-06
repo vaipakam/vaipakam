@@ -2389,6 +2389,14 @@ Positions liest denselben Bestand wie Home über einen gemeinsamen Leser: `getUs
 
 Die Seitenauswahl filtert Auszahlungen, laufende und beendete Zeilen nach der gehaltenen Seite. „Nichts“ wird nur gesagt, wenn der Positions- und der Auszahlungsdurchlauf vollständig waren und das letzte Lesen gelang; ein an seiner Obergrenze gestoppter Durchlauf wird als unvollständig angegeben. Eine Zeile öffnet `/positions/<id>`, wo das Eignungsurteil jede Aktion entscheidet; die Liste sendet keine Transaktion.
 
+<a id="position"></a>
+
+### Position: Wie ein Kredit gelesen wird
+
+Die Seite liest `getLoanDetails(loanId)` und `ownerOf` für die Positions-NFTs von Kreditgeber und Kreditnehmer; die Rolle ist das Token, das die Wallet jetzt hält. Für einen laufenden Kredit (Active oder FallbackPending) liest sie `getLoanDeadlines` (ursprüngliche Fälligkeit, Pausengutschrift, Fälligkeit, Ende der Kulanzfrist), bei einem Zahlungsplan `previewPeriodicSettle` mit `getPeriodicInterestEnabled`, `isLoanDefaultable`, `calculateHealthFactor` und `calculateLTV`; für jeden Kredit `getLoanCollateralLien` und `isSaleVehicleLoan`. Jedes Lesen steht für sich: Ein fehlgeschlagenes wird als unbekannt angezeigt, nie als null, und kein Datum wird aus `startTime` und `durationDays` berechnet.
+
+Sätze sind die Schnappschüsse des Kredits: `treasuryFeeBpsAtInit`, `loanInitiationFeeBpsAtInit` (keiner bei einem Verkaufsvehikel) und `liquidationLtvBpsAtInit`. Ein Health Factor von 0 ist die Angabe des Protokolls „keine preisbasierte Messung“ für eine Seite ohne Preis. `collateralLiquidity` Illiquid bei einem laufenden Kredit fügt die Sachwert-Warnung hinzu: Ein Ausfall überträgt die Sicherheit ohne Verkauf an den Kreditgeber. Die Seite sendet noch keine Transaktion.
+
 <a id="risk-access"></a>
 
 ### Risk Access: Ihre Risikostufe
