@@ -2381,14 +2381,8 @@ try {
   // cancelled or expired → stop, and the lender is never armed.
   const stateBeforeArm = await requestStateAt(requestId, await pub.getBlockNumber({ cacheTime: 0 }));
   if (stateBeforeArm !== 'open') stop(`request #${requestId} is ${stateBeforeArm} before the lender is armed — not arming`);
-  // RULE 1, once more, IMMEDIATELY before arming the lender (#2422 r11): the
-  // watched config — the risk-terms epoch the AcceptTerms is anchored to
-  // included — must still equal the preflight's. A move here is
-  // UNDETERMINED and stops the run before the lender is armed.
-  const armObs = await observeConfig('the lender\u2019s submit (risk-terms epoch, fees, grace, posture)', async () => null);
-  if (armObs.undetermined) stop(`not arming the lender: ${armObs.undetermined}`);
-  // The contract's own accept-gate previews for THIS request, right before
-  // the lender is armed: the creator (re-gated at accept) and the acceptor
+  // The contract's own accept-gate previews for THIS request, before the
+  // final config re-read and the lender's arming: the creator (re-gated at accept) and the acceptor
   // must both read 0, the exact rule the accept enforces (#3231).
   const offerGate = await readOfferGate(read, {
     gateEnabled: pre.riskGate,
@@ -2399,6 +2393,12 @@ try {
   });
   for (const l of offerGate.lines) check(l.label, l.ok, l.observed);
   if (!offerGate.ok) stop(`not arming the lender: the risk-access gate would refuse the accept of request #${requestId}`);
+  // RULE 1, once more, IMMEDIATELY before arming the lender (#2422 r11): the
+  // watched config — the risk-terms epoch the AcceptTerms is anchored to
+  // included — must still equal the preflight's. A move here is
+  // UNDETERMINED and stops the run before the lender is armed.
+  const armObs = await observeConfig('the lender\u2019s submit (risk-terms epoch, fees, grace, posture)', async () => null);
+  if (armObs.undetermined) stop(`not arming the lender: ${armObs.undetermined}`);
   LENDER_ANCHOR = await chainNow();
   console.log(`info  lender anchor (chain time at submit start): ${LENDER_ANCHOR}`);
   PLAN.arm('lender');
