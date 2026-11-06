@@ -366,6 +366,9 @@ contract CollateralListingExecutor is
     error NotSeaport();
     error NotDiamond();
     error UnknownOrder(bytes32 orderHash);
+    /// @notice #3178 — the parallel-sale listing's vault is below the mandatory
+    ///         vault version: nothing leaves it on its owner's own listing.
+    error ParallelSaleVaultOutdated(uint256 offerId);
     error ConduitNotApproved(address conduit);
     error LoanNotActive(uint256 loanId);
     error GraceExpired(uint256 loanId);
@@ -1435,6 +1438,12 @@ contract CollateralListingExecutor is
         OfferContext memory ctx = offerContext[params.orderHash];
         if (ctx.offerId == 0) revert UnknownOrder(params.orderHash);
         if (!approvedConduits[ctx.conduit]) revert ConduitNotApproved(ctx.conduit);
+        // #3178 (Codex #3220 r1) — the version rule at FILL time, not only at
+        // signing: Seaport skips the signature check for a pre-validated
+        // order. The Diamond's proceeds callback enforces the same rule.
+        if (IVaipakamVaultOutflowView(vaipakamDiamond).isParallelSaleVaultBlocked(ctx.offerId)) {
+            revert ParallelSaleVaultOutdated(ctx.offerId);
+        }
 
         // Diamond-side sanctions recheck — runs inside the diamond's
         // storage slot so the oracle lookup hits the diamond-configured

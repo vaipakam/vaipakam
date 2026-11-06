@@ -148,6 +148,10 @@ library LibSwapToRepayIntentSettlement {
         if (makingAmount != lot) revert IntentFillAmountMismatch(makingAmount, lot);
 
         LibVaipakam.Loan storage loan = s.loans[loanId];
+        // #3178 (Codex #3220 r1) — the version rule at FILL time, where the lot
+        // actually leaves: a vault below the mandatory version sends nothing
+        // out on its owner's own order, whatever the signature check said.
+        if (LibVaipakam.vaultUpgradeRequired(loan.borrower)) revert VaultFactoryFacet.VaultUpgradeRequired();
         address collateral = loan.collateralAsset;
         address vault = s.userVaipakamVaults[loan.borrower];
         LibEncumbrance.decrementCollateralLien(loanId, lot);

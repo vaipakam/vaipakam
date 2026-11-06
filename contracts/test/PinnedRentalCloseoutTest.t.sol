@@ -8,6 +8,8 @@ import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {PrecloseFacet} from "../src/facets/PrecloseFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
+import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
+import {PrepayListingFacet} from "../src/facets/PrepayListingFacet.sol";
 import {VaultDepositoryFacet} from "../src/facets/VaultDepositoryFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {VaipakamVaultImplementation} from "../src/VaipakamVaultImplementation.sol";
@@ -174,6 +176,30 @@ contract PinnedRentalCloseoutTest is SetupTest {
             lender, uint8(LibVaipakam.AssetType.ERC20), mockERC20, 0, 5 ether, lender
         );
         assertEq(IERC20(mockERC20).balanceOf(lender) - wallet0, 5 ether, "withdrawn after the upgrade");
+    }
+
+    /// @dev Codex #3220 r1 — Seaport skips the vault's signature check for a
+    ///      PRE-VALIDATED order, so the version rule must also hold at fill
+    ///      time. Every parallel-sale fill reports its proceeds to the Diamond;
+    ///      that callback refuses a creator whose vault is below the mandatory
+    ///      version, which reverts the whole fill.
+    ///      Kills: a parallel-sale fill from an outdated vault after the
+    ///      signing-time check was bypassed by pre-validation.
+    function test_ParallelSaleFillFromOutdatedVaultRefusedAtFillTime() public {
+        uint96 saleOfferId = 9_901;
+        LibVaipakam.Offer memory o;
+        o.id = saleOfferId;
+        o.creator = borrower;
+        o.offerType = LibVaipakam.OfferType.Borrower;
+        TestMutatorFacet(address(diamond)).setOffer(saleOfferId, o);
+        address executor = makeAddr("listingExecutor");
+        TestMutatorFacet(address(diamond)).setOfferPrepayListingExecutorRaw(saleOfferId, executor);
+        _pinnedBelowMandatoryRental(); // every vault, the creator's included, is now outdated
+        assertTrue(_upgradeRequired(borrower), "fixture: the creator's vault is outdated");
+
+        vm.prank(executor);
+        vm.expectRevert(VaultFactoryFacet.VaultUpgradeRequired.selector);
+        PrepayListingFacet(address(diamond)).recordOfferSaleProceeds(saleOfferId, mockERC20, 1 ether);
     }
 
     /// @dev Kills: the receive exemption leaking to a resolution that is not a
