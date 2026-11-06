@@ -103,10 +103,20 @@ const MAX_SCAN_PER_TICK = 200;
 const SCAN_CHUNK = 100;
 /** Max ack sends per tick (each is a CCIP fee spend). */
 const MAX_ACKS_PER_TICK = 5;
-/** Min seconds between ack attempts for one reservation (CCIP delivery
- *  takes minutes; Base finalizes idempotently so overlap is safe, just
- *  wasteful). */
-const ACK_RETRY_BACKOFF_SEC = 15 * 60;
+/** The slowest source-chain finality CCIP waits for among the mirrors it
+ *  serves, per Chainlink's finality-by-chain table (CCIP waits for full
+ *  source finality before executing): OP Mainnet 20 min, Base 18, Arbitrum
+ *  17, Polygon 17, Ethereum ~12.8, BNB Chain seconds. An ack's source is
+ *  the MIRROR, so this is the floor of how long an ack takes to land. */
+export const CCIP_SLOWEST_SOURCE_FINALITY_SEC = 20 * 60;
+/** Min seconds between ack attempts for one reservation. Base finalizes
+ *  idempotently, so an early re-send is safe but pays a second CCIP fee.
+ *  The backoff was 15 minutes, below Arbitrum's 17-minute finality, so
+ *  every Arbitrum ack was sent twice (2026-11-06: remit 2 at 18:55 and
+ *  again at 19:11, the first still in flight). Three times the slowest
+ *  finality leaves room for execution after it; a lost ack still re-sends
+ *  well inside the 8-hour overdue alert. */
+export const ACK_RETRY_BACKOFF_SEC = 3 * CCIP_SLOWEST_SOURCE_FINALITY_SEC;
 
 interface RemitReservationView {
   dstChainId: number;
