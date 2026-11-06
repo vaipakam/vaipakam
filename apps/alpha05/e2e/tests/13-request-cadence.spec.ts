@@ -106,6 +106,9 @@ test('a monthly request is offered only on terms the protocol admits, applies in
     await expect(receipt).toContainText('Interest due each period');
     await expect(receipt).toContainText(/every 30 days/);
     await expect(receipt).toContainText('Grace for a missed period');
+    // The whole term's interest is a total the instalments count toward.
+    await expect(receipt).toContainText('instalments paid count toward it');
+    await expect(receipt).not.toContainText('You owe on the due date');
     await expect(receipt).toContainText(/Interest is due every month: if a period is not paid within .+ after it ends, anyone may sell part of your collateral to pay it\./);
     await expect(receipt).toContainText('The interest schedule cannot be changed after posting');
     // The keeper's posture is Advanced detail.

@@ -513,7 +513,10 @@ above. Each resolves here, so a route reviewer needs no private file:
   and a schedule already chosen holds the review until it is known. The
   review states the schedule, each period's interest as the protocol
   expects it (at both ends of a range), the grace a missed period gets
-  (today's figure), and, in Basic, that a period not paid by its grace end
+  (today's figure, or a plain "could not be read" when the read failed,
+  never a silently missing row), that the amount owed is the whole term's
+  interest plus principal with the instalments counting toward it (not a
+  sum still due at the end), and, in Basic, that a period not paid by its grace end
   lets anyone sell part of the collateral to pay it, and that the schedule
   is fixed once posted. Who settles a missed period is Advanced detail:
   anyone may, and the keeper pass's arming is the capability service's

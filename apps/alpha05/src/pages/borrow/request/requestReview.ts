@@ -533,8 +533,15 @@ export function requestReceipt(r: RequestReview, meta: TokenMetaMap | null, copy
     { label: text('request.rowReceive'), value: amount(pair.lending, f.received), binding: false },
     { label: text('accept.rowFee'), value: amount(pair.lending, f.fee), binding: false },
     textRow('accept.rowFeeRule', format('request.feeRule', { rate: formatBps(r.lifBps) }), false),
-    { label: text(ranged ? 'request.rowOweDirect' : 'accept.rowOwe'), value: amount(pair.lending, f.owedAtDue), binding: true },
-    ...(largest ? [{ label: text('request.rowOweLargest'), value: amount(pair.lending, largest.owedAtDue), binding: true }] : []),
+    // With a schedule the figure is the whole term's interest, and the
+    // instalments paid along the way count toward it, so it is labelled as a
+    // total rather than as what is left to pay at the due date.
+    {
+      label: text(parsed.cadence !== 0 ? (ranged ? 'request.rowOweDirectTotal' : 'accept.rowOweTotal') : ranged ? 'request.rowOweDirect' : 'accept.rowOwe'),
+      value: amount(pair.lending, f.owedAtDue),
+      binding: true,
+    },
+    ...(largest ? [{ label: text(parsed.cadence !== 0 ? 'request.rowOweLargestTotal' : 'request.rowOweLargest'), value: amount(pair.lending, largest.owedAtDue), binding: true }] : []),
     textRow('accept.rowInterest', text(parsed.fullTerm ? (parsed.allowsPartialRepay ? 'accept.fullTermPartial' : 'accept.fullTerm') : 'accept.proRata'), true),
     ...scheduleRows(r, meta, copy, advanced, keeper),
     textRow('accept.rowPartial', text(parsed.allowsPartialRepay ? 'accept.partialYes' : 'accept.partialNo'), true),
@@ -644,7 +651,7 @@ function scheduleRows(r: RequestReview, meta: TokenMetaMap | null, copy: Pick<Co
     ...(isRanged(parsed) ? [row('request.rowPeriodLargest', owe(parsed.amountMax), true)] : []),
     // Today's figure: the grace is read from the live configuration when a
     // period is settled, so the request does not bind it.
-    ...(r.periodGraceSeconds !== null ? [row('request.rowPeriodGrace', format('accept.grace', { span: formatSpan(Number(r.periodGraceSeconds)) }), false)] : []),
+    row('request.rowPeriodGrace', r.periodGraceSeconds !== null ? format('accept.grace', { span: formatSpan(Number(r.periodGraceSeconds)) }) : text('request.periodGraceUnread'), false),
     ...(advanced ? [row('request.rowPeriodSettle', text(keeper === 'present' ? 'request.settleArmed' : keeper === 'absent' ? 'request.settleOff' : 'request.settleUnknown'), false)] : []),
   ];
 }

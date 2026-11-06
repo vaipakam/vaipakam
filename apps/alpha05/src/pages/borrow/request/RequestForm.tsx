@@ -770,12 +770,12 @@ export function RequestForm({ chain, own, pair, meta, onReview, onCancel }: Requ
         {figures && (
           <p className="tier-b request-summary" data-testid="request-summary" aria-live="polite">
             {largest !== null
-              ? format('request.rangeReceiveSummary', {
+              ? format(cadence !== 0 ? 'request.rangeReceiveSummaryScheduled' : 'request.rangeReceiveSummary', {
                   receive: tokenAmount(figures.received, pair.lending, meta, format),
                   owe: tokenAmount(figures.owedAtDue, pair.lending, meta, format),
                   largest: tokenAmount(largest, pair.lending, meta, format),
                 })
-              : format('request.summary', { receive: tokenAmount(figures.received, pair.lending, meta, format), owe: tokenAmount(figures.owedAtDue, pair.lending, meta, format) })}
+              : format(cadence !== 0 ? 'request.summaryScheduled' : 'request.summary', { receive: tokenAmount(figures.received, pair.lending, meta, format), owe: tokenAmount(figures.owedAtDue, pair.lending, meta, format) })}
           </p>
         )}
         <div className="thumb-buttons">

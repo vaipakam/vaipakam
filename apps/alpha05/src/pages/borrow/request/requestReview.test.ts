@@ -431,9 +431,18 @@ describe('an interest schedule (OFF-14)', () => {
     expect(row(r, 'request.rowPeriodSettle')).toBeUndefined();
     expect(requestReceipt(r, null, copy).consequences).toEqual(expect.arrayContaining(['request.loseCadence', 'request.loseCadenceFixed']));
   });
+  it('labels what is owed as the whole term with instalments counted, not as what is left at the due date', () => {
+    expect(row(scheduled(0), 'accept.rowOwe')).toBeDefined();
+    expect(row(scheduled(1), 'accept.rowOwe')).toBeUndefined();
+    expect(row(scheduled(1), 'accept.rowOweTotal')?.binding).toBe(true);
+    const ranged = scheduled(1, {}, rangedReview());
+    expect(row(ranged, 'request.rowOweDirectTotal')).toBeDefined();
+    expect(row(ranged, 'request.rowOweLargestTotal')).toBeDefined();
+    expect(row(ranged, 'request.rowOweDirect')).toBeUndefined();
+  });
   it('says an unread grace instead of a figure, and states the keeper posture in Advanced only', () => {
     const r = scheduled(2);
-    expect(row(r, 'request.rowPeriodGrace')).toBeUndefined();
+    expect(row(r, 'request.rowPeriodGrace')?.value).toEqual({ kind: 'text', text: 'request.periodGraceUnread' });
     expect(requestReceipt(r, null, copy).consequences).toContain('request.loseCadenceUnread');
     expect(requestReceipt(r, null, copy, true).rows.find((x) => x.label === 'request.rowPeriodSettle')?.value).toEqual({ kind: 'text', text: 'request.settleUnknown' });
     expect(requestReceipt(r, null, copy, true, 'present').rows.find((x) => x.label === 'request.rowPeriodSettle')?.value).toEqual({ kind: 'text', text: 'request.settleArmed' });
