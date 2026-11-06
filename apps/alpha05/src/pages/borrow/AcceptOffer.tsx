@@ -371,7 +371,10 @@ export function AcceptOffer({ offerId, chain, own, meta, terms, onClose }: Accep
           : set.why === 'refused'
             ? (set.reason ?? text('accept.restoreNotLanded'))
             : text('accept.restoreNotLanded');
-    return { ok: false, sentence: format('accept.notRestored', { why, amount: amt(token, set.now ?? approvedAmount) }) };
+    // An allowance that could not be read is said to be unknown, never
+    // filled in with the amount approved: the reset may have landed.
+    if (set.now === null) return { ok: false, sentence: format('accept.restoreUnverified', { why }) };
+    return { ok: false, sentence: format('accept.notRestored', { why, amount: amt(token, set.now) }) };
   }
 
   const load = async () => {
