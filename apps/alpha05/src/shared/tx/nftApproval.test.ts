@@ -55,6 +55,22 @@ describe('the one-token approval', () => {
   });
 });
 
+describe('an approval whose read-back fails', () => {
+  it('is stated as unverified with its transaction, never as not landed', async () => {
+    let calls = 0;
+    const flaky = {
+      account: WALLET,
+      read: async <T>(fn: (c: never) => Promise<T>) => {
+        if (++calls > 1) throw new Error('rpc down');
+        return { value: await fn(undefined as never), via: 'wallet' };
+      },
+    } as unknown as OwnStateClient;
+    states = [at(WALLET, null)];
+    const ap = nftApproval({ own: flaky, config: {} as Config, chainId: 1, diamond: DIAMOND, copy, tokenName: 'T #7', setStep: () => {} }, ASSET, 7n);
+    await expect(ap.approve(null)).rejects.toMatchObject({ refusal: { code: 'NftApprovalUnverified', reason: 'nftApproval.unread' } });
+  });
+});
+
 describe('putting the approval back', () => {
   it('needs nothing once the token has left the wallet (a transfer clears it)', async () => {
     states = [at(OTHER, null)];

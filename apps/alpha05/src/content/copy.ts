@@ -701,6 +701,7 @@ export const copy = {
     tokenHeld: B('Your wallet holds this NFT. It moves into your vault when you post.'),
     tokenNotHeld: A('Another wallet holds this NFT, so this wallet cannot lock it.'),
     tokenMissing: A('No NFT #{{id}} exists in this collection. Check the number.'),
+    tokenUnread: A('Who holds this NFT could not be read ({{reason}}). The review checks it again before anything is signed.'),
     errTokenIdEmpty: A("Enter the NFT's number."),
     errTokenId: A('Use whole digits only, as the number appears on the NFT.'),
     max: B('Max'),

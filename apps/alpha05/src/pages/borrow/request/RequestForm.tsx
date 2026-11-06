@@ -106,10 +106,16 @@ export function RequestForm({ chain, own, pair, meta, onReview, onCancel }: Requ
   const amount = lendingDecimals === null ? null : parseAmount(input.amount, lendingDecimals);
   const collateral = nft || collateralDecimals === null ? null : parseAmount(input.collateral, collateralDecimals);
   const tokenIdError = !nft || tokenId !== null ? null : input.tokenId.trim() === '' ? text('request.errTokenIdEmpty') : text('request.errTokenId');
+  // A failed read, first or a refresh behind an earlier answer, is stated
+  // as unknown: a cached holder is never shown as current.
   const tokenStanding =
-    !nft || tokenId === null || token.data === null
+    !nft || tokenId === null
       ? null
-      : token.data.owner === null
+      : token.error !== null
+        ? { tone: 'warn' as const, text: format('request.tokenUnread', { reason: token.error }) }
+        : token.data === null
+          ? null
+          : token.data.owner === null
         ? { tone: 'warn' as const, text: format('request.tokenMissing', { id: String(tokenId) }) }
         : holds(token.data, own.account)
           ? { tone: 'ok' as const, text: text('request.tokenHeld') }

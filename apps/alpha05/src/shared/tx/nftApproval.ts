@@ -62,8 +62,10 @@ export function nftApproval(d: NftApprovalDeps, asset: Hex, tokenId: bigint): Nf
     } catch {
       return { landed: false, hash, now: null };
     }
+    // A read-back that fails is missing evidence, not a failure: the hash is
+    // kept, so the caller states the step as unverified (it may have landed).
     const now = await read(block).catch(() => null);
-    return { landed: now !== null && same(now.approved, to), hash: null, now };
+    return { landed: now !== null && same(now.approved, to), hash: now === null ? hash : null, now };
   }
 
   async function approve(prior: Hex | null): Promise<void> {
@@ -75,7 +77,7 @@ export function nftApproval(d: NftApprovalDeps, asset: Hex, tokenId: bigint): Nf
     const r = await setTo(diamond);
     if (r.landed) return;
     throw new StatedRefusal({
-      code: 'NftApprovalNotSet',
+      code: r.hash !== null ? 'NftApprovalUnverified' : 'NftApprovalNotSet',
       reason: r.hash !== null ? format('nftApproval.unread', { hash: r.hash }) : format('nftApproval.notSet', { token: d.tokenName }),
       reopensAt: null,
       remedy: null,
