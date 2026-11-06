@@ -21,8 +21,6 @@ import { formatUtc } from '../ui/format';
 import { PLAN_SIGNATURES, RISK_ACCESS_ABI, pairName, planCall, readRiskStatus, riskPlan, type PairSource, type RiskNeed, type RiskPlan, type RiskStatus } from './riskAccess';
 import { effectSentence, isAction, levelName, needSentences, planMoved, riskReceipt, type ActionPlan } from './riskReceipt';
 
-type Hex = `0x${string}`;
-
 interface StepProps {
   chain: SupportedChain;
   own: OwnStateClient;
@@ -37,13 +35,6 @@ function sourceKey(s: PairSource): string {
   return s.kind === 'offer' ? `offer:${s.offerId.toString()}` : `pair:${pairName(s.pair)}`;
 }
 
-/** Where this session keeps when an agreement it recorded takes effect: the
- *  protocol has no read for that time, so only the transaction that recorded
- *  it can say (its block time plus the waiting period then). */
-function untilKey(chainId: number, account: Hex, s: RiskStatus): string {
-  return `risk.until:${chainId}:${account.toLowerCase()}:${s.need}:${pairName(s.pair)}`;
-}
-
 const BUTTONS = { raise: 'risk.raise', reaffirm: 'risk.reaffirm', consent: 'risk.consentButton', ack: 'risk.ackButton' } as const;
 
 /**
@@ -52,8 +43,8 @@ const BUTTONS = { raise: 'risk.raise', reaffirm: 'risk.reaffirm', consent: 'risk
  * (`need`); this reads what the step stands on each block and says what it
  * would change and when it would count. A step already recorded and still in
  * its waiting period is never offered again (a second one would start the
- * wait over): the time it takes effect is stated instead, or that this app
- * cannot read it.
+ * wait over): the time it takes effect is stated instead (a raise), or that
+ * this app cannot read it (an agreement: the protocol has no read for it).
  */
 export function RiskGate({ chain, own, need, source, pairLabel, onOpen }: StepProps & { onOpen: () => void }) {
   const copy = useCopy();
@@ -61,7 +52,6 @@ export function RiskGate({ chain, own, need, source, pairLabel, onOpen }: StepPr
   const diamond = chain.diamondAddress;
   const status = useOwnRead(['riskStatus', diamond, need, sourceKey(source)], (c) => readRiskStatus(c, diamond, own.account, need, source), { perBlock: true });
   const s = status.data;
-  const [until] = useStoredValue<bigint>(s ? untilKey(chain.chainId, own.account, s) : 'risk.until:none');
 
   if (s === null) {
     return status.state === 'failed' ? (
@@ -75,7 +65,7 @@ export function RiskGate({ chain, own, need, source, pairLabel, onOpen }: StepPr
       <p className="tier-b">{text('risk.reading')}</p>
     );
   }
-  const plan = riskPlan(s, until);
+  const plan = riskPlan(s);
   return (
     <div className="risk-gate" data-risk-need={need} data-risk-plan={plan.kind} data-testid="risk-gate">
       {plan.kind !== 'met' &&
@@ -92,7 +82,7 @@ export function RiskGate({ chain, own, need, source, pairLabel, onOpen }: StepPr
       )}
       {plan.kind === 'wait-pair' && (
         <Notice tone="info" tier="A">
-          {plan.until === null ? text('risk.waitPairUnknown') : format('risk.waitPair', { when: formatUtc(Number(plan.until)) })}
+          {text('risk.waitPairUnknown')}
         </Notice>
       )}
       {isAction(plan) && (
@@ -138,7 +128,6 @@ export function RiskStepFlow({ chain, own, need, source, pairLabel, flowKey, onB
   const identity = reviewIdentity(own);
   const key = `${flowKey}.risk`;
   const [reviewed, setReviewed] = useStoredValue<Reviewed>(`${key}:review`);
-  const [, setUntil] = useStoredValue<bigint>(reviewed ? untilKey(chain.chainId, account, reviewed.status) : 'risk.until:none');
   const mounted = useMounted();
 
   const tx = useTrackedTx({
@@ -173,8 +162,8 @@ export function RiskStepFlow({ chain, own, need, source, pairLabel, flowKey, onB
           { status: 'done', label: text('risk.legNow') },
         ];
       if (!after.pending) return [{ status: 'not-done', label, reason: text('risk.legPairMissing') }];
+      // Read at the receipt's own block, so this time belongs to this grant.
       const until = after.chainNow + after.cooldown;
-      setUntil(until);
       return [
         { status: 'done', label },
         { status: 'done', label: format('risk.legAt', { when: formatUtc(Number(until)) }) },
@@ -190,27 +179,29 @@ export function RiskStepFlow({ chain, own, need, source, pairLabel, flowKey, onB
         ({ value }) => {
           if (!mounted.current) return;
           setLoadError(null);
-          setReviewed({ status: value, plan: riskPlan(value, null), readAt: Date.now(), identity, source: sourceKey(source) });
+          setReviewed({ status: value, plan: riskPlan(value), readAt: Date.now(), identity, source: sourceKey(source) });
         },
         (e: unknown) => {
           if (mounted.current) setLoadError(refusalFromError(e).reason);
         },
       );
 
-  // Read the step once when it opens (a review kept from before, for the
-  // same need and pair under this identity, is kept), and open the review.
+  // Opened once. A transaction still out is shown as it stands. For this
+  // same step (same need and pair under this identity) the review, or an
+  // outcome the reader has not yet left, is shown too, even one that
+  // finished while the page was away. Anything else starts a new review.
   const opened = useRef(false);
   useEffect(() => {
     if (opened.current) return;
     opened.current = true;
-    // A step that ended earlier (its finish card was left) starts a new
-    // review; one still out with the wallet or the network is kept.
     const k = tx.phase.kind;
-    const fresh = k === 'idle' || k === 'measured' || k === 'failed' || k === 'superseded';
-    if (fresh) tx.review();
-    if (!fresh || k === 'idle') {
-      if (reviewed !== null && reviewed.identity === identity && reviewed.status.need === need && reviewed.source === sourceKey(source)) return;
-    }
+    const same = reviewed !== null && reviewed.identity === identity && reviewed.status.need === need && reviewed.source === sourceKey(source);
+    const ended = k === 'measured' || k === 'failed' || k === 'superseded';
+    const out = k === 'signing' || k === 'submitted' || k === 'mined' || k === 'receipt-unknown';
+    if (out || (same && k !== 'idle')) return;
+    if (ended) tx.reset();
+    if (k !== 'review') tx.review();
+    if (same) return;
     setReviewed(null);
     void load();
     // Opened once; the stored review and the tracker carry the rest.
@@ -233,7 +224,7 @@ export function RiskStepFlow({ chain, own, need, source, pairLabel, flowKey, onB
     } catch (e) {
       return { kind: 'unreadable', reason: refusalFromError(e).reason };
     }
-    const next = { status: now, plan: riskPlan(now, null) };
+    const next = { status: now, plan: riskPlan(now) };
     if (!isAction(next.plan)) return { kind: 'refused', refusal: { code: 'AlreadyRecorded', reason: text('risk.already'), reopensAt: null, remedy: null } };
     if (planMoved(reviewed, next)) {
       if (current()) setReviewed({ ...next, readAt: Date.now(), identity: reviewed.identity, source: reviewed.source });
@@ -243,7 +234,12 @@ export function RiskStepFlow({ chain, own, need, source, pairLabel, flowKey, onB
     return simulateCall(own, { address: diamond, abi: RISK_ACCESS_ABI, functionName: call.functionName, args: call.args });
   };
 
+  // Leaving the step leaves its outcome too: the next step opens fresh.
+  // A transaction still out (or whose receipt could not be read) is kept,
+  // so it stays on screen until it is settled.
   const back = () => {
+    const k = tx.phase.kind;
+    if (k === 'review' || k === 'measured' || k === 'failed' || k === 'superseded') tx.reset();
     setReviewed(null);
     onBack();
   };
@@ -287,15 +283,7 @@ export function RiskStepFlow({ chain, own, need, source, pairLabel, flowKey, onB
         next={null}
         after={() => (
           <p className="actions">
-            <button
-              type="button"
-              className="btn btn-primary"
-              onClick={() => {
-                tx.reset();
-                back();
-              }}
-              data-testid="risk-back"
-            >
+            <button type="button" className="btn btn-primary" onClick={back} data-testid="risk-back">
               {text('risk.back')}
             </button>
           </p>

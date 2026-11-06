@@ -48,27 +48,25 @@ describe('which step the protocol asks for', () => {
 
 describe('the plan', () => {
   it('raises to the least level the pair needs', () => {
-    expect(riskPlan(status({ required: 1 }), null)).toEqual({ kind: 'raise', level: 1 });
-    expect(riskPlan(status({ required: 2, held: 1, effective: 1 }), null)).toEqual({ kind: 'raise', level: 2 });
+    expect(riskPlan(status({ required: 1 }))).toEqual({ kind: 'raise', level: 1 });
+    expect(riskPlan(status({ required: 2, held: 1, effective: 1 }))).toEqual({ kind: 'raise', level: 2 });
   });
   it('waits for a raise already recorded instead of starting the wait over', () => {
-    expect(riskPlan(status({ held: 1, effective: 0, unlockAt: 5_000n }), null)).toEqual({ kind: 'wait-tier', until: 5_000n });
+    expect(riskPlan(status({ held: 1, effective: 0, unlockAt: 5_000n }))).toEqual({ kind: 'wait-tier', until: 5_000n });
   });
   it('confirms again a level a terms change made stale, at the level the wallet chose', () => {
-    expect(riskPlan(status({ held: 2, effective: 0, stale: true }), null)).toEqual({ kind: 'reaffirm', level: 2 });
+    expect(riskPlan(status({ held: 2, effective: 0, stale: true }))).toEqual({ kind: 'reaffirm', level: 2 });
   });
   it('is met when the level in effect covers the pair, or the gate is off', () => {
-    expect(riskPlan(status({ held: 1, effective: 1 }), null)).toEqual({ kind: 'met' });
-    expect(riskPlan(status({ gateOn: false }), null)).toEqual({ kind: 'met' });
+    expect(riskPlan(status({ held: 1, effective: 1 }))).toEqual({ kind: 'met' });
+    expect(riskPlan(status({ gateOn: false }))).toEqual({ kind: 'met' });
   });
   it('agrees to the pair, or waits for an agreement still in its waiting period', () => {
-    expect(riskPlan(status({ need: 'pair-consent' }), null)).toEqual({ kind: 'consent' });
-    expect(riskPlan(status({ need: 'pair-consent', pending: true }), null)).toEqual({ kind: 'wait-pair', until: null });
-    expect(riskPlan(status({ need: 'pair-consent', pending: true }), 4_000n)).toEqual({ kind: 'wait-pair', until: 4_000n });
-    // A recorded time already past is not offered as the time it counts.
-    expect(riskPlan(status({ need: 'pair-consent', pending: true }), 900n)).toEqual({ kind: 'wait-pair', until: null });
-    expect(riskPlan(status({ need: 'pair-consent', inEffect: true }), null)).toEqual({ kind: 'met' });
-    expect(riskPlan(status({ need: 'mid-tier-ack' }), null)).toEqual({ kind: 'ack' });
+    expect(riskPlan(status({ need: 'pair-consent' }))).toEqual({ kind: 'consent' });
+    // No read says when it counts, so no time is offered for it.
+    expect(riskPlan(status({ need: 'pair-consent', pending: true }))).toEqual({ kind: 'wait-pair' });
+    expect(riskPlan(status({ need: 'pair-consent', inEffect: true }))).toEqual({ kind: 'met' });
+    expect(riskPlan(status({ need: 'mid-tier-ack' }))).toEqual({ kind: 'ack' });
   });
 });
 

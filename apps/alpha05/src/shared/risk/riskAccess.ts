@@ -53,7 +53,7 @@ export function erc20Pair(lendAsset: Hex, collAsset: Hex): RiskPair {
   return { lendAsset, lendType: 0, lendTokenId: 0n, collAsset, collType: 0, collTokenId: 0n, prepayAsset: ZERO };
 }
 
-/** A stable name for a pair, to key what this session recorded for it. */
+/** A stable name for a pair, to key a flow's review of it. */
 export function pairName(p: RiskPair): string {
   return [p.lendAsset, p.lendType, p.lendTokenId, p.collAsset, p.collType, p.collTokenId, p.prepayAsset].map((x) => String(x).toLowerCase()).join(':');
 }
@@ -119,9 +119,11 @@ export type RiskPlan =
   | { kind: 'ack' }
   /** A raise is recorded and counts from `until`. */
   | { kind: 'wait-tier'; until: bigint }
-  /** An agreement or acknowledgement is recorded and counts from `until`,
-   *  or from a time this app cannot read (null). */
-  | { kind: 'wait-pair'; until: bigint | null }
+  /** An agreement or acknowledgement is recorded and still in its waiting
+   *  period. The protocol has no read for when that period ends (#3229), so
+   *  no time is stated: one this session remembered could belong to an
+   *  earlier grant that was revoked and given again since. */
+  | { kind: 'wait-pair' }
   /** The reads say the step is no longer needed: the protocol's next answer
    *  for the flow decides. */
   | { kind: 'met' };
@@ -131,7 +133,7 @@ export type RiskPlan =
  * waiting is never offered again, because a second raise starts its waiting
  * period over; likewise an agreement still in its waiting period.
  */
-export function riskPlan(s: RiskStatus, recordedUntil: bigint | null): RiskPlan {
+export function riskPlan(s: RiskStatus): RiskPlan {
   if (!s.gateOn) return { kind: 'met' };
   if (s.need === 'tier') {
     if (s.effective >= s.required) return { kind: 'met' };
@@ -140,7 +142,7 @@ export function riskPlan(s: RiskStatus, recordedUntil: bigint | null): RiskPlan 
     return { kind: 'raise', level: s.required };
   }
   if (s.inEffect) return { kind: 'met' };
-  if (s.pending) return { kind: 'wait-pair', until: recordedUntil !== null && recordedUntil > s.chainNow ? recordedUntil : null };
+  if (s.pending) return { kind: 'wait-pair' };
   return { kind: s.need === 'pair-consent' ? 'consent' : 'ack' };
 }
 
