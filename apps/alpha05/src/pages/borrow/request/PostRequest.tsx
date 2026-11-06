@@ -28,6 +28,7 @@ import { Notice } from '../../../shared/ui/Notice';
 import { shortAddress } from '../../../shared/ui/format';
 import { pageHandoff } from '../../../routes/pageMap';
 import { REQUEST_KEY } from './RequestForm';
+import { ArmTariff } from './ArmTariff';
 import { createdRequest } from './requestOutcome';
 import { erc20Pair, nftCollateralPair, type RiskNeed } from '../../../shared/risk/riskAccess';
 import { nftApproval } from '../../../shared/tx/nftApproval';
@@ -516,6 +517,9 @@ export function PostRequest({ draft, chain, own, meta, terms, onEdit, onClose }:
                 : { label: text('request.openOffersCurrent'), href: offersPage.href }
           }
           gate={gate}
+          // OFF-22: the tariff is armed by its own transaction once the
+          // request exists; until it confirms, loans open without it.
+          after={() => (offerId !== null && review?.draft.parsed.tariff ? <ArmTariff chain={chain} own={own} offerId={offerId} choice={review.draft.parsed.tariff} /> : null)}
           onClose={close}
         />
       )}

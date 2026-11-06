@@ -2115,6 +2115,12 @@ Basic は単一値のリクエストを出します。`amount` = `amountMax`、`
 
 `periodicInterestCadence` は 0（None）から 4（Annual）で、期間はそれぞれ 30・90・180・365 日です。フォームは `previewCadenceAdmission(lendingAsset, amount, assetType, collateralAsset, collateralAssetType, durationDays)` が認めるものを提示します。これは `createOffer` が適用するルールを、`amount`（レンジの最小端）で評価して実行します。拒否はそれぞれリバートデータから表示されます：`PeriodicInterestDisabled`、`CadenceNotAllowedForIlliquid`、または `CadenceNotAllowed(cadence, durationDays, principalNumeraire, threshold)`。1期間の利息は `principal × rate × intervalDays / (10000 × 365)` です。支払いが遅れた期間は、猶予 `getEffectiveGraceSeconds(intervalDays − 1)` が過ぎると誰でも `settlePeriodicInterest` で精算でき、担保が売却されローンは継続します。キーパーパス `periodicSettle` の有効状態はケイパビリティサービスの報告どおりに表示され、既定では不明です。スケジュールは投稿後に変更できません。
 
+<a id="borrow-request-tariff"></a>
+
+### Borrow: リクエストのフル手数料タリフ
+
+オプトインは `setOfferCreatorFullTariff(offerId, true, maxCStar, allowDowngrade)` で、作成者が `createOffer` の後に送り、貸し手がリクエストを受けた後は `OfferAlreadyAccepted` で拒否されます。`maxCStar` はゼロより大きくなければなりません（`FullTariffMaxCStarRequired`）。フォームはスイッチを `getFeeEntitlementConfig()` から、タリフを `quoteCStar(lendingAsset, principal, durationDays)` から表示し、範囲では `amount` と `amountMax` で読みます。上限の既定値は `amountMax` での見積もりです。各受諾で、手数料はそのローンの元本で算定した `C*` を取りますが、それはスイッチがオンで、元本に価格と流動性があり、`C* ≤ maxCStar` で、保管庫の空き VPFI（`getTrackedVPFIBalance` で上限を付けた保管庫残高から有効な担保権を引いたもの、`getFreeBalance` 経由）で足りる場合だけです。そうでなければ `FeeEntitlementDisabled`、`FeeEntitlementFullOptInFailed`、`FeeEntitlementTariffAboveAuth` で巻き戻ります。ただし `allowDowngrade` ならタリフなしでローンが開きます。借り手のローン手数料割引は `FULL_MODE_FEE_DISCOUNT_BONUS_BPS`（1000）上がり、`MAX_FEE_DISCOUNT_BPS`（5000）が上限です。確認画面はすべてのローンが拒否される選択を止め、オプトインは `getOffer` を読み直して測ります（`creatorFull`、`creatorMaxCStar`、`creatorAllowFullDowngrade`）。未充足リクエストへのバックストップ融資は、このアプリではまだ提供していません。
+
 <a id="risk-access"></a>
 
 ### Risk Access: あなたのリスクレベル

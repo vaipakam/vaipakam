@@ -1176,6 +1176,12 @@ Partiel, le mode par défaut, laisse les appariements remplir la demande en un o
 
 En mode Avancé, une demande peut payer les intérêts selon un échéancier plutôt que tout au remboursement : chaque mois, trimestre, semestre ou année. Le formulaire ne propose que les échéanciers que le protocole autorise pour vos conditions et indique sous chacun de ceux qui sont fermés pourquoi : les intérêts périodiques sont désactivés sur le réseau, un actif n'a pas de prix, le prêt vaut moins que le seuil du protocole (les deux chiffres sont affichés), ou la période n'est pas plus courte que le prêt. La revue montre les intérêts de chaque période et le délai de grâce d'une période manquée. Si une période n'est pas payée avant la fin de son délai de grâce, n'importe qui peut vendre une partie de votre garantie pour la payer, et le prêt reste ouvert. L'échéancier ne peut plus être modifié après publication. Comme les autres options avancées, il continue de s'appliquer si vous passez en mode Basique, et le formulaire le dit.
 
+<a id="borrow-request-tariff"></a>
+
+### Borrow: Le tarif de frais Full (Avancé)
+
+En mode Avancé, une demande peut prendre le tarif de frais Full : des frais en VPFI, prélevés dans votre coffre à l'ouverture de chaque prêt, qui ajoutent dix points à la remise sur les frais de prêt, jusqu'au plafond de 50 % du protocole. Les frais de prêt restent facturés dans l'actif prêté, et le tarif n'est pas remboursé. Le formulaire ne le propose que tant que le protocole l'a activé, et affiche le tarif du jour pour votre montant et votre durée. Vous fixez le maximum de VPFI qu'un prêt peut prendre (laissé vide : le tarif du jour pour le plus grand prêt) et ce qui arrive à un prêt qui ne peut pas prendre le tarif à son ouverture : il est refusé, ou il s'ouvre sans lui. Un prêt ne peut le prendre que si, à ce moment, le tarif est activé, l'actif prêté a un prix et est liquide, son tarif reste dans votre maximum et votre coffre détient assez de VPFI libres. Le tarif est fixé par une seconde transaction après la publication ; un prêteur qui prend la demande avant sa confirmation ouvre donc un prêt sans lui. Cette application ne propose pas encore de prêt de secours pour les demandes que personne ne prend.
+
 <a id="risk-access"></a>
 
 ### Risk Access : votre niveau de risque

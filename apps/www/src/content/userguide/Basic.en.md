@@ -1131,6 +1131,12 @@ Partial, the default, lets matches fill the request over one or more loans until
 
 In Advanced mode a request can pay interest on a schedule instead of all at repayment: every month, quarter, six months or year. The form offers only the schedules the protocol allows for your terms, and says under each closed one why: periodic interest is switched off on the network, an asset has no price, the loan is worth less than the protocol's threshold (both figures are shown), or the period is not shorter than the loan. The review shows each period's interest and the grace a missed period gets. If a period is not paid by the end of its grace, anyone may sell part of your collateral to pay it, and the loan stays open. The schedule cannot be changed after posting. Like the other Advanced options, it still applies if you switch to Basic, and the form says so.
 
+<a id="borrow-request-tariff"></a>
+
+### Borrow: The Full Fee Tariff (Advanced)
+
+In Advanced mode a request can take the Full fee tariff: a fee in VPFI, taken from your vault when each loan opens, that adds ten points to the discount on the loan fee, up to the protocol's 50% cap. The loan fee itself is still charged in the lending asset, and the tariff is not refunded. The form offers it only while the protocol has it switched on, and shows today's tariff for your amount and term. You set the most VPFI one loan may take (left blank, today's tariff for the largest loan) and what happens to a loan that cannot take the tariff when it opens: it is refused, or it opens without it. A loan can take it only if, at that moment, the tariff is switched on, the lending asset is priced and liquid, its tariff is within your most, and your vault holds enough free VPFI. The tariff is set by a second transaction after the request posts, so a lender who takes the request before that transaction confirms opens a loan without it. Backstop lending for requests nobody takes is not offered in this app yet.
+
 <a id="risk-access"></a>
 
 ### Risk Access: Your Risk Level

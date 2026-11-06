@@ -86,6 +86,7 @@ describe('createParams', () => {
         expiry: '7d',
         fullTerm: DEFAULT_INPUT.fullTerm,
         allowsPartialRepay: false,
+        tariff: null,
       },
       { lending, collateral, leg: { kind: 'erc20' } },
       99n,
@@ -118,6 +119,7 @@ describe('createParams for an NFT', () => {
         expiry: '7d',
         fullTerm: true,
         allowsPartialRepay: false,
+        tariff: null,
       },
       { lending, collateral, leg: { kind: 'erc721', tokenId: 7n } },
       99n,
@@ -151,6 +153,7 @@ describe('a range and a fill mode (OFF-10 / OFF-11)', () => {
     expiry: '7d' as const,
     fullTerm: true,
     allowsPartialRepay: false,
+    tariff: null,
   };
   it('sends the smallest and largest amount, the floor and the locked collateral, one rate, and the fill mode', () => {
     const p = createParams(ranged, { lending, collateral, leg: { kind: 'erc20' } }, 99n);

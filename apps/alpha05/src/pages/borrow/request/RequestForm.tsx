@@ -40,6 +40,7 @@ import { holds, parseQuantity, parseTokenId, readErc1155, readErc721 } from '../
 import { readRequestFormInputs, type RequestDraft } from './requestReview';
 import { CADENCES, cadenceOpen, cadenceRefusalText, isCadence, readCadenceAdmission, type Cadence } from '../../../shared/offers/cadence';
 import { readNumeraireSymbol } from '../../../shared/reads/numeraire';
+import { readTariffQuote, readTariffSwitch, suggestedCeiling, VPFI_DECIMALS } from '../../../shared/offers/fullTariff';
 
 /** The store key the typed request is kept under, so a navigation away and
  *  back, or a review closed to change a figure, keeps what was typed. */
@@ -59,7 +60,7 @@ const CADENCE_LABEL: Readonly<Record<Cadence, CopyKey>> = {
   4: 'request.cadenceAnnual',
 };
 
-const ADVANCED_NAME = { range: 'request.advancedRange', fill: 'request.advancedFill', cadence: 'request.advancedCadence' } as const satisfies Record<string, CopyKey>;
+const ADVANCED_NAME = { range: 'request.advancedRange', fill: 'request.advancedFill', cadence: 'request.advancedCadence', tariff: 'request.advancedTariff' } as const satisfies Record<string, CopyKey>;
 
 const EXPIRY_LABEL: Readonly<Record<ExpiryChoice, CopyKey>> = {
   never: 'request.expiryNeverOption',
@@ -104,7 +105,8 @@ export function RequestForm({ chain, own, pair, meta, onReview, onCancel }: Requ
   const input: RequestInput = { ...DEFAULT_INPUT, ...stored };
   const set = (patch: Partial<RequestInput>) => setStored({ ...input, ...patch });
   /** Errors show once a field has been left, or after a review was asked. */
-  const [touched, setTouched] = useState<Record<'amount' | 'amountMax' | 'floor' | 'collateral' | 'tokenId' | 'rate' | 'term' | 'expiry', boolean>>({
+  const [touched, setTouched] = useState<Record<'amount' | 'amountMax' | 'floor' | 'collateral' | 'tokenId' | 'rate' | 'term' | 'expiry' | 'ceiling', boolean>>({
+    ceiling: false,
     amount: false,
     amountMax: false,
     floor: false,
@@ -280,6 +282,37 @@ export function RequestForm({ chain, own, pair, meta, onReview, onCancel }: Requ
         : cadenceOpen(admitted, cadence)
           ? null
           : format('request.cadenceClosed', { reason: cadenceVerdict?.refusal ? cadenceRefusalText(cadenceVerdict.refusal, unit, { text, format }) : '' });
+  // OFF-22: the Full VPFI fee tariff. Offered only while the protocol's
+  // switch is on, and said either way (RB-SWITCH class 1a). The tariff is
+  // the protocol's quote for the largest loan the request can open; a blank
+  // ceiling takes that figure, which no loan of this request exceeds at
+  // today's figures. The opt-in is armed by its own transaction after
+  // posting, so it never enters the create call.
+  const tariffShown = isAdvanced || input.tariff;
+  const tariffSwitch = useOwnRead(['feeEntitlementSwitch', diamond], (c) => readTariffSwitch(c, diamond), { enabled: tariffShown });
+  const tariffPrincipal = ranged && amountMax?.ok ? amountMax.value : amount?.ok ? amount.value : null;
+  const tariffQuote = useOwnRead(
+    ['borrow', 'request', 'tariff', pair.lending.toLowerCase(), String(tariffPrincipal), String(durationDays)],
+    (c) => readTariffQuote(c, diamond, pair.lending, tariffPrincipal!, durationDays!),
+    { enabled: tariffShown && tariffSwitch.data === true && tariffPrincipal !== null && durationDays !== null },
+  );
+  const quoteNow = tariffPrincipal !== null && durationDays !== null && tariffQuote.error === null ? tariffQuote.data : null;
+  const suggested = suggestedCeiling(quoteNow);
+  const ceilingTyped = input.tariffCeiling.trim() !== '';
+  const ceiling = ceilingTyped ? parseAmount(input.tariffCeiling, VPFI_DECIMALS) : null;
+  const ceilingValue = ceiling?.ok ? ceiling.value : ceilingTyped ? null : suggested;
+  const vpfi = (v: bigint) => format('request.tariffVpfi', { amount: formatUnits(v, VPFI_DECIMALS) });
+  /** Why the chosen tariff cannot go to review: switched off now, or no
+   *  ceiling to authorize (none typed, and no quote to take it from). */
+  const tariffBlock = !input.tariff
+    ? null
+    : tariffSwitch.data === false
+      ? text('request.tariffOffBlock')
+      : ceiling !== null && !ceiling.ok
+        ? parseText(ceiling.error, 'VPFI', VPFI_DECIMALS)
+        : ceilingValue === null
+          ? text('request.tariffCeilingNeeded')
+          : null;
   const typedExpiry = parseDays(input.expiryDays, MAX_EXPIRY_DAYS);
   const expiryOk = input.expiry !== 'custom' || typedExpiry.ok;
   const expiryError =
@@ -296,7 +329,7 @@ export function RequestForm({ chain, own, pair, meta, onReview, onCancel }: Requ
   const largest = ranged && amountMax?.ok ? amountMax.value : null;
   const collateralOk = nft ? tokenId !== null : multi ? tokenId !== null && quantity !== null : collateral?.ok === true;
   const rangeOk = !ranged || (amountMax?.ok === true && (!floorTyped || floor?.ok === true) && shapeError === null);
-  const valid = amount?.ok === true && collateralOk && rate.ok && durationDays !== null && expiryOk && rangeOk && fillBlock === null && cadenceBlock === null && inputs.data !== null;
+  const valid = amount?.ok === true && collateralOk && rate.ok && durationDays !== null && expiryOk && rangeOk && fillBlock === null && cadenceBlock === null && tariffBlock === null && inputs.data !== null;
 
   // Only the latest submission, from a form still on screen for the same
   // wallet and network, may open a review: a slow block read answered after
@@ -339,6 +372,7 @@ export function RequestForm({ chain, own, pair, meta, onReview, onCancel }: Requ
           collateralFloor: floorValue,
           fillMode: input.fillMode,
           cadence,
+          tariff: input.tariff && ceilingValue !== null ? { maxCStar: ceilingValue, allowDowngrade: input.tariffDowngrade } : null,
           rateBps: rate.value,
           durationDays,
           expiry: input.expiry,
@@ -735,6 +769,87 @@ export function RequestForm({ chain, own, pair, meta, onReview, onCancel }: Requ
             )}
             <WhyLink summaryKey="request.cadenceSummary" detailKey="request.cadenceWhy" />
           </fieldset>
+          <fieldset className="choice-group" data-testid="request-tariff">
+            <legend>{text('request.tariffLabel')}</legend>
+            {tariffSwitch.error !== null ? (
+              <Notice tone="warn" tier="A">
+                {format('request.tariffSwitchUnread', { reason: tariffSwitch.error })}
+              </Notice>
+            ) : tariffSwitch.data === false ? (
+              <p className="tier-b field-hint" data-testid="request-tariff-off">
+                {text('request.tariffOff')}
+              </p>
+            ) : tariffSwitch.data === null ? (
+              <p className="tier-b field-hint" aria-live="polite">
+                {text('request.tariffReading')}
+              </p>
+            ) : null}
+            <label className="choice">
+              <input
+                type="checkbox"
+                checked={input.tariff}
+                disabled={tariffSwitch.data !== true && !input.tariff}
+                onChange={(e) => set({ tariff: e.target.checked })}
+                data-testid="request-tariff-opt"
+              />
+              <span>{text('request.tariffOption')}</span>
+            </label>
+            {input.tariff && (
+              <div className="tariff-detail">
+                <p className="tier-b field-hint" data-testid="request-tariff-quote" aria-live="polite">
+                  {tariffPrincipal === null || durationDays === null
+                    ? text('request.tariffNeedsTerms')
+                    : tariffQuote.error !== null
+                      ? format('request.tariffQuoteUnread', { reason: tariffQuote.error })
+                      : quoteNow === null
+                        ? text('request.tariffReading')
+                        : !quoteNow.numeraireOk
+                          ? text('request.tariffUnpriced')
+                          : format('request.tariffQuote', { tariff: vpfi(quoteNow.cStar), amount: tokenAmount(tariffPrincipal, pair.lending, meta, format) })}
+                </p>
+                <FormField
+                  label={text('request.tariffCeilingLabel')}
+                  hint={suggested !== null ? format('request.tariffCeilingHint', { tariff: vpfi(suggested) }) : text('request.tariffCeilingHintNone')}
+                  error={show('ceiling') && ceiling !== null && !ceiling.ok ? parseText(ceiling.error, 'VPFI', VPFI_DECIMALS) : null}
+                >
+                  {({ id, describedBy, invalid }) => (
+                    <input
+                      id={id}
+                      inputMode="decimal"
+                      autoComplete="off"
+                      aria-describedby={describedBy}
+                      aria-invalid={invalid}
+                      placeholder={suggested !== null ? formatUnits(suggested, VPFI_DECIMALS) : undefined}
+                      value={input.tariffCeiling}
+                      onChange={(e) => set({ tariffCeiling: e.target.value })}
+                      onBlur={() => leave('ceiling')}
+                      data-testid="request-tariff-ceiling"
+                    />
+                  )}
+                </FormField>
+                <fieldset className="choice-group" data-testid="request-tariff-fail">
+                  <legend>{text('request.tariffFailLabel')}</legend>
+                  <label className="choice">
+                    <input type="radio" name="request-tariff-fail" checked={!input.tariffDowngrade} onChange={() => set({ tariffDowngrade: false })} />
+                    <span>{text('request.tariffFailRefuse')}</span>
+                  </label>
+                  <label className="choice">
+                    <input type="radio" name="request-tariff-fail" checked={input.tariffDowngrade} onChange={() => set({ tariffDowngrade: true })} />
+                    <span>{text('request.tariffFailOpen')}</span>
+                  </label>
+                </fieldset>
+              </div>
+            )}
+            {tariffBlock !== null && (
+              <Notice tone="warn" tier="A">
+                <span data-testid="request-tariff-block">{tariffBlock}</span>
+              </Notice>
+            )}
+            <WhyLink summaryKey="request.tariffSummary" detailKey="request.tariffWhy" />
+          </fieldset>
+          <p className="tier-b field-hint" data-testid="request-backstop">
+            {text('request.backstopGap')}
+          </p>
         </section>
       ) : (
         effective.length > 0 && (
@@ -743,7 +858,7 @@ export function RequestForm({ chain, own, pair, meta, onReview, onCancel }: Requ
             <span data-testid="request-advanced-set">
               {format('request.advancedSetNote', { list: listOf(effective.map((o) => text(ADVANCED_NAME[o]))) })}
             </span>{' '}
-            <button type="button" className="btn" onClick={() => set({ ranged: false, amountMax: '', collateralFloor: '', fillMode: 'partial', cadence: 0 })} data-testid="request-advanced-clear">
+            <button type="button" className="btn" onClick={() => set({ ranged: false, amountMax: '', collateralFloor: '', fillMode: 'partial', cadence: 0, tariff: false, tariffCeiling: '', tariffDowngrade: false })} data-testid="request-advanced-clear">
               {text('request.advancedClear')}
             </button>
           </Notice>
@@ -757,6 +872,11 @@ export function RequestForm({ chain, own, pair, meta, onReview, onCancel }: Requ
       {cadenceBlock !== null && !isAdvanced && (
         <Notice tone="warn" tier="A">
           <span data-testid="request-cadence-block">{cadenceBlock}</span>
+        </Notice>
+      )}
+      {tariffBlock !== null && !isAdvanced && (
+        <Notice tone="warn" tier="A">
+          <span data-testid="request-tariff-block">{tariffBlock}</span>
         </Notice>
       )}
 

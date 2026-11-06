@@ -2006,6 +2006,12 @@ Basic은 단일 값 요청을 올립니다: `amount` = `amountMax`, `interestRat
 
 `periodicInterestCadence` 는 0(None)부터 4(Annual)까지이며, 기간은 30·90·180·365일입니다. 양식은 `previewCadenceAdmission(lendingAsset, amount, assetType, collateralAsset, collateralAssetType, durationDays)` 가 허용하는 것을 제시합니다. 이 함수는 `createOffer` 가 적용하는 규칙을 `amount`(범위의 최소값)로 평가해 실행합니다. 각 거부는 리버트 데이터에서 표시됩니다: `PeriodicInterestDisabled`, `CadenceNotAllowedForIlliquid`, 또는 `CadenceNotAllowed(cadence, durationDays, principalNumeraire, threshold)`. 한 기간의 이자는 `principal × rate × intervalDays / (10000 × 365)` 입니다. 미납 기간은 유예 `getEffectiveGraceSeconds(intervalDays − 1)` 가 지나면 누구나 `settlePeriodicInterest` 로 정산할 수 있으며, 담보를 팔고 대출은 유지됩니다. 키퍼 패스 `periodicSettle` 의 활성 상태는 기능 서비스가 보고하는 대로 표시되며 기본값은 알 수 없음입니다. 일정은 게시 후 바꿀 수 없습니다.
 
+<a id="borrow-request-tariff"></a>
+
+### Borrow: 요청의 풀 수수료 요율
+
+옵트인은 `setOfferCreatorFullTariff(offerId, true, maxCStar, allowDowngrade)`로, 작성자가 `createOffer` 뒤에 보내며, 대출자가 요청을 받은 뒤에는 `OfferAlreadyAccepted`로 거절됩니다. `maxCStar`는 0보다 커야 합니다(`FullTariffMaxCStarRequired`). 양식은 스위치를 `getFeeEntitlementConfig()`에서, 요율을 `quoteCStar(lendingAsset, principal, durationDays)`에서 보여 주며, 범위라면 `amount`와 `amountMax`에서 읽습니다. 최대치의 기본값은 `amountMax`에서의 견적입니다. 각 수락에서 부과는 그 대출의 원금으로 산정한 `C*`를 가져가지만, 스위치가 켜져 있고, 원금에 가격과 유동성이 있으며, `C* ≤ maxCStar`이고, 금고의 자유 VPFI(`getTrackedVPFIBalance`로 상한을 둔 금고 잔액에서 유효한 담보권을 뺀 값, `getFreeBalance` 경유)로 충당될 때만입니다. 그렇지 않으면 `FeeEntitlementDisabled`, `FeeEntitlementFullOptInFailed`, `FeeEntitlementTariffAboveAuth`로 되돌려지며, `allowDowngrade`라면 요율 없이 대출이 열립니다. 차입자의 대출 수수료 할인은 `FULL_MODE_FEE_DISCOUNT_BONUS_BPS`(1000)만큼 오르고 `MAX_FEE_DISCOUNT_BPS`(5000)가 상한입니다. 검토 화면은 모든 대출이 거절될 선택을 막고, 옵트인은 `getOffer`를 다시 읽어 측정합니다(`creatorFull`, `creatorMaxCStar`, `creatorAllowFullDowngrade`). 채워지지 않은 요청에 대한 백스톱 대출은 이 앱에서 아직 제공하지 않습니다.
+
 <a id="risk-access"></a>
 
 ### Risk Access: 내 위험 등급

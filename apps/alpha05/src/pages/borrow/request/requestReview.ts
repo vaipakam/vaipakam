@@ -31,6 +31,7 @@ import { pageHandoff } from '../../../routes/pageMap';
 import { CADENCE_ERRORS, cadenceRefusalText, classifyCadenceError, INTERVAL_DAYS, periodGraceLookupDays, periodInterest, type CadenceRefusal } from '../../../shared/offers/cadence';
 import type { Posture } from '../../../shared/capability/types';
 import { needFromRefusal, type RiskNeed } from '../../../shared/risk/riskAccess';
+import { readRequestTariff, tariffBlockers, tariffConsequences, tariffKey, tariffRows, type RequestTariff } from './tariffReview';
 import { diamondMayMove, holds, readErc1155, readErc721, type Erc1155State, type Erc721State } from '../../../shared/nft/nft';
 
 type Hex = `0x${string}`;
@@ -86,6 +87,8 @@ export interface RequestReview {
   /** OFF-14: the grace a missed period gets before it can be settled, read
    *  live; null without a schedule, or when it could not be read. */
   periodGraceSeconds: bigint | null;
+  /** OFF-22: the Full fee tariff's reads, when the request chose it. */
+  tariff: RequestTariff | null;
   lifBps: bigint;
   /** The borrower's vault; the zero address when posting opens it. */
   vault: Hex;
@@ -296,7 +299,7 @@ export async function readRequestReview(own: OwnStateClient, diamond: Hex, draft
           .catch((e: unknown) => ({ kind: 'unread' as const, reason: refusalFromError(e).reason }))
       : Promise.resolve({ kind: 'unpriced' as const });
   const collateralRanged = parsed.collateralFloor < parsed.collateral;
-  const [direct, largest, largestAtFloor, probe, start, partialFill, periodGraceSeconds] = await Promise.all([
+  const [direct, largest, largestAtFloor, probe, start, partialFill, periodGraceSeconds, tariff] = await Promise.all([
     ltv(parsed.amount, parsed.collateralFloor),
     ranged ? ltv(parsed.amountMax, parsed.collateral) : Promise.resolve(null),
     ranged && collateralRanged ? ltv(parsed.amountMax, parsed.collateralFloor) : Promise.resolve(null),
@@ -316,6 +319,7 @@ export async function readRequestReview(own: OwnStateClient, diamond: Hex, draft
     priced ? r<StartGate>((c) => readStartGate(c, diamond)).catch((): StartGate => ({ kind: 'unread' })) : Promise.resolve<StartGate>({ kind: 'none' }),
     r<boolean>((c) => c.readContract({ address: diamond, abi: CONFIG, functionName: 'getPartialFillEnabled' }) as Promise<boolean>).catch(() => null),
     parsed.cadence === 0 ? Promise.resolve(null) : r<bigint>((c) => readGraceSeconds(c, diamond, BigInt(periodGraceLookupDays(parsed.cadence)))).catch(() => null),
+    readRequestTariff(own, diamond, parsed, pair, lendingClass),
   ]);
   const probed = probe === null ? null : judgeLimit(probe, allowanceCovers);
   const risk: RequestRisk = {
@@ -327,7 +331,7 @@ export async function readRequestReview(own: OwnStateClient, diamond: Hex, draft
     start,
     partialFill,
   };
-  return { identity, account, diamond, draft, params, verdict, lendingClass, collateralClass, risk, maxDurationDays, graceSeconds, periodGraceSeconds, lifBps, vault, holding, readAt: Date.now() };
+  return { identity, account, diamond, draft, params, verdict, lendingClass, collateralClass, risk, maxDurationDays, graceSeconds, periodGraceSeconds, tariff, lifBps, vault, holding, readAt: Date.now() };
 }
 
 /** Whether the collateral needs an approval step before posting. */
@@ -351,9 +355,9 @@ export function approvalPrompts(r: Standing): number {
 }
 
 /** The wallet prompts posting asks for: the approval steps when needed,
- *  and the request itself. */
+ *  the request itself, and the tariff's own transaction when chosen. */
 export function promptCount(r: Standing): number {
-  return 1 + approvalPrompts(r);
+  return 1 + approvalPrompts(r) + (r.draft.parsed.tariff !== null ? 1 : 0);
 }
 
 /** What the wallet lacks of the collateral: an ERC-20 shortfall in base
@@ -410,6 +414,7 @@ export function requestBlockers(r: RequestReview, meta: TokenMetaMap | null, cop
     out.push(copy.format('request.blockSchedule', { reason: cadenceRefusalText(r.verdict.schedule, unit || copy.text('home.exposureUnit'), copy) }));
   else if (r.verdict.kind === 'refused' && lack.kind === 'none') out.push(copy.format('request.blockRefused', { reason: r.verdict.reason }));
   if (r.verdict.kind === 'unreadable') out.push(copy.format('request.blockUnread', { reason: r.verdict.reason }));
+  out.push(...tariffBlockers(r.tariff, copy));
   return out;
 }
 
@@ -428,6 +433,7 @@ export function changedBetween(a: RequestReview, b: RequestReview, copy: Pick<Co
     return copy.text('request.changedVerdict');
   if (a.lendingClass !== b.lendingClass || a.collateralClass !== b.collateralClass || riskKey(a.risk) !== riskKey(b.risk)) return copy.text('accept.changedClass');
   if (a.graceSeconds !== b.graceSeconds || a.periodGraceSeconds !== b.periodGraceSeconds || a.lifBps !== b.lifBps || a.maxDurationDays !== b.maxDurationDays) return copy.text('request.changedConfig');
+  if (tariffKey(a.tariff) !== tariffKey(b.tariff)) return copy.text('request.changedTariff');
   if (lackKey(collateralLack(a)) !== lackKey(collateralLack(b)) || needsApproval(a) !== needsApproval(b) || approvalPrompts(a) !== approvalPrompts(b))
     return copy.text(a.holding.kind === 'erc20' ? 'accept.changedFunds' : 'request.changedToken');
   if (a.vault.toLowerCase() !== b.vault.toLowerCase()) return copy.text('accept.changedVault');
@@ -519,7 +525,9 @@ export function requestReceipt(r: RequestReview, meta: TokenMetaMap | null, copy
           textRow('request.rowWhole', text('request.rangeFill'), true),
         ]
       : [{ label: text('request.rowAmount'), value: amount(pair.lending, parsed.amount), binding: true }, textRow('request.rowWhole', text('request.whole'), true)]),
-    textRow('request.rowFill', text(FILL_MODE_KEYS[parsed.fillMode]), true),
+    // With one amount the default mode is one lender for all of it, which
+    // the row above already says; only a mode that changes that is stated.
+    ...(ranged || parsed.fillMode !== 'partial' ? [textRow('request.rowFill', text(FILL_MODE_KEYS[parsed.fillMode]), true)] : []),
     ...(ranged
       ? [textRow('request.rowMatching', text(r.risk.partialFill === null ? 'request.matchingUnread' : r.risk.partialFill ? 'request.matchingOn' : 'request.matchingOff'), false)]
       : []),
@@ -544,6 +552,7 @@ export function requestReceipt(r: RequestReview, meta: TokenMetaMap | null, copy
     ...(largest ? [{ label: text(parsed.cadence !== 0 ? 'request.rowOweLargestTotal' : 'request.rowOweLargest'), value: amount(pair.lending, largest.owedAtDue), binding: true }] : []),
     textRow('accept.rowInterest', text(parsed.fullTerm ? (parsed.allowsPartialRepay ? 'accept.fullTermPartial' : 'accept.fullTerm') : 'accept.proRata'), true),
     ...scheduleRows(r, meta, copy, advanced, keeper),
+    ...tariffRows(r.tariff, parsed, copy),
     textRow('accept.rowPartial', text(parsed.allowsPartialRepay ? 'accept.partialYes' : 'accept.partialNo'), true),
     textRow('accept.rowPrepayListing', text('accept.prepayListingNo'), true),
     textRow('accept.rowParallelSale', text('accept.parallelNo'), true),
@@ -584,6 +593,7 @@ export function requestReceipt(r: RequestReview, meta: TokenMetaMap | null, copy
     ...rangeConsequences(r, meta, copy),
     ...matchConsequences(r, meta, copy),
     ...scheduleConsequences(r, copy),
+    ...tariffConsequences(r.tariff, copy),
     text('accept.loseDefault'),
     ...(r.lendingClass === 'illiquid' ? [text('accept.loseIlliquidLending')] : []),
     ...(r.collateralClass === 'illiquid' ? [text('accept.loseIlliquidCollateral')] : []),
