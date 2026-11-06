@@ -25,6 +25,7 @@ import {
   readRiskTermsHash,
   readVault,
   readWalletFunds,
+  tokenAcceptsApproval,
   type AcceptPreview,
   type OfferState,
   type WalletFunds,
@@ -32,6 +33,7 @@ import {
 import type { Receipt } from '../../shared/receipt/types';
 import { SWITCH_EFFECTS } from '../../shared/eligibility/switchClasses';
 import { tokenAmount, type TokenMetaMap } from '../../shared/reads/tokens';
+import { allowanceSteps } from '../../shared/tx/approval';
 import { formatBps, formatSpan, shortAddress } from '../../shared/ui/format';
 
 type Hex = `0x${string}`;
@@ -57,6 +59,9 @@ export interface AcceptReview {
   /** The borrower's vault; the zero address when it is opened by this accept. */
   vault: Hex;
   funds: WalletFunds;
+  /** Wallet prompts the approval takes: 0 when the allowance covers the
+   *  collateral, 2 when the token must be set to zero first. */
+  approvalSteps: number;
   /** The risk-access gate's code for this acceptance (0 = open); it is the
    *  creator's code when the creator is blocked. */
   gate: number;
@@ -88,6 +93,11 @@ export async function readAcceptReview(own: OwnStateClient, diamond: Hex, offerI
     r<number>((c) => readCreatorGate(c, diamond, offerId)),
     r<boolean>((c) => readFeeDiscountConsent(c, diamond, account)).catch(() => null),
   ]);
+  const lock = preview.collateralAmount;
+  const approvalSteps =
+    funds.allowance >= lock
+      ? 0
+      : (await allowanceSteps({ accepts: (amount) => r<boolean>((c) => tokenAcceptsApproval(c, offer.collateralAsset, account, diamond, amount)) }, funds.allowance, lock)).length;
   return {
     identity,
     offerId,
@@ -103,6 +113,7 @@ export async function readAcceptReview(own: OwnStateClient, diamond: Hex, offerI
     matcherBps,
     vault,
     funds,
+    approvalSteps,
     gate,
     creatorGate,
     consent,
@@ -117,8 +128,8 @@ export function needsApproval(r: Pick<AcceptReview, 'funds' | 'preview'>): boole
 
 /** The wallet prompts this acceptance asks for: the signed terms, the
  *  approval when one is needed, and the acceptance itself. */
-export function promptCount(r: Pick<AcceptReview, 'funds' | 'preview'>): number {
-  return needsApproval(r) ? 3 : 2;
+export function promptCount(r: Pick<AcceptReview, 'approvalSteps'>): number {
+  return 2 + r.approvalSteps;
 }
 
 const STATE_KEYS: Readonly<Record<Exclude<OfferState, 'open'>, CopyKey>> = {
@@ -221,7 +232,7 @@ export function changedBetween(a: AcceptReview, b: AcceptReview, copy: Pick<Copy
     a.matcherBps !== b.matcherBps
   )
     return copy.text('accept.changedClass');
-  if (shortfall(a.funds.balance, a.preview.collateralAmount) !== shortfall(b.funds.balance, b.preview.collateralAmount) || needsApproval(a) !== needsApproval(b))
+  if (shortfall(a.funds.balance, a.preview.collateralAmount) !== shortfall(b.funds.balance, b.preview.collateralAmount) || needsApproval(a) !== needsApproval(b) || a.approvalSteps !== b.approvalSteps)
     return copy.text('accept.changedFunds');
   if (a.vault.toLowerCase() !== b.vault.toLowerCase()) return copy.text('accept.changedVault');
   return null;
@@ -379,7 +390,7 @@ export function acceptReceipt(r: AcceptReview, meta: TokenMetaMap | null, copy: 
       value: {
         kind: 'text',
         text: needsApproval(r)
-          ? format('accept.approvalNeeded', {
+          ? format(r.approvalSteps === 2 ? 'accept.approvalZeroFirst' : 'accept.approvalNeeded', {
               amount: tokenAmount(f.collateral, collateral, meta, format),
             })
           : text('accept.approvalEnough'),

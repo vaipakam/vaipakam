@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { offer } from '../../shared/offers/testOffer';
-import { acceptReceipt, changedBetween, reviewBlockers, type AcceptReview } from './acceptReview';
+import { acceptReceipt, changedBetween, promptCount, reviewBlockers, type AcceptReview } from './acceptReview';
 
 type Hex = `0x${string}`;
 
@@ -33,6 +33,7 @@ function review(over: Partial<AcceptReview> = {}): AcceptReview {
     matcherBps: 100n,
     vault: '0x0000000000000000000000000000000000000000',
     funds: { balance: 10_000n * 10n ** 18n, allowance: 0n },
+    approvalSteps: 1,
     gate: 0,
     creatorGate: 0,
     consent: true,
@@ -78,5 +79,16 @@ describe('changedBetween', () => {
   it("treats a change in the lender's own block as a change", () => {
     expect(changedBetween(review(), review({ creatorGate: 1 }), copy)).toBe('accept.changedClass');
     expect(changedBetween(review(), review(), copy)).toBeNull();
+  });
+});
+
+describe('approval steps', () => {
+  it('counts the extra step to zero as a wallet prompt and names it on the receipt', () => {
+    expect(promptCount(review())).toBe(3);
+    expect(promptCount(review({ approvalSteps: 2 }))).toBe(4);
+    expect(promptCount(review({ approvalSteps: 0 }))).toBe(2);
+  });
+  it('reads a change in the number of approval steps as a changed review', () => {
+    expect(changedBetween(review(), review({ approvalSteps: 2 }), copy)).not.toBeNull();
   });
 });

@@ -283,6 +283,17 @@ export interface WalletFunds {
 }
 
 /** The wallet's balance of `token` and what it lets the protocol pull. */
+/** Whether the token would accept `approve(spender, amount)` from `owner`
+ *  now: a dry run, so a token that refuses a non-zero to non-zero change is
+ *  found out before the wallet is asked. A dry run that cannot be answered
+ *  counts as a refusal, which costs one extra prompt and never a failure. */
+export async function tokenAcceptsApproval(client: PublicClient, token: Hex, owner: Hex, spender: Hex, amount: bigint): Promise<boolean> {
+  return client.simulateContract({ address: token, abi: erc20Abi, functionName: 'approve', args: [spender, amount], account: owner }).then(
+    () => true,
+    () => false,
+  );
+}
+
 export async function readWalletFunds(client: PublicClient, token: Hex, owner: Hex, spender: Hex): Promise<WalletFunds> {
   const [balance, allowance] = await Promise.all([
     client.readContract({

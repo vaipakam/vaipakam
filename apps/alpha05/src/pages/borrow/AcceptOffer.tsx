@@ -13,17 +13,18 @@ import { useMode } from '../../app/ModeContext';
 import { ACCEPT_DEADLINE_SECONDS, ACCEPT_TERMS_DOMAIN_NAME, ACCEPT_TERMS_DOMAIN_VERSION, ACCEPT_TERMS_TYPES, buildAcceptTerms, freshNonce } from '../../shared/offers/acceptTerms';
 import { deliverySplit, legVerdict, moved, openedLoan } from '../../shared/offers/acceptOutcome';
 import { acceptFigures } from '../../shared/offers/model';
-import { readVault } from '../../shared/offers/reads';
+import { readVault, tokenAcceptsApproval } from '../../shared/offers/reads';
 import { tokenAmount, type TokenMetaMap } from '../../shared/reads/tokens';
-import { termsUrl, type TermsState } from '../../shared/terms/terms';
+import { readTerms, termsUrl, type TermsState } from '../../shared/terms/terms';
 import { askThrough } from '../../shared/tx/simulate';
 import { useStoredValue } from '../../shared/tx/txStore';
 import { useTrackedTx } from '../../shared/tx/useTrackedTx';
+import { allowanceSteps, setAllowance, type AllowanceIo } from '../../shared/tx/approval';
 import type { LegOutcome } from '../../shared/tx/outcome';
 import { ActionFlow, reviewIdentity, type Recheck } from '../../shared/ui/ActionFlow';
 import { Notice } from '../../shared/ui/Notice';
 import { shortAddress } from '../../shared/ui/format';
-import { acceptReceipt, changedBetween, needsApproval, promptCount, readAcceptReview, reviewBlockers, type AcceptReview } from './acceptReview';
+import { acceptReceipt, changedBetween, promptCount, readAcceptReview, reviewBlockers, type AcceptReview } from './acceptReview';
 
 type Hex = `0x${string}`;
 
@@ -103,9 +104,13 @@ export function AcceptOffer({ offerId, chain, own, meta, terms, onClose }: Accep
       // The allowance is read again now: the value a stop puts back is the
       // one the wallet holds right before this flow's approval, never the
       // review's, and a change that alters the steps stops before any prompt.
+      const io = allowanceIo(collateral, (amount, i, of) =>
+        say(of === 2 && i === 0 ? text('accept.stepApproveZero') : format('accept.stepApprove', { amount: amt(collateral, amount) })),
+      );
       const prior = await readAllowance(collateral);
-      const approved = prior < lock;
-      if (approved !== needsApproval(r))
+      const steps = prior < lock ? await allowanceSteps(io, prior, lock) : [];
+      const approved = steps.length > 0;
+      if (steps.length !== r.approvalSteps)
         throw new StatedRefusal({
           code: 'AcceptChanged',
           reason: text('accept.allowanceMoved'),
@@ -140,41 +145,29 @@ export function AcceptOffer({ offerId, chain, own, meta, terms, onClose }: Accep
 
       // 2. The approval, for exactly what is locked, when the wallet's
       //    current allowance does not cover it.
+      //    Each step is judged by the allowance it leaves (shared/tx/approval):
+      //    a cancelled, replaced or unreadable step is never taken as done.
       if (approved) {
-        say(format('accept.stepApprove', { amount: amt(collateral, lock) }));
-        const hash = await writeContract(config, {
-          address: collateral,
-          abi: erc20Abi,
-          functionName: 'approve',
-          args: [diamond, lock],
-          chainId: chain.chainId,
-          account,
-        });
-        // A receipt that cannot be read does not mean nothing was sent: the
-        // allowance itself says whether the approval landed, and if that is
-        // not known either, the refusal names the approval's hash and what it
-        // would allow, so it is never reported as "not sent" and forgotten.
-        const status = await waitForTransactionReceipt(config, {
-          hash,
-          chainId: chain.chainId,
-        }).then(
-          (m) => m.status,
-          async () => ((await readAllowance(collateral).catch(() => null)) === lock ? ('success' as const) : null),
-        );
-        if (status === null)
+        // `prior` is the allowance this flow overwrites and a stop restores,
+        // so nothing is sent if it moved while the terms were being signed.
+        const set = await setAllowance(io, lock, prior);
+        if (!set.ok) {
+          // The wallet refused the first prompt: nothing was sent.
+          if (set.why === 'refused' && set.sent === 0) throw new Error(set.reason ?? 'refused');
+          if (set.why === 'changed') throw new StatedRefusal({ code: 'AcceptChanged', reason: text('accept.allowanceMoved'), reopensAt: null, remedy: null });
+          // A step that landed (the one to zero, ahead of a refused or failed
+          // one) left the allowance away from `prior`: it is put back too.
+          const back = set.pending === null && set.now !== null && set.now !== prior ? ` ${(await putBack(collateral, prior, set.now)).sentence}` : '';
           throw new StatedRefusal({
-            code: 'ApprovalUnread',
-            reason: format('accept.approvalUnread', { hash, amount: amt(collateral, lock) }),
+            code: 'ApprovalNotSet',
+            reason:
+              (set.pending !== null
+                ? format('accept.approvalUnread', { hash: set.pending, amount: amt(collateral, lock) })
+                : format('accept.approvalNotSet', { amount: amt(collateral, lock), now: set.now === null ? text('accept.allowanceUnknown') : amt(collateral, set.now) })) + back,
             reopensAt: null,
             remedy: null,
           });
-        if (status !== 'success')
-          throw new StatedRefusal({
-            code: 'ApprovalFailed',
-            reason: text('accept.approvalFailed'),
-            reopensAt: null,
-            remedy: null,
-          });
+        }
         approvalLeft.current = { token: collateral, prior, amount: lock };
       }
 
@@ -326,56 +319,59 @@ export function AcceptOffer({ offerId, chain, own, meta, terms, onClose }: Accep
     },
   });
 
-  /** The wallet's allowance to the Diamond for `token`, read now. */
-  async function readAllowance(token: Hex): Promise<bigint> {
+  /** The wallet's allowance to the Diamond for `token`, now or at `block`. */
+  async function readAllowance(token: Hex, block?: bigint): Promise<bigint> {
     const x = await own.read((c) =>
       c.readContract({
         address: token,
         abi: erc20Abi,
         functionName: 'allowance',
         args: [account, diamond],
+        blockNumber: block,
       }),
     );
     return x.value;
   }
 
+  /** The wallet and chain operations the shared allowance rule runs on. */
+  function allowanceIo(token: Hex, onStep?: AllowanceIo['onStep']): AllowanceIo {
+    return {
+      read: (block) => readAllowance(token, block),
+      accepts: (amount) => own.read((c) => tokenAcceptsApproval(c, token, account, diamond, amount)).then((x) => x.value),
+      send: (amount) =>
+        writeContract(config, {
+          address: token,
+          abi: erc20Abi,
+          functionName: 'approve',
+          args: [diamond, amount],
+          chainId: chain.chainId,
+          account,
+        }),
+      wait: (hash) => waitForTransactionReceipt(config, { hash, chainId: chain.chainId }).then((m) => m.blockNumber),
+      onStep,
+    };
+  }
+
   /** Puts the allowance back to `prior` (best effort, and only if nothing
    *  else changed it since the approval), and says what happened. */
   async function putBack(token: Hex, prior: bigint, approvedAmount: bigint): Promise<{ ok: boolean; sentence: string }> {
-    const now = await readAllowance(token).catch(() => null);
-    if (now !== approvedAmount)
-      return {
-        ok: false,
-        sentence: format('accept.notRestored', {
-          why: text('accept.restoreChanged'),
-          amount: amt(token, now ?? approvedAmount),
-        }),
-      };
-    try {
-      setStep(text('accept.stepRestore'));
-      const hash = await writeContract(config, {
-        address: token,
-        abi: erc20Abi,
-        functionName: 'approve',
-        args: [diamond, prior],
-        chainId: chain.chainId,
-        account,
-      });
-      const mined = await waitForTransactionReceipt(config, {
-        hash,
-        chainId: chain.chainId,
-      });
-      if (mined.status !== 'success') throw new Error('the approval reset reverted');
-      return { ok: true, sentence: format('accept.restored', { amount: amt(token, prior) }) };
-    } catch (e) {
-      return {
-        ok: false,
-        sentence: format('accept.notRestored', {
-          why: refusalFromError(e).reason,
-          amount: amt(token, approvedAmount),
-        }),
-      };
-    }
+    // The same rule as the approval: the reset counts only when the
+    // allowance reads `prior` after it, whatever the wallet did with it.
+    const set = await setAllowance(
+      allowanceIo(token, () => setStep(text('accept.stepRestore'))),
+      prior,
+      approvedAmount,
+    ).catch((e: unknown) => ({ ok: false as const, why: 'refused' as const, sent: 0, now: null, pending: null, reason: refusalFromError(e).reason }));
+    if (set.ok) return { ok: true, sentence: format('accept.restored', { amount: amt(token, prior) }) };
+    const why =
+      set.why === 'changed'
+        ? text('accept.restoreChanged')
+        : set.pending !== null
+          ? format('accept.restorePending', { hash: set.pending })
+          : set.why === 'refused'
+            ? (set.reason ?? text('accept.restoreNotLanded'))
+            : text('accept.restoreNotLanded');
+    return { ok: false, sentence: format('accept.notRestored', { why, amount: amt(token, set.now ?? approvedAmount) }) };
   }
 
   const load = async () => {
@@ -427,11 +423,15 @@ export function AcceptOffer({ offerId, chain, own, meta, terms, onClose }: Accep
   const recheck = async (current: () => boolean): Promise<Recheck> => {
     if (!review) return { kind: 'unreadable', reason: text('flow.reading') };
     let next: AcceptReview;
+    let nowTerms: TermsState;
     try {
-      next = await readAcceptReview(own, diamond, offerId, review.identity);
+      // OFF-35 holds at the moment the wallet opens, not only when the flow
+      // did: a Terms version published since the review is accepted first.
+      [next, nowTerms] = await Promise.all([readAcceptReview(own, diamond, offerId, review.identity), own.read((c) => readTerms(c, diamond, account)).then((r) => r.value)]);
     } catch (e) {
       return { kind: 'unreadable', reason: refusalFromError(e).reason };
     }
+    if (nowTerms.kind === 'needed') return { kind: 'refused', refusal: { code: 'TermsNotAccepted', reason: text('accept.termsNewer'), reopensAt: null, remedy: null } };
     const what = changedBetween(review, next, copy);
     if (what !== null) {
       if (current()) {
