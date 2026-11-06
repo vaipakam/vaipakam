@@ -6,7 +6,7 @@
  */
 import { erc20Abi, type PublicClient } from 'viem';
 import { useChainRead } from './chainRead';
-import { formatUnits, shortAddress } from '../ui/format';
+import { formatExact, formatFigureText, shortAddress } from '../ui/format';
 import type { CopyAccess } from '../copy/useCopy';
 
 export interface TokenMeta {
@@ -55,5 +55,13 @@ export function assetName(address: string, meta: TokenMetaMap | null): string {
 export function tokenAmount(amount: bigint, address: string, meta: TokenMetaMap | null, format: CopyAccess['format']): string {
   const m = meta?.[address.toLowerCase()];
   if (!m || m.decimals === null) return format('asset.baseUnits', { amount: amount.toString(), token: shortAddress(address) });
-  return `${formatUnits(amount, m.decimals)} ${m.symbol ?? shortAddress(address)}`;
+  return `${formatFigureText(amount, m.decimals)} ${m.symbol ?? shortAddress(address)}`;
+}
+
+/** `tokenAmount` with every digit, for a figure the protocol acts on exactly
+ *  as written (an approval). */
+export function exactTokenAmount(amount: bigint, address: string, meta: TokenMetaMap | null, format: CopyAccess['format']): string {
+  const m = meta?.[address.toLowerCase()];
+  if (!m || m.decimals === null) return format('asset.baseUnits', { amount: amount.toString(), token: shortAddress(address) });
+  return `${formatExact(amount, m.decimals)} ${m.symbol ?? shortAddress(address)}`;
 }

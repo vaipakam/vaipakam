@@ -20,7 +20,7 @@
 import type { CopyAccess, CopyKey } from '../copy/useCopy';
 import type { Posture } from '../capability/types';
 import type { Receipt } from '../receipt/types';
-import { tokenAmount, type TokenMetaMap } from '../reads/tokens';
+import { exactTokenAmount, tokenAmount, type TokenMetaMap } from '../reads/tokens';
 import { formatBps, formatSpan, formatUtc } from '../ui/format';
 import { pageHandoff } from '../../routes/pageMap';
 import { isRanged, lenderPostFigures, partCollateral, ZERO, type ParsedPost } from './postModel';
@@ -108,7 +108,7 @@ export function lenderPostReceipt(r: PostReview, meta: TokenMetaMap | null, copy
         kind: 'text',
         text: !needsApproval(r)
           ? text('accept.approvalEnough')
-          : format(approvalSteps === 2 ? 'request.approvalZeroFirst' : 'request.approvalNeeded', { amount: tokenAmount(stake.amount, stake.asset, meta, format) }),
+          : format(approvalSteps === 2 ? 'request.approvalZeroFirst' : 'request.approvalNeeded', { amount: exactTokenAmount(stake.amount, stake.asset, meta, format) }),
       },
       binding: false,
       movesOut: needsApproval(r),

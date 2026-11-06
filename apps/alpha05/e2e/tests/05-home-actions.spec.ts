@@ -40,7 +40,7 @@ test('the faucet mints a test token, a test NFT and a multi-token, measures each
   await faucet.locator('[data-asset="liquidToken"]').getByRole('button', { name: 'Get 1000' }).click();
   const receipt = faucet.locator('.receipt');
   await expect(receipt).toContainText('You receive');
-  await expect(receipt).toContainText(/1000 \S+/);
+  await expect(receipt).toContainText(/1,000 \S+/);
   await expect(receipt).toContainText('not the protocol');
   await expect(receipt).toContainText('Wallet prompts: 1.');
   await fitsWidth(page);

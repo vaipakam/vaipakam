@@ -48,7 +48,7 @@ test('a borrower takes a lender offer whole: signed terms, an exact approval, an
   await expect(row).toHaveAttribute('data-takeable', 'true', { timeout: 60_000 });
   await expect(row).toContainText(`Offer #${offerId}: borrow 0.4`);
   await expect(row).toContainText('4.5% a year for 30 days');
-  await expect(row).toContainText('Collateral asked: 2000');
+  await expect(row).toContainText('Collateral asked: 2,000');
   await expect(row).toContainText('Pro-rata interest');
   await expect(row).toContainText('Partial repayment allowed.');
   await expect(row).toContainText('You would receive');
@@ -64,7 +64,7 @@ test('a borrower takes a lender offer whole: signed terms, an exact approval, an
   await expect(receipt).toContainText('You lock in your vault');
   // The protocol pays the sender a share of the fee; on a direct take that is the borrower.
   await expect(receipt).toContainText('Of that fee, paid back to you as the sender');
-  await expect(receipt).toContainText('2000');
+  await expect(receipt).toContainText('2,000');
   await expect(receipt).toContainText('You owe on the due date, if the protocol never pauses');
   // Every lifecycle term the signature binds is stated, defaults included.
   await expect(receipt).toContainText('Partial repayment');
@@ -78,7 +78,7 @@ test('a borrower takes a lender offer whole: signed terms, an exact approval, an
   const vault = await sc.read<Hex>('getUserVaultAddress', [borrower]).catch(() => null);
   const hasVault = vault !== null && !/^0x0{40}$/i.test(vault);
   await expect(receipt).toContainText(hasVault ? vault! : 'Opened for you in this same transaction');
-  await expect(receipt).toContainText('Exactly 2000');
+  await expect(receipt).toContainText('Exactly 2,000');
   await expect(receipt).toContainText('Signing records a binding agreement for the life of the loan.');
   await expect(receipt).toContainText('Wallet prompts: 3.');
   await expect(page.getByRole('region', { name: 'Offers you can take' })).toHaveCount(0);

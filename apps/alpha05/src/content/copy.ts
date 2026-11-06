@@ -90,6 +90,8 @@ export const copy = {
     consequences: B('What you can lose'),
     prompts: B('Wallet prompts: {{count}}.'),
     readAt: B('Figures read {{age}} ago.'),
+    showExact: B('Show exact figures'),
+    showShort: B('Show short figures'),
   },
   finish: {
     title: B('Outcome'),

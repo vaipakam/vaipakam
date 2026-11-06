@@ -35,6 +35,7 @@ import {
 import type { Receipt } from '../receipt/types';
 import type { OwnStateClient } from '../../chain/ownRail';
 import { formatUnits } from 'viem';
+import { formatFigureText } from '../ui/format';
 import { isRanged, type ParsedPost, type PostPair, type PostSide } from './postModel';
 import { TARIFF_KEYS } from './postCopy';
 
@@ -91,7 +92,10 @@ export function tariffRefusesEveryLoan(t: PostTariff | null): boolean {
   return t !== null && !t.choice.allowDowngrade && postTariffIssues(t).some((i) => FAILS_EVERY_LOAN.has(i.kind));
 }
 
-const vpfi = (v: bigint, format: CopyAccess['format']) => format('request.tariffVpfi', { amount: formatUnits(v, VPFI_DECIMALS) });
+/** A VPFI figure for reading (`formatFigureText`); `exact` for the ceiling,
+ *  which the arm step signs as written. */
+const vpfi = (v: bigint, format: CopyAccess['format'], exact = false) =>
+  format('request.tariffVpfi', { amount: exact ? formatUnits(v, VPFI_DECIMALS) : formatFigureText(v, VPFI_DECIMALS) });
 
 function quoteText(q: TariffQuote | null, why: string | undefined, copy: Pick<CopyAccess, 'text' | 'format'>, side: PostSide): string {
   if (q === null) return copy.format('request.tariffQuoteUnread', { reason: why ?? '' });
@@ -113,7 +117,7 @@ export function tariffRows(t: PostTariff | null, parsed: ParsedPost, copy: Pick<
     row('request.rowTariffSwitch', text(t.read.enabled === null ? 'request.tariffSwitchUnknown' : t.read.enabled ? 'request.tariffSwitchOn' : 'request.tariffSwitchOff'), false),
     row(ranged ? 'request.rowTariffSmallest' : 'request.rowTariffQuote', quoteText(t.read.smallest, t.why.quote, copy, side), false),
     ...(ranged ? [row('request.rowTariffLargest', quoteText(t.read.largest, t.why.quote, copy, side), false)] : []),
-    row('request.rowTariffCeiling', vpfi(t.choice.maxCStar, format), true),
+    row('request.rowTariffCeiling', vpfi(t.choice.maxCStar, format, true), true),
     row('request.rowTariffFail', text(t.choice.allowDowngrade ? 'request.tariffFailOpen' : 'request.tariffFailRefuse'), true),
     row('request.rowTariffVault', t.read.freeVpfi === null ? format('request.tariffVaultUnread', { reason: t.why.vault ?? '' }) : vpfi(t.read.freeVpfi, format), false),
   ];

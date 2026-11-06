@@ -53,7 +53,7 @@ test('a lender funds a borrow request whole: signed terms, an exact approval, an
   await expect(row).toHaveAttribute('data-takeable', 'true', { timeout: 60_000 });
   await expect(row).toContainText(`Request #${offerId}: lend 0.3`);
   await expect(row).toContainText('5% a year for 30 days');
-  await expect(row).toContainText('Collateral locked by the borrower: 1500');
+  await expect(row).toContainText('Collateral locked by the borrower: 1,500');
   await expect(row).toContainText('Pro-rata interest: an early repayment earns you less.');
   await expect(row).toContainText('You would lend 0.3');
   await fitsWidth(page);

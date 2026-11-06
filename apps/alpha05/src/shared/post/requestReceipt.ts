@@ -8,7 +8,7 @@
 import type { CopyAccess, CopyKey } from '../copy/useCopy';
 import type { Posture } from '../capability/types';
 import type { Receipt } from '../receipt/types';
-import { assetName, tokenAmount, type TokenMetaMap } from '../reads/tokens';
+import { assetName, exactTokenAmount, tokenAmount, type TokenMetaMap } from '../reads/tokens';
 import { formatBps, formatScaled, formatSpan, formatUtc } from '../ui/format';
 import { pageHandoff } from '../../routes/pageMap';
 import { isRanged, postFigures, ZERO, type ParsedPost } from './postModel';
@@ -133,7 +133,7 @@ export function requestReceipt(r: PostReview, meta: TokenMetaMap | null, copy: P
             ? format('request.approvalToken', { token: tokenName })
             : h.kind === 'erc1155'
               ? format('request.approvalOperator', { collection })
-              : format(h.approvalSteps === 2 ? 'request.approvalZeroFirst' : 'request.approvalNeeded', { amount: tokenAmount(parsed.collateral, pair.collateral, meta, format) }),
+              : format(h.approvalSteps === 2 ? 'request.approvalZeroFirst' : 'request.approvalNeeded', { amount: exactTokenAmount(parsed.collateral, pair.collateral, meta, format) }),
       },
       binding: false,
       movesOut: needsApproval(r),

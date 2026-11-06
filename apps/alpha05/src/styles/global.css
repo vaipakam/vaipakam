@@ -523,21 +523,49 @@ h1 {
 .tier-b {
   color: var(--text-body);
 }
+/* A list of facts: label and value side by side, in two even columns so a
+   long label never starves its value, one hairline between rows. */
 .facts {
   display: grid;
-  grid-template-columns: max-content 1fr;
-  gap: 6px 16px;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   margin: 16px 0;
-  padding: 12px 14px;
+  padding: 4px 16px;
   background: var(--surface-raised);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: 12px;
+}
+.facts dt,
+.facts dd {
+  padding: 10px 0;
+  border-top: 1px solid var(--border);
+}
+.facts dt:first-of-type,
+.facts dd:first-of-type {
+  border-top: 0;
 }
 .facts dt {
+  /* The space between the columns sits inside the label, so each row's
+     hairline runs unbroken across both. */
+  padding-inline-end: 24px;
   color: var(--text-muted);
 }
 .facts dd {
   margin: 0;
+  color: var(--text-body);
+}
+/* Figures line up digit for digit and never break inside a number. */
+.facts dd.value-amount {
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: normal;
+  word-break: keep-all;
+}
+.facts dd[data-binding='true'] {
+  color: var(--text-strong);
+  font-weight: 500;
+}
+.receipt-exact {
+  margin: -8px 0 8px;
+  font-size: 0.9rem;
 }
 
 .btn {
@@ -1051,17 +1079,22 @@ a.btn {
 .facts dt,
 .facts dd {
   min-width: 0;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
 }
-@media (max-width: 479px) {
+@media (max-width: 599px) {
   /* A label and its value stacked: a fingerprint or an address never
-     pushes the page sideways on a phone. */
+     pushes the page sideways on a phone. The hairline sits above each
+     label, so a label and its value read as one fact. */
   .facts {
     grid-template-columns: 1fr;
-    gap: 2px;
+  }
+  .facts dt {
+    padding: 10px 0 2px;
+    font-size: 0.9rem;
   }
   .facts dd {
-    margin-bottom: 8px;
+    padding: 0 0 10px;
+    border-top: 0;
   }
 }
 .action-flow {

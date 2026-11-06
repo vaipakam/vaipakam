@@ -101,7 +101,7 @@ test('a lender posts their own offer: exact figures, an exact approval of the am
     // The matching switch is stated whatever its state, since it can change while the offer is open.
     await expect(receipt).toContainText("Matching with borrowers' requests on this network");
     await expect(receipt).toContainText('Collateral a borrower must lock in their vault');
-    await expect(receipt).toContainText('1500');
+    await expect(receipt).toContainText('1,500');
     await expect(receipt).toContainText('6.5% a year');
     await expect(receipt).toContainText('14 days after a borrower takes it');
     await expect(receipt).toContainText("The borrower receives, at today's fee rate");

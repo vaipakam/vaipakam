@@ -50,7 +50,18 @@ describe('Receipt', () => {
   });
 
   it('renderValue states a time in UTC', () => {
-    expect(renderValue({ kind: 'time', unixSeconds: 1_700_000_000 }, describeAsset, 'Unknown')).toEqual({ text: '2023-11-14 22:13 UTC', unknown: false });
+    expect(renderValue({ kind: 'time', unixSeconds: 1_700_000_000 }, describeAsset, 'Unknown')).toEqual({ text: '2023-11-14 22:13 UTC', unknown: false, cut: false, full: null });
+  });
+
+  it('shows an amount short, marked approximate, with every digit on request', () => {
+    const long = { kind: 'amount' as const, asset: USDC, amount: 1_000_939_726n };
+    expect(renderValue(long, describeAsset, 'Unknown')).toEqual({ text: '≈ 1,000.9397 USDC', unknown: false, cut: true, full: '1000.939726 USDC' });
+    expect(renderValue(long, describeAsset, 'Unknown', true).text).toBe('1000.939726 USDC');
+    const out = html(createElement(Receipt, { receipt: { ...receipt, rows: [{ label: 'Interest', value: long, binding: false }] }, describeAsset, nowMs: 1_061_000 }));
+    expect(out).toContain('title="1000.939726 USDC"');
+    expect(out).toContain('Show exact figures');
+    // A receipt whose figures are all exact offers no toggle.
+    expect(html(createElement(Receipt, { receipt, describeAsset, nowMs: 1_061_000 }))).not.toContain('Show exact figures');
   });
 });
 
