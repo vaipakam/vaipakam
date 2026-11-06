@@ -148,3 +148,52 @@ describe('JSON-RPC errors are classified structurally', () => {
     expect(classify(err).summary).not.toContain('leak.example');
   });
 });
+
+describe('classification through a real viem client (Codex #3249 r1)', () => {
+  async function failingRead(rpcError: Record<string, unknown>): Promise<unknown> {
+    const { createPublicClient, http, parseAbi } = await import('viem');
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async (_input: unknown, init?: { body?: unknown }) => {
+      const body = JSON.parse(String(init?.body ?? '{}')) as { id?: number };
+      return new Response(JSON.stringify({ jsonrpc: '2.0', id: body.id ?? 0, error: rpcError }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }) as typeof fetch;
+    try {
+      const client = createPublicClient({
+        transport: http('https://rpc.example/SECRETKEY', { retryCount: 0 }),
+      });
+      await client.readContract({
+        address: '0x00000000000000000000000000000000000000d1',
+        abi: parseAbi(['function getExpectedSourceChainIds() view returns (uint32[])']),
+        functionName: 'getExpectedSourceChainIds',
+      });
+      throw new Error('expected the read to fail');
+    } catch (err) {
+      return err;
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  }
+
+  it('a JSON-RPC error is rpc-error with its code, and no provider field leaks', async () => {
+    const err = await failingRead({
+      code: -32000,
+      message: 'header not found',
+      // Provider-controlled and identifier-shaped: must not be emitted.
+      name: 'UpstreamSecretKey123456',
+    });
+    const out = classify(err, 'canonical read');
+    expect(out.kind).toBe('rpc-error');
+    expect(out.summary).toContain('-32000');
+    expect(out.summary).not.toContain('UpstreamSecretKey123456');
+    expect(out.summary).not.toContain('header not found');
+    expect(out.summary).not.toContain('SECRETKEY');
+  });
+
+  it('a real contract revert (JSON-RPC code 3) stays a contract revert', async () => {
+    const err = await failingRead({ code: 3, message: 'execution reverted', data: '0x' });
+    expect(classify(err).kind).toBe('contract-revert');
+  });
+});
