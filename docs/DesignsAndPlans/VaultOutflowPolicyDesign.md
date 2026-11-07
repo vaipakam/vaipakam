@@ -307,25 +307,31 @@ their own contract:
   the Timelock can swap, after the same kind of contract-held delay as the
   vault-code pointer (#3204). A renderer only draws; a check can only
   refuse a transfer.
-- **The Diamond's rights.** It can mint a new position's tokens, and place a
-  lock with an expiry while one of its routes is in progress (a sale
-  listing, an offset, a collateral listing, a swap-to-repay order). It
-  cannot move anyone's token, and cannot burn one before the position's
+- **The Diamond's rights.** It can mint a new position's tokens, and
+  nothing else: no move, no lock and no notify power. It cannot move
+  anyone's token, and cannot burn one before the position's
   final claim is paid. A protocol route that moves a position (a sale, an
   obligation handover, consolidation) does so with the holder's approval
   for that one token, given in the same step.
-- **Locks during a route.** While a token is locked, the NFT contract
-  refuses every transfer except the one the lock was placed for. A lock
-  ends when its route completes or is cancelled, and at its expiry at the
-  latest, which is the route's own expiry (a loan-sale listing already
-  carries a mandatory one). So a faulty Diamond can at most freeze a token
-  until that expiry, never move it. The contract reports the lock through
-  the standard "locked" signal (EIP-5192), so wallets and marketplaces show
-  the token as not transferable while it lasts, and the app shows why.
+- **No route locks: the holder is re-checked at completion.** Today a
+  token is locked while a sale listing, an offset, a collateral listing or
+  a swap-to-repay order is open, so the seller cannot list and then send
+  the NFT elsewhere. Instead, each route records the holder who started it,
+  and at completion (the fill, the accept, the swap) it requires that the
+  same holder still holds the token. If the NFT has moved, the completion
+  reverts and the route counts as cancelled. Completions are atomic, so the
+  worst outcome is a failed fill and its gas, never a loss. The marketplace
+  listings already re-check validity at fill, and this check joins them.
+  The app says it plainly ("moving this NFT cancels your open listing"),
+  and the indexer drops a listing whose NFT has moved.
 - **A listing completes without the seller present**, so the seller grants
-  the approval for that one token when listing. While the listing is open,
-  that token is exposed to the Diamond the way any listed NFT is exposed to
-  its marketplace; no other position is.
+  the approval for that one token when listing. A transfer clears it, as
+  ERC-721 does. While the listing is open, that token is exposed to the
+  Diamond the way any listed NFT is exposed to its marketplace; no other
+  position is.
+- **Protected mode's NFT lock stays, as the holder's own choice.** Only the
+  holder can switch it on, switching it off waits their delay, and the
+  Diamond has no part in it. It guards against phishing.
 - **No notification.** The NFT contract never calls the Diamond. Every rule
   that depends on the holder reads the current owner when it acts:
 
