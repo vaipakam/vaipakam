@@ -101,7 +101,7 @@ function LoanBody({ view: v, account, meta }: { view: LoanView; account: Hex; me
       <RoleLine role={role} />
       {obligations && (
         <div className="position-now">
-          <StageLine stage={obligations.stage} borrowerSide={borrowerSide} rental={!erc20} />
+          <StageLine stage={obligations.stage} borrowerSide={borrowerSide} rental={!erc20} defaultable={v.defaultable} />
           {obligations.interest && <InterestLine stage={obligations.interest} borrowerSide={borrowerSide} amountOf={(x) => tokenAmount(x, l.principalAsset, meta, format)} />}
           {v.deadlines?.periodic && !v.deadlines.periodic.enforced && (
             <p className="tier-b" data-testid="position-checkpoints-off">

@@ -678,8 +678,12 @@ above. Each resolves here, so a route reviewer needs no private file:
   reader's role, from the position tokens their wallet holds now (both
   holders read; "confirming your role" until they are, and a reader who
   holds neither is told they are viewing); the deadline that needs them,
-  worded for the side they hold, with "anyone may now start the default"
-  only when the protocol says the loan is defaultable, never "will be";
+  worded for the side they hold, with "can now be defaulted" and "anyone
+  may now start the default" only when the protocol says the loan is
+  defaultable, never "will be" (a grace end passed by the clock alone is
+  stated as passed, with the protocol's verdict unread or not yet given;
+  a list, which does not read the verdict, sends the reader to the loan's
+  page);
   the dates from the protocol's loan clock alone (the due date it opened
   with, the pause credit, the due date and the grace end; an unread date
   is unknown, never computed from the start and the term), and, for a
