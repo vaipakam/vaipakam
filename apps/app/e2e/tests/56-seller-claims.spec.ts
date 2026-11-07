@@ -12,9 +12,10 @@
  *  - the seed, from the chain: the sale recorded a claim for this seller
  *    with something owed (#2183);
  *  - the card, from the states it publishes (`data-state`, the row's
- *    `data-withdraw` and `data-withdrawn`), never from its wording: the
- *    list answered, this loan's row offers the withdrawal, and after the
- *    click the row says it was withdrawn;
+ *    `data-withdraw`, the card's withdrawal outcome), never from its
+ *    wording: the list answered, this loan's row offers the withdrawal, and
+ *    after the click the card states the withdrawal for this loan (the
+ *    row itself goes once nothing is owed);
  *  - the result, from the chain: one `SellerInterestWithdrawn` for this
  *    loan and seller with a positive amount, that exact amount reached the
  *    seller's wallet, and nothing is left waiting for them.
@@ -28,6 +29,7 @@ import { test, expect, connectWallet } from '../lib/wallet-fixture';
 import { consentAndWaitEnabled, newestOfferIdFor, signAcceptReview } from '../lib/flows';
 import { acceptOfferDirect, repayLoanInFull, seedDeskOffer } from '../lib/desk';
 import { increaseTime } from '../lib/anvil';
+import { topUpWeth } from '../lib/seed';
 import { DIAMOND, DIAMOND_ABI_VIEM, pub } from '../lib/chain';
 
 const DAY = 24 * 60 * 60;
@@ -50,6 +52,11 @@ const WITHDRAWN = parseAbiItem(
 test('the seller of a lender position withdraws the interest it earned before the sale', async ({
   launchWallet,
 }) => {
+  // The lender funds 0.5 WETH and the buyer pays about as much; the serial
+  // suite has already spent from both wallets, so neither relies on it.
+  await topUpWeth('lender', '1');
+  await topUpWeth('newLender', '1');
+  await topUpWeth('borrower', '1'); // repays principal plus interest
   const offerId = await seedDeskOffer({
     role: 'lender',
     side: 'lend',
@@ -125,7 +132,10 @@ test('the seller of a lender position withdraws the interest it earned before th
   const row = page.locator(`[data-testid="seller-claims"] li[data-loan="${loanId}"]`);
   await expect(row).toHaveAttribute('data-withdraw', 'ready', { timeout: 60_000 });
   await row.getByTestId('seller-claim-withdraw').click();
-  await expect(row).toHaveAttribute('data-withdrawn', 'true', { timeout: 120_000 });
+  // The card states the withdrawal itself: the row goes once nothing is owed.
+  await expect(
+    page.locator(`[data-testid="seller-claim-withdrawn"][data-loan="${loanId}"]`),
+  ).toBeVisible({ timeout: 120_000 });
 
   // The chain's account of it.
   const logs = await pub.getLogs({

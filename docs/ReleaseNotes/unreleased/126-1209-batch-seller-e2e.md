@@ -17,8 +17,11 @@ wallet, and nothing left waiting.
 To make those checks independent of wording, the batch card and the
 seller-claims card now publish where they stand as page attributes: the
 batch card's stage, each loan's plan and outcome; the seller-claims list's
-discovery state and each row's withdrawal verdict. Nothing a user sees
-changes. The test indexer now serves the seller-claim activity kinds from
+discovery state and each row's withdrawal verdict. One thing a user sees
+changes: "Withdrawn to your wallet" is now stated by the seller-claims card
+for each loan withdrawn this session, rather than inside the loan's row.
+A withdrawal that empties an ended loan's claim removes its row on the next
+read, which took the confirmation with it; the card now keeps it. The test indexer now serves the seller-claim activity kinds from
 the chain's own logs, filed by the indexer's own actor rule.
 
 Advances #126 and #1209.

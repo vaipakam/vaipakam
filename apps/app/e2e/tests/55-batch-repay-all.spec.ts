@@ -29,6 +29,7 @@ import {
 } from '../lib/chain';
 import { accountFor, type Role } from '../lib/wallets';
 import { MUSDC, freshTenor, seedDeskOffer } from '../lib/desk';
+import { topUpWeth } from '../lib/seed';
 
 type LoanRow = { borrower: string; offerId: bigint; status: number | bigint };
 
@@ -94,6 +95,9 @@ test('Repay all closes both loans one offer filled into', async ({ launchWallet 
   const tenor = await freshTenor(WETH, MUSDC);
   const decimals = await musdcDecimals();
   await mintMusdc('borrower', decimals);
+  // Each lender funds 0.001 WETH and the borrower repays both loans; none
+  // of them relies on what earlier specs left in the wallet.
+  for (const role of ['lender', 'newLender', 'borrower'] as const) await topUpWeth(role, '0.1');
 
   // The borrower's request is a range of 0.001–0.002 WETH with collateral
   // ranged 40–100 mUSDC, so each 0.001 slice locks its own 40.

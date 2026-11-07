@@ -20,6 +20,8 @@ import { LoanStatus } from '../lib/types';
 import {
   simulateSellerWithdraw,
   useMySellerClaims,
+  useRecordSellerWithdrawOutcome,
+  useSellerWithdrawOutcomes,
   type SellerClaimRow,
 } from '../data/sellerClaims';
 
@@ -54,6 +56,7 @@ function SellerClaimItem({ row }: { row: SellerClaimRow }) {
   const client = usePublicClient({ chainId: walletChain?.chainId });
   const { write } = useDiamondWrite();
   const queryClient = useQueryClient();
+  const recordWithdrawn = useRecordSellerWithdrawOutcome();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // What was waiting when this row's withdrawal went through. While the
@@ -62,7 +65,6 @@ function SellerClaimItem({ row }: { row: SellerClaimRow }) {
   const [withdrewFrom, setWithdrewFrom] = useState<string | null>(null);
   const heldNow = heldKey(row);
   const staleAfterWithdraw = withdrewFrom !== null && withdrewFrom === heldNow;
-  const showWithdrawn = withdrewFrom !== null && (staleAfterWithdraw || row.withdraw.kind !== 'ready');
 
   async function withdraw() {
     if (!address || !walletChain || !client) return;
@@ -79,6 +81,8 @@ function SellerClaimItem({ row }: { row: SellerClaimRow }) {
       if (live.kind === 'unknown') throw new Error(copy.sellerClaims.checkFailed);
       await write('claimAsSeller', [BigInt(row.loanId)]);
       setWithdrewFrom(heldNow);
+      // Stated by the card, not the row: the row goes once nothing is owed.
+      recordWithdrawn(row.loanId);
     } catch (err) {
       setError(captureTxError(err));
     } finally {
@@ -93,7 +97,6 @@ function SellerClaimItem({ row }: { row: SellerClaimRow }) {
       style={{ alignItems: 'flex-start' }}
       data-loan={row.loanId}
       data-withdraw={staleAfterWithdraw ? 'stale' : row.withdraw.kind}
-      data-withdrawn={showWithdrawn ? 'true' : 'false'}
       data-busy={busy ? 'true' : 'false'}
     >
       <span className="row-main">
@@ -121,11 +124,6 @@ function SellerClaimItem({ row }: { row: SellerClaimRow }) {
         ) : row.withdraw.kind === 'unknown' ? (
           <span className="row-sub" style={{ display: 'block' }}>
             {copy.sellerClaims.checkFailed}
-          </span>
-        ) : null}
-        {showWithdrawn ? (
-          <span className="row-sub" role="status" style={{ display: 'block' }}>
-            {copy.sellerClaims.withdrawn}
           </span>
         ) : null}
         {error ? (
@@ -181,6 +179,26 @@ function DiscoveryState({
 /** Renders nothing visible for a wallet with no seller claims. */
 export function SellerClaimsCard() {
   const claims = useMySellerClaims();
+  const withdrawn = useSellerWithdrawOutcomes();
+  // This session's withdrawals, listed by the card so each outlives its row
+  // (a withdrawal that empties an ended loan's claim removes the row).
+  const outcomeList = withdrawn.map((id) => (
+    <div
+      key={id}
+      className="banner banner-info"
+      role="status"
+      style={{ marginTop: 12 }}
+      data-testid="seller-claim-withdrawn"
+      data-loan={id}
+    >
+      <span className="banner-body">
+        <Link to={`/positions/${id}`} style={{ display: 'block' }}>
+          {copy.sellerClaims.rowTitle(String(id))}
+        </Link>
+        {copy.sellerClaims.withdrawn}
+      </span>
+    </div>
+  ));
   if (claims.isLoading || claims.data === undefined) return <DiscoveryState state="loading" />;
   if (claims.data === null) {
     return (
@@ -191,13 +209,16 @@ export function SellerClaimsCard() {
           <h2 style={{ margin: 0 }}>{copy.sellerClaims.title}</h2>
         </div>
         <p className="muted">{copy.sellerClaims.unavailable}</p>
+        {outcomeList}
       </section>
     );
   }
   const { rows, unread, truncated } = claims.data;
   // A cut-short list with nothing in it has not shown there is nothing: the
   // loans it did not reach may still owe this seller.
-  if (rows.length === 0 && unread.length === 0 && !truncated) return <DiscoveryState state="empty" />;
+  if (rows.length === 0 && unread.length === 0 && !truncated && outcomeList.length === 0) {
+    return <DiscoveryState state="empty" />;
+  }
   return (
     <section className="card" style={{ marginBottom: 16 }} data-testid="seller-claims">
       <DiscoveryState state="listed" unread={unread} truncated={truncated} />
@@ -217,6 +238,7 @@ export function SellerClaimsCard() {
         </p>
       ))}
       {truncated ? <p className="muted">{copy.sellerClaims.truncated}</p> : null}
+      {outcomeList}
     </section>
   );
 }
