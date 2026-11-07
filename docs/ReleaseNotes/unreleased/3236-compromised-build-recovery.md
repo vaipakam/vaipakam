@@ -1,4 +1,4 @@
-## Thread — Recovering from a compromised app build (PR #TBD)
+## Thread — Recovering from a compromised app build (PR #3271)
 
 A service worker keeps running in a visitor's browser after the page that installed it is gone. If a bad build of the connected app, or a script injected into a page, ever registered one, it could go on answering requests after the genuine build was restored. Every load of a production build of the app now removes any service-worker registration on its origin that is not the app's own worker, before it registers its own. One registration that refuses to go does not stop the others from being removed.
 
