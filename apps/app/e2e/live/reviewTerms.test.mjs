@@ -6,6 +6,11 @@
  * because #2537 made every receipt amount exact (the 2026-10-05 build still
  * rounded them). Rendering them through the app's formatter keeps the
  * fixtures from drifting from what the page prints.
+ *
+ * The BORROWER's review is the permit-route review (#1558 / #3042, #3295):
+ * the 2026-10-05 build reviewed an approval of the Diamond, which the
+ * deployed app no longer asks for, so that review is kept only as the
+ * retired text the parser must now refuse.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -152,17 +157,42 @@ const LOAN22 = {
 };
 const REVIEW_AT = 1_791_190_250n; // chain time of the 2026-10-05 review
 const GRACE_END = 1_793_470_120n + 86_400n; // loan end + 1-day grace
+// #3295 — the permit route's figures, as `getRefinancePayoff` reports them
+// (the loan-22 numbers: the payoff today, its growth to the grace end, the
+// wallet share today — interest plus the 0.2% LIF — and the share at the
+// request's last fillable moment, which the permit is signed for).
 const PAYOFF_NOW = refinancePayoffAt(LOAN22, REVIEW_AT);
 const HEADROOM = refinancePayoffAt(LOAN22, GRACE_END) - PAYOFF_NOW;
 const TOP_UP = PAYOFF_NOW - LOAN22.principal + 10_000_000_000_000n;
-const BORROWER_ROWS = [
+const BOUND = TOP_UP + HEADROOM;
+/** The "You may owe" row the deployed permit-route review renders
+ *  (RefinanceFlow: receiptYouMayOwe, payoffNote, permit.growthDisclosure,
+ *  permit.signDisclosure, permit.permit2ApprovalNote, walletNote). */
+const permitOwe = ({ headroom = HEADROOM, bound = BOUND } = {}) =>
+  `~${WETH(PAYOFF_NOW)} to pay off this loan, settled automatically when a lender accepts. The new loan’s money, less its initiation fee, covers most of it; the rest comes from your wallet. The old loan’s payoff is always the loan amount plus the full remaining term’s interest — even if interest on the loan normally builds up day by day. That is the exiting lender’s fixed entitlement on an early exit. ` +
+  (headroom > 0n
+    ? `If a lender accepts after the loan’s due date, the payoff grows (the late fee plus interest that keeps building up) by up to ~${WETH(headroom)} more for this request. The permit covers that too, so a late acceptance can’t fail on it. `
+    : '') +
+  (bound > 0n
+    ? `You’ll sign a payoff permit for at most ${WETH(bound)}: your wallet’s share of the payoff if a lender accepts at the last moment this request allows. The new loan’s money, less its initiation fee, pays the rest of the payoff straight to your current lender. Whoever completes the refinance can use the permit once, only for your share at that moment, so the rest of it is never taken. It lapses when the request ends, and nothing stays approved to the protocol. If your wallet hasn’t approved Permit2 (Uniswap’s permit contract) for this token for at least that amount, you approve it first. That approval moves nothing on its own: Permit2 pays only against a signature you make. `
+    : '') +
+  `When a lender accepts, the new loan’s money, less its initiation fee, covers most of the payoff in the same transaction, so keep about ${WETH(TOP_UP)} in your wallet (the interest portion plus the new loan’s initiation fee) while the request is open.`;
+/** The wallet-steps note the deployed card shows below the receipt. */
+const PERMIT_STEPS =
+  'Posting takes up to five wallet steps: the guardrails, the Permit2 approval if needed, the request, your signature on the payoff permit, and the transaction that attaches it. If you stop after the request is posted, it stays open without a permit and no lender can complete it; sign the permit from the request’s card, or cancel the request.';
+/** The retired approval-route review (the 2026-10-05 build). */
+const RETIRED_OWE = `~${WETH(PAYOFF_NOW)} to pay off this loan, settled automatically when a lender accepts. The new loan’s money, less its initiation fee, covers most of it; the rest comes from your wallet. The old loan’s payoff is always the loan amount plus the full remaining term’s interest — even if interest on the loan normally builds up day by day. That is the exiting lender’s fixed entitlement on an early exit. If a lender accepts after the loan’s due date, the payoff grows — the late fee for being late plus interest that keeps building up — by up to ~${WETH(HEADROOM)} more for this request. The approval you grant covers that too, so a late acceptance can’t fail on it. When a lender accepts, the new loan’s money, less its initiation fee, covers most of the payoff in the same transaction, so keep about ${WETH(TOP_UP)} in your wallet (the interest portion plus the new loan’s initiation fee) while the request is open.`;
+const RETIRED_STEPS =
+  'Posting takes up to three wallet confirmations (guardrails, payoff approval, the request itself). If you stop partway, the earlier steps stay in place on-chain until you finish posting or cancel — cancelling also removes the approval.';
+const borrowerRows = (owe) => [
   ['You receive', EN.refinance.receiptReceive],
   ['You lock', EN.refinance.receiptLock],
-  ['You may owe', `~${WETH(PAYOFF_NOW)} to pay off this loan, settled automatically when a lender accepts. The new loan’s money, less its initiation fee, covers most of it; the rest comes from your wallet. The old loan’s payoff is always the loan amount plus the full remaining term’s interest — even if interest on the loan normally builds up day by day. That is the exiting lender’s fixed entitlement on an early exit. If a lender accepts after the loan’s due date, the payoff grows — the late fee for being late plus interest that keeps building up — by up to ~${WETH(HEADROOM)} more for this request. The approval you grant covers that too, so a late acceptance can’t fail on it. When a lender accepts, the new loan’s money, less its initiation fee, covers most of the payoff in the same transaction, so keep about ${WETH(TOP_UP)} in your wallet (the interest portion plus the new loan’s initiation fee) while the request is open.`],
+  ['You may owe', owe],
   ['You can lose', EN.refinance.shortIsSafe],
   ['Fees', 'Vaipakam charges a 0.2% loan initiation fee on the borrowed amount. The protocol’s 2% cut of the payoff interest settles inside the payoff.'],
   ['When this ends', `When a lender accepts your request, when you cancel it, or when it expires with this loan’s grace window (Nov 1, 2026) — a refinance request can’t outlive the loan it replaces. ${EN.refinance.guardrailNote}`],
 ].map(([label, value]) => ({ label, value }));
+const BORROWER_ROWS = borrowerRows(permitOwe());
 function borrowerCtx(over = {}) {
   return {
     en: EN,
@@ -170,11 +200,13 @@ function borrowerCtx(over = {}) {
     payoffNow: PAYOFF_NOW,
     headroom: HEADROOM,
     topUp: TOP_UP,
+    bound: BOUND,
     lifBps: 20,
     treasuryFeeBps: 200n,
     clamped: true,
     graceEndDates: [new Date(Number(GRACE_END) * 1000).toLocaleDateString('en', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' })],
     requestWindowDays: 30n,
+    cardText: `Review refinance request ${PERMIT_STEPS} Confirm — post refinance request`,
     ...over,
   };
 }
@@ -267,10 +299,49 @@ describe('reviewTerms — the real loan-22 receipts', () => {
     expect(compareBorrowerReceipt(bdup, borrowerCtx()).mismatches.join()).toMatch(/"You may owe" row: .*2 rendered/);
   });
 
-  it('the borrower review matches the app\u2019s own payoff formulas, every term', () => {
+  it('the borrower review matches the contract\u2019s payoff figures, every term (permit route, #3295)', () => {
     const r = compareBorrowerReceipt(BORROWER_ROWS, borrowerCtx());
     expect(r.mismatches).toEqual([]);
-    expect(r.compared.length).toBe(8);
+    expect(r.compared).toEqual([
+      '"You receive" text',
+      '"You lock" text',
+      'payoff (today)',
+      'payoff growth before the last fillable moment',
+      'no approval-route disclosure',
+      'payoff permit maximum (wallet share at the last fillable moment)',
+      'Permit2 approval note',
+      'wallet top-up (payoff interest + LIF)',
+      'loan initiation fee (live LIF)',
+      'treasury cut (treasuryFeeBps)',
+      'request lifetime',
+      'wallet-steps note',
+    ]);
+  });
+
+  // #3295 — the live run halted here: the parser still expected the
+  // approval route's "The approval you grant covers that too". That review
+  // is now itself a mismatch, and so is its three-confirmation note.
+  it('refuses the retired approval-route review and its steps note', () => {
+    const old = compareBorrowerReceipt(borrowerRows(RETIRED_OWE), borrowerCtx({ cardText: RETIRED_STEPS })).mismatches.join(' | ');
+    expect(old).toMatch(/payoff-growth disclosure/);
+    expect(old).toMatch(/approval-route disclosure/);
+    expect(old).toMatch(/payoff-permit disclosure/);
+    expect(old).toMatch(/wallet-steps note/);
+    // The permit review with the retired steps note alongside is refused too.
+    const both = compareBorrowerReceipt(BORROWER_ROWS, borrowerCtx({ cardText: `${PERMIT_STEPS} ${RETIRED_STEPS}` }));
+    expect(both.mismatches).toHaveLength(1);
+    expect(compareBorrowerReceipt(BORROWER_ROWS, borrowerCtx({ cardText: undefined })).mismatches).toHaveLength(1);
+  });
+
+  it('pins the permit\u2019s maximum and its presence to the wallet share', () => {
+    // A permit disclosed for a different maximum than the contract's share.
+    expect(compareBorrowerReceipt(BORROWER_ROWS, borrowerCtx({ bound: BOUND + 1n })).mismatches.join()).toMatch(/payoff permit maximum/);
+    // A zero share: no permit is signed, so none may be disclosed…
+    expect(compareBorrowerReceipt(BORROWER_ROWS, borrowerCtx({ bound: 0n })).mismatches.join()).toMatch(/payoff-permit disclosure/);
+    // …and the review without one passes.
+    expect(compareBorrowerReceipt(borrowerRows(permitOwe({ bound: 0n })), borrowerCtx({ bound: 0n })).mismatches).toEqual([]);
+    // A share above zero with the disclosure missing is refused.
+    expect(compareBorrowerReceipt(borrowerRows(permitOwe({ bound: 0n })), borrowerCtx()).mismatches.join()).toMatch(/payoff-permit disclosure/);
   });
 
   it('the borrower review is refused on a wrong payoff, fee or lifetime branch', () => {
@@ -278,8 +349,10 @@ describe('reviewTerms — the real loan-22 receipts', () => {
     expect(compareBorrowerReceipt(BORROWER_ROWS, borrowerCtx({ lifBps: 30 })).mismatches).toHaveLength(1);
     // Not clamped ⇒ the review should have said "30 days after posting".
     expect(compareBorrowerReceipt(BORROWER_ROWS, borrowerCtx({ clamped: false })).mismatches).toHaveLength(1);
-    // No headroom ⇒ the late-fee disclosure must be absent.
+    // No headroom ⇒ the growth disclosure must be absent, and a review
+    // without one passes.
     expect(compareBorrowerReceipt(BORROWER_ROWS, borrowerCtx({ headroom: 0n })).mismatches).toHaveLength(1);
+    expect(compareBorrowerReceipt(borrowerRows(permitOwe({ headroom: 0n })), borrowerCtx({ headroom: 0n })).mismatches).toEqual([]);
   });
 });
 

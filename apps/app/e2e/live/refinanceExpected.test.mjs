@@ -26,17 +26,29 @@ import {
   afterAnchor,
   ANCHOR_LAG_SEC,
   ANCHOR_WINDOW_SEC,
-  approvalBetween,
   borrowerReserve,
+  expectedPayoffPermitTypedData,
   graceSecondsFrom,
+  lastFillableMoment,
   lateFeeAt,
-  payoffApprovalBounds,
-  refinancePayoffAt,
+  PAYOFF_PERMIT_TYPES,
+  PERMIT2_ADDRESS,
+  permitDeadlineWindow,
+  REQUEST_WINDOW_SEC,
   refinancePlanSteps,
+  SET_PAYOFF_PERMIT_SIGNATURE,
   ZERO_HASH,
 } from './refinanceExpected.mjs';
 import { createWritePlan } from './writePlan.mjs';
-import { encodeFunctionData, erc20Abi } from 'viem';
+import { createWalletClient, custom, encodeFunctionData, erc20Abi, toFunctionSelector } from 'viem';
+// The app's OWN permit builders and constants (#3295): the drive's expected
+// objects are held to what the deployed code produces, not to a restatement.
+import {
+  lastFillableMoment as appLastFillableMoment,
+  payoffPermitTypedData,
+  setPayoffPermitCall,
+} from '../../src/contracts/refinancePayoffPermit';
+import { PERMIT2_ADDRESS as APP_PERMIT2_ADDRESS } from '../../src/contracts/usePermit2Signing';
 
 const DAY = 86_400n;
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -79,6 +91,14 @@ const TERMS_ARGS = {
   // Loan 22's legs as checkLiquidity classifies them: the principal liquid,
   // the collateral illiquid.
   illiquidLegs: { lending: false, collateral: true },
+};
+
+/** The payoff-permit getters before any of their inputs exist (#3295). */
+const NO_PERMIT_YET = {
+  permitNeeded: true,
+  permit2ShareBounds: () => null,
+  borrowerPermit: () => null,
+  signedPayoffPermit: () => null,
 };
 
 /** The acceptance terms request #45 was actually signed with. */
@@ -181,7 +201,7 @@ describe('refinanceExpected — complete payloads, closed in both directions', (
         rateBps: 1200n,
         days: 30n,
         riskTermsHash: ZERO_HASH,
-        graceSeconds: 86_400n,
+        ...NO_PERMIT_YET,
         borrowerAnchor: () => NOW,
         lenderAnchor: () => NOW,
         illiquidLegs: TERMS_ARGS.illiquidLegs,
@@ -239,7 +259,7 @@ describe('refinanceExpected — complete payloads, closed in both directions', (
         abi: ABI,
         chainId: 84532,
         diamond: DIAMOND,
-        graceSeconds: 86_400n,
+        ...NO_PERMIT_YET,
         borrowerAnchor: () => NOW,
         lenderAnchor: () => null,
         requestId: () => null,
@@ -256,16 +276,16 @@ describe('refinanceExpected — complete payloads, closed in both directions', (
 
   // #2422 r8 — the borrower role stays CLOSED through the position page's
   // load, the card checks and the review checks; it is armed only for the
-  // confirmed submit. An approve(Diamond, 0) the page fires while loading
+  // confirmed submit. An approve(Permit2, 0) the page fires while loading
   // matches the plan's optional reset step exactly, so only the arming
   // keeps it from being consumed.
-  it('refuses an approve(Diamond, 0) requested while the borrower role is closed', () => {
+  it('refuses an approve(Permit2, 0) requested while the borrower role is closed', () => {
     const planArgs = {
       ...TERMS_ARGS,
       abi: ABI,
       chainId: 84532,
       diamond: DIAMOND,
-      graceSeconds: 86_400n,
+      ...NO_PERMIT_YET,
       borrowerAnchor: () => NOW,
       lenderAnchor: () => NOW,
       requestId: () => null,
@@ -275,7 +295,7 @@ describe('refinanceExpected — complete payloads, closed in both directions', (
       {
         from: BORROWER,
         to: LOAN.principalAsset,
-        data: encodeFunctionData({ abi: erc20Abi, functionName: 'approve', args: [DIAMOND, 0n] }),
+        data: encodeFunctionData({ abi: erc20Abi, functionName: 'approve', args: [PERMIT2_ADDRESS, 0n] }),
       },
       () => erc20Abi,
     );
@@ -283,7 +303,7 @@ describe('refinanceExpected — complete payloads, closed in both directions', (
     const r = onLoad.offer('borrower', 'tx', reset);
     expect(r.ok).toBe(false);
     expect(r.why).toMatch(/CLOSED/);
-    expect(onLoad.steps().find((st) => st.id === 'b-approve-reset').status).toBe('pending');
+    expect(onLoad.steps().find((st) => st.id === 'b-permit2-reset').status).toBe('pending');
     // Latched: the confirmed submit that follows cannot write either.
     onLoad.arm('borrower');
     expect(onLoad.offer('borrower', 'tx', reset).ok).toBe(false);
@@ -292,50 +312,7 @@ describe('refinanceExpected — complete payloads, closed in both directions', (
     const atSubmit = createWritePlan(refinancePlanSteps(planArgs));
     atSubmit.arm('borrower');
     expect(atSubmit.offer('borrower', 'tx', reset).ok).toBe(true);
-    expect(atSubmit.steps().find((st) => st.id === 'b-approve-reset').status).toBe('consumed');
-  });
-
-  it('bounds the payoff approval with the app\u2019s own formula — loan 22 to the wei', () => {
-    // Loan 22 refinanced on 2026-10-05: grace 1 day (no buckets → the default
-    // table for 29 days), the borrower's submit anchored at chain time
-    // 1791190252, and the app approved exactly 5116095890410958 wei.
-    expect(graceSecondsFrom([], 29n)).toBe(86_400n);
-    const b = payoffApprovalBounds(LOAN, 86_400n, () => 1_791_190_252n);
-    expect(b.floor()).toBe(5_116_095_890_410_958n);
-    // Loan 22's grace end came before the request's expiry, so both bounds
-    // clamp to it and coincide.
-    expect(b.cap()).toBe(5_116_095_890_410_958n);
-    // An undersized approve is refused; the real one passes.
-    const m = approvalBetween(b.floor, b.cap, 'the payoff');
-    expect(structMismatches({ amount: m }, { amount: 1n })).toHaveLength(1);
-    expect(structMismatches({ amount: m }, { amount: 5_116_095_890_410_958n })).toEqual([]);
-    // No anchor yet → the floor is unknown → refused, never guessed.
-    expect(structMismatches({ amount: approvalBetween(() => null, b.cap, 'x') }, { amount: b.cap() })).toHaveLength(1);
-    expect(payoffApprovalBounds(LOAN, 86_400n, () => null).cap()).toBeNull();
-  });
-
-  // #2422 r9: the cap is the payoff at min(anchor + ANCHOR_WINDOW_SEC +
-  // REQUEST_WINDOW_SEC − 1, grace end) — when the grace end lies past the
-  // request's expiry, an approval sized for the grace end is refused.
-  it('caps the payoff approval at the request\u2019s last fillable moment when the grace end is later', () => {
-    const anchor = 1_800_000_000n;
-    // A one-year loan that started a day before the anchor: its grace end
-    // is ~a year out, far past the request's 30-day window.
-    const long = { ...LOAN, startTime: anchor - DAY, interestAccrualStart: anchor - DAY, durationDays: 365n, useFullTermInterest: false };
-    // #3169 — the minimum runs to the term's end; past it (the grace end is a
-    // month past maturity) interest grows with elapsed seconds.
-    const growing = long;
-    const grace = 30n * DAY;
-    const graceEnd = growing.startTime + growing.durationDays * DAY + grace;
-    const lastFillable = anchor + ANCHOR_WINDOW_SEC + 30n * DAY - 1n;
-    expect(lastFillable < graceEnd).toBe(true);
-    const b = payoffApprovalBounds(growing, grace, () => anchor);
-    expect(b.cap()).toBe(refinancePayoffAt(growing, lastFillable));
-    expect(b.cap()).toBeLessThan(refinancePayoffAt(growing, graceEnd));
-    const m = approvalBetween(b.floor, b.cap, 'the payoff');
-    expect(structMismatches({ amount: m }, { amount: refinancePayoffAt(growing, graceEnd) })).toHaveLength(1);
-    expect(structMismatches({ amount: m }, { amount: b.cap() })).toEqual([]);
-    expect(structMismatches({ amount: m }, { amount: b.floor() })).toEqual([]);
+    expect(atSubmit.steps().find((st) => st.id === 'b-permit2-reset').status).toBe('consumed');
   });
 
   it('judges stamped times against the chain anchor, not the local clock', () => {
@@ -418,5 +395,290 @@ describe('refinanceExpected — the borrower reserve', () => {
     expect(now.interestShare).toBe(interestFor(4n * DAY - 60n) + lateFeeAt(l, asOf));
     expect(later.interestShare).toBe(interestFor(4n * DAY - 60n + HORIZON) + lateFeeAt(l, asOf + HORIZON));
     expect(later.interestShare).toBeGreaterThan(now.interestShare);
+  });
+});
+
+// #3295 — the borrower's half of the plan on the payoff-permit route
+// (#1558 / #3042): the Permit2 approval, createOffer, the payoff permit
+// signature and the attach call. The requests are produced by the APP's own
+// builders (`payoffPermitTypedData`, `setPayoffPermitCall`) and, for the
+// signature, serialised by viem's own wallet client exactly as the injected
+// wallet receives it — so a drift between the drive's expected objects and
+// what the deployed app sends fails here, not on a funded wallet.
+describe('refinanceExpected — the payoff-permit route (#3295)', () => {
+  const CHAIN = 84532;
+  const ANCHOR = NOW;
+  const GRACE_END = LOAN.startTime + LOAN.durationDays * DAY + DAY;
+  const REQUEST_ID = 46n;
+  // The app's own chain read lands 2 s after the drive's anchor.
+  const EXPIRES_AT = ANCHOR + 2n + REQUEST_WINDOW_SEC;
+  const DEADLINE = lastFillableMoment(EXPIRES_AT, GRACE_END);
+  // The wallet share the contract reports at that deadline (loan 22's
+  // interest share plus the 0.2% LIF on the new principal).
+  const SHARE = 49_726_027_397_260n;
+  const NONCE = 2n ** 200n + 12_345n;
+  const SIG = `0x${'cd'.repeat(65)}`;
+
+  const tx = (to, abi, functionName, args) =>
+    decodeTxForComparison({ from: BORROWER, to, data: encodeFunctionData({ abi, functionName, args }) }, (a) =>
+      a.toLowerCase() === DIAMOND.toLowerCase() ? ABI : erc20Abi,
+    );
+  const approve = (spender, amount) => tx(LOAN.principalAsset, erc20Abi, 'approve', [spender, amount]);
+  const createOffer = () =>
+    tx(DIAMOND, ABI, 'createOffer', [
+      {
+        offerType: 1,
+        lendingAsset: LOAN.principalAsset,
+        amount: LOAN.principal,
+        interestRateBps: 0n,
+        collateralAsset: LOAN.collateralAsset,
+        collateralAmount: LOAN.collateralAmount,
+        durationDays: 30n,
+        assetType: 0,
+        tokenId: 0n,
+        quantity: 1n,
+        creatorRiskAndTermsConsent: true,
+        prepayAsset: LOAN.prepayAsset,
+        collateralAssetType: 0,
+        collateralTokenId: 0n,
+        collateralQuantity: 0n,
+        allowsPartialRepay: false,
+        amountMax: LOAN.principal,
+        interestRateBpsMax: 1200n,
+        collateralAmountMax: LOAN.collateralAmount,
+        periodicInterestCadence: 0,
+        expiresAt: EXPIRES_AT,
+        fillMode: 1,
+        allowsPrepayListing: false,
+        allowsParallelSale: false,
+        refinanceTargetLoanId: 22n,
+        useFullTermInterest: true,
+      },
+    ]);
+
+  /** The eth_signTypedData_v4 request viem's wallet client sends for the
+   *  app's permit typed data, and the request the gate judges from it. */
+  async function permitRequest(over = {}) {
+    const calls = [];
+    const wallet = createWalletClient({
+      account: BORROWER,
+      transport: custom({
+        async request({ method, params }) {
+          calls.push({ method, params });
+          return SIG;
+        },
+      }),
+    });
+    const data = payoffPermitTypedData({
+      chainId: CHAIN,
+      diamond: DIAMOND,
+      token: LOAN.principalAsset,
+      maxAmount: SHARE,
+      nonce: NONCE,
+      deadline: DEADLINE,
+      loanId: 22n,
+      offerId: REQUEST_ID,
+      ...over,
+    });
+    await wallet.signTypedData({ account: BORROWER, ...data });
+    const call = calls.find((c) => c.method === 'eth_signTypedData_v4');
+    return { params: call.params, actual: { signer: call.params[0], typedData: JSON.parse(call.params[1]) } };
+  }
+  const attach = (over = {}) => {
+    const c = setPayoffPermitCall(REQUEST_ID, { maxAmount: SHARE, nonce: NONCE, deadline: DEADLINE, signature: SIG, ...over });
+    return tx(DIAMOND, ABI, c.functionName, c.args);
+  };
+
+  /** A plan armed for the borrower, with the figures the drive's
+   *  `prepareBorrowerPermit` would have read; `known` controls which. */
+  function borrowerPlan({ bounds = { floor: SHARE - 10n, cap: SHARE + 10n }, permit = { offerId: REQUEST_ID, deadline: DEADLINE, maxAmount: SHARE }, permitNeeded = true } = {}) {
+    let plan = null;
+    plan = createWritePlan(
+      refinancePlanSteps({
+        ...TERMS_ARGS,
+        abi: ABI,
+        chainId: CHAIN,
+        diamond: DIAMOND,
+        borrowerAnchor: () => ANCHOR,
+        lenderAnchor: () => NOW,
+        permitNeeded,
+        permit2ShareBounds: () => bounds,
+        borrowerPermit: () => permit,
+        signedPayoffPermit: () => plan.steps().find((st) => st.id === 'b-permit' && st.status === 'consumed')?.record ?? null,
+        requestId: () => null,
+        signedAcceptTerms: () => null,
+      }),
+    );
+    plan.arm('borrower');
+    return plan;
+  }
+  /** Offer a request and keep what the drive's gate keeps with the step. */
+  function offer(plan, kind, req) {
+    const r = plan.offer('borrower', kind, req.actual ?? req);
+    if (r.ok) plan.record(r.index, kind === 'typed' ? { params: req.params, signature: SIG } : { call: (req.actual ?? req).data, hash: '0x01' });
+    return r;
+  }
+
+  it('holds its constants to the app and the contract', () => {
+    expect(PERMIT2_ADDRESS).toBe(APP_PERMIT2_ADDRESS);
+    const fn = ABI.find((e) => e.type === 'function' && e.name === 'setRefinancePayoffPermit');
+    expect(toFunctionSelector(fn)).toBe(toFunctionSelector(SET_PAYOFF_PERMIT_SIGNATURE));
+    // The drive's type list IS the app's (which the app's own test holds to
+    // the contract's WITNESS_TYPE_STRING).
+    const app = payoffPermitTypedData({ chainId: CHAIN, diamond: DIAMOND, token: LOAN.principalAsset, maxAmount: 1n, nonce: 1n, deadline: 1n, loanId: 1n, offerId: 1n });
+    expect(PAYOFF_PERMIT_TYPES).toEqual(app.types);
+    // And it encodes the contract's witness type string, read from source.
+    const sol = fs.readFileSync(path.join(HERE, '../../../../contracts/src/libraries/LibRefinancePayoff.sol'), 'utf8');
+    const decl = sol.match(/WITNESS_TYPE_STRING\s*=\s*((?:\s*"[^"]*")+)\s*;/);
+    const witness = [...decl[1].matchAll(/"([^"]*)"/g)].map((m) => m[1]).join('');
+    const fields = (t) => PAYOFF_PERMIT_TYPES[t].map((f) => `${f.type} ${f.name}`).join(',');
+    // Permit2's fixed stub, then the witness type string the Diamond hands it.
+    const stub = 'PermitWitnessTransferFrom(TokenPermissions permitted,address spender,uint256 nonce,uint256 deadline,';
+    const encoded =
+      `PermitWitnessTransferFrom(${fields('PermitWitnessTransferFrom')})` +
+      `RefinancePayoff(${fields('RefinancePayoff')})TokenPermissions(${fields('TokenPermissions')})`;
+    expect(encoded).toBe(`${stub}${witness}`);
+  });
+
+  it('derives the deadline as the app does: the request’s last fillable moment', () => {
+    for (const [e, g] of [
+      [EXPIRES_AT, GRACE_END], // clamped to the grace end (loan 22)
+      [1_000n, 5_000n], // the request ends first
+      [5_001n, 5_000n], // expiry − 1 = grace end
+      [0n, 5_000n], // no expiry of its own
+    ]) {
+      expect(lastFillableMoment(e, g)).toBe(appLastFillableMoment(e, g));
+    }
+    expect(DEADLINE).toBe(GRACE_END);
+    const w = permitDeadlineWindow(1_000_000n, 10n ** 12n);
+    expect(w.earliest).toBe(1_000_000n - ANCHOR_LAG_SEC + REQUEST_WINDOW_SEC - 1n);
+    expect(w.latest).toBe(1_000_000n + ANCHOR_WINDOW_SEC + REQUEST_WINDOW_SEC - 1n);
+    expect(permitDeadlineWindow(1_000_000n, 2_000_000n)).toEqual({ earliest: 2_000_000n, latest: 2_000_000n });
+    expect(permitDeadlineWindow(null, 1n)).toBeNull();
+  });
+
+  it('accepts the app’s whole borrower sequence, in order, once', async () => {
+    const plan = borrowerPlan();
+    expect(plan.steps().map((st) => `${st.id}${st.optional ? '?' : ''}`)).toEqual([
+      'b-caps?',
+      'b-permit2-reset?',
+      'b-permit2-set?',
+      'b-create',
+      'b-permit',
+      'b-attach',
+      'l-sign',
+      'l-approve-reset?',
+      'l-approve-set?',
+      'l-accept',
+    ]);
+    expect(offer(plan, 'tx', approve(PERMIT2_ADDRESS, 0n)).ok).toBe(true);
+    expect(offer(plan, 'tx', approve(PERMIT2_ADDRESS, SHARE)).ok).toBe(true);
+    expect(offer(plan, 'tx', createOffer()).ok).toBe(true);
+    const permit = await permitRequest();
+    expect(structMismatches(plan.steps()[4].expected(), permit.actual)).toEqual([]);
+    expect(offer(plan, 'typed', permit).ok).toBe(true);
+    expect(offer(plan, 'tx', attach()).ok).toBe(true);
+    expect(plan.steps().filter((st) => st.role === 'borrower').map((st) => st.status)).toEqual([
+      'skipped',
+      'consumed',
+      'consumed',
+      'consumed',
+      'consumed',
+      'consumed',
+    ]);
+    // A second attach is refused: the step is consumed.
+    expect(offer(plan, 'tx', attach()).ok).toBe(false);
+  });
+
+  it('skips the Permit2 approval when the allowance already covers the share', async () => {
+    const plan = borrowerPlan();
+    expect(offer(plan, 'tx', createOffer()).ok).toBe(true);
+    expect(offer(plan, 'typed', await permitRequest()).ok).toBe(true);
+    expect(offer(plan, 'tx', attach()).ok).toBe(true);
+  });
+
+  it('refuses the retired approval of the Diamond', () => {
+    const r = offer(borrowerPlan(), 'tx', approve(DIAMOND, SHARE));
+    expect(r.ok).toBe(false);
+    expect(r.why).toMatch(/spender/);
+  });
+
+  it('bounds the Permit2 approval by the share at the earliest and latest deadline', () => {
+    const bounds = { floor: SHARE - 10n, cap: SHARE + 10n };
+    expect(offer(borrowerPlan({ bounds }), 'tx', approve(PERMIT2_ADDRESS, bounds.floor - 1n)).ok).toBe(false);
+    expect(offer(borrowerPlan({ bounds }), 'tx', approve(PERMIT2_ADDRESS, bounds.cap + 1n)).ok).toBe(false);
+    expect(offer(borrowerPlan({ bounds }), 'tx', approve(PERMIT2_ADDRESS, bounds.floor)).ok).toBe(true);
+    // Unread bounds refuse rather than guess.
+    expect(offer(borrowerPlan({ bounds: null }), 'tx', approve(PERMIT2_ADDRESS, SHARE)).ok).toBe(false);
+  });
+
+  it('refuses a reset that is not followed by its set', () => {
+    const plan = borrowerPlan();
+    expect(offer(plan, 'tx', approve(PERMIT2_ADDRESS, 0n)).ok).toBe(true);
+    expect(offer(plan, 'tx', createOffer()).ok).toBe(false);
+  });
+
+  /** A plan advanced to the permit signature. */
+  function atPermit(opts) {
+    const plan = borrowerPlan(opts);
+    expect(offer(plan, 'tx', createOffer()).ok).toBe(true);
+    return plan;
+  }
+
+  it('pins the permit to the request, the deadline and the contract’s share, exactly', async () => {
+    const wrongRequest = offer(atPermit(), 'typed', await permitRequest({ offerId: 45n }));
+    expect(wrongRequest.ok).toBe(false);
+    expect(wrongRequest.why).toMatch(/witness\.offerId: "45" \(want 46\)/);
+    const short = offer(atPermit(), 'typed', await permitRequest({ maxAmount: SHARE - 1n }));
+    expect(short.why).toMatch(/permitted\.amount/);
+    const early = offer(atPermit(), 'typed', await permitRequest({ deadline: DEADLINE - 1n }));
+    expect(early.why).toMatch(/message\.deadline/);
+    const spender = offer(atPermit(), 'typed', await permitRequest({ diamond: LENDER }));
+    expect(spender.why).toMatch(/message\.spender/);
+    const token = offer(atPermit(), 'typed', await permitRequest({ token: LOAN.collateralAsset }));
+    expect(token.why).toMatch(/permitted\.token/);
+    const otherLoan = offer(atPermit(), 'typed', await permitRequest({ loanId: 23n }));
+    expect(otherLoan.why).toMatch(/witness\.loanId/);
+    const chain = offer(atPermit(), 'typed', await permitRequest({ chainId: 1 }));
+    expect(chain.why).toMatch(/domain\.chainId/);
+  });
+
+  it('refuses the permit while its figures are unknown, and requires it after the request', async () => {
+    const r = offer(atPermit({ permit: null }), 'typed', await permitRequest());
+    expect(r.ok).toBe(false);
+    expect(r.why).toMatch(/b-permit cannot be judged yet/);
+    // The attach cannot pass over the signature, and the lender cannot pass
+    // over either borrower step.
+    expect(offer(atPermit(), 'tx', attach()).ok).toBe(false);
+    const plan = atPermit();
+    plan.arm('lender');
+    expect(plan.offer('lender', 'typed', {}).why).toMatch(/b-permit expects borrower typed/);
+  });
+
+  it('binds the attach call to exactly the signed permit', async () => {
+    const plan = atPermit();
+    expect(offer(plan, 'typed', await permitRequest()).ok).toBe(true);
+    const r = offer(plan, 'tx', attach({ nonce: NONCE + 1n }));
+    expect(r.ok).toBe(false);
+    expect(r.why).toMatch(/data\.args\.nonce/);
+    const plan2 = atPermit();
+    expect(offer(plan2, 'typed', await permitRequest()).ok).toBe(true);
+    expect(offer(plan2, 'tx', attach({ signature: `0x${'ee'.repeat(65)}` })).why).toMatch(/data\.args\.signature/);
+  });
+
+  it('carries no Permit2 step when the wallet share is zero, and needs that stated', () => {
+    const plan = borrowerPlan({ permitNeeded: false });
+    expect(plan.steps().map((st) => st.id)).toEqual(['b-caps', 'b-create', 'l-sign', 'l-approve-reset', 'l-approve-set', 'l-accept']);
+    expect(offer(plan, 'tx', approve(PERMIT2_ADDRESS, 1n)).ok).toBe(false);
+    const { permitNeeded: _omit, ...args } = { ...TERMS_ARGS, ...NO_PERMIT_YET };
+    expect(() =>
+      refinancePlanSteps({ ...args, abi: ABI, chainId: CHAIN, diamond: DIAMOND, borrowerAnchor: () => ANCHOR, lenderAnchor: () => NOW, requestId: () => null, signedAcceptTerms: () => null }),
+    ).toThrow(/permitNeeded/);
+  });
+
+  it('expects the permit’s nonce to be random, any uint256', async () => {
+    const exp = expectedPayoffPermitTypedData({ chainId: CHAIN, diamond: DIAMOND, signer: BORROWER, token: LOAN.principalAsset, maxAmount: SHARE, deadline: DEADLINE, loanId: 22n, offerId: REQUEST_ID });
+    expect(structMismatches(exp, (await permitRequest({ nonce: 0n })).actual)).toEqual([]);
+    expect(structMismatches(exp, (await permitRequest({ nonce: 2n ** 256n - 1n })).actual)).toEqual([]);
   });
 });
