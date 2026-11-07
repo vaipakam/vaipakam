@@ -287,6 +287,11 @@ const CLASSIFICATION = {
     reason:
       'deployment epoch per chain (#2497 r10); an empty table adopts the indexer\'s adopted Diamond and resets nothing',
   },
+  keeper_private_nonce: {
+    class: 'replay-derived',
+    reason:
+      'next nonce reserved by a private broadcast (#3240); an empty table only forgets a reservation, and a private transaction stays pending for minutes, far less than a restore takes, so the pending count is right again by then',
+  },
   keeper_ops_alert: {
     class: 'replay-derived',
     reason:
