@@ -44,9 +44,13 @@ const arg = (name) => (process.argv.includes(name) ? process.argv[process.argv.i
 
 // ── pure parts (selftested) ──────────────────────────────────────────────
 
-/** Whether a changed path rebuilds the site (the Workers Build trigger's own rules). */
+/**
+ * Whether a changed path rebuilds the site: its `watch` list in
+ * served-build.json, copied from the Workers Build trigger's path_includes
+ * (a trailing '/' is a folder, anything else one file).
+ */
 export function rebuilds(site, path) {
-  return path.startsWith(`${site.dir}/`) || path.startsWith('packages/') || path === 'pnpm-lock.yaml';
+  return (site.watch ?? []).some((w) => (w.endsWith('/') ? path.startsWith(w) : path === w));
 }
 
 /** The newest version stamped from exactly `commit` (clean, never `-dirty`). */
@@ -211,9 +215,12 @@ async function selftest() {
   const ok = (cond, msg) => {
     if (!cond) throw new Error(`selftest: ${msg}`);
   };
-  const app = { worker: 'vaipakam-app', dir: 'apps/app' };
+  const app = { worker: 'vaipakam-app', dir: 'apps/app', watch: ['apps/app/', 'packages/', 'pnpm-lock.yaml'] };
   ok(rebuilds(app, 'apps/app/src/x.ts') && rebuilds(app, 'packages/lib/src/a.mjs') && rebuilds(app, 'pnpm-lock.yaml'), 'app paths');
-  ok(!rebuilds(app, 'apps/application/x') && !rebuilds(app, 'apps/www/x') && !rebuilds(app, 'docs/x.md'), 'other paths');
+  ok(!rebuilds(app, 'apps/application/x') && !rebuilds(app, 'apps/www/x') && !rebuilds(app, 'docs/x.md') && !rebuilds(app, 'pnpm-lock.yaml.bak'), 'other paths');
+  ok(!rebuilds({ worker: 'vaipakam-www', dir: 'apps/www' }, 'apps/www/x'), 'a site with no watch list rebuilds on nothing');
+  const config = JSON.parse(readFileSync(CONFIG_PATH, 'utf8'));
+  ok(config.sites.every((s) => Array.isArray(s.watch) && s.watch.length > 0 && s.watch.some((w) => w === `${s.dir}/`)), 'every site watches at least its own folder');
 
   const c = 'a'.repeat(40);
   const vs = [
