@@ -52,7 +52,8 @@ export const PRIVATE_TX_FALLBACK_VAR = 'PRIVATE_TX_FALLBACK_CHAIN_IDS';
  *  long. */
 export const PRIVATE_ROUTE_FLOOR_TTL_MS = 7 * 60_000;
 
-/** One chain's route. `host` is the endpoint's host name, the only part of
+/** One chain's route. `host` is the endpoint's provider domain (the last
+ *  two labels of its host name, {@link providerDomain}), the only part of
  *  the URL a log line may carry. */
 export type SubmissionRoute =
   | { kind: 'public' }
@@ -64,6 +65,20 @@ export type SubmissionRoutes =
   | { unread: string };
 
 const PUBLIC: SubmissionRoute = { kind: 'public' };
+
+/**
+ * The part of an endpoint's host name a log may name: its last two labels
+ * (`rpc.flashbots.net` → `flashbots.net`). A provider can put an access key
+ * in a subdomain label (`https://<KEY>.rpc.example.org`), which the full host
+ * name would leak on every tick (Codex #3275 r3); the provider's own domain
+ * is enough to tell which endpoint a chain uses. An IP address, which carries
+ * no key, is named whole.
+ */
+export function providerDomain(hostname: string): string {
+  if (/^[\d.]+$/.test(hostname) || hostname.includes(':') || hostname.startsWith('[')) return hostname;
+  const labels = hostname.split('.').filter(Boolean);
+  return labels.slice(-2).join('.');
+}
 
 /** The routes `rpcs` (`PRIVATE_TX_RPCS`) and `fallback`
  *  (`PRIVATE_TX_FALLBACK_CHAIN_IDS`) state. Entries are described by
@@ -92,7 +107,7 @@ export function readSubmissionRoutes(rpcs: string | SecretReadFailed | undefined
         return { unread: `${where} (chain ${id}) is not a URL` };
       }
       if (url.protocol !== 'https:') return { unread: `${where} (chain ${id}) is not an https URL` };
-      routes.set(id, { kind: 'private', url: url.toString(), host: url.hostname, fallback: fallbackRead.chains.has(id) });
+      routes.set(id, { kind: 'private', url: url.toString(), host: providerDomain(url.hostname), fallback: fallbackRead.chains.has(id) });
     }
   }
   for (const id of fallbackRead.chains) {

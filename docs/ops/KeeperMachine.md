@@ -330,8 +330,9 @@ a commit. The template documents each line. In short:
   public. A chain not listed has no fallback. Empty settings mean every chain
   sends publicly. A value the keeper cannot read sends nothing on any chain, so
   check the `submission routes:` line every tick prints after `chains
-  resolved`: it names each chain's route and the endpoint's host, never its
-  URL. Before each private broadcast the keeper records the next nonce in its
+  resolved`: it names each chain's route and the endpoint's provider domain
+  (the last two labels of its host, such as `flashbots.net`), never its URL
+  or a subdomain, either of which can carry an access key. Before each private broadcast the keeper records the next nonce in its
   private database (`keeper_private_nonce`, keeper migration `0007`), so a
   restart cannot reuse the nonce of a private transaction still pending; a
   record it cannot read or write stops that chain's sends. On a private chain

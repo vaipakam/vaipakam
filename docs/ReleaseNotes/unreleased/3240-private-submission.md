@@ -29,8 +29,9 @@ a failed private send is a failed send.
 Settings the keeper cannot read stop every send on every chain, including a
 secret that is set but fails to load, and the log
 says why, rather than quietly sending publicly. Every tick logs a
-`submission routes:` line naming each chain's route and the endpoint's host,
-never its URL, which can carry an access key. With nothing configured, every
+`submission routes:` line naming each chain's route and the endpoint's
+provider domain (such as `flashbots.net`), never its URL or a subdomain,
+either of which can carry an access key. With nothing configured, every
 chain sends publicly, as before.
 
 This closes the keeper side of #3240. Which mainnet chains get a private route

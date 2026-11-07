@@ -10,6 +10,7 @@ import { privateKeyToAccount } from 'viem/accounts';
 import {
   armSubmissionRoutes,
   describeSubmissionRoutes,
+  providerDomain,
   PRIVATE_ROUTE_FLOOR_TTL_MS,
   readSubmissionRoutes,
   resetSubmissionRoutes,
@@ -60,8 +61,8 @@ describe('readSubmissionRoutes', () => {
 
   it('reads one route per chain, with its fallback where the list names it', () => {
     const r = readSubmissionRoutes(` 1=${URL_ETH}, 56=https://bsc.example.net/ `, '1');
-    expect(submissionRouteFor(r, 1)).toMatchObject({ kind: 'private', host: 'rpc.example.org', fallback: true });
-    expect(submissionRouteFor(r, 56)).toMatchObject({ kind: 'private', host: 'bsc.example.net', fallback: false });
+    expect(submissionRouteFor(r, 1)).toMatchObject({ kind: 'private', host: 'example.org', fallback: true });
+    expect(submissionRouteFor(r, 56)).toMatchObject({ kind: 'private', host: 'example.net', fallback: false });
     expect(submissionRouteFor(r, 8453)).toEqual({ kind: 'public' });
   });
 
@@ -82,11 +83,11 @@ describe('readSubmissionRoutes', () => {
     }
   });
 
-  it('names every served chain\'s route, and a private route for a chain not served, with the host only', () => {
+  it('names every served chain\'s route, and a private route for a chain not served, with the provider domain only', () => {
     const r = readSubmissionRoutes(`1=${URL_ETH},56=https://bsc.example.net/`, '1');
     const line = describeSubmissionRoutes(r, [{ id: 1, name: 'Ethereum' }, { id: 8453, name: 'Base' }]);
     expect(line).toBe(
-      'Ethereum(1) private via rpc.example.org, falling back to the public RPC when it fails; Base(8453) public RPC; a private route is set for chain 56, which this tick does not serve',
+      'Ethereum(1) private via example.org, falling back to the public RPC when it fails; Base(8453) public RPC; a private route is set for chain 56, which this tick does not serve',
     );
     expect(line).not.toContain('SECRET');
     expect(describeSubmissionRoutes(readSubmissionRoutes('bad', ''), [])).toMatch(/^nothing is sent on any chain/);
@@ -295,6 +296,20 @@ describe('the private nonce record (Codex #3275 r1)', () => {
     const err = await withSubmissionSlot(wallet, 1, account.address, Number.MAX_SAFE_INTEGER, send).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(SubmissionRouteUnread);
     expect(send).not.toHaveBeenCalled();
+  });
+});
+
+describe('the provider domain a log may name (Codex #3275 r3)', () => {
+  it('drops every label but the last two, so a key in a subdomain is never logged', () => {
+    expect(providerDomain('rpc.flashbots.net')).toBe('flashbots.net');
+    expect(providerDomain('SECRETKEY123.rpc.example.org')).toBe('example.org');
+    expect(providerDomain('localhost')).toBe('localhost');
+    expect(providerDomain('10.0.0.1')).toBe('10.0.0.1');
+  });
+
+  it('the route and its per-tick line carry only that domain', () => {
+    const routes = readSubmissionRoutes('1=https://SECRETKEY123.rpc.example.org/x', '');
+    expect(describeSubmissionRoutes(routes, [{ id: 1, name: 'eth' } as never])).not.toContain('SECRETKEY123');
   });
 });
 
