@@ -2,9 +2,9 @@
  * How a live drive that MAY write settles a run its write plan did not let
  * write (#2505).
  *
- * Two drivers sign through a write plan (`live-internal-match-claim.mjs`,
- * `live-lender-close-out.mjs`). Before the plan sends, a run can stop for a
- * reason that is no finding (a precondition the drive needs), or because the
+ * Three drivers sign through a write plan (`live-internal-match-claim.mjs`,
+ * `live-lender-close-out.mjs`, `live-seller-claim.mjs`). Before the plan
+ * sends, a run can stop for a reason that is no finding (a precondition the drive needs), or because the
  * page did not do what the drive expected (a missing row, a button that
  * never came up, a page that sent nothing after its button was clicked).
  *
