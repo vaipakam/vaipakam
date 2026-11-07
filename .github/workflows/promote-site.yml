@@ -1,0 +1,118 @@
+name: Promote site
+
+# APPROVE-TO-GO-LIVE FOR THE SITES (#3236). Built now, switched OFF until
+# mainnet (owner decision 2026-11-07): while it is off, every merge still
+# deploys the app, alpha05 and the marketing site by itself, and this
+# workflow does nothing on a push.
+#
+# Switched ON (docs/ops/IncidentRunbook.md, "Deploy approval"), each site's
+# Workers Build only UPLOADS the new version (VAIPAKAM_DEPLOY_MODE=upload),
+# and this workflow, for every site the merge rebuilds:
+#   1. waits for the version stamped with the commit;
+#   2. rebuilds the commit and compares it, through the version's preview
+#      URL, with what that version serves (the served-build check), so the
+#      approver is shown a verified candidate, never a bare version id;
+#   3. waits for a person to approve the `site-production` environment, and
+#   4. makes that version take all traffic, writing this run's URL into the
+#      deployment's message. The six-hourly served-build check then reports
+#      any live version that no approval run put there.
+#
+# The deploy token (Workers Scripts Edit) is a secret of that environment
+# only, so no job reaches it before the approval. The reviewer must be a
+# person's account that no agent or bot signs in as, with self-review
+# prevented: the gate exists to stop agents too.
+#
+# Dispatch it by hand to promote one site's version of a given commit, which
+# is also how the gate is rehearsed while it is off.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/app/**'
+      - 'apps/alpha05/**'
+      - 'apps/www/**'
+      - 'packages/**'
+      - 'pnpm-lock.yaml'
+  workflow_dispatch:
+    inputs:
+      site:
+        description: The site to promote
+        type: choice
+        options: [vaipakam-app, vaipakam-alpha05, vaipakam-www]
+      commit:
+        description: 'The commit on main whose version to promote (default: the tip of main)'
+        type: string
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    # Off (no repository variable) a push does nothing; a dispatch always runs.
+    if: vars.SITE_DEPLOY_APPROVAL == 'on' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      commit: ${{ steps.plan.outputs.commit }}
+      app: ${{ steps.plan.outputs.app }}
+      alpha05: ${{ steps.plan.outputs.alpha05 }}
+      www: ${{ steps.plan.outputs.www }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - id: plan
+        env:
+          EVENT: ${{ github.event_name }}
+          INPUT_SITE: ${{ inputs.site }}
+          INPUT_COMMIT: ${{ inputs.commit }}
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" = workflow_dispatch ]; then
+            commit="$(git rev-parse --verify "${INPUT_COMMIT:-HEAD}^{commit}")"
+            git merge-base --is-ancestor "$commit" origin/main || { echo "::error::$commit is not on main"; exit 1; }
+            echo "commit=$commit" >> "$GITHUB_OUTPUT"
+            for s in app alpha05 www; do
+              if [ "$INPUT_SITE" = "vaipakam-$s" ]; then echo "$s=true"; else echo "$s=false"; fi
+            done >> "$GITHUB_OUTPUT"
+          else
+            echo "commit=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+            node .github/scripts/promote-site.mjs plan --commit "$GITHUB_SHA" --base "$PUSH_BEFORE"
+          fi
+
+  app:
+    needs: plan
+    if: needs.plan.outputs.app == 'true'
+    uses: ./.github/workflows/promote-one.yml
+    with:
+      site: vaipakam-app
+      commit: ${{ needs.plan.outputs.commit }}
+    secrets:
+      CLOUDFLARE_DEPLOY_READ_TOKEN: ${{ secrets.CLOUDFLARE_DEPLOY_READ_TOKEN }}
+
+  alpha05:
+    needs: plan
+    if: needs.plan.outputs.alpha05 == 'true'
+    uses: ./.github/workflows/promote-one.yml
+    with:
+      site: vaipakam-alpha05
+      commit: ${{ needs.plan.outputs.commit }}
+    secrets:
+      CLOUDFLARE_DEPLOY_READ_TOKEN: ${{ secrets.CLOUDFLARE_DEPLOY_READ_TOKEN }}
+
+  www:
+    needs: plan
+    if: needs.plan.outputs.www == 'true'
+    uses: ./.github/workflows/promote-one.yml
+    with:
+      site: vaipakam-www
+      commit: ${{ needs.plan.outputs.commit }}
+    secrets:
+      CLOUDFLARE_DEPLOY_READ_TOKEN: ${{ secrets.CLOUDFLARE_DEPLOY_READ_TOKEN }}

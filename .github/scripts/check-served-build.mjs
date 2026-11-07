@@ -37,7 +37,11 @@
  *                               across versions, carries no stamp, or was
  *                               built from uncommitted changes;
  *   - `off-main:<worker>`     — the stamped commit is not on `main`;
- *   - `unbuildable:<worker>`  — the recorded commit did not build here.
+ *   - `unbuildable:<worker>`  — the recorded commit did not build here;
+ *   - `unapproved:<worker>`   — deploy approval is on (the repository
+ *                               variable SITE_DEPLOY_APPROVAL=on) and the
+ *                               live deployment was not made by an approval
+ *                               run (.github/workflows/promote-site.yml).
  * An unknown is never reported as a match.
  *
  * WHAT IT DOES NOT SEE. Only the files the build writes are compared. A file
@@ -48,6 +52,8 @@
  *
  *   CLOUDFLARE_ACCOUNT_ID=… CLOUDFLARE_DEPLOY_READ_TOKEN=… \
  *     node .github/scripts/check-served-build.mjs [--site vaipakam-app]
+ *   node .github/scripts/check-served-build.mjs --site vaipakam-app --version <uuid>
+ *     (a candidate awaiting approval, compared through its preview URL)
  *   node .github/scripts/check-served-build.mjs --selftest
  */
 import { execFileSync, spawnSync } from 'node:child_process';
@@ -55,7 +61,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { appendFileSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, relative, sep } from 'node:path';
-import { readLatestDeployment } from './lib/workerDeployments.mjs';
+import { readLatestDeployment, readVersion } from './lib/workerDeployments.mjs';
 
 const CONFIG_PATH = '.github/served-build.json';
 const sha256 = (buf) => createHash('sha256').update(buf).digest('hex');
@@ -238,11 +244,45 @@ async function pool(items, size, fn) {
   return out;
 }
 
-async function checkSite(site, { auth, ref, suffixPaths }) {
+/**
+ * The preview origin of one version: `https://<first 8 of its id>-<worker>.<subdomain>.workers.dev`,
+ * from the site's own workers.dev host in the config.
+ */
+export function previewHost(site, versionId) {
+  const own = site.hosts.find((h) => h.startsWith(`https://${site.worker}.`) && h.endsWith('.workers.dev'));
+  if (!own) return null;
+  return own.replace(`https://${site.worker}.`, `https://${versionId.slice(0, 8)}-${site.worker}.`);
+}
+
+/**
+ * `target` is `{ mode: 'live' }` (what visitors receive now) or
+ * `{ mode: 'candidate', version }` (a version uploaded for approval, #3236,
+ * compared through its preview URL before anyone approves it).
+ */
+async function checkSite(site, { auth, ref, suffixPaths, approvalOn, target = { mode: 'live' } }) {
   const problem = (kind, text) => ({ key: `${kind}:${site.worker}`, text: `${site.worker}: ${text}` });
-  const before = await readLatestDeployment(site.worker, auth);
-  const v = verifiableCommit(before);
-  if (v.reason) return { problems: [problem('unverifiable', `cannot be verified: ${v.reason}.`)], report: [] };
+  let v;
+  let hosts = site.hosts;
+  if (target.mode === 'candidate') {
+    const ver = await readVersion(site.worker, target.version, auth);
+    if (ver.read !== 'ok') return { problems: [problem('unverifiable', `version ${target.version} cannot be read (${ver.read === 'none' ? 'not found' : ver.error}).`)], report: [] };
+    if (!ver.stamp || ver.stamp[2] || !ver.message) return { problems: [problem('unverifiable', `version ${ver.id} carries no clean commit stamp, so it cannot be approved.`)], report: [] };
+    const preview = ver.hasPreview ? previewHost(site, ver.id) : null;
+    if (!preview) return { problems: [problem('unverifiable', `version ${ver.id} has no preview URL to compare.`)], report: [] };
+    v = { short: ver.stamp[1], version: ver.id };
+    hosts = [preview];
+  } else {
+    const before = await readLatestDeployment(site.worker, auth);
+    v = verifiableCommit(before);
+    if (v.reason) return { problems: [problem('unverifiable', `cannot be verified: ${v.reason}.`)], report: [] };
+    // With the deploy approval on (#3236), the live deployment must be one a
+    // person approved: its message names the approving run. Anything else
+    // went live around the approval (a dashboard change of the deploy mode,
+    // or a deploy made directly with a Cloudflare token).
+    if (approvalOn && !before.approvedBy) {
+      return { problems: [problem('unapproved', `is live on version ${v.version}, which no approval run put there, while deploy approval is on (SITE_DEPLOY_APPROVAL). Check the Workers Build deploy mode and who deployed it.`)], report: [] };
+    }
+  }
 
   let commit;
   try {
@@ -279,7 +319,7 @@ async function checkSite(site, { auth, ref, suffixPaths }) {
 
   const differences = [];
   let matched = 0;
-  for (const host of site.hosts) {
+  for (const host of hosts) {
     const verdicts = await pool(files, 8, async (file) => {
       const path = servedPath(file);
       try {
@@ -309,17 +349,17 @@ async function checkSite(site, { auth, ref, suffixPaths }) {
   // Only an OBSERVED change of version excuses the result. A failed second
   // read shows nothing changed, so it leaves the site unverified, never
   // passed and never skipped.
-  const after = await readLatestDeployment(site.worker, auth);
-  if (after.read !== 'ok') {
+  const after = target.mode === 'live' ? await readLatestDeployment(site.worker, auth) : null;
+  if (after && after.read !== 'ok') {
     const why = after.read === 'none' ? 'the Worker has no deployment' : `it could not be read (${after.error})`;
     return { problems: [problem('unverifiable', `cannot be verified: its deployment was read before the comparison but not after it: ${why}.`)], report: [] };
   }
-  if (!deploymentUnchanged(after, v.version)) {
+  if (after && !deploymentUnchanged(after, v.version)) {
     const now = after.versions.map((x) => `${x.id} at ${x.percentage}%`).join(', ');
     return { problems: [], report: [`${site.worker}: its deployment changed during the check (${v.version} → ${now}); not judged this run.`] };
   }
 
-  const summary = `${files.length} file(s) on ${site.hosts.length} host(s), built from ${v.short} (version ${v.version})`;
+  const summary = `${files.length} file(s) on ${hosts.length} host(s), built from ${v.short} (version ${v.version})`;
   if (differences.length === 0) {
     return { problems: [], report: [`${site.worker}: serving exactly what ${v.short} builds — ${summary}${expectedHeaders.size ? `, and the ${expectedHeaders.size} root header(s) _headers sets` : ''}.`] };
   }
@@ -387,6 +427,9 @@ function selftest() {
     ok(site.hosts.length > 0 && site.hosts.every((h) => /^https:\/\/[a-z0-9.-]+$/.test(h)), `${site.worker}: hosts are bare https origins`);
     ok(Object.entries(site.buildVars).every(([k, val]) => /^VITE_[A-Z0-9_]+$/.test(k) && typeof val === 'string'), `${site.worker}: only public VITE_ build variables are recorded`);
   }
+  const site0 = { worker: 'vaipakam-alpha05', hosts: ['https://alpha05.vaipakam.com', 'https://vaipakam-alpha05.dawn-fire-139e.workers.dev'] };
+  ok(previewHost(site0, '67d96165-ae24-4a8a-b655-192fd468d1dc') === 'https://67d96165-vaipakam-alpha05.dawn-fire-139e.workers.dev', 'preview host');
+  ok(previewHost({ worker: 'x', hosts: ['https://x.example.com'] }, '67d96165-ae24-4a8a-b655-192fd468d1dc') === null, 'no workers.dev host, no preview');
   console.log('check-served-build selftest: OK');
 }
 
@@ -403,12 +446,20 @@ async function main() {
   const sites = config.sites.filter((s) => !only || s.worker === only);
   if (sites.length === 0) throw new Error(`no site ${only} in ${CONFIG_PATH}`);
   const suffixPaths = new Set(config.suffixMatch.map((s) => s.path));
+  // A candidate (#3236): one site's uploaded version, compared through its
+  // preview URL before it is approved.
+  const candidate = process.argv.includes('--version') ? process.argv[process.argv.indexOf('--version') + 1] : null;
+  if (candidate && sites.length !== 1) throw new Error('--version needs --site');
+  const target = candidate ? { mode: 'candidate', version: candidate } : { mode: 'live' };
+  // Whether deploy approval is on is a repository setting, stated in the
+  // report either way.
+  const approvalOn = (process.env.SITE_DEPLOY_APPROVAL ?? '').trim() === 'on';
 
   const problems = [];
   const report = [];
   try {
     for (const site of sites) {
-      const r = await checkSite(site, { auth: { account, token }, ref, suffixPaths });
+      const r = await checkSite(site, { auth: { account, token }, ref, suffixPaths, approvalOn, target });
       problems.push(...r.problems);
       report.push(...r.report, ...r.problems.map((p) => p.text));
     }
@@ -422,6 +473,7 @@ async function main() {
     }
   }
 
+  if (!candidate) report.push(`Deploy approval (SITE_DEPLOY_APPROVAL) is ${approvalOn ? 'ON: a live version must have been approved' : 'off: sites deploy on merge'}.`);
   for (const line of report) console.log(line);
   if (process.env.GITHUB_STEP_SUMMARY) {
     appendFileSync(process.env.GITHUB_STEP_SUMMARY, `## Served build\n\n${report.map((l) => `- ${oneLine(l, 600)}`).join('\n')}\n`);

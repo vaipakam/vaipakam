@@ -1,0 +1,249 @@
+#!/usr/bin/env node
+/**
+ * Approve-to-go-live for the sites (#3236): the helper behind
+ * .github/workflows/promote-site.yml.
+ *
+ * WHY. Every merge to `main` deploys the app, alpha05 and the marketing site
+ * by itself. At mainnet the owner decided (2026-11-06, built 2026-11-07) that
+ * a person approves each of those deploys: a bad merge, a stolen token or an
+ * agent's mistake must not reach the page users sign through without a
+ * person looking first.
+ *
+ * HOW. With the gate on, a site's Workers Build runs with
+ * `VAIPAKAM_DEPLOY_MODE=upload` (packages/lib/bin/wrangler-deploy.mjs): the
+ * new version is uploaded, stamped with its commit and previewable, and takes
+ * no traffic. The workflow then:
+ *   1. `plan`    — names the sites this commit rebuilds (the same path rules
+ *                  as their Workers Build triggers);
+ *   2. `find`    — waits for the stamped version, and says whether it is
+ *                  already live (the gate is off), older than what is live
+ *                  (never promoted: approving it would roll the site back),
+ *                  or pending;
+ *   3. the served-build check compares the pending version, through its
+ *      preview URL, with a build of its commit, BEFORE anyone is asked;
+ *   4. a person approves the job in the GitHub environment, and
+ *   5. `deploy`  — re-checks all of it and makes that version take all
+ *                  traffic, writing the approving run into the deployment's
+ *                  message, which the served-build check reads back.
+ *
+ *   node .github/scripts/promote-site.mjs plan   --commit <sha> [--base <sha>]
+ *   node .github/scripts/promote-site.mjs find   --site <worker> --commit <sha>
+ *   node .github/scripts/promote-site.mjs deploy --site <worker> --commit <sha> --version <uuid>
+ *   node .github/scripts/promote-site.mjs --selftest
+ */
+import { execFileSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
+import { appendFileSync, readFileSync } from 'node:fs';
+import { deployVersion, readLatestDeployment, readRecentVersions } from './lib/workerDeployments.mjs';
+
+const CONFIG_PATH = '.github/served-build.json';
+const FULL_SHA = /^[0-9a-f]{40}$/;
+const git = (args) => execFileSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+const arg = (name) => (process.argv.includes(name) ? process.argv[process.argv.indexOf(name) + 1] : undefined);
+
+// ── pure parts (selftested) ──────────────────────────────────────────────
+
+/** Whether a changed path rebuilds the site (the Workers Build trigger's own rules). */
+export function rebuilds(site, path) {
+  return path.startsWith(`${site.dir}/`) || path.startsWith('packages/') || path === 'pnpm-lock.yaml';
+}
+
+/** The newest version stamped from exactly `commit` (clean, never `-dirty`). */
+export function versionFor(versions, commit) {
+  return versions.find((v) => v.tag === commit.slice(0, 12) && v.message === `built from ${commit}`) ?? null;
+}
+
+/**
+ * Where the candidate stands against what is live: 'live' (it already takes
+ * all traffic), 'newer' (it descends from the live commit: promotable),
+ * 'older' (the live commit descends from it: promoting would roll back), or
+ * 'unrelated' (neither, so not promoted).
+ */
+export function standing({ candidateCommit, candidateVersion, liveVersion, liveCommit }, isAncestor) {
+  if (liveVersion === candidateVersion) return 'live';
+  if (!liveCommit) return 'newer';
+  if (liveCommit === candidateCommit) return 'newer';
+  if (isAncestor(liveCommit, candidateCommit)) return 'newer';
+  if (isAncestor(candidateCommit, liveCommit)) return 'older';
+  return 'unrelated';
+}
+
+// ── side effects ─────────────────────────────────────────────────────────
+
+const isAncestor = (a, b) => {
+  try {
+    git(['merge-base', '--is-ancestor', a, b]);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+function output(values) {
+  for (const [k, v] of Object.entries(values)) console.log(`${k}=${v}`);
+  if (!process.env.GITHUB_OUTPUT) return;
+  const lines = Object.entries(values).map(([k, v]) => {
+    const value = String(v).replace(/[\r\n]+/g, ' ');
+    const d = `EOF_${randomUUID()}`;
+    return `${k}<<${d}\n${value}\n${d}\n`;
+  });
+  appendFileSync(process.env.GITHUB_OUTPUT, lines.join(''));
+}
+
+function summary(text) {
+  console.log(text);
+  if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${text}\n`);
+}
+
+function siteOf(config, worker) {
+  const site = config.sites.find((s) => s.worker === worker);
+  if (!site) throw new Error(`no site ${worker} in ${CONFIG_PATH}`);
+  return site;
+}
+
+function fullCommit(raw) {
+  const commit = git(['rev-parse', '--verify', '--quiet', `${raw}^{commit}`]).trim();
+  if (!FULL_SHA.test(commit)) throw new Error(`${raw} is not a commit here`);
+  // Only merged code is ever promoted, whatever ref the run started from.
+  if (!isAncestor(commit, 'origin/main')) throw new Error(`${commit} is not on main`);
+  return commit;
+}
+
+async function liveFacts(site, auth) {
+  const live = await readLatestDeployment(site.worker, auth);
+  if (live.read !== 'ok') throw new Error(`${site.worker}: its live deployment cannot be read (${live.read === 'none' ? 'none' : live.error})`);
+  const only = live.versions.length === 1 ? live.versions[0] : null;
+  const short = only?.stamp && !only.stamp[2] ? only.stamp[1] : null;
+  let liveCommit = null;
+  if (short) {
+    try {
+      liveCommit = git(['rev-parse', '--verify', '--quiet', `${short}^{commit}`]).trim();
+    } catch {
+      liveCommit = null;
+    }
+  }
+  return { liveVersion: only?.id ?? null, liveCommit };
+}
+
+async function find(config, auth) {
+  const site = siteOf(config, arg('--site'));
+  const commit = fullCommit(arg('--commit'));
+  const waitMinutes = Number(process.env.PROMOTE_WAIT_MINUTES ?? 30);
+  const deadline = Date.now() + waitMinutes * 60_000;
+  let version = null;
+  for (;;) {
+    const recent = await readRecentVersions(site.worker, auth, 30);
+    if (recent.read !== 'ok') throw new Error(`${site.worker}: versions cannot be read (${recent.error})`);
+    version = versionFor(recent.versions, commit);
+    if (version || Date.now() > deadline) break;
+    await new Promise((r) => setTimeout(r, 30_000));
+  }
+  if (!version) {
+    summary(`${site.worker}: no version stamped ${commit.slice(0, 12)} appeared within ${waitMinutes} min. Its Workers Build did not run or failed; nothing to approve.`);
+    output({ state: 'missing', version: '', short: commit.slice(0, 12) });
+    process.exitCode = 1;
+    return;
+  }
+  const facts = await liveFacts(site, auth);
+  const state = standing({ candidateCommit: commit, candidateVersion: version.id, ...facts }, isAncestor);
+  const words = {
+    live: 'is already live, so it deployed without approval: the gate is off on its Workers Build (VAIPAKAM_DEPLOY_MODE is not "upload").',
+    newer: `is uploaded and waiting for approval (live now: ${facts.liveCommit?.slice(0, 12) ?? 'an unplaced version'}).`,
+    older: `is OLDER than what is live (${facts.liveCommit?.slice(0, 12)}); promoting it would roll the site back, so it is not offered.`,
+    unrelated: `does not descend from the live commit ${facts.liveCommit?.slice(0, 12)}; it is not offered.`,
+  };
+  summary(`${site.worker}: version ${version.id} built from ${commit.slice(0, 12)} ${words[state]}`);
+  output({ state: state === 'newer' ? 'pending' : state, version: version.id, short: commit.slice(0, 12) });
+}
+
+async function deploy(config, readAuth, writeAuth) {
+  const site = siteOf(config, arg('--site'));
+  const commit = fullCommit(arg('--commit'));
+  const versionId = arg('--version');
+  const runUrl = `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`;
+  // Everything is read again after the approval: what was approved must
+  // still be the version stamped from this commit, and still newer than live.
+  const recent = await readRecentVersions(site.worker, readAuth, 50);
+  if (recent.read !== 'ok') throw new Error(`${site.worker}: versions cannot be read (${recent.error})`);
+  const version = versionFor(recent.versions, commit);
+  if (!version || version.id !== versionId) throw new Error(`${site.worker}: ${versionId} is no longer the version stamped from ${commit}`);
+  const facts = await liveFacts(site, readAuth);
+  const state = standing({ candidateCommit: commit, candidateVersion: versionId, ...facts }, isAncestor);
+  if (state === 'live') {
+    summary(`${site.worker}: ${versionId} is already live; nothing to do.`);
+    return;
+  }
+  if (state !== 'newer') throw new Error(`${site.worker}: ${versionId} is ${state} than the live deployment now; refusing to promote it.`);
+  await deployVersion(site.worker, versionId, runUrl, writeAuth);
+  const after = await readLatestDeployment(site.worker, readAuth);
+  if (after.read !== 'ok' || after.versions.length !== 1 || after.versions[0].id !== versionId || after.approvedBy !== runUrl) {
+    throw new Error(`${site.worker}: the deployment was sent but reading it back does not show ${versionId} live under this run`);
+  }
+  summary(`${site.worker}: version ${versionId} (${commit.slice(0, 12)}) is live, approved in ${runUrl}.`);
+}
+
+function plan(config) {
+  const commit = fullCommit(arg('--commit'));
+  // The push's own range when the workflow gives it (a push may carry more
+  // than one commit), else the commit's parent.
+  const rawBase = arg('--base');
+  const base = rawBase && FULL_SHA.test(rawBase) && !/^0+$/.test(rawBase) ? rawBase : git(['rev-parse', `${commit}^`]).trim();
+  const changed = git(['diff', '--name-only', base, commit]).split('\n').filter(Boolean);
+  const sites = config.sites.filter((s) => changed.some((p) => rebuilds(s, p))).map((s) => s.worker);
+  summary(`Commit ${commit.slice(0, 12)} rebuilds: ${sites.length ? sites.join(', ') : 'no site'}.`);
+  const has = (w) => (sites.includes(w) ? 'true' : 'false');
+  output({ app: has('vaipakam-app'), alpha05: has('vaipakam-alpha05'), www: has('vaipakam-www') });
+}
+
+// ── selftest ─────────────────────────────────────────────────────────────
+
+function selftest() {
+  const ok = (cond, msg) => {
+    if (!cond) throw new Error(`selftest: ${msg}`);
+  };
+  const app = { worker: 'vaipakam-app', dir: 'apps/app' };
+  ok(rebuilds(app, 'apps/app/src/x.ts') && rebuilds(app, 'packages/lib/src/a.mjs') && rebuilds(app, 'pnpm-lock.yaml'), 'app paths');
+  ok(!rebuilds(app, 'apps/application/x') && !rebuilds(app, 'apps/www/x') && !rebuilds(app, 'docs/x.md'), 'other paths');
+
+  const c = 'a'.repeat(40);
+  const vs = [
+    { id: 'v3', tag: `${c.slice(0, 12)}-dirty`, message: '' },
+    { id: 'v2', tag: c.slice(0, 12), message: `built from ${c}` },
+    { id: 'v1', tag: c.slice(0, 12), message: `built from ${c}` },
+  ];
+  ok(versionFor(vs, c)?.id === 'v2', 'the newest clean version of the commit');
+  ok(versionFor(vs, 'b'.repeat(40)) === null, 'no version for another commit');
+
+  const anc = (a, b) => a === 'old' && b === 'new';
+  ok(standing({ candidateCommit: 'new', candidateVersion: 'v', liveVersion: 'v', liveCommit: 'new' }, anc) === 'live', 'live');
+  ok(standing({ candidateCommit: 'new', candidateVersion: 'v2', liveVersion: 'v1', liveCommit: 'old' }, anc) === 'newer', 'newer');
+  ok(standing({ candidateCommit: 'old', candidateVersion: 'v1', liveVersion: 'v2', liveCommit: 'new' }, anc) === 'older', 'older');
+  ok(standing({ candidateCommit: 'x', candidateVersion: 'v1', liveVersion: 'v2', liveCommit: 'y' }, anc) === 'unrelated', 'unrelated');
+  ok(standing({ candidateCommit: 'x', candidateVersion: 'v1', liveVersion: null, liveCommit: null }, anc) === 'newer', 'unplaced live');
+  console.log('promote-site selftest: OK');
+}
+
+// ── main ─────────────────────────────────────────────────────────────────
+
+async function main() {
+  if (process.argv.includes('--selftest')) return selftest();
+  const config = JSON.parse(readFileSync(CONFIG_PATH, 'utf8'));
+  const cmd = process.argv[2];
+  if (cmd === 'plan') return plan(config);
+  const account = process.env.CLOUDFLARE_ACCOUNT_ID;
+  const readToken = process.env.CLOUDFLARE_DEPLOY_READ_TOKEN;
+  if (!account || !readToken) throw new Error('CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_DEPLOY_READ_TOKEN are required');
+  const readAuth = { account, token: readToken };
+  if (cmd === 'find') return find(config, readAuth);
+  if (cmd === 'deploy') {
+    const writeToken = process.env.CLOUDFLARE_PROMOTE_TOKEN;
+    if (!writeToken) throw new Error('CLOUDFLARE_PROMOTE_TOKEN is required to deploy (the approval environment holds it)');
+    return deploy(config, readAuth, { account, token: writeToken });
+  }
+  throw new Error('usage: promote-site.mjs plan|find|deploy …');
+}
+
+main().catch((err) => {
+  console.error(String(err.message).replace(/[\r\n]+/g, ' ').slice(0, 500));
+  process.exit(2);
+});
