@@ -1,4 +1,4 @@
-## Keeper — the matcher shares its previews across wallets, not offers (PR #<n>)
+## Keeper — the matcher shares its previews across wallets, not offers (PR #3274)
 
 The keeper's matcher previews a bounded number of candidate pairs per run.
 Until now it spent that budget in listing order: each lender walked every
