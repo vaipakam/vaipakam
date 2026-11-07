@@ -16,11 +16,12 @@
 //      REFERENCE_SITE_URL (the workers.dev URL the deploy printed). Both
 //      hosts answer every path with a 200 SPA shell, so only the bundle hash
 //      says which build is being reviewed. alpha02 is refused outright.
-//   2. Chain: the sale recorded a claim for ROLE on LOAN_ID, the loan is no
-//      longer Active, something is waiting for the seller
-//      (`getSellerInterestHeld` > 0), and the chain itself would let ROLE
-//      withdraw it now (a simulation of `claimAsSeller`). Otherwise BLOCKED:
-//      there is no claim to judge a card against.
+//   2. Chain: the loan is no longer Active, ROLE has either an open seller
+//      claim on it or something already waiting (`getSellerInterestHeld`;
+//      claimAsSeller splits an open claim off the terminal lender claim when
+//      it runs), and the chain itself would let ROLE withdraw now (a
+//      simulation of `claimAsSeller`). Otherwise BLOCKED: there is no claim
+//      to judge a card against.
 //   3. /claims: discovery settles as `listed`, the loan has exactly one row,
 //      the row offers the withdrawal (`data-withdraw="ready"`), and the loan
 //      is not among the rows the card could not read.
@@ -272,11 +273,16 @@ try {
   await blocked('chain reads failed', err);
 }
 const fmt = (v) => `${formatUnits(v, Number(decimals))} ${symbol}`;
-if (claimOwed === null) await blocked(`loan ${LOAN_ID}'s interest ledger holds no seller claim for ${ROLE} ${WALLET}`);
 if (Number(loan.status) === ACTIVE) {
   await blocked(`loan ${LOAN_ID} is still Active — run the fixture's repay stage first, so the claim is paid and can be withdrawn`);
 }
-if (heldBefore === 0n) await blocked(`nothing is waiting for ${ROLE} ${WALLET} on loan ${LOAN_ID} (getSellerInterestHeld is 0)`);
+// Past the terminal the seller's share is either already in their vault, or
+// still an open claim that claimAsSeller splits off the lender claim row when
+// it runs. Neither is a claim to judge only when both are absent; whether the
+// chain would pay now is the simulation's question below.
+if (claimOwed === null && heldBefore === 0n) {
+  await blocked(`loan ${LOAN_ID} holds no open seller claim and nothing waiting for ${ROLE} ${WALLET}`);
+}
 // The chain's own answer, at startup: a withdrawal the chain already refuses
 // (a pause, a sanctions flag) is not a card this drive can judge.
 try {
@@ -286,7 +292,7 @@ try {
   const name = err.walk((e) => e?.name === 'ContractFunctionRevertedError')?.data?.errorName;
   await blocked(`the chain already refuses claimAsSeller(${LOAN_ID}) for ${ROLE} ${WALLET} at startup (${name ?? err.shortMessage ?? err.message})`);
 }
-console.log(`claim: owed ${fmt(claimOwed)} gross, waiting ${fmt(heldBefore)}; loan status ${loan.status}`);
+console.log(`claim: ${claimOwed === null ? 'closed' : `open, ${fmt(claimOwed)} gross`}; waiting in the vault ${fmt(heldBefore)}; loan status ${loan.status}`);
 
 // ── Wallet posture ─────────────────────────────────────────────────────
 let gasFloor = 0n;

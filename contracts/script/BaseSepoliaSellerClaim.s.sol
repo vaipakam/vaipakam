@@ -42,8 +42,10 @@ import {IRepriceDiamondViews} from "./lib/RepriceVenueReport.sol";
  *           owed. Run it at least a few minutes after `open`: interest is
  *           earned per second, and a claim of zero proves nothing.
  *         - `repay` (`SC_LOAN_ID`): the borrower repays in full, approving
- *           exactly the Diamond's quote; refuses unless the loan reads Repaid
- *           and the seller's share is waiting (`getSellerInterestHeld` > 0).
+ *           the Diamond's quote plus 1% for interest accrued before it mines
+ *           (the allowance is set back to zero after); refuses unless the loan
+ *           reads Repaid and the seller's share is either in their vault or
+ *           still an open claim (`claimAsSeller` splits it off lazily).
  *
  *         Funds moved, all testnet mocks: the faucet mints mUSDC to the lender
  *         and the new lender and tLIQ to the borrower; the principal moves
@@ -158,20 +160,30 @@ contract BaseSepoliaSellerClaim is Script {
 
         uint256 due = RepayFacet(diamond).calculateRepaymentAmount(loanId);
         require(due > 0, "BaseSepoliaSellerClaim: the Diamond quotes nothing due");
+        // The quote is at simulation time; interest accrues per second until
+        // the repay mines, so fund and approve 1% headroom over it, then set
+        // the allowance back to zero so no standing approval is left.
+        uint256 cap = due + due / 100 + 1;
         vm.startBroadcast(borrowerKey);
         uint256 have = IERC20Metadata(loan.principalAsset).balanceOf(loan.borrower);
-        if (have < due) ERC20Mock(loan.principalAsset).mint(loan.borrower, due - have);
-        ERC20Mock(loan.principalAsset).approve(diamond, due);
+        if (have < cap) ERC20Mock(loan.principalAsset).mint(loan.borrower, cap - have);
+        ERC20Mock(loan.principalAsset).approve(diamond, cap);
         RepayFacet(diamond).repayLoan(loanId);
+        ERC20Mock(loan.principalAsset).approve(diamond, 0);
         vm.stopBroadcast();
 
         require(
             LoanFacet(diamond).getLoanDetails(loanId).status == LibVaipakam.LoanStatus.Repaid,
             "BaseSepoliaSellerClaim: the loan did not read Repaid"
         );
+        // The seller's share is either already in their vault (paid as the
+        // interest arrived) or still an open claim that `claimAsSeller` splits
+        // off the terminal lender claim when it runs. Either is withdrawable;
+        // the live driver establishes that with a simulation of the call.
         uint256 held = SellerClaimFacet(diamond).getSellerInterestHeld(loanId, seller, loan.principalAsset);
-        require(held > 0, "BaseSepoliaSellerClaim: nothing is waiting for the seller after the repay");
-        console.log("Repaid; waiting for the seller (raw):", held);
+        uint256 open = _claimOwed(diamond, loanId, seller);
+        require(held > 0 || open > 0, "BaseSepoliaSellerClaim: nothing is waiting for the seller and no claim is open after the repay");
+        console.log("Repaid; waiting in the seller's vault / still open as a claim (raw):", held, open);
         console.log("Next: live-seller-claim.mjs with LOAN_ID=", loanId);
     }
 
