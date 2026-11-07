@@ -55,6 +55,7 @@ export const GOVERNANCE_TIMELOCK_READ_ABI = parseAbi([
   'function getPendingProposalsCount() view returns (uint256)',
   'function getPendingProposals(uint32 offset, uint32 limit) view returns ((bytes32 id, uint256 eta, bool ready)[] page)',
   'function getMinDelay() view returns (uint256)',
+  'function MIN_DELAY_FLOOR() view returns (uint256)',
 ]);
 
 export const CALL_SCHEDULED_EVENT = parseAbiItem(
@@ -205,12 +206,13 @@ function prove(id: Hex, logs: ScheduledLog[], salt: Hex): QueuedOperationDetails
 
 /** Read one window's schedule logs for `id` and try to prove them. */
 async function tryWindow(
-  client: Pick<PublicClient, 'getLogs'>,
+  client: Pick<PublicClient, 'getLogs' | 'getBlock'>,
   timelock: Address,
-  id: Hex,
+  op: { id: Hex; eta: bigint },
   fromBlock: bigint,
   toBlock: bigint,
 ): Promise<{ found: false } | { found: true; details: QueuedOperationDetails | null }> {
+  const id = op.id;
   const [scheduled, salts] = await Promise.all([
     client.getLogs({ address: timelock, event: CALL_SCHEDULED_EVENT, args: { id }, fromBlock, toBlock }),
     client.getLogs({ address: timelock, event: CALL_SALT_EVENT, args: { id }, fromBlock, toBlock }),
@@ -246,7 +248,15 @@ async function tryWindow(
     const saltLog = salts.find((s) => s.transactionHash === tx);
     const salt = (saltLog?.args.salt as Hex | undefined) ?? ZERO32;
     const details = prove(id, logs, salt);
-    if (details) return { found: true, details };
+    if (!details || details.kind !== 'proved') continue;
+    // The calls hash to the id, but an id is the same every time the same
+    // calls are scheduled, so a cancelled earlier scheduling proves the calls
+    // and not this one's delay, block or transaction. The live scheduling is
+    // the one the stored time came from: OpenZeppelin sets
+    // eta = schedule block's timestamp + delay.
+    const at = await client.getBlock({ blockNumber: details.scheduledBlock });
+    if (at.timestamp + details.delay === op.eta) return { found: true, details };
+    return { found: false };
   }
   return { found: true, details: null };
 }
@@ -256,7 +266,7 @@ async function detailsFor(
   client: Pick<PublicClient, 'getBlock' | 'getLogs'>,
   timelock: Address,
   op: { id: Hex; eta: bigint },
-  minDelay: bigint,
+  delays: { current: bigint; floor: bigint },
   head: bigint,
   opts: ReadGovernanceQueueOptions,
 ): Promise<QueuedOperationDetails> {
@@ -272,7 +282,7 @@ async function detailsFor(
   const attempt = async (w: { fromBlock: bigint; toBlock: bigint } | null): Promise<QueuedOperationDetails | null> => {
     if (!w || searched.some((s) => s.fromBlock === w.fromBlock && s.toBlock === w.toBlock)) return null;
     searched.push(w);
-    const r = await tryWindow(client, timelock, op.id, w.fromBlock, w.toBlock);
+    const r = await tryWindow(client, timelock, op, w.fromBlock, w.toBlock);
     if (!r.found) return null;
     if (r.details) return r.details;
     sawUnproved = true;
@@ -285,11 +295,17 @@ async function detailsFor(
       const d = await attempt(clip(hint - range / 2n));
       if (d) return d;
     }
-    // An operation scheduled with the current minimum delay was scheduled at
-    // exactly `eta - minDelay`. A longer delay, or a minimum raised since,
-    // puts it earlier, so the search walks back from there.
-    const scheduleTs = op.eta > minDelay ? op.eta - minDelay : 0n;
-    let start = await firstBlockAtOrAfter(client, scheduleTs, opts.fromBlock, head);
+    // An operation was scheduled at exactly `eta - delay`, where the delay
+    // is at least the minimum in force then, and never below the floor the
+    // timelock was deployed with. The two exact candidates are the current
+    // minimum (how governance normally schedules) and the floor (the minimum
+    // until it is raised, so an operation queued before a raise). Any longer
+    // delay puts the schedule earlier than the floor's candidate, so the
+    // bounded walk goes back from there.
+    const at = (delay: bigint) => firstBlockAtOrAfter(client, op.eta > delay ? op.eta - delay : 0n, opts.fromBlock, head);
+    const d1 = await attempt(clip(await at(delays.current)));
+    if (d1) return d1;
+    let start = await at(delays.floor);
     const windows = opts.maxWindowsPerOperation ?? 8;
     for (let i = 0; i < windows; i++) {
       const d = await attempt(clip(start));
@@ -313,10 +329,14 @@ export async function readGovernanceQueue(
   const latest = await client.getBlock({ blockTag: 'latest' });
   const blockNumber = latest.number;
   if (blockNumber === null) throw new Error('governance queue: the latest block has no number');
-  const read = <T>(functionName: 'getPendingProposalsCount' | 'getMinDelay' | 'getPendingProposals', args?: readonly unknown[]) =>
+  const read = <T>(functionName: 'getPendingProposalsCount' | 'getMinDelay' | 'MIN_DELAY_FLOOR' | 'getPendingProposals', args?: readonly unknown[]) =>
     client.readContract({ address: timelock, abi: GOVERNANCE_TIMELOCK_READ_ABI, functionName, args, blockNumber } as never) as Promise<T>;
 
-  const [count, minDelay] = await Promise.all([read<bigint>('getPendingProposalsCount'), read<bigint>('getMinDelay')]);
+  const [count, minDelay, floor] = await Promise.all([
+    read<bigint>('getPendingProposalsCount'),
+    read<bigint>('getMinDelay'),
+    read<bigint>('MIN_DELAY_FLOOR'),
+  ]);
   const pageSize = opts.pageSize ?? 50;
   const pending: { id: Hex; eta: bigint; ready: boolean }[] = [];
   for (let offset = 0; BigInt(offset) < count; offset += pageSize) {
@@ -327,7 +347,7 @@ export async function readGovernanceQueue(
 
   const operations: QueuedOperation[] = [];
   for (const op of pending) {
-    operations.push({ ...op, details: await detailsFor(client, timelock, op, minDelay, blockNumber, opts) });
+    operations.push({ ...op, details: await detailsFor(client, timelock, op, { current: minDelay, floor }, blockNumber, opts) });
   }
   // Soonest first: the change that can run next leads.
   operations.sort((a, b) => (a.eta < b.eta ? -1 : a.eta > b.eta ? 1 : 0));
@@ -403,6 +423,8 @@ export interface DescribedCall {
     | { kind: 'ownership'; newOwner: Address }
     | { kind: 'upgrade'; implementation: Address }
     | { kind: 'call' }
+    /** No calldata: a plain transfer of `value` to the target. */
+    | { kind: 'transfer' }
     | { kind: 'undecoded' };
 }
 
@@ -423,6 +445,7 @@ export function describeGovernanceCall(call: GovernanceCall, targets: readonly G
   const known = targets.find((t) => t.address.toLowerCase() === call.target.toLowerCase()) ?? null;
   const selector = (call.data.length >= 10 ? call.data.slice(0, 10) : call.data) as Hex;
   const base = { target: call.target, targetKey: known?.key ?? null, value: call.value, selector };
+  if (call.data === '0x') return { ...base, functionName: null, args: [], action: { kind: 'transfer' } };
   if (!known?.abi) return { ...base, functionName: null, args: [], action: { kind: 'undecoded' } };
 
   let decoded: { functionName: string; args?: readonly unknown[] };
@@ -480,6 +503,14 @@ function actionOf(fn: string, a: readonly unknown[]): DescribedCall['action'] {
 /** One English line for an ops alert. Surfaces with their own copy (the
  *  app's locales) phrase `action` themselves instead. */
 export function englishSummary(d: DescribedCall): string {
+  // A native amount leaving the timelock is stated on every call that sends
+  // one, whatever the call does, so two calls differing only in it never read
+  // the same.
+  const sends = d.value > 0n ? ` Sends ${d.value.toString()} wei of the chain's native token from the timelock.` : '';
+  return actionSentence(d) + sends;
+}
+
+function actionSentence(d: DescribedCall): string {
   const where = d.targetKey ? `the ${d.targetKey}` : `unlisted contract ${d.target}`;
   const a = d.action;
   switch (a.kind) {
@@ -499,6 +530,8 @@ export function englishSummary(d: DescribedCall): string {
       return `Upgrades ${where} to the implementation at ${a.implementation}.`;
     case 'call':
       return `Calls ${d.functionName}(${d.args.map((x) => `${x.name}=${x.value}`).join(', ')}) on ${where}.`;
+    case 'transfer':
+      return `Transfers to ${where} with no call.`;
     case 'undecoded':
       return `Calls function ${d.selector} on ${where}; the call could not be decoded.`;
   }

@@ -26,6 +26,7 @@ const GENESIS = 1_800_000_000n;
 const BLOCK_TIME = 2n;
 const HEAD = 100_000n;
 const MIN_DELAY = 172_800n; // 48h = 86_400 blocks at 2s
+const FLOOR = 172_800n;
 
 const tsOf = (n: bigint) => GENESIS + n * BLOCK_TIME;
 
@@ -46,7 +47,7 @@ interface Salt {
   tx: Hex;
 }
 
-function fakeChain(opts: { pending: { id: Hex; eta: bigint; ready: boolean }[]; scheduled: Scheduled[]; salts?: Salt[] }) {
+function fakeChain(opts: { pending: { id: Hex; eta: bigint; ready: boolean }[]; scheduled: Scheduled[]; salts?: Salt[]; minDelay?: bigint }) {
   const calls = { getLogs: 0, getBlock: 0, ranges: [] as [bigint, bigint][] };
   const client = {
     async getBlock(args: { blockNumber?: bigint; blockTag?: string }) {
@@ -56,7 +57,8 @@ function fakeChain(opts: { pending: { id: Hex; eta: bigint; ready: boolean }[]; 
     },
     async readContract(args: { functionName: string; args?: readonly unknown[] }) {
       if (args.functionName === 'getPendingProposalsCount') return BigInt(opts.pending.length);
-      if (args.functionName === 'getMinDelay') return MIN_DELAY;
+      if (args.functionName === 'getMinDelay') return opts.minDelay ?? MIN_DELAY;
+      if (args.functionName === 'MIN_DELAY_FLOOR') return FLOOR;
       if (args.functionName === 'getPendingProposals') {
         const [offset, limit] = args.args as [number, number];
         return opts.pending.slice(offset, offset + limit);
@@ -91,7 +93,7 @@ const tx = (n: number) => `0x${n.toString(16).padStart(64, '0')}` as Hex;
 
 describe('the read ABI', () => {
   it('matches the committed VaipakamTimelock ABI', () => {
-    for (const name of ['getPendingProposalsCount', 'getPendingProposals', 'getMinDelay'] as const) {
+    for (const name of ['getPendingProposalsCount', 'getPendingProposals', 'getMinDelay', 'MIN_DELAY_FLOOR'] as const) {
       const ours = getAbiItem({ abi: GOVERNANCE_TIMELOCK_READ_ABI, name });
       const theirs = getAbiItem({ abi: VaipakamTimelockABI as Abi, name });
       expect(toFunctionSelector(ours as never)).toBe(toFunctionSelector(theirs as never));
@@ -173,6 +175,38 @@ describe('readGovernanceQueue', () => {
     });
     const q = await readGovernanceQueue(client, TIMELOCK, { maxLogRange: 2000, fromBlock: 0n });
     expect(q.operations[0].details.kind).toBe('proved');
+  });
+
+  it('finds an operation queued before the minimum delay was raised', async () => {
+    const block = 60_000n;
+    const id = hashOperation(pauseCall, ZERO32, ZERO32);
+    const { client } = fakeChain({
+      minDelay: FLOOR + 86_400n, // raised from 48h to 72h after it was queued
+      pending: [{ id, eta: tsOf(block) + FLOOR, ready: false }],
+      scheduled: [{ id, index: 0n, call: pauseCall, predecessor: ZERO32, delay: FLOOR, block, tx: tx(6), logIndex: 0 }],
+    });
+    const q = await readGovernanceQueue(client, TIMELOCK, { maxLogRange: 2000, fromBlock: 0n, maxWindowsPerOperation: 1 });
+    expect(q.operations[0].details.kind === 'proved' && q.operations[0].details.scheduledBlock).toBe(block);
+  });
+
+  it('does not take a cancelled earlier scheduling of the same calls for the live one', async () => {
+    const id = hashOperation(pauseCall, ZERO32, ZERO32);
+    const old = 5_000n; // scheduled with 48h, then cancelled
+    const live = 1_000n; // the same calls rescheduled... with a far longer delay
+    const liveDelay = FLOOR + 2n * (old - live) * BLOCK_TIME;
+    const eta = tsOf(live) + liveDelay;
+    const { client } = fakeChain({
+      pending: [{ id, eta, ready: false }],
+      scheduled: [
+        { id, index: 0n, call: pauseCall, predecessor: ZERO32, delay: FLOOR, block: old, tx: tx(7), logIndex: 0 },
+        { id, index: 0n, call: pauseCall, predecessor: ZERO32, delay: liveDelay, block: live, tx: tx(8), logIndex: 0 },
+      ],
+    });
+    // A stale hint at the cancelled scheduling.
+    const q = await readGovernanceQueue(client, TIMELOCK, { maxLogRange: 2000, fromBlock: 0n, hints: new Map([[id, old]]), maxWindowsPerOperation: 40 });
+    const d = q.operations[0].details;
+    expect(d.kind === 'proved' && d.scheduledTx).toBe(tx(8));
+    expect(d.kind === 'proved' && d.delay).toBe(liveDelay);
   });
 
   it('refuses logs that do not hash to the stored id', async () => {
@@ -266,6 +300,14 @@ describe('describeGovernanceCall', () => {
     const data = encodeFunctionData({ abi: VaipakamTimelockABI as Abi, functionName: 'updateDelay', args: [259_200n] });
     const d = describeGovernanceCall({ target: TIMELOCK, value: 0n, data }, targets);
     expect(d.action).toEqual({ kind: 'delay', newDelay: 259_200n });
+  });
+
+  it('states a native amount on every call that sends one', () => {
+    const d = describeGovernanceCall({ ...pauseCall, value: 10n ** 18n }, targets);
+    expect(englishSummary(d)).toBe("Pauses the diamond. Sends 1000000000000000000 wei of the chain's native token from the timelock.");
+    const t = describeGovernanceCall({ target: DIAMOND, value: 5n, data: '0x' }, targets);
+    expect(t.action).toEqual({ kind: 'transfer' });
+    expect(englishSummary(t)).toBe("Transfers to the diamond with no call. Sends 5 wei of the chain's native token from the timelock.");
   });
 
   it('says when a call cannot be decoded, never guessing', () => {
