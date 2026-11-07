@@ -116,6 +116,30 @@ import {LibOracleFreshness} from "./LibOracleFreshness.sol";
  *            no-change refresh leaves both counts as they were, and a batch
  *            cannot add beyond what the publication's first update declared.
  *
+ *         4b. **What a stolen adder key can do is bounded** (#3239). A
+ *            listing does more than block new positions: the Diamond's
+ *            sanctions gate also refuses the listed wallet's claims, its
+ *            partial and early withdrawals and its vault creation, until the
+ *            remover delists it. Two limits keep an adder's reach in
+ *            proportion:
+ *            - an adder (a caller that is not also a remover) may list at
+ *              most `adderDailyAdditionCap` addresses per UTC day, counted
+ *              across its updates. A larger publication finishes the next
+ *              day, through the batching of note 4a, or the remover applies
+ *              it at once. The owner sets the cap within
+ *              [`MIN_ADDER_DAILY_ADDITION_CAP`, `MAX_ADDER_DAILY_ADDITION_CAP`];
+ *            - no update, from anyone, may record a publication dated after
+ *              the chain's own UTC date. OFAC dates a file in US Eastern
+ *              time, which is never ahead of UTC, so a genuine file always
+ *              passes. Without this, one update dated far in the future made
+ *              every genuine later publication look older (note 1a) until the
+ *              owner authorized a rollback.
+ *            What stays open: an adder can still record a fake file under
+ *            TODAY's date, which holds back a genuine file of the same date
+ *            until the owner authorizes it (note 1a) or the next publication
+ *            arrives. Every listing is evented, so an off-chain watcher can
+ *            page the operators within minutes.
+ *
  *         5. **Attribution.** `sanctionSource` says which source flags an
  *            address, so a surface that tells a flagged user whom to contact
  *            can name OFAC's list or RedStone's oracle truthfully.
@@ -189,6 +213,24 @@ contract SanctionsList is ComposedSanctionsList, Ownable2Step {
     /// @notice The source hash that pending authorization names.
     bytes32 public rollbackAuthorizedHash;
 
+    /// @notice The most addresses an adder may list per UTC day (note 4b).
+    ///         The remover is not limited.
+    uint32 public adderDailyAdditionCap;
+
+    /// @notice The UTC day (days since 1970-01-01) `adderAdditionsOnDay`
+    ///         counts.
+    uint32 public adderAdditionsDay;
+
+    /// @notice Addresses adders listed on `adderAdditionsDay`.
+    uint32 public adderAdditionsOnDay;
+
+    /// @notice The cap a new list starts with (note 4b).
+    uint32 public constant DEFAULT_ADDER_DAILY_ADDITION_CAP = 100;
+    /// @notice The lowest cap the owner may set.
+    uint32 public constant MIN_ADDER_DAILY_ADDITION_CAP = 10;
+    /// @notice The highest cap the owner may set.
+    uint32 public constant MAX_ADDER_DAILY_ADDITION_CAP = 1000;
+
     /// @notice An adder was appointed or removed.
     /// @custom:event-category informational/admin
     event AdderSet(address indexed account, bool enabled);
@@ -238,6 +280,9 @@ contract SanctionsList is ComposedSanctionsList, Ownable2Step {
     event ChangesPending(uint64 indexed version, uint32 additions, uint32 delistings);
     /// @notice An update consumed that authorization.
     /// @custom:event-category informational/config
+    /// @notice The owner set the adders' daily listing cap (note 4b).
+    event AdderDailyAdditionCapSet(uint32 cap);
+
     event PublicationRollbackApplied(
         uint64 indexed version, uint32 fromDate, bytes32 fromHash, uint32 toDate, bytes32 toHash
     );
@@ -277,12 +322,22 @@ contract SanctionsList is ComposedSanctionsList, Ownable2Step {
     /// @notice Renouncing ownership is disabled: it would leave the adder
     ///         and remover sets impossible to rotate.
     error RenounceDisabled();
+    /// @notice An adder's update would list more addresses today than the
+    ///         daily cap leaves (note 4b).
+    error AdderDailyCapExceeded(uint256 additions, uint256 leftToday);
+    /// @notice A daily cap outside the allowed range.
+    error AdderDailyCapOutOfRange(uint32 cap);
+    /// @notice A publication dated after the chain's UTC date (note 4b).
+    error PublicationDatedInFuture(uint32 publicationDate, uint32 today);
 
     /// @param owner_      The chain's admin. Two-step ownership applies to
     ///                    every later transfer.
     /// @param secondary_  RedStone's Sanctions Oracle on this chain, or
     ///                    `address(0)` where it is not deployed. Immutable.
-    constructor(address owner_, address secondary_) Ownable(owner_) ComposedSanctionsList(secondary_) {}
+    constructor(address owner_, address secondary_) Ownable(owner_) ComposedSanctionsList(secondary_) {
+        adderDailyAdditionCap = DEFAULT_ADDER_DAILY_ADDITION_CAP;
+        emit AdderDailyAdditionCapSet(DEFAULT_ADDER_DAILY_ADDITION_CAP);
+    }
 
     // ── Roles ─────────────────────────────────────────────────────────
 
@@ -291,6 +346,13 @@ contract SanctionsList is ComposedSanctionsList, Ownable2Step {
         if (account == address(0)) revert ZeroAddress();
         isAdder[account] = enabled;
         emit AdderSet(account, enabled);
+    }
+
+    /// @notice Set how many addresses an adder may list per UTC day (note 4b).
+    function setAdderDailyAdditionCap(uint32 cap) external onlyOwner {
+        if (cap < MIN_ADDER_DAILY_ADDITION_CAP || cap > MAX_ADDER_DAILY_ADDITION_CAP) revert AdderDailyCapOutOfRange(cap);
+        adderDailyAdditionCap = cap;
+        emit AdderDailyAdditionCapSet(cap);
     }
 
     /// @notice Appoint or remove a remover (note 4).
@@ -379,11 +441,13 @@ contract SanctionsList is ComposedSanctionsList, Ownable2Step {
         uint32 additionsLeft,
         uint32 delistingsLeft
     ) external {
+        bool remover = isRemover[msg.sender];
         if (toRemove.length != 0) {
-            if (!isRemover[msg.sender]) revert NotRemover(msg.sender);
-        } else if (!isAdder[msg.sender] && !isRemover[msg.sender]) {
+            if (!remover) revert NotRemover(msg.sender);
+        } else if (!remover && !isAdder[msg.sender]) {
             revert NotUpdater(msg.sender);
         }
+        if (!remover) _countAdderAdditions(toAdd.length);
         uint64 current = listVersion;
         if (expectedVersion != current) revert StaleListVersion(expectedVersion, current);
         if (sourceHash_ == bytes32(0)) revert MissingSourceHash();
@@ -423,6 +487,17 @@ contract SanctionsList is ComposedSanctionsList, Ownable2Step {
         _setPendingCounts(repeat, nAdd, nRemove, additionsLeft, delistingsLeft);
         emit ChangesPending(version, additionsLeft, delistingsLeft);
         emit ListUpdated(version, sourceHash_, publicationDate, nAdd, nRemove, _listed.length(), msg.sender);
+    }
+
+    /// @dev Counts an adder's additions against today's cap (note 4b).
+    function _countAdderAdditions(uint256 additions) private {
+        if (additions == 0) return;
+        uint32 today = uint32(block.timestamp / 1 days);
+        uint256 used = adderAdditionsDay == today ? adderAdditionsOnDay : 0;
+        uint256 left = used >= adderDailyAdditionCap ? 0 : adderDailyAdditionCap - used;
+        if (additions > left) revert AdderDailyCapExceeded(additions, left);
+        adderAdditionsDay = today;
+        adderAdditionsOnDay = uint32(used + additions);
     }
 
     /// @dev The outstanding counts after an update (note 4a). A NEW
@@ -485,14 +560,39 @@ contract SanctionsList is ComposedSanctionsList, Ownable2Step {
     ///      included (Codex #2543 r10). The date orders publications, so an
     ///      impossible one (`20260231`) is refused rather than sorted, along
     ///      with an obvious encoding mistake (a Unix timestamp, `YYMMDD`, a
-    ///      swapped month and day).
-    function _checkPublicationDate(uint32 date) private pure {
+    ///      swapped month and day). A date after the chain's own UTC date
+    ///      is refused too (note 4b, #3239).
+    function _checkPublicationDate(uint32 date) private view {
         uint32 year = date / 10_000;
         uint32 month = (date / 100) % 100;
         uint32 day = date % 100;
         if (year < 2000 || year > 2999 || month == 0 || month > 12 || day == 0 || day > _daysInMonth(year, month)) {
             revert InvalidPublicationDate(date);
         }
+        uint32 today = utcDate(block.timestamp);
+        if (date > today) revert PublicationDatedInFuture(date, today);
+    }
+
+    /// @notice A Unix time's UTC calendar date as `YYYYMMDD`.
+    /// @dev    Howard Hinnant's days-to-civil algorithm, unsigned because a
+    ///         block time is never before 1970.
+    function utcDate(uint256 timestamp) public pure returns (uint32) {
+        uint256 z = timestamp / 1 days + 719_468;
+        uint256 era = z / 146_097;
+        uint256 doe = z - era * 146_097;
+        uint256 yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+        uint256 doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+        uint256 mp = (5 * doy + 2) / 153;
+        uint256 d = doy - (153 * mp + 2) / 5 + 1;
+        uint256 m = mp < 10 ? mp + 3 : mp - 9;
+        uint256 y = yoe + era * 400 + (m <= 2 ? 1 : 0);
+        return uint32(y * 10_000 + m * 100 + d);
+    }
+
+    /// @notice How many more addresses an adder may list today (note 4b).
+    function adderAdditionsLeftToday() external view returns (uint256) {
+        uint256 used = adderAdditionsDay == uint32(block.timestamp / 1 days) ? adderAdditionsOnDay : 0;
+        return used >= adderDailyAdditionCap ? 0 : adderDailyAdditionCap - used;
     }
 
     /// @dev Days in `month` of `year` (Gregorian).

@@ -808,24 +808,28 @@
       "gate": "the Diamond (its protected-mode cancel path), or the vault owner's EIP-712 CancelPin signature over (vault, nonce) verified at the beacon against the owner wallet the vault recorded; cancelling only ever refuses a change"
     },
     "VaultBeacon.executeCurrentVersion()": {
-      "class": "gap",
-      "issue": "#3282",
-      "why": "applies a current-version proposal once MIN_CODE_DELAY has passed; anyone may call it, and the keeper pass that backs it is #3282 (ships disarmed)"
+      "class": "keeper",
+      "pass": "vaultBeaconUpkeep",
+      "flag": "VAULT_BEACON_UPKEEP_ENABLED",
+      "evidence": "apps/keeper/src/vaultBeaconUpkeep.ts"
     },
     "VaultBeacon.executePin(address)": {
-      "class": "gap",
-      "issue": "#3282",
-      "why": "applies a vault's pin change once its pin delay has passed; anyone may call it, and the keeper pass that backs it is #3282 (ships disarmed)"
+      "class": "keeper",
+      "pass": "vaultBeaconUpkeep",
+      "flag": "VAULT_BEACON_UPKEEP_ENABLED",
+      "evidence": "apps/keeper/src/vaultBeaconUpkeep.ts"
     },
     "VaultBeacon.executePinDelay(address)": {
-      "class": "gap",
-      "issue": "#3282",
-      "why": "applies a vault's pin-delay lowering once the current delay has passed; anyone may call it, and the keeper pass that backs it is #3282 (ships disarmed)"
+      "class": "keeper",
+      "pass": "vaultBeaconUpkeep",
+      "flag": "VAULT_BEACON_UPKEEP_ENABLED",
+      "evidence": "apps/keeper/src/vaultBeaconUpkeep.ts"
     },
     "VaultBeacon.executeRevoke()": {
-      "class": "gap",
-      "issue": "#3282",
-      "why": "applies a revoke proposal once MIN_CODE_DELAY has passed; anyone may call it, and the keeper pass that backs it is #3282 (ships disarmed)"
+      "class": "keeper",
+      "pass": "vaultBeaconUpkeep",
+      "flag": "VAULT_BEACON_UPKEEP_ENABLED",
+      "evidence": "apps/keeper/src/vaultBeaconUpkeep.ts"
     },
     "VaultBeacon.setPinDelay(address,uint256,bytes)": {
       "class": "gated",
