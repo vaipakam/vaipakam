@@ -1,8 +1,12 @@
-import type { ComponentType } from 'react';
+import { lazy, type ComponentType } from 'react';
 import { BorrowPage } from '../pages/borrow/BorrowPage';
 import { HomePage } from '../pages/home/HomePage';
 import { LendPage } from '../pages/lend/LendPage';
 import { PositionsPage } from '../pages/positions/PositionsPage';
+
+/** The governance page decodes calls against the Diamond's whole ABI, which
+ *  no other page needs, so it loads with the route instead of with the app. */
+const GovernancePage = lazy(() => import('../pages/governance/GovernancePage').then((m) => ({ default: m.GovernancePage })));
 
 /** The page each BUILT route renders, by page-map path. A route not listed
  *  keeps its honest placeholder; `pageMap.test.ts` holds this map and the
@@ -12,4 +16,5 @@ export const BUILT_PAGES: Readonly<Record<string, ComponentType>> = {
   '/borrow': BorrowPage,
   '/lend': LendPage,
   '/positions': PositionsPage,
+  '/governance': GovernancePage,
 };
