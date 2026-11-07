@@ -225,23 +225,6 @@ contract InteractionRewardVaultDeliveryTest is SetupTest, IVaipakamErrors {
         );
     }
 
-    function testMandatoryUpgradeGateFallsBackToWallet() public {
-        address vault = _vaultFacet().getOrCreateUserVault(alice);
-        uint256 expected = _seedClaimable(alice);
-
-        // Put alice's vault below the mandatory floor — the design's
-        // below-mandatory-version claimant case.
-        _mut().setMandatoryVaultVersionRaw(type(uint256).max);
-
-        vm.prank(alice);
-        (uint256 paid, , ) = RewardClaimFacet(address(diamond)).claimInteractionRewards();
-
-        assertEq(paid, expected, "claim availability unchanged");
-        assertEq(vpfi.balanceOf(alice), expected, "wallet fallback paid");
-        assertEq(vpfi.balanceOf(vault), 0, "gated vault untouched");
-        assertEq(_tracked(alice), 0, "no tracked credit");
-    }
-
     // ─── Contract callers ────────────────────────────────────────────────────
 
     function testContractCallerDefaultsToRawWalletTransfer() public {

@@ -38,7 +38,6 @@ function review(over: Partial<AcceptReview> = {}): AcceptReview {
     vault: '0x0000000000000000000000000000000000000000',
     funds: { balance: 10_000n * 10n ** 18n, allowance: 0n },
     approvalSteps: 1,
-    vaultUpgradeYours: null,
     gate: 0,
     creatorGate: 0,
     consent: true,
@@ -98,12 +97,10 @@ describe('approval steps', () => {
   });
 });
 
-describe('vault upgrade refusal', () => {
-  const preview = { ...review().preview, error: 'VaultUpgradeRequired' as const };
-  it('sends the remedy to this wallet only when its own vault is the one below the required version', () => {
-    expect(reviewBlockers(review({ preview, vaultUpgradeYours: true }), null, copy)).toEqual(['accept.err.VaultUpgradeRequired']);
-    expect(reviewBlockers(review({ preview, vaultUpgradeYours: false }), null, copy)).toEqual(['accept.vaultUpgradeLender']);
-    expect(reviewBlockers(review({ preview, vaultUpgradeYours: null }), null, copy)).toEqual(['accept.vaultUpgradeEither']);
+describe('retired vault-version refusal (#3204)', () => {
+  const preview = { ...review().preview, error: 'RetiredVaultUpgradeRequired' as const };
+  it('reads as the code this build cannot name', () => {
+    expect(reviewBlockers(review({ preview }), null, copy)).toEqual(['accept.err.Unrecognised']);
   });
 });
 
@@ -132,8 +129,6 @@ describe('a lender funding a borrow request', () => {
 
   it('names the other side as the borrower in refusals and blocks', () => {
     expect(reviewBlockers(lenderReview({ gate: 2, creatorGate: 2 }), null, copy)).toEqual(['lendAccept.blockCreatorGate']);
-    const vault = { ...lenderReview().preview, error: 'VaultUpgradeRequired' as const };
-    expect(reviewBlockers(lenderReview({ preview: vault, vaultUpgradeYours: false }), null, copy)).toEqual(['lendAccept.vaultUpgradeBorrower']);
     const cancelled = { ...lenderReview().preview, error: 'OfferIsCancelled' as const };
     expect(reviewBlockers(lenderReview({ preview: cancelled }), null, copy)).toEqual(['lendAccept.err.OfferIsCancelled']);
     const paused = { ...lenderReview().preview, error: 'AssetPaused' as const };

@@ -841,10 +841,5 @@
         "internalType": "bytes32"
       }
     ]
-  },
-  {
-    "type": "error",
-    "name": "VaultUpgradeRequired",
-    "inputs": []
   }
 ]

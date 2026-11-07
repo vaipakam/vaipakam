@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {Test} from "forge-std/Test.sol";
+import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
 import {VaipakamDiamond} from "../src/VaipakamDiamond.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
@@ -308,7 +309,7 @@ contract LoanFacetTest is Test {
 
         // Init vault factory with impl
         vm.prank(owner);
-        VaultFactoryFacet(address(diamond)).initializeVaultImplementation();
+        LibTestVaultBeacon.install(address(diamond), address(this));
 
         // Mock approvals
         vm.prank(lender);

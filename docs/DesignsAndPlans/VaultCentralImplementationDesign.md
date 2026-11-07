@@ -1,6 +1,6 @@
 # Vault code resolved centrally (#3204)
 
-Status: **design for owner review**. Nothing here is built yet. The owner's
+Status: **built** (the #3204 build PR; see §8 for what the build decided and the residuals it states). The owner's
 decisions of 2026-11-05 are recorded in the issue and repeated where they
 apply. Every other choice this document makes is marked **Default**, so the
 owner can overturn it before code starts.
@@ -307,3 +307,57 @@ puts those checks into every vault at once.
 4. One build PR for this change, then #3205's.
 
 Both reach chains by fresh deploy.
+
+## 8. Build notes and stated residuals (the #3204 build)
+
+Decided while building (owner, 2026-11-07, via the project thread):
+- **The owner wallet the beacon checks** is recorded by the vault once, at
+  creation, from the BeaconProxy's init data (`vaultOwner()`). Replacing it on
+  a protected primary replacement arrives with #3205. **Residual until then:**
+  a replaced account's controller cannot pin or unpin. Testnet-only, because
+  #3205 lands before any mainnet deploy.
+- **Secondary keys.** `cancelPin` accepts the owner's signature or the
+  Diamond. Secondary signers cancel through the Diamond's existing
+  protected-mode cancel (`cancelSettingChange(account, 6)`), which calls the
+  beacon. The direct secondary-signature path lands with #3205's signer
+  record.
+- **The guardian** is an address the beacon stores, set by its owner (the
+  Timelock) and deployed as the Pauser Safe. Reading the PAUSER_ROLE holder
+  from the Diamond would let a faulty facet name itself. The beacon reads
+  only `paused()` from the Diamond.
+- **The pin delay raised by the Diamond is capped** at
+  `MAX_DIAMOND_PIN_DELAY` (2 days), strictly below `MIN_CODE_DELAY` (3 days),
+  so a pin requested as soon as a code change is proposed always executes
+  before that change. Only the owner's own signature may raise it above the
+  cap; lowering it needs the owner's signature and waits the current delay.
+  Protected mode raises it toward its own delay through that capped path.
+- **One pending proposal at a time** on the beacon, and **one pending pin
+  change per vault**. A pending pin whose target is revoked meanwhile lapses
+  at `executePin` instead of holding the vault's pin slot.
+- **Signed changes** (pin, unpin, cancel, pin delay) consume a per-vault nonce
+  at the beacon, so each signature is single-use.
+
+Stated residuals:
+- **The Diamond's pointer to the beacon** (`vaultBeacon`, set once at
+  deploy) lives in Diamond storage. A faulty facet rewriting it could only
+  change the beacon of vaults created afterwards; existing vaults hold their
+  beacon in their own proxy (immutable). #3205's genuine-vault code-identity
+  check bounds it.
+- **Gas.** Measured in `VaultBeaconTest.test_gas_vaultCallThroughBeacon`: a
+  vault view call costs 19,930 gas through the beacon against 2,898 on the
+  implementation directly, so the beacon lookup adds about **17,000 gas cold**
+  per vault call (a cold beacon account plus three storage reads); repeat
+  calls in the same transaction are much cheaper. Not cached across
+  transactions, by design.
+- **No keeper applies matured changes yet.** `executePin`, `executePinDelay`,
+  `executeCurrentVersion` and `executeRevoke` are open to anyone; the keeper
+  pass that backs them is #3282 (recorded gaps in
+  `permissionless-steps.json`).
+- **The app's vault page** (version, pin, pending change and countdown) is
+  #3281. Until it ships, the protection page says plainly that pins moved to
+  that page.
+- **Storage.** The Diamond's retired fields (`vaipakamVaultTemplate`, the
+  version counters, the per-user version and pin maps, `pendingUnpinAt`) keep
+  their slots under retired names; the vault's storage-layout root moves from
+  `uups:` to `beacon:` and is acknowledged as a deliberate break (fresh deploy
+  only).

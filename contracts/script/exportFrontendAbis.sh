@@ -403,6 +403,10 @@ FACETS=(
   # names, so a return naming another Base Diamond is never sent into a
   # delivery that Base would refuse.
   "VpfiReturnReceiver"
+  # #3204 — the VaultBeacon (standalone; NOT a diamond facet). Every user vault
+  # resolves its code through it; the vault page reads versions, pins and
+  # pending code changes from it, and the indexer decodes its events.
+  "VaultBeacon"
   # #2399 — the Diamond PROXY itself. Not a facet: its fallback raises
   # `FunctionDoesNotExist()` for an unrouted selector, the revert a stale ABI
   # produces. Listed under `proxy` in diamond-facets.json, and the combined

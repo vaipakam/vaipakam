@@ -564,32 +564,6 @@ contract AggregatorAdapterTest is SetupTest {
         assertEq(adapter.maxDeposit(aggregator), 0, "maxDeposit zeroed while paused");
     }
 
-    /// @dev #626 round-7 P2 — a mandatory VAULT upgrade (distinct from the adapter
-    ///      upgrade floor) makes the adapter's `withdrawLenderIntentCapital` revert
-    ///      `VaultUpgradeRequired`, so the withdraw max methods must advertise 0.
-    function test_vaultUpgradeRequired_zerosWithdrawCapacity() public {
-        _deposit(DEPOSIT); // adapter now has a vault at the current version
-        assertEq(adapter.maxWithdraw(aggregator), DEPOSIT, "withdrawable before");
-        // Publish a new vault impl (bumps currentVaultVersion) + mandate it.
-        VaipakamVaultImplementation newVaultImpl = new VaipakamVaultImplementation();
-        vm.startPrank(owner);
-        VaultFactoryFacet(address(diamond))
-            .upgradeVaultImplementation(address(newVaultImpl));
-        (, uint256 currentVaultVersion, , ) = VaultFactoryFacet(address(diamond))
-            .getVaultVersionInfo(address(adapter));
-        VaultFactoryFacet(address(diamond))
-            .setMandatoryVaultUpgrade(currentVaultVersion);
-        vm.stopPrank();
-        // The adapter's vault is now below the mandatory floor.
-        (, , , bool upgradeRequired) = VaultFactoryFacet(address(diamond))
-            .getVaultVersionInfo(address(adapter));
-        assertTrue(upgradeRequired, "adapter vault below mandatory floor");
-        assertEq(adapter.maxWithdraw(aggregator), 0, "maxWithdraw zeroed");
-        assertEq(adapter.maxRedeem(aggregator), 0, "maxRedeem zeroed");
-        // #626 round-8 P2 — deposit path also reverts under a vault mandate.
-        assertEq(adapter.maxDeposit(aggregator), 0, "maxDeposit zeroed");
-    }
-
     /// @dev #626 round-8 P2 — the adapter is ERC20-on-ERC20 and has no NFT sweep,
     ///      so it must reject any safe-transferred ERC721 (only its own Diamond
     ///      lender-position mint is accepted). A foreign NFT would otherwise be

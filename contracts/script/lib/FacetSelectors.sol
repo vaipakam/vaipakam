@@ -77,10 +77,10 @@ library FacetSelectors {
     ///         `getDiamondAddress` and `vaultSetNFTUser1155` (the exact drift
     ///         #778 warns about). The parity test keeps this list == the ABI.
     function vaultFactory() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](29);
-        s[0] = VaultFactoryFacet.initializeVaultImplementation.selector;
+        s = new bytes4[](25);
+        s[0] = VaultFactoryFacet.initializeVaultBeacon.selector;
         s[1] = VaultFactoryFacet.getOrCreateUserVault.selector;
-        s[2] = VaultFactoryFacet.upgradeVaultImplementation.selector;
+        s[2] = VaultFactoryFacet.getVaultBeacon.selector;
         s[3] = VaultFactoryFacet.vaultDepositERC20.selector;
         s[4] = VaultFactoryFacet.vaultWithdrawERC20.selector;
         s[5] = VaultFactoryFacet.vaultDepositERC721.selector;
@@ -91,30 +91,25 @@ library FacetSelectors {
         // #902 — the one loan-keyed renter route (replaced vaultSetNFTUser
         // and vaultSetNFTUser1155).
         s[10] = VaultFactoryFacet.vaultSetRentalUser.selector;
-        // #1566 S3e — the swap fill's counter-only outflow record. In slot 11
-        // since #902 retired vaultSetNFTUser1155.
+        // #1566 S3e — the swap fill's counter-only outflow record.
         s[11] = VaultFactoryFacet.recordVaultOutflowERC20.selector;
         s[12] = VaultFactoryFacet.vaultGetNFTUserOf.selector;
         s[13] = VaultFactoryFacet.vaultGetNFTUserExpires.selector;
         s[14] = VaultFactoryFacet.getOfferAmount.selector;
-        s[15] = VaultFactoryFacet.getVaipakamVaultImplementationAddress.selector;
-        s[16] = VaultFactoryFacet.getDiamondAddress.selector;
-        s[17] = VaultFactoryFacet.setMandatoryVaultUpgrade.selector;
-        s[18] = VaultFactoryFacet.upgradeUserVault.selector;
-        s[19] = VaultFactoryFacet.vaultGetNFTQuantity.selector;
-        s[20] = VaultFactoryFacet.getUserVaultAddress.selector;
-        s[21] = VaultFactoryFacet.vaultDepositERC20From.selector;
-        s[22] = VaultFactoryFacet.recordVaultDepositERC20.selector;
-        s[23] = VaultFactoryFacet.getTrackedHolding.selector;
-        s[24] = VaultFactoryFacet.getVaultVersionInfo.selector;
+        s[15] = VaultFactoryFacet.getDiamondAddress.selector;
+        s[16] = VaultFactoryFacet.vaultGetNFTQuantity.selector;
+        s[17] = VaultFactoryFacet.getUserVaultAddress.selector;
+        s[18] = VaultFactoryFacet.vaultDepositERC20From.selector;
+        s[19] = VaultFactoryFacet.recordVaultDepositERC20.selector;
+        s[20] = VaultFactoryFacet.getTrackedHolding.selector;
         // RL-1 — Diamond-funded vault credit primitive (reward
         // claim-to-vault delivery).
-        s[25] = VaultFactoryFacet.vaultCreditFromDiamondERC20.selector;
+        s[21] = VaultFactoryFacet.vaultCreditFromDiamondERC20.selector;
         // #1566 slice 4 PR B — the holder-sourced reward payout into a vault.
-        s[26] = bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256,uint256)"));
+        s[22] = bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256,uint256)"));
         // The four-argument credit stays as a compatibility entry (Codex #2276 r14 P2).
-        s[27] = bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256)"));
-        s[28] = VaultFactoryFacet.vaultDeliverERC20From.selector;
+        s[23] = bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256)"));
+        s[24] = VaultFactoryFacet.vaultDeliverERC20From.selector;
     }
 
     /// @notice Full external selector surface of {ProfileFacet} (32).

@@ -13,6 +13,7 @@ import {LibDepositoryLedger} from "../libraries/LibDepositoryLedger.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable, LibPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
+import {VaultBeacon} from "../VaultBeacon.sol";
 import {ISanctionsList} from "../interfaces/ISanctionsList.sol";
 
 /// @dev The vault deposit and withdraw routes, reached by self-call.
@@ -66,9 +67,8 @@ contract VaultDepositoryFacet is DiamondReentrancyGuard, DiamondPausable {
     error AmountZero();
     error InvalidAssetKind(uint8 kind);
     error NotUntracked(address asset, uint256 tokenId);
-    /// @notice A pin records the implementation the vault runs, so a vault
-    ///         behind the current template is upgraded before it is pinned.
-    error VaultNotCurrent(uint256 version, uint256 current);
+    /// @notice #3204 — `account` has no vault to pin or unpin.
+    error NoVaultToPin(address account);
 
     /// @notice `amount` of `asset` / `tokenId` entered `account`'s vault from
     ///         the account's own wallet.
@@ -120,12 +120,6 @@ contract VaultDepositoryFacet is DiamondReentrancyGuard, DiamondPausable {
         uint256 observedAmount,
         uint256 blockNumber
     );
-    /// @custom:event-category state-change/vault-mutation
-    event VaultPinned(address indexed account, address implementation);
-    /// @custom:event-category state-change/vault-mutation
-    event VaultUnpinRequested(address indexed account, uint256 effectiveAt);
-    /// @custom:event-category state-change/vault-mutation
-    event VaultUnpinned(address indexed account);
 
     /// @dev EIP-712 domain for the adoption acknowledgement, separate from
     ///      every other domain the Diamond signs under.
@@ -345,62 +339,51 @@ contract VaultDepositoryFacet is DiamondReentrancyGuard, DiamondPausable {
         emit UntrackedDisowned(msg.sender, asset, tokenId, observed, block.number);
     }
 
-    // ─── Implementation pin ──────────────────────────────────────────────
+    // ─── Version pin (#3204) ─────────────────────────────────────────────
 
     /**
-     * @notice Pin your vault to the implementation it runs now. A pinned vault
-     *         is upgraded only by you (no third party may call
-     *         `upgradeUserVault` on it), and while the protocol demands a
-     *         newer vault version it may still deposit, withdraw and release,
-     *         though not take part in a loan.
-     * @dev    The vault must be on the current version (the template it runs
-     *         is then `vaipakamVaultTemplate`).
+     * @notice Request pinning your vault to version `id` of the vault code:
+     *         your vault then runs that version until you change the pin, or
+     *         until governance revokes it. Caller: the vault's manager.
+     * @dev    The VaultBeacon holds the pin, verifies `signature` (the vault
+     *         owner's, over vault, id and the beacon's nonce) against the
+     *         owner wallet the vault recorded, and applies the change at once,
+     *         or after the vault's pin delay (raised by protected mode).
+     *         Refused here while the account is locked or in a new
+     *         controller's cool-down; the beacon's own delay holds regardless.
      */
-    function pinVaultImplementation() external nonReentrant whenNotPaused {
+    function pinVaultVersion(uint256 id, bytes calldata signature) external nonReentrant whenNotPaused {
         LibProtectedAccount.requireManager(msg.sender);
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        IVaultRoutes(address(this)).getOrCreateUserVault(msg.sender);
-        // Already pinned: the record names the implementation the vault runs
-        // (a pinned vault is never upgraded), so it is left as it is.
-        if (s.vaultPinnedImplementation[msg.sender] != address(0)) return;
-        // The record must name the code the vault actually runs. The vault
-        // runs the current template only when its version stamp is current,
-        // so an older vault is upgraded first (`upgradeUserVault`).
-        if (s.vaultVersion[msg.sender] != s.currentVaultVersion) {
-            revert VaultNotCurrent(s.vaultVersion[msg.sender], s.currentVaultVersion);
-        }
-        s.vaultPinnedImplementation[msg.sender] = s.vaipakamVaultTemplate;
-        emit VaultPinned(msg.sender, s.vaipakamVaultTemplate);
+        address vault = IVaultRoutes(address(this)).getOrCreateUserVault(msg.sender);
+        _requirePinnable(msg.sender);
+        VaultBeacon(LibVaipakam.storageSlot().vaultBeacon).requestPin(vault, id, signature);
     }
 
     /**
-     * @notice Remove `account`'s vault pin. Caller: the account's manager
-     *         (its own wallet, or its controller once replaced). Immediate
-     *         without protected mode; with it, waits the delay (applied by
-     *         `finalizeSettingChanges`), can be cancelled, and is refused
-     *         while locked or during a new controller's cool-down.
+     * @notice Request removing `account`'s vault pin, so the vault runs the
+     *         current version again. Caller: the account's manager. Same
+     *         beacon rules as {pinVaultVersion}.
      */
-    function unpinVaultImplementation(address account) external nonReentrant whenNotPaused {
+    function unpinVaultVersion(address account, bytes calldata signature) external nonReentrant whenNotPaused {
         LibProtectedAccount.requireManager(account);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        LibVaipakam.ProtectedAccount storage a = s.protectedAccount[account];
-        if (a.enabled) {
-            if (block.timestamp < a.cooldownUntil) revert LibProtectedAccount.PrimaryInCooldown(a.cooldownUntil);
-            if (a.locked) revert LibProtectedAccount.ProtectedVaultLocked(account);
-            a.pendingUnpinAt = uint64(block.timestamp) + a.delaySeconds;
-            emit VaultUnpinRequested(account, a.pendingUnpinAt);
-            return;
-        }
-        delete s.vaultPinnedImplementation[account];
-        emit VaultUnpinned(account);
+        address vault = s.userVaipakamVaults[account];
+        if (vault == address(0)) revert NoVaultToPin(account);
+        _requirePinnable(account);
+        VaultBeacon(s.vaultBeacon).requestUnpin(vault, signature);
+    }
+
+    /// @dev A protected account asks for no pin change while locked or during
+    ///      a new controller's cool-down. A faulty facet could skip this
+    ///      refusal, but never the beacon's delay or a direct cancel there.
+    function _requirePinnable(address account) private view {
+        LibVaipakam.ProtectedAccount storage a = LibVaipakam.storageSlot().protectedAccount[account];
+        if (!a.enabled) return;
+        if (block.timestamp < a.cooldownUntil) revert LibProtectedAccount.PrimaryInCooldown(a.cooldownUntil);
+        if (a.locked) revert LibProtectedAccount.ProtectedVaultLocked(account);
     }
 
     // ─── Views ───────────────────────────────────────────────────────────
-
-    /// @notice The implementation `user` pinned their vault to; zero if none.
-    function getVaultPin(address user) external view returns (address) {
-        return LibVaipakam.storageSlot().vaultPinnedImplementation[user];
-    }
 
     /// @notice What of `asset` / `tokenId` in `user`'s vault
     ///         {withdrawFromVault} may take now: the depository holding, never

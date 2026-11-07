@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {Test} from "forge-std/Test.sol";
+import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
 import {Vm} from "forge-std/Vm.sol";
 import {VaipakamDiamond} from "../src/VaipakamDiamond.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
@@ -413,7 +414,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         AccessControlFacet(address(diamond)).initializeAccessControl();
         AdminFacet(address(diamond)).unpause();
-        VaultFactoryFacet(address(diamond)).initializeVaultImplementation();
+        LibTestVaultBeacon.install(address(diamond), address(this));
         AdminFacet(address(diamond)).setTreasury(address(diamond));
         AdminFacet(address(diamond)).setZeroExProxy(mockZeroExProxy);
         AdminFacet(address(diamond)).setallowanceTarget(mockZeroExProxy);
@@ -2312,55 +2313,6 @@ contract EarlyWithdrawalFacetTest is Test {
         );
 
         AdminFacet(address(diamond)).unpause();
-    }
-
-    /// @dev #1835 (Codex #1891 F20) — the mandatory vault-version floor
-    ///      outranks staleness, even though F19 moved vault CREATION below it.
-    ///
-    ///      `getOrCreateUserVault` does two jobs: deploy a proxy for a
-    ///      first-time party, and enforce this floor for a party who already
-    ///      has one. F19 deferred the deployment cost and took the floor check
-    ///      with it by accident, so an outdated vault reported
-    ///      `SaleListingTermsStale` — and the relist that advises is blocked by
-    ///      the same floor, since `OfferCreateFacet` resolves a vault too.
-    ///      Advice that cannot be taken, hiding the reason that can: exactly the
-    ///      rule this PR's ordering rests on.
-    function test_item23_vaultUpgradeOutranksStaleTerms() public {
-        uint256 saleOfferId = _stagePreMirroringListing(
-            false, false, LibVaipakam.PeriodicInterestCadence.None
-        );
-
-        (LibAcceptTerms.AcceptTerms memory t, bytes memory sig, address buyer) =
-            _honestBuyerFor(saleOfferId, "vaultFloorStaleBuyer");
-
-        // Control: without the floor this listing answers staleness.
-        vm.expectRevert(IVaipakamErrors.SaleListingTermsStale.selector);
-        vm.prank(buyer);
-        OfferAcceptFacet(address(diamond)).acceptOffer(saleOfferId, t, sig);
-
-        // Governance ships a new vault version and raises the floor to it,
-        // above the seller's existing vault. The floor cannot be set above
-        // the current version (#2363), so the version is bumped first.
-        VaultFactoryFacet(address(diamond)).upgradeVaultImplementation(address(new VaipakamVaultImplementation()));
-        (uint256 sellerVersion, uint256 currentVersion,,) =
-            VaultFactoryFacet(address(diamond)).getVaultVersionInfo(lender);
-        assertGt(currentVersion, sellerVersion, "fixture: the seller's vault is below the new version");
-        VaultFactoryFacet(address(diamond)).setMandatoryVaultUpgrade(currentVersion);
-
-        vm.expectRevert(VaultFactoryFacet.VaultUpgradeRequired.selector);
-        vm.prank(buyer);
-        OfferAcceptFacet(address(diamond)).acceptOffer(saleOfferId, t, sig);
-
-        // …and the preview agrees (Codex #1891 F22). Adding the accept-side
-        // check without this classifier is the divergence this surface exists
-        // to prevent — F20 created it, and one round later it was found.
-        OfferAcceptFacet.AcceptPreview memory p =
-            OfferPreviewFacet(address(diamond)).previewAccept(saleOfferId, newLender);
-        assertEq(
-            uint8(p.errorCode),
-            uint8(OfferAcceptFacet.AcceptError.VaultUpgradeRequired),
-            "the upgrade refusal is actionable; it outranks staleness on both surfaces"
-        );
     }
 
     /// @dev #1835 (Codex #1891 F25) — the EXITING SELLER previewing their own
@@ -7630,34 +7582,6 @@ contract EarlyWithdrawalFacetTest is Test {
         (, listing) = _verdict(activeLoanId, lender);
         assertEq(listing.length, 1, "only the cooldown refuses the listing");
         assertEq(listing[0].reopensAt, promised, "the promise matches the cooldown the teardown started");
-    }
-
-    /// @dev Codex #3008 r1 — the direct sale migrates the held balance out of
-    ///      the STORED lender's vault whoever holds the position, including when
-    ///      the holder is the stored lender. An outdated vault there refuses the
-    ///      sale, so the verdict reports it on the direct route too, and only
-    ///      once on the listing route (where the holder check already covers it).
-    function test_SaleExitVerdict_OutdatedStoredLenderVaultRefusesTheDirectSale() public {
-        TestMutatorFacet(address(diamond)).setHeldForLenderRaw(activeLoanId, 1e6);
-        VaultFactoryFacet(address(diamond)).upgradeVaultImplementation(address(new VaipakamVaultImplementation()));
-        (uint256 lenderVersion, uint256 currentVersion,,) =
-            VaultFactoryFacet(address(diamond)).getVaultVersionInfo(lender);
-        assertGt(currentVersion, lenderVersion, "fixture: the lender's vault is below the new version");
-        VaultFactoryFacet(address(diamond)).setMandatoryVaultUpgrade(currentVersion);
-
-        (
-            SaleExitVerdictFacet.SaleRefusal[] memory direct,
-            SaleExitVerdictFacet.SaleRefusal[] memory listing
-        ) = _verdict(activeLoanId, lender);
-        bytes memory upgrade = abi.encodeWithSelector(VaultFactoryFacet.VaultUpgradeRequired.selector);
-        (bool found,) = _hasReason(direct, upgrade);
-        assertTrue(found, "the held migration needs the stored lender's vault upgraded");
-        uint256 n;
-        for (uint256 i; i < listing.length; ++i) {
-            if (keccak256(listing[i].reason) == keccak256(upgrade)) ++n;
-        }
-        assertEq(n, 1, "the listing reports the one vault once");
-        _assertEntriesMatchVerdict(activeLoanId, lender);
     }
 
     /// @dev A live borrower offset closes both routes; it can be torn down by

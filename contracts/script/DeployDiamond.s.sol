@@ -17,6 +17,8 @@ import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {OracleAdminFacet} from "../src/facets/OracleAdminFacet.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
+import {VaipakamVaultImplementation} from "../src/VaipakamVaultImplementation.sol";
+import {VaultBeacon} from "../src/VaultBeacon.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferParallelSaleFacet} from "../src/facets/OfferParallelSaleFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
@@ -128,6 +130,14 @@ import {StorageLayoutRecord} from "./lib/StorageLayoutRecord.sol";
 import {ArtifactDeploy} from "./lib/ArtifactDeploy.sol";
 
 contract DeployDiamond is Script, ArtifactRootBase {
+    /// @dev #3204 — the VaultBeacon deployed in step 5c, kept in storage so
+    ///      the artifact step reads it without widening `runWith`'s frame.
+    address internal vaultBeacon;
+    /// @dev OpenZeppelin's Initializable namespace (ERC-7201); a template
+    ///      whose initializers are disabled reads `type(uint64).max` there.
+    bytes32 internal constant _OZ_INITIALIZABLE_SLOT =
+        0xf0c57e16840df040f15088dc2f81fe391c3923bec73e23a9662efc9c229c6a00;
+
     // ── Deployed addresses (logged at the end) ──────────────────────────
     // `public` so the deploy-integration test (Issue #72) can read the
     // built Diamond after calling `run()` — the script's own
@@ -990,9 +1000,24 @@ contract DeployDiamond is Script, ArtifactRootBase {
         AdminFacet(diamond).setTreasury(treasury);
         console.log("Treasury set:", treasury);
 
-        // 5c. Initialize vault implementation (deploys template)
-        VaultFactoryFacet(diamond).initializeVaultImplementation();
-        console.log("Vault implementation initialized.");
+        // 5c. #3204 — the vault code and the VaultBeacon every vault resolves
+        // it through. The implementation's initializers must be disabled at
+        // construction (#905): checked from its Initializable slot, read-only,
+        // so a template anyone could initialize is never registered. The
+        // beacon is owned by `admin` (the Timelock takes it at handover), its
+        // guardian starts as `admin` until the operator sets the Pauser Safe,
+        // and version 1 is current from construction.
+        address vaultImpl = ArtifactDeploy.deploy(type(VaipakamVaultImplementation).name);
+        require(
+            uint256(vm.load(vaultImpl, _OZ_INITIALIZABLE_SLOT)) == type(uint64).max,
+            "DeployDiamond: the vault implementation's initializer can still be called"
+        );
+        vaultBeacon = ArtifactDeploy.deploy(
+            type(VaultBeacon).name,
+            abi.encode(admin, diamond, admin, vaultImpl)
+        );
+        VaultFactoryFacet(diamond).initializeVaultBeacon(vaultBeacon);
+        console.log("Vault beacon:", vaultBeacon);
 
         // 5d. Initialize NFT metadata
         VaipakamNFTFacet(diamond).initializeNFT();
@@ -1157,8 +1182,10 @@ contract DeployDiamond is Script, ArtifactRootBase {
         //                  chains and falls through to block.number
         //                  elsewhere. Do NOT pass block.number directly
         //                  from this script.
-        //   - vaultImpl:  per-user UUPS vault template the factory
-        //                  clones; surfaced via `getVaipakamVaultImplementationAddress()`
+        //   - vaultImpl:  the vault implementation registered as the beacon's
+        //                  version 1 (#3204); later versions are read from the
+        //                  beacon (`versionOf`)
+        //   - vaultBeacon: the VaultBeacon every vault resolves its code through
         //   - weth/treasury/admin: shared addresses every operator UI
         //                  cross-references against the .env they hold
         //
@@ -1166,10 +1193,11 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // deploy; rewriting them on each run is idempotent.
         Deployments.writeChainSlug();
         Deployments.writeDeployBlock();
-        Deployments.writeVaultImpl(
-            VaultFactoryFacet(diamond)
-                .getVaipakamVaultImplementationAddress()
-        );
+        {
+            (address impl1, ) = VaultBeacon(vaultBeacon).versionOf(1);
+            Deployments.writeVaultImpl(impl1);
+        }
+        Deployments.writeVaultBeacon(vaultBeacon);
         Deployments.writeTreasury(treasury);
         Deployments.writeAdmin(admin);
         // #1566 slice 4 PR A — the custody holder's address is part of the
@@ -1719,10 +1747,10 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     function _getVaultFactorySelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](29);
-        s[0] = VaultFactoryFacet.initializeVaultImplementation.selector;
+        s = new bytes4[](26);
+        s[0] = VaultFactoryFacet.initializeVaultBeacon.selector;
         s[1] = VaultFactoryFacet.getOrCreateUserVault.selector;
-        s[2] = VaultFactoryFacet.upgradeVaultImplementation.selector;
+        s[2] = VaultFactoryFacet.getVaultBeacon.selector;
         s[3] = VaultFactoryFacet.vaultDepositERC20.selector;
         s[4] = VaultFactoryFacet.vaultWithdrawERC20.selector;
         s[5] = VaultFactoryFacet.vaultDepositERC721.selector;
@@ -1736,32 +1764,28 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[11] = VaultFactoryFacet.vaultGetNFTUserOf.selector;
         s[12] = VaultFactoryFacet.vaultGetNFTUserExpires.selector;
         s[13] = VaultFactoryFacet.getOfferAmount.selector;
-        s[14] = VaultFactoryFacet.getVaipakamVaultImplementationAddress.selector;
-        s[15] = VaultFactoryFacet.getDiamondAddress.selector;
-        s[16] = VaultFactoryFacet.setMandatoryVaultUpgrade.selector;
-        s[17] = VaultFactoryFacet.upgradeUserVault.selector;
-        s[18] = VaultFactoryFacet.getUserVaultAddress.selector;
-        s[19] = VaultFactoryFacet.getVaultVersionInfo.selector;
+        s[14] = VaultFactoryFacet.getDiamondAddress.selector;
+        s[15] = VaultFactoryFacet.getUserVaultAddress.selector;
         // #1566 S3e — the swap fill's counter-only outflow record (the LOP
-        // moves the lot). In slot 20 since #902 retired vaultSetNFTUser1155.
-        s[20] = VaultFactoryFacet.recordVaultOutflowERC20.selector;
-        s[21] = VaultFactoryFacet.vaultGetNFTQuantity.selector;
+        // moves the lot).
+        s[16] = VaultFactoryFacet.recordVaultOutflowERC20.selector;
+        s[17] = VaultFactoryFacet.vaultGetNFTQuantity.selector;
         // T-051 / T-054 — chokepoint deposit + counter-only companions.
         // `vaultDepositERC20From` is the third-party-payer variant
         // RepayFacet uses to pull repayment funds from the borrower
         // into the lender's vault; without this selector cut, every
         // ERC-20 loan repayment reverts with FunctionDoesNotExist.
-        s[22] = VaultFactoryFacet.vaultDepositERC20From.selector;
-        s[23] = VaultFactoryFacet.recordVaultDepositERC20.selector;
-        s[24] = VaultFactoryFacet.getTrackedHolding.selector;
+        s[18] = VaultFactoryFacet.vaultDepositERC20From.selector;
+        s[19] = VaultFactoryFacet.recordVaultDepositERC20.selector;
+        s[20] = VaultFactoryFacet.getTrackedHolding.selector;
         // RL-1 — Diamond-funded vault credit primitive (reward
         // claim-to-vault delivery).
-        s[25] = VaultFactoryFacet.vaultCreditFromDiamondERC20.selector;
+        s[21] = VaultFactoryFacet.vaultCreditFromDiamondERC20.selector;
         // #1566 slice 4 PR B — the holder-sourced reward payout into a vault.
-        s[26] = bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256,uint256)"));
+        s[22] = bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256,uint256)"));
         // The four-argument credit stays as a compatibility entry (Codex #2276 r14 P2).
-        s[27] = bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256)"));
-        s[28] = VaultFactoryFacet.vaultDeliverERC20From.selector;
+        s[23] = bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256)"));
+        s[24] = VaultFactoryFacet.vaultDeliverERC20From.selector;
     }
 
     /// @dev Issue #67 — `OfferFacet` was split into `OfferCreateFacet`
@@ -1792,7 +1816,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     ///      jump-table reservation stays under the "Tag too large" ICE
     ///      ceiling.
     function _getOfferParallelSaleSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](5);
+        s = new bytes4[](4);
         s[0] = OfferParallelSaleFacet.postParallelSaleListing.selector;
         s[1] = OfferParallelSaleFacet.releaseParallelSaleLock.selector;
         // #1144 (S10 Invariant B) — permissionless offer-keyed prepay-sale
@@ -1800,8 +1824,6 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[2] = OfferParallelSaleFacet.syncPrepaySaleOffer.selector;
         // #2984 — the sync's own party set, read by the keeper's backstop.
         s[3] = OfferParallelSaleFacet.prepaySaleOfferParties.selector;
-        // #3178 — the executor's "may this listing's vault send out" read.
-        s[4] = OfferParallelSaleFacet.isParallelSaleVaultBlocked.selector;
     }
 
     function _getOfferAcceptSelectors() internal pure returns (bytes4[] memory s) {
@@ -2418,7 +2440,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
 
     /// @dev Selectors for `VaultDepositoryFacet` — the depository vault: deposit, withdraw, adopt, disown and the upgrade pin.
     function _getVaultDepositorySelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](18);
+        s = new bytes4[](17);
         s[0] = VaultDepositoryFacet.adoptUntracked.selector;
         s[1] = VaultDepositoryFacet.adoptionAckTextHash.selector;
         s[2] = VaultDepositoryFacet.adoptionDigest.selector;
@@ -2427,16 +2449,15 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[5] = VaultDepositoryFacet.depositToVault.selector;
         s[6] = VaultDepositoryFacet.disownUntracked.selector;
         s[7] = VaultDepositoryFacet.freeHolding.selector;
-        s[8] = VaultDepositoryFacet.getVaultPin.selector;
-        s[9] = VaultDepositoryFacet.pinVaultImplementation.selector;
-        s[10] = VaultDepositoryFacet.unpinVaultImplementation.selector;
-        s[11] = VaultDepositoryFacet.untrackedHolding.selector;
-        s[12] = VaultDepositoryFacet.vaultBannedSource.selector;
-        s[13] = VaultDepositoryFacet.withdrawFromVault.selector;
-        s[14] = VaultDepositoryFacet.withdrawableNow.selector;
-        s[15] = VaultDepositoryFacet.getDepositoryHolding.selector;
-        s[16] = VaultDepositoryFacet.getDepositoryAssets.selector;
-        s[17] = VaultDepositoryFacet.getVaultOwner.selector;
+        s[8] = VaultDepositoryFacet.pinVaultVersion.selector;
+        s[9] = VaultDepositoryFacet.unpinVaultVersion.selector;
+        s[10] = VaultDepositoryFacet.untrackedHolding.selector;
+        s[11] = VaultDepositoryFacet.vaultBannedSource.selector;
+        s[12] = VaultDepositoryFacet.withdrawFromVault.selector;
+        s[13] = VaultDepositoryFacet.withdrawableNow.selector;
+        s[14] = VaultDepositoryFacet.getDepositoryHolding.selector;
+        s[15] = VaultDepositoryFacet.getDepositoryAssets.selector;
+        s[16] = VaultDepositoryFacet.getVaultOwner.selector;
     }
 
     function _getClaimSelectors() internal pure returns (bytes4[] memory s) {

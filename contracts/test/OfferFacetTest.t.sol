@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {Test} from "forge-std/Test.sol";
+import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
 import {console} from "forge-std/console.sol";
 import {VaipakamDiamond} from "../src/VaipakamDiamond.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
@@ -255,7 +256,7 @@ contract OfferFacetTest is Test {
         // nftContract = nftFacet;
         // Initialize vault implementation
         vm.prank(owner);
-        VaultFactoryFacet(address(diamond)).initializeVaultImplementation();
+        LibTestVaultBeacon.install(address(diamond), address(this));
 
         // Mock balances/approvals
         deal(mockERC20, user1, 1e18);
@@ -443,11 +444,9 @@ contract OfferFacetTest is Test {
         returns (bytes4[] memory selectors)
     {
         selectors = new bytes4[](15);
-        selectors[0] = VaultFactoryFacet
-            .initializeVaultImplementation
-            .selector;
+        selectors[0] = VaultFactoryFacet.initializeVaultBeacon.selector;
         selectors[1] = VaultFactoryFacet.getOrCreateUserVault.selector;
-        selectors[2] = VaultFactoryFacet.upgradeVaultImplementation.selector;
+        selectors[2] = VaultFactoryFacet.getVaultBeacon.selector;
         selectors[3] = VaultFactoryFacet.vaultDepositERC20.selector;
         selectors[4] = VaultFactoryFacet.vaultWithdrawERC20.selector;
         selectors[5] = VaultFactoryFacet.vaultDepositERC721.selector;
@@ -459,9 +458,7 @@ contract OfferFacetTest is Test {
         selectors[11] = VaultFactoryFacet.vaultGetNFTUserOf.selector;
         selectors[12] = VaultFactoryFacet.vaultGetNFTUserExpires.selector;
         selectors[13] = VaultFactoryFacet.getOfferAmount.selector;
-        selectors[14] = VaultFactoryFacet
-            .getVaipakamVaultImplementationAddress
-            .selector;
+        selectors[14] = VaultFactoryFacet.getUserVaultAddress.selector;
         return selectors;
     }
 

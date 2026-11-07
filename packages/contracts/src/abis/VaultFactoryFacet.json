@@ -100,11 +100,11 @@
   },
   {
     "type": "function",
-    "name": "getVaipakamVaultImplementationAddress",
+    "name": "getVaultBeacon",
     "inputs": [],
     "outputs": [
       {
-        "name": "vaipakamVaultTemplate",
+        "name": "",
         "type": "address",
         "internalType": "address"
       }
@@ -113,42 +113,14 @@
   },
   {
     "type": "function",
-    "name": "getVaultVersionInfo",
+    "name": "initializeVaultBeacon",
     "inputs": [
       {
-        "name": "user",
+        "name": "beacon",
         "type": "address",
         "internalType": "address"
       }
     ],
-    "outputs": [
-      {
-        "name": "userVersion",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "currentVersion",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "mandatoryVersion",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "upgradeRequired",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "initializeVaultImplementation",
-    "inputs": [],
     "outputs": [],
     "stateMutability": "nonpayable"
   },
@@ -196,45 +168,6 @@
       },
       {
         "name": "recipient",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "setMandatoryVaultUpgrade",
-    "inputs": [
-      {
-        "name": "version",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "upgradeUserVault",
-    "inputs": [
-      {
-        "name": "user",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "upgradeVaultImplementation",
-    "inputs": [
-      {
-        "name": "newImplementation",
         "type": "address",
         "internalType": "address"
       }
@@ -701,25 +634,6 @@
   },
   {
     "type": "event",
-    "name": "MandatoryVaultVersionSet",
-    "inputs": [
-      {
-        "name": "previousVersion",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "version",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
     "name": "PaymentCreditedToVault",
     "inputs": [
       {
@@ -832,31 +746,13 @@
   },
   {
     "type": "event",
-    "name": "VaultImplementationUpgraded",
+    "name": "VaultBeaconSet",
     "inputs": [
       {
-        "name": "oldImplementation",
+        "name": "beacon",
         "type": "address",
         "indexed": true,
         "internalType": "address"
-      },
-      {
-        "name": "newImplementation",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "newVersion",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "newCodehash",
-        "type": "bytes32",
-        "indexed": false,
-        "internalType": "bytes32"
       }
     ],
     "anonymous": false
@@ -918,19 +814,6 @@
         "type": "uint64",
         "indexed": false,
         "internalType": "uint64"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "VaultUnpinned",
-    "inputs": [
-      {
-        "name": "account",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
       }
     ],
     "anonymous": false
@@ -2612,22 +2495,6 @@
       },
       {
         "name": "available",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "MandatoryVaultVersionUnreachable",
-    "inputs": [
-      {
-        "name": "version",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "currentVersion",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -5526,19 +5393,19 @@
   },
   {
     "type": "error",
-    "name": "VaultDepositFailed",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "VaultPinned",
+    "name": "VaultBeaconMismatch",
     "inputs": [
       {
-        "name": "user",
+        "name": "beacon",
         "type": "address",
         "internalType": "address"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "VaultDepositFailed",
+    "inputs": []
   },
   {
     "type": "error",
@@ -5548,11 +5415,6 @@
   {
     "type": "error",
     "name": "VaultTransferFailed",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "VaultUpgradeRequired",
     "inputs": []
   },
   {

@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
-import {UUPSUpgradeable} from "@openzeppelin/contracts/proxy/utils/UUPSUpgradeable.sol";
 import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import {ERC165Upgradeable} from "@openzeppelin/contracts-upgradeable/utils/introspection/ERC165Upgradeable.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -39,7 +38,6 @@ import {IListingExecutorValidator} from "./seaport/IListingExecutorValidator.sol
  *      Expand for Phase 2 (e.g., multi-asset batches).
  */
 contract VaipakamVaultImplementation is
-    UUPSUpgradeable,
     OwnableUpgradeable,
     ERC165Upgradeable,
     IERC721Receiver,
@@ -47,7 +45,12 @@ contract VaipakamVaultImplementation is
 {
     using SafeERC20 for IERC20;
     address private diamond;
-    address private implementationAddress;
+    /// @dev The vault's owner wallet, recorded once at creation (#3204). The
+    ///      VaultBeacon verifies every pin, unpin, pin-delay and cancel
+    ///      signature against it, so which code a vault runs never depends on
+    ///      the Diamond's word about who owns it. Replacing it on a protected
+    ///      primary replacement arrives with #3205.
+    address private ownerWallet;
 
     /// @dev Vault-side rental wrapper state. Authoritative for this platform:
     ///      external integrators SHOULD query the vault (via the factory
@@ -180,12 +183,25 @@ contract VaipakamVaultImplementation is
      */
     function initialize(
         address diamondAddress,
-        address implAddress
+        address vaultOwnerWallet
     ) external initializer {
         __Ownable_init(diamondAddress); // Diamond as owner
         __ERC165_init();
         diamond = diamondAddress;
-        implementationAddress = implAddress;
+        ownerWallet = vaultOwnerWallet;
+    }
+
+    /// @notice The storage-layout identity of the vault family. The
+    ///         VaultBeacon registers only implementations that report it, so
+    ///         a contract that is not a vault cannot be registered by mistake.
+    ///         Every version keeps the vault's storage append-only.
+    function vaultLayoutId() external pure returns (bytes32) {
+        return keccak256("vaipakam.vault.layout.v1");
+    }
+
+    /// @notice The owner wallet this vault recorded at creation (#3204).
+    function vaultOwner() external view returns (address) {
+        return ownerWallet;
     }
 
     /**
@@ -820,11 +836,6 @@ contract VaipakamVaultImplementation is
             interfaceId == type(IERC1155Receiver).interfaceId ||
             super.supportsInterface(interfaceId);
     }
-
-    // UUPS authorize upgrade
-    function _authorizeUpgrade(
-        address newImplementation
-    ) internal override onlyOwner {}
 
     /// @dev Storage gap reserved for future upgrade-safe state additions.
     ///      Each future storage var added to this contract must decrement

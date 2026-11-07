@@ -3,6 +3,8 @@
 pragma solidity ^0.8.29;
 
 import {Test} from "forge-std/Test.sol";
+import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
+import {VaultBeacon} from "../src/VaultBeacon.sol";
 import {VaipakamDiamond} from "../src/VaipakamDiamond.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
@@ -38,6 +40,7 @@ import {ArtifactDeploy} from "../script/lib/ArtifactDeploy.sol";
  *         deposits and withdrawals, upgrade, NFT rental helpers, and error cases.
  */
 contract VaultFactoryFacetTest is Test {
+    VaultBeacon internal vaultBeacon;
     VaipakamDiamond diamond;
     address owner;
     address user1;
@@ -147,7 +150,7 @@ contract VaultFactoryFacetTest is Test {
 
         AccessControlFacet(address(diamond)).initializeAccessControl();
         AdminFacet(address(diamond)).unpause();
-        VaultFactoryFacet(address(diamond)).initializeVaultImplementation();
+        vaultBeacon = LibTestVaultBeacon.install(address(diamond), address(this));
 
         // Approvals
         vm.prank(user1);
@@ -156,16 +159,43 @@ contract VaultFactoryFacetTest is Test {
         ERC20(mockERC20).approve(address(diamond), type(uint256).max);
     }
 
-    // ─── initializeVaultImplementation ──────────────────────────────────────
+    // ─── initializeVaultBeacon (#3204) ──────────────────────────────────────
 
-    function testInitializeCreatesImplementation() public view {
-        address impl = VaultFactoryFacet(address(diamond)).getVaipakamVaultImplementationAddress();
+    function testInitializeRecordsTheBeacon() public view {
+        assertEq(VaultFactoryFacet(address(diamond)).getVaultBeacon(), address(vaultBeacon));
+        (address impl, ) = vaultBeacon.versionOf(1);
         assertNotEq(impl, address(0));
+        assertEq(vaultBeacon.currentVersionId(), 1);
     }
 
     function testInitializeRevertsIfAlreadyInitialized() public {
         vm.expectRevert(VaultFactoryFacet.AlreadyInitialized.selector);
-        VaultFactoryFacet(address(diamond)).initializeVaultImplementation();
+        VaultFactoryFacet(address(diamond)).initializeVaultBeacon(address(vaultBeacon));
+    }
+
+    /// A beacon that names another Diamond is refused.
+    function testInitializeRefusesABeaconForAnotherDiamond() public {
+        AccessControlFacet acFacet = AccessControlFacet(ArtifactDeploy.deploy(type(AccessControlFacet).name));
+        VaipakamDiamond d2 = _bareFactoryDiamond(acFacet);
+        vm.expectRevert(abi.encodeWithSelector(VaultFactoryFacet.VaultBeaconMismatch.selector, address(vaultBeacon)));
+        VaultFactoryFacet(address(d2)).initializeVaultBeacon(address(vaultBeacon));
+    }
+
+    function _bareFactoryDiamond(AccessControlFacet acFacet) internal returns (VaipakamDiamond d2) {
+        d2 = new VaipakamDiamond(owner, address(cutFacet));
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](2);
+        cuts[0] = IDiamondCut.FacetCut({
+            facetAddress: address(vaultFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getVaultFactoryFacetSelectorsExtended()
+        });
+        cuts[1] = IDiamondCut.FacetCut({
+            facetAddress: address(acFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getAccessControlFacetSelectors()
+        });
+        IDiamondCut(address(d2)).diamondCut(cuts, address(0), "");
+        AccessControlFacet(address(d2)).initializeAccessControl();
     }
 
     function testInitializeRevertsNonOwner() public {
@@ -188,7 +218,7 @@ contract VaultFactoryFacetTest is Test {
 
         vm.prank(user1);
         vm.expectRevert(abi.encodeWithSelector(LibAccessControl.AccessControlUnauthorizedAccount.selector, user1, LibAccessControl.VAULT_ADMIN_ROLE));
-        VaultFactoryFacet(address(d2)).initializeVaultImplementation();
+        VaultFactoryFacet(address(d2)).initializeVaultBeacon(address(vaultBeacon));
     }
 
     // ─── getOrCreateUserVault ────────────────────────────────────────────────
@@ -213,41 +243,6 @@ contract VaultFactoryFacetTest is Test {
     }
 
     // ─── upgradeVaultImplementation ─────────────────────────────────────────
-
-    function testUpgradeImplementationSuccess() public {
-        VaipakamVaultImplementation newImpl = new VaipakamVaultImplementation();
-        address oldImpl = VaultFactoryFacet(address(diamond)).getVaipakamVaultImplementationAddress();
-
-        // Expect the enriched event — newVersion is the bumped
-        // currentVaultVersion after the upgrade lands, and the new
-        // implementation's codehash rides along (#897). `checkData=true`
-        // confirms both.
-        vm.expectEmit(true, true, true, true);
-        emit VaultFactoryFacet.VaultImplementationUpgraded(
-            oldImpl,
-            address(newImpl),
-            1, // first upgrade → version bumps from 0 → 1
-            address(newImpl).codehash
-        );
-        VaultFactoryFacet(address(diamond)).upgradeVaultImplementation(address(newImpl));
-
-        assertEq(
-            VaultFactoryFacet(address(diamond)).getVaipakamVaultImplementationAddress(),
-            address(newImpl)
-        );
-    }
-
-    function testUpgradeImplementationRevertsNonContract() public {
-        vm.expectRevert(VaultFactoryFacet.UpgradeFailed.selector);
-        VaultFactoryFacet(address(diamond)).upgradeVaultImplementation(makeAddr("notAContract"));
-    }
-
-    function testUpgradeImplementationRevertsNonOwner() public {
-        VaipakamVaultImplementation newImpl = new VaipakamVaultImplementation();
-        vm.prank(user1);
-        vm.expectRevert(abi.encodeWithSelector(LibAccessControl.AccessControlUnauthorizedAccount.selector, user1, LibAccessControl.VAULT_ADMIN_ROLE));
-        VaultFactoryFacet(address(diamond)).upgradeVaultImplementation(address(newImpl));
-    }
 
     // ─── vaultDepositERC20 / vaultWithdrawERC20 ─────────────────────────────
 
@@ -469,54 +464,6 @@ contract VaultFactoryFacetTest is Test {
         vm.stopPrank();
     }
 
-    /// @dev A lender vault left on an implementation without
-    ///      `setRental1155` (a pre-#902 vault after an in-place facet refresh)
-    ///      is upgraded to the current template by the rental step itself, so
-    ///      an accept or a close never waits on the lender upgrading. The stub
-    ///      stands in for the old implementation: it carries the upgrade entry
-    ///      and nothing else, so the fixture is asserted live first.
-    function test_902_staleVaultIsUpgradedBeforeARentalStep() public {
-        address proxy = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(user1);
-        address nft = makeAddr("erc1155");
-        _seedRental(1, user1, nft, 7, LibVaipakam.AssetType.ERC1155, 3);
-        LegacyVaultWithout1155Rows legacy = new LegacyVaultWithout1155Rows();
-        vm.prank(address(diamond));
-        UUPSUpgradeable(proxy).upgradeToAndCall(address(legacy), "");
-        vm.prank(address(diamond));
-        (bool ok, ) = proxy.call(
-            abi.encodeWithSelector(
-                VaipakamVaultImplementation.setRental1155.selector, nft, uint256(7), uint256(1), user2, uint64(1), uint256(3)
-            )
-        );
-        assertFalse(ok, "fixture-live: the legacy vault has no per-rental rows");
-
-        VaipakamVaultImplementation current = new VaipakamVaultImplementation();
-        VaultFactoryFacet(address(diamond)).upgradeVaultImplementation(address(current));
-
-        uint64 exp = uint64(block.timestamp + 10 days);
-        vm.prank(address(diamond));
-        VaultFactoryFacet(address(diamond)).vaultSetRentalUser(1, user2, exp);
-
-        assertEq(
-            address(uint160(uint256(vm.load(proxy, ERC1967_IMPLEMENTATION_SLOT)))),
-            address(current),
-            "the vault now runs the current template"
-        );
-        (uint256 userVersion, uint256 currentVersion, , ) = VaultFactoryFacet(address(diamond)).getVaultVersionInfo(user1);
-        assertEq(userVersion, currentVersion, "the vault's version stamp is current");
-        assertEq(VaultFactoryFacet(address(diamond)).vaultGetNFTQuantity(user1, nft, 7), 3, "the rental is recorded");
-
-        // A current vault is not upgraded again; the close goes through on it.
-        vm.prank(address(diamond));
-        VaultFactoryFacet(address(diamond)).vaultSetRentalUser(1, address(0), 0);
-        assertEq(VaultFactoryFacet(address(diamond)).vaultGetNFTQuantity(user1, nft, 7), 0, "the close went through");
-        assertEq(
-            address(uint160(uint256(vm.load(proxy, ERC1967_IMPLEMENTATION_SLOT)))),
-            address(current),
-            "still the current template"
-        );
-    }
-
     /// @dev A token's active rentals are bounded, so every close walks a
     ///      bounded list. The bound refuses only an ADDED row: a close or an
     ///      expiry refresh at the bound still goes through, a close frees a
@@ -524,9 +471,8 @@ contract VaultFactoryFacetTest is Test {
     function test_902_concurrentRentalsPerTokenAreBounded() public {
         VaultFactoryFacet(address(diamond)).getOrCreateUserVault(user1);
         address nft = makeAddr("erc1155");
-        uint256 cap = VaipakamVaultImplementation(
-            VaultFactoryFacet(address(diamond)).getVaipakamVaultImplementationAddress()
-        ).MAX_CONCURRENT_RENTALS_1155();
+        (address impl, ) = vaultBeacon.versionOf(1);
+        uint256 cap = VaipakamVaultImplementation(impl).MAX_CONCURRENT_RENTALS_1155();
         uint64 exp = uint64(block.timestamp + 10 days);
         for (uint256 id = 1; id <= cap + 1; ++id) {
             _seedRental(id, user1, nft, 7, LibVaipakam.AssetType.ERC1155, 1);
@@ -559,17 +505,14 @@ contract VaultFactoryFacetTest is Test {
         assertEq(VaultFactoryFacet(address(diamond)).vaultGetNFTQuantity(user1, nft, 7), 2, "rental 1 + the new one");
     }
 
-    // ─── getOfferAmount / getVaipakamVaultImplementationAddress ───────────────
+    // ─── getOfferAmount / getVaultBeacon ───────────────
 
     function testGetOfferAmountReturnsZeroForNonExistent() public view {
         assertEq(VaultFactoryFacet(address(diamond)).getOfferAmount(999), 0);
     }
 
-    function testGetVaipakamVaultImplementationAddressNotZero() public view {
-        assertNotEq(
-            VaultFactoryFacet(address(diamond)).getVaipakamVaultImplementationAddress(),
-            address(0)
-        );
+    function testGetVaultBeaconNotZero() public view {
+        assertNotEq(VaultFactoryFacet(address(diamond)).getVaultBeacon(), address(0));
     }
 
     // ─── getDiamondAddress ───────────────────────────────────────────────────
@@ -578,7 +521,7 @@ contract VaultFactoryFacetTest is Test {
         // diamondAddress is set during VaultFactoryFacet initialization
         // After getOrCreateUserVault, the diamond address should be stored
         VaultFactoryFacet(address(diamond)).getOrCreateUserVault(user1);
-        // getDiamondAddress reads s.diamondAddress which is set in initializeVaultImplementation
+        // getDiamondAddress reads s.diamondAddress which is set in initializeVaultBeacon
         address stored = VaultFactoryFacet(address(diamond)).getDiamondAddress();
         // The diamond address is set to address(this) context; just verify the call works
         assertEq(stored, address(diamond));
@@ -917,108 +860,11 @@ contract VaultFactoryFacetTest is Test {
 
     // ─── Test A: VaultUpgradeRequired ──────────────────────────────────────
 
-    /// @dev User has existing vault, mandatory upgrade set to higher version,
-    ///      getOrCreateUserVault reverts VaultUpgradeRequired.
-    function testGetOrCreateUserVaultRevertsVaultUpgradeRequired() public {
-        // Step 1: Create vault for user1
-        VaultFactoryFacet(address(diamond)).getOrCreateUserVault(user1);
-
-        // Step 2: Upgrade implementation to bump currentVaultVersion
-        VaipakamVaultImplementation newImpl = new VaipakamVaultImplementation();
-        VaultFactoryFacet(address(diamond)).upgradeVaultImplementation(address(newImpl));
-
-        // Step 3: Set mandatory upgrade to the new version. currentVaultVersion
-        // starts at 0 and is now 1; user1's vault is still at version 0. A
-        // floor above the current version is refused (#2363), so the floor
-        // is the current version.
-        VaultFactoryFacet(address(diamond)).setMandatoryVaultUpgrade(1);
-
-        // Step 4: Calling getOrCreateUserVault for user1 again should revert
-        vm.expectRevert(VaultFactoryFacet.VaultUpgradeRequired.selector);
-        VaultFactoryFacet(address(diamond)).getOrCreateUserVault(user1);
-    }
-
     // ─── Test B: upgradeUserVault reverts NoVault ─────────────────────────
-
-    /// @dev Call upgradeUserVault for a user with no vault. Should revert NoVault.
-    function testUpgradeUserVaultRevertsNoVault() public {
-        vm.expectRevert(VaultFactoryFacet.NoVault.selector);
-        VaultFactoryFacet(address(diamond)).upgradeUserVault(makeAddr("noVaultUser"));
-    }
 
     // ─── Test C: upgradeUserVault reverts UpgradeFailed ────────────────────
 
-    /// @dev Create vault for user1, mock the proxy's upgradeToAndCall to revert,
-    ///      then call upgradeUserVault(user1). Should revert UpgradeFailed.
-    function testUpgradeUserVaultRevertsUpgradeFailed() public {
-        address vault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(user1);
-
-        // Mock the proxy's upgradeToAndCall to revert with empty data
-        vm.mockCallRevert(
-            vault,
-            abi.encodeWithSelector(UUPSUpgradeable.upgradeToAndCall.selector),
-            ""
-        );
-
-        vm.expectRevert(VaultFactoryFacet.UpgradeFailed.selector);
-        VaultFactoryFacet(address(diamond)).upgradeUserVault(user1);
-        vm.clearMockedCalls();
-    }
-
     // ─── Additional branch coverage ─────────────────────────────────────────
-
-    /// @dev Covers the compound condition in getOrCreateUserVault else branch:
-    ///      mandatoryVaultVersion > 0 BUT user version >= mandatoryVaultVersion,
-    ///      so it does NOT revert (inner condition is false).
-    function testGetOrCreateUserVaultPassesWhenUserVersionMeetsMandatory() public {
-        // Step 1: Create vault for user1 (user gets vaultVersion = currentVaultVersion = 0)
-        address vault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(user1);
-
-        // Step 2: Upgrade implementation to bump currentVaultVersion to 1
-        VaipakamVaultImplementation newImpl = new VaipakamVaultImplementation();
-        VaultFactoryFacet(address(diamond)).upgradeVaultImplementation(address(newImpl));
-
-        // Step 3: Set user1's vault version to 2 (above mandatory) via
-        // the layout-resilient TestMutatorFacet setter.
-        TestMutatorFacet(address(diamond)).setVaultVersionRaw(user1, 2);
-
-        // Step 4: Set mandatory to 1 (user version 2 >= mandatory 1)
-        VaultFactoryFacet(address(diamond)).setMandatoryVaultUpgrade(1);
-
-        // Step 5: Calling getOrCreateUserVault should NOT revert
-        address result = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(user1);
-        assertEq(result, vault, "Should return existing vault without reverting");
-    }
-
-    /// @dev #2363 — a floor above `currentVaultVersion` is refused: the
-    ///      permissionless repair stamps users at the current version and no
-    ///      higher, so such a floor would halt every existing-vault user.
-    function testSetMandatoryVaultUpgradeRefusesAboveCurrentVersion() public {
-        VaultFactoryFacet(address(diamond)).getOrCreateUserVault(user1);
-        (, uint256 current,,) = VaultFactoryFacet(address(diamond)).getVaultVersionInfo(user1);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                VaultFactoryFacet.MandatoryVaultVersionUnreachable.selector, current + 1, current
-            )
-        );
-        VaultFactoryFacet(address(diamond)).setMandatoryVaultUpgrade(current + 1);
-
-        // Once a new implementation makes that version current, the same
-        // floor is accepted, and the user's own repair clears it.
-        VaultFactoryFacet(address(diamond)).upgradeVaultImplementation(address(new VaipakamVaultImplementation()));
-        vm.expectEmit(address(diamond));
-        emit VaultFactoryFacet.MandatoryVaultVersionSet(0, current + 1);
-        VaultFactoryFacet(address(diamond)).setMandatoryVaultUpgrade(current + 1);
-        vm.expectRevert(VaultFactoryFacet.VaultUpgradeRequired.selector);
-        VaultFactoryFacet(address(diamond)).getOrCreateUserVault(user1);
-        VaultFactoryFacet(address(diamond)).upgradeUserVault(user1);
-        VaultFactoryFacet(address(diamond)).getOrCreateUserVault(user1);
-
-        // Zero clears the requirement and says so.
-        vm.expectEmit(address(diamond));
-        emit VaultFactoryFacet.MandatoryVaultVersionSet(current + 1, 0);
-        VaultFactoryFacet(address(diamond)).setMandatoryVaultUpgrade(0);
-    }
 
     /// @dev #905 — the implementation contract locks its own initializer at
     ///      construction, so nobody can become its owner by initializing it,
@@ -1034,19 +880,16 @@ contract VaultFactoryFacetTest is Test {
     /// @dev #905 — the template the factory deploys is locked too, and the
     ///      per-user proxies built from it still initialize normally.
     function testFactoryTemplateIsLockedAndProxiesStillInitialize() public {
-        address template = VaultFactoryFacet(address(diamond)).getVaipakamVaultImplementationAddress();
+        (address template, ) = vaultBeacon.versionOf(1);
         vm.expectRevert(Initializable.InvalidInitialization.selector);
-        VaipakamVaultImplementation(template).initialize(user2, template);
+        VaipakamVaultImplementation(template).initialize(user2, user2);
 
         address vault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(user1);
         assertEq(VaipakamVaultImplementation(vault).owner(), address(diamond), "the proxy is owned by the Diamond");
-    }
-
-    /// @dev Covers setMandatoryVaultUpgrade revert for non-owner.
-    function testSetMandatoryVaultUpgradeRevertsNonOwner() public {
-        vm.prank(user1);
-        vm.expectRevert(abi.encodeWithSelector(LibAccessControl.AccessControlUnauthorizedAccount.selector, user1, LibAccessControl.VAULT_ADMIN_ROLE));
-        VaultFactoryFacet(address(diamond)).setMandatoryVaultUpgrade(1);
+        assertEq(VaipakamVaultImplementation(vault).vaultOwner(), user1, "the vault records its owner wallet");
+        // #3204 — a beacon proxy cannot be initialized twice either.
+        vm.expectRevert(Initializable.InvalidInitialization.selector);
+        VaipakamVaultImplementation(vault).initialize(user2, user2);
     }
 
     // ─── VaipakamVaultImplementation: Direct proxy auth revert tests ────────
@@ -1285,23 +1128,6 @@ contract VaultFactoryFacetTest is Test {
 
     // ─── Non-Mandatory Vault Upgrade Tests ─────────────────────────────────
 
-    /// @dev Tests that upgrading the implementation without setting mandatory upgrade
-    ///      does NOT block getOrCreateUserVault for existing users.
-    function testNonMandatoryUpgradeDoesNotBlock() public {
-        // Step 1: Create vault for user1
-        address vault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(user1);
-        assertTrue(vault != address(0), "Vault should be created");
-
-        // Step 2: Upgrade the implementation (bumps currentVaultVersion)
-        VaipakamVaultImplementation newImpl = new VaipakamVaultImplementation();
-        VaultFactoryFacet(address(diamond)).upgradeVaultImplementation(address(newImpl));
-
-        // Step 3: Do NOT call setMandatoryVaultUpgrade
-
-        // Step 4: Call getOrCreateUserVault(user1) → should succeed (not blocked)
-        address result = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(user1);
-        assertEq(result, vault, "Should return existing vault without reverting");
-    }
 }
 
 /// @dev The ERC-1967 implementation slot of a vault proxy.

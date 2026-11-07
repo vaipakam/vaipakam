@@ -202,6 +202,7 @@ import VpfiReturnSenderABI from './VpfiReturnSender.json';
 // #2984 — the Base-side vpfi-return receiver (standalone; NOT a diamond
 // facet): the keeper's return-transport pass reads which Diamond it delivers to.
 import VpfiReturnReceiverABI from './VpfiReturnReceiver.json';
+import VaultBeaconABI from './VaultBeacon.json';
 
 export {
   OfferCreateFacetABI,
@@ -330,6 +331,7 @@ export {
   VaipakamTimelockABI,
   VpfiReturnSenderABI,
   VpfiReturnReceiverABI,
+  VaultBeaconABI,
 };
 
 import type { Abi } from 'viem';

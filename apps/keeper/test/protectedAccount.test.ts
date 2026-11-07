@@ -80,7 +80,7 @@ function account(over: Partial<ProtectedAccount> = {}): ProtectedAccount {
     lockedAt: 0n,
     lockedBy: ZERO,
     controller: ZERO,
-    pendingUnpinAt: 0n,
+    retiredPendingUnpinAt: 0n,
     ...over,
   };
 }
@@ -346,7 +346,6 @@ describe('changeOf', () => {
   it('reads each kind of announced change, and nothing from a row it cannot read', () => {
     const row = (kind: string, args: Record<string, unknown>): LedgerRow => ({ kind, args, blockAt: 1, block: 1, log: 0, tx: '0x' });
     expect(changeOf(row('SettingChangeRequested', { account: ALICE, kind: 5, value: '0', effectiveAt: '10' }))).toEqual({ t: 'setting', account: ALICE, kind: 5, at: 10n });
-    expect(changeOf(row('VaultUnpinRequested', { account: ALICE, effectiveAt: '11' }))).toEqual({ t: 'setting', account: ALICE, kind: 6, at: 11n });
     expect(changeOf(row('AllowlistAddRequested', { account: ALICE, destination: DEST, effectiveAt: '12' }))).toEqual({ t: 'allow', account: ALICE, other: DEST, at: 12n });
     expect(changeOf(row('ReplacementScheduled', { account: ALICE, nominee: BOB, readyAt: '13' }))).toEqual({ t: 'replace', account: ALICE, other: BOB, at: 13n });
     expect(changeOf(row('SettingChangeRequested', { account: ALICE, kind: 9, effectiveAt: '10' })), 'an unknown setting').toBeNull();
@@ -354,7 +353,7 @@ describe('changeOf', () => {
   });
 
   it('names the same events the step reads', () => {
-    expect([...CHANGE_EVENTS].sort()).toEqual(['AllowlistAddRequested', 'ReplacementScheduled', 'SettingChangeRequested', 'SignerAddRequested', 'SignerRemoveRequested', 'VaultUnpinRequested']);
+    expect([...CHANGE_EVENTS].sort()).toEqual(['AllowlistAddRequested', 'ReplacementScheduled', 'SettingChangeRequested', 'SignerAddRequested', 'SignerRemoveRequested']);
   });
 });
 
@@ -617,8 +616,8 @@ describe('a run', () => {
     it('reports a setting only from its receipt: a landed call that applied nothing reports nothing (Codex #3090)', async () => {
       // A replacement finalized first, or a cancel between read and send,
       // leaves the setting's call landing with no SettingChangeApplied.
-      d.accounts.set(ALICE, account({ pendingUnpinAt: NOW - 5n }));
-      ledger.add('SettingChangeRequested', { account: ALICE, kind: 6, value: '0', effectiveAt: String(NOW - 5n) });
+      d.accounts.set(ALICE, account({ pendingUnlockAt: NOW - 5n }));
+      ledger.add('SettingChangeRequested', { account: ALICE, kind: 5, value: '0', effectiveAt: String(NOW - 5n) });
       const r = await run();
       expect(fns()).toEqual(['finalizeSettingChanges']);
       expect(r.finalized).toEqual([]);

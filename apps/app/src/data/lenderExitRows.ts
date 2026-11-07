@@ -288,8 +288,6 @@ function refusalText(
         return f.durationCap(String(r.args[1] ?? ''));
       case 'AssetPaused':
         return f.assetPaused;
-      case 'VaultUpgradeRequired':
-        return f.vaultUpgrade;
       case 'SaleLegUnpriceable':
         return f.admissionUnpriceable;
       case 'SaleAdmissionCodeUnknown':

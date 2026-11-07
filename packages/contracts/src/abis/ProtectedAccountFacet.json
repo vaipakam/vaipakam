@@ -437,7 +437,7 @@
             "internalType": "address"
           },
           {
-            "name": "pendingUnpinAt",
+            "name": "retiredPendingUnpinAt",
             "type": "uint64",
             "internalType": "uint64"
           }

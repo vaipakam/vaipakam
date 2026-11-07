@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {Test} from "forge-std/Test.sol";
+import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
 import {Vm} from "forge-std/Vm.sol";
 import {console} from "forge-std/console.sol";
 import {VaipakamDiamond} from "../src/VaipakamDiamond.sol";
@@ -510,7 +511,7 @@ contract RiskFacetTest is Test {
         AdminFacet(address(diamond)).unpause();
 
         // Init vault factory with impl
-        VaultFactoryFacet(address(diamond)).initializeVaultImplementation();
+        LibTestVaultBeacon.install(address(diamond), address(this));
         AdminFacet(address(diamond)).setTreasury(address(diamond));
         AdminFacet(address(diamond)).setZeroExProxy(
             address(mockZeroExProxy)

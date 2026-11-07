@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {Test} from "forge-std/Test.sol";
+import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
 import {VaipakamDiamond} from "../src/VaipakamDiamond.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {DiamondCutFacet} from "../src/facets/DiamondCutFacet.sol";
@@ -79,7 +80,7 @@ contract ProtectedVaultTest is Test {
 
         AccessControlFacet(address(diamond)).initializeAccessControl();
         AdminFacet(address(diamond)).unpause();
-        VaultFactoryFacet(address(diamond)).initializeVaultImplementation();
+        LibTestVaultBeacon.install(address(diamond), address(this));
         VaipakamNFTFacet(address(diamond)).initializeNFT();
         sanctionsList = new MockSanctionsList();
         ProfileFacet(address(diamond)).setSanctionsOracle(address(sanctionsList));
@@ -709,24 +710,6 @@ contract ProtectedVaultTest is Test {
         assertTrue(_prot().getProtectedAccount(user).locked);
     }
 
-    function testControllerUnpinsARetiredAccountThroughTheDelay() public {
-        vm.prank(user);
-        _depo().pinVaultImplementation();
-        _enable();
-        _replaceWithNominee();
-        vm.prank(user);
-        vm.expectRevert(abi.encodeWithSelector(LibProtectedAccount.NotAccountManager.selector, user, user));
-        _depo().unpinVaultImplementation(user);
-        // The controller loosens only after its cool-down.
-        vm.warp(block.timestamp + DELAY);
-        vm.prank(nominee);
-        _depo().unpinVaultImplementation(user);
-        assertTrue(_depo().getVaultPin(user) != address(0));
-        vm.warp(block.timestamp + DELAY);
-        _prot().finalizeSettingChanges(user);
-        assertEq(_depo().getVaultPin(user), address(0));
-    }
-
     function testTwoSignersCannotRecover() public {
         _enable();
         _addSigner(s1);
@@ -908,56 +891,6 @@ contract ProtectedVaultTest is Test {
     }
 
     // ─── Implementation pin ──────────────────────────────────────────────
-
-    function testProtectedUnpinWaitsTheDelay() public {
-        vm.prank(user);
-        _depo().pinVaultImplementation();
-        assertTrue(_depo().getVaultPin(user) != address(0));
-        _enable();
-        vm.prank(user);
-        _depo().unpinVaultImplementation(user);
-        assertTrue(_depo().getVaultPin(user) != address(0));
-        vm.warp(block.timestamp + DELAY);
-        _prot().finalizeSettingChanges(user);
-        assertEq(_depo().getVaultPin(user), address(0));
-    }
-
-    /// A pin records the implementation the vault runs: a vault behind the
-    /// current template must be upgraded before it can be pinned, and a
-    /// second pin leaves the record as it is.
-    function testPinRecordsTheImplementationTheVaultRuns() public {
-        _deposit20(1 ether);
-        address next = ArtifactDeploy.deploy(type(VaipakamVaultImplementation).name);
-        VaultFactoryFacet(address(diamond)).upgradeVaultImplementation(next);
-        vm.prank(user);
-        vm.expectPartialRevert(VaultDepositoryFacet.VaultNotCurrent.selector);
-        _depo().pinVaultImplementation();
-        vm.prank(user);
-        VaultFactoryFacet(address(diamond)).upgradeUserVault(user);
-        vm.prank(user);
-        _depo().pinVaultImplementation();
-        assertEq(_depo().getVaultPin(user), next, "the pin names the code the vault runs");
-        vm.prank(user);
-        _depo().pinVaultImplementation();
-        assertEq(_depo().getVaultPin(user), next, "a second pin changes nothing");
-    }
-
-    function testProtectedPinIsNotClearedByAnUpgrade() public {
-        vm.prank(user);
-        _depo().pinVaultImplementation();
-        _enable();
-        // A stolen primary key cannot skip the unpin delay with an upgrade.
-        vm.prank(user);
-        vm.expectRevert(abi.encodeWithSelector(VaultFactoryFacet.VaultPinned.selector, user));
-        VaultFactoryFacet(address(diamond)).upgradeUserVault(user);
-        assertTrue(_depo().getVaultPin(user) != address(0));
-        // After the delayed unpin, the vault upgrades normally.
-        vm.prank(user);
-        _depo().unpinVaultImplementation(user);
-        vm.warp(block.timestamp + DELAY);
-        _prot().finalizeSettingChanges(user);
-        VaultFactoryFacet(address(diamond)).upgradeUserVault(user);
-    }
 
     // ─── Position NFTs ───────────────────────────────────────────────────
 

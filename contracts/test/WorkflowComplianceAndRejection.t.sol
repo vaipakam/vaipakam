@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {Test} from "forge-std/Test.sol";
+import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
 import {VaipakamDiamond} from "../src/VaipakamDiamond.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
@@ -303,7 +304,7 @@ contract WorkflowComplianceAndRejection is Test {
         AdminFacet(address(diamond)).unpause();
 
         // Initialize diamond services
-        VaultFactoryFacet(address(diamond)).initializeVaultImplementation();
+        LibTestVaultBeacon.install(address(diamond), address(this));
         VaipakamNFTFacet(address(diamond)).initializeNFT();
         AdminFacet(address(diamond)).setTreasury(address(diamond));
         AdminFacet(address(diamond)).setZeroExProxy(makeAddr("zeroEx"));
@@ -885,67 +886,6 @@ contract WorkflowComplianceAndRejection is Test {
     // ═══════════════════════════════════════════════════════════════════════
     // Vault Upgrade Test
     // ═══════════════════════════════════════════════════════════════════════
-
-    /// @notice Verify vault mandatory upgrade: set mandatory version, user blocked, then upgrade resumes interaction
-    function test_VaultUpgrade_MandatoryBlocking() public {
-        // Step 1: Deploy a new vault implementation to bump version
-        VaipakamVaultImplementation newImpl = new VaipakamVaultImplementation();
-
-        // Step 2: Owner upgrades the vault implementation (bumps currentVaultVersion to 2)
-        vm.prank(owner);
-        VaultFactoryFacet(address(diamond)).upgradeVaultImplementation(address(newImpl));
-
-        // Step 3: Owner sets mandatory version to 1 (current version after upgrade).
-        // Vaults created before upgrade have version 0, so 0 < 1 triggers the block.
-        vm.prank(owner);
-        VaultFactoryFacet(address(diamond)).setMandatoryVaultUpgrade(1);
-
-        // Step 4: lender's vault was created at version 0. Calling getOrCreateUserVault
-        // should revert with VaultUpgradeRequired because version 0 < mandatory 1.
-        vm.expectRevert(VaultFactoryFacet.VaultUpgradeRequired.selector);
-        VaultFactoryFacet(address(diamond)).getOrCreateUserVault(lender);
-
-        // Step 5: User upgrades their vault via upgradeUserVault.
-        // The UUPS upgradeToAndCall on the proxy requires mocking since we cannot
-        // perform a real UUPS upgrade in this test environment.
-        // Read lender's proxy address directly from storage to mock the call on it.
-        address lenderProxy = _getLenderVaultDirect();
-
-        // Mock any call to the proxy's upgradeToAndCall to succeed
-        vm.mockCall(
-            lenderProxy,
-            abi.encodeWithSelector(
-                bytes4(keccak256("upgradeToAndCall(address,bytes)"))
-            ),
-            ""
-        );
-
-        VaultFactoryFacet(address(diamond)).upgradeUserVault(lender);
-
-        // Clear any stale mocks that might interfere
-        vm.clearMockedCalls();
-
-        // Re-mock oracle calls needed for getOrCreateUserVault (it may check liquidity/price)
-        mockLiquidity(address(mockUsdc), LibVaipakam.LiquidityStatus.Liquid);
-        mockPrice(address(mockUsdc), 1e8, 8);
-        mockLiquidity(address(mockWeth), LibVaipakam.LiquidityStatus.Liquid);
-        mockPrice(address(mockWeth), 1e8, 8);
-        mockLiquidity(address(mockNft), LibVaipakam.LiquidityStatus.Illiquid);
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector),
-            abi.encode(2e18)
-        );
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(RiskFacet.calculateLTV.selector),
-            abi.encode(6666)
-        );
-
-        // Step 6: After upgrade, getOrCreateUserVault should succeed
-        address vault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(lender);
-        assertTrue(vault != address(0), "Vault should be accessible after upgrade");
-    }
 
     /// @dev Helper to get lender's vault address directly from storage,
     ///      bypassing the production `getOrCreateUserVault` path's

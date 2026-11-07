@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 
 import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {VaultBeacon} from "../VaultBeacon.sol";
 import {LibProtectedAccount} from "../libraries/LibProtectedAccount.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
@@ -50,6 +51,8 @@ contract ProtectedAccountFacet is DiamondReentrancyGuard, DiamondPausable {
     uint8 internal constant CHANGE_NFT_OFF = 3;
     uint8 internal constant CHANGE_COSIGN_OFF = 4;
     uint8 internal constant CHANGE_UNLOCK = 5;
+    /// @dev #3204 — a pending pin change held by the VaultBeacon. Cancelling it
+    ///      here cancels it at the beacon; it is applied there, not here.
     uint8 internal constant CHANGE_UNPIN = 6;
 
     // ─── Events ──────────────────────────────────────────────────────────
@@ -187,7 +190,40 @@ contract ProtectedAccountFacet is DiamondReentrancyGuard, DiamondPausable {
         a.pendingDelayAt = 0;
         a.pendingNftOffAt = 0;
         a.pendingCosignOffAt = 0;
-        a.pendingUnpinAt = 0;
+        // #3204 — a pin change waits at the VaultBeacon; a lock, replacement
+        // or switch-off cancels it there, as it voids every other pending change.
+        _cancelBeaconPin(account);
+    }
+
+    /// @dev The account's vault and the VaultBeacon (#3204); zero vault if none.
+    function _beaconAndVault(address account) private view returns (VaultBeacon beacon, address vault) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        beacon = VaultBeacon(s.vaultBeacon);
+        vault = s.userVaipakamVaults[account];
+    }
+
+    /// @dev Cancel `account`'s pending pin change at the beacon, if any.
+    ///      Returns whether one was pending. Cancelling only refuses a change.
+    function _cancelBeaconPin(address account) private returns (bool) {
+        (VaultBeacon beacon, address vault) = _beaconAndVault(account);
+        if (vault == address(0) || address(beacon) == address(0)) return false;
+        (, uint256 at) = beacon.pendingPinOf(vault);
+        if (at == 0) return false;
+        beacon.cancelPin(vault, "");
+        return true;
+    }
+
+    /// @dev #3204 — raise the vault's pin delay at the beacon toward the
+    ///      protected-mode delay. The beacon caps a Diamond-driven raise at
+    ///      `MAX_DIAMOND_PIN_DELAY` (below its code-change delay), so the cap
+    ///      is applied here too; only the owner's own signature at the beacon
+    ///      may go higher. Never lowers.
+    function _raiseBeaconPinDelay(address account, uint256 delaySeconds) private {
+        (VaultBeacon beacon, address vault) = _beaconAndVault(account);
+        if (vault == address(0) || address(beacon) == address(0)) return;
+        uint256 cap = beacon.MAX_DIAMOND_PIN_DELAY();
+        uint256 d = delaySeconds > cap ? cap : delaySeconds;
+        if (d > beacon.pinDelay(vault)) beacon.raisePinDelay(vault, d);
     }
 
     /// @dev `at` if the change was requested in the current epoch, else 0
@@ -234,6 +270,7 @@ contract ProtectedAccountFacet is DiamondReentrancyGuard, DiamondPausable {
         a.enabled = true;
         a.delaySeconds = delaySeconds;
         a.protectNfts = protectNfts;
+        _raiseBeaconPinDelay(msg.sender, delaySeconds);
         emit ProtectedModeEnabled(msg.sender, delaySeconds, protectNfts);
     }
 
@@ -264,6 +301,7 @@ contract ProtectedAccountFacet is DiamondReentrancyGuard, DiamondPausable {
             a.delaySeconds = delaySeconds;
             a.pendingDelay = 0;
             a.pendingDelayAt = 0;
+            _raiseBeaconPinDelay(account, delaySeconds);
             emit ProtectedDelaySet(account, old, delaySeconds);
             return;
         }
@@ -318,7 +356,9 @@ contract ProtectedAccountFacet is DiamondReentrancyGuard, DiamondPausable {
         } else if (kind == CHANGE_NFT_OFF) a.pendingNftOffAt = 0;
         else if (kind == CHANGE_COSIGN_OFF) a.pendingCosignOffAt = 0;
         else if (kind == CHANGE_UNLOCK) a.pendingUnlockAt = 0;
-        else if (kind == CHANGE_UNPIN) a.pendingUnpinAt = 0;
+        else if (kind == CHANGE_UNPIN) {
+            if (!_cancelBeaconPin(account)) revert LibProtectedAccount.ChangeNotRequested();
+        }
         else revert LibProtectedAccount.ChangeNotRequested();
         emit SettingChangeCancelled(account, kind, msg.sender);
     }
@@ -367,12 +407,6 @@ contract ProtectedAccountFacet is DiamondReentrancyGuard, DiamondPausable {
             a.pendingUnlockAt = 0;
             emit VaultUnlocked(account);
             emit SettingChangeApplied(account, CHANGE_UNLOCK);
-        }
-        if (a.pendingUnpinAt != 0 && nowTs >= a.pendingUnpinAt) {
-            applied = true;
-            a.pendingUnpinAt = 0;
-            delete LibVaipakam.storageSlot().vaultPinnedImplementation[account];
-            emit SettingChangeApplied(account, CHANGE_UNPIN);
         }
         if (a.pendingDisableAt != 0 && nowTs >= a.pendingDisableAt) {
             if (LibProtectedAccount.openRows(account) == 0) {

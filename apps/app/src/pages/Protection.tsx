@@ -334,8 +334,6 @@ function AccountView({
     pending.push({ key: 'nfts', label: p.changeNftsOff, at: record.pendingNftOffAt, kind: 3 });
   if (record.pendingCosignOffAt > 0n)
     pending.push({ key: 'cosign', label: p.changeCosignOff, at: record.pendingCosignOffAt, kind: 4 });
-  if (record.pendingUnpinAt > 0n)
-    pending.push({ key: 'unpin', label: p.changeUnpin, at: record.pendingUnpinAt, kind: 6 });
   // Switching protection off completes only once no payout or position
   // transfer is open (the contract's finalize applies every other due change
   // and leaves the switch-off waiting, or refuses when it is the only one).
@@ -380,6 +378,10 @@ function AccountView({
           </span>
         </div>
       ) : null}
+
+      {/* #3204 — a vault version pin is no longer a protection setting;
+          it waits at the VaultBeacon and moves to the vault page (#3281). */}
+      <p className="row-sub">{p.pinMovedNote}</p>
 
       {pending.length > 0 ? (
         <section className="card">

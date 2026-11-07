@@ -1042,41 +1042,6 @@ contract FallbackCustodyTest is CustodyInvariantBase {
         assertEq(TreasuryFacet(address(diamond)).getTreasuryBalance(weth) - recorded0, t, "and is recorded as treasury");
     }
 
-    /// @notice F21 (#3178, owner decision 2026-11-05). A borrower vault behind a
-    ///         mandatory upgrade does NOT block the lender's in-kind claim: the
-    ///         claim pays the lender out of the borrower's vault, a protocol
-    ///         payout to the counterparty, and the version gate guards only the
-    ///         vault owner's own outflows. (Before #3178 the claim reverted
-    ///         `VaultUpgradeRequired` until anyone upgraded the borrower's vault.)
-    /// @dev    Kills: the lender's claim reverting on the BORROWER's vault version.
-    function test_F21_borrowerVaultBehindMandatoryUpgrade_doesNotBlockTheLendersClaim() public {
-        uint256 id = _fcForward(weth);
-        _fcLiquidateToFallback(id);
-        (uint256 l,,) = _fcSlices(id);
-        // A REAL implementation upgrade bumps the factory's current version (it starts at 0 on a
-        // fresh Diamond); existing proxies keep their old version until each is upgraded. The
-        // lender is brought current through the same permissionless upgrade, so only the
-        // borrower's vault sits behind the mandatory version.
-        vm.prank(owner);
-        VaultFactoryFacet(address(diamond)).upgradeVaultImplementation(address(new VaipakamVaultImplementation()));
-        VaultFactoryFacet(address(diamond)).upgradeUserVault(fcLender);
-        (, uint256 current,,) = VaultFactoryFacet(address(diamond)).getVaultVersionInfo(fcBorrower);
-        assertGt(current, 0, "fixture-live: a current vault version");
-        TestMutatorFacet(address(diamond)).setVaultVersionRaw(fcBorrower, current - 1);
-        TestMutatorFacet(address(diamond)).setMandatoryVaultVersionRaw(current);
-        (,,, bool borrowerBehind) = VaultFactoryFacet(address(diamond)).getVaultVersionInfo(fcBorrower);
-        (,,, bool lenderBehind) = VaultFactoryFacet(address(diamond)).getVaultVersionInfo(fcLender);
-        assertTrue(borrowerBehind, "fixture-live: the borrower's vault is behind");
-        assertFalse(lenderBehind, "fixture-live: the lender's is not");
-
-        uint256 lender0 = _fcBal(weth, fcLender);
-        vm.prank(fcLender);
-        ClaimFacet(address(diamond)).claimAsLender(id);
-        assertEq(_fcBal(weth, fcLender) - lender0, l, "the claim pays the lender slice out of the outdated vault");
-        (,,, borrowerBehind) = VaultFactoryFacet(address(diamond)).getVaultVersionInfo(fcBorrower);
-        assertTrue(borrowerBehind, "and the borrower's vault is still behind");
-    }
-
     // =====================================================================
     //  Fixtures
     // =====================================================================

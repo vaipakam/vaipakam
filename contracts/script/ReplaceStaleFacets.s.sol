@@ -89,6 +89,8 @@ contract ReplaceStaleFacets is DeployDiamond {
     /// @notice #2748 - the target Diamond predates the rate-model host; see
     ///         {_requireRateModelFacet}.
     error PredatesRateModelFacet(address diamond);
+    /// @notice #3204 - the target Diamond predates the VaultBeacon (fresh deploy only).
+    error PredatesVaultBeacon(address diamond);
 
     function run() external override {
         uint256 deployerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
@@ -138,6 +140,10 @@ contract ReplaceStaleFacets is DeployDiamond {
         // #1209 / #1808 - and one from before the interest ledger; see
         // {_requireInterestLedger}.
         _requireInterestLedger(diamond);
+        // #3204 - a Diamond from before the VaultBeacon is fresh-deploy only.
+        if (IDiamondLoupe(diamond).facetAddress(VaultFactoryFacet.getVaultBeacon.selector) == address(0)) {
+            revert PredatesVaultBeacon(diamond);
+        }
 
         vm.startBroadcast(deployerKey);
 

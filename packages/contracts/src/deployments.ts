@@ -245,6 +245,9 @@ export interface Deployment {
   diamond: HexAddress;
   deployBlock: number;
   vaultImpl: HexAddress;
+  /** #3204 — the VaultBeacon every user vault resolves its code through.
+   *  Optional until each chain's next fresh deploy writes it. */
+  vaultBeacon?: HexAddress;
   treasury: HexAddress;
   admin: HexAddress;
   facets: DeploymentFacets;

@@ -803,6 +803,34 @@
       "class": "user",
       "why": "a holder gives up its own role; the confirmation argument must be the caller"
     },
+    "VaultBeacon.cancelPin(address,bytes)": {
+      "class": "gated",
+      "gate": "the Diamond (its protected-mode cancel path), or the vault owner's EIP-712 CancelPin signature over (vault, nonce) verified at the beacon against the owner wallet the vault recorded; cancelling only ever refuses a change"
+    },
+    "VaultBeacon.executeCurrentVersion()": {
+      "class": "gap",
+      "issue": "#3282",
+      "why": "applies a current-version proposal once MIN_CODE_DELAY has passed; anyone may call it, and the keeper pass that backs it is #3282 (ships disarmed)"
+    },
+    "VaultBeacon.executePin(address)": {
+      "class": "gap",
+      "issue": "#3282",
+      "why": "applies a vault's pin change once its pin delay has passed; anyone may call it, and the keeper pass that backs it is #3282 (ships disarmed)"
+    },
+    "VaultBeacon.executePinDelay(address)": {
+      "class": "gap",
+      "issue": "#3282",
+      "why": "applies a vault's pin-delay lowering once the current delay has passed; anyone may call it, and the keeper pass that backs it is #3282 (ships disarmed)"
+    },
+    "VaultBeacon.executeRevoke()": {
+      "class": "gap",
+      "issue": "#3282",
+      "why": "applies a revoke proposal once MIN_CODE_DELAY has passed; anyone may call it, and the keeper pass that backs it is #3282 (ships disarmed)"
+    },
+    "VaultBeacon.setPinDelay(address,uint256,bytes)": {
+      "class": "gated",
+      "gate": "the vault owner's EIP-712 PinDelay signature over (vault, delay, nonce), verified at the beacon against the owner wallet the vault recorded; a lowering then waits the current delay"
+    },
     "VaultDepositoryFacet.disownUntracked(uint8,address,uint256)": {
       "class": "user",
       "why": "the vault owner disowns its own untracked asset"
@@ -810,10 +838,6 @@
     "VaultFactoryFacet.getOrCreateUserVault(address)": {
       "class": "user",
       "why": "creates or returns a user's own vault; no step waits on it"
-    },
-    "VaultFactoryFacet.upgradeUserVault(address)": {
-      "class": "user",
-      "why": "moves a vault to the current implementation; the owner does it when the app asks, and a pinned vault only by its owner"
     },
     "VaultPayoutFacet.escapeWithdraw(uint8,address,uint256,uint256)": {
       "class": "user",

@@ -171,7 +171,12 @@ library StorageLayoutRecord {
         m.diamond = diamond;
         m.cutFacet = IDiamondLoupe(diamond).facetAddress(DIAMOND_CUT_SELECTOR);
         m.facets = IDiamondLoupe(diamond).facetAddresses();
-        m.vaultTemplate = ChainContracts.readWord(diamond, "getVaipakamVaultImplementationAddress()", 0);
+        // #3204 — the vault code is the VaultBeacon's current version; a
+        // non-vault caller asking `implementation()` gets exactly that.
+        {
+            address beacon = ChainContracts.readWord(diamond, "getVaultBeacon()", 0);
+            m.vaultTemplate = beacon == address(0) ? address(0) : ChainContracts.readWord(beacon, "implementation()", 0);
+        }
         m.adapterTemplate = ChainContracts.readWord(diamond, "aggregatorAdapterTemplate()", 0);
         (m.proxies, m.implementations) = _liveProxies(diamond);
         m.codeHashes = _codeHashes(m);

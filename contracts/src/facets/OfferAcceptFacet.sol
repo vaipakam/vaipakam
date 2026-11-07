@@ -1121,32 +1121,6 @@ contract OfferAcceptFacet is
         // routes through `_acceptOffer` via `acceptOfferInternal`).
         if (lender == borrower) revert SelfTradeForbidden(lender);
 
-        // #1835 (Codex #1891 F20) — the mandatory vault-version floor stays
-        // AHEAD of staleness even though vault CREATION moved below it.
-        //
-        // `getOrCreateUserVault` does two things, and F19 only reasoned about
-        // one: it deploys a proxy for a first-time party (the gas cost F19
-        // deferred) AND it enforces this floor for a party who already has one
-        // (`VaultFactoryFacet.sol:288-293`). Deferring both meant a party with
-        // an outdated vault got `SaleListingTermsStale` instead of the
-        // upgrade refusal — and by the rule this whole ordering rests on, that
-        // is wrong: `OfferCreateFacet._createOfferSetup` calls `getUserVault`,
-        // so the relist staleness advises is blocked by the same floor. Advice
-        // that cannot be taken, hiding the reason that can.
-        //
-        // Checked inline against storage rather than by calling the factory,
-        // so an EXISTING vault is validated without deploying a missing one —
-        // which is the whole point of F19. A party with no vault yet cannot be
-        // below the floor: they get a fresh one at the current version.
-        if (s.mandatoryVaultVersion > 0) {
-            if (
-                (s.userVaipakamVaults[lender] != address(0) &&
-                    s.vaultVersion[lender] < s.mandatoryVaultVersion) ||
-                (s.userVaipakamVaults[borrower] != address(0) &&
-                    s.vaultVersion[borrower] < s.mandatoryVaultVersion)
-            ) revert VaultFactoryFacet.VaultUpgradeRequired();
-        }
-
         // #1835 (Codex #1891 F3/F4/F5/F10/F11) — the sale VEHICLE must MIRROR
         // the position it sells. A listing created before #1779 taught
         // `_buildSaleParams` to copy these four behavioural terms holds the
@@ -1978,11 +1952,10 @@ contract OfferAcceptFacet is
         // wrong in the same way it had been about the pause. Parity is the
         // point of this enum.
         //
-        // A surface built on this code must say the vault needs upgrading and
-        // point at `upgradeUserVault` — NOT that the listing is stale, which
-        // advises a relist the same floor blocks (`OfferCreateFacet` resolves a
-        // vault too). APPENDED — prior values stay stable.
-        VaultUpgradeRequired,
+        // #3204 — retired with the mandatory vault-version floor (every vault
+        // resolves its code through the VaultBeacon). Never produced; kept so
+        // the later codes keep their values.
+        RetiredVaultUpgradeRequired,
         // #1835 (Codex #1891 F25) — the acceptor IS the offer's creator, so
         // `_acceptOffer` resolves `lender == borrower` and reverts
         // `SelfTradeForbidden`. This surface had NO generic self-trade

@@ -644,7 +644,11 @@ test('the command line is parsed strictly', () => {
 test('the committed golden file names every root and one position per namespace', () => {
   const golden = JSON.parse(readFileSync(GOLDEN_FILE, 'utf8'));
   const roots = readRoots(readFileSync(ROOTS_FILE, 'utf8'));
-  const expectedRoots = [...roots.namespaces.map((n) => n.id), ...roots.uups.map((c) => `uups:${c}`)].sort();
+  const expectedRoots = [
+    ...roots.namespaces.map((n) => n.id),
+    ...roots.uups.map((c) => `uups:${c}`),
+    ...(roots.beacon ?? []).map((c) => `beacon:${c}`),
+  ].sort();
   assert.deepEqual(golden.roots, expectedRoots);
   for (const ns of roots.namespaces) {
     assert.equal(golden.layout.filter((l) => l.startsWith(`P|${ns.id}|`)).length, 1, `${ns.id} position`);
