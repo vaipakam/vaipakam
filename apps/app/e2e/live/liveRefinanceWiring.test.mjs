@@ -211,3 +211,74 @@ describe('live-refinance wiring — pre-write gates', () => {
     expect(ctx).toContain('participants: { borrower: BORROWER, lender: LENDER');
   });
 });
+
+describe('live-refinance wiring — the payoff-permit route (#3295)', () => {
+  it('the preflight BLOCKS a Diamond that does not route the payoff permit, from the watched routing', () => {
+    expect(statementFrom(SRC, 'const payoffRoute =')).toBe(
+      "const payoffRoute = /^0x0{40}$/i.test(watched.payoffPermitHost) ? 'approval' : 'permit';",
+    );
+    const want = between(SRC, 'want(\n  \'the Diamond pays the refinance payoff', 'PERMIT_NEEDED =');
+    expect(want).toContain("pre.payoffRoute === 'permit',");
+    expect(statementFrom(SRC, 'PERMIT_NEEDED = pre.')).toBe('PERMIT_NEEDED = pre.walletShare !== null && pre.walletShare > 0n;');
+  });
+
+  it('the plan is built with the permit getters the gate fills', () => {
+    const plan = statementFrom(SRC, 'PLAN = createWritePlan(');
+    expect(plan).toContain('permitNeeded: PERMIT_NEEDED,');
+    expect(plan).toContain('permit2ShareBounds: () => PERMIT2_SHARE_BOUNDS,');
+    expect(plan).toContain('borrowerPermit: () => BORROWER_PERMIT,');
+    expect(plan).toContain("st.id === 'b-permit' && st.status === 'consumed'");
+  });
+
+  it('the borrower gate reads the permit figures BEFORE the synchronous judgement, and the judgement keeps the decoded call', () => {
+    const gate = blockFrom(SRC, 'function signingGateFor(role) {');
+    const prep = gate.indexOf("if (role === 'borrower') await prepareBorrowerPermit();");
+    expect(prep).toBeGreaterThan(-1);
+    expect(prep).toBeLessThan(gate.indexOf('const v = judge(role, method, params);'));
+    expect(blockFrom(SRC, 'function judge(role, method, params) {')).toContain("{ call: actual.data }");
+  });
+
+  it('the permit figures come from the contract: the receipt’s request, the createOffer’s own expiry, the share at that deadline', () => {
+    const prep = blockFrom(SRC, 'async function prepareBorrowerPermit() {');
+    expect(prep).toContain("const expiresAt = create.record.call?.args?.params?.expiresAt;");
+    expect(prep).toContain('const deadline = lastFillableMoment(BigInt(expiresAt), GRACE_END);');
+    expect(prep).toContain('const maxAmount = await walletShareBy(deadline, rcpt.blockNumber);');
+    expect(prep).toContain('BORROWER_PERMIT = { offerId: created[0].args.offerId, deadline, maxAmount };');
+    expect(blockFrom(SRC, 'async function walletShareBy(by, blockNumber) {')).toContain(
+      "read('getRefinancePayoff', [LOAN_ID, 0n, by], blockNumber)",
+    );
+  });
+
+  it('the borrower stays armed until the page reports the permit attached, and the attach step was consumed', () => {
+    const region = between(SRC, "stop(`the refinance request did not go live: ${live ?? 'timed out'}`);", "PLAN.close();\n  console.log('info  write plan CLOSED after the borrower");
+    expect(region).toContain('if (PERMIT_NEEDED) {');
+    expect(region).toContain('if (t.includes(squash(P.done))) return \'attached\';');
+    expect(region).toContain("if (permitOutcome !== 'attached') stop(");
+    expect(region).toContain("st.id === 'b-attach'");
+  });
+
+  it('the attached permit is read back before the lender is armed', () => {
+    expect(blockFrom(SRC, 'async function pinRequestFromReceipt() {')).toContain('if (PERMIT_NEEDED) await verifyAttachedPermit();');
+    const verify = blockFrom(SRC, 'async function verifyAttachedPermit() {');
+    expect(verify).toContain("read('getRefinancePayoff', [LOAN_ID, requestId, BORROWER_PERMIT.deadline])");
+    expect(verify).toContain('nonceSpent === false');
+    expect(verify).toContain('maxAmount >= shareBy');
+    expect(verify).toMatch(/if \(!ok\) stop\(/);
+  });
+
+  it('the borrower review is compared with the contract’s figures and the card’s wallet-steps note', () => {
+    expect(statementFrom(SRC, 'const bTerms =')).toBe(
+      'const bTerms = await borrowerReviewMismatches(bObs.observed, bObs.config, receiptText);',
+    );
+    expect(blockFrom(SRC, 'async function borrowerReviewMismatches(rows, config, cardText) {')).toContain(
+      "read('getRefinancePayoff', [LOAN_ID, 0n, lastFillable])",
+    );
+  });
+
+  it('the ledger watches the borrower’s Permit2 allowance, and no step touches its Diamond allowance', () => {
+    const ledger = between(SRC, 'const LEDGER = [', '\n];');
+    expect(ledger).toContain("touchedBy: ['b-permit2-reset', 'b-permit2-set', 'l-accept', 'b-request-filled'],");
+    expect(ledger).toContain('read: (head) => allowanceAt(BORROWER, PERMIT2_ADDRESS, head),');
+    expect(between(SRC, "key: 'borrowerDiamondAllowance',", 'restore: () => null,')).toContain('touchedBy: [],');
+  });
+});
