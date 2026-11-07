@@ -124,19 +124,6 @@ interface IVaipakamIntentSurface {
 
     function paused() external view returns (bool);
 
-    /// @dev The 4th return value `upgradeRequired` is true iff `user` has a vault
-    ///      below a mandatory vault-upgrade floor — every Diamond-driven vault
-    ///      touch then reverts `VaultUpgradeRequired` until the vault is migrated.
-    function getVaultVersionInfo(address user)
-        external
-        view
-        returns (
-            uint256 userVersion,
-            uint256 currentVersion,
-            uint256 mandatoryVersion,
-            bool upgradeRequired
-        );
-
     function getAggregatorAdapterVersion(address adapter)
         external
         view
@@ -841,11 +828,6 @@ contract AggregatorAdapterImplementation is
         // #626 round-4 P2 — a sanctioned principal can't deposit (`_deposit`
         // reverts), so advertise 0.
         if (d.isSanctionedAddress(authorizedPrincipal)) return false;
-        // #626 round-8 P2 — a mandatory VAULT upgrade makes the deposit path
-        // (`fundLenderIntent` → `getOrCreateUserVault(adapter)`) revert
-        // `VaultUpgradeRequired` until the adapter's vault is migrated. Advertise 0.
-        (, , , bool vaultUpgradeRequired) = d.getVaultVersionInfo(address(this));
-        if (vaultUpgradeRequired) return false;
         if (!d.getLenderIntent(address(this), asset(), collateralAsset).active) {
             return false;
         }
@@ -879,13 +861,7 @@ contract AggregatorAdapterImplementation is
         if (d.isSanctionedAddress(authorizedPrincipal) || d.paused()) {
             return true;
         }
-        // #626 round-7 P2 — a mandatory VAULT upgrade (distinct from the adapter
-        // upgrade floor) makes `getOrCreateUserVault(adapter)` revert
-        // `VaultUpgradeRequired`, so `withdrawLenderIntentCapital` deterministically
-        // reverts until the adapter's underlying vault is migrated. Advertise 0.
-        (, , , bool vaultUpgradeRequired) =
-            d.getVaultVersionInfo(address(this));
-        return vaultUpgradeRequired;
+        return false;
     }
 
     /// @dev Tier-1 screen on the CALLER of a new-lending forwarder (#626 round-6

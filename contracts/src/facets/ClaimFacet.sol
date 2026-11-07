@@ -616,14 +616,6 @@ contract ClaimFacet is
             // payout) — otherwise `getOrCreateUserVault(loan.lender)` would brick
             // the clean current holder's backstop absorb. The stored party loses
             // custody to the (already-screened) NFT owner.
-            // #3178 (owner decision 2026-11-05) — a claim is the vault OWNER's own
-            // outflow when the claimant owns the vault it pays from: refused while
-            // that vault is below the mandatory vault version, until it is
-            // upgraded. A position holder claiming out of SOMEONE ELSE's vault is
-            // a payout to a counterparty and is not held back by that vault's version.
-            if (nftOwner == loan.lender && LibVaipakam.vaultUpgradeRequired(loan.lender)) {
-                revert VaultFactoryFacet.VaultUpgradeRequired();
-            }
             LibSanctionedLock.beginMoveOut(s, loan.lender);
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
@@ -1046,14 +1038,6 @@ contract ClaimFacet is
         // stale-and-later-flagged; arm the from-side move-out exemption so that
         // doesn't brick the clean current holder's claim (the stored party is
         // losing custody, not receiving). Pinned to the exact `loan.lender`.
-        // #3178 (owner decision 2026-11-05) — a claim is the vault OWNER's own
-        // outflow when the claimant owns the vault it pays from: refused while
-        // that vault is below the mandatory vault version, until it is
-        // upgraded. A position holder claiming out of SOMEONE ELSE's vault is
-        // a payout to a counterparty and is not held back by that vault's version.
-        if (msg.sender == loan.lender && LibVaipakam.vaultUpgradeRequired(loan.lender)) {
-            revert VaultFactoryFacet.VaultUpgradeRequired();
-        }
         LibSanctionedLock.beginMoveOut(s, loan.lender);
 
         // Transfer claimable assets from lender's vault to claimant (if any)
@@ -1386,14 +1370,6 @@ contract ClaimFacet is
         // stale-and-later-flagged; arm the from-side move-out exemption so the
         // clean current holder's claim isn't bricked (the stored party is losing
         // custody). Pinned to the exact `loan.borrower`; covers the restamp below.
-        // #3178 (owner decision 2026-11-05) — a claim is the vault OWNER's own
-        // outflow when the claimant owns the vault it pays from: refused while
-        // that vault is below the mandatory vault version, until it is
-        // upgraded. A position holder claiming out of SOMEONE ELSE's vault is
-        // a payout to a counterparty and is not held back by that vault's version.
-        if (msg.sender == loan.borrower && LibVaipakam.vaultUpgradeRequired(loan.borrower)) {
-            revert VaultFactoryFacet.VaultUpgradeRequired();
-        }
         LibSanctionedLock.beginMoveOut(s, loan.borrower);
 
         // Transfer claimable collateral from borrower's vault to claimant

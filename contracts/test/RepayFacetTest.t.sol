@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {Test} from "forge-std/Test.sol";
+import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
 import {VaipakamDiamond} from "../src/VaipakamDiamond.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
@@ -321,7 +322,7 @@ contract RepayFacetTest is Test {
 
         // Init vault factory with impl
         vm.prank(owner);
-        VaultFactoryFacet(address(diamond)).initializeVaultImplementation();
+        LibTestVaultBeacon.install(address(diamond), address(this));
         AdminFacet(address(diamond)).setTreasury(address(diamond));
         // vm.prank(address(diamond));
         // LibVaipakam.setTreasury(owner);

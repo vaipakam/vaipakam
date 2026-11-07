@@ -74,35 +74,29 @@ Both lists MUST stay in sync. Any new external function added to either facet re
 
 ---
 
-## UUPS vault upgrades
+## Vault code changes (VaultBeacon, #3204)
 
-### What a UUPS upgrade can do
-`VaipakamVaultImplementation` is a UUPS upgradeable. The implementation address is stored in the Diamond's `LibVaipakam.Storage`. `VaultFactoryFacet.upgradeVaultImplementation(newImpl)` replaces the address for **newly-created** vaults.
+### What changed
+Every user vault is a `BeaconProxy` that asks the **VaultBeacon** which code to run on every call. The beacon is a separate contract (not a facet), owned by the Timelock and **not upgradeable**; no facet's storage write can change which code a vault runs. There is no per-vault upgrade any more: `upgradeVaultImplementation`, `upgradeUserVault`, `setMandatoryVaultUpgrade` and the "vault below the mandatory version" rules (#3178) are gone. Design: [`VaultCentralImplementationDesign.md`](../DesignsAndPlans/VaultCentralImplementationDesign.md).
 
-Existing users only upgrade when:
-- `setMandatoryVaultUpgrade(true)` is set (forces upgrade on next interaction), OR
-- The user calls `upgradeUserVault()` themselves.
+A vault runs its owner's **pinned** version while that version is not revoked, otherwise the **current** version.
 
 ### Hazards
 | Hazard | Mitigation |
 |---|---|
-| New impl's `_authorizeUpgrade` reverts for every caller (brick) | **Test on a forked mainnet** with the real vault-admin role. OZ's `openzeppelin-foundry-upgrades` plugin does this automatically. |
-| Storage layout change | Same append-only rule. Diff `forge inspect VaipakamVaultImplementation storage-layout` vs. last release. |
-| Reinitializer not wired | Every new version must either (a) have no new initializable state, or (b) expose a `reinitialize(N)` behind the same role. |
-| Mandatory-upgrade flag flipped during high activity | Users mid-flow will pay extra gas to upgrade; coordinate with frontend to show a banner first. |
+| Storage layout change | Every registered version keeps the vault layout append-only; the storage-layout guard's `beacon:VaipakamVaultImplementation` root checks it, and `registerVersion` refuses a contract that does not report `vaultLayoutId()`. |
+| A registered implementation whose initializer can still be called | Deploy the implementation with its constructor disabling initializers (`DeployDiamond` checks the Initializable slot read-only before it registers version 1); check the same for every later version before registering it. |
+| A bad version reaches every vault at once | The change is two steps on the beacon, a proposal and an execution no sooner than `MIN_CODE_DELAY` (3 days, a constant) later; the Pauser Safe can cancel a pending proposal; owners can pin during the wait; the guardian can revoke while paused. |
 
-### Procedure (per upgrade)
+### Procedure (per version)
 1. Draft the new `VaipakamVaultImplementation` — only **append** state.
-2. Run the OpenZeppelin upgrade-safety checks (`validateUpgrade` from `Upgrades.sol`).
-3. Deploy the new implementation to the target chain (not behind a proxy — just the impl).
-4. `VAULT_ADMIN_ROLE` (timelock) queues `upgradeVaultImplementation(newImpl)`.
-5. After timelock delay, execute.
-6. Verify on a **new** vault created post-upgrade:
-   ```solidity
-   getOrCreateUserVault(testUser)
-   getVaultVersionInfo(testUser)   // should reflect new version
-   ```
-7. For existing users: decide whether to set `setMandatoryVaultUpgrade(true)`. Typical answer: **no**, unless the change fixes a security issue. Lazy migration preserves user gas.
+2. Run the storage-layout guard (`node contracts/script/storage-layout-guard.mjs check`).
+3. Deploy the implementation (not behind a proxy).
+4. The Timelock calls `VaultBeacon.registerVersion(impl)` — it runs nowhere yet.
+5. The Timelock calls `proposeCurrentVersion(id)`; owners see the pending change and may pin.
+6. After `MIN_CODE_DELAY`, anyone calls `executeCurrentVersion()`.
+7. Verify: `VaultBeacon.implementation()` (from a non-vault caller) and `resolvedVersionOf(vault)` for a sample of vaults.
+8. To withdraw a bad version: `proposeRevoke(id, successorId)` then `executeRevoke()` after the delay; in an emergency, while paused, the guardian's `guardianRevokeVersion`.
 
 ---
 

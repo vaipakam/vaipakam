@@ -298,6 +298,22 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
     ///         {_requireSlice3Diamond}.
     error PredatesSlice3FillLock(address diamond);
 
+    /// @notice #3204 - the target Diamond predates the VaultBeacon: its vaults
+    ///         are per-vault UUPS proxies, which no in-place refresh can turn
+    ///         into beacon proxies. Fresh deploy only (decision O1 = A).
+    error PredatesVaultBeacon(address diamond);
+
+    /// @dev #3204 - refuse a Diamond whose vault factory does not route
+    ///      `getVaultBeacon`: the refreshed factory would create beacon
+    ///      proxies against an unset beacon while every existing vault stays a
+    ///      UUPS proxy no code path can upgrade any more. Called before
+    ///      anything is deployed, so a refused run sends nothing.
+    function _requireVaultBeaconDiamond(address diamond) internal view {
+        if (IDiamondLoupe(diamond).facetAddress(VaultFactoryFacet.getVaultBeacon.selector) == address(0)) {
+            revert PredatesVaultBeacon(diamond);
+        }
+    }
+
     /// @dev #1566 slices 2-3 (owner decision O1 = A, 2026-10-07): a chain crosses the custody
     ///      boundary by FRESH deploy only, and this refresh cannot do it at all -- the fill lock is
     ///      enforced in `VaipakamDiamond`'s own fallback, which no facet cut replaces, so a refreshed
@@ -475,6 +491,7 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             "RefreshAllFacetsInPlace: ADMIN_PRIVATE_KEY is not the diamond owner (handover / timelock?)"
         );
         _requireSlice3Diamond(diamond);
+        _requireVaultBeaconDiamond(diamond);
         _requireNoOpenErc1155RentalAcross902(diamond);
         _requireNoOpenLoanAcrossInterestLedger(diamond);
         // The per-token tracked vault ledger is fresh-deploy only; see

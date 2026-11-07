@@ -22,7 +22,7 @@ Roles defined in `LibAccessControl.sol`:
 | `KYC_ADMIN_ROLE` | `keccak256("KYC_ADMIN_ROLE")` | Deployer on init | `ProfileFacet.updateKYCStatus/updateKYCTier/updateKYCThresholds/setKeeperAccess/setLoanKeeperAccess` |
 | `ORACLE_ADMIN_ROLE` | `keccak256("ORACLE_ADMIN_ROLE")` | Deployer on init | `OracleAdminFacet.setChainlinkRegistry/setUsdChainlinkDenominator/setEthChainlinkDenominator/setWethContract/setUniswapV3Factory/setStableTokenFeed/setSequencerUptimeFeed/setFeedOverride/setTellorOracle/setApi3ServerV1/setDIAOracleV2/setSecondaryOracleMaxDeviationBps/setSecondaryOracleMaxStaleness` |
 | `RISK_ADMIN_ROLE` | `keccak256("RISK_ADMIN_ROLE")` | Deployer on init | `RiskFacet.updateRiskParams` |
-| `VAULT_ADMIN_ROLE` | `keccak256("VAULT_ADMIN_ROLE")` | Deployer on init | `VaultFactoryFacet.upgradeVaultImplementation/setMandatoryVaultUpgrade` |
+| `VAULT_ADMIN_ROLE` | `keccak256("VAULT_ADMIN_ROLE")` | Deployer on init | `VaultFactoryFacet.initializeVaultBeacon` (one-shot, at deploy), the backstop and aggregator-adapter admin. Vault code itself is no longer a role power: it changes only at the Timelock-owned `VaultBeacon` (#3204) |
 | `EMERGENCY_REVOKER_ROLE` | `keccak256("EMERGENCY_REVOKER_ROLE")` | Never granted at init; `Handover.s.sol` grants it to the governance multisig | `AccessControlFacet.emergencyRevokeRole` only — removes a role immediately; never `DEFAULT_ADMIN_ROLE`, never from the Diamond owner |
 
 `DEFAULT_ADMIN_ROLE` is the admin of every other role (see `LibAccessControl.initializeAccessControl`).
@@ -100,7 +100,7 @@ User flows: `createOffer`, `acceptOffer`, `initiateLoan`, `repayLoan`, `repayPar
 - `AccessControlFacet.grantRole / revokeRole / renounceRole`
 - `DiamondCutFacet.diamondCut`
 - `OracleAdminFacet.*`
-- `VaultFactoryFacet.upgradeVaultImplementation / setMandatoryVaultUpgrade`
+- `VaultBeacon.guardianRevokeVersion` — the beacon's guardian may revoke a vault version **only while** the Diamond is paused, and only onto registered code (#3204)
 - `AdminFacet.pause / unpause / paused`
 - Every pure/view function
 - CCIP message ingress to `RewardReporterFacet.onRewardBroadcastV3Received` and `RewardAggregatorFacet.onChainReportReceived` (routed CCIP-router → `CcipMessenger._ccipReceive` → `VaipakamRewardMessenger.onCrossChainMessage` → the diamond) — so in-flight messages don't fail-and-retry forever (they still have their own auth gates + the `GuardianPausable` per-contract pause path).

@@ -2,6 +2,8 @@
 pragma solidity ^0.8.29;
 
 import {Test} from "forge-std/Test.sol";
+import {VaultBeacon} from "../../src/VaultBeacon.sol";
+import {VaipakamVaultImplementation} from "../../src/VaipakamVaultImplementation.sol";
 import {Vm} from "forge-std/Vm.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
@@ -88,6 +90,7 @@ contract HandoverGateTest is Test {
     ///      Pauser Safe leaves it: the admin holds the veto, and the
     ///      handover's own leg rotates it.
     VaipakamFeedRegistry internal feedRegistry;
+    VaultBeacon internal vaultBeacon;
 
     HandoverGate internal gate;
 
@@ -397,13 +400,13 @@ contract HandoverGateTest is Test {
     function test_PlanListsRequiredSlotsOnAnEmptyArtifact() public {
         vm.chainId(421614); // a mirror
         HandoverPlan.Target[] memory m = HandoverPlan.read("{}");
-        assertEq(m.length, 8, "mirror: 4 shared + mirror token, reward receiver, return sender + feed registry");
+        assertEq(m.length, 9, "mirror: 4 shared + mirror token, reward receiver, return sender + feed registry + vault beacon");
         for (uint256 i; i < m.length; ++i) {
             assertTrue(m[i].required && m[i].addr == address(0), "every listed slot is a required gap");
         }
         vm.chainId(84532); // canonical
         HandoverPlan.Target[] memory c = HandoverPlan.read("{}");
-        assertEq(c.length, 8, "canonical: 4 shared + buyback receiver, return receiver, feed registry, token");
+        assertEq(c.length, 9, "canonical: 4 shared + buyback receiver, return receiver, feed registry, vault beacon, token");
     }
 
     /// @notice #2880 — the handover rotates the feed registry's veto from the
@@ -425,6 +428,37 @@ contract HandoverGateTest is Test {
         feedRegistry.setGuardian(stranger);
         (string[] memory failures,) = gate.evaluate(inp, _logs());
         _assertContains(failures, "feedRegistry: guardian() is");
+    }
+
+    /// @notice #3204 — the handover moves the VaultBeacon's guardian from the
+    ///         admin to the Pauser Safe and its ownership to the Timelock,
+    ///         and the gate passes it.
+    function test_VaultBeacon_GuardianRotatedToThePauserSafe() public {
+        HandoverGate.Inputs memory inp = _build(_none());
+        assertEq(vaultBeacon.guardian(), pauserSafe, "rotated by the handover");
+        assertEq(vaultBeacon.owner(), address(timelock), "owned by the Timelock");
+        (string[] memory failures,) = gate.evaluate(inp, _logs());
+        _assertNoFailures(failures);
+    }
+
+    /// @notice A VaultBeacon whose guardian is anyone but the Pauser Safe
+    ///         fails the gate.
+    function test_VaultBeacon_WrongGuardianFails() public {
+        HandoverGate.Inputs memory inp = _build(_none());
+        vm.prank(address(timelock));
+        vaultBeacon.setGuardian(stranger);
+        (string[] memory failures,) = gate.evaluate(inp, _logs());
+        _assertContains(failures, "vaultBeacon: guardian() is");
+    }
+
+    /// @notice #3204 — the plan derives the guardian flag for a found
+    ///         contract from `guardian()`, so a guardian-bearing contract the
+    ///         list does not name is still rotated and checked.
+    function test_Plan_DerivesTheGuardianFlag() public {
+        _build(_none());
+        assertTrue(HandoverPlan.answersGuardian(address(vaultBeacon)), "the beacon answers guardian()");
+        assertTrue(HandoverPlan.answersGuardian(address(feedRegistry)), "the feed registry answers guardian()");
+        assertFalse(HandoverPlan.answersGuardian(address(rateGovernor)), "a plain Ownable2Step does not");
     }
 
     /// @notice Unset CCIP registry: the CCT administrator is reported as not
@@ -523,6 +557,7 @@ contract HandoverGateTest is Test {
         swapAdapter =
             new ZeroExAggregatorAdapter(t.adapterOnDeployer ? deployer : admin, makeAddr("allowanceHolder"), settlers);
         feedRegistry = new VaipakamFeedRegistry(admin, admin);
+        vaultBeacon = new VaultBeacon(admin, address(diamond), admin, address(new VaipakamVaultImplementation()));
         cctRegistry = new TokenAdminRegistryStub();
         cctRegistry.seed(address(vpfiToken), admin);
         cctRegistry.setPool(address(vpfiToken), address(tokenPool));
@@ -558,6 +593,7 @@ contract HandoverGateTest is Test {
         if (!t.skipPoolAccept) _accept(address(tokenPool), abi.encodeWithSignature("acceptOwnership()"));
         _accept(address(vpfiToken), abi.encodeWithSignature("acceptOwnership()"));
         _accept(address(feedRegistry), abi.encodeWithSignature("acceptOwnership()"));
+        _accept(address(vaultBeacon), abi.encodeWithSignature("acceptOwnership()"));
         if (!t.adapterOnDeployer) _accept(address(swapAdapter), abi.encodeWithSignature("acceptOwnership()"));
         if (!t.skipCctAccept) {
             _accept(address(cctRegistry), abi.encodeWithSignature("acceptAdminRole(address)", address(vpfiToken)));
@@ -579,7 +615,7 @@ contract HandoverGateTest is Test {
     }
 
     function _targets() internal view returns (HandoverPlan.Target[] memory t) {
-        t = new HandoverPlan.Target[](6);
+        t = new HandoverPlan.Target[](7);
         t[0] = HandoverPlan.Target("ccipMessenger", address(messenger), HandoverPlan.OwnableKind.OpenZeppelin, true, true);
         t[1] = HandoverPlan.Target("vpfiTokenPool", address(tokenPool), HandoverPlan.OwnableKind.Chainlink, true, false);
         t[2] = HandoverPlan.Target(
@@ -592,6 +628,7 @@ contract HandoverGateTest is Test {
         );
         t[5] =
             HandoverPlan.Target("feedRegistry", address(feedRegistry), HandoverPlan.OwnableKind.OpenZeppelin, true, true);
+        t[6] = HandoverPlan.Target("vaultBeacon", address(vaultBeacon), HandoverPlan.OwnableKind.OpenZeppelin, true, true);
     }
 
     function _accept(address target, bytes memory data) internal {

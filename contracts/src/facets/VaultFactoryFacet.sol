@@ -11,8 +11,8 @@ import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
 
 import {LibProtectedAccount} from "../libraries/LibProtectedAccount.sol";
 import {VaipakamVaultImplementation} from "../VaipakamVaultImplementation.sol";
-import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
-import {UUPSUpgradeable} from "@openzeppelin/contracts/proxy/utils/UUPSUpgradeable.sol";
+import {BeaconProxy} from "@openzeppelin/contracts/proxy/beacon/BeaconProxy.sol";
+import {VaultBeacon} from "../VaultBeacon.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC1155} from "@openzeppelin/contracts/token/ERC1155/IERC1155.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
@@ -37,7 +37,7 @@ interface IPayoutGate {
  * @author Vaipakam Developer Team
  * @notice This facet manages the creation, initialization, and upgrade of per-user UUPS vault proxies in the Vaipakam platform.
  * @dev This contract is part of the Diamond Standard (EIP-2535) and uses shared storage from LibVaipakam.
- *      It deploys ERC1967Proxy instances per user, all pointing to a shared upgradable VaipakamVaultImplementation.
+ *      It deploys one BeaconProxy per user; every proxy resolves its code through the VaultBeacon (#3204).
  *      The Diamond owns the implementation and controls upgrades.
  *      Provides public helpers for ERC20, ERC721, and ERC1155 deposit/withdraw, as well as ERC-4907 rental functions (setUser, userOf, userExpires).
  *      All operations forward calls to the user's proxy (delegated to implementation).
@@ -172,31 +172,9 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
         uint64 minActiveExpires
     );
 
-    /// @notice Emitted when the mandatory minimum vault version changes
-    ///         (#2363). Every user whose vault is stamped below `version` is
-    ///         refused the vault-dependent entry points until they (or
-    ///         anyone) call {upgradeUserVault}; zero clears the requirement.
+    /// @notice #3204 — the VaultBeacon new vaults point at was recorded.
     /// @custom:event-category informational/config
-    event MandatoryVaultVersionSet(uint256 previousVersion, uint256 version);
-
-    /// @notice Emitted when the shared vault implementation is upgraded.
-    /// @param oldImplementation The address of the previous implementation.
-    /// @param newImplementation The address of the new implementation.
-    /// @param newVersion The bumped `currentVaultVersion` counter after
-    ///        the upgrade. Indexers use this to correlate later per-user
-    ///        `upgradeUserVault` events with the implementation that
-    ///        became current at this moment.
-    /// @param newCodehash `extcodehash` of the new implementation (#897), so
-    ///        a reviewer can match the queued Timelock operation against
-    ///        audited bytecode — the address alone says nothing about what
-    ///        it runs.
-    /// @custom:event-category state-change/vault-mutation
-    event VaultImplementationUpgraded(
-        address indexed oldImplementation,
-        address indexed newImplementation,
-        uint256 indexed newVersion,
-        bytes32 newCodehash
-    );
+    event VaultBeaconSet(address indexed beacon);
 
     /// @notice RL-2 (VpfiRecyclingLoopClosureDesign §6) — emitted whenever
     ///         protocol-tracked VPFI leaves a user's vault through the
@@ -236,19 +214,9 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
     /// @dev #902 — {vaultSetRentalUser} was asked to set the renter of an
     ///      ERC-20 loan, which rents nothing.
     error NotRentalLoan();
-    error VaultUpgradeRequired();
-    /// @dev Depository vault — `user` pinned their vault's implementation, so
-    ///      only `user` may upgrade it.
-    error VaultPinned(address user);
-    /// @notice Depository vault — `user`'s pin was cleared (by their own
-    ///         upgrade, or by an unpin).
-    /// @custom:event-category state-change/vault-mutation
-    event VaultUnpinned(address indexed account);
-    /// @dev #2363 — a mandatory vault version above `currentVaultVersion`
-    ///      is a bar no user can clear: {upgradeUserVault} can only stamp a
-    ///      user at `currentVaultVersion`, so every existing-vault user
-    ///      would be refused until an admin acted again.
-    error MandatoryVaultVersionUnreachable(uint256 version, uint256 currentVersion);
+    /// @dev #3204 — the beacon handed to {initializeVaultBeacon} does not
+    ///      name this Diamond.
+    error VaultBeaconMismatch(address beacon);
     /// @notice #821 — a wind-down close-out tried to deposit a flagged
     ///         recipient's locked share but the recipient has no existing vault,
     ///         and the receive-side exemption refuses to mint one for a
@@ -257,25 +225,27 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
     error SanctionedRecipientHasNoVault(address recipient);
 
     /**
-     * @notice Initializes the shared vault implementation by deploying a new VaipakamVaultImplementation.
-     * @dev VAULT_ADMIN_ROLE-only. Single-shot: reverts AlreadyInitialized
-     *      once `vaipakamVaultTemplate` is set. Deploys a fresh impl and
-     *      stores both the template and the diamond self-reference. The
-     *      impl is not initialized: its constructor locks it (#905), and
-     *      only the per-user proxies are ever initialized.
+     * @notice Records the VaultBeacon every user vault resolves its code
+     *         through (#3204). One-shot, at deploy.
+     * @dev VAULT_ADMIN_ROLE-only. The beacon must name this Diamond. Which
+     *      code a vault runs is decided by the beacon (Timelock-owned, not
+     *      upgradeable), never by Diamond storage: this pointer only tells
+     *      the factory which beacon new vaults point at.
      */
-    function initializeVaultImplementation() external onlyRole(LibAccessControl.VAULT_ADMIN_ROLE) {
+    function initializeVaultBeacon(address beacon) external onlyRole(LibAccessControl.VAULT_ADMIN_ROLE) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        if (s.vaipakamVaultTemplate != address(0)) revert AlreadyInitialized();
-
-        VaipakamVaultImplementation impl = new VaipakamVaultImplementation();
-        s.vaipakamVaultTemplate = address(impl);
+        if (s.vaultBeacon != address(0)) revert AlreadyInitialized();
+        if (beacon.code.length == 0 || VaultBeacon(beacon).diamond() != address(this)) {
+            revert VaultBeaconMismatch(beacon);
+        }
+        s.vaultBeacon = beacon;
         s.diamondAddress = address(this);
+        emit VaultBeaconSet(beacon);
     }
 
     /**
      * @notice Gets or creates a user's vault proxy.
-     * @dev Deploys a new ERC1967Proxy if none exists, pointing to the shared implementation.
+     * @dev Deploys a new BeaconProxy (pointing at the VaultBeacon) if none exists.
      *      View function if exists; mutates if creates.
      *      Emits UserVaultCreated on creation.
      * @param user The user address.
@@ -325,159 +295,20 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
             if (receiveExempt && LibVaipakam.isSanctionedAddress(user)) {
                 revert SanctionedRecipientHasNoVault(user);
             }
+            // #3204 — a BeaconProxy: on every call it asks the VaultBeacon
+            // which code to run, so one timelocked change reaches every vault.
+            // The vault records its owner wallet here, once; the beacon checks
+            // every pin signature against that record.
             bytes memory _data = abi.encodeCall(
-                VaipakamVaultImplementation.initialize, // Function signature
-                (s.diamondAddress, s.vaipakamVaultTemplate) // Arguments
+                VaipakamVaultImplementation.initialize,
+                (s.diamondAddress, user)
             );
-            ERC1967Proxy newProxy = new ERC1967Proxy(
-                s.vaipakamVaultTemplate,
-                _data
-            );
-            proxy = address(newProxy);
+            proxy = address(new BeaconProxy(s.vaultBeacon, _data));
             s.userVaipakamVaults[user] = proxy;
             s.vaultUserOf[proxy] = user;
-            s.vaultVersion[user] = s.currentVaultVersion;
             emit UserVaultCreated(user, proxy);
-        } else {
-            // Block interactions with outdated vaults when a mandatory upgrade
-            // is active: every step the vault's OWNER takes on it (a claim, a
-            // withdrawal, the pause escape, a payout release, a deposit, a new
-            // position) waits for the upgrade. A pinned vault has no exception
-            // (#3178, owner decision 2026-11-05): its owner unpins and upgrades.
-            //
-            // #3178 (owner decision 2026-11-05) — the version gate guards what
-            // leaves a vault, never what a close-out pays into it, and never a
-            // close-out paying a counterparty out of it:
-            //  - a DELIVERY (the receive-side window above, pinned to the exact
-            //    recipient) lands in the vault whatever its version, so no
-            //    counterparty's repayment, early close or default ever waits on
-            //    the recipient's upgrade; the recipient's own steps (claim,
-            //    withdrawal, new offers) still pass this gate and wait;
-            //  - a protocol MOVE-OUT on a close-out (the move-out window, pinned
-            //    to the exact paying user) is not stopped by the payer's own
-            //    vault version, so an old vault cannot block its loan's default,
-            //    liquidation or settlement.
-            if (
-                LibVaipakam.vaultUpgradeRequired(user)
-                    && !receiveExempt
-                    && !moveOutExempt
-            ) revert VaultUpgradeRequired();
         }
     }
-
-    /**
-     * @notice Marks a mandatory minimum vault version.
-     * @dev VAULT_ADMIN_ROLE-only. When set, any user whose vault version is
-     *      below this value is blocked from all diamond-driven vault
-     *      interactions (see getOrCreateUserVault) until they call
-     *      {upgradeUserVault}. Set to 0 to clear the requirement.
-     *      Refuses a version above `currentVaultVersion` (#2363): the
-     *      permissionless repair stamps users at `currentVaultVersion` and
-     *      no higher, so such a bar would halt every existing-vault user
-     *      with no way for them to clear it.
-     * @param version The minimum required vault version (at most
-     *        currentVaultVersion; normally exactly it).
-     */
-    function setMandatoryVaultUpgrade(uint256 version) external onlyRole(LibAccessControl.VAULT_ADMIN_ROLE) {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        if (version > s.currentVaultVersion) {
-            revert MandatoryVaultVersionUnreachable(version, s.currentVaultVersion);
-        }
-        emit MandatoryVaultVersionSet(s.mandatoryVaultVersion, version);
-        s.mandatoryVaultVersion = version;
-    }
-
-    /**
-     * @notice Upgrades a user's vault proxy to the latest implementation.
-     * @dev Calls UUPS upgradeToAndCall on the user's proxy to point it to the
-     *      current vaipakamVaultTemplate. Updates the user's version stamp.
-     *      Callable by anyone (typically the user themselves via frontend),
-     *      except for a vault its owner has pinned
-     *      (`VaultDepositoryFacet.pinVaultImplementation`): only the owner
-     *      upgrades a pinned vault, which also clears the pin. A protected
-     *      account's pinned vault is not upgraded here at all: its pin comes
-     *      off only through the delayed unpin, and then anyone may upgrade.
-     * @param user The user whose vault to upgrade.
-     */
-    function upgradeUserVault(address user) external {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        address proxy = s.userVaipakamVaults[user];
-        if (proxy == address(0)) revert NoVault();
-        if (s.vaultPinnedImplementation[user] != address(0)) {
-            // Under protected mode a pin is removed only through the delayed
-            // unpin (`VaultDepositoryFacet.unpinVaultImplementation`), so a
-            // stolen primary key cannot skip that delay with an upgrade.
-            if (msg.sender != user || s.protectedAccount[user].enabled) revert VaultPinned(user);
-            delete s.vaultPinnedImplementation[user];
-            emit VaultUnpinned(user);
-        }
-        _upgradeVault(s, user, proxy);
-    }
-
-    /// @dev Points `user`'s vault `proxy` at the current shared template and
-    ///      stamps the current version. The one upgrade step, shared by
-    ///      {upgradeUserVault} and the rental route's catch-up. It refuses a
-    ///      PINNED vault, so no path reaching it can move a vault its owner
-    ///      pinned: the owner's own upgrade clears the pin before calling it,
-    ///      and the rental catch-up skips a pinned vault instead.
-    function _upgradeVault(
-        LibVaipakam.Storage storage s,
-        address user,
-        address proxy
-    ) private {
-        if (s.vaultPinnedImplementation[user] != address(0)) revert VaultPinned(user);
-        // Call UUPS upgradeToAndCall on the proxy
-        (bool success, ) = proxy.call(
-            abi.encodeWithSelector(
-                UUPSUpgradeable.upgradeToAndCall.selector,
-                s.vaipakamVaultTemplate,
-                "" // No initialization data needed for upgrade
-            )
-        );
-        if (!success) revert UpgradeFailed();
-        s.vaultVersion[user] = s.currentVaultVersion;
-    }
-
-    /**
-     * @notice Upgrades the shared vault implementation used by all per-user
-     *         proxies going forward.
-     * @dev VAULT_ADMIN_ROLE-only — the Timelock after handover, and since
-     *      #934 / D1 that role can no longer be re-granted to a hot key
-     *      without the Timelock delay either (DEFAULT_ADMIN_ROLE is
-     *      Timelock-held). This IS a lever over every user vault: a new
-     *      implementation, plus {setMandatoryVaultUpgrade} and the
-     *      permissionless {upgradeUserVault}, can change what every vault's
-     *      code does, including how it releases funds (#897). The
-     *      protection is that the change is public and delayed — queued in
-     *      the Timelock for its full delay, with the implementation's
-     *      codehash in the event — not that it is impossible.
-     *      Rejects non-contract addresses
-     *      (`code.length == 0`) but does not verify storage-layout
-     *      compatibility — that is the caller's responsibility. Bumps
-     *      `currentVaultVersion`; existing user proxies keep pointing at
-     *      the old impl until each user calls {upgradeUserVault}, unless
-     *      {setMandatoryVaultUpgrade} forces the upgrade.
-     *      Emits VaultImplementationUpgraded.
-     * @param newImplementation The new implementation address (must be a contract).
-     */
-    function upgradeVaultImplementation(address newImplementation) external onlyRole(LibAccessControl.VAULT_ADMIN_ROLE) {
-        if (newImplementation.code.length == 0) revert UpgradeFailed();
-
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        address oldImpl = s.vaipakamVaultTemplate;
-        s.vaipakamVaultTemplate = newImplementation;
-        unchecked {
-            ++s.currentVaultVersion;
-        }
-
-        emit VaultImplementationUpgraded(
-            oldImpl,
-            newImplementation,
-            s.currentVaultVersion,
-            newImplementation.codehash
-        );
-    }
-
     /**
      * @notice The single chokepoint for protocol-side ERC-20 deposits
      *         into a user's vault. Pulls `amount` directly from the
@@ -657,11 +488,10 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
      *         user's own tokens instead of the payout.
      *
      *         Vault resolution is READ-ONLY on purpose: never
-     *         {getOrCreateUserVault}, which both mints vaults and reverts
-     *         `VaultUpgradeRequired`. A payout path must not mint a vault as
-     *         a side effect, and callers (the reward claim) treat any revert
-     *         here as "fall back to wallet delivery" — so `NoVault` /
-     *         `VaultUpgradeRequired` below are the fallback triggers, not
+     *         {getOrCreateUserVault}, which mints vaults. A payout path must
+     *         not mint a vault as a side effect, and callers (the reward
+     *         claim) treat any revert here as "fall back to wallet delivery"
+     *         — so `NoVault` below is the fallback trigger, not
      *         hard failures. The whole body runs in the caller's
      *         revert-isolated cross-facet frame: a failure at ANY step
      *         (transfer, record) rolls back every vault-side effect
@@ -705,12 +535,12 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
      *         balance record (and tier refresh) as the Diamond-funded route.
      * @dev    ONE revert-isolated frame (design §5d): the caller invokes this
      *         through the Diamond's fallback, so a failure at ANY step — no
-     *         vault, the mandatory-upgrade gate, a row that cannot cover its
+     *         vault, a row that cannot cover its
      *         component, a release either end cannot account for, the record,
      *         the tier refresh — rolls back the row debits AND the holder release
      *         before the caller's wallet fallback pays. Exactly one
      *         destination is ever paid. Same fallback triggers as the sibling
-     *         (`NoVault` / `VaultUpgradeRequired` are not failures); same
+     *         (`NoVault` is not a failure); same
      *         onlyDiamondInternal posture. The token must be the configured
      *         VPFI: that is the only asset the holder's rows describe.
      * @param user     Claimant whose vault is credited.
@@ -770,20 +600,16 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
         LibDepositoryLedger.credit(user, token, 0, amount);
     }
 
-    /// @dev READ-ONLY resolution of an EXISTING vault on a current implementation
-    ///      (`NoVault` / `VaultUpgradeRequired` otherwise), with no sanctions
-    ///      screen. Shared by both protocol-payout credits (see
-    ///      {vaultCreditFromDiamondERC20} for why it never mints) and, since
-    ///      #1566 S3e, the swap fill's {recordVaultOutflowERC20}: a mandatory
-    ///      upgrade holds the fill until anyone runs {upgradeUserVault}, as the
-    ///      vault withdraw it replaced did.
+    /// @dev READ-ONLY resolution of an EXISTING vault (`NoVault` otherwise),
+    ///      with no sanctions screen. Shared by both protocol-payout credits
+    ///      (see {vaultCreditFromDiamondERC20} for why it never mints) and,
+    ///      since #1566 S3e, the swap fill's {recordVaultOutflowERC20}.
     function _currentVault(
         LibVaipakam.Storage storage s,
         address user
     ) private view returns (address proxy) {
         proxy = s.userVaipakamVaults[user];
         if (proxy == address(0)) revert NoVault();
-        if (LibVaipakam.vaultUpgradeRequired(user)) revert VaultUpgradeRequired();
     }
 
     /**
@@ -1147,11 +973,9 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
      *      as its own row keyed by `loanId` with the loan's `quantity`, so
      *      concurrent rentals of the same token from one vault coexist and
      *      closing one leaves the others' rights in place. `renter == 0`
-     *      revokes this rental only. A lender vault stamped below
-     *      `currentVaultVersion` is first upgraded to the current template
-     *      (the same step {upgradeUserVault} lets anyone take), so a vault
-     *      left on a pre-#902 implementation cannot block a rental's accept or
-     *      close. Reverts `NotRentalLoan` for an ERC-20
+     *      revokes this rental only. Every vault resolves its code through
+     *      the VaultBeacon (#3204), so no per-vault catch-up upgrade is
+     *      needed here. Reverts `NotRentalLoan` for an ERC-20
      *      loan, `NoVault` if the lender has no vault, or bubbles the vault's
      *      revert (else `ProxyCallFailed("Set rental user failed")`), which
      *      includes the vault's `TooManyConcurrentRentals` when a new ERC-1155
@@ -1173,17 +997,6 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
         address lender = loan.lender;
         address proxy = s.userVaipakamVaults[lender];
         if (proxy == address(0)) revert NoVault();
-        // A vault on an older implementation is brought to the current one
-        // first, so no rental step (a close included) depends on its lender
-        // having upgraded since the facets were refreshed. A vault its owner
-        // PINNED is left on the implementation the owner chose: only the
-        // owner upgrades a pinned vault, and the rental step runs on it.
-        if (
-            s.vaultVersion[lender] < s.currentVaultVersion
-                && s.vaultPinnedImplementation[lender] == address(0)
-        ) {
-            _upgradeVault(s, lender, proxy);
-        }
         address nftContract = loan.principalAsset;
         uint256 tokenId = loan.tokenId;
 
@@ -1262,7 +1075,7 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
 
     /**
      * @notice Returns the Diamond's own address as recorded in LibVaipakam
-     *         storage at {initializeVaultImplementation} time.
+     *         storage at {initializeVaultBeacon} time.
      * @dev Used by vault proxies to verify their authorized caller.
      * @return diamondAddress The Diamond proxy address.
      */
@@ -1290,52 +1103,12 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
     }
 
     /**
-     * @notice Returns the current shared `VaipakamVaultImplementation`
-     *         template address that new per-user proxies are pointed at.
-     * @dev Updated by {upgradeVaultImplementation}. Existing user proxies
-     *      keep their previous pointer until {upgradeUserVault}.
-     * @return vaipakamVaultTemplate The current vault implementation address.
+     * @notice The VaultBeacon every user vault resolves its code through
+     *         (#3204). Which version a vault runs, whether it is pinned and
+     *         whether a code change is pending are read from the beacon itself.
      */
-    function getVaipakamVaultImplementationAddress()
-        external
-        view
-        returns (address vaipakamVaultTemplate)
-    {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        return s.vaipakamVaultTemplate;
-    }
-
-    /**
-     * @notice Vault version info a frontend needs to surface the mandatory
-     *         upgrade flow (README §"Vault Upgrades"). Without this, clients
-     *         would have to probe `getOrCreateUserVault` and parse the
-     *         `VaultUpgradeRequired()` revert to detect blocked accounts.
-     * @param user The user address to check.
-     * @return userVersion The user's current vault version (0 if no vault).
-     * @return currentVersion The latest shared implementation version.
-     * @return mandatoryVersion The minimum required version (0 = no mandate).
-     * @return upgradeRequired True iff the user has an vault and it is below
-     *         the mandatory floor — UI should force an upgrade before any
-     *         further diamond-driven vault interaction.
-     */
-    function getVaultVersionInfo(address user)
-        external
-        view
-        returns (
-            uint256 userVersion,
-            uint256 currentVersion,
-            uint256 mandatoryVersion,
-            bool upgradeRequired
-        )
-    {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        userVersion = s.vaultVersion[user];
-        currentVersion = s.currentVaultVersion;
-        mandatoryVersion = s.mandatoryVaultVersion;
-        upgradeRequired =
-            s.userVaipakamVaults[user] != address(0) &&
-            mandatoryVersion > 0 &&
-            userVersion < mandatoryVersion;
+    function getVaultBeacon() external view returns (address) {
+        return LibVaipakam.storageSlot().vaultBeacon;
     }
 
     /**

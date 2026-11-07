@@ -117,18 +117,34 @@ remain governed by [Keeper Operations](KeeperOperations.md).
   49 hours and seven days. Each administrative pause keeps the period in force
   when it started, so a change applies only to pauses that start afterwards.
   The time the running pause's escape opens is readable.
-- An owner may pin the vault's current implementation. A vault behind the
-  current release is upgraded before it is pinned, so the pin names the code
-  actually in use. Only the owner can upgrade a pinned vault; protected mode
-  makes unpinning a delayed change.
-- A vault below the mandatory vault version, pinned or not, still receives
-  every close-out delivery; no counterparty's close-out waits on its upgrade.
-  Nothing leaves it on its owner's behalf until it is upgraded: the owner's
-  own claim, withdrawal, pause escape, payout release, deposit and new
-  positions are refused, a pinned vault included, and orders it would sign
-  for its owner read as unsigned. A protocol close-out paying the counterparty
-  out of it (a default, a liquidation, a repayment's settlement, another
-  holder's claim) is not stopped by its version.
+- **Which code a vault runs (#3204).** Every vault runs code chosen by one
+  central version registry that no part of the Diamond can change. A vault
+  runs the version its owner pinned, as long as that version has not been
+  revoked; otherwise it runs the current version. So one governance change
+  reaches every unpinned vault at once, and no vault is ever left on old code
+  because nobody upgraded it.
+- Only the governance Timelock may register a new version, make one current,
+  or revoke one. Making a version current and revoking one each wait at least
+  three days between proposal and execution, a wait the registry enforces
+  itself, so owners can see a change coming and pin before it lands. The
+  Pauser Safe may cancel a pending change but never propose or hurry one.
+  While the protocol is paused, and only then, it may also revoke a version
+  at once, moving vaults only onto code already registered.
+- A pin promises: your vault runs version N until you change the pin, or
+  until governance revokes N. A revoke moves a pinned vault to the current
+  version without its owner's consent. A revoked version is never restored.
+- Pinning, re-pinning and unpinning need the vault owner's own signature,
+  checked against the owner wallet the vault recorded when it was created,
+  and the vault's pin delay. With protected mode on, that delay is raised (by
+  the protection settings, to at most two days, so a pin requested as soon as
+  a code change is proposed still lands first; only the owner's own signature
+  may raise it further), a pending pin change can be cancelled, and none is
+  accepted while the account is locked. Lowering the pin delay waits the
+  current delay.
+- Stated residual until #3205: an account whose primary wallet was replaced
+  cannot change its pin, because the vault still records the original wallet.
+- Every vault still accepts calls only from the Diamond, on every version, and
+  every version keeps the vault's storage layout append-only.
 
 ## App disclosures and keeper service
 

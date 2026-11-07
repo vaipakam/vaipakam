@@ -111,7 +111,7 @@ function OfferRow({
   const ownStep = blocked?.kind === 'gate' && !blocked.block.creator && needFromAcceptCode(blocked.block.code) !== null;
   let blockedText: string | null = null;
   if (blocked?.kind === 'state') blockedText = stateText(blocked.state, copy, role);
-  else if (blocked?.kind === 'refused') blockedText = acceptErrorText(blocked.error, copy, null, role);
+  else if (blocked?.kind === 'refused') blockedText = acceptErrorText(blocked.error, copy, role);
   else if (ownStep) blockedText = text(k.rowRiskStep);
   else if (blocked?.kind === 'gate') blockedText = gateBlockText(blocked.block, copy, role);
   else if (blocked?.kind === 'unread') blockedText = blocked.reason;

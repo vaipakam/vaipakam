@@ -120,7 +120,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](256); // #2828 -clearTransportBatchDaysRaw (was 257); protected vault +setTrackedHoldingRaw (was 256); #1209 r2 +pushSellerClaimRaw (was 255); #1209 -setLenderPaidThroughRaw -setLenderPaidThroughWithPrincipalRaw -setLenderMarkVoidedRaw -setLenderTenureStartRaw (was 259); #2961 +setPacketDisposedRaw (was 258); #2876 +setOfferPrepayListingExecutorRaw (was 257); #1980 -setBorrowerLifVpfiHeldRaw (was 258); #918 setDayDeliveryProvedByRaw -> setDayDeliveryLandedRaw (net 0); #2910 PR 2 -setRemitReservationFinalizedRaw -setReleasedRemitHistoryRaw -setRemitReservationReleasedRaw (was 261); #2910 -setRecoveryAttributionRaw (was 262); #2875 item 3 +setRecycleBucketAbsorbedRaw -setRecycleCustodyRelocatedRaw -setReleasedRemitStrandedRaw -setRemitReleasedCountRaw (was 264, net 262); #2875 -clearDayLapseClockRaw -setReceivedRemitRaw (was 266); #1944 +setDayDeliveryProvedByRaw -setMirrorCommitReservedRaw (net 0); #2740 -getPrincipalPlusAccruedInterest -getTreasuryAndPrecloseFee +getSaleLegs (was 267); #2736 +setTierLtvCacheRaw (was 266); #1820 +guardedVpfiOutAndBackRaw (was 265); pre-d6 retirement -setRemitSplitOnWireRaw -unadmitTransportBatchRaw -setPacketDayListRaw +clearPacketAttestedRaw +relocateFreshIngressRaw (was 266); #2621 +setExpectedSourceChainIdsRaw (was 265); #2559 r5 +setPerkCreditsRaw (was 264); #2559 r2 +setPerkStateRaw (was 263); #1219 Codex #2556 r1 +setArmingFeeRateRaw (was 262); #1566 S3 +1-0 (swap-to-repay lot raw) (was 261); #1566 S2b +setFallbackVaultCustodyRaw (was 260); #2459 r6 +setChainConsumedRecycledRaw; #2459 r5 -uncreditFreshInHolderRaw -uncreditFreshForPacketRaw (the demotion no longer unwinds custody); #2459 r4 +setAggregatorAdapterRaw; PR 1 re-review +2 raw (expiry begun, re-credit tally); A2-iii +3 raw (attested caps, ledger reservation, day needs); 3b-ii-A2 r22 +loanSideRewardPaidRaw; #2342 +setLegacyFrozenVpfiRaw; 3b-ii-A2 +13 raw reads +5 raw writes; #1566 closure 2 — +creditInflowRawWithBefore (was 200); slice 4 PR B +5; cutover PR 2 +5; transport epochs 3b-i r3 +3; #2258 raw release +3; 3b-ii-A +1, then -1 with the pre-list scene (Codex #2296 items 2 and 4); r26 +1 flexible caps; 3b-ii-A2 r21 +1 ledger reservation
+        selectors = new bytes4[](254); // #3204 -setVaultVersionRaw -setMandatoryVaultVersionRaw (was 256); #2828 -clearTransportBatchDaysRaw (was 257); protected vault +setTrackedHoldingRaw (was 256); #1209 r2 +pushSellerClaimRaw (was 255); #1209 -setLenderPaidThroughRaw -setLenderPaidThroughWithPrincipalRaw -setLenderMarkVoidedRaw -setLenderTenureStartRaw (was 259); #2961 +setPacketDisposedRaw (was 258); #2876 +setOfferPrepayListingExecutorRaw (was 257); #1980 -setBorrowerLifVpfiHeldRaw (was 258); #918 setDayDeliveryProvedByRaw -> setDayDeliveryLandedRaw (net 0); #2910 PR 2 -setRemitReservationFinalizedRaw -setReleasedRemitHistoryRaw -setRemitReservationReleasedRaw (was 261); #2910 -setRecoveryAttributionRaw (was 262); #2875 item 3 +setRecycleBucketAbsorbedRaw -setRecycleCustodyRelocatedRaw -setReleasedRemitStrandedRaw -setRemitReleasedCountRaw (was 264, net 262); #2875 -clearDayLapseClockRaw -setReceivedRemitRaw (was 266); #1944 +setDayDeliveryProvedByRaw -setMirrorCommitReservedRaw (net 0); #2740 -getPrincipalPlusAccruedInterest -getTreasuryAndPrecloseFee +getSaleLegs (was 267); #2736 +setTierLtvCacheRaw (was 266); #1820 +guardedVpfiOutAndBackRaw (was 265); pre-d6 retirement -setRemitSplitOnWireRaw -unadmitTransportBatchRaw -setPacketDayListRaw +clearPacketAttestedRaw +relocateFreshIngressRaw (was 266); #2621 +setExpectedSourceChainIdsRaw (was 265); #2559 r5 +setPerkCreditsRaw (was 264); #2559 r2 +setPerkStateRaw (was 263); #1219 Codex #2556 r1 +setArmingFeeRateRaw (was 262); #1566 S3 +1-0 (swap-to-repay lot raw) (was 261); #1566 S2b +setFallbackVaultCustodyRaw (was 260); #2459 r6 +setChainConsumedRecycledRaw; #2459 r5 -uncreditFreshInHolderRaw -uncreditFreshForPacketRaw (the demotion no longer unwinds custody); #2459 r4 +setAggregatorAdapterRaw; PR 1 re-review +2 raw (expiry begun, re-credit tally); A2-iii +3 raw (attested caps, ledger reservation, day needs); 3b-ii-A2 r22 +loanSideRewardPaidRaw; #2342 +setLegacyFrozenVpfiRaw; 3b-ii-A2 +13 raw reads +5 raw writes; #1566 closure 2 — +creditInflowRawWithBefore (was 200); slice 4 PR B +5; cutover PR 2 +5; transport epochs 3b-i r3 +3; #2258 raw release +3; 3b-ii-A +1, then -1 with the pre-list scene (Codex #2296 items 2 and 4); r26 +1 flexible caps; 3b-ii-A2 r21 +1 ledger reservation
         // APPEND VIA A CURSOR, never a hand-written index (#1457 r11).
         //
         // Hand-numbered slots made a specific merge outcome silent: two
@@ -295,7 +295,6 @@ contract HelperTest {
         // the previous `vm.store` + hardcoded slot offset pattern.
         selectors[n++] = TestMutatorFacet.setSaleOfferToLoanIdRaw.selector;
         selectors[n++] = TestMutatorFacet.setOffsetOfferToLoanIdRaw.selector;
-        selectors[n++] = TestMutatorFacet.setVaultVersionRaw.selector;
         selectors[n++] = TestMutatorFacet.setMinPartialBpsRaw.selector;
         // Layout-resilient read of `s.userVaipakamVaults[user]` for
         // tests that need a user's vault address bypassing the
@@ -427,7 +426,6 @@ contract HelperTest {
         // Codex r2 promoted it); the mutator's duplicate stays un-routed.
         selectors[n++] = TestMutatorFacet.getRewardEntryUserIdx.selector;
         // RL-1 — claim-to-vault delivery test scaffolding.
-        selectors[n++] = TestMutatorFacet.setMandatoryVaultVersionRaw.selector;
         selectors[n++] = TestMutatorFacet.getStakeRollupStateRaw.selector;
         // #1817 — establish a genuine pre-existing staker lifecycle before a
         // flow that must reset it at a mid-transaction zero balance.
@@ -611,15 +609,13 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](5);
+        selectors = new bytes4[](4);
         selectors[0] = OfferParallelSaleFacet.postParallelSaleListing.selector;
         selectors[1] = OfferParallelSaleFacet.releaseParallelSaleLock.selector;
         // #1144 (S10 Invariant B) — offer-keyed prepay-sale sanctions sync.
         selectors[2] = OfferParallelSaleFacet.syncPrepaySaleOffer.selector;
         // #2984 — the sync's own party set (keeper backstop read).
         selectors[3] = OfferParallelSaleFacet.prepaySaleOfferParties.selector;
-        // #3178 — the executor's "may this listing's vault send out" read.
-        selectors[4] = OfferParallelSaleFacet.isParallelSaleVaultBlocked.selector;
         return selectors;
     }
 
@@ -961,12 +957,10 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](28);
-        selectors[0] = VaultFactoryFacet
-            .initializeVaultImplementation
-            .selector;
+        selectors = new bytes4[](24);
+        selectors[0] = VaultFactoryFacet.initializeVaultBeacon.selector;
         selectors[1] = VaultFactoryFacet.getOrCreateUserVault.selector;
-        selectors[2] = VaultFactoryFacet.upgradeVaultImplementation.selector;
+        selectors[2] = VaultFactoryFacet.getVaultBeacon.selector;
         selectors[3] = VaultFactoryFacet.vaultDepositERC20.selector;
         selectors[4] = VaultFactoryFacet.vaultWithdrawERC20.selector;
         selectors[5] = VaultFactoryFacet.vaultDepositERC721.selector;
@@ -978,29 +972,21 @@ contract HelperTest {
         selectors[11] = VaultFactoryFacet.vaultGetNFTUserOf.selector;
         selectors[12] = VaultFactoryFacet.vaultGetNFTUserExpires.selector;
         selectors[13] = VaultFactoryFacet.getOfferAmount.selector;
-        selectors[14] = VaultFactoryFacet
-            .getVaipakamVaultImplementationAddress
-            .selector;
-        selectors[15] = VaultFactoryFacet.setMandatoryVaultUpgrade.selector;
-        selectors[16] = VaultFactoryFacet.upgradeUserVault.selector;
-        selectors[17] = VaultFactoryFacet.vaultGetNFTQuantity.selector;
-        selectors[18] = VaultFactoryFacet.getUserVaultAddress.selector;
+        selectors[14] = VaultFactoryFacet.vaultGetNFTQuantity.selector;
+        selectors[15] = VaultFactoryFacet.getUserVaultAddress.selector;
         // T-051 / T-054 — counter chokepoint companions.
-        selectors[19] = VaultFactoryFacet.vaultDepositERC20From.selector;
-        selectors[20] = VaultFactoryFacet.recordVaultDepositERC20.selector;
-        selectors[21] = VaultFactoryFacet.getTrackedHolding.selector;
-        // T-054 PR-3 — stuck-token recovery.
-        // #398 — adapter `_withdrawalsBlocked()` reads the vault-upgrade floor.
-        selectors[22] = VaultFactoryFacet.getVaultVersionInfo.selector;
+        selectors[16] = VaultFactoryFacet.vaultDepositERC20From.selector;
+        selectors[17] = VaultFactoryFacet.recordVaultDepositERC20.selector;
+        selectors[18] = VaultFactoryFacet.getTrackedHolding.selector;
         // RL-1 — Diamond-funded vault credit primitive (reward
         // claim-to-vault delivery).
-        selectors[23] = VaultFactoryFacet.vaultCreditFromDiamondERC20.selector;
-        selectors[24] = bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256,uint256)"));
+        selectors[19] = VaultFactoryFacet.vaultCreditFromDiamondERC20.selector;
+        selectors[20] = bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256,uint256)"));
         // The four-argument credit stays as a compatibility entry (Codex #2276 r14 P2).
-        selectors[25] = bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256)"));
+        selectors[21] = bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256)"));
         // #1566 S3e — the swap fill's counter-only outflow record.
-        selectors[26] = VaultFactoryFacet.recordVaultOutflowERC20.selector;
-        selectors[27] = VaultFactoryFacet.vaultDeliverERC20From.selector;
+        selectors[22] = VaultFactoryFacet.recordVaultOutflowERC20.selector;
+        selectors[23] = VaultFactoryFacet.vaultDeliverERC20From.selector;
         return selectors;
     }
 
@@ -1545,7 +1531,7 @@ contract HelperTest {
 
     /// @dev Selectors for `VaultDepositoryFacet` — the depository vault: deposit, withdraw, adopt, disown and the upgrade pin.
     function getVaultDepositoryFacetSelectors() public pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](18);
+        selectors = new bytes4[](17);
         selectors[0] = VaultDepositoryFacet.adoptUntracked.selector;
         selectors[1] = VaultDepositoryFacet.adoptionAckTextHash.selector;
         selectors[2] = VaultDepositoryFacet.adoptionDigest.selector;
@@ -1554,16 +1540,15 @@ contract HelperTest {
         selectors[5] = VaultDepositoryFacet.depositToVault.selector;
         selectors[6] = VaultDepositoryFacet.disownUntracked.selector;
         selectors[7] = VaultDepositoryFacet.freeHolding.selector;
-        selectors[8] = VaultDepositoryFacet.getVaultPin.selector;
-        selectors[9] = VaultDepositoryFacet.pinVaultImplementation.selector;
-        selectors[10] = VaultDepositoryFacet.unpinVaultImplementation.selector;
-        selectors[11] = VaultDepositoryFacet.untrackedHolding.selector;
-        selectors[12] = VaultDepositoryFacet.vaultBannedSource.selector;
-        selectors[13] = VaultDepositoryFacet.withdrawFromVault.selector;
-        selectors[14] = VaultDepositoryFacet.withdrawableNow.selector;
-        selectors[15] = VaultDepositoryFacet.getDepositoryHolding.selector;
-        selectors[16] = VaultDepositoryFacet.getDepositoryAssets.selector;
-        selectors[17] = VaultDepositoryFacet.getVaultOwner.selector;
+        selectors[8] = VaultDepositoryFacet.pinVaultVersion.selector;
+        selectors[9] = VaultDepositoryFacet.unpinVaultVersion.selector;
+        selectors[10] = VaultDepositoryFacet.untrackedHolding.selector;
+        selectors[11] = VaultDepositoryFacet.vaultBannedSource.selector;
+        selectors[12] = VaultDepositoryFacet.withdrawFromVault.selector;
+        selectors[13] = VaultDepositoryFacet.withdrawableNow.selector;
+        selectors[14] = VaultDepositoryFacet.getDepositoryHolding.selector;
+        selectors[15] = VaultDepositoryFacet.getDepositoryAssets.selector;
+        selectors[16] = VaultDepositoryFacet.getVaultOwner.selector;
     }
 
     /// @dev Selectors for `OfferBookFacet` (#3242).
@@ -3139,10 +3124,10 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](29);
-        selectors[0] = VaultFactoryFacet.initializeVaultImplementation.selector;
+        selectors = new bytes4[](25);
+        selectors[0] = VaultFactoryFacet.initializeVaultBeacon.selector;
         selectors[1] = VaultFactoryFacet.getOrCreateUserVault.selector;
-        selectors[2] = VaultFactoryFacet.upgradeVaultImplementation.selector;
+        selectors[2] = VaultFactoryFacet.getVaultBeacon.selector;
         selectors[3] = VaultFactoryFacet.vaultDepositERC20.selector;
         selectors[4] = VaultFactoryFacet.vaultWithdrawERC20.selector;
         selectors[5] = VaultFactoryFacet.vaultDepositERC721.selector;
@@ -3154,28 +3139,22 @@ contract HelperTest {
         selectors[11] = VaultFactoryFacet.vaultGetNFTUserOf.selector;
         selectors[12] = VaultFactoryFacet.vaultGetNFTUserExpires.selector;
         selectors[13] = VaultFactoryFacet.getOfferAmount.selector;
-        selectors[14] = VaultFactoryFacet.getVaipakamVaultImplementationAddress.selector;
-        selectors[15] = VaultFactoryFacet.getDiamondAddress.selector;
-        selectors[16] = VaultFactoryFacet.setMandatoryVaultUpgrade.selector;
-        selectors[17] = VaultFactoryFacet.upgradeUserVault.selector;
-        selectors[18] = VaultFactoryFacet.vaultGetNFTQuantity.selector;
-        // #1566 S3e — the swap fill's counter-only outflow record. In slot 19
-        // since #902 retired vaultSetNFTUser1155.
-        selectors[19] = VaultFactoryFacet.recordVaultOutflowERC20.selector;
-        selectors[20] = VaultFactoryFacet.getUserVaultAddress.selector;
+        selectors[14] = VaultFactoryFacet.vaultGetNFTQuantity.selector;
+        selectors[15] = VaultFactoryFacet.getUserVaultAddress.selector;
         // T-051 / T-054 — counter chokepoint companions.
-        selectors[21] = VaultFactoryFacet.vaultDepositERC20From.selector;
-        selectors[22] = VaultFactoryFacet.recordVaultDepositERC20.selector;
-        selectors[23] = VaultFactoryFacet.getTrackedHolding.selector;
-        // The vault version read the app and the pin consult.
-        selectors[24] = VaultFactoryFacet.getVaultVersionInfo.selector;
+        selectors[16] = VaultFactoryFacet.vaultDepositERC20From.selector;
+        selectors[17] = VaultFactoryFacet.recordVaultDepositERC20.selector;
+        selectors[18] = VaultFactoryFacet.getTrackedHolding.selector;
         // RL-1 — Diamond-funded vault credit primitive (reward
         // claim-to-vault delivery).
-        selectors[25] = VaultFactoryFacet.vaultCreditFromDiamondERC20.selector;
-        selectors[26] = bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256,uint256)"));
+        selectors[19] = VaultFactoryFacet.vaultCreditFromDiamondERC20.selector;
+        selectors[20] = bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256,uint256)"));
         // The four-argument credit stays as a compatibility entry (Codex #2276 r14 P2).
-        selectors[27] = bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256)"));
-        selectors[28] = VaultFactoryFacet.vaultDeliverERC20From.selector;
+        selectors[21] = bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256)"));
+        // #1566 S3e — the swap fill's counter-only outflow record.
+        selectors[22] = VaultFactoryFacet.recordVaultOutflowERC20.selector;
+        selectors[23] = VaultFactoryFacet.vaultDeliverERC20From.selector;
+        selectors[24] = VaultFactoryFacet.getDiamondAddress.selector;
         return selectors;
     }
 

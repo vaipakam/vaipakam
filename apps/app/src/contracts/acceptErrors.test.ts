@@ -35,13 +35,16 @@ describe('the mirrored vocabulary', () => {
     expect(ACCEPT_ERROR_NAMES[14]).toBe('SalePositionBelowSolvencyFloor');
     expect(ACCEPT_ERROR_NAMES[16]).toBe('SaleListingTermsStale');
     expect(ACCEPT_ERROR_NAMES[17]).toBe('ProtocolPaused');
-    expect(ACCEPT_ERROR_NAMES[18]).toBe('VaultUpgradeRequired');
+    expect(ACCEPT_ERROR_NAMES[18]).toBe('RetiredVaultUpgradeRequired');
     expect(ACCEPT_ERROR_NAMES[19]).toBe('SelfTrade');
   });
 
   it('has words for every member, and only `None` clears', () => {
     expect(acceptBlockReason(ACCEPT_OK)).toBeNull();
     for (let code = 1; code < ACCEPT_ERROR_NAMES.length; code += 1) {
+      // #3204 — a retired member is never produced and deliberately reads
+      // as the generic refusal; it is pinned on its own below.
+      if (ACCEPT_ERROR_NAMES[code].startsWith('Retired')) continue;
       const reason = acceptBlockReason(code);
       expect(reason, `${ACCEPT_ERROR_NAMES[code]} has no copy`).toBeTruthy();
       // Never fall through to the generic message for a member we know
@@ -49,6 +52,10 @@ describe('the mirrored vocabulary', () => {
       // already gives.
       expect(reason).not.toBe(copy.errors.acceptBlocked.unknown);
     }
+    // #3204 — the retired vault-version code reads as the generic refusal.
+    expect(acceptBlockReason(ACCEPT_ERROR_NAMES.indexOf('RetiredVaultUpgradeRequired'))).toBe(
+      copy.errors.acceptBlocked.unknown,
+    );
   });
 
   it('treats an unrecognised code as a refusal, never as an all-clear', () => {

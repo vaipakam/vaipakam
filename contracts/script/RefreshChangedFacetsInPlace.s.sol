@@ -85,8 +85,9 @@ import {LibPausable} from "../src/libraries/LibPausable.sol";
  *         backfills and one-shot migrations. Use this script only when the
  *         change being rolled out needs none of them; a change that adds a
  *         refresh-time migration to {RefreshAllFacetsInPlace} is rolled out by
- *         that script. The vault implementation is upgraded by
- *         `UpgradeVaultImplementation.s.sol`.
+ *         that script. Vault code is not refreshed here: it changes only at
+ *         the VaultBeacon (#3204), by a registered version and a delayed
+ *         proposal.
  *
  *         STORAGE: like every in-place cut, safe only while every storage
  *         change since the Diamond was deployed is append-only.
@@ -126,6 +127,7 @@ contract RefreshChangedFacetsInPlace is RefreshAllFacetsInPlace {
             "RefreshChangedFacetsInPlace: the signing key is not the diamond owner"
         );
         _requireSlice3Diamond(diamond);
+        _requireVaultBeaconDiamond(diamond);
         _requireNoOpenErc1155RentalAcross902(diamond);
         _requireNoOpenLoanAcrossInterestLedger(diamond);
         // The per-token tracked vault ledger is fresh-deploy only; see

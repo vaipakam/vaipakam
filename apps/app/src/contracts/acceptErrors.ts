@@ -20,9 +20,8 @@
  * the listing faithfully and re-signing reproduces the same bad
  * vehicle. `ProtocolPaused` must not give a listing-, offer- or
  * buyer-specific reason, since none of them are actionable while the
- * protocol is paused. `VaultUpgradeRequired` must point at the vault
- * upgrade rather than at a relist, which the same floor would block.
- * Those are honoured below and should not be reworded casually.
+ * protocol is paused. (`RetiredVaultUpgradeRequired` is never
+ * produced since #3204 and reads as the generic refusal.) Those are honoured below and should not be reworded casually.
  *
  * WHAT THIS SURFACE MUST NOT CLAIM: `previewAccept`'s struct carries
  * `effectivePrincipal`, `interestRateBps`, `collateralAmount`,
@@ -60,7 +59,8 @@ export const ACCEPT_ERROR_NAMES = [
   'SaleAdmissionBlocked',
   'SaleListingTermsStale',
   'ProtocolPaused',
-  'VaultUpgradeRequired',
+  // #3204 — retired with the mandatory vault version; never produced.
+  'RetiredVaultUpgradeRequired',
   'SelfTrade',
   'RefinanceRequestUntakeable',
   'CadenceNotAdmitted',
@@ -110,7 +110,7 @@ const ACCEPT_ERROR_COPY_KEY: Record<AcceptErrorName, AcceptBlockedKey | null> = 
   SaleAdmissionBlocked: 'saleAdmissionBlocked',
   SaleListingTermsStale: 'saleListingStale',
   ProtocolPaused: 'protocolPaused',
-  VaultUpgradeRequired: 'vaultUpgradeRequired',
+  RetiredVaultUpgradeRequired: null,
   SelfTrade: 'selfTrade',
   RefinanceRequestUntakeable: 'refinanceUntakeable',
   CadenceNotAdmitted: 'cadenceNotAdmitted',

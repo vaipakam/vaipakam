@@ -135,7 +135,6 @@ describe('the verdict decides availability (#1841)', () => {
     ['SaleRelistCooldownActive', f.relistCooldown],
     ['SalePositionNotConsolidatable', f.heldVpfi],
     ['AssetPaused', f.assetPaused],
-    ['VaultUpgradeRequired', f.vaultUpgrade],
     ['SalePositionBelowSolvencyFloor', f.admissionBlocked],
     ['SaleLtvAboveAdmissionCap', f.admissionBlocked],
     ['SaleInheritsWeakerRiskTerms', f.admissionBlocked],

@@ -11,7 +11,6 @@ import {ISeaportZone, ZoneParameters, ReceivedItem, SpentItem, ItemType} from ".
 import {IVaipakamPrepayCallbacks} from "./IVaipakamPrepayCallbacks.sol";
 import {IVaipakamPrepayContext} from "./IVaipakamPrepayContext.sol";
 import {IVaipakamSanctionsView} from "./IVaipakamSanctionsView.sol";
-import {IVaipakamVaultOutflowView} from "./IVaipakamVaultOutflowView.sol";
 import {IVaipakamListingLegView} from "./IVaipakamListingLegView.sol";
 import {ISeaportOrderHash, ISeaportCancel, OrderComponents} from "./ISeaportOrderHash.sol";
 import {
@@ -366,9 +365,6 @@ contract CollateralListingExecutor is
     error NotSeaport();
     error NotDiamond();
     error UnknownOrder(bytes32 orderHash);
-    /// @notice #3178 — the parallel-sale listing's vault is below the mandatory
-    ///         vault version: nothing leaves it on its owner's own listing.
-    error ParallelSaleVaultOutdated(uint256 offerId);
     error ConduitNotApproved(address conduit);
     error LoanNotActive(uint256 loanId);
     error GraceExpired(uint256 loanId);
@@ -1198,13 +1194,6 @@ contract CollateralListingExecutor is
             // fill-time content + sanctions recheck lives in
             // _checkOfferOrderPreconditions.
             if (!approvedConduits[offerCtx.conduit]) return false;
-            // #3178 — a vault below the mandatory vault version sends nothing
-            // out on its owner's own listing: the fill reads as unsigned until
-            // the creator upgrades. (A loan-keyed prepay listing below is a
-            // close-out sale that pays the counterparty and is not held back.)
-            if (IVaipakamVaultOutflowView(vaipakamDiamond).isParallelSaleVaultBlocked(offerCtx.offerId)) {
-                return false;
-            }
             return true;
         }
 
@@ -1438,12 +1427,6 @@ contract CollateralListingExecutor is
         OfferContext memory ctx = offerContext[params.orderHash];
         if (ctx.offerId == 0) revert UnknownOrder(params.orderHash);
         if (!approvedConduits[ctx.conduit]) revert ConduitNotApproved(ctx.conduit);
-        // #3178 (Codex #3220 r1) — the version rule at FILL time, not only at
-        // signing: Seaport skips the signature check for a pre-validated
-        // order. The Diamond's proceeds callback enforces the same rule.
-        if (IVaipakamVaultOutflowView(vaipakamDiamond).isParallelSaleVaultBlocked(ctx.offerId)) {
-            revert ParallelSaleVaultOutdated(ctx.offerId);
-        }
 
         // Diamond-side sanctions recheck — runs inside the diamond's
         // storage slot so the oracle lookup hits the diamond-configured

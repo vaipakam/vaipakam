@@ -61,7 +61,8 @@ export const ACCEPT_ERRORS = [
   'SaleAdmissionBlocked',
   'SaleListingTermsStale',
   'ProtocolPaused',
-  'VaultUpgradeRequired',
+  // #3204 — retired with the mandatory vault version; never produced.
+  'RetiredVaultUpgradeRequired',
   'SelfTrade',
   'RefinanceRequestUntakeable',
   'CadenceNotAdmitted',
@@ -287,18 +288,6 @@ export async function readVault(client: PublicClient, diamond: Hex, account: Hex
     args: [account],
     ...at(b),
   })) as Hex;
-}
-
-/** Whether this wallet's own vault exists and sits below the version the
- *  protocol requires (`getVaultVersionInfo().upgradeRequired`). */
-export async function readVaultUpgradeRequired(client: PublicClient, diamond: Hex, account: Hex): Promise<boolean> {
-  const info = (await client.readContract({
-    address: diamond,
-    abi: VAULT_FACTORY,
-    functionName: 'getVaultVersionInfo',
-    args: [account],
-  })) as readonly [bigint, bigint, bigint, boolean];
-  return info[3];
 }
 
 export interface WalletFunds {

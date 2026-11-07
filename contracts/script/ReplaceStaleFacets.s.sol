@@ -93,6 +93,8 @@ contract ReplaceStaleFacets is DeployDiamond {
     /// @notice #3242 - the target Diamond predates the offer-book bounds; see
     ///         {_requireOfferBook}.
     error PredatesOfferBook(address diamond);
+    /// @notice #3204 - the target Diamond predates the VaultBeacon (fresh deploy only).
+    error PredatesVaultBeacon(address diamond);
 
     function run() external override {
         uint256 deployerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
@@ -145,6 +147,10 @@ contract ReplaceStaleFacets is DeployDiamond {
         // #3242 - and one from before the offer-book bounds; see
         // {_requireOfferBook}.
         _requireOfferBook(diamond);
+        // #3204 - a Diamond from before the VaultBeacon is fresh-deploy only.
+        if (IDiamondLoupe(diamond).facetAddress(VaultFactoryFacet.getVaultBeacon.selector) == address(0)) {
+            revert PredatesVaultBeacon(diamond);
+        }
 
         vm.startBroadcast(deployerKey);
 

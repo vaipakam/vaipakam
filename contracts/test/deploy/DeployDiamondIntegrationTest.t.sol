@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {Test} from "forge-std/Test.sol";
+import {VaultBeacon} from "../../src/VaultBeacon.sol";
 import {DeployDiamond} from "../../script/DeployDiamond.s.sol";
 import {DiamondInterfacesInit} from "../../src/DiamondInterfacesInit.sol";
 import {DiamondFacetNames} from "./DiamondFacetNames.sol";
@@ -386,15 +387,19 @@ contract DeployDiamondIntegrationTest is Test, DiamondFacetNames {
         }
     }
 
-    /// @notice Vault implementation was deployed by Step 5c (factory's
-    ///         `initializeVaultImplementation`) and surfaces a non-zero
-    ///         template address with code.
-    function test_DeployedDiamond_VaultImplInitialized() public {
+    /// @notice #3204 — Step 5c deploys the vault implementation and the
+    ///         VaultBeacon (version 1 current, naming this Diamond) and
+    ///         records the beacon on the factory; a vault created afterwards
+    ///         is a beacon proxy that runs version 1 and records its owner.
+    function test_DeployedDiamond_VaultBeaconInitialized() public {
         (address diamond,,) = _deploy(true);
-        address impl = VaultFactoryFacet(diamond)
-            .getVaipakamVaultImplementationAddress();
-        assertTrue(impl != address(0), "vault impl not initialized");
+        VaultBeacon beacon = VaultBeacon(VaultFactoryFacet(diamond).getVaultBeacon());
+        assertTrue(address(beacon) != address(0), "vault beacon not recorded");
+        assertEq(beacon.diamond(), diamond, "beacon names another Diamond");
+        assertEq(beacon.currentVersionId(), 1, "version 1 is not current");
+        (address impl, ) = beacon.versionOf(1);
         assertGt(impl.code.length, 0, "vault impl has no code");
+        assertEq(beacon.implementation(), impl, "the beacon does not resolve to version 1");
     }
 
     /// @notice #1566 slice 4 PR A — a fresh deploy binds a

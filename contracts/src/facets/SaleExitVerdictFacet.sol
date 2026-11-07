@@ -15,7 +15,6 @@ import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {EarlyWithdrawalFacet} from "./EarlyWithdrawalFacet.sol";
 import {EarlyWithdrawalDirectFacet} from "./EarlyWithdrawalDirectFacet.sol";
 import {OfferCreateFacet} from "./OfferCreateFacet.sol";
-import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
 
 /**
  * @title  SaleExitVerdictFacet
@@ -378,25 +377,6 @@ contract SaleExitVerdictFacet {
         _assetPause(r, loan.collateralAsset);
         if (_full(r)) return _trim(r);
 
-        // A vault behind the mandatory version is refused when funds move
-        // through it: the holder's on the listing (the vehicle is created for
-        // it), and the stored lender's wherever its held balance moves (the
-        // listing's consolidation, the direct sale's held migration). The
-        // direct sale migrates the held balance out of the stored lender's
-        // vault whoever holds the position, so only the listing, where a
-        // holder who IS the stored lender was already checked above, skips it.
-        if (listing && LibVaipakam.vaultUpgradeRequired(holder)) {
-            _add(r, abi.encodeWithSelector(VaultFactoryFacet.VaultUpgradeRequired.selector), 0);
-            if (_full(r)) return _trim(r);
-        }
-        if (
-            s.heldForLender[loanId] != 0 &&
-            !(listing && loan.lender == holder) &&
-            LibVaipakam.vaultUpgradeRequired(loan.lender)
-        ) {
-            _add(r, abi.encodeWithSelector(VaultFactoryFacet.VaultUpgradeRequired.selector), 0);
-            if (_full(r)) return _trim(r);
-        }
 
         // Admission last: the only check that reaches the oracles. A guard
         // that reverts with no data (the classifier itself could not run) is
