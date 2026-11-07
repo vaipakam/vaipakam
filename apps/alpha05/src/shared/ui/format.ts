@@ -94,10 +94,20 @@ export function formatSpan(seconds: number): string {
   return formatAge(s);
 }
 
+/** The latest moment a JavaScript date can hold, in Unix seconds. */
+const MAX_DATE_SECONDS = 8_640_000_000_000;
+
 /** A moment as a date and time in UTC, in the reader's language, always
- *  labelled UTC so it is never read as local time. */
-export function formatUtc(unixSeconds: number, locale?: string): string {
-  const d = new Date(unixSeconds * 1000);
+ *  labelled UTC so it is never read as local time. A chain value can lie
+ *  past what a date can hold (a timelock accepts any delay above its
+ *  minimum); that moment is stated exactly in Unix seconds instead of
+ *  throwing, so one far-off value never takes a page down. */
+export function formatUtc(unixSeconds: number | bigint, locale?: string): string {
+  const big = typeof unixSeconds === 'bigint';
+  if (big ? unixSeconds > BigInt(MAX_DATE_SECONDS) || unixSeconds < -BigInt(MAX_DATE_SECONDS) : !(Math.abs(unixSeconds) <= MAX_DATE_SECONDS)) {
+    return `Unix time ${String(unixSeconds)} UTC`;
+  }
+  const d = new Date(Number(unixSeconds) * 1000);
   const text = new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeStyle: 'short', timeZone: 'UTC' }).format(d);
   return `${text} UTC`;
 }
