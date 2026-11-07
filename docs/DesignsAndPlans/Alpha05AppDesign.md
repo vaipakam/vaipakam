@@ -709,7 +709,10 @@ above. Each resolves here, so a route reviewer needs no private file:
   price-based reading", never 0 and never unknown, while a successful
   reading of 0 on a priced loan is shown as 0; the liquidation
   threshold is the loan's stored
-  snapshot); where its collateral is held (the protocol's lien: held in
+  snapshot, and the network's internal-match band above it, read from the
+  protocol, in which no outside sale can close the loan, or that matching
+  is off or holds no band; an initiation fee rate recorded as 0 is "not
+  recorded", never 0%); where its collateral is held (the protocol's lien: held in
   the borrower's vault, on an ended loan until its claim is collected,
   released (checked before a zero amount, since a release zeroes it), or
   none, with an ERC-1155 lien's quantity); and, for a loan whose

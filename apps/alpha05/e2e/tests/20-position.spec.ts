@@ -56,6 +56,8 @@ test('a live loan states its status, the reader’s role, its dates, terms, heal
     const health = page.getByRole('region', { name: 'Health' });
     await expect(fact(health, 'Health factor')).toHaveText(/^\d/);
     await expect(fact(health, 'Liquidation threshold')).toHaveText(/% loan-to-value, fixed when the loan opened$/);
+    // The internal-match band is stated from the protocol: a band, or that matching is off or holds none.
+    await expect(fact(health, 'Held for an internal match')).toHaveText(/^(From \d.*% loan-to-value; an outside sale opens at .*%|No: .*)$/);
 
     const held = page.getByRole('region', { name: 'Collateral held' });
     await expect(fact(held, 'Amount')).toHaveText('3,000 tLIQ');

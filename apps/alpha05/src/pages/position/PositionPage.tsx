@@ -7,7 +7,7 @@ import { useCopy, type CopyKey } from '../../shared/copy/useCopy';
 import { CADENCE_NAME, isCadence } from '../../shared/offers/cadence';
 import { ASSET_ERC20, LOAN_STATUS_FALLBACK_PENDING, isLiveStatus, loanObligations, loanStatusName } from '../../shared/positions/model';
 import { InterestLine, ReadState, StageLine } from '../../shared/positions/PositionSections';
-import { ILLIQUID, readLoanView, roleOf, treasuryShareBps, type LoanView, type Role } from '../../shared/positions/loanView';
+import { ILLIQUID, readLoanView, recordedInitFeeBps, roleOf, treasuryShareBps, type LoanView, type Role } from '../../shared/positions/loanView';
 import { useOwnRead } from '../../shared/reads/useOwnRead';
 import { assetName, tokenAmount, useTokenMeta, type TokenMetaMap } from '../../shared/reads/tokens';
 import { formatBps, formatScaled, formatSpan, formatUtc, shortAddress } from '../../shared/ui/format';
@@ -89,6 +89,7 @@ function LoanBody({ view: v, account, meta }: { view: LoanView; account: Hex; me
   const live = isLiveStatus(l.status);
   const erc20 = l.assetType === ASSET_ERC20;
   const share = treasuryShareBps(l);
+  const initFee = recordedInitFeeBps(l);
   // A loan with an illiquid leg has no price-based risk math: the protocol
   // refuses the health and LTV reads for it, so a refused read here is "none",
   // not "unknown". On a loan with both legs priced, every successful read is
@@ -189,12 +190,24 @@ function LoanBody({ view: v, account, meta }: { view: LoanView; account: Hex; me
         )}
         {erc20 && <Fact label={text('position.rowPartial')} value={text(l.allowsPartialRepay ? 'position.allowed' : 'position.notAllowed')} unknown={unknown} />}
         {erc20 && <Fact label={text('position.rowListing')} value={text(l.allowsPrepayListing ? 'position.allowed' : 'position.notAllowed')} unknown={unknown} />}
-        {erc20 && <Fact label={text('position.rowShare')} value={format(share.legacy ? 'position.shareLegacy' : 'position.share', { rate: formatBps(BigInt(share.bps)) })} unknown={unknown} />}
+        {erc20 && (
+          <Fact
+            label={text('position.rowShare')}
+            value={format(share.legacy ? 'position.shareLegacy' : 'position.share', { rate: formatBps(BigInt(share.bps)) })}
+            unknown={unknown}
+          />
+        )}
         {erc20 && (
           <Fact
             label={text('position.rowInitFee')}
             value={
-              v.saleVehicle === null ? null : v.saleVehicle ? text('position.initFeeNone') : format('position.initFee', { rate: formatBps(BigInt(l.loanInitiationFeeBpsAtInit)) })
+              v.saleVehicle === null
+                ? null
+                : v.saleVehicle
+                  ? text('position.initFeeNone')
+                  : initFee === null
+                    ? text('position.initFeeUnrecorded')
+                    : format('position.initFee', { rate: formatBps(BigInt(initFee)) })
             }
             unknown={unknown}
           />
@@ -220,6 +233,24 @@ function LoanBody({ view: v, account, meta }: { view: LoanView; account: Hex; me
             unknown={unknown}
           />
           <Fact label={text('position.rowLiqLtv')} value={format('position.liqLtv', { rate: formatBps(BigInt(l.liquidationLtvBpsAtInit)) })} unknown={unknown} />
+          {!noRiskMath && (
+            <Fact
+              label={text('position.rowMatchWindow')}
+              value={
+                v.matchWindow === null
+                  ? null
+                  : !v.matchWindow.enabled
+                    ? text('position.matchWindowOff')
+                    : v.matchWindow.windowBps === 0n
+                      ? text('position.matchWindowNone')
+                      : format('position.matchWindow', {
+                          from: formatBps(BigInt(l.liquidationLtvBpsAtInit)),
+                          to: formatBps(BigInt(l.liquidationLtvBpsAtInit) + v.matchWindow.windowBps),
+                        })
+              }
+              unknown={unknown}
+            />
+          )}
         </Facts>
       )}
 

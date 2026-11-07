@@ -12,7 +12,16 @@
  * time; `getLoanDeadlines` is the one source).
  */
 import { type Abi, type PublicClient } from 'viem';
-import { DefaultedFacetABI, LoanFacetABI, MetricsFacetABI, NumeraireConfigFacetABI, RepayPeriodicFacetABI, RiskFacetABI, VaipakamNFTFacetABI } from '@vaipakam/contracts/abis';
+import {
+  ConfigFacetABI,
+  DefaultedFacetABI,
+  LoanFacetABI,
+  MetricsFacetABI,
+  NumeraireConfigFacetABI,
+  RepayPeriodicFacetABI,
+  RiskFacetABI,
+  VaipakamNFTFacetABI,
+} from '@vaipakam/contracts/abis';
 import { isLiveStatus, type Deadlines, type LoanSummary } from './model';
 
 type Hex = `0x${string}`;
@@ -24,6 +33,7 @@ const NFT = VaipakamNFTFacetABI as Abi;
 const DEFAULTED = DefaultedFacetABI as Abi;
 const PERIODIC = RepayPeriodicFacetABI as Abi;
 const NUMERAIRE = NumeraireConfigFacetABI as Abi;
+const CONFIG = ConfigFacetABI as Abi;
 
 /** `LibVaipakam.LiquidityStatus.Illiquid`. */
 export const ILLIQUID = 1;
@@ -40,6 +50,14 @@ export const LEGACY_TREASURY_FEE_BPS = 100;
  *  whether it came from the legacy fallback rather than the loan's record. */
 export function treasuryShareBps(l: Pick<LoanDetails, 'treasuryFeeBpsAtInit'>): { bps: number; legacy: boolean } {
   return l.treasuryFeeBpsAtInit === 0 ? { bps: LEGACY_TREASURY_FEE_BPS, legacy: true } : { bps: l.treasuryFeeBpsAtInit, legacy: false };
+}
+
+/** The initiation fee rate the loan recorded when it opened, or `null`
+ *  when none was recorded: a stored 0 marks a loan that opened before the
+ *  rate was kept (the recorded rate is always the resolved, non-zero knob),
+ *  never a fee-free loan. */
+export function recordedInitFeeBps(l: Pick<LoanDetails, 'loanInitiationFeeBpsAtInit'>): number | null {
+  return l.loanInitiationFeeBpsAtInit === 0 ? null : l.loanInitiationFeeBpsAtInit;
 }
 
 export interface LoanDetails extends LoanSummary {
@@ -99,6 +117,12 @@ export interface LoanView {
   lien: CollateralLien | null;
   /** A loan opened to carry a lender's sale (no fee, no rental). */
   saleVehicle: boolean | null;
+  /** The internal-match priority band (`getInternalMatchConfigBundle`):
+   *  while matching is on, a liquidatable loan whose loan-to-value is from
+   *  its threshold up to the threshold plus `windowBps` is held for an
+   *  internal match and every outside liquidation route refuses. Live loans
+   *  only; `null` when unread. */
+  matchWindow: { enabled: boolean; windowBps: bigint } | null;
 }
 
 /** The reader's role on this loan: the positions their wallet HOLDS now,
@@ -141,7 +165,7 @@ export async function readLoanView(client: PublicClient, diamond: Hex, loanId: b
   const live = isLiveStatus(loan.status);
   const cadence = loan.periodicInterestCadence;
 
-  const [lender, borrower, dates, periodic, periodicOn, defaultable, healthFactor, ltvBps, lien, saleVehicle] = await Promise.all([
+  const [lender, borrower, dates, periodic, periodicOn, defaultable, healthFactor, ltvBps, lien, saleVehicle, matchConfig] = await Promise.all([
     maybe(read<Hex>(NFT, 'ownerOf', [loan.lenderTokenId])),
     maybe(read<Hex>(NFT, 'ownerOf', [loan.borrowerTokenId])),
     live ? maybe(read<readonly [bigint, bigint, bigint, bigint]>(LOAN, 'getLoanDeadlines', [loanId])) : null,
@@ -152,6 +176,7 @@ export async function readLoanView(client: PublicClient, diamond: Hex, loanId: b
     live ? maybe(read<bigint>(RISK, 'calculateLTV', [loanId])) : null,
     maybe(read<CollateralLien>(METRICS, 'getLoanCollateralLien', [loanId])),
     maybe(read<boolean>(METRICS, 'isSaleVehicleLoan', [loanId])),
+    live ? maybe(read<readonly [boolean, bigint, bigint]>(CONFIG, 'getInternalMatchConfigBundle')) : null,
   ]);
 
   // A loan with a cadence answers to its checkpoint too: with the checkpoint
@@ -176,6 +201,7 @@ export async function readLoanView(client: PublicClient, diamond: Hex, loanId: b
     ltvBps,
     lien,
     saleVehicle,
+    matchWindow: matchConfig ? { enabled: matchConfig[0], windowBps: matchConfig[1] } : null,
   };
   return { view };
 }

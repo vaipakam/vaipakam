@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { roleOf, treasuryShareBps } from './loanView';
+import { recordedInitFeeBps, roleOf, treasuryShareBps } from './loanView';
 
 const me = '0x00000000000000000000000000000000000000aa' as const;
 const other = '0x00000000000000000000000000000000000000bb' as const;
@@ -23,5 +23,12 @@ describe('treasuryShareBps', () => {
   it('reads a recorded share as it is, and a recorded 0 as the legacy rate settlement charges', () => {
     expect(treasuryShareBps({ treasuryFeeBpsAtInit: 200 })).toEqual({ bps: 200, legacy: false });
     expect(treasuryShareBps({ treasuryFeeBpsAtInit: 0 })).toEqual({ bps: 100, legacy: true });
+  });
+});
+
+describe('recordedInitFeeBps', () => {
+  it('reads a recorded initiation fee rate, and a recorded 0 as not recorded', () => {
+    expect(recordedInitFeeBps({ loanInitiationFeeBpsAtInit: 20 })).toBe(20);
+    expect(recordedInitFeeBps({ loanInitiationFeeBpsAtInit: 0 })).toBeNull();
   });
 });
