@@ -1,4 +1,4 @@
-## Keeper — private submission route per chain (PR #<n>)
+## Keeper — private submission route per chain (PR #3275)
 
 On a chain with a public mempool, a liquidation or forced sale sent to the
 ordinary RPC can be seen before it lands, then copied or sandwiched. The
