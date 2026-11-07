@@ -16,6 +16,7 @@ import { usePublicClient } from 'wagmi';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import { useActiveChain } from '../chain/useActiveChain';
 import { freshData } from '../lib/freshData';
+import { idleAware } from '../lib/idle';
 import type { OfferBookFloor } from '../lib/offerSchema';
 
 export type { OfferBookFloor };
@@ -65,6 +66,10 @@ export function useOpenOfferCount(
     queryKey: ['openOfferCount', readChain.chainId, who],
     enabled: Boolean(publicClient && who),
     staleTime: 30_000,
+    // Bounded re-read as well as the receipt refresh: an offer can leave the
+    // book without a write from this app (a fill, a cancel elsewhere), and a
+    // form left open at the cap must reopen posting when it does.
+    refetchInterval: idleAware(30_000),
     queryFn: async () => {
       const [, cap, open] = (await publicClient!.readContract({
         address: readChain.diamondAddress,
