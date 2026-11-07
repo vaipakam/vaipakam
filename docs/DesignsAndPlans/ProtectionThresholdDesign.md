@@ -39,9 +39,12 @@ does not classify Liquid is worth 0, a liquid one is priced by `OracleFacet.getA
      a receivable whose worth depends on the borrower, accrued interest and default risk. The repo's
      valuation rule has no price for that, and inventing one breaks the standing rule against a
      figure the system cannot substantiate.
-  2. The value was counted when it entered. A lender's principal passes through a gated deposit or
-     a gated create offer while it sits in the vault, so any lender above the threshold has already
-     been asked.
+  2. The value was counted when it entered. A lender's principal passes through a gated deposit, a
+     gated create offer, or a gated accept while it is the owner's, so any lender above the
+     threshold has already been asked. The accept case needs care: `_acceptOffer` can pull the
+     lender's principal from the wallet into the vault and send it on to fund the loan in the same
+     entry (`OfferAcceptFacet.sol:1204-1252`), so an end-of-entry walk would see an empty vault.
+     The gate therefore also counts **pass-through value** (section 3).
   3. Counting it needs a per-holder ledger of open receivables that follows the position NFT. Under
      #3205 §3.9 the NFT moves to its own contract outside the Diamond, so the Diamond would have to
      track transfers it no longer sees.
@@ -60,7 +63,12 @@ the passive owner could fix. This deliberately differs from #671, which re-check
 because a tier can be lowered after posting. See Q1.
 
 The value is read **after** the action's ledger writes, at the end of the entry point (one view; a
-revert undoes the whole action). The six owner-named entries map onto these routes:
+revert undoes the whole action). It is the vault liquid value **plus pass-through value**: the
+liquid value of anything the same entry pulled from the acting owner's wallet into the vault and
+then sent out again, such as a lender's principal funded straight from the wallet at accept. The
+pulled amounts are summed per asset in a transient accumulator written where the wallet pull is
+recorded and read once by the gate, so no lasting receivables ledger is kept. A single large accept
+from an empty vault is therefore asked like a deposit of the same size. The six owner-named entries map onto these routes:
 
 | Owner's entry | Route (gated for `msg.sender`) | Note |
 | --- | --- | --- |
@@ -246,6 +254,8 @@ release-note fragment.
 
 - Boundary: exactly at the threshold passes; one base unit above refuses for an undecided account
   at each of the six entries and at the offer mutations, and passes for a decided one.
+- Pass-through: an undecided lender with an empty vault accepting a $10,000 borrower offer funded
+  from the wallet refuses; the same accept below the threshold passes; a decided lender passes.
 - Offer mutations: an undecided owner's offer below the threshold raised above it by
   `setOfferAmount`, `modifyOffer` or `setOfferCollateral` refuses; a mutation that refunds passes.
 - Route coverage: the deploy-sanity test fails on a vault-deposit route that is neither gated nor on
