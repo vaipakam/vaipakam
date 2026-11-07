@@ -228,13 +228,18 @@ export async function withSubmissionSlot<T>(
     const route = armedSubmissionRoute(chainId);
     if ('unread' in route) throw new SubmissionRouteUnread(`send refused: ${route.unread}`);
     // A private broadcast is invisible to the pending count until it is
-    // mined, and this process's memory does not survive a restart, so on a
-    // private chain the nonce record (`privateNonce.ts`) is read too, and a
-    // record that cannot be read sends nothing.
+    // mined, and this process's memory does not survive a restart, so the
+    // nonce record (`privateNonce.ts`) is read too, and a record that cannot
+    // be read sends nothing. It is read on EVERY chain once records are armed,
+    // not only on a chain whose route is private now (Codex #3275 r4): a
+    // route removed while a private send is still pending leaves that send's
+    // reservation in force, and the public pending count cannot see it.
     let recorded: { next: number; atMs: number } | null = null;
-    if (route.kind === 'private') {
-      const reservations = armedNonceReservations();
-      if (!reservations) throw new SubmissionRouteUnread('send refused: no private nonce record is armed for a private route');
+    const reservations = armedNonceReservations();
+    if (route.kind === 'private' && !reservations) {
+      throw new SubmissionRouteUnread('send refused: no private nonce record is armed for a private route');
+    }
+    if (reservations) {
       try {
         recorded = await reservations.read(chainId, address);
       } catch (err) {
@@ -247,7 +252,9 @@ export async function withSubmissionSlot<T>(
     const ttl = route.kind === 'private' ? PRIVATE_ROUTE_FLOOR_TTL_MS : FLOOR_TTL_MS;
     let nonce = pending;
     if (floor !== undefined && now() - floor.at < ttl) nonce = Math.max(nonce, floor.next);
-    if (recorded !== null && now() - recorded.atMs < ttl) nonce = Math.max(nonce, recorded.next);
+    // A record is always a private send's, so it keeps the private window
+    // whatever the chain's route is now.
+    if (recorded !== null && now() - recorded.atMs < PRIVATE_ROUTE_FLOOR_TTL_MS) nonce = Math.max(nonce, recorded.next);
     // The epoch fence (#2569 r4), before the signature: a send is made only
     // while the indexer's epoch this process was launched under still holds.
     // Thrown here, nothing was signed, so the nonce is simply released.

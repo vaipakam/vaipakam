@@ -288,6 +288,22 @@ describe('the private nonce record (Codex #3275 r1)', () => {
     expect(got).toBe(4);
   });
 
+  it('a route switched back to public still honours a pending private reservation (Codex #3275 r4)', async () => {
+    armHeldFence();
+    const reservations = memoryNonceReservations();
+    reservations.rows.set(key, { next: 1, atMs: Date.now() });
+    resetSubmissionQueues();
+    // The operator removed chain 1's private entry and restarted.
+    armSubmissionRoutes(readSubmissionRoutes('', ''), reservations);
+    const wallet = createWalletClient({ account, transport: rpc(async () => '0x', [], 'public') });
+    let got = -1;
+    await withSubmissionSlot(wallet, 1, account.address, Number.MAX_SAFE_INTEGER, async (nonce, signed) => {
+      signed();
+      got = nonce;
+    });
+    expect(got).toBe(1);
+  });
+
   it('a private route armed without a record sends nothing', async () => {
     armHeldFence();
     armSubmissionRoutes(readSubmissionRoutes(`1=${URL_ETH}`, ''));
