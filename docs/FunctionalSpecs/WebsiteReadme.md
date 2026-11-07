@@ -297,6 +297,7 @@ PWA requirements:
 - a static shell file is cached only when it is one of this build's files (hashed build output, the manifest, its icons, the logo), and each build's files are kept under that build's own name; a new build removes earlier builds' files when it takes over. An HTML answer to a file request is the host's page fallback, not that file, and is never stored
 - dynamic data including RPC responses, subgraph reads, `/quote/*` worker responses, and transaction-preview responses must bypass service-worker caching so on-chain state is never stale
 - the service worker should register only in production builds and should fail safely on browsers that do not support service workers
+- on every load, a production build of the connected app removes any service-worker registration on its origin that is not its own worker, so a worker left behind by a bad build or an injected script stops answering requests once the genuine app loads again. One registration that cannot be removed does not stop the others from being removed
 
 Farcaster Frame requirements:
 
@@ -759,6 +760,7 @@ Connected-app network model in Phase 1:
 - `Next index fetch in` should count down to the next `/offers/stats` / indexer-cursor fetch and reset from observed indexer updates rather than a guessed timer
 - advanced-mode users may get a deliberate `Purge browser-side state` control in that diagnostics panel; it must require confirmation and should clear IndexedDB, localStorage, and sessionStorage for the current origin so stale decode/cache states can be reset after redeploys
 - frontend builds should expose a build hash and build timestamp in the diagnostics panel when available, falling back gracefully when git metadata is unavailable
+- a build of a given commit, with the same build settings, must produce the same files every time, so the served site can be checked against the commit it claims to be; the timestamp a build shows is therefore the commit's time, and a build that cannot read its commit says in its log that it will not match a rebuild
 - manual force-refresh controls belong only on pages where the user is inspecting mutable lists, including OfferBook, Activity, Dashboard, and Your Vaipakam Vault
 - those page-level refresh controls should share one adaptive cooldown state machine: a 30-second baseline, exponential growth for repeated clicks up to a 5-minute cap, reset after a quiet period, a draining right-to-left progress bar, stable-width countdown digits, and `Syncing` / `Synced` / idle status states
 - app refresh probes should use named watermark tiers rather than scattered interval literals: OfferBook `hot` at 5 seconds active with idle backoff, Dashboard / Vault / Offer Details / Activity / badge diagnostics `warm` at 30 seconds active, and Analytics `cool` at 180 seconds active; all tiers pause while the tab is hidden and resume with an immediate catch-up probe on focus

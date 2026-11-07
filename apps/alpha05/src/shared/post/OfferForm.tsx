@@ -44,6 +44,7 @@ import { holds, parseQuantity, parseTokenId, readErc1155, readErc721 } from '../
 import { readPostFormInputs, type PostDraft } from './postReview';
 import { CADENCES, cadenceOpen, cadenceRefusalText, isCadence, readCadenceAdmission, type Cadence } from '../offers/cadence';
 import { readNumeraireSymbol } from '../reads/numeraire';
+import { belowFloor, capStanding, readMinOfferAmount, readOpenOffers } from '../offers/offerBook';
 import { readTariffQuote, readTariffSwitch, suggestedCeiling, VPFI_DECIMALS } from '../offers/fullTariff';
 
 /** The store keys each page's posting flow is kept under (the typed form,
@@ -293,6 +294,19 @@ export function OfferForm({ side, flowKey, chain, own, pair, meta, onReview, onC
   const cadence: Cadence = isCadence(input.cadence) ? input.cadence : 0;
   const admissionAmount = lender && ranged ? (minPart?.ok && partShape === null ? minPart.value : null) : amount?.ok ? amount.value : null;
   const admissionTerms = admissionAmount !== null && durationDays !== null ? { amount: admissionAmount, durationDays } : null;
+  // #3242 — the offer book's value floor applies to that same amount (a
+  // lending offer's smallest part, a request's smallest amount), and the
+  // per-wallet cap to the post itself. Both are the protocol's own answers;
+  // a failed read says nothing and leaves the refusal to the protocol.
+  const bookFloor = useOwnRead([flowKey, 'offerFloor', pair.lending.toLowerCase()], (c) => readMinOfferAmount(c, diamond, pair.lending));
+  const floorAmount = bookFloor.error === null ? bookFloor.data : null;
+  const floorShort = belowFloor(admissionAmount, floorAmount);
+  const floorText =
+    floorShort && floorAmount !== null && lendingDecimals !== null
+      ? format('request.errBelowFloor', { min: formatUnits(floorAmount, lendingDecimals), symbol: lendingSymbol })
+      : null;
+  const openOffers = useOwnRead([flowKey, 'openOffers'], (c) => readOpenOffers(c, diamond, own.account));
+  const capNow = capStanding(openOffers.error === null ? openOffers.data : null);
   const admission = useOwnRead(
     [flowKey, 'cadence', pair.lending.toLowerCase(), pair.collateral.toLowerCase(), pair.standard, String(admissionTerms?.amount), String(admissionTerms?.durationDays)],
     (c) =>
@@ -380,6 +394,8 @@ export function OfferForm({ side, flowKey, chain, own, pair, meta, onReview, onC
     fillBlock === null &&
     cadenceBlock === null &&
     tariffBlock === null &&
+    !floorShort &&
+    capNow !== 'full' &&
     inputs.data !== null;
 
   // Only the latest submission, from a form still on screen for the same
@@ -624,6 +640,13 @@ export function OfferForm({ side, flowKey, chain, own, pair, meta, onReview, onC
           {text('request.metaUnread')}
         </Notice>
       )}
+      {capNow !== 'room' && openOffers.data !== null && (
+        <Notice tone="warn" tier="A">
+          <span data-testid="request-offer-cap">
+            {format(capNow === 'full' ? 'request.offerCapFull' : 'request.offerCapNear', { open: String(openOffers.data.open), cap: String(openOffers.data.cap) })}
+          </span>
+        </Notice>
+      )}
       {inputs.state === 'reading' && <p className="tier-b">{text('request.configReading')}</p>}
       {inputs.state === 'failed' && (
         <Notice tone="warn" tier="A">
@@ -643,7 +666,7 @@ export function OfferForm({ side, flowKey, chain, own, pair, meta, onReview, onC
                 : text('lendOffer.amountHintPlain')
               : text(ranged ? 'request.amountMinHint' : 'request.amountHint')
           }
-          error={show('amount') ? amountError(amount, lendingSymbol, lendingDecimals) : null}
+          error={show('amount') ? (amountError(amount, lendingSymbol, lendingDecimals) ?? (lender && ranged ? null : floorText)) : null}
         >
           {({ id, describedBy, invalid }) => (
             <div className="input-with-action">
@@ -893,7 +916,7 @@ export function OfferForm({ side, flowKey, chain, own, pair, meta, onReview, onC
                         ? parseText(minPart.error, lendingSymbol, lendingDecimals)
                         : partShape === 'part-above-amount'
                           ? text('lendOffer.errPartAbove')
-                          : null
+                          : floorText
                       : null
                   }
                 >

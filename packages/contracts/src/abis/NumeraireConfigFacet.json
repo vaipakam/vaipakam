@@ -46,6 +46,19 @@
   },
   {
     "type": "function",
+    "name": "getMinOfferValueNumeraire",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getMinPrincipalForFinerCadence",
     "inputs": [],
     "outputs": [
@@ -194,6 +207,19 @@
         "name": "feed",
         "type": "address",
         "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setMinOfferValueNumeraire",
+    "inputs": [
+      {
+        "name": "minimum",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "outputs": [],
@@ -350,6 +376,19 @@
   {
     "type": "event",
     "name": "MinIntentFillNumeraireSet",
+    "inputs": [
+      {
+        "name": "minimum",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "MinOfferValueNumeraireSet",
     "inputs": [
       {
         "name": "minimum",

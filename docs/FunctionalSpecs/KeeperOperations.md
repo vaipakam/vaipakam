@@ -157,6 +157,21 @@ evidence that the migration has completed.
   silently reset liquidation thresholds, confidence windows, or arming
   choices. Signing keys and settings whose presence enables transactions
   are treated as secrets.
+- A chain can be given a private submission endpoint, so the keeper's
+  liquidations and sales there are not visible in the public mempool before
+  they land. On such a chain every transaction the keeper sends goes through
+  that endpoint, because its sends share one nonce sequence; reads stay on the
+  ordinary RPC. A failed private send falls back to the ordinary RPC only on a
+  chain the operator has explicitly allowed, and then sends the same signed
+  transaction, never a second one. Settings the keeper cannot read stop every
+  send rather than sending publicly. The keeper remembers, durably, which
+  nonce a private transaction holds, so a restart never replaces a private
+  transaction that is still pending, and a later run counts a private
+  transaction it sent and has not yet seen mined as pending, so it does not
+  send the same action again behind it; if it cannot keep that record, it sends
+  nothing on that chain. A fallback to the ordinary RPC is a new broadcast and
+  is not made once the run's deadline has passed. Each run states every chain's route.
+  Which chains need a private route at mainnet is an owner decision.
 - Error reports, stored failure reasons, and operator alerts remove provider
   addresses and credentials before becoming text. They retain useful refusal
   names and identifiers, so redaction does not hide why an action was skipped.
@@ -178,6 +193,14 @@ evidence that the migration has completed.
   capacity is exhausted, the pass still considers opted-in intents whose
   priority credit the protocol says would unlock a fill. Each fill is
   previewed, and shared per-run time and action limits still apply.
+- The per-run preview budget is shared across offer creators, not across
+  offers. Every pair of counterparties (a lender creator and a borrower
+  creator in one offer bucket, or a standing intent and a borrower creator) is
+  looked at once before any pair is looked at a second time, and the starting
+  point moves from run to run. So one wallet posting many offers cannot use up
+  a run's previews and keep other people's offers from being matched. Many
+  wallets each get their own share; the minimum offer size is what bounds
+  that.
 - A priority credit is consumed only when a fill would otherwise be refused
   for capacity. It grants no exemption from offer bounds, collateral safety,
   sanctions, or another authorization requirement. If the deployment cannot

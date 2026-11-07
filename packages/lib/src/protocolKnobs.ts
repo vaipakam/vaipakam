@@ -132,6 +132,11 @@ export const PROTOCOL_KNOB_GETTERS = [
   { key: 'lenderIntentEnabled', getter: 'isLenderIntentEnabled', setterEvents: ['LenderIntentEnabledSet'] },
   // #2760 — the effective value: the default when governance has set none.
   { key: 'minIntentFillNumeraire', getter: 'getMinIntentFillNumeraire', setterEvents: ['MinIntentFillNumeraireSet'] },
+  // #3242 — the offer-book bounds, each the effective value (the default
+  // when governance has set none). A numeraire rotation resets the floor and
+  // emits its event.
+  { key: 'minOfferValueNumeraire', getter: 'getMinOfferValueNumeraire', setterEvents: ['MinOfferValueNumeraireSet'] },
+  { key: 'maxOpenOffersPerWallet', getter: 'getMaxOpenOffersPerWallet', setterEvents: ['MaxOpenOffersPerWalletSet'] },
   // Treasury
   { key: 'treasury', getter: 'getTreasury', setterEvents: ['TreasurySet'] },
   // #2680 — the oracle stack's chain wiring, each a single stored address.

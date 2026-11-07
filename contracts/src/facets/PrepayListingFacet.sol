@@ -17,6 +17,7 @@ import {LibSettlement} from "../libraries/LibSettlement.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
+import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
 import {IVaipakamPrepayContext} from "../seaport/IVaipakamPrepayContext.sol";
 import {IVaipakamPrepayCallbacks} from "../seaport/IVaipakamPrepayCallbacks.sol";
 import {IListingExecutorRecorder} from "../seaport/IListingExecutorRecorder.sol";
@@ -362,6 +363,13 @@ contract PrepayListingFacet is
         if (borrower == address(0)) revert NotOfferExecutor(offerId, msg.sender);
         address vaultAddr = s.userVaipakamVaults[borrower];
         if (vaultAddr == address(0)) revert NotOfferExecutor(offerId, msg.sender);
+        // #3178 (Codex #3220 r1) — the Diamond-side rule every parallel-sale
+        // fill passes through, whatever happened at signing: Seaport skips the
+        // vault's signature check for a PRE-VALIDATED order, so a listing
+        // validated before the mandatory version rose would otherwise still
+        // take collateral out of the owner's now-outdated vault on the owner's
+        // own listing. Refusing here reverts the whole fill.
+        if (LibVaipakam.vaultUpgradeRequired(borrower)) revert VaultFactoryFacet.VaultUpgradeRequired();
 
         // T-086 Round-8 (#358) Codex round-3 user-directed redesign —
         // post-acceptance branch (the borrower's offer was already

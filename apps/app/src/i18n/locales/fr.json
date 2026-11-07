@@ -1877,7 +1877,13 @@
         "sortDurationLong": "Prêt le plus long d’abord",
         "assetLabel": "Filtrer par adresse d’actif",
         "assetPlaceholder": "0x… (n’importe quelle partie : actif prêté, garantie, paiement)",
-        "clear": "Effacer les filtres"
+        "clear": "Effacer les filtres",
+        "sortLargest": "Les plus grandes d’abord",
+        "minSizeLabel": "Taille minimale",
+        "minSizeAny": "Toute taille",
+        "minSizeAtLeast": "Au moins {{amount}} {{unit}}",
+        "minSizeUnitUnknown": "dans la devise de référence",
+        "sizeNote": "La taille est ce qu’une offre prête encore, ou ce qu’une demande sollicite, évaluée au prix du protocole. Les offres dans un jeton sans prix fiable n’ont pas de taille mesurée : elles ne sont jamais masquées par taille et sont listées après celles qui sont évaluées."
       },
       "loading": "Chargement du carnet d’offres…",
       "filteredEmptyTitle": "Aucune offre ne correspond à ces filtres",
@@ -2144,7 +2150,8 @@
         "lockAtFill": "{{amount}} {{symbol}} de garantie — bloqués uniquement lorsque quelqu’un prend l’offre.",
         "netYield": "Si quelqu’un prend l’offre et que le prêt est remboursé, vous gagnez environ {{net}} % par an après les frais de protocole de {{feePct}} % sur vos intérêts.",
         "lifNote": "Frais de démarrage : {{feePct}} % du montant du prêt (environ {{amount}} {{symbol}}), facturés au démarrage du prêt.",
-        "expiryGtcSignedHint": "Une offre signée gratuitement reste ouverte jusqu’à 7 jours, puis expire d’elle-même. Vous pouvez l’annuler avant (l’annulation coûte des frais de réseau)."
+        "expiryGtcSignedHint": "Une offre signée gratuitement reste ouverte jusqu’à 7 jours, puis expire d’elle-même. Vous pouvez l’annuler avant (l’annulation coûte des frais de réseau).",
+        "gaslessBelowFloor": "Cet ordre est plus petit que la plus petite offre que le protocole accepte dans ce jeton, personne ne pourrait donc le prendre. Rien n’a été publié. Augmentez le montant et signez à nouveau."
       },
       "orders": {
         "loading": "Chargement de vos ordres ouverts…",
@@ -2988,7 +2995,10 @@
       "receiptOweNothing": "Rien — c’est l’emprunteur qui vous doit.",
       "viewTransaction": "Voir la transaction",
       "viewPositions": "Voir mes positions",
-      "postAnother": "Publier une autre offre"
+      "postAnother": "Publier une autre offre",
+      "openOfferCapFull": "Vous avez déjà {{cap}} offres ouvertes, le maximum pour un portefeuille. Annulez-en une pour en publier une autre ; une offre expirée compte jusqu’à ce que vous l’annuliez.",
+      "openOfferCapNear": "Vous avez {{open}} des {{cap}} offres qu’un portefeuille peut avoir ouvertes. Une offre expirée compte jusqu’à ce que vous l’annuliez.",
+      "openOfferCapManage": "Voir vos offres"
     },
     "loanRow": {
       "youRent": "Vous louez",
@@ -3032,7 +3042,8 @@
       "waitingForWallet": "En attente du wallet…",
       "networkFallback": "réseau #{{id}}",
       "unknown": "inconnu",
-      "amountTooPrecise": "{{symbol}} ne peut pas être divisé aussi finement — utilisez au plus {{decimals}} décimales."
+      "amountTooPrecise": "{{symbol}} ne peut pas être divisé aussi finement — utilisez au plus {{decimals}} décimales.",
+      "amountBelowOfferFloor": "La plus petite offre que le protocole accepte dans ce jeton est de {{min}} {{symbol}}. Saisissez au moins ce montant."
     },
     "stepNav": {
       "progressAria": "Progression",
@@ -3318,7 +3329,11 @@
       "graceNote": "Combien de temps après sa date de fin un prêt peut être mis en défaut, selon la durée du prêt. Un prêt prend la première ligne dont sa durée est inférieure à la limite.",
       "graceUnsetNote": "Non défini, donc le barème par défaut documenté du protocole ci-dessous s’applique. Un prêt prend la première ligne dont sa durée est inférieure à la limite.",
       "graceUnder": "Prêts de moins de {{days}} jours",
-      "graceLongerLoans": "Tous les prêts plus longs"
+      "graceLongerLoans": "Tous les prêts plus longs",
+      "minOfferValue": "Offre minimale",
+      "minOfferValueHint": "Le montant minimal que doit valoir le principal d’une offre lorsqu’elle est publiée ou que son montant est modifié. Cela ne s’applique qu’à un jeton liquide doté d’un prix ; les NFT et les jetons illiquides ne sont jamais refusés pour leur valeur. Les offres issues d’un prêt existant en sont exemptées. L’augmenter ne ferme aucune offre ouverte.",
+      "maxOpenOffers": "Offres ouvertes par portefeuille",
+      "maxOpenOffersHint": "Le nombre maximal d’offres qu’un portefeuille peut avoir ouvertes en même temps, tous types d’offres confondus. Une offre expirée compte jusqu’à son annulation. Le baisser ne ferme aucune offre ouverte. Les offres issues d’un prêt existant en sont exemptées."
     },
     "forcedClose": {
       "title": "Ce prêt est en retard",
@@ -4167,6 +4182,8 @@
     "ListingFloorBelowReviewed": "Le minimum que cette annonce vous garantirait a baissé depuis votre vérification (du temps a passé, ou le prêt a changé). Rien n'a été mis en vente. Vérifiez à nouveau l'annonce pour voir le chiffre actuel.",
     "ListingHeldAboveReviewed": "Davantage a été mis de côté pour le prêteur sur ce prêt depuis votre vérification de l'annonce. Rien n'a été mis en vente. Vérifiez à nouveau l'annonce pour voir les chiffres actuels.",
     "SaleBelowSellerFloor": "Cette annonce ne peut plus être achetée : le prêt a changé depuis sa mise en vente (par exemple, une partie a été remboursée), si bien que la vente rapporterait au vendeur moins que le minimum garanti par son annonce. Rien n'a été prélevé. Le vendeur peut l'annuler et la remettre en vente.",
-    "SaleAboveHeldCeiling": "Cette annonce ne peut plus être achetée : depuis sa mise en vente, davantage a été mis de côté pour le prêteur sur ce prêt que l'annonce ne le permet. Rien n'a été prélevé. Le vendeur peut l'annuler et la remettre en vente."
+    "SaleAboveHeldCeiling": "Cette annonce ne peut plus être achetée : depuis sa mise en vente, davantage a été mis de côté pour le prêteur sur ce prêt que l'annonce ne le permet. Rien n'a été prélevé. Le vendeur peut l'annuler et la remettre en vente.",
+    "OfferBelowMinimumValue": "Cette offre est plus petite que ce que le protocole autorise : le montant, ou la plus petite part qu’un appariement peut prendre, vaut moins que la valeur minimale d’une offre. Augmentez le montant et réessayez.",
+    "TooManyOpenOffers": "Ce portefeuille a déjà autant d’offres ouvertes que le protocole l’autorise. Annulez une offre dont vous n’avez plus besoin (une offre expirée compte jusqu’à ce que vous l’annuliez), puis réessayez."
   }
 }

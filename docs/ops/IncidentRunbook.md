@@ -1858,7 +1858,10 @@ is open until someone records it as done:
   name's controller belongs under the same multisig as the Diamond's owner, so
   one key cannot repoint it.
 - **Domain hygiene**: registrar lock, DNSSEC, CAA records and HSTS preload on
-  the two canonical domains. This runbook has not verified their state.
+  the two canonical domains. Measured 2026-11-06: `vaipakam.com` has no DS
+  record at `.com` (DNSSEC off), no CAA records, and `app.vaipakam.com` sends
+  no `Strict-Transport-Security` header. Registrar lock was not checked. The
+  decision and the work are tracked on #3236.
 - **The position NFT's `external_url`.** The metadata carries a link only when
   an admin sets a base URL (`VaipakamNFTMetadataFacet.setExternalUrlBase`; the
   configuration script reads `NFT_EXTERNAL_URL_BASE` and leaves it unset by
@@ -1875,6 +1878,224 @@ contract page shows a valid owner too. An explorer cannot decode a position
 into terms a buyer can read. And replacing the verifier would leave the drain
 case untouched. The verifier's explorer links are a cross-check beside it, not a
 replacement for it.
+
+## 9. Our own app or domain is compromised (added 2026-11-07; #3236)
+
+### Why this differs from a clone
+
+Section 8 covers a copy of the app on someone else's domain. This section
+covers the worse case: `app.vaipakam.com` or `vaipakam.com` itself serves code
+we did not ship. That can come from a malicious merge (every app deploys
+automatically on merge to `main`), a stolen Cloudflare or GitHub credential,
+or a hijacked DNS record. Visitors then see the genuine address and the
+genuine look, so nothing tells them to be careful. What they sign is what
+the bad build asks them to sign.
+
+The contracts still enforce their own rules, so a bad build cannot move funds
+by itself. The loss comes from what users sign: token approvals to an
+attacker, a Permit2 signature, or a transfer.
+
+### Detect
+
+- **The served-build check fails** (`.github/workflows/served-build.yml`,
+  every six hours, alert issue "Served build differs from its commit"). It
+  rebuilds the commit each site's live deployment is stamped with, using the
+  public build variables recorded in `.github/served-build.json`, and compares
+  every served file and the root security headers with that build, on the
+  custom domain and on `workers.dev`. Its keys say what it found:
+  `mismatch` (a file or header differs), `off-main` (the deployed commit was
+  never merged), `unverifiable` (no stamp, a dirty build, or traffic split
+  across versions), `unbuildable`, and, once deploy approval is on (see
+  Prevent below), `unapproved` (a live version that no approval run put
+  there). A `mismatch` has two possible causes,
+  and the issue names both: someone changed a site's build variables in the
+  Workers Build settings without the same change to `.github/served-build.json`,
+  or what is served was altered. Treat it as altered, and start Contain below,
+  until the Workers Build settings are shown to hold exactly the new values
+  and the change was intended. Then record them in that file in a reviewed
+  commit. For www it compares only the bundled code (`/assets/`): its deploy
+  fetches live data while it builds (the protocol configuration the indexer
+  publishes, read by `scripts/generate-llms.mjs` and by the pages that
+  `scripts/prerender.mjs` renders into HTML), so its HTML and `llms` files
+  change whenever that data does. The check cannot see a file the build does
+  not write, nor a script injected only into a page it does not compare.
+  To run it by hand: `CLOUDFLARE_ACCOUNT_ID=… CLOUDFLARE_DEPLOY_READ_TOKEN=…
+  node .github/scripts/check-served-build.mjs [--site vaipakam-app]`.
+- A changed or missing `Content-Security-Policy` header, or a script host in
+  it that `public/_headers.base` does not name.
+- A Worker deployment whose commit stamp is not on `main`, or that has no
+  stamp (`.github/workflows/deploy-lag.yml` shows each Worker's live
+  deployment).
+- DNS records for the canonical domains that nobody changed on purpose.
+- User reports of an unexpected approval, signature or "connect to verify"
+  step on the real address.
+
+### Contain, in this order
+
+1. **Stop the bad build.** In the Cloudflare dashboard, open the Worker
+   (`vaipakam-app`, `vaipakam-www` or `vaipakam-alpha05`), go to Deployments,
+   and roll back to the last version whose commit stamp is a known-good
+   commit on `main`. From a checkout, `wrangler rollback <version-id>` in the
+   app's folder does the same. If no version can be trusted, remove the
+   custom domain from the Worker so the address serves nothing.
+2. **Stop it coming back.** Revert the bad commit on `main`, or Workers Builds
+   will deploy it again on the next merge. If the cause was a credential,
+   revoke it before the revert lands: the Cloudflare API tokens, the GitHub
+   token or app installation, and any session on the account.
+3. **If DNS itself was changed**, restore the records from the Cloudflare
+   audit log, confirm the registrar still lists Cloudflare's name servers, and
+   turn on the registrar lock.
+
+### Remove what the bad build left in browsers
+
+A bad build may have registered a service worker, which keeps running in a
+visitor's browser after the build is gone. The genuine app removes every
+service-worker registration that is not its own `/sw.js` each time it loads
+(`apps/app/src/lib/registerServiceWorker.ts`). That only helps once the
+genuine page loads. A foreign worker that answers page loads itself keeps the
+genuine page from ever running, so also send the emergency header:
+
+- Add `Clear-Site-Data: "cache", "storage"` under the `/*` rule of EVERY
+  affected host's header file, and merge it. Each host is its own Worker with
+  its own file, so editing one does nothing for the others:
+
+  | Host | Worker | Header file |
+  | --- | --- | --- |
+  | `app.vaipakam.com` | `vaipakam-app` | `apps/app/public/_headers.base` |
+  | `vaipakam.com` | `vaipakam-www` | `apps/www/public/_headers` |
+  | `alpha05.vaipakam.com` | `vaipakam-alpha05` | `apps/alpha05/public/_headers` |
+
+  Adding a header to an existing rule does not count against the 100-rule
+  limit. It has to be `/*`, not only the page and `/sw.js`: a worker's update
+  check fetches the script URL IT was registered with, which for a foreign
+  worker is whatever path the bad build chose (`/evil.js`, say). The host
+  answers that path with its page or not-found fallback, and `/*` is meant to
+  put the header on that answer too. The browser makes the update fetch from
+  the network whatever the worker does, so this is the one response an
+  intercepting worker cannot hide. Two things are untested here and need a
+  check in a scratch browser profile with the bad worker registered: that the
+  host's fallback answer carries the header, and that the browser honours it
+  on the update fetch. Say in the user notice that clearing the site's data by
+  hand (the browser's site settings) removes it for certain.
+- The price is high while it is up. On `/*` the header comes back with every
+  response, so every page load wipes the app's local settings and
+  wallet-connection sessions, and the genuine app's own service worker and
+  cache with them: visitors reconnect their wallet on every visit, and the app
+  loads without its offline shell. Say so in the user notice.
+- Keep it for at least 30 days, because a visitor who comes back later still
+  carries the old worker, and weigh a longer window against that cost. Then
+  remove it in a reviewed commit.
+
+### Tell users
+
+Post on every project channel at once. The site itself may not be
+trustworthy yet, so do not rely on a banner there alone. Say:
+
+- the time window in which the bad build was served (first and last time
+  seen, in UTC);
+- that anyone who signed a request on the app in that window should check
+  their wallet's token approvals and revoke any to a spender they do not
+  recognise. The Vaipakam Diamond's address for each network is listed in the
+  app's Help. Name a revoke tool only when you have checked it is genuine;
+- that a signature they did not expect (an approval, a Permit2 permit, a
+  "sign to verify") should be treated as given to the attacker;
+- that a position NFT can be taken too: an approval for the position NFT
+  contract (one token, or "all" of them) or a transfer of one hands the
+  position, and whatever it can claim, to the attacker. Anyone who signed one
+  should revoke it at once;
+- that the contracts' own rules stayed in force throughout.
+
+Do NOT say that funds in positions were safe or were not moved. Whether any
+position changed hands, or any claim was paid to someone else, is unknown
+until the on-chain review below has looked, and saying otherwise would stop
+the people most at risk from revoking.
+
+### Confirm the clean build is back
+
+- The deployed version is the known-good one you rolled back to (its commit
+  stamp is the trusted commit), and the custom domain and the `workers.dev`
+  URL both serve that version's `/assets/index-*.js` name and its `/sw.js`.
+  Compare with that version's own files first; a rebuild needs the build's
+  own variables (see Detect).
+- The `Content-Security-Policy` header matches the one that version served
+  before the incident.
+- The live drives in `apps/app/e2e/live/` pass against the restored deploy.
+
+### Prevent: a person approves each site deploy (built; off until mainnet)
+
+Every merge to `main` deploys the three sites by itself today. At mainnet a
+person approves each one first (owner decision 2026-11-07: build it now,
+rehearse it on testnet, switch it on at mainnet). It is
+`.github/workflows/promote-site.yml`. While it is off, a push does nothing
+and the sites deploy as before.
+
+With it on, a site's Workers Build only uploads the new version, stamped with
+its commit and reachable on its own preview address, and it takes no
+traffic. The workflow waits for that version, rebuilds the commit and
+compares it with what the preview address serves (the served-build check),
+and only then asks for approval. On approval it makes that version take all
+traffic, writes the approving run's address into the deployment's message,
+and records `promoted <worker> <version>` as a notice on its own GitHub job.
+It refuses a version older than what is live, and it refuses when the live
+deployment's commit cannot be established (traffic split across versions,
+no clean stamp), so approving a stale run can never roll a site back; in
+that case put a stamped version back by hand first (Contain, step 1).
+
+The six-hourly served-build check then reads GitHub's record, not
+Cloudflare's. The deployment's message only points it at a run. That run
+must be a promote-site run on `main` whose promote job recorded this exact
+version and commit, and no run on `main` may have approved a newer commit
+for the site. Approvals are ordered by commit, not by when a run started or
+was approved, because promotion only ever moves a site forward. A Cloudflare token
+can write any deployment message, so the message alone proves nothing; the
+GitHub record is out of that token's reach. Anything else is `unapproved`,
+including an older approved version put back by hand.
+
+To switch it on (all steps, in this order):
+
+1. In GitHub, create the environment `site-production`: required reviewer a
+   person's account that no agent, bot or automation signs in as; "Prevent
+   self-review" on; deployment branches limited to `main`. With self-review
+   prevented, the account that merged a change cannot approve its deploy, so
+   the reviewer account must not be the one merges are made with. Add to it the
+   secret `CLOUDFLARE_PROMOTE_TOKEN`, a Cloudflare API token with Account ·
+   Workers Scripts · Edit and nothing else. No other job can read it.
+2. In Cloudflare, add the build variable `VAIPAKAM_DEPLOY_MODE=upload` to the
+   Workers Build of `vaipakam-app`, `vaipakam-alpha05` and `vaipakam-www`
+   ONLY. The indexer, keeper and agent use the same deploy script and must
+   not get it. Any value other than `upload` or `live` fails the build.
+3. Set the repository variable `SITE_DEPLOY_APPROVAL=on`.
+4. Merge a small site change and approve it end to end. Confirm the served
+   build check runs clean afterwards.
+
+To switch it off, undo step 3 and then step 2; the next merge deploys
+directly again.
+
+What it does not do. A preview address is public, so an unapproved version
+can be opened by anyone who knows its address (nobody is sent there). A
+rollback by hand during an incident (Contain, step 1) is itself unapproved:
+the check reports `unapproved` until the next approved deploy, which is
+expected. Anyone who can edit the Workers Build settings or holds a
+Cloudflare token with Workers Scripts Edit can still deploy directly; the
+gate makes that visible within six hours rather than impossible, so keep
+those credentials few.
+
+To rehearse while it is off: upload a version by hand from a clean checkout
+of a commit on `main` (`VAIPAKAM_DEPLOY_MODE=upload pnpm run deploy` in the
+site's folder, with that site's build variables from
+`.github/served-build.json` in the environment, or the compare will fail),
+then run the workflow by hand for that site and commit. Until step 1 exists
+the promote job fails for want of its token, and nothing moves.
+
+### Afterwards
+
+Review on-chain approvals and transfers from users who signed during the
+window, including position-NFT approvals and transfers and any claim paid to a
+new holder, rotate every credential that could reach the deploy path, and record
+the timeline in the deployment log below. DNSSEC, CAA records and HSTS are on
+for the domain (checked 2026-11-07). The automatic served-build check is in
+place (see Detect), and the deploy approval is built and waits for mainnet
+(see Prevent).
 
 ---
 

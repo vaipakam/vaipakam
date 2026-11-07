@@ -12,6 +12,8 @@ import {OfferAcceptFeeFacet} from "../src/facets/OfferAcceptFeeFacet.sol";
 import {TreasuryFeeFacet} from "../src/facets/TreasuryFeeFacet.sol";
 import {NumeraireValueFacet} from "../src/facets/NumeraireValueFacet.sol";
 import {OfferPreviewFacet} from "../src/facets/OfferPreviewFacet.sol";
+import {OfferBookFacet} from "../src/facets/OfferBookFacet.sol";
+import {TestOfferFloor} from "./helpers/TestOfferFloor.sol";
 import {LibUserVault} from "../src/libraries/LibUserVault.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
@@ -137,7 +139,7 @@ contract OfferFacetTest is Test {
         HelperTest helperTest = new HelperTest();
 
         // Prepare cuts for required facets
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](16);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](17);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: ArtifactDeploy.deploy(type(OfferCreateFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
@@ -179,6 +181,12 @@ contract OfferFacetTest is Test {
             facetAddress: ArtifactDeploy.deploy(type(OfferPreviewFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getOfferPreviewFacetSelectors()
+        });
+        // #3242 — every creation enters the book through OfferBookFacet.
+        cuts[16] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(OfferBookFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getOfferBookFacetSelectors()
         });
         cuts[1] = IDiamondCut.FacetCut({
             facetAddress: ArtifactDeploy.deploy(type(ProfileFacet).name),
@@ -247,6 +255,8 @@ contract OfferFacetTest is Test {
         });
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
+        // #3242 — wei-sized offers below the $10 floor; see {TestOfferFloor}.
+        TestOfferFloor.lower(address(diamond));
         AccessControlFacet(address(diamond)).initializeAccessControl();
         // Diamond born paused (LibPausable). Clear via direct
         // storage write since this fixture doesn't cut AdminFacet.

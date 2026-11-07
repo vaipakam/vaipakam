@@ -22,6 +22,7 @@ import {TreasuryFacet} from "../src/facets/TreasuryFacet.sol";
 import {TreasuryFeeFacet} from "../src/facets/TreasuryFeeFacet.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
+import {VaipakamVaultImplementation} from "../src/VaipakamVaultImplementation.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {LibAcceptTerms} from "../src/libraries/LibAcceptTerms.sol";
 import {LibDelivery} from "../src/libraries/LibDelivery.sol";
@@ -409,6 +410,68 @@ contract MeasuredDeliveryTest is SetupTest {
         assertEq(_bal(col, lender) - wallet0, _less(claim), "the claim paid (less the token's own fee)");
         assertEq(_tracked(lender, col), 0, "nothing is left on the books");
         assertEq(_bal(col, address(diamond)), OTHER, "the Diamond's other holdings paid nothing");
+    }
+
+    /// @dev #3178 — the mandatory vault version moves past every vault.
+    function _mandatoryUpgradeForAll() internal {
+        VaultFactoryFacet vf = VaultFactoryFacet(address(diamond));
+        vf.upgradeVaultImplementation(address(new VaipakamVaultImplementation()));
+        (, uint256 current,,) = vf.getVaultVersionInfo(lender);
+        vf.setMandatoryVaultUpgrade(current);
+    }
+
+    /// @notice #3178 — with both parties' vaults below the mandatory vault
+    ///         version, an in-kind default still completes: the collateral
+    ///         moves out of the borrower's vault (a close-out move-out) into
+    ///         the lender's vault (a delivery), and only the lender's own
+    ///         claim waits for the lender's upgrade.
+    /// @dev    Kills: the move-out or the delivery reverting on a vault's
+    ///         version, and a claim paying out of a below-mandatory vault.
+    function test_InKindDefault_BothVaultsBelowMandatory_CompletesAndClaimWaits() public {
+        _scaffold(false);
+        address lVault = _vault(lender);
+        _mandatoryUpgradeForAll();
+        _pastGrace();
+        uint256 lVault0 = _bal(col, lVault);
+
+        uint256 sellQuote = defaultQuote(address(diamond), LOAN);
+        vm.prank(makeAddr("defaultKeeper"));
+        DefaultedFacet(address(diamond)).triggerDefault(LOAN, sellQuote, defaultAdapterCalls());
+
+        assertEq(uint8(_status()), uint8(LibVaipakam.LoanStatus.Defaulted), "the default completed");
+        (, uint256 claim, ) = ClaimFacet(address(diamond)).getClaimableAmount(LOAN, true);
+        assertEq(claim, COLLATERAL, "the claim is the whole collateral");
+        assertEq(_bal(col, lVault) - lVault0, claim, "the collateral is in the lender's vault");
+        assertEq(_bal(col, address(diamond)), OTHER, "nothing rests in the Diamond");
+
+        vm.prank(lender);
+        vm.expectRevert();
+        ClaimFacet(address(diamond)).claimAsLender(LOAN);
+
+        vm.prank(lender);
+        VaultFactoryFacet(address(diamond)).upgradeUserVault(lender);
+        uint256 wallet0 = _bal(col, lender);
+        vm.prank(lender);
+        ClaimFacet(address(diamond)).claimAsLender(LOAN);
+        assertEq(_bal(col, lender) - wallet0, claim, "the claim paid after the upgrade");
+    }
+
+    /// @notice #3178 — a wallet-funded ERC-20 repayment lands in a lender's
+    ///         vault that is below the mandatory version, and the loan closes.
+    /// @dev    Kills: the repayment reverting on the lender's vault version.
+    function test_Erc20Repay_LenderBelowMandatory_LandsInLendersVault() public {
+        _scaffold(false);
+        address lVault = _vault(lender);
+        _mandatoryUpgradeForAll();
+        vm.warp(block.timestamp + 10 days);
+        uint256 lVault0 = _bal(mockERC20, lVault);
+
+        vm.prank(borrower);
+        RepayFacet(address(diamond)).repayLoan(LOAN);
+
+        assertEq(uint8(_status()), uint8(LibVaipakam.LoanStatus.Repaid), "the loan closed");
+        (, uint256 claim, ) = ClaimFacet(address(diamond)).getClaimableAmount(LOAN, true);
+        assertEq(_bal(mockERC20, lVault) - lVault0, claim, "the due is in the lender's vault");
     }
 
     // -- Wallet payments are refused unless they arrive in full -------------

@@ -148,6 +148,10 @@ library LibSwapToRepayIntentSettlement {
         if (makingAmount != lot) revert IntentFillAmountMismatch(makingAmount, lot);
 
         LibVaipakam.Loan storage loan = s.loans[loanId];
+        // #3178 (Codex #3220 r1) — the version rule at FILL time, where the lot
+        // actually leaves: a vault below the mandatory version sends nothing
+        // out on its owner's own order, whatever the signature check said.
+        if (LibVaipakam.vaultUpgradeRequired(loan.borrower)) revert VaultFactoryFacet.VaultUpgradeRequired();
         address collateral = loan.collateralAsset;
         address vault = s.userVaipakamVaults[loan.borrower];
         LibEncumbrance.decrementCollateralLien(loanId, lot);
@@ -484,7 +488,12 @@ library LibSwapToRepayIntentSettlement {
         if (s.orderHashKind[orderHash] != LibVaipakam.ORDER_KIND_SWAP_TO_REPAY) return false;
         uint256 loanId = s.orderHashToLoanId[orderHash];
         if (loanId == 0 || s.intentCommits[loanId].orderHash != orderHash) return false;
-        return askingVault != address(0) && askingVault == s.userVaipakamVaults[s.loans[loanId].borrower];
+        address borrower = s.loans[loanId].borrower;
+        // #3178 — a vault below the mandatory vault version sends nothing out
+        // on its owner's own order: the fill reads as unsigned until the
+        // borrower upgrades (the commit refuses such a vault up front).
+        if (LibVaipakam.vaultUpgradeRequired(borrower)) return false;
+        return askingVault != address(0) && askingVault == s.userVaipakamVaults[borrower];
     }
 
     /// @dev The transient slot holding the borrower vault's collateral balance

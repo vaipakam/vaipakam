@@ -29,6 +29,7 @@ on:
       - '.github/scripts/check-deploy-lag.mjs'
       - '.github/workflows/deploy-lag.yml'
       - '.github/workflows/alert-issue.yml'
+      - '.github/scripts/lib/workerDeployments.mjs'
       - 'packages/lib/src/deployStamp.mjs'
 
 permissions:

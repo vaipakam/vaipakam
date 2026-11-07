@@ -111,6 +111,7 @@ import {RepatriationFacet} from "../src/facets/RepatriationFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {NumeraireConfigFacet} from "../src/facets/NumeraireConfigFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
+import {OfferBookFacet} from "../src/facets/OfferBookFacet.sol";
 
 contract HelperTest {
 
@@ -610,13 +611,15 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](4);
+        selectors = new bytes4[](5);
         selectors[0] = OfferParallelSaleFacet.postParallelSaleListing.selector;
         selectors[1] = OfferParallelSaleFacet.releaseParallelSaleLock.selector;
         // #1144 (S10 Invariant B) — offer-keyed prepay-sale sanctions sync.
         selectors[2] = OfferParallelSaleFacet.syncPrepaySaleOffer.selector;
         // #2984 — the sync's own party set (keeper backstop read).
         selectors[3] = OfferParallelSaleFacet.prepaySaleOfferParties.selector;
+        // #3178 — the executor's "may this listing's vault send out" read.
+        selectors[4] = OfferParallelSaleFacet.isParallelSaleVaultBlocked.selector;
         return selectors;
     }
 
@@ -958,7 +961,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](27);
+        selectors = new bytes4[](28);
         selectors[0] = VaultFactoryFacet
             .initializeVaultImplementation
             .selector;
@@ -997,6 +1000,7 @@ contract HelperTest {
         selectors[25] = bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256)"));
         // #1566 S3e — the swap fill's counter-only outflow record.
         selectors[26] = VaultFactoryFacet.recordVaultOutflowERC20.selector;
+        selectors[27] = VaultFactoryFacet.vaultDeliverERC20From.selector;
         return selectors;
     }
 
@@ -1141,7 +1145,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](24);
+        selectors = new bytes4[](25);
         selectors[0] = EncumbranceMutateFacet.releaseCollateralLien.selector;
         selectors[1] = EncumbranceMutateFacet.decrementCollateralLien.selector;
         selectors[2] = EncumbranceMutateFacet.incrementCollateralLien.selector;
@@ -1178,6 +1182,7 @@ contract HelperTest {
         // #2795 — pay a held borrower extra out on an obligation handover
         // (PrecloseFacet EIP-170 host).
         selectors[23] = EncumbranceMutateFacet.payHeldBorrowerExtra.selector;
+        selectors[24] = EncumbranceMutateFacet.settleRentalPrecloseShares.selector;
     }
 
     /// @notice #396 v0.5 — gasless signed off-chain offer book selectors.
@@ -1559,6 +1564,15 @@ contract HelperTest {
         selectors[15] = VaultDepositoryFacet.getDepositoryHolding.selector;
         selectors[16] = VaultDepositoryFacet.getDepositoryAssets.selector;
         selectors[17] = VaultDepositoryFacet.getVaultOwner.selector;
+    }
+
+    /// @dev Selectors for `OfferBookFacet` (#3242).
+    function getOfferBookFacetSelectors() public pure returns (bytes4[] memory selectors) {
+        selectors = new bytes4[](4);
+        selectors[0] = OfferBookFacet.openOfferOnBook.selector;
+        selectors[1] = OfferBookFacet.requireOfferValueAdmitted.selector;
+        selectors[2] = OfferBookFacet.getOfferBookBounds.selector;
+        selectors[3] = OfferBookFacet.getMinOfferAmount.selector;
     }
 
     function getClaimFacetSelectors()
@@ -2017,7 +2031,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](83);
+        selectors = new bytes4[](85);
         selectors[0] = ConfigFacet.setFeesConfig.selector;
         selectors[1] = ConfigFacet.setLiquidationConfig.selector;
         selectors[2] = ConfigFacet.setRiskConfig.selector;
@@ -2164,6 +2178,9 @@ contract HelperTest {
         selectors[81] = ConfigFacet.getRewardClaimHorizonDays.selector;
         // RL-4 (#1306) — recycled-stream allocation register.
         selectors[82] = ConfigFacet.setRecycleRegisterKeeperBps.selector;
+        // #3242 — the per-wallet open-offer cap.
+        selectors[83] = ConfigFacet.setMaxOpenOffersPerWallet.selector;
+        selectors[84] = ConfigFacet.getMaxOpenOffersPerWallet.selector;
         // #1222 (M3 B1) — cross-chain recycled ledger transparency reads.
         // #1222 M3 B3 — `getChainRecycledLedger` /
         // `getChainDailyRecycledCredit` MOVED to RewardAggregatorFacet
@@ -2180,7 +2197,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](19);
+        selectors = new bytes4[](21);
         // T-034 Periodic Interest Payment knobs + master kill-switches +
         // individual getters.
         selectors[0] = NumeraireConfigFacet.setNumeraire.selector;
@@ -2205,6 +2222,9 @@ contract HelperTest {
         selectors[16] = NumeraireConfigFacet.getEthPadFeed.selector;
         selectors[17] = NumeraireConfigFacet.getPadNumeraireRateFeed.selector;
         selectors[18] = NumeraireConfigFacet.getAssetNumeraireDirectFeedOverride.selector;
+        // #3242 — the offer value floor.
+        selectors[19] = NumeraireConfigFacet.setMinOfferValueNumeraire.selector;
+        selectors[20] = NumeraireConfigFacet.getMinOfferValueNumeraire.selector;
         return selectors;
     }
 
@@ -3119,7 +3139,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](28);
+        selectors = new bytes4[](29);
         selectors[0] = VaultFactoryFacet.initializeVaultImplementation.selector;
         selectors[1] = VaultFactoryFacet.getOrCreateUserVault.selector;
         selectors[2] = VaultFactoryFacet.upgradeVaultImplementation.selector;
@@ -3155,6 +3175,7 @@ contract HelperTest {
         selectors[26] = bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256,uint256)"));
         // The four-argument credit stays as a compatibility entry (Codex #2276 r14 P2).
         selectors[27] = bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256)"));
+        selectors[28] = VaultFactoryFacet.vaultDeliverERC20From.selector;
         return selectors;
     }
 

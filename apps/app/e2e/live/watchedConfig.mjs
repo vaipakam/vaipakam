@@ -122,6 +122,14 @@ export const STATE_READS = Object.freeze({
   checkLiquidity: 'external oracle / pool state — a precondition on the collateral only, never a model input',
   checkRefinanceRequest: 'one refinance request’s standing against its loan (reverts when it cannot be taken)',
   getRefinanceRequest: 'one loan’s recorded refinance request',
+  // riskGateReadiness.mjs (#3231): one party's standing under the risk-access
+  // gate. The gate SWITCH itself is watched config (riskAccessGate).
+  pairRequiredRiskLevel: 'one pair’s required risk level (from on-chain liquidity depth)',
+  getEffectiveRiskTier: 'one user’s effective risk tier',
+  hasIlliquidPairConsent: 'one user’s armed consent for one illiquid pair',
+  midTierStrictBlocked: 'one user’s strict-mode block for one pair',
+  previewCreatorBlock: 'one offer’s creator under the accept gate',
+  previewOfferAcceptBlock: 'one offer’s acceptor under the accept gate',
 });
 
 /** The Diamond getters the snapshot reads (the screening's included). */

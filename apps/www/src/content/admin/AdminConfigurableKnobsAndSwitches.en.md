@@ -1174,6 +1174,57 @@ adapter's included.
   default and emits the event, since the old value was denominated in
   the old numeraire.
 
+### Offer-book bounds (`minOfferValueNumeraire`, `maxOpenOffersPerWallet`)
+
+Two bounds that keep the offer book from being flooded with offers too
+small to be worth a keeper's work (#3242, owner decision 2026-11-07).
+Both apply when an offer is created; the floor also applies when an
+offer's amount changes. Offers that come from an existing loan (a sale or
+offset offer the protocol creates for a position, and a refinance offer)
+are exempt from both. A signed offer is held to the floor when it is
+filled, and never counts against the cap, since it is filled the moment
+it exists.
+
+**Value floor (`minOfferValueNumeraire`).** The least an offer's
+principal must be worth, in the active numeraire. It binds only a
+principal the protocol values: a liquid ERC-20 with a price. An NFT, an
+illiquid token and a liquid token whose price cannot be read at that
+moment are never refused for their value. Every partial fill is bounded
+by it too, because a fill is never smaller than the offer's amount.
+
+- **Default:** `10e18` (10 numeraire units, the same on every chain).
+  Zero restores it.
+- **Range:** `[1e18, 1_000_000e18]`.
+- **Getter:** `NumeraireConfigFacet.getMinOfferValueNumeraire() -> uint256`
+  (the effective value: the default while none is set).
+- **Setter:** `NumeraireConfigFacet.setMinOfferValueNumeraire(uint256)`
+  (`ADMIN_ROLE`; timelocked post-handover) → emits
+  `MinOfferValueNumeraireSet(effective)`.
+- **Applied when an offer is created or its amount changes, not
+  afterwards.** Raising the floor, or a price move, closes no offer
+  already open.
+- **Reset on numeraire rotation.** `setNumeraire` returns it to the
+  default and emits the event, since the old value was denominated in
+  the old numeraire.
+
+**Open-offer cap (`maxOpenOffersPerWallet`).** The most offers one
+wallet may have open at once, every offer type counted. An expired offer
+stays open until it is cancelled, so it counts until then.
+
+- **Default:** `25`. Zero restores it.
+- **Range:** `[5, 1000]`.
+- **Getter:** `ConfigFacet.getMaxOpenOffersPerWallet() -> uint256`.
+- **Setter:** `ConfigFacet.setMaxOpenOffersPerWallet(uint256)`
+  (`ADMIN_ROLE`; timelocked post-handover) → emits
+  `MaxOpenOffersPerWalletSet(effective)`.
+- **Lowering it closes no open offer.** A wallet above a new, lower cap
+  keeps its offers and cannot post another until it is back under.
+- **A wallet's standing:** `OfferBookFacet.getOfferBookBounds(wallet)`
+  returns the floor, the cap and how many offers the wallet has open.
+- **Counted from the fresh deploy.** The count starts with the build that
+  introduced it, so on a Diamond refreshed in place, offers opened before
+  the refresh are not counted.
+
 ## Liquidator-buys-at-discount path (FlashLoanLiquidationPath.md)
 
 The optional Aave-V3 / Compound-V3 / Morpho-Blue-style liquidation

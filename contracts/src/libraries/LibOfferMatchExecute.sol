@@ -548,6 +548,13 @@ library LibOfferMatchExecute {
                 );
             }
             L.accepted = true;
+            // #3242 (Codex #3283 r1 P1) — the lender offer is terminal, so it
+            // leaves the active-offer index here, paired with the flip (the
+            // borrower side's dust-close does the same below). Without it a
+            // matched lender offer stayed listed as open, and its creator's
+            // open-offer count never came down. Idempotent: a signed lender
+            // slice's own cleanup calls the same hook again as a no-op.
+            LibMetricsHooks.onOfferAccepted(lenderOfferId);
             emit OfferClosed(
                 lenderOfferId,
                 lenderRemaining == 0

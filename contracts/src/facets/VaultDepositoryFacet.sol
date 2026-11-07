@@ -172,7 +172,6 @@ contract VaultDepositoryFacet is DiamondReentrancyGuard, DiamondPausable {
         // controller's to withdraw, never its own.
         LibProtectedAccount.requireManager(msg.sender);
         IVaultRoutes routes = IVaultRoutes(address(this));
-        LibProtectedAccount.setDepositoryContext(true);
         if (kind == uint8(LibVaipakam.AssetType.ERC20)) {
             if (amount == 0) revert AmountZero();
             tokenId = 0;
@@ -186,7 +185,6 @@ contract VaultDepositoryFacet is DiamondReentrancyGuard, DiamondPausable {
         } else {
             revert InvalidAssetKind(kind);
         }
-        LibProtectedAccount.setDepositoryContext(false);
         LibDepositoryLedger.credit(msg.sender, asset, tokenId, amount);
         emit VaultDeposited(msg.sender, asset, kind, tokenId, amount);
     }
@@ -243,7 +241,6 @@ contract VaultDepositoryFacet is DiamondReentrancyGuard, DiamondPausable {
             return queuedId;
         }
         IVaultRoutes routes = IVaultRoutes(address(this));
-        LibProtectedAccount.setDepositoryContext(true);
         if (kind == uint8(LibVaipakam.AssetType.ERC20)) {
             routes.vaultWithdrawERC20(account, asset, recipient, amount);
         } else if (kind == uint8(LibVaipakam.AssetType.ERC721)) {
@@ -251,7 +248,6 @@ contract VaultDepositoryFacet is DiamondReentrancyGuard, DiamondPausable {
         } else {
             routes.vaultWithdrawERC1155(account, asset, tokenId, amount, recipient);
         }
-        LibProtectedAccount.setDepositoryContext(false);
         emit VaultWithdrawRequested(account, asset, kind, tokenId, amount, recipient, false);
     }
 

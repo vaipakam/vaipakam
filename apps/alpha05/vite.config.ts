@@ -1,6 +1,5 @@
 import { defineConfig, loadEnv, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
-import { execSync } from 'node:child_process';
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
@@ -9,20 +8,20 @@ import { cspScriptHashesPlugin } from '@vaipakam/lib/cspScriptHashes';
 import { REPORT_ONLY_HEADER, cspConnectSourcesPlugin } from '@vaipakam/lib/cspConnectSources';
 import { e2eDeploymentsBundlePlugin } from '@vaipakam/lib/e2eDeploymentsBundle';
 import { connectSources, rpcConfigProblems } from './src/chain/endpoints.ts';
+import { buildCommitLabel, buildSourceTime } from '@vaipakam/lib/buildTime';
 
 // Stamp the commit and build time into the bundle (shown on the Help page
 // and in the capability service's provenance) so a tester can always tell
 // which build they are looking at.
-process.env.VITE_BUILD_HASH = (() => {
-  try {
-    return execSync('git rev-parse --short HEAD', { stdio: ['ignore', 'pipe', 'ignore'] })
-      .toString()
-      .trim();
-  } catch {
-    return 'unknown';
-  }
-})();
-process.env.VITE_BUILD_TIME = new Date().toISOString();
+// A fixed 12-digit slice of the commit, never `git rev-parse --short`,
+// whose length depends on the clone's depth (#3236, @vaipakam/lib/buildTime).
+process.env.VITE_BUILD_HASH = buildCommitLabel();
+// #3236 — the time is the COMMIT's, not the clock's, so two builds of one
+// commit produce the same files and the served build can be checked by
+// rebuilding it (see @vaipakam/lib/buildTime).
+const buildTime = buildSourceTime();
+if (!buildTime.reproducible) console.warn(`[build-time] ${buildTime.reason}; stamping the clock, so this build will not match a rebuild`);
+process.env.VITE_BUILD_TIME = buildTime.iso;
 
 /** Every chain the committed deployments bundle carries a Diamond for. */
 function deployedChainIds(): number[] {

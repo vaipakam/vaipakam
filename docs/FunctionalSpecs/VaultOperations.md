@@ -121,6 +121,14 @@ remain governed by [Keeper Operations](KeeperOperations.md).
   current release is upgraded before it is pinned, so the pin names the code
   actually in use. Only the owner can upgrade a pinned vault; protected mode
   makes unpinning a delayed change.
+- A vault below the mandatory vault version, pinned or not, still receives
+  every close-out delivery; no counterparty's close-out waits on its upgrade.
+  Nothing leaves it on its owner's behalf until it is upgraded: the owner's
+  own claim, withdrawal, pause escape, payout release, deposit and new
+  positions are refused, a pinned vault included, and orders it would sign
+  for its owner read as unsigned. A protocol close-out paying the counterparty
+  out of it (a default, a liquidation, a repayment's settlement, another
+  holder's claim) is not stopped by its version.
 
 ## App disclosures and keeper service
 

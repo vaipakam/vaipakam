@@ -691,6 +691,49 @@ contract ConfigFacet is DiamondAccessControl {
     /// @notice Emitted on every change to the offer-creation duration cap.
     /// @custom:event-category informational/config
     event MaxOfferDurationDaysSet(uint16 newDays);
+
+    /// @notice #3242 — the cap on one wallet's open offers changed. `cap` is
+    ///         the effective cap after the write (the default when zero was
+    ///         written).
+    /// @custom:event-category informational/config
+    event MaxOpenOffersPerWalletSet(uint256 cap);
+
+    /**
+     * @notice #3242 — set the most offers one wallet may have open at once,
+     *         every offer type counted. Zero restores the default
+     *         ({LibVaipakam.MAX_OPEN_OFFERS_PER_WALLET_DEFAULT}).
+     * @dev ADMIN_ROLE-only (the Timelock after handover). A non-zero value must
+     *      lie in [{LibVaipakam.MAX_OPEN_OFFERS_PER_WALLET_FLOOR},
+     *      {LibVaipakam.MAX_OPEN_OFFERS_PER_WALLET_CEIL}]. Checked when a
+     *      wallet posts an offer: lowering it closes no offer already open.
+     * @param cap The new cap; pass 0 to reset to the default.
+     */
+    function setMaxOpenOffersPerWallet(uint256 cap)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        if (
+            cap != 0 &&
+            (cap < LibVaipakam.MAX_OPEN_OFFERS_PER_WALLET_FLOOR ||
+                cap > LibVaipakam.MAX_OPEN_OFFERS_PER_WALLET_CEIL)
+        ) {
+            revert IVaipakamErrors.ParameterOutOfRange(
+                // forge-lint: disable-next-line(unsafe-typecast)
+                bytes32("maxOpenOffersPerWallet"),
+                cap,
+                LibVaipakam.MAX_OPEN_OFFERS_PER_WALLET_FLOOR,
+                LibVaipakam.MAX_OPEN_OFFERS_PER_WALLET_CEIL
+            );
+        }
+        LibVaipakam.storageSlot().maxOpenOffersPerWallet = cap;
+        emit MaxOpenOffersPerWalletSet(LibVaipakam.cfgMaxOpenOffersPerWallet());
+    }
+
+    /// @notice #3242 — the cap on one wallet's open offers in effect: the
+    ///         governance value, or the default while unset.
+    function getMaxOpenOffersPerWallet() external view returns (uint256) {
+        return LibVaipakam.cfgMaxOpenOffersPerWallet();
+    }
     /// @notice Max-offer-duration outside the [floor, ceil] bounds.
     error InvalidMaxOfferDurationDays(uint16 provided, uint256 floorDays, uint256 ceilDays);
 

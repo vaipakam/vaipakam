@@ -383,7 +383,7 @@ async function judgePeriodicSettle(
 
   // A send from an earlier run may still be unmined; the period then still
   // reads due, and a second settlement would revert once the first lands.
-  const pending = await keeperTxPending(client, keeper);
+  const pending = await keeperTxPending(client, keeper, deps.chainId);
   if (pending !== null) return { kind: 'skipped', reason: pending };
 
   const early = await ownerVerdict(client, diamond, loanId);

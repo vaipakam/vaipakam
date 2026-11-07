@@ -31,6 +31,8 @@ import {SwapAttemptFacet} from "../../src/facets/SwapAttemptFacet.sol";
 import {TreasuryFeeFacet} from "../../src/facets/TreasuryFeeFacet.sol";
 import {NumeraireValueFacet} from "../../src/facets/NumeraireValueFacet.sol";
 import {OfferPreviewFacet} from "../../src/facets/OfferPreviewFacet.sol";
+import {OfferBookFacet} from "../../src/facets/OfferBookFacet.sol";
+import {TestOfferFloor} from "../helpers/TestOfferFloor.sol";
 import {HelperTest} from "../HelperTest.sol";
 import {ERC20Mock} from "../mocks/ERC20Mock.sol";
 import {LibAcceptTestSigner} from "../helpers/LibAcceptTestSigner.sol";
@@ -389,7 +391,7 @@ contract PositiveFlowsGapFillers is Test {
         AddCollateralFacet addCollateralFacet = AddCollateralFacet(ArtifactDeploy.deploy(type(AddCollateralFacet).name));
         AccessControlFacet accessControlFacet = AccessControlFacet(ArtifactDeploy.deploy(type(AccessControlFacet).name));
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](23);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](24);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -529,8 +531,16 @@ contract PositiveFlowsGapFillers is Test {
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getOfferPreviewFacetSelectors()
         });
+        // #3242 — every creation enters the book through OfferBookFacet.
+        cuts[23] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(OfferBookFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getOfferBookFacetSelectors()
+        });
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
+        // #3242 — wei-sized offers below the $10 floor; see {TestOfferFloor}.
+        TestOfferFloor.lower(address(diamond));
     }
 
     function _mockOracle() internal {

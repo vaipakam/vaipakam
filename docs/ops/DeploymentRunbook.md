@@ -1042,6 +1042,14 @@ each item is checked:
       because an open app tab sends hundreds of requests an hour, which
       Workers Free's daily allowance would not carry at launch. Steps in
       [`apps/rpc-proxy/README.md`](../../apps/rpc-proxy/README.md).
+- [ ] The operations baseline in
+      [`MainnetOpsBaseline.md`](MainnetOpsBaseline.md) (#3243) is met and
+      recorded: a dedicated, hardened keeper host with no automated session
+      on it, a separate key per role, host monitoring, the per-chain private
+      submission decision (#3240), production credentials scoped per
+      service and kept off machines automated sessions can read, and a
+      dated rotation record for every bot token and signing key. Name who
+      checked it and when.
 
 ---
 
@@ -1805,6 +1813,7 @@ Then, once per chain:
 
 7. `InteractionRewardsFacet.setInteractionLaunchTimestamp(<unix ts of launch day 00:00 UTC>)` — `SetInteractionLaunch.s.sol`, same value on every chain
    — **Base first.** Base refuses a mirror's day report while its own clock is unset (#2620), and a refused delivery has to be re-executed by hand in CCIP once Base's clock runs. Base also counts a report's day figures only when the mirror's value equals its own: a mirror launched on another value has every day zeroed on Base, permanently, since the value is one-shot.
+   — **Fund Base's reward pool before Base's anchor** (#3253). The 69M interaction pool is an allocation, not a balance. On Base the remittances to the mirrors draw only on what `RewardCustodyFacet.fundRewardPool` (ADMIN, after reward custody is activated) has delivered, so a fresh Base starts with nothing to send: every remittance refuses `DeliveredFreshBoundExceeded(…, 0)` and no day reaches a mirror. `SetInteractionLaunch` refuses Base's anchor while `getDeliveredFreshBound()` reports no headroom, and `--phase verify` fails a launched, unfunded Base ("[6] Reward pool funding"). The amount is the operator's decision; the check asks only that some headroom exists, so read the figures it prints. A mirror is funded by those remittances and needs no step here.
 
 **Post-step verification.** The script sanity-checks the messenger candidate
 before it broadcasts, but reads none of the configuration back afterwards, and

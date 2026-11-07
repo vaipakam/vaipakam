@@ -72,12 +72,6 @@ library LibProtectedAccount {
     ///      keccak256("vaipakam.protected.release") - 1.
     bytes32 private constant RELEASE_SLOT =
         0x62b976649fb28f5447dd1b77efb2bc2bdd87d5a31ccb45a449a2815773f96fdb;
-    /// @dev Transient flag: the current vault resolution is for a depository
-    ///      step (deposit, withdraw, release, escape), which a pinned vault
-    ///      below the mandatory version may still take.
-    ///      keccak256("vaipakam.protected.depository") - 1.
-    bytes32 private constant DEPOSITORY_SLOT =
-        0xb13a1b53160943d1671bc33777959cbc7ce57085294bea3fc22d1b695a3f2c8f;
 
     // ─── Errors ──────────────────────────────────────────────────────────
 
@@ -336,22 +330,6 @@ library LibProtectedAccount {
             tstore(slot, 0)
         }
         return true;
-    }
-
-    /// @dev Mark (or clear) the current call as a depository step.
-    function setDepositoryContext(bool on) internal {
-        bytes32 slot = DEPOSITORY_SLOT;
-        assembly ("memory-safe") {
-            tstore(slot, on)
-        }
-    }
-
-    /// @dev Whether the current call is a depository step.
-    function inDepositoryContext() internal view returns (bool on) {
-        bytes32 slot = DEPOSITORY_SLOT;
-        assembly ("memory-safe") {
-            on := tload(slot)
-        }
     }
 
     // ─── Payments credited to a protected vault ──────────────────────────

@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { DEPLOY_TAG, deployStamp, deployStampArgs, wranglerEntry } from './deployStamp.mjs';
+import { DEPLOY_TAG, deployMode, deployStamp, deployStampArgs, wranglerEntry } from './deployStamp.mjs';
 
 const SHA = '0123456789abcdef0123456789abcdef01234567';
 
@@ -78,5 +78,21 @@ describe('wranglerEntry', () => {
   it('refuses a wrangler that declares no wrangler bin', () => {
     const { dir } = pkgWith({ bin: { other: './x.js' } });
     expect(() => wranglerEntry(dir)).toThrow(/declares no "wrangler" bin/);
+  });
+});
+
+describe('deployMode (#3236)', () => {
+  it('deploys live by default and on "live"', () => {
+    expect(deployMode({})).toEqual({ mode: 'live' });
+    expect(deployMode({ VAIPAKAM_DEPLOY_MODE: ' live ' })).toEqual({ mode: 'live' });
+  });
+
+  it('uploads for approval on "upload"', () => {
+    expect(deployMode({ VAIPAKAM_DEPLOY_MODE: 'upload' })).toEqual({ mode: 'upload' });
+  });
+
+  it('refuses any other value rather than guessing', () => {
+    expect(deployMode({ VAIPAKAM_DEPLOY_MODE: 'Upload' })).toHaveProperty('reason');
+    expect(deployMode({ VAIPAKAM_DEPLOY_MODE: 'off' })).toHaveProperty('reason');
   });
 });

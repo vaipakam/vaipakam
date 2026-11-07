@@ -63,8 +63,9 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { dirname, join, posix } from 'node:path';
 import { parseJsonc } from '../../apps/keeper/scripts/lib/jsonc.mjs';
-// The tag form the deploy stamp writes, from its one definition.
-import { DEPLOY_TAG as STAMP_TAG } from '../../packages/lib/src/deployStamp.mjs';
+// The live deployment, read and shape-checked in one place (shared with the
+// served-build check, #3236); a tag is kept only in the deploy stamp's form.
+import { readLatestDeployment } from './lib/workerDeployments.mjs';
 
 const SOURCE_EXT = /\.(?:[cm]?[jt]sx?)$/;
 
@@ -322,44 +323,9 @@ function pendingSince(base, ref, worker, cwd) {
   return integrations.filter((c) => pending.has(c.sha)).map(({ sha, time, subject }) => ({ sha, time, subject }));
 }
 
-async function cloudflare(path, { account, token }) {
-  const res = await fetch(`https://api.cloudflare.com/client/v4/accounts/${account}/workers/scripts/${path}`, {
-    headers: { authorization: `Bearer ${token}`, accept: 'application/json' },
-    signal: AbortSignal.timeout(20_000),
-  });
-  if (res.status === 404) return { status: 404 };
-  // The status only: the body is the network's text, and it travels into the
-  // workflow's outputs, the issue and the chat message.
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  const body = await res.json();
-  if (!body?.success) throw new Error('the API answered success=false');
-  return { status: 200, result: body.result };
-}
-
-// What the Cloudflare API returns reaches the run log, the step summary, the
-// alert issue and the ops chat. Every value from it is therefore checked at
-// this boundary and kept only in a known shape: a version id as a UUID, a
-// time as the ISO string of its parsed value, a tag only when it is a stamp.
-const VERSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const isoTime = (value) => {
-  const ms = Date.parse(String(value ?? ''));
-  return Number.isNaN(ms) ? null : new Date(ms).toISOString();
-};
-
 async function gather(worker, { ref, auth }) {
-  let deployments;
-  try {
-    const r = await cloudflare(`${encodeURIComponent(worker.name)}/deployments`, auth);
-    if (r.status === 404) return { ...worker, read: 'none' };
-    deployments = Array.isArray(r.result?.deployments) ? r.result.deployments : null;
-    if (!deployments) throw new Error('no deployments list in the answer');
-  } catch (err) {
-    return { ...worker, read: 'error', error: String(err.message).replace(/[\r\n]+/g, ' ').slice(0, 120) };
-  }
-  if (deployments.length === 0) return { ...worker, read: 'none' };
-  const latest = [...deployments].sort((a, b) => Date.parse(b.created_on) - Date.parse(a.created_on))[0];
-  const deployedAt = isoTime(latest.created_on);
-  if (!deployedAt) return { ...worker, read: 'error', error: 'the latest deployment carries no readable time' };
+  const live = await readLatestDeployment(worker.name, auth);
+  if (live.read !== 'ok') return { ...worker, ...live };
   // An unstamped version is placed by when THAT VERSION was uploaded, never
   // by the deployment's time: a rollback deploys an old version today, and
   // placing it at today's main would hide every change it lacks.
@@ -368,30 +334,7 @@ async function gather(worker, { ref, auth }) {
     const sha = git(['rev-list', '-1', '--first-parent', `--before=${uploadedAt}`, ref]).trim();
     return sha || null;
   };
-  const versions = [];
-  // Only versions that take traffic run code anyone reaches; a version kept
-  // at 0% is listed but serves nothing.
-  for (const v of (latest.versions ?? []).filter((x) => Number(x.percentage) > 0)) {
-    if (!VERSION_ID.test(String(v.version_id))) {
-      return { ...worker, read: 'error', error: 'the latest deployment names a version id of an unknown shape' };
-    }
-    let tag = '';
-    let uploadedAt = null;
-    try {
-      const r = await cloudflare(`${encodeURIComponent(worker.name)}/versions/${encodeURIComponent(v.version_id)}`, auth);
-      // A version the deployment names but the API cannot find is a failed
-      // read, never an unstamped version: only a version actually read may
-      // be placed by its upload time.
-      if (r.status !== 200) throw new Error(`HTTP ${r.status}`);
-      // Kept only in the shapes this check writes or reads: a tag that is not
-      // a stamp is no stamp, and a time is re-written from its parsed value.
-      const rawTag = String(r.result?.annotations?.['workers/tag'] ?? '');
-      tag = STAMP_TAG.test(rawTag) ? rawTag : '';
-      uploadedAt = isoTime(r.result?.metadata?.created_on);
-    } catch (err) {
-      return { ...worker, read: 'error', error: `version ${v.version_id}: ${String(err.message).replace(/[\r\n]+/g, ' ').slice(0, 80)}` };
-    }
-    const stamp = STAMP_TAG.exec(tag);
+  const versions = live.versions.map(({ id, percentage, tag, stamp, uploadedAt }) => {
     let basis = 'time';
     let commit = null;
     if (stamp) {
@@ -407,9 +350,9 @@ async function gather(worker, { ref, auth }) {
           : 'it is unstamped and the API gave no upload time for it';
       }
     }
-    versions.push({
-      id: v.version_id,
-      percentage: Number(v.percentage),
+    return {
+      id,
+      percentage,
       tag,
       basis,
       commit,
@@ -417,10 +360,9 @@ async function gather(worker, { ref, auth }) {
       unplaced,
       dirty: Boolean(stamp?.[2]),
       pending: commit ? pendingSince(commit, ref, worker) : null,
-    });
-  }
-  if (versions.length === 0) return { ...worker, read: 'error', error: 'the latest deployment lists no version taking traffic' };
-  return { ...worker, read: 'ok', deployedAt, versions };
+    };
+  });
+  return { ...worker, read: 'ok', deployedAt: live.deployedAt, versions };
 }
 
 // ── selftest ─────────────────────────────────────────────────────────────

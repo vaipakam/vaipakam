@@ -76,6 +76,7 @@ import RiskDiscountedLiquidationFacetABI from './RiskDiscountedLiquidationFacet.
 import ProtectedAccountFacetABI from './ProtectedAccountFacet.json';
 import VaultPayoutFacetABI from './VaultPayoutFacet.json';
 import VaultDepositoryFacetABI from './VaultDepositoryFacet.json';
+import OfferBookFacetABI from './OfferBookFacet.json';
 import ClaimFacetABI from './ClaimFacet.json';
 import OracleFacetABI from './OracleFacet.json';
 import OracleAdminFacetABI from './OracleAdminFacet.json';
@@ -249,6 +250,7 @@ export {
   ProtectedAccountFacetABI,
   VaultPayoutFacetABI,
   VaultDepositoryFacetABI,
+  OfferBookFacetABI,
   ClaimFacetABI,
   OracleFacetABI,
   OracleAdminFacetABI,

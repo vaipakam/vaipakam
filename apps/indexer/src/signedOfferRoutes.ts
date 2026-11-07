@@ -30,7 +30,7 @@
 import { type Address, type Hex } from 'viem';
 import { createPublicClient, http } from 'viem';
 import { type Env, getChainConfigs, type ChainConfig } from './env';
-import { DIAMOND_SIGNED_OFFER_ABI } from './diamondAbi';
+import { DIAMOND_OFFER_BOOK_ABI, DIAMOND_SIGNED_OFFER_ABI } from './diamondAbi';
 import { chainNotServed, requestedChainId } from './servedChain';
 import {
   refreshOneMarketSummary,
@@ -670,10 +670,19 @@ export async function handleSignedOfferPost(
   // until the next SignedOfferMatched slice / scan reconciles it —
   // acceptable, because the direct-fill decision re-vets the LIVE ledger
   // client-side and `matchSignedOffer` reads the on-chain ledger anyway.
+  //
+  // #3242 — the offer-book value floor, in the same read. Every fill
+  // materializes an on-chain offer whose amount is at least the order's
+  // `amount` (a direct fill uses exactly that), and the protocol refuses one
+  // worth less than the floor when the lending token is liquid and priced
+  // (`OfferBelowMinimumValue`). An order whose smallest amount is below the
+  // floor would sit on the book as depth no taker can fill directly, so it is
+  // refused here with the floor in the token's units. The same best-effort
+  // posture: a failed read admits the order and the protocol is the backstop.
   let initialFilledAmount = '0';
   try {
     const client = createPublicClient({ transport: http(chain.rpc) });
-    const [nonceUsed, filled] = await Promise.all([
+    const [nonceUsed, filled, floor] = await Promise.all([
       client.readContract({
         address: chain.diamond as Address,
         abi: DIAMOND_SIGNED_OFFER_ABI,
@@ -686,9 +695,20 @@ export async function handleSignedOfferPost(
         functionName: 'signedOfferFilledAmount',
         args: [orderHash],
       }) as Promise<bigint>,
+      client.readContract({
+        address: chain.diamond as Address,
+        abi: DIAMOND_OFFER_BOOK_ABI,
+        functionName: 'getMinOfferAmount',
+        args: [order.lendingAsset as Address],
+        // Its own failure (a Diamond that predates the floor, a blip) costs
+        // only this check, never the two above.
+      }).catch(() => null) as Promise<readonly [boolean, bigint] | null>,
     ]);
     if (nonceUsed) {
       return jsonResponse({ error: 'nonce-used' }, 409);
+    }
+    if (floor !== null && floor[0] && BigInt(order.amount) < floor[1]) {
+      return jsonResponse({ error: 'below-offer-floor', minAmount: floor[1].toString() }, 400);
     }
     if (filled !== 0n) {
       // The contract's `_ceiling` collapses a zero amountMax to `amount`,

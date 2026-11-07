@@ -26,36 +26,17 @@
 // and where" from the same parser the passes use, whether or not a loan has
 // reached the branch since.
 
+import { parseChainIdList, type ChainIdList } from './chainIdList';
 import { flashLoanRoute } from './flashLoanProviders';
 
 export const DISCOUNT_PATH_VAR = 'DISCOUNT_PATH_CHAIN_IDS';
 
 /** The armed chains, or why the setting could not be read. */
-export type DiscountPathChains =
-  | { chains: ReadonlySet<number> }
-  | { unread: string };
-
-const CHAIN_ID = /^[1-9]\d*$/;
+export type DiscountPathChains = ChainIdList;
 
 /** The chains `raw` (the variable's value) arms. */
 export function discountPathChains(raw: string | undefined): DiscountPathChains {
-  const text = (raw ?? '').trim();
-  const chains = new Set<number>();
-  if (text === '') return { chains };
-  const parts = text.split(',');
-  for (let i = 0; i < parts.length; i += 1) {
-    const entry = parts[i].trim();
-    // The entry is described by position, never echoed: the setting sits
-    // among the keeper's secrets in its env file, and a paste error is how a
-    // credential ends up on the wrong line.
-    if (!CHAIN_ID.test(entry) || !Number.isSafeInteger(Number(entry))) {
-      return { unread: `${DISCOUNT_PATH_VAR} entry ${i + 1} of ${parts.length} is not a chain id` };
-    }
-    const id = Number(entry);
-    if (chains.has(id)) return { unread: `${DISCOUNT_PATH_VAR} names chain ${id} twice` };
-    chains.add(id);
-  }
-  return { chains };
+  return parseChainIdList(DISCOUNT_PATH_VAR, raw);
 }
 
 /** Why the discount path is not armed on `chainId`, or null when it is. */

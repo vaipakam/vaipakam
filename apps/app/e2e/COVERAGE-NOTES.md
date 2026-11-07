@@ -1930,3 +1930,14 @@ NOT covered live: the banned-adoption outcome (a sanctions-listed source), the u
 
 **Tier.** Unit. The figures are pure functions of the loan snapshot and the pause log, so the unit tests pin them exactly: a sub-day hold accrues, a full-term loan settled early owes the whole-term figure to the wei, grace accrues per second, the minimum after a re-stamp runs to the term end as it stood then, and a pause after the re-stamp does not raise it. No new live drive: the existing refinance and position drives exercise these figures against the deployed contract after the fresh deploy that carries #3169.
 
+
+<a id="cov-foreign-service-workers-removed-on-load"></a>
+## Foreign service workers removed on load (#3236)
+
+**Feature.** A service worker keeps running in a visitor's browser after the page that installed it is gone. If a bad build (or a script injected into a page) ever registered one on the app's origin, it could go on answering requests after the genuine build is back. So every load of a production build first reads the origin's registrations and unregisters each one whose installing, waiting or active worker is not exactly `<origin>/sw.js`, then registers its own worker if the build ships one. A registration holding no worker is left alone, and one unregister that fails does not stop the others.
+
+**Tier.** Unit
+
+**Where.** `src/lib/registerServiceWorker.test.ts`.
+
+**Limit, stated.** The check runs only when the genuine page loads. A foreign worker that answers page loads itself keeps the genuine page from running, so it is removed by the host's emergency `Clear-Site-Data` response instead (`docs/ops/IncidentRunbook.md` section 9).

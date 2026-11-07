@@ -46,6 +46,9 @@ export const RECEIPT_FLOOR_ROOTS: readonly string[] = [
   'myLoans',
   'myOffers',
   'activeOffers',
+  // The open-offer count against the cap (#3242): an own post, cancel or
+  // fill moves it, and a form at the cap re-enables posting on the re-read.
+  'openOfferCount',
   'claimables',
   'vaultAssets',
   // The depository card's withdrawable figure and the protected account's
