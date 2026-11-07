@@ -113,10 +113,10 @@ confirm the old value no longer works.
 
 | Credential | Used by | Held in | Rotate every | Last rotated | How |
 | --- | --- | --- | --- | --- | --- |
-| Keeper signing key | keeper host | host env file | on exposure; new key per fresh host | not yet recorded | new key, fund it, swap the env file, restart, drain the old key |
+| Keeper signing key | keeper host | host env file | on exposure; new key per fresh host | not yet recorded | a REVOCATION, not a gas sweep: on every chain revoke `KEEPER_ROLE` from the old key and grant it to the new one, on Base also `setRewardRemittanceKeeper` to the new key (a separate authority), swap the env file and restart, read both back per chain, then sweep the old key's gas; full procedure in [`AdminKeysAndPause.md`](AdminKeysAndPause.md) "Off-chain operator keys" and [`OffChainRestore.md`](OffChainRestore.md) §1 step 6 |
 | User bot token (`TG_BOT_TOKEN`) | keeper, agent | Secrets Store, host env file | 12 months | not yet recorded | BotFather `/revoke`, set the new token in both places |
 | Ops bot token (`TG_OPS_BOT_TOKEN`) | keeper, mesh watcher, backups | Secrets Store, host env file | 12 months | not yet recorded | BotFather `/revoke`, set it everywhere it is listed in CLAUDE.md "Two Telegram bots" |
-| Push channel key (`PUSH_CHANNEL_PK`) | keeper, agent | Secrets Store, host env file | on exposure | not yet recorded | replace the channel's signer, then remove the old one |
+| Push channel key (`PUSH_CHANNEL_PK`) | keeper, agent | Secrets Store, host env file | on exposure | not yet recorded | a signer swap only when `PUSH_CHANNEL_ADDRESS` is set on both senders and the exposed key is a DELEGATE of that channel, with the owner key held separately and not exposed; then add the new delegate and remove the old. An exposed owner key, or an unset `PUSH_CHANNEL_ADDRESS`, means a new staked channel and moving subscribers: [`IncidentRunbook.md`](IncidentRunbook.md) §4 |
 | Sanctions adder key | sanctions adder | its host env file | on exposure | not yet recorded | grant the new key the adder role, revoke the old |
 | Sanctions delister key | sanctions delister | its host env file | on exposure | not yet recorded | as the adder |
 | RPC provider keys (`RPC_*`, `RPC_PROXY_*`) | each service | Secrets Store, host env file | 12 months | not yet recorded | provider console, per service |
