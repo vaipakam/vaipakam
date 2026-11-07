@@ -563,6 +563,7 @@ export async function scanEvents(input: EventScanInput): Promise<EventScan> {
     if (stored === undefined || !stored.notified) {
       const notice = makeFinding({
         code: 'event-alert-start',
+        once: true,
         variant: contract.id,
         severity: 'advisory',
         chainId: input.chainId,
@@ -595,6 +596,7 @@ export async function scanEvents(input: EventScanInput): Promise<EventScan> {
         `\nblock ${block} · tx ${tx}`;
       const finding = makeFinding({
         code: 'event-alert',
+        once: true,
         variant: `${contract.id}.${log.eventName ?? 'undecodable'}@${tx}#${logIndex}`,
         // The event's own position: one alert per event, and a repeat of
         // the same event is the same alert.

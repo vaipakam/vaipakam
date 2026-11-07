@@ -261,6 +261,22 @@ describe('selectDue', () => {
   });
 });
 
+describe('selectDue — one-off alerts (#3301 r2)', () => {
+  it('never makes an already-sent once-only alert due again, while a repeating one is', async () => {
+    const { db, store } = harness();
+    db.prepare(`INSERT INTO alert_sent (alert_key, last_sent_at, fingerprint) VALUES ('ev', 0, 'f'), ('ledger', 0, 'f')`).run();
+    const r = await store.selectDue(
+      [
+        { key: 'ev', fingerprint: 'f', once: true },
+        { key: 'ledger', fingerprint: 'f' },
+      ],
+      60,
+      1_000_000,
+    );
+    expect(r.ok && r.value.map((c) => c.key)).toEqual(['ledger']);
+  });
+});
+
 describe('event-alert positions', () => {
   it('stores, reads back and moves a contract position per chain', async () => {
     const { store } = harness();

@@ -61,6 +61,8 @@ export type StoreOp =
 export interface DueAlert {
   key: string;
   fingerprint: string;
+  /** Once sent with this fingerprint, never due again (see `Finding.once`). */
+  once?: boolean;
 }
 
 export class AlertStore {
@@ -151,7 +153,7 @@ export class AlertStore {
           return (
             !prior ||
             prior.fingerprint !== c.fingerprint ||
-            now - prior.lastSentAt >= repeatSeconds
+            (!c.once && now - prior.lastSentAt >= repeatSeconds)
           );
         }),
       };

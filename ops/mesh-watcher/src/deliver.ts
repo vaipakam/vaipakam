@@ -28,7 +28,7 @@
 
 import { describeFailure } from './errors';
 import type { Finding } from './finding';
-import type { AlertStore, StoreOp } from './store';
+import type { AlertStore, DueAlert, StoreOp } from './store';
 import { sendOpsMessage, TELEGRAM_MAX_CHARS, type TelegramTarget } from './telegram';
 
 /** Between two findings packed into one message. */
@@ -140,9 +140,10 @@ export async function deliverFindings(
     return report;
   }
 
-  const candidates = req.findings.map((f) => ({
+  const candidates: DueAlert[] = req.findings.map((f) => ({
     key: f.key,
     fingerprint: f.fingerprint,
+    once: f.once === true,
   }));
 
   // Rule 2 — dedup is best-effort. The store cannot throw, so there is
