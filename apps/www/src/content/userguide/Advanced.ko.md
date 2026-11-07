@@ -2096,7 +2096,7 @@ Positions는 하나의 공유 리더로 Home과 같은 보유 목록을 읽습�
 
 ### Position: 대출을 읽는 방법
 
-페이지는 `getLoanDetails(loanId)`와 대출자·차입자 포지션 NFT의 `ownerOf`를 읽습니다. 역할은 지갑이 지금 보유한 토큰입니다. 진행 중인 대출(Active 또는 FallbackPending)에 대해서는 `getLoanDeadlines`(일시 중지 크레딧 전 현재 기간의 만기, 연장이나 차입자 인계로 다시 쓰임, 일시 중지 크레딧, 만기, 유예 종료), 상환 주기가 있으면 `getPeriodicInterestEnabled`와 함께 `previewPeriodicSettle`, `isLoanDefaultable` (+ `defaultKycAdmission`), `calculateHealthFactor`, `calculateLTV`를 읽고, 모든 대출에 대해 `getLoanCollateralLien`과 `isSaleVehicleLoan`을 읽습니다. 각 읽기는 독립적이며, 실패한 읽기는 0이 아니라 알 수 없음으로 표시하고, 날짜를 `startTime`과 `durationDays`로 계산하지 않습니다.
+페이지는 `getLoanDetails(loanId)`와 대출자·차입자 포지션 NFT의 `ownerOf`를 읽습니다. 역할은 지갑이 지금 보유한 토큰입니다. 진행 중인 대출(Active 또는 FallbackPending)에 대해서는 `getLoanDeadlines`(일시 중지 크레딧 전 현재 기간의 만기, 연장이나 차입자 인계로 다시 쓰임, 일시 중지 크레딧, 만기, 유예 종료), 상환 주기가 있으면 `getPeriodicInterestEnabled`와 함께 `previewPeriodicSettle`, `isLoanDefaultable` (+ `paused`, `sequencerHealthy`, `defaultKycAdmission`), `calculateHealthFactor`, `calculateLTV`를 읽고, 모든 대출에 대해 `getLoanCollateralLien`과 `isSaleVehicleLoan`을 읽습니다. 각 읽기는 독립적이며, 실패한 읽기는 0이 아니라 알 수 없음으로 표시하고, 날짜를 `startTime`과 `durationDays`로 계산하지 않습니다.
 
 가격이 있는 대출에는 `getInternalMatchConfigBundle`도 읽습니다. 내부 매칭이 켜져 있으면 LTV가 임계값부터 임계값 + `externalLiquidationPriorityWindowBps`까지인 대출은 내부 매칭용으로 보류되고 모든 외부 청산 경로가 거부합니다(`InternalMatchOnlyBand`). 페이지는 그 구간을 알립니다. `loanInitiationFeeBpsAtInit`가 0이면(요율이 기록되기 전에 개설된 대출) 기록 없음으로, `treasuryFeeBpsAtInit`가 0이면 정산이 적용하는 기존 1% 요율로 표시합니다. 현물 인도 경고는 ERC-20 대출에만 해당합니다. NFT 대여에는 담보가 없으며, 채무 불이행 시 임차인의 사용이 끝나고 선지급 대여료는 트레저리 몫을 뺀 뒤 대출자에게 지급되며 버퍼는 트레저리로 갑니다. 페이지는 대신 이를 알립니다.
 

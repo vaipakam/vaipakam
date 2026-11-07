@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { recordedInitFeeBps, roleOf, treasuryShareBps } from './loanView';
+import { defaultVerdict, recordedInitFeeBps, roleOf, treasuryShareBps } from './loanView';
 
 const me = '0x00000000000000000000000000000000000000aa' as const;
 const other = '0x00000000000000000000000000000000000000bb' as const;
@@ -30,5 +30,24 @@ describe('recordedInitFeeBps', () => {
   it('reads a recorded initiation fee rate, and a recorded 0 as not recorded', () => {
     expect(recordedInitFeeBps({ loanInitiationFeeBpsAtInit: 20 })).toBe(20);
     expect(recordedInitFeeBps({ loanInitiationFeeBpsAtInit: 0 })).toBeNull();
+  });
+});
+
+describe('defaultVerdict', () => {
+  const open = { timing: true, paused: false, sequencerHealthy: true, admitted: true };
+  it('allows a default only when every readable gate passes', () => {
+    expect(defaultVerdict(open)).toEqual({ defaultable: true, refusal: null });
+    expect(defaultVerdict({ ...open, timing: false })).toEqual({ defaultable: false, refusal: null });
+  });
+  it('names the gate that refuses a default the timing allows', () => {
+    expect(defaultVerdict({ ...open, paused: true })).toEqual({ defaultable: false, refusal: 'paused' });
+    expect(defaultVerdict({ ...open, sequencerHealthy: false })).toEqual({ defaultable: false, refusal: 'sequencer' });
+    expect(defaultVerdict({ ...open, admitted: false })).toEqual({ defaultable: false, refusal: 'admission' });
+  });
+  it('is unknown, never allowed, while a needed gate is unread', () => {
+    expect(defaultVerdict({ ...open, timing: null }).defaultable).toBeNull();
+    expect(defaultVerdict({ ...open, paused: null }).defaultable).toBeNull();
+    expect(defaultVerdict({ ...open, sequencerHealthy: null }).defaultable).toBeNull();
+    expect(defaultVerdict({ ...open, admitted: null }).defaultable).toBeNull();
   });
 });

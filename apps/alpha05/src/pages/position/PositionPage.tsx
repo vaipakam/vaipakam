@@ -7,7 +7,7 @@ import { useCopy, type CopyKey } from '../../shared/copy/useCopy';
 import { CADENCE_NAME, isCadence } from '../../shared/offers/cadence';
 import { ASSET_ERC20, LOAN_STATUS_FALLBACK_PENDING, isLiveStatus, loanObligations, loanStatusName } from '../../shared/positions/model';
 import { InterestLine, ReadState, StageLine } from '../../shared/positions/PositionSections';
-import { ILLIQUID, readLoanView, recordedInitFeeBps, roleOf, treasuryShareBps, type LoanView, type Role } from '../../shared/positions/loanView';
+import { ILLIQUID, readLoanView, recordedInitFeeBps, roleOf, treasuryShareBps, type DefaultRefusal, type LoanView, type Role } from '../../shared/positions/loanView';
 import { useOwnRead } from '../../shared/reads/useOwnRead';
 import { assetName, tokenAmount, useTokenMeta, type TokenMetaMap } from '../../shared/reads/tokens';
 import { formatBps, formatScaled, formatSpan, formatUtc, shortAddress } from '../../shared/ui/format';
@@ -16,6 +16,14 @@ import { OwnStamp } from '../../shared/ui/OwnStamp';
 import { useNow } from '../../shared/ui/useNow';
 import { WhyLink } from '../../shared/help/WhyLink';
 import { Notice } from '../../shared/ui/Notice';
+
+/** What the page says when the timing allows a default but another gate
+ *  of `triggerDefault` refuses it. */
+const DEFAULT_REFUSAL_KEY: Readonly<Record<DefaultRefusal, CopyKey>> = {
+  paused: 'position.defaultRefusedPaused',
+  sequencer: 'position.defaultRefusedSequencer',
+  admission: 'position.defaultRefused',
+};
 
 type Hex = `0x${string}`;
 
@@ -119,9 +127,9 @@ function LoanBody({ view: v, account, meta }: { view: LoanView; account: Hex; me
             </p>
           )}
           {v.defaultable === true && <p className="tier-a">{text('position.defaultable')}</p>}
-          {v.defaultRefused && (
-            <p className="tier-a" data-testid="position-default-refused">
-              {text('position.defaultRefused')}
+          {v.defaultRefusal !== null && (
+            <p className="tier-a" data-testid="position-default-refused" data-reason={v.defaultRefusal}>
+              {text(DEFAULT_REFUSAL_KEY[v.defaultRefusal])}
             </p>
           )}
         </div>

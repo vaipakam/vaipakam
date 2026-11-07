@@ -1938,7 +1938,7 @@ Positions 通过一个共享读取器读取与 Home 相同的持仓清单：`get
 
 ### Position：贷款如何读取
 
-页面读取 `getLoanDetails(loanId)`，并对出借人和借款人的仓位 NFT 调用 `ownerOf`；角色即钱包现在持有的代币。对进行中的贷款（Active 或 FallbackPending），读取 `getLoanDeadlines`（暂停补偿前当前期限的到期，展期或借款人转接会改写它、暂停补偿、到期、宽限结束），有付息周期时读取 `previewPeriodicSettle` 和 `getPeriodicInterestEnabled`，以及 `isLoanDefaultable` (+ `defaultKycAdmission`)、`calculateHealthFactor` 和 `calculateLTV`；对每笔贷款读取 `getLoanCollateralLien` 和 `isSaleVehicleLoan`。每次读取相互独立：失败的读取显示为未知，绝不显示为零，也不会用 `startTime` 和 `durationDays` 推算日期。
+页面读取 `getLoanDetails(loanId)`，并对出借人和借款人的仓位 NFT 调用 `ownerOf`；角色即钱包现在持有的代币。对进行中的贷款（Active 或 FallbackPending），读取 `getLoanDeadlines`（暂停补偿前当前期限的到期，展期或借款人转接会改写它、暂停补偿、到期、宽限结束），有付息周期时读取 `previewPeriodicSettle` 和 `getPeriodicInterestEnabled`，以及 `isLoanDefaultable` (+ `paused`, `sequencerHealthy`, `defaultKycAdmission`)、`calculateHealthFactor` 和 `calculateLTV`；对每笔贷款读取 `getLoanCollateralLien` 和 `isSaleVehicleLoan`。每次读取相互独立：失败的读取显示为未知，绝不显示为零，也不会用 `startTime` 和 `durationDays` 推算日期。
 
 对有价格的贷款，它还读取 `getInternalMatchConfigBundle`。内部撮合开启时，贷款价值比处于其阈值到阈值加 `externalLiquidationPriorityWindowBps` 之间的贷款会保留给内部撮合，所有外部清算途径都会拒绝（`InternalMatchOnlyBand`），页面会说明这个区间。`loanInitiationFeeBpsAtInit` 为 0（费率被记录之前开立的贷款）显示为未记录，`treasuryFeeBpsAtInit` 为 0 显示为结算采用的 1% 旧费率。实物交付警告仅适用于 ERC-20 贷款：NFT 租赁没有抵押品，违约时租用方的使用权终止，预付租金扣除金库份额后付给出借人，缓冲金转入金库，页面会改为说明这一点。
 

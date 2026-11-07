@@ -13,11 +13,13 @@
  */
 import { type Abi, type PublicClient } from 'viem';
 import {
+  AdminFacetABI,
   ConfigFacetABI,
   DefaultedFacetABI,
   LoanFacetABI,
   MetricsFacetABI,
   NumeraireConfigFacetABI,
+  OracleFacetABI,
   RepayPeriodicFacetABI,
   RiskFacetABI,
   VaipakamNFTFacetABI,
@@ -34,6 +36,8 @@ const DEFAULTED = DefaultedFacetABI as Abi;
 const PERIODIC = RepayPeriodicFacetABI as Abi;
 const NUMERAIRE = NumeraireConfigFacetABI as Abi;
 const CONFIG = ConfigFacetABI as Abi;
+const ADMIN = AdminFacetABI as Abi;
+const ORACLE = OracleFacetABI as Abi;
 
 /** `LibVaipakam.LiquidityStatus.Illiquid`. */
 export const ILLIQUID = 1;
@@ -96,6 +100,24 @@ export interface Holders {
   borrower: Hex | null;
 }
 
+/** The gate that refuses a default the timing already allows. */
+export type DefaultRefusal = 'paused' | 'sequencer' | 'admission';
+
+/** The one default verdict (see `LoanView.defaultable`), from the gates in
+ *  the order `triggerDefault` applies them after the timing. */
+export function defaultVerdict(g: { timing: boolean | null; paused: boolean | null; sequencerHealthy: boolean | null; admitted: boolean | null }): {
+  defaultable: boolean | null;
+  refusal: DefaultRefusal | null;
+} {
+  if (g.timing === false) return { defaultable: false, refusal: null };
+  if (g.timing === null) return { defaultable: null, refusal: null };
+  if (g.paused === true) return { defaultable: false, refusal: 'paused' };
+  if (g.sequencerHealthy === false) return { defaultable: false, refusal: 'sequencer' };
+  if (g.admitted === false) return { defaultable: false, refusal: 'admission' };
+  if (g.paused === null || g.sequencerHealthy === null || g.admitted === null) return { defaultable: null, refusal: null };
+  return { defaultable: true, refusal: null };
+}
+
 export interface LoanView {
   loan: LoanDetails;
   holders: Holders;
@@ -103,15 +125,17 @@ export interface LoanView {
   deadlines: Deadlines | null;
   /** The original due date before any pause credit; `null` when unread. */
   originalMaturity: bigint | null;
-  /** Whether a default may be started now: true only when the protocol's
-   *  timing verdict (`isLoanDefaultable`) AND the default's lender admission
-   *  (`defaultKycAdmission`, which refuses only where the network turns that
-   *  check on) both pass; `null` when either needed read failed. One
-   *  verdict, so no surface can say "may now start" on the timing alone. */
+  /** Whether a default may be started now: true only when every gate
+   *  `triggerDefault` applies that a read can answer passes: the timing
+   *  verdict (`isLoanDefaultable`), the global pause (`paused`), the
+   *  sequencer (`sequencerHealthy`) and the lender admission
+   *  (`defaultKycAdmission`, which refuses only where the network turns
+   *  that check on). `null` when a needed read failed. One verdict, so no
+   *  surface can say "may now start" on part of the rule. */
   defaultable: boolean | null;
-  /** The timing verdict says yes but the default's lender admission
-   *  refuses, so the page says why the default cannot start yet. */
-  defaultRefused: boolean;
+  /** When the timing allows a default but another gate refuses it, which
+   *  one, so the page says why it cannot start yet. */
+  defaultRefusal: DefaultRefusal | null;
   /** 1e18-scaled, as the protocol computes it (0 is a real reading: the
    *  collateral's risk-adjusted value rounds to nothing). `null` when the
    *  read failed, which is also how the protocol answers for a loan with an
@@ -172,20 +196,23 @@ export async function readLoanView(client: PublicClient, diamond: Hex, loanId: b
   const live = isLiveStatus(loan.status);
   const cadence = loan.periodicInterestCadence;
 
-  const [lender, borrower, dates, periodic, periodicOn, timingDefaultable, admission, healthFactor, ltvBps, lien, saleVehicle, matchConfig] = await Promise.all([
-    maybe(read<Hex>(NFT, 'ownerOf', [loan.lenderTokenId])),
-    maybe(read<Hex>(NFT, 'ownerOf', [loan.borrowerTokenId])),
-    live ? maybe(read<readonly [bigint, bigint, bigint, bigint]>(LOAN, 'getLoanDeadlines', [loanId])) : null,
-    live && cadence !== 0 ? maybe(read<readonly [number, bigint, bigint, bigint, bigint, bigint, boolean]>(PERIODIC, 'previewPeriodicSettle', [loanId])) : null,
-    live && cadence !== 0 ? maybe(read<boolean>(NUMERAIRE, 'getPeriodicInterestEnabled')) : null,
-    live ? maybe(read<boolean>(DEFAULTED, 'isLoanDefaultable', [loanId])) : null,
-    live ? maybe(read<readonly [boolean, Hex]>(DEFAULTED, 'defaultKycAdmission', [loanId])) : null,
-    live ? maybe(read<bigint>(RISK, 'calculateHealthFactor', [loanId])) : null,
-    live ? maybe(read<bigint>(RISK, 'calculateLTV', [loanId])) : null,
-    maybe(read<CollateralLien>(METRICS, 'getLoanCollateralLien', [loanId])),
-    maybe(read<boolean>(METRICS, 'isSaleVehicleLoan', [loanId])),
-    live ? maybe(read<readonly [boolean, bigint, bigint]>(CONFIG, 'getInternalMatchConfigBundle')) : null,
-  ]);
+  const [lender, borrower, dates, periodic, periodicOn, timingDefaultable, admission, paused, sequencerHealthy, healthFactor, ltvBps, lien, saleVehicle, matchConfig] =
+    await Promise.all([
+      maybe(read<Hex>(NFT, 'ownerOf', [loan.lenderTokenId])),
+      maybe(read<Hex>(NFT, 'ownerOf', [loan.borrowerTokenId])),
+      live ? maybe(read<readonly [bigint, bigint, bigint, bigint]>(LOAN, 'getLoanDeadlines', [loanId])) : null,
+      live && cadence !== 0 ? maybe(read<readonly [number, bigint, bigint, bigint, bigint, bigint, boolean]>(PERIODIC, 'previewPeriodicSettle', [loanId])) : null,
+      live && cadence !== 0 ? maybe(read<boolean>(NUMERAIRE, 'getPeriodicInterestEnabled')) : null,
+      live ? maybe(read<boolean>(DEFAULTED, 'isLoanDefaultable', [loanId])) : null,
+      live ? maybe(read<readonly [boolean, Hex]>(DEFAULTED, 'defaultKycAdmission', [loanId])) : null,
+      live ? maybe(read<boolean>(ADMIN, 'paused')) : null,
+      live ? maybe(read<boolean>(ORACLE, 'sequencerHealthy')) : null,
+      live ? maybe(read<bigint>(RISK, 'calculateHealthFactor', [loanId])) : null,
+      live ? maybe(read<bigint>(RISK, 'calculateLTV', [loanId])) : null,
+      maybe(read<CollateralLien>(METRICS, 'getLoanCollateralLien', [loanId])),
+      maybe(read<boolean>(METRICS, 'isSaleVehicleLoan', [loanId])),
+      live ? maybe(read<readonly [boolean, bigint, bigint]>(CONFIG, 'getInternalMatchConfigBundle')) : null,
+    ]);
 
   // A loan with a cadence answers to its checkpoint too: with the checkpoint
   // or the switch unread, its deadlines are unknown rather than half-known.
@@ -199,16 +226,15 @@ export async function readLoanView(client: PublicClient, diamond: Hex, loanId: b
     }
   }
 
-  const admitted = admission ? admission[0] : null;
-  const defaultable = timingDefaultable === false ? false : timingDefaultable === null || admitted === null ? null : admitted;
+  const verdict = defaultVerdict({ timing: timingDefaultable, paused, sequencerHealthy, admitted: admission ? admission[0] : null });
 
   const view: LoanView = {
     loan,
     holders: { lender, borrower },
     deadlines,
     originalMaturity: dates ? dates[0] : null,
-    defaultable,
-    defaultRefused: timingDefaultable === true && admitted === false,
+    defaultable: verdict.defaultable,
+    defaultRefusal: verdict.refusal,
     healthFactor,
     ltvBps,
     lien,
