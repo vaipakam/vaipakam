@@ -268,10 +268,32 @@ describe('live-refinance wiring — the payoff-permit route (#3295)', () => {
 
   it('the borrower review is compared with the contract’s figures and the card’s wallet-steps note', () => {
     expect(statementFrom(SRC, 'const bTerms =')).toBe(
-      'const bTerms = await borrowerReviewMismatches(bObs.observed, bObs.config, receiptText);',
+      'const bTerms = await borrowerReviewMismatches(bObs.observed, bObs.config, receiptText, reviewLoBlock);',
     );
-    expect(blockFrom(SRC, 'async function borrowerReviewMismatches(rows, config, cardText) {')).toContain(
-      "read('getRefinancePayoff', [LOAN_ID, 0n, lastFillable])",
+  });
+
+  // #3302 — the page's figures come from a chain time and a view read the
+  // page never shows, so the review is BRACKETED: one end read before the
+  // page opens, the other after the rows are read, each view pinned to its
+  // own block. The signed permit stays exact (prepareBorrowerPermit).
+  it('brackets the review figures between a block before the page loads and one after the rows are read', () => {
+    const lo = SRC.indexOf("const reviewLoBlock = await pub.getBlock({ blockTag: 'latest' });");
+    expect(lo).toBeGreaterThan(-1);
+    expect(lo).toBeLessThan(SRC.indexOf('await bp.goto(`${SITE}/positions/${LOAN_ID}`'));
+    const fn = blockFrom(SRC, 'async function borrowerReviewMismatches(rows, config, cardText, loBlock) {');
+    expect(fn.indexOf("const hiBlock = await pub.getBlock({ blockTag: 'latest' });")).toBeGreaterThan(-1);
+    expect(fn).toContain("read('getRefinancePayoff', [LOAN_ID, 0n, lastFillable], b.number)");
+    expect(fn).toContain('const [lo, hi] = await Promise.all([figuresAt(loBlock), figuresAt(hiBlock)]);');
+    expect(fn).toContain('bound: bracketOf(lo.shareBy, hi.shareBy),');
+    expect(fn).toContain('headroom: bracketOf(nonNeg(lo.payoffBy - hi.payoffNow), nonNeg(hi.payoffBy - lo.payoffNow)),');
+    // The rows are read (inside observeConfig) before the high end is.
+    const rowsRead = SRC.indexOf("const bObs = await observeConfig('the borrower\\u2019s review', () => receiptRows(card));");
+    expect(rowsRead).toBeGreaterThan(-1);
+    expect(rowsRead).toBeLessThan(SRC.indexOf('const bTerms = await borrowerReviewMismatches('));
+    // The funds-relevant comparison is NOT bracketed: the permit maximum is
+    // exactly the share at the deadline the createOffer actually carried.
+    expect(blockFrom(SRC, 'async function prepareBorrowerPermit() {')).toContain(
+      'const maxAmount = await walletShareBy(deadline, rcpt.blockNumber);',
     );
   });
 

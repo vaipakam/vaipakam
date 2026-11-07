@@ -21,6 +21,8 @@ import { formatTokenAmountExact } from '../../src/lib/format';
 import { refinancePayoffAt } from './refinanceExpected.mjs';
 import {
   amountMatches,
+  amountWithin,
+  bracketOf,
   compareBorrowerReceipt,
   exactUnits,
   compareLenderReceipt,
@@ -354,5 +356,57 @@ describe('reviewTerms — the real loan-22 receipts', () => {
     expect(compareBorrowerReceipt(BORROWER_ROWS, borrowerCtx({ headroom: 0n })).mismatches).toHaveLength(1);
     expect(compareBorrowerReceipt(borrowerRows(permitOwe({ headroom: 0n })), borrowerCtx({ headroom: 0n })).mismatches).toEqual([]);
   });
-});
 
+  // #3302 — the live run on loan 3 halted here: the page computed its
+  // figures from its own (earlier) chain time, the drive from a later read,
+  // and the share at the later deadline was 3,805,175 wei higher. The
+  // review's amounts are now BRACKETED by the figure at a block before the
+  // page loaded and one after the rows were read; no tolerance is added.
+  describe('the review bracket (#3302)', () => {
+    const LO = 2_027_362_379_502n; // loan 3: what the page showed
+    const HI = 2_027_366_184_677n; // loan 3: the drive's later read
+    it('bracketOf orders its ends, and a bigint is the exact bracket', () => {
+      expect(bracketOf(HI, LO)).toEqual({ lo: LO, hi: HI });
+      expect(bracketOf(LO)).toEqual({ lo: LO, hi: LO });
+      expect(bracketOf({ lo: HI, hi: LO })).toEqual({ lo: LO, hi: HI });
+    });
+    it('accepts a figure inside the bracket, ends included, and refuses one below or above', () => {
+      expect(amountWithin('0.000002027362379502', { lo: LO, hi: HI }, 18)).toBe(true);
+      expect(amountWithin('0.000002027366184677', { lo: LO, hi: HI }, 18)).toBe(true);
+      expect(amountWithin('0.000002027364', { lo: LO, hi: HI }, 18)).toBe(true);
+      expect(amountWithin('0.000002027362379501', { lo: LO, hi: HI }, 18)).toBe(false);
+      expect(amountWithin('0.000002027366184678', { lo: LO, hi: HI }, 18)).toBe(false);
+      // The exact (degenerate) bracket is exactly `amountMatches`.
+      expect(amountWithin('0.000002027362379502', LO, 18)).toBe(true);
+      expect(amountWithin('0.000002027366184677', LO, 18)).toBe(false);
+    });
+    const span = (v, below, above) => ({ lo: v - below, hi: v + above });
+    it('the borrower review passes when every figure lies in its bracket', () => {
+      const ctx = borrowerCtx({
+        payoffNow: span(PAYOFF_NOW, 0n, 0n),
+        headroom: span(HEADROOM, 5n, 3_805_175n),
+        topUp: span(TOP_UP, 0n, 7n),
+        bound: span(BOUND, 2n, 3_805_175n),
+      });
+      expect(compareBorrowerReceipt(BORROWER_ROWS, ctx).mismatches).toEqual([]);
+    });
+    it('refuses a permit maximum or growth figure below or above its bracket', () => {
+      const below = compareBorrowerReceipt(BORROWER_ROWS, borrowerCtx({ bound: span(BOUND + 1n, 0n, 3_805_175n) })).mismatches;
+      expect(below).toHaveLength(1);
+      expect(below[0]).toMatch(/payoff permit maximum.*expected between/);
+      const above = compareBorrowerReceipt(BORROWER_ROWS, borrowerCtx({ bound: span(BOUND - 3_805_175n, 0n, 3_805_174n) })).mismatches;
+      expect(above).toHaveLength(1);
+      expect(above[0]).toMatch(/payoff permit maximum/);
+      expect(compareBorrowerReceipt(BORROWER_ROWS, borrowerCtx({ headroom: span(HEADROOM + 1n, 0n, 9n) })).mismatches.join()).toMatch(/payoff growth/);
+      expect(compareBorrowerReceipt(BORROWER_ROWS, borrowerCtx({ headroom: span(HEADROOM - 10n, 0n, 9n) })).mismatches.join()).toMatch(/payoff growth/);
+      expect(compareBorrowerReceipt(BORROWER_ROWS, borrowerCtx({ topUp: span(TOP_UP + 1n, 0n, 1n) })).mismatches.join()).toMatch(/wallet top-up/);
+    });
+    it('a disclosure is required when the whole bracket is above zero, refused when it is zero, and either when it straddles zero', () => {
+      const noGrowth = borrowerRows(permitOwe({ headroom: 0n }));
+      expect(compareBorrowerReceipt(noGrowth, borrowerCtx({ headroom: { lo: 1n, hi: HEADROOM } })).mismatches.join()).toMatch(/payoff-growth disclosure/);
+      expect(compareBorrowerReceipt(noGrowth, borrowerCtx({ headroom: { lo: 0n, hi: HEADROOM } })).mismatches).toEqual([]);
+      expect(compareBorrowerReceipt(BORROWER_ROWS, borrowerCtx({ headroom: { lo: 0n, hi: HEADROOM } })).mismatches).toEqual([]);
+      expect(compareBorrowerReceipt(BORROWER_ROWS, borrowerCtx({ headroom: { lo: 0n, hi: 0n } })).mismatches.join()).toMatch(/payoff-growth disclosure/);
+    });
+  });
+});

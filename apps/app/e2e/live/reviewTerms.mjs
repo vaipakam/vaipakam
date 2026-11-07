@@ -103,6 +103,28 @@ export function amountMatches(displayedText, raw, decimals) {
   return units !== null && units === BigInt(raw);
 }
 
+/**
+ * A BRACKET for a figure the page computed at a moment the drive cannot see
+ * (#3302): `{ lo, hi }` in base units, the figure evaluated at a moment known
+ * to be no later than the page's and at one known to be no earlier. A plain
+ * bigint is the degenerate bracket `{ lo: v, hi: v }` — an exact figure.
+ * The ends are ordered here, so a caller passes the two evaluations as read.
+ * There is no tolerance in it: the ends ARE the figure, at two real moments.
+ */
+export function bracketOf(v, w = v) {
+  if (v && typeof v === 'object') return bracketOf(v.lo, v.hi);
+  const a = BigInt(v);
+  const b = BigInt(w);
+  return a <= b ? { lo: a, hi: b } : { lo: b, hi: a };
+}
+
+/** Does the displayed decimal, in base units, lie inside `bracket`? */
+export function amountWithin(displayedText, bracket, decimals) {
+  const units = exactUnits(displayedText, decimals);
+  const { lo, hi } = bracketOf(bracket);
+  return units !== null && units >= lo && units <= hi;
+}
+
 /** The raw amount as the exact decimal it should render as (for reports). */
 function exactText(raw, decimals) {
   const s = BigInt(raw).toString().padStart(decimals + 1, '0');
@@ -236,6 +258,17 @@ function comparer(rows, en) {
     const truth = `${exactText(raw, decimals)} ${symbol}`;
     L.want(label, p !== null && p.symbol === symbol && amountMatches(p.text, raw, decimals), shown, truth);
   };
+  /** An amount the page computed at a moment inside a bracket (#3302). */
+  const amountIn = (label, shown, bracket, decimals, symbol) => {
+    compared.push(label);
+    const p = parseAmount(shown ?? '');
+    const { lo, hi } = bracketOf(bracket);
+    const truth =
+      lo === hi
+        ? `${exactText(lo, decimals)} ${symbol}`
+        : `between ${exactText(lo, decimals)} and ${exactText(hi, decimals)} ${symbol} (the figure at the moments bracketing the page's read)`;
+    L.want(label, p !== null && p.symbol === symbol && amountWithin(p.text, { lo, hi }, decimals), shown, truth);
+  };
   const percent = (label, shown, bps) => {
     compared.push(label);
     L.want(label, percentMatches(parsePercentBps(shown ?? ''), bps), shown, `${Number(bps) / 100}%`);
@@ -245,7 +278,7 @@ function comparer(rows, en) {
     const v = valueOf(key);
     if (v !== null) L.want(`"${en.receipt[key]}" row`, v === squash(text), v, JSON.stringify(text));
   };
-  return { L, compared, valueOf, fit, amount, percent, exact };
+  return { L, compared, valueOf, fit, amount, amountIn, percent, exact };
 }
 
 /**
@@ -334,6 +367,16 @@ export function compareLenderReceipt(rows, ctx) {
  * The typed rate ceiling and length are not printed in this receipt; the
  * createOffer expected object binds them exactly instead.
  *
+ * THE FOUR AMOUNTS ARE BRACKETS (#3302). The page computes them from the
+ * chain time of its own last loan poll and a view read at its own block —
+ * a moment the drive cannot observe — so `payoffNow`, `headroom`, `topUp`
+ * and `bound` are each `{ lo, hi }` (`bracketOf`; a bigint is exact): the
+ * figure evaluated at a block the drive read BEFORE the page loaded and at
+ * one it read AFTER reading the rows. A disclosure that may be absent (the
+ * growth, the permit) is required when `lo > 0`, refused when `hi = 0`, and
+ * when the bracket straddles zero the page's choice is accepted and any
+ * figure it shows must still lie inside the bracket.
+ *
  * ctx: { en, principal: { decimals, symbol }, payoffNow, headroom, topUp,
  *   bound, lifBps, treasuryFeeBps, clamped, graceEndDates: string[],
  *   requestWindowDays, cardText }
@@ -346,16 +389,21 @@ export function compareBorrowerReceipt(rows, ctx) {
   const P = ctx.principal;
   c.exact('youReceive', Rf.receiptReceive);
   c.exact('youLock', Rf.receiptLock);
+  const headroom = bracketOf(ctx.headroom);
+  const bound = bracketOf(ctx.bound);
   const g1 = c.fit('youMayOwe', Rf.receiptYouMayOwe, { prefix: true });
-  if (g1) c.amount('payoff (today)', g1.payoff, ctx.payoffNow, P.decimals, P.symbol);
+  if (g1) c.amountIn('payoff (today)', g1.payoff, ctx.payoffNow, P.decimals, P.symbol);
   const owe = c.valueOf('youMayOwe') ?? '';
   const growth = matchTemplate(Pm.growthDisclosure, owe, { anywhere: true });
-  if (ctx.headroom > 0n) {
-    if (!growth) c.L.want('payoff-growth disclosure', false, owe, 'present (the permit covers a later, larger payoff)');
-    else c.amount('payoff growth before the last fillable moment', growth.maxGrowth, ctx.headroom, P.decimals, P.symbol);
+  if (growth && headroom.hi === 0n) {
+    c.compared.push('no payoff-growth disclosure');
+    c.L.want('payoff-growth disclosure', false, owe, 'absent (the payoff cannot grow)');
+  } else if (growth) {
+    c.amountIn('payoff growth before the last fillable moment', growth.maxGrowth, headroom, P.decimals, P.symbol);
+  } else if (headroom.lo > 0n) {
+    c.L.want('payoff-growth disclosure', false, owe, 'present (the permit covers a later, larger payoff)');
   } else {
     c.compared.push('no payoff-growth disclosure');
-    c.L.want('payoff-growth disclosure', growth === null, owe, 'absent (the payoff cannot grow)');
   }
   // The retired approval-route sentence must not be what the borrower reads.
   c.compared.push('no approval-route disclosure');
@@ -367,18 +415,22 @@ export function compareBorrowerReceipt(rows, ctx) {
   );
   const sign = matchTemplate(Pm.signDisclosure, owe, { anywhere: true });
   const p2 = owe.includes(squash(Pm.permit2ApprovalNote));
-  if (ctx.bound > 0n) {
-    if (!sign) c.L.want('payoff-permit disclosure', false, owe, 'present (a permit is signed for the wallet share)');
-    else c.amount('payoff permit maximum (wallet share at the last fillable moment)', sign.amount, ctx.bound, P.decimals, P.symbol);
+  if (bound.hi === 0n && (sign || p2)) {
+    c.compared.push('no payoff-permit disclosure');
+    c.L.want('payoff-permit disclosure', false, owe, 'absent (the wallet share is zero, so no permit is signed)');
+  } else if (sign) {
+    c.amountIn('payoff permit maximum (wallet share at the last fillable moment)', sign.amount, bound, P.decimals, P.symbol);
     c.compared.push('Permit2 approval note');
     c.L.want('Permit2 approval note', p2, owe, 'present');
+  } else if (bound.lo > 0n) {
+    c.L.want('payoff-permit disclosure', false, owe, 'present (a permit is signed for the wallet share)');
   } else {
     c.compared.push('no payoff-permit disclosure');
-    c.L.want('payoff-permit disclosure', sign === null && !p2, owe, 'absent (the wallet share is zero, so no permit is signed)');
+    c.L.want('payoff-permit disclosure', !p2, owe, 'absent (the wallet share is zero, so no permit is signed)');
   }
   const wallet = matchTemplate(Rf.walletNote, owe, { anywhere: true });
   if (!wallet) c.L.want('wallet top-up note', false, owe, 'present');
-  else c.amount('wallet top-up (payoff interest + LIF)', wallet.topUp, ctx.topUp, P.decimals, P.symbol);
+  else c.amountIn('wallet top-up (payoff interest + LIF)', wallet.topUp, ctx.topUp, P.decimals, P.symbol);
   const g2 = c.fit('fees', en.fees.borrowerLIF, { prefix: true });
   if (g2) c.percent('loan initiation fee (live LIF)', g2.pct, ctx.lifBps);
   const tre = matchTemplate(Rf.feesTreasuryNote, c.valueOf('fees') ?? '', { anywhere: true });
