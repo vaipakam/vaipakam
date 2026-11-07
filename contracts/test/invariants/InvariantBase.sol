@@ -33,6 +33,7 @@ import {NumeraireValueFacet} from "../../src/facets/NumeraireValueFacet.sol";
 import {OfferPreviewFacet} from "../../src/facets/OfferPreviewFacet.sol";
 import {ForcedSaleFacet} from "../../src/facets/ForcedSaleFacet.sol";
 import {HelperTest} from "../HelperTest.sol";
+import {MockSwapAdapter} from "../mocks/MockSwapAdapter.sol";
 import {ERC20Mock} from "../mocks/ERC20Mock.sol";
 import {TestMutatorFacet} from "../mocks/TestMutatorFacet.sol";
 import {ArtifactDeploy} from "../../script/lib/ArtifactDeploy.sol";
@@ -104,6 +105,16 @@ contract InvariantBase is Test {
         AdminFacet(address(diamond)).setTreasury(address(diamond));
         AdminFacet(address(diamond)).setZeroExProxy(makeAddr("zeroEx"));
         AdminFacet(address(diamond)).setallowanceTarget(makeAddr("zeroExAllowance"));
+
+        // #3241: register one swap venue that always fails. With no venue at all every
+        // `triggerDefault` reverts `NoSwapAdaptersConfigured` before the default is booked, and
+        // the handler's try/catch hid that as a no-op, so no suite on this base ever defaulted a
+        // loan. A failing venue sends the liquid default to the in-kind fallback, which is the
+        // path the claim and settlement suites need. Adapter index 0 is the one
+        // `defaultAdapterCalls()` names.
+        MockSwapAdapter failingVenue = new MockSwapAdapter("invariant-failing-venue");
+        failingVenue.setShouldRevert(true);
+        AdminFacet(address(diamond)).addSwapAdapter(address(failingVenue));
 
         ProfileFacet(address(diamond)).setTradeAllowance("US", "US", true);
         RiskFacet(address(diamond)).updateRiskParams(mockUsdc, 8000, 300);
