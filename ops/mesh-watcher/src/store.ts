@@ -46,11 +46,37 @@ export type StoreOp =
    * `rotation.ts` `ownedAlertChainIds`). A key whose chain id cannot be
    * parsed counts as chain 0, the watcher-level id.
    */
-  | { kind: 'retainAlerts'; keepKeys: readonly string[]; ownedChainIds: readonly number[] };
+  | {
+      kind: 'retainAlerts';
+      keepKeys: readonly string[];
+      ownedChainIds: readonly number[];
+      /**
+       * Finding codes this sweep never touches. A once-only event alert's
+       * record is its acknowledgement: it must outlive a tick in which the
+       * event was not re-read (a failed log read, say), or the event is sent
+       * again when the read recovers. Those records are removed by
+       * `forgetAlerts` once the event's scan position has passed them.
+       */
+      spareCodes?: readonly string[];
+    }
+  /** Forget these alert records outright (see `retainAlerts.spareCodes`). */
+  | { kind: 'forgetAlerts'; keys: readonly string[] }
+  /** Move one watched contract's event-scan position (`eventAlerts.ts`). */
+  | {
+      kind: 'setEventCursor';
+      chainId: number;
+      contract: string;
+      nextBlock: bigint;
+      /** Whether the contract's first-scan notice has been delivered. */
+      notified: boolean;
+      at: number;
+    };
 
 export interface DueAlert {
   key: string;
   fingerprint: string;
+  /** Once sent with this fingerprint, never due again (see `Finding.once`). */
+  once?: boolean;
 }
 
 export class AlertStore {
@@ -70,6 +96,25 @@ export class AlertStore {
       return { ok: true, value: out };
     } catch (err) {
       return { ok: false, failure: classify(err, 'loading alert runs') };
+    }
+  }
+
+  /** The event-alert scan position of every watched contract on `chainId`. */
+  async loadEventCursors(
+    chainId: number,
+  ): Promise<StoreResult<Map<string, { nextBlock: bigint; notified: boolean }>>> {
+    try {
+      const rows = await this.db
+        .prepare('SELECT contract, next_block, start_notified FROM event_cursor WHERE chain_id = ?')
+        .bind(chainId)
+        .all<{ contract: string; next_block: number; start_notified: number }>();
+      const out = new Map<string, { nextBlock: bigint; notified: boolean }>();
+      for (const row of rows.results ?? []) {
+        out.set(row.contract, { nextBlock: BigInt(row.next_block), notified: row.start_notified === 1 });
+      }
+      return { ok: true, value: out };
+    } catch (err) {
+      return { ok: false, failure: classify(err, 'loading event-alert positions') };
     }
   }
 
@@ -122,7 +167,7 @@ export class AlertStore {
           return (
             !prior ||
             prior.fingerprint !== c.fingerprint ||
-            now - prior.lastSentAt >= repeatSeconds
+            (!c.once && now - prior.lastSentAt >= repeatSeconds)
           );
         }),
       };
@@ -203,6 +248,21 @@ export class AlertStore {
             .bind(...c.binds),
         );
       }
+      case 'setEventCursor':
+        return [
+          this.db
+            .prepare(
+              `INSERT INTO event_cursor (chain_id, contract, next_block, start_notified, updated_at)
+             VALUES (?, ?, ?, ?, ?)
+             ON CONFLICT (chain_id, contract) DO UPDATE SET
+               next_block = excluded.next_block,
+               start_notified = excluded.start_notified,
+               updated_at = excluded.updated_at`,
+            )
+            // A block number is far below 2^53, so a JS number holds it
+            // exactly; D1 binds numbers, not bigints.
+            .bind(op.chainId, op.contract, Number(op.nextBlock), op.notified ? 1 : 0, op.at),
+        ];
       case 'recordAlert':
         return [
           this.db
@@ -221,15 +281,27 @@ export class AlertStore {
           .all<{ alert_key: string }>();
         const keep = new Set(op.keepKeys);
         const owned = new Set(op.ownedChainIds);
+        const spare = new Set(op.spareCodes ?? []);
         const drop = (stored.results ?? [])
           .map((r) => r.alert_key)
-          .filter((k) => !keep.has(k) && owned.has(alertKeyChainId(k) ?? 0));
-        return chunkD1InList(drop).map((c) =>
-          this.db
-            .prepare(`DELETE FROM alert_sent WHERE alert_key IN (${c.placeholders})`)
-            .bind(...c.binds),
-        );
+          .filter(
+            (k) =>
+              !keep.has(k) &&
+              owned.has(alertKeyChainId(k) ?? 0) &&
+              !spare.has(k.slice(0, Math.max(0, k.indexOf('/')))),
+          );
+        return this.deleteAlerts(drop);
       }
+      case 'forgetAlerts':
+        return this.deleteAlerts(op.keys);
     }
+  }
+
+  private deleteAlerts(keys: readonly string[]): D1PreparedStatement[] {
+    return chunkD1InList([...keys]).map((c) =>
+      this.db
+        .prepare(`DELETE FROM alert_sent WHERE alert_key IN (${c.placeholders})`)
+        .bind(...c.binds),
+    );
   }
 }

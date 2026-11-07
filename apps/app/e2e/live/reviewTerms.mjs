@@ -33,7 +33,8 @@
  *     reader saw.
  *
  * Pure; `reviewTerms.test.mjs` pins it with the strings the deployed app
- * rendered on 2026-10-05.
+ * rendered on 2026-10-05 (the lender's review) and with the permit-route
+ * borrower review that replaced the approval-route one (#3295).
  */
 
 const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -305,36 +306,75 @@ export function compareLenderReceipt(rows, ctx) {
 }
 
 /**
- * The BORROWER's refinance review (RefinanceFlow's ConfirmReceipt) vs the
- * figures the drive computes from the chain with the app's own formulas:
- * today's payoff, the late-fee headroom when the approval bound exceeds it,
- * the wallet top-up (payoff interest + the new loan's LIF), the LIF and
- * treasury rates, and the request's lifetime branch (30 days after posting,
- * or clamped to the loan's grace end — then dated). The typed rate ceiling
- * and length are not printed in this receipt; the createOffer expected
- * object binds them exactly instead.
+ * The BORROWER's refinance review (RefinanceFlow's ConfirmReceipt) on the
+ * PAYOFF-PERMIT route (#1558 / #3042, #3295) vs the contract's own figures
+ * (`getRefinancePayoff` for the request's last fillable moment — what the
+ * app reads):
+ *   - today's payoff;
+ *   - the payoff's growth before that moment (`copy.refinance.permit
+ *     .growthDisclosure`) — present exactly when it can grow, with the
+ *     growth figure;
+ *   - the permit disclosure (`permit.signDisclosure`, signed "for at most"
+ *     the wallet's share at that moment, ending "nothing stays approved to
+ *     the protocol") and the Permit2 approval note — present exactly when
+ *     the share can be above zero (`permitNeeded`), with the share figure;
+ *   - the wallet top-up (the share today: payoff interest + the new loan's
+ *     LIF);
+ *   - the LIF and treasury rates, and the request's lifetime branch (30
+ *     days after posting, or clamped to the loan's grace end — then dated);
+ *   - the card's wallet-steps note (`permit.multiStepNote`: "up to five
+ *     wallet steps … the Permit2 approval if needed, the request, your
+ *     signature on the payoff permit, and the transaction that attaches
+ *     it"), which sits below the receipt rather than in a row, so it is read
+ *     from the card's whole text.
+ * The RETIRED approval-route wording — "The approval you grant covers that
+ * too" (`refinance.lateFeeDisclosure`) and the three-confirmation note
+ * (`refinance.multiStepNote`) — is a mismatch wherever it appears: it
+ * describes an approval of the Diamond this route never makes.
+ * The typed rate ceiling and length are not printed in this receipt; the
+ * createOffer expected object binds them exactly instead.
  *
  * ctx: { en, principal: { decimals, symbol }, payoffNow, headroom, topUp,
- *   lifBps, treasuryFeeBps, clamped, graceEndDates: string[],
- *   requestWindowDays }
+ *   bound, lifBps, treasuryFeeBps, clamped, graceEndDates: string[],
+ *   requestWindowDays, cardText }
  */
 export function compareBorrowerReceipt(rows, ctx) {
   const { en } = ctx;
   const c = comparer(rows, en);
   const Rf = en.refinance;
+  const Pm = Rf.permit;
   const P = ctx.principal;
   c.exact('youReceive', Rf.receiptReceive);
   c.exact('youLock', Rf.receiptLock);
   const g1 = c.fit('youMayOwe', Rf.receiptYouMayOwe, { prefix: true });
   if (g1) c.amount('payoff (today)', g1.payoff, ctx.payoffNow, P.decimals, P.symbol);
   const owe = c.valueOf('youMayOwe') ?? '';
-  const late = matchTemplate(Rf.lateFeeDisclosure, owe, { anywhere: true });
+  const growth = matchTemplate(Pm.growthDisclosure, owe, { anywhere: true });
   if (ctx.headroom > 0n) {
-    if (!late) c.L.want('late-fee headroom disclosure', false, owe, 'present (the approval covers a later, larger payoff)');
-    else c.amount('late-fee headroom', late.maxGrowth, ctx.headroom, P.decimals, P.symbol);
+    if (!growth) c.L.want('payoff-growth disclosure', false, owe, 'present (the permit covers a later, larger payoff)');
+    else c.amount('payoff growth before the last fillable moment', growth.maxGrowth, ctx.headroom, P.decimals, P.symbol);
   } else {
-    c.compared.push('no late-fee headroom disclosure');
-    c.L.want('late-fee headroom disclosure', late === null, owe, 'absent (no headroom)');
+    c.compared.push('no payoff-growth disclosure');
+    c.L.want('payoff-growth disclosure', growth === null, owe, 'absent (the payoff cannot grow)');
+  }
+  // The retired approval-route sentence must not be what the borrower reads.
+  c.compared.push('no approval-route disclosure');
+  c.L.want(
+    'approval-route disclosure ("The approval you grant covers that too")',
+    matchTemplate(Rf.lateFeeDisclosure, owe, { anywhere: true }) === null,
+    owe,
+    'absent — this route approves nothing to the protocol',
+  );
+  const sign = matchTemplate(Pm.signDisclosure, owe, { anywhere: true });
+  const p2 = owe.includes(squash(Pm.permit2ApprovalNote));
+  if (ctx.bound > 0n) {
+    if (!sign) c.L.want('payoff-permit disclosure', false, owe, 'present (a permit is signed for the wallet share)');
+    else c.amount('payoff permit maximum (wallet share at the last fillable moment)', sign.amount, ctx.bound, P.decimals, P.symbol);
+    c.compared.push('Permit2 approval note');
+    c.L.want('Permit2 approval note', p2, owe, 'present');
+  } else {
+    c.compared.push('no payoff-permit disclosure');
+    c.L.want('payoff-permit disclosure', sign === null && !p2, owe, 'absent (the wallet share is zero, so no permit is signed)');
   }
   const wallet = matchTemplate(Rf.walletNote, owe, { anywhere: true });
   if (!wallet) c.L.want('wallet top-up note', false, owe, 'present');
@@ -360,6 +400,15 @@ export function compareBorrowerReceipt(rows, ctx) {
       c.L.want('request lifetime', d !== null && Number(d.days) === Number(ctx.requestWindowDays), g3.branch, `${ctx.requestWindowDays} days after posting`);
     }
   }
+  // The wallet-steps note under the receipt: the permit route's, never the
+  // retired three-confirmation one.
+  c.compared.push('wallet-steps note');
+  const card = squash(ctx.cardText ?? '');
+  c.L.want(
+    'wallet-steps note (copy.refinance.permit.multiStepNote)',
+    card.includes(squash(Pm.multiStepNote)) && !card.includes(squash(Rf.multiStepNote)),
+    card.slice(0, 200),
+    JSON.stringify(Pm.multiStepNote),
+  );
   return { mismatches: c.L.mismatches(), compared: c.compared };
 }
-

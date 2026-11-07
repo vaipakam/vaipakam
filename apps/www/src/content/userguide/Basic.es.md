@@ -1244,6 +1244,14 @@ Positions muestra cada préstamo que prestaste o tomaste en esta red, a partir d
 
 Todos, Prestados y Tomados filtran las tres listas a la vez. Positions dice que no tienes nada solo después de leerlo todo; si una lista no se pudo leer entera, lo indica. Cada préstamo abre su propia página, que muestra las acciones disponibles para ti. La lista nunca firma nada.
 
+<a id="position"></a>
+
+### Position: un préstamo
+
+Cada préstamo tiene su propia página. Empieza con el estado del préstamo y luego tu papel: el lado que tu wallet guarda ahora, ya que los tokens de posición pueden venderse o transferirse. Si no guardas ningún lado, solo lo estás viendo. Un plazo que te afecta se redacta para tu lado. Cuando termina el período de gracia, la página dice que cualquiera puede iniciar el impago, y solo cuando el protocolo lo confirma.
+
+Debajo aparecen las fechas del préstamo (la fecha de vencimiento del plazo actual antes de cualquier crédito por pausa, el tiempo añadido mientras el protocolo estuvo en pausa, la fecha de vencimiento y el fin del período de gracia), sus condiciones tal como están ahora (un reembolso parcial reduce el principal aún adeudado), su factor de salud y dónde está su garantía. Una cifra que no se pudo leer aparece como desconocida. Si la garantía no tiene precio, un impago entrega al prestamista la garantía misma, y la página lo dice. Si la red reserva una banda justo por encima del umbral de liquidación para un emparejamiento interno con otro préstamo, la página lo indica: dentro de esa banda ninguna venta externa puede cerrar el préstamo. Un alquiler de NFT no tiene garantía: si entra en impago, termina el uso del arrendatario, el alquiler prepagado va al prestamista menos la parte del protocolo y el colchón va a la tesorería. Por ahora la página es solo de lectura; sus acciones llegan en próximas actualizaciones.
+
 <a id="risk-access"></a>
 
 ### Risk Access: tu nivel de riesgo

@@ -12,10 +12,14 @@
 // UI the spec drives:
 //
 //   1. The BORROWER (Advanced mode) opens `/positions/<loan>`, fills the
-//      "Refinance this loan" form, reviews, consents and posts. The form
-//      may ask for up to three wallet steps (guardrail caps, payoff
-//      approval, createOffer); each is allowed through the write gate
-//      below only if it is one of exactly those.
+//      "Refinance this loan" form, reviews, consents and posts. On the
+//      payoff-permit route (#1558 / #3042) the form may ask for up to five
+//      wallet steps — guardrail caps, the Permit2 approval if needed, the
+//      createOffer, the payoff permit signature and the
+//      setRefinancePayoffPermit that attaches it (six if the Permit2
+//      approval goes through a reset to 0 first); each is allowed through
+//      the write gate below only if it is one of exactly those. The drive
+//      waits for the page to report the permit attached before it moves on.
 //   2. The request is pinned ON CHAIN from the createOffer receipt's own
 //      `OfferCreated` event — never from "newest offer" alone — and the
 //      page's "Refinance request #N is live" must name that same id. (Its
@@ -48,22 +52,33 @@
 //   (A') ONE ORDERED WRITE PLAN (#2422 r3). Those expected objects are the
 //       steps of ONE plan for the whole drive, declared before the first
 //       write (refinancePlanSteps → writePlan.mjs), in the app's order:
-//         b-caps? → b-approve-reset? → b-approve-set? → b-create →
+//         b-caps? → b-permit2-reset? → b-permit2-set? → b-create →
+//         b-permit → b-attach →
 //         l-sign → l-approve-reset? → l-approve-set? → l-accept
 //       (`?` = optional: the form skips caps that already cover the terms,
 //       and `ensureAllowance` sends a reset to 0 only for a leftover
-//       non-zero allowance and no approve at all when it already suffices).
+//       non-zero allowance and no approve at all when it already suffices;
+//       the four Permit2 steps are left out of the plan altogether when the
+//       wallet's share of the payoff is zero, because the app then asks for
+//       none of them).
 //       A request is allowed only if it matches the NEXT unconsumed step;
 //       a match consumes it before the provider is called, so a duplicate,
 //       an out-of-order request, a step the plan lacks, or anything after
 //       the plan is complete is refused, and the refusal latches the plan.
-//       The steps: caps; bounded principal approvals; the 26-field
-//       createOffer; the 34-field AcceptTerms (Full VPFI tariff OFF); and
-//       acceptOffer carrying EXACTLY the signed terms and signature. No
-//       Permit2 path: a borrower-request accept never uses one. The app's
-//       approval UNWIND after a failed post is not in the plan, so it is
-//       refused too — by then the drive has halted, and the report names
-//       any approval left standing.
+//       The steps: caps; the borrower's Permit2 approval, bounded by the
+//       wallet's share of the payoff; the 26-field createOffer; the payoff
+//       permit typed data (Permit2 domain, the principal token, the
+//       Diamond as spender, the request's last fillable moment as deadline,
+//       the RefinancePayoff(loan, request) witness) at EXACTLY the share
+//       the contract reports for that deadline; the attach call carrying
+//       exactly the signed permit; the lender's principal approvals; the
+//       34-field AcceptTerms (Full VPFI tariff OFF); and acceptOffer
+//       carrying EXACTLY the signed terms and signature. The borrower
+//       approves nothing to the Diamond on this route, and the lender
+//       accepting a borrower REQUEST never takes a Permit2 path. Nothing the
+//       app sends after a failed step (a retry from the pending card) is in
+//       the plan, so it is refused too — by then the drive has halted, and
+//       the report names anything left standing.
 //   (B) HALT BEFORE THE NEXT WRITE. Any failed assertion or disclosure
 //       check, at any phase, sets a halt; the gate then refuses every
 //       further write, and every UI step that leads to one (a consent tick,
@@ -74,10 +89,11 @@
 // Each role is armed only IMMEDIATELY BEFORE ITS CONFIRMED SUBMIT — the
 // borrower once the position card, posture banner and review figures have
 // passed, the lender once the request is pinned and the lender's review
-// has passed — and the plan is closed again when that submit settles. A
+// has passed — and the plan is closed again when that submit settles (for
+// the borrower, once the page reports the payoff permit attached). A
 // request while closed (or from the unarmed role) is refused, latches the
-// plan and halts: an approve(Diamond, 0) the position page fires while it
-// loads can never consume the plan's reset step.
+// plan and halts: an approve(…, 0) the position page fires while it loads
+// can never consume one of the plan's reset steps.
 // An approval RESET must be followed by its SET (`requires` in the plan).
 //
 // THE VERDICT IS AN OUTCOME MANIFEST (outcomeManifest.mjs), narrowed in the
@@ -145,9 +161,14 @@
 // figure is compared with the chain at display precision: the lender's
 // principal, full-term interest at the ceiling rate, collateral, yield fee,
 // length and grace window against the request and the live fee config;
-// the borrower's payoff, late-fee headroom, wallet top-up, LIF and treasury
-// rates and the request's lifetime against the app's own formulas. A
-// mismatch or an unparseable row halts before consent.
+// the borrower's payoff, its growth before the request's last fillable
+// moment, the payoff permit's maximum (the permit disclosure, ending
+// "nothing stays approved to the protocol", and the Permit2 approval note),
+// the wallet top-up, LIF and treasury rates, the request's lifetime and the
+// card's wallet-steps note against the contract's own `getRefinancePayoff`
+// and the live config — the retired "the approval you grant covers that
+// too" wording is itself a mismatch (#3295). A mismatch or an unparseable
+// row halts before consent.
 //
 // THE GATE LIVES IN THE WALLET (#2422 r4). Rules A and B are enforced by
 // `launch({ signingGate, pinnedChainId: 84532 })`: driver.mjs runs every
@@ -176,14 +197,22 @@
 // as "oracle unavailable". Principal amounts print with the principal
 // token's own decimals().
 //
-// APPROVALS COVER THE PULL (#2422 r4). The borrower's payoff approval must
-// lie between the payoff the app itself computes for the request's last
-// fillable moment (loanLive.ts `refinanceApprovalOf`, mirrored in
-// refinanceExpected.mjs — it reproduces loan 22's real approval to the wei)
-// and the payoff at the grace end; the lender's must be exactly the
-// principal. Time-stamped fields (request expiry, caps window, accept
-// deadline) are judged against the CHAIN time read when each submit flow
-// starts, not the local clock (see `afterAnchor`).
+// THE PAYOFF PERMIT IS PINNED TO THE CONTRACT'S FIGURE (#3295). Since #1558
+// the borrower approves nothing to the Diamond: the request carries a
+// single-use Permit2 permit for the wallet's SHARE of the payoff (#3042 —
+// the new loan's net principal pays the rest), and the app sizes it from
+// the contract's `getRefinancePayoff`, never from a mirror. So does this
+// drive: once the createOffer has mined, the gate reads the request id from
+// its OfferCreated, derives the deadline from that createOffer's expiry
+// (`lastFillableMoment`), and reads the share at that deadline — the permit
+// must carry exactly those. The Permit2 approval sent BEFORE the request
+// exists must lie between the shares at the earliest and latest deadline
+// the app could stamp (`permitDeadlineWindow`). A Diamond deployed before
+// #1558 (no `setRefinancePayoffPermit` route) is BLOCKED: this drive does
+// not model the retired approval route. The lender's approval must be
+// exactly the principal. Time-stamped fields (request expiry, caps window,
+// accept deadline) are judged against the CHAIN time read when each submit
+// flow starts, not the local clock (see `afterAnchor`).
 //
 // AFTER ANY FAILED RUN the drive works out what may be standing FROM THE
 // WRITE PLAN, not from what the page confirmed (#2422 r5): a consumed
@@ -191,8 +220,9 @@
 // page never said "request is live" (a missing or pending receipt, or a
 // send with no hash, is stated with its explorer lookup). It then re-reads
 // the chain through the TOUCHED-STATE LEDGER (#2422 r6, touchedState.mjs):
-// every piece of state a plan step can change — the borrower's and the
-// lender's allowance to the Diamond, the loan's auto-refinance caps, the
+// every piece of state a plan step can change — the borrower's allowance
+// to Permit2 (and, touched by no step, to the Diamond), the lender's
+// allowance to the Diamond, the loan's auto-refinance caps, the
 // open refinance requests on the loan, the replacement loan (identified
 // from our accept's receipt and by a state scan for the loan carrying this
 // run's request — so a matcher fill is found too — with both position
@@ -309,7 +339,9 @@ import {
   borrowerReserve,
   decodeTxForComparison,
   graceSecondsFrom,
-  refinancePayoffAt,
+  lastFillableMoment,
+  PERMIT2_ADDRESS,
+  permitDeadlineWindow,
   refinancePlanSteps,
   REQUEST_WINDOW_SEC,
 } from './refinanceExpected.mjs';
@@ -746,10 +778,10 @@ const MANIFEST = createManifest({
     },
     {
       id: 'allowanceAfter',
-      claim: 'no payoff allowance to the Diamond is left standing once the refinance completes',
+      claim: 'what stays approved once the refinance completes: the borrower\u2019s ERC-20 approval of Permit2, and the request\u2019s payoff permit',
       reason:
-        'not asserted — the app approves the payoff at the request\u2019s last fillable moment (late-fee headroom included), so an accept before that leaves the difference approved; loan 22\u2019s run left 0.0000764 WETH',
-      coveredBy: null,
+        'not asserted — the app raises the Permit2 approval to the permit\u2019s maximum (the wallet share at the request\u2019s last fillable moment), so an accept before that moment leaves the difference approved to Permit2 (not to the protocol: Permit2 pays only against a signature the wallet made); the permit itself is single-use, and nothing here reads whether Permit2 burned its nonce',
+      coveredBy: 'apps/app/src/contracts/refinancePayoffPermit.test.ts; contracts/test/RefinanceFacetTest.t.sol (the permit tests, via helpers/RefinancePayoffPermitHelper.sol)',
     },
   ],
 });
@@ -856,6 +888,83 @@ function abiFor(to) {
   return null;
 }
 
+// ---------------------------------------------------------------------
+// The payoff permit's expected figures (#3295) — read from the contract,
+// as the app reads them, before the borrower's permit steps are judged.
+// ---------------------------------------------------------------------
+/** Whether this run's request needs a payoff permit at all (the wallet's
+ *  share can be above zero, `permitNeeded` in the app); set by the
+ *  preflight. When false the plan carries no Permit2 step. */
+let PERMIT_NEEDED = null;
+/** The old loan's grace end as the drive resolves it (no pause credit —
+ *  the preflight requires the protocol unpaused, and the payoff mirror reads
+ *  no pause log either). A historical pause would move the app's deadline
+ *  away from this one: a mismatch, which halts — the safe direction. */
+let GRACE_END = null;
+/** `{ floor, cap }` — the wallet share at the earliest and latest deadline
+ *  the app could stamp, once the borrower anchor is read. */
+let PERMIT2_SHARE_BOUNDS = null;
+/** `{ offerId, deadline, maxAmount }` — the request from the createOffer
+ *  receipt, the deadline from that createOffer's expiry, and the share the
+ *  contract reports at that deadline. */
+let BORROWER_PERMIT = null;
+/** Why the last attempt to read those failed, for the refusal it causes. */
+let BORROWER_PERMIT_ERROR = null;
+
+/** The `walletShareBy` of `getRefinancePayoff(loan, 0, by)` — the figure the
+ *  app's `readPayoffQuote` signs the permit for (`offerId` 0: a request for
+ *  the outstanding principal, before the request exists). */
+async function walletShareBy(by, blockNumber) {
+  const r = await read('getRefinancePayoff', [LOAN_ID, 0n, by], blockNumber);
+  return r[4];
+}
+
+/**
+ * Fill in what the borrower's permit steps are judged against, from inputs
+ * this run already holds. Idempotent, and it never consumes or allows
+ * anything: a figure it cannot establish stays null, and the step that
+ * needs it then refuses ("cannot be judged yet"), halting the drive.
+ *   - Once the anchor is read: the share bounds for the Permit2 approval.
+ *   - Once the createOffer step is consumed with a hash: its receipt must
+ *     succeed with exactly one OfferCreated (that is the request id the
+ *     witness must name); the deadline is the last fillable moment of the
+ *     expiry THAT createOffer carried; the maximum is the share at it.
+ */
+async function prepareBorrowerPermit() {
+  if (!PERMIT_NEEDED) return;
+  try {
+    if (!PERMIT2_SHARE_BOUNDS && BORROWER_ANCHOR !== null) {
+      const w = permitDeadlineWindow(BORROWER_ANCHOR, GRACE_END);
+      const [floor, cap] = await Promise.all([walletShareBy(w.earliest), walletShareBy(w.latest)]);
+      PERMIT2_SHARE_BOUNDS = { floor, cap };
+      console.log(`info  Permit2 approval bounds (wallet share at deadlines ${w.earliest}…${w.latest}): ${fmtP(floor)} … ${fmtP(cap)}`);
+    }
+    const create = planSteps().find((st) => st.id === 'b-create' && st.status === 'consumed');
+    if (!BORROWER_PERMIT && create?.record.hash) {
+      const rcpt = await pub.waitForTransactionReceipt({ hash: create.record.hash, timeout: 180_000 });
+      if (rcpt.status !== 'success') throw new Error(`the createOffer ${create.record.hash} reverted`);
+      const decoded = diamondEvents(rcpt);
+      const created = decoded.events.filter((e) => e.eventName === 'OfferCreated');
+      if (decoded.undecodable > 0 || created.length !== 1) {
+        throw new Error(`the createOffer receipt carries ${created.length} OfferCreated event(s) and ${decoded.undecodable} undecodable Diamond log(s)`);
+      }
+      const expiresAt = create.record.call?.args?.params?.expiresAt;
+      if (expiresAt === undefined) throw new Error('the consumed createOffer step kept no decoded call');
+      const deadline = lastFillableMoment(BigInt(expiresAt), GRACE_END);
+      const maxAmount = await walletShareBy(deadline, rcpt.blockNumber);
+      BORROWER_PERMIT = { offerId: created[0].args.offerId, deadline, maxAmount };
+      console.log(
+        `info  payoff permit expected: request #${BORROWER_PERMIT.offerId}, deadline ${deadline}, at most ${fmtP(maxAmount)} ` +
+          `(getRefinancePayoff at block ${rcpt.blockNumber})`,
+      );
+    }
+    BORROWER_PERMIT_ERROR = null;
+  } catch (err) {
+    BORROWER_PERMIT_ERROR = String(err?.shortMessage ?? err?.message ?? err).split('\n')[0];
+    console.log(`info  the payoff permit's expected figures could not be read: ${BORROWER_PERMIT_ERROR}`);
+  }
+}
+
 /**
  * Judge one signing request against the plan. Synchronous: the decision
  * and the consumption of the step happen in one turn.
@@ -887,8 +996,15 @@ function judge(role, method, params) {
     return { ok: false, why: `unexpected wallet method ${method}` };
   }
   const r = PLAN.offer(role, kind, actual);
-  if (!r.ok) return r;
-  PLAN.record(r.index, { outcome: 'awaiting provider', ...(kind === 'typed' ? { params } : {}) });
+  if (!r.ok) {
+    return BORROWER_PERMIT_ERROR && role === 'borrower'
+      ? { ...r, why: `${r.why} (the payoff permit's figures could not be read: ${BORROWER_PERMIT_ERROR})` }
+      : r;
+  }
+  // A transaction's decoded call is kept with its step: a later step can be
+  // pinned to what an earlier one actually carried (the payoff permit's
+  // deadline is derived from the createOffer's own expiry).
+  PLAN.record(r.index, { outcome: 'awaiting provider', ...(kind === 'typed' ? { params } : { call: actual.data }) });
   return { ok: true, index: r.index, kind, purpose: r.step.purpose, stepId: r.step.id };
 }
 
@@ -908,6 +1024,10 @@ function judge(role, method, params) {
  */
 function signingGateFor(role) {
   return async (method, params) => {
+    // Chain reads the borrower's permit steps are judged against, taken
+    // BEFORE the judgement (which stays synchronous) and only from inputs
+    // this run already holds — the anchor and the consumed createOffer.
+    if (role === 'borrower') await prepareBorrowerPermit();
     const v = judge(role, method, params);
     if (!v.ok) {
       refusals.push(`${role}: ${method} — ${v.why}`);
@@ -984,27 +1104,33 @@ function lenderReviewMismatches(rows, req, config) {
 }
 
 /**
- * The borrower's refinance review vs the chain at the moment of comparison,
- * with the app's own payoff formulas (see `compareBorrowerReceipt`). A
- * whole-day boundary crossed between the page's read and this one would
- * show as a mismatch and halt — the safe direction.
+ * The borrower's refinance review vs the contract's own figures at the
+ * moment of comparison (see `compareBorrowerReceipt`). On the permit route
+ * the app reads every figure it shows from `getRefinancePayoff(loan, 0, the
+ * request's last fillable moment)`, so this reads the same view for the
+ * same moment, computed from the chain time now. A figure that moves
+ * between the page's read and this one (a deadline that is not clamped to
+ * the grace end, past maturity) shows as a mismatch and halts — the safe
+ * direction. `cardText` is the whole card, for the wallet-steps note under
+ * the receipt.
  */
-async function borrowerReviewMismatches(rows, config) {
+async function borrowerReviewMismatches(rows, config, cardText) {
   const t = await chainNow();
-  const payoffNow = refinancePayoffAt(loan, t);
   // RULE 1 (#2422 r10): the fee rates and grace buckets read AROUND the
   // observation, not the preflight's.
-  const lif = (loan.principal * BigInt(config.lifBps)) / 10_000n;
   const graceEnd = loanDue + graceSecondsFrom(config.graceBuckets, loan.durationDays);
   const expiresAt = t + REQUEST_WINDOW_SEC;
-  const lastFillable = expiresAt - 1n < graceEnd ? expiresAt - 1n : graceEnd;
+  const lastFillable = lastFillableMoment(expiresAt, graceEnd);
+  const q = await read('getRefinancePayoff', [LOAN_ID, 0n, lastFillable]);
+  const [, payoffNow, payoffBy, shareNow, shareBy] = q;
   const dateOpts = { day: 'numeric', month: 'short', year: 'numeric' };
   return compareBorrowerReceipt(rows, {
     en: EN.copy,
     principal: { decimals: PDEC, symbol: pre.principalSymbol },
     payoffNow,
-    headroom: refinancePayoffAt(loan, lastFillable) - payoffNow,
-    topUp: payoffNow - loan.principal + lif,
+    headroom: payoffBy > payoffNow ? payoffBy - payoffNow : 0n,
+    topUp: shareNow,
+    bound: shareBy,
     lifBps: config.lifBps,
     treasuryFeeBps: config.treasuryFeeBps,
     clamped: graceEnd + 1n < expiresAt,
@@ -1014,6 +1140,7 @@ async function borrowerReviewMismatches(rows, config) {
       new Date(Number(graceEnd) * 1000).toLocaleDateString('en', { ...dateOpts, timeZone: 'UTC' }),
     ],
     requestWindowDays: REQUEST_WINDOW_SEC / 86_400n,
+    cardText,
   });
 }
 
@@ -1056,12 +1183,12 @@ async function openRequestsAt(head) {
   return open.sort();
 }
 
-const allowanceAt = (owner, head) =>
+const allowanceAt = (owner, spender, head) =>
   pub.readContract({
     address: loan.principalAsset,
     abi: erc20Abi,
     functionName: 'allowance',
-    args: [owner, DIAMOND],
+    args: [owner, spender],
     blockNumber: head,
   });
 
@@ -1074,24 +1201,37 @@ const allowanceAt = (owner, head) =>
  */
 const LEDGER = [
   {
-    key: 'borrowerAllowance',
-    label: 'borrower allowance (principal token → Diamond)',
-    // The approvals set it; the accept's payoff pull spends it.
-    // ... and so does ANY fill of this run's request — ours, another
-    // lender's, or the order matcher's (#2422 r10, `runTouchedSteps`).
-    touchedBy: ['b-approve-reset', 'b-approve-set', 'l-accept', 'b-request-filled'],
-    read: (head) => allowanceAt(BORROWER, head),
+    key: 'borrowerPermit2Allowance',
+    label: 'borrower allowance (principal token → Permit2)',
+    // The Permit2 approvals set it (#1558: the borrower approves nothing to
+    // the Diamond); the accept's payoff pull spends it through Permit2 —
+    // and so does ANY fill of this run's request: ours, another lender's,
+    // or the order matcher's (#2422 r10, `runTouchedSteps`).
+    touchedBy: ['b-permit2-reset', 'b-permit2-set', 'l-accept', 'b-request-filled'],
+    read: (head) => allowanceAt(BORROWER, PERMIT2_ADDRESS, head),
     format: (v) => `${fmtP(v)} (raw ${v})`,
     restore: (b) =>
-      `from the borrower, approve(${DIAMOND}, ${b}) on ${loan.principalAsset} — the pre-run figure` +
-      `${b === 0n ? ' (a revoke)' : ''}. If a request of this run is still open, cancel it first: its acceptance pulls from this allowance` +
-      ' (and the app\u2019s cancel also clears the approval, so re-check this row after cancelling).',
+      `from the borrower, approve(${PERMIT2_ADDRESS}, ${b}) on ${loan.principalAsset} — the pre-run figure` +
+      `${b === 0n ? ' (a revoke)' : ''}. It moves nothing without a signature, but if a request of this run is still open with its ` +
+      'payoff permit attached, its acceptance pulls the wallet share through this allowance: cancel the request first.',
+  },
+  {
+    key: 'borrowerDiamondAllowance',
+    label: 'borrower allowance (principal token → Diamond)',
+    // No step of this run touches it: the permit route approves nothing to
+    // the Diamond, and the gate refuses the retired approval. So a change
+    // here is never this run's, and the ledger says so ("by no write of this
+    // run") instead of offering a remedy.
+    touchedBy: [],
+    read: (head) => allowanceAt(BORROWER, DIAMOND, head),
+    format: (v) => `${fmtP(v)} (raw ${v})`,
+    restore: () => null,
   },
   {
     key: 'lenderAllowance',
     label: 'lender allowance (principal token → Diamond)',
     touchedBy: ['l-approve-reset', 'l-approve-set', 'l-accept'],
-    read: (head) => allowanceAt(LENDER, head),
+    read: (head) => allowanceAt(LENDER, DIAMOND, head),
     format: (v) => `${fmtP(v)} (raw ${v})`,
     restore: (b) =>
       `from the lender, approve(${DIAMOND}, ${b}) on ${loan.principalAsset} — the pre-run figure${b === 0n ? ' (a revoke)' : ''}.`,
@@ -1121,7 +1261,10 @@ const LEDGER = [
       return (
         `cancel ${added.map((id) => `#${id}`).join(', ')} from the borrower — "Cancel refinance request" on ` +
         `${SITE}/positions/${LOAN_ID} (it opens a few minutes after posting), or cancelOffer(id) on the Diamond. ` +
-        `Until then any lender can accept it${pre.autoRefi && pre.posture.partialFill ? ', and with automatic matching ON the order matcher can fill it' : ''}.`
+        `Until then any lender can accept it${pre.autoRefi && pre.posture.partialFill ? ', and with automatic matching ON the order matcher can fill it' : ''}` +
+        (PERMIT_NEEDED
+          ? '; if its payoff permit is attached, that acceptance pulls up to the permit\u2019s maximum from the borrower\u2019s wallet through Permit2 (cancelling makes the permit unusable, since it names the request).'
+          : '.')
       );
     },
   },
@@ -1579,8 +1722,21 @@ const pre = await precondition('reading the preconditions from chain', async () 
   const sanctionL = watched['screen:lender'];
 
   // The loan's grace window, read the way the app reads it — the payoff
-  // approval the borrower signs is the payoff at the end of it.
+  // permit the borrower signs expires no later than its end.
   const { graceBuckets } = watched;
+  // THE PAYOFF ROUTE (#1558, #3295), read the way the app's
+  // `readPayoffRoute` reads it: a Diamond that routes
+  // setRefinancePayoffPermit pays the payoff through the request's permit;
+  // one that does not predates #1558 and pays it from a standing approval
+  // of the Diamond. This drive models the permit route only.
+  // It is watched config (the Diamond's routing; a cut changes it).
+  const payoffRoute = /^0x0{40}$/i.test(watched.payoffPermitHost) ? 'approval' : 'permit';
+  // The wallet's share of the payoff at the request's last fillable moment
+  // as of now — the figure the app would sign the permit for. Zero means the
+  // app asks for no permit at all (`permitNeeded`).
+  const preGraceEnd = loan.startTime + loan.durationDays * 86_400n + graceSecondsFrom(graceBuckets, loan.durationDays);
+  const preLastFillable = lastFillableMoment(block.timestamp + REQUEST_WINDOW_SEC, preGraceEnd);
+  const walletShare = payoffRoute === 'permit' ? (await read('getRefinancePayoff', [LOAN_ID, 0n, preLastFillable], head))[4] : null;
   const posture = { paused, autoRefinance: autoRefi, partialFill };
   // The plan carries no tier or pair-consent write, so with the gate ON both
   // parties must ALREADY be allowed to transact the loan's pair
@@ -1630,6 +1786,9 @@ const pre = await precondition('reading the preconditions from chain', async () 
     sanctionB,
     sanctionL,
     graceBuckets,
+    payoffRoute,
+    walletShare,
+    preLastFillable,
     posture,
     watched,
   };
@@ -1680,6 +1839,18 @@ const GRACE_SECONDS = graceSecondsFrom(pre.graceBuckets, loan.durationDays);
 console.log(
   `pre   grace window: ${GRACE_SECONDS}s (${pre.graceBuckets.length ? 'from getGraceBuckets' : 'no buckets published — the app\u2019s default table'})`,
 );
+GRACE_END = loan.startTime + loan.durationDays * 86_400n + GRACE_SECONDS;
+// The payoff route (#1558). The approval route is the pre-#1558 bridge
+// (#3074): its write plan is not modelled here, so it is BLOCKED rather
+// than driven with steps that do not describe it.
+want(
+  'the Diamond pays the refinance payoff through the request\u2019s payoff permit (routes setRefinancePayoffPermit, #1558)',
+  pre.payoffRoute === 'permit',
+  pre.payoffRoute === 'permit'
+    ? 'permit route'
+    : 'approval route — a Diamond deployed before #1558; this drive models only the permit route',
+);
+PERMIT_NEEDED = pre.walletShare !== null && pre.walletShare > 0n;
 want('accepting lender is not the borrower', !eq(LENDER, BORROWER), LENDER);
 want('collateral is Illiquid now (checkLiquidity)', Number(pre.collLiquidity) === LIQUIDITY_ILLIQUID, pre.collLiquidity);
 // At least MIN_TO_MATURITY_SEC before maturity, not merely "not past it"
@@ -1724,6 +1895,12 @@ want('borrower has no pending transactions', pre.b.nonceLatest === pre.b.noncePe
 want('lender has no pending transactions', pre.l.nonceLatest === pre.l.noncePending, `${pre.l.nonceLatest}/${pre.l.noncePending}`);
 const PDEC = Number(pre.principalDecimals);
 const fmtP = (v) => formatUnits(v, PDEC);
+if (pre.walletShare !== null) {
+  console.log(
+    `pre   payoff permit: wallet share at the last fillable moment ${pre.preLastFillable} = ${fmtP(pre.walletShare)} ` +
+      `(getRefinancePayoff at block ${pre.head}) — ${PERMIT_NEEDED ? 'a permit is needed, so the plan carries the Permit2 steps' : 'zero, so the app asks for no permit and the plan carries no Permit2 step'}`,
+  );
+}
 want('lender holds the principal', pre.l.principal >= loan.principal, `${fmtP(pre.l.principal)} ≥ ${fmtP(loan.principal)}`);
 // What the borrower must hold SPARE when the lender accepts: the payoff's
 // interest share plus the new loan's initiation fee (the new principal
@@ -1815,7 +1992,8 @@ let REQUEST_ID = null;
  * moment each submit flow starts — just before the click that leads to the
  * app's own `latestBlock` / `chainNow` read. Every time-relative field the
  * app stamps (the request expiry, the caps window, the AcceptTerms
- * deadline, and the payoff approval's floor) is judged against these
+ * deadline, and the window the payoff permit's deadline — and so the
+ * Permit2 approval's bounds — can fall in) is judged against these
  * rather than against the local clock; see `afterAnchor` for the window.
  * Null until read, which leaves those steps unjudgeable — refused.
  */
@@ -1837,7 +2015,6 @@ PLAN = createWritePlan(
     rateBps: RATE_BPS,
     days: DAYS_N,
     riskTermsHash: pre.riskTermsHash,
-    graceSeconds: GRACE_SECONDS,
     borrowerAnchor: () => BORROWER_ANCHOR,
     lenderAnchor: () => LENDER_ANCHOR,
     // Per-leg illiquid acknowledgements (#2728), from the pinned-head reads.
@@ -1845,6 +2022,13 @@ PLAN = createWritePlan(
       lending: Number(pre.principalLiquidity) === LIQUIDITY_ILLIQUID,
       collateral: Number(pre.collLiquidity) === LIQUIDITY_ILLIQUID,
     },
+    // The payoff permit (#1558 / #3042): its steps exist only when the
+    // wallet share can be above zero; their figures come from the contract
+    // (`prepareBorrowerPermit`).
+    permitNeeded: PERMIT_NEEDED,
+    permit2ShareBounds: () => PERMIT2_SHARE_BOUNDS,
+    borrowerPermit: () => BORROWER_PERMIT,
+    signedPayoffPermit: () => planSteps().find((st) => st.id === 'b-permit' && st.status === 'consumed')?.record ?? null,
     requestId: () => REQUEST_ID,
     signedAcceptTerms: () => planSteps().find((st) => st.id === 'l-sign' && st.status === 'consumed')?.record ?? null,
   }),
@@ -2014,6 +2198,40 @@ async function pinRequestFromReceipt() {
   REQUEST_ID = requestId;
   REQUEST_AS_CREATED = await read('getOfferDetails', [requestId], createRcpt.blockNumber);
   console.log(`info  createOffer ${createTx.hash} mined at block ${createRcpt.blockNumber}: request #${requestId}`);
+  if (PERMIT_NEEDED) await verifyAttachedPermit();
+}
+
+/**
+ * The payoff permit the attach step carried is the one the chain now holds
+ * for this run's request (#3295), read back through the same view the
+ * app's pending card reads: signed by the borrower, for exactly the signed
+ * maximum, nonce and deadline, its nonce not yet spent, and it covers the
+ * wallet share at its own deadline. A WRITE GATE before the lender is armed
+ * (a failure stops the drive), not an outcome claim.
+ */
+async function verifyAttachedPermit() {
+  const signed = planSteps().find((st) => st.id === 'b-permit' && st.status === 'consumed')?.record;
+  if (!signed?.params || !BORROWER_PERMIT) stop('the payoff permit step was not consumed, so there is no signed permit to compare');
+  const message = JSON.parse(signed.params[1]).message;
+  if (!check(
+    `the payoff permit names this run's request (#${BORROWER_PERMIT.offerId} = receipt #${requestId})`,
+    BORROWER_PERMIT.offerId === requestId,
+  )) stop('the payoff permit was signed for another request than the createOffer receipt created');
+  const r = await read('getRefinancePayoff', [LOAN_ID, requestId, BORROWER_PERMIT.deadline]);
+  const [, , , , shareBy, signer, maxAmount, nonce, deadline, nonceSpent] = r;
+  const ok =
+    eq(signer, BORROWER) &&
+    maxAmount === BigInt(message.permitted.amount) &&
+    nonce === BigInt(message.nonce) &&
+    deadline === BigInt(message.deadline) &&
+    nonceSpent === false &&
+    maxAmount >= shareBy;
+  check(
+    `request #${requestId} carries the signed payoff permit on chain (signer, maximum, nonce, deadline; nonce unspent; covers the share at its deadline)`,
+    ok,
+    `signer ${signer}, max ${fmtP(maxAmount)}, deadline ${deadline}, nonceSpent ${nonceSpent}, share at deadline ${fmtP(shareBy)}`,
+  );
+  if (!ok) stop(`request #${requestId}'s attached payoff permit is not the one this run signed — not arming the lender`);
 }
 
 /**
@@ -2177,7 +2395,7 @@ try {
   // RULE 1: the fee rates and grace window it quotes are judged against the
   // config read around the observation (BLOCKED on a race — nothing written).
   const bObs = await observeConfig('the borrower\u2019s review', () => receiptRows(card));
-  const bTerms = await borrowerReviewMismatches(bObs.observed, bObs.config);
+  const bTerms = await borrowerReviewMismatches(bObs.observed, bObs.config, receiptText);
   check(
     `borrower: review figures match the chain (${bTerms.compared.join(', ')})`,
     bTerms.mismatches.length === 0,
@@ -2228,6 +2446,37 @@ try {
   if (HALT) stop(`halted while posting: ${HALT}`);
   if (!live || live.startsWith('error')) {
     stop(`the refinance request did not go live: ${live ?? 'timed out'}`);
+  }
+  // The submit is not settled when the request is live (#1558): the app
+  // then signs the payoff permit and attaches it, and reports the outcome on
+  // the page-owned pending card. The plan stays armed for the borrower until
+  // that card says the permit is attached; any other outcome stops here.
+  if (PERMIT_NEEDED) {
+    const P = EN.copy.refinance.permit;
+    const literalHead = (tpl) => squash(tpl.split('{{')[0]);
+    const permitOutcome = await pollUntil('the payoff permit is attached', async () => {
+      if (refusals.length || HALT) return 'refused';
+      const t = squash(await bp.locator('body').innerText());
+      if (t.includes(squash(P.done))) return 'attached';
+      for (const [what, text] of [
+        ['attach failed', literalHead(P.attachFailed)],
+        ['attach unconfirmed', squash(P.attachUnconfirmed)],
+        ['posted without a permit', squash(P.postedWithoutPermit)],
+        ['no permit needed (the plan expected one)', squash(P.notNeeded)],
+      ]) {
+        if (t.includes(text)) return `error: ${what}`;
+      }
+      return null;
+    }, { timeoutMs: 300_000, everyMs: 2_000 });
+    await session.shot('refinance-05b-permit');
+    if (refusals.length) stop('the borrower page asked for a write the plan does not allow while attaching the payoff permit');
+    if (HALT) stop(`halted while attaching the payoff permit: ${HALT}`);
+    if (permitOutcome !== 'attached') stop(`the payoff permit was not reported attached: ${permitOutcome ?? 'timed out'}`);
+    const attach = planSteps().find((st) => st.id === 'b-attach');
+    if (attach?.status !== 'consumed' || !attach.record.hash) {
+      stop(`the page reports the permit attached, but the plan's attach step is ${attach?.status ?? 'missing'}${attach?.record.hash ? '' : ' with no hash'}`);
+    }
+    check('borrower: the page reports the payoff permit attached (copy.refinance.permit.done)', true);
   }
   // The borrower's submit has settled: nothing may be signed until the
   // lender's confirmed submit arms the plan again.

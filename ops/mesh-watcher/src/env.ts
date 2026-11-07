@@ -81,6 +81,24 @@ export interface Env {
    *  it only for a chain that genuinely idles between blocks. */
   STALE_LOCAL_SECONDS?: string;
 
+  // ── Event alerts (#3239 item 3, #3237) ───────────────────────────────
+  /** Var. Exactly `'true'` arms the event-alert pass (`eventAlerts.ts`):
+   *  sanctions-list updates, delisting proposals and governance-timelock
+   *  operations, per chain. Anything else leaves it off, and the tick
+   *  summary says so. Deliberately NOT declared in `wrangler.jsonc`:
+   *  `keep_vars` keeps a dashboard value only for vars the file does not
+   *  declare, so declaring it would reset an armed pass on every deploy. */
+  EVENT_ALERTS_ENABLED?: string;
+  /** Var. Most blocks one tick reads per contract. Default 5000 — under the
+   *  common provider cap on `eth_getLogs` ranges. A chain further behind
+   *  than this catches up over several ticks, and the summary shows the
+   *  backlog. */
+  EVENT_ALERT_LOG_RANGE?: string;
+  /** Var. On a contract's FIRST scan, how many finalized blocks back to
+   *  start (never before the deploy block). Default 20000. Events older
+   *  than that are not reported, and the first alert says so. */
+  EVENT_ALERT_INITIAL_LOOKBACK?: string;
+
   // ── Per-chain RPC endpoints (Secrets Store — they carry API keys) ───
   //
   // Keyed by EVM chain id: `RPC_8453`, `RPC_42161`, `RPC_84532`, ...
@@ -105,6 +123,7 @@ export interface Config {
   alertRepeatSeconds: number;
   staleLocalSeconds: number;
   telegram: { token: string; chatId: string } | null;
+  eventAlerts: { enabled: boolean; logRange: bigint; initialLookback: bigint };
 }
 
 function intVar(raw: unknown, fallback: number, label: string): number {
@@ -204,6 +223,13 @@ export function readConfig(env: Env): Config {
     alertRepeatSeconds: readAlertRepeatSeconds(env),
     staleLocalSeconds: intVar(env.STALE_LOCAL_SECONDS, 300, 'STALE_LOCAL_SECONDS'),
     telegram: readTelegramTarget(env),
+    eventAlerts: {
+      enabled: env.EVENT_ALERTS_ENABLED === 'true',
+      logRange: BigInt(intVar(env.EVENT_ALERT_LOG_RANGE, 5_000, 'EVENT_ALERT_LOG_RANGE')),
+      initialLookback: BigInt(
+        intVar(env.EVENT_ALERT_INITIAL_LOOKBACK, 20_000, 'EVENT_ALERT_INITIAL_LOOKBACK'),
+      ),
+    },
   };
 }
 

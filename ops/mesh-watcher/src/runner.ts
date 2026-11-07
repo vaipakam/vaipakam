@@ -4,9 +4,24 @@
  */
 
 import { assertAbiShape } from './abi';
-import { deploymentFor } from './chains';
+import {
+  deploymentAddressLabels,
+  deploymentFor,
+  isCoverageGap,
+  resolveChain,
+  verifyChainIdentity,
+  type CoverageGap,
+} from './chains';
 import { deliverFindings } from './deliver';
 import { classify, describeFailure } from './errors';
+import {
+  EVENT_ALERT_CODES,
+  assertEventAbiShape,
+  eventCursorWrites,
+  scanEvents,
+  type EventScan,
+  type WatchedContractId,
+} from './eventAlerts';
 import { hashIdentity, makeFinding } from './finding';
 import { assessHealth } from './health';
 import { stepSignal, type Observation } from './signal';
@@ -88,8 +103,94 @@ export interface TickSummary {
   advisory: number;
   coverageGaps: number;
   sent: number;
+  /**
+   * The event-alert pass (`eventAlerts.ts`): whether it is armed, and what
+   * it read this tick. `scanned` is empty when it is off, when the
+   * observed chain carries none of the watched contracts, or when the read
+   * failed (then a coverage gap says why). `backlogBlocks` is how many
+   * finalized blocks are still to read after this tick.
+   */
+  eventAlerts: {
+    armed: boolean;
+    scanned: { contract: string; fromBlock: string; toBlock: string; events: number }[];
+    backlogBlocks: string;
+  };
   findings: { severity: string; code: string; chainId: number; title: string }[];
   error?: string;
+}
+
+/** The deployment keys the event pass reads addresses from. */
+const EVENT_CONTRACT_KEYS: readonly WatchedContractId[] = [
+  'sanctionsList',
+  'sanctionsDelistingTimelock',
+  'timelock',
+];
+
+/**
+ * Run the event-alert pass on the chain this tick observed.
+ *
+ * Skipped (returns `null`) where the mesh read already reported the chain
+ * unusable: no deployment, no RPC, or an endpoint that answers as another
+ * network. And the pass confirms the endpoint's chain id ITSELF before
+ * reading (Codex #3301 r3): an endpoint whose `eth_chainId` merely failed
+ * is not proven to be this chain, and an empty log read through another
+ * network would move this chain's position past events never read. The
+ * check runs beside the position read, so it costs no round trip.
+ */
+async function runEventScan(
+  env: Env,
+  config: ReturnType<typeof readConfig>,
+  store: AlertStore,
+  chainId: number,
+  meshGaps: readonly CoverageGap[],
+): Promise<EventScan | null> {
+  if (meshGaps.some((g) => g.chainId === chainId && g.reason === 'chain-mismatch')) return null;
+  const row = deploymentFor(chainId);
+  const target = resolveChain(env, chainId);
+  if (!row || isCoverageGap(target)) return null;
+
+  const addresses: Partial<Record<WatchedContractId, `0x${string}`>> = {};
+  for (const key of EVENT_CONTRACT_KEYS) {
+    const value = row[key];
+    if (typeof value === 'string' && /^0x[0-9a-fA-F]{40}$/.test(value)) {
+      addresses[key] = value as `0x${string}`;
+    }
+  }
+  if (Object.keys(addresses).length === 0) return null;
+
+  const [identityGap, cursors] = await Promise.all([
+    verifyChainIdentity(target, 'event-logs'),
+    store.loadEventCursors(chainId),
+  ]);
+  if (identityGap) {
+    return { findings: [], scans: [], backlogBlocks: 0n, gap: identityGap };
+  }
+  if (!cursors.ok) {
+    // Without the stored position the pass would restart its look-back and
+    // re-send old events, so it does not read at all, and says so.
+    return {
+      findings: [],
+      scans: [],
+      backlogBlocks: 0n,
+      gap: {
+        chainId,
+        reason: 'no-rpc',
+        source: 'event-logs',
+        detail: `event alerts not read this tick — ${describeFailure(cursors.failure)}`,
+      },
+    };
+  }
+
+  return scanEvents({
+    client: target.client,
+    chainId,
+    addresses,
+    deployBlock: typeof row.deployBlock === 'number' ? BigInt(row.deployBlock) : null,
+    cursors: cursors.value,
+    logRange: config.eventAlerts.logRange,
+    initialLookback: config.eventAlerts.initialLookback,
+    labels: deploymentAddressLabels(chainId),
+  });
 }
 
 /** Translate a signal transition into a store operation, if any. */
@@ -140,6 +241,7 @@ export async function runTick(
     // readers assume — a mislabelled ledger figure would otherwise be
     // checked against the wrong invariant and reported as healthy.
     assertAbiShape();
+    assertEventAbiShape();
 
     const config = readConfig(env);
     // Resolved INSIDE the try: an unsupported cron throws a configuration
@@ -316,10 +418,20 @@ export async function runTick(
       }
     }
 
+    // ── Event alerts (#3239 item 3, #3237) ────────────────────────────
+    // Off unless EVENT_ALERTS_ENABLED is exactly 'true'. Reads only the
+    // chain this tick observed, like everything else here.
+    const eventScan =
+      config.eventAlerts.enabled && obs.observedChainId !== null
+        ? await runEventScan(env, config, store, obs.observedChainId, obs.gaps)
+        : null;
+    if (eventScan) findings.push(...eventScan.findings);
+    const gaps: CoverageGap[] = [...obs.gaps, ...(eventScan?.gap ? [eventScan.gap] : [])];
+
     // ── Coverage gaps ────────────────────────────────────────────────
     // Always surfaced. A watcher that quietly narrows its scope reports
     // "all clear" for chains it never looked at.
-    for (const gap of obs.gaps) {
+    for (const gap of gaps) {
       findings.push(makeFinding({
         code: 'coverage-gap',
         // Reason AND source: one chain can fail both its Base-side and
@@ -362,6 +474,7 @@ export async function runTick(
           kind: 'retainAlerts',
           keepKeys: findings.map((f) => f.key),
           ownedChainIds: ownedAlertChainIds(obs.observedChainId),
+          spareCodes: EVENT_ALERT_CODES,
         },
       );
     }
@@ -395,15 +508,40 @@ export async function runTick(
         }),
     });
 
+    // The event pass's position moves only after delivery, and only past
+    // what was delivered (`eventCursorWrites`). A manual run never moves
+    // it, like the streaks: the next cron tick reads the same events, and
+    // repeat suppression keeps an alert this run already sent from going
+    // out twice.
+    let cursorDegraded = false;
+    if (eventScan && stateAvailable && persistState && obs.observedChainId !== null) {
+      const committed = await store.commit(
+        eventCursorWrites(obs.observedChainId, eventScan, delivery.delivered, now),
+      );
+      if (!committed.ok) {
+        // Not lost: the events are read again next tick and suppressed as
+        // already sent. Reported so the position does not silently stall.
+        cursorDegraded = true;
+        console.error(
+          `mesh-watcher: event-alert position not saved — ${describeFailure(committed.failure)}`,
+        );
+      }
+    }
+
     const critical = findings.filter((f) => f.severity === 'critical').length;
+    // An event alert is news, not a broken ledger: a queued governance
+    // change must page, but it does not make the watcher unhealthy.
+    const ledgerCritical = findings.filter(
+      (f) => f.severity === 'critical' && !f.code.startsWith('event-alert'),
+    ).length;
     const deliveryConfigured = config.telegram !== null;
     const health = assessHealth({
-      criticalFindings: critical,
+      criticalFindings: ledgerCritical,
       deliveryConfigured,
       deliveryFailures: delivery.failures,
       deliveryVerified: delivery.verified,
-      coverageGaps: obs.gaps.length,
-      stateDegraded: delivery.stateDegraded,
+      coverageGaps: gaps.length,
+      stateDegraded: delivery.stateDegraded || cursorDegraded,
     });
     return {
       // Undeliverable alerts are not a healthy state, however clean the
@@ -419,14 +557,24 @@ export async function runTick(
       deliveryConfigured,
       deliveryVerified: delivery.verified,
       deliveryFailures: delivery.failures,
-      stateDegraded: delivery.stateDegraded,
+      stateDegraded: delivery.stateDegraded || cursorDegraded,
       chainsObserved: obs.books.length,
       observedChainId: obs.observedChainId,
       rotation: [...obs.rotation],
       critical,
       advisory: findings.length - critical,
-      coverageGaps: obs.gaps.length,
+      coverageGaps: gaps.length,
       sent: delivery.sent,
+      eventAlerts: {
+        armed: config.eventAlerts.enabled,
+        scanned: (eventScan?.scans ?? []).map((s) => ({
+          contract: s.contract,
+          fromBlock: s.from.toString(),
+          toBlock: s.to.toString(),
+          events: s.events.length,
+        })),
+        backlogBlocks: (eventScan?.backlogBlocks ?? 0n).toString(),
+      },
       findings: findings.map((f) => ({
         severity: f.severity,
         code: f.code,
@@ -508,6 +656,7 @@ export async function runTick(
       advisory: 0,
       coverageGaps: 0,
       sent: 0,
+      eventAlerts: { armed: env.EVENT_ALERTS_ENABLED === 'true', scanned: [], backlogBlocks: '0' },
       findings: [],
       error: message,
     };

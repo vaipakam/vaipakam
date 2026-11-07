@@ -65,7 +65,10 @@ test('with the tariff switched on, the request states it, posts, and sets it by 
     await page.getByTestId('request-rate').fill('6');
     await page.getByTestId('request-tariff-opt').check({ timeout: 60_000 });
     await expect(page.getByTestId('request-tariff-quote')).toContainText("Today's tariff for a loan of 0.25 WETH:", { timeout: 60_000 });
-    await expect(page.getByTestId('request-tariff').getByText(/Left blank, today's tariff for the largest loan is used/)).toBeVisible();
+    const ceilingHint = page.getByTestId('request-tariff').getByText(/Left blank, today's tariff for the largest loan is used/);
+    await expect(ceilingHint).toBeVisible();
+    // The suggested ceiling is authorized as written: every digit, never "≈".
+    await expect(ceilingHint).not.toContainText('≈');
     await expect(page.getByTestId('request-tariff-fail').getByRole('radio', { name: 'Refuse that loan' })).toBeChecked();
     await fitsWidth(page);
     await page.getByTestId('request-review').click();

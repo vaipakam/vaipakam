@@ -247,8 +247,14 @@ function LoanCard({ row, meta, obligations, deadlines }: { row: LiveLoanRow; met
 
 /** The loan's final due date and, for the side that bears it, the
  *  consequence of missing it. An NFT rental has no collateral, so its renter
- *  is told what a default does to the prepaid rent instead. */
-function StageLine({ stage, borrowerSide, rental }: { stage: LoanStage; borrowerSide: boolean; rental: boolean }) {
+ *  is told what a default does to the prepaid rent instead.
+ *
+ *  The stage is placed by a clock, but whether a loan can be defaulted is
+ *  the protocol's verdict (`isLoanDefaultable`), so "can now be defaulted"
+ *  is said only when that verdict is true. `defaultable` is that verdict on
+ *  the loan's own page (null when unread); a list, which does not read it,
+ *  leaves it out and sends the reader to the loan's page instead. */
+export function StageLine({ stage, borrowerSide, rental, defaultable }: { stage: LoanStage; borrowerSide: boolean; rental: boolean; defaultable?: boolean | null }) {
   const { text, format } = useCopy();
   const nowSec = Math.floor(useNow() / 1000);
   switch (stage.kind) {
@@ -269,8 +275,12 @@ function StageLine({ stage, borrowerSide, rental }: { stage: LoanStage; borrower
       return <p className="tier-b stage">{format('positions.loanInGraceLender', vars)}</p>;
     }
     case 'grace-over': {
+      const when = formatUtc(stage.graceEndedAt);
+      if (defaultable === undefined) return <p className="tier-a stage">{format('positions.loanGraceEndedOpen', { when })}</p>;
+      if (defaultable === null) return <p className="tier-a stage">{format('positions.loanGraceEndedUnread', { when })}</p>;
+      if (!defaultable) return <p className="tier-a stage">{format('positions.loanGraceEndedNotYet', { when })}</p>;
       const key = borrowerSide ? (rental ? 'positions.loanGraceOverRenter' : 'positions.loanGraceOverBorrower') : 'positions.loanGraceOverLender';
-      return <p className="tier-a stage">{format(key, { when: formatUtc(stage.graceEndedAt) })}</p>;
+      return <p className="tier-a stage">{format(key, { when })}</p>;
     }
   }
 }
@@ -278,7 +288,7 @@ function StageLine({ stage, borrowerSide, rental }: { stage: LoanStage; borrower
 /** An owed periodic-interest checkpoint, named with the interest still owed
  *  in the principal asset and, for the borrower, the sale that follows its
  *  grace. Shown beside the due date, whichever comes first. */
-function InterestLine({ stage, borrowerSide, amountOf }: { stage: InterestStage; borrowerSide: boolean; amountOf: (v: bigint) => string }) {
+export function InterestLine({ stage, borrowerSide, amountOf }: { stage: InterestStage; borrowerSide: boolean; amountOf: (v: bigint) => string }) {
   const { format } = useCopy();
   const nowSec = Math.floor(useNow() / 1000);
   switch (stage.kind) {

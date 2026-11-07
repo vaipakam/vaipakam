@@ -2,6 +2,7 @@ import { lazy, type ComponentType } from 'react';
 import { BorrowPage } from '../pages/borrow/BorrowPage';
 import { HomePage } from '../pages/home/HomePage';
 import { LendPage } from '../pages/lend/LendPage';
+import { PositionPage } from '../pages/position/PositionPage';
 import { PositionsPage } from '../pages/positions/PositionsPage';
 
 /** The governance page decodes calls against the Diamond's whole ABI, which
@@ -17,4 +18,5 @@ export const BUILT_PAGES: Readonly<Record<string, ComponentType>> = {
   '/lend': LendPage,
   '/positions': PositionsPage,
   '/governance': GovernancePage,
+  '/positions/:id': PositionPage,
 };

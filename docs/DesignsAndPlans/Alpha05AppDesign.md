@@ -689,6 +689,58 @@ above. Each resolves here, so a route reviewer needs no private file:
   could not be read in full says so. Every row opens its position, where
   the protocol's verdict decides which actions are open (RB-ELIG): the list
   signs nothing and offers no action of its own.
+- **RB-POSITION-VIEW** — a loan's own page states, in this order: its
+  status in words (an adverse one, fallback or default, as a warning; an
+  internal match as closed, with each side collecting on Claims); the
+  reader's role, from the position tokens their wallet holds now (both
+  holders read; "confirming your role" until they are, and a reader who
+  holds neither is told they are viewing); the deadline that needs them,
+  worded for the side they hold, with "can now be defaulted" and "anyone
+  may now start the default" only when the protocol says the loan is
+  defaultable, never "will be", and that verdict is every gate of the
+  default a read can answer (the timing, the global pause, the sequencer
+  and the lender admission), so the gate that refuses is stated as the
+  reason the default cannot start (a grace end passed by the
+  clock alone is
+  stated as passed, with the protocol's verdict unread or not yet given;
+  a list, which does not read the verdict, sends the reader to the loan's
+  page);
+  the dates from the protocol's loan clock alone (the current term's due
+  date before pause credit, labelled as that term's and never as the
+  opening one, since an extension or a borrower handover rewrites the
+  term; the pause credit, the due date and the grace end; an unread date
+  is unknown, never computed from the start and the term), and, for a
+  loan with an interest schedule where periodic settlement is switched
+  off, that no collateral is sold at a checkpoint; the terms as they stand
+  now, said to be so (the protocol keeps no record of the amount first
+  lent, and a partial repayment lowers the principal, collateral moves and
+  a borrower handover can change the rate, so the principal is "still
+  owed" on a live loan and "when it ended" on an ended one; an ended loan
+  with no principal on its record says an internal match covered it when
+  its status says so, and otherwise only that none is recorded, never
+  calling it a write-off it cannot establish; never "you lent"; the
+  protocol's share and the initiation fee rate as the loan's own
+  snapshots, none for a loan that carries a lender sale, and a share
+  recorded as 0 as the fixed legacy rate settlement charges for a loan
+  that opened without one, never as 0%; an NFT rental's
+  rent per day in its prepayment asset and whether returning early still
+  charges every remaining day);
+  its health (a failed reading is unknown; a loan with an unpriced leg,
+  whose health and loan-to-value reads the protocol refuses, is "no
+  price-based reading", never 0 and never unknown, while a successful
+  reading of 0 on a priced loan is shown as 0; the liquidation
+  threshold is the loan's stored
+  snapshot, and the network's internal-match band above it, read from the
+  protocol, in which no outside sale can close the loan, or that matching
+  is off or holds no band; an initiation fee rate recorded as 0 is "not
+  recorded", never 0%); where its collateral is held (the protocol's lien: held in
+  the borrower's vault, on an ended loan until its claim is collected,
+  released (checked before a zero amount, since a release zeroes it), or
+  none, with an ERC-1155 lien's quantity); and, for a loan whose
+  collateral has no price, that a default hands the lender the collateral
+  itself, while an NFT rental, which has no collateral, states its own
+  default instead (the renter's use ends, the prepaid rent goes to the
+  lender less the protocol's share, the buffer to the treasury). Until the loan's actions land, the page says so and offers none.
 
 ## 3. Companion specifications
 
