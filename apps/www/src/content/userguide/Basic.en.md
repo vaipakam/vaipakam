@@ -1233,6 +1233,14 @@ On a running loan, the page offers to repay it in full. Anyone may repay except 
 
 What you owe grows by the second, and the protocol takes the amount as of the moment your repayment confirms. The review shows two figures: what it costs now, and what it would cost about thirty minutes ahead. Your wallet approves exactly the second figure. If you had already approved more, even an unlimited amount, it is lowered to that figure for the repayment, since the repayment takes no maximum of its own. The approval limits the amount, not the time: a repayment that confirms later goes through only while what is owed still fits within it, and is otherwise refused with nothing moved. On a loan that charges the full term, the amount does not grow before the due date, so a later repayment can still go through. Whatever it does not use of the approval is put back afterwards. Then the borrower collects the collateral and the lender collects principal and interest on Claims.
 
+<a id="interest-schedule"></a>
+
+### Interest Schedule
+
+A loan with an interest schedule owes interest every period (a month, a quarter, six months or a year), not only at the end. Its page shows the current period: when it ends, when its grace period ends, the interest it owes, what has been paid toward it and what is still owed. The interest for a period is figured on the principal and rate as they stand now, so a partial repayment lowers it.
+
+Once a period and its grace are over, anyone may settle it. A paid period only moves the checkpoint forward; one that is still short sells just enough of the borrower's collateral to cover what is owed and the sale's charges. The page says whether settling is open now. It names the network's periodic-settlement switch when it is off (then nothing can be settled and no collateral is sold), and the protocol pause while it lasts (settlement stops, and the paused time is added to the period's dates). After a pause, a payment covers one period through its original end, and interest for the paused stretch stays owed.
+
 <a id="risk-access"></a>
 
 ### Risk Access: Your Risk Level

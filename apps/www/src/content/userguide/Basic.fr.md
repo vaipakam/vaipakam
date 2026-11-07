@@ -1278,6 +1278,14 @@ Sur un prêt en cours, la page propose de le rembourser intégralement. Tout le 
 
 Ce que vous devez augmente à chaque seconde, et le protocole prend le montant au moment où votre remboursement est confirmé. L'examen montre deux chiffres : ce que cela coûte maintenant et ce que cela coûterait environ trente minutes plus tard. Votre portefeuille approuve exactement le second chiffre. Si vous aviez déjà approuvé davantage, même un montant illimité, l'approbation est ramenée à ce chiffre pour le remboursement, car le remboursement ne fixe lui-même aucun maximum. L'approbation limite le montant, pas le temps : un remboursement confirmé plus tard ne passe que tant que ce qui est dû y tient encore, sinon il est refusé et rien ne bouge. Sur un prêt qui facture la durée entière, le montant ne grandit pas avant l'échéance, donc un remboursement plus tardif peut encore passer. Ce que le remboursement n'utilise pas de l'approbation est remis en place ensuite. Puis l'emprunteur récupère la garantie et le prêteur récupère le principal et les intérêts dans Claims.
 
+<a id="interest-schedule"></a>
+
+### Échéancier des intérêts
+
+Un prêt assorti d'un échéancier doit des intérêts à chaque période (un mois, un trimestre, six mois ou un an), pas seulement à la fin. Sa page montre la période en cours : quand elle se termine, quand son délai de grâce se termine, les intérêts qu'elle doit, ce qui a été payé et ce qui reste dû. Les intérêts d'une période sont calculés sur le capital et le taux tels qu'ils sont maintenant, donc un remboursement partiel les réduit.
+
+Une fois une période et son délai de grâce écoulés, n'importe qui peut la régler. Une période payée fait seulement avancer l'échéance ; pour une période encore incomplète, juste assez de garantie de l'emprunteur est vendue pour couvrir ce qui est dû et les frais de la vente. La page indique si le règlement est ouvert maintenant. Elle nomme l'interrupteur de règlement périodique du réseau lorsqu'il est coupé (rien ne peut alors être réglé et aucune garantie n'est vendue) et la pause du protocole tant qu'elle dure (le règlement s'arrête et le temps de pause s'ajoute aux dates de la période). Après une pause, un paiement couvre une période jusqu'à sa fin d'origine, et les intérêts de la durée de pause restent dus.
+
 <a id="risk-access"></a>
 
 ### Risk Access : votre niveau de risque

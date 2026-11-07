@@ -1952,6 +1952,14 @@ Positions 通过一个共享读取器读取与 Home 相同的持仓清单：`get
 
 确认页在最新区块读取 `calculateRepaymentAmount(loanId)`，再把区块时间覆盖为 `min(now + 30 分钟, 宽限期结束)` 读取一次；同一请求还会读取其实际运行的区块时间，忽略覆盖的连接会被跳过。批准额恰好是第二个数字，打开钱包前会模拟调用；收据之后，从其 `LoanRepaid` 日志读取还款使贷款所处的状态（而非该区块的状态，同一区块中随后的领取可能已将其结清），根据 `Transfer` 日志计量付款，当 allowance 显示为批准额减去付款时，将其恢复为之前的值。高于该数字的 allowance（包括无限额度）同样会降到这个数字，因为 `repayLoan(loanId)` 不设上限也不设期限；之后的恢复会还原原来的较大值。
 
+<a id="interest-schedule"></a>
+
+### 利息计划：如何读取
+
+对于有付息周期的 Active ERC-20 贷款，卡片读取 `previewPeriodicSettle(loanId)`（周期、`periodEndAt`、`graceEndsAt`、`expected`、`paidByBorrower`、`shortfall`、`canSettleNow`）、`getPeriodicInterestEnabled()` 和 `paused()`，并显示读取时的区块时间。`expected` 是按当前 `principal` 和 `interestRateBps` 计算的一个完整周期；`periodEndAt` 包含贷款的暂停补偿。
+
+预览的 `canSettleNow` 不考虑开关和暂停，因此卡片按 `settlePeriodicInterest` 自身的顺序把它们组合起来：关闭（`PeriodicInterestDisabled`）、暂停（`whenNotPaused`），然后是周期时间（`graceEndsAt` 之前为 `PeriodicSettleNotDue`）。只有在开关打开且协议未暂停时才会提示出售；无法读取的开关或暂停状态显示为未知。不足额为零时，结算只推进检查点。守护程序的 `PERIODIC_SETTLE` 是否启用不会报告给应用，因此卡片说明结算对任何人开放，而守护程序的状态未知。
+
 <a id="risk-access"></a>
 
 ### Risk Access：你的风险等级

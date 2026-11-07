@@ -2407,6 +2407,14 @@ Die Aktion folgt einer Regel: `repayLoan` wird für einen Active- oder FallbackP
 
 Die Prüfung liest `calculateRepaymentAmount(loanId)` am neuesten Block und erneut mit der auf `min(now + 30 Minuten, Ende der Kulanzfrist)` überschriebenen Blockzeit; dieselbe Anfrage liest die Blockzeit, unter der sie lief, und eine Verbindung, die die Überschreibung ignorierte, wird übergangen. Die Genehmigung ist genau die zweite Zahl, der Aufruf wird vor dem Öffnen der Wallet simuliert, und nach der Quittung wird der Status, in dem die Rückzahlung den Kredit ließ, aus ihrem `LoanRepaid`-Log gelesen (nicht am Block, an dem eine spätere Forderung ihn schon abgewickelt haben kann), die Zahlung aus den `Transfer`-Logs gemessen und die Allowance auf ihren vorherigen Wert zurückgesetzt, wenn sie die Genehmigung abzüglich der Zahlung liest. Eine höhere Allowance, auch eine unbegrenzte, wird ebenfalls auf diese Zahl gesenkt, da `repayLoan(loanId)` keinen Höchstbetrag und keine Frist kennt; das Zurücksetzen stellt danach den höheren Wert wieder her.
 
+<a id="interest-schedule"></a>
+
+### Zinsplan: Wie er gelesen wird
+
+Für einen aktiven ERC-20-Kredit mit Kadenz liest die Karte `previewPeriodicSettle(loanId)` (Kadenz, `periodEndAt`, `graceEndsAt`, `expected`, `paidByBorrower`, `shortfall`, `canSettleNow`), `getPeriodicInterestEnabled()` und `paused()` und nennt die gelesene Blockzeit. `expected` ist eine volle Periode beim aktuellen `principal` und `interestRateBps`; `periodEndAt` enthält die Pausengutschrift des Kredits.
+
+`canSettleNow` der Vorschau beachtet weder den Schalter noch die Pause, daher setzt die Karte sie in der Reihenfolge von `settlePeriodicInterest` zusammen: ausgeschaltet (`PeriodicInterestDisabled`), pausiert (`whenNotPaused`), dann die Zeit der Periode (`PeriodicSettleNotDue` vor `graceEndsAt`). Ein Verkauf wird nur angekündigt, wenn der Schalter an und das Protokoll nicht pausiert ist; ein ungelesener Schalter oder eine ungelesene Pause wird als unbekannt angegeben. Bei einem Fehlbetrag von null rückt die Abrechnung nur den Stichtag vor. Die Scharfschaltung von `PERIODIC_SETTLE` beim Keeper wird der App nicht gemeldet, daher sagt die Karte, dass die Abrechnung jedem offensteht und der Stand des Keepers nicht bekannt ist.
+
 <a id="risk-access"></a>
 
 ### Risk Access: Ihre Risikostufe
