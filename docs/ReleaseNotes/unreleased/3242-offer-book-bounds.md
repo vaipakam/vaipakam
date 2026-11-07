@@ -1,4 +1,4 @@
-## Thread — Offer-book bounds: a $10 value floor and a per-wallet open-offer cap (PR #3283)
+## Thread — Offer-book bounds: a $10 value floor and a per-wallet open-offer cap (PR #3283 and its app follow-up)
 
 The offer book can no longer be flooded with offers too small to be worth
 servicing. Two bounds now apply to every offer a wallet posts. An offer whose
@@ -34,8 +34,21 @@ total, which on a small offer would fall under the floor; it now raises that
 fill to the floor, read live from the protocol, and never above the total. An
 amount under the floor is named under the field before anything is signed, and
 both new refusals read as plain sentences. The standing-intent preview reports
-a slice under the floor the same way the fill would refuse it. This advances
-#3242; the size filter, default ranking and the open count before signing
-follow in their own PR.
+a slice under the floor the same way the fill would refuse it.
+
+The offer book now ranks offers largest first by default, so the market's
+real depth leads and a run of tiny offers sinks instead of crowding the top;
+newest first stays one choice away. A smallest-size filter (any, or at
+least 10, 100, 1,000 or 10,000 in the reference currency, which is read live
+rather than assumed) hides only an offer whose size it measured below the
+choice. Size is what a lending offer can still lend, or what a request asks
+for, at the protocol's price. An offer in a token with no reliable price has
+no measured size, so it is never hidden and is listed after the sized ones,
+and the page says so. Create offer, in both the current app and the new one,
+names the wallet's open count once it is within five of the cap and stops
+before any signature at the cap; the new app also names an amount, or a
+lending offer's smallest part, below the floor. The signed-offer book refuses
+an order whose smallest amount is below the floor, since no taker could fill
+it directly, and the Rate Desk says why in a sentence. Closes #3242.
 
 > Caveat: on a Diamond refreshed in place, offers opened before the refresh do not count against the cap.

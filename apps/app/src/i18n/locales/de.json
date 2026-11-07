@@ -1877,7 +1877,13 @@
         "sortDurationLong": "Längster Kredit zuerst",
         "assetLabel": "Nach Asset-Adresse filtern",
         "assetPlaceholder": "0x… (beliebiger Teil: Kredit-Asset, Sicherheit, Zahlung)",
-        "clear": "Filter löschen"
+        "clear": "Filter löschen",
+        "sortLargest": "Größte zuerst",
+        "minSizeLabel": "Kleinste Größe",
+        "minSizeAny": "Jede Größe",
+        "minSizeAtLeast": "Mindestens {{amount}} {{unit}}",
+        "minSizeUnitUnknown": "in der Referenzwährung",
+        "sizeNote": "Die Größe ist, was ein Angebot noch verleiht oder was eine Anfrage erbittet, bewertet zum Preis des Protokolls. Angebote in einem Token ohne verlässlichen Preis haben keine gemessene Größe: Sie werden nie nach Größe ausgeblendet und nach den bewerteten Angeboten aufgeführt."
       },
       "loading": "Angebotsbuch wird geladen…",
       "filteredEmptyTitle": "Keine Angebote passen zu diesen Filtern",
@@ -2144,7 +2150,8 @@
         "lockAtFill": "{{amount}} {{symbol}} Sicherheit — wird erst gesperrt, wenn jemand das Angebot annimmt.",
         "netYield": "Wenn jemand das Angebot annimmt und der Kredit zurückgezahlt wird, verdienen Sie nach der Protokollgebühr von {{feePct}} % auf Ihre Zinsen etwa {{net}} % pro Jahr.",
         "lifNote": "Startgebühr: {{feePct}} % des Kreditbetrags (etwa {{amount}} {{symbol}}), berechnet beim Start des Kredits.",
-        "expiryGtcSignedHint": "Ein kostenlos signiertes Angebot bleibt bis zu 7 Tage offen und läuft dann von selbst ab. Sie können es vorher stornieren (das Stornieren kostet eine Netzwerkgebühr)."
+        "expiryGtcSignedHint": "Ein kostenlos signiertes Angebot bleibt bis zu 7 Tage offen und läuft dann von selbst ab. Sie können es vorher stornieren (das Stornieren kostet eine Netzwerkgebühr).",
+        "gaslessBelowFloor": "Dieser Auftrag ist kleiner als das kleinste Angebot, das das Protokoll in diesem Token annimmt, daher könnte ihn niemand annehmen. Es wurde nichts eingestellt. Erhöhe den Betrag und signiere erneut."
       },
       "orders": {
         "loading": "Ihre offenen Orders werden geladen…",
@@ -2988,7 +2995,10 @@
       "receiptOweNothing": "Nichts — der Kreditnehmer schuldet Ihnen.",
       "viewTransaction": "Transaktion ansehen",
       "viewPositions": "Meine Positionen ansehen",
-      "postAnother": "Ein weiteres Angebot veröffentlichen"
+      "postAnother": "Ein weiteres Angebot veröffentlichen",
+      "openOfferCapFull": "Du hast bereits {{cap}} Angebote offen, das Maximum für eine Wallet. Storniere eines, um ein weiteres einzustellen; ein abgelaufenes Angebot zählt, bis du es stornierst.",
+      "openOfferCapNear": "Du hast {{open}} von {{cap}} Angeboten offen, die eine Wallet haben darf. Ein abgelaufenes Angebot zählt, bis du es stornierst.",
+      "openOfferCapManage": "Deine Angebote ansehen"
     },
     "loanRow": {
       "youRent": "Sie mieten",

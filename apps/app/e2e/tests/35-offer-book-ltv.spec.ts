@@ -18,6 +18,7 @@
 import { test, expect } from '../lib/wallet-fixture';
 import { DIAMOND, DIAMOND_ABI_VIEM, ERC20_MIN_ABI, WETH, pub } from '../lib/chain';
 import { BUCKET_PREFERENCE, TLIQ, getOffer, seedDeskOffer } from '../lib/desk';
+import { chooseMenuValue, gotoOfferBookNewest } from '../lib/flows';
 
 async function legValue(asset: `0x${string}`, amount: bigint): Promise<bigint> {
   const [[price, feedDecimals], tokenDecimals] = await Promise.all([
@@ -59,11 +60,21 @@ test('an offer card states its loan-to-value from live prices', async ({ launchW
   const pct = `${Number((Number(bps) / 100).toFixed(2))}%`;
 
   const { page } = await launchWallet('borrower', { advanced: true });
-  await page.goto('/offers', { waitUntil: 'domcontentloaded' });
+  await gotoOfferBookNewest(page);
   const row = page
     .locator('.item-row')
     .filter({ has: page.getByText(`offer #${offerId}`, { exact: false }) })
     .first();
   await expect(row).toBeVisible({ timeout: 60_000 });
   await expect(row).toContainText(`loan-to-value ${pct}`, { timeout: 30_000 });
+
+  // #3242 — the smallest-size filter hides a row only by its MEASURED size:
+  // this priced few-dollar offer is under the largest choice, so it leaves
+  // the list, and the page says how size is measured.
+  expect(borrowed < 10_000n * 10n ** 18n).toBe(true);
+  await chooseMenuValue(page, 'book-min-size', '10000');
+  await expect(row).toBeHidden({ timeout: 30_000 });
+  await expect(page.getByTestId('book-size-note')).toBeVisible();
+  await chooseMenuValue(page, 'book-min-size', '0');
+  await expect(row).toBeVisible({ timeout: 30_000 });
 });

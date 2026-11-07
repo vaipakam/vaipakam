@@ -437,6 +437,28 @@ export interface OfferBookFloor {
   minAmount?: bigint;
 }
 
+/**
+ * #3242 — how close a wallet is to the per-wallet open-offer cap, for the
+ * post flow: `full` stops the flow before signing (the protocol would refuse
+ * with `TooManyOpenOffers`), `near` names the count so the wallet is not
+ * surprised by the limit, `room` says nothing. A refinance request is not
+ * counted against the cap, so it always has room.
+ */
+export type OpenOfferStanding = 'room' | 'near' | 'full';
+
+/** Within this many offers of the cap, the flow names the count. */
+export const OPEN_OFFER_NEAR_MARGIN = 5n;
+
+export function openOfferStanding(
+  count: { open: bigint; cap: bigint } | undefined,
+  isRefinanceRequest: boolean,
+): OpenOfferStanding {
+  if (!count || isRefinanceRequest || count.cap === 0n) return 'room';
+  if (count.open >= count.cap) return 'full';
+  if (count.cap - count.open <= OPEN_OFFER_NEAR_MARGIN) return 'near';
+  return 'room';
+}
+
 /** #3242 — a lender offer's smallest fill: 10% of the whole amount (at
  *  least one base unit), raised to the offer-book floor's amount when it
  *  binds, and never above the whole amount. */

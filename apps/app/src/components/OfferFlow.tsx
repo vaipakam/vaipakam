@@ -53,7 +53,7 @@ import {
 } from '../contracts/erc20';
 import { useActiveOffers, useOffer } from '../data/hooks';
 import { useProtocolFees, readLiveProtocolFees } from '../data/fees';
-import { useOfferBookFloor } from '../data/offerFloor';
+import { useOfferBookFloor, useOpenOfferCount } from '../data/offerFloor';
 import { useGraceLabel } from '../data/protocol';
 import { assertWalletNotSanctionedLive } from '../data/sanctions';
 import {
@@ -66,6 +66,7 @@ import type { IndexedOffer } from '../data/indexer';
 import {
   OFFER_DURATION_BUCKETS_DAYS,
   initialOfferTerms,
+  openOfferStanding,
   toCreateOfferPayload,
   validateOfferTerms,
   withConsent,
@@ -508,6 +509,13 @@ export function OfferFlow({ side, initialMarket, createOnly = false }: {
   const collateralMeta = useTokenMeta(form.collateralAsset || undefined);
   // #3242 — the offer-book floor the lender's smallest fill must meet.
   const bookFloor = useOfferBookFloor(form.lendingAsset || undefined);
+  // #3242 — the wallet's open offers against the per-wallet cap. Only a
+  // posted offer counts; accepting one adds nothing to the creator's book.
+  const openOfferCount = useOpenOfferCount(mode === 'post' ? address : undefined);
+  const offerCapStanding = openOfferStanding(
+    openOfferCount,
+    form.refinanceTargetLoanId !== '' && form.refinanceTargetLoanId !== '0',
+  );
   // Accept mode: the selected offer's collateral leg (borrower side pays it).
   const selectedCollateralMeta = useTokenMeta(selected?.collateralAsset);
 
@@ -963,7 +971,6 @@ export function OfferFlow({ side, initialMarket, createOnly = false }: {
     isAddressLike(form.lendingAsset) &&
     isPositiveDecimal(form.amount) &&
     !amountTooPrecise &&
-    !amountBelowFloor &&
     durationValid;
   // The terms alone: the consent is the review's (`consent`, below), and
   // signing is gated on it there.
@@ -979,8 +986,13 @@ export function OfferFlow({ side, initialMarket, createOnly = false }: {
     isAddressLike(form.lendingAsset) &&
     isAddressLike(form.collateralAsset) &&
     form.lendingAsset.toLowerCase() === form.collateralAsset.toLowerCase();
+  // #3242 — the offer-book bounds gate POSTING only: finding and taking an
+  // existing offer adds nothing to this wallet's book, so match discovery
+  // stays open at the cap and for an amount under the floor.
   const postDetailsComplete =
     detailsComplete &&
+    !amountBelowFloor &&
+    offerCapStanding !== 'full' &&
     isAddressLike(form.collateralAsset) &&
     isPositiveDecimal(form.collateralAmount) &&
     !collateralTooPrecise &&
@@ -2448,6 +2460,27 @@ export function OfferFlow({ side, initialMarket, createOnly = false }: {
       {deepLinkNotice && step === 'details' ? (
         <div className="banner banner-warn" role="alert">
           <span className="banner-body">{deepLinkNotice}</span>
+        </div>
+      ) : null}
+
+      {/* #3242 — the per-wallet open-offer cap, said before any signing: at
+          the cap the flow stops here (the protocol would refuse the post);
+          near it, the count is named so the limit is no surprise. */}
+      {mode === 'post' && step === 'details' && openOfferCount && offerCapStanding !== 'room' ? (
+        <div
+          className={`banner ${offerCapStanding === 'full' ? 'banner-danger' : 'banner-warn'}`}
+          role={offerCapStanding === 'full' ? 'alert' : 'status'}
+          data-testid="open-offer-cap"
+        >
+          <span className="banner-body">
+            {offerCapStanding === 'full'
+              ? copy.offerFlow.openOfferCapFull(String(openOfferCount.cap))
+              : copy.offerFlow.openOfferCapNear(
+                  String(openOfferCount.open),
+                  String(openOfferCount.cap),
+                )}{' '}
+            <Link to="/positions">{copy.offerFlow.openOfferCapManage}</Link>
+          </span>
         </div>
       ) : null}
 

@@ -15,6 +15,8 @@ import { useQuery } from '@tanstack/react-query';
 import { usePublicClient } from 'wagmi';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import { useActiveChain } from '../chain/useActiveChain';
+import { freshData } from '../lib/freshData';
+import { idleAware } from '../lib/idle';
 import type { OfferBookFloor } from '../lib/offerSchema';
 
 export type { OfferBookFloor };
@@ -28,7 +30,7 @@ export function useOfferBookFloor(lendingAsset: string | undefined): OfferBookFl
     ? (lendingAsset as `0x${string}`)
     : undefined;
 
-  const { data } = useQuery({
+  const q = useQuery({
     queryKey: ['offerBookFloor', readChain.chainId, asset],
     enabled: Boolean(publicClient && asset),
     staleTime: 60_000,
@@ -43,5 +45,42 @@ export function useOfferBookFloor(lendingAsset: string | undefined): OfferBookFl
     },
   });
 
-  return { minAmount: data ?? undefined };
+  // A failed refresh drops a cached answer rather than serving it as current.
+  return { minAmount: freshData(q) ?? undefined };
+}
+
+/**
+ * #3242 — where `wallet` stands against the per-wallet open-offer cap, from
+ * `getOfferBookBounds(wallet)`. `undefined` while the read is in flight, has
+ * failed, or there is no wallet: the flow then says nothing about the cap and
+ * the protocol's own refusal (`TooManyOpenOffers`) is the backstop.
+ */
+export function useOpenOfferCount(
+  wallet: string | undefined,
+): { open: bigint; cap: bigint } | undefined {
+  const { readChain } = useActiveChain();
+  const publicClient = usePublicClient({ chainId: readChain.chainId });
+  const who = wallet && ADDRESS_RE.test(wallet) ? (wallet as `0x${string}`) : undefined;
+
+  const q = useQuery({
+    queryKey: ['openOfferCount', readChain.chainId, who],
+    enabled: Boolean(publicClient && who),
+    staleTime: 30_000,
+    // Bounded re-read as well as the receipt refresh: an offer can leave the
+    // book without a write from this app (a fill, a cancel elsewhere), and a
+    // form left open at the cap must reopen posting when it does.
+    refetchInterval: idleAware(30_000),
+    queryFn: async () => {
+      const [, cap, open] = (await publicClient!.readContract({
+        address: readChain.diamondAddress,
+        abi: DIAMOND_ABI_VIEM,
+        functionName: 'getOfferBookBounds',
+        args: [who!],
+      })) as readonly [bigint, bigint, bigint];
+      return { open, cap };
+    },
+  });
+  // A failed refresh drops the cached count: a stale "at the cap" must not
+  // keep blocking a wallet that has since cancelled an offer.
+  return freshData(q);
 }

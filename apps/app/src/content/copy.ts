@@ -5231,11 +5231,20 @@ const copySource = {
       sideBorrowing: 'Requests to borrow (you lend)',
       sideRentals: 'NFT rentals',
       sortLabel: 'Sort by',
+      // #3242 — the default: the market's real depth first, tiny offers last.
+      sortLargest: 'Largest first',
       sortNewest: 'Newest first',
       sortRateLow: 'Lowest rate first',
       sortRateHigh: 'Highest rate first',
       sortDurationShort: 'Shortest loan first',
       sortDurationLong: 'Longest loan first',
+      minSizeLabel: 'Smallest size',
+      minSizeAny: 'Any size',
+      minSizeAtLeast: tmpl('At least {{amount}} {{unit}}', ['amount', 'unit']),
+      // The reference currency could not be read, so it is named by what it is.
+      minSizeUnitUnknown: 'in the reference currency',
+      sizeNote:
+        'Size is what an offer still lends, or what a request asks for, valued at the protocol’s price. Offers in a token with no reliable price have no measured size: they are never hidden by size and are listed after the sized ones.',
       assetLabel: 'Filter by asset address',
       assetPlaceholder: '0x… (any part: loan asset, collateral, payment)',
       clear: 'Clear filters',
@@ -5651,6 +5660,10 @@ const copySource = {
         `The book rejected this order ({{reason}}). Nothing was posted.`,
         ['reason'],
       ),
+      // #3242 — the book's ingest applies the protocol's value floor to the
+      // order's smallest amount, since no taker could fill it directly.
+      gaslessBelowFloor:
+        'This order is smaller than the smallest offer the protocol accepts in this token, so no one could take it. Nothing was posted. Raise the amount and sign again.',
       gaslessUnavailable:
         'We couldn’t reach the order book right now — the order was NOT posted. Please try again in a moment.',
       // Leg labels interpolated into securityBlocked / securityUnknown
@@ -6938,6 +6951,16 @@ const copySource = {
     backHome: 'Back to Home',
   },
   offerFlow: {
+    // #3242 — the per-wallet open-offer cap, named before any signing.
+    openOfferCapFull: tmpl(
+      'You already have {{cap}} offers open, the most one wallet may have. Cancel one to post another; an expired offer counts until you cancel it.',
+      ['cap'],
+    ),
+    openOfferCapNear: tmpl(
+      'You have {{open}} of the {{cap}} offers one wallet may have open. An expired offer counts until you cancel it.',
+      ['open', 'cap'],
+    ),
+    openOfferCapManage: 'See your offers',
     // Duration field hint when the picked term exceeds the protocol cap.
     durationCap: tmpl(
       'The protocol currently caps offers at {{max}} — pick a shorter duration.',

@@ -39,6 +39,7 @@ import {
   OfferCancelFacetABI,
   LoanFacetABI,
   MetricsFacetABI,
+  OfferBookFacetABI,
   SignedOfferFacetABI,
 } from '@vaipakam/contracts/abis';
 
@@ -56,6 +57,11 @@ export const DIAMOND_METRICS_ABI = MetricsFacetABI;
  *  ingest-gate views the POST /signed-offers route consults. Full facet ABI
  *  re-exported per the same rationale as the two above. */
 export const DIAMOND_SIGNED_OFFER_ABI = SignedOfferFacetABI;
+
+/** #3242 — hosts `getMinOfferAmount(address)`, the offer-book value floor in
+ *  the lending token's own units, which the POST /signed-offers ingest gate
+ *  applies to an order's smallest amount. */
+export const DIAMOND_OFFER_BOOK_ABI = OfferBookFacetABI;
 
 /** ERC-721 `ownerOf` — the Vaipakam position NFT is a facet ON the Diamond, so
  *  the diamond address IS the NFT contract. Reverts on burned / nonexistent

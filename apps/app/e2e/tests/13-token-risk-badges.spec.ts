@@ -33,6 +33,7 @@ import {
   pickCuratedAsset,
   postLenderOffer,
   newestOfferIdFor,
+  gotoOfferBookNewest,
 } from '../lib/flows';
 import { WETH } from '../lib/chain';
 import { accountFor } from '../lib/wallets';
@@ -89,7 +90,7 @@ test('a hard-flagged offer wears "Risk flagged" on the book and is excluded from
   await mockGoPlus(viewer.page, () => ({ row: goPlusRow({ is_honeypot: '1' }) }));
 
   // Book row: badge visible (advanced mode renders the offer id).
-  await viewer.page.goto(`${BADGE_BASE}/offers`, { waitUntil: 'domcontentloaded' });
+  await gotoOfferBookNewest(viewer.page, BADGE_BASE);
   const row = bookRowFor(viewer.page, offerId);
   await expect(row).toBeVisible({ timeout: 30_000 });
   await expect(row.getByText('Risk flagged')).toBeVisible({ timeout: 30_000 });
@@ -122,7 +123,7 @@ test('a warn-tier offer stays listed wearing "Caution"', async ({
   const viewer = await launchWallet('borrower', { advanced: true });
   await mockGoPlus(viewer.page, () => ({ row: goPlusRow({ slippage_modifiable: '1' }) }));
 
-  await viewer.page.goto(`${BADGE_BASE}/offers`, { waitUntil: 'domcontentloaded' });
+  await gotoOfferBookNewest(viewer.page, BADGE_BASE);
   const row = bookRowFor(viewer.page, offerId);
   await expect(row).toBeVisible({ timeout: 30_000 });
   await expect(row.getByText('Caution')).toBeVisible({ timeout: 30_000 });
@@ -145,7 +146,7 @@ test('an unreachable screen shows "Not screened" and keeps the offer listed', as
   const viewer = await launchWallet('borrower', { advanced: true });
   await mockGoPlus(viewer.page, () => ({ status: 500 }));
 
-  await viewer.page.goto(`${BADGE_BASE}/offers`, { waitUntil: 'domcontentloaded' });
+  await gotoOfferBookNewest(viewer.page, BADGE_BASE);
   const row = bookRowFor(viewer.page, offerId);
   await expect(row).toBeVisible({ timeout: 30_000 });
   await expect(row.getByText('Not screened')).toBeVisible({ timeout: 30_000 });

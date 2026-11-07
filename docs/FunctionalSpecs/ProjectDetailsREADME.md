@@ -565,7 +565,11 @@ Offers that come from an existing loan are exempt from both, because
 refusing them would close a way out of a loan that already exists: a sale
 or offset offer the protocol creates for a position, and a refinance
 offer. A signed off-chain offer is held to the floor when it is filled and
-never counts against the cap, since it is filled the moment it exists.
+never counts against the cap, since it is filled the moment it exists. The
+signed-offer book also refuses, when an order is posted to it, an order
+whose smallest amount is below the floor, since no taker could fill it
+directly; if the floor cannot be read at that moment the order is admitted
+and the fill-time check is the backstop.
 There is no cancellation fee. A refusal names the bound and the figures
 (the offer's value and the floor, or the wallet's open count and the cap),
 and a wallet can read the floor, the cap and its own open count before it
@@ -1528,7 +1532,7 @@ old terms.
 - **Guidance:** Display data from the last accepted offer with similar parameters (e.g., asset type, duration) to provide users with an indication of current market rates on Vaipakam.
 - **Market-Rate Shortcut Widget:** Once a borrowing pair is fully specified, Offer Book should expose a small `Lend at market rate` / `Borrow at market rate` panel. The user enters the lending amount, the widget estimates the minimum collateral required from the same Health Factor / LTV rules enforced by the protocol with a small safety buffer, and the actions deep-link into `Create Offer` with the known fields pre-filled. The shortcut must not create or accept an offer directly and must not skip the full Create Offer review step. If the asset is thin, unsupported, or lacks a price on the connected chain, the widget may still deep-link but should leave unavailable collateral / rate fields unset and let Create Offer show the cautionary risk banner.
 - **Filters:** Users can filter offers by asset type, collateral requirements (if applicable), loan/rental duration, and amount.
-- **Size filter and default ranking (#3242):** The offer book should offer a minimum-size filter and, by default, rank offers so the larger and better-priced ones are seen first, so small offers cannot crowd the view even within the on-chain floor. The Create Offer flow should show the value floor and the wallet's open-offer count against the cap before the user signs. Where the flow chooses a lender's smallest fill for the user, it should never choose one below the floor: it raises the fill to the floor (never above the whole amount), and an amount below the floor is named before signing rather than left to fail.
+- **Size filter and default ranking (#3242):** The offer book should offer a minimum-size filter and, by default, rank offers largest first, so small offers cannot crowd the view even within the on-chain floor; sorting by rate or term stays one choice away, because which rate is better depends on which side the reader takes. An offer's size is what it can still lend (a lending offer) or what it asks for (a borrow request), valued at the protocol's price in the active numeraire. An offer whose size cannot be measured (an unpriced or illiquid token, an NFT, a failed price read) is never hidden by the filter; it is listed after the measured ones, and the page says so. The Create Offer flow should show the value floor and the wallet's open-offer count against the cap before the user signs. Where the flow chooses a lender's smallest fill for the user, it should never choose one below the floor: it raises the fill to the floor (never above the whole amount), and an amount below the floor is named before signing rather than left to fail.
 - **Auto-Matching (Suggestion Engine):** The frontend can suggest potentially compatible offers to users based on their currently defined preferences or draft offers.
 - **Clear Indicators:** The frontend will use clear indicators for network selection, asset liquidity status, and potential risks.
 - **Information Icons & Tooltips:** Key fields and terms should include concise helper text, tooltips, and links to deeper documentation or FAQs where appropriate.
