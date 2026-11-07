@@ -314,6 +314,18 @@ their own contract:
   final claim is paid. A protocol route that moves a position (a sale, an
   obligation handover, consolidation) does so with the holder's approval
   for that one token, given in the same step.
+- **Locks during a route.** While a token is locked, the NFT contract
+  refuses every transfer except the one the lock was placed for. A lock
+  ends when its route completes or is cancelled, and at its expiry at the
+  latest, which is the route's own expiry (a loan-sale listing already
+  carries a mandatory one). So a faulty Diamond can at most freeze a token
+  until that expiry, never move it. The contract reports the lock through
+  the standard "locked" signal (EIP-5192), so wallets and marketplaces show
+  the token as not transferable while it lasts, and the app shows why.
+- **A listing completes without the seller present**, so the seller grants
+  the approval for that one token when listing. While the listing is open,
+  that token is exposed to the Diamond the way any listed NFT is exposed to
+  its marketplace; no other position is.
 - **No notification.** The NFT contract never calls the Diamond. Every rule
   that depends on the holder reads the current owner when it acts:
 
