@@ -119,7 +119,7 @@ asks, without the indexer subscribing to every vault address.
 | Class | Layer 1 (Diamond: intent) | Layer 2 (vault: independent) |
 | --- | --- | --- |
 | **Owner** | Recipient is the owner's wallet or, with protected mode on, an allowlisted address after its delay. Version and pause rules apply. | `to == owner`, where `owner` is the vault's own record of its owner wallet (set at creation, changed only as §3.7 allows), or `to` is on the vault's **own** allowlist with its delay elapsed. **And** the amount is at most the vault's free balance of that asset: its balance less the sum of its own open liens on it (§3.7), so an owner outflow can never take what a lien still holds |
-| **Counterparty** | `to` is the vault of THAT loan's other party, the current holder of that position | `to` is the vault of the **current holder** of the other side's position NFT, read from the position-NFT contract (§3.9) at the moment of payment; the vault works out that holder's vault address from the holder's wallet itself (§3.4). The amount is at most the open lien for `ref`, and the lien is reduced by it |
+| **Counterparty** | `to` is the vault of THAT loan's other party, the current holder of that position | `to` is the vault of the **current holder** of the other side's position NFT, read from the position-NFT contract (§3.9) at the moment of payment. The vault accepts `to` only if it is a genuine vault (§3.4) **and** `to`'s own owner record (§3.7) equals that holder; it never consults the Diamond's wallet-to-vault lookup. The amount is at most the open lien for `ref`, and the lien is reduced by it |
 | **Treasury** | `to == s.treasury` | `to ==` the treasury address the registry holds (§3.6), **and** the amount is drawn either from the lien for `ref` and its fee budget, or from free balance under the owner's signed **fee authorization** for `ref` (§3.7). Without one of those, the vault pays the treasury nothing |
 | **Swap adapter / order taker** | A registered adapter for this action, against a lien | `to` is on the registry. The amount is at most the lien for `ref` |
 | **Marketplace conduit** | A recorded listing for `ref`, through a registered conduit | Grant only (§3.5), per amount or token id, and only to a registry conduit |
@@ -228,9 +228,17 @@ two fails closed: the vault refuses.
 - **The payee is the current holder.** Each lien records the other side's
   position (the position-NFT contract and token id). A counterparty payment
   goes to the vault of whoever holds that NFT at the moment of payment,
-  read from the position-NFT contract, which no facet can write (§3.9). So
-  a compromised Diamond cannot name a payee, and nothing has to be handed
-  over when a position changes hands.
+  read from the position-NFT contract, which no facet can write (§3.9).
+  The paying vault checks the destination itself: it must be a genuine
+  vault, and its own owner record must equal that holder. Both facts are
+  held outside the Diamond, so a compromised Diamond cannot substitute its
+  own genuine vault, and nothing has to be handed over when a position
+  changes hands.
+- **A holder with no vault yet.** Vaults are deployed at an address
+  derived from the owner wallet (CREATE2, with the owner fixed by that
+  derivation), so anyone may deploy a holder's vault and nobody can choose
+  its owner. A route paying such a holder deploys the vault first in the
+  same transaction, then pays it under the same check.
 - **Seller claims.** A sale through the protocol's route may split value
   earned before the sale (#1209's seller interest) as a seller claim. The
   vault records it only from the seller's signed sale terms (§8 Q1): the
@@ -316,10 +324,12 @@ their own contract:
 - **No route locks: the holder is re-checked at completion.** Today a
   token is locked while a sale listing, an offset, a collateral listing or
   a swap-to-repay order is open, so the seller cannot list and then send
-  the NFT elsewhere. Instead, each route records the holder who started it,
-  and at completion (the fill, the accept, the swap) it requires that the
-  same holder still holds the token. If the NFT has moved, the completion
-  reverts and the route counts as cancelled. Completions are atomic, so the
+  the NFT elsewhere. Instead, the NFT core keeps a **transfer count** per
+  token that only ever increases, by one on every transfer. Each route
+  records the count when it starts, and at completion (the fill, the
+  accept, the swap) it requires the count to be unchanged. If the NFT has
+  moved at all, even away and back, the completion reverts and the route
+  stays cancelled for good. Completions are atomic, so the
   worst outcome is a failed fill and its gas, never a loss. The marketplace
   listings already re-check validity at fill, and this check joins them.
   The app says it plainly ("moving this NFT cancels your open listing"),
@@ -388,6 +398,12 @@ opens by itself.
     the vault treats as the holder;
   - after a plain transfer of the position NFT on an outside marketplace,
     the next payment goes to the new holder's vault, with no app step;
+  - a payment to the attacker's own genuine vault, whose owner record is
+    not the NFT holder, reverts at layer 2;
+  - a holder with no vault: the route deploys it at its derived address,
+    then pays it;
+  - a route started, then the NFT sent away and back: completion reverts on
+    the changed transfer count;
   - a forged seller claim against an honest user's lien, to any vault but
     a recorded seller or above its recorded claim, reverts at layer 2;
   - paying more than the recorded lien reverts;
