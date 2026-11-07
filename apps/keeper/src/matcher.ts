@@ -61,8 +61,8 @@ import {
 import type { ChainConfig, Env } from './env';
 import type { PassTick } from './passSchedule';
 import { batchedRead } from './batchRead';
-import { pagedWalk, rotate, walkFrom } from './rotate';
-import { fairPairs, type FairUnit } from './fairPairs';
+import { pagedWalk, rotate, walkStart } from './rotate';
+import { fairPairs, pairSpaceFrom, type FairUnit } from './fairPairs';
 import { readCutoffMs, runIndex } from './runWindow';
 import { getChainConfigs } from './env';
 import {
@@ -559,49 +559,50 @@ export function groupByCreator(list: readonly OfferLite[]): Map<string, OfferLit
  * creator's. {@link fairPairs} walks them round-robin, so each pair of
  * counterparties gets a preview before any gets a second. A creator is never
  * paired with itself (#235 / #2760: the contract refuses a self-trade), so that
- * costs nothing. The buckets and both creator orders start at a point that
- * moves with the run ({@link walkFrom}), so when the budget reaches only part
- * of round 0, a different part is first next run. Lazy: a unit is built only
- * when the walk reaches it.
+ * costs nothing. Round 0 starts at a point in the whole space of (bucket,
+ * lender creator, borrower creator) cells that moves with the run
+ * ({@link pairSpaceFrom}, {@link walkStart}), so when the budget reaches only
+ * part of round 0, a different part is first next run and every cell is first
+ * in turn. Lazy: a unit is built only when the walk reaches it.
  */
 export function* offerMatchUnits(
   lenders: ReadonlyMap<string, readonly OfferLite[]>,
   borrowers: ReadonlyMap<string, readonly OfferLite[]>,
   run: number,
 ): Generator<FairUnit<OfferLite, OfferLite>> {
-  for (const key of walkFrom([...lenders.keys()], run)) {
+  const grids: { lenders: OfferLite[][]; lenderCreators: string[]; borrowers: OfferLite[][]; borrowerCreators: string[] }[] = [];
+  for (const [key, lenderList] of lenders) {
     const borrowerList = borrowers.get(key);
-    const lenderList = lenders.get(key);
-    if (!borrowerList || borrowerList.length === 0 || !lenderList) continue;
-    const lenderGroups = groupByCreator(lenderList);
-    const borrowerGroups = groupByCreator(borrowerList);
-    const borrowerCreators = walkFrom([...borrowerGroups.keys()], run);
-    for (const lc of walkFrom([...lenderGroups.keys()], run)) {
-      for (const bc of borrowerCreators) {
-        if (bc === lc) continue;
-        yield { as: lenderGroups.get(lc)!, bs: borrowerGroups.get(bc)! };
-      }
-    }
+    if (!borrowerList || borrowerList.length === 0) continue;
+    const lg = groupByCreator(lenderList);
+    const bg = groupByCreator(borrowerList);
+    grids.push({ lenders: [...lg.values()], lenderCreators: [...lg.keys()], borrowers: [...bg.values()], borrowerCreators: [...bg.keys()] });
+  }
+  const sizes = grids.map((g) => [g.lenders.length, g.borrowers.length] as const);
+  const total = sizes.reduce((n, [r, c]) => n + r * c, 0);
+  for (const [g, i, j] of pairSpaceFrom(sizes, walkStart(run, total))) {
+    const grid = grids[g];
+    if (grid.lenderCreators[i] === grid.borrowerCreators[j]) continue;
+    yield { as: grid.lenders[i], bs: grid.borrowers[j] };
   }
 }
 
 /**
  * The intent fill's units (#3242 part 2): one per intent and borrower creator,
- * in the intents' order, holding that intent against that creator's borrower
- * offers. Walked by {@link fairPairs} like the offer match, so a wallet with
- * many borrower offers gets one candidate per intent per round, the same as a
- * wallet with one. The creator order starts at a point that moves with the run
- * ({@link walkFrom}). Lazy.
+ * holding that intent against that creator's borrower offers. Walked by
+ * {@link fairPairs} like the offer match, so a wallet with many borrower
+ * offers gets one candidate per intent per round, the same as a wallet with
+ * one. Round 0 starts at a point in the intent × creator space that moves with
+ * the run, like {@link offerMatchUnits}. Lazy.
  */
 export function* intentFillUnits(
   intents: readonly LenderIntentSummary[],
   borrowers: readonly OfferLite[],
   run: number,
 ): Generator<FairUnit<LenderIntentSummary, OfferLite>> {
-  const groups = groupByCreator(borrowers);
-  const creators = walkFrom([...groups.keys()], run);
-  for (const intent of intents) {
-    for (const creator of creators) yield { as: [intent], bs: groups.get(creator)! };
+  const groups = [...groupByCreator(borrowers).values()];
+  for (const [, i, j] of pairSpaceFrom([[intents.length, groups.length]], walkStart(run, intents.length * groups.length))) {
+    yield { as: [intents[i]], bs: groups[j] };
   }
 }
 
@@ -1186,13 +1187,17 @@ export async function runIntentFillPass(
    *  times, and `readAt` says in which one an intent was last read. */
   let spentEpoch = capacitySpent ? 1 : 0;
   const readAt = new Map<LenderIntentSummary, number>();
-  for (const [intent, b] of fairPairs(
-    intentFillUnits(rotate(intents, Math.floor(Date.now() / 60_000)), borrowers, run),
-    (i) => deadIntents.has(i),
-    // Cheap client-side pre-filter (cuts previewIntent eth_calls), and the
-    // borrowers left in flight this run.
-    (i, o) => uncertainBorrowers.has(o.id.toString()) || !borrowerFitsIntent(i, o),
-  )) {
+  for (const [intent, b] of fairPairs(intentFillUnits(rotate(intents, Math.floor(Date.now() / 60_000)), borrowers, run), {
+    deadA: (i) => deadIntents.has(i),
+    // Cheap client-side pre-filters (they cut previewIntent eth_calls): the
+    // borrowers left in flight this run, a borrower the intent cannot serve,
+    // and one with no fill the intent can size. All three cost no preview, so
+    // they are passed over inside the walk rather than handed out.
+    skip: (i, o) =>
+      uncertainBorrowers.has(o.id.toString()) || !borrowerFitsIntent(i, o) || sizeIntentFill(i, o) === null,
+    stop: overBudget,
+    maxLive: MAX_PREVIEW_CALLS_PER_TICK,
+  })) {
     if (
       previews >= MAX_PREVIEW_CALLS_PER_TICK ||
       submits >= MAX_SUBMITS_PER_TICK ||
@@ -1641,11 +1646,12 @@ async function runOfferMatcherTickForChain(ctx: KeeperContext, run = 0): Promise
   // the walk is done with it for this run: fully filled, or backed off after an
   // uncertain submit. A borrower left in flight is passed over by every lender.
   const doneLenders = new Set<OfferLite>();
-  for (const [L, B] of fairPairs(
-    offerMatchUnits(lenders, borrowers, run),
-    (l) => doneLenders.has(l),
-    (_l, b) => uncertainBorrowers.has(b.id.toString()),
-  )) {
+  for (const [L, B] of fairPairs(offerMatchUnits(lenders, borrowers, run), {
+    deadA: (l) => doneLenders.has(l),
+    skip: (_l, b) => uncertainBorrowers.has(b.id.toString()),
+    stop: overBudget,
+    maxLive: MAX_PREVIEW_CALLS_PER_TICK,
+  })) {
     if (previewCalls >= MAX_PREVIEW_CALLS_PER_TICK) break;
     if (submits >= MAX_SUBMITS_PER_TICK) break;
     if (overBudget()) break;

@@ -4,7 +4,7 @@
  * before anyone else's are looked at.
  */
 import { describe, expect, it, vi } from 'vitest';
-import { fairPairs } from '../src/fairPairs';
+import { fairPairs, pairSpaceFrom } from '../src/fairPairs';
 import {
   MAX_PREVIEW_CALLS_PER_TICK,
   intentFillUnits,
@@ -58,7 +58,7 @@ describe('fairPairs', () => {
 
   it('reads the dead and skip rules at each pull, so a change between pulls holds from the next one', () => {
     const dead = new Set<string>();
-    const gen = fairPairs([{ as: ['a1', 'a2'], bs: ['x1', 'x2', 'x3'] }], (a) => dead.has(a), (_a, b) => b === 'x2');
+    const gen = fairPairs([{ as: ['a1', 'a2'], bs: ['x1', 'x2', 'x3'] }], { deadA: (a) => dead.has(a), skip: (_a, b) => b === 'x2' });
     expect(gen.next().value).toEqual(['a1', 'x1']);
     dead.add('a1');
     expect(gen.next().value).toEqual(['a2', 'x1']);
@@ -76,6 +76,38 @@ describe('fairPairs', () => {
     }
     expect(firstPairs(fairPairs(units()), 5)).toHaveLength(5);
     expect(built).toBeLessThanOrEqual(6);
+  });
+
+  it('stops at the caller\'s deadline even while every candidate is passed over (Codex #3274 r1)', () => {
+    let checks = 0;
+    const units = Array.from({ length: 1000 }, (_, i) => ({ as: [i], bs: Array.from({ length: 100 }, (_, j) => j) }));
+    const pulled = [...fairPairs(units, { skip: () => true, stop: () => ++checks > 50 })];
+    expect(pulled).toEqual([]);
+    expect(checks).toBeLessThanOrEqual(52);
+  });
+
+  it('keeps no exhausted unit, and at most maxLive units, for later rounds (Codex #3274 r1)', () => {
+    // 10 singleton units and 10 units of two candidates; maxLive 3: round 1
+    // serves only the first three two-candidate units.
+    const units = [
+      ...Array.from({ length: 10 }, (_, i) => ({ as: [`s${i}`], bs: ['x'] })),
+      ...Array.from({ length: 10 }, (_, i) => ({ as: [`d${i}`], bs: ['x', 'y'] })),
+    ];
+    const pairs = [...fairPairs(units, { maxLive: 3 })].map(([a, b]) => `${a}-${b}`);
+    expect(pairs.slice(0, 20)).toHaveLength(20);
+    expect(pairs.slice(20)).toEqual(['d0-y', 'd1-y', 'd2-y']);
+  });
+});
+
+describe('pairSpaceFrom', () => {
+  it('visits every cell of every grid once, from any start', () => {
+    const sizes = [[2, 3], [0, 4], [1, 2]] as const;
+    for (const start of [0, 1, 5, 6, 7, 100]) {
+      const cells = [...pairSpaceFrom(sizes, start)].map(([g, i, j]) => `${g}:${i}:${j}`);
+      expect(new Set(cells).size).toBe(8);
+      expect(cells).toHaveLength(8);
+    }
+    expect([...pairSpaceFrom(sizes, 6)][0]).toEqual([2, 0, 0]);
   });
 });
 
@@ -117,6 +149,20 @@ describe('offerMatchUnits — one wallet\'s offers cannot crowd out a genuine ma
     const pairs = [...fairPairs(offerMatchUnits(lenders, borrowers, 0))];
     expect(pairs.every(([l, b]) => l.creator !== b.creator)).toBe(true);
     expect(pairs).toHaveLength(2);
+  });
+
+  it('reaches every lender x borrower pair across runs when each run stops partway through round 0 (Codex #3274 r1)', () => {
+    // 30 lender creators, 30 borrower creators, 50 previews a run: a run ends
+    // within two lenders' worth of round 0. Every one of the 900 pairs is
+    // first reached within a bounded number of runs.
+    const n = 30;
+    const lenders = new Map([['k', Array.from({ length: n }, (_, i) => offer(i + 1, addr(0x1000 + i), 0))]]);
+    const borrowers = new Map([['k', Array.from({ length: n }, (_, i) => offer(1000 + i, addr(0x2000 + i), 1))]]);
+    const seen = new Set<string>();
+    for (let run = 0; run < 200; run += 1) {
+      for (const [l, b] of firstPairs(fairPairs(offerMatchUnits(lenders, borrowers, run)), 50)) seen.add(`${l.id}-${b.id}`);
+    }
+    expect(seen.size).toBe(n * n);
   });
 
   it('moves which creator is first with the run', () => {
