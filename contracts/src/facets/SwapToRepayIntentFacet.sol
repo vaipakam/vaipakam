@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
 import {LibLoanClock} from "../libraries/LibLoanClock.sol";
 import {LibPeriodicInterest} from "../libraries/LibPeriodicInterest.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
@@ -586,6 +587,9 @@ contract SwapToRepayIntentFacet is
         // #1566 S3e — the maker is `loan.borrower`'s vault, read from storage
         // (no sanctions screen: a must-complete close-out).
         address vault = s.userVaipakamVaults[loan.borrower];
+        // #3178 — the order would send the lot out of that vault on the
+        // borrower's own initiative, which waits for the mandatory upgrade.
+        if (LibVaipakam.vaultUpgradeRequired(loan.borrower)) revert VaultFactoryFacet.VaultUpgradeRequired();
         bytes32 structHash = keccak256(abi.encode(
             _LIMIT_ORDER_TYPEHASH,
             params.salt,

@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
 import {LibPrepayOrder} from "../libraries/LibPrepayOrder.sol";
 import {LibPrepayCleanup} from "../libraries/LibPrepayCleanup.sol";
@@ -235,6 +236,10 @@ contract OfferParallelSaleFacet is
 
         _PostLocals memory loc;
         loc.vaultAddr = s.userVaipakamVaults[offer.creator];
+        // #3178 — a listing would let Seaport take the collateral out of the
+        // creator's vault on the creator's own initiative, which waits for the
+        // mandatory vault upgrade (the executor refuses a fill from such a vault).
+        if (LibVaipakam.vaultUpgradeRequired(offer.creator)) revert VaultFactoryFacet.VaultUpgradeRequired();
         loc.executor = s.collateralListingExecutor;
         loc.conduit = LibPrepayOrder.resolveConduit(
             IListingExecutorRecorder(loc.executor).seaport(),
@@ -809,5 +814,17 @@ contract OfferParallelSaleFacet is
                 true
             );
         }
+    }
+
+    /**
+     * @notice #3178 — whether the vault holding `offerId`'s listed collateral
+     *         is below the mandatory vault version. The collateral-listing
+     *         executor asks it at signature time, so a parallel-sale fill from
+     *         such a vault reads as unsigned until the creator upgrades: a
+     *         vault below the mandatory version sends nothing out on its
+     *         owner's own initiative.
+     */
+    function isParallelSaleVaultBlocked(uint256 offerId) external view returns (bool) {
+        return LibVaipakam.vaultUpgradeRequired(LibVaipakam.storageSlot().offers[offerId].creator);
     }
 }

@@ -610,13 +610,15 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](4);
+        selectors = new bytes4[](5);
         selectors[0] = OfferParallelSaleFacet.postParallelSaleListing.selector;
         selectors[1] = OfferParallelSaleFacet.releaseParallelSaleLock.selector;
         // #1144 (S10 Invariant B) — offer-keyed prepay-sale sanctions sync.
         selectors[2] = OfferParallelSaleFacet.syncPrepaySaleOffer.selector;
         // #2984 — the sync's own party set (keeper backstop read).
         selectors[3] = OfferParallelSaleFacet.prepaySaleOfferParties.selector;
+        // #3178 — the executor's "may this listing's vault send out" read.
+        selectors[4] = OfferParallelSaleFacet.isParallelSaleVaultBlocked.selector;
         return selectors;
     }
 
@@ -958,7 +960,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](27);
+        selectors = new bytes4[](28);
         selectors[0] = VaultFactoryFacet
             .initializeVaultImplementation
             .selector;
@@ -997,6 +999,7 @@ contract HelperTest {
         selectors[25] = bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256)"));
         // #1566 S3e — the swap fill's counter-only outflow record.
         selectors[26] = VaultFactoryFacet.recordVaultOutflowERC20.selector;
+        selectors[27] = VaultFactoryFacet.vaultDeliverERC20From.selector;
         return selectors;
     }
 
@@ -1141,7 +1144,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](24);
+        selectors = new bytes4[](25);
         selectors[0] = EncumbranceMutateFacet.releaseCollateralLien.selector;
         selectors[1] = EncumbranceMutateFacet.decrementCollateralLien.selector;
         selectors[2] = EncumbranceMutateFacet.incrementCollateralLien.selector;
@@ -1178,6 +1181,7 @@ contract HelperTest {
         // #2795 — pay a held borrower extra out on an obligation handover
         // (PrecloseFacet EIP-170 host).
         selectors[23] = EncumbranceMutateFacet.payHeldBorrowerExtra.selector;
+        selectors[24] = EncumbranceMutateFacet.settleRentalPrecloseShares.selector;
     }
 
     /// @notice #396 v0.5 — gasless signed off-chain offer book selectors.
@@ -3119,7 +3123,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](28);
+        selectors = new bytes4[](29);
         selectors[0] = VaultFactoryFacet.initializeVaultImplementation.selector;
         selectors[1] = VaultFactoryFacet.getOrCreateUserVault.selector;
         selectors[2] = VaultFactoryFacet.upgradeVaultImplementation.selector;
@@ -3155,6 +3159,7 @@ contract HelperTest {
         selectors[26] = bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256,uint256)"));
         // The four-argument credit stays as a compatibility entry (Codex #2276 r14 P2).
         selectors[27] = bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256)"));
+        selectors[28] = VaultFactoryFacet.vaultDeliverERC20From.selector;
         return selectors;
     }
 
