@@ -25,6 +25,7 @@ import { ActionFlow, reviewIdentity, type Recheck } from '../ui/ActionFlow';
 import { FormField } from '../ui/FormField';
 import { Notice } from '../ui/Notice';
 import { formatUtc, shortAddress } from '../ui/format';
+import { allowanceFigure } from './approvalCap';
 import { partialReceipt } from './partialReceipt';
 import { amountSentence, partialBlockers, partialChanged, partialPromptCount, readPartialFloor, readPartialReview, type PartialReview } from './partialReview';
 
@@ -202,7 +203,9 @@ function PartialFlow({ loanId, chain, own, meta, amount, onChangeAmount, onClose
 
       const io = allowanceIo(asset, (v, i, of) => say(of === 2 && i === 0 ? text('approval.stepZero') : format('partial.stepApprove', { amount: exact(asset, v) })));
       const prior = await readAllowance(asset);
-      const steps = prior < reach ? await allowanceSteps(io, prior, reach) : [];
+      // Exactly the reviewed maximum, lowered too: the allowance is the only
+      // cap on what `repayPartial` can take (approvalCap).
+      const steps = await allowanceSteps(io, prior, reach);
       if (steps.length !== r.approvalSteps) throw allowanceMoved(copy);
       const approved = steps.length > 0;
       let since: bigint | null = null;
@@ -236,7 +239,7 @@ function PartialFlow({ loanId, chain, own, meta, amount, onChangeAmount, onClose
       approvalLeft.current = null;
       if (!left) return null;
       const after = await putBack(left.token, left.prior, left.amount, left.since);
-      return cleanUpLeg(after, format('approval.legBack', { amount: exact(left.token, left.prior) }));
+      return cleanUpLeg(after, format('approval.legBack', { amount: allowanceFigure(left.prior, left.token, meta, copy) }));
     },
     measure: async (receipt, at) => (review ? measure(review, receipt.logs, at) : []),
     release: async () => {
@@ -244,7 +247,7 @@ function PartialFlow({ loanId, chain, own, meta, amount, onChangeAmount, onClose
       leftover.current = null;
       if (!left) return null;
       const after = await putBack(left.token, left.prior, left.expect, left.since);
-      return cleanUpLeg(after, format('repay.legPutBack', { amount: exact(left.token, left.prior) }));
+      return cleanUpLeg(after, format('repay.legPutBack', { amount: allowanceFigure(left.prior, left.token, meta, copy) }));
     },
   });
 

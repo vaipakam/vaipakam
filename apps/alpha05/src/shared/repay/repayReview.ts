@@ -21,6 +21,7 @@ import { repayVerdict, STATUS_FALLBACK_PENDING } from '../eligibility/repay';
 import type { Verdict } from '../eligibility/types';
 import type { LoanDetails } from '../positions/loanView';
 import { allowanceSteps } from '../tx/approval';
+import { putBackPrompts } from './approvalCap';
 import { tokenAcceptsApproval } from '../offers/reads';
 import { readPayoff, readPayoffAt, type Payoff } from './payoff';
 
@@ -235,6 +236,5 @@ export function promptCount(r: RepayReview): number {
  *  two on a token that needs a step to zero first (only when going back to
  *  a non-zero allowance, so "up to"); otherwise one. */
 export function putBackPromptCount(r: RepayReview): number {
-  if (r.approvalSteps === 0) return 0;
-  return r.approvalSteps === 2 ? 2 : 1;
+  return putBackPrompts(r.approvalSteps);
 }

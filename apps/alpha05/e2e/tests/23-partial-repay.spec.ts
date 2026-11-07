@@ -30,6 +30,9 @@ test('the borrower pays part: the amount checked against the protocol bounds, ex
   const { loanId } = await openLoan(sc, { lender: 'lender', borrower: 'borrower', principalWeth: '0.3', collateralTliq: '1500', rateBps: 600, days: 30 });
   await sc.write('borrower', WETH, WETH_ABI, 'deposit', [], parseEther('0.2'));
   const borrower = sc.address('borrower');
+  // Below the reviewed maximum, so the flow raises it (another spec can
+  // leave a larger one, which the flow would lower instead).
+  await sc.write('borrower', WETH, erc20Abi, 'approve', [sc.diamond, 0n]);
   const prior = await sc.pub.readContract({ address: WETH, abi: erc20Abi, functionName: 'allowance', args: [borrower, sc.diamond] });
   const priorText = `${formatEther(prior)} WETH`;
 
@@ -67,7 +70,7 @@ test('the borrower pays part: the amount checked against the protocol bounds, ex
   await expect(receipt).toContainText('The interest is what has accrued since it was last paid');
   await expect(receipt).toContainText(/Paying part never moves the due date: the rest is still owed by .* UTC\./);
   await expect(receipt).not.toContainText(/At most (≈ )?\d/);
-  await expect(receipt).toContainText('Wallet prompts: 2.');
+  await expect(receipt).toContainText('Wallet prompts: 2, then up to 1 more to put back the unused approval.');
   await fitsWidth(page);
 
   // Changing the amount goes back to the form with the amount kept.

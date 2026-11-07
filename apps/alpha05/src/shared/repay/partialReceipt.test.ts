@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { OPEN } from '../eligibility/types';
 import type { LoanDetails } from '../positions/loanView';
 import { partialReceipt } from './partialReceipt';
-import { minimumPart, type PartialReview } from './partialReview';
+import { minimumPart, partialChanged, type PartialReview } from './partialReview';
 
 const copy = { text: (k: string) => k, format: (k: string) => k } as never;
 const A = '0x00000000000000000000000000000000000000aa' as const;
@@ -68,5 +68,21 @@ describe('minimumPart', () => {
   it('is the protocol product, never below one unit', () => {
     expect(minimumPart(1_000n, 500n)).toBe(50n);
     expect(minimumPart(10n, 100n)).toBe(1n);
+  });
+});
+
+describe('partialChanged', () => {
+  it('reopens on any loan field the receipt states, the due date included', () => {
+    expect(partialChanged(review, { ...review, loan: { ...review.loan, useFullTermInterest: true } }, copy)).toBe('repay.changedLoan');
+    expect(partialChanged(review, { ...review, maturity: 9_500n }, copy)).toBe('repay.changedLoan');
+    expect(partialChanged(review, review, copy)).toBeNull();
+  });
+});
+
+describe('partialReceipt put-back prompts', () => {
+  it('states the put-back apart from the payment prompts', () => {
+    expect(receipt(review).prompts).toBe(2);
+    expect(receipt(review).afterPrompts).toBe(1);
+    expect(receipt({ ...review, approvalSteps: 0 }).afterPrompts).toBe(0);
   });
 });

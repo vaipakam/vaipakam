@@ -9,15 +9,15 @@
  */
 import type { CopyAccess } from '../copy/useCopy';
 import { figured, textValue, type Receipt, type ReceiptValue } from '../receipt/types';
-import { exactTokenAmount, tokenAmount, type TokenMetaMap } from '../reads/tokens';
+import { tokenAmount, type TokenMetaMap } from '../reads/tokens';
 import { formatUtc } from '../ui/format';
-import { partialPromptCount, type PartialReview } from './partialReview';
+import { allowanceFigure, approvalRowText, lateConfirmationLines } from './approvalCap';
+import { partialPromptCount, partialPutBackPromptCount, type PartialReview } from './partialReview';
 
 export function partialReceipt(r: PartialReview, meta: TokenMetaMap | null, copy: Pick<CopyAccess, 'text' | 'format'>): Receipt {
   const { text, format } = copy;
   const loan = r.loan;
   const asset = loan.principalAsset;
-  const exact = (v: bigint) => exactTokenAmount(v, asset, meta, format);
   const by = formatUtc(Number(r.payoff.by));
   /** An amount, or "At most {amount}" when the figure is an upper bound. */
   const figure = (v: bigint): ReceiptValue =>
@@ -41,10 +41,7 @@ export function partialReceipt(r: PartialReview, meta: TokenMetaMap | null, copy
       label: text('repay.rowApproval'),
       value: {
         kind: 'text',
-        text:
-          r.approvalSteps === 0
-            ? format('repay.approvalEnough', { amount: exact(r.allowance) })
-            : format(r.approvalSteps === 2 ? 'repay.approvalZeroFirst' : 'repay.approvalNeeded', { amount: exact(r.totalBy) }),
+        text: approvalRowText({ allowance: r.allowance, steps: r.approvalSteps, cap: r.totalBy }, asset, meta, copy),
       },
       binding: false,
       movesOut: r.approvalSteps > 0,
@@ -53,11 +50,11 @@ export function partialReceipt(r: PartialReview, meta: TokenMetaMap | null, copy
 
   const consequences = [
     text(r.interestExact ? 'partial.interestExact' : loan.useFullTermInterest ? 'partial.interestBoundFull' : 'partial.interestBoundLate'),
-    format(r.capped ? 'repay.loseGraceEnds' : 'repay.loseLate', { time: by }),
+    ...lateConfirmationLines({ capped: r.capped, time: by, totalNow: r.amount + r.interestNow, totalBy: r.totalBy }, copy),
     ...(loan.useFullTermInterest ? [text('partial.fullTermRestarts')] : []),
     ...(r.period ? [format('partial.periodCounts', { time: formatUtc(Number(r.period.periodEndAt)) })] : r.periodUnread ? [text('partial.periodUnread')] : []),
     ...(r.maturity !== null ? [format('partial.dueStays', { time: formatUtc(Number(r.maturity)) })] : []),
-    ...(r.approvalSteps > 0 ? [format('repay.losePutBack', { amount: exact(r.allowance) })] : []),
+    ...(r.approvalSteps > 0 ? [format('repay.losePutBack', { amount: allowanceFigure(r.allowance, asset, meta, copy) })] : []),
     ...(r.balance >= r.amount + r.interestNow && r.balance < r.totalBy
       ? [figured((x) => format('partial.loseBalance', { amount: tokenAmount(r.balance, asset, meta, format, x) }))]
       : []),
@@ -68,6 +65,7 @@ export function partialReceipt(r: PartialReview, meta: TokenMetaMap | null, copy
     rows,
     consequences,
     prompts: partialPromptCount(r),
+    afterPrompts: partialPutBackPromptCount(r),
     readAt: r.readAt,
   };
 }

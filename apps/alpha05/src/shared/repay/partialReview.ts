@@ -25,6 +25,7 @@ import { checkPartialAmount, partialRepayVerdict, type AmountCheck } from '../el
 import type { Verdict } from '../eligibility/types';
 import type { LoanDetails, PeriodSchedule } from '../positions/loanView';
 import { allowanceSteps } from '../tx/approval';
+import { putBackPrompts } from './approvalCap';
 import { tokenAcceptsApproval } from '../offers/reads';
 import { readPayoff, readPayoffAt, type Payoff } from './payoff';
 import { PAYOFF_MIN_LEAD_SECONDS, readLoanFacts } from './repayReview';
@@ -144,8 +145,9 @@ export async function readPartialReview(
       c.readContract({ address: asset, abi: erc20Abi, functionName: 'allowance', args: [account, diamond] }),
     ]),
   );
-  const approvalSteps =
-    allowance >= totalBy ? 0 : (await allowanceSteps({ accepts: (v) => r((c) => tokenAcceptsApproval(c, asset, account, diamond, v)) }, allowance, totalBy)).length;
+  // Exactly the reviewed maximum, lowered as well as raised: `repayPartial`
+  // takes no maximum of its own, and the interest it adds grows (approvalCap).
+  const approvalSteps = (await allowanceSteps({ accepts: (v) => r((c) => tokenAcceptsApproval(c, asset, account, diamond, v)) }, allowance, totalBy)).length;
   const readAt = Date.now();
   const verdict = partialRepayVerdict(
     {
@@ -201,13 +203,17 @@ export async function readPartialReview(
   };
 }
 
+/** Every field of the loan record the partial receipt states or rests on
+ *  (partialReceipt): a change to any reopens the review. One list, as the
+ *  full repayment's `STATED_LOAN_FIELDS`. */
+export const PARTIAL_STATED_LOAN_FIELDS = ['status', 'principal', 'principalAsset', 'useFullTermInterest', 'allowsPartialRepay'] as const satisfies readonly (keyof LoanDetails)[];
+
 /** What a re-read found changed, in words, or null. The interest figures
  *  now are not compared (they grow by the second); the figure at the kept
  *  moment is. */
 export function partialChanged(a: PartialReview, b: PartialReview, copy: Pick<CopyAccess, 'text'>): string | null {
   const { text } = copy;
-  if (a.loan.status !== b.loan.status || a.loan.principal !== b.loan.principal || a.loan.principalAsset !== b.loan.principalAsset || a.floor !== b.floor)
-    return text('repay.changedLoan');
+  if (PARTIAL_STATED_LOAN_FIELDS.some((k) => a.loan[k] !== b.loan[k]) || a.floor !== b.floor || a.maturity !== b.maturity) return text('repay.changedLoan');
   if (
     a.lenderHolder !== b.lenderHolder ||
     a.borrowerHolder !== b.borrowerHolder ||
@@ -257,4 +263,11 @@ export function amountSentence(
 
 export function partialPromptCount(r: PartialReview): number {
   return r.approvalSteps + 1;
+}
+
+/** The prompts that may follow a payment that took effect, to put back what
+ *  it did not use of the approval (as the full repayment's
+ *  `putBackPromptCount`). */
+export function partialPutBackPromptCount(r: PartialReview): number {
+  return putBackPrompts(r.approvalSteps);
 }

@@ -849,8 +849,11 @@ above. Each resolves here, so a route reviewer needs no private file:
   before its due date), and otherwise as "at most", with the reason (a
   full-term loan's remaining term, or a late fee past the due date, which
   a part payment does not charge). The approval is exactly the part plus
-  the interest at most by the kept moment (as RB-POSITION-REPAY), and what
-  the payment does not use is put back. The review also states the
+  the interest at most by the kept moment, lowered to it as well as raised,
+  and it caps the amount, never the time: the approval row and the
+  late-confirmation sentences are ONE rule shared with RB-POSITION-REPAY
+  (`repayPartial` takes no maximum or deadline either), never a second
+  copy. What the payment does not use is put back. The review also states the
   principal left, that the due date does not move, that the lender
   position's holder is paid straight away with the treasury taking its
   share of the interest, that a full-term loan then counts the rest of its
