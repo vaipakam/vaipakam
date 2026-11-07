@@ -28,9 +28,11 @@
  * but a load-balanced RPC can answer from a node that has not seen the
  * transaction yet. So a slot also remembers the nonce after the last
  * broadcast and uses whichever is higher. The floor expires after
- * {@link FLOOR_TTL_MS}: if that broadcast is then dropped, the gap it
- * leaves lasts at most that long before the pending count is trusted
- * again, and the next send fills it.
+ * {@link FLOOR_TTL_MS}, counted from the last time the pending count was
+ * seen to pass the oldest nonce the floor holds ({@link renewWindow}): if
+ * that broadcast is then dropped, the gap it leaves lasts at most that long
+ * before the pending count is trusted again, and the next send fills it.
+ * Successors sent behind the gap do not renew the window (Codex #3275 r7).
  *
  * Which failures set the floor is the point of the design:
  *
@@ -91,13 +93,27 @@ import {
   PRIVATE_ROUTE_FLOOR_TTL_MS,
   PRIVATE_TX_FALLBACK_VAR,
 } from './submissionRoute';
+import type { NonceReservation } from './privateNonce';
 
 /** How long a remembered nonce outranks the RPC's pending count. */
 export const FLOOR_TTL_MS = 60_000;
 
-interface Floor {
-  next: number;
-  at: number;
+/** A remembered floor, in the same shape as the private nonce record. */
+type Floor = NonceReservation;
+
+/**
+ * The window after a send of `nonce`, given the window it followed (`prior`,
+ * null when there was none still in force) and the chain's pending count.
+ * The window is anchored to the oldest nonce not yet seen mined (`open`) and
+ * renewed only once the pending count has passed it, so a nonce that never
+ * mines ages out within one window however many successors follow it
+ * (Codex #3275 r7). The in-memory floor and the private nonce record both
+ * follow this one rule.
+ */
+export function renewWindow(prior: NonceReservation | null, nonce: number, pending: number, at: number): NonceReservation {
+  if (prior === null) return { next: nonce + 1, atMs: at, open: nonce };
+  const next = Math.max(nonce + 1, prior.next);
+  return pending > prior.open ? { next, atMs: at, open: Math.min(pending, nonce) } : { next, atMs: prior.atMs, open: prior.open };
 }
 
 const tails = new Map<string, Promise<void>>();
@@ -234,7 +250,7 @@ export async function withSubmissionSlot<T>(
     // not only on a chain whose route is private now (Codex #3275 r4): a
     // route removed while a private send is still pending leaves that send's
     // reservation in force, and the public pending count cannot see it.
-    let recorded: { next: number; atMs: number } | null = null;
+    let recorded: NonceReservation | null = null;
     const reservations = armedNonceReservations();
     if (route.kind === 'private' && !reservations) {
       throw new SubmissionRouteUnread('send refused: no private nonce record is armed for a private route');
@@ -250,8 +266,9 @@ export async function withSubmissionSlot<T>(
     const floor = floors.get(key);
     // ...and a remembered nonce is trusted for longer there.
     const ttl = route.kind === 'private' ? PRIVATE_ROUTE_FLOOR_TTL_MS : FLOOR_TTL_MS;
+    const liveFloor = floor !== undefined && now() - floor.atMs < ttl ? floor : null;
     let nonce = pending;
-    if (floor !== undefined && now() - floor.at < ttl) nonce = Math.max(nonce, floor.next);
+    if (liveFloor !== null) nonce = Math.max(nonce, liveFloor.next);
     // A record is always a private send's, so it keeps the private window
     // whatever the chain's route is now.
     if (recorded !== null && now() - recorded.atMs < PRIVATE_ROUTE_FLOOR_TTL_MS) nonce = Math.max(nonce, recorded.next);
@@ -276,11 +293,11 @@ export async function withSubmissionSlot<T>(
       // nonce would make every later send "nonce too high" and refresh
       // the floor each time, so the gap would never close.
       if (wasSigned && !isDefinitiveRejection(err)) {
-        floors.set(key, { next: nonce + 1, at: now() });
+        floors.set(key, renewWindow(liveFloor, nonce, pending, now()));
       }
       throw err;
     }
-    floors.set(key, { next: nonce + 1, at: now() });
+    floors.set(key, renewWindow(liveFloor, nonce, pending, now()));
     return result;
   } finally {
     release();
@@ -363,16 +380,19 @@ export async function broadcastSigned(
   const isPrivate = route.kind === 'private';
 
   // One rule for the nonce record, on every route (Codex #3275 r1, r2, r4,
-  // r5). The record is written BEFORE the bytes leave the process:
-  //  - by every private send, with a fresh window, so a restart still finds
-  //    its nonce taken;
-  //  - by any send that follows a reservation still in its window, keeping
-  //    THAT window, so a successor sent publicly after the route was removed
-  //    is protected exactly as long as the private gap it sits behind.
+  // r5, r7). The record is written BEFORE the bytes leave the process:
+  //  - by every private send, so a restart still finds its nonce taken;
+  //  - by any send that follows a reservation still in its window, so a
+  //    successor sent publicly after the route was removed is protected as
+  //    long as the private send it sits behind.
+  // The window is anchored to the OLDEST reserved nonce not yet seen mined
+  // (`open`), and a send renews it only once the chain's pending count has
+  // passed that nonce. So a nonce that never mines (a crash between the
+  // record and the broadcast) ages out within one window, however many
+  // successors the endpoint accepts behind it, and the slot then fills it.
   // A public send with no live reservation writes nothing. A refusal the
-  // node answered puts the record back as it stood, timestamp included, so a
-  // gap left by a crash ages out instead of being refreshed. A record that
-  // cannot be read or written sends nothing.
+  // node answered puts the record back as it stood. A record that cannot be
+  // read or written sends nothing.
   const reservations = armedNonceReservations();
   const address = wallet.account?.address;
   // Read from the signed bytes only where a record is kept.
@@ -382,7 +402,7 @@ export async function broadcastSigned(
   }
   let release = async (_err: unknown): Promise<void> => {};
   if (reservations && address && nonce !== undefined) {
-    let prior: { next: number; atMs: number } | null;
+    let prior: NonceReservation | null;
     try {
       prior = await reservations.read(chainId, address);
     } catch (err) {
@@ -390,9 +410,19 @@ export async function broadcastSigned(
     }
     const live = prior !== null && now() - prior.atMs < PRIVATE_ROUTE_FLOOR_TTL_MS;
     if (isPrivate || live) {
-      const atMs = isPrivate ? now() : (prior as { atMs: number }).atMs;
+      // Has the chain moved past the oldest reserved nonce since the window
+      // opened? Only then does this send open a fresh one.
+      let pending = 0;
+      if (live) {
+        try {
+          pending = await getTransactionCount(wallet, { address, blockTag: 'pending' });
+        } catch (err) {
+          throw new SubmissionRouteUnread(`send refused: the pending count could not be read for the nonce record (${describeFailure(err)})`);
+        }
+      }
+      const record = renewWindow(live ? prior : null, nonce, pending, now());
       try {
-        await reservations.write(chainId, address, Math.max(nonce + 1, live ? (prior as { next: number }).next : 0), atMs);
+        await reservations.write(chainId, address, record);
       } catch (err) {
         throw new SubmissionRouteUnread(`send refused: the private nonce record could not be written (${describeFailure(err)})`);
       }
@@ -402,7 +432,7 @@ export async function broadcastSigned(
         if (!isDefinitiveRejection(err)) return;
         try {
           // No earlier record: an expired one, which the slot ignores.
-          await reservations.write(chainId, address, prior?.next ?? nonce, prior?.atMs ?? 0);
+          await reservations.write(chainId, address, prior ?? { next: nonce, atMs: 0, open: nonce });
         } catch (writeErr) {
           console.warn(`[submission] chain=${chainId} could not release nonce ${nonce} in the private nonce record (${describeFailure(writeErr)}); later sends wait for it to expire`);
         }

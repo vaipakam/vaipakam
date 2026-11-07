@@ -15,13 +15,21 @@ import type { KeeperD1 } from './env';
 /** One account's record on one network. */
 export interface NonceReservation {
   next: number;
+  /** When the window opened: the last time the chain was seen to move past `open`. */
   atMs: number;
+  /**
+   * The oldest reserved nonce not yet seen mined. A successor renews the
+   * window only once the pending count has passed it, so a gap that never
+   * mines (a crash between the record and the broadcast) ages out within one
+   * window however many successors are accepted behind it (Codex #3275 r7).
+   */
+  open: number;
 }
 
 /** Where the records live. */
 export interface NonceReservations {
   read(networkId: number, address: Address): Promise<NonceReservation | null>;
-  write(networkId: number, address: Address, next: number, atMs: number): Promise<void>;
+  write(networkId: number, address: Address, record: NonceReservation): Promise<void>;
 }
 
 /** The records in the keeper's private database. */
@@ -29,21 +37,22 @@ export function d1NonceReservations(db: KeeperD1): NonceReservations {
   return {
     async read(networkId, address) {
       const row = await db
-        .prepare('SELECT next_nonce, recorded_at_ms FROM keeper_private_nonce WHERE network_id = ?1 AND address = ?2')
+        .prepare('SELECT next_nonce, recorded_at_ms, open_nonce FROM keeper_private_nonce WHERE network_id = ?1 AND address = ?2')
         .bind(networkId, address.toLowerCase())
-        .first<{ next_nonce: number; recorded_at_ms: number }>();
-      return row ? { next: Number(row.next_nonce), atMs: Number(row.recorded_at_ms) } : null;
+        .first<{ next_nonce: number; recorded_at_ms: number; open_nonce: number }>();
+      return row ? { next: Number(row.next_nonce), atMs: Number(row.recorded_at_ms), open: Number(row.open_nonce) } : null;
     },
-    async write(networkId, address, next, atMs) {
+    async write(networkId, address, { next, atMs, open }) {
       await db
         .prepare(
-          `INSERT INTO keeper_private_nonce (network_id, address, next_nonce, recorded_at_ms)
-           VALUES (?1, ?2, ?3, ?4)
+          `INSERT INTO keeper_private_nonce (network_id, address, next_nonce, recorded_at_ms, open_nonce)
+           VALUES (?1, ?2, ?3, ?4, ?5)
            ON CONFLICT(network_id, address) DO UPDATE SET
              next_nonce = excluded.next_nonce,
-             recorded_at_ms = excluded.recorded_at_ms`,
+             recorded_at_ms = excluded.recorded_at_ms,
+             open_nonce = excluded.open_nonce`,
         )
-        .bind(networkId, address.toLowerCase(), next, atMs)
+        .bind(networkId, address.toLowerCase(), next, atMs, open)
         .run();
     },
   };
@@ -58,8 +67,8 @@ export function memoryNonceReservations(): NonceReservations & { rows: Map<strin
     async read(n, a) {
       return rows.get(key(n, a)) ?? null;
     },
-    async write(n, a, next, atMs) {
-      rows.set(key(n, a), { next, atMs });
+    async write(n, a, record) {
+      rows.set(key(n, a), { ...record });
     },
   };
 }

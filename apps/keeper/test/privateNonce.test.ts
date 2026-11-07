@@ -15,9 +15,9 @@ describe('d1NonceReservations', () => {
   it('reads nothing before the first write, then the latest write, whatever the address case', async () => {
     const r = d1NonceReservations(createKeeperD1().d1 as unknown as KeeperD1);
     expect(await r.read(1, A)).toBeNull();
-    await r.write(1, A, 5, 100);
-    await r.write(1, A.toLowerCase() as Address, 6, 200);
-    expect(await r.read(1, A)).toEqual({ next: 6, atMs: 200 });
+    await r.write(1, A, { next: 5, atMs: 100, open: 4 });
+    await r.write(1, A.toLowerCase() as Address, { next: 6, atMs: 200, open: 5 });
+    expect(await r.read(1, A)).toEqual({ next: 6, atMs: 200, open: 5 });
     expect(await r.read(8453, A)).toBeNull();
   });
 });

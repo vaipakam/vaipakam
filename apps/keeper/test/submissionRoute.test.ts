@@ -23,6 +23,7 @@ import {
   isSendPastDeadline,
   resetSubmissionQueues,
   setPrivateSubmissionClientForTest,
+  renewWindow,
   SubmissionRouteUnread,
   withSubmissionSlot,
 } from '../src/submissionQueue';
@@ -215,7 +216,7 @@ describe('the private nonce record (Codex #3275 r1)', () => {
     const refused = setup({ fallback: false, priv: async () => { throw rpcRefusal(); } });
     await broadcastSigned(refused.wallet, 1, RAW, FAR).catch(() => {});
     // No earlier record: put back as an expired one.
-    expect(refused.reservations.rows.get(key)).toEqual({ next: 0, atMs: 0 });
+    expect(refused.reservations.rows.get(key)).toEqual({ next: 0, atMs: 0, open: 0 });
     const unknown = setup({ fallback: false, priv: async () => { throw lost(); } });
     await broadcastSigned(unknown.wallet, 1, RAW, FAR).catch(() => {});
     expect(unknown.reservations.rows.get(key)?.next).toBe(1);
@@ -223,10 +224,10 @@ describe('the private nonce record (Codex #3275 r1)', () => {
 
   it('a refused send restores the earlier record with its own timestamp, so a gap ages out (Codex #3275 r2)', async () => {
     const reservations = memoryNonceReservations();
-    reservations.rows.set(key, { next: 0, atMs: 1234 });
+    reservations.rows.set(key, { next: 0, atMs: 1234, open: 0 });
     const s = setup({ fallback: false, reservations, priv: async () => { throw rpcRefusal(); } });
     await broadcastSigned(s.wallet, 1, RAW, FAR).catch(() => {});
-    expect(reservations.rows.get(key)).toEqual({ next: 0, atMs: 1234 });
+    expect(reservations.rows.get(key)).toEqual({ next: 0, atMs: 1234, open: 0 });
   });
 
   it('a deadline that passes while the record is written sends nothing, and releases the record (Codex #3275 r2)', async () => {
@@ -234,9 +235,9 @@ describe('the private nonce record (Codex #3275 r1)', () => {
     let t = 0;
     const slow: NonceReservations = {
       read: (n, a) => reservations.read(n, a),
-      write: async (n, a, next, at) => {
+      write: async (n, a, record) => {
         t = 100;
-        await reservations.write(n, a, next, at);
+        await reservations.write(n, a, record);
       },
     };
     const s = setup({ fallback: true, reservations: slow, priv: async () => keccak256(RAW) });
@@ -244,7 +245,7 @@ describe('the private nonce record (Codex #3275 r1)', () => {
     expect(isSendPastDeadline(err)).toBe(true);
     expect(isDefinitiveRejection(err)).toBe(true);
     expect(s.calls).toEqual([]);
-    expect(reservations.rows.get(key)).toEqual({ next: 0, atMs: 0 });
+    expect(reservations.rows.get(key)).toEqual({ next: 0, atMs: 0, open: 0 });
   });
 
   it('a record that cannot be written sends nothing', async () => {
@@ -275,7 +276,7 @@ describe('the private nonce record (Codex #3275 r1)', () => {
   it('after a restart, the next send skips the nonce a private send still holds', async () => {
     armHeldFence();
     const reservations = memoryNonceReservations();
-    reservations.rows.set(key, { next: 4, atMs: Date.now() });
+    reservations.rows.set(key, { next: 4, atMs: Date.now(), open: 3 });
     // A fresh process: no in-memory floor, the pending count reads 0.
     resetSubmissionQueues();
     armSubmissionRoutes(readSubmissionRoutes(`1=${URL_ETH}`, ''), reservations);
@@ -291,7 +292,7 @@ describe('the private nonce record (Codex #3275 r1)', () => {
   it('a route switched back to public still honours a pending private reservation (Codex #3275 r4)', async () => {
     armHeldFence();
     const reservations = memoryNonceReservations();
-    reservations.rows.set(key, { next: 1, atMs: Date.now() });
+    reservations.rows.set(key, { next: 1, atMs: Date.now(), open: 0 });
     resetSubmissionQueues();
     // The operator removed chain 1's private entry and restarted.
     armSubmissionRoutes(readSubmissionRoutes('', ''), reservations);
@@ -308,7 +309,7 @@ describe('the private nonce record (Codex #3275 r1)', () => {
     armHeldFence();
     const reservations = memoryNonceReservations();
     const start = Date.now();
-    reservations.rows.set(key, { next: 1, atMs: start });
+    reservations.rows.set(key, { next: 1, atMs: start, open: 0 });
     resetSubmissionQueues();
     armSubmissionRoutes(readSubmissionRoutes('', ''), reservations);
     // The pending count stays 0: private nonce 0 has not landed.
@@ -326,7 +327,47 @@ describe('the private nonce record (Codex #3275 r1)', () => {
     }
     expect(nonces).toEqual([1, 2]);
     // The window stays the private send's, so the gap still ages out.
-    expect(reservations.rows.get(key)).toEqual({ next: 3, atMs: start });
+    expect(reservations.rows.get(key)).toEqual({ next: 3, atMs: start, open: 0 });
+  });
+
+  it('accepted private successors never postpone a gap past one window (Codex #3275 r7)', async () => {
+    armHeldFence();
+    const reservations = memoryNonceReservations();
+    const start = Date.now();
+    // A crash after reserving nonce 0, before it was broadcast.
+    reservations.rows.set(key, { next: 1, atMs: start, open: 0 });
+    resetSubmissionQueues();
+    armSubmissionRoutes(readSubmissionRoutes(`1=${URL_ETH}`, ''), reservations);
+    // The endpoint accepts every future nonce; the pending count stays 0.
+    setPrivateSubmissionClientForTest(
+      (submissionRouteFor(readSubmissionRoutes(`1=${URL_ETH}`, ''), 1) as { url: string }).url,
+      createPublicClient({ transport: rpc(async () => keccak256(RAW), [], 'private') }) as PublicClient,
+    );
+    const wallet = createWalletClient({ account, transport: rpc(async () => '0x', [], 'public') });
+    let t = start;
+    const nonces: number[] = [];
+    for (let at = start; at <= start + PRIVATE_ROUTE_FLOOR_TTL_MS + 61_000; at += 61_000) {
+      t = at;
+      await withSubmissionSlot(wallet, 1, account.address, FAR, async (nonce, signed) => {
+        signed();
+        nonces.push(nonce);
+        const raw = await account.signTransaction({ chainId: 1, nonce, type: 'eip1559', to: account.address, gas: 21_000n, maxFeePerGas: 1n, maxPriorityFeePerGas: 1n });
+        await broadcastSigned(wallet, 1, raw, FAR, () => t);
+      }, () => t);
+    }
+    // The window stayed the gap's, so once it passed the slot filled nonce 0.
+    expect(nonces[0]).toBe(1);
+    expect(nonces[nonces.length - 1]).toBe(0);
+  });
+
+  it('a window is renewed once the chain has moved past its oldest nonce', () => {
+    expect(renewWindow(null, 5, 5, 100)).toEqual({ next: 6, atMs: 100, open: 5 });
+    // Nonce 5 seen: a fresh window anchored at the oldest still unseen.
+    expect(renewWindow({ next: 6, atMs: 100, open: 5 }, 6, 6, 200)).toEqual({ next: 7, atMs: 200, open: 6 });
+    // Nonce 5 not seen: the old window stands.
+    expect(renewWindow({ next: 6, atMs: 100, open: 5 }, 6, 5, 200)).toEqual({ next: 7, atMs: 100, open: 5 });
+    // Several in flight, the first seen: anchored at the next unseen.
+    expect(renewWindow({ next: 8, atMs: 100, open: 5 }, 8, 6, 200)).toEqual({ next: 9, atMs: 200, open: 6 });
   });
 
   it('a deadline that passes while a public send reads the record sends nothing (Codex #3275 r6)', async () => {

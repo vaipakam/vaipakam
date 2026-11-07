@@ -7,7 +7,8 @@
 -- liquidation still waiting to land, and the next send would replace it. The
 -- submission slot reads this row on every private send and takes the higher
 -- of it and the pending count while the row is recent
--- (`PRIVATE_ROUTE_FLOOR_TTL_MS`).
+-- (`PRIVATE_ROUTE_FLOOR_TTL_MS`), measured from the last time the chain was
+-- seen to move past the oldest reserved nonce.
 --
 -- Keyed by `network_id`, deliberately NOT `chain_id`: a nonce belongs to the
 -- account on the network, not to a Diamond, so it must survive a fresh
@@ -18,5 +19,9 @@ CREATE TABLE IF NOT EXISTS keeper_private_nonce (
   address TEXT NOT NULL,
   next_nonce INTEGER NOT NULL,
   recorded_at_ms INTEGER NOT NULL,
+  -- The oldest reserved nonce not yet seen mined. The window (recorded_at_ms)
+  -- is renewed only once the pending count has passed it, so a nonce that
+  -- never mines ages out within one window (Codex #3275 r7).
+  open_nonce INTEGER NOT NULL,
   PRIMARY KEY (network_id, address)
 );
