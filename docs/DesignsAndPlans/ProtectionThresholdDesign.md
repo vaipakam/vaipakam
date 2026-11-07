@@ -173,6 +173,15 @@ shrinks, so it misses collateral and grows forever. Two shapes were weighed:
   4. **Unknown is not zero.** A Liquid asset whose price read refuses makes the value *unknown*.
      The gate then asks, as it does above the threshold, rather than counting the asset as 0. The
      status view says "value unknown" (Q8).
+  5. **Complete only from a known start.** The set is trusted only for an account whose holdings
+     have all been written since the set existed. The gate records the block it was installed at,
+     and the vault factory stamps each new vault with its creation block. An account whose vault was
+     created at or after installation is complete by construction. An older account may already
+     hold tracked balances the set never saw, and nothing on-chain can enumerate them, so its value
+     is *unknown* and it is asked to decide, as in point 4. No backfill is attempted: a backfill
+     could only prove the assets it was told about, which is the same gap. Asking holds nothing and
+     costs the account one decision. Mainnet is one fresh deploy, so every mainnet account is
+     complete; the rule matters for a testnet that takes the gate by facet refresh.
 
   Each walked asset costs one liquidity classification plus one quorum price read, the same cost as
   a KYC leg value today (`OfferAcceptFacet.sol:1787-1796`). It is not measured yet: a gas-snapshot
@@ -251,6 +260,9 @@ release-note fragment.
 - Walk: early exit; the K+1 asset asks; an asset that refuses a price makes the value unknown and asks;
   the set adds on 0→positive and removes on positive→0 for every ERC-20 deposit and withdraw route;
   ERC-721 token id 0 never enters it.
+- Upgrade state: on a Diamond with a vault holding $10,000 of collateral and a depository credit
+  from before the gate, a $1 deposit of a new asset by that undecided account asks; a vault created
+  after installation is walked normally.
 - Decline: written only by the manager; a stale `expectedVersion` refuses; a version bump voids it
   with zero writes; revoke is immediate; enabling protected mode clears it; events and views agree.
 - Protection: enabled with an active signer passes; an accepted pending signer passes or refuses

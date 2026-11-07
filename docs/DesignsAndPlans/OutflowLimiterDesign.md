@@ -114,11 +114,21 @@ at most 25. A slot is zeroed only when its hour is reused, 25 hours later.
 Rounding and hourly steps only err toward delaying: a $1,000 outflow at 00:59
 is still counted at 00:58 the next day.
 
-An outflow is **delayed whole**, never split, when the window sum plus its own
-value would exceed the threshold. Its value counts when requested, paid or
-queued, so a large queued withdrawal also delays small ones for 24 hours. A
-cancel does not credit it back (**Default**, conservative); a release is not
-counted again.
+An outflow is **delayed whole**, never split, when the window sum, plus the
+pending reservation, plus its own value would exceed the threshold. Two figures
+feed that rule, kept apart because they answer different questions:
+
+- **The meter counts actual payments, at payment time.** A pay-now outflow is
+  added when it pays, and a queued outflow is added **when it is released**,
+  however long it waited. So a $10,000 withdrawal released after 26 hours still
+  delays a $1,000 request made right after it. The released value is the larger
+  of the value recorded at request and its value at release when the guard
+  answers Ok; if the guard does not answer Ok, the recorded value is used.
+- **The pending reservation counts queued rows not yet released**: one running
+  sum of their recorded values, in the same units. A large queued withdrawal
+  therefore delays small ones while it waits. Release moves its value from the
+  reservation into the meter; cancel removes it from the reservation, since
+  nothing left the vault.
 
 ## 6. Pricing an outflow without trusting the Diamond
 
@@ -134,7 +144,20 @@ counted, stricter than the platform label (Q3).
 **Fail closed:** a feed whose answer is not Ok (stale, distrusted, sequencer
 down) delays the outflow, never values it at 0. If the guard's numeraire
 differs from the config's, every valued outflow is delayed until re-anchored
-(Q6). The first line runs the same rule against the same guard in the same
+(Q6).
+
+**A numeraire rotation does not carry the old sums over.** The meter and the
+pending reservation are tagged with the numeraire they were written in. Sums
+in one currency cannot be compared with a threshold in another, and converting
+them would need a cross-rate the vault has no trusted source for. So when the
+config's numeraire changes, every valued owner outflow is **delayed** (queued,
+not refused) until 25 hours after the rotation took effect, when the last
+old-currency hour has left the window. The meter then restarts empty under the
+new tag. Queued rows keep their old-currency recorded values; on release they
+are re-valued in the new currency, and if the guard does not answer Ok they
+wait. Both lines apply the same rule, each against its own tag, so a
+withdrawal made just before the rotation cannot be paired with an
+undercounted one just after it. The first line runs the same rule against the same guard in the same
 transaction, so honest paths never disagree. This build waits for #3272: a vault
 calling `NumeraireValueFacet` would be the Diamond checking itself.
 
@@ -254,7 +277,8 @@ and every §12 residual.
   the §9 figures are proposals, not derived from data.
 - **Q6. Numeraire rotation:** move it into the guard together with the
   threshold's re-anchoring, or accept "delay all valued outflows until
-  re-anchored"?
+  re-anchored"? Either way the old sums are not carried over: §6 delays
+  valued outflows for 25 hours after a rotation.
 - **Q7. Unbound legs and unlisted assets:** give incentive and
   Diamond-transient legs a per-vault cap too (tighter against a Diamond flaw,
   but it could stall a large liquidation, #3178)? And should an ERC-20 with no
@@ -273,6 +297,9 @@ and every §12 residual.
   Diamond's buckets (#3204's audit scope).
 - **Governance compromise** loosens limits only after 48 hours plus 3 days;
   noticing in time depends on #3237.
+- **A numeraire rotation** delays every valued owner outflow for 25 hours.
+  This is deliberate, it is announced by the governance delay, and rotations
+  should be rare.
 - **No-feed assets and NFTs** are not delayed (illiquid-at-0); liens and the
   count bucket bind them.
 - **Hourly steps** keep an outflow counted for at most one hour longer than an exact window would, never shorter.
@@ -284,6 +311,14 @@ and every §12 residual.
   clears only when its hour is reused 25 hours later; an outflow at 00:59 still
   counts at 00:58 the next day; a saturated slot still delays; no-feed assets and
   NFTs count 0; a stale or distrusted price, or a numeraire mismatch, delays.
+- **Releases and the reservation:** a $10,000 row released after 26 hours is
+  counted at release, so a $1,000 request right after it queues; a pending row
+  delays a small request; a cancel removes the row from the reservation; a
+  release counts the larger of the recorded and the current Ok value.
+- **Rotation:** after an undelayed $1,000 outflow, a rotation to a new
+  numeraire delays a just-under-threshold outflow in the new currency, in both
+  lines; 25 hours after the rotation the meter is empty under the new tag and
+  that outflow pays.
 - **Second line,** with a test facet calling `transferOut` directly: an
   unqueued over-threshold owner outflow reverts; an outflow beyond the vault
   bucket reverts; a facet writing arbitrary Diamond storage cannot change the
