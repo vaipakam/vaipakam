@@ -2217,7 +2217,7 @@ Positions は共通のリーダーを通して Home と同じ保有一覧を読�
 
 この操作は 1 つのルールに従います: `repayLoan` は、Active または FallbackPending の ERC-20 ローンについて、`loan.lender` でも `ownerOf(lenderTokenId)` でもない任意のウォレットに提示されます（`LenderCannotRepayOwnLoan`）。Active のローンでは実効的な猶予期間の終了後に止まり（`RepaymentPastGracePeriod`）、`positionLock(borrowerTokenId)` が `SwapToRepayIntent` の間も止まります。貸し手の売却出品、借り換えリクエスト、全体の一時停止では止まりません。レンタルはまだここでは提示しません。
 
-確認画面は `calculateRepaymentAmount(loanId)` を最新ブロックで読み、さらにブロック時刻を `min(now + 30 分, 猶予期間の終了)` に上書きして読みます。同じリクエストで実行時のブロック時刻も読み、上書きを無視した接続は使いません。承認額は 2 つ目の数値ちょうどで、ウォレットを開く前に呼び出しをシミュレーションします。受領後は、そのブロックでローンの状態を読み、支払額を `Transfer` ログから測り、allowance が承認額から支払額を引いた値を示す場合は以前の値に戻します。
+確認画面は `calculateRepaymentAmount(loanId)` を最新ブロックで読み、さらにブロック時刻を `min(now + 30 分, 猶予期間の終了)` に上書きして読みます。同じリクエストで実行時のブロック時刻も読み、上書きを無視した接続は使いません。承認額は 2 つ目の数値ちょうどで、ウォレットを開く前に呼び出しをシミュレーションします。受領後は、そのブロックでローンの状態を読み、支払額を `Transfer` ログから測り、allowance が承認額から支払額を引いた値を示す場合は以前の値に戻します。その数値を超える allowance（無制限を含む）も同じ数値まで下げます。`repayLoan(loanId)` には上限も期限もないためです。戻す処理では、その後に元の大きい値に戻します。
 
 <a id="risk-access"></a>
 

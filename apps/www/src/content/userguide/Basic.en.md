@@ -1231,7 +1231,7 @@ Below that come the loan's dates (the due date of its current term before any pa
 
 On a running loan, the page offers to repay it in full. Anyone may repay except the lender. If you do not hold the borrower position, paying gives you no right to the collateral: only its holder can collect it. Repaying is held once the grace period has ended (the loan then goes to default), and while a swap-to-repay order is pending.
 
-What you owe grows by the second, and the protocol takes the amount as of the moment your repayment confirms. The review shows two figures: what it costs now, and what it would cost about thirty minutes ahead. Your wallet approves exactly the second figure. If the repayment confirms later, it is refused and nothing moves. Whatever it does not use of the approval is put back afterwards. Then the borrower collects the collateral and the lender collects principal and interest on Claims.
+What you owe grows by the second, and the protocol takes the amount as of the moment your repayment confirms. The review shows two figures: what it costs now, and what it would cost about thirty minutes ahead. Your wallet approves exactly the second figure. If you had already approved more, even an unlimited amount, it is lowered to that figure for the repayment, since the repayment takes no maximum of its own. If the repayment confirms later, it is refused and nothing moves. Whatever it does not use of the approval is put back afterwards. Then the borrower collects the collateral and the lender collects principal and interest on Claims.
 
 <a id="risk-access"></a>
 

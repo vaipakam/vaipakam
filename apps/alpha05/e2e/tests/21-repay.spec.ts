@@ -4,14 +4,17 @@
  * fixture chain. The review states the protocol's payoff now and at most by a
  * moment a short while ahead, the wallet approves exactly the later figure,
  * and the finish card reports the MEASURED outcome: the loan repaid, what
- * left the wallet, and the unused approval put back. A wallet other than the
+ * left the wallet, and the unused approval put back. A larger standing
+ * approval (an unlimited one here) is lowered to exactly that figure for the
+ * repayment, since `repayLoan` takes no maximum, and put back afterwards. A
+ * wallet other than the
  * borrower is told that paying gives no right to the collateral; the lender
  * is not offered the action; a loan past its grace period says the protocol
  * no longer accepts a repayment. Runs on the desktop and the phone project;
  * each run opens its own loans, and the clock is moved only inside a
  * snapshot the test reverts.
  */
-import { createWalletClient, erc20Abi, formatEther, http, parseEther } from 'viem';
+import { createWalletClient, erc20Abi, formatEther, http, maxUint256, parseEther } from 'viem';
 import { openLoan, WETH } from '@vaipakam/anvil-harness/lending';
 import type { Page } from '@playwright/test';
 import { ANVIL_URL, anvilRpc, increaseTime, mine } from '../lib/anvil';
@@ -20,6 +23,13 @@ import { accountFor } from '../lib/wallets';
 import { connectWallet, expect, test } from '../lib/wallet';
 
 const WETH_ABI = [{ type: 'function', name: 'deposit', stateMutability: 'payable', inputs: [], outputs: [] }] as const;
+
+/** Sets the borrower's WETH allowance to the protocol directly, outside the app. */
+async function setAllowance(diamond: `0x${string}`, amount: bigint): Promise<void> {
+  const w = createWalletClient({ account: accountFor('borrower'), transport: http(ANVIL_URL) });
+  await w.writeContract({ address: WETH, abi: erc20Abi, functionName: 'approve', args: [diamond, amount], chain: null });
+  await mine();
+}
 
 async function fitsWidth(page: Page): Promise<void> {
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
@@ -31,8 +41,9 @@ test('the borrower repays in full: the payoff now and at most, an exact approval
   // The borrower received the principal less the fee; the interest is on top.
   await sc.write('borrower', WETH, WETH_ABI, 'deposit', [], parseEther('0.2'));
   const borrower = sc.address('borrower');
-  // Whatever approval the borrower already gave (an earlier spec's harness
-  // repayment can leave one) is what the flow puts back.
+  // Below the payoff, so the flow raises it; whatever it was is what the
+  // flow puts back. A larger one is the next test's case.
+  await setAllowance(sc.diamond, 0n);
   const prior = await sc.pub.readContract({ address: WETH, abi: erc20Abi, functionName: 'allowance', args: [borrower, sc.diamond] });
   const priorText = `${formatEther(prior)} WETH`;
 
@@ -78,6 +89,36 @@ test('the borrower repays in full: the payoff now and at most, an exact approval
   await finish.getByRole('button', { name: 'Close' }).click();
   await expect(page.getByTestId('position-status')).toHaveText('Repaid.', { timeout: 60_000 });
   await expect(page.getByRole('region', { name: 'Actions' })).toHaveCount(0);
+});
+
+test('an unlimited standing approval is lowered to exactly the most the repayment can take, then put back', async ({ launchWallet }) => {
+  const sc = scenario();
+  const { loanId } = await openLoan(sc, { lender: 'lender', borrower: 'borrower', principalWeth: '0.05', collateralTliq: '250', rateBps: 500, days: 30 });
+  await sc.write('borrower', WETH, WETH_ABI, 'deposit', [], parseEther('0.05'));
+  const borrower = sc.address('borrower');
+  await setAllowance(sc.diamond, maxUint256);
+
+  const { page, flags } = await launchWallet('borrower');
+  await page.goto(`/positions/${loanId}`);
+  await connectWallet(page);
+  await page.getByRole('region', { name: 'Actions' }).getByTestId('repay-open').click({ timeout: 60_000 });
+  const flow = page.getByTestId('repay-panel');
+  const receipt = flow.locator('.receipt');
+  await expect(receipt).toContainText(/Lower your approval from unlimited to exactly 0\.05\d* WETH, the most it can take by then/, { timeout: 60_000 });
+  await expect(receipt).toContainText(/If it confirms after .* UTC, the approval falls short and the repayment is refused/);
+  await expect(receipt).toContainText('Whatever the repayment does not use of the approval is put back to unlimited afterwards.');
+  await expect(receipt).toContainText('Wallet prompts: 2.');
+  await fitsWidth(page);
+
+  const sent = flags.sentTransactions;
+  await flow.getByRole('button', { name: 'Confirm in wallet' }).click();
+  const finish = flow.locator('[data-phase="measured"]');
+  await expect(finish).toHaveAttribute('data-verdict', 'done', { timeout: 90_000 });
+  await expect(finish).toContainText(`Loan #${loanId} repaid`);
+  await expect(finish).toContainText('Unused approval put back to unlimited');
+  // Lower, repay, and the put-back.
+  expect(flags.sentTransactions).toBe(sent + 3);
+  expect(await sc.pub.readContract({ address: WETH, abi: erc20Abi, functionName: 'allowance', args: [borrower, sc.diamond] })).toBe(maxUint256);
 });
 
 test('another wallet may repay but is told it gains no right to the collateral; the lender is not offered the action', async ({ launchWallet }) => {

@@ -4,6 +4,7 @@
  * approval lets the protocol take, where the collateral goes, and every
  * consequence. Every amount is the protocol's own settlement figure.
  */
+import { maxUint256 } from 'viem';
 import type { CopyAccess } from '../copy/useCopy';
 import { figured, textValue, type Receipt } from '../receipt/types';
 import { exactTokenAmount, tokenAmount, type TokenMetaMap } from '../reads/tokens';
@@ -12,6 +13,12 @@ import { STATUS_FALLBACK_PENDING } from '../eligibility/repay';
 import { paysAsBorrower, promptCount, type RepayReview } from './repayReview';
 
 type Hex = `0x${string}`;
+
+/** An allowance in words: the largest value, which a wallet's "unlimited"
+ *  approval sets, is named as such rather than printed as 78 digits. */
+export function allowanceFigure(v: bigint, asset: Hex, meta: TokenMetaMap | null, copy: Pick<CopyAccess, 'text' | 'format'>): string {
+  return v === maxUint256 ? copy.text('repay.unlimited') : exactTokenAmount(v, asset, meta, copy.format);
+}
 
 export function repayReceipt(r: RepayReview, account: Hex, meta: TokenMetaMap | null, copy: Pick<CopyAccess, 'text' | 'format'>): Receipt {
   const { text, format } = copy;
@@ -45,7 +52,11 @@ export function repayReceipt(r: RepayReview, account: Hex, meta: TokenMetaMap | 
         text:
           r.approvalSteps === 0
             ? format('repay.approvalEnough', { amount: exact(r.allowance) })
-            : format(r.approvalSteps === 2 ? 'repay.approvalZeroFirst' : 'repay.approvalNeeded', { amount: exact(r.payoff.atBy) }),
+            : r.approvalSteps === 2
+              ? format('repay.approvalZeroFirst', { amount: exact(r.payoff.atBy) })
+              : r.allowance > r.payoff.atBy
+                ? format('repay.approvalLower', { prior: allowanceFigure(r.allowance, asset, meta, copy), amount: exact(r.payoff.atBy) })
+                : format('repay.approvalNeeded', { amount: exact(r.payoff.atBy) }),
       },
       binding: false,
       movesOut: r.approvalSteps > 0,
@@ -55,7 +66,7 @@ export function repayReceipt(r: RepayReview, account: Hex, meta: TokenMetaMap | 
   const consequences = [
     text(loan.useFullTermInterest ? 'repay.loseFull' : 'repay.loseGrows'),
     format(r.capped ? 'repay.loseGraceEnds' : 'repay.loseLate', { time: by }),
-    ...(r.approvalSteps > 0 ? [format('repay.losePutBack', { amount: exact(r.allowance) })] : []),
+    ...(r.approvalSteps > 0 ? [format('repay.losePutBack', { amount: allowanceFigure(r.allowance, asset, meta, copy) })] : []),
     ...(borrower ? [] : [format('repay.loseThirdParty', { id: loan.borrowerTokenId.toString() })]),
     ...(loan.status === STATUS_FALLBACK_PENDING ? [text('repay.cure')] : []),
     ...(r.refinanceOffer === null ? [text('repay.refinanceUnread')] : r.refinanceOffer > 0n ? [format('repay.refinanceStays', { id: r.refinanceOffer.toString() })] : []),

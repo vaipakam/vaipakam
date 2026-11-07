@@ -1,10 +1,14 @@
+import { maxUint256 } from 'viem';
 import { describe, expect, it } from 'vitest';
 import { OPEN } from '../eligibility/types';
 import type { LoanDetails } from '../positions/loanView';
 import { repayReceipt } from './repayReceipt';
 import type { RepayReview } from './repayReview';
 
-const copy = { text: (k: string) => k, format: (k: string, v?: Record<string, string>) => `${k}${v?.id ? `#${v.id}` : ''}` } as never;
+const copy = {
+  text: (k: string) => k,
+  format: (k: string, v?: Record<string, string>) => `${k}${v?.id ? `#${v.id}` : ''}${v?.prior ? `<${v.prior}` : ''}`,
+} as never;
 const A = '0x00000000000000000000000000000000000000aa' as const;
 
 const review: RepayReview = {
@@ -35,5 +39,23 @@ describe('repayReceipt refinance request', () => {
   });
   it('states an unread request as unread', () => {
     expect(lines({ ...review, refinanceOffer: null })).toContain('repay.refinanceUnread');
+  });
+});
+
+describe('repayReceipt approval', () => {
+  const approvalRow = (r: RepayReview) => {
+    const row = repayReceipt(r, A, null, copy).rows.find((x) => x.label === 'repay.rowApproval');
+    return row && row.value.kind === 'text' ? row.value.text : null;
+  };
+  it('raises a short approval to exactly the reviewed maximum', () => {
+    expect(approvalRow(review)).toBe('repay.approvalNeeded');
+  });
+  it('lowers a larger approval to exactly the reviewed maximum, since the repayment takes no maximum of its own', () => {
+    expect(approvalRow({ ...review, allowance: 500n })).toMatch(/^repay\.approvalLower</);
+  });
+  it('names an unlimited approval as unlimited, where it is lowered and where it is put back', () => {
+    const r = { ...review, allowance: maxUint256 };
+    expect(approvalRow(r)).toBe('repay.approvalLower<repay.unlimited');
+    expect(lines(r)).toContain('repay.losePutBack');
   });
 });

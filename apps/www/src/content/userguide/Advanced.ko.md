@@ -2108,7 +2108,7 @@ Positions는 하나의 공유 리더로 Home과 같은 보유 목록을 읽습�
 
 이 작업은 하나의 규칙을 따릅니다: `repayLoan`은 Active 또는 FallbackPending ERC-20 대출에 대해 `loan.lender`도 `ownerOf(lenderTokenId)`도 아닌 모든 지갑에 제공되며(`LenderCannotRepayOwnLoan`), Active 대출에서는 실효 유예 기간 종료 후(`RepaymentPastGracePeriod`), 그리고 `positionLock(borrowerTokenId)`가 `SwapToRepayIntent`인 동안 보류됩니다. 대출자의 판매 등록, 재융자 요청, 전체 일시 중지는 이를 보류하지 않습니다. 대여는 아직 여기서 제공하지 않습니다.
 
-검토 화면은 `calculateRepaymentAmount(loanId)`를 최신 블록에서 읽고, 블록 시간을 `min(now + 30분, 유예 기간 종료)`로 덮어써서 한 번 더 읽습니다. 같은 요청이 실행된 블록 시간도 읽으며, 덮어쓰기를 무시한 연결은 건너뜁니다. 승인액은 정확히 두 번째 수치이고, 지갑을 열기 전에 호출을 시뮬레이션하며, 영수증 이후에는 그 블록에서 대출 상태를 읽고, `Transfer` 로그로 지급액을 측정하고, allowance가 승인액에서 지급액을 뺀 값이면 이전 값으로 되돌립니다.
+검토 화면은 `calculateRepaymentAmount(loanId)`를 최신 블록에서 읽고, 블록 시간을 `min(now + 30분, 유예 기간 종료)`로 덮어써서 한 번 더 읽습니다. 같은 요청이 실행된 블록 시간도 읽으며, 덮어쓰기를 무시한 연결은 건너뜁니다. 승인액은 정확히 두 번째 수치이고, 지갑을 열기 전에 호출을 시뮬레이션하며, 영수증 이후에는 그 블록에서 대출 상태를 읽고, `Transfer` 로그로 지급액을 측정하고, allowance가 승인액에서 지급액을 뺀 값이면 이전 값으로 되돌립니다. 그 수치보다 큰 allowance(무제한 포함)도 그 수치로 낮춥니다. `repayLoan(loanId)`에는 상한도 기한도 없기 때문이며, 이후 되돌리기가 원래의 큰 값을 복원합니다.
 
 <a id="risk-access"></a>
 

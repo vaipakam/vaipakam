@@ -747,7 +747,11 @@ above. Each resolves here, so a route reviewer needs no private file:
   the second read by asking the same view with the block time moved, on a
   connection that is checked to have honoured the move (one that ignored it
   is passed over, and if none honours it the repayment is not offered). The
-  approval is exactly the later figure; the review says that a repayment
+  approval is exactly the later figure, LOWERED to it as well as raised:
+  the protocol's full repayment takes no maximum or deadline of its own, so
+  the allowance is the only cap on what a late confirmation can take, and a
+  larger standing approval (an unlimited one included, named as unlimited)
+  would void the stated maximum. The review says that a repayment
   confirming after that moment is refused with nothing moved, and that what
   the repayment does not use is put back afterwards, to the allowance as it
   stood before. A payer who does not hold the borrower position is told it

@@ -1258,7 +1258,7 @@ Debajo aparecen las fechas del préstamo (la fecha de vencimiento del plazo actu
 
 En un préstamo activo, la página ofrece pagarlo completo. Cualquiera puede pagar excepto el prestamista. Si no tienes la posición de prestatario, pagar no te da ningún derecho sobre la garantía: solo su titular puede cobrarla. El pago queda retenido una vez terminado el período de gracia (el préstamo pasa entonces a impago) y mientras haya una orden de swap-to-repay pendiente.
 
-Lo que debes crece cada segundo, y el protocolo toma el importe del momento en que se confirma tu pago. La revisión muestra dos cifras: lo que cuesta ahora y lo que costaría unos treinta minutos después. Tu billetera aprueba exactamente la segunda cifra. Si el pago se confirma más tarde, se rechaza y nada se mueve. Lo que el pago no use de la aprobación se restablece después. Luego el prestatario cobra la garantía y el prestamista cobra el principal y los intereses en Claims.
+Lo que debes crece cada segundo, y el protocolo toma el importe del momento en que se confirma tu pago. La revisión muestra dos cifras: lo que cuesta ahora y lo que costaría unos treinta minutos después. Tu billetera aprueba exactamente la segunda cifra. Si ya habías aprobado más, incluso una cantidad ilimitada, se reduce a esa cifra para el pago, porque el pago no fija por sí mismo ningún máximo. Si el pago se confirma más tarde, se rechaza y nada se mueve. Lo que el pago no use de la aprobación se restablece después. Luego el prestatario cobra la garantía y el prestamista cobra el principal y los intereses en Claims.
 
 <a id="risk-access"></a>
 

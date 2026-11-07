@@ -120,10 +120,11 @@ export async function readRepayReview(
       c.readContract({ address: asset, abi: erc20Abi, functionName: 'allowance', args: [account, diamond] }),
     ]),
   );
-  const approvalSteps =
-    allowance >= payoff.atBy
-      ? 0
-      : (await allowanceSteps({ accepts: (amount) => r((c) => tokenAcceptsApproval(c, asset, account, diamond, amount)) }, allowance, payoff.atBy)).length;
+  // The allowance is set to exactly the reviewed maximum whichever way it
+  // stands, lowered as well as raised: `repayLoan` takes no maximum of its
+  // own, so a larger standing approval would let a late confirmation take
+  // more than the review states.
+  const approvalSteps = (await allowanceSteps({ accepts: (amount) => r((c) => tokenAcceptsApproval(c, asset, account, diamond, amount)) }, allowance, payoff.atBy)).length;
   const readAt = Date.now();
   const verdict = repayVerdict(
     {

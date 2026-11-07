@@ -22,7 +22,7 @@ import { useTrackedTx } from '../tx/useTrackedTx';
 import { ActionFlow, reviewIdentity, type Recheck } from '../ui/ActionFlow';
 import { Notice } from '../ui/Notice';
 import { shortAddress } from '../ui/format';
-import { repayReceipt } from './repayReceipt';
+import { allowanceFigure, repayReceipt } from './repayReceipt';
 import { changedBetween, promptCount, readRepayReview, reviewBlockers, type RepayReview } from './repayReview';
 
 type Hex = `0x${string}`;
@@ -51,8 +51,9 @@ interface RepayLoanProps {
 /**
  * LN-21 — repay a loan in full, by anyone except the lender. The review is
  * the protocol's own settlement figure now and at a moment a short while
- * ahead (the figure grows by the second); the wallet approves exactly the
- * later figure when its approval does not cover it, the repayment is sent
+ * ahead (the figure grows by the second); the allowance is set to exactly
+ * the later figure, lowered when a larger approval stands, since the
+ * repayment takes no maximum of its own; the repayment is sent
  * only after a dry run passes, and what the repayment does not use of the
  * approval is put back afterwards (best effort, stated either way). The
  * outcome is measured from the chain: the loan's status at the receipt's
@@ -100,7 +101,10 @@ export function RepayLoan({ loanId, chain, own, meta, onClose }: RepayLoanProps)
       // one the wallet holds right before this flow's approval.
       const io = allowanceIo(asset, (v, i, of) => say(of === 2 && i === 0 ? text('approval.stepZero') : format('repay.stepApprove', { amount: exact(asset, v) })));
       const prior = await readAllowance(asset);
-      const steps = prior < amount ? await allowanceSteps(io, prior, amount) : [];
+      // Exactly the reviewed maximum, lowered too: `repayLoan` has no
+      // maximum or deadline of its own, so the allowance is the only cap on
+      // what a late confirmation can take.
+      const steps = await allowanceSteps(io, prior, amount);
       if (steps.length !== r.approvalSteps) throw allowanceMoved(copy);
       const approved = steps.length > 0;
       let since: bigint | null = null;
@@ -134,7 +138,7 @@ export function RepayLoan({ loanId, chain, own, meta, onClose }: RepayLoanProps)
       approvalLeft.current = null;
       if (!left) return null;
       const after = await putBack(left.token, left.prior, left.amount, left.since);
-      return cleanUpLeg(after, format('approval.legBack', { amount: exact(left.token, left.prior) }));
+      return cleanUpLeg(after, format('approval.legBack', { amount: allowanceFigure(left.prior, left.token, meta, copy) }));
     },
     measure: async (receipt, at) => (review ? measure(review, receipt.logs, at) : []),
     // After a repayment that took effect: the approval it did not use is
@@ -144,7 +148,7 @@ export function RepayLoan({ loanId, chain, own, meta, onClose }: RepayLoanProps)
       leftover.current = null;
       if (!left) return null;
       const after = await putBack(left.token, left.prior, left.expect, left.since);
-      return cleanUpLeg(after, format('repay.legPutBack', { amount: exact(left.token, left.prior) }));
+      return cleanUpLeg(after, format('repay.legPutBack', { amount: allowanceFigure(left.prior, left.token, meta, copy) }));
     },
   });
 
