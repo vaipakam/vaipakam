@@ -68,6 +68,7 @@ revert undoes the whole action). The six owner-named entries map onto these rout
 | create offer | `OfferCreateFacet.createOffer` / `createOfferWithPermit` (`:349`, `:414`) | NOT `createOfferInternal` (`:377`), which only the offset (`PrecloseFacet.sol:1796`) and sale-listing (`EarlyWithdrawalFacet.sol:335`) exits reach |
 | accept | `OfferAcceptFacet.acceptOffer` / `acceptOfferWithPermit` (`:302`, `:392`) | at the external entry, not at `LoanFacet.initiateLoan` (`:204-205`), whose "acceptor" is not the sender on match and auto-link paths |
 | match | the owner's own matched postings: `LenderIntentFacet` (`:210`, `:386`) | keeper `OfferMatchFacet.matchOffers` (`:147`) acts for no owner; its creators were checked when they posted (Q1) |
+| change an offer so it holds more | `OfferMutateFacet.setOfferAmount`, `modifyOffer`, `setOfferCollateral` | gated only when the change deposits more (the `_settleAmountDelta` → `_pullOrRefundErc20` → `vaultDepositERC20` pull); a change that refunds is never gated |
 | add collateral | `AddCollateralFacet.addCollateral` (`:104`) | gated for the vault that receives the collateral; a cure question is open (Q2) |
 | buy a lender position | listed sale: through `acceptOffer`; direct sale: the buyer's own buy offer, through `createOffer` | the selling lender (`EarlyWithdrawalDirectFacet.sellLoanViaBuyOffer`, `:292`) is receiving a payout, never gated |
 
@@ -76,6 +77,15 @@ Today's open-position refusal for locked or retired accounts, `LibProtectedAccou
 not go inside it, and not inside the ledger writers `recordVaultDeposit` / `recordVaultWithdraw`
 (`LibVaipakam.sol:12713`, `:12735`), because those also run for settlement credits, which must
 never be gated.
+
+**The list is closed by a test, not by reading.** Every owner-initiated route
+that pulls value into the owner's own vault must either call the gate or sit on
+a reviewed exception list (settlement credits, refunds, passive fills). A
+deploy-sanity test enumerates the routes that reach `vaultDepositERC20` /
+`vaultDepositERC721` / `vaultDepositERC1155` from an external entry and fails on
+one that is neither gated nor listed, so a value-adding route added later (or
+missed here, as the offer mutations first were) cannot bypass the rule
+silently.
 
 **Placement.** A new `LibProtectionGate` holds the one rule, `requireDecided(account)`. It reads
 the protection and decline state from storage and returns at once when the account has decided.
@@ -226,7 +236,11 @@ release-note fragment.
 ## 10. Tests
 
 - Boundary: exactly at the threshold passes; one base unit above refuses for an undecided account
-  at each of the six entries, and passes for a decided one.
+  at each of the six entries and at the offer mutations, and passes for a decided one.
+- Offer mutations: an undecided owner's offer below the threshold raised above it by
+  `setOfferAmount`, `modifyOffer` or `setOfferCollateral` refuses; a mutation that refunds passes.
+- Route coverage: the deploy-sanity test fails on a vault-deposit route that is neither gated nor on
+  the reviewed exception list.
 - The acting party only: an undecided creator above the threshold is not checked at someone else's
   accept, nor at a keeper match. The offset and sale-listing internal creates are not gated.
 - Never gated (one test per route): repay, preclose, refinance completion, claims, default,

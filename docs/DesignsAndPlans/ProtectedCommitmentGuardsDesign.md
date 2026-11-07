@@ -188,8 +188,20 @@ because their pricing is a daily fee and not an APR (Q3).
   - A protected account accepting an off-band signed offer queues an accept
     row holding the digest, and the execution takes the signed offer and its
     signature again as calldata.
-- *Matches* (`OfferMatchFacet.sol:147`) and lender intents reach
-  `initiateLoan`, so a queued offer simply goes unmatched until it is live.
+- *Matches* (`OfferMatchFacet.sol:147`) reach `initiateLoan`, so a queued
+  standing offer simply goes unmatched until it is live.
+- *Lender intents* have no standing offer to wait. `matchIntent`
+  materializes a fresh slice and fills it in the same transaction, so a delay
+  started at that point could never mature: the failing fill would revert the
+  record with it. The guard is therefore recorded against the **persistent
+  intent**, when it is registered and whenever its terms change:
+  - an off-band protected intent gets a guard record keyed by the intent id
+    and a hash of its terms, live after `delaySeconds`, voided by epoch;
+  - a materialized slice inherits the intent's authorization: `initiateLoan`
+    accepts an off-band slice only if the parent intent's record is live and
+    its terms hash still matches;
+  - any change to the intent's rate or terms writes a new record and restarts
+    the delay.
 
 **Drift.** The reference can move after commit, and a live offer is not
 re-queued for that (see the residual risks in §6).
@@ -265,7 +277,8 @@ mode: "You'd receive {pct}% of this position's value."
 
 - **Storage:** per account wallet, per `(collection, tokenId)`, a record of
   `asset`, `amount`, `pendingAmount`, `pendingAt` and `epoch`. ERC-1155
-  records a per-unit amount.
+  records a per-unit amount, and every comparison scales it by the quantity
+  the order sells (see the effective floor below).
 - **Set or raise:** instant. Either the manager or a signer may raise, because
   a raise only tightens the guard. The first setting is also instant: until
   then the effective floor is what the lender and treasury are owed, so a
@@ -275,8 +288,12 @@ mode: "You'd receive {pct}% of this position's value."
   the manager may request it, and the manager or a signer may cancel it. A
   lock voids it by epoch, as allowlist additions are voided
   (`ProtectedAccountFacet.sol:433-472`).
-- **Effective floor** = max(minimum, what the lender and treasury are owed
-  now). When no minimum is set, it is the owed amount alone (the live floor,
+- **Effective floor** = max(minimum × quantity sold, what the lender and
+  treasury are owed now). The quantity sold is the order's ERC-1155 quantity
+  (today the whole `collateralQuantity`, `LibPrepayOrder._componentsAtMemory`),
+  and 1 for an ERC-721. Every check in §5.2 (fixed, Dutch end price, parallel
+  sale, atomic match) compares the order's **total** ask or net against this
+  total floor, never a per-unit minimum against a total. When no minimum is set, it is the owed amount alone (the live floor,
   `NFTPrepayListingFacet.sol:1248-1262`).
 - **Collection floor:** advisory only. The app may offer it as the starting
   value and warns "x% under the collection floor". Nothing on-chain reads it.
@@ -372,7 +389,9 @@ Unit tests for `LibProtectedCommitment`:
 - the band, both directions, on the range ends;
 - the rule not applying with no model, no reference or a stale reference;
 - 95% par at 94.99%, 95% and 95.01%;
-- effective floor = max(minimum, owed);
+- effective floor = max(minimum × quantity sold, owed), including an
+  ERC-1155 order of ten units whose total ask passes a per-unit minimum but
+  not ten times it (held);
 - an asset mismatch counting as below the minimum;
 - the epoch void;
 - the queue bound.
@@ -390,6 +409,9 @@ Scenario tests:
      before `liveAt`. Without a lock it fills after `liveAt`.
    - (c) An unarmed off-band signed offer from a protected signer reverts at
      fill. An armed and matured one fills.
+   - (d) An off-band protected lender intent: a match before the intent's
+     record is live reverts; after it, the materialized slice fills; changing
+     the intent's rate restarts the delay.
 2. **Floor-priced NFT listing, held (acceptance).**
    - (a) A protected borrower with a minimum lists at the live floor. Before
      `liveAt`: the ERC-1271 view returns invalid, a pre-validated order's fill

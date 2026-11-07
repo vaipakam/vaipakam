@@ -105,11 +105,14 @@ keeps one bucket per asset protocol-wide, in the Diamond only.
 
 **The delay meter is a strict rolling 24 hours, not a bucket.** A $1000 bucket
 can pass up to twice that within some 24-hour span, against the owner's wording.
-The vault keeps 24 hourly sums in whole numeraire units, rounded up, in
-saturating 32-bit fields, eight per slot: three slots plus an hour index, about
-four reads per outflow. The window is the current hour plus the 23 before it; a
-slot is zeroed when its hour is reused. Rounding and hourly steps only err
-toward delaying.
+The vault keeps 25 hourly sums in whole numeraire units, rounded up, in
+saturating 32-bit fields, eight per slot: four slots plus an hour index, about
+five reads per outflow. The window is the current hour plus the **24** before
+it, so the oldest hour, which still partly overlaps the trailing 24 hours, is
+always retained. An outflow therefore stays counted for at least 24 hours and
+at most 25. A slot is zeroed only when its hour is reused, 25 hours later.
+Rounding and hourly steps only err toward delaying: a $1,000 outflow at 00:59
+is still counted at 00:58 the next day.
 
 An outflow is **delayed whole**, never split, when the window sum plus its own
 value would exceed the threshold. Its value counts when requested, paid or
@@ -206,7 +209,7 @@ a disabled limit is refused.
 | --- | --- | --- |
 | Delay threshold (numeraire, rolling 24 h) | $1,000 (owner) | $100 – $50,000 |
 | Delay length | 24 h (Q5) | 12 h – 72 h |
-| Meter window | 24 h, hourly steps | constant (decided) |
+| Meter window | trailing 24 h, kept as 25 hourly sums (at least 24 h, at most 25 h) | constant (decided) |
 | Per-vault cap per ERC-20 | ≈ $250k in units, refills in 24 h (Q5) | above the threshold; full refill no faster than 1 h |
 | Per-vault NFT count | 20 ids, refills in 24 h (Q5) | 5 – 500 |
 | Brake per asset | ≈ $2M in units, refills in 24 h (Q5) | at least 10× the per-vault cap |
@@ -272,13 +275,14 @@ and every §12 residual.
   noticing in time depends on #3237.
 - **No-feed assets and NFTs** are not delayed (illiquid-at-0); liens and the
   count bucket bind them.
-- **Hourly steps** delay at most one hour more than an exact window would.
+- **Hourly steps** keep an outflow counted for at most one hour longer than an exact window would, never shorter.
 - **An oracle outage** delays every valued wallet outflow: stated friction.
 
 ## 13. Tests
 
 - **Meter:** exactly $1,000 pays; crossing it queues the whole outflow; a slot
-  clears as its hour leaves; a saturated slot still delays; no-feed assets and
+  clears only when its hour is reused 25 hours later; an outflow at 00:59 still
+  counts at 00:58 the next day; a saturated slot still delays; no-feed assets and
   NFTs count 0; a stale or distrusted price, or a numeraire mismatch, delays.
 - **Second line,** with a test facet calling `transferOut` directly: an
   unqueued over-threshold owner outflow reverts; an outflow beyond the vault
