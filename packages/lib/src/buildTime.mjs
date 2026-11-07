@@ -47,3 +47,27 @@ export function buildSourceTime({ cwd = process.cwd(), env = process.env, git, n
   }
   return { iso: now().toISOString(), source: 'clock', reproducible: false, reason };
 }
+
+/**
+ * The commit label a build stamps into its output (#3236): the first 12 hex
+ * digits of `HEAD`, the same length the deploy stamp records.
+ *
+ * WHY NOT `git rev-parse --short`. Its length is chosen by git from how many
+ * objects the checkout holds, so the same commit is labelled `fea4149` in a
+ * shallow clone (Workers Builds) and `fea41497a` in a full one. Every file
+ * carrying the label then differs between the two builds, and a rebuild of a
+ * served commit read as a mismatch. A fixed slice of the full hash is the
+ * same in every checkout.
+ *
+ * @param {{ cwd?: string, git?: (args: string[]) => string }} [opts]
+ * @returns {string} the 12-digit label, or 'unknown' when git cannot name HEAD.
+ */
+export function buildCommitLabel({ cwd = process.cwd(), git } = {}) {
+  const run = git ?? ((args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }));
+  try {
+    const sha = run(['rev-parse', 'HEAD']).trim().toLowerCase();
+    return /^[0-9a-f]{40}$/.test(sha) ? sha.slice(0, 12) : 'unknown';
+  } catch {
+    return 'unknown';
+  }
+}

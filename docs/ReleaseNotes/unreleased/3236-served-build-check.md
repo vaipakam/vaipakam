@@ -6,6 +6,8 @@ The build uses the public build variables recorded in `.github/served-build.json
 
 A finding opens an assigned issue ("Served build differs from its commit") and pings the ops chat, through the same alert path as the deploy-lag check. It says what it found: a file or header that differs, a deployed commit that is not on `main`, a deployment it cannot verify (no stamp, a build with uncommitted changes, or traffic split between versions), or a commit that would not build. A difference names both possible causes, a changed build variable or an altered site, and the runbook says to treat it as altered until shown otherwise. A deploy that lands during the check is not judged that run.
 
-The first run, against the deployments live on 2026-11-07, found all three sites serving exactly what their commits build. A run with one build variable changed reported the difference, so the check can see one. The deploy-lag check now reads deployments through the same shared reader.
+A local run, against the deployments live on 2026-11-07, found all three sites serving exactly what their commits build. A run with one build variable changed reported the difference, so the check can see one. The deploy-lag check now reads deployments through the same shared reader.
+
+The check's first scheduled run raised a false alarm. The app and alpha05 stamped their commit as git's short form, whose length depends on how much history the checkout holds: Cloudflare's shallow clone wrote seven characters, the check's full clone more, so every file carrying the stamp differed. Both builds now stamp the commit's first twelve characters, the same length the deploy stamp records, whatever the checkout. The Help page and the diagnostics show that longer form.
 
 Advances #3236.

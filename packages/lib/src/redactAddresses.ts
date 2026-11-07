@@ -94,7 +94,7 @@ export function redactAddress(address: string | undefined): string {
  * message will come through shortened. That is the trade this module makes
  * everywhere else — a redacted SHA can be asked for again, a published
  * account cannot be taken back. The app's own build stamp is unaffected: it
- * is `git rev-parse --short`, seven to nine characters.
+ * the commit's first twelve hex digits (`buildCommitLabel`).
  */
 const HEX_RUN_RE = /[a-fA-F0-9]+/g;
 const ADDRESS_HEX_LEN = 40;
