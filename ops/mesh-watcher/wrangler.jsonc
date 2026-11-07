@@ -113,6 +113,12 @@
     { "binding": "RPC_97",           "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "RPC_BNB_TESTNET" },
   ],
   "vars": {
+    // EVENT_ALERTS_ENABLED is deliberately NOT here (#3239, #3237). Under
+    // `keep_vars` a var declared in this file is overwritten on every
+    // deploy, so declaring it would turn an armed event-alert pass off at
+    // the next deploy. It is a dashboard var, exactly `true` to arm; see
+    // the README's EVENTS section. EVENT_ALERT_LOG_RANGE and
+    // EVENT_ALERT_INITIAL_LOOKBACK default in code (5000 / 20000 blocks).
     // EVM chain id of the canonical REWARD chain (Base 8453 / Base
     // Sepolia 84532). The MIRROR set is deliberately NOT configured
     // here: it is read from the canonical Diamond's
