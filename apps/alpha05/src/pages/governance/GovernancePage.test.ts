@@ -68,7 +68,7 @@ describe('GovernanceView', () => {
     const out = html({ queue: ready(queue([])) });
     expect(out).toContain('Nothing is queued on Base Sepolia.');
     expect(out).toContain('Read at block 123456');
-    expect(out).toContain('Each change waits at least 2 days after it is queued.');
+    expect(out).toContain('A change queued now must wait at least 2 days; each change below shows its own wait.');
   });
 
   it('marks the last answer as old when a re-read failed', () => {
