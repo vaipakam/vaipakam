@@ -1,4 +1,4 @@
-## Thread — the live refinance drive follows the payoff permit (PR #<n>)
+## Thread — the live refinance drive follows the payoff permit (PR #3298)
 
 The manual live refinance drive had not caught up with the refinance payoff permit (#1558, #3042). Its write plan still expected the borrower to approve the Diamond for the payoff, and its review check still expected the approval-route wording ("the approval you grant covers that too"). So the first live run against the deployed app stopped at the borrower's review, before anything was written. Closes #3295.
 
