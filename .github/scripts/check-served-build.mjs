@@ -61,6 +61,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { appendFileSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, relative, sep } from 'node:path';
+import { latestApproval } from './lib/approvalRecord.mjs';
 import { readLatestDeployment, readVersion } from './lib/workerDeployments.mjs';
 
 const CONFIG_PATH = '.github/served-build.json';
@@ -259,7 +260,7 @@ export function previewHost(site, versionId) {
  * `{ mode: 'candidate', version }` (a version uploaded for approval, #3236,
  * compared through its preview URL before anyone approves it).
  */
-async function checkSite(site, { auth, ref, suffixPaths, approvalOn, target = { mode: 'live' } }) {
+async function checkSite(site, { auth, github, ref, suffixPaths, approvalOn, target = { mode: 'live' } }) {
   const problem = (kind, text) => ({ key: `${kind}:${site.worker}`, text: `${site.worker}: ${text}` });
   let v;
   let hosts = site.hosts;
@@ -275,12 +276,26 @@ async function checkSite(site, { auth, ref, suffixPaths, approvalOn, target = { 
     const before = await readLatestDeployment(site.worker, auth);
     v = verifiableCommit(before);
     if (v.reason) return { problems: [problem('unverifiable', `cannot be verified: ${v.reason}.`)], report: [] };
-    // With the deploy approval on (#3236), the live deployment must be one a
-    // person approved: its message names the approving run. Anything else
-    // went live around the approval (a dashboard change of the deploy mode,
-    // or a deploy made directly with a Cloudflare token).
-    if (approvalOn && !before.approvedBy) {
-      return { problems: [problem('unapproved', `is live on version ${v.version}, which no approval run put there, while deploy approval is on (SITE_DEPLOY_APPROVAL). Check the Workers Build deploy mode and who deployed it.`)], report: [] };
+    // With the deploy approval on (#3236), the live version must be the one
+    // most recently approved, by GitHub's record (lib/approvalRecord.mjs).
+    // The deployment's own message is written by whoever deploys, so it is
+    // only a cross-check, never the proof. Anything else went live around
+    // the approval: a dashboard change of the deploy mode, a deploy made
+    // directly with a Cloudflare token, or an older approved version put
+    // back by hand.
+    if (approvalOn) {
+      const rec = await latestApproval(site.worker, github);
+      if (rec.read !== 'ok') return { problems: [problem('unverifiable', `its approval record on GitHub cannot be read (${rec.error}).`)], report: [] };
+      const why = !rec.approval
+        ? 'no approval run on main has promoted any version of it'
+        : rec.approval.version !== v.version
+          ? `the latest approved version is ${rec.approval.version} (${rec.approval.runUrl})`
+          : before.approvedBy !== rec.approval.runUrl
+            ? `its deployment does not name the run that approved it (${rec.approval.runUrl})`
+            : null;
+      if (why) {
+        return { problems: [problem('unapproved', `is live on version ${v.version}, which is not the version a person last approved: ${why}. Deploy approval is on (SITE_DEPLOY_APPROVAL); check the Workers Build deploy mode and who deployed it.`)], report: [] };
+      }
     }
   }
 
@@ -454,12 +469,15 @@ async function main() {
   // Whether deploy approval is on is a repository setting, stated in the
   // report either way.
   const approvalOn = (process.env.SITE_DEPLOY_APPROVAL ?? '').trim() === 'on';
+  // The approval record is read from GitHub (actions: read, checks: read).
+  const github = { token: process.env.GITHUB_TOKEN, repo: process.env.GITHUB_REPOSITORY || 'vaipakam/vaipakam', api: process.env.GITHUB_API_URL || 'https://api.github.com' };
+  if (approvalOn && !candidate && !github.token) throw new Error('deploy approval is on, so GITHUB_TOKEN (actions: read, checks: read) is required to read the approval record');
 
   const problems = [];
   const report = [];
   try {
     for (const site of sites) {
-      const r = await checkSite(site, { auth: { account, token }, ref, suffixPaths, approvalOn, target });
+      const r = await checkSite(site, { auth: { account, token }, github, ref, suffixPaths, approvalOn, target });
       problems.push(...r.problems);
       report.push(...r.report, ...r.problems.map((p) => p.text));
     }

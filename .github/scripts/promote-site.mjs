@@ -34,6 +34,7 @@
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { appendFileSync, readFileSync } from 'node:fs';
+import { parseApproval, promotedNotice } from './lib/approvalRecord.mjs';
 import { deployVersion, readLatestDeployment, readRecentVersions } from './lib/workerDeployments.mjs';
 
 const CONFIG_PATH = '.github/served-build.json';
@@ -56,12 +57,17 @@ export function versionFor(versions, commit) {
 /**
  * Where the candidate stands against what is live: 'live' (it already takes
  * all traffic), 'newer' (it descends from the live commit: promotable),
- * 'older' (the live commit descends from it: promoting would roll back), or
- * 'unrelated' (neither, so not promoted).
+ * 'older' (the live commit descends from it: promoting would roll back),
+ * 'unrelated' (neither), or 'unknown' (the live commit cannot be
+ * established). Only 'newer' is ever promoted.
  */
 export function standing({ candidateCommit, candidateVersion, liveVersion, liveCommit }, isAncestor) {
   if (liveVersion === candidateVersion) return 'live';
-  if (!liveCommit) return 'newer';
+  // A live deployment whose commit cannot be established (split traffic, no
+  // clean stamp, a stamp that is no commit here) cannot be ordered against
+  // the candidate, so promoting could roll the site back: refuse. Restore a
+  // stamped version by hand first (the runbook, section 9).
+  if (!liveCommit) return 'unknown';
   if (liveCommit === candidateCommit) return 'newer';
   if (isAncestor(liveCommit, candidateCommit)) return 'newer';
   if (isAncestor(candidateCommit, liveCommit)) return 'older';
@@ -151,6 +157,7 @@ async function find(config, auth) {
     newer: `is uploaded and waiting for approval (live now: ${facts.liveCommit?.slice(0, 12) ?? 'an unplaced version'}).`,
     older: `is OLDER than what is live (${facts.liveCommit?.slice(0, 12)}); promoting it would roll the site back, so it is not offered.`,
     unrelated: `does not descend from the live commit ${facts.liveCommit?.slice(0, 12)}; it is not offered.`,
+    unknown: 'cannot be ordered against the live deployment, whose commit cannot be established (split traffic, no clean stamp, or a stamp that is no commit on main); it is not offered. Put a stamped version back by hand first (runbook, section 9).',
   };
   summary(`${site.worker}: version ${version.id} built from ${commit.slice(0, 12)} ${words[state]}`);
   output({ state: state === 'newer' ? 'pending' : state, version: version.id, short: commit.slice(0, 12) });
@@ -179,6 +186,9 @@ async function deploy(config, readAuth, writeAuth) {
   if (after.read !== 'ok' || after.versions.length !== 1 || after.versions[0].id !== versionId || after.approvedBy !== runUrl) {
     throw new Error(`${site.worker}: the deployment was sent but reading it back does not show ${versionId} live under this run`);
   }
+  // GitHub's record of the approval, which the served-build check reads
+  // (lib/approvalRecord.mjs): written only here, after the read-back.
+  console.log(promotedNotice(site.worker, versionId));
   summary(`${site.worker}: version ${versionId} (${commit.slice(0, 12)}) is live, approved in ${runUrl}.`);
 }
 
@@ -219,7 +229,17 @@ function selftest() {
   ok(standing({ candidateCommit: 'new', candidateVersion: 'v2', liveVersion: 'v1', liveCommit: 'old' }, anc) === 'newer', 'newer');
   ok(standing({ candidateCommit: 'old', candidateVersion: 'v1', liveVersion: 'v2', liveCommit: 'new' }, anc) === 'older', 'older');
   ok(standing({ candidateCommit: 'x', candidateVersion: 'v1', liveVersion: 'v2', liveCommit: 'y' }, anc) === 'unrelated', 'unrelated');
-  ok(standing({ candidateCommit: 'x', candidateVersion: 'v1', liveVersion: null, liveCommit: null }, anc) === 'newer', 'unplaced live');
+  ok(standing({ candidateCommit: 'x', candidateVersion: 'v1', liveVersion: null, liveCommit: null }, anc) === 'unknown', 'an unplaced live deployment is never promoted over');
+  ok(standing({ candidateCommit: 'x', candidateVersion: 'v1', liveVersion: 'v2', liveCommit: null }, anc) === 'unknown', 'an unknown live commit is never promoted over');
+
+  const id = '0123abcd-0000-4000-8000-00000000beef';
+  const note = (message, extra = {}) => ({ annotation_level: 'notice', title: 'promoted', message, ...extra });
+  ok(promotedNotice('vaipakam-app', id) === `::notice title=promoted::promoted vaipakam-app ${id}`, 'notice command');
+  ok(parseApproval(note(`promoted vaipakam-app ${id}`))?.version === id, 'approval read back');
+  ok(parseApproval(note(`promoted vaipakam-app ${id}`, { annotation_level: 'warning' })) === null, 'only a notice');
+  ok(parseApproval(note(`promoted vaipakam-app ${id}`, { title: 'other' })) === null, 'only the promoted title');
+  ok(parseApproval(note(`promoted vaipakam-app ${id} and more`)) === null, 'exact shape only');
+  ok(parseApproval(note('promoted vaipakam-app not-a-uuid')) === null, 'a version id only');
   console.log('promote-site selftest: OK');
 }
 

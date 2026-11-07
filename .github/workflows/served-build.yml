@@ -30,6 +30,7 @@ on:
     paths:
       - '.github/scripts/check-served-build.mjs'
       - '.github/scripts/lib/workerDeployments.mjs'
+      - '.github/scripts/lib/approvalRecord.mjs'
       - '.github/served-build.json'
       - '.github/workflows/served-build.yml'
       - '.github/workflows/alert-issue.yml'
@@ -65,6 +66,13 @@ jobs:
     # One install per deployed commit and one build per site (a few minutes
     # each), then about a thousand small fetches.
     timeout-minutes: 45
+    permissions:
+      contents: read
+      # The deploy-approval record (#3236): promote-site.yml's runs, their
+      # jobs and those jobs' annotations. Read only, and unused while
+      # SITE_DEPLOY_APPROVAL is off.
+      actions: read
+      checks: read
     outputs:
       verdict: ${{ steps.check.outcome }}
       problems: ${{ steps.check.outputs.problems }}
@@ -75,6 +83,9 @@ jobs:
       SERVED_BUILD_REF: HEAD
       # On (at mainnet), a live version no approval run put there is a finding.
       SITE_DEPLOY_APPROVAL: ${{ vars.SITE_DEPLOY_APPROVAL }}
+      # Kept out of the build's environment like the Cloudflare token
+      # (buildEnv is an allowlist).
+      GITHUB_TOKEN: ${{ github.token }}
     steps:
       # The whole history: the deployed commit is checked out from it, and
       # must be on main.

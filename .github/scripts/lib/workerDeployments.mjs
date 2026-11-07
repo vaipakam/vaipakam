@@ -68,7 +68,8 @@ export async function readLatestDeployment(name, auth) {
   const deployedAt = isoTime(latest.created_on);
   if (!deployedAt) return { read: 'error', error: 'the latest deployment carries no readable time' };
   // The deployment's own message: an approved promotion (#3236) names the
-  // GitHub run that approved it. Kept only when it has that exact shape.
+  // GitHub run that approved it. Kept only when it has that exact shape, and
+  // only a cross-check: the deployer writes it (see approvalRecord.mjs).
   const rawMessage = String(latest.annotations?.['workers/message'] ?? '');
   const approvedBy = APPROVED_MESSAGE.exec(rawMessage)?.[1] ?? null;
   const versions = [];
@@ -100,7 +101,9 @@ export async function readLatestDeployment(name, auth) {
 
 /**
  * The deployment message an approved promotion writes, and the only form
- * read back: the approving run's URL. Anything else reads as not approved.
+ * read back: the approving run's URL. Whoever deploys writes this message,
+ * so it is a cross-check only; the proof of an approval is GitHub's record
+ * (approvalRecord.mjs).
  */
 export const APPROVED_MESSAGE = /^approved in (https:\/\/github\.com\/vaipakam\/vaipakam\/actions\/runs\/\d+)$/;
 

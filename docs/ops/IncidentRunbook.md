@@ -2034,10 +2034,19 @@ its commit and reachable on its own preview address, and it takes no
 traffic. The workflow waits for that version, rebuilds the commit and
 compares it with what the preview address serves (the served-build check),
 and only then asks for approval. On approval it makes that version take all
-traffic and writes the approving run's address into the deployment's
-message. It refuses a version older than what is live, so approving a stale
-run can never roll a site back. The six-hourly served-build check reports
-any live version without that message as `unapproved`.
+traffic, writes the approving run's address into the deployment's message,
+and records `promoted <worker> <version>` as a notice on its own GitHub job.
+It refuses a version older than what is live, and it refuses when the live
+deployment's commit cannot be established (traffic split across versions,
+no clean stamp), so approving a stale run can never roll a site back; in
+that case put a stamped version back by hand first (Contain, step 1).
+
+The six-hourly served-build check then reads GitHub's record, not
+Cloudflare's: the live version must be the one the newest approval run on
+`main` promoted, and the deployment must name that run. A Cloudflare token
+can write any deployment message, so the message alone proves nothing; the
+GitHub record is out of that token's reach. Anything else is `unapproved`,
+including an older approved version put back by hand.
 
 To switch it on (all steps, in this order):
 
