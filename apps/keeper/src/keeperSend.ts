@@ -21,7 +21,7 @@
 
 import { keccak256, type Address, type Hex, type PublicClient, type WalletClient } from 'viem';
 import { describeFailure } from '@vaipakam/lib/errorDescription';
-import { isDefinitiveRejection, isSendPastDeadline, withGasLimitRule, withSubmissionSlot } from './submissionQueue';
+import { broadcastSigned, isDefinitiveRejection, isSendPastDeadline, withGasLimitRule, withSubmissionSlot } from './submissionQueue';
 
 /** Null when the keeper has no unmined transaction; otherwise the reason
  *  to hold this send. */
@@ -95,7 +95,7 @@ export async function sendInSubmissionSlot(
       // a hash recorded before that refusal would read as a broadcast.
       signed();
       tx = keccak256(serialized);
-      await wallet.sendRawTransaction({ serializedTransaction: serialized });
+      await broadcastSigned(wallet, chainId, serialized);
     });
   } catch (err) {
     // Failed before signing, or the node answered with a refusal (or the

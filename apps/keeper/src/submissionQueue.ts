@@ -80,10 +80,12 @@ import {
   signTransaction,
   writeContract,
 } from 'viem/actions';
-import { HttpRequestError, keccak256, TimeoutError, type Hex } from 'viem';
+import { createPublicClient, http, HttpRequestError, keccak256, TimeoutError, type Hex, type PublicClient } from 'viem';
+import { summarizeFailure } from '@vaipakam/lib/errorDescription';
 import { gasLimitFromEstimate } from '@vaipakam/lib/gasLimit';
 import { SubrequestBudgetExhausted } from './subrequestBudget';
 import { assertEpochsHold } from './epochFence';
+import { armedSubmissionRoute, PRIVATE_ROUTE_FLOOR_TTL_MS, PRIVATE_TX_FALLBACK_VAR } from './submissionRoute';
 
 /** How long a remembered nonce outranks the RPC's pending count. */
 export const FLOOR_TTL_MS = 60_000;
@@ -95,6 +97,8 @@ interface Floor {
 
 const tails = new Map<string, Promise<void>>();
 const floors = new Map<string, Floor>();
+/** One client per private submission endpoint (#3240). */
+const privateClients = new Map<string, PublicClient>();
 
 function keyOf(chainId: number, address: Address): string {
   return `${chainId}:${address.toLowerCase()}`;
@@ -104,6 +108,7 @@ function keyOf(chainId: number, address: Address): string {
 export function resetSubmissionQueues(): void {
   tails.clear();
   floors.clear();
+  privateClients.clear();
 }
 
 /** A send refused because its pass's run deadline had passed (#2571 r1,
@@ -113,6 +118,11 @@ export function resetSubmissionQueues(): void {
  *  may have been signed locally and discarded: the guarantee is "not sent",
  *  never "not signed" (#2572 r4). */
 export class SendPastDeadline extends Error {}
+
+/** A send refused because the keeper's submission settings could not be read
+ *  (#3240, `submissionRoute.ts`). Raised at the send's turn, before the nonce
+ *  is read, so nothing is signed or sent. */
+export class SubmissionRouteUnread extends Error {}
 
 /** Whether `err` is, or wraps, a {@link SendPastDeadline}. viem wraps an
  *  error raised inside `writeContract` (`ContractFunctionExecutionError`,
@@ -205,9 +215,16 @@ export async function withSubmissionSlot<T>(
     if (now() >= notAfterMs) {
       throw new SendPastDeadline(`send refused at its turn: the run's deadline passed while it waited — next run`);
     }
+    // #3240 — the chain's route, before anything is read or signed: settings
+    // that cannot be read send nothing.
+    const route = armedSubmissionRoute(chainId);
+    if ('unread' in route) throw new SubmissionRouteUnread(`send refused: ${route.unread}`);
     const pending = await getTransactionCount(wallet, { address, blockTag: 'pending' });
     const floor = floors.get(key);
-    const fresh = floor !== undefined && now() - floor.at < FLOOR_TTL_MS;
+    // A private broadcast is invisible to that pending count until it is
+    // mined, so its remembered nonce is trusted for longer.
+    const ttl = route.kind === 'private' ? PRIVATE_ROUTE_FLOOR_TTL_MS : FLOOR_TTL_MS;
+    const fresh = floor !== undefined && now() - floor.at < ttl;
     const nonce = fresh ? Math.max(pending, floor.next) : pending;
     // The epoch fence (#2569 r4), before the signature: a send is made only
     // while the indexer's epoch this process was launched under still holds.
@@ -270,6 +287,8 @@ export function isDefinitiveRejection(err: unknown): boolean {
   // Refused by the slot before any broadcast (#2572): nothing reached the
   // network, like the subrequest budget's refusal above.
   if (chain.some((e) => e instanceof SendPastDeadline)) return true;
+  // Refused before the nonce read, settings unreadable (#3240): nothing sent.
+  if (chain.some((e) => e instanceof SubmissionRouteUnread)) return true;
   if (chain.some((e) => e instanceof TimeoutError || e instanceof HttpRequestError)) return false;
   if (chain.some((e) => NONCE_TAKEN.test(String((e as { message?: unknown }).message ?? '')))) {
     return false;
@@ -278,6 +297,52 @@ export function isDefinitiveRejection(err: unknown): boolean {
     const code = (e as { code?: unknown }).code;
     return typeof code === 'number' && code !== -1;
   });
+}
+
+/** Test seam: the client the private route to `url` broadcasts through. */
+export function setPrivateSubmissionClientForTest(url: string, client: PublicClient): void {
+  privateClients.set(url, client);
+}
+
+/**
+ * Broadcast `serialized` on `chainId` by the chain's armed route (#3240,
+ * `submissionRoute.ts`). The one broadcast every keeper send makes: the
+ * queued wallet and the raw slot (`keeperSend.ts`) both end here.
+ *
+ *  - public: the wallet's own RPC, as before.
+ *  - private: the private endpoint. When the chain is allowed a fallback and
+ *    the endpoint refuses or does not answer, the SAME signed bytes go to the
+ *    wallet's RPC, so no second transaction can result. If the private
+ *    attempt may have relayed and the fallback also fails, the private error
+ *    is what is thrown: the nonce stays reserved and the hash stays findable,
+ *    exactly as for any broadcast whose answer was lost.
+ *
+ * Called inside a submission slot, after `signed()`.
+ */
+export async function broadcastSigned(wallet: WalletClient, chainId: number, serialized: Hex): Promise<Hex> {
+  const route = armedSubmissionRoute(chainId);
+  if ('unread' in route) throw new SubmissionRouteUnread(`send refused: ${route.unread}`);
+  if (route.kind === 'public') return wallet.sendRawTransaction({ serializedTransaction: serialized });
+  let client = privateClients.get(route.url);
+  if (!client) {
+    client = createPublicClient({ transport: http(route.url, { retryCount: 0 }) });
+    privateClients.set(route.url, client);
+  }
+  try {
+    return await sendRawTransaction(client, { serializedTransaction: serialized });
+  } catch (privateErr) {
+    if (!route.fallback) throw privateErr;
+    // The error is redacted: a provider's message can carry the endpoint URL,
+    // and with it an access key.
+    console.warn(
+      `[submission] chain=${chainId} the private route via ${route.host} failed (${summarizeFailure(privateErr)}); sending the same signed transaction through the public RPC, as ${PRIVATE_TX_FALLBACK_VAR} allows`,
+    );
+    try {
+      return await wallet.sendRawTransaction({ serializedTransaction: serialized });
+    } catch (publicErr) {
+      throw isDefinitiveRejection(privateErr) ? publicErr : privateErr;
+    }
+  }
 }
 
 /** The signed transaction a failed broadcast may still have relayed, by the
@@ -378,7 +443,7 @@ export function queuedWallet(
         } as never);
         signed();
         try {
-          return await sendRawTransaction(base, { serializedTransaction: serialized });
+          return await broadcastSigned(base, chainId, serialized);
         } catch (err) {
           // Possibly relayed: the same rule that keeps the nonce reserved
           // ({@link withSubmissionSlot}) keeps the hash findable.

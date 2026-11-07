@@ -157,6 +157,15 @@ evidence that the migration has completed.
   silently reset liquidation thresholds, confidence windows, or arming
   choices. Signing keys and settings whose presence enables transactions
   are treated as secrets.
+- A chain can be given a private submission endpoint, so the keeper's
+  liquidations and sales there are not visible in the public mempool before
+  they land. On such a chain every transaction the keeper sends goes through
+  that endpoint, because its sends share one nonce sequence; reads stay on the
+  ordinary RPC. A failed private send falls back to the ordinary RPC only on a
+  chain the operator has explicitly allowed, and then sends the same signed
+  transaction, never a second one. Settings the keeper cannot read stop every
+  send rather than sending publicly. Each run states every chain's route.
+  Which chains need a private route at mainnet is an owner decision.
 - Error reports, stored failure reasons, and operator alerts remove provider
   addresses and credentials before becoming text. They retain useful refusal
   names and identifiers, so redaction does not hide why an action was skipped.
