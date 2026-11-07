@@ -265,6 +265,68 @@ silently drops Base's own activity out of every day's totals.
 
 ---
 
+### EVENTS — sanctions-list and timelock changes (#3239 item 3, #3237)
+
+**Off unless `EVENT_ALERTS_ENABLED` is exactly `true`.** The tick summary's
+`eventAlerts.armed` says which.
+
+Everything above is a relation between figures. These are events an
+operator must hear about while there is still time to act: a sanctions
+listing (it blocks the wallet's new positions and some claims and
+withdrawals, and the automated adder key can apply one unattended), a
+delisting proposal (it waits so the Safe can veto it), and an operation
+queued in the governance timelock (the 48-hour mainnet window is the main
+protection if the governance Safe is compromised).
+
+`src/eventAlerts.ts` holds one table, `WATCHED`: per contract, the
+deployment key naming its address (`sanctionsList`,
+`sanctionsDelistingTimelock`, `timelock`) and per event a severity, a
+title and the input shape the rule was written against.
+
+| Contract | Pages (critical) | Silent (advisory) |
+| --- | --- | --- |
+| Sanctions list | `ListUpdated` (added, removed, list size, source hash, publication date, updater), `AdderSet`, `RemoverSet`, `PublicationRollbackAuthorized`, `PublicationRollbackApplied`, ownership changes | `AdderDailyAdditionCapSet`, `PublicationRollbackCleared` |
+| Delisting timelock | `DelistingProposed` (accounts, eta), `ProposerSet`, `DelaySet`, `ClearanceSourceSet`, ownership changes | `DelistingReconfirmed`, `DelistingExecuted`, `DelistingCancelled`, `DelistingDiscarded`, `VetoSet` |
+| Governance timelock | `CallScheduled` (target named from the deployment record, function selector, value, delay, and the ready time read from `getTimestamp`), `MinDelayChange`, `RoleGranted`, `RoleRevoked`, `RoleAdminChanged` | `CallExecuted`, `Cancelled` |
+
+How a tick reads them:
+
+- **Only the observed chain**, like everything else, so each chain's events
+  are read once per rotation (15 minutes at three chains). One `eth_getLogs`
+  per contract present on that chain, plus one finalized-block read and,
+  when an operation was queued, one multicall for the ready times.
+- **Up to the FINALIZED block only**, so a reorg can neither alert an event
+  that did not happen nor drop one that did. The cost is the chain's
+  finality delay on top of the rotation.
+- **From a stored position** (`event_cursor`, migration `0002`). A
+  contract read for the first time starts `EVENT_ALERT_INITIAL_LOOKBACK`
+  finalized blocks back (default 20000, never before the deploy block), and
+  sends one advisory naming that block: events before it are not reported.
+  The start block is stored even when that advisory fails to send, so the
+  retry reads from the same block and the advisory is sent again.
+- **At most `EVENT_ALERT_LOG_RANGE` blocks** per contract per tick (default
+  5000). A chain further behind catches up over several ticks;
+  `eventAlerts.backlogBlocks` shows how far.
+- **The position moves only past delivered alerts** (`deliver.ts`
+  `delivered`: sent this tick, or already sent inside the repeat window).
+  An alert Telegram refused is read and sent again next time. With no
+  destination configured nothing advances. A manual `POST /run` never moves
+  it; repeat suppression keeps its sends from going out twice.
+- **A failed read is a coverage gap** (`source: event-logs`), so the tick is
+  not reported healthy. An event alert itself is news, not a fault: it
+  pages, but it does not fail the `ledger-clean` precondition.
+- **Only through an endpoint whose chain id it confirmed this tick.** An
+  endpoint that answers as another network, or whose `eth_chainId` fails,
+  is not read: an empty log read through the wrong network would move this
+  chain's position past events never read.
+- **An alert's record is its acknowledgement.** Event alerts are sent once,
+  never on the repeat timer, and their records survive the ordinary
+  not-firing sweep. Each is removed only when the position has passed its
+  event, so a tick whose read failed cannot make a delivered event look new.
+
+The decoded function of a queued call is shown as its selector for now; a
+plain-words decoding is the shared decoder #3237 tracks.
+
 ## How this is built, and why
 
 Seven review rounds during B4-c produced ~48 findings (the programme total across B4-c and its #1448 follow-up is higher — see the completion plan). Roughly four were in the ledger
@@ -577,6 +639,14 @@ the event-stream scanning originally assumed — both are computable from
 the raw stored slots at a pinned block.)*
 
 ## Deploying — operator steps
+
+**Arming the event alerts** on an existing deployment: apply the
+migrations (`npm run db:migrate`, which adds `event_cursor`), deploy, then
+set `EVENT_ALERTS_ENABLED` to `true` as a plain-text var in the dashboard.
+It is deliberately absent from `wrangler.jsonc`: under `keep_vars` a
+declared var is overwritten on every deploy. Confirm with `POST /run` that
+`eventAlerts.armed` is `true` and that each contract's first-scan notice
+arrived.
 
 First deployed 2026-11-04 against the testnet mesh (Base Sepolia canonical,
 Arbitrum Sepolia and BNB testnet mirrors). These are the steps for a fresh

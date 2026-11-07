@@ -27,10 +27,18 @@
  * moved a watched shape failed the first live tick; now it fails before
  * the deploy.
  *
+ * EVENTS TOO (#3239, #3237). The event-alert pass (`src/eventAlerts.ts`)
+ * decodes events from the sanctions list, the delisting timelock and the
+ * governance timelock, so the subset also carries `event` entries, copied
+ * and checked exactly like the views. An entry is identified by its TYPE and
+ * name together, so a view and an event of the same name never shadow each
+ * other.
+ *
  * Usage (from ops/mesh-watcher):
  *   node scripts/abi-subset.mjs            # --check: exit 1 on any drift
- *   node scripts/abi-subset.mjs --write    # re-copy every listed view
+ *   node scripts/abi-subset.mjs --write    # re-copy every listed entry
  *   node scripts/abi-subset.mjs --write --add RepatriationFacet:getFoo
+ *   node scripts/abi-subset.mjs --write --add SanctionsList:event:ListUpdated
  *
  * The subset is self-describing: `--write` re-copies the views already
  * listed, and `--add Facet:function` lists a new one. Which views the
@@ -52,12 +60,16 @@ function loadCompiled(facet) {
   return JSON.parse(readFileSync(join(ABI_DIR, `${facet}.json`), 'utf8'));
 }
 
-/** The single compiled function entry `name` in `abi`, or a problem string. */
-function compiledFunction(abi, facet, name) {
-  const matches = abi.filter((e) => e.type === 'function' && e.name === name);
-  if (matches.length === 0) return { problem: `${facet}.${name}: missing from the compiled ABI` };
+/** The entry types the subset may carry. */
+const ENTRY_TYPES = new Set(['function', 'event']);
+
+/** The single compiled entry of `type` named `name` in `abi`, or a problem string. */
+function compiledEntry(abi, facet, type, name) {
+  const label = type === 'function' ? `${facet}.${name}` : `${facet}.${type}:${name}`;
+  const matches = abi.filter((e) => e.type === type && e.name === name);
+  if (matches.length === 0) return { problem: `${label}: missing from the compiled ABI` };
   if (matches.length > 1) {
-    return { problem: `${facet}.${name}: ${matches.length} overloads in the compiled ABI, expected exactly 1` };
+    return { problem: `${label}: ${matches.length} overloads in the compiled ABI, expected exactly 1` };
   }
   return { entry: matches[0] };
 }
@@ -87,17 +99,18 @@ export function subsetProblems(subset) {
     }
     const seen = new Set();
     for (const entry of entries) {
-      if (entry.type !== 'function') {
-        problems.push(`${facet}: the subset carries a non-function entry (${entry.type}); it holds views only`);
+      if (!ENTRY_TYPES.has(entry.type)) {
+        problems.push(`${facet}: the subset carries a ${entry.type} entry; it holds views and events only`);
         continue;
       }
-      if (seen.has(entry.name)) problems.push(`${facet}.${entry.name}: listed twice in the subset`);
-      seen.add(entry.name);
-      const found = compiledFunction(compiled, facet, entry.name);
+      const id = `${entry.type}:${entry.name}`;
+      if (seen.has(id)) problems.push(`${facet}.${id}: listed twice in the subset`);
+      seen.add(id);
+      const found = compiledEntry(compiled, facet, entry.type, entry.name);
       if (found.problem) {
         problems.push(found.problem);
       } else if (canonical(found.entry) !== canonical(entry)) {
-        problems.push(`${facet}.${entry.name}: differs from the compiled ABI`);
+        problems.push(`${facet}.${id}: differs from the compiled ABI`);
       }
     }
   }
@@ -129,18 +142,20 @@ function main(argv) {
       return 1;
     }
     const n = Object.values(subset).reduce((a, e) => a + e.length, 0);
-    console.log(`mesh-watcher ABI subset: ${n} views match the compiled facet ABIs.`);
+    console.log(`mesh-watcher ABI subset: ${n} entries match the compiled ABIs.`);
     return 0;
   }
 
   for (const spec of adds) {
-    const [facet, name] = spec.split(':');
-    if (!facet || !name) {
-      console.error(`--add expects Facet:function, got "${spec}"`);
+    const parts = spec.split(':');
+    const [facet, type, name] =
+      parts.length === 2 ? [parts[0], 'function', parts[1]] : [parts[0], parts[1], parts[2]];
+    if (!facet || !name || !ENTRY_TYPES.has(type) || parts.length > 3) {
+      console.error(`--add expects Facet:function or Facet:event:Name, got "${spec}"`);
       return 2;
     }
     subset[facet] ??= [];
-    if (!subset[facet].some((e) => e.name === name)) subset[facet].push({ type: 'function', name });
+    if (!subset[facet].some((e) => e.type === type && e.name === name)) subset[facet].push({ type, name });
   }
 
   const problems = [];
@@ -148,7 +163,7 @@ function main(argv) {
   for (const facet of Object.keys(subset).sort()) {
     const compiled = loadCompiled(facet);
     next[facet] = subset[facet].map((e) => {
-      const found = compiledFunction(compiled, facet, e.name);
+      const found = compiledEntry(compiled, facet, e.type, e.name);
       if (found.problem) {
         problems.push(found.problem);
         return e;

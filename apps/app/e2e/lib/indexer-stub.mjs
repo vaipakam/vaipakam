@@ -21,6 +21,7 @@ import {
 } from 'viem';
 import { loopClosureBody, recyclingBody } from './recycling-fixture.mjs';
 import { planOwnerNotifications } from '@vaipakam/lib/rewardOwnerNotifications';
+import { activityActor } from '@vaipakam/lib/activityActor';
 
 const CHAIN_ID = 84532;
 const ANVIL_URL = process.env.APP_E2E_ANVIL_URL ?? 'http://127.0.0.1:8545';
@@ -118,6 +119,89 @@ async function ownerNotificationsFromChain(addr) {
       logIndex: r.logIndex,
     }))
     .reverse();
+}
+
+/**
+ * The activity kinds this stub serves from the chain's real logs (#1209):
+ * the seller-claim events, which the Claims page reads by actor and kind to
+ * find the loans a seller holds a claim on. Every other kind keeps the empty
+ * feed the specs were written against; a kind joins this list when a spec
+ * needs it, so no existing spec's environment changes behind it.
+ */
+const CHAIN_DERIVED_ACTIVITY_KINDS = new Set([
+  'SellerInterestClaimRecorded',
+  'SellerInterestPaid',
+  'SellerInterestWithdrawn',
+  'SellerInterestClaimClosed',
+]);
+
+/**
+ * `GET /activity?actor=&kind=` for the kinds above, derived from the chain
+ * the way the indexer files them: each log of a requested kind, decoded by
+ * the compiled ABI, kept when the indexer's own actor rule
+ * (`@vaipakam/lib/activityActor`) files it under `actor`, newest first by
+ * (block, log index), paged by the route's `block:logIndex` cursor. Only the
+ * fields the route serves are set; what the indexer normalizes and this stub
+ * does not (`asset`, `amount`, …) is null, which the route's contract reads
+ * as "not established".
+ */
+async function chainDerivedActivity(actor, kinds, limit, before) {
+  const rows = [];
+  for (const kind of kinds) {
+    const event = DIAMOND_ABI_VIEM.find((e) => e.type === 'event' && e.name === kind);
+    if (!event) throw new Error(`the Diamond ABI carries no ${kind} event`);
+    const logs = await pub.getLogs({ address: DIAMOND, event, fromBlock: DEPLOY_BLOCK, toBlock: 'latest' });
+    for (const l of logs) {
+      const args = Object.fromEntries(
+        Object.entries(l.args).map(([k, v]) => [k, typeof v === 'bigint' ? v.toString() : v]),
+      );
+      const filedUnder = activityActor(kind, l.args);
+      if (!filedUnder || filedUnder.toLowerCase() !== actor) continue;
+      rows.push({ l, kind, args, actor: filedUnder.toLowerCase() });
+    }
+  }
+  rows.sort((a, b) =>
+    a.l.blockNumber === b.l.blockNumber
+      ? b.l.logIndex - a.l.logIndex
+      : a.l.blockNumber < b.l.blockNumber
+        ? 1
+        : -1,
+  );
+  let start = 0;
+  if (before) {
+    const [bb, bl] = before.split(':').map(Number);
+    start = rows.findIndex(
+      (r) => Number(r.l.blockNumber) < bb || (Number(r.l.blockNumber) === bb && r.l.logIndex < bl),
+    );
+    if (start < 0) start = rows.length;
+  }
+  const page = rows.slice(start, start + limit);
+  const blockAt = new Map();
+  for (const r of page) {
+    if (!blockAt.has(r.l.blockNumber)) {
+      blockAt.set(r.l.blockNumber, Number((await pub.getBlock({ blockNumber: r.l.blockNumber })).timestamp));
+    }
+  }
+  const events = page.map((r) => ({
+    chainId: CHAIN_ID,
+    blockNumber: Number(r.l.blockNumber),
+    logIndex: r.l.logIndex,
+    txHash: r.l.transactionHash,
+    kind: r.kind,
+    loanId: r.args.loanId !== undefined ? Number(r.args.loanId) : null,
+    offerId: null,
+    actor: r.actor,
+    args: r.args,
+    blockAt: blockAt.get(r.l.blockNumber),
+    asset: null,
+    assetType: null,
+    amount: null,
+    amountMax: null,
+    tokenId: null,
+    quantity: null,
+  }));
+  const last = page.length === limit ? page[page.length - 1] : null;
+  return { events, nextBefore: last ? `${Number(last.l.blockNumber)}:${last.l.logIndex}` : null };
 }
 
 // On-chain LoanStatus → indexer row status (apps/app/src/lib/types.ts).
@@ -1424,7 +1508,17 @@ async function handler(req, res) {
     }
 
     // GET /activity — the Home feed degrades honestly on empty.
+    // A request by actor for chain-derived kinds only (the Claims page's
+    // seller-claim discovery) is served from the chain; see
+    // `chainDerivedActivity`.
     if (parts[0] === 'activity') {
+      const actor = url.searchParams.get('actor')?.toLowerCase();
+      const kinds = (url.searchParams.get('kind') ?? '').split(',').filter(Boolean);
+      if (actor && kinds.length > 0 && kinds.every((k) => CHAIN_DERIVED_ACTIVITY_KINDS.has(k))) {
+        const limit = Math.min(Math.max(Number(url.searchParams.get('limit') ?? 50) || 50, 1), 200);
+        const page = await chainDerivedActivity(actor, kinds, limit, url.searchParams.get('before'));
+        return json(200, { chainId: CHAIN_ID, ...page });
+      }
       return json(200, { chainId: CHAIN_ID, events: [], nextBefore: null });
     }
 

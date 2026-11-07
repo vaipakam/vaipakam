@@ -242,8 +242,22 @@ export function BatchCloseOutCard({
   const busy = stage.kind === 'planning' || stage.kind === 'sending';
   const ids = group.loans.map((l) => `#${l.loanId}`).join(', ');
 
+  // The card publishes where it stands, for a reader of the page (the live
+  // drive and the e2e spec), the way the forced-close card does: the stage,
+  // the action it runs, and the loans it was built from. Each review line
+  // and each outcome line carries its loan and its verdict, so a reader
+  // never has to judge one from its wording.
   return (
-    <section className="card" style={{ marginBottom: 16 }}>
+    <section
+      className="card"
+      style={{ marginBottom: 16 }}
+      data-testid="batch-close-out"
+      data-offer={String(group.offerId)}
+      data-loans={group.loans.map((l) => l.loanId).join(',')}
+      data-stage={stage.kind}
+      data-action={'action' in stage ? stage.action : ''}
+      data-ready={ready ? 'true' : 'false'}
+    >
       <div className="card-title">
         <Layers aria-hidden />
         <h2 style={{ margin: 0 }}>
@@ -262,6 +276,7 @@ export function BatchCloseOutCard({
             type="button"
             className="btn btn-primary"
             disabled={!ready}
+            data-testid="batch-close-out-repay"
             onClick={() => start('repay')}
           >
             {copy.batchClose.repayAll}
@@ -272,6 +287,7 @@ export function BatchCloseOutCard({
               type="button"
               className="btn"
               disabled={!ready}
+              data-testid="batch-close-out-preclose"
               onClick={() => start('preclose')}
             >
               {copy.batchClose.closeAllEarly}
@@ -284,6 +300,7 @@ export function BatchCloseOutCard({
               type="button"
               className="btn"
               disabled={!ready}
+              data-testid="batch-close-out-refinance"
               onClick={() => setStage({ kind: 'refinance' })}
             >
               {copy.batchRefinance.action}
@@ -323,7 +340,9 @@ export function BatchCloseOutCard({
         <>
           <ul className="row-list" style={{ listStyle: 'none', padding: 0 }}>
             {stage.outcomes.map((o) => (
-              <li key={o.loanId}>{outcomeText(stage.action, o)}</li>
+              <li key={o.loanId} data-loan={o.loanId} data-outcome={o.kind}>
+                {outcomeText(stage.action, o)}
+              </li>
             ))}
           </ul>
           {stage.note ? <p className="muted">{stage.note}</p> : null}
@@ -365,7 +384,7 @@ function BatchReview({
       </h3>
       <ul style={{ listStyle: 'none', padding: 0, margin: '0 0 12px' }}>
         {plans.map((p) => (
-          <li key={p.loanId} style={{ marginBottom: 6 }}>
+          <li key={p.loanId} style={{ marginBottom: 6 }} data-loan={p.loanId} data-plan={p.kind}>
             {p.kind === 'ready'
               ? copy.batchClose.dueNow(String(p.loanId), p.pull ? amount(p.pull.due) : '0')
               : copy.batchClose.leftOut(String(p.loanId), p.reason)}

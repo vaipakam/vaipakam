@@ -146,7 +146,7 @@ export async function loadPublication({ fetchSource, stateDir, keepFiles = DEFAU
  * computed from, so the failure report still states what the list declares
  * outstanding (see {@link failureReport}).
  */
-export async function runChain({ publication, readCurrent, latestVersion, roles, send, finality = {}, progress = [], maxRemove = DEFAULT_MAX_REMOVE, maxChangesPerCall = DEFAULT_MAX_CHANGES_PER_CALL, abi = sanctionsListAbi() }) {
+export async function runChain({ publication, readCurrent, latestVersion, roles, additionsLeftToday = async () => Infinity, send, finality = {}, progress = [], maxRemove = DEFAULT_MAX_REMOVE, maxChangesPerCall = DEFAULT_MAX_CHANGES_PER_CALL, abi = sanctionsListAbi() }) {
   const { parsed, sourceHash } = publication;
   const thisPublication = { date: parsed.publicationDate, hash: sourceHash };
   const current = await readCurrent();
@@ -181,13 +181,16 @@ export async function runChain({ publication, readCurrent, latestVersion, roles,
       signers: 'adder',
       maxRemove,
       maxChangesPerCall,
+      adderAllowance: await additionsLeftToday(),
       abi,
     });
     context.withheld = update.withheldRemovals;
     const report = (list) => ({
       list: summary(current),
       publicationOrder: update.order,
-      added: update.add,
+      added: update.addNow,
+      // Additions the list's daily cap holds for a later UTC day (#3239).
+      ...(update.addNow.length < update.add.length ? { heldForLaterDay: update.add.length - update.addNow.length } : {}),
       // What reached the network, and nothing else: an attempt never sent, or
       // refused by the node, did not touch the list.
       sent: progress.filter(broadcast),
@@ -201,7 +204,7 @@ export async function runChain({ publication, readCurrent, latestVersion, roles,
     const last = update.calls[update.calls.length - 1];
     const target = {
       version: BigInt(current.version) + BigInt(update.calls.length),
-      addresses: [...current.addresses, ...update.add],
+      addresses: [...current.addresses, ...update.addNow],
       sourceHash,
       publicationDate: parsed.publicationDate,
       pendingAdditions: last.additionsLeft,
@@ -622,8 +625,13 @@ export function summarizeChain(c, sourceFile) {
     const unconfirmed = c.sent.filter((e) => e.state !== 'included');
     const note = unconfirmed.length ? ` Not confirmed by their own receipts: ${unconfirmed.map((e) => `${e.tx} (${word[e.state] ?? e.state})`).join(', ')}; the list itself shows the update.` : '';
     lines.push(`final: the list at finalized block ${c.finalizedAt.number} holds exactly this update, including its ${c.added.length} new address(es). Transactions sent: ${c.sent.map((e) => e.tx).join(', ')}.${note}`);
-  } else lines.push(c.pendingAdditions > 0 ? 'nothing left to list from this publication; nothing sent.' : 'already follows this publication; nothing sent.');
-  if (c.pendingAdditions > 0) {
+  } else if (c.heldForLaterDay) lines.push("the list's daily cap on the adder's listings is spent for today; nothing sent.");
+  else lines.push(c.pendingAdditions > 0 ? 'nothing left to list from this publication; nothing sent.' : 'already follows this publication; nothing sent.');
+  if (c.heldForLaterDay && c.pendingAdditions === c.heldForLaterDay) {
+    // The list's daily cap (#3239): the rest of the publication is declared
+    // outstanding and lands on a later UTC day, or the remover applies it.
+    lines.push(`${c.heldForLaterDay} addition(s) of this publication wait for the next UTC day under the list's daily cap on the adder; the next run lists them, or the remover can apply them now.`);
+  } else if (c.pendingAdditions > 0) {
     // After this run sent every missing address, a non-zero count means the
     // list declares more additions than the publication has: an earlier
     // update overstated it. The adder cannot lower a recorded count, so this
@@ -711,6 +719,17 @@ function chainEffects(c, account, abi) {
         client.readContract({ address: c.list, abi, functionName: 'owner' }),
       ]);
       return { adder, remover, owner: getAddress(owner) === account.address };
+    },
+    // The list's daily cap on an adder's listings (#3239). A list built
+    // before the cap has no such read and no cap; any failure to read it
+    // plans without one, and the contract still refuses an update past a cap
+    // it does enforce, so this never lets more through.
+    additionsLeftToday: async () => {
+      try {
+        return Number(await client.readContract({ address: c.list, abi, functionName: 'adderAdditionsLeftToday' }));
+      } catch {
+        return Infinity;
+      }
     },
     send: async (call, { onSubmitted }) => {
       const label = `applyUpdate at version ${call.expectedVersion}`;

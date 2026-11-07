@@ -29,6 +29,9 @@
  * neighbouring field out of a different build's answer.
  */
 import configFacetAbi from '@vaipakam/contracts/abis/ConfigFacet.json' with { type: 'json' };
+import { toFunctionSelector } from 'viem';
+
+import { SET_PAYOFF_PERMIT_SIGNATURE } from './refinanceExpected.mjs';
 
 /** A picker for one named output of `getProtocolConfigBundle`, by its
  *  position in the compiled ABI. Throws at load when the ABI names no such
@@ -64,8 +67,15 @@ export const WATCHED_CONFIG = Object.freeze([
   // The fees both reviews quote (and the borrower's reserve is sized with).
   { key: 'treasuryFeeBps', fn: 'getFeesConfig', pick: (r) => r[0] },
   { key: 'lifBps', fn: 'getLoanInitiationFeeBps' },
-  // The grace window the reviews show and the payoff approval is sized to.
+  // The grace window the reviews show and the payoff permit's deadline is
+  // clamped to.
   { key: 'graceBuckets', fn: 'getGraceBuckets' },
+  // THE PAYOFF ROUTE (#1558, #3295): the facet the Diamond routes
+  // setRefinancePayoffPermit to — the zero address on a Diamond deployed
+  // before #1558, which pays the payoff from a standing approval instead.
+  // It is the Diamond's own routing, so a cut changes it; the app reads the
+  // same (`readPayoffRoute`), and it decides which write plan applies.
+  { key: 'payoffPermitHost', fn: 'facetAddress', args: () => [toFunctionSelector(SET_PAYOFF_PERMIT_SIGNATURE)] },
   // The risk-terms epoch the lender's AcceptTerms is anchored to.
   { key: 'riskTermsHash', fn: 'getCurrentRiskTermsHash' },
   // Per-asset pauses (RefinanceFlow's assertAssetNotPausedLive, both legs).
@@ -122,6 +132,9 @@ export const STATE_READS = Object.freeze({
   checkLiquidity: 'external oracle / pool state — a precondition on the collateral only, never a model input',
   checkRefinanceRequest: 'one refinance request’s standing against its loan (reverts when it cannot be taken)',
   getRefinanceRequest: 'one loan’s recorded refinance request',
+  // #3295: what the app reads for the payoff permit — computed from the loan
+  // and the watched LIF rate, and, for a posted request, its attached permit.
+  getRefinancePayoff: 'one loan’s refinance payoff and wallet share, and the payoff permit attached to one request',
   // riskGateReadiness.mjs (#3231): one party's standing under the risk-access
   // gate. The gate SWITCH itself is watched config (riskAccessGate).
   pairRequiredRiskLevel: 'one pair’s required risk level (from on-chain liquidity depth)',

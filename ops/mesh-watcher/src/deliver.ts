@@ -28,7 +28,7 @@
 
 import { describeFailure } from './errors';
 import type { Finding } from './finding';
-import type { AlertStore, StoreOp } from './store';
+import type { AlertStore, DueAlert, StoreOp } from './store';
 import { sendOpsMessage, TELEGRAM_MAX_CHARS, type TelegramTarget } from './telegram';
 
 /** Between two findings packed into one message. */
@@ -82,6 +82,14 @@ export interface DeliveryReport {
   /** Any storage read or write failed — windowed detectors are unreliable. */
   stateDegraded: boolean;
   degradedDetail: string[];
+  /**
+   * Keys of the findings that reached the operator: sent this tick, or
+   * suppressed because the same alert was already sent inside the repeat
+   * window. A finding whose send failed, or that went only to the Worker
+   * log because no destination is configured, is NOT here. The event-alert
+   * scan advances its position only past these (`eventAlerts.ts`).
+   */
+  delivered: Set<string>;
 }
 
 export interface DeliveryRequest {
@@ -110,6 +118,7 @@ export async function deliverFindings(
     degradedDetail: req.dedupAvailable
       ? []
       : ['streak state could not be read'],
+    delivered: new Set<string>(),
   };
 
   if (!req.telegram) {
@@ -131,9 +140,10 @@ export async function deliverFindings(
     return report;
   }
 
-  const candidates = req.findings.map((f) => ({
+  const candidates: DueAlert[] = req.findings.map((f) => ({
     key: f.key,
     fingerprint: f.fingerprint,
+    once: f.once === true,
   }));
 
   // Rule 2 — dedup is best-effort. The store cannot throw, so there is
@@ -143,6 +153,9 @@ export async function deliverFindings(
     const picked = await req.store.selectDue(candidates, req.repeatSeconds, req.now);
     if (picked.ok) {
       send = picked.value;
+      // Not due = sent before with this fingerprint inside the window.
+      const due = new Set(send.map((c) => c.key));
+      for (const c of candidates) if (!due.has(c.key)) report.delivered.add(c.key);
     } else {
       report.stateDegraded = true;
       report.degradedDetail.push(describeFailure(picked.failure));
@@ -176,6 +189,7 @@ export async function deliverFindings(
     }
     for (const finding of batch.findings) {
       report.sent += 1;
+      report.delivered.add(finding.key);
       confirmed.push({
         kind: 'recordAlert',
         key: finding.key,

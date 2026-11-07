@@ -104,9 +104,11 @@ export function approvalBetween(min, max, why) {
 }
 
 // ---------------------------------------------------------------------
-// The payoff the borrower's approval must cover — a MIRROR of the app's own
-// computation (apps/app/src/contracts/loanLive.ts), so the bound is what
-// the reviewed flow requires, not a guess.
+// The payoff the borrower must hold the top-up for — a MIRROR of the app's
+// own computation (apps/app/src/contracts/loanLive.ts). Since #1558 it sizes
+// only the PRE-WRITE reserve check (`borrowerReserve`); the figures the
+// borrower reviews and signs the payoff permit for come from the contract's
+// own `getRefinancePayoff`, which is what the app reads.
 // ---------------------------------------------------------------------
 const DAY = 86_400n;
 const loanEndOf = (l) => l.startTime + l.durationDays * DAY;
@@ -187,40 +189,140 @@ export function graceSecondsFrom(buckets, durationDays) {
   return buckets[buckets.length - 1].graceSeconds;
 }
 
+// ---------------------------------------------------------------------
+// The refinance payoff PERMIT (#1558 / #3042) — what the borrower signs
+// instead of approving the Diamond.
+//
+// Since #1558 a refinance request carries a single-use Permit2 permit: the
+// borrower signs `PermitWitnessTransferFrom` for an exact maximum, bound to
+// THIS loan through THIS request by the `RefinancePayoff(loanId, offerId)`
+// witness, and attaches it on chain with `setRefinancePayoffPermit`. Since
+// #3042 the new loan's net principal pays the old lender directly, so the
+// permit is signed for the wallet's SHARE of the payoff (the old loan's
+// interest and any late fee plus the new loan's initiation fee), never the
+// whole payoff. Nothing is approved to the Diamond: the only ERC-20 approval
+// is the wallet's approval of Permit2 itself, which moves nothing without a
+// signature. Mirrors apps/app/src/contracts/refinancePayoffPermit.ts.
+// ---------------------------------------------------------------------
+
+/** Uniswap's canonical Permit2 — the app's `PERMIT2_ADDRESS`
+ *  (src/contracts/usePermit2Signing.ts; pinned to it by the test). */
+export const PERMIT2_ADDRESS = '0x000000000022D473030F116dDEE9F6B43aC78BA3';
+
+/** The selector whose routing tells the two payoff routes apart, as the
+ *  app's `readPayoffRoute` reads it: a Diamond that routes it pays a
+ *  refinance payoff through the request's permit. */
+export const SET_PAYOFF_PERMIT_SIGNATURE = 'setRefinancePayoffPermit(uint256,uint256,uint256,uint256,bytes)';
+
+/** `lastFillableMoment` (refinancePayoffPermit.ts): one second before the
+ *  request's own expiry, never after the old loan's grace end. That moment
+ *  is the permit's deadline, so the permit lapses with the request. */
+export function lastFillableMoment(expiresAt, graceEnd) {
+  const e = BigInt(expiresAt);
+  const g = BigInt(graceEnd);
+  return e > 0n && e - 1n < g ? e - 1n : g;
+}
+
 /**
- * The borrower's payoff-approval bounds. The app approves
- * `refinanceApprovalOf` = the payoff at the request's last fillable moment:
- * min(expiresAt − 1, grace end), with expiresAt = its submit-time chain
- * time + REQUEST_WINDOW. Payoff only grows with time, so:
- *   - FLOOR: the payoff at min(anchor − LAG + REQUEST_WINDOW − 1, grace end)
- *     — the earliest the app's own clock could have put that moment;
- *   - CAP:   the payoff at the grace end — no request can be filled later.
+ * The window the permit's deadline can fall in, given the borrower anchor.
+ * The app stamps the request's expiry from its own chain read, which lies
+ * within [anchor − ANCHOR_LAG_SEC, anchor + ANCHOR_WINDOW_SEC]
+ * (`afterAnchor`), so the deadline lies between the last fillable moments
+ * of those two expiries. Payoff and share only grow with time, so the share
+ * at `earliest` is the smallest maximum the app could honestly sign and the
+ * share at `latest` the largest. Null until the anchor is read.
  */
-export function payoffApprovalBounds(l, graceSeconds, anchor) {
-  const graceEnd = loanEndOf(l) + graceSeconds;
-  /** The payoff at `t`, clamped to the grace end (the request cannot be
-   *  filled past it). */
-  const payoffBy = (t) => refinancePayoffAt(l, t < graceEnd ? t : graceEnd);
+export function permitDeadlineWindow(anchor, graceEnd) {
+  if (anchor == null) return null;
   return {
-    floor: () => {
-      const a = anchor();
-      if (a == null) return null;
-      return payoffBy(a - ANCHOR_LAG_SEC + REQUEST_WINDOW_SEC - 1n);
+    earliest: lastFillableMoment(anchor - ANCHOR_LAG_SEC + REQUEST_WINDOW_SEC, graceEnd),
+    latest: lastFillableMoment(anchor + ANCHOR_WINDOW_SEC + REQUEST_WINDOW_SEC, graceEnd),
+  };
+}
+
+/**
+ * The EIP-712 types the app signs a payoff permit with — its
+ * `PAYOFF_PERMIT_TYPES`. Permit2 hashes the witness type string the Diamond
+ * hands it (`LibRefinancePayoff.WITNESS_TYPE_STRING`), so these must name
+ * the same fields in the same order; the test holds them to both sources.
+ */
+export const PAYOFF_PERMIT_TYPES = {
+  PermitWitnessTransferFrom: [
+    { name: 'permitted', type: 'TokenPermissions' },
+    { name: 'spender', type: 'address' },
+    { name: 'nonce', type: 'uint256' },
+    { name: 'deadline', type: 'uint256' },
+    { name: 'witness', type: 'RefinancePayoff' },
+  ],
+  RefinancePayoff: [
+    { name: 'loanId', type: 'uint256' },
+    { name: 'offerId', type: 'uint256' },
+  ],
+  TokenPermissions: [
+    { name: 'token', type: 'address' },
+    { name: 'amount', type: 'uint256' },
+  ],
+};
+
+/** A Permit2 nonce the app draws at random (`randomNonce`): any uint256. */
+const RANDOM_NONCE = is('any uint256 (drawn at random by the app)', (v) => {
+  const n = BigInt(v);
+  return n >= 0n && n < 2n ** 256n;
+});
+
+/**
+ * The whole `eth_signTypedData_v4` request for the payoff permit — every
+ * field (`payoffPermitTypedData` in the app):
+ *   - domain: Permit2's own (name "Permit2", no version), on this chain;
+ *   - permitted: the old loan's principal token, at most `maxAmount` (the
+ *     wallet's share of the payoff at the deadline, read from the contract);
+ *   - spender: the Diamond, the only party that may use it;
+ *   - nonce: random by design (`nonce` replaces the matcher with an exact
+ *     value when pinned);
+ *   - deadline: the request's last fillable moment;
+ *   - witness: THIS loan through THIS request.
+ */
+export function expectedPayoffPermitTypedData({
+  chainId,
+  diamond,
+  signer,
+  token,
+  maxAmount,
+  deadline,
+  loanId,
+  offerId,
+  nonce = RANDOM_NONCE,
+}) {
+  return {
+    signer,
+    typedData: {
+      domain: { name: 'Permit2', chainId, verifyingContract: PERMIT2_ADDRESS },
+      types: {
+        EIP712Domain: optional([
+          { name: 'name', type: 'string' },
+          { name: 'chainId', type: 'uint256' },
+          { name: 'verifyingContract', type: 'address' },
+        ]),
+        ...PAYOFF_PERMIT_TYPES,
+      },
+      primaryType: 'PermitWitnessTransferFrom',
+      message: {
+        permitted: { token, amount: maxAmount },
+        spender: diamond,
+        nonce,
+        deadline,
+        witness: { loanId, offerId },
+      },
     },
-    // #2422 r9: the CAP is bounded by the request's own last fillable moment
-    // too, not only the grace end. The app stamps the expiry from a chain
-    // time inside [anchor − ANCHOR_LAG_SEC, anchor + ANCHOR_WINDOW_SEC], and
-    // the last fillable moment is expiry − 1 — so no approval the app could
-    // honestly compute exceeds the payoff at
-    // min(anchor + ANCHOR_WINDOW_SEC + REQUEST_WINDOW_SEC − 1, graceEnd).
-    // Capping at the grace end alone let an approval sized for a moment the
-    // request can never be filled at pass, whenever the grace end lies past
-    // the request's expiry.
-    cap: () => {
-      const a = anchor();
-      if (a == null) return null;
-      return payoffBy(a + ANCHOR_WINDOW_SEC + REQUEST_WINDOW_SEC - 1n);
-    },
+  };
+}
+
+/** `setRefinancePayoffPermit(offerId, maxAmount, nonce, deadline, signature)`
+ *  carrying exactly the permit that was signed (`setPayoffPermitCall`). */
+export function expectedSetPayoffPermitCall({ offerId, maxAmount, nonce, deadline, signature }) {
+  return {
+    functionName: 'setRefinancePayoffPermit',
+    args: { offerId, maxAmount, nonce, deadline, signature },
   };
 }
 
@@ -486,7 +588,7 @@ export function expectedAcceptOfferCall({ requestId, terms, signature }) {
 }
 
 // ---------------------------------------------------------------------
-// The whole drive's write plan, in order (#2422 r3).
+// The whole drive's write plan, in order (#2422 r3; the permit route #3295).
 // ---------------------------------------------------------------------
 
 /**
@@ -495,22 +597,47 @@ export function expectedAcceptOfferCall({ requestId, terms, signature }) {
  * `createWritePlan` (writePlan.mjs), which allows a request only if it
  * matches the NEXT unconsumed step.
  *
- * The order is the app's, read from its source and confirmed by the
- * 2026-10-05 run on loan 22:
- *   borrower (RefinanceFlow.submit): setAutoRefinanceCaps — OPTIONAL, the
- *     form skips it when the loan's caps already cover the reviewed terms;
- *     then `ensureAllowance` — an OPTIONAL reset to 0 (only when a non-zero
- *     allowance below the payoff bound is left over) and an OPTIONAL set
- *     (skipped when the allowance already covers it); then createOffer.
+ * The order is the app's, read from its source (RefinanceFlow.submit and
+ * refinancePayoffPermit.ts) — the permit route of #1558 / #3042:
+ *   borrower: setAutoRefinanceCaps — OPTIONAL, the form skips it when the
+ *     loan's caps already cover the reviewed terms; then the wallet's
+ *     approval of PERMIT2 (`ensurePermit2Approval` → `ensureAllowance`) — an
+ *     OPTIONAL reset to 0 (only when a non-zero allowance below the permit's
+ *     maximum is left over) and an OPTIONAL set to exactly that maximum
+ *     (skipped when the allowance already covers it); then createOffer;
+ *     then, once the request exists, the payoff permit SIGNATURE and the
+ *     `setRefinancePayoffPermit` transaction that attaches it. Both are
+ *     REQUIRED when the wallet's share can be above zero (`permitNeeded`):
+ *     a request without its permit stands but no lender can complete it.
+ *     When the share is zero the app asks for none of the four Permit2
+ *     steps, and the plan carries none (`permitNeeded: false`).
+ *     Nothing is approved to the Diamond on this route: an
+ *     `approve(Diamond, …)` from the borrower matches no step and halts.
+ *     (`attachRefinancePayoffPermit` re-runs `ensurePermit2Approval` after
+ *     the createOffer; it sends nothing then, because the approval above
+ *     already covers the same maximum — so the plan has no step for it, and
+ *     an approval asked for there halts the drive.)
  *   lender (OfferFlow accept): the AcceptTerms signature FIRST (the review
- *     lists "Sign the terms" before "Approve"), then the same optional
- *     reset / set pair for the principal, then acceptOffer.
+ *     lists "Sign the terms" before "Approve"), then the optional reset /
+ *     set pair for the principal to the Diamond, then acceptOffer. A lender
+ *     accepting a borrower REQUEST never takes the Permit2 path
+ *     (`acceptOfferWithPermit` serves lender offers only).
  *
- * `requestId()` returns the request's id once phase 2 has pinned it (null
- * before, which refuses the lender's steps); `signedAcceptTerms()` returns
- * the consumed AcceptTerms step's record `{ params, signature }` once the
- * signature is back (null before, which refuses the accept call). The
- * accept CALL is then pinned to exactly the signed terms and signature.
+ * The getters, each null until its input exists (null refuses the step):
+ *   - `permit2ShareBounds()` → `{ floor, cap }`: the wallet's share
+ *     (`getRefinancePayoff(…).walletShareBy`) at the earliest and latest
+ *     deadline the app could stamp (`permitDeadlineWindow`). The Permit2
+ *     approval must lie between them: it is raised to exactly the permit's
+ *     maximum, which is not known until the request exists.
+ *   - `borrowerPermit()` → `{ offerId, deadline, maxAmount }`: the request
+ *     id from the createOffer receipt's own OfferCreated, the deadline from
+ *     that createOffer's expiry (`lastFillableMoment`), and the share the
+ *     contract reports at that deadline. The permit is compared with these
+ *     EXACTLY.
+ *   - `signedPayoffPermit()` → the consumed `b-permit` step's record
+ *     `{ params, signature }`: the attach CALL is pinned to exactly the
+ *     signed nonce and the signature.
+ *   - `requestId()` / `signedAcceptTerms()`: as before, for the lender.
  */
 export function refinancePlanSteps({
   abi,
@@ -523,13 +650,19 @@ export function refinancePlanSteps({
   rateBps,
   days,
   riskTermsHash,
-  graceSeconds,
   borrowerAnchor,
   lenderAnchor,
   illiquidLegs,
+  permitNeeded,
+  permit2ShareBounds,
+  borrowerPermit,
+  signedPayoffPermit,
   requestId,
   signedAcceptTerms,
 }) {
+  if (typeof permitNeeded !== 'boolean') {
+    throw new Error('permitNeeded (whether the wallet share can be above zero) is required');
+  }
   const tx = (from, to, call) => expectedTx({ from, to, call, chainId });
   const termsArgs = (rid, pinned) => ({
     loan,
@@ -544,28 +677,93 @@ export function refinancePlanSteps({
     pinned,
     illiquidLegs,
   });
-  const payoff = payoffApprovalBounds(loan, graceSeconds, borrowerAnchor);
-  const approvePair = (role, who, min, max, why) => [
+  /** The optional ensureAllowance pair: a reset to 0 that REQUIRES its set,
+   *  then the set covering the pull. */
+  const approvePair = ({ prefix, role, who, spender, spenderName, min, max, why }) => [
     {
-      id: `${role[0]}-approve-reset`,
+      id: `${prefix}-reset`,
       role,
       kind: 'tx',
       optional: true,
       // A reset must be followed by its set: once the allowance has been
       // zeroed, nothing else may be signed until it is set again.
-      requires: `${role[0]}-approve-set`,
-      purpose: 'approve(Diamond, 0) — reset of a leftover allowance',
-      expected: tx(who, loan.principalAsset, expectedApproveCall({ spender: diamond, why, reset: true })),
+      requires: `${prefix}-set`,
+      purpose: `approve(${spenderName}, 0) — reset of a leftover allowance`,
+      expected: tx(who, loan.principalAsset, expectedApproveCall({ spender, why, reset: true })),
     },
     {
-      id: `${role[0]}-approve-set`,
+      id: `${prefix}-set`,
       role,
       kind: 'tx',
       optional: true,
-      purpose: `approve(Diamond, covering ${why}${typeof max === 'function' ? '' : `, ≤ ${max}`})`,
-      expected: tx(who, loan.principalAsset, expectedApproveCall({ spender: diamond, min, max, why })),
+      purpose: `approve(${spenderName}, covering ${why}${typeof max === 'function' ? '' : `, ≤ ${max}`})`,
+      expected: tx(who, loan.principalAsset, expectedApproveCall({ spender, min, max, why })),
     },
   ];
+  const at = (getter, key) => () => getter()?.[key] ?? null;
+  const borrowerPermitSteps = !permitNeeded
+    ? []
+    : [
+        // The approval is raised to EXACTLY the permit's maximum, which lies
+        // between the shares at the earliest and latest possible deadline.
+        ...approvePair({
+          prefix: 'b-permit2',
+          role: 'borrower',
+          who: borrower,
+          spender: PERMIT2_ADDRESS,
+          spenderName: 'Permit2',
+          min: at(permit2ShareBounds, 'floor'),
+          max: at(permit2ShareBounds, 'cap'),
+          why: 'the wallet’s share of the payoff',
+        }),
+      ];
+  const permitAndAttach = !permitNeeded
+    ? []
+    : [
+        {
+          id: 'b-permit',
+          role: 'borrower',
+          kind: 'typed',
+          purpose: 'sign the payoff permit (Permit2, RefinancePayoff witness) for the request',
+          expected: () => {
+            const p = borrowerPermit();
+            if (p == null) return null;
+            return expectedPayoffPermitTypedData({
+              chainId,
+              diamond,
+              signer: borrower,
+              token: loan.principalAsset,
+              maxAmount: p.maxAmount,
+              deadline: p.deadline,
+              loanId,
+              offerId: p.offerId,
+            });
+          },
+        },
+        {
+          id: 'b-attach',
+          role: 'borrower',
+          kind: 'tx',
+          purpose: 'setRefinancePayoffPermit(the request) with exactly the signed permit',
+          expected: () => {
+            const p = borrowerPermit();
+            const signed = signedPayoffPermit();
+            if (p == null || !signed?.signature || !signed?.params) return null;
+            const message = JSON.parse(signed.params[1]).message;
+            return tx(
+              borrower,
+              diamond,
+              expectedSetPayoffPermitCall({
+                offerId: p.offerId,
+                maxAmount: p.maxAmount,
+                nonce: BigInt(message.nonce),
+                deadline: p.deadline,
+                signature: signed.signature,
+              }),
+            );
+          },
+        },
+      ];
   return [
     {
       id: 'b-caps',
@@ -575,7 +773,7 @@ export function refinancePlanSteps({
       purpose: `setAutoRefinanceCaps(${loanId}, on, ${rateBps} bps)`,
       expected: tx(borrower, diamond, expectedCapsCall({ loanId, rateBps, days, anchor: borrowerAnchor })),
     },
-    ...approvePair('borrower', borrower, payoff.floor, payoff.cap, 'the payoff'),
+    ...borrowerPermitSteps,
     {
       id: 'b-create',
       role: 'borrower',
@@ -583,6 +781,7 @@ export function refinancePlanSteps({
       purpose: `createOffer(refinance of loan ${loanId})`,
       expected: tx(borrower, diamond, expectedCreateOfferCall({ loan, loanId, rateBps, days, anchor: borrowerAnchor })),
     },
+    ...permitAndAttach,
     {
       id: 'l-sign',
       role: 'lender',
@@ -595,7 +794,16 @@ export function refinancePlanSteps({
       },
     },
     // The lender's pull is exactly the principal, so floor = cap = principal.
-    ...approvePair('lender', lender, loan.principal, loan.principal, 'the principal'),
+    ...approvePair({
+      prefix: 'l-approve',
+      role: 'lender',
+      who: lender,
+      spender: diamond,
+      spenderName: 'Diamond',
+      min: loan.principal,
+      max: loan.principal,
+      why: 'the principal',
+    }),
     {
       id: 'l-accept',
       role: 'lender',
@@ -614,4 +822,3 @@ export function refinancePlanSteps({
     },
   ];
 }
-

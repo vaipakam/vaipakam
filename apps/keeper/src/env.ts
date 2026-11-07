@@ -265,6 +265,14 @@ interface BaseEnv {
    *  gas. */
   EXPIRED_TEARDOWN_ENABLED?: string;
 
+  // Vault beacon upkeep pass (#3282). `secret_text` like the flags above.
+  /** 'true' arms the vault beacon upkeep pass (in addition to KEEPER_ENABLED):
+   *  the VaultBeacon's permissionless applies of a matured change (a current
+   *  version or revoke proposal, a vault's pin change, a vault's pin-delay
+   *  lowering). Each only applies what its owner decided and waited out; it
+   *  moves no value and pays only gas. */
+  VAULT_BEACON_UPKEEP_ENABLED?: string;
+
   // Protocol upkeep pass (#2984). `secret_text` like the flags above.
   /** 'true' arms the protocol upkeep pass (in addition to KEEPER_ENABLED):
    *  the buyback-intent expiry and the tier LTV cache refresh. Both
@@ -529,6 +537,7 @@ export const PLAIN_VAR_KEYS = [
   'REWARD_STAGING_UPKEEP_ENABLED',
   'REWARD_STAGING_UNWIND_ENABLED',
   'EXPIRED_TEARDOWN_ENABLED',
+  'VAULT_BEACON_UPKEEP_ENABLED',
   'TIER_LTV_REFRESH_AFTER_SEC',
   'REWARD_ZEROED_DAY_ENABLED',
   'REWARD_ZEROED_DAY_WINDOW_DAYS',
@@ -757,6 +766,7 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     REWARD_STAGING_UPKEEP_ENABLED: raw.REWARD_STAGING_UPKEEP_ENABLED,
     REWARD_STAGING_UNWIND_ENABLED: raw.REWARD_STAGING_UNWIND_ENABLED,
     EXPIRED_TEARDOWN_ENABLED: raw.EXPIRED_TEARDOWN_ENABLED,
+    VAULT_BEACON_UPKEEP_ENABLED: raw.VAULT_BEACON_UPKEEP_ENABLED,
     TIER_LTV_REFRESH_AFTER_SEC: raw.TIER_LTV_REFRESH_AFTER_SEC,
     REWARD_ZEROED_DAY_ENABLED: raw.REWARD_ZEROED_DAY_ENABLED,
     REWARD_ZEROED_DAY_WINDOW_DAYS: raw.REWARD_ZEROED_DAY_WINDOW_DAYS,

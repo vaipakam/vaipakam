@@ -1,0 +1,12 @@
+## Thread — the live refinance drive follows the payoff permit (PR #3298)
+
+The manual live refinance drive had not caught up with the refinance payoff permit (#1558, #3042). Its write plan still expected the borrower to approve the Diamond for the payoff, and its review check still expected the approval-route wording ("the approval you grant covers that too"). So the first live run against the deployed app stopped at the borrower's review, before anything was written. Closes #3295.
+
+The drive now expects the borrower's steps in the order the app takes them: the guardrails if needed, the wallet's approval of Permit2 if needed (with a reset to zero first when a smaller approval is left over), the request, the signature on the payoff permit, and the transaction that attaches it. Each step is still one complete expected object, compared field by field, inside one ordered plan that stays closed until the borrower's confirmed submit and halts on any mismatch. The permit has to name this loan and the request the createOffer receipt created, be addressed to the Diamond, expire at the request's last fillable moment, and allow exactly the wallet share the contract reports for that moment. The attach call has to carry exactly the permit that was signed. Any approval of the Diamond from the borrower is now refused.
+
+The amounts come from the contract's own payoff view, which is what the app reads, and no longer from a copy of the app's payoff formula. The borrower's review is compared against the same view: the payoff, how much it can grow, the permit's maximum, the wallet top-up, and the "up to five wallet steps" note. The retired approval-route wording counts as a mismatch. The drive keeps the borrower's phase open until the page reports the permit attached, then reads the attached permit back on chain before the lender is armed.
+
+A Diamond that does not route the permit (one deployed before #1558) is now refused before any write. The drive does not model the old approval route. The payoff route is part of the watched configuration, so a change to it mid-run is caught like any other configuration race.
+
+> Caveat: this was verified by unit tests against the app's own permit builders and viem's own signing request, not by a live run, because the drive writes on chain.
+> Caveat: the app's copy says "up to five wallet steps", but when the Permit2 approval has to be reset to zero first the borrower sees six prompts. The drive allows both.
