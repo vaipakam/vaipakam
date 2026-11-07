@@ -1877,7 +1877,13 @@
         "sortDurationLong": "期限从长到短",
         "assetLabel": "按资产地址筛选",
         "assetPlaceholder": "0x…（任意一项：借出资产、抵押品、付款）",
-        "clear": "清除筛选"
+        "clear": "清除筛选",
+        "sortLargest": "最大优先",
+        "minSizeLabel": "最小规模",
+        "minSizeAny": "任意规模",
+        "minSizeAtLeast": "至少 {{amount}} {{unit}}",
+        "minSizeUnitUnknown": "以参考货币计",
+        "sizeNote": "规模是一项报价仍可出借的金额，或一项请求所要的金额，按协议价格估值。没有可靠价格的代币报价没有可测量的规模：它们不会因规模被隐藏，并排在已估值的报价之后。"
       },
       "loading": "正在加载 offer book…",
       "filteredEmptyTitle": "没有 offer 匹配这些筛选条件",
@@ -2144,7 +2150,8 @@
         "lockAtFill": "{{amount}} {{symbol}} 抵押品——只有在有人接受报价时才会锁定。",
         "netYield": "如果有人接受报价且贷款得到偿还，扣除利息部分 {{feePct}}% 的协议费后，你每年约赚 {{net}}%。",
         "lifNote": "起始费：贷款金额的 {{feePct}}%（约 {{amount}} {{symbol}}），在贷款开始时收取。",
-        "expiryGtcSignedHint": "免费签名报价最多保持开放 7 天，之后会自动过期。你也可以提前取消（取消需要支付网络费）。"
+        "expiryGtcSignedHint": "免费签名报价最多保持开放 7 天，之后会自动过期。你也可以提前取消（取消需要支付网络费）。",
+        "gaslessBelowFloor": "此订单小于协议在该代币中接受的最小报价，因此无人能接受。未发布任何内容。请提高金额并重新签名。"
       },
       "orders": {
         "loading": "正在加载您的未完成订单…",
@@ -2988,7 +2995,10 @@
       "receiptOweNothing": "无 — 借款人欠您。",
       "viewTransaction": "查看交易",
       "viewPositions": "查看我的持仓",
-      "postAnother": "再发布一个"
+      "postAnother": "再发布一个",
+      "openOfferCapFull": "你已有 {{cap}} 个报价未结，这是一个钱包的上限。取消一个才能发布另一个；过期的报价在你取消之前仍会计数。",
+      "openOfferCapNear": "你有 {{open}} 个未结报价，一个钱包最多可有 {{cap}} 个。过期的报价在你取消之前仍会计数。",
+      "openOfferCapManage": "查看你的报价"
     },
     "loanRow": {
       "youRent": "您租用",

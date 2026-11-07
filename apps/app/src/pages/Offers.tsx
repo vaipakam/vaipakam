@@ -54,9 +54,19 @@ import {
 } from '../lib/format';
 import type { IndexedOffer } from '../data/indexer';
 import { isRentalListing as isRental, offerAcceptPath } from '../data/offerLinks';
+import {
+  MIN_SIZE_CHOICES,
+  compareBySizeDesc,
+  keepsAtMinSize,
+  offerSize,
+  offerSizeAsset,
+  type MinSizeChoice,
+} from '../data/offerSize';
+import { useNumeraire } from '../data/useNumeraire';
 
 type SideFilter = 'all' | 'lending' | 'borrowing' | 'rentals';
 type SortKey =
+  | 'largest'
   | 'newest'
   | 'rate-low'
   | 'rate-high'
@@ -325,8 +335,15 @@ export function Offers() {
   const { readChain } = useActiveChain();
 
   const [side, setSide] = useState<SideFilter>('all');
-  const [sort, setSort] = useState<SortKey>('newest');
+  // #3242 — the book ranks largest first by default, so the market's real
+  // depth leads and a run of tiny offers sinks instead of crowding the top.
+  const [sort, setSort] = useState<SortKey>('largest');
   const [assetFilter, setAssetFilter] = useState('');
+  const [minSize, setMinSize] = useState<MinSizeChoice>(0);
+  // Sizes are in the protocol's reference currency; the unit is read, never
+  // assumed, and named generically when the read fails.
+  const numeraire = useNumeraire();
+  const sizeUnit = numeraire?.symbol ?? copy.offers.filters.minSizeUnitUnknown;
 
   // Basic mode ignores the power controls entirely (they aren't
   // rendered), so switching back to Basic restores the plain list.
@@ -337,9 +354,24 @@ export function Offers() {
   const activeSort: SortKey = sort;
   const activeAssetFilter = isAdvanced ? assetFilter.trim().toLowerCase() : '';
 
+  // #3242 — sizing needs the price of every row's lending asset, not only
+  // the visible window's: the filter and the ranking act on the whole book.
+  // The distinct assets are few, so this is one small batched read.
+  const sizePricing = useAssetPricing(
+    Array.isArray(offers.data)
+      ? offers.data.flatMap((o) => {
+          const asset = offerSizeAsset(o);
+          return asset ? [asset] : [];
+        })
+      : [],
+  );
+
   const visible = useMemo(() => {
     if (!Array.isArray(offers.data)) return offers.data;
+    const sizes = new Map(offers.data.map((o) => [o.offerId, offerSize(o, sizePricing)]));
+    const sizeOf = (o: IndexedOffer) => sizes.get(o.offerId) ?? { kind: 'none' as const };
     let rows = offers.data.filter((o) => {
+      if (!keepsAtMinSize(sizeOf(o), minSize)) return false;
       const lending = o.offerType === 0;
       const rental = isRental(o);
       if (activeSide === 'lending' && (!lending || rental)) return false;
@@ -358,6 +390,8 @@ export function Offers() {
     if (activeSort !== 'newest') {
       rows = [...rows].sort((a, b) => {
         switch (activeSort) {
+          case 'largest':
+            return compareBySizeDesc(sizeOf(a), sizeOf(b));
           case 'rate-low': {
             // Rentals have no APR — sink them below every priced row.
             const ra = rateOf(a) ?? Number.POSITIVE_INFINITY;
@@ -379,7 +413,7 @@ export function Offers() {
       });
     }
     return rows;
-  }, [offers.data, activeSide, activeSort, activeAssetFilter]);
+  }, [offers.data, activeSide, activeSort, activeAssetFilter, minSize, sizePricing]);
 
   // #1247 PAG-002 — the render window. The filtered/sorted array can
   // hold up to the 500-row data cap; rows (and their per-row reads)
@@ -390,7 +424,7 @@ export function Offers() {
     Array.isArray(visible) ? visible : [],
     // Chain identity too (Codex #1265 r2): a network switch with the
     // same filters must collapse the window over the NEW book.
-    `${readChain.chainId}|${activeSide}|${activeSort}|${activeAssetFilter}`,
+    `${readChain.chainId}|${activeSide}|${activeSort}|${activeAssetFilter}|${minSize}`,
   );
 
   // #1036 badges: one batched screen for every distinct non-curated
@@ -417,7 +451,7 @@ export function Offers() {
   // and the filter-empty copy may only ever appear when the unfiltered
   // book actually has rows — a truly empty market must say so even
   // with filters set (empty-state honesty rule).
-  const filtersActive = activeSide !== 'all' || activeAssetFilter !== '';
+  const filtersActive = activeSide !== 'all' || activeAssetFilter !== '' || minSize !== 0;
   const marketHasRows = Array.isArray(offers.data) && offers.data.length > 0;
 
   return (
@@ -453,12 +487,28 @@ export function Offers() {
                 value={sort}
                 onChange={(next) => setSort(next as SortKey)}
                 options={[
+                  { value: 'largest', label: copy.offers.filters.sortLargest },
                   { value: 'newest', label: copy.offers.filters.sortNewest },
                   { value: 'rate-low', label: copy.offers.filters.sortRateLow },
                   { value: 'rate-high', label: copy.offers.filters.sortRateHigh },
                   { value: 'duration-short', label: copy.offers.filters.sortDurationShort },
                   { value: 'duration-long', label: copy.offers.filters.sortDurationLong },
                 ]}
+              />
+            </div>
+            <div className="field" style={{ margin: 0 }}>
+              <label htmlFor="book-min-size">{copy.offers.filters.minSizeLabel}</label>
+              <SelectMenu
+                id="book-min-size"
+                value={String(minSize)}
+                onChange={(next) => setMinSize(Number(next) as MinSizeChoice)}
+                options={MIN_SIZE_CHOICES.map((n) => ({
+                  value: String(n),
+                  label:
+                    n === 0
+                      ? copy.offers.filters.minSizeAny
+                      : copy.offers.filters.minSizeAtLeast(n.toLocaleString('en-US'), sizeUnit),
+                }))}
               />
             </div>
             {isAdvanced ? (
@@ -476,6 +526,15 @@ export function Offers() {
               </div>
             ) : null}
           </div>
+          {/* #3242 — size is measured at the protocol's oracle price; a row
+              in a token with no reliable price has no measured size, so the
+              filter never hides it and the ranking places it last. Said
+              whenever size shapes the list, never implied. */}
+          {minSize !== 0 || activeSort === 'largest' ? (
+            <p className="muted" data-testid="book-size-note" style={{ margin: '12px 0 0' }}>
+              {copy.offers.filters.sizeNote}
+            </p>
+          ) : null}
         </div>
 
       {offers.isLoading ? (
@@ -495,8 +554,9 @@ export function Offers() {
                 className="btn btn-secondary"
                 onClick={() => {
                   setSide('all');
-                  setSort('newest');
+                  setSort('largest');
                   setAssetFilter('');
+                  setMinSize(0);
                 }}
               >
                 {copy.offers.filters.clear}

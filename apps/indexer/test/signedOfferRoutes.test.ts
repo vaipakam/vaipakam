@@ -26,7 +26,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Abi, AbiFunction, Hex } from 'viem';
 import { encodeFunctionResult, getAbiItem, toFunctionSelector } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
-import { DIAMOND_SIGNED_OFFER_ABI } from '../src/diamondAbi';
+import { DIAMOND_OFFER_BOOK_ABI, DIAMOND_SIGNED_OFFER_ABI } from '../src/diamondAbi';
 import {
   handleSignedOfferPost,
   handleSignedOffersGet,
@@ -742,6 +742,13 @@ const SEL_FILLED = toFunctionSelector(
   }) as AbiFunction,
 );
 
+const SEL_MIN_OFFER = toFunctionSelector(
+  getAbiItem({
+    abi: DIAMOND_OFFER_BOOK_ABI as Abi,
+    name: 'getMinOfferAmount',
+  }) as AbiFunction,
+);
+
 interface RpcReq {
   jsonrpc: string;
   id: number;
@@ -751,7 +758,7 @@ interface RpcReq {
 
 /** Answer the gate's two eth_calls from canned chain state; anything else
  *  (other URLs, other methods, other selectors) throws loudly. */
-function stubRpc(state: { nonceUsed: boolean; filled: bigint }): void {
+function stubRpc(state: { nonceUsed: boolean; filled: bigint; floor?: readonly [boolean, bigint] }): void {
   vi.stubGlobal(
     'fetch',
     async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
@@ -791,6 +798,12 @@ function stubRpc(state: { nonceUsed: boolean; filled: bigint }): void {
             abi: DIAMOND_SIGNED_OFFER_ABI as Abi,
             functionName: 'signedOfferFilledAmount',
             result: state.filled,
+          });
+        } else if (data.startsWith(SEL_MIN_OFFER) && state.floor) {
+          result = encodeFunctionResult({
+            abi: DIAMOND_OFFER_BOOK_ABI as Abi,
+            functionName: 'getMinOfferAmount',
+            result: state.floor,
           });
         } else {
           throw new Error(`unexpected eth_call selector ${data.slice(0, 10)}`);
@@ -974,5 +987,33 @@ describe('POST /signed-offers — chain-state ingest gate (Codex #1145 r7)', () 
       status: 'active',
       filledAmount: '300',
     });
+  });
+});
+
+describe('POST /signed-offers — the offer-book value floor (#3242)', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('refuses an order whose smallest amount is below a binding floor, naming the floor', async () => {
+    stubRpc({ nonceUsed: false, filled: 0n, floor: [true, 101n] });
+    const { env } = makeChainEnv();
+    const res = await post(env, rangedPartialOrder());
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: 'below-offer-floor', minAmount: '101' });
+  });
+
+  it('admits an order at the floor, and any order when the floor does not bind', async () => {
+    stubRpc({ nonceUsed: false, filled: 0n, floor: [true, 100n] });
+    expect((await post(makeChainEnv().env, rangedPartialOrder())).status).toBe(201);
+    vi.unstubAllGlobals();
+    // A floor that does not bind admits the order whatever amount it names.
+    stubRpc({ nonceUsed: false, filled: 0n, floor: [false, 1000n] });
+    expect((await post(makeChainEnv().env, rangedPartialOrder())).status).toBe(201);
+  });
+
+  it('admits the order when the floor read fails, leaving the refusal to the protocol', async () => {
+    stubRpc({ nonceUsed: false, filled: 0n });
+    expect((await post(makeChainEnv().env, rangedPartialOrder())).status).toBe(201);
   });
 });

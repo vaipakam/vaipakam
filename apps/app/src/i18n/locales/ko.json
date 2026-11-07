@@ -1877,7 +1877,13 @@
         "sortDurationLong": "기간 긴 순",
         "assetLabel": "자산 주소로 필터링",
         "assetPlaceholder": "0x… (대출 자산, 담보, 결제 중 어느 것이든)",
-        "clear": "필터 지우기"
+        "clear": "필터 지우기",
+        "sortLargest": "큰 순서",
+        "minSizeLabel": "최소 규모",
+        "minSizeAny": "모든 규모",
+        "minSizeAtLeast": "최소 {{amount}} {{unit}}",
+        "minSizeUnitUnknown": "기준 통화 기준",
+        "sizeNote": "규모는 오퍼가 아직 빌려줄 수 있는 금액 또는 요청이 원하는 금액을 프로토콜 가격으로 평가한 것입니다. 신뢰할 수 있는 가격이 없는 토큰의 오퍼는 규모가 측정되지 않으며, 규모로 숨겨지지 않고 평가된 오퍼 뒤에 표시됩니다."
       },
       "loading": "제안 장부 불러오는 중…",
       "filteredEmptyTitle": "이 필터와 일치하는 제안이 없습니다",
@@ -2144,7 +2150,8 @@
         "lockAtFill": "담보 {{amount}} {{symbol}} — 누군가 제안을 받아들일 때만 잠깁니다.",
         "netYield": "누군가 제안을 받고 대출이 상환되면, 이자에 대한 {{feePct}}% 프로토콜 수수료를 뺀 뒤 연 약 {{net}}%를 법니다.",
         "lifNote": "시작 수수료: 대출 금액의 {{feePct}}%(약 {{amount}} {{symbol}})이며, 대출이 시작될 때 부과됩니다.",
-        "expiryGtcSignedHint": "무료 서명 제안은 최대 7일 동안 열려 있다가 자동으로 만료됩니다. 그 전에 취소할 수도 있습니다(취소에는 네트워크 수수료가 듭니다)."
+        "expiryGtcSignedHint": "무료 서명 제안은 최대 7일 동안 열려 있다가 자동으로 만료됩니다. 그 전에 취소할 수도 있습니다(취소에는 네트워크 수수료가 듭니다).",
+        "gaslessBelowFloor": "이 주문은 프로토콜이 이 토큰에서 받는 가장 작은 오퍼보다 작아서 아무도 받을 수 없습니다. 아무것도 게시되지 않았습니다. 금액을 늘리고 다시 서명하세요."
       },
       "orders": {
         "loading": "열려 있는 주문 불러오는 중…",
@@ -2988,7 +2995,10 @@
       "receiptOweNothing": "없음 — 차입자가 회원님에게 빚집니다.",
       "viewTransaction": "트랜잭션 보기",
       "viewPositions": "내 포지션 보기",
-      "postAnother": "다른 제안 게시"
+      "postAnother": "다른 제안 게시",
+      "openOfferCapFull": "이미 {{cap}}개의 오퍼가 열려 있으며, 이는 지갑 하나의 최대치입니다. 다른 오퍼를 올리려면 하나를 취소하세요. 만료된 오퍼도 취소할 때까지 집계됩니다.",
+      "openOfferCapNear": "지갑 하나가 열어 둘 수 있는 {{cap}}개 중 {{open}}개의 오퍼가 열려 있습니다. 만료된 오퍼도 취소할 때까지 집계됩니다.",
+      "openOfferCapManage": "내 오퍼 보기"
     },
     "loanRow": {
       "youRent": "회원님이 빌림",

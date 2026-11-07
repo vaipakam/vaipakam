@@ -39,7 +39,7 @@
 import { test, expect, connectWallet } from '../lib/wallet-fixture';
 import { seedDeskOffer, acceptOfferDirect, getOffer } from '../lib/desk';
 import { accountFor } from '../lib/wallets';
-import { newestOfferIdFor } from '../lib/flows';
+import { newestOfferIdFor, gotoOfferBookNewest } from '../lib/flows';
 import { pub, DIAMOND, DIAMOND_ABI_VIEM, ERC20_MIN_ABI } from '../lib/chain';
 
 interface LoanShape {
@@ -285,7 +285,7 @@ test('refinance request completes: old loan closes, new loan carries the collate
   // The row is keyed on its accept link (rendered only for another user's
   // offer), so the tag asserted is this request's own.
   const browsing = await launchWallet('newLender');
-  await browsing.page.goto('/offers', { waitUntil: 'domcontentloaded' });
+  await gotoOfferBookNewest(browsing.page);
   const requestRow = browsing.page
     .locator('.item-row')
     .filter({ has: browsing.page.locator(`a[href*="offer=${requestId}&"]`) });

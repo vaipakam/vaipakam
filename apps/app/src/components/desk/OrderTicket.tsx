@@ -983,7 +983,11 @@ export function OrderTicket({
         throw new Error(copy.desk.ticket.gaslessUnavailable);
       }
       if (res.kind === 'rejected') {
-        throw new Error(copy.desk.ticket.gaslessRejected(res.error));
+        throw new Error(
+          res.error === 'below-offer-floor'
+            ? copy.desk.ticket.gaslessBelowFloor
+            : copy.desk.ticket.gaslessRejected(res.error),
+        );
       }
       setGaslessPosted(res.orderHash);
       consent.clear();

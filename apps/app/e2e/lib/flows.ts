@@ -226,3 +226,13 @@ export async function newestLoanIdFor(
   if (newest === undefined) throw new Error(`no ${side} loans for ${who}`);
   return newest;
 }
+
+/** Open the Offer Book sorted newest first (#3242). The book's default
+ *  ranking is largest first, which would sort a spec's freshly seeded,
+ *  few-dollar offer below every larger row earlier specs left — and out
+ *  of the 25-row window once the shared book grows. A spec looking for
+ *  its own new row asks for the order that puts it on top. */
+export async function gotoOfferBookNewest(page: Page, base = ''): Promise<void> {
+  await page.goto(`${base}/offers`, { waitUntil: 'domcontentloaded' });
+  await chooseMenuValue(page, 'book-sort', 'newest');
+}

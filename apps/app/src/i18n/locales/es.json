@@ -1877,7 +1877,13 @@
         "sortDurationLong": "Préstamo más largo primero",
         "assetLabel": "Filtrar por dirección de activo",
         "assetPlaceholder": "0x… (cualquier parte: activo del préstamo, garantía, pago)",
-        "clear": "Limpiar filtros"
+        "clear": "Limpiar filtros",
+        "sortLargest": "Las más grandes primero",
+        "minSizeLabel": "Tamaño mínimo",
+        "minSizeAny": "Cualquier tamaño",
+        "minSizeAtLeast": "Al menos {{amount}} {{unit}}",
+        "minSizeUnitUnknown": "en la moneda de referencia",
+        "sizeNote": "El tamaño es lo que una oferta aún presta, o lo que una solicitud pide, valorado al precio del protocolo. Las ofertas en un token sin precio fiable no tienen tamaño medido: nunca se ocultan por tamaño y se listan después de las valoradas."
       },
       "loading": "Cargando el libro de ofertas…",
       "filteredEmptyTitle": "Ninguna oferta coincide con estos filtros",
@@ -2144,7 +2150,8 @@
         "lockAtFill": "{{amount}} {{symbol}} de garantía — se bloquean solo cuando alguien acepta la oferta.",
         "netYield": "Si alguien acepta la oferta y el préstamo se devuelve, ganas alrededor de un {{net}}% al año tras la comisión del protocolo del {{feePct}}% sobre tus intereses.",
         "lifNote": "Comisión inicial: {{feePct}}% del importe del préstamo (unos {{amount}} {{symbol}}), cobrada cuando empieza el préstamo.",
-        "expiryGtcSignedHint": "Una oferta firmada gratis sigue abierta hasta 7 días y luego caduca sola. Puedes cancelarla antes (cancelar requiere una comisión de red)."
+        "expiryGtcSignedHint": "Una oferta firmada gratis sigue abierta hasta 7 días y luego caduca sola. Puedes cancelarla antes (cancelar requiere una comisión de red).",
+        "gaslessBelowFloor": "Esta orden es menor que la oferta más pequeña que el protocolo acepta en este token, así que nadie podría tomarla. No se publicó nada. Aumenta el monto y firma de nuevo."
       },
       "orders": {
         "loading": "Cargando tus órdenes abiertas…",
@@ -2988,7 +2995,10 @@
       "receiptOweNothing": "Nada — el prestatario te debe a ti.",
       "viewTransaction": "Ver la transacción",
       "viewPositions": "Ver mis posiciones",
-      "postAnother": "Publicar otra"
+      "postAnother": "Publicar otra",
+      "openOfferCapFull": "Ya tienes {{cap}} ofertas abiertas, el máximo para una billetera. Cancela una para publicar otra; una oferta vencida cuenta hasta que la canceles.",
+      "openOfferCapNear": "Tienes {{open}} de las {{cap}} ofertas que una billetera puede tener abiertas. Una oferta vencida cuenta hasta que la canceles.",
+      "openOfferCapManage": "Ver tus ofertas"
     },
     "loanRow": {
       "youRent": "Alquilas",
