@@ -80,6 +80,10 @@ function LoanBody({ view: v, account, meta }: { view: LoanView; account: Hex; me
   const role = roleOf(v.holders, account);
   const live = isLiveStatus(l.status);
   const erc20 = l.assetType === ASSET_ERC20;
+  // A loan with an illiquid leg has no price-based risk math: the protocol
+  // refuses the health and LTV reads for it, so a refused read here is "none",
+  // not "unknown".
+  const noRiskMath = l.principalLiquidity === ILLIQUID || l.collateralLiquidity === ILLIQUID;
   const amountOf = (asset: Hex, assetType: number, amount: bigint, tokenId: bigint, quantity: bigint) =>
     assetType === ASSET_ERC20
       ? tokenAmount(amount, asset, meta, format)
@@ -98,6 +102,11 @@ function LoanBody({ view: v, account, meta }: { view: LoanView; account: Hex; me
         <div className="position-now">
           <StageLine stage={obligations.stage} borrowerSide={borrowerSide} rental={!erc20} />
           {obligations.interest && <InterestLine stage={obligations.interest} borrowerSide={borrowerSide} amountOf={(x) => tokenAmount(x, l.principalAsset, meta, format)} />}
+          {v.deadlines?.periodic && !v.deadlines.periodic.enforced && (
+            <p className="tier-b" data-testid="position-checkpoints-off">
+              {text('positions.interestCheckpointsOff')}
+            </p>
+          )}
           {v.defaultable === true && <p className="tier-a">{text('position.defaultable')}</p>}
         </div>
       )}
@@ -128,10 +137,10 @@ function LoanBody({ view: v, account, meta }: { view: LoanView; account: Hex; me
         </Facts>
       )}
 
-      <Facts title={text('position.termsTitle')} id="position-terms">
+      <Facts title={text('position.termsTitle')} id="position-terms" lead={<p className="tier-b">{text(erc20 ? 'position.termsNow' : 'position.termsNowRental')}</p>}>
         <Fact
-          label={text(erc20 ? 'position.rowPrincipal' : 'position.rowRented')}
-          value={amountOf(l.principalAsset, l.assetType, l.principal, l.tokenId, l.quantity)}
+          label={text(erc20 ? (live ? 'position.rowPrincipal' : 'position.rowPrincipalEnded') : 'position.rowRented')}
+          value={erc20 && !live && l.principal === 0n ? text('position.principalWrittenOff') : amountOf(l.principalAsset, l.assetType, l.principal, l.tokenId, l.quantity)}
           unknown={unknown}
         />
         {erc20 && <Fact label={text('position.rowRate')} value={format('position.rate', { rate: formatBps(l.interestRateBps) })} unknown={unknown} />}
@@ -173,13 +182,13 @@ function LoanBody({ view: v, account, meta }: { view: LoanView; account: Hex; me
         <Facts title={text('position.healthTitle')} id="position-health" lead={<WhyLink summaryKey="position.healthSummary" detailKey="position.healthWhy" />}>
           <Fact
             label={text('position.rowHf')}
-            value={v.healthFactor === null ? null : v.healthFactor === 0n ? text('position.hfNone') : formatScaled(v.healthFactor)}
+            value={noRiskMath || v.healthFactor === 0n ? text('position.hfNone') : v.healthFactor === null ? null : formatScaled(v.healthFactor)}
             unknown={unknown}
             binding
           />
           <Fact
             label={text('position.rowLtv')}
-            value={v.ltvBps === null || v.healthFactor === 0n ? null : format('position.ltv', { rate: formatBps(v.ltvBps) })}
+            value={noRiskMath ? text('position.ltvNone') : v.ltvBps === null || v.healthFactor === 0n ? null : format('position.ltv', { rate: formatBps(v.ltvBps) })}
             unknown={unknown}
           />
           <Fact label={text('position.rowLiqLtv')} value={format('position.liqLtv', { rate: formatBps(BigInt(l.liquidationLtvBpsAtInit)) })} unknown={unknown} />
@@ -193,7 +202,7 @@ function LoanBody({ view: v, account, meta }: { view: LoanView; account: Hex; me
           <Fact label={text('position.rowLienState')} value={text('position.lienNone')} unknown={unknown} />
         ) : (
           <>
-            <Fact label={text('position.rowLienAmount')} value={amountOf(v.lien.asset, v.lien.assetType, v.lien.amount, v.lien.tokenId, 0n)} unknown={unknown} />
+            <Fact label={text('position.rowLienAmount')} value={amountOf(v.lien.asset, v.lien.assetType, v.lien.amount, v.lien.tokenId, v.lien.amount)} unknown={unknown} />
             <Fact
               label={text('position.rowLienState')}
               value={v.lien.released ? text('position.lienReleased') : format(live ? 'position.lienHeld' : 'position.lienHeldEnded', { vault: shortAddress(v.lien.user) })}

@@ -1223,7 +1223,7 @@ All, Lent and Borrowed narrow the three lists at once. Positions says you have n
 
 Each loan has its own page. It starts with the loan's status, then your role: the side your wallet holds now, since position tokens can be sold or transferred. If you hold neither side, you are viewing. A deadline that needs you is worded for your side. Once the grace period is over, the page says anyone may now start the default, and only when the protocol confirms it.
 
-Below that come the loan's dates (the due date it opened with, any time added while the protocol was paused, the due date and the end of the grace period), its terms as fixed when it opened, its health factor, and where its collateral is held. A figure that could not be read is shown as unknown. If the collateral has no price, a default hands the lender the collateral itself, and the page says so. For now the page is read-only; its actions come in later updates.
+Below that come the loan's dates (the due date it opened with, any time added while the protocol was paused, the due date and the end of the grace period), its terms as they stand now (a partial repayment lowers the principal still owed), its health factor, and where its collateral is held. A figure that could not be read is shown as unknown. If the collateral has no price, a default hands the lender the collateral itself, and the page says so. For now the page is read-only; its actions come in later updates.
 
 <a id="risk-access"></a>
 

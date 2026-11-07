@@ -45,7 +45,7 @@ test('a live loan states its status, the reader’s role, its dates, terms, heal
     await expect(fact(dates, 'Grace period ends')).toHaveText(/UTC/);
 
     const terms = page.getByRole('region', { name: 'Terms' });
-    await expect(fact(terms, 'Lent when this loan started')).toHaveText('0.6 WETH');
+    await expect(fact(terms, 'Principal still owed')).toHaveText('0.6 WETH');
     await expect(fact(terms, 'Interest rate')).toHaveText('5.25% a year');
     await expect(fact(terms, 'Term')).toHaveText('30 days');
     await expect(fact(terms, 'Interest')).toHaveText(/^(Full term|Pro rata)/);
@@ -84,5 +84,6 @@ test('a repaid loan states it, with no dates to meet and its collateral held unt
   await expect(page.getByTestId('position-status')).toHaveAttribute('data-status', 'repaid');
   await expect(page.getByRole('region', { name: 'Dates' })).toHaveCount(0);
   await expect(page.getByRole('region', { name: 'Health' })).toHaveCount(0);
+  await expect(fact(page.getByRole('region', { name: 'Terms' }), 'Principal on the loan when it ended')).toHaveText('0.15 WETH');
   await expect(fact(page.getByRole('region', { name: 'Collateral held' }), 'Where it is')).toHaveText(/^Held in the vault of 0x.* until its claim is collected on Claims$/);
 });
