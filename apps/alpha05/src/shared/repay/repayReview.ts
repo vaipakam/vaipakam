@@ -165,12 +165,29 @@ export function paysAsBorrower(r: RepayReview, account: Hex): boolean {
   return r.borrowerHolder?.toLowerCase() === account.toLowerCase();
 }
 
+/** Every field of the loan record the receipt states (repayReceipt): a
+ *  change to any of them, such as a partial withdrawal lowering the
+ *  collateral, reopens the review. One list, so a row added to the receipt
+ *  is compared by adding its field here. */
+export const STATED_LOAN_FIELDS = [
+  'status',
+  'principal',
+  'principalAsset',
+  'useFullTermInterest',
+  'collateralAsset',
+  'collateralAssetType',
+  'collateralAmount',
+  'collateralTokenId',
+  'collateralQuantity',
+  'borrowerTokenId',
+] as const satisfies readonly (keyof LoanDetails)[];
+
 /** What a re-read found changed, in words, or null when nothing the review
  *  states moved. The payoff now is not compared: it grows by the second,
  *  and the approval is sized to the figure at the kept moment. */
 export function changedBetween(a: RepayReview, b: RepayReview, copy: Pick<CopyAccess, 'text'>): string | null {
   const { text } = copy;
-  if (a.loan.status !== b.loan.status || a.loan.principal !== b.loan.principal || a.loan.principalAsset !== b.loan.principalAsset) return text('repay.changedLoan');
+  if (STATED_LOAN_FIELDS.some((k) => a.loan[k] !== b.loan[k])) return text('repay.changedLoan');
   if (
     a.lenderHolder !== b.lenderHolder ||
     a.borrowerHolder !== b.borrowerHolder ||
@@ -197,4 +214,13 @@ export function reviewBlockers(r: RepayReview, shortText: (short: bigint) => str
  *  repayment. */
 export function promptCount(r: RepayReview): number {
   return r.approvalSteps + 1;
+}
+
+/** The prompts that may follow a repayment that took effect, to put back
+ *  what it did not use of the approval: none when no approval was made;
+ *  two on a token that needs a step to zero first (only when going back to
+ *  a non-zero allowance, so "up to"); otherwise one. */
+export function putBackPromptCount(r: RepayReview): number {
+  if (r.approvalSteps === 0) return 0;
+  return r.approvalSteps === 2 ? 2 : 1;
 }

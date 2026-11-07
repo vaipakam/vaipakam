@@ -89,6 +89,7 @@ export const copy = {
     unknown: B('Unknown'),
     consequences: B('What you can lose'),
     prompts: B('Wallet prompts: {{count}}.'),
+    promptsThen: B('Wallet prompts: {{count}}, then up to {{after}} more to put back the unused approval.'),
     readAt: B('Figures read {{age}} ago.'),
     showExact: B('Show exact figures'),
     showShort: B('Show short figures'),

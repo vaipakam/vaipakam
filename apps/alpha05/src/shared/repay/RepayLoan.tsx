@@ -22,7 +22,8 @@ import { useTrackedTx } from '../tx/useTrackedTx';
 import { ActionFlow, reviewIdentity, type Recheck } from '../ui/ActionFlow';
 import { Notice } from '../ui/Notice';
 import { shortAddress } from '../ui/format';
-import { allowanceFigure, repayReceipt } from './repayReceipt';
+import { allowanceFigure } from './approvalCap';
+import { repayReceipt } from './repayReceipt';
 import { changedBetween, promptCount, readRepayReview, reviewBlockers, type RepayReview } from './repayReview';
 
 type Hex = `0x${string}`;

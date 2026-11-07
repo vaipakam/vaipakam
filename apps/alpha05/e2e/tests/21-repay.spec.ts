@@ -68,7 +68,7 @@ test('the borrower repays in full: the payoff now and at most, an exact approval
   await expect(receipt).toContainText(`Whatever the repayment does not use of the approval is put back to ${priorText} afterwards.`);
   await expect(receipt).not.toContainText('This figure did not grow over that window');
   await expect(receipt).not.toContainText('Paying gives you no right to the collateral');
-  await expect(receipt).toContainText('Wallet prompts: 2.');
+  await expect(receipt).toContainText('Wallet prompts: 2, then up to 1 more to put back the unused approval.');
   await fitsWidth(page);
 
   const sent = flags.sentTransactions;
@@ -108,7 +108,7 @@ test('an unlimited standing approval is lowered to exactly the most the repaymen
   await expect(receipt).toContainText(/Lower your approval from unlimited to exactly 0\.05\d* WETH, the most it can take by then/, { timeout: 60_000 });
   await expect(receipt).toContainText(/The approval caps the amount, not the time: confirming after .* UTC, it goes through only while/);
   await expect(receipt).toContainText('Whatever the repayment does not use of the approval is put back to unlimited afterwards.');
-  await expect(receipt).toContainText('Wallet prompts: 2.');
+  await expect(receipt).toContainText('Wallet prompts: 2, then up to 1 more to put back the unused approval.');
   await fitsWidth(page);
 
   const sent = flags.sentTransactions;

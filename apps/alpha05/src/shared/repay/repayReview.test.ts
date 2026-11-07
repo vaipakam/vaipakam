@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { OPEN } from '../eligibility/types';
 import type { LoanDetails } from '../positions/loanView';
-import { changedBetween, promptCount, reviewBlockers, type RepayReview } from './repayReview';
+import { changedBetween, promptCount, reviewBlockers, type RepayReview, putBackPromptCount } from './repayReview';
 
 const copy = { text: (k: string) => k } as never;
 const A = '0x00000000000000000000000000000000000000aa' as const;
@@ -32,6 +32,11 @@ describe('changedBetween', () => {
     expect(changedBetween(review, { ...review, payoff: { ...review.payoff, atBy: 104n } }, copy)).toBe('repay.changedPayoff');
     expect(changedBetween(review, { ...review, payoff: { ...review.payoff, by: 3_000n } }, copy)).toBe('repay.changedPayoff');
   });
+  it('reopens when any loan field the receipt states moved, a withdrawn collateral included', () => {
+    expect(changedBetween(review, { ...review, loan: { ...review.loan, collateralAmount: 1n } }, copy)).toBe('repay.changedLoan');
+    expect(changedBetween(review, { ...review, loan: { ...review.loan, collateralQuantity: 3n } }, copy)).toBe('repay.changedLoan');
+    expect(changedBetween(review, { ...review, loan: { ...review.loan, useFullTermInterest: true } }, copy)).toBe('repay.changedLoan');
+  });
   it('reopens when a holder, the approval steps or the verdict moved', () => {
     expect(changedBetween(review, { ...review, borrowerHolder: null }, copy)).toBe('repay.changedHolders');
     expect(changedBetween(review, { ...review, refinanceOffer: 9n }, copy)).toBe('repay.changedHolders');
@@ -48,5 +53,10 @@ describe('reviewBlockers and promptCount', () => {
   it('counts the approval steps and the repayment', () => {
     expect(promptCount(review)).toBe(2);
     expect(promptCount({ ...review, approvalSteps: 0 })).toBe(1);
+  });
+  it('counts the put-back prompts that may follow apart: none without an approval, up to two through zero', () => {
+    expect(putBackPromptCount({ ...review, approvalSteps: 0 })).toBe(0);
+    expect(putBackPromptCount(review)).toBe(1);
+    expect(putBackPromptCount({ ...review, approvalSteps: 2 })).toBe(2);
   });
 });

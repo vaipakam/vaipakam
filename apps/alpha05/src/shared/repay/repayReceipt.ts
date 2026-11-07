@@ -4,28 +4,21 @@
  * approval lets the protocol take, where the collateral goes, and every
  * consequence. Every amount is the protocol's own settlement figure.
  */
-import { maxUint256 } from 'viem';
 import type { CopyAccess } from '../copy/useCopy';
 import { figured, textValue, type Receipt } from '../receipt/types';
-import { exactTokenAmount, tokenAmount, type TokenMetaMap } from '../reads/tokens';
+import { tokenAmount, type TokenMetaMap } from '../reads/tokens';
 import { assetAmount } from '../positions/assetAmount';
 import { formatUtc } from '../ui/format';
+import { allowanceFigure, approvalRowText, lateConfirmationLines } from './approvalCap';
 import { STATUS_FALLBACK_PENDING } from '../eligibility/repay';
-import { paysAsBorrower, promptCount, type RepayReview } from './repayReview';
+import { paysAsBorrower, promptCount, putBackPromptCount, type RepayReview } from './repayReview';
 
 type Hex = `0x${string}`;
-
-/** An allowance in words: the largest value, which a wallet's "unlimited"
- *  approval sets, is named as such rather than printed as 78 digits. */
-export function allowanceFigure(v: bigint, asset: Hex, meta: TokenMetaMap | null, copy: Pick<CopyAccess, 'text' | 'format'>): string {
-  return v === maxUint256 ? copy.text('repay.unlimited') : exactTokenAmount(v, asset, meta, copy.format);
-}
 
 export function repayReceipt(r: RepayReview, account: Hex, meta: TokenMetaMap | null, copy: Pick<CopyAccess, 'text' | 'format'>): Receipt {
   const { text, format } = copy;
   const loan = r.loan;
   const asset = loan.principalAsset;
-  const exact = (v: bigint) => exactTokenAmount(v, asset, meta, format);
   const by = formatUtc(Number(r.payoff.by));
   const borrower = paysAsBorrower(r, account);
   const collateral = (x: boolean) =>
@@ -56,14 +49,7 @@ export function repayReceipt(r: RepayReview, account: Hex, meta: TokenMetaMap | 
       label: text('repay.rowApproval'),
       value: {
         kind: 'text',
-        text:
-          r.approvalSteps === 0
-            ? format('repay.approvalEnough', { amount: exact(r.allowance) })
-            : r.approvalSteps === 2
-              ? format('repay.approvalZeroFirst', { amount: exact(r.payoff.atBy) })
-              : r.allowance > r.payoff.atBy
-                ? format('repay.approvalLower', { prior: allowanceFigure(r.allowance, asset, meta, copy), amount: exact(r.payoff.atBy) })
-                : format('repay.approvalNeeded', { amount: exact(r.payoff.atBy) }),
+        text: approvalRowText({ allowance: r.allowance, steps: r.approvalSteps, cap: r.payoff.atBy }, asset, meta, copy),
       },
       binding: false,
       movesOut: r.approvalSteps > 0,
@@ -72,11 +58,7 @@ export function repayReceipt(r: RepayReview, account: Hex, meta: TokenMetaMap | 
 
   const consequences = [
     text(loan.useFullTermInterest ? 'repay.loseFull' : 'repay.loseGrows'),
-    format(r.capped ? 'repay.loseGraceEnds' : 'repay.loseLate', { time: by }),
-    // `repayLoan` takes no deadline: the approval is the only limit, so a
-    // figure that does not grow (full-term interest before the due date)
-    // leaves a later confirmation free to go through, and the review says so.
-    ...(!r.capped && r.payoff.atBy === r.payoff.now ? [text('repay.loseSame')] : []),
+    ...lateConfirmationLines({ capped: r.capped, time: by, totalNow: r.payoff.now, totalBy: r.payoff.atBy }, copy),
     ...(r.approvalSteps > 0 ? [format('repay.losePutBack', { amount: allowanceFigure(r.allowance, asset, meta, copy) })] : []),
     ...(borrower ? [] : [format('repay.loseThirdParty', { id: loan.borrowerTokenId.toString() })]),
     ...(loan.status === STATUS_FALLBACK_PENDING ? [text('repay.cure')] : []),
@@ -89,6 +71,7 @@ export function repayReceipt(r: RepayReview, account: Hex, meta: TokenMetaMap | 
     rows,
     consequences,
     prompts: promptCount(r),
+    afterPrompts: putBackPromptCount(r),
     readAt: r.readAt,
   };
 }
