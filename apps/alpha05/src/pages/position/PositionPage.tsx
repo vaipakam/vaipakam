@@ -119,6 +119,11 @@ function LoanBody({ view: v, account, meta }: { view: LoanView; account: Hex; me
             </p>
           )}
           {v.defaultable === true && <p className="tier-a">{text('position.defaultable')}</p>}
+          {v.defaultRefused && (
+            <p className="tier-a" data-testid="position-default-refused">
+              {text('position.defaultRefused')}
+            </p>
+          )}
         </div>
       )}
       {/* An NFT rental has no collateral leg (its collateral liquidity is

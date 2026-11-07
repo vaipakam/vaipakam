@@ -103,8 +103,15 @@ export interface LoanView {
   deadlines: Deadlines | null;
   /** The original due date before any pause credit; `null` when unread. */
   originalMaturity: bigint | null;
-  /** Whether a default may be started now (`isLoanDefaultable`). */
+  /** Whether a default may be started now: true only when the protocol's
+   *  timing verdict (`isLoanDefaultable`) AND the default's lender admission
+   *  (`defaultKycAdmission`, which refuses only where the network turns that
+   *  check on) both pass; `null` when either needed read failed. One
+   *  verdict, so no surface can say "may now start" on the timing alone. */
   defaultable: boolean | null;
+  /** The timing verdict says yes but the default's lender admission
+   *  refuses, so the page says why the default cannot start yet. */
+  defaultRefused: boolean;
   /** 1e18-scaled, as the protocol computes it (0 is a real reading: the
    *  collateral's risk-adjusted value rounds to nothing). `null` when the
    *  read failed, which is also how the protocol answers for a loan with an
@@ -165,13 +172,14 @@ export async function readLoanView(client: PublicClient, diamond: Hex, loanId: b
   const live = isLiveStatus(loan.status);
   const cadence = loan.periodicInterestCadence;
 
-  const [lender, borrower, dates, periodic, periodicOn, defaultable, healthFactor, ltvBps, lien, saleVehicle, matchConfig] = await Promise.all([
+  const [lender, borrower, dates, periodic, periodicOn, timingDefaultable, admission, healthFactor, ltvBps, lien, saleVehicle, matchConfig] = await Promise.all([
     maybe(read<Hex>(NFT, 'ownerOf', [loan.lenderTokenId])),
     maybe(read<Hex>(NFT, 'ownerOf', [loan.borrowerTokenId])),
     live ? maybe(read<readonly [bigint, bigint, bigint, bigint]>(LOAN, 'getLoanDeadlines', [loanId])) : null,
     live && cadence !== 0 ? maybe(read<readonly [number, bigint, bigint, bigint, bigint, bigint, boolean]>(PERIODIC, 'previewPeriodicSettle', [loanId])) : null,
     live && cadence !== 0 ? maybe(read<boolean>(NUMERAIRE, 'getPeriodicInterestEnabled')) : null,
     live ? maybe(read<boolean>(DEFAULTED, 'isLoanDefaultable', [loanId])) : null,
+    live ? maybe(read<readonly [boolean, Hex]>(DEFAULTED, 'defaultKycAdmission', [loanId])) : null,
     live ? maybe(read<bigint>(RISK, 'calculateHealthFactor', [loanId])) : null,
     live ? maybe(read<bigint>(RISK, 'calculateLTV', [loanId])) : null,
     maybe(read<CollateralLien>(METRICS, 'getLoanCollateralLien', [loanId])),
@@ -191,12 +199,16 @@ export async function readLoanView(client: PublicClient, diamond: Hex, loanId: b
     }
   }
 
+  const admitted = admission ? admission[0] : null;
+  const defaultable = timingDefaultable === false ? false : timingDefaultable === null || admitted === null ? null : admitted;
+
   const view: LoanView = {
     loan,
     holders: { lender, borrower },
     deadlines,
     originalMaturity: dates ? dates[0] : null,
     defaultable,
+    defaultRefused: timingDefaultable === true && admitted === false,
     healthFactor,
     ltvBps,
     lien,

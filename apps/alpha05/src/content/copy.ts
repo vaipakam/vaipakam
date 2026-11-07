@@ -301,6 +301,7 @@ export const copy = {
     pauseCredit: B('{{span}}, added while the protocol was paused'),
     datesUnknown: A('The dates could not be read, so they are shown as unknown.'),
     defaultable: A('The grace period is over: anyone may now start the default.'),
+    defaultRefused: A('The grace period is over, but the protocol refuses a default for now: the lender does not meet a check this network requires to start one.'),
     termsTitle: B('Terms'),
     termsNow: B('As they stand now: a partial repayment, a collateral move or a borrower handover can change them.'),
     termsNowRental: B('As they stand now: a borrower handover can change the collateral.'),

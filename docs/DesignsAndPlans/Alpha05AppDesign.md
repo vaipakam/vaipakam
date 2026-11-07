@@ -680,7 +680,10 @@ above. Each resolves here, so a route reviewer needs no private file:
   holds neither is told they are viewing); the deadline that needs them,
   worded for the side they hold, with "can now be defaulted" and "anyone
   may now start the default" only when the protocol says the loan is
-  defaultable, never "will be" (a grace end passed by the clock alone is
+  defaultable, never "will be", and that verdict is the timing read AND
+  the default's lender admission together, so a refused admission is
+  stated as the reason the default cannot start (a grace end passed by the
+  clock alone is
   stated as passed, with the protocol's verdict unread or not yet given;
   a list, which does not read the verdict, sends the reader to the loan's
   page);
