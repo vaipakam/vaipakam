@@ -1,0 +1,55 @@
+{
+  "$comment": [
+    "What the served-build check (#3236, .github/scripts/check-served-build.mjs) expects each site to be serving.",
+    "buildVars are the PUBLIC build variables each site's Workers Build is configured with in the Cloudflare dashboard. They ship in the bundle, so none of them is a secret. They are written down here, in a reviewed commit, on purpose: the check rebuilds the deployed commit with THESE values, so a dashboard change (an RPC or indexer origin pointed somewhere else) shows as a mismatch until someone records it here. Reading them back from the dashboard instead would make such a change invisible.",
+    "Changing a site's build variables is therefore two steps: the dashboard, and this file in the same hour. Until both agree the check reports the site as not serving what its commit builds, and says why that may be.",
+    "compare: 'all' compares every file the build writes that the Worker serves; 'assets' compares only dist/assets/ (the marketing site prerenders its pages in a later deploy step this check does not repeat).",
+    "suffixMatch: files a host is known to rewrite. The built file must still appear, byte for byte, as the end of what is served."
+  ],
+  "sites": [
+    {
+      "worker": "vaipakam-app",
+      "dir": "apps/app",
+      "hosts": ["https://app.vaipakam.com", "https://vaipakam-app.dawn-fire-139e.workers.dev"],
+      "compare": "all",
+      "buildVars": {
+        "VITE_ADMIN_DASHBOARD_PUBLIC": "true",
+        "VITE_AGENT_ORIGIN": "https://agent.vaipakam.com",
+        "VITE_DEFAULT_CHAIN_ID": "84532",
+        "VITE_DIAG_DRAWER_ENABLED": "true",
+        "VITE_DIAG_RECORD_ENABLED": "false",
+        "VITE_INDEXER_ORIGIN": "https://indexer.vaipakam.com",
+        "VITE_LOG_INDEX_CHUNK": "6000",
+        "VITE_PUSH_CHANNEL_ADDRESS": "0x6F5847A0CA1F2cB1bbEf944124cE5995988a1D6b",
+        "VITE_RPC_PROXY_ORIGIN": "https://rpc.vaipakam.com",
+        "VITE_WALLETCONNECT_PROJECT_ID": "8387e30b3581f46ba768bd420346281d"
+      }
+    },
+    {
+      "worker": "vaipakam-alpha05",
+      "dir": "apps/alpha05",
+      "hosts": ["https://alpha05.vaipakam.com", "https://vaipakam-alpha05.dawn-fire-139e.workers.dev"],
+      "compare": "all",
+      "buildVars": {
+        "VITE_AGENT_ORIGIN": "https://agent.vaipakam.com",
+        "VITE_DEFAULT_CHAIN_ID": "84532",
+        "VITE_INDEXER_ORIGIN": "https://indexer.vaipakam.com",
+        "VITE_RPC_PROXY_ORIGIN": "https://rpc.vaipakam.com",
+        "VITE_WALLETCONNECT_PROJECT_ID": "8387e30b3581f46ba768bd420346281d"
+      }
+    },
+    {
+      "worker": "vaipakam-www",
+      "dir": "apps/www",
+      "hosts": ["https://vaipakam.com", "https://vaipakam-www.dawn-fire-139e.workers.dev"],
+      "compare": "assets",
+      "buildVars": {}
+    }
+  ],
+  "suffixMatch": [
+    {
+      "path": "/robots.txt",
+      "reason": "Cloudflare's managed robots.txt prepends its content-signal rules on the custom domains"
+    }
+  ]
+}
