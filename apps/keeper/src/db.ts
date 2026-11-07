@@ -858,7 +858,7 @@ export async function discoverConflictedDayParts(
  *  return-transport pass (#2984) records each re-sendable message it sent
  *  under `return_send` (`item` names the message, `block` is 0), so it is not
  *  sent again before the indexer has recorded it. */
-export type WorkKind = 'delivery_conflict' | 'late_ack' | 'day_broadcast' | 'day_zeroed' | 'day_close' | 'day_owed' | 'day_clock' | 'day_dispatch' | 'day_open' | 'scan_cursor' | 'return_send';
+export type WorkKind = 'delivery_conflict' | 'late_ack' | 'day_broadcast' | 'day_zeroed' | 'day_close' | 'day_owed' | 'day_clock' | 'day_dispatch' | 'day_open' | 'scan_cursor' | 'return_send' | 'beacon_pin';
 
 /** The last block the shared indexer has completely recorded on `chainId`
  *  (its `diamond` cursor, advanced only after a whole window is written), or

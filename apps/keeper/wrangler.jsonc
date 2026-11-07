@@ -442,6 +442,12 @@
   //     its expiry or on a closed loan, hourly. Each is simulated
   //     first and sent only when it would succeed. Permissionless; moves no
   //     value and pays only gas. Ships unset.
+  //   - VAULT_BEACON_UPKEEP_ENABLED — 'true' arms the #3282 vault-beacon
+  //     upkeep pass, hourly: executeCurrentVersion / executeRevoke for a
+  //     Timelock proposal past MIN_CODE_DELAY, executePin and
+  //     executePinDelay for a vault owner's signed change past its delay.
+  //     Nothing is sent before executableAt; each is simulated first.
+  //     Permissionless; moves no value and pays only gas. Ships unset.
   //   - REWARD_STAGING_UPKEEP_ENABLED — 'true' arms the #3097 reward staging
   //     upkeep pass, hourly: prepareStagedDay / reserveStagedDay /
   //     resolveStagedDayPage for open staging records, reserveDomainPage /
