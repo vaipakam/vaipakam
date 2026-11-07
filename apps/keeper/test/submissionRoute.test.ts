@@ -304,6 +304,39 @@ describe('the private nonce record (Codex #3275 r1)', () => {
     expect(got).toBe(1);
   });
 
+  it('public successors of a private gap advance the reservation inside its window (Codex #3275 r5)', async () => {
+    armHeldFence();
+    const reservations = memoryNonceReservations();
+    const start = Date.now();
+    reservations.rows.set(key, { next: 1, atMs: start });
+    resetSubmissionQueues();
+    armSubmissionRoutes(readSubmissionRoutes('', ''), reservations);
+    // The pending count stays 0: private nonce 0 has not landed.
+    const wallet = createWalletClient({ account, transport: rpc(async () => '0x', [], 'public') });
+    let t = start;
+    const nonces: number[] = [];
+    for (const at of [start, start + FLOOR_TTL_MS + 1_000]) {
+      t = at;
+      await withSubmissionSlot(wallet, 1, account.address, FAR, async (nonce, signed) => {
+        signed();
+        nonces.push(nonce);
+        const raw = await account.signTransaction({ chainId: 1, nonce, type: 'eip1559', to: account.address, gas: 21_000n, maxFeePerGas: 1n, maxPriorityFeePerGas: 1n });
+        await broadcastSigned(wallet, 1, raw, FAR, () => t);
+      }, () => t);
+    }
+    expect(nonces).toEqual([1, 2]);
+    // The window stays the private send's, so the gap still ages out.
+    expect(reservations.rows.get(key)).toEqual({ next: 3, atMs: start });
+  });
+
+  it('a public send with no live reservation writes nothing', async () => {
+    const reservations = memoryNonceReservations();
+    armSubmissionRoutes(readSubmissionRoutes('', ''), reservations);
+    const wallet = createWalletClient({ account, transport: rpc(async () => keccak256(RAW), [], 'public') });
+    await broadcastSigned(wallet, 1, RAW, FAR);
+    expect(reservations.rows.size).toBe(0);
+  });
+
   it('a private route armed without a record sends nothing', async () => {
     armHeldFence();
     armSubmissionRoutes(readSubmissionRoutes(`1=${URL_ETH}`, ''));

@@ -360,47 +360,70 @@ export async function broadcastSigned(
 ): Promise<Hex> {
   const route = armedSubmissionRoute(chainId);
   if ('unread' in route) throw new SubmissionRouteUnread(`send refused: ${route.unread}`);
-  if (route.kind === 'public') return wallet.sendRawTransaction({ serializedTransaction: serialized });
+  const isPrivate = route.kind === 'private';
 
-  // The nonce is recorded BEFORE the bytes leave the process (Codex #3275
-  // r1): a restart after the broadcast then still finds it taken. A record
-  // that cannot be written sends nothing.
+  // One rule for the nonce record, on every route (Codex #3275 r1, r2, r4,
+  // r5). The record is written BEFORE the bytes leave the process:
+  //  - by every private send, with a fresh window, so a restart still finds
+  //    its nonce taken;
+  //  - by any send that follows a reservation still in its window, keeping
+  //    THAT window, so a successor sent publicly after the route was removed
+  //    is protected exactly as long as the private gap it sits behind.
+  // A public send with no live reservation writes nothing. A refusal the
+  // node answered puts the record back as it stood, timestamp included, so a
+  // gap left by a crash ages out instead of being refreshed. A record that
+  // cannot be read or written sends nothing.
   const reservations = armedNonceReservations();
   const address = wallet.account?.address;
-  const nonce = parseTransaction(serialized).nonce;
-  if (!reservations || !address || nonce === undefined) {
+  // Read from the signed bytes only where a record is kept.
+  const nonce = reservations || isPrivate ? parseTransaction(serialized).nonce : undefined;
+  if (isPrivate && (!reservations || !address || nonce === undefined)) {
     throw new SubmissionRouteUnread('send refused: the private send could not be recorded (no nonce record, account or nonce)');
   }
-  // The record as it stood, so a send that takes nothing puts it back
-  // exactly, timestamp included (Codex #3275 r2): refreshing it on every
-  // refused send would keep a gap left by a crash fresh forever.
-  let prior: { next: number; atMs: number } | null;
-  try {
-    prior = await reservations.read(chainId, address);
-    await reservations.write(chainId, address, nonce + 1, now());
-  } catch (err) {
-    throw new SubmissionRouteUnread(`send refused: the private nonce record could not be written (${describeFailure(err)})`);
-  }
-  // A refusal the node answered took nothing, so the nonce is released again,
-  // as the in-memory floor does; if that write fails, the record holds the
-  // nonce for at most PRIVATE_ROUTE_FLOOR_TTL_MS, a delay and never a
-  // replacement.
-  const release = async (err: unknown): Promise<void> => {
-    if (!isDefinitiveRejection(err)) return;
+  let release = async (_err: unknown): Promise<void> => {};
+  if (reservations && address && nonce !== undefined) {
+    let prior: { next: number; atMs: number } | null;
     try {
-      // No earlier record: an expired one, which the slot ignores.
-      await reservations.write(chainId, address, prior?.next ?? nonce, prior?.atMs ?? 0);
-    } catch (writeErr) {
-      console.warn(`[submission] chain=${chainId} could not release nonce ${nonce} in the private nonce record (${describeFailure(writeErr)}); later sends wait for it to expire`);
+      prior = await reservations.read(chainId, address);
+    } catch (err) {
+      throw new SubmissionRouteUnread(`send refused: the private nonce record could not be read (${describeFailure(err)})`);
     }
-  };
+    const live = prior !== null && now() - prior.atMs < PRIVATE_ROUTE_FLOOR_TTL_MS;
+    if (isPrivate || live) {
+      const atMs = isPrivate ? now() : (prior as { atMs: number }).atMs;
+      try {
+        await reservations.write(chainId, address, Math.max(nonce + 1, live ? (prior as { next: number }).next : 0), atMs);
+      } catch (err) {
+        throw new SubmissionRouteUnread(`send refused: the private nonce record could not be written (${describeFailure(err)})`);
+      }
+      // If this write fails, the record holds the nonce for at most
+      // PRIVATE_ROUTE_FLOOR_TTL_MS: a delay, never a replacement.
+      release = async (err: unknown): Promise<void> => {
+        if (!isDefinitiveRejection(err)) return;
+        try {
+          // No earlier record: an expired one, which the slot ignores.
+          await reservations.write(chainId, address, prior?.next ?? nonce, prior?.atMs ?? 0);
+        } catch (writeErr) {
+          console.warn(`[submission] chain=${chainId} could not release nonce ${nonce} in the private nonce record (${describeFailure(writeErr)}); later sends wait for it to expire`);
+        }
+      };
+      // The write can be slow (the machine's D1 adapter waits up to 20 s),
+      // so the run's deadline is checked again before anything leaves.
+      if (now() >= notAfterMs) {
+        const late = new SendPastDeadline(`send refused before broadcast: the run's deadline passed while the nonce was recorded — next run`);
+        await release(late);
+        throw late;
+      }
+    }
+  }
 
-  // The write above can be slow (the machine's D1 adapter waits up to 20 s),
-  // so the run's deadline is checked again before anything leaves.
-  if (now() >= notAfterMs) {
-    const late = new SendPastDeadline(`send refused before broadcast: the run's deadline passed while the private nonce was recorded — next run`);
-    await release(late);
-    throw late;
+  if (!isPrivate) {
+    try {
+      return await wallet.sendRawTransaction({ serializedTransaction: serialized });
+    } catch (err) {
+      await release(err);
+      throw err;
+    }
   }
 
   // Through the sending pass's own fetch when it has one, so a capped pass
