@@ -44,7 +44,7 @@
     {
       "worker": "vaipakam-www",
       "dir": "apps/www",
-      "watch": ["apps/www/"],
+      "watch": ["apps/www/", "packages/", "pnpm-lock.yaml"],
       "hosts": ["https://vaipakam.com", "https://vaipakam-www.dawn-fire-139e.workers.dev"],
       "compare": "assets",
       "buildVars": {}

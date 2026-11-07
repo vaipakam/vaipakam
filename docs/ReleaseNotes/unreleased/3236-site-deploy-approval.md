@@ -13,6 +13,6 @@ Advances #3236.
 > Caveat: A version waiting for approval can be opened at its public preview address by anyone who knows that address.
 > Caveat: An incident rollback by hand is itself unapproved, so the check reports it until the next approved deploy.
 
-Which sites a merge rebuilds is now read from a `watch` list per site in `.github/served-build.json`, copied from each Workers Build trigger's watched paths. The first version assumed every site rebuilds on a shared-package change. The marketing site's trigger watches only its own folder, so with the gate on it would have waited for an upload that never came.
+Which sites a merge rebuilds is now read from a `watch` list per site in `.github/served-build.json`, copied from each Workers Build trigger's watched paths. The first version assumed every site rebuilds on a shared-package change. The marketing site's trigger watches only its own folder, so with the gate on it would have waited for an upload that never came. The marketing site's trigger now also watches the shared packages and the lockfile, which its pages depend on, so a shared change rebuilds it like the other two sites.
 
 The promote step reads the approved version by its id, because pull-request preview builds upload versions to the same Worker and can push it out of a recent-versions list by the time someone approves.
