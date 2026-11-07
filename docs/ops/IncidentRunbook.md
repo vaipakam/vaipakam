@@ -1906,8 +1906,11 @@ attacker, a Permit2 signature, or a transfer.
   identical files, but only with the SAME build variables the Workers Build
   used (the trigger's variables, readable through the Workers Builds API).
   Without them every file that carries a variable differs and reads as a
-  mismatch. Builds made before #3236 stamped the clock and never match a
-  rebuild. (The automatic served-build check #3236 asks for does not exist
+  mismatch. The www build also embeds the protocol configuration the indexer
+  publishes AT BUILD TIME (`scripts/generate-llms.mjs`, the `llms` documents),
+  so a www rebuild after a configuration change differs in those files and
+  only those; compare the rest. Builds made before #3236 stamped the clock and
+  never match a rebuild. (The automatic served-build check #3236 asks for does not exist
   yet; until it does, this is a manual check.)
 - A changed or missing `Content-Security-Policy` header, or a script host in
   it that `public/_headers.base` does not name.
