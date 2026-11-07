@@ -306,6 +306,10 @@ library LibMetricsHooks {
         s.assetPairActiveOfferIdsPos[offer.lendingAsset][offer.collateralAsset][id] =
             s.assetPairActiveOfferIds[offer.lendingAsset][offer.collateralAsset].length;
 
+        // #3242 — the creator's open-offer count moves with this index, in
+        // and out, so the cap reads exactly what the index holds.
+        s.openOfferCount[offer.creator] += 1;
+
         _markUserSeen(s, offer.creator);
     }
 
@@ -393,6 +397,12 @@ library LibMetricsHooks {
         delete s.activeOfferIdsListPos[id];
 
         if (s.activeOffersCount > 0) s.activeOffersCount -= 1;
+        // #3242 — the offer leaves its creator's open-offer count with the
+        // index. Every caller fires this hook before the offer row is
+        // deleted, so `creator` is still readable. The guard covers an offer
+        // opened before a refresh introduced the count.
+        address creator = s.offers[id].creator;
+        if (s.openOfferCount[creator] > 0) s.openOfferCount[creator] -= 1;
     }
 
     /// @dev Swap-pop removal from `assetPairActiveOfferIds`. Reads the

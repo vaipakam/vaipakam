@@ -110,7 +110,9 @@ abstract contract DiamondFacetNames {
     ///      106 → 109 with `ProtectedAccountFacet`, `VaultPayoutFacet` and
     ///      `VaultDepositoryFacet` (protected account mode and the depository
     ///      vault).
-    function cutFacetNames() internal pure returns (string[109] memory) {
+    ///      109 → 110 with `OfferBookFacet` (#3242 — the offer book's entry
+    ///      step and its bounds, split off OfferCreateFacet for EIP-170).
+    function cutFacetNames() internal pure returns (string[110] memory) {
         return [
             "AccessControlFacet",
             "AddCollateralFacet",
@@ -256,6 +258,8 @@ abstract contract DiamondFacetNames {
             "ProtectedAccountFacet",
             "VaultPayoutFacet",
             "VaultDepositoryFacet",
+            // The offer book's entry step and bounds (#3242).
+            "OfferBookFacet",
             "SwapToRepayFacet",
             "SwapToRepayPartialFacet",
             "SwapToRepayIntentFacet",

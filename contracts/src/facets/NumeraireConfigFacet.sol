@@ -85,6 +85,12 @@ contract NumeraireConfigFacet is DiamondAccessControl {
     /// @custom:event-category informational/config
     event MinIntentFillNumeraireSet(uint256 minimum);
 
+    /// @notice #3242 — the floor on an offer principal's value changed.
+    ///         `minimum` is the effective floor after the write (the default
+    ///         when zero was written, or when a numeraire rotation reset it).
+    /// @custom:event-category informational/config
+    event MinOfferValueNumeraireSet(uint256 minimum);
+
     /// @notice T-034 Numeraire generalization (b1) — atomic numeraire rotation.
     ///         The struct carries ALL state that defines the protocol's
     ///         reference currency at once. By construction, governance
@@ -248,6 +254,50 @@ contract NumeraireConfigFacet is DiamondAccessControl {
             s.minIntentFillNumeraire = 0;
             emit MinIntentFillNumeraireSet(LibVaipakam.cfgMinIntentFillNumeraire());
         }
+        // #3242 — and so was the offer value floor.
+        if (s.minOfferValueNumeraire != 0) {
+            s.minOfferValueNumeraire = 0;
+            emit MinOfferValueNumeraireSet(LibVaipakam.cfgMinOfferValueNumeraire());
+        }
+    }
+
+    /**
+     * @notice #3242 — set the floor on the value of an offer's principal, in
+     *         the active numeraire (1e18-scaled). Zero restores the default
+     *         ({LibVaipakam.MIN_OFFER_VALUE_NUMERAIRE_DEFAULT}, $10).
+     * @dev ADMIN_ROLE-only (the Timelock after handover). A non-zero value must
+     *      lie in [{LibVaipakam.MIN_OFFER_VALUE_NUMERAIRE_FLOOR},
+     *      {LibVaipakam.MIN_OFFER_VALUE_NUMERAIRE_CEIL}]. Applied when an offer
+     *      is created or its amount is changed; an offer already open is not
+     *      re-checked. A principal that cannot be priced is never refused.
+     * @param minimum The new floor; pass 0 to reset to the default.
+     */
+    function setMinOfferValueNumeraire(uint256 minimum)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        if (
+            minimum != 0 &&
+            (minimum < LibVaipakam.MIN_OFFER_VALUE_NUMERAIRE_FLOOR ||
+                minimum > LibVaipakam.MIN_OFFER_VALUE_NUMERAIRE_CEIL)
+        ) {
+            revert IVaipakamErrors.ParameterOutOfRange(
+                // forge-lint: disable-next-line(unsafe-typecast)
+                bytes32("minOfferValueNumeraire"),
+                minimum,
+                LibVaipakam.MIN_OFFER_VALUE_NUMERAIRE_FLOOR,
+                LibVaipakam.MIN_OFFER_VALUE_NUMERAIRE_CEIL
+            );
+        }
+        LibVaipakam.storageSlot().minOfferValueNumeraire = minimum;
+        emit MinOfferValueNumeraireSet(LibVaipakam.cfgMinOfferValueNumeraire());
+    }
+
+    /// @notice #3242 — the floor on an offer principal's value in effect
+    ///         (1e18 numeraire): the governance value, or the default while
+    ///         unset.
+    function getMinOfferValueNumeraire() external view returns (uint256) {
+        return LibVaipakam.cfgMinOfferValueNumeraire();
     }
 
     /// @notice Update only the principal threshold for finer cadences,

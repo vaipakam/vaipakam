@@ -111,6 +111,7 @@ import {RepatriationFacet} from "../src/facets/RepatriationFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {NumeraireConfigFacet} from "../src/facets/NumeraireConfigFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
+import {OfferBookFacet} from "../src/facets/OfferBookFacet.sol";
 
 contract HelperTest {
 
@@ -1565,6 +1566,14 @@ contract HelperTest {
         selectors[17] = VaultDepositoryFacet.getVaultOwner.selector;
     }
 
+    /// @dev Selectors for `OfferBookFacet` (#3242).
+    function getOfferBookFacetSelectors() public pure returns (bytes4[] memory selectors) {
+        selectors = new bytes4[](3);
+        selectors[0] = OfferBookFacet.openOfferOnBook.selector;
+        selectors[1] = OfferBookFacet.requireOfferValueAdmitted.selector;
+        selectors[2] = OfferBookFacet.getOfferBookBounds.selector;
+    }
+
     function getClaimFacetSelectors()
         public
         pure
@@ -2021,7 +2030,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](83);
+        selectors = new bytes4[](85);
         selectors[0] = ConfigFacet.setFeesConfig.selector;
         selectors[1] = ConfigFacet.setLiquidationConfig.selector;
         selectors[2] = ConfigFacet.setRiskConfig.selector;
@@ -2168,6 +2177,9 @@ contract HelperTest {
         selectors[81] = ConfigFacet.getRewardClaimHorizonDays.selector;
         // RL-4 (#1306) — recycled-stream allocation register.
         selectors[82] = ConfigFacet.setRecycleRegisterKeeperBps.selector;
+        // #3242 — the per-wallet open-offer cap.
+        selectors[83] = ConfigFacet.setMaxOpenOffersPerWallet.selector;
+        selectors[84] = ConfigFacet.getMaxOpenOffersPerWallet.selector;
         // #1222 (M3 B1) — cross-chain recycled ledger transparency reads.
         // #1222 M3 B3 — `getChainRecycledLedger` /
         // `getChainDailyRecycledCredit` MOVED to RewardAggregatorFacet
@@ -2184,7 +2196,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](19);
+        selectors = new bytes4[](21);
         // T-034 Periodic Interest Payment knobs + master kill-switches +
         // individual getters.
         selectors[0] = NumeraireConfigFacet.setNumeraire.selector;
@@ -2209,6 +2221,9 @@ contract HelperTest {
         selectors[16] = NumeraireConfigFacet.getEthPadFeed.selector;
         selectors[17] = NumeraireConfigFacet.getPadNumeraireRateFeed.selector;
         selectors[18] = NumeraireConfigFacet.getAssetNumeraireDirectFeedOverride.selector;
+        // #3242 — the offer value floor.
+        selectors[19] = NumeraireConfigFacet.setMinOfferValueNumeraire.selector;
+        selectors[20] = NumeraireConfigFacet.getMinOfferValueNumeraire.selector;
         return selectors;
     }
 

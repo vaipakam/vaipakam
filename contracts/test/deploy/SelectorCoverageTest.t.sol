@@ -305,6 +305,8 @@ contract SelectorCoverageTest is Test, DeployDiamond, DiamondFacetNames {
         _addAll(_getProtectedAccountSelectors());
         _addAll(_getVaultPayoutSelectors());
         _addAll(_getVaultDepositorySelectors());
+        // #3242 — the offer book's entry step and bounds.
+        _addAll(_getOfferBookSelectors());
         // T-086 step 5 — `PrepayListingFacet` (executor↔diamond trust
         // boundary for Seaport prepay collateral sales). Selector
         // helper lives on `DeployDiamond.s.sol` like every other facet.

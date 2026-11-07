@@ -31,6 +31,8 @@ import {SwapAttemptFacet} from "../../src/facets/SwapAttemptFacet.sol";
 import {TreasuryFeeFacet} from "../../src/facets/TreasuryFeeFacet.sol";
 import {NumeraireValueFacet} from "../../src/facets/NumeraireValueFacet.sol";
 import {OfferPreviewFacet} from "../../src/facets/OfferPreviewFacet.sol";
+import {OfferBookFacet} from "../../src/facets/OfferBookFacet.sol";
+import {TestOfferFloor} from "../helpers/TestOfferFloor.sol";
 import {ForcedSaleFacet} from "../../src/facets/ForcedSaleFacet.sol";
 import {HelperTest} from "../HelperTest.sol";
 import {MockSwapAdapter} from "../mocks/MockSwapAdapter.sol";
@@ -147,7 +149,7 @@ contract InvariantBase is Test {
         TestMutatorFacet mutatorFacet = new TestMutatorFacet();
         MetricsFacet metricsFacet = MetricsFacet(ArtifactDeploy.deploy(type(MetricsFacet).name));
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](27);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](28);
         cuts[0] = IDiamondCut.FacetCut({facetAddress: address(offerCreateFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCreateFacetSelectors()});
         cuts[17] = IDiamondCut.FacetCut({
             facetAddress: address(offerAcceptFacet),
@@ -238,6 +240,12 @@ contract InvariantBase is Test {
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getOfferPreviewFacetSelectors()
         });
+        // #3242 — every creation enters the book through OfferBookFacet.
+        cuts[27] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(OfferBookFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getOfferBookFacetSelectors()
+        });
         // #2795 / #2796 - every forced sale runs through a self-call into
         // ForcedSaleFacet, so a hand-built Diamond that cuts a seller must cut
         // this host too.
@@ -257,6 +265,8 @@ contract InvariantBase is Test {
         });
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
+        // #3242 — wei-sized offers below the $10 floor; see {TestOfferFloor}.
+        TestOfferFloor.lower(address(diamond));
     }
 
     function _mockOracle() internal {

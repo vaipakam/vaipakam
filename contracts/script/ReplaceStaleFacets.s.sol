@@ -15,6 +15,7 @@ import {DeployDiamond} from "./DeployDiamond.s.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {IDiamondLoupe} from "@diamond-3/interfaces/IDiamondLoupe.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
+import {OfferBookFacet} from "../src/facets/OfferBookFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {OfferAcceptFeeFacet} from "../src/facets/OfferAcceptFeeFacet.sol";
 import {TreasuryFeeFacet} from "../src/facets/TreasuryFeeFacet.sol";
@@ -142,6 +143,11 @@ contract ReplaceStaleFacets is DeployDiamond {
         vm.startBroadcast(deployerKey);
 
         OfferCreateFacet offerCreateFacet = OfferCreateFacet(ArtifactDeploy.deploy(type(OfferCreateFacet).name));
+        // #3242 — every creation ends in a self-call to the offer book's entry
+        // step (the book bounds, the active index and the creation events), so
+        // a refreshed creator without its host reverts every create
+        // `FunctionDoesNotExist`. Deployed alongside; partitioned below.
+        OfferBookFacet offerBookFacet = OfferBookFacet(ArtifactDeploy.deploy(type(OfferBookFacet).name));
         OfferAcceptFacet offerAcceptFacet = OfferAcceptFacet(ArtifactDeploy.deploy(type(OfferAcceptFacet).name));
         // #1835 — the accept path's borrower-LIF charge now lives on its own
         // host. Deployed alongside because the two are one behaviour across a
@@ -186,6 +192,7 @@ contract ReplaceStaleFacets is DeployDiamond {
         NumeraireValueFacet numeraireValueFacet = NumeraireValueFacet(ArtifactDeploy.deploy(type(NumeraireValueFacet).name));
 
         console.log("OfferFacet:          ", address(offerCreateFacet));
+        console.log("OfferBookFacet:      ", address(offerBookFacet));
         console.log("OfferAcceptFacet:    ", address(offerAcceptFacet));
         console.log("OfferAcceptFeeFacet: ", address(offerAcceptFeeFacet));
         console.log("OracleFacet:         ", address(oracleFacet));
@@ -226,17 +233,20 @@ contract ReplaceStaleFacets is DeployDiamond {
         // the inherited `DeployDiamond` getter that defines what the Diamond
         // routes, so the surface cannot be partial (#778/#779).
         //
-        // Twelve facets, so at most two cuts each, plus THREE retired-selector
+        // Thirteen facets, so at most two cuts each, plus THREE retired-selector
         // Removes (#2459 r4's previewIntent; #2489's tariff setter; #2812's
-        // range flags) — 27 at most
+        // range flags) — 29 at most
         // (Codex #2489 r12: a short array would panic on a fully mixed stale
         // Diamond before diamondCut ran); empty partitions are skipped and the
         // staging array is trimmed to what was actually used (a zero-selector
         // cut reverts).
-        IDiamondCut.FacetCut[] memory staging = new IDiamondCut.FacetCut[](27);
+        IDiamondCut.FacetCut[] memory staging = new IDiamondCut.FacetCut[](29);
         uint256 n;
         n = _appendPartitioned(
             staging, n, diamond, address(offerCreateFacet), _getOfferCreateSelectors()
+        );
+        n = _appendPartitioned(
+            staging, n, diamond, address(offerBookFacet), _getOfferBookSelectors()
         );
         n = _appendPartitioned(
             staging, n, diamond, address(oracleFacet), _getOracleSelectors()

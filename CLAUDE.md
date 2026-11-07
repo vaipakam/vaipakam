@@ -112,6 +112,7 @@ Cross-facet calls use `address(this).call(abi.encodeWithSelector(...))` — this
 | **RewardRemitDestinationFacet** | What Base does when a remit destination leaves its expected-source list (#2963): `onExpectedSourceListChange`, the `address(this)`-gated hook `RewardAggregatorFacet.setExpectedSourceChainIds` self-calls BEFORE it rewrites the list, and the permissionless `continueRemitDestinationRelease`. A removal abandons the chain's days through the removal day and releases the pool room Base held for them; a re-listing is refused until that release is complete. Its own facet because `RewardRemittanceFacet` had about 1.1 KB of EIP-170 headroom. **Refreshed together with RewardAggregatorFacet and RewardRemittanceFacet** (the setter calls the hook; the planner refuses an abandoned day) |
 | **ProfileFacet**       | User country (sanctions), KYC verification                                  |
 | **AdminFacet**         | Treasury, 0x proxy, allowance target config                                 |
+| **OfferBookFacet** | The step where a new offer enters the book (#3242): `openOfferOnBook`, the `address(this)`-gated self-call every `OfferCreateFacet` creation ends with, applies the two book bounds (the $10 value floor on a liquid priced principal, the per-wallet open-offer cap), records the offer in the active index and emits `OfferCreated` + `OfferCreatedDetails` (still `OfferCreateFacet`'s declarations, emitted by name, so topic hashes are unchanged). Also `requireOfferValueAdmitted` (OfferMutateFacet's amount re-check) and `getOfferBookBounds(wallet)`. Split off `OfferCreateFacet`, which had about 100 bytes of EIP-170 headroom. **`OfferCreatedDetails` is no longer emitted from OfferCreateFacet's code.** Refreshed together with OfferCreateFacet and OfferMutateFacet |
 | **NotificationFeeFacet** | The paid-notification fee: `markNotifBilled` (`NOTIF_BILLER_ROLE`) and the wallet's own consent to it (`setNotificationFeeConsent` / `getNotificationFeeConsent`). Split off `LoanFacet` and `ProfileFacet` in #2769, when screening the payer pushed `LoanFacet` over EIP-170. **`markNotifBilled` is NOT on LoanFacet any more** |
 
 **Refresh-together families (#1566 slices 2–3, #2472, #2440).** Each facet set
@@ -267,7 +268,7 @@ runs half of it on old code:
 - **NumeraireValueFacet + every facet that values an amount in the numeraire
   (#2419).** `RiskFacet` (LTV, health factor, the collapse test, the
   partial-liquidation snapshots and the liquidator KYC value) and the facets
-  whose code reaches `LibRiskMath` (today `OfferCreateFacet`,
+  whose code reaches `LibRiskMath` (today `OfferBookFacet`,
   `OfferMatchFacet`, `OfferMatchIntentFacet`, `OfferMutateFacet` and
   `RiskPreviewFacet`) value through a self-call to `getNumeraireValue` /
   `getAmountForNumeraireValue`, the one 1e18 rule in `LibNumeraireValue`.
@@ -336,6 +337,19 @@ runs half of it on old code:
   multi-year question differently from the preview. `RefreshAllFacetsInPlace`
   carries all three; `ReplaceStaleFacets` carries creation and the preview but
   not OfferMutateFacet, so it cannot refresh this family whole.
+
+- **OfferBookFacet + OfferCreateFacet + OfferMutateFacet — the offer-book
+  bounds (#3242).** Every creation ends in a self-call to
+  `OfferBookFacet.openOfferOnBook`, which applies the value floor and the
+  open-offer cap, indexes the offer and emits the creation events; an amount
+  change self-calls `requireOfferValueAdmitted`. A creator or mutator
+  refreshed without the host reverts `FunctionDoesNotExist` on every create
+  or amount change (a hard revert, never an unindexed offer).
+  `RefreshAllFacetsInPlace` and `ReplaceStaleFacets` carry the host;
+  `ReplaceStaleFacets` does not carry OfferMutateFacet, so an amount change
+  stays on the old, floor-free code there. The per-wallet open count starts
+  with the build that introduced it: on a Diamond refreshed in place, offers
+  opened before the refresh are not counted.
 
 - **Every facet that reads a loan deadline (#668 / #935, owner decision
   D2).** A loan's due date and grace end are read only through

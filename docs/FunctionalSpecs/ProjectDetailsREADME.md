@@ -540,6 +540,38 @@ behavior; a source release alone is not evidence that a testnet was refreshed.
 
 ## 3. Offer Creation
 
+### Offer-book bounds — a value floor and a per-wallet cap (owner decision 2026-11-07, #3242)
+
+The offer book must not be floodable with offers too small to be worth
+servicing. Two bounds apply to every offer a wallet posts:
+
+- **A floor on the principal's value.** An offer whose principal is worth
+  less than a governance-set minimum in the active numeraire is refused,
+  both when it is created and when its amount is changed. The default is
+  10 numeraire units ($10), the same on every chain, sized so a loan's fees
+  cover a keeper's work on it on an L2. The floor binds only a principal
+  the protocol values: a liquid ERC-20 with a price. An NFT, an illiquid
+  token (which the protocol values at nothing) and a liquid token whose
+  price cannot be read at that moment are never refused for their value.
+  Every partial fill is bounded by the same floor without a check of its
+  own, because no fill is smaller than the offer's amount and a remainder
+  smaller than that closes the offer.
+- **A cap on open offers per wallet.** A wallet may have at most a
+  governance-set number of offers open at once (25 by default), every
+  offer type counted. An expired offer counts until it is cancelled.
+  Cancelling an offer makes room. Lowering the cap closes no open offer.
+
+Offers that come from an existing loan are exempt from both, because
+refusing them would close a way out of a loan that already exists: a sale
+or offset offer the protocol creates for a position, and a refinance
+offer. A signed off-chain offer is held to the floor when it is filled and
+never counts against the cap, since it is filled the moment it exists.
+There is no cancellation fee. A refusal names the bound and the figures
+(the offer's value and the floor, or the wallet's open count and the cap),
+and a wallet can read the floor, the cap and its own open count before it
+signs. Both bounds are bounded governance knobs, so a chain where a
+keeper's work costs more can raise the floor.
+
 ### Creation modes — on-chain and gasless signed offers (v0.5)
 
 An offer may be created two ways, both reaching the same on-chain offer state:
@@ -1496,6 +1528,7 @@ old terms.
 - **Guidance:** Display data from the last accepted offer with similar parameters (e.g., asset type, duration) to provide users with an indication of current market rates on Vaipakam.
 - **Market-Rate Shortcut Widget:** Once a borrowing pair is fully specified, Offer Book should expose a small `Lend at market rate` / `Borrow at market rate` panel. The user enters the lending amount, the widget estimates the minimum collateral required from the same Health Factor / LTV rules enforced by the protocol with a small safety buffer, and the actions deep-link into `Create Offer` with the known fields pre-filled. The shortcut must not create or accept an offer directly and must not skip the full Create Offer review step. If the asset is thin, unsupported, or lacks a price on the connected chain, the widget may still deep-link but should leave unavailable collateral / rate fields unset and let Create Offer show the cautionary risk banner.
 - **Filters:** Users can filter offers by asset type, collateral requirements (if applicable), loan/rental duration, and amount.
+- **Size filter and default ranking (#3242):** The offer book should offer a minimum-size filter and, by default, rank offers so the larger and better-priced ones are seen first, so small offers cannot crowd the view even within the on-chain floor. The Create Offer flow should show the value floor and the wallet's open-offer count against the cap before the user signs.
 - **Auto-Matching (Suggestion Engine):** The frontend can suggest potentially compatible offers to users based on their currently defined preferences or draft offers.
 - **Clear Indicators:** The frontend will use clear indicators for network selection, asset liquidity status, and potential risks.
 - **Information Icons & Tooltips:** Key fields and terms should include concise helper text, tooltips, and links to deeper documentation or FAQs where appropriate.

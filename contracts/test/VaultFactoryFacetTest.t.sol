@@ -20,6 +20,8 @@ import {OfferAcceptFeeFacet} from "../src/facets/OfferAcceptFeeFacet.sol";
 import {TreasuryFeeFacet} from "../src/facets/TreasuryFeeFacet.sol";
 import {NumeraireValueFacet} from "../src/facets/NumeraireValueFacet.sol";
 import {OfferPreviewFacet} from "../src/facets/OfferPreviewFacet.sol";
+import {OfferBookFacet} from "../src/facets/OfferBookFacet.sol";
+import {TestOfferFloor} from "./helpers/TestOfferFloor.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {DiamondCutFacet} from "../src/facets/DiamondCutFacet.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
@@ -79,7 +81,7 @@ contract VaultFactoryFacetTest is Test {
         TestMutatorFacet testMutatorFacet = new TestMutatorFacet();
         helperTest = new HelperTest();
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](11);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](12);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(vaultFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -132,6 +134,12 @@ contract VaultFactoryFacetTest is Test {
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getOfferPreviewFacetSelectors()
         });
+        // #3242 — every creation enters the book through OfferBookFacet.
+        cuts[11] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(OfferBookFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getOfferBookFacetSelectors()
+        });
         cuts[3] = IDiamondCut.FacetCut({
             facetAddress: address(accessControlFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -144,6 +152,8 @@ contract VaultFactoryFacetTest is Test {
         });
         cuts[5] = IDiamondCut.FacetCut({facetAddress: address(offerCancelFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCancelFacetSelectors()});
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
+        // #3242 — wei-sized offers below the $10 floor; see {TestOfferFloor}.
+        TestOfferFloor.lower(address(diamond));
 
         AccessControlFacet(address(diamond)).initializeAccessControl();
         AdminFacet(address(diamond)).unpause();
