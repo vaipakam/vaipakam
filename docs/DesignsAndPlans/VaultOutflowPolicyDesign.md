@@ -2,7 +2,7 @@
 
 Status: **design for owner review**. The owner's decisions of 2026-11-05/06
 are recorded on #3205 and repeated where they apply. Choices they did not
-settle are marked **Default**. Six questions in §8: Q1 and Q5 are decided, and the others still need an answer
+settle are marked **Default**. Six questions in §8: Q1, Q5 and Q6 are decided, and the others still need an answer
 before code starts. This builds on [#3204's central vault code
 design](VaultCentralImplementationDesign.md) and ships after it.
 
@@ -53,7 +53,8 @@ delivery checks and the sanctions lock.
   which is the #3178 principle.
 - **A vault-held lien record.** A counterparty is paid only against a lien
   the vault itself recorded when the position opened, up to that lien, and
-  only to the payee recorded on it.
+  only to the vault of whoever holds the other side's position NFT, which
+  lives outside the Diamond (§3.9).
 - **The treasury** stays one address behind the multisig and Timelock.
   Guardians only pause.
 - **Just-in-time approvals.** No vault holds an allowance between
@@ -118,7 +119,7 @@ asks, without the indexer subscribing to every vault address.
 | Class | Layer 1 (Diamond: intent) | Layer 2 (vault: independent) |
 | --- | --- | --- |
 | **Owner** | Recipient is the owner's wallet or, with protected mode on, an allowlisted address after its delay. Version and pause rules apply. | `to == owner`, where `owner` is the vault's own record of its owner wallet (set at creation, changed only as §3.7 allows), or `to` is on the vault's **own** allowlist with its delay elapsed. **And** the amount is at most the vault's free balance of that asset: its balance less the sum of its own open liens on it (§3.7), so an owner outflow can never take what a lien still holds |
-| **Counterparty** | `to` is the vault of THAT loan's other party (or the current holder of that position). The amount is drawn from that loan's lien and bounded by its claim records | `to` is the **payee** this vault recorded on the lien for `ref` (§3.7): the vault whose owner signed the other side of the terms, or a later holder the current payee's owner assigned the position to. The amount is at most that open lien, and the lien is reduced by it |
+| **Counterparty** | `to` is the vault of THAT loan's other party, the current holder of that position | `to` is the vault of the **current holder** of the other side's position NFT, read from the position-NFT contract (§3.9) at the moment of payment. The vault accepts `to` only if it is a genuine vault (§3.4) **and** `to`'s own owner record (§3.7) equals that holder; it never consults the Diamond's wallet-to-vault lookup. The amount is at most the open lien for `ref`, and the lien is reduced by it |
 | **Treasury** | `to == s.treasury` | `to ==` the treasury address the registry holds (§3.6), **and** the amount is drawn either from the lien for `ref` and its fee budget, or from free balance under the owner's signed **fee authorization** for `ref` (§3.7). Without one of those, the vault pays the treasury nothing |
 | **Swap adapter / order taker** | A registered adapter for this action, against a lien | `to` is on the registry. The amount is at most the lien for `ref` |
 | **Marketplace conduit** | A recorded listing for `ref`, through a registered conduit | Grant only (§3.5), per amount or token id, and only to a registry conduit |
@@ -224,24 +225,41 @@ two fails closed: the vault refuses.
   outflow is allowed only against an open lien for its `ref`, and reduces
   it. So does an incentive payment, which also debits that lien's
   incentive budget.
-- **The payee.** Each lien also records its payee: the vault that may
-  receive counterparty payments against it. It is set from the other
-  side's own signature over the same terms, verified through that vault's
-  ERC-1271 answer, which checks its own owner record (§3.4 makes sure it is
-  a genuine vault). So a compromised Diamond cannot name a payee; it could
-  only replay terms the other party really signed. The payee changes only
-  when the position changes hands, and only with an **assignment** the
-  current payee's owner signed (the new holder's vault, the `ref`, a
-  nonce), verified the same way. A sale route already collects the
-  seller's signature; §8 Q6 covers a plain transfer of the position NFT.
-- **Seller claims.** When an assignment moves the payee, whatever the old
-  payee is still owed under the signed sale is recorded on the lien as a
-  seller claim: the old payee's vault and the amount, both from the
-  assignment the old payee's owner signed. The seller-claim class pays only
-  such a recorded seller, up to that claim.
+- **The payee is the current holder.** Each lien records the other side's
+  position (the position-NFT contract and token id). A counterparty payment
+  goes to the vault of whoever holds that NFT at the moment of payment,
+  read from the position-NFT contract, which no facet can write (§3.9).
+  The paying vault checks the destination itself: it must be a genuine
+  vault, and its own owner record must equal that holder. Both facts are
+  held outside the Diamond, so a compromised Diamond cannot substitute its
+  own genuine vault, and nothing has to be handed over when a position
+  changes hands.
+- **A holder with no vault yet.** Vaults are deployed at an address
+  derived from the owner wallet (CREATE2, with the owner fixed by that
+  derivation), so anyone may deploy a holder's vault and nobody can choose
+  its owner. A route paying such a holder deploys the vault first in the
+  same transaction, then pays it under the same check.
+- **The holder of this vault's own side.** When a borrower position moves
+  from A to B, the collateral stays in A's vault under its lien, and the
+  lien now answers to B, never to A. Every action on that lien is
+  authorized by the current holder of the borrower NFT, read from the NFT
+  contract: a partial withdrawal of surplus, a swap-to-repay, a collateral
+  listing. The vault checks the holder's own signature (EIP-712, or
+  ERC-1271 from the holder's vault), not A's. At release, what is left of
+  the lien goes to B's vault under the same binding check as a
+  counterparty payment (a **position-holder** class); it becomes A's free
+  balance only if A still holds the NFT. So an ordinary transfer gives B
+  everything the position carries, without A's help, and A can no longer
+  reach it.
+- **Seller claims.** A sale through the protocol's route may split value
+  earned before the sale (#1209's seller interest) as a seller claim. The
+  vault records it only from the seller's signed sale terms (§8 Q1): the
+  seller's vault and the amount. The seller-claim class pays only such a
+  recorded seller, up to that claim. On a plain transfer there is no seller
+  claim; the value travels with the NFT.
 - **The rule behind both.** Every protocol class that names a recipient
-  pays only one the vault recorded itself: from a counterparty's signature
-  (payee, seller claim), from the registry (treasury, adapter, conduit,
+  pays only one the vault can establish itself: from the position-NFT
+  contract (payee), from a signature (seller claim), from the registry (treasury, adapter, conduit,
   backstop) or from its own creation (listing escrow). Only the incentive
   class and the Diamond transient leg have a recipient the vault cannot
   check, and both are bounded by their per-lien budgets (§7). The vault keeps a running sum of its open liens per
@@ -269,8 +287,9 @@ two fails closed: the vault refuses.
   sets the new owner wallet, which is both the payout destination and the
   signer of later authorizations. The old wallet stops passing either
   check at once.
-- **Release.** A close-out releases what is left of a lien to the owner's
-  free balance. On repay, preclose and refinance the vault releases only
+- **Release.** A close-out releases what is left of a lien to the current
+  holder of this vault's side of the position: the owner's free balance
+  when the owner still holds it, otherwise the holder's vault (above). On repay, preclose and refinance the vault releases only
   against a receipt the payee vault recorded for the same transaction
   (§8 Q5, decided). On the listed exceptions a release is trusted to the
   Diamond (layer 1 only), bounded rather than closed. A released lien's assets can leave only by the owner class: to
@@ -294,6 +313,76 @@ owner's own signature, checked by the vault** (§8 Q1, decided).
   owner's allowlist or version. (#3204 removes the version rules anyway.)
 - Delivery measurement and the tracked-balance counter, now inside the one
   library function.
+
+### 3.9 Position NFTs outside the Diamond (§8 Q6, decided)
+
+The ownership record of a position NFT sits in Diamond storage today, so a
+faulty facet could rewrite who holds a position. The position NFTs move to
+their own contract:
+
+- **A fixed core.** A standard ERC-721 that keeps owners, approvals and
+  transfers. It is not upgradeable, so no upgrade can rewrite owners.
+- **Pluggable parts that cannot move a token.** The artwork and description
+  renderer, and a transfer check (sanctions screening, the buyer's risk
+  access). Each sits behind an address
+  the Timelock can swap, after the same kind of contract-held delay as the
+  vault-code pointer (#3204). A renderer only draws; a check can only
+  refuse a transfer.
+- **The Diamond's rights.** It can mint a new position's tokens, and
+  nothing else: no move, no lock and no notify power. It cannot move
+  anyone's token, and cannot burn one before the position's
+  final claim is paid. A protocol route that moves a position (a sale, an
+  obligation handover, consolidation) does so with the holder's approval
+  for that one token, given in the same step.
+- **No route locks: the holder is re-checked at completion.** Today a
+  token is locked while a sale listing, an offset, a collateral listing or
+  a swap-to-repay order is open, so the seller cannot list and then send
+  the NFT elsewhere. Instead, the NFT core keeps a **transfer count** per
+  token that only ever increases, by one on every transfer. Each route
+  records the count when it starts, and at completion (the fill, the
+  accept, the swap) it requires the count to be unchanged. If the NFT has
+  moved at all, even away and back, the completion reverts and the route
+  stays cancelled for good. Completions are atomic, so the
+  worst outcome is a failed fill and its gas, never a loss. The marketplace
+  listings already re-check validity at fill, and this check joins them.
+  The app says it plainly ("moving this NFT cancels your open listing"),
+  and the indexer drops a listing whose NFT has moved.
+- **A listing completes without the seller present**, so the seller grants
+  the approval for that one token when listing. A transfer clears it, as
+  ERC-721 does. While the listing is open, that token is exposed to the
+  Diamond the way any listed NFT is exposed to its marketplace; no other
+  position is.
+- **Protected mode's NFT lock stays, as the holder's own choice.** Only the
+  holder can switch it on, switching it off waits their delay, and the
+  Diamond has no part in it. It guards against phishing.
+- **Primary replacement moves the positions too.** When a protected
+  account replaces its primary wallet A with B (§3.7: a majority of
+  secondaries, after the delay, verified by the vault), the vault then
+  calls the NFT core's recovery transfer. The core accepts it only from a
+  genuine vault whose own record shows the replacement of A by B, and only
+  for tokens held by A; it moves them to B and counts them as transfers.
+  Because a protected account's NFTs are under its own lock, a thief
+  holding A cannot move them during the replacement delay. The Diamond has
+  no part in it.
+- **No notification.** The NFT contract never calls the Diamond. Every rule
+  that depends on the holder reads the current owner when it acts:
+
+| Today's holder-dependent feature | Rule after the move |
+| --- | --- |
+| Payouts, claims, held-for-holder payouts, consolidation | Read the current owner when acting |
+| Sanctions freeze of a flagged holder | The transfer check refuses moves to or from a flagged wallet; payouts screen the current owner |
+| Seller interest (#1209) | The protocol sale route splits it as a seller claim (§3.7). On a plain transfer it travels with the NFT, as accrued interest does on a traded bond |
+| VPFI fee-tier exclusion (#2342) | Worked out from the current owner when read, not at transfer |
+| Interaction rewards | Follow the current owner. The build checks each reward rule for anything that must be cut at the moment of a sale and states its rule there; none is added silently |
+| Indexer and app history | The standard ERC-721 `Transfer` event |
+
+- **What it costs.** Every place that reads holders from Diamond storage
+  switches to the new contract, and minting and the lock calls move there.
+  The position-NFT code also leaves the Diamond, which frees room under the
+  contract size limit.
+- **Residual.** A position NFT is now as phishable as any NFT: one "approve
+  all" signature to a fake marketplace can move it. Protected mode's NFT
+  protection covers accounts that turn it on, and the app suggests it.
 
 ## 4. Pause
 
@@ -324,11 +413,26 @@ opens by itself.
   - a layer-1 bypass (a test facet calling the vault directly with a forged
     class) reverts at layer 2.
 - Counterparty:
-  - paying any vault other than the lien's recorded payee reverts at
-    layer 2, with layer 1 bypassed, including the attacker's own genuine
-    vault against an honest user's existing lien;
-  - a payee change without the current payee owner's signed assignment
-    reverts, and a replayed assignment reverts on its nonce;
+  - paying any vault other than the current holder's reverts at layer 2,
+    with layer 1 bypassed, including the attacker's own genuine vault
+    against an honest user's existing lien;
+  - a test facet that writes arbitrary Diamond storage cannot change who
+    the vault treats as the holder;
+  - after a plain transfer of the position NFT on an outside marketplace,
+    the next payment goes to the new holder's vault, with no app step;
+  - a payment to the attacker's own genuine vault, whose owner record is
+    not the NFT holder, reverts at layer 2;
+  - a holder with no vault: the route deploys it at its derived address,
+    then pays it;
+  - a route started, then the NFT sent away and back: completion reverts on
+    the changed transfer count;
+  - a borrower NFT moved from A to B: B, not A, authorizes partial
+    withdrawals and listings, and the released collateral reaches B's
+    vault; A's owner withdrawal cannot take it;
+  - a protected account's primary replaced: its position NFTs move to the
+    new wallet through the vault-verified recovery transfer, payments then
+    reach its vault, and a recovery transfer from a non-vault, or for a
+    replacement the vault did not record, reverts;
   - a forged seller claim against an honest user's lien, to any vault but
     a recorded seller or above its recorded claim, reverts at layer 2;
   - paying more than the recorded lien reverts;
@@ -380,10 +484,10 @@ opens by itself.
 
 - **Funnelling through the attacker's own vault.** A destination check
   alone cannot tell an attacker's genuine vault from a counterparty's. The
-  recorded payee closes that for counterparty payments: an honest user's
-  open lien pays only the vault its other party signed as, or one that
-  party assigned it to. A compromised Diamond can reach a counterparty
-  payment only on positions whose other side the attacker signed. The
+  holder rule closes that for counterparty payments: an honest user's open
+  lien pays only the vault of whoever really holds the other side's NFT,
+  which the Diamond cannot rewrite. A compromised Diamond can reach a
+  counterparty payment only on positions the attacker holds. The
   classes the vault cannot bind to a recipient (incentives, the Diamond
   transient leg) stay bounded by their budgets and are listed below.
 - **A bad price through a legitimate route.** Oracle floors, slippage caps,
@@ -429,7 +533,7 @@ opens by itself.
    checked by the Diamond would stop bugs but not a compromised Diamond, so
    where the check binds, the vaults make it:
    - **Repay, preclose and refinance** pay the lender's due into the lien's
-     recorded payee vault in the same transaction. That vault measures what
+     current holder's vault in the same transaction. That vault measures what
      arrived (balance before and after) and records, in transient storage,
      "received X for `ref`". The borrower's vault releases the lien only if
      that receipt exists and X covers at least the principal the signed
@@ -450,15 +554,14 @@ opens by itself.
 
    **End state:** every release is vault-checked, once every payout goes
    vault to vault. Filed as a follow-up.
-6. **A plain transfer of a position NFT.** The payee follows a position only
-   with the current holder's signed assignment (§3.7). Default: while a
-   position has an open lien, its NFT moves only through an entry that
-   carries that assignment, so a plain `transferFrom` reverts and a
-   marketplace sale of the NFT needs the app's assignment step. The
-   alternative, letting the payee follow the NFT owner as the Diamond
-   records it, keeps plain transfers but brings back the exposure this
-   section closes: a compromised Diamond could rewrite the owner and
-   redirect an honest user's payments.
+
+6. **How position NFTs change hands.** **Decided (owner, 2026-11-07):
+   the position NFTs move out of the Diamond** into their own contract
+   (§3.9), and the vault pays the current holder. Positions move freely,
+   wallet to wallet or on any marketplace, without the app. The options not
+   taken were refusing plain transfers while a loan is open, and a signed
+   handover for every move; both existed only because the ownership record
+   sat in Diamond storage.
 
 ## 9. Order of work
 
@@ -467,6 +570,8 @@ opens by itself.
 2. This build, in one PR: the vault's two entries, `LibVaultOutflow`, the
    registry, all call sites moved, the old entries deleted, and the tests
    above.
+   The position-NFT contract (§3.9) is part of it, or lands just before it,
+   since counterparty payouts read their holder from it.
 3. #3206 (rate limits held in the vault's own storage) builds on this
    library and the vault's records.
 4. #3246 part 2 (clawback to the recovery address) adds a class: the

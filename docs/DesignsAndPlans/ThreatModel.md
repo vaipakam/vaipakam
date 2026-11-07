@@ -93,7 +93,7 @@ A "residual" below is a stated limit, not a bug report.
 | Outdated vaults never trap a counterparty: close-outs land, and only the owner's own outflows wait for the upgrade. Until it merges, a loan party's vault below the mandatory version can block a close-out | #3178 (PR #3220) |
 | The deploy sets the risk-access cooldown, and the mainnet gate refuses zero | #3266 |
 | One timelocked pointer for every vault's code; the guardian can revoke a version while paused, but only to code already registered | #3204 ([design](VaultCentralImplementationDesign.md)) |
-| One vault outflow policy: typed destinations, a lien the vault itself recorded, payouts to the owner's own wallet when not protected, just-in-time approvals, signed orders that follow the pause | #3205 ([design](VaultOutflowPolicyDesign.md)) |
+| One vault outflow policy: typed destinations, a lien the vault itself recorded, payouts to the owner's own wallet when not protected, just-in-time approvals, signed orders that follow the pause; position NFTs in their own non-upgradeable contract, so counterparty payouts follow the real holder | #3205 ([design](VaultOutflowPolicyDesign.md)) |
 | Outflow circuit breaker: per-asset caps over a rolling window held in each vault's own storage, a delay on large wallet withdrawals for every account, and an automatic pause on an outflow spike | #3206 |
 | Protected mode guards commitments, not only withdrawals: off-band rates, below-par lender sales, NFT listings below the owner's minimum, and two price sources agreeing before a forced sale | #3227 |
 | Above a liquid-value threshold, adding value needs protected mode or a signed, versioned decline | #3233 |
