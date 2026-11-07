@@ -302,6 +302,8 @@ How a tick reads them:
   contract read for the first time starts `EVENT_ALERT_INITIAL_LOOKBACK`
   finalized blocks back (default 20000, never before the deploy block), and
   sends one advisory naming that block: events before it are not reported.
+  The start block is stored even when that advisory fails to send, so the
+  retry reads from the same block and the advisory is sent again.
 - **At most `EVENT_ALERT_LOG_RANGE` blocks** per contract per tick (default
   5000). A chain further behind catches up over several ticks;
   `eventAlerts.backlogBlocks` shows how far.

@@ -370,11 +370,22 @@ export interface EventScanInput {
   /** The deployment's deploy block — the floor of a first scan. */
   deployBlock: bigint | null;
   /** Stored next-block per contract (`event_cursor`). */
-  cursors: ReadonlyMap<string, bigint>;
+  cursors: ReadonlyMap<string, EventCursor>;
   logRange: bigint;
   initialLookback: bigint;
   /** Address → deployment key, for plain-words targets. */
   labels: ReadonlyMap<string, string>;
+}
+
+/**
+ * A contract's stored scan position. `notified` is whether its first-scan
+ * notice has reached the operator: until it has, the notice is sent again
+ * on every scan, while the position itself is already fixed, so a retry
+ * can never start later than the first attempt did.
+ */
+export interface EventCursor {
+  nextBlock: bigint;
+  notified: boolean;
 }
 
 /** One alerted event, with where it sits so the position can follow it. */
@@ -523,7 +534,7 @@ export async function scanEvents(input: EventScanInput): Promise<EventScan> {
     const stored = input.cursors.get(contract.id);
     const floor = input.deployBlock ?? 0n;
     const lookbackStart = finalized > input.initialLookback ? finalized - input.initialLookback : 0n;
-    const from = stored ?? (floor > lookbackStart ? floor : lookbackStart);
+    const from = stored?.nextBlock ?? (floor > lookbackStart ? floor : lookbackStart);
     if (from > finalized) continue; // nothing finalized past the position yet
     const to = from + input.logRange - 1n < finalized ? from + input.logRange - 1n : finalized;
     out.backlogBlocks += finalized - to;
@@ -549,7 +560,7 @@ export async function scanEvents(input: EventScanInput): Promise<EventScan> {
       continue;
     }
 
-    if (stored === undefined) {
+    if (stored === undefined || !stored.notified) {
       const notice = makeFinding({
         code: 'event-alert-start',
         variant: contract.id,
@@ -643,8 +654,13 @@ export async function scanEvents(input: EventScanInput): Promise<EventScan> {
  * Each scanned contract moves to the block of its EARLIEST undelivered
  * event, or past the scanned range when every event was delivered — so an
  * event whose alert did not reach the operator is read again next time,
- * and one that did is never sent twice. A first scan whose start notice
- * was not delivered writes nothing, so the notice is sent again.
+ * and one that did is never sent twice.
+ *
+ * A first scan's start notice that was not delivered pins the position at
+ * the scan's START and records the notice as owed (Codex #3301 r1 P1).
+ * Writing nothing instead would let the next tick recompute the look-back
+ * from a later finalized block and start past events this scan read but
+ * could not deliver.
  */
 export function eventCursorWrites(
   chainId: number,
@@ -654,10 +670,11 @@ export function eventCursorWrites(
 ): StoreOp[] {
   const ops: StoreOp[] = [];
   for (const s of scan.scans) {
-    if (s.startNoticeKey !== null && !delivered.has(s.startNoticeKey)) continue;
+    const notified = s.startNoticeKey === null || delivered.has(s.startNoticeKey);
     const pending = s.events.filter((e) => !delivered.has(e.key)).map((e) => e.block);
+    if (!notified) pending.push(s.from);
     const next = pending.length > 0 ? pending.reduce((a, b) => (b < a ? b : a)) : s.to + 1n;
-    ops.push({ kind: 'setEventCursor', chainId, contract: s.contract, nextBlock: next, at });
+    ops.push({ kind: 'setEventCursor', chainId, contract: s.contract, nextBlock: next, notified, at });
   }
   return ops;
 }

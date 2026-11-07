@@ -101,7 +101,7 @@ describe('scanEvents', () => {
   it('reads from the stored position, caps the range, and renders the listing', async () => {
     const { client } = fakeClient({ logs: [listUpdated(995_000n)] });
     const scan = await scanEvents(
-      input({ client, cursors: new Map([['sanctionsList', 994_000n], ['timelock', 999_000n]]) }),
+      input({ client, cursors: new Map([['sanctionsList', { nextBlock: 994_000n, notified: true }], ['timelock', { nextBlock: 999_000n, notified: true }]]) }),
     );
     const alert = scan.findings.find((f) => f.code === 'event-alert')!;
     expect(alert.severity).toBe('critical');
@@ -146,7 +146,7 @@ describe('scanEvents', () => {
       ],
       ready: [1_800_000_000n],
     });
-    const scan = await scanEvents(input({ client, cursors: new Map([['timelock', 999_000n]]) }));
+    const scan = await scanEvents(input({ client, cursors: new Map([['timelock', { nextBlock: 999_000n, notified: true }]]) }));
     const alert = scan.findings.find((f) => f.code === 'event-alert')!;
     expect(alert.severity).toBe('critical');
     expect(alert.detail).toContain(`target = ${DIAMOND} (diamond)`);
@@ -169,13 +169,13 @@ describe('scanEvents', () => {
       ],
       ready: new Error('multicall failed'),
     });
-    const scan = await scanEvents(input({ client, cursors: new Map([['timelock', 999_000n]]) }));
+    const scan = await scanEvents(input({ client, cursors: new Map([['timelock', { nextBlock: 999_000n, notified: true }]]) }));
     expect(scan.findings.find((f) => f.code === 'event-alert')!.detail).toContain('executable from: UNKNOWN');
   });
 
   it('reports a failed log read as a gap, without the provider URL, and leaves that contract unscanned', async () => {
     const { client } = fakeClient({ failLogsFor: LIST });
-    const scan = await scanEvents(input({ client, cursors: new Map([['sanctionsList', 1n], ['timelock', 1n]]) }));
+    const scan = await scanEvents(input({ client, cursors: new Map([['sanctionsList', { nextBlock: 1n, notified: true }], ['timelock', { nextBlock: 1n, notified: true }]]) }));
     expect(scan.gap?.source).toBe('event-logs');
     expect(scan.gap?.detail).toContain('Sanctions list');
     expect(scan.gap?.detail).not.toContain('rpc.example');
@@ -202,7 +202,7 @@ describe('scanEvents', () => {
 describe('eventCursorWrites — nothing is skipped', () => {
   async function scanned() {
     const { client } = fakeClient({ logs: [listUpdated(995_100n, 0), listUpdated(995_300n, 1)] });
-    return scanEvents(input({ client, cursors: new Map([['sanctionsList', 995_000n]]), addresses: { sanctionsList: LIST } }));
+    return scanEvents(input({ client, cursors: new Map([['sanctionsList', { nextBlock: 995_000n, notified: true }]]), addresses: { sanctionsList: LIST } }));
   }
   const nextOf = (ops: StoreOp[]) => ops.map((o) => (o.kind === 'setEventCursor' ? o.nextBlock : null));
 
@@ -219,11 +219,26 @@ describe('eventCursorWrites — nothing is skipped', () => {
     expect(nextOf(eventCursorWrites(84532, scan, new Set(), 0))).toEqual([995_100n]);
   });
 
-  it('writes no position for a first scan whose start notice did not arrive', async () => {
-    const { client } = fakeClient({});
+  it('pins a first scan at its start when the start notice did not arrive (Codex #3301 r1)', async () => {
+    const { client } = fakeClient({ logs: [listUpdated(980_001n)] });
     const scan = await scanEvents(input({ client, addresses: { sanctionsList: LIST } }));
-    expect(eventCursorWrites(84532, scan, new Set(), 0)).toEqual([]);
-    expect(eventCursorWrites(84532, scan, new Set([scan.scans[0]!.startNoticeKey!]), 0)).toHaveLength(1);
+    const event = scan.findings.find((f) => f.code === 'event-alert')!.key;
+
+    // Even with the event itself delivered, an owed notice holds the start.
+    const [owed] = eventCursorWrites(84532, scan, new Set([event]), 0);
+    expect(owed).toMatchObject({ nextBlock: 980_000n, notified: false });
+
+    // The retry reads from that same block, after finality moved on, and
+    // still owes the notice.
+    const { client: later, calls } = fakeClient({ finalized: 1_000_450n, logs: [listUpdated(980_001n)] });
+    const retry = await scanEvents(
+      input({ client: later, addresses: { sanctionsList: LIST }, cursors: new Map([['sanctionsList', { nextBlock: 980_000n, notified: false }]]) }),
+    );
+    expect(calls[0]!.fromBlock).toBe(980_000n);
+    expect(retry.findings.some((f) => f.code === 'event-alert-start')).toBe(true);
+
+    const all = new Set(retry.findings.map((f) => f.key));
+    expect(eventCursorWrites(84532, retry, all, 0)[0]).toMatchObject({ nextBlock: 984_999n + 1n, notified: true });
   });
 });
 

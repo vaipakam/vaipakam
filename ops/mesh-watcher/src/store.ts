@@ -48,7 +48,15 @@ export type StoreOp =
    */
   | { kind: 'retainAlerts'; keepKeys: readonly string[]; ownedChainIds: readonly number[] }
   /** Move one watched contract's event-scan position (`eventAlerts.ts`). */
-  | { kind: 'setEventCursor'; chainId: number; contract: string; nextBlock: bigint; at: number };
+  | {
+      kind: 'setEventCursor';
+      chainId: number;
+      contract: string;
+      nextBlock: bigint;
+      /** Whether the contract's first-scan notice has been delivered. */
+      notified: boolean;
+      at: number;
+    };
 
 export interface DueAlert {
   key: string;
@@ -76,14 +84,18 @@ export class AlertStore {
   }
 
   /** The event-alert scan position of every watched contract on `chainId`. */
-  async loadEventCursors(chainId: number): Promise<StoreResult<Map<string, bigint>>> {
+  async loadEventCursors(
+    chainId: number,
+  ): Promise<StoreResult<Map<string, { nextBlock: bigint; notified: boolean }>>> {
     try {
       const rows = await this.db
-        .prepare('SELECT contract, next_block FROM event_cursor WHERE chain_id = ?')
+        .prepare('SELECT contract, next_block, start_notified FROM event_cursor WHERE chain_id = ?')
         .bind(chainId)
-        .all<{ contract: string; next_block: number }>();
-      const out = new Map<string, bigint>();
-      for (const row of rows.results ?? []) out.set(row.contract, BigInt(row.next_block));
+        .all<{ contract: string; next_block: number; start_notified: number }>();
+      const out = new Map<string, { nextBlock: bigint; notified: boolean }>();
+      for (const row of rows.results ?? []) {
+        out.set(row.contract, { nextBlock: BigInt(row.next_block), notified: row.start_notified === 1 });
+      }
       return { ok: true, value: out };
     } catch (err) {
       return { ok: false, failure: classify(err, 'loading event-alert positions') };
@@ -224,15 +236,16 @@ export class AlertStore {
         return [
           this.db
             .prepare(
-              `INSERT INTO event_cursor (chain_id, contract, next_block, updated_at)
-             VALUES (?, ?, ?, ?)
+              `INSERT INTO event_cursor (chain_id, contract, next_block, start_notified, updated_at)
+             VALUES (?, ?, ?, ?, ?)
              ON CONFLICT (chain_id, contract) DO UPDATE SET
                next_block = excluded.next_block,
+               start_notified = excluded.start_notified,
                updated_at = excluded.updated_at`,
             )
             // A block number is far below 2^53, so a JS number holds it
             // exactly; D1 binds numbers, not bigints.
-            .bind(op.chainId, op.contract, Number(op.nextBlock), op.at),
+            .bind(op.chainId, op.contract, Number(op.nextBlock), op.notified ? 1 : 0, op.at),
         ];
       case 'recordAlert':
         return [

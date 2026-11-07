@@ -265,20 +265,20 @@ describe('event-alert positions', () => {
   it('stores, reads back and moves a contract position per chain', async () => {
     const { store } = harness();
     await store.commit([
-      { kind: 'setEventCursor', chainId: 84532, contract: 'timelock', nextBlock: 100n, at: 1 },
-      { kind: 'setEventCursor', chainId: 84532, contract: 'sanctionsList', nextBlock: 50n, at: 1 },
-      { kind: 'setEventCursor', chainId: 97, contract: 'timelock', nextBlock: 7n, at: 1 },
+      { kind: 'setEventCursor', chainId: 84532, contract: 'timelock', nextBlock: 100n, notified: true, at: 1 },
+      { kind: 'setEventCursor', chainId: 84532, contract: 'sanctionsList', nextBlock: 50n, notified: false, at: 1 },
+      { kind: 'setEventCursor', chainId: 97, contract: 'timelock', nextBlock: 7n, notified: true, at: 1 },
     ]);
     await store.commit([
-      { kind: 'setEventCursor', chainId: 84532, contract: 'timelock', nextBlock: 250n, at: 2 },
+      { kind: 'setEventCursor', chainId: 84532, contract: 'timelock', nextBlock: 250n, notified: true, at: 2 },
     ]);
 
     const r = await store.loadEventCursors(84532);
     expect(r.ok).toBe(true);
     if (r.ok) {
       expect([...r.value.entries()].sort()).toEqual([
-        ['sanctionsList', 50n],
-        ['timelock', 250n],
+        ['sanctionsList', { nextBlock: 50n, notified: false }],
+        ['timelock', { nextBlock: 250n, notified: true }],
       ]);
     }
   });
