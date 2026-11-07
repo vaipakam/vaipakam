@@ -1,12 +1,4 @@
-## Thread — End-to-end specs for Repay all and seller claims
-
-Two features that had only unit coverage now run end to end on the local
-test chain in CI.
-
-"Repay all" on Positions (#126) is driven on a borrower whose ranged
-request was filled in two slices by two lenders, which gives two open
-loans carrying the same offer. The spec checks the seed on chain, runs
-the card's review and confirm, and requires both loans to read Repaid.
+## Thread — End-to-end spec for seller claims; test markers for Repay all
 
 The seller's claim on Claims (#1209) is driven through a real sale: a loan
 runs ten days, the lender lists it, a third wallet buys it, the borrower
@@ -26,4 +18,8 @@ the chain's own logs, filed by the indexer's own actor rule.
 
 Advances #126 and #1209.
 
-> Caveat: the live drives on Base Sepolia for both features are still to run.
+> Caveat: "Repay all" (#126) has no end-to-end spec yet. The only way a
+> borrower gets two loans from one offer is a ranged request filled in
+> slices, and that seed is held on a contract issue found while writing
+> the spec; the spec lands with the fix. The live drive on Base Sepolia
+> for seller claims is still to run.
