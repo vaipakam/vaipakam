@@ -24,8 +24,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { encodeFunctionData } from 'viem';
-import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
+import { encodeFunctionData, parseAbi } from 'viem';
 import { bundleWith, deployFromSource } from '@vaipakam/anvil-harness/fixture';
 import { ANVIL_URL } from './anvil';
 import { E2E_ADMIN_KEY, E2E_BUNDLE, E2E_BUNDLE_RUN_ID, e2eRunId } from './artifacts';
@@ -76,12 +75,16 @@ async function lowerOfferFloor(diamond: `0x${string}`): Promise<void> {
   const fieldSlot = BigInt(line.split('|')[2]);
   const slot = VAIPAKAM_STORAGE_BASE + fieldSlot;
   await rpc('anvil_setStorageAt', [diamond, toHex32(slot), toHex32(1n)]);
-  const data = encodeFunctionData({ abi: DIAMOND_ABI_VIEM, functionName: 'getMinOfferValueNumeraire' });
+  const data = encodeFunctionData({ abi: FLOOR_ABI, functionName: 'getMinOfferValueNumeraire' });
   const ret = (await rpc('eth_call', [{ to: diamond, data }, 'latest'])) as `0x${string}`;
   if (BigInt(ret) !== 1n) {
     throw new Error(`[e2e] offer floor not lowered (reads ${BigInt(ret)}): the storage-layout slot is stale`);
   }
 }
+
+// The global setup runs under plain Node ESM, which cannot import the ABI
+// bundle's JSON without import attributes, so the one getter is declared here.
+const FLOOR_ABI = parseAbi(['function getMinOfferValueNumeraire() view returns (uint256)']);
 
 /** `LibVaipakam.VANGKI_STORAGE_POSITION`, the namespaced storage base. */
 const VAIPAKAM_STORAGE_BASE = 0x76f6f3ffb4e1cbadb2d289330bfeb7bd9d50e6e2407a61733161f6e3e1d10e00n;
