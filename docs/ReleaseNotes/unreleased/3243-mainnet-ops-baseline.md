@@ -1,4 +1,4 @@
-## Operations — the mainnet operations baseline (PR #<n>)
+## Operations — the mainnet operations baseline (PR #3277)
 
 A new runbook, `docs/ops/MainnetOpsBaseline.md`, sets the bar the machines and
 credentials must clear before mainnet. The mainnet readiness checklist now
