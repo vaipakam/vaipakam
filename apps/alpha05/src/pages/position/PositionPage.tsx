@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { Link, useParams } from 'react-router-dom';
+import { useAccount } from 'wagmi';
 import { getSupportedChain } from '../../chain/chains';
 import { useOwnStateClient } from '../../chain/ownRail';
 import { useCopy, type CopyKey } from '../../shared/copy/useCopy';
@@ -38,10 +39,15 @@ export function PositionPage() {
   const params = useParams();
   const loanId = parseLoanId(params.id);
   const own = useOwnStateClient();
-  const chain = getSupportedChain(own?.chainId);
+  // Connection and network are read on their own, as Home and Positions do:
+  // a wallet on a network this app does not serve is told to switch, not to
+  // connect.
+  const { status, chainId } = useAccount();
+  const connected = status === 'connected';
+  const chain = getSupportedChain(own?.chainId ?? chainId);
   const diamond = (chain?.diamondAddress ?? '0x') as Hex;
   const view = useOwnRead(['position', diamond, loanId?.toString() ?? ''], (c) => readLoanView(c, diamond, loanId!), { enabled: chain !== null && loanId !== null });
-  const meta = useTokenMeta(view.data?.view ? [view.data.view.loan.principalAsset, view.data.view.loan.collateralAsset] : []).data;
+  const meta = useTokenMeta(view.data?.view ? [view.data.view.loan.principalAsset, view.data.view.loan.collateralAsset, view.data.view.loan.prepayAsset] : []).data;
 
   return (
     <main className="page position" aria-labelledby="position-title">
@@ -51,10 +57,12 @@ export function PositionPage() {
       <h1 id="position-title">{format('position.title', { id: params.id ?? '' })}</h1>
       {loanId === null ? (
         <p className="tier-a">{text('position.badId')}</p>
-      ) : !own ? (
+      ) : !connected ? (
         <p className="tier-b">{text('position.connectPrompt')}</p>
       ) : !chain ? (
         <p className="tier-b">{text('position.unsupportedChain')}</p>
+      ) : !own ? (
+        <p className="tier-b">{text('position.connectPrompt')}</p>
       ) : (
         <>
           <OwnStamp reads={[view]} />
@@ -141,10 +149,18 @@ function LoanBody({ view: v, account, meta }: { view: LoanView; account: Hex; me
       <Facts title={text('position.termsTitle')} id="position-terms" lead={<p className="tier-b">{text(erc20 ? 'position.termsNow' : 'position.termsNowRental')}</p>}>
         <Fact
           label={text(erc20 ? (live ? 'position.rowPrincipal' : 'position.rowPrincipalEnded') : 'position.rowRented')}
-          value={erc20 && !live && l.principal === 0n ? text('position.principalWrittenOff') : amountOf(l.principalAsset, l.assetType, l.principal, l.tokenId, l.quantity)}
+          value={
+            erc20 && !live && l.principal === 0n
+              ? text(loanStatusName(l.status) === 'matched' ? 'position.principalMatched' : 'position.principalNoneEnded')
+              : amountOf(l.principalAsset, l.assetType, l.principal, l.tokenId, l.quantity)
+          }
           unknown={unknown}
         />
         {erc20 && <Fact label={text('position.rowRate')} value={format('position.rate', { rate: formatBps(l.interestRateBps) })} unknown={unknown} />}
+        {!erc20 && <Fact label={text('position.rowRentPerDay')} value={tokenAmount(l.principal, l.prepayAsset, meta, format)} unknown={unknown} binding />}
+        {!erc20 && (
+          <Fact label={text('position.rowRentEarly')} value={text(l.useFullTermInterest ? 'position.rentEarlyFull' : 'position.rentEarlyUsed')} unknown={unknown} binding />
+        )}
         <Fact label={text('position.rowTerm')} value={format('position.term', { days: l.durationDays.toString() })} unknown={unknown} />
         {erc20 && <Fact label={text('position.rowInterest')} value={text(l.useFullTermInterest ? 'position.interestFull' : 'position.interestProRata')} unknown={unknown} />}
         {erc20 && (

@@ -692,10 +692,14 @@ above. Each resolves here, so a route reviewer needs no private file:
   now, said to be so (the protocol keeps no record of the amount first
   lent, and a partial repayment lowers the principal, collateral moves and
   a borrower handover can change the rate, so the principal is "still
-  owed" on a live loan and "when it ended" on an ended one, and a
-  principal written off at the close is said to be, never shown as 0;
-  never "you lent"; the protocol's share and the initiation fee rate as
-  the loan's own snapshots, none for a loan that carries a lender sale);
+  owed" on a live loan and "when it ended" on an ended one; an ended loan
+  with no principal on its record says an internal match covered it when
+  its status says so, and otherwise only that none is recorded, never
+  calling it a write-off it cannot establish; never "you lent"; the
+  protocol's share and the initiation fee rate as the loan's own
+  snapshots, none for a loan that carries a lender sale; an NFT rental's
+  rent per day in its prepayment asset and whether returning early still
+  charges every remaining day);
   its health (a failed reading is unknown; a loan with an unpriced leg,
   whose health and loan-to-value reads the protocol refuses, is "no
   price-based reading", never 0 and never unknown, while a successful

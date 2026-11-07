@@ -1940,7 +1940,7 @@ Positions 通过一个共享读取器读取与 Home 相同的持仓清单：`get
 
 页面读取 `getLoanDetails(loanId)`，并对出借人和借款人的仓位 NFT 调用 `ownerOf`；角色即钱包现在持有的代币。对进行中的贷款（Active 或 FallbackPending），读取 `getLoanDeadlines`（原到期、暂停补偿、到期、宽限结束），有付息周期时读取 `previewPeriodicSettle` 和 `getPeriodicInterestEnabled`，以及 `isLoanDefaultable`、`calculateHealthFactor` 和 `calculateLTV`；对每笔贷款读取 `getLoanCollateralLien` 和 `isSaleVehicleLoan`。每次读取相互独立：失败的读取显示为未知，绝不显示为零，也不会用 `startTime` 和 `durationDays` 推算日期。
 
-费率均为贷款快照：`treasuryFeeBpsAtInit`、`loanInitiationFeeBpsAtInit`（出售载体贷款为无）和 `liquidationLtvBpsAtInit`。任一方为 Illiquid（`principalLiquidity` 或 `collateralLiquidity`）的贷款没有基于价格的读数：协议会拒绝该贷款的 `calculateHealthFactor` 和 `calculateLTV`，页面会说明这一点而不是显示未知。`principal` 是尚欠的本金（部分还款会减少它），`interestRateBps` 和 `collateralAmount` 也可能变化，因此条款按当前状态显示；结清时核销的本金会如实说明。`getPeriodicInterestEnabled` 为 false 时，页面会说明在检查点不会出售抵押品。进行中贷款的 `collateralLiquidity` 为 Illiquid 时，会加上实物交割警告：违约时抵押品不经出售直接转给出借人。该页面目前不发送任何交易。
+费率均为贷款快照：`treasuryFeeBpsAtInit`、`loanInitiationFeeBpsAtInit`（出售载体贷款为无）和 `liquidationLtvBpsAtInit`。任一方为 Illiquid（`principalLiquidity` 或 `collateralLiquidity`）的贷款没有基于价格的读数：协议会拒绝该贷款的 `calculateHealthFactor` 和 `calculateLTV`，页面会说明这一点而不是显示未知。`principal` 是尚欠的本金（部分还款会减少它），`interestRateBps` 和 `collateralAmount` 也可能变化，因此条款按当前状态显示；记录中没有本金的已结束贷款会说明是否由内部撮合覆盖，否则只说明没有记录；NFT 租赁会显示每日租金（`principal`，以 `prepayAsset` 计）以及提前归还是否仍按每个剩余天数收费（`useFullTermInterest`）。`getPeriodicInterestEnabled` 为 false 时，页面会说明在检查点不会出售抵押品。进行中贷款的 `collateralLiquidity` 为 Illiquid 时，会加上实物交割警告：违约时抵押品不经出售直接转给出借人。该页面目前不发送任何交易。
 
 <a id="risk-access"></a>
 
