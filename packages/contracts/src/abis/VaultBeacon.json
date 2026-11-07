@@ -710,6 +710,19 @@
     "stateMutability": "view"
   },
   {
+    "type": "function",
+    "name": "voidPending",
+    "inputs": [
+      {
+        "name": "vault",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
     "type": "event",
     "name": "CurrentVaultVersionProposed",
     "inputs": [
@@ -849,6 +862,31 @@
         "name": "target",
         "type": "uint256",
         "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "by",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "VaultPinDelayLowerCancelled",
+    "inputs": [
+      {
+        "name": "vault",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "newDelay",
+        "type": "uint256",
+        "indexed": false,
         "internalType": "uint256"
       },
       {

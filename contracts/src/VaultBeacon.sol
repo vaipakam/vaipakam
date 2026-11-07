@@ -162,6 +162,7 @@ contract VaultBeacon is IBeacon, Ownable2Step, EIP712 {
     event VaultPinCancelled(address indexed vault, uint256 indexed target, address indexed by);
     event VaultPinDelaySet(address indexed vault, uint256 oldDelay, uint256 newDelay);
     event VaultPinDelayLowerRequested(address indexed vault, uint256 newDelay, uint256 executableAt);
+    event VaultPinDelayLowerCancelled(address indexed vault, uint256 newDelay, address indexed by);
     event GuardianSet(address indexed oldGuardian, address indexed newGuardian);
 
     // ─── Errors ──────────────────────────────────────────────────────────
@@ -359,6 +360,25 @@ contract VaultBeacon is IBeacon, Ownable2Step, EIP712 {
         }
         delete _pendingPin[vault];
         emit VaultPinCancelled(vault, p.target, msg.sender);
+    }
+
+    /// @notice Void every change pending for `vault`: a pin change and a
+    ///         pin-delay lowering. The Diamond only, whenever the vault's
+    ///         protected state begins or ends (switching protection on, a lock,
+    ///         a primary replacement, a switch-off), so no change requested
+    ///         under one posture can mature under the next. Cancelling only
+    ///         ever refuses a change; it moves nothing.
+    function voidPending(address vault) external onlyDiamond {
+        PendingPin memory p = _pendingPin[vault];
+        if (p.executableAt != 0) {
+            delete _pendingPin[vault];
+            emit VaultPinCancelled(vault, p.target, msg.sender);
+        }
+        PendingDelay memory d = _pendingDelay[vault];
+        if (d.executableAt != 0) {
+            delete _pendingDelay[vault];
+            emit VaultPinDelayLowerCancelled(vault, d.delay, msg.sender);
+        }
     }
 
     /// @notice Raise `vault`'s pin delay without the owner's signature, up to

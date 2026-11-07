@@ -173,13 +173,26 @@ contract ProtectedAccountFacet is DiamondReentrancyGuard, DiamondPausable {
     /// @dev Void every pending allowlist addition and signer change of
     ///      `account` at once (they are mappings, so they are voided by
     ///      epoch, not swept), and cancel a pin change pending at the
-    ///      VaultBeacon (#3204). The ONE void every path that ends or replaces
-    ///      protected state reaches (a lock and a replacement through
-    ///      {_dropPendingChanges}, a switch-off through {_clearAccount}), so
-    ///      none of them can leave a pin change maturing behind it.
+    ///      VaultBeacon (#3204), with any pin-delay lowering. The ONE void
+    ///      every path that ends or replaces protected state reaches (a lock
+    ///      and a replacement through {_dropPendingChanges}, a switch-off
+    ///      through {_clearAccount}), so none of them can leave a pin change
+    ///      or a delay lowering maturing behind it.
     function _voidPendingChanges(address account) private {
         ++LibVaipakam.storageSlot().protectedChangeEpoch[account];
-        _cancelBeaconPin(account);
+        _voidBeaconPending(account);
+    }
+
+    /// @dev #3204 — void every change pending for `account`'s vault at the
+    ///      VaultBeacon: a pin change AND a pin-delay lowering. Reached by
+    ///      every path that begins or ends protected state ({_voidPendingChanges}
+    ///      for a lock, a replacement and a switch-off; {enableProtectedMode}
+    ///      for a switch-on), so nothing requested under one posture matures
+    ///      under the next.
+    function _voidBeaconPending(address account) private {
+        (VaultBeacon beacon, address vault) = _beaconAndVault(account);
+        if (vault == address(0) || address(beacon) == address(0)) return;
+        beacon.voidPending(vault);
     }
 
     /// @dev Drop every pending change on `account`: the allowlist additions
@@ -272,6 +285,10 @@ contract ProtectedAccountFacet is DiamondReentrancyGuard, DiamondPausable {
         a.enabled = true;
         a.delaySeconds = delaySeconds;
         a.protectNfts = protectNfts;
+        // Switching on voids anything pending at the beacon first (a delay
+        // lowering requested before included), whether or not the delay
+        // itself needs a raise.
+        _voidBeaconPending(msg.sender);
         _raiseBeaconPinDelay(msg.sender, delaySeconds);
         emit ProtectedModeEnabled(msg.sender, delaySeconds, protectNfts);
     }

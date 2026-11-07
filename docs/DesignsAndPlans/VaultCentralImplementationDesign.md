@@ -334,6 +334,13 @@ Decided while building (owner, 2026-11-07, via the project thread):
 - **Ownership can never be renounced** (`renounceOwnership` reverts, as on
   `VaipakamFeedRegistry`): an ownerless beacon could never register or revoke
   a version again. It moves only by the two-step transfer.
+- **Entering or leaving protected state voids everything pending at the
+  beacon.** `voidPending(vault)` (Diamond-only) cancels a pending pin change
+  and a pending pin-delay lowering. Protected mode calls it on every path
+  that begins or ends protected state: switching on (always, even when the
+  delay needs no raise), a lock, a primary replacement and a switch-off. So
+  nothing requested under one posture, a lowering to zero included, can
+  mature under the next.
 - **One pending proposal at a time** on the beacon, and **one pending pin
   change per vault**. A pending pin whose target is revoked meanwhile lapses
   at `executePin` instead of holding the vault's pin slot.

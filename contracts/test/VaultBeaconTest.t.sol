@@ -509,6 +509,58 @@ contract VaultBeaconTest is Test {
         assertEq(beacon.pinnedVersion(vaultA), 0, "the old request never applied");
     }
 
+    /// A pin-delay lowering requested while a switch-off waits is voided by
+    /// the switch-off, so re-enabling protection cannot let it mature.
+    function test_switchOffVoidsAPendingDelayLowering() public {
+        _protectAlice();
+        uint256 d = beacon.pinDelay(vaultA);
+        uint256 t0 = block.timestamp;
+        vm.prank(alice);
+        ProtectedAccountFacet(address(diamond)).requestDisableProtectedMode();
+        bytes memory lower = _sign(ALICE_KEY, beacon.pinDelayDigest(vaultA, 0));
+        beacon.setPinDelay(vaultA, 0, lower);
+        (, uint256 lowerAt) = beacon.pendingPinDelayOf(vaultA);
+        assertGt(lowerAt, 0, "a lowering is pending");
+
+        vm.warp(t0 + LibProtectedAccount.MIN_DELAY);
+        ProtectedAccountFacet(address(diamond)).finalizeSettingChanges(alice);
+        (, uint256 after_) = beacon.pendingPinDelayOf(vaultA);
+        assertEq(after_, 0, "the switch-off voided the lowering");
+
+        _protectAlice();
+        vm.warp(lowerAt);
+        vm.expectRevert(abi.encodeWithSelector(VaultBeacon.NoDelayChange.selector, vaultA));
+        beacon.executePinDelay(vaultA);
+        assertEq(beacon.pinDelay(vaultA), d, "the delay stays where protection set it");
+    }
+
+    /// Switching protection on voids a pending lowering even when the delay
+    /// already equals the protection delay, so no raise was needed.
+    function test_equalDelayReEnableStillVoidsAPendingLowering() public {
+        uint256 cap = beacon.MAX_DIAMOND_PIN_DELAY();
+        bytes memory set = _sign(ALICE_KEY, beacon.pinDelayDigest(vaultA, cap));
+        beacon.setPinDelay(vaultA, cap, set);
+        bytes memory lower = _sign(ALICE_KEY, beacon.pinDelayDigest(vaultA, 0));
+        beacon.setPinDelay(vaultA, 0, lower);
+        (, uint256 lowerAt) = beacon.pendingPinDelayOf(vaultA);
+        assertGt(lowerAt, 0, "a lowering is pending");
+
+        _protectAlice(); // MIN_DELAY == cap: no raise is needed
+        assertEq(beacon.pinDelay(vaultA), cap, "no numerical raise happened");
+        (, uint256 after_) = beacon.pendingPinDelayOf(vaultA);
+        assertEq(after_, 0, "switching on voided the lowering anyway");
+        vm.warp(lowerAt);
+        vm.expectRevert(abi.encodeWithSelector(VaultBeacon.NoDelayChange.selector, vaultA));
+        beacon.executePinDelay(vaultA);
+    }
+
+    /// Only the Diamond may void pending changes.
+    function test_voidPendingIsDiamondOnly() public {
+        vm.prank(stranger);
+        vm.expectRevert(abi.encodeWithSelector(VaultBeacon.NotDiamond.selector, stranger));
+        beacon.voidPending(vaultA);
+    }
+
     /// A pending pin to a version revoked meanwhile lapses instead of
     /// holding the vault's pin slot.
     function test_pendingPinToARevokedVersionLapses() public {
