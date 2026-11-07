@@ -429,6 +429,23 @@ export interface OfferPayloadDecimals {
   collateral?: number;
 }
 
+/** #3242 — what the guided flow knows of the offer-book value floor for
+ *  the lending token (read by `useOfferBookFloor`). */
+export interface OfferBookFloor {
+  /** The smallest admitted `amount` in the token's base units, when the
+   *  floor binds this token; undefined when it does not, or is unknown. */
+  minAmount?: bigint;
+}
+
+/** #3242 — a lender offer's smallest fill: 10% of the whole amount (at
+ *  least one base unit), raised to the offer-book floor's amount when it
+ *  binds, and never above the whole amount. */
+export function lenderSmallestFill(total: bigint, floorAmount: bigint | undefined): bigint {
+  const tenth = total / 10n > 0n ? total / 10n : 1n;
+  const raised = floorAmount !== undefined && floorAmount > tenth ? floorAmount : tenth;
+  return raised < total ? raised : total;
+}
+
 /**
  * Issue #165 Phase 1 — role-asymmetric UI LABELS over single-value
  * payloads.
@@ -517,6 +534,7 @@ function exactOfferAmount(
 export function toCreateOfferPayload(
   s: OfferFormState,
   decimals: OfferPayloadDecimals = {},
+  floor: OfferBookFloor = {},
 ): CreateOfferPayload {
   const lendingDecimals = decimals.lending ?? 18;
   const collateralDecimals = decimals.collateral ?? 18;
@@ -542,10 +560,15 @@ export function toCreateOfferPayload(
 
   // For lender ERC-20 offers, `minPartialFillAmount` defaults to 10%
   // of `lendingAmount` per design §2.3. Floor at 1 wei so the `> 0`
-  // invariant holds even for tiny offers. NFT-lending offers (rentals)
-  // ship `amount == amountMax` (single-value — the daily rental fee).
+  // invariant holds even for tiny offers. #3242 — the protocol refuses an
+  // offer whose smallest fill is worth less than the offer-book floor, so
+  // the default is raised to the floor's amount when the floor binds this
+  // token, and never above the whole amount (an offer smaller than the
+  // floor is then refused as a whole, which the form says). NFT-lending
+  // offers (rentals) ship `amount == amountMax` (single-value — the daily
+  // rental fee).
   const lenderMinPartial = s.assetType === 'erc20'
-    ? (lendingAmount / 10n > 0n ? lendingAmount / 10n : 1n)
+    ? lenderSmallestFill(lendingAmount, floor.minAmount)
     : lendingAmount;
 
   return {

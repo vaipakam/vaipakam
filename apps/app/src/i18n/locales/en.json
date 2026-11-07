@@ -3594,7 +3594,8 @@
       "waitingForWallet": "Waiting for wallet…",
       "networkFallback": "network #{{id}}",
       "unknown": "unknown",
-      "amountTooPrecise": "{{symbol}} can’t be split that finely — use at most {{decimals}} decimal places."
+      "amountTooPrecise": "{{symbol}} can’t be split that finely — use at most {{decimals}} decimal places.",
+      "amountBelowOfferFloor": "The smallest offer the protocol accepts in this token is {{min}} {{symbol}}. Enter at least that much."
     },
     "stepNav": {
       "progressAria": "Progress",
@@ -3906,6 +3907,10 @@
       "availableNow": "now (the cooldown ended {{when}})",
       "availableFrom": "not before {{when}}, in {{span}}",
       "maxOfferDuration": "Max offer duration",
+      "minOfferValue": "Smallest offer",
+      "minOfferValueHint": "The least an offer’s principal must be worth when it is posted or its amount is changed. It applies only to a liquid token with a price; NFTs and illiquid tokens are never refused for their value. Offers that come from an existing loan are exempt. Raising it closes no open offer.",
+      "maxOpenOffers": "Open offers per wallet",
+      "maxOpenOffersHint": "The most offers one wallet may have open at once, every offer type counted. An expired offer counts until it is cancelled. Lowering it closes no open offer. Offers that come from an existing loan are exempt.",
       "flagsHeading": "Feature flags",
       "partialFill": "Order matching (partial fill)",
       "partialFillHint": "While off, the order matchers refuse and an accepted offer fills once. While on, a ranged offer can be filled across several matches. Ranged offers themselves are always on.",
@@ -4001,6 +4006,8 @@
     "FunctionDisabled": "This feature is currently turned off by protocol governance. Please try again later.",
     "InterestRateAboveCeiling": "The interest rate is above the protocol's current ceiling. Lower the rate and try again.",
     "OfferDurationExceedsCap": "The loan duration is longer than the protocol allows. Choose a shorter term.",
+    "OfferBelowMinimumValue": "This offer is smaller than the protocol allows: the amount, or the smallest part one match may take, is worth less than the minimum offer value. Raise the amount and try again.",
+    "TooManyOpenOffers": "This wallet already has as many open offers as the protocol allows. Cancel an offer you no longer need (an expired offer counts until you cancel it), then try again.",
     "AmountMustBePositive": "Enter an amount greater than zero.",
     "AmountMaxMustBePositive": "Enter a maximum amount greater than zero.",
     "CollateralMustBePositive": "Enter a collateral amount greater than zero.",

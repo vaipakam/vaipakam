@@ -277,12 +277,14 @@ export const INTENT_SIZE_DOWN_MAX_PROBES = 6;
  *  `IntentError.BelowMinFill` (9, the intent's minimum fill),
  *  `CollateralUnresolvable` (14, which past `hi` can only be the required
  *  collateral rounding to zero), `SliceCollateralBelowFloor` (18, the
- *  create-time collateral floor) and `MatchError.AmountNoOverlap` (4, below the
- *  borrower's minimum amount, since `hi` overlapped). Every OTHER refusal is
+ *  create-time collateral floor), `SliceBelowMinOfferValue` (23, the offer
+ *  value floor the slice meets as it enters the book, #3242) and
+ *  `MatchError.AmountNoOverlap` (4, below the borrower's minimum amount, since
+ *  `hi` overlapped). Every OTHER refusal is
  *  read as too big: the gates `hi` never reached (the risk gate, the accept
  *  gate's KYC tier, the solver's capacity) refuse larger fills, never only
  *  smaller ones. */
-const INTENT_ERR_LOW_END = new Set<number>([9, 14, 18]);
+const INTENT_ERR_LOW_END = new Set<number>([9, 14, 18, 23]);
 const MATCH_ERR_AMOUNT_NO_OVERLAP = 4;
 
 /** What one `previewIntent` probe says about the fill size it was sent (#2760).

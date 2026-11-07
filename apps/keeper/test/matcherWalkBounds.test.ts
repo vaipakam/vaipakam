@@ -71,8 +71,8 @@ describe('intentProbeVerdict', () => {
     expect(intentProbeVerdict(null)).toBe('unread');
     expect(intentProbeVerdict({ ok: true, intentError: 0, matchError: 0 })).toBe('ok');
     // Low end: BelowMinFill, CollateralUnresolvable (rounds to zero),
-    // SliceCollateralBelowFloor, and AmountNoOverlap (below the borrower's minimum).
-    for (const intentError of [9, 14, 18]) {
+    // SliceCollateralBelowFloor, SliceBelowMinOfferValue (#3242), and AmountNoOverlap (below the borrower's minimum).
+    for (const intentError of [9, 14, 18, 23]) {
       expect(intentProbeVerdict({ ok: false, intentError, matchError: 0 })).toBe('belowWindow');
     }
     expect(intentProbeVerdict({ ok: false, intentError: 0, matchError: 4 })).toBe('belowWindow');

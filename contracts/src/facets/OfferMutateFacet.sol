@@ -12,6 +12,7 @@ import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {OfferCreateFacet} from "./OfferCreateFacet.sol";
 import {OfferPreviewFacet} from "./OfferPreviewFacet.sol";
+import {OfferBookFacet} from "./OfferBookFacet.sol";
 import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
 import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
 import {ProfileFacet} from "./ProfileFacet.sol";
@@ -188,6 +189,10 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         // threshold with a finer cadence and then shrink amount below
         // it while keeping the finer cadence.
         _revalidatePeriodicCadenceForAmount(offer, newAmount);
+        // #3242 — the new amount meets the same value floor creation applies.
+        OfferBookFacet(address(this)).requireOfferValueAdmitted(
+            offer.lendingAsset, offer.assetType, newAmount
+        );
 
         offer.amount = newAmount;
         offer.amountMax = newAmountMax;
@@ -339,6 +344,10 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
             // `setOfferAmount`; the new amount must still satisfy the
             // (amount, cadence) compatibility rule createOffer enforces.
             _revalidatePeriodicCadenceForAmount(offer, params.amount);
+            // #3242 — the new amount meets creation's value floor.
+            OfferBookFacet(address(this)).requireOfferValueAdmitted(
+                offer.lendingAsset, offer.assetType, params.amount
+            );
         }
         if (rateChanged) {
             _assertRateInvariants(

@@ -414,6 +414,22 @@ library LibVaipakam {
     uint256 constant MIN_INTENT_FILL_NUMERAIRE_DEFAULT = 100e18;
     uint256 constant MIN_INTENT_FILL_NUMERAIRE_FLOOR = 1e18;
     uint256 constant MIN_INTENT_FILL_NUMERAIRE_CEIL = 1_000_000e18;
+    // #3242 — the smallest offer anyone may post, valued in the active
+    // numeraire (1e18-scaled) by the one shared value rule. It binds only an
+    // offer whose principal can be priced: an unpriced principal (an illiquid
+    // token, an NFT) is never refused for having no value. A stored 0 reads
+    // as the default ($10 at the owner's decision, 2026-11-07, the same on
+    // every chain); the setter bounds a non-zero value to [MIN, MAX].
+    uint256 constant MIN_OFFER_VALUE_NUMERAIRE_DEFAULT = 10e18;
+    uint256 constant MIN_OFFER_VALUE_NUMERAIRE_FLOOR = 1e18;
+    uint256 constant MIN_OFFER_VALUE_NUMERAIRE_CEIL = 1_000_000e18;
+    // #3242 — the most offers one wallet may have open at once, every offer
+    // type counted. A stored 0 reads as the default; the setter bounds a
+    // non-zero value to [MIN, MAX] so a mistyped cap can neither shut
+    // ordinary users out nor lift the bound entirely.
+    uint256 constant MAX_OPEN_OFFERS_PER_WALLET_DEFAULT = 25;
+    uint256 constant MAX_OPEN_OFFERS_PER_WALLET_FLOOR = 5;
+    uint256 constant MAX_OPEN_OFFERS_PER_WALLET_CEIL = 1_000;
     uint256 constant LOAN_INITIATION_FEE_BPS = 20; // 0.2% fee deducted from ERC-20 principal at loan initiation (rev-8 fee freeze, #1352; was 10 = 0.1%). Charged once at accept — no post-init reader, so the bump affects new originations only (open loans already paid their LIF)
     // Fallback-path split (README §7): lender gets principal + accrued
     // interest + {FALLBACK_LENDER_BONUS_BPS} of principal; treasury gets
@@ -8335,6 +8351,29 @@ library LibVaipakam {
         ///      by `RepatriationFacet.onUntypedRemainderReturnReceived`.
         ///      Base-only. Appended — append-only.
         mapping(uint32 => uint256) chainUntypedRemainderReturned;
+        /// @dev #3242 — governance's floor on the value of an offer's
+        ///      principal, in the active numeraire (1e18). Zero reads as
+        ///      {MIN_OFFER_VALUE_NUMERAIRE_DEFAULT}; read through
+        ///      {cfgMinOfferValueNumeraire}. Written only by
+        ///      `NumeraireConfigFacet.setMinOfferValueNumeraire`, and reset to
+        ///      zero by a numeraire rotation (the value was denominated in the
+        ///      old unit). Appended — append-only.
+        uint256 minOfferValueNumeraire;
+        /// @dev #3242 — governance's cap on one wallet's open offers. Zero
+        ///      reads as {MAX_OPEN_OFFERS_PER_WALLET_DEFAULT}; read through
+        ///      {cfgMaxOpenOffersPerWallet}. Written only by
+        ///      `ConfigFacet.setMaxOpenOffersPerWallet`. Appended —
+        ///      append-only.
+        uint256 maxOpenOffersPerWallet;
+        /// @dev #3242 — per creator, how many of its offers are in the
+        ///      active-offer index now, every offer type counted (a sale,
+        ///      offset or refinance offer too). Written only by
+        ///      `LibMetricsHooks` as an offer enters and leaves that index, so
+        ///      it can never disagree with it. A Diamond refreshed in place
+        ///      across #3242 starts every count at zero, so offers opened
+        ///      before the refresh are not counted (the count can only read
+        ///      low, never high). Appended — append-only.
+        mapping(address => uint256) openOfferCount;
     }
 
     /// @notice Protected account mode — one owner wallet's settings.
@@ -10795,6 +10834,21 @@ library LibVaipakam {
 
     /// @dev #2760 — the effective floor on a standing intent's smallest fill,
     ///      1e18 numeraire: the governance value, or the default while unset.
+    /// @notice #3242 — the floor on an offer principal's value in effect
+    ///         (1e18 numeraire): the configured value, or the default while
+    ///         it is unset.
+    function cfgMinOfferValueNumeraire() internal view returns (uint256) {
+        uint256 v = storageSlot().minOfferValueNumeraire;
+        return v == 0 ? MIN_OFFER_VALUE_NUMERAIRE_DEFAULT : v;
+    }
+
+    /// @notice #3242 — the cap on one wallet's open offers in effect: the
+    ///         configured value, or the default while it is unset.
+    function cfgMaxOpenOffersPerWallet() internal view returns (uint256) {
+        uint256 v = storageSlot().maxOpenOffersPerWallet;
+        return v == 0 ? MAX_OPEN_OFFERS_PER_WALLET_DEFAULT : v;
+    }
+
     function cfgMinIntentFillNumeraire() internal view returns (uint256) {
         uint256 v = storageSlot().minIntentFillNumeraire;
         return v == 0 ? MIN_INTENT_FILL_NUMERAIRE_DEFAULT : v;

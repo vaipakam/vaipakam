@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibOfferAdmission} from "./LibOfferAdmission.sol";
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {LibFacet} from "./LibFacet.sol";
 import {LibRiskMath} from "./LibRiskMath.sol";
@@ -154,7 +155,11 @@ library LibOfferMatch {
         // #1219 review — the solver's capacity cannot cover this fill (the route's
         // actor, as the fill resolves it). Checked LAST, where `matchIntent` now
         // takes the charge. APPENDED — prior ordinals stay stable.
-        CapacityExhausted
+        CapacityExhausted,
+        // #3242 — the slice's principal is worth less than the offer value
+        // floor it meets as it enters the book (OfferBelowMinimumValue).
+        // APPENDED — prior ordinals stay stable.
+        SliceBelowMinOfferValue
     }
 
     /// @notice Structured outcome of `RiskPreviewFacet.previewIntent`. `ok` is
@@ -955,6 +960,16 @@ library LibOfferMatch {
         //     multi-year slice always reverts `CadenceNotAllowed`.
         if (cp.durationDays > 365) {
             return _intentFail(res, IntentError.SliceMultiYearTerm);
+        }
+        // (e) #3242 — the offer value floor, which the slice meets as it enters
+        //     the book (`OfferBookFacet.openOfferOnBook`, the last step of
+        //     `createSignedOfferVault`). An intent admitted under a lower floor,
+        //     or a price that has moved, can leave a fill below it.
+        {
+            (bool belowFloor, , ) = LibOfferAdmission.valueBelowFloor(
+                lendingAsset, LibVaipakam.AssetType.ERC20, fillAmount
+            );
+            if (belowFloor) return _intentFail(res, IntentError.SliceBelowMinOfferValue);
         }
 
         // #951 v2 (Codex #959 bind-to-live, round-8 P2/P3) — mirror

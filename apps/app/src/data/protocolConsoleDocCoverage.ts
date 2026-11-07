@@ -111,6 +111,9 @@ export const DOC_COVERAGE: Readonly<Record<string, DocCoverage>> = {
   'KYC tier 0 / tier 1 thresholds (numeraire)': { notShown: 'not-on-retail' },
   'Standing-intent fill switch (`lenderIntentEnabled`)': { shown: ['lenderIntentEnabled'] },
   'Standing-intent admission floor (`minIntentFillNumeraire`)': { shown: ['minIntentFillNumeraire'] },
+  'Offer-book bounds (`minOfferValueNumeraire`, `maxOpenOffersPerWallet`)': {
+    shown: ['minOfferValueNumeraire', 'maxOpenOffersPerWallet'],
+  },
   'Matching kill-switch (`partialFillEnabled`)': { shown: ['partialFillEnabled'] },
   'Master kill-switch — `discountPathEnabled`': { notShown: 'no-getter' },
   'Per-tier liquidator discount (BPS)': {
