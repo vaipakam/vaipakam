@@ -88,7 +88,14 @@ function SellerClaimItem({ row }: { row: SellerClaimRow }) {
   }
 
   return (
-    <li className="item-row" style={{ alignItems: 'flex-start' }}>
+    <li
+      className="item-row"
+      style={{ alignItems: 'flex-start' }}
+      data-loan={row.loanId}
+      data-withdraw={staleAfterWithdraw ? 'stale' : row.withdraw.kind}
+      data-withdrawn={showWithdrawn ? 'true' : 'false'}
+      data-busy={busy ? 'true' : 'false'}
+    >
       <span className="row-main">
         <Link to={`/positions/${row.loanId}`} className="row-title">
           {copy.sellerClaims.rowTitle(String(row.loanId))}
@@ -131,6 +138,7 @@ function SellerClaimItem({ row }: { row: SellerClaimRow }) {
         <button
           type="button"
           className="btn btn-primary btn-sm"
+          data-testid="seller-claim-withdraw"
           disabled={busy || !onSupportedChain}
           onClick={() => void withdraw()}
         >
@@ -141,13 +149,43 @@ function SellerClaimItem({ row }: { row: SellerClaimRow }) {
   );
 }
 
-/** Renders nothing for a wallet with no seller claims. */
+/**
+ * Where seller-claim discovery stands, published for a reader of the page
+ * (the live drive and the e2e spec), the way the extension-reserve card
+ * publishes its own: `loading` until the list and every row's chain reads
+ * have answered, `empty` when they answered with nothing, `unavailable`
+ * when the list could not be read, and `listed` otherwise. `data-unread`
+ * names loans whose row could not be read and `data-truncated` a list cut
+ * short, so a reader never takes a missing row for a claim that is not there.
+ */
+function DiscoveryState({
+  state,
+  unread = [],
+  truncated = false,
+}: {
+  state: 'loading' | 'empty' | 'unavailable' | 'listed';
+  unread?: readonly number[];
+  truncated?: boolean;
+}) {
+  return (
+    <span
+      hidden
+      data-testid="seller-claims-state"
+      data-state={state}
+      data-unread={unread.join(',')}
+      data-truncated={truncated ? 'true' : 'false'}
+    />
+  );
+}
+
+/** Renders nothing visible for a wallet with no seller claims. */
 export function SellerClaimsCard() {
   const claims = useMySellerClaims();
-  if (claims.isLoading || claims.data === undefined) return null;
+  if (claims.isLoading || claims.data === undefined) return <DiscoveryState state="loading" />;
   if (claims.data === null) {
     return (
       <section className="card" style={{ marginBottom: 16 }}>
+        <DiscoveryState state="unavailable" />
         <div className="card-title">
           <Coins aria-hidden />
           <h2 style={{ margin: 0 }}>{copy.sellerClaims.title}</h2>
@@ -159,9 +197,10 @@ export function SellerClaimsCard() {
   const { rows, unread, truncated } = claims.data;
   // A cut-short list with nothing in it has not shown there is nothing: the
   // loans it did not reach may still owe this seller.
-  if (rows.length === 0 && unread.length === 0 && !truncated) return null;
+  if (rows.length === 0 && unread.length === 0 && !truncated) return <DiscoveryState state="empty" />;
   return (
     <section className="card" style={{ marginBottom: 16 }} data-testid="seller-claims">
+      <DiscoveryState state="listed" unread={unread} truncated={truncated} />
       <div className="card-title">
         <Coins aria-hidden />
         <h2 style={{ margin: 0 }}>{copy.sellerClaims.title}</h2>
