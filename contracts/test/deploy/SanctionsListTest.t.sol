@@ -46,7 +46,12 @@ contract SanctionsListTest is Test {
         address indexed safe
     );
 
+    /// @dev 2029-01-01 00:00 UTC: after every publication date these tests
+    ///      record, since a date after the chain's UTC date is refused (#3239).
+    uint256 internal constant NOW = 1_861_920_000;
+
     function setUp() public {
+        vm.warp(NOW);
         // A mainnet chain id: unlike the testnet overlay, this list may live
         // anywhere.
         vm.chainId(1);
@@ -278,7 +283,7 @@ contract SanctionsListTest is Test {
     // ── Updates ───────────────────────────────────────────────────────
 
     function test_ApplyUpdate_ListsRecordsProvenanceAndEmits() public {
-        vm.warp(1_760_000_000);
+        vm.warp(NOW);
         vm.expectEmit(true, true, false, true, address(list));
         emit AddressListed(a, 1);
         vm.expectEmit(true, true, false, true, address(list));
@@ -288,7 +293,7 @@ contract SanctionsListTest is Test {
         _update(_arr(a, b), _none(), H1, 20261015);
 
         assertEq(list.listVersion(), 1);
-        assertEq(list.lastUpdatedAt(), 1_760_000_000);
+        assertEq(list.lastUpdatedAt(), NOW);
         assertEq(list.sourceHash(), H1);
         assertEq(list.sourcePublicationDate(), 20261015);
         assertEq(list.listedCount(), 2);
@@ -665,6 +670,7 @@ contract SanctionsListTest is Test {
     function test_Order_AcceptsRealCalendarEdges() public {
         _update(_arr(a), _none(), H1, 20280229);
         _update(_none(), _none(), H2, 20280430);
+        vm.warp(13_574_563_200); // 2400-02-29: a date must not run ahead of the chain (#3239)
         _update(_none(), _none(), keccak256("p3"), 24000229);
         assertEq(list.sourcePublicationDate(), 24000229);
     }
@@ -750,7 +756,7 @@ contract SanctionsListTest is Test {
     // ── Freshness ─────────────────────────────────────────────────────
 
     function test_Freshness_ReportsBothSources() public {
-        vm.warp(1_760_000_000);
+        vm.warp(NOW);
         _update(_arr(a), _none(), H1, 20261015);
         redstone.setLastUpdate(1_759_900_000);
         (
@@ -767,7 +773,7 @@ contract SanctionsListTest is Test {
         assertEq(pendingAdd, 0);
         assertEq(pending, 0);
         assertEq(version, 1);
-        assertEq(ownAt, 1_760_000_000);
+        assertEq(ownAt, NOW);
         assertEq(h, H1);
         assertEq(pub, 20261015);
         assertTrue(hasSec);
@@ -785,7 +791,7 @@ contract SanctionsListTest is Test {
     /// @notice A zero word (never updated, or a fallback answering with an
     ///         empty word) is not a time, so it reads as unknown.
     function test_Freshness_ZeroSecondaryTimestampIsUnknown() public {
-        vm.warp(1_760_000_000);
+        vm.warp(NOW);
         redstone.setLastUpdate(0);
         (bool known, uint256 ts) = list.secondaryLastUpdate();
         assertFalse(known);
@@ -799,15 +805,15 @@ contract SanctionsListTest is Test {
     /// @notice A timestamp after the current block is implausible and reads
     ///         as unknown; the current block itself is accepted.
     function test_Freshness_FutureSecondaryTimestampIsUnknown() public {
-        vm.warp(1_760_000_000);
-        redstone.setLastUpdate(1_760_000_001);
+        vm.warp(NOW);
+        redstone.setLastUpdate(NOW + 1);
         (bool known, uint256 ts) = list.secondaryLastUpdate();
         assertFalse(known);
         assertEq(ts, 0);
-        redstone.setLastUpdate(1_760_000_000);
+        redstone.setLastUpdate(NOW);
         (known, ts) = list.secondaryLastUpdate();
         assertTrue(known);
-        assertEq(ts, 1_760_000_000);
+        assertEq(ts, NOW);
     }
 
     /// @notice A secondary without RedStone's freshness read (a plain
@@ -864,5 +870,95 @@ contract SanctionsListTest is Test {
         for (uint256 i; i < nAdd; ++i) {
             assertEq(list.isSanctioned(add[i]), i >= nRemove);
         }
+    }
+
+    // ── The adder's bounds (#3239, note 4b) ───────────────────────────
+
+    function _many(uint256 n, uint256 seed) internal pure returns (address[] memory r) {
+        r = new address[](n);
+        for (uint256 i; i < n; ++i) {
+            r[i] = address(uint160(seed + i));
+        }
+    }
+
+    function test_UtcDate_ConvertsUnixTime() public view {
+        assertEq(list.utcDate(0), 19700101);
+        assertEq(list.utcDate(NOW), 20290101);
+        assertEq(list.utcDate(NOW - 1), 20281231);
+        assertEq(list.utcDate(951_782_400), 20000229); // a leap day of a century leap year
+        assertEq(list.utcDate(4_107_542_400), 21000301); // 2100 is not a leap year
+    }
+
+    function test_PublicationDate_RefusesADateAfterTheChainsUtcDate() public {
+        vm.warp(1_792_368_000); // 2026-10-19 00:00 UTC
+        _update(_arr(a), _none(), H1, 20261019); // today is fine
+        vm.prank(bot);
+        vm.expectRevert(abi.encodeWithSelector(SanctionsList.PublicationDatedInFuture.selector, uint32(20261020), uint32(20261019)));
+        list.applyUpdate(1, _arr(b), _none(), H2, 20261020, 0, 0);
+        // The remover is held to it too, and so is a rollback authorization.
+        vm.prank(safe);
+        vm.expectRevert(abi.encodeWithSelector(SanctionsList.PublicationDatedInFuture.selector, uint32(29991231), uint32(20261019)));
+        list.applyUpdate(1, _arr(b), _none(), H2, 29991231, 0, 0);
+        vm.warp(1_792_368_000 + 1 days);
+        vm.prank(bot);
+        list.applyUpdate(1, _arr(b), _none(), H2, 20261020, 0, 0);
+        assertEq(list.sourcePublicationDate(), 20261020);
+    }
+
+    function test_DailyCap_StartsAtTheDefaultAndOnlyTheOwnerMovesIt() public {
+        assertEq(list.adderDailyAdditionCap(), 100);
+        assertEq(list.adderAdditionsLeftToday(), 100);
+        vm.prank(bot);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, bot));
+        list.setAdderDailyAdditionCap(500);
+        vm.startPrank(admin);
+        vm.expectRevert(abi.encodeWithSelector(SanctionsList.AdderDailyCapOutOfRange.selector, uint32(9)));
+        list.setAdderDailyAdditionCap(9);
+        vm.expectRevert(abi.encodeWithSelector(SanctionsList.AdderDailyCapOutOfRange.selector, uint32(1001)));
+        list.setAdderDailyAdditionCap(1001);
+        vm.expectEmit(address(list));
+        emit SanctionsList.AdderDailyAdditionCapSet(10);
+        list.setAdderDailyAdditionCap(10);
+        vm.stopPrank();
+        assertEq(list.adderAdditionsLeftToday(), 10);
+    }
+
+    function test_DailyCap_BoundsTheAdderAcrossUpdatesUntilTheNextUtcDay() public {
+        vm.prank(admin);
+        list.setAdderDailyAdditionCap(10);
+        // A publication of 15: the adder lists 6, then 4 more of it, and the
+        // day's cap is spent.
+        vm.prank(bot);
+        list.applyUpdate(0, _many(6, 0x1000), _none(), H1, 20261015, 9, 0);
+        vm.prank(bot);
+        list.applyUpdate(1, _many(4, 0x1006), _none(), H1, 20261015, 5, 0);
+        assertEq(list.adderAdditionsLeftToday(), 0);
+        vm.prank(bot);
+        vm.expectRevert(abi.encodeWithSelector(SanctionsList.AdderDailyCapExceeded.selector, uint256(1), uint256(0)));
+        list.applyUpdate(2, _many(1, 0x100a), _none(), H1, 20261015, 4, 0);
+        // A refresh that lists nothing still goes through.
+        vm.prank(bot);
+        list.applyUpdate(2, _none(), _none(), H1, 20261015, 5, 0);
+        // The next UTC day, the rest of the publication lands.
+        vm.warp(NOW + 1 days);
+        assertEq(list.adderAdditionsLeftToday(), 10);
+        vm.prank(bot);
+        list.applyUpdate(3, _many(5, 0x100a), _none(), H1, 20261015, 0, 0);
+        assertEq(list.listedCount(), 15);
+        assertEq(list.adderAdditionsLeftToday(), 5);
+    }
+
+    function test_DailyCap_RefusesOneUpdateLargerThanTheCap() public {
+        vm.prank(bot);
+        vm.expectRevert(abi.encodeWithSelector(SanctionsList.AdderDailyCapExceeded.selector, uint256(101), uint256(100)));
+        list.applyUpdate(0, _many(101, 0x1000), _none(), H1, 20261015, 0, 0);
+    }
+
+    function test_DailyCap_DoesNotLimitTheRemover() public {
+        vm.prank(safe);
+        list.applyUpdate(0, _many(300, 0x1000), _none(), H1, 20261015, 0, 0);
+        assertEq(list.listedCount(), 300);
+        // nor count against the adder's allowance
+        assertEq(list.adderAdditionsLeftToday(), 100);
     }
 }

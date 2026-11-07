@@ -1150,6 +1150,7 @@ export function buildUpdate({
   maxChangesPerCall = DEFAULT_MAX_CHANGES_PER_CALL,
   confirmedDelistings = [],
   signers = 'all',
+  maxAdditions = Infinity,
   abi = sanctionsListAbi(),
 }) {
   if (signers !== 'all' && signers !== 'adder') throw new Error(`signers must be 'all' or 'adder', got ${JSON.stringify(signers)}`);
@@ -1157,6 +1158,12 @@ export function buildUpdate({
   if (signers === 'adder' && allowRollback) throw new Error('an adder-only update never rolls back a publication');
   if (!Number.isSafeInteger(maxRemove) || maxRemove < 0) throw new Error(`maxRemove must be a non-negative integer, got ${maxRemove}`);
   if (!Number.isSafeInteger(maxChangesPerCall) || maxChangesPerCall < 1) throw new Error(`maxChangesPerCall must be a positive integer, got ${maxChangesPerCall}`);
+  // The list's daily cap on an adder's listings (#3239, note 4b on the
+  // contract): only an adder-only update is held to it.
+  if (maxAdditions !== Infinity && (!Number.isSafeInteger(maxAdditions) || maxAdditions < 0)) {
+    throw new Error(`maxAdditions must be a non-negative integer, got ${maxAdditions}`);
+  }
+  if (signers !== 'adder' && maxAdditions !== Infinity) throw new Error('maxAdditions bounds an adder-only update only');
   if (recordedDate === undefined || recordedHash === undefined) throw new Error('the recorded publication date and hash are required');
   // No defaults: a guessed count would build calls the contract refuses, or
   // hide a partly applied publication from the reviewer (Codex #2543 r9).
@@ -1229,8 +1236,12 @@ export function buildUpdate({
   // empty adder call declaring its delistings outstanding, so the list says
   // which publication it follows and what of it is not yet applied. A repeat
   // with nothing left to add gives the adder nothing to do.
+  // What this update lists: all of it, or as much as the adder's daily cap
+  // leaves today. The rest stays declared outstanding (note 4a), and the next
+  // run, on a later UTC day, lists it as a repeat of the same publication.
+  const addNow = add.slice(0, maxAdditions);
   let addBatches;
-  if (add.length > 0) addBatches = batches(add);
+  if (addNow.length > 0) addBatches = batches(addNow);
   else if (signers === 'adder') addBatches = order === 'same-publication' ? [] : [[]];
   else addBatches = remove.length > 0 ? [] : [[]];
   for (const batch of addBatches) {
@@ -1245,6 +1256,9 @@ export function buildUpdate({
   }
   return {
     add,
+    // The additions this update's calls carry; fewer than `add` only when the
+    // adder's daily cap holds the rest back for a later day.
+    addNow,
     remove,
     // The delistings this update leaves for the remover: all of them in
     // adder-only mode, none otherwise.

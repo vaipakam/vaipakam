@@ -98,6 +98,37 @@ test('run: a new publication lists its additions and declares its delistings for
   assert.ok(needsAlert(report));
 });
 
+test('run: the list\'s daily cap holds the rest of a publication for a later UTC day (#3239)', async () => {
+  const list = { version: 7n, addresses: [C] };
+  let left = 1;
+  const capped = { additionsLeftToday: async () => left };
+  const first = await run(list, capped);
+  assert.equal(first.chain.status, 'applied');
+  assert.equal(first.sent.length, 1);
+  let args = decodeFunctionData({ abi: sanctionsListAbi(), data: first.sent[0].calldata }).args;
+  assert.equal(args[1].length, 1, 'one address listed, as the cap allows');
+  assert.equal(args[5], 1, 'the other is declared outstanding');
+  assert.equal(first.chain.added.length, 1);
+  assert.equal(first.chain.heldForLaterDay, 1);
+  assert.match(summarize(first.report), /1 addition\(s\) of this publication wait for the next UTC day/);
+  assert.doesNotMatch(summarize(first.report), /overstated/);
+
+  left = 0;
+  const spent = await run(list, capped);
+  assert.equal(spent.chain.status, 'up-to-date');
+  assert.equal(spent.sent.length, 0);
+  assert.match(summarize(spent.report), /daily cap on the adder's listings is spent for today; nothing sent/);
+
+  left = 100;
+  const nextDay = await run(list, capped);
+  assert.equal(nextDay.chain.status, 'applied');
+  args = decodeFunctionData({ abi: sanctionsListAbi(), data: nextDay.sent[0].calldata }).args;
+  assert.equal(args[1].length, 1);
+  assert.equal(args[5], 0, 'the publication is complete');
+  assert.equal(nextDay.chain.heldForLaterDay, undefined);
+  assert.equal(list.addresses.length, 3);
+});
+
 test('run: up to date when the list holds the recorded publication', async () => {
   const fixtureAddrs = ['0x1CAb8177ACe78b1B6B1c393371F4f2dCAE40CbEB', getAddress('0x252a8bd2319d8a555b872990601221b3a2053bce')];
   const { report, chain, sent } = await run({ version: 8n, addresses: fixtureAddrs, date: 20260307, hash: HASH });
