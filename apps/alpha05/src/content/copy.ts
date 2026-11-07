@@ -402,7 +402,10 @@ export const copy = {
     approvalZeroFirst: B('Set to 0 first, as this token requires, then approve exactly {{amount}}'),
     loseFull: A('You pay the protocol’s figure at the moment it confirms; past the due date a late fee is added.'),
     loseGrows: A('The amount grows by the second until it confirms; you pay the protocol’s figure at that moment.'),
-    loseLate: A('If it confirms after {{time}}, the approval falls short and the repayment is refused: nothing moves. Review it again.'),
+    loseLate: A(
+      'The approval caps the amount, not the time: confirming after {{time}}, it goes through only while the protocol’s figure stays within it, and is otherwise refused with nothing moved.',
+    ),
+    loseSame: A('This figure did not grow over that window, so a repayment confirming after it can still go through, at the protocol’s figure then.'),
     loseGraceEnds: A('The grace period ends at {{time}}; after that the protocol refuses a repayment and nothing moves.'),
     losePutBack: A('Whatever the repayment does not use of the approval is put back to {{amount}} afterwards.'),
     loseThirdParty: A('Paying gives you no right to the collateral: only the holder of borrower position #{{id}} can collect it.'),

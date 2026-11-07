@@ -6,10 +6,11 @@ import { useOwnStateClient, type OwnStateClient } from '../../chain/ownRail';
 import { useCopy, type CopyKey } from '../../shared/copy/useCopy';
 import { CADENCE_NAME, isCadence } from '../../shared/offers/cadence';
 import { ASSET_ERC20, LOAN_STATUS_FALLBACK_PENDING, isLiveStatus, loanObligations, loanStatusName } from '../../shared/positions/model';
+import { assetAmount } from '../../shared/positions/assetAmount';
 import { InterestLine, ReadState, StageLine } from '../../shared/positions/PositionSections';
 import { ILLIQUID, readLoanView, recordedInitFeeBps, roleOf, treasuryShareBps, type DefaultRefusal, type LoanView, type Role } from '../../shared/positions/loanView';
 import { useOwnRead } from '../../shared/reads/useOwnRead';
-import { assetName, tokenAmount, useTokenMeta, type TokenMetaMap } from '../../shared/reads/tokens';
+import { tokenAmount, useTokenMeta, type TokenMetaMap } from '../../shared/reads/tokens';
 import { formatBps, formatScaled, formatSpan, formatUtc, shortAddress } from '../../shared/ui/format';
 import { Icon } from '../../shared/ui/Icon';
 import { OwnStamp } from '../../shared/ui/OwnStamp';
@@ -105,10 +106,7 @@ function LoanBody({ loanId, view: v, own, chain, meta }: { loanId: bigint; view:
   // not "unknown". On a loan with both legs priced, every successful read is
   // a figure, zero included (a collateral value that rounds to nothing).
   const noRiskMath = l.principalLiquidity === ILLIQUID || l.collateralLiquidity === ILLIQUID;
-  const amountOf = (asset: Hex, assetType: number, amount: bigint, tokenId: bigint, quantity: bigint) =>
-    assetType === ASSET_ERC20
-      ? tokenAmount(amount, asset, meta, format)
-      : format('asset.nft', { id: tokenId.toString(), asset: assetName(asset, meta) }) + (quantity > 1n ? ` × ${quantity.toString()}` : '');
+  const amountOf = (asset: Hex, assetType: number, amount: bigint, tokenId: bigint, quantity: bigint) => assetAmount({ asset, assetType, amount, tokenId, quantity }, meta, format);
   // Deadline wording follows the side the reader holds; a viewer who holds
   // neither reads the lender's (no "you must repay").
   const borrowerSide = role?.borrower === true && role.lender !== true;

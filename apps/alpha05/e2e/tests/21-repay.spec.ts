@@ -64,8 +64,9 @@ test('the borrower repays in full: the payoff now and at most, an exact approval
   await expect(receipt).toContainText(/1,500 tLIQ, collected on Claims by the holder of borrower position #\d+/);
   await expect(receipt).toContainText(/Approve exactly 0\.3\d* WETH, the most it can take by then/);
   await expect(receipt).toContainText('The amount grows by the second until it confirms');
-  await expect(receipt).toContainText(/If it confirms after .* UTC, the approval falls short and the repayment is refused/);
+  await expect(receipt).toContainText(/The approval caps the amount, not the time: confirming after .* UTC, it goes through only while/);
   await expect(receipt).toContainText(`Whatever the repayment does not use of the approval is put back to ${priorText} afterwards.`);
+  await expect(receipt).not.toContainText('This figure did not grow over that window');
   await expect(receipt).not.toContainText('Paying gives you no right to the collateral');
   await expect(receipt).toContainText('Wallet prompts: 2.');
   await fitsWidth(page);
@@ -105,7 +106,7 @@ test('an unlimited standing approval is lowered to exactly the most the repaymen
   const flow = page.getByTestId('repay-panel');
   const receipt = flow.locator('.receipt');
   await expect(receipt).toContainText(/Lower your approval from unlimited to exactly 0\.05\d* WETH, the most it can take by then/, { timeout: 60_000 });
-  await expect(receipt).toContainText(/If it confirms after .* UTC, the approval falls short and the repayment is refused/);
+  await expect(receipt).toContainText(/The approval caps the amount, not the time: confirming after .* UTC, it goes through only while/);
   await expect(receipt).toContainText('Whatever the repayment does not use of the approval is put back to unlimited afterwards.');
   await expect(receipt).toContainText('Wallet prompts: 2.');
   await fitsWidth(page);
@@ -119,6 +120,24 @@ test('an unlimited standing approval is lowered to exactly the most the repaymen
   // Lower, repay, and the put-back.
   expect(flags.sentTransactions).toBe(sent + 3);
   expect(await sc.pub.readContract({ address: WETH, abi: erc20Abi, functionName: 'allowance', args: [borrower, sc.diamond] })).toBe(maxUint256);
+});
+
+test('full-term interest: the payoff does not grow, so the review says a later confirmation can still go through', async ({ launchWallet }) => {
+  const sc = scenario();
+  const { loanId } = await openLoan(sc, { lender: 'lender', borrower: 'borrower', principalWeth: '0.05', collateralTliq: '250', rateBps: 500, days: 30, fullTermInterest: true });
+  await sc.write('borrower', WETH, WETH_ABI, 'deposit', [], parseEther('0.05'));
+
+  const { page } = await launchWallet('borrower');
+  await page.goto(`/positions/${loanId}`);
+  await connectWallet(page);
+  await page.getByRole('region', { name: 'Actions' }).getByTestId('repay-open').click({ timeout: 60_000 });
+  const flow = page.getByTestId('repay-panel');
+  const receipt = flow.locator('.receipt');
+  await expect(receipt).toContainText('This figure did not grow over that window, so a repayment confirming after it can still go through', { timeout: 60_000 });
+  await expect(receipt).toContainText(/The approval caps the amount, not the time/);
+  await fitsWidth(page);
+  await flow.getByRole('button', { name: 'Cancel' }).click();
+  await expect(page.getByTestId('repay-open')).toBeVisible();
 });
 
 test('another wallet may repay but is told it gains no right to the collateral; the lender is not offered the action', async ({ launchWallet }) => {

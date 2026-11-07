@@ -8,6 +8,7 @@ import { maxUint256 } from 'viem';
 import type { CopyAccess } from '../copy/useCopy';
 import { figured, textValue, type Receipt } from '../receipt/types';
 import { exactTokenAmount, tokenAmount, type TokenMetaMap } from '../reads/tokens';
+import { assetAmount } from '../positions/assetAmount';
 import { formatUtc } from '../ui/format';
 import { STATUS_FALLBACK_PENDING } from '../eligibility/repay';
 import { paysAsBorrower, promptCount, type RepayReview } from './repayReview';
@@ -27,7 +28,13 @@ export function repayReceipt(r: RepayReview, account: Hex, meta: TokenMetaMap | 
   const exact = (v: bigint) => exactTokenAmount(v, asset, meta, format);
   const by = formatUtc(Number(r.payoff.by));
   const borrower = paysAsBorrower(r, account);
-  const collateral = (x: boolean) => tokenAmount(loan.collateralAmount, loan.collateralAsset, meta, format, x);
+  const collateral = (x: boolean) =>
+    assetAmount(
+      { asset: loan.collateralAsset, assetType: loan.collateralAssetType, amount: loan.collateralAmount, tokenId: loan.collateralTokenId, quantity: loan.collateralQuantity },
+      meta,
+      format,
+      x,
+    );
 
   const rows: Receipt['rows'] = [
     { label: text('repay.rowNow'), value: { kind: 'amount', asset, amount: r.payoff.now }, binding: true, movesOut: true },
@@ -66,6 +73,10 @@ export function repayReceipt(r: RepayReview, account: Hex, meta: TokenMetaMap | 
   const consequences = [
     text(loan.useFullTermInterest ? 'repay.loseFull' : 'repay.loseGrows'),
     format(r.capped ? 'repay.loseGraceEnds' : 'repay.loseLate', { time: by }),
+    // `repayLoan` takes no deadline: the approval is the only limit, so a
+    // figure that does not grow (full-term interest before the due date)
+    // leaves a later confirmation free to go through, and the review says so.
+    ...(!r.capped && r.payoff.atBy === r.payoff.now ? [text('repay.loseSame')] : []),
     ...(r.approvalSteps > 0 ? [format('repay.losePutBack', { amount: allowanceFigure(r.allowance, asset, meta, copy) })] : []),
     ...(borrower ? [] : [format('repay.loseThirdParty', { id: loan.borrowerTokenId.toString() })]),
     ...(loan.status === STATUS_FALLBACK_PENDING ? [text('repay.cure')] : []),

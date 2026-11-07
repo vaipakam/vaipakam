@@ -751,10 +751,16 @@ above. Each resolves here, so a route reviewer needs no private file:
   the protocol's full repayment takes no maximum or deadline of its own, so
   the allowance is the only cap on what a late confirmation can take, and a
   larger standing approval (an unlimited one included, named as unlimited)
-  would void the stated maximum. The review says that a repayment
-  confirming after that moment is refused with nothing moved, and that what
+  would void the stated maximum. The approval caps the AMOUNT, never the
+  time, and the review says so: a repayment confirming after that moment
+  goes through only while the protocol's figure stays within the approval.
+  Where the two figures are equal (full-term interest before the due date)
+  the review also says a later confirmation can still go through; it never
+  promises a deadline the protocol does not enforce. It says that what
   the repayment does not use is put back afterwards, to the allowance as it
-  stood before. A payer who does not hold the borrower position is told it
+  stood before. The collateral is named by its asset type (an NFT by its
+  token id, an ERC-1155 with its quantity), through the same rule as the
+  loan page. A payer who does not hold the borrower position is told it
   gains no right to the collateral. A re-read does not count the payoff
   growing by the second as a change; the figure at the kept moment, the
   holders, the dates, the approval steps or the verdict moving reopens the
