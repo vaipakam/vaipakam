@@ -971,8 +971,6 @@ export function OfferFlow({ side, initialMarket, createOnly = false }: {
     isAddressLike(form.lendingAsset) &&
     isPositiveDecimal(form.amount) &&
     !amountTooPrecise &&
-    !amountBelowFloor &&
-    !(mode === 'post' && offerCapStanding === 'full') &&
     durationValid;
   // The terms alone: the consent is the review's (`consent`, below), and
   // signing is gated on it there.
@@ -988,8 +986,13 @@ export function OfferFlow({ side, initialMarket, createOnly = false }: {
     isAddressLike(form.lendingAsset) &&
     isAddressLike(form.collateralAsset) &&
     form.lendingAsset.toLowerCase() === form.collateralAsset.toLowerCase();
+  // #3242 — the offer-book bounds gate POSTING only: finding and taking an
+  // existing offer adds nothing to this wallet's book, so match discovery
+  // stays open at the cap and for an amount under the floor.
   const postDetailsComplete =
     detailsComplete &&
+    !amountBelowFloor &&
+    offerCapStanding !== 'full' &&
     isAddressLike(form.collateralAsset) &&
     isPositiveDecimal(form.collateralAmount) &&
     !collateralTooPrecise &&

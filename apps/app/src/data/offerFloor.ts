@@ -15,6 +15,7 @@ import { useQuery } from '@tanstack/react-query';
 import { usePublicClient } from 'wagmi';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import { useActiveChain } from '../chain/useActiveChain';
+import { freshData } from '../lib/freshData';
 import type { OfferBookFloor } from '../lib/offerSchema';
 
 export type { OfferBookFloor };
@@ -28,7 +29,7 @@ export function useOfferBookFloor(lendingAsset: string | undefined): OfferBookFl
     ? (lendingAsset as `0x${string}`)
     : undefined;
 
-  const { data } = useQuery({
+  const q = useQuery({
     queryKey: ['offerBookFloor', readChain.chainId, asset],
     enabled: Boolean(publicClient && asset),
     staleTime: 60_000,
@@ -43,7 +44,8 @@ export function useOfferBookFloor(lendingAsset: string | undefined): OfferBookFl
     },
   });
 
-  return { minAmount: data ?? undefined };
+  // A failed refresh drops a cached answer rather than serving it as current.
+  return { minAmount: freshData(q) ?? undefined };
 }
 
 /**
@@ -59,7 +61,7 @@ export function useOpenOfferCount(
   const publicClient = usePublicClient({ chainId: readChain.chainId });
   const who = wallet && ADDRESS_RE.test(wallet) ? (wallet as `0x${string}`) : undefined;
 
-  const { data } = useQuery({
+  const q = useQuery({
     queryKey: ['openOfferCount', readChain.chainId, who],
     enabled: Boolean(publicClient && who),
     staleTime: 30_000,
@@ -73,5 +75,7 @@ export function useOpenOfferCount(
       return { open, cap };
     },
   });
-  return data;
+  // A failed refresh drops the cached count: a stale "at the cap" must not
+  // keep blocking a wallet that has since cancelled an offer.
+  return freshData(q);
 }
