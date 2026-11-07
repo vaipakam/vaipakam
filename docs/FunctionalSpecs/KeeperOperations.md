@@ -998,6 +998,31 @@ serves. Each ships switched off behind its own flag.
   same listing. Each teardown is reported from the protocol's own record of
   it. The duty ships switched off behind its own flag and pays only gas.
 
+## Applying vault-beacon changes once their delay has passed
+
+- The vault beacon holds three kinds of change that wait out a delay before
+  anyone may apply them: a new current vault version or a revoke the
+  Timelock proposed (waiting the beacon's minimum code delay, during which
+  it can still be cancelled), a vault owner's signed pin or unpin (waiting
+  that vault's own pin delay), and a vault owner's signed lowering of that
+  pin delay (waiting the current delay). Applying one only carries out what
+  its owner already decided and waited out; it moves no value. Every hour,
+  on every chain whose Diamond names a beacon, the keeper applies each one
+  that is due, so a matured change does not depend on someone remembering
+  to apply it.
+- The keeper must never apply a change before the time the beacon itself
+  records for it. It asks the beacon whether each application would succeed
+  and sends it only then, a few per kind per run. A change someone else
+  applied or cancelled first, and one the beacon says is not yet due, are
+  reported as such rather than as failures; each applied change is reported
+  from the beacon's own record of it.
+- The vaults to look at are found from the beacon's own request records, read
+  up to the chain's finalized block. A vault is dropped from the keeper's
+  list only when nothing is pending for it both at the latest block and at
+  the finalized block, so a change a reorganisation brings back is never
+  forgotten.
+- The duty ships switched off behind its own flag and pays only gas.
+
 ## Moving held reward claim days on to payment
 
 - A reward claim day that one call could not settle is held in a staging
@@ -1266,9 +1291,9 @@ The master keeper switch and each duty's own arming choice are separate.
 The periodic-interest settler and grace auto-list each have their own
 disabled-by-default activation.
 Late acknowledgements, sanctions observation, reward-day
-automation, reward-day close-out, zeroed-day recovery, the return transport, the reward heartbeat and its entry close-out, protocol upkeep, its prepay-sale sanctions sync, its tier-push retry, its tier-exclusion refresh, its reward-entry index compaction and its sanctions-registry refresh, and position upkeep and its backstop fill must each
+automation, reward-day close-out, zeroed-day recovery, the return transport, the reward heartbeat and its entry close-out, protocol upkeep, its prepay-sale sanctions sync, its tier-push retry, its tier-exclusion refresh, its reward-entry index compaction and its sanctions-registry refresh, position upkeep and its backstop fill, and vault-beacon upkeep must each
 disclose whether they are armed on the selected deployment. Reward-day
-automation, close-out, zeroed-day recovery, the return transport, the heartbeat and its entry close-out, protocol upkeep, its sanctions sync, its tier-push retry, its tier-exclusion refresh, its index compaction and its sanctions-registry refresh, and position upkeep and its backstop fill ship disabled and require
+automation, close-out, zeroed-day recovery, the return transport, the heartbeat and its entry close-out, protocol upkeep, its sanctions sync, its tier-push retry, its tier-exclusion refresh, its index compaction and its sanctions-registry refresh, position upkeep and its backstop fill, and vault-beacon upkeep ship disabled and require
 deliberate activation. Deploying their software does not prove they run, that rewards have launched, or that custody or the
 expiry horizon has been activated. The mirror's day-delivery protection is
 required by its reward role, as stated in the current tokenomics spec; it is

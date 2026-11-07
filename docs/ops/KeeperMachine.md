@@ -448,6 +448,8 @@ journalctl -u vaipakam-keeper -f
    `BACKSTOP_FILL_ENABLED`, which lends treasury capital from the backstop
    vault and is an owner decision of its own),
    `EXPIRED_TEARDOWN_ENABLED` (`expiredTeardown`, hourly at :06),
+   `VAULT_BEACON_UPKEEP_ENABLED` (`vaultBeaconUpkeep`, hourly at :26:
+   applies VaultBeacon proposals, pins and pin-delay lowerings once due),
    `REWARD_STAGING_UPKEEP_ENABLED` (`rewardStagingUpkeep`, hourly at :51:
    moves held reward claim days on to payment; its unwind step also needs
    `REWARD_STAGING_UNWIND_ENABLED`), and
