@@ -20,6 +20,8 @@ import { LoanStatus } from '../lib/types';
 import {
   simulateSellerWithdraw,
   useMySellerClaims,
+  useRecordSellerWithdrawOutcome,
+  useSellerWithdrawOutcomes,
   type SellerClaimRow,
 } from '../data/sellerClaims';
 
@@ -54,6 +56,7 @@ function SellerClaimItem({ row }: { row: SellerClaimRow }) {
   const client = usePublicClient({ chainId: walletChain?.chainId });
   const { write } = useDiamondWrite();
   const queryClient = useQueryClient();
+  const recordWithdrawn = useRecordSellerWithdrawOutcome();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // What was waiting when this row's withdrawal went through. While the
@@ -62,7 +65,6 @@ function SellerClaimItem({ row }: { row: SellerClaimRow }) {
   const [withdrewFrom, setWithdrewFrom] = useState<string | null>(null);
   const heldNow = heldKey(row);
   const staleAfterWithdraw = withdrewFrom !== null && withdrewFrom === heldNow;
-  const showWithdrawn = withdrewFrom !== null && (staleAfterWithdraw || row.withdraw.kind !== 'ready');
 
   async function withdraw() {
     if (!address || !walletChain || !client) return;
@@ -79,6 +81,8 @@ function SellerClaimItem({ row }: { row: SellerClaimRow }) {
       if (live.kind === 'unknown') throw new Error(copy.sellerClaims.checkFailed);
       await write('claimAsSeller', [BigInt(row.loanId)]);
       setWithdrewFrom(heldNow);
+      // Stated by the card, not the row: the row goes once nothing is owed.
+      recordWithdrawn(row.loanId);
     } catch (err) {
       setError(captureTxError(err));
     } finally {
@@ -88,7 +92,13 @@ function SellerClaimItem({ row }: { row: SellerClaimRow }) {
   }
 
   return (
-    <li className="item-row" style={{ alignItems: 'flex-start' }}>
+    <li
+      className="item-row"
+      style={{ alignItems: 'flex-start' }}
+      data-loan={row.loanId}
+      data-withdraw={staleAfterWithdraw ? 'stale' : row.withdraw.kind}
+      data-busy={busy ? 'true' : 'false'}
+    >
       <span className="row-main">
         <Link to={`/positions/${row.loanId}`} className="row-title">
           {copy.sellerClaims.rowTitle(String(row.loanId))}
@@ -116,11 +126,6 @@ function SellerClaimItem({ row }: { row: SellerClaimRow }) {
             {copy.sellerClaims.checkFailed}
           </span>
         ) : null}
-        {showWithdrawn ? (
-          <span className="row-sub" role="status" style={{ display: 'block' }}>
-            {copy.sellerClaims.withdrawn}
-          </span>
-        ) : null}
         {error ? (
           <span className="row-sub" role="alert" style={{ display: 'block', color: 'var(--danger)' }}>
             {error}
@@ -131,6 +136,7 @@ function SellerClaimItem({ row }: { row: SellerClaimRow }) {
         <button
           type="button"
           className="btn btn-primary btn-sm"
+          data-testid="seller-claim-withdraw"
           disabled={busy || !onSupportedChain}
           onClick={() => void withdraw()}
         >
@@ -141,27 +147,81 @@ function SellerClaimItem({ row }: { row: SellerClaimRow }) {
   );
 }
 
-/** Renders nothing for a wallet with no seller claims. */
+/**
+ * Where seller-claim discovery stands, published for a reader of the page
+ * (the live drive and the e2e spec), the way the extension-reserve card
+ * publishes its own: `loading` until the list and every row's chain reads
+ * have answered, `empty` when they answered with nothing, `unavailable`
+ * when the list could not be read, and `listed` otherwise. `data-unread`
+ * names loans whose row could not be read and `data-truncated` a list cut
+ * short, so a reader never takes a missing row for a claim that is not there.
+ */
+function DiscoveryState({
+  state,
+  unread = [],
+  truncated = false,
+}: {
+  state: 'loading' | 'empty' | 'unavailable' | 'listed';
+  unread?: readonly number[];
+  truncated?: boolean;
+}) {
+  return (
+    <span
+      hidden
+      data-testid="seller-claims-state"
+      data-state={state}
+      data-unread={unread.join(',')}
+      data-truncated={truncated ? 'true' : 'false'}
+    />
+  );
+}
+
+/** Renders nothing visible for a wallet with no seller claims. */
 export function SellerClaimsCard() {
   const claims = useMySellerClaims();
-  if (claims.isLoading || claims.data === undefined) return null;
+  const withdrawn = useSellerWithdrawOutcomes();
+  // This session's withdrawals, listed by the card so each outlives its row
+  // (a withdrawal that empties an ended loan's claim removes the row).
+  const outcomeList = withdrawn.map((id) => (
+    <div
+      key={id}
+      className="banner banner-info"
+      role="status"
+      style={{ marginTop: 12 }}
+      data-testid="seller-claim-withdrawn"
+      data-loan={id}
+    >
+      <span className="banner-body">
+        <Link to={`/positions/${id}`} style={{ display: 'block' }}>
+          {copy.sellerClaims.rowTitle(String(id))}
+        </Link>
+        {copy.sellerClaims.withdrawn}
+      </span>
+    </div>
+  ));
+  if (claims.isLoading || claims.data === undefined) return <DiscoveryState state="loading" />;
   if (claims.data === null) {
     return (
       <section className="card" style={{ marginBottom: 16 }}>
+        <DiscoveryState state="unavailable" />
         <div className="card-title">
           <Coins aria-hidden />
           <h2 style={{ margin: 0 }}>{copy.sellerClaims.title}</h2>
         </div>
         <p className="muted">{copy.sellerClaims.unavailable}</p>
+        {outcomeList}
       </section>
     );
   }
   const { rows, unread, truncated } = claims.data;
   // A cut-short list with nothing in it has not shown there is nothing: the
   // loans it did not reach may still owe this seller.
-  if (rows.length === 0 && unread.length === 0 && !truncated) return null;
+  if (rows.length === 0 && unread.length === 0 && !truncated && outcomeList.length === 0) {
+    return <DiscoveryState state="empty" />;
+  }
   return (
     <section className="card" style={{ marginBottom: 16 }} data-testid="seller-claims">
+      <DiscoveryState state="listed" unread={unread} truncated={truncated} />
       <div className="card-title">
         <Coins aria-hidden />
         <h2 style={{ margin: 0 }}>{copy.sellerClaims.title}</h2>
@@ -178,6 +238,7 @@ export function SellerClaimsCard() {
         </p>
       ))}
       {truncated ? <p className="muted">{copy.sellerClaims.truncated}</p> : null}
+      {outcomeList}
     </section>
   );
 }
