@@ -340,9 +340,17 @@ export function setPrivateSubmissionClientForTest(url: string, client: PublicCli
  *    is what is thrown: the nonce stays reserved and the hash stays findable,
  *    exactly as for any broadcast whose answer was lost.
  *
- * Called inside a submission slot, after `signed()`.
+ * Called inside a submission slot, after `signed()`. `notAfterMs` is the
+ * sending run's deadline: on a private route it is checked again after the
+ * nonce record is written, since that write can carry a send past it.
  */
-export async function broadcastSigned(wallet: WalletClient, chainId: number, serialized: Hex): Promise<Hex> {
+export async function broadcastSigned(
+  wallet: WalletClient,
+  chainId: number,
+  serialized: Hex,
+  notAfterMs: number,
+  now: () => number = Date.now,
+): Promise<Hex> {
   const route = armedSubmissionRoute(chainId);
   if ('unread' in route) throw new SubmissionRouteUnread(`send refused: ${route.unread}`);
   if (route.kind === 'public') return wallet.sendRawTransaction({ serializedTransaction: serialized });
@@ -356,8 +364,13 @@ export async function broadcastSigned(wallet: WalletClient, chainId: number, ser
   if (!reservations || !address || nonce === undefined) {
     throw new SubmissionRouteUnread('send refused: the private send could not be recorded (no nonce record, account or nonce)');
   }
+  // The record as it stood, so a send that takes nothing puts it back
+  // exactly, timestamp included (Codex #3275 r2): refreshing it on every
+  // refused send would keep a gap left by a crash fresh forever.
+  let prior: { next: number; atMs: number } | null;
   try {
-    await reservations.write(chainId, address, nonce + 1, Date.now());
+    prior = await reservations.read(chainId, address);
+    await reservations.write(chainId, address, nonce + 1, now());
   } catch (err) {
     throw new SubmissionRouteUnread(`send refused: the private nonce record could not be written (${describeFailure(err)})`);
   }
@@ -368,11 +381,20 @@ export async function broadcastSigned(wallet: WalletClient, chainId: number, ser
   const release = async (err: unknown): Promise<void> => {
     if (!isDefinitiveRejection(err)) return;
     try {
-      await reservations.write(chainId, address, nonce, Date.now());
+      // No earlier record: an expired one, which the slot ignores.
+      await reservations.write(chainId, address, prior?.next ?? nonce, prior?.atMs ?? 0);
     } catch (writeErr) {
       console.warn(`[submission] chain=${chainId} could not release nonce ${nonce} in the private nonce record (${describeFailure(writeErr)}); later sends wait for it to expire`);
     }
   };
+
+  // The write above can be slow (the machine's D1 adapter waits up to 20 s),
+  // so the run's deadline is checked again before anything leaves.
+  if (now() >= notAfterMs) {
+    const late = new SendPastDeadline(`send refused before broadcast: the run's deadline passed while the private nonce was recorded — next run`);
+    await release(late);
+    throw late;
+  }
 
   // Through the sending pass's own fetch when it has one, so a capped pass
   // counts the private broadcast like any other request (Codex #3275 r1).
@@ -506,7 +528,7 @@ export function queuedWallet(
         } as never);
         signed();
         try {
-          return await broadcastSigned(base, chainId, serialized);
+          return await broadcastSigned(base, chainId, serialized, notAfterMs);
         } catch (err) {
           // Possibly relayed: the same rule that keeps the nonce reserved
           // ({@link withSubmissionSlot}) keeps the hash findable.

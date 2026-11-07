@@ -19,6 +19,7 @@ import {
   broadcastSigned,
   FLOOR_TTL_MS,
   isDefinitiveRejection,
+  isSendPastDeadline,
   resetSubmissionQueues,
   setPrivateSubmissionClientForTest,
   SubmissionRouteUnread,
@@ -27,6 +28,7 @@ import {
 import { memoryNonceReservations, type NonceReservations } from '../src/privateNonce';
 import { armHeldFence } from './helpers/epochFence';
 
+const FAR = Number.MAX_SAFE_INTEGER;
 const URL_ETH = 'https://rpc.example.org/fast?key=SECRET';
 const account = privateKeyToAccount(`0x${'11'.repeat(32)}` as Hex);
 // A real signed transaction at nonce 0, so the nonce the record takes is read
@@ -123,26 +125,26 @@ describe('broadcastSigned', () => {
   it('sends through the ordinary RPC on a chain with no private route', async () => {
     const calls: string[] = [];
     const wallet = createWalletClient({ account, transport: rpc(async () => keccak256(RAW), calls, 'public') });
-    await broadcastSigned(wallet, 8453, RAW);
+    await broadcastSigned(wallet, 8453, RAW, FAR);
     expect(calls).toEqual(['public']);
   });
 
   it('sends through the private endpoint, and never the ordinary RPC, on a chain with one', async () => {
     const s = setup({ fallback: false, priv: async () => keccak256(RAW) });
-    expect(await broadcastSigned(s.wallet, 1, RAW)).toBe(keccak256(RAW));
+    expect(await broadcastSigned(s.wallet, 1, RAW, FAR)).toBe(keccak256(RAW));
     expect(s.calls).toEqual(['private']);
   });
 
   it('without a fallback, a failed private send is a failed send', async () => {
     const s = setup({ fallback: false, priv: async () => { throw rpcRefusal(); } });
-    await expect(broadcastSigned(s.wallet, 1, RAW)).rejects.toThrow();
+    await expect(broadcastSigned(s.wallet, 1, RAW, FAR)).rejects.toThrow();
     expect(s.calls).toEqual(['private']);
   });
 
   it('with a fallback, the same signed bytes go to the ordinary RPC', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const s = setup({ fallback: true, priv: async () => { throw rpcRefusal(); } });
-    expect(await broadcastSigned(s.wallet, 1, RAW)).toBe(keccak256(RAW));
+    expect(await broadcastSigned(s.wallet, 1, RAW, FAR)).toBe(keccak256(RAW));
     expect(s.calls).toEqual(['private', 'public']);
     expect(warn.mock.calls.join(' ')).not.toContain('SECRET');
   });
@@ -150,7 +152,7 @@ describe('broadcastSigned', () => {
   it('when a private send that may have relayed is followed by a refused fallback, the possibly-relayed error is thrown', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     const s = setup({ fallback: true, priv: async () => { throw lost(); }, pub: async () => { throw rpcRefusal(); } });
-    const err = await broadcastSigned(s.wallet, 1, RAW).catch((e: unknown) => e);
+    const err = await broadcastSigned(s.wallet, 1, RAW, FAR).catch((e: unknown) => e);
     // Not definitive: the slot keeps the nonce reserved.
     expect(isDefinitiveRejection(err)).toBe(false);
   });
@@ -204,17 +206,44 @@ describe('the private nonce record (Codex #3275 r1)', () => {
         return keccak256(RAW);
       },
     });
-    await broadcastSigned(s.wallet, 1, RAW);
+    await broadcastSigned(s.wallet, 1, RAW, FAR);
     expect(seen).toBe(1);
   });
 
   it('is released when the private endpoint refuses outright, and kept when the answer is lost', async () => {
     const refused = setup({ fallback: false, priv: async () => { throw rpcRefusal(); } });
-    await broadcastSigned(refused.wallet, 1, RAW).catch(() => {});
-    expect(refused.reservations.rows.get(key)?.next).toBe(0);
+    await broadcastSigned(refused.wallet, 1, RAW, FAR).catch(() => {});
+    // No earlier record: put back as an expired one.
+    expect(refused.reservations.rows.get(key)).toEqual({ next: 0, atMs: 0 });
     const unknown = setup({ fallback: false, priv: async () => { throw lost(); } });
-    await broadcastSigned(unknown.wallet, 1, RAW).catch(() => {});
+    await broadcastSigned(unknown.wallet, 1, RAW, FAR).catch(() => {});
     expect(unknown.reservations.rows.get(key)?.next).toBe(1);
+  });
+
+  it('a refused send restores the earlier record with its own timestamp, so a gap ages out (Codex #3275 r2)', async () => {
+    const reservations = memoryNonceReservations();
+    reservations.rows.set(key, { next: 0, atMs: 1234 });
+    const s = setup({ fallback: false, reservations, priv: async () => { throw rpcRefusal(); } });
+    await broadcastSigned(s.wallet, 1, RAW, FAR).catch(() => {});
+    expect(reservations.rows.get(key)).toEqual({ next: 0, atMs: 1234 });
+  });
+
+  it('a deadline that passes while the record is written sends nothing, and releases the record (Codex #3275 r2)', async () => {
+    const reservations = memoryNonceReservations();
+    let t = 0;
+    const slow: NonceReservations = {
+      read: (n, a) => reservations.read(n, a),
+      write: async (n, a, next, at) => {
+        t = 100;
+        await reservations.write(n, a, next, at);
+      },
+    };
+    const s = setup({ fallback: true, reservations: slow, priv: async () => keccak256(RAW) });
+    const err = await broadcastSigned(s.wallet, 1, RAW, 50, () => t).catch((e: unknown) => e);
+    expect(isSendPastDeadline(err)).toBe(true);
+    expect(isDefinitiveRejection(err)).toBe(true);
+    expect(s.calls).toEqual([]);
+    expect(reservations.rows.get(key)).toEqual({ next: 0, atMs: 0 });
   });
 
   it('a record that cannot be written sends nothing', async () => {
@@ -223,7 +252,7 @@ describe('the private nonce record (Codex #3275 r1)', () => {
       write: async () => { throw new Error('D1 unavailable'); },
     };
     const s = setup({ fallback: true, reservations: failing, priv: async () => keccak256(RAW) });
-    const err = await broadcastSigned(s.wallet, 1, RAW).catch((e: unknown) => e);
+    const err = await broadcastSigned(s.wallet, 1, RAW, FAR).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(SubmissionRouteUnread);
     expect(s.calls).toEqual([]);
   });
@@ -290,7 +319,7 @@ describe('the private broadcast through a capped pass', () => {
       Number.MAX_SAFE_INTEGER,
       fetchFn as unknown as typeof fetch,
     );
-    expect(await broadcastSigned(wallet, 1, RAW)).toBe(keccak256(RAW));
+    expect(await broadcastSigned(wallet, 1, RAW, FAR)).toBe(keccak256(RAW));
     expect(fetchFn).toHaveBeenCalledTimes(1);
   });
 });

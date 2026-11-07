@@ -95,7 +95,7 @@ export async function sendInSubmissionSlot(
       // a hash recorded before that refusal would read as a broadcast.
       signed();
       tx = keccak256(serialized);
-      await broadcastSigned(wallet, chainId, serialized);
+      await broadcastSigned(wallet, chainId, serialized, notAfterMs);
     });
   } catch (err) {
     // Failed before signing, or the node answered with a refusal (or the
