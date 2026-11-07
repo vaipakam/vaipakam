@@ -1144,6 +1144,7 @@ export function buildKeeperContext(
     }),
     chain.id,
     notAfterMs,
+    fetchFn,
   );
   return {
     wallet,

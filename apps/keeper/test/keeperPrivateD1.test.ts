@@ -46,6 +46,7 @@ const EXPECTED_PRIVATE = [
   'keeper_horizon_cursor',
   'keeper_horizon_entry',
   'keeper_ops_alert',
+  'keeper_private_nonce',
   'keeper_remit_ack',
   'keeper_remit_ack_frontier',
   'keeper_sanctions_screen',
@@ -66,7 +67,7 @@ const GRANDFATHERED_SHARED = new Map<string, string[]>([
 ]);
 
 describe("the keeper's private database", () => {
-  it('its migrations create exactly the fifteen keeper-private tables', () => {
+  it('its migrations create exactly the sixteen keeper-private tables', () => {
     expect([...KEEPER_PRIVATE_TABLES].sort()).toEqual(EXPECTED_PRIVATE);
   });
 

@@ -222,7 +222,7 @@ export class StepSender {
     if (!this.pendingChecked) {
       let pending: string | null;
       try {
-        pending = await keeperTxPending(ctx.client as PublicClient, ctx.wallet.account!.address);
+        pending = await keeperTxPending(ctx.client as PublicClient, ctx.wallet.account!.address, ctx.chainId);
       } catch (err) {
         if (err instanceof PastRunDeadline) return this.stop('deadline');
         console.error(`[keeper] ${pass} chain=${ctx.chainId} the keeper's pending transactions could not be read: ${shortErr(err)}`);
