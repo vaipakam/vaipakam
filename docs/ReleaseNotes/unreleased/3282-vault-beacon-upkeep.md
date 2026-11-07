@@ -1,4 +1,4 @@
-## Keeper — applying vault-beacon changes once due (PR #<n>)
+## Keeper — applying vault-beacon changes once due (PR #3297)
 
 The vault beacon (#3204) holds three kinds of change that wait out a delay and
 then may be applied by anyone: a Timelock proposal of a new current vault
