@@ -62,6 +62,7 @@ import {
   type OfferTerms,
 } from '../../lib/offerSchema';
 import { readLiveProtocolFees, useProtocolFees } from '../../data/fees';
+import { useOfferBookFloor } from '../../data/offerFloor';
 import {
   needsSecurityCheck,
   useTokenSecurity,
@@ -249,6 +250,8 @@ export function OrderTicket({
   const collateralAsset = pair?.collateralAsset ?? '';
 
   const lendingMeta = useTokenMeta(pair?.lendingAsset);
+  // #3242 — the offer-book floor the lender's smallest fill must meet.
+  const bookFloor = useOfferBookFloor(pair?.lendingAsset);
   const collateralMeta = useTokenMeta(pair?.collateralAsset);
 
   // UX-027 — the Max chip fills the escrowed leg from the wallet
@@ -449,6 +452,7 @@ export function OrderTicket({
           lending: lendingMeta.data?.decimals,
           collateral: collateralMeta.data?.decimals,
         },
+        bookFloor,
       );
       return {
         ...base,

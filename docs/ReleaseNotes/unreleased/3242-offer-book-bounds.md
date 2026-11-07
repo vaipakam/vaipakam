@@ -29,7 +29,13 @@ The open count starts with this build, so on a Diamond refreshed in place
 the offers opened before the refresh are not counted. Every chain reaches
 this by the next fresh deploy.
 
-This advances #3242. The app side (a size filter, default ranking, and showing
-the floor and the wallet's count before signing) follows in its own PR.
+In the app, the guided lend flow sets a lender's smallest fill to 10% of the
+total, which on a small offer would fall under the floor; it now raises that
+fill to the floor, read live from the protocol, and never above the total. An
+amount under the floor is named under the field before anything is signed, and
+both new refusals read as plain sentences. The standing-intent preview reports
+a slice under the floor the same way the fill would refuse it. This advances
+#3242; the size filter, default ranking and the open count before signing
+follow in their own PR.
 
 > Caveat: on a Diamond refreshed in place, offers opened before the refresh do not count against the cap.

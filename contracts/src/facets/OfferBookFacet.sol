@@ -95,6 +95,20 @@ contract OfferBookFacet is IVaipakamErrors {
         );
     }
 
+    /**
+     * @notice #3242 — the smallest amount of ERC-20 `lendingAsset` the value
+     *         floor admits as an offer's `amount` (a lender offer's smallest
+     *         fill), so a form can size it before the offer is posted.
+     * @param lendingAsset The principal asset.
+     * @return binds  False when the floor does not apply to this token (not
+     *                liquid, or no price now); any amount is admitted then.
+     * @return amount The smallest admitted amount in base units, when
+     *                `binds`; 0 otherwise.
+     */
+    function getMinOfferAmount(address lendingAsset) external view returns (bool binds, uint256 amount) {
+        return LibOfferAdmission.minAdmittedAmount(lendingAsset);
+    }
+
     /// @dev Emits `OfferCreatedDetails`. Moved verbatim from
     ///      `OfferCreateFacet` (#3242); populated field by field on a memory
     ///      struct to stay clear of viaIR's stack limit at the emit site.

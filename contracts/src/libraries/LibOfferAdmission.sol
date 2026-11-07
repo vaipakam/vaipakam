@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {LibNumeraireValueRead} from "./LibNumeraireValueRead.sol";
 import {OracleFacet} from "../facets/OracleFacet.sol";
+import {NumeraireValueFacet} from "../facets/NumeraireValueFacet.sol";
 
 /**
  * @title LibOfferAdmission
@@ -100,18 +101,42 @@ library LibOfferAdmission {
         view
         returns (bool below, uint256 value, uint256 minimum)
     {
-        if (assetType != LibVaipakam.AssetType.ERC20) return (false, 0, 0);
-        (bool ok, bytes memory ret) = address(this).staticcall(
-            abi.encodeCall(OracleFacet.checkLiquidity, (lendingAsset))
-        );
-        if (!ok || ret.length < 32) return (false, 0, 0);
-        if (abi.decode(ret, (LibVaipakam.LiquidityStatus)) != LibVaipakam.LiquidityStatus.Liquid) {
-            return (false, 0, 0);
-        }
+        if (assetType != LibVaipakam.AssetType.ERC20 || !_isLiquid(lendingAsset)) return (false, 0, 0);
         bool priced;
         (priced, value) = LibNumeraireValueRead.tryValue(lendingAsset, amount, false);
         if (!priced) return (false, 0, 0);
         minimum = LibVaipakam.cfgMinOfferValueNumeraire();
         below = value < minimum;
+    }
+
+    /// @notice The smallest amount of ERC-20 `lendingAsset` the floor admits,
+    ///         for a form that must size an offer's smallest fill before it
+    ///         is posted. `binds` is false when the floor does not apply to
+    ///         the token (not liquid, or no price can be read now); `amount`
+    ///         is then 0 and any amount is admitted.
+    /// @dev The same liquidity read as {valueBelowFloor}, then the inverse
+    ///      of its valuation, rounded up: the smallest amount whose value,
+    ///      rounded down, reaches the floor. A price read that reverts reads
+    ///      as no price, exactly as {valueBelowFloor} admits it.
+    function minAdmittedAmount(address lendingAsset) internal view returns (bool binds, uint256 amount) {
+        if (!_isLiquid(lendingAsset)) return (false, 0);
+        (bool ok, bytes memory ret) = address(this).staticcall(
+            abi.encodeCall(
+                NumeraireValueFacet.getAmountForNumeraireValue,
+                (lendingAsset, LibVaipakam.cfgMinOfferValueNumeraire(), true)
+            )
+        );
+        if (!ok || ret.length < 32) return (false, 0);
+        return (true, abi.decode(ret, (uint256)));
+    }
+
+    /// @dev True when the oracle reads `asset` as liquid. A reverting or
+    ///      malformed read is not liquid, so the floor never binds on it.
+    function _isLiquid(address asset) private view returns (bool) {
+        (bool ok, bytes memory ret) = address(this).staticcall(
+            abi.encodeCall(OracleFacet.checkLiquidity, (asset))
+        );
+        if (!ok || ret.length < 32) return false;
+        return abi.decode(ret, (LibVaipakam.LiquidityStatus)) == LibVaipakam.LiquidityStatus.Liquid;
     }
 }

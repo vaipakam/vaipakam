@@ -3032,7 +3032,8 @@
       "waitingForWallet": "Esperando la billetera…",
       "networkFallback": "red #{{id}}",
       "unknown": "desconocido",
-      "amountTooPrecise": "{{symbol}} no se puede dividir tanto: usa como máximo {{decimals}} decimales."
+      "amountTooPrecise": "{{symbol}} no se puede dividir tanto: usa como máximo {{decimals}} decimales.",
+      "amountBelowOfferFloor": "La oferta más pequeña que acepta el protocolo en este token es de {{min}} {{symbol}}. Introduce al menos esa cantidad."
     },
     "stepNav": {
       "progressAria": "Progreso",
@@ -4171,6 +4172,8 @@
     "ListingFloorBelowReviewed": "El mínimo que te garantizaría este anuncio ha bajado desde que lo revisaste (ha pasado tiempo o el préstamo ha cambiado). No se anunció nada. Revisa el anuncio de nuevo para ver la cifra actual.",
     "ListingHeldAboveReviewed": "Se ha reservado más para el prestamista en este préstamo desde que revisaste el anuncio. No se anunció nada. Revisa el anuncio de nuevo para ver las cifras actuales.",
     "SaleBelowSellerFloor": "Este anuncio ya no se puede comprar: el préstamo ha cambiado desde que se anunció (por ejemplo, se pagó una parte), así que la venta pagaría al vendedor menos que el mínimo que garantiza su anuncio. No se cobró nada. El vendedor puede cancelarlo y volver a anunciarlo.",
-    "SaleAboveHeldCeiling": "Este anuncio ya no se puede comprar: desde que se anunció se ha reservado más para el prestamista en este préstamo de lo que el anuncio permite. No se cobró nada. El vendedor puede cancelarlo y volver a anunciarlo."
+    "SaleAboveHeldCeiling": "Este anuncio ya no se puede comprar: desde que se anunció se ha reservado más para el prestamista en este préstamo de lo que el anuncio permite. No se cobró nada. El vendedor puede cancelarlo y volver a anunciarlo.",
+    "OfferBelowMinimumValue": "Esta oferta es más pequeña de lo que permite el protocolo: el importe, o la parte más pequeña que puede tomar una coincidencia, vale menos que el valor mínimo de oferta. Aumenta el importe e inténtalo de nuevo.",
+    "TooManyOpenOffers": "Esta billetera ya tiene tantas ofertas abiertas como permite el protocolo. Cancela una oferta que ya no necesites (una oferta vencida cuenta hasta que la canceles) e inténtalo de nuevo."
   }
 }

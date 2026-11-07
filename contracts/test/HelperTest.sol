@@ -1568,10 +1568,11 @@ contract HelperTest {
 
     /// @dev Selectors for `OfferBookFacet` (#3242).
     function getOfferBookFacetSelectors() public pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](3);
+        selectors = new bytes4[](4);
         selectors[0] = OfferBookFacet.openOfferOnBook.selector;
         selectors[1] = OfferBookFacet.requireOfferValueAdmitted.selector;
         selectors[2] = OfferBookFacet.getOfferBookBounds.selector;
+        selectors[3] = OfferBookFacet.getMinOfferAmount.selector;
     }
 
     function getClaimFacetSelectors()

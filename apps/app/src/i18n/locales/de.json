@@ -3032,7 +3032,8 @@
       "waitingForWallet": "Warten auf die Wallet…",
       "networkFallback": "Netzwerk #{{id}}",
       "unknown": "unbekannt",
-      "amountTooPrecise": "{{symbol}} lässt sich nicht so fein aufteilen – verwenden Sie höchstens {{decimals}} Nachkommastellen."
+      "amountTooPrecise": "{{symbol}} lässt sich nicht so fein aufteilen – verwenden Sie höchstens {{decimals}} Nachkommastellen.",
+      "amountBelowOfferFloor": "Das kleinste Angebot, das das Protokoll in diesem Token annimmt, beträgt {{min}} {{symbol}}. Gib mindestens diesen Betrag ein."
     },
     "stepNav": {
       "progressAria": "Fortschritt",
@@ -4171,6 +4172,8 @@
     "ListingFloorBelowReviewed": "Das Minimum, das Ihnen dieses Angebot garantieren würde, ist seit Ihrer Prüfung gesunken (Zeit ist vergangen oder der Kredit hat sich geändert). Es wurde nichts inseriert. Prüfen Sie das Angebot erneut, um den aktuellen Wert zu sehen.",
     "ListingHeldAboveReviewed": "Seit Ihrer Prüfung des Angebots wurde auf diesem Kredit mehr für den Kreditgeber zurückgelegt. Es wurde nichts inseriert. Prüfen Sie das Angebot erneut, um die aktuellen Werte zu sehen.",
     "SaleBelowSellerFloor": "Dieses Angebot kann nicht mehr gekauft werden: Der Kredit hat sich seit dem Inserieren geändert (etwa durch eine Teilrückzahlung), so dass der Verkauf dem Verkäufer weniger als das von seinem Angebot garantierte Minimum einbrächte. Es wurde nichts eingezogen. Der Verkäufer kann es stornieren und erneut inserieren.",
-    "SaleAboveHeldCeiling": "Dieses Angebot kann nicht mehr gekauft werden: Seit dem Inserieren wurde auf diesem Kredit mehr für den Kreditgeber zurückgelegt, als das Angebot zulässt. Es wurde nichts eingezogen. Der Verkäufer kann es stornieren und erneut inserieren."
+    "SaleAboveHeldCeiling": "Dieses Angebot kann nicht mehr gekauft werden: Seit dem Inserieren wurde auf diesem Kredit mehr für den Kreditgeber zurückgelegt, als das Angebot zulässt. Es wurde nichts eingezogen. Der Verkäufer kann es stornieren und erneut inserieren.",
+    "OfferBelowMinimumValue": "Dieses Angebot ist kleiner, als das Protokoll erlaubt: Der Betrag oder der kleinste Teil, den ein Abgleich übernehmen darf, ist weniger wert als der Mindestwert eines Angebots. Erhöhe den Betrag und versuche es erneut.",
+    "TooManyOpenOffers": "Diese Wallet hat bereits so viele offene Angebote, wie das Protokoll erlaubt. Storniere ein Angebot, das du nicht mehr brauchst (ein abgelaufenes Angebot zählt, bis du es stornierst), und versuche es dann erneut."
   }
 }

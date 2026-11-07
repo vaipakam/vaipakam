@@ -7200,6 +7200,12 @@ const copySource = {
       '{{symbol}} can’t be split that finely — use at most {{decimals}} decimal places.',
       ['symbol', 'decimals'],
     ),
+    // #3242 — an offer below the protocol's smallest offer value. The
+    // figure is the live floor in the offer's token, from the protocol.
+    amountBelowOfferFloor: tmpl(
+      'The smallest offer the protocol accepts in this token is {{min}} {{symbol}}. Enter at least that much.',
+      ['min', 'symbol'],
+    ),
   },
   stepNav: {
     progressAria: 'Progress',

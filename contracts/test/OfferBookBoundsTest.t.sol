@@ -115,6 +115,23 @@ contract OfferBookBoundsTest is SetupTest {
         assertGt(id, 0);
     }
 
+    /// @dev The form-sizing view agrees with enforcement: its amount is
+    ///      admitted and one base unit less is refused.
+    function test_minOfferAmountIsTheSmallestAdmitted() public {
+        (bool binds, uint256 minAmount) = _book().getMinOfferAmount(mockERC20);
+        assertTrue(binds, "the floor binds a liquid priced token");
+        assertEq(minAmount, 10 ether, "$10 of a $1 token");
+        assertGt(_lend(minAmount), 0);
+        vm.expectPartialRevert(LibOfferAdmission.OfferBelowMinimumValue.selector);
+        _lend(minAmount - 1);
+    }
+
+    function test_minOfferAmountDoesNotBindAnIlliquidToken() public view {
+        (bool binds, uint256 minAmount) = _book().getMinOfferAmount(mockIlliquidERC20);
+        assertFalse(binds);
+        assertEq(minAmount, 0);
+    }
+
     function test_floorFollowsGovernanceAndResets() public {
         NumeraireConfigFacet(address(diamond)).setMinOfferValueNumeraire(20e18);
         assertEq(NumeraireConfigFacet(address(diamond)).getMinOfferValueNumeraire(), 20e18);

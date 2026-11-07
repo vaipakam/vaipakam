@@ -286,6 +286,10 @@ const FRIENDLY_ERROR_BY_NAME: Record<string, string> = {
     "The interest rate is above the protocol's current ceiling. Lower the rate and try again.",
   OfferDurationExceedsCap:
     'The loan duration is longer than the protocol allows. Choose a shorter term.',
+  OfferBelowMinimumValue:
+    'This offer is smaller than the protocol allows: the amount, or the smallest part one match may take, is worth less than the minimum offer value. Raise the amount and try again.',
+  TooManyOpenOffers:
+    'This wallet already has as many open offers as the protocol allows. Cancel an offer you no longer need (an expired offer counts until you cancel it), then try again.',
   LenderCannotRepayOwnLoan:
     "You can't repay a loan where you are the lender — repaying your own loan isn't allowed.",
   PartialRepayNotAllowed:
@@ -525,6 +529,8 @@ export const KNOWN_ERROR_SELECTORS: Record<string, string> = {
   '0xd779ce4f': 'FunctionDisabled(uint8)',
   '0xfb45ee07': 'InterestRateAboveCeiling()',
   '0x1df8547f': 'OfferDurationExceedsCap(uint256,uint256)',
+  '0xad2ab1e2': 'OfferBelowMinimumValue(uint256,uint256)',
+  '0x1c3937bb': 'TooManyOpenOffers(uint256,uint256)',
   '0x5c2262de': 'AmountMustBePositive()',
   '0xb66583b8': 'AmountMaxMustBePositive()',
   '0x57b061fc': 'CollateralMustBePositive()',

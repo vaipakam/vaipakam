@@ -3032,7 +3032,8 @@
       "waitingForWallet": "等待钱包…",
       "networkFallback": "网络 #{{id}}",
       "unknown": "未知",
-      "amountTooPrecise": "{{symbol}} 不能分得这么细——最多使用 {{decimals}} 位小数。"
+      "amountTooPrecise": "{{symbol}} 不能分得这么细——最多使用 {{decimals}} 位小数。",
+      "amountBelowOfferFloor": "协议在此代币中接受的最小报价为 {{min}} {{symbol}}。请至少输入该数额。"
     },
     "stepNav": {
       "progressAria": "进度",
@@ -4171,6 +4172,8 @@
     "ListingFloorBelowReviewed": "自您审阅以来，此挂单可为您保证的最低额已下降（时间已经过去，或贷款已发生变化）。未挂出任何内容。请重新审阅挂单以查看当前数字。",
     "ListingHeldAboveReviewed": "自您审阅挂单以来，本笔贷款为出借人预留的金额已增加。未挂出任何内容。请重新审阅挂单以查看当前数字。",
     "SaleBelowSellerFloor": "此挂单已无法购买：自挂出以来贷款已发生变化（例如偿还了部分贷款），成交将使卖方获得的金额低于其挂单保证的最低额。未扣取任何款项。卖方可以取消并重新挂出。",
-    "SaleAboveHeldCeiling": "此挂单已无法购买：自挂出以来，本笔贷款为出借人预留的金额已超出挂单允许的范围。未扣取任何款项。卖方可以取消并重新挂出。"
+    "SaleAboveHeldCeiling": "此挂单已无法购买：自挂出以来，本笔贷款为出借人预留的金额已超出挂单允许的范围。未扣取任何款项。卖方可以取消并重新挂出。",
+    "OfferBelowMinimumValue": "此报价低于协议允许的最小规模：金额或单次撮合可成交的最小部分，价值低于最低报价价值。请提高金额后重试。",
+    "TooManyOpenOffers": "此钱包的未结报价数已达到协议允许的上限。请取消一个不再需要的报价（已过期的报价在取消前仍计入），然后重试。"
   }
 }
