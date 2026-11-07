@@ -2201,6 +2201,16 @@ Positions は共通のリーダーを通して Home と同じ保有一覧を読�
 
 サイドの選択は、支払い・進行中・終了の各行を保有サイドで絞り込みます。「何もない」と表示するのは、ポジションと支払いのたどりが両方完了し、最新の読み取りが成功したときだけです。上限で止まったたどりは不完全と表示します。行は `/positions/<id>` を開き、そこで適格性の判定が各操作を決めます。一覧はトランザクションを送りません。
 
+<a id="position"></a>
+
+### Position: ローンの読み方
+
+ページは `getLoanDetails(loanId)` と、貸し手・借り手のポジション NFT の `ownerOf` を読みます。役割はウォレットが今保有しているトークンです。進行中のローン（Active または FallbackPending）では、`getLoanDeadlines`（停止クレジット前の現在の期間の満期。延長や借り手の引き継ぎで書き換わります、停止クレジット、満期、猶予期間の終了）、利払いスケジュールがあれば `getPeriodicInterestEnabled` とともに `previewPeriodicSettle`、`isLoanDefaultable` (+ `paused`, `sequencerHealthy`, `defaultKycAdmission`)、`calculateHealthFactor`、`calculateLTV` を読みます。すべてのローンで `getLoanCollateralLien` と `isSaleVehicleLoan` を読みます。各読み取りは独立しており、失敗したものは 0 ではなく不明と表示し、日付を `startTime` と `durationDays` から計算することはありません。
+
+価格のあるローンでは `getInternalMatchConfigBundle` も読みます。内部マッチングが有効な間、LTVがしきい値からしきい値＋`externalLiquidationPriorityWindowBps` までにあるローンは内部マッチング用に確保され、外部の清算ルートはすべて拒否します（`InternalMatchOnlyBand`）。ページはその範囲を示します。`loanInitiationFeeBpsAtInit` が 0（料率が記録される前に開始したローン）の場合は未記録と表示し、`treasuryFeeBpsAtInit` が 0 の場合は決済が適用する従来の1%として表示します。現物引き渡しの警告はERC-20ローンのみが対象です。NFTレンタルには担保がなく、デフォルトすると借り手の利用が終わり、前払いの賃料はトレジャリーの取り分を差し引いて貸し手へ支払われ、バッファはトレジャリーへ送られます。ページは代わりにそれを示します。
+
+料率はローンのスナップショットです: `treasuryFeeBpsAtInit`、`loanInitiationFeeBpsAtInit`（売却用ローンではなし）、`liquidationLtvBpsAtInit`。片側が Illiquid（`principalLiquidity` または `collateralLiquidity`）のローンには価格に基づく値がありません: プロトコルはそのローンの `calculateHealthFactor` と `calculateLTV` を拒否し、ページは不明ではなくその旨を表示します。`principal` は残りの元本です（一部返済で減ります）。`interestRateBps` と `collateralAmount` も変わり得るため、条件は現在の値で表示します。記録上の元本がない終了済みローンは、内部マッチングでカバーされたかどうかを示し、そうでなければ記録がないことだけを示します。NFT レンタルは 1 日あたりの賃料(`principal`、`prepayAsset` 建て)と、早期返却でも残り日数分すべてが請求されるか(`useFullTermInterest`)を表示します。`getPeriodicInterestEnabled` が false の場合、チェックポイントで担保は売却されないと表示します。進行中のローンで `collateralLiquidity` が Illiquid の場合は現物決済の警告を加えます: デフォルト時は売却せずに担保を貸し手へ移転します。このページはまだトランザクションを送りません。
+
 <a id="risk-access"></a>
 
 ### Risk Access: あなたのリスクレベル

@@ -2578,6 +2578,16 @@ Positions reads the same inventory as Home through one shared reader: `getUserPo
 
 The side choice filters payouts, live and ended rows by the side held. "Nothing" is said only when the position walk and the payout walk completed and the latest read succeeded; a walk stopped at its cap is stated as incomplete. A row opens `/positions/<id>`, where the eligibility verdict decides each action; the list sends no transaction.
 
+<a id="position"></a>
+
+### Position: How a Loan Is Read
+
+The page reads `getLoanDetails(loanId)` and `ownerOf` for the lender and borrower position NFTs; the role is the token the wallet holds now. For a live loan (Active or FallbackPending) it reads `getLoanDeadlines` (the current term's maturity before pause credit, which an extension or a borrower handover rewrites, pause credit, maturity, grace end), `previewPeriodicSettle` with `getPeriodicInterestEnabled` when the loan has a cadence, `isLoanDefaultable` (+ `paused`, `sequencerHealthy`, `defaultKycAdmission`), `calculateHealthFactor` and `calculateLTV`; for every loan, `getLoanCollateralLien` and `isSaleVehicleLoan`. Each read stands alone: one that fails is shown as unknown, never as zero, and no date is computed from `startTime` and `durationDays`.
+
+For a priced loan it also reads `getInternalMatchConfigBundle`. While internal matching is on, a loan whose loan-to-value sits from its threshold up to the threshold plus `externalLiquidationPriorityWindowBps` is held for an internal match and every outside liquidation route refuses (`InternalMatchOnlyBand`), so the page states that band. A `loanInitiationFeeBpsAtInit` of 0 (a loan opened before the rate was kept) is shown as not recorded, and a `treasuryFeeBpsAtInit` of 0 as the 1% legacy rate settlement applies. The in-kind warning is for an ERC-20 loan only: an NFT rental has no collateral, and its default ends the renter's use, pays the prepaid rent to the lender less the treasury share and sends the buffer to the treasury, which the page states instead.
+
+Rates are the loan's snapshots: `treasuryFeeBpsAtInit`, `loanInitiationFeeBpsAtInit` (none on a sale vehicle) and `liquidationLtvBpsAtInit`. A loan with an Illiquid leg (`principalLiquidity` or `collateralLiquidity`) has no price-based reading: the protocol refuses `calculateHealthFactor` and `calculateLTV` for it, and the page says so instead of unknown. `principal` is what is still owed (a partial repayment lowers it), and `interestRateBps` and `collateralAmount` can change too, so the terms are shown as they stand now; an ended loan with no principal on its record says whether an internal match covered it, and otherwise only that none is recorded; an NFT rental shows its rent per day (`principal`, in `prepayAsset`) and whether returning early still charges every remaining day (`useFullTermInterest`). With `getPeriodicInterestEnabled` false, the page says no collateral is sold at a checkpoint. `collateralLiquidity` Illiquid on a live loan adds the in-kind warning: a default transfers the collateral to the lender without a sale. The page sends no transaction yet.
+
 <a id="risk-access"></a>
 
 ### Risk Access: Your Risk Level

@@ -1266,6 +1266,14 @@ Positions listet jeden Kredit, den Sie in diesem Netzwerk vergeben oder aufgenom
 
 Alle, Verliehen und Geliehen grenzen alle drei Listen zugleich ein. Positions sagt nur dann, dass Sie nichts haben, wenn alles gelesen wurde; konnte eine Liste nicht vollständig gelesen werden, steht das dort. Jeder Kredit öffnet seine eigene Seite, die zeigt, welche Aktionen Ihnen offenstehen. Die Liste selbst signiert nie etwas.
 
+<a id="position"></a>
+
+### Position: Ein Kredit
+
+Jeder Kredit hat eine eigene Seite. Sie beginnt mit dem Status des Kredits, dann Ihre Rolle: die Seite, die Ihre Wallet jetzt hält, denn Positions-Token können verkauft oder übertragen werden. Halten Sie keine Seite, sehen Sie den Kredit nur an. Eine Frist, die Sie betrifft, ist für Ihre Seite formuliert. Ist die Kulanzfrist vorbei, sagt die Seite, dass jetzt jeder den Ausfall einleiten kann, und nur, wenn das Protokoll es bestätigt.
+
+Darunter folgen die Daten des Kredits (das Fälligkeitsdatum der aktuellen Laufzeit vor einer Pausengutschrift, Zeit, die während einer Protokollpause gutgeschrieben wurde, das Fälligkeitsdatum und das Ende der Kulanzfrist), seine Bedingungen, wie sie jetzt stehen (eine Teilrückzahlung senkt den noch geschuldeten Kapitalbetrag), sein Health Factor und wo seine Sicherheit liegt. Eine Zahl, die nicht gelesen werden konnte, wird als unbekannt angezeigt. Hat die Sicherheit keinen Preis, erhält der Kreditgeber bei einem Ausfall die Sicherheit selbst, und die Seite sagt das. Hält das Netzwerk knapp über der Liquidationsschwelle ein Band für einen internen Abgleich mit einem anderen Kredit zurück, nennt die Seite es: Innerhalb dieses Bands kann kein externer Verkauf den Kredit schließen. Eine NFT-Miete hat keine Sicherheit: Fällt sie aus, endet die Nutzung des Mieters, die vorausbezahlte Miete geht abzüglich des Protokollanteils an den Kreditgeber und der Puffer an die Treasury. Vorerst ist die Seite nur lesend; ihre Aktionen folgen in späteren Updates.
+
 <a id="risk-access"></a>
 
 ### Risk Access: Ihre Risikostufe

@@ -2,6 +2,7 @@ import type { ComponentType } from 'react';
 import { BorrowPage } from '../pages/borrow/BorrowPage';
 import { HomePage } from '../pages/home/HomePage';
 import { LendPage } from '../pages/lend/LendPage';
+import { PositionPage } from '../pages/position/PositionPage';
 import { PositionsPage } from '../pages/positions/PositionsPage';
 
 /** The page each BUILT route renders, by page-map path. A route not listed
@@ -12,4 +13,5 @@ export const BUILT_PAGES: Readonly<Record<string, ComponentType>> = {
   '/borrow': BorrowPage,
   '/lend': LendPage,
   '/positions': PositionsPage,
+  '/positions/:id': PositionPage,
 };
