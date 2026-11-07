@@ -1900,12 +1900,15 @@ attacker, a Permit2 signature, or a transfer.
 - A served asset that the deployed version did not upload. Compare the
   `/assets/index-*.js` name served by the custom domain with the one the
   Worker's `workers.dev` URL serves, and both with the asset list of the
-  version the Cloudflare dashboard shows as deployed. Do NOT compare against a
-  fresh local build: the build stamps its own time into the bundle and into
-  `/sw.js`, and the Workers Build supplies its own environment, so a rebuild of
-  the same commit never reproduces the deployed file names and would always
-  read as a mismatch. (The automatic served-build check #3236 asks for does
-  not exist yet; until it does, this is a manual check.)
+  version the Cloudflare dashboard shows as deployed. A rebuild is a second
+  check only with care: since #3236 the app, alpha05 and www builds stamp the
+  commit's time rather than the clock, so two builds of one commit produce
+  identical files, but only with the SAME build variables the Workers Build
+  used (the trigger's variables, readable through the Workers Builds API).
+  Without them every file that carries a variable differs and reads as a
+  mismatch. Builds made before #3236 stamped the clock and never match a
+  rebuild. (The automatic served-build check #3236 asks for does not exist
+  yet; until it does, this is a manual check.)
 - A changed or missing `Content-Security-Policy` header, or a script host in
   it that `public/_headers.base` does not name.
 - A Worker deployment whose commit stamp is not on `main`, or that has no
@@ -2000,7 +2003,8 @@ the people most at risk from revoking.
 - The deployed version is the known-good one you rolled back to (its commit
   stamp is the trusted commit), and the custom domain and the `workers.dev`
   URL both serve that version's `/assets/index-*.js` name and its `/sw.js`.
-  Compare with that version's own files, not with a rebuild (see Detect).
+  Compare with that version's own files first; a rebuild needs the build's
+  own variables (see Detect).
 - The `Content-Security-Policy` header matches the one that version served
   before the incident.
 - The live drives in `apps/app/e2e/live/` pass against the restored deploy.
