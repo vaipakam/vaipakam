@@ -90,6 +90,9 @@ contract ReplaceStaleFacets is DeployDiamond {
     /// @notice #2748 - the target Diamond predates the rate-model host; see
     ///         {_requireRateModelFacet}.
     error PredatesRateModelFacet(address diamond);
+    /// @notice #3242 - the target Diamond predates the offer-book bounds; see
+    ///         {_requireOfferBook}.
+    error PredatesOfferBook(address diamond);
 
     function run() external override {
         uint256 deployerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
@@ -139,6 +142,9 @@ contract ReplaceStaleFacets is DeployDiamond {
         // #1209 / #1808 - and one from before the interest ledger; see
         // {_requireInterestLedger}.
         _requireInterestLedger(diamond);
+        // #3242 - and one from before the offer-book bounds; see
+        // {_requireOfferBook}.
+        _requireOfferBook(diamond);
 
         vm.startBroadcast(deployerKey);
 
@@ -498,6 +504,23 @@ contract ReplaceStaleFacets is DeployDiamond {
     function _requireInterestLedger(address diamond) internal view {
         if (IDiamondLoupe(diamond).facetAddress(SellerClaimFacet.getInterestLedger.selector) == address(0)) {
             revert PredatesInterestLedger(diamond);
+        }
+    }
+
+    /// @dev #3242 (Codex #3283 r1) - refuse a Diamond from before the
+    ///      offer-book bounds. The per-wallet open-offer count goes up in the
+    ///      book's entry step and comes down in every facet that takes an offer
+    ///      off the book (cancel, accept, match, intent fill, preclose, the
+    ///      lender sale, the prepay sale), each of which inlines the hook. This
+    ///      curated set carries only some of them, so crossing here would leave
+    ///      the rest removing offers without bringing the count down, and a
+    ///      wallet would hit the cap with nothing open. Crossing the boundary is
+    ///      a fresh deploy or `RefreshAllFacetsInPlace`, never this refresh. The
+    ///      marker is the routing of `OfferBookFacet.getOfferBookBounds`.
+    ///      Called before the broadcast starts, so a refused run sends nothing.
+    function _requireOfferBook(address diamond) internal view {
+        if (IDiamondLoupe(diamond).facetAddress(OfferBookFacet.getOfferBookBounds.selector) == address(0)) {
+            revert PredatesOfferBook(diamond);
         }
     }
 

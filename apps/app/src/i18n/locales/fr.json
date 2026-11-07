@@ -3318,7 +3318,11 @@
       "graceNote": "Combien de temps après sa date de fin un prêt peut être mis en défaut, selon la durée du prêt. Un prêt prend la première ligne dont sa durée est inférieure à la limite.",
       "graceUnsetNote": "Non défini, donc le barème par défaut documenté du protocole ci-dessous s’applique. Un prêt prend la première ligne dont sa durée est inférieure à la limite.",
       "graceUnder": "Prêts de moins de {{days}} jours",
-      "graceLongerLoans": "Tous les prêts plus longs"
+      "graceLongerLoans": "Tous les prêts plus longs",
+      "minOfferValue": "Offre minimale",
+      "minOfferValueHint": "Le montant minimal que doit valoir le principal d’une offre lorsqu’elle est publiée ou que son montant est modifié. Cela ne s’applique qu’à un jeton liquide doté d’un prix ; les NFT et les jetons illiquides ne sont jamais refusés pour leur valeur. Les offres issues d’un prêt existant en sont exemptées. L’augmenter ne ferme aucune offre ouverte.",
+      "maxOpenOffers": "Offres ouvertes par portefeuille",
+      "maxOpenOffersHint": "Le nombre maximal d’offres qu’un portefeuille peut avoir ouvertes en même temps, tous types d’offres confondus. Une offre expirée compte jusqu’à son annulation. Le baisser ne ferme aucune offre ouverte. Les offres issues d’un prêt existant en sont exemptées."
     },
     "forcedClose": {
       "title": "Ce prêt est en retard",

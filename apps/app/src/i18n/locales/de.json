@@ -3318,7 +3318,11 @@
       "graceNote": "Wie lange nach seinem Enddatum ein Kredit in den Ausfall gesetzt werden kann, nach Laufzeit des Kredits. Ein Kredit nimmt die erste Zeile, deren Grenze seine Laufzeit unterschreitet.",
       "graceUnsetNote": "Nicht gesetzt, daher gilt der unten dokumentierte Standardplan des Protokolls. Ein Kredit nimmt die erste Zeile, deren Grenze seine Laufzeit unterschreitet.",
       "graceUnder": "Kredite unter {{days}} Tagen",
-      "graceLongerLoans": "Alle längeren Kredite"
+      "graceLongerLoans": "Alle längeren Kredite",
+      "minOfferValue": "Kleinstes Angebot",
+      "minOfferValueHint": "Der Mindestwert, den der Kapitalbetrag eines Angebots haben muss, wenn es eingestellt oder sein Betrag geändert wird. Das gilt nur für einen liquiden Token mit Preis; NFTs und illiquide Token werden nie wegen ihres Werts abgelehnt. Angebote, die aus einem bestehenden Kredit stammen, sind ausgenommen. Eine Erhöhung schließt kein offenes Angebot.",
+      "maxOpenOffers": "Offene Angebote pro Wallet",
+      "maxOpenOffersHint": "Die Höchstzahl an Angeboten, die eine Wallet gleichzeitig offen haben darf, alle Angebotsarten zusammengezählt. Ein abgelaufenes Angebot zählt, bis es storniert wird. Eine Senkung schließt kein offenes Angebot. Angebote, die aus einem bestehenden Kredit stammen, sind ausgenommen."
     },
     "forcedClose": {
       "title": "Dieses Darlehen ist überfällig",

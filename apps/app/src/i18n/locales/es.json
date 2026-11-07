@@ -3318,7 +3318,11 @@
       "graceNote": "Cuánto tiempo después de su fecha de fin puede declararse en impago un préstamo, según su duración. Un préstamo toma la primera fila cuyo límite supera su duración.",
       "graceUnsetNote": "No definido, así que se aplica el calendario predeterminado documentado del protocolo que figura abajo. Un préstamo toma la primera fila cuyo límite supera su duración.",
       "graceUnder": "Préstamos de menos de {{days}} días",
-      "graceLongerLoans": "Todos los préstamos más largos"
+      "graceLongerLoans": "Todos los préstamos más largos",
+      "minOfferValue": "Oferta mínima",
+      "minOfferValueHint": "Lo mínimo que debe valer el principal de una oferta cuando se publica o se cambia su importe. Solo se aplica a un token líquido con precio; los NFT y los tokens ilíquidos nunca se rechazan por su valor. Las ofertas que provienen de un préstamo existente están exentas. Subirlo no cierra ninguna oferta abierta.",
+      "maxOpenOffers": "Ofertas abiertas por billetera",
+      "maxOpenOffersHint": "El número máximo de ofertas que una billetera puede tener abiertas a la vez, contando todos los tipos de oferta. Una oferta vencida cuenta hasta que se cancela. Bajarlo no cierra ninguna oferta abierta. Las ofertas que provienen de un préstamo existente están exentas."
     },
     "forcedClose": {
       "title": "Este préstamo está vencido",

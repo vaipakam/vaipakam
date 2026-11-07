@@ -28,6 +28,8 @@ import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {LibRiskAccess} from "../src/libraries/LibRiskAccess.sol";
 import {LibMetricsTypes} from "../src/libraries/LibMetricsTypes.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
+import {NumeraireConfigFacet} from "../src/facets/NumeraireConfigFacet.sol";
+import {LibOfferAdmission} from "../src/libraries/LibOfferAdmission.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
@@ -1065,6 +1067,30 @@ contract LenderIntentMatchTest is SetupTest {
     }
 
     // ── exposure cap (checked BEFORE funded-capital) ──
+    /// @dev #3242 — the slice an intent fill materializes is a signed offer,
+    ///      so it must clear the offer-book value floor; the preview reports
+    ///      the refusal the fill would raise instead of `Ok`.
+    function test_previewIntent_sliceBelowMinOfferValue_agrees() public {
+        _setIntent(MAX_EXPOSURE);
+        _fundIntent(PRINCIPAL);
+        address b = _newBorrower("b1");
+        uint256 cp = _postBorrower(b, PRINCIPAL, 2 * PRINCIPAL);
+        // Raise the floor above the whole fill's value (the setter's ceiling).
+        NumeraireConfigFacet(address(diamond)).setMinOfferValueNumeraire(1e24);
+
+        LibOfferMatch.IntentPreviewResult memory r = _preview(solver, PRINCIPAL, cp);
+        assertFalse(r.ok, "preview !ok below the offer floor");
+        assertEq(
+            uint8(r.intentError),
+            uint8(LibOfferMatch.IntentError.SliceBelowMinOfferValue)
+        );
+        vm.prank(solver);
+        vm.expectPartialRevert(LibOfferAdmission.OfferBelowMinimumValue.selector);
+        OfferMatchIntentFacet(address(diamond)).matchIntent(
+            lender, mockERC20, mockCollateralERC20, cp, PRINCIPAL
+        );
+    }
+
     function test_previewIntent_exposureExceeded_agrees() public {
         _setIntent(500 ether); // maxExposure below the fill
         _fundIntent(PRINCIPAL);

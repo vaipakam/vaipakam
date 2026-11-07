@@ -78,22 +78,40 @@ library LibOfferAdmission {
     ///         floor; returns otherwise. A principal that is not an ERC-20, is
     ///         not liquid, or whose value the shared rule cannot give now, is
     ///         admitted.
-    /// @dev Liquidity is read first and on its own, never inferred from a
-    ///      zero value: a liquid amount too small to be worth one unit also
-    ///      values at zero, and it must be refused, not admitted.
     function enforceValue(address lendingAsset, LibVaipakam.AssetType assetType, uint256 amount)
         internal
         view
     {
-        if (assetType != LibVaipakam.AssetType.ERC20) return;
+        (bool below, uint256 value, uint256 minimum) = valueBelowFloor(lendingAsset, assetType, amount);
+        if (below) revert OfferBelowMinimumValue(value, minimum);
+    }
+
+    /// @notice The floor rule as an answer rather than a revert, for a preview
+    ///         that must report the refusal {enforceValue} would raise (the
+    ///         standing-intent preview, whose slice is created at fill).
+    /// @dev Liquidity is read first and on its own, never inferred from a
+    ///      zero value: a liquid amount too small to be worth one unit also
+    ///      values at zero, and it must be refused, not admitted.
+    /// @return below   True when the principal is refused.
+    /// @return value   Its value (1e18 numeraire), when it was valued.
+    /// @return minimum The floor in effect, when it was compared.
+    function valueBelowFloor(address lendingAsset, LibVaipakam.AssetType assetType, uint256 amount)
+        internal
+        view
+        returns (bool below, uint256 value, uint256 minimum)
+    {
+        if (assetType != LibVaipakam.AssetType.ERC20) return (false, 0, 0);
         (bool ok, bytes memory ret) = address(this).staticcall(
             abi.encodeCall(OracleFacet.checkLiquidity, (lendingAsset))
         );
-        if (!ok || ret.length < 32) return;
-        if (abi.decode(ret, (LibVaipakam.LiquidityStatus)) != LibVaipakam.LiquidityStatus.Liquid) return;
-        (bool priced, uint256 value) = LibNumeraireValueRead.tryValue(lendingAsset, amount, false);
-        if (!priced) return;
-        uint256 minimum = LibVaipakam.cfgMinOfferValueNumeraire();
-        if (value < minimum) revert OfferBelowMinimumValue(value, minimum);
+        if (!ok || ret.length < 32) return (false, 0, 0);
+        if (abi.decode(ret, (LibVaipakam.LiquidityStatus)) != LibVaipakam.LiquidityStatus.Liquid) {
+            return (false, 0, 0);
+        }
+        bool priced;
+        (priced, value) = LibNumeraireValueRead.tryValue(lendingAsset, amount, false);
+        if (!priced) return (false, 0, 0);
+        minimum = LibVaipakam.cfgMinOfferValueNumeraire();
+        below = value < minimum;
     }
 }

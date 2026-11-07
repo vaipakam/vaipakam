@@ -345,11 +345,14 @@ runs half of it on old code:
   change self-calls `requireOfferValueAdmitted`. A creator or mutator
   refreshed without the host reverts `FunctionDoesNotExist` on every create
   or amount change (a hard revert, never an unindexed offer).
-  `RefreshAllFacetsInPlace` and `ReplaceStaleFacets` carry the host;
-  `ReplaceStaleFacets` does not carry OfferMutateFacet, so an amount change
-  stays on the old, floor-free code there. The per-wallet open count starts
-  with the build that introduced it: on a Diamond refreshed in place, offers
-  opened before the refresh are not counted.
+  The open count comes down in every facet that takes an offer off the
+  book (each inlines `LibMetricsHooks`), so the crossing is a fresh deploy or
+  `RefreshAllFacetsInPlace`: `ReplaceStaleFacets` carries the host but
+  refuses a Diamond that does not already route `getOfferBookBounds`
+  (`PredatesOfferBook`). It does not carry OfferMutateFacet, so after the
+  crossing an amount change it leaves stale stays floor-free. The count
+  starts with the build that introduced it: on a Diamond refreshed in place,
+  offers opened before the refresh are not counted.
 
 - **Every facet that reads a loan deadline (#668 / #935, owner decision
   D2).** A loan's due date and grace end are read only through
