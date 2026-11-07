@@ -9,11 +9,13 @@ import {
   deploymentFor,
   isCoverageGap,
   resolveChain,
+  verifyChainIdentity,
   type CoverageGap,
 } from './chains';
 import { deliverFindings } from './deliver';
 import { classify, describeFailure } from './errors';
 import {
+  EVENT_ALERT_CODES,
   assertEventAbiShape,
   eventCursorWrites,
   scanEvents,
@@ -129,8 +131,11 @@ const EVENT_CONTRACT_KEYS: readonly WatchedContractId[] = [
  *
  * Skipped (returns `null`) where the mesh read already reported the chain
  * unusable: no deployment, no RPC, or an endpoint that answers as another
- * network — events read through a wrong-network endpoint would be alerted
- * under the wrong chain. Those are already coverage gaps.
+ * network. And the pass confirms the endpoint's chain id ITSELF before
+ * reading (Codex #3301 r3): an endpoint whose `eth_chainId` merely failed
+ * is not proven to be this chain, and an empty log read through another
+ * network would move this chain's position past events never read. The
+ * check runs beside the position read, so it costs no round trip.
  */
 async function runEventScan(
   env: Env,
@@ -153,7 +158,13 @@ async function runEventScan(
   }
   if (Object.keys(addresses).length === 0) return null;
 
-  const cursors = await store.loadEventCursors(chainId);
+  const [identityGap, cursors] = await Promise.all([
+    verifyChainIdentity(target, 'event-logs'),
+    store.loadEventCursors(chainId),
+  ]);
+  if (identityGap) {
+    return { findings: [], scans: [], backlogBlocks: 0n, gap: identityGap };
+  }
   if (!cursors.ok) {
     // Without the stored position the pass would restart its look-back and
     // re-send old events, so it does not read at all, and says so.
@@ -463,6 +474,7 @@ export async function runTick(
           kind: 'retainAlerts',
           keepKeys: findings.map((f) => f.key),
           ownedChainIds: ownedAlertChainIds(obs.observedChainId),
+          spareCodes: EVENT_ALERT_CODES,
         },
       );
     }

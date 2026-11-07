@@ -204,12 +204,28 @@ describe('eventCursorWrites — nothing is skipped', () => {
     const { client } = fakeClient({ logs: [listUpdated(995_100n, 0), listUpdated(995_300n, 1)] });
     return scanEvents(input({ client, cursors: new Map([['sanctionsList', { nextBlock: 995_000n, notified: true }]]), addresses: { sanctionsList: LIST } }));
   }
-  const nextOf = (ops: StoreOp[]) => ops.map((o) => (o.kind === 'setEventCursor' ? o.nextBlock : null));
+  const nextOf = (ops: StoreOp[]) =>
+    ops.flatMap((o) => (o.kind === 'setEventCursor' ? [o.nextBlock] : []));
+  const forgotten = (ops: StoreOp[]) => ops.flatMap((o) => (o.kind === 'forgetAlerts' ? o.keys : []));
 
   it('moves past the range when every event was delivered', async () => {
     const scan = await scanned();
     const all = new Set(scan.findings.map((f) => f.key));
-    expect(nextOf(eventCursorWrites(84532, scan, all, 0))).toEqual([999_999n + 1n]);
+    const ops = eventCursorWrites(84532, scan, all, 0);
+    expect(nextOf(ops)).toEqual([999_999n + 1n]);
+    // Every record the position passed is released; nothing else is.
+    expect(forgotten(ops).sort()).toEqual([...all].sort());
+  });
+
+  it('keeps the record of a delivered event the position has not passed (Codex #3301 r3)', async () => {
+    const scan = await scanned();
+    const [first, second] = scan.findings.map((f) => f.key);
+    const ops = eventCursorWrites(84532, scan, new Set([second!]), 0);
+    expect(nextOf(ops)).toEqual([995_100n]);
+    // The second event lies past the pinned position, so its record stays
+    // and it is not sent again when it is re-read.
+    expect(forgotten(ops)).toEqual([]);
+    expect(first).not.toBe(second);
   });
 
   it('stops at the earliest undelivered event, so it is read and sent again', async () => {

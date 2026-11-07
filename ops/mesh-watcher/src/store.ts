@@ -46,7 +46,21 @@ export type StoreOp =
    * `rotation.ts` `ownedAlertChainIds`). A key whose chain id cannot be
    * parsed counts as chain 0, the watcher-level id.
    */
-  | { kind: 'retainAlerts'; keepKeys: readonly string[]; ownedChainIds: readonly number[] }
+  | {
+      kind: 'retainAlerts';
+      keepKeys: readonly string[];
+      ownedChainIds: readonly number[];
+      /**
+       * Finding codes this sweep never touches. A once-only event alert's
+       * record is its acknowledgement: it must outlive a tick in which the
+       * event was not re-read (a failed log read, say), or the event is sent
+       * again when the read recovers. Those records are removed by
+       * `forgetAlerts` once the event's scan position has passed them.
+       */
+      spareCodes?: readonly string[];
+    }
+  /** Forget these alert records outright (see `retainAlerts.spareCodes`). */
+  | { kind: 'forgetAlerts'; keys: readonly string[] }
   /** Move one watched contract's event-scan position (`eventAlerts.ts`). */
   | {
       kind: 'setEventCursor';
@@ -267,15 +281,27 @@ export class AlertStore {
           .all<{ alert_key: string }>();
         const keep = new Set(op.keepKeys);
         const owned = new Set(op.ownedChainIds);
+        const spare = new Set(op.spareCodes ?? []);
         const drop = (stored.results ?? [])
           .map((r) => r.alert_key)
-          .filter((k) => !keep.has(k) && owned.has(alertKeyChainId(k) ?? 0));
-        return chunkD1InList(drop).map((c) =>
-          this.db
-            .prepare(`DELETE FROM alert_sent WHERE alert_key IN (${c.placeholders})`)
-            .bind(...c.binds),
-        );
+          .filter(
+            (k) =>
+              !keep.has(k) &&
+              owned.has(alertKeyChainId(k) ?? 0) &&
+              !spare.has(k.slice(0, Math.max(0, k.indexOf('/')))),
+          );
+        return this.deleteAlerts(drop);
       }
+      case 'forgetAlerts':
+        return this.deleteAlerts(op.keys);
     }
+  }
+
+  private deleteAlerts(keys: readonly string[]): D1PreparedStatement[] {
+    return chunkD1InList([...keys]).map((c) =>
+      this.db
+        .prepare(`DELETE FROM alert_sent WHERE alert_key IN (${c.placeholders})`)
+        .bind(...c.binds),
+    );
   }
 }

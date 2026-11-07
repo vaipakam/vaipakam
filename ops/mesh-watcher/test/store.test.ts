@@ -261,6 +261,22 @@ describe('selectDue', () => {
   });
 });
 
+describe('event-alert acknowledgements (#3301 r3)', () => {
+  it('survive the not-firing sweep, and go only when forgotten by name', async () => {
+    const { db, store } = harness();
+    for (const k of ['event-alert/timelock.Cancelled@0x1#0:84532', 'event-alert-start/timelock:84532', 'coverage-gap/x:84532']) {
+      seedAlert(db, k);
+    }
+    await store.commit([
+      { kind: 'retainAlerts', keepKeys: [], ownedChainIds: [84532, 0], spareCodes: ['event-alert', 'event-alert-start'] },
+    ]);
+    expect(alertKeys(db)).toEqual(['event-alert-start/timelock:84532', 'event-alert/timelock.Cancelled@0x1#0:84532']);
+
+    await store.commit([{ kind: 'forgetAlerts', keys: ['event-alert/timelock.Cancelled@0x1#0:84532'] }]);
+    expect(alertKeys(db)).toEqual(['event-alert-start/timelock:84532']);
+  });
+});
+
 describe('selectDue — one-off alerts (#3301 r2)', () => {
   it('never makes an already-sent once-only alert due again, while a repeating one is', async () => {
     const { db, store } = harness();

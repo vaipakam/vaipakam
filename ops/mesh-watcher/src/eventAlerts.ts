@@ -48,6 +48,13 @@ import { makeFinding, type Finding, type Severity } from './finding';
 import { MULTICALL3 } from './mesh';
 import type { StoreOp } from './store';
 
+/**
+ * The codes of this pass's findings. Their alert records are kept through
+ * the ordinary not-firing-any-more sweep and removed only once the scan
+ * position has passed the event (`eventCursorWrites`).
+ */
+export const EVENT_ALERT_CODES: readonly string[] = ['event-alert', 'event-alert-start'];
+
 /** The deployment keys of the watched contracts — also their cursor ids. */
 export type WatchedContractId = 'sanctionsList' | 'sanctionsDelistingTimelock' | 'timelock';
 
@@ -677,6 +684,12 @@ export function eventCursorWrites(
     if (!notified) pending.push(s.from);
     const next = pending.length > 0 ? pending.reduce((a, b) => (b < a ? b : a)) : s.to + 1n;
     ops.push({ kind: 'setEventCursor', chainId, contract: s.contract, nextBlock: next, notified, at });
+    // Records the position has now passed are never read again, so their
+    // acknowledgements can go. Anything at or after the new position keeps
+    // its record, whatever happens to the next read (Codex #3301 r3).
+    const passed = s.events.filter((e) => e.block < next).map((e) => e.key);
+    if (notified && s.startNoticeKey !== null) passed.push(s.startNoticeKey);
+    if (passed.length > 0) ops.push({ kind: 'forgetAlerts', keys: passed });
   }
   return ops;
 }

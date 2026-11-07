@@ -315,8 +315,14 @@ How a tick reads them:
 - **A failed read is a coverage gap** (`source: event-logs`), so the tick is
   not reported healthy. An event alert itself is news, not a fault: it
   pages, but it does not fail the `ledger-clean` precondition.
-- **Never on a chain-mismatched endpoint**: events read through the wrong
-  network would be alerted under the wrong chain.
+- **Only through an endpoint whose chain id it confirmed this tick.** An
+  endpoint that answers as another network, or whose `eth_chainId` fails,
+  is not read: an empty log read through the wrong network would move this
+  chain's position past events never read.
+- **An alert's record is its acknowledgement.** Event alerts are sent once,
+  never on the repeat timer, and their records survive the ordinary
+  not-firing sweep. Each is removed only when the position has passed its
+  event, so a tick whose read failed cannot make a delivered event look new.
 
 The decoded function of a queued call is shown as its selector for now; a
 plain-words decoding is the shared decoder #3237 tracks.
