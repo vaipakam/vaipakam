@@ -329,6 +329,23 @@ describe('the private nonce record (Codex #3275 r1)', () => {
     expect(reservations.rows.get(key)).toEqual({ next: 3, atMs: start });
   });
 
+  it('a deadline that passes while a public send reads the record sends nothing (Codex #3275 r6)', async () => {
+    const calls: string[] = [];
+    let t = 0;
+    const slowRead: NonceReservations = {
+      read: async () => {
+        t = 100;
+        return null;
+      },
+      write: async () => {},
+    };
+    armSubmissionRoutes(readSubmissionRoutes('', ''), slowRead);
+    const wallet = createWalletClient({ account, transport: rpc(async () => keccak256(RAW), calls, 'public') });
+    const err = await broadcastSigned(wallet, 1, RAW, 50, () => t).catch((e: unknown) => e);
+    expect(isSendPastDeadline(err)).toBe(true);
+    expect(calls).toEqual([]);
+  });
+
   it('a public send with no live reservation writes nothing', async () => {
     const reservations = memoryNonceReservations();
     armSubmissionRoutes(readSubmissionRoutes('', ''), reservations);

@@ -407,13 +407,14 @@ export async function broadcastSigned(
           console.warn(`[submission] chain=${chainId} could not release nonce ${nonce} in the private nonce record (${describeFailure(writeErr)}); later sends wait for it to expire`);
         }
       };
-      // The write can be slow (the machine's D1 adapter waits up to 20 s),
-      // so the run's deadline is checked again before anything leaves.
-      if (now() >= notAfterMs) {
-        const late = new SendPastDeadline(`send refused before broadcast: the run's deadline passed while the nonce was recorded — next run`);
-        await release(late);
-        throw late;
-      }
+    }
+    // The record's read and write can be slow (the machine's D1 adapter waits
+    // up to 20 s), so the run's deadline is checked again after them, on
+    // every route, before anything leaves (Codex #3275 r2, r6).
+    if (now() >= notAfterMs) {
+      const late = new SendPastDeadline(`send refused before broadcast: the run's deadline passed while the nonce record was read — next run`);
+      await release(late);
+      throw late;
     }
   }
 
