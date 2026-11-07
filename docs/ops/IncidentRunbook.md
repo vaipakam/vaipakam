@@ -1897,11 +1897,15 @@ attacker, a Permit2 signature, or a transfer.
 
 ### Detect
 
-- A served asset that no build from `main` produced. Compare the
-  `/assets/index-*.js` name served by the custom domain, by the Worker's
-  `workers.dev` URL, and by a local build of the commit the deploy stamp
-  names. (The automatic served-build check #3236 asks for does not exist
-  yet; until it does, this is a manual check.)
+- A served asset that the deployed version did not upload. Compare the
+  `/assets/index-*.js` name served by the custom domain with the one the
+  Worker's `workers.dev` URL serves, and both with the asset list of the
+  version the Cloudflare dashboard shows as deployed. Do NOT compare against a
+  fresh local build: the build stamps its own time into the bundle and into
+  `/sw.js`, and the Workers Build supplies its own environment, so a rebuild of
+  the same commit never reproduces the deployed file names and would always
+  read as a mismatch. (The automatic served-build check #3236 asks for does
+  not exist yet; until it does, this is a manual check.)
 - A changed or missing `Content-Security-Policy` header, or a script host in
   it that `public/_headers.base` does not name.
 - A Worker deployment whose commit stamp is not on `main`, or that has no
@@ -1936,19 +1940,27 @@ service-worker registration that is not its own `/sw.js` each time it loads
 genuine page loads. A foreign worker that answers page loads itself keeps the
 genuine page from ever running, so also send the emergency header:
 
-- Add `Clear-Site-Data: "cache", "storage"` under the `/`, `/index.html` and
-  `/sw.js` rules in `apps/app/public/_headers.base` (adding a header to an
-  existing rule does not count against the 100-rule limit), and merge it. The
-  browser fetches `/sw.js` from the network on its update checks whatever the
-  worker does, which is why that rule carries it too. Whether a given browser
+- Add `Clear-Site-Data: "cache", "storage"` under the `/*` rule at the top of
+  `apps/app/public/_headers.base` (adding a header to an existing rule does
+  not count against the 100-rule limit), and merge it. It has to be `/*`, not
+  only the page and `/sw.js`: a worker's update check fetches the script URL
+  IT was registered with, which for a foreign worker is whatever path the bad
+  build chose (`/evil.js`, say). The host answers that path with the page
+  fallback, and `/*` puts the header on that answer too. The browser makes the
+  update fetch from the network whatever the worker does, so this is the one
+  response an intercepting worker cannot hide. Whether a given browser
   honours the header on that update fetch has not been tested here, so check
   it once in a scratch browser profile that has the bad worker registered,
   and say in the user notice that clearing the site's data by hand (the
   browser's site settings) removes it for certain.
-- `"storage"` also clears the app's local settings and wallet-connection
-  sessions, so visitors reconnect once. That is the price of the lever.
+- The price is high while it is up. On `/*` the header comes back with every
+  response, so every page load wipes the app's local settings and
+  wallet-connection sessions, and the genuine app's own service worker and
+  cache with them: visitors reconnect their wallet on every visit, and the app
+  loads without its offline shell. Say so in the user notice.
 - Keep it for at least 30 days, because a visitor who comes back later still
-  carries the old worker. Then remove it in a reviewed commit.
+  carries the old worker, and weigh a longer window against that cost. Then
+  remove it in a reviewed commit.
 
 ### Tell users
 
@@ -1963,24 +1975,32 @@ trustworthy yet, so do not rely on a banner there alone. Say:
   app's Help. Name a revoke tool only when you have checked it is genuine;
 - that a signature they did not expect (an approval, a Permit2 permit, a
   "sign to verify") should be treated as given to the attacker;
-- that funds already in Vaipakam positions stay under the contracts' rules
-  and were not moved by the app.
+- that a position NFT can be taken too: an approval for the position NFT
+  contract (one token, or "all" of them) or a transfer of one hands the
+  position, and whatever it can claim, to the attacker. Anyone who signed one
+  should revoke it at once;
+- that the contracts' own rules stayed in force throughout.
 
-Do not promise that nothing was lost until the on-chain review below is done.
+Do NOT say that funds in positions were safe or were not moved. Whether any
+position changed hands, or any claim was paid to someone else, is unknown
+until the on-chain review below has looked, and saying otherwise would stop
+the people most at risk from revoking.
 
 ### Confirm the clean build is back
 
-- The custom domain and the `workers.dev` URL serve the same
-  `/assets/index-*.js` name, and it matches a local build of the restored
-  commit.
-- The `Content-Security-Policy` header is back to the one the build writes.
-- `/sw.js` matches the restored build's `dist/sw.js`.
+- The deployed version is the known-good one you rolled back to (its commit
+  stamp is the trusted commit), and the custom domain and the `workers.dev`
+  URL both serve that version's `/assets/index-*.js` name and its `/sw.js`.
+  Compare with that version's own files, not with a rebuild (see Detect).
+- The `Content-Security-Policy` header matches the one that version served
+  before the incident.
 - The live drives in `apps/app/e2e/live/` pass against the restored deploy.
 
 ### Afterwards
 
 Review on-chain approvals and transfers from users who signed during the
-window, rotate every credential that could reach the deploy path, and record
+window, including position-NFT approvals and transfers and any claim paid to a
+new holder, rotate every credential that could reach the deploy path, and record
 the timeline in the deployment log below. The open prevention items are on
 #3236: DNSSEC, CAA and HSTS, an automatic served-build check, and whether a
 merge that changes a user-facing app needs a human approval at mainnet.
