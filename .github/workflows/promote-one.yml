@@ -15,6 +15,14 @@ on:
     secrets:
       CLOUDFLARE_DEPLOY_READ_TOKEN:
         required: true
+      # An environment secret of site-production. A reusable workflow sees it
+      # only when the caller passes it by name (otherwise it reads as empty,
+      # with no error). It still resolves only in the job that names that
+      # environment, so the candidate job never holds it. Not required: the
+      # caller's own scope has no value for it, and the deploy step refuses an
+      # empty token by name.
+      CLOUDFLARE_PROMOTE_TOKEN:
+        required: false
 
 permissions:
   contents: read
