@@ -166,8 +166,11 @@ evidence that the migration has completed.
   transaction, never a second one. Settings the keeper cannot read stop every
   send rather than sending publicly. The keeper remembers, durably, which
   nonce a private transaction holds, so a restart never replaces a private
-  transaction that is still pending; if it cannot keep that record, it sends
-  nothing on that chain. Each run states every chain's route.
+  transaction that is still pending, and a later run counts a private
+  transaction it sent and has not yet seen mined as pending, so it does not
+  send the same action again behind it; if it cannot keep that record, it sends
+  nothing on that chain. A fallback to the ordinary RPC is a new broadcast and
+  is not made once the run's deadline has passed. Each run states every chain's route.
   Which chains need a private route at mainnet is an owner decision.
 - Error reports, stored failure reasons, and operator alerts remove provider
   addresses and credentials before becoming text. They retain useful refusal

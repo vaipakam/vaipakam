@@ -24,6 +24,7 @@ import {
   resetSubmissionQueues,
   setPrivateSubmissionClientForTest,
   chooseNonce,
+  heldUnminedNonces,
   SubmissionRouteUnread,
   withSubmissionSlot,
 } from '../src/submissionQueue';
@@ -391,6 +392,39 @@ describe('the private nonce record (Codex #3275 r1)', () => {
       }, () => t);
     }
     expect(nonces).toEqual([0, 2]);
+  });
+
+  it('counts recent recorded nonces above the mined count as held, for the pending-action hold (Codex #3275 r9)', async () => {
+    const reservations = memoryNonceReservations();
+    const t = Date.now();
+    reservations.rows.set(row(3), t);
+    reservations.rows.set(row(4), t - PRIVATE_ROUTE_FLOOR_TTL_MS - 1);
+    reservations.rows.set(row(1), t);
+    resetSubmissionQueues();
+    armSubmissionRoutes(readSubmissionRoutes(`1=${URL_ETH}`, ''), reservations);
+    // Nonce 1 is mined (count 2), nonce 4's row has expired: only 3 is held.
+    expect(await heldUnminedNonces(1, account.address, 2, () => t)).toBe(1);
+    const { keeperTxPending } = await import('../src/keeperSend');
+    const client = { getTransactionCount: async () => 2 };
+    expect(await keeperTxPending(client as never, account.address, 1)).toBe('keeper-tx-pending (1 unmined)');
+    expect(await keeperTxPending(client as never, account.address, 8453)).toBeNull();
+  });
+
+  it('a deadline that passes during a refused private attempt skips the public fallback (Codex #3275 r9)', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    let t = 0;
+    const refused = setup({ fallback: true, priv: async () => { t = 100; throw rpcRefusal(); } });
+    const err = await broadcastSigned(refused.wallet, 1, RAW, 50, () => t).catch((e: unknown) => e);
+    expect(isSendPastDeadline(err)).toBe(true);
+    expect(refused.calls).toEqual(['private']);
+    expect(refused.reservations.rows.size).toBe(0);
+    t = 0;
+    const lostOne = setup({ fallback: true, priv: async () => { t = 100; throw lost(); } });
+    const err2 = await broadcastSigned(lostOne.wallet, 1, RAW, 50, () => t).catch((e: unknown) => e);
+    // May have relayed: its outcome stays unknown and its nonce stays held.
+    expect(isDefinitiveRejection(err2)).toBe(false);
+    expect(lostOne.calls).toEqual(['private']);
+    expect(lostOne.reservations.rows.has(row(0))).toBe(true);
   });
 
   it('takes the lowest nonce at or above the pending count that no recent send holds', () => {

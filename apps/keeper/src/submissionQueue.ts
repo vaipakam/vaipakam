@@ -123,6 +123,34 @@ function keyOf(chainId: number, address: Address): string {
   return `${chainId}:${address.toLowerCase()}`;
 }
 
+/**
+ * How many nonces at or above `mined` (the account's mined count) this keeper
+ * still holds as sent and not yet seen mined: its own recent broadcasts in
+ * this process on a private route, and, once records are armed, the recent rows of the private
+ * nonce record (Codex #3275 r9). The ordinary RPC's pending count cannot see a
+ * private transaction, so the pending-action hold (`keeperTxPending`) adds
+ * this to it; otherwise a later run would read the loan as untouched and send
+ * the same action again behind the first. A record that cannot be read
+ * throws, and the hold then sends nothing.
+ */
+export async function heldUnminedNonces(chainId: number, address: Address, mined: number, now: () => number = Date.now): Promise<number> {
+  const held = new Set<number>();
+  const reservations = armedNonceReservations();
+  if (reservations) {
+    for (const r of await reservations.read(chainId, address)) {
+      if (r.nonce >= mined && now() - r.atMs < PRIVATE_ROUTE_FLOOR_TTL_MS) held.add(r.nonce);
+    }
+  }
+  // On a public route the pending count already sees this process's sends.
+  const route = armedSubmissionRoute(chainId);
+  if (!('kind' in route) || route.kind === 'private') {
+    for (const [n, at] of floors.get(keyOf(chainId, address)) ?? []) {
+      if (n >= mined && now() - at < PRIVATE_ROUTE_FLOOR_TTL_MS) held.add(n);
+    }
+  }
+  return held.size;
+}
+
 /** Test seam: forget every queue and floor. */
 export function resetSubmissionQueues(): void {
   tails.clear();
@@ -465,6 +493,16 @@ export async function broadcastSigned(
     console.warn(
       `[submission] chain=${chainId} the private route via ${route.host} failed (${summarizeFailure(privateErr)}); sending the same signed transaction through the public RPC, as ${PRIVATE_TX_FALLBACK_VAR} allows`,
     );
+    // The fallback is a new broadcast, so the run's deadline is checked
+    // again first (Codex #3275 r9). A private attempt the endpoint refused
+    // outright sent nothing: release and defer. One that may have relayed
+    // keeps its reservation and its unknown outcome.
+    if (now() >= notAfterMs) {
+      if (!isDefinitiveRejection(privateErr)) throw privateErr;
+      const late = new SendPastDeadline(`send refused before the public fallback: the run's deadline passed during the private attempt — next run`);
+      await release(late);
+      throw late;
+    }
     try {
       return await wallet.sendRawTransaction({ serializedTransaction: serialized });
     } catch (publicErr) {

@@ -109,7 +109,7 @@ export async function attemptMatchLiquidation(
   const preview = await previewMatchLiquidation({ client, diamond, account: keeper, loanId, blockNumber });
   if (preview !== 'match') return { kind: 'skipped', reason: `preview=${preview}` };
 
-  const pending = await keeperTxPending(client, keeper);
+  const pending = await keeperTxPending(client, keeper, deps.chainId);
   if (pending !== null) return { kind: 'skipped', reason: pending };
 
   return sendInSubmissionSlot(wallet, deps.chainId, deps.notAfterMs, diamond, emptyListLiquidation(loanId));
