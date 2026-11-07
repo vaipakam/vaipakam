@@ -331,6 +331,9 @@ Decided while building (owner, 2026-11-07, via the project thread):
   before that change. Only the owner's own signature may raise it above the
   cap; lowering it needs the owner's signature and waits the current delay.
   Protected mode raises it toward its own delay through that capped path.
+- **Ownership can never be renounced** (`renounceOwnership` reverts, as on
+  `VaipakamFeedRegistry`): an ownerless beacon could never register or revoke
+  a version again. It moves only by the two-step transfer.
 - **One pending proposal at a time** on the beacon, and **one pending pin
   change per vault**. A pending pin whose target is revoked meanwhile lapses
   at `executePin` instead of holding the vault's pin slot.
@@ -349,6 +352,13 @@ Stated residuals:
   per vault call (a cold beacon account plus three storage reads); repeat
   calls in the same transaction are much cheaper. Not cached across
   transactions, by design.
+- **A guardian revoke can strand a pending Timelock proposal.** If the
+  guardian's emergency revoke changes the current version while a Timelock
+  revoke proposal is pending, that proposal can fail its re-check at
+  execution (for example `BadSuccessor`, its successor no longer fitting).
+  It fails closed: nothing changes, and it stays pending until the Timelock
+  or the guardian clears it with `cancelProposal`, after which a fresh
+  proposal can be made.
 - **No keeper applies matured changes yet.** `executePin`, `executePinDelay`,
   `executeCurrentVersion` and `executeRevoke` are open to anyone; the keeper
   pass that backs them is #3282 (recorded gaps in

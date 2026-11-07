@@ -5,6 +5,7 @@ import {Ownable, Ownable2Step} from "@openzeppelin/contracts/access/Ownable2Step
 import {IBeacon} from "@openzeppelin/contracts/proxy/beacon/IBeacon.sol";
 import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 import {SignatureChecker} from "@openzeppelin/contracts/utils/cryptography/SignatureChecker.sol";
+import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 /// @dev The one Diamond read the beacon makes: whether the protocol is paused.
 ///      A faulty facet can only set it to paused, which lets the guardian move
@@ -76,6 +77,11 @@ contract VaultBeacon is IBeacon, Ownable2Step, EIP712 {
     ///         as soon as a code change is proposed can always execute before
     ///         that change does, whatever a faulty Diamond raised it to.
     uint256 public constant MAX_DIAMOND_PIN_DELAY = 2 days;
+
+    /// @notice The longest pin delay any path may set, the owner's own
+    ///         signature included. Bounds every stored waiting time, so no
+    ///         delay can overflow the time it is added to.
+    uint256 public constant MAX_PIN_DELAY = 30 days;
 
     /// @notice The layout identity every registered implementation must report.
     bytes32 public constant VAULT_LAYOUT_ID = keccak256("vaipakam.vault.layout.v1");
@@ -179,6 +185,8 @@ contract VaultBeacon is IBeacon, Ownable2Step, EIP712 {
     error DelayNotHigher(uint256 current, uint256 requested);
     error DelayAboveDiamondCap(uint256 requested, uint256 cap);
     error NoDelayChange(address vault);
+    error RenounceDisabled();
+    error DelayTooLong(uint256 requested, uint256 max);
 
     // ─── Construction ────────────────────────────────────────────────────
 
@@ -296,6 +304,13 @@ contract VaultBeacon is IBeacon, Ownable2Step, EIP712 {
         _revoke(id, successorId, true);
     }
 
+    /// @notice Ownership can never be renounced: an ownerless beacon could
+    ///         never register or revoke a version again, freezing every
+    ///         vault's code. Ownership moves only by the two-step transfer.
+    function renounceOwnership() public view override onlyOwner {
+        revert RenounceDisabled();
+    }
+
     /// @notice Set the guardian. The Timelock only.
     function setGuardian(address newGuardian) external onlyOwner {
         if (newGuardian == address(0)) revert ZeroAddress();
@@ -351,6 +366,7 @@ contract VaultBeacon is IBeacon, Ownable2Step, EIP712 {
     ///         mode on). Only ever raises.
     function raisePinDelay(address vault, uint256 delay) external onlyDiamond {
         if (delay > MAX_DIAMOND_PIN_DELAY) revert DelayAboveDiamondCap(delay, MAX_DIAMOND_PIN_DELAY);
+        _checkDelay(delay);
         uint256 old = pinDelay[vault];
         if (delay <= old) revert DelayNotHigher(old, delay);
         _setDelay(vault, old, delay);
@@ -361,6 +377,7 @@ contract VaultBeacon is IBeacon, Ownable2Step, EIP712 {
     ///         effect at once, with no cap; a lowering waits the current delay
     ///         and is then applied by {executePinDelay}.
     function setPinDelay(address vault, uint256 delay, bytes calldata signature) external {
+        _checkDelay(delay);
         _consumeSignature(vault, keccak256(abi.encode(PIN_DELAY_TYPEHASH, vault, delay, nonces[vault])), signature);
         uint256 old = pinDelay[vault];
         if (delay >= old) {
@@ -369,8 +386,8 @@ contract VaultBeacon is IBeacon, Ownable2Step, EIP712 {
             if (delay != old) _setDelay(vault, old, delay);
             return;
         }
-        uint256 at = block.timestamp + old;
-        _pendingDelay[vault] = PendingDelay({delay: uint64(delay), executableAt: uint64(at)});
+        uint64 at = _at(old);
+        _pendingDelay[vault] = PendingDelay({delay: SafeCast.toUint64(delay), executableAt: at});
         emit VaultPinDelayLowerRequested(vault, delay, at);
     }
 
@@ -407,13 +424,13 @@ contract VaultBeacon is IBeacon, Ownable2Step, EIP712 {
 
     function _register(address impl) private returns (uint256 id) {
         if (impl.code.length == 0) revert NoCode(impl);
-        bytes32 layout;
+        bytes32 layoutId;
         try IVaultCode(impl).vaultLayoutId() returns (bytes32 l) {
-            layout = l;
+            layoutId = l;
         } catch {
             revert NotAVaultImplementation(impl);
         }
-        if (layout != VAULT_LAYOUT_ID) revert NotAVaultImplementation(impl);
+        if (layoutId != VAULT_LAYOUT_ID) revert NotAVaultImplementation(impl);
         uint256 n = versionCount;
         for (uint256 i = 1; i <= n; ++i) {
             if (_versions[i].implementation == impl) revert AlreadyRegistered(impl);
@@ -432,9 +449,9 @@ contract VaultBeacon is IBeacon, Ownable2Step, EIP712 {
         if (pendingProposal.kind != ProposalKind.None) revert ProposalPending();
         pendingProposal = Proposal({
             kind: kind,
-            id: uint64(id),
-            successorId: uint64(successorId),
-            executableAt: uint64(block.timestamp + MIN_CODE_DELAY)
+            id: SafeCast.toUint64(id),
+            successorId: SafeCast.toUint64(successorId),
+            executableAt: _at(MIN_CODE_DELAY)
         });
     }
 
@@ -474,8 +491,8 @@ contract VaultBeacon is IBeacon, Ownable2Step, EIP712 {
             _applyPin(vault, target);
             return;
         }
-        uint256 at = block.timestamp + delay;
-        _pendingPin[vault] = PendingPin({target: uint64(target), executableAt: uint64(at)});
+        uint64 at = _at(delay);
+        _pendingPin[vault] = PendingPin({target: SafeCast.toUint64(target), executableAt: at});
         emit VaultPinRequested(vault, target, at);
     }
 
@@ -487,6 +504,18 @@ contract VaultBeacon is IBeacon, Ownable2Step, EIP712 {
             pinnedVersion[vault] = target;
             emit VaultVersionPinned(vault, target);
         }
+    }
+
+    /// @dev THE pin-delay bound, applied by every path that sets one (the
+    ///      Diamond's raise, the owner's raise and the owner's lowering).
+    function _checkDelay(uint256 delay) private pure {
+        if (delay > MAX_PIN_DELAY) revert DelayTooLong(delay, MAX_PIN_DELAY);
+    }
+
+    /// @dev The one place a waiting time becomes a stored timestamp: computed
+    ///      at full width and narrowed with a checked cast, never truncated.
+    function _at(uint256 wait) private view returns (uint64) {
+        return SafeCast.toUint64(block.timestamp + wait);
     }
 
     function _setDelay(address vault, uint256 old, uint256 delay) private {

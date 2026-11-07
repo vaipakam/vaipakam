@@ -616,8 +616,8 @@ describe('a run', () => {
     it('reports a setting only from its receipt: a landed call that applied nothing reports nothing (Codex #3090)', async () => {
       // A replacement finalized first, or a cancel between read and send,
       // leaves the setting's call landing with no SettingChangeApplied.
-      d.accounts.set(ALICE, account({ pendingUnlockAt: NOW - 5n }));
-      ledger.add('SettingChangeRequested', { account: ALICE, kind: 5, value: '0', effectiveAt: String(NOW - 5n) });
+      d.accounts.set(ALICE, account({ pendingCosignOffAt: NOW - 5n }));
+      ledger.add('SettingChangeRequested', { account: ALICE, kind: 4, value: '0', effectiveAt: String(NOW - 5n) });
       const r = await run();
       expect(fns()).toEqual(['finalizeSettingChanges']);
       expect(r.finalized).toEqual([]);

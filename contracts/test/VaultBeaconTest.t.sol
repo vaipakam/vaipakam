@@ -210,6 +210,16 @@ contract VaultBeaconTest is Test {
         assertFalse(ok, "proxiableUUID");
     }
 
+    /// The registry can never be frozen by renouncing its ownership.
+    function test_ownershipCannotBeRenounced() public {
+        vm.expectRevert(VaultBeacon.RenounceDisabled.selector);
+        beacon.renounceOwnership();
+        assertEq(beacon.owner(), address(this));
+        vm.prank(stranger);
+        vm.expectRevert(abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", stranger));
+        beacon.renounceOwnership();
+    }
+
     // ─── Pins and revocation ─────────────────────────────────────────────
 
     /// A pinned vault keeps its version across a current-version change, and
@@ -449,6 +459,54 @@ contract VaultBeaconTest is Test {
         bytes memory sig = _sign(ALICE_KEY, beacon.pinDelayDigest(vaultA, 30 days));
         beacon.setPinDelay(vaultA, 30 days, sig);
         assertEq(beacon.pinDelay(vaultA), 30 days);
+    }
+
+    /// Every pin-delay path is bounded by MAX_PIN_DELAY: a delay of 2**64
+    /// can never be set, so no later lowering can wrap its waiting time to
+    /// zero; the boundary itself is accepted.
+    function test_pinDelayIsBounded_noOverflowToZero() public {
+        uint256 huge = uint256(1) << 64;
+        uint256 max = beacon.MAX_PIN_DELAY();
+        bytes memory sig = _sign(ALICE_KEY, beacon.pinDelayDigest(vaultA, huge));
+        vm.expectRevert(abi.encodeWithSelector(VaultBeacon.DelayTooLong.selector, huge, max));
+        beacon.setPinDelay(vaultA, huge, sig);
+
+        bytes memory over = _sign(ALICE_KEY, beacon.pinDelayDigest(vaultA, max + 1));
+        vm.expectRevert(abi.encodeWithSelector(VaultBeacon.DelayTooLong.selector, max + 1, max));
+        beacon.setPinDelay(vaultA, max + 1, over);
+
+        bytes memory atMax = _sign(ALICE_KEY, beacon.pinDelayDigest(vaultA, max));
+        beacon.setPinDelay(vaultA, max, atMax);
+        assertEq(beacon.pinDelay(vaultA), max, "the boundary is accepted");
+
+        // A lowering from the maximum still waits the full current delay.
+        bytes memory lower = _sign(ALICE_KEY, beacon.pinDelayDigest(vaultA, 0));
+        beacon.setPinDelay(vaultA, 0, lower);
+        (, uint256 at) = beacon.pendingPinDelayOf(vaultA);
+        assertEq(at, block.timestamp + max, "the lowering waits the 30-day delay, not zero");
+    }
+
+    /// Switching protection off cancels a pin change waiting at the beacon,
+    /// so switching it on again does not revive the old request.
+    function test_switchingProtectionOffCancelsAPendingPin() public {
+        _protectAlice();
+        uint256 t0 = block.timestamp;
+        vm.prank(alice);
+        ProtectedAccountFacet(address(diamond)).requestDisableProtectedMode();
+        vm.warp(t0 + 1 days);
+        _pinAlice(3);
+        (, uint256 pinAt) = beacon.pendingPinOf(vaultA);
+        assertGt(pinAt, 0, "a pin change is pending");
+        vm.warp(t0 + LibProtectedAccount.MIN_DELAY);
+        ProtectedAccountFacet(address(diamond)).finalizeSettingChanges(alice);
+        (, uint256 after_) = beacon.pendingPinOf(vaultA);
+        assertEq(after_, 0, "the switch-off cancelled it at the beacon");
+
+        _protectAlice();
+        vm.warp(pinAt);
+        vm.expectRevert(abi.encodeWithSelector(VaultBeacon.NoPinChange.selector, vaultA));
+        beacon.executePin(vaultA);
+        assertEq(beacon.pinnedVersion(vaultA), 0, "the old request never applied");
     }
 
     /// A pending pin to a version revoked meanwhile lapses instead of

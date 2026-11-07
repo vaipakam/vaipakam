@@ -266,8 +266,6 @@ export const ACTIVITY_LABELS: Record<string, ActivityLabel> = {
   VaultWithdrawRequested: { label: 'Vault withdrawal requested', category: 'other', priority: 60 },
   UntrackedAdopted: { label: 'Tokens added to vault', category: 'other', priority: 60 },
   UntrackedDisowned: { label: 'Unsolicited tokens disowned', category: 'other', priority: 40 },
-  VaultUnpinRequested: { label: 'Vault version unpin requested', category: 'other', priority: 40 },
-  VaultUnpinned: { label: 'Vault version unpinned', category: 'other', priority: 40 },
   PayoutQueued: { label: 'Payout queued', category: 'other', priority: 55 },
   PayoutReleased: { label: 'Payout released', category: 'other', priority: 60 },
   PayoutCancelled: { label: 'Payout cancelled', category: 'other', priority: 40 },

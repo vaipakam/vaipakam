@@ -172,9 +172,14 @@ contract ProtectedAccountFacet is DiamondReentrancyGuard, DiamondPausable {
 
     /// @dev Void every pending allowlist addition and signer change of
     ///      `account` at once (they are mappings, so they are voided by
-    ///      epoch, not swept).
+    ///      epoch, not swept), and cancel a pin change pending at the
+    ///      VaultBeacon (#3204). The ONE void every path that ends or replaces
+    ///      protected state reaches (a lock and a replacement through
+    ///      {_dropPendingChanges}, a switch-off through {_clearAccount}), so
+    ///      none of them can leave a pin change maturing behind it.
     function _voidPendingChanges(address account) private {
         ++LibVaipakam.storageSlot().protectedChangeEpoch[account];
+        _cancelBeaconPin(account);
     }
 
     /// @dev Drop every pending change on `account`: the allowlist additions
@@ -190,9 +195,6 @@ contract ProtectedAccountFacet is DiamondReentrancyGuard, DiamondPausable {
         a.pendingDelayAt = 0;
         a.pendingNftOffAt = 0;
         a.pendingCosignOffAt = 0;
-        // #3204 — a pin change waits at the VaultBeacon; a lock, replacement
-        // or switch-off cancels it there, as it voids every other pending change.
-        _cancelBeaconPin(account);
     }
 
     /// @dev The account's vault and the VaultBeacon (#3204); zero vault if none.
