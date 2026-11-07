@@ -181,7 +181,7 @@ export async function runChain({ publication, readCurrent, latestVersion, roles,
       signers: 'adder',
       maxRemove,
       maxChangesPerCall,
-      maxAdditions: await additionsLeftToday(),
+      adderAllowance: await additionsLeftToday(),
       abi,
     });
     context.withheld = update.withheldRemovals;

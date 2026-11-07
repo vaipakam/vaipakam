@@ -707,3 +707,25 @@ test('adder-only: the witness and the removal cap still hold; rollback is refuse
   assert.throws(() => buildUpdate({ parsed, sourceHash: hash, current: [], currentVersion: 1, ...FRESH, signers: 'adder', allowRollback: true }), /never rolls back/);
   assert.throws(() => buildUpdate({ parsed, sourceHash: hash, current: [], currentVersion: 1, ...FRESH, signers: 'remover' }), /signers must be/);
 });
+
+test('build: the adder lists only what its daily cap leaves; the remover lists the rest (#3239)', () => {
+  const parsed = parseSdnAdvanced(FIXTURE.toString('utf8'));
+  const base = { parsed, sourceHash: `0x${'a'.repeat(64)}`, current: [C], currentVersion: 4n, ...FRESH };
+  // Both signers: one address by the adder, the other by the uncapped remover,
+  // then the remover's delisting, in that order and on consecutive versions.
+  const all = buildConfirmed({ ...base, adderAllowance: 1 });
+  assert.deepEqual(all.calls.map((c) => [c.signer, c.add.length, c.remove.length, c.additionsLeft, c.delistingsLeft]), [
+    ['adder', 1, 0, 1, 1],
+    ['remover', 1, 0, 0, 1],
+    ['remover', 0, 1, 0, 0],
+  ]);
+  assert.equal(all.addNow.length, 2);
+  // Nothing left for the adder today: the remover lists both.
+  const none = buildConfirmed({ ...base, adderAllowance: 0 });
+  assert.deepEqual(none.calls.map((c) => [c.signer, c.add.length, c.remove.length]), [['remover', 2, 0], ['remover', 0, 1]]);
+  // Adder only: the rest is declared outstanding for a later day.
+  const adder = buildUpdate({ ...base, signers: 'adder', adderAllowance: 1 });
+  assert.deepEqual(adder.calls.map((c) => [c.add.length, c.additionsLeft, c.delistingsLeft]), [[1, 1, 1]]);
+  assert.equal(adder.addNow.length, 1);
+  assert.throws(() => buildUpdate({ ...base, signers: 'adder', adderAllowance: -1 }), /adderAllowance must be a non-negative integer/);
+});

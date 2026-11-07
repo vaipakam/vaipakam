@@ -6,7 +6,7 @@ The list now limits an adder to a number of listings per UTC day across all its 
 
 No update from any account may now record a publication dated after the chain's own UTC date. OFAC's dates are never ahead of UTC, so a genuine file always passes.
 
-The adder service reads how many listings the day still allows and plans within it. It reports the rest of the publication as waiting for the next UTC day, not as an error or an overstated count. Against a list deployed before this change, which has no cap, it plans without one.
+The adder service reads how many listings the day still allows and plans within it. It reports the rest of the publication as waiting for the next UTC day, not as an error or an overstated count. Against a list deployed before this change, which has no cap, it plans without one. The manual diff tool, which plans calls for both signers, gives the adder only what the day allows and puts the rest of the additions in calls for the Safe, which has no cap.
 
 The functional spec and the sanctions runbook now say what a listing blocks, what stays open and how to recover.
 

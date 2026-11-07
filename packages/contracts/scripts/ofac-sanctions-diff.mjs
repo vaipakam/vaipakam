@@ -1150,7 +1150,7 @@ export function buildUpdate({
   maxChangesPerCall = DEFAULT_MAX_CHANGES_PER_CALL,
   confirmedDelistings = [],
   signers = 'all',
-  maxAdditions = Infinity,
+  adderAllowance = Infinity,
   abi = sanctionsListAbi(),
 }) {
   if (signers !== 'all' && signers !== 'adder') throw new Error(`signers must be 'all' or 'adder', got ${JSON.stringify(signers)}`);
@@ -1158,12 +1158,11 @@ export function buildUpdate({
   if (signers === 'adder' && allowRollback) throw new Error('an adder-only update never rolls back a publication');
   if (!Number.isSafeInteger(maxRemove) || maxRemove < 0) throw new Error(`maxRemove must be a non-negative integer, got ${maxRemove}`);
   if (!Number.isSafeInteger(maxChangesPerCall) || maxChangesPerCall < 1) throw new Error(`maxChangesPerCall must be a positive integer, got ${maxChangesPerCall}`);
-  // The list's daily cap on an adder's listings (#3239, note 4b on the
-  // contract): only an adder-only update is held to it.
-  if (maxAdditions !== Infinity && (!Number.isSafeInteger(maxAdditions) || maxAdditions < 0)) {
-    throw new Error(`maxAdditions must be a non-negative integer, got ${maxAdditions}`);
+  // What the list's daily cap still lets the adder list today (#3239, note
+  // 4b on the contract). The remover is not capped.
+  if (adderAllowance !== Infinity && (!Number.isSafeInteger(adderAllowance) || adderAllowance < 0)) {
+    throw new Error(`adderAllowance must be a non-negative integer, got ${adderAllowance}`);
   }
-  if (signers !== 'adder' && maxAdditions !== Infinity) throw new Error('maxAdditions bounds an adder-only update only');
   if (recordedDate === undefined || recordedHash === undefined) throw new Error('the recorded publication date and hash are required');
   // No defaults: a guessed count would build calls the contract refuses, or
   // hide a partly applied publication from the reviewer (Codex #2543 r9).
@@ -1236,12 +1235,16 @@ export function buildUpdate({
   // empty adder call declaring its delistings outstanding, so the list says
   // which publication it follows and what of it is not yet applied. A repeat
   // with nothing left to add gives the adder nothing to do.
-  // What this update lists: all of it, or as much as the adder's daily cap
-  // leaves today. The rest stays declared outstanding (note 4a), and the next
-  // run, on a later UTC day, lists it as a repeat of the same publication.
-  const addNow = add.slice(0, maxAdditions);
+  // The adder lists as much as its daily cap leaves today. In adder-only mode
+  // the rest stays declared outstanding (note 4a) and the next run, on a later
+  // UTC day, lists it as a repeat of the same publication; when the remover
+  // signs too, the remover lists the rest now, since it is not capped.
+  const byAdder = add.slice(0, adderAllowance);
+  const byRemover = signers === 'all' ? add.slice(byAdder.length) : [];
+  const addNow = [...byAdder, ...byRemover];
   let addBatches;
-  if (addNow.length > 0) addBatches = batches(addNow);
+  if (byAdder.length > 0) addBatches = batches(byAdder);
+  else if (byRemover.length > 0) addBatches = [];
   else if (signers === 'adder') addBatches = order === 'same-publication' ? [] : [[]];
   else addBatches = remove.length > 0 ? [] : [[]];
   for (const batch of addBatches) {
@@ -1249,6 +1252,10 @@ export function buildUpdate({
     push('adder', batch, [], addsLeft, delsLeft);
   }
   if (signers === 'all') {
+    for (const batch of batches(byRemover)) {
+      addsLeft -= batch.length;
+      push('remover', batch, [], addsLeft, delsLeft);
+    }
     for (const batch of batches(remove)) {
       delsLeft -= batch.length;
       push('remover', [], batch, addsLeft, delsLeft);
@@ -1257,7 +1264,7 @@ export function buildUpdate({
   return {
     add,
     // The additions this update's calls carry; fewer than `add` only when the
-    // adder's daily cap holds the rest back for a later day.
+    // adder's daily cap holds the rest back for a later day (adder-only mode).
     addNow,
     remove,
     // The delistings this update leaves for the remover: all of them in
@@ -1377,6 +1384,12 @@ async function main() {
   const current = await readCurrentFromChain(createPublicClient({ transport: http(args.rpc) }), getAddress(args.list), abi, parseUintArg('--chain-id', args['chain-id'], { min: 1n }));
   current.source = { chainId: current.chainId.toString(), list: getAddress(args.list), atBlock: current.blockNumber.toString(), atBlockHash: current.blockHash, pinnedFrom: current.blockTag };
 
+  // The adder's allowance today under the list's daily cap (#3239); a list
+  // built before the cap has no such read and no cap.
+  let adderAllowance = Infinity;
+  try {
+    adderAllowance = Number(await createPublicClient({ transport: http(args.rpc) }).readContract({ address: getAddress(args.list), abi, functionName: 'adderAdditionsLeftToday' }));
+  } catch {}
   const maxRemove = args['max-remove'] !== undefined ? Number(parseUintArg('--max-remove', args['max-remove'], { max: 1_000_000n })) : DEFAULT_MAX_REMOVE;
   const update = buildUpdate({
     parsed,
@@ -1391,6 +1404,7 @@ async function main() {
     maxRemove,
     confirmedDelistings: args['confirm-delist'] === undefined ? [] : String(args['confirm-delist']).split(',').map((a) => a.trim()).filter(Boolean),
     maxChangesPerCall: args['max-changes-per-call'] !== undefined ? Number(parseUintArg('--max-changes-per-call', args['max-changes-per-call'], { min: 1n, max: 100_000n })) : DEFAULT_MAX_CHANGES_PER_CALL,
+    adderAllowance,
     abi,
   });
 
