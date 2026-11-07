@@ -35,7 +35,7 @@ import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { appendFileSync, readFileSync } from 'node:fs';
 import { parseApproval, promotedNotice, verifyApproval } from './lib/approvalRecord.mjs';
-import { deployVersion, readLatestDeployment, readRecentVersions } from './lib/workerDeployments.mjs';
+import { deployVersion, readLatestDeployment, readRecentVersions, readVersion } from './lib/workerDeployments.mjs';
 
 const CONFIG_PATH = '.github/served-build.json';
 const FULL_SHA = /^[0-9a-f]{40}$/;
@@ -142,7 +142,8 @@ async function find(config, auth) {
   const deadline = Date.now() + waitMinutes * 60_000;
   let version = null;
   for (;;) {
-    const recent = await readRecentVersions(site.worker, auth, 30);
+    // Pull-request preview builds upload versions too, so read a wide page.
+    const recent = await readRecentVersions(site.worker, auth, 100);
     if (recent.read !== 'ok') throw new Error(`${site.worker}: versions cannot be read (${recent.error})`);
     version = versionFor(recent.versions, commit);
     if (version || Date.now() > deadline) break;
@@ -174,10 +175,12 @@ async function deploy(config, readAuth, writeAuth) {
   const runUrl = `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`;
   // Everything is read again after the approval: what was approved must
   // still be the version stamped from this commit, and still newer than live.
-  const recent = await readRecentVersions(site.worker, readAuth, 50);
-  if (recent.read !== 'ok') throw new Error(`${site.worker}: versions cannot be read (${recent.error})`);
-  const version = versionFor(recent.versions, commit);
-  if (!version || version.id !== versionId) throw new Error(`${site.worker}: ${versionId} is no longer the version stamped from ${commit}`);
+  // The approved version is read by its id, not searched for among the
+  // recent ones: an approval can come hours later, after pull-request
+  // preview builds have uploaded many newer versions.
+  const version = await readVersion(site.worker, versionId, readAuth);
+  if (version.read !== 'ok') throw new Error(`${site.worker}: version ${versionId} cannot be read (${version.read === 'none' ? 'not found' : version.error})`);
+  if (!versionFor([version], commit)) throw new Error(`${site.worker}: ${versionId} is not the clean version stamped from ${commit}`);
   const facts = await liveFacts(site, readAuth);
   const state = standing({ candidateCommit: commit, candidateVersion: versionId, ...facts }, isAncestor);
   if (state === 'live') {
