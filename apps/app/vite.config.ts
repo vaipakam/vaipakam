@@ -1,30 +1,21 @@
 import { build, defineConfig, loadEnv, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
 import { cloudflare } from '@cloudflare/vite-plugin';
-import { execSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { cspScriptHashesPlugin } from '@vaipakam/lib/cspScriptHashes';
-import { buildSourceTime } from '@vaipakam/lib/buildTime';
+import { buildCommitLabel, buildSourceTime } from '@vaipakam/lib/buildTime';
 import { e2eDeploymentsBundlePlugin } from '@vaipakam/lib/e2eDeploymentsBundle';
 import { REPORT_ONLY_HEADER, cspConnectSourcesPlugin } from '@vaipakam/lib/cspConnectSources';
 import { connectSources, rpcConfigProblems } from './src/lib/endpoints.ts';
 
 // Stamp the commit + build time into the bundle (shown on the Help page)
 // so a tester can always tell which build they're looking at.
-process.env.VITE_BUILD_HASH = (() => {
-  try {
-    return execSync('git rev-parse --short HEAD', {
-      stdio: ['ignore', 'pipe', 'ignore'],
-    })
-      .toString()
-      .trim();
-  } catch {
-    return 'unknown';
-  }
-})();
+// A fixed 12-digit slice of the commit, never `git rev-parse --short`,
+// whose length depends on the clone's depth (#3236, @vaipakam/lib/buildTime).
+process.env.VITE_BUILD_HASH = buildCommitLabel();
 // #3236 — the time is the COMMIT's, not the clock's, so two builds of one
 // commit produce the same files and the served build can be checked by
 // rebuilding it (see @vaipakam/lib/buildTime).

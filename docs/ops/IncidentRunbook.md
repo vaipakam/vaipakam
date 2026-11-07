@@ -1897,23 +1897,28 @@ attacker, a Permit2 signature, or a transfer.
 
 ### Detect
 
-- A served asset that the deployed version did not upload. Compare the
-  `/assets/index-*.js` name served by the custom domain with the one the
-  Worker's `workers.dev` URL serves, and both with the asset list of the
-  version the Cloudflare dashboard shows as deployed. A rebuild is a second
-  check only with care: since #3236 the app, alpha05 and www builds stamp the
-  commit's time rather than the clock, so two builds of one commit produce
-  identical files, but only with the SAME build variables the Workers Build
-  used (the trigger's variables, readable through the Workers Builds API).
-  Without them every file that carries a variable differs and reads as a
-  mismatch. For www, compare only the bundled code (`/assets/`), never its
-  pages or documents: its deploy fetches live data while it builds (the
-  protocol configuration the indexer publishes, read by
-  `scripts/generate-llms.mjs` and by the pages that `scripts/prerender.mjs`
-  renders into HTML), so its HTML and `llms` files change whenever that data
-  does. The app and alpha05 deploys fetch nothing while building. Builds made
-  before #3236 stamped the clock and never match a rebuild. (The automatic served-build check #3236 asks for does not exist
-  yet; until it does, this is a manual check.)
+- **The served-build check fails** (`.github/workflows/served-build.yml`,
+  every six hours, alert issue "Served build differs from its commit"). It
+  rebuilds the commit each site's live deployment is stamped with, using the
+  public build variables recorded in `.github/served-build.json`, and compares
+  every served file and the root security headers with that build, on the
+  custom domain and on `workers.dev`. Its keys say what it found:
+  `mismatch` (a file or header differs), `off-main` (the deployed commit was
+  never merged), `unverifiable` (no stamp, a dirty build, or traffic split
+  across versions) and `unbuildable`. A `mismatch` has two possible causes,
+  and the issue names both: someone changed a site's build variables in the
+  Workers Build settings without the same change to `.github/served-build.json`,
+  or what is served was altered. Treat it as altered, and start Contain below,
+  until the Workers Build settings are shown to hold exactly the new values
+  and the change was intended. Then record them in that file in a reviewed
+  commit. For www it compares only the bundled code (`/assets/`): its deploy
+  fetches live data while it builds (the protocol configuration the indexer
+  publishes, read by `scripts/generate-llms.mjs` and by the pages that
+  `scripts/prerender.mjs` renders into HTML), so its HTML and `llms` files
+  change whenever that data does. The check cannot see a file the build does
+  not write, nor a script injected only into a page it does not compare.
+  To run it by hand: `CLOUDFLARE_ACCOUNT_ID=… CLOUDFLARE_DEPLOY_READ_TOKEN=…
+  node .github/scripts/check-served-build.mjs [--site vaipakam-app]`.
 - A changed or missing `Content-Security-Policy` header, or a script host in
   it that `public/_headers.base` does not name.
 - A Worker deployment whose commit stamp is not on `main`, or that has no
@@ -2020,8 +2025,8 @@ Review on-chain approvals and transfers from users who signed during the
 window, including position-NFT approvals and transfers and any claim paid to a
 new holder, rotate every credential that could reach the deploy path, and record
 the timeline in the deployment log below. The open prevention items are on
-#3236: DNSSEC, CAA and HSTS, an automatic served-build check, and whether a
-merge that changes a user-facing app needs a human approval at mainnet.
+#3236: DNSSEC, CAA and HSTS, and a human approval for app deploys at mainnet.
+The automatic served-build check is in place (see Detect).
 
 ---
 

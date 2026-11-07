@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildSourceTime } from './buildTime.mjs';
+import { buildCommitLabel, buildSourceTime } from './buildTime.mjs';
 
 const noGit = () => {
   throw new Error('not a git repository');
@@ -38,5 +38,21 @@ describe('buildSourceTime (#3236)', () => {
     const t = buildSourceTime({ env: {}, git: () => '', now: () => new Date(0) });
     expect(t.source).toBe('clock');
     expect(t.reason).toMatch(/no commit time/);
+  });
+});
+
+describe('buildCommitLabel (#3236)', () => {
+  const full = 'FEA41497A460A1B2C3D4E5F60718293A4B5C6D7E';
+  it('is the first 12 hex digits of HEAD, whatever the clone depth', () => {
+    const git = (args: string[]) => {
+      expect(args).toEqual(['rev-parse', 'HEAD']);
+      return `${full}\n`;
+    };
+    expect(buildCommitLabel({ git })).toBe('fea41497a460');
+  });
+
+  it('says unknown when git cannot name HEAD', () => {
+    expect(buildCommitLabel({ git: noGit })).toBe('unknown');
+    expect(buildCommitLabel({ git: () => 'not-a-hash' })).toBe('unknown');
   });
 });
