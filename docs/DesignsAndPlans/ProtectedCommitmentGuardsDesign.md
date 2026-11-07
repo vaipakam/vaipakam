@@ -134,8 +134,14 @@ hand-typed offer, and this guard needs one (Q1).
 **Proposed reference.** A per-chain record per `(lendingAsset, tenor bucket)`
 holds a reference rate and its update time.
 
-- A bounded role publishes it. The proposal is `WATCHER_ROLE`, with a cap on
-  the change per update and a staleness bound.
+- A bounded role publishes it. The proposal is `WATCHER_ROLE`, with a
+  staleness bound and a **movement cap over time, not per update**. Each key
+  keeps an anchor rate and the anchor's time. The anchor rolls forward to the
+  current rate only once 24 hours have passed since the anchor's time, and
+  every update must stay within the cap of the anchor. Repeated updates in one
+  block, or across a day, cannot reset it, so the reference moves at most the
+  cap within one anchor period and at most twice the cap in any 24 hours.
+  Updates are also at least one hour apart.
 - The band centre is the registered model's quote at that reference, clamped
   as today. The half-width is `cfgRateModelBandHalfWidthBps(ref)`.
 
@@ -358,7 +364,10 @@ price or a lock.
 
 - **The reference-rate publisher is a new trust input.** A stale or missing
   reference turns guard A off, and the app says so. A captured publisher
-  could widen what counts as in-band. The per-update change cap bounds that.
+  could shift what counts as in-band, but only by the movement cap per
+  anchor period (at most twice the cap in any 24 hours), however many updates
+  it sends. A commitment that a shift brought in-band still needed that shift
+  to be published first, in the open.
 - **The band is wide by design.** At a 12% market, 7–17% is in-band
   (`RateModelFacet.sol:92-94`). A thief can still make in-band commitments
   with liquid collateral at once. The loss is bounded by the band width times
@@ -388,6 +397,10 @@ Unit tests for `LibProtectedCommitment`:
 
 - the band, both directions, on the range ends;
 - the rule not applying with no model, no reference or a stale reference;
+- reference movement: many updates from the publisher in one block, and
+  across a day, cannot move the reference beyond the cap from its anchor;
+  an update within an hour of the last is refused; the anchor rolls only after
+  24 hours;
 - 95% par at 94.99%, 95% and 95.01%;
 - effective floor = max(minimum × quantity sold, owed), including an
   ERC-1155 order of ten units whose total ask passes a per-unit minimum but

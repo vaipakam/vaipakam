@@ -151,11 +151,16 @@ pending reservation are tagged with the numeraire they were written in. Sums
 in one currency cannot be compared with a threshold in another, and converting
 them would need a cross-rate the vault has no trusted source for. So when the
 config's numeraire changes, every valued owner outflow is **delayed** (queued,
-not refused) until 25 hours after the rotation took effect, when the last
-old-currency hour has left the window. The meter then restarts empty under the
-new tag. Queued rows keep their old-currency recorded values; on release they
-are re-valued in the new currency, and if the guard does not answer Ok they
-wait. Both lines apply the same rule, each against its own tag, so a
+not refused) until **both** of these hold: 25 hours have passed since the
+rotation took effect, so the last old-currency hour has left the window; and
+no queued row recorded in the old currency is still pending. The meter then
+restarts empty under the new tag. The reservation is kept per tag, so an
+old-currency reservation is never added to a new-currency one. Old rows keep
+their old-currency recorded values; on release they are re-valued in the new
+currency and, if the guard does not answer Ok, they wait. Once an old row is
+released or cancelled it leaves the old reservation. When that reaches zero,
+and the 25 hours have passed, immediate withdrawals resume. An old row
+re-valued at release enters the new meter at its new-currency value. Both lines apply the same rule, each against its own tag, so a
 withdrawal made just before the rotation cannot be paired with an
 undercounted one just after it. The first line runs the same rule against the same guard in the same
 transaction, so honest paths never disagree. This build waits for #3272: a vault
@@ -297,7 +302,8 @@ and every §12 residual.
   Diamond's buckets (#3204's audit scope).
 - **Governance compromise** loosens limits only after 48 hours plus 3 days;
   noticing in time depends on #3237.
-- **A numeraire rotation** delays every valued owner outflow for 25 hours.
+- **A numeraire rotation** delays every valued owner outflow for 25 hours,
+  and longer while an old-currency queued row is still pending.
   This is deliberate, it is announced by the governance delay, and rotations
   should be rare.
 - **No-feed assets and NFTs** are not delayed (illiquid-at-0); liens and the
@@ -318,7 +324,8 @@ and every §12 residual.
 - **Rotation:** after an undelayed $1,000 outflow, a rotation to a new
   numeraire delays a just-under-threshold outflow in the new currency, in both
   lines; 25 hours after the rotation the meter is empty under the new tag and
-  that outflow pays.
+  that outflow pays; a $1,000 row still pending from before the rotation keeps
+  the delay on past 25 hours until it is released or cancelled.
 - **Second line,** with a test facet calling `transferOut` directly: an
   unqueued over-threshold owner outflow reverts; an outflow beyond the vault
   bucket reverts; a facet writing arbitrary Diamond storage cannot change the
