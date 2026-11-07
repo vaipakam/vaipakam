@@ -204,7 +204,7 @@ contract Handover is Script {
     function _execute(Config memory c) internal {
         _preflight(c);
         _rotateDiamond(c);
-        _rotateFeedRegistryGuardian(c);
+        _rotateGuardians(c);
 
         // ── Owned contracts → Timelock ──────────────────────────────────
         // The whole CCIP stack is ADMIN-owned two-step: `DeployCrosschain`
@@ -237,23 +237,30 @@ contract Handover is Script {
         _printAcceptSteps(c, cctRotated);
     }
 
-    /// @dev #2880 — the feed registry's veto belongs to the Pauser Safe. A
-    ///      testnet deploy without a Pauser Safe left it with the admin; it
-    ///      moves here, while the admin still owns the registry and before
-    ///      ownership goes to the Timelock. The gate refuses any other holder.
-    function _rotateFeedRegistryGuardian(Config memory c) internal {
+    /// @dev Every guardian-flagged target's stop-only power belongs to the
+    ///      Pauser Safe: the feed registry's veto (#2880), the VaultBeacon's
+    ///      cancel and paused-only revoke (#3204), a `GuardianPausable`
+    ///      contract's pause, and any found contract that answers
+    ///      `guardian()` (the plan derives that flag). One loop for all of
+    ///      them, run while the admin still owns each and before ownership
+    ///      goes to the Timelock. It moves a guardian still held by the admin
+    ///      (the deploy default); the gate refuses any other holder.
+    function _rotateGuardians(Config memory c) internal {
         for (uint256 i; i < c.targets.length; ++i) {
             HandoverPlan.Target memory t = c.targets[i];
-            if (t.addr == address(0) || keccak256(bytes(t.label)) != keccak256("feedRegistry")) continue;
-            if (IFeedRegistryGuardian(t.addr).guardian() == c.pauserSafe) return;
+            if (t.addr == address(0) || !t.guardian) continue;
+            address current = IFeedRegistryGuardian(t.addr).guardian();
+            if (current == c.pauserSafe) continue;
+            // Only the deploy default (the admin) is rotated. Any other holder
+            // is an anomaly the gate reports by name, never silently replaced.
+            if (current != c.admin) continue;
             require(
                 IOwnable2Step(t.addr).owner() == c.admin,
-                "feedRegistry: its guardian is not the Pauser Safe and the admin no longer owns it to rotate it"
+                string.concat(t.label, ": its guardian is not the Pauser Safe and the admin no longer owns it to rotate it")
             );
             vm.broadcast(c.adminKey);
             IFeedRegistryGuardian(t.addr).setGuardian(c.pauserSafe);
-            console.log("feedRegistry guardian -> Pauser Safe:", c.pauserSafe);
-            return;
+            console.log(string.concat(t.label, " guardian -> Pauser Safe:"), c.pauserSafe);
         }
     }
 

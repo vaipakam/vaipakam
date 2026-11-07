@@ -667,9 +667,6 @@ export const copy = {
     blockCreatorGate: A(
       "The borrower's own risk setting no longer covers this pair, so this request cannot be funded until the borrower changes it. Nothing in your account would change that.",
     ),
-    vaultUpgradeBorrower: A(
-      "The borrower's vault is below the version the protocol requires, so this request cannot be funded until the borrower upgrades it. Nothing in your account would change that.",
-    ),
     err: {
       OfferAlreadyAccepted: A('Another lender has already funded this request.'),
       SanctionedCreator: A("The borrower's wallet is flagged by the sanctions screen, so this request cannot be funded."),
@@ -677,7 +674,6 @@ export const copy = {
       OfferExpired: A('This request has expired.'),
       OfferPartiallyFilled: A('Part of this request has already been matched, so it can no longer be funded directly.'),
       OfferIsCancelled: A('The borrower cancelled this request.'),
-      VaultUpgradeRequired: A('Your vault needs an upgrade before it can fund a new loan. The Vault page that does it is not built yet; the current app can upgrade it.'),
       SelfTrade: A('This is your own request.'),
       RefinanceRequestUntakeable: A('This request refinances a loan that cannot be refinanced through it now, so it cannot be funded.'),
       CadenceNotAdmitted: A("The protocol no longer admits this request's interest schedule, so it cannot be funded."),
@@ -999,12 +995,6 @@ export const copy = {
     ),
     blockShortfall: A('Your wallet holds {{have}}, which is {{missing}} short of the {{need}} this offer locks.'),
     blockDistrusted: A('The protocol does not trust the price of {{asset}} right now, so new loans on it are closed. Your open positions are not affected.'),
-    vaultUpgradeLender: A(
-      "The lender's vault is below the version the protocol requires, so this offer cannot be taken until the lender upgrades it. Nothing in your account would change that.",
-    ),
-    vaultUpgradeEither: A(
-      "One side's vault is below the version the protocol requires, so this offer cannot be taken until it is upgraded. The review names whose when it can read it.",
-    ),
     blockGateOther: A("The protocol's risk check refuses this acceptance with a code this build cannot name, so it cannot be taken here."),
     blockCreatorGate: A(
       "The lender's own risk setting no longer covers this pair, so this offer cannot be taken until the lender changes it. Nothing in your account would change that.",
@@ -1028,7 +1018,6 @@ export const copy = {
       SaleAdmissionBlocked: A('This offer sells a loan position the protocol does not admit for sale now.'),
       SaleListingTermsStale: A("This sale listing's terms no longer match its loan."),
       ProtocolPaused: A('The protocol is paused, so no new loans can open. {{staysOpen}}'),
-      VaultUpgradeRequired: A('Your vault needs an upgrade before it can take new collateral. The Vault page that does it is not built yet; the current app can upgrade it.'),
       SelfTrade: A('This is your own offer.'),
       RefinanceRequestUntakeable: A('This offer cannot be taken directly.'),
       CadenceNotAdmitted: A("The protocol no longer admits this offer's interest schedule, so it cannot be taken."),

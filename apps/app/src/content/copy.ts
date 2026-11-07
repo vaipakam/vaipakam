@@ -2993,7 +2993,9 @@ const copySource = {
     changeUnlock: 'Vault unlocks',
     changeNftsOff: 'Position NFT delay turns off',
     changeCosignOff: 'Co-signing requirement turns off',
-    changeUnpin: 'Vault version unpins',
+    // #3204 — pins moved to the VaultBeacon; the vault page (#3281) will show them.
+    pinMovedNote:
+      'Vault version pins are no longer part of these protection settings. A pin, and the wait before a pin change takes effect, will show on the vault page, which is not built yet.',
     changeAt: tmpl('from {{when}}', ['when']),
     changeDue: 'Ready to apply',
     changeDisableWaitsForRows: tmpl('Due, but protection turns off only once no payout or position transfer is open ({{count}} open now). Let them finish, or cancel them.', ['count']),
@@ -4055,10 +4057,6 @@ const copySource = {
         ),
         assetPaused:
           'Not available while one of this loan’s assets is paused by the protocol.',
-        // #1214: the app has no vault-upgrade action yet, and saying so
-        // is better than implying one exists somewhere on the page.
-        vaultUpgrade:
-          'Not available until a vault involved in this sale is upgraded to the current version, which this app can’t do yet.',
         admissionBlocked:
           'Not available right now — the position doesn’t meet the protocol’s conditions for a buyer to take it over (its collateral cover or terms). That can change as prices move.',
         admissionUnpriceable:
@@ -6153,10 +6151,6 @@ const copySource = {
       // actionable, relisting included.
       protocolPaused:
         'The protocol is paused right now, so no positions can be opened or taken. Nothing was sent — try again once it resumes.',
-      // Contract directive: point at the vault upgrade, NOT at a
-      // relist, which the same floor would block.
-      vaultUpgradeRequired:
-        'One side of this trade is on an old vault version and needs to upgrade before it can trade. Nothing was sent.',
       selfTrade:
         'This is your own offer, so you can’t take it. Cancel it instead if you want it off the book.',
       // #2407 — a refinance request can be taken only if it is its loan's
@@ -6701,9 +6695,6 @@ const copySource = {
       VaultWithdrawRequested: 'Vault withdrawal requested',
       UntrackedAdopted: 'Tokens added to vault',
       UntrackedDisowned: 'Unsolicited tokens disowned',
-      VaultPinned: 'Vault version pinned',
-      VaultUnpinRequested: 'Vault version unpin requested',
-      VaultUnpinned: 'Vault version unpinned',
       PayoutQueued: 'Payout queued',
       PayoutReleased: 'Payout released',
       PayoutCancelled: 'Payout cancelled',

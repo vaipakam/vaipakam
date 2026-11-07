@@ -494,7 +494,7 @@ This halts every `whenNotPaused` facet entry. What remains callable while paused
 - `AccessControlFacet.grantRole / revokeRole / renounceRole`
 - `DiamondCutFacet.diamondCut`
 - `OracleAdminFacet.*` (so a bad feed can be swapped without unpause)
-- `VaultFactoryFacet.upgradeVaultImplementation`
+- `VaultBeacon.guardianRevokeVersion(id, successorId)` — the Pauser Safe moves every vault off a bad version, onto one already registered; works **only** while paused (#3204)
 - Every `whenNotPaused`-less getter
 
 See `PauseGatingTest` for the canonical list.

@@ -30,7 +30,7 @@ const record = (over: Partial<ProtectedAccountRecord> = {}): ProtectedAccountRec
   lockedAt: 0n,
   lockedBy: ZERO,
   controller: ZERO,
-  pendingUnpinAt: 0n,
+  retiredPendingUnpinAt: 0n,
   ...over,
 });
 

@@ -146,14 +146,6 @@ contract TestMutatorFacet {
         return LibVaipakam.storageSlot().userLoanIndexed[user][loanId];
     }
 
-    /// @notice RL-1 test-only — force the mandatory-vault-upgrade gate
-    ///         without deploying a fresh implementation, so tests can put a
-    ///         claimant's vault below `mandatoryVaultVersion` and assert the
-    ///         vault-credit → wallet fallback.
-    function setMandatoryVaultVersionRaw(uint256 version) external {
-        LibVaipakam.storageSlot().mandatoryVaultVersion = version;
-    }
-
     /// @notice #1817 / #1820 test-only — run the REAL tier record refresh
     ///         for `user` at their current tracked vault VPFI balance, exactly
     ///         as the production balance writers do. Lets a test establish a
@@ -749,13 +741,6 @@ contract TestMutatorFacet {
     ///         the scaffolded state matches what production produces.
     function setLoanToOffsetOfferIdRaw(uint256 loanId, uint256 offsetOfferId) external {
         LibVaipakam.storageSlot().loanToOffsetOfferId[loanId] = offsetOfferId;
-    }
-
-    /// @notice Write `s.vaultVersion[user] = version` directly.
-    ///         Used by `VaultFactoryFacetTest` to simulate a user
-    ///         whose proxy is already at a specific version.
-    function setVaultVersionRaw(address user, uint256 version) external {
-        LibVaipakam.storageSlot().vaultVersion[user] = version;
     }
 
     /// @notice Write `s.assetRiskParams[asset].minPartialBps = bps`

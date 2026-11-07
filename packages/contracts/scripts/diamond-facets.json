@@ -131,6 +131,7 @@
     "VaipakamRewardMessenger",
     "VaipakamTimelock",
     "VpfiReturnSender",
-    "VpfiReturnReceiver"
+    "VpfiReturnReceiver",
+    "VaultBeacon"
   ]
 }

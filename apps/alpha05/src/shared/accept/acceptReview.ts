@@ -27,7 +27,6 @@ import {
   readRiskTermsHash,
   readTreasuryFeeBps,
   readVault,
-  readVaultUpgradeRequired,
   readWalletFunds,
   tokenAcceptsApproval,
   type AcceptPreview,
@@ -74,7 +73,6 @@ export interface AcceptReview {
   /** Read only when the protocol reports a vault below the required
    *  version: whether it is this wallet's own (false: the other side's), or
    *  null when that could not be read. */
-  vaultUpgradeYours: boolean | null;
   /** The risk-access gate's code for this acceptance (0 = open); it is the
    *  creator's code when the creator is blocked. */
   gate: number;
@@ -112,10 +110,6 @@ export async function readAcceptReview(own: OwnStateClient, diamond: Hex, offerI
       r<number>((c) => readCreatorGate(c, diamond, offerId)),
       r<boolean>((c) => readFeeDiscountConsent(c, diamond, account)).catch(() => null),
     ]);
-  // The protocol refuses when EITHER party's vault is below the required
-  // version; which one is read from this wallet's own vault, so the remedy
-  // is never sent to the side that cannot act on it.
-  const vaultUpgradeYours = preview.error === 'VaultUpgradeRequired' ? await r<boolean>((c) => readVaultUpgradeRequired(c, diamond, account)).catch(() => null) : null;
   const pay = payLeg(role, offer, preview).amount;
   const approvalSteps =
     funds.allowance >= pay ? 0 : (await allowanceSteps({ accepts: (amount) => r<boolean>((c) => tokenAcceptsApproval(c, payAsset, account, diamond, amount)) }, funds.allowance, pay)).length;
@@ -137,7 +131,6 @@ export async function readAcceptReview(own: OwnStateClient, diamond: Hex, offerI
     vault,
     funds,
     approvalSteps,
-    vaultUpgradeYours,
     gate,
     creatorGate,
     consent,
@@ -201,7 +194,6 @@ const LENDER_ERRORS: Partial<Record<AcceptPreview['error'], CopyKey>> = {
   OfferExpired: 'lendAccept.err.OfferExpired',
   OfferPartiallyFilled: 'lendAccept.err.OfferPartiallyFilled',
   OfferIsCancelled: 'lendAccept.err.OfferIsCancelled',
-  VaultUpgradeRequired: 'lendAccept.err.VaultUpgradeRequired',
   SelfTrade: 'lendAccept.err.SelfTrade',
   RefinanceRequestUntakeable: 'lendAccept.err.RefinanceRequestUntakeable',
   CadenceNotAdmitted: 'lendAccept.err.CadenceNotAdmitted',
@@ -209,11 +201,10 @@ const LENDER_ERRORS: Partial<Record<AcceptPreview['error'], CopyKey>> = {
 };
 
 /** The protocol's first refusal, as the page states it for the reader's role. */
-export function acceptErrorText(error: AcceptPreview['error'], copy: Pick<CopyAccess, 'text' | 'format'>, vaultUpgradeYours: boolean | null = null, role: AcceptRole = 'borrower'): string {
-  // Either party's vault can be the one below the required version: the
-  // remedy goes to this wallet only when its own vault is the one.
-  if (error === 'VaultUpgradeRequired' && vaultUpgradeYours !== true)
-    return copy.text(vaultUpgradeYours === false ? (role === 'borrower' ? 'accept.vaultUpgradeLender' : 'lendAccept.vaultUpgradeBorrower') : 'accept.vaultUpgradeEither');
+export function acceptErrorText(code: AcceptPreview['error'], copy: Pick<CopyAccess, 'text' | 'format'>, role: AcceptRole = 'borrower'): string {
+  // #3204 — the retired vault-version code is never produced; should an old
+  // Diamond send it, it reads as the code this build cannot name.
+  const error: AcceptPreview['error'] = code === 'RetiredVaultUpgradeRequired' ? 'Unrecognised' : code;
   if (error === 'ProtocolPaused')
     return copy.format('accept.err.ProtocolPaused', {
       staysOpen: SWITCH_EFFECTS['2'].staysOpen,
@@ -240,7 +231,7 @@ export function cadenceText(cadence: number, copy: Pick<CopyAccess, 'text'>): st
 export function reviewBlockers(r: AcceptReview, meta: TokenMetaMap | null, copy: Pick<CopyAccess, 'text' | 'format'>): string[] {
   const out: string[] = [];
   if (r.state !== 'open') out.push(copy.format('accept.blockState', { state: stateText(r.state, copy, r.role) }));
-  else if (r.preview.error !== 'None') out.push(acceptErrorText(r.preview.error, copy, r.vaultUpgradeYours, r.role));
+  else if (r.preview.error !== 'None') out.push(acceptErrorText(r.preview.error, copy, r.role));
   // A borrow-side offer linked to a loan is a sale of that loan's lender
   // position: taking it buys a running loan, which this review does not
   // describe, so it is never taken here.

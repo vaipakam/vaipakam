@@ -3107,7 +3107,7 @@ library LibVaipakam {
         uint256 nextOfferId;
         uint256 nextLoanId;
         uint256 nextTokenId; // For Vaipakam NFTs
-        address vaipakamVaultTemplate; // Shared UUPS implementation
+        address retiredVaipakamVaultTemplate; // #3204: retired; vaults resolve their code through `vaultBeacon`
         address treasury; // Configurable treasury address
         address zeroExProxy; // 0x proxy for liquidations
         address allowanceTarget; // allowance target for 0x proxy protocol
@@ -3223,9 +3223,9 @@ library LibVaipakam {
         mapping(uint256 => uint256) saleOfferToLoanId; // saleOfferId => loanId for lender sale completion
         mapping(uint256 => uint256) offerIdToLoanId; // offerId => loanId (set at loan initiation)
         mapping(uint256 => uint256) loanToOffsetOfferId; // loanId => offset offerId (borrower preclose Option 3)
-        uint256 currentVaultVersion; // incremented on each implementation upgrade
-        uint256 mandatoryVaultVersion; // minimum version required; 0 = no mandatory upgrade
-        mapping(address => uint256) vaultVersion; // user => version when their proxy was last upgraded
+        uint256 retiredCurrentVaultVersion; // #3204: retired; versions live in VaultBeacon
+        uint256 retiredMandatoryVaultVersion; // #3204: retired with the below-mandatory rules (#3178)
+        mapping(address => uint256) retiredVaultVersion; // #3204: retired; a vault's version is VaultBeacon.resolvedVersionOf
         uint256 kycTier0ThresholdNumeraire; // Tier0 max (default 1_000 * 1e18)
         uint256 kycTier1ThresholdNumeraire; // Tier1 max (default 10_000 * 1e18)
         mapping(address => bool) keeperAccessEnabled; // User-level master switch — quick "pause all keepers for me" (default: false)
@@ -5088,8 +5088,8 @@ library LibVaipakam {
         mapping(address => mapping(address => mapping(address => uint256)))
             lenderIntentCapital;
         // #398 v1.5 — ERC-4626 aggregator-adapter factory state. Mirrors the
-        // per-user vault version machinery (vaipakamVaultTemplate /
-        // currentVaultVersion / mandatoryVaultVersion / vaultVersion): one shared
+        // per-user vault version machinery user vaults had before #3204 (one
+        // shared template, a version counter, a mandatory floor): one shared
         // UUPS adapter implementation, per-aggregator proxies, governance-published
         // impls + aggregator-pull migration + a mandatory floor for critical fixes.
         address aggregatorAdapterTemplate;        // shared UUPS adapter impl
@@ -8290,11 +8290,9 @@ library LibVaipakam {
         ///      payout or position-transfer row (one sequence for both).
         ///      Written only by `LibProtectedAccount`. Appended — append-only.
         uint256 protectedRowSeq;
-        /// @dev Depository vault — per owner, the vault implementation the
-        ///      owner pinned their vault to; zero means not pinned. A pinned
-        ///      vault is upgraded only by its owner. Written only by
-        ///      `VaultDepositoryFacet`. Appended — append-only.
-        mapping(address => address) vaultPinnedImplementation;
+        /// @dev #3204: retired. Pins live in `VaultBeacon` (`pinnedVersion`),
+        ///      where no facet can write them. Never written.
+        mapping(address => address) retiredVaultPinnedImplementation;
         /// @dev Depository vault — the one tracked ledger: per owner, asset
         ///      and token id (zero for an ERC-20), what the protocol put into
         ///      the owner's vault and has not taken out. Every kind of asset
@@ -8374,6 +8372,13 @@ library LibVaipakam {
         ///      before the refresh are not counted (the count can only read
         ///      low, never high). Appended — append-only.
         mapping(address => uint256) openOfferCount;
+        /// @dev #3204 — the VaultBeacon every user vault resolves its code
+        ///      through (each vault is a `BeaconProxy` pointing at it). Set
+        ///      once at deploy by `VaultFactoryFacet.initializeVaultBeacon`.
+        ///      A faulty facet rewriting it would only change the beacon of
+        ///      vaults created afterwards; #3205's genuine-vault code-identity
+        ///      check bounds that. Appended — append-only.
+        address vaultBeacon;
     }
 
     /// @notice Protected account mode — one owner wallet's settings.
@@ -8400,7 +8405,8 @@ library LibVaipakam {
         uint64 lockedAt;
         address lockedBy;
         address controller;
-        uint64 pendingUnpinAt;
+        /// @dev #3204: retired; a pending pin change is held by the VaultBeacon.
+        uint64 retiredPendingUnpinAt;
     }
 
     /// @notice Protected account mode — a pending change to one signer.
@@ -12871,19 +12877,6 @@ library LibVaipakam {
         if (storageSlot().sanctionsOracle == address(0)) return;
         _assertMovePartyNotSanctioned(from);
         _assertMovePartyNotSanctioned(to);
-    }
-
-    /// @notice Whether `user`'s existing vault is behind the mandatory vault
-    ///         version, so every vault interaction through
-    ///         `VaultFactoryFacet` refuses it with `VaultUpgradeRequired`.
-    ///         False for a user with no vault: one created now is current.
-    /// @dev    The ONE rule `VaultFactoryFacet` enforces (#1841), read on its
-    ///         own by the sale-exit verdict.
-    function vaultUpgradeRequired(address user) internal view returns (bool) {
-        Storage storage s = storageSlot();
-        return s.userVaipakamVaults[user] != address(0) &&
-            s.mandatoryVaultVersion > 0 &&
-            s.vaultVersion[user] < s.mandatoryVaultVersion;
     }
 
     /// @notice Whether {assertPositionMoveNotSanctioned} would refuse `party`

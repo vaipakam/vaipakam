@@ -328,6 +328,54 @@
       "from": "loans[].interestRemainingDays",
       "to": "loans[].retiredInterestRemainingDays",
       "reason": "#3169 (owner decision 2026-11-05): interest counts by the second and a full-term loan's minimum is derived to the second from the term tuple (LibLoanClock.minimumInterestSeconds), so the whole-day remaining-term counter is retired; the slot keeps its place and is no longer written or read. Same type and position; marked retired, not repurposed."
+    },
+    {
+      "region": "vaipakam",
+      "slot": 3,
+      "offset": 0,
+      "from": "vaipakamVaultTemplate",
+      "to": "retiredVaipakamVaultTemplate",
+      "reason": "#3204 (owner decision 2026-11-05/06, fresh deploy only): every user vault resolves its code through the VaultBeacon, so the per-vault template, version counters, per-user version and pin record are retired; the slot keeps its place and is no longer read or written. Same type and position; marked retired, not repurposed."
+    },
+    {
+      "region": "vaipakam",
+      "slot": 39,
+      "offset": 0,
+      "from": "currentVaultVersion",
+      "to": "retiredCurrentVaultVersion",
+      "reason": "#3204 (owner decision 2026-11-05/06, fresh deploy only): every user vault resolves its code through the VaultBeacon, so the per-vault template, version counters, per-user version and pin record are retired; the slot keeps its place and is no longer read or written. Same type and position; marked retired, not repurposed."
+    },
+    {
+      "region": "vaipakam",
+      "slot": 40,
+      "offset": 0,
+      "from": "mandatoryVaultVersion",
+      "to": "retiredMandatoryVaultVersion",
+      "reason": "#3204 (owner decision 2026-11-05/06, fresh deploy only): every user vault resolves its code through the VaultBeacon, so the per-vault template, version counters, per-user version and pin record are retired; the slot keeps its place and is no longer read or written. Same type and position; marked retired, not repurposed."
+    },
+    {
+      "region": "vaipakam",
+      "slot": 41,
+      "offset": 0,
+      "from": "vaultVersion",
+      "to": "retiredVaultVersion",
+      "reason": "#3204 (owner decision 2026-11-05/06, fresh deploy only): every user vault resolves its code through the VaultBeacon, so the per-vault template, version counters, per-user version and pin record are retired; the slot keeps its place and is no longer read or written. Same type and position; marked retired, not repurposed."
+    },
+    {
+      "region": "vaipakam",
+      "slot": 679,
+      "offset": 0,
+      "from": "vaultPinnedImplementation",
+      "to": "retiredVaultPinnedImplementation",
+      "reason": "#3204 (owner decision 2026-11-05/06, fresh deploy only): every user vault resolves its code through the VaultBeacon, so the per-vault template, version counters, per-user version and pin record are retired; the slot keeps its place and is no longer read or written. Same type and position; marked retired, not repurposed."
+    },
+    {
+      "region": "vaipakam@661[address]",
+      "slot": 3,
+      "offset": 20,
+      "from": "protectedAccount[].pendingUnpinAt",
+      "to": "protectedAccount[].retiredPendingUnpinAt",
+      "reason": "#3204: a pending vault pin change is held by the VaultBeacon, which applies the vault's pin delay itself; the protected-mode unpin timer is retired. The slot keeps its place and is no longer read or written. Same type and position; marked retired, not repurposed."
     }
   ]
 }

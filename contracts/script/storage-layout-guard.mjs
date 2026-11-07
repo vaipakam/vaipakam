@@ -730,6 +730,21 @@ export function typeIndex(units) {
 }
 
 /**
+ * The beacon implementations among `contracts` (#3204): deployable and
+ * reporting the vault layout identity, that is exposing `vaultLayoutId()`.
+ * Each runs behind a BeaconProxy, so its own state variables are the layout
+ * every registered version must keep append-only. Read from the compiler's
+ * own method list, like {uupsContracts}. Pure.
+ */
+export function beaconContracts(contracts) {
+  return contracts
+    .filter((c) => c.target.startsWith('src/'))
+    .filter((c) => (c.art.deployedBytecode?.object ?? '0x').length > 2 && c.art.methodIdentifiers?.['vaultLayoutId()'])
+    .map((c) => c.name)
+    .sort();
+}
+
+/**
  * The UUPS implementations among `contracts`: deployable (non-empty runtime
  * code) and upgradeable through ERC-1822, that is exposing `proxiableUUID()`.
  * Read from the compiler's own method list, so it does not matter how the
@@ -799,6 +814,7 @@ export function pointerProblems({ namespaces, probeStructs, pointers, functionFi
 export function readRoots(text) {
   const roots = JSON.parse(text);
   if (!Array.isArray(roots.namespaces) || !Array.isArray(roots.uups)) throw new Error('roots.json needs `namespaces` and `uups` arrays');
+  if (roots.beacon !== undefined && !Array.isArray(roots.beacon)) throw new Error('roots.json: `beacon` must be an array');
   roots.namespaces.forEach((ns, i) => {
     for (const k of ['id', 'probe', 'positionFile', 'positionConstant']) {
       if (typeof ns?.[k] !== 'string' || !ns[k]) throw new Error(`roots.json: namespaces[${i}].${k} must be a non-empty string`);
@@ -879,6 +895,13 @@ export function buildLedger({ outDir = join(CONTRACTS_DIR, 'out'), roots = readR
   const found = uupsContracts(build.contracts);
   for (const c of found) if (!roots.uups.includes(c)) problems.push(`${c} is a UUPS implementation (it exposes proxiableUUID()) but roots.json does not list it`);
   for (const c of roots.uups) if (!found.includes(c)) problems.push(`roots.json lists ${c} as UUPS, but it does not expose proxiableUUID()`);
+
+  // Beacon implementations (#3204): the same rule, behind a VaultBeacon.
+  const beaconRoots = roots.beacon ?? [];
+  for (const c of beaconRoots) add(`beacon:${c}`, contractArtifact(build, c).storageLayout);
+  const foundBeacon = beaconContracts(build.contracts);
+  for (const c of foundBeacon) if (!beaconRoots.includes(c)) problems.push(`${c} is a beacon implementation (it exposes vaultLayoutId()) but roots.json does not list it under \`beacon\``);
+  for (const c of beaconRoots) if (!foundBeacon.includes(c)) problems.push(`roots.json lists ${c} as a beacon implementation, but it does not expose vaultLayoutId()`);
 
   // Enum members and value types, from the declarations the compiler resolved.
   const types = typeIndex([...build.scope].map((f) => build.units.get(f)).filter(Boolean));

@@ -22,8 +22,8 @@
 //      queued: the run names the refusal and tries again next run.
 //   2. FINALIZE — apply each pending change whose delay has passed: the
 //      account's setting changes (`finalizeSettingChanges`: a lowered delay,
-//      NFT protection or the co-sign requirement switched off, an unlock, an
-//      unpin, switching the mode off — which waits while the account has
+//      NFT protection or the co-sign requirement switched off, an unlock,
+//      switching the mode off — which waits while the account has
 //      open rows, and is counted waiting when the chain says so), an
 //      allowlist addition that has not expired (`finalizeAddAllowlisted`),
 //      a signer addition the nominee has accepted and that has not expired
@@ -182,7 +182,8 @@ export const SETTING_FIELD: Readonly<Record<number, keyof ProtectedAccount>> = {
   3: 'pendingNftOffAt',
   4: 'pendingCosignOffAt',
   5: 'pendingUnlockAt',
-  6: 'pendingUnpinAt',
+  // 6 (unpin) retired by #3204: a pin change waits at the VaultBeacon, and
+  // its keeper pass is #3282.
 };
 const SETTING_NAME: Readonly<Record<number, string>> = {
   1: 'switch-off',
@@ -190,11 +191,7 @@ const SETTING_NAME: Readonly<Record<number, string>> = {
   3: 'nft-protection-off',
   4: 'cosign-off',
   5: 'unlock',
-  6: 'unpin',
 };
-/** `VaultDepositoryFacet.unpinVaultImplementation` announces an unpin with its
- *  own event; it matures in `pendingUnpinAt` like the other settings. */
-const CHANGE_UNPIN = 6;
 /** The switch-off, which waits for the account's open rows. */
 const CHANGE_DISABLE = 1;
 
@@ -202,7 +199,6 @@ export const PAYOUT_EVENT = 'PayoutQueued';
 export const TRANSFER_EVENT = 'PositionTransferQueued';
 export const CHANGE_EVENTS = [
   'SettingChangeRequested',
-  'VaultUnpinRequested',
   'AllowlistAddRequested',
   'SignerAddRequested',
   'SignerRemoveRequested',
@@ -234,7 +230,8 @@ export interface ProtectedAccount {
   lockedAt: bigint;
   lockedBy: Address;
   controller: Address;
-  pendingUnpinAt: bigint;
+  /** #3204 — retired; a pending pin change is held by the VaultBeacon. */
+  retiredPendingUnpinAt: bigint;
 }
 
 interface PendingPayout {
@@ -520,10 +517,6 @@ export function changeOf(row: LedgerRow): Change | null {
       const kind = Number(row.args.kind);
       const at = uint(row.args.effectiveAt);
       return SETTING_FIELD[kind] !== undefined && at !== null ? { t: 'setting', account, kind, at } : null;
-    }
-    case 'VaultUnpinRequested': {
-      const at = uint(row.args.effectiveAt);
-      return at !== null ? { t: 'setting', account, kind: CHANGE_UNPIN, at } : null;
     }
     case 'AllowlistAddRequested':
     case 'SignerAddRequested':

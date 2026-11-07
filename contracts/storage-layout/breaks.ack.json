@@ -424,6 +424,25 @@
         "W|vaipakam@684[address]@0[]|20"
       ],
       "reason": "#2828: inline-day wire. The day list, its chunk bitmap and extent, the paged park and its cursor, and the batch's indexedDays/dayCount are deleted, which moves later fields. Prelive: like the rest of #1566 slices 2-3 this reaches a chain only by fresh deploy, so no chain is upgraded in place across it."
+    },
+    {
+      "baseSha256": "44f7c45ffc169f7978f6d592744bfea7eda9b75e071745efae8aa507b3139e74",
+      "lines": [
+        "C|uups:VaipakamVaultImplementation@2[address]@0[uint256]@0[]|0|0|_rentalEntries[][][]",
+        "D|uups:VaipakamVaultImplementation@2[address]@0[uint256]|0|0|_rentalEntries[][]",
+        "L|uups:VaipakamVaultImplementation@2[address]@0[uint256]@0[]|0|0|address|_rentalEntries[][][].user",
+        "L|uups:VaipakamVaultImplementation@2[address]@0[uint256]@0[]|0|20|uint64|_rentalEntries[][][].expires",
+        "L|uups:VaipakamVaultImplementation@2[address]@0[uint256]@0[]|1|0|uint128|_rentalEntries[][][].quantity",
+        "L|uups:VaipakamVaultImplementation@2[address]@0[uint256]@0[]|1|16|uint128|_rentalEntries[][][].rentalId",
+        "L|uups:VaipakamVaultImplementation@3[bytes32]|0|0|address|_listingExecutor[]",
+        "L|uups:VaipakamVaultImplementation|0|0|address|diamond",
+        "L|uups:VaipakamVaultImplementation|1|0|address|implementationAddress",
+        "M|uups:VaipakamVaultImplementation@2[address]|0|0|uint256|_rentalEntries[]",
+        "M|uups:VaipakamVaultImplementation|2|0|address|_rentalEntries",
+        "M|uups:VaipakamVaultImplementation|3|0|bytes32|_listingExecutor",
+        "W|uups:VaipakamVaultImplementation@2[address]@0[uint256]@0[]|64"
+      ],
+      "reason": "#3204 (owner decision 2026-11-05/06; fresh deploy only, decision O1 = A): VaipakamVaultImplementation is no longer a UUPS implementation. Every user vault is a BeaconProxy resolving its code through the VaultBeacon, so its layout root moves from uups:VaipakamVaultImplementation to beacon:VaipakamVaultImplementation (the same rule: every registered version keeps it append-only), and the slot that held the per-vault implementation address now records the vault's owner wallet, a new meaning. No chain is upgraded in place across this change."
     }
   ]
 }

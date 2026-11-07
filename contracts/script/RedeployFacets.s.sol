@@ -159,6 +159,7 @@ contract RedeployFacets is Script {
         _requireVaultHeldFallbackCustody(diamond);
         // #1566 slice 3 - and one from before the fill lock; see {_requireSlice3Diamond}.
         _requireSlice3Diamond(diamond);
+        _requireVaultBeaconDiamond(diamond);
         // #666 - and one whose OracleFacet cannot answer the fallback's
         // price-status read; see {_requireOraclePriceStatus}.
         _requireOraclePriceStatus(diamond);
@@ -860,6 +861,22 @@ contract RedeployFacets is Script {
                 FallbackCustodyFacet.disposeFallbackCustody.selector
             ) == address(0)
         ) revert PredatesVaultHeldFallbackCustody(diamond);
+    }
+
+    /// @notice #3204 - the target Diamond predates the VaultBeacon: its vaults
+    ///         are per-vault UUPS proxies, which no in-place refresh can turn
+    ///         into beacon proxies. Fresh deploy only (decision O1 = A).
+    error PredatesVaultBeacon(address diamond);
+
+    /// @dev #3204 - refuse a Diamond whose vault factory does not route
+    ///      `getVaultBeacon`: the refreshed factory would create beacon
+    ///      proxies against an unset beacon while every existing vault stays a
+    ///      UUPS proxy no code path can upgrade any more. Called before
+    ///      anything is deployed, so a refused run sends nothing.
+    function _requireVaultBeaconDiamond(address diamond) internal view {
+        if (IDiamondLoupe(diamond).facetAddress(VaultFactoryFacet.getVaultBeacon.selector) == address(0)) {
+            revert PredatesVaultBeacon(diamond);
+        }
     }
 
     /// @dev #1566 slice 3 - refuse a Diamond from before the fill lock. The lock is enforced in

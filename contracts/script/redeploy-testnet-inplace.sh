@@ -22,8 +22,9 @@
 #                                           the whole selector set onto the LIVE
 #                                           diamond; pauses across the cuts,
 #                                           verifies routing, reverts on mismatch)
-#   5. UpgradeVaultImplementation.s.sol    (deploy a fresh VaipakamVault impl +
-#                                           retarget the shared UUPS template)
+#   5. (retired, #3204) vault code no longer changes in a refresh: every
+#      vault resolves its code through the VaultBeacon, and a new version
+#      is registered and proposed there (a 3-day delay the beacon enforces)
 #   ── once, at the end (optional --export) ──
 #   6. exportFrontendDeployments.sh + exportFrontendAbis.sh
 #
@@ -31,10 +32,6 @@
 #   - The regression + sanity gate is chain-INDEPENDENT (local tests + static
 #     checks), so it runs ONCE, FIRST, and a failure aborts before ANY gas is
 #     spent on ANY chain. Fail-fast is the whole point.
-#   - Within a chain, Refresh runs BEFORE the vault upgrade: Refresh can Replace
-#     VaultFactoryFacet's bytecode, and the vault upgrade calls
-#     VaultFactoryFacet.upgradeVaultImplementation — so it must execute against
-#     the FRESH facet, and after Refresh has unpaused the diamond.
 #
 # SAFETY / MODES
 #   - DEFAULT = GATE-ONLY (dry): runs steps 1-3, then PRINTS the exact per-chain
@@ -160,7 +157,7 @@ BROADCAST=0
 SKIP_REGRESSION=0
 SKIP_SANITY=0
 SKIP_BUILD=0
-SKIP_VAULT=0
+SKIP_VAULT=1  # #3204: the vault step is retired (vault code changes at the VaultBeacon); --skip-vault stays accepted as a no-op
 RUN_EXPORT=0
 CHAINS="base-sepolia arb-sepolia"
 NICE=(ionice -c 2 -n 0)
@@ -565,8 +562,6 @@ EOF
     echo "  #    in every mode the artifact is reconciled by --sig \"record()\" once the bind has confirmed)"
     echo "  FOUNDRY_PROFILE=default forge script script/DeployRewardCustodyHolder.s.sol --sig \"run()\" --rpc-url \$$var --broadcast --slow"
     echo "  FOUNDRY_PROFILE=default forge script script/DeployRewardCustodyHolder.s.sol --sig \"record()\" --rpc-url \$$var   # after the bind is mined; BEFORE any export"
-    [ "$SKIP_VAULT" -eq 0 ] && \
-    echo "  FOUNDRY_PROFILE=default forge script script/UpgradeVaultImplementation.s.sol --sig \"run()\" --ffi --rpc-url \$$var --broadcast --slow"
     echo
   done
   exit 0
@@ -699,14 +694,7 @@ for slug in $CHAINS; do
     *) fail "$slug: rewardCustodyActivated() could not be read after the refresh ('${activated:-unreadable}') -- refusing to guess whether this chain's reward custody is activated; retry [4c] by hand once the RPC answers" ;;
   esac
 
-  if [ "$SKIP_VAULT" -eq 0 ]; then
-    banner "[5] $slug — UpgradeVaultImplementation (UUPS template)"
-    "${NICE[@]}" forge script script/UpgradeVaultImplementation.s.sol --sig "run()" --ffi \
-      --rpc-url "$rpc" --broadcast --slow \
-      || fail "$slug: UpgradeVaultImplementation broadcast failed"
-  else
-    info "[5] $slug — vault upgrade skipped (--skip-vault)"
-  fi
+  info "[5] $slug — vault code is not part of a refresh (#3204): register and propose a new version at the VaultBeacon"
   # The refresh restores service only where it found the Diamond live; a
   # chain that had to be paused for a due migration (the normal first
   # rollout) is LEFT PAUSED for a fresh Unpauser decision, and that is not

@@ -48,7 +48,8 @@ export interface ProtectedAccountRecord {
   lockedAt: bigint;
   lockedBy: `0x${string}`;
   controller: `0x${string}`;
-  pendingUnpinAt: bigint;
+  /** #3204 — retired; a pending pin change is held by the VaultBeacon. */
+  retiredPendingUnpinAt: bigint;
 }
 
 export interface PendingPayoutRow {
@@ -116,10 +117,6 @@ export interface ProtectedAccountSnapshot {
   transfers: PendingTransferRow[] | null;
   replacement: ReplacementState | null;
   escapeOpen: boolean | null;
-  /** The pinned implementation, or null when not pinned. */
-  vaultPin: `0x${string}` | null;
-  /** False when the pin read failed (then `vaultPin` means nothing). */
-  vaultPinKnown: boolean;
   delayBounds: { min: number; max: number } | null;
   /** Block time of the pinned read. */
   chainNowSec: bigint;
@@ -526,8 +523,6 @@ function useProtectedAccountQueryOptions() {
         transfers: null,
         replacement: null,
         escapeOpen: null,
-        vaultPin: null,
-        vaultPinKnown: false,
         delayBounds: null,
         chainNowSec: block.timestamp,
         fetchedAtMs,
@@ -541,7 +536,7 @@ function useProtectedAccountQueryOptions() {
         return { ...base, recordFailed: true };
       }
 
-      const [signerAddrs, allowlist, payoutIds, transferIds, repl, escapeOpen, vaultPin, bounds, pendAllow, pendSign] =
+      const [signerAddrs, allowlist, payoutIds, transferIds, repl, escapeOpen, bounds, pendAllow, pendSign] =
         await Promise.all([
         soft(read<`0x${string}`[]>('getProtectedSigners', [target])),
         soft(read<`0x${string}`[]>('getAllowlist', [target])),
@@ -557,7 +552,6 @@ function useProtectedAccountQueryOptions() {
           >('getReplacement', [target]),
         ),
         soft(read<boolean>('isEscapeOpen')),
-        soft(read<`0x${string}`>('getVaultPin', [target])),
         soft(read<readonly [bigint, bigint]>('getProtectedDelayBounds')),
         soft(read<readonly [readonly `0x${string}`[], readonly bigint[]]>('getPendingAllowlistAdditions', [target])),
         soft(
@@ -665,8 +659,6 @@ function useProtectedAccountQueryOptions() {
             }
           : null,
         escapeOpen,
-        vaultPin: vaultPin && vaultPin.toLowerCase() !== ZERO ? vaultPin : null,
-        vaultPinKnown: vaultPin !== null,
         delayBounds: bounds ? { min: Number(bounds[0]), max: Number(bounds[1]) } : null,
       };
     },

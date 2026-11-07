@@ -58,18 +58,6 @@ contract MockVaipakamDiamond is IVaipakamPrepayContext, IVaipakamPrepayCallbacks
         ctx = c;
     }
 
-    /// @dev #3178 — the Diamond's "is this parallel-sale listing's vault below
-    ///      the mandatory version" read, set per offer by the test.
-    mapping(uint256 => bool) public parallelSaleVaultBlocked;
-
-    function setParallelSaleVaultBlocked(uint256 offerId, bool blocked) external {
-        parallelSaleVaultBlocked[offerId] = blocked;
-    }
-
-    function isParallelSaleVaultBlocked(uint256 offerId) external view returns (bool) {
-        return parallelSaleVaultBlocked[offerId];
-    }
-
     function getPrepayContext(uint256, uint256)
         external
         view
@@ -697,33 +685,6 @@ contract CollateralListingExecutorTest is Test {
         );
         executor.validateOrder(p);
         assertFalse(diamond.recordProceedsCalled());
-    }
-
-    /// @notice #1279 — a clean buyer is unaffected (the unflagged path still
-    ///         fills); the screen keys on the fulfiller, not on any recipient.
-    /// @notice #3178 (Codex #3220 r1) — a parallel-sale order recorded (and,
-    ///         on a real Seaport, pre-validated) while its vault was current,
-    ///         then the mandatory vault version rises: Seaport skips the
-    ///         signature check for a pre-validated order, so the zone's own
-    ///         fill-time preconditions refuse it and nothing leaves the vault.
-    ///         The straddle: the same order fills once the vault is current.
-    /// @dev    Kills: the version rule living only in the ERC-1271 check.
-    function test_fill_offerKeyed_vaultOutdatedAfterValidation_refusedAtAuthorize() public {
-        bytes32 h = keccak256("offer-order-prevalidated-then-outdated");
-        _recordOfferOrderAs(h, TEST_OFFER_ID);
-        diamond.setParallelSaleVaultBlocked(TEST_OFFER_ID, true);
-
-        ZoneParameters memory p = _validOfferZoneParams(h);
-        vm.prank(seaport);
-        vm.expectRevert(
-            abi.encodeWithSelector(CollateralListingExecutor.ParallelSaleVaultOutdated.selector, uint256(TEST_OFFER_ID))
-        );
-        executor.authorizeOrder(p);
-        assertFalse(diamond.markConsumedCalled(), "nothing settled");
-
-        diamond.setParallelSaleVaultBlocked(TEST_OFFER_ID, false);
-        _fillOne(p, _amountsOf(p));
-        assertTrue(diamond.markConsumedCalled(), "straddle: a current vault fills");
     }
 
     function test_fill_offerKeyed_cleanBuyerFills() public {

@@ -148,7 +148,7 @@ library HandoverPlan {
     ///      The canonical token does since #937.
     function read(string memory json) internal view returns (Target[] memory targets) {
         bool canonical = isCanonical();
-        Target[] memory all = new Target[](11);
+        Target[] memory all = new Target[](12);
         uint256 n;
         n = _slot(all, n, "ccipMessenger", readOptional(json, "ccipMessenger"), OwnableKind.OpenZeppelin, true, true);
         n = _slot(all, n, "vpfiTokenPool", readOptional(json, "vpfiTokenPool"), OwnableKind.Chainlink, true, false);
@@ -192,6 +192,11 @@ library HandoverPlan {
         // Timelock like every other owned contract; its guardian holds the
         // veto, a stop-only power, so it is the Pauser Safe.
         n = _slot(all, n, "feedRegistry", readOptional(json, "feedRegistry"), OwnableKind.OpenZeppelin, true, true);
+        // #3204 — every chain's vaults resolve their code through the
+        // VaultBeacon. Its owner registers and proposes vault code, so it
+        // moves to the Timelock; its guardian may cancel a proposal and, while
+        // paused, revoke a version (stop-only), so it is the Pauser Safe.
+        n = _slot(all, n, "vaultBeacon", readOptional(json, "vaultBeacon"), OwnableKind.OpenZeppelin, true, true);
         // Canonical VPFI only: on a mirror the local ERC-20 IS `vpfiMirror`,
         // already listed above.
         if (canonical) {
@@ -247,13 +252,23 @@ library HandoverPlan {
                 addr: a,
                 kind: readable ? OwnableKind.OpenZeppelin : OwnableKind.Chainlink,
                 required: false,
-                guardian: false
+                // #3204 — derived, never listed: any found contract that
+                // answers `guardian()` holds a stop-only power, so the
+                // handover rotates it to the Pauser Safe and the gate checks
+                // it, and a new guardian-bearing contract cannot be missed.
+                guardian: answersGuardian(a)
             });
         }
         all = new Target[](n);
         for (uint256 i; i < n; ++i) {
             all[i] = buf[i];
         }
+    }
+
+    /// @notice Whether `a` answers `guardian()` with one address word.
+    function answersGuardian(address a) internal view returns (bool) {
+        (bool ok, bytes memory ret) = a.staticcall(abi.encodeWithSignature("guardian()"));
+        return ok && ret.length == 32;
     }
 
     /// @notice `a.owner()`, and whether `a` answers it with one word.
