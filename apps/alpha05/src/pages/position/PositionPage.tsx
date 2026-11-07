@@ -120,10 +120,20 @@ function LoanBody({ view: v, account, meta }: { view: LoanView; account: Hex; me
           {v.defaultable === true && <p className="tier-a">{text('position.defaultable')}</p>}
         </div>
       )}
-      {l.collateralLiquidity === ILLIQUID && live && (
+      {/* An NFT rental has no collateral leg (its collateral liquidity is
+          recorded as illiquid regardless), so it states its own default
+          consequence instead of the in-kind hand-over. */}
+      {erc20 && l.collateralLiquidity === ILLIQUID && live && (
         <div data-testid="position-in-kind">
           <Notice tone="warn" tier="A">
             {text('position.inKind')}
+          </Notice>
+        </div>
+      )}
+      {!erc20 && live && (
+        <div data-testid="position-rental-default">
+          <Notice tone="warn" tier="A">
+            {text('position.rentalDefault')}
           </Notice>
         </div>
       )}

@@ -293,7 +293,7 @@ export const copy = {
       'position',
     ),
     datesTitle: B('Dates'),
-    rowOriginalDue: B('Due date when it opened'),
+    rowOriginalDue: B('Due date of this term, before pause credit'),
     rowPauseCredit: B('Pause credit'),
     rowDue: B('Due date'),
     rowGraceEnd: B('Grace period ends'),
@@ -353,6 +353,7 @@ export const copy = {
     rowLienAmount: B('Amount'),
     rowLienState: B('Where it is'),
     inKind: A('If this loan defaults, the lender receives the collateral itself, whatever it is worth: no sale, no price-based liquidation.'),
+    rentalDefault: A("If this rental defaults, the renter's use ends, the prepaid rent goes to the lender less the protocol's share, and the buffer goes to the treasury. Nothing comes back to the renter."),
     actionsLater: B('Actions for this loan come in a later update.'),
   },
   flow: {

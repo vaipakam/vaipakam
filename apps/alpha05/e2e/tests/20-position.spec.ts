@@ -40,7 +40,7 @@ test('a live loan states its status, the reader’s role, its dates, terms, heal
     await expect(page.getByTestId('position-role')).toHaveAttribute('data-role', expected);
 
     const dates = page.getByRole('region', { name: 'Dates' });
-    await expect(fact(dates, 'Due date when it opened')).toHaveText(/UTC/);
+    await expect(fact(dates, 'Due date of this term, before pause credit')).toHaveText(/UTC/);
     await expect(fact(dates, 'Pause credit')).toHaveText('None');
     await expect(fact(dates, 'Grace period ends')).toHaveText(/UTC/);
 

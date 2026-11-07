@@ -684,8 +684,10 @@ above. Each resolves here, so a route reviewer needs no private file:
   stated as passed, with the protocol's verdict unread or not yet given;
   a list, which does not read the verdict, sends the reader to the loan's
   page);
-  the dates from the protocol's loan clock alone (the due date it opened
-  with, the pause credit, the due date and the grace end; an unread date
+  the dates from the protocol's loan clock alone (the current term's due
+  date before pause credit, labelled as that term's and never as the
+  opening one, since an extension or a borrower handover rewrites the
+  term; the pause credit, the due date and the grace end; an unread date
   is unknown, never computed from the start and the term), and, for a
   loan with an interest schedule where periodic settlement is switched
   off, that no collateral is sold at a checkpoint; the terms as they stand
@@ -712,7 +714,9 @@ above. Each resolves here, so a route reviewer needs no private file:
   released (checked before a zero amount, since a release zeroes it), or
   none, with an ERC-1155 lien's quantity); and, for a loan whose
   collateral has no price, that a default hands the lender the collateral
-  itself. Until the loan's actions land, the page says so and offers none.
+  itself, while an NFT rental, which has no collateral, states its own
+  default instead (the renter's use ends, the prepaid rent goes to the
+  lender less the protocol's share, the buffer to the treasury). Until the loan's actions land, the page says so and offers none.
 
 ## 3. Companion specifications
 
