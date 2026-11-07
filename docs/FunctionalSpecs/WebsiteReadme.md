@@ -297,6 +297,7 @@ PWA requirements:
 - a static shell file is cached only when it is one of this build's files (hashed build output, the manifest, its icons, the logo), and each build's files are kept under that build's own name; a new build removes earlier builds' files when it takes over. An HTML answer to a file request is the host's page fallback, not that file, and is never stored
 - dynamic data including RPC responses, subgraph reads, `/quote/*` worker responses, and transaction-preview responses must bypass service-worker caching so on-chain state is never stale
 - the service worker should register only in production builds and should fail safely on browsers that do not support service workers
+- on every load, a production build of the connected app removes any service-worker registration on its origin that is not its own worker, so a worker left behind by a bad build or an injected script stops answering requests once the genuine app loads again. One registration that cannot be removed does not stop the others from being removed
 
 Farcaster Frame requirements:
 
