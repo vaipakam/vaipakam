@@ -23,7 +23,10 @@ import { DatabaseSync } from 'node:sqlite';
 import { describe, expect, it } from 'vitest';
 import { AlertStore, type StoreOp } from '../src/store';
 
-const DDL = readFileSync(new URL('../migrations/0001_init.sql', import.meta.url), 'utf8');
+// Every migration, in order, so the harness is the schema the Worker runs on.
+const DDL = ['0001_init.sql', '0002_event_cursor.sql']
+  .map((f) => readFileSync(new URL(`../migrations/${f}`, import.meta.url), 'utf8'))
+  .join('\n');
 
 type SqlValue = number | string | null;
 
@@ -255,6 +258,39 @@ describe('selectDue', () => {
     const reads = bound.filter((b) => /FROM alert_sent WHERE alert_key IN/.test(b.sql));
     expect(reads.length).toBeGreaterThan(1);
     for (const rd of reads) expect(rd.binds).toBeLessThanOrEqual(100);
+  });
+});
+
+describe('event-alert positions', () => {
+  it('stores, reads back and moves a contract position per chain', async () => {
+    const { store } = harness();
+    await store.commit([
+      { kind: 'setEventCursor', chainId: 84532, contract: 'timelock', nextBlock: 100n, at: 1 },
+      { kind: 'setEventCursor', chainId: 84532, contract: 'sanctionsList', nextBlock: 50n, at: 1 },
+      { kind: 'setEventCursor', chainId: 97, contract: 'timelock', nextBlock: 7n, at: 1 },
+    ]);
+    await store.commit([
+      { kind: 'setEventCursor', chainId: 84532, contract: 'timelock', nextBlock: 250n, at: 2 },
+    ]);
+
+    const r = await store.loadEventCursors(84532);
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect([...r.value.entries()].sort()).toEqual([
+        ['sanctionsList', 50n],
+        ['timelock', 250n],
+      ]);
+    }
+  });
+
+  it('returns a failure rather than throwing when the read fails', async () => {
+    const exploding = {
+      prepare() {
+        throw new Error('D1_ERROR: database is unavailable');
+      },
+    } as unknown as D1Database;
+    const r = await new AlertStore(exploding).loadEventCursors(1);
+    expect(r.ok).toBe(false);
   });
 });
 

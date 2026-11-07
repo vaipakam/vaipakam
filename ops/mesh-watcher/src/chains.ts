@@ -24,6 +24,14 @@ interface DeploymentRow {
   chainId: number;
   chainSlug: string;
   diamond: string;
+  /** Block the chain's Diamond was deployed at — the event-alert floor. */
+  deployBlock?: number;
+  /** The own sanctions list (#2443), on chains that carry one. */
+  sanctionsList?: string;
+  /** The delisting timelock in front of the list's remover (#2443). */
+  sanctionsDelistingTimelock?: string;
+  /** The governance timelock that owns the admin surface. */
+  timelock?: string;
 }
 
 const ROWS = deployments as unknown as Record<string, DeploymentRow>;
@@ -77,7 +85,10 @@ export interface CoverageGap {
     | 'own-ledger-composition'
     | 'own-ledger-repat'
     | 'own-ledger-reattribution'
-    | 'own-ledger-backing';
+    | 'own-ledger-backing'
+    // #3239 / #3237 — the event-alert scan of the sanctions list and the
+    // timelocks (`eventAlerts.ts`). One gap per chain per tick at most.
+    | 'event-logs';
   detail: string;
   /**
    * The chain the endpoint actually reported, on `chain-mismatch` gaps only
@@ -106,6 +117,28 @@ export interface CoverageGap {
  */
 export function deploymentFor(chainId: number): DeploymentRow | null {
   return ROWS[String(chainId)] ?? null;
+}
+
+/**
+ * Every address the committed deployment row names for `chainId`, by key.
+ *
+ * Used to say WHAT a timelock call or a role change points at in plain
+ * words (`diamond`, `sanctionsList`, ...) instead of a bare address. Only
+ * top-level string fields that are addresses are read, so the labels are
+ * exactly the deployment artifact's own key names. Lower-cased addresses.
+ */
+export function deploymentAddressLabels(chainId: number): ReadonlyMap<string, string> {
+  const row = ROWS[String(chainId)] as unknown as Record<string, unknown> | undefined;
+  const labels = new Map<string, string>();
+  if (!row) return labels;
+  for (const [key, value] of Object.entries(row)) {
+    if (typeof value === 'string' && /^0x[0-9a-fA-F]{40}$/.test(value)) {
+      const addr = value.toLowerCase();
+      // First key wins, so a repeated address keeps one stable label.
+      if (!labels.has(addr)) labels.set(addr, key);
+    }
+  }
+  return labels;
 }
 
 /**
