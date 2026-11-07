@@ -115,6 +115,14 @@ describe('GovernanceView', () => {
     expect(out).toContain('Where ownership moves in two steps, it moves only when that address accepts.');
   });
 
+  it('keeps the page up for a change whose time is past what a date can hold', () => {
+    const pause = encodeFunctionData({ abi: DIAMOND_ABI_VIEM, functionName: 'pause' });
+    const far = 10n ** 22n;
+    const out = html({ queue: ready(queue([{ id: id(8), eta: far, ready: false, details: { ...proved([{ target: DIAMOND, value: 0n, data: pause }]), delay: far } as QueuedOperation['details'] }])) });
+    expect(out).toContain('Unix time 10000000000000000000000 UTC');
+    expect(out).toContain('Pauses the protocol contract.');
+  });
+
   it('lists an unproved change with its id and why its action is unknown', () => {
     const out = html({
       queue: ready(queue([{ id: id(9), eta: BigInt(NOW + 100), ready: false, details: { kind: 'unknown', reason: 'unproved', searched: [] } }])),

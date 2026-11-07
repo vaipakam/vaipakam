@@ -128,7 +128,7 @@ function OperationCard({
     <li className="card governance-op" data-testid="governance-op">
       <h2>{format('governance.opTitle', { n: String(n) })}</h2>
       <p className="tier-b" data-testid="governance-op-when">
-        {runnable ? text('governance.opReady') : elapsed ? null : format('governance.opWaiting', { time: formatUtc(eta), left: formatSpan(eta - nowSec) })}
+        {runnable ? text('governance.opReady') : elapsed ? null : format('governance.opWaiting', { time: formatUtc(op.eta), left: formatSpan(eta - nowSec) })}
       </p>
       {d.kind === 'proved' && d.predecessorDone !== null && (
         <p className={d.predecessorDone ? 'tier-b' : 'tier-a'} data-testid="governance-op-after">

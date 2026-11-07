@@ -56,6 +56,11 @@ describe('formatUtc', () => {
   it('labels the moment as UTC', () => {
     expect(formatUtc(0, 'en-GB')).toBe('1 Jan 1970, 00:00 UTC');
   });
+  it('states a moment past what a date can hold exactly, never throwing', () => {
+    expect(formatUtc(10n ** 22n, 'en-GB')).toBe('Unix time 10000000000000000000000 UTC');
+    expect(formatUtc(1e16, 'en-GB')).toBe('Unix time 10000000000000000 UTC');
+    expect(formatUtc(1_800_000_000n, 'en-GB')).toBe(formatUtc(1_800_000_000, 'en-GB'));
+  });
 });
 
 describe('formatFigure', () => {
