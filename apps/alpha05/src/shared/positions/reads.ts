@@ -1,5 +1,6 @@
 /**
- * Home's reads (RW-70, ACC-31). The wallet's positions, payouts and offers
+ * The position book (RW-70, ACC-31, LN-05, LN-11), read by Home and Positions
+ * through one reader. The wallet's positions, payouts and offers
  * are OWN state: read through the own rail (`useOwnRead`), bound to the
  * connected identity and chain. The protocol's pause posture and numeraire
  * are chain reads that belong to no one (`useChainRead`).
@@ -28,8 +29,8 @@ import {
   RepayPeriodicFacetABI,
   RiskFacetABI,
 } from '@vaipakam/contracts/abis';
-import { scanAll } from '../../shared/reads/scan';
-import { ASSET_ERC20, LOAN_STATUS_ACTIVE, isLiveStatus, positionKey, type Deadlines, type LiveLoanRow, type LoanSummary } from './model';
+import { scanAll } from '../reads/scan';
+import { ASSET_ERC20, LOAN_STATUS_ACTIVE, isLiveStatus, positionKey, type Deadlines, type EndedLoanRow, type LiveLoanRow, type LoanSummary } from './model';
 
 const DASHBOARD = MetricsDashboardFacetABI as Abi;
 const METRICS = MetricsFacetABI as Abi;
@@ -111,13 +112,22 @@ export interface Payouts {
   complete: boolean;
   /** Ended (or fallback) loans whose position the wallet holds but did not
    *  originate on that side: the protocol's pending rule is listed only for
-   *  the recorded party, so whether these pay out is not known here. */
-  unlisted: number;
+   *  the recorded party, so whether these pay out is not known here. Each
+   *  keeps its side, so a side choice narrows them with the listed rows. */
+  unlisted: PayoutRow[];
+}
+
+/** Held positions on loans that have ended (repaid, defaulted, settled or
+ *  internally matched), most recent loan first. */
+export interface EndedLoans {
+  rows: EndedLoanRow[];
+  complete: boolean;
 }
 
 export interface PositionBook {
   loans: LiveLoans;
   payouts: Payouts;
+  ended: EndedLoans;
 }
 
 /**
@@ -128,7 +138,7 @@ export interface PositionBook {
  * claimables view) says a claim would pay the recorded party AND the wallet
  * still holds that side's position, since the claim pays the holder. A held
  * position on an ended loan the wallet received from someone else is not
- * covered by that view; it is counted (`unlisted`) rather than guessed.
+ * covered by that view; it is listed apart (`unlisted`) rather than guessed.
  */
 export async function readPositionBook(client: PublicClient, diamond: Hex, account: Hex): Promise<PositionBook> {
   const inventory = await walkInventory(client, diamond, account, 'getUserPositionLoansPaginated');
@@ -153,7 +163,8 @@ export async function readPositionBook(client: PublicClient, diamond: Hex, accou
   // Read once: whether periodic settlement is switched on. Unread, a loan
   // with a cadence has an unknown deadline (its checkpoint may or may not
   // let collateral be sold); a loan without one is unaffected.
-  const periodicOn = live.length === 0 ? Promise.resolve(false) : (client.readContract({ address: diamond, abi: NUMERAIRE, functionName: 'getPeriodicInterestEnabled' }) as Promise<boolean>);
+  const periodicOn =
+    live.length === 0 ? Promise.resolve(false) : (client.readContract({ address: diamond, abi: NUMERAIRE, functionName: 'getPeriodicInterestEnabled' }) as Promise<boolean>);
   periodicOn.catch(() => undefined);
 
   const [healthList, deadlineList, valueList, payouts] = await Promise.all([
@@ -192,7 +203,11 @@ export async function readPositionBook(client: PublicClient, diamond: Hex, accou
     deadlines[positionKey(r)] = deadlineList[i] ?? null;
     values[positionKey(r)] = valueList[i] ?? null;
   });
-  return { loans: { rows, complete: inventory.complete, deadlines, values }, payouts };
+  const ended: EndedLoanRow[] = held
+    .filter((h) => !isLiveStatus(h.loan.status))
+    .map((h) => ({ loan: h.loan, borrowerSide: h.borrowerSide }))
+    .sort((a, b) => (a.loan.id < b.loan.id ? 1 : a.loan.id > b.loan.id ? -1 : a.borrowerSide === b.borrowerSide ? 0 : a.borrowerSide ? 1 : -1));
+  return { loans: { rows, complete: inventory.complete, deadlines, values }, payouts, ended: { rows: ended, complete: inventory.complete } };
 }
 
 /** A claim can be open on a loan that is still live (a lender's claim on a
@@ -219,7 +234,9 @@ async function readPayouts(client: PublicClient, diamond: Hex, account: Hex, hel
     .sort((a, b) => (a.loanId < b.loanId ? -1 : a.loanId > b.loanId ? 1 : 0));
   // Positions the pending view cannot cover: received from another wallet,
   // on a loan that is no longer simply Active (ended, or in fallback).
-  const unlisted = held.filter((h) => h.loan.status !== LOAN_STATUS_ACTIVE && h.recordedParty.toLowerCase() !== account.toLowerCase()).length;
+  const unlisted = held
+    .filter((h) => h.loan.status !== LOAN_STATUS_ACTIVE && h.recordedParty.toLowerCase() !== account.toLowerCase())
+    .map((h): PayoutRow => ({ loanId: h.loan.id, side: h.borrowerSide ? 'borrower' : 'lender' }));
   return { rows, complete: inventoryComplete && lender.complete && borrower.complete, unlisted };
 }
 

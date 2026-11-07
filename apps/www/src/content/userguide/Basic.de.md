@@ -1258,6 +1258,14 @@ Bevor sich Ihre Wallet öffnet, lässt die App das Protokoll Ihr Angebot probewe
 
 Das Veröffentlichen eines Angebots kostet Sie keine Gebühr. Die Eröffnungsgebühr trägt der Kreditnehmer: ein kleiner Anteil des Betrags, einmal im verliehenen Asset erhoben, wenn ein Kreditnehmer Ihr Angebot annimmt, zum dann geltenden Satz, und von dem abgezogen, was er erhält. Sie verleihen den ganzen Betrag, und der Kreditnehmer schuldet ihn vollständig mit Zinsen zurück. Werden Zinsen gezahlt, behält das Protokoll seinen Anteil daran, zum Satz, der bei Eröffnung des Kredits gilt; Ihre Gebührenrabattstufe kann diesen Anteil senken, solange Ihre Gebührenrabatt-Einstellung aktiv ist. Die Prüfung zeigt den heutigen Satz und das Höchste, was dieser Anteil nehmen kann; lässt sich der Satz nicht lesen, sagt die Prüfung das, statt eine Zahl zu zeigen.
 
+<a id="positions"></a>
+
+### Positions: Ihre Kreditpositionen
+
+Positions listet jeden Kredit, den Sie in diesem Netzwerk vergeben oder aufgenommen haben, anhand der Positions-Token in Ihrer Wallet. Eine Position, die Sie an jemand anderen übertragen haben, verschwindet daher aus Ihrer Liste. Zuerst kommen Auszahlungen, die zum Abholen bereitstehen; sie öffnen Claims. Dann folgen laufende Kredite, die dringendste Frist zuerst, wie auf Home. Zuletzt kommen beendete Kredite, jeweils mit ihrem Ende: zurückgezahlt, ausgefallen, abgewickelt oder durch ein Matching geschlossen. Ein beendeter Kredit, dessen Auszahlung noch wartet, verweist Sie auf Claims.
+
+Alle, Verliehen und Geliehen grenzen alle drei Listen zugleich ein. Positions sagt nur dann, dass Sie nichts haben, wenn alles gelesen wurde; konnte eine Liste nicht vollständig gelesen werden, steht das dort. Jeder Kredit öffnet seine eigene Seite, die zeigt, welche Aktionen Ihnen offenstehen. Die Liste selbst signiert nie etwas.
+
 <a id="risk-access"></a>
 
 ### Risk Access: Ihre Risikostufe

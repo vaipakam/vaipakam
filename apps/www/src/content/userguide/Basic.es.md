@@ -1236,6 +1236,14 @@ Antes de que se abra su billetera, la app pide al protocolo que pruebe su oferta
 
 Publicar una oferta no le cobra ninguna comisión. La comisión de apertura es del prestatario: una pequeña parte del importe, cobrada una vez en el activo prestado cuando un prestatario acepta su oferta, a la tasa vigente entonces, y descontada de lo que recibe. Usted presta todo el importe, y el prestatario se lo devuelve completo con intereses. Cuando se pagan los intereses, el protocolo se queda con su parte, a la tasa vigente al abrirse el préstamo; su nivel de descuento de comisiones puede reducir esa parte mientras su ajuste de descuento esté activado. La revisión muestra la tasa de hoy y lo máximo que puede tomar esa parte; si esa tasa no se puede leer, la revisión lo dice en lugar de mostrar una cifra.
 
+<a id="positions"></a>
+
+### Positions: Tus posiciones de préstamo
+
+Positions muestra cada préstamo que prestaste o tomaste en esta red, a partir de los tokens de posición que guarda tu wallet, así que una posición que transferiste a otra persona sale de tu lista. Primero aparecen los pagos listos para cobrar, que abren Claims. Después, los préstamos activos, con el plazo más urgente primero, como en Home. Al final, los préstamos terminados, cada uno con cómo terminó: reembolsado, en impago, liquidado o cerrado por un emparejamiento. Un préstamo terminado cuyo pago sigue esperando te remite a Claims.
+
+Todos, Prestados y Tomados filtran las tres listas a la vez. Positions dice que no tienes nada solo después de leerlo todo; si una lista no se pudo leer entera, lo indica. Cada préstamo abre su propia página, que muestra las acciones disponibles para ti. La lista nunca firma nada.
+
 <a id="risk-access"></a>
 
 ### Risk Access: tu nivel de riesgo
