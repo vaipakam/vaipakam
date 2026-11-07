@@ -1906,11 +1906,13 @@ attacker, a Permit2 signature, or a transfer.
   identical files, but only with the SAME build variables the Workers Build
   used (the trigger's variables, readable through the Workers Builds API).
   Without them every file that carries a variable differs and reads as a
-  mismatch. The www build also embeds the protocol configuration the indexer
-  publishes AT BUILD TIME (`scripts/generate-llms.mjs`, the `llms` documents),
-  so a www rebuild after a configuration change differs in those files and
-  only those; compare the rest. Builds made before #3236 stamped the clock and
-  never match a rebuild. (The automatic served-build check #3236 asks for does not exist
+  mismatch. For www, compare only the bundled code (`/assets/`), never its
+  pages or documents: its deploy fetches live data while it builds (the
+  protocol configuration the indexer publishes, read by
+  `scripts/generate-llms.mjs` and by the pages that `scripts/prerender.mjs`
+  renders into HTML), so its HTML and `llms` files change whenever that data
+  does. The app and alpha05 deploys fetch nothing while building. Builds made
+  before #3236 stamped the clock and never match a rebuild. (The automatic served-build check #3236 asks for does not exist
   yet; until it does, this is a manual check.)
 - A changed or missing `Content-Security-Policy` header, or a script host in
   it that `public/_headers.base` does not name.
