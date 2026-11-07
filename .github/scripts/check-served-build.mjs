@@ -144,6 +144,10 @@ export function verifiableCommit(live) {
   return { short: v.stamp[1], version: v.id };
 }
 
+/** Whether a deployment read after the comparison still serves only `version`. */
+export const deploymentUnchanged = (live, version) =>
+  live.read === 'ok' && live.versions.length === 1 && live.versions[0].id === version;
+
 // ── side effects ─────────────────────────────────────────────────────────
 
 function listFiles(root) {
@@ -302,10 +306,17 @@ async function checkSite(site, { auth, ref, suffixPaths }) {
     }
   }
 
+  // Only an OBSERVED change of version excuses the result. A failed second
+  // read shows nothing changed, so it leaves the site unverified, never
+  // passed and never skipped.
   const after = await readLatestDeployment(site.worker, auth);
-  const afterV = verifiableCommit(after);
-  if (afterV.version !== v.version) {
-    return { problems: [], report: [`${site.worker}: its deployment changed during the check (${v.version} → ${afterV.version ?? 'unknown'}); not judged this run.`] };
+  if (after.read !== 'ok') {
+    const why = after.read === 'none' ? 'the Worker has no deployment' : `it could not be read (${after.error})`;
+    return { problems: [problem('unverifiable', `cannot be verified: its deployment was read before the comparison but not after it: ${why}.`)], report: [] };
+  }
+  if (!deploymentUnchanged(after, v.version)) {
+    const now = after.versions.map((x) => `${x.id} at ${x.percentage}%`).join(', ');
+    return { problems: [], report: [`${site.worker}: its deployment changed during the check (${v.version} → ${now}); not judged this run.`] };
   }
 
   const summary = `${files.length} file(s) on ${site.hosts.length} host(s), built from ${v.short} (version ${v.version})`;
@@ -363,6 +374,10 @@ function selftest() {
   ok(verifiableCommit({ read: 'ok', versions: [{ ...version(''), stamp: null }] }).reason.includes('no commit stamp'), 'unstamped');
   ok(verifiableCommit({ read: 'ok', versions: [version('aaaaaaaaaaaa-dirty')] }).reason.includes('uncommitted'), 'dirty');
   ok(verifiableCommit({ read: 'ok', versions: [version('aaaaaaaaaaaa')] }).short === 'aaaaaaaaaaaa', 'clean stamp');
+  ok(deploymentUnchanged({ read: 'ok', versions: [version('aaaaaaaaaaaa')] }, 'v1'), 'same version is unchanged');
+  ok(!deploymentUnchanged({ read: 'ok', versions: [{ ...version('aaaaaaaaaaaa'), id: 'v2' }] }, 'v1'), 'a new version is a change');
+  ok(!deploymentUnchanged({ read: 'ok', versions: [version('aaaaaaaaaaaa'), { ...version('aaaaaaaaaaaa'), id: 'v2' }] }, 'v1'), 'a split is a change');
+  ok(!deploymentUnchanged({ read: 'error', error: 'HTTP 503' }, 'v1'), 'a failed read is not "unchanged"');
 
   const config = JSON.parse(readFileSync(CONFIG_PATH, 'utf8'));
   for (const site of config.sites) {
