@@ -868,12 +868,6 @@ contract VaultFactoryFacetTest is Test {
         VaultFactoryFacet(address(diamond)).vaultApproveNFT721(user1, mockNft721, 999);
     }
 
-    // ─── Test A: VaultUpgradeRequired ──────────────────────────────────────
-
-    // ─── Test B: upgradeUserVault reverts NoVault ─────────────────────────
-
-    // ─── Test C: upgradeUserVault reverts UpgradeFailed ────────────────────
-
     // ─── Additional branch coverage ─────────────────────────────────────────
 
     /// @dev #905 — the implementation contract locks its own initializer at

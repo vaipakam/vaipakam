@@ -5088,8 +5088,8 @@ library LibVaipakam {
         mapping(address => mapping(address => mapping(address => uint256)))
             lenderIntentCapital;
         // #398 v1.5 — ERC-4626 aggregator-adapter factory state. Mirrors the
-        // per-user vault version machinery (vaipakamVaultTemplate /
-        // currentVaultVersion / mandatoryVaultVersion / vaultVersion): one shared
+        // per-user vault version machinery user vaults had before #3204 (one
+        // shared template, a version counter, a mandatory floor): one shared
         // UUPS adapter implementation, per-aggregator proxies, governance-published
         // impls + aggregator-pull migration + a mandatory floor for critical fixes.
         address aggregatorAdapterTemplate;        // shared UUPS adapter impl

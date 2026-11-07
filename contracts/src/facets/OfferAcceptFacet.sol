@@ -1943,14 +1943,8 @@ contract OfferAcceptFacet is
         // (relisting is `whenNotPaused` too). APPENDED — prior values stay
         // stable.
         ProtocolPaused,
-        // #1835 (Codex #1891 F20 → F22) — a party to this accept already holds
-        // a vault below `mandatoryVaultVersion`, so `_acceptOffer` reverts
-        // `VaultFactoryFacet.VaultUpgradeRequired` before it reaches staleness.
-        //
-        // Classified because the accept-side check exists at all: F20 added it
-        // ahead of the stale comparison, which immediately made the preview
-        // wrong in the same way it had been about the pause. Parity is the
-        // point of this enum.
+        // #1835 (Codex #1891 F20 → F22) once classified a party holding a
+        // vault below the mandatory vault version.
         //
         // #3204 — retired with the mandatory vault-version floor (every vault
         // resolves its code through the VaultBeacon). Never produced; kept so

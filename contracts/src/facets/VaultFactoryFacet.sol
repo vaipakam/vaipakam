@@ -1075,7 +1075,7 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
 
     /**
      * @notice Returns the Diamond's own address as recorded in LibVaipakam
-     *         storage at {initializeVaultImplementation} time.
+     *         storage at {initializeVaultBeacon} time.
      * @dev Used by vault proxies to verify their authorized caller.
      * @return diamondAddress The Diamond proxy address.
      */
