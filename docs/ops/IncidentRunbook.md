@@ -1940,19 +1940,28 @@ service-worker registration that is not its own `/sw.js` each time it loads
 genuine page loads. A foreign worker that answers page loads itself keeps the
 genuine page from ever running, so also send the emergency header:
 
-- Add `Clear-Site-Data: "cache", "storage"` under the `/*` rule at the top of
-  `apps/app/public/_headers.base` (adding a header to an existing rule does
-  not count against the 100-rule limit), and merge it. It has to be `/*`, not
-  only the page and `/sw.js`: a worker's update check fetches the script URL
-  IT was registered with, which for a foreign worker is whatever path the bad
-  build chose (`/evil.js`, say). The host answers that path with the page
-  fallback, and `/*` puts the header on that answer too. The browser makes the
-  update fetch from the network whatever the worker does, so this is the one
-  response an intercepting worker cannot hide. Whether a given browser
-  honours the header on that update fetch has not been tested here, so check
-  it once in a scratch browser profile that has the bad worker registered,
-  and say in the user notice that clearing the site's data by hand (the
-  browser's site settings) removes it for certain.
+- Add `Clear-Site-Data: "cache", "storage"` under the `/*` rule of EVERY
+  affected host's header file, and merge it. Each host is its own Worker with
+  its own file, so editing one does nothing for the others:
+
+  | Host | Worker | Header file |
+  | --- | --- | --- |
+  | `app.vaipakam.com` | `vaipakam-app` | `apps/app/public/_headers.base` |
+  | `vaipakam.com` | `vaipakam-www` | `apps/www/public/_headers` |
+  | `alpha05.vaipakam.com` | `vaipakam-alpha05` | `apps/alpha05/public/_headers` |
+
+  Adding a header to an existing rule does not count against the 100-rule
+  limit. It has to be `/*`, not only the page and `/sw.js`: a worker's update
+  check fetches the script URL IT was registered with, which for a foreign
+  worker is whatever path the bad build chose (`/evil.js`, say). The host
+  answers that path with its page or not-found fallback, and `/*` is meant to
+  put the header on that answer too. The browser makes the update fetch from
+  the network whatever the worker does, so this is the one response an
+  intercepting worker cannot hide. Two things are untested here and need a
+  check in a scratch browser profile with the bad worker registered: that the
+  host's fallback answer carries the header, and that the browser honours it
+  on the update fetch. Say in the user notice that clearing the site's data by
+  hand (the browser's site settings) removes it for certain.
 - The price is high while it is up. On `/*` the header comes back with every
   response, so every page load wipes the app's local settings and
   wallet-connection sessions, and the genuine app's own service worker and
