@@ -1603,6 +1603,7 @@ a.btn {
 .governance-op,
 .governance-call,
 .governance-id,
+.governance-data,
 .governance-args dt,
 .governance-args dd {
   overflow-wrap: anywhere;

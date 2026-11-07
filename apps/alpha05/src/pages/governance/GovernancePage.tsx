@@ -118,15 +118,23 @@ function OperationCard({
   const { text, format } = useCopy();
   const eta = Number(op.eta);
   // The timelock's own `ready` flag was read at the queue's block; a clock
-  // that has since passed the time reads as runnable too.
-  const runnable = op.ready || eta <= nowSec;
+  // that has since passed the time reads as elapsed too. An operation with a
+  // predecessor runs only once that one has, so the wait alone is not enough.
   const d = op.details;
+  const elapsed = op.ready || eta <= nowSec;
+  const waitsOnPredecessor = d.kind === 'proved' && d.predecessorDone === false;
+  const runnable = elapsed && !waitsOnPredecessor;
   return (
     <li className="card governance-op" data-testid="governance-op">
       <h2>{format('governance.opTitle', { n: String(n) })}</h2>
       <p className="tier-b" data-testid="governance-op-when">
-        {runnable ? text('governance.opReady') : format('governance.opWaiting', { time: formatUtc(eta), left: formatSpan(eta - nowSec) })}
+        {runnable ? text('governance.opReady') : elapsed ? null : format('governance.opWaiting', { time: formatUtc(eta), left: formatSpan(eta - nowSec) })}
       </p>
+      {d.kind === 'proved' && d.predecessorDone !== null && (
+        <p className={d.predecessorDone ? 'tier-b' : 'tier-a'} data-testid="governance-op-after">
+          {format(d.predecessorDone ? 'governance.opAfterDone' : 'governance.opAfter', { id: d.predecessor })}
+        </p>
+      )}
       {d.kind === 'proved' ? (
         <>
           {d.calls.length > 1 && <p className="tier-b">{format('governance.opBatch', { count: String(d.calls.length) })}</p>}
@@ -207,7 +215,9 @@ function CallLine({ call, chain }: { call: DescribedCall; chain: SupportedChain 
       line = format('governance.action.unpause', { target });
       break;
     case 'ownership':
-      line = format('governance.action.ownership', { target, owner: a.newOwner });
+      line = /^0x0{40}$/i.test(a.newOwner)
+        ? format('governance.action.ownershipZero', { target })
+        : format('governance.action.ownership', { target, owner: a.newOwner });
       break;
     case 'upgrade':
       line = format('governance.action.upgrade', { target, address: a.implementation });
@@ -233,7 +243,12 @@ function CallLine({ call, chain }: { call: DescribedCall; chain: SupportedChain 
         <dl className="facts governance-args">
           <dt>{call.functionName ?? call.selector}</dt>
           <dd>{call.target}</dd>
-          {call.args.length === 0 ? (
+          {call.functionName === null ? (
+            <>
+              <dt>{text('governance.argsUnknown')}</dt>
+              <dd />
+            </>
+          ) : call.args.length === 0 ? (
             <>
               <dt>{text('governance.argsNone')}</dt>
               <dd />
@@ -243,6 +258,8 @@ function CallLine({ call, chain }: { call: DescribedCall; chain: SupportedChain 
               <ArgRow key={i} name={arg.name} type={arg.type} value={arg.value} />
             ))
           )}
+          <dt>{text('governance.callData')}</dt>
+          <dd className="governance-data">{call.data}</dd>
         </dl>
       </details>
     </li>

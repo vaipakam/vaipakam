@@ -56,6 +56,7 @@ export const GOVERNANCE_TIMELOCK_READ_ABI = parseAbi([
   'function getPendingProposals(uint32 offset, uint32 limit) view returns ((bytes32 id, uint256 eta, bool ready)[] page)',
   'function getMinDelay() view returns (uint256)',
   'function MIN_DELAY_FLOOR() view returns (uint256)',
+  'function isOperationDone(bytes32 id) view returns (bool)',
 ]);
 
 export const CALL_SCHEDULED_EVENT = parseAbiItem(
@@ -80,6 +81,10 @@ export type QueuedOperationDetails =
       form: 'single' | 'batch';
       calls: GovernanceCall[];
       predecessor: Hex;
+      /** Whether the predecessor has run, read at the queue's block: the
+       *  timelock refuses to run this operation until it has. `null` when
+       *  there is no predecessor (it is zero). */
+      predecessorDone: boolean | null;
       salt: Hex;
       /** The delay it was scheduled with, in seconds. */
       delay: bigint;
@@ -198,7 +203,7 @@ function prove(id: Hex, logs: ScheduledLog[], salt: Hex): QueuedOperationDetails
   const predecessor = sorted[0].predecessor;
   if (sorted.some((l) => l.predecessor !== predecessor || l.delay !== sorted[0].delay)) return null;
   const calls = sorted.map((l) => l.call);
-  const base = { calls, predecessor, salt, delay: sorted[0].delay, scheduledBlock: sorted[0].block, scheduledTx: sorted[0].tx } as const;
+  const base = { calls, predecessor, predecessorDone: null, salt, delay: sorted[0].delay, scheduledBlock: sorted[0].block, scheduledTx: sorted[0].tx } as const;
   if (calls.length === 1 && hashOperation(calls[0], predecessor, salt) === id) return { kind: 'proved', form: 'single', ...base };
   if (hashOperationBatch(calls, predecessor, salt) === id) return { kind: 'proved', form: 'batch', ...base };
   return null;
@@ -329,7 +334,10 @@ export async function readGovernanceQueue(
   const latest = await client.getBlock({ blockTag: 'latest' });
   const blockNumber = latest.number;
   if (blockNumber === null) throw new Error('governance queue: the latest block has no number');
-  const read = <T>(functionName: 'getPendingProposalsCount' | 'getMinDelay' | 'MIN_DELAY_FLOOR' | 'getPendingProposals', args?: readonly unknown[]) =>
+  const read = <T>(
+    functionName: 'getPendingProposalsCount' | 'getMinDelay' | 'MIN_DELAY_FLOOR' | 'getPendingProposals' | 'isOperationDone',
+    args?: readonly unknown[],
+  ) =>
     client.readContract({ address: timelock, abi: GOVERNANCE_TIMELOCK_READ_ABI, functionName, args, blockNumber } as never) as Promise<T>;
 
   const [count, minDelay, floor] = await Promise.all([
@@ -347,7 +355,13 @@ export async function readGovernanceQueue(
 
   const operations: QueuedOperation[] = [];
   for (const op of pending) {
-    operations.push({ ...op, details: await detailsFor(client, timelock, op, { current: minDelay, floor }, blockNumber, opts) });
+    const details = await detailsFor(client, timelock, op, { current: minDelay, floor }, blockNumber, opts);
+    // The timelock runs an operation only after its predecessor has run, so
+    // an elapsed delay alone does not make it runnable.
+    if (details.kind === 'proved' && details.predecessor !== ZERO32) {
+      details.predecessorDone = await read<boolean>('isOperationDone', [details.predecessor]);
+    }
+    operations.push({ ...op, details });
   }
   // Soonest first: the change that can run next leads.
   operations.sort((a, b) => (a.eta < b.eta ? -1 : a.eta > b.eta ? 1 : 0));
@@ -409,6 +423,8 @@ export interface DescribedCall {
   targetKey: string | null;
   /** Native value sent with the call, wei. */
   value: bigint;
+  /** The whole calldata, kept so an undecoded call is still shown exactly. */
+  data: Hex;
   selector: Hex;
   /** Null when the call could not be decoded against the target's ABI. */
   functionName: string | null;
@@ -444,7 +460,7 @@ function argText(type: string, v: unknown): string {
 export function describeGovernanceCall(call: GovernanceCall, targets: readonly GovernanceTarget[]): DescribedCall {
   const known = targets.find((t) => t.address.toLowerCase() === call.target.toLowerCase()) ?? null;
   const selector = (call.data.length >= 10 ? call.data.slice(0, 10) : call.data) as Hex;
-  const base = { target: call.target, targetKey: known?.key ?? null, value: call.value, selector };
+  const base = { target: call.target, targetKey: known?.key ?? null, value: call.value, data: call.data, selector };
   if (call.data === '0x') return { ...base, functionName: null, args: [], action: { kind: 'transfer' } };
   if (!known?.abi) return { ...base, functionName: null, args: [], action: { kind: 'undecoded' } };
 
@@ -525,7 +541,9 @@ function actionSentence(d: DescribedCall): string {
     case 'unpause':
       return `Unpauses ${where}.`;
     case 'ownership':
-      return `Transfers ownership of ${where} to ${a.newOwner} (where ownership is two-step, the new owner must then accept).`;
+      return /^0x0{40}$/i.test(a.newOwner)
+        ? `Calls transferOwnership with the zero address on ${where}: on a two-step owner this cancels a pending handover.`
+        : `Names ${a.newOwner} as the new owner of ${where}; where ownership is two-step, it moves only when that address accepts.`;
     case 'upgrade':
       return `Upgrades ${where} to the implementation at ${a.implementation}.`;
     case 'call':
@@ -533,6 +551,6 @@ function actionSentence(d: DescribedCall): string {
     case 'transfer':
       return `Transfers to ${where} with no call.`;
     case 'undecoded':
-      return `Calls function ${d.selector} on ${where}; the call could not be decoded.`;
+      return `Calls function ${d.selector} on ${where}; the call could not be decoded (call data ${d.data}).`;
   }
 }

@@ -45,6 +45,7 @@ const proved = (calls: { target: Address; value: bigint; data: Hex }[]): QueuedO
   form: calls.length > 1 ? 'batch' : 'single',
   calls,
   predecessor: id(0),
+  predecessorDone: null,
   salt: id(0),
   delay: 172_800n,
   scheduledBlock: 120_000n,
@@ -99,6 +100,21 @@ describe('GovernanceView', () => {
     expect(out).toContain('does not expire');
   });
 
+  it('does not call a change runnable while its predecessor has not run', () => {
+    const pause = encodeFunctionData({ abi: DIAMOND_ABI_VIEM, functionName: 'pause' });
+    const details = { ...proved([{ target: DIAMOND, value: 0n, data: pause }]), predecessor: id(5), predecessorDone: false } as QueuedOperation['details'];
+    const out = html({ queue: ready(queue([{ id: id(4), eta: BigInt(NOW - 10), ready: true, details }])) });
+    expect(out).not.toContain('Can run now.');
+    expect(out).toContain(`It runs only after operation ${id(5)} has run, and that operation has not run yet.`);
+  });
+
+  it('names a new owner without promising the handover is done', () => {
+    const owner = '0x00000000000000000000000000000000000000ab' as Address;
+    const data = encodeFunctionData({ abi: DIAMOND_ABI_VIEM, functionName: 'transferOwnership', args: [owner] });
+    const out = html({ queue: ready(queue([{ id: id(6), eta: BigInt(NOW + 100), ready: false, details: proved([{ target: DIAMOND, value: 0n, data }]) }])) });
+    expect(out).toContain('Where ownership moves in two steps, it moves only when that address accepts.');
+  });
+
   it('lists an unproved change with its id and why its action is unknown', () => {
     const out = html({
       queue: ready(queue([{ id: id(9), eta: BigInt(NOW + 100), ready: false, details: { kind: 'unknown', reason: 'unproved', searched: [] } }])),
@@ -114,5 +130,8 @@ describe('GovernanceView', () => {
     });
     expect(out).toContain(`Calls function 0xdeadbeef on unlisted contract ${stranger}. This app cannot decode it, so what it does is unknown.`);
     expect(out).toContain('Sends 0.1 ETH from the timelock with this call.');
+    expect(out).toContain('Its arguments could not be decoded; the raw call data is below.');
+    expect(out).not.toContain('No arguments.');
+    expect(out).toContain('0xdeadbeef</dd>');
   });
 });

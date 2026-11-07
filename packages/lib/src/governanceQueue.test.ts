@@ -47,7 +47,7 @@ interface Salt {
   tx: Hex;
 }
 
-function fakeChain(opts: { pending: { id: Hex; eta: bigint; ready: boolean }[]; scheduled: Scheduled[]; salts?: Salt[]; minDelay?: bigint }) {
+function fakeChain(opts: { pending: { id: Hex; eta: bigint; ready: boolean }[]; scheduled: Scheduled[]; salts?: Salt[]; minDelay?: bigint; done?: Hex[] }) {
   const calls = { getLogs: 0, getBlock: 0, ranges: [] as [bigint, bigint][] };
   const client = {
     async getBlock(args: { blockNumber?: bigint; blockTag?: string }) {
@@ -59,6 +59,7 @@ function fakeChain(opts: { pending: { id: Hex; eta: bigint; ready: boolean }[]; 
       if (args.functionName === 'getPendingProposalsCount') return BigInt(opts.pending.length);
       if (args.functionName === 'getMinDelay') return opts.minDelay ?? MIN_DELAY;
       if (args.functionName === 'MIN_DELAY_FLOOR') return FLOOR;
+      if (args.functionName === 'isOperationDone') return (opts.done ?? []).includes((args.args as [Hex])[0]);
       if (args.functionName === 'getPendingProposals') {
         const [offset, limit] = args.args as [number, number];
         return opts.pending.slice(offset, offset + limit);
@@ -93,7 +94,7 @@ const tx = (n: number) => `0x${n.toString(16).padStart(64, '0')}` as Hex;
 
 describe('the read ABI', () => {
   it('matches the committed VaipakamTimelock ABI', () => {
-    for (const name of ['getPendingProposalsCount', 'getPendingProposals', 'getMinDelay', 'MIN_DELAY_FLOOR'] as const) {
+    for (const name of ['getPendingProposalsCount', 'getPendingProposals', 'getMinDelay', 'MIN_DELAY_FLOOR', 'isOperationDone'] as const) {
       const ours = getAbiItem({ abi: GOVERNANCE_TIMELOCK_READ_ABI, name });
       const theirs = getAbiItem({ abi: VaipakamTimelockABI as Abi, name });
       expect(toFunctionSelector(ours as never)).toBe(toFunctionSelector(theirs as never));
@@ -207,6 +208,24 @@ describe('readGovernanceQueue', () => {
     const d = q.operations[0].details;
     expect(d.kind === 'proved' && d.scheduledTx).toBe(tx(8));
     expect(d.kind === 'proved' && d.delay).toBe(liveDelay);
+  });
+
+  it('reads whether a predecessor has run, since the timelock waits for it', async () => {
+    const before = `0x${'11'.repeat(32)}` as Hex;
+    const after = `0x${'22'.repeat(32)}` as Hex;
+    const ops = [before, after].map((pred, i) => {
+      const block = 10_000n + BigInt(i) * 5_000n;
+      const id = hashOperation(pauseCall, pred, ZERO32);
+      return { id, block, pred };
+    });
+    const { client } = fakeChain({
+      done: [before],
+      pending: ops.map((o) => ({ id: o.id, eta: tsOf(o.block) + MIN_DELAY, ready: true })),
+      scheduled: ops.map((o, i) => ({ id: o.id, index: 0n, call: pauseCall, predecessor: o.pred, delay: MIN_DELAY, block: o.block, tx: tx(20 + i), logIndex: 0 })),
+    });
+    const q = await readGovernanceQueue(client, TIMELOCK, { maxLogRange: 2000, fromBlock: 0n });
+    const done = q.operations.map((o) => (o.details.kind === 'proved' ? o.details.predecessorDone : 'unknown'));
+    expect(done).toEqual([true, false]);
   });
 
   it('refuses logs that do not hash to the stored id', async () => {
