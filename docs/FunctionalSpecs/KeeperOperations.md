@@ -178,6 +178,14 @@ evidence that the migration has completed.
   capacity is exhausted, the pass still considers opted-in intents whose
   priority credit the protocol says would unlock a fill. Each fill is
   previewed, and shared per-run time and action limits still apply.
+- The per-run preview budget is shared across offer creators, not across
+  offers. Every pair of counterparties (a lender creator and a borrower
+  creator in one offer bucket, or a standing intent and a borrower creator) is
+  looked at once before any pair is looked at a second time, and the starting
+  point moves from run to run. So one wallet posting many offers cannot use up
+  a run's previews and keep other people's offers from being matched. Many
+  wallets each get their own share; the minimum offer size is what bounds
+  that.
 - A priority credit is consumed only when a fill would otherwise be refused
   for capacity. It grants no exemption from offer bounds, collateral safety,
   sanctions, or another authorization requirement. If the deployment cannot
