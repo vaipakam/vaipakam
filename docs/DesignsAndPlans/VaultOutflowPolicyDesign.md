@@ -239,6 +239,18 @@ two fails closed: the vault refuses.
   derivation), so anyone may deploy a holder's vault and nobody can choose
   its owner. A route paying such a holder deploys the vault first in the
   same transaction, then pays it under the same check.
+- **The holder of this vault's own side.** When a borrower position moves
+  from A to B, the collateral stays in A's vault under its lien, and the
+  lien now answers to B, never to A. Every action on that lien is
+  authorized by the current holder of the borrower NFT, read from the NFT
+  contract: a partial withdrawal of surplus, a swap-to-repay, a collateral
+  listing. The vault checks the holder's own signature (EIP-712, or
+  ERC-1271 from the holder's vault), not A's. At release, what is left of
+  the lien goes to B's vault under the same binding check as a
+  counterparty payment (a **position-holder** class); it becomes A's free
+  balance only if A still holds the NFT. So an ordinary transfer gives B
+  everything the position carries, without A's help, and A can no longer
+  reach it.
 - **Seller claims.** A sale through the protocol's route may split value
   earned before the sale (#1209's seller interest) as a seller claim. The
   vault records it only from the seller's signed sale terms (§8 Q1): the
@@ -275,8 +287,9 @@ two fails closed: the vault refuses.
   sets the new owner wallet, which is both the payout destination and the
   signer of later authorizations. The old wallet stops passing either
   check at once.
-- **Release.** A close-out releases what is left of a lien to the owner's
-  free balance. On repay, preclose and refinance the vault releases only
+- **Release.** A close-out releases what is left of a lien to the current
+  holder of this vault's side of the position: the owner's free balance
+  when the owner still holds it, otherwise the holder's vault (above). On repay, preclose and refinance the vault releases only
   against a receipt the payee vault recorded for the same transaction
   (§8 Q5, decided). On the listed exceptions a release is trusted to the
   Diamond (layer 1 only), bounded rather than closed. A released lien's assets can leave only by the owner class: to
@@ -342,6 +355,15 @@ their own contract:
 - **Protected mode's NFT lock stays, as the holder's own choice.** Only the
   holder can switch it on, switching it off waits their delay, and the
   Diamond has no part in it. It guards against phishing.
+- **Primary replacement moves the positions too.** When a protected
+  account replaces its primary wallet A with B (§3.7: a majority of
+  secondaries, after the delay, verified by the vault), the vault then
+  calls the NFT core's recovery transfer. The core accepts it only from a
+  genuine vault whose own record shows the replacement of A by B, and only
+  for tokens held by A; it moves them to B and counts them as transfers.
+  Because a protected account's NFTs are under its own lock, a thief
+  holding A cannot move them during the replacement delay. The Diamond has
+  no part in it.
 - **No notification.** The NFT contract never calls the Diamond. Every rule
   that depends on the holder reads the current owner when it acts:
 
@@ -404,6 +426,13 @@ opens by itself.
     then pays it;
   - a route started, then the NFT sent away and back: completion reverts on
     the changed transfer count;
+  - a borrower NFT moved from A to B: B, not A, authorizes partial
+    withdrawals and listings, and the released collateral reaches B's
+    vault; A's owner withdrawal cannot take it;
+  - a protected account's primary replaced: its position NFTs move to the
+    new wallet through the vault-verified recovery transfer, payments then
+    reach its vault, and a recovery transfer from a non-vault, or for a
+    replacement the vault did not record, reverts;
   - a forged seller claim against an honest user's lien, to any vault but
     a recorded seller or above its recorded claim, reverts at layer 2;
   - paying more than the recorded lien reverts;
