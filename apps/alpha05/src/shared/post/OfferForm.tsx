@@ -10,7 +10,7 @@ import { useOwnRead } from '../reads/useOwnRead';
 import { useStoredValue } from '../tx/txStore';
 import { useMounted } from '../tx/useReviewRefresh';
 import { FormField } from '../ui/FormField';
-import { formatFigureText } from '../ui/format';
+import { formatExact, formatFigureText } from '../ui/format';
 import { useMode } from '../../app/ModeContext';
 import { Notice } from '../ui/Notice';
 import {
@@ -357,6 +357,9 @@ export function OfferForm({ side, flowKey, chain, own, pair, meta, onReview, onC
   const ceiling = ceilingTyped ? parseAmount(input.tariffCeiling, VPFI_DECIMALS) : null;
   const ceilingValue = ceiling?.ok ? ceiling.value : ceilingTyped ? null : suggested;
   const vpfi = (v: bigint) => format('request.tariffVpfi', { amount: formatFigureText(v, VPFI_DECIMALS) });
+  /** The suggested ceiling is a figure the reader authorizes as written, so
+   *  it is shown in every digit (RB-FUNDS), never shortened. */
+  const vpfiExact = (v: bigint) => format('request.tariffVpfi', { amount: formatExact(v, VPFI_DECIMALS) });
   /** Why the chosen tariff cannot go to review: switched off now, or no
    *  ceiling to authorize (none typed, and no quote to take it from). */
   const tariffBlock = !tariffChosen
@@ -569,7 +572,7 @@ export function OfferForm({ side, flowKey, chain, own, pair, meta, onReview, onC
           </p>
           <FormField
             label={text('request.tariffCeilingLabel')}
-            hint={suggested !== null ? format('request.tariffCeilingHint', { tariff: vpfi(suggested) }) : text('request.tariffCeilingHintNone')}
+            hint={suggested !== null ? format('request.tariffCeilingHint', { tariff: vpfiExact(suggested) }) : text('request.tariffCeilingHintNone')}
             error={show('ceiling') && ceiling !== null && !ceiling.ok ? parseText(ceiling.error, 'VPFI', VPFI_DECIMALS) : null}
           >
             {({ id, describedBy, invalid }) => (
