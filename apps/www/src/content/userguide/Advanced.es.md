@@ -2405,6 +2405,14 @@ Para un préstamo ERC-20 activo con cadencia, la tarjeta lee `previewPeriodicSet
 
 El `canSettleNow` de la vista previa no tiene en cuenta el interruptor ni la pausa, así que la tarjeta los combina en el orden propio de `settlePeriodicInterest`: apagado (`PeriodicInterestDisabled`), en pausa (`whenNotPaused`) y luego el tiempo del período (`PeriodicSettleNotDue` antes de `graceEndsAt`). Solo se anuncia una venta cuando el interruptor está encendido y el protocolo no está en pausa; un interruptor o una pausa sin leer se indican como desconocidos. Con un déficit cero, la liquidación solo adelanta el punto de control. El armado de `PERIODIC_SETTLE` en el keeper no se comunica a la app, así que la tarjeta dice que la liquidación está abierta a cualquiera y que el estado del keeper no se conoce.
 
+<a id="partial-repay"></a>
+
+### Pagar parte de un préstamo: cómo se calcula
+
+`repayPartial(loanId, amount)` toma `amount` de principal más el interés acumulado desde `interestAccrualStart` (neto de cualquier crédito periódico). Paga directamente al titular actual de la posición prestamista, separando la parte de la tesorería, reduce `principal`, reinicia el reloj de intereses y abona el período actual; el vencimiento nunca se mueve. Lo rechaza después del fin del período de gracia, por debajo de `principal × minPartialBps / 10000` (`getAssetRiskParams`), con el principal completo o más (`PartialWouldRetireFullPrincipal`), con un compromiso de intención o una solicitud de refinanciación activos y, en un préstamo líquido, si el factor de salud empeorara.
+
+Ninguna vista devuelve el interés del pago parcial antes de la llamada (#3299), así que la revisión usa `calculateRepaymentAmount` menos `principal`, leído ahora y en un momento algo posterior. Es exacto para un préstamo prorrateado hasta su vencimiento; con `useFullTermInterest` incluye el mínimo del plazo restante y, tras el vencimiento, un recargo por mora, por lo que se muestra como «como máximo». La aprobación es exactamente la parte más esa cifra superior. La tarjeta final mide `principal` en el bloque del recibo, la salida de la cartera y después `previewPeriodicSettle`.
+
 <a id="risk-access"></a>
 
 ### Risk Access: tu nivel de riesgo

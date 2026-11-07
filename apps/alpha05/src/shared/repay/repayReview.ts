@@ -74,8 +74,9 @@ async function maybe<T>(p: Promise<T>): Promise<T | null> {
   }
 }
 
-/** The loan's own facts: one connection, read together. */
-async function readLoanFacts(c: PublicClient, diamond: Hex, loanId: bigint) {
+/** The loan's own facts: one connection, read together. Shared with the
+ *  partial repayment's review, which reads the same loan. */
+export async function readLoanFacts(c: PublicClient, diamond: Hex, loanId: bigint) {
   const loan = (await c.readContract({ address: diamond, abi: LOAN, functionName: 'getLoanDetails', args: [loanId] })) as LoanDetails;
   const [lenderHolder, borrowerHolder, dates, borrowerLock, refinance] = await Promise.all([
     maybe(c.readContract({ address: diamond, abi: NFT, functionName: 'ownerOf', args: [loan.lenderTokenId] }) as Promise<Hex>),
@@ -86,7 +87,15 @@ async function readLoanFacts(c: PublicClient, diamond: Hex, loanId: bigint) {
     maybe(c.readContract({ address: diamond, abi: NFT, functionName: 'positionLock', args: [loan.borrowerTokenId] }).then(Number)),
     maybe(c.readContract({ address: diamond, abi: REFINANCE, functionName: 'getRefinanceRequest', args: [loanId] }) as Promise<readonly [bigint, boolean]>),
   ]);
-  return { loan, lenderHolder, borrowerHolder, graceEnd: dates ? dates[3] : null, borrowerLock, refinance: refinance ? { offerId: refinance[0], live: refinance[1] } : null };
+  return {
+    loan,
+    lenderHolder,
+    borrowerHolder,
+    graceEnd: dates ? dates[3] : null,
+    maturity: dates ? dates[2] : null,
+    borrowerLock,
+    refinance: refinance ? { offerId: refinance[0], live: refinance[1] } : null,
+  };
 }
 
 /**

@@ -825,6 +825,42 @@ above. Each resolves here, so a route reviewer needs no private file:
   settleable belongs to a loan that is not running, stated as such and never
   as a sale. The card is read-only; paying a period and settling one come
   with their own actions.
+- **RB-POSITION-PARTIAL** — paying part of a loan (LN-22, LN-64) is
+  offered to the borrower position's holder alone, since the protocol takes
+  a partial repayment from that holder only. Its one rule (RB-ELIG) reads
+  the protocol's checks in the protocol's order: a loan in fallback (only a
+  full repayment, which cures it), a loan that is not running, a rental
+  (the app's own limit, said so), a wallet that is not the holder, terms
+  that do not allow it (fixed when the loan opened), past the grace end, a
+  pending swap-to-repay order and a live refinance request; it also holds
+  while an offset offer on the borrower position is live, since that offer
+  was made for the loan as it stands (the app's own rule, said so). It
+  never holds for the protocol pause or a lender listing. On the loan page
+  only the reasons that close paying part but not repaying in full are
+  stated for it, so a shared reason is said once. The principal part is
+  checked as it is typed against the protocol's own bounds: more than
+  nothing, at least the protocol's minimum part for the lending asset (an
+  unread minimum is stated, and the amount is not taken), and less than
+  the whole principal, which is sent to Repay in full. The payment adds the
+  interest accrued since the loan's interest was last paid, and no protocol
+  view gives that figure ahead of the call (#3299), so the review states it
+  from the protocol's payoff figure less the principal: as an amount only
+  where that is exactly a part payment's interest (a pro-rata loan, at or
+  before its due date), and otherwise as "at most", with the reason (a
+  full-term loan's remaining term, or a late fee past the due date, which
+  a part payment does not charge). The approval is exactly the part plus
+  the interest at most by the kept moment (as RB-POSITION-REPAY), and what
+  the payment does not use is put back. The review also states the
+  principal left, that the due date does not move, that the lender
+  position's holder is paid straight away with the treasury taking its
+  share of the interest, that a full-term loan then counts the rest of its
+  term on the lower principal, and that the interest counts toward the
+  current interest period. The reader can go back and change the amount
+  from the review. The finish card measures the principal at the receipt's
+  block against the principal less the part, what left the wallet (at
+  least the part, at most the stated upper total), where the interest
+  period stands afterwards, and the approval put back. The two repayment
+  flows never run at once.
 
 ## 3. Companion specifications
 

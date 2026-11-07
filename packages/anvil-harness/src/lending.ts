@@ -91,6 +91,8 @@ export interface OfferTerms {
   /** Whether interest is charged for the whole term however early the loan
    *  is repaid (`useFullTermInterest`). Omitted, pro rata. */
   fullTermInterest?: boolean;
+  /** Whether the loan may be repaid in part; true when left out. */
+  allowsPartialRepay?: boolean;
 }
 
 /** The lender posts a lender offer, escrowing the principal it wrapped from
@@ -117,7 +119,7 @@ export async function postLenderOffer(sc: ScenarioChain, t: OfferTerms): Promise
       collateralAssetType: 0,
       collateralTokenId: 0n,
       collateralQuantity: 0n,
-      allowsPartialRepay: true,
+      allowsPartialRepay: t.allowsPartialRepay ?? true,
       amountMax: principal,
       interestRateBpsMax: BigInt(t.rateBps),
       collateralAmountMax: collateral,

@@ -2118,6 +2118,14 @@ Positions는 하나의 공유 리더로 Home과 같은 보유 목록을 읽습�
 
 미리보기의 `canSettleNow`는 스위치와 일시 중지를 고려하지 않으므로, 카드는 `settlePeriodicInterest`의 순서대로 이를 결합합니다: 꺼짐(`PeriodicInterestDisabled`), 일시 중지(`whenNotPaused`), 그다음 기간의 시간(`graceEndsAt` 이전에는 `PeriodicSettleNotDue`). 매각은 스위치가 켜져 있고 프로토콜이 중지되지 않았을 때만 알립니다. 읽지 못한 스위치나 일시 중지는 알 수 없음으로 표시합니다. 부족액이 0이면 정산은 체크포인트만 앞으로 옮깁니다. 키퍼의 `PERIODIC_SETTLE` 활성화 여부는 앱에 보고되지 않으므로, 카드는 정산이 누구에게나 열려 있고 키퍼의 상태는 알 수 없다고 표시합니다.
 
+<a id="partial-repay"></a>
+
+### 대출 일부 상환: 금액 산정 방식
+
+`repayPartial(loanId, amount)`는 원금 `amount`와 `interestAccrualStart` 이후 발생한 이자(정기 크레딧 차감 후)를 받습니다. 현재 대출자 포지션 보유자에게 직접 지급하면서 트레저리 몫을 떼어 내고, `principal`을 줄이고, 이자 시계를 다시 시작하며, 현재 기간에 반영합니다. 만기는 절대 바뀌지 않습니다. 유예 기간 종료 후, `principal × minPartialBps / 10000`(`getAssetRiskParams`) 미만, 원금 전액 이상(`PartialWouldRetireFullPrincipal`), 활성 인텐트 커밋이나 재융자 요청이 있을 때, 그리고 유동성 대출에서 건전성 지수가 나빠질 때는 거부합니다.
+
+호출 전에 일부 상환 이자를 돌려주는 뷰가 없으므로(#3299) 검토 화면은 지금과 잠시 뒤 시점에 읽은 `calculateRepaymentAmount`에서 `principal`을 뺀 값을 씁니다. 만기까지의 일할 계산 대출에서는 정확하지만, `useFullTermInterest`이면 남은 기간의 최소 이자를, 만기 후에는 연체료를 포함하므로 "최대"로 표시합니다. 승인 금액은 상환액과 그 상한값의 합과 정확히 같습니다. 완료 카드는 영수증 블록의 `principal`, 지갑에서 나간 금액, 이후의 `previewPeriodicSettle`을 측정합니다.
+
 <a id="risk-access"></a>
 
 ### Risk Access: 내 위험 등급
