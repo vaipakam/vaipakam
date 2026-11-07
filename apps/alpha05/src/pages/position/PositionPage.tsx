@@ -82,7 +82,8 @@ function LoanBody({ view: v, account, meta }: { view: LoanView; account: Hex; me
   const erc20 = l.assetType === ASSET_ERC20;
   // A loan with an illiquid leg has no price-based risk math: the protocol
   // refuses the health and LTV reads for it, so a refused read here is "none",
-  // not "unknown".
+  // not "unknown". On a loan with both legs priced, every successful read is
+  // a figure, zero included (a collateral value that rounds to nothing).
   const noRiskMath = l.principalLiquidity === ILLIQUID || l.collateralLiquidity === ILLIQUID;
   const amountOf = (asset: Hex, assetType: number, amount: bigint, tokenId: bigint, quantity: bigint) =>
     assetType === ASSET_ERC20
@@ -182,13 +183,13 @@ function LoanBody({ view: v, account, meta }: { view: LoanView; account: Hex; me
         <Facts title={text('position.healthTitle')} id="position-health" lead={<WhyLink summaryKey="position.healthSummary" detailKey="position.healthWhy" />}>
           <Fact
             label={text('position.rowHf')}
-            value={noRiskMath || v.healthFactor === 0n ? text('position.hfNone') : v.healthFactor === null ? null : formatScaled(v.healthFactor)}
+            value={noRiskMath ? text('position.hfNone') : v.healthFactor === null ? null : formatScaled(v.healthFactor)}
             unknown={unknown}
             binding
           />
           <Fact
             label={text('position.rowLtv')}
-            value={noRiskMath ? text('position.ltvNone') : v.ltvBps === null || v.healthFactor === 0n ? null : format('position.ltv', { rate: formatBps(v.ltvBps) })}
+            value={noRiskMath ? text('position.ltvNone') : v.ltvBps === null ? null : format('position.ltv', { rate: formatBps(v.ltvBps) })}
             unknown={unknown}
           />
           <Fact label={text('position.rowLiqLtv')} value={format('position.liqLtv', { rate: formatBps(BigInt(l.liquidationLtvBpsAtInit)) })} unknown={unknown} />

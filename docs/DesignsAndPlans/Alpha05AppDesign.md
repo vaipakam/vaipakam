@@ -694,7 +694,8 @@ above. Each resolves here, so a route reviewer needs no private file:
   the loan's own snapshots, none for a loan that carries a lender sale);
   its health (a failed reading is unknown; a loan with an unpriced leg,
   whose health and loan-to-value reads the protocol refuses, is "no
-  price-based reading", never 0 and never unknown; the liquidation
+  price-based reading", never 0 and never unknown, while a successful
+  reading of 0 on a priced loan is shown as 0; the liquidation
   threshold is the loan's stored
   snapshot); where its collateral is held (the protocol's lien: held in
   the borrower's vault, on an ended loan until its claim is collected,

@@ -76,11 +76,14 @@ export interface LoanView {
   originalMaturity: bigint | null;
   /** Whether a default may be started now (`isLoanDefaultable`). */
   defaultable: boolean | null;
-  /** 1e18-scaled; 0 means the protocol gives no price-based reading (an
-   *  unpriced leg). `null` when the read failed. */
+  /** 1e18-scaled, as the protocol computes it (0 is a real reading: the
+   *  collateral's risk-adjusted value rounds to nothing). `null` when the
+   *  read failed, which is also how the protocol answers for a loan with an
+   *  illiquid leg (it refuses the read); the page tells the two apart by
+   *  the loan's liquidity classes. */
   healthFactor: bigint | null;
-  /** In basis points; `null` when it could not be read or has no meaning
-   *  (an unpriced leg). */
+  /** In basis points; `null` when it could not be read (the protocol also
+   *  refuses it for a loan with an illiquid leg). */
   ltvBps: bigint | null;
   lien: CollateralLien | null;
   /** A loan opened to carry a lender's sale (no fee, no rental). */
@@ -88,7 +91,7 @@ export interface LoanView {
 }
 
 /** The reader's role on this loan: the positions their wallet HOLDS now,
- *  never the parties recorded when it opened. `null` while a holder is
+ *  never the parties recorded when it opened. `null` while either holder is
  *  unread: the role is being confirmed. */
 export interface Role {
   lender: boolean;
@@ -99,9 +102,10 @@ export function roleOf(holders: Holders, account: Hex): Role | null {
   const a = account.toLowerCase();
   const lender = holders.lender?.toLowerCase() === a;
   const borrower = holders.borrower?.toLowerCase() === a;
-  // Holding one is known from its own read; holding neither needs both.
-  if (lender || borrower) return { lender, borrower };
-  return holders.lender === null || holders.borrower === null ? null : { lender: false, borrower: false };
+  // Both reads are needed for any role: with one unread, a wallet holding
+  // the side that was read may hold the other too.
+  if (holders.lender === null || holders.borrower === null) return null;
+  return { lender, borrower };
 }
 
 async function maybe<T>(p: Promise<T>): Promise<T | null> {
