@@ -199,6 +199,10 @@ function LoanBody({ view: v, account, meta }: { view: LoanView; account: Hex; me
       <Facts title={text('position.collateralTitle')} id="position-collateral">
         {v.lien === null ? (
           <Fact label={text('position.rowLienState')} value={null} unknown={unknown} />
+        ) : v.lien.released ? (
+          // A release zeroes the lien's amount, so it is checked before a
+          // zero amount is read as "no collateral".
+          <Fact label={text('position.rowLienState')} value={text('position.lienReleased')} unknown={unknown} />
         ) : v.lien.amount === 0n && v.lien.assetType === ASSET_ERC20 ? (
           <Fact label={text('position.rowLienState')} value={text('position.lienNone')} unknown={unknown} />
         ) : (
@@ -206,9 +210,9 @@ function LoanBody({ view: v, account, meta }: { view: LoanView; account: Hex; me
             <Fact label={text('position.rowLienAmount')} value={amountOf(v.lien.asset, v.lien.assetType, v.lien.amount, v.lien.tokenId, v.lien.amount)} unknown={unknown} />
             <Fact
               label={text('position.rowLienState')}
-              value={v.lien.released ? text('position.lienReleased') : format(live ? 'position.lienHeld' : 'position.lienHeldEnded', { vault: shortAddress(v.lien.user) })}
+              value={format(live ? 'position.lienHeld' : 'position.lienHeldEnded', { vault: shortAddress(v.lien.user) })}
               unknown={unknown}
-              binding={!v.lien.released}
+              binding
             />
           </>
         )}

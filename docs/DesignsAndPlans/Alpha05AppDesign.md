@@ -699,7 +699,8 @@ above. Each resolves here, so a route reviewer needs no private file:
   threshold is the loan's stored
   snapshot); where its collateral is held (the protocol's lien: held in
   the borrower's vault, on an ended loan until its claim is collected,
-  released, or none, with an ERC-1155 lien's quantity); and, for a loan whose
+  released (checked before a zero amount, since a release zeroes it), or
+  none, with an ERC-1155 lien's quantity); and, for a loan whose
   collateral has no price, that a default hands the lender the collateral
   itself. Until the loan's actions land, the page says so and offers none.
 
