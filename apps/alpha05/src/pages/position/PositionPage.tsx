@@ -7,7 +7,7 @@ import { useCopy, type CopyKey } from '../../shared/copy/useCopy';
 import { CADENCE_NAME, isCadence } from '../../shared/offers/cadence';
 import { ASSET_ERC20, LOAN_STATUS_FALLBACK_PENDING, isLiveStatus, loanObligations, loanStatusName } from '../../shared/positions/model';
 import { InterestLine, ReadState, StageLine } from '../../shared/positions/PositionSections';
-import { ILLIQUID, readLoanView, roleOf, type LoanView, type Role } from '../../shared/positions/loanView';
+import { ILLIQUID, readLoanView, roleOf, treasuryShareBps, type LoanView, type Role } from '../../shared/positions/loanView';
 import { useOwnRead } from '../../shared/reads/useOwnRead';
 import { assetName, tokenAmount, useTokenMeta, type TokenMetaMap } from '../../shared/reads/tokens';
 import { formatBps, formatScaled, formatSpan, formatUtc, shortAddress } from '../../shared/ui/format';
@@ -88,6 +88,7 @@ function LoanBody({ view: v, account, meta }: { view: LoanView; account: Hex; me
   const role = roleOf(v.holders, account);
   const live = isLiveStatus(l.status);
   const erc20 = l.assetType === ASSET_ERC20;
+  const share = treasuryShareBps(l);
   // A loan with an illiquid leg has no price-based risk math: the protocol
   // refuses the health and LTV reads for it, so a refused read here is "none",
   // not "unknown". On a loan with both legs priced, every successful read is
@@ -178,7 +179,7 @@ function LoanBody({ view: v, account, meta }: { view: LoanView; account: Hex; me
         )}
         {erc20 && <Fact label={text('position.rowPartial')} value={text(l.allowsPartialRepay ? 'position.allowed' : 'position.notAllowed')} unknown={unknown} />}
         {erc20 && <Fact label={text('position.rowListing')} value={text(l.allowsPrepayListing ? 'position.allowed' : 'position.notAllowed')} unknown={unknown} />}
-        {erc20 && <Fact label={text('position.rowShare')} value={format('position.share', { rate: formatBps(BigInt(l.treasuryFeeBpsAtInit)) })} unknown={unknown} />}
+        {erc20 && <Fact label={text('position.rowShare')} value={format(share.legacy ? 'position.shareLegacy' : 'position.share', { rate: formatBps(BigInt(share.bps)) })} unknown={unknown} />}
         {erc20 && (
           <Fact
             label={text('position.rowInitFee')}

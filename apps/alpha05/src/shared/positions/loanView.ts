@@ -31,6 +31,17 @@ export const ILLIQUID = 1;
 /** The stored loan record, as `getLoanDetails` returns it (the fields the
  *  page states). Rates and the liquidation threshold are the loan's own
  *  snapshots, fixed when it opened, never today's configuration. */
+/** The protocol's share of interest a loan opened without a recorded rate
+ *  settles at: a stored 0 means no rate was recorded at origination (older
+ *  loans), and settlement then charges this fixed legacy rate, never zero. */
+export const LEGACY_TREASURY_FEE_BPS = 100;
+
+/** The share of interest settlement actually takes for this loan, and
+ *  whether it came from the legacy fallback rather than the loan's record. */
+export function treasuryShareBps(l: Pick<LoanDetails, 'treasuryFeeBpsAtInit'>): { bps: number; legacy: boolean } {
+  return l.treasuryFeeBpsAtInit === 0 ? { bps: LEGACY_TREASURY_FEE_BPS, legacy: true } : { bps: l.treasuryFeeBpsAtInit, legacy: false };
+}
+
 export interface LoanDetails extends LoanSummary {
   lender: Hex;
   borrower: Hex;

@@ -697,7 +697,9 @@ above. Each resolves here, so a route reviewer needs no private file:
   its status says so, and otherwise only that none is recorded, never
   calling it a write-off it cannot establish; never "you lent"; the
   protocol's share and the initiation fee rate as the loan's own
-  snapshots, none for a loan that carries a lender sale; an NFT rental's
+  snapshots, none for a loan that carries a lender sale, and a share
+  recorded as 0 as the fixed legacy rate settlement charges for a loan
+  that opened without one, never as 0%; an NFT rental's
   rent per day in its prepayment asset and whether returning early still
   charges every remaining day);
   its health (a failed reading is unknown; a loan with an unpriced leg,

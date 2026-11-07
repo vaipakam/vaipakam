@@ -327,6 +327,7 @@ export const copy = {
     notAllowed: B('Not allowed'),
     rowShare: B("Protocol's share of interest"),
     share: B('{{rate}}%, fixed when the loan opened'),
+    shareLegacy: B('{{rate}}%, the fixed rate for a loan that opened without one recorded'),
     rowInitFee: B('Initiation fee rate'),
     initFee: B('{{rate}}% of the amount, fixed when the loan opened'),
     initFeeNone: B('None: this loan carries a lender sale'),
