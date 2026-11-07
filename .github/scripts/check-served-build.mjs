@@ -61,7 +61,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { appendFileSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, relative, sep } from 'node:path';
-import { latestApproval } from './lib/approvalRecord.mjs';
+import { verifyApproval } from './lib/approvalRecord.mjs';
 import { readLatestDeployment, readVersion } from './lib/workerDeployments.mjs';
 
 const CONFIG_PATH = '.github/served-build.json';
@@ -279,22 +279,15 @@ async function checkSite(site, { auth, github, ref, suffixPaths, approvalOn, tar
     // With the deploy approval on (#3236), the live version must be the one
     // most recently approved, by GitHub's record (lib/approvalRecord.mjs).
     // The deployment's own message is written by whoever deploys, so it is
-    // only a cross-check, never the proof. Anything else went live around
+    // only the pointer to the run to check, never the proof. Anything else went live around
     // the approval: a dashboard change of the deploy mode, a deploy made
     // directly with a Cloudflare token, or an older approved version put
     // back by hand.
     if (approvalOn) {
-      const rec = await latestApproval(site.worker, github);
+      const rec = await verifyApproval(site.worker, v.version, before.approvedBy, github);
       if (rec.read !== 'ok') return { problems: [problem('unverifiable', `its approval record on GitHub cannot be read (${rec.error}).`)], report: [] };
-      const why = !rec.approval
-        ? 'no approval run on main has promoted any version of it'
-        : rec.approval.version !== v.version
-          ? `the latest approved version is ${rec.approval.version} (${rec.approval.runUrl})`
-          : before.approvedBy !== rec.approval.runUrl
-            ? `its deployment does not name the run that approved it (${rec.approval.runUrl})`
-            : null;
-      if (why) {
-        return { problems: [problem('unapproved', `is live on version ${v.version}, which is not the version a person last approved: ${why}. Deploy approval is on (SITE_DEPLOY_APPROVAL); check the Workers Build deploy mode and who deployed it.`)], report: [] };
+      if (!rec.approved) {
+        return { problems: [problem('unapproved', `is live on version ${v.version}, which is not the version a person last approved: ${rec.why}. Deploy approval is on (SITE_DEPLOY_APPROVAL); check the Workers Build deploy mode and who deployed it.`)], report: [] };
       }
     }
   }

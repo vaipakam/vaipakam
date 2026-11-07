@@ -2042,8 +2042,9 @@ no clean stamp), so approving a stale run can never roll a site back; in
 that case put a stamped version back by hand first (Contain, step 1).
 
 The six-hourly served-build check then reads GitHub's record, not
-Cloudflare's: the live version must be the one the newest approval run on
-`main` promoted, and the deployment must name that run. A Cloudflare token
+Cloudflare's. The deployment's message only points it at a run. That run
+must be a promote-site run on `main` whose promote job recorded this exact
+version, and no later run may have recorded another version for the site. A Cloudflare token
 can write any deployment message, so the message alone proves nothing; the
 GitHub record is out of that token's reach. Anything else is `unapproved`,
 including an older approved version put back by hand.
