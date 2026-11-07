@@ -27,10 +27,10 @@
  * Reading the pending count right after a broadcast is usually enough,
  * but a load-balanced RPC can answer from a node that has not seen the
  * transaction yet. So a slot also remembers the nonce after the last
- * broadcast and uses whichever is higher. The floor expires after
- * {@link FLOOR_TTL_MS}: if that broadcast is then dropped, the gap it
- * leaves lasts at most that long before the pending count is trusted
- * again, and the next send fills it.
+ * broadcast and skips it ({@link chooseNonce}). Each remembered nonce
+ * expires {@link FLOOR_TTL_MS} after its own broadcast: if that broadcast is
+ * then dropped, the gap it leaves lasts at most that long before the next
+ * send fills it, however many sends follow it (Codex #3275 r7, r8).
  *
  * Which failures set the floor is the point of the design:
  *
@@ -80,30 +80,82 @@ import {
   signTransaction,
   writeContract,
 } from 'viem/actions';
-import { HttpRequestError, keccak256, TimeoutError, type Hex } from 'viem';
+import { createPublicClient, http, HttpRequestError, keccak256, parseTransaction, TimeoutError, type Hex, type PublicClient } from 'viem';
+import { describeFailure, summarizeFailure } from '@vaipakam/lib/errorDescription';
 import { gasLimitFromEstimate } from '@vaipakam/lib/gasLimit';
 import { SubrequestBudgetExhausted } from './subrequestBudget';
 import { assertEpochsHold } from './epochFence';
+import {
+  armedNonceReservations,
+  armedSubmissionRoute,
+  PRIVATE_ROUTE_FLOOR_TTL_MS,
+  PRIVATE_TX_FALLBACK_VAR,
+} from './submissionRoute';
+import type { NonceReservation } from './privateNonce';
 
 /** How long a remembered nonce outranks the RPC's pending count. */
 export const FLOOR_TTL_MS = 60_000;
 
-interface Floor {
-  next: number;
-  at: number;
+/**
+ * The nonce a send takes: the lowest at or above the pending count that no
+ * recent send still holds. Each held nonce carries its own send time, so a
+ * nonce that never went out (dropped, or never broadcast before a crash) is
+ * refilled once ITS window has passed, while the sends behind it keep theirs
+ * (Codex #3275 r7, r8). The in-memory floor and the private nonce record
+ * both feed this one rule.
+ */
+export function chooseNonce(pending: number, held: ReadonlySet<number>): number {
+  let nonce = pending;
+  while (held.has(nonce)) nonce++;
+  return nonce;
 }
 
 const tails = new Map<string, Promise<void>>();
-const floors = new Map<string, Floor>();
+/** Per queue: each nonce this process broadcast, and when. */
+const floors = new Map<string, Map<number, number>>();
+/** One client per private submission endpoint (#3240), for wallets with no
+ *  request budget of their own. */
+const privateClients = new Map<string, PublicClient>();
+/** The fetch a budgeted pass built its wallet with ({@link queuedWallet}). */
+const walletFetch = new WeakMap<object, typeof fetch>();
 
 function keyOf(chainId: number, address: Address): string {
   return `${chainId}:${address.toLowerCase()}`;
+}
+
+/**
+ * How many nonces at or above `mined` (the account's mined count) this keeper
+ * still holds as sent and not yet seen mined: its own recent broadcasts in
+ * this process on a private route, and, once records are armed, the recent rows of the private
+ * nonce record (Codex #3275 r9). The ordinary RPC's pending count cannot see a
+ * private transaction, so the pending-action hold (`keeperTxPending`) adds
+ * this to it; otherwise a later run would read the loan as untouched and send
+ * the same action again behind the first. A record that cannot be read
+ * throws, and the hold then sends nothing.
+ */
+export async function heldUnminedNonces(chainId: number, address: Address, mined: number, now: () => number = Date.now): Promise<number> {
+  const held = new Set<number>();
+  const reservations = armedNonceReservations();
+  if (reservations) {
+    for (const r of await reservations.read(chainId, address)) {
+      if (r.nonce >= mined && now() - r.atMs < PRIVATE_ROUTE_FLOOR_TTL_MS) held.add(r.nonce);
+    }
+  }
+  // On a public route the pending count already sees this process's sends.
+  const route = armedSubmissionRoute(chainId);
+  if (!('kind' in route) || route.kind === 'private') {
+    for (const [n, at] of floors.get(keyOf(chainId, address)) ?? []) {
+      if (n >= mined && now() - at < PRIVATE_ROUTE_FLOOR_TTL_MS) held.add(n);
+    }
+  }
+  return held.size;
 }
 
 /** Test seam: forget every queue and floor. */
 export function resetSubmissionQueues(): void {
   tails.clear();
   floors.clear();
+  privateClients.clear();
 }
 
 /** A send refused because its pass's run deadline had passed (#2571 r1,
@@ -113,6 +165,11 @@ export function resetSubmissionQueues(): void {
  *  may have been signed locally and discarded: the guarantee is "not sent",
  *  never "not signed" (#2572 r4). */
 export class SendPastDeadline extends Error {}
+
+/** A send refused because the keeper's submission settings could not be read
+ *  (#3240, `submissionRoute.ts`). Raised at the send's turn, before the nonce
+ *  is read, so nothing is signed or sent. */
+export class SubmissionRouteUnread extends Error {}
 
 /** Whether `err` is, or wraps, a {@link SendPastDeadline}. viem wraps an
  *  error raised inside `writeContract` (`ContractFunctionExecutionError`,
@@ -205,10 +262,43 @@ export async function withSubmissionSlot<T>(
     if (now() >= notAfterMs) {
       throw new SendPastDeadline(`send refused at its turn: the run's deadline passed while it waited — next run`);
     }
+    // #3240 — the chain's route, before anything is read or signed: settings
+    // that cannot be read send nothing.
+    const route = armedSubmissionRoute(chainId);
+    if ('unread' in route) throw new SubmissionRouteUnread(`send refused: ${route.unread}`);
+    // A private broadcast is invisible to the pending count until it is
+    // mined, and this process's memory does not survive a restart, so the
+    // nonce record (`privateNonce.ts`) is read too, and a record that cannot
+    // be read sends nothing. It is read on EVERY chain once records are armed,
+    // not only on a chain whose route is private now (Codex #3275 r4): a
+    // route removed while a private send is still pending leaves that send's
+    // reservation in force, and the public pending count cannot see it.
+    const reservations = armedNonceReservations();
+    if (route.kind === 'private' && !reservations) {
+      throw new SubmissionRouteUnread('send refused: no private nonce record is armed for a private route');
+    }
+    // A recorded nonce is always a private send's or one behind it, so it
+    // keeps the private window whatever the chain's route is now.
+    const held = new Set<number>();
+    if (reservations) {
+      let rows: NonceReservation[];
+      try {
+        rows = await reservations.read(chainId, address);
+      } catch (err) {
+        throw new SubmissionRouteUnread(`send refused: the private nonce record could not be read (${describeFailure(err)})`);
+      }
+      for (const r of rows) if (now() - r.atMs < PRIVATE_ROUTE_FLOOR_TTL_MS) held.add(r.nonce);
+    }
     const pending = await getTransactionCount(wallet, { address, blockTag: 'pending' });
-    const floor = floors.get(key);
-    const fresh = floor !== undefined && now() - floor.at < FLOOR_TTL_MS;
-    const nonce = fresh ? Math.max(pending, floor.next) : pending;
+    // ...and a remembered nonce is trusted for longer there.
+    const ttl = route.kind === 'private' ? PRIVATE_ROUTE_FLOOR_TTL_MS : FLOOR_TTL_MS;
+    let mine = floors.get(key);
+    if (!mine) floors.set(key, (mine = new Map()));
+    for (const [n, at] of mine) {
+      if (n < pending || now() - at >= ttl) mine.delete(n);
+      else held.add(n);
+    }
+    const nonce = chooseNonce(pending, held);
     // The epoch fence (#2569 r4), before the signature: a send is made only
     // while the indexer's epoch this process was launched under still holds.
     // Thrown here, nothing was signed, so the nonce is simply released.
@@ -229,12 +319,10 @@ export async function withSubmissionSlot<T>(
       // with a refusal took nothing, and moving the floor past an unused
       // nonce would make every later send "nonce too high" and refresh
       // the floor each time, so the gap would never close.
-      if (wasSigned && !isDefinitiveRejection(err)) {
-        floors.set(key, { next: nonce + 1, at: now() });
-      }
+      if (wasSigned && !isDefinitiveRejection(err)) mine.set(nonce, now());
       throw err;
     }
-    floors.set(key, { next: nonce + 1, at: now() });
+    mine.set(nonce, now());
     return result;
   } finally {
     release();
@@ -270,6 +358,9 @@ export function isDefinitiveRejection(err: unknown): boolean {
   // Refused by the slot before any broadcast (#2572): nothing reached the
   // network, like the subrequest budget's refusal above.
   if (chain.some((e) => e instanceof SendPastDeadline)) return true;
+  // Refused before the nonce read, settings or the nonce record unreadable,
+  // or the record not written before broadcast (#3240): nothing sent.
+  if (chain.some((e) => e instanceof SubmissionRouteUnread)) return true;
   if (chain.some((e) => e instanceof TimeoutError || e instanceof HttpRequestError)) return false;
   if (chain.some((e) => NONCE_TAKEN.test(String((e as { message?: unknown }).message ?? '')))) {
     return false;
@@ -278,6 +369,148 @@ export function isDefinitiveRejection(err: unknown): boolean {
     const code = (e as { code?: unknown }).code;
     return typeof code === 'number' && code !== -1;
   });
+}
+
+/** Test seam: the client the private route to `url` broadcasts through. */
+export function setPrivateSubmissionClientForTest(url: string, client: PublicClient): void {
+  privateClients.set(url, client);
+}
+
+/**
+ * Broadcast `serialized` on `chainId` by the chain's armed route (#3240,
+ * `submissionRoute.ts`). The one broadcast every keeper send makes: the
+ * queued wallet and the raw slot (`keeperSend.ts`) both end here.
+ *
+ *  - public: the wallet's own RPC, as before.
+ *  - private: the private endpoint. When the chain is allowed a fallback and
+ *    the endpoint refuses or does not answer, the SAME signed bytes go to the
+ *    wallet's RPC, so no second transaction can result. If the private
+ *    attempt may have relayed and the fallback also fails, the private error
+ *    is what is thrown: the nonce stays reserved and the hash stays findable,
+ *    exactly as for any broadcast whose answer was lost.
+ *
+ * Called inside a submission slot, after `signed()`. `notAfterMs` is the
+ * sending run's deadline: on a private route it is checked again after the
+ * nonce record is written, since that write can carry a send past it.
+ */
+export async function broadcastSigned(
+  wallet: WalletClient,
+  chainId: number,
+  serialized: Hex,
+  notAfterMs: number,
+  now: () => number = Date.now,
+): Promise<Hex> {
+  const route = armedSubmissionRoute(chainId);
+  if ('unread' in route) throw new SubmissionRouteUnread(`send refused: ${route.unread}`);
+  const isPrivate = route.kind === 'private';
+
+  // One rule for the nonce record, on every route (Codex #3275 r1, r2, r4,
+  // r5, r7, r8). A row for this nonce is written BEFORE the bytes leave the
+  // process:
+  //  - by every private send, so a restart still finds its nonce taken;
+  //  - by any send made while another recorded nonce is still recent, so a
+  //    successor sent publicly after the route was removed is protected as
+  //    long as the private send it sits behind.
+  // Each row carries its own send time ({@link chooseNonce}). A public send
+  // with no recent row writes nothing. A refusal the node answered puts this
+  // nonce's row back as it stood. A record that cannot be read or written
+  // sends nothing.
+  const reservations = armedNonceReservations();
+  const address = wallet.account?.address;
+  // Read from the signed bytes only where a record is kept.
+  const nonce = reservations || isPrivate ? parseTransaction(serialized).nonce : undefined;
+  if (isPrivate && (!reservations || !address || nonce === undefined)) {
+    throw new SubmissionRouteUnread('send refused: the private send could not be recorded (no nonce record, account or nonce)');
+  }
+  let release = async (_err: unknown): Promise<void> => {};
+  if (reservations && address && nonce !== undefined) {
+    let rows: NonceReservation[];
+    try {
+      rows = await reservations.read(chainId, address);
+    } catch (err) {
+      throw new SubmissionRouteUnread(`send refused: the private nonce record could not be read (${describeFailure(err)})`);
+    }
+    const t = now();
+    const anyLive = rows.some((r) => t - r.atMs < PRIVATE_ROUTE_FLOOR_TTL_MS);
+    if (isPrivate || anyLive) {
+      const prior = rows.find((r) => r.nonce === nonce)?.atMs ?? null;
+      try {
+        await reservations.write(chainId, address, nonce, t);
+      } catch (err) {
+        throw new SubmissionRouteUnread(`send refused: the private nonce record could not be written (${describeFailure(err)})`);
+      }
+      // Housekeeping only: an expired row is ignored whether or not it is gone.
+      await reservations.prune(chainId, address, t - PRIVATE_ROUTE_FLOOR_TTL_MS).catch((err: unknown) => {
+        console.warn(`[submission] chain=${chainId} could not prune expired nonce rows (${describeFailure(err)})`);
+      });
+      // If this write fails, the row holds the nonce for at most
+      // PRIVATE_ROUTE_FLOOR_TTL_MS: a delay, never a replacement.
+      release = async (err: unknown): Promise<void> => {
+        if (!isDefinitiveRejection(err)) return;
+        try {
+          await reservations.write(chainId, address, nonce, prior);
+        } catch (writeErr) {
+          console.warn(`[submission] chain=${chainId} could not release nonce ${nonce} in the private nonce record (${describeFailure(writeErr)}); later sends wait for it to expire`);
+        }
+      };
+    }
+    // The record's read and write can be slow (the machine's D1 adapter waits
+    // up to 20 s), so the run's deadline is checked again after them, on
+    // every route, before anything leaves (Codex #3275 r2, r6).
+    if (now() >= notAfterMs) {
+      const late = new SendPastDeadline(`send refused before broadcast: the run's deadline passed while the nonce record was read — next run`);
+      await release(late);
+      throw late;
+    }
+  }
+
+  if (!isPrivate) {
+    try {
+      return await wallet.sendRawTransaction({ serializedTransaction: serialized });
+    } catch (err) {
+      await release(err);
+      throw err;
+    }
+  }
+
+  // Through the sending pass's own fetch when it has one, so a capped pass
+  // counts the private broadcast like any other request (Codex #3275 r1).
+  const fetchFn = walletFetch.get(wallet);
+  let client = fetchFn ? undefined : privateClients.get(route.url);
+  if (!client) {
+    client = createPublicClient({ transport: http(route.url, { retryCount: 0, ...(fetchFn ? { fetchFn } : {}) }) });
+    if (!fetchFn) privateClients.set(route.url, client);
+  }
+  try {
+    return await sendRawTransaction(client, { serializedTransaction: serialized });
+  } catch (privateErr) {
+    if (!route.fallback) {
+      await release(privateErr);
+      throw privateErr;
+    }
+    // Summarized, never the raw message: a provider's message can carry the
+    // endpoint URL, and with it an access key.
+    console.warn(
+      `[submission] chain=${chainId} the private route via ${route.host} failed (${summarizeFailure(privateErr)}); sending the same signed transaction through the public RPC, as ${PRIVATE_TX_FALLBACK_VAR} allows`,
+    );
+    // The fallback is a new broadcast, so the run's deadline is checked
+    // again first (Codex #3275 r9). A private attempt the endpoint refused
+    // outright sent nothing: release and defer. One that may have relayed
+    // keeps its reservation and its unknown outcome.
+    if (now() >= notAfterMs) {
+      if (!isDefinitiveRejection(privateErr)) throw privateErr;
+      const late = new SendPastDeadline(`send refused before the public fallback: the run's deadline passed during the private attempt — next run`);
+      await release(late);
+      throw late;
+    }
+    try {
+      return await wallet.sendRawTransaction({ serializedTransaction: serialized });
+    } catch (publicErr) {
+      const thrown = isDefinitiveRejection(privateErr) ? publicErr : privateErr;
+      await release(thrown);
+      throw thrown;
+    }
+  }
 }
 
 /** The signed transaction a failed broadcast may still have relayed, by the
@@ -342,11 +575,15 @@ export function queuedWallet(
    *  run's slot has ended waits for the next run instead of competing with
    *  it. */
   notAfterMs: number,
+  /** The fetch the pass's requests go through when it caps them
+   *  (`subrequestBudget.ts`): the private broadcast uses it too (#3240). */
+  fetchFn?: typeof fetch,
 ): WalletClient {
   // At build time too, so a wallet without a deadline fails where it is made
   // rather than at its first send.
   assertFiniteDeadline(notAfterMs, 'queuedWallet');
-  return wallet.extend((base) => {
+  if (fetchFn) walletFetch.set(wallet, fetchFn);
+  const queued = wallet.extend((base) => {
     // Typed loosely: viem's generic signatures for these actions cannot be
     // restated by a wrapper; the arguments pass through unchanged.
     const queuedSend = async (args: Parameters<typeof sendTransaction>[1]) => {
@@ -378,7 +615,7 @@ export function queuedWallet(
         } as never);
         signed();
         try {
-          return await sendRawTransaction(base, { serializedTransaction: serialized });
+          return await broadcastSigned(base, chainId, serialized, notAfterMs);
         } catch (err) {
           // Possibly relayed: the same rule that keeps the nonce reserved
           // ({@link withSubmissionSlot}) keeps the hash findable.
@@ -394,4 +631,6 @@ export function queuedWallet(
         writeContract(routed as never, args)) as never,
     };
   }) as unknown as WalletClient;
+  if (fetchFn) walletFetch.set(queued, fetchFn);
+  return queued;
 }

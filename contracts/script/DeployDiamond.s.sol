@@ -55,6 +55,7 @@ import {RiskDiscountedLiquidationFacet} from "../src/facets/RiskDiscountedLiquid
 import {ProtectedAccountFacet} from "../src/facets/ProtectedAccountFacet.sol";
 import {VaultPayoutFacet} from "../src/facets/VaultPayoutFacet.sol";
 import {VaultDepositoryFacet} from "../src/facets/VaultDepositoryFacet.sol";
+import {OfferBookFacet} from "../src/facets/OfferBookFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {AddCollateralFacet} from "../src/facets/AddCollateralFacet.sol";
 import {TreasuryFacet} from "../src/facets/TreasuryFacet.sol";
@@ -377,6 +378,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
         ProtectedAccountFacet protectedAccountFacet = ProtectedAccountFacet(ArtifactDeploy.deploy(type(ProtectedAccountFacet).name));
         VaultPayoutFacet vaultPayoutFacet = VaultPayoutFacet(ArtifactDeploy.deploy(type(VaultPayoutFacet).name));
         VaultDepositoryFacet vaultDepositoryFacet = VaultDepositoryFacet(ArtifactDeploy.deploy(type(VaultDepositoryFacet).name));
+        // #3242 — the offer book's entry step, split off OfferCreateFacet (EIP-170).
+        OfferBookFacet offerBookFacet = OfferBookFacet(ArtifactDeploy.deploy(type(OfferBookFacet).name));
         ClaimFacet claimFacet = ClaimFacet(ArtifactDeploy.deploy(type(ClaimFacet).name));
         AddCollateralFacet addCollateralFacet = AddCollateralFacet(ArtifactDeploy.deploy(type(AddCollateralFacet).name));
         TreasuryFacet treasuryFacet = TreasuryFacet(ArtifactDeploy.deploy(type(TreasuryFacet).name));
@@ -519,7 +522,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
         // 37 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](109);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](110);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -630,6 +633,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         cuts[106] = _buildCut(address(protectedAccountFacet), _getProtectedAccountSelectors());
         cuts[107] = _buildCut(address(vaultPayoutFacet), _getVaultPayoutSelectors());
         cuts[108] = _buildCut(address(vaultDepositoryFacet), _getVaultDepositorySelectors());
+        cuts[109] = _buildCut(address(offerBookFacet), _getOfferBookSelectors());
         cuts[26] = _buildCut(address(rewardReporterFacet), _getRewardReporterSelectors());
         cuts[27] = _buildCut(address(rewardAggregatorFacet), _getRewardAggregatorSelectors());
         cuts[28] = _buildCut(address(configFacet), _getConfigSelectors());
@@ -1244,6 +1248,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         Deployments.writeFacet("protectedAccountFacet", address(protectedAccountFacet));
         Deployments.writeFacet("vaultPayoutFacet", address(vaultPayoutFacet));
         Deployments.writeFacet("vaultDepositoryFacet", address(vaultDepositoryFacet));
+        Deployments.writeFacet("offerBookFacet", address(offerBookFacet));
         Deployments.writeFacet("claimFacet",              address(claimFacet));
         Deployments.writeFacet("addCollateralFacet",      address(addCollateralFacet));
         Deployments.writeFacet("treasuryFacet",           address(treasuryFacet));
@@ -2460,6 +2465,15 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[16] = VaultDepositoryFacet.getVaultOwner.selector;
     }
 
+    /// @dev Selectors for `OfferBookFacet` (#3242) — the offer book's entry step and its bounds.
+    function _getOfferBookSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](4);
+        s[0] = OfferBookFacet.openOfferOnBook.selector;
+        s[1] = OfferBookFacet.requireOfferValueAdmitted.selector;
+        s[2] = OfferBookFacet.getOfferBookBounds.selector;
+        s[3] = OfferBookFacet.getMinOfferAmount.selector;
+    }
+
     function _getClaimSelectors() internal pure returns (bytes4[] memory s) {
         s = new bytes4[](11);
         s[0] = ClaimFacet.claimAsLender.selector;
@@ -3079,7 +3093,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     function _getConfigSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](83);
+        s = new bytes4[](85);
         // Setters
         s[0] = ConfigFacet.setFeesConfig.selector;
         s[1] = ConfigFacet.setLiquidationConfig.selector;
@@ -3255,6 +3269,9 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[81] = ConfigFacet.getRewardClaimHorizonDays.selector;
         // RL-4 (#1306) — recycled-stream allocation register.
         s[82] = ConfigFacet.setRecycleRegisterKeeperBps.selector;
+        // #3242 — the per-wallet open-offer cap.
+        s[83] = ConfigFacet.setMaxOpenOffersPerWallet.selector;
+        s[84] = ConfigFacet.getMaxOpenOffersPerWallet.selector;
         // #1222 (M3 B1) — cross-chain recycled ledger transparency reads.
         // #1222 M3 B3 — `getChainRecycledLedger` /
         // `getChainDailyRecycledCredit` MOVED to RewardAggregatorFacet
@@ -3266,7 +3283,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     /// sibling `NumeraireConfigFacet` to keep ConfigFacet under the
     /// EIP-170 24,576-byte runtime limit.
     function _getNumeraireConfigSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](19);
+        s = new bytes4[](21);
         // T-034 Periodic Interest Payment knobs + master kill-switches +
         // per-knob single-value getters consumed by the protocol-console
         // knob registry.
@@ -3293,6 +3310,9 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[16] = NumeraireConfigFacet.getEthPadFeed.selector;
         s[17] = NumeraireConfigFacet.getPadNumeraireRateFeed.selector;
         s[18] = NumeraireConfigFacet.getAssetNumeraireDirectFeedOverride.selector;
+        // #3242 — the offer value floor.
+        s[19] = NumeraireConfigFacet.setMinOfferValueNumeraire.selector;
+        s[20] = NumeraireConfigFacet.getMinOfferValueNumeraire.selector;
     }
 
     /// T-090 v1.1 (#389) — intent-based swap-to-repay config

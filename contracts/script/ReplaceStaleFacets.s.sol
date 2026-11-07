@@ -15,6 +15,7 @@ import {DeployDiamond} from "./DeployDiamond.s.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {IDiamondLoupe} from "@diamond-3/interfaces/IDiamondLoupe.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
+import {OfferBookFacet} from "../src/facets/OfferBookFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {OfferAcceptFeeFacet} from "../src/facets/OfferAcceptFeeFacet.sol";
 import {TreasuryFeeFacet} from "../src/facets/TreasuryFeeFacet.sol";
@@ -89,6 +90,9 @@ contract ReplaceStaleFacets is DeployDiamond {
     /// @notice #2748 - the target Diamond predates the rate-model host; see
     ///         {_requireRateModelFacet}.
     error PredatesRateModelFacet(address diamond);
+    /// @notice #3242 - the target Diamond predates the offer-book bounds; see
+    ///         {_requireOfferBook}.
+    error PredatesOfferBook(address diamond);
     /// @notice #3204 - the target Diamond predates the VaultBeacon (fresh deploy only).
     error PredatesVaultBeacon(address diamond);
 
@@ -140,6 +144,9 @@ contract ReplaceStaleFacets is DeployDiamond {
         // #1209 / #1808 - and one from before the interest ledger; see
         // {_requireInterestLedger}.
         _requireInterestLedger(diamond);
+        // #3242 - and one from before the offer-book bounds; see
+        // {_requireOfferBook}.
+        _requireOfferBook(diamond);
         // #3204 - a Diamond from before the VaultBeacon is fresh-deploy only.
         if (IDiamondLoupe(diamond).facetAddress(VaultFactoryFacet.getVaultBeacon.selector) == address(0)) {
             revert PredatesVaultBeacon(diamond);
@@ -148,6 +155,11 @@ contract ReplaceStaleFacets is DeployDiamond {
         vm.startBroadcast(deployerKey);
 
         OfferCreateFacet offerCreateFacet = OfferCreateFacet(ArtifactDeploy.deploy(type(OfferCreateFacet).name));
+        // #3242 — every creation ends in a self-call to the offer book's entry
+        // step (the book bounds, the active index and the creation events), so
+        // a refreshed creator without its host reverts every create
+        // `FunctionDoesNotExist`. Deployed alongside; partitioned below.
+        OfferBookFacet offerBookFacet = OfferBookFacet(ArtifactDeploy.deploy(type(OfferBookFacet).name));
         OfferAcceptFacet offerAcceptFacet = OfferAcceptFacet(ArtifactDeploy.deploy(type(OfferAcceptFacet).name));
         // #1835 — the accept path's borrower-LIF charge now lives on its own
         // host. Deployed alongside because the two are one behaviour across a
@@ -192,6 +204,7 @@ contract ReplaceStaleFacets is DeployDiamond {
         NumeraireValueFacet numeraireValueFacet = NumeraireValueFacet(ArtifactDeploy.deploy(type(NumeraireValueFacet).name));
 
         console.log("OfferFacet:          ", address(offerCreateFacet));
+        console.log("OfferBookFacet:      ", address(offerBookFacet));
         console.log("OfferAcceptFacet:    ", address(offerAcceptFacet));
         console.log("OfferAcceptFeeFacet: ", address(offerAcceptFeeFacet));
         console.log("OracleFacet:         ", address(oracleFacet));
@@ -232,17 +245,20 @@ contract ReplaceStaleFacets is DeployDiamond {
         // the inherited `DeployDiamond` getter that defines what the Diamond
         // routes, so the surface cannot be partial (#778/#779).
         //
-        // Twelve facets, so at most two cuts each, plus THREE retired-selector
+        // Thirteen facets, so at most two cuts each, plus THREE retired-selector
         // Removes (#2459 r4's previewIntent; #2489's tariff setter; #2812's
-        // range flags) — 27 at most
+        // range flags) — 29 at most
         // (Codex #2489 r12: a short array would panic on a fully mixed stale
         // Diamond before diamondCut ran); empty partitions are skipped and the
         // staging array is trimmed to what was actually used (a zero-selector
         // cut reverts).
-        IDiamondCut.FacetCut[] memory staging = new IDiamondCut.FacetCut[](27);
+        IDiamondCut.FacetCut[] memory staging = new IDiamondCut.FacetCut[](29);
         uint256 n;
         n = _appendPartitioned(
             staging, n, diamond, address(offerCreateFacet), _getOfferCreateSelectors()
+        );
+        n = _appendPartitioned(
+            staging, n, diamond, address(offerBookFacet), _getOfferBookSelectors()
         );
         n = _appendPartitioned(
             staging, n, diamond, address(oracleFacet), _getOracleSelectors()
@@ -494,6 +510,23 @@ contract ReplaceStaleFacets is DeployDiamond {
     function _requireInterestLedger(address diamond) internal view {
         if (IDiamondLoupe(diamond).facetAddress(SellerClaimFacet.getInterestLedger.selector) == address(0)) {
             revert PredatesInterestLedger(diamond);
+        }
+    }
+
+    /// @dev #3242 (Codex #3283 r1) - refuse a Diamond from before the
+    ///      offer-book bounds. The per-wallet open-offer count goes up in the
+    ///      book's entry step and comes down in every facet that takes an offer
+    ///      off the book (cancel, accept, match, intent fill, preclose, the
+    ///      lender sale, the prepay sale), each of which inlines the hook. This
+    ///      curated set carries only some of them, so crossing here would leave
+    ///      the rest removing offers without bringing the count down, and a
+    ///      wallet would hit the cap with nothing open. Crossing the boundary is
+    ///      a fresh deploy or `RefreshAllFacetsInPlace`, never this refresh. The
+    ///      marker is the routing of `OfferBookFacet.getOfferBookBounds`.
+    ///      Called before the broadcast starts, so a refused run sends nothing.
+    function _requireOfferBook(address diamond) internal view {
+        if (IDiamondLoupe(diamond).facetAddress(OfferBookFacet.getOfferBookBounds.selector) == address(0)) {
+            revert PredatesOfferBook(diamond);
         }
     }
 

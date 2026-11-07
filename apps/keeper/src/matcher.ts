@@ -61,7 +61,8 @@ import {
 import type { ChainConfig, Env } from './env';
 import type { PassTick } from './passSchedule';
 import { batchedRead } from './batchRead';
-import { pagedWalk, rotate } from './rotate';
+import { pagedWalk, rotate, walkStart } from './rotate';
+import { fairPairs, pairSpaceFrom, type FairUnit } from './fairPairs';
 import { readCutoffMs, runIndex } from './runWindow';
 import { getChainConfigs } from './env';
 import {
@@ -105,7 +106,7 @@ const SCAN_PAGE = 200n;
 const HYDRATE_CHUNK = 40;
 
 /** Per-tick cap on `previewMatch` calls (one `eth_call` each). */
-const MAX_PREVIEW_CALLS_PER_TICK = 2000;
+export const MAX_PREVIEW_CALLS_PER_TICK = 2000;
 
 /** Per-tick cap on `matchOffers` submissions — a busy book shouldn't
  *  burn the keeper's whole gas budget in one cron tick. */
@@ -139,7 +140,7 @@ const OFFER_TYPE_LENDER = 0;
 const OFFER_TYPE_BORROWER = 1;
 
 /** Subset of the `Offer` struct the matcher needs. */
-interface OfferLite {
+export interface OfferLite {
   id: bigint;
   /** Offer creator — used for the #235 self-trade pre-filter. Two
    *  offers with the same creator can never produce a valid loan
@@ -276,12 +277,14 @@ export const INTENT_SIZE_DOWN_MAX_PROBES = 6;
  *  `IntentError.BelowMinFill` (9, the intent's minimum fill),
  *  `CollateralUnresolvable` (14, which past `hi` can only be the required
  *  collateral rounding to zero), `SliceCollateralBelowFloor` (18, the
- *  create-time collateral floor) and `MatchError.AmountNoOverlap` (4, below the
- *  borrower's minimum amount, since `hi` overlapped). Every OTHER refusal is
+ *  create-time collateral floor), `SliceBelowMinOfferValue` (23, the offer
+ *  value floor the slice meets as it enters the book, #3242) and
+ *  `MatchError.AmountNoOverlap` (4, below the borrower's minimum amount, since
+ *  `hi` overlapped). Every OTHER refusal is
  *  read as too big: the gates `hi` never reached (the risk gate, the accept
  *  gate's KYC tier, the solver's capacity) refuse larger fills, never only
  *  smaller ones. */
-const INTENT_ERR_LOW_END = new Set<number>([9, 14, 18]);
+const INTENT_ERR_LOW_END = new Set<number>([9, 14, 18, 23]);
 const MATCH_ERR_AMOUNT_NO_OVERLAP = 4;
 
 /** What one `previewIntent` probe says about the fill size it was sent (#2760).
@@ -350,7 +353,7 @@ export async function searchIntentFill<P>(
 }
 
 /** One row of `MetricsFacet.getActiveLenderIntents` (`LenderIntentSummary`). */
-interface LenderIntentSummary {
+export interface LenderIntentSummary {
   owner: Address;
   lendingAsset: Address;
   collateralAsset: Address;
@@ -531,14 +534,13 @@ async function hydrateOffers(
   return out;
 }
 
-/** A bucket's borrower offers grouped by creator, in the order each creator
- *  first appears (#2760). The match pass walks a lender's counterparties group
- *  by group and passes over the lender's own group in one step, so a creator on
- *  both sides of a bucket costs one comparison per lender rather than one per
- *  borrower offer they hold. Every other group it enters costs a preview per
- *  offer, so the walk's work is bounded by the preview budget plus one group
- *  check per lender. Creators are compared lower-cased: `getOffer` returns
- *  checksummed addresses, and the raw bytes are what the contract compares. */
+/** A bucket's offers grouped by creator, in the order each creator first
+ *  appears (#2760). The match walk pairs groups, never offers
+ *  ({@link offerMatchUnits}), so a creator on both sides of a bucket is passed
+ *  over in one step, and a creator's offer count buys it no share of the
+ *  preview budget (#3242 part 2). Creators are compared lower-cased: `getOffer`
+ *  returns checksummed addresses, and the raw bytes are what the contract
+ *  compares. */
 export function groupByCreator(list: readonly OfferLite[]): Map<string, OfferLite[]> {
   const groups = new Map<string, OfferLite[]>();
   for (const o of list) {
@@ -551,6 +553,59 @@ export function groupByCreator(list: readonly OfferLite[]): Map<string, OfferLit
     group.push(o);
   }
   return groups;
+}
+
+/**
+ * The offer match's units (#3242 part 2): one per bucket and pair of distinct
+ * creators, holding that lender creator's offers against that borrower
+ * creator's. {@link fairPairs} walks them round-robin, so each pair of
+ * counterparties gets a preview before any gets a second. A creator is never
+ * paired with itself (#235 / #2760: the contract refuses a self-trade), so that
+ * costs nothing. Round 0 starts at a point in the whole space of (bucket,
+ * lender creator, borrower creator) cells that moves with the run
+ * ({@link pairSpaceFrom}, {@link walkStart}), so when the budget reaches only
+ * part of round 0, a different part is first next run and every cell is first
+ * in turn. Lazy: a unit is built only when the walk reaches it.
+ */
+export function* offerMatchUnits(
+  lenders: ReadonlyMap<string, readonly OfferLite[]>,
+  borrowers: ReadonlyMap<string, readonly OfferLite[]>,
+  run: number,
+): Generator<FairUnit<OfferLite, OfferLite>> {
+  const grids: { lenders: OfferLite[][]; lenderCreators: string[]; borrowers: OfferLite[][]; borrowerCreators: string[] }[] = [];
+  for (const [key, lenderList] of lenders) {
+    const borrowerList = borrowers.get(key);
+    if (!borrowerList || borrowerList.length === 0) continue;
+    const lg = groupByCreator(lenderList);
+    const bg = groupByCreator(borrowerList);
+    grids.push({ lenders: [...lg.values()], lenderCreators: [...lg.keys()], borrowers: [...bg.values()], borrowerCreators: [...bg.keys()] });
+  }
+  const sizes = grids.map((g) => [g.lenders.length, g.borrowers.length] as const);
+  const total = sizes.reduce((n, [r, c]) => n + r * c, 0);
+  for (const [g, i, j] of pairSpaceFrom(sizes, walkStart(run, total))) {
+    const grid = grids[g];
+    if (grid.lenderCreators[i] === grid.borrowerCreators[j]) continue;
+    yield { as: grid.lenders[i], bs: grid.borrowers[j] };
+  }
+}
+
+/**
+ * The intent fill's units (#3242 part 2): one per intent and borrower creator,
+ * holding that intent against that creator's borrower offers. Walked by
+ * {@link fairPairs} like the offer match, so a wallet with many borrower
+ * offers gets one candidate per intent per round, the same as a wallet with
+ * one. Round 0 starts at a point in the intent × creator space that moves with
+ * the run, like {@link offerMatchUnits}. Lazy.
+ */
+export function* intentFillUnits(
+  intents: readonly LenderIntentSummary[],
+  borrowers: readonly OfferLite[],
+  run: number,
+): Generator<FairUnit<LenderIntentSummary, OfferLite>> {
+  const groups = [...groupByCreator(borrowers).values()];
+  for (const [, i, j] of pairSpaceFrom([[intents.length, groups.length]], walkStart(run, intents.length * groups.length))) {
+    yield { as: [intents[i]], bs: groups[j] };
+  }
 }
 
 function partitionByBucket(offers: readonly OfferLite[]): {
@@ -1120,147 +1175,170 @@ export async function runIntentFillPass(
    *  preview slot, so the per-tick rails bound it like any other preview. */
   let capacitySpent = capacitySpentAtStart;
   let creditFills = 0;
-  // ROTATED by the tick (#2564 r1): the per-tick rails reach a prefix of the
-  // registry when it is large, and a fixed start would reach the same prefix
-  // every tick — a credit-backed intent past it would never be served.
-  for (const intent of rotate(intents, Math.floor(Date.now() / 60_000))) {
-    if (overBudget() || submits >= MAX_SUBMITS_PER_TICK) break;
-    if (capacitySpent) {
-      // Only an intent some borrower could fill is worth a read, and the read
+  // #3242 part 2 — round-robin across (intent, borrower creator) units
+  // ({@link intentFillUnits}), so one wallet's many borrower offers cannot use
+  // up the previews an intent's other borrowers, or later intents, are owed.
+  // The intent order is ROTATED by the tick (#2564 r1): the per-tick rails reach
+  // a prefix of the registry when it is large, and a fixed start would reach
+  // the same prefix every tick — a credit-backed intent past it would never be
+  // served. An intent is `dead` once the walk is done with it this run: after
+  // any submit attempt, or a refusal that holds for every borrower of it.
+  const deadIntents = new Set<LenderIntentSummary>();
+  /** #2564 — each time the capacity is seen spent, every live intent needs a
+   *  fresh priority read before it is scanned again: `spentEpoch` counts those
+   *  times, and `readAt` says in which one an intent was last read. */
+  let spentEpoch = capacitySpent ? 1 : 0;
+  const readAt = new Map<LenderIntentSummary, number>();
+  for (const [intent, b] of fairPairs(intentFillUnits(rotate(intents, Math.floor(Date.now() / 60_000)), borrowers, run), {
+    deadA: (i) => deadIntents.has(i),
+    // Cheap client-side pre-filters (they cut previewIntent eth_calls): the
+    // borrowers left in flight this run, a borrower the intent cannot serve,
+    // and one with no fill the intent can size. All three cost no preview, so
+    // they are passed over inside the walk rather than handed out.
+    skip: (i, o) =>
+      uncertainBorrowers.has(o.id.toString()) || !borrowerFitsIntent(i, o) || sizeIntentFill(i, o) === null,
+    stop: overBudget,
+    maxLive: MAX_PREVIEW_CALLS_PER_TICK,
+  })) {
+    if (
+      previews >= MAX_PREVIEW_CALLS_PER_TICK ||
+      submits >= MAX_SUBMITS_PER_TICK ||
+      overBudget()
+    ) {
+      break;
+    }
+    if (capacitySpent && readAt.get(intent) !== spentEpoch) {
+      // Only an intent some borrower could fill reaches here, and the read
       // leaves at least one preview for the fill it may unlock.
-      if (!borrowers.some((b) => !uncertainBorrowers.has(b.id.toString()) && borrowerFitsIntent(intent, b))) continue;
       if (previews + 1 >= MAX_PREVIEW_CALLS_PER_TICK) break;
       previews += 1;
       const state = await priorityState(ctx, intent, solver);
-      if (state === 'blocked') continue;
+      if (state === 'blocked') {
+        deadIntents.add(intent);
+        continue;
+      }
+      readAt.set(intent, spentEpoch);
       // The capacity refilled since it was seen spent: ordinary scanning resumes.
       if (state === 'capacity') capacitySpent = false;
     }
-    for (const b of borrowers) {
-      if (
-        previews >= MAX_PREVIEW_CALLS_PER_TICK ||
-        submits >= MAX_SUBMITS_PER_TICK ||
-        overBudget()
-      ) {
-        break;
-      }
-      if (uncertainBorrowers.has(b.id.toString())) continue;
-      // Cheap client-side pre-filter (cuts previewIntent eth_calls).
-      if (!borrowerFitsIntent(intent, b)) continue;
-      // `b.amountFilled` is kept fresh as same-tick fills land (below + in the
-      // matchOffers loop), so `sizeIntentFill` sees live residual capacity and
-      // doesn't oversize into a `previewIntent` rejection (Codex #748 r1).
-      let fillAmount = sizeIntentFill(intent, b);
-      if (fillAmount === null) continue;
+    // `b.amountFilled` is kept fresh as same-tick fills land (below + in the
+    // matchOffers loop), so `sizeIntentFill` sees live residual capacity and
+    // doesn't oversize into a `previewIntent` rejection (Codex #748 r1).
+    let fillAmount = sizeIntentFill(intent, b);
+    if (fillAmount === null) continue;
 
-      previews += 1;
-      let preview = await previewIntent(ctx, solver, intent, b.id, fillAmount);
-      if (!preview) continue;
-      // Codex #748 r4/r5/r6 — a non-AON oversized fill that fails ONLY on the
-      // borrower's collateral (intent LTV stricter than the offer was sized
-      // for) can often succeed smaller. `previewIntent` returns reqCollateral=0
-      // on that very failure, so rather than reqCollateral-scaling, probe `lo`
-      // first (guaranteeing a viable fill is found when one exists) then
-      // binary-search upward for the LARGEST viable fill — a bounded handful of
-      // probes — instead of re-attempting the too-large amount every tick (which
-      // would never auto-fill that borrower for this intent).
-      if (
-        !preview.ok &&
-        preview.matchError === MATCH_ERR_COLLATERAL_BELOW &&
-        b.fillMode !== FILL_MODE_AON &&
-        previews < MAX_PREVIEW_CALLS_PER_TICK
-      ) {
-        const lo =
-          intent.minFillAmount > b.amount ? intent.minFillAmount : b.amount;
-        const found = await searchIntentFill(lo, fillAmount, async (fill) => {
-          if (previews >= MAX_PREVIEW_CALLS_PER_TICK) return null;
-          previews += 1;
-          const p = await previewIntent(ctx, solver, intent, b.id, fill);
-          return { verdict: intentProbeVerdict(p), preview: p };
-        });
-        if (found && found.preview) {
-          fillAmount = found.fill;
-          preview = found.preview;
-        }
-        // else: no viable fill was found: `preview` stays the original CBR
-        // failure and the handler below continues to the next borrower.
+    previews += 1;
+    let preview = await previewIntent(ctx, solver, intent, b.id, fillAmount);
+    if (!preview) continue;
+    // Codex #748 r4/r5/r6 — a non-AON oversized fill that fails ONLY on the
+    // borrower's collateral (intent LTV stricter than the offer was sized
+    // for) can often succeed smaller. `previewIntent` returns reqCollateral=0
+    // on that very failure, so rather than reqCollateral-scaling, probe `lo`
+    // first (guaranteeing a viable fill is found when one exists) then
+    // binary-search upward for the LARGEST viable fill — a bounded handful of
+    // probes — instead of re-attempting the too-large amount every tick (which
+    // would never auto-fill that borrower for this intent).
+    if (
+      !preview.ok &&
+      preview.matchError === MATCH_ERR_COLLATERAL_BELOW &&
+      b.fillMode !== FILL_MODE_AON &&
+      previews < MAX_PREVIEW_CALLS_PER_TICK
+    ) {
+      const lo =
+        intent.minFillAmount > b.amount ? intent.minFillAmount : b.amount;
+      const found = await searchIntentFill(lo, fillAmount, async (fill) => {
+        if (previews >= MAX_PREVIEW_CALLS_PER_TICK) return null;
+        previews += 1;
+        const p = await previewIntent(ctx, solver, intent, b.id, fill);
+        return { verdict: intentProbeVerdict(p), preview: p };
+      });
+      if (found && found.preview) {
+        fillAmount = found.fill;
+        preview = found.preview;
       }
-      // `ok` already folds intentError == Ok && matchError == Ok && riskBlock == 0.
-      if (!preview.ok) {
-        const e = preview.intentError;
-        const scope = intentRefusalScope(e);
-        // GLOBAL terminal — same verdict for EVERY intent + borrower this tick,
-        // so stop the whole pass; the master kill-switches additionally log
-        // once (sharing the matchOffers latch) (Codex #748 r2/r3).
-        if (scope === 'pass') {
-          if (
-            (e === INTENT_ERR_MATCHER_DISABLED ||
-              e === INTENT_ERR_INTENT_DISABLED) &&
-            !killSwitchLogged.get(ctx.chainId)
-          ) {
-            console.log(
-              `[matcher] chain=${ctx.chainId} intent-fill disabled: a master flag (partialFill/lenderIntent) is off; retrying every tick`,
-            );
-            killSwitchLogged.set(ctx.chainId, true);
-          }
-          return submits;
+      // else: no viable fill was found: `preview` stays the original CBR
+      // failure and the handler below continues to the next borrower.
+    }
+    // `ok` already folds intentError == Ok && matchError == Ok && riskBlock == 0.
+    if (!preview.ok) {
+      const e = preview.intentError;
+      const scope = intentRefusalScope(e);
+      // GLOBAL terminal — same verdict for EVERY intent + borrower this tick,
+      // so stop the whole pass; the master kill-switches additionally log
+      // once (sharing the matchOffers latch) (Codex #748 r2/r3).
+      if (scope === 'pass') {
+        if (
+          (e === INTENT_ERR_MATCHER_DISABLED ||
+            e === INTENT_ERR_INTENT_DISABLED) &&
+          !killSwitchLogged.get(ctx.chainId)
+        ) {
+          console.log(
+            `[matcher] chain=${ctx.chainId} intent-fill disabled: a master flag (partialFill/lenderIntent) is off; retrying every tick`,
+          );
+          killSwitchLogged.set(ctx.chainId, true);
         }
-        // CAPACITY (#2564) — this solver's capacity is spent. It ends THIS
-        // intent (no credit covers it: a credit-backed intent previews Ok), and
-        // from here on only intents a priority credit unlocks are scanned. A
-        // credit-backed intent refused here ran out of credits mid-pass; the
-        // next one may still hold some.
-        if (scope === 'capacity') {
-          if (!capacitySpent) {
-            console.log(
-              `[matcher] chain=${ctx.chainId} intent-fill: this keeper's fill capacity is spent; continuing only with intents a priority credit unlocks`,
-            );
-          }
-          capacitySpent = true;
-          break;
-        }
-        // INTENT-level terminal — same verdict for every BORROWER of this intent
-        // (auth, aggregator-pause, inactive, VPFI-lending, unresolvable
-        // collateral, …), so abandon the intent rather than burning a preview
-        // per borrower for an identical result (Codex #748 r1/r3).
-        if (scope === 'intent') break;
-        // Borrower-specific — try the next borrower.
-        continue;
-      }
-
-      // Codex #748 r4 P1 — re-read the pause immediately before committing gas:
-      // `keepersPaused` may have flipped during the scan/paging since the
-      // pass-start gate, and `matchIntent` does NOT enforce the pause for OPEN
-      // intents, so without this re-check the keeper could originate a loan
-      // moments after operators paused for an incident. Fail-closed (terminal).
-      if (await keepersPaused(ctx)) {
-        logKeepersPausedOnce(ctx);
         return submits;
       }
-
-      submits += 1;
-      const outcome = await submitIntentFill(ctx, intent, b.id, fillAmount, preview);
-      if (outcome !== null) {
-        intentFills += 1;
-        // Counted from the MINED record (#2564 r1): `IntentPriorityFill` is
-        // what says a credit was spent, never the capacity state seen before.
-        if (outcome.creditSpent) creditFills += 1;
-        // Keep the in-memory borrower snapshot live for later intents that
-        // target the same borrower (the single-fill slice consumes exactly
-        // `matchAmount`).
-        b.amountFilled += preview.matchAmount;
-      } else {
-        // Uncertain (broadcast fail / receipt timeout) — quarantine this
-        // borrower for the rest of the tick so no other intent double-fills it
-        // before the possibly-in-flight tx lands (Codex #748 r2).
-        uncertainBorrowers.add(b.id.toString());
+      // CAPACITY (#2564) — this solver's capacity is spent. It ends THIS
+      // intent (no credit covers it: a credit-backed intent previews Ok), and
+      // from here on only intents a priority credit unlocks are scanned. A
+      // credit-backed intent refused here ran out of credits mid-pass; the
+      // next one may still hold some.
+      if (scope === 'capacity') {
+        if (!capacitySpent) {
+          console.log(
+            `[matcher] chain=${ctx.chainId} intent-fill: this keeper's fill capacity is spent; continuing only with intents a priority credit unlocks`,
+          );
+          capacitySpent = true;
+          spentEpoch += 1;
+        }
+        deadIntents.add(intent);
+        continue;
       }
-      // Back off this intent after ANY submit attempt — a success moved its
-      // exposure/capital, an uncertain result leaves the tx possibly in-flight;
-      // either way, sizing more fills for it against the stale snapshot would
-      // queue reverting txs (mirrors the matchOffers path — Codex #748 r1).
-      break;
+      // INTENT-level terminal — same verdict for every BORROWER of this intent
+      // (auth, aggregator-pause, inactive, VPFI-lending, unresolvable
+      // collateral, …), so abandon the intent rather than burning a preview
+      // per borrower for an identical result (Codex #748 r1/r3).
+      if (scope === 'intent') {
+        deadIntents.add(intent);
+        continue;
+      }
+      // Borrower-specific — try the next borrower.
+      continue;
     }
+
+    // Codex #748 r4 P1 — re-read the pause immediately before committing gas:
+    // `keepersPaused` may have flipped during the scan/paging since the
+    // pass-start gate, and `matchIntent` does NOT enforce the pause for OPEN
+    // intents, so without this re-check the keeper could originate a loan
+    // moments after operators paused for an incident. Fail-closed (terminal).
+    if (await keepersPaused(ctx)) {
+      logKeepersPausedOnce(ctx);
+      return submits;
+    }
+
+    submits += 1;
+    const outcome = await submitIntentFill(ctx, intent, b.id, fillAmount, preview);
+    if (outcome !== null) {
+      intentFills += 1;
+      // Counted from the MINED record (#2564 r1): `IntentPriorityFill` is
+      // what says a credit was spent, never the capacity state seen before.
+      if (outcome.creditSpent) creditFills += 1;
+      // Keep the in-memory borrower snapshot live for later intents that
+      // target the same borrower (the single-fill slice consumes exactly
+      // `matchAmount`).
+      b.amountFilled += preview.matchAmount;
+    } else {
+      // Uncertain (broadcast fail / receipt timeout) — quarantine this
+      // borrower for the rest of the tick so no other intent double-fills it
+      // before the possibly-in-flight tx lands (Codex #748 r2).
+      uncertainBorrowers.add(b.id.toString());
+    }
+    // Back off this intent after ANY submit attempt — a success moved its
+    // exposure/capital, an uncertain result leaves the tx possibly in-flight;
+    // either way, sizing more fills for it against the stale snapshot would
+    // queue reverting txs (mirrors the matchOffers path — Codex #748 r1).
+    deadIntents.add(intent);
   }
   if (intentFills > 0) {
     console.log(
@@ -1564,112 +1642,76 @@ async function runOfferMatcherTickForChain(ctx: KeeperContext, run = 0): Promise
   const uncertainBorrowers = new Set<string>();
 
   let capacitySpent = false; // #1219 — set once a preview says this keeper's fill capacity is spent
-  for (const [key, lenderList] of lenders) {
-    if (submits >= MAX_SUBMITS_PER_TICK || capacitySpent) break;
+  // #3242 part 2 — the pairs are walked round-robin across pairs of CREATORS
+  // ({@link offerMatchUnits}), so one wallet's many offers cannot use up the
+  // preview budget before anyone else's are looked at. A lender is `dead` once
+  // the walk is done with it for this run: fully filled, or backed off after an
+  // uncertain submit. A borrower left in flight is passed over by every lender.
+  const doneLenders = new Set<OfferLite>();
+  for (const [L, B] of fairPairs(offerMatchUnits(lenders, borrowers, run), {
+    deadA: (l) => doneLenders.has(l),
+    skip: (_l, b) => uncertainBorrowers.has(b.id.toString()),
+    stop: overBudget,
+    maxLive: MAX_PREVIEW_CALLS_PER_TICK,
+  })) {
+    if (previewCalls >= MAX_PREVIEW_CALLS_PER_TICK) break;
+    if (submits >= MAX_SUBMITS_PER_TICK) break;
     if (overBudget()) break;
-    const borrowerList = borrowers.get(key);
-    if (!borrowerList || borrowerList.length === 0) continue;
-    const borrowerGroups = groupByCreator(borrowerList);
 
-    for (const L of lenderList) {
-      if (submits >= MAX_SUBMITS_PER_TICK || capacitySpent) break;
-      if (overBudget()) break;
-      const lenderCreator = L.creator.toLowerCase();
-      // Each (L, B) pair is visited once: the listing holds each offer id once
-      // (#2760), and each lender walks its bucket's borrowers once.
-      borrowerScan: for (const [creator, group] of borrowerGroups) {
-        // #235 / #2760 — self-trade short-circuit. Same-creator pairs can
-        // never produce a valid loan (the contract reverts
-        // `SelfTradeForbidden(party)` in `_acceptOffer`, and `previewMatch`
-        // returns `MatchError.SelfTrade`). The lender's own group is passed
-        // over whole, before any per-pair work, so a creator holding offers on
-        // both sides costs one comparison per lender, not one per pair.
-        if (creator === lenderCreator) continue;
-        for (const B of group) {
-          if (previewCalls >= MAX_PREVIEW_CALLS_PER_TICK) break borrowerScan;
-          if (submits >= MAX_SUBMITS_PER_TICK) break borrowerScan;
-          if (overBudget()) break borrowerScan;
-
-          previewCalls += 1;
-          const p = await previewMatch(ctx, L.id, B.id);
-          if (p && p.errorCode === MATCH_ERR_CAPACITY_EXHAUSTED) {
-            console.log(
-              `[matcher] chain=${ctx.chainId} match pass: this keeper's fill capacity is spent; waiting for it to refill`,
-            );
-            capacitySpent = true;
-            break borrowerScan;
-          }
-          if (!p || p.errorCode !== MATCH_ERR_OK) {
-            // Defence-in-depth: the client-side self-trade pre-filter
-            // above should catch every same-creator pair, but log here
-            // anyway in case `getOffer` ever races against an in-flight
-            // ownership transfer or the OfferLite struct loses the
-            // `creator` field in a future refactor. Other typed errors
-            // are too noisy to log per-pair on a busy book; the
-            // observability story for those lives in the per-tick
-            // submits / previewCalls metric.
-            if (p && p.errorCode === MATCH_ERR_SELF_TRADE) {
-              console.log(
-                `[matcher] chain=${ctx.chainId} self-trade pair slipped pre-filter — L=${L.id} B=${B.id} creator=${L.creator}`,
-              );
-            }
-            continue;
-          }
-
-          const ok = await submitMatch(ctx, L.id, B.id, p);
-          if (ok) {
-            submits += 1;
-            // Keep B's in-memory snapshot live so the later #625 intent-fill pass
-            // sizes against B's true residual capacity, not its tick-start value
-            // (Codex #748 r1).
-            B.amountFilled += p.matchAmount;
-            // Issue #172 / #102 — post-borrower-partial-fill, borrower
-            // offers are NOT single-fill anymore. Don't break the inner
-            // loop on success: the same lender may have remaining capacity
-            // to fan-out across additional borrowers in this tick, and the
-            // same borrower (post-this match) may still have capacity that
-            // a DIFFERENT lender in `lenderList` could fill.
-            //
-            // Each (L,B) pair is visited once per tick (see the walk
-            // above). After a successful submit, both
-            // L's and B's `amountFilled` have grown on-chain; the next
-            // `previewMatch` call within this tick reads the updated state
-            // and returns the right overlap (or `AmountNoOverlap` /
-            // dust-close, which the `if (!p || p.errorCode !== Ok)`
-            // continue above handles cleanly).
-            //
-            // Early-exit only when the preview reports the lender is now
-            // FULLY filled (`lenderRemainingPostMatch == 0n`). Anything
-            // smaller — where the lender still has some capacity that
-            // might not meet the per-match minimum — is left to the
-            // contract's `previewMatch` to filter on the next iteration;
-            // the extra preview call per exhausted lender per tick is
-            // cheap relative to fan-out wins on healthy ones.
-            if (p.lenderRemainingPostMatch === 0n) {
-              break borrowerScan;
-            }
-            // Otherwise fall through to the next borrower for this lender.
-            continue;
-          }
-          // Codex #176 round-2 P1 — `submitMatch` returned false. The
-          // three causes (broadcast failure, on-chain revert,
-          // `waitForTransactionReceipt` timeout) all leave L's state
-          // uncertain — the tx may still be in flight, or another keeper
-          // / a borrower-cancel raced us. Trying L against B2/B3 in the
-          // same tick would re-evaluate against possibly-stale state
-          // and either queue duplicate matches (the race the #176
-          // round-1 fix existed to prevent) or burn preview calls on
-          // doomed pairs. Back off this lender for the tick: the explicit
-          // `break` skips the rest of its borrowers.
-          //
-          // #748 r3 — also mark B uncertain so the intent-fill pass below won't
-          // queue a `matchIntent` for the same borrower while this offer-match tx
-          // may still be in flight (it would revert once the offer-match mines).
-          uncertainBorrowers.add(B.id.toString());
-          break borrowerScan;
-        }
-      }
+    previewCalls += 1;
+    const p = await previewMatch(ctx, L.id, B.id);
+    if (p && p.errorCode === MATCH_ERR_CAPACITY_EXHAUSTED) {
+      console.log(
+        `[matcher] chain=${ctx.chainId} match pass: this keeper's fill capacity is spent; waiting for it to refill`,
+      );
+      capacitySpent = true;
+      break;
     }
+    if (!p || p.errorCode !== MATCH_ERR_OK) {
+      // Defence-in-depth: the units never pair a creator with itself (#235 /
+      // #2760: the contract reverts `SelfTradeForbidden(party)` and
+      // `previewMatch` returns `MatchError.SelfTrade`), but log here anyway in
+      // case `getOffer` ever races against an in-flight ownership transfer or
+      // the OfferLite struct loses the `creator` field in a future refactor.
+      // Other typed errors are too noisy to log per-pair on a busy book; the
+      // observability story for those lives in the per-tick submits /
+      // previewCalls metric.
+      if (p && p.errorCode === MATCH_ERR_SELF_TRADE) {
+        console.log(
+          `[matcher] chain=${ctx.chainId} self-trade pair slipped pre-filter — L=${L.id} B=${B.id} creator=${L.creator}`,
+        );
+      }
+      continue;
+    }
+
+    const ok = await submitMatch(ctx, L.id, B.id, p);
+    if (ok) {
+      submits += 1;
+      // Keep B's in-memory snapshot live so the later #625 intent-fill pass
+      // sizes against B's true residual capacity, not its tick-start value
+      // (Codex #748 r1).
+      B.amountFilled += p.matchAmount;
+      // Issue #172 / #102 — borrower offers are not single-fill: the same
+      // lender may fan out across more borrowers this run, and the same
+      // borrower may still have room another lender could fill. The next
+      // `previewMatch` reads the updated on-chain state and returns the right
+      // overlap (or `AmountNoOverlap` / dust-close, which the `continue` above
+      // handles). The lender is done only when the preview reports it FULLY
+      // filled; anything smaller is left to the next preview to filter.
+      if (p.lenderRemainingPostMatch === 0n) doneLenders.add(L);
+      continue;
+    }
+    // Codex #176 round-2 P1 — `submitMatch` returned false. The three causes
+    // (broadcast failure, on-chain revert, receipt timeout) all leave L's state
+    // uncertain: the tx may still be in flight, or another keeper / a borrower
+    // cancel raced us. Back off this lender for the run, so no duplicate match
+    // is queued against stale state.
+    //
+    // #748 r3 — also mark B uncertain, so neither another lender here nor the
+    // intent-fill pass below fills the same borrower while this tx may still
+    // mine.
+    doneLenders.add(L);
+    uncertainBorrowers.add(B.id.toString());
   }
 
   // #625 WI-2c — auto-lend intent-fill pass. Reuses the hydrated borrower book

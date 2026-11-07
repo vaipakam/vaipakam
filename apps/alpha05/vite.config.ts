@@ -9,6 +9,7 @@ import { cspScriptHashesPlugin } from '@vaipakam/lib/cspScriptHashes';
 import { REPORT_ONLY_HEADER, cspConnectSourcesPlugin } from '@vaipakam/lib/cspConnectSources';
 import { e2eDeploymentsBundlePlugin } from '@vaipakam/lib/e2eDeploymentsBundle';
 import { connectSources, rpcConfigProblems } from './src/chain/endpoints.ts';
+import { buildSourceTime } from '@vaipakam/lib/buildTime';
 
 // Stamp the commit and build time into the bundle (shown on the Help page
 // and in the capability service's provenance) so a tester can always tell
@@ -22,7 +23,12 @@ process.env.VITE_BUILD_HASH = (() => {
     return 'unknown';
   }
 })();
-process.env.VITE_BUILD_TIME = new Date().toISOString();
+// #3236 — the time is the COMMIT's, not the clock's, so two builds of one
+// commit produce the same files and the served build can be checked by
+// rebuilding it (see @vaipakam/lib/buildTime).
+const buildTime = buildSourceTime();
+if (!buildTime.reproducible) console.warn(`[build-time] ${buildTime.reason}; stamping the clock, so this build will not match a rebuild`);
+process.env.VITE_BUILD_TIME = buildTime.iso;
 
 /** Every chain the committed deployments bundle carries a Diamond for. */
 function deployedChainIds(): number[] {

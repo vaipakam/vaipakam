@@ -41,6 +41,8 @@ import {RiskDiscountedLiquidationFacet} from "../src/facets/RiskDiscountedLiquid
 import {ProtectedAccountFacet} from "../src/facets/ProtectedAccountFacet.sol";
 import {VaultPayoutFacet} from "../src/facets/VaultPayoutFacet.sol";
 import {VaultDepositoryFacet} from "../src/facets/VaultDepositoryFacet.sol";
+import {OfferBookFacet} from "../src/facets/OfferBookFacet.sol";
+import {TestOfferFloor} from "./helpers/TestOfferFloor.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {LibPausable} from "../src/libraries/LibPausable.sol";
@@ -316,6 +318,7 @@ contract SetupTest is Test {
     ProtectedAccountFacet protectedAccountFacet;
     VaultPayoutFacet vaultPayoutFacet;
     VaultDepositoryFacet vaultDepositoryFacet;
+    OfferBookFacet offerBookFacet;
     RepayFacet repayFacet;
     RepayPeriodicFacet repayPeriodicFacet;
     SwapToRepayFacet swapToRepayFacet;
@@ -486,6 +489,7 @@ contract SetupTest is Test {
         protectedAccountFacet = ProtectedAccountFacet(ArtifactDeploy.deploy(type(ProtectedAccountFacet).name));
         vaultPayoutFacet = VaultPayoutFacet(ArtifactDeploy.deploy(type(VaultPayoutFacet).name));
         vaultDepositoryFacet = VaultDepositoryFacet(ArtifactDeploy.deploy(type(VaultDepositoryFacet).name));
+        offerBookFacet = OfferBookFacet(ArtifactDeploy.deploy(type(OfferBookFacet).name));
         repayFacet = RepayFacet(ArtifactDeploy.deploy(type(RepayFacet).name));
         repayPeriodicFacet = RepayPeriodicFacet(ArtifactDeploy.deploy(type(RepayPeriodicFacet).name));
         swapToRepayFacet = SwapToRepayFacet(ArtifactDeploy.deploy(type(SwapToRepayFacet).name));
@@ -606,7 +610,7 @@ contract SetupTest is Test {
         // Preclose / Refinance / EarlyWithdrawal / PartialWithdrawal
         // quartet at slots 24-27 to unblock the PauseGating fold —
         // those slots stay where they are.
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](110);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](111);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -1068,6 +1072,11 @@ contract SetupTest is Test {
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getVaultDepositoryFacetSelectors()
         });
+        cuts[110] = IDiamondCut.FacetCut({
+            facetAddress: address(offerBookFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getOfferBookFacetSelectors()
+        });
         // #1306 follow-up — read-only lens facet (view/getter surface split
         // off InteractionRewardsFacet for EIP-170 headroom; shared storage).
         cuts[66] = IDiamondCut.FacetCut({
@@ -1410,6 +1419,10 @@ contract SetupTest is Test {
         // helper because some downstream test diamonds don't cut
         // `ConfigFacet`.
         TestMutatorFacet(address(diamond)).setTierLiquidationLtvBpsAllRaw(8500, 8500, 8500);
+        // #3242 — the offer value floor ($10 in production) would refuse the
+        // wei-sized offers most suites post against the $1 mocks; see
+        // {TestOfferFloor}.
+        TestOfferFloor.lower(address(diamond));
 
         // Mock oracle: Set liquid for mockERC20, illiquid for others.
         // Mock both the classification (checkLiquidity) and execution-routing

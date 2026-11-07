@@ -224,6 +224,8 @@ export interface DeploymentFacets {
   protectedAccountFacet?: HexAddress;
   vaultPayoutFacet?: HexAddress;
   vaultDepositoryFacet?: HexAddress;
+  /** #3242 — the offer book's entry step and bounds, split off offerCreateFacet. */
+  offerBookFacet?: HexAddress;
   signedOfferFacet?: HexAddress;
   swapToRepayFacet?: HexAddress;
   /** #2416 — the partial swap-to-repay route, split off swapToRepayFacet. */

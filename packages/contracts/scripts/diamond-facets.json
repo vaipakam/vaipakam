@@ -44,6 +44,7 @@
     "ProtectedAccountFacet",
     "VaultPayoutFacet",
     "VaultDepositoryFacet",
+    "OfferBookFacet",
     "ClaimFacet",
     "OracleFacet",
     "OracleAdminFacet",

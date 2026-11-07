@@ -230,7 +230,7 @@ async function judgeCloseOut(
   // another pass's. The loan then still reads Active and defaultable, and a
   // second `triggerDefault` would queue behind the first only to revert once
   // it lands. While one is unmined, this run waits.
-  const pending = await keeperTxPending(client, keeper);
+  const pending = await keeperTxPending(client, keeper, deps.chainId);
   if (pending !== null) return { kind: 'skipped', reason: pending };
 
   const loan = await readLoan(client, diamond, loanId);

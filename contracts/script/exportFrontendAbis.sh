@@ -297,6 +297,8 @@ FACETS=(
   "ProtectedAccountFacet"
   "VaultPayoutFacet"
   "VaultDepositoryFacet"
+  # The offer book's entry step and bounds (#3242).
+  "OfferBookFacet"
   "SwapToRepayFacet"
   "SwapToRepayPartialFacet"
   "SwapToRepayIntentFacet"

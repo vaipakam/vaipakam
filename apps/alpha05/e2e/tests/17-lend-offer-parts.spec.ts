@@ -58,6 +58,10 @@ test('a lender posts an offer in parts: the whole amount locked, the smallest pa
     await page.getByTestId('lend-offer-part').fill('0.3');
     await page.getByTestId('lend-offer-part').blur();
     await expect(page.getByText('The smallest part cannot be more than the amount you lend.')).toBeVisible();
+    // #3242 — a part worth less than the offer-book floor is named with the
+    // protocol's own smallest amount, before any review or signature.
+    await page.getByTestId('lend-offer-part').fill('0.000001');
+    await expect(page.getByText(/The smallest offer the protocol accepts in this token is [0-9.]+ WETH\./)).toBeVisible({ timeout: 30_000 });
     await page.getByTestId('lend-offer-part').fill('0.05');
     // All or none takes no parts; immediate or cancel needs an expiry.
     const fill = page.getByTestId('request-fill');

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {OfferBookFacet} from "../src/facets/OfferBookFacet.sol";
 import {SetupTest} from "./SetupTest.t.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
@@ -234,6 +235,39 @@ contract CancelAfterPartialFillTest is SetupTest {
     ///         earlier match is unaffected (its principal stays at the
     ///         matched amount on the loan struct), (c) the cancel
     ///         cooldown was bypassed (no `vm.warp` past the delay).
+    /// @notice #3242 (Codex #3283 r1 P1) — a lender offer a match fills to
+    ///         the end leaves the book: off the active index and out of its
+    ///         creator's open-offer count, so it never holds a cap slot.
+    function test_matchedLenderOfferLeavesTheOpenCount() public {
+        uint256 lenderOfferId = _postLenderOffer({
+            creator: lender,
+            amount: 1_000,
+            amountMax: 5_000,
+            rateMin: 500,
+            rateMax: 600,
+            collateralRequired: 500
+        });
+        (, , uint256 openBefore) = OfferBookFacet(address(diamond)).getOfferBookBounds(lender);
+        assertEq(openBefore, 1, "lender offer counted while open");
+
+        uint256 borrowerOfferId = _postBorrowerOffer({
+            creator: borrower,
+            amountMin: 5_000,
+            amountMax: 5_000,
+            rateMin: 500,
+            rateMax: 600,
+            collateralMin: 500,
+            collateralMax: 500
+        });
+        OfferMatchFacet(address(diamond)).matchOffers(lenderOfferId, borrowerOfferId);
+
+        assertTrue(OfferCancelFacet(address(diamond)).getOffer(lenderOfferId).accepted, "lender offer closed");
+        (, , uint256 lenderOpen) = OfferBookFacet(address(diamond)).getOfferBookBounds(lender);
+        assertEq(lenderOpen, 0, "a filled lender offer holds no cap slot");
+        (, , uint256 borrowerOpen) = OfferBookFacet(address(diamond)).getOfferBookBounds(borrower);
+        assertEq(borrowerOpen, 0, "a filled borrower offer holds no cap slot");
+    }
+
     function test_lenderPartialFillThenCancel() public {
         // Lender's pre-create wallet balance — establishes baseline.
         uint256 lenderWalletBefore = ERC20(mockERC20).balanceOf(lender);

@@ -381,6 +381,12 @@ interface BaseEnv {
    *  var (`PLAIN_VAR_KEYS`), not a secret; it is never echoed when it cannot
    *  be read. */
   DISCOUNT_PATH_CHAIN_IDS?: string;
+
+  /** #3240 — the chains whose private sends may fall back to the ordinary
+   *  RPC (`submissionRoute.ts`): a comma list of decimal chain ids, each of
+   *  which must have a private route. Unset allows no fallback. A plain var,
+   *  never echoed when it cannot be read. */
+  PRIVATE_TX_FALLBACK_CHAIN_IDS?: string;
 }
 
 /**
@@ -437,6 +443,11 @@ export interface WorkerEnv extends BaseEnv {
   // Autonomous-keeper EOA signing key. The ONLY Worker that holds a
   // signing key (staging plan §2 least-privilege contract).
   KEEPER_PRIVATE_KEY?: SecretBinding;
+  // #3240 — per-chain private submission endpoints (`submissionRoute.ts`),
+  // `<chainId>=<https URL>` entries. A secret: an endpoint URL can carry an
+  // access key. Not bound on the Worker, which declines every invocation;
+  // the machine sets it in its env file.
+  PRIVATE_TX_RPCS?: SecretBinding;
 }
 
 /**
@@ -466,6 +477,7 @@ export const SECRET_BINDING_KEYS = [
   'ZEROEX_API_KEY',
   'ONEINCH_API_KEY',
   'KEEPER_PRIVATE_KEY',
+  'PRIVATE_TX_RPCS',
 ] as const satisfies readonly (keyof WorkerEnv)[];
 
 /**
@@ -534,6 +546,7 @@ export const PLAIN_VAR_KEYS = [
   'SPLIT_MIN_IMPROVEMENT_BPS',
   'PARTIAL_LIQ_MIN_HF_BPS',
   'DISCOUNT_PATH_CHAIN_IDS',
+  'PRIVATE_TX_FALLBACK_CHAIN_IDS',
 ] as const satisfies readonly (keyof BaseEnv)[];
 
 /** One plain-string knob's name. A reader that takes one of these, rather
@@ -593,6 +606,15 @@ export interface Env extends BaseEnv {
   ZEROEX_API_KEY?: string;
   ONEINCH_API_KEY?: string;
   KEEPER_PRIVATE_KEY?: string;
+  /** #3240 — the one secret whose failed read is NOT collapsed to unset
+   *  ({@link readSecretOrFailure}): unset means "every chain sends publicly",
+   *  so a set-but-unreadable value must not read as that. */
+  PRIVATE_TX_RPCS?: string | SecretReadFailed;
+}
+
+/** A Secrets Store binding that is present but whose read failed. */
+export interface SecretReadFailed {
+  readonly secretReadFailed: true;
 }
 
 /**
@@ -624,6 +646,25 @@ async function readSecret(
 }
 
 /**
+ * {@link readSecret}, except that a binding which is present but cannot be
+ * read is reported as such rather than as unset. For a secret whose absence
+ * is itself a setting (#3240: no private routes means public sends), the
+ * difference decides whether the keeper fails closed.
+ */
+async function readSecretOrFailure(
+  b: SecretBinding | undefined,
+): Promise<string | SecretReadFailed | undefined> {
+  if (!b) return undefined;
+  try {
+    return await b.get();
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('[env] Secrets Store fetch failed; its dependent feature refuses:', redactedError(err));
+    return { secretReadFailed: true };
+  }
+}
+
+/**
  * Resolve the raw Worker bindings into the plain `Env` that every
  * downstream function expects. All secrets are fetched in parallel.
  * Call this **once** per cron tick, at the Worker entry point —
@@ -646,6 +687,7 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     zeroEx,
     oneInch,
     keeperKey,
+    privateTxRpcs,
   ] = await Promise.all([
     readSecret(raw.RPC_BASE),
     readSecret(raw.RPC_ETH),
@@ -662,6 +704,7 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     readSecret(raw.ZEROEX_API_KEY),
     readSecret(raw.ONEINCH_API_KEY),
     readSecret(raw.KEEPER_PRIVATE_KEY),
+    readSecretOrFailure(raw.PRIVATE_TX_RPCS),
   ]);
   return {
     // Passed straight through — these need no `.get()` resolution. That is
@@ -731,6 +774,7 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     SPLIT_MIN_IMPROVEMENT_BPS: raw.SPLIT_MIN_IMPROVEMENT_BPS,
     PARTIAL_LIQ_MIN_HF_BPS: raw.PARTIAL_LIQ_MIN_HF_BPS,
     DISCOUNT_PATH_CHAIN_IDS: raw.DISCOUNT_PATH_CHAIN_IDS,
+    PRIVATE_TX_FALLBACK_CHAIN_IDS: raw.PRIVATE_TX_FALLBACK_CHAIN_IDS,
     // Resolved secrets.
     RPC_BASE: base,
     RPC_ETH: eth,
@@ -747,6 +791,7 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     ZEROEX_API_KEY: zeroEx,
     ONEINCH_API_KEY: oneInch,
     KEEPER_PRIVATE_KEY: keeperKey,
+    PRIVATE_TX_RPCS: privateTxRpcs,
     // RPC_ZKEVM intentionally unset — Polygon zkEVM is out of scope.
   };
 }

@@ -18,7 +18,7 @@
 import { toEventSelector } from 'viem';
 import type { Abi, AbiEvent } from 'viem';
 import { test, expect } from '../lib/wallet-fixture';
-import { postLenderOffer, newestOfferIdFor } from '../lib/flows';
+import { postLenderOffer, newestOfferIdFor, gotoOfferBookNewest } from '../lib/flows';
 import { increaseTime, mine } from '../lib/anvil';
 import { pub, DIAMOND, DIAMOND_ABI_VIEM } from '../lib/chain';
 import { withDeskOffer } from '../lib/desk';
@@ -97,7 +97,7 @@ test('a just-cancelled offer vanishes from the book while the cache still serves
         // book shows it (positive control: the row's presence proves the
         // catch-up layer doesn't over-filter).
         const borrower = await launchWallet('borrower');
-        await borrower.page.goto('/offers', { waitUntil: 'domcontentloaded' });
+        await gotoOfferBookNewest(borrower.page);
         const bookRow = borrower.page.locator(`a[href*="offer=${offerId}&"]`);
         await expect(bookRow.first()).toBeVisible({ timeout: 30_000 });
 
@@ -135,7 +135,7 @@ test('a just-cancelled offer vanishes from the book while the cache still serves
         // over the post-pin tail decodes the terminal event and strips
         // it. A full page load guarantees a fresh query (no SPA cache
         // carry-over).
-        await borrower.page.goto('/offers', { waitUntil: 'domcontentloaded' });
+        await gotoOfferBookNewest(borrower.page);
         // Wait for a POSITIVELY loaded book first — the spec's own anchor
         // row — because waiting for the loading text to be ABSENT would pass
         // trivially before React even mounts, letting the absence assert

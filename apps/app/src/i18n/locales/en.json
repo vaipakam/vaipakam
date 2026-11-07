@@ -2431,11 +2431,17 @@
         "sideBorrowing": "Requests to borrow (you lend)",
         "sideRentals": "NFT rentals",
         "sortLabel": "Sort by",
+        "sortLargest": "Largest first",
         "sortNewest": "Newest first",
         "sortRateLow": "Lowest rate first",
         "sortRateHigh": "Highest rate first",
         "sortDurationShort": "Shortest loan first",
         "sortDurationLong": "Longest loan first",
+        "minSizeLabel": "Smallest size",
+        "minSizeAny": "Any size",
+        "minSizeAtLeast": "At least {{amount}} {{unit}}",
+        "minSizeUnitUnknown": "in the reference currency",
+        "sizeNote": "Size is what an offer still lends, or what a request asks for, valued at the protocol’s price. Offers in a token with no reliable price have no measured size: they are never hidden by size and are listed after the sized ones.",
         "assetLabel": "Filter by asset address",
         "assetPlaceholder": "0x… (any part: loan asset, collateral, payment)",
         "clear": "Clear filters"
@@ -2686,6 +2692,7 @@
         "gaslessPosted": "Signed offer posted — no network fee spent. It becomes a loan when someone takes it.",
         "gaslessFundsWarn": "Heads up: your vault has less than the {{amount}} {{symbol}} this offer needs. If the funds aren’t there when someone takes it, it will fail — add funds to your vault to keep it usable.",
         "gaslessRejected": "The book rejected this order ({{reason}}). Nothing was posted.",
+        "gaslessBelowFloor": "This order is smaller than the smallest offer the protocol accepts in this token, so no one could take it. Nothing was posted. Raise the amount and sign again.",
         "gaslessUnavailable": "We couldn’t reach the order book right now — the order was NOT posted. Please try again in a moment.",
         "legLoanAsset": "loan asset",
         "legCollateral": "collateral",
@@ -3433,6 +3440,9 @@
       "backHome": "Back to Home"
     },
     "offerFlow": {
+      "openOfferCapFull": "You already have {{cap}} offers open, the most one wallet may have. Cancel one to post another; an expired offer counts until you cancel it.",
+      "openOfferCapNear": "You have {{open}} of the {{cap}} offers one wallet may have open. An expired offer counts until you cancel it.",
+      "openOfferCapManage": "See your offers",
       "durationCap": "The protocol currently caps offers at {{max}} — pick a shorter duration.",
       "receipts": {
         "buyYouReceive": "The lender position of running loan #{{loanId}}: up to ~{{interest}} interest from now to the due date if the borrower repays on time, plus the full {{principal}} back.",
@@ -3589,7 +3599,8 @@
       "waitingForWallet": "Waiting for wallet…",
       "networkFallback": "network #{{id}}",
       "unknown": "unknown",
-      "amountTooPrecise": "{{symbol}} can’t be split that finely — use at most {{decimals}} decimal places."
+      "amountTooPrecise": "{{symbol}} can’t be split that finely — use at most {{decimals}} decimal places.",
+      "amountBelowOfferFloor": "The smallest offer the protocol accepts in this token is {{min}} {{symbol}}. Enter at least that much."
     },
     "stepNav": {
       "progressAria": "Progress",
@@ -3901,6 +3912,10 @@
       "availableNow": "now (the cooldown ended {{when}})",
       "availableFrom": "not before {{when}}, in {{span}}",
       "maxOfferDuration": "Max offer duration",
+      "minOfferValue": "Smallest offer",
+      "minOfferValueHint": "The least an offer’s principal must be worth when it is posted or its amount is changed. It applies only to a liquid token with a price; NFTs and illiquid tokens are never refused for their value. Offers that come from an existing loan are exempt. Raising it closes no open offer.",
+      "maxOpenOffers": "Open offers per wallet",
+      "maxOpenOffersHint": "The most offers one wallet may have open at once, every offer type counted. An expired offer counts until it is cancelled. Lowering it closes no open offer. Offers that come from an existing loan are exempt.",
       "flagsHeading": "Feature flags",
       "partialFill": "Order matching (partial fill)",
       "partialFillHint": "While off, the order matchers refuse and an accepted offer fills once. While on, a ranged offer can be filled across several matches. Ranged offers themselves are always on.",
@@ -3996,6 +4011,8 @@
     "FunctionDisabled": "This feature is currently turned off by protocol governance. Please try again later.",
     "InterestRateAboveCeiling": "The interest rate is above the protocol's current ceiling. Lower the rate and try again.",
     "OfferDurationExceedsCap": "The loan duration is longer than the protocol allows. Choose a shorter term.",
+    "OfferBelowMinimumValue": "This offer is smaller than the protocol allows: the amount, or the smallest part one match may take, is worth less than the minimum offer value. Raise the amount and try again.",
+    "TooManyOpenOffers": "This wallet already has as many open offers as the protocol allows. Cancel an offer you no longer need (an expired offer counts until you cancel it), then try again.",
     "AmountMustBePositive": "Enter an amount greater than zero.",
     "AmountMaxMustBePositive": "Enter a maximum amount greater than zero.",
     "CollateralMustBePositive": "Enter a collateral amount greater than zero.",

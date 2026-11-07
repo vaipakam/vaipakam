@@ -1876,7 +1876,13 @@
         "sortDurationLong": "Längster Kredit zuerst",
         "assetLabel": "Nach Asset-Adresse filtern",
         "assetPlaceholder": "0x… (beliebiger Teil: Kredit-Asset, Sicherheit, Zahlung)",
-        "clear": "Filter löschen"
+        "clear": "Filter löschen",
+        "sortLargest": "Größte zuerst",
+        "minSizeLabel": "Kleinste Größe",
+        "minSizeAny": "Jede Größe",
+        "minSizeAtLeast": "Mindestens {{amount}} {{unit}}",
+        "minSizeUnitUnknown": "in der Referenzwährung",
+        "sizeNote": "Die Größe ist, was ein Angebot noch verleiht oder was eine Anfrage erbittet, bewertet zum Preis des Protokolls. Angebote in einem Token ohne verlässlichen Preis haben keine gemessene Größe: Sie werden nie nach Größe ausgeblendet und nach den bewerteten Angeboten aufgeführt."
       },
       "loading": "Angebotsbuch wird geladen…",
       "filteredEmptyTitle": "Keine Angebote passen zu diesen Filtern",
@@ -2143,7 +2149,8 @@
         "lockAtFill": "{{amount}} {{symbol}} Sicherheit — wird erst gesperrt, wenn jemand das Angebot annimmt.",
         "netYield": "Wenn jemand das Angebot annimmt und der Kredit zurückgezahlt wird, verdienen Sie nach der Protokollgebühr von {{feePct}} % auf Ihre Zinsen etwa {{net}} % pro Jahr.",
         "lifNote": "Startgebühr: {{feePct}} % des Kreditbetrags (etwa {{amount}} {{symbol}}), berechnet beim Start des Kredits.",
-        "expiryGtcSignedHint": "Ein kostenlos signiertes Angebot bleibt bis zu 7 Tage offen und läuft dann von selbst ab. Sie können es vorher stornieren (das Stornieren kostet eine Netzwerkgebühr)."
+        "expiryGtcSignedHint": "Ein kostenlos signiertes Angebot bleibt bis zu 7 Tage offen und läuft dann von selbst ab. Sie können es vorher stornieren (das Stornieren kostet eine Netzwerkgebühr).",
+        "gaslessBelowFloor": "Dieser Auftrag ist kleiner als das kleinste Angebot, das das Protokoll in diesem Token annimmt, daher könnte ihn niemand annehmen. Es wurde nichts eingestellt. Erhöhe den Betrag und signiere erneut."
       },
       "orders": {
         "loading": "Ihre offenen Orders werden geladen…",
@@ -2983,7 +2990,10 @@
       "receiptOweNothing": "Nichts — der Kreditnehmer schuldet Ihnen.",
       "viewTransaction": "Transaktion ansehen",
       "viewPositions": "Meine Positionen ansehen",
-      "postAnother": "Ein weiteres Angebot veröffentlichen"
+      "postAnother": "Ein weiteres Angebot veröffentlichen",
+      "openOfferCapFull": "Du hast bereits {{cap}} Angebote offen, das Maximum für eine Wallet. Storniere eines, um ein weiteres einzustellen; ein abgelaufenes Angebot zählt, bis du es stornierst.",
+      "openOfferCapNear": "Du hast {{open}} von {{cap}} Angeboten offen, die eine Wallet haben darf. Ein abgelaufenes Angebot zählt, bis du es stornierst.",
+      "openOfferCapManage": "Deine Angebote ansehen"
     },
     "loanRow": {
       "youRent": "Sie mieten",
@@ -3027,7 +3037,8 @@
       "waitingForWallet": "Warten auf die Wallet…",
       "networkFallback": "Netzwerk #{{id}}",
       "unknown": "unbekannt",
-      "amountTooPrecise": "{{symbol}} lässt sich nicht so fein aufteilen – verwenden Sie höchstens {{decimals}} Nachkommastellen."
+      "amountTooPrecise": "{{symbol}} lässt sich nicht so fein aufteilen – verwenden Sie höchstens {{decimals}} Nachkommastellen.",
+      "amountBelowOfferFloor": "Das kleinste Angebot, das das Protokoll in diesem Token annimmt, beträgt {{min}} {{symbol}}. Gib mindestens diesen Betrag ein."
     },
     "stepNav": {
       "progressAria": "Fortschritt",
@@ -3313,7 +3324,11 @@
       "graceNote": "Wie lange nach seinem Enddatum ein Kredit in den Ausfall gesetzt werden kann, nach Laufzeit des Kredits. Ein Kredit nimmt die erste Zeile, deren Grenze seine Laufzeit unterschreitet.",
       "graceUnsetNote": "Nicht gesetzt, daher gilt der unten dokumentierte Standardplan des Protokolls. Ein Kredit nimmt die erste Zeile, deren Grenze seine Laufzeit unterschreitet.",
       "graceUnder": "Kredite unter {{days}} Tagen",
-      "graceLongerLoans": "Alle längeren Kredite"
+      "graceLongerLoans": "Alle längeren Kredite",
+      "minOfferValue": "Kleinstes Angebot",
+      "minOfferValueHint": "Der Mindestwert, den der Kapitalbetrag eines Angebots haben muss, wenn es eingestellt oder sein Betrag geändert wird. Das gilt nur für einen liquiden Token mit Preis; NFTs und illiquide Token werden nie wegen ihres Werts abgelehnt. Angebote, die aus einem bestehenden Kredit stammen, sind ausgenommen. Eine Erhöhung schließt kein offenes Angebot.",
+      "maxOpenOffers": "Offene Angebote pro Wallet",
+      "maxOpenOffersHint": "Die Höchstzahl an Angeboten, die eine Wallet gleichzeitig offen haben darf, alle Angebotsarten zusammengezählt. Ein abgelaufenes Angebot zählt, bis es storniert wird. Eine Senkung schließt kein offenes Angebot. Angebote, die aus einem bestehenden Kredit stammen, sind ausgenommen."
     },
     "forcedClose": {
       "title": "Dieses Darlehen ist überfällig",
@@ -4162,6 +4177,8 @@
     "ListingFloorBelowReviewed": "Das Minimum, das Ihnen dieses Angebot garantieren würde, ist seit Ihrer Prüfung gesunken (Zeit ist vergangen oder der Kredit hat sich geändert). Es wurde nichts inseriert. Prüfen Sie das Angebot erneut, um den aktuellen Wert zu sehen.",
     "ListingHeldAboveReviewed": "Seit Ihrer Prüfung des Angebots wurde auf diesem Kredit mehr für den Kreditgeber zurückgelegt. Es wurde nichts inseriert. Prüfen Sie das Angebot erneut, um die aktuellen Werte zu sehen.",
     "SaleBelowSellerFloor": "Dieses Angebot kann nicht mehr gekauft werden: Der Kredit hat sich seit dem Inserieren geändert (etwa durch eine Teilrückzahlung), so dass der Verkauf dem Verkäufer weniger als das von seinem Angebot garantierte Minimum einbrächte. Es wurde nichts eingezogen. Der Verkäufer kann es stornieren und erneut inserieren.",
-    "SaleAboveHeldCeiling": "Dieses Angebot kann nicht mehr gekauft werden: Seit dem Inserieren wurde auf diesem Kredit mehr für den Kreditgeber zurückgelegt, als das Angebot zulässt. Es wurde nichts eingezogen. Der Verkäufer kann es stornieren und erneut inserieren."
+    "SaleAboveHeldCeiling": "Dieses Angebot kann nicht mehr gekauft werden: Seit dem Inserieren wurde auf diesem Kredit mehr für den Kreditgeber zurückgelegt, als das Angebot zulässt. Es wurde nichts eingezogen. Der Verkäufer kann es stornieren und erneut inserieren.",
+    "OfferBelowMinimumValue": "Dieses Angebot ist kleiner, als das Protokoll erlaubt: Der Betrag oder der kleinste Teil, den ein Abgleich übernehmen darf, ist weniger wert als der Mindestwert eines Angebots. Erhöhe den Betrag und versuche es erneut.",
+    "TooManyOpenOffers": "Diese Wallet hat bereits so viele offene Angebote, wie das Protokoll erlaubt. Storniere ein Angebot, das du nicht mehr brauchst (ein abgelaufenes Angebot zählt, bis du es stornierst), und versuche es dann erneut."
   }
 }

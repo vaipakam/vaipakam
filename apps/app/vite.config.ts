@@ -7,6 +7,7 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { cspScriptHashesPlugin } from '@vaipakam/lib/cspScriptHashes';
+import { buildSourceTime } from '@vaipakam/lib/buildTime';
 import { e2eDeploymentsBundlePlugin } from '@vaipakam/lib/e2eDeploymentsBundle';
 import { REPORT_ONLY_HEADER, cspConnectSourcesPlugin } from '@vaipakam/lib/cspConnectSources';
 import { connectSources, rpcConfigProblems } from './src/lib/endpoints.ts';
@@ -24,7 +25,12 @@ process.env.VITE_BUILD_HASH = (() => {
     return 'unknown';
   }
 })();
-process.env.VITE_BUILD_TIME = new Date().toISOString();
+// #3236 — the time is the COMMIT's, not the clock's, so two builds of one
+// commit produce the same files and the served build can be checked by
+// rebuilding it (see @vaipakam/lib/buildTime).
+const buildTime = buildSourceTime();
+if (!buildTime.reproducible) console.warn(`[build-time] ${buildTime.reason}; stamping the clock, so this build will not match a rebuild`);
+process.env.VITE_BUILD_TIME = buildTime.iso;
 
 // #2687 — whether this build registers the service worker. Set here on
 // every build, never left to an env file (a value already in the process

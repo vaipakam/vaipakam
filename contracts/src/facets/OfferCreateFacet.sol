@@ -7,13 +7,13 @@ import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibProtectedAccount} from "../libraries/LibProtectedAccount.sol";
 import {LibLoanClock} from "../libraries/LibLoanClock.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
-import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
 import {LibPermit2, ISignatureTransfer} from "../libraries/LibPermit2.sol";
-import {LibRiskMath} from "../libraries/LibRiskMath.sol";
 import {LibNumeraireValueRead} from "../libraries/LibNumeraireValueRead.sol";
 import {LibOfferBounds} from "../libraries/LibOfferBounds.sol";
 import {LibOfferShape} from "../libraries/LibOfferShape.sol";
 import {LibCadenceAdmission} from "../libraries/LibCadenceAdmission.sol";
+import {LibOfferAdmission} from "../libraries/LibOfferAdmission.sol";
+import {OfferBookFacet} from "./OfferBookFacet.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
@@ -22,7 +22,6 @@ import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {Strings} from "@openzeppelin/contracts/utils/Strings.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
-import {OracleFacet} from "./OracleFacet.sol";
 import {OfferPreviewFacet} from "./OfferPreviewFacet.sol";
 import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
@@ -352,7 +351,7 @@ contract OfferCreateFacet is
         address vault;
         (offerId, vault) = _createOfferSetup(msg.sender, params);
         _pullCreatorAssetsClassic(offerId, msg.sender, params, vault);
-        _createOfferFinish(msg.sender, offerId, params);
+        _createOfferFinish(msg.sender, offerId, params, LibOfferAdmission.Route.UserPosted);
     }
 
     /// @notice Cross-facet entry used exclusively by
@@ -384,7 +383,7 @@ contract OfferCreateFacet is
         address vault;
         (offerId, vault) = _createOfferSetup(creator, params);
         _pullCreatorAssetsClassic(offerId, creator, params, vault);
-        _createOfferFinish(creator, offerId, params);
+        _createOfferFinish(creator, offerId, params, LibOfferAdmission.Route.OnBehalf);
     }
 
     /**
@@ -464,7 +463,7 @@ contract OfferCreateFacet is
         // retags the old lien. Without this, a Permit2 refinance would force a
         // second collateral batch and lose the carry-over.
         if (LibVaipakam.storageSlot().offers[offerId].refinanceCarryOver) {
-            _createOfferFinish(msg.sender, offerId, params);
+            _createOfferFinish(msg.sender, offerId, params, LibOfferAdmission.Route.UserPosted);
             return offerId;
         }
         LibPermit2.pull(msg.sender, vault, expectedAsset, amount, permit, signature);
@@ -484,7 +483,7 @@ contract OfferCreateFacet is
             ),
             VaultDepositFailed.selector
         );
-        _createOfferFinish(msg.sender, offerId, params);
+        _createOfferFinish(msg.sender, offerId, params, LibOfferAdmission.Route.UserPosted);
     }
 
     /// @notice Funding mode for a materialized signed offer (#396 v0.5).
@@ -636,7 +635,7 @@ contract OfferCreateFacet is
                 VaultDepositFailed.selector
             );
         }
-        _createOfferFinish(creator, offerId, params);
+        _createOfferFinish(creator, offerId, params, LibOfferAdmission.Route.SignedMaterialize);
     }
 
     /// @notice #1949 — the same event `ProfileFacet.setOfferCreatorFullTariff`
@@ -1213,7 +1212,8 @@ contract OfferCreateFacet is
     function _createOfferFinish(
         address creator,
         uint256 offerId,
-        LibVaipakam.CreateOfferParams calldata params
+        LibVaipakam.CreateOfferParams calldata params,
+        LibOfferAdmission.Route route
     ) private {
         // Protected account mode — a locked or retired account posts no offer.
         LibProtectedAccount.requireCanOpen(creator);
@@ -1307,85 +1307,13 @@ contract OfferCreateFacet is
             );
         }
 
-        LibMetricsHooks.onOfferCreated(offer);
-
-        emit OfferCreated(offerId, creator, params.offerType);
-        _emitOfferCreatedDetails(offerId, creator);
-    }
-
-    /// @dev Emits {OfferCreatedDetails}. Factored out + populated
-    ///      field-by-field on a memory struct to dodge viaIR's
-    ///      stack-too-deep at the emit site.
-    function _emitOfferCreatedDetails(uint256 offerId, address creator) internal {
-        LibVaipakam.Offer storage offer = LibVaipakam.storageSlot().offers[offerId];
-
-        OfferCreatedFields memory f;
-        f.offerType = offer.offerType;
-        f.assetType = offer.assetType;
-        f.collateralAssetType = offer.collateralAssetType;
-        f.amount = offer.amount;
-        f.tokenId = offer.tokenId;
-        f.collateralAsset = offer.collateralAsset;
-        f.collateralAmount = offer.collateralAmount;
-        f.interestRateBps = offer.interestRateBps;
-        f.durationDays = offer.durationDays;
-        // Issue #102 / ADR-0010 §3 — indexers see the LOGICAL borrower
-        // amount ceiling, never the storage default. The GTC default
-        // ships `amountMax = 0` on borrower offers and derives the
-        // effective ceiling at match-time from `collateralAmountMax ×
-        // effective init-LTV cap`. Apply the same collapse here so the
-        // event payload mirrors what `previewMatch` sees, sparing
-        // indexers from having to re-derive (and from observing the raw
-        // storage 0). Lender offers always have `amountMax > 0` (pre-
-        // vault requirement) so the conditional is a no-op for them.
-        if (offer.amountMax == 0
-            && offer.offerType == LibVaipakam.OfferType.Borrower) {
-            uint8 effTier = OracleFacet(address(this))
-                                .getEffectiveLiquidityTier(offer.collateralAsset);
-            uint256 maxLtv  = LibVaipakam.assetInitLtvCeilingBps(offer.collateralAsset);
-            uint256 tierCap = uint256(LibVaipakam.effectiveTierMaxInitLtvBps(effTier));
-            uint256 cap     = maxLtv < tierCap ? maxLtv : tierCap;
-            uint256 borrowerCollMax = offer.collateralAmountMax == 0
-                ? offer.collateralAmount
-                : offer.collateralAmountMax;
-            f.amountMax = LibRiskMath.maxLendingForLtvCap(
-                borrowerCollMax,
-                offer.lendingAsset,
-                offer.collateralAsset,
-                cap
-            );
-        } else {
-            f.amountMax = offer.amountMax;
-        }
-        f.interestRateBpsMax = offer.interestRateBpsMax;
-        // Issue #169 follow-up — indexers see the LOGICAL upper bound,
-        // never the storage default. The single-value-SSTORE-skip
-        // optimisation in `_writeOfferCollateralFields` leaves
-        // `offer.collateralAmountMax == 0` on legacy / single-value
-        // offers; apply the same `0 ⇒ collateralAmount` collapse here
-        // so the event payload mirrors what every read site (preview,
-        // refund, cancel) sees. Without this, indexers would have to
-        // know about the SSTORE-skip — leaky abstraction.
-        f.collateralAmountMax = offer.collateralAmountMax == 0
-            ? offer.collateralAmount
-            : offer.collateralAmountMax;
-        f.creatorRiskAndTermsConsent = offer.creatorRiskAndTermsConsent;
-        f.allowsPartialRepay = offer.allowsPartialRepay;
-        f.periodicInterestCadence = offer.periodicInterestCadence;
-        f.expiresAt = offer.expiresAt;
-        f.fillMode = offer.fillMode;
-        // T-086 step 4 — companion-event surface for the lender's
-        // prepay-listing consent. Carried so indexer / frontend cache
-        // merges can render the offer's "borrower may post a prepay
-        // listing" decoration without a follow-up `getOffer` view-call.
-        f.allowsPrepayListing = offer.allowsPrepayListing;
-        // T-092 Phase 2b (Codex round-1 P2) — carry the refinance
-        // target on the companion event so indexers + the dapp can
-        // distinguish refinance-tagged Borrower offers from standard
-        // ones without a follow-up `getOffer` view-call.
-        f.refinanceTargetLoanId = offer.refinanceTargetLoanId;
-
-        emit OfferCreatedDetails(offerId, creator, offer.lendingAsset, f);
+        // #3242 — the offer enters the book through one host,
+        // {OfferBookFacet.openOfferOnBook}: it applies the two book bounds
+        // (the value floor and the per-wallet open-offer cap, both read from
+        // the row just written), records the offer in the active index and
+        // announces it ({OfferCreated} then {OfferCreatedDetails}, unchanged).
+        // A refusal reverts this whole create.
+        OfferBookFacet(address(this)).openOfferOnBook(offerId, route);
     }
 
     /**

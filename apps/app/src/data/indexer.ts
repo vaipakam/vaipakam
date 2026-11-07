@@ -1075,6 +1075,10 @@ export interface ProtocolKnobValues {
   autoPauseAvailableAt?: string;
   lenderIntentEnabled?: boolean;
   minIntentFillNumeraire?: string;
+  /** #3242 — the offer value floor (1e18 numeraire) and the per-wallet
+   *  open-offer cap, each the effective value. */
+  minOfferValueNumeraire?: string;
+  maxOpenOffersPerWallet?: string;
   treasury?: string;
   // #2680 — single-output settings added with the multi-part reads.
   /** The predominant denominator (PAD) and its feeds; the zero address /

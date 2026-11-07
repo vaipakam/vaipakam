@@ -14,6 +14,10 @@
       "types": "./src/address.ts",
       "default": "./src/address.ts"
     },
+    "./buildTime": {
+      "types": "./src/buildTime.d.mts",
+      "default": "./src/buildTime.mjs"
+    },
     "./cronCadence": {
       "types": "./src/cronCadence.ts",
       "default": "./src/cronCadence.ts"

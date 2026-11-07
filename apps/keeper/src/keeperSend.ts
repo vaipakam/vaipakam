@@ -21,21 +21,23 @@
 
 import { keccak256, type Address, type Hex, type PublicClient, type WalletClient } from 'viem';
 import { describeFailure } from '@vaipakam/lib/errorDescription';
-import { isDefinitiveRejection, isSendPastDeadline, withGasLimitRule, withSubmissionSlot } from './submissionQueue';
+import { broadcastSigned, heldUnminedNonces, isDefinitiveRejection, isSendPastDeadline, withGasLimitRule, withSubmissionSlot } from './submissionQueue';
 
 /** Null when the keeper has no unmined transaction; otherwise the reason
  *  to hold this send. */
 export async function keeperTxPending(
   client: Pick<PublicClient, 'getTransactionCount'>,
   keeper: Address,
+  chainId: number,
 ): Promise<string | null> {
   const [pendingNonce, minedNonce] = await Promise.all([
     client.getTransactionCount({ address: keeper, blockTag: 'pending' }),
     client.getTransactionCount({ address: keeper, blockTag: 'latest' }),
   ]);
-  return pendingNonce > minedNonce
-    ? `keeper-tx-pending (${pendingNonce - minedNonce} unmined)`
-    : null;
+  // The ordinary RPC cannot see a private send until it is mined, so the
+  // keeper's own record of what it sent counts too (Codex #3275 r9).
+  const unmined = Math.max(pendingNonce - minedNonce, await heldUnminedNonces(chainId, keeper, minedNonce));
+  return unmined > 0 ? `keeper-tx-pending (${unmined} unmined)` : null;
 }
 
 /** The skip reason an attempt's thrown error is logged under (#2572): a send
@@ -95,7 +97,7 @@ export async function sendInSubmissionSlot(
       // a hash recorded before that refusal would read as a broadcast.
       signed();
       tx = keccak256(serialized);
-      await wallet.sendRawTransaction({ serializedTransaction: serialized });
+      await broadcastSigned(wallet, chainId, serialized, notAfterMs);
     });
   } catch (err) {
     // Failed before signing, or the node answered with a refusal (or the

@@ -48,7 +48,9 @@ export type RowFormat =
   /** A unix time from which something may happen (#2843): said as now
    *  once it has passed, as the time and how long until it otherwise. Zero
    *  means the row's own `zeroMeans`. */
-  | 'notBefore';
+  | 'notBefore'
+  /** A whole number of things, shown as the number (#3242). */
+  | 'count';
 
 /** The values with a row of their own; the tier table and the grace
  *  schedule are lists, rendered on their own after the sections. */
@@ -214,6 +216,9 @@ export const CONSOLE_SECTIONS: readonly ConsoleSection[] = [
         zeroMeans: 'autoPauseNeverFroze',
       },
       { key: 'maxOfferDurationDays', label: 'maxOfferDuration', format: 'days' },
+      // #3242 — the offer-book bounds.
+      { key: 'minOfferValueNumeraire', label: 'minOfferValue', hint: 'minOfferValueHint', format: 'numeraireAmount' },
+      { key: 'maxOpenOffersPerWallet', label: 'maxOpenOffers', hint: 'maxOpenOffersHint', format: 'count' },
     ],
   },
   {

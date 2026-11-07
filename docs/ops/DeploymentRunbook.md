@@ -1042,6 +1042,14 @@ each item is checked:
       because an open app tab sends hundreds of requests an hour, which
       Workers Free's daily allowance would not carry at launch. Steps in
       [`apps/rpc-proxy/README.md`](../../apps/rpc-proxy/README.md).
+- [ ] The operations baseline in
+      [`MainnetOpsBaseline.md`](MainnetOpsBaseline.md) (#3243) is met and
+      recorded: a dedicated, hardened keeper host with no automated session
+      on it, a separate key per role, host monitoring, the per-chain private
+      submission decision (#3240), production credentials scoped per
+      service and kept off machines automated sessions can read, and a
+      dated rotation record for every bot token and signing key. Name who
+      checked it and when.
 
 ---
 
