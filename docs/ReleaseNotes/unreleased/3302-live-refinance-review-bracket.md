@@ -1,4 +1,4 @@
-## Thread — the live refinance drive brackets the borrower review in time (PR #PRNUM)
+## Thread — the live refinance drive brackets the borrower review in time (PR #3303)
 
 The re-run of the live refinance drive on loan 3 stopped at the borrower's review, before anything was written. Two figures on the page, the payoff growth and the payoff permit maximum, were 3,805,175 wei lower than the drive expected. Closes #3302.
 
