@@ -27,6 +27,14 @@
   // CONSEQUENCE, and it is the intended trade: a deploy can no longer REMOVE
   // a var. Deleting one is now a deliberate dashboard action.
   "keep_vars": true,
+  // `viem` imported from `packages/lib` (the shared governance decoder,
+  // `src/eventAlerts.ts`) resolves to this Worker's own copy, so the bundle
+  // carries one viem and needs no workspace install. Same rule as the
+  // `paths` entry in tsconfig.json. The alias names viem's ESM entry, not
+  // the package folder: the folder resolves through `main` to the CommonJS
+  // build, which esbuild cannot tree-shake (measured: 1,450 KiB against
+  // 822 KiB for this entry).
+  "alias": { "viem": "./node_modules/viem/_esm/index.js" },
   "observability": {
     "enabled": true,
   },

@@ -20,6 +20,12 @@
     // hand-typing call signatures. See the header comment in `abi.ts`
     // for why (the 2026-05-05 watcher offer-decode drift incident).
     "resolveJsonModule": true,
+    // `src/eventAlerts.ts` imports `packages/lib/src/governanceQueue.ts` by
+    // relative path, and that file imports `viem`. This Worker is outside the
+    // pnpm workspace, so no node_modules sits above `packages/lib` in CI;
+    // point the import at this Worker's own copy. `wrangler.jsonc` `alias` and
+    // `vitest.config.ts` say the same for the bundle and the tests.
+    "paths": { "viem": ["./node_modules/viem"] },
     "noEmit": true
   },
   // SRC ONLY here; `tsconfig.test.json` covers `test/**` (#2235 r1 P2).

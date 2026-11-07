@@ -40,7 +40,18 @@
  */
 
 import type { Abi, AbiEvent, AbiFunction, Address, Hex, PublicClient } from 'viem';
-import { keccak256, toHex } from 'viem';
+// THE SHARED DECODER (#3237), reached by relative path like `store.ts`'s
+// chunker: this Worker is outside the pnpm workspace. The public "queued
+// changes" page reads the same module, so an alert and the page describe a
+// queued call in the same words. `viem` inside it resolves to this Worker's
+// own copy (the `paths` entry in tsconfig.json, `alias` in wrangler.jsonc and
+// vitest.config.ts), so the bundle carries one viem.
+import {
+  describeGovernanceCall,
+  englishSummary,
+  roleName,
+  type GovernanceTarget,
+} from '../../../packages/lib/src/governanceQueue';
 import abiSubset from './abiSubset.json';
 import type { CoverageGap } from './chains';
 import { classify, describeFailure } from './errors';
@@ -302,13 +313,90 @@ const TIMELOCK_VIEWS = ['getTimestamp'] as const;
 type SubsetEntry = { type: string; name?: string; inputs?: { name: string; type: string; indexed?: boolean }[] };
 const SUBSET = abiSubset as unknown as Record<string, SubsetEntry[]>;
 
+/**
+ * The calls a queued governance operation is decoded against, per
+ * deployment key of its target: each contract's state-changing surface that
+ * governance is expected to drive. A call to anything else, or to a function
+ * not listed, is still alerted, named by its four-byte selector with the
+ * whole call data, never guessed (`englishSummary`'s undecoded line). The
+ * entries are copied verbatim from the compiled ABIs like every other subset
+ * entry, so a changed signature fails `abi:check` before a deploy.
+ */
+const GOVERNANCE_CALLS: Readonly<Record<string, ReadonlyArray<{ abiFile: string; names: readonly string[] }>>> = {
+  diamond: [
+    { abiFile: 'DiamondCutFacet', names: ['diamondCut'] },
+    {
+      abiFile: 'AccessControlFacet',
+      names: ['grantRole', 'revokeRole', 'renounceRole', 'emergencyRevokeRole', 'transferAdmin'],
+    },
+    { abiFile: 'OwnershipFacet', names: ['transferOwnership'] },
+    { abiFile: 'AdminFacet', names: ['pause', 'unpause'] },
+  ],
+  timelock: [{ abiFile: 'VaipakamTimelock', names: ['grantRole', 'revokeRole', 'renounceRole', 'updateDelay'] }],
+  sanctionsList: [
+    {
+      abiFile: 'SanctionsList',
+      names: [
+        'acceptOwnership',
+        'transferOwnership',
+        'applyUpdate',
+        'authorizePublicationRollback',
+        'setAdder',
+        'setAdderDailyAdditionCap',
+        'setRemover',
+      ],
+    },
+  ],
+  sanctionsDelistingTimelock: [
+    {
+      abiFile: 'SanctionsDelistingTimelock',
+      names: [
+        'acceptOwnership',
+        'transferOwnership',
+        'cancel',
+        'discard',
+        'setClearanceMaxAge',
+        'setClearanceSource',
+        'setDelay',
+        'setOracleMaxAge',
+        'setProposer',
+        'setVetoed',
+      ],
+    },
+  ],
+};
+
 /** Every subset entry the event pass needs — what `abiSubset.json` must carry for it. */
 export const WATCHED_EVENT_ENTRIES: ReadonlyArray<{ facetFile: string; type: 'event' | 'function'; name: string }> = [
   ...WATCHED.flatMap((c) =>
     Object.keys(c.events).map((name) => ({ facetFile: c.abiFile, type: 'event' as const, name })),
   ),
   ...TIMELOCK_VIEWS.map((name) => ({ facetFile: 'VaipakamTimelock', type: 'function' as const, name })),
+  ...Object.values(GOVERNANCE_CALLS).flatMap((groups) =>
+    groups.flatMap((g) => g.names.map((name) => ({ facetFile: g.abiFile, type: 'function' as const, name }))),
+  ),
 ];
+
+/** The decode ABI for calls to a deployment key, or null when none is carried. */
+function governanceAbi(key: string): Abi | null {
+  const groups = GOVERNANCE_CALLS[key];
+  if (!groups) return null;
+  return groups.flatMap((g) =>
+    (SUBSET[g.abiFile] ?? []).filter((e) => e.type === 'function' && g.names.includes(e.name ?? '')),
+  ) as unknown as Abi;
+}
+
+/** Every address the deployment records, as a target the decoder may name. */
+export function governanceTargets(labels: ReadonlyMap<string, string>): GovernanceTarget[] {
+  return [...labels].map(([address, key]) => ({ key, address: address as Address, abi: governanceAbi(key) }));
+}
+
+/** One queued or executed call in plain words, from the shared decoder. */
+function callAction(args: Record<string, unknown>, targets: readonly GovernanceTarget[]): string | null {
+  const { target, value, data } = args;
+  if (typeof target !== 'string' || typeof value !== 'bigint' || typeof data !== 'string') return null;
+  return englishSummary(describeGovernanceCall({ target: target as Address, value, data: data as Hex }, targets));
+}
 
 function abiOf(contract: WatchedContract): Abi {
   return (SUBSET[contract.abiFile] ?? []) as unknown as Abi;
@@ -420,22 +508,6 @@ export interface EventScan {
   backlogBlocks: bigint;
 }
 
-/**
- * Well-known OpenZeppelin TimelockController roles, by hash. Built on first
- * use rather than at module load: most ticks render no role event, and the
- * cold-start CPU of this Worker is tight (Workers Free, 10 ms).
- */
-let roleNames: ReadonlyMap<string, string> | null = null;
-function roleName(hash: string): string | undefined {
-  roleNames ??= new Map([
-    [`0x${'0'.repeat(64)}`, 'DEFAULT_ADMIN_ROLE'],
-    ...['PROPOSER_ROLE', 'EXECUTOR_ROLE', 'CANCELLER_ROLE', 'TIMELOCK_ADMIN_ROLE'].map(
-      (r) => [keccak256(toHex(r)), r] as [string, string],
-    ),
-  ]);
-  return roleNames.get(hash.toLowerCase());
-}
-
 const DURATION_FIELDS = new Set(['delay', 'previousDelay', 'newDelay', 'oldDuration', 'newDuration']);
 const TIME_FIELDS = new Set(['eta']);
 /** How many entries of an address list one alert prints before summarising. */
@@ -464,12 +536,12 @@ function renderValue(
   }
   if (type === 'bytes' && typeof value === 'string') {
     const bytes = (value.length - 2) / 2;
-    // The function a call runs is its first four bytes. Plain-words
-    // decoding of the call is tracked on #3237 (the shared decoder).
+    // The function a call runs is its first four bytes. The call in plain
+    // words is the alert's `action` line (`callAction`).
     return bytes >= 4 ? `function selector ${value.slice(0, 10)}, ${bytes} bytes of calldata` : `${bytes} bytes`;
   }
   if (type === 'bytes32' && typeof value === 'string' && field.toLowerCase().includes('role')) {
-    const name = roleName(value);
+    const name = roleName(value as Hex);
     return name ? `${name} (${value})` : value;
   }
   if (typeof value === 'bigint') {
@@ -517,6 +589,8 @@ interface DecodedLog {
 export async function scanEvents(input: EventScanInput): Promise<EventScan> {
   const out: EventScan = { findings: [], scans: [], gap: null, backlogBlocks: 0n };
   const failures: string[] = [];
+  /** Built on the first timelock call this tick: most ticks have none. */
+  let targets: GovernanceTarget[] | undefined;
 
   const present = WATCHED.filter((c) => input.addresses[c.id] !== undefined);
   if (present.length === 0) return out;
@@ -596,6 +670,11 @@ export async function scanEvents(input: EventScanInput): Promise<EventScan> {
         const [name, type] = s.split(':') as [string, string];
         return `  ${name} = ${renderValue(name, type, args[name], input.labels)}`;
       });
+      if (contract.id === 'timelock' && (log.eventName === 'CallScheduled' || log.eventName === 'CallExecuted')) {
+        targets ??= governanceTargets(input.labels);
+        const action = callAction(args, targets);
+        lines.push(`  action: ${action ?? '(could not be described: the call did not decode)'}`);
+      }
       const base =
         `${contract.label} ${address}\n` +
         `event: ${log.eventName ?? 'UNDECODABLE (a watched topic whose data did not decode)'}\n` +

@@ -287,7 +287,7 @@ title and the input shape the rule was written against.
 | --- | --- | --- |
 | Sanctions list | `ListUpdated` (added, removed, list size, source hash, publication date, updater), `AdderSet`, `RemoverSet`, `PublicationRollbackAuthorized`, `PublicationRollbackApplied`, ownership changes | `AdderDailyAdditionCapSet`, `PublicationRollbackCleared` |
 | Delisting timelock | `DelistingProposed` (accounts, eta), `ProposerSet`, `DelaySet`, `ClearanceSourceSet`, ownership changes | `DelistingReconfirmed`, `DelistingExecuted`, `DelistingCancelled`, `DelistingDiscarded`, `VetoSet` |
-| Governance timelock | `CallScheduled` (target named from the deployment record, function selector, value, delay, and the ready time read from `getTimestamp`), `MinDelayChange`, `RoleGranted`, `RoleRevoked`, `RoleAdminChanged` | `CallExecuted`, `Cancelled` |
+| Governance timelock | `CallScheduled` (target named from the deployment record, the call in plain words, value, delay, and the ready time read from `getTimestamp`), `MinDelayChange`, `RoleGranted`, `RoleRevoked`, `RoleAdminChanged` | `CallExecuted`, `Cancelled` |
 
 How a tick reads them:
 
@@ -324,8 +324,16 @@ How a tick reads them:
   not-firing sweep. Each is removed only when the position has passed its
   event, so a tick whose read failed cannot make a delivered event look new.
 
-The decoded function of a queued call is shown as its selector for now; a
-plain-words decoding is the shared decoder #3237 tracks.
+**A queued or executed call is put into plain words** (`action:` line) by the
+shared decoder in `packages/lib/src/governanceQueue.ts`, the same module the
+public "queued changes" page reads. Calls are decoded against the
+state-changing surface governance is expected to drive on the Diamond (cut,
+roles, ownership, pause), the timelock itself, the sanctions list and the
+delisting timelock (`GOVERNANCE_CALLS` in `src/eventAlerts.ts`, copied
+verbatim into the ABI subset). Any other call is named by its four-byte
+selector with its whole call data, never guessed. `viem` inside that module
+resolves to this Worker's own copy (`paths` in `tsconfig.json`, `alias` in
+`wrangler.jsonc` and `vitest.config.ts`).
 
 ## How this is built, and why
 

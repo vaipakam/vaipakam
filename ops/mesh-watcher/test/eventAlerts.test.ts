@@ -4,7 +4,7 @@
  * position moves after delivery.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { Address, Hex } from 'viem';
+import { encodeFunctionData, keccak256, parseAbi, toHex, type Address, type Hex } from 'viem';
 import { deliverFindings } from '../src/deliver';
 import { eventCursorWrites, scanEvents, type EventClient, type EventScanInput } from '../src/eventAlerts';
 import type { Finding } from '../src/finding';
@@ -151,8 +151,63 @@ describe('scanEvents', () => {
     expect(alert.severity).toBe('critical');
     expect(alert.detail).toContain(`target = ${DIAMOND} (diamond)`);
     expect(alert.detail).toContain('function selector 0x12345678, 8 bytes of calldata');
+    // A function the watcher carries no decode entry for is named by its
+    // selector with the whole call data, never guessed.
+    expect(alert.detail).toContain(
+      'action: Calls function 0x12345678 on the diamond; the call could not be decoded (call data 0x12345678deadbeef).',
+    );
     expect(alert.detail).toContain('delay = 172800 s (48.0 h)');
     expect(alert.detail).toContain(`executable from: ${new Date(1_800_000_000_000).toISOString()}`);
+  });
+
+  it('puts a queued call into plain words with the shared decoder', async () => {
+    const account: Address = '0x00000000000000000000000000000000000000AA';
+    const grant = encodeFunctionData({
+      abi: parseAbi(['function grantRole(bytes32 role, address account)']),
+      functionName: 'grantRole',
+      args: [keccak256(toHex('PAUSER_ROLE')), account],
+    });
+    const handover = encodeFunctionData({
+      abi: parseAbi(['function transferOwnership(address newOwner)']),
+      functionName: 'transferOwnership',
+      args: [account],
+    });
+    const call = (data: Hex, target: Address, logIndex: number, name = 'CallScheduled'): FakeLog => ({
+      address: TIMELOCK,
+      eventName: name,
+      args: {
+        id: `0x${'cd'.repeat(32)}`,
+        index: BigInt(logIndex),
+        target,
+        value: logIndex === 1 ? 5n : 0n,
+        data,
+        predecessor: `0x${'0'.repeat(64)}`,
+        delay: 1n,
+      },
+      blockNumber: 999_500n,
+      transactionHash: TX(1),
+      logIndex,
+    });
+    const { client } = fakeClient({
+      logs: [call(grant, DIAMOND, 0), call(handover, LIST, 1), call(grant, DIAMOND, 2, 'CallExecuted')],
+      ready: [1n, 1n],
+    });
+    const scan = await scanEvents(
+      input({
+        client,
+        cursors: new Map([['timelock', { nextBlock: 999_000n, notified: true }]]),
+        labels: new Map([
+          [DIAMOND.toLowerCase(), 'diamond'],
+          [LIST.toLowerCase(), 'sanctionsList'],
+        ]),
+      }),
+    );
+    const [granted, handed, executed] = scan.findings.filter((f) => f.code === 'event-alert');
+    expect(granted!.detail).toContain(`action: Grants PAUSER_ROLE to ${account} on the diamond.`);
+    expect(handed!.detail).toContain(
+      `action: Names ${account} as the new owner of the sanctionsList; where ownership is two-step, it moves only when that address accepts. Sends 5 wei of the chain's native token from the timelock.`,
+    );
+    expect(executed!.detail).toContain(`action: Grants PAUSER_ROLE to ${account} on the diamond.`);
   });
 
   it('says the ready time is unknown when the timelock read fails, rather than leaving it out', async () => {
