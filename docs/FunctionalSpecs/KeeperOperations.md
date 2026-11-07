@@ -164,7 +164,10 @@ evidence that the migration has completed.
   ordinary RPC. A failed private send falls back to the ordinary RPC only on a
   chain the operator has explicitly allowed, and then sends the same signed
   transaction, never a second one. Settings the keeper cannot read stop every
-  send rather than sending publicly. Each run states every chain's route.
+  send rather than sending publicly. The keeper remembers, durably, which
+  nonce a private transaction holds, so a restart never replaces a private
+  transaction that is still pending; if it cannot keep that record, it sends
+  nothing on that chain. Each run states every chain's route.
   Which chains need a private route at mainnet is an owner decision.
 - Error reports, stored failure reasons, and operator alerts remove provider
   addresses and credentials before becoming text. They retain useful refusal

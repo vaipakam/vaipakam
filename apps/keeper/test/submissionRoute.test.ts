@@ -4,7 +4,7 @@
  * ordinary RPC only where the operator allows it, and settings that cannot be
  * read send nothing.
  */
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createPublicClient, createWalletClient, custom, keccak256, type Hex, type PublicClient } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import {
@@ -24,11 +24,25 @@ import {
   SubmissionRouteUnread,
   withSubmissionSlot,
 } from '../src/submissionQueue';
+import { memoryNonceReservations, type NonceReservations } from '../src/privateNonce';
 import { armHeldFence } from './helpers/epochFence';
 
 const URL_ETH = 'https://rpc.example.org/fast?key=SECRET';
 const account = privateKeyToAccount(`0x${'11'.repeat(32)}` as Hex);
-const RAW = '0x02f86b0180808080808080c0' as Hex;
+// A real signed transaction at nonce 0, so the nonce the record takes is read
+// from the bytes as it is in production.
+let RAW: Hex;
+beforeAll(async () => {
+  RAW = await account.signTransaction({
+    chainId: 1,
+    nonce: 0,
+    type: 'eip1559',
+    to: account.address,
+    gas: 21_000n,
+    maxFeePerGas: 1n,
+    maxPriorityFeePerGas: 1n,
+  });
+});
 
 afterEach(() => {
   resetSubmissionRoutes();
@@ -92,13 +106,14 @@ function rpc(send: () => Promise<unknown>, calls: string[], name: string) {
   });
 }
 
-function setup(opts: { fallback: boolean; priv: () => Promise<unknown>; pub?: () => Promise<unknown> }) {
+function setup(opts: { fallback: boolean; priv: () => Promise<unknown>; pub?: () => Promise<unknown>; reservations?: NonceReservations }) {
   const calls: string[] = [];
-  armSubmissionRoutes(readSubmissionRoutes(`1=${URL_ETH}`, opts.fallback ? '1' : ''));
+  const reservations = opts.reservations ?? memoryNonceReservations();
+  armSubmissionRoutes(readSubmissionRoutes(`1=${URL_ETH}`, opts.fallback ? '1' : ''), reservations);
   const route = submissionRouteFor(readSubmissionRoutes(`1=${URL_ETH}`, ''), 1) as { url: string };
   setPrivateSubmissionClientForTest(route.url, createPublicClient({ transport: rpc(opts.priv, calls, 'private') }) as PublicClient);
   const wallet = createWalletClient({ account, transport: rpc(opts.pub ?? (async () => keccak256(RAW)), calls, 'public') });
-  return { calls, wallet };
+  return { calls, wallet, reservations };
 }
 
 const rpcRefusal = () => Object.assign(new Error('priority fee too low'), { code: -32000 });
@@ -157,7 +172,7 @@ describe('the remembered nonce on a private route', () => {
   it('outranks the pending count for longer than on a public route', async () => {
     expect(PRIVATE_ROUTE_FLOOR_TTL_MS).toBeGreaterThan(6 * 60_000);
     armHeldFence();
-    armSubmissionRoutes(readSubmissionRoutes(`1=${URL_ETH}`, ''));
+    armSubmissionRoutes(readSubmissionRoutes(`1=${URL_ETH}`, ''), memoryNonceReservations());
     const wallet = createWalletClient({ account, transport: rpc(async () => '0x', [], 'public') });
     let t = 0;
     const now = () => t;
@@ -172,5 +187,110 @@ describe('the remembered nonce on a private route', () => {
     // The pending count always reads 0. On the private chain the second send
     // still takes nonce 1; on the public chain the floor has expired.
     expect(nonces).toEqual([0, 1, 0, 0]);
+  });
+});
+
+describe('the private nonce record (Codex #3275 r1)', () => {
+  const key = `1:${account.address.toLowerCase()}`;
+
+  it('is written before the private broadcast leaves the process', async () => {
+    const reservations = memoryNonceReservations();
+    let seen: unknown;
+    const s = setup({
+      fallback: false,
+      reservations,
+      priv: async () => {
+        seen = reservations.rows.get(key)?.next;
+        return keccak256(RAW);
+      },
+    });
+    await broadcastSigned(s.wallet, 1, RAW);
+    expect(seen).toBe(1);
+  });
+
+  it('is released when the private endpoint refuses outright, and kept when the answer is lost', async () => {
+    const refused = setup({ fallback: false, priv: async () => { throw rpcRefusal(); } });
+    await broadcastSigned(refused.wallet, 1, RAW).catch(() => {});
+    expect(refused.reservations.rows.get(key)?.next).toBe(0);
+    const unknown = setup({ fallback: false, priv: async () => { throw lost(); } });
+    await broadcastSigned(unknown.wallet, 1, RAW).catch(() => {});
+    expect(unknown.reservations.rows.get(key)?.next).toBe(1);
+  });
+
+  it('a record that cannot be written sends nothing', async () => {
+    const failing: NonceReservations = {
+      read: async () => null,
+      write: async () => { throw new Error('D1 unavailable'); },
+    };
+    const s = setup({ fallback: true, reservations: failing, priv: async () => keccak256(RAW) });
+    const err = await broadcastSigned(s.wallet, 1, RAW).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(SubmissionRouteUnread);
+    expect(s.calls).toEqual([]);
+  });
+
+  it('a record that cannot be read refuses the send before it is signed', async () => {
+    armHeldFence();
+    const failing: NonceReservations = {
+      read: async () => { throw new Error('D1 unavailable'); },
+      write: async () => {},
+    };
+    armSubmissionRoutes(readSubmissionRoutes(`1=${URL_ETH}`, ''), failing);
+    const wallet = createWalletClient({ account, transport: rpc(async () => '0x', [], 'public') });
+    const send = vi.fn();
+    const err = await withSubmissionSlot(wallet, 1, account.address, Number.MAX_SAFE_INTEGER, send).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(SubmissionRouteUnread);
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it('after a restart, the next send skips the nonce a private send still holds', async () => {
+    armHeldFence();
+    const reservations = memoryNonceReservations();
+    reservations.rows.set(key, { next: 4, atMs: Date.now() });
+    // A fresh process: no in-memory floor, the pending count reads 0.
+    resetSubmissionQueues();
+    armSubmissionRoutes(readSubmissionRoutes(`1=${URL_ETH}`, ''), reservations);
+    const wallet = createWalletClient({ account, transport: rpc(async () => '0x', [], 'public') });
+    let got = -1;
+    await withSubmissionSlot(wallet, 1, account.address, Number.MAX_SAFE_INTEGER, async (nonce, signed) => {
+      signed();
+      got = nonce;
+    });
+    expect(got).toBe(4);
+  });
+
+  it('a private route armed without a record sends nothing', async () => {
+    armHeldFence();
+    armSubmissionRoutes(readSubmissionRoutes(`1=${URL_ETH}`, ''));
+    const wallet = createWalletClient({ account, transport: rpc(async () => '0x', [], 'public') });
+    const send = vi.fn();
+    const err = await withSubmissionSlot(wallet, 1, account.address, Number.MAX_SAFE_INTEGER, send).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(SubmissionRouteUnread);
+    expect(send).not.toHaveBeenCalled();
+  });
+});
+
+describe('a secret that is set but cannot be read', () => {
+  it('reads as unread, not as absent, and refuses every send', () => {
+    const routes = readSubmissionRoutes({ secretReadFailed: true }, '');
+    expect('unread' in submissionRouteFor(routes, 8453)).toBe(true);
+  });
+});
+
+describe('the private broadcast through a capped pass', () => {
+  it('goes through the pass\'s own fetch', async () => {
+    const reservations = memoryNonceReservations();
+    armSubmissionRoutes(readSubmissionRoutes(`1=${URL_ETH}`, ''), reservations);
+    const fetchFn = vi.fn(async () =>
+      new Response(JSON.stringify({ jsonrpc: '2.0', id: 0, result: keccak256(RAW) }), { headers: { 'content-type': 'application/json' } }),
+    );
+    const { queuedWallet } = await import('../src/submissionQueue');
+    const wallet = queuedWallet(
+      createWalletClient({ account, transport: rpc(async () => keccak256(RAW), [], 'public') }),
+      1,
+      Number.MAX_SAFE_INTEGER,
+      fetchFn as unknown as typeof fetch,
+    );
+    expect(await broadcastSigned(wallet, 1, RAW)).toBe(keccak256(RAW));
+    expect(fetchFn).toHaveBeenCalledTimes(1);
   });
 });

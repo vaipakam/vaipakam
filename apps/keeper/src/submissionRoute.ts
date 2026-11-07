@@ -36,6 +36,8 @@
 // run's own log states which route its sends took.
 
 import { parseChainId, parseChainIdList } from './chainIdList';
+import type { SecretReadFailed } from './env';
+import type { NonceReservations } from './privateNonce';
 
 export const PRIVATE_TX_RPCS_VAR = 'PRIVATE_TX_RPCS';
 export const PRIVATE_TX_FALLBACK_VAR = 'PRIVATE_TX_FALLBACK_CHAIN_IDS';
@@ -66,7 +68,10 @@ const PUBLIC: SubmissionRoute = { kind: 'public' };
 /** The routes `rpcs` (`PRIVATE_TX_RPCS`) and `fallback`
  *  (`PRIVATE_TX_FALLBACK_CHAIN_IDS`) state. Entries are described by
  *  position, never echoed. */
-export function readSubmissionRoutes(rpcs: string | undefined, fallback: string | undefined): SubmissionRoutes {
+export function readSubmissionRoutes(rpcs: string | SecretReadFailed | undefined, fallback: string | undefined): SubmissionRoutes {
+  // A secret that is set but could not be fetched is not an empty one: it
+  // may name private routes, so nothing is sent (Codex #3275 r1).
+  if (typeof rpcs === 'object') return { unread: `${PRIVATE_TX_RPCS_VAR} is set but could not be read` };
   const fallbackRead = parseChainIdList(PRIVATE_TX_FALLBACK_VAR, fallback);
   if ('unread' in fallbackRead) return fallbackRead;
   const routes = new Map<number, Extract<SubmissionRoute, { kind: 'private' }>>();
@@ -122,14 +127,18 @@ export function describeSubmissionRoutes(routes: SubmissionRoutes, chains: reado
   return lines.join('; ') || 'no chain served';
 }
 
-// The process's routes. Armed once per tick, before any pass launches
-// (`tick.ts`), from the same resolved settings the tick runs with. Never armed
-// (a test, a script) reads as no private route anywhere.
+// The process's routes and nonce records. Armed once per tick, before any
+// pass launches (`tick.ts`), from the same resolved settings the tick runs
+// with. Never armed (a test, a script) reads as no private route anywhere. A
+// private route armed without a nonce record sends nothing on that chain.
 let armed: SubmissionRoutes = { routes: new Map() };
+let armedReservations: NonceReservations | null = null;
 
-/** Arm `routes` for every send this process makes from now on. */
-export function armSubmissionRoutes(routes: SubmissionRoutes): void {
+/** Arm `routes`, and the nonce records private sends keep, for every send
+ *  this process makes from now on. */
+export function armSubmissionRoutes(routes: SubmissionRoutes, reservations: NonceReservations | null = null): void {
   armed = routes;
+  armedReservations = reservations;
 }
 
 /** The armed route for `chainId`. */
@@ -137,7 +146,13 @@ export function armedSubmissionRoute(chainId: number): SubmissionRoute | { unrea
   return submissionRouteFor(armed, chainId);
 }
 
+/** The armed nonce records, or null when none is armed. */
+export function armedNonceReservations(): NonceReservations | null {
+  return armedReservations;
+}
+
 /** Test seam: back to no private route anywhere. */
 export function resetSubmissionRoutes(): void {
   armed = { routes: new Map() };
+  armedReservations = null;
 }

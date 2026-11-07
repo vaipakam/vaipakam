@@ -15,6 +15,7 @@
 
 import { getChainConfigs, resolveEnv, WORKER_NAME, type WorkerEnv } from './env';
 import { armSubmissionRoutes, describeSubmissionRoutes, readSubmissionRoutes } from './submissionRoute';
+import { d1NonceReservations } from './privateNonce';
 import {
   hasD1Binding,
   maintenanceSkipNotice,
@@ -158,7 +159,7 @@ export async function runKeeperTick(
   // before any pass launches, and named once per tick so the run's log says
   // which route its sends took. Unreadable settings send nothing anywhere.
   const routes = readSubmissionRoutes(resolved.PRIVATE_TX_RPCS, resolved.PRIVATE_TX_FALLBACK_CHAIN_IDS);
-  armSubmissionRoutes(routes);
+  armSubmissionRoutes(routes, d1NonceReservations(resolved.KEEPER_DB));
   // eslint-disable-next-line no-console
   console.log(`[keeper] submission routes: ${describeSubmissionRoutes(routes, chains)}`);
 

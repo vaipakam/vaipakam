@@ -606,7 +606,15 @@ export interface Env extends BaseEnv {
   ZEROEX_API_KEY?: string;
   ONEINCH_API_KEY?: string;
   KEEPER_PRIVATE_KEY?: string;
-  PRIVATE_TX_RPCS?: string;
+  /** #3240 — the one secret whose failed read is NOT collapsed to unset
+   *  ({@link readSecretOrFailure}): unset means "every chain sends publicly",
+   *  so a set-but-unreadable value must not read as that. */
+  PRIVATE_TX_RPCS?: string | SecretReadFailed;
+}
+
+/** A Secrets Store binding that is present but whose read failed. */
+export interface SecretReadFailed {
+  readonly secretReadFailed: true;
 }
 
 /**
@@ -634,6 +642,25 @@ async function readSecret(
     // eslint-disable-next-line no-console
     console.error('[env] Secrets Store fetch failed; treating as unset:', redactedError(err));
     return undefined;
+  }
+}
+
+/**
+ * {@link readSecret}, except that a binding which is present but cannot be
+ * read is reported as such rather than as unset. For a secret whose absence
+ * is itself a setting (#3240: no private routes means public sends), the
+ * difference decides whether the keeper fails closed.
+ */
+async function readSecretOrFailure(
+  b: SecretBinding | undefined,
+): Promise<string | SecretReadFailed | undefined> {
+  if (!b) return undefined;
+  try {
+    return await b.get();
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('[env] Secrets Store fetch failed; its dependent feature refuses:', redactedError(err));
+    return { secretReadFailed: true };
   }
 }
 
@@ -677,7 +704,7 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     readSecret(raw.ZEROEX_API_KEY),
     readSecret(raw.ONEINCH_API_KEY),
     readSecret(raw.KEEPER_PRIVATE_KEY),
-    readSecret(raw.PRIVATE_TX_RPCS),
+    readSecretOrFailure(raw.PRIVATE_TX_RPCS),
   ]);
   return {
     // Passed straight through — these need no `.get()` resolution. That is

@@ -15,6 +15,10 @@ could replace the private one. For the same reason, the keeper trusts a
 remembered nonce longer on a private chain: seven minutes, against the six
 minutes Flashbots Protect keeps a transaction pending. A dropped private
 transaction can therefore hold later sends on that chain for up to that long.
+The remembered nonce is also written to the keeper's own database before each
+private broadcast, so a keeper restarted by an update or a crash still skips a
+private transaction that has not landed yet. If that record cannot be read or
+written, the keeper sends nothing on that chain rather than guessing.
 
 Falling back to the ordinary RPC is opt-in per chain. When it is allowed and
 the private endpoint refuses or does not answer, the same signed transaction
@@ -22,7 +26,8 @@ goes to the ordinary RPC, so a second transaction can never result. It does
 become public, and the keeper logs that it fell back. When it is not allowed,
 a failed private send is a failed send.
 
-Settings the keeper cannot read stop every send on every chain, and the log
+Settings the keeper cannot read stop every send on every chain, including a
+secret that is set but fails to load, and the log
 says why, rather than quietly sending publicly. Every tick logs a
 `submission routes:` line naming each chain's route and the endpoint's host,
 never its URL, which can carry an access key. With nothing configured, every

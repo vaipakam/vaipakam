@@ -80,12 +80,17 @@ import {
   signTransaction,
   writeContract,
 } from 'viem/actions';
-import { createPublicClient, http, HttpRequestError, keccak256, TimeoutError, type Hex, type PublicClient } from 'viem';
-import { summarizeFailure } from '@vaipakam/lib/errorDescription';
+import { createPublicClient, http, HttpRequestError, keccak256, parseTransaction, TimeoutError, type Hex, type PublicClient } from 'viem';
+import { describeFailure, summarizeFailure } from '@vaipakam/lib/errorDescription';
 import { gasLimitFromEstimate } from '@vaipakam/lib/gasLimit';
 import { SubrequestBudgetExhausted } from './subrequestBudget';
 import { assertEpochsHold } from './epochFence';
-import { armedSubmissionRoute, PRIVATE_ROUTE_FLOOR_TTL_MS, PRIVATE_TX_FALLBACK_VAR } from './submissionRoute';
+import {
+  armedNonceReservations,
+  armedSubmissionRoute,
+  PRIVATE_ROUTE_FLOOR_TTL_MS,
+  PRIVATE_TX_FALLBACK_VAR,
+} from './submissionRoute';
 
 /** How long a remembered nonce outranks the RPC's pending count. */
 export const FLOOR_TTL_MS = 60_000;
@@ -97,8 +102,11 @@ interface Floor {
 
 const tails = new Map<string, Promise<void>>();
 const floors = new Map<string, Floor>();
-/** One client per private submission endpoint (#3240). */
+/** One client per private submission endpoint (#3240), for wallets with no
+ *  request budget of their own. */
 const privateClients = new Map<string, PublicClient>();
+/** The fetch a budgeted pass built its wallet with ({@link queuedWallet}). */
+const walletFetch = new WeakMap<object, typeof fetch>();
 
 function keyOf(chainId: number, address: Address): string {
   return `${chainId}:${address.toLowerCase()}`;
@@ -219,13 +227,27 @@ export async function withSubmissionSlot<T>(
     // that cannot be read send nothing.
     const route = armedSubmissionRoute(chainId);
     if ('unread' in route) throw new SubmissionRouteUnread(`send refused: ${route.unread}`);
+    // A private broadcast is invisible to the pending count until it is
+    // mined, and this process's memory does not survive a restart, so on a
+    // private chain the nonce record (`privateNonce.ts`) is read too, and a
+    // record that cannot be read sends nothing.
+    let recorded: { next: number; atMs: number } | null = null;
+    if (route.kind === 'private') {
+      const reservations = armedNonceReservations();
+      if (!reservations) throw new SubmissionRouteUnread('send refused: no private nonce record is armed for a private route');
+      try {
+        recorded = await reservations.read(chainId, address);
+      } catch (err) {
+        throw new SubmissionRouteUnread(`send refused: the private nonce record could not be read (${describeFailure(err)})`);
+      }
+    }
     const pending = await getTransactionCount(wallet, { address, blockTag: 'pending' });
     const floor = floors.get(key);
-    // A private broadcast is invisible to that pending count until it is
-    // mined, so its remembered nonce is trusted for longer.
+    // ...and a remembered nonce is trusted for longer there.
     const ttl = route.kind === 'private' ? PRIVATE_ROUTE_FLOOR_TTL_MS : FLOOR_TTL_MS;
-    const fresh = floor !== undefined && now() - floor.at < ttl;
-    const nonce = fresh ? Math.max(pending, floor.next) : pending;
+    let nonce = pending;
+    if (floor !== undefined && now() - floor.at < ttl) nonce = Math.max(nonce, floor.next);
+    if (recorded !== null && now() - recorded.atMs < ttl) nonce = Math.max(nonce, recorded.next);
     // The epoch fence (#2569 r4), before the signature: a send is made only
     // while the indexer's epoch this process was launched under still holds.
     // Thrown here, nothing was signed, so the nonce is simply released.
@@ -287,7 +309,8 @@ export function isDefinitiveRejection(err: unknown): boolean {
   // Refused by the slot before any broadcast (#2572): nothing reached the
   // network, like the subrequest budget's refusal above.
   if (chain.some((e) => e instanceof SendPastDeadline)) return true;
-  // Refused before the nonce read, settings unreadable (#3240): nothing sent.
+  // Refused before the nonce read, settings or the nonce record unreadable,
+  // or the record not written before broadcast (#3240): nothing sent.
   if (chain.some((e) => e instanceof SubmissionRouteUnread)) return true;
   if (chain.some((e) => e instanceof TimeoutError || e instanceof HttpRequestError)) return false;
   if (chain.some((e) => NONCE_TAKEN.test(String((e as { message?: unknown }).message ?? '')))) {
@@ -323,24 +346,60 @@ export async function broadcastSigned(wallet: WalletClient, chainId: number, ser
   const route = armedSubmissionRoute(chainId);
   if ('unread' in route) throw new SubmissionRouteUnread(`send refused: ${route.unread}`);
   if (route.kind === 'public') return wallet.sendRawTransaction({ serializedTransaction: serialized });
-  let client = privateClients.get(route.url);
+
+  // The nonce is recorded BEFORE the bytes leave the process (Codex #3275
+  // r1): a restart after the broadcast then still finds it taken. A record
+  // that cannot be written sends nothing.
+  const reservations = armedNonceReservations();
+  const address = wallet.account?.address;
+  const nonce = parseTransaction(serialized).nonce;
+  if (!reservations || !address || nonce === undefined) {
+    throw new SubmissionRouteUnread('send refused: the private send could not be recorded (no nonce record, account or nonce)');
+  }
+  try {
+    await reservations.write(chainId, address, nonce + 1, Date.now());
+  } catch (err) {
+    throw new SubmissionRouteUnread(`send refused: the private nonce record could not be written (${describeFailure(err)})`);
+  }
+  // A refusal the node answered took nothing, so the nonce is released again,
+  // as the in-memory floor does; if that write fails, the record holds the
+  // nonce for at most PRIVATE_ROUTE_FLOOR_TTL_MS, a delay and never a
+  // replacement.
+  const release = async (err: unknown): Promise<void> => {
+    if (!isDefinitiveRejection(err)) return;
+    try {
+      await reservations.write(chainId, address, nonce, Date.now());
+    } catch (writeErr) {
+      console.warn(`[submission] chain=${chainId} could not release nonce ${nonce} in the private nonce record (${describeFailure(writeErr)}); later sends wait for it to expire`);
+    }
+  };
+
+  // Through the sending pass's own fetch when it has one, so a capped pass
+  // counts the private broadcast like any other request (Codex #3275 r1).
+  const fetchFn = walletFetch.get(wallet);
+  let client = fetchFn ? undefined : privateClients.get(route.url);
   if (!client) {
-    client = createPublicClient({ transport: http(route.url, { retryCount: 0 }) });
-    privateClients.set(route.url, client);
+    client = createPublicClient({ transport: http(route.url, { retryCount: 0, ...(fetchFn ? { fetchFn } : {}) }) });
+    if (!fetchFn) privateClients.set(route.url, client);
   }
   try {
     return await sendRawTransaction(client, { serializedTransaction: serialized });
   } catch (privateErr) {
-    if (!route.fallback) throw privateErr;
-    // The error is redacted: a provider's message can carry the endpoint URL,
-    // and with it an access key.
+    if (!route.fallback) {
+      await release(privateErr);
+      throw privateErr;
+    }
+    // Summarized, never the raw message: a provider's message can carry the
+    // endpoint URL, and with it an access key.
     console.warn(
       `[submission] chain=${chainId} the private route via ${route.host} failed (${summarizeFailure(privateErr)}); sending the same signed transaction through the public RPC, as ${PRIVATE_TX_FALLBACK_VAR} allows`,
     );
     try {
       return await wallet.sendRawTransaction({ serializedTransaction: serialized });
     } catch (publicErr) {
-      throw isDefinitiveRejection(privateErr) ? publicErr : privateErr;
+      const thrown = isDefinitiveRejection(privateErr) ? publicErr : privateErr;
+      await release(thrown);
+      throw thrown;
     }
   }
 }
@@ -407,11 +466,15 @@ export function queuedWallet(
    *  run's slot has ended waits for the next run instead of competing with
    *  it. */
   notAfterMs: number,
+  /** The fetch the pass's requests go through when it caps them
+   *  (`subrequestBudget.ts`): the private broadcast uses it too (#3240). */
+  fetchFn?: typeof fetch,
 ): WalletClient {
   // At build time too, so a wallet without a deadline fails where it is made
   // rather than at its first send.
   assertFiniteDeadline(notAfterMs, 'queuedWallet');
-  return wallet.extend((base) => {
+  if (fetchFn) walletFetch.set(wallet, fetchFn);
+  const queued = wallet.extend((base) => {
     // Typed loosely: viem's generic signatures for these actions cannot be
     // restated by a wrapper; the arguments pass through unchanged.
     const queuedSend = async (args: Parameters<typeof sendTransaction>[1]) => {
@@ -459,4 +522,6 @@ export function queuedWallet(
         writeContract(routed as never, args)) as never,
     };
   }) as unknown as WalletClient;
+  if (fetchFn) walletFetch.set(queued, fetchFn);
+  return queued;
 }

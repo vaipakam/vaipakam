@@ -331,9 +331,13 @@ a commit. The template documents each line. In short:
   sends publicly. A value the keeper cannot read sends nothing on any chain, so
   check the `submission routes:` line every tick prints after `chains
   resolved`: it names each chain's route and the endpoint's host, never its
-  URL. On a private chain a dropped transaction can hold later sends on that
-  chain for up to seven minutes. Which mainnet chains get a private route is
-  an owner decision recorded in the mainnet checklist.
+  URL. Before each private broadcast the keeper records the next nonce in its
+  private database (`keeper_private_nonce`, keeper migration `0007`), so a
+  restart cannot reuse the nonce of a private transaction still pending; a
+  record it cannot read or write stops that chain's sends. On a private chain
+  a dropped transaction can hold later sends on that chain for up to seven
+  minutes. Which mainnet chains get a private route is an owner decision
+  recorded in the mainnet checklist.
 - **Knobs:** copy the live values from the keeper Worker's dashboard.
 
 An empty value is unset, as an unbound setting is on the Worker. A chain or
