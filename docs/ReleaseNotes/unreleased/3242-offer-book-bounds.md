@@ -1,4 +1,4 @@
-## Thread — Offer-book bounds: a $10 value floor and a per-wallet open-offer cap (PR #3281)
+## Thread — Offer-book bounds: a $10 value floor and a per-wallet open-offer cap (PR #3283)
 
 The offer book can no longer be flooded with offers too small to be worth
 servicing. Two bounds now apply to every offer a wallet posts. An offer whose
