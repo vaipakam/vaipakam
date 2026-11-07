@@ -303,7 +303,7 @@ their own contract:
   transfers. It is not upgradeable, so no upgrade can rewrite owners.
 - **Pluggable parts that cannot move a token.** The artwork and description
   renderer, and a transfer check (sanctions screening, the buyer's risk
-  access, a token under an open sale listing). Each sits behind an address
+  access). Each sits behind an address
   the Timelock can swap, after the same kind of contract-held delay as the
   vault-code pointer (#3204). A renderer only draws; a check can only
   refuse a transfer.
