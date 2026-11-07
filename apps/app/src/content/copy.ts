@@ -7789,6 +7789,12 @@ const copySource = {
     availableNow: tmpl('now (the cooldown ended {{when}})', ['when']),
     availableFrom: tmpl('not before {{when}}, in {{span}}', ['when', 'span']),
     maxOfferDuration: 'Max offer duration',
+    minOfferValue: 'Smallest offer',
+    minOfferValueHint:
+      'The least an offer’s principal must be worth when it is posted or its amount is changed. It applies only to a liquid token with a price; NFTs and illiquid tokens are never refused for their value. Offers that come from an existing loan are exempt. Raising it closes no open offer.',
+    maxOpenOffers: 'Open offers per wallet',
+    maxOpenOffersHint:
+      'The most offers one wallet may have open at once, every offer type counted. An expired offer counts until it is cancelled. Lowering it closes no open offer. Offers that come from an existing loan are exempt.',
     flagsHeading: 'Feature flags',
     partialFill: 'Order matching (partial fill)',
     partialFillHint:

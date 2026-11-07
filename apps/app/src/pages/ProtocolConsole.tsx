@@ -182,6 +182,8 @@ function makeFormatters(locale: string | undefined) {
           : copy.protocolConsole.unsetDefault(seconds(String(row.documentedDefaultSeconds)));
       case 'days':
         return plain(str, ` ${copy.protocolConsole.days}`);
+      case 'count':
+        return plain(str);
       case 'flag':
         return flag(typeof v === 'boolean' ? v : undefined);
       case 'pause':
