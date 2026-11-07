@@ -274,22 +274,8 @@ async function checkSite(site, { auth, github, ref, suffixPaths, approvalOn, tar
     hosts = [preview];
   } else {
     const before = await readLatestDeployment(site.worker, auth);
-    v = verifiableCommit(before);
+    v = { ...verifiableCommit(before), approvedBy: before.approvedBy };
     if (v.reason) return { problems: [problem('unverifiable', `cannot be verified: ${v.reason}.`)], report: [] };
-    // With the deploy approval on (#3236), the live version must be the one
-    // most recently approved, by GitHub's record (lib/approvalRecord.mjs).
-    // The deployment's own message is written by whoever deploys, so it is
-    // only the pointer to the run to check, never the proof. Anything else went live around
-    // the approval: a dashboard change of the deploy mode, a deploy made
-    // directly with a Cloudflare token, or an older approved version put
-    // back by hand.
-    if (approvalOn) {
-      const rec = await verifyApproval(site.worker, v.version, before.approvedBy, github);
-      if (rec.read !== 'ok') return { problems: [problem('unverifiable', `its approval record on GitHub cannot be read (${rec.error}).`)], report: [] };
-      if (!rec.approved) {
-        return { problems: [problem('unapproved', `is live on version ${v.version}, which is not the version a person last approved: ${rec.why}. Deploy approval is on (SITE_DEPLOY_APPROVAL); check the Workers Build deploy mode and who deployed it.`)], report: [] };
-      }
-    }
   }
 
   let commit;
@@ -302,6 +288,31 @@ async function checkSite(site, { auth, github, ref, suffixPaths, approvalOn, tar
     git(['merge-base', '--is-ancestor', commit, ref]);
   } catch {
     return { problems: [problem('off-main', `is serving ${v.short}, which is not on main: the deployed code was never merged.`)], report: [] };
+  }
+
+  // With the deploy approval on (#3236), the live version must be the one a
+  // person last approved, by GitHub's record (lib/approvalRecord.mjs). The
+  // deployment's own message is written by whoever deploys, so it is only
+  // the pointer to the run to check, never the proof. Anything else went live
+  // around the approval: a dashboard change of the deploy mode, a deploy made
+  // directly with a Cloudflare token, or an older approved version put back
+  // by hand.
+  if (target.mode === 'live' && approvalOn) {
+    const rec = await verifyApproval({ worker: site.worker, liveVersion: v.version, liveCommit: commit, approvedBy: v.approvedBy }, github, {
+      isAncestor: (x, y) => {
+        try {
+          git(['merge-base', '--is-ancestor', x, y]);
+          return true;
+        } catch {
+          return false;
+        }
+      },
+      commitTime: (c) => git(['show', '-s', '--format=%cI', c]).trim(),
+    });
+    if (rec.read !== 'ok') return { problems: [problem('unverifiable', `its approval record on GitHub cannot be read (${rec.error}).`)], report: [] };
+    if (!rec.approved) {
+      return { problems: [problem('unapproved', `is live on version ${v.version}, which is not the version a person last approved: ${rec.why}. Deploy approval is on (SITE_DEPLOY_APPROVAL); check the Workers Build deploy mode and who deployed it.`)], report: [] };
+    }
   }
 
   let dist;

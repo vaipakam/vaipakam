@@ -34,7 +34,7 @@
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { appendFileSync, readFileSync } from 'node:fs';
-import { parseApproval, promotedNotice } from './lib/approvalRecord.mjs';
+import { parseApproval, promotedNotice, verifyApproval } from './lib/approvalRecord.mjs';
 import { deployVersion, readLatestDeployment, readRecentVersions } from './lib/workerDeployments.mjs';
 
 const CONFIG_PATH = '.github/served-build.json';
@@ -188,7 +188,7 @@ async function deploy(config, readAuth, writeAuth) {
   }
   // GitHub's record of the approval, which the served-build check reads
   // (lib/approvalRecord.mjs): written only here, after the read-back.
-  console.log(promotedNotice(site.worker, versionId));
+  console.log(promotedNotice(site.worker, versionId, commit));
   summary(`${site.worker}: version ${versionId} (${commit.slice(0, 12)}) is live, approved in ${runUrl}.`);
 }
 
@@ -207,7 +207,7 @@ function plan(config) {
 
 // ── selftest ─────────────────────────────────────────────────────────────
 
-function selftest() {
+async function selftest() {
   const ok = (cond, msg) => {
     if (!cond) throw new Error(`selftest: ${msg}`);
   };
@@ -234,12 +234,48 @@ function selftest() {
 
   const id = '0123abcd-0000-4000-8000-00000000beef';
   const note = (message, extra = {}) => ({ annotation_level: 'notice', title: 'promoted', message, ...extra });
-  ok(promotedNotice('vaipakam-app', id) === `::notice title=promoted::promoted vaipakam-app ${id}`, 'notice command');
-  ok(parseApproval(note(`promoted vaipakam-app ${id}`))?.version === id, 'approval read back');
-  ok(parseApproval(note(`promoted vaipakam-app ${id}`, { annotation_level: 'warning' })) === null, 'only a notice');
-  ok(parseApproval(note(`promoted vaipakam-app ${id}`, { title: 'other' })) === null, 'only the promoted title');
-  ok(parseApproval(note(`promoted vaipakam-app ${id} and more`)) === null, 'exact shape only');
-  ok(parseApproval(note('promoted vaipakam-app not-a-uuid')) === null, 'a version id only');
+  const cc = 'c'.repeat(40);
+  ok(promotedNotice('vaipakam-app', id, cc) === `::notice title=promoted::promoted vaipakam-app ${id} ${cc}`, 'notice command');
+  ok(parseApproval(note(`promoted vaipakam-app ${id} ${cc}`))?.commit === cc, 'approval read back');
+  ok(parseApproval(note(`promoted vaipakam-app ${id}`)) === null, 'a commit is required');
+  ok(parseApproval(note(`promoted vaipakam-app ${id} ${cc}`, { annotation_level: 'warning' })) === null, 'only a notice');
+  ok(parseApproval(note(`promoted vaipakam-app ${id} ${cc}`, { title: 'other' })) === null, 'only the promoted title');
+  ok(parseApproval(note(`promoted vaipakam-app ${id} ${cc} and more`)) === null, 'exact shape only');
+  ok(parseApproval(note(`promoted vaipakam-app not-a-uuid ${cc}`)) === null, 'a version id only');
+  // verifyApproval against a fake GitHub: runs 1 (approves L), 2 (approves
+  // the newer N), 3 (a branch run claiming N), each promote job's notices.
+  const L = '1'.repeat(40);
+  const N = '2'.repeat(40);
+  const vL = '0123abcd-0000-4000-8000-000000000001';
+  const vN = '0123abcd-0000-4000-8000-000000000002';
+  const url = (n) => `https://github.com/vaipakam/vaipakam/actions/runs/${n}`;
+  const mkRun = (n, branch = 'main') => ({ id: n, head_branch: branch, path: '.github/workflows/promote-site.yml', html_url: url(n), created_at: '2026-11-07T00:00:00Z' });
+  const fake = (runs, notesByRun) => async (path) => {
+    let m;
+    if ((m = /^actions\/runs\/(\d+)$/.exec(path))) return runs.find((r) => r.id === Number(m[1])) ?? Promise.reject(new Error('GitHub HTTP 404'));
+    if ((m = /^actions\/runs\/(\d+)\/jobs/.exec(path))) return { jobs: notesByRun[m[1]] ? [{ id: Number(m[1]) * 10, name: 'app / promote', conclusion: 'success' }] : [] };
+    if ((m = /^check-runs\/(\d+)\/annotations/.exec(path))) return (notesByRun[Number(m[1]) / 10] ?? []).map((msg) => note(msg));
+    if (path.startsWith('actions/workflows/promote-site.yml/runs')) return { workflow_runs: runs };
+    throw new Error(`unexpected ${path}`);
+  };
+  const gitFake = { isAncestor: (a, b) => a === b || (a === L && b === N), commitTime: () => '2026-11-06T00:00:00Z' };
+  const verify = async (runs, notes, live) => verifyApproval(live, { fetchJson: fake(runs, notes) }, gitFake);
+  const liveL = { worker: 'vaipakam-app', liveVersion: vL, liveCommit: L, approvedBy: url(1) };
+  const okL = await verify([mkRun(1)], { 1: [`promoted vaipakam-app ${vL} ${L}`] }, liveL);
+  ok(okL.read === 'ok' && okL.approved, 'an approved live version passes');
+  const replay = await verify([mkRun(2), mkRun(1)], { 1: [`promoted vaipakam-app ${vL} ${L}`], 2: [`promoted vaipakam-app ${vN} ${N}`] }, liveL);
+  ok(replay.read === 'ok' && !replay.approved, 'an older approval put back after a newer one fails');
+  // Created in either order, the newer COMMIT decides.
+  const okN = await verify([mkRun(1), mkRun(2)], { 1: [`promoted vaipakam-app ${vL} ${L}`], 2: [`promoted vaipakam-app ${vN} ${N}`] }, { ...liveL, liveVersion: vN, liveCommit: N, approvedBy: url(2) });
+  ok(okN.read === 'ok' && okN.approved, 'the newest approved commit passes, whatever order its run was created in');
+  const branch = await verify([mkRun(3, 'feature'), mkRun(1)], { 1: [`promoted vaipakam-app ${vL} ${L}`], 3: [`promoted vaipakam-app ${vN} ${N}`] }, liveL);
+  ok(branch.read === 'ok' && branch.approved, 'a run on another branch is not a newer approval');
+  const forged = await verify([mkRun(3, 'feature')], { 3: [`promoted vaipakam-app ${vL} ${L}`] }, { ...liveL, approvedBy: url(3) });
+  ok(forged.read === 'ok' && !forged.approved, 'a pointer to a run on another branch fails');
+  const wrongVersion = await verify([mkRun(1)], { 1: [`promoted vaipakam-app ${vN} ${L}`] }, liveL);
+  ok(wrongVersion.read === 'ok' && !wrongVersion.approved, 'the named run must have promoted this exact version');
+  const none = await verify([mkRun(1)], {}, { ...liveL, approvedBy: '' });
+  ok(none.read === 'ok' && !none.approved, 'no pointer fails');
   console.log('promote-site selftest: OK');
 }
 

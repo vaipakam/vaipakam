@@ -2044,7 +2044,9 @@ that case put a stamped version back by hand first (Contain, step 1).
 The six-hourly served-build check then reads GitHub's record, not
 Cloudflare's. The deployment's message only points it at a run. That run
 must be a promote-site run on `main` whose promote job recorded this exact
-version, and no later run may have recorded another version for the site. A Cloudflare token
+version and commit, and no run on `main` may have approved a newer commit
+for the site. Approvals are ordered by commit, not by when a run started or
+was approved, because promotion only ever moves a site forward. A Cloudflare token
 can write any deployment message, so the message alone proves nothing; the
 GitHub record is out of that token's reach. Anything else is `unapproved`,
 including an older approved version put back by hand.
