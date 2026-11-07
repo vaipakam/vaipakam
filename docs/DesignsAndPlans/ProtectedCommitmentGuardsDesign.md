@@ -160,7 +160,13 @@ apply, and `getRateGuardStatus(lendingAsset, durationDays)` returns the reason
 
 An above-band lender offer or a below-band borrower offer harms only the
 thief's side, so it executes at once (Q2). NFT rental offers are excluded,
-because their pricing is a daily fee and not an APR (Q3).
+because their pricing is a daily fee and not an APR (Q3). **The synthetic
+borrower offer a lender's listed sale creates** (`EarlyWithdrawalFacet._buildSaleParams`,
+`EarlyWithdrawalFacet.sol:418`) is also excluded from this rate rule. Its
+creator is the selling lender and its rate is the buyer's asked APR, so the
+borrower rule would judge a sale as if it were a loan request. A sale's
+economics are judged by guard B (§5), the same as the direct sale route, so a
+listed sale is never held by an APR the seller does not pay.
 
 **Where the check runs.**
 
@@ -407,6 +413,8 @@ Unit tests for `LibProtectedCommitment`:
 
 - the band, both directions, on the range ends;
 - the rule not applying with no model, no reference or a stale reference;
+- a lender's listed sale whose buyer asks an above-band APR is not held by
+  guard A, and guard B alone decides it, as for the direct sale;
 - matches: a queued, a cancelled and an epoch-voided lender offer each fail
   to match an otherwise fillable borrower offer, including at an in-band
   midpoint; the same for a queued borrower offer against a live lender offer;

@@ -122,8 +122,12 @@ feed that rule, kept apart because they answer different questions:
   added when it pays, and a queued outflow is added **when it is released**,
   however long it waited. So a $10,000 withdrawal released after 26 hours still
   delays a $1,000 request made right after it. The released value is the larger
-  of the value recorded at request and its value at release when the guard
-  answers Ok; if the guard does not answer Ok, the recorded value is used.
+  of the value recorded at request and its value at release. **A priced row is
+  released only while the guard answers Ok**, so a release never counts a stale
+  figure; it waits otherwise. The one exception is a release under the #3173
+  escape rule, which may proceed without a price: it then saturates the current
+  hour's sum, so every later valued owner outflow is delayed until that hour
+  leaves the window.
 - **The pending reservation counts queued rows not yet released**: one running
   sum of their recorded values, in the same units. A large queued withdrawal
   therefore delays small ones while it waits. Release moves its value from the
@@ -229,8 +233,12 @@ the guardian's window.
 **Release.** Anyone, after `releaseAt`, while live or under the #3173 escape
 rule (as `VaultPayoutFacet.sol:126` does today). Both lines re-check that the
 recipient is still allowed and that the per-vault buckets and the brake have
-room. A short bucket reverts the release and the row waits for the refill;
-nothing is lost.
+room. **A release pays in parts when a bucket is short**: it pays what the
+buckets and the brake allow now, and the row keeps the remainder with its
+original `releaseAt`, so the delay already served is never lost. A row larger
+than a bucket's whole capacity, which a later tightening can cause, therefore
+drains over several refills instead of reverting forever. Each part is counted
+in the meter when it pays and leaves the reservation by the same amount.
 
 ## 9. Setters, bounds and defaults
 
@@ -329,7 +337,11 @@ and every §12 residual.
 - **Releases and the reservation:** a $10,000 row released after 26 hours is
   counted at release, so a $1,000 request right after it queues; a pending row
   delays a small request; a cancel removes the row from the reservation; a
-  release counts the larger of the recorded and the current Ok value.
+  release counts the larger of the recorded and the current Ok value; a
+  priced release waits while the guard is not Ok; an escape release without a
+  price saturates the hour and delays the next valued outflow; a 200,000 row
+  under a cap tightened to 100,000 releases in two parts, keeping its
+  `releaseAt`.
 - **Rotation:** after an undelayed $1,000 outflow, a rotation to a new
   numeraire delays a just-under-threshold outflow in the new currency, in both
   lines; 25 hours after the rotation the meter is empty under the new tag and
