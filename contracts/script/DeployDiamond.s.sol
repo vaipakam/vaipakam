@@ -1752,7 +1752,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     function _getVaultFactorySelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](26);
+        s = new bytes4[](25);
         s[0] = VaultFactoryFacet.initializeVaultBeacon.selector;
         s[1] = VaultFactoryFacet.getOrCreateUserVault.selector;
         s[2] = VaultFactoryFacet.getVaultBeacon.selector;
