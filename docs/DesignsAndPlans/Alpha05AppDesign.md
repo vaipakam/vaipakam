@@ -654,6 +654,24 @@ above. Each resolves here, so a route reviewer needs no private file:
   page after the offer posts, worded for an offer, and a new offer is held
   back while that step is open. An offer that asks for an NFT is a later
   update.
+- **RB-POSITIONS-LIST** — Positions lists the loan positions the connected
+  wallet holds on its chain, read from the position tokens it holds (the
+  same inventory Home reads, through one shared reader, so a transferred
+  position leaves the sender's list and Home and Positions never disagree).
+  It lists, in this order: payouts confirmed ready to collect (each names
+  its loan and side and sends the reader to Claims, which states the
+  amounts); live loans (the most urgent deadline first, the loans one offer
+  opened grouped, each with its side, terms, due date and the consequence
+  of missing it, any interest period, the health factor and an Open
+  button); and ended loans (newest first, each with its side, terms and
+  status in words: repaid, defaulted, settled, or closed by a match; a
+  status the app does not know is shown by its number, never guessed),
+  which point at Claims while a payout on them waits. A side choice (all,
+  lent, borrowed) narrows all three lists at once. "Nothing" is said only
+  when every walk completed and the latest read succeeded; a list that
+  could not be read in full says so. Every row opens its position, where
+  the protocol's verdict decides which actions are open (RB-ELIG): the list
+  signs nothing and offers no action of its own.
 
 ## 3. Companion specifications
 

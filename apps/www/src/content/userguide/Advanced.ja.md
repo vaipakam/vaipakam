@@ -2193,6 +2193,14 @@ Lend は、ERC-20 担保に対する ERC-20 の借入リクエスト（`offerTyp
 
 `createOffer` は貸し手に何も課しません。表示される手数料は借り手のもので、貸出資産での金額の `getLoanInitiationFeeBps` です。`acceptOffer` 実行時に有効な料率で計算され、その時点の借り手の保有ティア割引で下がり、借り手への送金額から差し引かれます。表示額は今日の料率によります。利息のうちプロトコルの取り分は `getTreasuryFeeBps` で、ローン開始時にローンごとに固定されます（`treasuryFeeBpsAtInit`）。同意がオンなら、利息の精算時に貸し手の保有ティア割引がそれを下げます。確認画面は今日の料率と、その料率での取り分を上限として示します。`getTreasuryFeeBps` の読み取りに失敗した場合はそう示し、取り分も戻る額も表示しません。
 
+<a id="positions"></a>
+
+### Positions: 一覧の読み方
+
+Positions は共通のリーダーを通して Home と同じ保有一覧を読みます。`getUserPositionLoansPaginated` がウォレットの保有するポジション NFT をたどり、`getLoansBatch` がそれらを読み込み、各サイドは保有しているトークン（`lenderTokenId` または `borrowerTokenId`）から決まり、組成時に記録された当事者からは決めません。状態が Active または FallbackPending のローンは進行中で、期限・ヘルスファクター・グループ化は Home で説明したとおりです。それ以外の状態はすべて終了扱いで、新しいローン id から順に、`LoanStatus` の名前で示します: Repaid、Defaulted、Settled、InternalMatched（マッチングで終了）。アプリが知らない状態番号は番号のまま表示します。支払いは Home で説明した claimables のルールに従います: 他の人から受け取った終了ローンの保有ポジションは数として示し、推測はしません。
+
+サイドの選択は、支払い・進行中・終了の各行を保有サイドで絞り込みます。「何もない」と表示するのは、ポジションと支払いのたどりが両方完了し、最新の読み取りが成功したときだけです。上限で止まったたどりは不完全と表示します。行は `/positions/<id>` を開き、そこで適格性の判定が各操作を決めます。一覧はトランザクションを送りません。
+
 <a id="risk-access"></a>
 
 ### Risk Access: あなたのリスクレベル

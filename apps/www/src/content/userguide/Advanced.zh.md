@@ -1926,6 +1926,14 @@ Lend 通过出借人发送的 `acceptOffer(offerId, terms, signature)`，直接�
 
 `createOffer` 不向出借人收取任何费用。显示的费用由借款人承担：出借资产金额的 `getLoanInitiationFeeBps`，按 `acceptOffer` 执行时生效的费率计算，届时由借款人的持有等级折扣降低，并从其到账金额中扣除；显示的数字按今天的费率计算。协议在利息中的份额为 `getTreasuryFeeBps`，在每笔贷款开立时固定（`treasuryFeeBpsAtInit`）；在同意开启时，出借人的持有等级折扣会在结算利息时降低该份额。审核显示今天的费率，以及按该费率计算的份额作为上限；`getTreasuryFeeBps` 读取失败时会说明，且不显示份额或返还金额。
 
+<a id="positions"></a>
+
+### Positions：列表如何读取
+
+Positions 通过一个共享读取器读取与 Home 相同的持仓清单：`getUserPositionLoansPaginated` 遍历钱包持有的仓位 NFT，`getLoansBatch` 批量加载，每一方由所持代币（`lenderTokenId` 或 `borrowerTokenId`）决定，绝不依据发起时记录的当事人。状态为 Active 或 FallbackPending 的贷款为进行中，其期限、健康因子与分组如 Home 中所述。其他所有状态均为已结束，按贷款 id 从新到旧排列，以 `LoanStatus` 命名：Repaid、Defaulted、Settled 或 InternalMatched（因撮合而关闭）；应用不认识的状态编号按编号显示。待领款项遵循 Home 中所述的 claimables 规则：钱包从他人处收到的已结束贷款仓位只计数，不做猜测。
+
+方向选择按所持一方筛选待领款项、进行中和已结束的行。只有当仓位遍历和待领款项遍历都已完成且最新读取成功时，才会显示“没有”；在上限处停止的遍历会标明不完整。每一行打开 `/positions/<id>`，由资格判定决定每项操作；列表不发送任何交易。
+
 <a id="risk-access"></a>
 
 ### Risk Access：你的风险等级

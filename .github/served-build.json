@@ -4,12 +4,14 @@
     "buildVars are the PUBLIC build variables each site's Workers Build is configured with in the Cloudflare dashboard. They ship in the bundle, so none of them is a secret. They are written down here, in a reviewed commit, on purpose: the check rebuilds the deployed commit with THESE values, so a dashboard change (an RPC or indexer origin pointed somewhere else) shows as a mismatch until someone records it here. Reading them back from the dashboard instead would make such a change invisible.",
     "Changing a site's build variables is therefore two steps: the dashboard, and this file in the same hour. Until both agree the check reports the site as not serving what its commit builds, and says why that may be.",
     "compare: 'all' compares every file the build writes that the Worker serves; 'assets' compares only dist/assets/ (the marketing site prerenders its pages in a later deploy step this check does not repeat).",
+    "watch: the paths whose change makes the site's Workers Build rebuild it, copied from that trigger's path_includes in the Cloudflare dashboard. The deploy approval (promote-site.yml) uses them to know which sites a merge uploads, so a change to a trigger's paths is also a change here.",
     "suffixMatch: files a host is known to rewrite. The built file must still appear, byte for byte, as the end of what is served."
   ],
   "sites": [
     {
       "worker": "vaipakam-app",
       "dir": "apps/app",
+      "watch": ["apps/app/", "packages/", "pnpm-lock.yaml"],
       "hosts": ["https://app.vaipakam.com", "https://vaipakam-app.dawn-fire-139e.workers.dev"],
       "compare": "all",
       "buildVars": {
@@ -28,6 +30,7 @@
     {
       "worker": "vaipakam-alpha05",
       "dir": "apps/alpha05",
+      "watch": ["apps/alpha05/", "packages/", "pnpm-lock.yaml"],
       "hosts": ["https://alpha05.vaipakam.com", "https://vaipakam-alpha05.dawn-fire-139e.workers.dev"],
       "compare": "all",
       "buildVars": {
@@ -41,6 +44,7 @@
     {
       "worker": "vaipakam-www",
       "dir": "apps/www",
+      "watch": ["apps/www/", "packages/", "pnpm-lock.yaml"],
       "hosts": ["https://vaipakam.com", "https://vaipakam-www.dawn-fire-139e.workers.dev"],
       "compare": "assets",
       "buildVars": {}

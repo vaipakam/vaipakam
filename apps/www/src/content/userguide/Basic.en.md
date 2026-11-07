@@ -1209,6 +1209,14 @@ Before your wallet opens, the app asks the protocol to try your offer as a dry r
 
 Posting an offer charges you no fee. The initiation fee is the borrower's: a small share of the amount, charged once in the lending asset when a borrower takes your offer, at the rate in force then, and taken from what they receive. You lend the whole amount, and the borrower owes it back in full with interest. When interest is paid, the protocol keeps its share of it, at the rate in force when the loan opens; your fee-discount tier can lower that share while your fee-discount setting is on. The review shows today's rate and the most that share can take; if that rate cannot be read, the review says so instead of showing a figure.
 
+<a id="positions"></a>
+
+### Positions: Your Loan Positions
+
+Positions lists every loan you lent or borrowed in on this network, from the position tokens your wallet holds, so a position you transferred to someone else leaves your list. Payouts ready to collect come first and open Claims. Live loans follow, the most urgent deadline first, as on Home. Ended loans come last, each with how it ended: repaid, defaulted, settled, or closed by a match. An ended loan whose payout is still waiting points you to Claims.
+
+All, Lent and Borrowed narrow the three lists at once. Positions says you have nothing only after reading everything; if a list could not be read in full, it says so. Each loan opens its own page, which shows the actions open to you. The list itself never signs anything.
+
 <a id="risk-access"></a>
 
 ### Risk Access: Your Risk Level

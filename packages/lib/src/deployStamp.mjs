@@ -106,7 +106,27 @@ export function wranglerEntry(cwd) {
 }
 
 /**
- * Run `wrangler deploy <args…> <stamp flags>` for the package at `cwd`.
+ * How a Worker deploy goes out (#3236), read from `VAIPAKAM_DEPLOY_MODE`:
+ *   - unset or `live`: `wrangler deploy`, the new version takes all traffic;
+ *   - `upload`: `wrangler versions upload`, the new version is stored, stamped
+ *     and given a preview URL, and takes NO traffic until a person approves it
+ *     (.github/workflows/promote-site.yml).
+ * Any other value is refused, so a typo never deploys live by accident.
+ *
+ * The mode is a setting of the Worker's Workers Build (a build variable),
+ * not a file in the repository, so no merge can switch the approval off.
+ *
+ * @returns {{ mode: 'live' | 'upload' } | { reason: string }}
+ */
+export function deployMode(env = process.env) {
+  const raw = (env.VAIPAKAM_DEPLOY_MODE ?? '').trim();
+  if (raw === '' || raw === 'live') return { mode: 'live' };
+  if (raw === 'upload') return { mode: 'upload' };
+  return { reason: `VAIPAKAM_DEPLOY_MODE must be "live" or "upload", got ${JSON.stringify(raw.slice(0, 32))}` };
+}
+
+/**
+ * Run `wrangler <subcommand…> <args…> <stamp flags>` for the package at `cwd`.
  *
  * Wrangler is started as its own JavaScript entry under this Node, never
  * through a shell: on Windows a shell would split the stamp's message (it
@@ -114,12 +134,18 @@ export function wranglerEntry(cwd) {
  * entry is resolved from `cwd`, so each package deploys with the wrangler
  * it declares.
  *
+ * @param {string[]} subcommand `['deploy']` or `['versions', 'upload']`
  * @returns {import('node:child_process').SpawnSyncReturns<Buffer>}
  */
-export function wranglerDeploy(args, { cwd = process.cwd(), stamp, stdio = 'inherit' } = {}) {
+export function wranglerRun(subcommand, args, { cwd = process.cwd(), stamp, stdio = 'inherit' } = {}) {
   const entry = wranglerEntry(cwd);
-  return spawnSync(process.execPath, [entry, 'deploy', ...args, ...deployStampArgs(stamp ?? { reason: 'none given' })], {
+  return spawnSync(process.execPath, [entry, ...subcommand, ...args, ...deployStampArgs(stamp ?? { reason: 'none given' })], {
     cwd,
     stdio,
   });
+}
+
+/** `wrangler deploy <args…> <stamp flags>` (see wranglerRun). */
+export function wranglerDeploy(args, opts = {}) {
+  return wranglerRun(['deploy'], args, opts);
 }

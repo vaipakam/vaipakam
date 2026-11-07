@@ -2371,6 +2371,14 @@ La revisión simula `createOffer` desde la billetera y lee ambas clases, `getEff
 
 `createOffer` no cobra nada al prestamista. La comisión mostrada es del prestatario: `getLoanInitiationFeeBps` del importe en el activo prestado, a la tasa vigente cuando se ejecuta `acceptOffer`, reducida entonces por el descuento de nivel de tenencia del prestatario y descontada de lo que se le entrega; la cifra mostrada usa la tasa de hoy. La parte del protocolo sobre los intereses es `getTreasuryFeeBps`, fijada por préstamo al abrirse (`treasuryFeeBpsAtInit`); el descuento de nivel de tenencia del prestamista, con el consentimiento activado, la reduce al liquidar los intereses. La revisión muestra la tasa de hoy y la parte a esa tasa como límite superior; una lectura fallida de `getTreasuryFeeBps` se indica, y no se muestra ninguna parte ni importe de vuelta.
 
+<a id="positions"></a>
+
+### Positions: cómo se lee la lista
+
+Positions lee el mismo inventario que Home mediante un lector compartido: `getUserPositionLoansPaginated` recorre los NFT de posición que guarda la wallet, `getLoansBatch` los carga, y cada lado sale del token que se guarda (`lenderTokenId` o `borrowerTokenId`), nunca de la parte registrada al originarse. Los préstamos con estado Active o FallbackPending están activos, con los plazos, el factor de salud y la agrupación descritos en Home. Cualquier otro estado es terminado, con el id de préstamo más reciente primero, nombrado según `LoanStatus`: Repaid, Defaulted, Settled o InternalMatched (cerrado por un emparejamiento); un número de estado que la app no conoce se muestra como número. Los pagos siguen la regla de reclamables descrita en Home: una posición guardada sobre un préstamo terminado que la wallet recibió de otra persona se cuenta, no se adivina.
+
+La elección de lado filtra los pagos y las filas activas y terminadas por el lado que se guarda. "Nada" se dice solo cuando el recorrido de posiciones y el de pagos se completaron y la última lectura tuvo éxito; un recorrido detenido en su tope se indica como incompleto. Una fila abre `/positions/<id>`, donde el veredicto de elegibilidad decide cada acción; la lista no envía ninguna transacción.
+
 <a id="risk-access"></a>
 
 ### Risk Access: tu nivel de riesgo

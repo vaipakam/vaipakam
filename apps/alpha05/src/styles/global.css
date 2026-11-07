@@ -1569,3 +1569,18 @@ a.btn {
   font-size: 1.05rem;
   font-weight: 600;
 }
+
+/* ── Positions: the side choice ─────────────────────────────────────── */
+.positions-side {
+  margin: 12px 0 4px;
+}
+.positions-side button {
+  min-height: var(--taptarget);
+  padding: 8px 18px;
+  transition: background-color 250ms var(--ease-standard), color 250ms var(--ease-standard);
+}
+@media (prefers-reduced-motion: reduce) {
+  .positions-side button {
+    transition: none;
+  }
+}

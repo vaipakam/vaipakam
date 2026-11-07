@@ -1905,7 +1905,9 @@ attacker, a Permit2 signature, or a transfer.
   custom domain and on `workers.dev`. Its keys say what it found:
   `mismatch` (a file or header differs), `off-main` (the deployed commit was
   never merged), `unverifiable` (no stamp, a dirty build, or traffic split
-  across versions) and `unbuildable`. A `mismatch` has two possible causes,
+  across versions), `unbuildable`, and, once deploy approval is on (see
+  Prevent below), `unapproved` (a live version that no approval run put
+  there). A `mismatch` has two possible causes,
   and the issue names both: someone changed a site's build variables in the
   Workers Build settings without the same change to `.github/served-build.json`,
   or what is served was altered. Treat it as altered, and start Contain below,
@@ -2019,14 +2021,81 @@ the people most at risk from revoking.
   before the incident.
 - The live drives in `apps/app/e2e/live/` pass against the restored deploy.
 
+### Prevent: a person approves each site deploy (built; off until mainnet)
+
+Every merge to `main` deploys the three sites by itself today. At mainnet a
+person approves each one first (owner decision 2026-11-07: build it now,
+rehearse it on testnet, switch it on at mainnet). It is
+`.github/workflows/promote-site.yml`. While it is off, a push does nothing
+and the sites deploy as before.
+
+With it on, a site's Workers Build only uploads the new version, stamped with
+its commit and reachable on its own preview address, and it takes no
+traffic. The workflow waits for that version, rebuilds the commit and
+compares it with what the preview address serves (the served-build check),
+and only then asks for approval. On approval it makes that version take all
+traffic, writes the approving run's address into the deployment's message,
+and records `promoted <worker> <version>` as a notice on its own GitHub job.
+It refuses a version older than what is live, and it refuses when the live
+deployment's commit cannot be established (traffic split across versions,
+no clean stamp), so approving a stale run can never roll a site back; in
+that case put a stamped version back by hand first (Contain, step 1).
+
+The six-hourly served-build check then reads GitHub's record, not
+Cloudflare's. The deployment's message only points it at a run. That run
+must be a promote-site run on `main` whose promote job recorded this exact
+version and commit, and no run on `main` may have approved a newer commit
+for the site. Approvals are ordered by commit, not by when a run started or
+was approved, because promotion only ever moves a site forward. A Cloudflare token
+can write any deployment message, so the message alone proves nothing; the
+GitHub record is out of that token's reach. Anything else is `unapproved`,
+including an older approved version put back by hand.
+
+To switch it on (all steps, in this order):
+
+1. In GitHub, create the environment `site-production`: required reviewer a
+   person's account that no agent, bot or automation signs in as; "Prevent
+   self-review" on; deployment branches limited to `main`. With self-review
+   prevented, the account that merged a change cannot approve its deploy, so
+   the reviewer account must not be the one merges are made with. Add to it the
+   secret `CLOUDFLARE_PROMOTE_TOKEN`, a Cloudflare API token with Account ·
+   Workers Scripts · Edit and nothing else. No other job can read it.
+2. In Cloudflare, add the build variable `VAIPAKAM_DEPLOY_MODE=upload` to the
+   Workers Build of `vaipakam-app`, `vaipakam-alpha05` and `vaipakam-www`
+   ONLY. The indexer, keeper and agent use the same deploy script and must
+   not get it. Any value other than `upload` or `live` fails the build.
+3. Set the repository variable `SITE_DEPLOY_APPROVAL=on`.
+4. Merge a small site change and approve it end to end. Confirm the served
+   build check runs clean afterwards.
+
+To switch it off, undo step 3 and then step 2; the next merge deploys
+directly again.
+
+What it does not do. A preview address is public, so an unapproved version
+can be opened by anyone who knows its address (nobody is sent there). A
+rollback by hand during an incident (Contain, step 1) is itself unapproved:
+the check reports `unapproved` until the next approved deploy, which is
+expected. Anyone who can edit the Workers Build settings or holds a
+Cloudflare token with Workers Scripts Edit can still deploy directly; the
+gate makes that visible within six hours rather than impossible, so keep
+those credentials few.
+
+To rehearse while it is off: upload a version by hand from a clean checkout
+of a commit on `main` (`VAIPAKAM_DEPLOY_MODE=upload pnpm run deploy` in the
+site's folder, with that site's build variables from
+`.github/served-build.json` in the environment, or the compare will fail),
+then run the workflow by hand for that site and commit. Until step 1 exists
+the promote job fails for want of its token, and nothing moves.
+
 ### Afterwards
 
 Review on-chain approvals and transfers from users who signed during the
 window, including position-NFT approvals and transfers and any claim paid to a
 new holder, rotate every credential that could reach the deploy path, and record
-the timeline in the deployment log below. The open prevention items are on
-#3236: DNSSEC, CAA and HSTS, and a human approval for app deploys at mainnet.
-The automatic served-build check is in place (see Detect).
+the timeline in the deployment log below. DNSSEC, CAA records and HSTS are on
+for the domain (checked 2026-11-07). The automatic served-build check is in
+place (see Detect), and the deploy approval is built and waits for mainnet
+(see Prevent).
 
 ---
 
