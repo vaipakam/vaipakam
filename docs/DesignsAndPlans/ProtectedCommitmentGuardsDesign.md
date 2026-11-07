@@ -174,8 +174,15 @@ because their pricing is a daily fee and not an APR (Q3).
 - *Fill*: `LoanFacet.initiateLoan` (`LoanFacet.sol:188-205`).
   - It is the chokepoint for accept, match, signed fill and sale vehicle, and
     it already calls `requireCanOpen` for both parties.
-  - It refuses with `CommitmentNotLive(kind, ref, liveAt)` when the creator's
-    offer has a non-live record.
+  - It refuses with `CommitmentNotLive(kind, ref, liveAt)` when **any
+    standing offer the fill consumes** has a non-live record: the creator's
+    offer on an accept, and **both** offers on a match. A match passes the
+    borrower's offer as the accepted offer and carries the lender's offer
+    separately in the match context (`matchLenderAuthOfferId`,
+    `LibOfferMatchExecute.sol:343-355,382-385`), so the lookup resolves the
+    lender's record from that context rather than from the accepted offer.
+    One shared check takes the list of consumed offer ids, so no fill route
+    can check a subset.
   - The resolved rate (`LoanFacet.sol:1021-1074`, including the match
     midpoint) is always inside the offer's committed range, so no fresh
     judgement is needed at fill.
@@ -194,8 +201,11 @@ because their pricing is a daily fee and not an APR (Q3).
   - A protected account accepting an off-band signed offer queues an accept
     row holding the digest, and the execution takes the signed offer and its
     signature again as calldata.
-- *Matches* (`OfferMatchFacet.sol:147`) reach `initiateLoan`, so a queued
-  standing offer simply goes unmatched until it is live.
+- *Matches* (`OfferMatchFacet.sol:147`) reach `initiateLoan`, which checks
+  both the lender's and the borrower's records, so either queued standing
+  offer simply goes unmatched until it is live. The rate the match resolves is
+  not a substitute: a lender offer whose low range end put it off-band can
+  match at an in-band midpoint, and it still waits.
 - *Lender intents* have no standing offer to wait. `matchIntent`
   materializes a fresh slice and fills it in the same transaction, so a delay
   started at that point could never mature: the failing fill would revert the
@@ -397,6 +407,9 @@ Unit tests for `LibProtectedCommitment`:
 
 - the band, both directions, on the range ends;
 - the rule not applying with no model, no reference or a stale reference;
+- matches: a queued, a cancelled and an epoch-voided lender offer each fail
+  to match an otherwise fillable borrower offer, including at an in-band
+  midpoint; the same for a queued borrower offer against a live lender offer;
 - reference movement: many updates from the publisher in one block, and
   across a day, cannot move the reference beyond the cap from its anchor;
   an update within an hour of the last is refused; the anchor rolls only after

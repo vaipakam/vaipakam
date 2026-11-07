@@ -146,23 +146,32 @@ down) delays the outflow, never values it at 0. If the guard's numeraire
 differs from the config's, every valued outflow is delayed until re-anchored
 (Q6).
 
-**A numeraire rotation does not carry the old sums over.** The meter and the
-pending reservation are tagged with the numeraire they were written in. Sums
-in one currency cannot be compared with a threshold in another, and converting
-them would need a cross-rate the vault has no trusted source for. So when the
-config's numeraire changes, every valued owner outflow is **delayed** (queued,
-not refused) until **both** of these hold: 25 hours have passed since the
-rotation took effect, so the last old-currency hour has left the window; and
-no queued row recorded in the old currency is still pending. The meter then
-restarts empty under the new tag. The reservation is kept per tag, so an
-old-currency reservation is never added to a new-currency one. Old rows keep
-their old-currency recorded values; on release they are re-valued in the new
-currency and, if the guard does not answer Ok, they wait. Once an old row is
-released or cancelled it leaves the old reservation. When that reaches zero,
-and the 25 hours have passed, immediate withdrawals resume. An old row
-re-valued at release enters the new meter at its new-currency value. Both lines apply the same rule, each against its own tag, so a
-withdrawal made just before the rotation cannot be paired with an
-undercounted one just after it. The first line runs the same rule against the same guard in the same
+**A numeraire rotation does not carry the old sums over.** Sums in one
+currency cannot be compared with a threshold in another, and converting them
+would need a cross-rate the vault has no trusted source for. So the meter and
+the pending reservation each exist **per currency tag**:
+
+- At rotation the old-tag meter and old-tag reservation are frozen: they take
+  no new entries. A new-tag meter and reservation start empty and accumulate
+  normally from that moment, releases included.
+- **The hold.** Every valued owner outflow is delayed (queued, not refused)
+  while the old tag still matters: until 25 hours after the rotation took
+  effect, so the last old-currency hour has left the window, **and** until no
+  queued row recorded in the old currency is still pending.
+- Old rows keep their old-currency recorded values. On release they are
+  re-valued in the new currency, and they wait if the guard does not answer
+  Ok. A released old row leaves the old reservation and enters the **new**
+  meter at its new-currency value; a cancelled one only leaves the old
+  reservation.
+- When the hold ends, only the old-tag meter and reservation are discarded.
+  The new-tag meter keeps every entry it gathered during the hold, so a
+  release made just before the hold ended still counts.
+
+Both lines apply the same rule, each against its own tags, so a withdrawal
+made just before the rotation cannot be paired with an undercounted one just
+after it.
+
+The first line runs the same rule against the same guard in the same
 transaction, so honest paths never disagree. This build waits for #3272: a vault
 calling `NumeraireValueFacet` would be the Diamond checking itself.
 
@@ -325,7 +334,9 @@ and every §12 residual.
   numeraire delays a just-under-threshold outflow in the new currency, in both
   lines; 25 hours after the rotation the meter is empty under the new tag and
   that outflow pays; a $1,000 row still pending from before the rotation keeps
-  the delay on past 25 hours until it is released or cancelled.
+  the delay on past 25 hours until it is released or cancelled; a row released
+  24 hours after the rotation still counts in the new meter after the hold
+  ends, so a threshold-sized outflow an hour later queues.
 - **Second line,** with a test facet calling `transferOut` directly: an
   unqueued over-threshold owner outflow reverts; an outflow beyond the vault
   bucket reverts; a facet writing arbitrary Diamond storage cannot change the
