@@ -15,9 +15,9 @@ could replace the private one. For the same reason, the keeper trusts a
 remembered nonce longer on a private chain: seven minutes, against the six
 minutes Flashbots Protect keeps a transaction pending. A dropped private
 transaction can therefore hold later sends on that chain for up to that long.
-The seven minutes run from the last time the chain was seen to mine the oldest
-transaction still held, so later sends accepted behind a dropped one do not
-extend the hold.
+Each transaction's seven minutes run from its own broadcast, so later sends
+accepted behind a dropped one neither extend its hold nor lose their own when
+the dropped one is replaced.
 The remembered nonce is also written to the keeper's own database before each
 private broadcast, so a keeper restarted by an update or a crash still skips a
 private transaction that has not landed yet. If that record cannot be read or

@@ -332,12 +332,12 @@ a commit. The template documents each line. In short:
   check the `submission routes:` line every tick prints after `chains
   resolved`: it names each chain's route and the endpoint's provider domain
   (the last two labels of its host, such as `flashbots.net`), never its URL
-  or a subdomain, either of which can carry an access key. Before each private broadcast the keeper records the next nonce in its
-  private database (`keeper_private_nonce`, keeper migration `0007`), so a
+  or a subdomain, either of which can carry an access key. Before each private broadcast the keeper records that nonce, with its own
+  send time, in its private database (`keeper_private_nonce`, keeper migration `0007`), so a
   restart cannot reuse the nonce of a private transaction still pending; a
   record it cannot read or write stops that chain's sends. On a private chain
   a dropped transaction can hold later sends on that chain for up to seven
-  minutes. Which mainnet chains get a private route is an owner decision
+  minutes from its own broadcast; the sends behind it keep their own seven. Which mainnet chains get a private route is an owner decision
   recorded in the mainnet checklist.
 - **Knobs:** copy the live values from the keeper Worker's dashboard.
 
