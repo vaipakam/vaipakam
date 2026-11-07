@@ -433,11 +433,21 @@ the installed release).
 
 ## 6. Residual risk, stated
 
-A stolen **adder** key can list arbitrary addresses (blocking those wallets
-from opening new positions; closing out stays open) or record a publication
-dated in the future, which stalls later updates until the owner authorizes a
-rollback. Both are recoverable by the owner and the Safe. The key cannot
-delist and cannot appoint anyone.
+A stolen **adder** key can list arbitrary addresses, at most the list's
+daily cap per UTC day (100 by default, set by the owner within 10 to 1,000;
+#3239). A listing blocks that wallet's new positions, its claims, its partial
+and early withdrawals and its vault creation until the Safe delists it;
+close-outs that make its counterparties whole stay open. The key can also
+record a false file under today's date, which holds back a genuine file of
+the same date until the owner authorizes it or the next publication arrives.
+It can no longer record a date after the chain's own UTC date. All of it is
+recoverable by the owner and the Safe. The key cannot delist and cannot
+appoint anyone.
+
+The adder plans within the cap: it reads what the day still allows, lists
+that much, and reports the rest of the publication as waiting for the next
+UTC day. A large first population is faster through the Safe, which the cap
+does not limit.
 
 A stolen **delister** key can propose wrongful delistings, no more in total
 than the publication declares outstanding. Each waits out the window, during
