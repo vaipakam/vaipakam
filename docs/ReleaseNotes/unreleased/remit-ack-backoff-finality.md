@@ -1,5 +1,0 @@
-## Keeper — remit acknowledgements are no longer sent twice from Arbitrum (PR #3264)
-
-When a mirror receives its daily reward budget from Base, the keeper sends an acknowledgement back over CCIP from the mirror and pays the CCIP fee. If Base has not recorded the acknowledgement yet, the keeper re-sends it after a backoff. That backoff was 15 minutes. CCIP waits for full finality on the source chain before it delivers, and Chainlink states 17 minutes for Arbitrum (18 for Base, 20 for OP Mainnet). So every acknowledgement from Arbitrum was still in flight when the keeper re-sent it, and the fee was paid twice. On 2026-11-06 the day-1 acknowledgement for Arbitrum went out at 18:55 and again at 19:11. Base accepted it once, as it always does with a duplicate, so the only loss was the fee.
-
-The backoff is now three times the slowest source finality among CCIP's chains, which is one hour. An acknowledgement that is truly lost is still re-sent several times before the eight-hour overdue alert reaches the operator.
