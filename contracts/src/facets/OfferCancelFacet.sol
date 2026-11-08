@@ -12,6 +12,7 @@ import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
 import {LibSaleListing} from "../libraries/LibSaleListing.sol";
 import {LibPrepayCleanup} from "../libraries/LibPrepayCleanup.sol";
+import {LibRefinanceRequest} from "../libraries/LibRefinanceRequest.sol";
 import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
@@ -128,8 +129,9 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
      * @param offerId The offer ID to cancel.
      */
     /// @dev #3205 — whether `offerId` is an offset or lender-sale vehicle whose
-    ///      route on its position is dead ({LibPositionNFT.routeIsDead}). False
-    ///      for every other offer.
+    ///      route on its position is dead ({LibPositionNFT.routeIsDead}), or
+    ///      (#3336) a refinance request whose position moved since it was
+    ///      recorded. False for every other offer.
     function _vehicleRouteDead(LibVaipakam.Storage storage s, uint256 offerId) private view returns (bool) {
         uint256 loanId = s.offsetOfferToLoanId[offerId];
         if (loanId != 0) {
@@ -139,6 +141,12 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         if (loanId != 0) {
             return LibPositionNFT.routeIsDead(s.loans[loanId].lenderTokenId, LibPositionNFT.RouteReason.EarlyWithdrawalSale);
         }
+        // #3336 — a refinance request is dead once it is no longer its loan's
+        // recorded request on an unmoved position: the borrower position moved
+        // since it was recorded, or a later request displaced it. Either way
+        // it can never be taken ({LibRefinanceRequest.assertTakeable}).
+        loanId = s.offers[offerId].refinanceTargetLoanId;
+        if (loanId != 0) return !LibRefinanceRequest.unmoved(s, loanId, offerId);
         return false;
     }
 
