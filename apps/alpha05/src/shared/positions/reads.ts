@@ -59,7 +59,7 @@ async function settled<T>(promises: readonly Promise<T>[]): Promise<(T | null)[]
 
 /** Walks an ERC-721 inventory view taking `(user, offset, limit)` and
  *  returning `(ids, tokenIds, totalBalance)`, as one bounded scan. */
-async function walkInventory(client: PublicClient, diamond: Hex, account: Hex, functionName: string) {
+export async function walkInventory(client: PublicClient, diamond: Hex, account: Hex, functionName: string) {
   return scanAll<{ id: bigint; tokenId: bigint }>(
     async (cursor, maxScan) => {
       const [ids, tokenIds, total] = (await client.readContract({
@@ -77,7 +77,7 @@ async function walkInventory(client: PublicClient, diamond: Hex, account: Hex, f
 }
 
 /** Bulk hydration in chunks the view accepts, positions preserved. */
-async function inBatches<T>(ids: readonly bigint[], read: (chunk: bigint[]) => Promise<readonly T[]>): Promise<T[]> {
+export async function inBatches<T>(ids: readonly bigint[], read: (chunk: bigint[]) => Promise<readonly T[]>): Promise<T[]> {
   const out: T[] = [];
   for (let i = 0; i < ids.length; i += BATCH) out.push(...(await read(ids.slice(i, i + BATCH))));
   return out;

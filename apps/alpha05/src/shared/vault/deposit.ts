@@ -26,7 +26,7 @@ import { tokenAcceptsApproval } from '../offers/reads';
 import { answerOrNull } from '../reads/answer';
 import { frozenState, readSanctionsPosture, type FrozenState } from '../sanctions/posture';
 import { allowanceSteps } from '../tx/approval';
-import { payoutRoute, type PayoutRoute, type Protection } from '../protection/payout';
+import { payoutRoute, protectionFrom, type PayoutRoute, type ProtectedAccountAnswer, type Protection } from '../protection/payout';
 import { routeChanged } from '../protection/payoutCopy';
 
 type Hex = `0x${string}`;
@@ -87,15 +87,7 @@ export async function readDepositReview(own: OwnStateClient, diamond: Hex, draft
         c.readContract({ address: diamond, abi: FACTORY, functionName: 'getUserVaultAddress', args: [account], ...at }) as Promise<Hex>,
         answerOrNull(c.readContract({ address: diamond, abi: ADMIN, functionName: 'paused', ...at }) as Promise<boolean>),
         readSanctionsPosture(c, diamond, account, block),
-        answerOrNull(
-          c.readContract({ address: diamond, abi: PROTECTED, functionName: 'getProtectedAccount', args: [account], ...at }) as Promise<{
-            retired: boolean;
-            enabled: boolean;
-            locked: boolean;
-            delaySeconds: number | bigint;
-            requireCosign: boolean;
-          }>,
-        ),
+        answerOrNull(c.readContract({ address: diamond, abi: PROTECTED, functionName: 'getProtectedAccount', args: [account], ...at }) as Promise<ProtectedAccountAnswer>),
       ]);
       let holding: DepositHolding;
       // An ERC-721 token needs one approval for that token unless the
@@ -115,8 +107,7 @@ export async function readDepositReview(own: OwnStateClient, diamond: Hex, draft
         ]);
         holding = { kind: 'erc20', balance, allowance, approvalSteps: 0 };
       }
-      const protection: Protection | null =
-        account_ === null ? null : { enabled: account_.enabled, locked: account_.locked, delaySeconds: Number(account_.delaySeconds), requireCosign: account_.requireCosign };
+      const protection = protectionFrom(account_);
       return {
         vault: vault.toLowerCase() === ZERO ? null : vault,
         paused,

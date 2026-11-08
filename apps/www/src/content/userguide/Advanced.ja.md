@@ -2319,6 +2319,18 @@ Positions は共通のリーダーを通して Home と同じ保有一覧を読�
 
 通知は同じブロックで `paused`、`VaultPayoutFacet.isEscapeOpen`、`escapeOpensAt`（手動一時停止の開始時刻に、開始時のエスケープ期間を足したもの。有効な一時停止がない場合や Diamond が一度も開始されていない場合はゼロ）、`getProtectedAccount(wallet)` を読み、ブロック時刻に対してカウントダウンします。ルートが閉じたまま一時停止中は `withdrawFromVault` が `EnforcedPause` でリバートし、レビューは一時停止が止めていると伝えます。`isEscapeOpen` が真になると、保護されたアカウントは引き続き `withdrawFromVault` を使い、キューへの登録が続きます。それ以外のウォレットの引き出しは `escapeWithdraw(kind, asset, tokenId, amount)` を呼びます。これは保護されたアカウントを拒否し（`EscapeNotForProtected`）、禁止された受取人を拒否し、ウォレット自身の入金残高と自由な数値で上限が決まり、呼び出し元に支払います。完了カードは `EscapeWithdrawal(account, asset, tokenId, amount)` と、ボールトからウォレットへのトークン自体の移転を読みます。一時停止、ルート、またはルートが開いている場合のモードが読めなければ、引き出しは送信されません。
 
+<a id="my-offers"></a>
+
+### あなたのオファー
+
+一覧は `getUserOffersPaginated(wallet)`（作成者ごとのインデックスで、取り消したIDも残る）と `getUserPositionOffersPaginated(wallet)`（ウォレットがポジショントークンを持つオファー）の和集合で、`MetricsDashboardFacet.getOffersWithState` を通じて最大250件ずつ読み、位置ごとに対応する答えを受け取ります。各行は問い合わせたIDに対応づけられます。何も成立せずに取り消されたオファーはレコードが削除されるため、ビューはID 0と導出状態「取消済み」を返し、行は条件を再構成せずに何も示しません。部分成立後に取り消されたオファーは `accepted` が立ったままレコードが残り、成立として読まれます。フィルターの件数は読み取った行について数えます。どちらかのインデックスを最後まで読めなかった場合、ページは一覧が不完全かもしれないと示します。
+
+<a id="offer-cancel"></a>
+
+### オファーを取り消す
+
+確認画面は1つのブロックで `getOffer(id)`、`getOffersWithState([id])`、`getOfferLinkedLoanId(id)`、`paused()` と作成者の `getProtectedAccount` を読み、`OfferCancelFacet.cancelOffer(id)` を試行実行します。ファセットは作成者のマネージャーにはいつでも、`expiresAt` を過ぎれば誰にでも取消を認めます。`OfferAlreadyAccepted`、`OfferAlreadyConsumedBySale` を拒否し、`amountFilled == 0` のオファーが300秒未満で期限内なら `CancelCooldownActive` を返し、`whenNotPaused` です。返却額はファセット自身の分岐で算出します。ERC-20の貸付オファーは貸付資産の `(amountMax または amount) - amountFilled`、NFTの貸付オファーはそのトークンまたはERC-1155の数量、借入リクエストは未使用の担保 `(collateralAmountMax または collateralAmount) - collateralAmountFilled` またはそのNFT（`refinanceCarryOver` で担保がローンに残る場合はなし）、レンタルリクエストは `amount × durationDays` に `rentalBufferBpsAtCreate` のバッファを加えた額です。`getOfferLinkedLoanId` でローンに結びつくオファーや、記録されたバッファがゼロのレンタルリクエスト（その場合プロトコルは現行率を使う）は署名前に算出しません。返却はすべてボールト出金を通じて作成者のボールトから出るため、保護モードではキューに入るか、ロック中はボールトに留まります。ポジショントークンは廃止されます。完了カードは `OfferCanceled(offerId, creator)`、作成者へのプロトコルの支払い記録、作成者へのトークン自身の送金を読みます。
+
 <a id="risk-access"></a>
 
 ### Risk Access: あなたのリスクレベル

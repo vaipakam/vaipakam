@@ -61,7 +61,7 @@ const review: LoanClaimReview = {
   claim: null,
   lanes: [{ kind: 'row', asset: WETH, assetType: 0, tokenId: 0n, amount: 50n }],
   sellersShare: 0n,
-  protection: { enabled: false, locked: false, delaySeconds: 0, requireCosign: false },
+  protection: { enabled: false, locked: false, delaySeconds: 0, requireCosign: false, retired: false, controller: '0x0000000000000000000000000000000000000000' as const },
   route: 'wallet',
   frozen: null,
   dryRun: null,

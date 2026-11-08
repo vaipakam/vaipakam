@@ -29,7 +29,7 @@ const queued = (address: `0x${string}`, account: `0x${string}`, amount: bigint) 
   eventLog(address, 'PayoutQueued', { account, id: 1n, asset: ASSET, kind: 0, tokenId: 0n, amount, recipient: account, releaseAt: 1_900_000_000n });
 
 describe('payoutRoute', () => {
-  const on = { enabled: true, locked: false, delaySeconds: 3600, requireCosign: false };
+  const on = { enabled: true, locked: false, delaySeconds: 3600, requireCosign: false, retired: false, controller: '0x0000000000000000000000000000000000000000' as const };
   it('pays a wallet without the mode at once, and says unknown when unread', () => {
     expect(payoutRoute({ ...on, enabled: false }, ME, ME)).toBe('wallet');
     expect(payoutRoute(null, ME, ME)).toBe('unknown');
@@ -45,7 +45,7 @@ describe('payoutRoute', () => {
 
 describe('payoutOutcomes', () => {
   it('reads a payout queued for this account and asset from the Diamond only, summed', () => {
-    expect(payoutOutcomes([queued(DIAMOND, ME, 7n), queued(DIAMOND, ME, 3n)], DIAMOND, ME, ASSET)).toEqual([{ kind: 'queued', amount: 10n, releaseAt: 1_900_000_000n }]);
+    expect(payoutOutcomes([queued(DIAMOND, ME, 7n), queued(DIAMOND, ME, 3n)], DIAMOND, ME, ASSET)).toEqual([{ kind: 'queued', amount: 10n, releaseAt: 1_900_000_000n, recipient: ME }]);
     expect(payoutOutcomes([queued(OTHER, ME, 7n)], DIAMOND, ME, ASSET)).toEqual([]);
     expect(payoutOutcomes([queued(DIAMOND, OTHER, 7n)], DIAMOND, ME, ASSET)).toEqual([]);
     expect(payoutOutcomes([], DIAMOND, ME, ASSET)).toEqual([]);
@@ -59,7 +59,7 @@ describe('payoutOutcomes', () => {
   it('reads a payment split between the queue and the vault as both', () => {
     const held = eventLog(DIAMOND, 'PayoutHeldInVault', { account: ME, asset: ASSET, tokenId: 0n, amount: 5n });
     expect(payoutOutcomes([queued(DIAMOND, ME, 7n), held], DIAMOND, ME, ASSET)).toEqual([
-      { kind: 'queued', amount: 7n, releaseAt: 1_900_000_000n },
+      { kind: 'queued', amount: 7n, releaseAt: 1_900_000_000n, recipient: ME },
       { kind: 'held', amount: 5n },
     ]);
   });

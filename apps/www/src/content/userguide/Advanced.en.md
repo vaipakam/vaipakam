@@ -2696,6 +2696,18 @@ The card reads, at one block, `getProtectedAccount(wallet)`, `getProtectedDelayB
 
 The notice reads, at one block, `paused`, `VaultPayoutFacet.isEscapeOpen`, `escapeOpensAt` (the manual pause's start plus the escape period it began with; zero when none is in force or the Diamond has never launched) and `getProtectedAccount(wallet)`, and counts down against the block's time. While paused with the route closed, `withdrawFromVault` reverts `EnforcedPause` and the review says the pause stops it. Once `isEscapeOpen` is true, a protected account still uses `withdrawFromVault`, which keeps queueing; any other wallet's Withdraw calls `escapeWithdraw(kind, asset, tokenId, amount)`, which refuses a protected account (`EscapeNotForProtected`), refuses a barred recipient, is bounded by the wallet's own depository holding and the free figure, and pays the caller. The finish card reads `EscapeWithdrawal(account, asset, tokenId, amount)` and the token's own transfer from the vault to the wallet. If the pause, the route or, under an open route, the mode is unread, no withdrawal is sent.
 
+<a id="my-offers"></a>
+
+### Your offers
+
+The list is the union of `getUserOffersPaginated(wallet)` (the per-creator index, which keeps a cancelled id) and `getUserPositionOffersPaginated(wallet)` (the offers whose position token the wallet holds), read in batches of at most 250 through `MetricsDashboardFacet.getOffersWithState`, which answers position for position. Each row is matched to the id it asked for: an offer cancelled with nothing filled has its record deleted, so the view reports id 0 with the derived state Cancelled, and the row shows no terms rather than rebuilt ones. An offer cancelled after a partial fill keeps its record with `accepted` set, and reads as filled. The filter counts are taken over the rows read; if either index could not be read to its end, the page says the list may be incomplete.
+
+<a id="offer-cancel"></a>
+
+### Cancel an offer
+
+The review reads, at one block, `getOffer(id)`, `getOffersWithState([id])`, `getOfferLinkedLoanId(id)`, `paused()` and the creator's `getProtectedAccount`, then dry-runs `OfferCancelFacet.cancelOffer(id)`. The facet lets the creator's manager cancel at any time and anyone once `expiresAt` has passed; it refuses `OfferAlreadyAccepted`, `OfferAlreadyConsumedBySale`, and `CancelCooldownActive` while an offer with `amountFilled == 0` is younger than 300 seconds and not expired, and it is `whenNotPaused`. The return is sized from the facet's own branches: a lender ERC-20 offer returns `(amountMax or amount) - amountFilled` of the lending asset; a lender NFT offer its token, or its ERC-1155 quantity; a borrower request its unused collateral `(collateralAmountMax or collateralAmount) - collateralAmountFilled`, or its NFT, and nothing when `refinanceCarryOver` keeps the collateral in the loan; a rental request `amount × durationDays` plus the buffer at `rentalBufferBpsAtCreate`. An offer tied to a loan by `getOfferLinkedLoanId`, or a rental request whose stamped buffer is zero (the protocol then uses its current rate), is not sized before signing. Every return leaves the creator's vault through the vault withdrawal, so protected mode queues it, or keeps it in the vault while the account is locked. The position token is retired. The finish card reads `OfferCanceled(offerId, creator)`, the protocol's payout record for the creator, and the token's own transfer to the creator.
+
 <a id="risk-access"></a>
 
 ### Risk Access: Your Risk Level

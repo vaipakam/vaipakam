@@ -1584,6 +1584,38 @@ a.btn {
 .positions-side {
   margin: 12px 0 4px;
 }
+/* Offer state filters: pills that wrap on a phone rather than scroll. */
+.offers-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 12px 0;
+}
+.offers-filters button {
+  min-height: var(--taptarget);
+  padding: 6px 14px;
+  font: inherit;
+  font-size: 0.9rem;
+  color: var(--text-body);
+  background: var(--surface-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background-color 250ms var(--ease-standard), color 250ms var(--ease-standard), border-color 250ms var(--ease-standard);
+}
+.offers-filters button:hover {
+  border-color: var(--brand-fill);
+}
+.offers-filters button[aria-pressed='true'] {
+  background: var(--brand-fill);
+  border-color: var(--brand-fill);
+  color: var(--text-on-brand);
+}
+@media (prefers-reduced-motion: reduce) {
+  .offers-filters button {
+    transition: none;
+  }
+}
 .positions-side button {
   min-height: var(--taptarget);
   padding: 8px 18px;
