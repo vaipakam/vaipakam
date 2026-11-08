@@ -43,6 +43,7 @@ import {ERC20Mock} from "../mocks/ERC20Mock.sol";
 import {TestMutatorFacet} from "../mocks/TestMutatorFacet.sol";
 import {ArtifactDeploy} from "../../script/lib/ArtifactDeploy.sol";
 import {InteractionRewardsFacet} from "../../src/facets/InteractionRewardsFacet.sol";
+import {LibTestForcedSalePreview} from "../helpers/LibTestForcedSalePreview.sol";
 
 /**
  * @title InvariantBase
@@ -275,6 +276,7 @@ contract InvariantBase is Test {
         });
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
+        LibTestForcedSalePreview.install(address(diamond));
         // #3242 — wei-sized offers below the $10 floor; see {TestOfferFloor}.
         TestOfferFloor.lower(address(diamond));
     }

@@ -116,6 +116,7 @@ import {FeeOnTransferERC20Mock} from "./mocks/FeeOnTransferERC20Mock.sol";
 import {ArtifactDeploy} from "../script/lib/ArtifactDeploy.sol";
 import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol";
 import {liquidationQuote, forcedSaleQuote, forcedSalePlan} from "./helpers/ForcedSaleQuote.sol";
+import {LibTestForcedSalePreview} from "./helpers/LibTestForcedSalePreview.sol";
 
 contract RiskFacetTest is Test {
     VaipakamDiamond diamond;
@@ -527,6 +528,7 @@ contract RiskFacetTest is Test {
         });
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
+        LibTestForcedSalePreview.install(address(diamond));
         // #3242 — wei-sized offers below the $10 floor; see {TestOfferFloor}.
         TestOfferFloor.lower(address(diamond));
         AccessControlFacet(address(diamond)).initializeAccessControl();

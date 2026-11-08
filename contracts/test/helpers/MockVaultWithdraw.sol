@@ -105,6 +105,38 @@ contract VaultWithdrawTestHook {
         return false;
     }
 
+    /// @notice The scalar entry, stubbed by the same switches.
+    function vaultOutflowArgs(
+        address,
+        uint8 kind,
+        address,
+        uint256,
+        uint256 amount,
+        address,
+        uint8 class_,
+        uint256,
+        uint256,
+        uint8
+    ) external returns (uint256) {
+        if (_stubbed(VaultOutflowTypes.AssetKind(kind), VaultOutflowTypes.OutflowClass(class_))) return amount;
+        return _real();
+    }
+
+    /// @notice The compact Diamond-transient ERC-20 entry, stubbed likewise.
+    function vaultOutflowToDiamondERC20(address, address, uint256 amount, uint256, uint8) external returns (uint256) {
+        if (_stubbed(VaultOutflowTypes.AssetKind.ERC20, VaultOutflowTypes.OutflowClass.DiamondTransient)) return amount;
+        return _real();
+    }
+
+    /// @dev Forward the call unchanged to the real policy host.
+    function _real() private returns (uint256) {
+        (bool ok, bytes memory out) = REAL.delegatecall(msg.data);
+        assembly ("memory-safe") {
+            if iszero(ok) { revert(add(out, 0x20), mload(out)) }
+            return(add(out, 0x20), mload(out))
+        }
+    }
+
     /// @notice Runs AS the Diamond (delegatecalled by its fallback).
     function vaultOutflow(address, VaultOutflowTypes.Outflow calldata o) external returns (uint256) {
         if (_stubbed(o.kind, o.class_)) return o.amount;
@@ -197,6 +229,8 @@ library MockVaultWithdraw {
     function _install(address diamond) private {
         _installFor(diamond, VaultOutflowFacet.vaultOutflowToOwner.selector);
         _installFor(diamond, VaultOutflowFacet.vaultOutflow.selector);
+        _installFor(diamond, VaultOutflowFacet.vaultOutflowArgs.selector);
+        _installFor(diamond, VaultOutflowFacet.vaultOutflowToDiamondERC20.selector);
     }
 
     function _installFor(address diamond, bytes4 selector) private {

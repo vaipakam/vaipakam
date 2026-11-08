@@ -54,6 +54,7 @@ import {MockZeroExLegacyAdapter} from "./mocks/MockZeroExLegacyAdapter.sol";
 import {MockRentableNFT721} from "./mocks/MockRentableNFT721.sol";
 import {ArtifactDeploy} from "../script/lib/ArtifactDeploy.sol";
 import {defaultQuote} from "./helpers/ForcedSaleQuote.sol";
+import {LibTestForcedSalePreview} from "./helpers/LibTestForcedSalePreview.sol";
 
 /**
  * @title ClaimFacetTest
@@ -284,6 +285,7 @@ contract ClaimFacetTest is Test {
         });
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
+        LibTestForcedSalePreview.install(address(diamond));
         // #3242 — wei-sized offers below the $10 floor; see {TestOfferFloor}.
         TestOfferFloor.lower(address(diamond));
 

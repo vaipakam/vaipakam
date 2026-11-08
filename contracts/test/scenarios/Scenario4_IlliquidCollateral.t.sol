@@ -44,6 +44,7 @@ import {ERC20Mock} from "../mocks/ERC20Mock.sol";
 import {LibAcceptTestSigner} from "../helpers/LibAcceptTestSigner.sol";
 import {ArtifactDeploy} from "../../script/lib/ArtifactDeploy.sol";
 import {defaultQuote} from "../helpers/ForcedSaleQuote.sol";
+import {LibTestForcedSalePreview} from "../helpers/LibTestForcedSalePreview.sol";
 
 /**
  * @title Scenario4_IlliquidCollateral
@@ -237,6 +238,7 @@ contract Scenario4_IlliquidCollateral is Test {
         });
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
+        LibTestForcedSalePreview.install(address(diamond));
         // #3242 — wei-sized offers below the $10 floor; see {TestOfferFloor}.
         TestOfferFloor.lower(address(diamond));
         AccessControlFacet(address(diamond)).initializeAccessControl();

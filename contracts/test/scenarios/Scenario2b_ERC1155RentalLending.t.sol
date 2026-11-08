@@ -50,6 +50,7 @@ import {ZeroExProxyMock} from "../mocks/ZeroExProxyMock.sol";
 import {MockZeroExLegacyAdapter} from "../mocks/MockZeroExLegacyAdapter.sol";
 import {ArtifactDeploy} from "../../script/lib/ArtifactDeploy.sol";
 import {defaultQuote} from "../helpers/ForcedSaleQuote.sol";
+import {LibTestForcedSalePreview} from "../helpers/LibTestForcedSalePreview.sol";
 
 /**
  * @title Scenario2b_ERC1155RentalLending
@@ -264,6 +265,7 @@ contract Scenario2b_ERC1155RentalLending is Test {
         });
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
+        LibTestForcedSalePreview.install(address(diamond));
         // #3242 — wei-sized offers below the $10 floor; see {TestOfferFloor}.
         TestOfferFloor.lower(address(diamond));
         AccessControlFacet(address(diamond)).initializeAccessControl();
