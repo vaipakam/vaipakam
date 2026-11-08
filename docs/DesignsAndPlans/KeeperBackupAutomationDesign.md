@@ -37,7 +37,9 @@ step's due rule, and ships with every step switched off.
 
 - the VaultBeacon's two proposal executes (one candidate each);
 - each day step for the last `dayWindow` closed days (default 7), counting
-  back from yesterday;
+  back from yesterday, and for a rotating window of `dayWindow` days over
+  every older day, moving on every 5 minutes (a day's lapse opens only after
+  its finalize and a lapse window, often weeks after the day);
 - each loan step for a rotating window of the active-loan list (default 10
   loans, moving on every 5 minutes);
 - the stale-sale-listing teardown for the linked loan of each offer in a
@@ -51,19 +53,27 @@ its own. One step needs an extra rule: `recycleSkippedDayValue` succeeds with
 zero once nothing is left, so it is due only while its probe returns a
 non-zero amount.
 
-**Waiting.** A due candidate is first noted with the time it was seen, in a
-cheap transaction. It runs only if a later check still finds it due between
-`lagSec` (default 1 hour) and `lagSec + actWindowSec` (default 1 more hour)
-after the note. If our keeper runs the step in the meantime, the probe fails
-and the backup does nothing. A note older than that window no longer counts,
-so a step that recurs (a daily deduction) waits the full lag every time.
+**Waiting.** A due candidate is first noted, in a cheap transaction: it
+joins a bounded queue (at most 64) with the time it was seen. Every check
+visits the whole queue before it scans, so a noted candidate is revisited
+however far the rotating loan, offer and day windows have moved away from it.
+It runs only if a check still finds it due between `lagSec` (default 1 hour)
+and `lagSec + actWindowSec` (default 1 more hour) after the note. If our
+keeper runs the step in the meantime, the probe fails and the note is
+dropped; the perform probes again before it drops, so a drop removes only
+what is truly no longer due (or a step since disarmed). A note older than its
+window is renewed if the step is still due, so a step that recurs (a daily
+deduction) waits the full lag every time. While the queue is full no new note
+is taken; every entry leaves within one lag and run window of its note.
+`firstSeenAt(step, arg)` and `pendingCandidates()` show the queue.
 
 **Running.** A perform runs at most `runsPerPerform` steps (default 2, at most
 4). Each run clears its note first and emits `BackupStepRun(step, arg, ok,
 revertSelector)`; a run that reverts (someone ran it between check and
 perform) is recorded and changes nothing. `BackupDueNoted` marks every wait
-that starts, so the ops side can see from events alone that the backup found
-our keeper late.
+that starts and `BackupNoteDropped` every wait that ended without a run, so
+the ops side can see from events alone that the backup found our keeper late
+and whether our keeper caught up.
 
 ## The steps (the "clean set")
 
@@ -159,9 +169,10 @@ gets to it, and never a run.
 
 `contracts/test/KeeperBackupUpkeepTest.t.sol` drives the contract against a
 stand-in Diamond: every step off at deployment, the simulation-only check,
-the probe that changes nothing, note then run only after the lag, nothing
-when the keeper ran first, a stale note restarting the wait, a reverted run
+the probe that changes nothing, note then run only after the lag, a drop
+when the keeper ran first (and a drop refused while still due), a disarmed
+note dropped, a noted loan revisited after the window moved on, a stale note restarting the wait, a reverted run
 recorded with its selector, the forwarder gate, no run without a ready note,
 the run cap, the no-sale default with a paid bonus swept to the treasury,
-day zero and the day window, the recycle rule, the offer-linked teardown,
+day zero, the recent day window and the rotating history window, the recycle rule, the offer-linked teardown,
 the beacon steps and the rotating loan window.

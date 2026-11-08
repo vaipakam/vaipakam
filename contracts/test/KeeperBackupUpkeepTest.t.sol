@@ -318,7 +318,7 @@ contract KeeperBackupUpkeepTest is Test {
         emit KeeperBackupUpkeep.BackupStepRun(AUTO_DEDUCT, 12, true, bytes4(0));
         _perform(a);
         assertEq(diamond.runs(diamond.autoDeductDaily.selector, 12), 1);
-        assertEq(backup.firstSeenAt(keccak256(abi.encode(AUTO_DEDUCT, uint256(12)))), 0);
+        assertEq(backup.firstSeenAt(AUTO_DEDUCT, 12), 0);
     }
 
     function test_DoesNothingWhenTheKeeperRanItFirst() public {
@@ -328,8 +328,69 @@ contract KeeperBackupUpkeepTest is Test {
         _perform(a);
         diamond.setDue(diamond.autoDeductDaily.selector, 11, false); // our keeper ran it
         vm.warp(block.timestamp + 61 minutes);
-        (bool needed,) = _check();
+        (bool needed, KeeperBackupUpkeep.Action[] memory b) = _check();
+        assertTrue(needed);
+        assertEq(b.length, 1);
+        assertEq(uint8(b[0].mode), uint8(KeeperBackupUpkeep.Mode.Drop));
+        vm.expectEmit(address(backup));
+        emit KeeperBackupUpkeep.BackupNoteDropped(AUTO_DEDUCT, 11);
+        _perform(b);
+        assertEq(diamond.runs(diamond.autoDeductDaily.selector, 11), 0);
+        assertEq(backup.pendingCandidates().length, 0);
+        (needed,) = _check();
         assertFalse(needed);
+    }
+
+    function test_ADropOfAStillDueNoteIsRefused() public {
+        _arm(AUTO_DEDUCT);
+        diamond.setDue(diamond.autoDeductDaily.selector, 11, true);
+        (, KeeperBackupUpkeep.Action[] memory a) = _check();
+        _perform(a);
+        // Waiting: a drop is refused.
+        _perform(_one(KeeperBackupUpkeep.Mode.Drop, AUTO_DEDUCT, 11));
+        assertEq(backup.pendingCandidates().length, 1);
+        // Ready and still due: a drop is refused too.
+        vm.warp(block.timestamp + 61 minutes);
+        _perform(_one(KeeperBackupUpkeep.Mode.Drop, AUTO_DEDUCT, 11));
+        assertEq(backup.pendingCandidates().length, 1);
+    }
+
+    function test_ANoteForADisarmedStepIsDropped() public {
+        _arm(AUTO_DEDUCT);
+        _arm(CLOSE_DAY); // keep the mask non-zero after disarming
+        diamond.setDue(diamond.autoDeductDaily.selector, 11, true);
+        (, KeeperBackupUpkeep.Action[] memory a) = _check();
+        _perform(a);
+        vm.prank(owner);
+        backup.setEnabledSteps(uint256(1) << CLOSE_DAY);
+        (bool needed, KeeperBackupUpkeep.Action[] memory b) = _check();
+        assertTrue(needed);
+        assertEq(uint8(b[0].mode), uint8(KeeperBackupUpkeep.Mode.Drop));
+        _perform(b);
+        assertEq(backup.pendingCandidates().length, 0);
+    }
+
+    function test_ANotedCandidateIsRevisitedAfterTheWindowMovesOn() public {
+        vm.prank(owner);
+        backup.setScan(1, 7, 1_500_000, 2);
+        _arm(AUTO_DEDUCT);
+        diamond.setDue(diamond.autoDeductDaily.selector, 11, true);
+        diamond.setDue(diamond.autoDeductDaily.selector, 12, true);
+        diamond.setDue(diamond.autoDeductDaily.selector, 13, true);
+        // Note whichever loan the window shows now.
+        (, KeeperBackupUpkeep.Action[] memory a) = _check();
+        assertEq(a.length, 1);
+        uint256 noted = a[0].arg;
+        _perform(a);
+        // 61 minutes on, the one-loan window has rotated many times, but the
+        // queue is visited first, so the noted loan runs.
+        uint256 t = block.timestamp + 61 minutes;
+        vm.warp(t);
+        (, KeeperBackupUpkeep.Action[] memory b) = _check();
+        assertEq(uint8(b[0].mode), uint8(KeeperBackupUpkeep.Mode.Run));
+        assertEq(b[0].arg, noted);
+        _perform(b);
+        assertEq(diamond.runs(diamond.autoDeductDaily.selector, noted), 1);
     }
 
     function test_AStaleNoteStartsTheWaitAgain() public {
@@ -371,7 +432,7 @@ contract KeeperBackupUpkeepTest is Test {
         diamond.setDue(diamond.autoDeductDaily.selector, 11, true);
         // Disarmed: even a note is skipped.
         _perform(_one(KeeperBackupUpkeep.Mode.Note, AUTO_DEDUCT, 11));
-        assertEq(backup.firstSeenAt(keccak256(abi.encode(AUTO_DEDUCT, uint256(11)))), 0);
+        assertEq(backup.firstSeenAt(AUTO_DEDUCT, 11), 0);
         // Armed, but a Run with no note behind it is skipped.
         _arm(AUTO_DEDUCT);
         _perform(_one(KeeperBackupUpkeep.Mode.Run, AUTO_DEDUCT, 11));
@@ -425,16 +486,28 @@ contract KeeperBackupUpkeepTest is Test {
         assertEq(a[0].step, CLOSE_DAY);
         assertEq(a[0].arg, 0);
 
-        // Day 2 is outside a 7-day window seen from day 10.
+        // From day 10 the recent window is days 9..3; day 3 is found at once.
         diamond.setDay(10, true);
         diamond.setDue(diamond.closeDay.selector, 0, false);
-        diamond.setDue(diamond.closeDay.selector, 2, true);
-        (needed,) = _check();
-        assertFalse(needed);
         diamond.setDue(diamond.closeDay.selector, 3, true);
         (needed, a) = _check();
         assertTrue(needed);
         assertEq(a[0].arg, 3);
+        diamond.setDue(diamond.closeDay.selector, 3, false);
+
+        // An old day (a lapse opens weeks after its day) is reached by the
+        // rotating history window: from day 40 the older days are 0..32.
+        diamond.setDay(40, true);
+        diamond.setDue(diamond.closeDay.selector, 2, true);
+        bool seen;
+        uint256 t = block.timestamp;
+        for (uint256 i; i < 5; i++) {
+            (needed, a) = _check();
+            if (needed && a[0].arg == 2) seen = true;
+            t += 5 minutes;
+            vm.warp(t);
+        }
+        assertTrue(seen, "day 2 reached by the history window");
 
         // Before launch nothing is a day.
         diamond.setDay(0, false);

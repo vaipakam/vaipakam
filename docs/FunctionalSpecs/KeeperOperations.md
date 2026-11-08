@@ -1116,8 +1116,12 @@ backup, not a second keeper:
   the step in a way whose effects are always undone.
 - It waits. A due step is first noted, and is run only if it is still due
   after a set delay (one hour by default) and within a set window after that.
-  If the keeper runs the step meanwhile, the backup does nothing. A step that
-  recurs waits the full delay every time.
+  If the keeper runs the step meanwhile, the backup does nothing and lets the
+  note go. A noted step is checked again on every look until it is run or let
+  go, however far the backup's scan of loans, offers and days has moved on. A
+  step that recurs waits the full delay every time.
+- It finds reward-day steps on recent days and on older days alike, because a
+  day's lapse becomes possible only long after the day itself.
 - It covers only steps anyone may call that need nothing computed off-chain
   and can be found from on-chain reads: daily rental deductions, expired
   listing and intent teardowns, the grace auto-listing of NFT collateral, a

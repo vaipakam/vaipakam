@@ -62,8 +62,9 @@ interface IBackupSteps {
  *         sent as a transaction (it refuses a real sender). It builds the
  *         candidate calls for every ENABLED step: per active loan in a rotating
  *         window, per active offer's linked loan in a rotating window, per day
- *         in a window of recent closed days, and the VaultBeacon's two proposal
- *         executes. Whether a candidate is due is decided by the protocol
+ *         for the most recent closed days AND a rotating window over every
+ *         older day (a lapse becomes possible only weeks after its day), and
+ *         the VaultBeacon's two proposal executes. Whether a candidate is due is decided by the protocol
  *         itself: each candidate is PROBED, i.e. called from this contract
  *         inside a self-call that always reverts, so its effects are undone and
  *         only its success is kept. The backup carries no copy of any step's
@@ -71,13 +72,16 @@ interface IBackupSteps {
  *         `recycleSkippedDayValue`, which succeeds with zero once there is
  *         nothing left: it is due only when its probe returns a non-zero amount.
  *
- *         WAITING. A due candidate is first NOTED (its first-seen time is
- *         stored), in a cheap transaction. It is RUN only when a later check
- *         still finds it due between `lagSec` and `lagSec + actWindowSec` after
- *         that time. If our keeper ran it meanwhile, the probe fails and the
- *         backup does nothing. A note older than that window is stale and is
- *         replaced the next time the candidate is due, so a step that recurs
- *         (a daily rental deduction) waits the full lag every time.
+ *         WAITING. A due candidate is first NOTED: it joins a bounded queue
+ *         with its first-seen time, in a cheap transaction. Every check visits
+ *         the whole queue BEFORE scanning, so a noted candidate is revisited
+ *         however far the scan windows have rotated away from it. It is RUN only
+ *         when a check still finds it due between `lagSec` and
+ *         `lagSec + actWindowSec` after that time. A noted candidate that is no
+ *         longer due (our keeper ran it) is DROPPED; perform re-probes before
+ *         dropping, so a drop can only remove what is truly not due. A note
+ *         older than its window is renewed if the step is still due, so a step
+ *         that recurs (a daily rental deduction) waits the full lag every time.
  *
  *         RUNNING. `performUpkeep` accepts only the registered Chainlink
  *         forwarder, and only (step, argument) pairs: the call it makes is
@@ -132,10 +136,12 @@ contract KeeperBackupUpkeep is IAutomationCompatible, Ownable2Step {
     uint256 private constant LAST_DAY_STEP = 11;
 
     /// @notice What a perform does with one (step, argument): note it as due,
-    ///         or run it.
+    ///         run it, or drop a note that is no longer due (or whose step was
+    ///         switched off).
     enum Mode {
         Note,
-        Run
+        Run,
+        Drop
     }
 
     struct Action {
@@ -153,6 +159,9 @@ contract KeeperBackupUpkeep is IAutomationCompatible, Ownable2Step {
     uint16 public constant MAX_LOAN_WINDOW = 50;
     uint16 public constant MAX_DAY_WINDOW = 30;
     uint8 public constant MAX_ACTIONS = 16;
+    /// @notice Most candidates waiting at once. A full queue delays new notes;
+    ///         every entry leaves within `lagSec + actWindowSec` of its note.
+    uint8 public constant MAX_PENDING = 64;
     uint8 public constant MAX_RUNS_PER_PERFORM = 4;
     /// @notice Gas kept back in a check after the last probe, so the encoding
     ///         of the result never runs out.
@@ -188,8 +197,17 @@ contract KeeperBackupUpkeep is IAutomationCompatible, Ownable2Step {
 
     // ─── State ──────────────────────────────────────────────────────────
 
-    /// @notice When a (step, argument) was first noted as due; 0 = never, or run.
-    mapping(bytes32 => uint64) public firstSeenAt;
+    /// @notice A noted candidate and when it was first seen due.
+    struct Pending {
+        uint8 step;
+        uint64 seenAt;
+        uint256 arg;
+    }
+
+    /// @dev The noted candidates, in no order. `_pendingSlot[key]` is the
+    ///      entry's index + 1 (0 = not pending).
+    Pending[] private _pending;
+    mapping(bytes32 => uint256) private _pendingSlot;
 
     // ─── Events ─────────────────────────────────────────────────────────
 
@@ -199,6 +217,8 @@ contract KeeperBackupUpkeep is IAutomationCompatible, Ownable2Step {
     event ScanSet(uint16 loanWindow, uint16 dayWindow, uint32 probeGas, uint8 runsPerPerform);
     /// @notice A step was seen due and its wait started.
     event BackupDueNoted(uint8 indexed step, uint256 indexed arg, uint64 at);
+    /// @notice A noted step stopped being due before its run, and left the queue.
+    event BackupNoteDropped(uint8 indexed step, uint256 indexed arg);
     /// @notice The backup ran a step our keeper had left undone past the lag.
     ///         `ok` is false when the call reverted (someone ran it first, or it
     ///         stopped being due); `revertSelector` names the refusal.
@@ -295,6 +315,17 @@ contract KeeperBackupUpkeep is IAutomationCompatible, Ownable2Step {
         }
     }
 
+    /// @notice When a (step, argument) was first noted as due; 0 = not pending.
+    function firstSeenAt(uint8 step, uint256 arg) external view returns (uint64) {
+        uint256 slot = _pendingSlot[_key(step, arg)];
+        return slot == 0 ? 0 : _pending[slot - 1].seenAt;
+    }
+
+    /// @notice The noted candidates waiting now.
+    function pendingCandidates() external view returns (Pending[] memory) {
+        return _pending;
+    }
+
     // ─── Chainlink Automation ───────────────────────────────────────────
 
     /// @inheritdoc IAutomationCompatible
@@ -310,21 +341,52 @@ contract KeeperBackupUpkeep is IAutomationCompatible, Ownable2Step {
         uint256 mask = enabledSteps;
         if (mask == 0) return (false, "");
 
+        // Noted candidates first, wherever the scan windows are now.
+        for (uint256 i; i < _pending.length && !_full(n, runs); i++) {
+            Pending memory p = _pending[i];
+            if (!_on(mask, p.step)) {
+                actions[n++] = Action(Mode.Drop, p.step, p.arg); // disarmed since noted
+                continue;
+            }
+            Stage stage = _stage(p.seenAt);
+            if (stage == Stage.Waiting) continue;
+            if (gasleft() < uint256(probeGas) + CHECK_GAS_RESERVE) break;
+            bool due = isDue(p.step, p.arg);
+            if (due && stage == Stage.Ready) {
+                actions[n++] = Action(Mode.Run, p.step, p.arg);
+                runs++;
+            } else if (due) {
+                actions[n++] = Action(Mode.Note, p.step, p.arg); // stale: renew the wait
+            } else {
+                actions[n++] = Action(Mode.Drop, p.step, p.arg);
+            }
+        }
+
         // Singletons: the VaultBeacon's proposal.
         for (uint8 s = uint8(Step.BeaconExecuteCurrentVersion); s <= uint8(Step.BeaconExecuteRevoke); s++) {
             if (_full(n, runs)) break;
             (n, runs) = _consider(actions, n, runs, mask, s, 0);
         }
 
-        // Days: yesterday back through `dayWindow` days.
+        // Days.
         if (_anyIn(mask, FIRST_DAY_STEP, LAST_DAY_STEP)) {
             (uint256 today, bool active) = IBackupDiamondReads(diamond).getInteractionCurrentDay();
             // Days are zero-based from launch; `active` is false before launch.
+            // The most recent `dayWindow` closed days every check, then a
+            // rotating window of `dayWindow` days over all older ones, since a
+            // day's lapse opens only after its finalize plus a lapse window.
             if (active) {
-                for (uint256 back = 1; back <= dayWindow && back <= today && !_full(n, runs); back++) {
-                    uint256 d = today - back;
-                    for (uint256 s = FIRST_DAY_STEP; s <= LAST_DAY_STEP && !_full(n, runs); s++) {
-                        (n, runs) = _consider(actions, n, runs, mask, uint8(s), d);
+                uint256 recent = today < dayWindow ? today : dayWindow;
+                for (uint256 back = 1; back <= recent && !_full(n, runs); back++) {
+                    (n, runs) = _considerDay(actions, n, runs, mask, today - back);
+                }
+                uint256 older = today - recent; // days [0, older) are older
+                if (older > 0) {
+                    uint256 pages = (older + dayWindow - 1) / dayWindow;
+                    uint256 start = ((block.timestamp / rotationSec) % pages) * dayWindow;
+                    uint256 end = start + dayWindow > older ? older : start + dayWindow;
+                    for (uint256 d = start; d < end && !_full(n, runs); d++) {
+                        (n, runs) = _considerDay(actions, n, runs, mask, d);
                     }
                 }
             }
@@ -368,17 +430,34 @@ contract KeeperBackupUpkeep is IAutomationCompatible, Ownable2Step {
         for (uint256 i; i < actions.length; i++) {
             Action memory a = actions[i];
             if (a.step >= STEP_COUNT) revert UnknownStep(a.step);
-            if (!_on(enabledSteps, a.step)) continue;
             bytes32 key = _key(a.step, a.arg);
-            uint64 seen = firstSeenAt[key];
+            uint256 slot = _pendingSlot[key];
+            Stage stage = slot == 0 ? Stage.None : _stage(_pending[slot - 1].seenAt);
+            if (a.mode == Mode.Drop) {
+                // Only a disarmed step, or one the protocol says is not due,
+                // leaves the queue without running. An armed note still in
+                // its wait stays.
+                if (slot == 0) continue;
+                if (_on(enabledSteps, a.step) && (stage == Stage.Waiting || isDue(a.step, a.arg))) continue;
+                _removePending(key, slot);
+                emit BackupNoteDropped(a.step, a.arg);
+                continue;
+            }
+            if (!_on(enabledSteps, a.step)) continue;
             if (a.mode == Mode.Note) {
-                if (_stage(seen) == Stage.Waiting || _stage(seen) == Stage.Ready) continue;
-                firstSeenAt[key] = uint64(block.timestamp);
+                if (stage == Stage.Waiting || stage == Stage.Ready) continue;
+                if (slot != 0) {
+                    _pending[slot - 1].seenAt = uint64(block.timestamp); // renew a stale note
+                } else {
+                    if (_pending.length >= MAX_PENDING) continue;
+                    _pending.push(Pending(a.step, uint64(block.timestamp), a.arg));
+                    _pendingSlot[key] = _pending.length;
+                }
                 emit BackupDueNoted(a.step, a.arg, uint64(block.timestamp));
             } else {
-                if (_stage(seen) != Stage.Ready || runs >= runsPerPerform) continue;
+                if (stage != Stage.Ready || runs >= runsPerPerform) continue;
                 runs++;
-                delete firstSeenAt[key];
+                _removePending(key, slot);
                 (address target, bytes memory data) = _call(a.step, a.arg);
                 (bool ok, bytes memory ret) = target.call(data);
                 emit BackupStepRun(a.step, a.arg, ok, ok || ret.length < 4 ? bytes4(0) : bytes4(ret));
@@ -408,15 +487,40 @@ contract KeeperBackupUpkeep is IAutomationCompatible, Ownable2Step {
         returns (uint256, uint256)
     {
         if (!_on(mask, step) || gasleft() < uint256(probeGas) + CHECK_GAS_RESERVE) return (n, runs);
-        Stage stage = _stage(firstSeenAt[_key(step, arg)]);
-        if (stage == Stage.Waiting) return (n, runs);
+        // A pending candidate was already handled from the queue this check.
+        if (_pendingSlot[_key(step, arg)] != 0) return (n, runs);
+        if (_pending.length + _countNotes(actions, n) >= MAX_PENDING) return (n, runs);
         if (!isDue(step, arg)) return (n, runs);
-        if (stage == Stage.Ready) {
-            actions[n] = Action(Mode.Run, step, arg);
-            return (n + 1, runs + 1);
-        }
         actions[n] = Action(Mode.Note, step, arg);
         return (n + 1, runs);
+    }
+
+    function _considerDay(Action[] memory actions, uint256 n, uint256 runs, uint256 mask, uint256 day)
+        internal
+        returns (uint256, uint256)
+    {
+        for (uint256 s = FIRST_DAY_STEP; s <= LAST_DAY_STEP && !_full(n, runs); s++) {
+            (n, runs) = _consider(actions, n, runs, mask, uint8(s), day);
+        }
+        return (n, runs);
+    }
+
+    /// @dev New notes already collected in this check.
+    function _countNotes(Action[] memory actions, uint256 n) internal pure returns (uint256 c) {
+        for (uint256 i; i < n; i++) {
+            if (actions[i].mode == Mode.Note) c++;
+        }
+    }
+
+    function _removePending(bytes32 key, uint256 slot) internal {
+        uint256 last = _pending.length;
+        if (slot != last) {
+            Pending memory moved = _pending[last - 1];
+            _pending[slot - 1] = moved;
+            _pendingSlot[_key(moved.step, moved.arg)] = slot;
+        }
+        _pending.pop();
+        delete _pendingSlot[key];
     }
 
     function _full(uint256 n, uint256 runs) internal view returns (bool) {
