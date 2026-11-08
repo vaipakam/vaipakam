@@ -3,6 +3,9 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibVaultOutflow} from "../libraries/LibVaultOutflow.sol";
+import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
+import {LibDelivery} from "../libraries/LibDelivery.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibFeeEntitlement} from "../libraries/LibFeeEntitlement.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
@@ -154,19 +157,15 @@ contract OfferAcceptFeeFacet is IVaipakamErrors {
             // #2440 — the treasury accrues what reached it.
             LibFacet.vaultFeeToTreasury(lender, lendingAsset, treasuryCut);
             if (matcherCut > 0) {
-                LibFacet.crossFacetCall(
-                    abi.encodeWithSelector(
-                        VaultFactoryFacet.vaultWithdrawERC20.selector,
-                        lender,
-                        lendingAsset,
-                        s.matchOverride.active
-                            ? s.matchOverride.matcher
-                            : (s.signedOfferAcceptor != address(0)
-                                ? s.signedOfferAcceptor
-                                : originalCaller),
-                        matcherCut
-                    ),
-                    VaultWithdrawFailed.selector
+                LibVaultOutflow.toIncentive(
+                    lender,
+                    lendingAsset,
+                    matcherCut,
+                    s.matchOverride.active
+                        ? s.matchOverride.matcher
+                        : (s.signedOfferAcceptor != address(0) ? s.signedOfferAcceptor : originalCaller),
+                    offerId,
+                    OutflowReason.INCENTIVE
                 );
             }
         }
@@ -191,12 +190,12 @@ contract OfferAcceptFeeFacet is IVaipakamErrors {
         // so the net principal must arrive in full: a lending asset that
         // delivers less than it sends is refused at acceptance, as the
         // collateral is (the platform does not support such tokens).
-        LibFacet.vaultWithdrawExact(
-            lender,
+        // #3205 part 2 — into the borrower's VAULT (owner decision: protocol
+        // payouts go to the payee's vault), from which the borrower withdraws.
+        LibDelivery.requireFull(
             lendingAsset,
-            borrower,
             effectivePrincipal - initiationFee,
-            VaultWithdrawFailed.selector
+            LibVaultOutflow.toBorrowerAtAccept(lender, lendingAsset, effectivePrincipal - initiationFee, borrower, offerId)
         );
     }
 }

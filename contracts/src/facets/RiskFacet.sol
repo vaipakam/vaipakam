@@ -12,6 +12,7 @@ import {LibEntitlement} from "../libraries/LibEntitlement.sol";
 import {LibInterestLedger} from "../libraries/LibInterestLedger.sol";
 import {LibPeriodicInterest} from "../libraries/LibPeriodicInterest.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
+import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
 import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
 import {LibDelivery} from "../libraries/LibDelivery.sol";
 import {LibLenderYieldFeeHost} from "../libraries/LibLenderYieldFeeHost.sol";
@@ -901,7 +902,9 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
             LibVaipakam.storageSlot(),
             loan.borrower,
             loan.collateralAsset,
-            swappedCollateral
+            swappedCollateral,
+            loanId,
+            OutflowReason.LIQUIDATION
         );
         // Oracle-derived expected proceeds + slippage floor, scoped to
         // the slice. Same formula as {triggerLiquidation}.

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
+import {LibVaultOutflow} from "./LibVaultOutflow.sol";
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {LibVpfiRecycle} from "./LibVpfiRecycle.sol";
@@ -207,12 +209,7 @@ library LibNotificationFee {
         //    verifies the balance actually rose by the tariff. The
         //    withdraw refreshes the payer's tier record itself (#1820).
         uint256 balanceBefore = IERC20(vpfi).balanceOf(address(this));
-        VaultFactoryFacet(address(this)).vaultWithdrawERC20(
-            payer,
-            vpfi,
-            address(this),
-            vpfiAmount
-        );
+        LibVaultOutflow.toDiamond(payer, LibVaultOutflow.ERC20, vpfi, 0, vpfiAmount, loanId, OutflowReason.RECYCLE);
 
         // 2. Credit the recycle bucket now that the tariff sits on the
         //    Diamond — the first live non-forfeit absorption class

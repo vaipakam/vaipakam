@@ -158,7 +158,12 @@ contract VaultOutflowFacet is IVaipakamErrors {
             }
         }
 
-        delivered = _transfer(proxy, o);
+        // A holder payout whose payee vault IS the paying vault (the stored
+        // party still holds the position) moves nothing: the share stays where
+        // it is and only the ledgers change, from held to the owner's own.
+        // Skipping the self-transfer keeps a fee-charging token from charging
+        // for a move that did not happen.
+        delivered = o.to == proxy ? o.amount : _transfer(proxy, o);
         LibVaipakam.recordVaultWithdraw(user, o.asset, o.tokenId, o.amount);
 
         // A payee VAULT is credited in the tracked ledger and, as free money
@@ -216,20 +221,35 @@ contract VaultOutflowFacet is IVaipakamErrors {
             if (o.to == user || !LibProtectedAccount.isEnabled(user) || !LibProtectedAccount.isAllowed(user, o.to)) {
                 revert OutflowRecipientInvalid(c, o.to);
             }
+        } else if (c == VaultOutflowTypes.OutflowClass.MatchedCounterparty) {
+            // The match, read from both loans: the paying loan's borrower owns
+            // the paying vault and its collateral is the asset, which is the
+            // receiving loan's principal. The payee is the receiving loan's
+            // STORED lender, whose vault that loan's lender claim reads (the
+            // claim then pays the current holder). The settlement books it.
+            LibVaipakam.Loan storage paying = s.loans[o.ref];
+            LibVaipakam.Loan storage receiving = s.loans[o.counterRef];
+            if (
+                o.counterRef == 0 || o.counterRef == o.ref || paying.borrower != user || paying.collateralAsset != o.asset
+                    || receiving.principalAsset != o.asset
+            ) revert OutflowPositionMismatch(o.ref, o.counterRef);
+            o.positionToken = receiving.lenderTokenId;
+            o.to = s.userVaipakamVaults[receiving.lender];
+            if (o.to == address(0)) revert OutflowRecipientInvalid(c, address(0));
         } else if (
             c == VaultOutflowTypes.OutflowClass.PositionHolder || c == VaultOutflowTypes.OutflowClass.Counterparty
-                || c == VaultOutflowTypes.OutflowClass.MatchedCounterparty
+                || c == VaultOutflowTypes.OutflowClass.Consolidation
         ) {
-            if (c != VaultOutflowTypes.OutflowClass.MatchedCounterparty) {
-                LibVaipakam.Loan storage loan = s.loans[o.ref];
-                if (o.positionToken == 0 || (o.positionToken != loan.lenderTokenId && o.positionToken != loan.borrowerTokenId))
-                {
-                    revert OutflowPositionMismatch(o.ref, o.positionToken);
-                }
+            LibVaipakam.Loan storage loan = s.loans[o.ref];
+            if (o.positionToken == 0 || (o.positionToken != loan.lenderTokenId && o.positionToken != loan.borrowerTokenId)) {
+                revert OutflowPositionMismatch(o.ref, o.positionToken);
             }
-            payeeOwner = LibPositionNFT.core().holderOf(o.positionToken);
-            if (payeeOwner == address(0)) revert OutflowRecipientInvalid(c, address(0));
-            o.to = LibFacet.getOrCreateVault(payeeOwner);
+            address holder = LibPositionNFT.core().holderOf(o.positionToken);
+            if (holder == address(0)) revert OutflowRecipientInvalid(c, address(0));
+            o.to = LibFacet.getOrCreateVault(holder);
+            // A consolidation moves custody under the lien: the move books it.
+            // A holder payout is free money for the holder: booked here.
+            if (c != VaultOutflowTypes.OutflowClass.Consolidation) payeeOwner = holder;
         } else if (c == VaultOutflowTypes.OutflowClass.ClaimCustody) {
             // The STORED party of the receiving side of THAT loan, from loan
             // state: `o.positionToken` names the side. Its vault must exist
@@ -244,18 +264,34 @@ contract VaultOutflowFacet is IVaipakamErrors {
             else revert OutflowPositionMismatch(o.ref, o.positionToken);
             o.to = s.userVaipakamVaults[stored];
             if (o.to == address(0)) revert OutflowRecipientInvalid(c, address(0));
+        } else if (c == VaultOutflowTypes.OutflowClass.PrincipalToBorrower) {
+            // The borrower of this accept (the caller names it: the accept
+            // resolves it, before the loan exists). Paid into its vault as free
+            // money, which the borrower withdraws.
+            payeeOwner = o.to;
+            if (payeeOwner == address(0)) revert OutflowRecipientInvalid(c, address(0));
+            o.to = LibFacet.getOrCreateVault(payeeOwner);
         } else if (c == VaultOutflowTypes.OutflowClass.Treasury) {
             o.to = LibFacet.getTreasury();
         } else if (c == VaultOutflowTypes.OutflowClass.Backstop) {
-            o.to = LibVaipakam.getBackstopVault();
-            if (o.to == address(0)) revert OutflowRecipientInvalid(c, address(0));
+            // The backstop's own Vaipakam vault, where it holds what it
+            // absorbs. The settlement books the arrival (tracked ledger).
+            address backstop = LibVaipakam.getBackstopVault();
+            if (backstop == address(0)) revert OutflowRecipientInvalid(c, address(0));
+            o.to = LibFacet.getOrCreateVault(backstop);
         } else if (c == VaultOutflowTypes.OutflowClass.DiamondTransient) {
             o.to = address(this);
         } else if (c == VaultOutflowTypes.OutflowClass.SwapAdapter) {
             if (!_isSwapAdapter(s, o.to)) revert OutflowRecipientInvalid(c, o.to);
+        } else if (c == VaultOutflowTypes.OutflowClass.SellerClaim) {
+            // The vault of a prior seller recorded on THIS loan (#1209); the
+            // caller names the seller, the vault is that seller's own.
+            if (!_isRecordedSeller(s, o.ref, o.to)) revert OutflowRecipientInvalid(c, o.to);
+            o.to = s.userVaipakamVaults[o.to];
+            if (o.to == address(0)) revert OutflowRecipientInvalid(c, address(0));
         } else {
-            // Incentive, LiquidationBuyer, SellerClaim, ListingEscrow: the
-            // caller names the actor; never this Diamond or a vault-less zero.
+            // Incentive, LiquidationBuyer, ListingEscrow: the caller names the
+            // actor; never this Diamond or a vault-less zero.
             if (o.to == address(0) || o.to == address(this)) revert OutflowRecipientInvalid(c, o.to);
         }
     }
@@ -320,7 +356,7 @@ contract VaultOutflowFacet is IVaipakamErrors {
     ///      protected payee receives into its vault instead.
     function _paysWallet(VaultOutflowTypes.OutflowClass c) private pure returns (bool) {
         return c == VaultOutflowTypes.OutflowClass.OwnerAllowlisted || c == VaultOutflowTypes.OutflowClass.Incentive
-            || c == VaultOutflowTypes.OutflowClass.LiquidationBuyer || c == VaultOutflowTypes.OutflowClass.SellerClaim;
+            || c == VaultOutflowTypes.OutflowClass.LiquidationBuyer;
     }
 
     /// @dev Where a payout from `user`'s vault to `recipient` must land instead
@@ -331,6 +367,19 @@ contract VaultOutflowFacet is IVaipakamErrors {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         if (!s.protectedAccount[recipient].enabled) return address(0);
         return s.userVaipakamVaults[recipient];
+    }
+
+    function _isRecordedSeller(LibVaipakam.Storage storage s, uint256 loanId, address who)
+        private
+        view
+        returns (bool)
+    {
+        if (who == address(0)) return false;
+        LibVaipakam.SellerInterestClaim[] storage claims = s.sellerInterestClaims[loanId];
+        for (uint256 i; i < claims.length; ++i) {
+            if (claims[i].seller == who) return true;
+        }
+        return false;
     }
 
     function _isSwapAdapter(LibVaipakam.Storage storage s, address who) private view returns (bool) {

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
+import {LibVaultOutflow} from "../libraries/LibVaultOutflow.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
@@ -495,10 +497,7 @@ contract SellerClaimFacet is DiamondReentrancyGuard, DiamondPausable {
     function _withdraw(uint256 loanId, address seller, address asset) private returns (uint256 amount) {
         amount = LibEncumbrance.releaseSellerInterest(loanId, seller, asset);
         if (amount == 0) return 0;
-        LibFacet.crossFacetCall(
-            abi.encodeCall(VaultFactoryFacet.vaultWithdrawERC20, (seller, asset, seller, amount)),
-            bytes4(0)
-        );
+        LibVaultOutflow.toOwner(seller, LibVaultOutflow.ERC20, asset, 0, amount, OutflowReason.SELLER_CLAIM);
         emit SellerInterestWithdrawn(loanId, seller, asset, amount);
     }
 }

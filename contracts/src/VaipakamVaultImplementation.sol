@@ -669,13 +669,23 @@ contract VaipakamVaultImplementation is
         if (c == VaultOutflowTypes.OutflowClass.Owner) return o.to == ownerWallet;
         if (
             c == VaultOutflowTypes.OutflowClass.PositionHolder || c == VaultOutflowTypes.OutflowClass.Counterparty
-                || c == VaultOutflowTypes.OutflowClass.MatchedCounterparty
-        ) return _isHolderVault(o.to, o.positionToken);
+                || c == VaultOutflowTypes.OutflowClass.Consolidation
+        ) {
+            return _isHolderVault(o.to, o.positionToken);
+        }
         if (c == VaultOutflowTypes.OutflowClass.Treasury) return o.to == _registryPointer(RegistryKeys.TREASURY);
-        if (c == VaultOutflowTypes.OutflowClass.Backstop) return o.to == _registryPointer(RegistryKeys.BACKSTOP);
+        if (c == VaultOutflowTypes.OutflowClass.Backstop) {
+            address backstop = _registryPointer(RegistryKeys.BACKSTOP);
+            return backstop != address(0) && _isGenuineVault(o.to) && IVaultOwnerView(o.to).vaultOwner() == backstop;
+        }
         if (c == VaultOutflowTypes.OutflowClass.SwapAdapter) return _inRegistrySet(RegistryKeys.SWAP_ADAPTERS, o.to);
         if (c == VaultOutflowTypes.OutflowClass.DiamondTransient) return o.to == diamond;
-        if (c == VaultOutflowTypes.OutflowClass.ClaimCustody) return _isGenuineVault(o.to);
+        if (
+            c == VaultOutflowTypes.OutflowClass.ClaimCustody || c == VaultOutflowTypes.OutflowClass.PrincipalToBorrower
+                || c == VaultOutflowTypes.OutflowClass.MatchedCounterparty
+        ) {
+            return _isGenuineVault(o.to);
+        }
         // Stage A residuals, checked by the Diamond only until Stage B
         // (#3379): an allowlisted address (the allowlist moves into the
         // vault), the incentive and liquidation-buyer actors (bounded by the

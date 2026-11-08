@@ -3,6 +3,7 @@ pragma solidity ^0.8.29;
 
 import {VaultOutflowTypes, OutflowReason} from "../vault/VaultOutflowTypes.sol";
 import {LibRevert} from "./LibRevert.sol";
+import {LibDelivery} from "./LibDelivery.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 
 /// @dev The policy host's entries, for the self-call encoding.
@@ -91,20 +92,39 @@ library LibVaultOutflow {
         );
     }
 
-    /// @notice To the vault of whoever holds `lenderToken`, the lender side of
-    ///         ANOTHER loan that loan `loanId` was matched against. The caller
-    ///         has checked the match.
+    /// @notice A transferred side's custody, from its stored party's vault
+    ///         into the vault of whoever holds `positionToken` of loan
+    ///         `loanId` now, still under the lien. The move books it.
+    function toConsolidatedHolder(
+        address user,
+        uint8 kind,
+        address asset,
+        uint256 tokenId,
+        uint256 amount,
+        uint256 loanId,
+        uint256 positionToken
+    ) internal returns (uint256) {
+        return _go(
+            user, kind, asset, tokenId, amount, address(0), VaultOutflowTypes.OutflowClass.Consolidation, loanId, positionToken, OutflowReason.CONSOLIDATION
+        );
+    }
+
+    /// @notice An internal-match leg: the borrower of `payingLoanId` pays,
+    ///         from its vault, the vault of the stored lender of
+    ///         `receivingLoanId`, the loan it was matched against.
     function toMatchedCounterparty(
         address user,
         address asset,
         uint256 amount,
-        uint256 loanId,
-        uint256 lenderToken,
+        uint256 payingLoanId,
+        uint256 receivingLoanId,
         uint8 reason
     ) internal returns (uint256) {
-        return _go(
-            user, ERC20, asset, 0, amount, address(0), VaultOutflowTypes.OutflowClass.MatchedCounterparty, loanId, lenderToken, reason
+        VaultOutflowTypes.Outflow memory o = _outflow(
+            user, ERC20, asset, 0, amount, address(0), VaultOutflowTypes.OutflowClass.MatchedCounterparty, payingLoanId, 0, reason
         );
+        o.counterRef = receivingLoanId;
+        return _send(user, o);
     }
 
     /// @notice Into the vault of loan `loanId`'s STORED party on the side
@@ -123,6 +143,17 @@ library LibVaultOutflow {
     ) internal returns (uint256) {
         return _go(
             user, kind, asset, tokenId, amount, address(0), VaultOutflowTypes.OutflowClass.ClaimCustody, loanId, sideToken, reason
+        );
+    }
+
+    /// @notice A new loan's net principal from the lender's vault into the
+    ///         vault of `borrower`, the borrower of the accept of `offerId`.
+    function toBorrowerAtAccept(address lender, address asset, uint256 amount, address borrower, uint256 offerId)
+        internal
+        returns (uint256)
+    {
+        return _go(
+            lender, ERC20, asset, 0, amount, borrower, VaultOutflowTypes.OutflowClass.PrincipalToBorrower, offerId, 0, OutflowReason.PRINCIPAL
         );
     }
 
@@ -148,6 +179,24 @@ library LibVaultOutflow {
         returns (uint256)
     {
         return _go(user, kind, asset, tokenId, amount, address(0), VaultOutflowTypes.OutflowClass.DiamondTransient, ref, 0, reason);
+    }
+
+    /// @notice {toDiamond} for an ERC-20, refused unless all of `amount`
+    ///         arrived (a voluntary flow, #2440 outcome 1).
+    function toDiamondExact(address user, address asset, uint256 amount, uint256 ref, uint8 reason) internal {
+        LibDelivery.requireFull(asset, amount, toDiamond(user, ERC20, asset, 0, amount, ref, reason));
+    }
+
+    /// @notice {toDiamond} for an ERC-20 that reports failure instead of
+    ///         bubbling it, for a caller that refuses with its own named error.
+    function tryToDiamond(address user, address asset, uint256 amount, uint256 ref, uint8 reason)
+        internal
+        returns (bool ok)
+    {
+        VaultOutflowTypes.Outflow memory o = _outflow(
+            user, ERC20, asset, 0, amount, address(0), VaultOutflowTypes.OutflowClass.DiamondTransient, ref, 0, reason
+        );
+        (ok,) = address(this).call(abi.encodeCall(IVaultOutflowHost.vaultOutflow, (user, o)));
     }
 
     // ─── Actors the caller names ─────────────────────────────────────────
@@ -176,7 +225,8 @@ library LibVaultOutflow {
         return _go(user, kind, asset, tokenId, amount, liquidator, VaultOutflowTypes.OutflowClass.LiquidationBuyer, loanId, 0, reason);
     }
 
-    /// @notice To a recorded prior seller of loan `loanId`.
+    /// @notice Into the vault of `seller`, a recorded prior seller of loan
+    ///         `loanId`. The settlement books the arrival.
     function toSellerClaim(address user, address asset, uint256 amount, address seller, uint256 loanId)
         internal
         returns (uint256)
@@ -232,7 +282,22 @@ library LibVaultOutflow {
         uint256 positionToken,
         uint8 reason
     ) private returns (uint256) {
-        VaultOutflowTypes.Outflow memory o = VaultOutflowTypes.Outflow({
+        return _send(user, _outflow(user, kind, asset, tokenId, amount, to, class_, ref, positionToken, reason));
+    }
+
+    function _outflow(
+        address, /* user */
+        uint8 kind,
+        address asset,
+        uint256 tokenId,
+        uint256 amount,
+        address to,
+        VaultOutflowTypes.OutflowClass class_,
+        uint256 ref,
+        uint256 positionToken,
+        uint8 reason
+    ) private pure returns (VaultOutflowTypes.Outflow memory) {
+        return VaultOutflowTypes.Outflow({
             kind: VaultOutflowTypes.AssetKind(kind),
             asset: asset,
             tokenId: tokenId,
@@ -241,8 +306,12 @@ library LibVaultOutflow {
             class_: class_,
             ref: ref,
             positionToken: positionToken,
-            reason: reason
+            reason: reason,
+            counterRef: 0
         });
+    }
+
+    function _send(address user, VaultOutflowTypes.Outflow memory o) private returns (uint256) {
         return abi.decode(_call(abi.encodeCall(IVaultOutflowHost.vaultOutflow, (user, o))), (uint256));
     }
 

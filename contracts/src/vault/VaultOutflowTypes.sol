@@ -35,8 +35,10 @@ library VaultOutflowTypes {
      *           the position now (a release, a claim, a consolidation).
      *         - Counterparty: the vault of whoever holds the OTHER side of the
      *           same loan now.
-     *         - MatchedCounterparty: the vault of whoever holds the lender side
-     *           of another loan this loan was matched against.
+     *         - MatchedCounterparty: an internal-match leg: the paying loan
+     *           (`ref`) pays the vault of the STORED lender of the loan it was
+     *           matched against (`counterRef`), where that loan's lender claim
+     *           finds it; `positionToken` is that loan's lender token.
      *         - Treasury: the registry's treasury.
      *         - SwapAdapter: a registry swap adapter (liquidation, default,
      *           swap-to-repay, treasury conversion).
@@ -46,7 +48,8 @@ library VaultOutflowTypes {
      *         - LiquidationBuyer: the liquidator that paid the loan's debt in
      *           this same transaction.
      *         - SellerClaim: a recorded prior seller of this loan.
-     *         - Backstop: the registry's backstop.
+     *         - Backstop: the backstop's own Vaipakam vault (a genuine vault
+     *           whose owner record is the registry's backstop).
      *         - DiamondTransient: the Diamond itself, within one transaction,
      *           with its onward leg declared in `reason`.
      *         - ClaimCustody: the vault of the loan side's STORED party, where a
@@ -57,6 +60,15 @@ library VaultOutflowTypes {
      *           listing) keeps its custody with the stored party. The vault
      *           checks only that the destination is a genuine Vaipakam vault;
      *           the claim that leaves it is holder-bound (PositionHolder).
+     *         - PrincipalToBorrower: a new loan's net principal, from the
+     *           lender's vault into the vault of the borrower of THIS accept.
+     *           At delivery the loan and its position NFTs do not exist yet, so
+     *           there is no holder to read; the vault checks a genuine vault
+     *           until Stage B binds it to the signed accept terms.
+     *         - Consolidation: a transferred side's custody moving from its
+     *           stored party's vault to the CURRENT holder's vault, still under
+     *           the side's lien (#594): holder-bound like PositionHolder, but
+     *           not free money, so the move books it as custody.
      */
     enum OutflowClass {
         Owner,
@@ -72,7 +84,9 @@ library VaultOutflowTypes {
         SellerClaim,
         Backstop,
         DiamondTransient,
-        ClaimCustody
+        ClaimCustody,
+        PrincipalToBorrower,
+        Consolidation
     }
 
     /// @notice Who a just-in-time allowance may name as spender.
@@ -101,6 +115,8 @@ library VaultOutflowTypes {
      *                      holder's vault is the payee. 0 otherwise.
      * @param reason        The business reason (an {OutflowReason} ordinal),
      *                      named in the movement event.
+     * @param counterRef    For MatchedCounterparty: the receiving loan. 0
+     *                      otherwise.
      */
     struct Outflow {
         AssetKind kind;
@@ -112,6 +128,7 @@ library VaultOutflowTypes {
         uint256 ref;
         uint256 positionToken;
         uint8 reason;
+        uint256 counterRef;
     }
 
     /**

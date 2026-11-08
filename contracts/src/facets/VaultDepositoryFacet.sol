@@ -10,6 +10,8 @@ import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibProtectedAccount} from "../libraries/LibProtectedAccount.sol";
 import {LibDepositoryLedger} from "../libraries/LibDepositoryLedger.sol";
+import {LibVaultOutflow} from "../libraries/LibVaultOutflow.sol";
+import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable, LibPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
@@ -65,6 +67,9 @@ interface IVaultRoutes {
  */
 contract VaultDepositoryFacet is DiamondReentrancyGuard, DiamondPausable {
     error AmountZero();
+    /// @dev #3205 part 2 — without protected mode a withdrawal pays only the
+    ///      account's own wallet.
+    error RecipientNotOwnWallet(address account, address recipient);
     error InvalidAssetKind(uint8 kind);
     error NotUntracked(address asset, uint256 tokenId);
     /// @notice #3204 — `account` has no vault to pin or unpin.
@@ -190,8 +195,10 @@ contract VaultDepositoryFacet is DiamondReentrancyGuard, DiamondPausable {
      *         account, its controller. Bounded by {withdrawableNow}: the
      *         depository holding, never more than the free holding (tracked
      *         minus liens minus earmark). Anything a loan, offer, claim,
-     *         intent or reserve holds is refused. Without protected mode the asset is paid at once to
-     *         any `recipient`. With it, the payout is QUEUED: `recipient`
+     *         intent or reserve holds is refused. Without protected mode the asset is paid at once,
+     *         and only to the account's own wallet (#3205 part 2, owner decision 2026-11-06:
+     *         any other address needs protected mode's allowlist and its delay). With it, the
+     *         payout is QUEUED: `recipient`
      *         must be the manager wallet or an allowlisted destination, the
      *         account must not be locked, and the asset leaves after the delay
      *         through `VaultPayoutFacet.releasePayout`. Not pause-gated for a
@@ -234,14 +241,8 @@ contract VaultDepositoryFacet is DiamondReentrancyGuard, DiamondPausable {
             emit VaultWithdrawRequested(account, asset, kind, tokenId, amount, recipient, true);
             return queuedId;
         }
-        IVaultRoutes routes = IVaultRoutes(address(this));
-        if (kind == uint8(LibVaipakam.AssetType.ERC20)) {
-            routes.vaultWithdrawERC20(account, asset, recipient, amount);
-        } else if (kind == uint8(LibVaipakam.AssetType.ERC721)) {
-            routes.vaultWithdrawERC721(account, asset, tokenId, recipient);
-        } else {
-            routes.vaultWithdrawERC1155(account, asset, tokenId, amount, recipient);
-        }
+        if (recipient != account) revert RecipientNotOwnWallet(account, recipient);
+        LibVaultOutflow.toOwner(account, kind, asset, tokenId, amount, OutflowReason.WITHDRAW);
         emit VaultWithdrawRequested(account, asset, kind, tokenId, amount, recipient, false);
     }
 

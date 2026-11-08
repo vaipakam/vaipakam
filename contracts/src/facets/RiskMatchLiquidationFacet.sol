@@ -6,6 +6,8 @@ import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibInterestLedger} from "../libraries/LibInterestLedger.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
+import {LibVaultOutflow} from "../libraries/LibVaultOutflow.sol";
+import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
 import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
 import {LibFallbackCustody} from "../libraries/LibFallbackCustody.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
@@ -464,13 +466,13 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
         // Leg Y consumes C's, Leg Z consumes A's.
         _consumeLeg(loanIdB, r.movedX, r.incentiveX, la.lender, matcher);
         // Leg X: B's collateral (= A's principal asset) → A.lender + matcher.
-        _settleLeg(loanIdA, lb.borrower, la.principalAsset, la.lender, r.movedX, r.incentiveX, matcher);
+        _settleLeg(loanIdA, loanIdB, lb.borrower, la.principalAsset, la.lender, r.movedX, r.incentiveX, matcher);
         _consumeLeg(loanIdC, r.movedY, r.incentiveY, lb.lender, matcher);
         // Leg Y: C's collateral (= B's principal asset) → B.lender + matcher.
-        _settleLeg(loanIdB, lc.borrower, lb.principalAsset, lb.lender, r.movedY, r.incentiveY, matcher);
+        _settleLeg(loanIdB, loanIdC, lc.borrower, lb.principalAsset, lb.lender, r.movedY, r.incentiveY, matcher);
         _consumeLeg(loanIdA, r.movedZ, r.incentiveZ, lc.lender, matcher);
         // Leg Z: A's collateral (= C's principal asset) → C.lender + matcher.
-        _settleLeg(loanIdC, la.borrower, lc.principalAsset, lc.lender, r.movedZ, r.incentiveZ, matcher);
+        _settleLeg(loanIdC, loanIdA, la.borrower, lc.principalAsset, lc.lender, r.movedZ, r.incentiveZ, matcher);
 
         // State updates — each loan's principal cleared by its leg's moved
         // amount (every leg delivered in full, #2625 item 3), each
@@ -596,6 +598,7 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
     ///        keeper / lender who triggered settlement.
     function _settleLeg(
         uint256 loanId,
+        uint256 payingLoanId,
         address payingBorrower,
         address asset,
         address receivingLender,
@@ -611,7 +614,9 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
         // loan-init doesn't BRICK the internal-match settlement. The share is
         // still frozen (the claim-side stored-owner gate in `ClaimFacet`), and a
         // `SanctionedProceedsLocked` event is emitted when the lender is flagged.
-        address lenderVault = LibSanctionedLock.getOrCreateVaultLocked(
+        // Resolves (or creates) the receiving lender's vault behind the pin;
+        // the policy pays it below.
+        LibSanctionedLock.getOrCreateVaultLocked(
             s, receivingLender, loanId, asset, lenderShare
         );
         // #821 (Codex #832 r2 P1) — every leg WITHDRAWS from the paying
@@ -621,11 +626,14 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
         // (collateral pushed OUT to the already-screened lender / matcher).
         LibSanctionedLock.beginMoveOut(s, payingBorrower);
         if (lenderShare > 0) {
+            // #3205 part 2 — the matched counterparty: the paying loan's
+            // borrower vault into the receiving loan's stored lender's vault,
+            // both read from the two loans by the policy.
             LibDelivery.requireFull(
                 asset,
                 lenderShare,
-                VaultFactoryFacet(address(this)).vaultWithdrawERC20(
-                    payingBorrower, asset, lenderVault, lenderShare
+                LibVaultOutflow.toMatchedCounterparty(
+                    payingBorrower, asset, lenderShare, payingLoanId, loanId, OutflowReason.LIQUIDATION
                 )
             );
             VaultFactoryFacet(address(this)).recordVaultDepositERC20(
@@ -635,9 +643,7 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
         if (incentive > 0) {
             // #21 matcher-recipient fix: pay the incentive to `matcher`
             // (never `msg.sender` — see the @param note).
-            VaultFactoryFacet(address(this)).vaultWithdrawERC20(
-                payingBorrower, asset, matcher, incentive
-            );
+            LibVaultOutflow.toIncentive(payingBorrower, asset, incentive, matcher, payingLoanId, OutflowReason.INCENTIVE);
         }
         LibSanctionedLock.endMoveOut(s);
     }
@@ -714,10 +720,10 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
         // (`movedY`).
         _consumeLeg(loanIdB, r.movedX, r.incentiveX, la.lender, matcher);
         // Leg X — B's collateral (= A's principal asset) → A.lender + matcher.
-        _settleLeg(loanIdA, lb.borrower, la.principalAsset, la.lender, r.movedX, r.incentiveX, matcher);
+        _settleLeg(loanIdA, loanIdB, lb.borrower, la.principalAsset, la.lender, r.movedX, r.incentiveX, matcher);
         _consumeLeg(loanIdA, r.movedY, r.incentiveY, lb.lender, matcher);
         // Leg Y — A's collateral (= B's principal asset) → B.lender + matcher.
-        _settleLeg(loanIdB, la.borrower, lb.principalAsset, lb.lender, r.movedY, r.incentiveY, matcher);
+        _settleLeg(loanIdB, loanIdA, la.borrower, lb.principalAsset, lb.lender, r.movedY, r.incentiveY, matcher);
 
         // State updates — debt cleared by the gross amount the leg paid
         // (borrower forfeits the full amount; the incentive % they

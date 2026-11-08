@@ -8,6 +8,8 @@ import {LibScanPage} from "../libraries/LibScanPage.sol";
 // #195 — `LibAuth.requireOfferCreator` is replaced by an inline access
 // gate that admits the creator OR any caller against an expired offer;
 // see `cancelOffer` for the full rule.
+import {LibVaultOutflow} from "../libraries/LibVaultOutflow.sol";
+import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
 import {LibSaleListing} from "../libraries/LibSaleListing.sol";
@@ -310,40 +312,12 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
                     : offer.amountMax;
                 uint256 refund = effAmountMax - offer.amountFilled;
                 if (refund > 0) {
-                    LibFacet.crossFacetCall(
-                        abi.encodeWithSelector(
-                            VaultFactoryFacet.vaultWithdrawERC20.selector,
-                            creator,
-                            offer.lendingAsset,
-                            creator,
-                            refund
-                        ),
-                        VaultWithdrawFailed.selector
-                    );
+                    LibVaultOutflow.toOwner(creator, LibVaultOutflow.ERC20, offer.lendingAsset, 0, refund, OutflowReason.OFFER_REFUND);
                 }
             } else if (offer.assetType == LibVaipakam.AssetType.ERC721) {
-                LibFacet.crossFacetCall(
-                    abi.encodeWithSelector(
-                        VaultFactoryFacet.vaultWithdrawERC721.selector,
-                        creator,
-                        offer.lendingAsset,
-                        offer.tokenId,
-                        creator
-                    ),
-                    VaultWithdrawFailed.selector
-                );
+                LibVaultOutflow.toOwner(creator, LibVaultOutflow.ERC721, offer.lendingAsset, offer.tokenId, 1, OutflowReason.OFFER_REFUND);
             } else if (offer.assetType == LibVaipakam.AssetType.ERC1155) {
-                LibFacet.crossFacetCall(
-                    abi.encodeWithSelector(
-                        VaultFactoryFacet.vaultWithdrawERC1155.selector,
-                        creator,
-                        offer.lendingAsset,
-                        offer.tokenId,
-                        offer.quantity,
-                        creator
-                    ),
-                    VaultWithdrawFailed.selector
-                );
+                LibVaultOutflow.toOwner(creator, LibVaultOutflow.ERC1155, offer.lendingAsset, offer.tokenId, offer.quantity, OutflowReason.OFFER_REFUND);
             }
         } else if (lockedSaleLoanId == 0) {
             // #3318 — a lender-sale VEHICLE (a Borrower-type offer the
@@ -410,43 +384,15 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
                         : offer.collateralAmountMax;
                     uint256 borrowerColRefund = borrowerColMax - offer.collateralAmountFilled;
                     if (borrowerColRefund > 0 && !carryOver) {
-                        LibFacet.crossFacetCall(
-                            abi.encodeWithSelector(
-                                VaultFactoryFacet.vaultWithdrawERC20.selector,
-                                creator,
-                                offer.collateralAsset,
-                                creator,
-                                borrowerColRefund
-                            ),
-                            VaultWithdrawFailed.selector
-                        );
+                        LibVaultOutflow.toOwner(creator, LibVaultOutflow.ERC20, offer.collateralAsset, 0, borrowerColRefund, OutflowReason.OFFER_REFUND);
                     }
                 } else if (offer.collateralAssetType == LibVaipakam.AssetType.ERC721) {
                     if (!carryOver) {
-                        LibFacet.crossFacetCall(
-                            abi.encodeWithSelector(
-                                VaultFactoryFacet.vaultWithdrawERC721.selector,
-                                creator,
-                                offer.collateralAsset,
-                                offer.collateralTokenId,
-                                creator
-                            ),
-                            VaultWithdrawFailed.selector
-                        );
+                        LibVaultOutflow.toOwner(creator, LibVaultOutflow.ERC721, offer.collateralAsset, offer.collateralTokenId, 1, OutflowReason.OFFER_REFUND);
                     }
                 } else if (offer.collateralAssetType == LibVaipakam.AssetType.ERC1155) {
                     if (!carryOver) {
-                        LibFacet.crossFacetCall(
-                            abi.encodeWithSelector(
-                                VaultFactoryFacet.vaultWithdrawERC1155.selector,
-                                creator,
-                                offer.collateralAsset,
-                                offer.collateralTokenId,
-                                offer.collateralQuantity,
-                                creator
-                            ),
-                            VaultWithdrawFailed.selector
-                        );
+                        LibVaultOutflow.toOwner(creator, LibVaultOutflow.ERC1155, offer.collateralAsset, offer.collateralTokenId, offer.collateralQuantity, OutflowReason.OFFER_REFUND);
                     }
                 }
             } else if (
@@ -463,16 +409,7 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
                 uint256 buffer = (prepayAmount * LibVaipakam.effectiveRentalBufferBps(offer)) /
                     LibVaipakam.BASIS_POINTS;
                 uint256 totalPrepay = prepayAmount + buffer;
-                LibFacet.crossFacetCall(
-                    abi.encodeWithSelector(
-                        VaultFactoryFacet.vaultWithdrawERC20.selector,
-                        creator,
-                        offer.prepayAsset,
-                        creator,
-                        totalPrepay
-                    ),
-                    VaultWithdrawFailed.selector
-                );
+                LibVaultOutflow.toOwner(creator, LibVaultOutflow.ERC20, offer.prepayAsset, 0, totalPrepay, OutflowReason.OFFER_REFUND);
             }
         }
 

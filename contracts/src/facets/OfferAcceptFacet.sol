@@ -5,6 +5,8 @@ pragma solidity ^0.8.29;
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibLoanClock} from "../libraries/LibLoanClock.sol";
 import {LibAcceptTerms} from "../libraries/LibAcceptTerms.sol";
+import {LibVaultOutflow} from "../libraries/LibVaultOutflow.sol";
+import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {RefinanceFacet} from "./RefinanceFacet.sol";
 import {LibAutoRefinanceCheck} from "../libraries/LibAutoRefinanceCheck.sol";
@@ -671,16 +673,9 @@ contract OfferAcceptFacet is
         if (offer.collateralAssetType != LibVaipakam.AssetType.ERC20) return;
         if (offer.collateralAmountMax <= offer.collateralAmount) return;
         uint256 collRefund = offer.collateralAmountMax - offer.collateralAmount;
-        LibFacet.crossFacetCall(
-            abi.encodeWithSelector(
-                VaultFactoryFacet.vaultWithdrawERC20.selector,
-                offer.creator,           // pull from borrower's vault
-                offer.collateralAsset,
-                offer.creator,           // refund to borrower's wallet
-                collRefund
-            ),
-            VaultWithdrawFailed.selector
-        );
+        // refund to borrower's wallet
+        LibVaultOutflow.toOwner(offer.creator, LibVaultOutflow.ERC20, // pull from borrower's vault
+                offer.collateralAsset, 0, collRefund, OutflowReason.OFFER_REFUND);
     }
 
     /// @dev #573 — release the borrower offer-collateral lock on a DIRECT
@@ -1310,13 +1305,7 @@ contract OfferAcceptFacet is
                 // #2440 — a voluntary accept: refused unless the whole price
                 // reached the Diamond, so the escrow never names more than it
                 // holds.
-                LibFacet.vaultWithdrawExact(
-                    lender,
-                    offer.lendingAsset,
-                    address(this),
-                    effectivePrincipal,
-                    VaultWithdrawFailed.selector
-                );
+                LibVaultOutflow.toDiamondExact(lender, offer.lendingAsset, effectivePrincipal, offerId, OutflowReason.SALE);
                 // Inlined rather than held in a local: this viaIR frame is already
                 // at its stack budget (see {OfferAcceptFeeFacet}).
                 s.saleProceedsEscrow[

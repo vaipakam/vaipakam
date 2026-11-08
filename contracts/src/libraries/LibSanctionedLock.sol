@@ -4,6 +4,8 @@ pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {LibFacet} from "./LibFacet.sol";
+import {LibVaultOutflow} from "./LibVaultOutflow.sol";
+import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
 import {LibDelivery} from "./LibDelivery.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -89,33 +91,6 @@ library LibSanctionedLock {
         s.consolidationMoveFromUser = address(0);
     }
 
-    /// @dev Single-call ERC-20 vault WITHDRAW under the from-side move-out
-    ///      exemption: folds `beginMoveOut` + the `vaultWithdrawERC20` cross-facet
-    ///      call + `endMoveOut` into one shared subroutine for the common
-    ///      wind-down case where a forced default / liquidation pulls a
-    ///      (possibly-flagged) `payer`'s collateral OUT to an already-screened
-    ///      `recipient`. Folding the call here keeps each site a single CALL,
-    ///      which matters for the EIP-170-tight liquidation facets (RiskFacet et
-    ///      al.). Use the raw `beginMoveOut`/`endMoveOut` window directly where
-    ///      several withdrawals — or the ERC-721/1155 variants — must share one
-    ///      exemption span. Reverts `VaultWithdrawFailed` on a failed withdraw,
-    ///      matching the inline call sites this replaces.
-    ///      #2440 — returns what `recipient` received, never more than
-    ///      `amount` (measured by the withdraw itself). A forced close-out
-    ///      pulling into the Diamond acts on that figure ({pullToDiamond}).
-    function vaultWithdrawERC20MoveOut(
-        LibVaipakam.Storage storage s,
-        address payer,
-        address asset,
-        address recipient,
-        uint256 amount
-    ) internal returns (uint256 delivered) {
-        s.consolidationMoveFromUser = payer;
-        delivered = LibFacet.vaultWithdrawDelivered(
-            payer, asset, recipient, amount, IVaipakamErrors.VaultWithdrawFailed.selector
-        );
-        s.consolidationMoveFromUser = address(0);
-    }
 
     /// @dev #2440 — outcome 2 of {LibDelivery} for a FORCED close-out: moves
     ///      `amount` of `payer`'s `asset` out of their vault into the Diamond
@@ -131,9 +106,13 @@ library LibSanctionedLock {
         LibVaipakam.Storage storage s,
         address payer,
         address asset,
-        uint256 amount
+        uint256 amount,
+        uint256 loanId,
+        uint8 reason
     ) internal returns (uint256 received) {
-        received = vaultWithdrawERC20MoveOut(s, payer, asset, address(this), amount);
+        s.consolidationMoveFromUser = payer;
+        received = LibVaultOutflow.toDiamond(payer, LibVaultOutflow.ERC20, asset, 0, amount, loanId, reason);
+        s.consolidationMoveFromUser = address(0);
     }
 
     /// @dev Clear the pin and, when `recipient` is sanctions-flagged, emit the
@@ -302,11 +281,33 @@ library LibSanctionedLock {
         if (amount == 0) return 0;
         // Receive side: resolve `owner`'s EXISTING vault behind the pin.
         s.sanctionedDepositExemptUser = owner;
-        address ownerVault = LibFacet.getOrCreateVault(owner);
+        LibFacet.getOrCreateVault(owner);
         s.sanctionedDepositExemptUser = address(0);
         // From side: withdraw `fromUser`'s prepay into `owner`'s vault behind the
         // move-out exemption (so a flagged `fromUser` doesn't brick the service).
-        credited = vaultWithdrawERC20MoveOut(s, fromUser, asset, ownerVault, amount);
+        // #3205 part 2 — through the one policy, under the class `owner` has
+        // on this loan: the stored lender or borrower holds it as claim
+        // custody, the backstop in its own vault, a recorded seller as its
+        // seller claim. Anyone else is refused by the policy.
+        s.consolidationMoveFromUser = fromUser;
+        LibVaipakam.Loan storage loan = s.loans[loanId];
+        if (owner == loan.lender || owner == loan.borrower) {
+            credited = LibVaultOutflow.toClaimCustody(
+                fromUser,
+                LibVaultOutflow.ERC20,
+                asset,
+                0,
+                amount,
+                loanId,
+                owner == loan.lender ? loan.lenderTokenId : loan.borrowerTokenId,
+                OutflowReason.SANCTIONED_LOCK
+            );
+        } else if (owner == s.backstopVault) {
+            credited = LibVaultOutflow.toBackstop(fromUser, LibVaultOutflow.ERC20, asset, 0, amount, loanId, OutflowReason.BACKSTOP);
+        } else {
+            credited = LibVaultOutflow.toSellerClaim(fromUser, asset, amount, owner, loanId);
+        }
+        s.consolidationMoveFromUser = address(0);
         // Tick `owner`'s tracked balance (the funds now sit in their vault), the
         // same bookkeeping `LibFacet.depositForNewLender` does for a Diamond
         // `safeTransfer` into a vault.

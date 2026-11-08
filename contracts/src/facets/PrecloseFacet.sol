@@ -15,6 +15,8 @@ import {LibSettlement} from "../libraries/LibSettlement.sol";
 import {LibPrepayCleanup} from "../libraries/LibPrepayCleanup.sol";
 import {LibCompliance} from "../libraries/LibCompliance.sol";
 import {LibLoan} from "../libraries/LibLoan.sol";
+import {LibVaultOutflow} from "../libraries/LibVaultOutflow.sol";
+import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibDelivery} from "../libraries/LibDelivery.sol";
 import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
@@ -1065,39 +1067,11 @@ contract PrecloseFacet is
         address exitingBorrowerHolder = LibPositionNFT.ownerOf(loan.borrowerTokenId);
         if (isErc20) {
             if (loan.collateralAssetType == LibVaipakam.AssetType.ERC20) {
-                LibFacet.crossFacetCall(
-                    abi.encodeWithSelector(
-                        VaultFactoryFacet.vaultWithdrawERC20.selector,
-                        loan.borrower,
-                        loan.collateralAsset,
-                        exitingBorrowerHolder,
-                        loan.collateralAmount
-                    ),
-                    IVaipakamErrors.VaultWithdrawFailed.selector
-                );
+                LibVaultOutflow.toPositionHolder(loan.borrower, LibVaultOutflow.ERC20, loan.collateralAsset, 0, loan.collateralAmount, loanId, loan.borrowerTokenId, OutflowReason.COLLATERAL_RELEASE);
             } else if (loan.collateralAssetType == LibVaipakam.AssetType.ERC721) {
-                LibFacet.crossFacetCall(
-                    abi.encodeWithSelector(
-                        VaultFactoryFacet.vaultWithdrawERC721.selector,
-                        loan.borrower,
-                        loan.collateralAsset,
-                        loan.collateralTokenId,
-                        exitingBorrowerHolder
-                    ),
-                    IVaipakamErrors.VaultWithdrawFailed.selector
-                );
+                LibVaultOutflow.toPositionHolder(loan.borrower, LibVaultOutflow.ERC721, loan.collateralAsset, loan.collateralTokenId, 1, loanId, loan.borrowerTokenId, OutflowReason.COLLATERAL_RELEASE);
             } else if (loan.collateralAssetType == LibVaipakam.AssetType.ERC1155) {
-                LibFacet.crossFacetCall(
-                    abi.encodeWithSelector(
-                        VaultFactoryFacet.vaultWithdrawERC1155.selector,
-                        loan.borrower,
-                        loan.collateralAsset,
-                        loan.collateralTokenId,
-                        loan.collateralQuantity,
-                        exitingBorrowerHolder
-                    ),
-                    IVaipakamErrors.VaultWithdrawFailed.selector
-                );
+                LibVaultOutflow.toPositionHolder(loan.borrower, LibVaultOutflow.ERC1155, loan.collateralAsset, loan.collateralTokenId, loan.collateralQuantity, loanId, loan.borrowerTokenId, OutflowReason.COLLATERAL_RELEASE);
             }
         }
 

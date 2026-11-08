@@ -11,6 +11,7 @@ import {LibFallback} from "../libraries/LibFallback.sol";
 import {LibSaleSizing} from "../libraries/LibSaleSizing.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
 import {LibDelivery} from "../libraries/LibDelivery.sol";
+import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
 import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
 import {LibCloseoutFreeze} from "../libraries/LibCloseoutFreeze.sol";
 import {LibPeriodicInterest} from "../libraries/LibPeriodicInterest.sol";
@@ -511,7 +512,7 @@ contract ForcedSaleFacet is IVaipakamErrors {
         j.need = plan.need;
         j.unsold = loan.collateralAmount - quotedSell;
         LibEncumbrance.decrementCollateralLien(loanId, quotedSell);
-        received = LibSanctionedLock.pullToDiamond(s, loan.borrower, loan.collateralAsset, quotedSell);
+        received = LibSanctionedLock.pullToDiamond(s, loan.borrower, loan.collateralAsset, quotedSell, loanId, OutflowReason.LIQUIDATION);
         j.minOut = LibSaleSizing.floorAtRate(rate, received, LibVaipakam.cfgMaxLiquidationSlippageBps());
     }
 
@@ -547,7 +548,7 @@ contract ForcedSaleFacet is IVaipakamErrors {
         LibEncumbrance.releaseCollateralLien(j.loanId);
         uint256 rest = j.unsold == 0
             ? 0
-            : LibSanctionedLock.pullToDiamond(s, loan.borrower, loan.collateralAsset, j.unsold);
+            : LibSanctionedLock.pullToDiamond(s, loan.borrower, loan.collateralAsset, j.unsold, j.loanId, OutflowReason.LIQUIDATION);
         loan.collateralAmount = alreadyHere + rest;
     }
 

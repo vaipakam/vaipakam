@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibEncumbrance} from "./LibEncumbrance.sol";
+import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
+import {LibVaultOutflow} from "./LibVaultOutflow.sol";
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {LibFacet} from "./LibFacet.sol";
 import {LibInterestLedger} from "./LibInterestLedger.sol";
@@ -707,24 +710,20 @@ library LibVPFIDiscount {
         // fallback here, before any call.
         if (prevTracked < vpfiRequired) return (false, 0);
 
-        // #569 — the encumbrance guard can revert this withdraw when the
-        // lender's VPFI is locked as loan collateral; that is the
-        // silent-fallback path (`ok == false`). The withdraw refreshes the
-        // lender's tier record itself (#1820), so a failed one leaves the
-        // record untouched.
-        address treasury = LibFacet.getTreasury();
-        (bool ok, ) = address(this).call(
-            abi.encodeWithSelector(
-                VaultFactoryFacet.vaultWithdrawERC20.selector,
-                lender,
-                vpfi,
-                treasury,
-                vpfiRequired
-            )
-        );
-        if (!ok) return (false, 0);
-
-        LibFacet.recordTreasuryAccrual(vpfi, vpfiRequired);
+        // #569 / #3205 part 2 — VPFI pledged as loan collateral is not free,
+        // and the vault outflow would refuse it. Decide that HERE, from the
+        // same free-balance rule the outflow applies, and take the
+        // direct-reduction fallback (no token moves) when the VPFI is not
+        // free. Once it is free the payment goes through the treasury class
+        // and FAILS CLOSED: no spec line lets a discount failure pass silently
+        // (the brief's rule), and with the known refusal pre-checked a
+        // failure here is a real fault, not a fallback.
+        {
+            uint256 tracked = prevTracked < vaultBal ? prevTracked : vaultBal;
+            if (LibEncumbrance.freeBalance(lender, vpfi, 0, tracked) < vpfiRequired) return (false, 0);
+        }
+        uint256 arrived = LibVaultOutflow.toTreasury(lender, vpfi, vpfiRequired, loan.id, OutflowReason.FEE);
+        LibFacet.recordTreasuryAccrual(vpfi, arrived);
         return (true, vpfiRequired);
     }
 

@@ -15,6 +15,8 @@ import {LibCompliance} from "../libraries/LibCompliance.sol";
 import {LibRiskAccess} from "../libraries/LibRiskAccess.sol";
 import {LibSaleListing} from "../libraries/LibSaleListing.sol";
 import {LibLoan} from "../libraries/LibLoan.sol";
+import {LibVaultOutflow} from "../libraries/LibVaultOutflow.sol";
+import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibDelivery} from "../libraries/LibDelivery.sol";
 import {LenderIntentFacet} from "./LenderIntentFacet.sol";
@@ -909,44 +911,16 @@ contract EarlyWithdrawalFacet is
         );
         if (tempLoan.collateralAssetType == LibVaipakam.AssetType.ERC20) {
             if (tempLoan.collateralAmount > 0) {
-                LibFacet.crossFacetCall(
-                    abi.encodeWithSelector(
-                        VaultFactoryFacet.vaultWithdrawERC20.selector,
-                        originalLender,
-                        tempLoan.collateralAsset,
-                        originalLender,
-                        tempLoan.collateralAmount
-                    ),
-                    VaultWithdrawFailed.selector
-                );
+                LibVaultOutflow.toOwner(originalLender, LibVaultOutflow.ERC20, tempLoan.collateralAsset, 0, tempLoan.collateralAmount, OutflowReason.COLLATERAL_RELEASE);
             }
         } else if (
             tempLoan.collateralAssetType == LibVaipakam.AssetType.ERC721
         ) {
-            LibFacet.crossFacetCall(
-                abi.encodeWithSelector(
-                    VaultFactoryFacet.vaultWithdrawERC721.selector,
-                    originalLender,
-                    tempLoan.collateralAsset,
-                    tempLoan.collateralTokenId,
-                    originalLender
-                ),
-                VaultWithdrawFailed.selector
-            );
+            LibVaultOutflow.toOwner(originalLender, LibVaultOutflow.ERC721, tempLoan.collateralAsset, tempLoan.collateralTokenId, 1, OutflowReason.COLLATERAL_RELEASE);
         } else if (
             tempLoan.collateralAssetType == LibVaipakam.AssetType.ERC1155
         ) {
-            LibFacet.crossFacetCall(
-                abi.encodeWithSelector(
-                    VaultFactoryFacet.vaultWithdrawERC1155.selector,
-                    originalLender,
-                    tempLoan.collateralAsset,
-                    tempLoan.collateralTokenId,
-                    tempLoan.collateralQuantity,
-                    originalLender
-                ),
-                VaultWithdrawFailed.selector
-            );
+            LibVaultOutflow.toOwner(originalLender, LibVaultOutflow.ERC1155, tempLoan.collateralAsset, tempLoan.collateralTokenId, tempLoan.collateralQuantity, OutflowReason.COLLATERAL_RELEASE);
         }
 
         // Mark temp loan as Repaid with zeroed-out claim records so
@@ -1055,13 +1029,7 @@ contract EarlyWithdrawalFacet is
         // the buyer's vault holds and nothing is drawn from the Diamond's
         // other balance.
         s.consolidationMoveFromUser = originalLender;
-        LibFacet.vaultWithdrawExact(
-            originalLender,
-            payAsset,
-            address(this),
-            priorHeldSale,
-            VaultWithdrawFailed.selector
-        );
+        LibVaultOutflow.toDiamondExact(originalLender, payAsset, priorHeldSale, loanId, OutflowReason.SALE);
         s.consolidationMoveFromUser = address(0);
         LibSanctionedLock.depositLockedInFull(s, newLender, loanId, payAsset, priorHeldSale);
     }

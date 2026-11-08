@@ -8,6 +8,8 @@ import {LibFallbackCustody} from "../libraries/LibFallbackCustody.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibConsolidation} from "../libraries/LibConsolidation.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
+import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
+import {LibVaultOutflow} from "../libraries/LibVaultOutflow.sol";
 import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
 import {LibSwap} from "../libraries/LibSwap.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
@@ -666,10 +668,12 @@ contract FallbackCustodyFacet is IVaipakamErrors {
         LibFallbackCustody.debit(loanId, amount, move, to);
         LibEncumbrance.decrementCollateralLien(loanId, amount);
         if (move == LibFallbackCustody.Move.ToTreasury) {
-            arrived = LibSanctionedLock.vaultWithdrawERC20MoveOut(s, borrower, asset, to, amount);
+            LibSanctionedLock.beginMoveOut(s, borrower);
+            arrived = LibVaultOutflow.toTreasury(borrower, asset, amount, loanId, OutflowReason.FEE);
+            LibSanctionedLock.endMoveOut(s);
             LibFacet.recordTreasuryAccrual(asset, arrived);
         } else if (move == LibFallbackCustody.Move.RetryPulled) {
-            arrived = LibSanctionedLock.pullToDiamond(s, borrower, asset, amount);
+            arrived = LibSanctionedLock.pullToDiamond(s, borrower, asset, amount, loanId, OutflowReason.SWAP);
         } else {
             arrived = LibSanctionedLock.depositLockedFromVault(s, borrower, to, loanId, asset, amount);
         }
