@@ -43,6 +43,8 @@ const REFINANCE = RefinanceFacetABI as Abi;
 
 /** `LibVaipakam.LiquidityStatus.Illiquid`. */
 export const ILLIQUID = 1;
+/** `LibVaipakam.LiquidityStatus.Liquid`, as `checkLiquidity` answers now. */
+const LIQUID_NOW = 0;
 
 /** The stored loan record, as `getLoanDetails` returns it (the fields the
  *  page states). Rates and the liquidation threshold are the loan's own
@@ -178,6 +180,13 @@ export interface LoanView {
    *  (`getRefinanceRequest`), which holds a partial repayment; null when
    *  unread or the loan has ended. */
   refinanceLive: boolean | null;
+  /** For a running ERC-20 loan, whether governance has paused its collateral
+   *  token (`isAssetPaused`) and whether the protocol prices it now
+   *  (`checkLiquidity`), which decide a top-up; null when unread or not
+   *  asked. Read live: the loan's recorded liquidity class is its class at
+   *  opening. */
+  collateralPaused: boolean | null;
+  collateralLiquidNow: boolean | null;
 }
 
 /** One interest period, as the protocol previews its settlement. */
@@ -248,6 +257,8 @@ export async function readLoanView(client: PublicClient, diamond: Hex, loanId: b
   const cadence = loan.periodicInterestCadence;
 
   const scheduled = live && cadence !== 0;
+  /** A running ERC-20 loan: one a top-up could apply to. */
+  const liveErc20 = live && loan.assetType === 0;
   const [
     lender,
     borrower,
@@ -265,6 +276,8 @@ export async function readLoanView(client: PublicClient, diamond: Hex, loanId: b
     matchConfig,
     borrowerLock,
     refinance,
+    collateralPaused,
+    collateralLiquidity,
   ] = await Promise.all([
     maybe(read<Hex>(NFT, 'ownerOf', [loan.lenderTokenId])),
     maybe(read<Hex>(NFT, 'ownerOf', [loan.borrowerTokenId])),
@@ -282,6 +295,8 @@ export async function readLoanView(client: PublicClient, diamond: Hex, loanId: b
     live ? maybe(read<readonly [boolean, bigint, bigint]>(CONFIG, 'getInternalMatchConfigBundle')) : null,
     live ? maybe(read<number>(NFT, 'positionLock', [loan.borrowerTokenId]).then(Number)) : null,
     live ? maybe(read<readonly [bigint, boolean]>(REFINANCE, 'getRefinanceRequest', [loanId])) : null,
+    liveErc20 ? maybe(read<boolean>(ADMIN, 'isAssetPaused', [loan.collateralAsset])) : null,
+    liveErc20 ? maybe(read<number>(ORACLE, 'checkLiquidity', [loan.collateralAsset]).then(Number)) : null,
   ]);
 
   // A loan with a cadence answers to its checkpoint too: with the checkpoint
@@ -327,6 +342,8 @@ export async function readLoanView(client: PublicClient, diamond: Hex, loanId: b
     periodicOn,
     paused,
     refinanceLive: refinance ? refinance[1] : null,
+    collateralPaused,
+    collateralLiquidNow: collateralLiquidity === null ? null : collateralLiquidity === LIQUID_NOW,
   };
   return { view };
 }
