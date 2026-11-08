@@ -48,6 +48,22 @@ const ELSEWHERE_KEY = {
 } as const satisfies Record<string, CopyKey>;
 
 /** An offer number from the address bar, or null when it is not one. */
+/**
+ * The flows open or in flight for an offer on this page: its cancel (or
+ * clean-up) and its take, including a take waiting on the Terms prompt. A
+ * held flow keeps its panel whatever the offer's latest read says: its own
+ * transaction changes the offer (a take fills it, a cancel ends it and may
+ * clear its terms), and the creator may cancel under a reader's open review,
+ * so the panel stays, with its Close, until the reader closes it.
+ */
+function useHeldFlows(id: bigint | null): { cancel: boolean; take: boolean; closeCancel: () => void } {
+  const cancel = useCancelOfferHeld(id ?? 0n);
+  const [taking] = useStoredValue<string>(`${OFFERS_ACCEPT_KEY}:offer`);
+  const [pending] = useStoredValue<string>(`${OFFERS_ACCEPT_KEY}:pending`);
+  const key = id?.toString() ?? null;
+  return { cancel: id !== null && cancel.held, take: key !== null && (taking === key || pending === key), closeCancel: () => cancel.setOpen(null) };
+}
+
 export function parseOfferId(raw: string | undefined): bigint | null {
   if (raw === undefined || !/^\d{1,30}$/.test(raw)) return null;
   const id = BigInt(raw);
@@ -81,11 +97,9 @@ export function OfferPage() {
   const d = read.data;
   const meta = useTokenMeta(d?.kind === 'offer' ? [d.offer.lendingAsset, d.offer.collateralAsset, d.offer.prepayAsset] : []).data;
   const now = useNow();
-  // A cancel or clean-up deletes the offer's terms when nothing filled it,
-  // so the re-read after its receipt finds none; the held flow is rendered
-  // here, not only inside the offer's body, so its finish card stays until
-  // the reader closes it (RB-OFFER-CANCEL).
-  const heldCancel = useCancelOfferHeld(id ?? 0n);
+  // A held flow renders here when the read finds no terms (a cancel cleared
+  // them), and inside the offer's body otherwise.
+  const held = useHeldFlows(id);
   const heldOwn = connected && walletChain ? own : null;
 
   return (
@@ -116,9 +130,10 @@ export function OfferPage() {
               {format('offerPage.noTerms', { id: id.toString(), chain: chain.name })}
             </p>
           )}
-          {d?.kind !== 'offer' && heldCancel.held && walletChain && heldOwn && (
+          {d?.kind !== 'offer' && (held.cancel || held.take) && walletChain && heldOwn && (
             <section className="home-section" data-testid="offer-action">
-              <CancelOffer id={id} chain={walletChain} own={heldOwn} onClose={() => heldCancel.setOpen(null)} />
+              {held.cancel && <CancelOffer id={id} chain={walletChain} own={heldOwn} onClose={held.closeCancel} />}
+              {held.take && <TakeAction id={id} chain={walletChain} own={heldOwn} meta={meta} lend />}
             </section>
           )}
           {d?.kind === 'offer' && <OfferBody detail={d} walletChain={connected ? walletChain : null} own={connected && walletChain ? own : null} meta={meta} />}
@@ -145,12 +160,7 @@ function OfferBody({
   const viewer = own?.account ?? null;
   const mine = viewer !== null && o.creator.toLowerCase() === viewer.toLowerCase();
   const action = detailAction(d, viewer);
-  // A flow that is open or in flight keeps its panel on screen after its own
-  // transaction changes the offer's state (a take fills it, a cancel ends
-  // it), so the measured finish card stays readable until it is closed.
-  const cancelHeld = useCancelOfferHeld(d.id).held;
-  const [taking] = useStoredValue<string>(`${OFFERS_ACCEPT_KEY}:offer`);
-  const takeHeld = taking === d.id.toString();
+  const held = useHeldFlows(d.id);
   const lend = o.offerType === OFFER_TYPE_LENDER;
   const erc20 = o.assetType === ASSET_ERC20;
   const erc20Collateral = o.collateralAssetType === ASSET_ERC20;
@@ -209,10 +219,10 @@ function OfferBody({
             )}
           </p>
         )}
-        {(action.kind === 'cancel' || action.kind === 'clean-up' || cancelHeld) && walletChain && own && (
+        {(action.kind === 'cancel' || action.kind === 'clean-up' || held.cancel) && walletChain && own && (
           <CancelAction id={d.id} cleanUp={action.kind === 'clean-up'} chain={walletChain} own={own} />
         )}
-        {(action.kind === 'accept' || takeHeld) && walletChain && own && <TakeAction id={d.id} chain={walletChain} own={own} meta={meta} lend={lend} />}
+        {(action.kind === 'accept' || held.take) && walletChain && own && <TakeAction id={d.id} chain={walletChain} own={own} meta={meta} lend={lend} />}
       </section>
       <WhyLink summaryKey="offerPage.whySummary" detailKey="offerPage.why" />
     </>

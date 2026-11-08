@@ -19,6 +19,7 @@ function json(over: Record<string, unknown> = {}): Record<string, unknown> {
     collateralAssetType: 0,
     tokenId: '0',
     collateralTokenId: '0',
+    collateralQuantity: '0',
     amount: '1000',
     amountMax: '2000',
     amountFilled: '0',

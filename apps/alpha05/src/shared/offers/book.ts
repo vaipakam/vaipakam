@@ -36,6 +36,7 @@ export interface BookRow extends OfferLineFields {
    *  read it (#2382). A lender offer's is its amount. */
   collateralAmountMax: bigint | null;
   collateralTokenId: bigint;
+  collateralQuantity: bigint;
   amountFilled: bigint;
   /** 0 = never expires. */
   expiresAt: bigint;
@@ -109,6 +110,7 @@ export function bookRowFrom(o: Json): BookRow {
     durationDays: big(o.durationDays),
     tokenId: big(o.tokenId),
     collateralTokenId: big(o.collateralTokenId),
+    collateralQuantity: big(o.collateralQuantity),
     prepayAsset: addr(o.prepayAsset),
     expiresAt: big(o.expiresAt),
     kind: kindOf(o, offerType),

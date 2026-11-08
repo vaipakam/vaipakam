@@ -1,6 +1,7 @@
 import type { CopyAccess } from '../copy/useCopy';
 import { ASSET_ERC20 } from '../positions/model';
-import { assetName, tokenAmount, type TokenMetaMap } from '../reads/tokens';
+import { assetAmount } from '../positions/assetAmount';
+import { tokenAmount, type TokenMetaMap } from '../reads/tokens';
 
 type Hex = `0x${string}`;
 
@@ -14,6 +15,8 @@ export interface CollateralTerms {
    *  null when the source has not read it. */
   collateralAmountMax: bigint | null;
   collateralTokenId: bigint;
+  /** An ERC-1155's unit count (1 or 0 for an ERC-721). */
+  collateralQuantity: bigint;
 }
 
 /**
@@ -23,7 +26,9 @@ export interface CollateralTerms {
  * floor alone would read as the whole commitment (RB-OFFER-BOOK).
  */
 export function collateralWords(t: CollateralTerms, meta: TokenMetaMap | null, format: CopyAccess['format']): string {
-  if (t.collateralAssetType !== ASSET_ERC20) return format('asset.nft', { id: t.collateralTokenId.toString(), asset: assetName(t.collateralAsset, meta) });
+  if (t.collateralAssetType !== ASSET_ERC20) {
+    return assetAmount({ asset: t.collateralAsset, assetType: t.collateralAssetType, amount: 0n, tokenId: t.collateralTokenId, quantity: t.collateralQuantity }, meta, format);
+  }
   const min = tokenAmount(t.collateralAmount, t.collateralAsset, meta, format);
   if (t.collateralAmountMax === null) return format('offerBook.collateralFloor', { min });
   if (t.collateralAmountMax > t.collateralAmount) return format('offerBook.collateralRange', { min, max: tokenAmount(t.collateralAmountMax, t.collateralAsset, meta, format) });

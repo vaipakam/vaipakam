@@ -1294,7 +1294,8 @@ above. Each resolves here, so a route reviewer needs no private file:
   bound position moved are tagged by kind, and a request the index has not
   read as refinance or not says it may be one. A borrower request's
   collateral reads as its range when it has one, and as "at least" its
-  floor when the index has not read the ceiling, never as the floor alone.
+  floor when the index has not read the ceiling, never as the floor alone;
+  an ERC-1155's collateral states its unit count.
   A row the index returned in
   a shape the app cannot read is counted as unread, never dropped silently;
   a failed read is a degraded-source warning ("nothing here means no
@@ -1323,7 +1324,8 @@ above. Each resolves here, so a route reviewer needs no private file:
   An ended offer says how it ended and offers nothing. A take, cancel or
   clean-up that is open or in flight keeps its panel, finish card included,
   after its own transaction changes the offer, even when a cancel cleared
-  the terms. Without a wallet the page asks for one at the action, never
+  the terms, and a take whose offer the creator cancels under the review
+  keeps its panel and its Close. Without a wallet the page asks for one at the action, never
   before reading, and a failed re-read behind terms already shown says the
   terms are the earlier read and may be out of date.
 - **RB-OFFER-CANCEL** — cancelling an offer (OFF-48) or cleaning up an
