@@ -1,4 +1,4 @@
-## Thread — Anyone may clear a listing whose position moved (PR #<n>)
+## Thread — Anyone may clear a listing whose position moved (PR #3389)
 
 A position NFT moves freely, and a listing or request tied to it can never complete once the position has moved. Before this change, only the offset and lender-sale offers could be cleared by anyone once their position moved. A collateral sale listing, a swap-to-repay order and a refinance request stayed in place until their own expiry. Until then the record stayed in storage and stayed visible in listing views, and the new holder had to deal with a flow that was never theirs.
 
