@@ -64,7 +64,10 @@ interface IBackupSteps {
  *         window, per active offer's linked loan in a rotating window, per day
  *         for the most recent closed days AND a rotating window over every
  *         older day (a lapse becomes possible only weeks after its day), and
- *         the VaultBeacon's two proposal executes. Whether a candidate is due is decided by the protocol
+ *         the VaultBeacon's two proposal executes. These parts and the note
+ *         queue share the check's gas, and the part that goes first moves on
+ *         every block, so one part whose probes are costly cannot starve the
+ *         rest. Whether a candidate is due is decided by the protocol
  *         itself: each candidate is PROBED, i.e. called from this contract
  *         inside a self-call that always reverts, so its effects are undone and
  *         only its success is kept. The backup carries no copy of any step's
@@ -73,15 +76,17 @@ interface IBackupSteps {
  *         nothing left: it is due only when its probe returns a non-zero amount.
  *
  *         WAITING. A due candidate is first NOTED: it joins a bounded queue
- *         with its first-seen time, in a cheap transaction. Every check visits
- *         the whole queue BEFORE scanning, so a noted candidate is revisited
- *         however far the scan windows have rotated away from it. It is RUN only
- *         when a check still finds it due between `lagSec` and
+ *         with its first-seen time, in a cheap transaction. The queue is
+ *         visited on its own, apart from the scan windows, so a noted candidate
+ *         is revisited however far they have rotated away from it. It is RUN
+ *         only when a check still finds it due between `lagSec` and
  *         `lagSec + actWindowSec` after that time. A noted candidate that is no
- *         longer due (our keeper ran it) is DROPPED; perform re-probes before
- *         dropping, so a drop can only remove what is truly not due. A note
- *         older than its window is renewed if the step is still due, so a step
- *         that recurs (a daily rental deduction) waits the full lag every time.
+ *         longer due (our keeper ran it) is DROPPED, during its wait as well,
+ *         so a later occurrence of a recurring step is noted afresh; perform
+ *         re-probes before dropping, so a drop can only remove what is truly
+ *         not due. A note older than its window is renewed if the step is still
+ *         due, so a step that recurs (a daily rental deduction) waits the full
+ *         lag every time.
  *
  *         RUNNING. `performUpkeep` accepts only the registered Chainlink
  *         forwarder, and only (step, argument) pairs: the call it makes is
@@ -163,6 +168,8 @@ contract KeeperBackupUpkeep is IAutomationCompatible, Ownable2Step {
     ///         every entry leaves within `lagSec + actWindowSec` of its note.
     uint8 public constant MAX_PENDING = 64;
     uint8 public constant MAX_RUNS_PER_PERFORM = 4;
+    /// @dev The parts of a check that share its gas: see `checkUpkeep`.
+    uint256 private constant PARTS = 6;
     /// @notice Gas kept back in a check after the last probe, so the encoding
     ///         of the result never runs out.
     uint256 public constant CHECK_GAS_RESERVE = 300_000;
@@ -341,75 +348,14 @@ contract KeeperBackupUpkeep is IAutomationCompatible, Ownable2Step {
         uint256 mask = enabledSteps;
         if (mask == 0) return (false, "");
 
-        // Noted candidates first, wherever the scan windows are now.
-        for (uint256 i; i < _pending.length && !_full(n, runs); i++) {
-            Pending memory p = _pending[i];
-            if (!_on(mask, p.step)) {
-                actions[n++] = Action(Mode.Drop, p.step, p.arg); // disarmed since noted
-                continue;
-            }
-            Stage stage = _stage(p.seenAt);
-            if (stage == Stage.Waiting) continue;
-            if (gasleft() < uint256(probeGas) + CHECK_GAS_RESERVE) break;
-            bool due = isDue(p.step, p.arg);
-            if (due && stage == Stage.Ready) {
-                actions[n++] = Action(Mode.Run, p.step, p.arg);
-                runs++;
-            } else if (due) {
-                actions[n++] = Action(Mode.Note, p.step, p.arg); // stale: renew the wait
-            } else {
-                actions[n++] = Action(Mode.Drop, p.step, p.arg);
-            }
-        }
-
-        // Singletons: the VaultBeacon's proposal.
-        for (uint8 s = uint8(Step.BeaconExecuteCurrentVersion); s <= uint8(Step.BeaconExecuteRevoke); s++) {
-            if (_full(n, runs)) break;
-            (n, runs) = _consider(actions, n, runs, mask, s, 0);
-        }
-
-        // Days.
-        if (_anyIn(mask, FIRST_DAY_STEP, LAST_DAY_STEP)) {
-            (uint256 today, bool active) = IBackupDiamondReads(diamond).getInteractionCurrentDay();
-            // Days are zero-based from launch; `active` is false before launch.
-            // The most recent `dayWindow` closed days every check, then a
-            // rotating window of `dayWindow` days over all older ones, since a
-            // day's lapse opens only after its finalize plus a lapse window.
-            if (active) {
-                uint256 recent = today < dayWindow ? today : dayWindow;
-                for (uint256 back = 1; back <= recent && !_full(n, runs); back++) {
-                    (n, runs) = _considerDay(actions, n, runs, mask, today - back);
-                }
-                uint256 older = today - recent; // days [0, older) are older
-                if (older > 0) {
-                    uint256 pages = (older + dayWindow - 1) / dayWindow;
-                    uint256 start = ((block.timestamp / rotationSec) % pages) * dayWindow;
-                    uint256 end = start + dayWindow > older ? older : start + dayWindow;
-                    for (uint256 d = start; d < end && !_full(n, runs); d++) {
-                        (n, runs) = _considerDay(actions, n, runs, mask, d);
-                    }
-                }
-            }
-        }
-
-        // Loans: a rotating window of the active-loan list.
-        if (_anyIn(mask, FIRST_LOAN_STEP, LAST_LOAN_STEP)) {
-            uint256[] memory loans = _window(true);
-            for (uint256 i; i < loans.length && !_full(n, runs); i++) {
-                for (uint256 s = FIRST_LOAN_STEP; s <= LAST_LOAN_STEP && !_full(n, runs); s++) {
-                    (n, runs) = _consider(actions, n, runs, mask, uint8(s), loans[i]);
-                }
-            }
-        }
-
-        // Offers: a sale listing that outlived its loan is reached from the offer.
-        if (_on(mask, uint8(Step.TeardownStaleSaleListing))) {
-            uint256[] memory offers = _window(false);
-            for (uint256 i; i < offers.length && !_full(n, runs); i++) {
-                uint256 loanId = IBackupDiamondReads(diamond).getOfferLinkedLoanId(offers[i]);
-                if (loanId == 0) continue;
-                (n, runs) = _consider(actions, n, runs, mask, uint8(Step.TeardownStaleSaleListing), loanId);
-            }
+        // Six parts share the check's gas: the note queue, the beacon, the
+        // recent days, the older days, the loans and the offers. The part
+        // that goes first moves on every block, so a part whose probes are
+        // costly, or run out of their gas, cannot starve the others: each
+        // part leads one check in six.
+        uint256 first = block.number % PARTS;
+        for (uint256 k; k < PARTS && !_full(n, runs); k++) {
+            (n, runs) = _scanPart((first + k) % PARTS, actions, n, runs, mask);
         }
 
         if (n == 0) return (false, "");
@@ -435,10 +381,9 @@ contract KeeperBackupUpkeep is IAutomationCompatible, Ownable2Step {
             Stage stage = slot == 0 ? Stage.None : _stage(_pending[slot - 1].seenAt);
             if (a.mode == Mode.Drop) {
                 // Only a disarmed step, or one the protocol says is not due,
-                // leaves the queue without running. An armed note still in
-                // its wait stays.
+                // leaves the queue without running.
                 if (slot == 0) continue;
-                if (_on(enabledSteps, a.step) && (stage == Stage.Waiting || isDue(a.step, a.arg))) continue;
+                if (_on(enabledSteps, a.step) && isDue(a.step, a.arg)) continue;
                 _removePending(key, slot);
                 emit BackupNoteDropped(a.step, a.arg);
                 continue;
@@ -479,6 +424,116 @@ contract KeeperBackupUpkeep is IAutomationCompatible, Ownable2Step {
         if (age < lagSec) return Stage.Waiting;
         if (age <= uint256(lagSec) + actWindowSec) return Stage.Ready;
         return Stage.None;
+    }
+
+    function _scanPart(uint256 part, Action[] memory actions, uint256 n, uint256 runs, uint256 mask)
+        internal
+        returns (uint256, uint256)
+    {
+        if (part == 0) return _scanQueue(actions, n, runs, mask);
+        if (part == 1) {
+            for (uint8 s = uint8(Step.BeaconExecuteCurrentVersion); s <= uint8(Step.BeaconExecuteRevoke); s++) {
+                if (_full(n, runs)) break;
+                (n, runs) = _consider(actions, n, runs, mask, s, 0);
+            }
+            return (n, runs);
+        }
+        if (part == 2 || part == 3) return _scanDays(part == 2, actions, n, runs, mask);
+        if (part == 4) return _scanLoans(actions, n, runs, mask);
+        return _scanOffers(actions, n, runs, mask);
+    }
+
+    /// @dev Every noted candidate, from a start that moves on every block. A
+    ///      note is probed even while it waits, so a step our keeper ran is
+    ///      dropped at once and a later occurrence of a recurring step starts
+    ///      a wait of its own.
+    function _scanQueue(Action[] memory actions, uint256 n, uint256 runs, uint256 mask)
+        internal
+        returns (uint256, uint256)
+    {
+        uint256 len = _pending.length;
+        if (len == 0) return (n, runs);
+        uint256 start = block.number % len;
+        for (uint256 j; j < len && !_full(n, runs); j++) {
+            Pending memory p = _pending[(start + j) % len];
+            if (!_on(mask, p.step)) {
+                actions[n++] = Action(Mode.Drop, p.step, p.arg); // disarmed since noted
+                continue;
+            }
+            Stage stage = _stage(p.seenAt);
+            if (!isDue(p.step, p.arg)) {
+                actions[n++] = Action(Mode.Drop, p.step, p.arg);
+            } else if (stage == Stage.Ready) {
+                actions[n++] = Action(Mode.Run, p.step, p.arg);
+                runs++;
+            } else if (stage == Stage.None) {
+                actions[n++] = Action(Mode.Note, p.step, p.arg); // stale: renew the wait
+            }
+            // Waiting and still due: nothing to do yet.
+        }
+        return (n, runs);
+    }
+
+    /// @dev Days are zero-based from launch, and none exists before launch.
+    ///      `recent`: the last `dayWindow` closed days, from a start that moves
+    ///      on every block. Otherwise a window of `dayWindow` days over all
+    ///      older days, moving on every `rotationSec`, since a day's lapse
+    ///      opens only after its finalize plus a lapse window.
+    function _scanDays(bool recent, Action[] memory actions, uint256 n, uint256 runs, uint256 mask)
+        internal
+        returns (uint256, uint256)
+    {
+        if (!_anyIn(mask, FIRST_DAY_STEP, LAST_DAY_STEP)) return (n, runs);
+        (uint256 today, bool active) = IBackupDiamondReads(diamond).getInteractionCurrentDay();
+        if (!active) return (n, runs);
+        uint256 closed = today < dayWindow ? today : dayWindow;
+        if (recent) {
+            if (closed == 0) return (n, runs);
+            uint256 start = block.number % closed;
+            for (uint256 j; j < closed && !_full(n, runs); j++) {
+                (n, runs) = _considerDay(actions, n, runs, mask, today - 1 - (start + j) % closed);
+            }
+            return (n, runs);
+        }
+        uint256 older = today - closed; // days [0, older)
+        if (older == 0) return (n, runs);
+        uint256 pages = (older + dayWindow - 1) / dayWindow;
+        uint256 first = ((block.timestamp / rotationSec) % pages) * dayWindow;
+        uint256 end = first + dayWindow > older ? older : first + dayWindow;
+        for (uint256 d = first; d < end && !_full(n, runs); d++) {
+            (n, runs) = _considerDay(actions, n, runs, mask, d);
+        }
+        return (n, runs);
+    }
+
+    /// @dev A rotating window of the active-loan list.
+    function _scanLoans(Action[] memory actions, uint256 n, uint256 runs, uint256 mask)
+        internal
+        returns (uint256, uint256)
+    {
+        if (!_anyIn(mask, FIRST_LOAN_STEP, LAST_LOAN_STEP)) return (n, runs);
+        uint256[] memory loans = _window(true);
+        for (uint256 i; i < loans.length && !_full(n, runs); i++) {
+            for (uint256 s = FIRST_LOAN_STEP; s <= LAST_LOAN_STEP && !_full(n, runs); s++) {
+                (n, runs) = _consider(actions, n, runs, mask, uint8(s), loans[i]);
+            }
+        }
+        return (n, runs);
+    }
+
+    /// @dev A sale listing that outlived its loan is reached from the offer.
+    function _scanOffers(Action[] memory actions, uint256 n, uint256 runs, uint256 mask)
+        internal
+        returns (uint256, uint256)
+    {
+        if (!_on(mask, uint8(Step.TeardownStaleSaleListing))) return (n, runs);
+        uint256[] memory offers = _window(false);
+        for (uint256 i; i < offers.length && !_full(n, runs); i++) {
+            uint256 loanId = IBackupDiamondReads(diamond).getOfferLinkedLoanId(offers[i]);
+            if (loanId == 0) continue;
+            (n, runs) = _consider(actions, n, runs, mask, uint8(Step.TeardownStaleSaleListing), loanId);
+        }
+        return (n, runs);
     }
 
     /// @dev Add the action a due candidate needs, if any.

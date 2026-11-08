@@ -45,6 +45,13 @@ step's due rule, and ships with every step switched off.
 - the stale-sale-listing teardown for the linked loan of each offer in a
   rotating window of the active-offer list.
 
+The note queue and these four kinds of candidate (the days split into
+recent and older) are six parts that share the check's gas. The part that
+goes first moves on every block, and the queue and the recent days also start
+from a point that moves on every block, so a part whose probes are costly or
+run out of their gas (a close whose frontier is far behind) cannot starve the
+rest: each part leads one check in six.
+
 Whether a candidate is due is the protocol's answer, not ours. The contract
 calls the step from a self-call (`probe`) that always reverts with the
 result, so the step's effects are undone and only "it would succeed" is kept.
@@ -60,7 +67,9 @@ however far the rotating loan, offer and day windows have moved away from it.
 It runs only if a check still finds it due between `lagSec` (default 1 hour)
 and `lagSec + actWindowSec` (default 1 more hour) after the note. If our
 keeper runs the step in the meantime, the probe fails and the note is
-dropped; the perform probes again before it drops, so a drop removes only
+dropped, during its wait as well, so the next occurrence of a recurring step
+is noted afresh instead of running on the old note's time; the perform probes
+again before it drops, so a drop removes only
 what is truly no longer due (or a step since disarmed). A note older than its
 window is renewed if the step is still due, so a step that recurs (a daily
 deduction) waits the full lag every time. While the queue is full no new note
@@ -170,7 +179,8 @@ gets to it, and never a run.
 `contracts/test/KeeperBackupUpkeepTest.t.sol` drives the contract against a
 stand-in Diamond: every step off at deployment, the simulation-only check,
 the probe that changes nothing, note then run only after the lag, a drop
-when the keeper ran first (and a drop refused while still due), a disarmed
+when the keeper ran first, even during the wait (and a drop refused while
+still due), a costly part that cannot starve the others, a disarmed
 note dropped, a noted loan revisited after the window moved on, a stale note restarting the wait, a reverted run
 recorded with its selector, the forwarder gate, no run without a ready note,
 the run cap, the no-sale default with a paid bonus swept to the treasury,

@@ -18,6 +18,8 @@ contract MockBackupDiamond {
     address public beacon;
 
     mapping(bytes4 => mapping(uint256 => bool)) public due;
+    mapping(bytes4 => mapping(uint256 => bool)) public burn;
+    uint256 public sink;
     mapping(bytes4 => mapping(uint256 => uint256)) public runs;
     mapping(uint256 => uint256) public recyclable;
     uint256 public lastSellAmount = type(uint256).max;
@@ -48,6 +50,12 @@ contract MockBackupDiamond {
 
     function setDue(bytes4 sel, uint256 arg, bool d) external {
         due[sel][arg] = d;
+    }
+
+    /// @dev A step that spends every unit of gas it is given, like a close
+    ///      whose frontier is far behind.
+    function setBurn(bytes4 sel, uint256 arg, bool b) external {
+        burn[sel][arg] = b;
     }
 
     function setRecyclable(uint256 day, uint256 amount) external {
@@ -148,6 +156,9 @@ contract MockBackupDiamond {
     }
 
     function _run(uint256 arg) internal {
+        if (burn[msg.sig][arg]) {
+            while (true) sink++;
+        }
         if (!due[msg.sig][arg]) revert NotDue();
         due[msg.sig][arg] = false;
         runs[msg.sig][arg]++;
@@ -346,7 +357,7 @@ contract KeeperBackupUpkeepTest is Test {
         diamond.setDue(diamond.autoDeductDaily.selector, 11, true);
         (, KeeperBackupUpkeep.Action[] memory a) = _check();
         _perform(a);
-        // Waiting: a drop is refused.
+        // Waiting and still due: a drop is refused.
         _perform(_one(KeeperBackupUpkeep.Mode.Drop, AUTO_DEDUCT, 11));
         assertEq(backup.pendingCandidates().length, 1);
         // Ready and still due: a drop is refused too.
@@ -387,10 +398,67 @@ contract KeeperBackupUpkeepTest is Test {
         uint256 t = block.timestamp + 61 minutes;
         vm.warp(t);
         (, KeeperBackupUpkeep.Action[] memory b) = _check();
-        assertEq(uint8(b[0].mode), uint8(KeeperBackupUpkeep.Mode.Run));
-        assertEq(b[0].arg, noted);
+        bool run;
+        for (uint256 i; i < b.length; i++) {
+            if (b[i].mode == KeeperBackupUpkeep.Mode.Run) {
+                assertEq(b[i].arg, noted);
+                run = true;
+            }
+        }
+        assertTrue(run, "the noted loan runs");
         _perform(b);
         assertEq(diamond.runs(diamond.autoDeductDaily.selector, noted), 1);
+    }
+
+    function test_AWaitingNoteIsDroppedOnceTheKeeperRunsIt() public {
+        _arm(AUTO_DEDUCT);
+        diamond.setDue(diamond.autoDeductDaily.selector, 11, true);
+        (, KeeperBackupUpkeep.Action[] memory a) = _check();
+        _perform(a);
+        // Our keeper runs it a minute later, well inside the wait.
+        diamond.setDue(diamond.autoDeductDaily.selector, 11, false);
+        uint256 t = block.timestamp + 1 minutes;
+        vm.warp(t);
+        (bool needed, KeeperBackupUpkeep.Action[] memory b) = _check();
+        assertTrue(needed);
+        assertEq(b.length, 1);
+        assertEq(uint8(b[0].mode), uint8(KeeperBackupUpkeep.Mode.Drop));
+        _perform(b);
+        assertEq(backup.pendingCandidates().length, 0);
+        // The next occurrence starts a wait of its own instead of running on
+        // the old note's time.
+        t += 60 minutes;
+        vm.warp(t);
+        diamond.setDue(diamond.autoDeductDaily.selector, 11, true);
+        (, b) = _check();
+        assertEq(b.length, 1);
+        assertEq(uint8(b[0].mode), uint8(KeeperBackupUpkeep.Mode.Note));
+        _perform(b);
+        assertEq(backup.firstSeenAt(AUTO_DEDUCT, 11), uint64(t));
+        assertEq(diamond.runs(diamond.autoDeductDaily.selector, 11), 0);
+    }
+
+    function test_ACostlyPartCannotStarveTheOthers() public {
+        _arm(CLOSE_DAY);
+        _arm(AUTO_DEDUCT);
+        diamond.setDay(10, true);
+        // Every recent day's close spends its whole probe allowance.
+        for (uint256 d = 3; d <= 9; d++) {
+            diamond.setBurn(diamond.closeDay.selector, d, true);
+        }
+        diamond.setDue(diamond.autoDeductDaily.selector, 11, true);
+        bool found;
+        for (uint256 b = 1; b <= 6; b++) {
+            vm.roll(b);
+            vm.prank(address(0xBEEF), SIM);
+            (bool needed, bytes memory data) = backup.checkUpkeep{gas: 5_000_000}("");
+            if (!needed) continue;
+            KeeperBackupUpkeep.Action[] memory a = abi.decode(data, (KeeperBackupUpkeep.Action[]));
+            for (uint256 i; i < a.length; i++) {
+                if (a[i].step == AUTO_DEDUCT && a[i].arg == 11) found = true;
+            }
+        }
+        assertTrue(found, "the loan is found while the recent days burn their gas");
     }
 
     function test_AStaleNoteStartsTheWaitAgain() public {
