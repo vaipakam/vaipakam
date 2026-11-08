@@ -71,6 +71,7 @@ import { d1ScanCursors, type FinalBlock, type ScanCursors } from './scanCursors'
 import { boundedCall, PassReader } from './passReader';
 import { StepSender } from './stepSender';
 import { leadStageCutoffMs, runIndex } from './runWindow';
+import { LEGACY_DIAMOND_NFT_ABI, positionNftForDiamond } from './positionNft';
 
 /** Only the functions and events this pass names, plus every Diamond error. */
 const PICK: ReadonlySet<string> = new Set([
@@ -103,6 +104,10 @@ const pick = (abi: unknown) => (abi as Abi).filter((x) => x.type === 'error' || 
 export const ABI = dedupe([
   ...pick(VaultPayoutFacetABI),
   ...pick(VaipakamNFTFacetABI),
+  // #3205: the position-NFT queue reads and release exist only on a
+  // legacy-mode Diamond, named in the frozen fragment.
+  // TODO(#3321 positionNft-legacy-removal): drop with the legacy mode.
+  ...pick(LEGACY_DIAMOND_NFT_ABI),
   ...pick(ProtectedAccountFacetABI),
   ...pick(VaultDepositoryFacetABI),
   ...(VaipakamDiamondABI as Abi).filter((x) => x.type === 'error'),
@@ -310,6 +315,8 @@ export interface ProtectedReport {
   cancelled: bigint[];
   /** Position-transfer ids moved this run. */
   transferred: bigint[];
+  /** Why the transfer step did not run on this chain, or null (#3205). */
+  transferSkipped: string | null;
   /** Changes applied this run, as `kind:account[:other]`. */
   finalized: string[];
   /** Rows not sent this run for a reason the chain states, by reason. */
@@ -370,7 +377,9 @@ export function describeReport(r: ProtectedReport): string {
     `[keeper] protectedAccount chain=${r.chainId}`,
     `payouts-released=${r.released.map((x) => `${x.id}(delivered ${x.delivered})`).join(',') || 'none'}`,
     ...(r.cancelled.length > 0 ? [`payouts-cancelled-by-release=${r.cancelled.join(',')} (destination no longer allowed; the asset stays in the vault)`] : []),
-    `transfers-released=${r.transferred.join(',') || 'none'}`,
+    r.transferSkipped
+      ? `transfers=skipped (${r.transferSkipped})`
+      : `transfers-released=${r.transferred.join(',') || 'none'}`,
     `changes-finalized=${r.finalized.join(',') || 'none'}`,
     ...(r.locks === null
       ? []
@@ -411,6 +420,7 @@ export async function protectedOnce(chainId: number, diamond: Address, deps: Pro
     released: [],
     cancelled: [],
     transferred: [],
+    transferSkipped: null,
     finalized: [],
     waiting: new Map(),
     locks: deps.telegram?.lock === true ? [] : null,
@@ -748,6 +758,14 @@ class Step {
 
   // 1b. Position transfers.
   async releaseTransfers(): Promise<void> {
+    // #3205: a chain whose position NFTs live in the standalone PositionNFT
+    // has no queued NFT transfer to release; its holder lock's matured
+    // unlocks are not executed by this pass.
+    if (positionNftForDiamond(this.r.diamond).mode === 'standalone') {
+      this.report.transferSkipped =
+        'position NFTs live in the standalone PositionNFT: there is no queued transfer, and matured holder unlocks are not sent by this pass';
+      return;
+    }
     if (this.lockRequested === null) return;
     const page = await readLedgerRotation<bigint>({
       ledger: this.deps.ledger,

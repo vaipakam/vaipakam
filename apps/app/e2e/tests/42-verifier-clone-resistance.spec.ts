@@ -13,7 +13,7 @@
  *  offer the explorer cross-check too.
  */
 import { test, expect } from '../lib/wallet-fixture';
-import { DIAMOND } from '../lib/chain';
+import { POSITION_NFT } from '../lib/chain';
 
 const ABSENT_TOKEN = '999999';
 
@@ -28,15 +28,15 @@ test('the verifier says it never needs a wallet and names the contract it checke
   await expect(notice).toContainText(/connect a wallet, sign a message, or approve a transfer/i);
 
   // The FULL address, linked to the explorer's page for that address.
-  const contract = page.locator(`a[href$="/address/${DIAMOND}"]`).first();
+  const contract = page.locator(`a[href$="/address/${POSITION_NFT}"]`).first();
   await expect(contract).toBeVisible();
-  await expect(contract).toHaveText(DIAMOND);
+  await expect(contract).toHaveText(POSITION_NFT);
   await expect(contract).toHaveAttribute('target', '_blank');
 
   // The verdict renders, and it carries the independent cross-check.
   await expect(page.getByTestId('nft-verdict-never-minted')).toBeVisible();
   await expect(page.getByText(/has never been minted on/i)).toBeVisible();
-  const explorer = page.locator(`a[href$="/nft/${DIAMOND}/${ABSENT_TOKEN}"]`);
+  const explorer = page.locator(`a[href$="/nft/${POSITION_NFT}/${ABSENT_TOKEN}"]`);
   await expect(explorer).toBeVisible();
   await expect(explorer).toContainText(`#${ABSENT_TOKEN}`);
   await expect(explorer).toHaveAttribute('rel', /noopener/);
@@ -50,7 +50,7 @@ test('Help lists the contract address and explains how to spot a fake verifier',
 
   const contracts = page.locator('#contracts');
   await expect(contracts).toBeVisible();
-  await expect(contracts.locator(`a[href$="/address/${DIAMOND}"]`)).toHaveText(DIAMOND);
+  await expect(contracts.locator(`a[href$="/address/${POSITION_NFT}"]`)).toHaveText(POSITION_NFT);
 
   await expect(page.getByText(/how do I spot a fake verifier/i)).toBeVisible();
 });

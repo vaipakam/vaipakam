@@ -2740,7 +2740,6 @@
 {"type":"error","name":"AskBelowFloor","inputs":[{"name":"loanId","type":"uint256","internalType":"uint256"},{"name":"askPrice","type":"uint256","internalType":"uint256"},{"name":"minAsk","type":"uint256","internalType":"uint256"}]},
 {"type":"error","name":"AskBelowFloorPlusFees","inputs":[{"name":"loanId","type":"uint256","internalType":"uint256"},{"name":"askPrice","type":"uint256","internalType":"uint256"},{"name":"required","type":"uint256","internalType":"uint256"}]},
 {"type":"error","name":"AuctionWindowStillOpen","inputs":[{"name":"loanId","type":"uint256","internalType":"uint256"},{"name":"nowTime","type":"uint256","internalType":"uint256"},{"name":"auctionEndTime","type":"uint256","internalType":"uint256"}]},
-{"type":"error","name":"BorrowerNFTAlreadyLocked","inputs":[{"name":"tokenId","type":"uint256","internalType":"uint256"},{"name":"currentReason","type":"uint8","internalType":"enum LibPositionNFT.RouteReason"}]},
 {"type":"error","name":"ConduitNotApproved","inputs":[{"name":"conduit","type":"address","internalType":"address"}]},
 {"type":"error","name":"FeeLegDecayNotAllowedOnFixedPrice","inputs":[{"name":"idx","type":"uint256","internalType":"uint256"}]},
 {"type":"error","name":"FeeLegInvalidAmount","inputs":[{"name":"idx","type":"uint256","internalType":"uint256"}]},

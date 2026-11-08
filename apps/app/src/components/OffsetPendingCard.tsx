@@ -18,7 +18,7 @@ import { usePublicClient, useWalletClient } from 'wagmi';
 import { copy } from '../content/copy';
 import { captureTxError } from '../lib/errors';
 import { useActiveChain } from '../chain/useActiveChain';
-import { DIAMOND_ABI_VIEM, useDiamondWrite, useTermsBlockNonExitWrites } from '../contracts/diamond';
+import { useDiamondWrite, useTermsBlockNonExitWrites } from '../contracts/diamond';
 import {
   LOAN_STATUS_ACTIVE,
   offsetCompletionBoundOf,
@@ -29,6 +29,8 @@ import { ensureAllowance } from '../contracts/erc20';
 import type { OffsetPendingState } from '../data/offsetPending';
 import { formatTokenAmountExact } from '../lib/format';
 import type { TokenMeta } from '../contracts/erc20';
+import { readPositionRouteOn } from '../contracts/positionNft';
+import { useRouteBlocksTransfer } from '../contracts/positionNft';
 
 export function OffsetPendingCard({
   loanId,
@@ -57,6 +59,7 @@ export function OffsetPendingCard({
   onCleared: () => void;
   onDone: (msg: string) => void;
 }) {
+  const routeBlocks = useRouteBlocksTransfer();
   const { address, walletChain, onSupportedChain } = useActiveChain();
   const { data: walletClient } = useWalletClient();
   const publicClient = usePublicClient({ chainId: walletChain?.chainId });
@@ -135,12 +138,7 @@ export function OffsetPendingCard({
       // approve for a commitment that no longer exists — nor restore
       // an amount that is already short (Codex #1500 r5).
       const [lockRaw, live] = await Promise.all([
-        publicClient!.readContract({
-          address: walletChain.diamondAddress,
-          abi: DIAMOND_ABI_VIEM,
-          functionName: 'positionLock',
-          args: [BigInt(borrowerTokenId)],
-        }) as Promise<number | bigint>,
+        readPositionRouteOn(publicClient!, walletChain.diamondAddress, BigInt(borrowerTokenId)) as Promise<number | bigint>,
         readLoanLive(publicClient!, walletChain.diamondAddress, loanId),
       ]);
       if (Number(lockRaw) !== LOCK_PRECLOSE_OFFSET) {
@@ -193,7 +191,7 @@ export function OffsetPendingCard({
           : copy.offset.pendingOfferUnknown}
       </p>
       <div className="banner banner-warn" role="note">
-        <span className="banner-body">{copy.offset.lockWarn}</span>
+        <span className="banner-body">{routeBlocks ? copy.offset.lockWarn : copy.offset.lockWarnRoute}</span>
       </div>
       {completable ? (
         <div className="banner banner-warn" role="note" style={{ marginTop: 8 }}>

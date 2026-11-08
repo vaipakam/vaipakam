@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "./LibVaipakam.sol";
+import {LibPositionNFT} from "./LibPositionNFT.sol";
 import {LibProtectedAccount} from "./LibProtectedAccount.sol";
 import {VaipakamVaultImplementation} from "../VaipakamVaultImplementation.sol";
 import {FeeLeg} from "../seaport/PrepayTypes.sol";
@@ -74,6 +75,13 @@ library LibPrepayListingWiring {
         address conduit,
         address executor
     ) internal {
+        // #3205 — the ONE place a collateral listing arms its route, on a
+        // post and on every update alike. Every caller has authenticated the
+        // CURRENT borrower-position holder. `openRoute` keeps a live route's
+        // transfer count, rebinds a dead one of this reason to the current
+        // count (a holder who received the position re-arms the listing as
+        // their own), and refuses while another flow's live route holds it.
+        LibPositionNFT.openRoute(loan.borrowerTokenId, LibPositionNFT.RouteReason.PrepayCollateralListing);
         address vaultAddr = s.userVaipakamVaults[loan.borrower];
         if (vaultAddr == address(0)) revert VaultNotDeployed(loan.borrower);
         VaipakamVaultImplementation vault = VaipakamVaultImplementation(vaultAddr);

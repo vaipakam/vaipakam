@@ -324,7 +324,6 @@ contract NFTPrepayListingFacet is
     ///         the older flow's lock state. Concurrent strategic
     ///         flows are not supported in v1; the borrower must
     ///         resolve the existing flow first.
-    error BorrowerNFTAlreadyLocked(uint256 tokenId, LibPositionNFT.RouteReason currentReason);
 
     /// @notice Master kill-switch is off. ADMIN flips it on once
     ///         steps 7 (vault approval) + 10 (default-flow lock-
@@ -502,10 +501,8 @@ contract NFTPrepayListingFacet is
         if (existing != bytes32(0)) {
             revert PrepayListingAlreadyExists(loanId, existing);
         }
-        LibPositionNFT.RouteReason currentLock = LibPositionNFT.routeOf(loan.borrowerTokenId);
-        if (currentLock != LibPositionNFT.RouteReason.None) {
-            revert BorrowerNFTAlreadyLocked(loan.borrowerTokenId, currentLock);
-        }
+        // #3205 — another flow's LIVE route refuses in `openRoute` (in
+        // LibPrepayListingWiring.wire); a dead one is replaced there.
 
         // Grace-window upper bound.
         uint256 gracePeriodEnd = _gracePeriodEnd(loan);
@@ -629,7 +626,7 @@ contract NFTPrepayListingFacet is
         // wire vault. Effects-before-interactions: storage writes
         // BEFORE the external calls to executor + vault, even
         // though both are trusted singletons.
-        LibPositionNFT.openRoute(loan.borrowerTokenId, LibPositionNFT.RouteReason.PrepayCollateralListing);
+        // #3205 — the route opens (or rebinds) in LibPrepayListingWiring.wire.
         s.prepayListingOrderHash[loanId] = orderHash;
         s.prepayListingExecutor[loanId] = address(executor);
         // T-086 #316 + Round-5 Block A (#313) + Round-5 Block B (#309) —

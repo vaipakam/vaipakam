@@ -165,6 +165,7 @@ import { StepNav, type StepDef } from './StepNav';
 import { consentCheck, useEligibility } from './useEligibility';
 import { useReviewConsent } from '../hooks/useReviewConsent';
 import { idleAware } from '../lib/idle';
+import { readPositionOwnerOn } from '../contracts/positionNft';
 
 type Side = 'lender' | 'borrower';
 type FlowStep = 'details' | 'choose' | 'terms' | 'review' | 'done';
@@ -3268,12 +3269,7 @@ async function readSaleReviewLive(
   // a doomed self-buy reach signing. A throw here surfaces as the
   // review's named check-failed state with a retry (query path) or
   // aborts before any signature/approval (submit path).
-  const currentBorrower = (await client.readContract({
-    address: diamondAddress,
-    abi: DIAMOND_ABI_VIEM,
-    functionName: 'ownerOf',
-    args: [live.borrowerTokenId],
-  })) as `0x${string}`;
+  const currentBorrower = (await readPositionOwnerOn(client, diamondAddress, live.borrowerTokenId)) as `0x${string}`;
   return {
     kind: 'sale',
     loanId,

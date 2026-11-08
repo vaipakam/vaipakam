@@ -23,16 +23,15 @@ import {
   RefinanceFacetABI,
   RepayPeriodicFacetABI,
   RiskFacetABI,
-  VaipakamNFTFacetABI,
 } from '@vaipakam/contracts/abis';
 import { isLiveStatus, type Deadlines, type LoanSummary } from './model';
+import { positionOwnerCall, positionRouteCallFor } from './positionNft';
 
 type Hex = `0x${string}`;
 
 const LOAN = LoanFacetABI as Abi;
 const RISK = RiskFacetABI as Abi;
 const METRICS = MetricsFacetABI as Abi;
-const NFT = VaipakamNFTFacetABI as Abi;
 const DEFAULTED = DefaultedFacetABI as Abi;
 const PERIODIC = RepayPeriodicFacetABI as Abi;
 const NUMERAIRE = NumeraireConfigFacetABI as Abi;
@@ -242,6 +241,8 @@ export async function readLoanView(client: PublicClient, diamond: Hex, loanId: b
   const block = await maybe(client.getBlock({ blockTag: 'latest' }));
   const at = block ? { blockNumber: block.number } : {};
   const read = <T>(abi: Abi, functionName: string, args: readonly unknown[] = []) => client.readContract({ address: diamond, abi, functionName, args, ...at }) as Promise<T>;
+  // #3205: position-NFT reads go to the chain's position-NFT surface.
+  const readCall = async <T>(call: () => ReturnType<typeof positionOwnerCall>) => (await client.readContract({ ...call(), ...at })) as T;
   const loan = await read<LoanDetails>(LOAN, 'getLoanDetails', [loanId]);
   if (loan.id === 0n) return { view: null };
   const live = isLiveStatus(loan.status);
@@ -266,8 +267,8 @@ export async function readLoanView(client: PublicClient, diamond: Hex, loanId: b
     borrowerLock,
     refinance,
   ] = await Promise.all([
-    maybe(read<Hex>(NFT, 'ownerOf', [loan.lenderTokenId])),
-    maybe(read<Hex>(NFT, 'ownerOf', [loan.borrowerTokenId])),
+    maybe(readCall<Hex>(() => positionOwnerCall(diamond, loan.lenderTokenId))),
+    maybe(readCall<Hex>(() => positionOwnerCall(diamond, loan.borrowerTokenId))),
     live ? maybe(read<readonly [bigint, bigint, bigint, bigint]>(LOAN, 'getLoanDeadlines', [loanId])) : null,
     scheduled ? maybe(read<readonly [number, bigint, bigint, bigint, bigint, bigint, boolean]>(PERIODIC, 'previewPeriodicSettle', [loanId])) : null,
     scheduled ? maybe(read<boolean>(NUMERAIRE, 'getPeriodicInterestEnabled')) : null,
@@ -280,7 +281,7 @@ export async function readLoanView(client: PublicClient, diamond: Hex, loanId: b
     maybe(read<CollateralLien>(METRICS, 'getLoanCollateralLien', [loanId])),
     maybe(read<boolean>(METRICS, 'isSaleVehicleLoan', [loanId])),
     live ? maybe(read<readonly [boolean, bigint, bigint]>(CONFIG, 'getInternalMatchConfigBundle')) : null,
-    live ? maybe(read<number>(NFT, 'positionLock', [loan.borrowerTokenId]).then(Number)) : null,
+    live ? maybe(readCall<number>(() => positionRouteCallFor(diamond, loan.borrowerTokenId)).then(Number)) : null,
     live ? maybe(read<readonly [bigint, boolean]>(REFINANCE, 'getRefinanceRequest', [loanId])) : null,
   ]);
 

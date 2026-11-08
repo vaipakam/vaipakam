@@ -361,6 +361,7 @@ import {
   requestStateOf,
   scanForReplacement,
 } from './refinanceOutcome.mjs';
+import { positionHolderReader } from './positionHolder.mjs';
 
 // ---------------------------------------------------------------------
 // Output hygiene FIRST — before anything can print. The chain RPC URL may
@@ -500,6 +501,8 @@ const read = (functionName, args = [], blockNumber) =>
     args,
     ...(blockNumber !== undefined ? { blockNumber } : {}),
   });
+// #3205 — holders come from the chain's position-NFT contract, not the Diamond ABI.
+const readHolder = positionHolderReader(pub, CHAIN_ID);
 const loanOf = async (id, blockNumber) => {
   const l = await read('getLoanDetails', [id], blockNumber);
   return { ...l, status: Number(l.status), collateralLiquidity: Number(l.collateralLiquidity) };
@@ -1344,8 +1347,8 @@ async function replacementAt(head) {
   });
   if (!match) return null;
   const [borrowerHolder, lenderHolder] = await Promise.all([
-    read('ownerOf', [match.borrowerTokenId], head),
-    read('ownerOf', [match.lenderTokenId], head),
+    readHolder(match.borrowerTokenId, head),
+    readHolder(match.lenderTokenId, head),
   ]);
   return {
     id: match.id,
@@ -1665,8 +1668,8 @@ const pre = await precondition('reading the preconditions from chain', async () 
   // Who holds each position NOW (#2422 r3 P2) — read first, because the old
   // lender position's holder is one of the participants the snapshot screens.
   const [borrowerPositionHolder, lenderPositionHolder] = await Promise.all([
-    read('ownerOf', [loan.borrowerTokenId], head),
-    read('ownerOf', [loan.lenderTokenId], head),
+    readHolder(loan.borrowerTokenId, head),
+    readHolder(loan.lenderTokenId, head),
   ]);
   // THE WATCHED-CONFIG SNAPSHOT (#2422 r12, watchedConfig.mjs): every
   // mutable governance value this drive reads, in ONE read, at the pinned

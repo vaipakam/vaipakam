@@ -917,7 +917,8 @@
       "blockedOtherPaths": "Tant que cet offset est ouvert, rembourser ou clôturer autrement laisserait l'offre liée en plan — annulez-la d'abord.",
       "alreadyLive": "Une offre d'offset est déjà active pour ce prêt (elle a peut-être été publiée depuis un autre appareil). Rien n'a été approuvé ni envoyé — actualisez pour la voir ci-dessous.",
       "durationOverCap": "Les offres ne peuvent pas durer plus de {{max}} jours actuellement. Raccourcissez la durée et réexaminez — rien n'a été approuvé ni envoyé.",
-      "onlyBeforeDue": "Un offset nécessite une durée de remplacement se terminant avant l'échéance de ce prêt — il n'est plus disponible aussi près de l'échéance (ou au-delà)."
+      "onlyBeforeDue": "Un offset nécessite une durée de remplacement se terminant avant l'échéance de ce prêt — il n'est plus disponible aussi près de l'échéance (ou au-delà).",
+      "lockWarnRoute": "Tant que cette offre est ouverte, laissez votre NFT de position d'emprunteur où il est : le déplacer signifie que l'offset ne peut plus s'exécuter, et l'offre ne peut alors plus qu'être annulée."
     },
     "refinance": {
       "postedButUnconfirmed": "Votre demande a été envoyée, mais nous n’avons pas pu confirmer si elle a abouti. Vérifiez vos demandes ouvertes avant de réessayer : si elle est bien passée, une seconde demande créerait un doublon. L’autorisation de dépense a été laissée en place, car un prêteur qui accepte la demande en a besoin pour encaisser le remboursement.",
@@ -1082,7 +1083,17 @@
       "neverMintedBody": "Aucun NFT de position portant cet identifiant n’a été créé sur {{chain}}. Si la position a été ouverte sur un autre réseau, passez sur ce réseau et vérifiez à nouveau.",
       "goneTitle": "Le token n°{{id}} n’existe pas actuellement sur ce réseau",
       "goneBody": "Soit il a été retiré par le protocole, soit il n’a jamais été frappé ici — les contrats de ce réseau n’enregistrent pas lequel des deux. Considérez toute offre de vente ou de transfert de cet identifiant de jeton comme sans valeur sur ce réseau.",
-      "goneBodyUnchecked": "Soit il a été retiré par le protocole, soit il n’a jamais été frappé ici — nous n’avons pas pu vérifier lequel pour l’instant ; recharger la page relance la vérification. Considérez toute offre de vente ou de transfert de cet identifiant de jeton comme sans valeur sur ce réseau."
+      "goneBodyUnchecked": "Soit il a été retiré par le protocole, soit il n’a jamais été frappé ici — nous n’avons pas pu vérifier lequel pour l’instant ; recharger la page relance la vérification. Considérez toute offre de vente ou de transfert de cet identifiant de jeton comme sans valeur sur ce réseau.",
+      "routeLabel": "Route de protocole ouverte",
+      "routePrecloseOffset": "Un préremboursement par offset est ouvert sur ce jeton. Il peut encore être transféré, mais après un transfert l'offset ne peut plus s'exécuter et ne peut plus qu'être annulé.",
+      "routeSale": "Une annonce de vente de position est ouverte sur ce jeton. Il peut encore être transféré, mais après un transfert la vente ne peut plus se terminer et l'annonce ne peut plus qu'être annulée.",
+      "routePrepayListing": "Une annonce de garantie est ouverte sur ce jeton. Il peut encore être transféré, mais après un transfert l'annonce ne peut plus se terminer et ne peut plus qu'être annulée.",
+      "routeSwapToRepayIntent": "Une enchère de remboursement par la garantie est ouverte sur ce jeton : la garantie est engagée dans un ordre actif pour rembourser le prêt. Le jeton peut encore être transféré, mais après un transfert l'enchère ne peut plus être réglée et ne peut plus qu'être annulée.",
+      "routeUnrecognized": "Une route de protocole que cette version de l'application ne reconnaît pas est ouverte sur ce jeton. Un transfert peut l'empêcher de se terminer.",
+      "routeUnknown": "Nous n'avons pas pu lire pour l'instant si une route de protocole est ouverte sur ce jeton — revérifiez avant de compter sur un transfert pour la laisser intacte.",
+      "holderLockLabel": "Verrou du détenteur",
+      "holderLocked": "Le détenteur actuel a verrouillé ses NFT de position : ce jeton ne peut pas être transféré tant qu'il ne les a pas déverrouillés, et un déverrouillage attend le délai qu'il a fixé.",
+      "holderLockUnknown": "Nous n'avons pas pu lire si le détenteur actuel a verrouillé ses NFT de position — ne comptez pas sur la transférabilité de ce jeton tant que cette lecture n'est pas nette."
     },
     "recover": {
       "title": "Réclamer des jetons bloqués",
@@ -1395,7 +1406,8 @@
           "unrecognised": "Indisponible : le protocole refuse cette vente ({{name}}).",
           "unnamedError": "un motif que cette application ne reconnaît pas",
           "reopensEarliest": "Si l’on s’en remet au temps, cela se lève au plus tôt le {{time}}. Une démarche que quelqu’un choisit de faire, comme l’annulation d’une mise en vente, peut le lever plus tôt."
-        }
+        },
+        "listStructuralRoute": "Tant que l’annonce est active, déplacer votre NFT de position fait perdre à l’annonce sa possibilité d’aboutir. L’annonce bloque aussi deux des options de l’EMPRUNTEUR sur ce prêt : le protocole refuse le retrait de sa garantie et sa sortie par compensation, dans les deux cas pour protéger les termes signés par l’acheteur. Ses remboursements, totaux ou partiels, restent possibles. Les blocages prennent fin lorsqu’un acheteur conclut ou que vous annulez ; si l’annonce expire simplement, ils demeurent jusqu’à ce que quelqu’un lance le nettoyage qui la supprime."
       },
       "pastDue": "Ce prêt a dépassé son échéance : l’emprunteur le rembourse ou la procédure de défaut le résout. Aucune nouvelle vente ne peut être lancée maintenant.",
       "checking": "Vérification des options disponibles sur cette position…"
@@ -1487,7 +1499,13 @@
       "cancelSoon": "L'annulation s'ouvre quelques minutes après la listing — réessayez bientôt.",
       "loanSettledWhileListed": "Ce prêt a été réglé ; l'annonce de vente ne pourra donc jamais aboutir — annulez-la pour déverrouiller votre NFT de prêteur.",
       "ended": "Votre annonce de vente n’est plus active. Si un acheteur l’a acceptée, votre paiement (son paiement, moins le règlement) est déjà dans votre portefeuille, et les intérêts que vous avez gagnés sont votre créance sur le prêt, affichée dans Retraits.",
-      "listingUnavailable": "Lister votre position à votre propre prix n'est pas encore disponible — l'étape on-chain nécessaire est en cours de correction. La sortie instantanée ci-dessus fonctionne : elle vend immédiatement dans une offre ouverte correspondante."
+      "listingUnavailable": "Lister votre position à votre propre prix n'est pas encore disponible — l'étape on-chain nécessaire est en cours de correction. La sortie instantanée ci-dessus fonctionne : elle vend immédiatement dans une offre ouverte correspondante.",
+      "lockWarningRoute": "Déplacer votre NFT de position prêteur annule votre annonce ouverte : une fois déplacé, la vente ne peut plus se terminer et l'annonce ne peut plus qu'être annulée. Vos droits de retrait ne sont pas affectés.",
+      "receiptLockRoute": "Rien n’est verrouillé. Tant que l’annonce est active, déplacer votre NFT de position prêteur signifie que la vente ne peut plus se terminer. Rien d’autre.",
+      "pendingRoute": "L'annonce de vente #{{offerId}} est active. Laissez votre NFT de prêteur où il est : le déplacer annule votre annonce ouverte. Lorsqu'un acheteur accepte, vous êtes payé dans la même transaction : le paiement de l'acheteur, moins le règlement.",
+      "pendingNoIdRoute": "Cette position est mise en vente (depuis un autre appareil, l'annulation n'est donc pas disponible ici — annulez là où elle a été mise en vente). Déplacer votre NFT de prêteur annule votre annonce ouverte.",
+      "expiredUnsoldRoute": "Cette annonce a pris fin le {{date}} sans acheteur ; personne ne peut donc plus l'acheter. Elle retient encore ce prêt jusqu'à ce qu'elle soit nettoyée : annulez-la ici, ou n'importe qui peut envoyer la transaction de nettoyage.",
+      "expiredUnsoldNoCancelRoute": "Cette annonce a pris fin le {{date}} sans acheteur ; personne ne peut donc plus l'acheter. Elle retient encore ce prêt jusqu'à ce qu'elle soit nettoyée, ce que n'importe qui peut faire en envoyant la transaction de nettoyage."
     },
     "positions": {
       "rowRental": "Location n°{{id}} · frais prépayés",
@@ -3618,7 +3636,9 @@
       "reviewAgain": "Examinez de nouveau l’annonce pour voir les montants actuels.",
       "changedSinceReview": "Ce qu’implique cette annonce a changé après votre examen. Mettez-le en vente depuis sa propre page, qui affiche les conditions actuelles.",
       "ownPageShape": "Seuls les prêts dont le principal et la garantie sont des tokens peuvent être mis en vente.",
-      "unavailableNetwork": "Les prêts {{ids}} viennent de la même offre. Leur mise en vente n’est pas encore disponible sur ce réseau : les outils de mise en vente ne sont pas publiés sur ce déploiement."
+      "unavailableNetwork": "Les prêts {{ids}} viennent de la même offre. Leur mise en vente n’est pas encore disponible sur ce réseau : les outils de mise en vente ne sont pas publiés sur ce déploiement.",
+      "lockWarningRoute": "Déplacer un NFT de position de prêteur mis en vente annule cette annonce : une fois déplacé, cette vente ne peut plus se finaliser et l’annonce ne peut plus qu’être annulée. Vos droits de réclamation ne changent pas.",
+      "lockEachRoute": "Rien n’est bloqué. Tant que chaque annonce est active, déplacer le NFT de position de prêteur de ce prêt signifie que sa vente ne peut plus se finaliser."
     },
     "batchRefinance": {
       "action": "Tout refinancer",
@@ -3879,7 +3899,23 @@
       "done": "Terminé. L’affichage ici peut prendre un instant.",
       "unknownWhen": "date inconnue",
       "managedAccountTitle": "Compte que vous gérez désormais : {{account}}",
-      "managedAccountUnknown": "Nous n’avons pas pu vérifier si votre portefeuille gère un compte déplacé. Si c’est le cas, ce compte n’est pas encore affiché ici."
+      "managedAccountUnknown": "Nous n’avons pas pu vérifier si votre portefeuille gère un compte déplacé. Si c’est le cas, ce compte n’est pas encore affiché ici.",
+      "protectNftsLockLabel": "Verrouiller aussi mes NFT de position maintenant (les déverrouiller plus tard attend le délai)",
+      "summaryNftLockOn": "Vos NFT de position sont verrouillés.",
+      "summaryNftLockOff": "Vos NFT de position ne sont pas verrouillés.",
+      "nftLockTitle": "Verrou des NFT de position",
+      "nftLockOn": "Vos NFT de position sont verrouillés : aucun ne peut être transféré, et aucune autorisation de transfert ne peut être donnée, tant qu’ils ne sont pas déverrouillés.",
+      "nftLockOff": "Vos NFT de position ne sont pas verrouillés : ils peuvent être transférés comme n’importe quel autre NFT.",
+      "nftLockDelay": "Le déverrouillage attend {{delay}} après votre demande.",
+      "nftLockNoDelay": "Le déverrouillage prend effet dès votre demande.",
+      "nftUnlockPending": "Un déverrouillage a été demandé. Il peut être appliqué à partir du {{when}} ; annulez-le si vous ne l’avez pas demandé.",
+      "nftUnlockDue": "Le déverrouillage que vous avez demandé peut être appliqué maintenant. N’importe qui peut l’envoyer.",
+      "nftLowerPending": "Une attente de déverrouillage plus courte, de {{delay}}, a été demandée et s’applique à partir du {{when}}.",
+      "nftLockNow": "Verrouiller mes NFT de position maintenant",
+      "nftCancelUnlock": "Annuler le déverrouillage",
+      "nftExecuteUnlock": "Appliquer le déverrouillage",
+      "nftLockUnknown": "Nous n’avons pas pu lire le verrou de vos NFT de position pour l’instant. Ne supposez pas que vos NFT sont déverrouillés.",
+      "nftLockNote": "Ce verrou est tenu par le contrat des NFT de position lui-même. La protection peut l’activer et allonger l’attente, mais jamais le déverrouiller ni raccourcir l’attente : seul le portefeuille qui détient les NFT peut demander le déverrouillage, et le déverrouillage attend toujours."
     },
     "autoExtend": {
       "title": "Prolongation automatique",

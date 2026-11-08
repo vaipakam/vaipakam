@@ -14,7 +14,7 @@
  * moved forward and the review reopens with the new figure.
  */
 import { erc20Abi, type Abi, type PublicClient } from 'viem';
-import { LoanFacetABI, RefinanceFacetABI, VaipakamNFTFacetABI } from '@vaipakam/contracts/abis';
+import { LoanFacetABI, RefinanceFacetABI } from '@vaipakam/contracts/abis';
 import type { OwnStateClient } from '../../chain/ownRail';
 import type { CopyAccess } from '../copy/useCopy';
 import { repayVerdict, STATUS_FALLBACK_PENDING } from '../eligibility/repay';
@@ -24,11 +24,11 @@ import { allowanceSteps } from '../tx/approval';
 import { putBackPrompts } from './approvalCap';
 import { tokenAcceptsApproval } from '../offers/reads';
 import { readPayoff, readPayoffAt, type Payoff } from './payoff';
+import { positionOwnerCall, positionRouteCallFor } from '../positions/positionNft';
 
 type Hex = `0x${string}`;
 
 const LOAN = LoanFacetABI as Abi;
-const NFT = VaipakamNFTFacetABI as Abi;
 const REFINANCE = RefinanceFacetABI as Abi;
 
 /** A kept moment closer than this to the chain's time is moved forward. */
@@ -80,12 +80,12 @@ async function maybe<T>(p: Promise<T>): Promise<T | null> {
 export async function readLoanFacts(c: PublicClient, diamond: Hex, loanId: bigint) {
   const loan = (await c.readContract({ address: diamond, abi: LOAN, functionName: 'getLoanDetails', args: [loanId] })) as LoanDetails;
   const [lenderHolder, borrowerHolder, dates, borrowerLock, refinance] = await Promise.all([
-    maybe(c.readContract({ address: diamond, abi: NFT, functionName: 'ownerOf', args: [loan.lenderTokenId] }) as Promise<Hex>),
-    maybe(c.readContract({ address: diamond, abi: NFT, functionName: 'ownerOf', args: [loan.borrowerTokenId] }) as Promise<Hex>),
+    maybe((async () => (await c.readContract(positionOwnerCall(diamond, loan.lenderTokenId))) as Hex)()),
+    maybe((async () => (await c.readContract(positionOwnerCall(diamond, loan.borrowerTokenId))) as Hex)()),
     loan.status === STATUS_FALLBACK_PENDING
       ? null
       : maybe(c.readContract({ address: diamond, abi: LOAN, functionName: 'getLoanDeadlines', args: [loanId] }) as Promise<readonly [bigint, bigint, bigint, bigint]>),
-    maybe(c.readContract({ address: diamond, abi: NFT, functionName: 'positionLock', args: [loan.borrowerTokenId] }).then(Number)),
+    maybe((async () => Number(await c.readContract(positionRouteCallFor(diamond, loan.borrowerTokenId))))()),
     maybe(c.readContract({ address: diamond, abi: REFINANCE, functionName: 'getRefinanceRequest', args: [loanId] }) as Promise<readonly [bigint, boolean]>),
   ]);
   return {

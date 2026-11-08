@@ -1941,3 +1941,13 @@ NOT covered live: the banned-adoption outcome (a sanctions-listed source), the u
 **Where.** `src/lib/registerServiceWorker.test.ts`.
 
 **Limit, stated.** The check runs only when the genuine page loads. A foreign worker that answers page loads itself keeps the genuine page from running, so it is removed by the host's emergency `Clear-Site-Data` response instead (`docs/ops/IncidentRunbook.md` section 9).
+
+<a id="cov-position-nft-modes"></a>
+## Position NFTs read per chain mode (#3205)
+
+**Feature.** PR #3318 moved the position NFTs out of the Diamond into a standalone `PositionNFT`. The app reads a chain's mode from its deployment record through `src/contracts/positionNft.ts`: with `positionNFT` listed, owners, approvals and transfers go to that contract, an open route (offset, sale listing, collateral listing, swap-to-repay auction) no longer blocks a transfer, and a closed position's token is retired rather than burned; without it, the pre-#3205 Diamond answers through a frozen fragment kept beside the resolver. The copy follows the mode: on a standalone chain it says moving the NFT cancels the listing or offset, and the Protection page shows the holder lock (lock, ask to unlock, cancel, apply) instead of the queued NFT transfers.
+
+**Tier.** CI-Anvil for the standalone mode (the fixture deploys the current contracts, so specs 25, 26, 40, 41, 42 and 44 read `positionRoute` and the PositionNFT); unit for the resolver, the frozen fragment and the Terms gate.
+
+**Limit, stated.** The legacy branch runs only against the current testnets, so it is checked live, not on CI. The holder-lock card on the Protection page has no spec yet. The chain exposes no view saying whether a route's token has moved since the route opened, so the copy states the rule and cannot say whether a particular route is already dead. The legacy branch is removed by #3321.
+

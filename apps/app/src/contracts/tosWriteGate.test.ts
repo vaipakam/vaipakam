@@ -8,7 +8,8 @@
  */
 import { describe, expect, it } from 'vitest';
 import { encodeFunctionData } from 'viem';
-import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
+import { DIAMOND_ABI_VIEM, PositionNFTABI } from '@vaipakam/contracts/abis';
+import { LEGACY_DIAMOND_NFT_ABI } from '@vaipakam/lib/positionNft';
 import { EXIT_WRITES, isExitWrite } from './tosWriteGate';
 
 const call = (functionName: string, args: readonly unknown[]) => ({
@@ -252,14 +253,38 @@ describe('isExitWrite', () => {
 
   it('names only writes the ABI actually has', () => {
     // A typo here fails open in the worst way: the intended write stops
-    // being exempt, and nothing says so.
-    const abiNames = new Set(
-      (DIAMOND_ABI_VIEM as readonly { type?: string; name?: string }[])
-        .filter((i) => i.type === 'function')
-        .map((i) => i.name),
-    );
+    // being exempt, and nothing says so. A name resolves against the
+    // generated Diamond ABI, the frozen pre-#3205 Diamond fragment (the
+    // legacy NFT queue), or the PositionNFT (its holder lock).
+    const names = (abi: unknown) =>
+      (abi as readonly { type?: string; name?: string }[]).filter((i) => i.type === 'function').map((i) => i.name);
+    const abiNames = new Set([
+      ...names(DIAMOND_ABI_VIEM),
+      ...names(LEGACY_DIAMOND_NFT_ABI),
+      ...names(PositionNFTABI),
+    ]);
     for (const fn of EXIT_WRITES) {
       expect(abiNames.has(fn), fn).toBe(true);
     }
+  });
+
+  it('keeps the legacy queue names in the frozen fragment, not the generated ABI (#3205)', () => {
+    const names = (abi: unknown) =>
+      new Set((abi as readonly { type?: string; name?: string }[]).filter((i) => i.type === 'function').map((i) => i.name));
+    const legacy = names(LEGACY_DIAMOND_NFT_ABI);
+    const diamond = names(DIAMOND_ABI_VIEM);
+    for (const fn of ['queuePositionTransfer', 'cancelPositionTransfer', 'releasePositionTransfer', 'cosignPositionTransfer']) {
+      expect(EXIT_WRITES.has(fn), fn).toBe(true);
+      expect(legacy.has(fn), fn).toBe(true);
+      expect(diamond.has(fn), fn).toBe(false);
+    }
+  });
+
+  it('permits the PositionNFT holder-lock writes that protect or free the holder (#3205)', () => {
+    for (const fn of ['lock', 'requestUnlock', 'cancelUnlock', 'executeUnlock']) {
+      expect(isExitWrite(fn, []), fn).toBe(true);
+    }
+    // Lowering the lock delay loosens protection: gated.
+    expect(isExitWrite('setLockDelay', [0n])).toBe(false);
   });
 });

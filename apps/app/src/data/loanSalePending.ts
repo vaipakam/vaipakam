@@ -30,6 +30,7 @@ import { fetchOffersByCreator } from './indexer';
 import { makePendingMarkerStore } from '../lib/pendingMarker';
 import { useActiveChain } from '../chain/useActiveChain';
 import { tipAware } from '../chain/railHealth';
+import { readPositionOwnerOn, readPositionRouteOn } from '../contracts/positionNft';
 
 /** LibERC721.LockReason.EarlyWithdrawalSale. */
 export const LOCK_EARLY_WITHDRAWAL_SALE = 2;
@@ -221,21 +222,10 @@ export function useLoanSalePending(
     queryFn: async (): Promise<LoanSalePendingState> => {
       const diamond = readChain.diamondAddress;
       const [lock, live, latestBlock, holder] = await Promise.all([
-        readClient!.readContract({
-          address: diamond,
-          abi: DIAMOND_ABI_VIEM,
-          functionName: 'positionLock',
-          args: [BigInt(lenderTokenId!)],
-        }) as Promise<number | bigint>,
+        readPositionRouteOn(readClient!, diamond, BigInt(lenderTokenId!)) as Promise<number | bigint>,
         readLoanLive(readClient!, diamond, loanId),
         readClient!.getBlock({ blockTag: 'latest' }),
-        readClient!
-          .readContract({
-            address: diamond,
-            abi: DIAMOND_ABI_VIEM,
-            functionName: 'ownerOf',
-            args: [BigInt(lenderTokenId!)],
-          })
+        readPositionOwnerOn(readClient!, diamond, BigInt(lenderTokenId!))
           .catch(() => null) as Promise<string | null>,
       ]);
       const listed = Number(lock) === LOCK_EARLY_WITHDRAWAL_SALE;

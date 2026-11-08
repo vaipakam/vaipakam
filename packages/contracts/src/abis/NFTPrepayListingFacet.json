@@ -637,22 +637,6 @@
   },
   {
     "type": "error",
-    "name": "BorrowerNFTAlreadyLocked",
-    "inputs": [
-      {
-        "name": "tokenId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "currentReason",
-        "type": "uint8",
-        "internalType": "enum LibPositionNFT.RouteReason"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "BroadcastClockDivergence",
     "inputs": [
       {

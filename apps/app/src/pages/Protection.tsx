@@ -23,6 +23,7 @@ import { isAddress } from 'viem';
 import { copy } from '../content/copy';
 import { useActiveChain } from '../chain/useActiveChain';
 import { useDiamondWrite } from '../contracts/diamond';
+import { LEGACY_DIAMOND_NFT_ABI, POSITION_NFT_ABI } from '../contracts/positionNft';
 import { DepositoryCard } from '../components/DepositoryCard';
 import { useTokenMeta } from '../contracts/erc20';
 import { captureTxError } from '../lib/errors';
@@ -42,6 +43,7 @@ import {
   useProtectedAccount,
   useRetiredAccountOf,
   type PendingAddition,
+  type HolderLockState,
   type PendingPayoutRow,
   type ProtectedAccountSnapshot,
 } from '../data/protectedAccount';
@@ -284,12 +286,15 @@ function AccountView({
   snap: ProtectedAccountSnapshot;
   asSigner: boolean;
 }) {
-  const { address } = useActiveChain();
+  const { address, walletChain } = useActiveChain();
   const { write } = useDiamondWrite();
   const { busy, error, done, run } = useRunner();
   const nowSec = useNowSec();
   const p = copy.protection;
   const record = snap.record!;
+  // #3205: the position-NFT queue exists only on a legacy-mode chain; a
+  // standalone chain protects the NFTs with the PositionNFT holder lock.
+  const legacyNfts = snap.nftMode === 'legacy';
   const now = chainNowOf(snap, nowSec);
   const manager = isManager(account, record, address);
   // A new primary's cool-down: no loosening change (an unlock included) can
@@ -321,6 +326,12 @@ function AccountView({
   for (let d = Math.ceil(bounds.min / DAY); d <= Math.floor(bounds.max / DAY); d++) dayOptions.push(d);
 
   const tx = (fn: string, args: readonly unknown[]) => run(() => write(fn, args));
+  // TODO(#3321 positionNft-legacy-removal): the legacy queue writes, sent
+  // through the frozen pre-#3205 fragment.
+  const txLegacyNft = (fn: string, args: readonly unknown[]) =>
+    run(() =>
+      write(fn, args, { target: { address: walletChain!.diamondAddress, abi: LEGACY_DIAMOND_NFT_ABI } }),
+    );
 
   // `kind` is the contract's CHANGE_* constant {cancelSettingChange} takes.
   const pending: Array<{ key: string; label: string; at: bigint; kind: number }> = [];
@@ -359,11 +370,17 @@ function AccountView({
         </h2>
         <p>
           {p.summaryDelay(days(record.delaySeconds))}{' '}
-          {record.retired && !record.protectNfts
-            ? p.summaryNftsRetired
-            : record.protectNfts
-              ? p.summaryNftsOn
-              : p.summaryNftsOff}{' '}
+          {!legacyNfts
+            ? snap.holderLock === null
+              ? p.nftLockUnknown
+              : snap.holderLock.locked
+                ? p.summaryNftLockOn
+                : p.summaryNftLockOff
+            : record.retired && !record.protectNfts
+              ? p.summaryNftsRetired
+              : record.protectNfts
+                ? p.summaryNftsOn
+                : p.summaryNftsOff}{' '}
           {record.requireCosign ? p.summaryCosignOn : ''}
         </p>
         {record.retired ? <p className="muted">{p.retiredNote(shortAddress(record.controller))}</p> : null}
@@ -520,7 +537,12 @@ function AccountView({
         <p className="muted">{p.codeHint}</p>
       </section>
 
-      {record.protectNfts || record.retired || (snap.transfers?.length ?? 0) > 0 || snap.transfers === null ? (
+      {!legacyNfts && address?.toLowerCase() === account.toLowerCase() ? (
+        <HolderLockCard lock={snap.holderLock} holder={account} now={now} />
+      ) : null}
+
+      {legacyNfts &&
+      (record.protectNfts || record.retired || (snap.transfers?.length ?? 0) > 0 || snap.transfers === null) ? (
         <section className="card">
           <h2 className="card-title">{p.transfersTitle}</h2>
           {snap.transfers === null ? (
@@ -554,7 +576,7 @@ function AccountView({
                       type="button"
                       className="btn btn-primary"
                       disabled={busy}
-                      onClick={() => tx('releasePositionTransfer', [t.id])}
+                      onClick={() => txLegacyNft('releasePositionTransfer', [t.id])}
                     >
                       {p.release}
                     </button>
@@ -564,7 +586,7 @@ function AccountView({
                       type="button"
                       className="btn btn-secondary"
                       disabled={busy}
-                      onClick={() => tx('cosignPositionTransfer', [t.id])}
+                      onClick={() => txLegacyNft('cosignPositionTransfer', [t.id])}
                     >
                       {p.cosign}
                     </button>
@@ -574,7 +596,7 @@ function AccountView({
                       type="button"
                       className="btn btn-secondary"
                       disabled={busy}
-                      onClick={() => tx('cancelPositionTransfer', [t.id])}
+                      onClick={() => txLegacyNft('cancelPositionTransfer', [t.id])}
                     >
                       {p.cancel}
                     </button>
@@ -589,7 +611,7 @@ function AccountView({
               <QueueTransferAction
                 fixedTo={record.retired ? address : null}
                 disabled={busy}
-                onSubmit={(id, to) => tx('queuePositionTransfer', [id, to])}
+                onSubmit={(id, to) => txLegacyNft('queuePositionTransfer', [id, to])}
               />
             </>
           ) : null}
@@ -623,16 +645,27 @@ function AccountView({
             </button>
           </div>
           <div className="cluster">
-            {record.retired ? null : (
+            {record.retired ? null : legacyNfts ? (
               // A replaced account delays position NFT transfers whatever the
               // setting says, so the toggle is not offered there.
               <button
                 type="button"
                 className="btn btn-secondary"
                 disabled={busy || (loosenBlocked && record.protectNfts)}
-                onClick={() => tx('setProtectNfts', [account, !record.protectNfts])}
+                onClick={() => txLegacyNft('setProtectNfts', [account, !record.protectNfts])}
               >
                 {record.protectNfts ? p.nftsOff : p.nftsOn}
+              </button>
+            ) : snap.holderLock?.locked ? null : (
+              // Standalone: protection can only switch the holder lock ON;
+              // unlocking is the holder's own, at the PositionNFT.
+              <button
+                type="button"
+                className="btn btn-secondary"
+                disabled={busy}
+                onClick={() => tx('lockPositionNfts', [account])}
+              >
+                {p.nftLockNow}
               </button>
             )}
             <button
@@ -851,6 +884,78 @@ function AccountView({
   );
 }
 
+/**
+ * #3205 — the PositionNFT holder lock on the connected wallet's own tokens
+ * (standalone mode). Lock, ask to unlock and cancel act on the caller; the
+ * unlock, once its delay has passed, can be applied by anyone.
+ */
+function HolderLockCard({
+  lock,
+  holder,
+  now,
+}: {
+  lock: HolderLockState | null;
+  holder: `0x${string}`;
+  now: bigint;
+}) {
+  const { write } = useDiamondWrite();
+  const { walletChain } = useActiveChain();
+  const { busy, error, done, run } = useRunner();
+  const p = copy.protection;
+  const nft = (fn: string, args: readonly unknown[]) =>
+    run(() => write(fn, args, { target: { address: walletChain!.positionNft.nft, abi: POSITION_NFT_ABI } }));
+  return (
+    <section className="card" data-testid="holder-lock">
+      <h2 className="card-title">{p.nftLockTitle}</h2>
+      {lock === null ? (
+        <p className="banner banner-warn">{p.nftLockUnknown}</p>
+      ) : (
+        <>
+          <p>{lock.locked ? p.nftLockOn : p.nftLockOff}</p>
+          <p className="muted">
+            {lock.delay > 0n ? p.nftLockDelay(days(Number(lock.delay))) : p.nftLockNoDelay}
+          </p>
+          {lock.unlockAt > 0n ? (
+            <p role="status">{isDue(lock.unlockAt, now) ? p.nftUnlockDue : p.nftUnlockPending(when(lock.unlockAt))}</p>
+          ) : null}
+          {lock.lowerAt > 0n ? (
+            <p className="muted">{p.nftLowerPending(days(Number(lock.lowerDelay)), when(lock.lowerAt))}</p>
+          ) : null}
+          <div className="cluster">
+            {!lock.locked ? (
+              <button type="button" className="btn btn-danger" disabled={busy} onClick={() => nft('lock', [])}>
+                {p.nftLockNow}
+              </button>
+            ) : lock.unlockAt === 0n ? (
+              <button type="button" className="btn btn-secondary" disabled={busy} onClick={() => nft('requestUnlock', [])}>
+                {p.requestUnlock}
+              </button>
+            ) : (
+              <>
+                {isDue(lock.unlockAt, now) ? (
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    disabled={busy}
+                    onClick={() => nft('executeUnlock', [holder])}
+                  >
+                    {p.nftExecuteUnlock}
+                  </button>
+                ) : null}
+                <button type="button" className="btn btn-secondary" disabled={busy} onClick={() => nft('cancelUnlock', [])}>
+                  {p.nftCancelUnlock}
+                </button>
+              </>
+            )}
+          </div>
+        </>
+      )}
+      <p className="muted">{p.nftLockNote}</p>
+      <Feedback error={error} done={done} />
+    </section>
+  );
+}
+
 /** Enable form for an account with protection off. */
 function EnableForm({ snap }: { snap: ProtectedAccountSnapshot }) {
   const { write } = useDiamondWrite();
@@ -877,7 +982,8 @@ function EnableForm({ snap }: { snap: ProtectedAccountSnapshot }) {
         </select>
       </div>
       <label className="cluster">
-        <input type="checkbox" checked={nfts} onChange={(e) => setNfts(e.target.checked)} /> {p.protectNftsLabel}
+        <input type="checkbox" checked={nfts} onChange={(e) => setNfts(e.target.checked)} />{' '}
+        {snap.nftMode === 'legacy' ? p.protectNftsLabel : p.protectNftsLockLabel}
       </label>
       <button
         type="button"

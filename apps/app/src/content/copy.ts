@@ -1730,6 +1730,11 @@ const copySource = {
       'Listing locks each listed lender position NFT — it can’t be transferred until that sale completes or that listing ends (cancelling unlocks it in one step, from the loan’s page; after expiry, a cleanup transaction anyone can send does). Your claim rights are unaffected.',
     receiveEach:
       'For each listed loan, at least the minimum shown above once the settlement is taken, if a buyer takes it before its listing ends. Each listing records its own minimum, and is skipped rather than made if it would record less.',
+    // #3205 — standalone PositionNFT networks (see loanSale.lockWarningRoute).
+    lockWarningRoute:
+      'Moving a listed lender position NFT cancels that listing: once it has moved, that sale can no longer complete and the listing can only be cancelled. Your claim rights are unaffected.',
+    lockEachRoute:
+      'Nothing is locked. While each listing stands, moving that loan’s lender position NFT means its sale can no longer complete.',
     lockEach:
       'Each listed loan’s lender position NFT, until its sale completes or its listing ends. Nothing else.',
     youMayOwe:
@@ -2027,6 +2032,10 @@ const copySource = {
     ),
     lockWarn:
       'While this offer is open, your borrower position is transfer-locked — it can’t be moved, listed, or sold until the offset completes or you cancel the offer.',
+    // #3205 — standalone PositionNFT networks: the offset is a route that a
+    // transfer stops from completing, not a transfer lock.
+    lockWarnRoute:
+      'While this offer is open, keep your borrower position NFT where it is: moving it means the offset can no longer complete, and the offer can then only be cancelled.',
     fundsNote: tmpl(
       'Posting locks {{principal}} from your wallet as the new offer’s lending money. Keep about {{completion}} more available: when someone accepts, the payoff of your current loan is pulled from your wallet automatically in that same transaction.',
       ['principal', 'completion'],
@@ -2451,6 +2460,27 @@ const copySource = {
       'Locked for a collateral listing — it can’t be transferred while that listing stands.',
     lockSwapToRepayIntent:
       'Locked for a repay-from-collateral auction — collateral is committed to a live order to repay the loan, and any collateral the order does not include stays pledged. It can’t be transferred until the auction settles or is cancelled.',
+    // #3205 — on a network whose position NFTs live in the standalone
+    // PositionNFT, an open route does not stop a transfer; a transfer stops
+    // the route from completing.
+    routeLabel: 'Open protocol route',
+    routePrecloseOffset:
+      'A preclose-by-offset is open on this token. It can still be transferred, but after a transfer the offset can no longer complete and can only be cancelled.',
+    routeSale:
+      'A position sale listing is open on this token. It can still be transferred, but after a transfer the sale can no longer complete and the listing can only be cancelled.',
+    routePrepayListing:
+      'A collateral listing is open on this token. It can still be transferred, but after a transfer the listing can no longer complete and can only be cancelled.',
+    routeSwapToRepayIntent:
+      'A repay-from-collateral auction is open on this token: collateral is committed to a live order to repay the loan. The token can still be transferred, but after a transfer the auction can no longer settle and can only be cancelled.',
+    routeUnrecognized:
+      'A protocol route this app version doesn’t recognise is open on this token. A transfer may stop it from completing.',
+    routeUnknown:
+      'We couldn’t read whether a protocol route is open on this token right now — re-check before relying on a transfer leaving it intact.',
+    holderLockLabel: 'Holder lock',
+    holderLocked:
+      'The current holder has locked their position NFTs: this token can’t be transferred until they unlock, and an unlock waits the delay they set.',
+    holderLockUnknown:
+      'We couldn’t read whether the current holder has locked their position NFTs — don’t rely on this token being transferable until this reads clean.',
     sanctionsLabel: 'Compliance status',
     sanctionsFlagged:
       'The current holder is compliance-flagged: this NFT cannot be transferred in or out of their wallet, and its claims stay frozen until the flag clears. Do not buy this token expecting delivery.',
@@ -3044,6 +3074,25 @@ const copySource = {
     signerLockHoldsMove:
       'A recovery signer has locked this account, so this wallet cannot cancel the proposed move or propose another. The recovery signers can cancel it.',
     transfersUnknown: 'We couldn’t read the transfer queue just now. Don’t assume it is empty.',
+    // #3205 — the PositionNFT holder lock (networks whose position NFTs live
+    // in the standalone PositionNFT contract). It replaces the NFT queue.
+    protectNftsLockLabel: 'Also lock my position NFTs now (unlocking them later waits the delay)',
+    summaryNftLockOn: 'Your position NFTs are locked.',
+    summaryNftLockOff: 'Your position NFTs are not locked.',
+    nftLockTitle: 'Position NFT lock',
+    nftLockOn: 'Your position NFTs are locked: none of them can be transferred, and no transfer approval can be given, until they are unlocked.',
+    nftLockOff: 'Your position NFTs are not locked: they can be transferred like any other NFT.',
+    nftLockDelay: tmpl('Unlocking waits {{delay}} after you ask.', ['delay']),
+    nftLockNoDelay: 'Unlocking takes effect as soon as you ask.',
+    nftUnlockPending: tmpl('An unlock was asked for. It can be applied from {{when}}; cancel it if you did not ask for it.', ['when']),
+    nftUnlockDue: 'The unlock you asked for can be applied now. Anyone can send it.',
+    nftLowerPending: tmpl('A shorter unlock wait of {{delay}} was asked for and applies from {{when}}.', ['delay', 'when']),
+    nftLockNow: 'Lock my position NFTs now',
+    nftCancelUnlock: 'Cancel the unlock',
+    nftExecuteUnlock: 'Apply the unlock',
+    nftLockUnknown: 'We couldn’t read your position NFT lock just now. Don’t assume your NFTs are unlocked.',
+    nftLockNote:
+      'This lock is kept by the position NFT contract itself. Protection can switch it on and lengthen the wait, but never unlock it or shorten the wait: only the wallet holding the NFTs can ask to unlock, and the unlock always waits.',
     transferLine: tmpl('Position NFT #{{tokenId}} to {{to}}', ['tokenId', 'to']),
     allowlistTitle: 'Payout addresses',
     allowlistBody: 'Payouts may go only to your own wallet or to up to five addresses listed here. A new address becomes usable after the delay.',
@@ -3934,6 +3983,9 @@ const copySource = {
       // not happen.
       listStructural:
         'While the listing stands, your position can’t be transferred, and it also holds two of the BORROWER’s options on this loan — the protocol refuses their collateral withdrawal and their offset exit, both to protect the buyer’s signed terms. Their repayments, full or partial, stay open. The holds end when a buyer completes or you cancel; if the listing simply expires, they stay in place until someone runs the cleanup that clears it.',
+      // #3205 — standalone PositionNFT networks.
+      listStructuralRoute:
+        'While the listing stands, moving your position NFT cancels the listing’s chance to complete. The listing also holds two of the BORROWER’s options on this loan — the protocol refuses their collateral withdrawal and their offset exit, both to protect the buyer’s signed terms. Their repayments, full or partial, stay open. The holds end when a buyer completes or you cancel; if the listing simply expires, they stay in place until someone runs the cleanup that clears it.',
       listAlreadyListed:
         'Already listed — this position is on sale now. The listing card below shows its terms and lets you cancel it.',
       // Codex r5 P2 — the line above promises a cancel the pending card
@@ -4220,6 +4272,26 @@ const copySource = {
       'Listing locks your lender position NFT — it can’t be transferred until the sale completes or the listing ends (cancelling unlocks it in one step; after expiry, a cleanup transaction anyone can send does). Your claim rights are unaffected.',
     sweetenNote:
       'A rate above the loan’s own rate attracts buyers faster, but the difference for the remaining term is deducted from what the buyer pays you.',
+    // #3205 — standalone PositionNFT networks: a listing does not lock the
+    // NFT; moving it cancels the listing's chance to complete.
+    lockWarningRoute:
+      'Moving your lender position NFT cancels your open listing: once it has moved, the sale can no longer complete and the listing can only be cancelled. Your claim rights are unaffected.',
+    receiptLockRoute:
+      'Nothing is locked. While the listing stands, moving your lender position NFT means the sale can no longer complete. Nothing else.',
+    pendingRoute: tmpl(
+      `Sale listing #{{offerId}} is live. Keep your lender NFT where it is: moving it cancels your open listing. When a buyer accepts, you’re paid in the same transaction: the buyer’s payment, less the settlement.`,
+      ['offerId'],
+    ),
+    pendingNoIdRoute:
+      'This position is listed for sale (listed from another device, so cancelling here isn’t available — cancel where it was listed). Moving your lender NFT cancels your open listing.',
+    expiredUnsoldRoute: tmpl(
+      'This listing ended on {{date}} without a buyer, so no one can buy it now. It still holds this loan until it is cleared: cancel it here, or anyone can send the cleanup transaction.',
+      ['date'],
+    ),
+    expiredUnsoldNoCancelRoute: tmpl(
+      'This listing ended on {{date}} without a buyer, so no one can buy it now. It still holds this loan until it is cleared, which anyone can do by sending the cleanup transaction.',
+      ['date'],
+    ),
     done:
       'Position listed. When a buyer accepts, the sale settles in their transaction and you’re paid their payment less the settlement — there’s nothing to keep in place meanwhile. You can cancel the listing below.',
     pending: tmpl(

@@ -285,7 +285,7 @@ contract NFTPrepayAutoListFacet is DiamondPausable, DiamondReentrancyGuard {
         );
 
         // ── Effects (lock + slot writes) ───────────────────────────────
-        LibPositionNFT.openRoute(loan.borrowerTokenId, LibPositionNFT.RouteReason.PrepayCollateralListing);
+        // #3205 — the route opens (or rebinds) in LibPrepayListingWiring.wire.
         s.prepayListingOrderHash[loanId] = orderHash;
         s.prepayListingExecutor[loanId] = address(executor);
 

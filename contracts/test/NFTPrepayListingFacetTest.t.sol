@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
+
 import {SetupTest} from "./SetupTest.t.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibPositionNFT} from "../src/libraries/LibPositionNFT.sol";
@@ -364,11 +366,14 @@ contract NFTPrepayListingFacetTest is SetupTest {
         );
 
         vm.prank(borrowerHolder);
+        // #3205 — the one route rule (`openRoute`, reached through the
+        // listing wiring) refuses another flow's live route.
         vm.expectRevert(
             abi.encodeWithSelector(
-                NFTPrepayListingFacet.BorrowerNFTAlreadyLocked.selector,
+                LibPositionNFT.RouteConflict.selector,
                 BORROWER_TOKEN_ID,
-                LibPositionNFT.RouteReason.PrecloseOffset
+                LibPositionNFT.RouteReason.PrecloseOffset,
+                LibPositionNFT.RouteReason.PrepayCollateralListing
             )
         );
         NFTPrepayListingFacet(address(diamond)).postPrepayListing(
@@ -1637,6 +1642,73 @@ contract NFTPrepayListingFacetTest is SetupTest {
             uint8(LibPositionNFT.RouteReason.PrepayCollateralListing),
             "lock continuous"
         );
+    }
+
+    // ─── #3205: a received position re-arms the listing on update ───────
+
+    /// @dev Real lending token, a posted listing, then the borrower position
+    ///      handed to a new holder. Returns the new holder.
+    function _postThenHandOver(bool dutch) internal returns (address newHolder, ERC20Mock lendingToken) {
+        _scaffoldActiveLoan({allowsPrepay: true});
+        lendingToken = new ERC20Mock("Lending", "LND", 18);
+        LibVaipakam.Loan memory loan = _baseLoan();
+        loan.allowsPrepayListing = true;
+        loan.principalAsset = address(lendingToken);
+        TestMutatorFacet(address(diamond)).setLoan(LOAN_ID, loan);
+
+        vm.prank(borrowerHolder);
+        if (dutch) {
+            NFTPrepayDutchListingFacet(address(diamond)).postPrepayDutchListing(
+                LOAN_ID, 110 ether, 104 ether, _dutchAuctionEnd(), TEST_SALT_A, conduitKey, _emptyFeeLegs()
+            );
+        } else {
+            NFTPrepayListingFacet(address(diamond)).postPrepayListing(
+                LOAN_ID, _floorPlusBuffer(), TEST_SALT_A, conduitKey, _emptyFeeLegs()
+            );
+        }
+        newHolder = makeAddr("receivedPositionHolder");
+        LibTestPositionNFT.move(address(diamond), BORROWER_TOKEN_ID, newHolder);
+    }
+
+    function _fillAndAssertSettled(ERC20Mock lendingToken) internal {
+        lendingToken.mint(address(diamond), _floorPlusBuffer());
+        vm.prank(address(mockExecutor));
+        PrepayListingFacet(address(diamond)).executorFinalizePrepaySale(LOAN_ID, _floorPlusBuffer());
+        assertEq(
+            NFTPrepayListingFacet(address(diamond)).getPrepayListingOrderHash(LOAN_ID),
+            bytes32(0),
+            "the sale settled"
+        );
+    }
+
+    /// @notice The OLD holder's listing can never fill once the position moved.
+    function test_transferredPosition_oldListingCannotFill() public {
+        (, ERC20Mock lendingToken) = _postThenHandOver(false);
+        lendingToken.mint(address(diamond), _floorPlusBuffer());
+        vm.prank(address(mockExecutor));
+        vm.expectRevert();
+        PrepayListingFacet(address(diamond)).executorFinalizePrepaySale(LOAN_ID, _floorPlusBuffer());
+    }
+
+    /// @notice Fixed-price: the new holder's update re-arms the route at the
+    ///         current transfer count, so the updated listing fills.
+    function test_transferThenUpdateThenFill_fixedPrice() public {
+        (address newHolder, ERC20Mock lendingToken) = _postThenHandOver(false);
+        vm.prank(newHolder);
+        NFTPrepayListingFacet(address(diamond)).updatePrepayListing(
+            LOAN_ID, _floorPlusBuffer() + 1 ether, TEST_SALT_B, conduitKey, _emptyFeeLegs()
+        );
+        _fillAndAssertSettled(lendingToken);
+    }
+
+    /// @notice Dutch: same rule through the Dutch update.
+    function test_transferThenUpdateThenFill_dutch() public {
+        (address newHolder, ERC20Mock lendingToken) = _postThenHandOver(true);
+        vm.prank(newHolder);
+        NFTPrepayDutchListingFacet(address(diamond)).updatePrepayDutchListing(
+            LOAN_ID, 115 ether, 108 ether, block.timestamp + 12 hours, TEST_SALT_A + 1, conduitKey, _emptyFeeLegs()
+        );
+        _fillAndAssertSettled(lendingToken);
     }
 
     // ─── #1144 (S10 Invariant B): syncPrepaySaleListing ─────────────────

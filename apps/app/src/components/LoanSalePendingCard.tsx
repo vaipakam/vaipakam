@@ -25,6 +25,7 @@ import {
   type LoanSalePendingState,
 } from '../data/loanSalePending';
 import { formatDateTime } from '../lib/format';
+import { useRouteBlocksTransfer } from '../contracts/positionNft';
 
 export function LoanSalePendingCard({
   state,
@@ -45,6 +46,7 @@ export function LoanSalePendingCard({
    *  its result must outlive it. */
   onDone: (message: string) => void;
 }) {
+  const routeBlocks = useRouteBlocksTransfer();
   const { onSupportedChain } = useActiveChain();
   const { data: walletClient } = useWalletClient();
   const { write } = useDiamondWrite();
@@ -74,8 +76,10 @@ export function LoanSalePendingCard({
   }
 
   const listingLine = state.offerId
-    ? copy.loanSale.pending(state.offerId)
-    : copy.loanSale.pendingNoId;
+    ? (routeBlocks ? copy.loanSale.pending : copy.loanSale.pendingRoute)(state.offerId)
+    : routeBlocks
+      ? copy.loanSale.pendingNoId
+      : copy.loanSale.pendingNoIdRoute;
 
   return (
     <section className="card">
@@ -91,8 +95,12 @@ export function LoanSalePendingCard({
               ? copy.loanSale.acceptedCompleting
               : view === 'expired'
                 ? (canCancel
-                    ? copy.loanSale.expiredUnsold
-                    : copy.loanSale.expiredUnsoldNoCancel)(
+                    ? routeBlocks
+                      ? copy.loanSale.expiredUnsold
+                      : copy.loanSale.expiredUnsoldRoute
+                    : routeBlocks
+                      ? copy.loanSale.expiredUnsoldNoCancel
+                      : copy.loanSale.expiredUnsoldNoCancelRoute)(
                     formatDateTime(Number(state.expiresAt)),
                   )
                 : listingLine}

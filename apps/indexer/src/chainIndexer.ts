@@ -89,7 +89,6 @@ import {
   DIAMOND_OFFER_DETAILS_ABI,
   DIAMOND_LOAN_DETAILS_ABI,
   DIAMOND_SIGNED_OFFER_ABI,
-  ERC721_OWNER_OF_ABI,
 } from './diamondAbi';
 import { ceilingOf } from './signedOfferEip712';
 import { indexerPublishPrepayListing } from './openseaPublish';
@@ -152,6 +151,7 @@ import { adoptDeployment, describeAdoption, isAdoptedEpoch } from './deploymentE
 import { activityRefs } from '@vaipakam/lib/activityRefs';
 import { activityActor } from '@vaipakam/lib/activityActor';
 import { redactedError } from '@vaipakam/lib/errorDescription';
+import { LEGACY_POSITION_EVENTS, POSITION_TRANSFER_EVENT, positionNftForDiamond, positionOwnerOfCall, scannedAddresses } from './positionNft';
 
 /** Resolve a chain's deployBlock from the consolidated deployments
  *  JSON — the indexer's first-run fallback when no cursor exists. */
@@ -186,7 +186,10 @@ function getDeployBlock(chainId: number): number | undefined {
 const EVENT_ABI: readonly AbiEvent[] = (() => {
   const seen = new Set<string>();
   const out: AbiEvent[] = [];
-  for (const item of DIAMOND_ABI_VIEM as Abi) {
+  // #3205 — the ERC-721 `Transfer` the generated Diamond ABI no longer
+  // carries: emitted by the PositionNFT (standalone) or a legacy Diamond.
+  // The legacy Diamond's NFT-queue events too (TODO(#3321 positionNft-legacy-removal)).
+  for (const item of [...(DIAMOND_ABI_VIEM as Abi), POSITION_TRANSFER_EVENT as AbiEvent, ...LEGACY_POSITION_EVENTS]) {
     if (item.type !== 'event') continue;
     const ev = item as AbiEvent;
     let sig: string;
@@ -1137,10 +1140,7 @@ async function resolveCurrentHolders(
     if (!tokenId || tokenId === '0') return null;
     try {
       const owner = (await client.readContract({
-        address: diamond,
-        abi: ERC721_OWNER_OF_ABI,
-        functionName: 'ownerOf',
-        args: [BigInt(tokenId)],
+        ...positionOwnerOfCall(positionNftForDiamond(diamond), BigInt(tokenId)),
         blockNumber: head,
       })) as string;
       return owner.toLowerCase();
@@ -2546,7 +2546,9 @@ async function runChainPass(
       // (config-facet events, ERC-721 Approval, etc.) throw on decode
       // and are skipped.
       const rawLogs = await client.getLogs({
-        address: diamond,
+        // #3205: plus the PositionNFT on a standalone-mode chain, whose
+        // `Transfer` events keep the holder columns current.
+        address: scannedAddresses(diamond),
         fromBlock: cursor,
         toBlock: chunkEnd,
       });
@@ -4243,10 +4245,7 @@ async function refreshOfferDetails(
   if (o.positionTokenId > 0n) {
     try {
       const owner = (await client.readContract({
-        address: diamond,
-        abi: ERC721_OWNER_OF_ABI,
-        functionName: 'ownerOf',
-        args: [o.positionTokenId],
+        ...positionOwnerOfCall(positionNftForDiamond(diamond), o.positionTokenId),
         blockNumber: atBlock,
       })) as string;
       if (owner) observedOwner = owner.toLowerCase();
@@ -6879,6 +6878,30 @@ export async function processLoanLogs(
     // transitions to a loan's lender/borrower-tokenId at offer
     // accept). We fire all 3 UPDATEs blindly; only the matching
     // row gets touched, the others no-op.
+    // #3205 — standalone mode retires a closed position's token instead of
+    // burning it (no `Transfer` to 0x0), so the retirement clears the holder
+    // exactly as a burn did (#749): the position drops out of the
+    // by-holder routes and the claimables.
+    else if (log.eventName === 'PositionRetired') {
+      const tokenId = String(a.tokenId as bigint);
+      if (tokenId !== '0') {
+        const writes = await env.DB.batch([
+          env.DB.prepare(
+            `UPDATE loans SET lender_current_owner = ?, updated_at = ?
+             WHERE chain_id = ? AND lender_token_id = ?`,
+          ).bind('0x0000000000000000000000000000000000000000', now, chainId, tokenId),
+          env.DB.prepare(
+            `UPDATE loans SET borrower_current_owner = ?, updated_at = ?
+             WHERE chain_id = ? AND borrower_token_id = ?`,
+          ).bind('0x0000000000000000000000000000000000000000', now, chainId, tokenId),
+          env.DB.prepare(
+            `UPDATE offers SET creator_current_owner = ?, updated_at = ?
+             WHERE chain_id = ? AND position_token_id = ?`,
+          ).bind('0x0000000000000000000000000000000000000000', now, chainId, tokenId),
+        ]);
+        if (writes.reduce((n, r) => n + (r.meta?.changes ?? 0), 0) > 0) ownershipTransfers++;
+      }
+    }
     else if (log.eventName === 'Transfer') {
       const tokenId = String(a.tokenId as bigint);
       const to = String(a.to as string).toLowerCase();
@@ -6891,18 +6914,25 @@ export async function processLoanLogs(
       // were skipped, leaving the last live holder — they'd keep showing the
       // claimed position as still held.) The same tokenId sits on at most one
       // of the three rows; the others no-op.
+      // #3205 — a token whose position closed (burned, or RETIRED by
+      // `PositionRetired` below) keeps the zero holder: a standalone-mode
+      // retired token can still move as a receipt, and that move must not
+      // put a closed position back into anyone's holdings.
       const ownerWrites = await env.DB.batch([
         env.DB.prepare(
           `UPDATE loans SET lender_current_owner = ?, updated_at = ?
-           WHERE chain_id = ? AND lender_token_id = ?`,
+           WHERE chain_id = ? AND lender_token_id = ?
+             AND (lender_current_owner IS NULL OR lender_current_owner != '0x0000000000000000000000000000000000000000')`,
         ).bind(to, now, chainId, tokenId),
         env.DB.prepare(
           `UPDATE loans SET borrower_current_owner = ?, updated_at = ?
-           WHERE chain_id = ? AND borrower_token_id = ?`,
+           WHERE chain_id = ? AND borrower_token_id = ?
+             AND (borrower_current_owner IS NULL OR borrower_current_owner != '0x0000000000000000000000000000000000000000')`,
         ).bind(to, now, chainId, tokenId),
         env.DB.prepare(
           `UPDATE offers SET creator_current_owner = ?, updated_at = ?
-           WHERE chain_id = ? AND position_token_id = ?`,
+           WHERE chain_id = ? AND position_token_id = ?
+             AND (creator_current_owner IS NULL OR creator_current_owner != '0x0000000000000000000000000000000000000000')`,
         ).bind(to, now, chainId, tokenId),
       ]);
       // RPC read-diet PR 0 — count only Transfers that re-pointed a TRACKED

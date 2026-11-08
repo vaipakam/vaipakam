@@ -917,7 +917,8 @@
       "blockedOtherPaths": "Solange dieser Offset offen ist, würde eine Rückzahlung oder ein anderweitiger Abschluss das verknüpfte Angebot stranden lassen — stornieren Sie es zuerst.",
       "alreadyLive": "Für diesen Kredit ist bereits ein Offset-Angebot aktiv (es wurde möglicherweise auf einem anderen Gerät veröffentlicht). Es wurde nichts freigegeben oder gesendet — aktualisieren Sie, um es unten zu sehen.",
       "durationOverCap": "Angebote dürfen derzeit nicht länger als {{max}} Tage laufen. Verkürzen Sie die Laufzeit und prüfen Sie erneut — es wurde nichts freigegeben oder gesendet.",
-      "onlyBeforeDue": "Ein Offset braucht eine Ersatzlaufzeit, die vor dem Fälligkeitsdatum dieses Kredits endet — so nah am Fälligkeitsdatum (oder danach) ist er nicht mehr verfügbar."
+      "onlyBeforeDue": "Ein Offset braucht eine Ersatzlaufzeit, die vor dem Fälligkeitsdatum dieses Kredits endet — so nah am Fälligkeitsdatum (oder danach) ist er nicht mehr verfügbar.",
+      "lockWarnRoute": "Solange dieses Angebot offen ist, lassen Sie Ihr Kreditnehmer-Positions-NFT, wo es ist: Bewegen Sie es, kann der Offset nicht mehr abgeschlossen werden, und das Angebot kann dann nur noch storniert werden."
     },
     "refinance": {
       "postedButUnconfirmed": "Deine Anfrage wurde gesendet, aber wir konnten nicht bestätigen, ob sie durchgegangen ist. Prüfe deine offenen Anfragen, bevor du es erneut versuchst — falls sie angekommen ist, würde eine zweite Anfrage ein Duplikat erzeugen. Die Ausgabe-Freigabe wurde bewusst beibehalten, weil ein Kreditgeber, der die Anfrage annimmt, sie zum Einzug der Ablösung benötigt.",
@@ -1082,7 +1083,17 @@
       "neverMintedBody": "Auf {{chain}} wurde kein Positions-NFT mit dieser ID erstellt. Wenn die Position auf einem anderen Netzwerk eröffnet wurde, wechseln Sie zu diesem Netzwerk und prüfen Sie erneut.",
       "goneTitle": "Token #{{id}} existiert derzeit nicht auf diesem Netzwerk",
       "goneBody": "Entweder wurde er vom Protokoll stillgelegt, oder er wurde hier nie geprägt — die Verträge dieses Netzwerks halten nicht fest, welcher Fall vorliegt. Behandeln Sie jedes Angebot, diese Token-ID zu verkaufen oder zu übertragen, in diesem Netzwerk als wertlos.",
-      "goneBodyUnchecked": "Entweder wurde er vom Protokoll stillgelegt, oder er wurde hier nie geprägt — wir konnten gerade nicht prüfen, welcher Fall vorliegt; ein Neuladen versucht es erneut. Behandeln Sie jedes Angebot, diese Token-ID zu verkaufen oder zu übertragen, in diesem Netzwerk als wertlos."
+      "goneBodyUnchecked": "Entweder wurde er vom Protokoll stillgelegt, oder er wurde hier nie geprägt — wir konnten gerade nicht prüfen, welcher Fall vorliegt; ein Neuladen versucht es erneut. Behandeln Sie jedes Angebot, diese Token-ID zu verkaufen oder zu übertragen, in diesem Netzwerk als wertlos.",
+      "routeLabel": "Offene Protokollroute",
+      "routePrecloseOffset": "Auf diesem Token ist eine vorzeitige Schließung per Offset offen. Er kann weiterhin übertragen werden, doch nach einer Übertragung kann der Offset nicht mehr abgeschlossen und nur noch storniert werden.",
+      "routeSale": "Auf diesem Token ist ein Positionsverkaufs-Inserat offen. Er kann weiterhin übertragen werden, doch nach einer Übertragung kann der Verkauf nicht mehr abgeschlossen werden, und das Inserat kann nur noch storniert werden.",
+      "routePrepayListing": "Auf diesem Token ist ein Sicherheiten-Inserat offen. Er kann weiterhin übertragen werden, doch nach einer Übertragung kann das Inserat nicht mehr abgeschlossen und nur noch storniert werden.",
+      "routeSwapToRepayIntent": "Auf diesem Token ist eine Auktion zur Rückzahlung aus der Sicherheit offen: Die Sicherheit ist in einer aktiven Order zur Rückzahlung des Kredits gebunden. Der Token kann weiterhin übertragen werden, doch nach einer Übertragung kann die Auktion nicht mehr abgewickelt und nur noch storniert werden.",
+      "routeUnrecognized": "Auf diesem Token ist eine Protokollroute offen, die diese App-Version nicht erkennt. Eine Übertragung kann ihren Abschluss verhindern.",
+      "routeUnknown": "Wir konnten gerade nicht lesen, ob auf diesem Token eine Protokollroute offen ist — prüfen Sie es erneut, bevor Sie sich darauf verlassen, dass eine Übertragung sie unberührt lässt.",
+      "holderLockLabel": "Sperre des Inhabers",
+      "holderLocked": "Der aktuelle Inhaber hat seine Positions-NFTs gesperrt: Dieser Token kann nicht übertragen werden, bis er sie entsperrt, und ein Entsperren wartet die von ihm festgelegte Verzögerung ab.",
+      "holderLockUnknown": "Wir konnten nicht lesen, ob der aktuelle Inhaber seine Positions-NFTs gesperrt hat — verlassen Sie sich nicht darauf, dass dieser Token übertragbar ist, bis diese Abfrage ein sauberes Ergebnis liefert."
     },
     "recover": {
       "title": "Feststeckende Tokens beanspruchen",
@@ -1395,7 +1406,8 @@
           "unrecognised": "Nicht verfügbar – das Protokoll lehnt diesen Verkauf ab ({{name}}).",
           "unnamedError": "ein Grund, den diese App nicht kennt",
           "reopensEarliest": "Allein durch Zeitablauf wird das frühestens am {{time}} aufgehoben. Ein Schritt, den jemand bewusst unternimmt, etwa das Stornieren eines Verkaufsangebots, kann es früher aufheben."
-        }
+        },
+        "listStructuralRoute": "Solange das Inserat besteht, nimmt das Bewegen Ihres Positions-NFTs dem Inserat die Möglichkeit, abgeschlossen zu werden. Das Inserat hält außerdem zwei Optionen des KREDITNEHMERS bei diesem Kredit zurück: Das Protokoll verweigert die Entnahme seiner Sicherheit und seinen Ausstieg per Verrechnung – beides, um die vom Käufer signierten Konditionen zu schützen. Seine Rückzahlungen, ganz oder teilweise, bleiben möglich. Die Sperren enden, wenn ein Käufer abschließt oder Sie stornieren; läuft das Inserat einfach ab, bestehen sie fort, bis jemand die Bereinigung ausführt, die es entfernt."
       },
       "pastDue": "Dieser Kredit ist überfällig – der Kreditnehmer zahlt ihn zurück oder das Ausfallverfahren löst ihn auf. Neue Verkäufe können jetzt nicht mehr gestartet werden.",
       "checking": "Prüfen, welche dieser Optionen für diese Position verfügbar sind…"
@@ -1487,7 +1499,13 @@
       "cancelSoon": "Der Abbruch wird wenige Minuten nach dem Inserieren möglich — versuchen Sie es gleich noch einmal.",
       "loanSettledWhileListed": "Dieser Kredit ist abgerechnet, daher kann das Verkaufsangebot nie abgeschlossen werden — stornieren Sie es, um Ihr Kreditgeber-NFT zu entsperren.",
       "ended": "Ihr Verkaufslisting ist nicht mehr aktiv. Hat ein Käufer es angenommen, ist Ihre Auszahlung (seine Zahlung abzüglich der Abrechnung) bereits in Ihrer Wallet, und die verdienten Zinsen sind Ihr Anspruch auf den Kredit, angezeigt unter „Ansprüche“.",
-      "listingUnavailable": "Ihre Position zu einem eigenen Preis zu listen ist noch nicht möglich — der dafür nötige On-Chain-Schritt wird gerade repariert. Der Sofort-Ausstieg oben funktioniert: Er verkauft sofort in ein passendes offenes Angebot."
+      "listingUnavailable": "Ihre Position zu einem eigenen Preis zu listen ist noch nicht möglich — der dafür nötige On-Chain-Schritt wird gerade repariert. Der Sofort-Ausstieg oben funktioniert: Er verkauft sofort in ein passendes offenes Angebot.",
+      "lockWarningRoute": "Das Bewegen Ihres Kreditgeber-Positions-NFTs storniert Ihr offenes Inserat: Sobald es bewegt wurde, kann der Verkauf nicht mehr abgeschlossen werden, und das Inserat kann nur noch storniert werden. Ihre Anspruchsrechte bleiben unberührt.",
+      "receiptLockRoute": "Nichts ist gesperrt. Solange das Inserat besteht, bedeutet das Bewegen Ihres Kreditgeber-Positions-NFTs, dass der Verkauf nicht mehr abgeschlossen werden kann. Nichts anderes.",
+      "pendingRoute": "Verkaufsangebot #{{offerId}} ist aktiv. Lassen Sie Ihr Kreditgeber-NFT, wo es ist: Das Bewegen storniert Ihr offenes Angebot. Nimmt ein Käufer an, werden Sie in derselben Transaktion bezahlt: mit der Zahlung des Käufers, abzüglich der Abrechnung.",
+      "pendingNoIdRoute": "Diese Position ist zum Verkauf inseriert (von einem anderen Gerät aus, daher ist Stornieren hier nicht möglich — stornieren Sie dort, wo inseriert wurde). Das Bewegen Ihres Kreditgeber-NFTs storniert Ihr offenes Angebot.",
+      "expiredUnsoldRoute": "Dieses Angebot endete am {{date}} ohne Käufer, daher kann es niemand mehr kaufen. Es bindet diesen Kredit weiterhin, bis es aufgeräumt ist: stornieren Sie es hier, oder jeder kann die Aufräum-Transaktion senden.",
+      "expiredUnsoldNoCancelRoute": "Dieses Angebot endete am {{date}} ohne Käufer, daher kann es niemand mehr kaufen. Es bindet diesen Kredit weiterhin, bis es aufgeräumt ist, was jeder durch Senden der Aufräum-Transaktion erledigen kann."
     },
     "positions": {
       "rowRental": "Miete #{{id}} · Gebühren vorausbezahlt",
@@ -3618,7 +3636,9 @@
       "reviewAgain": "Prüfe das Inserat erneut, um die aktuellen Beträge zu sehen.",
       "changedSinceReview": "Was dieses Inserat umfasst, hat sich nach deiner Prüfung geändert. Inseriere ihn auf seiner eigenen Seite, die die aktuellen Bedingungen zeigt.",
       "ownPageShape": "Nur Kredite mit Token als Kreditbetrag und Token als Sicherheit können zum Verkauf angeboten werden.",
-      "unavailableNetwork": "Die Kredite {{ids}} stammen aus demselben Angebot. Sie zum Verkauf anzubieten ist in diesem Netzwerk noch nicht verfügbar: Die Verkaufswerkzeuge sind in dieser Bereitstellung nicht veröffentlicht."
+      "unavailableNetwork": "Die Kredite {{ids}} stammen aus demselben Angebot. Sie zum Verkauf anzubieten ist in diesem Netzwerk noch nicht verfügbar: Die Verkaufswerkzeuge sind in dieser Bereitstellung nicht veröffentlicht.",
+      "lockWarningRoute": "Das Bewegen eines inserierten Kreditgeber-Positions-NFTs storniert dieses Inserat: Sobald es bewegt wurde, kann dieser Verkauf nicht mehr abgeschlossen werden, und das Inserat kann nur noch storniert werden. Deine Auszahlungsrechte bleiben unberührt.",
+      "lockEachRoute": "Nichts ist gesperrt. Solange jedes Inserat besteht, bedeutet das Bewegen des Kreditgeber-Positions-NFTs dieses Kredits, dass sein Verkauf nicht mehr abgeschlossen werden kann."
     },
     "batchRefinance": {
       "action": "Alle refinanzieren",
@@ -3879,7 +3899,23 @@
       "done": "Erledigt. Es kann einen Moment dauern, bis es hier erscheint.",
       "unknownWhen": "unbekannt",
       "managedAccountTitle": "Konto, das du jetzt verwaltest: {{account}}",
-      "managedAccountUnknown": "Wir konnten nicht prüfen, ob deine Wallet ein verschobenes Konto verwaltet. Falls ja, wird dieses Konto hier noch nicht angezeigt."
+      "managedAccountUnknown": "Wir konnten nicht prüfen, ob deine Wallet ein verschobenes Konto verwaltet. Falls ja, wird dieses Konto hier noch nicht angezeigt.",
+      "protectNftsLockLabel": "Meine Positions-NFTs jetzt auch sperren (ein späteres Entsperren wartet die Verzögerung ab)",
+      "summaryNftLockOn": "Deine Positions-NFTs sind gesperrt.",
+      "summaryNftLockOff": "Deine Positions-NFTs sind nicht gesperrt.",
+      "nftLockTitle": "Sperre der Positions-NFTs",
+      "nftLockOn": "Deine Positions-NFTs sind gesperrt: Keines davon kann übertragen werden, und es kann keine Übertragungsfreigabe erteilt werden, bis sie entsperrt sind.",
+      "nftLockOff": "Deine Positions-NFTs sind nicht gesperrt: Sie können wie jedes andere NFT übertragen werden.",
+      "nftLockDelay": "Das Entsperren wartet nach deiner Anfrage {{delay}}.",
+      "nftLockNoDelay": "Das Entsperren wird wirksam, sobald du es anforderst.",
+      "nftUnlockPending": "Ein Entsperren wurde angefordert. Es kann ab {{when}} angewendet werden; brich es ab, wenn du es nicht angefordert hast.",
+      "nftUnlockDue": "Das von dir angeforderte Entsperren kann jetzt angewendet werden. Jeder kann es senden.",
+      "nftLowerPending": "Eine kürzere Entsperr-Wartezeit von {{delay}} wurde angefordert und gilt ab {{when}}.",
+      "nftLockNow": "Meine Positions-NFTs jetzt sperren",
+      "nftCancelUnlock": "Entsperren abbrechen",
+      "nftExecuteUnlock": "Entsperren anwenden",
+      "nftLockUnknown": "Wir konnten die Sperre deiner Positions-NFTs gerade nicht lesen. Geh nicht davon aus, dass deine NFTs entsperrt sind.",
+      "nftLockNote": "Diese Sperre wird vom Positions-NFT-Vertrag selbst geführt. Der Schutz kann sie einschalten und die Wartezeit verlängern, aber niemals entsperren oder die Wartezeit verkürzen: Nur die Wallet, die die NFTs hält, kann das Entsperren anfordern, und das Entsperren wartet immer."
     },
     "autoExtend": {
       "title": "Automatische Verlängerung",

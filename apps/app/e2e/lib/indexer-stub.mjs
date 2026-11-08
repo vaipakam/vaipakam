@@ -45,6 +45,10 @@ const E2E_DEPLOYMENT = JSON.parse(
   fs.readFileSync(path.resolve(HERE, '..', '.state', 'deployments.json'), 'utf8'),
 )[String(CHAIN_ID)];
 const DIAMOND = E2E_DEPLOYMENT.diamond;
+/** #3205 — the fixture deploys the standalone PositionNFT, so holders are
+ *  read there; a retired (closed) token keeps its owner, so the Diamond's
+ *  `isPositionRetired` answers "nobody holds it" as a burn used to. */
+const POSITION_NFT = E2E_DEPLOYMENT.positionNFT ?? DIAMOND;
 /** The block the fixture Diamond was deployed at — where a log scan starts. */
 const DEPLOY_BLOCK = BigInt(E2E_DEPLOYMENT.deployBlock ?? 0);
 const pub = createPublicClient({
@@ -1157,7 +1161,11 @@ async function handler(req, res) {
         // holds it" answer; any other failure (ABI/RPC) must 500.
         let owner = null;
         try {
-          owner = await read('ownerOf', [BigInt(o.positionTokenId)]);
+          const tokenId = BigInt(o.positionTokenId);
+          const retired = POSITION_NFT !== DIAMOND && (await read('isPositionRetired', [tokenId]));
+          if (!retired) {
+            owner = await pub.readContract({ address: POSITION_NFT, abi: DIAMOND_ABI_VIEM, functionName: 'ownerOf', args: [tokenId] });
+          }
         } catch (e) {
           if (!isRevertError(e)) throw e;
         }

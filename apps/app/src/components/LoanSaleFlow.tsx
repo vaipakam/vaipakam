@@ -73,6 +73,7 @@ import { ConsentWithdrawnNote } from './ConsentWithdrawnNote';
 import { SimulationPreview } from './SimulationPreview';
 import type { TxSimInput } from '../contracts/useTxSimulation';
 import type { TokenMeta } from '../contracts/erc20';
+import { useRouteBlocksTransfer } from '../contracts/positionNft';
 
 export function LoanSaleFlow({
   row,
@@ -99,6 +100,7 @@ export function LoanSaleFlow({
   busy: boolean;
   setBusy: (b: boolean) => void;
 }) {
+  const routeBlocks = useRouteBlocksTransfer();
   const { address, walletChain, onSupportedChain } = useActiveChain();
   const { data: walletClient } = useWalletClient();
   const publicClient = usePublicClient({ chainId: walletChain?.chainId });
@@ -434,7 +436,7 @@ export function LoanSaleFlow({
               ]
                 .filter(Boolean)
                 .join(' '),
-              youLock: copy.loanSale.receiptLock,
+              youLock: routeBlocks ? copy.loanSale.receiptLock : copy.loanSale.receiptLockRoute,
               youMayOwe: copy.loanSale.receiptYouMayOwe(formatTokenAmountExact(nowCost, dec), sym),
               youCanLose: copy.loanSale.receiptCanLose,
               fees: copy.loanSale.receiptFees,
@@ -442,7 +444,9 @@ export function LoanSaleFlow({
             }}
           >
             <div className="banner banner-warn" role="alert" style={{ marginBottom: 12 }}>
-              <span className="banner-body">{copy.loanSale.lockWarning}</span>
+              <span className="banner-body">
+                {routeBlocks ? copy.loanSale.lockWarning : copy.loanSale.lockWarningRoute}
+              </span>
             </div>
             <SimulationPreview tx={simTx} />
           </ConfirmReceipt>

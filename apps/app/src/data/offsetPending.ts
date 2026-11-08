@@ -19,6 +19,7 @@ import { useQuery } from '@tanstack/react-query';
 import { usePublicClient } from 'wagmi';
 import { erc20Abi } from 'viem';
 import { DIAMOND_ABI_VIEM } from '../contracts/diamond';
+import { readPositionRoute } from '../contracts/positionNft';
 import {
   CANCEL_COOLDOWN_SECONDS,
   LOAN_STATUS_ACTIVE,
@@ -127,12 +128,7 @@ export function useOffsetPending(
       const diamond = readChain.diamondAddress;
       const [lockRaw, live, latestBlock, offer, allowance, balance] =
         await Promise.all([
-          readClient!.readContract({
-            address: diamond,
-            abi: DIAMOND_ABI_VIEM,
-            functionName: 'positionLock',
-            args: [BigInt(borrowerTokenId!)],
-          }) as Promise<number | bigint>,
+          readPositionRoute(readClient!, readChain.positionNft, BigInt(borrowerTokenId!)),
           readLoanLive(readClient!, diamond, loanId),
           readClient!.getBlock({ blockTag: 'latest' }),
           offerId

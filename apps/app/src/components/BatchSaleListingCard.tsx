@@ -45,6 +45,7 @@ import { rememberLoanSaleOffer } from '../data/loanSalePending';
 import { useReviewConsent } from '../hooks/useReviewConsent';
 import { ConfirmReceipt } from './ConfirmReceipt';
 import { ConsentWithdrawnNote } from './ConsentWithdrawnNote';
+import { useRouteBlocksTransfer } from '../contracts/positionNft';
 
 type ReadyPlan = Extract<SaleListingPlan, { kind: 'ready' }>;
 
@@ -364,6 +365,7 @@ function SaleReview({
   onConfirm: () => void;
   onCancel: () => void;
 }) {
+  const routeBlocks = useRouteBlocksTransfer();
   const readyCount = plans.filter((p) => p.kind === 'ready').length;
   return (
     <>
@@ -420,7 +422,7 @@ function SaleReview({
             disabled={confirmDisabled}
             data={{
               youReceive: copy.batchSale.receiveEach,
-              youLock: copy.batchSale.lockEach,
+              youLock: routeBlocks ? copy.batchSale.lockEach : copy.batchSale.lockEachRoute,
               youMayOwe: copy.batchSale.youMayOwe,
               youCanLose: copy.loanSale.receiptCanLose,
               fees: copy.loanSale.receiptFees,
@@ -428,7 +430,9 @@ function SaleReview({
             }}
           >
             <div className="banner banner-warn" role="alert" style={{ marginBottom: 12 }}>
-              <span className="banner-body">{copy.batchSale.lockWarning}</span>
+              <span className="banner-body">
+                {routeBlocks ? copy.batchSale.lockWarning : copy.batchSale.lockWarningRoute}
+              </span>
             </div>
           </ConfirmReceipt>
         </>

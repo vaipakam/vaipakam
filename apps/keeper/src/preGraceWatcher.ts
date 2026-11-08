@@ -86,6 +86,7 @@ import { batchedRead } from './batchRead';
 import { AlertDelivery } from './alertDelivery';
 import { describeFailure, redactedError } from '@vaipakam/lib/errorDescription';
 import { loanMaturity, pauseInForceAt, readPauseLog, type PauseLog } from '@vaipakam/lib/loanClock';
+import { positionNftForDiamond } from './positionNft';
 
 const METRICS_ABI: Abi = MetricsFacetABI as Abi;
 const AUTO_LIFECYCLE_ABI: Abi = AutoLifecycleFacetABI as Abi;
@@ -319,13 +320,14 @@ async function watchChain(env: Env, chain: ChainConfig, alerts: AlertDelivery): 
   });
   if (due.length === 0) return;
 
-  // Resolve borrower-NFT owners. The Diamond IS the ERC721 collection for
-  // position NFTs.
+  // Resolve borrower-NFT owners on the chain's position-NFT contract
+  // (#3205: the standalone PositionNFT, or a legacy Diamond).
+  const nftAddress = positionNftForDiamond(diamond).nft as Address;
   const ownerResults = await chunkedRead(
     publicClient,
     due,
     (d) => ({
-      address: diamond,
+      address: nftAddress,
       abi: erc721Abi,
       functionName: 'ownerOf' as const,
       args: [d.loan.borrowerTokenId] as const,

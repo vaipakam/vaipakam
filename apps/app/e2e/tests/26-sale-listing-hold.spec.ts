@@ -99,7 +99,7 @@ test('listing holds the borrower options; expiry + cleanup frees them', async ({
   const lock = await pub.readContract({
     address: DIAMOND,
     abi: DIAMOND_ABI_VIEM,
-    functionName: 'positionLock',
+    functionName: 'positionRoute', // #3205: the open route (formerly positionLock)
     args: [loan.lenderTokenId],
   });
   expect(

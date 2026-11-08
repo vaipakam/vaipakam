@@ -26,6 +26,7 @@ import { fetchActivity } from './indexer';
 import { isRevert } from './liveLoanRow';
 import { freshData } from '../lib/freshData';
 import { loanEndTimeOf, readLoanLive } from '../contracts/loanLive';
+import { readPositionOwnerOn } from '../contracts/positionNft';
 
 const REFRESH_MS = 60_000;
 
@@ -445,13 +446,7 @@ export async function readReserveRow(ctx: Ctx, loanId: number, holder: Address):
   if (Number(details.status) === 0) {
     // A burned position reads as no holder.
     const owner = await (
-      ctx.client.readContract({
-        address: ctx.diamond,
-        abi: DIAMOND_ABI_VIEM,
-        functionName: 'ownerOf',
-        args: [details.borrowerTokenId],
-        blockNumber: block,
-      }) as Promise<Address>
+      readPositionOwnerOn(ctx.client, ctx.diamond, details.borrowerTokenId, block) as Promise<Address>
     ).catch((err: unknown) => {
       if (isRevert(err)) return null;
       throw err;

@@ -686,7 +686,7 @@ contract NFTPrepayListingAtomicFacet is DiamondReentrancyGuard, DiamondPausable 
         );
 
         // STEP 3 — Lock the borrower NFT.
-        LibPositionNFT.openRoute(loan.borrowerTokenId, LibPositionNFT.RouteReason.PrepayCollateralListing);
+        // #3205 — the route opens (or rebinds) in LibPrepayListingWiring.wire.
 
         // STEP 4 — Pin + restamp diamond slots. `askPrice = endAskPrice
         // = effectiveAsk` per §17.11 step 4 (Codex round-10 P3 — the
