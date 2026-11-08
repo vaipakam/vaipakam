@@ -7,6 +7,7 @@
  * outcome must render NOTHING (never a false "held" banner, never a
  * button for a transaction that would revert).
  */
+import { DEPLOYMENTS } from '@vaipakam/contracts/deployments';
 import { describe, expect, it } from 'vitest';
 import { BaseError, ContractFunctionRevertedError } from 'viem';
 import {
@@ -272,7 +273,9 @@ describe('computeHoldGate', () => {
  * failures are what push the surface into its errored state.
  */
 describe('probeSaleHoldLive', () => {
-  const DIAMOND = '0xdia0000000000000000000000000000000000000' as const;
+  // A Diamond the bundle records without a positionNFT: legacy mode, so the
+  // route is read as `positionLock` (#3205).
+  const DIAMOND = DEPLOYMENTS[84532]!.diamond as `0x${string}`;
 
   function fakeClient(opts: {
     lock: number;

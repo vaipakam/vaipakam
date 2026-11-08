@@ -41,6 +41,7 @@ function review(over: Partial<AcceptReview> = {}): AcceptReview {
     gate: 0,
     creatorGate: 0,
     consent: true,
+    positionFlow: 'not-bound',
     readAt: 1,
     ...over,
   } as AcceptReview;
@@ -51,6 +52,13 @@ describe('reviewBlockers', () => {
     expect(reviewBlockers(review({ gate: 2, creatorGate: 2 }), null, copy)).toEqual(['accept.blockCreatorGate']);
     expect(reviewBlockers(review({ gate: 1, creatorGate: 0 }), null, copy)).toEqual(['risk.blockTier']);
     expect(reviewBlockers(review(), null, copy)).toEqual([]);
+  });
+  it('#3205 — refuses an open offer whose loan position moved since it opened; an unknown verdict is not a block', () => {
+    expect(reviewBlockers(review({ positionFlow: 'moved' }), null, copy)).toEqual(['accept.blockPositionMoved']);
+    expect(reviewBlockers(review({ positionFlow: 'unknown' }), null, copy)).toEqual([]);
+    expect(reviewBlockers(review({ positionFlow: 'not-moved' }), null, copy)).toEqual([]);
+    // An ended offer states its own state, not the move.
+    expect(reviewBlockers(review({ state: 'cancelled', positionFlow: 'moved' }), null, copy)).toEqual(['accept.blockState']);
   });
 });
 

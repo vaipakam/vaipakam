@@ -48,7 +48,7 @@ async function positionLockOf(tokenId: bigint): Promise<number> {
     await pub.readContract({
       address: DIAMOND,
       abi: DIAMOND_ABI_VIEM,
-      functionName: 'positionLock',
+      functionName: 'positionRoute', // #3205: the open route (formerly positionLock)
       args: [tokenId],
     }),
   );
@@ -159,8 +159,10 @@ test('offset posts, locks the position, and cancel releases it (Option 3)', asyn
     .locator('section.card')
     .filter({ hasText: 'Exit by becoming a lender (offset)' });
   await expect(offsetCard).toBeVisible({ timeout: 60_000 });
-  // The MUST-SURFACE transfer-lock disclosure renders before review.
-  await expect(offsetCard.getByText(/transfer-locked/i)).toBeVisible();
+  // The MUST-SURFACE route disclosure renders before review. #3205: this
+  // tier runs the standalone PositionNFT, where moving the NFT stops the
+  // offset completing instead of being refused.
+  await expect(offsetCard.getByText(/moving it means the offset can no longer complete/i)).toBeVisible();
   const review = offsetCard.getByRole('button', {
     name: /review offset offer/i,
   });

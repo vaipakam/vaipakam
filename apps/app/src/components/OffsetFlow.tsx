@@ -55,6 +55,8 @@ import { AmountPrecisionHint } from './AmountPrecisionHint';
 import { ConfirmReceipt } from './ConfirmReceipt';
 import { useReviewConsent } from '../hooks/useReviewConsent';
 import type { TokenMeta } from '../contracts/erc20';
+import { readPositionRouteOn } from '../contracts/positionNft';
+import { useRouteBlocksTransfer } from '../contracts/positionNft';
 
 /** Headroom reserved between the offset's replacement maturity and the
  *  original loan's maturity when sizing the DEFAULT/max term. The
@@ -110,6 +112,7 @@ export function OffsetFlow({
    *  null to proceed. */
   preSubmitBlock?: () => Promise<string | null>;
 }) {
+  const routeBlocks = useRouteBlocksTransfer();
   const { address, walletChain, onSupportedChain } = useActiveChain();
   const { data: walletClient } = useWalletClient();
   const publicClient = usePublicClient({ chainId: walletChain?.chainId });
@@ -302,24 +305,12 @@ export function OffsetFlow({
         // this path raised the allowance. Read the live lock in the
         // same batch and stop before any approval (fail closed: this
         // read throws on transport failure).
-        publicClient
-          .readContract({
-            address: walletChain.diamondAddress,
-            abi: DIAMOND_ABI_VIEM,
-            functionName: 'positionLock',
-            args: [BigInt(row.borrowerTokenId)],
-          })
+        readPositionRouteOn(publicClient, walletChain.diamondAddress, BigInt(row.borrowerTokenId))
           .then((v) => Number(v)),
         // The LENDER position's lock too: a live sale listing on the
         // other side of this loan also blocks an offset on chain, and
         // it is invisible from the borrower token (Codex #1500 r5).
-        publicClient
-          .readContract({
-            address: walletChain.diamondAddress,
-            abi: DIAMOND_ABI_VIEM,
-            functionName: 'positionLock',
-            args: [BigInt(row.lenderTokenId)],
-          })
+        readPositionRouteOn(publicClient, walletChain.diamondAddress, BigInt(row.lenderTokenId))
           .then((v) => Number(v)),
         // The live offer-duration ceiling: governance can lower
         // maxOfferDurationDays below this loan's remaining term, and
@@ -523,7 +514,7 @@ export function OffsetFlow({
       <p className="muted">{copy.offset.blurb}</p>
 
       <div className="banner banner-warn" role="note" style={{ marginBottom: 12 }}>
-        <span className="banner-body">{copy.offset.lockWarn}</span>
+        <span className="banner-body">{routeBlocks ? copy.offset.lockWarn : copy.offset.lockWarnRoute}</span>
       </div>
 
       <div className="cluster">
@@ -645,7 +636,7 @@ export function OffsetFlow({
             }}
           >
             <div className="banner banner-warn" role="alert" style={{ marginBottom: 12 }}>
-              <span className="banner-body">{copy.offset.lockWarn}</span>
+              <span className="banner-body">{routeBlocks ? copy.offset.lockWarn : copy.offset.lockWarnRoute}</span>
             </div>
           </ConfirmReceipt>
         </div>

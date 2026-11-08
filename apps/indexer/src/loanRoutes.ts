@@ -31,6 +31,13 @@ import {
 } from './liquidatorStats';
 import { EXPECTED_SCAN_CADENCE_SEC } from './chainIngestDO';
 import {
+  logPosition,
+  movedSinceOpened,
+  offerPositionFlows,
+  readLastMoves,
+  type OfferFlowColumns,
+} from './positionFlowMoves';
+import {
   type RepairObservationRow,
   repairObservationPosition,
   repairObservationsPage,
@@ -367,7 +374,8 @@ export async function handleLoanById(
       `SELECT order_hash, ask_price, conduit, lister,
               posted_at, updated_at, grace_period_end,
               conduit_key, salt, executor,
-              end_ask_price, auction_end_time, auction_mode
+              end_ask_price, auction_end_time, auction_mode,
+              block_number, log_index
        FROM prepay_listings
        WHERE chain_id = ? AND loan_id = ?`,
     )
@@ -386,8 +394,14 @@ export async function handleLoanById(
         end_ask_price: string | null;
         auction_end_time: number | null;
         auction_mode: number | null;
+        block_number: number;
+        log_index: number;
       }>();
     const payload: Record<string, unknown> = loanToJson(row, await loanClockView(env, chainId));
+    // #3205 — each side's last position-NFT move, for the listing's and the
+    // intent's moved verdicts below (one rule: `movedSinceOpened`).
+    const moves = await readLastMoves(env, chainId, [loanId]);
+    const borrowerMove = moves.get(`${loanId}:borrower`) ?? null;
     if (listing) {
       // T-086 Round-5 Block C (#309 Mode B) — surface conduit_key /
       // salt / executor / auction_mode / end_ask_price /
@@ -412,6 +426,13 @@ export async function handleLoanById(
         endAskPrice: listing.end_ask_price,
         auctionEndTime: listing.auction_end_time,
         auctionMode: listing.auction_mode,
+        // #3205 — the borrower position NFT moved since this listing was
+        // posted or last updated (an update by the current holder re-arms
+        // it): a moved listing can never sell. null = cannot tell.
+        positionMovedSinceOpened: movedSinceOpened(
+          logPosition(listing.block_number, listing.log_index),
+          borrowerMove,
+        ),
       };
     }
     // T-090 v1.1 (#389) Sub 2 (#417) — surface the live intent
@@ -423,7 +444,8 @@ export async function handleLoanById(
     // intent commit landed.
     const intent = await env.DB.prepare(
       `SELECT order_hash, committed_by, maker_amount, taker_amount,
-              deadline, committed_at, committed_tx_hash
+              deadline, committed_at, committed_tx_hash,
+              committed_block, committed_log_index
        FROM swap_to_repay_intents
        WHERE chain_id = ? AND loan_id = ?`,
     )
@@ -436,6 +458,8 @@ export async function handleLoanById(
         deadline: number;
         committed_at: number;
         committed_tx_hash: string;
+        committed_block: number | null;
+        committed_log_index: number | null;
       }>();
     if (intent) {
       // `makerAmount` is the auction lot (#2322) — the collateral the
@@ -451,8 +475,37 @@ export async function handleLoanById(
         deadline: intent.deadline,
         committedAt: intent.committed_at,
         committedTxHash: intent.committed_tx_hash,
+        // #3205 — the borrower position NFT moved since the commit: a moved
+        // intent can never fill. null = cannot tell (the commit's log
+        // position is not recorded).
+        positionMovedSinceOpened: movedSinceOpened(
+          logPosition(intent.committed_block, intent.committed_log_index),
+          borrowerMove,
+        ),
       };
     }
+    // #3205 — the open offers bound to this loan's positions (its lender-sale
+    // listing, offset offer and refinance requests), each with whether its
+    // side's position NFT moved since it opened. Served so a page that does
+    // not know the offer id (a holder who did not post it) can still tell
+    // the flow can no longer complete. A field per offer, never a filter.
+    const bound = await env.DB.prepare(
+      `SELECT offer_id, status, is_sale_vehicle, is_offset_vehicle,
+              refinance_target_loan_id, vehicle_loan_id,
+              first_seen_block, created_log_index
+         FROM offers
+        WHERE chain_id = ? AND status IN ('active', 'active_unknown_expiry')
+          AND (vehicle_loan_id = ? OR refinance_target_loan_id = ?)
+        ORDER BY offer_id DESC LIMIT 20`,
+    )
+      .bind(chainId, loanId, loanId)
+      .all<OfferFlowColumns & { status: string }>();
+    const boundRows = bound.results ?? [];
+    const flows = await offerPositionFlows(env, chainId, boundRows);
+    payload.positionFlows = boundRows.flatMap((r) => {
+      const f = flows.get(r.offer_id);
+      return f ? [{ offerId: r.offer_id, status: r.status, ...f }] : [];
+    });
     return jsonResponse(payload);
   } catch (err) {
     console.error('[loanRoutes] byId failed', redactedError(err));

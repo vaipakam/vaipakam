@@ -118,6 +118,7 @@ import {
   reserveFigureMismatches,
   squash,
 } from './autoExtendExpected.mjs';
+import { positionHolderReader } from './positionHolder.mjs';
 
 // Output hygiene first: the RPC URL may carry a provider key, and viem embeds
 // request URLs in its errors. Every console line is scrubbed.
@@ -227,6 +228,8 @@ console.log(`build: ${siteBundle} on ${hostOf(SITE_URL)} and ${hostOf(REFERENCE_
 const { pub } = clientsFor(CHAIN_ID);
 const read = (functionName, args = [], blockNumber) =>
   pub.readContract({ address: DIAMOND, abi: DIAMOND_ABI, functionName, args, ...(blockNumber !== undefined ? { blockNumber } : {}) });
+// #3205 — holders come from the chain's position-NFT contract, not the Diamond ABI.
+const readHolder = positionHolderReader(pub, CHAIN_ID);
 // Every configuration read that can exit the process (`blockedSync`) runs
 // here, before any write: after one, an exit would skip the settlement.
 const IDX = indexerOrigin();
@@ -240,8 +243,8 @@ try {
   pre.head = head;
   pre.loan = await read('getLoanDetails', [LOAN_ID], at);
   [pre.bHolder, pre.lHolder, pre.switchOn, pre.paused, pre.window, pre.funding, pre.bCaps, pre.lCaps, pre.tosB, pre.tosL] = await Promise.all([
-    read('ownerOf', [pre.loan.borrowerTokenId], at),
-    read('ownerOf', [pre.loan.lenderTokenId], at),
+    readHolder(pre.loan.borrowerTokenId, at),
+    readHolder(pre.loan.lenderTokenId, at),
     read('getAutoExtendEnabled', [], at),
     read('paused', [], at),
     read('getAutoExtendWindow', [LOAN_ID], at),
@@ -330,7 +333,7 @@ try {
     if (l.startTime === 0n) break;
     if (Number(l.status) !== 0) continue;
     if (!(await read('isLoanDefaultable', [id], at))) continue;
-    const holder = await read('ownerOf', [l.lenderTokenId], at);
+    const holder = await readHolder(l.lenderTokenId, at);
     const role = eq(holder, BORROWER) ? 'borrower' : eq(holder, LENDER) ? 'lender' : null;
     if (role) pastGrace.push({ id, role });
     else pastGraceOther.push(id);

@@ -12,7 +12,7 @@ import { useCallback } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { copy } from '../content/copy';
 import { usePublicClient, useWalletClient } from 'wagmi';
-import type { TransactionReceipt } from 'viem';
+import type { Abi, TransactionReceipt } from 'viem';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import { assertSettled } from './ownReceipt';
 import { useActiveChain } from '../chain/useActiveChain';
@@ -144,7 +144,14 @@ export function useDiamondWrite() {
        *  receipt wait can time out on a transaction that mined perfectly
        *  well, and undoing a side effect of a write that actually landed
        *  is worse than leaving it (#1529 review round 8). */
-      opts?: { onSubmitted?: (hash: `0x${string}`) => void },
+      opts?: {
+        onSubmitted?: (hash: `0x${string}`) => void;
+        /** #3205 — send to another contract than the Diamond with the
+         *  generated ABI: the PositionNFT (its holder lock), or the Diamond
+         *  through the frozen legacy NFT fragment. Resolved by
+         *  `contracts/positionNft`; the Terms gate applies the same way. */
+        target?: { address: `0x${string}`; abi: Abi };
+      },
     ): Promise<DiamondWriteResult> => {
       if (!onSupportedChain || !walletChain || !walletClient || !address) {
         throw new Error(copy.errors.walletConnectFirst);
@@ -187,8 +194,8 @@ export function useDiamondWrite() {
         }
       }
       const hash = await walletClient.writeContract({
-        address: walletChain.diamondAddress,
-        abi: DIAMOND_ABI_VIEM,
+        address: opts?.target?.address ?? walletChain.diamondAddress,
+        abi: opts?.target?.abi ?? DIAMOND_ABI_VIEM,
         functionName,
         args: args as unknown[],
         account: address,

@@ -128,6 +128,7 @@ contract RefreshChangedFacetsInPlace is RefreshAllFacetsInPlace {
         );
         _requireSlice3Diamond(diamond);
         _requireVaultBeaconDiamond(diamond);
+        _requirePositionNFTDiamond(diamond);
         _requireNoOpenErc1155RentalAcross902(diamond);
         _requireNoOpenLoanAcrossInterestLedger(diamond);
         // The per-token tracked vault ledger is fresh-deploy only; see

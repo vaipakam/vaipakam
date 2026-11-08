@@ -140,6 +140,7 @@ const CLASSIFICATION = {
       'cleared with notifications so band rows re-derive (#1450 r33)',
   },
   swap_to_repay_intents: { class: 'replay-derived', reason: 'chainIndexer-only writes (#1450 r32)' },
+  position_side_moves: { class: 'replay-derived', reason: 'chainIndexer-only writes from position-NFT Transfer logs (#3205)' },
   loan_orphans: {
     class: 'born-off-chain',
     reason:

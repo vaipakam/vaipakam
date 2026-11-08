@@ -24,7 +24,7 @@ import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {RepayPeriodicFacet} from "../src/facets/RepayPeriodicFacet.sol";
 import {MetricsFacet} from "../src/facets/MetricsFacet.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
-import {LibERC721} from "../src/libraries/LibERC721.sol";
+import {LibPositionNFT} from "../src/libraries/LibPositionNFT.sol";
 import {LibOneTxSwapFill} from "./helpers/LibOneTxSwapFill.sol";
 
 /**
@@ -494,18 +494,18 @@ contract SwapToRepayIntentFacetTest is SetupTest {
         assertEq(claimAmt, LOAN_COLLATERAL - lot, "the borrower can claim every unit the fill did not take");
         assertEq(collateralAsset.balanceOf(borrowerVault), LOAN_COLLATERAL - lot, "and it is all in the vault");
         assertEq(_lien(), LOAN_COLLATERAL - lot, "liened exactly once, for exactly the claim");
-        assertEq(uint256(_borrowerLock()), uint256(LibERC721.LockReason.None), "the fill releases the position lock");
+        assertEq(uint256(_borrowerLock()), uint256(LibPositionNFT.RouteReason.None), "the fill releases the position lock");
     }
 
-    function _borrowerLock() internal view returns (LibERC721.LockReason) {
-        return VaipakamNFTFacet(address(diamond)).positionLock(LOAN_ID * 2);
+    function _borrowerLock() internal view returns (LibPositionNFT.RouteReason) {
+        return VaipakamNFTFacet(address(diamond)).positionRoute(LOAN_ID * 2);
     }
 
     /// @dev Rewrite the borrower position's stored lock reason in place. The
     ///      `locks` mapping's slot is found by scanning the ERC-7201 namespace
     ///      for the entry currently holding the live reason (asserted unique),
     ///      so the helper does not hard-code the struct's field offset.
-    function _overwriteBorrowerLock(LibERC721.LockReason to) internal {
+    function _overwriteBorrowerLock(LibPositionNFT.RouteReason to) internal {
         bytes32 base = 0xffc14e8dfa13b7ea215d815404bdf757f7212df791bac9ce070c8e8dcd574f00;
         uint256 current = uint256(_borrowerLock());
         require(current != 0, "helper needs a live lock to locate the slot");
@@ -530,38 +530,46 @@ contract SwapToRepayIntentFacetTest is SetupTest {
         SwapToRepayIntentFacet.FusionOrderParams memory params = _armHappyCommit();
         vm.prank(borrowerEoa);
         SwapToRepayIntentFacet(address(diamond)).commitSwapToRepayIntent(LOAN_ID, params);
-        _overwriteBorrowerLock(LibERC721.LockReason.PrepayCollateralListing);
+        _overwriteBorrowerLock(LibPositionNFT.RouteReason.PrepayCollateralListing);
 
         vm.warp(params.deadline + 1);
         vm.prank(borrowerEoa);
         SwapToRepayIntentFacet(address(diamond)).cancelSwapToRepayIntent(LOAN_ID);
-        assertEq(uint256(_borrowerLock()), uint256(LibERC721.LockReason.PrepayCollateralListing), "the listing keeps its lock");
+        assertEq(uint256(_borrowerLock()), uint256(LibPositionNFT.RouteReason.PrepayCollateralListing), "the listing keeps its lock");
     }
 
-    /// @dev Same cohort, settled by a fill instead of a cancel.
-    function test_Fill_PreLockCommit_LeavesAnotherFlowsLockInPlace() public {
+    /// @dev #3205 — a commit whose route another flow now holds is dead and
+    ///      can never fill. (Before #3205 this cohort was a pre-lock commit
+    ///      carried across an in-place refresh and its fill was tolerated; #3205
+    ///      reaches a chain only by fresh deploy, and every commit opens its
+    ///      route, so a route that is not the commit's means the position moved
+    ///      and another flow replaced the dead route — the fill must refuse,
+    ///      or the old holder's order would sell the new holder's collateral.)
+    function test_Fill_RefusedWhenAnotherFlowHoldsTheRoute() public {
         SwapToRepayIntentFacet.FusionOrderParams memory params = _armHappyCommit();
         vm.recordLogs();
         vm.prank(borrowerEoa);
         SwapToRepayIntentFacet(address(diamond)).commitSwapToRepayIntent(LOAN_ID, params);
         bytes32 orderHash = _committedOrderHash();
         uint256 lot = SwapToRepayIntentFacet(address(diamond)).getIntentCommit(LOAN_ID).makerAmount;
-        _overwriteBorrowerLock(LibERC721.LockReason.PrepayCollateralListing);
+        _overwriteBorrowerLock(LibPositionNFT.RouteReason.PrepayCollateralListing);
 
-        // #1566 slice 3 — the whole fill in ONE call, as the pinned LOP runs it
-        // (LibOneTxSwapFill): the pre-hook takes the fill lock and records the
-        // lot leaving the vault, the LOP moves it from the vault (the order's
-        // maker, S3e) to the taker and the taker's principal in, and the
-        // post-hook releases the lock and settles. Two separate top-level
-        // calls cannot carry the lock between the hooks.
         principalAsset.mint(address(fusionLOP), params.takerAmount);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LibPositionNFT.RouteNotOpen.selector,
+                LOAN_ID * 2,
+                LibPositionNFT.RouteReason.SwapToRepayIntent,
+                LibPositionNFT.RouteReason.PrepayCollateralListing
+            )
+        );
         LibOneTxSwapFill.fill(
             address(fusionLOP), address(diamond), borrowerVault, orderHash, address(collateralAsset), lot,
             address(0xF111), address(principalAsset), params.takerAmount
         );
 
-        assertEq(uint256(LoanFacet(address(diamond)).getLoanDetails(LOAN_ID).status), uint256(LibVaipakam.LoanStatus.Repaid), "precondition: the fill settled");
-        assertEq(uint256(_borrowerLock()), uint256(LibERC721.LockReason.PrepayCollateralListing), "the listing keeps its lock");
+        assertEq(uint256(LoanFacet(address(diamond)).getLoanDetails(LOAN_ID).status), uint256(LibVaipakam.LoanStatus.Active), "the loan is untouched");
+        assertEq(uint256(_borrowerLock()), uint256(LibPositionNFT.RouteReason.PrepayCollateralListing), "the listing keeps its lock");
     }
 
     /// @dev The borrower position is locked for the life of the commit, so the
@@ -570,15 +578,15 @@ contract SwapToRepayIntentFacetTest is SetupTest {
     ///      releases it.
     function test_Commit_LocksTheBorrowerPositionUntilCancel() public {
         SwapToRepayIntentFacet.FusionOrderParams memory params = _armHappyCommit();
-        assertEq(uint256(_borrowerLock()), uint256(LibERC721.LockReason.None), "precondition: unlocked");
+        assertEq(uint256(_borrowerLock()), uint256(LibPositionNFT.RouteReason.None), "precondition: unlocked");
         vm.prank(borrowerEoa);
         SwapToRepayIntentFacet(address(diamond)).commitSwapToRepayIntent(LOAN_ID, params);
-        assertEq(uint256(_borrowerLock()), uint256(LibERC721.LockReason.SwapToRepayIntent), "locked for the auction");
+        assertEq(uint256(_borrowerLock()), uint256(LibPositionNFT.RouteReason.SwapToRepayIntent), "locked for the auction");
 
         vm.warp(params.deadline + 1);
         vm.prank(borrowerEoa);
         SwapToRepayIntentFacet(address(diamond)).cancelSwapToRepayIntent(LOAN_ID);
-        assertEq(uint256(_borrowerLock()), uint256(LibERC721.LockReason.None), "released on cancel");
+        assertEq(uint256(_borrowerLock()), uint256(LibPositionNFT.RouteReason.None), "released on cancel");
     }
 
     /// @dev Codex #2341 r3 — with coarse collateral the smallest lot that

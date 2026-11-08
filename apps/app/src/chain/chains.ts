@@ -11,6 +11,7 @@
  * app adds fields when a page needs them, not before.
  */
 import { getDeployment } from '@vaipakam/contracts/deployments';
+import { positionNftSurface, type PositionNftSurface } from '@vaipakam/lib/positionNft';
 import { isMainnetChain, rpcEndpointsFor, wsUrlFor, type RpcEndpoint } from '../lib/endpoints';
 
 /** Display metadata. Where a chain is READ from (its RPC and optional
@@ -91,6 +92,9 @@ export interface SupportedChain {
   testnet: boolean;
   nativeGasSymbol: string;
   diamondAddress: `0x${string}`;
+  /** #3205 — where this chain's position NFTs live, and in which mode. Read
+   *  through `contracts/positionNft`. */
+  positionNft: PositionNftSurface;
   deployBlock: number;
 }
 
@@ -115,6 +119,7 @@ export const SUPPORTED_CHAINS: readonly SupportedChain[] = CHAIN_META.flatMap(
         testnet: !isMainnetChain(meta.chainId),
         nativeGasSymbol: meta.nativeGasSymbol,
         diamondAddress: deployment.diamond as `0x${string}`,
+        positionNft: positionNftSurface(deployment),
         deployBlock: deployment.deployBlock ?? 0,
       },
     ];

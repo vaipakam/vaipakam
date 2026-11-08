@@ -8,7 +8,7 @@ import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibLoanClock} from "../libraries/LibLoanClock.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibServiceCapacity} from "../libraries/LibServiceCapacity.sol";
-import {LibERC721} from "../libraries/LibERC721.sol";
+import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibDepositoryLedger} from "../libraries/LibDepositoryLedger.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
@@ -616,7 +616,7 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
         if (loan.periodicInterestCadence != LibVaipakam.PeriodicInterestCadence.None) {
             revert PeriodicCadenceMustSettleFirst();
         }
-        if (LibERC721.ownerOf(loan.borrowerTokenId) != msg.sender) revert NotBorrowerNftOwner();
+        if (LibPositionNFT.ownerOf(loan.borrowerTokenId) != msg.sender) revert NotBorrowerNftOwner();
         address asset = loan.principalAsset;
         LibFacet.requireAssetNotPaused(asset);
         // Wallet -> the caller's own vault through the protocol chokepoint,
@@ -857,8 +857,8 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
         if (keeperActed && !s.protocolCfg.cfgAutoExtendEnabled) revert AutoExtendDisabled();
         if (keeperActed) LibServiceCapacity.chargeKeeper(); // #1219 — one keeper action
         LibVaipakam._assertNotSanctioned(msg.sender);
-        address borrowerNftOwner = LibERC721.ownerOf(loan.borrowerTokenId);
-        address lenderNftOwner = LibERC721.ownerOf(loan.lenderTokenId);
+        address borrowerNftOwner = LibPositionNFT.ownerOf(loan.borrowerTokenId);
+        address lenderNftOwner = LibPositionNFT.ownerOf(loan.lenderTokenId);
         LibVaipakam._assertNotSanctioned(borrowerNftOwner);
         LibVaipakam._assertNotSanctioned(lenderNftOwner);
 
@@ -1258,7 +1258,7 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
         // for a burned NFT (terminal claim path burns the position
         // NFT). Read the storage slot directly so the reader returns
         // disabled-caps cleanly instead of bubbling a revert.
-        address current = LibERC721._ownerOfRaw(loan.borrowerTokenId);
+        address current = LibPositionNFT.holderOrZero(loan.borrowerTokenId);
         return current != address(0) && LibProtectedAccount.manager(current) == setter;
     }
 
@@ -1267,7 +1267,7 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
         address setter
     ) internal view returns (bool) {
         if (setter == address(0)) return true;
-        address current = LibERC721._ownerOfRaw(loan.lenderTokenId);
+        address current = LibPositionNFT.holderOrZero(loan.lenderTokenId);
         return current != address(0) && LibProtectedAccount.manager(current) == setter;
     }
 }

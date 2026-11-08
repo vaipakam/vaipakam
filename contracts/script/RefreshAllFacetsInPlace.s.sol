@@ -298,6 +298,23 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
     ///         {_requireSlice3Diamond}.
     error PredatesSlice3FillLock(address diamond);
 
+    /// @notice #3205 - the target Diamond predates the PositionNFT core: its
+    ///         position owners live in Diamond storage, which no refresh can
+    ///         move into the standalone contract. Fresh deploy only.
+    error PredatesPositionNFT(address diamond);
+
+    /// @dev #3205 - refuse a Diamond that does not route
+    ///      `VaipakamNFTFacet.positionNFT`, or routes it with no core set:
+    ///      every refreshed holder read would revert against an unset core
+    ///      while the old owners stay unreadable in Diamond storage. Called
+    ///      before anything is deployed, so a refused run sends nothing.
+    function _requirePositionNFTDiamond(address diamond) internal view {
+        if (
+            IDiamondLoupe(diamond).facetAddress(VaipakamNFTFacet.positionNFT.selector) == address(0)
+                || VaipakamNFTFacet(diamond).positionNFT() == address(0)
+        ) revert PredatesPositionNFT(diamond);
+    }
+
     /// @notice #3204 - the target Diamond predates the VaultBeacon: its vaults
     ///         are per-vault UUPS proxies, which no in-place refresh can turn
     ///         into beacon proxies. Fresh deploy only (decision O1 = A).
@@ -492,6 +509,7 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         );
         _requireSlice3Diamond(diamond);
         _requireVaultBeaconDiamond(diamond);
+        _requirePositionNFTDiamond(diamond);
         _requireNoOpenErc1155RentalAcross902(diamond);
         _requireNoOpenLoanAcrossInterestLedger(diamond);
         // The per-token tracked vault ledger is fresh-deploy only; see

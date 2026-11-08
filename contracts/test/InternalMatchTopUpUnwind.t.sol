@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
+
 import {SetupTest} from "./SetupTest.t.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet.sol";
@@ -100,16 +102,8 @@ contract InternalMatchTopUpUnwindTest is SetupTest {
         l.borrowerTokenId = id * 2;
         l.lenderTokenId = id * 2 + 1;
         TestMutatorFacet(address(diamond)).scaffoldActiveLoan(id, l);
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(IERC721.ownerOf.selector, id * 2),
-            abi.encode(borrower_)
-        );
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(IERC721.ownerOf.selector, id * 2 + 1),
-            abi.encode(lender_)
-        );
+        LibTestPositionNFT.mockHolder(address(diamond), id * 2, borrower_);
+        LibTestPositionNFT.mockHolder(address(diamond), id * 2 + 1, lender_);
 
         address bVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(borrower_);
         ERC20Mock(collateral).mint(bVault, collateralAmt);
@@ -244,11 +238,7 @@ contract InternalMatchTopUpUnwindTest is SetupTest {
 
     function _mockBorrowerNftHolder(uint256 loanId, address holder) internal {
         uint256 tokenId = _getLoan(loanId).borrowerTokenId;
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(IERC721.ownerOf.selector, tokenId),
-            abi.encode(holder)
-        );
+        LibTestPositionNFT.mockHolder(address(diamond), tokenId, holder);
         vm.mockCall(
             address(diamond),
             abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector),
@@ -256,7 +246,7 @@ contract InternalMatchTopUpUnwindTest is SetupTest {
         );
         vm.mockCall(
             address(diamond),
-            abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector),
+            abi.encodeWithSelector(VaipakamNFTFacet.retirePosition.selector),
             ""
         );
     }

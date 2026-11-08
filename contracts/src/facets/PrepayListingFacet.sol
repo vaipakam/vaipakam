@@ -10,7 +10,7 @@ import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
 import {LibPrepayCleanup} from "../libraries/LibPrepayCleanup.sol";
 import {LibReentrancyGuard, DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {LibCollateralSettlement} from "../libraries/LibCollateralSettlement.sol";
-import {LibERC721} from "../libraries/LibERC721.sol";
+import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
 import {LibLenderYieldFeeHost} from "../libraries/LibLenderYieldFeeHost.sol";
 import {LibCloseoutFreeze} from "../libraries/LibCloseoutFreeze.sol";
 import {LibSettlement} from "../libraries/LibSettlement.sol";
@@ -140,7 +140,7 @@ contract PrepayListingFacet is
         // holder is not a sale recipient: its share is deposited into the
         // lender's vault behind a claim row, and the claim is screened
         // instead, so a flagged lender never blocks the sale (#2876).
-        ctx.borrowerNftOwner = VaipakamNFTFacet(address(this)).ownerOf(loan.borrowerTokenId);
+        ctx.borrowerNftOwner = LibPositionNFT.ownerOf(loan.borrowerTokenId);
 
         // #306 architectural fix — borrower's per-user vault.
         // The diamond's `NFTPrepayListingFacet.postPrepayListing`
@@ -289,7 +289,7 @@ contract PrepayListingFacet is
             // `LibERC721._unlock` in `_settleLoanFromParallelSale`.
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
-                    VaipakamNFTFacet.burnNFT.selector,
+                    VaipakamNFTFacet.retirePosition.selector,
                     offerRow.positionTokenId
                 ),
                 NFTBurnFailed.selector
@@ -558,15 +558,15 @@ contract PrepayListingFacet is
         // #1832 — terminal seam of the lifetime interest counter.
         LibMetricsHooks.onInterestPaid(loan, plan.interest + plan.lateFee);
 
-        address lender = LibERC721.ownerOf(loan.lenderTokenId);
-        address borrower = LibERC721.ownerOf(loan.borrowerTokenId);
+        address lender = LibPositionNFT.ownerOf(loan.lenderTokenId);
+        address borrower = LibPositionNFT.ownerOf(loan.borrowerTokenId);
         LibVaipakam.assertRecipientNotBarred(borrower);
 
         (uint256 lenderExtra, uint256 treasuryNet) = LibLenderYieldFeeHost.resolve(
             loanId, lender, plan.interest + plan.lateFee, plan.treasuryShare
         );
 
-        _closeSoldLoan(loan);
+        _closeSoldLoan(loan, offerId == 0);
 
         // The sold collateral leaves the borrower's vault through the
         // marketplace conduit, not through a vault withdrawal route, so its
@@ -611,7 +611,12 @@ contract PrepayListingFacet is
     ///      Settled once the borrower side has nothing left
     ///      ({LibCloseoutFreeze.borrowerSideOpen}). Shared by both listing
     ///      types so their closes cannot drift.
-    function _closeSoldLoan(LibVaipakam.Loan storage loan) private {
+    /// @param routeBound True for a loan-keyed collateral listing, which
+    ///        always opens the borrower position's route when it is posted:
+    ///        its completion requires that route, unmoved (#3205). A
+    ///        parallel sale opens none, so it completes the route only if one
+    ///        of its reason happens to be open.
+    function _closeSoldLoan(LibVaipakam.Loan storage loan, bool routeBound) private {
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
                 EncumbranceMutateFacet.terminalize.selector,
@@ -621,7 +626,11 @@ contract PrepayListingFacet is
             ),
             bytes4(0)
         );
-        LibERC721._unlock(loan.borrowerTokenId);
+        if (routeBound) {
+            LibPositionNFT.completeRoute(loan.borrowerTokenId, LibPositionNFT.RouteReason.PrepayCollateralListing);
+        } else {
+            LibPositionNFT.completeRouteIfHeldBy(loan.borrowerTokenId, LibPositionNFT.RouteReason.PrepayCollateralListing);
+        }
         _markPositionRepaid(loan.borrowerTokenId, loan.id);
         _markPositionRepaid(loan.lenderTokenId, loan.id);
         // #1067 — DURABLE terminal reward close: a sale is a proper close,

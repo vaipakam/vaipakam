@@ -160,6 +160,7 @@ contract RedeployFacets is Script {
         // #1566 slice 3 - and one from before the fill lock; see {_requireSlice3Diamond}.
         _requireSlice3Diamond(diamond);
         _requireVaultBeaconDiamond(diamond);
+        _requirePositionNFTDiamond(diamond);
         // #666 - and one whose OracleFacet cannot answer the fallback's
         // price-status read; see {_requireOraclePriceStatus}.
         _requireOraclePriceStatus(diamond);
@@ -861,6 +862,23 @@ contract RedeployFacets is Script {
                 FallbackCustodyFacet.disposeFallbackCustody.selector
             ) == address(0)
         ) revert PredatesVaultHeldFallbackCustody(diamond);
+    }
+
+    /// @notice #3205 - the target Diamond predates the PositionNFT core: its
+    ///         position owners live in Diamond storage, which no refresh can
+    ///         move into the standalone contract. Fresh deploy only.
+    error PredatesPositionNFT(address diamond);
+
+    /// @dev #3205 - refuse a Diamond that does not route
+    ///      `VaipakamNFTFacet.positionNFT`, or routes it with no core set:
+    ///      every refreshed holder read would revert against an unset core
+    ///      while the old owners stay unreadable in Diamond storage. Called
+    ///      before anything is deployed, so a refused run sends nothing.
+    function _requirePositionNFTDiamond(address diamond) internal view {
+        if (
+            IDiamondLoupe(diamond).facetAddress(VaipakamNFTFacet.positionNFT.selector) == address(0)
+                || VaipakamNFTFacet(diamond).positionNFT() == address(0)
+        ) revert PredatesPositionNFT(diamond);
     }
 
     /// @notice #3204 - the target Diamond predates the VaultBeacon: its vaults

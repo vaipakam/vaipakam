@@ -22,7 +22,6 @@
  * so both stay with the caller.
  */
 import type { PublicClient } from 'viem';
-import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import { proRataInterestSeconds } from '@vaipakam/lib/loanClock';
 import { copy } from '../content/copy';
 import { captureTxError } from '../lib/errors';
@@ -43,6 +42,7 @@ import { discoverRefinanceRequest } from './refinanceDiscovery';
 import { liveRefinanceVerdict } from './refinanceInterlock';
 import { LOCK_PRECLOSE_OFFSET } from './offsetPending';
 import { readFeeEntitlement } from './tariff';
+import { readPositionRouteOn } from '../contracts/positionNft';
 
 export type CloseOutAction = 'repay' | 'preclose';
 
@@ -190,12 +190,7 @@ export async function offsetLockRefusal(
 ): Promise<string | null> {
   if (loan.assetType !== AssetType.ERC20) return null;
   const lock = Number(
-    await ctx.publicClient.readContract({
-      address: ctx.diamond,
-      abi: DIAMOND_ABI_VIEM,
-      functionName: 'positionLock',
-      args: [BigInt(loan.borrowerTokenId)],
-    }),
+    await readPositionRouteOn(ctx.publicClient, ctx.diamond, BigInt(loan.borrowerTokenId)),
   );
   return lock === LOCK_PRECLOSE_OFFSET ? copy.offset.blockedOtherPaths : null;
 }

@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {SetupTest} from "./SetupTest.t.sol";
+import {LibPositionNFT} from "../src/libraries/LibPositionNFT.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibAccessControl} from "../src/libraries/LibAccessControl.sol";
 import {PrepayListingFacet} from "../src/facets/PrepayListingFacet.sol";
@@ -196,6 +197,9 @@ contract PrepayListingFacetTest is SetupTest {
         TestMutatorFacet(address(diamond)).setLoan(TEST_LOAN_ID, loan);
         TestMutatorFacet(address(diamond)).mintNFTRaw(_scLender, loan.lenderTokenId);
         TestMutatorFacet(address(diamond)).mintNFTRaw(_scBorrower, loan.borrowerTokenId);
+        // #3205 — posting a loan-keyed listing opens the borrower position's
+        // route; its sale completes only through that route, unmoved.
+        TestMutatorFacet(address(diamond)).lockNFTRaw(loan.borrowerTokenId, LibPositionNFT.RouteReason.PrepayCollateralListing);
         TestMutatorFacet(address(diamond)).setTrackedHoldingRaw(_scBorrower, nftAsset, 5, 6);
 
         IVaipakamPrepayContext.PrepayContext memory pctx =
@@ -233,6 +237,9 @@ contract PrepayListingFacetTest is SetupTest {
         TestMutatorFacet(address(diamond)).setLoan(id, loan);
         TestMutatorFacet(address(diamond)).mintNFTRaw(_scLender, loan.lenderTokenId);
         TestMutatorFacet(address(diamond)).mintNFTRaw(_scBorrower, loan.borrowerTokenId);
+        // #3205 — posting a loan-keyed listing opens the borrower position's
+        // route; its sale completes only through that route, unmoved.
+        TestMutatorFacet(address(diamond)).lockNFTRaw(loan.borrowerTokenId, LibPositionNFT.RouteReason.PrepayCollateralListing);
     }
 
     function _readLoan(uint256 id) internal view returns (LibVaipakam.Loan memory loan) {

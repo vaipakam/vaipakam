@@ -27,6 +27,8 @@
  */
 import { toFunctionSelector, type Address, type PublicClient } from 'viem';
 import { isRevert, revertErrorName } from './contractRevert';
+import { POSITION_ROUTE, type PositionNftSurface } from './positionNft.mjs';
+import { readPositionRoute } from './positionNftReads';
 
 export type SaleListingHoldState =
   | 'none'
@@ -35,9 +37,9 @@ export type SaleListingHoldState =
   | 'accepted'
   | 'unknown';
 
-/** LibERC721.LockReason.EarlyWithdrawalSale — the lender NFT's lock while a
- *  sale lifecycle (listing OR accepted-awaiting-completion) is in flight. */
-export const LOCK_EARLY_WITHDRAWAL_SALE = 2;
+/** The EarlyWithdrawalSale route on the lender NFT while a sale lifecycle
+ *  (listing OR accepted-awaiting-completion) is in flight. */
+export const LOCK_EARLY_WITHDRAWAL_SALE = POSITION_ROUTE.EarlyWithdrawalSale;
 
 /** The PR-A bounded-listing selector — the positive facet-version signal.
  *  The PRE-refresh Diamond routes the same one-argument teardown selector
@@ -52,17 +54,10 @@ export const BOUNDED_LISTING_SELECTOR = toFunctionSelector(
   'function createLoanSaleOffer(uint256,uint256,bool,uint64)',
 );
 
-/** The two reads the probe makes, with the two errors it classifies. Inline
- *  so this module carries no generated ABI; any other revert is `unknown`
- *  whether or not it decodes. */
+/** The teardown probe, with the two errors it classifies. Inline so this
+ *  module carries no generated ABI; any other revert is `unknown` whether or
+ *  not it decodes. The route read goes through `positionNftReads` (#3205). */
 const SALE_HOLD_ABI = [
-  {
-    type: 'function',
-    name: 'positionLock',
-    stateMutability: 'view',
-    inputs: [{ name: 'tokenId', type: 'uint256' }],
-    outputs: [{ name: '', type: 'uint8' }],
-  },
   {
     type: 'function',
     name: 'teardownStaleSaleListing',
@@ -111,7 +106,9 @@ export function probeErrorName(err: unknown): string | null {
  *  cannot read for a network blip it might retry past. */
 export async function probeSaleHoldLive(
   client: Pick<PublicClient, 'simulateContract' | 'readContract'>,
-  diamondAddress: Address,
+  /** The chain's position-NFT surface (#3205): the route is read from its
+   *  Diamond under the chain's mode, and the teardown simulated there. */
+  surface: PositionNftSurface,
   loanId: number | bigint,
   /** The loan's lender position token id, '' when unknown (the lock then
    *  cannot rule a listing out, so the probe simulates). */
@@ -121,23 +118,16 @@ export async function probeSaleHoldLive(
    *  judge this beside other reads from the same block. */
   blockNumber?: bigint,
 ): Promise<SaleListingHoldState> {
-  // LOCK FIRST. The lender position NFT carries the EarlyWithdrawalSale lock
-  // for the WHOLE listing lifecycle — stamped at creation, released only by
-  // the teardown or the completion — so an unlocked position PROVES there is
+  // ROUTE FIRST. The lender position NFT carries the EarlyWithdrawalSale
+  // route for the WHOLE listing lifecycle — opened at creation, closed only by
+  // the teardown or the completion — so a position without it PROVES there is
   // nothing to classify, without simulating anything. Most loans were never
   // listed, so this one read answers the common case.
+  const diamondAddress: Address = surface.diamond;
   let saleLocked: boolean | undefined;
   if (lenderTokenId !== '') {
     saleLocked =
-      Number(
-        await client.readContract({
-          address: diamondAddress,
-          abi: SALE_HOLD_ABI,
-          functionName: 'positionLock',
-          args: [BigInt(lenderTokenId)],
-          blockNumber,
-        }),
-      ) === LOCK_EARLY_WITHDRAWAL_SALE;
+      (await readPositionRoute(client, surface, BigInt(lenderTokenId), blockNumber)) === LOCK_EARLY_WITHDRAWAL_SALE;
     if (!saleLocked) return 'none';
   }
   try {

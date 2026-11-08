@@ -3,6 +3,7 @@
  * executor's intersection of both sides' limits, the setter arguments per
  * side, the funding cover, and the reserve discovery and reads.
  */
+import { DEPLOYMENTS } from '@vaipakam/contracts/deployments';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { BaseError, ContractFunctionRevertedError, type Address, type PublicClient } from 'viem';
 
@@ -43,7 +44,7 @@ import {
   type ExtendCaps,
 } from './autoExtend';
 
-const DIAMOND = '0x000000000000000000000000000000000000d1a0' as Address;
+const DIAMOND = DEPLOYMENTS[84532]!.diamond as Address; // a legacy-mode record (#3205)
 const ME = '0x00000000000000000000000000000000000000aA' as Address;
 const OTHER = '0x00000000000000000000000000000000000000bb' as Address;
 const USDC = '0x0000000000000000000000000000000000000001' as Address;

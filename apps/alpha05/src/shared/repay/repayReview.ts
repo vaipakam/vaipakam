@@ -14,7 +14,7 @@
  * moved forward and the review reopens with the new figure.
  */
 import { erc20Abi, type Abi, type PublicClient } from 'viem';
-import { LoanFacetABI, RefinanceFacetABI, VaipakamNFTFacetABI } from '@vaipakam/contracts/abis';
+import { LoanFacetABI, RefinanceFacetABI } from '@vaipakam/contracts/abis';
 import type { OwnStateClient } from '../../chain/ownRail';
 import type { CopyAccess } from '../copy/useCopy';
 import { repayVerdict, STATUS_FALLBACK_PENDING } from '../eligibility/repay';
@@ -24,12 +24,12 @@ import { allowanceSteps } from '../tx/approval';
 import { putBackPrompts } from './approvalCap';
 import { tokenAcceptsApproval } from '../offers/reads';
 import { readPayoff, readPayoffAt, type Payoff } from './payoff';
+import { positionRouteCallFor, readLiveHolderOrNull } from '../positions/positionNft';
 import { answerOrNull } from '../reads/answer';
 
 type Hex = `0x${string}`;
 
 const LOAN = LoanFacetABI as Abi;
-const NFT = VaipakamNFTFacetABI as Abi;
 const REFINANCE = RefinanceFacetABI as Abi;
 
 /** A kept moment closer than this to the chain's time is moved forward. */
@@ -73,12 +73,12 @@ export interface RepayReview {
 export async function readLoanFacts(c: PublicClient, diamond: Hex, loanId: bigint) {
   const loan = (await c.readContract({ address: diamond, abi: LOAN, functionName: 'getLoanDetails', args: [loanId] })) as LoanDetails;
   const [lenderHolder, borrowerHolder, dates, borrowerLock, refinance] = await Promise.all([
-    answerOrNull(c.readContract({ address: diamond, abi: NFT, functionName: 'ownerOf', args: [loan.lenderTokenId] }) as Promise<Hex>),
-    answerOrNull(c.readContract({ address: diamond, abi: NFT, functionName: 'ownerOf', args: [loan.borrowerTokenId] }) as Promise<Hex>),
+    readLiveHolderOrNull(c, diamond, loan.lenderTokenId),
+    readLiveHolderOrNull(c, diamond, loan.borrowerTokenId),
     loan.status === STATUS_FALLBACK_PENDING
       ? null
       : answerOrNull(c.readContract({ address: diamond, abi: LOAN, functionName: 'getLoanDeadlines', args: [loanId] }) as Promise<readonly [bigint, bigint, bigint, bigint]>),
-    answerOrNull(c.readContract({ address: diamond, abi: NFT, functionName: 'positionLock', args: [loan.borrowerTokenId] }).then(Number)),
+    answerOrNull(c.readContract(positionRouteCallFor(diamond, loan.borrowerTokenId)).then(Number)),
     answerOrNull(c.readContract({ address: diamond, abi: REFINANCE, functionName: 'getRefinanceRequest', args: [loanId] }) as Promise<readonly [bigint, boolean]>),
   ]);
   return {

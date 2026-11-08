@@ -1941,3 +1941,21 @@ NOT covered live: the banned-adoption outcome (a sanctions-listed source), the u
 **Where.** `src/lib/registerServiceWorker.test.ts`.
 
 **Limit, stated.** The check runs only when the genuine page loads. A foreign worker that answers page loads itself keeps the genuine page from running, so it is removed by the host's emergency `Clear-Site-Data` response instead (`docs/ops/IncidentRunbook.md` section 9).
+
+<a id="cov-position-nft-modes"></a>
+## Position NFTs read per chain mode (#3205)
+
+**Feature.** PR #3318 moved the position NFTs out of the Diamond into a standalone `PositionNFT`. The app reads a chain's mode from its deployment record through `src/contracts/positionNft.ts`: with `positionNFT` listed, owners, approvals and transfers go to that contract, an open route (offset, sale listing, collateral listing, swap-to-repay auction) no longer blocks a transfer, and a closed position's token is retired rather than burned; without it, the pre-#3205 Diamond answers through a frozen fragment kept beside the resolver. The copy follows the mode: on a standalone chain it says moving the NFT cancels the listing or offset, and the Protection page shows the holder lock (lock, ask to unlock, cancel, apply) instead of the queued NFT transfers.
+
+**Tier.** CI-Anvil for the standalone mode (the fixture deploys the current contracts, so specs 25, 26, 40, 41, 42 and 44 read `positionRoute` and the PositionNFT); unit for the resolver, the frozen fragment and the Terms gate.
+
+**Limit, stated.** The legacy branch runs only against the current testnets, so it is checked live, not on CI. The holder-lock card on the Protection page has no spec yet. On a standalone chain it renders for the connected wallet at the page root, whether protected mode is on or off, because the lock outlives protected mode (#3318 Codex r3). The chain exposes no view saying whether a route's token has moved since the route opened (#3323), so the copy states the rule and cannot say whether a particular route is already dead. The legacy branch is removed by #3321.
+
+<a id="cov-moved-position-flows"></a>
+## Moved-position flows end (#3205)
+
+**Feature.** A position NFT's transfer never blocks; a flow bound to a position completes only if its token has not moved since the flow opened. The indexer derives that from the Transfer logs it scans (`apps/indexer/src/positionFlowMoves.ts`, migration 0085) and publishes it per flow: `positionFlow` on every offer route, `positionMovedSinceOpened` on the loan route's collateral listing and swap order, and `positionFlows` on `/loans/:id`. The app reads it through `src/data/positionFlowMoved.ts`. The sale-listing card shows the listing as ended and offers the cancel to any viewer (anyone may cancel a moved sale vehicle). The offset card ends the offset, drops the funding warnings and the re-approve action, and cancels the offer the indexer names when this device has no marker. The refinance card ends a request the chain no longer counts as standing (`getRefinanceRequest`), naming the move when the indexer reports one. The offer book, the marketplace and the offer deep link offer no accept for a moved offer and say why.
+
+**Tier.** Unit for the verdict helpers and the sale card's view rule; the indexer rule runs against the real migrated schema.
+
+**Limit, stated.** No spec moves a position NFT on the Anvil fixture, so the card and book wiring is not driven end to end. The verdict is the indexer's (the chain has no view of it yet, #3323): when the indexer does not answer, the sale and offset cards on a standalone-PositionNFT chain say the app cannot tell, and the book shows the row as before (the protocol still refuses the accept). The app has no collateral-listing or swap-order card, so those two verdicts are served but not yet shown.

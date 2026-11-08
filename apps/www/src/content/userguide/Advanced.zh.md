@@ -1938,7 +1938,7 @@ Positions 通过一个共享读取器读取与 Home 相同的持仓清单：`get
 
 ### Position：贷款如何读取
 
-页面读取 `getLoanDetails(loanId)`，并对出借人和借款人的仓位 NFT 调用 `ownerOf`；角色即钱包现在持有的代币。对进行中的贷款（Active 或 FallbackPending），读取 `getLoanDeadlines`（暂停补偿前当前期限的到期，展期或借款人转接会改写它、暂停补偿、到期、宽限结束），有付息周期时读取 `previewPeriodicSettle` 和 `getPeriodicInterestEnabled`，以及 `isLoanDefaultable` (+ `paused`, `sequencerHealthy`, `defaultKycAdmission`)、`calculateHealthFactor` 和 `calculateLTV`；对每笔贷款读取 `getLoanCollateralLien` 和 `isSaleVehicleLoan`。每次读取相互独立：失败的读取显示为未知，绝不显示为零，也不会用 `startTime` 和 `durationDays` 推算日期。
+页面读取 `getLoanDetails(loanId)` 以及出借人和借款人仓位 NFT 的持有人（在部署记录的 PositionNFT 合约上调用 `ownerOf`，#3205 之前的部署则在 Diamond 本身上调用）；角色即钱包现在持有的代币。对进行中的贷款（Active 或 FallbackPending），读取 `getLoanDeadlines`（暂停补偿前当前期限的到期，展期或借款人转接会改写它、暂停补偿、到期、宽限结束），有付息周期时读取 `previewPeriodicSettle` 和 `getPeriodicInterestEnabled`，以及 `isLoanDefaultable` (+ `paused`, `sequencerHealthy`, `defaultKycAdmission`)、`calculateHealthFactor` 和 `calculateLTV`；对每笔贷款读取 `getLoanCollateralLien` 和 `isSaleVehicleLoan`。每次读取相互独立：失败的读取显示为未知，绝不显示为零，也不会用 `startTime` 和 `durationDays` 推算日期。
 
 对有价格的贷款，它还读取 `getInternalMatchConfigBundle`。内部撮合开启时，贷款价值比处于其阈值到阈值加 `externalLiquidationPriorityWindowBps` 之间的贷款会保留给内部撮合，所有外部清算途径都会拒绝（`InternalMatchOnlyBand`），页面会说明这个区间。`loanInitiationFeeBpsAtInit` 为 0（费率被记录之前开立的贷款）显示为未记录，`treasuryFeeBpsAtInit` 为 0 显示为结算采用的 1% 旧费率。实物交付警告仅适用于 ERC-20 贷款：NFT 租赁没有抵押品，违约时租用方的使用权终止，预付租金扣除金库份额后付给出借人，缓冲金转入金库，页面会改为说明这一点。
 
@@ -1948,7 +1948,7 @@ Positions 通过一个共享读取器读取与 Home 相同的持仓清单：`get
 
 ### 全额还款：金额如何确定
 
-该操作遵循一条规则：对 Active 或 FallbackPending 的 ERC-20 贷款，`repayLoan` 提供给既不是 `loan.lender` 也不是 `ownerOf(lenderTokenId)` 的任何钱包（`LenderCannotRepayOwnLoan`）；Active 贷款过了实际宽限期结束时间后暂停（`RepaymentPastGracePeriod`），`positionLock(borrowerTokenId)` 为 `SwapToRepayIntent` 期间也暂停。出借人的出售挂单、再融资请求和全局暂停都不会暂停它。租赁暂不在此提供。
+该操作遵循一条规则：对 Active 或 FallbackPending 的 ERC-20 贷款，`repayLoan` 提供给既不是 `loan.lender` 也不是 `ownerOf(lenderTokenId)` 的任何钱包（`LenderCannotRepayOwnLoan`）；Active 贷款过了实际宽限期结束时间后暂停（`RepaymentPastGracePeriod`），借款人仓位的开放路径为 `SwapToRepayIntent` 期间也暂停（Diamond 上的 `positionRoute(borrowerTokenId)`，#3205 之前的部署则为 `positionLock(borrowerTokenId)`）。出借人的出售挂单、再融资请求和全局暂停都不会暂停它。租赁暂不在此提供。
 
 确认页在最新区块读取 `calculateRepaymentAmount(loanId)`，再把区块时间覆盖为 `min(now + 30 分钟, 宽限期结束)` 读取一次；同一请求还会读取其实际运行的区块时间，忽略覆盖的连接会被跳过。批准额恰好是第二个数字，打开钱包前会模拟调用；收据之后，从其 `LoanRepaid` 日志读取还款使贷款所处的状态（而非该区块的状态，同一区块中随后的领取可能已将其结清），根据 `Transfer` 日志计量付款，当 allowance 显示为批准额减去付款时，将其恢复为之前的值。高于该数字的 allowance（包括无限额度）同样会降到这个数字，因为 `repayLoan(loanId)` 不设上限也不设期限；之后的恢复会还原原来的较大值。
 

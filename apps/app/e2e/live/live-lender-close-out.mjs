@@ -75,6 +75,7 @@ import { splitBlocked } from './readOnlyFindings.mjs';
 import { decodeTxForComparison, expectedTx } from './refinanceExpected.mjs';
 import { createWritePlan } from './writePlan.mjs';
 import { readDefaultQuote } from './forcedSaleQuote.mjs';
+import { positionHolderReader, positionRouteReader } from './positionHolder.mjs';
 
 const SITE_URL = requireSiteUrl();
 const REFERENCE_SITE_URL = process.env.REFERENCE_SITE_URL ?? '';
@@ -248,6 +249,9 @@ console.log(`build: ${siteBundle} on both hosts`);
 const { pub } = clientsFor(CHAIN_ID);
 const read = (functionName, args = [], extra = {}) =>
   pub.readContract({ address: DIAMOND, abi: DIAMOND_ABI, functionName, args, ...extra });
+// #3205 — holders come from the chain's position-NFT contract, not the Diamond ABI.
+const readHolder = positionHolderReader(pub, CHAIN_ID);
+const readRoute = positionRouteReader(pub, CHAIN_ID);
 let loan;
 let lenderHolder;
 let enabledAdapters;
@@ -286,7 +290,7 @@ const LOCK_SALE = 2;
  * name.
  */
 async function lockWithholds(lenderTokenId, blockNumber) {
-  const lock = Number(await read('positionLock', [lenderTokenId], blockNumber === undefined ? {} : { blockNumber }));
+  const lock = await readRoute(lenderTokenId, blockNumber);
   if (lock === 0) return null;
   if (lock !== LOCK_SALE) return `the lender position is locked (LibERC721.LockReason ${lock}), a lifecycle this drive does not judge`;
   try {
@@ -310,7 +314,7 @@ async function lockWithholds(lenderTokenId, blockNumber) {
 let startupRoster;
 try {
   loan = await read('getLoanDetails', [LOAN_ID]);
-  lenderHolder = await read('ownerOf', [loan.lenderTokenId]);
+  lenderHolder = await readHolder(loan.lenderTokenId);
   const adapters = await read('getSwapAdapters');
   const disabled = await Promise.all(adapters.map((a) => read('isSwapAdapterDisabled', [a])));
   enabledAdapters = new Set(adapters.map((_, i) => i).filter((i) => disabled[i] === false));
@@ -449,7 +453,7 @@ async function eligibleAt(blockNumber) {
   ]);
   const fixed = loanR.value ?? loan;
   const [holderR, lockR, disabledR] = await Promise.all([
-    settle(read('ownerOf', [fixed.lenderTokenId], at)),
+    settle(readHolder(fixed.lenderTokenId, pinned)),
     settle(lockWithholds(fixed.lenderTokenId, pinned)),
     // One settled read per adapter, so a flag that answered still counts
     // when a sibling's does not.

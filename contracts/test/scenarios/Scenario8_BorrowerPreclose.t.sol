@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibTestPositionNFT} from "../helpers/LibTestPositionNFT.sol";
 import {Test} from "forge-std/Test.sol";
 import {LibTestVaultBeacon} from "../helpers/LibTestVaultBeacon.sol";
 import {VaipakamDiamond} from "../../src/VaipakamDiamond.sol";
@@ -260,7 +261,7 @@ contract Scenario8_BorrowerPreclose is Test {
         AdminFacet(address(diamond)).unpause();
 
         LibTestVaultBeacon.install(address(diamond), address(this));
-        VaipakamNFTFacet(address(diamond)).initializeNFT();
+        LibTestPositionNFT.install(address(diamond), address(this));
         AdminFacet(address(diamond)).setTreasury(address(diamond));
         AdminFacet(address(diamond)).setZeroExProxy(mockZeroExProxy);
         AdminFacet(address(diamond)).setallowanceTarget(mockZeroExProxy);
@@ -394,7 +395,7 @@ contract Scenario8_BorrowerPreclose is Test {
 
         // Mock cross-facet calls for vault withdraw (collateral release) and NFT operations
         MockVaultWithdraw.deliversAll(address(diamond));
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.retirePosition.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
 
