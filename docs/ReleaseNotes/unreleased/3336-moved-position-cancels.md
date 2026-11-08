@@ -7,7 +7,7 @@ Each of the three existing permissionless cancels now clears its route as soon a
 - The swap-to-repay order cancel works at once, before the order's deadline. Both fill hooks already refuse such an order.
 - The offer cancel now also treats a refinance request as dead once it is no longer its loan's recorded request on an unmoved position.
 
-None of these cancels moves the loan's own assets. The collateral under the loan's lien and a swap-to-repay lot stay where the loan holds them, and they follow the current holder at repay, claim or default. What a creator put in personally, such as a refinance request's fresh collateral, goes back to that creator through the same refund an ordinary cancel makes. The caller receives nothing. No selector, event or storage changed.
+None of these cancels releases the loan's own assets: the collateral stays under the loan's lien. The swap-to-repay cancel, like every teardown of that order, also moves the borrower side to the position's current holder, so the still-liened collateral follows that holder into their vault; the others leave it where it is until repay, claim or default. A moved offer or refinance request can also be cleared inside the usual short cancellation cooldown, since nothing can accept it any more. What a creator put in personally, such as a refinance request's fresh collateral, goes back to that creator through the same refund an ordinary cancel makes. The caller receives nothing. No selector, event or storage changed.
 
 This advances #3336. Still to come under that issue: the keeper sweep that finds moved positions and calls these cancels (the keeper thread's work, shipping disarmed), and hiding dead listings in the apps and indexer.
 

@@ -167,6 +167,7 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         // refund still goes to `offer.creator`, whose protected payout gate
         // queues it to the controller.
         address creator = offer.creator;
+        bool routeDead = _vehicleRouteDead(s, offerId);
         // #3205 — and anyone against an offset or sale vehicle whose route is
         // dead: the position it is bound to moved (or its route was closed),
         // so it can never complete, and only its creator could otherwise
@@ -175,7 +176,7 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         if (
             LibProtectedAccount.manager(creator) != msg.sender
                 && !LibVaipakam.isOfferExpired(offer)
-                && !_vehicleRouteDead(s, offerId)
+                && !routeDead
         ) {
             revert NotCreatorOrNotExpired(creator, offer.expiresAt);
         }
@@ -215,11 +216,16 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         // cannot grief anyone, and an offer whose expiry falls inside the
         // window would otherwise be "expired but uncleanable" until the
         // window separately elapsed.
+        //
+        // #3336 — a vehicle whose route is dead bypasses it for the same
+        // reason: no accept or match can bind it any more, so there is no
+        // race to protect, and the position's new holder should not wait.
         if (
             offer.amountFilled == 0
             && offer.createdAt != 0
             && block.timestamp < uint256(offer.createdAt) + LibVaipakam.MIN_OFFER_CANCEL_DELAY
             && !LibVaipakam.isOfferExpired(offer)
+            && !routeDead
         ) {
             revert CancelCooldownActive();
         }

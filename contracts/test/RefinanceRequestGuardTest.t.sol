@@ -669,6 +669,21 @@ contract RefinanceRequestGuardTest is SetupTest {
         assertEq(LibTestPositionNFT.core(address(diamond)).ownerOf(tokenId), newHolder, "the new holder keeps the position");
     }
 
+    /// #3336 — the cancel cooldown guards a race with an accept; a moved request
+    /// can never be accepted, so a third party may clear it inside the cooldown.
+    function test_movedRequest_thirdPartyCancel_insideTheCooldown() public {
+        uint256 loanId = _activeLoan();
+        uint256 offerId = _request(loanId, 0);
+        uint256 tokenId = LoanFacet(address(diamond)).getLoanDetails(loanId).borrowerTokenId;
+        address newHolder = makeAddr("cooldownNewHolder");
+        vm.prank(borrower);
+        LibTestPositionNFT.core(address(diamond)).transferFrom(borrower, newHolder, tokenId);
+
+        vm.prank(makeAddr("cooldownCleaner"));
+        OfferCancelFacet(address(diamond)).cancelOffer(offerId);
+        assertEq(OfferCancelFacet(address(diamond)).getOffer(offerId).creator, address(0), "the request is gone");
+    }
+
     /// The storage slot holding `loanId`'s indexed request, found by observing
     /// which slot the view reads that holds `offerId` (the Storage struct is
     /// too large to compute its field offset by hand).
