@@ -177,11 +177,12 @@ contract LoanLedgerHandler is Test {
         (bool ok, uint256 loanId) = _pickLoan(loanIdx);
         if (!ok) return;
         LibVaipakam.Loan memory pre = _loan(loanId);
+        bool wasActive = pre.status == LibVaipakam.LoanStatus.Active;
         Snap memory before = _snap();
         inner.precloseDirect(loanIdx);
         int256[2] memory dB = _book(loanId, before, "precloseDirect");
         _checkExactInterest(loanId, pre, dB);
-        if (_loan(loanId).status != LibVaipakam.LoanStatus.Active) precloseLanded++;
+        if (wasActive && _loan(loanId).status != LibVaipakam.LoanStatus.Active) precloseLanded++;
     }
 
     function repayPartial(uint256 loanIdx, uint256 amount) external {
@@ -220,10 +221,11 @@ contract LoanLedgerHandler is Test {
     function triggerLiquidation(uint256 loanIdx) external {
         (bool ok, uint256 loanId) = _pickLoan(loanIdx);
         if (!ok) return;
+        bool wasActive = _loan(loanId).status == LibVaipakam.LoanStatus.Active;
         Snap memory before = _snap();
         inner.triggerLiquidation(loanIdx);
         _book(loanId, before, "triggerLiquidation");
-        if (_loan(loanId).status != LibVaipakam.LoanStatus.Active) liquidationLanded++;
+        if (wasActive && _loan(loanId).status != LibVaipakam.LoanStatus.Active) liquidationLanded++;
     }
 
     /// @notice #3241: the lender sells the position into a standing lender offer. The buyer
