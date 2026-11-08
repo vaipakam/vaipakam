@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibTestOutflow} from "./helpers/LibTestOutflow.sol";
 import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
 import {SetupTest} from "./SetupTest.t.sol";
 import {Vm} from "forge-std/Vm.sol";
@@ -255,9 +256,7 @@ contract VPFIDiscountFacetTest is SetupTest {
 
         vm.recordLogs();
         vm.prank(address(diamond));
-        VaultFactoryFacet(address(diamond)).vaultWithdrawERC20(
-            borrower, address(mockERC20), borrower, amount
-        );
+        LibTestOutflow.withdrawERC20(address(diamond), borrower, address(mockERC20), borrower, amount);
         Vm.Log[] memory logs = vm.getRecordedLogs();
         bytes32 debitedTopic =
             keccak256("VaultVpfiDebited(address,uint256,address)");

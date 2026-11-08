@@ -127,6 +127,12 @@ asks, without the indexer subscribing to every vault address.
 | **Seller claim** | A recorded seller of THIS loan | `to` is a seller this vault recorded on the lien for `ref` when the position was assigned (§3.7), and the amount is at most that seller's recorded claim, which each payment debits |
 | **Backstop** | The configured backstop | The registry's backstop, drawn from the lien for `ref` and its backstop budget (§3.7) |
 | **Diamond (transient)** | Only inside one transaction, with an onward class declared | `to == diamond`, at most the lien for `ref` |
+| **Owner, allowlisted** (decided default, 2026-11-08) | A protected account's allowlisted address, or its controller once retired, under the payout gate | Stage A: not the vault itself and not the Diamond. Stage B moves the allowlist into the vault and checks it there |
+| **Claim custody** (decided default, 2026-11-08) | The STORED party of the receiving side of THAT loan, derived from loan state (the caller passes the side's position token, never a recipient). Used where a side cannot be consolidated to its holder: NFT rentals, FallbackPending, a Tier-2 sanctioned holder, a live listing | Stage A: a genuine vault only. Stage B adds the lien bound. The parked share is never credited to the depository ledger, so the stored party's own withdrawal cannot take it; the claim pays it on to the current holder (PositionHolder). Follow-up #3381 makes custody always follow the holder |
+| **Matched counterparty** (decided default, 2026-11-08) | An internal-match leg. The intent carries both loans (`ref` = the paying loan, `counterRef` = the receiving loan); layer 1 checks the match from both loans' state (the paying loan's borrower owns the paying vault; the asset is its collateral and the receiving loan's principal). The payee is the receiving loan's STORED lender's vault, where that loan's lender claim finds it | Stage A: a genuine vault. Stage B: a lien on the paying loan |
+| **Principal to borrower** (decided default, 2026-11-08) | A new loan's net principal. The loan and its position NFTs do not exist yet, so the payee is the accepted offer's borrower side in the same transaction (a borrower offer's creator, or a lender offer's acceptor as the accept recorded it in transient storage); no recipient argument | Stage A: a genuine vault. Stage B binds it to the signed accept terms |
+| **Consolidation** (decided default, 2026-11-08) | A transferred side's custody moving, under its lien, from the stored party's vault to the current holder's vault (#594) | The same holder binding as PositionHolder; booked as custody, not credited as free money |
+| **Liquidation buyer** (decided default, 2026-11-08) | The liquidator that paid the debt in this same transaction: `msg.sender` of the discounted liquidation, which no longer takes a free recipient | Stage A: not the vault and not the Diamond; Stage B bounds it by the loan's lien |
 
 ### 3.4 "A genuine Vaipakam vault", without asking the Diamond
 
@@ -600,13 +606,67 @@ These record the choices the build made where §3.9 left room. The coordinator a
 
 **Not automated yet.** Nothing backs the core's `executeUnlock` and `executeLockDelay` with a keeper pass. They are open entry points that only apply what the holder asked for once its delay has passed. They are recorded as a gap in `permissionless-steps.json`.
 
+### Build notes, part 2 Stage A: the vault's one door (2026-11-08)
+
+These record what Stage A built and every decided default it took, with the
+coordinator's approval of each.
+
+1. **Two stages** (decided default, 2026-11-08: reviewability of a
+   fund-moving diff; both stages before the fresh deploy). Stage A, this
+   build: the Diamond's one policy, the vault's two entries with every check
+   that needs no owner signature, the just-in-time grants, the ERC-1155
+   listing escrow, own-wallet-only withdrawals, payouts to vaults and the
+   decided defaults. Stage B (#3379): the owner-signed lien record, the
+   class budgets, the payee-receipt release (Q5), the seller-claim check, and
+   the app and keeper signing changes. The intent struct already carries
+   `ref`, the class, the position token and `counterRef`, so Stage B adds
+   checks, not an entry point. **No deploy happens before Stage B.**
+2. **A facet behind a self-call, not an inlined library.** RiskFacet,
+   PrecloseFacet, OfferMatchFacet, ForcedSaleFacet, AutoLifecycleFacet and
+   RefinanceFacet each had under 1.2 KB of EIP-170 headroom, and every call
+   site already reached the old withdraw entries through a self-call. The
+   policy is `VaultOutflowFacet`; `LibVaultOutflow`'s typed helpers are the
+   only callers, and a deploy-sanity test (`VaultOutflowDoorTest`) fails on
+   any other facet whose runtime code reaches the vault's doors.
+3. **The registry.** The vault reads the protocol registry (its
+   `requirePointer` for the treasury and backstop, fail-closed, and
+   `isMember` for the adapter and conduit sets) as an immutable of its code.
+   The registry is built by the security work stream; until it lands, tests
+   use a mock. The launch refuses (`vault registry seeded`) while the
+   registry is missing, names another treasury, or lacks a routed swap
+   adapter, the 1inch order protocol or, with a listing executor configured,
+   any conduit, so an empty registry can never silently refuse every fill.
+4. **Payouts go to vaults** (owner decision): claims, the active-loan lender
+   share and the new loan's principal are credited to the payee's vault as
+   free money, which the payee withdraws.
+5. **Decided defaults on the inventory's gaps:** the backstop's own vault
+   pays the lender-position holder as an ordinary holder payout; the
+   discounted liquidation pays `msg.sender` only (its recipient parameter is
+   gone); an internal-match leg is the matched-counterparty class above; the
+   backstop sweep pays only the registry's treasury (its free `to` is gone).
+6. **The VPFI yield fee** goes through the treasury class and fails closed.
+   No spec line lets a discount failure pass silently, so the known refusal
+   (VPFI pledged as collateral) is pre-checked from the same free-balance
+   rule the outflow applies and takes the direct-reduction fallback; any
+   other failure reverts.
+7. **The VPFI recycle pulls** (perk purchase, notification fee, the Full
+   tariff) are Diamond-transient with the reason RECYCLE.
+8. **Stated limits of Stage A's vault-side checks.** For the classes whose
+   payee the vault cannot yet bind (claim custody, matched counterparty,
+   principal to borrower) it checks only that the payee is a genuine vault;
+   for the owner-allowlisted, incentive, liquidation-buyer and seller-claim
+   classes only that the payee is neither the vault nor the Diamond. The
+   lien bound on the AMOUNT, for every protocol class, is Stage B's.
+
 ## 9. Order of work
 
 1. #3204's build (central vault code; it supplies the code-hash identity
    and the beacon).
-2. This build, in one PR: the vault's two entries, `LibVaultOutflow`, the
-   registry, all call sites moved, the old entries deleted, and the tests
-   above.
+2. This build, in two PRs (decided default, 2026-11-08, for reviewability;
+   both before the fresh deploy): Stage A (the vault's two entries, the
+   policy, all call sites moved, the old entries deleted, the grants and the
+   escrow), then Stage B (#3379: the owner-signed liens, the class budgets,
+   the receipt release and the seller-claim check).
    The position-NFT contract (§3.9) is part of it, or lands just before it,
    since counterparty payouts read their holder from it.
 3. #3206 (rate limits held in the vault's own storage) builds on this

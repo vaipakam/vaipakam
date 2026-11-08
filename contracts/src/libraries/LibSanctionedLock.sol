@@ -5,7 +5,7 @@ pragma solidity ^0.8.29;
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {LibFacet} from "./LibFacet.sol";
 import {LibVaultOutflow} from "./LibVaultOutflow.sol";
-import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
+import {OutflowReason, VaultOutflowTypes} from "../vault/VaultOutflowTypes.sol";
 import {LibDelivery} from "./LibDelivery.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -291,22 +291,27 @@ library LibSanctionedLock {
         // seller claim. Anyone else is refused by the policy.
         s.consolidationMoveFromUser = fromUser;
         LibVaipakam.Loan storage loan = s.loans[loanId];
-        if (owner == loan.lender || owner == loan.borrower) {
-            credited = LibVaultOutflow.toClaimCustody(
-                fromUser,
-                LibVaultOutflow.ERC20,
-                asset,
-                0,
-                amount,
-                loanId,
-                owner == loan.lender ? loan.lenderTokenId : loan.borrowerTokenId,
-                OutflowReason.SANCTIONED_LOCK
-            );
+        VaultOutflowTypes.OutflowClass c = VaultOutflowTypes.OutflowClass.SellerClaim;
+        uint256 sideToken;
+        if (owner == loan.lender) {
+            c = VaultOutflowTypes.OutflowClass.ClaimCustody;
+            sideToken = loan.lenderTokenId;
+        } else if (owner == loan.borrower) {
+            c = VaultOutflowTypes.OutflowClass.ClaimCustody;
+            sideToken = loan.borrowerTokenId;
         } else if (owner == s.backstopVault) {
-            credited = LibVaultOutflow.toBackstop(fromUser, LibVaultOutflow.ERC20, asset, 0, amount, loanId, OutflowReason.BACKSTOP);
-        } else {
-            credited = LibVaultOutflow.toSellerClaim(fromUser, asset, amount, owner, loanId);
+            c = VaultOutflowTypes.OutflowClass.Backstop;
         }
+        credited = LibVaultOutflow.toCustodyClass(
+            fromUser,
+            asset,
+            amount,
+            c,
+            owner,
+            loanId,
+            sideToken,
+            c == VaultOutflowTypes.OutflowClass.SellerClaim ? OutflowReason.SELLER_CLAIM : OutflowReason.SANCTIONED_LOCK
+        );
         s.consolidationMoveFromUser = address(0);
         // Tick `owner`'s tracked balance (the funds now sit in their vault), the
         // same bookkeeping `LibFacet.depositForNewLender` does for a Diamond

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibTestOutflow} from "./helpers/LibTestOutflow.sol";
 import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
 import {Test} from "forge-std/Test.sol";
 import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
@@ -1668,9 +1669,7 @@ contract SetupTest is Test {
         uint256 diamond0 = ERC20(l.collateralAsset).balanceOf(address(diamond));
         vm.startPrank(address(diamond));
         EncumbranceMutateFacet(address(diamond)).releaseCollateralLien(loanId);
-        VaultFactoryFacet(address(diamond)).vaultWithdrawERC20(
-            l.borrower, l.collateralAsset, address(diamond), l.collateralAmount
-        );
+        LibTestOutflow.withdrawERC20(address(diamond), l.borrower, l.collateralAsset, address(diamond), l.collateralAmount);
         FallbackCustodyFacet(address(diamond)).enterFallback(loanId);
         vm.stopPrank();
 

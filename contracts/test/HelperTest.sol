@@ -1514,10 +1514,13 @@ contract HelperTest {
 
     /// @dev Selectors for `VaultOutflowFacet` (#3205 part 2).
     function getVaultOutflowFacetSelectors() public pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](3);
+        selectors = new bytes4[](4);
         selectors[0] = VaultOutflowFacet.vaultOutflow.selector;
         selectors[1] = VaultOutflowFacet.vaultGrant.selector;
         selectors[2] = VaultOutflowFacet.vaultCloseGrant.selector;
+
+        // The compact Owner-class entry (same policy, six scalars).
+        selectors[3] = VaultOutflowFacet.vaultOutflowToOwner.selector;
     }
 
     /// @dev Selectors for `OfferBookFacet` (#3242).
@@ -3093,37 +3096,31 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](25);
+        selectors = new bytes4[](20);
         selectors[0] = VaultFactoryFacet.initializeVaultBeacon.selector;
         selectors[1] = VaultFactoryFacet.getOrCreateUserVault.selector;
         selectors[2] = VaultFactoryFacet.getVaultBeacon.selector;
         selectors[3] = VaultFactoryFacet.vaultDepositERC20.selector;
-        selectors[4] = VaultFactoryFacet.vaultWithdrawERC20.selector;
-        selectors[5] = VaultFactoryFacet.vaultDepositERC721.selector;
-        selectors[6] = VaultFactoryFacet.vaultWithdrawERC721.selector;
-        selectors[7] = VaultFactoryFacet.vaultDepositERC1155.selector;
-        selectors[8] = VaultFactoryFacet.vaultWithdrawERC1155.selector;
-        selectors[9] = VaultFactoryFacet.vaultApproveNFT721.selector;
-        selectors[10] = VaultFactoryFacet.vaultSetRentalUser.selector;
-        selectors[11] = VaultFactoryFacet.vaultGetNFTUserOf.selector;
-        selectors[12] = VaultFactoryFacet.vaultGetNFTUserExpires.selector;
-        selectors[13] = VaultFactoryFacet.getOfferAmount.selector;
-        selectors[14] = VaultFactoryFacet.vaultGetNFTQuantity.selector;
-        selectors[15] = VaultFactoryFacet.getUserVaultAddress.selector;
+        selectors[4] = VaultFactoryFacet.vaultDepositERC721.selector;
+        selectors[5] = VaultFactoryFacet.vaultDepositERC1155.selector;
+        selectors[6] = VaultFactoryFacet.vaultSetRentalUser.selector;
+        selectors[7] = VaultFactoryFacet.vaultGetNFTUserOf.selector;
+        selectors[8] = VaultFactoryFacet.vaultGetNFTUserExpires.selector;
+        selectors[9] = VaultFactoryFacet.getOfferAmount.selector;
+        selectors[10] = VaultFactoryFacet.vaultGetNFTQuantity.selector;
+        selectors[11] = VaultFactoryFacet.getUserVaultAddress.selector;
         // T-051 / T-054 — counter chokepoint companions.
-        selectors[16] = VaultFactoryFacet.vaultDepositERC20From.selector;
-        selectors[17] = VaultFactoryFacet.recordVaultDepositERC20.selector;
-        selectors[18] = VaultFactoryFacet.getTrackedHolding.selector;
+        selectors[12] = VaultFactoryFacet.vaultDepositERC20From.selector;
+        selectors[13] = VaultFactoryFacet.recordVaultDepositERC20.selector;
+        selectors[14] = VaultFactoryFacet.getTrackedHolding.selector;
         // RL-1 — Diamond-funded vault credit primitive (reward
         // claim-to-vault delivery).
-        selectors[19] = VaultFactoryFacet.vaultCreditFromDiamondERC20.selector;
-        selectors[20] = bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256,uint256)"));
+        selectors[15] = VaultFactoryFacet.vaultCreditFromDiamondERC20.selector;
+        selectors[16] = bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256,uint256)"));
         // The four-argument credit stays as a compatibility entry (Codex #2276 r14 P2).
-        selectors[21] = bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256)"));
-        // #1566 S3e — the swap fill's counter-only outflow record.
-        selectors[22] = VaultFactoryFacet.recordVaultOutflowERC20.selector;
-        selectors[23] = VaultFactoryFacet.vaultDeliverERC20From.selector;
-        selectors[24] = VaultFactoryFacet.getDiamondAddress.selector;
+        selectors[17] = bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256)"));
+        selectors[18] = VaultFactoryFacet.vaultDeliverERC20From.selector;
+        selectors[19] = VaultFactoryFacet.getDiamondAddress.selector;
         return selectors;
     }
 
@@ -3226,10 +3223,11 @@ contract HelperTest {
         selectors[4] = PrepayListingFacet.markOfferConsumedBySale.selector;
         selectors[5] = PrepayListingFacet.recordOfferSaleProceeds.selector;
         selectors[6] = PrepayListingFacet.assertOfferFillNotSanctioned.selector;
-        return selectors;
-    
+        // #3205 part 2 — the fill's just-in-time ERC-721 grant hooks.
         selectors[7] = PrepayListingFacet.executorOpenListingGrant.selector;
-        selectors[8] = PrepayListingFacet.executorCloseListingGrant.selector;}
+        selectors[8] = PrepayListingFacet.executorCloseListingGrant.selector;
+        return selectors;
+    }
 
     /// @dev T-086 step 6 — `NFTPrepayListingFacet` selectors. Mirrors
     ///      `DeployDiamond._getNFTPrepayListingSelectors`. Two view

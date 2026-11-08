@@ -11,6 +11,21 @@ interface IVaultOutflowHost {
     function vaultOutflow(address user, VaultOutflowTypes.Outflow calldata o) external returns (uint256 delivered);
     function vaultGrant(address user, VaultOutflowTypes.Grant calldata g) external;
     function vaultCloseGrant(address user) external returns (uint256 consumed);
+    function vaultOutflowToOwner(address user, uint8 kind, address asset, uint256 tokenId, uint256 amount, uint8 reason)
+        external
+        returns (uint256 delivered);
+    function vaultOutflowArgs(
+        address user,
+        uint8 kind,
+        address asset,
+        uint256 tokenId,
+        uint256 amount,
+        address to,
+        uint8 class_,
+        uint256 ref,
+        uint256 positionToken,
+        uint8 reason
+    ) external returns (uint256 delivered);
 }
 
 /**
@@ -39,7 +54,10 @@ library LibVaultOutflow {
         internal
         returns (uint256)
     {
-        return _go(user, kind, asset, tokenId, amount, user, VaultOutflowTypes.OutflowClass.Owner, 0, 0, reason);
+        return abi.decode(
+            _call(abi.encodeCall(IVaultOutflowHost.vaultOutflowToOwner, (user, kind, asset, tokenId, amount, reason))),
+            (uint256)
+        );
     }
 
     /// @notice To an address on `user`'s protected-mode allowlist (or its
@@ -194,10 +212,12 @@ library LibVaultOutflow {
         internal
         returns (bool ok)
     {
-        VaultOutflowTypes.Outflow memory o = _outflow(
-            user, ERC20, asset, 0, amount, address(0), VaultOutflowTypes.OutflowClass.DiamondTransient, ref, 0, reason
+        (ok,) = address(this).call(
+            abi.encodeCall(
+                IVaultOutflowHost.vaultOutflowArgs,
+                (user, ERC20, asset, 0, amount, address(0), uint8(VaultOutflowTypes.OutflowClass.DiamondTransient), ref, 0, reason)
+            )
         );
-        (ok,) = address(this).call(abi.encodeCall(IVaultOutflowHost.vaultOutflow, (user, o)));
     }
 
     // ─── Actors the caller names ─────────────────────────────────────────
@@ -249,6 +269,24 @@ library LibVaultOutflow {
         );
     }
 
+    /// @notice A sanctioned-lock or custody deposit whose class the caller
+    ///         chose from loan state (`LibSanctionedLock.depositLockedFromVault`
+    ///         picks one of claim custody, backstop or seller claim); one call
+    ///         for all three keeps the facets that inline it under EIP-170.
+    ///         The policy still derives and checks the payee for the class.
+    function toCustodyClass(
+        address user,
+        address asset,
+        uint256 amount,
+        VaultOutflowTypes.OutflowClass class_,
+        address namedParty,
+        uint256 loanId,
+        uint256 sideToken,
+        uint8 reason
+    ) internal returns (uint256) {
+        return _go(user, ERC20, asset, 0, amount, namedParty, class_, loanId, sideToken, reason);
+    }
+
     // ─── Just-in-time allowances ─────────────────────────────────────────
 
     /// @notice Open a just-in-time allowance on `user`'s vault for this
@@ -295,7 +333,15 @@ library LibVaultOutflow {
         uint256 positionToken,
         uint8 reason
     ) private returns (uint256) {
-        return _send(user, _outflow(user, kind, asset, tokenId, amount, to, class_, ref, positionToken, reason));
+        return abi.decode(
+            _call(
+                abi.encodeCall(
+                    IVaultOutflowHost.vaultOutflowArgs,
+                    (user, kind, asset, tokenId, amount, to, uint8(class_), ref, positionToken, reason)
+                )
+            ),
+            (uint256)
+        );
     }
 
     function _outflow(

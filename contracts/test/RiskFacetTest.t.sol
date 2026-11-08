@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
+import {VaultOutflowTypes} from "../src/vault/VaultOutflowTypes.sol";
 import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
 import {Test} from "forge-std/Test.sol";
 import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
@@ -1452,13 +1454,7 @@ contract RiskFacetTest is Test {
         // rather than diverging from the suite's mocking convention.
         vm.expectCall(
             address(diamond),
-            abi.encodeWithSelector(
-                VaultFactoryFacet.vaultWithdrawERC20.selector,
-                ln.borrower,
-                ln.collateralAsset,
-                address(diamond),
-                sold
-            )
+            abi.encodePacked(VaultOutflowFacet.vaultOutflow.selector, abi.encode(ln.borrower, VaultOutflowTypes.AssetKind.ERC20, ln.collateralAsset, uint256(0), sold, address(0), VaultOutflowTypes.OutflowClass.DiamondTransient))
         );
         // The collateral lien MUST fall by the amount sold before the vault
         // withdrawal, or the real withdrawal reverts at the encumbrance
@@ -2078,13 +2074,7 @@ contract RiskFacetTest is Test {
         );
 
         // Mock collateral withdrawal to fail
-        vm.mockCallRevert(
-            address(diamond),
-            abi.encodeWithSelector(
-                VaultFactoryFacet.vaultWithdrawERC20.selector
-            ),
-            "withdraw failed"
-        );
+        MockVaultWithdraw.fails(address(diamond), VaultOutflowTypes.AssetKind.ERC20);
 
         uint256 sellQuote = liquidationQuote(address(diamond), loanId);
         vm.expectRevert(bytes("withdraw failed"));
@@ -4894,61 +4884,35 @@ contract RiskFacetTest is Test {
     function testTriggerLiquidationDiscounted_RevertsWhenDisabled() public {
         uint256 loanId = createAndAcceptOffer();
         vm.expectRevert(RiskDiscountedLiquidationFacet.DiscountPathDisabled.selector);
-        RiskDiscountedLiquidationFacet(address(diamond)).triggerLiquidationDiscounted(
-            loanId,
-            address(this),
-            ""
-        );
+        RiskDiscountedLiquidationFacet(address(diamond)).triggerLiquidationDiscounted(loanId, "");
     }
 
-    /// @dev Zero recipient → `ZeroRecipient` revert. Guard fires
-    ///      before sequencer / HF checks (cheap fast-path).
-    function testTriggerLiquidationDiscounted_RevertsZeroRecipient() public {
-        uint256 loanId = createAndAcceptOffer();
-        TestMutatorFacet(address(diamond)).setDiscountPathEnabledRaw(true);
-        vm.expectRevert(RiskDiscountedLiquidationFacet.ZeroRecipient.selector);
-        RiskDiscountedLiquidationFacet(address(diamond)).triggerLiquidationDiscounted(
-            loanId,
-            address(0),
-            ""
-        );
-    }
 
     /// @dev Loan not in `Active` state → `InvalidLoan`. A non-existent
     ///      loanId trips the same default-Inactive branch.
     function testTriggerLiquidationDiscounted_RevertsLoanNotActive() public {
         TestMutatorFacet(address(diamond)).setDiscountPathEnabledRaw(true);
         vm.expectRevert(RiskDiscountedLiquidationFacet.InvalidLoan.selector);
-        RiskDiscountedLiquidationFacet(address(diamond)).triggerLiquidationDiscounted(
-            999_999,
-            address(this),
-            ""
-        );
+        RiskDiscountedLiquidationFacet(address(diamond)).triggerLiquidationDiscounted(999_999, "");
     }
 
-    /// @dev #816 — a sanctioned seized-collateral `recipient` is rejected even
-    ///      when the caller (`msg.sender`) is clean. The discounted path
-    ///      delivers the bought collateral to a caller-chosen `recipient`, so
-    ///      screening only the caller would let a clean liquidator route fresh
-    ///      value to a flagged wallet. The recipient screen fires right after
-    ///      the zero-recipient guard, before any loan/HF read.
-    function test_triggerLiquidationDiscounted_RevertsWhenRecipientSanctioned() public {
+    /// @dev #816 / #3205 part 2 — the seized collateral reaches only the
+    ///      caller (`msg.sender`), so the caller is the one screened: a
+    ///      flagged liquidator is refused before any loan or HF read.
+    function test_triggerLiquidationDiscounted_RevertsWhenCallerSanctioned() public {
         uint256 loanId = createAndAcceptOffer();
         TestMutatorFacet(address(diamond)).setDiscountPathEnabledRaw(true);
 
-        address flaggedRecipient = makeAddr("flaggedRecipient");
+        address flaggedLiquidator = makeAddr("flaggedLiquidator");
         MockSanctionsList m = new MockSanctionsList();
         ProfileFacet(address(diamond)).setSanctionsOracle(address(m));
-        m.setFlagged(flaggedRecipient, true);
+        m.setFlagged(flaggedLiquidator, true);
 
         vm.expectRevert(
-            abi.encodeWithSelector(LibVaipakam.SanctionedAddress.selector, flaggedRecipient)
+            abi.encodeWithSelector(LibVaipakam.SanctionedAddress.selector, flaggedLiquidator)
         );
-        RiskDiscountedLiquidationFacet(address(diamond)).triggerLiquidationDiscounted(
-            loanId,
-            flaggedRecipient,
-            ""
-        );
+        vm.prank(flaggedLiquidator);
+        RiskDiscountedLiquidationFacet(address(diamond)).triggerLiquidationDiscounted(loanId, "");
     }
 
     /// @dev Sequencer down → reuse the atomic path's
@@ -4962,11 +4926,7 @@ contract RiskFacetTest is Test {
             abi.encode(false)
         );
         vm.expectRevert(RiskDiscountedLiquidationFacet.SequencerUnhealthy.selector);
-        RiskDiscountedLiquidationFacet(address(diamond)).triggerLiquidationDiscounted(
-            loanId,
-            address(this),
-            ""
-        );
+        RiskDiscountedLiquidationFacet(address(diamond)).triggerLiquidationDiscounted(loanId, "");
         vm.clearMockedCalls();
     }
 
@@ -4987,11 +4947,7 @@ contract RiskFacetTest is Test {
             abi.encode(uint256(15 * 1e17))
         );
         vm.expectRevert(RiskDiscountedLiquidationFacet.HealthFactorNotLow.selector);
-        RiskDiscountedLiquidationFacet(address(diamond)).triggerLiquidationDiscounted(
-            loanId,
-            address(this),
-            ""
-        );
+        RiskDiscountedLiquidationFacet(address(diamond)).triggerLiquidationDiscounted(loanId, "");
         vm.clearMockedCalls();
     }
 
@@ -5026,11 +4982,7 @@ contract RiskFacetTest is Test {
                 mockCollateralERC20
             )
         );
-        RiskDiscountedLiquidationFacet(address(diamond)).triggerLiquidationDiscounted(
-            loanId,
-            address(this),
-            ""
-        );
+        RiskDiscountedLiquidationFacet(address(diamond)).triggerLiquidationDiscounted(loanId, "");
         vm.clearMockedCalls();
     }
 
@@ -5063,11 +5015,7 @@ contract RiskFacetTest is Test {
                 mockCollateralERC20
             )
         );
-        RiskDiscountedLiquidationFacet(address(diamond)).triggerLiquidationDiscounted(
-            loanId,
-            address(this),
-            ""
-        );
+        RiskDiscountedLiquidationFacet(address(diamond)).triggerLiquidationDiscounted(loanId, "");
         vm.clearMockedCalls();
     }
 
@@ -5090,11 +5038,7 @@ contract RiskFacetTest is Test {
         IERC20(mockERC20).approve(address(diamond), 2000 ether);
 
         vm.expectRevert(OracleFacet.OraclePriceDivergence.selector);
-        RiskDiscountedLiquidationFacet(address(diamond)).triggerLiquidationDiscounted(
-            loanId,
-            address(this),
-            ""
-        );
+        RiskDiscountedLiquidationFacet(address(diamond)).triggerLiquidationDiscounted(loanId, "");
         vm.clearMockedCalls();
     }
 
@@ -5146,7 +5090,7 @@ contract RiskFacetTest is Test {
         if (stampFull) {
             _expectResolverKeyedOnHolder(loanId);
         }
-        RiskDiscountedLiquidationFacet(address(diamond)).triggerLiquidationDiscounted(loanId, address(this), "");
+        RiskDiscountedLiquidationFacet(address(diamond)).triggerLiquidationDiscounted(loanId, "");
         toTreasury = IERC20(mockERC20).balanceOf(treasuryEoa) - before;
         lv = VaultFactoryFacet(address(diamond)).getUserVaultAddress(ln.lender);
         toLender = IERC20(mockERC20).balanceOf(lv) - lBefore;
@@ -5219,11 +5163,7 @@ contract RiskFacetTest is Test {
         // expectEmit would catch first. recordLogs + topic-0 search
         // is robust to interleaved events from cross-facet calls.
         vm.recordLogs();
-        RiskDiscountedLiquidationFacet(address(diamond)).triggerLiquidationDiscounted(
-            loanId,
-            address(this),
-            ""
-        );
+        RiskDiscountedLiquidationFacet(address(diamond)).triggerLiquidationDiscounted(loanId, "");
         Vm.Log[] memory logs = vm.getRecordedLogs();
         bytes32 expectedTopic = keccak256(
             "LiquidationDiscounted(uint256,address,address,uint8,uint16,uint256,uint256,uint256)"
@@ -5278,7 +5218,7 @@ contract RiskFacetTest is Test {
         emit RiskDiscountedLiquidationFacet.LiquidationDiscounted(
             loanId, address(this), address(this), p.tier, p.discountBps, p.debt, p.seized, p.surplus
         );
-        RiskDiscountedLiquidationFacet(address(diamond)).triggerLiquidationDiscounted(loanId, address(this), "");
+        RiskDiscountedLiquidationFacet(address(diamond)).triggerLiquidationDiscounted(loanId, "");
         assertEq(before - IERC20(mockERC20).balanceOf(address(this)), p.debt, "pulled exactly the previewed debt");
         // The vault withdraw is mocked in this fixture, so the seizure and
         // surplus are read from the liquidation's own event above.

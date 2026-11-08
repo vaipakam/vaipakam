@@ -647,16 +647,12 @@ contract BackstopAbsorbTest is SetupTest {
         // Over-sweep (more than warehoused LENDER_COL) reverts.
         vm.prank(owner);
         vm.expectRevert(BackstopFacet.BackstopAbsorbCollateralInsufficient.selector);
-        BackstopFacet(address(diamond)).sweepBackstopAbsorbCollateral(
-            mockCollateralERC20, makeAddr("gov"), LENDER_COL + 1
-        );
+        BackstopFacet(address(diamond)).sweepBackstopAbsorbCollateral(mockCollateralERC20, LENDER_COL + 1);
 
         // Exact warehoused amount sweeps to the recipient.
         address gov = makeAddr("gov");
         vm.prank(owner);
-        BackstopFacet(address(diamond)).sweepBackstopAbsorbCollateral(
-            mockCollateralERC20, gov, LENDER_COL
-        );
+        BackstopFacet(address(diamond)).sweepBackstopAbsorbCollateral(mockCollateralERC20, LENDER_COL);
         assertEq(IERC20(mockCollateralERC20).balanceOf(gov), LENDER_COL, "swept to gov");
     }
 
@@ -698,9 +694,7 @@ contract BackstopAbsorbTest is SetupTest {
             TreasuryFacet(address(diamond)).getTreasuryBalance(mockCollateralERC20);
         // Write-off path: sweep the warehoused collateral to the Diamond (treasury).
         vm.prank(owner);
-        BackstopFacet(address(diamond)).sweepBackstopAbsorbCollateral(
-            mockCollateralERC20, address(diamond), LENDER_COL
-        );
+        BackstopFacet(address(diamond)).sweepBackstopAbsorbCollateral(mockCollateralERC20, LENDER_COL);
         assertEq(
             TreasuryFacet(address(diamond)).getTreasuryBalance(mockCollateralERC20) - before,
             LENDER_COL,

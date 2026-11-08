@@ -2474,10 +2474,13 @@ contract DeployDiamond is Script, ArtifactRootBase {
     /// @dev Selectors for `VaultOutflowFacet` (#3205 part 2) — the one vault
     ///      outflow policy host, reached only by self-call.
     function _getVaultOutflowSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](3);
+        s = new bytes4[](4);
         s[0] = VaultOutflowFacet.vaultOutflow.selector;
         s[1] = VaultOutflowFacet.vaultGrant.selector;
         s[2] = VaultOutflowFacet.vaultCloseGrant.selector;
+
+        // The compact Owner-class entry (same policy, six scalars).
+        s[3] = VaultOutflowFacet.vaultOutflowToOwner.selector;
     }
 
     function _getClaimSelectors() internal pure returns (bytes4[] memory s) {
@@ -2628,9 +2631,11 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[4] = PrepayListingFacet.markOfferConsumedBySale.selector;
         s[5] = PrepayListingFacet.recordOfferSaleProceeds.selector;
         s[6] = PrepayListingFacet.assertOfferFillNotSanctioned.selector;
-    
+        // #3205 part 2 — the fill's just-in-time ERC-721 grant hooks, called
+        // by the listing executor's authorizeOrder / validateOrder.
         s[7] = PrepayListingFacet.executorOpenListingGrant.selector;
-        s[8] = PrepayListingFacet.executorCloseListingGrant.selector;}
+        s[8] = PrepayListingFacet.executorCloseListingGrant.selector;
+    }
 
     /// @dev T-086 step 6 — `NFTPrepayListingFacet` selectors. Hosts the
     ///      borrower-facing post / update / cancel / cancelExpired

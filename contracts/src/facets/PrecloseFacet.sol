@@ -1065,14 +1065,22 @@ contract PrecloseFacet is
         // there is nothing to return; the zero `collateralAssetType` must not
         // read as an ERC-20 leg.
         address exitingBorrowerHolder = LibPositionNFT.ownerOf(loan.borrowerTokenId);
+        // #3205 part 2 — one holder payout for any collateral kind (the asset
+        // type's ordinals are the outflow kind's).
         if (isErc20) {
-            if (loan.collateralAssetType == LibVaipakam.AssetType.ERC20) {
-                LibVaultOutflow.toPositionHolder(loan.borrower, LibVaultOutflow.ERC20, loan.collateralAsset, 0, loan.collateralAmount, loanId, loan.borrowerTokenId, OutflowReason.COLLATERAL_RELEASE);
-            } else if (loan.collateralAssetType == LibVaipakam.AssetType.ERC721) {
-                LibVaultOutflow.toPositionHolder(loan.borrower, LibVaultOutflow.ERC721, loan.collateralAsset, loan.collateralTokenId, 1, loanId, loan.borrowerTokenId, OutflowReason.COLLATERAL_RELEASE);
-            } else if (loan.collateralAssetType == LibVaipakam.AssetType.ERC1155) {
-                LibVaultOutflow.toPositionHolder(loan.borrower, LibVaultOutflow.ERC1155, loan.collateralAsset, loan.collateralTokenId, loan.collateralQuantity, loanId, loan.borrowerTokenId, OutflowReason.COLLATERAL_RELEASE);
-            }
+            LibVaipakam.AssetType t = loan.collateralAssetType;
+            LibVaultOutflow.toPositionHolder(
+                loan.borrower,
+                uint8(t),
+                loan.collateralAsset,
+                t == LibVaipakam.AssetType.ERC20 ? 0 : loan.collateralTokenId,
+                t == LibVaipakam.AssetType.ERC20
+                    ? loan.collateralAmount
+                    : (t == LibVaipakam.AssetType.ERC721 ? 1 : loan.collateralQuantity),
+                loanId,
+                loan.borrowerTokenId,
+                OutflowReason.COLLATERAL_RELEASE
+            );
         }
 
         // #2795 — a borrower extra held on this open loan (a periodic forced

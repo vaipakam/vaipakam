@@ -600,8 +600,8 @@ contract FallbackCustodyTest is CustodyInvariantBase {
 
         address sink = makeAddr("fcBackstopSweepSink");
         vm.expectRevert(BackstopFacet.BackstopAbsorbCollateralInsufficient.selector);
-        BackstopFacet(address(diamond)).sweepBackstopAbsorbCollateral(vpfi, sink, l + 1);
-        BackstopFacet(address(diamond)).sweepBackstopAbsorbCollateral(vpfi, sink, l);
+        BackstopFacet(address(diamond)).sweepBackstopAbsorbCollateral(vpfi, l + 1);
+        BackstopFacet(address(diamond)).sweepBackstopAbsorbCollateral(vpfi, l);
         assertEq(_fcBal(vpfi, sink), l, "warehoused exactly the lender slice");
     }
 

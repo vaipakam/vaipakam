@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
+import {LibTestOutflow} from "./helpers/LibTestOutflow.sol";
 import {SetupTest} from "./SetupTest.t.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
@@ -135,7 +137,7 @@ contract OfferCollateralLockTest is SetupTest {
         vm.prank(address(diamond));
         vm.expectRevert(
             abi.encodeWithSelector(
-                VaultFactoryFacet.WithdrawWouldUnderflowLien.selector,
+                VaultOutflowFacet.WithdrawWouldUnderflowLien.selector,
                 borrower,
                 mockCollateralERC20,
                 uint256(0),
@@ -143,9 +145,7 @@ contract OfferCollateralLockTest is SetupTest {
                 uint256(0)
             )
         );
-        VaultFactoryFacet(address(diamond)).vaultWithdrawERC20(
-            borrower, mockCollateralERC20, borrower, 1
-        );
+        LibTestOutflow.withdrawERC20(address(diamond), borrower, mockCollateralERC20, borrower, 1);
     }
 
     // ─── accept — hand-off to the loan-collateral lien (no double/leak) ─

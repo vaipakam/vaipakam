@@ -337,7 +337,7 @@ contract InternalMatchPriorityWindowTest is SetupTest {
                 uint256(8_700)
             )
         );
-        RiskDiscountedLiquidationFacet(address(diamond)).triggerLiquidationDiscounted(LOAN_ID, address(this), "");
+        RiskDiscountedLiquidationFacet(address(diamond)).triggerLiquidationDiscounted(LOAN_ID, "");
     }
 
     /// @notice #2734 — the discounted liquidation's preview reads the same

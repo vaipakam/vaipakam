@@ -121,6 +121,19 @@ contract MockVaipakamDiamond is IVaipakamPrepayContext, IVaipakamPrepayCallbacks
             IERC20(principalAsset).transfer(forwardProceedsTo, amount);
         }
     }
+    /// @dev #3205 part 2 — the fill's just-in-time grant hooks; recorded.
+    uint256 public grantsOpened;
+    uint256 public grantsClosed;
+
+    function executorOpenListingGrant(uint256, uint96, address) external override {
+        ++grantsOpened;
+    }
+
+    function executorCloseListingGrant(uint256, uint96) external override returns (uint256) {
+        ++grantsClosed;
+        return 1;
+    }
+
     function assertOfferFillNotSanctioned(uint96 offerId, address borrowerWallet)
         external
         override

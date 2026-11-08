@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {VaultOutflowTypes} from "../src/vault/VaultOutflowTypes.sol";
 import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
 import {Test} from "forge-std/Test.sol";
 import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
@@ -450,10 +451,7 @@ contract PartialWithdrawalFacetTest is Test {
 
     /// @dev Covers CrossFacetCallFailed("Withdraw failed") in partialWithdrawCollateral
     function testPartialWithdrawCrossFacetFails() public {
-        vm.mockCallRevert(
-            address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector),
-            "withdraw failed"
-        );
+        MockVaultWithdraw.fails(address(diamond), VaultOutflowTypes.AssetKind.ERC20);
 
         vm.expectRevert(bytes("withdraw failed"));
         vm.prank(borrower);

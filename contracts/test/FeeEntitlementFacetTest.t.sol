@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {VaultOutflowTypes} from "../src/vault/VaultOutflowTypes.sol";
+import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
 import {SetupTest} from "./SetupTest.t.sol";
 import {Vm} from "forge-std/Vm.sol";
@@ -1569,11 +1571,7 @@ contract FeeEntitlementFacetTest is SetupTest {
         // and avoids pinning the quoted amount.
         vm.expectCall(
             address(diamond),
-            abi.encodeWithSelector(
-                VaultFactoryFacet.vaultWithdrawERC20.selector,
-                holder,
-                address(vpfiToken)
-            )
+            abi.encodePacked(VaultOutflowFacet.vaultOutflow.selector, abi.encode(holder, VaultOutflowTypes.AssetKind.ERC20, address(vpfiToken)))
         );
 
         uint256 holderVpfiBefore = vpfiToken.balanceOf(_vault(holder));

@@ -132,6 +132,66 @@ contract VaultOutflowFacet is IVaipakamErrors {
         onlyDiamondInternal
         returns (uint256 delivered)
     {
+        return _outflow(user, o);
+    }
+
+    /**
+     * @notice The Owner class through a compact entry: `user`'s vault to
+     *         `user`'s own wallet. The same policy as {vaultOutflow}; it exists
+     *         so a caller near EIP-170 encodes six scalars instead of the
+     *         whole intent struct.
+     */
+    function vaultOutflowToOwner(address user, uint8 kind, address asset, uint256 tokenId, uint256 amount, uint8 reason)
+        external
+        onlyDiamondInternal
+        returns (uint256 delivered)
+    {
+        VaultOutflowTypes.Outflow memory o;
+        o.kind = VaultOutflowTypes.AssetKind(kind);
+        o.asset = asset;
+        o.tokenId = tokenId;
+        o.amount = amount;
+        o.to = user;
+        o.class_ = VaultOutflowTypes.OutflowClass.Owner;
+        o.reason = reason;
+        return _outflow(user, o);
+    }
+
+    /**
+     * @notice {vaultOutflow} with the intent passed as scalars (no
+     *         `counterRef`, which only the matched-counterparty class uses).
+     *         The same policy; it exists because building and encoding the
+     *         struct in every caller costs bytecode that facets near EIP-170
+     *         do not have.
+     */
+    function vaultOutflowArgs(
+        address user,
+        uint8 kind,
+        address asset,
+        uint256 tokenId,
+        uint256 amount,
+        address to,
+        uint8 class_,
+        uint256 ref,
+        uint256 positionToken,
+        uint8 reason
+    ) external onlyDiamondInternal returns (uint256 delivered) {
+        VaultOutflowTypes.Outflow memory o;
+        o.kind = VaultOutflowTypes.AssetKind(kind);
+        o.asset = asset;
+        o.tokenId = tokenId;
+        o.amount = amount;
+        o.to = to;
+        o.class_ = VaultOutflowTypes.OutflowClass(class_);
+        o.ref = ref;
+        o.positionToken = positionToken;
+        o.reason = reason;
+        return _outflow(user, o);
+    }
+
+    function _outflow(address user, VaultOutflowTypes.Outflow memory o) private returns (uint256 delivered) {
+        // Nothing to move is a no-op, as a zero withdrawal always was.
+        if (o.amount == 0) return 0;
         address proxy = LibFacet.getOrCreateVault(user);
         address payeeOwner = _resolveRecipient(user, o);
         // A listing's lot moving into the vault's own escrow stays under its

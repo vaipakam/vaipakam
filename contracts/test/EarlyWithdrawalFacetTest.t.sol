@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
+import {VaultOutflowTypes, OutflowReason} from "../src/vault/VaultOutflowTypes.sol";
 import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
 import {Test} from "forge-std/Test.sol";
 import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
@@ -3680,11 +3682,7 @@ contract EarlyWithdrawalFacetTest is Test {
             })
         );
 
-        vm.mockCallRevert(
-            address(diamond),
-            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector),
-            "withdraw failed"
-        );
+        MockVaultWithdraw.fails(address(diamond), VaultOutflowTypes.AssetKind.ERC20);
 
         vm.prank(lender);
         vm.expectRevert(bytes("withdraw failed"));
@@ -4940,7 +4938,7 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.retirePosition.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
         // All vault withdrawals will fail
-        vm.mockCallRevert(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), "fail");
+        MockVaultWithdraw.fails(address(diamond), VaultOutflowTypes.AssetKind.ERC20);
 
         vm.prank(lender);
         vm.expectRevert(bytes("fail"));
@@ -5051,7 +5049,7 @@ contract EarlyWithdrawalFacetTest is Test {
         MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCallRevert(
             address(diamond),
-            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector, lender, mockERC20, lender, 500 ether),
+            abi.encodeCall(VaultOutflowFacet.vaultOutflowToOwner, (lender, uint8(VaultOutflowTypes.AssetKind.ERC20), mockERC20, uint256(0), uint256(500 ether), OutflowReason.COLLATERAL_RELEASE)),
             "release fail"
         );
 
@@ -5103,7 +5101,7 @@ contract EarlyWithdrawalFacetTest is Test {
         _setupTempLoan(2);
 
         // Migration vault withdraw must fail
-        vm.mockCallRevert(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), "fail");
+        MockVaultWithdraw.fails(address(diamond), VaultOutflowTypes.AssetKind.ERC20);
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.retirePosition.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
 
@@ -5216,7 +5214,7 @@ contract EarlyWithdrawalFacetTest is Test {
         _setupTempLoan(2);
 
         MockVaultWithdraw.deliversAll(address(diamond));
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC721.selector), abi.encode(true));
+        MockVaultWithdraw.stubs(address(diamond), VaultOutflowTypes.AssetKind.ERC721);
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.retirePosition.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
 
@@ -5248,7 +5246,7 @@ contract EarlyWithdrawalFacetTest is Test {
         _setupTempLoan(2);
 
         MockVaultWithdraw.deliversAll(address(diamond));
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC1155.selector), abi.encode(true));
+        MockVaultWithdraw.stubs(address(diamond), VaultOutflowTypes.AssetKind.ERC1155);
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.retirePosition.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
 
@@ -5496,7 +5494,7 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.retirePosition.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
         // ERC721 collateral release fails
-        vm.mockCallRevert(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC721.selector), "erc721 fail");
+        MockVaultWithdraw.fails(address(diamond), VaultOutflowTypes.AssetKind.ERC721);
 
         vm.prank(lender);
         vm.expectRevert();
@@ -5532,7 +5530,7 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.retirePosition.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
         // ERC1155 collateral release fails
-        vm.mockCallRevert(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC1155.selector), "erc1155 fail");
+        MockVaultWithdraw.fails(address(diamond), VaultOutflowTypes.AssetKind.ERC1155);
 
         vm.prank(lender);
         vm.expectRevert();
@@ -5949,7 +5947,7 @@ contract EarlyWithdrawalFacetTest is Test {
         // fixture mocks, so the seller side is pinned as that withdraw.
         vm.expectCall(
             address(diamond),
-            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector, lender, mockERC20)
+            abi.encodePacked(VaultOutflowFacet.vaultOutflow.selector, abi.encode(lender, VaultOutflowTypes.AssetKind.ERC20, mockERC20))
         );
         vm.prank(lender);
         EarlyWithdrawalFacet(address(diamond)).completeLoanSale(activeLoanId);

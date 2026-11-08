@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
+import {LibTestOutflow} from "./helpers/LibTestOutflow.sol";
 import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
 
 import {SetupTest} from "./SetupTest.t.sol";
@@ -334,13 +336,11 @@ contract InternalMatchExecutionTest is SetupTest {
         vm.prank(address(diamond));
         vm.expectRevert(
             abi.encodeWithSelector(
-                VaultFactoryFacet.WithdrawWouldUnderflowLien.selector,
+                VaultOutflowFacet.WithdrawWouldUnderflowLien.selector,
                 borrower, mockCollateralERC20, uint256(0), uint256(1), uint256(0)
             )
         );
-        VaultFactoryFacet(address(diamond)).vaultWithdrawERC20(
-            borrower, mockCollateralERC20, borrower, 1
-        );
+        LibTestOutflow.withdrawERC20(address(diamond), borrower, mockCollateralERC20, borrower, 1);
 
         // Retrieval: the CURRENT borrower-position NFT holder (transferred
         // to `newHolder`) claims the residual via claimAsBorrower (now

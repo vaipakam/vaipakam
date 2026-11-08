@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibTestOutflow} from "./helpers/LibTestOutflow.sol";
 import {SetupTest} from "./SetupTest.t.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
@@ -831,7 +832,7 @@ contract MeasuredDeliveryTest is SetupTest {
             )
         );
         vm.prank(address(diamond));
-        VaultFactoryFacet(address(diamond)).vaultWithdrawERC20(borrower, mockERC20, lender, 4 ether);
+        LibTestOutflow.withdrawERC20(address(diamond), borrower, mockERC20, lender, 4 ether);
     }
 
     /// @notice The control: an ordinary token costs its sender exactly what
@@ -840,7 +841,7 @@ contract MeasuredDeliveryTest is SetupTest {
         ERC20Mock(mockERC20).mint(bVault, 10 ether);
         TestMutatorFacet(address(diamond)).setProtocolTrackedVaultBalanceRaw(borrower, mockERC20, 10 ether);
         vm.prank(address(diamond));
-        uint256 delivered = VaultFactoryFacet(address(diamond)).vaultWithdrawERC20(borrower, mockERC20, lender, 4 ether);
+        uint256 delivered = LibTestOutflow.withdrawERC20(address(diamond), borrower, mockERC20, lender, 4 ether);
         assertEq(delivered, 4 ether, "delivered in full");
         assertEq(_bal(mockERC20, bVault), 6 ether, "the vault lost what it sent");
     }
@@ -899,9 +900,7 @@ contract MeasuredDeliveryTest is SetupTest {
         TestMutatorFacet(address(diamond)).setProtocolTrackedVaultBalanceRaw(borrower, mockERC20, 10 ether);
 
         vm.prank(address(diamond));
-        uint256 delivered = VaultFactoryFacet(address(diamond)).vaultWithdrawERC20(
-            borrower, mockERC20, bVault, 4 ether
-        );
+        uint256 delivered = LibTestOutflow.withdrawERC20(address(diamond), borrower, mockERC20, bVault, 4 ether);
 
         assertEq(delivered, 4 ether, "the whole amount stayed where it was sent");
         assertEq(_bal(mockERC20, bVault), 10 ether, "nothing left the vault");
@@ -916,9 +915,7 @@ contract MeasuredDeliveryTest is SetupTest {
         _chargesFee(mockERC20, address(0));
 
         vm.prank(address(diamond));
-        uint256 delivered = VaultFactoryFacet(address(diamond)).vaultWithdrawERC20(
-            borrower, mockERC20, bVault, 4 ether
-        );
+        uint256 delivered = LibTestOutflow.withdrawERC20(address(diamond), borrower, mockERC20, bVault, 4 ether);
 
         assertEq(delivered, _less(4 ether), "the amount less the charge");
         assertEq(_bal(mockERC20, bVault), 10 ether - (4 ether - _less(4 ether)), "the vault paid the charge");

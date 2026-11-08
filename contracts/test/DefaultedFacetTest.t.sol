@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
+import {VaultOutflowTypes} from "../src/vault/VaultOutflowTypes.sol";
 import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
 import {Test} from "forge-std/Test.sol";
 import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
@@ -1770,11 +1772,7 @@ contract DefaultedFacetTest is Test {
         vm.warp(block.timestamp + 33 days + 3);
 
         // First call (getOrCreateUserVault) succeeds, second (vaultWithdrawERC20) fails.
-        vm.mockCallRevert(
-            address(diamond),
-            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector),
-            "mock revert"
-        );
+        MockVaultWithdraw.fails(address(diamond), VaultOutflowTypes.AssetKind.ERC20);
         uint256 sellQuote = defaultQuote(address(diamond), loanId);
         vm.expectRevert(bytes("mock revert"));
         DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
@@ -1790,11 +1788,7 @@ contract DefaultedFacetTest is Test {
         vm.warp(block.timestamp + 33 days + 3);
 
         // Mock vaultWithdrawERC20 to fail (for buffer to treasury step)
-        vm.mockCallRevert(
-            address(diamond),
-            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector),
-            "mock revert"
-        );
+        MockVaultWithdraw.fails(address(diamond), VaultOutflowTypes.AssetKind.ERC20);
         uint256 sellQuote = defaultQuote(address(diamond), loanId);
         vm.expectRevert();
         DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
@@ -1829,11 +1823,7 @@ contract DefaultedFacetTest is Test {
         vm.warp(block.timestamp + 33 days + 3);
 
         // Mock collateral withdrawal to fail (inline swap path)
-        vm.mockCallRevert(
-            address(diamond),
-            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector),
-            "mock revert"
-        );
+        MockVaultWithdraw.fails(address(diamond), VaultOutflowTypes.AssetKind.ERC20);
         uint256 sellQuote = defaultQuote(address(diamond), loanId);
         vm.expectRevert(bytes("mock revert"));
         DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
@@ -1857,11 +1847,7 @@ contract DefaultedFacetTest is Test {
         TestMutatorFacet(address(diamond)).setLoan(loanId, override1155);
 
         // Mock the ERC1155 vault withdraw call to succeed
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC1155.selector),
-            abi.encode(true)
-        );
+        MockVaultWithdraw.stubs(address(diamond), VaultOutflowTypes.AssetKind.ERC1155);
 
         uint256 sellQuote = defaultQuote(address(diamond), loanId);
         vm.expectEmit(true, false, false, false);
@@ -1943,13 +1929,13 @@ contract DefaultedFacetTest is Test {
         // First vaultWithdrawERC20 (buffer=15 ether to treasury) succeeds — match by full args
         vm.mockCall(
             address(diamond),
-            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector, borrower, mockERC20, treasuryAddr, uint256(15 ether)),
+            abi.encodePacked(VaultOutflowFacet.vaultOutflow.selector, abi.encode(borrower, VaultOutflowTypes.AssetKind.ERC20, mockERC20, uint256(0), uint256(15 ether), address(0), VaultOutflowTypes.OutflowClass.Treasury)),
             abi.encode(uint256(15 ether)) // #2440 — the withdraw returns what arrived
         );
         // Second vaultWithdrawERC20 (full prepayAmount=300 ether to diamond) fails — match by full args
         vm.mockCallRevert(
             address(diamond),
-            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector, borrower, mockERC20, address(diamond), uint256(300 ether)),
+            abi.encodePacked(VaultOutflowFacet.vaultOutflow.selector, abi.encode(borrower, VaultOutflowTypes.AssetKind.ERC20, mockERC20, uint256(0), uint256(300 ether), address(0), VaultOutflowTypes.OutflowClass.DiamondTransient)),
             "prepay fail"
         );
 
@@ -2594,7 +2580,7 @@ contract DefaultedFacetTest is Test {
         TestMutatorFacet(address(diamond)).setLoan(loanId, loanOverride);
 
         // Mock vaultWithdrawERC721 to succeed
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC721.selector), abi.encode(true));
+        MockVaultWithdraw.stubs(address(diamond), VaultOutflowTypes.AssetKind.ERC721);
 
         uint256 sellQuote = defaultQuote(address(diamond), loanId);
         DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
@@ -2626,7 +2612,7 @@ contract DefaultedFacetTest is Test {
         TestMutatorFacet(address(diamond)).setLoan(loanId, loanOverride);
 
         // Mock vaultWithdrawERC1155 to succeed
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC1155.selector), abi.encode(true));
+        MockVaultWithdraw.stubs(address(diamond), VaultOutflowTypes.AssetKind.ERC1155);
 
         uint256 sellQuote = defaultQuote(address(diamond), loanId);
         DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
