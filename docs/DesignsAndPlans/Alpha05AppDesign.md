@@ -1192,6 +1192,30 @@ above. Each resolves here, so a route reviewer needs no private file:
   vault. While the protocol is paused the panel says so, with what stays
   open, and offers no deposit. The form's balance check is read again each
   block, so a balance that grows lifts its refusal by itself.
+- **RB-VAULT-WITHDRAW** — a withdrawal from the wallet's own vault (ACC-23)
+  takes what is free back to the connected wallet, and only to it: the
+  protocol would pay any screened address for an account without protected
+  mode, and the app offers none, so the receipt says the destination is the
+  wallet that signs. It opens from an asset row with something free, or, for
+  an NFT collection the deposit record names without token ids, from that
+  collection with the token id typed. The form's limit is the protocol's own
+  `withdrawableNow` figure for that asset and token, read again each block.
+  The review is read at one block: the vault, the pause and whether the
+  escape route is open under it, the sanctions screen, the account's
+  protected mode (retired, on, locked, delay, secondary signer) and the free
+  figure, then the protocol's dry run of this very withdrawal. No vault, a
+  retired wallet, a flagged wallet, a pause that applies (every pause, except
+  for a protected account once the escape route opens), a locked account, an
+  amount above the free figure, or the dry run's refusal stops it by name;
+  an unread pause, screen, free figure or dry run is stated. The receipt
+  names the vault it leaves, where it goes (this wallet at once, or the
+  account's payout queue for its delay, with a secondary signer's approval
+  where required), the free figure before and after, that only what is free
+  moves, that a queued withdrawal can be cancelled from the payout queue on
+  the Claims page, and that no approval is asked. The finish card states the
+  protocol's own withdrawal record (and whether it queued it), the queued
+  payout with its release time, and what the token's own logs moved from the
+  vault to the wallet.
 - **RB-FROZEN** — money the protocol holds for a wallet the sanctions
   screen flags (LN-53) is stated as "Frozen, awaiting de-listing": locked
   where its loan keeps it, in a vault, not lost, and released once the

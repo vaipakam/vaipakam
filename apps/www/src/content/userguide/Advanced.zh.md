@@ -2034,6 +2034,12 @@ Positions 通过一个共享读取器读取与 Home 相同的持仓清单：`get
 
 存入调用 `VaultDepositoryFacet.depositToVault(kind, asset, tokenId, amount)`：kind 0 为 ERC-20，1 为 ERC-721，2 为 ERC-1155；ERC-20 的代币 ID 为 0，ERC-721 的数量为 1。它带有 `whenNotPaused`，会筛查调用者（Tier-1），并拒绝已被替换而退役的钱包（`requireManager`）。审阅在同一区块读取 `getUserVaultAddress`、`paused`、制裁筛查状态、`getProtectedAccount(wallet)`，以及钱包的余额和授权；未能读取的暂停、筛查或退役状态会被说明，由试运行决定。授权为 ERC-20 的精确 `approve`（代币须先归零时为两步）、ERC-721 的 `approve(diamond, tokenId)`，或 ERC-1155 的 `setApprovalForAll(diamond, true)`，除非原本已授予，否则在存入后撤回。试运行在授权之后进行；ERC-20 以全额到账检查（`LibDelivery.pullExact`）拉取，因此转账扣费的代币会回滚。完成卡读取 `VaultDeposited(account, asset, kind, tokenId, amount)` 以及代币自身进入金库的转账日志。此存入没有 permit 路径。审阅还从 `getProtectedAccount(wallet)` 保留 `enabled`、`locked`、`delaySeconds` 和 `requireCosign`，回执说明这笔存入之后如何取出：立即、等待延迟期后（需要时经次级签名人批准），或账户锁定期间无法取出，而 `depositToVault` 并不拒绝锁定账户的存入。签名前的最后检查会重新读取 `hasAcceptedCurrentTerms`，并拒绝未接受的版本。
 
+<a id="vault-withdraw"></a>
+
+### 从金库提取
+
+提取调用 `VaultDepositoryFacet.withdrawFromVault(account, kind, asset, tokenId, amount, recipient)`，其中 `account` 和 `recipient` 都是已连接的钱包。上限为 `withdrawableNow(account, kind, asset, tokenId)`（超出则 `AmountExceedsFree`），它检查 `requireManager(account)`，筛查调用方（Tier-1）和收款方；暂停期间被拒绝，除非账户受保护且 `isEscapeOpen` 为真。审阅在同一区块读取 `getUserVaultAddress`、`paused`、`isEscapeOpen`、制裁状态、`getProtectedAccount(wallet)` 和 `withdrawableNow`，然后试运行该调用。未开启保护模式时，金库路由立即付给钱包；开启后，`LibProtectedAccount.queuePayout` 将付款排队 `delaySeconds`，并拒绝 `ProtectedVaultLocked`、`RecipientNotAllowlisted` 和 `TooManyPendingRows`。完成卡读取 `VaultWithdrawRequested(account, asset, kind, tokenId, amount, recipient, queued)`、`PayoutQueued` 以及代币自身从金库到钱包的转账日志。存入记录未记代币 ID 的合集，通过输入代币 ID 提取；表单上限为该代币的 `withdrawableNow`，每个区块重新读取。
+
 <a id="risk-access"></a>
 
 ### Risk Access：你的风险等级
