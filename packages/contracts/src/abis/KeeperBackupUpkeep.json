@@ -442,19 +442,6 @@
   },
   {
     "type": "function",
-    "name": "rotationSec",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint32",
-        "internalType": "uint32"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "runsPerPerform",
     "inputs": [],
     "outputs": [
@@ -531,11 +518,6 @@
       },
       {
         "name": "actWindowSec_",
-        "type": "uint32",
-        "internalType": "uint32"
-      },
-      {
-        "name": "rotationSec_",
         "type": "uint32",
         "internalType": "uint32"
       }
@@ -801,12 +783,6 @@
       },
       {
         "name": "actWindowSec",
-        "type": "uint32",
-        "indexed": false,
-        "internalType": "uint32"
-      },
-      {
-        "name": "rotationSec",
         "type": "uint32",
         "indexed": false,
         "internalType": "uint32"
