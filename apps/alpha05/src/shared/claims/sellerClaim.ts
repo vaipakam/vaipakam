@@ -22,6 +22,7 @@ import type { CopyAccess } from '../copy/useCopy';
 import { closed, OPEN, unknownVerdict, type Refusal, type Verdict } from '../eligibility/types';
 import { treasuryShareBps, type LoanDetails } from '../positions/loanView';
 import type { IndexerClient } from '../reads/world/indexerClient';
+import { ACTOR_LOANS_MAX_PAGES, discoverActorLoans } from '../reads/world/actorLoans';
 import { answerOrNull } from '../reads/answer';
 import { frozenRefusal, type FrozenState } from '../sanctions/posture';
 
@@ -44,7 +45,7 @@ const BPS = 10_000n;
 /** The four events the indexer files under the seller as its actor. */
 export const SELLER_KINDS = ['SellerInterestClaimRecorded', 'SellerInterestPaid', 'SellerInterestClaimClosed', 'SellerInterestWithdrawn'] as const;
 /** How far the discovery walks the wallet's seller history (pages of 100). */
-export const DISCOVERY_MAX_PAGES = 10;
+export const DISCOVERY_MAX_PAGES = ACTOR_LOANS_MAX_PAGES;
 
 /** Whether the loan's lender claim is final, so a withdrawal first splits
  *  it (`SellerClaimFacet._final`): ended and lender-claimable, not in
@@ -117,21 +118,10 @@ export async function readSellerRow(c: PublicClient, diamond: Hex, loanId: bigin
   return { loanId, loan, claims, claimAsset, held, share };
 }
 
-/** The loans the index names under `seller` for any step of a seller claim,
- *  newest first, walked to its end or to the cap. Throws when the index does
- *  not answer, so the surface states that instead of an empty list. */
-export async function discoverSoldLoans(indexer: IndexerClient, chainId: number, seller: Hex): Promise<{ loanIds: bigint[]; complete: boolean }> {
-  const ids = new Set<string>();
-  let before: string | null = null;
-  for (let page = 0; page < DISCOVERY_MAX_PAGES; page++) {
-    const q = new URLSearchParams({ chainId: String(chainId), actor: seller, kind: SELLER_KINDS.join(','), limit: '100' });
-    if (before) q.set('before', before);
-    const res: { events?: { loanId: number | string | null }[]; nextBefore?: string | null } = await indexer.getJson(`/activity?${q.toString()}`);
-    for (const e of res.events ?? []) if (e.loanId !== null && e.loanId !== undefined) ids.add(String(e.loanId));
-    if (!res.nextBefore) return { loanIds: [...ids].map((s) => BigInt(s)), complete: true };
-    before = res.nextBefore;
-  }
-  return { loanIds: [...ids].map((s) => BigInt(s)), complete: false };
+/** The loans the index names under `seller` for any step of a seller claim
+ *  (`discoverActorLoans`). */
+export function discoverSoldLoans(indexer: IndexerClient, chainId: number, seller: Hex): Promise<{ loanIds: bigint[]; complete: boolean }> {
+  return discoverActorLoans(indexer, chainId, seller, SELLER_KINDS, DISCOVERY_MAX_PAGES);
 }
 
 /** The seller's open claims on the row, summed (a seller who sold twice can

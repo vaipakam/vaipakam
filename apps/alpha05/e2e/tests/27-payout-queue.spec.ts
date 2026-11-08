@@ -79,7 +79,6 @@ test('the owner sees the queue in due order, cancels one payout and releases ano
     await expect(rowOf(id).getByTestId(`queue-release-${id}`)).toHaveCount(0);
     await expect(rowOf(id).getByTestId(`queue-cosign-${id}`)).toHaveCount(0);
   }
-  await expect(page.getByTestId('claims-not-yet')).not.toContainText('protected-account queue');
   await fitsWidth(page);
 
   // Cancel the first.

@@ -2277,6 +2277,12 @@ Positions は共通のリーダーを通して Home と同じ保有一覧を読�
 
 アプリは `getSanctionsOracle`（ゼロならこのチェーンにスクリーニングなし）、`sanctionsStatus(wallet)`（Clean、Flagged、またはスクリーニングがリバートしたときの Unavailable）、`isSanctionsConfirmedFlagged(wallet)`（`refreshSanctionsFlag` が確定的な読み取りから同期する登録簿）を読み取ります。Flagged、またはウォレットが登録済みの Unavailable は凍結と読みます。未登録の Unavailable はそう読みません。`claimAsLender` と `claimAsBorrower` は `whenNotPaused` の後に呼び出し元をスクリーニングし、障害は通します。プロトコルが記録した当事者のために支払いを凍結した側は fail-closed で解放され、その当事者が Clean と読まれるまで、その時点で誰がポジションを持っていても `SanctionedAddress` または `SanctionsOracleUnavailable` でリバートします。プロトコルはその記録された当事者を参照するビューを持たないため、アプリはそこではドライランに頼り、その拒否を同じ言葉で伝えます。`claimAsSeller` はフラグ付きの売り手を、また障害中は登録済みの売り手を拒否します。ローンの進行中、フラグ付きの保有者のために保留された貸し手の取り分は `getClaimable(loanId, true)` の `heldForLender` に加算され、貸し手のクレームが支払うまで記録上の貸し手のボールトに確保されます。フラグ付きの借り手でも返済はできますが、担保の追加はできません。
 
+<a id="extension-reserves"></a>
+
+### 延長用リザーブ：何が確認されるか
+
+`fundExtendReserve(loanId, amount)` は、借り手ポジション保有者のウォレットからローンの元本トークンを本人のボールトに預け入れ、そのローン用に確保します。`whenNotPaused` と制裁スクリーニングを伴い、ローンが Active で、ERC-20 ローンで、定期的な利払い間隔がない場合を除き拒否されます。`getExtendFunding(loanId, holder)` はトークン、`reserved`、保有者のその他の自由残高、延長が現時点と期間終了時に請求する額を返します。延長は現在の保有者のボールトからのみ、リザーブを先に請求します。`withdrawExtendReserve(account, loanId, amount)` は `whenNotPaused` を伴い、呼び出し元がアカウントの管理者（本人のウォレット、または置き換え後のコントローラー）であることを求め、呼び出し元をスクリーニングし（障害時は通過）、確保額を超えると `ExtendReserveInsufficient` で取り消されます。ローンの状態にかかわらず利用できます。アプリはウォレットに紐づくインデックスのアクティビティ (`ExtendReserveFunded`, `ExtendReserveWithdrawn`, `ExtendChargeDrawn`) からローンを一覧にし、番号での検索はチェーンだけを読みます。レビューが読み取ったリザーブ全額を引き出し、呼び出しをレビュー時と送信時に試行し、完了カードは `ExtendReserveWithdrawn`（金額と、確保されたまま残る額）を読み、保護モードが支払いをキューに入れたり保持したりした場合は `PayoutQueued` または `PayoutHeldInVault` も読みます。
+
 <a id="risk-access"></a>
 
 ### Risk Access: あなたのリスクレベル

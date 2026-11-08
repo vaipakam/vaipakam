@@ -1336,6 +1336,12 @@ Quand vous vendez une position de prêteur, les intérêts gagnés pendant que v
 
 Si le contrôle des sanctions signale votre portefeuille, le protocole ne prend rien de ce qui vous est dû et n'empêche jamais un prêt de se clore : l'autre partie reçoit quand même ce que son côté récupère. Votre part est mise de côté dans un coffre, verrouillée, et libérée dès que votre portefeuille est retiré de la liste. Claims et la page du prêt affichent alors « Gelé, en attente de retrait de la liste » et ne proposent aucun bouton pour encaisser. Si le contrôle ne peut pas être lu et que votre portefeuille a déjà été confirmé comme signalé, un paiement gelé reste verrouillé jusqu'à ce que le contrôle réponde à nouveau, et un paiement dû à votre portefeuille pendant ce temps est mis de côté de la même façon, car le protocole le traite toujours comme signalé ; une panne seule ne gèle jamais un portefeuille qui n'a jamais été confirmé comme signalé. Sur un prêt en cours, sa page indique aussi ce que le prêt a déjà payé et qui est réservé à la position du prêteur jusqu'à ce qu'il l'encaisse, et un prêt remboursé indique s'il attend un excédent que l'emprunteur n'a pas encore encaissé.
 
+<a id="extension-reserves"></a>
+
+### Réserves de prolongation
+
+Si vous détenez la position d'emprunteur d'un prêt, vous pouvez mettre de côté le jeton du prêt dans votre propre coffre pour ses prolongations. Une prolongation, celle du keeper ou la vôtre, puise d'abord dans cette réserve. La réserve reste la vôtre. Claims liste chaque prêt où il vous en reste, et indique si une prolongation peut encore y puiser : seulement tant que le prêt court et que vous détenez sa position d'emprunteur. Vous pouvez reprendre toute la réserve à tout moment tant que le protocole n'est pas en pause, quel que soit l'état du prêt ; si le prêt court encore, sa prochaine prolongation puise alors dans votre autre solde du jeton. Les prêts sont trouvés dans l'index de l'app ; s'il ne peut pas les lister, recherchez un prêt par son numéro. Aucune approbation n'est nécessaire, votre portefeuille demande donc une fois, après un essai, et la carte finale montre où l'argent est arrivé.
+
 <a id="risk-access"></a>
 
 ### Risk Access : votre niveau de risque

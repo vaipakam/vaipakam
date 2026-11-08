@@ -2010,6 +2010,12 @@ Positions 通过一个共享读取器读取与 Home 相同的持仓清单：`get
 
 应用读取 `getSanctionsOracle`（为零表示此链上没有筛查）、`sanctionsStatus(wallet)`（Clean、Flagged，或在筛查回滚时为 Unavailable）以及 `isSanctionsConfirmedFlagged(wallet)`，即 `refreshSanctionsFlag` 根据确定性读取同步的登记簿。Flagged，或钱包已登记时的 Unavailable，视为冻结；未登记的 Unavailable 则不是。`claimAsLender` 和 `claimAsBorrower` 在 `whenNotPaused` 之后筛查调用方，并放行故障；协议为某个记录在案的一方冻结付款的那一侧以 fail-closed 方式释放：在该方读取为 Clean 之前，无论届时谁持有头寸，都会以 `SanctionedAddress` 或 `SanctionsOracleUnavailable` 回滚。协议没有提供查看该记录方的视图，因此应用在此依赖试运行，并用同样的措辞说明其拒绝。`claimAsSeller` 会拒绝被标记的卖方，以及在故障期间已登记的卖方。贷款进行期间，为被标记持有人暂存的出借人份额会计入 `getClaimable(loanId, true)` 的 `heldForLender`，预留在记录的出借人金库中，直到出借人的领取将其支付。被标记的借款人仍可还款，但不能追加抵押品。
 
+<a id="extension-reserves"></a>
+
+### 展期储备：检查哪些内容
+
+`fundExtendReserve(loanId, amount)` 将贷款的本金代币从借款人头寸持有人的钱包存入其自己的金库，并为该贷款预留。它带有 `whenNotPaused` 和制裁筛查，除非贷款为 Active、是 ERC-20 贷款且没有定期付息周期，否则会被拒绝。`getExtendFunding(loanId, holder)` 返回代币、`reserved`、持有人的其他可用余额，以及展期现在和窗口结束时将收取的金额；展期只从当前持有人的金库收取，先扣储备。`withdrawExtendReserve(account, loanId, amount)` 带有 `whenNotPaused`，要求调用者是该账户的管理者（其自己的钱包，或替换后的控制者），对调用者进行筛查（故障时放行），超出预留额时以 `ExtendReserveInsufficient` 回退；无论贷款处于何种状态均可调用。应用根据索引中记在该钱包名下的活动 (`ExtendReserveFunded`, `ExtendReserveWithdrawn`, `ExtendChargeDrawn`) 列出贷款；按编号查找只读取链上数据。它会取回审核读取到的全部储备，在审核时和发送时各试运行一次调用，完成卡片读取 `ExtendReserveWithdrawn`（金额以及仍保留的部分），在保护模式将付款排入队列或保留时，还会读取 `PayoutQueued` 或 `PayoutHeldInVault`。
+
 <a id="risk-access"></a>
 
 ### Risk Access：你的风险等级

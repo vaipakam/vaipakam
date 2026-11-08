@@ -15,11 +15,13 @@
 //  - the read-only RPC proxy's `POST /rpc/:chainId`, forwarded to Anvil
 //    verbatim (alpha05 refuses a per-chain RPC URL, so this is the ONLY
 //    way the dev server's reads reach the fixture chain);
-//  - the indexer's `GET /activity?actor=…&kind=…`, for the seller-claim
-//    kinds only: read from the chain's own logs of the four seller events,
-//    filed under the seller as the indexer files them (topic 2), so Claims
-//    discovers a sold position the way it does against the real Worker.
-//    Refused with 503 while the posture is `down`, as the whole index is.
+//  - the indexer's `GET /activity?actor=…&kind=…`, for the seller-claim and
+//    extension-reserve kinds only: read from the chain's own logs of those
+//    events, filed under the seller or the reserve's depositor as the
+//    indexer files them (topic 2 of each: the loan is topic 1), so Claims
+//    discovers a sold position or a reserve the way it does against the
+//    real Worker. Refused with 503 while the posture is `down`, as the whole
+//    index is.
 //
 // Everything a world read would need beyond health lands with the route
 // that reads it (the Home PR adds the position views, the Offers PR the
@@ -41,12 +43,15 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 // committed one, whose 84532 entry is the live testnet).
 const DEPLOYMENT = JSON.parse(fs.readFileSync(path.resolve(HERE, '..', '.state', 'deployments.json'), 'utf8'))[String(CHAIN_ID)];
 
-// The seller-claim events, from the combined Diamond ABI (the recorded event
-// is a library's, so it is in no single facet's file).
+// The activity events the stand-in serves, from the combined Diamond ABI
+// (the seller's recorded event is a library's, so it is in no single
+// facet's file). Each carries the loan as topic 1 and its actor as topic 2.
 const DIAMOND_ABI = JSON.parse(fs.readFileSync(path.resolve(HERE, '..', '..', '..', '..', 'packages', 'contracts', 'src', 'diamondAbi.json'), 'utf8'));
 const SELLER_KINDS = ['SellerInterestClaimRecorded', 'SellerInterestPaid', 'SellerInterestClaimClosed', 'SellerInterestWithdrawn'];
-const SELLER_TOPICS = new Map(
-  SELLER_KINDS.map((name) => {
+const RESERVE_KINDS = ['ExtendReserveFunded', 'ExtendReserveWithdrawn', 'ExtendChargeDrawn'];
+const ACTIVITY_KINDS = [...SELLER_KINDS, ...RESERVE_KINDS];
+const ACTIVITY_TOPICS = new Map(
+  ACTIVITY_KINDS.map((name) => {
     const item = DIAMOND_ABI.find((e) => e.type === 'event' && e.name === name);
     if (!item) throw new Error(`the Diamond ABI has no ${name} event`);
     return [toEventSelector(item), name];
@@ -94,19 +99,19 @@ async function ingestHealth() {
   };
 }
 
-/** `/activity` for the seller kinds: every seller event filed under `actor`,
+/** `/activity` for the served kinds: every such event filed under `actor`,
  *  newest first, in one page (a test chain never needs a second). */
-async function sellerActivity(url) {
+async function actorActivity(url) {
   const actor = (url.searchParams.get('actor') ?? '').toLowerCase();
   if (!/^0x[0-9a-f]{40}$/.test(actor)) return { status: 400, body: { error: 'actor must be an address' } };
   const kinds = (url.searchParams.get('kind') ?? '').split(',').filter(Boolean);
-  if (kinds.length === 0 || kinds.some((k) => !SELLER_KINDS.includes(k))) return { status: 400, body: { error: 'the stand-in serves the seller kinds only' } };
-  const topics = [...SELLER_TOPICS].filter(([, name]) => kinds.includes(name)).map(([t]) => t);
+  if (kinds.length === 0 || kinds.some((k) => !ACTIVITY_KINDS.includes(k))) return { status: 400, body: { error: 'the stand-in serves the seller and reserve kinds only' } };
+  const topics = [...ACTIVITY_TOPICS].filter(([, name]) => kinds.includes(name)).map(([t]) => t);
   const logs = await anvil('eth_getLogs', [{ address: DEPLOYMENT.diamond, fromBlock: '0x0', toBlock: 'latest', topics: [topics, null, `0x${actor.slice(2).padStart(64, '0')}`] }]);
   const events = logs
     .map((l) => ({
       chainId: CHAIN_ID,
-      kind: SELLER_TOPICS.get(l.topics[0]),
+      kind: ACTIVITY_TOPICS.get(l.topics[0]),
       actor,
       loanId: Number(BigInt(l.topics[1])),
       blockNumber: Number(l.blockNumber),
@@ -154,7 +159,7 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === '/') {
       json(res, 200, {
         service: 'alpha05 e2e stand-in',
-        routes: ['/health/ingest', '/activity (seller kinds)', '/ws/chain/:chainId (503)', '/rpc/:chainId', '/__stub/index-posture'],
+        routes: ['/health/ingest', '/activity (seller and reserve kinds)', '/ws/chain/:chainId (503)', '/rpc/:chainId', '/__stub/index-posture'],
       });
       return;
     }
@@ -181,7 +186,7 @@ const server = http.createServer(async (req, res) => {
         json(res, 503, { error: 'e2e stand-in: index posture is down' });
         return;
       }
-      const out = await sellerActivity(url);
+      const out = await actorActivity(url);
       json(res, out.status, out.body);
       return;
     }

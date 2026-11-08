@@ -1001,10 +1001,9 @@ above. Each resolves here, so a route reviewer needs no private file:
   token is burnt and the reader leaves and returns, until its finish card is
   closed. Claims lists the payouts of
   the positions the wallet holds now, so a bought position pays its new
-  holder, says "nothing to collect" only when every read completed, and
-  names the payouts it does not yet collect (extension reserves) with a
-  link to the current app until their slice lands; seller interest is
-  RB-SELLER-CLAIM, and a payout frozen for a flagged wallet is RB-FROZEN.
+  holder, and says "nothing to collect" only when every read completed;
+  seller interest is RB-SELLER-CLAIM, an unused extension reserve is
+  RB-RESERVE, and a payout frozen for a flagged wallet is RB-FROZEN.
 - **RB-PAYOUT-QUEUE** — Claims lists a protected account's payout queue
   (LN-54, LN-55, LN-56): the wallet's own account, then an account it
   manages since a replacement retired it, and in Advanced mode any account
@@ -1063,6 +1062,24 @@ above. Each resolves here, so a route reviewer needs no private file:
   reviewed one said beside it) and each payment where it landed. A row that
   could not be read is said so, and a withdrawal in progress stays on screen
   until its finish card is closed, whatever the latest list or lookup shows.
+- **RB-RESERVE** — an extension reserve (LN-62) is the depositor's own
+  money, set aside in their own vault for a loan's extensions, and Claims
+  lists every loan where this wallet has some left: found from the index's
+  activity filed under the wallet (funded, charged, withdrawn), or looked
+  up by loan number from the chain alone, never shown as empty while the
+  index fails. Each row states the reserve and whether an extension can
+  still draw on it: only on a running ERC-20 loan with no interest cadence,
+  and only while this wallet holds the borrower position, since an
+  extension charges the current holder's vault; with the holder unread on a
+  running loan, it is said unknown, never safe. The whole reserve is taken
+  back in one withdrawal, open whatever the loan's state and whoever holds
+  the position, held by the protocol pause (it is one of the withdrawals a
+  pause stops, as the protocol enforces) and refused for a flagged wallet
+  (RB-FROZEN; an outage is the dry run's). The review says a running
+  extension then loses the reserve, the dry run decides the rest (a wallet
+  that no longer manages the account is told so), and the finish card
+  measures where the money landed (RB-PAYOUT-ROUTE) and what stays
+  reserved if more was set aside meanwhile.
 - **RB-FROZEN** — money the protocol holds for a wallet the sanctions
   screen flags (LN-53) is stated as "Frozen, awaiting de-listing": locked
   where its loan keeps it, in a vault, not lost, and released once the
