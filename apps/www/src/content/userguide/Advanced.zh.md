@@ -1984,6 +1984,14 @@ Positions 通过一个共享读取器读取与 Home 相同的持仓清单：`get
 
 表单用 `calculateMaxWithdrawable` 检查金额；对不处于 Active 的贷款或非流动抵押品，它为零，并随利息累积而下降。没有视图公开关联的出售挂单，因此审核会试运行取回并指出该拒绝；发送时会再次试运行。完成卡片从交易的 `PartialCollateralWithdrawn` 日志读取剩余抵押品和新数值，并从代币转入钱包的 `Transfer` 读取到账金额。对于开启保护账户模式的调用者，金库的付款闸门不会直接支付，而是按账户的延迟期将提取放入队列（`PayoutQueued`），因此审核会读取 `getProtectedAccount`，完成卡片会读取该日志。
 
+<a id="collect-a-payout"></a>
+
+### 领取款项：检查什么
+
+`claimAsLender(loanId)` 和 `claimAsBorrower(loanId)` 带有 `whenNotPaused`，从该方登记的当事人（`loan.lender` / `loan.borrower`）的金库付款给调用者，调用者必须是该方头寸代币的 `ownerOf`。出借人可在 Repaid、Defaulted、FallbackPending 或 InternalMatched 的贷款上领取；借款人只能在 Repaid、Defaulted 或 InternalMatched 上领取。出借人的领取在持有人检查之前拒绝已领取的记录（`AlreadyClaimed`），在之后拒绝没有任何待付项的一方（`NothingToClaim`）；强制平仓记为零的记录仍会执行并关闭头寸。借款人的领取只在抵押品记录和盈余记录都为空或已领取时才拒绝，并按各自的标志分别支付，同时支付仍以另一种代币处于贷款留置之下的抵押品。
+
+审核页读取 `getClaimable`（出借人记录已扣除前任卖家的部分，旁边附有 `getSellersShareOfLenderClaim`）、`getBorrowerSurplusClaim` 和 `getLoanCollateralLien`，并模拟运行领取，这也会执行制裁检查。列表以头寸代币为准：`getUserDashboardClaimables` 列出登记当事人的领取，因此列出的记录只在钱包持有该方时保留；从他人处得到的、已结束贷款上的持有头寸，则直接读取其领取。完成卡片读取 `LenderFundsClaimed` / `BorrowerFundsClaimed`、`BorrowerSurplusClaimed` 和 `LoanSettled`，以及转入钱包的代币；对处于保护账户模式的调用者，读取 `PayoutQueued`（账户自己的金库）、`PayoutHeldInVault`（账户已锁定或队列已满）或 `PaymentCreditedToVault`（其他当事人的金库）。在 FallbackPending 贷款上，出借人的领取可能在领取时执行内部撮合并改写记录，因此完成卡片会将转账与协议自己的记录进行比较。
+
 <a id="risk-access"></a>
 
 ### Risk Access：你的风险等级

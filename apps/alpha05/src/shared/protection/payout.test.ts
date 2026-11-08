@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { encodeAbiParameters, encodeEventTopics, type Abi, type AbiEvent, type Log } from 'viem';
 import { VaultPayoutFacetABI } from '@vaipakam/contracts/abis';
-import { payoutOutcome, payoutRoute } from './payout';
+import { payoutOutcomes, payoutRoute } from './payout';
 
 const DIAMOND = '0x00000000000000000000000000000000000000d1' as const;
 const OTHER = '0x00000000000000000000000000000000000000e2' as const;
@@ -43,21 +43,24 @@ describe('payoutRoute', () => {
   });
 });
 
-describe('payoutOutcome', () => {
+describe('payoutOutcomes', () => {
   it('reads a payout queued for this account and asset from the Diamond only, summed', () => {
-    expect(payoutOutcome([queued(DIAMOND, ME, 7n), queued(DIAMOND, ME, 3n)], DIAMOND, ME, ASSET)).toEqual({ kind: 'queued', amount: 10n, releaseAt: 1_900_000_000n });
-    expect(payoutOutcome([queued(OTHER, ME, 7n)], DIAMOND, ME, ASSET)).toBeNull();
-    expect(payoutOutcome([queued(DIAMOND, OTHER, 7n)], DIAMOND, ME, ASSET)).toBeNull();
-    expect(payoutOutcome([], DIAMOND, ME, ASSET)).toBeNull();
+    expect(payoutOutcomes([queued(DIAMOND, ME, 7n), queued(DIAMOND, ME, 3n)], DIAMOND, ME, ASSET)).toEqual([{ kind: 'queued', amount: 10n, releaseAt: 1_900_000_000n }]);
+    expect(payoutOutcomes([queued(OTHER, ME, 7n)], DIAMOND, ME, ASSET)).toEqual([]);
+    expect(payoutOutcomes([queued(DIAMOND, OTHER, 7n)], DIAMOND, ME, ASSET)).toEqual([]);
+    expect(payoutOutcomes([], DIAMOND, ME, ASSET)).toEqual([]);
   });
   it('reads a payout kept in the vault and a payment credited to it', () => {
-    expect(payoutOutcome([eventLog(DIAMOND, 'PayoutHeldInVault', { account: ME, asset: ASSET, tokenId: 0n, amount: 5n })], DIAMOND, ME, ASSET)).toEqual({
-      kind: 'held',
-      amount: 5n,
-    });
-    expect(payoutOutcome([eventLog(DIAMOND, 'PaymentCreditedToVault', { account: ME, asset: ASSET, tokenId: 0n, amount: 5n, received: 4n })], DIAMOND, ME, ASSET)).toEqual({
-      kind: 'vault',
-      amount: 4n,
-    });
+    const held = eventLog(DIAMOND, 'PayoutHeldInVault', { account: ME, asset: ASSET, tokenId: 0n, amount: 5n });
+    expect(payoutOutcomes([held], DIAMOND, ME, ASSET)).toEqual([{ kind: 'held', amount: 5n }]);
+    const credited = eventLog(DIAMOND, 'PaymentCreditedToVault', { account: ME, asset: ASSET, tokenId: 0n, amount: 5n, received: 4n });
+    expect(payoutOutcomes([credited], DIAMOND, ME, ASSET)).toEqual([{ kind: 'vault', amount: 4n }]);
+  });
+  it('reads a payment split between the queue and the vault as both', () => {
+    const held = eventLog(DIAMOND, 'PayoutHeldInVault', { account: ME, asset: ASSET, tokenId: 0n, amount: 5n });
+    expect(payoutOutcomes([queued(DIAMOND, ME, 7n), held], DIAMOND, ME, ASSET)).toEqual([
+      { kind: 'queued', amount: 7n, releaseAt: 1_900_000_000n },
+      { kind: 'held', amount: 5n },
+    ]);
   });
 });

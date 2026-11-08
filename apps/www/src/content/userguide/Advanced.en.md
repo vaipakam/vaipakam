@@ -2628,6 +2628,14 @@ The app reads those inputs, both asset checks live rather than from the loan's o
 
 The form checks the amount against `calculateMaxWithdrawable`, which is zero for a loan that is not Active or whose collateral is illiquid, and which falls as interest accrues. No view exposes a linked sale listing, so the review runs the withdrawal as a dry run and names that refusal; the send runs it again. The finish card reads the collateral left and the new figures from the transaction's `PartialCollateralWithdrawn` log, and the amount received from the token's `Transfer` to the wallet. For a caller running protected account mode, the vault's payout gate queues the withdrawal (`PayoutQueued`) for the account's delay instead of paying it, so the review reads `getProtectedAccount` and the finish card reads that log.
 
+<a id="collect-a-payout"></a>
+
+### Collecting a Payout: What Is Checked
+
+`claimAsLender(loanId)` and `claimAsBorrower(loanId)` carry `whenNotPaused` and pay from the vault of the party recorded for the side (`loan.lender` / `loan.borrower`) to the caller, who must be `ownerOf` that side's position token. The lender may claim on a Repaid, Defaulted, FallbackPending or InternalMatched loan; the borrower on Repaid, Defaulted or InternalMatched only. The lender's claim refuses an already-claimed row (`AlreadyClaimed`) before the holder check and a side with nothing open (`NothingToClaim`) after it; a row a forced close-out recorded at zero still runs and closes the position. The borrower's claim refuses only when its collateral row and its surplus row are both empty or claimed, and pays each on its own flag, with collateral still under the loan's lien in another token beside them.
+
+The review reads `getClaimable` (the lender row already net of past sellers, with `getSellersShareOfLenderClaim` beside it), `getBorrowerSurplusClaim` and `getLoanCollateralLien`, and runs the claim as a dry run, which also applies the sanctions screens. The list follows the position token: `getUserDashboardClaimables` lists the recorded party's claims, so a listed row is kept only while the wallet holds that side, and a held position on an ended loan received from someone else has its claim read directly. The finish card reads `LenderFundsClaimed` / `BorrowerFundsClaimed`, `BorrowerSurplusClaimed` and `LoanSettled`, and the token transfers to the wallet; for a caller in protected account mode it reads `PayoutQueued` (the account's own vault), `PayoutHeldInVault` (a locked account or a full queue) or `PaymentCreditedToVault` (another party's vault). On a FallbackPending loan the lender's claim may run a claim-time internal match that rewrites the row, so the finish card compares the transfers with the protocol's own record.
+
 <a id="risk-access"></a>
 
 ### Risk Access: Your Risk Level

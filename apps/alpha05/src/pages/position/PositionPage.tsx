@@ -16,6 +16,7 @@ import { useNow } from '../../shared/ui/useNow';
 import { WhyLink } from '../../shared/help/WhyLink';
 import { Notice } from '../../shared/ui/Notice';
 import { LoanActions } from './LoanActions';
+import { LoanClaims } from './LoanClaims';
 import { Fact, Facts } from './Facts';
 import { InterestSchedule } from './InterestSchedule';
 
@@ -153,6 +154,7 @@ function LoanBody({ loanId, view: v, own, chain, meta }: { loanId: bigint; view:
       )}
 
       <LoanActions loanId={loanId} view={v} role={role} own={own} chain={chain} meta={meta} />
+      <LoanClaims loanId={loanId} view={v} own={own} chain={chain} meta={meta} />
 
       {live && (
         <Facts title={text('position.datesTitle')} id="position-dates" lead={v.deadlines === null ? <p className="tier-a">{text('position.datesUnknown')}</p> : null}>

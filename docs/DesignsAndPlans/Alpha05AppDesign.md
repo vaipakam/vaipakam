@@ -916,7 +916,9 @@ above. Each resolves here, so a route reviewer needs no private file:
   linked sale listing also holds it; no view exposes that link (#3308), so
   the review's dry run of this very withdrawal names it, and the send runs
   the dry run again. The page states a closed reason only where no action
-  above already said it. The amount is more than nothing and at most the
+  above already said it, and a hold said once for two actions (an unpriced
+  token with the top-up, a refinance request with paying part) is said in
+  words that name both. The amount is more than nothing and at most the
   protocol's limit now (`calculateMaxWithdrawable`), checked as it is typed;
   the form says the limit moves with prices and as interest accrues, and
   offers no "use the most" shortcut, since an amount at the limit is
@@ -956,6 +958,53 @@ above. Each resolves here, so a route reviewer needs no private file:
   the finish card. A mode that could not be read is stated as unknown, never
   as the wallet route. A change to the route, or to a queued payment's delay
   or signer requirement, reopens the review.
+- **RB-POSITION-CLAIM** — collecting a loan payout (LN-48, LN-49, LN-50)
+  is one flow under RB-CLAIM, opened from the loan's page and from Claims.
+  Each side is decided by its own rule (RB-ELIG), read against that side's
+  position holder, never the reader's overall role, in the order
+  `claimAsLender` / `claimAsBorrower` checks: the protocol pause, a loan
+  whose status pays no claim on that side (a running loan; a settled one; a
+  loan in fallback, which pays the borrower only after the lender has
+  collected or the loan is cured), a side already collected or with nothing
+  recorded, and the holder. On the loan's page the borrower's payout stays
+  shown while it waits on a loan in fallback, with that reason, so its
+  holder is never left with no payout section and no explanation. The review names every payout the claim makes
+  on that side: the lender's recorded row and funds held for the lender
+  before the loan ended, a rented NFT back to its lender, the borrower's
+  collateral row, collateral the borrower added in another token, and a
+  surplus held for the borrower. A row recorded at zero says so, and that
+  collecting still closes the position. It states where the payout goes by
+  RB-PAYOUT-ROUTE (the wallet; a protected account's own-vault payout queued
+  for its delay, or kept in its vault while the account is locked or its
+  queue is full; a payment from another party's vault into a protected
+  wallet's vault), what past sellers of the
+  lender position take first (stated as unknown, with what it may take, when
+  it could not be read), that collecting burns the position token,
+  that collecting in fallback ends the fallback and the borrower's cure, and
+  the pause posture. The protocol's dry run of this very claim is part of
+  the review, and the send runs it again. The finish card measures, from
+  the transaction's own logs, the claim recorded, what the protocol paid
+  from the row against what was reviewed, each payout that arrived, was
+  queued, kept or credited to a vault (each destination stated, since one
+  payment can split between the queue and the vault), an NFT's arrival, and
+  the loan's settlement once both sides have collected. A lender claim on a
+  loan in fallback runs the protocol's match first with the claimant as its
+  matcher. A match rewrites the payout in places the protocol records only
+  in part (a full match the row, a partial one the funds held for the
+  lender), so when the logs show one the card says the match changed the
+  payout and states what each token delivered instead of comparing it with
+  the review (a reviewed token that delivered nothing is still flagged), and
+  states the matcher's reward each leg paid, in that leg's loan's principal
+  token, the collateral token's included. A claim the review
+  could not read is stated as unknown, never as zero. A claim flow in progress
+  stays on Claims, drawn from the app's record of it, after its position
+  token is burnt and the reader leaves and returns, until its finish card is
+  closed. Claims lists the payouts of
+  the positions the wallet holds now, so a bought position pays its new
+  holder, says "nothing to collect" only when every read completed, and
+  names the payouts it does not yet collect (seller interest, frozen sale
+  proceeds, the protected-account queue, extension reserves) with a link to
+  the current app until their slices land.
 
 ## 3. Companion specifications
 
