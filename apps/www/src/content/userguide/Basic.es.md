@@ -1360,6 +1360,18 @@ La tarjeta Seguridad de la cuenta en la página Bóveda muestra si tu cuenta usa
 
 Mientras el protocolo está en pausa, la página Bóveda lo dice arriba: los retiros están cerrados, mientras que el pago total y parcial y añadir garantía siguen abiertos. Si es una pausa administrativa, también dice cuándo se abre su vía de escape, según lo informa el protocolo, con una cuenta atrás. Una vez abierta la vía, Retirar en cualquier activo con algo libre devuelve lo tuyo directamente a tu billetera; la revisión dice que pasa por la vía de escape, y la vía nunca devuelve lo que retiene un préstamo, una oferta o un reclamo. Con el modo protegido activo, tus retiros siguen esperando el plazo de tu cuenta en la cola de pagos, como siempre. Una pausa automática, o un protocolo aún no lanzado, no abre ninguna vía de escape, y la página dice que no hay ninguna prevista.
 
+<a id="my-offers"></a>
+
+### Tus ofertas
+
+Ofertas lista cada oferta que creaste en la red a la que estás conectado y cada oferta cuyo token de posición tienes ahora, la más reciente primero. Cada una muestra el estado que informa el protocolo: abierta, completada, vendida, vencida o cancelada, y los filtros sobre la lista cuentan cada estado. Una solicitud de préstamo figura como vendida cuando su garantía se vendió mediante su anuncio en el mercado antes de que alguien la aceptara: no se abrió ningún préstamo y lo obtenido en la venta fue a la bóveda de quien la creó. Una oferta abierta mantiene en tu bóveda lo que presta o compromete hasta que se completa o se cancela; una vencida lo mantiene ahí hasta que alguien la limpia. Cuando el protocolo cancela una oferta que nada completó, borra sus condiciones, así que la página muestra solo su número y su estado. Si otra billetera tiene el token de posición de una oferta que creaste, aún puedes cancelarla y la devolución llega a ti; si tienes una que creó otra billetera, solo esa billetera puede cancelarla antes de que venza. El libro de ofertas sigue en la app actual, y la página enlaza a él.
+
+<a id="offer-cancel"></a>
+
+### Cancelar una oferta
+
+Cancelar en una oferta abierta que creaste la retira del libro y devuelve lo que aún bloquea en tu bóveda: el importe no prestado o el NFT de una oferta de préstamo, la garantía sin usar de una solicitud, o la tarifa prepagada y el margen de una solicitud de alquiler. Una oferta que nada ha completado no puede cancelarse en sus primeros cinco minutos, para que una cancelación nunca compita con una aceptación; la revisión dice cuándo podrá, y levanta el bloqueo por sí sola. La parte ya completada sigue completada. Una oferta vencida tiene un botón Limpiar que devuelve de la misma forma lo que bloqueaba; cualquiera puede limpiar una oferta vencida, y la devolución siempre va a su creador. La revisión dice qué vuelve y adónde: sin modo protegido llega a tu billetera al instante; con él, espera el retraso de tu cuenta en la cola de pagos, o queda en tu bóveda mientras la cuenta está bloqueada. Cuando la app no puede calcular la devolución, como en una oferta ligada a un préstamo en curso, la revisión lo dice y la tarjeta final muestra lo que se movió. Mientras el protocolo está en pausa, cancelar está cerrado. Nada sale de tu billetera y no se pide ninguna aprobación, así que tu billetera pregunta una vez.
+
 <a id="risk-access"></a>
 
 ### Risk Access: tu nivel de riesgo

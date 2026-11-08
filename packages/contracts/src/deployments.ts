@@ -257,6 +257,10 @@ export interface Deployment {
    *  NFT; read through `positionNftAddress`. Optional until each chain's
    *  next fresh deploy writes it. */
   positionNFT?: HexAddress;
+  /** #3272 — the ProtocolRegistry: the delayed, Timelock-owned endpoints the
+   *  Diamond and every vault share (the price guard first). Optional until
+   *  each chain's next fresh deploy writes it. */
+  protocolRegistry?: HexAddress;
   treasury: HexAddress;
   admin: HexAddress;
   facets: DeploymentFacets;

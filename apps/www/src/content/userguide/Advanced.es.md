@@ -2497,6 +2497,18 @@ La tarjeta lee, en un mismo bloque, `getProtectedAccount(wallet)`, `getProtected
 
 El aviso lee, en un mismo bloque, `paused`, `VaultPayoutFacet.isEscapeOpen`, `escapeOpensAt` (el inicio de la pausa manual más el periodo de escape con que empezó; cero si no hay ninguna en vigor o el Diamond nunca se lanzó) y `getProtectedAccount(wallet)`, y cuenta atrás con la hora del bloque. En pausa con la vía cerrada, `withdrawFromVault` revierte con `EnforcedPause` y la revisión dice que la pausa lo detiene. Cuando `isEscapeOpen` es verdadero, una cuenta protegida sigue usando `withdrawFromVault`, que sigue poniendo en cola; el retiro de cualquier otra billetera llama a `escapeWithdraw(kind, asset, tokenId, amount)`, que rechaza una cuenta protegida (`EscapeNotForProtected`), rechaza un destinatario vetado, está limitado por el saldo propio de depósito de la billetera y la cifra libre, y paga a quien llama. La tarjeta final lee `EscapeWithdrawal(account, asset, tokenId, amount)` y la transferencia del propio token de la bóveda a la billetera. Si la pausa, la vía o, con la vía abierta, el modo no se pueden leer, no se envía ningún retiro.
 
+<a id="my-offers"></a>
+
+### Tus ofertas
+
+La lista es la unión de `getUserOffersPaginated(wallet)` (el índice por creador, que conserva un id cancelado) y `getUserPositionOffersPaginated(wallet)` (las ofertas cuyo token de posición tiene la billetera), leídas en lotes de como máximo 250 mediante `MetricsDashboardFacet.getOffersWithState`, que responde posición por posición. Cada fila se asocia al id que se pidió: una oferta cancelada sin nada completado tiene su registro borrado, así que la vista informa id 0 con el estado derivado Cancelada, y la fila no muestra condiciones en lugar de reconstruirlas. Una oferta cancelada tras un llenado parcial conserva su registro con `accepted` activado y se lee como completada. Los recuentos de los filtros se calculan sobre las filas leídas; si alguno de los índices no pudo leerse hasta el final, la página dice que la lista puede estar incompleta.
+
+<a id="offer-cancel"></a>
+
+### Cancelar una oferta
+
+La revisión lee, en un mismo bloque, `getOffer(id)`, `getOffersWithState([id])`, `getOfferLinkedLoanId(id)`, `paused()` y el `getProtectedAccount` del creador, y luego simula `OfferCancelFacet.cancelOffer(id)`. La faceta permite al gestor del creador cancelar en cualquier momento y a cualquiera una vez pasado `expiresAt`; rechaza `OfferAlreadyAccepted`, `OfferAlreadyConsumedBySale` y `CancelCooldownActive` mientras una oferta con `amountFilled == 0` tenga menos de 300 segundos y no haya vencido, y es `whenNotPaused`. La devolución se calcula con las propias ramas de la faceta: una oferta de préstamo ERC-20 devuelve `(amountMax o amount) - amountFilled` del activo prestado; una oferta de préstamo de NFT su token, o su cantidad ERC-1155; una solicitud de préstamo su garantía sin usar `(collateralAmountMax o collateralAmount) - collateralAmountFilled`, o su NFT, y nada cuando `refinanceCarryOver` mantiene la garantía en el préstamo; una solicitud de alquiler `amount × durationDays` más el margen a `rentalBufferBpsAtCreate`. Una oferta ligada a un préstamo por `getOfferLinkedLoanId`, o una solicitud de alquiler con margen registrado en cero (el protocolo usa entonces su tasa actual), no se calcula antes de firmar. Toda devolución sale de la bóveda del creador por el retiro de bóveda, así que el modo protegido la pone en cola, o la mantiene en la bóveda mientras la cuenta está bloqueada. El token de posición se retira. La tarjeta final lee `OfferCanceled(offerId, creator)`, el registro de pago del protocolo para el creador y la propia transferencia del token al creador.
+
 <a id="risk-access"></a>
 
 ### Risk Access: tu nivel de riesgo

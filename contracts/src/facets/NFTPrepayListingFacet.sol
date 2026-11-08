@@ -949,7 +949,9 @@ contract NFTPrepayListingFacet is
     // ─── Permissionless entry: cancelExpiredPrepayListing ───────────────
 
     /// @notice Permissionless cleanup of a listing whose grace
-    ///         window has expired without a fill.
+    ///         window has expired without a fill, or (#3336), at any
+    ///         time, of a listing whose borrower position has moved
+    ///         since it was posted.
     /// @dev    Three rationale points worth keeping in mind:
     ///
     ///         1. **Lock liveness.** The borrower-position NFT
@@ -996,6 +998,16 @@ contract NFTPrepayListingFacet is
         bytes32 orderHash = s.prepayListingOrderHash[loanId];
         if (orderHash == bytes32(0)) {
             revert PrepayListingNotFound(loanId);
+        }
+
+        // #3336 — a listing whose borrower position moved since it was posted
+        // (or whose route another flow replaced) can never fill
+        // (`LibPositionNFT.completeRoute` refuses it), so anyone may clear it
+        // at once, with no window to wait for. Like every cancel here it moves
+        // nothing: the collateral stays in the loan's vault under its lien.
+        if (LibPositionNFT.routeIsDead(loan.borrowerTokenId, LibPositionNFT.RouteReason.PrepayCollateralListing)) {
+            _cancel(s, loan, loanId, orderHash, CancelReason.PositionMoved);
+            return;
         }
 
         // Round-5 Block B (#309) post-merge polish — Codex P2 (mode-

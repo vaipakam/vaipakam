@@ -21,7 +21,7 @@ const review: TakeBackReview = {
   maxWithdrawable: 20n,
   healthFactor: 2n * 10n ** 18n,
   ltvBps: 4000n,
-  protection: { enabled: false, locked: false, delaySeconds: 0, requireCosign: false },
+  protection: { enabled: false, locked: false, delaySeconds: 0, requireCosign: false, retired: false, controller: '0x0000000000000000000000000000000000000000' as const },
   route: 'wallet',
   amountCheck: { ok: true },
   dryRun: null,
@@ -67,7 +67,7 @@ describe('takeBackReceipt', () => {
 
 describe('takeBack protected account mode', () => {
   const lines = (r: TakeBackReview) => takeBackReceipt(r, null, copy).consequences.map(String);
-  const on = { enabled: true, locked: false, delaySeconds: 86_400, requireCosign: false };
+  const on = { enabled: true, locked: false, delaySeconds: 86_400, requireCosign: false, retired: false, controller: '0x0000000000000000000000000000000000000000' as const };
   const queued: TakeBackReview = { ...review, protection: on, route: 'queued' };
   it('sends to the wallet at once when the mode is off', () => {
     expect(destination(review, copy)).toBe('takeBack.to');
