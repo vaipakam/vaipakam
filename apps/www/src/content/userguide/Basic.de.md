@@ -1328,6 +1328,12 @@ Die Prüfung listet jede Zahlung auf, die die Forderung leistet, was frühere Ve
 
 Bei aktivem Schutzmodus wartet alles, was Ihren Tresor in Richtung Ihrer Wallet verlässt, die Verzögerung Ihres Kontos in einer Auszahlungswarteschlange ab. „Claims“ listet auf, was dort wartet, das Früheste zuerst, jeweils mit einem kurzen Anfragecode: Jede Benachrichtigung zu einer Auszahlung zeigt denselben Code, sodass Sie eine Nachricht einer Anfrage zuordnen können. Jede Zeile nennt, was sie zahlt, wohin sie geht und ab wann sie freigegeben werden kann. Sobald eine Auszahlung fällig ist, kann jeder sie freigeben, und sie zahlt immer nur an das gespeicherte Ziel; ist dieses Ziel nicht mehr erlaubt, storniert die Freigabe sie stattdessen. Sie oder einer Ihrer zweiten Unterzeichner können eine Auszahlung jederzeit stornieren, auch während einer Pause, und der Vermögenswert bleibt in Ihrem Tresor. Verlangt Ihr Konto eine Genehmigung, genehmigt ein zweiter Unterzeichner jede Auszahlung zuerst; ein Unterzeichner findet Ihr Konto im Advanced-Modus, indem er dessen Adresse einfügt. Eine Pause hält Freigaben an, bis sie endet oder sich nach einer langen Pause der Notausgang öffnet. Jede Aktion fragt Ihre Wallet einmal, und die Abschlusskarte zeigt, was die Transaktion bewirkt hat.
 
+<a id="seller-interest"></a>
+
+### Zinsen aus einer verkauften Position
+
+Wenn Sie eine Kreditgeberposition verkaufen, bleiben die Zinsen, die Sie in Ihrer Haltezeit verdient und noch nicht erhalten haben, als Anspruch auf den Kredit Ihre. Claims listet jeden Kredit, auf dem Sie einen solchen Anspruch halten, mit dem, was Ihnen nach dem Zinsanteil des Protokolls zusteht, und dem, was schon in Ihrem Vault wartet. Solange der Kredit läuft, bedient jede Zinszahlung zuerst die offenen Ansprüche, den ältesten zuerst, in den eigenen Vault jedes Verkäufers; bis etwas Ihren erreicht, gibt es nichts abzuheben. Ist der Kredit beendet, teilt die Abhebung zuerst auf, was die Kreditgeberseite zurückerhalten hat: zuerst das Kapital des Inhabers, dann jeden Verkäuferanspruch, den ältesten zuerst. Dabei schließen alle offenen Ansprüche, und was ein Anspruch nicht erhält, bleibt unbezahlt. Die Kredite stammen aus dem Index der App; kann er sie nicht auflisten, suchen Sie einen Kredit über seine Nummer, die allein von der Chain gelesen wird. Es ist keine Freigabe nötig, Ihre Wallet fragt also einmal, nach einem Probelauf, und die Abschlusskarte zeigt, was die Transaktion gezahlt hat.
+
 <a id="risk-access"></a>
 
 ### Risk Access: Ihre Risikostufe

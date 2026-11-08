@@ -1306,6 +1306,12 @@ La revisión enumera cada pago que hace la reclamación, lo que cobran primero l
 
 Con el modo protegido activado, todo lo que sale de tu bóveda hacia tu billetera espera el retraso de tu cuenta en una cola de pagos. Reclamaciones muestra lo que espera allí, primero lo más próximo, cada uno con un código de solicitud corto: cada alerta sobre un pago muestra el mismo código, así puedes relacionar un mensaje con una solicitud. Cada fila indica qué paga, adónde va y cuándo puede liberarse. Cuando un pago vence, cualquiera puede liberarlo, y solo paga al destino que registró; si ese destino ya no está permitido, liberarlo lo cancela. Tú, o uno de tus firmantes secundarios, puedes cancelar un pago en cualquier momento, incluso durante una pausa, y el activo se queda en tu bóveda. Si tu cuenta exige aprobación, un firmante secundario aprueba antes cada pago; un firmante encuentra tu cuenta en el modo avanzado pegando su dirección. Una pausa retiene las liberaciones hasta que termina o, tras una pausa larga, se abre su vía de escape. Cada acción pide a tu billetera una sola vez, y la tarjeta final muestra lo que hizo la transacción.
 
+<a id="seller-interest"></a>
+
+### Intereses de una posición que vendiste
+
+Cuando vendes una posición de prestamista, los intereses que ganaste mientras la tenías y aún no cobraste siguen siendo tuyos como un derecho sobre el préstamo. Claims muestra cada préstamo en el que tienes ese derecho, con lo que se te debe tras la parte del protocolo en los intereses y lo que ya espera en tu bóveda. Mientras el préstamo sigue en curso, cada pago de intereses paga primero los derechos abiertos, el más antiguo primero, en la bóveda propia de cada vendedor; hasta que algo llega a la tuya no hay nada que retirar. Cuando el préstamo ha terminado, retirar primero reparte lo que recuperó el lado prestamista: primero el principal del titular, luego cada derecho de vendedor, el más antiguo primero. Entonces se cierran todos los derechos abiertos, y lo que un derecho no cobra queda sin pagar. Los préstamos se encuentran en el índice de la app; si no puede listarlos, busca un préstamo por su número, que se lee solo de la cadena. No hace falta ninguna aprobación, así que tu billetera pide una vez, tras una simulación, y la tarjeta final muestra lo que pagó la transacción.
+
 <a id="risk-access"></a>
 
 ### Risk Access: tu nivel de riesgo
