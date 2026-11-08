@@ -22,6 +22,7 @@ import { reviewIdentity } from '../../shared/ui/ActionFlow';
 import { PayoutQueue } from '../../shared/protection/PayoutQueue';
 import { SellerClaims } from '../../shared/claims/SellerClaims';
 import { Reserves } from '../../shared/claims/Reserves';
+import { ClaimAll } from '../../shared/claims/ClaimAll';
 import { FrozenNotice, useFrozenState } from '../../shared/sanctions/FrozenNotice';
 import type { FrozenState } from '../../shared/sanctions/posture';
 import { OwnStamp } from '../../shared/ui/OwnStamp';
@@ -32,7 +33,9 @@ type Hex = `0x${string}`;
 /**
  * Claims (RB-CLAIM; LN-48, LN-49, LN-50, RW-71): the canonical list of what
  * the connected wallet can collect on its chain, each through the same flow
- * the loan page and Home open. Loan payouts come first, found by the position
+ * the loan page and Home open. Claim everything (LN-51) leads: every payout
+ * ready now, each to include or leave out, collected in one transaction.
+ * Loan payouts follow, found by the position
  * the wallet holds (a bought position pays its new holder), each row read
  * from the chain as its claim reads it, with every payout named and the
  * claim's rule deciding whether it is offered (RB-ELIG). Rewards follow, the
@@ -80,6 +83,7 @@ export function ClaimsPage() {
       {served && book.chain && own && (
         <>
           <FrozenNotice state={frozen} />
+          <ClaimAll own={own} chain={book.chain} payouts={payouts} payoutsFailed={book.read.state === 'failed' && payouts === null} frozen={frozen} />
           <section className="home-section" aria-labelledby="claims-loans">
             <h2 id="claims-loans">{text('claims.loansTitle')}</h2>
             <OwnStamp reads={[book.read, claims]} />

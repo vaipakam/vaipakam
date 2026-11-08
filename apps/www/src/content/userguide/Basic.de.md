@@ -1322,6 +1322,12 @@ Wenn ein Kredit endet, hält das Protokoll fest, was jeder Seite zusteht, und de
 
 Die Prüfung listet jede Zahlung auf, die die Forderung leistet, was frühere Verkäufer einer Kreditgeberposition zuerst erhalten (verdiente, nicht gezahlte Zinsen) und wohin die Zahlung geht: in Ihre Wallet oder, bei aktivem Schutzmodus, in die Auszahlungswarteschlange Ihres Kontos oder in Ihren Tresor. Eine Genehmigung ist nicht nötig, Ihre Wallet fragt also einmal, nachdem die App die Forderung als Probelauf ausgeführt hat. Eine Pause des Protokolls stoppt jede Forderung. Solange ein Kredit im Fallback ist, wartet die Auszahlung des Kreditnehmers, bis der Kreditgeber abholt, und das beendet den Fallback: Der Kreditnehmer kann ihn nicht mehr heilen. Die Abschlusskarte zeigt, was die Transaktion tatsächlich gezahlt hat.
 
+<a id="claim-everything"></a>
+
+### Alles einfordern
+
+Claims beginnt mit „Alles einfordern“: jede Auszahlung, die Sie jetzt einziehen können, gesammelt in einer Transaktion. Aufgeführt werden Kreditauszahlungen beendeter Kredite, deren Position Sie halten, Interaktionsbelohnungen, das nicht verliehene Kapital Ihrer stehenden Angebote, freies VPFI in Ihrem Tresor und, wenn Sie Zahlungsempfänger sind, abhebbare Gehaltszahlungen. Jede Auszahlung hat einen Schalter, sodass Sie jede davon auslassen können. Freies VPFI im Tresor ist aus, bis Sie es einschalten, weil es Ihre Gebührenrabattstufe bestimmt; ebenso das Kapital eines stehenden Angebots, das noch verleiht. Zinsen aus einer Position, die Sie verkauft haben, und ein Kredit im Fallback werden einzeln eingezogen. Jede Auszahlung läuft innerhalb der Transaktion für sich: eine, die das Protokoll ablehnt, wird übersprungen und bleibt aufgeführt, die übrigen werden trotzdem gezahlt. Eine Transaktion trägt höchstens 30 Auszahlungen; der Rest wartet auf eine zweite. Nichts verlässt Ihre Wallet, daher fragt Ihre Wallet einmal, nach einem Probelauf, und die Abschlusskarte zeigt jede Auszahlung als eingezogen oder übersprungen und wo das Geld angekommen ist. Eine Pause stoppt jede Einforderung.
+
 <a id="payout-queue"></a>
 
 ### Auszahlungen in Ihrer Warteschlange

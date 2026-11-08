@@ -1080,6 +1080,54 @@ above. Each resolves here, so a route reviewer needs no private file:
   that no longer manages the account is told so), and the finish card
   measures where the money landed (RB-PAYOUT-ROUTE) and what stays
   reserved if more was set aside meanwhile.
+- **RB-CLAIM-ALL** — Claim everything (LN-51) leads Claims and carries
+  RB-CLAIM's inclusion list, read from the chain: each loan side the
+  wallet holds whose claim the loan's own rule opens and that pays
+  something; interaction rewards when the claim, run as its preview,
+  completes, even paying nothing, since such a claim walks days that paid
+  nothing to reach later paying ones (that claim also pays any held
+  reward), or else a held reward
+  the screen releases; the un-lent capital of each standing offer the wallet
+  owns; free VPFI in its vault; and each payroll stream paying it (paid
+  into a protected payee's vault, as any payment from outside its own
+  vault). A lender
+  claim on a loan in fallback is named as collected on its own, since that
+  claim settles the fallback first and only then decides what it pays; a
+  source or a loan that could not be read is named as left out, never
+  dropped, and the other sources are still read and offered (the position
+  book failing leaves out the loans only). Every payout has a switch; all are on except free vault VPFI
+  and the capital of a standing offer that lends VPFI (both count toward the
+  fee-discount tier, which the review says when either is sent; an offer's
+  capital is also kept off, and said, while the VPFI token cannot be read)
+  and the
+  capital of a standing offer still lending (taking it out leaves the offer
+  less to lend), which the reader turns on. A held reward the screen
+  releases is offered even when the rewards preview cannot be read. The pause and a flagged wallet stop the whole batch before
+  signing, said once; anything else is the protocol's call, payout by
+  payout: the batch entry runs each payout as its own call with the wallet
+  as caller and each allowed to fail, so the review's dry run of the batch
+  answers for each one, a refused payout is left out of the transaction
+  with the protocol's reason, and one refused when the transaction runs is
+  skipped, moves nothing and stays listed. Because a call allowed to fail
+  never reverts the batch, its gas limit is sized on the same calls each
+  required to succeed, so no payout is skipped only for want of gas. One
+  transaction carries at most
+  the protocol's bound (30 calls); the rest wait for a second one, said in
+  the list and the review. The review states where each payout lands, one
+  row per destination when they differ, a queued one with its delay. A
+  queued payout's delay or secondary signer
+  changing while the review is open is a changed review. The finish card
+  reports each payout collected or
+  skipped from its own record in the logs, each NFT (collection and token
+  id, summed across the payouts that paid it) where its routing records or
+  transfer put it, each place with its own quantity, and each token measured where it
+  landed (RB-PAYOUT-ROUTE) against what the collected payouts recorded,
+  summed across them; a rewards claim that leaves more says so, and the
+  rest is listed again, and when that cannot be read after the claim the
+  card says it is not known rather than implying nothing is left. A payroll
+  figure is a floor (the withdrawal pays all accrued when it runs), stated
+  as such; its rise while the review is open is not a change to confirm, a
+  fall is.
 - **RB-FROZEN** — money the protocol holds for a wallet the sanctions
   screen flags (LN-53) is stated as "Frozen, awaiting de-listing": locked
   where its loan keeps it, in a vault, not lost, and released once the

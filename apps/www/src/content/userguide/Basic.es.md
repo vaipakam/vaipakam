@@ -1300,6 +1300,12 @@ Cuando un préstamo termina, el protocolo registra lo que se debe a cada parte, 
 
 La revisión enumera cada pago que hace la reclamación, lo que cobran primero los vendedores anteriores de una posición de prestamista (intereses ganados y no pagados) y adónde llega el pago: a tu billetera o, con el modo protegido activado, a la cola de pagos de tu cuenta o a tu bóveda. No hace falta ninguna aprobación, así que tu billetera pregunta una vez, después de que la app pruebe la reclamación en simulación. Una pausa del protocolo detiene toda reclamación. Mientras un préstamo está en fallback, el pago del prestatario espera a que el prestamista cobre, y ese cobro termina el fallback: el prestatario ya no puede subsanarlo. La tarjeta final muestra lo que la transacción pagó de verdad.
 
+<a id="claim-everything"></a>
+
+### Cobrarlo todo
+
+Claims empieza con «Cobrarlo todo»: cada pago que puede cobrar ahora, reunido en una sola transacción. Lista los pagos de préstamos terminados cuya posición usted tiene, las recompensas por interacción, el capital no prestado de sus ofertas permanentes, el VPFI libre de su bóveda y, si es beneficiario, la nómina retirable. Cada pago tiene un interruptor, así que puede dejar fuera cualquiera. El VPFI libre de la bóveda está apagado salvo que lo active, porque fija su nivel de descuento en comisiones, y lo mismo el capital de una oferta permanente que sigue prestando. Los intereses que le deben de una posición que vendió, y un préstamo en fallback, se cobran por separado. Cada pago se ejecuta por su cuenta dentro de la transacción: uno que el protocolo rechaza se omite y sigue en la lista, y los demás se pagan igualmente. Una transacción lleva como máximo 30 pagos; el resto espera a una segunda. Nada sale de su billetera, así que su billetera pide una vez, tras una prueba, y la tarjeta final muestra cada pago cobrado u omitido y adónde llegó el dinero. Una pausa detiene todo cobro.
+
 <a id="payout-queue"></a>
 
 ### Pagos en espera en tu cola
