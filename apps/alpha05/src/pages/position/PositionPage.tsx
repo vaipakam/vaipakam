@@ -7,7 +7,7 @@ import { CADENCE_NAME, isCadence } from '../../shared/offers/cadence';
 import { ASSET_ERC20, LOAN_STATUS_ACTIVE, LOAN_STATUS_FALLBACK_PENDING, isLiveStatus, loanObligations, loanStatusName } from '../../shared/positions/model';
 import { assetAmount } from '../../shared/positions/assetAmount';
 import { InterestLine, ReadState, StageLine } from '../../shared/positions/PositionSections';
-import { ILLIQUID, readLoanView, recordedInitFeeBps, roleOf, treasuryShareBps, type DefaultRefusal, type LoanView, type Role } from '../../shared/positions/loanView';
+import { ILLIQUID, readLoanView, holdsASide, recordedInitFeeBps, roleOf, treasuryShareBps, type DefaultRefusal, type LoanView, type Role } from '../../shared/positions/loanView';
 import { useOwnRead } from '../../shared/reads/useOwnRead';
 import { tokenAmount, useTokenMeta, type TokenMetaMap } from '../../shared/reads/tokens';
 import { formatBps, formatScaled, formatSpan, formatUtc, shortAddress } from '../../shared/ui/format';
@@ -115,7 +115,11 @@ function LoanBody({ loanId, view: v, own, chain, meta }: { loanId: bigint; view:
   const obligations = live ? loanObligations({ loan: l, borrowerSide, healthFactor: v.healthFactor ?? 0n }, v.deadlines, nowSec) : null;
   const unknown = text('receipt.unknown');
   // RB-FROZEN — the reader's own standing, said only to a holder of a side.
-  const frozen = useFrozenState(chain.diamondAddress, role ? account : null);
+  // One held side is enough: once the other party collects, its token is
+  // burned and the combined role reads as unconfirmed, while this side's
+  // payout may still be frozen.
+  const holder = holdsASide(v.holders, account);
+  const frozen = useFrozenState(chain.diamondAddress, holder ? account : null);
   // What a running loan already paid that waits for the lender's claim, in
   // the loan's payment token (the principal token, or a rental's prepay
   // token).
@@ -132,7 +136,7 @@ function LoanBody({ loanId, view: v, own, chain, meta }: { loanId: bigint; view:
     <>
       <StatusLine status={l.status} />
       <RoleLine role={role} />
-      {role && <FrozenNotice state={frozen} />}
+      {holder && <FrozenNotice state={frozen} />}
       {obligations && (
         <div className="position-now">
           <StageLine stage={obligations.stage} borrowerSide={borrowerSide} rental={!erc20} defaultable={v.defaultable} />

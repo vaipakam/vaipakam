@@ -249,6 +249,16 @@ export function roleOf(holders: Holders, account: Hex): Role | null {
   return { lender, borrower };
 }
 
+/** Whether the reader holds at least one side that was read. Unlike
+ *  `roleOf`, one side is enough: after one party collects, its position
+ *  token is burned and reads as unread, while the other side may still hold
+ *  a payout. Anything said about the reader's own standing (the sanctions
+ *  posture) keys on this, never on the combined role. */
+export function holdsASide(holders: Holders, account: Hex): boolean {
+  const a = account.toLowerCase();
+  return holders.lender?.toLowerCase() === a || holders.borrower?.toLowerCase() === a;
+}
+
 /** One loan's read: `view` is `null` when no loan has this id (the stored
  *  record is empty), which is an answer, never "still reading". */
 export interface LoanRead {

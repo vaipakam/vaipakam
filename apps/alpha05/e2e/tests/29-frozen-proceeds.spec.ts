@@ -112,7 +112,7 @@ test('a flagged lender’s payout waits frozen, through an outage, and collects 
   await page.reload();
   await connectWallet(page);
   await expect(page.getByTestId('frozen-notice')).toHaveAttribute('data-state', 'outage', { timeout: 60_000 });
-  await expect(page.getByTestId('frozen-notice')).toContainText('An outage alone never freezes a payout.');
+  await expect(page.getByTestId('frozen-notice')).toContainText('a payment due to it in this time is parked the same way');
   await card.getByTestId(`claims-open-lender-${loanId}`).click({ timeout: 60_000 });
   const flow = card.getByTestId('loan-claim-panel-lender');
   await expect(flow).toContainText('Frozen until the sanctions screen can be read', { timeout: 60_000 });

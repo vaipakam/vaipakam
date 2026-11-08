@@ -1072,7 +1072,8 @@ above. Each resolves here, so a route reviewer needs no private file:
   screen could be read), and is one of four: flagged; an outage, meaning the
   screen cannot be read and the wallet was confirmed flagged before, so a
   payout frozen for it stays locked until the screen answers (release is
-  fail-closed); unknown, when the standing could not be read, said and never
+  fail-closed), and a payment due to it during the outage is parked too,
+  since the protocol keeps treating a registered wallet as flagged; unknown, when the standing could not be read, said and never
   assumed either way; or nothing frozen. An outage alone never freezes
   anyone, so a wallet never confirmed flagged reads as nothing frozen in an
   outage. Claims and the loan's page show a notice for the first three, to
