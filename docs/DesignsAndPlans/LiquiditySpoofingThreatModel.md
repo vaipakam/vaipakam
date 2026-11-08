@@ -11,6 +11,21 @@ that asset, then removing depth or dumping the asset after positions open.
 The goal is to make this attack expensive, slow, visible, and unable to grant
 high-risk assets favorable treatment from a short-lived pool state.
 
+## Status (2026-11-08)
+
+The same-transaction case is closed on-chain (#3354, owner decision
+2026-11-08). A V3 pool counts only when its own on-chain record answers for
+the TWAP window, and the route search credits it with its harmonic-mean
+in-range liquidity over that window: the lower of that and the current
+figure on every admission read (new positions, tiers, offer bounds), and the
+mean alone on the close-out reads (HF liquidation and the time-based
+default), so depth withdrawn in the close-out's own block cannot make it
+refuse. The mean-tick check is required rather than best-effort. V2-fork
+pools are no longer searched at all: they keep no time-weighted record of
+their reserves. Everything below about keeper confidence, promotion windows,
+exposure caps and snapshots is still open under #830; it covers an attacker
+who holds real depth for longer than the window.
+
 ## Background
 
 The current functional spec already requires a liquid ERC-20 asset to have:
