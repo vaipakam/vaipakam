@@ -221,18 +221,23 @@ function QueueRowCard({ q, row, own, chain, meta }: { q: AccountQueue; row: Queu
   };
   const p = row.payout;
   const testId = row.id.toString();
+  // An action already open on this row stays drawn whatever the latest row
+  // read answered: its progress and Check again never hang on that read.
+  const open = ACTIONS.find((a) => flows[a].held);
+  const panel =
+    open !== undefined ? <QueuePayoutAction account={q.account} id={row.id} action={open} chain={chain} own={own} meta={meta} onClose={() => flows[open].setOpen(null)} /> : null;
   if (p === null) {
     return (
       <li className="card" data-queue-row={testId}>
         <p className="row-head">{row.code ?? format('queue.rowNumber', { id: testId })}</p>
         <p className="tier-a">{text('queue.rowUnread')}</p>
+        {panel}
       </li>
     );
   }
   const nowSec = queueClock(q, nowMs);
   const what = payoutWords(p, meta, format);
   const verdicts = Object.fromEntries(ACTIONS.map((a) => [a, queueVerdict(a, q, row, viewer, nowSec, copy)])) as Record<QueueAction, ReturnType<typeof queueVerdict>>;
-  const open = ACTIONS.find((a) => flows[a].held);
   const cancels = releaseCancels(q, row);
   const release = verdicts.release;
   return (
@@ -257,9 +262,7 @@ function QueueRowCard({ q, row, own, chain, meta }: { q: AccountQueue; row: Queu
         )}
       </dl>
       {cancels === true && <p className="tier-a">{text('queue.notAllowedNote')}</p>}
-      {open !== undefined ? (
-        <QueuePayoutAction account={q.account} id={row.id} action={open} chain={chain} own={own} meta={meta} onClose={() => flows[open].setOpen(null)} />
-      ) : (
+      {panel ?? (
         <>
           <div className="form-actions">
             {ACTIONS.filter((a) => verdicts[a].state === 'open' && holdsRole(a, q, viewer)).map((a) => (
