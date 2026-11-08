@@ -6759,6 +6759,8 @@ const copySource = {
       VPFIDepositedToVault: 'VPFI deposited to vault',
       VPFIWithdrawnFromVault: 'VPFI withdrawn from vault',
       VaultVpfiDebited: 'VPFI spent from vault',
+      VaultOutflow: 'Moved out of vault',
+      VaultGrantSettled: 'Vault allowance settled',
       RewardEntryForfeitSettled: 'Rewards forfeited',
       AutoDailyDeducted: 'Daily rental fee paid',
       AutoExtendBorrowerCapsChanged: 'Automatic extension limits updated',
