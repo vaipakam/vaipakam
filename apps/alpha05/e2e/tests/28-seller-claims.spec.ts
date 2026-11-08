@@ -57,8 +57,8 @@ async function soldLoan(sc: ReturnType<typeof scenario>): Promise<{ loanId: bigi
 }
 
 test('a sold position lists its interest from the index, offers nothing while the loan runs, and withdraws the ended loan’s split', async ({ launchWallet }) => {
-  // The last step waits out one discovery poll (a minute).
-  test.setTimeout(300_000);
+  // Two steps each wait out one refresh interval (a minute).
+  test.setTimeout(360_000);
   const sc = scenario();
   const { loanId, gross, net } = await soldLoan(sc);
   expect(gross).toBeGreaterThan(0n);
@@ -78,8 +78,10 @@ test('a sold position lists its interest from the index, offers nothing while th
   await fitsWidth(page);
 
   // The loan ends: the row offers the split of what the lender side recovered.
+  // A payment by another wallet reaches the page on the next own-read
+  // interval (a minute while visible, RB-REFRESH), so this waits past one.
   await repayInFull(sc, 'borrower', loanId);
-  await expect(row).toContainText('From the ended loan’s recovery', { timeout: 60_000 });
+  await expect(row).toContainText('From the ended loan’s recovery', { timeout: 90_000 });
   await expect(row).toContainText('This loan has ended');
   await row.getByTestId(`seller-withdraw-${loanId}`).click();
 
@@ -120,6 +122,7 @@ test('a sold position lists its interest from the index, offers nothing while th
 });
 
 test('when the index fails, a sold loan is looked up by its number and its interest withdrawn while the loan runs', async ({ launchWallet }) => {
+  test.setTimeout(300_000);
   const sc = scenario();
   const { loanId, net } = await soldLoan(sc);
   const seller = sc.address('lender');
@@ -141,7 +144,8 @@ test('when the index fails, a sold loan is looked up by its number and its inter
   await sc.write('borrower', WETH, TOKEN_ABI, 'deposit', [], parseEther('1'));
   await sc.write('borrower', WETH, TOKEN_ABI, 'approve', [sc.diamond, parseEther('1')]);
   await sc.diamondWrite('borrower', 'repayPartial', [loanId, half]);
-  await expect(row).toContainText('Ready in your vault', { timeout: 60_000 });
+  // Another wallet's payment: seen on the next own-read interval (see above).
+  await expect(row).toContainText('Ready in your vault', { timeout: 90_000 });
   await fitsWidth(page);
   await row.getByTestId(`seller-withdraw-${loanId}`).click();
 
