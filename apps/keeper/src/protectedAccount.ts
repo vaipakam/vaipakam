@@ -72,6 +72,7 @@ import { boundedCall, PassReader } from './passReader';
 import { StepSender } from './stepSender';
 import { leadStageCutoffMs, runIndex } from './runWindow';
 import { LEGACY_DIAMOND_NFT_ABI, positionNftForDiamond } from './positionNft';
+import { protectedAccountFromView } from '@vaipakam/lib/protectedAccountView';
 
 /** Only the functions and events this pass names, plus every Diamond error. */
 const PICK: ReadonlySet<string> = new Set([
@@ -623,7 +624,7 @@ class Step {
   /** Keep a settings answer that came back; an unread one changes nothing,
    *  so a later read this run may still fill it. */
   private learn(a: Address, got: unknown): void {
-    if (got !== undefined && !this.known(a)) this.accounts.set(a, got as ProtectedAccount);
+    if (got !== undefined && !this.known(a)) this.accounts.set(a, protectedAccountFromView(got as object) as unknown as ProtectedAccount);
   }
 
   /** The accounts' settings at the head, for those not read yet this run. */
@@ -863,7 +864,7 @@ class Step {
     if (changes.length > 0) {
       const now = await this.clock('change');
       if (now === null) return;
-      const st = (await this.readWithAccounts(changeCalls(changes).map((call, i) => ({ ...call, account: changes[i].account })), 'changes')) as (ChangeState | undefined)[];
+      const st = changeStates(changes, await this.readWithAccounts(changeCalls(changes).map((call, i) => ({ ...call, account: changes[i].account })), 'changes'));
       // One `finalizeSettingChanges` per account applies every due setting;
       // what it applied is read from its receipt (`applied`), never assumed
       // from its landing (Codex #3090).
@@ -982,7 +983,7 @@ class Step {
   /** Each change's own pending record at `block`, by position; undefined
    *  where unread. */
   private async readChanges(cs: readonly Change[], block: bigint): Promise<(ChangeState | undefined)[]> {
-    return (await this.r.many(changeCalls(cs), 'changes-final', block)) as (ChangeState | undefined)[];
+    return changeStates(cs, await this.r.many(changeCalls(cs), 'changes-final', block));
   }
 
   private isEvent(log: { topics: readonly string[]; address: string }, name: string, id: bigint): boolean {
@@ -997,6 +998,17 @@ class Step {
     }
     return 0n;
   }
+}
+
+/** Each change's record answer as {@link pendingAt} reads it: a setting
+ *  change's account record goes through the shared view normaliser, so a
+ *  renamed field never reads as undefined (#3318 Codex r2). */
+function changeStates(cs: readonly Change[], got: readonly unknown[]): (ChangeState | undefined)[] {
+  return got.map((s, i) =>
+    s !== undefined && cs[i].t === 'setting'
+      ? (protectedAccountFromView(s as object) as unknown as ChangeState)
+      : (s as ChangeState | undefined),
+  );
 }
 
 /** The read of each change's own pending record. */

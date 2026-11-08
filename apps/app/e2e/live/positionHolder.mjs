@@ -10,7 +10,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { positionNftSurface, positionOwnerOfCall, positionRouteCall } from '@vaipakam/lib/positionNft';
+import { positionNftSurface, positionRouteCall, readPositionOwner } from '@vaipakam/lib/positionNft';
 
 const BUNDLE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../../packages/contracts/src/deployments.json');
 
@@ -21,12 +21,12 @@ export function positionSurfaceFor(chainId) {
   return positionNftSurface(d);
 }
 
-/** `(tokenId, blockNumber?) => holder`: `ownerOf` on that contract. Throws
- *  exactly as the read does (a revert, or a transport failure). */
+/** `(tokenId, blockNumber?) => holder`: the LIVE holder on that contract.
+ *  Throws as a pre-#3205 `ownerOf` did: a revert, a `PositionRetiredError`
+ *  for a retired token, or a transport failure. */
 export function positionHolderReader(pub, chainId) {
   const surface = positionSurfaceFor(chainId);
-  return (tokenId, blockNumber) =>
-    pub.readContract({ ...positionOwnerOfCall(surface, tokenId), ...(blockNumber === undefined ? {} : { blockNumber }) });
+  return (tokenId, blockNumber) => readPositionOwner(pub, surface, tokenId, blockNumber);
 }
 
 /** `(tokenId, blockNumber?) => route ordinal`: the open protocol route,

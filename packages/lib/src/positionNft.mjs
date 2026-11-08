@@ -152,9 +152,56 @@ export function routeBlocksTransfer(surface) {
   return surface.mode === 'legacy';
 }
 
-/** `ownerOf(tokenId)` on the contract that holds the tokens. */
-export function positionOwnerOfCall(surface, tokenId) {
+/** RAW `ownerOf(tokenId)` on the contract holding the tokens. Not exported:
+ *  in standalone mode a retired receipt still has an owner, so a raw owner is
+ *  not a live holder. Every reader goes through {@link readPositionOwner} or,
+ *  when batching, {@link positionHolderCalls} + {@link positionHolderFrom},
+ *  which carry the retired rule (#3318 Codex r2). */
+function tokenOwnerCall(surface, tokenId) {
   return { address: surface.nft, abi: POSITION_ERC721_ABI, functionName: 'ownerOf', args: [BigInt(tokenId)] };
+}
+
+/** Thrown by {@link readPositionOwner} for a retired token: the standalone
+ *  counterpart of the legacy `ownerOf` revert for a burned one. */
+export class PositionRetiredError extends Error {
+  constructor(tokenId) {
+    super(`position token ${String(tokenId)} is retired: its position closed`);
+    this.name = 'PositionRetiredError';
+    this.tokenId = BigInt(tokenId);
+  }
+}
+
+/**
+ * The calls that establish a LIVE holder of `tokenId`, for a batched reader:
+ * the owner, and (standalone) whether the token was retired. Read both at the
+ * same block, then pass the answers to {@link positionHolderFrom}.
+ */
+export function positionHolderCalls(surface, tokenId) {
+  return { owner: tokenOwnerCall(surface, tokenId), retired: positionRetiredCall(surface, tokenId) };
+}
+
+/** A live holder from {@link positionHolderCalls}' answers: the owner, or
+ *  `'gone'` when the token was retired. `retired` is ignored (pass
+ *  `undefined`) when the surface has no retired call. */
+export function positionHolderFrom(owner, retired) {
+  return retired === true ? 'gone' : owner;
+}
+
+/**
+ * The LIVE holder of `tokenId`, read at `blockNumber` (both reads at that one
+ * block). Throws exactly as a pre-#3205 `ownerOf` did: a revert for a token
+ * never minted (and, legacy, burned), {@link PositionRetiredError} for a
+ * retired one, and a transport failure as itself.
+ */
+export async function readPositionOwner(client, surface, tokenId, blockNumber) {
+  const at = blockNumber === undefined ? {} : { blockNumber };
+  const calls = positionHolderCalls(surface, tokenId);
+  const [owner, retired] = await Promise.all([
+    client.readContract({ ...calls.owner, ...at }),
+    calls.retired ? client.readContract({ ...calls.retired, ...at }) : Promise.resolve(undefined),
+  ]);
+  if (positionHolderFrom(owner, retired) === 'gone') throw new PositionRetiredError(tokenId);
+  return owner;
 }
 
 /** The open route on `tokenId`: `positionRoute` (standalone) or the legacy

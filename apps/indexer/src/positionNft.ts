@@ -16,11 +16,13 @@ import {
   POSITION_ERC721_ABI,
   positionNftSurface,
   positionNftSurfaceForDiamond,
-  positionOwnerOfCall,
   type PositionNftSurface,
 } from '@vaipakam/lib/positionNft';
 
-export { positionOwnerOfCall, type PositionNftSurface };
+/** The live holder of a position token (`'gone'` once retired or burned);
+ *  the one holder read every indexer path uses. */
+export { readPositionHolder } from '@vaipakam/lib/positionNftReads';
+export type { PositionNftSurface };
 
 /** The surface of the chain whose Diamond is `diamond`. A Diamond no record
  *  names is read as legacy: the Diamond itself, the only contract the

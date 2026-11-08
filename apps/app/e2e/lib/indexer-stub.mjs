@@ -11,6 +11,7 @@
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
+import { POSITION_ERC721_ABI } from '@vaipakam/lib/positionNft';
 import { fileURLToPath } from 'node:url';
 import {
   createPublicClient,
@@ -1164,7 +1165,7 @@ async function handler(req, res) {
           const tokenId = BigInt(o.positionTokenId);
           const retired = POSITION_NFT !== DIAMOND && (await read('isPositionRetired', [tokenId]));
           if (!retired) {
-            owner = await pub.readContract({ address: POSITION_NFT, abi: DIAMOND_ABI_VIEM, functionName: 'ownerOf', args: [tokenId] });
+            owner = await pub.readContract({ address: POSITION_NFT, abi: POSITION_ERC721_ABI, functionName: 'ownerOf', args: [tokenId] });
           }
         } catch (e) {
           if (!isRevertError(e)) throw e;

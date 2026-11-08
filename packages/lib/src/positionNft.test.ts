@@ -8,7 +8,10 @@ import {
   POSITION_ROUTE_ABI,
   positionNftSurface,
   positionNftSurfaceForDiamond,
-  positionOwnerOfCall,
+  PositionRetiredError,
+  positionHolderCalls,
+  positionHolderFrom,
+  readPositionOwner,
   positionRetiredCall,
   positionRouteCall,
   routeBlocksTransfer,
@@ -45,8 +48,9 @@ describe('call builders', () => {
   const legacy = positionNftSurface({ diamond: DIAMOND });
 
   it('aims ownerOf at the token contract', () => {
-    expect(positionOwnerOfCall(standalone, 7n).address).toBe(NFT);
-    expect(positionOwnerOfCall(legacy, 7n).address).toBe(DIAMOND);
+    expect(positionHolderCalls(standalone, 7n).owner.address).toBe(NFT);
+    expect(positionHolderCalls(legacy, 7n).owner.address).toBe(DIAMOND);
+    expect(positionHolderCalls(legacy, 7n).retired).toBeNull();
   });
 
   it('reads the route from the Diamond under each mode’s name', () => {
@@ -110,6 +114,22 @@ describe('reads', () => {
     const s = positionNftSurface({ diamond: DIAMOND, positionNFT: NFT });
     expect(await readPositionHolder(client({ ownerOf: NFT, isPositionRetired: true }), s, 1n)).toBe('gone');
     expect(await readPositionHolder(client({ ownerOf: NFT, isPositionRetired: false }), s, 1n)).toBe(NFT);
+  });
+
+  it('the owner read refuses a retired token, at the block it was asked for', async () => {
+    const s = positionNftSurface({ diamond: DIAMOND, positionNFT: NFT });
+    const seen: unknown[] = [];
+    const pinned = {
+      readContract: async (a: { functionName: string; blockNumber?: bigint }) => {
+        seen.push([a.functionName, a.blockNumber]);
+        return a.functionName === 'ownerOf' ? NFT : true;
+      },
+    };
+    await expect(readPositionOwner(pinned, s, 9n, 77n)).rejects.toBeInstanceOf(PositionRetiredError);
+    expect(seen).toEqual([['ownerOf', 77n], ['isPositionRetired', 77n]]);
+    expect(await readPositionOwner(client({ ownerOf: NFT, isPositionRetired: false }), s, 9n)).toBe(NFT);
+    expect(positionHolderFrom(NFT, true)).toBe('gone');
+    expect(positionHolderFrom(NFT, undefined)).toBe(NFT);
   });
 
   it('a legacy ownerOf revert reads as gone; a transport failure throws', async () => {

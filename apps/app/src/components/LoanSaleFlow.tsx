@@ -411,7 +411,7 @@ export function LoanSaleFlow({
               onChange={(e) => consent.set(e.target.checked)}
               style={{ marginTop: 4 }}
             />
-            <span>{copy.loanSale.consentLabel}</span>
+            <span>{routeBlocks ? copy.loanSale.consentLabel : copy.loanSale.consentLabelRoute}</span>
           </label>
           <ConsentWithdrawnNote consent={consent} />
           <ConfirmReceipt
@@ -440,7 +440,7 @@ export function LoanSaleFlow({
               youMayOwe: copy.loanSale.receiptYouMayOwe(formatTokenAmountExact(nowCost, dec), sym),
               youCanLose: copy.loanSale.receiptCanLose,
               fees: copy.loanSale.receiptFees,
-              whenThisEnds: copy.loanSale.receiptEnds,
+              whenThisEnds: routeBlocks ? copy.loanSale.receiptEnds : copy.loanSale.receiptEndsRoute,
             }}
           >
             <div className="banner banner-warn" role="alert" style={{ marginBottom: 12 }}>

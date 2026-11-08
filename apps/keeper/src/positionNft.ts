@@ -14,7 +14,8 @@ import { positionNftSurface, positionNftSurfaceForDiamond, type PositionNftSurfa
 export {
   LEGACY_DIAMOND_NFT_ABI,
   POSITION_ERC721_ABI,
-  positionOwnerOfCall,
+  positionHolderCalls,
+  positionHolderFrom,
   type PositionNftSurface,
 } from '@vaipakam/lib/positionNft';
 

@@ -24,7 +24,7 @@ import { allowanceSteps } from '../tx/approval';
 import { putBackPrompts } from './approvalCap';
 import { tokenAcceptsApproval } from '../offers/reads';
 import { readPayoff, readPayoffAt, type Payoff } from './payoff';
-import { positionOwnerCall, positionRouteCallFor } from '../positions/positionNft';
+import { positionRouteCallFor, readPositionOwnerFor } from '../positions/positionNft';
 
 type Hex = `0x${string}`;
 
@@ -80,8 +80,8 @@ async function maybe<T>(p: Promise<T>): Promise<T | null> {
 export async function readLoanFacts(c: PublicClient, diamond: Hex, loanId: bigint) {
   const loan = (await c.readContract({ address: diamond, abi: LOAN, functionName: 'getLoanDetails', args: [loanId] })) as LoanDetails;
   const [lenderHolder, borrowerHolder, dates, borrowerLock, refinance] = await Promise.all([
-    maybe((async () => (await c.readContract(positionOwnerCall(diamond, loan.lenderTokenId))) as Hex)()),
-    maybe((async () => (await c.readContract(positionOwnerCall(diamond, loan.borrowerTokenId))) as Hex)()),
+    maybe(readPositionOwnerFor(c, diamond, loan.lenderTokenId)),
+    maybe(readPositionOwnerFor(c, diamond, loan.borrowerTokenId)),
     loan.status === STATUS_FALLBACK_PENDING
       ? null
       : maybe(c.readContract({ address: diamond, abi: LOAN, functionName: 'getLoanDeadlines', args: [loanId] }) as Promise<readonly [bigint, bigint, bigint, bigint]>),

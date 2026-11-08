@@ -25,7 +25,7 @@ import {
   RiskFacetABI,
 } from '@vaipakam/contracts/abis';
 import { isLiveStatus, type Deadlines, type LoanSummary } from './model';
-import { positionOwnerCall, positionRouteCallFor } from './positionNft';
+import { positionRouteCallFor, readPositionOwnerFor } from './positionNft';
 
 type Hex = `0x${string}`;
 
@@ -241,8 +241,10 @@ export async function readLoanView(client: PublicClient, diamond: Hex, loanId: b
   const block = await maybe(client.getBlock({ blockTag: 'latest' }));
   const at = block ? { blockNumber: block.number } : {};
   const read = <T>(abi: Abi, functionName: string, args: readonly unknown[] = []) => client.readContract({ address: diamond, abi, functionName, args, ...at }) as Promise<T>;
-  // #3205: position-NFT reads go to the chain's position-NFT surface.
-  const readCall = async <T>(call: () => ReturnType<typeof positionOwnerCall>) => (await client.readContract({ ...call(), ...at })) as T;
+  // #3205: position-NFT reads go to the chain's position-NFT surface; a
+  // holder read carries the retired rule (a closed position has none).
+  const readCall = async <T>(call: () => ReturnType<typeof positionRouteCallFor>) => (await client.readContract({ ...call(), ...at })) as T;
+  const holder = (tokenId: bigint) => readPositionOwnerFor(client, diamond, tokenId, block?.number);
   const loan = await read<LoanDetails>(LOAN, 'getLoanDetails', [loanId]);
   if (loan.id === 0n) return { view: null };
   const live = isLiveStatus(loan.status);
@@ -267,8 +269,8 @@ export async function readLoanView(client: PublicClient, diamond: Hex, loanId: b
     borrowerLock,
     refinance,
   ] = await Promise.all([
-    maybe(readCall<Hex>(() => positionOwnerCall(diamond, loan.lenderTokenId))),
-    maybe(readCall<Hex>(() => positionOwnerCall(diamond, loan.borrowerTokenId))),
+    maybe(holder(loan.lenderTokenId)),
+    maybe(holder(loan.borrowerTokenId)),
     live ? maybe(read<readonly [bigint, bigint, bigint, bigint]>(LOAN, 'getLoanDeadlines', [loanId])) : null,
     scheduled ? maybe(read<readonly [number, bigint, bigint, bigint, bigint, bigint, boolean]>(PERIODIC, 'previewPeriodicSettle', [loanId])) : null,
     scheduled ? maybe(read<boolean>(NUMERAIRE, 'getPeriodicInterestEnabled')) : null,

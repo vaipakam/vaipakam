@@ -409,7 +409,7 @@ function SaleReview({
               onChange={(e) => onConsent(e.target.checked)}
               style={{ marginTop: 4 }}
             />
-            <span>{copy.batchSale.consentLabel}</span>
+            <span>{routeBlocks ? copy.batchSale.consentLabel : copy.batchSale.consentLabelRoute}</span>
           </label>
           {consentNote}
           {/* The same six-row review every other write shows, worded for

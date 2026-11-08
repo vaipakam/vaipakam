@@ -16,6 +16,7 @@
  *     an empty queue, because an empty list would hide a payout an attacker
  *     queued.
  */
+import { protectedAccountFromView } from '@vaipakam/lib/protectedAccountView';
 import { useQueries, useQuery } from '@tanstack/react-query';
 import { usePublicClient } from 'wagmi';
 import { parseEventLogs, type Log } from 'viem';
@@ -568,17 +569,11 @@ function useProtectedAccountQueryOptions() {
       try {
         // The generated ABI names the two NFT-queue fields `retired*` since
         // #3205; on a legacy chain they still carry the live settings.
-        const raw = await read<
-          Omit<ProtectedAccountRecord, 'protectNfts' | 'pendingNftOffAt'> & {
-            retiredProtectNfts: boolean;
-            retiredPendingNftOffAt: bigint;
-          }
-        >('getProtectedAccount', [target]);
-        const { retiredProtectNfts, retiredPendingNftOffAt, ...rest } = raw;
+        const view = protectedAccountFromView(await read<object>('getProtectedAccount', [target])) as ProtectedAccountRecord;
         record = {
-          ...rest,
-          protectNfts: legacy ? Boolean(retiredProtectNfts) : false,
-          pendingNftOffAt: legacy ? BigInt(retiredPendingNftOffAt) : 0n,
+          ...view,
+          protectNfts: legacy ? view.protectNfts : false,
+          pendingNftOffAt: legacy ? view.pendingNftOffAt : 0n,
         };
       } catch (e) {
         if (isMissingSelectorError(e)) return { ...base, supported: false };

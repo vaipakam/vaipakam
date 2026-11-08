@@ -31,6 +31,7 @@
  *  tariff, a reward programme on the e2e chain).
  */
 import { erc20Abi, type Address } from "viem";
+import { POSITION_ERC721_ABI } from "@vaipakam/lib/positionNft";
 import { test, expect } from "../lib/wallet-fixture";
 import { connectWallet } from "../lib/wallet-fixture";
 import {
@@ -98,7 +99,7 @@ const read = <T>(functionName: string, args: readonly unknown[]) =>
 const holderOf = (tokenId: bigint) =>
   pub.readContract({
     address: POSITION_NFT,
-    abi: DIAMOND_ABI_VIEM,
+    abi: POSITION_ERC721_ABI,
     functionName: "ownerOf",
     args: [tokenId],
   }) as Promise<Address>;

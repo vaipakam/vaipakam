@@ -41,7 +41,22 @@ export function positionNftSurfaceForDiamond(
   deployments: Readonly<Record<string | number, { diamond: string; positionNFT?: string | undefined } | undefined>>,
 ): PositionNftSurface | null;
 export function routeBlocksTransfer(surface: PositionNftSurface): boolean;
-export function positionOwnerOfCall(surface: PositionNftSurface, tokenId: bigint | number | string): PositionContractCall;
+export class PositionRetiredError extends Error {
+  readonly tokenId: bigint;
+  constructor(tokenId: bigint | number | string);
+}
+export function positionHolderCalls(
+  surface: PositionNftSurface,
+  tokenId: bigint | number | string,
+): { owner: PositionContractCall; retired: PositionContractCall | null };
+export function positionHolderFrom(owner: Hex, retired: boolean | undefined): Hex | 'gone';
+export function readPositionOwner(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  client: { readContract: (args: any) => Promise<unknown> },
+  surface: PositionNftSurface,
+  tokenId: bigint | number | string,
+  blockNumber?: bigint,
+): Promise<Hex>;
 export function positionRouteCall(surface: PositionNftSurface, tokenId: bigint | number | string): PositionContractCall;
 export function positionRetiredCall(
   surface: PositionNftSurface,

@@ -9,7 +9,7 @@
  * deleted at the all-waves fresh deploy.
  */
 import { DEPLOYMENTS } from '@vaipakam/contracts/deployments';
-import { positionNftSurfaceForDiamond, positionOwnerOfCall, positionRouteCall, type PositionNftSurface } from '@vaipakam/lib/positionNft';
+import { positionNftSurfaceForDiamond, positionRouteCall, readPositionOwner, type PositionNftSurface } from '@vaipakam/lib/positionNft';
 
 /** The surface of the chain whose Diamond is `diamond`; throws when no
  *  record names it, so a caller never guesses the mode. */
@@ -19,9 +19,16 @@ export function positionNftForDiamond(diamond: string): PositionNftSurface {
   return s;
 }
 
-/** `ownerOf` on the contract holding the chain's position NFTs. */
-export function positionOwnerCall(diamond: string, tokenId: bigint) {
-  return positionOwnerOfCall(positionNftForDiamond(diamond), tokenId);
+/** The LIVE holder of `tokenId` (both reads at `blockNumber`). Throws as a
+ *  pre-#3205 `ownerOf` did: a revert for a never-minted or burned token, a
+ *  `PositionRetiredError` for a retired one, a transport failure as itself. */
+export function readPositionOwnerFor(
+  client: { readContract: (args: any) => Promise<unknown> },
+  diamond: string,
+  tokenId: bigint,
+  blockNumber?: bigint,
+): Promise<`0x${string}`> {
+  return readPositionOwner(client, positionNftForDiamond(diamond), tokenId, blockNumber);
 }
 
 /** The open route on `tokenId` (`positionRoute`, or the legacy `positionLock`). */

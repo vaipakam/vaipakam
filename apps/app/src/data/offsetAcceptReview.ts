@@ -25,6 +25,7 @@
  * funding is the one the poster's own card watches (`offsetCompletionBoundOf`),
  * so the two parties are told the same thing.
  */
+import { readPositionOwnerOn } from "../contracts/positionNft";
 import type { PublicClient } from "viem";
 import { erc20Abi } from "viem";
 import { DIAMOND_ABI_VIEM } from "../contracts/diamond";
@@ -140,12 +141,11 @@ export async function readOffsetReviewLive(
   // holder, and that NFT is locked until the offset completes or is
   // cancelled, so the two must agree. Anything else is not a shape this
   // review describes.
-  const currentBorrower = (await client.readContract({
-    address: diamondAddress,
-    abi: DIAMOND_ABI_VIEM,
-    functionName: "ownerOf",
-    args: [live.borrowerTokenId],
-  })) as `0x${string}`;
+  const currentBorrower = (await readPositionOwnerOn(
+    client,
+    diamondAddress,
+    live.borrowerTokenId,
+  )) as `0x${string}`;
   if (
     Number(offer.offerType) !== OFFER_TYPE_LENDER ||
     offer.creator.toLowerCase() !== currentBorrower.toLowerCase()

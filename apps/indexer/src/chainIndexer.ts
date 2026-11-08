@@ -151,7 +151,7 @@ import { adoptDeployment, describeAdoption, isAdoptedEpoch } from './deploymentE
 import { activityRefs } from '@vaipakam/lib/activityRefs';
 import { activityActor } from '@vaipakam/lib/activityActor';
 import { redactedError } from '@vaipakam/lib/errorDescription';
-import { LEGACY_POSITION_EVENTS, POSITION_TRANSFER_EVENT, positionNftForDiamond, positionOwnerOfCall, scannedAddresses } from './positionNft';
+import { LEGACY_POSITION_EVENTS, POSITION_TRANSFER_EVENT, positionNftForDiamond, readPositionHolder, scannedAddresses } from './positionNft';
 
 /** Resolve a chain's deployBlock from the consolidated deployments
  *  JSON — the indexer's first-run fallback when no cursor exists. */
@@ -1139,11 +1139,10 @@ async function resolveCurrentHolders(
     // '0' is the stub-row sentinel, never a real ERC721 id.
     if (!tokenId || tokenId === '0') return null;
     try {
-      const owner = (await client.readContract({
-        ...positionOwnerOfCall(positionNftForDiamond(diamond), BigInt(tokenId)),
-        blockNumber: head,
-      })) as string;
-      return owner.toLowerCase();
+      // #3318 r2 — a retired receipt (standalone) or a burned token
+      // (legacy) has no live holder: 'gone' at this same pinned head.
+      const holder = await readPositionHolder(client, positionNftForDiamond(diamond), BigInt(tokenId), head);
+      return holder === 'gone' ? null : holder.toLowerCase();
     } catch {
       // Unreadable, or gone. This pass does not need to know which: it uses
       // a holder only when it has one, and writes no owner column.
@@ -4244,11 +4243,8 @@ async function refreshOfferDetails(
   let observedOwner: string | null = null;
   if (o.positionTokenId > 0n) {
     try {
-      const owner = (await client.readContract({
-        ...positionOwnerOfCall(positionNftForDiamond(diamond), o.positionTokenId),
-        blockNumber: atBlock,
-      })) as string;
-      if (owner) observedOwner = owner.toLowerCase();
+      const holder = await readPositionHolder(client, positionNftForDiamond(diamond), o.positionTokenId, atBlock);
+      if (holder !== 'gone') observedOwner = holder.toLowerCase();
     } catch {
       // unanswered — keep the stored holder (see above).
     }

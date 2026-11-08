@@ -64,7 +64,7 @@ export function LoanSalePendingCard({
     setError(null);
     try {
       await write('cancelOffer', [BigInt(state.offerId)]);
-      onDone(copy.loanSale.cancelled);
+      onDone(routeBlocks ? copy.loanSale.cancelled : copy.loanSale.cancelledRoute);
       onCleared();
       void queryClient.invalidateQueries({ queryKey: ['loanSalePending'] });
       void queryClient.invalidateQueries({ queryKey: ['myOffers'] });
@@ -90,7 +90,7 @@ export function LoanSalePendingCard({
               and is current, REPLACES the pre-acceptance text rather than
               sitting under it. */}
           {view === 'settled'
-            ? copy.loanSale.loanSettledWhileListed
+            ? (routeBlocks ? copy.loanSale.loanSettledWhileListed : copy.loanSale.loanSettledWhileListedRoute)
             : view === 'accepted'
               ? copy.loanSale.acceptedCompleting
               : view === 'expired'

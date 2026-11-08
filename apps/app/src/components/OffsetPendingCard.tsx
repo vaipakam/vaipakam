@@ -94,7 +94,7 @@ export function OffsetPendingCard({
       // wallet's approvals view as the remedy — the r1 finding
       // (silence about a lingering payoff-sized approval) is answered
       // by the disclosure, not by a guess about ownership.
-      onDone(copy.offset.cancelledApprovalKept);
+      onDone(routeBlocks ? copy.offset.cancelledApprovalKept : copy.offset.cancelledApprovalKeptRoute);
       onCleared();
       void queryClient.invalidateQueries({ queryKey: ['offsetPending'] });
       void queryClient.invalidateQueries({ queryKey: ['myOffers'] });
@@ -147,7 +147,7 @@ export function OffsetPendingCard({
         return;
       }
       if (live.status !== LOAN_STATUS_ACTIVE) {
-        setError(copy.offset.restoreLoanClosed);
+        setError(routeBlocks ? copy.offset.restoreLoanClosed : copy.offset.restoreLoanClosedRoute);
         void queryClient.invalidateQueries({ queryKey: ['offsetPending'] });
         return;
       }
@@ -182,9 +182,9 @@ export function OffsetPendingCard({
       <h3>{copy.offset.pendingTitle}</h3>
       <p className="muted">
         {state !== undefined && !state.loanActive
-          ? copy.offset.pendingLoanClosed
+          ? (routeBlocks ? copy.offset.pendingLoanClosed : copy.offset.pendingLoanClosedRoute)
           : state?.termUnfillable
-            ? copy.offset.pendingTermUnfillable
+            ? (routeBlocks ? copy.offset.pendingTermUnfillable : copy.offset.pendingTermUnfillableRoute)
             : copy.offset.pendingBody}{' '}
         {offerId !== null
           ? copy.offset.pendingOffer(offerId)
