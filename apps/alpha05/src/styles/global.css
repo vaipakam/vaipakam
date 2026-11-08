@@ -1584,6 +1584,16 @@ a.btn {
 .positions-side {
   margin: 12px 0 4px;
 }
+/* A book row's tags (expired, refinance request, loan sale): wrap on a phone. */
+.row-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 6px 0 0;
+}
+.row-badges:empty {
+  display: none;
+}
 /* Offer state filters: pills that wrap on a phone rather than scroll. */
 .offers-filters {
   display: flex;

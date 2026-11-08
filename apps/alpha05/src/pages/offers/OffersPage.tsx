@@ -3,10 +3,10 @@ import { Link } from 'react-router-dom';
 import { useAccount } from 'wagmi';
 import { getSupportedChain, type SupportedChain } from '../../chain/chains';
 import { useOwnStateClient, type OwnStateClient } from '../../chain/ownRail';
-import { PAGES, currentAppHref } from '../../routes/pageMap';
 import { useCopy, type CopyKey } from '../../shared/copy/useCopy';
 import { WhyLink } from '../../shared/help/WhyLink';
 import { CancelOffer, useCancelOfferHeld, useCancelPins } from '../../shared/offers/CancelOffer';
+import { OfferBook } from '../../shared/offers/OfferBook';
 import { filterCounts, inFilter, OFFER_FILTERS, readMyOffers, type MyOffer, type OfferFilter } from '../../shared/offers/myOffers';
 import { offerAmount, offerLine } from '../../shared/offers/offerLine';
 import { ASSET_ERC20 } from '../../shared/positions/model';
@@ -46,8 +46,9 @@ const STATE_KEY: Record<MyOffer['state'], CopyKey> = {
  * and an offer held by one wallet but created by another says who may
  * cancel it and where its return goes.
  *
- * The offer book (OFF-39, OFF-40, OFF-43) comes in the next slice; until
- * then the page links to the current app for it.
+ * Below it, the offer book (OFF-39, OFF-40, OFF-43): every open offer on
+ * the network, read from the index, with or without a wallet; each row
+ * opens the offer's own page, which reads it from the chain.
  */
 export function OffersPage() {
   const { text, format } = useCopy();
@@ -73,8 +74,6 @@ export function OffersPage() {
   const pinned = new Set(cancelPins.pins.map((p) => p.id.toString()));
   const listed = new Set(data?.rows.map((r) => r.id.toString()) ?? []);
   const rows = data ? [...cancelPins.pins.filter((p) => !listed.has(p.id.toString())), ...data.rows.filter((r) => inFilter(r, filter) || pinned.has(r.id.toString()))] : [];
-  const offersPage = PAGES.find((p) => p.path === '/offers');
-  const currentOffers = offersPage ? currentAppHref(offersPage, {}) : null;
 
   return (
     <main className="page offers" aria-labelledby="offers-title">
@@ -131,16 +130,9 @@ export function OffersPage() {
               <WhyLink summaryKey="offers.whySummary" detailKey="offers.why" />
             </section>
           )}
-          {currentOffers !== null && (
-            <p className="tier-b" data-testid="offers-next">
-              {text('offers.bookNext')}{' '}
-              <a href={currentOffers} target="_blank" rel="noreferrer">
-                {text('vault.openCurrent')}
-              </a>
-            </p>
-          )}
         </>
       )}
+      <OfferBook viewer={served && own ? own.account : null} />
     </main>
   );
 }
@@ -171,7 +163,9 @@ function OfferRow({
   return (
     <li className="card" data-offer-id={id} data-testid={`offer-row-${id}`}>
       <p className="row-head">
-        {t ? offerLine(t, meta, copy) : format('offers.offerNumber', { id })}{' '}
+        <Link to={`/offers/${id}`} data-testid={`offer-link-${id}`}>
+          {t ? offerLine(t, meta, copy) : format('offers.offerNumber', { id })}
+        </Link>{' '}
         <span className="badge" data-testid={`offer-state-${id}`}>
           {text(STATE_KEY[o.state])}
         </span>

@@ -2702,6 +2702,18 @@ The notice reads, at one block, `paused`, `VaultPayoutFacet.isEscapeOpen`, `esca
 
 The list is the union of `getUserOffersPaginated(wallet)` (the per-creator index, which keeps a cancelled id) and `getUserPositionOffersPaginated(wallet)` (the offers whose position token the wallet holds), read in batches of at most 250 through `MetricsDashboardFacet.getOffersWithState`, which answers position for position. Each row is matched to the id it asked for: an offer cancelled with nothing filled has its record deleted, so the view reports id 0 with the derived state Cancelled, and the row shows no terms rather than rebuilt ones. An offer cancelled after a partial fill keeps its record with `accepted` set, and reads as filled. The filter counts are taken over the rows read; if either index could not be read to its end, the page says the list may be incomplete.
 
+<a id="offer-book"></a>
+
+### The offer book
+
+The book reads the indexer's `GET /offers/active?chainId&limit=50&before=<offerId>`, newest first by offer id, paged by `nextBefore`. The indexer keeps a lapsed offer `active` (expiry is lazy on-chain), so a row whose `expiresAt` has passed is tagged expired. `isSaleVehicle`, `isOffsetVehicle` and `refinanceTargetLoanId` (null = not read) tag the kind, and `positionFlow.movedSinceOpened` a moved bound position (#3205). Every field is parsed exactly; a row that fails is counted as unread. The tab is `assetType` (0 = an ERC-20 loan, otherwise a rental), the side `offerType`. The query is invalidated by the push rail and re-read every 60 s while visible; an index failure is stated, never an empty book.
+
+<a id="offer-detail"></a>
+
+### An offer's page
+
+`/offers/:id` reads, at one block, `OfferCancelFacet.getOffer(id)`, `MetricsFacet.getOfferState(id)` and `getOfferLinkedLoanId(id)`, through the wallet when one is connected and the read-only proxy otherwise. A zero creator means the record was deleted (a cancel with nothing filled) or never written; the protocol keeps no offer count, so the page does not say which. A non-zero linked loan marks a loan sale (a borrower offer) or an offset (a lender offer); a borrower offer's `refinanceTargetLoanId` marks a refinance request. Taking runs the shared `acceptOffer` flow (signed `AcceptTerms`, exact approval, dry run, measured outcome) under its own store key; cancel and clean-up run the shared `cancelOffer` flow. Rentals, NFT collateral, loan sales and offsets link the current app.
+
 <a id="offer-cancel"></a>
 
 ### Cancel an offer

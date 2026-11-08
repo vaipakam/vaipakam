@@ -2058,6 +2058,18 @@ Positions 通过一个共享读取器读取与 Home 相同的持仓清单：`get
 
 列表是 `getUserOffersPaginated(wallet)`（按创建者的索引，会保留已取消的 id）与 `getUserPositionOffersPaginated(wallet)`（钱包持有其仓位代币的报价）的并集，通过逐位对应作答的 `MetricsDashboardFacet.getOffersWithState` 以每批至多 250 个读取。每一行都与所查询的 id 对应：未成交即取消的报价其记录已删除，视图返回 id 0 和推导出的“已取消”状态，该行不显示条款，而不是重建条款。部分成交后取消的报价保留记录并设置 `accepted`，读作已成交。筛选计数基于已读取的行；若任一索引未能读到末尾，页面会说明列表可能不完整。
 
+<a id="offer-book"></a>
+
+### 报价簿
+
+报价簿读取索引器的 `GET /offers/active?chainId&limit=50&before=<offerId>`，按报价 id 从新到旧排列，通过 `nextBefore` 分页。索引器会把已失效的报价保留为 `active`（链上的到期是惰性判定的），因此 `expiresAt` 已过的行会标记为已过期。`isSaleVehicle`、`isOffsetVehicle` 和 `refinanceTargetLoanId`（null = 未读取）标记报价类型，`positionFlow.movedSinceOpened` 标记已移动的绑定仓位（#3205）。每个字段都精确解析；解析失败的行计为未读。标签页取自 `assetType`（0 = ERC-20 贷款，否则为租赁），方向取自 `offerType`。查询由推送通道失效，并在可见期间每 60 秒重新读取；索引故障会如实说明，绝不显示为空报价簿。
+
+<a id="offer-detail"></a>
+
+### 报价页面
+
+`/offers/:id` 在同一区块读取 `OfferCancelFacet.getOffer(id)`、`MetricsFacet.getOfferState(id)` 和 `getOfferLinkedLoanId(id)`，连接钱包时经由钱包，否则经由只读代理。创建者为零表示记录已被删除（未成交任何部分即取消）或从未写入；协议不保存报价数量，因此页面不说明是哪一种。非零的关联贷款标记贷款出售（借款人报价）或抵销（出借人报价）；借款人报价的 `refinanceTargetLoanId` 标记再融资请求。接受时使用共享的 `acceptOffer` 流程（签名的 `AcceptTerms`、精确授权、试运行、实测结果），并使用独立的存储键；取消和清理使用共享的 `cancelOffer` 流程。租赁、NFT 抵押、贷款出售和抵销会链接到当前应用。
+
 <a id="offer-cancel"></a>
 
 ### 取消报价

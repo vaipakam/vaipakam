@@ -2503,6 +2503,18 @@ El aviso lee, en un mismo bloque, `paused`, `VaultPayoutFacet.isEscapeOpen`, `es
 
 La lista es la unión de `getUserOffersPaginated(wallet)` (el índice por creador, que conserva un id cancelado) y `getUserPositionOffersPaginated(wallet)` (las ofertas cuyo token de posición tiene la billetera), leídas en lotes de como máximo 250 mediante `MetricsDashboardFacet.getOffersWithState`, que responde posición por posición. Cada fila se asocia al id que se pidió: una oferta cancelada sin nada completado tiene su registro borrado, así que la vista informa id 0 con el estado derivado Cancelada, y la fila no muestra condiciones en lugar de reconstruirlas. Una oferta cancelada tras un llenado parcial conserva su registro con `accepted` activado y se lee como completada. Los recuentos de los filtros se calculan sobre las filas leídas; si alguno de los índices no pudo leerse hasta el final, la página dice que la lista puede estar incompleta.
 
+<a id="offer-book"></a>
+
+### El libro de ofertas
+
+El libro lee `GET /offers/active?chainId&limit=50&before=<offerId>` del indexador, de la más nueva a la más antigua por id de oferta, paginado con `nextBefore`. El indexador mantiene `active` una oferta caducada (el vencimiento es perezoso en la cadena), así que una fila cuyo `expiresAt` ya pasó se marca como vencida. `isSaleVehicle`, `isOffsetVehicle` y `refinanceTargetLoanId` (null = no leído) marcan el tipo, y `positionFlow.movedSinceOpened` una posición vinculada que se movió (#3205). Cada campo se analiza con exactitud; una fila que falla se cuenta como no leída. La pestaña es `assetType` (0 = un préstamo ERC-20; si no, un alquiler) y el lado, `offerType`. La consulta se invalida con el canal push y se vuelve a leer cada 60 s mientras está visible; un fallo del índice se indica, nunca un libro vacío.
+
+<a id="offer-detail"></a>
+
+### La página de una oferta
+
+`/offers/:id` lee, en un mismo bloque, `OfferCancelFacet.getOffer(id)`, `MetricsFacet.getOfferState(id)` y `getOfferLinkedLoanId(id)`, a través de la billetera cuando hay una conectada y del proxy de solo lectura en otro caso. Un creador cero significa que el registro se borró (una cancelación sin nada cubierto) o nunca se escribió; el protocolo no lleva un recuento de ofertas, así que la página no dice cuál de los dos. Un préstamo vinculado distinto de cero marca una venta de préstamo (oferta de prestatario) o una compensación (oferta de prestamista); el `refinanceTargetLoanId` de una oferta de prestatario marca una solicitud de refinanciación. Tomarla ejecuta el flujo compartido `acceptOffer` (`AcceptTerms` firmados, aprobación exacta, simulación, resultado medido) con su propia clave de almacenamiento; cancelar y limpiar ejecutan el flujo compartido `cancelOffer`. Los alquileres, la garantía NFT, las ventas de préstamos y las compensaciones enlazan a la app actual.
+
 <a id="offer-cancel"></a>
 
 ### Cancelar una oferta
