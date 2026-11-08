@@ -15,6 +15,7 @@ import {RepayFacet} from "../../src/facets/RepayFacet.sol";
 import {DefaultedFacet} from "../../src/facets/DefaultedFacet.sol";
 import {ClaimFacet} from "../../src/facets/ClaimFacet.sol";
 import {AddCollateralFacet} from "../../src/facets/AddCollateralFacet.sol";
+import {PrecloseFacet} from "../../src/facets/PrecloseFacet.sol";
 import {ERC20Mock} from "../mocks/ERC20Mock.sol";
 import {defaultQuote} from "../helpers/ForcedSaleQuote.sol";
 
@@ -279,6 +280,22 @@ contract Handler is Test {
 
         vm.prank(L.borrower);
         try RepayFacet(diamond).repayPartial(loanId, amount) {} catch {}
+    }
+
+    /// @notice Borrower closes an active loan early through the direct
+    ///         preclose route (#3241): pays what is owed now, collateral
+    ///         released.
+    function precloseDirect(uint256 loanIdx) external {
+        callCount["precloseDirect"]++;
+        if (loanIds.length == 0) return;
+        uint256 idx = bound(loanIdx, 0, loanIds.length - 1);
+        uint256 loanId = loanIds[idx];
+
+        LibVaipakam.Loan memory L = _getLoan(loanId);
+        if (L.status != LibVaipakam.LoanStatus.Active) return;
+
+        vm.prank(L.borrower);
+        try PrecloseFacet(diamond).precloseDirect(loanId) {} catch {}
     }
 
     /// @notice Borrower tops up collateral on an active loan.

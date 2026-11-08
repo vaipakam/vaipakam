@@ -108,6 +108,7 @@ contract LoanLedgerHandler is Test {
     uint256 public acceptChecks;
     uint256 public interestChecks;
     uint256 public bookedActions;
+    uint256 public precloseLanded;
 
     constructor(InvariantBase _base) {
         base = _base;
@@ -162,6 +163,20 @@ contract LoanLedgerHandler is Test {
         inner.repay(loanIdx);
         int256[2] memory dB = _book(loanId, before, "repay");
         _checkExactInterest(loanId, pre, dB);
+    }
+
+    /// @notice #3241: a direct preclose closes the loan early. Booked like a repayment; when it
+    ///         closes a loan with no earlier partial before its due time, the interest it pays is
+    ///         checked exactly, the same as an on-time repayment.
+    function precloseDirect(uint256 loanIdx) external {
+        (bool ok, uint256 loanId) = _pickLoan(loanIdx);
+        if (!ok) return;
+        LibVaipakam.Loan memory pre = _loan(loanId);
+        Snap memory before = _snap();
+        inner.precloseDirect(loanIdx);
+        int256[2] memory dB = _book(loanId, before, "precloseDirect");
+        _checkExactInterest(loanId, pre, dB);
+        if (_loan(loanId).status != LibVaipakam.LoanStatus.Active) precloseLanded++;
     }
 
     function repayPartial(uint256 loanIdx, uint256 amount) external {
@@ -416,6 +431,9 @@ contract LoanLedgerHandler is Test {
         if (pre.status != LibVaipakam.LoanStatus.Active) return;
         if (_loan(loanId).status != LibVaipakam.LoanStatus.Repaid) return;
         if (block.timestamp > b.dueTime) return; // a late fee may apply; bounded elsewhere
+        // A full-term-interest loan pays the whole term on an early preclose, not the accrual
+        // to the second. The shared handler never posts one; skip rather than misprice it.
+        if (pre.useFullTermInterest) return;
         interestChecks++;
         int256 paid = -dB[USDC];
         uint256 elapsed = block.timestamp - b.startTime;

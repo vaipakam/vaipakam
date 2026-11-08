@@ -36,9 +36,9 @@ import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
  *               exactly the interest the spec formula gives, rounded down once.
  *
  *         Paths covered are the shared handler's: offer posting, both accept directions, full and
- *         partial repayment, collateral top-up, time-based default (the rig has no working swap
+ *         partial repayment, the direct preclose, collateral top-up, time-based default (the rig has no working swap
  *         venue, so default reaches the in-kind fallback) and both claims. Periodic interest,
- *         preclose and offset, refinance, the lender sale, rentals and HF liquidation are not yet
+ *         the preclose offset, refinance, the lender sale, rentals and HF liquidation are not yet
  *         driven; #3241 tracks them, and the vault outflow seam (#3205) is where this check is
  *         meant to bind every one of them.
  *
@@ -126,6 +126,7 @@ contract LoanSettlementBoundInvariant is Test {
         console.log("booked actions", ledger.bookedActions());
         console.log("accept checks", ledger.acceptChecks());
         console.log("exact-interest checks", ledger.interestChecks());
+        console.log("preclosed loans", ledger.precloseLanded());
     }
 
     // ── Deterministic proofs that the checks are live ──────────────────
@@ -141,6 +142,23 @@ contract LoanSettlementBoundInvariant is Test {
         ledger.warp(10 days);
         ledger.repay(0);
         assertEq(ledger.interestChecks(), 1, "exact-interest check did not run");
+
+        ledger.claimAsLender(0);
+        ledger.claimAsBorrower(0);
+
+        invariant_PerActionChecksHold();
+        invariant_NoLoanPaysOutMoreThanEnteredIt();
+    }
+
+    /// @notice #3241: a direct preclose before the due time pays exactly the interest accrued to
+    ///         the second, and the books hold through both claims.
+    function test_LedgerBooksAPreclosedLoan() public {
+        ledger.createLenderOffer(0, 1_000 ether, 30, 1_000, 10 ether);
+        ledger.acceptLenderOffer(0, 0);
+        ledger.warp(5 days);
+        ledger.precloseDirect(0);
+        assertEq(ledger.precloseLanded(), 1, "preclose did not land");
+        assertEq(ledger.interestChecks(), 1, "exact-interest check did not run on the preclose");
 
         ledger.claimAsLender(0);
         ledger.claimAsBorrower(0);
