@@ -62,21 +62,25 @@ describe('bestEffortGasLimit', () => {
     expect(calls.every((c) => c.allowFailure)).toBe(true);
   });
 
-  it('when an item would revert, sizes the items that ran, together and in order', async () => {
-    const seen: string[][] = [];
+  it('when an item would revert, re-estimates the whole batch with only the items that ran required', async () => {
+    const seen: { data: string; allowFailure: boolean }[][] = [];
     const limit = await bestEffortGasLimit(calls, {
       estimate: async (c) => {
-        seen.push(c.map((i) => i.callData));
-        if (c.length === 3) throw new Error('reverts');
-        return 700_000n;
+        seen.push(c.map((i) => ({ data: i.callData, allowFailure: i.allowFailure })));
+        if (c.every((i) => !i.allowFailure)) throw new Error('reverts');
+        return 900_000n;
       },
       simulate: async () => [ok, skip, ok],
     });
-    // One estimate of items 1 and 3 as a batch, never item by item, so a
-    // later item that depends on an earlier one is sized as it runs.
-    expect(seen[1]).toEqual([calls[0].callData, calls[2].callData]);
+    // Every item stays, in order: the failing one still runs and spends
+    // gas, and a later item may depend on an earlier one.
     expect(seen).toHaveLength(2);
-    expect(limit).toBe(gasLimitFromEstimate(700_000n));
+    expect(seen[1]).toEqual([
+      { data: calls[0].callData, allowFailure: false },
+      { data: calls[1].callData, allowFailure: true },
+      { data: calls[2].callData, allowFailure: false },
+    ]);
+    expect(limit).toBe(gasLimitFromEstimate(900_000n));
   });
 
   it('leaves it to the wallet when no item would run', async () => {
@@ -89,7 +93,7 @@ describe('bestEffortGasLimit', () => {
     expect(limit).toBeUndefined();
   });
 
-  it('leaves it to the wallet when the subset reverts too', async () => {
+  it('leaves it to the wallet when the marked batch reverts too', async () => {
     const limit = await bestEffortGasLimit(calls, {
       estimate: async () => {
         throw new Error('reverts');

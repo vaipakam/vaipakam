@@ -69,15 +69,15 @@ export function chunkForMulticall<T>(items: readonly T[], size = MAX_MULTICALL_C
  * When the strict form reverts, some item would fail now anyway (a loan
  * closed by someone else since the plan, say). The batch is then simulated
  * best-effort, which reports each item's outcome, and the estimate is taken
- * on the strict form of the items that ran, IN ORDER and together. Items are
- * never sized one by one: a later item can depend on an earlier one (a
- * refinance request is refused until its caps are set by the item before
- * it), and only the batch as it runs shows that. The items that would fail
- * are left out of the figure; each stops at its first refusal, which the
- * margin covers.
+ * on the WHOLE batch again with each item that ran marked must-succeed and
+ * each item that failed left best-effort. Nothing is dropped or reordered:
+ * a later item can depend on an earlier one (a refinance request is refused
+ * until the item before it sets its caps), and an item that fails still runs
+ * and still spends gas before it refuses. So the figure counts every item's
+ * cost, and an item expected to run cannot be starved inside it.
  *
  * When nothing would run, or the chain moved between the two reads so the
- * subset reverts too, there is no figure to give and the wallet estimates.
+ * marked batch reverts too, there is no figure to give and the wallet estimates.
  * The batch can then only skip, and its read-back says so.
  *
  * @returns The limit to send with, or `undefined` to leave it to the wallet.
@@ -99,9 +99,9 @@ export async function bestEffortGasLimit(
   }
   try {
     const results = await node.simulate([...calls]);
-    const running = strict.filter((_, i) => results[i]?.success === true);
-    if (running.length === 0) return undefined;
-    return gasLimitFromEstimate(await node.estimate(running));
+    const marked = calls.map((c, i) => ({ ...c, allowFailure: results[i]?.success !== true }));
+    if (marked.every((c) => c.allowFailure)) return undefined;
+    return gasLimitFromEstimate(await node.estimate(marked));
   } catch {
     return undefined;
   }
