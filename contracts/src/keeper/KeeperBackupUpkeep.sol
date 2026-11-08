@@ -84,8 +84,14 @@ interface IBackupSteps {
  *         with its first-seen time, in a cheap transaction. The queue is
  *         visited on its own, apart from the scan pages, so a noted candidate
  *         is revisited however far they have moved away from it. It is RUN
- *         only when a check still finds it due between `lagSec` and
- *         `lagSec + actWindowSec` after that time. A noted candidate that is no
+ *         only when a check still finds it due between its step's lag
+ *         (`lagSecOf`) and that lag plus `actWindowSec` after that time. The
+ *         lag is per step because our keeper's passes run on different
+ *         cadences (one minute to one hour) and one step's own window closes:
+ *         the grace auto-listing is open only inside a grace that can be one
+ *         hour. Every check first takes the notes inside their run window,
+ *         the one whose window closes first first, so a full queue still
+ *         reaches each note while it can run. A noted candidate that is no
  *         longer due (our keeper ran it) is DROPPED, during its wait as well,
  *         so a later occurrence of a recurring step is noted afresh; perform
  *         re-probes before dropping, so a drop can only remove what is truly
@@ -165,13 +171,22 @@ contract KeeperBackupUpkeep is IAutomationCompatible, Ownable2Step {
 
     uint32 public constant MIN_LAG_SEC = 10 minutes;
     uint32 public constant MAX_LAG_SEC = 7 days;
-    uint32 public constant MIN_ACT_WINDOW_SEC = 10 minutes;
+    /// @notice Longest lag for the grace auto-listing, which the protocol
+    ///         accepts only before grace ends. The shortest grace it allows is
+    ///         one hour, so this leaves at least half of it for finding the
+    ///         loan and running the step.
+    uint32 public constant MAX_GRACE_LIST_LAG_SEC = 30 minutes;
+    /// @notice A full queue is worked through at one note per check or more,
+    ///         earliest window end first, so a window must outlast
+    ///         `MAX_PENDING` checks: 64 checks at a 12-second block is under
+    ///         13 minutes.
+    uint32 public constant MIN_ACT_WINDOW_SEC = 30 minutes;
     uint32 public constant MAX_ACT_WINDOW_SEC = 1 days;
     uint16 public constant MAX_LOAN_WINDOW = 50;
     uint16 public constant MAX_DAY_WINDOW = 30;
     uint8 public constant MAX_ACTIONS = 16;
     /// @notice Most candidates waiting at once. A full queue delays new notes;
-    ///         every entry leaves within `lagSec + actWindowSec` of its note.
+    ///         every entry leaves within its lag plus `actWindowSec` of its note.
     uint8 public constant MAX_PENDING = 64;
     uint8 public constant MAX_RUNS_PER_PERFORM = 4;
     /// @dev The parts of a check that share its gas: see `checkUpkeep`.
@@ -193,8 +208,11 @@ contract KeeperBackupUpkeep is IAutomationCompatible, Ownable2Step {
     address public forwarder;
     /// @notice Bit i set = step i is armed. Zero at deployment.
     uint256 public enabledSteps;
-    /// @notice How long a step must stay due before the backup runs it.
-    uint32 public lagSec = 1 hours;
+    /// @notice How long each step must stay due before the backup runs it,
+    ///         by step id. One hour, except the grace auto-listing (15
+    ///         minutes, see `MAX_GRACE_LIST_LAG_SEC`); our keeper's slowest
+    ///         passes run hourly.
+    uint32[STEP_COUNT] public lagSecOf;
     /// @notice How long after the lag a note stays good for running.
     uint32 public actWindowSec = 1 hours;
     /// @notice Active loans (and active offers) probed per check.
@@ -224,7 +242,8 @@ contract KeeperBackupUpkeep is IAutomationCompatible, Ownable2Step {
 
     event StepsEnabled(uint256 previousMask, uint256 mask);
     event ForwarderSet(address previous, address forwarder);
-    event TimingSet(uint32 lagSec, uint32 actWindowSec);
+    event LagSet(uint8 indexed step, uint32 previousLagSec, uint32 lagSec);
+    event ActWindowSet(uint32 previousActWindowSec, uint32 actWindowSec);
     event ScanSet(uint16 loanWindow, uint16 dayWindow, uint32 probeGas, uint8 runsPerPerform);
     /// @notice A step was seen due and its wait started.
     event BackupDueNoted(uint8 indexed step, uint256 indexed arg, uint64 at);
@@ -253,6 +272,9 @@ contract KeeperBackupUpkeep is IAutomationCompatible, Ownable2Step {
         if (diamond_ == address(0) || treasury_ == address(0)) revert ZeroAddress();
         diamond = diamond_;
         treasury = treasury_;
+        for (uint8 i; i < STEP_COUNT; i++) {
+            lagSecOf[i] = Step(i) == Step.AutoListAtFloorOnGrace ? 15 minutes : 1 hours;
+        }
     }
 
     // ─── Owner ──────────────────────────────────────────────────────────
@@ -271,12 +293,20 @@ contract KeeperBackupUpkeep is IAutomationCompatible, Ownable2Step {
         forwarder = forwarder_;
     }
 
-    function setTiming(uint32 lagSec_, uint32 actWindowSec_) external onlyOwner {
-        if (lagSec_ < MIN_LAG_SEC || lagSec_ > MAX_LAG_SEC) revert SettingOutOfRange();
+    /// @notice Set one step's lag. The grace auto-listing's is capped lower
+    ///         (`MAX_GRACE_LIST_LAG_SEC`), since its own window closes.
+    function setLag(uint8 step, uint32 lagSec_) external onlyOwner {
+        if (step >= STEP_COUNT) revert UnknownStep(step);
+        uint32 max = Step(step) == Step.AutoListAtFloorOnGrace ? MAX_GRACE_LIST_LAG_SEC : MAX_LAG_SEC;
+        if (lagSec_ < MIN_LAG_SEC || lagSec_ > max) revert SettingOutOfRange();
+        emit LagSet(step, lagSecOf[step], lagSec_);
+        lagSecOf[step] = lagSec_;
+    }
+
+    function setActWindow(uint32 actWindowSec_) external onlyOwner {
         if (actWindowSec_ < MIN_ACT_WINDOW_SEC || actWindowSec_ > MAX_ACT_WINDOW_SEC) revert SettingOutOfRange();
-        lagSec = lagSec_;
+        emit ActWindowSet(actWindowSec, actWindowSec_);
         actWindowSec = actWindowSec_;
-        emit TimingSet(lagSec_, actWindowSec_);
     }
 
     function setScan(uint16 loanWindow_, uint16 dayWindow_, uint32 probeGas_, uint8 runsPerPerform_) external onlyOwner {
@@ -350,8 +380,13 @@ contract KeeperBackupUpkeep is IAutomationCompatible, Ownable2Step {
         uint256 mask = enabledSteps;
         if (mask == 0) return (false, "");
 
-        // Six parts share the check's gas: the note queue, the beacon, the
-        // recent days, the older days, the loans and the offers. The part
+        // The notes inside their run window come first, every check: they are
+        // the only work with a deadline, and each one leaves the queue (run or
+        // dropped) once probed, so they cannot hold the gas for long.
+        (n, runs) = _scanReady(actions, n, runs, mask);
+
+        // Six parts share the rest of the gas: the other notes, the beacon,
+        // the recent days, the older days, the loans and the offers. The part
         // that goes first moves on every block, so a part whose probes are
         // costly, or run out of their gas, cannot starve the others: each
         // part leads one check in six.
@@ -380,7 +415,7 @@ contract KeeperBackupUpkeep is IAutomationCompatible, Ownable2Step {
             if (a.step >= STEP_COUNT) revert UnknownStep(a.step);
             bytes32 key = _key(a.step, a.arg);
             uint256 slot = _pendingSlot[key];
-            Stage stage = slot == 0 ? Stage.None : _stage(_pending[slot - 1].seenAt);
+            Stage stage = slot == 0 ? Stage.None : _stage(a.step, _pending[slot - 1].seenAt);
             if (a.mode == Mode.Drop) {
                 // Only a disarmed step, or one the protocol says is not due,
                 // leaves the queue without running.
@@ -420,11 +455,12 @@ contract KeeperBackupUpkeep is IAutomationCompatible, Ownable2Step {
         Ready // noted, inside the run window
     }
 
-    function _stage(uint64 seen) internal view returns (Stage) {
+    function _stage(uint8 step, uint64 seen) internal view returns (Stage) {
         if (seen == 0) return Stage.None;
         uint256 age = block.timestamp - seen;
-        if (age < lagSec) return Stage.Waiting;
-        if (age <= uint256(lagSec) + actWindowSec) return Stage.Ready;
+        uint256 lag = lagSecOf[step];
+        if (age < lag) return Stage.Waiting;
+        if (age <= lag + actWindowSec) return Stage.Ready;
         return Stage.None;
     }
 
@@ -490,10 +526,43 @@ contract KeeperBackupUpkeep is IAutomationCompatible, Ownable2Step {
         return (n, runs);
     }
 
-    /// @dev Every noted candidate, from a start that moves every round of
-    ///      `PARTS` blocks (`_cycle`). A note is probed even while it waits, so
-    ///      a step our keeper ran is dropped at once and a later occurrence of
-    ///      a recurring step starts a wait of its own.
+    /// @dev The notes inside their run window, the one whose window closes
+    ///      first first (earliest deadline first). A full queue is so worked
+    ///      through at one note per check or more, so each note is reached
+    ///      while it can run as long as its window outlasts `MAX_PENDING`
+    ///      checks (`MIN_ACT_WINDOW_SEC`). A start that only rotated could
+    ///      leave a note unvisited for longer than its whole window.
+    function _scanReady(Action[] memory actions, uint256 n, uint256 runs, uint256 mask)
+        internal
+        returns (uint256, uint256)
+    {
+        uint256 len = _pending.length;
+        if (len == 0) return (n, runs);
+        uint256 window = actWindowSec;
+        uint256[] memory closes = new uint256[](len); // 0 = not ready, or taken
+        for (uint256 i; i < len; i++) {
+            Pending storage p = _pending[i];
+            (uint8 step, uint64 seen) = (p.step, p.seenAt);
+            if (_stage(step, seen) == Stage.Ready) closes[i] = uint256(seen) + lagSecOf[step] + window;
+        }
+        while (!_full(n, runs)) {
+            uint256 best = len;
+            uint256 bestClose = type(uint256).max;
+            for (uint256 i; i < len; i++) {
+                if (closes[i] != 0 && closes[i] < bestClose) (best, bestClose) = (i, closes[i]);
+            }
+            if (best == len) break;
+            closes[best] = 0;
+            (n, runs) = _actOnNote(actions, n, runs, mask, _pending[best]);
+        }
+        return (n, runs);
+    }
+
+    /// @dev The other notes (waiting, or past their window), from a start that
+    ///      moves every round of `PARTS` blocks (`_cycle`). A note is probed
+    ///      even while it waits, so a step our keeper ran is dropped at once
+    ///      and a later occurrence of a recurring step starts a wait of its
+    ///      own. The notes inside their window were taken by `_scanReady`.
     function _scanQueue(Action[] memory actions, uint256 n, uint256 runs, uint256 mask)
         internal
         returns (uint256, uint256)
@@ -503,20 +572,31 @@ contract KeeperBackupUpkeep is IAutomationCompatible, Ownable2Step {
         uint256 start = _cycle() % len;
         for (uint256 j; j < len && !_full(n, runs); j++) {
             Pending memory p = _pending[(start + j) % len];
-            if (!_on(mask, p.step)) {
-                actions[n++] = Action(Mode.Drop, p.step, p.arg); // disarmed since noted
-                continue;
-            }
-            Stage stage = _stage(p.seenAt);
-            if (!isDue(p.step, p.arg)) {
-                actions[n++] = Action(Mode.Drop, p.step, p.arg);
-            } else if (stage == Stage.Ready) {
-                actions[n++] = Action(Mode.Run, p.step, p.arg);
-                runs++;
-            } else if (stage == Stage.None) {
-                actions[n++] = Action(Mode.Note, p.step, p.arg); // stale: renew the wait
-            }
-            // Waiting and still due: nothing to do yet.
+            if (_stage(p.step, p.seenAt) == Stage.Ready) continue;
+            (n, runs) = _actOnNote(actions, n, runs, mask, p);
+        }
+        return (n, runs);
+    }
+
+    /// @dev The action one note needs: drop it if its step was disarmed or is
+    ///      no longer due, run it inside its window, renew it past its window.
+    ///      A waiting note that is still due needs nothing yet.
+    function _actOnNote(Action[] memory actions, uint256 n, uint256 runs, uint256 mask, Pending memory p)
+        internal
+        returns (uint256, uint256)
+    {
+        if (!_on(mask, p.step) || !isDue(p.step, p.arg)) {
+            actions[n] = Action(Mode.Drop, p.step, p.arg);
+            return (n + 1, runs);
+        }
+        Stage stage = _stage(p.step, p.seenAt);
+        if (stage == Stage.Ready) {
+            actions[n] = Action(Mode.Run, p.step, p.arg);
+            return (n + 1, runs + 1);
+        }
+        if (stage == Stage.None) {
+            actions[n] = Action(Mode.Note, p.step, p.arg); // stale: renew the wait
+            return (n + 1, runs);
         }
         return (n, runs);
     }

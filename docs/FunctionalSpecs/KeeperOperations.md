@@ -1115,7 +1115,7 @@ backup, not a second keeper:
   no rule of its own about when a step is due; it asks the protocol by trying
   the step in a way whose effects are always undone.
 - It waits. A due step is first noted, and is run only if it is still due
-  after a set delay (one hour by default) and within a set window after that.
+  after a delay set per step (one hour by default, and at most half an hour for the grace auto-listing, whose own window can be one hour) and within a set window after that. The runner takes the noted steps whose window closes first first, so a full queue still reaches each one in time.
   If the keeper runs the step meanwhile, the backup does nothing and lets the
   note go. A noted step is checked again on every look until it is run or let
   go, however far the backup's scan of loans, offers and days has moved on. A

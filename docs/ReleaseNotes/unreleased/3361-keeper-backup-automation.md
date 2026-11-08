@@ -2,7 +2,7 @@
 
 A new standalone contract, the keeper backup runner, lets Chainlink Automation run a set of permissionless upkeep steps when our own keeper has left them undone too long. The keeper runs on one machine, so until now a step nobody else called stayed undone while that machine was down, out of gas or stuck.
 
-The runner keeps no rule of its own about when a step is due. On each check it tries every candidate step in a call whose effects are always undone and keeps only whether it would succeed, so it cannot drift from the protocol. A due step is first noted, and is run only if it is still due an hour later (a setting); if our keeper runs it in the meantime, the runner does nothing.
+The runner keeps no rule of its own about when a step is due. On each check it tries every candidate step in a call whose effects are always undone and keeps only whether it would succeed, so it cannot drift from the protocol. A due step is first noted, and is run only if it is still due after a delay set per step (an hour by default, 15 minutes for the grace auto-listing, which the protocol accepts only inside a grace that can be one hour); if our keeper runs it in the meantime, the runner does nothing.
 
 It covers daily rental deductions, expired listing and intent teardowns, the grace auto-listing of NFT collateral, past-grace defaults and periodic-interest stamps that need no sale, the Base reward-day close, the lapses, skips and recycling of finished reward days, and the vault-code changes whose delay has passed. It does not cover liquidations or matching, anything needing a swap route, quote or cross-chain fee, steps found only from event history, the reward-day finalize, or backstop fills. The design note is docs/DesignsAndPlans/KeeperBackupAutomationDesign.md.
 

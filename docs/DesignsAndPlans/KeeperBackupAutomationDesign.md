@@ -75,11 +75,33 @@ zero once nothing is left, so it is due only while its probe returns a
 non-zero amount.
 
 **Waiting.** A due candidate is first noted, in a cheap transaction: it
-joins a bounded queue (at most 64) with the time it was seen. Every check
-visits the whole queue before it scans, so a noted candidate is revisited
-however far the loan, offer and day pages have moved away from it.
-It runs only if a check still finds it due between `lagSec` (default 1 hour)
-and `lagSec + actWindowSec` (default 1 more hour) after the note. If our
+joins a bounded queue (at most 64) with the time it was seen. The queue is
+visited on its own, apart from the scan pages, so a noted candidate is
+revisited however far the loan, offer and day pages have moved away from it.
+It runs only if a check still finds it due between its step's lag
+(`lagSecOf(step)`) and that lag plus `actWindowSec` (default 1 hour) after the
+note.
+
+The lag is per step, for two reasons. Our keeper's passes run on cadences
+from one minute to one hour, so one hour is the default: the backup leaves
+our keeper a full cycle of its slowest pass. And one step's own window
+closes. The protocol accepts the grace auto-listing only from maturity until
+grace ends, and grace can be as short as one hour (loans under seven days on
+the default schedule, and the protocol's floor for any schedule). A one-hour
+lag would make that step impossible to run, so its lag defaults to 15
+minutes and the setter refuses more than 30, which leaves at least half the
+shortest grace for finding the loan and running the step.
+
+Every check takes the notes inside their run window first, before any other
+part, the one whose window closes first first (earliest deadline first).
+Each such note leaves the queue once probed, run or dropped, so they cannot
+hold the gas for long. A full queue is therefore worked through at one note
+per check or more: 64 checks at the worst case. The run window must outlast
+that, which is why it is at least 30 minutes (64 checks at a 12-second block
+take under 13). An earlier version walked the queue from a start that moved
+once every six blocks; with costly probes a check reached three notes, and a
+note could stay unvisited for longer than its whole window and be renewed
+forever. If our
 keeper runs the step in the meantime, the probe fails and the note is
 dropped, during its wait as well, so the next occurrence of a recurring step
 is noted afresh instead of running on the old note's time; the perform probes
@@ -87,7 +109,9 @@ again before it drops, so a drop removes only
 what is truly no longer due (or a step since disarmed). A note older than its
 window is renewed if the step is still due, so a step that recurs (a daily
 deduction) waits the full lag every time. While the queue is full no new note
-is taken; every entry leaves within one lag and run window of its note.
+is taken; every entry leaves within its lag and run window of its note,
+provided checks and performs keep coming at the rate the paragraph above
+assumes (one note per check).
 `firstSeenAt(step, arg)` and `pendingCandidates()` show the queue.
 
 **Running.** A perform runs at most `runsPerPerform` steps (default 2, at most
@@ -169,8 +193,8 @@ Two limits worth stating plainly:
   leaves a due step alone, the backup runs it after the lag. That is no new
   power: anyone may call these steps; the backup only guarantees somebody
   does.
-- Every setting is bounded: lag 10 minutes to 7 days, run window 10 minutes
-  to 1 day, at most 50 loans and 30 days per check, probe gas 100,000 to
+- Every setting is bounded: lag 10 minutes to 7 days per step (30 minutes at
+  most for the grace auto-listing), run window 30 minutes to 1 day, at most 50 loans and 30 days per check, probe gas 100,000 to
   5,000,000, at most 4 runs per perform. A step bit beyond the last step is
   refused.
 

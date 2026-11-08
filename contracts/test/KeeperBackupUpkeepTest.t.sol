@@ -19,6 +19,7 @@ contract MockBackupDiamond {
 
     mapping(bytes4 => mapping(uint256 => bool)) public due;
     mapping(bytes4 => mapping(uint256 => bool)) public burn;
+    mapping(bytes4 => mapping(uint256 => uint256)) public cost;
     uint256 public sink;
     mapping(bytes4 => mapping(uint256 => uint256)) public runs;
     mapping(uint256 => uint256) public recyclable;
@@ -56,6 +57,12 @@ contract MockBackupDiamond {
     ///      whose frontier is far behind.
     function setBurn(bytes4 sel, uint256 arg, bool b) external {
         burn[sel][arg] = b;
+    }
+
+    /// @dev A step that spends about `gasAmount` and then behaves as usual,
+    ///      like a costly step that is still due.
+    function setCost(bytes4 sel, uint256 arg, uint256 gasAmount) external {
+        cost[sel][arg] = gasAmount;
     }
 
     function setRecyclable(uint256 day, uint256 amount) external {
@@ -158,6 +165,11 @@ contract MockBackupDiamond {
     function _run(uint256 arg) internal {
         if (burn[msg.sig][arg]) {
             while (true) sink++;
+        }
+        uint256 spend = cost[msg.sig][arg];
+        if (spend != 0) {
+            uint256 stop = gasleft() > spend ? gasleft() - spend : 0;
+            while (gasleft() > stop) sink++;
         }
         if (!due[msg.sig][arg]) revert NotDue();
         due[msg.sig][arg] = false;
@@ -273,9 +285,15 @@ contract KeeperBackupUpkeepTest is Test {
         vm.expectRevert(abi.encodeWithSelector(KeeperBackupUpkeep.StepsOutOfRange.selector, uint256(1) << 14));
         backup.setEnabledSteps(uint256(1) << 14);
         vm.expectRevert(KeeperBackupUpkeep.SettingOutOfRange.selector);
-        backup.setTiming(5 minutes, 1 hours);
+        backup.setLag(AUTO_DEDUCT, 5 minutes);
         vm.expectRevert(KeeperBackupUpkeep.SettingOutOfRange.selector);
-        backup.setTiming(1 hours, 2 days);
+        backup.setLag(AUTO_DEDUCT, 8 days);
+        vm.expectRevert(abi.encodeWithSelector(KeeperBackupUpkeep.UnknownStep.selector, uint8(14)));
+        backup.setLag(14, 1 hours);
+        vm.expectRevert(KeeperBackupUpkeep.SettingOutOfRange.selector);
+        backup.setActWindow(29 minutes);
+        vm.expectRevert(KeeperBackupUpkeep.SettingOutOfRange.selector);
+        backup.setActWindow(2 days);
         vm.expectRevert(KeeperBackupUpkeep.SettingOutOfRange.selector);
         backup.setScan(51, 7, 1_500_000, 2);
         vm.expectRevert(KeeperBackupUpkeep.SettingOutOfRange.selector);
@@ -283,6 +301,113 @@ contract KeeperBackupUpkeepTest is Test {
         vm.expectRevert(KeeperBackupUpkeep.ZeroAddress.selector);
         backup.setForwarder(address(0));
         vm.stopPrank();
+    }
+
+    function test_TheLagIsPerStepAndTheGraceListingKeepsInsideItsGrace() public {
+        uint8 graceList = uint8(KeeperBackupUpkeep.Step.AutoListAtFloorOnGrace);
+        assertEq(backup.lagSecOf(graceList), 15 minutes);
+        for (uint8 i; i < backup.STEP_COUNT(); i++) {
+            if (i != graceList) assertEq(backup.lagSecOf(i), 1 hours);
+        }
+        assertEq(backup.actWindowSec(), 1 hours);
+        // The shortest grace the protocol allows is one hour: the listing's lag
+        // stays at half of it or less, whatever the owner sets.
+        vm.startPrank(owner);
+        vm.expectRevert(KeeperBackupUpkeep.SettingOutOfRange.selector);
+        backup.setLag(graceList, 31 minutes);
+        backup.setLag(graceList, 30 minutes);
+        backup.setLag(AUTO_DEDUCT, 2 hours);
+        vm.stopPrank();
+        assertEq(backup.lagSecOf(graceList), 30 minutes);
+        assertEq(backup.lagSecOf(AUTO_DEDUCT), 2 hours);
+
+        // A one-hour grace: noted at maturity, run 15 minutes later.
+        vm.prank(owner);
+        backup.setLag(graceList, 15 minutes);
+        _arm(graceList);
+        diamond.setDue(diamond.autoListAtFloorOnGrace.selector, 11, true);
+        (, KeeperBackupUpkeep.Action[] memory a) = _check();
+        _perform(a);
+        vm.warp(block.timestamp + 15 minutes);
+        (, a) = _check();
+        assertEq(uint8(a[0].mode), uint8(KeeperBackupUpkeep.Mode.Run));
+        _perform(a);
+        assertEq(diamond.runs(diamond.autoListAtFloorOnGrace.selector, 11), 1);
+    }
+
+    /// @dev Codex #3373 r10: a queue walked only from a rotating start can
+    ///      leave a note unvisited for longer than its whole window when probes
+    ///      are costly. Half the queue is waiting, half inside its window; each
+    ///      probe costs 1.4M gas, so a 5M check affords three. Every note must
+    ///      still run inside its window, and none may go stale and be renewed.
+    function test_AFullQueueRunsEveryNoteInsideItsWindow() public {
+        vm.prank(owner);
+        backup.setActWindow(30 minutes);
+        _arm(AUTO_DEDUCT);
+        uint256[] memory ids = new uint256[](64);
+        for (uint256 i; i < 64; i++) ids[i] = 101 + i;
+        diamond.setLoans(ids);
+        vm.roll(1000);
+
+        _fillTo(ids, 0, 32);
+        // The second half is noted while the first still waits.
+        vm.warp(block.timestamp + 40 minutes);
+        _fillTo(ids, 32, 64);
+        assertEq(backup.pendingCandidates().length, 64, "the queue is full");
+
+        for (uint256 i; i < 64; i++) diamond.setCost(diamond.autoDeductDaily.selector, ids[i], 1_400_000);
+        _runBatch(ids, 0, 32);
+        _runBatch(ids, 32, 64);
+    }
+
+    /// @dev Mark loans [from, to) due and check every 12-second block until each
+    ///      is noted.
+    function _fillTo(uint256[] memory ids, uint256 from, uint256 to) internal {
+        for (uint256 i = from; i < to; i++) diamond.setDue(diamond.autoDeductDaily.selector, ids[i], true);
+        for (uint256 b; b < 400 && backup.pendingCandidates().length < to; b++) {
+            vm.roll(block.number + 1);
+            vm.warp(block.timestamp + 12);
+            (bool needed, KeeperBackupUpkeep.Action[] memory a) = _check();
+            if (needed) _perform(a);
+        }
+        assertEq(backup.pendingCandidates().length, to, "every due loan is noted");
+    }
+
+    /// @dev From the moment the last of loans [from, to) is inside its window,
+    ///      check with 5M gas and perform every 12-second block. Each must run
+    ///      before its own window closes, with no note renewed.
+    function _runBatch(uint256[] memory ids, uint256 from, uint256 to) internal {
+        uint256 lastSeen;
+        uint256 firstClose = type(uint256).max;
+        for (uint256 i = from; i < to; i++) {
+            uint256 seen = backup.firstSeenAt(AUTO_DEDUCT, ids[i]);
+            assertGt(seen, 0, "noted");
+            if (seen > lastSeen) lastSeen = seen;
+            uint256 closes = seen + 1 hours + 30 minutes;
+            if (closes < firstClose) firstClose = closes;
+        }
+        vm.warp(lastSeen + 1 hours);
+        for (uint256 b; b < 200 && _ranCount(ids, from, to) < to - from; b++) {
+            vm.roll(block.number + 1);
+            vm.warp(block.timestamp + 12);
+            vm.prank(address(0xBEEF), SIM);
+            (bool needed, bytes memory data) = backup.checkUpkeep{gas: 5_000_000}("");
+            if (!needed) continue;
+            KeeperBackupUpkeep.Action[] memory a = abi.decode(data, (KeeperBackupUpkeep.Action[]));
+            for (uint256 k; k < a.length; k++) {
+                assertTrue(a[k].mode != KeeperBackupUpkeep.Mode.Note, "no note goes stale");
+            }
+            _perform(a);
+        }
+        assertLe(block.timestamp, firstClose, "all ran before the earliest window closed");
+        for (uint256 i = from; i < to; i++) {
+            assertEq(diamond.runs(diamond.autoDeductDaily.selector, ids[i]), 1, "every note ran");
+            assertEq(backup.firstSeenAt(AUTO_DEDUCT, ids[i]), 0);
+        }
+    }
+
+    function _ranCount(uint256[] memory ids, uint256 from, uint256 to) internal view returns (uint256 c) {
+        for (uint256 i = from; i < to; i++) c += diamond.runs(diamond.autoDeductDaily.selector, ids[i]);
     }
 
     function test_CheckRefusesARealTransaction() public {
