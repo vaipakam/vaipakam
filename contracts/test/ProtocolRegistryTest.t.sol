@@ -5,6 +5,7 @@ import {Test} from "forge-std/Test.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {ProtocolRegistry} from "../src/governance/ProtocolRegistry.sol";
 import {RegistryKeys} from "../src/governance/RegistryKeys.sol";
+import {IProtocolRegistryReader} from "../src/interfaces/IProtocolRegistryReader.sol";
 
 /**
  * @title  ProtocolRegistryTest
@@ -65,7 +66,7 @@ contract ProtocolRegistryTest is Test {
     function test_RequirePointer_RefusesAnUnsetKey() public {
         bytes32 unset = keccak256("unset");
         assertEq(reg.pointer(unset), address(0));
-        vm.expectRevert(abi.encodeWithSelector(ProtocolRegistry.PointerUnset.selector, unset));
+        vm.expectRevert(abi.encodeWithSelector(IProtocolRegistryReader.PointerUnset.selector, unset));
         reg.requirePointer(unset);
     }
 

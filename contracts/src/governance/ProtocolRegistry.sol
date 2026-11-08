@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 import {Ownable, Ownable2Step} from "@openzeppelin/contracts/access/Ownable2Step.sol";
 import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
+import {IProtocolRegistryReader} from "../interfaces/IProtocolRegistryReader.sol";
 
 /**
  * @title  ProtocolRegistry
@@ -55,7 +56,7 @@ import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
  *         own delay and canceller already stand in front of that call, and
  *         the handover moves every guardian to the Pauser Safe in one loop.
  */
-contract ProtocolRegistry is Ownable2Step {
+contract ProtocolRegistry is Ownable2Step, IProtocolRegistryReader {
     using EnumerableSet for EnumerableSet.AddressSet;
 
     // ─── Constants ───────────────────────────────────────────────────────
@@ -117,7 +118,6 @@ contract ProtocolRegistry is Ownable2Step {
 
     error ZeroAddress();
     error NotOwnerOrGuardian(address caller);
-    error PointerUnset(bytes32 key);
     error NoChange();
     error ChangePending();
     error NothingPending();
