@@ -12,10 +12,14 @@ describe('settlementState', () => {
     expect(settlementState(s, true, null, 2_000n).kind).toBe('pause-unread');
   });
 
-  it('places the period by the block time: running, in its grace, then due', () => {
+  it('places a period the protocol does not call settleable by the block time: running, then in its grace', () => {
     expect(settlementState(s, true, false, 900n)).toEqual({ kind: 'running', ended: false, graceEndsAt: 1_100n, shortfall: 30n });
     expect(settlementState(s, true, false, 1_000n)).toEqual({ kind: 'running', ended: true, graceEndsAt: 1_100n, shortfall: 30n });
-    expect(settlementState(s, true, false, 1_100n)).toEqual({ kind: 'due', shortfall: 30n });
+  });
+
+  it('never announces a sale the preview refuses: past grace and not callable is a loan that is not running', () => {
+    expect(settlementState(s, true, false, 1_100n)).toEqual({ kind: 'held' });
+    expect(settlementState({ ...s, canSettleNow: true }, true, false, 1_100n)).toEqual({ kind: 'due', shortfall: 30n });
   });
 
   it("takes the protocol's own callable-now over the block time", () => {

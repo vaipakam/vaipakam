@@ -228,7 +228,14 @@ export interface LoanRead {
 
 /** Reads one loan. */
 export async function readLoanView(client: PublicClient, diamond: Hex, loanId: bigint): Promise<LoanRead> {
-  const read = <T>(abi: Abi, functionName: string, args: readonly unknown[] = []) => client.readContract({ address: diamond, abi, functionName, args }) as Promise<T>;
+  // Every read is pinned to one block, the block whose time the page states:
+  // the loan's status, the settlement preview and the chain time then
+  // describe the same moment, so no answer is placed against another's
+  // state. With the block unread, the reads take the latest state and the
+  // chain time is stated as unknown.
+  const block = await maybe(client.getBlock({ blockTag: 'latest' }));
+  const at = block ? { blockNumber: block.number } : {};
+  const read = <T>(abi: Abi, functionName: string, args: readonly unknown[] = []) => client.readContract({ address: diamond, abi, functionName, args, ...at }) as Promise<T>;
   const loan = await read<LoanDetails>(LOAN, 'getLoanDetails', [loanId]);
   if (loan.id === 0n) return { view: null };
   const live = isLiveStatus(loan.status);
@@ -251,7 +258,6 @@ export async function readLoanView(client: PublicClient, diamond: Hex, loanId: b
     saleVehicle,
     matchConfig,
     borrowerLock,
-    block,
   ] = await Promise.all([
     maybe(read<Hex>(NFT, 'ownerOf', [loan.lenderTokenId])),
     maybe(read<Hex>(NFT, 'ownerOf', [loan.borrowerTokenId])),
@@ -268,7 +274,6 @@ export async function readLoanView(client: PublicClient, diamond: Hex, loanId: b
     maybe(read<boolean>(METRICS, 'isSaleVehicleLoan', [loanId])),
     live ? maybe(read<readonly [boolean, bigint, bigint]>(CONFIG, 'getInternalMatchConfigBundle')) : null,
     live ? maybe(read<number>(NFT, 'positionLock', [loan.borrowerTokenId]).then(Number)) : null,
-    live ? maybe(client.getBlock({ blockTag: 'latest' })) : null,
   ]);
 
   // A loan with a cadence answers to its checkpoint too: with the checkpoint
@@ -298,7 +303,7 @@ export async function readLoanView(client: PublicClient, diamond: Hex, loanId: b
     saleVehicle,
     matchWindow: matchConfig ? { enabled: matchConfig[0], windowBps: matchConfig[1] } : null,
     borrowerLock,
-    chainNow: block ? block.timestamp : null,
+    chainNow: live && block ? block.timestamp : null,
     schedule: periodic
       ? {
           cadence: Number(periodic[0]),

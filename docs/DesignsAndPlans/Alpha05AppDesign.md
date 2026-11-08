@@ -814,8 +814,13 @@ above. Each resolves here, so a route reviewer needs no private file:
   period only through its original end with the paused stretch's interest
   still owed, that settling is open to anyone and the keeper's posture is
   not known (the capability service does not yet report it), and the chain
-  time the period is placed against. The card is read-only; paying a period
-  and settling one come with their own actions.
+  time the period is placed against. Every read on the loan page is pinned
+  to the one block whose time is stated, so the loan's status, the preview
+  and the chain time describe the same moment; the preview's "callable now"
+  is then the last word, and a period past its grace that it does not call
+  settleable belongs to a loan that is not running, stated as such and never
+  as a sale. The card is read-only; paying a period and settling one come
+  with their own actions.
 
 ## 3. Companion specifications
 

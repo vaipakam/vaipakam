@@ -41,6 +41,8 @@ export function InterestSchedule({ view: v, meta }: { view: LoanView; meta: Toke
         return text('schedule.settlePaused');
       case 'due':
         return text('schedule.settleOpen');
+      case 'held':
+        return text('schedule.settleHeld');
       case 'running':
         return format('schedule.settleOpens', { time: formatUtc(Number(state.graceEndsAt)) });
       default:
@@ -102,6 +104,8 @@ function StateNote({ state, amount }: { state: SettlementState; amount: (x: bigi
       return <p className="tier-a">{text('schedule.pauseUnread')}</p>;
     case 'time-unread':
       return <p className="tier-b">{text('schedule.timeUnread')}</p>;
+    case 'held':
+      return <p className="tier-a">{text('schedule.held')}</p>;
     case 'running':
       return state.shortfall === 0n ? (
         <p className="tier-b">{text('schedule.covered')}</p>

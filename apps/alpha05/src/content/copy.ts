@@ -382,6 +382,7 @@ export const copy = {
     settleOpens: B('Opens {{time}}'),
     settleOff: B('Switched off here'),
     settlePaused: B('Stopped while the protocol is paused'),
+    settleHeld: B('Not open: the loan is not running'),
     expectedSummary: B('The interest for a period is figured on the principal and rate as they stand now.'),
     expectedWhy: C(
       'Each period owes interest for its whole length, at the principal and rate as they stand now, so a partial repayment lowers it. The interest a borrower pays during the period counts toward it. Once the period and its grace are over, anyone may settle it: a paid period only moves the checkpoint forward, and one still short sells just enough collateral to cover what is owed and the sale’s charges.',
@@ -392,6 +393,7 @@ export const copy = {
     paused: A('The protocol is paused: no period can be settled while it is, and the paused time is added to this period’s dates.'),
     pauseUnread: A('Whether the protocol is paused could not be read; a pause stops settlement.'),
     timeUnread: B('The chain’s time could not be read, so where this period stands is unknown.'),
+    held: A('This loan is not running now, so the protocol settles none of its periods and sells no collateral at a checkpoint.'),
     owedLater: A('If {{amount}} is still owed when the grace ends {{time}}, anyone may then sell collateral to cover it.'),
     dueShort: A('Anyone may now settle this period by selling collateral sized to cover {{amount}} and the sale’s charges.'),
     covered: B('This period is paid: settling it only moves the checkpoint forward, and no collateral is sold.'),
