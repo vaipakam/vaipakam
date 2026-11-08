@@ -1992,11 +1992,11 @@ const copySource = {
     action: 'Review handover',
     confirm: 'Confirm — hand over loan',
     done:
-      'Loan handed over. You’re out of the debt, and your collateral was sent straight back to your wallet in the same transaction.',
+      'Loan handed over. You’re out of the debt, and your collateral was returned to your vault in the same transaction, ready to withdraw.',
     accruedLabel: 'interest built up so far',
     shortfallLabel: 'lender rate top-up',
     receiptReceive:
-      'Your collateral back — sent straight to your wallet in the same transaction — and you owe nothing further on this loan.',
+      'Your collateral back — returned to your vault in the same transaction, ready to withdraw — and you owe nothing further on this loan.',
     receiptLock: 'Nothing new.',
     receiptOwe: tmpl(
       'About {{total}} now ({{accrued}} interest so far + {{shortfall}} rate top-up). The exact figure is worked out on the blockchain when it runs.',
@@ -2007,7 +2007,7 @@ const copySource = {
     receiptFees:
       'The protocol’s usual cut of the interest you pay settles inside the payment.',
     receiptEnds:
-      'Immediately — the new borrower takes over, and your collateral comes back to your wallet, in this same transaction.',
+      'Immediately — the new borrower takes over, and your collateral comes back to your vault, in this same transaction.',
     offerGone:
       'That borrow request is no longer available (accepted, cancelled, or changed). Pick another.',
     offerNotEligible:

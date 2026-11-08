@@ -657,6 +657,30 @@ coordinator's approval of each.
    for the owner-allowlisted, incentive, liquidation-buyer and seller-claim
    classes only that the payee is neither the vault nor the Diamond. The
    lien bound on the AMOUNT, for every protocol class, is Stage B's.
+9. **One check path behind four entries.** EIP-170 left some callers no
+   room to encode the whole intent struct, so the policy facet has four
+   external entries: the struct entry, a scalar entry carrying the same
+   fields as arguments, and two compact entries (to the owner, and an ERC-20
+   to the Diamond). Each builds the same intent and calls one private check,
+   which carries every class rule, the free-balance check, the protected
+   payout gate and redirect, the transfer, the ledgers and the one movement
+   event. No entry carries a check of its own, and the policy test drives
+   every entry through the same class matrix.
+10. **A share that cannot follow its holder yet is reserved, not loose.** The
+    claim-custody class parks a terminal share in the vault of the loan's
+    stored party for that side. It is not credited as that party's own money,
+    so the party's withdrawal (bounded by the depository ledger) refuses it,
+    and the claim pays the current position holder. A matched liquidation
+    parks the same way for the receiving loan's stored lender. #3381 makes the
+    share follow the holder at the time of the movement.
+11. **ForcedSaleFacet split** (coordinator: 11 bytes of headroom was not
+    acceptable). The two previews moved to `ForcedSalePreviewFacet`, and the
+    sizing rule both facets read is `LibForcedSalePlan`, one copy. The two
+    facets are refreshed together. Sizes measured on the Stage A head:
+    ForcedSaleFacet 21,522 bytes, ForcedSalePreviewFacet 7,972,
+    VaultOutflowFacet about 9,800, OfferMatchFacet 24,298, PrecloseFacet
+    about 23,938, AutoLifecycleFacet 24,442 and EncumbranceMutateFacet 24,392.
+    The last two are the next to split (#3385).
 
 ## 9. Order of work
 

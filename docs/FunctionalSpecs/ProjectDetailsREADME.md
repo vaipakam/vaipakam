@@ -517,6 +517,56 @@ outcomes according to the action being taken.
   - A move whose source is also its destination (one user holding positions on both sides, so tokens move from that user's vault into the same vault, or a payer who is also the payee) is complete with the tokens staying where they are. It counts as delivered in full for an ordinary token, less only whatever the move itself cost the holder, and it must never be read as a delivery of nothing: that would leave the moved tokens outside every record while the other side of the trade still gives up its own.
   - A fee drawn from a vault for the treasury, or for the party who matched two offers, and a treasury share the protocol already holds from a settlement (a liquidation's handling fee, an interest cut, a sale's treasury share), is recorded as it arrived and never stops the transaction, in either kind of flow: no party is recorded as paid by that leg, so the fee's recipient bears a token's own transfer charge. Where the protocol is its own treasury, a treasury share it already holds is not moved at all: it is already where the treasury keeps it, so the whole share is recorded and no token can take a transfer charge out of the balances held for other users. A payout of a user's own balance, of a recorded claim to its claimant, or of a liquidator's or keeper's bonus pays what the token delivers, since refusing it would trap the recipient's own funds.
 
+#### Every movement out of a vault has a declared destination (#3205 part 2)
+
+Every movement out of a user's vault, whether it is a withdrawal, a payout, a
+fee, a settlement leg or an allowance, passes one platform rule. That rule
+names the movement's destination class and checks the destination against
+it, and the vault then checks again on what it can establish itself, without
+the platform's word. Each movement emits one record naming the vault, the
+asset, the amount sent and received, the destination, the class, the reason
+and the loan or offer it belongs to.
+
+- **The owner's own withdrawal pays only the owner's own wallet.** Without
+  protected mode, no other recipient is accepted. Any other address needs
+  protected mode's allowlist, and waits its delay.
+- **Payouts land in the payee's vault.** A claim, the lender's share of a
+  repayment while the loan is still open, and a new loan's net principal are
+  paid into the payee's vault as funds the payee owns, and the payee then
+  withdraws them under the rule above. A claim's payee is whoever holds the
+  position NFT at the moment of payment.
+- **A payout to a position's holder** reaches only the vault whose own
+  record names that holder, read from the position-NFT contract.
+- **The treasury, the backstop, the swap adapters and the marketplace
+  conduits** are read from a registry the governance timelock owns, which no
+  platform code can write. A launch is refused until that registry names the
+  platform's treasury and carries every route the platform sells or lists
+  through, so an empty registry can never silently refuse every fee or fill.
+- **A share that cannot follow its holder yet** (an NFT rental, a loan in
+  fallback, a sanctioned current holder, a live listing) is parked in the
+  vault of that side's party as the loan records it, and is never counted as
+  that party's own withdrawable money. The claim pays it to the current
+  holder. Making every share follow its holder directly is #3381.
+- **A liquidator buying collateral at a discount** receives it only at the
+  address that paid, never at an address it names. The backstop's warehoused
+  collateral can be swept only to the treasury.
+- **No vault holds an allowance between transactions.** A swap-to-repay fill
+  is granted exactly its lot inside the fill and has it closed before the
+  fill ends. A collateral listing's ERC-721 is approved to the marketplace's
+  conduit only inside the fill. An ERC-1155 listing moves exactly the listed
+  id and amount into an escrow the vault creates for that listing, which is
+  the order's seller and the only holder of the marketplace approval; every
+  cancel, expiry or teardown brings the rest back. While an allowance is
+  open the vault refuses every other movement, and anyone may close a
+  leftover one, since that can only reduce what the vault exposes.
+- **What is not yet guaranteed**, until the second stage of this work
+  (#3379), which lands before any deployment: the vault does not yet bound
+  an amount by a lien the owner signed. For the parked shares, a matched
+  liquidation's leg and a new loan's principal it checks only that the
+  destination is a genuine platform vault. For the allowlisted, liquidator,
+  incentive and seller-claim payees it checks only that the destination is
+  neither the vault nor the platform. Those bounds are the second stage's.
+
 These requirements consolidate the [October 22 accounting decisions](../ReleaseNotes/ReleaseNotes-2026-10-22.md).
 They describe intended behavior. A deployment needs its compatible treasury,
 settlement, listing and backstop updates before every path can provide that

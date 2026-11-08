@@ -5238,7 +5238,7 @@ contract RiskFacetTest is Test {
     ///         loan that cannot be liquidated carries no figures.
     function test_2697_previewNamesWhyNot() public {
         uint256 loanId = createAndAcceptOffer();
-        ForcedSaleFacet f = ForcedSaleFacet(address(diamond));
+        ForcedSalePreviewFacet f = ForcedSalePreviewFacet(address(diamond));
 
         LibDiscountedLiquidation.Preview memory p = f.previewDiscountedLiquidation(loanId);
         assertEq(uint8(p.status), uint8(LibDiscountedLiquidation.Status.Disabled), "switch off");
