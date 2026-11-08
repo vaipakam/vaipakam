@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {ForcedSalePreviewFacet} from "../../src/facets/ForcedSalePreviewFacet.sol";
 import {ForcedSaleFacet} from "../../src/facets/ForcedSaleFacet.sol";
 
 /**
@@ -22,7 +23,7 @@ function forcedSaleQuote(address diamond, uint256 loanId, ForcedSaleFacet.Forced
     view
     returns (uint256)
 {
-    try ForcedSaleFacet(diamond).previewForcedSale(loanId, kind) returns (
+    try ForcedSalePreviewFacet(diamond).previewForcedSale(loanId, kind) returns (
         ForcedSaleFacet.ForcedSalePlan memory plan
     ) {
         return plan.sell;
@@ -54,5 +55,5 @@ function forcedSalePlan(address diamond, uint256 loanId, ForcedSaleFacet.ForcedS
     view
     returns (ForcedSaleFacet.ForcedSalePlan memory)
 {
-    return ForcedSaleFacet(diamond).previewForcedSale(loanId, kind);
+    return ForcedSalePreviewFacet(diamond).previewForcedSale(loanId, kind);
 }

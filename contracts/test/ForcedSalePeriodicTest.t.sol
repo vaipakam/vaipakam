@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {ForcedSalePreviewFacet} from "../src/facets/ForcedSalePreviewFacet.sol";
 import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
 import {SetupTest} from "./SetupTest.t.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
@@ -115,7 +116,7 @@ contract ForcedSalePeriodicTest is SetupTest {
     }
 
     function _plan() internal view returns (ForcedSaleFacet.ForcedSalePlan memory) {
-        return ForcedSaleFacet(address(diamond)).previewForcedSale(
+        return ForcedSalePreviewFacet(address(diamond)).previewForcedSale(
             LOAN, ForcedSaleFacet.ForcedSaleKind.PeriodicSettlement
         );
     }

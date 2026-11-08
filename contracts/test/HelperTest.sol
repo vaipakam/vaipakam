@@ -2798,6 +2798,12 @@ contract HelperTest {
         selectors = FacetSelectors.forcedSale();
     }
 
+    /// #3205 part 2 — the forced-sale previews. Mirrors
+    /// `DeployDiamond._getForcedSalePreviewSelectors`.
+    function getForcedSalePreviewFacetSelectors() public pure returns (bytes4[] memory selectors) {
+        selectors = FacetSelectors.forcedSalePreview();
+    }
+
     /// #3359 - the forced-sale floor rule. Mirrors
     /// `DeployDiamond._getSaleFloorSelectors`.
     function getSaleFloorFacetSelectors() public pure returns (bytes4[] memory selectors) {

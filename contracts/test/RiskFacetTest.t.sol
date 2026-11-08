@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {ForcedSalePreviewFacet} from "../src/facets/ForcedSalePreviewFacet.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {VaultOutflowTypes} from "../src/vault/VaultOutflowTypes.sol";
 import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
@@ -5212,7 +5213,7 @@ contract RiskFacetTest is Test {
         IERC20(mockERC20).approve(address(diamond), 4000 ether);
 
         LibDiscountedLiquidation.Preview memory p =
-            ForcedSaleFacet(address(diamond)).previewDiscountedLiquidation(loanId);
+            ForcedSalePreviewFacet(address(diamond)).previewDiscountedLiquidation(loanId);
         assertEq(uint8(p.status), uint8(LibDiscountedLiquidation.Status.Ready), "ready");
         assertEq(p.principalAsset, mockERC20, "principal asset");
         assertEq(p.collateralAsset, mockCollateralERC20, "collateral asset");

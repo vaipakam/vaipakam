@@ -302,6 +302,7 @@ FACETS=(
   # The forced-sale floor rule (#3359).
   "SaleFloorFacet"
   "VaultOutflowFacet"
+  "ForcedSalePreviewFacet"
   "SwapToRepayFacet"
   "SwapToRepayPartialFacet"
   "SwapToRepayIntentFacet"

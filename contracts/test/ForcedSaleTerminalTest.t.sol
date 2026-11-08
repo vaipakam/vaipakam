@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {ForcedSalePreviewFacet} from "../src/facets/ForcedSalePreviewFacet.sol";
 import {SetupTest} from "./SetupTest.t.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibSwap} from "../src/libraries/LibSwap.sol";
@@ -126,7 +127,7 @@ contract ForcedSaleTerminalTest is SetupTest {
         view
         returns (ForcedSaleFacet.ForcedSalePlan memory)
     {
-        return ForcedSaleFacet(address(diamond)).previewForcedSale(LOAN, kind);
+        return ForcedSalePreviewFacet(address(diamond)).previewForcedSale(LOAN, kind);
     }
 
     function _pastGrace() internal {

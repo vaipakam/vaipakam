@@ -116,7 +116,9 @@ abstract contract DiamondFacetNames {
     ///      rule both forced sellers self-call, and its hourly checkpoints).
     ///      111 → 112 with `VaultOutflowFacet` (#3205 part 2 — the one vault
     ///      outflow policy host).
-    function cutFacetNames() internal pure returns (string[112] memory) {
+    ///      112 → 113 with `ForcedSalePreviewFacet` (#3205 part 2 — the
+    ///      forced-sale previews, split off ForcedSaleFacet).
+    function cutFacetNames() internal pure returns (string[113] memory) {
         return [
             "AccessControlFacet",
             "AddCollateralFacet",
@@ -268,6 +270,8 @@ abstract contract DiamondFacetNames {
             "SaleFloorFacet",
             // The one vault outflow policy host (#3205 part 2).
             "VaultOutflowFacet",
+            // The forced-sale previews (#3205 part 2, split off ForcedSaleFacet).
+            "ForcedSalePreviewFacet",
             "SwapToRepayFacet",
             "SwapToRepayPartialFacet",
             "SwapToRepayIntentFacet",

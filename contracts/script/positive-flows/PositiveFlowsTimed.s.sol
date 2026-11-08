@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {ForcedSalePreviewFacet} from "../../src/facets/ForcedSalePreviewFacet.sol";
 import {console} from "forge-std/console.sol";
 import {VmSafe} from "forge-std/Vm.sol";
 import {PositiveFlowsBase} from "./PositiveFlowsBase.sol";
@@ -501,8 +502,7 @@ contract PositiveFlowsTimed is PositiveFlowsBase {
         LibSwap.AdapterCall[] memory route = _swapRouteFor(address(adapter));
         Balances memory b0 = _balances(adapter);
         // The settler quotes the host's plan, as a keeper does (#2796).
-        uint256 sellAmount = ForcedSaleFacet(diamond)
-            .previewForcedSale(periodicLoanId, ForcedSaleFacet.ForcedSaleKind.PeriodicSettlement)
+        uint256 sellAmount = ForcedSalePreviewFacet(diamond).previewForcedSale(periodicLoanId, ForcedSaleFacet.ForcedSaleKind.PeriodicSettlement)
             .sell;
         vm.startBroadcast(newLenderKey);
         RepayPeriodicFacet(diamond).settlePeriodicInterest(periodicLoanId, sellAmount, route);

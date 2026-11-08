@@ -18,6 +18,7 @@ import {SaleExitVerdictFacet} from "../../src/facets/SaleExitVerdictFacet.sol";
 import {SellerClaimFacet} from "../../src/facets/SellerClaimFacet.sol";
 import {RefinancePayoffFacet} from "../../src/facets/RefinancePayoffFacet.sol";
 import {ForcedSaleFacet} from "../../src/facets/ForcedSaleFacet.sol";
+import {ForcedSalePreviewFacet} from "../../src/facets/ForcedSalePreviewFacet.sol";
 
 /**
  * @title  FacetSelectors
@@ -597,7 +598,7 @@ library FacetSelectors {
         s[2] = NumeraireValueFacet.getLiquidNumeraireValue.selector;
     }
 
-    /// @notice Full external selector surface of {ForcedSaleFacet} (5).
+    /// @notice Full external selector surface of {ForcedSaleFacet} (3).
     ///
     /// @dev    #2795 / #2796. The one forced-sale rule: size the sale to the
     ///         debt, sell it, and split the proceeds lender first.
@@ -614,13 +615,23 @@ library FacetSelectors {
     ///         (`getForcedSaleFacetSelectors`) return it, and
     ///         `RedeploySelectorParityTest` pins it to the compiled ABI.
     function forcedSale() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](5);
-        s[0] = ForcedSaleFacet.previewForcedSale.selector;
-        s[1] = ForcedSaleFacet.sellToNeed.selector;
-        s[2] = ForcedSaleFacet.payBorrowerWallet.selector;
-        s[3] = bytes4(keccak256("QUOTE_MARGIN_BPS()"));
+        s = new bytes4[](3);
+        s[0] = ForcedSaleFacet.sellToNeed.selector;
+        s[1] = ForcedSaleFacet.payBorrowerWallet.selector;
+        s[2] = bytes4(keccak256("QUOTE_MARGIN_BPS()"));
+    }
+
+    /// @notice Full external selector surface of {ForcedSalePreviewFacet} (2).
+    ///
+    /// @dev    #3205 part 2 — the forced-sale previews, split off
+    ///         ForcedSaleFacet along its read / write seam; both size through
+    ///         `LibForcedSalePlan`. Refreshed with ForcedSaleFacet (one rule
+    ///         read by both): `RedeployFacets` cuts it from this list.
+    function forcedSalePreview() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](2);
+        s[0] = ForcedSalePreviewFacet.previewForcedSale.selector;
         // #2697 — the discounted liquidation's figures, read by its
         // flash-loan receiver inside the liquidating transaction.
-        s[4] = ForcedSaleFacet.previewDiscountedLiquidation.selector;
+        s[1] = ForcedSalePreviewFacet.previewDiscountedLiquidation.selector;
     }
 }

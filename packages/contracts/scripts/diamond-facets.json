@@ -47,6 +47,7 @@
     "OfferBookFacet",
     "SaleFloorFacet",
     "VaultOutflowFacet",
+    "ForcedSalePreviewFacet",
     "ClaimFacet",
     "OracleFacet",
     "OracleAdminFacet",

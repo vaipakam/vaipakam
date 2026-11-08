@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {ForcedSalePreviewFacet} from "../src/facets/ForcedSalePreviewFacet.sol";
 import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
 
 import {SetupTest} from "./SetupTest.t.sol";
@@ -354,7 +355,7 @@ contract InternalMatchPriorityWindowTest is SetupTest {
             abi.encode(uint256(8_600))
         );
         LibDiscountedLiquidation.Preview memory p =
-            ForcedSaleFacet(address(diamond)).previewDiscountedLiquidation(LOAN_ID);
+            ForcedSalePreviewFacet(address(diamond)).previewDiscountedLiquidation(LOAN_ID);
         assertEq(
             uint8(p.status), uint8(LibDiscountedLiquidation.Status.InternalMatchWindow), "in window"
         );
@@ -364,7 +365,7 @@ contract InternalMatchPriorityWindowTest is SetupTest {
             abi.encodeWithSelector(RiskFacet.calculateLTV.selector, LOAN_ID),
             abi.encode(uint256(8_700))
         );
-        p = ForcedSaleFacet(address(diamond)).previewDiscountedLiquidation(LOAN_ID);
+        p = ForcedSalePreviewFacet(address(diamond)).previewDiscountedLiquidation(LOAN_ID);
         assertTrue(
             p.status != LibDiscountedLiquidation.Status.InternalMatchWindow, "at the ceiling the window is over"
         );
@@ -380,7 +381,7 @@ contract InternalMatchPriorityWindowTest is SetupTest {
             abi.encode(uint256(8_600))
         );
         LibDiscountedLiquidation.Preview memory p =
-            ForcedSaleFacet(address(diamond)).previewDiscountedLiquidation(LOAN_ID);
+            ForcedSalePreviewFacet(address(diamond)).previewDiscountedLiquidation(LOAN_ID);
         assertTrue(p.status != LibDiscountedLiquidation.Status.InternalMatchWindow, "switch off");
     }
 }
