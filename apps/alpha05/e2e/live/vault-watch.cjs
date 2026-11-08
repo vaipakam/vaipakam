@@ -1,10 +1,12 @@
-// Watch-only live review of the Vault page (ACC-20, ACC-21, ACC-24,
-// RB-VAULT) (live tier, run after each deploy), through the shared
-// watch-only wallet (watch-wallet.cjs): nothing can be sent. Opens Vault as
-// <address> and prints the page: the vault address (or that there is none,
-// with Create my vault, whose review it opens and leaves unsigned), and each
-// asset row with the protocol's figures, uncounted notes and how it was
-// found, then the same with small and empty rows shown. Checks that nothing
+// Watch-only live review of the Vault page (ACC-20, ACC-21, ACC-22, ACC-24,
+// RB-VAULT, RB-VAULT-DEPOSIT) (live tier, run after each deploy), through
+// the shared watch-only wallet (watch-wallet.cjs): nothing can be sent.
+// Opens Vault as <address> and prints the page: the vault address (or that
+// there is none, with Create my vault, whose review it opens and leaves
+// unsigned), each asset row with the protocol's figures, uncounted notes and
+// how it was found, then the same with small and empty rows shown, then the
+// Deposit form and review for a small amount of the first suggested asset
+// (or the Terms prompt it asks for first), left unsigned. Checks that nothing
 // scrolls sideways and saves full-page screenshots per device.
 // Usage: node e2e/live/vault-watch.cjs <address>
 // (screenshots go to $LIVE_OUT or /tmp; $LIVE_URL overrides the origin)
@@ -43,6 +45,30 @@ async function session(b, opts, label) {
     await p.waitForTimeout(3000);
     console.log(`----- create review (unsigned)\n${(await receipt.count()) ? await text(receipt) : 'no receipt shown'}`);
   }
+  // ACC-22: open Deposit, choose the first suggested asset, type a small
+  // amount and print the review (or the Terms prompt), left unsigned.
+  const depositOpen = p.getByTestId('vault-deposit-open');
+  if (await depositOpen.count()) {
+    await depositOpen.click();
+    const terms = p.getByRole('dialog', { name: 'Terms of Service' });
+    const form = p.getByTestId('vault-deposit-form');
+    await Promise.race([terms.waitFor({ timeout: 30000 }), form.waitFor({ timeout: 30000 })]).catch(() => {});
+    if (await terms.count()) console.log(`----- deposit asks for Terms first (unsigned)\n${await text(terms)}`);
+    else if (await form.count()) {
+      await form.getByTestId('vault-deposit-asset').selectOption({ index: 1 });
+      const amount = form.getByTestId('vault-deposit-amount');
+      await amount.waitFor({ timeout: 30000 }).catch(() => {});
+      if (await amount.count()) await amount.fill('0.0001');
+      else await form.getByTestId('vault-deposit-token-id').fill('1').catch(() => {});
+      await p.waitForTimeout(2000);
+      console.log(`----- deposit form\n${await text(form)}`);
+      await form.getByTestId('vault-deposit-review').click();
+      const receipt = p.getByTestId('vault-deposit-panel').locator('.receipt');
+      await receipt.waitFor({ timeout: 60000 }).catch(() => {});
+      await p.waitForTimeout(3000);
+      console.log(`----- deposit review (unsigned)\n${(await receipt.count()) ? await text(p.getByTestId('vault-deposit-panel')) : 'no receipt shown'}`);
+    }
+  } else if (await p.getByTestId('vault-deposit-paused').count()) console.log(`----- deposit closed\n${await text(p.getByTestId('vault-deposit-paused'))}`);
   console.log('scrollWidth/innerWidth', await p.evaluate(() => [document.documentElement.scrollWidth, window.innerWidth]));
   await p.screenshot({ path: `${OUT}/live-vault-${label}.png`, fullPage: true });
   console.log(`errors: ${JSON.stringify(errs)}`);
