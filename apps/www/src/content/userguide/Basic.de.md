@@ -1382,6 +1382,18 @@ Die Karte Kontosicherheit auf der Tresor-Seite zeigt, ob Ihr Konto im geschützt
 
 Solange das Protokoll pausiert ist, sagt die Tresor-Seite das oben: Abhebungen sind geschlossen, während vollständige und teilweise Rückzahlung und das Nachschießen von Sicherheiten offen bleiben. Ist es eine administrative Pause, nennt sie auch, wann deren Notausgang öffnet, so wie das Protokoll es meldet, mit einem Countdown. Ist der Notausgang offen, bringt Abheben an jedem Asset mit freiem Anteil das, was Ihnen gehört, direkt zurück in Ihre Wallet; die Prüfung sagt, dass es über den Notausgang geht, und er gibt nie zurück, was ein Kredit, ein Angebot oder ein Anspruch hält. Mit geschütztem Modus warten Ihre Abhebungen wie gewohnt die Verzögerung Ihres Kontos in der Auszahlungs-Warteschlange ab. Eine automatische Pause oder ein noch nicht gestartetes Protokoll öffnet keinen Notausgang, und die Seite sagt, dass keiner geplant ist.
 
+<a id="my-offers"></a>
+
+### Ihre Angebote
+
+Angebote listet jedes Angebot, das Sie im verbundenen Netzwerk erstellt haben, und jedes Angebot, dessen Positions-Token Sie gerade halten, das neueste zuerst. Jedes zeigt den Status, den das Protokoll meldet: offen, erfüllt, abgelaufen oder storniert, und die Filter über der Liste zählen jeden Status. Ein offenes Angebot hält, was es verleiht oder verpfändet, in Ihrem Vault, bis es erfüllt oder storniert wird; ein abgelaufenes hält es dort, bis es aufgeräumt wird. Storniert das Protokoll ein Angebot, das noch nichts erfüllt hat, löscht es dessen Bedingungen, daher zeigt die Seite nur Nummer und Status. Hält eine andere Wallet den Positions-Token eines Angebots, das Sie erstellt haben, können Sie es trotzdem stornieren, und die Rückgabe geht an Sie; halten Sie eines, das eine andere Wallet erstellt hat, kann nur diese es vor Ablauf stornieren. Das Orderbuch ist noch in der aktuellen App, und die Seite verlinkt dorthin.
+
+<a id="offer-cancel"></a>
+
+### Ein Angebot stornieren
+
+Stornieren bei einem offenen Angebot, das Sie erstellt haben, nimmt es aus dem Buch und gibt zurück, was es noch in Ihrem Vault sperrt: den nicht verliehenen Betrag oder das NFT eines Leihangebots, die ungenutzte Sicherheit einer Anfrage oder die vorausbezahlte Gebühr samt Puffer einer Mietanfrage. Ein Angebot, das noch nichts erfüllt hat, kann in seinen ersten fünf Minuten nicht storniert werden, damit eine Stornierung nie mit einer Annahme konkurriert; die Prüfung nennt den Zeitpunkt und hebt die Sperre von selbst auf. Ein bereits erfüllter Teil bleibt erfüllt. Ein abgelaufenes Angebot hat die Schaltfläche Aufräumen, die ebenso zurückgibt, was es sperrte; jeder darf ein abgelaufenes Angebot aufräumen, und die Rückgabe geht immer an seinen Ersteller. Die Prüfung sagt, was zurückkommt und wohin: ohne geschützten Modus sofort an Ihre Wallet; mit ihm wartet es die Verzögerung Ihres Kontos in der Auszahlungswarteschlange ab oder bleibt in Ihrem Vault, solange das Konto gesperrt ist. Kann die App die Rückgabe nicht beziffern, etwa bei einem Angebot, das an einen laufenden Kredit gebunden ist, sagt die Prüfung das, und die Abschlusskarte zeigt, was bewegt wurde. Solange das Protokoll pausiert ist, ist das Stornieren geschlossen. Nichts verlässt Ihre Wallet und keine Freigabe wird verlangt, daher fragt Ihre Wallet einmal.
+
 <a id="risk-access"></a>
 
 ### Risk Access: Ihre Risikostufe

@@ -77,10 +77,14 @@ export function payoutLegs(
     exact: (amount: bigint) => string;
     walletLeg: (what: string) => string;
     walletOther: (got: string, expected: string) => string;
+    /** A routed line for a payment to someone else (the reader is not the
+     *  payee); the payee's own wording otherwise. */
+    routed?: (o: PayoutOutcome, what: string) => string;
   },
   copy: Copy,
 ): LegOutcome[] {
-  const legs: LegOutcome[] = p.outcomes.map((o) => ({ status: 'done', label: routedLeg(o, p.what(o.amount), p.protection, copy) }));
+  const routed = p.routed ?? ((o: PayoutOutcome, what: string) => routedLeg(o, what, p.protection, copy));
+  const legs: LegOutcome[] = p.outcomes.map((o) => ({ status: 'done', label: routed(o, p.what(o.amount)) }));
   if (p.wallet > 0n || p.outcomes.length === 0) legs.push({ status: 'done', label: p.walletLeg(p.what(p.wallet)) });
   const total = p.outcomes.reduce((t, o) => t + o.amount, p.wallet);
   if (total === p.expected) return legs;

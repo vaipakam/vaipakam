@@ -1333,6 +1333,18 @@ The Account safety card on the Vault page shows whether your account runs protec
 
 While the protocol is paused, the Vault page says so at the top: withdrawals are closed, while full and partial repayment and adding collateral stay open. If the pause is an administrative one, it also says when its escape route opens, as the protocol reports it, with a countdown. Once the route is open, Withdraw on any asset with something free takes what is yours straight back to your wallet; the review says it goes through the escape route, and the route never returns what a loan, offer or claim holds. With protected mode on, your withdrawals still wait your account's delay in the payout queue, as usual. An automatic pause, or a protocol not yet launched, opens no escape route, and the page says none is scheduled.
 
+<a id="my-offers"></a>
+
+### Your offers
+
+Offers lists every offer you made on the network you are connected to, and every offer whose position token you hold now, newest first. Each shows the state the protocol reports: open, filled, expired or cancelled, and the filters above the list count each state. An open offer keeps what it lends or pledges in your vault until it is filled or cancelled; an expired one keeps it there until it is cleaned up. When the protocol cancels an offer that nothing filled, it clears the offer's terms, so the page shows only its number and state. If another wallet holds the position token of an offer you made, you can still cancel it and its return comes to you; if you hold one that another wallet made, only that wallet can cancel it before it expires. The offer book is still in the current app, and the page links to it.
+
+<a id="offer-cancel"></a>
+
+### Cancel an offer
+
+Cancel on an open offer you made takes it off the book and returns what it still locks in your vault: a lending offer's unlent amount or its NFT, a request's unused collateral, or a rental request's prepaid fee and buffer. An offer nothing has filled cannot be cancelled in its first five minutes, so a cancel never races someone's accept; the review says when it can be, and lifts the block by itself. Part of an offer already filled stays filled. An expired offer has a Clean up button that returns what it locked in the same way; anyone may clean up an expired offer, and the return always goes to its creator. The review says what returns and where: without protected mode it reaches your wallet at once; with it, it waits your account's delay in the payout queue, or stays in your vault while the account is locked. Where the app cannot size the return, such as for an offer tied to a running loan, the review says so and the finish card shows what moved. While the protocol is paused, cancelling is closed. Nothing leaves your wallet and no approval is asked, so your wallet asks once.
+
 <a id="risk-access"></a>
 
 ### Risk Access: Your Risk Level

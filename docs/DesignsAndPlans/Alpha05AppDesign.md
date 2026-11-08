@@ -1261,6 +1261,43 @@ above. Each resolves here, so a route reviewer needs no private file:
   If the pause, the route or, under an open route, the mode is unread, no
   entry point is chosen and nothing is sent. The finish card reads
   `EscapeWithdrawal` and the token's own transfer to the wallet.
+- **RB-OFFERS-MINE** — the Offers page (OFF-46) lists every offer the
+  connected wallet created, from the protocol's own per-creator index
+  (which keeps a cancelled id), together with every offer whose position
+  token it holds now, read in one bulk call with the protocol's own state
+  for each, newest first. Filters by state (open, filled with a
+  sale-consumed listing counted as filled, expired, cancelled, all) carry
+  each one's count; a list that could not be read to its end says so, and
+  nothing missing is reported as none. Each row is matched to the id it was
+  asked for, never to the id the view reports: an offer cancelled with
+  nothing filled has its record cleared, so the row says the protocol
+  cleared its terms and shows only its number and state, never rebuilt
+  terms. An offer held by one wallet but created by another says who may
+  cancel it and where its return goes. The offer line is one shared helper,
+  the same as Home's open offers. The offer book comes in a later slice; the
+  page says so and links the current app for it.
+- **RB-OFFER-CANCEL** — cancelling an offer (OFF-48) or cleaning up an
+  expired one (OFF-49) is one flow, keyed by the offer, opened from its row.
+  The review is read at one block: the offer, the protocol's state for it,
+  the loan a sale or offset listing is tied to, the pause and the creator's
+  protected mode, then the protocol's dry run. A filled, cancelled or unread
+  offer, a pause (or an unread one), a non-creator before expiry, the
+  protocol's five-minute cool-down on an unfilled offer (with the time it
+  ends, lifting by itself as the chain passes it) or the dry run's refusal
+  stops it by name. The receipt states what returns, sized from the offer's
+  own terms by the facet's own branches (unlent principal, the NFT, unused
+  collateral, a rental request's prepay and buffer at its stamped rate), or
+  says it cannot be sized (an offer tied to a running loan, a refinance
+  request that carries its collateral, a rental request posted before the
+  buffer stamp) and leaves the figure to the finish card. It states where
+  the return lands: for the creator, its own payout route; for anyone
+  cleaning up someone else's offer, the creator's wallet, queue or vault
+  named as the creator's, never "yours". It also says a filled part stays
+  filled, the return leaves the creator's vault, the position token is
+  retired, a cancel past the cool-down races an accept and either may win,
+  and that no approval is asked. The finish card reads the Diamond's cancel
+  event, the routed payout and what the token's own logs moved to the
+  creator.
 - **RB-FROZEN** — money the protocol holds for a wallet the sanctions
   screen flags (LN-53) is stated as "Frozen, awaiting de-listing": locked
   where its loan keeps it, in a vault, not lost, and released once the

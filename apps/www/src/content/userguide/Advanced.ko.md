@@ -2210,6 +2210,18 @@ Positions는 하나의 공유 리더로 Home과 같은 보유 목록을 읽습�
 
 알림은 한 블록에서 `paused`, `VaultPayoutFacet.isEscapeOpen`, `escapeOpensAt`(수동 일시 중지 시작 시각에 시작 당시의 비상 탈출 기간을 더한 값. 유효한 일시 중지가 없거나 Diamond가 출시된 적이 없으면 0), `getProtectedAccount(wallet)`를 읽고 블록 시각을 기준으로 카운트다운합니다. 경로가 닫힌 채 일시 중지 중이면 `withdrawFromVault`가 `EnforcedPause`로 리버트하고, 검토 화면은 일시 중지가 이를 막는다고 알립니다. `isEscapeOpen`이 참이 되면 보호 계정은 계속 `withdrawFromVault`를 쓰며 대기열 등록도 계속됩니다. 다른 모든 지갑의 출금은 `escapeWithdraw(kind, asset, tokenId, amount)`를 호출합니다. 이 함수는 보호 계정을 거부하고(`EscapeNotForProtected`), 금지된 수령인을 거부하며, 지갑 자신의 예치 잔액과 출금 가능 수치로 한도가 정해지고, 호출자에게 지급합니다. 완료 카드는 `EscapeWithdrawal(account, asset, tokenId, amount)`와 볼트에서 지갑으로 가는 토큰 자체의 이전을 읽습니다. 일시 중지, 경로, 또는 경로가 열린 경우의 모드를 읽을 수 없으면 출금을 보내지 않습니다.
 
+<a id="my-offers"></a>
+
+### 내 오퍼
+
+목록은 `getUserOffersPaginated(wallet)`(취소된 ID도 남기는 생성자별 인덱스)과 `getUserPositionOffersPaginated(wallet)`(지갑이 포지션 토큰을 가진 오퍼)의 합집합이며, 위치별로 답하는 `MetricsDashboardFacet.getOffersWithState`를 통해 최대 250개씩 읽습니다. 각 행은 요청한 ID에 맞춰집니다. 아무것도 체결되지 않고 취소된 오퍼는 레코드가 삭제되어 뷰가 ID 0과 파생 상태 취소를 보고하므로, 행은 재구성한 조건 대신 아무 조건도 보여 주지 않습니다. 부분 체결 후 취소된 오퍼는 `accepted`가 설정된 채 레코드를 유지하며 체결로 읽힙니다. 필터 개수는 읽은 행을 기준으로 세며, 어느 인덱스든 끝까지 읽지 못했다면 페이지가 목록이 불완전할 수 있다고 알립니다.
+
+<a id="offer-cancel"></a>
+
+### 오퍼 취소
+
+검토 화면은 한 블록에서 `getOffer(id)`, `getOffersWithState([id])`, `getOfferLinkedLoanId(id)`, `paused()`, 생성자의 `getProtectedAccount`를 읽은 뒤 `OfferCancelFacet.cancelOffer(id)`를 시험 실행합니다. 파셋은 생성자의 관리자에게는 언제든, `expiresAt`이 지나면 누구에게나 취소를 허용합니다. `OfferAlreadyAccepted`, `OfferAlreadyConsumedBySale`를 거부하고, `amountFilled == 0`인 오퍼가 300초 미만이며 만료되지 않았으면 `CancelCooldownActive`로 거부하며, `whenNotPaused`입니다. 반환액은 파셋 자체의 분기로 계산합니다. ERC-20 대출 오퍼는 대출 자산의 `(amountMax 또는 amount) - amountFilled`, NFT 대출 오퍼는 그 토큰 또는 ERC-1155 수량, 차입 요청은 쓰지 않은 담보 `(collateralAmountMax 또는 collateralAmount) - collateralAmountFilled` 또는 그 NFT(`refinanceCarryOver`가 담보를 대출에 남기면 없음), 대여 요청은 `amount × durationDays`에 `rentalBufferBpsAtCreate` 버퍼를 더한 값입니다. `getOfferLinkedLoanId`로 대출에 묶인 오퍼나 기록된 버퍼가 0인 대여 요청(이 경우 프로토콜은 현재 비율을 씀)은 서명 전에 계산하지 않습니다. 모든 반환은 볼트 출금을 통해 생성자의 볼트를 떠나므로, 보호 모드는 대기열에 넣거나 계정이 잠긴 동안 볼트에 둡니다. 포지션 토큰은 폐기됩니다. 완료 카드는 `OfferCanceled(offerId, creator)`, 생성자에 대한 프로토콜의 지급 기록, 생성자에게 간 토큰 자체의 전송을 읽습니다.
+
 <a id="risk-access"></a>
 
 ### Risk Access: 내 위험 등급

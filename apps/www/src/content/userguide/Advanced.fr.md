@@ -2517,6 +2517,18 @@ La carte lit, dans un même bloc, `getProtectedAccount(wallet)`, `getProtectedDe
 
 L'avis lit, dans un même bloc, `paused`, `VaultPayoutFacet.isEscapeOpen`, `escapeOpensAt` (le début de la pause manuelle plus la période de secours avec laquelle elle a commencé ; zéro si aucune n'est en vigueur ou si le Diamond n'a jamais été lancé) et `getProtectedAccount(wallet)`, et décompte selon l'heure du bloc. En pause avec la voie fermée, `withdrawFromVault` revient sur `EnforcedPause` et la revue dit que la pause l'arrête. Dès que `isEscapeOpen` est vrai, un compte protégé utilise toujours `withdrawFromVault`, qui continue de mettre en file ; le retrait de tout autre portefeuille appelle `escapeWithdraw(kind, asset, tokenId, amount)`, qui refuse un compte protégé (`EscapeNotForProtected`), refuse un destinataire interdit, est borné par le solde de dépôt propre du portefeuille et le chiffre libre, et paie l'appelant. La carte finale lit `EscapeWithdrawal(account, asset, tokenId, amount)` et le transfert du jeton lui-même du coffre vers le portefeuille. Si la pause, la voie ou, voie ouverte, le mode ne peuvent être lus, aucun retrait n'est envoyé.
 
+<a id="my-offers"></a>
+
+### Vos offres
+
+La liste est l'union de `getUserOffersPaginated(wallet)` (l'index par créateur, qui garde un id annulé) et de `getUserPositionOffersPaginated(wallet)` (les offres dont le portefeuille détient le jeton de position), lues par lots d'au plus 250 via `MetricsDashboardFacet.getOffersWithState`, qui répond position par position. Chaque ligne est associée à l'id demandé : une offre annulée sans exécution a son enregistrement supprimé, la vue rapporte donc l'id 0 avec l'état dérivé Annulée, et la ligne n'affiche aucune condition plutôt que des conditions reconstruites. Une offre annulée après une exécution partielle garde son enregistrement avec `accepted` positionné et se lit comme exécutée. Les compteurs des filtres portent sur les lignes lues ; si l'un des index n'a pas pu être lu jusqu'au bout, la page dit que la liste peut être incomplète.
+
+<a id="offer-cancel"></a>
+
+### Annuler une offre
+
+La vérification lit, dans un même bloc, `getOffer(id)`, `getOffersWithState([id])`, `getOfferLinkedLoanId(id)`, `paused()` et le `getProtectedAccount` du créateur, puis simule `OfferCancelFacet.cancelOffer(id)`. La facette permet au gestionnaire du créateur d'annuler à tout moment, et à n'importe qui une fois `expiresAt` passé ; elle refuse `OfferAlreadyAccepted`, `OfferAlreadyConsumedBySale`, et `CancelCooldownActive` tant qu'une offre avec `amountFilled == 0` a moins de 300 secondes et n'a pas expiré, et elle est `whenNotPaused`. Le retour est chiffré selon les branches de la facette : une offre de prêt ERC-20 rend `(amountMax ou amount) - amountFilled` de l'actif prêté ; une offre de prêt NFT son jeton, ou sa quantité ERC-1155 ; une demande d'emprunt sa garantie inutilisée `(collateralAmountMax ou collateralAmount) - collateralAmountFilled`, ou son NFT, et rien quand `refinanceCarryOver` garde la garantie dans le prêt ; une demande de location `amount × durationDays` plus la marge à `rentalBufferBpsAtCreate`. Une offre liée à un prêt par `getOfferLinkedLoanId`, ou une demande de location dont la marge enregistrée vaut zéro (le protocole prend alors son taux actuel), n'est pas chiffrée avant la signature. Tout retour quitte le coffre du créateur par le retrait de coffre, donc le mode protégé le met en file, ou le garde dans le coffre tant que le compte est verrouillé. Le jeton de position est retiré. La carte finale lit `OfferCanceled(offerId, creator)`, l'enregistrement de paiement du protocole pour le créateur et le transfert propre du jeton vers le créateur.
+
 <a id="risk-access"></a>
 
 ### Risk Access : votre niveau de risque
