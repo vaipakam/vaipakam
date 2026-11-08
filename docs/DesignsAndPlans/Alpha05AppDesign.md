@@ -966,7 +966,9 @@ above. Each resolves here, so a route reviewer needs no private file:
   whose status pays no claim on that side (a running loan; a settled one; a
   loan in fallback, which pays the borrower only after the lender has
   collected or the loan is cured), a side already collected or with nothing
-  recorded, and the holder. The review names every payout the claim makes
+  recorded, and the holder. On the loan's page the borrower's payout stays
+  shown while it waits on a loan in fallback, with that reason, so its
+  holder is never left with no payout section and no explanation. The review names every payout the claim makes
   on that side: the lender's recorded row and funds held for the lender
   before the loan ended, a rented NFT back to its lender, the borrower's
   collateral row, collateral the borrower added in another token, and a

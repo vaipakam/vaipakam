@@ -1,7 +1,7 @@
 import type { OwnStateClient } from '../../chain/ownRail';
 import type { SupportedChain } from '../../chain/chains';
 import { LoanClaim, useLoanClaimHeld } from '../../shared/claims/LoanClaim';
-import { sideClaimableStatus, type ClaimSide } from '../../shared/claims/loanClaim';
+import { sideShown, type ClaimSide } from '../../shared/claims/loanClaim';
 import { useCopy } from '../../shared/copy/useCopy';
 import { claimVerdict } from '../../shared/eligibility/claim';
 import type { LoanView } from '../../shared/positions/loanView';
@@ -24,8 +24,10 @@ interface LoanClaimsProps {
  * never the reader's overall role: a side already collected burns its
  * position token, and the other side's holder must still be able to collect.
  *
- * A side is shown to the wallet that holds it. Its closed reason is stated
- * (a pause, a loan in fallback, nothing left), and one whose inputs could not
+ * A side is shown to the wallet that holds it, also while it waits on a loan
+ * in fallback (the borrower's payout then waits for the lender's claim or a
+ * cure). Its closed reason is stated (a pause, a loan in fallback, nothing
+ * left), and one whose inputs could not
  * be read says that and is not offered. A claim in flight keeps its panel on
  * screen until the reader closes the finish card.
  */
@@ -38,7 +40,7 @@ export function LoanClaims({ loanId, view: v, own, chain, meta }: LoanClaimsProp
 
   const sides = (['lender', 'borrower'] as const).filter((s) => {
     const holder = v.holders[s];
-    return sideClaimableStatus(s, Number(v.loan.status)) && holder !== null && holder.toLowerCase() === own.account.toLowerCase();
+    return sideShown(s, Number(v.loan.status)) && holder !== null && holder.toLowerCase() === own.account.toLowerCase();
   });
   if (active === null && sides.length === 0) return null;
 

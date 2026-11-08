@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { claimVerdict, type ClaimInputs } from '../eligibility/claim';
-import { claimLanes, extraLiened, sideClaimableStatus, sideOpen, type SideClaim } from './loanClaim';
+import { claimLanes, extraLiened, sideClaimableStatus, sideOpen, sideShown, type SideClaim } from './loanClaim';
 
 const A = '0x00000000000000000000000000000000000000aa' as const;
 const B = '0x00000000000000000000000000000000000000bb' as const;
@@ -28,6 +28,14 @@ describe('sideClaimableStatus', () => {
     expect(sideClaimableStatus('lender', 4)).toBe(true);
     expect(sideClaimableStatus('borrower', 4)).toBe(false);
     expect(sideClaimableStatus('lender', 0) || sideClaimableStatus('lender', 3)).toBe(false);
+  });
+});
+
+describe('sideShown', () => {
+  it('shows the borrower’s payout waiting in fallback, and nothing on a running or settled loan', () => {
+    expect(sideShown('borrower', 4)).toBe(true);
+    expect(sideShown('lender', 4)).toBe(true);
+    expect(sideShown('borrower', 0) || sideShown('borrower', 3)).toBe(false);
   });
 });
 

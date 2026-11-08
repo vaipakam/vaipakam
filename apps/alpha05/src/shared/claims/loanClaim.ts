@@ -78,6 +78,14 @@ export function sideClaimableStatus(side: ClaimSide, status: number): boolean {
 /** Whether the loan is in fallback (the lender's claim then settles it). */
 export const isFallback = (status: number): boolean => status === FALLBACK_PENDING;
 
+/** Whether a page shows `side`'s payout on a loan in `status`: when it can
+ *  be collected, and also while it waits on a loan in fallback, so the
+ *  borrower is told the payout exists and what it waits for instead of
+ *  seeing nothing. */
+export function sideShown(side: ClaimSide, status: number): boolean {
+  return sideClaimableStatus(side, status) || isFallback(status);
+}
+
 /**
  * Whether the side still has a claim to run (unclaimed and something open).
  * On the lender side a claim a close-out recorded counts at a zero amount: a
