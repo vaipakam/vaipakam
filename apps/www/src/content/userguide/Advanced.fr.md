@@ -2425,6 +2425,14 @@ Pour un prêt ERC-20 actif avec une cadence, la carte lit `previewPeriodicSettle
 
 Le `canSettleNow` de l'aperçu ignore l'interrupteur et la pause, donc la carte les combine dans l'ordre propre à `settlePeriodicInterest` : coupé (`PeriodicInterestDisabled`), en pause (`whenNotPaused`), puis le temps de la période (`PeriodicSettleNotDue` avant `graceEndsAt`). Une vente n'est annoncée que lorsque l'interrupteur est activé et que le protocole n'est pas en pause ; un interrupteur ou une pause non lus sont indiqués comme inconnus. Avec un manque nul, le règlement ne fait qu'avancer l'échéance. L'armement de `PERIODIC_SETTLE` côté keeper n'est pas transmis à l'app, donc la carte indique que le règlement est ouvert à tous et que l'état du keeper n'est pas connu.
 
+<a id="partial-repay"></a>
+
+### Rembourser une partie d'un prêt : comment le montant est calculé
+
+`repayPartial(loanId, amount)` prend `amount` de principal plus les intérêts courus depuis `interestAccrualStart` (nets de tout crédit périodique). Il paie les intérêts d'abord aux détenteurs précédents à qui des intérêts d'avant une vente restent dus (`paySellersFirst`), puis le détenteur actuel de la position prêteur, part de la trésorerie déduite (pour un détenteur que le protocole doit geler, sa part est déposée bloquée dans le coffre du prêteur, `freezeOrPayActiveLenderFromPayer`) ; il réduit `principal`, redémarre l'horloge des intérêts et crédite la période en cours ; l'échéance ne bouge jamais. Il refuse après la fin du délai de grâce, en dessous de `principal × minPartialBps / 10000` (`getAssetRiskParams`), à hauteur de tout le principal ou au-delà (`PartialWouldRetireFullPrincipal`), en présence d'un engagement d'intention ou d'une demande de refinancement actifs et, pour un prêt liquide, si le facteur de santé se dégraderait.
+
+Aucune vue ne renvoie les intérêts du paiement partiel avant l'appel (#3299) ; la vérification utilise donc `calculateRepaymentAmount` moins `principal`, lu maintenant et à un moment un peu plus tard. C'est exact pour un prêt au prorata jusqu'à l'échéance ; avec `useFullTermInterest` cela inclut le minimum de la durée restante et, après l'échéance, des pénalités de retard, d'où l'affichage « au plus ». L'autorisation est exactement la part plus ce chiffre supérieur. La carte finale mesure le `newPrincipal` du journal `PartialRepaid` du paiement lui-même (pas `principal` au bloc, qu'une transaction ultérieure dans ce bloc peut modifier), la sortie du portefeuille et ensuite `previewPeriodicSettle`. La revue ne refuse le portefeuille que s'il lui manque la part, ou la part plus un intérêt exact ; quand seul le montant maximal dépasse son solde, la simulation faite juste avant l'envoi du paiement tranche.
+
 <a id="risk-access"></a>
 
 ### Risk Access : votre niveau de risque
