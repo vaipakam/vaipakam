@@ -1,4 +1,4 @@
-## Thread — Forced sales lose less on deep, calm markets (PR #TBD)
+## Thread — Forced sales lose less on deep, calm markets (PR #3380)
 
 Every forced sale of collateral used to accept losing up to the full 6% slippage cap to the market, whatever the asset. On a deep market in a quiet hour a sale fills for far less than that. The rest was room for a searcher to take from the sale, and the borrower paid for it, since what a forced sale fails to raise comes out of what is returned to them.
 
