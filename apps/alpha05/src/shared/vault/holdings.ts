@@ -15,8 +15,12 @@
  * Which assets to read: the protocol lists every asset contract ever credited
  * to the wallet's deposit record (`getDepositoryAssets`, paged until its
  * stated length; an empty page before the end is never the end), and the
- * wallet's own loans, open offers and standing offers name the assets a
- * position put there. An asset that reached the vault by neither route (a plain transfer) cannot
+ * protocol's other per-wallet records name the assets a position put there:
+ * every loan the wallet was ever a party to, every offer it ever created
+ * (an offer's escrow stays in its creator's vault whoever holds its
+ * position), and every standing offer it owns. Each is an append-only list
+ * kept by the wallet that made the record, never one that follows a
+ * position token. An asset that reached the vault by neither route (a plain transfer) cannot
  * be found from the chain alone; the page says so instead of implying the
  * list is everything. The deposit record names an NFT collection but not its
  * token ids, so a collection is named without figures unless a loan names
@@ -24,7 +28,7 @@
  */
 import type { Abi, PublicClient } from 'viem';
 import { erc20Abi } from 'viem';
-import { LenderIntentFacetABI, LoanFacetABI, MetricsFacetABI, VaultDepositoryFacetABI, VaultFactoryFacetABI } from '@vaipakam/contracts/abis';
+import { LenderIntentFacetABI, LoanFacetABI, MetricsFacetABI, OfferCancelFacetABI, VaultDepositoryFacetABI, VaultFactoryFacetABI } from '@vaipakam/contracts/abis';
 import { answerOrNull } from '../reads/answer';
 import { NFT_ABI, readStandard, type Standard } from '../nft/nft';
 
@@ -35,6 +39,7 @@ const FACTORY = VaultFactoryFacetABI as Abi;
 const INTENT = LenderIntentFacetABI as Abi;
 const LOAN = LoanFacetABI as Abi;
 const METRICS = MetricsFacetABI as Abi;
+const OFFER = OfferCancelFacetABI as Abi;
 const ZERO = '0x0000000000000000000000000000000000000000';
 
 /** The protocol's `AssetType` positions. */
@@ -187,6 +192,19 @@ export async function readVaultHoldings(c: PublicClient, diamond: Hex, account: 
     answerOrNull(c.readContract({ address: diamond, abi: LOAN, functionName: 'getLoanDetails', args: [id], ...at }) as Promise<LoanLegs>),
   );
   const legs = loanAssets(records.loans);
+  // Every offer the wallet ever created: its escrow was pulled into this
+  // vault, and stays here when the offer's position token changes hands.
+  const offerIds = await readPagedList<bigint>(
+    (offset, limit) =>
+      c.readContract({ address: diamond, abi: METRICS, functionName: 'getUserOffersPaginated', args: [account, offset, limit], ...at }) as Promise<
+        readonly [readonly bigint[], bigint]
+      >,
+  );
+  const offerRecords = await readLoanLegs(offerIds.assets, async (id) => {
+    const o = await answerOrNull(c.readContract({ address: diamond, abi: OFFER, functionName: 'getOffer', args: [id], ...at }) as Promise<OfferRecord>);
+    return o === null ? null : offerLegs(o);
+  });
+  const made = loanAssets(offerRecords.loans, 'offer');
   // Every standing offer the wallet owns, cancelled ones too: funding one
   // puts its lent asset in this vault without adding it to the deposit
   // record, and a cancelled one can still hold capital.
@@ -197,14 +215,21 @@ export async function readVaultHoldings(c: PublicClient, diamond: Hex, account: 
       >,
   );
   const all: PositionAssets = {
-    erc20: [...legs.erc20, ...intentAssets(intents.assets), ...positions.erc20],
-    nfts: [...legs.nfts, ...positions.nfts],
+    erc20: [...legs.erc20, ...made.erc20, ...intentAssets(intents.assets), ...positions.erc20],
+    nfts: [...legs.nfts, ...made.nfts, ...positions.nfts],
     loanIds: ids,
     complete: positions.complete,
   };
   const { subjects, collections } = holdingSubjects(deposited, all);
   const rows = await Promise.all(subjects.map((s) => readHoldingRow(c, diamond, account, vault, s, block)));
-  return { vault, rows, collections, listComplete: list.complete, positionsComplete: positions.complete && history.complete && records.complete && intents.complete, block };
+  return {
+    vault,
+    rows,
+    collections,
+    listComplete: list.complete,
+    positionsComplete: positions.complete && history.complete && records.complete && offerIds.complete && offerRecords.complete && intents.complete,
+    block,
+  };
 }
 
 /** Each loan's record; a loan whose read had no answer makes the position
@@ -219,15 +244,39 @@ export async function readLoanLegs(ids: readonly bigint[], read: (id: bigint) =>
  *  prepaid fee token (accepting a rental puts it in the renter's vault
  *  without adding it to the deposit record). A zero row is hidden as empty,
  *  so a side whose leg is not in this vault costs a read and shows nothing. */
-export function loanAssets(loans: readonly LoanLegs[]): Pick<PositionAssets, 'erc20' | 'nfts'> {
+export function loanAssets(loans: readonly LoanLegs[], source: HoldingSource = 'loan'): Pick<PositionAssets, 'erc20' | 'nfts'> {
   const erc20: PositionAssets['erc20'] = [];
   const nfts: PositionAssets['nfts'] = [];
   for (const l of loans) {
-    leg(erc20, nfts, l.principalAsset, l.assetType, l.tokenId, 'loan');
-    leg(erc20, nfts, l.collateralAsset, l.collateralAssetType, l.collateralTokenId, 'loan');
-    if (l.prepayAsset.toLowerCase() !== ZERO) leg(erc20, nfts, l.prepayAsset, KIND.erc20, 0n, 'loan');
+    leg(erc20, nfts, l.principalAsset, l.assetType, l.tokenId, source);
+    leg(erc20, nfts, l.collateralAsset, l.collateralAssetType, l.collateralTokenId, source);
+    if (l.prepayAsset.toLowerCase() !== ZERO) leg(erc20, nfts, l.prepayAsset, KIND.erc20, 0n, source);
   }
   return { erc20, nfts };
+}
+
+/** An offer's record, as far as its legs go. */
+export interface OfferRecord {
+  lendingAsset: Hex;
+  assetType: number;
+  tokenId: bigint;
+  collateralAsset: Hex;
+  collateralAssetType: number;
+  collateralTokenId: bigint;
+  prepayAsset: Hex;
+}
+
+/** An offer's legs in a loan record's shape, so one rule reads both. */
+export function offerLegs(o: OfferRecord): LoanLegs {
+  return {
+    principalAsset: o.lendingAsset,
+    assetType: o.assetType,
+    tokenId: o.tokenId,
+    collateralAsset: o.collateralAsset,
+    collateralAssetType: o.collateralAssetType,
+    collateralTokenId: o.collateralTokenId,
+    prepayAsset: o.prepayAsset,
+  };
 }
 
 /** A standing offer as the owner's list returns it, as far as discovery

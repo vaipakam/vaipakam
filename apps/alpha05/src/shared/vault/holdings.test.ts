@@ -6,6 +6,7 @@ import {
   isDust,
   isEmpty,
   loanAssets,
+  offerLegs,
   positionAssets,
   readLoanLegs,
   readPagedList,
@@ -104,6 +105,19 @@ describe('positionAssets', () => {
       { asset: B, source: 'offer' },
     ]);
     expect(p.nfts).toEqual([{ standard: 'erc1155', asset: N, tokenId: 4n, source: 'offer' }]);
+  });
+});
+
+describe('offerLegs', () => {
+  it('reads an offer by the loan rule, under the offer source', () => {
+    const legs = offerLegs({ lendingAsset: A, assetType: 0, tokenId: 0n, collateralAsset: N, collateralAssetType: 1, collateralTokenId: 9n, prepayAsset: B });
+    expect(loanAssets([legs], 'offer')).toEqual({
+      erc20: [
+        { asset: A, source: 'offer' },
+        { asset: B, source: 'offer' },
+      ],
+      nfts: [{ standard: 'erc721', asset: N, tokenId: 9n, source: 'offer' }],
+    });
   });
 });
 

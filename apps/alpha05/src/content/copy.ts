@@ -1177,7 +1177,7 @@ export const copy = {
     sourceOffer: B('an offer'),
     sourceIntent: B('a standing offer'),
     sources: B('Found through {{list}}'),
-    vpfiNote: B('VPFI here sets your fee-discount tier. It is not collateral.'),
+    vpfiNote: B('VPFI here sets your fee-discount tier. Holding it pledges nothing; pledged VPFI shows as held.'),
     vpfiLink: B('Manage VPFI on Rewards'),
     showHidden: B('Show {{count}} small or empty'),
     hideHidden: B('Hide small and empty'),
@@ -1185,7 +1185,7 @@ export const copy = {
       'Your deposit record also names these NFT collections. It keeps no token ids, so only a token one of your loans or offers names is listed above; others you deposited are not: {{list}}.',
     ),
     discoveryNote: A(
-      'Listed: every asset you deposited or were paid into the vault, every asset of a loan you were ever party to or hold a position in, every asset your open offers name, and what every standing offer of yours lends, cancelled ones too. An asset sent to the vault by a plain transfer shows only if one of those names it.',
+      'Listed: every asset you deposited or were paid into the vault, every asset of a loan you were ever party to or hold a position in, every asset of an offer you ever made, and what every standing offer of yours lends, cancelled ones too. An asset sent to the vault by a plain transfer shows only if one of those names it.',
     ),
     listIncomplete: A('Your deposit record was not read to its end, so an asset you deposited may be missing.'),
     positionsIncomplete: A('Your loans, offers and standing offers were not all read, so an asset one of them put in your vault may be missing.'),
