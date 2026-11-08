@@ -140,6 +140,16 @@ export function mineGross(row: Pick<SellerRow, 'claims'>, seller: Hex): bigint |
   return row.claims.filter((e) => e.seller.toLowerCase() === seller.toLowerCase()).reduce((t, e) => t + e.grossOwed, 0n);
 }
 
+/** What the seller's open claims are owed after the loan's fee, each claim
+ *  netted on its own and then summed, as the protocol ranks and closes them
+ *  (netting the sum instead can state a unit more than is ever paid). Null
+ *  when the loan or its claims could not be read. */
+export function mineNet(row: Pick<SellerRow, 'claims' | 'loan'>, seller: Hex): bigint | null {
+  if (row.claims === null || row.loan === null) return null;
+  const fee = treasuryShareBps(row.loan).bps;
+  return row.claims.filter((e) => e.seller.toLowerCase() === seller.toLowerCase()).reduce((t, e) => t + netOwed(e.grossOwed, fee), 0n);
+}
+
 /** The loan's fee on interest, as the split applies it. */
 export function rowFeeBps(row: SellerRow): { bps: number; legacy: boolean } | null {
   return row.loan ? treasuryShareBps(row.loan) : null;

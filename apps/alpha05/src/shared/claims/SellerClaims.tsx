@@ -14,7 +14,7 @@ import { useTxEntries, useTxStore } from '../tx/txStore';
 import { reviewIdentity } from '../ui/ActionFlow';
 import { FormField } from '../ui/FormField';
 import { OwnStamp } from '../ui/OwnStamp';
-import { discoverSoldLoans, mineGross, netOwed, readPaused, readSellerRow, rowFeeBps, sellerRowShown, sellerVerdict, splitFinal, splitPart, type SellerRow } from './sellerClaim';
+import { discoverSoldLoans, mineGross, mineNet, readPaused, readSellerRow, rowFeeBps, sellerRowShown, sellerVerdict, splitFinal, splitPart, type SellerRow } from './sellerClaim';
 import type { SellerClaimReview } from './sellerClaimReview';
 import { SELLER_CLAIM_KEY_PREFIX, SellerClaim, sellerClaimKey, sellerWords, useSellerClaimHeld } from './SellerClaim';
 
@@ -189,6 +189,7 @@ function SellerRowCard({
   }
   const loan = row.loan;
   const mine = mineGross(row, wallet) ?? 0n;
+  const owed = mineNet(row, wallet) ?? 0n;
   const fee = rowFeeBps(row)!;
   const final = splitFinal(Number(loan.status));
   const part = splitPart(row, wallet);
@@ -200,7 +201,7 @@ function SellerRowCard({
         {mine > 0n && (
           <>
             <dt className="tier-b">{format('sellerClaim.rowOwed', { pct: (fee.bps / 100).toString() })}</dt>
-            <dd>{words.amount(loan.principalAsset, netOwed(mine, fee.bps), false)}</dd>
+            <dd>{words.amount(loan.principalAsset, owed, false)}</dd>
           </>
         )}
         {row.held

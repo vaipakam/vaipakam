@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { SellerClaimFacetABI } from '@vaipakam/contracts/abis';
 import { OPEN } from '../eligibility/types';
 import type { LoanDetails } from '../positions/loanView';
-import { discoverSoldLoans, mineGross, netOwed, sellerLogs, sellerRowShown, sellerVerdict, splitFinal, splitPart, type SellerRow } from './sellerClaim';
+import { discoverSoldLoans, mineGross, mineNet, netOwed, sellerLogs, sellerRowShown, sellerVerdict, splitFinal, splitPart, type SellerRow } from './sellerClaim';
 import { measureSellerClaim, sellerClaimReceipt, sellerPays, type SellerClaimReview } from './sellerClaimReview';
 
 type Hex = `0x${string}`;
@@ -37,6 +37,21 @@ describe('seller claim rules', () => {
   it('nets a claim of the loan’s fee, rounded as the protocol rounds it', () => {
     expect(netOwed(1000n, 200)).toBe(980n);
     expect(netOwed(999n, 200)).toBe(979n);
+  });
+
+  it('nets each claim on its own before summing what a seller is owed', () => {
+    const r = row({
+      claims: [
+        { seller: ME, grossOwed: 101n },
+        { seller: OLDER, grossOwed: 50n },
+        { seller: ME, grossOwed: 101n },
+      ],
+    });
+    // 98 + 98, where netting the summed 202 would state 197.
+    expect(mineNet(r, ME)).toBe(196n);
+    const receipt = sellerClaimReceipt(review(r), ME, words, copy);
+    expect(receipt.rows[0]!.value).toEqual({ kind: 'amount', asset: WETH, amount: 196n });
+    expect(mineNet(row({ claims: null }), ME)).toBeNull();
   });
 
   it('pays what waits in the vault, and nothing more, while the loan runs', () => {

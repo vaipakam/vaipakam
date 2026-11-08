@@ -22,7 +22,7 @@ import { askThrough } from '../tx/simulate';
 import type { LegOutcome } from '../tx/outcome';
 import {
   mineGross,
-  netOwed,
+  mineNet,
   readPaused,
   readSellerRow,
   rowFeeBps,
@@ -138,12 +138,13 @@ export function sellerClaimReceipt(r: SellerClaimReview, account: Hex, w: Seller
   const rows: ReceiptRow[] = [];
   const loan = r.row.loan;
   const mine = mineGross(r.row, account);
+  const owed = mineNet(r.row, account);
   const fee = rowFeeBps(r.row);
   const final = loan !== null && splitFinal(Number(loan.status));
-  if (loan && mine !== null && mine > 0n && fee) {
+  if (loan && mine !== null && mine > 0n && owed !== null && fee) {
     rows.push({
       label: format('sellerClaim.rowOwed', { pct: (fee.bps / 100).toString() }),
-      value: { kind: 'amount', asset: loan.principalAsset, amount: netOwed(mine, fee.bps) },
+      value: { kind: 'amount', asset: loan.principalAsset, amount: owed },
       binding: false,
     });
   }
@@ -159,8 +160,8 @@ export function sellerClaimReceipt(r: SellerClaimReview, account: Hex, w: Seller
 
   const consequences: ReceiptText[] = [];
   if (final && mine !== null && mine > 0n) consequences.push(text('sellerClaim.splitNote'));
-  if (!final && mine !== null && mine > 0n)
-    consequences.push(figured((exact) => format('sellerClaim.restLater', { amount: w.amount(loan!.principalAsset, netOwed(mine, fee!.bps), exact) })));
+  if (!final && mine !== null && mine > 0n && owed !== null)
+    consequences.push(figured((exact) => format('sellerClaim.restLater', { amount: w.amount(loan!.principalAsset, owed, exact) })));
   if (fee?.legacy) consequences.push(text('sellerClaim.legacyFee'));
   consequences.push(...routeNotes(r.route, r.protection, copy), text('loanClaim.pauseHolds'));
   return { title: format('sellerClaim.title', { id: r.loanId.toString() }), rows, consequences, prompts: 1, readAt: r.readAt };
