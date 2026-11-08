@@ -4,7 +4,7 @@ pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibLoanClock} from "../libraries/LibLoanClock.sol";
-import {LibERC721} from "../libraries/LibERC721.sol";
+import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
 import {LibPrepayOrder} from "../libraries/LibPrepayOrder.sol";
 import {LibPrepayListingWiring} from "../libraries/LibPrepayListingWiring.sol";
 import {LibAutoList} from "../libraries/LibAutoList.sol";
@@ -169,7 +169,7 @@ contract NFTPrepayAutoListFacet is DiamondPausable, DiamondReentrancyGuard {
 
         // ── Caller is NOT the current position holder (§18.7) ─────────
         address currentHolder =
-            VaipakamNFTFacet(address(this)).ownerOf(loan.borrowerTokenId);
+            LibPositionNFT.ownerOf(loan.borrowerTokenId);
         if (msg.sender == currentHolder) revert NotEligibleAutoLister(msg.sender);
 
         // ── Tier-1 sanctions on surplus recipient (§18.10) ─────────────
@@ -285,7 +285,7 @@ contract NFTPrepayAutoListFacet is DiamondPausable, DiamondReentrancyGuard {
         );
 
         // ── Effects (lock + slot writes) ───────────────────────────────
-        LibERC721._lock(loan.borrowerTokenId, LibERC721.LockReason.PrepayCollateralListing);
+        LibPositionNFT.openRoute(loan.borrowerTokenId, LibPositionNFT.RouteReason.PrepayCollateralListing);
         s.prepayListingOrderHash[loanId] = orderHash;
         s.prepayListingExecutor[loanId] = address(executor);
 

@@ -2,7 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "./LibVaipakam.sol";
-import {LibERC721} from "./LibERC721.sol";
+import {LibPositionNFT} from "./LibPositionNFT.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {LibAutoRefinanceCheck} from "./LibAutoRefinanceCheck.sol";
 import {LibPeriodicInterest} from "./LibPeriodicInterest.sol";
@@ -120,7 +120,7 @@ library LibRefinanceRequest {
         LibVaipakam.Loan storage loan = s.loans[loanId];
         if (loan.status != LibVaipakam.LoanStatus.Active) return false;
         // Non-reverting read: a missing token simply means "not standing".
-        return LibERC721._ownerOfRaw(loan.borrowerTokenId) == o.creator;
+        return LibPositionNFT.holderOrZero(loan.borrowerTokenId) == o.creator;
     }
 
     /// @notice Revert with the reason `offerId` could not be accepted as
@@ -232,7 +232,7 @@ library LibRefinanceRequest {
         if (
             o.creator == address(0) ||
             o.accepted ||
-            LibERC721._ownerOfRaw(s.loans[loanId].borrowerTokenId) != o.creator
+            LibPositionNFT.holderOrZero(s.loans[loanId].borrowerTokenId) != o.creator
         ) return (0, false);
         return (prior, false);
     }

@@ -53,7 +53,7 @@ library LibLoan {
 
         (bool success, bytes memory data) = diamond.call(
             abi.encodeWithSelector(
-                VaipakamNFTFacet.burnNFT.selector,
+                VaipakamNFTFacet.retirePosition.selector,
                 loan.lenderTokenId
             )
         );
@@ -249,7 +249,7 @@ library LibLoan {
 
         (bool success, bytes memory data) = diamond.call(
             abi.encodeWithSelector(
-                VaipakamNFTFacet.burnNFT.selector,
+                VaipakamNFTFacet.retirePosition.selector,
                 loan.borrowerTokenId
             )
         );

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
 import {SetupTest} from "./SetupTest.t.sol";
 import {Vm} from "forge-std/Vm.sol";
 import {defaultAdapterCalls} from "./helpers/AdapterCallHelpers.sol";
@@ -1051,7 +1052,7 @@ contract VPFIDiscountFacetTest is SetupTest {
         address holder = makeAddr("cleanBorrowerHolder");
         uint256 borrowerTokenId = LoanFacet(address(diamond)).getLoanDetails(loanId).borrowerTokenId;
         vm.prank(borrower);
-        IERC721(address(diamond)).transferFrom(borrower, holder, borrowerTokenId);
+        LibTestPositionNFT.core(address(diamond)).transferFrom(borrower, holder, borrowerTokenId);
 
         MockSanctionsList oracle = new MockSanctionsList();
         oracle.setFlagged(borrower, true);

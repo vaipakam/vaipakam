@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
 import {LibLoanClock} from "../libraries/LibLoanClock.sol";
@@ -214,7 +215,7 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         // Block lender-side self-repay (mirrors RepayFacet:273-278).
         if (msg.sender == loan.lender) revert LenderCannotRepayOwnLoan();
         if (
-            IERC721(address(this)).ownerOf(loan.lenderTokenId) == msg.sender
+            LibPositionNFT.ownerOf(loan.lenderTokenId) == msg.sender
         ) revert LenderCannotRepayOwnLoan();
 
         if (maxCollateralIn == 0 || maxCollateralIn > loan.collateralAmount)
@@ -335,7 +336,7 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         {
             (uint256 lenderExtra, uint256 newTreasury) = _resolveLenderYieldFee(
                 loanId,
-                IERC721(address(this)).ownerOf(loan.lenderTokenId),
+                LibPositionNFT.ownerOf(loan.lenderTokenId),
                 plan.interest + plan.lateFee,
                 plan.treasuryShare
             );
@@ -377,8 +378,7 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         // follows the NFT, not the stale `loan.borrower` field
         // (Codex round-2 P1 #1).
         uint256 surplusPrincipal = outputAmount - requiredPrincipal;
-        address currentBorrowerHolder = IERC721(address(this))
-            .ownerOf(loan.borrowerTokenId);
+        address currentBorrowerHolder = LibPositionNFT.ownerOf(loan.borrowerTokenId);
         // #954 (§2.1) — swap-to-repay is a Tier-2 close-out that MUST complete,
         // so the surplus is never a blocking revert. A clean holder is paid
         // directly; a SANCTIONED holder's surplus is frozen into loan.borrower's

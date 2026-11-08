@@ -3,7 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "./LibVaipakam.sol";
-import {LibERC721} from "./LibERC721.sol";
+import {LibPositionNFT} from "./LibPositionNFT.sol";
 import {IListingExecutorRecorder} from "../seaport/IListingExecutorRecorder.sol";
 import {VaipakamVaultImplementation} from "../VaipakamVaultImplementation.sol";
 
@@ -101,7 +101,7 @@ library LibPrepayCleanup {
         // 1. Effects.
         delete s.prepayListingOrderHash[loanId];
         delete s.prepayListingExecutor[loanId];
-        LibERC721._unlock(loan.borrowerTokenId);
+        LibPositionNFT.closeRouteIfHeldBy(loan.borrowerTokenId, LibPositionNFT.RouteReason.PrepayCollateralListing);
 
         // 2. Interactions.
         // Executor clear — guarded for the unusual case where the

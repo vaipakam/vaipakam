@@ -58,8 +58,6 @@ contract VaultPayoutFacet is DiamondReentrancyGuard {
     /// @notice A secondary signer co-signed queued payout `id`.
     /// @custom:event-category state-change/vault-mutation
     event PayoutCosigned(address indexed account, uint256 indexed id, address indexed signer);
-    /// @notice A secondary signer co-signed queued position transfer `id`.
-    event PositionTransferCosigned(address indexed account, uint256 indexed id, address indexed signer);
 
     function _requireLiveOrEscape() private view {
         if (LibPausable.paused() && !_escapeOpen()) revert LibPausable.EnforcedPause();
@@ -163,17 +161,6 @@ contract VaultPayoutFacet is DiamondReentrancyGuard {
         emit PayoutCosigned(p.user, id, msg.sender);
     }
 
-    /// @notice Co-sign queued position transfer `id`. Caller: one of the
-    ///         account's secondary signers. Needed before release while the
-    ///         account requires co-signing, exactly as for a payout.
-    function cosignPositionTransfer(uint256 id) external nonReentrant {
-        LibVaipakam.PendingPositionTransfer storage t = LibVaipakam.storageSlot().pendingPositionTransfers[id];
-        if (t.state != LibProtectedAccount.ROW_QUEUED) revert LibProtectedAccount.RowNotQueued(id);
-        if (!LibProtectedAccount.isSigner(t.from, msg.sender)) revert LibProtectedAccount.NotSigner(t.from, msg.sender);
-        t.cosigned = true;
-        emit PositionTransferCosigned(t.from, id, msg.sender);
-    }
-
     /// @notice Cancel queued payout `id`; the asset stays in the vault. Works
     ///         during a pause. Caller: the account's manager or a signer.
     function cancelPayout(uint256 id) external nonReentrant {
@@ -246,20 +233,6 @@ contract VaultPayoutFacet is DiamondReentrancyGuard {
         return LibVaipakam.storageSlot().pendingPayoutIds[account].values();
     }
 
-    /// @notice Position-transfer row `id`, in whatever state it is.
-    function getPendingPositionTransfer(uint256 id)
-        external
-        view
-        returns (LibVaipakam.PendingPositionTransfer memory)
-    {
-        return LibVaipakam.storageSlot().pendingPositionTransfers[id];
-    }
-
-    /// @notice Ids of `account`'s queued position transfers.
-    function getPendingTransferIds(address account) external view returns (uint256[] memory) {
-        return LibVaipakam.storageSlot().pendingTransferIds[account].values();
-    }
-
     /// @notice What `account`'s queued payouts hold back of `asset` / `tokenId`.
     function getPayoutEarmark(address account, address asset, uint256 tokenId) external view returns (uint256) {
         return LibVaipakam.storageSlot().pendingPayoutEarmark[account][asset][tokenId];
@@ -267,7 +240,7 @@ contract VaultPayoutFacet is DiamondReentrancyGuard {
 
     /**
      * @notice The short code the app and every alert show beside row `id`
-     *         (a payout or a position transfer), so a user can match a
+     *         (a payout), so a user can match a
      *         message to a request. 30 bits, rendered as six base32
      *         characters off-chain. Derived from the chain, the Diamond and
      *         the id, so a phishing message cannot reuse a real code for a

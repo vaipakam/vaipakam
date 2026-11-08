@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
 import {LibRefinanceRequest} from "../libraries/LibRefinanceRequest.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibLoanClock} from "../libraries/LibLoanClock.sol";
@@ -260,7 +261,7 @@ contract RepayFacet is DiamondReentrancyGuard, IVaipakamErrors {
         if (loan.assetType == LibVaipakam.AssetType.ERC20) {
             if (msg.sender == loan.lender) revert LenderCannotRepayOwnLoan();
             if (
-                IERC721(address(this)).ownerOf(loan.lenderTokenId) == msg.sender
+                LibPositionNFT.ownerOf(loan.lenderTokenId) == msg.sender
             ) revert LenderCannotRepayOwnLoan();
         }
 
@@ -326,7 +327,7 @@ contract RepayFacet is DiamondReentrancyGuard, IVaipakamErrors {
             // secondary path below also needs (#1383).
             (uint256 lenderExtra, uint256 newTreasury) = _hostResolveLenderYieldFee(
                 loan.id,
-                IERC721(address(this)).ownerOf(loan.lenderTokenId),
+                LibPositionNFT.ownerOf(loan.lenderTokenId),
                 plan.interest + plan.lateFee,
                 plan.treasuryShare
             );
@@ -773,7 +774,7 @@ contract RepayFacet is DiamondReentrancyGuard, IVaipakamErrors {
             {
                 (uint256 lenderExtra, uint256 newTreasury) = _hostResolveLenderYieldFee(
                     loan.id,
-                    IERC721(address(this)).ownerOf(loan.lenderTokenId),
+                    LibPositionNFT.ownerOf(loan.lenderTokenId),
                     accrued,
                     treasuryShare
                 );
@@ -932,7 +933,7 @@ contract RepayFacet is DiamondReentrancyGuard, IVaipakamErrors {
             {
                 (uint256 lenderExtra, uint256 newTreasury) = _hostResolveLenderYieldFee(
                     loan.id,
-                    IERC721(address(this)).ownerOf(loan.lenderTokenId),
+                    LibPositionNFT.ownerOf(loan.lenderTokenId),
                     accrued,
                     treasuryShare
                 );

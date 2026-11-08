@@ -21,7 +21,7 @@ import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
 import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
 import {ProfileFacet} from "./ProfileFacet.sol";
 import {LibOfferMatch} from "../libraries/LibOfferMatch.sol";
-import {LibERC721} from "../libraries/LibERC721.sol";
+import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {RiskFacet} from "./RiskFacet.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
@@ -322,7 +322,7 @@ contract PrecloseFacet is
             // which is why the separate emit block below is gone).
             (uint256 lenderExtra, uint256 newTreasury) = _hostResolveLenderYieldFee(
                 loanId,
-                IERC721(address(this)).ownerOf(loan.lenderTokenId),
+                LibPositionNFT.ownerOf(loan.lenderTokenId),
                 plan.interest + plan.lateFee,
                 plan.treasuryShare
             );
@@ -482,7 +482,7 @@ contract PrecloseFacet is
                 (uint256 rentLenderExtra, uint256 rentNewTreasury) =
                     _hostResolveLenderYieldFee(
                         loanId,
-                        IERC721(address(this)).ownerOf(loan.lenderTokenId),
+                        LibPositionNFT.ownerOf(loan.lenderTokenId),
                         totalDue,
                         treasuryFee
                     );
@@ -648,7 +648,7 @@ contract PrecloseFacet is
         // `IERC721(address(this)).ownerOf` authority source `requireKeeperFor`
         // uses (the current owner, not the latched `loan.borrower`).
         LibVaipakam._assertNotSanctioned(
-            IERC721(address(this)).ownerOf(loan.borrowerTokenId)
+            LibPositionNFT.ownerOf(loan.borrowerTokenId)
         );
         if (loan.status != LibVaipakam.LoanStatus.Active)
             revert LoanNotActive();
@@ -845,7 +845,7 @@ contract PrecloseFacet is
             (uint256 aprLenderExtra, uint256 aprNewTreasury) =
                 _hostResolveLenderYieldFee(
                     loanId,
-                    IERC721(address(this)).ownerOf(loan.lenderTokenId),
+                    LibPositionNFT.ownerOf(loan.lenderTokenId),
                     accruedInterest,
                     treasuryFee
                 );
@@ -1003,7 +1003,7 @@ contract PrecloseFacet is
                     (uint256 rentLenderExtra, uint256 rentNewTreasury) =
                         _hostResolveLenderYieldFee(
                             loanId,
-                            IERC721(address(this)).ownerOf(loan.lenderTokenId),
+                            LibPositionNFT.ownerOf(loan.lenderTokenId),
                             accruedRent,
                             rentTreasury
                         );
@@ -1062,7 +1062,7 @@ contract PrecloseFacet is
         // #2949 — a rental carries no collateral (`isErc20` is false), so
         // there is nothing to return; the zero `collateralAssetType` must not
         // read as an ERC-20 leg.
-        address exitingBorrowerHolder = LibERC721.ownerOf(loan.borrowerTokenId);
+        address exitingBorrowerHolder = LibPositionNFT.ownerOf(loan.borrowerTokenId);
         if (isErc20) {
             if (loan.collateralAssetType == LibVaipakam.AssetType.ERC20) {
                 LibFacet.crossFacetCall(
@@ -1305,7 +1305,7 @@ contract PrecloseFacet is
         // Burn ben's offer position NFT (offer is consumed)
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
-                VaipakamNFTFacet.burnNFT.selector,
+                VaipakamNFTFacet.retirePosition.selector,
                 offer.positionTokenId
             ),
             IVaipakamErrors.NFTBurnFailed.selector
@@ -1359,7 +1359,7 @@ contract PrecloseFacet is
      *      (successful completion) or {OfferFacet.cancelOffer} (initiator
      *      cancels the linked offset offer) releases it. During that
      *      window the holder cannot list, sell, transfer, or approve the
-     *      NFT on any marketplace. See LibERC721.LockReason.PrecloseOffset.
+     *      NFT on any marketplace. See LibPositionNFT.RouteReason.PrecloseOffset.
      *
      *      Per README Section 8, Option 3:
      *      - alice deposits principal and creates a Lender Offer via OfferFacet.
@@ -1531,8 +1531,8 @@ contract PrecloseFacet is
         // The NFT stays with the initiator, but ERC-721 transfer/approve is
         // blocked at the library level for the duration of the offset flow.
         // Lock is cleared in completeOffset (success) or OfferFacet.cancelOffer
-        // (cancel). See LibERC721.LockReason.
-        LibERC721._lock(loan.borrowerTokenId, LibERC721.LockReason.PrecloseOffset);
+        // (cancel). See LibPositionNFT.RouteReason.
+        LibPositionNFT.openRoute(loan.borrowerTokenId, LibPositionNFT.RouteReason.PrecloseOffset);
         // #1001 (S3, Codex #1070 r6 P3) — emit the ACTUAL offset creator (the
         // borrower-position holder that owns + funds the offer and can cancel it),
         // NOT `msg.sender` — which on the keeper-triggered path is the keeper.
@@ -1541,7 +1541,7 @@ contract PrecloseFacet is
         emit OffsetOfferCreated(
             loanId,
             newOfferId,
-            IERC721(address(this)).ownerOf(loan.borrowerTokenId),
+            LibPositionNFT.ownerOf(loan.borrowerTokenId),
             accruedShortfallSum
         );
     }
@@ -1673,7 +1673,7 @@ contract PrecloseFacet is
             (uint256 offLenderExtra, uint256 offNewTreasury) =
                 _hostResolveLenderYieldFee(
                     loanId,
-                    IERC721(address(this)).ownerOf(loan.lenderTokenId),
+                    LibPositionNFT.ownerOf(loan.lenderTokenId),
                     interestBase,
                     treasuryFee
                 );
@@ -1790,7 +1790,7 @@ contract PrecloseFacet is
         // (The borrower NFT is locked for the offset, so this holder is fixed from
         // posting through completion.) The #671 create-time risk-access gate still
         // runs inside `createOfferInternal` on this creator.
-        address offsetCreator = IERC721(address(this)).ownerOf(loan.borrowerTokenId);
+        address offsetCreator = LibPositionNFT.ownerOf(loan.borrowerTokenId);
         (bool success, bytes memory result) = address(this).call(
             abi.encodeWithSelector(
                 OfferCreateFacet.createOfferInternal.selector,
@@ -2007,6 +2007,13 @@ contract PrecloseFacet is
         uint256 newOfferId = s.loanToOffsetOfferId[originalLoanId];
         if (newOfferId == 0) revert OffsetNotLinked();
 
+        // #3205 — checked once the offset is known to exist, so an unlinked
+        // loan says so. The offset completes only for the holder that opened it:
+        // the borrower position must not have moved since (the PositionNFT
+        // core's transfer count), or the completion reverts and the offset
+        // stays cancellable.
+        LibPositionNFT.requireUnmoved(loan.borrowerTokenId, LibPositionNFT.RouteReason.PrecloseOffset);
+
         // Verify the offer was accepted
         LibVaipakam.Offer storage offer = s.offers[newOfferId];
         if (!offer.accepted) revert OffsetOfferNotAccepted();
@@ -2130,7 +2137,7 @@ contract PrecloseFacet is
         // Release the native transfer lock on the borrower-side NFT. The
         // original loan is now Repaid; the initiator retains the NFT to
         // later claim back the original collateral via ClaimFacet.
-        LibERC721._unlock(loan.borrowerTokenId);
+        LibPositionNFT.closeRouteIfHeldBy(loan.borrowerTokenId, LibPositionNFT.RouteReason.PrecloseOffset);
 
         // Clear offset link mappings on both sides now that the flow
         // has fully settled (prevents stale offset references).

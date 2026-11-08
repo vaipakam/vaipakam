@@ -18,7 +18,7 @@ import {LibLoan} from "../libraries/LibLoan.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibDelivery} from "../libraries/LibDelivery.sol";
 import {LenderIntentFacet} from "./LenderIntentFacet.sol";
-import {LibERC721} from "../libraries/LibERC721.sol";
+import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
 import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
 import {InteractionRewardsFacet} from "./InteractionRewardsFacet.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -144,7 +144,7 @@ contract EarlyWithdrawalFacet is
      *      via {completeLoanSale}) or the initiator cancels via
      *      {OfferFacet.cancelOffer}. During that window the holder cannot
      *      list, sell, transfer, or approve the NFT on any marketplace.
-     *      See LibERC721.LockReason.EarlyWithdrawalSale.
+     *      See LibPositionNFT.RouteReason.EarlyWithdrawalSale.
      *
      *      liam creates offer for his loan position; new lender accepts via OfferFacet.acceptOffer.
      *      Terms: Remaining duration, same assets/collateral. Links offer to loan via new mapping.
@@ -279,7 +279,7 @@ contract EarlyWithdrawalFacet is
         // real creator — proceeds and cancel authority bind to them, NOT to a
         // keeper caller (#951). The verdict has authorised the caller; a
         // keeper's action is charged against its service capacity (#1219).
-        address seller = LibERC721.ownerOf(loan.lenderTokenId);
+        address seller = LibPositionNFT.ownerOf(loan.lenderTokenId);
         if (msg.sender != seller && msg.sender != address(this)) {
             LibServiceCapacity.chargeKeeper();
         }
@@ -321,8 +321,8 @@ contract EarlyWithdrawalFacet is
         // stays the pre-callback seller) from the now-relocked position. Locking
         // first closes that window. Lock is released (and the NFT burned) in
         // completeLoanSale via migrateLenderPosition → LibERC721._burn, or
-        // released in OfferFacet.cancelOffer. See LibERC721.LockReason.
-        LibERC721._lock(loan.lenderTokenId, LibERC721.LockReason.EarlyWithdrawalSale);
+        // released in OfferFacet.cancelOffer. See LibPositionNFT.RouteReason.
+        LibPositionNFT.openRoute(loan.lenderTokenId, LibPositionNFT.RouteReason.EarlyWithdrawalSale);
 
         // Create mimicking Borrower Offer via cross-facet call.
         // collateralAmount is set to 0 because this is a lender-position sale,
@@ -590,6 +590,10 @@ contract EarlyWithdrawalFacet is
 
         LibVaipakam.Offer storage saleOffer = s.offers[saleOfferId];
         if (!saleOffer.accepted) revert SaleOfferNotAccepted();
+        // #3205 — the sale completes only for the lender holder that listed
+        // it: a lender position that moved since (the PositionNFT core's
+        // transfer count) reverts the completion.
+        LibPositionNFT.requireUnmoved(loan.lenderTokenId, LibPositionNFT.RouteReason.EarlyWithdrawalSale);
 
         // Phase 6: role-scoped keeper authority. Lender-entitled action, so
         // resolve against the lender NFT holder and require the
@@ -785,7 +789,7 @@ contract EarlyWithdrawalFacet is
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
                 ProfileFacet.enforcePositionSaleMove.selector,
-                LibERC721.ownerOf(loan.lenderTokenId),
+                LibPositionNFT.ownerOf(loan.lenderTokenId),
                 newLender
             ),
             bytes4(0)
@@ -872,14 +876,14 @@ contract EarlyWithdrawalFacet is
         // Burn both NFTs on the temporary loan
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
-                VaipakamNFTFacet.burnNFT.selector,
+                VaipakamNFTFacet.retirePosition.selector,
                 tempLoan.lenderTokenId
             ),
             NFTBurnFailed.selector
         );
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
-                VaipakamNFTFacet.burnNFT.selector,
+                VaipakamNFTFacet.retirePosition.selector,
                 tempLoan.borrowerTokenId
             ),
             NFTBurnFailed.selector

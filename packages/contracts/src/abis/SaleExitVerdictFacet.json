@@ -90,6 +90,11 @@
   },
   {
     "type": "error",
+    "name": "PositionNFTNotSet",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "SaleAdmissionCodeUnknown",
     "inputs": [
       {

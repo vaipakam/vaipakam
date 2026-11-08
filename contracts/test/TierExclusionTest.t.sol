@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
 import {SetupTest} from "./SetupTest.t.sol";
 import {Vm} from "forge-std/Vm.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
@@ -135,8 +136,7 @@ contract TierExclusionTest is SetupTest {
         internal
         returns (MockSanctionsList sanctions)
     {
-        TestMutatorFacet(address(diamond)).burnNFTRaw(tokenId);
-        TestMutatorFacet(address(diamond)).mintNFTRaw(to, tokenId);
+        LibTestPositionNFT.move(address(diamond), tokenId, to);
         sanctions = new MockSanctionsList();
         ProfileFacet(address(diamond)).setSanctionsOracle(address(sanctions));
         sanctions.setFlagged(to, true);
@@ -293,7 +293,7 @@ contract TierExclusionTest is SetupTest {
 
         address buyer = makeAddr("claimBuyer");
         vm.prank(borrowerEoa);
-        VaipakamNFTFacet(address(diamond)).transferFrom(borrowerEoa, buyer, BORROWER_TOKEN);
+        LibTestPositionNFT.core(address(diamond)).transferFrom(borrowerEoa, buyer, BORROWER_TOKEN);
 
         uint256 bVpfi;
         (, , bv, bVpfi) = _exclusion();
@@ -302,7 +302,7 @@ contract TierExclusionTest is SetupTest {
         assertEq(_tierBalance(borrowerEoa), OWN_VPFI, "the seller keeps credit only on their own VPFI");
 
         vm.prank(buyer);
-        VaipakamNFTFacet(address(diamond)).transferFrom(buyer, borrowerEoa, BORROWER_TOKEN);
+        LibTestPositionNFT.core(address(diamond)).transferFrom(buyer, borrowerEoa, BORROWER_TOKEN);
         (, , bv, bVpfi) = _exclusion();
         assertEq(bv, address(0), "bought back: nothing owed to anyone else");
         assertEq(_owedToOthers(borrowerEoa), 0, "bought back: aggregate back to zero");
@@ -318,7 +318,7 @@ contract TierExclusionTest is SetupTest {
         _scaffold(OWN_VPFI);
 
         vm.prank(borrowerEoa);
-        VaipakamNFTFacet(address(diamond)).transferFrom(borrowerEoa, makeAddr("liveBuyer"), BORROWER_TOKEN);
+        LibTestPositionNFT.core(address(diamond)).transferFrom(borrowerEoa, makeAddr("liveBuyer"), BORROWER_TOKEN);
 
         (, , address bv, uint256 bVpfi) = _exclusion();
         assertEq(bv, address(0), "live loan: no exclusion");
@@ -336,7 +336,7 @@ contract TierExclusionTest is SetupTest {
         assertEq(bv, borrowerEoa, "fixture: the borrower side carries a charge");
 
         vm.prank(address(diamond));
-        VaipakamNFTFacet(address(diamond)).burnNFT(BORROWER_TOKEN);
+        VaipakamNFTFacet(address(diamond)).retirePosition(BORROWER_TOKEN);
 
         uint256 bVpfi;
         (, , bv, bVpfi) = _exclusion();
@@ -361,7 +361,7 @@ contract TierExclusionTest is SetupTest {
         assertEq(_owedToOthers(borrowerEoa), legacy, "fixture: the legacy bump is in the aggregate");
 
         vm.prank(borrowerEoa);
-        VaipakamNFTFacet(address(diamond)).transferFrom(borrowerEoa, makeAddr("legacyBuyer"), BORROWER_TOKEN);
+        LibTestPositionNFT.core(address(diamond)).transferFrom(borrowerEoa, makeAddr("legacyBuyer"), BORROWER_TOKEN);
 
         assertEq(
             _owedToOthers(borrowerEoa),

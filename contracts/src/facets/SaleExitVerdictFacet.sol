@@ -4,7 +4,7 @@ pragma solidity ^0.8.29;
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibProtectedAccount} from "../libraries/LibProtectedAccount.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
-import {LibERC721} from "../libraries/LibERC721.sol";
+import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
 import {LibInterestLedger} from "../libraries/LibInterestLedger.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibLoanClock} from "../libraries/LibLoanClock.sol";
@@ -172,7 +172,7 @@ contract SaleExitVerdictFacet {
         // Both routes require an Active loan. A loan with no live lender
         // position (never created, or closed and its NFT burned) is not Active
         // either; nothing below applies to it.
-        address holder = LibERC721._ownerOfRaw(loan.lenderTokenId);
+        address holder = LibPositionNFT.holderOrZero(loan.lenderTokenId);
         if (loan.status != LibVaipakam.LoanStatus.Active || holder == address(0)) {
             _add(r, abi.encodeWithSelector(IVaipakamErrors.LoanNotActive.selector), 0);
             return _trim(r);
@@ -192,15 +192,15 @@ contract SaleExitVerdictFacet {
             );
             if (_full(r)) return _trim(r);
         } else if (LibProtectedAccount.protectsNfts(holder)) {
-            // With NFT protection on, a position leaves the account only by a
-            // queued, cancellable transfer (allowlist, co-sign, delay). A sale
-            // moves it to the buyer at once, and its shortfall pays the buyer
-            // from the seller's principal, so it would route value past every
-            // one of those checks. The owner may switch NFT protection off
-            // (after the delay) to sell.
+            // With the holder's tokens under the PositionNFT core's holder
+            // lock (#3205), a position leaves the account only once the
+            // holder has unlocked, after the lock's delay. A sale moves it to
+            // the buyer at once, and its shortfall pays the buyer from the
+            // seller's principal, so it would route value past that delay. The
+            // holder may unlock (after the delay) to sell.
             _add(
                 r,
-                abi.encodeWithSelector(LibProtectedAccount.PositionMovesOnlyByQueuedTransfer.selector, holder),
+                abi.encodeWithSelector(LibProtectedAccount.PositionNftsLocked.selector, holder),
                 0
             );
             if (_full(r)) return _trim(r);

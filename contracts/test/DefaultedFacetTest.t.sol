@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
 import {Test} from "forge-std/Test.sol";
 import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
 import {console} from "forge-std/console.sol";
@@ -425,6 +426,7 @@ contract DefaultedFacetTest is Test {
         // Init vault factory with impl
         vm.prank(owner);
         LibTestVaultBeacon.install(address(diamond), address(this));
+        LibTestPositionNFT.install(address(diamond), address(this));
         AdminFacet(address(diamond)).setTreasury(address(diamond));
         AdminFacet(address(diamond)).setZeroExProxy(
             address(mockZeroExProxy)
@@ -919,7 +921,7 @@ contract DefaultedFacetTest is Test {
                 abi.encodeWithSelector(
                     VPFIDiscountFacet.resolveLenderYieldFeeFor.selector,
                     loanId,
-                    VaipakamNFTFacet(address(diamond)).ownerOf(ln.lenderTokenId)
+                    LibTestPositionNFT.core(address(diamond)).ownerOf(ln.lenderTokenId)
                 )
             );
         }
@@ -993,7 +995,7 @@ contract DefaultedFacetTest is Test {
         LibVaipakam.Loan memory l0 = LoanFacet(address(diamond)).getLoanDetails(loanId);
         address dHolder = makeAddr("defaultHolder1955");
         vm.prank(l0.lender);
-        VaipakamNFTFacet(address(diamond)).transferFrom(
+        LibTestPositionNFT.core(address(diamond)).transferFrom(
             l0.lender, dHolder, l0.lenderTokenId
         );
         MockSanctionsList dSanc = new MockSanctionsList();
@@ -1040,7 +1042,7 @@ contract DefaultedFacetTest is Test {
         // that current holder is the intended claimant the marker keys on.
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
         assertEq(
-            IERC721(address(diamond)).ownerOf(loan.lenderTokenId),
+            LibTestPositionNFT.core(address(diamond)).ownerOf(loan.lenderTokenId),
             lender,
             "lender holds the position NFT"
         );

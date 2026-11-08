@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
 import {SetupTest} from "./SetupTest.t.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {AutoLifecycleFacet} from "../src/facets/AutoLifecycleFacet.sol";
@@ -1823,7 +1824,7 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         address newHolder = makeAddr("newBorrowerHolder");
         LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(loanId);
         vm.prank(borrower);
-        VaipakamNFTFacet(address(diamond)).transferFrom(borrower, newHolder, l.borrowerTokenId);
+        LibTestPositionNFT.core(address(diamond)).transferFrom(borrower, newHolder, l.borrowerTokenId);
         (, uint256 forNew, , , ) = _f().getExtendFunding(loanId, newHolder);
         assertEq(forNew, 0, "the new holder has no reserve");
         vm.prank(newHolder);

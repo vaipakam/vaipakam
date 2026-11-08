@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
+
 import {SetupTest} from "./SetupTest.t.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {RiskSplitLiquidationFacet} from "../src/facets/RiskSplitLiquidationFacet.sol";
@@ -67,16 +69,8 @@ contract InternalMatchPriorityWindowTest is SetupTest {
         l.lenderTokenId = 2;
         TestMutatorFacet(address(diamond)).setLoan(LOAN_ID, l);
 
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(IERC721.ownerOf.selector, uint256(1)),
-            abi.encode(borrower)
-        );
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(IERC721.ownerOf.selector, uint256(2)),
-            abi.encode(lender)
-        );
+        LibTestPositionNFT.mockHolder(address(diamond), uint256(1), borrower);
+        LibTestPositionNFT.mockHolder(address(diamond), uint256(2), lender);
 
         // Mock the gauntlet so `triggerLiquidation` reaches the
         // priority-window gate cleanly:

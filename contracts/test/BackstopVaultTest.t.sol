@@ -2,6 +2,9 @@
 pragma solidity ^0.8.29;
 
 import {SetupTest} from "./SetupTest.t.sol";
+import {BackstopVaultImplementation} from "../src/BackstopVaultImplementation.sol";
+import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
+import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {LenderIntentFacet} from "../src/facets/LenderIntentFacet.sol";
@@ -896,5 +899,22 @@ contract BackstopVaultTest is SetupTest {
         vm.prank(makeAddr("poker"));
         uint256 loanId = BackstopFacet(address(diamond)).backstopFill(offerId);
         assertEq(LoanFacet(address(diamond)).getLoanDetails(loanId).lender, vault, "filled after the new delay");
+    }
+
+    /// @dev #3205 — the PositionNFT core mints, so the vault must accept the
+    ///      core's mint (not only the Diamond's), and must refuse to sweep a
+    ///      position NFT out by the core's address.
+    function test_positionNftMintedByTheCore_isAccepted_andNeverSwept() public {
+        uint256 tokenId = 990_001;
+        vm.prank(address(diamond));
+        VaipakamNFTFacet(address(diamond)).mintNFT(
+            vault, tokenId, 1, 0, true, LibVaipakam.LoanPositionStatus.OfferCreated
+        );
+        address core = address(LibTestPositionNFT.core(address(diamond)));
+        assertEq(LibTestPositionNFT.core(address(diamond)).ownerOf(tokenId), vault, "the vault holds the position");
+
+        vm.prank(address(diamond));
+        vm.expectRevert(BackstopVaultImplementation.UnexpectedNFT.selector);
+        BackstopVaultImplementation(vault).sweepNFT(core, tokenId, makeAddr("sweepTo"));
     }
 }

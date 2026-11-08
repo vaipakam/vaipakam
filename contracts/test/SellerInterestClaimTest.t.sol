@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
 import {SetupTest} from "./SetupTest.t.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibInterestLedger} from "../src/libraries/LibInterestLedger.sol";
@@ -340,7 +341,7 @@ contract SellerInterestClaimTest is SetupTest {
         address holder = makeAddr("plainHolder");
         uint256 tokenId = LoanFacet(address(diamond)).getLoanDetails(loanId).lenderTokenId;
         vm.prank(lender);
-        IERC721(address(diamond)).transferFrom(lender, holder, tokenId);
+        LibTestPositionNFT.core(address(diamond)).transferFrom(lender, holder, tokenId);
         m.setFlagged(lender, true);
 
         bytes memory blocked = abi.encodeWithSelector(LibVaipakam.SanctionedAddress.selector, lender);
@@ -494,7 +495,7 @@ contract SellerInterestClaimTest is SetupTest {
         address holder = makeAddr("transfereeHolder");
         uint256 tokenId = LoanFacet(address(diamond)).getLoanDetails(loanId).lenderTokenId;
         vm.prank(lender);
-        IERC721(address(diamond)).transferFrom(lender, holder, tokenId);
+        LibTestPositionNFT.core(address(diamond)).transferFrom(lender, holder, tokenId);
         assertEq(VaultFactoryFacet(address(diamond)).getUserVaultAddress(holder), address(0), "no vault yet");
 
         _skip(10 days);

@@ -339,27 +339,6 @@
   },
   {
     "type": "error",
-    "name": "LockReasonConflict",
-    "inputs": [
-      {
-        "name": "tokenId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "current",
-        "type": "uint8",
-        "internalType": "enum LibERC721.LockReason"
-      },
-      {
-        "name": "attempted",
-        "type": "uint8",
-        "internalType": "enum LibERC721.LockReason"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "NotEligibleAutoLister",
     "inputs": [
       {
@@ -368,6 +347,11 @@
         "internalType": "address"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "PositionNFTNotSet",
+    "inputs": []
   },
   {
     "type": "error",
@@ -410,6 +394,27 @@
     "type": "error",
     "name": "ReentrancyGuardReentrantCall",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RouteConflict",
+    "inputs": [
+      {
+        "name": "tokenId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "current",
+        "type": "uint8",
+        "internalType": "enum LibPositionNFT.RouteReason"
+      },
+      {
+        "name": "attempted",
+        "type": "uint8",
+        "internalType": "enum LibPositionNFT.RouteReason"
+      }
+    ]
   },
   {
     "type": "error",

@@ -78,7 +78,6 @@ describe('activityParticipants — the rule', () => {
   });
 
   it('never names an authorized or configured address', () => {
-    expect(activityParticipants('Approval', { owner: A, approved: B })).toEqual([A.toLowerCase()]);
     expect(activityParticipants('KeeperActionsUpdated', { user: A, keeper: B })).toEqual([
       A.toLowerCase(),
     ]);

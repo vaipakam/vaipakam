@@ -409,6 +409,10 @@ FACETS=(
   # resolves its code through it; the vault page reads versions, pins and
   # pending code changes from it, and the indexer decodes its events.
   "VaultBeacon"
+  # #3205 — the PositionNFT (standalone; NOT a diamond facet). The ownership
+  # record of every position: the app reads holders, approvals and the holder
+  # lock from it, and the indexer decodes its Transfer and lock events.
+  "PositionNFT"
   # #2399 — the Diamond PROXY itself. Not a facet: its fallback raises
   # `FunctionDoesNotExist()` for an unrouted selector, the revert a stale ABI
   # produces. Listed under `proxy` in diamond-facets.json, and the combined

@@ -4,7 +4,7 @@ pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibLoanClock} from "../libraries/LibLoanClock.sol";
-import {LibERC721} from "../libraries/LibERC721.sol";
+import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
 import {DiamondAccessControl} from "../libraries/LibAccessControl.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
@@ -118,7 +118,7 @@ contract NFTPrepayDutchListingFacet is
     error ExecutorNotSet();
     error UnsupportedCollateralForV1(LibVaipakam.AssetType collateralType);
     error UnsupportedPrincipalForV1(LibVaipakam.AssetType principalType);
-    error BorrowerNFTAlreadyLocked(uint256 tokenId, LibERC721.LockReason currentReason);
+    error BorrowerNFTAlreadyLocked(uint256 tokenId, LibPositionNFT.RouteReason currentReason);
     error PrepayListingDisabled();
     error FeeLegsExceedCap(uint256 supplied, uint256 cap);
     error FeeLegInvalidRecipient(uint256 idx);
@@ -185,15 +185,15 @@ contract NFTPrepayDutchListingFacet is
         if (s.prepayListingOrderHash[loanId] != bytes32(0)) {
             revert PrepayListingAlreadyExists(loanId, s.prepayListingOrderHash[loanId]);
         }
-        LibERC721.LockReason currentLock = LibERC721.storedLockOf(loan.borrowerTokenId);
-        if (currentLock != LibERC721.LockReason.None) {
+        LibPositionNFT.RouteReason currentLock = LibPositionNFT.routeOf(loan.borrowerTokenId);
+        if (currentLock != LibPositionNFT.RouteReason.None) {
             revert BorrowerNFTAlreadyLocked(loan.borrowerTokenId, currentLock);
         }
 
         uint256 gracePeriodEnd = _gracePeriodEnd(loan);
         _assertDutchWindow(loanId, auctionEndTime, gracePeriodEnd);
 
-        address holder = VaipakamNFTFacet(address(this)).ownerOf(loan.borrowerTokenId);
+        address holder = LibPositionNFT.ownerOf(loan.borrowerTokenId);
         if (holder != msg.sender) revert NotPositionHolder(loanId, msg.sender, holder);
         // #818 Tier-1 sanctions — posting a Dutch collateral-sale listing routes
         // value to the holder on fill; `holder == msg.sender`. See the fixed-price
@@ -274,7 +274,7 @@ contract NFTPrepayDutchListingFacet is
         uint256 gracePeriodEnd = _gracePeriodEnd(loan);
         _assertDutchWindow(loanId, newAuctionEndTime, gracePeriodEnd);
 
-        address holder = VaipakamNFTFacet(address(this)).ownerOf(loan.borrowerTokenId);
+        address holder = LibPositionNFT.ownerOf(loan.borrowerTokenId);
         if (holder != msg.sender) revert NotPositionHolder(loanId, msg.sender, holder);
         // #818 Tier-1 sanctions — see `postPrepayDutchListing`. `holder == msg.sender`.
         LibVaipakam._assertNotSanctioned(msg.sender);
@@ -477,7 +477,7 @@ contract NFTPrepayDutchListingFacet is
         // Post path locks the borrower NFT; the update path keeps the
         // existing lock continuous across the rotation (no re-lock race).
         if (lockNft) {
-            LibERC721._lock(loan.borrowerTokenId, LibERC721.LockReason.PrepayCollateralListing);
+            LibPositionNFT.openRoute(loan.borrowerTokenId, LibPositionNFT.RouteReason.PrepayCollateralListing);
         }
         s.prepayListingOrderHash[loanId] = orderHash;
         s.prepayListingExecutor[loanId] = address(executor);

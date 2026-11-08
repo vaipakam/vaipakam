@@ -27,7 +27,7 @@ import {VaipakamVaultImplementation} from "../VaipakamVaultImplementation.sol";
 import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {RiskFacet} from "./RiskFacet.sol";
 import {LibSaleSizing} from "../libraries/LibSaleSizing.sol";
-import {LibERC721} from "../libraries/LibERC721.sol";
+import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
 import {LibLopDomain} from "../libraries/LibLopDomain.sol";
 
 /**
@@ -430,7 +430,7 @@ contract SwapToRepayIntentFacet is
             revert IntentTokenNotAllowed(loan.collateralAsset);
         LibAuth.requireBorrowerNftOwner(loan);
         if (msg.sender == loan.lender) revert IVaipakamErrors.LenderCannotRepayOwnLoan();
-        if (IERC721(address(this)).ownerOf(loan.lenderTokenId) == msg.sender)
+        if (LibPositionNFT.ownerOf(loan.lenderTokenId) == msg.sender)
             revert IVaipakamErrors.LenderCannotRepayOwnLoan();
         uint256 endTime = LibLoanClock.maturity(loan);
         uint256 graceEnd = endTime + LibVaipakam.gracePeriod(loan.durationDays);
@@ -528,7 +528,7 @@ contract SwapToRepayIntentFacet is
         // already holds the lock, so a commit cannot overwrite it. Every
         // teardown (cancel, expired cancel, both force-cancels) and the fill
         // settlement release it.
-        LibERC721._lock(loan.borrowerTokenId, LibERC721.LockReason.SwapToRepayIntent);
+        LibPositionNFT.openRoute(loan.borrowerTokenId, LibPositionNFT.RouteReason.SwapToRepayIntent);
 
         // ── §5.1 step 7: minOutput floor (Codex round-10 P1 #5 +
         //    round-11 P1 #3 — must add late fee on top of getPrepayContext) ─
@@ -936,7 +936,7 @@ contract SwapToRepayIntentFacet is
         // #2322 — release the borrower-position lock the commit took. Reason-
         // checked: a commit made before the lock existed never took it, and
         // must not clear another flow's lock (e.g. a live prepay listing's).
-        LibERC721._unlockIfHeldBy(loan.borrowerTokenId, LibERC721.LockReason.SwapToRepayIntent);
+        LibPositionNFT.closeRouteIfHeldBy(loan.borrowerTokenId, LibPositionNFT.RouteReason.SwapToRepayIntent);
 
         // #594 — every teardown (borrower cancel, permissionless cancel,
         // force-cancel via HF / past-default) leaves the whole collateral in

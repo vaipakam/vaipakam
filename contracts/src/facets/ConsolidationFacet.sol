@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibConsolidation} from "../libraries/LibConsolidation.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
@@ -123,7 +124,7 @@ contract ConsolidationFacet is
         uint256 tokenId = isLenderSide
             ? loan.lenderTokenId
             : loan.borrowerTokenId;
-        if (IERC721(address(this)).ownerOf(tokenId) != msg.sender) {
+        if (LibPositionNFT.ownerOf(tokenId) != msg.sender) {
             revert NotNFTOwner();
         }
 

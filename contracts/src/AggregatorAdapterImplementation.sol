@@ -9,6 +9,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IERC721Receiver} from "@openzeppelin/contracts/token/ERC721/IERC721Receiver.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
+import {IPositionNFTSource} from "./interfaces/IPositionNFTSource.sol";
 import {LibVaipakam} from "./libraries/LibVaipakam.sol";
 import {LibSwap} from "./libraries/LibSwap.sol";
 
@@ -743,7 +744,7 @@ contract AggregatorAdapterImplementation is
     ///         the principal. Screened (Tier-1 funds/asset-out to the principal).
     function sweepNFTToPrincipal(address nft, uint256 tokenId) external {
         if (msg.sender != authorizedPrincipal) revert NotAuthorizedPrincipal();
-        if (nft == diamond) revert CannotSweepProtocolNFT();
+        if (_isPositionNFT(nft)) revert CannotSweepProtocolNFT();
         _screenPrincipal();
         // #626 round-10 P3 — plain `transferFrom`, not `safeTransferFrom`: the
         // principal may be an aggregator CONTRACT without `onERC721Received`, and
@@ -792,8 +793,16 @@ contract AggregatorAdapterImplementation is
         uint256,
         bytes calldata
     ) external view override returns (bytes4) {
-        if (msg.sender != diamond || from != address(0)) revert UnexpectedNFT();
+        // #3205 — the PositionNFT core mints, so it is the caller here.
+        if (from != address(0) || msg.sender != IPositionNFTSource(diamond).positionNFT()) revert UnexpectedNFT();
         return IERC721Receiver.onERC721Received.selector;
+    }
+
+    /// @dev #3205 — a Vaipakam position NFT: the PositionNFT core the Diamond
+    ///      records (the core mints, and is the token contract), or the
+    ///      Diamond itself (kept so a pre-#3205 reading cannot slip through).
+    function _isPositionNFT(address nft) private view returns (bool) {
+        return nft == diamond || nft == IPositionNFTSource(diamond).positionNFT();
     }
 
     // ─── Governance ─────────────────────────────────────────────────────────

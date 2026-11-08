@@ -7,7 +7,7 @@ import {LibInterestLedger} from "../libraries/LibInterestLedger.sol";
 import {LibMetricsTypes} from "../libraries/LibMetricsTypes.sol";
 import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
-import {LibERC721} from "../libraries/LibERC721.sol";
+import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
 import {LibScanPage} from "../libraries/LibScanPage.sol";
 import {LibPausable} from "../libraries/LibPausable.sol";
 import {OracleFacet} from "./OracleFacet.sol";
@@ -1004,7 +1004,7 @@ contract MetricsFacet {
     // scanning logs — Alchemy / public RPCs that cap event scans to 10 blocks
     // no longer affect reads. The reverse indexes are append-only (see
     // LibVaipakam.Storage.userLoanIds / userOfferIds) and the position NFT
-    // enumeration lives in LibERC721.ERC721Storage.allTokens / ownedTokens.
+    // enumeration lives in LibPositionNFT.ERC721Storage.allTokens / ownedTokens.
 
     /// @notice Global loan/offer counts. `nextLoanId - 1` is the highest ever
     ///         assigned ID; IDs are sequential and start at 1.
@@ -1334,12 +1334,15 @@ contract MetricsFacet {
         returns (uint256[] memory loanIds, uint256[] memory tokenIds)
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        uint256 balance = LibERC721.balanceOf(user);
+        uint256 balance = LibPositionNFT.balanceOf(user);
         uint256[] memory loanBuf = new uint256[](balance);
         uint256[] memory tokenBuf = new uint256[](balance);
         uint256 filled;
         for (uint256 i = 0; i < balance; i++) {
-            uint256 tokenId = LibERC721.tokenOfOwnerByIndex(user, i);
+            uint256 tokenId = LibPositionNFT.tokenOfOwnerByIndex(user, i);
+            // #3205 — a retired token (closed position, kept as a receipt)
+            // is listed nowhere, as a burned one was not.
+            if (LibPositionNFT.isRetired(tokenId)) continue;
             uint256 lid = s.loanIdByPositionTokenId[tokenId];
             if (lid != 0) {
                 loanBuf[filled] = lid;
@@ -1375,12 +1378,15 @@ contract MetricsFacet {
         returns (uint256[] memory offerIds, uint256[] memory tokenIds)
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        uint256 balance = LibERC721.balanceOf(user);
+        uint256 balance = LibPositionNFT.balanceOf(user);
         uint256[] memory offerBuf = new uint256[](balance);
         uint256[] memory tokenBuf = new uint256[](balance);
         uint256 filled;
         for (uint256 i = 0; i < balance; i++) {
-            uint256 tokenId = LibERC721.tokenOfOwnerByIndex(user, i);
+            uint256 tokenId = LibPositionNFT.tokenOfOwnerByIndex(user, i);
+            // #3205 — a retired token (closed position, kept as a receipt)
+            // is listed nowhere, as a burned one was not.
+            if (LibPositionNFT.isRetired(tokenId)) continue;
             uint256 oid = s.offerIdByPositionTokenId[tokenId];
             if (oid != 0) {
                 offerBuf[filled] = oid;
@@ -1430,7 +1436,7 @@ contract MetricsFacet {
         )
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        totalBalance = LibERC721.balanceOf(user);
+        totalBalance = LibPositionNFT.balanceOf(user);
         if (offset >= totalBalance || limit == 0) {
             return (new uint256[](0), new uint256[](0), totalBalance);
         }
@@ -1442,7 +1448,10 @@ contract MetricsFacet {
         uint256[] memory tokenBuf = new uint256[](span);
         uint256 filled;
         for (uint256 i = offset; i < end; i++) {
-            uint256 tokenId = LibERC721.tokenOfOwnerByIndex(user, i);
+            uint256 tokenId = LibPositionNFT.tokenOfOwnerByIndex(user, i);
+            // #3205 — a retired token (closed position, kept as a receipt)
+            // is listed nowhere, as a burned one was not.
+            if (LibPositionNFT.isRetired(tokenId)) continue;
             uint256 lid = s.loanIdByPositionTokenId[tokenId];
             if (lid != 0) {
                 loanBuf[filled] = lid;
@@ -1485,7 +1494,7 @@ contract MetricsFacet {
         )
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        totalBalance = LibERC721.balanceOf(user);
+        totalBalance = LibPositionNFT.balanceOf(user);
         if (offset >= totalBalance || limit == 0) {
             return (new uint256[](0), new uint256[](0), totalBalance);
         }
@@ -1496,7 +1505,10 @@ contract MetricsFacet {
         uint256[] memory tokenBuf = new uint256[](span);
         uint256 filled;
         for (uint256 i = offset; i < end; i++) {
-            uint256 tokenId = LibERC721.tokenOfOwnerByIndex(user, i);
+            uint256 tokenId = LibPositionNFT.tokenOfOwnerByIndex(user, i);
+            // #3205 — a retired token (closed position, kept as a receipt)
+            // is listed nowhere, as a burned one was not.
+            if (LibPositionNFT.isRetired(tokenId)) continue;
             uint256 oid = s.offerIdByPositionTokenId[tokenId];
             if (oid != 0) {
                 offerBuf[filled] = oid;
@@ -1846,9 +1858,10 @@ contract MetricsFacet {
         view
         returns (NFTPositionSummary memory s)
     {
-        LibERC721.ERC721Storage storage es = LibERC721._storage();
-        // Reverts when token doesn't exist — same UX as ownerOf.
-        if (es.owners[tokenId] == address(0)) revert("NFT does not exist");
+        LibPositionNFT.ERC721Storage storage es = LibPositionNFT._storage();
+        // Reverts for a never-minted id. A retired token (closed position,
+        // kept by its holder as a receipt) still summarises, so it renders.
+        if (LibPositionNFT.core().holderOf(tokenId) == address(0)) revert("NFT does not exist");
 
         s.tokenId = tokenId;
         s.offerId = es.offerIds[tokenId];
@@ -1860,6 +1873,11 @@ contract MetricsFacet {
         LibVaipakam.Storage storage vs = LibVaipakam.storageSlot();
         LibVaipakam.Offer storage offer = vs.offers[s.offerId];
         s.createdAt = offer.createdAt;
+        // #3205 — a retired token is a receipt of a closed position: it names
+        // its offer, loan, side and last status, and no live figure (no
+        // principal, collateral or claim), so a marketplace cannot show it as
+        // the live position it once was.
+        if (es.retired[tokenId]) return s;
 
         // Resolve realized loan terms when a loan exists (the common case
         // since Phase 1 only mints NFTs at loan-init); otherwise fall back

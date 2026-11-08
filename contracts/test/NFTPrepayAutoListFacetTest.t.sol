@@ -22,7 +22,7 @@ import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {FeeLeg, PREPAY_MODE_FIXED_PRICE, PREPAY_MODE_DUTCH} from "../src/seaport/PrepayTypes.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {IVaipakamPrepayContext} from "../src/seaport/IVaipakamPrepayContext.sol";
-import {LibERC721} from "../src/libraries/LibERC721.sol";
+import {LibPositionNFT} from "../src/libraries/LibPositionNFT.sol";
 
 /**
  * @notice T-086 Round-7 (Issue #355) — facet-level integration tests
@@ -480,7 +480,7 @@ contract NFTPrepayAutoListFacetTest is SetupTest {
         // would have taken at post-time (round-3.4 P2 line 529 fix).
         TestMutatorFacet(address(diamond)).lockNFTRaw(
             BORROWER_TOKEN_ID,
-            LibERC721.LockReason.PrepayCollateralListing
+            LibPositionNFT.RouteReason.PrepayCollateralListing
         );
 
         // Compute the live floor to size the stale ask above it.
@@ -560,7 +560,7 @@ contract NFTPrepayAutoListFacetTest is SetupTest {
         // would have taken (round-3.5 P2 line 599 fix).
         TestMutatorFacet(address(diamond)).lockNFTRaw(
             BORROWER_TOKEN_ID,
-            LibERC721.LockReason.PrepayCollateralListing
+            LibPositionNFT.RouteReason.PrepayCollateralListing
         );
 
         IVaipakamPrepayContext.PrepayContext memory pctx =
@@ -624,7 +624,7 @@ contract NFTPrepayAutoListFacetTest is SetupTest {
 
         TestMutatorFacet(address(diamond)).lockNFTRaw(
             BORROWER_TOKEN_ID,
-            LibERC721.LockReason.PrepayCollateralListing
+            LibPositionNFT.RouteReason.PrepayCollateralListing
         );
 
         IVaipakamPrepayContext.PrepayContext memory pctx =

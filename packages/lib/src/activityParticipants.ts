@@ -149,13 +149,9 @@ const PARTIES: ReadonlyMap<string, readonly string[]> = new Map<string, readonly
   ['PayoutCancelled', ['account']],
   ['PayoutHeldInVault', ['account']],
   ['PaymentCreditedToVault', ['account']],
-  ['PositionTransferQueued', ['account']],
-  ['PositionTransferReleased', ['account']],
-  ['PositionTransferCancelled', ['account']],
   ['EscapeWithdrawal', ['account']],
   // A co-signature names the signer who gave it.
   ['PayoutCosigned', ['account', 'signer']],
-  ['PositionTransferCosigned', ['account', 'signer']],
   // Protected account mode: the account's own settings and its lock.
   ['ProtectedModeEnabled', ['account']],
   ['ProtectedModeDisabled', ['account']],
@@ -187,10 +183,6 @@ const PARTIES: ReadonlyMap<string, readonly string[]> = new Map<string, readonly
   ['ReplacementCancelled', ['account', 'nominee']],
   ['PrimaryReplaced', ['account', 'controller']],
   ['NFTMinted', ['owner']],
-  ['Approval', ['owner']],
-  ['ApprovalForAll', ['owner']],
-  // The actor is the recipient (`to`); the sender gave the position up.
-  ['Transfer', ['from']],
   // Proceeds owed to `recipient` held instead of paid. Shown only to the
   // recipient, under a label that names no list and no provider.
   ['SanctionedProceedsLocked', ['recipient']],
@@ -242,8 +234,6 @@ const LOCAL_NOT_A_PARTY: ReadonlyMap<string, Readonly<Record<string, string>>> =
   string,
   Readonly<Record<string, string>>
 >([
-  ['Approval', { approved: 'the address approved for one position NFT' }],
-  ['ApprovalForAll', { operator: 'the operator approved for every position NFT' }],
   // The owner's declared source of an adopted asset is a statement about
   // where it came from, not a wallet acting in the row.
   ['UntrackedAdopted', { declaredSource: 'the address the owner declared sent the asset' }],
@@ -253,9 +243,6 @@ const LOCAL_NOT_A_PARTY: ReadonlyMap<string, Readonly<Record<string, string>>> =
   ['PayoutQueued', { recipient: "the owner's wallet or an allowlisted address" }],
   ['PayoutReleased', { recipient: "the owner's wallet or an allowlisted address" }],
   ['PayoutCancelled', { by: 'the wallet that cancelled (the owner or one of its signers, acting on the account)' }],
-  ['PositionTransferQueued', { to: "the owner's wallet or an allowlisted address" }],
-  ['PositionTransferReleased', { to: "the owner's wallet or an allowlisted address" }],
-  ['PositionTransferCancelled', { by: 'the wallet that cancelled (the owner or one of its signers, acting on the account)' }],
   ['SettingChangeCancelled', { by: 'the wallet that cancelled (the owner or one of its signers, acting on the account)' }],
   ['AllowlistAddRequested', { destination: 'an address the owner is adding as a payout destination' }],
   ['AllowlistAddCancelled', { destination: 'the payout destination withdrawn', by: 'the wallet that cancelled (the owner or one of its signers, acting on the account)' }],
@@ -358,6 +345,8 @@ const EXEMPT: ReadonlyMap<string, ExemptGroup> = new Map<string, ExemptGroup>([
       'UsdChainlinkDenominatorSet',
       // #3204 — the VaultBeacon new vaults point at, set once at deploy.
       'VaultBeaconSet',
+      // #3205 — the PositionNFT core the Diamond mints through, set once at deploy.
+      'PositionNFTSet',
       'VPFIDiscountConfigUpdated',
       'VPFITokenRotated',
       'VPFITokenSet',

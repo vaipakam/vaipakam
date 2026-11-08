@@ -4,7 +4,7 @@ pragma solidity ^0.8.29;
 
 import {SetupTest} from "./SetupTest.t.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
-import {LibERC721} from "../src/libraries/LibERC721.sol";
+import {LibPositionNFT} from "../src/libraries/LibPositionNFT.sol";
 import {NFTPrepayListingFacet} from "../src/facets/NFTPrepayListingFacet.sol";
 import {NFTPrepayDutchListingFacet} from "../src/facets/NFTPrepayDutchListingFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
@@ -360,7 +360,7 @@ contract NFTPrepayListingFacetTest is SetupTest {
         // Use TestMutatorFacet so we can write the lock through the
         // diamond's storage context.
         TestMutatorFacet(address(diamond)).lockNFTRaw(
-            BORROWER_TOKEN_ID, LibERC721.LockReason.PrecloseOffset
+            BORROWER_TOKEN_ID, LibPositionNFT.RouteReason.PrecloseOffset
         );
 
         vm.prank(borrowerHolder);
@@ -368,7 +368,7 @@ contract NFTPrepayListingFacetTest is SetupTest {
             abi.encodeWithSelector(
                 NFTPrepayListingFacet.BorrowerNFTAlreadyLocked.selector,
                 BORROWER_TOKEN_ID,
-                LibERC721.LockReason.PrecloseOffset
+                LibPositionNFT.RouteReason.PrecloseOffset
             )
         );
         NFTPrepayListingFacet(address(diamond)).postPrepayListing(
@@ -418,8 +418,8 @@ contract NFTPrepayListingFacetTest is SetupTest {
 
         // Borrower-position NFT locked with the right reason.
         assertEq(
-            uint8(VaipakamNFTFacet(address(diamond)).positionLock(BORROWER_TOKEN_ID)),
-            uint8(LibERC721.LockReason.PrepayCollateralListing),
+            uint8(VaipakamNFTFacet(address(diamond)).positionRoute(BORROWER_TOKEN_ID)),
+            uint8(LibPositionNFT.RouteReason.PrepayCollateralListing),
             "borrower NFT locked with PrepayCollateralListing reason"
         );
     }
@@ -577,8 +577,8 @@ contract NFTPrepayListingFacetTest is SetupTest {
 
         // Lock stays on through the update (only the orderHash rotates).
         assertEq(
-            uint8(VaipakamNFTFacet(address(diamond)).positionLock(BORROWER_TOKEN_ID)),
-            uint8(LibERC721.LockReason.PrepayCollateralListing),
+            uint8(VaipakamNFTFacet(address(diamond)).positionRoute(BORROWER_TOKEN_ID)),
+            uint8(LibPositionNFT.RouteReason.PrepayCollateralListing),
             "lock stays on through update"
         );
     }
@@ -694,8 +694,8 @@ contract NFTPrepayListingFacetTest is SetupTest {
             "post-repay cancel clears bookkeeping"
         );
         assertEq(
-            uint8(VaipakamNFTFacet(address(diamond)).positionLock(BORROWER_TOKEN_ID)),
-            uint8(LibERC721.LockReason.None),
+            uint8(VaipakamNFTFacet(address(diamond)).positionRoute(BORROWER_TOKEN_ID)),
+            uint8(LibPositionNFT.RouteReason.None),
             "post-repay cancel releases the lock"
         );
     }
@@ -724,8 +724,8 @@ contract NFTPrepayListingFacetTest is SetupTest {
 
         // Lock released.
         assertEq(
-            uint8(VaipakamNFTFacet(address(diamond)).positionLock(BORROWER_TOKEN_ID)),
-            uint8(LibERC721.LockReason.None),
+            uint8(VaipakamNFTFacet(address(diamond)).positionRoute(BORROWER_TOKEN_ID)),
+            uint8(LibPositionNFT.RouteReason.None),
             "borrower NFT unlocked"
         );
     }
@@ -906,8 +906,8 @@ contract NFTPrepayListingFacetTest is SetupTest {
             address(mockExecutor)
         );
         assertEq(
-            uint8(VaipakamNFTFacet(address(diamond)).positionLock(BORROWER_TOKEN_ID)),
-            uint8(LibERC721.LockReason.PrepayCollateralListing)
+            uint8(VaipakamNFTFacet(address(diamond)).positionRoute(BORROWER_TOKEN_ID)),
+            uint8(LibPositionNFT.RouteReason.PrepayCollateralListing)
         );
 
         // Trigger the cleanup helper (the entry point both
@@ -932,8 +932,8 @@ contract NFTPrepayListingFacetTest is SetupTest {
             "vault orderHash binding cleared"
         );
         assertEq(
-            uint8(VaipakamNFTFacet(address(diamond)).positionLock(BORROWER_TOKEN_ID)),
-            uint8(LibERC721.LockReason.None),
+            uint8(VaipakamNFTFacet(address(diamond)).positionRoute(BORROWER_TOKEN_ID)),
+            uint8(LibPositionNFT.RouteReason.None),
             "borrower NFT lock released"
         );
         // Executor side received the clearOrder.
@@ -1025,8 +1025,8 @@ contract NFTPrepayListingFacetTest is SetupTest {
         NFTPrepayListingFacet(address(diamond)).cancelExpiredPrepayListing(LOAN_ID);
 
         assertEq(
-            uint8(VaipakamNFTFacet(address(diamond)).positionLock(BORROWER_TOKEN_ID)),
-            uint8(LibERC721.LockReason.None),
+            uint8(VaipakamNFTFacet(address(diamond)).positionRoute(BORROWER_TOKEN_ID)),
+            uint8(LibPositionNFT.RouteReason.None),
             "post-default cleanup still releases the lock"
         );
         assertEq(
@@ -1059,8 +1059,8 @@ contract NFTPrepayListingFacetTest is SetupTest {
         );
         assertEq(mockExecutor.clearCallCount(), 1, "clearOrder called");
         assertEq(
-            uint8(VaipakamNFTFacet(address(diamond)).positionLock(BORROWER_TOKEN_ID)),
-            uint8(LibERC721.LockReason.None),
+            uint8(VaipakamNFTFacet(address(diamond)).positionRoute(BORROWER_TOKEN_ID)),
+            uint8(LibPositionNFT.RouteReason.None),
             "borrower NFT unlocked"
         );
     }
@@ -1117,8 +1117,8 @@ contract NFTPrepayListingFacetTest is SetupTest {
             "orderHash cleared on Dutch-expiry cleanup"
         );
         assertEq(
-            uint8(VaipakamNFTFacet(address(diamond)).positionLock(BORROWER_TOKEN_ID)),
-            uint8(LibERC721.LockReason.None),
+            uint8(VaipakamNFTFacet(address(diamond)).positionRoute(BORROWER_TOKEN_ID)),
+            uint8(LibPositionNFT.RouteReason.None),
             "borrower NFT unlocked"
         );
     }
@@ -1398,8 +1398,8 @@ contract NFTPrepayListingFacetTest is SetupTest {
 
         // Lock active under PrepayCollateralListing.
         assertEq(
-            uint8(VaipakamNFTFacet(address(diamond)).positionLock(BORROWER_TOKEN_ID)),
-            uint8(LibERC721.LockReason.PrepayCollateralListing),
+            uint8(VaipakamNFTFacet(address(diamond)).positionRoute(BORROWER_TOKEN_ID)),
+            uint8(LibPositionNFT.RouteReason.PrepayCollateralListing),
             "borrower NFT locked"
         );
     }
@@ -1633,8 +1633,8 @@ contract NFTPrepayListingFacetTest is SetupTest {
 
         // Lock stayed PrepayCollateralListing across the rotation.
         assertEq(
-            uint8(VaipakamNFTFacet(address(diamond)).positionLock(BORROWER_TOKEN_ID)),
-            uint8(LibERC721.LockReason.PrepayCollateralListing),
+            uint8(VaipakamNFTFacet(address(diamond)).positionRoute(BORROWER_TOKEN_ID)),
+            uint8(LibPositionNFT.RouteReason.PrepayCollateralListing),
             "lock continuous"
         );
     }

@@ -9,7 +9,7 @@ import {LibScanPage} from "../libraries/LibScanPage.sol";
 // gate that admits the creator OR any caller against an expired offer;
 // see `cancelOffer` for the full rule.
 import {LibFacet} from "../libraries/LibFacet.sol";
-import {LibERC721} from "../libraries/LibERC721.sol";
+import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
 import {LibSaleListing} from "../libraries/LibSaleListing.sol";
 import {LibPrepayCleanup} from "../libraries/LibPrepayCleanup.sol";
 import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
@@ -127,6 +127,21 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
      *      or CancelCooldownActive.
      * @param offerId The offer ID to cancel.
      */
+    /// @dev #3205 — whether `offerId` is an offset or lender-sale vehicle whose
+    ///      route on its position is dead ({LibPositionNFT.routeIsDead}). False
+    ///      for every other offer.
+    function _vehicleRouteDead(LibVaipakam.Storage storage s, uint256 offerId) private view returns (bool) {
+        uint256 loanId = s.offsetOfferToLoanId[offerId];
+        if (loanId != 0) {
+            return LibPositionNFT.routeIsDead(s.loans[loanId].borrowerTokenId, LibPositionNFT.RouteReason.PrecloseOffset);
+        }
+        loanId = s.saleOfferToLoanId[offerId];
+        if (loanId != 0) {
+            return LibPositionNFT.routeIsDead(s.loans[loanId].lenderTokenId, LibPositionNFT.RouteReason.EarlyWithdrawalSale);
+        }
+        return false;
+    }
+
     function cancelOffer(uint256 offerId) external nonReentrant whenNotPaused {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Offer storage offer = s.offers[offerId];
@@ -144,7 +159,16 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         // refund still goes to `offer.creator`, whose protected payout gate
         // queues it to the controller.
         address creator = offer.creator;
-        if (LibProtectedAccount.manager(creator) != msg.sender && !LibVaipakam.isOfferExpired(offer)) {
+        // #3205 — and anyone against an offset or sale vehicle whose route is
+        // dead: the position it is bound to moved (or its route was closed),
+        // so it can never complete, and only its creator could otherwise
+        // clear it, leaving the position's new holder encumbered. The refund
+        // still goes to `offer.creator`.
+        if (
+            LibProtectedAccount.manager(creator) != msg.sender
+                && !LibVaipakam.isOfferExpired(offer)
+                && !_vehicleRouteDead(s, offerId)
+        ) {
             revert NotCreatorOrNotExpired(creator, offer.expiresAt);
         }
         if (offer.accepted) revert OfferAlreadyAccepted();
@@ -216,25 +240,12 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         // returned by the ordinary Lender-cancel refund branch below.
         uint256 lockedOffsetLoanId = s.offsetOfferToLoanId[offerId];
         if (lockedOffsetLoanId != 0) {
-            // #1001 (S3, Codex #1070 r8/r9 P2) — unlock the borrower NFT iff it
-            // still EXISTS, keyed on token existence rather than loan status. Under
-            // settle-at-completion an offset can stay linked while the original
-            // loan goes terminal (the borrower repays/defaults directly instead of
-            // completing the offset). `LibERC721._unlock` reads `ownerOf(tokenId)`,
-            // which reverts on a BURNED token — so an unconditional unlock would
-            // brick the cancel once `claimAsBorrower` has burned `borrowerTokenId`,
-            // stranding the offer's pre-funded principal. But a status guard is
-            // wrong in BOTH directions: FallbackPending (r9 #1) and a terminal-but-
-            // NOT-YET-CLAIMED loan (r9 #4) both keep the NFT intact + locked, so
-            // skipping the unlock would leave it permanently locked. Gate on the
-            // non-reverting `_ownerOfRaw` (address(0) ⇔ burned/nonexistent): unlock
-            // when the token lives (Active / FallbackPending / terminal-unclaimed),
-            // skip the moot unlock only once it's actually burned. The link is
-            // dropped + the creator's principal refunded either way.
-            uint256 offsetBorrowerTokenId = s.loans[lockedOffsetLoanId].borrowerTokenId;
-            if (LibERC721._ownerOfRaw(offsetBorrowerTokenId) != address(0)) {
-                LibERC721._unlock(offsetBorrowerTokenId);
-            }
+            // #3205 — close the offset route on the borrower position. Closing
+            // reads no holder (the route record lives in Diamond storage), so it
+            // runs whatever became of the position meanwhile (repaid, defaulted,
+            // claimed and retired), and the creator's principal is refunded
+            // either way.
+            LibPositionNFT.closeRouteIfHeldBy(s.loans[lockedOffsetLoanId].borrowerTokenId, LibPositionNFT.RouteReason.PrecloseOffset);
             delete s.offsetOfferToLoanId[offerId];
             delete s.loanToOffsetOfferId[lockedOffsetLoanId];
         }
@@ -242,7 +253,7 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         // (b) EarlyWithdrawal loan sale: release the lender position NFT.
         uint256 lockedSaleLoanId = s.saleOfferToLoanId[offerId];
         if (lockedSaleLoanId != 0) {
-            LibERC721._unlock(s.loans[lockedSaleLoanId].lenderTokenId);
+            LibPositionNFT.closeRouteIfHeldBy(s.loans[lockedSaleLoanId].lenderTokenId, LibPositionNFT.RouteReason.EarlyWithdrawalSale);
             delete s.saleOfferToLoanId[offerId];
             delete s.loanToSaleOfferId[lockedSaleLoanId];
             // #1503 item 4 — bounds die with the listing they describe.
@@ -461,7 +472,7 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         // Burn position NFT (not the underlying asset tokenId).
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
-                VaipakamNFTFacet.burnNFT.selector,
+                VaipakamNFTFacet.retirePosition.selector,
                 offer.positionTokenId
             ),
             NFTBurnFailed.selector

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
 import {SetupTest} from "./SetupTest.t.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {AutoLifecycleFacet} from "../src/facets/AutoLifecycleFacet.sol";
@@ -244,7 +245,7 @@ contract RefinanceRequestGuardTest is SetupTest {
         uint256 tokenId = LoanFacet(address(diamond)).getLoanDetails(loanId).borrowerTokenId;
         address newHolder = makeAddr("newHolder");
         vm.prank(borrower);
-        IERC721(address(diamond)).transferFrom(borrower, newHolder, tokenId);
+        LibTestPositionNFT.core(address(diamond)).transferFrom(borrower, newHolder, tokenId);
         assertEq(_live(loanId), 0);
     }
 
@@ -283,7 +284,7 @@ contract RefinanceRequestGuardTest is SetupTest {
 
         address holderB = makeAddr("holderB");
         vm.prank(borrower);
-        IERC721(address(diamond)).transferFrom(borrower, holderB, tokenId);
+        LibTestPositionNFT.core(address(diamond)).transferFrom(borrower, holderB, tokenId);
         address vaultB = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(holderB);
         ERC20Mock(mockCollateralERC20).mint(holderB, LOAN_COLLATERAL);
         vm.startPrank(holderB);
@@ -299,7 +300,7 @@ contract RefinanceRequestGuardTest is SetupTest {
         // #664 — the cancel cooldown applies to every fresh offer.
         vm.warp(block.timestamp + LibVaipakam.MIN_OFFER_CANCEL_DELAY);
         OfferCancelFacet(address(diamond)).cancelOffer(r2);
-        IERC721(address(diamond)).transferFrom(holderB, borrower, tokenId);
+        LibTestPositionNFT.core(address(diamond)).transferFrom(holderB, borrower, tokenId);
         vm.stopPrank();
         vm.prank(borrower);
         AutoLifecycleFacet(address(diamond)).setAutoRefinanceCaps(
@@ -517,11 +518,11 @@ contract RefinanceRequestGuardTest is SetupTest {
         RefinanceFacet(address(diamond)).checkRefinanceRequest(loanId, r1);
     }
 
-    /// Standing is reversible only through the position coming back to the
-    /// request's creator, and an open offset locks the position — so a request
-    /// can never stand again beside an offset opened while it did not. A
-    /// handed-away request lets the new holder open an offset; the position
-    /// cannot return while it is open, and the request cannot be taken.
+    /// A handed-away request lets the new holder open an offset. Since #3205
+    /// an open offset no longer locks the position: it may come back to the
+    /// request's creator, which only kills the offset (its completion needs
+    /// the transfer count unchanged). The request still cannot be taken while
+    /// the offset is open, whoever holds the position.
     function test_aRequestCannotStandOrBeTakenBesideAnOffset() public {
         uint256 loanId = _activeLoan();
         uint256 r1 = _request(loanId, 0);
@@ -529,7 +530,7 @@ contract RefinanceRequestGuardTest is SetupTest {
 
         address holderB = makeAddr("offsetHolder");
         vm.prank(borrower);
-        IERC721(address(diamond)).transferFrom(borrower, holderB, tokenId);
+        LibTestPositionNFT.core(address(diamond)).transferFrom(borrower, holderB, tokenId);
         address vaultB = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(holderB);
         ERC20Mock(mockERC20).mint(holderB, LOAN_PRINCIPAL * 4);
         vm.startPrank(holderB);
@@ -539,20 +540,19 @@ contract RefinanceRequestGuardTest is SetupTest {
             loanId, 500, 30, mockCollateralERC20, LOAN_COLLATERAL, true, mockERC20
         );
         assertGt(offsetOfferId, 0, "precondition: the offset is open");
-        vm.expectRevert();
-        IERC721(address(diamond)).transferFrom(holderB, borrower, tokenId);
+        LibTestPositionNFT.core(address(diamond)).transferFrom(holderB, borrower, tokenId);
         vm.stopPrank();
+        assertEq(LibTestPositionNFT.core(address(diamond)).ownerOf(tokenId), borrower, "the position came back");
 
-        assertEq(_live(loanId), 0, "R1 does not stand beside the offset");
         assertTrue(
             OfferPreviewFacet(address(diamond)).previewAccept(r1, makeAddr("previewLender")).errorCode
                 != OfferAcceptFacet.AcceptError.None,
             "previewed as unable to complete"
         );
-        // Acceptance refuses on the creator no longer holding the position,
-        // before the take-side offset check is reached.
+        // The creator holds the position again, so the take-side offset check
+        // is what refuses.
         _acceptExpectingRevert(
-            r1, abi.encodeWithSelector(LibAutoRefinanceCheck.RefinanceTargetNotBorrower.selector)
+            r1, abi.encodeWithSelector(IVaipakamErrors.RefinanceBlockedByOffset.selector, loanId, offsetOfferId)
         );
     }
 

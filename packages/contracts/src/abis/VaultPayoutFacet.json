@@ -71,19 +71,6 @@
   },
   {
     "type": "function",
-    "name": "cosignPositionTransfer",
-    "inputs": [
-      {
-        "name": "id",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "creditOwnerVault",
     "inputs": [
       {
@@ -255,76 +242,6 @@
   {
     "type": "function",
     "name": "getPendingPayoutIds",
-    "inputs": [
-      {
-        "name": "account",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256[]",
-        "internalType": "uint256[]"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getPendingPositionTransfer",
-    "inputs": [
-      {
-        "name": "id",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "tuple",
-        "internalType": "struct LibVaipakam.PendingPositionTransfer",
-        "components": [
-          {
-            "name": "from",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "state",
-            "type": "uint8",
-            "internalType": "uint8"
-          },
-          {
-            "name": "cosigned",
-            "type": "bool",
-            "internalType": "bool"
-          },
-          {
-            "name": "releaseAt",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "to",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "tokenId",
-            "type": "uint256",
-            "internalType": "uint256"
-          }
-        ]
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getPendingTransferIds",
     "inputs": [
       {
         "name": "account",
@@ -634,31 +551,6 @@
         "name": "recipient",
         "type": "address",
         "indexed": false,
-        "internalType": "address"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "PositionTransferCosigned",
-    "inputs": [
-      {
-        "name": "account",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "id",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "signer",
-        "type": "address",
-        "indexed": true,
         "internalType": "address"
       }
     ],

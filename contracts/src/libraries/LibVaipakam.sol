@@ -4216,7 +4216,7 @@ library LibVaipakam {
         //      orderHash left in `orderContext` would still be
         //      fillable until grace expiry. We need the old hash to
         //      pass to `clearOrder`.
-        //   3. The `LibERC721._lock(LockReason.PrepayCollateralListing)`
+        //   3. The `LibPositionNFT.openRoute(LockReason.PrepayCollateralListing)`
         //      lock is the consent + safety primitive; this mapping
         //      is the orderHash bookkeeping. Keeping them in separate
         //      storage slots avoids overloading the lock semantics.
@@ -8265,15 +8265,19 @@ library LibVaipakam {
         /// @dev Protected account mode — every pending position-NFT transfer
         ///      row by id. Written only by `LibProtectedAccount`. Appended —
         ///      append-only.
-        mapping(uint256 => PendingPositionTransfer) pendingPositionTransfers;
+        /// @dev #3205: retired; the queued position transfer was replaced by
+        ///      the PositionNFT core's holder lock.
+        mapping(uint256 => PendingPositionTransfer) retiredPendingPositionTransfers;
         /// @dev Protected account mode — per owner, the ids of the position
         ///      transfer rows still queued. Written only by
         ///      `LibProtectedAccount`. Appended — append-only.
-        mapping(address => EnumerableSet.UintSet) pendingTransferIds;
+        /// @dev #3205: retired.
+        mapping(address => EnumerableSet.UintSet) retiredPendingTransferIds;
         /// @dev Protected account mode — per position token id, the one open
         ///      transfer row for it; zero means none. Written only by
         ///      `LibProtectedAccount`. Appended — append-only.
-        mapping(uint256 => uint256) pendingTransferByToken;
+        /// @dev #3205: retired.
+        mapping(uint256 => uint256) retiredPendingTransferByToken;
         /// @dev Protected account mode — per owner, the open proposal to
         ///      replace the primary wallet. Written only by
         ///      `LibProtectedAccount`. Appended — append-only.
@@ -8391,7 +8395,8 @@ library LibVaipakam {
     struct ProtectedAccount {
         bool enabled;
         bool locked;
-        bool protectNfts;
+        /// @dev #3205: retired; NFT protection is the PositionNFT core's holder lock.
+        bool retiredProtectNfts;
         bool requireCosign;
         bool retired;
         uint32 delaySeconds;
@@ -8399,7 +8404,8 @@ library LibVaipakam {
         uint64 pendingDelayAt;
         uint64 pendingDisableAt;
         uint64 pendingUnlockAt;
-        uint64 pendingNftOffAt;
+        /// @dev #3205: retired with `retiredProtectNfts`.
+        uint64 retiredPendingNftOffAt;
         uint64 pendingCosignOffAt;
         uint64 cooldownUntil;
         uint64 lockedAt;

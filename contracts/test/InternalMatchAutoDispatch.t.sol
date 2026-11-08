@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
+
 import {SetupTest} from "./SetupTest.t.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet.sol";
@@ -78,16 +80,8 @@ contract InternalMatchAutoDispatchTest is SetupTest {
         l.lenderTokenId = id * 2 + 1;
         TestMutatorFacet(address(diamond)).scaffoldActiveLoan(id, l);
 
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(IERC721.ownerOf.selector, id * 2),
-            abi.encode(borrower_)
-        );
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(IERC721.ownerOf.selector, id * 2 + 1),
-            abi.encode(lender_)
-        );
+        LibTestPositionNFT.mockHolder(address(diamond), id * 2, borrower_);
+        LibTestPositionNFT.mockHolder(address(diamond), id * 2 + 1, lender_);
 
         address bVault = VaultFactoryFacet(address(diamond))
             .getOrCreateUserVault(borrower_);

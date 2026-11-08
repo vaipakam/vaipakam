@@ -1983,27 +1983,6 @@
   },
   {
     "type": "error",
-    "name": "LockReasonConflict",
-    "inputs": [
-      {
-        "name": "tokenId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "current",
-        "type": "uint8",
-        "internalType": "enum LibERC721.LockReason"
-      },
-      {
-        "name": "attempted",
-        "type": "uint8",
-        "internalType": "enum LibERC721.LockReason"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "NFTBurnFailed",
     "inputs": []
   },
@@ -2314,6 +2293,32 @@
         "internalType": "address"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "PositionMovedSinceRouteOpened",
+    "inputs": [
+      {
+        "name": "tokenId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "countAtOpen",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "countNow",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "PositionNFTNotSet",
+    "inputs": []
   },
   {
     "type": "error",
@@ -3790,6 +3795,48 @@
     "type": "error",
     "name": "RiskAndTermsConsentRequired",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RouteConflict",
+    "inputs": [
+      {
+        "name": "tokenId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "current",
+        "type": "uint8",
+        "internalType": "enum LibPositionNFT.RouteReason"
+      },
+      {
+        "name": "attempted",
+        "type": "uint8",
+        "internalType": "enum LibPositionNFT.RouteReason"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RouteNotOpen",
+    "inputs": [
+      {
+        "name": "tokenId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "expected",
+        "type": "uint8",
+        "internalType": "enum LibPositionNFT.RouteReason"
+      },
+      {
+        "name": "current",
+        "type": "uint8",
+        "internalType": "enum LibPositionNFT.RouteReason"
+      }
+    ]
   },
   {
     "type": "error",
