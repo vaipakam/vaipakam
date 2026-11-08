@@ -1,4 +1,4 @@
-## Thread — Distinct liquidators per chain on the loan stats (PR #<n>)
+## Thread — Distinct liquidators per chain on the loan stats (PR #3368)
 
 The indexer's loan stats now report how many distinct addresses carried out liquidations on the chain over the last 7 and 30 days. This is the trigger for the liquidation bonus auction (#3355): the auction gets built once a chain has at least five independent liquidators over 30 days. Before this, nothing measured that.
 
