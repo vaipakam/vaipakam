@@ -8,12 +8,13 @@
  * in the same block can move the loan on.
  */
 import { erc721Abi, parseAbi, parseEventLogs, type Abi, type Log } from 'viem';
-import { ClaimFacetABI } from '@vaipakam/contracts/abis';
+import { ClaimFacetABI, RiskMatchLiquidationFacetABI } from '@vaipakam/contracts/abis';
 import { ASSET_ERC721, type ClaimSide } from './loanClaim';
 
 type Hex = `0x${string}`;
 
 const CLAIM = ClaimFacetABI as Abi;
+const MATCH = RiskMatchLiquidationFacetABI as Abi;
 const ERC1155_TRANSFER = parseAbi(['event TransferSingle(address indexed operator, address indexed from, address indexed to, uint256 id, uint256 value)']);
 
 type Args = Record<string, bigint | number | string | boolean | undefined>;
@@ -63,4 +64,52 @@ export function nftArrived(logs: readonly Log[], asset: Hex, assetType: number, 
     args: { to?: string; id?: bigint; value?: bigint };
   }[];
   return hits.filter((h) => same(h.args.to) && h.args.id === tokenId).reduce((t, h) => t + (h.args.value ?? 0n), 0n);
+}
+
+/** One leg's matching reward in a match this transaction made: paid to the
+ *  matcher in the principal token of the loan whose lender the leg paid. */
+export interface MatchIncentive {
+  loanId: bigint;
+  amount: bigint;
+}
+
+interface MatchArgs {
+  loanIdA?: bigint;
+  loanIdB?: bigint;
+  loanIdC?: bigint;
+  matcher?: string;
+  incentivePaidA?: bigint;
+  incentivePaidB?: bigint;
+  incentivePaidC?: bigint;
+}
+
+function matches(logs: readonly Log[], diamond: Hex, loanId: bigint): MatchArgs[] {
+  const own = logs.filter((l) => l.address.toLowerCase() === diamond.toLowerCase());
+  const events = parseEventLogs({ abi: MATCH, logs: [...own], eventName: 'InternalMatchExecuted', strict: false }) as unknown as { args: MatchArgs }[];
+  return events.map((e) => e.args).filter((a) => a.loanIdA === loanId || a.loanIdB === loanId || (a.loanIdC !== undefined && a.loanIdC !== 0n && a.loanIdC === loanId));
+}
+
+/** Whether this transaction matched the loan (`InternalMatchExecuted`): on a
+ *  loan in fallback the lender's claim runs the protocol's match first, which
+ *  rewrites the claim row it then pays. */
+export function matchedInTx(logs: readonly Log[], diamond: Hex, loanId: bigint): boolean {
+  return matches(logs, diamond, loanId).length > 0;
+}
+
+/** The matching rewards this transaction paid `account` as the matcher of a
+ *  match on the loan, one per leg that paid one (a two-way match has two
+ *  legs, a three-way match three). Each leg's reward is in the principal
+ *  token of that leg's loan, which the caller resolves. */
+export function matchIncentives(logs: readonly Log[], diamond: Hex, loanId: bigint, account: Hex): MatchIncentive[] {
+  const out: MatchIncentive[] = [];
+  for (const m of matches(logs, diamond, loanId)) {
+    if (typeof m.matcher !== 'string' || m.matcher.toLowerCase() !== account.toLowerCase()) continue;
+    const legs: [bigint | undefined, bigint | undefined][] = [
+      [m.loanIdA, m.incentivePaidA],
+      [m.loanIdB, m.incentivePaidB],
+      [m.loanIdC, m.incentivePaidC],
+    ];
+    for (const [id, amount] of legs) if (id !== undefined && id !== 0n && amount !== undefined && amount > 0n) out.push({ loanId: id, amount });
+  }
+  return out;
 }

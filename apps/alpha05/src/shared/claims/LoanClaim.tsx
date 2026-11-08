@@ -18,7 +18,7 @@ import { shortAddress } from '../ui/format';
 import { measureLoanClaim, type OutcomeText } from './claimOutcome';
 import type { ClaimSide } from './loanClaim';
 import { loanClaimReceipt } from './loanClaimReceipt';
-import { CLAIM, claimFunction, loanClaimBlockers, loanClaimChanged, readLoanClaimReview, type LoanClaimReview } from './loanClaimReview';
+import { CLAIM, claimFunction, loanClaimBlockers, loanClaimChanged, readLoanClaimReview, readPaidIncentives, type LoanClaimReview } from './loanClaimReview';
 
 type Hex = `0x${string}`;
 
@@ -95,7 +95,7 @@ export function LoanClaim({ loanId, side, chain, own, meta, onClose }: LoanClaim
       setStep(format('accept.stepOf', { n: '1', total: '1', what: text('loanClaim.stepSend') }));
       return writeContract(config, { address: diamond, abi: CLAIM, functionName, args: [loanId], chainId: chain.chainId, account });
     },
-    measure: async (receipt) => (review ? measureLoanClaim(review, receipt.logs, diamond, account, words) : []),
+    measure: async (receipt) => (review ? measureLoanClaim(review, receipt.logs, diamond, account, words, await readPaidIncentives(own, diamond, review, receipt.logs)) : []),
     release: async () => null,
   });
 

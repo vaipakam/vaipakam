@@ -15,7 +15,7 @@ import { assetAmount } from '../positions/assetAmount';
 import type { Receipt, ReceiptRow } from '../receipt/types';
 import type { TokenMetaMap } from '../reads/tokens';
 import { routedDestination, routeNotes } from '../protection/payoutCopy';
-import { ASSET_ERC20, isFallback, type ClaimLane, type LaneKind } from './loanClaim';
+import { ASSET_ERC20, isFallback, sideClaimableStatus, type ClaimLane, type LaneKind } from './loanClaim';
 import type { LoanClaimReview } from './loanClaimReview';
 
 type Copy = Pick<CopyAccess, 'text' | 'format'>;
@@ -60,8 +60,12 @@ export function loanClaimReceipt(r: LoanClaimReview, meta: TokenMetaMap | null, 
   // could not be read is unknown, never zero.
   if (r.claim === null) rows.push({ label: text('loanClaim.rowReceive'), value: unknown, binding: true });
   else if (r.lanes.length === 0 && !r.claim.claimed) rows.push({ label: text('loanClaim.rowReceive'), value: { kind: 'text', text: text('loanClaim.zeroClaim') }, binding: true });
+  // What past sellers take first is stated when it is owed, and stated as
+  // unknown when it could not be read: never left out as if nothing were owed.
+  const sellersUnread = r.side === 'lender' && r.sellersShare === null && sideClaimableStatus(r.side, Number(r.loan.status));
   if (r.side === 'lender' && r.sellersShare !== null && r.sellersShare > 0n && r.claim)
     rows.push({ label: text('loanClaim.rowSellers'), value: { kind: 'amount', asset: r.claim.asset, amount: r.sellersShare }, binding: false });
+  if (sellersUnread) rows.push({ label: text('loanClaim.rowSellers'), value: unknown, binding: false });
   if (r.side === 'lender' && Number(r.loan.status) === DEFAULTED && Number(r.loan.assetType) === ASSET_ERC20)
     rows.push({ label: text('loanClaim.rowPrincipal'), value: { kind: 'amount', asset: r.loan.principalAsset, amount: r.loan.principal }, binding: false });
   const to = claimDestination(r, copy);
@@ -72,6 +76,7 @@ export function loanClaimReceipt(r: LoanClaimReview, meta: TokenMetaMap | null, 
     text('loanClaim.closes'),
     ...(fallback ? [text('loanClaim.fallbackEnds')] : []),
     ...(r.side === 'lender' && r.sellersShare !== null && r.sellersShare > 0n ? [text('loanClaim.sellersNote')] : []),
+    ...(sellersUnread ? [text('loanClaim.sellersUnreadNote')] : []),
     ...routeNotes(r.route, r.protection, copy),
     ...(r.route === 'queued' ? [text('loanClaim.queueFullNote')] : []),
     text('loanClaim.pauseHolds'),

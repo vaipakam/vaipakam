@@ -938,10 +938,13 @@ export const copy = {
     toWallet: B('Your wallet'),
     closes: A('Collecting closes your side of the loan: the protocol burns your position token. Once both sides have collected, the loan is settled.'),
     fallbackEnds: A(
-      'This loan is in fallback. Collecting now ends it: the borrower can no longer cure it and the loan is recorded as defaulted. A match the protocol makes while you collect can change what is paid; the finish card shows what was paid.',
+      'This loan is in fallback. Collecting now ends it: the borrower can no longer cure it and the loan is recorded as defaulted. A match the protocol makes while you collect can change what is paid, and pays you a small matching reward in the tokens it moves; the finish card shows what was paid.',
     ),
     sellersNote: A(
       'Past sellers of this position are owed interest they earned and were not paid. The protocol pays them first from this payout, after your principal, and the payout above is what remains for you.',
+    ),
+    sellersUnreadNote: A(
+      'What past sellers of this position take first could not be read. If they are owed interest, the protocol pays them first from this payout, so you may receive less than shown above.',
     ),
     queueFullNote: A('If your payout queue is full when this confirms, the protocol keeps the payout in your vault instead. The finish card says which.'),
     pauseHolds: A('If the protocol pauses before this confirms, it is refused and nothing moves.'),
@@ -954,6 +957,10 @@ export const copy = {
     notClaimed: B('The transaction records no claim on this loan.'),
     legRecorded: B('Payout collected from loan #{{id}}'),
     legRowPaid: B('The protocol paid {{amount}} from the claim'),
+    legRowMatched: B('The protocol matched this loan as you collected and paid {{amount}} from the claim'),
+    legIncentive: B('Matching reward paid to you: {{amount}}'),
+    legIncentiveUnread: B('A matching reward was paid to you'),
+    incentiveUnread: A('The protocol paid you a matching reward from loan #{{id}}, but its token could not be read, so it is not counted in the amounts here.'),
     rowOther: A('The protocol paid {{amount}} from the claim, not the {{expected}} reviewed.'),
     surplusNotPaid: B('The transaction records no surplus payment.'),
     legArrived: B('{{amount}} arrived in your wallet'),

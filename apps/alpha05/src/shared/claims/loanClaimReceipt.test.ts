@@ -61,3 +61,17 @@ describe('loanClaimReceipt payout amount', () => {
     expect(amountRow({ ...review, claim: { ...open, claimed: true }, lanes: [] })).toBeUndefined();
   });
 });
+
+describe('loanClaimReceipt seller share', () => {
+  const lender: LoanClaimReview = { ...review, side: 'lender' };
+  const sellers = (r: LoanClaimReview) => loanClaimReceipt(r, null, copy).rows.find((x) => x.label === 'loanClaim.rowSellers')?.value;
+  it('states an unread seller share as unknown, with what it may take', () => {
+    expect(sellers(lender)?.kind).toBe('unknown');
+    expect(lines(lender)).toContain('loanClaim.sellersUnreadNote');
+  });
+  it('says nothing of sellers owed nothing, and nothing on the borrower side', () => {
+    expect(sellers({ ...lender, sellersShare: 0n })).toBeUndefined();
+    expect(lines({ ...lender, sellersShare: 0n })).not.toContain('loanClaim.sellersUnreadNote');
+    expect(sellers(review)).toBeUndefined();
+  });
+});

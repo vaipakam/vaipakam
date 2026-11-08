@@ -39,7 +39,9 @@ export function RewardsWidget() {
 
   const pending = useOwnRead(['rewardsPending', diamond], (c) => readPendingRewards(c, diamond, account), { enabled });
   // The labelled lower bound, read only when the preview itself cannot run.
-  const lower = useOwnRead(['rewardsLowerBound', diamond], (c) => readRewardLowerBound(c, diamond, account), { enabled: enabled && pending.state === 'failed' && pending.data === null });
+  const lower = useOwnRead(['rewardsLowerBound', diamond], (c) => readRewardLowerBound(c, diamond, account), {
+    enabled: enabled && pending.state === 'failed' && pending.data === null,
+  });
   const held = useOwnRead(['rewardsHeld', diamond], (c) => readHeldRewards(c, diamond, account), { enabled });
   const expiry = useOwnRead(['rewardsExpiry', diamond], (c) => readSoonestExpiry(c, diamond, account), { enabled });
   const tier = useOwnRead(['rewardsTier', diamond], (c) => readEffectiveTier(c, diamond, account), { enabled });
@@ -68,7 +70,9 @@ export function RewardsWidget() {
               : format('rewards.pendingZero', { from: p.fromDay.toString(), to: p.toDay.toString() })}
         </p>
         {/* A claim paid from its reward entries alone names no day range. */}
-        {p.amount > 0n && <p className="tier-b">{p.toDay === 0n ? text('rewards.pendingEntries') : format('rewards.pendingDays', { from: p.fromDay.toString(), to: p.toDay.toString() })}</p>}
+        {p.amount > 0n && (
+          <p className="tier-b">{p.toDay === 0n ? text('rewards.pendingEntries') : format('rewards.pendingDays', { from: p.fromDay.toString(), to: p.toDay.toString() })}</p>
+        )}
       </>
     );
   } else if (p) {
@@ -113,7 +117,12 @@ export function RewardsWidget() {
   const e = expiry.data;
   if (e?.kind === 'dark') removal = <p className="tier-b">{text('rewards.expiryDark')}</p>;
   else if (e?.kind === 'none') removal = <p className="tier-b">{text('rewards.expiryNone')}</p>;
-  else if (e?.kind === 'incomplete') removal = <Notice tone="warn" tier="A">{text('rewards.expiryIncomplete')}</Notice>;
+  else if (e?.kind === 'incomplete')
+    removal = (
+      <Notice tone="warn" tier="A">
+        {text('rewards.expiryIncomplete')}
+      </Notice>
+    );
   else if (e?.kind === 'date') {
     const when = formatUtc(e.at);
     removal = (
@@ -125,10 +134,19 @@ export function RewardsWidget() {
         ) : (
           <p className="tier-b">{format('rewards.expiryDate', { when })}</p>
         )}
-        {!e.complete && <Notice tone="warn" tier="A">{text('rewards.expiryPartial')}</Notice>}
+        {!e.complete && (
+          <Notice tone="warn" tier="A">
+            {text('rewards.expiryPartial')}
+          </Notice>
+        )}
       </>
     );
-  } else if (expiry.state === 'failed') removal = <Notice tone="warn" tier="A">{format('rewards.expiryFailed', { reason: expiry.error ?? 'no answer' })}</Notice>;
+  } else if (expiry.state === 'failed')
+    removal = (
+      <Notice tone="warn" tier="A">
+        {format('rewards.expiryFailed', { reason: expiry.error ?? 'no answer' })}
+      </Notice>
+    );
 
   // RW-36: shown only when something is held; a read failure is stated.
   let heldBlock = null;
@@ -150,7 +168,11 @@ export function RewardsWidget() {
         </Notice>
       );
   } else if (held.state === 'failed' && h === null) {
-    heldBlock = <Notice tone="warn" tier="A">{format('rewards.heldFailed', { reason: held.error ?? 'no answer' })}</Notice>;
+    heldBlock = (
+      <Notice tone="warn" tier="A">
+        {format('rewards.heldFailed', { reason: held.error ?? 'no answer' })}
+      </Notice>
+    );
   }
 
   // Every read the section shows, and only those, carries the freshness:

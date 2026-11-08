@@ -976,7 +976,8 @@ above. Each resolves here, so a route reviewer needs no private file:
   for its delay, or kept in its vault while the account is locked or its
   queue is full; a payment from another party's vault into a protected
   wallet's vault), what past sellers of the
-  lender position take first, that collecting burns the position token,
+  lender position take first (stated as unknown, with what it may take, when
+  it could not be read), that collecting burns the position token,
   that collecting in fallback ends the fallback and the borrower's cure, and
   the pause posture. The protocol's dry run of this very claim is part of
   the review, and the send runs it again. The finish card measures, from
@@ -984,7 +985,12 @@ above. Each resolves here, so a route reviewer needs no private file:
   from the row against what was reviewed, each payout that arrived, was
   queued, kept or credited to a vault (each destination stated, since one
   payment can split between the queue and the vault), an NFT's arrival, and
-  the loan's settlement once both sides have collected. A claim the review
+  the loan's settlement once both sides have collected. A lender claim on a
+  loan in fallback runs the protocol's match first with the claimant as its
+  matcher: when the logs show that match, the rewritten row is stated as the
+  match's doing, and the matcher's reward each leg paid (in that leg's loan's
+  principal token, read from the protocol's record of that loan) is stated
+  and counted in its token's total, the collateral token's included. A claim the review
   could not read is stated as unknown, never as zero. A claim flow in progress
   stays on Claims, drawn from the app's record of it, after its position
   token is burnt and the reader leaves and returns, until its finish card is

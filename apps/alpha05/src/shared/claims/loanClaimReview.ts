@@ -12,7 +12,7 @@
  * A claim moves nothing out of the wallet and asks no approval: the protocol
  * pays from the recorded party's vault to the position's holder.
  */
-import type { Abi, PublicClient } from 'viem';
+import type { Abi, Log, PublicClient } from 'viem';
 import { AdminFacetABI, ClaimFacetABI, LoanFacetABI, MetricsFacetABI, SellerClaimFacetABI, VaipakamNFTFacetABI } from '@vaipakam/contracts/abis';
 import type { OwnStateClient } from '../../chain/ownRail';
 import type { CopyAccess } from '../copy/useCopy';
@@ -23,6 +23,8 @@ import type { LoanDetails } from '../positions/loanView';
 import { payoutRoute, readProtection, type PayoutRoute, type Protection } from '../protection/payout';
 import { routeChanged } from '../protection/payoutCopy';
 import { askThrough } from '../tx/simulate';
+import { matchIncentives } from './claimLog';
+import type { PaidIncentive } from './claimOutcome';
 import { claimLanes, extraLiened, sideClaimableStatus, type ClaimLane, type ClaimSide, type SideClaim } from './loanClaim';
 
 type Hex = `0x${string}`;
@@ -197,4 +199,27 @@ export function loanClaimBlockers(r: LoanClaimReview, copy: Pick<CopyAccess, 'te
   if (r.dryRun === 'unread') return [copy.text('loanClaim.dryRunUnread')];
   if (r.dryRun !== null) return [copy.format('repay.dryRunRefused', { reason: r.dryRun.reason })];
   return [];
+}
+
+/** The matching rewards a claim's transaction paid the claimant (a lender
+ *  claim on a loan in fallback runs the protocol's match first, with the
+ *  claimant as its matcher), each with its token: the principal token of the
+ *  leg's loan, read from the protocol's record of that loan. A token that
+ *  could not be read stays null, and the finish card says so. */
+export async function readPaidIncentives(own: OwnStateClient, diamond: Hex, r: Pick<LoanClaimReview, 'loanId' | 'loan'>, logs: readonly Log[]): Promise<PaidIncentive[]> {
+  const paid = matchIncentives(logs, diamond, r.loanId, own.account);
+  if (paid.length === 0) return [];
+  const others = [...new Set(paid.filter((p) => p.loanId !== r.loanId).map((p) => p.loanId))];
+  const assets = new Map<bigint, Hex | null>([[r.loanId, r.loan.principalAsset]]);
+  if (others.length > 0) {
+    const read = await maybe(
+      own
+        .read((c: PublicClient) =>
+          Promise.all(others.map((id) => maybe(c.readContract({ address: diamond, abi: LOAN, functionName: 'getLoanDetails', args: [id] }) as Promise<LoanDetails>))),
+        )
+        .then((x) => x.value),
+    );
+    others.forEach((id, i) => assets.set(id, read?.[i]?.principalAsset ?? null));
+  }
+  return paid.map((p) => ({ loanId: p.loanId, amount: p.amount, asset: assets.get(p.loanId) ?? null }));
 }
