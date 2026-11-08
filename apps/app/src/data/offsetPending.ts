@@ -31,6 +31,7 @@ import { ZERO_ADDRESS } from '../lib/offerSchema';
 import { makePendingMarkerStore } from '../lib/pendingMarker';
 import { useActiveChain } from '../chain/useActiveChain';
 import { tipAware } from '../chain/railHealth';
+import { boundOfferMoved, readLoanFlows, type FlowMoved } from './positionFlowMoved';
 
 const marker = makePendingMarkerStore('app.offsetOffer');
 
@@ -67,6 +68,15 @@ export interface OffsetPendingState {
   balanceShort: boolean;
   /** The completion pull's approval/balance bound. */
   completionBound: bigint;
+  /** #3205 — the borrower position NFT moved since the offset was posted,
+   *  per the indexer (the chain has no view of it yet, #3323). `'yes'`: the
+   *  offset can never complete, and anyone may cancel its offer (the refund
+   *  goes to the wallet that posted it). `'unknown'` is stated as such. */
+  positionMoved: FlowMoved;
+  /** The offset offer the indexer names for this loan when this device has
+   *  no marker for it, verified to exist and be unaccepted; null otherwise.
+   *  Lets a viewer who did not post the offset cancel one that moved. */
+  indexedOfferId: string | null;
 }
 
 export function useOffsetPending(
@@ -162,6 +172,29 @@ export function useOffsetPending(
             : Promise.resolve(0n),
         ]);
       const locked = Number(lockRaw) === LOCK_PRECLOSE_OFFSET;
+      // #3205 — the indexer's verdict on the loan's offset offer. Best
+      // effort: no answer reads 'unknown', never "not moved".
+      const flows = locked ? await readLoanFlows(readChain.chainId, loanId) : null;
+      const indexed = boundOfferMoved(flows, 'offset', offerId);
+      const positionMoved: FlowMoved = locked ? indexed.moved : 'no';
+      let indexedOfferId: string | null = null;
+      let indexedCreatedAt: bigint | null = null;
+      if (offerId === null && indexed.offerId !== null) {
+        try {
+          const o = (await readClient!.readContract({
+            address: diamond,
+            abi: DIAMOND_ABI_VIEM,
+            functionName: 'getOfferDetails',
+            args: [BigInt(indexed.offerId)],
+          })) as { creator: string; accepted: boolean; createdAt: bigint };
+          if (o.creator !== ZERO_ADDRESS && !o.accepted) {
+            indexedOfferId = indexed.offerId;
+            indexedCreatedAt = o.createdAt;
+          }
+        } catch {
+          // Unread: the cancel stays unavailable, as without the indexer.
+        }
+      }
       const offerExists =
         offer !== null && offer.creator !== ZERO_ADDRESS && !offer.accepted;
       const loanActive = live.status === LOAN_STATUS_ACTIVE;
@@ -179,20 +212,24 @@ export function useOffsetPending(
       // off zero placeholders; a dead offset (loan settled another
       // way, or the term no longer fits) has nothing left to fund, so
       // the warnings stop and cancel-to-unwind is the only story.
-      const completable = locked && loanActive && !termUnfillable;
+      const completable = locked && loanActive && !termUnfillable && positionMoved !== 'yes';
       const fundingKnown = Boolean(address);
       return {
         locked,
         loanActive,
         offerExists,
         cancelUnlocked:
-          offer !== null &&
-          latestBlock.timestamp >= offer.createdAt + CANCEL_COOLDOWN_SECONDS,
+          offer !== null
+            ? latestBlock.timestamp >= offer.createdAt + CANCEL_COOLDOWN_SECONDS
+            : indexedCreatedAt !== null &&
+              latestBlock.timestamp >= indexedCreatedAt + CANCEL_COOLDOWN_SECONDS,
         termUnfillable,
         allowanceShort:
           fundingKnown && completable && allowance < completionBound,
         balanceShort: fundingKnown && completable && balance < completionBound,
         completionBound,
+        positionMoved,
+        indexedOfferId,
       };
     },
   });

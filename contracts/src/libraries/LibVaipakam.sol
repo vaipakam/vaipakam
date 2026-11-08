@@ -8383,6 +8383,15 @@ library LibVaipakam {
         ///      vaults created afterwards; #3205's genuine-vault code-identity
         ///      check bounds that. Appended — append-only.
         address vaultBeacon;
+        /// @dev #3205 (#3318) — the borrower position token's transfer count
+        ///      when `loanId`'s refinance request was recorded
+        ///      (`refinanceRequestOfLoan`). The request stands, and can be
+        ///      taken, only while the count is unchanged: a transfer (even
+        ///      away and back) ends it, the same rule as every other
+        ///      position-bound flow. Kept on the request rather than as a
+        ///      route, so it never contends with the position's one route.
+        ///      Appended — append-only.
+        mapping(uint256 => uint256) refinanceRequestTransferCount;
     }
 
     /// @notice Protected account mode — one owner wallet's settings.

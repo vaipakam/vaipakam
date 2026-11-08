@@ -184,7 +184,13 @@ describe('SQL-vs-schema guard (#1149)', () => {
     // record a participant. Sharing the predicate is what makes them dynamic;
     // both shapes execute against the REAL migrated schema in
     // `test/retiredReceiptTransfer.test.ts`.
-    expect(skipped.length).toBeLessThanOrEqual(25);
+    // Raised 25 → 27 for #3205: the position-move upsert (one per loan side)
+    // reads the same live-side predicate, and its side's token and holder
+    // columns, so a retired receipt records no move. Values are bound.
+    // Executed against the REAL migrated schema by
+    // `test/positionFlowMoves.test.ts` (both sides, the replay guard and the
+    // retired receipt).
+    expect(skipped.length).toBeLessThanOrEqual(27);
   });
 
   it('every static SQL statement prepares against the migrated schema', () => {

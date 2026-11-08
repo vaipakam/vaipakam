@@ -31,6 +31,8 @@ import { shortAddress } from '../ui/format';
 import { needFromAcceptCode, type RiskNeed } from '../risk/riskAccess';
 import { RiskGate, RiskStepFlow } from '../risk/RiskAccessStep';
 import { changedBetween, paid, promptCount, readAcceptReview, reviewBlockers, type AcceptReview } from './acceptReview';
+import { indexerPositionFlowReader } from '../offers/positionFlow';
+import { useWorldRail } from '../reads/world/WorldRailContext';
 import { acceptReceipt } from './receipt';
 
 type Hex = `0x${string}`;
@@ -78,6 +80,8 @@ export function AcceptOffer({ flowKey, offerId, chain, own, meta, terms, onClose
   const { mode } = useMode();
   const diamond = chain.diamondAddress;
   const account = own.account;
+  // #3205 — the indexer's moved verdict for a position-bound offer.
+  const flows = indexerPositionFlowReader(useWorldRail().indexer, chain.chainId);
   const identity = reviewIdentity(own);
   const [review, setReview] = useStoredValue<AcceptReview>(`${flowKey}:review`);
   /** The review read the consent was given against (its `readAt`): a new
@@ -355,7 +359,7 @@ export function AcceptOffer({ flowKey, offerId, chain, own, meta, terms, onClose
   const mounted = useMounted();
   const load = async () => {
     try {
-      const next = await readAcceptReview(own, diamond, offerId, identity);
+      const next = await readAcceptReview(own, diamond, offerId, identity, flows);
       if (!mounted.current) return;
       setLoadError(null);
       setReview(next);
@@ -373,7 +377,7 @@ export function AcceptOffer({ flowKey, offerId, chain, own, meta, terms, onClose
     chainId: chain.chainId,
     active: onReview,
     review,
-    read: (before) => readAcceptReview(own, diamond, before.offerId, before.identity),
+    read: (before) => readAcceptReview(own, diamond, before.offerId, before.identity, flows),
     sameSubject: (a, b) => a.offerId === b.offerId,
     changed: (before, next) => changedBetween(before, next, copy) !== null,
     setReview,
@@ -397,7 +401,7 @@ export function AcceptOffer({ flowKey, offerId, chain, own, meta, terms, onClose
       setLoanId(null);
       setRiskOpen(null);
       let live = true;
-      readAcceptReview(own, diamond, offerId, identity).then(
+      readAcceptReview(own, diamond, offerId, identity, flows).then(
         (next) => {
           if (!live) return;
           setLoadError(null);
@@ -422,7 +426,7 @@ export function AcceptOffer({ flowKey, offerId, chain, own, meta, terms, onClose
     try {
       // OFF-35 holds at the moment the wallet opens, not only when the flow
       // did: a Terms version published since the review is accepted first.
-      [next, nowTerms] = await Promise.all([readAcceptReview(own, diamond, offerId, review.identity), own.read((c) => readTerms(c, diamond, account)).then((r) => r.value)]);
+      [next, nowTerms] = await Promise.all([readAcceptReview(own, diamond, offerId, review.identity, flows), own.read((c) => readTerms(c, diamond, account)).then((r) => r.value)]);
     } catch (e) {
       return { kind: 'unreadable', reason: refusalFromError(e).reason };
     }

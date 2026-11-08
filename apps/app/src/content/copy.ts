@@ -68,6 +68,7 @@ const copySource = {
   "apr": "Annual APR",
   "notRecorded": "Not recorded",
   "partial": "Partially filled — use the rate desk to match remaining liquidity.",
+  "positionMoved": "This refinance request can no longer be taken: the borrower position it is for has moved since it was posted.",
   "own": "Your own offer",
   "refinance": "Refinance request — review existing collateral and loan terms.",
   "collateralFloor": "Borrower collateral shown is the committed minimum; review the full range before signing.",
@@ -1320,6 +1321,9 @@ const copySource = {
       'That’s your own offer — you can cancel it from My positions, but you can’t accept it yourself.',
     offerGone:
       'That offer is no longer open. Browse current matches below or post your own.',
+    // #3205 — an offer tied to a loan position that moved since it was posted.
+    offerPositionMoved:
+      'That offer can no longer be taken: the loan position it is tied to has moved to another wallet (or away and back) since it was posted, and it can complete only while that position has not moved. Browse current matches below or post your own.',
     counterpartyBlocked:
       'The other side of this offer can’t transact right now (compliance flag), so it can’t be accepted. Nothing was sent.',
     offerNotFound:
@@ -2080,6 +2084,11 @@ const copySource = {
     // #3205 — standalone PositionNFT networks: a route never locks the token.
     pendingTermUnfillableRoute:
       'The offer’s replacement term can no longer finish before this loan’s due date, so no one can accept it any more. Cancel it to get your lending money back.',
+    // #3205 — the borrower position moved since the offset was posted.
+    pendingMoved:
+      'This offset can no longer complete: your borrower position NFT moved (to another wallet, or away and back) after the offset was posted, and an offset completes only while the position has not moved since. No one can accept it any more. Anyone can cancel its offer to close it out; the lending money it holds goes back to the wallet that posted it.',
+    movedUnknown:
+      'The app can’t tell whether your borrower position NFT has moved since this offset was posted. If it has, the offset can no longer complete and only a cancel closes it out.',
     pendingOffer: tmpl('Linked offer: #{{offerId}}.', ['offerId']),
     pendingOfferUnknown:
       'This device doesn’t remember the linked offer’s number (it may have been created elsewhere). You can still find and cancel it from My positions → your offers.',
@@ -2277,6 +2286,12 @@ const copySource = {
       'This wallet has posted more offers since this loan’s offer was made than we can check here, so an older refinance request on this loan (one posted before the protocol kept a record of requests) may not be shown. Such a request can never be accepted and doesn’t hold the loan back, but it may still carry a standing payoff approval. If one is still open, you can cancel it under “Your open offers” on the Rate Desk; remove the token approval it relied on under “Standing token approvals” in Settings (Advanced mode) if nothing else needs it.',
     pendingUntakeable:
       'This refinance request can never be accepted: it isn’t the request the protocol has on record for this loan (it was posted before that record existed, or a newer request replaced it). It does not hold the loan back. Cancel it below to remove it. Its payoff approval is not removed with it, because the same approval serves every refinance request this wallet posts on this token; if nothing else needs it, remove it under “Standing token approvals” in Settings (Advanced mode).',
+    // #3205 — the borrower position moved since the request was posted.
+    pendingMoved:
+      'This refinance request can no longer be accepted: the borrower position NFT moved (to another wallet, or away and back) after it was posted, and a request completes only while the position has not moved since. It does not hold the loan back. Only the wallet that posted it can cancel it before it expires; after that, anyone can. The position’s current holder can post a new request.',
+    // #3205 — the chain says the request no longer stands, reason unnamed.
+    pendingNotStanding:
+      'The protocol no longer counts this refinance request as standing, so no lender can accept it: since it was posted, the borrower position NFT has moved, or another wallet now holds it. It does not hold the loan back. Only the wallet that posted it can cancel it before it expires; after that, anyone can.',
     // #2429 r3 — cancelling a leftover never revokes the shared approval.
     cancelledLeftoverApprovalKept:
       'Request cancelled. Its payoff approval was left in place, because the same approval serves every refinance request this wallet posts on this token. If nothing else needs it, remove it under “Standing token approvals” in Settings (Advanced mode).',
@@ -4351,6 +4366,13 @@ const copySource = {
     // rather than implying it checked (the view is #2672).
     boundsNote:
       'When a listing is made, it records the least you can come out with and how much is already set aside for the lender. If the loan changes before a buyer takes it so that a sale would break either figure — for example, the borrower repays part of the loan — buyers’ attempts are refused, and you can cancel and list again at the new terms. The app can’t read the figures recorded for this listing yet, so it can’t tell you whether that has happened. (Listings made before this protection existed recorded no figures and sell as before.)',
+    // #3205 — the lender position moved since the listing was posted.
+    movedEnded:
+      'This listing can no longer complete: the lender position NFT moved (to another wallet, or away and back) after it was posted, and a sale completes only while the position has not moved since its listing. No buyer can take it. Anyone can cancel it to close it out; anything it holds goes back to the wallet that posted it.',
+    movedEndedNoId:
+      'This listing can no longer complete: the lender position NFT moved (to another wallet, or away and back) after it was posted. No buyer can take it. Anyone can cancel it to close it out, but the app couldn’t identify the listing’s offer, so it can’t offer the cancel here.',
+    movedUnknown:
+      'The app can’t tell whether your lender position NFT has moved since this listing was posted. If it has, the listing can no longer complete and only a cancel closes it out.',
     cancel: 'Cancel listing',
     cancelled:
       'Listing cancelled — your lender NFT is unlocked and the loan continues unchanged. (Listings made with an earlier version of the app also set a token approval. If one is still in place, you can remove it from your wallet’s token-approvals view.)',
@@ -5327,6 +5349,9 @@ const copySource = {
     // being an unexplained dead end.
     notTakeablePartial: 'Part of this offer is already taken, so the rest can’t be taken directly here.',
     notTakeableNft: 'This offer uses an NFT as the loan or its collateral, which can’t be taken directly here.',
+    // #3205 — tied to a loan position that moved since it was posted.
+    notTakeableMoved:
+      'This can no longer be taken: the loan position it is tied to has moved to another wallet (or away and back) since it was posted, and it can complete only while that position has not moved.',
     filters: {
       showLabel: 'Show',
       sideAll: 'Everything',

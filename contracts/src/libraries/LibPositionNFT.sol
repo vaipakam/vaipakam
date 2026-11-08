@@ -176,6 +176,13 @@ library LibPositionNFT {
         return _storage().retired[tokenId];
     }
 
+    /// @notice How many times `tokenId` has been transferred (the core's
+    ///         count, which only rises). A flow that must complete for the
+    ///         holder that opened it records this and requires it unchanged.
+    function transferCountOf(uint256 tokenId) internal view returns (uint256) {
+        return core().transferCount(tokenId);
+    }
+
     /// @notice Whether `holder` keeps its tokens under the core's holder lock.
     function isHolderLocked(address holder) internal view returns (bool) {
         address a = _storage().core;

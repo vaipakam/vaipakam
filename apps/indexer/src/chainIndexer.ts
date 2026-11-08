@@ -92,6 +92,7 @@ import {
 } from './diamondAbi';
 import { ceilingOf } from './signedOfferEip712';
 import { indexerPublishPrepayListing } from './openseaPublish';
+import { recordPositionMove } from './positionFlowMoves';
 import { maybeRefreshProtocolConfig } from './configSnapshot';
 import {
   collectPushHints,
@@ -3134,7 +3135,10 @@ async function processOfferLogs(
   // Bucket by event name — all the OfferCreated rows first (so the
   // row exists before any later status flip in the same scan window),
   // then the terminal events.
-  const created: { offerId: bigint; creator: Address; offerType: number; blockNumber: bigint }[] = [];
+  // #3205 — `logIndex` with `blockNumber` is the point the offer opened
+  // (`offers.created_log_index`), which a position-bound offer's moved verdict
+  // compares against (`positionFlowMoves.ts`).
+  const created: { offerId: bigint; creator: Address; offerType: number; blockNumber: bigint; logIndex: number }[] = [];
   const accepted: { offerId: bigint; loanId: bigint }[] = [];
   const cancelled: { offerId: bigint }[] = [];
   // T-086 Round-8 (#358) §19.7e + Codex round-3 P2 #1 — distinct bucket
@@ -3207,6 +3211,7 @@ async function processOfferLogs(
         creator: a.creator as Address,
         offerType: Number(a.offerType),
         blockNumber: log.blockNumber,
+        logIndex: Number(log.logIndex),
       });
     } else if (log.eventName === 'OfferAccepted') {
       accepted.push({
@@ -3378,9 +3383,9 @@ async function processOfferLogs(
            is_stub, collateral_range_stale,
            created_at, expires_at, fill_mode,
            refinance_target_loan_id,
-           first_seen_block, first_seen_at, updated_at)
+           first_seen_block, created_log_index, first_seen_at, updated_at)
          VALUES
-          (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 1, ?, ?, ?, ?, ?, ?, ?)`,
+          (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 1, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
         .bind(
           chainId,
@@ -3432,6 +3437,7 @@ async function processOfferLogs(
           Number(od.fillMode ?? 0),
           refinanceTargetFromDetail(od.refinanceTargetLoanId),
           Number(o.blockNumber),
+          o.logIndex,
           now,
           now,
         )
@@ -3454,9 +3460,9 @@ async function processOfferLogs(
          amount, interest_rate_bps, collateral_amount, duration_days,
          creator_current_owner,
          is_stub,
-         first_seen_block, first_seen_at, updated_at)
+         first_seen_block, created_log_index, first_seen_at, updated_at)
        VALUES
-        (?, ?, 'active', ?, ?, '0x', '0x', 0, 0, 1, 1, '0', 0, '0', 0, ?, 1, ?, ?, ?)`,
+        (?, ?, 'active', ?, ?, '0x', '0x', 0, 0, 1, 1, '0', 0, '0', 0, ?, 1, ?, ?, ?, ?)`,
     )
       .bind(
         chainId,
@@ -3467,6 +3473,7 @@ async function processOfferLogs(
         // column; subsequent Transfer events overwrite as needed.
         o.creator.toLowerCase(),
         Number(o.blockNumber),
+        o.logIndex,
         now,
         now,
       )
@@ -5684,8 +5691,9 @@ export async function processLoanLogs(
         `INSERT OR REPLACE INTO swap_to_repay_intents
            (chain_id, loan_id, order_hash, committed_by,
             maker_amount, taker_amount, deadline,
-            committed_at, committed_tx_hash)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            committed_at, committed_tx_hash,
+            committed_block, committed_log_index)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
         .bind(
           chainId,
@@ -5697,6 +5705,9 @@ export async function processLoanLogs(
           Number(a.deadline as bigint),
           blockAt,
           log.transactionHash,
+          // #3205 — the point the intent opened, for its moved verdict.
+          Number(log.blockNumber),
+          Number(log.logIndex),
         )
         .run();
     } else if (log.eventName === 'SwapToRepayIntentFilled') {
@@ -6052,10 +6063,12 @@ export async function processLoanLogs(
       // routes fail open (row shows) rather than dropping real fills.
       const saleOfferId = Number(a.saleOfferId as bigint);
       const marked = await env.DB.prepare(
-        `UPDATE offers SET is_sale_vehicle = 1, updated_at = ?
+        // #3205 — `vehicle_loan_id` binds the sale to the loan's LENDER side,
+        // whose moves end it (`positionFlowMoves.ts`).
+        `UPDATE offers SET is_sale_vehicle = 1, vehicle_loan_id = ?, updated_at = ?
           WHERE chain_id = ? AND offer_id = ?`,
       )
-        .bind(Math.floor(Date.now() / 1000), chainId, saleOfferId)
+        .bind(Number(a.loanId as bigint), Math.floor(Date.now() / 1000), chainId, saleOfferId)
         .run();
       if ((marked.meta?.changes ?? 0) === 0) {
         console.error(
@@ -6079,10 +6092,12 @@ export async function processLoanLogs(
       // (row shows) rather than dropping real liquidity.
       const offsetOfferId = Number(a.newOfferId as bigint);
       const marked = await env.DB.prepare(
-        `UPDATE offers SET is_offset_vehicle = 1, updated_at = ?
+        // #3205 — `vehicle_loan_id` binds the offset to the loan's BORROWER
+        // side, whose moves end it (`positionFlowMoves.ts`).
+        `UPDATE offers SET is_offset_vehicle = 1, vehicle_loan_id = ?, updated_at = ?
           WHERE chain_id = ? AND offer_id = ?`,
       )
-        .bind(Math.floor(Date.now() / 1000), chainId, offsetOfferId)
+        .bind(Number(a.originalLoanId as bigint), Math.floor(Date.now() / 1000), chainId, offsetOfferId)
         .run();
       if ((marked.meta?.changes ?? 0) === 0) {
         console.error(
@@ -6955,6 +6970,23 @@ export async function processLoanLogs(
       // `PositionRetired` below) keeps the zero holder: a standalone-mode
       // retired token can still move as a receipt, and that move must not
       // put a closed position back into anyone's holdings.
+      // #3205 — record the move FIRST: a position-bound flow opened before
+      // it can never complete (`positionFlowMoves.ts`). First because a burn
+      // writes the zero holder below, after which the live-side predicate no
+      // longer finds the side it burned. A mint (`from` = 0x0) records nothing.
+      await recordPositionMove(
+        env,
+        chainId,
+        {
+          tokenId,
+          from: String(a.from as string),
+          block: Number(log.blockNumber),
+          logIndex: Number(log.logIndex),
+          txHash: String(log.transactionHash),
+          movedAt: chainTimeOf(blockTimestamps, log.blockNumber),
+        },
+        liveSideSql,
+      );
       const ownerWrites = await env.DB.batch([
         env.DB.prepare(
           `UPDATE loans SET lender_current_owner = ?, updated_at = ?

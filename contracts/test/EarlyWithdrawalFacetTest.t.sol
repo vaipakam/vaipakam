@@ -2095,6 +2095,57 @@ contract EarlyWithdrawalFacetTest is Test {
         EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
     }
 
+    /// @dev #3318 (Raaj 08:22) — once the lender position moves, anyone may
+    ///      cancel the dead sale listing, and the refund holds ONLY what the
+    ///      creator deposited for it. A sale vehicle deposited nothing, so
+    ///      nothing moves: the seller's wallet and vault, the borrower's
+    ///      collateral and the loan's lien are unchanged, and the new holder
+    ///      keeps the position.
+    function test_deadSaleListing_thirdPartyCancel_refundsNothingTheLoanOwns() public {
+        uint256 saleOfferId = _listSaleOffer();
+        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
+        address newHolder = makeAddr("lenderPositionBuyerOffBook");
+        LibTestPositionNFT.move(address(diamond), loan.lenderTokenId, newHolder);
+
+        address lenderVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(lender);
+        address borrowerVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(loan.borrower);
+        uint256 lenderWallet = ERC20(mockERC20).balanceOf(lender);
+        uint256 lenderVaultBal = ERC20(mockERC20).balanceOf(lenderVault);
+        uint256 collateralHeld = ERC20(mockCollateralERC20).balanceOf(borrowerVault);
+        LibVaipakam.Encumbrance memory lienBefore = MetricsFacet(address(diamond)).getLoanCollateralLien(activeLoanId);
+
+        vm.warp(block.timestamp + LibVaipakam.MIN_OFFER_CANCEL_DELAY + 1); // past the cancel cooldown
+        vm.prank(makeAddr("anyCleaner"));
+        OfferCancelFacet(address(diamond)).cancelOffer(saleOfferId);
+
+        assertEq(ERC20(mockERC20).balanceOf(lender), lenderWallet, "seller wallet unchanged");
+        assertEq(ERC20(mockERC20).balanceOf(lenderVault), lenderVaultBal, "seller vault unchanged");
+        assertEq(ERC20(mockCollateralERC20).balanceOf(borrowerVault), collateralHeld, "the loan's collateral stays put");
+        LibVaipakam.Encumbrance memory lienAfter = MetricsFacet(address(diamond)).getLoanCollateralLien(activeLoanId);
+        assertEq(lienAfter.amount, lienBefore.amount, "the loan's lien is intact");
+        assertFalse(lienAfter.released, "the loan's lien is still live");
+        assertEq(LibTestPositionNFT.core(address(diamond)).ownerOf(loan.lenderTokenId), newHolder, "the new holder keeps the position");
+    }
+
+    /// @dev Same, for a vehicle whose loan's collateral is an NFT: the vehicle
+    ///      mirrors the loan's collateral kind and token id, and before #3318
+    ///      its cancel tried to withdraw that NFT from the seller's vault. The
+    ///      refund now mirrors the deposit (none), so the cancel clears.
+    function test_deadSaleListing_nftCollateralVehicle_cancelWithdrawsNothing() public {
+        uint256 saleOfferId = _listSaleOffer();
+        LibVaipakam.Offer memory o = OfferCancelFacet(address(diamond)).getOffer(saleOfferId);
+        o.collateralAssetType = LibVaipakam.AssetType.ERC721;
+        o.collateralTokenId = 42;
+        TestMutatorFacet(address(diamond)).setOffer(saleOfferId, o);
+        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
+        LibTestPositionNFT.move(address(diamond), loan.lenderTokenId, makeAddr("nftCollatBuyer"));
+
+        vm.warp(block.timestamp + LibVaipakam.MIN_OFFER_CANCEL_DELAY + 1); // past the cancel cooldown
+        vm.prank(makeAddr("anyCleaner2"));
+        OfferCancelFacet(address(diamond)).cancelOffer(saleOfferId);
+        assertEq(OfferCancelFacet(address(diamond)).getOffer(saleOfferId).creator, address(0), "the dead listing is cancelled");
+    }
+
     /// @dev #1835 (Codex #1891 F3) — a TERMINAL loan's stale listing must still
     ///      report the terminal loan, not the stale terms.
     ///

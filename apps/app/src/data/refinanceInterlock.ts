@@ -44,6 +44,11 @@ export interface NamedRequestFacts {
   /** #2425 — not the loan's recorded request (the protocol reports another,
    *  or none): it can never be taken and holds nothing back. */
   untakeable: boolean;
+  /** #3205 — the loan's recorded request, but the protocol no longer counts
+   *  it as standing (`getRefinanceRequest` reports it not live): the borrower
+   *  position moved since it was posted, or another wallet holds it. It can
+   *  never be taken and holds nothing back. Absent = not read (false). */
+  notStanding?: boolean;
 }
 
 /** The request the page names. `ownScan` is the connected viewer's own
@@ -110,7 +115,8 @@ export function refinanceInterlock(a: {
       : creatorIsHolder(a.state.creator) &&
         !a.state.expired &&
         !a.state.pastGrace &&
-        !a.state.untakeable);
+        !a.state.untakeable &&
+        a.state.notStanding !== true);
   // An open request the holder's scan found that the page is NOT naming
   // (the viewer's own request is named instead) still blocks.
   const holderOpen = h?.kind === 'found' && h.open && h.untakeable !== true ? h.offerId : null;

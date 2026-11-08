@@ -2,6 +2,8 @@
 pragma solidity ^0.8.29;
 
 import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
+import {MetricsFacet} from "../src/facets/MetricsFacet.sol";
+import {LibPositionNFT} from "../src/libraries/LibPositionNFT.sol";
 import {SetupTest} from "./SetupTest.t.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {AutoLifecycleFacet} from "../src/facets/AutoLifecycleFacet.sol";
@@ -247,6 +249,28 @@ contract RefinanceRequestGuardTest is SetupTest {
         vm.prank(borrower);
         LibTestPositionNFT.core(address(diamond)).transferFrom(borrower, newHolder, tokenId);
         assertEq(_live(loanId), 0);
+    }
+
+    /// #3205 (#3318) — a request completes only while the borrower position
+    /// has not moved since it was recorded. A round trip (away and back) ends
+    /// it: it neither stands nor can be taken, and it no longer blocks the
+    /// holder from recording a fresh one.
+    function test_aRoundTripEndsTheRequest() public {
+        uint256 loanId = _activeLoan();
+        uint256 r1 = _request(loanId, 0);
+        uint256 tokenId = LoanFacet(address(diamond)).getLoanDetails(loanId).borrowerTokenId;
+        address away = makeAddr("roundTripHolder");
+        vm.prank(borrower);
+        LibTestPositionNFT.core(address(diamond)).transferFrom(borrower, away, tokenId);
+        vm.prank(away);
+        LibTestPositionNFT.core(address(diamond)).transferFrom(away, borrower, tokenId);
+
+        assertEq(_live(loanId), 0, "a round trip does not revive the request");
+        _acceptExpectingRevert(
+            r1, abi.encodeWithSelector(LibPositionNFT.PositionMovedSinceRouteOpened.selector, tokenId, 0, 2)
+        );
+        uint256 r2 = _request(loanId, 0);
+        assertEq(_live(loanId), r2, "the holder records a fresh request, which stands");
     }
 
     // ─── #2424 r1 — only the RECORDED request can fill ───────────────
@@ -549,11 +573,59 @@ contract RefinanceRequestGuardTest is SetupTest {
                 != OfferAcceptFacet.AcceptError.None,
             "previewed as unable to complete"
         );
-        // The creator holds the position again, so the take-side offset check
-        // is what refuses.
+        // The creator holds the position again, but it moved (away and back)
+        // since R1 was recorded, so R1 is dead (#3205): the moved check, which
+        // every completion runs first, refuses it.
         _acceptExpectingRevert(
-            r1, abi.encodeWithSelector(IVaipakamErrors.RefinanceBlockedByOffset.selector, loanId, offsetOfferId)
+            r1, abi.encodeWithSelector(LibPositionNFT.PositionMovedSinceRouteOpened.selector, tokenId, 0, 2)
         );
+    }
+
+    /// #3318 (Raaj 08:22) — a dead offset (its borrower position moved) can be
+    /// cancelled by anyone, and the refund holds ONLY the creator's own
+    /// offset principal. The loan's collateral stays under the loan's lien.
+    function test_deadOffset_thirdPartyCancel_refundsOnlyTheCreatorsPrincipal() public {
+        uint256 loanId = _activeLoan();
+        uint256 tokenId = LoanFacet(address(diamond)).getLoanDetails(loanId).borrowerTokenId;
+        address creator = makeAddr("offsetCreator");
+        vm.prank(borrower);
+        LibTestPositionNFT.core(address(diamond)).transferFrom(borrower, creator, tokenId);
+        address creatorVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(creator);
+        ERC20Mock(mockERC20).mint(creator, LOAN_PRINCIPAL * 4);
+        vm.startPrank(creator);
+        ERC20(mockERC20).approve(creatorVault, type(uint256).max);
+        ERC20(mockERC20).approve(address(diamond), type(uint256).max);
+        uint256 offsetOfferId = PrecloseFacet(address(diamond)).offsetWithNewOffer(
+            loanId, 500, 30, mockCollateralERC20, LOAN_COLLATERAL, true, mockERC20
+        );
+        vm.stopPrank();
+        uint256 deposited = OfferCancelFacet(address(diamond)).getOffer(offsetOfferId).amountMax;
+        if (deposited == 0) deposited = OfferCancelFacet(address(diamond)).getOffer(offsetOfferId).amount;
+
+        // The position moves on: the offset is dead.
+        address nextHolder = makeAddr("nextBorrowerHolder");
+        vm.prank(creator);
+        LibTestPositionNFT.core(address(diamond)).transferFrom(creator, nextHolder, tokenId);
+
+        address loanVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(
+            LoanFacet(address(diamond)).getLoanDetails(loanId).borrower
+        );
+        uint256 collateralHeld = ERC20(mockCollateralERC20).balanceOf(loanVault);
+        LibVaipakam.Encumbrance memory lienBefore = MetricsFacet(address(diamond)).getLoanCollateralLien(loanId);
+        uint256 creatorWallet = ERC20(mockERC20).balanceOf(creator);
+        uint256 creatorCollateral = ERC20(mockCollateralERC20).balanceOf(creator);
+
+        vm.warp(block.timestamp + LibVaipakam.MIN_OFFER_CANCEL_DELAY + 1); // past the cancel cooldown
+        vm.prank(makeAddr("offsetCleaner"));
+        OfferCancelFacet(address(diamond)).cancelOffer(offsetOfferId);
+
+        assertEq(ERC20(mockERC20).balanceOf(creator), creatorWallet + deposited, "the creator gets back exactly the offset principal");
+        assertEq(ERC20(mockCollateralERC20).balanceOf(creator), creatorCollateral, "no collateral reaches the creator");
+        assertEq(ERC20(mockCollateralERC20).balanceOf(loanVault), collateralHeld, "the loan's collateral stays put");
+        LibVaipakam.Encumbrance memory lienAfter = MetricsFacet(address(diamond)).getLoanCollateralLien(loanId);
+        assertEq(lienAfter.amount, lienBefore.amount, "the loan's lien is intact");
+        assertFalse(lienAfter.released, "the loan's lien is still live");
+        assertEq(LibTestPositionNFT.core(address(diamond)).ownerOf(tokenId), nextHolder, "the current holder keeps the position");
     }
 
     /// The storage slot holding `loanId`'s indexed request, found by observing

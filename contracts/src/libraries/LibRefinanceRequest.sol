@@ -120,7 +120,28 @@ library LibRefinanceRequest {
         LibVaipakam.Loan storage loan = s.loans[loanId];
         if (loan.status != LibVaipakam.LoanStatus.Active) return false;
         // Non-reverting read: a missing token simply means "not standing".
-        return LibPositionNFT.holderOrZero(loan.borrowerTokenId) == o.creator;
+        // #3205 — and only while the position has not moved since the
+        // request was recorded: a round trip (away and back) ends it.
+        return LibPositionNFT.holderOrZero(loan.borrowerTokenId) == o.creator && unmoved(s, loanId, offerId);
+    }
+
+    /// @notice Whether `loanId`'s borrower position has not moved since
+    ///         `offerId` was recorded as its request (#3205: the transfer-count
+    ///         rule every position-bound flow follows). False for a request
+    ///         that is not the recorded one.
+    function unmoved(LibVaipakam.Storage storage s, uint256 loanId, uint256 offerId) internal view returns (bool) {
+        return s.refinanceRequestOfLoan[loanId] == offerId
+            && LibPositionNFT.transferCountOf(s.loans[loanId].borrowerTokenId) == s.refinanceRequestTransferCount[loanId];
+    }
+
+    /// @dev Revert `PositionMovedSinceRouteOpened` unless {unmoved}.
+    function _requireUnmoved(LibVaipakam.Storage storage s, uint256 loanId, uint256 offerId) private view {
+        if (unmoved(s, loanId, offerId)) return;
+        revert LibPositionNFT.PositionMovedSinceRouteOpened(
+            s.loans[loanId].borrowerTokenId,
+            s.refinanceRequestTransferCount[loanId],
+            LibPositionNFT.transferCountOf(s.loans[loanId].borrowerTokenId)
+        );
     }
 
     /// @notice Revert with the reason `offerId` could not be accepted as
@@ -159,6 +180,7 @@ library LibRefinanceRequest {
             o.refinanceTargetLoanId != loanId ||
             LibVaipakam.isOfferExpired(o)
         ) revert IVaipakamErrors.RefinanceRequestNotLive(loanId, offerId);
+        if (s.refinanceRequestOfLoan[loanId] == offerId) _requireUnmoved(s, loanId, offerId);
         LibAutoRefinanceCheck.validate(
             s,
             loanId,
@@ -232,7 +254,8 @@ library LibRefinanceRequest {
         if (
             o.creator == address(0) ||
             o.accepted ||
-            LibPositionNFT.holderOrZero(s.loans[loanId].borrowerTokenId) != o.creator
+            LibPositionNFT.holderOrZero(s.loans[loanId].borrowerTokenId) != o.creator ||
+            !unmoved(s, loanId, prior)
         ) return (0, false);
         return (prior, false);
     }
@@ -250,6 +273,10 @@ library LibRefinanceRequest {
         }
         assertReplaceable(loanId);
         s.refinanceRequestOfLoan[loanId] = offerId;
+        // #3205 — the request is the current holder's (the caller recorded it
+        // as them): snapshot the position's transfer count, so a later move
+        // ends it.
+        s.refinanceRequestTransferCount[loanId] = LibPositionNFT.transferCountOf(s.loans[loanId].borrowerTokenId);
     }
 
     /// @notice Revert unless `offerId`, if refinance-tagged, may be TAKEN now
@@ -259,10 +286,12 @@ library LibRefinanceRequest {
     ///         — the two flows each close the loan, so whichever settled second
     ///         would find it closed underneath it. The offset half is defence
     ///         in depth: a request cannot be recorded beside an offset, an
-    ///         offset cannot be opened beside a standing request, and an open
-    ///         offset locks the position, so the one way back to standing (the
-    ///         position returning to the request's creator) is closed while it
-    ///         is open. An untagged offer passes: it
+    ///         offset cannot be opened beside a standing request, and since
+    ///         #3205 a request whose position moved at all (the only way an
+    ///         offset could have been opened by another holder meanwhile) can
+    ///         never stand or be taken again, even if the position returns to
+    ///         its creator. The request must also be unmoved since it was
+    ///         recorded (`PositionMovedSinceRouteOpened`). An untagged offer passes: it
     ///         is not a refinance request, and the routes that accept one gate
     ///         it themselves.
     function assertTakeable(uint256 loanId, uint256 offerId) internal view {
@@ -271,6 +300,9 @@ library LibRefinanceRequest {
         if (s.refinanceRequestOfLoan[loanId] != offerId) {
             revert IVaipakamErrors.RefinanceRequestNotRecorded(loanId, offerId);
         }
+        // #3205 — every completion (accept, match) reaches this: a request
+        // whose position moved since it was recorded can never be taken.
+        _requireUnmoved(s, loanId, offerId);
         uint256 offsetOfferId = s.loanToOffsetOfferId[loanId];
         if (offsetOfferId != 0) {
             revert IVaipakamErrors.RefinanceBlockedByOffset(loanId, offsetOfferId);
@@ -284,6 +316,6 @@ library LibRefinanceRequest {
         uint256 loanId,
         uint256 offerId
     ) internal view returns (bool) {
-        return s.refinanceRequestOfLoan[loanId] == offerId && s.loanToOffsetOfferId[loanId] == 0;
+        return unmoved(s, loanId, offerId) && s.loanToOffsetOfferId[loanId] == 0;
     }
 }

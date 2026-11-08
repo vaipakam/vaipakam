@@ -56,7 +56,10 @@ export function LoanSalePendingCard({
   const view = saleListingCardView(state, stale);
   // The cancel control's own gate, so the copy never names a control that
   // is not on the card (Codex #2673 r1).
-  const canCancel = Boolean(state.offerId) && state.isHolder;
+  // #3205 — a listing whose lender position moved can never complete, and
+  // the protocol lets ANYONE cancel it (the refund still goes to its poster),
+  // so the cancel is offered to every viewer then.
+  const canCancel = Boolean(state.offerId) && (state.isHolder || view === 'moved');
 
   async function cancelListing() {
     if (!state.offerId || !walletReady) return;
@@ -91,6 +94,10 @@ export function LoanSalePendingCard({
               sitting under it. */}
           {view === 'settled'
             ? (routeBlocks ? copy.loanSale.loanSettledWhileListed : copy.loanSale.loanSettledWhileListedRoute)
+            : view === 'moved'
+              ? canCancel
+                ? copy.loanSale.movedEnded
+                : copy.loanSale.movedEndedNoId
             : view === 'accepted'
               ? copy.loanSale.acceptedCompleting
               : view === 'expired'
@@ -125,6 +132,13 @@ export function LoanSalePendingCard({
           <p className="field-hint" style={{ marginTop: 8 }}>
             {copy.loanSale.boundsNote}
           </p>
+          {/* #3205 — where moving the NFT does not block (standalone
+              PositionNFT), say when the app cannot tell whether it moved. */}
+          {!routeBlocks && state.positionMoved === 'unknown' ? (
+            <p className="field-hint" style={{ marginTop: 8 }}>
+              {copy.loanSale.movedUnknown}
+            </p>
+          ) : null}
         </>
       ) : null}
       {canCancel ? (

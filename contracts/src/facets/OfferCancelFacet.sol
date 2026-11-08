@@ -345,7 +345,14 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
                     VaultWithdrawFailed.selector
                 );
             }
-        } else {
+        } else if (lockedSaleLoanId == 0) {
+            // #3318 — a lender-sale VEHICLE (a Borrower-type offer the
+            // seller's listing created) deposited NOTHING: `createOffer` skips
+            // the whole borrower-side pull for it (`saleVehicleCreate`). Its
+            // collateral fields mirror the LOAN's (kind, token id, quantity),
+            // so running this refund would withdraw the loan's collateral or
+            // an NFT rental's prepayment, which are not the creator's. The
+            // refund mirrors the deposit: a sale vehicle refunds nothing.
             // Borrower: unlock what was actually deposited at create.
             // #576 — a CARRY-OVER refinance offer pledged NO fresh collateral
             // and created no escrow lock (both skipped at create), so there is

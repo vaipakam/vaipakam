@@ -35,7 +35,7 @@ import { useRouteBlocksTransfer } from '../contracts/positionNft';
 export function OffsetPendingCard({
   loanId,
   borrowerTokenId,
-  offerId,
+  offerId: rememberedOfferId,
   state,
   principalAsset,
   principalMeta,
@@ -60,6 +60,10 @@ export function OffsetPendingCard({
   onDone: (msg: string) => void;
 }) {
   const routeBlocks = useRouteBlocksTransfer();
+  // #3205 — without this device's marker, the offer the indexer names for
+  // the loan (verified to exist) is the one a cancel targets.
+  const offerId = rememberedOfferId ?? state?.indexedOfferId ?? null;
+  const moved = state?.positionMoved === 'yes';
   const { address, walletChain, onSupportedChain } = useActiveChain();
   const { data: walletClient } = useWalletClient();
   const publicClient = usePublicClient({ chainId: walletChain?.chainId });
@@ -175,7 +179,7 @@ export function OffsetPendingCard({
   // cancel-to-unwind and every completion-flavoured line goes away
   // (Codex #1500 r1).
   const completable =
-    state === undefined || (state.loanActive && !state.termUnfillable);
+    state === undefined || (state.loanActive && !state.termUnfillable && !moved);
 
   return (
     <section className="card">
@@ -183,6 +187,8 @@ export function OffsetPendingCard({
       <p className="muted">
         {state !== undefined && !state.loanActive
           ? (routeBlocks ? copy.offset.pendingLoanClosed : copy.offset.pendingLoanClosedRoute)
+          : moved
+            ? copy.offset.pendingMoved
           : state?.termUnfillable
             ? (routeBlocks ? copy.offset.pendingTermUnfillable : copy.offset.pendingTermUnfillableRoute)
             : copy.offset.pendingBody}{' '}
@@ -190,9 +196,18 @@ export function OffsetPendingCard({
           ? copy.offset.pendingOffer(offerId)
           : copy.offset.pendingOfferUnknown}
       </p>
-      <div className="banner banner-warn" role="note">
-        <span className="banner-body">{routeBlocks ? copy.offset.lockWarn : copy.offset.lockWarnRoute}</span>
-      </div>
+      {moved ? null : (
+        <div className="banner banner-warn" role="note">
+          <span className="banner-body">{routeBlocks ? copy.offset.lockWarn : copy.offset.lockWarnRoute}</span>
+        </div>
+      )}
+      {/* #3205 — where moving the NFT does not block, say when the app
+          cannot tell whether it moved since the offset was posted. */}
+      {!routeBlocks && state?.positionMoved === 'unknown' && completable ? (
+        <p className="field-hint" style={{ marginTop: 8 }}>
+          {copy.offset.movedUnknown}
+        </p>
+      ) : null}
       {completable ? (
         <div className="banner banner-warn" role="note" style={{ marginTop: 8 }}>
           <span className="banner-body">{copy.offset.blockedOtherPaths}</span>

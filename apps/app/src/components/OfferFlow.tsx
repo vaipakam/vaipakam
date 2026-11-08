@@ -479,6 +479,12 @@ export function OfferFlow({ side, initialMarket, createOnly = false }: {
       clear(copy.match.offerGone);
       return;
     }
+    // #3205 — tied to a loan position that moved since it was posted: it can
+    // never complete, so the review is never opened for it.
+    if (row.positionFlow?.movedSinceOpened === true) {
+      clear(copy.match.offerPositionMoved);
+      return;
+    }
     // Deliberately an effect (#1520): this is a DEEP-LINK arrival, not a
     // derived value. The row does not exist until the indexer query resolves,
     // and what happens on arrival is a multi-step flow transition — select the

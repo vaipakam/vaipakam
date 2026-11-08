@@ -31,6 +31,7 @@ import { makePendingMarkerStore } from '../lib/pendingMarker';
 import { useActiveChain } from '../chain/useActiveChain';
 import { tipAware } from '../chain/railHealth';
 import { readPositionOwnerOn, readPositionRouteOn } from '../contracts/positionNft';
+import { boundOfferMoved, readLoanFlows, type FlowMoved } from './positionFlowMoved';
 
 /** LibERC721.LockReason.EarlyWithdrawalSale. */
 export const LOCK_EARLY_WITHDRAWAL_SALE = 2;
@@ -101,6 +102,11 @@ export interface LoanSalePendingState {
   completable: SaleListingVerdict;
   /** Chain time says the cancel cooldown has elapsed. */
   cancelUnlocked: boolean;
+  /** #3205 — the lender position NFT moved since the listing was posted,
+   *  per the indexer (the chain has no view of it yet, #3323). `'yes'`: the
+   *  sale can never complete, and anyone may cancel the listing. `'unknown'`
+   *  is stated as such, never read as live. */
+  positionMoved: FlowMoved;
 }
 
 export type SaleListingVerdict = 'yes' | 'no' | 'unknown';
@@ -117,6 +123,8 @@ export type SaleListingVerdict = 'yes' | 'no' | 'unknown';
 export type SaleListingCardView =
   | 'stale'
   | 'settled'
+  // #3205 — the lender position moved since the listing was posted.
+  | 'moved'
   | 'accepted'
   | 'expired'
   | 'open'
@@ -128,6 +136,7 @@ export function saleListingCardView(
 ): SaleListingCardView {
   if (stale) return 'stale';
   if (!state.loanActive) return 'settled';
+  if (state.positionMoved === 'yes') return 'moved';
   if (state.accepted === true) return 'accepted';
   if (state.fillable === 'no' && state.expiresAt !== null) return 'expired';
   return state.fillable === 'yes' ? 'open' : 'unread';
@@ -245,10 +254,18 @@ export function useLoanSalePending(
       // live lock, resurrecting the listing form).
       let resolvedId: string | null = null;
       let verifyFailed = false;
+      // #3205 — the indexer's verdict on the loan's sale listing, and the
+      // offer id it names for it (so a holder who did not post it can still
+      // cancel a listing that moved). Best effort; null = no answer.
+      const flows = listed ? await readLoanFlows(readChain.chainId, loanId) : null;
+      const indexed = boundOfferMoved(flows, 'loanSale', null);
       if (listed) {
         try {
           const candidateIds: string[] = [];
           if (markerId !== null) candidateIds.push(markerId);
+          if (indexed.offerId !== null && !candidateIds.includes(indexed.offerId)) {
+            candidateIds.push(indexed.offerId);
+          }
           if (isHolder && probeBudgetRef.current > 0) {
             // Recovery probe: capped at the most recent offers, and
             // budgeted so a permanently-unresolvable listing doesn't
@@ -305,9 +322,14 @@ export function useLoanSalePending(
         }
       }
       const loanActive = live.status === LOAN_STATUS_ACTIVE;
-      const { fillable, completable } = listed
-        ? saleListingVerdicts({ loanActive, record, chainNow: latestBlock.timestamp })
-        : { fillable: 'no' as const, completable: 'no' as const };
+      const positionMoved: FlowMoved = !listed
+        ? 'no'
+        : resolvedId !== null
+          ? boundOfferMoved(flows, 'loanSale', resolvedId).moved
+          : indexed.moved;
+      const { fillable, completable } = !listed || positionMoved === 'yes'
+        ? { fillable: 'no' as const, completable: 'no' as const }
+        : saleListingVerdicts({ loanActive, record, chainNow: latestBlock.timestamp });
 
       return {
         listed,
@@ -323,6 +345,7 @@ export function useLoanSalePending(
           resolvedId !== null &&
           record !== null &&
           latestBlock.timestamp >= createdAt + CANCEL_COOLDOWN_SECONDS,
+        positionMoved,
       };
     },
   });
