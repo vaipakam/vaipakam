@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
 import {Vm} from "forge-std/Vm.sol";
 import {SetupTest} from "./SetupTest.t.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
@@ -1016,9 +1017,9 @@ contract SignedOfferMatcherTest is SetupTest {
         uint256 slicePosToken =
             OfferCancelFacet(address(diamond)).getOffer(sliceOfferId).positionTokenId;
 
-        // The orphan slice position NFT is burned.
-        vm.expectRevert();
-        VaipakamNFTFacet(address(diamond)).ownerOf(slicePosToken);
+        // The orphan slice position NFT is retired (#3205: the core never
+        // burns; the Diamond treats a retired token as gone).
+        assertTrue(VaipakamNFTFacet(address(diamond)).isPositionRetired(slicePosToken));
 
         // getUserPositionOffers no longer surfaces the consumed slice as an
         // open offer (reverse map cleared + NFT gone).

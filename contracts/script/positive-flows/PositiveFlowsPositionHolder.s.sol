@@ -8,6 +8,7 @@ import {IVaipakamErrors} from "../../src/interfaces/IVaipakamErrors.sol";
 import {LoanFacet} from "../../src/facets/LoanFacet.sol";
 import {ClaimFacet} from "../../src/facets/ClaimFacet.sol";
 import {PrecloseFacet} from "../../src/facets/PrecloseFacet.sol";
+import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {VaipakamNFTFacet} from "../../src/facets/VaipakamNFTFacet.sol";
 
 /**
@@ -54,10 +55,10 @@ contract PositiveFlowsPositionHolder is PositiveFlowsBase {
         console.log("Loan initiated, loanId:", loanId);
 
         vm.startBroadcast(borrowerKey);
-        VaipakamNFTFacet(diamond).transferFrom(borrower, newBorrower, loan.borrowerTokenId);
+        IERC721(VaipakamNFTFacet(diamond).positionNFT()).transferFrom(borrower, newBorrower, loan.borrowerTokenId);
         vm.stopBroadcast();
         require(
-            VaipakamNFTFacet(diamond).ownerOf(loan.borrowerTokenId) == newBorrower,
+            IERC721(VaipakamNFTFacet(diamond).positionNFT()).ownerOf(loan.borrowerTokenId) == newBorrower,
             "PF-163: the borrower NFT should now belong to newBorrower"
         );
         console.log("Borrower NFT transferred to newBorrower");
@@ -122,10 +123,10 @@ contract PositiveFlowsPositionHolder is PositiveFlowsBase {
         console.log("Loan initiated, loanId:", loanId);
 
         vm.startBroadcast(lenderKey);
-        VaipakamNFTFacet(diamond).transferFrom(lender, newLender, loan.lenderTokenId);
+        IERC721(VaipakamNFTFacet(diamond).positionNFT()).transferFrom(lender, newLender, loan.lenderTokenId);
         vm.stopBroadcast();
         require(
-            VaipakamNFTFacet(diamond).ownerOf(loan.lenderTokenId) == newLender,
+            IERC721(VaipakamNFTFacet(diamond).positionNFT()).ownerOf(loan.lenderTokenId) == newLender,
             "PF-234: the lender NFT should now belong to newLender"
         );
         console.log("Lender NFT transferred to newLender");

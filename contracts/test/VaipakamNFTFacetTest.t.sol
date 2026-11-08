@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibPositionNFT} from "../src/libraries/LibPositionNFT.sol";
+import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
 import {Test} from "forge-std/Test.sol";
 import {VaipakamDiamond} from "../src/VaipakamDiamond.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
@@ -42,27 +44,6 @@ contract VaipakamNFTFacetTest is Test {
     uint256 constant OFFER_ID = 10;
     uint256 constant LOAN_ID = 5;
 
-    function _getAllNftSelectors() internal pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](16);
-        selectors[0] = VaipakamNFTFacet.mintNFT.selector;
-        selectors[1] = VaipakamNFTFacet.updateNFTStatus.selector;
-        selectors[2] = VaipakamNFTFacet.burnNFT.selector;
-        selectors[3] = VaipakamNFTFacet.initializeNFT.selector;
-        selectors[4] = bytes4(keccak256("ownerOf(uint256)"));
-        // ERC721 interface functions
-        selectors[5] = VaipakamNFTFacet.name.selector;
-        selectors[6] = VaipakamNFTFacet.symbol.selector;
-        selectors[7] = VaipakamNFTFacet.balanceOf.selector;
-        selectors[8] = bytes4(keccak256("approve(address,uint256)"));
-        selectors[9] = VaipakamNFTFacet.getApproved.selector;
-        selectors[10] = VaipakamNFTFacet.setApprovalForAll.selector;
-        selectors[11] = VaipakamNFTFacet.isApprovedForAll.selector;
-        selectors[12] = bytes4(keccak256("transferFrom(address,address,uint256)"));
-        selectors[13] = bytes4(keccak256("safeTransferFrom(address,address,uint256)"));
-        selectors[14] = bytes4(keccak256("safeTransferFrom(address,address,uint256,bytes)"));
-        selectors[15] = VaipakamNFTFacet.supportsInterface.selector;
-    }
-
     function setUp() public {
         owner = address(this);
         user = makeAddr("user");
@@ -82,7 +63,7 @@ contract VaipakamNFTFacetTest is Test {
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(nftFacet),
             action: IDiamondCut.FacetCutAction.Add,
-            functionSelectors: _getAllNftSelectors()
+            functionSelectors: helperTest.getVaipakamNFTFacetSelectors()
         });
         cuts[1] = IDiamondCut.FacetCut({
             facetAddress: address(accessControlFacet),
@@ -114,7 +95,7 @@ contract VaipakamNFTFacetTest is Test {
         vm.store(address(diamond), bytes32(uint256(0x2160e84a745d8897ad2778886d40d3563c8bc30c059c5f2173e21e9d47057400)), bytes32(0));
 
         // Initialize NFT storage in diamond (replaces constructor which can't init proxy storage)
-        VaipakamNFTFacet(address(diamond)).initializeNFT();
+        LibTestPositionNFT.install(address(diamond), address(this));
     }
 
     /// @dev Helper: mint an NFT via diamond proxy (authorized caller — msg.sender must be diamond).
@@ -135,7 +116,7 @@ contract VaipakamNFTFacetTest is Test {
         emit VaipakamNFTFacet.NFTMinted(TOKEN_ID_1, user, "Lender");
         _mintViaProxy(user, TOKEN_ID_1, true, LibVaipakam.LoanPositionStatus.OfferCreated);
 
-        assertEq(IERC721(address(diamond)).ownerOf(TOKEN_ID_1), user);
+        assertEq(LibTestPositionNFT.core(address(diamond)).ownerOf(TOKEN_ID_1), user);
     }
 
     function testMintNFTBorrowerSuccess() public {
@@ -143,7 +124,7 @@ contract VaipakamNFTFacetTest is Test {
         emit VaipakamNFTFacet.NFTMinted(TOKEN_ID_1, user, "Borrower");
         _mintViaProxy(user, TOKEN_ID_1, false, LibVaipakam.LoanPositionStatus.OfferCreated);
 
-        assertEq(IERC721(address(diamond)).ownerOf(TOKEN_ID_1), user);
+        assertEq(LibTestPositionNFT.core(address(diamond)).ownerOf(TOKEN_ID_1), user);
     }
 
     function testMintNFTRevertsDirectEOACall() public {
@@ -157,8 +138,8 @@ contract VaipakamNFTFacetTest is Test {
         _mintViaProxy(user, TOKEN_ID_1, true, LibVaipakam.LoanPositionStatus.OfferCreated);
         _mintViaProxy(user, TOKEN_ID_2, false, LibVaipakam.LoanPositionStatus.OfferCreated);
 
-        assertEq(IERC721(address(diamond)).ownerOf(TOKEN_ID_1), user);
-        assertEq(IERC721(address(diamond)).ownerOf(TOKEN_ID_2), user);
+        assertEq(LibTestPositionNFT.core(address(diamond)).ownerOf(TOKEN_ID_1), user);
+        assertEq(LibTestPositionNFT.core(address(diamond)).ownerOf(TOKEN_ID_2), user);
     }
 
     // ─── updateNFTStatus ──────────────────────────────────────────────────────
@@ -186,34 +167,39 @@ contract VaipakamNFTFacetTest is Test {
         VaipakamNFTFacet(address(diamond)).updateNFTStatus(TOKEN_ID_1, LOAN_ID, LibVaipakam.LoanPositionStatus.LoanInitiated);
     }
 
-    // ─── burnNFT ──────────────────────────────────────────────────────────────
+    // ─── retirePosition (#3205: the core never burns) ──────────────────────────
 
-    function testBurnNFTSuccess() public {
-        _mintViaProxy(user, TOKEN_ID_1, true, LibVaipakam.LoanPositionStatus.OfferCreated);
+    function testRetirePositionKeepsTheReceiptAndReadsAsGone() public {
+        _mintViaProxy(user, TOKEN_ID_1, true, LibVaipakam.LoanPositionStatus.LoanClosed);
 
         vm.expectEmit(true, false, false, false);
-        emit VaipakamNFTFacet.NFTBurned(TOKEN_ID_1);
+        emit VaipakamNFTFacet.PositionRetired(TOKEN_ID_1);
         vm.prank(address(diamond));
-        VaipakamNFTFacet(address(diamond)).burnNFT(TOKEN_ID_1);
+        VaipakamNFTFacet(address(diamond)).retirePosition(TOKEN_ID_1);
 
-        // ownerOf should revert after burn (ERC721 standard)
-        vm.expectRevert();
-        IERC721(address(diamond)).ownerOf(TOKEN_ID_1);
+        // The holder keeps the token as a receipt, and it still renders.
+        assertEq(LibTestPositionNFT.core(address(diamond)).ownerOf(TOKEN_ID_1), user);
+        assertGt(bytes(VaipakamNFTMetadataFacet(address(diamond)).tokenURI(TOKEN_ID_1)).length, 0);
+        // The Diamond reads it as gone.
+        assertTrue(VaipakamNFTFacet(address(diamond)).isPositionRetired(TOKEN_ID_1));
+        // Retiring again is a no-op.
+        vm.prank(address(diamond));
+        VaipakamNFTFacet(address(diamond)).retirePosition(TOKEN_ID_1);
     }
 
-    function testBurnNFTRevertsEOACall() public {
+    function testRetirePositionRevertsEOACall() public {
         _mintViaProxy(user, TOKEN_ID_1, true, LibVaipakam.LoanPositionStatus.OfferCreated);
 
         vm.prank(user, user);
         vm.expectRevert(VaipakamNFTFacet.NotAuthorized.selector);
-        VaipakamNFTFacet(address(diamond)).burnNFT(TOKEN_ID_1);
+        VaipakamNFTFacet(address(diamond)).retirePosition(TOKEN_ID_1);
     }
 
-    function testBurnNFTRevertsNonExistentToken() public {
-        // ownerOf(999) reverts via ERC721 before the NFTAlreadyBurned check fires
+    function testRetirePositionRevertsUnmintedToken() public {
         vm.prank(address(diamond));
-        vm.expectRevert();
-        VaipakamNFTFacet(address(diamond)).burnNFT(999);
+        vm.expectRevert(abi.encodeWithSelector(LibPositionNFT.ERC721NonexistentToken.selector, 999));
+        VaipakamNFTFacet(address(diamond)).retirePosition(999);
+        assertFalse(VaipakamNFTFacet(address(diamond)).isPositionRetired(999));
     }
 
     // ─── tokenURI ─────────────────────────────────────────────────────────────
@@ -272,7 +258,7 @@ contract VaipakamNFTFacetTest is Test {
 
     function testOwnerOfReturnsCorrectOwner() public {
         _mintViaProxy(user, TOKEN_ID_1, true, LibVaipakam.LoanPositionStatus.LoanInitiated);
-        assertEq(IERC721(address(diamond)).ownerOf(TOKEN_ID_1), user);
+        assertEq(LibTestPositionNFT.core(address(diamond)).ownerOf(TOKEN_ID_1), user);
     }
 
     // ─── Additional branch coverage tests ────────────────────────────────────
@@ -287,19 +273,6 @@ contract VaipakamNFTFacetTest is Test {
         // Verify status was actually updated by querying tokenURI
         string memory uri = VaipakamNFTMetadataFacet(address(diamond)).tokenURI(TOKEN_ID_1);
         assertGt(bytes(uri).length, 0);
-    }
-
-    /// @dev burnNFT with a valid token — covers the burn success path where ownerOf != address(0).
-    function testBurnNFTValidTokenCoversOwnerNotZeroBranch() public {
-        _mintViaProxy(user, TOKEN_ID_2, false, LibVaipakam.LoanPositionStatus.OfferCreated);
-        // Token exists — burn should succeed
-        vm.expectEmit(true, false, false, false);
-        emit VaipakamNFTFacet.NFTBurned(TOKEN_ID_2);
-        vm.prank(address(diamond));
-        VaipakamNFTFacet(address(diamond)).burnNFT(TOKEN_ID_2);
-        // After burn, ownerOf should revert
-        vm.expectRevert();
-        IERC721(address(diamond)).ownerOf(TOKEN_ID_2);
     }
 
     /// @dev tokenURI with a LibVaipakam.LoanPositionStatus.LoanClosed status — covers `isClosed = true` branch via lender role.
@@ -332,16 +305,16 @@ contract VaipakamNFTFacetTest is Test {
     // ─── ERC721 Interface ────────────────────────────────────────────────────
 
     function testNameAndSymbol() public {
-        assertEq(VaipakamNFTFacet(address(diamond)).name(), "Vaipakam NFT");
-        assertEq(VaipakamNFTFacet(address(diamond)).symbol(), "VAIPAK");
+        assertEq(LibTestPositionNFT.core(address(diamond)).name(), "Vaipakam NFT");
+        assertEq(LibTestPositionNFT.core(address(diamond)).symbol(), "VAIPAK");
     }
 
     function testBalanceOf() public {
-        assertEq(VaipakamNFTFacet(address(diamond)).balanceOf(user), 0);
+        assertEq(LibTestPositionNFT.core(address(diamond)).balanceOf(user), 0);
         _mintViaProxy(user, TOKEN_ID_1, true, LibVaipakam.LoanPositionStatus.OfferCreated);
-        assertEq(VaipakamNFTFacet(address(diamond)).balanceOf(user), 1);
+        assertEq(LibTestPositionNFT.core(address(diamond)).balanceOf(user), 1);
         _mintViaProxy(user, TOKEN_ID_2, false, LibVaipakam.LoanPositionStatus.OfferCreated);
-        assertEq(VaipakamNFTFacet(address(diamond)).balanceOf(user), 2);
+        assertEq(LibTestPositionNFT.core(address(diamond)).balanceOf(user), 2);
     }
 
     function testApproveAndGetApproved() public {
@@ -349,19 +322,19 @@ contract VaipakamNFTFacetTest is Test {
         address approved = makeAddr("approved");
 
         vm.prank(user);
-        VaipakamNFTFacet(address(diamond)).approve(approved, TOKEN_ID_1);
-        assertEq(VaipakamNFTFacet(address(diamond)).getApproved(TOKEN_ID_1), approved);
+        LibTestPositionNFT.core(address(diamond)).approve(approved, TOKEN_ID_1);
+        assertEq(LibTestPositionNFT.core(address(diamond)).getApproved(TOKEN_ID_1), approved);
     }
 
     function testSetApprovalForAll() public {
         address operator = makeAddr("operator");
         vm.prank(user);
-        VaipakamNFTFacet(address(diamond)).setApprovalForAll(operator, true);
-        assertTrue(VaipakamNFTFacet(address(diamond)).isApprovedForAll(user, operator));
+        LibTestPositionNFT.core(address(diamond)).setApprovalForAll(operator, true);
+        assertTrue(LibTestPositionNFT.core(address(diamond)).isApprovedForAll(user, operator));
 
         vm.prank(user);
-        VaipakamNFTFacet(address(diamond)).setApprovalForAll(operator, false);
-        assertFalse(VaipakamNFTFacet(address(diamond)).isApprovedForAll(user, operator));
+        LibTestPositionNFT.core(address(diamond)).setApprovalForAll(operator, false);
+        assertFalse(LibTestPositionNFT.core(address(diamond)).isApprovedForAll(user, operator));
     }
 
     function testTransferFrom() public {
@@ -369,8 +342,8 @@ contract VaipakamNFTFacetTest is Test {
         _mintViaProxy(user, TOKEN_ID_1, true, LibVaipakam.LoanPositionStatus.OfferCreated);
 
         vm.prank(user);
-        VaipakamNFTFacet(address(diamond)).transferFrom(user, recipient, TOKEN_ID_1);
-        assertEq(IERC721(address(diamond)).ownerOf(TOKEN_ID_1), recipient);
+        LibTestPositionNFT.core(address(diamond)).transferFrom(user, recipient, TOKEN_ID_1);
+        assertEq(LibTestPositionNFT.core(address(diamond)).ownerOf(TOKEN_ID_1), recipient);
     }
 
     function testSafeTransferFrom() public {
@@ -378,8 +351,8 @@ contract VaipakamNFTFacetTest is Test {
         _mintViaProxy(user, TOKEN_ID_1, true, LibVaipakam.LoanPositionStatus.OfferCreated);
 
         vm.prank(user);
-        VaipakamNFTFacet(address(diamond)).safeTransferFrom(user, recipient, TOKEN_ID_1);
-        assertEq(IERC721(address(diamond)).ownerOf(TOKEN_ID_1), recipient);
+        LibTestPositionNFT.core(address(diamond)).safeTransferFrom(user, recipient, TOKEN_ID_1);
+        assertEq(LibTestPositionNFT.core(address(diamond)).ownerOf(TOKEN_ID_1), recipient);
     }
 
     function testSafeTransferFromWithData() public {
@@ -387,26 +360,26 @@ contract VaipakamNFTFacetTest is Test {
         _mintViaProxy(user, TOKEN_ID_1, true, LibVaipakam.LoanPositionStatus.OfferCreated);
 
         vm.prank(user);
-        VaipakamNFTFacet(address(diamond)).safeTransferFrom(user, recipient, TOKEN_ID_1, "test data");
-        assertEq(IERC721(address(diamond)).ownerOf(TOKEN_ID_1), recipient);
+        LibTestPositionNFT.core(address(diamond)).safeTransferFrom(user, recipient, TOKEN_ID_1, "test data");
+        assertEq(LibTestPositionNFT.core(address(diamond)).ownerOf(TOKEN_ID_1), recipient);
     }
 
     // ─── supportsInterface ───────────────────────────────────────────────────
 
     function testSupportsInterfaceERC721() public view {
-        assertTrue(VaipakamNFTFacet(address(diamond)).supportsInterface(type(IERC721).interfaceId));
+        assertTrue(LibTestPositionNFT.core(address(diamond)).supportsInterface(type(IERC721).interfaceId));
     }
 
     function testSupportsInterfaceERC721Metadata() public view {
-        assertTrue(VaipakamNFTFacet(address(diamond)).supportsInterface(type(IERC721Metadata).interfaceId));
+        assertTrue(LibTestPositionNFT.core(address(diamond)).supportsInterface(type(IERC721Metadata).interfaceId));
     }
 
     function testSupportsInterfaceERC165() public view {
-        assertTrue(VaipakamNFTFacet(address(diamond)).supportsInterface(type(IERC165).interfaceId));
+        assertTrue(LibTestPositionNFT.core(address(diamond)).supportsInterface(type(IERC165).interfaceId));
     }
 
     function testSupportsInterfaceReturnsFalseForUnknown() public view {
-        assertFalse(VaipakamNFTFacet(address(diamond)).supportsInterface(0xdeadbeef));
+        assertFalse(LibTestPositionNFT.core(address(diamond)).supportsInterface(0xdeadbeef));
     }
 
     // ─── _isClosedStatus branches ────────────────────────────────────────────
@@ -432,9 +405,32 @@ contract VaipakamNFTFacetTest is Test {
     // ─── initializeNFT access control ────────────────────────────────────────
 
     function testInitializeNFTRevertsNonAdmin() public {
+        address core = address(LibTestPositionNFT.core(address(diamond)));
         vm.prank(user);
         vm.expectRevert();
-        VaipakamNFTFacet(address(diamond)).initializeNFT();
+        VaipakamNFTFacet(address(diamond)).initializeNFT(core);
+    }
+
+    function testInitializeNFTIsOnceOnly() public {
+        address core = address(LibTestPositionNFT.core(address(diamond)));
+        vm.expectRevert(LibPositionNFT.PositionNFTAlreadySet.selector);
+        VaipakamNFTFacet(address(diamond)).initializeNFT(core);
+    }
+
+    /// @dev #3205 — the Diamond is not an ERC-721 any more: it routes none of
+    ///      the token surface, so every owner read goes to the core.
+    function testTheDiamondRoutesNoErc721Surface() public {
+        (bool ok, ) = address(diamond).staticcall(abi.encodeWithSignature("ownerOf(uint256)", 1));
+        assertFalse(ok, "ownerOf is not on the Diamond");
+        (ok, ) = address(diamond).call(abi.encodeWithSignature("transferFrom(address,address,uint256)", user, owner, 1));
+        assertFalse(ok, "transferFrom is not on the Diamond");
+    }
+
+    /// @dev Only the core may call the Diamond's transfer check.
+    function testCheckPositionTransferIsCoreOnly() public {
+        vm.prank(user);
+        vm.expectRevert(VaipakamNFTFacet.NotAuthorized.selector);
+        VaipakamNFTFacet(address(diamond)).checkPositionTransfer(user, user, owner, 1);
     }
 
     // ─── #821 freeze-at-source: position-NFT transfer restriction ─────────────
@@ -460,7 +456,7 @@ contract VaipakamNFTFacetTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(LibVaipakam.SanctionedAddress.selector, user)
         );
-        IERC721(address(diamond)).transferFrom(user, cleanBuyer, TOKEN_ID_1);
+        LibTestPositionNFT.core(address(diamond)).transferFrom(user, cleanBuyer, TOKEN_ID_1);
 
         // 2. A flagged RECIPIENT cannot receive a position NFT.
         m.setFlagged(user, false);
@@ -471,14 +467,14 @@ contract VaipakamNFTFacetTest is Test {
                 LibVaipakam.SanctionedAddress.selector, cleanBuyer
             )
         );
-        IERC721(address(diamond)).transferFrom(user, cleanBuyer, TOKEN_ID_1);
+        LibTestPositionNFT.core(address(diamond)).transferFrom(user, cleanBuyer, TOKEN_ID_1);
 
         // 3. Clean → clean transfer (legitimate secondary-market sale) works.
         m.setFlagged(cleanBuyer, false);
         vm.prank(user);
-        IERC721(address(diamond)).transferFrom(user, cleanBuyer, TOKEN_ID_1);
+        LibTestPositionNFT.core(address(diamond)).transferFrom(user, cleanBuyer, TOKEN_ID_1);
         assertEq(
-            IERC721(address(diamond)).ownerOf(TOKEN_ID_1),
+            LibTestPositionNFT.core(address(diamond)).ownerOf(TOKEN_ID_1),
             cleanBuyer,
             "clean secondary-market transfer succeeds"
         );
@@ -488,8 +484,8 @@ contract VaipakamNFTFacetTest is Test {
         ProfileFacet(address(diamond)).setSanctionsOracle(address(0));
         m.setFlagged(cleanBuyer, true); // still "flagged" in the now-detached oracle
         vm.prank(cleanBuyer);
-        IERC721(address(diamond)).transferFrom(cleanBuyer, user, TOKEN_ID_1);
-        assertEq(IERC721(address(diamond)).ownerOf(TOKEN_ID_1), user, "fail-open when oracle unset");
+        LibTestPositionNFT.core(address(diamond)).transferFrom(cleanBuyer, user, TOKEN_ID_1);
+        assertEq(LibTestPositionNFT.core(address(diamond)).ownerOf(TOKEN_ID_1), user, "fail-open when oracle unset");
     }
 }
 

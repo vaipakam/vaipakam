@@ -24,11 +24,11 @@ import {
   RefinanceFacetABI,
   RepayPeriodicFacetABI,
   RiskFacetABI,
-  VaipakamNFTFacetABI,
 } from '@vaipakam/contracts/abis';
 import { sideClaimableStatus, type SideClaim } from '../claims/loanClaim';
 import { readSideClaim } from '../claims/loanClaimReview';
 import { isLiveStatus, LOAN_STATUS_ACTIVE, type Deadlines, type LoanSummary } from './model';
+import { positionRouteCallFor, readLiveHolderOrNull } from './positionNft';
 import { answerOrNull } from '../reads/answer';
 
 type Hex = `0x${string}`;
@@ -36,7 +36,6 @@ type Hex = `0x${string}`;
 const LOAN = LoanFacetABI as Abi;
 const RISK = RiskFacetABI as Abi;
 const METRICS = MetricsFacetABI as Abi;
-const NFT = VaipakamNFTFacetABI as Abi;
 const DEFAULTED = DefaultedFacetABI as Abi;
 const PERIODIC = RepayPeriodicFacetABI as Abi;
 const NUMERAIRE = NumeraireConfigFacetABI as Abi;
@@ -275,6 +274,10 @@ export async function readLoanView(client: PublicClient, diamond: Hex, loanId: b
   const block = await client.getBlock({ blockTag: 'latest' });
   const at = { blockNumber: block.number };
   const read = <T>(abi: Abi, functionName: string, args: readonly unknown[] = []) => client.readContract({ address: diamond, abi, functionName, args, ...at }) as Promise<T>;
+  // #3205: position-NFT reads go to the chain's position-NFT surface; a
+  // holder read carries the retired rule (a closed position has none).
+  const readCall = async <T>(call: () => ReturnType<typeof positionRouteCallFor>) => (await client.readContract({ ...call(), ...at })) as T;
+  const holder = (tokenId: bigint) => readLiveHolderOrNull(client, diamond, tokenId, block.number);
   const loan = await read<LoanDetails>(LOAN, 'getLoanDetails', [loanId]);
   if (loan.id === 0n) return { view: null };
   const live = isLiveStatus(loan.status);
@@ -307,8 +310,8 @@ export async function readLoanView(client: PublicClient, diamond: Hex, loanId: b
     borrowerClaim,
     runningLenderRow,
   ] = await Promise.all([
-    answerOrNull(read<Hex>(NFT, 'ownerOf', [loan.lenderTokenId])),
-    answerOrNull(read<Hex>(NFT, 'ownerOf', [loan.borrowerTokenId])),
+    holder(loan.lenderTokenId),
+    holder(loan.borrowerTokenId),
     live ? answerOrNull(read<readonly [bigint, bigint, bigint, bigint]>(LOAN, 'getLoanDeadlines', [loanId])) : null,
     scheduled ? answerOrNull(read<readonly [number, bigint, bigint, bigint, bigint, bigint, boolean]>(PERIODIC, 'previewPeriodicSettle', [loanId])) : null,
     scheduled ? answerOrNull(read<boolean>(NUMERAIRE, 'getPeriodicInterestEnabled')) : null,
@@ -321,7 +324,7 @@ export async function readLoanView(client: PublicClient, diamond: Hex, loanId: b
     answerOrNull(read<CollateralLien>(METRICS, 'getLoanCollateralLien', [loanId])),
     answerOrNull(read<boolean>(METRICS, 'isSaleVehicleLoan', [loanId])),
     live ? answerOrNull(read<readonly [boolean, bigint, bigint]>(CONFIG, 'getInternalMatchConfigBundle')) : null,
-    live ? answerOrNull(read<number>(NFT, 'positionLock', [loan.borrowerTokenId]).then(Number)) : null,
+    live ? answerOrNull(readCall<number>(() => positionRouteCallFor(diamond, loan.borrowerTokenId)).then(Number)) : null,
     live ? answerOrNull(read<readonly [bigint, boolean]>(REFINANCE, 'getRefinanceRequest', [loanId])) : null,
     liveErc20 ? answerOrNull(read<boolean>(ADMIN, 'isAssetPaused', [loan.collateralAsset])) : null,
     liveErc20 ? answerOrNull(read<number>(ORACLE, 'checkLiquidity', [loan.collateralAsset]).then(Number)) : null,

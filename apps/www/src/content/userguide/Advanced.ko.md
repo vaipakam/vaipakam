@@ -2096,7 +2096,7 @@ Positions는 하나의 공유 리더로 Home과 같은 보유 목록을 읽습�
 
 ### Position: 대출을 읽는 방법
 
-페이지는 `getLoanDetails(loanId)`와 대출자·차입자 포지션 NFT의 `ownerOf`를 읽습니다. 역할은 지갑이 지금 보유한 토큰입니다. 진행 중인 대출(Active 또는 FallbackPending)에 대해서는 `getLoanDeadlines`(일시 중지 크레딧 전 현재 기간의 만기, 연장이나 차입자 인계로 다시 쓰임, 일시 중지 크레딧, 만기, 유예 종료), 상환 주기가 있으면 `getPeriodicInterestEnabled`와 함께 `previewPeriodicSettle`, `isLoanDefaultable` (+ `paused`, `sequencerHealthy`, `defaultKycAdmission`), `calculateHealthFactor`, `calculateLTV`를 읽고, 모든 대출에 대해 `getLoanCollateralLien`과 `isSaleVehicleLoan`을 읽습니다. 각 읽기는 독립적이며, 실패한 읽기는 0이 아니라 알 수 없음으로 표시하고, 날짜를 `startTime`과 `durationDays`로 계산하지 않습니다.
+페이지는 `getLoanDetails(loanId)`와 대출자·차입자 포지션 NFT의 보유자(배포가 기록한 PositionNFT 컨트랙트의 `ownerOf`, #3205 이전 배포라면 Diamond 자체의 `ownerOf`)를 읽습니다. 역할은 지갑이 지금 보유한 토큰입니다. 진행 중인 대출(Active 또는 FallbackPending)에 대해서는 `getLoanDeadlines`(일시 중지 크레딧 전 현재 기간의 만기, 연장이나 차입자 인계로 다시 쓰임, 일시 중지 크레딧, 만기, 유예 종료), 상환 주기가 있으면 `getPeriodicInterestEnabled`와 함께 `previewPeriodicSettle`, `isLoanDefaultable` (+ `paused`, `sequencerHealthy`, `defaultKycAdmission`), `calculateHealthFactor`, `calculateLTV`를 읽고, 모든 대출에 대해 `getLoanCollateralLien`과 `isSaleVehicleLoan`을 읽습니다. 각 읽기는 독립적이며, 실패한 읽기는 0이 아니라 알 수 없음으로 표시하고, 날짜를 `startTime`과 `durationDays`로 계산하지 않습니다.
 
 가격이 있는 대출에는 `getInternalMatchConfigBundle`도 읽습니다. 내부 매칭이 켜져 있으면 LTV가 임계값부터 임계값 + `externalLiquidationPriorityWindowBps`까지인 대출은 내부 매칭용으로 보류되고 모든 외부 청산 경로가 거부합니다(`InternalMatchOnlyBand`). 페이지는 그 구간을 알립니다. `loanInitiationFeeBpsAtInit`가 0이면(요율이 기록되기 전에 개설된 대출) 기록 없음으로, `treasuryFeeBpsAtInit`가 0이면 정산이 적용하는 기존 1% 요율로 표시합니다. 현물 인도 경고는 ERC-20 대출에만 해당합니다. NFT 대여에는 담보가 없으며, 채무 불이행 시 임차인의 사용이 끝나고 선지급 대여료는 트레저리 몫을 뺀 뒤 대출자에게 지급되며 버퍼는 트레저리로 갑니다. 페이지는 대신 이를 알립니다.
 
@@ -2106,7 +2106,7 @@ Positions는 하나의 공유 리더로 Home과 같은 보유 목록을 읽습�
 
 ### 전액 상환: 금액이 정해지는 방식
 
-이 작업은 하나의 규칙을 따릅니다: `repayLoan`은 Active 또는 FallbackPending ERC-20 대출에 대해 `loan.lender`도 `ownerOf(lenderTokenId)`도 아닌 모든 지갑에 제공되며(`LenderCannotRepayOwnLoan`), Active 대출에서는 실효 유예 기간 종료 후(`RepaymentPastGracePeriod`), 그리고 `positionLock(borrowerTokenId)`가 `SwapToRepayIntent`인 동안 보류됩니다. 대출자의 판매 등록, 재융자 요청, 전체 일시 중지는 이를 보류하지 않습니다. 대여는 아직 여기서 제공하지 않습니다.
+이 작업은 하나의 규칙을 따릅니다: `repayLoan`은 Active 또는 FallbackPending ERC-20 대출에 대해 `loan.lender`도 `ownerOf(lenderTokenId)`도 아닌 모든 지갑에 제공되며(`LenderCannotRepayOwnLoan`), Active 대출에서는 실효 유예 기간 종료 후(`RepaymentPastGracePeriod`), 그리고 차입자 포지션의 열린 경로가 `SwapToRepayIntent`인 동안(Diamond의 `positionRoute(borrowerTokenId)`, #3205 이전 배포라면 `positionLock(borrowerTokenId)`) 보류됩니다. 대출자의 판매 등록, 재융자 요청, 전체 일시 중지는 이를 보류하지 않습니다. 대여는 아직 여기서 제공하지 않습니다.
 
 검토 화면은 `calculateRepaymentAmount(loanId)`를 최신 블록에서 읽고, 블록 시간을 `min(now + 30분, 유예 기간 종료)`로 덮어써서 한 번 더 읽습니다. 같은 요청이 실행된 블록 시간도 읽으며, 덮어쓰기를 무시한 연결은 건너뜁니다. 승인액은 정확히 두 번째 수치이고, 지갑을 열기 전에 호출을 시뮬레이션하며, 영수증 이후에는 상환이 대출을 남긴 상태를 그 `LoanRepaid` 로그에서 읽고(블록 시점이 아닙니다. 같은 블록의 이후 청구로 이미 정산되었을 수 있기 때문입니다), `Transfer` 로그로 지급액을 측정하고, allowance가 승인액에서 지급액을 뺀 값이면 이전 값으로 되돌립니다. 그 수치보다 큰 allowance(무제한 포함)도 그 수치로 낮춥니다. `repayLoan(loanId)`에는 상한도 기한도 없기 때문이며, 이후 되돌리기가 원래의 큰 값을 복원합니다.
 
@@ -2191,6 +2191,12 @@ Positions는 하나의 공유 리더로 Home과 같은 보유 목록을 읽습�
 ### 볼트에 예치하기
 
 예치는 `VaultDepositoryFacet.depositToVault(kind, asset, tokenId, amount)`입니다. kind 0은 ERC-20, 1은 ERC-721, 2는 ERC-1155이며, ERC-20의 토큰 ID는 0, ERC-721의 수량은 1입니다. `whenNotPaused`이고, 호출자를 심사하며(Tier-1), 교체로 은퇴한 지갑을 거부합니다(`requireManager`). 검토는 한 블록에서 `getUserVaultAddress`, `paused`, 제재 심사 상태, `getProtectedAccount(wallet)`, 지갑의 잔액과 승인을 읽습니다. 읽지 못한 일시 중지·심사·은퇴는 그렇다고 밝히고 드라이 런이 결정합니다. 승인은 ERC-20이면 정확한 `approve`(먼저 0으로 되돌려야 하는 토큰은 두 단계), ERC-721이면 `approve(diamond, tokenId)`, ERC-1155이면 `setApprovalForAll(diamond, true)`이며, 이미 부여된 것이 아니면 예치 후 철회합니다. 드라이 런은 승인 뒤에 실행되며, ERC-20은 전액 도착 확인(`LibDelivery.pullExact`)과 함께 가져오므로 전송 수수료가 있는 토큰은 되돌려집니다. 완료 카드는 `VaultDeposited(account, asset, kind, tokenId, amount)`와 볼트로 들어간 토큰 자체의 전송 로그를 읽습니다. 이 예치에는 permit 경로가 없습니다. 검토는 `getProtectedAccount(wallet)`에서 `enabled`, `locked`, `delaySeconds`, `requireCosign`도 보관하고, 영수증은 예치가 다시 나갈 수 있는 방식을 알려 줍니다. 즉시, 대기 시간 후(필요하면 보조 서명자 승인과 함께), 또는 계정이 잠긴 동안에는 나갈 수 없으며, 잠긴 계정이어도 `depositToVault`는 거부하지 않습니다. 서명 전 마지막 확인은 `hasAcceptedCurrentTerms`를 다시 읽고 동의하지 않은 버전을 거부합니다.
+
+<a id="vault-withdraw"></a>
+
+### 볼트에서 출금
+
+출금은 `VaultDepositoryFacet.withdrawFromVault(account, kind, asset, tokenId, amount, recipient)`이며, `account`와 `recipient`는 모두 연결된 지갑입니다. 한도는 `withdrawableNow(account, kind, asset, tokenId)`이고(넘으면 `AmountExceedsFree`), `requireManager(account)`를 확인하며, 호출자(Tier-1)와 수령인을 심사하고, 일시 중지 중에는 계정이 보호되어 있고 `isEscapeOpen`이 참인 경우가 아니면 거부됩니다. 검토는 한 블록에서 `getUserVaultAddress`, `paused`, `isEscapeOpen`, 제재 상태, `getProtectedAccount(wallet)`, `withdrawableNow`를 읽은 뒤 호출을 모의 실행합니다. 보호 모드가 꺼져 있으면 볼트 경로가 지갑에 바로 지급하고, 켜져 있으면 `LibProtectedAccount.queuePayout`이 `delaySeconds` 동안 지급을 대기열에 넣으며 `ProtectedVaultLocked`, `RecipientNotAllowlisted`, `TooManyPendingRows`를 거부합니다. 완료 카드는 `VaultWithdrawRequested(account, asset, kind, tokenId, amount, recipient, queued)`, `PayoutQueued`, 그리고 볼트에서 지갑으로 간 토큰 자체의 전송 로그를 읽습니다. 예치 기록이 토큰 ID 없이 알려 주는 컬렉션은 토큰 ID를 입력해 출금하며, 양식의 한도는 그 토큰의 `withdrawableNow`로 블록마다 다시 읽습니다.
 
 <a id="risk-access"></a>
 

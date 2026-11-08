@@ -480,8 +480,8 @@ contract OfferExpiryTest is SetupTest {
     // ─── #2529: the highest allocated position-NFT id ───────────────────────
 
     /// The offer's position NFT takes the next id, so the view reads it back;
-    /// once the cancel burns it, the id stays at or below the view and
-    /// `ownerOf` reverts (burned, not never-minted).
+    /// once the cancel retires it (#3205: the core never burns), the id stays
+    /// at or below the view and the Diamond reports it retired.
     function testHighestTokenIdTracksAllocationAndBurn() public {
         VaipakamNFTFacet nft = VaipakamNFTFacet(address(diamond));
         uint256 before_ = nft.highestTokenId();
@@ -493,8 +493,7 @@ contract OfferExpiryTest is SetupTest {
         vm.warp(block.timestamp + LibVaipakam.MIN_OFFER_CANCEL_DELAY);
         vm.prank(lender);
         OfferCancelFacet(address(diamond)).cancelOffer(id);
-        assertEq(nft.highestTokenId(), tokenId, "a burn does not lower it");
-        vm.expectRevert();
-        nft.ownerOf(tokenId);
+        assertEq(nft.highestTokenId(), tokenId, "a retirement does not lower it");
+        assertTrue(nft.isPositionRetired(tokenId), "retired, not never-minted");
     }
 }

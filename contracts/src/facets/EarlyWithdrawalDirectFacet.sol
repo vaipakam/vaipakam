@@ -11,7 +11,7 @@ import {LibRiskAccess} from "../libraries/LibRiskAccess.sol";
 import {LibLoan} from "../libraries/LibLoan.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibDelivery} from "../libraries/LibDelivery.sol";
-import {LibERC721} from "../libraries/LibERC721.sol";
+import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
 import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
 import {InteractionRewardsFacet} from "./InteractionRewardsFacet.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -606,7 +606,7 @@ contract EarlyWithdrawalDirectFacet is
         // stored `loan.borrower` is stale; both the self-buy guard and the
         // compliance recheck below key on the live holder. Same resolution the
         // listed route does in `LoanFacet.initiateLoan` (Codex #959 round-8 P1).
-        address currentBorrower = LibERC721.ownerOf(loan.borrowerTokenId);
+        address currentBorrower = LibPositionNFT.ownerOf(loan.borrowerTokenId);
         // Reject the loan's OWN current borrower buying the lender side of their
         // own debt: that migrates the lender onto the borrower, leaving an Active
         // loan with `lender == borrower` (a party owing itself — breaks
@@ -750,7 +750,7 @@ contract EarlyWithdrawalDirectFacet is
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
                 ProfileFacet.enforcePositionMoveNotSanctioned.selector,
-                LibERC721.ownerOf(loan.lenderTokenId),
+                LibPositionNFT.ownerOf(loan.lenderTokenId),
                 buyOffer.creator
             ),
             bytes4(0)
@@ -947,7 +947,7 @@ contract EarlyWithdrawalDirectFacet is
         // Burn the consumed offer's position NFT (stale "Offer Created" artifact)
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
-                VaipakamNFTFacet.burnNFT.selector,
+                VaipakamNFTFacet.retirePosition.selector,
                 buyOffer.positionTokenId
             ),
             NFTBurnFailed.selector

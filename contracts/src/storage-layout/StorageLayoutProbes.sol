@@ -2,7 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
-import {LibERC721} from "../libraries/LibERC721.sol";
+import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
 import {LibAccessControl} from "../libraries/LibAccessControl.sol";
 import {LibPausable} from "../libraries/LibPausable.sol";
 import {LibReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
@@ -52,7 +52,7 @@ contract StorageLayoutProbeVaipakam {
 
 contract StorageLayoutProbeERC721 {
     // slither-disable-next-line unused-state
-    LibERC721.ERC721Storage internal probe;
+    LibPositionNFT.ERC721Storage internal probe;
 }
 
 contract StorageLayoutProbeAccessControl {

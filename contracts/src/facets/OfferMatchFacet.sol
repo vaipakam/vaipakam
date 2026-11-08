@@ -274,16 +274,18 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
         // consumed one-tx slice would surface as a phantom OPEN offer in both
         // `getUserPositionOffers` (active index + reverse map) and tokenURI
         // (live NFT). Mirror OfferCancelFacet's terminal cleanup: drop the
-        // active index, clear the reverse map, burn the orphan NFT. (A BORROWER
-        // slice needs none of this: its token carries over to
-        // `loan.borrowerTokenId` and onLoanInitiated owns the cleanup.)
+        // active index, clear the reverse map, retire the orphan NFT. (Since
+        // #3205 the matcher's `retireTerminalOfferTokens` also retires a
+        // terminal slice's own token on either side, so this is idempotent
+        // there; a BORROWER slice's token no longer carries over to the loan,
+        // which takes its own.)
         if (signedIsLender) {
             LibMetricsHooks.onOfferAccepted(sliceOfferId);
             uint256 slicePosToken = s.offers[sliceOfferId].positionTokenId;
             delete s.offerIdByPositionTokenId[slicePosToken];
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
-                    VaipakamNFTFacet.burnNFT.selector, slicePosToken
+                    VaipakamNFTFacet.retirePosition.selector, slicePosToken
                 ),
                 LibOfferMatchExecute.NFTBurnFailed.selector
             );

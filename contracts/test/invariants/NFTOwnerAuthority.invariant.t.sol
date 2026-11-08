@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {PositionNFT} from "../../src/PositionNFT.sol";
+import {LibTestPositionNFT} from "../helpers/LibTestPositionNFT.sol";
 import {Test} from "forge-std/Test.sol";
 import {InvariantBase} from "./InvariantBase.sol";
 import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
@@ -52,6 +54,7 @@ contract NFTOwnerAuthorityInvariant is Test {
         uint256 n = handler.loanIdsLength();
         LoanFacet loans = LoanFacet(address(base.diamond()));
         VaipakamNFTFacet nft = VaipakamNFTFacet(address(base.diamond()));
+        PositionNFT core = LibTestPositionNFT.core(address(base.diamond()));
         for (uint256 i = 0; i < n; i++) {
             uint256 loanId = handler.loanIdAt(i);
             LibVaipakam.Loan memory L = loans.getLoanDetails(loanId);
@@ -59,17 +62,11 @@ contract NFTOwnerAuthorityInvariant is Test {
                 L.status == LibVaipakam.LoanStatus.Active ||
                 L.status == LibVaipakam.LoanStatus.FallbackPending
             ) {
-                // ownerOf reverts if the token was burned — catch that.
-                try nft.ownerOf(L.lenderTokenId) returns (address lOwner) {
-                    assertTrue(lOwner != address(0), "lender NFT owner zero");
-                } catch {
-                    revert("lender NFT burned while loan open");
-                }
-                try nft.ownerOf(L.borrowerTokenId) returns (address bOwner) {
-                    assertTrue(bOwner != address(0), "borrower NFT owner zero");
-                } catch {
-                    revert("borrower NFT burned while loan open");
-                }
+                // #3205 — a live position's token is minted and not retired.
+                assertTrue(core.holderOf(L.lenderTokenId) != address(0), "lender NFT missing while loan open");
+                assertTrue(core.holderOf(L.borrowerTokenId) != address(0), "borrower NFT missing while loan open");
+                assertFalse(nft.isPositionRetired(L.lenderTokenId), "lender NFT retired while loan open");
+                assertFalse(nft.isPositionRetired(L.borrowerTokenId), "borrower NFT retired while loan open");
             }
         }
     }

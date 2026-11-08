@@ -70,7 +70,11 @@ A "residual" below is a stated limit, not a bug report.
   30-minute on-chain record, never from the pool as it stands in one block.
   A new position credits the lower of the current and the average depth; a
   liquidation or default credits the average, so depth pulled in the same
-  block cannot block it. Pools with no such record, V2-fork pools included,
+  block cannot block it. A new position also needs the pool's current price
+  to agree with the feed and with its own average; a liquidation or default
+  does not apply those price checks (#3371), so neither a fast market move
+  nor a one-block price push can stop it, and its oracle-based minimum
+  output still refuses a bad fill. Pools with no such record, V2-fork pools included,
   do not count. Someone willing to hold real depth for longer than the
   window is not stopped by this; keeper confidence and exposure caps
   (#830) are the planned answer.

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
 import {SetupTest} from "./SetupTest.t.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
@@ -142,22 +143,25 @@ contract SanctionsFailClosedTransferTest is SetupTest {
         assertEq(uint8(_status(wallet)), uint8(LibVaipakam.SanctionsRead.Flagged));
     }
 
-    // ─── Movement gate — block paths (gate precedes the ownership check) ─────
+    // ─── Movement gate — block paths (a real token the wallet holds, #3205:
+    //     the core checks existence and authority before the Diamond's check) ─
 
     function test_transfer_flaggedRevertsNormalOp() public {
         MockSanctionsList m = _oracle();
+        TestMutatorFacet(address(diamond)).mintNFTRaw(wallet, TOK);
         m.setFlagged(wallet, true);
         vm.prank(wallet);
         vm.expectRevert(
             abi.encodeWithSelector(LibVaipakam.SanctionedAddress.selector, wallet)
         );
-        VaipakamNFTFacet(address(diamond)).transferFrom(wallet, recipient, TOK);
+        LibTestPositionNFT.core(address(diamond)).transferFrom(wallet, recipient, TOK);
     }
 
     /// LOAD-BEARING: a wallet REGISTERED while the oracle was up cannot move a
     /// position during an oracle outage (fail-closed on the registry).
     function test_transfer_registeredRevertsDuringOutage() public {
         MockSanctionsList m = _oracle();
+        TestMutatorFacet(address(diamond)).mintNFTRaw(wallet, TOK);
         m.setFlagged(wallet, true);
         ProfileFacet(address(diamond)).refreshSanctionsFlag(wallet); // register while up
         m.setRevertOnRead(true); // outage
@@ -165,7 +169,7 @@ contract SanctionsFailClosedTransferTest is SetupTest {
         vm.expectRevert(
             abi.encodeWithSelector(LibVaipakam.SanctionedAddress.selector, wallet)
         );
-        VaipakamNFTFacet(address(diamond)).transferFrom(wallet, recipient, TOK);
+        LibTestPositionNFT.core(address(diamond)).transferFrom(wallet, recipient, TOK);
     }
 
     // ─── Movement gate — allow paths (real token; transfer completes) ────────
@@ -175,8 +179,8 @@ contract SanctionsFailClosedTransferTest is SetupTest {
         TestMutatorFacet(address(diamond)).mintNFTRaw(wallet, TOK);
         m.setRevertOnRead(true); // outage
         vm.prank(wallet);
-        VaipakamNFTFacet(address(diamond)).transferFrom(wallet, recipient, TOK);
-        assertEq(VaipakamNFTFacet(address(diamond)).ownerOf(TOK), recipient);
+        LibTestPositionNFT.core(address(diamond)).transferFrom(wallet, recipient, TOK);
+        assertEq(LibTestPositionNFT.core(address(diamond)).ownerOf(TOK), recipient);
     }
 
     function test_transfer_oracleUnsetIgnoresRegistry() public {
@@ -187,8 +191,8 @@ contract SanctionsFailClosedTransferTest is SetupTest {
         ProfileFacet(address(diamond)).setSanctionsOracle(address(0));
         TestMutatorFacet(address(diamond)).mintNFTRaw(wallet, TOK);
         vm.prank(wallet);
-        VaipakamNFTFacet(address(diamond)).transferFrom(wallet, recipient, TOK);
-        assertEq(VaipakamNFTFacet(address(diamond)).ownerOf(TOK), recipient);
+        LibTestPositionNFT.core(address(diamond)).transferFrom(wallet, recipient, TOK);
+        assertEq(LibTestPositionNFT.core(address(diamond)).ownerOf(TOK), recipient);
     }
 
     /// Self-heal: an authoritative-clean move clears a stale registry entry.
@@ -199,8 +203,8 @@ contract SanctionsFailClosedTransferTest is SetupTest {
         m.setFlagged(wallet, false); // de-listed at the oracle (oracle up)
         TestMutatorFacet(address(diamond)).mintNFTRaw(wallet, TOK);
         vm.prank(wallet);
-        VaipakamNFTFacet(address(diamond)).transferFrom(wallet, recipient, TOK);
-        assertEq(VaipakamNFTFacet(address(diamond)).ownerOf(TOK), recipient);
+        LibTestPositionNFT.core(address(diamond)).transferFrom(wallet, recipient, TOK);
+        assertEq(LibTestPositionNFT.core(address(diamond)).ownerOf(TOK), recipient);
         assertFalse(
             ProfileFacet(address(diamond)).isSanctionsConfirmedFlagged(wallet),
             "clean move self-heal-cleared the stale registry entry"

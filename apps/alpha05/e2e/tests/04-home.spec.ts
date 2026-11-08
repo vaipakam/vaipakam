@@ -8,7 +8,6 @@
  */
 import { openLoan, postLenderOffer, repayInFull } from '@vaipakam/anvil-harness/lending';
 import { scenario } from '../lib/chain';
-import { accountFor } from '../lib/wallets';
 import { connectWallet, expect, test } from '../lib/wallet';
 
 const INTENTS = ['/borrow', '/lend', '/rent', '/rent?side=owner', '/positions'];
@@ -133,7 +132,7 @@ test('a position follows its NFT: a lender who transferred it no longer sees the
   const [view] = await sc.read<readonly { loan: { lenderTokenId: bigint } }[]>('getLoansBatch', [[loanId]]);
   // The lender position moves to a wallet this suite does not drive; the
   // loan's recorded lender is unchanged, which is what an index walk would read.
-  await sc.diamondWrite('lender', 'transferFrom', [accountFor('lender').address, '0x000000000000000000000000000000000000dEaD', view!.loan.lenderTokenId]);
+  await sc.positionTransfer('lender', '0x000000000000000000000000000000000000dEaD', view!.loan.lenderTokenId);
 
   const borrower = await launchWallet('borrower');
   await borrower.page.goto('/');

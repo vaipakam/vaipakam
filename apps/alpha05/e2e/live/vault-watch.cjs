@@ -1,11 +1,13 @@
-// Watch-only live review of the Vault page (ACC-20, ACC-21, ACC-22, ACC-24,
-// RB-VAULT, RB-VAULT-DEPOSIT) (live tier, run after each deploy), through
+// Watch-only live review of the Vault page (ACC-20, ACC-21, ACC-22, ACC-23,
+// ACC-24, RB-VAULT, RB-VAULT-DEPOSIT, RB-VAULT-WITHDRAW) (live tier, run
+// after each deploy), through
 // the shared watch-only wallet (watch-wallet.cjs): nothing can be sent.
 // Opens Vault as <address> and prints the page: the vault address (or that
 // there is none, with Create my vault, whose review it opens and leaves
 // unsigned), each asset row with the protocol's figures, uncounted notes and
 // how it was found, then the same with small and empty rows shown, then the
-// Deposit form and review for a small amount of the first suggested asset
+// Withdraw form and review for a small amount of the first asset with
+// something free (left unsigned), then the Deposit form and review for a small amount of the first suggested asset
 // (or the Terms prompt it asks for first), left unsigned. Checks that nothing
 // scrolls sideways and saves full-page screenshots per device.
 // Usage: node e2e/live/vault-watch.cjs <address>
@@ -45,6 +47,25 @@ async function session(b, opts, label) {
     await p.waitForTimeout(3000);
     console.log(`----- create review (unsigned)\n${(await receipt.count()) ? await text(receipt) : 'no receipt shown'}`);
   }
+  // ACC-23: open Withdraw on the first asset with something free, type a
+  // small amount and print the review, left unsigned.
+  const withdrawOpen = p.locator('[data-testid^="vault-withdraw-open-"]').first();
+  if (await withdrawOpen.count()) {
+    await withdrawOpen.click();
+    const form = p.getByTestId('vault-withdraw-form');
+    await form.waitFor({ timeout: 30000 }).catch(() => {});
+    const amount = form.getByTestId('vault-withdraw-amount');
+    if (await amount.count()) await amount.fill('0.0001');
+    await p.waitForTimeout(2000);
+    console.log(`----- withdraw form\n${(await form.count()) ? await text(form) : 'no form shown'}`);
+    if (await form.count()) {
+      await form.getByTestId('vault-withdraw-review').click();
+      const receipt = p.getByTestId('vault-withdraw-panel').locator('.receipt');
+      await receipt.waitFor({ timeout: 60000 }).catch(() => {});
+      await p.waitForTimeout(3000);
+      console.log(`----- withdraw review (unsigned)\n${(await receipt.count()) ? await text(p.getByTestId('vault-withdraw-panel')) : 'no receipt shown'}`);
+    }
+  } else console.log('----- withdraw: no asset with something free');
   // ACC-22: open Deposit, choose the first suggested asset, type a small
   // amount and print the review (or the Terms prompt), left unsigned.
   const depositOpen = p.getByTestId('vault-deposit-open');

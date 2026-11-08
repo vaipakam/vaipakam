@@ -172,7 +172,7 @@ describe('#2703 — a wallet’s rows, by loan or by the participants rule', () 
 
   it('keeps a row naming the wallet as a party', () => {
     expect(isWalletActivity(ev({ kind: 'UserVaultCreated', args: { user: ME, proxy: OTHER } }), ME, loans)).toBe(true);
-    expect(isWalletActivity(ev({ kind: 'Transfer', args: { from: ME, to: OTHER } }), ME, loans)).toBe(true);
+    expect(isWalletActivity(ev({ kind: 'NFTMinted', args: { tokenId: '1', owner: ME, role: 'Lender' } }), ME, loans)).toBe(true);
   });
 
   it('drops a row that only mentions the wallet', () => {

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
+
 import {SetupTest} from "./SetupTest.t.sol";
 import {SwapToRepayFacet} from "../src/facets/SwapToRepayFacet.sol";
 import {SwapToRepayPartialFacet} from "../src/facets/SwapToRepayPartialFacet.sol";
@@ -400,8 +402,7 @@ contract SwapToRepayFacetTest is SetupTest {
         // (the test diamond doesn't cut `transferFrom`; the production
         // diamond does) and flip `loan.borrower` to lenderEoa so both
         // gates target the same address.
-        TestMutatorFacet(address(diamond)).burnNFTRaw(2);
-        TestMutatorFacet(address(diamond)).mintNFTRaw(lenderEoa, 2);
+        LibTestPositionNFT.move(address(diamond), 2, lenderEoa);
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(1);
         loan.borrower = lenderEoa;
         TestMutatorFacet(address(diamond)).setLoan(1, loan);
@@ -726,8 +727,7 @@ contract SwapToRepayFacetTest is SetupTest {
         internal
         returns (MockSanctionsList sanctions)
     {
-        TestMutatorFacet(address(diamond)).burnNFTRaw(/* tokenId */ 2);
-        TestMutatorFacet(address(diamond)).mintNFTRaw(to, /* tokenId */ 2);
+        LibTestPositionNFT.move(address(diamond), 2, to);
         sanctions = new MockSanctionsList();
         ProfileFacet(address(diamond)).setSanctionsOracle(address(sanctions));
         sanctions.setFlagged(to, true);
@@ -1164,8 +1164,7 @@ contract SwapToRepayFacetTest is SetupTest {
         _reseedCollateral();
         _scaffoldLoan(2, true, false);
         _stampLenderFull(2);
-        TestMutatorFacet(address(diamond)).burnNFTRaw(3); // lenderTokenId = 2*2-1
-        TestMutatorFacet(address(diamond)).mintNFTRaw(newLender, 3);
+        LibTestPositionNFT.move(address(diamond), 3, newLender); // lenderTokenId = 2*2-1
         adapter1.setOutputMultiplierBps(10_000);
 
         uint256 t0 = IERC20(address(principalAsset)).balanceOf(treasury);

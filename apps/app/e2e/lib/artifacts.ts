@@ -79,6 +79,8 @@ export function e2eRunId(): string {
 
 export interface DeploymentSlice {
   diamond: `0x${string}`;
+  /** #3205 — the standalone PositionNFT the fixture deploy writes. */
+  positionNFT?: `0x${string}`;
   /** The Diamond's admin — holds ADMIN_ROLE and ownership, so specs that
    *  flip config (#1355) impersonate it. */
   admin: `0x${string}`;

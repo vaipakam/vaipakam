@@ -39,6 +39,7 @@ import {
 import { privateKeyToAccount } from 'viem/accounts';
 import fs from 'node:fs';
 import { gasLimitFromEstimate } from '@vaipakam/lib/gasLimit';
+import { POSITION_ERC721_ABI } from '@vaipakam/lib/positionNft';
 import type { SpawnedAnvil } from './process';
 import { explainMinedRevert } from './minedRevert';
 import { ANVIL_DEV_KEYS } from './devKeys';
@@ -187,6 +188,15 @@ export class ScenarioChain<F extends ChainFixture = ChainFixture> {
   /** A Diamond write as `who`. */
   diamondWrite(who: Party, functionName: string, args: readonly unknown[] = [], value?: bigint): Promise<TransactionReceipt> {
     return this.write(who, this.diamond, DIAMOND_ABI_VIEM, functionName, args, value);
+  }
+
+  /** #3205 — move a position NFT as its holder `who`: a transfer at the
+   *  contract that holds the position NFTs (the Diamond names it,
+   *  `positionNFT()`), never at the Diamond, which is no ERC-721 since
+   *  #3318. */
+  async positionTransfer(who: Party, to: Address, tokenId: bigint): Promise<TransactionReceipt> {
+    const nft = await this.read<Address>('positionNFT');
+    return this.write(who, nft, POSITION_ERC721_ABI as Abi, 'transferFrom', [this.address(who), to, tokenId]);
   }
 
   /** A Diamond read. */

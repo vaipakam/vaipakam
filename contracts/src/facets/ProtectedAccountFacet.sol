@@ -6,6 +6,7 @@ import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {VaultBeacon} from "../VaultBeacon.sol";
 import {LibProtectedAccount} from "../libraries/LibProtectedAccount.sol";
+import {LibPositionNFT, IPositionNFTCore} from "../libraries/LibPositionNFT.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
@@ -48,6 +49,8 @@ contract ProtectedAccountFacet is DiamondReentrancyGuard, DiamondPausable {
     /// @notice Pending setting kinds, for {cancelSettingChange}.
     uint8 internal constant CHANGE_DISABLE = 1;
     uint8 internal constant CHANGE_LOWER_DELAY = 2;
+    /// @dev #3205: retired. NFT protection is the PositionNFT core's holder
+    ///      lock; switching it off is the holder's own unlock at the core.
     uint8 internal constant CHANGE_NFT_OFF = 3;
     uint8 internal constant CHANGE_COSIGN_OFF = 4;
     uint8 internal constant CHANGE_UNLOCK = 5;
@@ -181,6 +184,44 @@ contract ProtectedAccountFacet is DiamondReentrancyGuard, DiamondPausable {
     function _voidPendingChanges(address account) private {
         ++LibVaipakam.storageSlot().protectedChangeEpoch[account];
         _voidBeaconPending(account);
+        _voidCoreLockPending(account);
+    }
+
+    /// @dev #3205 — the PositionNFT core, or 0 before it is set.
+    function _positionCore() private view returns (IPositionNFTCore) {
+        return IPositionNFTCore(LibPositionNFT._storage().core);
+    }
+
+    /// @dev #3205 — void `account`'s pending holder unlock and lock-delay
+    ///      lowering at the PositionNFT core. Reached from the same places as
+    ///      {_voidBeaconPending}, so an unlock asked under one posture cannot
+    ///      mature under the next. Only ever refuses a change.
+    function _voidCoreLockPending(address account) private {
+        IPositionNFTCore c = _positionCore();
+        if (address(c) == address(0)) return;
+        c.voidPending(account);
+    }
+
+    /// @dev #3205 — put `account`'s position NFTs under the core's holder
+    ///      lock. The Diamond may lock; it can never unlock (the holder does,
+    ///      at the core, after the lock's delay).
+    function _lockPositionNfts(address account) private {
+        IPositionNFTCore c = _positionCore();
+        if (address(c) == address(0)) return;
+        c.lockFor(account);
+    }
+
+    /// @dev #3205 — raise `account`'s holder-lock delay at the core toward
+    ///      the protected-mode delay, capped at the core's
+    ///      `MAX_DIAMOND_LOCK_DELAY` (only the holder may go higher). Never
+    ///      lowers.
+    function _raiseCoreLockDelay(address account, uint256 delaySeconds) private {
+        IPositionNFTCore c = _positionCore();
+        if (address(c) == address(0)) return;
+        uint256 cap = c.MAX_DIAMOND_LOCK_DELAY();
+        uint256 d = delaySeconds > cap ? cap : delaySeconds;
+        (, uint256 current,,,) = c.lockOf(account);
+        if (d > current) c.raiseLockDelay(account, d);
     }
 
     /// @dev #3204 — void every change pending for `account`'s vault at the
@@ -202,11 +243,14 @@ contract ProtectedAccountFacet is DiamondReentrancyGuard, DiamondPausable {
     ///      either.
     function _dropPendingChanges(address account, LibVaipakam.ProtectedAccount storage a) private {
         _voidPendingChanges(account);
+        // #3205 — a lock and a replacement both also hold the account's
+        // position NFTs at the core: an emergency or a lost key is no time for
+        // a position to leave.
+        _lockPositionNfts(account);
         a.pendingUnlockAt = 0;
         a.pendingDisableAt = 0;
         a.pendingDelay = 0;
         a.pendingDelayAt = 0;
-        a.pendingNftOffAt = 0;
         a.pendingCosignOffAt = 0;
     }
 
@@ -274,8 +318,9 @@ contract ProtectedAccountFacet is DiamondReentrancyGuard, DiamondPausable {
      *         destination; the allowlist starts empty besides.
      * @param delaySeconds How long every payout and loosening change waits,
      *        within `MIN_DELAY`..`MAX_DELAY`.
-     * @param protectNfts  Whether the account's position NFTs move only
-     *        through a queued transfer.
+     * @param protectNfts  Whether to put the account's position NFTs under
+     *        the PositionNFT core's holder lock now (#3205). Unlocking is the
+     *        holder's own, at the core, after the lock's delay.
      */
     function enableProtectedMode(uint32 delaySeconds, bool protectNfts) external nonReentrant whenNotPaused {
         LibVaipakam.ProtectedAccount storage a = LibVaipakam.storageSlot().protectedAccount[msg.sender];
@@ -284,12 +329,14 @@ contract ProtectedAccountFacet is DiamondReentrancyGuard, DiamondPausable {
         IVaultResolver(address(this)).getOrCreateUserVault(msg.sender);
         a.enabled = true;
         a.delaySeconds = delaySeconds;
-        a.protectNfts = protectNfts;
-        // Switching on voids anything pending at the beacon first (a delay
-        // lowering requested before included), whether or not the delay
-        // itself needs a raise.
+        // Switching on voids anything pending at the beacon and at the
+        // PositionNFT core first (a delay lowering or an unlock requested
+        // before included), whether or not the delay itself needs a raise.
         _voidBeaconPending(msg.sender);
+        _voidCoreLockPending(msg.sender);
         _raiseBeaconPinDelay(msg.sender, delaySeconds);
+        _raiseCoreLockDelay(msg.sender, delaySeconds);
+        if (protectNfts) _lockPositionNfts(msg.sender);
         emit ProtectedModeEnabled(msg.sender, delaySeconds, protectNfts);
     }
 
@@ -321,6 +368,7 @@ contract ProtectedAccountFacet is DiamondReentrancyGuard, DiamondPausable {
             a.pendingDelay = 0;
             a.pendingDelayAt = 0;
             _raiseBeaconPinDelay(account, delaySeconds);
+            _raiseCoreLockDelay(account, delaySeconds);
             emit ProtectedDelaySet(account, old, delaySeconds);
             return;
         }
@@ -330,18 +378,15 @@ contract ProtectedAccountFacet is DiamondReentrancyGuard, DiamondPausable {
         emit SettingChangeRequested(account, CHANGE_LOWER_DELAY, delaySeconds, a.pendingDelayAt);
     }
 
-    /// @notice Turn NFT protection on (immediate) or off (waits the delay).
-    function setProtectNfts(address account, bool on) external nonReentrant whenNotPaused {
+    /// @notice Put `account`'s position NFTs under the PositionNFT core's
+    ///         holder lock now (#3205), with the lock delay raised toward the
+    ///         account's delay. Turning it off is the holder's own unlock at
+    ///         the core, which waits the lock's delay; the Diamond cannot.
+    function lockPositionNfts(address account) external nonReentrant whenNotPaused {
         LibVaipakam.ProtectedAccount storage a = _requireManager(account);
-        if (on) {
-            a.protectNfts = true;
-            a.pendingNftOffAt = 0;
-            emit ProtectNftsSet(account, true);
-            return;
-        }
-        _requireLoosenable(account, a);
-        a.pendingNftOffAt = _later(a);
-        emit SettingChangeRequested(account, CHANGE_NFT_OFF, 0, a.pendingNftOffAt);
+        _raiseCoreLockDelay(account, a.delaySeconds);
+        _lockPositionNfts(account);
+        emit ProtectNftsSet(account, true);
     }
 
     /// @notice Require a secondary signer's co-sign on every release (on is
@@ -372,8 +417,7 @@ contract ProtectedAccountFacet is DiamondReentrancyGuard, DiamondPausable {
         else if (kind == CHANGE_LOWER_DELAY) {
             a.pendingDelay = 0;
             a.pendingDelayAt = 0;
-        } else if (kind == CHANGE_NFT_OFF) a.pendingNftOffAt = 0;
-        else if (kind == CHANGE_COSIGN_OFF) a.pendingCosignOffAt = 0;
+        } else if (kind == CHANGE_COSIGN_OFF) a.pendingCosignOffAt = 0;
         else if (kind == CHANGE_UNLOCK) a.pendingUnlockAt = 0;
         else if (kind == CHANGE_UNPIN) {
             if (!_cancelBeaconPin(account)) revert LibProtectedAccount.ChangeNotRequested();
@@ -403,13 +447,6 @@ contract ProtectedAccountFacet is DiamondReentrancyGuard, DiamondPausable {
             a.pendingDelay = 0;
             a.pendingDelayAt = 0;
             emit SettingChangeApplied(account, CHANGE_LOWER_DELAY);
-        }
-        if (a.pendingNftOffAt != 0 && nowTs >= a.pendingNftOffAt) {
-            applied = true;
-            a.protectNfts = false;
-            a.pendingNftOffAt = 0;
-            emit ProtectNftsSet(account, false);
-            emit SettingChangeApplied(account, CHANGE_NFT_OFF);
         }
         if (a.pendingCosignOffAt != 0 && nowTs >= a.pendingCosignOffAt) {
             applied = true;

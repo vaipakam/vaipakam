@@ -15,6 +15,7 @@ import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet.sol";
 import {MetricsFacet} from "../src/facets/MetricsFacet.sol";
+import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
 import {RepriceTestnetMock} from "./RepriceTestnetMock.s.sol";
 import {Deployments} from "./lib/Deployments.sol";
@@ -413,7 +414,7 @@ contract BaseSepoliaInternalMatch is RepriceTestnetMock {
     ///      `ownerOf` reverts; the caller decides what an unreadable holder
     ///      means (on the active list it means refuse).
     function _holderOf(address diamond, uint256 tokenId) internal view returns (bool read, address holder) {
-        try VaipakamNFTFacet(diamond).ownerOf(tokenId) returns (address o) {
+        try IERC721(VaipakamNFTFacet(diamond).positionNFT()).ownerOf(tokenId) returns (address o) {
             return (true, o);
         } catch {
             return (false, address(0));
@@ -462,8 +463,8 @@ contract BaseSepoliaInternalMatch is RepriceTestnetMock {
         // lender/borrower fields are only consolidated on a later operation,
         // so a transferred NFT would otherwise pass the check above.
         require(
-            VaipakamNFTFacet(diamond).ownerOf(l.lenderTokenId) == vm.addr(lenderKey)
-                && VaipakamNFTFacet(diamond).ownerOf(l.borrowerTokenId) == vm.addr(borrowerKey),
+            IERC721(VaipakamNFTFacet(diamond).positionNFT()).ownerOf(l.lenderTokenId) == vm.addr(lenderKey)
+                && IERC721(VaipakamNFTFacet(diamond).positionNFT()).ownerOf(l.borrowerTokenId) == vm.addr(borrowerKey),
             "BaseSepoliaInternalMatch: an input loan's position NFT is held by another wallet"
         );
     }

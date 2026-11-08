@@ -18,7 +18,7 @@ import { usePublicClient, useWalletClient } from 'wagmi';
 import { copy } from '../content/copy';
 import { captureTxError } from '../lib/errors';
 import { useActiveChain } from '../chain/useActiveChain';
-import { DIAMOND_ABI_VIEM, useDiamondWrite, useTermsBlockNonExitWrites } from '../contracts/diamond';
+import { useDiamondWrite, useTermsBlockNonExitWrites } from '../contracts/diamond';
 import {
   LOAN_STATUS_ACTIVE,
   offsetCompletionBoundOf,
@@ -29,11 +29,13 @@ import { ensureAllowance } from '../contracts/erc20';
 import type { OffsetPendingState } from '../data/offsetPending';
 import { formatTokenAmountExact } from '../lib/format';
 import type { TokenMeta } from '../contracts/erc20';
+import { readPositionRouteOn } from '../contracts/positionNft';
+import { useRouteBlocksTransfer } from '../contracts/positionNft';
 
 export function OffsetPendingCard({
   loanId,
   borrowerTokenId,
-  offerId,
+  offerId: rememberedOfferId,
   state,
   principalAsset,
   principalMeta,
@@ -57,6 +59,11 @@ export function OffsetPendingCard({
   onCleared: () => void;
   onDone: (msg: string) => void;
 }) {
+  const routeBlocks = useRouteBlocksTransfer();
+  // #3205 — without this device's marker, the offer the indexer names for
+  // the loan (verified to exist) is the one a cancel targets.
+  const offerId = rememberedOfferId ?? state?.indexedOfferId ?? null;
+  const moved = state?.positionMoved === 'yes';
   const { address, walletChain, onSupportedChain } = useActiveChain();
   const { data: walletClient } = useWalletClient();
   const publicClient = usePublicClient({ chainId: walletChain?.chainId });
@@ -91,7 +98,7 @@ export function OffsetPendingCard({
       // wallet's approvals view as the remedy — the r1 finding
       // (silence about a lingering payoff-sized approval) is answered
       // by the disclosure, not by a guess about ownership.
-      onDone(copy.offset.cancelledApprovalKept);
+      onDone(routeBlocks ? copy.offset.cancelledApprovalKept : copy.offset.cancelledApprovalKeptRoute);
       onCleared();
       void queryClient.invalidateQueries({ queryKey: ['offsetPending'] });
       void queryClient.invalidateQueries({ queryKey: ['myOffers'] });
@@ -135,12 +142,7 @@ export function OffsetPendingCard({
       // approve for a commitment that no longer exists — nor restore
       // an amount that is already short (Codex #1500 r5).
       const [lockRaw, live] = await Promise.all([
-        publicClient!.readContract({
-          address: walletChain.diamondAddress,
-          abi: DIAMOND_ABI_VIEM,
-          functionName: 'positionLock',
-          args: [BigInt(borrowerTokenId)],
-        }) as Promise<number | bigint>,
+        readPositionRouteOn(publicClient!, walletChain.diamondAddress, BigInt(borrowerTokenId)) as Promise<number | bigint>,
         readLoanLive(publicClient!, walletChain.diamondAddress, loanId),
       ]);
       if (Number(lockRaw) !== LOCK_PRECLOSE_OFFSET) {
@@ -149,7 +151,7 @@ export function OffsetPendingCard({
         return;
       }
       if (live.status !== LOAN_STATUS_ACTIVE) {
-        setError(copy.offset.restoreLoanClosed);
+        setError(routeBlocks ? copy.offset.restoreLoanClosed : copy.offset.restoreLoanClosedRoute);
         void queryClient.invalidateQueries({ queryKey: ['offsetPending'] });
         return;
       }
@@ -177,24 +179,35 @@ export function OffsetPendingCard({
   // cancel-to-unwind and every completion-flavoured line goes away
   // (Codex #1500 r1).
   const completable =
-    state === undefined || (state.loanActive && !state.termUnfillable);
+    state === undefined || (state.loanActive && !state.termUnfillable && !moved);
 
   return (
     <section className="card">
       <h3>{copy.offset.pendingTitle}</h3>
       <p className="muted">
         {state !== undefined && !state.loanActive
-          ? copy.offset.pendingLoanClosed
+          ? (routeBlocks ? copy.offset.pendingLoanClosed : copy.offset.pendingLoanClosedRoute)
+          : moved
+            ? copy.offset.pendingMoved
           : state?.termUnfillable
-            ? copy.offset.pendingTermUnfillable
+            ? (routeBlocks ? copy.offset.pendingTermUnfillable : copy.offset.pendingTermUnfillableRoute)
             : copy.offset.pendingBody}{' '}
         {offerId !== null
           ? copy.offset.pendingOffer(offerId)
           : copy.offset.pendingOfferUnknown}
       </p>
-      <div className="banner banner-warn" role="note">
-        <span className="banner-body">{copy.offset.lockWarn}</span>
-      </div>
+      {moved ? null : (
+        <div className="banner banner-warn" role="note">
+          <span className="banner-body">{routeBlocks ? copy.offset.lockWarn : copy.offset.lockWarnRoute}</span>
+        </div>
+      )}
+      {/* #3205 — where moving the NFT does not block, say when the app
+          cannot tell whether it moved since the offset was posted. */}
+      {!routeBlocks && state?.positionMoved === 'unknown' && completable ? (
+        <p className="field-hint" style={{ marginTop: 8 }}>
+          {copy.offset.movedUnknown}
+        </p>
+      ) : null}
       {completable ? (
         <div className="banner banner-warn" role="note" style={{ marginTop: 8 }}>
           <span className="banner-body">{copy.offset.blockedOtherPaths}</span>

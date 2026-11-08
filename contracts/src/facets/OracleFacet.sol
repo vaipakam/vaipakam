@@ -1827,7 +1827,8 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
     ///      contribution into `best[i]` = the lowest price-impact seen at
     ///      `sizes[i]` (PAD × 1e6) across every pool — *after* the two
     ///      manipulation guards (value-balance / spot≈feed, and the
-    ///      best-effort TWAP-consistency tick check). `best` and `sizes`
+    ///      TWAP-consistency tick check), which run for admission reads
+    ///      only (#3371). `best` and `sizes`
     ///      are mutated-in-place memory arrays of length 4
     ///      `{floor, tier1, tier2, tier3}`. `pQ`/`scaleQ` are the quote
     ///      token's Chainlink price and `10**(feedDec + tokenDec)`
@@ -1868,26 +1869,36 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
         (uint256 r0, uint256 r1) = LibSlippage.v3VirtualReserves(uint128(credited), sqrtPriceX96);
         if (r0 == 0 || r1 == 0) return;
         (uint256 reserveAsset, uint256 reserveQ) = assetIsToken0 ? (r0, r1) : (r1, r0);
-        // Guard 1 — the two legs' Chainlink-priced values must be
-        // balanced within `band` bps (⇔ the pool's spot price agrees
-        // with the trusted feed): `legValueRatio = feedMid / poolMid`,
-        // so balanced legs ⇔ poolMid ≈ feedMid. Skipped when the quote's
-        // price is distrusted (`ctx.quoteUnvalued`, #666): there is no
-        // trusted value to balance against.
-        if (!ctx.quoteUnvalued) {
-            uint256 vAsset = Math.mulDiv(reserveAsset, ctx.pA * 1e6, ctx.scaleA); // PAD × 1e6
-            uint256 vQ = Math.mulDiv(reserveQ, pQ * 1e6, scaleQ); // PAD × 1e6
-            if (vAsset == 0 || vQ == 0) return;
-            (uint256 lo, uint256 hi) = vAsset < vQ ? (vAsset, vQ) : (vQ, vAsset);
-            uint256 bp = LibVaipakam.BASIS_POINTS;
-            if (ctx.band < bp && lo * bp < hi * (bp - ctx.band)) return;
-        }
-        // Guard 2 — the `twapWindow`-mean tick must be within `band` ticks of
-        // the current tick (1 tick ≈ 1 bp of price for small `band`), which
-        // catches a *recently*-manipulated pool that guard 1 alone would
-        // miss if the price has since reverted. Required since #3354 (the
-        // read above refuses a pool whose oracle cannot answer).
-        {
+        // The two price-agreement guards below run for admission only
+        // (#3371). They refuse a pool whose current price disagrees with the
+        // feed or with its own window mean, which is what keeps a
+        // manipulated pool from admitting a position. At a close-out they
+        // would refuse the same pools in a genuine fast move (the current
+        // tick runs ahead of its 30-minute mean) or after a one-block price
+        // push, so the collateral would read not liquid exactly when its
+        // liquidation or default must run. A close-out does not need them:
+        // the forced sale demands an oracle-derived minimum output, and the
+        // in-kind fallback takes over when no route meets it, so a moved
+        // pool can only fail to fill, never fill at a bad price.
+        if (!ctx.closeOut) {
+            // Guard 1 — the two legs' Chainlink-priced values must be
+            // balanced within `band` bps (⇔ the pool's spot price agrees
+            // with the trusted feed): `legValueRatio = feedMid / poolMid`,
+            // so balanced legs ⇔ poolMid ≈ feedMid. Skipped when the quote's
+            // price is distrusted (`ctx.quoteUnvalued`, #666): there is no
+            // trusted value to balance against.
+            if (!ctx.quoteUnvalued) {
+                uint256 vAsset = Math.mulDiv(reserveAsset, ctx.pA * 1e6, ctx.scaleA); // PAD × 1e6
+                uint256 vQ = Math.mulDiv(reserveQ, pQ * 1e6, scaleQ); // PAD × 1e6
+                if (vAsset == 0 || vQ == 0) return;
+                (uint256 lo, uint256 hi) = vAsset < vQ ? (vAsset, vQ) : (vQ, vAsset);
+                uint256 bp = LibVaipakam.BASIS_POINTS;
+                if (ctx.band < bp && lo * bp < hi * (bp - ctx.band)) return;
+            }
+            // Guard 2 — the `twapWindow`-mean tick must be within `band`
+            // ticks of the current tick (1 tick ≈ 1 bp of price for small
+            // `band`), which catches a *recently*-manipulated pool that
+            // guard 1 alone would miss if the price has since reverted.
             int256 d = int256(curTick) - int256(meanTick);
             if (d < 0) d = -d;
             // safe: `d` was just made non-negative above.

@@ -82,6 +82,7 @@ const card = (over: Partial<LoanSalePendingState>): LoanSalePendingState => ({
   fillable: "yes",
   completable: "yes",
   cancelUnlocked: true,
+  positionMoved: "no",
   ...over,
 });
 
@@ -103,6 +104,20 @@ describe("saleListingCardView", () => {
         false,
       ),
     ).toBe("settled");
+  });
+
+  it("#3205 — a listing whose lender position moved is ended, whatever its record says", () => {
+    expect(saleListingCardView(card({ positionMoved: "yes" }), false)).toBe("moved");
+    expect(
+      saleListingCardView(card({ positionMoved: "yes", accepted: true }), false),
+    ).toBe("moved");
+    // An unknown verdict is not a moved one: the card states the record.
+    expect(saleListingCardView(card({ positionMoved: "unknown" }), false)).toBe("open");
+    // A settled loan says so first; a stale answer claims nothing.
+    expect(
+      saleListingCardView(card({ positionMoved: "yes", loanActive: false }), false),
+    ).toBe("settled");
+    expect(saleListingCardView(card({ positionMoved: "yes" }), true)).toBe("stale");
   });
 
   it("says nothing it did not read when the record was not read", () => {

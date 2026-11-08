@@ -7,7 +7,7 @@ import {LibFacet} from "./LibFacet.sol";
 import {LibDelivery} from "./LibDelivery.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import {LibERC721} from "./LibERC721.sol";
+import {LibPositionNFT} from "./LibPositionNFT.sol";
 import {VaultFactoryFacet} from "../facets/VaultFactoryFacet.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 
@@ -498,7 +498,7 @@ library LibSanctionedLock {
         bool lenderSide
     ) internal {
         uint256 tokenId = lenderSide ? loan.lenderTokenId : loan.borrowerTokenId;
-        recordFrozenClaimant(s, loan.id, lenderSide, LibERC721._ownerOfRaw(tokenId));
+        recordFrozenClaimant(s, loan.id, lenderSide, LibPositionNFT.holderOrZero(tokenId));
     }
 
     /// @notice The recorded frozen claimant for a `(loanId, side)`, or

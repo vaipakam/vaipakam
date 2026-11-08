@@ -114,6 +114,7 @@ function OfferRow({
   else if (blocked?.kind === 'refused') blockedText = acceptErrorText(blocked.error, copy, role);
   else if (ownStep) blockedText = text(k.rowRiskStep);
   else if (blocked?.kind === 'gate') blockedText = gateBlockText(blocked.block, copy, role);
+  else if (blocked?.kind === 'moved') blockedText = text('accept.blockPositionMoved');
   else if (blocked?.kind === 'unread') blockedText = blocked.reason;
   const f = row.preview && matcherBps !== null ? acceptFigures(row.preview, o.durationDays, matcherBps) : null;
   // A lender's line needs no protocol share: it states what leaves the

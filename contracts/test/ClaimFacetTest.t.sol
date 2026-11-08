@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
 import {Test} from "forge-std/Test.sol";
 import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
 import {VaipakamDiamond} from "../src/VaipakamDiamond.sol";
@@ -290,6 +291,7 @@ contract ClaimFacetTest is Test {
 
         // Init admin state
         LibTestVaultBeacon.install(address(diamond), address(this));
+        LibTestPositionNFT.install(address(diamond), address(this));
         AdminFacet(address(diamond)).setTreasury(address(diamond));
         AdminFacet(address(diamond)).setZeroExProxy(mockZeroExProxy);
         AdminFacet(address(diamond)).setallowanceTarget(mockZeroExProxy);
@@ -816,7 +818,7 @@ contract ClaimFacetTest is Test {
         // Allow vault withdraw but fail burnNFT
         vm.mockCallRevert(
             address(diamond),
-            abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector),
+            abi.encodeWithSelector(VaipakamNFTFacet.retirePosition.selector),
             "burn failed"
         );
         vm.prank(lender);
@@ -833,7 +835,7 @@ contract ClaimFacetTest is Test {
         // Allow vault withdraw but fail burnNFT
         vm.mockCallRevert(
             address(diamond),
-            abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector),
+            abi.encodeWithSelector(VaipakamNFTFacet.retirePosition.selector),
             "burn failed"
         );
         vm.prank(borrower);
@@ -896,8 +898,8 @@ contract ClaimFacetTest is Test {
             uint8(LibVaipakam.LoanStatus.Settled),
             "and the loan settles"
         );
-        vm.expectRevert();
-        IERC721(address(diamond)).ownerOf(lenderTokenId);
+        // #3205: the core never burns; a closed position is retired.
+        assertTrue(VaipakamNFTFacet(address(diamond)).isPositionRetired(lenderTokenId));
     }
 
     /// @dev Covers heldForLender > 0 path in claimAsLender.

@@ -36,6 +36,9 @@ function OfferCard({ offer }: { offer: IndexedOffer }) {
   const { address } = useActiveChain();
   const own = address?.toLowerCase() === offer.creator.toLowerCase();
   const partial = BigInt(offer.amountFilled || '0') !== 0n;
+  // #3205 — a refinance request whose borrower position moved since it was
+  // posted can never be taken: said on the card, with no review button.
+  const moved = offer.positionFlow?.movedSinceOpened === true;
   return <article className="card marketplace-offer">
     <div className="marketplace-offer-heading">
       <strong>{formatBpsAsPercent(marketplaceRate(offer))} <small>{copy.marketplace.apr}</small></strong>
@@ -48,6 +51,7 @@ function OfferCard({ offer }: { offer: IndexedOffer }) {
     <p className="muted">{offer.offerType === 0 ? copy.marketplace.collateralFull : copy.marketplace.collateralFloor}</p>
     {(offer.refinanceTargetLoanId ?? 0) > 0 ? <p>{copy.marketplace.refinance}</p> : null}
     {own ? <span className="badge badge-neutral">{copy.marketplace.own}</span>
+      : moved ? <p>{copy.marketplace.positionMoved}</p>
       : partial ? <p>{copy.marketplace.partial}</p>
         : <Link className="btn btn-primary" to={offerAcceptPath(offer)}>{copy.marketplace.review}</Link>}
   </article>;

@@ -2,6 +2,8 @@
 pragma solidity ^0.8.29;
 
 import {SetupTest} from "./SetupTest.t.sol";
+import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
+import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferMatchFacet} from "../src/facets/OfferMatchFacet.sol";
@@ -703,5 +705,22 @@ contract AggregatorAdapterTest is SetupTest {
         vm.stopPrank();
         uint256 loanId = _match(500 ether);
         assertGt(loanId, 0, "verified principal + adapter -> fill succeeds");
+    }
+
+    /// @dev #3205 — the PositionNFT core mints, so the adapter must accept the
+    ///      core's mint, and the principal can never sweep a position NFT by
+    ///      the core's address (its claim follows the token).
+    function test_positionNftMintedByTheCore_isAccepted_andNeverSwept() public {
+        uint256 tokenId = 990_002;
+        vm.prank(address(diamond));
+        VaipakamNFTFacet(address(diamond)).mintNFT(
+            address(adapter), tokenId, 1, 0, true, LibVaipakam.LoanPositionStatus.OfferCreated
+        );
+        address core = address(LibTestPositionNFT.core(address(diamond)));
+        assertEq(LibTestPositionNFT.core(address(diamond)).ownerOf(tokenId), address(adapter));
+
+        vm.prank(aggregator);
+        vm.expectRevert(AggregatorAdapterImplementation.CannotSweepProtocolNFT.selector);
+        adapter.sweepNFTToPrincipal(core, tokenId);
     }
 }

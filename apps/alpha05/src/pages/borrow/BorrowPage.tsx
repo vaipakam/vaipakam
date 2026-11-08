@@ -24,6 +24,8 @@ import { OfferForm, REQUEST_KEY } from '../../shared/post/OfferForm';
 import type { PostDraft } from '../../shared/post/postReview';
 import type { PostAssets } from '../../shared/post/postModel';
 import { useAssetStandard } from '../../shared/nft/useStandard';
+import { indexerPositionFlowReader } from '../../shared/offers/positionFlow';
+import { useWorldRail } from '../../shared/reads/world/WorldRailContext';
 
 type Hex = `0x${string}`;
 
@@ -92,18 +94,21 @@ export function BorrowPage() {
   const ready = pair.lending !== null && pair.collateral !== null && pair.lending.toLowerCase() !== pair.collateral.toLowerCase();
 
   const diamond = (chain?.diamondAddress ?? '0x') as Hex;
+  const world = useWorldRail();
+  // #3205 — the indexer's moved verdict for offers bound to a loan position.
+  const flows = indexerPositionFlowReader(world.indexer, chain?.chainId ?? world.chainId);
   const lending = pair.lending ?? ('0x' as Hex);
   const collateral = pair.collateral ?? ('0x' as Hex);
   const ownMatches = useOwnRead(
     ['borrow', 'matches', lending.toLowerCase(), collateral.toLowerCase()],
-    (c) => readMatches(c, diamond, lending, collateral, own!.account, 'borrower'),
+    (c) => readMatches(c, diamond, lending, collateral, own!.account, 'borrower', flows),
     {
       enabled: ready && walletChain !== null,
     },
   );
   const publicMatches = useChainRead(
     ['borrow', 'matches', diamond, lending.toLowerCase(), collateral.toLowerCase()],
-    (c) => readMatches(c, diamond, lending, collateral, null, 'borrower'),
+    (c) => readMatches(c, diamond, lending, collateral, null, 'borrower', flows),
     {
       enabled: ready && !connected,
     },

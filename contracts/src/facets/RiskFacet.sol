@@ -16,7 +16,7 @@ import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
 import {LibDelivery} from "../libraries/LibDelivery.sol";
 import {LibLenderYieldFeeHost} from "../libraries/LibLenderYieldFeeHost.sol";
-import {LibERC721} from "../libraries/LibERC721.sol";
+import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
 import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
 import {LibPrepayCleanup} from "../libraries/LibPrepayCleanup.sol";
 import {OracleFacet} from "./OracleFacet.sol";
@@ -993,7 +993,7 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         // loan but still takes the ordinary cut from the interest it recovers.
         (, treasuryInterestFee) = LibLenderYieldFeeHost.resolve(
             loanId,
-            LibERC721.ownerOf(loan.lenderTokenId),
+            LibPositionNFT.ownerOf(loan.lenderTokenId),
             interestPortion,
             treasuryInterestFee
         );
@@ -1242,7 +1242,7 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
 
     //     (success, ) = address(this).call(
     //         abi.encodeWithSelector(
-    //             VaipakamNFTFacet.burnNFT.selector,
+    //             VaipakamNFTFacet.retirePosition.selector,
     //             loan.lenderTokenId
     //         )
     //     );
@@ -1250,7 +1250,7 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
 
     //     (success, ) = address(this).call(
     //         abi.encodeWithSelector(
-    //             VaipakamNFTFacet.burnNFT.selector,
+    //             VaipakamNFTFacet.retirePosition.selector,
     //             loan.borrowerTokenId
     //         )
     //     );

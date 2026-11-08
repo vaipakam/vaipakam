@@ -12,6 +12,7 @@ import type { OwnStateClient } from '../../chain/ownRail';
 import type { CopyAccess, CopyKey } from '../copy/useCopy';
 import { readFeeDiscountConsent } from '../consent/feeDiscount';
 import { readAssetClass, type AssetClass } from '../offers/assets';
+import type { PositionFlowReader, PositionFlowVerdict } from '../offers/positionFlow';
 import type { StoredOffer } from '../offers/acceptTerms';
 import { acceptorRole, gateBlock, payLeg, shortfall, type AcceptRole, type GateBlock } from '../offers/model';
 import {
@@ -81,10 +82,19 @@ export interface AcceptReview {
   creatorGate: number;
   /** The fee-discount setting; null when it could not be read. */
   consent: boolean | null;
+  /** #3205 — the indexer's word on whether the loan position this offer is
+   *  bound to moved since it opened (the chain has no view yet). */
+  positionFlow: PositionFlowVerdict;
   readAt: number;
 }
 
-export async function readAcceptReview(own: OwnStateClient, diamond: Hex, offerId: bigint, identity: string): Promise<AcceptReview> {
+export async function readAcceptReview(
+  own: OwnStateClient,
+  diamond: Hex,
+  offerId: bigint,
+  identity: string,
+  flows?: PositionFlowReader,
+): Promise<AcceptReview> {
   const account = own.account;
   const r = <T>(fn: Parameters<OwnStateClient['read']>[0]) => own.read(fn).then((x) => x.value as T);
   const offer = await r<StoredOffer>((c) => readOffer(c, diamond, offerId));
@@ -92,7 +102,7 @@ export async function readAcceptReview(own: OwnStateClient, diamond: Hex, offerI
   // What this wallet pays: the collateral for a borrower, the principal for
   // a lender. Its token is known from the offer before the preview sizes it.
   const payAsset = role === 'borrower' ? offer.collateralAsset : offer.lendingAsset;
-  const [state, preview, linkedLoanId, riskTermsHash, lendingClass, collateralClass, graceSeconds, lifBps, matcherBps, protocolShareBps, vault, funds, gate, creatorGate, consent] =
+  const [state, preview, linkedLoanId, riskTermsHash, lendingClass, collateralClass, graceSeconds, lifBps, matcherBps, protocolShareBps, vault, funds, gate, creatorGate, consent, positionFlow] =
     await Promise.all([
       r<OfferState>((c) => readOfferState(c, diamond, offerId)),
       r<AcceptPreview>((c) => readPreview(c, diamond, offerId, account)),
@@ -109,6 +119,7 @@ export async function readAcceptReview(own: OwnStateClient, diamond: Hex, offerI
       r<number>((c) => readAcceptGate(c, diamond, offerId, account)),
       r<number>((c) => readCreatorGate(c, diamond, offerId)),
       r<boolean>((c) => readFeeDiscountConsent(c, diamond, account)).catch(() => null),
+      flows ? flows(offerId) : Promise.resolve<PositionFlowVerdict>('unknown'),
     ]);
   const pay = payLeg(role, offer, preview).amount;
   const approvalSteps =
@@ -134,6 +145,7 @@ export async function readAcceptReview(own: OwnStateClient, diamond: Hex, offerI
     gate,
     creatorGate,
     consent,
+    positionFlow,
     readAt: Date.now(),
   };
 }
@@ -232,6 +244,9 @@ export function reviewBlockers(r: AcceptReview, meta: TokenMetaMap | null, copy:
   const out: string[] = [];
   if (r.state !== 'open') out.push(copy.format('accept.blockState', { state: stateText(r.state, copy, r.role) }));
   else if (r.preview.error !== 'None') out.push(acceptErrorText(r.preview.error, copy, r.role));
+  // #3205 — bound to a loan position that moved since it opened: it can
+  // never complete, so the acceptance is never sent.
+  if (r.state === 'open' && r.positionFlow === 'moved') out.push(copy.text('accept.blockPositionMoved'));
   // A borrow-side offer linked to a loan is a sale of that loan's lender
   // position: taking it buys a running loan, which this review does not
   // describe, so it is never taken here.

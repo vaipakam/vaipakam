@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { useRef, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { useAccount } from 'wagmi';
 import { useOwnStateClient } from '../../chain/ownRail';
@@ -19,6 +19,8 @@ import { OwnStamp } from '../../shared/ui/OwnStamp';
 import { holdingFigures, positionAssets, readVaultHoldings, shownRows, type HoldingRow, type HoldingSource } from '../../shared/vault/holdings';
 import { CreateVault, useCreateVaultHeld } from '../../shared/vault/CreateVault';
 import { DEPOSIT_KEY, DepositVault, useDepositHeld } from '../../shared/vault/DepositVault';
+import { useWithdrawHeld, WithdrawVault } from '../../shared/vault/WithdrawVault';
+import type { WithdrawSubject } from '../../shared/vault/withdraw';
 import { TermsPrompt } from '../../shared/terms/TermsPrompt';
 import { useTerms } from '../../shared/terms/useTerms';
 import { useTermsGate } from '../../shared/terms/useTermsGate';
@@ -37,8 +39,8 @@ const SOURCE: Record<HoldingSource, CopyKey> = { deposit: 'vault.sourceDeposit',
  * protocol is said to be uncounted, with the route to adopt it. Which assets
  * the page could not look for is said, never implied.
  *
- * Deposit and withdraw follow in the next slice; until then the page points
- * to the current app for them.
+ * A deposit moves an asset in (ACC-22) and a withdrawal takes what is free
+ * back to this wallet (ACC-23), each from its own panel.
  */
 export function VaultPage() {
   const copy = useCopy();
@@ -72,10 +74,17 @@ export function VaultPage() {
   });
   const vpfi = useChainRead(['vpfiToken', diamond], (c) => readVpfiToken(c, diamond), { enabled: chain !== null, immutable: true });
   const data = holdings.data;
-  const meta = useTokenMeta(data ? [...data.rows.map((r) => r.asset), ...data.collections] : []).data;
+  const meta = useTokenMeta(data ? [...data.rows.map((r) => r.asset), ...data.collections.map((c) => c.asset)] : []).data;
   const frozen = useFrozenState(diamond, served && own ? own.account : null);
   const create = useCreateVaultHeld();
   const deposit = useDepositHeld();
+  const withdraw = useWithdrawHeld();
+  const withdrawRef = useRef<HTMLElement>(null);
+  const openWithdraw = (s: WithdrawSubject) => {
+    withdraw.open(s);
+    // The panel sits above the list: bring it into view on a phone.
+    requestAnimationFrame(() => withdrawRef.current?.scrollIntoView({ block: 'start', behavior: 'smooth' }));
+  };
   const paused = useOwnRead(['vault', 'paused', diamond], (c) => readPaused(c, diamond), { enabled: chain !== null, perBlock: true });
   const terms = useTerms();
   const termsGate = useTermsGate(`${DEPOSIT_KEY}.terms`, served ? chain : null, own);
@@ -205,6 +214,18 @@ export function VaultPage() {
                 </p>
                 <p className="tier-a">{text('vault.ownNote')}</p>
               </section>
+              {withdraw.subject !== null && (
+                <section className="home-section" aria-labelledby="vault-withdraw" data-testid="vault-withdraw" ref={withdrawRef}>
+                  <h2 id="vault-withdraw">{text('vaultWithdraw.formTitle')}</h2>
+                  <WithdrawVault
+                    key={`${withdraw.subject.standard}:${withdraw.subject.asset}:${withdraw.subject.tokenId}`}
+                    chain={chain}
+                    own={own}
+                    subject={withdraw.subject}
+                    onClose={() => withdraw.open(null)}
+                  />
+                </section>
+              )}
               <section className="home-section" aria-labelledby="vault-holdings">
                 <h2 id="vault-holdings">{text('vault.holdingsTitle')}</h2>
                 {positionsFailed && <p className="tier-a">{format('vault.positionsFailed', { reason: book.read.error ?? offers.error ?? '' })}</p>}
@@ -218,7 +239,13 @@ export function VaultPage() {
                 {shown.rows.length > 0 && (
                   <ul className="rows" data-testid="vault-rows">
                     {shown.rows.map((r) => (
-                      <HoldingCard key={`${r.standard}:${r.asset}:${r.tokenId}`} row={r} meta={meta} vpfi={vpfi.data ?? null} />
+                      <HoldingCard
+                        key={`${r.standard}:${r.asset}:${r.tokenId}`}
+                        row={r}
+                        meta={meta}
+                        vpfi={vpfi.data ?? null}
+                        onWithdraw={withdraw.subject === null ? openWithdraw : null}
+                      />
                     ))}
                   </ul>
                 )}
@@ -228,9 +255,32 @@ export function VaultPage() {
                   </button>
                 ) : null}
                 {data.collections.length > 0 && (
-                  <p className="tier-a" data-testid="vault-collections">
-                    {format('vault.collections', { list: data.collections.map((c) => assetName(c, meta)).join(', ') })}
-                  </p>
+                  <div data-testid="vault-collections">
+                    <h3>{text('vaultWithdraw.collectionsTitle')}</h3>
+                    <p className="tier-a">{text('vault.collections')}</p>
+                    <ul className="rows">
+                      {data.collections.map((c) => (
+                        <li key={c.asset} className="card" data-vault-collection={c.asset.toLowerCase()}>
+                          <p className="row-head">{assetName(c.asset, meta)}</p>
+                          <p className="vault-asset-address">
+                            <code>{c.asset}</code>
+                          </p>
+                          {withdraw.subject === null && (
+                            <div className="form-actions">
+                              <button
+                                type="button"
+                                className="btn"
+                                onClick={() => openWithdraw({ standard: c.standard, asset: c.asset, tokenId: null })}
+                                data-testid={`vault-withdraw-collection-${c.asset.toLowerCase()}`}
+                              >
+                                {text('vaultWithdraw.withdrawToken')}
+                              </button>
+                            </div>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
                 )}
                 <p className="tier-b">{text('vault.discoveryNote')}</p>
                 <WhyLink summaryKey="vault.whySummary" detailKey="vault.why" />
@@ -253,7 +303,18 @@ export function VaultPage() {
 
 /** One asset: the protocol's figures for it, how the page found it, and
  *  what is uncounted or short, each said in words. */
-function HoldingCard({ row: r, meta, vpfi }: { row: HoldingRow; meta: TokenMetaMap | null; vpfi: Hex | null }) {
+function HoldingCard({
+  row: r,
+  meta,
+  vpfi,
+  onWithdraw,
+}: {
+  row: HoldingRow;
+  meta: TokenMetaMap | null;
+  vpfi: Hex | null;
+  /** Opens this asset's withdrawal; null while another one is open. */
+  onWithdraw: ((s: WithdrawSubject) => void) | null;
+}) {
   const { text, format } = useCopy();
   const f = holdingFigures(r);
   const nft = r.standard !== 'erc20';
@@ -296,6 +357,13 @@ function HoldingCard({ row: r, meta, vpfi }: { row: HoldingRow; meta: TokenMetaM
         </p>
       )}
       <p className="tier-b">{format('vault.sources', { list: r.sources.map((s) => text(SOURCE[s])).join(', ') })}</p>
+      {onWithdraw !== null && f.withdrawable !== null && f.withdrawable > 0n && (
+        <div className="form-actions">
+          <button type="button" className="btn" onClick={() => onWithdraw({ standard: r.standard, asset: r.asset, tokenId: r.tokenId })} data-testid={`vault-withdraw-open-${key}`}>
+            {text('vaultWithdraw.open')}
+          </button>
+        </div>
+      )}
     </li>
   );
 }

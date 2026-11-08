@@ -2355,6 +2355,11 @@
   },
   {
     "type": "error",
+    "name": "PositionNFTNotSet",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "PrepayListingBufferNotConfigured",
     "inputs": []
   },

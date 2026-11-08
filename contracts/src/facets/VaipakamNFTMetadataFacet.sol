@@ -3,7 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
-import {LibERC721} from "../libraries/LibERC721.sol";
+import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
 import {LibJsonText} from "../libraries/LibJsonText.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
 import {Base64} from "@openzeppelin/contracts/utils/Base64.sol";
@@ -66,7 +66,7 @@ contract VaipakamNFTMetadataFacet is DiamondAccessControl {
         bool isLender,
         string calldata uri
     ) external onlyRole(LibAccessControl.ADMIN_ROLE) {
-        LibERC721._storage().statusImageUris[status][isLender] = uri;
+        LibPositionNFT._storage().statusImageUris[status][isLender] = uri;
         emit StatusImageURIUpdated(status, isLender, uri);
     }
 
@@ -83,9 +83,9 @@ contract VaipakamNFTMetadataFacet is DiamondAccessControl {
         onlyRole(LibAccessControl.ADMIN_ROLE)
     {
         if (isLender) {
-            LibERC721._storage().defaultLenderImage = uri;
+            LibPositionNFT._storage().defaultLenderImage = uri;
         } else {
-            LibERC721._storage().defaultBorrowerImage = uri;
+            LibPositionNFT._storage().defaultBorrowerImage = uri;
         }
         emit DefaultImageURIUpdated(isLender, uri);
     }
@@ -112,7 +112,7 @@ contract VaipakamNFTMetadataFacet is DiamondAccessControl {
         LibVaipakam.LoanPositionStatus status,
         bool isLender
     ) internal view returns (string memory) {
-        LibERC721.ERC721Storage storage es = LibERC721._storage();
+        LibPositionNFT.ERC721Storage storage es = LibPositionNFT._storage();
         string memory specific = es.statusImageUris[status][isLender];
         if (bytes(specific).length > 0) return specific;
         string memory sideDefault = isLender
@@ -140,9 +140,11 @@ contract VaipakamNFTMetadataFacet is DiamondAccessControl {
     function tokenURI(
         uint256 tokenId
     ) external view returns (string memory) {
-        LibERC721.ownerOf(tokenId); // Reverts for non-existent tokens
+        // A retired token still renders (its holder keeps it as a receipt of
+        // the closed position); only a never-minted id is refused.
+        if (LibPositionNFT.core().holderOf(tokenId) == address(0)) revert LibPositionNFT.ERC721NonexistentToken(tokenId);
 
-        LibERC721.ERC721Storage storage es = LibERC721._storage();
+        LibPositionNFT.ERC721Storage storage es = LibPositionNFT._storage();
 
         // Single-source-of-truth read for everything the metadata
         // surfaces. MetricsFacet computes loan-vs-offer fallback,
@@ -576,16 +578,14 @@ contract VaipakamNFTMetadataFacet is DiamondAccessControl {
      */
     // forge-lint: disable-next-line(mixed-case-function)
     function contractURI() external view returns (string memory) {
-        LibERC721.ERC721Storage storage es = LibERC721._storage();
+        LibPositionNFT.ERC721Storage storage es = LibPositionNFT._storage();
         string memory image = bytes(es.contractImageURI).length > 0
             ? es.contractImageURI
             : es.defaultLenderImage;
 
         string memory json = string(
             abi.encodePacked(
-                '{"name":"',
-                es.name,
-                '","description":"Vaipakam P2P lending and rental position NFTs. Each token represents a live offer or loan on the Vaipakam protocol.",',
+                '{"name":"Vaipakam NFT","description":"Vaipakam P2P lending and rental position NFTs. Each token represents a live offer or loan on the Vaipakam protocol.",',
                 '"image":"',
                 image,
                 '","external_link":"https://vaipakam.xyz"}'
@@ -609,7 +609,7 @@ contract VaipakamNFTMetadataFacet is DiamondAccessControl {
         external
         onlyRole(LibAccessControl.ADMIN_ROLE)
     {
-        LibERC721._storage().contractImageURI = uri;
+        LibPositionNFT._storage().contractImageURI = uri;
     }
 
     /**
@@ -633,7 +633,7 @@ contract VaipakamNFTMetadataFacet is DiamondAccessControl {
         external
         onlyRole(LibAccessControl.ADMIN_ROLE)
     {
-        LibERC721._storage().externalUrlBase = newBase;
+        LibPositionNFT._storage().externalUrlBase = newBase;
         emit ExternalUrlBaseUpdated(newBase);
     }
 
