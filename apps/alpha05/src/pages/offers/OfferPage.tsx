@@ -9,11 +9,12 @@ import { WhyLink } from '../../shared/help/WhyLink';
 import { CancelOffer, useCancelOfferHeld } from '../../shared/offers/CancelOffer';
 import { roleTerms } from '../../shared/offers/acceptTerms';
 import { detailAction, readOfferDetail, type OfferDetail } from '../../shared/offers/offerDetail';
+import { collateralWords } from '../../shared/offers/collateralWords';
 import { offerAmount, offerLine } from '../../shared/offers/offerLine';
 import type { OfferState } from '../../shared/offers/reads';
 import { ASSET_ERC20, OFFER_TYPE_LENDER } from '../../shared/positions/model';
 import { useChainRead, useScreenChain } from '../../shared/reads/chainRead';
-import { assetName, tokenAmount, useTokenMeta, type TokenMetaMap } from '../../shared/reads/tokens';
+import { tokenAmount, useTokenMeta, type TokenMetaMap } from '../../shared/reads/tokens';
 import { useOwnRead } from '../../shared/reads/useOwnRead';
 import { TermsPrompt } from '../../shared/terms/TermsPrompt';
 import { useTerms } from '../../shared/terms/useTerms';
@@ -80,6 +81,12 @@ export function OfferPage() {
   const d = read.data;
   const meta = useTokenMeta(d?.kind === 'offer' ? [d.offer.lendingAsset, d.offer.collateralAsset, d.offer.prepayAsset] : []).data;
   const now = useNow();
+  // A cancel or clean-up deletes the offer's terms when nothing filled it,
+  // so the re-read after its receipt finds none; the held flow is rendered
+  // here, not only inside the offer's body, so its finish card stays until
+  // the reader closes it (RB-OFFER-CANCEL).
+  const heldCancel = useCancelOfferHeld(id ?? 0n);
+  const heldOwn = connected && walletChain ? own : null;
 
   return (
     <main className="page offer" aria-labelledby="offer-title">
@@ -98,11 +105,21 @@ export function OfferPage() {
             publicRead.readAt !== null && <p className="tier-b stamp">{format('offerPage.readAt', { age: formatAge((now - publicRead.readAt) / 1000), chain: chain.name })}</p>
           )}
           {read.state === 'failed' && <p className="tier-a notice-warn">{format('offerPage.failed', { reason: read.error ?? '' })}</p>}
+          {read === publicRead && read.state === 'ready' && read.error !== null && (
+            <p className="tier-a notice-warn" data-testid="offer-refresh-failed">
+              {format('offerPage.refreshFailed', { reason: read.error, chain: chain.name })}
+            </p>
+          )}
           {d === null && read.state !== 'failed' && <p className="tier-b">{text('offerPage.reading')}</p>}
           {d?.kind === 'no-terms' && (
             <p className="tier-a" data-testid="offer-no-terms">
               {format('offerPage.noTerms', { id: id.toString(), chain: chain.name })}
             </p>
+          )}
+          {d?.kind !== 'offer' && heldCancel.held && walletChain && heldOwn && (
+            <section className="home-section" data-testid="offer-action">
+              <CancelOffer id={id} chain={walletChain} own={heldOwn} onClose={() => heldCancel.setOpen(null)} />
+            </section>
           )}
           {d?.kind === 'offer' && <OfferBody detail={d} walletChain={connected ? walletChain : null} own={connected && walletChain ? own : null} meta={meta} />}
         </>
@@ -136,12 +153,10 @@ function OfferBody({
   const takeHeld = taking === d.id.toString();
   const lend = o.offerType === OFFER_TYPE_LENDER;
   const erc20 = o.assetType === ASSET_ERC20;
+  const erc20Collateral = o.collateralAssetType === ASSET_ERC20;
   const unknown = text('receipt.unknown');
   const amt = (v: bigint) => offerAmount(o, v, meta, format);
-  const collateral =
-    o.collateralAssetType === ASSET_ERC20
-      ? tokenAmount(o.collateralAmount, o.collateralAsset, meta, format)
-      : format('asset.nft', { id: o.collateralTokenId.toString(), asset: assetName(o.collateralAsset, meta) });
+  const collateral = collateralWords(o, meta, format);
   const terms = roleTerms(o);
   const offersPage = PAGES.find((p) => p.path === '/offers/:id');
   const currentHref = offersPage ? currentAppHref(offersPage, { id: d.id.toString() }) : null;
@@ -166,6 +181,9 @@ function OfferBody({
         )}
         {erc20 && o.amountFilled > 0n && <Fact label={text('offerPage.factFilled')} value={amt(o.amountFilled)} unknown={unknown} />}
         <Fact label={text(lend ? 'offerPage.factCollateralAsked' : 'offerPage.factCollateralPledged')} value={collateral} unknown={unknown} />
+        {!lend && erc20Collateral && o.collateralAmountFilled > 0n && (
+          <Fact label={text('offerPage.factCollateralFilled')} value={tokenAmount(o.collateralAmountFilled, o.collateralAsset, meta, format)} unknown={unknown} />
+        )}
         <Fact label={text('offerPage.factDuration')} value={format('offerPage.days', { days: o.durationDays.toString() })} unknown={unknown} />
         <Fact label={text('offerPage.factExpires')} value={o.expiresAt > 0n ? formatUtc(Number(o.expiresAt)) : text('offerPage.never')} unknown={unknown} />
       </Facts>

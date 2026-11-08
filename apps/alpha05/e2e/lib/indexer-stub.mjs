@@ -92,6 +92,8 @@ async function offerRow(id) {
     interestRateBps: Number(o.interestRateBps),
     interestRateBpsMax: Number(o.interestRateBpsMax),
     collateralAmount: o.collateralAmount.toString(),
+    collateralAmountMax: (o.collateralAmountMax === 0n ? o.collateralAmount : o.collateralAmountMax).toString(),
+    collateralAmountFilled: o.collateralAmountFilled.toString(),
     durationDays: Number(o.durationDays),
     prepayAsset: o.prepayAsset.toLowerCase(),
     expiresAt: Number(o.expiresAt),

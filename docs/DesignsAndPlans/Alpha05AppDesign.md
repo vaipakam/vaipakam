@@ -1292,7 +1292,10 @@ above. Each resolves here, so a route reviewer needs no private file:
   index still files as open is tagged expired, with anyone allowed to clean
   it up; a refinance request, a loan sale, an offset and an offer whose
   bound position moved are tagged by kind, and a request the index has not
-  read as refinance or not says it may be one. A row the index returned in
+  read as refinance or not says it may be one. A borrower request's
+  collateral reads as its range when it has one, and as "at least" its
+  floor when the index has not read the ceiling, never as the floor alone.
+  A row the index returned in
   a shape the app cannot read is counted as unread, never dropped silently;
   a failed read is a degraded-source warning ("nothing here means no
   offers"), and a failed re-read behind a list already shown says the list
@@ -1307,7 +1310,8 @@ above. Each resolves here, so a route reviewer needs no private file:
   terms says exactly that: cancelled, or never posted, and the protocol does
   not say which. The page states the side, the creator, the amount (a range
   when it has one), what is already filled, the collateral asked for or
-  pledged, the term and when the offer lapses, and what a refinance
+  pledged (a request's range when it has one, and what of it is already
+  committed to loans), the term and when the offer lapses, and what a refinance
   request, loan sale or offset would do. What the reader may do follows
   from that read: take an open loan offer of a token against token
   collateral whole, through the same acceptance flow and Terms gate as
@@ -1316,8 +1320,12 @@ above. Each resolves here, so a route reviewer needs no private file:
   own open offer, or clean up an expired one whoever created it, through
   RB-OFFER-CANCEL; or, for a rental, an NFT-collateral offer, a loan sale or
   an offset, be told it is taken in the current app for now, with a link.
-  An ended offer says how it ended and offers nothing. Without a wallet the
-  page asks for one at the action, never before reading.
+  An ended offer says how it ended and offers nothing. A take, cancel or
+  clean-up that is open or in flight keeps its panel, finish card included,
+  after its own transaction changes the offer, even when a cancel cleared
+  the terms. Without a wallet the page asks for one at the action, never
+  before reading, and a failed re-read behind terms already shown says the
+  terms are the earlier read and may be out of date.
 - **RB-OFFER-CANCEL** — cancelling an offer (OFF-48) or cleaning up an
   expired one (OFF-49) is one flow, keyed by the offer, opened from its row.
   The review is read at one block: the offer, the protocol's state for it,

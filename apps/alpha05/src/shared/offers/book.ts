@@ -32,6 +32,9 @@ export interface BookRow extends OfferLineFields {
   collateralAssetType: number;
   collateralAsset: Hex;
   collateralAmount: bigint;
+  /** A borrower request's collateral ceiling; null when the index has not
+   *  read it (#2382). A lender offer's is its amount. */
+  collateralAmountMax: bigint | null;
   collateralTokenId: bigint;
   amountFilled: bigint;
   /** 0 = never expires. */
@@ -101,6 +104,8 @@ export function bookRowFrom(o: Json): BookRow {
     interestRateBps: big(o.interestRateBps),
     interestRateBpsMax: big(o.interestRateBpsMax),
     collateralAmount: big(o.collateralAmount),
+    collateralAmountMax:
+      offerType === OFFER_TYPE_LENDER ? big(o.collateralAmount) : o.collateralAmountMax === null || o.collateralAmountMax === undefined ? null : big(o.collateralAmountMax),
     durationDays: big(o.durationDays),
     tokenId: big(o.tokenId),
     collateralTokenId: big(o.collateralTokenId),

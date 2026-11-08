@@ -1,0 +1,22 @@
+import { describe, expect, it } from 'vitest';
+import type { CopyAccess } from '../copy/useCopy';
+import { collateralWords, type CollateralTerms } from './collateralWords';
+import { TLIQ } from './testOffer';
+
+const format = ((k: string, v: Record<string, string>) => `${k}:${JSON.stringify(v)}`) as unknown as CopyAccess['format'];
+const base: CollateralTerms = { collateralAssetType: 0, collateralAsset: TLIQ, collateralAmount: 100n, collateralAmountMax: 100n, collateralTokenId: 0n };
+
+describe('collateralWords', () => {
+  it('reads one amount as that amount', () => {
+    expect(collateralWords(base, null, format)).not.toContain('offerBook.collateral');
+  });
+  it('reads a ranged request as floor to ceiling', () => {
+    expect(collateralWords({ ...base, collateralAmountMax: 300n }, null, format)).toMatch(/^offerBook\.collateralRange:/);
+  });
+  it('says only the floor is known when the ceiling is unread', () => {
+    expect(collateralWords({ ...base, collateralAmountMax: null }, null, format)).toMatch(/^offerBook\.collateralFloor:/);
+  });
+  it('names an NFT by its id', () => {
+    expect(collateralWords({ ...base, collateralAssetType: 1, collateralTokenId: 7n }, null, format)).toMatch(/^asset\.nft:.*"7"/);
+  });
+});

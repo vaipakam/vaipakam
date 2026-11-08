@@ -5,7 +5,8 @@
  * the chain's offers as the indexer does), filters by tab and side, and
  * opens its page, which reads it from the chain and asks for a wallet to
  * take it. A borrower then takes it whole from that page through the
- * shared acceptance flow, and the page reads it back as filled. With the
+ * shared acceptance flow, and the page reads it back as filled. A creator
+ * cancels from the page and keeps the finish card after the terms clear. With the
  * index down, the book says it could not be read instead of showing an
  * empty list. Runs on the desktop and the phone project; the chain is
  * reverted after each test.
@@ -118,6 +119,34 @@ test('a borrower takes an offer whole from its page, and the page reads it back 
   await expect(page.getByText('This offer was taken and became a loan.')).toBeVisible();
   await expect(page.getByTestId('offer-page-take')).toHaveCount(0);
   await fitsWidth(page);
+});
+
+test('the creator cancels an offer from its page, and the finish card stays after the cancel clears its terms', async ({ launchWallet }) => {
+  test.setTimeout(180_000);
+  const sc = scenario({ lender: 'freshLender' });
+  const offerId = await postLenderOffer(sc, { lender: 'lender', principalWeth: '0.04', collateralTliq: '200', rateBps: 520, days: 10 });
+  const id = offerId.toString();
+  await anvilRpc('evm_increaseTime', [301]);
+  await anvilRpc('evm_mine');
+
+  const { page } = await launchWallet('freshLender');
+  await page.goto(`/offers/${id}`);
+  await connectWallet(page);
+  await expect(page.getByTestId('offer-state')).toHaveText('Open', { timeout: 60_000 });
+  await expect(page.getByTestId('offer-page-take')).toHaveCount(0);
+  await page.getByTestId('offer-page-cancel').click();
+  const flow = page.getByTestId(`offer-cancel-panel-${id}`);
+  await expect(flow.locator('.receipt')).toContainText('Cancel this offer', { timeout: 60_000 });
+  await flow.getByRole('button', { name: 'Confirm in wallet' }).click();
+  const finish = flow.locator('[data-phase="measured"]');
+  await expect(finish).toHaveAttribute('data-verdict', 'done', { timeout: 120_000 });
+  // The re-read after the receipt finds no terms; the finish card stays.
+  await expect(page.getByTestId('offer-no-terms')).toBeVisible({ timeout: 60_000 });
+  await expect(finish).toContainText(`Offer #${id} cancelled`);
+  await fitsWidth(page);
+  await finish.getByRole('button', { name: 'Close' }).click();
+  await expect(flow).toHaveCount(0);
+  await expect(page.getByTestId('offer-no-terms')).toBeVisible();
 });
 
 test('with the index down, the book says it could not be read instead of showing no offers', async ({ launchWallet }) => {

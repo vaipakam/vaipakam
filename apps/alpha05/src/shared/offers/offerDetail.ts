@@ -42,7 +42,7 @@ export async function readOfferDetail(client: PublicClient, diamond: Hex, id: bi
   const at = { blockNumber: block };
   const offer = await readOffer(client, diamond, id, at);
   if (offer.creator.toLowerCase() === ZERO_ADDRESS) return { kind: 'no-terms', id, block };
-  const [state, linkedLoanId] = await Promise.all([readOfferState(client, diamond, id, at), readLinkedLoanId(client, diamond, id)]);
+  const [state, linkedLoanId] = await Promise.all([readOfferState(client, diamond, id, at), readLinkedLoanId(client, diamond, id, at)]);
   return { kind: 'offer', id, offer, state, purpose: purposeOf(offer, linkedLoanId), linkedLoanId, block };
 }
 

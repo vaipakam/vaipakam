@@ -67,6 +67,11 @@ describe('the offer book', () => {
     expect(bookRowFrom(json({ positionFlow: { movedSinceOpened: null } })).moved).toBeNull();
     expect(bookRowFrom(json({ positionFlow: undefined })).moved).toBeNull();
   });
+  it('keeps a request’s collateral ceiling, unknown when the index has not read it', () => {
+    expect(bookRowFrom(json({ offerType: 1, collateralAmountMax: '9000' })).collateralAmountMax).toBe(9000n);
+    expect(bookRowFrom(json({ offerType: 1, collateralAmountMax: null })).collateralAmountMax).toBeNull();
+    expect(bookRowFrom(json({ offerType: 0, collateralAmount: '5', collateralAmountMax: null })).collateralAmountMax).toBe(5n);
+  });
   it('shows an address the index stored lowercased in checksum form', () => {
     expect(bookRowFrom(json({ creator: LENDER.toLowerCase() })).creator).toBe(getAddress(LENDER));
   });

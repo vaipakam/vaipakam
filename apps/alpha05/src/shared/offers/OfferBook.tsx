@@ -4,14 +4,15 @@ import { useInfiniteQuery } from '@tanstack/react-query';
 import { getSupportedChain, DEFAULT_CHAIN } from '../../chain/chains';
 import { useCopy, type CopyAccess, type CopyKey } from '../copy/useCopy';
 import { WhyLink } from '../help/WhyLink';
-import { ASSET_ERC20, OFFER_TYPE_LENDER } from '../positions/model';
-import { assetName, tokenAmount, useTokenMeta, type TokenMetaMap } from '../reads/tokens';
+import { OFFER_TYPE_LENDER } from '../positions/model';
+import { useTokenMeta, type TokenMetaMap } from '../reads/tokens';
 import { worldKey } from '../reads/identityKey';
 import { IndexerUnavailable } from '../reads/world/indexerClient';
 import { useWorldRail } from '../reads/world/WorldRailContext';
 import { formatUtc, shortAddress } from '../ui/format';
 import { useNow } from '../ui/useNow';
 import { BOOK_SIDES, BOOK_TABS, inBook, lapsed, readBookPage, type BookKind, type BookRow, type BookSide, type BookTab } from './book';
+import { collateralWords } from './collateralWords';
 import { offerLine } from './offerLine';
 
 type Hex = `0x${string}`;
@@ -36,13 +37,6 @@ function indexReason(e: unknown, text: CopyAccess['text']): string {
     );
   }
   return (e as Error | null)?.message ?? '';
-}
-
-/** The collateral an offer asks for or pledges, in words. */
-function collateralText(r: BookRow, meta: TokenMetaMap | null, format: CopyAccess['format']): string {
-  return r.collateralAssetType === ASSET_ERC20
-    ? tokenAmount(r.collateralAmount, r.collateralAsset, meta, format)
-    : format('asset.nft', { id: r.collateralTokenId.toString(), asset: assetName(r.collateralAsset, meta) });
 }
 
 /**
@@ -151,7 +145,7 @@ function BookRowItem({ row: r, viewer, meta, copy, expired }: { row: BookRow; vi
           {offerLine(r, meta, copy)}
         </Link>
       </p>
-      <p className="tier-b">{format(lend ? 'offerBook.collateralAsked' : 'offerBook.collateralPledged', { collateral: collateralText(r, meta, format) })}</p>
+      <p className="tier-b">{format(lend ? 'offerBook.collateralAsked' : 'offerBook.collateralPledged', { collateral: collateralWords(r, meta, format) })}</p>
       <p className="tier-b">
         {mine ? text('offerBook.byYou') : format('offerBook.byCreator', { address: shortAddress(r.creator) })}
         {r.expiresAt > 0n && !expired && <> · {format('home.offerExpires', { when: formatUtc(Number(r.expiresAt)) })}</>}

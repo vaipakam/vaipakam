@@ -23,6 +23,8 @@ export function offer(over: Partial<StoredOffer> = {}): StoredOffer {
     interestRateBps: 500n,
     interestRateBpsMax: 900n,
     collateralAmount: 5000n * 10n ** 18n,
+    collateralAmountMax: 5000n * 10n ** 18n,
+    collateralAmountFilled: 0n,
     durationDays: 30n,
     tokenId: 0n,
     collateralTokenId: 0n,
