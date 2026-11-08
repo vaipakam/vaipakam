@@ -43,6 +43,7 @@ import {ProtectedAccountFacet} from "../src/facets/ProtectedAccountFacet.sol";
 import {VaultPayoutFacet} from "../src/facets/VaultPayoutFacet.sol";
 import {VaultDepositoryFacet} from "../src/facets/VaultDepositoryFacet.sol";
 import {OfferBookFacet} from "../src/facets/OfferBookFacet.sol";
+import {SaleFloorFacet} from "../src/facets/SaleFloorFacet.sol";
 import {TestOfferFloor} from "./helpers/TestOfferFloor.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
@@ -320,6 +321,7 @@ contract SetupTest is Test {
     VaultPayoutFacet vaultPayoutFacet;
     VaultDepositoryFacet vaultDepositoryFacet;
     OfferBookFacet offerBookFacet;
+    SaleFloorFacet saleFloorFacet;
     RepayFacet repayFacet;
     RepayPeriodicFacet repayPeriodicFacet;
     SwapToRepayFacet swapToRepayFacet;
@@ -491,6 +493,7 @@ contract SetupTest is Test {
         vaultPayoutFacet = VaultPayoutFacet(ArtifactDeploy.deploy(type(VaultPayoutFacet).name));
         vaultDepositoryFacet = VaultDepositoryFacet(ArtifactDeploy.deploy(type(VaultDepositoryFacet).name));
         offerBookFacet = OfferBookFacet(ArtifactDeploy.deploy(type(OfferBookFacet).name));
+        saleFloorFacet = SaleFloorFacet(ArtifactDeploy.deploy(type(SaleFloorFacet).name));
         repayFacet = RepayFacet(ArtifactDeploy.deploy(type(RepayFacet).name));
         repayPeriodicFacet = RepayPeriodicFacet(ArtifactDeploy.deploy(type(RepayPeriodicFacet).name));
         swapToRepayFacet = SwapToRepayFacet(ArtifactDeploy.deploy(type(SwapToRepayFacet).name));
@@ -611,7 +614,7 @@ contract SetupTest is Test {
         // Preclose / Refinance / EarlyWithdrawal / PartialWithdrawal
         // quartet at slots 24-27 to unblock the PauseGating fold —
         // those slots stay where they are.
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](111);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](112);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -1077,6 +1080,12 @@ contract SetupTest is Test {
             facetAddress: address(offerBookFacet),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getOfferBookFacetSelectors()
+        });
+        // #3359 - the forced-sale floor rule both forced sellers self-call.
+        cuts[111] = IDiamondCut.FacetCut({
+            facetAddress: address(saleFloorFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getSaleFloorFacetSelectors()
         });
         // #1306 follow-up — read-only lens facet (view/getter surface split
         // off InteractionRewardsFacet for EIP-170 headroom; shared storage).

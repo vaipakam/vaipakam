@@ -58,6 +58,7 @@ import {ProtectedAccountFacet} from "../src/facets/ProtectedAccountFacet.sol";
 import {VaultPayoutFacet} from "../src/facets/VaultPayoutFacet.sol";
 import {VaultDepositoryFacet} from "../src/facets/VaultDepositoryFacet.sol";
 import {OfferBookFacet} from "../src/facets/OfferBookFacet.sol";
+import {SaleFloorFacet} from "../src/facets/SaleFloorFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {AddCollateralFacet} from "../src/facets/AddCollateralFacet.sol";
 import {TreasuryFacet} from "../src/facets/TreasuryFacet.sol";
@@ -386,6 +387,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
         VaultDepositoryFacet vaultDepositoryFacet = VaultDepositoryFacet(ArtifactDeploy.deploy(type(VaultDepositoryFacet).name));
         // #3242 — the offer book's entry step, split off OfferCreateFacet (EIP-170).
         OfferBookFacet offerBookFacet = OfferBookFacet(ArtifactDeploy.deploy(type(OfferBookFacet).name));
+        // #3359 — the forced-sale floor rule and its hourly price checkpoints.
+        SaleFloorFacet saleFloorFacet = SaleFloorFacet(ArtifactDeploy.deploy(type(SaleFloorFacet).name));
         ClaimFacet claimFacet = ClaimFacet(ArtifactDeploy.deploy(type(ClaimFacet).name));
         AddCollateralFacet addCollateralFacet = AddCollateralFacet(ArtifactDeploy.deploy(type(AddCollateralFacet).name));
         TreasuryFacet treasuryFacet = TreasuryFacet(ArtifactDeploy.deploy(type(TreasuryFacet).name));
@@ -528,7 +531,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
         // 37 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](110);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](111);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -640,6 +643,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         cuts[107] = _buildCut(address(vaultPayoutFacet), _getVaultPayoutSelectors());
         cuts[108] = _buildCut(address(vaultDepositoryFacet), _getVaultDepositorySelectors());
         cuts[109] = _buildCut(address(offerBookFacet), _getOfferBookSelectors());
+        cuts[110] = _buildCut(address(saleFloorFacet), _getSaleFloorSelectors());
         cuts[26] = _buildCut(address(rewardReporterFacet), _getRewardReporterSelectors());
         cuts[27] = _buildCut(address(rewardAggregatorFacet), _getRewardAggregatorSelectors());
         cuts[28] = _buildCut(address(configFacet), _getConfigSelectors());
@@ -1280,6 +1284,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         Deployments.writeFacet("vaultPayoutFacet", address(vaultPayoutFacet));
         Deployments.writeFacet("vaultDepositoryFacet", address(vaultDepositoryFacet));
         Deployments.writeFacet("offerBookFacet", address(offerBookFacet));
+        Deployments.writeFacet("saleFloorFacet", address(saleFloorFacet));
         Deployments.writeFacet("claimFacet",              address(claimFacet));
         Deployments.writeFacet("addCollateralFacet",      address(addCollateralFacet));
         Deployments.writeFacet("treasuryFacet",           address(treasuryFacet));
@@ -1611,7 +1616,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     function _getOracleSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](20);
+        s = new bytes4[](21);
         s[0] = OracleFacet.checkLiquidity.selector;
         s[1] = OracleFacet.getAssetPrice.selector;
         s[2] = OracleFacet.calculateLTV.selector;
@@ -1650,6 +1655,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // #2747 — the tier search's quote-leg test, read by the launch
         // readiness check's WETH quote-route gate.
         s[19] = OracleFacet.isLiquidityQuoteUsable.selector;
+        // #3359 — the close-out depth tier the forced-sale floor reads.
+        s[20] = OracleFacet.getCloseOutLiquidityTier.selector;
     }
 
     function _getOracleAdminSelectors() internal pure returns (bytes4[] memory s) {
@@ -2473,6 +2480,17 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[1] = OfferBookFacet.requireOfferValueAdmitted.selector;
         s[2] = OfferBookFacet.getOfferBookBounds.selector;
         s[3] = OfferBookFacet.getMinOfferAmount.selector;
+    }
+
+    /// @dev Selectors for `SaleFloorFacet` (#3359) — the forced-sale floor
+    ///      rule, its settings and the hourly price checkpoints it reads.
+    function _getSaleFloorSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](5);
+        s[0] = SaleFloorFacet.saleFloorBps.selector;
+        s[1] = SaleFloorFacet.checkpointHourlyPrices.selector;
+        s[2] = SaleFloorFacet.getHourlyPriceCheckpoint.selector;
+        s[3] = SaleFloorFacet.setSaleFloorConfig.selector;
+        s[4] = SaleFloorFacet.getSaleFloorConfig.selector;
     }
 
     function _getClaimSelectors() internal pure returns (bytes4[] memory s) {
