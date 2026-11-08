@@ -331,7 +331,10 @@ state-changing surface governance is expected to drive on the Diamond (cut,
 roles, ownership, pause), the timelock itself, the sanctions list and the
 delisting timelock (`GOVERNANCE_CALLS` in `src/eventAlerts.ts`, copied
 verbatim into the ABI subset). Any other call is named by its four-byte
-selector with its whole call data, never guessed. `viem` inside that module
+selector with its whole call data, never guessed. An alert's detail is held to
+`EVENT_DETAIL_MAX_CHARS` so Telegram never cuts it: when it would not fit, the
+`action:` line (always last) is the part shortened, the cut is stated, and the
+event's fields, transaction and ready time are kept. `viem` inside that module
 resolves to this Worker's own copy (`paths` in `tsconfig.json`, `alias` in
 `wrangler.jsonc` and `vitest.config.ts`).
 

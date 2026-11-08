@@ -6,7 +6,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { encodeFunctionData, keccak256, parseAbi, toHex, type Address, type Hex } from 'viem';
 import { deliverFindings } from '../src/deliver';
-import { eventCursorWrites, scanEvents, type EventClient, type EventScanInput } from '../src/eventAlerts';
+import {
+  EVENT_DETAIL_MAX_CHARS,
+  eventCursorWrites,
+  scanEvents,
+  type EventClient,
+  type EventScanInput,
+} from '../src/eventAlerts';
 import type { Finding } from '../src/finding';
 import type { AlertStore, StoreOp } from '../src/store';
 
@@ -208,6 +214,30 @@ describe('scanEvents', () => {
       `action: Names ${account} as the new owner of the sanctionsList; where ownership is two-step, it moves only when that address accepts. Sends 5 wei of the chain's native token from the timelock.`,
     );
     expect(executed!.detail).toContain(`action: Grants PAUSER_ROLE to ${account} on the diamond.`);
+  });
+
+  it('keeps the ready time and the transaction when a huge call is cut to fit one message', async () => {
+    const data = `0x12345678${'ab'.repeat(3_000)}` as Hex;
+    const { client } = fakeClient({
+      logs: [
+        {
+          address: TIMELOCK,
+          eventName: 'CallScheduled',
+          args: { id: `0x${'cd'.repeat(32)}`, index: 0n, target: DIAMOND, value: 0n, data, predecessor: `0x${'0'.repeat(64)}`, delay: 1n },
+          blockNumber: 999_500n,
+          transactionHash: TX(7),
+          logIndex: 0,
+        },
+      ],
+      ready: [1_800_000_000n],
+    });
+    const scan = await scanEvents(input({ client, cursors: new Map([['timelock', { nextBlock: 999_000n, notified: true }]]) }));
+    const detail = scan.findings.find((f) => f.code === 'event-alert')!.detail;
+    expect(detail.length).toBeLessThanOrEqual(EVENT_DETAIL_MAX_CHARS);
+    expect(detail).toContain(`tx ${TX(7)}`);
+    expect(detail).toContain(`executable from: ${new Date(1_800_000_000_000).toISOString()}`);
+    expect(detail).toContain('action: Calls function 0x12345678 on the diamond');
+    expect(detail).toContain(`(the action cut to fit the alert; the full call is in tx ${TX(7)} on chain)`);
   });
 
   it('says the ready time is unknown when the timelock read fails, rather than leaving it out', async () => {

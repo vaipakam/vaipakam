@@ -567,6 +567,36 @@ function readyText(ts: bigint | null): string {
   return `executable from: ${iso(ts)}`;
 }
 
+/**
+ * The most an event alert's detail may carry. Telegram cuts a message at
+ * 4,096 characters, and the alert's header and title come on top of this,
+ * so the detail stays well inside it. A cut message is still recorded as
+ * delivered, so anything past the cut would be lost for good.
+ */
+export const EVENT_DETAIL_MAX_CHARS = 3_600;
+
+/**
+ * An alert's detail, guaranteed to fit. `essential` (the event's fields, its
+ * block and transaction, and when a queued call can execute) comes first and
+ * is never cut while it fits on its own. `tail` (the call in plain words,
+ * which can carry kilobytes of call data or a long argument list) comes last
+ * and is the part cut when the whole would not fit; the cut is SAID, and it
+ * names the transaction, where the full call is on chain.
+ */
+export function fitDetail(essential: string, tail: string | null, tx: string): string {
+  const note = (what: string) => `… (${what} cut to fit the alert; the full call is in tx ${tx} on chain)`;
+  if (essential.length > EVENT_DETAIL_MAX_CHARS) {
+    const n = note('the event');
+    return `${essential.slice(0, EVENT_DETAIL_MAX_CHARS - n.length - 1)}\n${n}`;
+  }
+  if (tail === null) return essential;
+  const whole = `${essential}\n${tail}`;
+  if (whole.length <= EVENT_DETAIL_MAX_CHARS) return whole;
+  const n = note('the action');
+  const room = EVENT_DETAIL_MAX_CHARS - essential.length - n.length - 2;
+  return room > 0 ? `${essential}\n${tail.slice(0, room)}\n${n}` : `${essential}\n${n}`;
+}
+
 function gapOf(chainId: number, detail: string): CoverageGap {
   return { chainId, reason: 'no-rpc', source: 'event-logs', detail };
 }
@@ -608,7 +638,7 @@ export async function scanEvents(input: EventScanInput): Promise<EventScan> {
     return out;
   }
 
-  const scheduled: { finding: number; id: Hex; base: string }[] = [];
+  const scheduled: { finding: number; id: Hex; base: string; action: string | null; tx: Hex }[] = [];
 
   for (const contract of present) {
     const address = input.addresses[contract.id]!;
@@ -670,10 +700,10 @@ export async function scanEvents(input: EventScanInput): Promise<EventScan> {
         const [name, type] = s.split(':') as [string, string];
         return `  ${name} = ${renderValue(name, type, args[name], input.labels)}`;
       });
+      let action: string | null = null;
       if (contract.id === 'timelock' && (log.eventName === 'CallScheduled' || log.eventName === 'CallExecuted')) {
         targets ??= governanceTargets(input.labels);
-        const action = callAction(args, targets);
-        lines.push(`  action: ${action ?? '(could not be described: the call did not decode)'}`);
+        action = `action: ${callAction(args, targets) ?? '(could not be described: the call did not decode)'}`;
       }
       const base =
         `${contract.label} ${address}\n` +
@@ -692,10 +722,10 @@ export async function scanEvents(input: EventScanInput): Promise<EventScan> {
         severity: rule?.severity ?? 'critical',
         chainId: input.chainId,
         title: rule?.title ?? `${contract.label}: watched event did not decode`,
-        detail: base,
+        detail: fitDetail(base, action, tx),
       });
       if (contract.id === 'timelock' && log.eventName === 'CallScheduled' && typeof args.id === 'string') {
-        scheduled.push({ finding: out.findings.length, id: args.id as Hex, base });
+        scheduled.push({ finding: out.findings.length, id: args.id as Hex, base, action, tx });
       }
       out.findings.push(finding);
       scan.events.push({ key: finding.key, block });
@@ -726,7 +756,7 @@ export async function scanEvents(input: EventScanInput): Promise<EventScan> {
     }
     scheduled.forEach((s, i) => {
       const f = out.findings[s.finding]!;
-      out.findings[s.finding] = { ...f, detail: `${s.base}\n${readyText(ready[i] ?? null)}` };
+      out.findings[s.finding] = { ...f, detail: fitDetail(`${s.base}\n${readyText(ready[i] ?? null)}`, s.action, s.tx) };
     });
   }
 
