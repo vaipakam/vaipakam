@@ -630,14 +630,19 @@ export const copy = {
     rowTo: B('Sent to'),
     to: B('Your wallet, from your vault'),
     toQueued: B('Your protected account’s payout queue for {{delay}}, then your wallet'),
+    toQueuedCosign: B('Your payout queue for {{delay}}, then your wallet once a secondary signer approves'),
     queuedNote: A(
       'Protected mode is on for your account, so the protocol queues this withdrawal instead of paying it at once. It reaches your wallet once the account’s delay has passed and the payout is released.',
     ),
     protectionUnread: A(
       'Whether protected mode is on for your account could not be read. If it is, the collateral waits in the account’s payout queue for its delay before reaching your wallet.',
     ),
+    cosignNote: A(
+      'Your account also requires a secondary signer to approve each release. Once the delay passes, the collateral reaches your wallet only after one of your secondary signers approves it; the protocol checks this when the payout is released.',
+    ),
     changedProtection: B('Your account’s protected mode'),
     legQueued: B('{{amount}} queued for your wallet, releasable from {{time}}'),
+    legQueuedCosign: B('{{amount}} queued, releasable from {{time}} once a secondary signer approves'),
     queuedOther: A('{{amount}} was queued for your wallet, not the {{expected}} reviewed.'),
     rowMax: B('Most you can take back now'),
     closer: A('Taking back collateral lowers the loan’s health factor and raises its loan-to-value, so it moves closer to liquidation.'),

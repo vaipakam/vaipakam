@@ -62,7 +62,7 @@ export interface TakeBackReview {
   /** The wallet's protected account mode (`getProtectedAccount`), or null
    *  when it could not be read. A wallet with the mode on gets the
    *  collateral queued for `delaySeconds`, not at once. */
-  protection: { enabled: boolean; delaySeconds: number } | null;
+  protection: { enabled: boolean; delaySeconds: number; requireCosign: boolean } | null;
   amountCheck: TakeBackCheck;
   /** The protocol's dry run of this withdrawal now: null when it passes,
    *  its refusal when it refuses, 'unread' when it could not be run. Asked
@@ -102,7 +102,7 @@ export async function readTakeBackReview(
         read<bigint>(WITHDRAW, 'calculateMaxWithdrawable', [loanId]),
         read<bigint>(RISK, 'calculateHealthFactor', [loanId]),
         read<bigint>(RISK, 'calculateLTV', [loanId]),
-        read<{ enabled: boolean; delaySeconds: number | bigint }>(PROTECTED, 'getProtectedAccount', [account]),
+        read<{ enabled: boolean; delaySeconds: number | bigint; requireCosign: boolean }>(PROTECTED, 'getProtectedAccount', [account]),
       ]);
       return {
         loan,
@@ -114,7 +114,9 @@ export async function readTakeBackReview(
         maxWithdrawable,
         healthFactor,
         ltvBps,
-        protection: protectedAccount ? { enabled: protectedAccount.enabled, delaySeconds: Number(protectedAccount.delaySeconds) } : null,
+        protection: protectedAccount
+          ? { enabled: protectedAccount.enabled, delaySeconds: Number(protectedAccount.delaySeconds), requireCosign: protectedAccount.requireCosign }
+          : null,
       };
     })
     .then((x) => x.value);
@@ -163,7 +165,8 @@ export function takeBackChanged(a: TakeBackReview, b: TakeBackReview, copy: Pick
   if (TAKE_BACK_STATED_LOAN_FIELDS.some((k) => a.loan[k] !== b.loan[k])) return text('repay.changedLoan');
   if (a.borrowerHolder !== b.borrowerHolder || a.borrowerLock !== b.borrowerLock || a.paused !== b.paused || a.refinanceLive !== b.refinanceLive)
     return text('repay.changedHolders');
-  if (a.protection?.enabled !== b.protection?.enabled || a.protection?.delaySeconds !== b.protection?.delaySeconds) return text('takeBack.changedProtection');
+  if (a.protection?.enabled !== b.protection?.enabled || a.protection?.delaySeconds !== b.protection?.delaySeconds || a.protection?.requireCosign !== b.protection?.requireCosign)
+    return text('takeBack.changedProtection');
   if (a.verdict.state !== b.verdict.state || a.verdict.refusals[0]?.code !== b.verdict.refusals[0]?.code) return text('repay.changedVerdict');
   return null;
 }

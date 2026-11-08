@@ -924,9 +924,11 @@ above. Each resolves here, so a route reviewer needs no private file:
   collateral goes from the borrower's vault to the wallet that asks, in one
   prompt. A wallet running protected account mode gets it queued for the
   account's delay instead (the protocol queues an owner's own withdrawal),
-  so the review reads the mode and states the queue and its delay, or that
-  the mode could not be read, and the finish card measures the queued
-  payout and when it can be released. The review states the collateral before and after, where it goes,
+  so the review reads the mode and states the queue and its delay (and,
+  while the account requires it, that a secondary signer must approve the
+  release, which the protocol checks at release), or that the mode could
+  not be read, and the finish card measures the queued payout and when it
+  can be released. The review states the collateral before and after, where it goes,
   the limit, the health factor and loan-to-value now, and every
   consequence: the loan moves closer to liquidation; the protocol checks its
   limits again at confirmation, so a price move first refuses it with

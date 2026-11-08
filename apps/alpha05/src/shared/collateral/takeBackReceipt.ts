@@ -30,7 +30,11 @@ export function takeBackReceipt(r: TakeBackReview, _meta: TokenMetaMap | null, c
   ];
   const consequences = [
     text('takeBack.closer'),
-    ...(r.protection === null ? [text('takeBack.protectionUnread')] : r.protection.enabled ? [text('takeBack.queuedNote')] : []),
+    ...(r.protection === null
+      ? [text('takeBack.protectionUnread')]
+      : r.protection.enabled
+        ? [text('takeBack.queuedNote'), ...(r.protection.requireCosign ? [text('takeBack.cosignNote')] : [])]
+        : []),
     text('takeBack.limitMoves'),
     text('takeBack.afterFigures'),
     text('takeBack.pauseHolds'),
@@ -39,8 +43,10 @@ export function takeBackReceipt(r: TakeBackReview, _meta: TokenMetaMap | null, c
 }
 
 /** Where the collateral goes: the wallet at once, or, for a wallet running
- *  protected account mode, the account's payout queue for its delay. */
+ *  protected account mode, the account's payout queue for its delay (and,
+ *  while the account requires it, a secondary signer's approval of the
+ *  release, which the protocol checks when the payout is released). */
 export function destination(r: TakeBackReview, copy: Pick<CopyAccess, 'text' | 'format'>): string {
-  if (r.protection?.enabled) return copy.format('takeBack.toQueued', { delay: formatSpan(r.protection.delaySeconds) });
+  if (r.protection?.enabled) return copy.format(r.protection.requireCosign ? 'takeBack.toQueuedCosign' : 'takeBack.toQueued', { delay: formatSpan(r.protection.delaySeconds) });
   return copy.text('takeBack.to');
 }

@@ -207,7 +207,10 @@ function TakeBackFlow({ loanId, chain, own, meta, amount, onChangeAmount, onClos
     }
     const queued = payoutQueued(logs, diamond, account, asset);
     if (queued) {
-      const label = format('takeBack.legQueued', { amount: tokenAmount(queued.amount, asset, meta, format), time: formatUtc(Number(queued.releaseAt)) });
+      const label = format(r.protection?.requireCosign ? 'takeBack.legQueuedCosign' : 'takeBack.legQueued', {
+        amount: tokenAmount(queued.amount, asset, meta, format),
+        time: formatUtc(Number(queued.releaseAt)),
+      });
       legs.push(
         queued.amount === r.amount
           ? { status: 'done', label }

@@ -21,7 +21,7 @@ const review: TakeBackReview = {
   maxWithdrawable: 20n,
   healthFactor: 2n * 10n ** 18n,
   ltvBps: 4000n,
-  protection: { enabled: false, delaySeconds: 0 },
+  protection: { enabled: false, delaySeconds: 0, requireCosign: false },
   amountCheck: { ok: true },
   dryRun: null,
   verdict: OPEN,
@@ -72,12 +72,20 @@ describe('takeBack protected account mode', () => {
     expect(lines(review)).not.toContain('takeBack.protectionUnread');
   });
   it('states the payout queue when the mode is on, and the unknown when unread', () => {
-    const on = { ...review, protection: { enabled: true, delaySeconds: 86_400 } };
+    const on = { ...review, protection: { enabled: true, delaySeconds: 86_400, requireCosign: false } };
     expect(destination(on, copy)).toBe('takeBack.toQueued');
     expect(lines(on)).toContain('takeBack.queuedNote');
+    expect(lines(on)).not.toContain('takeBack.cosignNote');
     expect(lines({ ...review, protection: null })).toContain('takeBack.protectionUnread');
   });
+  it('states that a release needs a secondary signer while the account requires it', () => {
+    const cosign = { ...review, protection: { enabled: true, delaySeconds: 86_400, requireCosign: true } };
+    expect(destination(cosign, copy)).toBe('takeBack.toQueuedCosign');
+    expect(lines(cosign)).toContain('takeBack.cosignNote');
+  });
   it('reopens the review when the mode changes', () => {
-    expect(takeBackChanged(review, { ...review, protection: { enabled: true, delaySeconds: 3600 } }, copy)).toBe('takeBack.changedProtection');
+    expect(takeBackChanged(review, { ...review, protection: { enabled: true, delaySeconds: 3600, requireCosign: false } }, copy)).toBe('takeBack.changedProtection');
+    const on = { ...review, protection: { enabled: true, delaySeconds: 3600, requireCosign: false } };
+    expect(takeBackChanged(on, { ...on, protection: { ...on.protection, requireCosign: true } }, copy)).toBe('takeBack.changedProtection');
   });
 });
