@@ -103,15 +103,19 @@ export async function readLoanClaimReview(
   const account = own.account;
   const facts = await own
     .read(async (c: PublicClient) => {
-      const loan = (await c.readContract({ address: diamond, abi: LOAN, functionName: 'getLoanDetails', args: [loanId] })) as LoanDetails;
-      const read = <T>(abi: Abi, functionName: string, args: readonly unknown[] = []) => answerOrNull(c.readContract({ address: diamond, abi, functionName, args }) as Promise<T>);
+      // One block for everything the review states: the claim row and the
+      // sellers' share of it move together when the claim runs.
+      const at = { blockNumber: await c.getBlockNumber({ cacheTime: 0 }) };
+      const loan = (await c.readContract({ address: diamond, abi: LOAN, functionName: 'getLoanDetails', args: [loanId], ...at })) as LoanDetails;
+      const read = <T>(abi: Abi, functionName: string, args: readonly unknown[] = []) =>
+        answerOrNull(c.readContract({ address: diamond, abi, functionName, args, ...at }) as Promise<T>);
       const asked = sideClaimableStatus(side, Number(loan.status));
       const [holder, paused, claim, sellersShare, protection] = await Promise.all([
         read<Hex>(NFT, 'ownerOf', [side === 'lender' ? loan.lenderTokenId : loan.borrowerTokenId]),
         read<boolean>(ADMIN, 'paused'),
-        asked ? readSideClaim(c, diamond, loanId, side) : null,
+        asked ? readSideClaim(c, diamond, loanId, side, at) : null,
         side === 'lender' && asked ? read<bigint>(SELLER, 'getSellersShareOfLenderClaim', [loanId]) : null,
-        readProtection(c, diamond, account),
+        readProtection(c, diamond, account, at.blockNumber),
       ]);
       return { loan, holder, paused, claim, sellersShare, protection };
     })
@@ -205,13 +209,16 @@ export async function readPaidIncentives(own: OwnStateClient, diamond: Hex, r: P
   const others = [...new Set(paid.filter((p) => p.loanId !== r.loanId).map((p) => p.loanId))];
   const assets = new Map<bigint, Hex | null>([[r.loanId, r.loan.principalAsset]]);
   if (others.length > 0) {
-    const read = await answerOrNull(
-      own
-        .read((c: PublicClient) =>
-          Promise.all(others.map((id) => answerOrNull(c.readContract({ address: diamond, abi: LOAN, functionName: 'getLoanDetails', args: [id] }) as Promise<LoanDetails>))),
-        )
-        .then((x) => x.value),
-    );
+    // Inside the rail a failed source is thrown so the next one is tried;
+    // once every source has failed, the tokens stay unread (null) and only
+    // those rewards are stated as unknown: the claim's own outcome, already
+    // measured from the receipt, is never discarded for them.
+    const read = await own
+      .read((c: PublicClient) =>
+        Promise.all(others.map((id) => answerOrNull(c.readContract({ address: diamond, abi: LOAN, functionName: 'getLoanDetails', args: [id] }) as Promise<LoanDetails>))),
+      )
+      .then((x) => x.value)
+      .catch(() => null);
     others.forEach((id, i) => assets.set(id, read?.[i]?.principalAsset ?? null));
   }
   return paid.map((p) => ({ loanId: p.loanId, amount: p.amount, asset: assets.get(p.loanId) ?? null }));

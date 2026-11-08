@@ -91,9 +91,14 @@ export interface SellerRow {
 type ClaimableTuple = readonly [Hex, bigint, boolean, number, bigint, bigint, bigint, boolean];
 type LedgerTuple = readonly [bigint, bigint, bigint | number, readonly { seller: Hex; grossOwed: bigint }[]];
 
-/** One loan, read as `claimAsSeller` reads it for `seller`. */
-export async function readSellerRow(c: PublicClient, diamond: Hex, loanId: bigint, seller: Hex): Promise<SellerRow> {
-  const read = <T>(abi: Abi, functionName: string, args: readonly unknown[]) => answerOrNull(c.readContract({ address: diamond, abi, functionName, args }) as Promise<T>);
+/** One loan, read as `claimAsSeller` reads it for `seller`, every read at
+ *  one block (`blockNumber`, or the head when none is given): the open
+ *  claims, the vault balances and the split's share move together when the
+ *  loan's holder collects, so reads from two blocks could state a claim as
+ *  unpaid beside the payment already waiting for it. */
+export async function readSellerRow(c: PublicClient, diamond: Hex, loanId: bigint, seller: Hex, blockNumber?: bigint): Promise<SellerRow> {
+  const at = { blockNumber: blockNumber ?? (await c.getBlockNumber({ cacheTime: 0 })) };
+  const read = <T>(abi: Abi, functionName: string, args: readonly unknown[]) => answerOrNull(c.readContract({ address: diamond, abi, functionName, args, ...at }) as Promise<T>);
   const loan = await read<LoanDetails>(LOAN, 'getLoanDetails', [loanId]);
   if (loan === null) return { loanId, loan: null, claims: null, claimAsset: null, held: null, share: null };
   const [ledger, row] = await Promise.all([read<LedgerTuple>(SELLER, 'getInterestLedger', [loanId]), read<ClaimableTuple>(CLAIM, 'getClaimable', [loanId, true])]);
@@ -223,8 +228,8 @@ export function sellerRowKey(row: SellerRow): string {
 }
 
 /** The protocol pause, which stops `claimAsSeller`; null when unread. */
-export async function readPaused(c: PublicClient, diamond: Hex): Promise<boolean | null> {
-  return answerOrNull(c.readContract({ address: diamond, abi: ADMIN, functionName: 'paused' }) as Promise<boolean>);
+export async function readPaused(c: PublicClient, diamond: Hex, blockNumber?: bigint): Promise<boolean | null> {
+  return answerOrNull(c.readContract({ address: diamond, abi: ADMIN, functionName: 'paused', ...(blockNumber === undefined ? {} : { blockNumber }) }) as Promise<boolean>);
 }
 
 // ─── The transaction's own record ─────────────────────────────────────────

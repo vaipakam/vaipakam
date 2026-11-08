@@ -32,8 +32,9 @@ export interface Protection {
 
 /** The wallet's mode, or null when the contract gave no answer (a failed
  *  source is thrown, so the own rail tries the next one). */
-export async function readProtection(c: PublicClient, diamond: Hex, account: Hex): Promise<Protection | null> {
-  const a = (await answerOrNull(c.readContract({ address: diamond, abi: PROTECTED, functionName: 'getProtectedAccount', args: [account] }))) as {
+export async function readProtection(c: PublicClient, diamond: Hex, account: Hex, blockNumber?: bigint): Promise<Protection | null> {
+  const at = blockNumber === undefined ? {} : { blockNumber };
+  const a = (await answerOrNull(c.readContract({ address: diamond, abi: PROTECTED, functionName: 'getProtectedAccount', args: [account], ...at }))) as {
     enabled: boolean;
     locked: boolean;
     delaySeconds: number | bigint;

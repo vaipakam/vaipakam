@@ -55,7 +55,8 @@ export function SellerClaims({ own, chain }: { own: OwnStateClient; chain: Suppo
   const rows = useOwnRead(
     ['seller', diamond, ids.join(',')],
     async (c) => {
-      const [paused, list] = await Promise.all([readPaused(c, diamond), Promise.all(ids.map((id) => readSellerRow(c, diamond, id, wallet)))]);
+      const block = await c.getBlockNumber({ cacheTime: 0 });
+      const [paused, list] = await Promise.all([readPaused(c, diamond, block), Promise.all(ids.map((id) => readSellerRow(c, diamond, id, wallet, block)))]);
       return { paused, list };
     },
     { enabled: ids.length > 0 },

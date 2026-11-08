@@ -60,7 +60,13 @@ export async function readSellerClaimReview(own: OwnStateClient, diamond: Hex, l
   const seller = own.account;
   const facts = await own
     .read(async (c: PublicClient) => {
-      const [row, paused, protection] = await Promise.all([readSellerRow(c, diamond, loanId, seller), readPaused(c, diamond), readProtection(c, diamond, seller)]);
+      // One block for everything the review states.
+      const block = await c.getBlockNumber({ cacheTime: 0 });
+      const [row, paused, protection] = await Promise.all([
+        readSellerRow(c, diamond, loanId, seller, block),
+        readPaused(c, diamond, block),
+        readProtection(c, diamond, seller, block),
+      ]);
       return { row, paused, protection };
     })
     .then((x) => x.value);
