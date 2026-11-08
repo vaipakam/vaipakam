@@ -12,7 +12,7 @@ const review: TakeBackReview = {
   identity: '1:0xaa',
   loanId: 7n,
   amount: 5n,
-  loan: { status: 0, assetType: 0, borrower: A, collateralAsset: A, collateralAmount: 100n, principal: 10n, principalAsset: A, borrowerTokenId: 2n } as unknown as LoanDetails,
+  loan: { status: 0, assetType: 0, collateralAsset: A, collateralAmount: 100n, principal: 10n, principalAsset: A, borrowerTokenId: 2n } as unknown as LoanDetails,
   borrowerHolder: A,
   borrowerLock: 0,
   paused: false,
@@ -87,12 +87,6 @@ describe('takeBack protected account mode', () => {
     const cosign: TakeBackReview = { ...queued, protection: { ...on, requireCosign: true } };
     expect(destination(cosign, copy)).toBe('payout.toQueuedCosign');
     expect(lines(cosign)).toContain('payout.cosignNote');
-  });
-  it('states the vault for a later holder of the position', () => {
-    const later: TakeBackReview = { ...review, protection: on, route: 'vault' };
-    expect(destination(later, copy)).toBe('payout.toVault');
-    expect(lines(later)).toContain('payout.vaultNote');
-    expect(lines(later)).not.toContain('payout.queuedNote');
   });
   it('reopens the review when the route, the delay or the secondary signer changes', () => {
     expect(takeBackChanged(review, queued, copy)).toBe('payout.changed');

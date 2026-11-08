@@ -10,11 +10,10 @@
  *
  * Nothing leaves the wallet and no approval is asked: the protocol sends
  * the collateral from the borrower's vault to the wallet that asks. When
- * that wallet runs protected account mode the payment is routed instead
- * (`payoutRoute`): the borrower's own withdrawal is queued for the
- * account's delay (`LibProtectedAccount.gate`), and a payment to a later
- * holder of the position is paid into that holder's vault. So the review
- * reads the wallet's mode too.
+ * that wallet runs protected account mode, the protocol queues the owner's
+ * own withdrawal for the account's delay instead (`LibProtectedAccount.gate`,
+ * stated through the shared payout route), so the review reads the wallet's
+ * mode too.
  */
 import type { Abi, PublicClient } from 'viem';
 import { AdminFacetABI, LoanFacetABI, OracleFacetABI, PartialWithdrawalFacetABI, RefinanceFacetABI, RiskFacetABI, VaipakamNFTFacetABI } from '@vaipakam/contracts/abis';
@@ -56,9 +55,8 @@ export interface TakeBackReview {
   /** The wallet's protected account mode, or null when it could not be
    *  read. */
   protection: Protection | null;
-  /** Where the collateral lands: the wallet, the account's payout queue
-   *  (the borrower's own withdrawal), or the account's vault (a later
-   *  holder's); `unknown` when the mode could not be read. */
+  /** Where the collateral lands: the wallet, or the account's payout queue;
+   *  `unknown` when the mode could not be read. */
   route: PayoutRoute;
   amountCheck: TakeBackCheck;
   /** The protocol's dry run of this withdrawal now: null when it passes,
@@ -137,16 +135,19 @@ export async function readTakeBackReview(
     const dry = await askThrough(own, (c) => c.simulateContract({ address: diamond, abi: WITHDRAW, functionName: 'partialWithdrawCollateral', args: [loanId, amount], account }));
     dryRun = dry.kind === 'answered' ? null : dry.kind === 'reverted' ? refusalFromError(dry.error) : 'unread';
   }
-  // The collateral leaves the vault of the borrower the loan records.
-  const route = payoutRoute(facts.protection, account, facts.loan.borrower);
+  // The withdrawal first moves a bought borrower position's collateral into
+  // the holder's own vault (`LibConsolidation.consolidateToHolder`), so the
+  // collateral always leaves the asking holder's vault. Consolidation skips
+  // only a loan in fallback, a rental, an illiquid NFT collateral's sale
+  // listing, a live swap-to-repay order or a sanctioned holder, each of which
+  // the rule above or the dry run already refuses.
+  const route = payoutRoute(facts.protection, account, account);
   return { identity, loanId, amount, ...facts, route, amountCheck, dryRun, verdict, readAt };
 }
 
-/** Every loan field the receipt states or the route depends on: a change
- *  to any reopens the review. */
+/** Every loan field the receipt states: a change to any reopens the review. */
 export const TAKE_BACK_STATED_LOAN_FIELDS = [
   'status',
-  'borrower',
   'assetType',
   'collateralAsset',
   'collateralAmount',

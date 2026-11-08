@@ -23,13 +23,19 @@ import { connectWallet, expect, test } from '../lib/wallet';
 type Hex = `0x${string}`;
 
 // The chain as each test found it: a later spec counts on the borrower's
-// wallet holding none of the collateral token.
+// wallet holding none of the collateral token. A revert leaves the head at
+// the snapshot's timestamp, as old as the test took, while the next block
+// mines at the wall clock; a later write would then be estimated in that
+// stale environment and mine short of gas on a call whose cost grows with
+// elapsed time (interest accrues per second). So a block is mined at once,
+// bringing the head to the present.
 let snapshot: Hex;
 test.beforeEach(async () => {
   snapshot = await anvilRpc<Hex>('evm_snapshot');
 });
 test.afterEach(async () => {
   await anvilRpc('evm_revert', [snapshot]);
+  await anvilRpc('evm_mine');
 });
 
 async function fitsWidth(page: Page): Promise<void> {

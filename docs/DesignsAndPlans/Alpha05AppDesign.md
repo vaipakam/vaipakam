@@ -922,12 +922,14 @@ above. Each resolves here, so a route reviewer needs no private file:
   offers no "use the most" shortcut, since an amount at the limit is
   refused once a second of interest accrues. No approval is asked: the
   collateral goes from the borrower's vault to the wallet that asks, in one
-  prompt. A wallet running protected account mode has it routed instead,
-  by the one payout rule every flow paying the wallet shares (RB-PAYOUT-ROUTE
-  below): the borrower's own withdrawal is queued for the account's delay
-  (and, while the account requires it, released only once a secondary signer
-  approves, which the protocol checks at release), and a later holder of the
-  position is paid into their vault. The review states that route, or that
+  prompt. A wallet running protected account mode has it queued for the
+  account's delay instead, stated by the one payout rule every flow paying
+  the wallet shares (RB-PAYOUT-ROUTE below), and, while the account requires
+  it, released only once a secondary signer approves, which the protocol
+  checks at release. The withdrawal is always the holder's own: it first
+  moves a bought position's collateral into the holder's vault, and every
+  state that skips that move is one the rule or the dry run refuses. The
+  review states that route, or that
   the mode could not be read, and the finish card measures where the
   collateral went and, when queued, from when it can be released. The review states the collateral before and after, where it goes,
   the limit, the health factor and loan-to-value now, and every

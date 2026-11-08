@@ -42,8 +42,8 @@ export function takeBackReceipt(r: TakeBackReview, _meta: TokenMetaMap | null, c
 
 /** Where the collateral goes: the wallet at once, or where protected
  *  account mode routes it (the account's payout queue for its delay, with a
- *  secondary signer's approval while the account requires one, or a later
- *  holder's vault); null when the mode could not be read. */
+ *  secondary signer's approval while the account requires one); null when
+ *  the mode could not be read. */
 export function destination(r: Pick<TakeBackReview, 'route' | 'protection'>, copy: Pick<CopyAccess, 'text' | 'format'>): string | null {
   return r.route === 'wallet' ? copy.text('takeBack.to') : routedDestination(r.route, r.protection, copy);
 }
