@@ -84,6 +84,7 @@ import {ProtectedAccountFacet} from "../src/facets/ProtectedAccountFacet.sol";
 import {VaultPayoutFacet} from "../src/facets/VaultPayoutFacet.sol";
 import {VaultDepositoryFacet} from "../src/facets/VaultDepositoryFacet.sol";
 import {OfferBookFacet} from "../src/facets/OfferBookFacet.sol";
+import {SaleFloorFacet} from "../src/facets/SaleFloorFacet.sol";
 import {NumeraireConfigFacet} from "../src/facets/NumeraireConfigFacet.sol";
 import {ReceiverFacet} from "../src/facets/ReceiverFacet.sol";
 import {RiskAccessFacet} from "../src/facets/RiskAccessFacet.sol";
@@ -292,7 +293,10 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
     // value floor, the per-wallet open-offer cap, the active index and the
     // creation events), split off OfferCreateFacet for EIP-170 headroom. Its
     // selectors are new, so they are cut as Adds.
-    uint256 public constant EXPECTED_FACETS = 110;
+    // 110 -> 111: SaleFloorFacet (#3359) - the forced-sale floor rule that
+    // ForcedSaleFacet and RiskFacet's partial liquidation self-call, and the
+    // hourly price checkpoints it reads. Its selectors are new (Adds).
+    uint256 public constant EXPECTED_FACETS = 111;
 
     /// @notice #1566 slice 3 - the target Diamond predates the fill lock; see
     ///         {_requireSlice3Diamond}.
@@ -1372,6 +1376,7 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         items[107] = Item("vaultPayoutFacet", ArtifactDeploy.deploy(type(VaultPayoutFacet).name), _getVaultPayoutSelectors());
         items[108] = Item("vaultDepositoryFacet", ArtifactDeploy.deploy(type(VaultDepositoryFacet).name), _getVaultDepositorySelectors());
         items[109] = Item("offerBookFacet", ArtifactDeploy.deploy(type(OfferBookFacet).name), _getOfferBookSelectors());
+        items[110] = Item("saleFloorFacet", ArtifactDeploy.deploy(type(SaleFloorFacet).name), _getSaleFloorSelectors());
         items[26] = Item("rewardReporterFacet", ArtifactDeploy.deploy(type(RewardReporterFacet).name), _getRewardReporterSelectors());
         // #1222 M3 B3 — `getChainRecycledLedger` /
         // `getChainDailyRecycledCredit` moved here from ConfigFacet (EIP-170).

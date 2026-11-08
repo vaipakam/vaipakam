@@ -202,6 +202,25 @@
   },
   {
     "type": "function",
+    "name": "getCloseOutLiquidityTier",
+    "inputs": [
+      {
+        "name": "asset",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "tier",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getEffectiveLiquidityTier",
     "inputs": [
       {
