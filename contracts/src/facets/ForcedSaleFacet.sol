@@ -467,8 +467,18 @@ contract ForcedSaleFacet is IVaipakamErrors {
     {
         uint256 pledged = loan.collateralAmount;
         // #3359 — the one floor rule, read by self-call so it exists once.
+        // Its cushion is measured against the whole loan's debt, never only
+        // what this sale covers: a periodic sale covers one period's
+        // shortfall, which says nothing about how well the loan is cushioned.
+        // A terminal sale's `debt` already is the whole balance plus the late
+        // fee, so the larger of the two serves every kind.
         uint256 cap = SaleFloorFacet(address(this))
-            .saleFloorBps(loan.collateralAsset, loan.principalAsset, pledged, debt).bps;
+            .saleFloorBps(
+                loan.collateralAsset,
+                loan.principalAsset,
+                pledged,
+                Math.max(debt, LibEntitlement.currentBorrowBalance(loan))
+            ).bps;
         plan.floorBps = cap;
         plan.debt = debt;
         plan.need = debt
