@@ -112,10 +112,11 @@ test('a lender posts their own offer: exact figures, an exact approval of the am
     await expect(receipt).toContainText('Exactly 0.2');
     await expect(receipt).toContainText('A borrower who takes the offer opens the loan at once');
     await expect(receipt).toContainText('When the offer lapses it can no longer be taken');
-    await expect(receipt).toContainText('This app cannot follow or cancel an offer yet.');
+    // The Offers page is built: the review sends nobody elsewhere to follow or cancel it.
+    await expect(receipt).not.toContainText('This app cannot follow or cancel an offer yet.');
     await expect(receipt).toContainText('Your side of the loan is a position token in your wallet');
     await expect(receipt).toContainText('Wallet prompts: 2.');
-    await expect(page.getByTestId('request-manage-link')).toHaveAttribute('href', 'https://app.vaipakam.com/offers');
+    await expect(page.getByTestId('request-manage-link')).toHaveCount(0);
     await fitsWidth(page);
 
     const flow = page.locator('.post-request');
@@ -148,7 +149,7 @@ test('a lender posts their own offer: exact figures, an exact approval of the am
     expect(await sc.pub.readContract({ address: WETH, abi: erc20Abi, functionName: 'allowance', args: [lender, sc.diamond] })).toBe(0n);
     const vaultNow = await sc.read<Hex>('getUserVaultAddress', [lender]);
     expect(await sc.pub.readContract({ address: WETH, abi: erc20Abi, functionName: 'balanceOf', args: [vaultNow] })).toBe(vaultBefore + parseEther('0.2'));
-    await expect(finish.getByRole('link', { name: "Follow it on the current app's Offers page" })).toHaveAttribute('href', 'https://app.vaipakam.com/offers');
+    await expect(finish.getByRole('link', { name: 'See it under Offers' })).toHaveAttribute('href', '/offers');
 
     // Closing returns to the requests, and the next offer starts from a clean form.
     await finish.getByRole('button', { name: 'Close' }).click();
