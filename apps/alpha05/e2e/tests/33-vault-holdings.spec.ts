@@ -37,11 +37,11 @@ async function fitsWidth(page: Page): Promise<void> {
 
 test('a wallet with no vault creates one, and the page then shows its address', async ({ launchWallet }) => {
   test.setTimeout(180_000);
-  const sc = scenario();
+  const sc = scenario({ borrower: 'freshBorrower' });
   const me = sc.address('borrower');
   expect(((await sc.read<Hex>('getUserVaultAddress', [me])) as string).toLowerCase()).toBe(ZERO);
 
-  const { page, flags } = await launchWallet('borrower');
+  const { page, flags } = await launchWallet('freshBorrower');
   await page.goto('/vault');
   await connectWallet(page);
   const none = page.getByTestId('vault-none');
@@ -74,7 +74,8 @@ test('a wallet with no vault creates one, and the page then shows its address', 
 
 test('the holdings show the protocol’s figures: counted, free, held by a loan, and an uncounted transfer', async ({ launchWallet }) => {
   test.setTimeout(240_000);
-  const sc = scenario();
+  // Wallets with no history, so every figure below is this test's alone.
+  const sc = scenario({ lender: 'freshLender', borrower: 'freshBorrower' });
   await openLoan(sc, { lender: 'lender', borrower: 'borrower', principalWeth: '0.05', collateralTliq: '1500', rateBps: 500, days: 30 });
   const lender = sc.address('lender');
   const borrower = sc.address('borrower');
@@ -89,7 +90,7 @@ test('the holdings show the protocol’s figures: counted, free, held by a loan,
   await sc.write('lender', WETH, TOKEN_ABI, 'transfer', [lenderVault, parseEther('0.001')]);
   expect(await sc.pub.readContract({ address: WETH, abi: erc20Abi, functionName: 'balanceOf', args: [lenderVault] })).toBe(deposit + parseEther('0.001'));
 
-  const { page, ctx } = await launchWallet('lender');
+  const { page, ctx } = await launchWallet('freshLender');
   await page.goto('/vault');
   await connectWallet(page);
   const weth = `erc20:${WETH.toLowerCase()}:0`;
@@ -105,7 +106,7 @@ test('the holdings show the protocol’s figures: counted, free, held by a loan,
   await ctx.close();
 
   // The borrower's collateral is all held by the loan, none of it free.
-  const b = await launchWallet('borrower');
+  const b = await launchWallet('freshBorrower');
   await b.page.goto('/vault');
   await connectWallet(b.page);
   const coll = `erc20:${tliq.toLowerCase()}:0`;
