@@ -629,6 +629,16 @@ export const copy = {
     rowAmount: B('Collateral you take back'),
     rowTo: B('Sent to'),
     to: B('Your wallet, from your vault'),
+    toQueued: B('Your protected account’s payout queue for {{delay}}, then your wallet'),
+    queuedNote: A(
+      'Protected mode is on for your account, so the protocol queues this withdrawal instead of paying it at once. It reaches your wallet once the account’s delay has passed and the payout is released.',
+    ),
+    protectionUnread: A(
+      'Whether protected mode is on for your account could not be read. If it is, the collateral waits in the account’s payout queue for its delay before reaching your wallet.',
+    ),
+    changedProtection: B('Your account’s protected mode'),
+    legQueued: B('{{amount}} queued for your wallet, releasable from {{time}}'),
+    queuedOther: A('{{amount}} was queued for your wallet, not the {{expected}} reviewed.'),
     rowMax: B('Most you can take back now'),
     closer: A('Taking back collateral lowers the loan’s health factor and raises its loan-to-value, so it moves closer to liquidation.'),
     limitMoves: A('The protocol checks its limits again when this confirms. If prices move first and the amount no longer fits, it is refused and nothing moves.'),

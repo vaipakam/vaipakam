@@ -4,10 +4,10 @@ A running loan's page in the next app now offers its borrower a way to take back
 
 The borrower types the amount, checked as it is typed against the protocol's own most that can be taken back now. The form says that this limit moves with prices and as interest accrues, and it offers no shortcut to the exact limit, since an amount at the limit would be refused once a moment of interest accrues.
 
-No approval is needed: the collateral goes from the borrower's vault to the wallet that asks, in one wallet prompt. The review shows the collateral now and after, where it goes, the limit, and the loan's health factor and loan-to-value now. It says that taking collateral back moves the loan closer to liquidation, that the protocol checks its limits again when the withdrawal confirms (so a price move or a pause before then refuses it with nothing moved), and that the finish card shows the protocol's own figures after.
+No approval is needed: the collateral goes from the borrower's vault to the wallet that asks, in one wallet prompt. A wallet with protected account mode on gets it queued for the account's delay instead, and the review says so (or says the mode could not be read). The review shows the collateral now and after, where it goes, the limit, and the loan's health factor and loan-to-value now. It says that taking collateral back moves the loan closer to liquidation, that the protocol checks its limits again when the withdrawal confirms (so a price move or a pause before then refuses it with nothing moved), and that the finish card shows the protocol's own figures after.
 
 A lender's sale listing also holds a withdrawal, and no protocol view exposes that link (issue #3308), so the review asks the protocol to try this very withdrawal first and names that refusal; the send tries it again.
 
-After the withdrawal the app reads the outcome from the transaction's own record: the collateral it left, the protocol's health factor and loan-to-value after it, and what arrived in the wallet.
+After the withdrawal the app reads the outcome from the transaction's own record: the collateral it left, the protocol's health factor and loan-to-value after it, and what arrived in the wallet or was queued for it.
 
 Rulebook: `docs/DesignsAndPlans/Alpha05AppDesign.md` RB-POSITION-TAKE-BACK. Epic #3180.

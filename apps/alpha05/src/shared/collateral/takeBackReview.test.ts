@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { OPEN } from '../eligibility/types';
 import type { LoanDetails } from '../positions/loanView';
-import { takeBackReceipt } from './takeBackReceipt';
+import { destination, takeBackReceipt } from './takeBackReceipt';
 import { takeBackBlockers, takeBackChanged, type TakeBackReview } from './takeBackReview';
 
 const copy = { text: (k: string) => k, format: (k: string, v?: Record<string, string>) => (v?.max ? `${k}#${v.max}` : v?.reason ? `${k}#${v.reason}` : k) } as never;
@@ -21,6 +21,7 @@ const review: TakeBackReview = {
   maxWithdrawable: 20n,
   healthFactor: 2n * 10n ** 18n,
   ltvBps: 4000n,
+  protection: { enabled: false, delaySeconds: 0 },
   amountCheck: { ok: true },
   dryRun: null,
   verdict: OPEN,
@@ -60,5 +61,23 @@ describe('takeBackReceipt', () => {
     const r = takeBackReceipt(review, null, copy);
     expect(r.prompts).toBe(1);
     expect(r.consequences.map(String)).toEqual(['takeBack.closer', 'takeBack.limitMoves', 'takeBack.afterFigures', 'takeBack.pauseHolds']);
+  });
+});
+
+describe('takeBack protected account mode', () => {
+  const lines = (r: TakeBackReview) => takeBackReceipt(r, null, copy).consequences.map(String);
+  it('sends to the wallet at once when the mode is off', () => {
+    expect(destination(review, copy)).toBe('takeBack.to');
+    expect(lines(review)).not.toContain('takeBack.queuedNote');
+    expect(lines(review)).not.toContain('takeBack.protectionUnread');
+  });
+  it('states the payout queue when the mode is on, and the unknown when unread', () => {
+    const on = { ...review, protection: { enabled: true, delaySeconds: 86_400 } };
+    expect(destination(on, copy)).toBe('takeBack.toQueued');
+    expect(lines(on)).toContain('takeBack.queuedNote');
+    expect(lines({ ...review, protection: null })).toContain('takeBack.protectionUnread');
+  });
+  it('reopens the review when the mode changes', () => {
+    expect(takeBackChanged(review, { ...review, protection: { enabled: true, delaySeconds: 3600 } }, copy)).toBe('takeBack.changedProtection');
   });
 });

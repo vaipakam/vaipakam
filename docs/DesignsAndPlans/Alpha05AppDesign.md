@@ -922,14 +922,18 @@ above. Each resolves here, so a route reviewer needs no private file:
   offers no "use the most" shortcut, since an amount at the limit is
   refused once a second of interest accrues. No approval is asked: the
   collateral goes from the borrower's vault to the wallet that asks, in one
-  prompt. The review states the collateral before and after, where it goes,
+  prompt. A wallet running protected account mode gets it queued for the
+  account's delay instead (the protocol queues an owner's own withdrawal),
+  so the review reads the mode and states the queue and its delay, or that
+  the mode could not be read, and the finish card measures the queued
+  payout and when it can be released. The review states the collateral before and after, where it goes,
   the limit, the health factor and loan-to-value now, and every
   consequence: the loan moves closer to liquidation; the protocol checks its
   limits again at confirmation, so a price move first refuses it with
   nothing moved; a pause before then does the same; and the finish card
   states the protocol's own figures after. A re-read reopens the review
   when a stated loan field, the holder or lock, the pause, the refinance
-  request or the verdict moves; the limit, health factor and loan-to-value
+  request, the protected mode or the verdict moves; the limit, health factor and loan-to-value
   move with prices and are restated, and a limit that falls below the
   amount blocks the review rather than reopening it. The finish card
   measures, from the transaction's own logs, the collateral the withdrawal

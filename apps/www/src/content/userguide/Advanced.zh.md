@@ -1982,7 +1982,7 @@ Positions 通过一个共享读取器读取与 Home 相同的持仓清单：`get
 
 `partialWithdrawCollateral(loanId, amount)` 将 `amount` 的抵押品从借款人的金库发送到调用者的钱包，降低 `collateralAmount` 和抵押留置，并发出带有新健康因子和 LTV 的 `PartialCollateralWithdrawn`。它带有 `whenNotPaused`，并按顺序拒绝：受制裁的调用者、有效的换币还款承诺、有效的再融资请求（`RefinanceRequestOpen`）、关联的出售挂单（`SaleListingActive`）、不是 `ownerOf(borrowerTokenId)` 的调用者、不处于 Active 的贷款、超过抵押品的金额、`checkLiquidity` 未报告为 Liquid 的抵押品，以及低于最低健康因子或高于开立时 LTV 上限的结果。
 
-表单用 `calculateMaxWithdrawable` 检查金额；对不处于 Active 的贷款或非流动抵押品，它为零，并随利息累积而下降。没有视图公开关联的出售挂单，因此审核会试运行取回并指出该拒绝；发送时会再次试运行。完成卡片从交易的 `PartialCollateralWithdrawn` 日志读取剩余抵押品和新数值，并从代币转入钱包的 `Transfer` 读取到账金额。
+表单用 `calculateMaxWithdrawable` 检查金额；对不处于 Active 的贷款或非流动抵押品，它为零，并随利息累积而下降。没有视图公开关联的出售挂单，因此审核会试运行取回并指出该拒绝；发送时会再次试运行。完成卡片从交易的 `PartialCollateralWithdrawn` 日志读取剩余抵押品和新数值，并从代币转入钱包的 `Transfer` 读取到账金额。对于开启保护账户模式的调用者，金库的付款闸门不会直接支付，而是按账户的延迟期将提取放入队列（`PayoutQueued`），因此审核会读取 `getProtectedAccount`，完成卡片会读取该日志。
 
 <a id="risk-access"></a>
 

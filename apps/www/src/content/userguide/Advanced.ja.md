@@ -2249,7 +2249,7 @@ Positions は共通のリーダーを通して Home と同じ保有一覧を読�
 
 `partialWithdrawCollateral(loanId, amount)` は借り手のボールトから呼び出し元のウォレットへ担保を `amount` 送り、`collateralAmount` と担保リーエンを減らし、新しいヘルスファクターとLTVを含む `PartialCollateralWithdrawn` を発行します。`whenNotPaused` が付いており、次の順に拒否します: 制裁対象の呼び出し元、有効なスワップ返済コミット、有効なリファイナンス依頼(`RefinanceRequestOpen`)、紐づいた売却出品(`SaleListingActive`)、`ownerOf(borrowerTokenId)` 以外の呼び出し元、Active でないローン、担保を超える金額、`checkLiquidity` が Liquid と報告しない担保、最低ヘルスファクターを下回るか開始時のLTV上限を超える結果。
 
-フォームは金額を `calculateMaxWithdrawable` と照合します。これは Active でないローンや非流動的な担保ではゼロで、利息の発生とともに下がります。紐づいた売却出品を返すビューはないため、確認画面で引き出しをドライランし、その拒否を表示します。送信時にも再度実行します。完了カードは、残った担保と新しい数値をトランザクションの `PartialCollateralWithdrawn` ログから、受け取った金額をウォレットへのトークンの `Transfer` から読み取ります。
+フォームは金額を `calculateMaxWithdrawable` と照合します。これは Active でないローンや非流動的な担保ではゼロで、利息の発生とともに下がります。紐づいた売却出品を返すビューはないため、確認画面で引き出しをドライランし、その拒否を表示します。送信時にも再度実行します。完了カードは、残った担保と新しい数値をトランザクションの `PartialCollateralWithdrawn` ログから、受け取った金額をウォレットへのトークンの `Transfer` から読み取ります。保護アカウントモードの呼び出し元の場合、ボールトの支払いゲートは引き出しを支払わずにアカウントの遅延期間だけキューに入れる(`PayoutQueued`)ため、レビューは `getProtectedAccount` を読み、完了カードはそのログを読みます。
 
 <a id="risk-access"></a>
 

@@ -9,10 +9,22 @@
  * exposes (a lender's linked sale listing, #3308).
  *
  * Nothing leaves the wallet and no approval is asked: the protocol sends
- * the collateral from the borrower's vault to the wallet that asks.
+ * the collateral from the borrower's vault to the wallet that asks. When
+ * that wallet runs protected account mode, the protocol queues its own
+ * withdrawal for the account's delay instead (`LibProtectedAccount.gate`),
+ * so the review reads the account's mode too.
  */
 import type { Abi, PublicClient } from 'viem';
-import { AdminFacetABI, LoanFacetABI, OracleFacetABI, PartialWithdrawalFacetABI, RefinanceFacetABI, RiskFacetABI, VaipakamNFTFacetABI } from '@vaipakam/contracts/abis';
+import {
+  AdminFacetABI,
+  LoanFacetABI,
+  OracleFacetABI,
+  PartialWithdrawalFacetABI,
+  ProtectedAccountFacetABI,
+  RefinanceFacetABI,
+  RiskFacetABI,
+  VaipakamNFTFacetABI,
+} from '@vaipakam/contracts/abis';
 import type { OwnStateClient } from '../../chain/ownRail';
 import type { CopyAccess } from '../copy/useCopy';
 import { refusalFromError } from '../eligibility/refusal';
@@ -29,6 +41,7 @@ const ADMIN = AdminFacetABI as Abi;
 const ORACLE = OracleFacetABI as Abi;
 const RISK = RiskFacetABI as Abi;
 const REFINANCE = RefinanceFacetABI as Abi;
+const PROTECTED = ProtectedAccountFacetABI as Abi;
 export const WITHDRAW = PartialWithdrawalFacetABI as Abi;
 /** `LibVaipakam.LiquidityStatus.Liquid`. */
 const LIQUID = 0;
@@ -46,6 +59,10 @@ export interface TakeBackReview {
   maxWithdrawable: bigint | null;
   healthFactor: bigint | null;
   ltvBps: bigint | null;
+  /** The wallet's protected account mode (`getProtectedAccount`), or null
+   *  when it could not be read. A wallet with the mode on gets the
+   *  collateral queued for `delaySeconds`, not at once. */
+  protection: { enabled: boolean; delaySeconds: number } | null;
   amountCheck: TakeBackCheck;
   /** The protocol's dry run of this withdrawal now: null when it passes,
    *  its refusal when it refuses, 'unread' when it could not be run. Asked
@@ -76,7 +93,7 @@ export async function readTakeBackReview(
     .read(async (c: PublicClient) => {
       const loan = (await c.readContract({ address: diamond, abi: LOAN, functionName: 'getLoanDetails', args: [loanId] })) as LoanDetails;
       const read = <T>(abi: Abi, functionName: string, args: readonly unknown[] = []) => maybe(c.readContract({ address: diamond, abi, functionName, args }) as Promise<T>);
-      const [borrowerHolder, borrowerLock, paused, refinance, liquidity, maxWithdrawable, healthFactor, ltvBps] = await Promise.all([
+      const [borrowerHolder, borrowerLock, paused, refinance, liquidity, maxWithdrawable, healthFactor, ltvBps, protectedAccount] = await Promise.all([
         read<Hex>(NFT, 'ownerOf', [loan.borrowerTokenId]),
         read<number>(NFT, 'positionLock', [loan.borrowerTokenId]).then((v) => (v === null ? null : Number(v))),
         read<boolean>(ADMIN, 'paused'),
@@ -85,6 +102,7 @@ export async function readTakeBackReview(
         read<bigint>(WITHDRAW, 'calculateMaxWithdrawable', [loanId]),
         read<bigint>(RISK, 'calculateHealthFactor', [loanId]),
         read<bigint>(RISK, 'calculateLTV', [loanId]),
+        read<{ enabled: boolean; delaySeconds: number | bigint }>(PROTECTED, 'getProtectedAccount', [account]),
       ]);
       return {
         loan,
@@ -96,6 +114,7 @@ export async function readTakeBackReview(
         maxWithdrawable,
         healthFactor,
         ltvBps,
+        protection: protectedAccount ? { enabled: protectedAccount.enabled, delaySeconds: Number(protectedAccount.delaySeconds) } : null,
       };
     })
     .then((x) => x.value);
@@ -144,6 +163,7 @@ export function takeBackChanged(a: TakeBackReview, b: TakeBackReview, copy: Pick
   if (TAKE_BACK_STATED_LOAN_FIELDS.some((k) => a.loan[k] !== b.loan[k])) return text('repay.changedLoan');
   if (a.borrowerHolder !== b.borrowerHolder || a.borrowerLock !== b.borrowerLock || a.paused !== b.paused || a.refinanceLive !== b.refinanceLive)
     return text('repay.changedHolders');
+  if (a.protection?.enabled !== b.protection?.enabled || a.protection?.delaySeconds !== b.protection?.delaySeconds) return text('takeBack.changedProtection');
   if (a.verdict.state !== b.verdict.state || a.verdict.refusals[0]?.code !== b.verdict.refusals[0]?.code) return text('repay.changedVerdict');
   return null;
 }

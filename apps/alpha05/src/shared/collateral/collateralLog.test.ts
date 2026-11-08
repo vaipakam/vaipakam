@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { encodeAbiParameters, encodeEventTopics, type Abi, type Log } from 'viem';
-import { AddCollateralFacetABI, PartialWithdrawalFacetABI } from '@vaipakam/contracts/abis';
-import { collateralAdded, collateralWithdrawn, curedFromFallback } from './collateralLog';
+import { AddCollateralFacetABI, PartialWithdrawalFacetABI, VaultPayoutFacetABI } from '@vaipakam/contracts/abis';
+import { collateralAdded, collateralWithdrawn, curedFromFallback, payoutQueued } from './collateralLog';
 
 const DIAMOND = '0x00000000000000000000000000000000000000d1' as const;
 const OTHER = '0x00000000000000000000000000000000000000e2' as const;
@@ -48,5 +48,24 @@ describe('collateralWithdrawn', () => {
   });
   it('ignores another loan, another contract and a top-up', () => {
     expect(collateralWithdrawn([withdrawn(DIAMOND, 8n, 10n), withdrawn(OTHER, 7n, 10n), added(DIAMOND, 7n, 15n)], DIAMOND, 7n)).toBeNull();
+  });
+});
+
+function queuedLog(address: `0x${string}`, account: `0x${string}`, asset: `0x${string}`, amount: bigint): Log {
+  const topics = encodeEventTopics({ abi: VaultPayoutFacetABI as Abi, eventName: 'PayoutQueued', args: { account, id: 1n, asset } });
+  const data = encodeAbiParameters(
+    [{ type: 'uint8' }, { type: 'uint256' }, { type: 'uint256' }, { type: 'address' }, { type: 'uint256' }],
+    [0, 0n, amount, account, 1_900_000_000n],
+  );
+  return { address, topics, data } as unknown as Log;
+}
+
+describe('payoutQueued', () => {
+  const ASSET = '0x00000000000000000000000000000000000000c4' as const;
+  it('reads a payout queued for this account and asset from the Diamond only', () => {
+    expect(payoutQueued([queuedLog(DIAMOND, PAYER, ASSET, 7n)], DIAMOND, PAYER, ASSET)).toEqual({ amount: 7n, releaseAt: 1_900_000_000n });
+    expect(payoutQueued([queuedLog(OTHER, PAYER, ASSET, 7n)], DIAMOND, PAYER, ASSET)).toBeNull();
+    expect(payoutQueued([queuedLog(DIAMOND, OTHER, ASSET, 7n)], DIAMOND, PAYER, ASSET)).toBeNull();
+    expect(payoutQueued([], DIAMOND, PAYER, ASSET)).toBeNull();
   });
 });

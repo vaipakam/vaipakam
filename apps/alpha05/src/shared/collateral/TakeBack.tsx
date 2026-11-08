@@ -19,8 +19,8 @@ import { useTrackedTx } from '../tx/useTrackedTx';
 import { ActionFlow, reviewIdentity, type Recheck } from '../ui/ActionFlow';
 import { FormField } from '../ui/FormField';
 import { Notice } from '../ui/Notice';
-import { formatBps, formatScaled, shortAddress } from '../ui/format';
-import { collateralWithdrawn } from './collateralLog';
+import { formatBps, formatScaled, formatUtc, shortAddress } from '../ui/format';
+import { collateralWithdrawn, payoutQueued } from './collateralLog';
 import { takeBackReceipt } from './takeBackReceipt';
 import { readTakeBackReview, takeBackBlockers, takeBackChanged, WITHDRAW, type TakeBackReview } from './takeBackReview';
 
@@ -204,6 +204,16 @@ function TakeBackFlow({ loanId, chain, own, meta, amount, onChangeAmount, onClos
           ? { status: 'unknown', label: text('addColl.rowHfNow'), reason: text('takeBack.hfAfterNone') }
           : { status: 'done', label: format('addColl.legHf', { hf: formatScaled(taken.newHf), ltv: formatBps(taken.newLtv) }) },
       );
+    }
+    const queued = payoutQueued(logs, diamond, account, asset);
+    if (queued) {
+      const label = format('takeBack.legQueued', { amount: tokenAmount(queued.amount, asset, meta, format), time: formatUtc(Number(queued.releaseAt)) });
+      legs.push(
+        queued.amount === r.amount
+          ? { status: 'done', label }
+          : { status: 'unknown', label, reason: format('takeBack.queuedOther', { amount: exact(asset, queued.amount), expected: exact(asset, r.amount) }) },
+      );
+      return legs;
     }
     const received = moved(logs, asset, null, account);
     const receivedLabel = format('takeBack.legReceived', { amount: tokenAmount(received, asset, meta, format) });
