@@ -663,7 +663,7 @@ async function nftSide(side, tokenId, loanId) {
   return {
     ...out,
     [`${side}NftStatus`]: Number(await read(ABIS.nft, 'nftStatusOf', [tokenId])),
-    [`${side}NftLock`]: Number(await read(ABIS.nft, 'positionLock', [tokenId])),
+    [`${side}NftLock`]: Number(await read(ABIS.nft, 'positionRoute', [tokenId])),
     [`${side}NftBinding`]: binding,
   };
 }

@@ -1161,8 +1161,106 @@ above. Each resolves here, so a route reviewer needs no private file:
   of the count) are hidden behind a switch that counts them. VPFI in the
   vault is named as setting the fee-discount tier, holding it for that pledging nothing (VPFI
   pledged to a loan or offer shows as held), with a
-  link to Rewards. Deposit and withdraw are the next slices; until then the
-  page links the current app for them.
+  link to Rewards. Withdraw is the next slice; until then the page links the
+  current app for it.
+- **RB-VAULT-DEPOSIT** — a deposit into the wallet's own vault (ACC-22) is
+  one asset, chosen from the suggested tokens and test collections or
+  pasted, its standard the contract's own answer, then the amount, the NFT's
+  token id, or the token id and quantity. An unaccepted Terms version is
+  accepted first, and the Terms are read again as the last check before
+  signing: a switch to a wallet that has not accepted them, or a version
+  published while the form is open, sends the deposit back through the gate
+  (a transaction already under way is left to finish). The review is read at
+  one block: the wallet's vault (or that the deposit creates it), the
+  protocol pause, the sanctions screen, whether a replacement retired the
+  wallet, the account's protected mode, and the wallet's holding and
+  approval. The receipt states how the deposit can leave again: to the
+  wallet at once without protected mode, after the account's delay (and a
+  secondary signer, where the account requires one) with it, not at all
+  while the account is locked (the protocol still takes the deposit), and
+  that it is unknown when the mode was not read; a change to any of these
+  while the review is open is a change. A pause, a flagged wallet, a retired wallet or a shortfall stops
+  it by name, and an unread pause or screen is stated and left to the
+  protocol's dry run. The approval is exactly what the deposit takes (an
+  ERC-20 amount, one ERC-721 token, or an ERC-1155 collection granted for
+  this deposit and taken back after it unless the wallet had granted it),
+  the dry run runs with it in place (so a token that does not arrive in full
+  is refused before the deposit is sent), and an approval the flow made is
+  put back when the deposit does not go through. The receipt states that no
+  token-safety screening runs. The finish card states what the protocol's
+  own deposit record credited and what the token's own logs moved into the
+  vault. While the protocol is paused the panel says so, with what stays
+  open, and offers no deposit. The form's balance check is read again each
+  block, so a balance that grows lifts its refusal by itself.
+- **RB-VAULT-WITHDRAW** — a withdrawal from the wallet's own vault (ACC-23)
+  takes what is free back to the connected wallet, and only to it: the
+  protocol would pay any screened address for an account without protected
+  mode, and the app offers none, so the receipt says the destination is the
+  wallet that signs. It opens from an asset row with something free, or, for
+  an NFT collection the deposit record names without token ids, from that
+  collection with the token id typed. The form's limit is the protocol's own
+  `withdrawableNow` figure for that asset and token, read again each block.
+  The review is read at one block: the vault, the pause and whether the
+  escape route is open under it, the sanctions screen, the account's
+  protected mode (retired, on, locked, delay, secondary signer) and the free
+  figure, then the protocol's dry run of this very withdrawal. No vault, a
+  retired wallet, a flagged wallet, a pause that applies (every pause, except
+  for a protected account once the escape route opens), a locked account, an
+  amount above the free figure, or the dry run's refusal stops it by name;
+  an unread pause, screen, free figure or dry run is stated. The receipt
+  names the vault it leaves, where it goes (this wallet at once, or the
+  account's payout queue for its delay, with a secondary signer's approval
+  where required), the free figure before and after, that only what is free
+  moves, that a queued withdrawal can be cancelled from the payout queue on
+  the Claims page, and that no approval is asked. The finish card states the
+  protocol's own withdrawal record (and whether it queued it), the queued
+  payout with its release time, and what the token's own logs moved from the
+  vault to the wallet.
+- **RB-VAULT-SAFETY** — the Vault page's safety card (ACC-36 Basic face,
+  ACC-37, ACC-43) reads the account's protected mode at one block, with the
+  protocol's delay bounds, the pause, the sanctions screen and the queued
+  payout count, on its own reads: it never waits on holdings discovery, so a
+  failed holdings scan cannot hide Lock now. A Diamond without the feature reads "unavailable", never
+  "off"; an unread mode offers no control and says not to assume it is off;
+  a wallet a replacement retired names the wallet that manages the account
+  and offers nothing. Off, it offers Turn on: in Basic the shortest delay the
+  protocol allows and NFT protection off, both stated; in Advanced the delay
+  in whole days inside the bounds and NFT protection. On, it states the
+  delay, co-sign, NFT protection, queued count, lock (since when, by whom)
+  and every pending change with its time, and offers Lock now (unlocked),
+  Ask to unlock (locked, none asked) and Apply due changes (anything due).
+  Each receipt states what the mode becomes and every consequence: turning
+  on never delays what is owed to others, credits other vaults' payments
+  into the vault, cancels any pending vault-code change and raises the wait
+  on a future one (said, not read); a lock cancels every queued payout (counted), drops every
+  pending setting change (counted) and voids every pending destination,
+  signer and vault-code change (said, not counted), cancels a replacement
+  this wallet proposed while one its signers proposed survives (said, not
+  read), leaves repayment and
+  adding collateral open and works during a pause; an unlock waits the
+  delay; applying due changes applies every due change together, a shorter
+  delay is always shown as the delay it sets beside the current one, and a
+  switch-off waits for an empty queue and clears destinations, signers,
+  their pending additions and any pending replacement. Every consequence is
+  taken from the facet's own code path for that call, whole, not from one
+  finding at a time. Each action is dry-run at review and again before the wallet
+  opens, and the finish card reads the Diamond's own events for this
+  account. The account's own payout queue (RB-CLAIM: the Claims component)
+  is shown under the card.
+- **RB-VAULT-ESCAPE** — while the protocol is paused, the Vault page
+  states it at the top (ACC-30, ACC-31): withdrawals are closed, full and
+  partial repayment and adding collateral stay open, and, under an
+  administrative pause, when its escape route opens, from the protocol's own
+  `escapeOpensAt` against the chain's clock, never a hard-coded period. A
+  pause that schedules no route (automatic, or a protocol not yet launched)
+  is said to schedule none. Once the route is open, the Withdraw button
+  routes a wallet without protected mode through `escapeWithdraw`, and the
+  receipt says the asset goes straight to this wallet through the escape
+  route and that the route never returns what a loan, offer or claim holds;
+  a protected account keeps the ordinary withdrawal, which keeps queueing.
+  If the pause, the route or, under an open route, the mode is unread, no
+  entry point is chosen and nothing is sent. The finish card reads
+  `EscapeWithdrawal` and the token's own transfer to the wallet.
 - **RB-FROZEN** — money the protocol holds for a wallet the sanctions
   screen flags (LN-53) is stated as "Frozen, awaiting de-listing": locked
   where its loan keeps it, in a vault, not lost, and released once the

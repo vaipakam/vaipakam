@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
+
 import {Vm} from "forge-std/Vm.sol";
 import {Test} from "forge-std/Test.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
@@ -79,8 +81,8 @@ contract FallbackPricedSplitTest is SetupTest {
         l.borrowerTokenId = LOAN * 2;
         l.lenderTokenId = LOAN * 2 + 1;
         TestMutatorFacet(address(diamond)).scaffoldActiveLoan(LOAN, l);
-        vm.mockCall(address(diamond), abi.encodeWithSelector(IERC721.ownerOf.selector, LOAN * 2), abi.encode(borrower_));
-        vm.mockCall(address(diamond), abi.encodeWithSelector(IERC721.ownerOf.selector, LOAN * 2 + 1), abi.encode(lender_));
+        LibTestPositionNFT.mockHolder(address(diamond), LOAN * 2, borrower_);
+        LibTestPositionNFT.mockHolder(address(diamond), LOAN * 2 + 1, lender_);
         address bVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(borrower_);
         ERC20Mock(mockCollateralERC20).mint(bVault, COLLATERAL);
         TestMutatorFacet(address(diamond)).setProtocolTrackedVaultBalanceRaw(borrower_, mockCollateralERC20, COLLATERAL);

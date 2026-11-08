@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
 import {SetupTest} from "./SetupTest.t.sol";
 import {Vm} from "forge-std/Vm.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
@@ -480,7 +481,7 @@ contract FeeEntitlementFacetTest is SetupTest {
 
         LibVaipakam.Loan memory ol = LoanFacet(address(diamond)).getLoanDetails(oldLoanId);
         vm.prank(lender);
-        VaipakamNFTFacet(address(diamond)).transferFrom(lender, holder, ol.lenderTokenId);
+        LibTestPositionNFT.core(address(diamond)).transferFrom(lender, holder, ol.lenderTokenId);
 
         // The consolidation DECLINES — the documented skip-not-block case.
         vm.mockCall(address(diamond),
@@ -1401,7 +1402,7 @@ contract FeeEntitlementFacetTest is SetupTest {
         LibVaipakam.Loan memory rl = LoanFacet(address(diamond)).getLoanDetails(loanId);
         address rHolder = makeAddr("rentalHolder1955");
         vm.prank(rl.lender);
-        VaipakamNFTFacet(address(diamond)).transferFrom(
+        LibTestPositionNFT.core(address(diamond)).transferFrom(
             rl.lender, rHolder, rl.lenderTokenId
         );
         vpfiToken.transfer(rHolder, PARTY_VPFI_STAKE);
@@ -1542,7 +1543,7 @@ contract FeeEntitlementFacetTest is SetupTest {
 
         LibVaipakam.Loan memory ol = LoanFacet(address(diamond)).getLoanDetails(oldLoanId);
         vm.prank(ol.lender);
-        VaipakamNFTFacet(address(diamond)).transferFrom(ol.lender, holder, ol.lenderTokenId);
+        LibTestPositionNFT.core(address(diamond)).transferFrom(ol.lender, holder, ol.lenderTokenId);
 
         // ARM THE PEG. `weiPerVpfi` is deliberately large (1 ETH per VPFI) so
         // the quoted `vpfiRequired` stays far inside the holder's stake — a

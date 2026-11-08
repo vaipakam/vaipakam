@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibPositionNFT} from "./LibPositionNFT.sol";
 import {LibProtectedAccount} from "./LibProtectedAccount.sol";
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
@@ -60,13 +61,13 @@ library LibAuth {
 
     /// @dev Caller must own the lender-side position NFT for this loan.
     function requireLenderNftOwner(LibVaipakam.Loan storage loan) internal view {
-        if (IERC721(address(this)).ownerOf(loan.lenderTokenId) != msg.sender)
+        if (LibPositionNFT.ownerOf(loan.lenderTokenId) != msg.sender)
             revert IVaipakamErrors.NotNFTOwner();
     }
 
     /// @dev Caller must own the borrower-side position NFT for this loan.
     function requireBorrowerNftOwner(LibVaipakam.Loan storage loan) internal view {
-        if (IERC721(address(this)).ownerOf(loan.borrowerTokenId) != msg.sender)
+        if (LibPositionNFT.ownerOf(loan.borrowerTokenId) != msg.sender)
             revert IVaipakamErrors.NotNFTOwner();
     }
 
@@ -75,7 +76,7 @@ library LibAuth {
     ///      retired it. The rule for a holder's standing CONSENT (auto-extend
     ///      caps), which a retired wallet must not be able to give.
     function requirePositionManager(uint256 tokenId) internal view {
-        if (msg.sender != LibProtectedAccount.manager(IERC721(address(this)).ownerOf(tokenId)))
+        if (msg.sender != LibProtectedAccount.manager(LibPositionNFT.ownerOf(tokenId)))
             revert IVaipakamErrors.NotNFTOwner();
     }
 
@@ -113,7 +114,7 @@ library LibAuth {
         // charges a keeper's action, never an owner acting on their own position.
         if (msg.sender == address(this)) return false;
         uint256 tokenId = lenderSide ? loan.lenderTokenId : loan.borrowerTokenId;
-        address nftOwner = IERC721(address(this)).ownerOf(tokenId);
+        address nftOwner = LibPositionNFT.ownerOf(tokenId);
         // Protected account mode: the holder acts through its manager. Once
         // a replacement retired the holder, its controller acts on the
         // position and the old wallet is no longer the owner here; no keeper

@@ -149,6 +149,8 @@ const PARTIES: ReadonlyMap<string, readonly string[]> = new Map<string, readonly
   ['PayoutCancelled', ['account']],
   ['PayoutHeldInVault', ['account']],
   ['PaymentCreditedToVault', ['account']],
+  // #3205 — the legacy Diamond's protected-mode NFT queue, still decoded on a
+  // pre-#3205 chain (`POSITION_NFT_INDEXED_EVENTS`).
   ['PositionTransferQueued', ['account']],
   ['PositionTransferReleased', ['account']],
   ['PositionTransferCancelled', ['account']],
@@ -187,6 +189,8 @@ const PARTIES: ReadonlyMap<string, readonly string[]> = new Map<string, readonly
   ['ReplacementCancelled', ['account', 'nominee']],
   ['PrimaryReplaced', ['account', 'controller']],
   ['NFTMinted', ['owner']],
+  // Position-NFT ERC-721 events (the legacy Diamond's, or the standalone
+  // PositionNFT's, both decoded through `POSITION_NFT_INDEXED_EVENTS`).
   ['Approval', ['owner']],
   ['ApprovalForAll', ['owner']],
   // The actor is the recipient (`to`); the sender gave the position up.
@@ -242,10 +246,10 @@ const LOCAL_NOT_A_PARTY: ReadonlyMap<string, Readonly<Record<string, string>>> =
   string,
   Readonly<Record<string, string>>
 >([
-  ['Approval', { approved: 'the address approved for one position NFT' }],
-  ['ApprovalForAll', { operator: 'the operator approved for every position NFT' }],
   // The owner's declared source of an adopted asset is a statement about
   // where it came from, not a wallet acting in the row.
+  ['Approval', { approved: 'the address approved for one position NFT' }],
+  ['ApprovalForAll', { operator: 'the operator approved for every position NFT' }],
   ['UntrackedAdopted', { declaredSource: 'the address the owner declared sent the asset' }],
   // Payout and position-transfer destinations are the owner's own wallet or
   // an address on the owner's allowlist: the owner's choice, not a party.
@@ -355,6 +359,8 @@ const EXEMPT: ReadonlyMap<string, ExemptGroup> = new Map<string, ExemptGroup>([
       'UsdChainlinkDenominatorSet',
       // #3204 — the VaultBeacon new vaults point at, set once at deploy.
       'VaultBeaconSet',
+      // #3205 — the PositionNFT core the Diamond mints through, set once at deploy.
+      'PositionNFTSet',
       'VPFIDiscountConfigUpdated',
       'VPFITokenRotated',
       'VPFITokenSet',

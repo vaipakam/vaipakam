@@ -19,7 +19,7 @@ import {ConsolidationFacet} from "../facets/ConsolidationFacet.sol";
 import {VaultFactoryFacet} from "../facets/VaultFactoryFacet.sol";
 import {VaipakamVaultImplementation} from "../VaipakamVaultImplementation.sol";
 import {VPFIDiscountFacet} from "../facets/VPFIDiscountFacet.sol";
-import {LibERC721} from "./LibERC721.sol";
+import {LibPositionNFT} from "./LibPositionNFT.sol";
 
 /**
  * @title LibSwapToRepayIntentSettlement — T-087 Sub 3.B extraction
@@ -144,6 +144,12 @@ library LibSwapToRepayIntentSettlement {
             revert IntentPreInteractionUnauthorized(msg.sender);
         }
         if (commit.custodialCollateral != 0) revert IntentCustodyNotVaultHeld(loanId);
+        // #3205 — the fill settles for the borrower holder that committed
+        // it; a position moved since reverts the fill. Every commit opens
+        // this route, so a route that is not this commit's (closed, or
+        // replaced after a move by another flow's) means the commit is dead:
+        // strict, never "if held".
+        LibPositionNFT.requireUnmoved(s.loans[loanId].borrowerTokenId, LibPositionNFT.RouteReason.SwapToRepayIntent);
         uint256 lot = commit.makerAmount;
         if (makingAmount != lot) revert IntentFillAmountMismatch(makingAmount, lot);
 
@@ -198,6 +204,8 @@ library LibSwapToRepayIntentSettlement {
         if (makingAmount != commit.makerAmount) {
             revert IntentFillAmountMismatch(makingAmount, commit.makerAmount);
         }
+        // #3205 — and still unmoved at the post-hook (the taker runs between).
+        LibPositionNFT.requireUnmoved(s.loans[loanId].borrowerTokenId, LibPositionNFT.RouteReason.SwapToRepayIntent);
 
         LibVaipakam.Loan storage loan = s.loans[loanId];
 
@@ -274,7 +282,7 @@ library LibSwapToRepayIntentSettlement {
         // holder was fixed for the whole auction, so the claim recorded above
         // and the remainder in the vault belong to the same holder. Reason-
         // checked, so a pre-lock commit cannot clear another flow's lock.
-        LibERC721._unlockIfHeldBy(loan.borrowerTokenId, LibERC721.LockReason.SwapToRepayIntent);
+        LibPositionNFT.closeRouteIfHeldBy(loan.borrowerTokenId, LibPositionNFT.RouteReason.SwapToRepayIntent);
         // T-087 Sub 3.B — clear the kind discriminator stamped at
         // commit time so a stale orderHash can't be replayed against
         // a different kind.
@@ -316,7 +324,7 @@ library LibSwapToRepayIntentSettlement {
         // VPFI-payment path. Dark until `feeEntitlementEnabled`.
         if (plan.treasuryShare > 0) {
             address settlingLender =
-                IERC721(address(this)).ownerOf(loan.lenderTokenId);
+                LibPositionNFT.ownerOf(loan.lenderTokenId);
             // #1383 — INLINED eligibility short-circuit (no cross-facet routing)
             // so an ineligible/dark loan never calls the host.
             if (LibVPFIDiscount.lenderYieldFeeEligible(loan, settlingLender)) {
@@ -378,7 +386,7 @@ library LibSwapToRepayIntentSettlement {
         // `borrowerSurplusClaims` row (previously an UNSCREENED direct transfer).
         uint256 surplusPrincipal = actualDelivered - requiredPrincipal;
         address currentBorrowerHolder =
-            IERC721(address(this)).ownerOf(loan.borrowerTokenId);
+            LibPositionNFT.ownerOf(loan.borrowerTokenId);
         LibCloseoutFreeze.freezeOrPayBorrowerSurplus(
             s, loanId, loan, currentBorrowerHolder, surplusPrincipal
         );
@@ -484,6 +492,11 @@ library LibSwapToRepayIntentSettlement {
         if (s.orderHashKind[orderHash] != LibVaipakam.ORDER_KIND_SWAP_TO_REPAY) return false;
         uint256 loanId = s.orderHashToLoanId[orderHash];
         if (loanId == 0 || s.intentCommits[loanId].orderHash != orderHash) return false;
+        // #3205 — a commit whose borrower position moved since, or whose
+        // route is no longer its own, reads invalid (as the hooks refuse it).
+        if (!LibPositionNFT.isUnmoved(s.loans[loanId].borrowerTokenId, LibPositionNFT.RouteReason.SwapToRepayIntent)) {
+            return false;
+        }
         address borrower = s.loans[loanId].borrower;
         return askingVault != address(0) && askingVault == s.userVaipakamVaults[borrower];
     }

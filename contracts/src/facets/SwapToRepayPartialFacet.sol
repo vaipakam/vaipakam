@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
 import {LibRefinanceRequest} from "../libraries/LibRefinanceRequest.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibLoanClock} from "../libraries/LibLoanClock.sol";
@@ -178,7 +179,7 @@ contract SwapToRepayPartialFacet is DiamondReentrancyGuard, DiamondPausable, IVa
         // their own lender vault while keeping the loan Active.
         if (msg.sender == loan.lender) revert LenderCannotRepayOwnLoan();
         if (
-            IERC721(address(this)).ownerOf(loan.lenderTokenId) == msg.sender
+            LibPositionNFT.ownerOf(loan.lenderTokenId) == msg.sender
         ) revert LenderCannotRepayOwnLoan();
 
         if (!loan.allowsPartialRepay) revert PartialRepayNotAllowed();
@@ -302,7 +303,7 @@ contract SwapToRepayPartialFacet is DiamondReentrancyGuard, DiamondPausable, IVa
         // shift is treasury→lender, so `partialPrincipal` (already computed) and
         // the borrower surplus (below) are invariant.
         {
-            address settlingLender = IERC721(address(this)).ownerOf(loan.lenderTokenId);
+            address settlingLender = LibPositionNFT.ownerOf(loan.lenderTokenId);
             (uint256 lenderExtra, uint256 newTreasury) = _resolveLenderYieldFee(
                 loanId,
                 settlingLender,
@@ -329,8 +330,7 @@ contract SwapToRepayPartialFacet is DiamondReentrancyGuard, DiamondPausable, IVa
         // stays Active so the lender has no claim slot, and
         // `vaultWithdrawERC20` is `onlyDiamondInternal` — direct EOA
         // transfer is the only path to actually realize the funds.
-        address currentLenderHolder = IERC721(address(this))
-            .ownerOf(loan.lenderTokenId);
+        address currentLenderHolder = LibPositionNFT.ownerOf(loan.lenderTokenId);
         // #954 (§1.3) — `swapToRepayPartial` is a DISCRETIONARY, loan-stays-
         // Active path (the analogue of `repayPartial`), so it hard-SCREENS the
         // direct EOA payee rather than freezing: a flagged party's must-complete
@@ -352,8 +352,7 @@ contract SwapToRepayPartialFacet is DiamondReentrancyGuard, DiamondPausable, IVa
         // principal and vault withdraw is internal-only.
         uint256 surplus = outputAmount - treasuryShare - lenderTotal;
         if (surplus > 0) {
-            address currentBorrowerHolder = IERC721(address(this))
-                .ownerOf(loan.borrowerTokenId);
+            address currentBorrowerHolder = LibPositionNFT.ownerOf(loan.borrowerTokenId);
             // #954 (§1.3) — same Tier-1 discretionary screen on the borrower
             // surplus payee; the must-complete escape is `swapToRepayFull`.
             LibVaipakam._assertNotSanctioned(currentBorrowerHolder);

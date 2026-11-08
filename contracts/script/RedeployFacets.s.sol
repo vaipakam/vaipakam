@@ -43,6 +43,7 @@ import {TrackedHoldingRollout} from "./lib/TrackedHoldingRollout.sol";
 import {ArtifactDeploy} from "./lib/ArtifactDeploy.sol";
 import {SellerClaimFacet} from "../src/facets/SellerClaimFacet.sol";
 import {RefinancePayoffFacet} from "../src/facets/RefinancePayoffFacet.sol";
+import {SaleFloorFacet} from "../src/facets/SaleFloorFacet.sol";
 
 /**
  * @title RedeployFacets
@@ -114,6 +115,9 @@ contract RedeployFacets is Script {
     /// @notice #1558 - the target Diamond predates the refinance payoff
     ///         permit; see {_requireRefinancePayoffPermit}.
     error PredatesRefinancePayoffPermit(address diamond);
+    /// @notice #3359 - the target Diamond predates the forced-sale floor
+    ///         rule; see {_requireSaleFloorRule}.
+    error PredatesSaleFloorRule(address diamond);
 
     function run() external {
         uint256 deployerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
@@ -160,6 +164,7 @@ contract RedeployFacets is Script {
         // #1566 slice 3 - and one from before the fill lock; see {_requireSlice3Diamond}.
         _requireSlice3Diamond(diamond);
         _requireVaultBeaconDiamond(diamond);
+        _requirePositionNFTDiamond(diamond);
         // #666 - and one whose OracleFacet cannot answer the fallback's
         // price-status read; see {_requireOraclePriceStatus}.
         _requireOraclePriceStatus(diamond);
@@ -187,6 +192,9 @@ contract RedeployFacets is Script {
         // #1558 - and one from before the refinance payoff permit; see
         // {_requireRefinancePayoffPermit}.
         _requireRefinancePayoffPermit(diamond);
+        // #3359 - and one from before the forced-sale floor rule; see
+        // {_requireSaleFloorRule}.
+        _requireSaleFloorRule(diamond);
 
         vm.startBroadcast(deployerKey);
 
@@ -863,6 +871,23 @@ contract RedeployFacets is Script {
         ) revert PredatesVaultHeldFallbackCustody(diamond);
     }
 
+    /// @notice #3205 - the target Diamond predates the PositionNFT core: its
+    ///         position owners live in Diamond storage, which no refresh can
+    ///         move into the standalone contract. Fresh deploy only.
+    error PredatesPositionNFT(address diamond);
+
+    /// @dev #3205 - refuse a Diamond that does not route
+    ///      `VaipakamNFTFacet.positionNFT`, or routes it with no core set:
+    ///      every refreshed holder read would revert against an unset core
+    ///      while the old owners stay unreadable in Diamond storage. Called
+    ///      before anything is deployed, so a refused run sends nothing.
+    function _requirePositionNFTDiamond(address diamond) internal view {
+        if (
+            IDiamondLoupe(diamond).facetAddress(VaipakamNFTFacet.positionNFT.selector) == address(0)
+                || VaipakamNFTFacet(diamond).positionNFT() == address(0)
+        ) revert PredatesPositionNFT(diamond);
+    }
+
     /// @notice #3204 - the target Diamond predates the VaultBeacon: its vaults
     ///         are per-vault UUPS proxies, which no in-place refresh can turn
     ///         into beacon proxies. Fresh deploy only (decision O1 = A).
@@ -1060,6 +1085,21 @@ contract RedeployFacets is Script {
             IDiamondLoupe(diamond).facetAddress(RefinancePayoffFacet.setRefinancePayoffPermit.selector)
                 == address(0)
         ) revert PredatesRefinancePayoffPermit(diamond);
+    }
+
+    /// @dev #3359 - refuse a Diamond that does not route the forced-sale
+    ///      floor rule. ForcedSaleFacet and RiskFacet, both carried here, read
+    ///      their slippage floor through a self-call to
+    ///      `SaleFloorFacet.saleFloorBps`, which in turn reads OracleFacet's
+    ///      close-out depth tier; this script carries neither of those hosts,
+    ///      so against an older Diamond every forced sale and partial
+    ///      liquidation would revert `FunctionDoesNotExist`. The crossing is a
+    ///      fresh deploy or `RefreshAllFacetsInPlace`. Called before the
+    ///      broadcast starts.
+    function _requireSaleFloorRule(address diamond) internal view {
+        if (IDiamondLoupe(diamond).facetAddress(SaleFloorFacet.saleFloorBps.selector) == address(0)) {
+            revert PredatesSaleFloorRule(diamond);
+        }
     }
 
     function _replace(address facet, bytes4[] memory selectors)

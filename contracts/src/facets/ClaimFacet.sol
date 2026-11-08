@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibInterestLedger} from "../libraries/LibInterestLedger.sol";
 import {LibLifecycle} from "../libraries/LibLifecycle.sol";
@@ -354,7 +355,7 @@ contract ClaimFacet is
         // The cash recipient is the CURRENT lender-NFT owner (the keeper is just
         // the executor). The opt-in must have been set by THIS owner — a transfer
         // after opt-in voids it (the stored authorizer no longer matches).
-        address nftOwner = IERC721(address(this)).ownerOf(loan.lenderTokenId);
+        address nftOwner = LibPositionNFT.ownerOf(loan.lenderTokenId);
         if (
             loan.status != LibVaipakam.LoanStatus.FallbackPending ||
             !snap.active ||
@@ -680,7 +681,7 @@ contract ClaimFacet is
         );
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
-                VaipakamNFTFacet.burnNFT.selector,
+                VaipakamNFTFacet.retirePosition.selector,
                 loan.lenderTokenId
             ),
             NFTBurnFailed.selector
@@ -1138,7 +1139,7 @@ contract ClaimFacet is
 
         // Burn the lender's NFT
         LibFacet.crossFacetCall(
-            abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector, loan.lenderTokenId),
+            abi.encodeWithSelector(VaipakamNFTFacet.retirePosition.selector, loan.lenderTokenId),
             NFTBurnFailed.selector
         );
 
@@ -1196,7 +1197,7 @@ contract ClaimFacet is
             ) {
                 LibFacet.crossFacetCall(
                     abi.encodeWithSelector(
-                        VaipakamNFTFacet.burnNFT.selector,
+                        VaipakamNFTFacet.retirePosition.selector,
                         loan.borrowerTokenId
                     ),
                     NFTBurnFailed.selector
@@ -1439,7 +1440,7 @@ contract ClaimFacet is
 
         // Burn the borrower's NFT
         LibFacet.crossFacetCall(
-            abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector, loan.borrowerTokenId),
+            abi.encodeWithSelector(VaipakamNFTFacet.retirePosition.selector, loan.borrowerTokenId),
             NFTBurnFailed.selector
         );
 

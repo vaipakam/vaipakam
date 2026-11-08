@@ -31,6 +31,7 @@ import { type Env } from './env';
 import { chainNotServed, requestedChainId } from './servedChain';
 import { EXPECTED_SCAN_CADENCE_SEC } from './chainIngestDO';
 import { redactedError } from '@vaipakam/lib/errorDescription';
+import { offerPositionFlows, type PositionFlowJson } from './positionFlowMoves';
 
 const DEFAULT_PAGE_LIMIT = 50;
 const MAX_PAGE_LIMIT = 200;
@@ -122,12 +123,27 @@ interface OfferRow {
   // backfill could not reach); `undefined` = this build reading a database
   // before 0068 (`SELECT *` keeps that working). Both serve as null: unknown.
   refinance_target_loan_id?: number | null;
+  // 0085 (#3205) — the loan a sale or offset vehicle is bound to, and the log
+  // index of the offer's OfferCreated (its block is `first_seen_block`).
+  // NULL = not known; `undefined` = a database before 0085.
+  vehicle_loan_id?: number | null;
+  created_log_index?: number | null;
   first_seen_block: number;
   first_seen_at: number;
   updated_at: number;
 }
 
-function toJson(row: OfferRow): Record<string, unknown> {
+/** Map rows with their #3205 `positionFlow` verdicts (one batched read). */
+async function toJsonRows(
+  env: Env,
+  chainId: number,
+  rows: readonly OfferRow[],
+): Promise<Record<string, unknown>[]> {
+  const flows = await offerPositionFlows(env, chainId, rows);
+  return rows.map((r) => toJson(r, flows.get(r.offer_id) ?? null));
+}
+
+function toJson(row: OfferRow, positionFlow: PositionFlowJson | null): Record<string, unknown> {
   return {
     chainId: row.chain_id,
     offerId: row.offer_id,
@@ -166,6 +182,13 @@ function toJson(row: OfferRow): Record<string, unknown> {
     isOffsetVehicle: row.is_offset_vehicle === 1,
     // #2528 — null means UNKNOWN (not read yet), never "not a refinance".
     refinanceTargetLoanId: row.refinance_target_loan_id ?? null,
+    // #3205 — for an offer bound to a loan position (a lender-sale vehicle,
+    // an offset vehicle, a refinance request): its kind, side, loan and
+    // whether that side's position NFT moved since the offer opened. A moved
+    // flow can never complete. `movedSinceOpened: null` = the indexer cannot
+    // tell. `positionFlow: null` = bound to no position (or a refinance
+    // target not read yet, which `refinanceTargetLoanId: null` states).
+    positionFlow,
     firstSeenBlock: row.first_seen_block,
     firstSeenAt: row.first_seen_at,
     updatedAt: row.updated_at,
@@ -543,7 +566,7 @@ export async function handleOffersActive(req: Request, env: Env): Promise<Respon
        ORDER BY offer_id DESC LIMIT ?`,
     ).bind(...binds, limit);
     const rows = await stmt.all<OfferRow>();
-    const offers = (rows.results ?? []).map(toJson);
+    const offers = await toJsonRows(env, chainId, rows.results ?? []);
     const next =
       offers.length === limit && offers.length > 0
         ? (offers[offers.length - 1] as { offerId: number }).offerId
@@ -579,7 +602,7 @@ export async function handleOfferById(
       .bind(chainId, offerId)
       .first<OfferRow>();
     if (!row) return jsonResponse({ error: 'not-found' }, 404);
-    return jsonResponse(toJson(row));
+    return jsonResponse((await toJsonRows(env, chainId, [row]))[0]);
   } catch (err) {
     console.error('[offerRoutes] byId failed', redactedError(err));
     return jsonResponse({ error: 'byId-failed' }, 500);
@@ -619,7 +642,7 @@ export async function handleOffersByCreator(
            ORDER BY offer_id DESC LIMIT ?`,
         ).bind(chainId, addr, limit);
     const rows = await stmt.all<OfferRow>();
-    const offers = (rows.results ?? []).map(toJson);
+    const offers = await toJsonRows(env, chainId, rows.results ?? []);
     const next =
       offers.length === limit && offers.length > 0
         ? (offers[offers.length - 1] as { offerId: number }).offerId
@@ -677,7 +700,7 @@ export async function handleOffersByCurrentHolder(
            ORDER BY offer_id DESC LIMIT ?`,
         ).bind(chainId, addr, limit);
     const rows = await stmt.all<OfferRow>();
-    const offers = (rows.results ?? []).map(toJson);
+    const offers = await toJsonRows(env, chainId, rows.results ?? []);
     const next =
       offers.length === limit && offers.length > 0
         ? (offers[offers.length - 1] as { offerId: number }).offerId
@@ -722,7 +745,7 @@ export async function handleOffersRecent(req: Request, env: Env): Promise<Respon
            ORDER BY offer_id DESC LIMIT ?`,
         ).bind(chainId, limit);
     const rows = await stmt.all<OfferRow>();
-    const offers = (rows.results ?? []).map(toJson);
+    const offers = await toJsonRows(env, chainId, rows.results ?? []);
     const next =
       offers.length === limit && offers.length > 0
         ? (offers[offers.length - 1] as { offerId: number }).offerId

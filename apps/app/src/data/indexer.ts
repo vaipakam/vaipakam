@@ -134,6 +134,37 @@ export interface IndexedOffer {
    *  refinance; 0 = not a refinance request. `null` / absent = UNKNOWN (a row
    *  the indexer has not read, or an older worker), never "not a refinance". */
   refinanceTargetLoanId?: number | null;
+  /** #3205 (migration 0085) — for an offer bound to a loan position (a
+   *  lender-sale listing, an offset offer, a refinance request): which flow
+   *  it is, the side it binds and whether that side's position NFT moved
+   *  since the offer opened. A moved flow can never complete. `null` = bound
+   *  to no position; absent = an older worker (UNKNOWN). Within it,
+   *  `movedSinceOpened: null` = the indexer cannot tell. */
+  positionFlow?: IndexedPositionFlow | null;
+}
+
+/** #3205 — see {@link IndexedOffer.positionFlow}. */
+export interface IndexedPositionFlow {
+  kind: 'loanSale' | 'offset' | 'refinance';
+  side: 'lender' | 'borrower';
+  loanId: number | null;
+  movedSinceOpened: boolean | null;
+}
+
+/** #3205 — what `/loans/:id` says about the flows bound to the loan's
+ *  positions. Every field is optional: an older worker omits them, which
+ *  reads as UNKNOWN, never as "not moved". */
+export interface IndexedLoanFlows {
+  /** The loan's collateral listing, when the indexer holds one. */
+  prepayListing?: { positionMovedSinceOpened?: boolean | null };
+  /** The loan's swap-to-repay intent, when the indexer holds one. */
+  swapToRepayIntent?: { positionMovedSinceOpened?: boolean | null };
+  /** The open offers bound to the loan's positions. */
+  positionFlows?: (IndexedPositionFlow & { offerId: number; status: string })[];
+}
+
+export function fetchLoanFlows(chainId: number, loanId: number): Promise<IndexedLoanFlows | null> {
+  return getJson<IndexedLoanFlows>(`/loans/${loanId}?chainId=${chainId}`);
 }
 
 export interface ActiveOffersPage {

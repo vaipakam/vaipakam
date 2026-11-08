@@ -6,10 +6,6 @@ import {IERC165} from "@diamond-3/interfaces/IERC165.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {IDiamondLoupe} from "@diamond-3/interfaces/IDiamondLoupe.sol";
 import {IERC173} from "@diamond-3/interfaces/IERC173.sol";
-import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
-import {IERC721Metadata} from "@openzeppelin/contracts/token/ERC721/extensions/IERC721Metadata.sol";
-import {IERC721Enumerable} from "@openzeppelin/contracts/token/ERC721/extensions/IERC721Enumerable.sol";
-import {IERC2981} from "@openzeppelin/contracts/interfaces/IERC2981.sol";
 import {IERC1155Receiver} from "@openzeppelin/contracts/token/ERC1155/IERC1155Receiver.sol";
 
 /**
@@ -29,9 +25,11 @@ import {IERC1155Receiver} from "@openzeppelin/contracts/token/ERC1155/IERC1155Re
  *
  *         Each claim names an interface whose every function the deploy
  *         routes: the cut and loupe (EIP-2535), `owner`/`transferOwnership`
- *         (OwnershipFacet), the position NFT (VaipakamNFTFacet: ERC-721,
- *         metadata, enumerable, `royaltyInfo`), and both ERC-1155 receiver
- *         hooks (ReceiverFacet). Advertising the receiver does not open the
+ *         (OwnershipFacet), and both ERC-1155 receiver hooks (ReceiverFacet).
+ *         Since #3205 the Diamond is not the position NFT: the ERC-721 family
+ *         and EIP-2981 are advertised by the standalone PositionNFT contract,
+ *         and the Diamond's `royaltyInfo` answers only as that contract's
+ *         renderer, so the Diamond claims none of them. Advertising the receiver does not open the
  *         Diamond as a sink: the hooks accept only the one pinned token of an
  *         in-flight consolidation move and refuse every batch; ERC-165 says
  *         the functions exist, not that every transfer is accepted.
@@ -47,16 +45,12 @@ import {IERC1155Receiver} from "@openzeppelin/contracts/token/ERC1155/IERC1155Re
 contract DiamondInterfacesInit {
     /// @notice Every interface id the Diamond advertises.
     function interfaceIds() public pure returns (bytes4[] memory ids) {
-        ids = new bytes4[](9);
+        ids = new bytes4[](5);
         ids[0] = type(IERC165).interfaceId;
         ids[1] = type(IDiamondCut).interfaceId;
         ids[2] = type(IDiamondLoupe).interfaceId;
         ids[3] = type(IERC173).interfaceId;
-        ids[4] = type(IERC721).interfaceId;
-        ids[5] = type(IERC721Metadata).interfaceId;
-        ids[6] = type(IERC721Enumerable).interfaceId;
-        ids[7] = type(IERC2981).interfaceId;
-        ids[8] = type(IERC1155Receiver).interfaceId;
+        ids[4] = type(IERC1155Receiver).interfaceId;
     }
 
     /// @notice Record {interfaceIds} in the Diamond's ERC-165 table. Meant to

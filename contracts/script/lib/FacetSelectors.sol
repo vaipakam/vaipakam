@@ -47,7 +47,7 @@ import {ForcedSaleFacet} from "../../src/facets/ForcedSaleFacet.sol";
 library FacetSelectors {
     /// @notice Full external selector surface of {OracleFacet} (20).
     function oracle() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](20);
+        s = new bytes4[](21);
         s[0] = OracleFacet.checkLiquidity.selector;
         s[1] = OracleFacet.getAssetPrice.selector;
         s[2] = OracleFacet.calculateLTV.selector;
@@ -68,6 +68,8 @@ library FacetSelectors {
         s[17] = OracleFacet.countLiveSecondaryOracleFeeds.selector;
         s[18] = OracleFacet.getAssetPriceStatus.selector;
         s[19] = OracleFacet.isLiquidityQuoteUsable.selector;
+        // #3359 — the close-out depth tier the forced-sale floor reads.
+        s[20] = OracleFacet.getCloseOutLiquidityTier.selector;
     }
 
     /// @notice Full external selector surface of {VaultFactoryFacet} (34).
@@ -161,35 +163,20 @@ library FacetSelectors {
     ///         VaipakamNFTMetadataFacet (#2957); `RedeployFacets` refuses a
     ///         Diamond from before that split.
     function vaipakamNFT() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](26);
+        s = new bytes4[](13);
         s[0] = VaipakamNFTFacet.mintNFT.selector;
         s[1] = VaipakamNFTFacet.updateNFTStatus.selector;
-        s[2] = VaipakamNFTFacet.burnNFT.selector;
+        s[2] = VaipakamNFTFacet.retirePosition.selector;
         s[3] = VaipakamNFTFacet.initializeNFT.selector;
-        s[4] = bytes4(keccak256("ownerOf(uint256)"));
-        s[5] = VaipakamNFTFacet.royaltyInfo.selector;
-        s[6] = VaipakamNFTFacet.setDefaultRoyalty.selector;
-        s[7] = VaipakamNFTFacet.name.selector;
-        s[8] = VaipakamNFTFacet.symbol.selector;
-        s[9] = VaipakamNFTFacet.balanceOf.selector;
-        s[10] = VaipakamNFTFacet.approve.selector;
-        s[11] = VaipakamNFTFacet.getApproved.selector;
-        s[12] = VaipakamNFTFacet.setApprovalForAll.selector;
-        s[13] = VaipakamNFTFacet.isApprovedForAll.selector;
-        s[14] = VaipakamNFTFacet.transferFrom.selector;
-        s[15] = bytes4(keccak256("safeTransferFrom(address,address,uint256)"));
-        s[16] = bytes4(keccak256("safeTransferFrom(address,address,uint256,bytes)"));
-        s[17] = VaipakamNFTFacet.positionLock.selector;
-        s[18] = bytes4(keccak256("totalSupply()"));
-        s[19] = bytes4(keccak256("tokenByIndex(uint256)"));
-        s[20] = bytes4(keccak256("tokenOfOwnerByIndex(address,uint256)"));
-        s[21] = VaipakamNFTFacet.nftStatusOf.selector;
-        s[22] = VaipakamNFTFacet.highestTokenId.selector;
-        // Protected account mode: a protected owner's position moves only
-        // through a delayed transfer.
-        s[23] = VaipakamNFTFacet.queuePositionTransfer.selector;
-        s[24] = VaipakamNFTFacet.cancelPositionTransfer.selector;
-        s[25] = VaipakamNFTFacet.releasePositionTransfer.selector;
+        s[4] = VaipakamNFTFacet.royaltyInfo.selector;
+        s[5] = VaipakamNFTFacet.setDefaultRoyalty.selector;
+        s[6] = VaipakamNFTFacet.positionRoute.selector;
+        s[7] = VaipakamNFTFacet.nftStatusOf.selector;
+        s[8] = VaipakamNFTFacet.highestTokenId.selector;
+        s[9] = VaipakamNFTFacet.positionNFT.selector;
+        s[10] = VaipakamNFTFacet.isPositionRetired.selector;
+        s[11] = VaipakamNFTFacet.checkPositionTransfer.selector;
+        s[12] = VaipakamNFTFacet.retireTerminalOfferTokens.selector;
     }
 
     /// @notice Full external selector surface of {RiskPreviewFacet} (10) —

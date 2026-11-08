@@ -77,6 +77,7 @@ import ProtectedAccountFacetABI from './ProtectedAccountFacet.json';
 import VaultPayoutFacetABI from './VaultPayoutFacet.json';
 import VaultDepositoryFacetABI from './VaultDepositoryFacet.json';
 import OfferBookFacetABI from './OfferBookFacet.json';
+import SaleFloorFacetABI from './SaleFloorFacet.json';
 import ClaimFacetABI from './ClaimFacet.json';
 import OracleFacetABI from './OracleFacet.json';
 import OracleAdminFacetABI from './OracleAdminFacet.json';
@@ -204,6 +205,9 @@ import VpfiReturnSenderABI from './VpfiReturnSender.json';
 // facet): the keeper's return-transport pass reads which Diamond it delivers to.
 import VpfiReturnReceiverABI from './VpfiReturnReceiver.json';
 import VaultBeaconABI from './VaultBeacon.json';
+// #3205 — the PositionNFT (standalone; NOT a diamond facet): the position
+// ownership record.
+import PositionNFTABI from './PositionNFT.json';
 
 export {
   OfferCreateFacetABI,
@@ -252,6 +256,7 @@ export {
   VaultPayoutFacetABI,
   VaultDepositoryFacetABI,
   OfferBookFacetABI,
+  SaleFloorFacetABI,
   ClaimFacetABI,
   OracleFacetABI,
   OracleAdminFacetABI,
@@ -334,6 +339,7 @@ export {
   VpfiReturnSenderABI,
   VpfiReturnReceiverABI,
   VaultBeaconABI,
+  PositionNFTABI,
 };
 
 import type { Abi } from 'viem';

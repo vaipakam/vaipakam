@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
+
 import {SetupTest} from "./SetupTest.t.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet.sol";
@@ -93,16 +95,8 @@ contract InternalMatchExecutionTest is SetupTest {
         // scaffoldActiveLoan adds to the active list so the
         // LibLifecycle.transition's list-remove succeeds on terminal.
         TestMutatorFacet(address(diamond)).scaffoldActiveLoan(id, l);
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(IERC721.ownerOf.selector, id * 2),
-            abi.encode(borrower_)
-        );
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(IERC721.ownerOf.selector, id * 2 + 1),
-            abi.encode(lender_)
-        );
+        LibTestPositionNFT.mockHolder(address(diamond), id * 2, borrower_);
+        LibTestPositionNFT.mockHolder(address(diamond), id * 2 + 1, lender_);
 
         address bVault = VaultFactoryFacet(address(diamond))
             .getOrCreateUserVault(borrower_);
@@ -135,11 +129,7 @@ contract InternalMatchExecutionTest is SetupTest {
     ///      `updateNFTStatus` / `burnNFT` cross-facet calls no-op.
     function _mockLenderNft(uint256 loanId, address owner_) internal {
         uint256 tokenId = _getLoan(loanId).lenderTokenId;
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(IERC721.ownerOf.selector, tokenId),
-            abi.encode(owner_)
-        );
+        LibTestPositionNFT.mockHolder(address(diamond), tokenId, owner_);
         vm.mockCall(
             address(diamond),
             abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector),
@@ -147,7 +137,7 @@ contract InternalMatchExecutionTest is SetupTest {
         );
         vm.mockCall(
             address(diamond),
-            abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector),
+            abi.encodeWithSelector(VaipakamNFTFacet.retirePosition.selector),
             ""
         );
     }
@@ -273,11 +263,7 @@ contract InternalMatchExecutionTest is SetupTest {
         // Transfer LOAN_A's borrower position: override the seed's
         // stored-owner `ownerOf` mock for `borrowerTokenId == LOAN_A * 2`.
         address bHolder = makeAddr("aBorrowerHolder691");
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(IERC721.ownerOf.selector, LOAN_A * 2),
-            abi.encode(bHolder)
-        );
+        LibTestPositionNFT.mockHolder(address(diamond), LOAN_A * 2, bHolder);
         // The eager consolidation moves A's collateral into the holder's vault;
         // mirror the protocol-tracked counter so the subsequent settle withdraw
         // from the holder's vault doesn't underflow (the seed only ticked it for
@@ -360,13 +346,9 @@ contract InternalMatchExecutionTest is SetupTest {
         // to `newHolder`) claims the residual via claimAsBorrower (now
         // accepting InternalMatched). The lien releases atomically at claim.
         address newHolder = address(0xBEEF);
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(IERC721.ownerOf.selector, a.borrowerTokenId),
-            abi.encode(newHolder)
-        );
+        LibTestPositionNFT.mockHolder(address(diamond), a.borrowerTokenId, newHolder);
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.retirePosition.selector), "");
 
         uint256 holderBefore = IERC20(mockCollateralERC20).balanceOf(newHolder);
         vm.prank(newHolder);
@@ -411,11 +393,7 @@ contract InternalMatchExecutionTest is SetupTest {
         // the external ownerOf mock to it.
         address flaggedHolder = makeAddr("s10MatchBorrowerHolder");
         TestMutatorFacet(address(diamond)).mintNFTRaw(flaggedHolder, LOAN_A * 2);
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(IERC721.ownerOf.selector, LOAN_A * 2),
-            abi.encode(flaggedHolder)
-        );
+        LibTestPositionNFT.mockHolder(address(diamond), LOAN_A * 2, flaggedHolder);
         MockSanctionsList m = new MockSanctionsList();
         ProfileFacet(address(diamond)).setSanctionsOracle(address(m));
         m.setFlagged(flaggedHolder, true);
@@ -465,9 +443,9 @@ contract InternalMatchExecutionTest is SetupTest {
         // left wholly intact.
         LibVaipakam.Loan memory a = _getLoan(LOAN_A);
         address borrowerHolder = address(0xBEEF);
-        vm.mockCall(address(diamond), abi.encodeWithSelector(IERC721.ownerOf.selector, a.borrowerTokenId), abi.encode(borrowerHolder));
+        LibTestPositionNFT.mockHolder(address(diamond), a.borrowerTokenId, borrowerHolder);
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.retirePosition.selector), "");
 
         uint256 lenderVaultBefore = IERC20(mockERC20).balanceOf(lenderVault);
         vm.prank(borrowerHolder);
@@ -1277,7 +1255,7 @@ contract InternalMatchExecutionTest is SetupTest {
 
         // Borrower has nothing to claim (exactly collateralized).
         LibVaipakam.Loan memory a = _getLoan(LOAN_A);
-        vm.mockCall(address(diamond), abi.encodeWithSelector(IERC721.ownerOf.selector, a.borrowerTokenId), abi.encode(borrower));
+        LibTestPositionNFT.mockHolder(address(diamond), a.borrowerTokenId, borrower);
         vm.prank(borrower);
         vm.expectRevert(ClaimFacet.NothingToClaim.selector);
         ClaimFacet(address(diamond)).claimAsBorrower(LOAN_A);
@@ -1309,9 +1287,9 @@ contract InternalMatchExecutionTest is SetupTest {
         // Borrower claims the 400 residual — now both sides cleared → Settled.
         LibVaipakam.Loan memory a = _getLoan(LOAN_A);
         address bHolder = makeAddr("bHolder");
-        vm.mockCall(address(diamond), abi.encodeWithSelector(IERC721.ownerOf.selector, a.borrowerTokenId), abi.encode(bHolder));
+        LibTestPositionNFT.mockHolder(address(diamond), a.borrowerTokenId, bHolder);
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.retirePosition.selector), "");
         vm.prank(bHolder);
         ClaimFacet(address(diamond)).claimAsBorrower(LOAN_A);
         assertEq(uint8(_getLoan(LOAN_A).status), uint8(LibVaipakam.LoanStatus.Settled), "borrower second claim settles");
@@ -1329,9 +1307,9 @@ contract InternalMatchExecutionTest is SetupTest {
         // not the deleted #577 override, keeps it open).
         LibVaipakam.Loan memory a = _getLoan(LOAN_A);
         address bHolder = makeAddr("bHolder");
-        vm.mockCall(address(diamond), abi.encodeWithSelector(IERC721.ownerOf.selector, a.borrowerTokenId), abi.encode(bHolder));
+        LibTestPositionNFT.mockHolder(address(diamond), a.borrowerTokenId, bHolder);
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.retirePosition.selector), "");
         vm.prank(bHolder);
         ClaimFacet(address(diamond)).claimAsBorrower(LOAN_A);
         assertEq(

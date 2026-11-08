@@ -423,6 +423,25 @@ library LibVaipakam {
     uint256 constant MIN_OFFER_VALUE_NUMERAIRE_DEFAULT = 10e18;
     uint256 constant MIN_OFFER_VALUE_NUMERAIRE_FLOOR = 1e18;
     uint256 constant MIN_OFFER_VALUE_NUMERAIRE_CEIL = 1_000_000e18;
+
+    // #3359 — the forced-sale floor by depth tier (owner decision 2026-11-08,
+    // "Balanced"). A forced sale of collateral that clears the deepest probe
+    // ($5M at <=2% impact) may lose at most 2.5% to the market, $500k 3.5%,
+    // $50k 4.5%, and only while the pair is calm (no move over 2% against
+    // either of the last two hourly price checkpoints) and the collateral
+    // covers at least 110% of the debt. Anything else uses the full
+    // `cfgMaxLiquidationSlippageBps` (6%) at once. A stored 0 reads as the
+    // default; the setter bounds every non-zero value.
+    uint16 constant SALE_FLOOR_TIER1_BPS_DEFAULT = 450;
+    uint16 constant SALE_FLOOR_TIER2_BPS_DEFAULT = 350;
+    uint16 constant SALE_FLOOR_TIER3_BPS_DEFAULT = 250;
+    uint16 constant SALE_FLOOR_TIER_BPS_MIN = 100;
+    uint16 constant SALE_FLOOR_CALM_MOVE_BPS_DEFAULT = 200;
+    uint16 constant SALE_FLOOR_CALM_MOVE_BPS_MIN = 50;
+    uint16 constant SALE_FLOOR_CALM_MOVE_BPS_MAX = 1_000;
+    uint16 constant SALE_FLOOR_CUSHION_BPS_DEFAULT = 11_000;
+    uint16 constant SALE_FLOOR_CUSHION_BPS_MIN = 10_500;
+    uint16 constant SALE_FLOOR_CUSHION_BPS_MAX = 20_000;
     // #3242 — the most offers one wallet may have open at once, every offer
     // type counted. A stored 0 reads as the default; the setter bounds a
     // non-zero value to [MIN, MAX] so a mistyped cap can neither shut
@@ -3103,6 +3122,17 @@ library LibVaipakam {
         uint256 grossOwed;
     }
 
+    /// @notice #3359 — governance's forced-sale floor settings. Every field
+    ///         reads 0 as its default ({SALE_FLOOR_TIER1_BPS_DEFAULT} and
+    ///         siblings); written only by `SaleFloorFacet.setSaleFloorConfig`.
+    struct SaleFloorConfig {
+        uint16 tier1Bps;
+        uint16 tier2Bps;
+        uint16 tier3Bps;
+        uint16 calmMoveBps;
+        uint16 cushionBps;
+    }
+
     struct Storage {
         uint256 nextOfferId;
         uint256 nextLoanId;
@@ -4207,7 +4237,7 @@ library LibVaipakam {
         //      orderHash left in `orderContext` would still be
         //      fillable until grace expiry. We need the old hash to
         //      pass to `clearOrder`.
-        //   3. The `LibERC721._lock(LockReason.PrepayCollateralListing)`
+        //   3. The `LibPositionNFT.openRoute(LockReason.PrepayCollateralListing)`
         //      lock is the consent + safety primitive; this mapping
         //      is the orderHash bookkeeping. Keeping them in separate
         //      storage slots avoids overloading the lock semantics.
@@ -8256,15 +8286,19 @@ library LibVaipakam {
         /// @dev Protected account mode — every pending position-NFT transfer
         ///      row by id. Written only by `LibProtectedAccount`. Appended —
         ///      append-only.
-        mapping(uint256 => PendingPositionTransfer) pendingPositionTransfers;
+        /// @dev #3205: retired; the queued position transfer was replaced by
+        ///      the PositionNFT core's holder lock.
+        mapping(uint256 => PendingPositionTransfer) retiredPendingPositionTransfers;
         /// @dev Protected account mode — per owner, the ids of the position
         ///      transfer rows still queued. Written only by
         ///      `LibProtectedAccount`. Appended — append-only.
-        mapping(address => EnumerableSet.UintSet) pendingTransferIds;
+        /// @dev #3205: retired.
+        mapping(address => EnumerableSet.UintSet) retiredPendingTransferIds;
         /// @dev Protected account mode — per position token id, the one open
         ///      transfer row for it; zero means none. Written only by
         ///      `LibProtectedAccount`. Appended — append-only.
-        mapping(uint256 => uint256) pendingTransferByToken;
+        /// @dev #3205: retired.
+        mapping(uint256 => uint256) retiredPendingTransferByToken;
         /// @dev Protected account mode — per owner, the open proposal to
         ///      replace the primary wallet. Written only by
         ///      `LibProtectedAccount`. Appended — append-only.
@@ -8370,6 +8404,26 @@ library LibVaipakam {
         ///      vaults created afterwards; #3205's genuine-vault code-identity
         ///      check bounds that. Appended — append-only.
         address vaultBeacon;
+        /// @dev #3205 (#3318) — the borrower position token's transfer count
+        ///      when `loanId`'s refinance request was recorded
+        ///      (`refinanceRequestOfLoan`). The request stands, and can be
+        ///      taken, only while the count is unchanged: a transfer (even
+        ///      away and back) ends it, the same rule as every other
+        ///      position-bound flow. Kept on the request rather than as a
+        ///      route, so it never contends with the position's one route.
+        ///      Appended — append-only.
+        mapping(uint256 => uint256) refinanceRequestTransferCount;
+        /// @dev #3359 — the forced-sale floor settings ({SaleFloorConfig}).
+        ///      Written only by `SaleFloorFacet.setSaleFloorConfig`. Appended
+        ///      — append-only.
+        SaleFloorConfig saleFloorCfg;
+        /// @dev #3359 — per asset and UTC hour (`timestamp / 1 hours`), the
+        ///      asset's oracle price that hour, scaled to 1e18; 0 = no
+        ///      checkpoint. Written only by
+        ///      `SaleFloorFacet.checkpointHourlyPrices` (first caller in the
+        ///      hour wins), read by the forced-sale floor's calm test.
+        ///      Appended — append-only.
+        mapping(address => mapping(uint256 => uint256)) hourlyPrice1e18;
     }
 
     /// @notice Protected account mode — one owner wallet's settings.
@@ -8382,7 +8436,8 @@ library LibVaipakam {
     struct ProtectedAccount {
         bool enabled;
         bool locked;
-        bool protectNfts;
+        /// @dev #3205: retired; NFT protection is the PositionNFT core's holder lock.
+        bool retiredProtectNfts;
         bool requireCosign;
         bool retired;
         uint32 delaySeconds;
@@ -8390,7 +8445,8 @@ library LibVaipakam {
         uint64 pendingDelayAt;
         uint64 pendingDisableAt;
         uint64 pendingUnlockAt;
-        uint64 pendingNftOffAt;
+        /// @dev #3205: retired with `retiredProtectNfts`.
+        uint64 retiredPendingNftOffAt;
         uint64 pendingCosignOffAt;
         uint64 cooldownUntil;
         uint64 lockedAt;
@@ -10837,6 +10893,17 @@ library LibVaipakam {
     function cfgMinOfferValueNumeraire() internal view returns (uint256) {
         uint256 v = storageSlot().minOfferValueNumeraire;
         return v == 0 ? MIN_OFFER_VALUE_NUMERAIRE_DEFAULT : v;
+    }
+
+    /// @notice #3359 — the forced-sale floor settings in effect, each field
+    ///         resolved to its default while unset.
+    function cfgSaleFloor() internal view returns (SaleFloorConfig memory c) {
+        c = storageSlot().saleFloorCfg;
+        if (c.tier1Bps == 0) c.tier1Bps = SALE_FLOOR_TIER1_BPS_DEFAULT;
+        if (c.tier2Bps == 0) c.tier2Bps = SALE_FLOOR_TIER2_BPS_DEFAULT;
+        if (c.tier3Bps == 0) c.tier3Bps = SALE_FLOOR_TIER3_BPS_DEFAULT;
+        if (c.calmMoveBps == 0) c.calmMoveBps = SALE_FLOOR_CALM_MOVE_BPS_DEFAULT;
+        if (c.cushionBps == 0) c.cushionBps = SALE_FLOOR_CUSHION_BPS_DEFAULT;
     }
 
     /// @notice #3242 — the cap on one wallet's open offers in effect: the

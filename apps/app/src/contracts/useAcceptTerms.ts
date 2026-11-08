@@ -48,6 +48,7 @@ import {
   screenTargets,
   type ReviewedTokenScreen,
 } from './acceptTokenScreen';
+import { readPositionOwnerOn } from '../contracts/positionNft';
 
 const ACCEPT_DEADLINE_SECONDS = 30 * 60; // 30 minutes, matching the Permit2 window.
 
@@ -234,12 +235,7 @@ export function useAcceptTermsSigning() {
       // the offer's position NFT, so a dead ownerOf is the reliable
       // signal that acceptOffer would revert on the terminal bit.
       try {
-        await publicClient.readContract({
-          address: diamondAddr,
-          abi: DIAMOND_ABI_VIEM,
-          functionName: 'ownerOf',
-          args: [o.positionTokenId as bigint],
-        });
+        await readPositionOwnerOn(publicClient, diamondAddr, o.positionTokenId as bigint);
       } catch (e) {
         const isRevert =
           e instanceof BaseError &&

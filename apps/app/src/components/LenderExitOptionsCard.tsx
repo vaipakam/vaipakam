@@ -41,6 +41,7 @@ import {
   type LenderExitInput,
   type LenderExitJumpTarget,
 } from '../data/lenderExitRows';
+import { useRouteBlocksTransfer } from '../contracts/positionNft';
 
 export type { LenderExitJumpTarget };
 
@@ -56,7 +57,8 @@ export function LenderExitOptionsCard({
   isAdvanced: boolean;
   onSwitchToAdvanced: () => void;
 }) {
-  const rows = buildLenderExitRows(rowInput);
+  const routeBlocks = useRouteBlocksTransfer();
+  const rows = buildLenderExitRows({ ...rowInput, routeBlocksTransfer: routeBlocks });
 
   const jump = (target: LenderExitJumpTarget) => {
     document

@@ -4,7 +4,7 @@ pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibLoanClock} from "../libraries/LibLoanClock.sol";
-import {LibERC721} from "../libraries/LibERC721.sol";
+import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
 import {DiamondAccessControl} from "../libraries/LibAccessControl.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
@@ -118,7 +118,6 @@ contract NFTPrepayDutchListingFacet is
     error ExecutorNotSet();
     error UnsupportedCollateralForV1(LibVaipakam.AssetType collateralType);
     error UnsupportedPrincipalForV1(LibVaipakam.AssetType principalType);
-    error BorrowerNFTAlreadyLocked(uint256 tokenId, LibERC721.LockReason currentReason);
     error PrepayListingDisabled();
     error FeeLegsExceedCap(uint256 supplied, uint256 cap);
     error FeeLegInvalidRecipient(uint256 idx);
@@ -185,15 +184,13 @@ contract NFTPrepayDutchListingFacet is
         if (s.prepayListingOrderHash[loanId] != bytes32(0)) {
             revert PrepayListingAlreadyExists(loanId, s.prepayListingOrderHash[loanId]);
         }
-        LibERC721.LockReason currentLock = LibERC721.storedLockOf(loan.borrowerTokenId);
-        if (currentLock != LibERC721.LockReason.None) {
-            revert BorrowerNFTAlreadyLocked(loan.borrowerTokenId, currentLock);
-        }
+        // #3205 — another flow's LIVE route refuses in `openRoute` (in
+        // LibPrepayListingWiring.wire); a dead one is replaced there.
 
         uint256 gracePeriodEnd = _gracePeriodEnd(loan);
         _assertDutchWindow(loanId, auctionEndTime, gracePeriodEnd);
 
-        address holder = VaipakamNFTFacet(address(this)).ownerOf(loan.borrowerTokenId);
+        address holder = LibPositionNFT.ownerOf(loan.borrowerTokenId);
         if (holder != msg.sender) revert NotPositionHolder(loanId, msg.sender, holder);
         // #818 Tier-1 sanctions — posting a Dutch collateral-sale listing routes
         // value to the holder on fill; `holder == msg.sender`. See the fixed-price
@@ -228,7 +225,7 @@ contract NFTPrepayDutchListingFacet is
             conduitKey: conduitKey
         });
 
-        orderHash = _buildAndRecordDutch(s, loan, loanId, p, executor, feeLegs, /* lockNft */ true);
+        orderHash = _buildAndRecordDutch(s, loan, loanId, p, executor, feeLegs);
 
         emit PrepayListingPosted(
             loanId,
@@ -274,7 +271,7 @@ contract NFTPrepayDutchListingFacet is
         uint256 gracePeriodEnd = _gracePeriodEnd(loan);
         _assertDutchWindow(loanId, newAuctionEndTime, gracePeriodEnd);
 
-        address holder = VaipakamNFTFacet(address(this)).ownerOf(loan.borrowerTokenId);
+        address holder = LibPositionNFT.ownerOf(loan.borrowerTokenId);
         if (holder != msg.sender) revert NotPositionHolder(loanId, msg.sender, holder);
         // #818 Tier-1 sanctions — see `postPrepayDutchListing`. `holder == msg.sender`.
         LibVaipakam._assertNotSanctioned(msg.sender);
@@ -300,8 +297,7 @@ contract NFTPrepayDutchListingFacet is
         if (vaultAddr == address(0)) revert LibPrepayListingWiring.VaultNotDeployed(loan.borrower);
         LibPrepayListingWiring.unwire(s, loan, oldOrderHash);
 
-        // #656c — share the post-path builder (lockNft == false keeps the
-        // lock continuous across the rotation). See `_buildAndRecordDutch`.
+        // #656c — share the post-path builder. See `_buildAndRecordDutch`.
         DutchParams memory p = DutchParams({
             startAskPrice: newStartAskPrice,
             endAskPrice: newEndAskPrice,
@@ -309,7 +305,7 @@ contract NFTPrepayDutchListingFacet is
             salt: newSalt,
             conduitKey: newConduitKey
         });
-        newOrderHash = _buildAndRecordDutch(s, loan, loanId, p, currentExecutor, feeLegs, /* lockNft */ false);
+        newOrderHash = _buildAndRecordDutch(s, loan, loanId, p, currentExecutor, feeLegs);
 
         emit PrepayListingUpdated(
             loanId,
@@ -430,9 +426,7 @@ contract NFTPrepayDutchListingFacet is
     }
 
     /// @dev #656c — unified post/update Dutch builder. Called from BOTH
-    ///      `postPrepayDutchListing` (`lockNft == true`) and
-    ///      `updatePrepayDutchListing` (`lockNft == false`, the lock stays
-    ///      continuous across the rotation). The two-call-site shape keeps
+    ///      `postPrepayDutchListing` and `updatePrepayDutchListing`. The two-call-site shape keeps
     ///      the optimizer from inlining the heavy `recordOrder` marshalling
     ///      back into the entry frames — that isolation is the per-function
     ///      viaIR stack relief that lets the consolidate hook fit in the
@@ -446,8 +440,7 @@ contract NFTPrepayDutchListingFacet is
         uint256 loanId,
         DutchParams memory p,
         IListingExecutorRecorder executor,
-        FeeLeg[] calldata feeLegs,
-        bool lockNft
+        FeeLeg[] calldata feeLegs
     ) private returns (bytes32 orderHash) {
         if (p.startAskPrice < p.endAskPrice) revert AskNotMonotonic(p.startAskPrice, p.endAskPrice);
 
@@ -474,11 +467,7 @@ contract NFTPrepayDutchListingFacet is
             feeLegs
         );
 
-        // Post path locks the borrower NFT; the update path keeps the
-        // existing lock continuous across the rotation (no re-lock race).
-        if (lockNft) {
-            LibERC721._lock(loan.borrowerTokenId, LibERC721.LockReason.PrepayCollateralListing);
-        }
+        // #3205 — the route opens (or rebinds) in LibPrepayListingWiring.wire.
         s.prepayListingOrderHash[loanId] = orderHash;
         s.prepayListingExecutor[loanId] = address(executor);
 
@@ -502,7 +491,7 @@ contract NFTPrepayDutchListingFacet is
         // with the library's own `VaultNotDeployed` revert; keeping
         // the upfront check so the buildAndHashDutch call below sees
         // a non-zero offerer.
-        LibPrepayListingWiring.wire(s, loan, orderHash, conduit, address(executor));
+        LibPrepayListingWiring.wire(s, loan, orderHash, conduit, address(executor), /* holderAuthenticated */ true);
     }
 
     function _assertDutchSolvency(

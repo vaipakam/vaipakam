@@ -81,7 +81,7 @@ export interface VaultHoldings {
   rows: HoldingRow[];
   /** Every NFT collection the deposit record names: it keeps no token ids,
    *  so only tokens a position names are read, and the page says so. */
-  collections: Hex[];
+  collections: { asset: Hex; standard: Standard }[];
   /** Whether the deposit record's list was read to its end. */
   listComplete: boolean;
   /** Whether the position sources the page was given were complete. */
@@ -133,7 +133,10 @@ export async function readPagedList<T>(
 /** Every subject to read, once each: deposit-record ERC-20s, position
  *  ERC-20s and position NFT tokens, with every reason it is read. Every
  *  deposit-record NFT collection is also returned apart, to be named. */
-export function holdingSubjects(deposited: readonly { asset: Hex; standard: Standard }[], positions: PositionAssets): { subjects: HoldingSubject[]; collections: Hex[] } {
+export function holdingSubjects(
+  deposited: readonly { asset: Hex; standard: Standard }[],
+  positions: PositionAssets,
+): { subjects: HoldingSubject[]; collections: { asset: Hex; standard: Standard }[] } {
   const byKey = new Map<string, HoldingSubject>();
   const add = (standard: Standard, asset: Hex, tokenId: bigint, source: HoldingSource) => {
     if (asset.toLowerCase() === ZERO) return;
@@ -151,10 +154,10 @@ export function holdingSubjects(deposited: readonly { asset: Hex; standard: Stan
   // Every deposited collection is named, also one a position names a token
   // of: the record keeps no token ids, so knowing one token never shows that
   // every deposited token was found.
-  const collections: Hex[] = [];
+  const collections: { asset: Hex; standard: Standard }[] = [];
   for (const d of deposited) {
     if (d.standard === 'erc20') continue;
-    if (!collections.some((c) => c.toLowerCase() === d.asset.toLowerCase())) collections.push(d.asset);
+    if (!collections.some((c) => c.asset.toLowerCase() === d.asset.toLowerCase())) collections.push({ asset: d.asset, standard: d.standard });
   }
   // Deposit-record NFT tokens a position names are read for their figures;
   // mark the deposit reason on them too.

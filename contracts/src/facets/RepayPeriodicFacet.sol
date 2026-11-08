@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibLoanClock} from "../libraries/LibLoanClock.sol";
 import {SwapToRepayIntentFacet} from "./SwapToRepayIntentFacet.sol";
@@ -192,7 +193,7 @@ contract RepayPeriodicFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
         // Gated on an INLINED eligibility read so the ineligible/dark case never
         // routes to the host (no cross-facet dependency for unstamped loans).
         if (treasuryShare > 0) {
-            address settlingLender = IERC721(address(this)).ownerOf(loan.lenderTokenId);
+            address settlingLender = LibPositionNFT.ownerOf(loan.lenderTokenId);
             if (LibVPFIDiscount.lenderYieldFeeEligible(loan, settlingLender)) {
                 bytes memory ret = LibFacet.crossFacetCallReturn(
                     abi.encodeWithSelector(

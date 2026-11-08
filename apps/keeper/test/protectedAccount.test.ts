@@ -138,9 +138,14 @@ class FakeDiamond {
         const t = this.transfers.get(a[0]);
         return { from: t?.from ?? ZERO, state: t?.state ?? 0, releaseAt: t?.releaseAt ?? 0n, to: t?.to ?? ZERO, tokenId: t?.tokenId ?? 0n };
       }
-      case 'getProtectedAccount':
-        // A copy, as a chain read is: a later send must not change it.
-        return { ...this.acct(a[0]) };
+      case 'getProtectedAccount': {
+        // A copy, as a chain read is: a later send must not change it. Named
+        // as the GENERATED ABI decodes it since #3205 (the two NFT-queue
+        // fields are `retired*`), so the keeper's normaliser is exercised
+        // (#3318 Codex r2: the old names hid a `BigInt(undefined)`).
+        const { protectNfts, pendingNftOffAt, ...rest } = this.acct(a[0]);
+        return { ...rest, retiredProtectNfts: protectNfts, retiredPendingNftOffAt: pendingNftOffAt };
+      }
       case 'getAllowlistPendingAt':
         return this.allowPending.get(`${a[0]}:${a[1]}`) ?? 0n;
       case 'getSignerChange':

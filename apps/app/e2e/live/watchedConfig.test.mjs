@@ -62,7 +62,7 @@ describe('watchedConfig — the one snapshot', () => {
   // race rule on the way).
   for (const [driver, minReads] of [
     ['live-refinance.mjs', 10],
-    ['live-seed-illiquid-loan.mjs', 4],
+    ['live-seed-illiquid-loan.mjs', 3], // its ownerOf reads moved to positionHolder.mjs (#3205)
     ['live-refinance-lender-review.mjs', 4],
   ]) {
     it(`${driver} reads NO watched getter directly, and every other read it makes is classified`, () => {

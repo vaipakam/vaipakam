@@ -235,7 +235,7 @@ contract OfferMatchIntentFacet is DiamondReentrancyGuard, DiamondPausable {
         uint256 slicePosToken = s.offers[sliceOfferId].positionTokenId;
         delete s.offerIdByPositionTokenId[slicePosToken];
         LibFacet.crossFacetCall(
-            abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector, slicePosToken),
+            abi.encodeWithSelector(VaipakamNFTFacet.retirePosition.selector, slicePosToken),
             LibOfferMatchExecute.NFTBurnFailed.selector
         );
 

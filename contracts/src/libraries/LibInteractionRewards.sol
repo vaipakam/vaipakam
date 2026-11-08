@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibPositionNFT} from "./LibPositionNFT.sol";
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {LibPausable} from "./LibPausable.sol";
 // #1499 (Codex #1970 r1 P1) — the claim reads its room from
@@ -852,12 +853,10 @@ library LibInteractionRewards {
     ) private {
         if (entryId == 0) return;
         if (s.rewardEntries[entryId].closed) return;
-        try IERC721(address(this)).ownerOf(tokenId) returns (address holder) {
-            if (holder != address(0)) {
-                repointRewardEntryAtClose(loanId, holder, isLenderSide);
-            }
-        } catch {
-            // Token burned / absent — nothing to re-anchor.
+        // A retired or absent token reads as 0: nothing to re-anchor.
+        address holder = LibPositionNFT.holderOrZero(tokenId);
+        if (holder != address(0)) {
+            repointRewardEntryAtClose(loanId, holder, isLenderSide);
         }
     }
 

@@ -85,6 +85,7 @@ const OFFER_ID_ARGS = ['offerId', 'lenderOfferId', 'borrowerOfferId', 'buyOfferI
  *  forces `truncated` so clients fall back to the coarse key. */
 const UNMAPPABLE_ROW_EVENTS = new Set([
   'Transfer',
+  'PositionRetired', // #3205: a retirement clears a holder by tokenId, like a burn
   'SignedOfferFilled',
   'SignedOfferMatched',
   'SignedOfferCancelled',

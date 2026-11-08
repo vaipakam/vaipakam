@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
 import {LibVpfiRecycle} from "../libraries/LibVpfiRecycle.sol";
@@ -388,11 +389,8 @@ contract InteractionRewardsFacet is
         view
         returns (address)
     {
-        try IERC721(address(this)).ownerOf(tokenId) returns (address holder) {
-            return holder == address(0) ? fallbackAddr : holder;
-        } catch {
-            return fallbackAddr;
-        }
+        address holder = LibPositionNFT.holderOrZero(tokenId);
+        return holder == address(0) ? fallbackAddr : holder;
     }
 
     /// @notice Codex #2489 r13 — the host of `closeLoan`'s holder re-anchor

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
 import {Test} from "forge-std/Test.sol";
 import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
 import {VaipakamDiamond} from "../src/VaipakamDiamond.sol";
@@ -323,6 +324,7 @@ contract RepayFacetTest is Test {
         // Init vault factory with impl
         vm.prank(owner);
         LibTestVaultBeacon.install(address(diamond), address(this));
+        LibTestPositionNFT.install(address(diamond), address(this));
         AdminFacet(address(diamond)).setTreasury(address(diamond));
         // vm.prank(address(diamond));
         // LibVaipakam.setTreasury(owner);
@@ -672,11 +674,7 @@ contract RepayFacetTest is Test {
 
         // Simulate a secondary-market transfer of the lender position NFT.
         address newHolder = makeAddr("rentalLenderHolder654");
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(IERC721.ownerOf.selector, lenderTokenId),
-            abi.encode(newHolder)
-        );
+        LibTestPositionNFT.mockHolder(address(diamond), lenderTokenId, newHolder);
 
         uint256 newHolderBefore = ERC20Mock(mockERC20).balanceOf(newHolder);
         uint256 storedLenderBefore = ERC20Mock(mockERC20).balanceOf(lender);

@@ -31,9 +31,10 @@ import { usePublicClient } from 'wagmi';
 import { zeroAddress } from 'viem';
 import {
   BOUNDED_LISTING_SELECTOR,
-  probeSaleHoldLive,
+  probeSaleHoldLive as probeSaleHoldOnSurface,
   type SaleListingHoldState,
 } from '@vaipakam/lib/saleHold';
+import { positionNftForDiamond } from '../contracts/positionNft';
 import { DIAMOND_ABI_VIEM } from '../contracts/diamond';
 import { useActiveChain } from '../chain/useActiveChain';
 import { tipAware } from '../chain/railHealth';
@@ -44,9 +45,18 @@ import { tipAware } from '../chain/railHealth';
 export {
   classifyTeardownProbe,
   probeErrorName,
-  probeSaleHoldLive,
   type SaleListingHoldState,
 } from '@vaipakam/lib/saleHold';
+
+/** The shared probe, given the chain's Diamond: its position-NFT mode
+ *  (#3205) is resolved from the deployment record that names it. */
+export async function probeSaleHoldLive(
+  client: Parameters<typeof probeSaleHoldOnSurface>[0],
+  diamond: `0x${string}`,
+  ...rest: Parameters<typeof probeSaleHoldOnSurface> extends [unknown, unknown, ...infer R] ? R : never
+): Promise<SaleListingHoldState> {
+  return probeSaleHoldOnSurface(client, positionNftForDiamond(diamond), ...rest);
+}
 
 /** Query state as this module consumes it — the three fields the gate
  *  below actually reads, so it can be exercised without a QueryClient. */

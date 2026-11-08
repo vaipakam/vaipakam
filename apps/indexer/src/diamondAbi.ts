@@ -63,9 +63,10 @@ export const DIAMOND_SIGNED_OFFER_ABI = SignedOfferFacetABI;
  *  applies to an order's smallest amount. */
 export const DIAMOND_OFFER_BOOK_ABI = OfferBookFacetABI;
 
-/** ERC-721 `ownerOf` — the Vaipakam position NFT is a facet ON the Diamond, so
- *  the diamond address IS the NFT contract. Reverts on burned / nonexistent
- *  tokens; the caller catches and falls back. */
+/** ERC-721 `ownerOf`. #3205: aim it at `positionNftForDiamond(diamond).nft`
+ *  (`./positionNft`) — the standalone PositionNFT, or the Diamond on a
+ *  legacy-mode chain — never at the Diamond directly. Reverts on burned /
+ *  nonexistent tokens; the caller catches and falls back. */
 export const ERC721_OWNER_OF_ABI = [
   {
     type: 'function',

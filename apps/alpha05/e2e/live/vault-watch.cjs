@@ -1,10 +1,17 @@
-// Watch-only live review of the Vault page (ACC-20, ACC-21, ACC-24,
-// RB-VAULT) (live tier, run after each deploy), through the shared
-// watch-only wallet (watch-wallet.cjs): nothing can be sent. Opens Vault as
-// <address> and prints the page: the vault address (or that there is none,
-// with Create my vault, whose review it opens and leaves unsigned), and each
-// asset row with the protocol's figures, uncounted notes and how it was
-// found, then the same with small and empty rows shown. Checks that nothing
+// Watch-only live review of the Vault page (ACC-20, ACC-21, ACC-22, ACC-23,
+// ACC-24, ACC-36, ACC-37, ACC-43, RB-VAULT, RB-VAULT-DEPOSIT,
+// RB-VAULT-WITHDRAW, RB-VAULT-SAFETY) (live tier, run
+// after each deploy), through
+// the shared watch-only wallet (watch-wallet.cjs): nothing can be sent.
+// Opens Vault as <address> and prints the page: the vault address (or that
+// there is none, with Create my vault, whose review it opens and leaves
+// unsigned), each asset row with the protocol's figures, uncounted notes and
+// how it was found, then the same with small and empty rows shown, then the
+// Withdraw form and review for a small amount of the first asset with
+// something free (left unsigned), then the Deposit form and review for a small amount of the first suggested asset
+// (or the Terms prompt it asks for first), left unsigned, then the Account
+// safety card and the review of its first action (Turn on or Lock now), left
+// unsigned. Checks that nothing
 // scrolls sideways and saves full-page screenshots per device.
 // Usage: node e2e/live/vault-watch.cjs <address>
 // (screenshots go to $LIVE_OUT or /tmp; $LIVE_URL overrides the origin)
@@ -42,6 +49,69 @@ async function session(b, opts, label) {
     await receipt.waitFor({ timeout: 60000 }).catch(() => {});
     await p.waitForTimeout(3000);
     console.log(`----- create review (unsigned)\n${(await receipt.count()) ? await text(receipt) : 'no receipt shown'}`);
+  }
+  // ACC-23: open Withdraw on the first asset with something free, type a
+  // small amount and print the review, left unsigned.
+  const withdrawOpen = p.locator('[data-testid^="vault-withdraw-open-"]').first();
+  if (await withdrawOpen.count()) {
+    await withdrawOpen.click();
+    const form = p.getByTestId('vault-withdraw-form');
+    await form.waitFor({ timeout: 30000 }).catch(() => {});
+    const amount = form.getByTestId('vault-withdraw-amount');
+    if (await amount.count()) await amount.fill('0.0001');
+    await p.waitForTimeout(2000);
+    console.log(`----- withdraw form\n${(await form.count()) ? await text(form) : 'no form shown'}`);
+    if (await form.count()) {
+      await form.getByTestId('vault-withdraw-review').click();
+      const receipt = p.getByTestId('vault-withdraw-panel').locator('.receipt');
+      await receipt.waitFor({ timeout: 60000 }).catch(() => {});
+      await p.waitForTimeout(3000);
+      console.log(`----- withdraw review (unsigned)\n${(await receipt.count()) ? await text(p.getByTestId('vault-withdraw-panel')) : 'no receipt shown'}`);
+    }
+  } else console.log('----- withdraw: no asset with something free');
+  // ACC-22: open Deposit, choose the first suggested asset, type a small
+  // amount and print the review (or the Terms prompt), left unsigned.
+  const depositOpen = p.getByTestId('vault-deposit-open');
+  if (await depositOpen.count()) {
+    await depositOpen.click();
+    const terms = p.getByRole('dialog', { name: 'Terms of Service' });
+    const form = p.getByTestId('vault-deposit-form');
+    await Promise.race([terms.waitFor({ timeout: 30000 }), form.waitFor({ timeout: 30000 })]).catch(() => {});
+    if (await terms.count()) console.log(`----- deposit asks for Terms first (unsigned)\n${await text(terms)}`);
+    else if (await form.count()) {
+      await form.getByTestId('vault-deposit-asset').selectOption({ index: 1 });
+      const amount = form.getByTestId('vault-deposit-amount');
+      await amount.waitFor({ timeout: 30000 }).catch(() => {});
+      if (await amount.count()) await amount.fill('0.0001');
+      else await form.getByTestId('vault-deposit-token-id').fill('1').catch(() => {});
+      await p.waitForTimeout(2000);
+      console.log(`----- deposit form\n${await text(form)}`);
+      await form.getByTestId('vault-deposit-review').click();
+      const receipt = p.getByTestId('vault-deposit-panel').locator('.receipt');
+      await receipt.waitFor({ timeout: 60000 }).catch(() => {});
+      await p.waitForTimeout(3000);
+      console.log(`----- deposit review (unsigned)\n${(await receipt.count()) ? await text(p.getByTestId('vault-deposit-panel')) : 'no receipt shown'}`);
+    }
+  } else if (await p.getByTestId('vault-deposit-paused').count()) console.log(`----- deposit closed\n${await text(p.getByTestId('vault-deposit-paused'))}`);
+  // ACC-30/31: the pause notice, shown only while the protocol is paused.
+  const escape = p.getByTestId('vault-escape');
+  console.log(`----- pause notice\n${(await escape.count()) ? await text(escape) : 'none (the protocol is not paused)'}`);
+  // ACC-36/37/43: print the safety card, then open the review of its first
+  // action (Turn on, or Lock now when protection is on), left unsigned.
+  const card = p.getByTestId('vault-safety');
+  await card.getByTestId('vault-safety-state').waitFor({ timeout: 60000 }).catch(() => {});
+  console.log(`----- safety card\n${(await card.count()) ? await text(card) : 'no card shown'}`);
+  const turnOn = card.getByTestId('vault-safety-turn-on');
+  const lock = card.getByTestId('vault-safety-lock');
+  if (await turnOn.count()) {
+    await turnOn.click();
+    await card.getByTestId('vault-safety-review').click();
+  } else if (await lock.count()) await lock.click();
+  const safety = card.getByTestId('vault-safety-panel');
+  if (await safety.count()) {
+    await safety.locator('.receipt').waitFor({ timeout: 60000 }).catch(() => {});
+    await p.waitForTimeout(3000);
+    console.log(`----- safety review (unsigned)\n${await text(safety)}`);
   }
   console.log('scrollWidth/innerWidth', await p.evaluate(() => [document.documentElement.scrollWidth, window.innerWidth]));
   await p.screenshot({ path: `${OUT}/live-vault-${label}.png`, fullPage: true });

@@ -2,7 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "./LibVaipakam.sol";
-import {LibERC721} from "./LibERC721.sol";
+import {LibPositionNFT} from "./LibPositionNFT.sol";
 import {LibMetricsHooks} from "./LibMetricsHooks.sol";
 import {LibFacet} from "./LibFacet.sol";
 import {LibLoanClock} from "./LibLoanClock.sol";
@@ -116,7 +116,7 @@ library LibSaleListing {
         uint256 loanId,
         uint256 saleOfferId
     ) private {
-        LibERC721._unlock(s.loans[loanId].lenderTokenId);
+        LibPositionNFT.closeRouteIfHeldBy(s.loans[loanId].lenderTokenId, LibPositionNFT.RouteReason.EarlyWithdrawalSale);
 
         s.offerCancelled[saleOfferId] = true;
         LibMetricsHooks.onOfferCancelled(saleOfferId);
@@ -136,7 +136,7 @@ library LibSaleListing {
             delete s.offerIdByPositionTokenId[vehiclePositionTokenId];
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
-                    VaipakamNFTFacet.burnNFT.selector,
+                    VaipakamNFTFacet.retirePosition.selector,
                     vehiclePositionTokenId
                 ),
                 bytes4(0)

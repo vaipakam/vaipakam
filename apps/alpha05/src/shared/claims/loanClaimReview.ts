@@ -12,8 +12,9 @@
  * A claim moves nothing out of the wallet and asks no approval: the protocol
  * pays from the recorded party's vault to the position's holder.
  */
+import { readLiveHolderOrNull } from '../positions/positionNft';
 import type { Abi, Log, PublicClient } from 'viem';
-import { AdminFacetABI, ClaimFacetABI, LoanFacetABI, MetricsFacetABI, SellerClaimFacetABI, VaipakamNFTFacetABI } from '@vaipakam/contracts/abis';
+import { AdminFacetABI, ClaimFacetABI, LoanFacetABI, MetricsFacetABI, SellerClaimFacetABI } from '@vaipakam/contracts/abis';
 import type { OwnStateClient } from '../../chain/ownRail';
 import type { CopyAccess } from '../copy/useCopy';
 import { claimVerdict } from '../eligibility/claim';
@@ -32,7 +33,6 @@ import { answerOrNull } from '../reads/answer';
 type Hex = `0x${string}`;
 
 const LOAN = LoanFacetABI as Abi;
-const NFT = VaipakamNFTFacetABI as Abi;
 const ADMIN = AdminFacetABI as Abi;
 const METRICS = MetricsFacetABI as Abi;
 const SELLER = SellerClaimFacetABI as Abi;
@@ -115,7 +115,9 @@ export async function readLoanClaimReview(
         answerOrNull(c.readContract({ address: diamond, abi, functionName, args, ...at }) as Promise<T>);
       const asked = sideClaimableStatus(side, Number(loan.status));
       const [holder, paused, claim, sellersShare, protection, posture] = await Promise.all([
-        read<Hex>(NFT, 'ownerOf', [side === 'lender' ? loan.lenderTokenId : loan.borrowerTokenId]),
+        // #3205: the side's LIVE holder through the position-NFT door; a
+        // retired (or burned) token has none.
+        readLiveHolderOrNull(c, diamond, side === 'lender' ? loan.lenderTokenId : loan.borrowerTokenId, at.blockNumber),
         read<boolean>(ADMIN, 'paused'),
         asked ? readSideClaim(c, diamond, loanId, side, at) : null,
         side === 'lender' && asked ? read<bigint>(SELLER, 'getSellersShareOfLenderClaim', [loanId]) : null,

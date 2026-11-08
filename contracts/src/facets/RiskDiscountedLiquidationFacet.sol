@@ -9,7 +9,7 @@ import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
 import {LibDelivery} from "../libraries/LibDelivery.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibLenderYieldFeeHost} from "../libraries/LibLenderYieldFeeHost.sol";
-import {LibERC721} from "../libraries/LibERC721.sol";
+import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
 import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
 import {LibPrepayCleanup} from "../libraries/LibPrepayCleanup.sol";
 import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
@@ -381,7 +381,7 @@ contract RiskDiscountedLiquidationFacet is
         // miss because it sits beside the ordinary one.
         (, treasuryInterestFee) = LibLenderYieldFeeHost.resolve(
             loanId,
-            LibERC721.ownerOf(loan.lenderTokenId),
+            LibPositionNFT.ownerOf(loan.lenderTokenId),
             interestPortion,
             treasuryInterestFee
         );

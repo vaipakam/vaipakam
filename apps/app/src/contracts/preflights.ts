@@ -29,6 +29,7 @@ import {
   type GraceBucket,
 } from '../lib/grace';
 import { formatTokenAmount } from '../lib/format';
+import { readPositionOwnerOn } from './positionNft';
 
 export { defaultGraceSeconds };
 
@@ -110,12 +111,7 @@ export async function assertPositionNftHeldLive(opts: {
 }): Promise<void> {
   let owner: string;
   try {
-    owner = (await opts.publicClient.readContract({
-      address: opts.diamondAddress,
-      abi: DIAMOND_ABI_VIEM,
-      functionName: 'ownerOf',
-      args: [BigInt(opts.tokenId)],
-    })) as string;
+    owner = (await readPositionOwnerOn(opts.publicClient, opts.diamondAddress, BigInt(opts.tokenId))) as string;
   } catch (err) {
     // Fail closed either way, but say the TRUE thing: a revert means
     // the token is gone (burned/claimed → the position really moved);

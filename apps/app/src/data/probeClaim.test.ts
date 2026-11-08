@@ -3,6 +3,7 @@
  * page and the loan page. Driven with a fake read client so each lane and
  * each failure shape is pinned.
  */
+import { DEPLOYMENTS } from '@vaipakam/contracts/deployments';
 import { describe, expect, it } from 'vitest';
 import {
   ContractFunctionExecutionError,
@@ -13,7 +14,7 @@ import { isMemoizableProbe, loanClaimRefetchInterval, OWED_RETRY_MS, probeClaim 
 import type { PositionLoan } from './hooks';
 
 const ME = '0x00000000000000000000000000000000000000aa';
-const DIAMOND = '0x00000000000000000000000000000000000000dd' as const;
+const DIAMOND = DEPLOYMENTS[84532]!.diamond as `0x${string}`; // a legacy-mode record (#3205)
 const USDC = '0x00000000000000000000000000000000000000c1';
 const ZERO = '0x0000000000000000000000000000000000000000';
 
