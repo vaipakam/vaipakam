@@ -859,8 +859,11 @@ above. Each resolves here, so a route reviewer needs no private file:
   share of the interest, that a full-term loan then counts the rest of its
   term on the lower principal, and that the interest counts toward the
   current interest period. The reader can go back and change the amount
-  from the review. The finish card measures the principal at the receipt's
-  block against the principal less the part, what left the wallet (at
+  from the review. The finish card measures the principal the payment left,
+  from its own log (not the loan at the block, which a later transaction
+  there can move on), against the principal less the part; the standing
+  allowance moving reopens the review, as for a full repayment; and the
+  card measures what left the wallet (at
   least the part, at most the stated upper total), where the interest
   period stands afterwards, and the approval put back. The two repayment
   flows never run at once.

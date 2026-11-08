@@ -75,6 +75,7 @@ describe('partialChanged', () => {
   it('reopens on any loan field the receipt states, the due date included', () => {
     expect(partialChanged(review, { ...review, loan: { ...review.loan, useFullTermInterest: true } }, copy)).toBe('repay.changedLoan');
     expect(partialChanged(review, { ...review, maturity: 9_500n }, copy)).toBe('repay.changedLoan');
+    expect(partialChanged(review, { ...review, allowance: review.allowance + 1n }, copy)).toBe('repay.changedFunds');
     expect(partialChanged(review, review, copy)).toBeNull();
   });
 });

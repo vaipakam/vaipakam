@@ -521,7 +521,7 @@ export const copy = {
     stepSend: B('send the payment.'),
     legPrincipal: B('Principal now {{amount}}'),
     principalOther: A('The chain shows {{amount}} of principal still owed, not the {{expected}} this payment leaves.'),
-    principalUnread: B('The principal after the payment could not be read.'),
+    notPaid: B('The transaction records no part payment of this loan.'),
     paidOther: A('The transaction took {{amount}} from your wallet; the review expected {{part}} plus at most {{interest}} of interest.'),
     legPeriodMoved: B('Interest checkpoint moved on to {{time}}'),
     legPeriodPaid: B('{{amount}} now counted toward the period ending {{time}}'),

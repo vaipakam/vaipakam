@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from 'react';
 import type { Abi, Log } from 'viem';
 import { useConfig } from 'wagmi';
 import { writeContract } from 'wagmi/actions';
-import { LoanFacetABI, RepayFacetABI, RepayPeriodicFacetABI } from '@vaipakam/contracts/abis';
+import { RepayFacetABI, RepayPeriodicFacetABI } from '@vaipakam/contracts/abis';
 import type { OwnStateClient } from '../../chain/ownRail';
 import type { SupportedChain } from '../../chain/chains';
 import { useCopy } from '../copy/useCopy';
@@ -27,12 +27,12 @@ import { Notice } from '../ui/Notice';
 import { formatUtc, shortAddress } from '../ui/format';
 import { allowanceFigure } from './approvalCap';
 import { partialReceipt } from './partialReceipt';
+import { partialPrincipalAfter } from './repaidLog';
 import { amountSentence, partialBlockers, partialChanged, partialPromptCount, readPartialFloor, readPartialReview, type PartialReview } from './partialReview';
 
 type Hex = `0x${string}`;
 
 const REPAY_ABI = RepayFacetABI as Abi;
-const LOAN_ABI = LoanFacetABI as Abi;
 const PERIODIC_ABI = RepayPeriodicFacetABI as Abi;
 
 /** The store key a loan's partial repayment keeps its state under: one per
@@ -62,9 +62,9 @@ interface PartialRepayProps {
  * wallet approves exactly the most it can take by a moment a short while
  * ahead, the payment is sent only after a dry run passes, and what it does
  * not use of the approval is put back afterwards. The outcome is measured
- * from the chain: the principal at the receipt's block, what left the
- * wallet in the transaction's own logs, and where the interest period
- * stands afterwards.
+ * from the transaction's own logs (the principal the payment left, what
+ * left the wallet) and from the chain at its block (where the interest
+ * period stands afterwards).
  */
 export function PartialRepay(props: PartialRepayProps) {
   const key = partialKey(props.loanId);
@@ -204,7 +204,9 @@ function PartialFlow({ loanId, chain, own, meta, amount, onChangeAmount, onClose
       const io = allowanceIo(asset, (v, i, of) => say(of === 2 && i === 0 ? text('approval.stepZero') : format('partial.stepApprove', { amount: exact(asset, v) })));
       const prior = await readAllowance(asset);
       // Exactly the reviewed maximum, lowered too: the allowance is the only
-      // cap on what `repayPartial` can take (approvalCap).
+      // cap on what `repayPartial` can take (approvalCap). The prior
+      // allowance is what a stop puts back and what the review stated.
+      if (prior !== r.allowance) throw allowanceMoved(copy);
       const steps = await allowanceSteps(io, prior, reach);
       if (steps.length !== r.approvalSteps) throw allowanceMoved(copy);
       const approved = steps.length > 0;
@@ -251,24 +253,23 @@ function PartialFlow({ loanId, chain, own, meta, amount, onChangeAmount, onClose
     },
   });
 
-  /** The principal at the receipt's block, what left the wallet, and where
-   *  the interest period stands. */
+  /** The principal the part payment left (its own log), what left the
+   *  wallet, and where the interest period stands at the receipt's block. */
   const measure = async (r: PartialReview, logs: readonly Log[], at: AnchoredReader): Promise<LegOutcome[]> => {
     const asset = r.loan.principalAsset;
     const legs: LegOutcome[] = [];
     const expected = r.loan.principal - r.amount;
-    try {
-      const principal = await at.read((c, b) =>
-        c.readContract({ address: diamond, abi: LOAN_ABI, functionName: 'getLoanDetails', args: [loanId], ...b }).then((l) => (l as { principal: bigint }).principal),
-      );
+    // The part payment's own log, not the principal at the block: another
+    // transaction later in that block (a liquidation) can move it on.
+    const principal = partialPrincipalAfter(logs, diamond, loanId);
+    if (principal === null) legs.push({ status: 'not-done', label: format('partial.legPrincipal', { amount: exact(asset, expected) }), reason: text('partial.notPaid') });
+    else {
       const label = format('partial.legPrincipal', { amount: tokenAmount(principal, asset, meta, format) });
       legs.push(
         principal === expected
           ? { status: 'done', label }
           : { status: 'not-done', label, reason: format('partial.principalOther', { amount: exact(asset, principal), expected: exact(asset, expected) }) },
       );
-    } catch {
-      legs.push({ status: 'unknown', label: format('partial.legPrincipal', { amount: exact(asset, expected) }), reason: text('partial.principalUnread') });
     }
     // What left the wallet: the part, and the interest as of this block,
     // which is at most the review's upper figure.

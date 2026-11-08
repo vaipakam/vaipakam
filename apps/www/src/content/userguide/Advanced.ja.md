@@ -2233,7 +2233,7 @@ Positions は共通のリーダーを通して Home と同じ保有一覧を読�
 
 `repayPartial(loanId, amount)` は元本 `amount` と、`interestAccrualStart` 以降に発生した利息(定期クレジット控除後)を受け取ります。現在の貸し手ポジション保有者に直接支払い、トレジャリーの取り分を分け、`principal` を減らし、利息の時計を再開し、現在の期間に計上します。満期は動きません。猶予期間の終了後、`principal × minPartialBps / 10000`(`getAssetRiskParams`)未満、元本全額以上(`PartialWouldRetireFullPrincipal`)、有効なインテントコミットや借り換えリクエストがあるとき、そして流動性のあるローンでヘルスファクターが悪化するときは拒否します。
 
-呼び出し前に一部返済の利息を返すビューはないため(#3299)、確認画面では今と少し先の時点で読んだ `calculateRepaymentAmount` から `principal` を引いた値を使います。満期までの日割りローンでは正確ですが、`useFullTermInterest` では残り期間の最低利息、満期後は延滞料を含むため「最大」と表示します。承認額は返済額とその上限値の合計ちょうどです。完了カードは、レシートのブロックでの `principal`、ウォレットからの流出、その後の `previewPeriodicSettle` を測定します。
+呼び出し前に一部返済の利息を返すビューはないため(#3299)、確認画面では今と少し先の時点で読んだ `calculateRepaymentAmount` から `principal` を引いた値を使います。満期までの日割りローンでは正確ですが、`useFullTermInterest` では残り期間の最低利息、満期後は延滞料を含むため「最大」と表示します。承認額は返済額とその上限値の合計ちょうどです。完了カードは、支払い自身の `PartialRepaid` ログの `newPrincipal`（ブロック時点の `principal` ではありません。同じブロックの後続トランザクションで変わりうるためです）、ウォレットからの流出、その後の `previewPeriodicSettle` を測定します。
 
 <a id="risk-access"></a>
 

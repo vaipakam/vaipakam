@@ -224,7 +224,8 @@ export function partialChanged(a: PartialReview, b: PartialReview, copy: Pick<Co
     return text('repay.changedHolders');
   if (a.payoff.by !== b.payoff.by || a.interestBy !== b.interestBy) return text('repay.changedPayoff');
   if (a.period?.periodEndAt !== b.period?.periodEndAt || a.period?.paid !== b.period?.paid || a.period?.expected !== b.period?.expected) return text('partial.changedPeriod');
-  if (a.approvalSteps !== b.approvalSteps || a.balance < a.amount + a.interestNow !== b.balance < b.amount + b.interestNow) return text('repay.changedFunds');
+  if (a.allowance !== b.allowance || a.approvalSteps !== b.approvalSteps || a.balance < a.amount + a.interestNow !== b.balance < b.amount + b.interestNow)
+    return text('repay.changedFunds');
   if (a.verdict.state !== b.verdict.state || a.verdict.refusals[0]?.code !== b.verdict.refusals[0]?.code) return text('repay.changedVerdict');
   return null;
 }

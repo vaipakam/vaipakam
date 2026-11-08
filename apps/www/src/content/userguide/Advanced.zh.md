@@ -1966,7 +1966,7 @@ Positions 通过一个共享读取器读取与 Home 相同的持仓清单：`get
 
 `repayPartial(loanId, amount)` 收取本金 `amount` 加上自 `interestAccrualStart` 以来累计的利息（扣除任何定期抵扣）。它直接支付给当前出借人头寸的持有人，并分出国库的份额，降低 `principal`，重新开始计息时钟，并计入当前期间；到期日永不移动。在宽限期结束后、低于 `principal × minPartialBps / 10000`（`getAssetRiskParams`）、等于或高于全部本金（`PartialWouldRetireFullPrincipal`）、存在有效的意图承诺或再融资请求时，以及流动性贷款的健康因子会变差时，它会拒绝。
 
-没有任何视图能在调用前返回部分还款的利息（#3299），因此审核界面使用现在及稍后时刻读取的 `calculateRepaymentAmount` 减去 `principal`。对按比例计息、未过到期日的贷款，这是精确的；使用 `useFullTermInterest` 时它包含剩余期限的最低利息，过了到期日还包含滞纳金，因此显示为"最多"。授权金额恰好是偿还部分加上这个上限。完成卡片会测量收据所在区块的 `principal`、钱包的流出，以及之后的 `previewPeriodicSettle`。
+没有任何视图能在调用前返回部分还款的利息（#3299），因此审核界面使用现在及稍后时刻读取的 `calculateRepaymentAmount` 减去 `principal`。对按比例计息、未过到期日的贷款，这是精确的；使用 `useFullTermInterest` 时它包含剩余期限的最低利息，过了到期日还包含滞纳金，因此显示为"最多"。授权金额恰好是偿还部分加上这个上限。完成卡片会测量该付款自身 `PartialRepaid` 日志中的 `newPrincipal`（而非该区块的 `principal`，同一区块中随后的交易可能改变它）、钱包的流出，以及之后的 `previewPeriodicSettle`。
 
 <a id="risk-access"></a>
 
