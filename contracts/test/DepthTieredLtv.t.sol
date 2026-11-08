@@ -363,6 +363,37 @@ contract DepthTieredLtv is Test {
         assertEq(_status(true), uint256(LibVaipakam.LiquidityStatus.Liquid));
     }
 
+    /// @dev #3359 — the close-out depth tier, which a forced sale's floor is
+    ///      read from, is built at the feed price, so a swap in the sale's
+    ///      own block that moves the pool's current price (in either
+    ///      direction, by a factor of ten) does not move the tier.
+    function test_closeOut_tierIgnoresAPricePush() public {
+        _mockPool(mockUniFactory, mockAsset, 3000, L_TIER3);
+        address pool = _poolAddr(mockUniFactory, mockAsset, mockWeth, 3000);
+        assertEq(OracleFacet(address(diamond)).getCloseOutLiquidityTier(mockAsset), 3);
+        _pushSqrtPrice(pool, uint160(uint256(10) << 96));
+        assertEq(OracleFacet(address(diamond)).getCloseOutLiquidityTier(mockAsset), 3, "price pushed up");
+        _pushSqrtPrice(pool, uint160((uint256(1) << 96) / 10));
+        assertEq(OracleFacet(address(diamond)).getCloseOutLiquidityTier(mockAsset), 3, "price pushed down");
+    }
+
+    /// @dev #3359 — the feed-price reserve is the pool's true depth: a
+    ///      shallower pool still reads its lower close-out tier.
+    function test_closeOut_tierFollowsTheMeanDepth() public {
+        _mockPool(mockUniFactory, mockAsset, 3000, L_TIER1);
+        assertEq(OracleFacet(address(diamond)).getCloseOutLiquidityTier(mockAsset), 1);
+        _mockPool(mockUniFactory, mockAsset, 3000, L_TIER2);
+        assertEq(OracleFacet(address(diamond)).getCloseOutLiquidityTier(mockAsset), 2);
+    }
+
+    function _pushSqrtPrice(address pool, uint160 sqrtPriceX96) internal {
+        vm.mockCall(
+            pool,
+            abi.encodeWithSignature("slot0()"),
+            abi.encode(sqrtPriceX96, int24(0), uint16(0), uint16(0), uint16(0), uint8(0), false)
+        );
+    }
+
     // ─── getEffectiveLiquidityTier = min(onChain, keeperTier) ───────
 
     function test_effectiveTier_defaultKeeperTierIsOne() public {
