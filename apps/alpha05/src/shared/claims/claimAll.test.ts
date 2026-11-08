@@ -23,6 +23,7 @@ import {
   type ClaimAllWords,
 } from './claimAll';
 import type { LoanClaimRow } from './loanClaimRows';
+import { remainderAfter } from './rewards';
 
 type Hex = `0x${string}`;
 const DIAMOND = '0x00000000000000000000000000000000000000d1' as Hex;
@@ -272,6 +273,21 @@ describe('the finish card', () => {
     expect(legs[1]!.status === 'not-done' && legs[1]!.reason).toBe('claimAll.skipped');
   });
 
+  it('says when whether more reward days remain could not be read after the claim', () => {
+    const rewards = list.legs.find((l) => l.key === 'rewards')!;
+    const logs = [
+      log(DIAMOND, LEG_EVENTS, 'RewardDeliveredToVault', { user: ME, amount: 5n, claimDayId: 3n }),
+      log(DIAMOND, LEG_EVENTS, 'InteractionRewardsClaimed', { user: ME, fromDay: 1n, toDay: 2n, amount: 5n }),
+    ];
+    const legs = measureClaimAll(review([rewards]), logs, DIAMOND, ME, words, copy, null);
+    expect(legs.map((l) => `${l.status}:${l.label}`)).toEqual(['done:claimAll.legRewards{"what":"claimAll.rewards","amount":"5"}', 'unknown:claimAll.legRewardsRest']);
+    expect(measureClaimAll(review([rewards]), logs, DIAMOND, ME, words, copy, false).map((l) => l.status)).toEqual(['done']);
+    expect(remainderAfter(null, 10n)).toBeNull();
+    expect(remainderAfter({ kind: 'none' }, 10n)).toBe(false);
+    expect(remainderAfter({ kind: 'exact', amount: 1n, fromDay: 3n, toDay: 4n, atBlock: 9n }, 10n)).toBeNull();
+    expect(remainderAfter({ kind: 'exact', amount: 1n, fromDay: 3n, toDay: 4n, atBlock: 10n }, 10n)).toBe(true);
+  });
+
   it('flags a token that did not all arrive', () => {
     const legs = measureClaimAll(review(list.legs.slice(0, 1)), [claimed(7n, 100n), transfer(WETH, 60n)], DIAMOND, ME, words, copy, null);
     expect(legs.at(-1)!.status).toBe('unknown');
@@ -315,6 +331,15 @@ describe('the finish card', () => {
     expect(rows[0]!.value).toMatchObject({ kind: 'text' });
     expect(JSON.stringify(rows[0]!.value)).toContain('1 h');
     expect(rows[1]!.value).toEqual({ kind: 'text', text: 'loanClaim.toWallet' });
+  });
+
+  it('lets a payroll stream’s accrual through the recheck, and reads a lower figure as a change', () => {
+    const pay = (withdrawable: bigint) =>
+      claimAllList(inputs({ loans: { paused: false, rows: [], complete: true }, payroll: { rows: [{ streamId: 2n, asset: WETH, withdrawable }], complete: true } }), copy, 1);
+    const at = (l: ReturnType<typeof pay>) => review(l.legs, { list: l });
+    expect(claimAllChanged(at(pay(6n)), at(pay(9n)), copy)).toBeNull();
+    expect(claimAllChanged(at(pay(6n)), at(pay(5n)), copy)).toBe('claimAll.changed');
+    expect(payoutLabel(pay(6n).legs[0]!, pay(6n).legs[0]!.payouts[0]!, copy)).toBe('claimAll.payrollAtLeast');
   });
 
   it('reads a selected standing offer starting to lend again as a changed review', () => {

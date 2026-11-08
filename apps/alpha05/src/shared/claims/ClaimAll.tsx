@@ -41,7 +41,7 @@ import {
   type LegPayout,
 } from './claimAll';
 import { MULTICALL, readClaimAllList, readClaimAllReview } from './claimAllRead';
-import { moreRemains, readPendingRewards } from './rewards';
+import { readPendingRewards, remainderAfter } from './rewards';
 
 type Hex = `0x${string}`;
 
@@ -283,7 +283,7 @@ function ClaimAllFlow({ chain, own, payouts, picked, meta, onClose }: FlowProps)
           .read((c) => readPendingRewards(c, diamond, account))
           .then((x) => x.value)
           .catch(() => null);
-        more = now === null ? null : moreRemains(now, receipt.blockNumber);
+        more = remainderAfter(now, receipt.blockNumber);
       }
       return measureClaimAll(review, receipt.logs, diamond, account, w, copy, more);
     },

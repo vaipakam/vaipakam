@@ -271,6 +271,17 @@ export function moreRemains(now: PendingRewards | null, claimBlock: bigint): boo
   return now?.kind === 'exact' && now.atBlock >= claimBlock;
 }
 
+/** After a claim at `claimBlock`, whether more rewards remain: true for a
+ *  preview with a figure read at or after that block, false when the
+ *  protocol answers that nothing is left (it cannot answer so before the
+ *  claim, which had something to pay), and null when that is not known (no
+ *  read, a figure read before the claim, or any other answer). */
+export function remainderAfter(now: PendingRewards | null, claimBlock: bigint): boolean | null {
+  if (now === null) return null;
+  if (now.kind === 'none') return false;
+  return moreRemains(now, claimBlock) ? true : null;
+}
+
 /** Within the final notice before the estimate (unix seconds). */
 export function inFinalNotice(at: number, nowSeconds: number): boolean {
   return at - nowSeconds <= FINAL_NOTICE_DAYS * 86_400;

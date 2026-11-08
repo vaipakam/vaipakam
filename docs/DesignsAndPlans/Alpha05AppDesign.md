@@ -1120,7 +1120,11 @@ above. Each resolves here, so a route reviewer needs no private file:
   record (by collection and token id) or transfer put it, and each token measured where it
   landed (RB-PAYOUT-ROUTE) against what the collected payouts recorded,
   summed across them; a rewards claim that leaves more says so, and the
-  rest is listed again.
+  rest is listed again, and when that cannot be read after the claim the
+  card says it is not known rather than implying nothing is left. A payroll
+  figure is a floor (the withdrawal pays all accrued when it runs), stated
+  as such; its rise while the review is open is not a change to confirm, a
+  fall is.
 - **RB-FROZEN** — money the protocol holds for a wallet the sanctions
   screen flags (LN-53) is stated as "Frozen, awaiting de-listing": locked
   where its loan keeps it, in a vault, not lost, and released once the

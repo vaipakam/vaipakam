@@ -1037,6 +1037,7 @@ export const copy = {
     rowToVault: B('Credited to your vault'),
     vpfiOptIn: B('Off unless you turn it on: this VPFI sets your fee-discount tier.'),
     intentOptIn: B('Off unless you turn it on: this standing offer is still lending from this capital.'),
+    payrollAtLeast: B('Pays you at least this; salary accrued before it confirms is paid too'),
     tierUnknownOptIn: B('Off unless you turn it on: whether this capital sets your fee-discount tier could not be read.'),
     gapLoanUnread: A('{{what}} could not be read, so it is left out. Collect it from its own row once it reads.'),
     gapFallback: A('{{what}} is collected on its own: the loan is in fallback, and its claim settles the fallback first, which decides what it pays.'),
@@ -1097,6 +1098,8 @@ export const copy = {
     skipped: A('Skipped: the protocol refused it when the transaction ran, so nothing moved. It stays listed to collect.'),
     legCollected: B('{{what}}: collected'),
     legRewards: B('{{what}}: {{amount}} credited to your vault'),
+    legRewardsRest: B('More rewards to claim'),
+    legRewardsRestUnread: A('Whether more reward days remain could not be read after this claim. The Rewards page shows what is left.'),
     legRewardsMore: B('More rewards remain to collect; they are listed again.'),
     whySummary: B('How Claim everything works'),
     why: C(

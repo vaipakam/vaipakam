@@ -355,6 +355,9 @@ export function legTitle(l: Pick<ClaimAllLeg, 'subject'>, copy: Copy, symbol: (a
 
 /** One payout's label within its leg. */
 export function payoutLabel(l: ClaimAllLeg, p: LegPayout, copy: Copy): string | null {
+  // A payroll withdrawal pays everything accrued when it runs, so the
+  // figure read is a floor that keeps rising while the stream runs.
+  if (l.subject.kind === 'payroll') return copy.text('claimAll.payrollAtLeast');
   if (l.subject.kind === 'rewards' && p.amount === 0n)
     return l.subject.toDay === 0n
       ? copy.text('rewards.pendingZeroEntries')
@@ -425,7 +428,10 @@ const payoutKey = (p: LegPayout) => `${lower(p.asset)}:${p.assetType}:${p.tokenI
 // The whole subject (an offer's running state, a rewards claim's days) and
 // the opt-in are part of what the review states, not only the payouts.
 const subjectSig = (s: LegSubject) => JSON.stringify(s, (_k, v: unknown) => (typeof v === 'bigint' ? v.toString() : typeof v === 'string' ? v.toLowerCase() : v));
-const legSig = (l: ClaimAllLeg) => `${l.key}=${subjectSig(l.subject)}=${l.optIn}=${l.route}=${l.payouts.map(payoutKey).join(',')}`;
+// A payroll figure is a floor (see `payoutLabel`): its rise is the stream
+// accruing, not a change to confirm, so it is compared on its own below.
+const legSig = (l: ClaimAllLeg) =>
+  `${l.key}=${subjectSig(l.subject)}=${l.optIn}=${l.route}=${l.subject.kind === 'payroll' ? l.payouts.map((p) => lower(p.asset)).join(',') : l.payouts.map(payoutKey).join(',')}`;
 
 /** What a re-read found changed, in words, or null when nothing the review
  *  states moved. */
@@ -433,6 +439,8 @@ export function claimAllChanged(a: ClaimAllReview, b: ClaimAllReview, copy: Pick
   const { text } = copy;
   if (a.list.paused !== b.list.paused || a.list.frozen !== b.list.frozen) return text('repay.changedVerdict');
   if (a.send.map(legSig).join('|') !== b.send.map(legSig).join('|')) return text('claimAll.changed');
+  // A payroll floor that went down (the stream paid elsewhere, or was cut) is a change.
+  if (a.send.some((l, n) => l.subject.kind === 'payroll' && b.send[n]!.payouts[0]!.amount < l.payouts[0]!.amount)) return text('claimAll.changed');
   // The same route can bind differently: a queued payout's delay and its
   // secondary signer are stated in the review.
   if (
@@ -612,6 +620,9 @@ export function measureClaimAll(r: ClaimAllReview, logs: readonly Log[], diamond
       // Any part the vault could not take is paid to the wallet.
       if (paid.amount > toVault) add(paid.asset, paid.amount - toVault);
       if (l.subject.kind === 'rewards' && moreRewards === true) legs.push({ status: 'done', label: text('claimAll.legRewardsMore') });
+      // Whether days remain could not be confirmed after the claim: said, never read as none.
+      if (l.subject.kind === 'rewards' && moreRewards === null)
+        legs.push({ status: 'unknown', label: text('claimAll.legRewardsRest'), reason: text('claimAll.legRewardsRestUnread') });
       continue;
     }
     legs.push({ status: 'done', label: format('claimAll.legCollected', { what: title }) });
