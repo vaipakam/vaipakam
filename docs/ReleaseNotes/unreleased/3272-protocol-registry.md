@@ -1,4 +1,4 @@
-## Thread — A shared, delayed registry for protocol endpoints (PR #TBD)
+## Thread — A shared, delayed registry for protocol endpoints (PR #3383)
 
 A new standalone contract, the protocol registry, now ships with every fresh deploy. It holds the endpoints that the Diamond and every user vault must agree on, outside the Diamond, so a faulty facet cannot change them. It starts empty. The standalone price guard (#3272) adds the first entry when it ships. The vault payout policy (#3205 part 2) then adds the treasury, the backstop, and the swap adapter and conduit sets, as data rather than code.
 
