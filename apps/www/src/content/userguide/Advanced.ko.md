@@ -2142,6 +2142,14 @@ Positions는 하나의 공유 리더로 Home과 같은 보유 목록을 읽습�
 
 양식은 금액을 `calculateMaxWithdrawable`과 비교합니다. 이 값은 Active가 아닌 대출이나 비유동 담보에서는 0이며, 이자가 누적되면 줄어듭니다. 연결된 매각 등록을 보여 주는 뷰가 없으므로 검토 화면은 회수를 모의 실행해 그 거부를 알리고, 전송 시 다시 실행합니다. 완료 카드는 남은 담보와 새 수치를 트랜잭션의 `PartialCollateralWithdrawn` 로그에서, 받은 금액을 지갑으로의 토큰 `Transfer`에서 읽습니다. 보호 계정 모드를 쓰는 호출자의 경우 볼트의 지급 게이트가 인출을 지급하는 대신 계정의 지연 시간 동안 대기열에 넣으므로(`PayoutQueued`), 검토는 `getProtectedAccount`를 읽고 완료 카드는 그 로그를 읽습니다.
 
+<a id="collect-a-payout"></a>
+
+### 지급금 받기: 확인 항목
+
+`claimAsLender(loanId)`와 `claimAsBorrower(loanId)`에는 `whenNotPaused`가 붙어 있으며, 해당 측에 기록된 당사자(`loan.lender` / `loan.borrower`)의 금고에서 호출자에게 지급합니다. 호출자는 해당 측 포지션 토큰의 `ownerOf`여야 합니다. 대출자는 Repaid, Defaulted, FallbackPending, InternalMatched 대출에서 청구할 수 있고, 차입자는 Repaid, Defaulted, InternalMatched에서만 청구할 수 있습니다. 대출자 청구는 이미 청구된 행(`AlreadyClaimed`)을 보유자 확인 전에, 남은 것이 없는 측(`NothingToClaim`)을 그 후에 거부합니다. 강제 종료가 0으로 기록한 행도 실행되어 포지션을 닫습니다. 차입자 청구는 담보 행과 잉여 행이 모두 비었거나 청구되었을 때만 거부하며, 각 행을 자체 플래그에 따라 지급하고, 다른 토큰으로 대출 담보권 아래 남아 있는 담보도 함께 지급합니다.
+
+검토 화면은 `getClaimable`(대출자 행은 이전 판매자 몫을 이미 뺀 값이며 `getSellersShareOfLenderClaim`을 함께 표시), `getBorrowerSurplusClaim`, `getLoanCollateralLien`을 읽고, 청구를 시뮬레이션합니다. 시뮬레이션은 제재 검사도 적용합니다. 목록은 포지션 토큰을 따릅니다. `getUserDashboardClaimables`는 기록된 당사자의 청구를 나열하므로, 나열된 행은 지갑이 해당 측을 보유하는 동안에만 남고, 다른 사람에게서 받은 종료된 대출 포지션은 청구를 직접 읽습니다. 완료 카드는 `LenderFundsClaimed` / `BorrowerFundsClaimed`, `BorrowerSurplusClaimed`, `LoanSettled`와 지갑으로의 토큰 전송을 읽습니다. 보호 계정 모드의 호출자에 대해서는 `PayoutQueued`(계정 자신의 금고), `PayoutHeldInVault`(잠긴 계정 또는 가득 찬 대기열), `PaymentCreditedToVault`(다른 당사자의 금고)를 읽습니다. FallbackPending 대출에서는 대출자 청구가 청구 시점 내부 매칭을 실행해 행을 다시 쓸 수 있으므로, 완료 카드는 전송을 프로토콜 자체 기록과 비교합니다.
+
 <a id="risk-access"></a>
 
 ### Risk Access: 내 위험 등급

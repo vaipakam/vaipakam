@@ -1,17 +1,17 @@
 import { Link } from 'react-router-dom';
 import { useOwnStateClient } from '../../chain/ownRail';
 import { getSupportedChain } from '../../chain/chains';
-import { RewardClaim, pendingText } from '../../shared/claims/RewardClaim';
-import { inFinalNotice, readEffectiveTier, readHeldRewards, readPendingRewards, readRewardLowerBound, readSoonestExpiry, readVpfiToken } from '../../shared/claims/rewards';
-import { useCopy } from '../../shared/copy/useCopy';
-import { WhyLink } from '../../shared/help/WhyLink';
-import { useChainRead } from '../../shared/reads/chainRead';
-import { tokenAmount, useTokenMeta } from '../../shared/reads/tokens';
-import { useOwnRead } from '../../shared/reads/useOwnRead';
-import { formatUtc } from '../../shared/ui/format';
-import { Notice } from '../../shared/ui/Notice';
-import { OwnStamp } from '../../shared/ui/OwnStamp';
-import { useNow } from '../../shared/ui/useNow';
+import { RewardClaim, pendingText } from './RewardClaim';
+import { inFinalNotice, readEffectiveTier, readHeldRewards, readPendingRewards, readRewardLowerBound, readSoonestExpiry, readVpfiToken } from './rewards';
+import { useCopy } from '../copy/useCopy';
+import { WhyLink } from '../help/WhyLink';
+import { useChainRead } from '../reads/chainRead';
+import { tokenAmount, useTokenMeta } from '../reads/tokens';
+import { useOwnRead } from '../reads/useOwnRead';
+import { formatUtc } from '../ui/format';
+import { Notice } from '../ui/Notice';
+import { OwnStamp } from '../ui/OwnStamp';
+import { useNow } from '../ui/useNow';
 
 type Hex = `0x${string}`;
 

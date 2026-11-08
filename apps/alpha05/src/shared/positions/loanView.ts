@@ -26,6 +26,8 @@ import {
   RiskFacetABI,
   VaipakamNFTFacetABI,
 } from '@vaipakam/contracts/abis';
+import { sideClaimableStatus, type SideClaim } from '../claims/loanClaim';
+import { readSideClaim } from '../claims/loanClaimReview';
 import { isLiveStatus, type Deadlines, type LoanSummary } from './model';
 
 type Hex = `0x${string}`;
@@ -174,10 +176,15 @@ export interface LoanView {
   /** Whether periodic settlement is switched on here
    *  (`getPeriodicInterestEnabled`); null when unread or not asked. */
   periodicOn: boolean | null;
-  /** Whether the protocol is paused (`paused`), asked for every running
-   *  loan: the pause stops settlement and a default alike; null when unread
-   *  or not asked. */
+  /** Whether the protocol is paused (`paused`), asked for every loan: the
+   *  pause stops settlement, a default and every claim alike; null when
+   *  unread. */
   paused: boolean | null;
+  /** Each side's claim as the protocol records it (LN-48, LN-49), asked
+   *  only in a state that side may claim in; null when not asked or unread
+   *  (the claim's rule reads the loan's state first, so the two never
+   *  meet). */
+  claims: { lender: SideClaim | null; borrower: SideClaim | null };
   /** Whether a refinance request is live for a running loan
    *  (`getRefinanceRequest`), which holds a partial repayment; null when
    *  unread or the loan has ended. */
@@ -286,6 +293,8 @@ export async function readLoanView(client: PublicClient, diamond: Hex, loanId: b
     collateralPaused,
     collateralLiquidity,
     maxWithdrawable,
+    lenderClaim,
+    borrowerClaim,
   ] = await Promise.all([
     maybe(read<Hex>(NFT, 'ownerOf', [loan.lenderTokenId])),
     maybe(read<Hex>(NFT, 'ownerOf', [loan.borrowerTokenId])),
@@ -294,7 +303,7 @@ export async function readLoanView(client: PublicClient, diamond: Hex, loanId: b
     scheduled ? maybe(read<boolean>(NUMERAIRE, 'getPeriodicInterestEnabled')) : null,
     live ? maybe(read<boolean>(DEFAULTED, 'isLoanDefaultable', [loanId])) : null,
     live ? maybe(read<readonly [boolean, Hex]>(DEFAULTED, 'defaultKycAdmission', [loanId])) : null,
-    live ? maybe(read<boolean>(ADMIN, 'paused')) : null,
+    maybe(read<boolean>(ADMIN, 'paused')),
     live ? maybe(read<boolean>(ORACLE, 'sequencerHealthy')) : null,
     live ? maybe(read<bigint>(RISK, 'calculateHealthFactor', [loanId])) : null,
     live ? maybe(read<bigint>(RISK, 'calculateLTV', [loanId])) : null,
@@ -306,6 +315,8 @@ export async function readLoanView(client: PublicClient, diamond: Hex, loanId: b
     liveErc20 ? maybe(read<boolean>(ADMIN, 'isAssetPaused', [loan.collateralAsset])) : null,
     liveErc20 ? maybe(read<number>(ORACLE, 'checkLiquidity', [loan.collateralAsset]).then(Number)) : null,
     liveErc20 ? maybe(read<bigint>(PARTIAL_WITHDRAWAL, 'calculateMaxWithdrawable', [loanId])) : null,
+    sideClaimableStatus('lender', Number(loan.status)) ? readSideClaim(client, diamond, loanId, 'lender', at) : null,
+    sideClaimableStatus('borrower', Number(loan.status)) ? readSideClaim(client, diamond, loanId, 'borrower', at) : null,
   ]);
 
   // A loan with a cadence answers to its checkpoint too: with the checkpoint
@@ -354,6 +365,7 @@ export async function readLoanView(client: PublicClient, diamond: Hex, loanId: b
     collateralPaused,
     collateralLiquidNow: collateralLiquidity === null ? null : collateralLiquidity === LIQUID_NOW,
     maxWithdrawable,
+    claims: { lender: lenderClaim, borrower: borrowerClaim },
   };
   return { view };
 }

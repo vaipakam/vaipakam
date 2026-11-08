@@ -1292,6 +1292,14 @@ Mientras un préstamo está activo, quien tiene la posición de prestatario pued
 
 La revisión muestra la garantía ahora y después, que va de su bóveda a su billetera, el límite actual y el factor de salud y el préstamo sobre valor actuales. No hace falta aprobación, así que su billetera pide confirmar una vez, después de que la app pruebe el retiro en simulación. El protocolo vuelve a comprobar sus límites cuando el retiro se confirma: si los precios se movieron y el importe ya no cabe, se rechaza y no se mueve nada. Una pausa del protocolo, una orden de swap-to-repay pendiente, una solicitud de refinanciación vigente o una venta listada por el prestamista lo detiene, y el protocolo solo permite retirar garantía de un token al que pone precio. Si tu cuenta tiene activado el modo protegido, la garantía espera en su cola de pagos durante el retraso de la cuenta antes de llegar a tu cartera, y la revisión lo indica.
 
+<a id="collect-a-payout"></a>
+
+### Cobrar un pago
+
+Cuando un préstamo termina, el protocolo registra lo que se debe a cada parte, y quien tiene cada posición lo cobra desde la página del préstamo o desde Reclamaciones. Paga a quien tiene la posición ahora, así que una posición que compraste te paga a ti. El pago del prestamista es el principal y los intereses, o lo que recuperó un impago o una liquidación, más los fondos retenidos para el prestamista y, en un alquiler, el NFT alquilado. El pago del prestatario es la garantía devuelta o lo que sobró, más el excedente retenido para el prestatario. Cobrar quema tu token de posición, y cuando ambas partes han cobrado, el préstamo queda liquidado.
+
+La revisión enumera cada pago que hace la reclamación, lo que cobran primero los vendedores anteriores de una posición de prestamista (intereses ganados y no pagados) y adónde llega el pago: a tu billetera o, con el modo protegido activado, a la cola de pagos de tu cuenta o a tu bóveda. No hace falta ninguna aprobación, así que tu billetera pregunta una vez, después de que la app pruebe la reclamación en simulación. Una pausa del protocolo detiene toda reclamación. Mientras un préstamo está en fallback, el pago del prestatario espera a que el prestamista cobre, y ese cobro termina el fallback: el prestatario ya no puede subsanarlo. La tarjeta final muestra lo que la transacción pagó de verdad.
+
 <a id="risk-access"></a>
 
 ### Risk Access: tu nivel de riesgo

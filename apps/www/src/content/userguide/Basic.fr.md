@@ -1310,6 +1310,14 @@ Tant qu'un prêt court, le détenteur de la position d'emprunteur peut reprendre
 
 La revue montre la garantie maintenant et après, qu'elle passe de votre coffre à votre portefeuille, la limite actuelle, ainsi que le facteur de santé et le ratio prêt/valeur actuels. Aucune approbation n'est nécessaire : votre portefeuille demande une seule confirmation, après que l'app a testé le retrait en simulation. Le protocole revérifie ses limites à la confirmation : si les prix ont bougé et que le montant ne passe plus, le retrait est refusé et rien ne bouge. Une pause du protocole, un ordre swap-to-repay en attente, une demande de refinancement en cours ou une mise en vente par le prêteur le bloque, et le protocole ne laisse reprendre de garantie que pour un jeton qu'il valorise. Si le mode protégé est activé sur votre compte, la garantie attend dans sa file de paiements pendant le délai du compte avant d'arriver dans votre portefeuille, et la revue le dit.
 
+<a id="collect-a-payout"></a>
+
+### Encaisser un versement
+
+Quand un prêt prend fin, le protocole enregistre ce qui revient à chaque partie, et le détenteur de chaque position l'encaisse depuis la page du prêt ou depuis Réclamations. Il paie celui qui détient la position aujourd'hui : une position que vous avez achetée vous paie. Le versement du prêteur est le principal et les intérêts, ou ce qu'un défaut ou une liquidation a récupéré, plus les fonds retenus pour le prêteur et, pour une location, le NFT loué. Le versement de l'emprunteur est la garantie rendue ou ce qui reste, plus un excédent retenu pour l'emprunteur. L'encaissement brûle votre jeton de position, et une fois que les deux parties ont encaissé, le prêt est soldé.
+
+L'examen liste chaque paiement que fait la réclamation, ce que les anciens vendeurs d'une position de prêteur prennent d'abord (des intérêts gagnés et non payés) et où arrive le paiement : votre portefeuille ou, avec le mode protégé actif, la file de versements de votre compte ou votre coffre. Aucune approbation n'est nécessaire, votre portefeuille demande donc une fois, après que l'application a simulé la réclamation. Une pause du protocole arrête toute réclamation. Tant qu'un prêt est en repli, le versement de l'emprunteur attend que le prêteur encaisse, et cet encaissement met fin au repli : l'emprunteur ne peut plus le régulariser. La carte de fin montre ce que la transaction a réellement payé.
+
 <a id="risk-access"></a>
 
 ### Risk Access : votre niveau de risque
