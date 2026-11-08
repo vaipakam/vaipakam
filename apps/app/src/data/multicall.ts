@@ -67,29 +67,42 @@ export function chunkForMulticall<T>(items: readonly T[], size = MAX_MULTICALL_C
  * batch is still SENT best-effort, at that estimate plus the shared margin.
  *
  * When the strict form reverts, some item would fail now anyway (a loan
- * closed by someone else since the plan, say). Each item is then estimated
- * on its own, strict, and the limit is the sum of the ones that would run,
- * plus the margin. The sum counts the base transaction cost once per item,
- * so it errs high; unused gas is not charged. When no item would run, there
- * is no figure to give and the wallet estimates as before: the batch can
- * only skip, and its read-back says so.
+ * closed by someone else since the plan, say). The batch is then simulated
+ * best-effort, which reports each item's outcome, and the estimate is taken
+ * on the strict form of the items that ran, IN ORDER and together. Items are
+ * never sized one by one: a later item can depend on an earlier one (a
+ * refinance request is refused until its caps are set by the item before
+ * it), and only the batch as it runs shows that. The items that would fail
+ * are left out of the figure; each stops at its first refusal, which the
+ * margin covers.
  *
- * @param estimate Estimates one `multicall` with the given items, rejecting
- *                 when it would revert.
+ * When nothing would run, or the chain moved between the two reads so the
+ * subset reverts too, there is no figure to give and the wallet estimates.
+ * The batch can then only skip, and its read-back says so.
+ *
  * @returns The limit to send with, or `undefined` to leave it to the wallet.
  */
 export async function bestEffortGasLimit(
   calls: readonly EncodedMulticallCall[],
-  estimate: (calls: EncodedMulticallCall[]) => Promise<bigint>,
+  node: {
+    /** Estimates one `multicall` with these items; rejects when it reverts. */
+    estimate: (calls: EncodedMulticallCall[]) => Promise<bigint>;
+    /** Runs one `multicall` with these items and returns its results. */
+    simulate: (calls: EncodedMulticallCall[]) => Promise<readonly MulticallResult[]>;
+  },
 ): Promise<bigint | undefined> {
   const strict = calls.map((c) => ({ ...c, allowFailure: false }));
   try {
-    return gasLimitFromEstimate(await estimate(strict));
+    return gasLimitFromEstimate(await node.estimate(strict));
   } catch {
-    // Some item would revert now; size from the ones that would run.
+    // Some item would revert now; size from the ones that run.
   }
-  const alone = await Promise.all(strict.map((c) => estimate([c]).catch(() => null)));
-  const running = alone.filter((g): g is bigint => g !== null);
-  if (running.length === 0) return undefined;
-  return gasLimitFromEstimate(running.reduce((a, g) => a + g, 0n));
+  try {
+    const results = await node.simulate([...calls]);
+    const running = strict.filter((_, i) => results[i]?.success === true);
+    if (running.length === 0) return undefined;
+    return gasLimitFromEstimate(await node.estimate(running));
+  } catch {
+    return undefined;
+  }
 }

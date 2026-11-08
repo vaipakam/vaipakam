@@ -19,7 +19,7 @@ import { useActiveChain } from '../chain/useActiveChain';
 import { publishReceiptInvalidation } from '../chain/receiptSync';
 import { isExitWrite } from './tosWriteGate';
 import { tosQueryKey, isVerdictStale, type TosVerdictData } from './tosGate';
-import { bestEffortGasLimit, type EncodedMulticallCall } from '../data/multicall';
+import { bestEffortGasLimit, type EncodedMulticallCall, type MulticallResult } from '../data/multicall';
 
 export { DIAMOND_ABI_VIEM };
 
@@ -200,15 +200,26 @@ export function useDiamondWrite() {
       // refinance): see `bestEffortGasLimit`.
       const gas =
         functionName === 'multicall' && !opts?.target
-          ? await bestEffortGasLimit(args[0] as EncodedMulticallCall[], (calls) =>
-              publicClient.estimateContractGas({
-                address: walletChain.diamondAddress,
-                abi: DIAMOND_ABI_VIEM,
-                functionName: 'multicall',
-                args: [calls],
-                account: address,
-              }),
-            )
+          ? await bestEffortGasLimit(args[0] as EncodedMulticallCall[], {
+              estimate: (calls) =>
+                publicClient.estimateContractGas({
+                  address: walletChain.diamondAddress,
+                  abi: DIAMOND_ABI_VIEM,
+                  functionName: 'multicall',
+                  args: [calls],
+                  account: address,
+                }),
+              simulate: async (calls) =>
+                (
+                  await publicClient.simulateContract({
+                    address: walletChain.diamondAddress,
+                    abi: DIAMOND_ABI_VIEM,
+                    functionName: 'multicall',
+                    args: [calls],
+                    account: address,
+                  })
+                ).result as readonly MulticallResult[],
+            })
           : undefined;
       const hash = await walletClient.writeContract({
         address: opts?.target?.address ?? walletChain.diamondAddress,
