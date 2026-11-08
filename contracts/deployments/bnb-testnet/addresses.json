@@ -169,5 +169,6 @@
   },
   "serviceCapacityEscrow": "0xbB49315011146F3711D1A351552831188ca9AB54",
   "sanctionsOracleStandIn": "0x53Bb8839572d733Cc7E68964EB104B96C7715120",
-  "sanctionsClearanceAttestor": "0x57aB8AA6FfCdA681Fb30Bb58aF788010944beA3E"
+  "sanctionsClearanceAttestor": "0x57aB8AA6FfCdA681Fb30Bb58aF788010944beA3E",
+  "keeperAddress": "0xD9257B636E17D5714DD54F260c9F7EB81349E49B"
 }
