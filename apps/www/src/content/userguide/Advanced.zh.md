@@ -1960,6 +1960,14 @@ Positions 通过一个共享读取器读取与 Home 相同的持仓清单：`get
 
 预览的 `canSettleNow` 不考虑开关和暂停，因此卡片按 `settlePeriodicInterest` 自身的顺序把它们组合起来：关闭（`PeriodicInterestDisabled`）、暂停（`whenNotPaused`），然后是周期时间（`graceEndsAt` 之前为 `PeriodicSettleNotDue`）。只有在开关打开且协议未暂停时才会提示出售；无法读取的开关或暂停状态显示为未知。不足额为零时，结算只推进检查点。守护程序的 `PERIODIC_SETTLE` 是否启用不会报告给应用，因此卡片说明结算对任何人开放，而守护程序的状态未知。
 
+<a id="partial-repay"></a>
+
+### 偿还部分贷款：金额如何计算
+
+`repayPartial(loanId, amount)` 收取本金 `amount` 加上自 `interestAccrualStart` 以来累计的利息（扣除任何定期抵扣）。它先把利息支付给出售前仍欠其利息的此前持有人（`paySellersFirst`），再支付给当前出借人头寸的持有人，并分出国库的份额（若持有人须被协议冻结，其份额改为锁定存入出借人金库，`freezeOrPayActiveLenderFromPayer`），降低 `principal`，重新开始计息时钟，并计入当前期间；到期日永不移动。在宽限期结束后、低于 `principal × minPartialBps / 10000`（`getAssetRiskParams`）、等于或高于全部本金（`PartialWouldRetireFullPrincipal`）、存在有效的意图承诺或再融资请求时，以及流动性贷款的健康因子会变差时，它会拒绝。
+
+没有任何视图能在调用前返回部分还款的利息（#3299），因此审核界面使用现在及稍后时刻读取的 `calculateRepaymentAmount` 减去 `principal`。对按比例计息、未过到期日的贷款，这是精确的；使用 `useFullTermInterest` 时它包含剩余期限的最低利息，过了到期日还包含滞纳金，因此显示为"最多"。授权金额恰好是偿还部分加上这个上限。完成卡片会测量该付款自身 `PartialRepaid` 日志中的 `newPrincipal`（而非该区块的 `principal`，同一区块中随后的交易可能改变它）、钱包的流出，以及之后的 `previewPeriodicSettle`。仅当钱包余额不足以支付该部分本金，或该部分本金加确切利息时，审核才会拦下；若只是上限数字超过余额，则由发送付款前一刻的模拟执行来决定。
+
 <a id="risk-access"></a>
 
 ### Risk Access：你的风险等级

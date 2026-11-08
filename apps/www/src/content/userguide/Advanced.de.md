@@ -2415,6 +2415,14 @@ Für einen aktiven ERC-20-Kredit mit Kadenz liest die Karte `previewPeriodicSett
 
 `canSettleNow` der Vorschau beachtet weder den Schalter noch die Pause, daher setzt die Karte sie in der Reihenfolge von `settlePeriodicInterest` zusammen: ausgeschaltet (`PeriodicInterestDisabled`), pausiert (`whenNotPaused`), dann die Zeit der Periode (`PeriodicSettleNotDue` vor `graceEndsAt`). Ein Verkauf wird nur angekündigt, wenn der Schalter an und das Protokoll nicht pausiert ist; ein ungelesener Schalter oder eine ungelesene Pause wird als unbekannt angegeben. Bei einem Fehlbetrag von null rückt die Abrechnung nur den Stichtag vor. Die Scharfschaltung von `PERIODIC_SETTLE` beim Keeper wird der App nicht gemeldet, daher sagt die Karte, dass die Abrechnung jedem offensteht und der Stand des Keepers nicht bekannt ist.
 
+<a id="partial-repay"></a>
+
+### Einen Teil des Kredits zurückzahlen: Wie die Zahlung bemessen wird
+
+`repayPartial(loanId, amount)` nimmt `amount` an Kapital plus die seit `interestAccrualStart` aufgelaufenen Zinsen (abzüglich periodischer Gutschriften). Es zahlt die Zinsen zuerst an frühere Inhaber, denen aus der Zeit vor einem Verkauf noch Zinsen zustehen (`paySellersFirst`), dann an den aktuellen Inhaber der Kreditgeberposition, wobei der Anteil der Treasury abgezogen wird (bei einem Inhaber, den das Protokoll einfrieren muss, wird sein Anteil stattdessen gesperrt im Kreditgeber-Vault hinterlegt, `freezeOrPayActiveLenderFromPayer`); es senkt `principal`, startet die Zinsuhr neu und schreibt den Betrag der laufenden Periode gut; die Fälligkeit bewegt sich nie. Es lehnt ab nach dem Ende der Nachfrist, unter `principal × minPartialBps / 10000` (`getAssetRiskParams`), bei dem gesamten Kapital oder mehr (`PartialWouldRetireFullPrincipal`), bei einem aktiven Intent-Commit oder einer Refinanzierungsanfrage und bei einem liquiden Kredit, wenn sich der Health Factor verschlechtern würde.
+
+Keine View liefert die Zinsen der Teilzahlung vor dem Aufruf (#3299), daher nutzt die Prüfung `calculateRepaymentAmount` abzüglich `principal`, gelesen jetzt und für einen Zeitpunkt kurz danach. Das ist exakt für einen Pro-rata-Kredit bis zur Fälligkeit; mit `useFullTermInterest` enthält es den Mindestzins der Restlaufzeit und nach der Fälligkeit eine Verzugsgebühr, daher wird es als „höchstens“ gezeigt. Die Freigabe ist genau der Teil plus diese Obergrenze. Die Abschlusskarte misst `newPrincipal` aus dem eigenen `PartialRepaid`-Log der Zahlung (nicht `principal` am Block, den eine spätere Transaktion dort verändern kann), den Abfluss aus der Wallet und danach `previewPeriodicSettle`. Die Überprüfung lehnt die Wallet nur ab, wenn ihr der Teilbetrag fehlt oder der Teilbetrag plus ein exakter Zinsbetrag; übersteigt nur der obere Wert ihr Guthaben, entscheidet der Probelauf unmittelbar vor dem Senden der Zahlung.
+
 <a id="risk-access"></a>
 
 ### Risk Access: Ihre Risikostufe
