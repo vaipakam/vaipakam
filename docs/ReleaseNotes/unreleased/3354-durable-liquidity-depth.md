@@ -1,4 +1,4 @@
-## Liquidity status reads pool depth that persists, not a single block (PR #<n>)
+## Liquidity status reads pool depth that persists, not a single block (PR #3370)
 
 Whether a token counts as liquid, and which depth tier it earns, used to be read from each pool exactly as it stood in the current block. Depth added and removed around one transaction could therefore make a weak token look liquid when a loan opened, and depth pulled just before a liquidation could make that liquidation refuse. The owner chose an on-chain fix.
 
