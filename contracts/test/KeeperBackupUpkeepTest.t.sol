@@ -12,6 +12,7 @@ contract MockBackupDiamond {
 
     uint256[] public loans;
     uint256[] public offers;
+    uint256[] public payouts;
     mapping(uint256 => uint256) public linkedLoan;
     uint256 public today;
     bool public active;
@@ -34,6 +35,10 @@ contract MockBackupDiamond {
 
     function setOffers(uint256[] memory ids) external {
         offers = ids;
+    }
+
+    function setPayouts(uint256[] memory ids) external {
+        payouts = ids;
     }
 
     function setLinked(uint256 offerId, uint256 loanId) external {
@@ -103,6 +108,14 @@ contract MockBackupDiamond {
         return beacon;
     }
 
+    function getOpenPayoutCount() external view returns (uint256) {
+        return payouts.length;
+    }
+
+    function getOpenPayoutIds(uint256 offset, uint256 limit) external view returns (uint256[] memory) {
+        return _slice(payouts, offset, limit);
+    }
+
     // ── steps ──
     function autoDeductDaily(uint256 id) external {
         _run(id);
@@ -153,6 +166,11 @@ contract MockBackupDiamond {
 
     function skipConflictedDay(uint256 d) external {
         _run(d);
+    }
+
+    function releasePayout(uint256 id) external returns (uint256) {
+        _run(id);
+        return 1;
     }
 
     /// @dev Succeeds with zero once nothing is left, as the real step does.
@@ -223,6 +241,7 @@ contract KeeperBackupUpkeepTest is Test {
     uint8 constant CLOSE_DAY = uint8(KeeperBackupUpkeep.Step.CloseDay);
     uint8 constant RECYCLE = uint8(KeeperBackupUpkeep.Step.RecycleSkippedDayValue);
     uint8 constant BEACON_CURRENT = uint8(KeeperBackupUpkeep.Step.BeaconExecuteCurrentVersion);
+    uint8 constant RELEASE_PAYOUT = uint8(KeeperBackupUpkeep.Step.ReleasePayout);
 
     function setUp() public {
         vm.warp(1_800_000_000);
@@ -282,14 +301,14 @@ contract KeeperBackupUpkeepTest is Test {
         vm.expectRevert();
         backup.setEnabledSteps(1);
         vm.startPrank(owner);
-        vm.expectRevert(abi.encodeWithSelector(KeeperBackupUpkeep.StepsOutOfRange.selector, uint256(1) << 14));
-        backup.setEnabledSteps(uint256(1) << 14);
+        vm.expectRevert(abi.encodeWithSelector(KeeperBackupUpkeep.StepsOutOfRange.selector, uint256(1) << 15));
+        backup.setEnabledSteps(uint256(1) << 15);
         vm.expectRevert(KeeperBackupUpkeep.SettingOutOfRange.selector);
         backup.setLag(AUTO_DEDUCT, 5 minutes);
         vm.expectRevert(KeeperBackupUpkeep.SettingOutOfRange.selector);
         backup.setLag(AUTO_DEDUCT, 8 days);
-        vm.expectRevert(abi.encodeWithSelector(KeeperBackupUpkeep.UnknownStep.selector, uint8(14)));
-        backup.setLag(14, 1 hours);
+        vm.expectRevert(abi.encodeWithSelector(KeeperBackupUpkeep.UnknownStep.selector, uint8(15)));
+        backup.setLag(15, 1 hours);
         vm.expectRevert(KeeperBackupUpkeep.SettingOutOfRange.selector);
         backup.setActWindow(29 minutes);
         vm.expectRevert(KeeperBackupUpkeep.SettingOutOfRange.selector);
@@ -527,7 +546,7 @@ contract KeeperBackupUpkeepTest is Test {
         // the noted loan runs.
         uint256 t = block.timestamp + 61 minutes;
         vm.warp(t);
-        vm.roll(block.number + 6); // one round of KeeperBackupUpkeep.PARTS
+        vm.roll(block.number + 7); // one round of KeeperBackupUpkeep.PARTS
         (, KeeperBackupUpkeep.Action[] memory b) = _check();
         bool run;
         for (uint256 i; i < b.length; i++) {
@@ -579,7 +598,7 @@ contract KeeperBackupUpkeepTest is Test {
         }
         diamond.setDue(diamond.autoDeductDaily.selector, 11, true);
         bool found;
-        for (uint256 b = 1; b <= 6; b++) {
+        for (uint256 b = 1; b <= 7; b++) {
             vm.roll(b);
             vm.prank(address(0xBEEF), SIM);
             (bool needed, bytes memory data) = backup.checkUpkeep{gas: 5_000_000}("");
@@ -619,7 +638,7 @@ contract KeeperBackupUpkeepTest is Test {
     ///      leads would always be even, and the first loan's periodic stamp
     ///      (pair 5, after its own burning default) would never go first.
     function test_APartReachedOnlyWhileLeadingStillRotatesThroughEveryPair() public {
-        uint256 parts = 6; // KeeperBackupUpkeep.PARTS
+        uint256 parts = 7; // KeeperBackupUpkeep.PARTS
         uint256 loansPart = 4;
         vm.prank(owner);
         backup.setScan(10, 7, 3_000_000, 2);
@@ -693,8 +712,9 @@ contract KeeperBackupUpkeepTest is Test {
         _arm(AUTO_DEDUCT);
         _perform(_one(KeeperBackupUpkeep.Mode.Run, AUTO_DEDUCT, 11));
         assertEq(diamond.runs(diamond.autoDeductDaily.selector, 11), 0);
-        vm.expectRevert(abi.encodeWithSelector(KeeperBackupUpkeep.UnknownStep.selector, uint8(14)));
-        _perform(_one(KeeperBackupUpkeep.Mode.Note, 14, 11));
+        uint8 unknown = backup.STEP_COUNT();
+        vm.expectRevert(abi.encodeWithSelector(KeeperBackupUpkeep.UnknownStep.selector, unknown));
+        _perform(_one(KeeperBackupUpkeep.Mode.Note, unknown, 11));
     }
 
     function test_RunsPerPerformCapsTheRuns() public {
@@ -765,7 +785,7 @@ contract KeeperBackupUpkeepTest is Test {
 
         // An old day (a lapse opens weeks after its day) is reached by the
         // history pages: from day 40 the older days are 0..32, five pages of
-        // seven, and the page moves on once per round of six blocks.
+        // seven, and the page moves on once per round of seven blocks.
         diamond.setDay(40, true);
         diamond.setDue(diamond.closeDay.selector, 2, true);
         bool seen;
@@ -775,7 +795,7 @@ contract KeeperBackupUpkeepTest is Test {
         for (uint256 i; i < 5; i++) {
             (needed, a) = _check();
             if (needed && a[0].arg == 2) seen = true;
-            b += 6; // one round of KeeperBackupUpkeep.PARTS
+            b += 7; // one round of KeeperBackupUpkeep.PARTS
             vm.roll(b);
         }
         assertTrue(seen, "day 2 reached by the history window");
@@ -830,7 +850,7 @@ contract KeeperBackupUpkeepTest is Test {
         backup.setScan(1, 7, 1_500_000, 2);
         _arm(AUTO_DEDUCT);
         diamond.setDue(diamond.autoDeductDaily.selector, 13, true);
-        // One loan per page; the page moves once per round of six blocks, and
+        // One loan per page; the page moves once per round of seven blocks, and
         // time alone moves nothing.
         (bool before,) = _check();
         uint256 t = block.timestamp;
@@ -847,7 +867,7 @@ contract KeeperBackupUpkeepTest is Test {
         for (uint256 i; i < 3; i++) {
             (bool needed, KeeperBackupUpkeep.Action[] memory a) = _check();
             if (needed && a[0].arg == 13) seen = true;
-            b += 6; // one round of KeeperBackupUpkeep.PARTS
+            b += 7; // one round of KeeperBackupUpkeep.PARTS
             vm.roll(b);
         }
         assertTrue(seen);
@@ -862,7 +882,7 @@ contract KeeperBackupUpkeepTest is Test {
     ///      time does meanwhile. (A page chosen by time could return to page
     ///      three only on rounds whose start falls in one residue class.)
     function test_EveryPairOfEveryPageLeadsItsPart() public {
-        uint256 parts = 6; // KeeperBackupUpkeep.PARTS
+        uint256 parts = 7; // KeeperBackupUpkeep.PARTS
         uint256 loansPart = 4;
         uint256 pages = 3;
         uint256 pairsPerPage = 10 * 7; // ten loans, seven loan steps
@@ -883,7 +903,7 @@ contract KeeperBackupUpkeepTest is Test {
         uint256 t = block.timestamp;
         for (uint256 m; m < pages * pairsPerPage && !found; m++) {
             vm.roll(m * parts + loansPart);
-            t += 12 seconds; // a round of six two-second blocks
+            t += 14 seconds; // a round of seven two-second blocks
             vm.warp(t);
             vm.prank(address(0xBEEF), SIM);
             (bool needed, bytes memory data) = backup.checkUpkeep{gas: 5_000_000}("");
@@ -896,5 +916,58 @@ contract KeeperBackupUpkeepTest is Test {
             }
         }
         assertTrue(found, "the last pair of the last page leads its part within pages x pairs rounds");
+    }
+
+    // ── payout releases ──
+
+    function test_AMaturedPayoutIsReleasedFromTheOpenSetAfterTheLag() public {
+        _arm(RELEASE_PAYOUT);
+        uint256[] memory ids = new uint256[](2);
+        ids[0] = 4;
+        ids[1] = 7;
+        diamond.setPayouts(ids);
+        // Payout 4 is still in its delay (its release would revert); 7 is due.
+        diamond.setDue(diamond.releasePayout.selector, 7, true);
+        (bool needed, KeeperBackupUpkeep.Action[] memory a) = _check();
+        assertTrue(needed);
+        assertEq(a.length, 1);
+        assertEq(a[0].step, RELEASE_PAYOUT);
+        assertEq(a[0].arg, 7);
+        _perform(a);
+        vm.warp(block.timestamp + 61 minutes);
+        (needed, a) = _check();
+        assertTrue(needed);
+        assertEq(uint8(a[0].mode), uint8(KeeperBackupUpkeep.Mode.Run));
+        vm.expectEmit(address(backup));
+        emit KeeperBackupUpkeep.BackupStepRun(RELEASE_PAYOUT, 7, true, bytes4(0));
+        _perform(a);
+        assertEq(diamond.runs(diamond.releasePayout.selector, 7), 1);
+        assertEq(diamond.runs(diamond.releasePayout.selector, 4), 0);
+    }
+
+    function test_ThePayoutPageMovesOnEveryRoundAndIsOffWhileDisarmed() public {
+        vm.prank(owner);
+        backup.setScan(1, 7, 1_500_000, 2);
+        uint256[] memory ids = new uint256[](3);
+        ids[0] = 1;
+        ids[1] = 2;
+        ids[2] = 3;
+        diamond.setPayouts(ids);
+        diamond.setDue(diamond.releasePayout.selector, 3, true);
+        (bool needed,) = _check();
+        assertFalse(needed, "disarmed: no payout is probed");
+        _arm(RELEASE_PAYOUT);
+        bool seen;
+        // A local block counter: under via-IR `block.number` read in a loop can
+        // stay at its first value after `vm.roll`.
+        uint256 bn = block.number;
+        for (uint256 i; i < 3; i++) {
+            KeeperBackupUpkeep.Action[] memory a;
+            (needed, a) = _check();
+            if (needed && a[0].arg == 3) seen = true;
+            bn += 7; // one round of KeeperBackupUpkeep.PARTS
+            vm.roll(bn);
+        }
+        assertTrue(seen);
     }
 }

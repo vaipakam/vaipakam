@@ -8424,6 +8424,16 @@ library LibVaipakam {
         ///      hour wins), read by the forced-sale floor's calm test.
         ///      Appended — append-only.
         mapping(address => mapping(uint256 => uint256)) hourlyPrice1e18;
+        /// @dev #3361 — every queued payout id, across all accounts: the same
+        ///      ids as the union of `pendingPayoutIds`, kept as one set so a
+        ///      keeper (ours, or the Chainlink backup) can find matured
+        ///      payouts without knowing the accounts. Written only by
+        ///      `LibProtectedAccount` beside each `pendingPayoutIds` write
+        ///      (queue adds; cancel and release remove). A Diamond refreshed
+        ///      in place across #3361 starts it empty, so rows queued before
+        ///      the refresh are missing from it (it can only read short, never
+        ///      list a closed row). Appended — append-only.
+        EnumerableSet.UintSet openPayoutIds;
     }
 
     /// @notice Protected account mode — one owner wallet's settings.
