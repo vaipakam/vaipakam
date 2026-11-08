@@ -109,6 +109,7 @@ export function bookRowFrom(o: Json): BookRow {
       offerType === OFFER_TYPE_LENDER ? big(o.collateralAmount) : o.collateralAmountMax === null || o.collateralAmountMax === undefined ? null : big(o.collateralAmountMax),
     durationDays: big(o.durationDays),
     tokenId: big(o.tokenId),
+    quantity: big(o.quantity),
     collateralTokenId: big(o.collateralTokenId),
     collateralQuantity: big(o.collateralQuantity),
     prepayAsset: addr(o.prepayAsset),

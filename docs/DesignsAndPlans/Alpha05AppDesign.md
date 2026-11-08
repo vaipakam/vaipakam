@@ -1295,7 +1295,7 @@ above. Each resolves here, so a route reviewer needs no private file:
   read as refinance or not says it may be one. A borrower request's
   collateral reads as its range when it has one, and as "at least" its
   floor when the index has not read the ceiling, never as the floor alone;
-  an ERC-1155's collateral states its unit count.
+  an ERC-1155 leg, rented or pledged, states its unit count.
   A row the index returned in
   a shape the app cannot read is counted as unread, never dropped silently;
   a failed read is a degraded-source warning ("nothing here means no

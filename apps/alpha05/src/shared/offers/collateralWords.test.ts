@@ -23,3 +23,29 @@ describe('collateralWords', () => {
     expect(collateralWords({ ...base, collateralAssetType: 1, collateralTokenId: 7n }, null, format)).toMatch(/^asset\.nft:.*"7"/);
   });
 });
+
+describe('offerLine', () => {
+  it('counts an ERC-1155 rental’s units', async () => {
+    const { offerLine } = await import('./offerLine');
+    const text = ((k: string) => k) as unknown as CopyAccess['text'];
+    const line = offerLine(
+      {
+        id: 3n,
+        offerType: 0,
+        assetType: 2,
+        lendingAsset: TLIQ,
+        amount: 10n,
+        amountMax: 10n,
+        interestRateBps: 0n,
+        interestRateBpsMax: 0n,
+        durationDays: 7n,
+        tokenId: 9n,
+        quantity: 4n,
+        prepayAsset: TLIQ,
+      },
+      null,
+      { text, format },
+    );
+    expect(line).toContain(' × 4');
+  });
+});

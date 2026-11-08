@@ -20,6 +20,7 @@ function json(over: Record<string, unknown> = {}): Record<string, unknown> {
     tokenId: '0',
     collateralTokenId: '0',
     collateralQuantity: '0',
+    quantity: '0',
     amount: '1000',
     amountMax: '2000',
     amountFilled: '0',
