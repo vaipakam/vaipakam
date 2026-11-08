@@ -737,7 +737,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](54);
+        selectors = new bytes4[](48);
         selectors[0] = AdminFacet.setTreasury.selector;
         selectors[1] = AdminFacet.getTreasury.selector;
         selectors[2] = AdminFacet.setZeroExProxy.selector;
@@ -761,46 +761,37 @@ contract HelperTest {
         // Auto-pause primitive (Phase 1 follow-up).
         selectors[20] = AdminFacet.autoPause.selector;
         selectors[21] = AdminFacet.pausedUntil.selector;
-        // Depth-tiered LTV (Piece B follow-up b) — Uni-V2-fork family
-        // setters/getters. Configured per chain by ADMIN_ROLE; zero
-        // factory ⇒ that leg of the route search is skipped.
-        selectors[22] = AdminFacet.setUniswapV2Factory.selector;
-        selectors[23] = AdminFacet.getUniswapV2Factory.selector;
-        selectors[24] = AdminFacet.setSushiswapV2Factory.selector;
-        selectors[25] = AdminFacet.getSushiswapV2Factory.selector;
-        selectors[26] = AdminFacet.setPancakeswapV2Factory.selector;
-        selectors[27] = AdminFacet.getPancakeswapV2Factory.selector;
         // T-092 (#508) — auto-lifecycle admin kill switches.
-        selectors[28] = AdminFacet.setAutoLendEnabled.selector;
-        selectors[29] = AdminFacet.setAutoRefinanceEnabled.selector;
-        selectors[30] = AdminFacet.setAutoExtendEnabled.selector;
+        selectors[22] = AdminFacet.setAutoLendEnabled.selector;
+        selectors[23] = AdminFacet.setAutoRefinanceEnabled.selector;
+        selectors[24] = AdminFacet.setAutoExtendEnabled.selector;
         // Codex round-1 P2 — getters.
-        selectors[31] = AdminFacet.getAutoLendEnabled.selector;
-        selectors[32] = AdminFacet.getAutoRefinanceEnabled.selector;
-        selectors[33] = AdminFacet.getAutoExtendEnabled.selector;
+        selectors[25] = AdminFacet.getAutoLendEnabled.selector;
+        selectors[26] = AdminFacet.getAutoRefinanceEnabled.selector;
+        selectors[27] = AdminFacet.getAutoExtendEnabled.selector;
         // #633 — per-venue swap-adapter pause + feature kill-switches.
-        selectors[34] = AdminFacet.setSwapAdapterDisabled.selector;
-        selectors[35] = AdminFacet.isSwapAdapterDisabled.selector;
-        selectors[36] = AdminFacet.setAggregatorAdaptersPaused.selector;
-        selectors[37] = AdminFacet.setKeepersPaused.selector;
-        selectors[38] = AdminFacet.setPeerLtvReadsPaused.selector;
-        selectors[39] = AdminFacet.keepersPaused.selector;
-        selectors[40] = AdminFacet.setPartialLiquidationSizing.selector;
-        selectors[41] = AdminFacet.getPartialLiquidationSizing.selector;
-        selectors[42] = AdminFacet.getMaxPartialLiquidationCloseFactorBps.selector;
-        selectors[43] = AdminFacet.unpauseIfPauseEpoch.selector;
-        selectors[44] = AdminFacet.launch.selector;
-        selectors[45] = AdminFacet.pausedSecondsAt.selector;
-        selectors[46] = AdminFacet.getPauseIntervals.selector;
-        selectors[47] = AdminFacet.autoPauseCooldownSeconds.selector;
-        selectors[48] = AdminFacet.autoPauseAvailableAt.selector;
-        selectors[49] = AdminFacet.setAutoPauseCooldownSeconds.selector;
+        selectors[28] = AdminFacet.setSwapAdapterDisabled.selector;
+        selectors[29] = AdminFacet.isSwapAdapterDisabled.selector;
+        selectors[30] = AdminFacet.setAggregatorAdaptersPaused.selector;
+        selectors[31] = AdminFacet.setKeepersPaused.selector;
+        selectors[32] = AdminFacet.setPeerLtvReadsPaused.selector;
+        selectors[33] = AdminFacet.keepersPaused.selector;
+        selectors[34] = AdminFacet.setPartialLiquidationSizing.selector;
+        selectors[35] = AdminFacet.getPartialLiquidationSizing.selector;
+        selectors[36] = AdminFacet.getMaxPartialLiquidationCloseFactorBps.selector;
+        selectors[37] = AdminFacet.unpauseIfPauseEpoch.selector;
+        selectors[38] = AdminFacet.launch.selector;
+        selectors[39] = AdminFacet.pausedSecondsAt.selector;
+        selectors[40] = AdminFacet.getPauseIntervals.selector;
+        selectors[41] = AdminFacet.autoPauseCooldownSeconds.selector;
+        selectors[42] = AdminFacet.autoPauseAvailableAt.selector;
+        selectors[43] = AdminFacet.setAutoPauseCooldownSeconds.selector;
         // #1637 — reads for the two kill switches.
-        selectors[50] = AdminFacet.aggregatorAdaptersPaused.selector;
-        selectors[51] = AdminFacet.peerLtvReadsPaused.selector;
+        selectors[44] = AdminFacet.aggregatorAdaptersPaused.selector;
+        selectors[45] = AdminFacet.peerLtvReadsPaused.selector;
         // #3173 — the bounded escape period.
-        selectors[52] = AdminFacet.setEscapeGraceSeconds.selector;
-        selectors[53] = AdminFacet.getEscapeGraceSeconds.selector;
+        selectors[46] = AdminFacet.setEscapeGraceSeconds.selector;
+        selectors[47] = AdminFacet.getEscapeGraceSeconds.selector;
         return selectors;
     }
 
