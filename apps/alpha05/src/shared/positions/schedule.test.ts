@@ -26,4 +26,11 @@ describe('settlementState', () => {
     expect(settlementState({ ...s, canSettleNow: true, shortfall: 0n }, true, false, null)).toEqual({ kind: 'due', shortfall: 0n });
     expect(settlementState(s, true, false, null).kind).toBe('time-unread');
   });
+
+  it('states the switch and the pause even when the period could not be read', () => {
+    expect(settlementState(null, false, false, 2_000n).kind).toBe('off');
+    expect(settlementState(null, true, true, 2_000n).kind).toBe('paused');
+    expect(settlementState(null, null, false, 2_000n).kind).toBe('switch-unread');
+    expect(settlementState(null, true, false, 2_000n).kind).toBe('period-unread');
+  });
 });

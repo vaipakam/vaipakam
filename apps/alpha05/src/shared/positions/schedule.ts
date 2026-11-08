@@ -27,6 +27,9 @@ export type SettlementState =
   | { kind: 'paused' }
   | { kind: 'pause-unread' }
   | { kind: 'time-unread' }
+  /** The period's own figures could not be read; the switch and the pause
+   *  were, and neither stops settlement. */
+  | { kind: 'period-unread' }
   /** The period is still running, or has ended and is in its grace. */
   | { kind: 'running'; ended: boolean; graceEndsAt: bigint; shortfall: bigint }
   /** The period is past its grace but the protocol does not settle it: the
@@ -35,11 +38,14 @@ export type SettlementState =
   /** Anyone may settle the period now. */
   | { kind: 'due'; shortfall: bigint };
 
-export function settlementState(s: PeriodSchedule, periodicOn: boolean | null, paused: boolean | null, chainNow: bigint | null): SettlementState {
+/** The switch and the pause are read on their own, so they are stated even
+ *  when the period (`s`) could not be read. */
+export function settlementState(s: PeriodSchedule | null, periodicOn: boolean | null, paused: boolean | null, chainNow: bigint | null): SettlementState {
   if (periodicOn === false) return { kind: 'off' };
   if (periodicOn === null) return { kind: 'switch-unread' };
   if (paused === true) return { kind: 'paused' };
   if (paused === null) return { kind: 'pause-unread' };
+  if (s === null) return { kind: 'period-unread' };
   // The protocol's own verdict is the last word on "now"; the block time,
   // read at the same block, only places a period that is not settleable.
   if (s.canSettleNow) return { kind: 'due', shortfall: s.shortfall };

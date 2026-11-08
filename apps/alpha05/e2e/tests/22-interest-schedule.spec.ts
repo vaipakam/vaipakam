@@ -101,7 +101,9 @@ test('a monthly schedule states its period, what is owed, and the switch and the
     await expect(fact(card, 'Settling this period')).toHaveText('Open now to anyone', { timeout: 60_000 });
     await expect(notes).toHaveAttribute('data-state', 'due');
     await expect(notes).toContainText(/Anyone may now settle this period by selling collateral sized to cover .* WETH and the sale’s charges\./);
-    await expect(notes).toContainText('After a pause, a payment covers one period, through its original end. Interest for the paused stretch stays owed.');
+    await expect(notes).toContainText(
+      'A pause moved this period’s dates later by the paused time, but the interest it owes stays one period’s worth. Interest kept accruing through the pause, and any interest a repayment pays counts toward the period.',
+    );
     await fitsWidth(page);
   } finally {
     await anvilRpc('evm_revert', [snapshot]);

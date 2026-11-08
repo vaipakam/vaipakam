@@ -810,11 +810,15 @@ above. Each resolves here, so a route reviewer needs no private file:
   time is stated as unknown, never assumed. A paid period is said to only
   move the checkpoint forward. The page states how the borrower pays a
   period (by partial repayment where the loan allows it, otherwise only by
-  full repayment or by the sale), that after a pause a payment covers one
-  period only through its original end with the paused stretch's interest
-  still owed, that settling is open to anyone and the keeper's posture is
+  full repayment or by the sale), that a pause moves the period's dates
+  later while the interest a period owes stays one period's worth (interest
+  keeps accruing through the pause, and any interest a repayment pays counts
+  toward the period), that settling is open to anyone and the keeper's posture is
   not known (the capability service does not yet report it), and the chain
-  time the period is placed against. Every read on the loan page is pinned
+  time the period is placed against. When the period itself cannot be
+  read, the switch and the pause are still stated as read, so a switch that
+  is off is disclosed even with the period's figures unknown. Every read on
+  the loan page is pinned
   to the one block whose time is stated, so the loan's status, the preview
   and the chain time describe the same moment; the preview's "callable now"
   is then the last word, and a period past its grace that it does not call

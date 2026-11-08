@@ -399,7 +399,7 @@ export const copy = {
     covered: B('This period is paid: settling it only moves the checkpoint forward, and no collateral is sold.'),
     payByPartial: B('The borrower can pay a period by partial repayment, which pays the interest accrued so far.'),
     noPartial: B('This loan does not allow partial repayment: only full repayment or the sale covers a period.'),
-    pausedStretch: A('After a pause, a payment covers one period, through its original end. Interest for the paused stretch stays owed.'),
+    pausedStretch: A('A pause moved this period’s dates later by the paused time, but the interest it owes stays one period’s worth. Interest kept accruing through the pause, and any interest a repayment pays counts toward the period.'),
     keeper: B('Settling is open to anyone. Whether the protocol’s keeper settles periods here is not known.'),
     chainTime: B('Checked against chain time {{time}}.'),
     unread: A('This loan’s interest period could not be read, so it is shown as unknown.'),

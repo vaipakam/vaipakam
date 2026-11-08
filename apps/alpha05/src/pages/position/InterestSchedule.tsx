@@ -29,11 +29,12 @@ export function InterestSchedule({ view: v, meta }: { view: LoanView; meta: Toke
   const unknown = text('receipt.unknown');
   const amount = (x: bigint) => tokenAmount(x, l.principalAsset, meta, format);
   const cadence = l.periodicInterestCadence;
-  const state: SettlementState | null = s ? settlementState(s, v.periodicOn, v.paused, v.chainNow) : null;
+  // The switch and the pause are stated even when the period itself could
+  // not be read: a switch that is off is disclosed whatever else is unknown.
+  const state: SettlementState = settlementState(s, v.periodicOn, v.paused, v.chainNow);
   const pauseCredit = v.deadlines?.pauseCredit ?? 0n;
 
   const settleValue = (): string | null => {
-    if (!state) return null;
     switch (state.kind) {
       case 'off':
         return text('schedule.settleOff');
@@ -51,17 +52,16 @@ export function InterestSchedule({ view: v, meta }: { view: LoanView; meta: Toke
   };
 
   const notes = (
-    <div className="schedule-notes" data-testid="schedule-notes" data-state={state?.kind ?? 'unread'}>
-      {state === null ? (
+    <div className="schedule-notes" data-testid="schedule-notes" data-state={state.kind}>
+      {s === null && (
         <Notice tone="warn" tier="A">
           {text('schedule.unread')}
         </Notice>
-      ) : (
-        <StateNote state={state} amount={amount} />
       )}
-      {state?.kind !== 'off' && <p className="tier-b">{text(l.allowsPartialRepay ? 'schedule.payByPartial' : 'schedule.noPartial')}</p>}
+      <StateNote state={state} amount={amount} />
+      {state.kind !== 'off' && <p className="tier-b">{text(l.allowsPartialRepay ? 'schedule.payByPartial' : 'schedule.noPartial')}</p>}
       {pauseCredit > 0n && <p className="tier-a">{text('schedule.pausedStretch')}</p>}
-      {state && state.kind !== 'off' && state.kind !== 'paused' && <p className="tier-b">{text('schedule.keeper')}</p>}
+      {state.kind !== 'off' && state.kind !== 'paused' && <p className="tier-b">{text('schedule.keeper')}</p>}
       {v.chainNow !== null && <p className="tier-b">{format('schedule.chainTime', { time: formatUtc(Number(v.chainNow)) })}</p>}
     </div>
   );
@@ -104,6 +104,8 @@ function StateNote({ state, amount }: { state: SettlementState; amount: (x: bigi
       return <p className="tier-a">{text('schedule.pauseUnread')}</p>;
     case 'time-unread':
       return <p className="tier-b">{text('schedule.timeUnread')}</p>;
+    case 'period-unread':
+      return null;
     case 'held':
       return <p className="tier-a">{text('schedule.held')}</p>;
     case 'running':
