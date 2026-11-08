@@ -1003,8 +1003,35 @@ above. Each resolves here, so a route reviewer needs no private file:
   the positions the wallet holds now, so a bought position pays its new
   holder, says "nothing to collect" only when every read completed, and
   names the payouts it does not yet collect (seller interest, frozen sale
-  proceeds, the protected-account queue, extension reserves) with a link to
-  the current app until their slices land.
+  proceeds, extension reserves) with a link to the current app until their
+  slices land.
+- **RB-PAYOUT-QUEUE** — Claims lists a protected account's payout queue
+  (LN-54, LN-55, LN-56): the wallet's own account, then an account it
+  manages since a replacement retired it, and in Advanced mode any account
+  looked up by address, for a secondary signer. Rows come in the order they
+  fall due by the chain's clock, never the browser's. Each row leads with its
+  request code exactly as the chain derives it and every alert prints it
+  (`@vaipakam/lib/requestCode`), and states what it pays, its destination
+  (the reader's wallet, the account's wallet, or an allowlisted address),
+  when it can be released, and, where the account requires it, whether a
+  signer has approved it. A row or list that could not be read is said so,
+  never shown as empty. Each action has one rule (RB-ELIG) read in the order
+  the contract checks it. Release is anyone's: held by a pause until the
+  pause ends or its escape route opens; open at once for a row whose
+  destination is no longer allowed, which the review and the button state
+  cancels it instead of paying; otherwise only once due, the account
+  unlocked, and approved where required. Cancel belongs to the account's
+  manager wallet or a secondary signer and works during a pause. Approve
+  belongs to a signer, only where the account requires approval and the row
+  is not yet approved. Each runs through one flow (review, the protocol's
+  dry run, one wallet prompt) and its finish card is measured from the
+  transaction's logs: the release paid, with the protocol's measured
+  delivery stated beside a short one; a cancel instead of a payment, stated
+  as such; the cancel; the approval. The account's delay and approval rule,
+  the keeper service's arming for releases (the capability service's
+  answer, unknown by default) and the pause posture are stated above the
+  rows. An action in progress stays on screen after its row leaves the
+  queue, until its finish card is closed.
 
 ## 3. Companion specifications
 

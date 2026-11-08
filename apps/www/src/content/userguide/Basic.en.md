@@ -1273,6 +1273,12 @@ When a loan ends, the protocol records what each side is owed, and the holder of
 
 The review lists every payout the claim makes, what past sellers of a lender position take first (interest they earned and were not paid), and where the payment lands: your wallet, or, with protected mode on, your account's payout queue or your vault. No approval is needed, so your wallet asks once, after the app tries the claim as a dry run. A protocol pause stops every claim. While a loan is in fallback, the borrower's payout waits until the lender collects, and the lender collecting ends the fallback: the borrower can no longer cure it. The finish card shows what the transaction actually paid.
 
+<a id="payout-queue"></a>
+
+### Payouts Waiting in Your Queue
+
+With protected mode on, everything leaving your vault for your wallet waits out your account's delay in a payout queue. Claims lists what waits there, soonest first, each with a short request code: every alert about a payout prints the same code, so you can match a message to a request. Each row says what it pays, where it goes and when it can be released. Once a payout is due, anyone can release it, and it only ever pays the destination it recorded; if that destination is no longer allowed, releasing it cancels it instead. You, or one of your secondary signers, can cancel a payout at any time, even during a pause, and the asset stays in your vault. If your account requires approval, a secondary signer approves each payout first; a signer finds your account in Advanced mode by pasting its address. A pause holds releases until it ends or, after a long pause, its escape route opens. Each action asks your wallet once, and the finish card shows what the transaction did.
+
 <a id="risk-access"></a>
 
 ### Risk Access: Your Risk Level

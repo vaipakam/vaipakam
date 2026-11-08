@@ -1318,6 +1318,12 @@ Quand un prêt prend fin, le protocole enregistre ce qui revient à chaque parti
 
 L'examen liste chaque paiement que fait la réclamation, ce que les anciens vendeurs d'une position de prêteur prennent d'abord (des intérêts gagnés et non payés) et où arrive le paiement : votre portefeuille ou, avec le mode protégé actif, la file de versements de votre compte ou votre coffre. Aucune approbation n'est nécessaire, votre portefeuille demande donc une fois, après que l'application a simulé la réclamation. Une pause du protocole arrête toute réclamation. Tant qu'un prêt est en repli, le versement de l'emprunteur attend que le prêteur encaisse, et cet encaissement met fin au repli : l'emprunteur ne peut plus le régulariser. La carte de fin montre ce que la transaction a réellement payé.
 
+<a id="payout-queue"></a>
+
+### Versements en attente dans votre file
+
+Avec le mode protégé actif, tout ce qui quitte votre coffre vers votre portefeuille attend le délai de votre compte dans une file de versements. Réclamations liste ce qui y attend, le plus proche d'abord, chacun avec un court code de demande : chaque alerte sur un versement affiche le même code, ce qui vous permet de relier un message à une demande. Chaque ligne indique ce qu'elle paie, où elle va et quand elle peut être libérée. Une fois un versement dû, n'importe qui peut le libérer, et il ne paie que la destination qu'il a enregistrée ; si cette destination n'est plus autorisée, le libérer l'annule. Vous, ou l'un de vos signataires secondaires, pouvez annuler un versement à tout moment, même pendant une pause, et l'actif reste dans votre coffre. Si votre compte exige une approbation, un signataire secondaire approuve d'abord chaque versement ; un signataire trouve votre compte en mode avancé en collant son adresse. Une pause retient les libérations jusqu'à sa fin ou, après une longue pause, jusqu'à l'ouverture de sa voie de sortie. Chaque action sollicite votre portefeuille une fois, et la carte de fin montre ce que la transaction a fait.
+
 <a id="risk-access"></a>
 
 ### Risk Access : votre niveau de risque

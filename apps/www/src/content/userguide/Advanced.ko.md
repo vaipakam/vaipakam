@@ -2150,6 +2150,12 @@ Positions는 하나의 공유 리더로 Home과 같은 보유 목록을 읽습�
 
 검토 화면은 `getClaimable`(대출자 행은 이전 판매자 몫을 이미 뺀 값이며 `getSellersShareOfLenderClaim`을 함께 표시), `getBorrowerSurplusClaim`, `getLoanCollateralLien`을 읽고, 청구를 시뮬레이션합니다. 시뮬레이션은 제재 검사도 적용합니다. 목록은 포지션 토큰을 따릅니다. `getUserDashboardClaimables`는 기록된 당사자의 청구를 나열하므로, 나열된 행은 지갑이 해당 측을 보유하는 동안에만 남고, 다른 사람에게서 받은 종료된 대출 포지션은 청구를 직접 읽습니다. 완료 카드는 `LenderFundsClaimed` / `BorrowerFundsClaimed`, `BorrowerSurplusClaimed`, `LoanSettled`와 지갑으로의 토큰 전송을 읽습니다. 보호 계정 모드의 호출자에 대해서는 `PayoutQueued`(계정 자신의 금고), `PayoutHeldInVault`(잠긴 계정 또는 가득 찬 대기열), `PaymentCreditedToVault`(다른 당사자의 금고)를 읽습니다. FallbackPending 대출에서는 대출자 청구가 청구 시점 내부 매칭을 실행해 행을 다시 쓸 수 있으므로, 완료 카드는 전송을 프로토콜 자체 기록과 비교합니다.
 
+<a id="payout-queue"></a>
+
+### 지급 대기열: 확인 항목
+
+목록은 `getPendingPayoutIds(account)`이며, 각 행마다 `getPendingPayout(id)`와 `requestCode(id)`를 읽습니다. 코드는 알림이 쓰는 것과 같은 공유 렌더러로 base32 여섯 글자로 표시되며, 행은 브라우저 시계가 아니라 최신 블록의 타임스탬프에 대한 `releaseAt` 순으로 정렬됩니다. `releasePayout(id)`는 누구나 호출할 수 있고 일시 중지 중에는 `isEscapeOpen()`이 될 때까지 거부됩니다. 수령인이 관리자(계정, 또는 은퇴 후에는 그 컨트롤러)도 아니고 `getAllowlist`에도 없는 대기 행은 시간 확인 전에 지급 대신 취소됩니다. 그렇지 않으면 행은 기한이 되어야 하고, 계정은 잠기지 않아야 하며(`ProtectedVaultLocked`), `requireCosign`이 켜져 있는 동안에는 공동 서명되어 있어야 하고(`CosignRequired`), 수령인은 다시 검사됩니다. `cancelPayout(id)`는 관리자 또는 서명자의 것이며(`NotManagerOrSigner`), 일시 중지 중에도 작동하고, 자산을 다시 인출할 수 있도록 예치 장부에 적립합니다. `cosignPayout(id)`는 `getProtectedSigners`의 서명자의 것이며(`NotSigner`), 앱은 계정이 이를 요구하고 행이 아직 공동 서명되지 않은 동안에만 제공합니다. 각 작업은 검토 화면에서 시뮬레이션으로, 전송 시 다시 한 번 실행됩니다. 완료 카드는 해당 id의 `PayoutReleased`(금액과 프로토콜이 측정한 `delivered`), `PayoutCancelled`, `PayoutCosigned`를 읽습니다. keeper의 `protectedAccount` 패스가 기한이 된 행을 해제하는지는 기능 서비스의 답이며, 기본값은 알 수 없음입니다. 잠금은 대기 중인 모든 행을 취소합니다.
+
 <a id="risk-access"></a>
 
 ### Risk Access: 내 위험 등급
