@@ -905,6 +905,36 @@ above. Each resolves here, so a route reviewer needs no private file:
   the collateral the top-up left, the protocol's health factor and
   loan-to-value after, the cure of a loan in fallback, and what left the
   wallet.
+- **RB-POSITION-TAKE-BACK** — taking back collateral from a loan (LN-32) is
+  the borrower position holder's alone, so the action is offered to that
+  holder only. Its one rule (RB-ELIG) reads the inputs
+  `partialWithdrawCollateral` checks, in its order: the protocol pause, a
+  pending swap-to-repay order on the borrower position, a standing refinance
+  request, the holder, a loan that is not running (one in fallback
+  included), a rental, collateral the protocol does not price now, and the
+  protocol's own most that can be taken back now being zero. A lender's
+  linked sale listing also holds it; no view exposes that link (#3308), so
+  the review's dry run of this very withdrawal names it, and the send runs
+  the dry run again. The page states a closed reason only where no action
+  above already said it. The amount is more than nothing and at most the
+  protocol's limit now (`calculateMaxWithdrawable`), checked as it is typed;
+  the form says the limit moves with prices and as interest accrues, and
+  offers no "use the most" shortcut, since an amount at the limit is
+  refused once a second of interest accrues. No approval is asked: the
+  collateral goes from the borrower's vault to the wallet that asks, in one
+  prompt. The review states the collateral before and after, where it goes,
+  the limit, the health factor and loan-to-value now, and every
+  consequence: the loan moves closer to liquidation; the protocol checks its
+  limits again at confirmation, so a price move first refuses it with
+  nothing moved; a pause before then does the same; and the finish card
+  states the protocol's own figures after. A re-read reopens the review
+  when a stated loan field, the holder or lock, the pause, the refinance
+  request or the verdict moves; the limit, health factor and loan-to-value
+  move with prices and are restated, and a limit that falls below the
+  amount blocks the review rather than reopening it. The finish card
+  measures, from the transaction's own logs, the collateral the withdrawal
+  left, the protocol's health factor and loan-to-value after, and what
+  arrived in the wallet.
 
 ## 3. Companion specifications
 

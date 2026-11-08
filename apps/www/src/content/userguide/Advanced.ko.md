@@ -2134,6 +2134,14 @@ Positions는 하나의 공유 리더로 Home과 같은 보유 목록을 읽습�
 
 앱은 이 입력을 읽으며, 두 자산 확인은 대출 개시 시의 분류가 아니라 현재 상태로 하고, 드라이 런이 프로토콜의 마지막 판단입니다. 추가 후의 헬스 팩터를 돌려주는 뷰가 없으므로 검토 화면은 현재 `calculateHealthFactor`와 `calculateLTV`를 보여 주고, 완료 카드는 거래의 `CollateralAdded` 로그에서 새 수치를 읽습니다. FallbackPending 대출은 새 헬스 팩터가 대출의 최솟값에 이르고 LTV가 개시 한도 안에 있으면 추가로 회복됩니다. 완료 카드는 `LoanCuredFromFallback`을 확인합니다. 금액 이상인 기존 승인은 그대로 둡니다. 가져가는 것은 정확히 그 금액이기 때문입니다. 더 작은 승인은 정확히 그 금액으로 올리고, 추가가 이뤄지지 않으면 되돌립니다.
 
+<a id="take-back-collateral"></a>
+
+### 담보 회수: 확인되는 항목
+
+`partialWithdrawCollateral(loanId, amount)`는 차입자의 볼트에서 호출자의 지갑으로 담보를 `amount`만큼 보내고, `collateralAmount`와 담보 리엔을 줄이며, 새 건강 지수와 LTV를 담은 `PartialCollateralWithdrawn`을 발생시킵니다. `whenNotPaused`가 적용되며 다음 순서로 거부합니다: 제재 대상 호출자, 유효한 스왑 상환 커밋, 유효한 리파이낸스 요청(`RefinanceRequestOpen`), 연결된 매각 등록(`SaleListingActive`), `ownerOf(borrowerTokenId)`가 아닌 호출자, Active가 아닌 대출, 담보를 넘는 금액, `checkLiquidity`가 Liquid로 보고하지 않는 담보, 최소 건강 지수 미만이거나 개시 시 LTV 상한을 넘는 결과.
+
+양식은 금액을 `calculateMaxWithdrawable`과 비교합니다. 이 값은 Active가 아닌 대출이나 비유동 담보에서는 0이며, 이자가 누적되면 줄어듭니다. 연결된 매각 등록을 보여 주는 뷰가 없으므로 검토 화면은 회수를 모의 실행해 그 거부를 알리고, 전송 시 다시 실행합니다. 완료 카드는 남은 담보와 새 수치를 트랜잭션의 `PartialCollateralWithdrawn` 로그에서, 받은 금액을 지갑으로의 토큰 `Transfer`에서 읽습니다.
+
 <a id="risk-access"></a>
 
 ### Risk Access: 내 위험 등급

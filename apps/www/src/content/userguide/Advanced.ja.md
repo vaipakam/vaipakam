@@ -2243,6 +2243,14 @@ Positions は共通のリーダーを通して Home と同じ保有一覧を読�
 
 アプリはこれらの入力を読み取り、資産の 2 つの確認はローン開始時の区分ではなく現在の状態で行い、ドライランがプロトコルの最終判断となります。追加後のヘルスファクターを返すビューはないため、確認画面は現在の `calculateHealthFactor` と `calculateLTV` を示し、完了カードは取引の `CollateralAdded` ログから新しい数値を読み取ります。FallbackPending のローンでは、新しいヘルスファクターがローンの最低値に達し、LTV が開始時の上限内に収まると追加によって回復します。完了カードは `LoanCuredFromFallback` を確認します。金額以上の既存の承認はそのまま残します。引き出されるのはちょうどその金額だからです。小さい承認はちょうどその金額まで上げ、追加が成立しなければ元に戻します。
 
+<a id="take-back-collateral"></a>
+
+### 担保の引き出し: 確認される内容
+
+`partialWithdrawCollateral(loanId, amount)` は借り手のボールトから呼び出し元のウォレットへ担保を `amount` 送り、`collateralAmount` と担保リーエンを減らし、新しいヘルスファクターとLTVを含む `PartialCollateralWithdrawn` を発行します。`whenNotPaused` が付いており、次の順に拒否します: 制裁対象の呼び出し元、有効なスワップ返済コミット、有効なリファイナンス依頼(`RefinanceRequestOpen`)、紐づいた売却出品(`SaleListingActive`)、`ownerOf(borrowerTokenId)` 以外の呼び出し元、Active でないローン、担保を超える金額、`checkLiquidity` が Liquid と報告しない担保、最低ヘルスファクターを下回るか開始時のLTV上限を超える結果。
+
+フォームは金額を `calculateMaxWithdrawable` と照合します。これは Active でないローンや非流動的な担保ではゼロで、利息の発生とともに下がります。紐づいた売却出品を返すビューはないため、確認画面で引き出しをドライランし、その拒否を表示します。送信時にも再度実行します。完了カードは、残った担保と新しい数値をトランザクションの `PartialCollateralWithdrawn` ログから、受け取った金額をウォレットへのトークンの `Transfer` から読み取ります。
+
 <a id="risk-access"></a>
 
 ### Risk Access: あなたのリスクレベル

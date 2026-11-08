@@ -2431,6 +2431,14 @@ Keine View liefert die Zinsen der Teilzahlung vor dem Aufruf (#3299), daher nutz
 
 Die App liest diese Eingaben, beide Asset-Prüfungen live statt aus der Eröffnungsklasse des Kredits, und der Testlauf hat das letzte Wort des Protokolls. Keine View liefert den Health Factor nach einer Aufstockung, daher nennt die Prüfung `calculateHealthFactor` und `calculateLTV` jetzt, und die Abschlusskarte liest die neuen Werte aus dem `CollateralAdded`-Log der Transaktion. Bei einem FallbackPending-Kredit heilt die Aufstockung ihn, wenn der neue Health Factor das Minimum des Kredits erreicht und der LTV innerhalb seiner Eröffnungsgrenze liegt; die Abschlusskarte prüft auf `LoanCuredFromFallback`. Eine bestehende Genehmigung in Höhe des Betrags oder darüber bleibt unverändert, da genau der Betrag gezogen wird; eine kleinere wird auf genau den Betrag erhöht und zurückgesetzt, falls die Aufstockung nicht durchgeht.
 
+<a id="take-back-collateral"></a>
+
+### Sicherheiten zurücknehmen: Was geprüft wird
+
+`partialWithdrawCollateral(loanId, amount)` sendet `amount` der Sicherheit aus dem Vault des Kreditnehmers an die Wallet des Aufrufers, senkt `collateralAmount` und das Sicherungsrecht und emittiert `PartialCollateralWithdrawn` mit neuem Health Factor und LTV. Sie trägt `whenNotPaused` und lehnt der Reihe nach ab: einen sanktionierten Aufrufer, einen aktiven Swap-to-Repay-Commit, eine aktive Refinanzierungsanfrage (`RefinanceRequestOpen`), ein verknüpftes Verkaufsangebot (`SaleListingActive`), einen anderen Aufrufer als `ownerOf(borrowerTokenId)`, einen Kredit, der nicht Active ist, einen Betrag über der Sicherheit, eine Sicherheit, die `checkLiquidity` nicht als Liquid meldet, und ein Ergebnis unter dem Mindest-Health-Factor oder über dem LTV-Deckel bei Eröffnung.
+
+Das Formular prüft den Betrag gegen `calculateMaxWithdrawable`, das für einen nicht aktiven Kredit oder eine illiquide Sicherheit null ist und mit auflaufenden Zinsen sinkt. Keine View zeigt ein verknüpftes Verkaufsangebot, daher führt die Prüfung die Entnahme als Probelauf aus und nennt diese Ablehnung; das Senden führt sie erneut aus. Die Abschlusskarte liest die verbleibende Sicherheit und die neuen Werte aus dem `PartialCollateralWithdrawn`-Log der Transaktion und den erhaltenen Betrag aus dem `Transfer` des Tokens an die Wallet.
+
 <a id="risk-access"></a>
 
 ### Risk Access: Ihre Risikostufe

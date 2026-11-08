@@ -1976,6 +1976,14 @@ Positions 通过一个共享读取器读取与 Home 相同的持仓清单：`get
 
 应用读取这些输入，两项资产检查都按当前状态而非贷款开仓时的类别进行，试运行是协议的最终判断。没有视图会返回追加后的健康因子，因此审核界面显示当前的 `calculateHealthFactor` 和 `calculateLTV`，完成卡片从交易的 `CollateralAdded` 日志读取新数字。对于 FallbackPending 贷款，当新的健康因子达到贷款的最低值且 LTV 在其开仓上限之内时，追加会使其恢复；完成卡片会检查 `LoanCuredFromFallback`。等于或高于该数量的现有授权保持不变，因为拉取的恰好就是这个数量；较小的授权会提高到恰好这个数量，若追加未成功则恢复原值。
 
+<a id="take-back-collateral"></a>
+
+### 取回抵押品：检查哪些内容
+
+`partialWithdrawCollateral(loanId, amount)` 将 `amount` 的抵押品从借款人的金库发送到调用者的钱包，降低 `collateralAmount` 和抵押留置，并发出带有新健康因子和 LTV 的 `PartialCollateralWithdrawn`。它带有 `whenNotPaused`，并按顺序拒绝：受制裁的调用者、有效的换币还款承诺、有效的再融资请求（`RefinanceRequestOpen`）、关联的出售挂单（`SaleListingActive`）、不是 `ownerOf(borrowerTokenId)` 的调用者、不处于 Active 的贷款、超过抵押品的金额、`checkLiquidity` 未报告为 Liquid 的抵押品，以及低于最低健康因子或高于开立时 LTV 上限的结果。
+
+表单用 `calculateMaxWithdrawable` 检查金额；对不处于 Active 的贷款或非流动抵押品，它为零，并随利息累积而下降。没有视图公开关联的出售挂单，因此审核会试运行取回并指出该拒绝；发送时会再次试运行。完成卡片从交易的 `PartialCollateralWithdrawn` 日志读取剩余抵押品和新数值，并从代币转入钱包的 `Transfer` 读取到账金额。
+
 <a id="risk-access"></a>
 
 ### Risk Access：你的风险等级

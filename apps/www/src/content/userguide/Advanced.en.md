@@ -2620,6 +2620,14 @@ No view returns the partial's interest ahead of the call (#3299), so the review 
 
 The app reads those inputs, both asset checks live rather than from the loan's opening class, and the dry run is the protocol's last word. No view returns the health factor after a top-up, so the review states `calculateHealthFactor` and `calculateLTV` now and the finish card reads the new figures from the transaction's `CollateralAdded` log. On a FallbackPending loan the top-up cures it when the new health factor reaches the loan's minimum and the LTV is within its opening cap; the finish card checks for `LoanCuredFromFallback`. A standing approval at or above the amount is left as it is, since the pull is exactly the amount; a smaller one is raised to exactly the amount and put back if the top-up does not go through.
 
+<a id="take-back-collateral"></a>
+
+### Taking Back Collateral: What Is Checked
+
+`partialWithdrawCollateral(loanId, amount)` sends `amount` of the collateral from the borrower's vault to the caller's wallet, lowers `collateralAmount` and the collateral lien, and emits `PartialCollateralWithdrawn` with the new health factor and LTV. It carries `whenNotPaused` and refuses, in order: a sanctioned caller, a live swap-to-repay commit, a live refinance request (`RefinanceRequestOpen`), a linked sale listing (`SaleListingActive`), a caller other than `ownerOf(borrowerTokenId)`, a loan that is not Active, an amount above the collateral, collateral `checkLiquidity` does not report as Liquid, and a result below the loan's minimum health factor or above its opening LTV cap.
+
+The form checks the amount against `calculateMaxWithdrawable`, which is zero for a loan that is not Active or whose collateral is illiquid, and which falls as interest accrues. No view exposes a linked sale listing, so the review runs the withdrawal as a dry run and names that refusal; the send runs it again. The finish card reads the collateral left and the new figures from the transaction's `PartialCollateralWithdrawn` log, and the amount received from the token's `Transfer` to the wallet.
+
 <a id="risk-access"></a>
 
 ### Risk Access: Your Risk Level

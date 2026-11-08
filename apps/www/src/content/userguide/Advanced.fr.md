@@ -2441,6 +2441,14 @@ Aucune vue ne renvoie les intérêts du paiement partiel avant l'appel (#3299) ;
 
 L'application lit ces entrées, les deux vérifications de l'actif en direct plutôt que depuis la classe d'ouverture du prêt, et la simulation donne le dernier mot au protocole. Aucune vue ne renvoie le facteur de santé après un complément : l'examen indique donc `calculateHealthFactor` et `calculateLTV` maintenant, et la carte finale lit les nouveaux chiffres dans le journal `CollateralAdded` de la transaction. Sur un prêt FallbackPending, le complément le rétablit quand le nouveau facteur de santé atteint le minimum du prêt et que le LTV reste dans son plafond d'ouverture ; la carte finale cherche `LoanCuredFromFallback`. Une approbation existante égale ou supérieure au montant est laissée telle quelle, puisque le prélèvement est exactement le montant ; une plus petite est portée exactement au montant et remise en état si le complément n'aboutit pas.
 
+<a id="take-back-collateral"></a>
+
+### Reprendre de la garantie : ce qui est vérifié
+
+`partialWithdrawCollateral(loanId, amount)` envoie `amount` de la garantie du coffre de l'emprunteur vers le portefeuille de l'appelant, réduit `collateralAmount` et le nantissement, et émet `PartialCollateralWithdrawn` avec le nouveau facteur de santé et LTV. Elle porte `whenNotPaused` et refuse, dans l'ordre : un appelant sanctionné, un commit swap-to-repay actif, une demande de refinancement active (`RefinanceRequestOpen`), une mise en vente liée (`SaleListingActive`), un appelant autre que `ownerOf(borrowerTokenId)`, un prêt qui n'est pas Active, un montant supérieur à la garantie, une garantie que `checkLiquidity` ne déclare pas Liquid, et un résultat sous le facteur de santé minimal ou au-dessus du plafond de LTV à l'ouverture.
+
+Le formulaire vérifie le montant contre `calculateMaxWithdrawable`, qui vaut zéro pour un prêt non Active ou une garantie illiquide, et qui baisse à mesure que les intérêts courent. Aucune vue n'expose une mise en vente liée : la revue simule donc le retrait et nomme ce refus ; l'envoi le simule à nouveau. La carte finale lit la garantie restante et les nouveaux chiffres dans le log `PartialCollateralWithdrawn` de la transaction, et le montant reçu dans le `Transfer` du jeton vers le portefeuille.
+
 <a id="risk-access"></a>
 
 ### Risk Access : votre niveau de risque
