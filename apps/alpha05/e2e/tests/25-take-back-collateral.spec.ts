@@ -9,15 +9,28 @@
  * MEASURED outcome from the transaction's own logs: the collateral it left,
  * the protocol's health factor and loan-to-value after, and what arrived in
  * the wallet. The lender is not offered the action. Runs on the desktop and
- * the phone project; each run opens its own loans.
+ * the phone project; each run opens its own loans, and every test is rolled
+ * back after it, so the collateral it returns never reaches a later spec's
+ * wallet.
  */
 import { erc20Abi, parseEther } from 'viem';
 import { openLoan } from '@vaipakam/anvil-harness/lending';
 import type { Page } from '@playwright/test';
+import { anvilRpc } from '../lib/anvil';
 import { scenario } from '../lib/chain';
 import { connectWallet, expect, test } from '../lib/wallet';
 
 type Hex = `0x${string}`;
+
+// The chain as each test found it: a later spec counts on the borrower's
+// wallet holding none of the collateral token.
+let snapshot: Hex;
+test.beforeEach(async () => {
+  snapshot = await anvilRpc<Hex>('evm_snapshot');
+});
+test.afterEach(async () => {
+  await anvilRpc('evm_revert', [snapshot]);
+});
 
 async function fitsWidth(page: Page): Promise<void> {
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
