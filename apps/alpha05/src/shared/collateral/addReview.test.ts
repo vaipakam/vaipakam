@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { OPEN } from '../eligibility/types';
 import type { LoanDetails } from '../positions/loanView';
-import { addReceipt } from './addReceipt';
+import { addReceipt, heldText } from './addReceipt';
 import { addBlockers, addChanged, addPromptCount, type AddReview } from './addReview';
 
 const copy = { text: (k: string) => k, format: (k: string, v?: Record<string, string>) => (v?.amount ? `${k}#${v.amount}` : k) } as never;
@@ -11,7 +11,7 @@ const review: AddReview = {
   identity: '1:0xaa',
   loanId: 7n,
   amount: 50n,
-  loan: { status: 0, assetType: 0, collateralAsset: A, collateralAmount: 100n, principal: 10n, principalAsset: A, borrowerTokenId: 2n } as unknown as LoanDetails,
+  loan: { status: 0, assetType: 0, collateralAsset: A, collateralAmount: 100n, principal: 10n, principalAsset: A, borrowerTokenId: 2n, borrower: A } as unknown as LoanDetails,
   borrowerHolder: A,
   borrowerLock: 0,
   assetPaused: false,
@@ -63,5 +63,18 @@ describe('addChanged and addBlockers', () => {
   it('counts the approval steps and the top-up', () => {
     expect(addPromptCount(review)).toBe(2);
     expect(addPromptCount({ ...review, approvalSteps: 0 })).toBe(1);
+  });
+});
+
+describe('addReceipt custody and loss', () => {
+  const B = '0x00000000000000000000000000000000000000bb' as const;
+  it('always states that added collateral can be lost', () => {
+    expect(lines(review)).toContain('addColl.canLose');
+  });
+  it('names the recorded borrower’s vault for a transferred position in fallback', () => {
+    expect(heldText(review, copy)).toBe('addColl.held');
+    expect(heldText({ ...review, borrowerHolder: B }, copy)).toBe('addColl.held');
+    expect(heldText({ ...review, borrowerHolder: B, loan: { ...review.loan, status: 4 } }, copy)).toBe('addColl.heldRecorded');
+    expect(heldText({ ...review, borrowerHolder: null, loan: { ...review.loan, status: 4 } }, copy)).toBe('addColl.heldRecordedUnread');
   });
 });

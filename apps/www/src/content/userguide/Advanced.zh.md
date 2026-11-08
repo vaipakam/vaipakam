@@ -1972,7 +1972,7 @@ Positions 通过一个共享读取器读取与 Home 相同的持仓清单：`get
 
 ### 追加抵押品：检查哪些内容
 
-`addCollateral(loanId, amount)` 从调用者处把贷款自身抵押代币恰好 `amount` 拉入借款人的金库，提高 `collateralAmount` 和抵押留置，并发出带有新健康因子和 LTV 的 `CollateralAdded`。它会拒绝进行中的 swap-to-repay 承诺、不是 `ownerOf(borrowerTokenId)` 的调用者、既非 Active 也非 FallbackPending 的贷款、租赁、已暂停的抵押资产（`isAssetPaused`），以及 `checkLiquidity` 未报告为 Liquid 的抵押品。它不带 `whenNotPaused`。
+`addCollateral(loanId, amount)` 从调用者处把贷款自身抵押代币恰好 `amount` 拉入借款人的金库，提高 `collateralAmount` 和抵押留置，并发出带有新健康因子和 LTV 的 `CollateralAdded`。它会拒绝进行中的 swap-to-repay 承诺、不是 `ownerOf(borrowerTokenId)` 的调用者、既非 Active 也非 FallbackPending 的贷款、租赁、已暂停的抵押资产（`isAssetPaused`），以及 `checkLiquidity` 未报告为 Liquid 的抵押品。它不带 `whenNotPaused`。存入的是所记录的 `loan.borrower` 的金库：Active 贷款会先把已转让的头寸合并到持有人（`consolidateToHolder`），因此是持有人的金库；FallbackPending 贷款在被治愈前不会合并，因此审核会写明所记录的金库。追加的代币计入 `collateralAmount`，清算和违约会消耗它，审核会说明这一点。
 
 应用读取这些输入，两项资产检查都按当前状态而非贷款开仓时的类别进行，试运行是协议的最终判断。没有视图会返回追加后的健康因子，因此审核界面显示当前的 `calculateHealthFactor` 和 `calculateLTV`，完成卡片从交易的 `CollateralAdded` 日志读取新数字。对于 FallbackPending 贷款，当新的健康因子达到贷款的最低值且 LTV 在其开仓上限之内时，追加会使其恢复；完成卡片会检查 `LoanCuredFromFallback`。等于或高于该数量的现有授权保持不变，因为拉取的恰好就是这个数量；较小的授权会提高到恰好这个数量，若追加未成功则恢复原值。
 

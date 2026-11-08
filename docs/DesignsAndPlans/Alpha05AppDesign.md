@@ -883,10 +883,15 @@ above. Each resolves here, so a route reviewer needs no private file:
   refusals no repayment shares (the token paused or unpriced). The amount
   is more of the loan's own collateral token, more than nothing and within
   the wallet's balance, checked as it is typed. The review states the
-  collateral before and after, that it is held in the borrower's vault
-  locked to the loan, the health factor and loan-to-value now, the
-  approval, and every consequence: no view gives the figures a top-up leads
-  to, so the finish card states the protocol's own; added collateral can be
+  collateral before and after, where it is held, the health factor and
+  loan-to-value now, the approval, and every consequence. Where it is held
+  follows the protocol: the top-up lands in the vault of the borrower the
+  loan records, which for a running loan is the holder's own (the position
+  is consolidated first), but for a loan in fallback whose position changed
+  hands is the recorded borrower's, named, until the top-up cures it. The
+  consequences, always shown: added collateral can be lost with the rest to
+  a liquidation or default; no view gives the figures a top-up leads to, so
+  the finish card states the protocol's own; added collateral can be
   taken back only within the protocol's limits while the loan runs; a loan
   in fallback returns to running only if the top-up restores its opening
   limits; and the pause posture, stated in every case (open, paused and

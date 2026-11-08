@@ -564,6 +564,13 @@ export const copy = {
     rowAfter: B('Collateral after'),
     rowHeld: B('Held'),
     held: B('In your vault, locked to this loan until it ends'),
+    heldRecorded: A(
+      'In the vault of {{vault}}, the borrower this loan records, locked to it. While the loan is in fallback it stays there; it moves to your vault only if this top-up returns the loan to running.',
+    ),
+    heldRecordedUnread: A(
+      'In the vault of {{vault}}, the borrower this loan records, locked to it. Who holds the borrower position now could not be read, so whether that is your vault is not known.',
+    ),
+    canLose: A('Collateral you add can be lost with the rest: if the loan is liquidated or defaults, it is used toward the debt like the collateral already held.'),
     rowHfNow: B('Health factor now'),
     rowLtvNow: B('Loan-to-value now'),
     approvalCovers: B('Your approval already covers the {{amount}} it takes'),

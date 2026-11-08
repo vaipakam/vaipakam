@@ -11,7 +11,7 @@
 import type { CopyAccess } from '../copy/useCopy';
 import { figured, type Receipt } from '../receipt/types';
 import { exactTokenAmount, tokenAmount, type TokenMetaMap } from '../reads/tokens';
-import { formatBps, formatScaled } from '../ui/format';
+import { formatBps, formatScaled, shortAddress } from '../ui/format';
 import { addPromptCount, inFallback, type AddReview } from './addReview';
 
 export function addReceipt(r: AddReview, meta: TokenMetaMap | null, copy: Pick<CopyAccess, 'text' | 'format'>): Receipt {
@@ -30,7 +30,7 @@ export function addReceipt(r: AddReview, meta: TokenMetaMap | null, copy: Pick<C
     { label: text('addColl.rowAmount'), value: { kind: 'amount', asset, amount: r.amount }, binding: true, movesOut: true },
     { label: text('addColl.rowBefore'), value: { kind: 'amount', asset, amount: loan.collateralAmount }, binding: false },
     { label: text('addColl.rowAfter'), value: { kind: 'amount', asset, amount: loan.collateralAmount + r.amount }, binding: true },
-    { label: text('addColl.rowHeld'), value: { kind: 'text', text: text('addColl.held') }, binding: true },
+    { label: text('addColl.rowHeld'), value: { kind: 'text', text: heldText(r, copy) }, binding: true },
     { label: text('addColl.rowHfNow'), value: r.healthFactor === null ? unknown : { kind: 'text', text: formatScaled(r.healthFactor) }, binding: false },
     { label: text('addColl.rowLtvNow'), value: r.ltvBps === null ? unknown : { kind: 'text', text: format('position.ltv', { rate: formatBps(r.ltvBps) }) }, binding: false },
     { label: text('repay.rowBalance'), value: { kind: 'amount', asset, amount: r.balance }, binding: false },
@@ -43,6 +43,7 @@ export function addReceipt(r: AddReview, meta: TokenMetaMap | null, copy: Pick<C
   ];
 
   const consequences = [
+    text('addColl.canLose'),
     text('addColl.afterFigures'),
     text('addColl.takeBackLimit'),
     ...(inFallback(r) ? [text('addColl.fallbackCure')] : []),
@@ -57,4 +58,18 @@ export function addReceipt(r: AddReview, meta: TokenMetaMap | null, copy: Pick<C
     prompts: addPromptCount(r),
     readAt: r.readAt,
   };
+}
+
+/** Where the top-up lands. The protocol deposits into the vault of the
+ *  borrower the loan records. A running loan first moves to the current
+ *  holder (consolidation), so that is the reader's own vault; a loan in
+ *  fallback is not moved while the episode lasts, so a position that changed
+ *  hands keeps the top-up in the recorded borrower's vault unless the top-up
+ *  returns the loan to running. */
+export function heldText(r: AddReview, copy: Pick<CopyAccess, 'text' | 'format'>): string {
+  const recorded = r.loan.borrower;
+  const moved = r.borrowerHolder !== null && recorded.toLowerCase() !== r.borrowerHolder.toLowerCase();
+  if (inFallback(r) && moved) return copy.format('addColl.heldRecorded', { vault: shortAddress(recorded) });
+  if (inFallback(r) && r.borrowerHolder === null) return copy.format('addColl.heldRecordedUnread', { vault: shortAddress(recorded) });
+  return copy.text('addColl.held');
 }

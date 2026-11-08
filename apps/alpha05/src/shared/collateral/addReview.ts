@@ -145,6 +145,7 @@ export const ADD_STATED_LOAN_FIELDS = [
   'principal',
   'principalAsset',
   'borrowerTokenId',
+  'borrower',
 ] as const satisfies readonly (keyof LoanDetails)[];
 
 /** What a re-read found changed, in words, or null when nothing the review

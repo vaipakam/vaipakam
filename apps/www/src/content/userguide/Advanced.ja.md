@@ -2239,7 +2239,7 @@ Positions は共通のリーダーを通して Home と同じ保有一覧を読�
 
 ### 担保の追加：何が確認されるか
 
-`addCollateral(loanId, amount)` は、ローン自身の担保トークンをちょうど `amount` だけ呼び出し元から借り手のボールトへ引き出し、`collateralAmount` と担保リーエンを増やし、新しいヘルスファクターと LTV を含む `CollateralAdded` を発行します。進行中の swap-to-repay コミット、`ownerOf(borrowerTokenId)` 以外の呼び出し元、Active でも FallbackPending でもないローン、レンタル、一時停止中の担保資産（`isAssetPaused`）、`checkLiquidity` が Liquid と報告しない担保を拒否します。`whenNotPaused` は付いていません。
+`addCollateral(loanId, amount)` は、ローン自身の担保トークンをちょうど `amount` だけ呼び出し元から借り手のボールトへ引き出し、`collateralAmount` と担保リーエンを増やし、新しいヘルスファクターと LTV を含む `CollateralAdded` を発行します。進行中の swap-to-repay コミット、`ownerOf(borrowerTokenId)` 以外の呼び出し元、Active でも FallbackPending でもないローン、レンタル、一時停止中の担保資産（`isAssetPaused`）、`checkLiquidity` が Liquid と報告しない担保を拒否します。`whenNotPaused` は付いていません。入金先は記録された `loan.borrower` のボールトです。Active のローンは先に移転済みポジションを保有者へ統合する(`consolidateToHolder`)ため保有者のボールトになり、FallbackPending のローンは回復するまで統合されないため、レビューは記録されたボールトを示します。追加したトークンは清算やデフォルトで消費される `collateralAmount` に含まれ、レビューはそのことを伝えます。
 
 アプリはこれらの入力を読み取り、資産の 2 つの確認はローン開始時の区分ではなく現在の状態で行い、ドライランがプロトコルの最終判断となります。追加後のヘルスファクターを返すビューはないため、確認画面は現在の `calculateHealthFactor` と `calculateLTV` を示し、完了カードは取引の `CollateralAdded` ログから新しい数値を読み取ります。FallbackPending のローンでは、新しいヘルスファクターがローンの最低値に達し、LTV が開始時の上限内に収まると追加によって回復します。完了カードは `LoanCuredFromFallback` を確認します。金額以上の既存の承認はそのまま残します。引き出されるのはちょうどその金額だからです。小さい承認はちょうどその金額まで上げ、追加が成立しなければ元に戻します。
 

@@ -61,6 +61,7 @@ test('the borrower adds collateral: the amount checked against the wallet, an ex
   await expect(receipt).toContainText('1,500 tLIQ');
   await expect(receipt).toContainText('1,750 tLIQ');
   await expect(receipt).toContainText('In your vault, locked to this loan until it ends');
+  await expect(receipt).toContainText('Collateral you add can be lost with the rest: if the loan is liquidated or defaults');
   await expect(receipt).toContainText('Health factor now');
   await expect(receipt).toContainText(/Approve exactly the 250 tLIQ it takes/);
   await expect(receipt).toContainText('The finish card shows the protocol’s own figures after it.');

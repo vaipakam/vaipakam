@@ -2130,7 +2130,7 @@ Positions는 하나의 공유 리더로 Home과 같은 보유 목록을 읽습�
 
 ### 담보 추가: 무엇을 확인하는가
 
-`addCollateral(loanId, amount)`는 대출 자체의 담보 토큰을 정확히 `amount`만큼 호출자에게서 차입자의 볼트로 가져오고, `collateralAmount`와 담보 리엔을 늘리며, 새 헬스 팩터와 LTV를 담은 `CollateralAdded`를 내보냅니다. 진행 중인 swap-to-repay 커밋, `ownerOf(borrowerTokenId)`가 아닌 호출자, Active도 FallbackPending도 아닌 대출, 대여, 일시 중지된 담보 자산(`isAssetPaused`), `checkLiquidity`가 Liquid로 보고하지 않는 담보는 거부합니다. `whenNotPaused`는 붙어 있지 않습니다.
+`addCollateral(loanId, amount)`는 대출 자체의 담보 토큰을 정확히 `amount`만큼 호출자에게서 차입자의 볼트로 가져오고, `collateralAmount`와 담보 리엔을 늘리며, 새 헬스 팩터와 LTV를 담은 `CollateralAdded`를 내보냅니다. 진행 중인 swap-to-repay 커밋, `ownerOf(borrowerTokenId)`가 아닌 호출자, Active도 FallbackPending도 아닌 대출, 대여, 일시 중지된 담보 자산(`isAssetPaused`), `checkLiquidity`가 Liquid로 보고하지 않는 담보는 거부합니다. `whenNotPaused`는 붙어 있지 않습니다. 예치는 기록된 `loan.borrower`의 볼트로 갑니다. Active 대출은 먼저 이전된 포지션을 보유자에게 통합하므로(`consolidateToHolder`) 보유자의 볼트가 되고, FallbackPending 대출은 회복될 때까지 통합되지 않으므로 검토는 기록된 볼트를 밝힙니다. 추가한 토큰은 청산과 디폴트가 소비하는 `collateralAmount`에 포함되며, 검토가 이를 알립니다.
 
 앱은 이 입력을 읽으며, 두 자산 확인은 대출 개시 시의 분류가 아니라 현재 상태로 하고, 드라이 런이 프로토콜의 마지막 판단입니다. 추가 후의 헬스 팩터를 돌려주는 뷰가 없으므로 검토 화면은 현재 `calculateHealthFactor`와 `calculateLTV`를 보여 주고, 완료 카드는 거래의 `CollateralAdded` 로그에서 새 수치를 읽습니다. FallbackPending 대출은 새 헬스 팩터가 대출의 최솟값에 이르고 LTV가 개시 한도 안에 있으면 추가로 회복됩니다. 완료 카드는 `LoanCuredFromFallback`을 확인합니다. 금액 이상인 기존 승인은 그대로 둡니다. 가져가는 것은 정확히 그 금액이기 때문입니다. 더 작은 승인은 정확히 그 금액으로 올리고, 추가가 이뤄지지 않으면 되돌립니다.
 
