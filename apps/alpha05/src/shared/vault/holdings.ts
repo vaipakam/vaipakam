@@ -1,0 +1,267 @@
+/**
+ * ACC-20, ACC-21, ACC-24: what the connected wallet's own vault holds, read
+ * from the protocol's own views at one block (RB-RAILS, RB-FUNDS).
+ *
+ * The protocol keeps four figures per asset, and the page shows them as the
+ * protocol states them, never re-deriving one from another:
+ * - what sits in the vault on chain (the token's own balance for the vault);
+ * - what the protocol counts as the wallet's there (the tracked holding);
+ *   an asset that arrived outside the protocol is not counted until its
+ *   owner adopts it (`untrackedHolding`, ACC-24);
+ * - what the wallet may withdraw now (`withdrawableNow`): the protocol's own
+ *   answer after every loan, offer, claim, reserve, intent and queued payout;
+ * - the rest of the counted holding, which only those positions release.
+ *
+ * Which assets to read: the protocol lists every asset contract ever credited
+ * to the wallet's deposit record (`getDepositoryAssets`, paged until its
+ * stated length; an empty page before the end is never the end), and the
+ * wallet's own loans and open offers name the assets a position put there.
+ * An asset that reached the vault by neither route (a plain transfer) cannot
+ * be found from the chain alone; the page says so instead of implying the
+ * list is everything. The deposit record names an NFT collection but not its
+ * token ids, so a collection is named without figures unless a loan names
+ * the token.
+ */
+import type { Abi, PublicClient } from 'viem';
+import { erc20Abi } from 'viem';
+import { VaultDepositoryFacetABI, VaultFactoryFacetABI } from '@vaipakam/contracts/abis';
+import { answerOrNull } from '../reads/answer';
+import { NFT_ABI, readStandard, type Standard } from '../nft/nft';
+
+type Hex = `0x${string}`;
+
+const DEPOSITORY = VaultDepositoryFacetABI as Abi;
+const FACTORY = VaultFactoryFacetABI as Abi;
+const ZERO = '0x0000000000000000000000000000000000000000';
+
+/** The protocol's `AssetType` positions. */
+const KIND: Record<Standard, number> = { erc20: 0, erc721: 1, erc1155: 2 };
+
+/** One page of the deposit record's asset list. */
+export const DEPOSITORY_PAGE = 50;
+/** Pages read before the list is said to be incomplete. */
+export const DEPOSITORY_MAX_PAGES = 20;
+
+/** Why the page reads an asset. */
+export type HoldingSource = 'deposit' | 'loan' | 'offer';
+
+/** An asset the page reads: an ERC-20, or one NFT token a loan names. */
+export interface HoldingSubject {
+  standard: Standard;
+  asset: Hex;
+  /** 0 for an ERC-20. */
+  tokenId: bigint;
+  sources: HoldingSource[];
+}
+
+/** The protocol's figures for one subject; each null when its read had no
+ *  answer (the contract reverted). */
+export interface HoldingRow extends HoldingSubject {
+  /** What the vault holds on chain (an ERC-721: 1 or 0). */
+  inVault: bigint | null;
+  /** What the protocol counts as the wallet's (the tracked holding). */
+  tracked: bigint | null;
+  /** What the wallet may withdraw now, after every position. */
+  withdrawable: bigint | null;
+  /** What sits in the vault outside the protocol's count. */
+  untracked: bigint | null;
+}
+
+export interface VaultHoldings {
+  /** The wallet's vault; null when it has none yet. */
+  vault: Hex | null;
+  rows: HoldingRow[];
+  /** NFT collections the deposit record names with no token this page can
+   *  name (the record keeps no token ids). */
+  collections: Hex[];
+  /** Whether the deposit record's list was read to its end. */
+  listComplete: boolean;
+  /** Whether the position sources the page was given were complete. */
+  positionsComplete: boolean;
+  block: bigint;
+}
+
+/** The assets the wallet's positions name, by kind (from the position book
+ *  and the open offers the caller already read). */
+export interface PositionAssets {
+  erc20: { asset: Hex; source: HoldingSource }[];
+  nfts: { standard: 'erc721' | 'erc1155'; asset: Hex; tokenId: bigint; source: HoldingSource }[];
+  complete: boolean;
+}
+
+/** The deposit record's asset list, paged to its stated length. An empty page
+ *  before the end, or more pages than the cap, ends the walk incomplete. */
+export async function readDepositoryAssets(
+  read: (offset: bigint, limit: bigint) => Promise<readonly [readonly Hex[], bigint]>,
+  opts: { page: number; maxPages: number } = { page: DEPOSITORY_PAGE, maxPages: DEPOSITORY_MAX_PAGES },
+): Promise<{ assets: Hex[]; complete: boolean }> {
+  const assets: Hex[] = [];
+  let offset = 0n;
+  for (let i = 0; i < opts.maxPages; i++) {
+    const [page, total] = await read(offset, BigInt(opts.page));
+    assets.push(...page);
+    offset += BigInt(page.length);
+    if (offset >= total) return { assets, complete: true };
+    if (page.length === 0) return { assets, complete: false };
+  }
+  return { assets, complete: false };
+}
+
+/** Every subject to read, once each: deposit-record ERC-20s, position
+ *  ERC-20s and position NFT tokens, with every reason it is read. A
+ *  deposit-record NFT collection no position names is returned apart. */
+export function holdingSubjects(deposited: readonly { asset: Hex; standard: Standard }[], positions: PositionAssets): { subjects: HoldingSubject[]; collections: Hex[] } {
+  const byKey = new Map<string, HoldingSubject>();
+  const add = (standard: Standard, asset: Hex, tokenId: bigint, source: HoldingSource) => {
+    if (asset.toLowerCase() === ZERO) return;
+    const key = `${standard}:${asset.toLowerCase()}:${tokenId.toString()}`;
+    const have = byKey.get(key);
+    if (have) {
+      if (!have.sources.includes(source)) have.sources.push(source);
+      return;
+    }
+    byKey.set(key, { standard, asset, tokenId, sources: [source] });
+  };
+  for (const d of deposited) if (d.standard === 'erc20') add('erc20', d.asset, 0n, 'deposit');
+  for (const p of positions.erc20) add('erc20', p.asset, 0n, p.source);
+  for (const n of positions.nfts) add(n.standard, n.asset, n.tokenId, n.source);
+  const named = new Set(positions.nfts.map((n) => n.asset.toLowerCase()));
+  const collections: Hex[] = [];
+  for (const d of deposited) {
+    if (d.standard === 'erc20' || named.has(d.asset.toLowerCase())) continue;
+    if (!collections.some((c) => c.toLowerCase() === d.asset.toLowerCase())) collections.push(d.asset);
+  }
+  // Deposit-record NFT tokens a position names are read for their figures;
+  // mark the deposit reason on them too.
+  for (const s of byKey.values()) {
+    if (s.standard !== 'erc20' && deposited.some((d) => d.asset.toLowerCase() === s.asset.toLowerCase()) && !s.sources.includes('deposit')) s.sources.push('deposit');
+  }
+  return { subjects: [...byKey.values()], collections };
+}
+
+/** The wallet's vault and every subject's figures, at one block. */
+export async function readVaultHoldings(c: PublicClient, diamond: Hex, account: Hex, positions: PositionAssets): Promise<VaultHoldings> {
+  const block = await c.getBlockNumber({ cacheTime: 0 });
+  const at = { blockNumber: block };
+  const vaultRaw = (await c.readContract({ address: diamond, abi: FACTORY, functionName: 'getUserVaultAddress', args: [account], ...at })) as Hex;
+  const vault = vaultRaw.toLowerCase() === ZERO ? null : vaultRaw;
+  if (vault === null) return { vault: null, rows: [], collections: [], listComplete: true, positionsComplete: positions.complete, block };
+  const list = await readDepositoryAssets(
+    (offset, limit) =>
+      c.readContract({ address: diamond, abi: DEPOSITORY, functionName: 'getDepositoryAssets', args: [account, offset, limit], ...at }) as Promise<
+        readonly [readonly Hex[], bigint]
+      >,
+  );
+  const deposited = await Promise.all(list.assets.map(async (asset) => ({ asset, standard: await readStandard(c, asset) })));
+  const { subjects, collections } = holdingSubjects(deposited, positions);
+  const rows = await Promise.all(subjects.map((s) => readHoldingRow(c, diamond, account, vault, s, block)));
+  return { vault, rows, collections, listComplete: list.complete, positionsComplete: positions.complete, block };
+}
+
+async function readHoldingRow(c: PublicClient, diamond: Hex, account: Hex, vault: Hex, s: HoldingSubject, block: bigint): Promise<HoldingRow> {
+  const at = { blockNumber: block };
+  const kind = KIND[s.standard];
+  const view = (address: Hex, abi: Abi, functionName: string, args: readonly unknown[]) =>
+    answerOrNull(c.readContract({ address, abi, functionName, args, ...at }) as Promise<unknown>);
+  const inVault = async (): Promise<bigint | null> => {
+    if (s.standard === 'erc20') return (await view(s.asset, erc20Abi as Abi, 'balanceOf', [vault])) as bigint | null;
+    if (s.standard === 'erc1155') return (await view(s.asset, NFT_ABI as Abi, 'balanceOf', [vault, s.tokenId])) as bigint | null;
+    const owner = (await view(s.asset, NFT_ABI as Abi, 'ownerOf', [s.tokenId])) as Hex | null;
+    return owner === null ? 0n : owner.toLowerCase() === vault.toLowerCase() ? 1n : 0n;
+  };
+  const [held, tracked, withdrawable, untracked] = await Promise.all([
+    inVault(),
+    view(diamond, FACTORY, 'getTrackedHolding', [account, s.asset, s.tokenId]) as Promise<bigint | null>,
+    view(diamond, DEPOSITORY, 'withdrawableNow', [account, kind, s.asset, s.tokenId]) as Promise<bigint | null>,
+    view(diamond, DEPOSITORY, 'untrackedHolding', [account, kind, s.asset, s.tokenId]) as Promise<bigint | null>,
+  ]);
+  return { ...s, inVault: held, tracked, withdrawable, untracked };
+}
+
+/** What the page states for one row, from the protocol's figures alone. */
+export interface HoldingFigures {
+  /** What the protocol counts and the vault holds: the smaller of the two
+   *  (an unsolicited transfer never raises it); null when either is unread. */
+  counted: bigint | null;
+  /** The protocol's own answer; null when unread. */
+  withdrawable: bigint | null;
+  /** The counted holding positions keep (counted minus withdrawable); null
+   *  when either is unread. */
+  held: bigint | null;
+  /** In the vault outside the protocol's count; null when unread. */
+  untracked: bigint | null;
+  /** The vault holds LESS than the protocol counts (a token that moved the
+   *  balance itself); the page shows both. */
+  short: boolean;
+  /** Every counted unit is kept by a position. */
+  allHeld: boolean;
+  /** Any figure could not be read. */
+  unread: boolean;
+}
+
+export function holdingFigures(r: HoldingRow): HoldingFigures {
+  const counted = r.inVault !== null && r.tracked !== null ? (r.inVault < r.tracked ? r.inVault : r.tracked) : null;
+  const held = counted !== null && r.withdrawable !== null && counted >= r.withdrawable ? counted - r.withdrawable : null;
+  return {
+    counted,
+    withdrawable: r.withdrawable,
+    held,
+    untracked: r.untracked,
+    short: r.inVault !== null && r.tracked !== null && r.inVault < r.tracked,
+    allHeld: counted !== null && counted > 0n && r.withdrawable === 0n,
+    unread: r.inVault === null || r.tracked === null || r.withdrawable === null || r.untracked === null,
+  };
+}
+
+/** A row is dust when what it counts is above zero and below 1e-11 of a whole
+ *  token (ERC-20 with known decimals only). */
+export function isDust(r: HoldingRow, decimals: number | null): boolean {
+  if (r.standard !== 'erc20' || decimals === null || decimals < 11) return false;
+  const f = holdingFigures(r);
+  if (f.counted === null || f.counted === 0n) return false;
+  if ((f.untracked ?? 0n) > 0n) return false;
+  return f.counted * 10n ** 11n < 10n ** BigInt(decimals);
+}
+
+/** Nothing of the asset is in the vault, counted or not (the deposit record
+ *  keeps an asset listed after it is all withdrawn). An unread row is never
+ *  empty. */
+export function isEmpty(r: HoldingRow): boolean {
+  const f = holdingFigures(r);
+  if (f.unread) return false;
+  return r.inVault === 0n && r.tracked === 0n && r.untracked === 0n;
+}
+
+/** The rows shown by default, and how many the "show small and empty"
+ *  switch hides. */
+export function shownRows(rows: readonly HoldingRow[], decimals: (asset: Hex) => number | null, showAll: boolean): { rows: HoldingRow[]; hidden: number } {
+  const keep = rows.filter((r) => showAll || !(isEmpty(r) || isDust(r, decimals(r.asset))));
+  return { rows: keep, hidden: rows.length - rows.filter((r) => !(isEmpty(r) || isDust(r, decimals(r.asset)))).length };
+}
+
+/** The assets the wallet's loans and open offers name. Loans pass every
+ *  leg (a zero row is hidden as empty), so a side whose leg is not in this
+ *  vault costs a read and shows nothing. */
+export function positionAssets(
+  loans: readonly { principalAsset: Hex; assetType: number; tokenId: bigint; collateralAsset: Hex; collateralAssetType: number; collateralTokenId: bigint }[],
+  offers: readonly { lendingAsset: Hex; assetType: number; tokenId: bigint; prepayAsset: Hex; collateralAsset: Hex; collateralAssetType: number; collateralTokenId: bigint }[],
+  complete: boolean,
+): PositionAssets {
+  const erc20: PositionAssets['erc20'] = [];
+  const nfts: PositionAssets['nfts'] = [];
+  const leg = (asset: Hex, type: number, tokenId: bigint, source: HoldingSource) => {
+    if (type === KIND.erc20) erc20.push({ asset, source });
+    else if (type === KIND.erc721) nfts.push({ standard: 'erc721', asset, tokenId, source });
+    else if (type === KIND.erc1155) nfts.push({ standard: 'erc1155', asset, tokenId, source });
+  };
+  for (const l of loans) {
+    leg(l.principalAsset, l.assetType, l.tokenId, 'loan');
+    leg(l.collateralAsset, l.collateralAssetType, l.collateralTokenId, 'loan');
+  }
+  for (const o of offers) {
+    leg(o.lendingAsset, o.assetType, o.tokenId, 'offer');
+    leg(o.collateralAsset, o.collateralAssetType, o.collateralTokenId, 'offer');
+    if (o.prepayAsset.toLowerCase() !== ZERO) leg(o.prepayAsset, KIND.erc20, 0n, 'offer');
+  }
+  return { erc20, nfts, complete };
+}

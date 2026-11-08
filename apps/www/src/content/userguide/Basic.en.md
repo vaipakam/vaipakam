@@ -1303,6 +1303,12 @@ If the sanctions screen flags your wallet, the protocol takes nothing you are ow
 
 If you hold a loan's borrower position, you can set aside the loan's token in your own vault for its extensions. An extension, the keeper's or your own, draws on that reserve first. The reserve stays yours. Claims lists every loan where you have some left, and says whether an extension can still draw on it: only while the loan runs and you hold its borrower position. You can take the whole reserve back at any time while the protocol is not paused, whatever the loan's state; if the loan is still running, its next extension then draws on your other balance of the token instead. The loans are found in the app's index; if it cannot list them, look a loan up by its number. No approval is needed, so your wallet asks once, after a dry run, and the finish card shows where the money landed.
 
+<a id="vault-holdings"></a>
+
+### Your Vault
+
+Vault shows your own vault on the network you are connected to: its full address, with a link to the explorer. It is a contract the protocol keeps for your wallet alone; nothing in it is pooled with anyone else's, and assets leave it only by the protocol's rules. If you have no vault yet, the page says so and offers to create one; your first deposit or offer would create it anyway. Creating it moves nothing and asks no approval, so your wallet asks once. Each asset shows three figures from the protocol: In your vault (what the protocol counts as yours there), Free to withdraw now, and Held by your positions (what your loans, offers, claims, reserves or queued payouts keep). A token sent to your vault by a plain transfer is not counted and cannot be withdrawn until you adopt it; the row says so and links to where you adopt or disown it. The page lists the assets you deposited and the assets your loans and open offers name, so a token sent by a plain transfer shows only if one of those names it. Small and empty rows are hidden behind a switch that counts them. VPFI in your vault sets your fee-discount tier and is not collateral. Deposit and withdraw come to this page next.
+
 <a id="risk-access"></a>
 
 ### Risk Access: Your Risk Level

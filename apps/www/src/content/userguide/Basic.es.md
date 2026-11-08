@@ -1330,6 +1330,12 @@ Si el control de sanciones marca su billetera, el protocolo no toma nada de lo q
 
 Si tiene la posición del prestatario de un préstamo, puede apartar el token del préstamo en su propia bóveda para sus extensiones. Una extensión, la del keeper o la suya, toma primero de esa reserva. La reserva sigue siendo suya. Claims lista cada préstamo en el que le queda algo, e indica si una extensión aún puede tomar de ella: solo mientras el préstamo está en curso y usted tiene su posición del prestatario. Puede recuperar toda la reserva en cualquier momento mientras el protocolo no esté en pausa, sea cual sea el estado del préstamo; si el préstamo sigue en curso, su siguiente extensión toma entonces de su otro saldo del token. Los préstamos se encuentran en el índice de la app; si no puede listarlos, busque un préstamo por su número. No hace falta ninguna aprobación, así que su billetera pide una vez, tras una prueba, y la tarjeta final muestra adónde llegó el dinero.
 
+<a id="vault-holdings"></a>
+
+### Tu bóveda
+
+Bóveda muestra tu propia bóveda en la red a la que estás conectado: su dirección completa, con un enlace al explorador. Es un contrato que el protocolo mantiene solo para tu billetera; nada de lo que contiene se mezcla con lo de nadie más, y los activos solo salen de ella según las reglas del protocolo. Si aún no tienes bóveda, la página lo dice y ofrece crearla; tu primer depósito u oferta la crearía de todos modos. Crearla no mueve nada ni pide ninguna aprobación, así que tu billetera pregunta una vez. Cada activo muestra tres cifras del protocolo: En tu bóveda (lo que el protocolo cuenta como tuyo allí), Libre para retirar ahora y Retenido por tus posiciones (lo que guardan tus préstamos, ofertas, reclamos, reservas o pagos en cola). Un token enviado a tu bóveda con una transferencia simple no se cuenta y no puede retirarse hasta que lo adoptes; la fila lo dice y enlaza a donde lo adoptas o lo repudias. La página lista los activos que depositaste y los que nombran tus préstamos y ofertas abiertas, así que un token enviado con una transferencia simple solo aparece si uno de ellos lo nombra. Las filas pequeñas y vacías quedan ocultas tras un interruptor que las cuenta. El VPFI de tu bóveda fija tu nivel de descuento en comisiones y no es garantía. Depositar y retirar llegarán después a esta página.
+
 <a id="risk-access"></a>
 
 ### Risk Access: tu nivel de riesgo

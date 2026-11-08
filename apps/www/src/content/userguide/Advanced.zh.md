@@ -2022,6 +2022,12 @@ Positions 通过一个共享读取器读取与 Home 相同的持仓清单：`get
 
 `fundExtendReserve(loanId, amount)` 将贷款的本金代币从借款人头寸持有人的钱包存入其自己的金库，并为该贷款预留。它带有 `whenNotPaused` 和制裁筛查，除非贷款为 Active、是 ERC-20 贷款且没有定期付息周期，否则会被拒绝。`getExtendFunding(loanId, holder)` 返回代币、`reserved`、持有人的其他可用余额，以及展期现在和窗口结束时将收取的金额；展期只从当前持有人的金库收取，先扣储备。`withdrawExtendReserve(account, loanId, amount)` 带有 `whenNotPaused`，要求调用者是该账户的管理者（其自己的钱包，或替换后的控制者），对调用者进行筛查（故障时放行），超出预留额时以 `ExtendReserveInsufficient` 回退；无论贷款处于何种状态均可调用。应用根据索引中记在该钱包名下的活动 (`ExtendReserveFunded`, `ExtendReserveWithdrawn`, `ExtendChargeDrawn`) 列出贷款；按编号查找只读取链上数据。它会取回审核读取到的全部储备，在审核时和发送时各试运行一次调用，完成卡片读取 `ExtendReserveWithdrawn`（金额以及仍保留的部分），在保护模式将付款排入队列或保留时，还会读取 `PayoutQueued` 或 `PayoutHeldInVault`。
 
+<a id="vault-holdings"></a>
+
+### 你的金库：读取什么
+
+金库是 `VaultFactoryFacet.getUserVaultAddress(wallet)`；`getOrCreateUserVault(wallet)` 创建它（一级制裁筛查，无暂停门槛），完成卡片读取 `UserVaultCreated`。每项资产在同一区块读取：金库自身的余额（ERC-20 用 `balanceOf`，ERC-721 用 `ownerOf`，ERC-1155 用 `balanceOf`）、`getTrackedHolding`、`withdrawableNow` 和 `untrackedHolding`。“在你的金库中”取余额与跟踪持有量中较小者；“现在可自由提取”即原样返回的 `withdrawableNow`（存入持有量，以 `freeHolding` 为上限：跟踪量减去留置再减去保护模式的预留）；“被你的头寸占用”是计入数量减去该值。资产来自 `getDepositoryAssets(wallet, offset, limit)`，按页读取直到返回的总数（在此之前出现空页视为不完整），每个列出合约的标准通过 ERC-165 读取，并加上钱包进行中和已结束贷款以及未成交报价的各条腿。记录不保存 NFT 代币 ID，因此没有任何贷款涉及的已存入集合会不带数字地列出。尘额是大于零且小于一个完整代币 1e-11 的计入数量。
+
 <a id="risk-access"></a>
 
 ### Risk Access：你的风险等级

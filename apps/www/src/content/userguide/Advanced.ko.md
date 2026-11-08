@@ -2180,6 +2180,12 @@ Positions는 하나의 공유 리더로 Home과 같은 보유 목록을 읽습�
 
 `fundExtendReserve(loanId, amount)`는 차입자 포지션 보유자의 지갑에서 대출의 원금 토큰을 본인 볼트로 입금하고 그 대출용으로 예약합니다. `whenNotPaused`와 제재 검사를 거치며, 대출이 Active이고 ERC-20 대출이며 주기적 이자 주기가 없지 않으면 거부됩니다. `getExtendFunding(loanId, holder)`는 토큰, `reserved`, 보유자의 다른 자유 잔액, 그리고 연장이 지금과 기간 종료 시 부과할 금액을 반환합니다. 연장은 현재 보유자의 볼트에서만, 예비금부터 부과합니다. `withdrawExtendReserve(account, loanId, amount)`는 `whenNotPaused`를 거치고, 호출자가 계정의 관리자(본인 지갑, 또는 교체 후의 컨트롤러)일 것을 요구하며, 호출자를 검사하고(장애 시 통과), 예약된 금액을 넘으면 `ExtendReserveInsufficient`로 되돌립니다. 대출 상태와 관계없이 열려 있습니다. 앱은 지갑 아래 기록된 인덱스 활동 (`ExtendReserveFunded`, `ExtendReserveWithdrawn`, `ExtendChargeDrawn`)에서 대출 목록을 만들며, 번호 조회는 체인만 읽습니다. 검토가 읽은 예비금 전부를 인출하고, 호출을 검토 때와 전송 때 다시 시험 실행하며, 완료 카드는 `ExtendReserveWithdrawn`(금액과 예약된 채 남는 금액)를 읽고, 보호 모드가 지급을 대기열에 넣거나 보관한 경우 `PayoutQueued` 또는 `PayoutHeldInVault`도 읽습니다.
 
+<a id="vault-holdings"></a>
+
+### 내 볼트: 무엇을 읽는가
+
+볼트는 `VaultFactoryFacet.getUserVaultAddress(wallet)`입니다. `getOrCreateUserVault(wallet)`이 볼트를 만들며(1단계 제재 검사, 일시 중지 게이트 없음), 완료 카드는 `UserVaultCreated`를 읽습니다. 자산마다 같은 블록에서 읽는 것은 볼트 자체 잔액(ERC-20 `balanceOf`, ERC-721 `ownerOf`, ERC-1155 `balanceOf`), `getTrackedHolding`, `withdrawableNow`, `untrackedHolding`입니다. "볼트 안"은 잔액과 추적 보유량 중 작은 값이고, "지금 출금 가능"은 반환된 `withdrawableNow` 그대로(예치 보유량을 `freeHolding`, 즉 추적량에서 담보권과 보호 모드 예치분을 뺀 값으로 제한한 것)이며, "포지션이 보유 중"은 계산된 수치에서 그 값을 뺀 것입니다. 자산은 `getDepositoryAssets(wallet, offset, limit)`에서 반환된 총수까지 페이지별로 읽고(그 전의 빈 페이지는 불완전으로 봅니다), 목록의 각 컨트랙트 표준은 ERC-165로 읽으며, 지갑의 진행 중·종료된 대출과 열린 오퍼의 각 레그를 더합니다. 기록에는 NFT 토큰 ID가 없으므로, 어떤 대출도 가리키지 않는 예치 컬렉션은 수치 없이 나열됩니다. 더스트는 0보다 크고 토큰 하나의 1e-11보다 작은 계산 수치입니다.
+
 <a id="risk-access"></a>
 
 ### Risk Access: 내 위험 등급
