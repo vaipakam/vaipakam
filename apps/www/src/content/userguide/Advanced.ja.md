@@ -2295,6 +2295,12 @@ Positions は共通のリーダーを通して Home と同じ保有一覧を読�
 
 ボールトは `VaultFactoryFacet.getUserVaultAddress(wallet)` です。`getOrCreateUserVault(wallet)` がこれを作成し（ティア1の制裁チェック、一時停止ゲートなし）、完了カードは `UserVaultCreated` を読みます。資産ごとに同じブロックで読むのは、ボールト自身の残高（ERC-20 は `balanceOf`、ERC-721 は `ownerOf`、ERC-1155 は `balanceOf`）、`getTrackedHolding`、`withdrawableNow`、`untrackedHolding` です。「ボールト内」は残高と追跡保有量の小さい方、「今すぐ引き出し可能」は返された `withdrawableNow` そのもの（入金保有量を `freeHolding`、つまり追跡量からリーエンと保護モードの留保を引いた量で上限としたもの）、「ポジションが保持中」は計上量からそれを引いたものです。資産は `getDepositoryAssets(wallet, offset, limit)` から、返された総数までページごとに読みます（その前の空ページは不完全として扱います）。一覧の各コントラクトの規格は ERC-165 で読み、さらに `getUserLoansPaginated(wallet)` のすべてのローンと、ウォレットがポジションを保有するすべてのローンの各レッグ（貸し出し資産、担保、レンタルの前払い手数料トークン）を同じブロックで `getLoanDetails` により読み、これまでに作成したすべてのオファー（`getUserOffersPaginated(wallet)`、各件を `getOffer` で読む）の各レッグも加えます。オファーの預け入れは、ポジションNFTを譲渡した後も作成者のボールトに残るためです。`getLenderIntentsByOwner(wallet)` の各常設オファー（取り消し済みを含む）が貸し出す資産も加えます。常設オファーへの資金投入は、入金記録に載せずにその資産をボールトへ入れるためです。記録は NFT のトークンIDを保持しないため、入金済みの NFT コレクションはすべて注記で名前を示し、数値付きで一覧に出るのはローンかオファーが指すトークンだけです。ダストとは、ゼロより大きく、トークン1枚の 1e-11 未満の計上量です。
 
+<a id="vault-deposit"></a>
+
+### ボールトに入金する
+
+入金は `VaultDepositoryFacet.depositToVault(kind, asset, tokenId, amount)` です。kind は 0 が ERC-20、1 が ERC-721、2 が ERC-1155 で、ERC-20 のトークンIDは 0、ERC-721 の数量は 1 です。`whenNotPaused` で、呼び出し元を審査し（Tier-1）、置き換えで退役したウォレットを拒否します（`requireManager`）。レビューは同じブロックで `getUserVaultAddress`、`paused`、制裁審査の状態、`getProtectedAccount(wallet)`、ウォレットの残高と承認を読みます。読めなかった停止・審査・退役はその旨を示し、ドライランが判断します。承認は ERC-20 なら厳密な `approve`（先にゼロへ戻す必要があるトークンは2段階）、ERC-721 なら `approve(diamond, tokenId)`、ERC-1155 なら `setApprovalForAll(diamond, true)` で、すでに付与済みでなければ入金後に取り消します。ドライランは承認の後に実行し、ERC-20 は全額到着の確認（`LibDelivery.pullExact`）付きで引き取るため、送金手数料のあるトークンは失敗します。完了カードは `VaultDeposited(account, asset, kind, tokenId, amount)` と、ボールトへのトークン自身の転送ログを読みます。この入金に permit の経路はありません。レビューは `getProtectedAccount(wallet)` から `enabled`、`locked`、`delaySeconds`、`requireCosign` も保持し、レシートは入金が再び出られる方法を示します。すぐに、待機時間の後に（必要な場合はセカンダリ署名者の承認付きで）、またはアカウントのロック中は出られない、のいずれかで、ロック中でも `depositToVault` は拒否しません。署名前の最後の確認で `hasAcceptedCurrentTerms` を読み直し、未同意のバージョンを拒否します。
+
 <a id="risk-access"></a>
 
 ### Risk Access: あなたのリスクレベル

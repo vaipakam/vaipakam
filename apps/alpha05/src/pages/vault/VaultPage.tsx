@@ -5,6 +5,7 @@ import { useOwnStateClient } from '../../chain/ownRail';
 import { getSupportedChain } from '../../chain/chains';
 import { pageHandoff, PAGES, currentAppHref } from '../../routes/pageMap';
 import { readVpfiToken } from '../../shared/claims/rewards';
+import { readPaused } from '../../shared/claims/sellerClaim';
 import { useCopy } from '../../shared/copy/useCopy';
 import type { CopyKey } from '../../shared/copy/useCopy';
 import { WhyLink } from '../../shared/help/WhyLink';
@@ -17,6 +18,11 @@ import { FrozenNotice, useFrozenState } from '../../shared/sanctions/FrozenNotic
 import { OwnStamp } from '../../shared/ui/OwnStamp';
 import { holdingFigures, positionAssets, readVaultHoldings, shownRows, type HoldingRow, type HoldingSource } from '../../shared/vault/holdings';
 import { CreateVault, useCreateVaultHeld } from '../../shared/vault/CreateVault';
+import { DEPOSIT_KEY, DepositVault, useDepositHeld } from '../../shared/vault/DepositVault';
+import { TermsPrompt } from '../../shared/terms/TermsPrompt';
+import { useTerms } from '../../shared/terms/useTerms';
+import { useTermsGate } from '../../shared/terms/useTermsGate';
+import { Notice } from '../../shared/ui/Notice';
 
 type Hex = `0x${string}`;
 
@@ -69,6 +75,26 @@ export function VaultPage() {
   const meta = useTokenMeta(data ? [...data.rows.map((r) => r.asset), ...data.collections] : []).data;
   const frozen = useFrozenState(diamond, served && own ? own.account : null);
   const create = useCreateVaultHeld();
+  const deposit = useDepositHeld();
+  const paused = useOwnRead(['vault', 'paused', diamond], (c) => readPaused(c, diamond), { enabled: chain !== null, perBlock: true });
+  const terms = useTerms();
+  const termsGate = useTermsGate(`${DEPOSIT_KEY}.terms`, served ? chain : null, own);
+  const termsOpen = termsGate.session !== null;
+  // ACC-15: a deposit puts new value under the protocol, so an unaccepted
+  // Terms version is accepted first; the form opens once that is recorded.
+  // The Terms are this wallet's: a switch to a wallet that has not accepted
+  // them, or a version published while the form is open, sends an open form
+  // or review back through the gate (a transaction already under way is
+  // left to finish, and the deposit's last check before signing reads the
+  // Terms again either way).
+  const termsDue = terms.data?.kind === 'needed';
+  const openDeposit = () => {
+    if (terms.data?.kind === 'needed') {
+      termsGate.start(terms.data);
+      return;
+    }
+    deposit.setOpen(true);
+  };
   const [showAll, setShowAll] = useState(false);
   const positionsFailed = book.read.state === 'failed' || offers.state === 'failed';
 
@@ -111,6 +137,60 @@ export function VaultPage() {
               )}
             </section>
           )}
+          <section className="home-section" aria-labelledby="vault-deposit" data-testid="vault-deposit">
+            <h2 id="vault-deposit">{text('vaultDeposit.formTitle')}</h2>
+            {terms.state === 'failed' && (
+              <Notice tone="warn" tier="A">
+                {format('consent.termsUnknown', { chain: chain.name, reason: terms.error ?? 'no answer' })}{' '}
+                <button type="button" className="btn" onClick={terms.refetch}>
+                  {text('consent.retry')}
+                </button>
+              </Notice>
+            )}
+            {termsOpen && termsGate.session ? (
+              <TermsPrompt
+                asker={text('vaultDeposit.asker')}
+                gate={termsGate}
+                session={termsGate.session}
+                chain={chain}
+                own={own}
+                onAccepted={() => {
+                  termsGate.end();
+                  deposit.setOpen(true);
+                }}
+                onClose={() => termsGate.end()}
+              />
+            ) : deposit.held && termsDue && !deposit.inFlight ? (
+              <div data-testid="vault-deposit-terms-due">
+                <Notice tone="warn" tier="A">
+                  {text('vaultDeposit.termsDue')}
+                </Notice>
+                <div className="form-actions">
+                  <button type="button" className="btn btn-primary" onClick={openDeposit} data-testid="vault-deposit-terms-accept">
+                    {text('vaultDeposit.termsAccept')}
+                  </button>
+                  <button type="button" className="btn" onClick={() => deposit.setOpen(null)}>
+                    {text('flow.cancel')}
+                  </button>
+                </div>
+              </div>
+            ) : deposit.held ? (
+              <DepositVault chain={chain} own={own} onClose={() => deposit.setOpen(null)} onTermsDue={terms.refetch} />
+            ) : paused.data === true ? (
+              <p className="tier-a" data-testid="vault-deposit-paused">
+                {text('vaultDeposit.paused')}
+              </p>
+            ) : frozen === 'flagged' ? (
+              <p className="tier-a">{text('vaultDeposit.flagged')}</p>
+            ) : (
+              <>
+                <p className="tier-b">{text('vaultDeposit.lead')}</p>
+                <button type="button" className="btn btn-primary" onClick={openDeposit} disabled={terms.state !== 'ready'} data-testid="vault-deposit-open">
+                  {text('vaultDeposit.open')}
+                </button>
+              </>
+            )}
+          </section>
           {data !== null && data.vault !== null && (
             <>
               <section className="home-section" aria-labelledby="vault-address">
