@@ -1874,10 +1874,15 @@ contract MetricsFacet {
         LibVaipakam.Offer storage offer = vs.offers[s.offerId];
         s.createdAt = offer.createdAt;
         // #3205 — a retired token is a receipt of a closed position: it names
-        // its offer, loan, side and last status, and no live figure (no
-        // principal, collateral or claim), so a marketplace cannot show it as
-        // the live position it once was.
-        if (es.retired[tokenId]) return s;
+        // its offer, loan, side, the loan's REAL lifecycle state and what was
+        // lent and pledged (assets and their kinds, which the identity traits
+        // render), and no live figure (no principal, collateral or claim), so
+        // a marketplace cannot show it as the live position it once was, nor
+        // as an active loan (#3318 Codex r4).
+        if (es.retired[tokenId]) {
+            _retiredIdentity(s, vs, offer);
+            return s;
+        }
 
         // Resolve realized loan terms when a loan exists (the common case
         // since Phase 1 only mints NFTs at loan-init); otherwise fall back
@@ -1980,6 +1985,37 @@ contract MetricsFacet {
             ) {
                 s.collateralLockedNow = s.collateralAmount;
             }
+        }
+    }
+
+    /// @dev The identity a retired receipt keeps: the loan's status and the
+    ///      lent and pledged assets with their kinds and symbols (from the
+    ///      loan, or the offer when no loan exists). Every amount stays zero.
+    function _retiredIdentity(
+        NFTPositionSummary memory s,
+        LibVaipakam.Storage storage vs,
+        LibVaipakam.Offer storage offer
+    ) private view {
+        if (s.loanId != 0) {
+            LibVaipakam.Loan storage loan = vs.loans[s.loanId];
+            s.loanStatus = loan.status;
+            s.principalAsset = loan.principalAsset;
+            s.principalAssetType = loan.assetType;
+            s.collateralAsset = loan.collateralAsset;
+            s.collateralAssetType = loan.collateralAssetType;
+            s.prepayAsset = loan.prepayAsset;
+        } else {
+            s.principalAsset = offer.lendingAsset;
+            s.principalAssetType = offer.assetType;
+            s.collateralAsset = offer.collateralAsset;
+            s.collateralAssetType = offer.collateralAssetType;
+            s.prepayAsset = offer.prepayAsset;
+        }
+        (s.principalSymbol, s.principalDecimals) = _assetMeta(s.principalAsset, s.principalAssetType);
+        if (s.principalAssetType == LibVaipakam.AssetType.ERC20) {
+            (s.collateralSymbol, s.collateralDecimals) = _assetMeta(s.collateralAsset, s.collateralAssetType);
+        } else {
+            (s.prepaySymbol, s.prepayDecimals) = _erc20Meta(s.prepayAsset);
         }
     }
 

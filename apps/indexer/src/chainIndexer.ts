@@ -5142,6 +5142,46 @@ async function recordLoanParticipant(
 }
 
 /**
+ * The ONE rule for a new loan row's initial position holders (both insert
+ * paths). In order, per side:
+ *   1. the recipient of that token's mint in this batch (`NFTMinted`, the
+ *      loan's own transaction): authoritative, and the only source for a
+ *      match slice's fresh tokens (#3205, #3318 Codex r4), which never equal
+ *      the offer's token;
+ *   2. a token REUSED from the creator's offer (a direct accept): the offer's
+ *      current holder (#749), since its NFT may have moved before the accept;
+ *   3. the event's origination party.
+ */
+async function seedPositionOwners(
+  env: Env,
+  chainId: number,
+  offerId: number,
+  mintedTo: ReadonlyMap<string, string>,
+  sides: { lenderTok: string; borrowerTok: string; lender: string; borrower: string },
+): Promise<{ lenderOwner: string; borrowerOwner: string }> {
+  let lenderOwner = mintedTo.get(sides.lenderTok) ?? sides.lender;
+  let borrowerOwner = mintedTo.get(sides.borrowerTok) ?? sides.borrower;
+  const lenderMinted = mintedTo.has(sides.lenderTok);
+  const borrowerMinted = mintedTo.has(sides.borrowerTok);
+  if (lenderMinted && borrowerMinted) return { lenderOwner, borrowerOwner };
+  const offerRow = await env.DB.prepare(
+    `SELECT position_token_id, creator_current_owner FROM offers
+      WHERE chain_id = ? AND offer_id = ?`,
+  )
+    .bind(chainId, offerId)
+    .first<{ position_token_id: string; creator_current_owner: string }>();
+  if (offerRow?.creator_current_owner) {
+    const creatorTok = String(offerRow.position_token_id);
+    if (creatorTok !== '0' && creatorTok === sides.lenderTok && !lenderMinted) {
+      lenderOwner = offerRow.creator_current_owner;
+    } else if (creatorTok !== '0' && creatorTok === sides.borrowerTok && !borrowerMinted) {
+      borrowerOwner = offerRow.creator_current_owner;
+    }
+  }
+  return { lenderOwner, borrowerOwner };
+}
+
+/**
  * Insert a `LoanInitiated` row and seed its initiation participants in ONE
  * D1 batch, so the two land together or not at all (#2221, Codex #2836 r6).
  *
@@ -5224,11 +5264,20 @@ export async function processLoanLogs(
   // map here means the lookup works regardless of the relative log
   // order of the two events within the tx.
   const loanDetailsByLoanId = new Map<number, Record<string, unknown>>();
+  // #3205 (#3318 Codex r4) — who each position token minted in this batch was
+  // minted to, from the Diamond's own `NFTMinted` (emitted on both legacy and
+  // standalone chains, in the loan's own transaction). The loan seeding reads
+  // it first, so a fresh token's holder comes from the mint, never from
+  // token-id reuse.
+  const mintedTo = new Map<string, string>();
   for (const log of logs) {
     if (log.eventName === 'LoanInitiatedDetails') {
       const la = log.args as Record<string, unknown>;
       const det = la.details as Record<string, unknown> | undefined;
       if (det) loanDetailsByLoanId.set(Number(la.loanId as bigint), det);
+    } else if (log.eventName === 'NFTMinted') {
+      const ma = log.args as Record<string, unknown>;
+      mintedTo.set(String(ma.tokenId as bigint), String(ma.owner as string).toLowerCase());
     }
   }
 
@@ -5330,22 +5379,12 @@ export async function processLoanLogs(
         // resolvable yet (no-transfer case is identical anyway). The frontend's
         // on-chain verify is the authoritative backstop for the residual stub /
         // same-batch race.
-        let lenderOwner = lender;
-        let borrowerOwner = borrower;
-        const offerRow = await env.DB.prepare(
-          `SELECT position_token_id, creator_current_owner FROM offers
-            WHERE chain_id = ? AND offer_id = ?`,
-        )
-          .bind(chainId, offerId)
-          .first<{ position_token_id: string; creator_current_owner: string }>();
-        if (offerRow?.creator_current_owner) {
-          const creatorTok = String(offerRow.position_token_id);
-          if (creatorTok !== '0' && creatorTok === lenderTok) {
-            lenderOwner = offerRow.creator_current_owner;
-          } else if (creatorTok !== '0' && creatorTok === borrowerTok) {
-            borrowerOwner = offerRow.creator_current_owner;
-          }
-        }
+        const { lenderOwner, borrowerOwner } = await seedPositionOwners(env, chainId, offerId, mintedTo, {
+          lenderTok,
+          borrowerTok,
+          lender,
+          borrower,
+        });
         // #2467 — `init_terms_unbacked = 0`: this path takes the rate and
         // duration from the `LoanInitiatedDetails` event itself, so the
         // initiation terms are backed. The other insert paths leave the
@@ -5478,22 +5517,12 @@ export async function processLoanLogs(
         // offer's position_token_id; falls back to the read-back parties
         // when the offer row isn't resolvable (identical in the
         // no-pre-accept-transfer common case).
-        let lenderOwner = loanDetail.lender.toLowerCase();
-        let borrowerOwner = loanDetail.borrower.toLowerCase();
-        const offerRow = await env.DB.prepare(
-          `SELECT position_token_id, creator_current_owner FROM offers
-            WHERE chain_id = ? AND offer_id = ?`,
-        )
-          .bind(chainId, offerId)
-          .first<{ position_token_id: string; creator_current_owner: string }>();
-        if (offerRow?.creator_current_owner) {
-          const creatorTok = String(offerRow.position_token_id);
-          if (creatorTok !== '0' && creatorTok === loanDetail.lenderTokenId.toString()) {
-            lenderOwner = offerRow.creator_current_owner;
-          } else if (creatorTok !== '0' && creatorTok === loanDetail.borrowerTokenId.toString()) {
-            borrowerOwner = offerRow.creator_current_owner;
-          }
-        }
+        const { lenderOwner, borrowerOwner } = await seedPositionOwners(env, chainId, offerId, mintedTo, {
+          lenderTok: loanDetail.lenderTokenId.toString(),
+          borrowerTok: loanDetail.borrowerTokenId.toString(),
+          lender: loanDetail.lender.toLowerCase(),
+          borrower: loanDetail.borrower.toLowerCase(),
+        });
         const insert = env.DB.prepare(
           `INSERT OR IGNORE INTO loans
             (chain_id, loan_id, offer_id, status, lender, borrower,

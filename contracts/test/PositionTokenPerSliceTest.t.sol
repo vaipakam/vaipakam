@@ -11,6 +11,7 @@ import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
+import {MetricsFacet} from "../src/facets/MetricsFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibMetricsHooks} from "../src/libraries/LibMetricsHooks.sol";
@@ -144,6 +145,9 @@ contract PositionTokenPerSliceTest is SetupTest {
         vm.prank(borrower);
         ClaimFacet(address(diamond)).claimAsBorrower(loanA);
 
+        _assertClosedReceipt(loanA, _loan(loanA).lenderTokenId);
+        _assertClosedReceipt(loanA, _loan(loanA).borrowerTokenId);
+
         VaipakamNFTFacet nft = VaipakamNFTFacet(address(diamond));
         assertFalse(nft.isPositionRetired(b.lenderTokenId), "loan B lender token still live");
         assertFalse(nft.isPositionRetired(b.borrowerTokenId), "loan B borrower token still live");
@@ -155,6 +159,23 @@ contract PositionTokenPerSliceTest is SetupTest {
         ClaimFacet(address(diamond)).claimAsLender(loanB);
         vm.prank(borrower);
         ClaimFacet(address(diamond)).claimAsBorrower(loanB);
+    }
+
+    /// @dev #3318 Codex r4 — a claimed position's token is a retired receipt.
+    ///      Its summary (what `tokenURI` renders) states the loan's REAL
+    ///      closed state, never Active, and what was lent and pledged, with
+    ///      every live figure zero.
+    function _assertClosedReceipt(uint256 loanId, uint256 tokenId) internal view {
+        assertTrue(VaipakamNFTFacet(address(diamond)).isPositionRetired(tokenId), "claimed side retired");
+        MetricsFacet.NFTPositionSummary memory s = MetricsFacet(address(diamond)).getNFTPositionSummary(tokenId);
+        LibVaipakam.LoanStatus real = _loan(loanId).status;
+        assertTrue(real != LibVaipakam.LoanStatus.Active, "precondition: the loan is closed");
+        assertEq(uint8(s.loanStatus), uint8(real), "the receipt states the loan's real state");
+        assertEq(s.principalAsset, mockERC20, "what was lent");
+        assertEq(s.collateralAsset, mockCollateralERC20, "what was pledged");
+        assertEq(s.principalAmount, 0, "no live principal");
+        assertEq(s.collateralAmount, 0, "no live collateral");
+        assertEq(s.claimableAmount, 0, "no live claim");
     }
 
     // ── tests ────────────────────────────────────────────────────────

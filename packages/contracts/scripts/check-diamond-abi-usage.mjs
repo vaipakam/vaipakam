@@ -110,7 +110,8 @@ function callArgs(src, open) {
 }
 
 const lineOf = (src, i) => src.slice(0, i).split('\n').length;
-const esc = (s) => s.replace(/\$/g, '\\$');
+/** Full regular-expression escape of `s` (every metacharacter, not just `$`). */
+const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 /** Every literal function name `src` sends through a generated ABI, as
  *  `{ name, abi, line, shape }`, `abi` being the reference it resolves to. */
