@@ -21,6 +21,7 @@ import { useTxEntries, useTxStore } from '../../shared/tx/txStore';
 import { reviewIdentity } from '../../shared/ui/ActionFlow';
 import { PayoutQueue } from '../../shared/protection/PayoutQueue';
 import { SellerClaims } from '../../shared/claims/SellerClaims';
+import { Reserves } from '../../shared/claims/Reserves';
 import { FrozenNotice, useFrozenState } from '../../shared/sanctions/FrozenNotice';
 import type { FrozenState } from '../../shared/sanctions/posture';
 import { OwnStamp } from '../../shared/ui/OwnStamp';
@@ -36,9 +37,10 @@ type Hex = `0x${string}`;
  * from the chain as its claim reads it, with every payout named and the
  * claim's rule deciding whether it is offered (RB-ELIG). Rewards follow, the
  * same section Home shows. Between them, the interest a position the wallet
- * sold still owes it (LN-52), and a protected account's payout queue (LN-54,
- * LN-55, LN-56): what waits, under which request code, and the release,
- * cancel and co-sign actions this wallet may take.
+ * sold still owes it (LN-52), the extension reserves it can take back
+ * (LN-62), and a protected account's payout queue (LN-54, LN-55, LN-56): what
+ * waits, under which request code, and the release, cancel and co-sign
+ * actions this wallet may take.
  *
  * When the sanctions screen flags the wallet (LN-53, RB-FROZEN), the page
  * says so above everything: what is held for it waits, locked, until it is
@@ -46,9 +48,6 @@ type Hex = `0x${string}`;
  *
  * "Nothing to collect" is said only when every walk completed and its latest
  * read succeeded; a row whose claim could not be read stays, said so.
- * Extension reserves and "Claim everything" come in later slices (#3191);
- * until then the page names them and links the current app, so a payout it
- * cannot collect is never implied absent.
  */
 export function ClaimsPage() {
   const { text, format } = useCopy();
@@ -107,14 +106,9 @@ export function ClaimsPage() {
             )}
             {claims.data !== null && !claims.data.complete && <p className="tier-b">{text('claims.incomplete')}</p>}
             <WhyLink summaryKey="claims.howSummary" detailKey="loanClaim.why" />
-            <p className="tier-a" data-testid="claims-not-yet">
-              {text('claims.notYet')}{' '}
-              <a href="https://app.vaipakam.com/claims" target="_blank" rel="noreferrer">
-                {text('claims.notYetLink')}
-              </a>
-            </p>
           </section>
           <SellerClaims own={own} chain={book.chain} frozen={frozen} />
+          <Reserves own={own} chain={book.chain} frozen={frozen} />
           <PayoutQueue own={own} chain={book.chain} />
           <RewardsWidget />
         </>

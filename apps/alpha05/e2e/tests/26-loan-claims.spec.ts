@@ -103,7 +103,8 @@ test('each side collects its payout of a repaid loan: the lender from the loan p
     const before = await sc.pub.readContract({ address: collateralAsset, abi: erc20Abi, functionName: 'balanceOf', args: [borrowerAddr] });
     await page.goto('/claims');
     await connectWallet(page);
-    await expect(page.getByTestId('claims-not-yet')).toContainText('Not on this page yet');
+    // Every kind of payout Claims lists is on the page: nothing points elsewhere.
+    await expect(page.getByTestId('claims-not-yet')).toHaveCount(0);
     const card = page.locator(`[data-claim="borrower:${loanId}"]`);
     await expect(card).toContainText('Collateral back to you', { timeout: 60_000 });
     await expect(card).toContainText('1,500 tLIQ');

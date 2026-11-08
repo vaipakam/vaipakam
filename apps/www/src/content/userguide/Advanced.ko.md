@@ -2168,6 +2168,12 @@ Positions는 하나의 공유 리더로 Home과 같은 보유 목록을 읽습�
 
 앱은 `getSanctionsOracle`(0이면 이 체인에 검사가 없음), `sanctionsStatus(wallet)`(Clean, Flagged, 또는 검사가 되돌려질 때 Unavailable), 그리고 `refreshSanctionsFlag`가 확정적인 조회로 동기화하는 등록부 `isSanctionsConfirmedFlagged(wallet)`를 읽습니다. Flagged, 또는 지갑이 등록된 상태의 Unavailable은 동결로 읽고, 등록되지 않은 Unavailable은 그렇게 읽지 않습니다. `claimAsLender`와 `claimAsBorrower`는 `whenNotPaused` 다음에 호출자를 검사하고 장애는 통과시킵니다. 프로토콜이 기록된 당사자를 위해 지급을 동결한 쪽은 fail-closed로 해제되어, 그 당사자가 Clean으로 읽힐 때까지 그때 누가 포지션을 보유하든 `SanctionedAddress` 또는 `SanctionsOracleUnavailable`로 되돌려집니다. 프로토콜은 그 기록된 당사자에 대한 조회를 제공하지 않으므로, 앱은 그 경우 모의 실행에 의존하고 그 거절을 같은 말로 전합니다. `claimAsSeller`는 표시된 판매자를, 그리고 장애 중에는 등록된 판매자를 거절합니다. 대출이 진행되는 동안 표시된 보유자를 위해 보관된 대출자 몫은 `getClaimable(loanId, true)`의 `heldForLender`에 더해지며, 대출자의 청구가 지급할 때까지 기록된 대출자의 볼트에 예약됩니다. 표시된 차입자도 상환은 할 수 있지만 담보 추가는 할 수 없습니다.
 
+<a id="extension-reserves"></a>
+
+### 연장 예비금: 확인하는 항목
+
+`fundExtendReserve(loanId, amount)`는 차입자 포지션 보유자의 지갑에서 대출의 원금 토큰을 본인 볼트로 입금하고 그 대출용으로 예약합니다. `whenNotPaused`와 제재 검사를 거치며, 대출이 Active이고 ERC-20 대출이며 주기적 이자 주기가 없지 않으면 거부됩니다. `getExtendFunding(loanId, holder)`는 토큰, `reserved`, 보유자의 다른 자유 잔액, 그리고 연장이 지금과 기간 종료 시 부과할 금액을 반환합니다. 연장은 현재 보유자의 볼트에서만, 예비금부터 부과합니다. `withdrawExtendReserve(account, loanId, amount)`는 `whenNotPaused`를 거치고, 호출자가 계정의 관리자(본인 지갑, 또는 교체 후의 컨트롤러)일 것을 요구하며, 호출자를 검사하고(장애 시 통과), 예약된 금액을 넘으면 `ExtendReserveInsufficient`로 되돌립니다. 대출 상태와 관계없이 열려 있습니다. 앱은 지갑 아래 기록된 인덱스 활동 (`ExtendReserveFunded`, `ExtendReserveWithdrawn`, `ExtendChargeDrawn`)에서 대출 목록을 만들며, 번호 조회는 체인만 읽습니다. 검토가 읽은 예비금 전부를 인출하고, 호출을 검토 때와 전송 때 다시 시험 실행하며, 완료 카드는 `ExtendReserveWithdrawn`(금액과 예약된 채 남는 금액)를 읽고, 보호 모드가 지급을 대기열에 넣거나 보관한 경우 `PayoutQueued` 또는 `PayoutHeldInVault`도 읽습니다.
+
 <a id="risk-access"></a>
 
 ### Risk Access: 내 위험 등급

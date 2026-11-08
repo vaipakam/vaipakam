@@ -1318,6 +1318,12 @@ Cuando vendes una posición de prestamista, los intereses que ganaste mientras l
 
 Si el control de sanciones marca su billetera, el protocolo no toma nada de lo que se le debe y nunca impide que un préstamo se cierre: la otra parte igualmente recibe lo que recupera su lado. Su parte queda aparcada en una bóveda, bloqueada, y se libera cuando su billetera sale de la lista. Claims y la página del préstamo indican entonces «Congelado, a la espera de salir de la lista» y no ofrecen botón para cobrar. Si el control no puede leerse y su billetera fue confirmada como marcada antes, un pago congelado sigue bloqueado hasta que el control responda de nuevo, y un pago debido a su billetera en ese tiempo queda aparcado del mismo modo, porque el protocolo la sigue tratando como marcada; una caída por sí sola nunca congela una billetera que nunca fue confirmada como marcada. En un préstamo en curso, su página muestra además lo que el préstamo ya pagó y está reservado para la posición del prestamista hasta que este lo cobre, y un préstamo reembolsado indica cuándo espera un excedente que el prestatario aún no ha cobrado.
 
+<a id="extension-reserves"></a>
+
+### Reservas de extensión
+
+Si tiene la posición del prestatario de un préstamo, puede apartar el token del préstamo en su propia bóveda para sus extensiones. Una extensión, la del keeper o la suya, toma primero de esa reserva. La reserva sigue siendo suya. Claims lista cada préstamo en el que le queda algo, e indica si una extensión aún puede tomar de ella: solo mientras el préstamo está en curso y usted tiene su posición del prestatario. Puede recuperar toda la reserva en cualquier momento mientras el protocolo no esté en pausa, sea cual sea el estado del préstamo; si el préstamo sigue en curso, su siguiente extensión toma entonces de su otro saldo del token. Los préstamos se encuentran en el índice de la app; si no puede listarlos, busque un préstamo por su número. No hace falta ninguna aprobación, así que su billetera pide una vez, tras una prueba, y la tarjeta final muestra adónde llegó el dinero.
+
 <a id="risk-access"></a>
 
 ### Risk Access: tu nivel de riesgo

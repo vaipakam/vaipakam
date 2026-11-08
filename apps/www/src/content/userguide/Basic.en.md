@@ -1291,6 +1291,12 @@ When you sell a lender position, the interest you earned while you held it, and 
 
 If the sanctions screen flags your wallet, the protocol takes nothing you are owed and never stops a loan from closing: the other party still receives what its side recovers. Your share is parked in a vault, locked, and released once your wallet is de-listed. Claims and the loan's page then say "Frozen, awaiting de-listing" and offer no button to collect. If the screen cannot be read and your wallet was confirmed flagged before, a frozen payout stays locked until the screen answers again, and a payment due to your wallet in that time is parked the same way, since the protocol still treats it as flagged; an outage alone never freezes a wallet never confirmed flagged. On a running loan, the loan's page also shows what the loan already paid that is reserved for the lender position until the lender collects it, and a repaid loan says when it waits for a surplus the borrower has not yet collected.
 
+<a id="extension-reserves"></a>
+
+### Extension Reserves
+
+If you hold a loan's borrower position, you can set aside the loan's token in your own vault for its extensions. An extension, the keeper's or your own, draws on that reserve first. The reserve stays yours. Claims lists every loan where you have some left, and says whether an extension can still draw on it: only while the loan runs and you hold its borrower position. You can take the whole reserve back at any time while the protocol is not paused, whatever the loan's state; if the loan is still running, its next extension then draws on your other balance of the token instead. The loans are found in the app's index; if it cannot list them, look a loan up by its number. No approval is needed, so your wallet asks once, after a dry run, and the finish card shows where the money landed.
+
 <a id="risk-access"></a>
 
 ### Risk Access: Your Risk Level

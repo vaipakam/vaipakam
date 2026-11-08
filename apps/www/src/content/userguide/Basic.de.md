@@ -1340,6 +1340,12 @@ Wenn Sie eine Kreditgeberposition verkaufen, bleiben die Zinsen, die Sie in Ihre
 
 Wenn das Sanktions-Screening Ihre Wallet markiert, nimmt das Protokoll nichts von dem, was Ihnen zusteht, und hält keinen Kredit vom Abschluss ab: Die Gegenseite erhält trotzdem, was ihre Seite erlöst. Ihr Anteil wird gesperrt in einem Tresor verwahrt und freigegeben, sobald Ihre Wallet von der Liste gestrichen ist. Claims und die Seite des Kredits zeigen dann „Eingefroren, wartet auf Streichung von der Liste“ und bieten keine Schaltfläche zum Einziehen an. Kann das Screening nicht gelesen werden und wurde Ihre Wallet zuvor als markiert bestätigt, bleibt eine eingefrorene Auszahlung gesperrt, bis das Screening wieder antwortet, und eine in dieser Zeit fällige Zahlung an Ihre Wallet wird ebenso verwahrt, weil das Protokoll sie weiter als markiert behandelt; ein Ausfall allein friert keine Wallet ein, die nie als markiert bestätigt wurde. Bei einem laufenden Kredit zeigt dessen Seite außerdem, was der Kredit bereits gezahlt hat und für die Kreditgeberposition reserviert ist, bis der Kreditgeber es einzieht, und ein zurückgezahlter Kredit sagt, wenn er auf einen Überschuss wartet, den der Kreditnehmer noch nicht eingezogen hat.
 
+<a id="extension-reserves"></a>
+
+### Verlängerungsreserven
+
+Wenn Sie die Kreditnehmerposition eines Kredits halten, können Sie den Token des Kredits in Ihrem eigenen Tresor für dessen Verlängerungen zurücklegen. Eine Verlängerung, die des Keepers oder Ihre eigene, greift zuerst auf diese Reserve zu. Die Reserve bleibt Ihre. Claims listet jeden Kredit, bei dem Ihnen noch etwas davon bleibt, und sagt, ob eine Verlängerung noch darauf zugreifen kann: nur solange der Kredit läuft und Sie seine Kreditnehmerposition halten. Sie können die ganze Reserve jederzeit zurücknehmen, solange das Protokoll nicht pausiert ist, gleich in welchem Zustand der Kredit ist; läuft der Kredit noch, greift seine nächste Verlängerung dann stattdessen auf Ihr übriges Guthaben des Tokens zu. Die Kredite werden im Index der App gefunden; kann er sie nicht auflisten, suchen Sie einen Kredit über seine Nummer. Eine Freigabe ist nicht nötig, daher fragt Ihre Wallet einmal, nach einem Probelauf, und die Abschlusskarte zeigt, wo das Geld angekommen ist.
+
 <a id="risk-access"></a>
 
 ### Risk Access: Ihre Risikostufe
