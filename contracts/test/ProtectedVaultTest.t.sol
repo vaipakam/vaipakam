@@ -199,12 +199,18 @@ contract ProtectedVaultTest is Test {
         assertEq(_tracked(user, address(multi), 3), 4);
         assertEq(nft.ownerOf(7), v);
 
+        // #3205 part 2 — without protected mode a withdrawal pays only the
+        // owner's own wallet: another recipient is refused.
         vm.startPrank(user);
+        vm.expectRevert(abi.encodeWithSelector(VaultDepositoryFacet.RecipientNotOwnWallet.selector, user, friend));
         _depo().withdrawFromVault(user, K20, address(token), 0, 40 ether, friend);
+        uint256 walletBefore = token.balanceOf(user);
+        _depo().withdrawFromVault(user, K20, address(token), 0, 40 ether, user);
         _depo().withdrawFromVault(user, K721, address(nft), 7, 0, user);
         _depo().withdrawFromVault(user, K1155, address(multi), 3, 4, user);
         vm.stopPrank();
-        assertEq(token.balanceOf(friend), 40 ether);
+        assertEq(token.balanceOf(friend), 0, "nothing reached another address");
+        assertEq(token.balanceOf(user) - walletBefore, 40 ether, "the owner's own wallet received it");
         assertEq(_tracked(user, address(token), 0), 60 ether);
         assertEq(nft.ownerOf(7), user);
         assertEq(_tracked(user, address(nft), 7), 0);

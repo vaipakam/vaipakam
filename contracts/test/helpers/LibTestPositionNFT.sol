@@ -31,7 +31,18 @@ library LibTestPositionNFT {
         nft = PositionNFT(
             ArtifactDeploy.deploy(type(PositionNFT).name, abi.encode(owner, diamond, owner, diamond, diamond))
         );
-        VaipakamNFTFacet(diamond).initializeNFT(address(nft));
+        // A suite Diamond that does not route the NFT facet still needs the
+        // core recorded: the vault code reads it as an immutable and the
+        // policy reads the holder from it. Record it in the slot the facet's
+        // initializer writes (the same slot read above).
+        try VaipakamNFTFacet(diamond).initializeNFT(address(nft)) {}
+        catch {
+            VM.store(
+                diamond,
+                bytes32(uint256(ERC721_STORAGE_POSITION) + CORE_SLOT_OFFSET),
+                bytes32(uint256(uint160(address(nft))))
+            );
+        }
     }
 
     /// @notice The PositionNFT core `diamond` records: where every position's

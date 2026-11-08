@@ -255,8 +255,18 @@ contract VaultOutflowFacet is IVaipakamErrors {
         // party still holds the position) moves nothing: the share stays where
         // it is and only the ledgers change, from held to the owner's own.
         // Skipping the self-transfer keeps a fee-charging token from charging
-        // for a move that did not happen.
-        delivered = o.to == proxy ? o.amount : _transfer(proxy, o);
+        // for a move that did not happen. The classes whose payee is DERIVED
+        // here (a holder, a stored party, the backstop) are booked on both
+        // sides, here or by their settlement. A class whose recipient the
+        // CALLER names (an allowlisted address, an incentive payee, a
+        // liquidation buyer) may never name the paying vault itself: that
+        // would debit the ledger for tokens that never left.
+        if (o.to == proxy) {
+            if (_paysWallet(o.class_)) revert OutflowRecipientInvalid(o.class_, o.to);
+            delivered = o.amount;
+        } else {
+            delivered = _transfer(proxy, o);
+        }
         if (o.class_ == VaultOutflowTypes.OutflowClass.ListingEscrow) {
             emit VaultOutflow(user, proxy, o.asset, o.tokenId, o.amount, delivered, o.to, o.class_, o.reason, o.ref);
             return delivered;

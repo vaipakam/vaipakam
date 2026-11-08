@@ -51,7 +51,15 @@ contract MockProtocolRegistry is IProtocolRegistryReader {
     function pointer(bytes32 key) public view returns (address a) {
         a = _pointer[key];
         if (a == address(0) && key == RegistryKeys.TREASURY && diamond != address(0)) {
-            a = ITreasuryRead(diamond).getTreasury();
+            // A hand-built suite Diamond may not route `getTreasury` (it sets
+            // the treasury through TestMutatorFacet); every such suite makes
+            // the Diamond its own treasury, so that is the answer then. A
+            // suite whose treasury is elsewhere sets the pointer here.
+            try ITreasuryRead(diamond).getTreasury() returns (address t) {
+                a = t;
+            } catch {
+                a = diamond;
+            }
         }
     }
 

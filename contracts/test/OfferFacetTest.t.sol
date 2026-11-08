@@ -71,7 +71,7 @@ import {RiskPreviewFacet} from "../src/facets/RiskPreviewFacet.sol";
 import {MockRentableNFT721} from "./mocks/MockRentableNFT721.sol";
 import {LibAcceptTerms} from "../src/libraries/LibAcceptTerms.sol";
 import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
-import {MockVaultWithdraw} from "./helpers/MockVaultWithdraw.sol";
+import {MockVaultWithdraw, VaultOutflowStubFailure} from "./helpers/MockVaultWithdraw.sol";
 import {ArtifactDeploy} from "../script/lib/ArtifactDeploy.sol";
 
 contract OfferFacetTest is Test {
@@ -2098,7 +2098,7 @@ contract OfferFacetTest is Test {
         // #664 — the cancel cooldown applies to every fresh offer.
         vm.warp(block.timestamp + LibVaipakam.MIN_OFFER_CANCEL_DELAY);
         vm.prank(user1);
-        vm.expectRevert(bytes("withdraw fail"));
+        vm.expectRevert(abi.encodeWithSelector(VaultOutflowStubFailure.selector, uint8(0)));
         OfferCancelFacet(address(diamond)).cancelOffer(offerId);
         vm.clearMockedCalls();
     }
@@ -2246,7 +2246,7 @@ contract OfferFacetTest is Test {
         // #664 — the cancel cooldown applies to every fresh offer.
         vm.warp(block.timestamp + LibVaipakam.MIN_OFFER_CANCEL_DELAY);
         vm.prank(user2);
-        vm.expectRevert(bytes("unlock fail"));
+        vm.expectRevert(abi.encodeWithSelector(VaultOutflowStubFailure.selector, uint8(0)));
         OfferCancelFacet(address(diamond)).cancelOffer(offerId);
         vm.clearMockedCalls();
     }
@@ -2346,7 +2346,7 @@ contract OfferFacetTest is Test {
         // #664 — the cancel cooldown applies to every fresh offer.
         vm.warp(block.timestamp + LibVaipakam.MIN_OFFER_CANCEL_DELAY);
         vm.prank(user1);
-        vm.expectRevert(bytes("withdraw fail"));
+        vm.expectRevert(abi.encodeWithSelector(VaultOutflowStubFailure.selector, uint8(1)));
         OfferCancelFacet(address(diamond)).cancelOffer(offerId);
         vm.clearMockedCalls();
     }
@@ -2399,7 +2399,7 @@ contract OfferFacetTest is Test {
         // #664 — the cancel cooldown applies to every fresh offer.
         vm.warp(block.timestamp + LibVaipakam.MIN_OFFER_CANCEL_DELAY);
         vm.prank(user1);
-        vm.expectRevert(bytes("withdraw fail"));
+        vm.expectRevert(abi.encodeWithSelector(VaultOutflowStubFailure.selector, uint8(2)));
         OfferCancelFacet(address(diamond)).cancelOffer(offerId);
         vm.clearMockedCalls();
     }
@@ -2449,7 +2449,7 @@ contract OfferFacetTest is Test {
         // #664 — the cancel cooldown applies to every fresh offer.
         vm.warp(block.timestamp + LibVaipakam.MIN_OFFER_CANCEL_DELAY);
         vm.prank(user2);
-        vm.expectRevert(bytes("unlock fail"));
+        vm.expectRevert(abi.encodeWithSelector(VaultOutflowStubFailure.selector, uint8(0)));
         OfferCancelFacet(address(diamond)).cancelOffer(offerId);
         vm.clearMockedCalls();
     }
@@ -2506,7 +2506,7 @@ contract OfferFacetTest is Test {
         // #664 — the cancel cooldown applies to every fresh offer.
         vm.warp(block.timestamp + LibVaipakam.MIN_OFFER_CANCEL_DELAY);
         vm.prank(user2);
-        vm.expectRevert(bytes("unlock fail"));
+        vm.expectRevert(abi.encodeWithSelector(VaultOutflowStubFailure.selector, uint8(0)));
         OfferCancelFacet(address(diamond)).cancelOffer(offerId);
         vm.clearMockedCalls();
     }
@@ -2559,7 +2559,7 @@ contract OfferFacetTest is Test {
         // rev-8 freeze #1352 charged in full since user2 has no VPFI) = 998.
         vm.mockCallRevert(
             address(diamond),
-            abi.encodePacked(VaultOutflowFacet.vaultOutflow.selector, abi.encode(user1, VaultOutflowTypes.AssetKind.ERC20, mockERC20, uint256(0), uint256(998), address(0), VaultOutflowTypes.OutflowClass.PrincipalToBorrower)),
+            abi.encodePacked(VaultOutflowFacet.vaultOutflowArgs.selector, abi.encode(user1, VaultOutflowTypes.AssetKind.ERC20, mockERC20, uint256(0), uint256(998), address(0), VaultOutflowTypes.OutflowClass.PrincipalToBorrower)),
             "transfer fail"
         );
 
@@ -3391,7 +3391,7 @@ contract OfferFacetTest is Test {
         // #664 — the cancel cooldown applies to every fresh offer.
         vm.warp(block.timestamp + LibVaipakam.MIN_OFFER_CANCEL_DELAY);
         vm.prank(user2);
-        vm.expectRevert(bytes("unlock fail"));
+        vm.expectRevert(abi.encodeWithSelector(VaultOutflowStubFailure.selector, uint8(1)));
         OfferCancelFacet(address(diamond)).cancelOffer(offerId);
         vm.clearMockedCalls();
     }
@@ -3873,7 +3873,7 @@ contract OfferFacetTest is Test {
         // #664 — the cancel cooldown applies to every fresh offer.
         vm.warp(block.timestamp + LibVaipakam.MIN_OFFER_CANCEL_DELAY);
         vm.prank(user2);
-        vm.expectRevert(bytes("unlock fail"));
+        vm.expectRevert(abi.encodeWithSelector(VaultOutflowStubFailure.selector, uint8(2)));
         OfferCancelFacet(address(diamond)).cancelOffer(offerId);
         vm.clearMockedCalls();
     }

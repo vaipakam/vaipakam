@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 
 import {ForcedSalePreviewFacet} from "../src/facets/ForcedSalePreviewFacet.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
+import {OutflowReason} from "../src/vault/VaultOutflowTypes.sol";
 import {VaultOutflowTypes} from "../src/vault/VaultOutflowTypes.sol";
 import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
 import {Test} from "forge-std/Test.sol";
@@ -111,7 +112,7 @@ import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {ZeroExProxyMock} from "./mocks/ZeroExProxyMock.sol";
 import {MockZeroExLegacyAdapter} from "./mocks/MockZeroExLegacyAdapter.sol";
 import {MockRentableNFT721} from "./mocks/MockRentableNFT721.sol";
-import {MockVaultWithdraw} from "./helpers/MockVaultWithdraw.sol";
+import {MockVaultWithdraw, VaultOutflowStubFailure} from "./helpers/MockVaultWithdraw.sol";
 import {FeeOnTransferERC20Mock} from "./mocks/FeeOnTransferERC20Mock.sol";
 import {ArtifactDeploy} from "../script/lib/ArtifactDeploy.sol";
 import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol";
@@ -1465,7 +1466,7 @@ contract RiskFacetTest is Test {
         // rather than diverging from the suite's mocking convention.
         vm.expectCall(
             address(diamond),
-            abi.encodePacked(VaultOutflowFacet.vaultOutflow.selector, abi.encode(ln.borrower, VaultOutflowTypes.AssetKind.ERC20, ln.collateralAsset, uint256(0), sold, address(0), VaultOutflowTypes.OutflowClass.DiamondTransient))
+            abi.encodeCall(VaultOutflowFacet.vaultOutflowToDiamondERC20, (ln.borrower, ln.collateralAsset, sold, loanId, OutflowReason.LIQUIDATION))
         );
         // The collateral lien MUST fall by the amount sold before the vault
         // withdrawal, or the real withdrawal reverts at the encumbrance
@@ -2088,7 +2089,7 @@ contract RiskFacetTest is Test {
         MockVaultWithdraw.fails(address(diamond), VaultOutflowTypes.AssetKind.ERC20);
 
         uint256 sellQuote = liquidationQuote(address(diamond), loanId);
-        vm.expectRevert(bytes("withdraw failed"));
+        vm.expectRevert(abi.encodeWithSelector(VaultOutflowStubFailure.selector, uint8(0)));
         RiskFacet(address(diamond)).triggerLiquidation(
             loanId,
             sellQuote,
@@ -3528,7 +3529,9 @@ contract RiskFacetTest is Test {
         address borrowerVault = VaultFactoryFacet(address(diamond)).getUserVaultAddress(borrower);
         uint256 vaultCol0 = IERC20(mockCollateralERC20).balanceOf(borrowerVault);
 
-        uint256 lenderBefore = IERC20(mockERC20).balanceOf(lender);
+        // #3205 part 2 — the claim pays the lender's VAULT.
+        address lenderVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(lender);
+        uint256 lenderBefore = IERC20(mockERC20).balanceOf(lenderVault);
         vm.prank(lender);
         // Phase 7a: auto-retry was removed from single-arg claimAsLender;
         // tests asserting retry success use the explicit overload that
@@ -3539,9 +3542,9 @@ contract RiskFacetTest is Test {
         );
 
         assertEq(
-            IERC20(mockERC20).balanceOf(lender) - lenderBefore,
+            IERC20(mockERC20).balanceOf(lenderVault) - lenderBefore,
             1030 ether,
-            "lender principal-asset proceeds"
+            "lender principal-asset proceeds, in the lender's vault"
         );
         assertEq(
             vaultCol0 - IERC20(mockCollateralERC20).balanceOf(borrowerVault),
@@ -3606,15 +3609,17 @@ contract RiskFacetTest is Test {
         assertGt(treasuryCol, 0, "fixture-live: a treasury slice");
 
         // Retry also reverts.
-        uint256 lenderBefore = IERC20(mockCollateralERC20).balanceOf(lender);
+        // #3205 part 2 — the claim pays the lender's VAULT.
+        address lenderVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(lender);
+        uint256 lenderBefore = IERC20(mockCollateralERC20).balanceOf(lenderVault);
         vm.prank(lender);
         ClaimFacet(address(diamond)).claimAsLender(loanId);
 
-        // Lender got 1030 ether collateral; treasury got its slice.
+        // Lender's vault got 1030 ether collateral; treasury got its slice.
         assertEq(
-            IERC20(mockCollateralERC20).balanceOf(lender) - lenderBefore,
+            IERC20(mockCollateralERC20).balanceOf(lenderVault) - lenderBefore,
             1030 ether,
-            "lender collateral on failed retry"
+            "lender collateral on failed retry, in the lender's vault"
         );
         assertEq(
             IERC20(mockCollateralERC20).balanceOf(address(diamond)) - diamondCol0,

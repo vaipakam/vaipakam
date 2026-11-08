@@ -70,7 +70,7 @@ import {ConsolidationFacet} from "../src/facets/ConsolidationFacet.sol";
 import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol";
 import {VPFIDiscountAccumulatorFacet} from "../src/facets/VPFIDiscountAccumulatorFacet.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
-import {MockVaultWithdraw} from "./helpers/MockVaultWithdraw.sol";
+import {MockVaultWithdraw, VaultOutflowStubFailure} from "./helpers/MockVaultWithdraw.sol";
 import {FeeOnTransferERC20Mock} from "./mocks/FeeOnTransferERC20Mock.sol";
 import {ArtifactDeploy} from "../script/lib/ArtifactDeploy.sol";
 
@@ -3685,7 +3685,7 @@ contract EarlyWithdrawalFacetTest is Test {
         MockVaultWithdraw.fails(address(diamond), VaultOutflowTypes.AssetKind.ERC20);
 
         vm.prank(lender);
-        vm.expectRevert(bytes("withdraw failed"));
+        vm.expectRevert(abi.encodeWithSelector(VaultOutflowStubFailure.selector, uint8(0)));
         EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOffer);
         vm.clearMockedCalls();
     }
@@ -4941,7 +4941,7 @@ contract EarlyWithdrawalFacetTest is Test {
         MockVaultWithdraw.fails(address(diamond), VaultOutflowTypes.AssetKind.ERC20);
 
         vm.prank(lender);
-        vm.expectRevert(bytes("fail"));
+        vm.expectRevert(abi.encodeWithSelector(VaultOutflowStubFailure.selector, uint8(0)));
         EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
         vm.clearMockedCalls();
     }
@@ -5108,7 +5108,7 @@ contract EarlyWithdrawalFacetTest is Test {
         // The accrued transfer from lender triggers safeTransferFrom first (not mocked),
         // but since accrued=0 at timestamp 0, no transfer needed. However, the migration
         // vault withdraw will fail.
-        vm.expectRevert(bytes("fail"));
+        vm.expectRevert(abi.encodeWithSelector(VaultOutflowStubFailure.selector, uint8(0)));
         vm.prank(lender);
         EarlyWithdrawalFacet(address(diamond)).completeLoanSale(activeLoanId);
         vm.clearMockedCalls();
@@ -5947,7 +5947,7 @@ contract EarlyWithdrawalFacetTest is Test {
         // fixture mocks, so the seller side is pinned as that withdraw.
         vm.expectCall(
             address(diamond),
-            abi.encodePacked(VaultOutflowFacet.vaultOutflow.selector, abi.encode(lender, VaultOutflowTypes.AssetKind.ERC20, mockERC20))
+            abi.encodePacked(VaultOutflowFacet.vaultOutflowToDiamondERC20.selector, abi.encode(lender, mockERC20))
         );
         vm.prank(lender);
         EarlyWithdrawalFacet(address(diamond)).completeLoanSale(activeLoanId);
