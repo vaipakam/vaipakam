@@ -183,6 +183,19 @@ export const FOUR_VERDICT_DRIVERS = new Map([
       'UNDETERMINED (exit 3), with the touched-state ledger printed (#2431, #2434)',
   ],
   [
+    'live-seller-claim.mjs',
+    // Exits 2 when the build differs from the reference deploy, or LOAN_ID
+    // carries no seller claim for the role with something waiting that the
+    // chain would pay now: a missing precondition, never a card defect.
+    // Also MANUAL-ONLY — see MANUAL_ONLY_DRIVERS below.
+    'with WITHDRAW=1, after the withdrawal was sent the shared runVerdict ' +
+      'FAILs only when a chain read contradicts the payout or what is left ' +
+      'waiting; anything else is UNDETERMINED (exit 3) (#1209). In any mode, ' +
+      'a run whose plan sent nothing but whose wallet nonce moved or cannot be ' +
+      'established, with no failure already observed, is UNDETERMINED too, as ' +
+      'is a page that did not do what was expected and showed nothing that says why',
+  ],
+  [
     'live-internal-match-claim.mjs',
     // Exits 2 when the build differs from the reference deploy, or LOAN_ID is
     // not an internally matched loan with a stamped record whose lender
@@ -278,6 +291,12 @@ export const MANUAL_ONLY_DRIVERS = new Map([
     'needs LOAN_ID naming a real Active loan past its grace period whose lender ' +
       'position ROLE holds, and with CLOSE=1 it closes that loan out, which ends ' +
       'the card it checks — run it by hand (#2463)',
+  ],
+  [
+    'live-seller-claim.mjs',
+    'needs LOAN_ID naming a sold and repaid loan with a seller claim waiting ' +
+      '(set up by contracts/script/BaseSepoliaSellerClaim.s.sol), and with ' +
+      'WITHDRAW=1 it withdraws, which ends the row it checks — run it by hand (#1209)',
   ],
   [
     'live-internal-match-claim.mjs',
