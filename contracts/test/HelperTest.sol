@@ -114,6 +114,7 @@ import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {OfferBookFacet} from "../src/facets/OfferBookFacet.sol";
 import {SaleFloorFacet} from "../src/facets/SaleFloorFacet.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
+import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
 
 contract HelperTest {
 
@@ -1517,17 +1518,7 @@ contract HelperTest {
 
     /// @dev Selectors for `VaultOutflowFacet` (#3205 part 2).
     function getVaultOutflowFacetSelectors() public pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](6);
-        selectors[0] = VaultOutflowFacet.vaultOutflow.selector;
-        selectors[1] = VaultOutflowFacet.vaultGrant.selector;
-        selectors[2] = VaultOutflowFacet.vaultCloseGrant.selector;
-
-        // The compact Owner-class entry (same policy, six scalars).
-        selectors[3] = VaultOutflowFacet.vaultOutflowToOwner.selector;
-        // The scalar entry every typed helper but the matched leg uses.
-        selectors[4] = VaultOutflowFacet.vaultOutflowArgs.selector;
-        // The compact Diamond-transient ERC-20 entry (forced sales, pulls).
-        selectors[5] = VaultOutflowFacet.vaultOutflowToDiamondERC20.selector;
+        return LibTestVaultBeacon.outflowSelectors();
     }
 
     /// @dev Selectors for `OfferBookFacet` (#3242).

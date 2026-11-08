@@ -97,6 +97,15 @@ contract VaultOutflowFacet is IVaipakamErrors {
     event VaultVpfiDebited(address indexed user, uint256 amount, address recipient);
 
     error OnlyDiamondInternal();
+    /// @dev The vault's own (layer-2) refusals, re-declared byte-identical
+    ///      from {VaipakamVaultImplementation} so this facet's ABI, and so
+    ///      the Diamond's combined ABI, names them: they reach a caller as
+    ///      reverts bubbled through {_callVault}, and the vault code is not a
+    ///      Diamond facet. The policy test pins the selectors equal.
+    error OutflowDestinationRefused(VaultOutflowTypes.OutflowClass class_, address to);
+    error GrantRefused(VaultOutflowTypes.GrantClass class_, address spender);
+    error GrantOpen(uint256 ref);
+    error ZeroOutflow();
     /// @dev Layer 1: the destination is not one the class may reach.
     error OutflowRecipientInvalid(VaultOutflowTypes.OutflowClass class_, address to);
     /// @dev A holder class names a position token that does not belong to `ref`.

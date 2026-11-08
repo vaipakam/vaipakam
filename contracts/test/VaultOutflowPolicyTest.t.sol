@@ -432,4 +432,13 @@ contract VaultOutflowPolicyTest is SetupTest {
         assertEq(token.balanceOf(_vault(newHolder)), 6 ether, "the claim paid the new holder's vault");
         assertEq(token.balanceOf(storedLender), 0, "the old holder got nothing");
     }
+
+    /// @notice The vault's refusals are re-declared on the policy facet so the
+    ///         Diamond's ABI decodes them; the two declarations must agree.
+    function test_theFacetRedeclaresTheVaultsRefusalsByteIdentical() public pure {
+        assertEq(VaultOutflowFacet.OutflowDestinationRefused.selector, VaipakamVaultImplementation.OutflowDestinationRefused.selector);
+        assertEq(VaultOutflowFacet.GrantRefused.selector, VaipakamVaultImplementation.GrantRefused.selector);
+        assertEq(VaultOutflowFacet.GrantOpen.selector, VaipakamVaultImplementation.GrantOpen.selector);
+        assertEq(VaultOutflowFacet.ZeroOutflow.selector, VaipakamVaultImplementation.ZeroOutflow.selector);
+    }
 }
