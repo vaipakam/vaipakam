@@ -19,6 +19,7 @@ import { useActiveChain } from '../chain/useActiveChain';
 import { publishReceiptInvalidation } from '../chain/receiptSync';
 import { isExitWrite } from './tosWriteGate';
 import { tosQueryKey, isVerdictStale, type TosVerdictData } from './tosGate';
+import { bestEffortGasLimit, type EncodedMulticallCall } from '../data/multicall';
 
 export { DIAMOND_ABI_VIEM };
 
@@ -193,6 +194,22 @@ export function useDiamondWrite() {
           );
         }
       }
+      // #126 — a best-effort batch is never sent at the node's estimate,
+      // which starves its items of gas and mines them all as skipped. One
+      // rule for every batch (Claim all, Repay all, batch sale, batch
+      // refinance): see `bestEffortGasLimit`.
+      const gas =
+        functionName === 'multicall' && !opts?.target
+          ? await bestEffortGasLimit(args[0] as EncodedMulticallCall[], (calls) =>
+              publicClient.estimateContractGas({
+                address: walletChain.diamondAddress,
+                abi: DIAMOND_ABI_VIEM,
+                functionName: 'multicall',
+                args: [calls],
+                account: address,
+              }),
+            )
+          : undefined;
       const hash = await walletClient.writeContract({
         address: opts?.target?.address ?? walletChain.diamondAddress,
         abi: opts?.target?.abi ?? DIAMOND_ABI_VIEM,
@@ -200,6 +217,7 @@ export function useDiamondWrite() {
         args: args as unknown[],
         account: address,
         chain: walletClient.chain,
+        ...(gas !== undefined ? { gas } : {}),
       });
       opts?.onSubmitted?.(hash);
       // Not just "did a transaction succeed" but "did OUR CALL run":

@@ -5,7 +5,8 @@
 import { describe, expect, it } from 'vitest';
 import { decodeFunctionData } from 'viem';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
-import { chunkForMulticall, encodeBestEffort, MAX_MULTICALL_CALLS } from './multicall';
+import { gasLimitFromEstimate } from '@vaipakam/lib/gasLimit';
+import { bestEffortGasLimit, chunkForMulticall, encodeBestEffort, MAX_MULTICALL_CALLS } from './multicall';
 
 describe('encodeBestEffort', () => {
   it('encodes each call with allowFailure set', () => {
@@ -32,5 +33,40 @@ describe('chunkForMulticall', () => {
 
   it('returns nothing for nothing', () => {
     expect(chunkForMulticall([])).toEqual([]);
+  });
+});
+
+describe('bestEffortGasLimit', () => {
+  const calls = encodeBestEffort([
+    { functionName: 'repayLoan', args: [1n] },
+    { functionName: 'repayLoan', args: [2n] },
+  ]);
+
+  it('sizes from the strict form of the same batch, plus the margin', async () => {
+    const seen: boolean[][] = [];
+    const limit = await bestEffortGasLimit(calls, async (c) => {
+      seen.push(c.map((i) => i.allowFailure));
+      return 1_000_000n;
+    });
+    expect(seen).toEqual([[false, false]]);
+    expect(limit).toBe(gasLimitFromEstimate(1_000_000n));
+    // The batch itself is untouched: still sent best-effort.
+    expect(calls.every((c) => c.allowFailure)).toBe(true);
+  });
+
+  it('when an item would revert, sums the items that would run', async () => {
+    const limit = await bestEffortGasLimit(calls, async (c) => {
+      if (c.length > 1) throw new Error('reverts');
+      if (c[0].callData === calls[1].callData) throw new Error('reverts');
+      return 400_000n;
+    });
+    expect(limit).toBe(gasLimitFromEstimate(400_000n));
+  });
+
+  it('leaves it to the wallet when no item would run', async () => {
+    const limit = await bestEffortGasLimit(calls, async () => {
+      throw new Error('reverts');
+    });
+    expect(limit).toBeUndefined();
   });
 });
