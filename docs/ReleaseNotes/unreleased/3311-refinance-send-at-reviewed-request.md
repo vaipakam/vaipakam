@@ -1,4 +1,4 @@
-## Thread — Refinance requests post the request their review described (PR #PRNUM)
+## Thread — Refinance requests post the request their review described (PR #3312)
 
 Posting a refinance request from the loan page always failed with "This offer's terms changed since you reviewed it". The review quoted the payoff ceiling at the request's last fillable moment, which it took from the chain time the page last read, plus the 30-day request window. The send then worked out the request's expiry again from the newest block, a few seconds later. While a loan accrues interest and the request's last fillable moment is still before the grace end, a later deadline means a slightly larger ceiling, so the guard against a grown ceiling refused essentially every send. A live drive on Base Sepolia loan 3 hit exactly this. The batch "Refinance all" late re-check had the same flaw.
 
