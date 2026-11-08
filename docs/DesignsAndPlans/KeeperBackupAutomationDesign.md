@@ -47,10 +47,11 @@ step's due rule, and ships with every step switched off.
 
 The note queue and these four kinds of candidate (the days split into
 recent and older) are six parts that share the check's gas. The part that
-goes first moves on every block, and the queue and the recent days also start
-from a point that moves on every block, so a part whose probes are costly or
-run out of their gas (a close whose frontier is far behind) cannot starve the
-rest: each part leads one check in six.
+goes first moves on every block, and so does the first (step, argument) pair
+inside each part, so a probe that is costly or runs out of its gas (a close
+whose frontier is far behind, a default with a long consolidation scan) cannot
+starve the rest: each part leads one check in six, and each pair leads its
+part in turn.
 
 Whether a candidate is due is the protocol's answer, not ours. The contract
 calls the step from a self-call (`probe`) that always reverts with the
@@ -136,8 +137,13 @@ Two limits worth stating plainly:
   reads from other chains.
 - **`backstopFill`**: it lends treasury capital.
 - **Steps that succeed without being due** (`advanceInterestFrontiers`,
-  `refreshTierLtvCache`): a probe cannot tell due from not due, so running
-  them on that answer would spend gas for nothing.
+  `refreshTierLtvCache`, `epochPruneTransportDayCursor`): a probe cannot tell
+  due from not due, so running them on that answer would spend gas for
+  nothing. One consequence is stated plainly: when a skipped day's first
+  window of transport epochs is spent or residual-only, `recycleSkippedDayValue`
+  returns zero and the value beyond that window waits for our keeper, which
+  prunes the cursor. The prune does not say whether it moved, so the backup
+  cannot back it yet; #3378 asks it to.
 
 ## Value and authority
 
@@ -180,7 +186,8 @@ gets to it, and never a run.
 stand-in Diamond: every step off at deployment, the simulation-only check,
 the probe that changes nothing, note then run only after the lag, a drop
 when the keeper ran first, even during the wait (and a drop refused while
-still due), a costly part that cannot starve the others, a disarmed
+still due), a costly part that cannot starve the others, costly loans that cannot hide
+the later ones in their page, a disarmed
 note dropped, a noted loan revisited after the window moved on, a stale note restarting the wait, a reverted run
 recorded with its selector, the forwarder gate, no run without a ready note,
 the run cap, the no-sale default with a paid bonus swept to the treasury,

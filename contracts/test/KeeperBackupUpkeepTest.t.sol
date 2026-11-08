@@ -461,6 +461,27 @@ contract KeeperBackupUpkeepTest is Test {
         assertTrue(found, "the loan is found while the recent days burn their gas");
     }
 
+    function test_CostlyLoansCannotHideTheLaterOnesInTheirPage() public {
+        _arm(DEFAULT_NO_SALE);
+        _arm(uint8(KeeperBackupUpkeep.Step.PeriodicStampWithoutSale));
+        // Every loan's default spends its whole probe allowance; the one due
+        // step is the last loan's periodic stamp, after all three in the page.
+        for (uint256 id = 11; id <= 13; id++) diamond.setBurn(diamond.triggerDefault.selector, id, true);
+        diamond.setDue(diamond.settlePeriodicInterest.selector, 13, true);
+        bool found;
+        for (uint256 b = 1; b <= 42 && !found; b++) {
+            vm.roll(b);
+            vm.prank(address(0xBEEF), SIM);
+            (bool needed, bytes memory data) = backup.checkUpkeep{gas: 5_000_000}("");
+            if (!needed) continue;
+            KeeperBackupUpkeep.Action[] memory a = abi.decode(data, (KeeperBackupUpkeep.Action[]));
+            for (uint256 i; i < a.length; i++) {
+                if (a[i].arg == 13 && a[i].step == uint8(KeeperBackupUpkeep.Step.PeriodicStampWithoutSale)) found = true;
+            }
+        }
+        assertTrue(found, "the stamp is found while the defaults before it burn their gas");
+    }
+
     function test_AStaleNoteStartsTheWaitAgain() public {
         _arm(AUTO_DEDUCT);
         diamond.setDue(diamond.autoDeductDaily.selector, 11, true);

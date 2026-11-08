@@ -66,8 +66,8 @@ interface IBackupSteps {
  *         older day (a lapse becomes possible only weeks after its day), and
  *         the VaultBeacon's two proposal executes. These parts and the note
  *         queue share the check's gas, and the part that goes first moves on
- *         every block, so one part whose probes are costly cannot starve the
- *         rest. Whether a candidate is due is decided by the protocol
+ *         every block, as does the first (step, argument) pair inside each
+ *         part, so a pair whose probe is costly cannot starve the rest. Whether a candidate is due is decided by the protocol
  *         itself: each candidate is PROBED, i.e. called from this contract
  *         inside a self-call that always reverts, so its effects are undone and
  *         only its success is kept. The backup carries no copy of any step's
@@ -101,7 +101,8 @@ interface IBackupSteps {
  *         from event logs, `finalizeDay` (irreversible, and the keeper holds it
  *         on facts read from other chains), `backstopFill` (lends treasury
  *         capital) and steps that succeed without being due
- *         (`advanceInterestFrontiers`, `refreshTierLtvCache`). See
+ *         (`advanceInterestFrontiers`, `refreshTierLtvCache`,
+ *         `epochPruneTransportDayCursor`). See
  *         docs/DesignsAndPlans/KeeperBackupAutomationDesign.md.
  *
  *         VALUE. The backup attaches no value to any call. A step can pay its
@@ -431,16 +432,55 @@ contract KeeperBackupUpkeep is IAutomationCompatible, Ownable2Step {
         returns (uint256, uint256)
     {
         if (part == 0) return _scanQueue(actions, n, runs, mask);
+        uint256[] memory args;
+        uint256 firstStep;
+        uint256 lastStep;
         if (part == 1) {
-            for (uint8 s = uint8(Step.BeaconExecuteCurrentVersion); s <= uint8(Step.BeaconExecuteRevoke); s++) {
-                if (_full(n, runs)) break;
-                (n, runs) = _consider(actions, n, runs, mask, s, 0);
-            }
-            return (n, runs);
+            firstStep = uint8(Step.BeaconExecuteCurrentVersion);
+            lastStep = uint8(Step.BeaconExecuteRevoke);
+            args = new uint256[](1); // the beacon's steps take no argument
+        } else if (part == 2 || part == 3) {
+            firstStep = FIRST_DAY_STEP;
+            lastStep = LAST_DAY_STEP;
+            if (_anyIn(mask, firstStep, lastStep)) args = _days(part == 2);
+        } else if (part == 4) {
+            firstStep = FIRST_LOAN_STEP;
+            lastStep = LAST_LOAN_STEP;
+            if (_anyIn(mask, firstStep, lastStep)) args = _window(true);
+        } else {
+            firstStep = uint8(Step.TeardownStaleSaleListing);
+            lastStep = firstStep;
+            if (_on(mask, uint8(firstStep))) args = _offerLinkedLoans();
         }
-        if (part == 2 || part == 3) return _scanDays(part == 2, actions, n, runs, mask);
-        if (part == 4) return _scanLoans(actions, n, runs, mask);
-        return _scanOffers(actions, n, runs, mask);
+        // Only an offer can yield no candidate (no linked loan): day zero and
+        // the beacon's argument are real zeros.
+        return _scanCandidates(args, part == 5, firstStep, lastStep, actions, n, runs, mask);
+    }
+
+    /// @dev Every (step, argument) pair of one part, from a start that moves
+    ///      on every block, so a costly pair (a probe that spends its whole
+    ///      allowance) cannot keep the pairs after it from being reached.
+    function _scanCandidates(
+        uint256[] memory args,
+        bool skipZero,
+        uint256 firstStep,
+        uint256 lastStep,
+        Action[] memory actions,
+        uint256 n,
+        uint256 runs,
+        uint256 mask
+    ) internal returns (uint256, uint256) {
+        uint256 steps = lastStep - firstStep + 1;
+        uint256 total = args.length * steps;
+        if (total == 0) return (n, runs);
+        uint256 start = block.number % total;
+        for (uint256 j; j < total && !_full(n, runs); j++) {
+            uint256 idx = (start + j) % total;
+            uint256 arg = args[idx / steps];
+            if (skipZero && arg == 0) continue;
+            (n, runs) = _consider(actions, n, runs, mask, uint8(firstStep + idx % steps), arg);
+        }
+        return (n, runs);
     }
 
     /// @dev Every noted candidate, from a start that moves on every block. A
@@ -475,65 +515,34 @@ contract KeeperBackupUpkeep is IAutomationCompatible, Ownable2Step {
     }
 
     /// @dev Days are zero-based from launch, and none exists before launch.
-    ///      `recent`: the last `dayWindow` closed days, from a start that moves
-    ///      on every block. Otherwise a window of `dayWindow` days over all
-    ///      older days, moving on every `rotationSec`, since a day's lapse
-    ///      opens only after its finalize plus a lapse window.
-    function _scanDays(bool recent, Action[] memory actions, uint256 n, uint256 runs, uint256 mask)
-        internal
-        returns (uint256, uint256)
-    {
-        if (!_anyIn(mask, FIRST_DAY_STEP, LAST_DAY_STEP)) return (n, runs);
+    ///      `recent`: the last `dayWindow` closed days. Otherwise a window of
+    ///      `dayWindow` days over all older days, moving on every `rotationSec`,
+    ///      since a day's lapse opens only after its finalize plus a lapse
+    ///      window.
+    function _days(bool recent) internal view returns (uint256[] memory out) {
         (uint256 today, bool active) = IBackupDiamondReads(diamond).getInteractionCurrentDay();
-        if (!active) return (n, runs);
+        if (!active) return out;
         uint256 closed = today < dayWindow ? today : dayWindow;
         if (recent) {
-            if (closed == 0) return (n, runs);
-            uint256 start = block.number % closed;
-            for (uint256 j; j < closed && !_full(n, runs); j++) {
-                (n, runs) = _considerDay(actions, n, runs, mask, today - 1 - (start + j) % closed);
-            }
-            return (n, runs);
+            out = new uint256[](closed);
+            for (uint256 back = 1; back <= closed; back++) out[back - 1] = today - back;
+            return out;
         }
         uint256 older = today - closed; // days [0, older)
-        if (older == 0) return (n, runs);
+        if (older == 0) return out;
         uint256 pages = (older + dayWindow - 1) / dayWindow;
         uint256 first = ((block.timestamp / rotationSec) % pages) * dayWindow;
         uint256 end = first + dayWindow > older ? older : first + dayWindow;
-        for (uint256 d = first; d < end && !_full(n, runs); d++) {
-            (n, runs) = _considerDay(actions, n, runs, mask, d);
-        }
-        return (n, runs);
+        out = new uint256[](end - first);
+        for (uint256 d = first; d < end; d++) out[d - first] = d;
     }
 
-    /// @dev A rotating window of the active-loan list.
-    function _scanLoans(Action[] memory actions, uint256 n, uint256 runs, uint256 mask)
-        internal
-        returns (uint256, uint256)
-    {
-        if (!_anyIn(mask, FIRST_LOAN_STEP, LAST_LOAN_STEP)) return (n, runs);
-        uint256[] memory loans = _window(true);
-        for (uint256 i; i < loans.length && !_full(n, runs); i++) {
-            for (uint256 s = FIRST_LOAN_STEP; s <= LAST_LOAN_STEP && !_full(n, runs); s++) {
-                (n, runs) = _consider(actions, n, runs, mask, uint8(s), loans[i]);
-            }
-        }
-        return (n, runs);
-    }
-
-    /// @dev A sale listing that outlived its loan is reached from the offer.
-    function _scanOffers(Action[] memory actions, uint256 n, uint256 runs, uint256 mask)
-        internal
-        returns (uint256, uint256)
-    {
-        if (!_on(mask, uint8(Step.TeardownStaleSaleListing))) return (n, runs);
-        uint256[] memory offers = _window(false);
-        for (uint256 i; i < offers.length && !_full(n, runs); i++) {
-            uint256 loanId = IBackupDiamondReads(diamond).getOfferLinkedLoanId(offers[i]);
-            if (loanId == 0) continue;
-            (n, runs) = _consider(actions, n, runs, mask, uint8(Step.TeardownStaleSaleListing), loanId);
-        }
-        return (n, runs);
+    /// @dev The linked loan of each offer in a rotating window of the
+    ///      active-offer list (zero for an offer with none): a sale listing
+    ///      that outlived its loan is reached from the offer.
+    function _offerLinkedLoans() internal view returns (uint256[] memory out) {
+        out = _window(false);
+        for (uint256 i; i < out.length; i++) out[i] = IBackupDiamondReads(diamond).getOfferLinkedLoanId(out[i]);
     }
 
     /// @dev Add the action a due candidate needs, if any.
@@ -548,16 +557,6 @@ contract KeeperBackupUpkeep is IAutomationCompatible, Ownable2Step {
         if (!isDue(step, arg)) return (n, runs);
         actions[n] = Action(Mode.Note, step, arg);
         return (n + 1, runs);
-    }
-
-    function _considerDay(Action[] memory actions, uint256 n, uint256 runs, uint256 mask, uint256 day)
-        internal
-        returns (uint256, uint256)
-    {
-        for (uint256 s = FIRST_DAY_STEP; s <= LAST_DAY_STEP && !_full(n, runs); s++) {
-            (n, runs) = _consider(actions, n, runs, mask, uint8(s), day);
-        }
-        return (n, runs);
     }
 
     /// @dev New notes already collected in this check.

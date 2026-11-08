@@ -1128,7 +1128,10 @@ backup, not a second keeper:
   past-grace default that needs no sale, a periodic-interest stamp that needs
   no sale, the reward-day close where the chain charges no fee for it, the
   lapses and skips of finished reward days, the recycling of a skipped day's
-  value while any is left, and the vault-code changes whose delay has passed.
+  value while a recycle still moves some, and the vault-code changes whose
+  delay has passed. Value of a skipped day that sits beyond spent transport
+  records waits for the keeper, which first moves the day's reading point
+  past them; the backup cannot tell when that move is needed.
 - It does not cover liquidations or matching, which stay open to anyone;
   anything that needs a swap route, a price quote or a cross-chain fee;
   steps found only from event history; the irreversible reward-day finalize;
