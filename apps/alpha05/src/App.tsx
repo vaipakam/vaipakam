@@ -1,3 +1,4 @@
+import { Suspense } from 'react';
 import { Route, Routes } from 'react-router-dom';
 import { Shell } from './app/Shell';
 import { NotBuilt, NotFound } from './routes/NotBuilt';
@@ -16,7 +17,7 @@ export function App() {
       <Route element={<Shell />}>
         {PAGES.map((page) => {
           const Page = BUILT_PAGES[page.path];
-          return <Route key={page.path} path={page.path} element={Page ? <Page /> : <NotBuilt page={page} />} />;
+          return <Route key={page.path} path={page.path} element={Page ? <Suspense fallback={null}><Page /></Suspense> : <NotBuilt page={page} />} />;
         })}
         <Route path="*" element={<NotFound />} />
       </Route>

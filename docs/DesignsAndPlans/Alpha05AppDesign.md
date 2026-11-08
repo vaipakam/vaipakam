@@ -404,6 +404,23 @@ on the user's own device such as a browser extension. This is a deployment
 acceptance criterion (§3.2): a route does not reach parity on a deployment
 without it.
 
+### RB-GOVERNANCE-QUEUE — queued governance changes are public
+
+Every change governance makes waits out the governance timelock's delay,
+and the wait protects users only if they can see the change. So one public
+page, reached from the footer without a wallet, lists every operation the
+timelock holds on the chain the screen describes, soonest first, with when it
+can run, in words what it will do, and its exact call. The queue is read from
+the timelock's own storage, and every value on the page is read at one block,
+which the page states. What a change will do is shown only when its calls,
+read from the chain's schedule records, hash to the id the timelock stores;
+a change whose records were not found or do not match is still listed, with
+its id, its time and the reason its action is unknown. A call the app cannot
+decode is named as such, never guessed. A chain with no timelock recorded, a
+failed read and a failed re-read are each stated, never shown as an empty
+queue. The page also says that a queued change does not expire: it stays
+runnable until it is run or cancelled.
+
 ### RB-STATUS — every matrix row has a status
 
 `approved` (canonical intended behaviour), `proposed` (a departure or new

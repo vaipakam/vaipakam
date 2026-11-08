@@ -347,7 +347,7 @@ import {
 } from './refinanceExpected.mjs';
 import { createWritePlan } from './writePlan.mjs';
 import { formatLedgerRow, ledgerRows, runTouchedSteps } from './touchedState.mjs';
-import { compareBorrowerReceipt, compareLenderReceipt } from './reviewTerms.mjs';
+import { bracketOf, compareBorrowerReceipt, compareLenderReceipt } from './reviewTerms.mjs';
 import { expectedPostureFrom, postureCopyFrom } from './refinancePosture.mjs';
 import { createManifest, runVerdict } from './outcomeManifest.mjs';
 import { observationVerdict, observeAgainstChain } from './observation.mjs';
@@ -1104,33 +1104,51 @@ function lenderReviewMismatches(rows, req, config) {
 }
 
 /**
- * The borrower's refinance review vs the contract's own figures at the
- * moment of comparison (see `compareBorrowerReceipt`). On the permit route
- * the app reads every figure it shows from `getRefinancePayoff(loan, 0, the
- * request's last fillable moment)`, so this reads the same view for the
- * same moment, computed from the chain time now. A figure that moves
- * between the page's read and this one (a deadline that is not clamped to
- * the grace end, past maturity) shows as a mismatch and halts — the safe
- * direction. `cardText` is the whole card, for the wallet-steps note under
- * the receipt.
+ * The borrower's refinance review vs the contract's own figures (see
+ * `compareBorrowerReceipt`), BRACKETED in time (#3302).
+ *
+ * How the page derives its figures: RefinanceFlow quotes from the parent's
+ * live loan poll — `chainNow` is that poll's LATEST BLOCK TIMESTAMP (chain
+ * time, never the device clock, not rounded), refreshed about once a
+ * minute — and reads `getRefinancePayoff(loan, 0, lastFillableMoment(chainNow
+ * + 30 days, grace end))` at its own latest block. The page shows neither
+ * moment, so the drive cannot reproduce the figure exactly: a run on loan 3
+ * halted because the drive's later read put the deadline a few seconds
+ * later and the share 3,805,175 wei higher.
+ *
+ * So each figure is evaluated at two real moments that bracket the page's:
+ * `loBlock`, read before the page was opened (the page's poll and its view
+ * read both came after it), and a block read here, after the rows were read
+ * (both came before it). At each end the view is read AT that block with the
+ * deadline that end implies. Payoff and share never fall with time, so the
+ * page's figure lies between the two; the growth (payoff at the deadline
+ * minus payoff now, two moments) between the extreme pairings. No tolerance
+ * is added. The SIGNED permit is not judged here: its maximum must equal
+ * exactly what the contract reports for the deadline actually signed
+ * (`prepareBorrowerPermit`).
  */
-async function borrowerReviewMismatches(rows, config, cardText) {
-  const t = await chainNow();
+async function borrowerReviewMismatches(rows, config, cardText, loBlock) {
+  const hiBlock = await pub.getBlock({ blockTag: 'latest' });
   // RULE 1 (#2422 r10): the fee rates and grace buckets read AROUND the
   // observation, not the preflight's.
   const graceEnd = loanDue + graceSecondsFrom(config.graceBuckets, loan.durationDays);
+  const figuresAt = async (b) => {
+    const lastFillable = lastFillableMoment(b.timestamp + REQUEST_WINDOW_SEC, graceEnd);
+    const [, payoffNow, payoffBy, shareNow, shareBy] = await read('getRefinancePayoff', [LOAN_ID, 0n, lastFillable], b.number);
+    return { payoffNow, payoffBy, shareNow, shareBy };
+  };
+  const [lo, hi] = await Promise.all([figuresAt(loBlock), figuresAt(hiBlock)]);
+  const nonNeg = (x) => (x > 0n ? x : 0n);
+  const t = hiBlock.timestamp;
   const expiresAt = t + REQUEST_WINDOW_SEC;
-  const lastFillable = lastFillableMoment(expiresAt, graceEnd);
-  const q = await read('getRefinancePayoff', [LOAN_ID, 0n, lastFillable]);
-  const [, payoffNow, payoffBy, shareNow, shareBy] = q;
   const dateOpts = { day: 'numeric', month: 'short', year: 'numeric' };
   return compareBorrowerReceipt(rows, {
     en: EN.copy,
     principal: { decimals: PDEC, symbol: pre.principalSymbol },
-    payoffNow,
-    headroom: payoffBy > payoffNow ? payoffBy - payoffNow : 0n,
-    topUp: shareNow,
-    bound: shareBy,
+    payoffNow: bracketOf(lo.payoffNow, hi.payoffNow),
+    headroom: bracketOf(nonNeg(lo.payoffBy - hi.payoffNow), nonNeg(hi.payoffBy - lo.payoffNow)),
+    topUp: bracketOf(lo.shareNow, hi.shareNow),
+    bound: bracketOf(lo.shareBy, hi.shareBy),
     lifBps: config.lifBps,
     treasuryFeeBps: config.treasuryFeeBps,
     clamped: graceEnd + 1n < expiresAt,
@@ -2343,6 +2361,10 @@ try {
   // 1. Borrower posts the refinance request through the form.
   // -------------------------------------------------------------------
   const bp = session.page;
+  // The LOW end of the review's bracket (#3302): a block read BEFORE the
+  // page loads, so every chain time and view the page computes its review
+  // from is at or after it (see `borrowerReviewMismatches`).
+  const reviewLoBlock = await pub.getBlock({ blockTag: 'latest' });
   await bp.goto(`${SITE}/positions/${LOAN_ID}`, { waitUntil: 'domcontentloaded', timeout: 60_000 });
   await ensureConnected(bp);
   const bLang = await renderedLang(bp);
@@ -2395,7 +2417,7 @@ try {
   // RULE 1: the fee rates and grace window it quotes are judged against the
   // config read around the observation (BLOCKED on a race — nothing written).
   const bObs = await observeConfig('the borrower\u2019s review', () => receiptRows(card));
-  const bTerms = await borrowerReviewMismatches(bObs.observed, bObs.config, receiptText);
+  const bTerms = await borrowerReviewMismatches(bObs.observed, bObs.config, receiptText, reviewLoBlock);
   check(
     `borrower: review figures match the chain (${bTerms.compared.join(', ')})`,
     bTerms.mismatches.length === 0,

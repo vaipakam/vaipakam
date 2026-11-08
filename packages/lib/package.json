@@ -134,6 +134,10 @@
       "types": "./src/protocolKnobs.ts",
       "default": "./src/protocolKnobs.ts"
     },
+    "./governanceQueue": {
+      "types": "./src/governanceQueue.ts",
+      "default": "./src/governanceQueue.ts"
+    },
     "./staticReturn": {
       "types": "./src/staticReturn.ts",
       "default": "./src/staticReturn.ts"

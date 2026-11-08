@@ -1,5 +1,5 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
-import { NavLink, Outlet } from 'react-router-dom';
+import { Link, NavLink, Outlet } from 'react-router-dom';
 import { useMode } from './ModeContext';
 import { useTheme } from './ThemeContext';
 import { IdentityLine, WalletControl } from './WalletControl';
@@ -251,6 +251,9 @@ export function Shell() {
       </div>
       <footer className="foot">
         <WhyLink summaryKey="shell.mode" detailKey="shell.modeWhy" vars={{ mode }} />
+        <p className="tier-b">
+          <Link to="/governance">{text('governance.footerLink')}</Link>
+        </p>
         <p className="tier-b">{format('shell.build', { hash: import.meta.env.VITE_BUILD_HASH ?? 'unknown', time: import.meta.env.VITE_BUILD_TIME ?? 'unknown' })}</p>
       </footer>
       <nav className="bottom-bar" aria-label="Quick access">
