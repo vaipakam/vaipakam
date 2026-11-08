@@ -350,7 +350,9 @@ function creatorRoutedLeg(o: PayoutOutcome, what: string, protection: Protection
       wallet: creatorWallet(protection, creator, copy, o.recipient),
       time: formatUtc(Number(o.releaseAt)),
     });
-  return copy.format('offerCancel.legCreatorHeld', { what });
+  // Locked or a full queue (`LibProtectedAccount.gate`): the cause is named
+  // only when the creator's account read as locked.
+  return copy.format(protection?.locked === true ? 'offerCancel.legCreatorHeld' : 'offerCancel.legCreatorHeldEither', { what });
 }
 
 type Args = Record<string, unknown>;

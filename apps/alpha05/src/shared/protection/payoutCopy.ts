@@ -71,7 +71,10 @@ export function routedLeg(o: PayoutOutcome, what: string, protection: Protection
       wallet: queuedWallet(protection, copy, o.recipient),
       time: formatUtc(Number(o.releaseAt)),
     });
-  if (o.kind === 'held') return copy.format('payout.legHeld', { what });
+  // The protocol keeps a payout in the vault while the account is locked OR
+  // its queue is full (`LibProtectedAccount.gate`); the cause is named only
+  // when the account read as locked, both otherwise.
+  if (o.kind === 'held') return copy.format(protection?.locked === true ? 'payout.legHeld' : 'payout.legHeldEither', { what });
   return copy.format('payout.legVault', { what });
 }
 

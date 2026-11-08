@@ -663,10 +663,10 @@ export const copy = {
     toHeld: B('Your vault, held while your protected account is locked'),
     toVault: B('Your vault, because protected mode is on for your account'),
     queuedNote: A(
-      'Protected mode is on for your account and this comes from your own vault, so the protocol queues it instead of paying it at once. It reaches your wallet once the account’s delay has passed and the payout is released.',
+      'Protected mode is on for your account and this comes from your own vault, so the protocol queues it instead of paying it at once. It reaches your wallet once the account’s delay has passed and the payout is released. If the account’s payout queue is full when this confirms, the protocol keeps it in your vault instead.',
     ),
     queuedControllerNote: A(
-      'Protected mode is on for your account and this comes from your own vault, so the protocol queues it instead of paying it at once. A replacement retired this account, so once the delay has passed and the payout is released it goes to {{address}}, the wallet that now manages the account, not to this one.',
+      'Protected mode is on for your account and this comes from your own vault, so the protocol queues it instead of paying it at once. A replacement retired this account, so once the delay has passed and the payout is released it goes to {{address}}, the wallet that now manages the account, not to this one. If the account’s payout queue is full when this confirms, the protocol keeps it in your vault instead.',
     ),
     cosignNote: A(
       'Your account also requires a secondary signer to approve each release. Once the delay passes, this reaches your wallet only after one of your secondary signers approves it; the protocol checks this when the payout is released.',
@@ -682,6 +682,7 @@ export const copy = {
     legQueued: B('{{what}} queued for {{wallet}}, releasable from {{time}}'),
     legQueuedCosign: B('{{what}} queued for {{wallet}}, releasable from {{time}} once a secondary signer approves'),
     legHeld: B('{{what}} kept in your vault while your account is locked'),
+    legHeldEither: B('{{what}} kept in your vault: your account was locked or its payout queue was full'),
     legVault: B('{{what}} paid into your vault'),
     totalOther: A('In all, {{amount}} went to your wallet, payout queue or vault, not the {{expected}} reviewed.'),
   },
@@ -1498,9 +1499,11 @@ export const copy = {
     toCreatorQueuedCosign: B('The creator’s payout queue for {{delay}}, then {{wallet}} once their secondary signer approves'),
     creatorWallet: B('the creator’s wallet ({{address}})'),
     creatorControllerWallet: B('the wallet that now manages the creator’s account ({{address}})'),
-    creatorQueuedNote: A('The creator’s protected mode queues this return for their delay; once released it goes only to {{wallet}}.'),
+    creatorQueuedNote: A(
+      'The creator’s protected mode queues this return for their delay; once released it goes only to {{wallet}}. If their payout queue is full when this confirms, the protocol keeps it in their vault instead.',
+    ),
     creatorQueuedCosignNote: A(
-      'The creator’s protected mode queues this return for their delay, and a secondary signer of theirs must approve its release; once released it goes only to {{wallet}}.',
+      'The creator’s protected mode queues this return for their delay, and a secondary signer of theirs must approve its release; once released it goes only to {{wallet}}. If their payout queue is full when this confirms, the protocol keeps it in their vault instead.',
     ),
     creatorHeldNote: A('The creator’s protected account is locked, so the protocol keeps this return in their vault until it is unlocked.'),
     toCreatorHeld: B('The creator’s vault, held while their protected account is locked ({{address}})'),
@@ -1538,6 +1541,7 @@ export const copy = {
     legCreatorQueued: B('{{what}} queued for {{wallet}}, releasable from {{time}}'),
     legCreatorQueuedCosign: B('{{what}} queued for {{wallet}}, releasable from {{time}} once their signer approves'),
     legCreatorHeld: B('{{what}} kept in the creator’s vault while their account is locked'),
+    legCreatorHeldEither: B('{{what}} kept in the creator’s vault: their account was locked or its payout queue was full'),
     notReturned: A('The transaction records no return of this token to the creator.'),
     whySummary: B('What cancelling does'),
     why: C(
