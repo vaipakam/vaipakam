@@ -16,7 +16,7 @@ import {
   type AccountQueue,
   type QueueRow,
 } from './queue';
-import { measureQueueAction, queueReceipt, type QueueReview } from './queueReview';
+import { destinationWords, measureQueueAction, queueReceipt, type QueueReview } from './queueReview';
 
 type Hex = `0x${string}`;
 const DIAMOND = '0x00000000000000000000000000000000000000d1' as Hex;
@@ -166,6 +166,19 @@ describe('queue outcome', () => {
   it('measures a release that cancelled as done only when the review said it would', () => {
     expect(measureQueueAction(review('release', { cancels: true }), [cancelled(1n)], DIAMOND, OWNER, what, copy)[0]!.status).toBe('done');
     expect(measureQueueAction(review('release'), [cancelled(1n)], DIAMOND, OWNER, what, copy)[0]!.status).toBe('unknown');
+  });
+
+  it('flags a payment when the review promised a cancellation', () => {
+    const out = measureQueueAction(review('release', { cancels: true }), [released(1n, 100n)], DIAMOND, OWNER, what, copy);
+    expect(out[0]).toMatchObject({ status: 'unknown', reason: 'queue.paidUnexpected' });
+  });
+
+  it('calls a destination allowlisted only when the allowlist says so', () => {
+    expect(destinationWords(queue(), SAFE, OWNER, copy)).toMatch(/^queue\.toOther/);
+    expect(destinationWords(queue(), OTHER, OWNER, copy)).toMatch(/^queue\.toDisallowed/);
+    expect(destinationWords(queue({ allowlist: null }), OTHER, OWNER, copy)).toMatch(/^queue\.toUnread/);
+    expect(destinationWords(queue(), OWNER, OWNER, copy)).toBe('queue.toYourWallet');
+    expect(destinationWords(queue(), OWNER, SIGNER, copy)).toMatch(/^queue\.toManager/);
   });
 
   it('measures a cancel and a co-sign from their events', () => {

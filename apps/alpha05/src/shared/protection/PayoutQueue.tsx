@@ -74,6 +74,11 @@ export function PayoutQueue({ own, chain }: { own: OwnStateClient; chain: Suppor
       <h2 id="claims-queue">{text('queue.title')}</h2>
       <OwnStamp reads={managed !== null ? [ownQueue, retired, managedQueue] : [ownQueue, retired]} />
       <AccountQueueView read={ownQueue} role="own" own={own} chain={chain} meta={meta} keeper={keeper} />
+      {retired.state === 'failed' && retired.data === null && (
+        <p className="tier-a" data-testid="queue-managed-unread">
+          {text('queue.managedUnread')}
+        </p>
+      )}
       {managed !== null && <AccountQueueView read={managedQueue} role="managed" own={own} chain={chain} meta={meta} keeper={keeper} />}
       {isAdvanced && (
         <div className="queue-lookup">

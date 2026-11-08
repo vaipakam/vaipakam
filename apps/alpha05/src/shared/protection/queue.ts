@@ -23,6 +23,7 @@ import { parseEventLogs, type Abi, type Log, type PublicClient } from 'viem';
 import { AdminFacetABI, ProtectedAccountFacetABI, VaultPayoutFacetABI } from '@vaipakam/contracts/abis';
 import { formatRequestCode } from '@vaipakam/lib/requestCode';
 import type { CopyAccess } from '../copy/useCopy';
+import { isContractAnswer } from '../nft/nft';
 import { closed, OPEN, unknownVerdict, type Refusal, type Verdict } from '../eligibility/types';
 
 type Hex = `0x${string}`;
@@ -96,11 +97,15 @@ export function queueClock(q: Pick<AccountQueue, 'chainNow' | 'readAt'>, nowMs: 
   return q.chainNow === null ? null : q.chainNow + Math.max(0, Math.floor((nowMs - q.readAt) / 1000));
 }
 
+/** A read whose contract answer is a revert comes back null (said unread);
+ *  any other failure is thrown, so the own rail moves on to its next source
+ *  instead of settling on a source that could not answer at all. */
 async function maybe<T>(p: Promise<T>): Promise<T | null> {
   try {
     return await p;
-  } catch {
-    return null;
+  } catch (e) {
+    if (isContractAnswer(e)) return null;
+    throw e;
   }
 }
 
@@ -122,7 +127,7 @@ type RawMode = { enabled: boolean; locked: boolean; requireCosign: boolean; reti
 export async function readAccountQueue(c: PublicClient, diamond: Hex, account: Hex): Promise<AccountQueue> {
   const read = <T>(abi: Abi, functionName: string, args: readonly unknown[] = []) => maybe(c.readContract({ address: diamond, abi, functionName, args }) as Promise<T>);
   const [block, mode, signers, allowlist, paused, escapeOpen, escapeOpensAt, ids] = await Promise.all([
-    maybe(c.getBlock()),
+    c.getBlock(),
     read<RawMode>(PROTECTED, 'getProtectedAccount', [account]),
     read<readonly Hex[]>(PROTECTED, 'getProtectedSigners', [account]),
     read<readonly Hex[]>(PROTECTED, 'getAllowlist', [account]),
@@ -151,7 +156,7 @@ export async function readAccountQueue(c: PublicClient, diamond: Hex, account: H
     escapeOpen,
     escapeOpensAt: escapeOpensAt === null ? null : Number(escapeOpensAt),
     rows: rows === null ? null : orderByDue(rows),
-    chainNow: block === null ? null : Number(block.timestamp),
+    chainNow: Number(block.timestamp),
     readAt: Date.now(),
   };
 }

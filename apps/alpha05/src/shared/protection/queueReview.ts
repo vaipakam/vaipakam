@@ -21,6 +21,7 @@ import {
   PAYOUT,
   QUEUE_FUNCTION,
   ROW_QUEUED,
+  destinationAllowed,
   queueClock,
   queueLogs,
   queueManager,
@@ -124,13 +125,18 @@ export function rowName(row: QueueRow, copy: Copy): string {
 }
 
 /** Where a row pays, in words: the viewer's own wallet, the account's
- *  manager wallet, or an allowlisted destination. */
+ *  manager wallet, an allowlisted destination, or an address the account no
+ *  longer allows (or whose standing could not be read), never "allowlisted"
+ *  without the allowlist saying so. */
 export function destinationWords(q: AccountQueue, recipient: Hex, viewer: Hex, copy: Copy): string {
   const { text, format } = copy;
-  if (recipient.toLowerCase() === viewer.toLowerCase()) return text('queue.toYourWallet');
+  const address = shortAddress(recipient);
+  const allowed = destinationAllowed(q, recipient);
   const manager = queueManager(q);
-  if (manager !== null && recipient.toLowerCase() === manager.toLowerCase()) return format('queue.toManager', { address: shortAddress(recipient) });
-  return format('queue.toOther', { address: shortAddress(recipient) });
+  if (recipient.toLowerCase() === viewer.toLowerCase() && allowed !== false) return text('queue.toYourWallet');
+  if (manager !== null && recipient.toLowerCase() === manager.toLowerCase()) return format('queue.toManager', { address });
+  if (allowed === true) return format('queue.toOther', { address });
+  return format(allowed === false ? 'queue.toDisallowed' : 'queue.toUnread', { address });
 }
 
 /** A payout's size in words: `what(exact)` names it with short or exact
@@ -182,6 +188,8 @@ export function measureQueueAction(r: QueueReview, logs: readonly Log[], diamond
     if (seen.released) {
       const destination = destinationWords(r.queue, seen.released.recipient, viewer, copy);
       const label = format('queue.legReleased', { what: what(seen.released.delivered, false), destination });
+      // The review said this release would cancel; it paid instead.
+      if (r.cancels === true) return [{ status: 'unknown', label, reason: text('queue.paidUnexpected') }];
       if (seen.released.delivered === seen.released.amount) return [{ status: 'done', label }];
       return [{ status: 'unknown', label, reason: format('queue.deliveredOther', { amount: what(seen.released.delivered, true), expected: what(seen.released.amount, true) }) }];
     }
