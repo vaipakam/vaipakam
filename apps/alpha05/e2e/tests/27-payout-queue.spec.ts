@@ -168,7 +168,13 @@ test('a secondary signer looks the account up, approves a payout that needs appr
   await expect(finish).toContainText(`Payout ${codes[0]} approved for release once due`);
   expect(flags.sentTransactions).toBe(sent + 1);
   expect((await sc.read<Pending>('getPendingPayout', [id])).cosigned).toBe(true);
+  // The finish card does not hang on the lookup field: cleared, the card
+  // stays on screen under the account it acted on.
+  await section.getByTestId('queue-lookup').fill('');
+  await expect(section.locator('[data-role="held"]').getByTestId(`queue-cosign-panel-${id}`)).toContainText(`Payout ${codes[0]} approved for release once due`);
   await finish.getByRole('button', { name: 'Close' }).click();
+  await expect(section.locator('[data-role="held"]')).toHaveCount(0);
+  await section.getByTestId('queue-lookup').fill(owner);
 
   // Approved and due: anyone may release it, and it pays the account's wallet.
   const before = await sc.pub.readContract({ address: WETH, abi: erc20Abi, functionName: 'balanceOf', args: [owner] });

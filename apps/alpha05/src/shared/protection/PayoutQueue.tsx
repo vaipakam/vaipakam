@@ -51,7 +51,7 @@ async function readRetiredAccountOf(c: PublicClient, diamond: Hex, controller: H
  * keeps working.
  */
 export function PayoutQueue({ own, chain }: { own: OwnStateClient; chain: SupportedChain }) {
-  const { text } = useCopy();
+  const { text, format } = useCopy();
   const { isAdvanced } = useMode();
   const diamond = chain.diamondAddress;
   const wallet = own.account;
@@ -65,6 +65,21 @@ export function PayoutQueue({ own, chain }: { own: OwnStateClient; chain: Suppor
   const lookup = isAdvanced && isAddress(lookupText.trim()) ? (lookupText.trim() as Hex) : null;
   const lookupQueue = useOwnRead(['queue', diamond, lookup], (c) => readAccountQueue(c, diamond, lookup!), { enabled: lookup !== null });
 
+  const lookupShown = lookup !== null && lookup.toLowerCase() !== wallet.toLowerCase() && lookup.toLowerCase() !== managed?.toLowerCase();
+  // Each read the section draws carries its age and any failed re-read in
+  // the one stamp, the lookup included, and Refresh re-reads every one.
+  const stamped = [ownQueue, retired, ...(managed !== null ? [managedQueue] : []), ...(lookupShown ? [lookupQueue] : [])];
+  // A flow the store holds on an account no view is drawing with an answer
+  // (a lookup since cleared, or a queue whose read failed) is drawn here, so
+  // its progress, its Check again and its finish card stay reachable.
+  const drawn = new Set(
+    [ownQueue.data, managed !== null ? managedQueue.data : null, lookupShown ? lookupQueue.data : null]
+      .filter((q): q is AccountQueue => q !== null)
+      .map((q) => q.account.toLowerCase()),
+  );
+  const orphans = useHeldQueueFlows(reviewIdentity(own), (account) => !drawn.has(account.toLowerCase()));
+  const orphanAccounts = [...new Set(orphans.map((h) => h.account.toLowerCase()))];
+
   const queues = [ownQueue.data, managedQueue.data, lookupQueue.data].filter((q): q is AccountQueue => q !== null);
   const assets = queues.flatMap((q) => (q.rows ?? []).flatMap((r) => (r.payout ? [r.payout.asset] : [])));
   const meta = useTokenMeta(assets).data;
@@ -72,7 +87,7 @@ export function PayoutQueue({ own, chain }: { own: OwnStateClient; chain: Suppor
   return (
     <section className="home-section" aria-labelledby="claims-queue">
       <h2 id="claims-queue">{text('queue.title')}</h2>
-      <OwnStamp reads={managed !== null ? [ownQueue, retired, managedQueue] : [ownQueue, retired]} />
+      <OwnStamp reads={stamped} />
       <AccountQueueView read={ownQueue} role="own" own={own} chain={chain} meta={meta} keeper={keeper} />
       {retired.state === 'failed' && retired.data === null && (
         <p className="tier-a" data-testid="queue-managed-unread">
@@ -98,11 +113,22 @@ export function PayoutQueue({ own, chain }: { own: OwnStateClient; chain: Suppor
               />
             )}
           </FormField>
-          {lookup !== null && lookup.toLowerCase() !== wallet.toLowerCase() && lookup.toLowerCase() !== managed?.toLowerCase() && (
-            <AccountQueueView read={lookupQueue} role="lookup" own={own} chain={chain} meta={meta} keeper={keeper} />
-          )}
+          {lookupShown && <AccountQueueView read={lookupQueue} role="lookup" own={own} chain={chain} meta={meta} keeper={keeper} />}
         </div>
       )}
+      {orphanAccounts.map((a) => {
+        const flows = orphans.filter((h) => h.account.toLowerCase() === a);
+        return (
+          <div key={a} className="queue-account" data-queue-account={a} data-role="held">
+            <h3 className="row-head">{format('queue.heldHead', { address: shortAddress(flows[0]!.account) })}</h3>
+            <ul className="rows">
+              {flows.map((h) => (
+                <HeldQueueCard key={`${h.action}:${h.id}`} id={h.id} action={h.action} account={h.account} code={h.code} own={own} chain={chain} meta={meta} />
+              ))}
+            </ul>
+          </div>
+        );
+      })}
       <WhyLink summaryKey="queue.whySummary" detailKey="queue.why" />
     </section>
   );
@@ -125,7 +151,9 @@ function AccountQueueView({
 }) {
   const { text, format } = useCopy();
   const q = read.data;
-  const held = useHeldQueueFlows(reviewIdentity(own), q?.account ?? null, new Set((q?.rows ?? []).map((r) => r.id.toString())));
+  const listed = new Set((q?.rows ?? []).map((r) => r.id.toString()));
+  const mine = q?.account.toLowerCase() ?? null;
+  const held = useHeldQueueFlows(reviewIdentity(own), (account, id) => account.toLowerCase() === mine && !listed.has(id.toString()));
   if (q === null) {
     if (read.state === 'failed')
       return (
@@ -253,19 +281,21 @@ function QueueRowCard({ q, row, own, chain, meta }: { q: AccountQueue; row: Queu
   );
 }
 
-/** The action flows the store holds for `account` whose row the queue no
- *  longer lists (the action released or cancelled it): each one's row and
- *  action, from the review it stored. */
-function useHeldQueueFlows(identity: string | null, account: Hex | null, listed: ReadonlySet<string>): { id: bigint; action: QueueAction; code: string | null }[] {
+/** The action flows the store holds for this wallet that `pick` selects,
+ *  by account and row: each one's account, row and action, from the review
+ *  it stored. Read from the store alone, so a flow outlives the view that
+ *  started it (a row the action removed, a lookup since cleared, a queue
+ *  whose read failed). */
+function useHeldQueueFlows(identity: string | null, pick: (account: Hex, id: bigint) => boolean): { account: Hex; id: bigint; action: QueueAction; code: string | null }[] {
   const store = useTxStore();
   const entries = useTxEntries();
-  if (identity === null || account === null) return [];
+  if (identity === null) return [];
   return entries.flatMap(([key]) => {
     if (!key.startsWith(QUEUE_KEY_PREFIX)) return [];
     const review = store.value<QueueReview>(`${key}:review`);
-    if (!review || review.identity !== identity || review.account.toLowerCase() !== account.toLowerCase()) return [];
-    if (queueActionKey(review.id, review.action) !== key || listed.has(review.id.toString())) return [];
-    return [{ id: review.id, action: review.action, code: review.row.code }];
+    if (!review || review.identity !== identity || queueActionKey(review.id, review.action) !== key) return [];
+    if (!pick(review.account, review.id)) return [];
+    return [{ account: review.account, id: review.id, action: review.action, code: review.row.code }];
   });
 }
 

@@ -925,6 +925,7 @@ export const copy = {
     pausedHeld: A('The protocol is paused, so releases wait until it resumes. Cancelling still works.'),
     managedHead: B('Account {{address}}, which you manage since it was replaced'),
     lookupHead: B('Account {{address}}'),
+    heldHead: B('Your action on account {{address}}'),
     managedUnread: A('Whether you manage another protected account, replaced by this wallet, could not be read, so its queue is not shown.'),
     lookupLabel: B('Look up another account’s queue'),
     lookupHint: B('For a secondary signer: paste the protected account’s address to co-sign or cancel its payouts.'),

@@ -1030,8 +1030,11 @@ above. Each resolves here, so a route reviewer needs no private file:
   as such; the cancel; the approval. The account's delay and approval rule,
   the keeper service's arming for releases (the capability service's
   answer, unknown by default) and the pause posture are stated above the
-  rows. An action in progress stays on screen after its row leaves the
-  queue, until its finish card is closed.
+  rows. An action in progress stays on screen until its finish card is
+  closed: after its row leaves the queue, after the lookup that found the
+  account is cleared, and when that account's queue cannot be read. The
+  sync stamp covers every queue the section shows, a looked-up one
+  included.
 
 ## 3. Companion specifications
 
