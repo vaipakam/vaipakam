@@ -18,17 +18,6 @@ import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 ///      through exactly the code (lien guard, measured delivery, tracked
 ///      ledger) every other payout uses.
 interface IVaultWithdrawRoutes {
-    function vaultWithdrawERC20(address user, address token, address recipient, uint256 amount)
-        external
-        returns (uint256 delivered);
-    function vaultWithdrawERC721(address user, address nftContract, uint256 tokenId, address recipient) external;
-    function vaultWithdrawERC1155(
-        address user,
-        address nftContract,
-        uint256 tokenId,
-        uint256 amount,
-        address recipient
-    ) external;
 }
 
 /**

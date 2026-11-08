@@ -309,7 +309,7 @@ contract NFTPrepayAutoListFacet is DiamondPausable, DiamondReentrancyGuard {
         FeeLeg[] memory emptyFeeLegs = new FeeLeg[](0);
         bytes32 orderHash = LibPrepayOrder.buildAndHashMem(
             pctx,
-            vaultAddr,
+            pctx.borrowerVault, // the offerer (#3205 part 2)
             address(executor),
             executor.seaport(),
             askPrice,
@@ -586,7 +586,7 @@ contract NFTPrepayAutoListFacet is DiamondPausable, DiamondReentrancyGuard {
 
         bytes32 newOrderHash = LibPrepayOrder.buildAndHashMem(
             pctx,
-            vaultAddr,
+            pctx.borrowerVault, // the offerer (#3205 part 2)
             address(executor),
             executor.seaport(),
             rotatedAsk,

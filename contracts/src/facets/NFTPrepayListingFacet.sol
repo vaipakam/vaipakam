@@ -617,7 +617,7 @@ contract NFTPrepayListingFacet is
         if (vaultAddr == address(0)) revert LibPrepayListingWiring.VaultNotDeployed(loan.borrower);
         orderHash = LibPrepayOrder.buildAndHash(
             pctx,
-            vaultAddr,
+            pctx.borrowerVault, // the offerer (#3205 part 2)
             address(executor),
             CollateralListingExecutor(address(executor)).seaport(),
             askPrice,
@@ -813,7 +813,7 @@ contract NFTPrepayListingFacet is
         address vaultAddr = s.userVaipakamVaults[loan.borrower];
         newOrderHash = LibPrepayOrder.buildAndHash(
             pctx,
-            vaultAddr,
+            pctx.borrowerVault, // the offerer (#3205 part 2)
             address(executor),
             CollateralListingExecutor(address(executor)).seaport(),
             askPrice,

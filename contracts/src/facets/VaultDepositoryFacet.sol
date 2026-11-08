@@ -24,17 +24,6 @@ interface IVaultRoutes {
     function vaultDepositERC721(address user, address from, address nftContract, uint256 tokenId) external;
     function vaultDepositERC1155(address user, address from, address nftContract, uint256 tokenId, uint256 amount)
         external;
-    function vaultWithdrawERC20(address user, address token, address recipient, uint256 amount)
-        external
-        returns (uint256 delivered);
-    function vaultWithdrawERC721(address user, address nftContract, uint256 tokenId, address recipient) external;
-    function vaultWithdrawERC1155(
-        address user,
-        address nftContract,
-        uint256 tokenId,
-        uint256 amount,
-        address recipient
-    ) external;
     function getOrCreateUserVault(address user) external returns (address proxy);
 }
 

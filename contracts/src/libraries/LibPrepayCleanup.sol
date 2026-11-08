@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibListingEscrow} from "./LibListingEscrow.sol";
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {LibPositionNFT} from "./LibPositionNFT.sol";
 import {IListingExecutorRecorder} from "../seaport/IListingExecutorRecorder.sol";
@@ -135,8 +136,14 @@ library LibPrepayCleanup {
             VaipakamVaultImplementation vault = VaipakamVaultImplementation(vaultAddr);
             // #3205 part 2 — an ERC-721 listing holds no approval between
             // transactions (the fill's hooks grant and close it), so there
-            // is none to revoke; the orderHash binding is what a stale fill
-            // would need, and it goes here.
+            // is none to revoke; an ERC-1155 lot comes back from its escrow
+            // (nothing, after a fill). The orderHash binding is what a stale
+            // fill would need, and it goes here.
+            if (loan.collateralAssetType == LibVaipakam.AssetType.ERC1155) {
+                LibListingEscrow.close(
+                    vaultAddr, loan.collateralAsset, loan.collateralTokenId, LibListingEscrow.key(false, loanId)
+                );
+            }
             vault.revokeListingOrderHash(orderHash);
         }
 
@@ -268,8 +275,15 @@ library LibPrepayCleanup {
                 VaipakamVaultImplementation vault = VaipakamVaultImplementation(vaultAddr);
                 // #3205 part 2 — no ERC-721 approval outlives a fill (its
                 // hooks grant and close it), so nothing is revoked here
-                // whichever path tears the listing down.
+                // whichever path tears the listing down; an ERC-1155 lot
+                // comes back from its escrow (nothing, after a fill).
                 revokeConduitApproval;
+                LibVaipakam.Offer storage offer = s.offers[uint256(offerId)];
+                if (offer.collateralAssetType == LibVaipakam.AssetType.ERC1155) {
+                    LibListingEscrow.close(
+                        vaultAddr, offer.collateralAsset, offer.collateralTokenId, LibListingEscrow.key(true, offerId)
+                    );
+                }
                 vault.revokeListingOrderHash(orderHash);
             }
         }

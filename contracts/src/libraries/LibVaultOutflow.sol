@@ -147,13 +147,14 @@ library LibVaultOutflow {
     }
 
     /// @notice A new loan's net principal from the lender's vault into the
-    ///         vault of `borrower`, the borrower of the accept of `offerId`.
-    function toBorrowerAtAccept(address lender, address asset, uint256 amount, address borrower, uint256 offerId)
+    ///         vault of the borrower of this accept of `offerId`, which the
+    ///         policy derives from the offer and the accept in flight.
+    function toBorrowerAtAccept(address lender, address asset, uint256 amount, uint256 offerId)
         internal
         returns (uint256)
     {
         return _go(
-            lender, ERC20, asset, 0, amount, borrower, VaultOutflowTypes.OutflowClass.PrincipalToBorrower, offerId, 0, OutflowReason.PRINCIPAL
+            lender, ERC20, asset, 0, amount, address(0), VaultOutflowTypes.OutflowClass.PrincipalToBorrower, offerId, 0, OutflowReason.PRINCIPAL
         );
     }
 
@@ -233,6 +234,18 @@ library LibVaultOutflow {
     {
         return _go(
             user, ERC20, asset, 0, amount, seller, VaultOutflowTypes.OutflowClass.SellerClaim, loanId, 0, OutflowReason.SELLER_CLAIM
+        );
+    }
+
+    /// @notice An ERC-1155 listing's lot from `user`'s vault into the vault's
+    ///         own escrow for listing `key` (the listing's Seaport offerer).
+    ///         The escrow counts as part of the vault: no ledger moves.
+    function toListingEscrow(address user, address asset, uint256 tokenId, uint256 amount, bytes32 key, uint256 ref)
+        internal
+        returns (uint256)
+    {
+        return _go(
+            user, ERC1155, asset, tokenId, amount, address(0), VaultOutflowTypes.OutflowClass.ListingEscrow, ref, uint256(key), OutflowReason.LISTING_ESCROW
         );
     }
 

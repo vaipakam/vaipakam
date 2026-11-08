@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibListingEscrow} from "./LibListingEscrow.sol";
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {LibPositionNFT} from "./LibPositionNFT.sol";
 import {LibProtectedAccount} from "./LibProtectedAccount.sol";
@@ -86,7 +87,21 @@ library LibPrepayListingWiring {
         address vaultAddr = s.userVaipakamVaults[loan.borrower];
         if (vaultAddr == address(0)) revert VaultNotDeployed(loan.borrower);
         VaipakamVaultImplementation vault = VaipakamVaultImplementation(vaultAddr);
-        _grantConduitApproval(vault, loan, conduit);
+        // #3205 part 2 — an ERC-721 is approved only inside its fill; an
+        // ERC-1155 lot moves into the vault's escrow for this listing, which
+        // is the order's offerer and the only holder of the conduit approval.
+        if (loan.collateralAssetType == LibVaipakam.AssetType.ERC1155) {
+            LibListingEscrow.open(
+                loan.borrower,
+                vaultAddr,
+                loan.collateralAsset,
+                loan.collateralTokenId,
+                loan.collateralQuantity,
+                conduit,
+                LibListingEscrow.key(false, loan.id),
+                loan.id
+            );
+        }
         vault.registerListingOrderHash(orderHash, executor);
     }
 
@@ -116,37 +131,15 @@ library LibPrepayListingWiring {
         if (vaultAddr == address(0)) return;
         VaipakamVaultImplementation vault = VaipakamVaultImplementation(vaultAddr);
         // #3205 part 2 — an ERC-721 listing holds no approval between
-        // transactions, so there is nothing to clear here.
+        // transactions; an ERC-1155 lot comes back from its escrow.
+        if (loan.collateralAssetType == LibVaipakam.AssetType.ERC1155) {
+            LibListingEscrow.close(vaultAddr, loan.collateralAsset, loan.collateralTokenId, LibListingEscrow.key(false, loan.id));
+        }
         // Both asset types: invalidate the vault's ERC-1271 binding
         // for `orderHash`. After this the vault's `isValidSignature`
         // returns INVALID for any Seaport replay attempt against the
         // canceled order.
         vault.revokeListingOrderHash(orderHash);
-    }
-
-    /// @dev Asset-type-aware conduit-approval grant. ERC721 uses
-    ///      per-token `approve`; ERC1155's only approval surface is
-    ///      operator-wide `setApprovalForAll`. Shared by both posting
-    ///      paths via `wire`. The FULL_RESTRICTED order type + the
-    ///      executor's content gate bound the operator-wide ERC1155
-    ///      approval's blast radius.
-    function _grantConduitApproval(
-        VaipakamVaultImplementation vault,
-        LibVaipakam.Loan storage loan,
-        address conduit
-    ) private {
-        if (loan.collateralAssetType == LibVaipakam.AssetType.ERC721) {
-            // #3205 part 2 — granted only inside the fill (the executor's
-            // authorizeOrder asks the Diamond for it), never here.
-            conduit;
-        } else {
-            // ERC1155 — supported per T-086 step 15.
-            vault.setCollateralOperatorApprovalERC1155(
-                loan.collateralAsset,
-                conduit,
-                true
-            );
-        }
     }
 
     /// @dev The listing-author rule, run before a prepay or parallel-sale

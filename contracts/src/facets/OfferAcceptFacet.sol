@@ -6,6 +6,7 @@ import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibLoanClock} from "../libraries/LibLoanClock.sol";
 import {LibAcceptTerms} from "../libraries/LibAcceptTerms.sol";
 import {LibVaultOutflow} from "../libraries/LibVaultOutflow.sol";
+import {LibAcceptContext} from "../libraries/LibAcceptContext.sol";
 import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {RefinanceFacet} from "./RefinanceFacet.sol";
@@ -945,6 +946,9 @@ contract OfferAcceptFacet is
             : (s.signedOfferAcceptor != address(0)
                 ? s.signedOfferAcceptor
                 : msg.sender);
+        // #3205 part 2 — the vault outflow policy derives the new loan's
+        // borrower from this record when it delivers the principal.
+        LibAcceptContext.setAcceptor(offerId, acceptor);
 
         // Phase 4.3 — address-level sanctions screening on both sides
         // of the match. The acceptor's check is obvious; the creator's

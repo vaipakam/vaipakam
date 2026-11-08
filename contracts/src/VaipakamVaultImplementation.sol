@@ -22,6 +22,7 @@ import {VaultFactoryFacet} from "./facets/VaultFactoryFacet.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import {IListingExecutorValidator} from "./seaport/IListingExecutorValidator.sol";
 import {VaultOutflowTypes} from "./vault/VaultOutflowTypes.sol";
+import {ListingEscrow} from "./vault/ListingEscrow.sol";
 import {IProtocolRegistryReader} from "./interfaces/IProtocolRegistryReader.sol";
 import {RegistryKeys} from "./governance/RegistryKeys.sol";
 
@@ -257,21 +258,6 @@ contract VaipakamVaultImplementation is
     //     proxy = s.userVaipakamVaults[user];
     // }
 
-    /**
-     * @notice Withdraws ERC-20 tokens from this vault to a recipient.
-     * @dev Safe transfer. Callable by owner (Diamond/facets).
-     * @param token The ERC-20 token address.
-     * @param recipient The recipient address.
-     * @param amount The amount to withdraw.
-     */
-    // forge-lint: disable-next-line(mixed-case-function)
-    function withdrawERC20(
-        address token,
-        address recipient,
-        uint256 amount
-    ) external onlyDiamond {
-        IERC20(token).safeTransfer(recipient, amount);
-    }
 
     /**
      * @notice Deposits an ERC-721 NFT into this vault.
@@ -291,25 +277,6 @@ contract VaipakamVaultImplementation is
         );
     }
 
-    /**
-     * @notice Withdraws an ERC-721 NFT from this vault to a recipient.
-     * @dev Safe transfer. Callable by owner.
-     * @param nftContract The NFT contract address.
-     * @param tokenId The token ID.
-     * @param recipient The recipient address.
-     */
-    // forge-lint: disable-next-line(mixed-case-function)
-    function withdrawERC721(
-        address nftContract,
-        uint256 tokenId,
-        address recipient
-    ) external onlyDiamond {
-        IERC721(nftContract).safeTransferFrom(
-            address(this),
-            recipient,
-            tokenId
-        );
-    }
 
     /**
      * @notice Deposits ERC-1155 tokens into this vault.
@@ -333,56 +300,10 @@ contract VaipakamVaultImplementation is
         );
     }
 
-    /**
-     * @notice Withdraws ERC-1155 tokens from this vault to a recipient.
-     * @dev Safe transfer. Callable by owner.
-     * @param nftContract The NFT contract address.
-     * @param tokenId The token ID.
-     * @param amount The amount to withdraw.
-     * @param recipient The recipient address.
-     */
-    // forge-lint: disable-next-line(mixed-case-function)
-    function withdrawERC1155(
-        address nftContract,
-        uint256 tokenId,
-        uint256 amount,
-        address recipient
-    ) external onlyDiamond {
-        IERC1155(nftContract).safeTransferFrom(
-            address(this),
-            recipient,
-            tokenId,
-            amount,
-            ""
-        );
-    }
 
-    /**
-     * @notice Approves this vault as operator for an ERC-721 NFT (for rentals without holding).
-     * @dev Calls IERC721.approve. Callable by owner (facets for lender offers).
-     * @param nftContract The NFT contract address.
-     * @param tokenId The token ID.
-     */
-    // forge-lint: disable-next-line(mixed-case-function)
-    function approveERC721(
-        address nftContract,
-        uint256 tokenId
-    ) external onlyDiamond {
-        IERC721(nftContract).approve(address(this), tokenId);
-    }
 
     // ─── T-086 step 7 — Seaport prepay-listing narrow entries ───────────
 
-    /// @notice Emitted when the diamond toggles a Seaport conduit's
-    ///         per-token approval on the vault's collateral NFT.
-    ///         `conduit == address(0)` (or `approved == false`)
-    ///         signals an approval revocation.
-    event CollateralOperatorApprovalSet(
-        address indexed nftContract,
-        uint256 indexed tokenId,
-        address indexed conduit,
-        bool approved
-    );
 
     /// @notice Emitted when the diamond pins a Seaport `orderHash`
     ///         to its recording executor for ERC-1271 delegation.
@@ -392,9 +313,6 @@ contract VaipakamVaultImplementation is
     ///         binding (cancel / cancelExpired / post-fill).
     event ListingOrderHashRevoked(bytes32 indexed orderHash);
 
-    /// @notice #1566 S3e — this vault's ERC-20 allowance to `spender` was set to `amount` by the
-    ///         Diamond (a swap-to-repay intent's lot, approved to the pinned 1inch LOP).
-    event ERC20ApprovalSet(address indexed token, address indexed spender, uint256 amount);
 
     /// @dev Caller-passed zero `orderHash` to a register / revoke.
     ///      Seaport never produces a zero hash so it's an obvious
@@ -404,83 +322,7 @@ contract VaipakamVaultImplementation is
     /// @dev Caller-passed zero `executor` to {registerListingOrderHash}.
     error ZeroExecutor();
 
-    /**
-     * @notice Set / unset a Seaport conduit's per-token approval
-     *         on a collateral NFT held by this vault.
-     * @dev    Diamond-gated; the diamond is responsible for
-     *         pre-validating that `conduit` is in the executor's
-     *         governance-managed allow-list at call time. The
-     *         vault performs the raw `IERC721.approve` write
-     *         (passing `address(0)` to revoke when `approved` is
-     *         `false`).
-     *
-     *         The NFT must already live in this vault — the
-     *         `IERC721.approve` call would revert if the vault
-     *         isn't the current owner, which is the right
-     *         invariant: the diamond should only authorise an
-     *         approval against a vault that holds the collateral.
-     *
-     *         Seaport-side semantic: after a successful fill,
-     *         `IERC721.transferFrom` clears the per-token approval
-     *         atomically with the transfer (ERC-721 standard), so
-     *         the post-fill state is approval = `address(0)`
-     *         without an explicit revoke call. The diamond's
-     *         cancel paths DO explicitly revoke; that's the only
-     *         path that leaves the NFT in the vault while clearing
-     *         the approval.
-     */
-    function setCollateralOperatorApproval(
-        address nftContract,
-        uint256 tokenId,
-        address conduit,
-        bool approved
-    ) external onlyDiamond {
-        address target = approved ? conduit : address(0);
-        IERC721(nftContract).approve(target, tokenId);
-        emit CollateralOperatorApprovalSet(nftContract, tokenId, conduit, approved);
-    }
 
-    /**
-     * @notice ERC1155 sibling of {setCollateralOperatorApproval}.
-     *         Grants (or revokes) operator-level approval on an
-     *         ERC1155 collateral collection — ERC1155 has no
-     *         per-token `approve`; the standard's only approval
-     *         surface is `setApprovalForAll(operator, approved)`,
-     *         which is operator-wide on the collection.
-     * @dev    Diamond-gated. T-086 step 15 extension folded into
-     *         #306's architectural fix.
-     *
-     *         The operator-wide approval's blast radius is bounded
-     *         by:
-     *           1. The Seaport order's `FULL_RESTRICTED` orderType
-     *              — Seaport refuses partial fills; the executor
-     *              content gate enforces the full vaulted balance.
-     *           2. The diamond's #306 canonical-order construction —
-     *              the orderHash registered on the vault's
-     *              ERC-1271 mapping corresponds to a SPECIFIC
-     *              `(collection, tokenId, fullAmount)` offer
-     *              that the diamond verified; a malicious order
-     *              with a different shape would have a different
-     *              hash and the vault's ERC-1271 would return
-     *              INVALID for it.
-     *
-     *         The conduit-allow-list discipline on the executor
-     *         singleton is the trust anchor — only conduits the
-     *         protocol has explicitly approved can be passed.
-     */
-    function setCollateralOperatorApprovalERC1155(
-        address nftContract,
-        address conduit,
-        bool approved
-    ) external onlyDiamond {
-        IERC1155(nftContract).setApprovalForAll(conduit, approved);
-        emit CollateralOperatorApprovalSet(
-            nftContract,
-            0, // tokenId placeholder — ERC1155 approval is operator-wide
-            conduit,
-            approved
-        );
-    }
 
     /**
      * @notice Pin a Seaport `orderHash → executor` binding so this
@@ -524,18 +366,6 @@ contract VaipakamVaultImplementation is
         emit ListingOrderHashRevoked(orderHash);
     }
 
-    /**
-     * @notice #1566 S3e — set this vault's ERC-20 allowance to `spender` to exactly `amount`.
-     * @dev    Diamond-gated. A swap-to-repay intent's 1inch order names this vault as its maker
-     *         (registered through {registerListingOrderHash} with the Diamond as validator), so the
-     *         LOP takes the auction lot from here, on this allowance, inside the fill. The Diamond
-     *         raises it by the lot at commit and lowers it by the lot at a teardown; a fill consumes
-     *         it as the LOP's own transfer. Always an exact amount, never an unlimited approval.
-     */
-    function approveERC20(address token, address spender, uint256 amount) external onlyDiamond {
-        IERC20(token).forceApprove(spender, amount);
-        emit ERC20ApprovalSet(token, spender, amount);
-    }
 
     // ─── #3205 part 2 — the one door out ───────────────────────────────
 
@@ -575,6 +405,63 @@ contract VaipakamVaultImplementation is
         uint256 ref;
     }
     OpenGrant private _openGrant;
+
+    /// @dev #3205 part 2 — the listing escrows this vault created, by address:
+    ///      the listing key each one serves (0 = not one of this vault's).
+    mapping(address => bytes32) private _escrowKey;
+
+    event ListingEscrowOpened(bytes32 indexed key, address indexed escrow, address asset, address conduit);
+    event ListingEscrowClosed(bytes32 indexed key, address indexed escrow, uint256 returned);
+
+    /**
+     * @notice The address of this vault's escrow for listing `key` (deployed
+     *         or not). A listing order names it as offerer before it exists.
+     */
+    function listingEscrowAddress(bytes32 key) public view returns (address) {
+        return address(
+            uint160(
+                uint256(
+                    keccak256(
+                        abi.encodePacked(bytes1(0xff), address(this), key, keccak256(type(ListingEscrow).creationCode))
+                    )
+                )
+            )
+        );
+    }
+
+    /**
+     * @notice Create (once per key) the escrow for listing `key` and approve
+     *         `conduit` on it for `asset`. The lot moves in afterwards through
+     *         {transferOut} (class ListingEscrow).
+     */
+    function openListingEscrow(bytes32 key, address asset, address conduit)
+        external
+        onlyDiamond
+        returns (address escrow)
+    {
+        if (key == bytes32(0)) revert ZeroOutflow();
+        escrow = listingEscrowAddress(key);
+        if (escrow.code.length == 0) {
+            escrow = address(new ListingEscrow{salt: key}());
+        }
+        _escrowKey[escrow] = key;
+        ListingEscrow(escrow).approve(asset, conduit);
+        emit ListingEscrowOpened(key, escrow, asset, conduit);
+    }
+
+    /// @notice Bring back whatever escrow `key` still holds of `asset` /
+    ///         `tokenId` and revoke its approval (a cancel, an expiry, a
+    ///         teardown; after a fill it returns nothing).
+    function closeListingEscrow(bytes32 key, address asset, uint256 tokenId)
+        external
+        onlyDiamond
+        returns (uint256 returned)
+    {
+        address escrow = listingEscrowAddress(key);
+        if (_escrowKey[escrow] != key) return 0;
+        returned = ListingEscrow(escrow).close(asset, tokenId);
+        emit ListingEscrowClosed(key, escrow, returned);
+    }
 
     /**
      * @notice Move one asset out of this vault (#3205 part 2, §3.1). The ONLY
@@ -680,6 +567,11 @@ contract VaipakamVaultImplementation is
         }
         if (c == VaultOutflowTypes.OutflowClass.SwapAdapter) return _inRegistrySet(RegistryKeys.SWAP_ADAPTERS, o.to);
         if (c == VaultOutflowTypes.OutflowClass.DiamondTransient) return o.to == diamond;
+        // An escrow this vault created for the listing the outflow names
+        // (`positionToken` carries the listing key for this class).
+        if (c == VaultOutflowTypes.OutflowClass.ListingEscrow) {
+            return o.positionToken != 0 && _escrowKey[o.to] == bytes32(o.positionToken);
+        }
         if (
             c == VaultOutflowTypes.OutflowClass.ClaimCustody || c == VaultOutflowTypes.OutflowClass.PrincipalToBorrower
                 || c == VaultOutflowTypes.OutflowClass.MatchedCounterparty
@@ -689,8 +581,7 @@ contract VaipakamVaultImplementation is
         // Stage A residuals, checked by the Diamond only until Stage B
         // (#3379): an allowlisted address (the allowlist moves into the
         // vault), the incentive and liquidation-buyer actors (bounded by the
-        // lien's budgets), a recorded seller (the signed sale terms), and the
-        // listing escrow (created by this vault, with the escrow work). None
+        // lien's budgets) and a recorded seller (the signed sale terms). None
         // may name this vault or the Diamond.
         return o.to != address(this) && o.to != diamond;
     }
@@ -1015,6 +906,8 @@ contract VaipakamVaultImplementation is
     /// @dev Whether `operator` may deliver an NFT into this vault.
     function _acceptsNftFrom(address operator) private view returns (bool) {
         if (operator == diamond || operator == address(this)) return true;
+        // #3205 part 2 — one of this vault's own listing escrows returning a lot.
+        if (_escrowKey[operator] != bytes32(0)) return true;
         // Fail closed: a Diamond that cannot answer (no registry route)
         // accepts nothing beyond its own and the vault's own deliveries.
         try IVaultRegistryView(diamond).getVaultOwner(operator) returns (address user) {
@@ -1078,5 +971,5 @@ contract VaipakamVaultImplementation is
     ///      for ~50 uint256-sized fields (or proportionally fewer
     ///      mappings / arrays / larger structs); sized conservatively.
     // forge-lint: disable-next-line(mixed-case-variable)
-    uint256[44] private __gap;
+    uint256[43] private __gap;
 }

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibListingEscrow} from "../libraries/LibListingEscrow.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
 import {LibPrepayOrder} from "../libraries/LibPrepayOrder.sol";
@@ -722,7 +723,9 @@ contract OfferParallelSaleFacet is
             endTime: loc.endTime,
             principalAsset: offer.lendingAsset,
             mode: PREPAY_MODE_PRE_LOAN_FIXED_PRICE,
-            borrowerVault: loc.vaultAddr,
+            // #3205 part 2 — the order's offerer: the vault for an ERC-721,
+            // the vault's escrow for this listing for an ERC-1155.
+            borrowerVault: _offererOf(loc.vaultAddr, offer.collateralAssetType, offerId),
             borrowerWallet: offer.creator,
             // T-086 Round-8 Step 7 — collateral content pinned at
             // post-time. The parallel-sale lock guarantees these
@@ -776,30 +779,39 @@ contract OfferParallelSaleFacet is
             loc.executor
         );
 
-        // Codex P1 round-1 #2 — grant the Seaport conduit permission
-        // to move the collateral NFT on fill. Without this approval,
-        // Seaport's fulfill reverts even after the executor's content
-        // checks + ERC-1271 signature check pass. ERC721 takes a
-        // per-token approval; ERC1155 has no per-token approval surface
-        // so an operator-wide setApprovalForAll is used (same pattern
-        // the loan-keyed `LibPrepayListingWiring.wire` path applies).
-        // The teardown paths (`LibPrepayCleanup.clearOfferListing` +
-        // `releaseParallelSaleLock`) DON'T need to revoke for ERC1155
-        // because the orderHash invalidation via `revokeListingOrderHash`
-        // is the authoritative safety primitive (see
-        // VaipakamVaultImplementation.setCollateralOperatorApprovalERC1155
-        // natspec). For ERC721 we leave the per-token approval in place
-        // until cancel — the orderHash invalidation makes a stale fill
-        // impossible regardless of approval state.
-        if (offer.collateralAssetType == LibVaipakam.AssetType.ERC721) {
-            // #3205 part 2 — granted only inside the fill, by the executor's
-            // authorizeOrder, never at listing time.
-        } else {
-            VaipakamVaultImplementation(loc.vaultAddr).setCollateralOperatorApprovalERC1155(
-                offer.collateralAsset,
-                loc.conduit,
-                true
-            );
-        }
+        // #3205 part 2 — no approval at listing time. An ERC-721 is approved
+        // to the fill's conduit inside the fill (the executor's
+        // authorizeOrder); an ERC-1155 lot moves into the vault's escrow for
+        // this listing, the order's offerer and the only holder of the
+        // conduit approval. Teardown brings it back.
+        if (offer.collateralAssetType == LibVaipakam.AssetType.ERC1155) _openEscrow(offer, offerId, loc.vaultAddr, loc.conduit);
     }
+
+    /// @dev #3205 part 2 — the listing's offerer: the vault for an ERC-721,
+    ///      the vault's escrow for this offer-keyed listing for an ERC-1155.
+    ///      Its own frame: {_recordAndWireOfferOrder} is at its stack budget.
+    function _offererOf(address vault, LibVaipakam.AssetType assetType, uint96 offerId)
+        private
+        view
+        returns (address)
+    {
+        return LibListingEscrow.offerer(vault, assetType, LibListingEscrow.key(true, offerId));
+    }
+
+    /// @dev #3205 part 2 — move an ERC-1155 listing's lot into the vault's
+    ///      escrow for it and approve the conduit there. Its own frame, as
+    ///      {_offererOf}.
+    function _openEscrow(LibVaipakam.Offer storage offer, uint96 offerId, address vault, address conduit) private {
+        LibListingEscrow.open(
+            offer.creator,
+            vault,
+            offer.collateralAsset,
+            offer.collateralTokenId,
+            offer.collateralQuantity,
+            conduit,
+            LibListingEscrow.key(true, offerId),
+            offerId
+        );
+    }
+
 }

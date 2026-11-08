@@ -11,6 +11,7 @@ import {LibProtectedAccount} from "../libraries/LibProtectedAccount.sol";
 import {LibDepositoryLedger} from "../libraries/LibDepositoryLedger.sol";
 import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
+import {LibAcceptContext} from "../libraries/LibAcceptContext.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {VaipakamVaultImplementation} from "../VaipakamVaultImplementation.sol";
 import {VaultOutflowTypes} from "../vault/VaultOutflowTypes.sol";
@@ -133,7 +134,10 @@ contract VaultOutflowFacet is IVaipakamErrors {
     {
         address proxy = LibFacet.getOrCreateVault(user);
         address payeeOwner = _resolveRecipient(user, o);
-        _assertFree(user, proxy, o);
+        // A listing's lot moving into the vault's own escrow stays under its
+        // lien (the escrow counts as part of the vault), so it is not "free"
+        // money leaving and the lien guard does not apply to it.
+        if (o.class_ != VaultOutflowTypes.OutflowClass.ListingEscrow) _assertFree(user, proxy, o);
 
         // Protected account mode: a payout to the owner's own wallet (or its
         // controller) is queued, or kept in a locked account's vault. Nothing
@@ -164,6 +168,10 @@ contract VaultOutflowFacet is IVaipakamErrors {
         // Skipping the self-transfer keeps a fee-charging token from charging
         // for a move that did not happen.
         delivered = o.to == proxy ? o.amount : _transfer(proxy, o);
+        if (o.class_ == VaultOutflowTypes.OutflowClass.ListingEscrow) {
+            emit VaultOutflow(user, proxy, o.asset, o.tokenId, o.amount, delivered, o.to, o.class_, o.reason, o.ref);
+            return delivered;
+        }
         LibVaipakam.recordVaultWithdraw(user, o.asset, o.tokenId, o.amount);
 
         // A payee VAULT is credited in the tracked ledger and, as free money
@@ -282,10 +290,14 @@ contract VaultOutflowFacet is IVaipakamErrors {
             o.to = s.userVaipakamVaults[stored];
             if (o.to == address(0)) revert OutflowRecipientInvalid(c, address(0));
         } else if (c == VaultOutflowTypes.OutflowClass.PrincipalToBorrower) {
-            // The borrower of this accept (the caller names it: the accept
-            // resolves it, before the loan exists). Paid into its vault as free
-            // money, which the borrower withdraws.
-            payeeOwner = o.to;
+            // The borrower side of THIS accept of offer `ref`, derived here:
+            // a borrower offer's creator, or a lender offer's acceptor as the
+            // accept recorded it in this transaction. Paid into its vault as
+            // free money, which the borrower withdraws.
+            LibVaipakam.Offer storage offer = s.offers[o.ref];
+            payeeOwner = offer.offerType == LibVaipakam.OfferType.Borrower
+                ? offer.creator
+                : LibAcceptContext.acceptor(o.ref);
             if (payeeOwner == address(0)) revert OutflowRecipientInvalid(c, address(0));
             o.to = LibFacet.getOrCreateVault(payeeOwner);
         } else if (c == VaultOutflowTypes.OutflowClass.Treasury) {
@@ -300,6 +312,14 @@ contract VaultOutflowFacet is IVaipakamErrors {
             o.to = address(this);
         } else if (c == VaultOutflowTypes.OutflowClass.SwapAdapter) {
             if (!_isSwapAdapter(s, o.to)) revert OutflowRecipientInvalid(c, o.to);
+        } else if (c == VaultOutflowTypes.OutflowClass.ListingEscrow) {
+            // This vault's own escrow for the listing whose key the outflow
+            // carries (in `positionToken`); the escrow counts as part of the
+            // vault, so the move changes no ledger.
+            if (o.positionToken == 0 || o.kind != VaultOutflowTypes.AssetKind.ERC1155) {
+                revert OutflowRecipientInvalid(c, o.to);
+            }
+            o.to = VaipakamVaultImplementation(s.userVaipakamVaults[user]).listingEscrowAddress(bytes32(o.positionToken));
         } else if (c == VaultOutflowTypes.OutflowClass.SellerClaim) {
             // The vault of a prior seller recorded on THIS loan (#1209); the
             // caller names the seller, the vault is that seller's own.
@@ -307,8 +327,8 @@ contract VaultOutflowFacet is IVaipakamErrors {
             o.to = s.userVaipakamVaults[o.to];
             if (o.to == address(0)) revert OutflowRecipientInvalid(c, address(0));
         } else {
-            // Incentive, LiquidationBuyer, ListingEscrow: the caller names the
-            // actor; never this Diamond or a vault-less zero.
+            // Incentive, LiquidationBuyer: the caller names the actor; never
+            // this Diamond or a vault-less zero.
             if (o.to == address(0) || o.to == address(this)) revert OutflowRecipientInvalid(c, o.to);
         }
     }

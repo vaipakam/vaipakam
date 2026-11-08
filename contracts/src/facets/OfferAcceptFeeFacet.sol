@@ -195,7 +195,7 @@ contract OfferAcceptFeeFacet is IVaipakamErrors {
         LibDelivery.requireFull(
             lendingAsset,
             effectivePrincipal - initiationFee,
-            LibVaultOutflow.toBorrowerAtAccept(lender, lendingAsset, effectivePrincipal - initiationFee, borrower, offerId)
+            LibVaultOutflow.toBorrowerAtAccept(lender, lendingAsset, effectivePrincipal - initiationFee, offerId)
         );
     }
 }

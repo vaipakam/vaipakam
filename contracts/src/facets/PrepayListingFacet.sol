@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibListingEscrow} from "../libraries/LibListingEscrow.sol";
 import {VaultOutflowTypes} from "../vault/VaultOutflowTypes.sol";
 import {LibVaultOutflow} from "../libraries/LibVaultOutflow.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
@@ -147,10 +148,13 @@ contract PrepayListingFacet is
         // #306 architectural fix — borrower's per-user vault.
         // The diamond's `NFTPrepayListingFacet.postPrepayListing`
         // consumes this when constructing the canonical Seaport
-        // order shape (offerer = vault); the executor's zone
-        // callback re-verifies `params.offerer == borrowerVault`
-        // at fill time as defense-in-depth.
-        ctx.borrowerVault = s.userVaipakamVaults[loan.borrower];
+        // order shape; the executor's zone callback re-verifies
+        // `params.offerer == borrowerVault` at fill time as
+        // defense-in-depth. #3205 part 2 — the OFFERER: the vault for an
+        // ERC-721, the vault's escrow for this listing for an ERC-1155.
+        ctx.borrowerVault = LibListingEscrow.offerer(
+            s.userVaipakamVaults[loan.borrower], loan.collateralAssetType, LibListingEscrow.key(false, loanId)
+        );
     }
 
     // ─── Callback: executorFinalizePrepaySale ───────────────────────────
@@ -624,19 +628,18 @@ contract PrepayListingFacet is
 
         _closeSoldLoan(loan, offerId == 0);
 
-        // The sold collateral leaves the borrower's vault through the
-        // marketplace conduit, not through a vault withdrawal route, so its
-        // outflow is recorded here, once, for both listing types. Without
-        // it the tracked holding would keep a token the vault no longer
-        // holds, and a later untracked arrival of the same token could not
-        // be adopted. The listing accepts only ERC-721 and ERC-1155
-        // collateral (`NFTPrepayListingFacet`).
-        LibVaipakam.recordVaultWithdraw(
-            loan.borrower,
-            loan.collateralAsset,
-            loan.collateralTokenId,
-            loan.collateralAssetType == LibVaipakam.AssetType.ERC721 ? 1 : loan.collateralQuantity
-        );
+        // The sold collateral leaves through the marketplace conduit, not a
+        // vault withdrawal route. #3205 part 2 — an ERC-721 left on the fill's
+        // just-in-time grant, and closing that grant (the executor did it
+        // before this settlement) booked the outflow. An ERC-1155 left from
+        // its listing escrow, which counts as part of the vault until the
+        // sale, so the outflow is booked here, once. The listing accepts
+        // only ERC-721 and ERC-1155 collateral (`NFTPrepayListingFacet`).
+        if (loan.collateralAssetType == LibVaipakam.AssetType.ERC1155) {
+            LibVaipakam.recordVaultWithdraw(
+                loan.borrower, loan.collateralAsset, loan.collateralTokenId, loan.collateralQuantity
+            );
+        }
 
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         uint256 lenderAmount = plan.lenderDue + lenderExtra;
