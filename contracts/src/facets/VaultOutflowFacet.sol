@@ -191,6 +191,20 @@ contract VaultOutflowFacet is IVaipakamErrors {
     function vaultGrant(address user, VaultOutflowTypes.Grant calldata g) external onlyDiamondInternal {
         address proxy = _existingVault(user);
         if (g.amount == 0 && g.kind == VaultOutflowTypes.AssetKind.ERC20) revert GrantInvalid();
+        // An order-taker grant (the swap-to-repay lot) runs the lien guard,
+        // as a withdrawal does: the fill lowers the lien by the lot first, so
+        // the grant can expose only what is then free. A conduit grant
+        // exposes the LISTED collateral itself, which its lien covers until
+        // the sale settles; Stage B (#3379) bounds it by that lien at the
+        // vault.
+        if (g.class_ == VaultOutflowTypes.GrantClass.OrderTaker) {
+            VaultOutflowTypes.Outflow memory probe;
+            probe.kind = g.kind;
+            probe.asset = g.asset;
+            probe.tokenId = g.tokenId;
+            probe.amount = g.amount;
+            _assertFree(user, proxy, probe);
+        }
         _callVault(proxy, abi.encodeCall(VaipakamVaultImplementation.grantAllowance, (g)));
     }
 
@@ -204,7 +218,10 @@ contract VaultOutflowFacet is IVaipakamErrors {
         (address asset, address spender, uint256 tokenId,, uint256 ref) = VaipakamVaultImplementation(proxy).openGrant();
         if (spender == address(0)) return 0;
         consumed = VaipakamVaultImplementation(proxy).closeGrant();
-        if (consumed != 0) LibVaipakam.recordVaultWithdraw(user, asset, tokenId, consumed);
+        if (consumed != 0) {
+            LibVaipakam.recordVaultWithdraw(user, asset, tokenId, consumed);
+            if (asset == LibVaipakam.storageSlot().vpfiToken) emit VaultVpfiDebited(user, consumed, spender);
+        }
         emit VaultGrantSettled(user, proxy, spender, asset, tokenId, consumed, ref);
     }
 

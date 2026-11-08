@@ -133,17 +133,10 @@ library LibPrepayCleanup {
         address vaultAddr = s.userVaipakamVaults[loan.borrower];
         if (vaultAddr != address(0)) {
             VaipakamVaultImplementation vault = VaipakamVaultImplementation(vaultAddr);
-            // T-086 step 15 + #306 fix — branch on asset type.
-            // ERC721 explicitly revokes the per-token approval;
-            // ERC1155 leaves the operator-wide approval in place
-            // (orderHash invalidation via `revokeListingOrderHash`
-            // is the authoritative safety primitive, matching the
-            // standard Seaport ERC1155 conduit pattern).
-            if (loan.collateralAssetType == LibVaipakam.AssetType.ERC721) {
-                vault.setCollateralOperatorApproval(
-                    loan.collateralAsset, loan.collateralTokenId, address(0), false
-                );
-            }
+            // #3205 part 2 — an ERC-721 listing holds no approval between
+            // transactions (the fill's hooks grant and close it), so there
+            // is none to revoke; the orderHash binding is what a stale fill
+            // would need, and it goes here.
             vault.revokeListingOrderHash(orderHash);
         }
 
@@ -273,22 +266,10 @@ library LibPrepayCleanup {
             address vaultAddr = s.userVaipakamVaults[borrower];
             if (vaultAddr != address(0)) {
                 VaipakamVaultImplementation vault = VaipakamVaultImplementation(vaultAddr);
-                // Codex round-4 P1 #1 — only revoke the ERC721 conduit
-                // approval on the borrower-driven destructive paths
-                // (release / cancel). On the sale-fill path the
-                // approval MUST stay alive long enough for Seaport to
-                // finish the NFT transfer out of the vault; revoking
-                // before would make the transfer revert and stall the
-                // fill entirely.
-                if (revokeConduitApproval) {
-                    LibVaipakam.Offer storage offer = s.offers[uint256(offerId)];
-                    if (offer.collateralAssetType == LibVaipakam.AssetType.ERC721) {
-                        vault.setCollateralOperatorApproval(
-                            offer.collateralAsset, offer.collateralTokenId,
-                            address(0), false
-                        );
-                    }
-                }
+                // #3205 part 2 — no ERC-721 approval outlives a fill (its
+                // hooks grant and close it), so nothing is revoked here
+                // whichever path tears the listing down.
+                revokeConduitApproval;
                 vault.revokeListingOrderHash(orderHash);
             }
         }

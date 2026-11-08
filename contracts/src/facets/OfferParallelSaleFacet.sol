@@ -792,12 +792,8 @@ contract OfferParallelSaleFacet is
         // until cancel — the orderHash invalidation makes a stale fill
         // impossible regardless of approval state.
         if (offer.collateralAssetType == LibVaipakam.AssetType.ERC721) {
-            VaipakamVaultImplementation(loc.vaultAddr).setCollateralOperatorApproval(
-                offer.collateralAsset,
-                offer.collateralTokenId,
-                loc.conduit,
-                true
-            );
+            // #3205 part 2 — granted only inside the fill, by the executor's
+            // authorizeOrder, never at listing time.
         } else {
             VaipakamVaultImplementation(loc.vaultAddr).setCollateralOperatorApprovalERC1155(
                 offer.collateralAsset,

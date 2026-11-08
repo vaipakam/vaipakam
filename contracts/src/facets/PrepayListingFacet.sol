@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {VaultOutflowTypes} from "../vault/VaultOutflowTypes.sol";
+import {LibVaultOutflow} from "../libraries/LibVaultOutflow.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibLoanClock} from "../libraries/LibLoanClock.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
@@ -256,6 +258,60 @@ contract PrepayListingFacet is
         if (pinned == address(0) || msg.sender != pinned) {
             revert NotOfferExecutor(offerId, msg.sender);
         }
+    }
+
+    /// @inheritdoc IVaipakamPrepayCallbacks
+    /// @dev #3205 part 2 — the listing's ERC-721, approved to the fill's
+    ///      conduit for this transaction only (§3.5). The vault checks the
+    ///      conduit against the registry's conduit set. ERC-1155 collateral
+    ///      never takes a vault approval: it lists through an escrow.
+    function executorOpenListingGrant(uint256 loanId, uint96 offerId, address conduit)
+        external
+        override
+        whenNotPaused
+    {
+        (address owner, address asset, uint256 tokenId, uint256 ref) = _listingGrantSubject(loanId, offerId);
+        if (owner == address(0)) return;
+        LibVaultOutflow.grant(
+            owner, LibVaultOutflow.ERC721, asset, tokenId, 1, conduit, VaultOutflowTypes.GrantClass.Conduit, ref
+        );
+    }
+
+    /// @inheritdoc IVaipakamPrepayCallbacks
+    function executorCloseListingGrant(uint256 loanId, uint96 offerId)
+        external
+        override
+        returns (uint256 consumed)
+    {
+        (address owner,,,) = _listingGrantSubject(loanId, offerId);
+        if (owner == address(0)) return 0;
+        consumed = LibVaultOutflow.closeGrant(owner);
+    }
+
+    /// @dev The vault owner and the listed ERC-721 of exactly one listing, with
+    ///      the caller checked against the executor that listing names. A
+    ///      listing whose collateral is not an ERC-721 takes no vault grant:
+    ///      `owner` is 0.
+    function _listingGrantSubject(uint256 loanId, uint96 offerId)
+        private
+        view
+        returns (address owner, address asset, uint256 tokenId, uint256 ref)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if ((loanId == 0) == (offerId == 0)) revert NotExecutor(msg.sender, address(0));
+        if (loanId != 0) {
+            address expected = s.collateralListingExecutor;
+            if (expected == address(0)) revert ExecutorNotSet();
+            if (msg.sender != expected) revert NotExecutor(msg.sender, expected);
+            LibVaipakam.Loan storage loan = s.loans[loanId];
+            if (loan.collateralAssetType != LibVaipakam.AssetType.ERC721) return (address(0), address(0), 0, loanId);
+            return (loan.borrower, loan.collateralAsset, loan.collateralTokenId, loanId);
+        }
+        address pinned = s.offerPrepayListingExecutor[offerId];
+        if (pinned == address(0) || msg.sender != pinned) revert NotOfferExecutor(offerId, msg.sender);
+        LibVaipakam.Offer storage offer = s.offers[offerId];
+        if (offer.collateralAssetType != LibVaipakam.AssetType.ERC721) return (address(0), address(0), 0, offerId);
+        return (offer.creator, offer.collateralAsset, offer.collateralTokenId, offerId);
     }
 
     /// @inheritdoc IVaipakamPrepayCallbacks

@@ -115,18 +115,8 @@ library LibPrepayListingWiring {
         address vaultAddr = s.userVaipakamVaults[loan.borrower];
         if (vaultAddr == address(0)) return;
         VaipakamVaultImplementation vault = VaipakamVaultImplementation(vaultAddr);
-        if (loan.collateralAssetType == LibVaipakam.AssetType.ERC721) {
-            // ERC721 only: clear the per-token approval the matching
-            // `wire` granted. ERC1155 has no per-token approval, and
-            // its operator-wide approval is bounded by the ERC-1271
-            // revoke below + FULL_RESTRICTED.
-            vault.setCollateralOperatorApproval(
-                loan.collateralAsset,
-                loan.collateralTokenId,
-                address(0),
-                false
-            );
-        }
+        // #3205 part 2 — an ERC-721 listing holds no approval between
+        // transactions, so there is nothing to clear here.
         // Both asset types: invalidate the vault's ERC-1271 binding
         // for `orderHash`. After this the vault's `isValidSignature`
         // returns INVALID for any Seaport replay attempt against the
@@ -146,12 +136,9 @@ library LibPrepayListingWiring {
         address conduit
     ) private {
         if (loan.collateralAssetType == LibVaipakam.AssetType.ERC721) {
-            vault.setCollateralOperatorApproval(
-                loan.collateralAsset,
-                loan.collateralTokenId,
-                conduit,
-                true
-            );
+            // #3205 part 2 — granted only inside the fill (the executor's
+            // authorizeOrder asks the Diamond for it), never here.
+            conduit;
         } else {
             // ERC1155 — supported per T-086 step 15.
             vault.setCollateralOperatorApprovalERC1155(

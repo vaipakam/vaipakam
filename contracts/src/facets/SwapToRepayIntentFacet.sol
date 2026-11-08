@@ -612,20 +612,15 @@ contract SwapToRepayIntentFacet is
         if (s.orderHashKind[orderHash] != bytes32(0))
             revert IntentOrderHashAlreadyInUse(orderHash);
 
-        // ── §5.1 step 10 (#1566 S3e): the vault signs and approves ───
+        // ── §5.1 step 10 (#1566 S3e): the vault signs ────────────────
         // The vault, not this Diamond, is the order's maker: register the
         // hash on it with this Diamond as the validator (the registry the
         // Seaport listings use), so its ERC-1271 answers through
-        // `IntentDispatchFacet.isOrderValid`; and raise its exact allowance
-        // to the pinned LOP by the lot (zero-then-set for USDT-style
-        // tokens, inside the vault). The orderbook then sees the lot where
-        // it rests, approved, and reads the order as fillable.
+        // `IntentDispatchFacet.isOrderValid`. #3205 part 2 — no allowance is
+        // set here: the fill's pre-hook grants exactly the lot for that one
+        // transaction and its post-hook closes it, so the vault holds no
+        // allowance between transactions.
         VaipakamVaultImplementation(vault).registerListingOrderHash(orderHash, address(this));
-        VaipakamVaultImplementation(vault).approveERC20(
-            loan.collateralAsset,
-            s.cfgFusionLimitOrderProtocol,
-            IERC20(loan.collateralAsset).allowance(vault, s.cfgFusionLimitOrderProtocol) + lot
-        );
 
         // ── §5.1 step 11: record commit + reverse index + extension
         //    bytes + bump live count + emit ─────────────────────────────
@@ -907,15 +902,9 @@ contract SwapToRepayIntentFacet is
         // their vault.
         LibVaipakam.Loan storage loan = s.loans[loanId];
 
-        // ── 4. The vault's allowance + the live count (#1566 S3e) ───
-        {
-            uint256 current = IERC20(loan.collateralAsset).allowance(vault, commit.lopAtCommit);
-            VaipakamVaultImplementation(vault).approveERC20(
-                loan.collateralAsset,
-                commit.lopAtCommit,
-                current > commit.makerAmount ? current - commit.makerAmount : 0
-            );
-        }
+        // ── 4. The live count ───────────────────────────────────────
+        // #3205 part 2 — no allowance to lower: the vault grants the lot
+        // only inside a fill.
         s.intentLiveCommitCount -= 1;
 
         // ── 5. Storage cleanup ──────────────────────────────────────
