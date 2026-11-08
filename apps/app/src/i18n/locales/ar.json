@@ -2709,6 +2709,8 @@
         "VPFIDepositedToVault": "تم إيداع VPFI في vault",
         "VPFIWithdrawnFromVault": "تم سحب VPFI من vault",
         "VaultVpfiDebited": "تم إنفاق VPFI من vault",
+        "VaultOutflow": "نُقل من vault",
+        "VaultGrantSettled": "تمت تسوية إذن vault",
         "RewardEntryForfeitSettled": "تم إسقاط المكافآت",
         "AutoDailyDeducted": "تم دفع رسوم الإيجار اليومية",
         "AutoExtendBorrowerCapsChanged": "تم تحديث حدود التمديد التلقائي",

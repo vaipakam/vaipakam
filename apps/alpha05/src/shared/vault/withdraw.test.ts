@@ -29,8 +29,15 @@ const copy = {
 };
 const amountText = (v: bigint) => `${v}`;
 
-const OPEN = { enabled: false, locked: false, delaySeconds: 0, requireCosign: false };
-const PROTECTED = { enabled: true, locked: false, delaySeconds: 2 * 86_400, requireCosign: false };
+const OPEN = { enabled: false, locked: false, delaySeconds: 0, requireCosign: false, retired: false, controller: '0x0000000000000000000000000000000000000000' as const };
+const PROTECTED = {
+  enabled: true,
+  locked: false,
+  delaySeconds: 2 * 86_400,
+  requireCosign: false,
+  retired: false,
+  controller: '0x0000000000000000000000000000000000000000' as const,
+};
 
 const erc20Draft: WithdrawDraft = { standard: 'erc20', asset: TOKEN, tokenId: 0n, amount: 100n };
 const nftDraft: WithdrawDraft = { standard: 'erc721', asset: NFT, tokenId: 7n, amount: 1n };
@@ -179,7 +186,7 @@ describe('withdrawReceipt', () => {
   });
   it('with protected mode, the payout queue for the delay and how to cancel it', () => {
     const r = withdrawReceipt(review({ protection: { ...PROTECTED, requireCosign: true } }), null, copy);
-    expect(r.rows.find((x) => x.label === 'vaultWithdraw.rowTo')?.value).toEqual({ kind: 'text', text: 'payout.toQueuedCosign:{"delay":"2 days"}' });
+    expect(r.rows.find((x) => x.label === 'vaultWithdraw.rowTo')?.value).toEqual({ kind: 'text', text: 'payout.toQueuedCosign:{"delay":"2 days","wallet":"payout.yourWallet"}' });
     expect(r.consequences).toContain('payout.queuedNote');
     expect(r.consequences).toContain('payout.cosignNote');
     expect(r.consequences).toContain('vaultWithdraw.queueCancel');

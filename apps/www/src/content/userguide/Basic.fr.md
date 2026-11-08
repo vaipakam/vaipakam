@@ -1378,6 +1378,18 @@ La carte Sécurité du compte de la page Coffre indique si votre compte fonction
 
 Tant que le protocole est en pause, la page Coffre l'indique en haut : les retraits sont fermés, tandis que le remboursement total ou partiel et l'ajout de garantie restent ouverts. S'il s'agit d'une pause administrative, elle indique aussi quand sa voie de secours s'ouvre, telle que le protocole la publie, avec un compte à rebours. Une fois la voie ouverte, Retirer sur tout actif ayant une part libre renvoie ce qui vous appartient directement vers votre portefeuille ; la revue dit que cela passe par la voie de secours, et la voie ne rend jamais ce qu'un prêt, une offre ou une réclamation retient. Avec le mode protégé, vos retraits attendent toujours le délai de votre compte dans la file de paiements, comme d'habitude. Une pause automatique, ou un protocole pas encore lancé, n'ouvre aucune voie de secours, et la page indique qu'aucune n'est prévue.
 
+<a id="my-offers"></a>
+
+### Vos offres
+
+Offres liste chaque offre que vous avez créée sur le réseau auquel vous êtes connecté, et chaque offre dont vous détenez le jeton de position, la plus récente d'abord. Chacune affiche l'état que rapporte le protocole : ouverte, exécutée, vendue, expirée ou annulée, et les filtres au-dessus de la liste comptent chaque état. Une demande d'emprunt apparaît comme vendue quand sa garantie a été vendue par son annonce sur la place de marché avant que quiconque l'accepte : aucun prêt n'a été ouvert, et le produit de la vente est allé dans le coffre de son créateur. Une offre ouverte garde dans votre coffre ce qu'elle prête ou engage jusqu'à ce qu'elle soit exécutée ou annulée ; une offre expirée l'y garde jusqu'à ce qu'elle soit nettoyée. Quand le protocole annule une offre que rien n'a exécutée, il efface ses conditions, donc la page n'affiche que son numéro et son état. Si un autre portefeuille détient le jeton de position d'une offre que vous avez créée, vous pouvez toujours l'annuler et le retour vous revient ; si vous détenez celui d'une offre créée par un autre portefeuille, seul celui-ci peut l'annuler avant son expiration. Le carnet d'offres est encore dans l'application actuelle, et la page y renvoie.
+
+<a id="offer-cancel"></a>
+
+### Annuler une offre
+
+Annuler sur une offre ouverte que vous avez créée la retire du carnet et rend ce qu'elle bloque encore dans votre coffre : le montant non prêté ou le NFT d'une offre de prêt, la garantie inutilisée d'une demande, ou les frais prépayés et la marge d'une demande de location. Une offre que rien n'a exécutée ne peut pas être annulée pendant ses cinq premières minutes, pour qu'une annulation ne fasse jamais la course avec une acceptation ; la vérification indique quand elle le pourra et lève le blocage d'elle-même. La part déjà exécutée le reste. Une offre expirée a un bouton Nettoyer qui rend de la même façon ce qu'elle bloquait ; n'importe qui peut nettoyer une offre expirée, et le retour va toujours à son créateur. La vérification dit ce qui revient et où : sans mode protégé, cela arrive tout de suite dans votre portefeuille ; avec lui, cela attend le délai de votre compte dans la file des paiements, ou reste dans votre coffre tant que le compte est verrouillé. Quand l'application ne peut pas chiffrer le retour, par exemple pour une offre liée à un prêt en cours, la vérification le dit et la carte finale montre ce qui a bougé. Tant que le protocole est en pause, l'annulation est fermée. Rien ne quitte votre portefeuille et aucune approbation n'est demandée, donc votre portefeuille demande une seule fois.
+
 <a id="risk-access"></a>
 
 ### Risk Access : votre niveau de risque

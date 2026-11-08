@@ -146,7 +146,15 @@ function SafetyState({ mode: m, now, openRows, wallet, busy, choosing, onChoose,
         <dt>{text('safety.factCosign')}</dt>
         <dd>{text(m.requireCosign ? 'safety.cosignOn' : 'safety.cosignOff')}</dd>
         <dt>{text('safety.factNfts')}</dt>
-        <dd>{text(m.protectNfts ? 'safety.nftsOn' : 'safety.nftsOff')}</dd>
+        <dd data-testid="vault-safety-nfts">
+          {m.nftLock === null
+            ? text('safety.nftsUnread')
+            : !m.nftLock
+              ? text('safety.nftsOff')
+              : m.nftUnlockAt !== 0
+                ? format('safety.nftsUnlocking', { at: formatUtc(m.nftUnlockAt) })
+                : text('safety.nftsOn')}
+        </dd>
         <dt>{text('safety.factQueued')}</dt>
         <dd data-testid="vault-safety-queued">{openRows === null ? text('safety.queuedUnread') : format('safety.payoutCount', { count: String(openRows) })}</dd>
       </dl>

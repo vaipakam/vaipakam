@@ -28,19 +28,41 @@ export interface Protection {
    *  (`LibProtectedAccount.beginRelease` refuses `CosignRequired` without
    *  it, even after the delay). */
   requireCosign: boolean;
+  /** A replacement retired the account: a queued payout to its old wallet
+   *  is released to `controller` instead (`LibProtectedAccount.gate`). */
+  retired: boolean;
+  /** The wallet that manages a retired account (the zero address while it
+   *  is not retired). */
+  controller: Hex;
+}
+
+/** `getProtectedAccount`'s answer, as far as a payout's route reads it. */
+export interface ProtectedAccountAnswer {
+  enabled: boolean;
+  locked: boolean;
+  delaySeconds: number | bigint;
+  requireCosign: boolean;
+  retired: boolean;
+  controller: Hex;
+}
+
+/** The one mapping from the contract's answer to the mode a route reads,
+ *  so every flow that reads the account in its own batch states the same
+ *  route. */
+export function protectionFrom(a: ProtectedAccountAnswer | null): Protection | null {
+  return a === null
+    ? null
+    : { enabled: a.enabled, locked: a.locked, delaySeconds: Number(a.delaySeconds), requireCosign: a.requireCosign, retired: a.retired, controller: a.controller };
 }
 
 /** The wallet's mode, or null when the contract gave no answer (a failed
  *  source is thrown, so the own rail tries the next one). */
 export async function readProtection(c: PublicClient, diamond: Hex, account: Hex, blockNumber?: bigint): Promise<Protection | null> {
   const at = blockNumber === undefined ? {} : { blockNumber };
-  const a = (await answerOrNull(c.readContract({ address: diamond, abi: PROTECTED, functionName: 'getProtectedAccount', args: [account], ...at }))) as {
-    enabled: boolean;
-    locked: boolean;
-    delaySeconds: number | bigint;
-    requireCosign: boolean;
-  } | null;
-  return a === null ? null : { enabled: a.enabled, locked: a.locked, delaySeconds: Number(a.delaySeconds), requireCosign: a.requireCosign };
+  const a = (await answerOrNull(
+    c.readContract({ address: diamond, abi: PROTECTED, functionName: 'getProtectedAccount', args: [account], ...at }),
+  )) as ProtectedAccountAnswer | null;
+  return protectionFrom(a);
 }
 
 /** Where a payment to `account` from `source`'s vault goes:
@@ -66,8 +88,9 @@ export function payoutRoute(protection: Protection | null, account: Hex, source:
  *  second kept in the vault. So every destination the logs show is returned,
  *  each summed; none when nothing was routed (it was paid to the wallet, or
  *  not at all: the transfer itself says which). `tokenId` narrows it to one
- *  NFT of the collection. */
-export type PayoutOutcome = { kind: 'queued'; amount: bigint; releaseAt: bigint } | { kind: 'held'; amount: bigint } | { kind: 'vault'; amount: bigint };
+ *  NFT of the collection. A queued payment names the wallet its release
+ *  goes to: the account's own, or its controller's once it was retired. */
+export type PayoutOutcome = { kind: 'queued'; amount: bigint; releaseAt: bigint; recipient: Hex } | { kind: 'held'; amount: bigint } | { kind: 'vault'; amount: bigint };
 
 type Args = Record<string, bigint | number | string | undefined>;
 
@@ -86,7 +109,7 @@ export function payoutOutcomes(logs: readonly Log[], diamond: Hex, account: Hex,
   };
   const out: PayoutOutcome[] = [];
   const queued = sum('PayoutQueued', 'amount');
-  if (queued) out.push({ kind: 'queued', amount: queued.total, releaseAt: BigInt(queued.last.releaseAt ?? 0n) });
+  if (queued) out.push({ kind: 'queued', amount: queued.total, releaseAt: BigInt(queued.last.releaseAt ?? 0n), recipient: String(queued.last.recipient).toLowerCase() as Hex });
   const held = sum('PayoutHeldInVault', 'amount');
   if (held) out.push({ kind: 'held', amount: held.total });
   const credited = sum('PaymentCreditedToVault', 'received');

@@ -2709,6 +2709,8 @@
         "VPFIDepositedToVault": "VPFI depositado en el vault",
         "VPFIWithdrawnFromVault": "VPFI retirado del vault",
         "VaultVpfiDebited": "VPFI gastado desde el vault",
+        "VaultOutflow": "Salida del vault",
+        "VaultGrantSettled": "Permiso del vault liquidado",
         "RewardEntryForfeitSettled": "Recompensas perdidas",
         "AutoDailyDeducted": "Tarifa diaria de alquiler pagada",
         "AutoExtendBorrowerCapsChanged": "Límites de extensión automática actualizados",

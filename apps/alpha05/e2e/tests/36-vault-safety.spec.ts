@@ -10,7 +10,7 @@
  * and the phone project, with wallets that have no history; the chain is
  * reverted after each test.
  */
-import { parseEther } from 'viem';
+import { parseAbi, parseEther } from 'viem';
 import { WETH } from '@vaipakam/anvil-harness/lending';
 import { TOKEN_ABI } from '@vaipakam/anvil-harness/scenarioChain';
 import type { Page } from '@playwright/test';
@@ -19,9 +19,10 @@ import { scenario } from '../lib/chain';
 import { connectWallet, expect, test } from '../lib/wallet';
 
 type Hex = `0x${string}`;
-type Mode = { enabled: boolean; locked: boolean; delaySeconds: number; protectNfts: boolean };
+type Mode = { enabled: boolean; locked: boolean; delaySeconds: number };
 
 const DAY = 24 * 60 * 60;
+const HOLDER_LOCK = parseAbi(['function isLocked(address holder) view returns (bool)']);
 
 // See 26-loan-claims: a revert leaves the head at the snapshot's timestamp,
 // so a block is mined at once.
@@ -70,11 +71,15 @@ test('protected mode is turned on in Basic mode with the shortest delay, and the
   const mode = await sc.read<Mode>('getProtectedAccount', [me]);
   expect(mode.enabled).toBe(true);
   expect(Number(mode.delaySeconds)).toBe(2 * DAY);
-  expect(mode.protectNfts).toBe(false);
+  // Basic mode leaves position NFT protection off: no holder lock at the
+  // standalone PositionNFT (#3205), and the card says so.
+  const core = await sc.read<Hex>('positionNFT', []);
+  expect(await sc.pub.readContract({ address: core, abi: HOLDER_LOCK, functionName: 'isLocked', args: [me] })).toBe(false);
 
   await finish.getByRole('button', { name: 'Close' }).click();
   await expect(card.getByTestId('vault-safety-state')).toHaveAttribute('data-state', 'on', { timeout: 60_000 });
   await expect(card.getByTestId('vault-safety-lock')).toBeVisible();
+  await expect(card.getByTestId('vault-safety-nfts')).toHaveText('Off');
   await fitsWidth(page);
 });
 

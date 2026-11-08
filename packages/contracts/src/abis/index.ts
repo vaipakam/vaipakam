@@ -210,6 +210,7 @@ import VaultBeaconABI from './VaultBeacon.json';
 // #3205 — the PositionNFT (standalone; NOT a diamond facet): the position
 // ownership record.
 import PositionNFTABI from './PositionNFT.json';
+import ProtocolRegistryABI from './ProtocolRegistry.json';
 
 export {
   OfferCreateFacetABI,
@@ -344,6 +345,7 @@ export {
   VpfiReturnReceiverABI,
   VaultBeaconABI,
   PositionNFTABI,
+  ProtocolRegistryABI,
 };
 
 import type { Abi } from 'viem';

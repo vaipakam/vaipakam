@@ -20,6 +20,9 @@ import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {VaipakamVaultImplementation} from "../src/VaipakamVaultImplementation.sol";
 import {VaultBeacon} from "../src/VaultBeacon.sol";
 import {PositionNFT} from "../src/PositionNFT.sol";
+import {ProtocolRegistry} from "../src/governance/ProtocolRegistry.sol";
+import {RegistryKeys} from "../src/governance/RegistryKeys.sol";
+import {IProtocolRegistryReader} from "../src/interfaces/IProtocolRegistryReader.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferParallelSaleFacet} from "../src/facets/OfferParallelSaleFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
@@ -140,8 +143,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
     address internal vaultBeacon;
     /// @dev #3205 — the PositionNFT core deployed in step 5d.
     address internal positionNFT;
-    /// @dev #3205 part 2 — the protocol registry the vault code reads (zero
-    ///      until the registry contract lands; see step 5d).
+    /// @dev #3272 — the ProtocolRegistry deployed in step 5c-ii; #3205 part 2
+    ///      builds the vault code (5d) against it.
     address internal protocolRegistry;
     /// @dev OpenZeppelin's Initializable namespace (ERC-7201); a template
     ///      whose initializers are disabled reads `type(uint64).max` there.
@@ -1039,6 +1042,22 @@ contract DeployDiamond is Script, ArtifactRootBase {
         VaipakamNFTFacet(diamond).initializeNFT(positionNFT);
         console.log("PositionNFT:", positionNFT);
 
+        // 5c-ii. #3272 — the ProtocolRegistry: the endpoints the Diamond and
+        // every vault must agree on, held where no facet can write. Owned by
+        // `admin` (the Timelock takes it at handover), guardian `admin` until
+        // the handover moves it to the Pauser Safe, and the minimum delay.
+        //
+        // #3205 part 2 seeds, at construction (the only write that does not
+        // wait), every endpoint this deploy already knows: TREASURY = the
+        // treasury set in 5b, which every vault's treasury-class outflow pays
+        // and nothing else. The swap adapters, the 1inch order protocol, the
+        // listing conduits and the backstop are configured after this step,
+        // so each joins through the registry's delayed add; the launch
+        // readiness check (`vault registry seeded`) refuses until each the
+        // Diamond routes is in its set.
+        _deployProtocolRegistry(admin, treasury);
+        console.log("Protocol registry:", protocolRegistry);
+
         // 5d. #3204 — the vault code and the VaultBeacon every vault resolves
         // it through. The implementation's initializers must be disabled at
         // construction (#905): checked from its Initializable slot, read-only,
@@ -1049,11 +1068,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
         //
         // #3205 part 2 — the vault code reads two contracts as immutables: the
         // PositionNFT core (5c, a holder payout's payee) and the protocol
-        // registry (the treasury, backstop, swap adapters and conduits a vault
-        // may pay or approve). The registry is built by the security work
-        // stream and wired here when it lands, before #3205 Stage B and before
-        // any deploy (#3379); until then it is zero, which leaves every
-        // registry class closed at the vault, fail-safe.
+        // registry (5c-ii: the treasury, backstop, swap adapters and conduits
+        // a vault may pay or approve).
         address vaultImpl = ArtifactDeploy.deploy(
             type(VaipakamVaultImplementation).name, abi.encode(positionNFT, protocolRegistry)
         );
@@ -1244,6 +1260,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         }
         Deployments.writeVaultBeacon(vaultBeacon);
         Deployments.writePositionNFT(positionNFT);
+        Deployments.writeProtocolRegistry(protocolRegistry);
         Deployments.writeTreasury(treasury);
         Deployments.writeAdmin(admin);
         // #1566 slice 4 PR A — the custody holder's address is part of the
@@ -1455,6 +1472,24 @@ contract DeployDiamond is Script, ArtifactRootBase {
     ///      from the one list of interfaces it advertises. The standard
     ///      EIP-2535 init route: the initializer runs by delegatecall in the
     ///      Diamond's storage and is never routed, so it adds no selector.
+    /// @dev Step 5c-ii, in its own frame (runWith is at the viaIR budget).
+    ///      Seeds TREASURY and refuses a registry that does not name it: an
+    ///      empty registry would leave every vault refusing every fee.
+    function _deployProtocolRegistry(address admin, address treasury) internal {
+        bytes32[] memory keys = new bytes32[](1);
+        address[] memory values = new address[](1);
+        keys[0] = RegistryKeys.TREASURY;
+        values[0] = treasury;
+        protocolRegistry = ArtifactDeploy.deploy(
+            type(ProtocolRegistry).name,
+            abi.encode(admin, admin, uint256(3 days), keys, values, new bytes32[](0), new address[](0))
+        );
+        require(
+            IProtocolRegistryReader(protocolRegistry).requirePointer(RegistryKeys.TREASURY) == treasury,
+            "DeployDiamond: the protocol registry does not name the treasury"
+        );
+    }
+
     function _recordInterfaces(address diamond) internal {
         address interfacesInit = ArtifactDeploy.deploy(type(DiamondInterfacesInit).name);
         IDiamondCut(diamond).diamondCut(
