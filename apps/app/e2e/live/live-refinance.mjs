@@ -2006,9 +2006,16 @@ EXPECT_LOAN = loan;
 /** The request's id, once phase 2 has pinned it from the receipt. */
 let REQUEST_ID = null;
 /**
- * Chain-time ANCHORS (#2422 r4 P2): the latest block's timestamp, read the
- * moment each submit flow starts — just before the click that leads to the
- * app's own `latestBlock` / `chainNow` read. Every time-relative field the
+ * Chain-time ANCHORS (#2422 r4 P2): the latest block's timestamp, read
+ * before the app's own chain-time read for each flow. The LENDER's is read
+ * the moment its submit starts, just before the click that leads to the
+ * app's `chainNow` read. The BORROWER's is the block read before the
+ * borrower page loads (`reviewLoBlock`): since #3311 the app posts the
+ * request with the expiry its REVIEW fixed — the review's chain time plus
+ * the window — not one re-derived at submit, so the borrower's stamped
+ * times follow the review's chain time, which is at or after that block
+ * (and the app refuses a review older than 10 minutes of chain time, well
+ * inside `ANCHOR_WINDOW_SEC`). Every time-relative field the
  * app stamps (the request expiry, the caps window, the AcceptTerms
  * deadline, and the window the payoff permit's deadline — and so the
  * Permit2 approval's bounds — can fall in) is judged against these
@@ -2447,8 +2454,10 @@ try {
   // been written yet, so a move exits BLOCKED inside `observeConfig`.
   const bArmObs = await observeConfig('the borrower\u2019s submit (fees, grace, posture, risk-terms epoch)', async () => null);
   if (bArmObs.undetermined) stop(`not arming the borrower: ${bArmObs.undetermined}`);
-  BORROWER_ANCHOR = await chainNow();
-  console.log(`info  borrower anchor (chain time at submit start): ${BORROWER_ANCHOR}`);
+  // The app stamps the request from its REVIEW's chain time (#3311), so
+  // the anchor is the block read before the page loaded, not the submit.
+  BORROWER_ANCHOR = reviewLoBlock.timestamp;
+  console.log(`info  borrower anchor (chain time before the review loaded): ${BORROWER_ANCHOR}`);
   // Arm the borrower role NOW — the card, posture and review checks above
   // have passed, and the next action is the confirmed submit (#2422 r8).
   PLAN.arm('borrower');

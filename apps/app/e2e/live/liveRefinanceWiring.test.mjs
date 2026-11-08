@@ -297,6 +297,15 @@ describe('live-refinance wiring — the payoff-permit route (#3295)', () => {
     );
   });
 
+  it('anchors the borrower’s stamped times on the block read before the review loaded (#3311)', () => {
+    // The app posts the request with the expiry its REVIEW fixed, so the
+    // anchor is the review bracket's low end, not a read at submit.
+    const set = SRC.indexOf('BORROWER_ANCHOR = reviewLoBlock.timestamp;');
+    expect(set).toBeGreaterThan(SRC.indexOf("const reviewLoBlock = await pub.getBlock({ blockTag: 'latest' });"));
+    expect(set).toBeLessThan(SRC.indexOf("PLAN.arm('borrower');"));
+    expect(SRC).not.toContain('BORROWER_ANCHOR = await chainNow();');
+  });
+
   it('the ledger watches the borrower’s Permit2 allowance, and no step touches its Diamond allowance', () => {
     const ledger = between(SRC, 'const LEDGER = [', '\n];');
     expect(ledger).toContain("touchedBy: ['b-permit2-reset', 'b-permit2-set', 'l-accept', 'b-request-filled'],");

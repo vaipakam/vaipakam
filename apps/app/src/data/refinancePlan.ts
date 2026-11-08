@@ -73,6 +73,30 @@ import {
  *  pre-exist. */
 export const REQUEST_WINDOW_DAYS = 30n;
 
+/**
+ * How long a review stays sendable, in CHAIN seconds (#3311): 10 minutes.
+ *
+ * The review fixes the request's expiry (review-time chain clock + the
+ * window) and the payoff bound at that request's last fillable moment, and
+ * the request is posted with exactly that expiry, so what the receipt
+ * disclosed is what the chain records. A fixed expiry only gets closer:
+ * past this age the request would live a noticeably shorter window than
+ * the one the borrower read, so the send refuses and asks for a fresh
+ * review instead. Judged against the live block's timestamp, never the
+ * device clock (a backgrounded or skewed device must not decide it).
+ * Ten minutes covers reading the receipt, ticking consent and the wallet
+ * prompts of a single request; a longer pause is not the review the
+ * borrower consented to.
+ */
+export const REFINANCE_REVIEW_MAX_AGE_SECONDS = 10n * 60n;
+
+/** What a review fixed, passed back to the send so the checks run at the
+ *  SAME request the receipt described (#3311). */
+export interface ReviewedRequest {
+  /** The request expiry the review was quoted at. */
+  requestExpiry: bigint;
+}
+
 /** The loan fields a plan reads — a subset of the indexer row. */
 export interface RefinanceLoan extends CloseOutLoan {
   collateralAsset: string;
@@ -155,12 +179,21 @@ const refusal = (loanId: number, reason: string, feesMoved = false): RefinanceRe
  * The checks a refinance request runs immediately before it is signed.
  * A refusal the preflights raise (sanctions, the position NFT not held, a
  * paused asset) and every failed read THROW.
+ *
+ * Without `reviewed` this IS the review: the request expiry is the live
+ * block's time plus the window. With `reviewed` it is the send (#3311):
+ * the expiry is the reviewed one, so the bound, the permit deadline, the
+ * caps window and the posted request are all judged at the request the
+ * receipt described, and a figure moves only when something real moved —
+ * not because the chain clock advanced between review and send. A review
+ * older than `REFINANCE_REVIEW_MAX_AGE_SECONDS` of chain time is refused.
  */
 export async function checkRefinanceRequest(
   ctx: RefinanceCtx,
   loan: RefinanceLoan,
   terms: RefinanceTerms,
   reviewedFees: ReviewedFees,
+  reviewed?: ReviewedRequest,
 ): Promise<RefinanceRequestReady | RefinanceRefusal> {
   const { publicClient, diamond, holder } = ctx;
   // createOffer + the accept-time refinance are Tier-1 — live re-screen
@@ -240,13 +273,29 @@ export async function checkRefinanceRequest(
   ) {
     return refusal(loan.loanId, copy.match.termsChanged, true);
   }
+  // The request this plan is for: the reviewed one at a send, a fresh one
+  // at a review. A review whose chain time is too far behind the live
+  // block is refused rather than posted with a window it no longer has.
+  // (A review slightly AHEAD of this block — an RPC node behind the one
+  // the page read — is not stale; the request then lives a few seconds
+  // longer than the window, never shorter.)
+  const windowSeconds = REQUEST_WINDOW_DAYS * 86_400n;
+  if (
+    reviewed &&
+    chainNow > reviewed.requestExpiry - windowSeconds + REFINANCE_REVIEW_MAX_AGE_SECONDS
+  ) {
+    return refusal(
+      loan.loanId,
+      copy.refinance.reviewStale(Number(REFINANCE_REVIEW_MAX_AGE_SECONDS / 60n)),
+    );
+  }
+  const requestExpiry = reviewed ? reviewed.requestExpiry : chainNow + windowSeconds;
   // Guardrails: rate ceiling = the reviewed rate; end-date window =
   // accept-time + duration must fit inside it. Written only when the
   // existing caps don't already cover the reviewed terms — the OFFER's
   // own rate ceiling and expiry are what bind the accept, so looser
   // pre-existing caps are harmless.
-  const neededExpiry =
-    chainNow + (BigInt(terms.durationDays) + REQUEST_WINDOW_DAYS) * 86_400n;
+  const neededExpiry = requestExpiry + BigInt(terms.durationDays) * 86_400n;
   const capsCover =
     caps.enabled && Number(caps.maxRateBps) >= terms.rateBps && caps.maxNewExpiry >= neededExpiry;
   // The bound is sized at the request's LAST fillable moment (its own
@@ -255,7 +304,6 @@ export async function checkRefinanceRequest(
   // it is the wallet's share — the payoff less the new loan's net
   // principal (#3042); the request asks for the old principal
   // (`toRefinanceOfferPayload`), with the live fee rate as the bound.
-  const requestExpiry = chainNow + REQUEST_WINDOW_DAYS * 86_400n;
   const quote = await readPayoffQuote({
     publicClient,
     diamond,
@@ -300,6 +348,22 @@ export async function checkRefinanceRequest(
       expiresAt: requestExpiry,
     }),
   };
+}
+
+/**
+ * Whether a send must refuse what its review showed (#3311 / Codex #1256
+ * r3): the Diamond now pays the payoff by another route, or the bound —
+ * the most the acceptance can pull, which the permit or approval is sized
+ * on — GREW. Both plans must be for the same request (the send passes the
+ * reviewed expiry to `checkRefinanceRequest`), so a growth here is a real
+ * change (a late fee, a changed loan, the fee rate), never the clock.
+ * A bound that shrank is fine: the pull only gets smaller.
+ */
+export function reviewedBoundMoved(
+  plan: Pick<RefinanceRequestReady, 'route' | 'bound'>,
+  reviewed: Pick<RefinanceRequestReady, 'route' | 'bound'>,
+): boolean {
+  return plan.route !== reviewed.route || plan.bound > reviewed.bound;
 }
 
 /** The Diamond calls a ready request makes, in order: the guardrail
@@ -417,7 +481,11 @@ export type RefinanceBatchPlan = (RefinanceRequestReady & { notes: string[] }) |
  * figures are at most those: in grace the spare amount grows with each
  * day's late fee while the bound stays fixed at the grace end, and a
  * request sent on a grown spare amount could be posted already unfunded.
- * A figure that shrank is fine: the pull only gets smaller.
+ * A figure that shrank is fine: the pull only gets smaller. The re-check
+ * runs at the reviewed request's own expiry (#3311), so the bound is
+ * compared at the deadline it was reviewed at, and a review older than
+ * `REFINANCE_REVIEW_MAX_AGE_SECONDS` of chain time leaves the loan out —
+ * which a long batch can reach for its last loans.
  */
 export async function planRefinanceForBatch(
   ctx: RefinanceCtx,
@@ -435,14 +503,22 @@ export async function planRefinanceForBatch(
       (await refinancePostRefusal(ctx, loan, copy.batchRefinance.ownPageOpenRequest)) ??
       (await offsetLockRefusal(ctx, loan));
     if (blocked) return refusal(loan.loanId, blocked);
-    const plan = await checkRefinanceRequest(ctx, loan, terms, reviewedFees);
+    // The late re-check runs at the REVIEWED request (#3311): its expiry,
+    // so the bound below is compared at the same deadline it was reviewed
+    // at, and the request posts with the expiry the review described.
+    const plan = await checkRefinanceRequest(
+      ctx,
+      loan,
+      terms,
+      reviewedFees,
+      reviewed ? { requestExpiry: reviewed.requestExpiry } : undefined,
+    );
     if (plan.kind === 'refused') return plan;
     const notes = refinanceNotes(plan);
     if (
       reviewed &&
       (notes.join('\n') !== reviewed.notes.join('\n') ||
-        plan.route !== reviewed.route ||
-        plan.bound > reviewed.bound ||
+        reviewedBoundMoved(plan, reviewed) ||
         plan.topUp > reviewed.topUp)
     ) {
       return refusal(loan.loanId, copy.batchRefinance.changedSinceReview);

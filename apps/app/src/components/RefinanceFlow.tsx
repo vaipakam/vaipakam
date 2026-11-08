@@ -71,6 +71,7 @@ import { useProtocolFees } from '../data/fees';
 import {
   REQUEST_WINDOW_DAYS,
   checkRefinanceRequest,
+  reviewedBoundMoved,
   refinanceStatements,
 } from '../data/refinancePlan';
 import { useAutoRefinancePosture } from '../data/protocol';
@@ -171,7 +172,11 @@ export function RefinanceFlow({
   // #1558 — the payoff now and the bound come from the contract
   // (`getRefinancePayoff`), so the figures reviewed are the figures the
   // permit is signed for. Kept on screen while a newer block's figures
-  // load, so a refresh does not close an open review.
+  // load, so a refresh does not close an open review. The quote carries
+  // the request expiry it was computed at (#3311): with
+  // `keepPreviousData` the figures on screen can belong to an older block
+  // than `chainNow`, and the send must check — and post — the request
+  // THOSE figures describe.
   const quoteQuery = useQuery({
     queryKey: [
       'refinancePayoffQuote',
@@ -184,21 +189,24 @@ export function RefinanceFlow({
     ],
     enabled: Boolean(publicClient && walletChain) && graceReady,
     placeholderData: keepPreviousData,
-    queryFn: () =>
-      readPayoffQuote({
+    queryFn: async () => {
+      const requestExpiry = chainNow + REQUEST_WINDOW_DAYS * 86_400n;
+      const q = await readPayoffQuote({
         publicClient: publicClient!,
         diamond: walletChain!.diamondAddress,
         live,
         loanId: BigInt(row.loanId),
         offerId: 0n,
         chainNow,
-        expiresAt: chainNow + REQUEST_WINDOW_DAYS * 86_400n,
+        expiresAt: requestExpiry,
         graceSeconds: graceSec,
         // The request asks for the old loan's principal
         // (toRefinanceOfferPayload).
         requestAmount: live.principal,
         loanInitiationFeeBps: fees.loanInitiationFeeBps,
-      }),
+      });
+      return { ...q, requestExpiry };
+    },
   });
   const quote = quoteQuery.data;
   const quoteReady = quote !== undefined;
@@ -218,11 +226,12 @@ export function RefinanceFlow({
   const payoffHeadroom = quote?.growth ?? 0n;
   // OfferCreateFacet clamps a refinance request's on-chain expiry to
   // the grace boundary (graceEnd + 1) — when that clamp binds, the
-  // honest reviewed lifetime is the grace end, not "30 days after
-  // posting" (Codex #1256 r3).
+  // honest reviewed lifetime is the grace end, not "30 days after this
+  // review" (Codex #1256 r3; the window counts from the review, #3311).
   const graceEndTs = loanEndTimeOf(live, chainNow) + graceSec;
-  const expiryGraceClamped =
-    graceReady && graceEndTs + 1n < chainNow + REQUEST_WINDOW_DAYS * 86_400n;
+  // The expiry of the request the figures on screen describe (#3311).
+  const reviewedExpiry = quote?.requestExpiry ?? chainNow + REQUEST_WINDOW_DAYS * 86_400n;
+  const expiryGraceClamped = graceReady && graceEndTs + 1n < reviewedExpiry;
 
   const rateBps = isPositiveDecimal(rateInput) ? percentToBps(rateInput) : null;
   const durationDays = /^\d+$/.test(durationInput)
@@ -356,11 +365,18 @@ export function RefinanceFlow({
       // borrower (see header), the reviewed fee config, the guardrails the
       // request needs, and the payoff and approval at the request's last
       // fillable moment. Read failures throw.
+      //
+      // #3311 — judged at the REVIEWED request: its expiry is the one the
+      // receipt's figures were quoted at, so the bound below is compared
+      // at the same deadline, and the request posts with that expiry. A
+      // review too old in chain time is refused there (re-review).
+      if (!quote) throw new Error(copy.match.termsChanged);
       const plan = await checkRefinanceRequest(
         { publicClient, diamond: walletChain.diamondAddress, holder: address },
         row,
         { rateBps, durationDays },
         fees,
+        { requestExpiry: quote.requestExpiry },
       );
       if (plan.kind === 'refused') {
         if (plan.feesMoved) {
@@ -369,20 +385,25 @@ export function RefinanceFlow({
           void queryClient.invalidateQueries({ queryKey: ['protocolFees'] });
           throw new Error(plan.reason);
         }
+        // Refresh what the receipt shows, so a re-review (a stale one
+        // above all, #3311) quotes the current block.
+        void queryClient.invalidateQueries({ queryKey: ['loanLive'] });
+        void queryClient.invalidateQueries({ queryKey: ['refinancePayoffQuote'] });
         setError(plan.reason);
         return;
       }
       const { liveLoan } = plan;
       postedOnPermitRoute = plan.route === 'permit';
-      // The receipt disclosed the bound from the RENDER-time chain clock
-      // — a backgrounded tab freezes it, and the plan is judged at the
-      // live block. If the bound GREW (the loan slid toward or past
-      // maturity while the receipt sat open), or the Diamond now pays the
-      // payoff by another route than the one reviewed, force a re-review
-      // instead of signing what the reviewed figures never showed (Codex
-      // #1256 r3). Shrinkage (a partial settled) is fine — the pull only
-      // gets smaller. Checked before any write.
-      if (!quote || plan.route !== quote.route || plan.bound > payoffBound) {
+      // The plan is judged at the live block for the SAME request the
+      // receipt described (#3311), so its bound differs from the reviewed
+      // one only when something real moved: the loan itself (a late fee,
+      // a changed position) or the fee rate. If the bound GREW, or the
+      // Diamond now pays the payoff by another route than the one
+      // reviewed, force a re-review instead of signing what the reviewed
+      // figures never showed (Codex #1256 r3). Shrinkage (a partial
+      // settled) is fine — the pull only gets smaller. Checked before any
+      // write.
+      if (reviewedBoundMoved(plan, quote)) {
         void queryClient.invalidateQueries({ queryKey: ['loanLive'] });
         void queryClient.invalidateQueries({ queryKey: ['refinancePayoffQuote'] });
         throw new Error(copy.match.termsChanged);
