@@ -14,7 +14,8 @@
  * after, from the transaction's log.
  */
 import { erc20Abi, type Abi, type PublicClient } from 'viem';
-import { AdminFacetABI, LoanFacetABI, OracleFacetABI, RiskFacetABI, VaipakamNFTFacetABI } from '@vaipakam/contracts/abis';
+import { AdminFacetABI, LoanFacetABI, OracleFacetABI, RiskFacetABI } from '@vaipakam/contracts/abis';
+import { positionRouteCallFor, readPositionOwnerFor } from '../positions/positionNft';
 import type { OwnStateClient } from '../../chain/ownRail';
 import type { CopyAccess } from '../copy/useCopy';
 import { addCollateralVerdict, checkTopUp, type TopUpCheck } from '../eligibility/addCollateral';
@@ -27,7 +28,6 @@ import { allowanceSteps } from '../tx/approval';
 type Hex = `0x${string}`;
 
 const LOAN = LoanFacetABI as Abi;
-const NFT = VaipakamNFTFacetABI as Abi;
 const ADMIN = AdminFacetABI as Abi;
 const ORACLE = OracleFacetABI as Abi;
 const RISK = RiskFacetABI as Abi;
@@ -75,8 +75,10 @@ export async function readAddReview(own: OwnStateClient, diamond: Hex, loanId: b
     const loan = (await c.readContract({ address: diamond, abi: LOAN, functionName: 'getLoanDetails', args: [loanId] })) as LoanDetails;
     const read = <T>(abi: Abi, functionName: string, args: readonly unknown[] = []) => maybe(c.readContract({ address: diamond, abi, functionName, args }) as Promise<T>);
     const [borrowerHolder, borrowerLock, assetPaused, liquidity, healthFactor, ltvBps, paused] = await Promise.all([
-      read<Hex>(NFT, 'ownerOf', [loan.borrowerTokenId]),
-      read<number>(NFT, 'positionLock', [loan.borrowerTokenId]).then((v) => (v === null ? null : Number(v))),
+      // #3205: through the position-NFT door (the standalone PositionNFT or
+      // the legacy Diamond); a retired token has no holder.
+      maybe(readPositionOwnerFor(c, diamond, loan.borrowerTokenId)),
+      maybe(c.readContract(positionRouteCallFor(diamond, loan.borrowerTokenId))).then((v) => (v === null ? null : Number(v))),
       read<boolean>(ADMIN, 'isAssetPaused', [loan.collateralAsset]),
       read<number>(ORACLE, 'checkLiquidity', [loan.collateralAsset]).then((v) => (v === null ? null : Number(v))),
       read<bigint>(RISK, 'calculateHealthFactor', [loanId]),
