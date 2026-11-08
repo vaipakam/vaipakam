@@ -147,7 +147,7 @@ export const copy = {
     firstRunVaultTitle: B('Your own vault'),
     firstRunVault: B("Each wallet gets its own vault; your assets are never pooled with anyone else's."),
     firstRunRateTitle: B('A fixed rate you agree'),
-    firstRunRate: B('Lender and borrower agree the rate and term up front; it holds unless both agree to change it.'),
+    firstRunRate: B('Lender and borrower agree the rate and term up front, and the rate holds for the whole loan.'),
     firstRunReceiptTitle: B('A receipt before every signature'),
     firstRunReceipt: B('Before you sign, the app shows what you receive, lock, may owe and can lose.'),
     firstRunHelpTitle: B('Answers in place'),
@@ -765,7 +765,7 @@ export const copy = {
     ),
     howSummary: B('Pick what to borrow and what to lock, then take an offer that fits.'),
     howWhy: C(
-      "A lender posts an offer: an amount of one token, a rate, a term and the collateral they ask for. The rate and term are fixed when the loan opens and hold for its whole life unless you and the lender both agree to change them. Taking it opens a loan in one transaction: your collateral moves from your wallet into your own vault, where it stays locked while the loan is open, and the amount, less the loan initiation fee, arrives in your wallet. You repay the amount plus interest by the due date; after the grace period the loan defaults and the lender is paid from your collateral. The offers listed are read from the protocol itself through your wallet's connection, and what each would give you is the protocol's own preview for your wallet. When no offer fits, you can post your own borrow request for the pair and wait for a lender to take it.",
+      "A lender posts an offer: an amount of one token, a rate, a term and the collateral they ask for. The rate and term are fixed when the loan opens; only an extension you and the lender both agree to, or your handing the loan to a new borrower, changes them. Taking it opens a loan in one transaction: your collateral moves from your wallet into your own vault, where it stays locked while the loan is open, and the amount, less the loan initiation fee, arrives in your wallet. You repay the amount plus interest by the due date; after the grace period the loan defaults and the lender is paid from your collateral. The offers listed are read from the protocol itself through your wallet's connection, and what each would give you is the protocol's own preview for your wallet. When no offer fits, you can post your own borrow request for the pair and wait for a lender to take it.",
       'borrow-start',
     ),
     stepsLabel: B('Borrowing steps'),
@@ -854,7 +854,7 @@ export const copy = {
     ),
     howSummary: B('Pick what to lend and what collateral you accept, then fund a request that fits.'),
     howWhy: C(
-      "A borrower posts a request: an amount of one token, the rate they will pay, a term, and collateral already locked in their own vault. The rate and term are fixed when the loan opens and hold for its whole life unless you and the borrower both agree to change them. Funding it opens a loan in one transaction: the amount leaves your wallet, the borrower receives it less their loan initiation fee, and the collateral stays locked for you until the loan ends. The borrower repays the amount plus interest by the due date. If they do not, after the grace period the loan defaults and you are paid from the collateral: sold for you where the protocol can, handed to you as-is where it cannot. The requests listed are read from the protocol itself through your wallet's connection, and what each would do is the protocol's own preview for your wallet.",
+      "A borrower posts a request: an amount of one token, the rate they will pay, a term, and collateral already locked in their own vault. The rate and term are fixed when the loan opens. Two things can change them: an extension you and the borrower both agree to, or the borrower handing the loan to a new borrower, which needs no consent from you but pays you any interest the new terms would cost you. Funding it opens a loan in one transaction: the amount leaves your wallet, the borrower receives it less their loan initiation fee, and the collateral stays locked for you until the loan ends. The borrower repays the amount plus interest by the due date. If they do not, after the grace period the loan defaults and you are paid from the collateral: sold for you where the protocol can, handed to you as-is where it cannot. The requests listed are read from the protocol itself through your wallet's connection, and what each would do is the protocol's own preview for your wallet.",
       'lend-start',
     ),
     stepsLabel: B('Lending steps'),

@@ -15,10 +15,13 @@ own vault" so it never suggests that Vaipakam holds people's assets. The
 website's call to action no longer says "start earning", and its Spanish,
 Chinese and Arabic versions no longer speak of yield.
 
-Where the rate can change, the longer texts say so: only when both sides agree,
-through an extension near maturity within limits both position holders set, or
-a handover to a replacement borrower whose rate applies while the exiting
-borrower tops up any interest the lender would lose. A refinance replaces the
+Where the rate can change, the longer texts say so, without claiming every
+change needs both parties: an extension near maturity needs both position
+holders within limits each sets, while a handover to a replacement borrower is
+started by the borrower alone, needs no lender consent, and pays the lender any
+interest the new terms would cost them. The copy also says where funds sit:
+offered funds and collateral wait in each user's own vault, and the loan amount
+is paid from the lender's vault to the borrower's wallet. A refinance replaces the
 loan rather than changing its rate. These rules are recorded as a copy rule in
 the website spec.
 

@@ -142,7 +142,7 @@
     "titleLine1": "Préstamos vault-to-vault",
     "titleLine2": "Seguro on-chain",
     "subtitlePrefix": "Vaipakam",
-    "subtitleBody": "te permite prestar y pedir prestados tokens a una tasa y un plazo fijos acordados entre prestamista y prestatario, y alquilar NFT, mientras tus activos permanecen en tu propio vault. Cada posición se rastrea mediante un NFT único — transparente, rastreable y sin confianza desde la oferta hasta la liquidación.",
+    "subtitleBody": "te permite prestar y pedir prestados tokens a una tasa y un plazo fijos acordados entre prestamista y prestatario, y alquilar NFT. Los fondos para prestar y la garantía esperan en el vault propio y sin custodia de cada usuario. Cada posición se rastrea mediante un NFT único — transparente, rastreable y sin confianza desde la oferta hasta la liquidación.",
     "launchApp": "Abrir Vaipakam",
     "howItWorks": "Cómo funciona",
     "statP2pValue": "Fija",
@@ -166,7 +166,7 @@
     "title": "Todo lo necesario para prestar sin intermediarios",
     "subtitle": "Un protocolo DeFi de préstamos completo basado en el Diamond Standard, compatible con tokens ERC-20 y NFT alquilables en Ethereum, Polygon y Arbitrum.",
     "p2pTitle": "Préstamos vault-to-vault",
-    "p2pDesc": "Crea o acepta ofertas de tokens ERC-20 con las condiciones que tú fijas: tasa de interés, tipo de colateral y duración del préstamo. La tasa acordada se mantiene durante todo el préstamo, salvo que ambas partes acuerden cambiarla. Sin pools intermediarios.",
+    "p2pDesc": "Crea o acepta ofertas de tokens ERC-20 con las condiciones que tú fijas: tasa de interés, tipo de colateral y duración del préstamo. La tasa acordada se mantiene durante todo el préstamo. Solo cambia si ambas partes acuerdan prorrogarlo cerca de su fin, o si el prestatario traspasa el préstamo a un nuevo prestatario; en ese caso, el prestamista recibe cualquier interés que perdería. Sin pools intermediarios.",
     "nftTitle": "Alquiler de NFT (ERC-4907)",
     "nftDesc": "Alquilar NFT ERC-721 y ERC-1155 con tarifa diaria. El prestatario obtiene los derechos de uso mientras el NFT permanece de forma segura en custodia.",
     "vaultTitle": "Custodia aislada por usuario",
@@ -228,7 +228,7 @@
   "cta": {
     "sectionLabel": "Comenzar",
     "title": "¿Listo para empezar a prestar?",
-    "subtitle": "Conecta una billetera y publica una oferta a la tasa y el plazo fijos que elijas. Los fondos se mueven de vault a vault, sin pool y sin intermediarios.",
+    "subtitle": "Conecta una billetera y publica una oferta a la tasa y el plazo fijos que elijas. Tu oferta espera en tu propio vault, sin pool y sin intermediarios.",
     "launchApp": "Abrir Vaipakam",
     "readDocs": "Leer la documentación"
   },
@@ -253,7 +253,7 @@
     "entries": {
       "basics-what-is-vaipakam": {
         "q": "¿Qué es Vaipakam, en lenguaje sencillo?",
-        "a1": "Vaipakam es un mercado vault-to-vault para prestar criptomonedas y alquilar artículos digitales (NFT). Una persona publica una oferta con las condiciones que le resultan cómodas — importe, interés, duración — y otra persona la acepta. Sin banco, sin gestor de fondos, sin intermediario entre las dos contrapartes. La tasa de interés que acuerdan es fija durante todo el préstamo, salvo que ambos acuerden cambiarla.",
+        "a1": "Vaipakam es un mercado vault-to-vault para prestar criptomonedas y alquilar artículos digitales (NFT). Una persona publica una oferta con las condiciones que le resultan cómodas — importe, interés, duración — y otra persona la acepta. Sin banco, sin gestor de fondos, sin intermediario entre las dos contrapartes. La tasa de interés que acuerdan es fija durante todo el préstamo. Solo cambia si ambos acuerdan prorrogarlo, o si el prestatario lo traspasa a un nuevo prestatario, en cuyo caso el prestamista recibe cualquier interés que perdería.",
         "a2": "Lo que mantiene la honestidad de todos es un conjunto de contratos inteligentes en una blockchain. Mantienen los activos en custodia individual durante el préstamo y los liberan automáticamente cuando se cumplen las condiciones. Cada usuario conserva el control de sus propios fondos; el protocolo se limita a hacer cumplir el acuerdo pactado."
       },
       "basics-wallet": {

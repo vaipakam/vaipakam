@@ -193,7 +193,7 @@
     "titleLine1": "Vault-to-Vault",
     "titleLine2": "Secure On-Chain",
     "subtitlePrefix": "Vaipakam",
-    "subtitleBody": "lets you lend and borrow tokens at a fixed rate and term agreed between lender and borrower, and rent NFTs, while your assets stay in your own vault. Every position is tracked by a unique NFT — transparent, traceable and trustless from offer to settlement.",
+    "subtitleBody": "lets you lend and borrow tokens at a fixed rate and term agreed between lender and borrower, and rent NFTs. Lending funds and collateral wait in each user's own non-custodial vault. Every position is tracked by a unique NFT — transparent, traceable and trustless from offer to settlement.",
     "launchApp": "Launch Vaipakam",
     "buyVpfi": "VPFI Benefits",
     "howItWorks": "How It Works",
@@ -218,7 +218,7 @@
     "title": "Everything you need for trustless lending",
     "subtitle": "A complete DeFi lending protocol built on the Diamond Standard, supporting ERC-20 tokens and rentable NFTs across Ethereum, Polygon, and Arbitrum.",
     "p2pTitle": "Vault-to-Vault Lending & Borrowing",
-    "p2pDesc": "Create or accept offers for ERC-20 tokens on terms you set — interest rate, collateral type and loan duration. The agreed rate holds for the life of the loan unless both sides agree to change it. No intermediary pools.",
+    "p2pDesc": "Create or accept offers for ERC-20 tokens on terms you set — interest rate, collateral type and loan duration. The agreed rate holds for the life of the loan. It changes only if both sides agree to extend the loan near its end, or if the borrower hands the loan to a new borrower, when the lender is paid any interest they would lose. No intermediary pools.",
     "nftTitle": "NFT Rentals (ERC-4907)",
     "nftDesc": "Rent out ERC-721 and ERC-1155 NFTs with daily pricing. Borrowers get user rights while the NFT stays safely in the vault.",
     "vaultTitle": "Vaipakam Vaults",
@@ -280,7 +280,7 @@
   "cta": {
     "sectionLabel": "Get Started",
     "title": "Ready to start lending?",
-    "subtitle": "Connect a wallet and post an offer at a fixed rate and term you choose. Funds move vault to vault — no pool, no middleman.",
+    "subtitle": "Connect a wallet and post an offer at a fixed rate and term you choose. Your offer waits in your own vault — no pool, no middleman.",
     "launchApp": "Launch Vaipakam",
     "readDocs": "Read Documentation"
   },
@@ -305,7 +305,7 @@
     "entries": {
       "basics-what-is-vaipakam": {
         "q": "What is Vaipakam, in plain English?",
-        "a1": "Vaipakam is a vault-to-vault marketplace for lending crypto and renting digital items (NFTs). One person posts an offer with the terms they're comfortable with — amount, interest, duration — and another person accepts it. No bank, no fund manager, no intermediary sitting between the two counterparties. The interest rate the two agree is fixed for the whole loan unless both of them agree to change it.",
+        "a1": "Vaipakam is a vault-to-vault marketplace for lending crypto and renting digital items (NFTs). One person posts an offer with the terms they're comfortable with — amount, interest, duration — and another person accepts it. No bank, no fund manager, no intermediary sitting between the two counterparties. The interest rate they agree is fixed for the whole loan. It changes only if both agree to extend the loan, or if the borrower hands it to a new borrower, in which case the lender is paid any interest they would lose.",
         "a2": "What keeps everyone honest is a set of smart contracts on a blockchain. They hold the assets in individual vault during the loan and release them automatically when the terms are met. Each user remains in control of their own funds; the protocol simply enforces the deal that was agreed."
       },
       "basics-wallet": {

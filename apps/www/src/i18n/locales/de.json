@@ -142,7 +142,7 @@
     "titleLine1": "Vault-to-Vault-Kreditvergabe",
     "titleLine2": "Sicher on-chain",
     "subtitlePrefix": "Vaipakam",
-    "subtitleBody": "lässt Sie Token zu einem festen Zinssatz und einer festen Laufzeit verleihen und ausleihen, die Kreditgeber und Kreditnehmer vereinbaren, und NFTs vermieten, während Ihre Vermögenswerte in Ihrem eigenen Vault bleiben. Jede Position wird durch ein einzigartiges NFT verfolgt — transparent, nachvollziehbar und vertrauenslos vom Angebot bis zur Abwicklung.",
+    "subtitleBody": "lässt Sie Token zu einem festen Zinssatz und einer festen Laufzeit verleihen und ausleihen, die Kreditgeber und Kreditnehmer vereinbaren, und NFTs vermieten. Verleihmittel und Sicherheiten liegen im eigenen, nicht verwahrenden Vault jedes Nutzers. Jede Position wird durch ein einzigartiges NFT verfolgt — transparent, nachvollziehbar und vertrauenslos vom Angebot bis zur Abwicklung.",
     "launchApp": "Vaipakam öffnen",
     "howItWorks": "So funktioniert es",
     "statP2pValue": "Fest",
@@ -166,7 +166,7 @@
     "title": "Alles für vertrauensfreie Kreditvergabe",
     "subtitle": "Ein vollständiges DeFi-Kreditprotokoll auf Basis des Diamond Standards, das ERC-20-Token und vermietbare NFTs auf Ethereum, Polygon und Arbitrum unterstützt.",
     "p2pTitle": "Vault-to-Vault-Verleihen und -Leihen",
-    "p2pDesc": "Erstellen oder Annehmen von Angeboten für ERC-20-Token zu Ihren Konditionen – Zinssatz, Sicherheitenart und Laufzeit. Der vereinbarte Zinssatz gilt für die gesamte Laufzeit des Kredits, sofern nicht beide Seiten einer Änderung zustimmen. Ohne zwischengeschaltete Pools.",
+    "p2pDesc": "Erstellen oder Annehmen von Angeboten für ERC-20-Token zu Ihren Konditionen – Zinssatz, Sicherheitenart und Laufzeit. Der vereinbarte Zinssatz gilt für die gesamte Laufzeit des Kredits. Er ändert sich nur, wenn beide Seiten einer Verlängerung kurz vor Ende zustimmen oder wenn der Kreditnehmer den Kredit an einen neuen Kreditnehmer übergibt; dann erhält der Kreditgeber jeden Zins ersetzt, der ihm entginge. Ohne zwischengeschaltete Pools.",
     "nftTitle": "NFT-Vermietung (ERC-4907)",
     "nftDesc": "Vermietung von ERC-721- und ERC-1155-NFTs zu Tagespreisen. Der Borrower erhält die Nutzungsrechte, während das NFT sicher im Treuhandbereich verbleibt.",
     "vaultTitle": "Isolierter Treuhandbereich pro Nutzer",
@@ -228,7 +228,7 @@
   "cta": {
     "sectionLabel": "Loslegen",
     "title": "Bereit, Kredite zu vergeben?",
-    "subtitle": "Wallet verbinden und ein Angebot zu einem festen Zinssatz und einer festen Laufzeit Ihrer Wahl erstellen. Mittel fließen von Vault zu Vault – ohne Pool, ohne Mittelsmann.",
+    "subtitle": "Wallet verbinden und ein Angebot zu einem festen Zinssatz und einer festen Laufzeit Ihrer Wahl erstellen. Ihr Angebot wartet in Ihrem eigenen Vault – ohne Pool, ohne Mittelsmann.",
     "launchApp": "Vaipakam öffnen",
     "readDocs": "Dokumentation lesen"
   },
@@ -253,7 +253,7 @@
     "entries": {
       "basics-what-is-vaipakam": {
         "q": "Was ist Vaipakam in einfachen Worten?",
-        "a1": "Vaipakam ist ein Vault-to-Vault-Marktplatz für das Verleihen von Kryptowährungen und das Vermieten digitaler Objekte (NFT). Eine Person veröffentlicht ein Angebot mit den für sie passenden Konditionen — Betrag, Zinsen, Laufzeit — und eine andere Person nimmt es an. Keine Bank, kein Fondsmanager, kein Vermittler zwischen den beiden Parteien. Der vereinbarte Zinssatz gilt fest für den gesamten Kredit, sofern nicht beide einer Änderung zustimmen.",
+        "a1": "Vaipakam ist ein Vault-to-Vault-Marktplatz für das Verleihen von Kryptowährungen und das Vermieten digitaler Objekte (NFT). Eine Person veröffentlicht ein Angebot mit den für sie passenden Konditionen — Betrag, Zinsen, Laufzeit — und eine andere Person nimmt es an. Keine Bank, kein Fondsmanager, kein Vermittler zwischen den beiden Parteien. Der vereinbarte Zinssatz gilt fest für den gesamten Kredit. Er ändert sich nur, wenn beide einer Verlängerung zustimmen oder der Kreditnehmer den Kredit an einen neuen Kreditnehmer übergibt; dann erhält der Kreditgeber jeden entgangenen Zins ersetzt.",
         "a2": "Was alle ehrlich hält, ist eine Reihe von Smart Contracts auf einer Blockchain. Sie verwahren die Vermögenswerte während der Laufzeit in individueller Treuhand und geben sie automatisch frei, sobald die Bedingungen erfüllt sind. Jede Nutzerin und jeder Nutzer behält die Kontrolle über die eigenen Mittel; das Protokoll erzwingt lediglich die getroffene Vereinbarung."
       },
       "basics-wallet": {
