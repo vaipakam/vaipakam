@@ -2289,6 +2289,12 @@ Positions は共通のリーダーを通して Home と同じ保有一覧を読�
 
 `fundExtendReserve(loanId, amount)` は、借り手ポジション保有者のウォレットからローンの元本トークンを本人のボールトに預け入れ、そのローン用に確保します。`whenNotPaused` と制裁スクリーニングを伴い、ローンが Active で、ERC-20 ローンで、定期的な利払い間隔がない場合を除き拒否されます。`getExtendFunding(loanId, holder)` はトークン、`reserved`、保有者のその他の自由残高、延長が現時点と期間終了時に請求する額を返します。延長は現在の保有者のボールトからのみ、リザーブを先に請求します。`withdrawExtendReserve(account, loanId, amount)` は `whenNotPaused` を伴い、呼び出し元がアカウントの管理者（本人のウォレット、または置き換え後のコントローラー）であることを求め、呼び出し元をスクリーニングし（障害時は通過）、確保額を超えると `ExtendReserveInsufficient` で取り消されます。ローンの状態にかかわらず利用できます。アプリはウォレットに紐づくインデックスのアクティビティ (`ExtendReserveFunded`, `ExtendReserveWithdrawn`, `ExtendChargeDrawn`) からローンを一覧にし、番号での検索はチェーンだけを読みます。レビューが読み取ったリザーブ全額を引き出し、呼び出しをレビュー時と送信時に試行し、完了カードは `ExtendReserveWithdrawn`（金額と、確保されたまま残る額）を読み、保護モードが支払いをキューに入れたり保持したりした場合は `PayoutQueued` または `PayoutHeldInVault` も読みます。
 
+<a id="vault-holdings"></a>
+
+### あなたのボールト：何が読まれるか
+
+ボールトは `VaultFactoryFacet.getUserVaultAddress(wallet)` です。`getOrCreateUserVault(wallet)` がこれを作成し（ティア1の制裁チェック、一時停止ゲートなし）、完了カードは `UserVaultCreated` を読みます。資産ごとに同じブロックで読むのは、ボールト自身の残高（ERC-20 は `balanceOf`、ERC-721 は `ownerOf`、ERC-1155 は `balanceOf`）、`getTrackedHolding`、`withdrawableNow`、`untrackedHolding` です。「ボールト内」は残高と追跡保有量の小さい方、「今すぐ引き出し可能」は返された `withdrawableNow` そのもの（入金保有量を `freeHolding`、つまり追跡量からリーエンと保護モードの留保を引いた量で上限としたもの）、「ポジションが保持中」は計上量からそれを引いたものです。資産は `getDepositoryAssets(wallet, offset, limit)` から、返された総数までページごとに読みます（その前の空ページは不完全として扱います）。一覧の各コントラクトの規格は ERC-165 で読み、さらに `getUserLoansPaginated(wallet)` のすべてのローンと、ウォレットがポジションを保有するすべてのローンの各レッグ（貸し出し資産、担保、レンタルの前払い手数料トークン）を同じブロックで `getLoanDetails` により読み、これまでに作成したすべてのオファー（`getUserOffersPaginated(wallet)`、各件を `getOffer` で読む）の各レッグも加えます。オファーの預け入れは、ポジションNFTを譲渡した後も作成者のボールトに残るためです。`getLenderIntentsByOwner(wallet)` の各常設オファー（取り消し済みを含む）が貸し出す資産も加えます。常設オファーへの資金投入は、入金記録に載せずにその資産をボールトへ入れるためです。記録は NFT のトークンIDを保持しないため、入金済みの NFT コレクションはすべて注記で名前を示し、数値付きで一覧に出るのはローンかオファーが指すトークンだけです。ダストとは、ゼロより大きく、トークン1枚の 1e-11 未満の計上量です。
+
 <a id="risk-access"></a>
 
 ### Risk Access: あなたのリスクレベル

@@ -256,6 +256,10 @@ export interface OpenOffer {
   tokenId: bigint;
   /** A rental's fee asset; `amount` is then the daily fee in it. */
   prepayAsset: Hex;
+  /** The collateral leg a borrower offer locks in the creator's vault. */
+  collateralAsset: Hex;
+  collateralAssetType: number;
+  collateralTokenId: bigint;
 }
 
 export interface OpenOffers {

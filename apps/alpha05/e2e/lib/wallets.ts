@@ -9,8 +9,15 @@ import type { PrivateKeyAccount } from 'viem';
 import { setBalance } from './anvil';
 import { STATE_DIR } from './artifacts';
 
-export type Role = 'lender' | 'borrower' | 'visitor';
-export const ROLES: Role[] = ['lender', 'borrower', 'visitor'];
+/**
+ * `freshLender` and `freshBorrower` are held back for specs that need a wallet
+ * with no vault and no history, such as creating a vault or a first deposit.
+ * Every spec that drives them reverts the chain after each test, so each test
+ * finds them as global setup left them: funded with ETH and nothing else. The
+ * other roles collect vaults and balances as the suite runs.
+ */
+export type Role = 'lender' | 'borrower' | 'visitor' | 'freshLender' | 'freshBorrower';
+export const ROLES: Role[] = ['lender', 'borrower', 'visitor', 'freshLender', 'freshBorrower'];
 
 const STATE_FILE = path.join(STATE_DIR, 'wallets.json');
 
