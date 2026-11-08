@@ -36,6 +36,7 @@ export function safetyReceipt(r: SafetyReview, copy: Copy): Receipt {
       text('safety.enableLoosen'),
       text('safety.enableLock'),
       text('safety.enableVault'),
+      text('safety.enableVoidsPin'),
     );
     if (f.bounds === null) unread.push(text('safety.boundsUnread'));
     if (f.frozen === 'unknown' || f.frozen === 'outage') unread.push(text('vaultDeposit.screenUnread'));
@@ -84,7 +85,7 @@ export function safetyReceipt(r: SafetyReview, copy: Copy): Receipt {
       });
     consequences.push(text('safety.finalizeAll'));
     if (r.due.includes('unlock')) consequences.push(text('safety.finalizeUnlock'));
-    if (r.due.includes('disable')) consequences.push(text('safety.finalizeDisable'));
+    if (r.due.includes('disable')) consequences.push(text('safety.finalizeDisable'), text('safety.finalizeDisableClears'));
     if (r.due.includes('lowerDelay') || r.due.includes('nftOff') || r.due.includes('cosignOff')) consequences.push(text('safety.finalizeLoosens'));
   }
   consequences.push(...unread, text('vaultWithdraw.noApproval'));

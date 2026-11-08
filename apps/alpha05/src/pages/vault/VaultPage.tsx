@@ -290,7 +290,9 @@ export function VaultPage() {
               </section>
             </>
           )}
-          {data !== null && <SafetyCard own={own} chain={chain} />}
+          {/* Read on its own facts, never behind holdings discovery, so a failed
+              holdings scan can never hide Lock now or a safety send in flight. */}
+          <SafetyCard own={own} chain={chain} />
           {currentVault !== null && (
             <p className="tier-b" data-testid="vault-next">
               {text('vault.nextSlices')}{' '}

@@ -1219,7 +1219,8 @@ above. Each resolves here, so a route reviewer needs no private file:
 - **RB-VAULT-SAFETY** — the Vault page's safety card (ACC-36 Basic face,
   ACC-37, ACC-43) reads the account's protected mode at one block, with the
   protocol's delay bounds, the pause, the sanctions screen and the queued
-  payout count. A Diamond without the feature reads "unavailable", never
+  payout count, on its own reads: it never waits on holdings discovery, so a
+  failed holdings scan cannot hide Lock now. A Diamond without the feature reads "unavailable", never
   "off"; an unread mode offers no control and says not to assume it is off;
   a wallet a replacement retired names the wallet that manages the account
   and offers nothing. Off, it offers Turn on: in Basic the shortest delay the
@@ -1229,14 +1230,16 @@ above. Each resolves here, so a route reviewer needs no private file:
   and every pending change with its time, and offers Lock now (unlocked),
   Ask to unlock (locked, none asked) and Apply due changes (anything due).
   Each receipt states what the mode becomes and every consequence: turning
-  on never delays what is owed to others and credits other vaults' payments
-  into the vault; a lock cancels every queued payout (counted), drops every
+  on never delays what is owed to others, credits other vaults' payments
+  into the vault and cancels any pending vault-code change (said, not
+  read); a lock cancels every queued payout (counted), drops every
   pending setting change (counted) and voids every pending destination,
   signer and vault-code change (said, not counted), leaves repayment and
   adding collateral open and works during a pause; an unlock waits the
   delay; applying due changes applies every due change together, a shorter
   delay is always shown as the delay it sets beside the current one, and a
-  switch-off waits for an empty queue. Each action is dry-run at review and again before the wallet
+  switch-off waits for an empty queue and clears destinations, signers and
+  their pending additions. Each action is dry-run at review and again before the wallet
   opens, and the finish card reads the Diamond's own events for this
   account. The account's own payout queue (RB-CLAIM: the Claims component)
   is shown under the card.

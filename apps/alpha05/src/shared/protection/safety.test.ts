@@ -151,7 +151,9 @@ describe('safetyReceipt', () => {
   it('turning on states the delay, what waits, and that it never delays what is owed to others', () => {
     const r = safetyReceipt(review('enable'), copy);
     expect(r.rows.find((x) => x.label === 'safety.rowDelay')?.value).toEqual({ kind: 'text', text: '2 days' });
-    expect(r.consequences).toEqual(expect.arrayContaining(['safety.enableNeverOthers', 'safety.enableInbound', 'safety.enableNftsOff', 'safety.enableVault']));
+    expect(r.consequences).toEqual(
+      expect.arrayContaining(['safety.enableNeverOthers', 'safety.enableInbound', 'safety.enableNftsOff', 'safety.enableVault', 'safety.enableVoidsPin']),
+    );
     expect(r.prompts).toBe(1);
   });
   it('a lock states what it cancels and drops; unread facts are said', () => {
@@ -164,7 +166,7 @@ describe('safetyReceipt', () => {
   it('applying due changes names each change and that all due ones apply together', () => {
     const r = safetyReceipt(review('finalize', { mode: ON }, { due: ['unlock', 'disable'] }), copy);
     expect(r.rows[0]?.value).toEqual({ kind: 'text', text: 'safety.changeUnlock · safety.changeDisable' });
-    expect(r.consequences).toEqual(expect.arrayContaining(['safety.finalizeAll', 'safety.finalizeUnlock', 'safety.finalizeDisable']));
+    expect(r.consequences).toEqual(expect.arrayContaining(['safety.finalizeAll', 'safety.finalizeUnlock', 'safety.finalizeDisable', 'safety.finalizeDisableClears']));
   });
   it('a due shorter delay names the delay it sets, beside the current one', () => {
     const r = safetyReceipt(review('finalize', { mode: { ...ON, delaySeconds: 5 * DAY, pendingDelay: 2 * DAY, pendingDelayAt: NOW - 1 } }, { due: ['lowerDelay'] }), copy);
