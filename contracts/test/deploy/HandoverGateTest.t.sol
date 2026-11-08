@@ -3,6 +3,7 @@ pragma solidity ^0.8.29;
 
 import {Test} from "forge-std/Test.sol";
 import {VaultBeacon} from "../../src/VaultBeacon.sol";
+import {ProtocolRegistry} from "../../src/governance/ProtocolRegistry.sol";
 import {VaipakamVaultImplementation} from "../../src/VaipakamVaultImplementation.sol";
 import {Vm} from "forge-std/Vm.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
@@ -91,6 +92,8 @@ contract HandoverGateTest is Test {
     ///      handover's own leg rotates it.
     VaipakamFeedRegistry internal feedRegistry;
     VaultBeacon internal vaultBeacon;
+    /// @dev #3272 — the protocol registry, deployed as DeployDiamond leaves it.
+    ProtocolRegistry internal protocolRegistry;
 
     HandoverGate internal gate;
 
@@ -451,6 +454,21 @@ contract HandoverGateTest is Test {
         _assertContains(failures, "vaultBeacon: guardian() is");
     }
 
+    /// @notice #3272 — the handover moves the ProtocolRegistry's guardian to
+    ///         the Pauser Safe and its ownership to the Timelock, and a wrong
+    ///         guardian fails the gate.
+    function test_ProtocolRegistry_GuardianRotated_WrongGuardianFails() public {
+        HandoverGate.Inputs memory inp = _build(_none());
+        assertEq(protocolRegistry.guardian(), pauserSafe, "rotated by the handover");
+        assertEq(protocolRegistry.owner(), address(timelock), "owned by the Timelock");
+        (string[] memory failures,) = gate.evaluate(inp, _logs());
+        _assertNoFailures(failures);
+        vm.prank(address(timelock));
+        protocolRegistry.setGuardian(stranger);
+        (failures,) = gate.evaluate(inp, _logs());
+        _assertContains(failures, "protocolRegistry: guardian() is");
+    }
+
     /// @notice #3204 — the plan derives the guardian flag for a found
     ///         contract from `guardian()`, so a guardian-bearing contract the
     ///         list does not name is still rotated and checked.
@@ -558,6 +576,7 @@ contract HandoverGateTest is Test {
             new ZeroExAggregatorAdapter(t.adapterOnDeployer ? deployer : admin, makeAddr("allowanceHolder"), settlers);
         feedRegistry = new VaipakamFeedRegistry(admin, admin);
         vaultBeacon = new VaultBeacon(admin, address(diamond), admin, address(new VaipakamVaultImplementation()));
+        protocolRegistry = new ProtocolRegistry(admin, admin, 3 days, new bytes32[](0), new address[](0));
         cctRegistry = new TokenAdminRegistryStub();
         cctRegistry.seed(address(vpfiToken), admin);
         cctRegistry.setPool(address(vpfiToken), address(tokenPool));
@@ -594,6 +613,7 @@ contract HandoverGateTest is Test {
         _accept(address(vpfiToken), abi.encodeWithSignature("acceptOwnership()"));
         _accept(address(feedRegistry), abi.encodeWithSignature("acceptOwnership()"));
         _accept(address(vaultBeacon), abi.encodeWithSignature("acceptOwnership()"));
+        _accept(address(protocolRegistry), abi.encodeWithSignature("acceptOwnership()"));
         if (!t.adapterOnDeployer) _accept(address(swapAdapter), abi.encodeWithSignature("acceptOwnership()"));
         if (!t.skipCctAccept) {
             _accept(address(cctRegistry), abi.encodeWithSignature("acceptAdminRole(address)", address(vpfiToken)));
@@ -615,7 +635,7 @@ contract HandoverGateTest is Test {
     }
 
     function _targets() internal view returns (HandoverPlan.Target[] memory t) {
-        t = new HandoverPlan.Target[](7);
+        t = new HandoverPlan.Target[](8);
         t[0] = HandoverPlan.Target("ccipMessenger", address(messenger), HandoverPlan.OwnableKind.OpenZeppelin, true, true);
         t[1] = HandoverPlan.Target("vpfiTokenPool", address(tokenPool), HandoverPlan.OwnableKind.Chainlink, true, false);
         t[2] = HandoverPlan.Target(
@@ -629,6 +649,9 @@ contract HandoverGateTest is Test {
         t[5] =
             HandoverPlan.Target("feedRegistry", address(feedRegistry), HandoverPlan.OwnableKind.OpenZeppelin, true, true);
         t[6] = HandoverPlan.Target("vaultBeacon", address(vaultBeacon), HandoverPlan.OwnableKind.OpenZeppelin, true, true);
+        t[7] = HandoverPlan.Target(
+            "protocolRegistry", address(protocolRegistry), HandoverPlan.OwnableKind.OpenZeppelin, true, true
+        );
     }
 
     function _accept(address target, bytes memory data) internal {

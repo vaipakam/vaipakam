@@ -204,6 +204,7 @@ import VpfiReturnSenderABI from './VpfiReturnSender.json';
 // facet): the keeper's return-transport pass reads which Diamond it delivers to.
 import VpfiReturnReceiverABI from './VpfiReturnReceiver.json';
 import VaultBeaconABI from './VaultBeacon.json';
+import ProtocolRegistryABI from './ProtocolRegistry.json';
 
 export {
   OfferCreateFacetABI,
@@ -334,6 +335,7 @@ export {
   VpfiReturnSenderABI,
   VpfiReturnReceiverABI,
   VaultBeaconABI,
+  ProtocolRegistryABI,
 };
 
 import type { Abi } from 'viem';

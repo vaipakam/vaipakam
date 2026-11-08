@@ -19,6 +19,7 @@ import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {VaipakamVaultImplementation} from "../src/VaipakamVaultImplementation.sol";
 import {VaultBeacon} from "../src/VaultBeacon.sol";
+import {ProtocolRegistry} from "../src/governance/ProtocolRegistry.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferParallelSaleFacet} from "../src/facets/OfferParallelSaleFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
@@ -134,6 +135,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
     /// @dev #3204 — the VaultBeacon deployed in step 5c, kept in storage so
     ///      the artifact step reads it without widening `runWith`'s frame.
     address internal vaultBeacon;
+    /// @dev #3272 — the ProtocolRegistry deployed in step 5c-ii.
+    address internal protocolRegistry;
     /// @dev OpenZeppelin's Initializable namespace (ERC-7201); a template
     ///      whose initializers are disabled reads `type(uint64).max` there.
     bytes32 internal constant _OZ_INITIALIZABLE_SLOT =
@@ -1023,6 +1026,18 @@ contract DeployDiamond is Script, ArtifactRootBase {
         VaultFactoryFacet(diamond).initializeVaultBeacon(vaultBeacon);
         console.log("Vault beacon:", vaultBeacon);
 
+        // 5c-ii. #3272 — the ProtocolRegistry: the endpoints the Diamond and
+        // every vault must agree on, held where no facet can write. Owned by
+        // `admin` (the Timelock takes it at handover), guardian `admin` until
+        // the handover moves it to the Pauser Safe, and the minimum delay.
+        // It starts empty: the price guard (#3272) and the vault payout
+        // endpoints (#3205) add their keys when they ship.
+        protocolRegistry = ArtifactDeploy.deploy(
+            type(ProtocolRegistry).name,
+            abi.encode(admin, admin, uint256(3 days), new bytes32[](0), new address[](0))
+        );
+        console.log("Protocol registry:", protocolRegistry);
+
         // 5d. Initialize NFT metadata
         VaipakamNFTFacet(diamond).initializeNFT();
         console.log("NFT initialized.");
@@ -1202,6 +1217,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
             Deployments.writeVaultImpl(impl1);
         }
         Deployments.writeVaultBeacon(vaultBeacon);
+        Deployments.writeProtocolRegistry(protocolRegistry);
         Deployments.writeTreasury(treasury);
         Deployments.writeAdmin(admin);
         // #1566 slice 4 PR A — the custody holder's address is part of the

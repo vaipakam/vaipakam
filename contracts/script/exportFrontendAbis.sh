@@ -409,6 +409,10 @@ FACETS=(
   # resolves its code through it; the vault page reads versions, pins and
   # pending code changes from it, and the indexer decodes its events.
   "VaultBeacon"
+  # #3272 — the ProtocolRegistry (standalone; NOT a diamond facet). The
+  # delayed endpoints the Diamond and every vault share; the governance page
+  # reads its pending changes and the indexer decodes its events.
+  "ProtocolRegistry"
   # #2399 — the Diamond PROXY itself. Not a facet: its fallback raises
   # `FunctionDoesNotExist()` for an unrouted selector, the revert a stale ABI
   # produces. Listed under `proxy` in diamond-facets.json, and the combined

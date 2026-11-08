@@ -132,6 +132,7 @@
     "VaipakamTimelock",
     "VpfiReturnSender",
     "VpfiReturnReceiver",
-    "VaultBeacon"
+    "VaultBeacon",
+    "ProtocolRegistry"
   ]
 }
