@@ -91,6 +91,28 @@ describe('measureLoanClaim with a claim-time match', () => {
     expect(labels.filter((l) => l.startsWith('loanClaim.legIncentive'))).toHaveLength(2);
   });
 
+  it('measures what a partial match delivered beyond the review, held proceeds included, without a mismatch', () => {
+    // The row is paid as reviewed; the match's proceeds came through the
+    // funds held for the lender, which the protocol pays with no record.
+    const logs = [matched(ME), claimed(50n), transfer(WETH, 50n + 30n + 1n), transfer(TLIQ, 2n)];
+    const legs = measureLoanClaim(review, logs, DIAMOND, ME, t, [
+      { loanId: 7n, asset: WETH, amount: 1n },
+      { loanId: 9n, asset: TLIQ, amount: 2n },
+    ]);
+    expect(legs.every((l) => l.status === 'done')).toBe(true);
+    expect(legs.map((l) => l.label)).toContain('loanClaim.legArrived{"amount":"81 e1"}');
+  });
+
+  it('still flags a reviewed token that delivered nothing after a match', () => {
+    const legs = measureLoanClaim(review, [matched(ME), claimed(50n)], DIAMOND, ME, t, []);
+    expect(legs.some((l) => l.status === 'not-done')).toBe(true);
+  });
+
+  it('compares with the review when no match ran', () => {
+    const legs = measureLoanClaim({ ...review, loan: { ...review.loan, status: 1 } as LoanDetails }, [claimed(50n), transfer(WETH, 80n)], DIAMOND, ME, t, []);
+    expect(legs.some((l) => l.status === 'unknown')).toBe(true);
+  });
+
   it('states a reward whose token could not be read as unknown', () => {
     const logs = [matched(ME), claimed(99n), transfer(WETH, 100n)];
     const legs = measureLoanClaim(review, logs, DIAMOND, ME, t, [

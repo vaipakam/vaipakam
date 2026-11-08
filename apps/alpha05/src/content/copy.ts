@@ -957,7 +957,7 @@ export const copy = {
     notClaimed: B('The transaction records no claim on this loan.'),
     legRecorded: B('Payout collected from loan #{{id}}'),
     legRowPaid: B('The protocol paid {{amount}} from the claim'),
-    legRowMatched: B('The protocol matched this loan as you collected and paid {{amount}} from the claim'),
+    legRowMatched: B('Matched as you collected, which changed the payout: the claim row paid {{amount}}'),
     legIncentive: B('Matching reward paid to you: {{amount}}'),
     legIncentiveUnread: B('A matching reward was paid to you'),
     incentiveUnread: A('The protocol paid you a matching reward from loan #{{id}}, but its token could not be read, so it is not counted in the amounts here.'),

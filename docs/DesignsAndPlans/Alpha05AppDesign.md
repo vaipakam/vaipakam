@@ -987,10 +987,13 @@ above. Each resolves here, so a route reviewer needs no private file:
   payment can split between the queue and the vault), an NFT's arrival, and
   the loan's settlement once both sides have collected. A lender claim on a
   loan in fallback runs the protocol's match first with the claimant as its
-  matcher: when the logs show that match, the rewritten row is stated as the
-  match's doing, and the matcher's reward each leg paid (in that leg's loan's
-  principal token, read from the protocol's record of that loan) is stated
-  and counted in its token's total, the collateral token's included. A claim the review
+  matcher. A match rewrites the payout in places the protocol records only
+  in part (a full match the row, a partial one the funds held for the
+  lender), so when the logs show one the card says the match changed the
+  payout and states what each token delivered instead of comparing it with
+  the review (a reviewed token that delivered nothing is still flagged), and
+  states the matcher's reward each leg paid, in that leg's loan's principal
+  token, the collateral token's included. A claim the review
   could not read is stated as unknown, never as zero. A claim flow in progress
   stays on Claims, drawn from the app's record of it, after its position
   token is burnt and the reader leaves and returns, until its finish card is
