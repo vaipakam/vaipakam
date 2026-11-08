@@ -1992,6 +1992,12 @@ Positions 通过一个共享读取器读取与 Home 相同的持仓清单：`get
 
 审核页读取 `getClaimable`（出借人记录已扣除前任卖家的部分，旁边附有 `getSellersShareOfLenderClaim`）、`getBorrowerSurplusClaim` 和 `getLoanCollateralLien`，并模拟运行领取，这也会执行制裁检查。列表以头寸代币为准：`getUserDashboardClaimables` 列出登记当事人的领取，因此列出的记录只在钱包持有该方时保留；从他人处得到的、已结束贷款上的持有头寸，则直接读取其领取。完成卡片读取 `LenderFundsClaimed` / `BorrowerFundsClaimed`、`BorrowerSurplusClaimed` 和 `LoanSettled`，以及转入钱包的代币；对处于保护账户模式的调用者，读取 `PayoutQueued`（账户自己的金库）、`PayoutHeldInVault`（账户已锁定或队列已满）或 `PaymentCreditedToVault`（其他当事人的金库）。在 FallbackPending 贷款上，出借人的领取可能在领取时执行内部撮合并改写记录，因此完成卡片会将转账与协议自己的记录进行比较。
 
+<a id="payout-queue"></a>
+
+### 付款队列：检查什么
+
+列表来自 `getPendingPayoutIds(account)`，每一行读取 `getPendingPayout(id)` 和 `requestCode(id)`；代码由提醒所用的同一个共享渲染器显示为六个 base32 字符，各行按 `releaseAt` 相对于最新区块时间戳排序，而不是浏览器时钟。`releasePayout(id)` 任何人都可调用，暂停期间在 `isEscapeOpen()` 之前会被拒绝。收款人既不是管理者（账户本身，或账户退役后的控制者）也不在 `getAllowlist` 中的排队行，会在时间检查之前被取消而不是支付；否则该行必须已到期、账户未锁定（`ProtectedVaultLocked`），并且在 `requireCosign` 开启期间已获联署（`CosignRequired`），收款人还会被再次筛查。`cancelPayout(id)` 属于管理者或签名人（`NotManagerOrSigner`），暂停期间也可使用，并会记入存管账本，使资产可以再次提取。`cosignPayout(id)` 属于 `getProtectedSigners` 中的签名人（`NotSigner`）；只有在账户要求联署且该行尚未联署时，应用才会提供此操作。每项操作在审核时先模拟运行，发送时再运行一次。完成卡片会读取该 id 的 `PayoutReleased`（金额和协议测得的 `delivered`）、`PayoutCancelled` 和 `PayoutCosigned`。keeper 的 `protectedAccount` 任务是否放行到期行，取决于能力服务的回答，默认为未知。锁定会取消所有排队行。
+
 <a id="risk-access"></a>
 
 ### Risk Access：你的风险等级

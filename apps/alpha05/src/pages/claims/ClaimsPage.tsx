@@ -19,6 +19,7 @@ import { useTokenMeta, type TokenMetaMap } from '../../shared/reads/tokens';
 import { useOwnRead } from '../../shared/reads/useOwnRead';
 import { useTxEntries, useTxStore } from '../../shared/tx/txStore';
 import { reviewIdentity } from '../../shared/ui/ActionFlow';
+import { PayoutQueue } from '../../shared/protection/PayoutQueue';
 import { OwnStamp } from '../../shared/ui/OwnStamp';
 import { useNow } from '../../shared/ui/useNow';
 
@@ -31,7 +32,9 @@ type Hex = `0x${string}`;
  * the wallet holds (a bought position pays its new holder), each row read
  * from the chain as its claim reads it, with every payout named and the
  * claim's rule deciding whether it is offered (RB-ELIG). Rewards follow, the
- * same section Home shows.
+ * same section Home shows. Between them, a protected account's payout queue
+ * (LN-54, LN-55, LN-56): what waits, under which request code, and the
+ * release, cancel and co-sign actions this wallet may take.
  *
  * "Nothing to collect" is said only when every walk completed and its latest
  * read succeeded; a row whose claim could not be read stays, said so. Seller
@@ -102,6 +105,7 @@ export function ClaimsPage() {
               </a>
             </p>
           </section>
+          <PayoutQueue own={own} chain={book.chain} />
           <RewardsWidget />
         </>
       )}
