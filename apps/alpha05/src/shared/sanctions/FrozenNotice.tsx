@@ -7,10 +7,14 @@ import { frozenState, readSanctionsPosture, type FrozenState } from './posture';
 type Hex = `0x${string}`;
 
 /** The connected wallet's frozen state on this chain (RB-FROZEN), one read
- *  shared by every surface that shows it. Undefined until first read. */
+ *  shared by every surface that shows it. Undefined until first read. A
+ *  latest read that failed makes it unknown even with an earlier answer in
+ *  hand: a standing that could not be refreshed is never stated as current
+ *  (a de-listed wallet would otherwise stay shown as flagged). */
 export function useFrozenState(diamond: Hex, wallet: Hex | null): FrozenState | undefined {
   const posture = useOwnRead(['sanctions', diamond, wallet ?? ''], (c) => readSanctionsPosture(c, diamond, wallet!), { enabled: wallet !== null });
-  if (posture.data === null) return posture.state === 'failed' ? 'unknown' : undefined;
+  if (posture.error !== null || posture.state === 'failed') return 'unknown';
+  if (posture.data === null) return undefined;
   return frozenState(posture.data);
 }
 

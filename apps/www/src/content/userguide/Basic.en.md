@@ -1289,7 +1289,7 @@ When you sell a lender position, the interest you earned while you held it, and 
 
 ### When a Payout Is Frozen
 
-If the sanctions screen flags your wallet, the protocol takes nothing you are owed and never stops a loan from closing: the other party is still repaid. Your share is parked in a vault, locked, and released once your wallet is de-listed. Claims and the loan's page then say "Frozen, awaiting de-listing" and offer no button to collect. If the screen cannot be read and your wallet was confirmed flagged before, a frozen payout stays locked until the screen answers again; an outage alone never freezes anyone. On a running loan, the loan's page also shows what the loan already paid that is reserved for the lender position until the lender collects it, and a repaid loan says when it waits for a surplus the borrower has not yet collected.
+If the sanctions screen flags your wallet, the protocol takes nothing you are owed and never stops a loan from closing: the other party still receives what its side recovers. Your share is parked in a vault, locked, and released once your wallet is de-listed. Claims and the loan's page then say "Frozen, awaiting de-listing" and offer no button to collect. If the screen cannot be read and your wallet was confirmed flagged before, a frozen payout stays locked until the screen answers again; an outage alone never freezes anyone. On a running loan, the loan's page also shows what the loan already paid that is reserved for the lender position until the lender collects it, and a repaid loan says when it waits for a surplus the borrower has not yet collected.
 
 <a id="risk-access"></a>
 

@@ -120,8 +120,10 @@ function LoanBody({ loanId, view: v, own, chain, meta }: { loanId: bigint; view:
   // the loan's payment token (the principal token, or a rental's prepay
   // token).
   const held = l.status === LOAN_STATUS_ACTIVE && v.heldForLender !== null && v.heldForLender > 0n ? v.heldForLender : null;
-  // A surplus held for the borrower keeps a repaid loan from settling until
-  // it is collected (LN-53): said, so the loan's status reads true.
+  // A surplus still held for the borrower is one payout a repaid loan waits
+  // on before it settles (LN-53): said, so the loan's status reads true. The
+  // lender's side may be open too, so the note never promises that collecting
+  // the surplus alone settles it.
   const surplusOpen = loanStatusName(l.status) === 'repaid' && v.claims.borrower !== null && v.claims.borrower.surplus !== null;
 
   return (

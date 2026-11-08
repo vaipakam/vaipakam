@@ -1087,10 +1087,15 @@ above. Each resolves here, so a route reviewer needs no private file:
   states what the loan already paid that is reserved for the lender
   position in the lender vault the loan records, such as a payment made
   while the holder was flagged, until the lender's claim pays it. A repaid
-  loan whose borrower surplus is still held says that it settles once that
-  surplus is collected, so its status reads true. A change to the wallet's
+  loan whose borrower surplus is still held says that surplus is one of the
+  payouts left to collect before it settles (never that collecting it alone
+  settles the loan, since the lender's side may be open too), so its status
+  reads true. A change to the wallet's
   standing reopens a claim's review. Repayments and close-outs are never
-  held for a flagged party; only what it is owed waits.
+  held for a flagged party; only what it is owed waits. The surfaces never
+  promise the other party more than its side recovers: a default or a
+  liquidation can recover less than is owed. A standing whose latest read
+  failed is unknown, even with an earlier answer in hand.
 
 ## 3. Companion specifications
 

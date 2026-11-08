@@ -4,10 +4,10 @@
  * it (RB-FROZEN).
  *
  * The protocol never seizes a flagged party's proceeds and never lets a
- * close-out wait on them: a repayment, a default or a liquidation completes so
- * the other party is made whole, and the flagged party's share is parked in a
- * vault, locked, until the wallet is de-listed. What the app can say from the
- * chain:
+ * close-out wait on them: a repayment, a default or a liquidation completes
+ * and the other party receives what its side recovers, while the flagged
+ * party's share is parked in a vault, locked, until the wallet is de-listed.
+ * What the app can say from the chain:
  * - no screen configured: nothing is frozen on this chain;
  * - the screen flags the wallet: every claim refuses it now (each claim
  *   screens its caller first), so what is held for it waits, locked, not lost;

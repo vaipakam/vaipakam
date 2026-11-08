@@ -908,7 +908,7 @@ export const copy = {
   frozen: {
     noticeTitle: B('Frozen, awaiting de-listing.'),
     noticeFlagged: A(
-      'The sanctions screen flags this wallet. Nothing held for it is taken: each payout stays locked where its loan keeps it, in a vault, and is released once the wallet is de-listed. Repayments and close-outs still complete, so the other party is always made whole. Each payout below shows what is held.',
+      'The sanctions screen flags this wallet. Nothing held for it is taken: each payout stays locked where its loan keeps it, in a vault, and is released once the wallet is de-listed. Repayments and close-outs still run, and the other party still receives what its side recovers. Each payout below shows what is held.',
     ),
     noticeOutage: A(
       'The sanctions screen cannot be read right now, and this wallet was confirmed flagged before. A payout frozen for it stays locked until the screen can show the wallet de-listed. An outage alone never freezes a payout.',
@@ -926,10 +926,10 @@ export const copy = {
     reservedRunning: A(
       '{{amount}} the loan already paid is held for the lender position, reserved in the lender vault this loan records until the lender’s claim pays it. A payment made while the holder was flagged by the sanctions screen waits here, as can an amount an early close set aside.',
     ),
-    openForSurplus: A('This loan has not settled yet: a surplus from its close is held for the borrower position, and the loan settles once that is collected.'),
+    openForSurplus: A('This loan has not settled yet: a surplus from its close is still held for the borrower position, one of the payouts left to collect before it settles.'),
     whySummary: B('Why a payout can be frozen'),
     why: C(
-      'When the sanctions screen flags a wallet, the protocol does not take what it is owed and does not stop a loan from closing. A repayment, a default or a liquidation completes, so the other party is made whole, and the flagged wallet’s share is parked in a vault, locked. It is released once the wallet is de-listed. Release is fail-closed: once the protocol has recorded a wallet as frozen on a loan, the payout moves only when the screen can be read and shows that wallet de-listed, whoever holds the position by then. An outage alone never freezes anyone: a payout made while the screen could not be read is not frozen. Payments a running loan makes to a flagged lender position wait in the loan’s lender vault, reserved for it, until the loan’s claim.',
+      'When the sanctions screen flags a wallet, the protocol does not take what it is owed and does not stop a loan from closing. A repayment, a default or a liquidation still completes, and the other party receives what its side recovers, which in a default or liquidation can be less than it is owed. The flagged wallet’s share is parked in a vault, locked. It is released once the wallet is de-listed. Release is fail-closed: once the protocol has recorded a wallet as frozen on a loan, the payout moves only when the screen can be read and shows that wallet de-listed, whoever holds the position by then. An outage alone never freezes anyone: a payout made while the screen could not be read is not frozen. Payments a running loan makes to a flagged lender position wait in the loan’s lender vault, reserved for it, until the loan’s claim.',
     ),
   },
   queue: {
