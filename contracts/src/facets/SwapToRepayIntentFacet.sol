@@ -746,7 +746,9 @@ contract SwapToRepayIntentFacet is
      *         filled pre-check + same return target as
      *         {cancelSwapToRepayIntent}. Bypasses the §5.6 master
      *         switch IFF a commit exists (so a chain-toggle-off
-     *         can't leave an order live forever).
+     *         can't leave an order live forever). #3336 — callable at
+     *         any time once the borrower position has moved since the
+     *         commit, since such an order can never fill.
      */
     function cancelExpiredIntent(uint256 loanId)
         external
@@ -762,7 +764,16 @@ contract SwapToRepayIntentFacet is
         // window only the current borrower-NFT holder may cancel —
         // keeps a keeper / opportunist from front-running the
         // borrower's own clean recovery path.
+        //
+        // #3336 — except once the borrower position has moved since the
+        // commit (or another flow replaced its route): the order can then
+        // never fill (both fill hooks refuse it), there is no holder recovery
+        // path left to protect, so anyone may clear it at once. The teardown
+        // moves no tokens; the lot stays in the loan's vault under its lien.
         if (
+            !LibPositionNFT.routeIsDead(
+                s.loans[loanId].borrowerTokenId, LibPositionNFT.RouteReason.SwapToRepayIntent
+            ) &&
             block.timestamp <
                 uint256(commit.deadline) + uint256(LibVaipakam.cfgIntentCancelGraceSecondsEffective())
         ) revert IntentNotPastCancelGrace();
