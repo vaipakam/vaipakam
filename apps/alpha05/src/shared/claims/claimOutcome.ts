@@ -109,10 +109,18 @@ export function measureLoanClaim(r: LoanClaimReview, logs: readonly Log[], diamo
     const k = i.asset.toLowerCase();
     byToken.set(k, { asset: byToken.get(k)?.asset ?? i.asset, amount: (byToken.get(k)?.amount ?? 0n) + i.amount });
   }
+  // A match can pay the loan's own tokens whatever the review named (the
+  // match's proceeds come in the principal token through the funds held for
+  // the lender, rewards can round to nothing), so after a match both are
+  // measured too; a token that delivered nothing and was owed nothing is
+  // left out.
+  if (matched && Number(r.loan.assetType) === ASSET_ERC20)
+    for (const asset of [r.loan.principalAsset, r.loan.collateralAsset]) if (!byToken.has(asset.toLowerCase())) byToken.set(asset.toLowerCase(), { asset, amount: 0n });
   for (const { asset, amount: reviewed } of byToken.values()) {
     const outcomes = payoutOutcomes(logs, diamond, account, asset);
     const wallet = moved(logs, asset, null, account);
     const delivered = outcomes.reduce((total, o) => total + o.amount, wallet);
+    if (reviewed === 0n && delivered === 0n) continue;
     legs.push(
       ...payoutLegs(
         {

@@ -103,6 +103,16 @@ describe('measureLoanClaim with a claim-time match', () => {
     expect(legs.map((l) => l.label)).toContain('loanClaim.legArrived{"amount":"81 e1"}');
   });
 
+  it('measures the principal a match paid with no reward and no reviewed principal', () => {
+    // The residual row names collateral; the match's proceeds came in the
+    // principal token through the held funds, and its reward rounded to zero.
+    const collateralRow: LoanClaimReview = { ...review, lanes: [{ kind: 'row', asset: TLIQ, assetType: 0, tokenId: 0n, amount: 9n }] };
+    const record = log(DIAMOND, ClaimFacetABI as Abi, 'LenderFundsClaimed', { loanId: 7n, claimant: ME, asset: TLIQ, amount: 9n, newBothClaimed: false });
+    const legs = measureLoanClaim(collateralRow, [matched(VAULT), record, transfer(TLIQ, 9n), transfer(WETH, 40n)], DIAMOND, ME, t, []);
+    expect(legs.map((l) => l.label)).toContain('loanClaim.legArrived{"amount":"40 e1"}');
+    expect(legs.every((l) => l.status === 'done')).toBe(true);
+  });
+
   it('still flags a reviewed token that delivered nothing after a match', () => {
     const legs = measureLoanClaim(review, [matched(ME), claimed(50n)], DIAMOND, ME, t, []);
     expect(legs.some((l) => l.status === 'not-done')).toBe(true);
