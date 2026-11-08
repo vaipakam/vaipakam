@@ -134,6 +134,7 @@
     "VpfiReturnSender",
     "VpfiReturnReceiver",
     "VaultBeacon",
-    "PositionNFT"
+    "PositionNFT",
+    "ProtocolRegistry"
   ]
 }

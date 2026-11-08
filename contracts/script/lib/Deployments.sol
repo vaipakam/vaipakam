@@ -581,6 +581,7 @@ library Deployments {
     function writeVaultImpl(address a)      internal { _writeAddr(".vaultImpl",      a); }
     function writeVaultBeacon(address a)    internal { _writeAddr(".vaultBeacon",    a); }
     function writePositionNFT(address a)    internal { _writeAddr(".positionNFT",    a); }
+    function writeProtocolRegistry(address a) internal { _writeAddr(".protocolRegistry", a); }
     function writeTimelock(address a)        internal { _writeAddr(".timelock",        a); }
     function writeVpfiToken(address a)       internal { _writeAddr(".vpfiToken",       a); }
     function writeVpfiTokenImpl(address a)   internal { _writeAddr(".vpfiTokenImpl",   a); }
