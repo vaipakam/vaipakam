@@ -88,6 +88,9 @@ contract LoanLedgerHandler is Test {
         uint256 collateralIn; // initial collateral plus every top-up
         uint256 lastActionTs;
         bool hadPartial;
+        /// @dev #3241 — every holder the lender position has had. A sale moves value between
+        ///      them (the buyer pays the seller), so the lender side is booked as one party.
+        mapping(address => bool) lenderSide;
         int256[2] dLender;
         int256[2] dBorrower;
         int256[2] dDiamond;
@@ -110,6 +113,7 @@ contract LoanLedgerHandler is Test {
     uint256 public bookedActions;
     uint256 public precloseLanded;
     uint256 public liquidationLanded;
+    uint256 public saleLanded;
 
     constructor(InvariantBase _base) {
         base = _base;
@@ -220,6 +224,25 @@ contract LoanLedgerHandler is Test {
         inner.triggerLiquidation(loanIdx);
         _book(loanId, before, "triggerLiquidation");
         if (_loan(loanId).status != LibVaipakam.LoanStatus.Active) liquidationLanded++;
+    }
+
+    /// @notice #3241: the lender sells the position into a standing lender offer. The buyer
+    ///         joins the loan's lender side, so the price it pays the seller nets out inside it;
+    ///         what the side as a whole receives stays bounded by what entered the loan.
+    function sellLoan(uint256 loanIdx, uint256 offerIdx) external {
+        (bool ok, uint256 loanId) = _pickLoan(loanIdx);
+        if (!ok) return;
+        address lenderBefore = _loan(loanId).lender;
+        Snap memory before = _snap();
+        inner.sellLoan(loanIdx, offerIdx);
+        address lenderAfter = _loan(loanId).lender;
+        if (lenderAfter == lenderBefore) {
+            _requireNoMovement(before, "sellLoan (no sale)");
+            return;
+        }
+        books[loanId].lenderSide[lenderAfter] = true;
+        _book(loanId, before, "sellLoan");
+        saleLanded++;
     }
 
     function claimAsLender(uint256 loanIdx) external {
@@ -416,7 +439,7 @@ contract LoanLedgerHandler is Test {
         for (uint256 a = 0; a < 2; a++) {
             for (uint256 i = 0; i < 6; i++) {
                 int256 d = _delta(s.actor[i][a], before.actor[i][a]);
-                if (actors[i] == b.lender) {
+                if (actors[i] == b.lender || b.lenderSide[actors[i]]) {
                     b.dLender[a] += d;
                 } else if (actors[i] == b.borrower) {
                     b.dBorrower[a] += d;

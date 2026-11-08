@@ -19,6 +19,7 @@ import {PrecloseFacet} from "../../src/facets/PrecloseFacet.sol";
 import {ERC20Mock} from "../mocks/ERC20Mock.sol";
 import {defaultQuote, liquidationQuote} from "../helpers/ForcedSaleQuote.sol";
 import {RiskFacet} from "../../src/facets/RiskFacet.sol";
+import {EarlyWithdrawalDirectFacet} from "../../src/facets/EarlyWithdrawalDirectFacet.sol";
 
 /**
  * @title Handler
@@ -61,6 +62,8 @@ contract Handler is Test {
     ///      loan at any time (its trigger is the health factor, not the
     ///      clock), so the time-default suite skips these.
     mapping(uint256 => bool) public ghostLiquidated;
+    /// @dev #3241 — loans whose lender position was sold at least once.
+    mapping(uint256 => bool) public ghostSold;
 
     // Call-count telemetry surfaced to invariants for sanity / coverage.
     mapping(bytes32 => uint256) public callCount;
@@ -301,6 +304,26 @@ contract Handler is Test {
 
         vm.prank(L.borrower);
         try PrecloseFacet(diamond).precloseDirect(loanId) {} catch {}
+    }
+
+    /// @notice The lender of an active loan sells the position into a standing
+    ///         lender offer (#3241, the direct early-withdrawal route). The
+    ///         buyer becomes the lender; the loan itself carries on.
+    function sellLoan(uint256 loanIdx, uint256 offerIdx) external {
+        callCount["sellLoan"]++;
+        if (loanIds.length == 0 || lenderOfferIds.length == 0) return;
+        uint256 loanId = loanIds[bound(loanIdx, 0, loanIds.length - 1)];
+        uint256 oIdx = bound(offerIdx, 0, lenderOfferIds.length - 1);
+        uint256 offerId = lenderOfferIds[oIdx];
+
+        LibVaipakam.Loan memory L = _getLoan(loanId);
+        if (L.status != LibVaipakam.LoanStatus.Active) return;
+
+        vm.prank(L.lender);
+        try EarlyWithdrawalDirectFacet(diamond).sellLoanViaBuyOffer(loanId, offerId) {
+            ghostSold[loanId] = true;
+            _popOfferAt(lenderOfferIds, oIdx);
+        } catch {}
     }
 
     /// @notice Borrower tops up collateral on an active loan.

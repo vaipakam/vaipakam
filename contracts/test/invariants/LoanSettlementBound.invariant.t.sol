@@ -128,6 +128,7 @@ contract LoanSettlementBoundInvariant is Test {
         console.log("exact-interest checks", ledger.interestChecks());
         console.log("preclosed loans", ledger.precloseLanded());
         console.log("liquidated loans", ledger.liquidationLanded());
+        console.log("sold loans", ledger.saleLanded());
     }
 
     // ── Deterministic proofs that the checks are live ──────────────────
@@ -203,6 +204,24 @@ contract LoanSettlementBoundInvariant is Test {
         ledger.claimAsBorrower(0);
         (int256 dLw2,,,) = ledger.loanDeltas(loanId, WETH);
         assertGt(dLw2, dLw, "lender received no collateral from the liquidation");
+
+        invariant_PerActionChecksHold();
+        invariant_NoLoanPaysOutMoreThanEnteredIt();
+    }
+
+    /// @notice #3241: a sold loan. The buyer pays the seller and becomes the lender; the loan is
+    ///         then repaid to the buyer, and the lender side as a whole stays within the bounds.
+    function test_LedgerBooksASoldLoan() public {
+        ledger.createBorrowerOffer(1, 1_000 ether, 30, 1_000, 10 ether);
+        ledger.acceptBorrowerOffer(1, 0);
+        ledger.createLenderOffer(2, 1_000 ether, 30, 1_000, 10 ether);
+        ledger.warp(3 days);
+        ledger.sellLoan(0, 0);
+        assertEq(ledger.saleLanded(), 1, "sale did not land");
+        ledger.warp(3 days);
+        ledger.repay(0);
+        ledger.claimAsLender(0);
+        ledger.claimAsBorrower(0);
 
         invariant_PerActionChecksHold();
         invariant_NoLoanPaysOutMoreThanEnteredIt();
