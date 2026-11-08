@@ -112,6 +112,7 @@ import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {NumeraireConfigFacet} from "../src/facets/NumeraireConfigFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {OfferBookFacet} from "../src/facets/OfferBookFacet.sol";
+import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 
 contract HelperTest {
 
@@ -1515,6 +1516,14 @@ contract HelperTest {
         selectors[14] = VaultDepositoryFacet.getDepositoryHolding.selector;
         selectors[15] = VaultDepositoryFacet.getDepositoryAssets.selector;
         selectors[16] = VaultDepositoryFacet.getVaultOwner.selector;
+    }
+
+    /// @dev Selectors for `VaultOutflowFacet` (#3205 part 2).
+    function getVaultOutflowFacetSelectors() public pure returns (bytes4[] memory selectors) {
+        selectors = new bytes4[](3);
+        selectors[0] = VaultOutflowFacet.vaultOutflow.selector;
+        selectors[1] = VaultOutflowFacet.vaultGrant.selector;
+        selectors[2] = VaultOutflowFacet.vaultCloseGrant.selector;
     }
 
     /// @dev Selectors for `OfferBookFacet` (#3242).

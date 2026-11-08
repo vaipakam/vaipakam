@@ -299,6 +299,7 @@ FACETS=(
   "VaultDepositoryFacet"
   # The offer book's entry step and bounds (#3242).
   "OfferBookFacet"
+  "VaultOutflowFacet"
   "SwapToRepayFacet"
   "SwapToRepayPartialFacet"
   "SwapToRepayIntentFacet"

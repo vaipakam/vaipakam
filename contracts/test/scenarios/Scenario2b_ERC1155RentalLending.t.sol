@@ -150,7 +150,7 @@ contract Scenario2b_ERC1155RentalLending is Test {
         addCollateralFacet = AddCollateralFacet(ArtifactDeploy.deploy(type(AddCollateralFacet).name));
         accessControlFacet = AccessControlFacet(ArtifactDeploy.deploy(type(AccessControlFacet).name));
         helperTest = new HelperTest();
-        vaultImpl = new VaipakamVaultImplementation();
+        vaultImpl = new VaipakamVaultImplementation(address(0), address(0));
 
         IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](25);
         cuts[0] = IDiamondCut.FacetCut({facetAddress: address(offerCreateFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCreateFacetSelectors()});

@@ -874,7 +874,7 @@ contract VaultFactoryFacetTest is Test {
     ///      construction, so nobody can become its owner by initializing it,
     ///      whatever path deployed it.
     function testVaultImplementationCannotBeInitializedDirectly() public {
-        VaipakamVaultImplementation impl = new VaipakamVaultImplementation();
+        VaipakamVaultImplementation impl = new VaipakamVaultImplementation(address(0), address(0));
         vm.prank(user2);
         vm.expectRevert(Initializable.InvalidInitialization.selector);
         impl.initialize(user2, address(impl));
@@ -1075,7 +1075,7 @@ contract VaultFactoryFacetTest is Test {
     ///      Since _authorizeUpgrade is internal via onlyOwner, we test via upgradeToAndCall.
     function testVaultImplUpgradeRevertsNonOwner() public {
         address vault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(user1);
-        VaipakamVaultImplementation newImpl = new VaipakamVaultImplementation();
+        VaipakamVaultImplementation newImpl = new VaipakamVaultImplementation(address(0), address(0));
 
         vm.prank(user2);
         vm.expectRevert();

@@ -21,13 +21,31 @@ import {IERC4907} from "./interfaces/IERC4907.sol";
 import {VaultFactoryFacet} from "./facets/VaultFactoryFacet.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import {IListingExecutorValidator} from "./seaport/IListingExecutorValidator.sol";
+import {VaultOutflowTypes} from "./vault/VaultOutflowTypes.sol";
+import {IProtocolRegistryReader} from "./interfaces/IProtocolRegistryReader.sol";
+import {RegistryKeys} from "./governance/RegistryKeys.sol";
+
+/// @dev The one PositionNFT read a vault makes: who holds a position now.
+interface IPositionHolderView {
+    function holderOf(uint256 tokenId) external view returns (address);
+}
+
+/// @dev The one read a vault makes of another vault: its recorded owner.
+interface IVaultOwnerView {
+    function vaultOwner() external view returns (address);
+}
 
 /**
  * @title VaipakamVaultImplementation
  * @author Vaipakam Developer Team
- * @notice This is the upgradable implementation for per-user vault contracts in the Vaipakam platform.
- * @dev This contract uses UUPS for upgradeability and Ownable for access control (owned by the Diamond).
- *      It handles ERC20 deposits/withdrawals and NFT (ERC721/1155) deposits/withdrawals.
+ * @notice The code every per-user vault runs, resolved through the VaultBeacon (#3204).
+ * @dev Each vault is a `BeaconProxy`; the code it runs changes only through the
+ *      beacon's timelocked registration and the owner's own pin, never through
+ *      an upgrade entry on the vault. Ownable (owned by the Diamond) gates the
+ *      deposit entry.
+ *      It handles ERC20 deposits and NFT (ERC721/1155) deposits. Every movement
+ *      OUT passes {transferOut} or {grantAllowance}, which check the
+ *      destination themselves (#3205 part 2, `VaultOutflowPolicyDesign.md` §3).
  *      Supports ERC-4907 for rentable NFTs: setUser, userOf, userExpires (calls on external NFT contracts).
  *      Implements IERC721Receiver and IERC1155Receiver for safe transfers.
  *      For ERC721 rentals: Vault calls setUser without necessarily holding the NFT (assumes operator approval).
@@ -51,6 +69,14 @@ contract VaipakamVaultImplementation is
     ///      the Diamond's word about who owns it. Replacing it on a protected
     ///      primary replacement arrives with #3205.
     address private ownerWallet;
+
+    /// @notice The PositionNFT core (#3205): who holds each position. A holder
+    ///         payout is checked against it, never against the Diamond's word.
+    address public immutable POSITION_NFT;
+    /// @notice The Timelock-owned protocol registry: the treasury, backstop,
+    ///         swap adapters and marketplace conduits a vault may pay or
+    ///         approve. Zero leaves every registry class closed.
+    address public immutable REGISTRY;
 
     /// @dev Vault-side rental wrapper state. Authoritative for this platform:
     ///      external integrators SHOULD query the vault (via the factory
@@ -169,10 +195,15 @@ contract VaipakamVaultImplementation is
      *      same transaction; `upgradeVaultImplementation` checks only that
      *      the new implementation has code, so a template deployed without
      *      that step was open to whoever called first.
+     *      #3205 part 2 — `positionNft` and `registry` are immutables of
+     *      the CODE, so every vault running this version reads the same two
+     *      contracts, and no Diamond write can redirect them.
      * @custom:oz-upgrades-unsafe-allow constructor
      */
-    constructor() {
+    constructor(address positionNft, address registry) {
         _disableInitializers();
+        POSITION_NFT = positionNft;
+        REGISTRY = registry;
     }
 
     /**
@@ -504,6 +535,196 @@ contract VaipakamVaultImplementation is
     function approveERC20(address token, address spender, uint256 amount) external onlyDiamond {
         IERC20(token).forceApprove(spender, amount);
         emit ERC20ApprovalSet(token, spender, amount);
+    }
+
+    // ─── #3205 part 2 — the one door out ───────────────────────────────
+
+    /// @notice A movement out of this vault, as the vault checked and made it.
+    event VaultTransferOut(
+        VaultOutflowTypes.OutflowClass indexed class_,
+        address indexed asset,
+        address indexed to,
+        uint256 tokenId,
+        uint256 amount,
+        uint256 ref
+    );
+    /// @notice A just-in-time allowance opened.
+    event VaultGrantOpened(address indexed asset, address indexed spender, uint256 tokenId, uint256 amount, uint256 ref);
+    /// @notice A just-in-time allowance closed; `consumed` is what the spender
+    ///         took (ERC-20 units, or 1 for an ERC-721 that left).
+    event VaultGrantClosed(address indexed asset, address indexed spender, uint256 tokenId, uint256 consumed, uint256 ref);
+
+    /// @dev The destination is not one `class_` may reach.
+    error OutflowDestinationRefused(VaultOutflowTypes.OutflowClass class_, address to);
+    /// @dev A grant names a spender outside its registry set, or an asset kind
+    ///      the vault never grants (ERC-1155).
+    error GrantRefused(VaultOutflowTypes.GrantClass class_, address spender);
+    /// @dev A just-in-time allowance is open: nothing else leaves until it closes.
+    error GrantOpen(uint256 ref);
+    error ZeroOutflow();
+
+    /// @dev The one open just-in-time allowance (§3.5 rule 2). `spender` 0 =
+    ///      none. While it is open the vault refuses every other outflow and
+    ///      grant, so an allowance can never be combined with a second door.
+    struct OpenGrant {
+        VaultOutflowTypes.AssetKind kind;
+        address asset;
+        uint256 tokenId;
+        uint256 amount;
+        address spender;
+        uint256 ref;
+    }
+    OpenGrant private _openGrant;
+
+    /**
+     * @notice Move one asset out of this vault (#3205 part 2, §3.1). The ONLY
+     *         way value leaves a vault at the Diamond's call.
+     * @dev    Diamond-gated, and then checked here on the vault's own
+     *         knowledge (layer 2, §3.3): the Diamond's policy host has
+     *         already checked intent against loan state (layer 1). Stage A
+     *         checks the destination; Stage B (#3379) adds the owner-signed
+     *         lien bound on the amount. Refused while a grant is open.
+     */
+    function transferOut(VaultOutflowTypes.Outflow calldata o) external onlyDiamond {
+        if (_openGrant.spender != address(0)) revert GrantOpen(_openGrant.ref);
+        if (o.amount == 0 || o.to == address(0)) revert ZeroOutflow();
+        if (!_destinationAllowed(o)) revert OutflowDestinationRefused(o.class_, o.to);
+        if (o.kind == VaultOutflowTypes.AssetKind.ERC20) {
+            IERC20(o.asset).safeTransfer(o.to, o.amount);
+        } else if (o.kind == VaultOutflowTypes.AssetKind.ERC721) {
+            IERC721(o.asset).safeTransferFrom(address(this), o.to, o.tokenId);
+        } else {
+            IERC1155(o.asset).safeTransferFrom(address(this), o.to, o.tokenId, o.amount, "");
+        }
+        emit VaultTransferOut(o.class_, o.asset, o.to, o.tokenId, o.amount, o.ref);
+    }
+
+    /**
+     * @notice Open a just-in-time allowance for the transaction that uses it
+     *         (§3.5). One at a time; the Diamond closes it in the same
+     *         transaction ({closeGrant}), and anyone may close a leftover one.
+     * @dev    The spender must belong to the registry set its class names.
+     *         ERC-20 and ERC-721 only: the vault never grants an operator-wide
+     *         approval (rule 3); an ERC-1155 listing goes through an escrow.
+     */
+    function grantAllowance(VaultOutflowTypes.Grant calldata g) external onlyDiamond {
+        if (_openGrant.spender != address(0)) revert GrantOpen(_openGrant.ref);
+        bytes32 set = g.class_ == VaultOutflowTypes.GrantClass.Conduit
+            ? RegistryKeys.CONDUITS
+            : RegistryKeys.SWAP_ADAPTERS;
+        if (
+            g.spender == address(0) || g.kind == VaultOutflowTypes.AssetKind.ERC1155 || !_inRegistrySet(set, g.spender)
+        ) revert GrantRefused(g.class_, g.spender);
+        _openGrant = OpenGrant({kind: g.kind, asset: g.asset, tokenId: g.tokenId, amount: g.amount, spender: g.spender, ref: g.ref});
+        if (g.kind == VaultOutflowTypes.AssetKind.ERC20) {
+            IERC20(g.asset).forceApprove(g.spender, g.amount);
+        } else {
+            IERC721(g.asset).approve(g.spender, g.tokenId);
+        }
+        emit VaultGrantOpened(g.asset, g.spender, g.tokenId, g.amount, g.ref);
+    }
+
+    /**
+     * @notice Close the open allowance, if any, and report what the spender
+     *         took. Anyone may call it: it can only reduce what the vault
+     *         exposes (§3.5 rule 2).
+     * @dev    Consumption is measured from the approval itself, never from the
+     *         vault's balance, so a donation in the meantime cannot mask a
+     *         spend. ERC-721: if the vault no longer owns the token the token
+     *         contract already cleared the approval, so nothing is called (an
+     *         `approve` would revert and roll back a good fill).
+     * @return consumed ERC-20 units taken, or 1 for an ERC-721 that left; 0
+     *         when nothing was open.
+     */
+    function closeGrant() external returns (uint256 consumed) {
+        OpenGrant memory g = _openGrant;
+        if (g.spender == address(0)) return 0;
+        delete _openGrant;
+        if (g.kind == VaultOutflowTypes.AssetKind.ERC20) {
+            uint256 left = IERC20(g.asset).allowance(address(this), g.spender);
+            consumed = left >= g.amount ? 0 : g.amount - left;
+            if (left != 0) IERC20(g.asset).forceApprove(g.spender, 0);
+        } else if (IERC721(g.asset).ownerOf(g.tokenId) == address(this)) {
+            IERC721(g.asset).approve(address(0), g.tokenId);
+        } else {
+            consumed = 1;
+        }
+        emit VaultGrantClosed(g.asset, g.spender, g.tokenId, consumed, g.ref);
+    }
+
+    /// @notice The open allowance, if any (`spender` 0 = none).
+    function openGrant()
+        external
+        view
+        returns (address asset, address spender, uint256 tokenId, uint256 amount, uint256 ref)
+    {
+        OpenGrant storage g = _openGrant;
+        return (g.asset, g.spender, g.tokenId, g.amount, g.ref);
+    }
+
+    /// @dev Layer 2 (§3.3): whether `o.to` is a destination `o.class_` may
+    ///      reach, on what this vault can establish without the Diamond.
+    function _destinationAllowed(VaultOutflowTypes.Outflow calldata o) private view returns (bool) {
+        VaultOutflowTypes.OutflowClass c = o.class_;
+        if (c == VaultOutflowTypes.OutflowClass.Owner) return o.to == ownerWallet;
+        if (
+            c == VaultOutflowTypes.OutflowClass.PositionHolder || c == VaultOutflowTypes.OutflowClass.Counterparty
+                || c == VaultOutflowTypes.OutflowClass.MatchedCounterparty
+        ) return _isHolderVault(o.to, o.positionToken);
+        if (c == VaultOutflowTypes.OutflowClass.Treasury) return o.to == _registryPointer(RegistryKeys.TREASURY);
+        if (c == VaultOutflowTypes.OutflowClass.Backstop) return o.to == _registryPointer(RegistryKeys.BACKSTOP);
+        if (c == VaultOutflowTypes.OutflowClass.SwapAdapter) return _inRegistrySet(RegistryKeys.SWAP_ADAPTERS, o.to);
+        if (c == VaultOutflowTypes.OutflowClass.DiamondTransient) return o.to == diamond;
+        if (c == VaultOutflowTypes.OutflowClass.ClaimCustody) return _isGenuineVault(o.to);
+        // Stage A residuals, checked by the Diamond only until Stage B
+        // (#3379): an allowlisted address (the allowlist moves into the
+        // vault), the incentive and liquidation-buyer actors (bounded by the
+        // lien's budgets), a recorded seller (the signed sale terms), and the
+        // listing escrow (created by this vault, with the escrow work). None
+        // may name this vault or the Diamond.
+        return o.to != address(this) && o.to != diamond;
+    }
+
+    /// @dev Whether `to` is the vault of whoever holds `positionToken` now:
+    ///      a genuine vault (the same BeaconProxy code as this one, §3.4) whose
+    ///      own owner record is that holder, read from the PositionNFT core.
+    ///      This vault itself qualifies when its own owner is the holder (two
+    ///      positions of one holder).
+    function _isHolderVault(address to, uint256 positionToken) private view returns (bool) {
+        if (POSITION_NFT == address(0)) return false;
+        address holder = IPositionHolderView(POSITION_NFT).holderOf(positionToken);
+        if (holder == address(0)) return false;
+        if (to == address(this)) return ownerWallet == holder;
+        if (!_isGenuineVault(to)) return false;
+        return IVaultOwnerView(to).vaultOwner() == holder;
+    }
+
+    /// @dev Whether `to` runs the same BeaconProxy code as this vault (§3.4):
+    ///      every genuine vault has one code hash, set by the immutable beacon.
+    function _isGenuineVault(address to) private view returns (bool) {
+        return to == address(this) || (to.code.length != 0 && to.codehash == address(this).codehash);
+    }
+
+    /// @dev The registry's pointer under `key`; 0 (no match possible) when the
+    ///      registry is unset or the read fails, so the class fails closed.
+    function _registryPointer(bytes32 key) private view returns (address) {
+        if (REGISTRY == address(0)) return address(0);
+        try IProtocolRegistryReader(REGISTRY).requirePointer(key) returns (address a) {
+            return a;
+        } catch {
+            return address(0);
+        }
+    }
+
+    /// @dev Whether `who` is in the registry set `setKey`; false when the
+    ///      registry is unset or the read fails.
+    function _inRegistrySet(bytes32 setKey, address who) private view returns (bool) {
+        if (REGISTRY == address(0)) return false;
+        try IProtocolRegistryReader(REGISTRY).isMember(setKey, who) returns (bool m) {
+            return m;
+        } catch {
+            return false;
+        }
     }
 
     /**
@@ -847,5 +1068,5 @@ contract VaipakamVaultImplementation is
     ///      for ~50 uint256-sized fields (or proportionally fewer
     ///      mappings / arrays / larger structs); sized conservatively.
     // forge-lint: disable-next-line(mixed-case-variable)
-    uint256[49] private __gap;
+    uint256[44] private __gap;
 }

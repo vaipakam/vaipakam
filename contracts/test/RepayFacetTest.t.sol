@@ -158,7 +158,7 @@ contract RepayFacetTest is Test {
         testMutatorFacet = new TestMutatorFacet();
 
         // Deploy vault impl
-        vaultImpl = new VaipakamVaultImplementation();
+        vaultImpl = new VaipakamVaultImplementation(address(0), address(0));
 
         // Cut facets into diamond
         IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](24);

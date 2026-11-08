@@ -226,6 +226,8 @@ export interface DeploymentFacets {
   vaultDepositoryFacet?: HexAddress;
   /** #3242 — the offer book's entry step and bounds, split off offerCreateFacet. */
   offerBookFacet?: HexAddress;
+  /** #3205 part 2 — the one vault outflow policy host. */
+  vaultOutflowFacet?: HexAddress;
   signedOfferFacet?: HexAddress;
   swapToRepayFacet?: HexAddress;
   /** #2416 — the partial swap-to-repay route, split off swapToRepayFacet. */

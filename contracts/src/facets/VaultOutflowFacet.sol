@@ -1,0 +1,349 @@
+// SPDX-License-Identifier: BUSL-1.1
+pragma solidity ^0.8.29;
+
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
+import {IERC1155} from "@openzeppelin/contracts/token/ERC1155/IERC1155.sol";
+import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
+import {LibDelivery} from "../libraries/LibDelivery.sol";
+import {LibProtectedAccount} from "../libraries/LibProtectedAccount.sol";
+import {LibDepositoryLedger} from "../libraries/LibDepositoryLedger.sol";
+import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
+import {LibFacet} from "../libraries/LibFacet.sol";
+import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
+import {VaipakamVaultImplementation} from "../VaipakamVaultImplementation.sol";
+import {VaultOutflowTypes} from "../vault/VaultOutflowTypes.sol";
+
+/// @dev The protected-mode payout gate's host (`VaultPayoutFacet`).
+interface IVaultOutflowPayoutGate {
+    function applyPayoutGate(
+        address user,
+        uint8 kind,
+        address asset,
+        uint256 tokenId,
+        uint256 amount,
+        address recipient
+    ) external returns (bool held);
+}
+
+/**
+ * @title  VaultOutflowFacet
+ * @author Vaipakam Developer Team
+ * @notice THE one Diamond function every movement out of a user vault passes
+ *         (#3205 part 2, `docs/DesignsAndPlans/VaultOutflowPolicyDesign.md`
+ *         §3.2). It checks the destination against loan state for its class
+ *         (layer 1), applies the lien guard and protected mode, calls the
+ *         vault's one door ({VaipakamVaultImplementation.transferOut}, which
+ *         checks again on its own knowledge: layer 2), measures what arrived,
+ *         keeps the tracked ledgers, and emits one {VaultOutflow} per movement.
+ *
+ * @dev    A facet behind a self-call, not an inlined library (decided default,
+ *         2026-11-08): RiskFacet, PrecloseFacet, OfferMatchFacet,
+ *         ForcedSaleFacet, AutoLifecycleFacet and RefinanceFacet each had under
+ *         1.2 KB of EIP-170 headroom, and every call site already reached the
+ *         old withdraw entries through a self-call. Callers reach it only
+ *         through `LibVaultOutflow`'s typed helpers, which take only the
+ *         arguments their class allows. `onlyDiamondInternal`.
+ *
+ *         Stage A (decided default, 2026-11-08): the owner-signed lien bound
+ *         on the AMOUNT, the class budgets, the payee-receipt release and the
+ *         seller-claim check arrive with Stage B (#3379), before any deploy.
+ */
+contract VaultOutflowFacet is IVaipakamErrors {
+    /**
+     * @notice One movement out of a vault: whose vault, what, to whom, why.
+     * @param owner     The vault's owner.
+     * @param vault     The vault it left.
+     * @param asset     The token.
+     * @param tokenId   The NFT id (0 for ERC-20).
+     * @param amount    What the vault sent.
+     * @param delivered What `to` received (ERC-20, measured; NFT = `amount`).
+     * @param to        Where it went.
+     * @param class_    How `to` was established.
+     * @param reason    The business reason (`OutflowReason`).
+     * @param ref       The loan or offer it belongs to (0 for owner classes).
+     * @custom:event-category state-change/vault-mutation
+     */
+    event VaultOutflow(
+        address indexed owner,
+        address indexed vault,
+        address indexed asset,
+        uint256 tokenId,
+        uint256 amount,
+        uint256 delivered,
+        address to,
+        VaultOutflowTypes.OutflowClass class_,
+        uint8 reason,
+        uint256 ref
+    );
+
+    /// @notice A just-in-time allowance closed, with what its spender took.
+    /// @custom:event-category state-change/vault-mutation
+    event VaultGrantSettled(
+        address indexed owner,
+        address indexed vault,
+        address indexed spender,
+        address asset,
+        uint256 tokenId,
+        uint256 consumed,
+        uint256 ref
+    );
+
+    /// @notice RL-2 — a vault's tracked VPFI fell (byte-identical to
+    ///         `VaultFactoryFacet.VaultVpfiDebited`, so its topic is unchanged).
+    /// @custom:event-category state-change/vault-mutation
+    event VaultVpfiDebited(address indexed user, uint256 amount, address recipient);
+
+    error OnlyDiamondInternal();
+    /// @dev Layer 1: the destination is not one the class may reach.
+    error OutflowRecipientInvalid(VaultOutflowTypes.OutflowClass class_, address to);
+    /// @dev A holder class names a position token that does not belong to `ref`.
+    error OutflowPositionMismatch(uint256 ref, uint256 positionToken);
+    /// @dev The vault call failed without a reason of its own.
+    error VaultOutflowFailed();
+    /// @dev `user` has no vault (a grant or its close needs an existing one).
+    error NoVault();
+    /// @dev A grant of nothing.
+    error GrantInvalid();
+    /// @dev The withdrawal would dip into a lien (same as the retired
+    ///      `VaultFactoryFacet.WithdrawWouldUnderflowLien`).
+    error WithdrawWouldUnderflowLien(address user, address asset, uint256 tokenId, uint256 amount, uint256 free);
+
+    modifier onlyDiamondInternal() {
+        if (msg.sender != address(this)) revert OnlyDiamondInternal();
+        _;
+    }
+
+    /**
+     * @notice Move one asset out of `user`'s vault under the policy.
+     * @dev    For PositionHolder, Counterparty and MatchedCounterparty the
+     *         caller's `o.to` is ignored: the payee is the vault of whoever
+     *         holds `o.positionToken` now, resolved (and created if absent)
+     *         here. For Treasury, Backstop and DiamondTransient it is ignored
+     *         too: the payee comes from configuration. Returns what the
+     *         recipient received (ERC-20, never more than `o.amount`), or
+     *         `o.amount` when protected mode held the payout instead of paying
+     *         it.
+     */
+    function vaultOutflow(address user, VaultOutflowTypes.Outflow memory o)
+        external
+        onlyDiamondInternal
+        returns (uint256 delivered)
+    {
+        address proxy = LibFacet.getOrCreateVault(user);
+        address payeeOwner = _resolveRecipient(user, o);
+        _assertFree(user, proxy, o);
+
+        // Protected account mode: a payout to the owner's own wallet (or its
+        // controller) is queued, or kept in a locked account's vault. Nothing
+        // moves and the tracked balance is unchanged until a release pays it
+        // through this same function.
+        if (
+            LibVaipakam.storageSlot().protectedAccount[user].enabled
+                && IVaultOutflowPayoutGate(address(this)).applyPayoutGate(
+                    user, _assetType(o.kind), o.asset, o.tokenId, o.amount, o.to
+                )
+        ) return o.amount;
+
+        // A payment to a protected account's WALLET from anyone else's vault
+        // is credited to that account's vault, so it leaves only through its
+        // delay. The holder classes pay a vault already.
+        address creditTo;
+        if (_paysWallet(o.class_)) {
+            creditTo = _protectedRecipientVault(user, o.to);
+            if (creditTo != address(0)) {
+                payeeOwner = o.to;
+                o.to = creditTo;
+            }
+        }
+
+        delivered = _transfer(proxy, o);
+        LibVaipakam.recordVaultWithdraw(user, o.asset, o.tokenId, o.amount);
+
+        // A payee VAULT is credited in the tracked ledger and, as free money
+        // for its owner, in the depository ledger: a holder payout and a
+        // protected wallet's redirected payment both leave only through that
+        // owner's own withdrawal. Claim custody is booked by the settlement
+        // that parked it (its claim, not its owner, decides where it goes).
+        if (creditTo != address(0)) {
+            LibProtectedAccount.creditPayment(payeeOwner, o.asset, o.tokenId, o.amount, delivered);
+        } else if (payeeOwner != address(0)) {
+            LibVaipakam.recordVaultDeposit(payeeOwner, o.asset, o.tokenId, delivered);
+            LibDepositoryLedger.credit(payeeOwner, o.asset, o.tokenId, delivered);
+        }
+
+        if (o.kind == VaultOutflowTypes.AssetKind.ERC20 && o.asset == LibVaipakam.storageSlot().vpfiToken) {
+            emit VaultVpfiDebited(user, o.amount, o.to);
+        }
+        emit VaultOutflow(user, proxy, o.asset, o.tokenId, o.amount, delivered, o.to, o.class_, o.reason, o.ref);
+    }
+
+    /**
+     * @notice Open a just-in-time allowance on `user`'s vault for this
+     *         transaction (§3.5). The vault checks the spender's registry set.
+     */
+    function vaultGrant(address user, VaultOutflowTypes.Grant calldata g) external onlyDiamondInternal {
+        address proxy = _existingVault(user);
+        if (g.amount == 0 && g.kind == VaultOutflowTypes.AssetKind.ERC20) revert GrantInvalid();
+        _callVault(proxy, abi.encodeCall(VaipakamVaultImplementation.grantAllowance, (g)));
+    }
+
+    /**
+     * @notice Close `user`'s vault's open allowance and book what its spender
+     *         took: the tracked ledger falls by it. Returns it (0 when none
+     *         was open).
+     */
+    function vaultCloseGrant(address user) external onlyDiamondInternal returns (uint256 consumed) {
+        address proxy = _existingVault(user);
+        (address asset, address spender, uint256 tokenId,, uint256 ref) = VaipakamVaultImplementation(proxy).openGrant();
+        if (spender == address(0)) return 0;
+        consumed = VaipakamVaultImplementation(proxy).closeGrant();
+        if (consumed != 0) LibVaipakam.recordVaultWithdraw(user, asset, tokenId, consumed);
+        emit VaultGrantSettled(user, proxy, spender, asset, tokenId, consumed, ref);
+    }
+
+    // ─── Layer 1 ─────────────────────────────────────────────────────────
+
+    /// @dev Check (and for derived classes, set) `o.to`. Returns the owner of
+    ///      the payee vault for the holder classes (to credit it), else 0.
+    function _resolveRecipient(address user, VaultOutflowTypes.Outflow memory o) private returns (address payeeOwner) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        VaultOutflowTypes.OutflowClass c = o.class_;
+        if (c == VaultOutflowTypes.OutflowClass.Owner) {
+            if (o.to != user) revert OutflowRecipientInvalid(c, o.to);
+        } else if (c == VaultOutflowTypes.OutflowClass.OwnerAllowlisted) {
+            if (o.to == user || !LibProtectedAccount.isEnabled(user) || !LibProtectedAccount.isAllowed(user, o.to)) {
+                revert OutflowRecipientInvalid(c, o.to);
+            }
+        } else if (
+            c == VaultOutflowTypes.OutflowClass.PositionHolder || c == VaultOutflowTypes.OutflowClass.Counterparty
+                || c == VaultOutflowTypes.OutflowClass.MatchedCounterparty
+        ) {
+            if (c != VaultOutflowTypes.OutflowClass.MatchedCounterparty) {
+                LibVaipakam.Loan storage loan = s.loans[o.ref];
+                if (o.positionToken == 0 || (o.positionToken != loan.lenderTokenId && o.positionToken != loan.borrowerTokenId))
+                {
+                    revert OutflowPositionMismatch(o.ref, o.positionToken);
+                }
+            }
+            payeeOwner = LibPositionNFT.core().holderOf(o.positionToken);
+            if (payeeOwner == address(0)) revert OutflowRecipientInvalid(c, address(0));
+            o.to = LibFacet.getOrCreateVault(payeeOwner);
+        } else if (c == VaultOutflowTypes.OutflowClass.ClaimCustody) {
+            // The STORED party of the receiving side of THAT loan, from loan
+            // state: `o.positionToken` names the side. Its vault must exist
+            // (the settlement resolves it first, under the sanctioned lock
+            // where that applies). The parked share is not credited to the
+            // depository ledger, so that party's own withdrawal cannot take
+            // it; the claim pays it on to the current holder.
+            LibVaipakam.Loan storage loan = s.loans[o.ref];
+            address stored;
+            if (o.positionToken != 0 && o.positionToken == loan.lenderTokenId) stored = loan.lender;
+            else if (o.positionToken != 0 && o.positionToken == loan.borrowerTokenId) stored = loan.borrower;
+            else revert OutflowPositionMismatch(o.ref, o.positionToken);
+            o.to = s.userVaipakamVaults[stored];
+            if (o.to == address(0)) revert OutflowRecipientInvalid(c, address(0));
+        } else if (c == VaultOutflowTypes.OutflowClass.Treasury) {
+            o.to = LibFacet.getTreasury();
+        } else if (c == VaultOutflowTypes.OutflowClass.Backstop) {
+            o.to = LibVaipakam.getBackstopVault();
+            if (o.to == address(0)) revert OutflowRecipientInvalid(c, address(0));
+        } else if (c == VaultOutflowTypes.OutflowClass.DiamondTransient) {
+            o.to = address(this);
+        } else if (c == VaultOutflowTypes.OutflowClass.SwapAdapter) {
+            if (!_isSwapAdapter(s, o.to)) revert OutflowRecipientInvalid(c, o.to);
+        } else {
+            // Incentive, LiquidationBuyer, SellerClaim, ListingEscrow: the
+            // caller names the actor; never this Diamond or a vault-less zero.
+            if (o.to == address(0) || o.to == address(this)) revert OutflowRecipientInvalid(c, o.to);
+        }
+    }
+
+    /// @dev The lien guard: the amount must be free (balance, capped by the
+    ///      tracked ledger so unsolicited dust never counts, less the active
+    ///      liens on it). Terminal paths release their lien before paying.
+    function _assertFree(address user, address proxy, VaultOutflowTypes.Outflow memory o) private view {
+        uint256 tracked = LibVaipakam.trackedHolding(user, o.asset, o.tokenId);
+        uint256 raw;
+        if (o.kind == VaultOutflowTypes.AssetKind.ERC20) {
+            raw = IERC20(o.asset).balanceOf(proxy);
+        } else if (o.kind == VaultOutflowTypes.AssetKind.ERC1155) {
+            raw = IERC1155(o.asset).balanceOf(proxy, o.tokenId);
+        } else {
+            raw = tracked;
+        }
+        uint256 free = LibEncumbrance.freeBalance(user, o.asset, o.tokenId, tracked < raw ? tracked : raw);
+        if (o.amount > free) revert WithdrawWouldUnderflowLien(user, o.asset, o.tokenId, o.amount, free);
+    }
+
+    // ─── The move ────────────────────────────────────────────────────────
+
+    /// @dev Call the vault's one door and measure the delivery. ERC-20: the
+    ///      vault may lose no more than `amount` (a token charging its sender
+    ///      would take the excess from the holder's other positions) and the
+    ///      return is what `to` received (#2440). NFT: the vault's transfer is
+    ///      exact, or the call reverts.
+    function _transfer(address proxy, VaultOutflowTypes.Outflow memory o) private returns (uint256 delivered) {
+        if (o.kind != VaultOutflowTypes.AssetKind.ERC20) {
+            _callVault(proxy, abi.encodeCall(VaipakamVaultImplementation.transferOut, (o)));
+            if (o.kind == VaultOutflowTypes.AssetKind.ERC721 && IERC721(o.asset).ownerOf(o.tokenId) != o.to) {
+                revert VaultOutflowFailed();
+            }
+            return o.amount;
+        }
+        uint256 proxyBefore = IERC20(o.asset).balanceOf(proxy);
+        uint256 toBefore = IERC20(o.asset).balanceOf(o.to);
+        _callVault(proxy, abi.encodeCall(VaipakamVaultImplementation.transferOut, (o)));
+        LibDelivery.requireNoOverDebit(o.asset, proxy, proxyBefore, o.amount);
+        delivered = LibDelivery.measured(o.asset, proxy, o.to, toBefore, o.amount);
+    }
+
+    function _callVault(address proxy, bytes memory data) private {
+        (bool ok, bytes memory ret) = proxy.call(data);
+        if (!ok) {
+            if (ret.length == 0) revert VaultOutflowFailed();
+            assembly ("memory-safe") {
+                revert(add(ret, 0x20), mload(ret))
+            }
+        }
+    }
+
+    // ─── Helpers ─────────────────────────────────────────────────────────
+
+    function _existingVault(address user) private view returns (address proxy) {
+        proxy = LibVaipakam.storageSlot().userVaipakamVaults[user];
+        if (proxy == address(0)) revert NoVault();
+    }
+
+    /// @dev The classes whose recipient is a wallet the caller names, which a
+    ///      protected payee receives into its vault instead.
+    function _paysWallet(VaultOutflowTypes.OutflowClass c) private pure returns (bool) {
+        return c == VaultOutflowTypes.OutflowClass.OwnerAllowlisted || c == VaultOutflowTypes.OutflowClass.Incentive
+            || c == VaultOutflowTypes.OutflowClass.LiquidationBuyer || c == VaultOutflowTypes.OutflowClass.SellerClaim;
+    }
+
+    /// @dev Where a payout from `user`'s vault to `recipient` must land instead
+    ///      of `recipient`'s wallet: its vault when `recipient` has protected
+    ///      mode on (and is not `user`), else 0.
+    function _protectedRecipientVault(address user, address recipient) private view returns (address) {
+        if (recipient == user) return address(0);
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (!s.protectedAccount[recipient].enabled) return address(0);
+        return s.userVaipakamVaults[recipient];
+    }
+
+    function _isSwapAdapter(LibVaipakam.Storage storage s, address who) private view returns (bool) {
+        address[] storage list = s.swapAdapters;
+        for (uint256 i; i < list.length; ++i) {
+            if (list[i] == who) return true;
+        }
+        return false;
+    }
+
+    function _assetType(VaultOutflowTypes.AssetKind k) private pure returns (uint8) {
+        if (k == VaultOutflowTypes.AssetKind.ERC20) return uint8(LibVaipakam.AssetType.ERC20);
+        if (k == VaultOutflowTypes.AssetKind.ERC721) return uint8(LibVaipakam.AssetType.ERC721);
+        return uint8(LibVaipakam.AssetType.ERC1155);
+    }
+}
