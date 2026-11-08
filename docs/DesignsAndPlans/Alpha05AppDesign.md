@@ -1088,7 +1088,9 @@ above. Each resolves here, so a route reviewer needs no private file:
   nothing to reach later paying ones (that claim also pays any held
   reward), or else a held reward
   the screen releases; the un-lent capital of each standing offer the wallet
-  owns; free VPFI in its vault; and each payroll stream paying it. A lender
+  owns; free VPFI in its vault; and each payroll stream paying it (paid
+  into a protected payee's vault, as any payment from outside its own
+  vault). A lender
   claim on a loan in fallback is named as collected on its own, since that
   claim settles the fallback first and only then decides what it pays; a
   source or a loan that could not be read is named as left out, never
@@ -1116,8 +1118,9 @@ above. Each resolves here, so a route reviewer needs no private file:
   queued payout's delay or secondary signer
   changing while the review is open is a changed review. The finish card
   reports each payout collected or
-  skipped from its own record in the logs, each NFT where its own routing
-  record (by collection and token id) or transfer put it, and each token measured where it
+  skipped from its own record in the logs, each NFT (collection and token
+  id, summed across the payouts that paid it) where its routing records or
+  transfer put it, each place with its own quantity, and each token measured where it
   landed (RB-PAYOUT-ROUTE) against what the collected payouts recorded,
   summed across them; a rewards claim that leaves more says so, and the
   rest is listed again, and when that cannot be read after the claim the

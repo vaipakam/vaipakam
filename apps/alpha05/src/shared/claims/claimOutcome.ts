@@ -140,7 +140,7 @@ export function measureLoanClaim(r: LoanClaimReview, logs: readonly Log[], diamo
 
   for (const l of lanes) {
     if (l.assetType === ASSET_ERC20) continue;
-    legs.push(...nftLegs(logs, diamond, account, l, t.nft(l), r.protection, t.copy));
+    legs.push(...nftLegs(logs, diamond, account, l, (n) => t.nft({ ...l, amount: n }), r.protection, t.copy));
   }
 
   if (loanSettled(logs, diamond, r.loanId)) legs.push({ status: 'done', label: text('loanClaim.legSettled') });
@@ -150,24 +150,24 @@ export function measureLoanClaim(r: LoanClaimReview, logs: readonly Log[], diamo
 /**
  * One NFT payout's finish-card legs: each place the routing records put THIS
  * token (matched by collection and token id), and the wallet if it arrived
- * there, done only when they account for the whole amount promised; else one
- * leg saying it did not arrive.
+ * there, each named with the quantity that went there, done only when they
+ * account for the whole amount promised; else one leg saying it did not
+ * arrive. `label` names the NFT with a quantity.
  */
 export function nftLegs(
   logs: readonly Log[],
   diamond: Hex,
   account: Hex,
   p: { asset: Hex; assetType: number; tokenId: bigint; amount: bigint },
-  label: string,
+  label: (amount: bigint) => string,
   protection: Protection | null,
   copy: Pick<CopyAccess, 'text' | 'format'>,
 ): LegOutcome[] {
   const routed = payoutOutcomes(logs, diamond, account, p.asset, p.tokenId);
   const arrived = nftArrived(logs, p.asset, p.assetType, p.tokenId, account);
   const total = routed.reduce((t, o) => t + o.amount, 0n) + arrived;
-  const walletLeg = copy.format('loanClaim.legNft', { nft: label });
-  if (total < p.amount) return [{ status: 'not-done', label: walletLeg, reason: copy.text('loanClaim.nftNotArrived') }];
-  const out: LegOutcome[] = routed.map((o) => ({ status: 'done', label: routedLeg(o, label, protection, copy) }));
-  if (arrived > 0n) out.push({ status: 'done', label: walletLeg });
+  if (total < p.amount) return [{ status: 'not-done', label: copy.format('loanClaim.legNft', { nft: label(p.amount) }), reason: copy.text('loanClaim.nftNotArrived') }];
+  const out: LegOutcome[] = routed.map((o) => ({ status: 'done', label: routedLeg(o, label(o.amount), protection, copy) }));
+  if (arrived > 0n) out.push({ status: 'done', label: copy.format('loanClaim.legNft', { nft: label(arrived) }) });
   return out;
 }

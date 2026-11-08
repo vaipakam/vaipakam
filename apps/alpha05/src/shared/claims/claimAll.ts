@@ -250,8 +250,10 @@ export function claimAllList(i: ClaimAllInputs, copy: Pick<CopyAccess, 'text'>, 
   if (i.payroll === null) gaps.push({ kind: 'payroll', why: 'unread' });
   else {
     if (!i.payroll.complete) gaps.push({ kind: 'payroll', why: 'partial' });
-    // Payroll is paid from the protocol straight to the payee.
-    for (const r of i.payroll.rows) if (r.withdrawable > 0n) legs.push(leg({ kind: 'payroll', streamId: r.streamId }, [erc20(r.asset, r.withdrawable)], 'wallet'));
+    // The protocol pays a protected payee into its vault instead
+    // (`LibDelivery.pushOut`), as any payment from outside the payee's own vault.
+    for (const r of i.payroll.rows)
+      if (r.withdrawable > 0n) legs.push(leg({ kind: 'payroll', streamId: r.streamId }, [erc20(r.asset, r.withdrawable)], payoutRoute(i.protection, i.account, ZERO)));
   }
 
   return { paused: i.paused, frozen: i.frozen, protection: i.protection, legs, gaps };
@@ -606,6 +608,12 @@ export function measureClaimAll(r: ClaimAllReview, logs: readonly Log[], diamond
     const k = lower(asset);
     expected.set(k, { asset: expected.get(k)?.asset ?? asset, amount: (expected.get(k)?.amount ?? 0n) + amount });
   };
+  const nfts = new Map<string, LegPayout>();
+  const addNft = (p: LegPayout) => {
+    const k = `${lower(p.asset)}:${p.tokenId}`;
+    const had = nfts.get(k);
+    nfts.set(k, had ? { ...had, amount: had.amount + p.amount } : { ...p, lane: null });
+  };
   for (const l of r.send) {
     const title = legTitle(l, copy, w.symbol);
     const rec = legRecord(l, logs, diamond, account);
@@ -631,11 +639,11 @@ export function measureClaimAll(r: ClaimAllReview, logs: readonly Log[], diamond
     const loanId = l.subject.loanId;
     if (l.payouts.some((p) => p.lane === 'surplus') && surplusPaid(logs, diamond, loanId) === null)
       legs.push({ status: 'not-done', label: `${title}: ${laneLabel('surplus', l.subject.side, copy)}`, reason: text('loanClaim.surplusNotPaid') });
-    for (const p of l.payouts) {
-      if (p.assetType === ASSET_ERC20) continue;
-      legs.push(...nftLegs(logs, diamond, account, p, w.nft(p), r.list.protection, copy));
-    }
+    for (const p of l.payouts) if (p.assetType !== ASSET_ERC20) addNft(p);
   }
+  // Each NFT (collection and token id) measured once, against what every
+  // collected payout of it promised, each destination with its own quantity.
+  for (const p of nfts.values()) legs.push(...nftLegs(logs, diamond, account, p, (n) => w.nft({ ...p, amount: n }), r.list.protection, copy));
   for (const { asset, amount } of expected.values()) {
     if (amount === 0n) continue;
     const outcomes = payoutOutcomes(logs, diamond, account, asset);

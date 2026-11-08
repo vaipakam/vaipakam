@@ -322,7 +322,8 @@ describe('the finish card', () => {
   it('states each destination in full when payouts land in different places', () => {
     const guard = { enabled: true, locked: false, delaySeconds: 3600, requireCosign: false };
     const l = claimAllList(inputs({ protection: guard, payroll: { rows: [{ streamId: 2n, asset: WETH, withdrawable: 6n }], complete: true } }), copy, 1);
-    expect(l.legs.map((x) => x.route)).toEqual(['queued', 'wallet']);
+    // A protected payee's payroll is paid into its vault.
+    expect(l.legs.map((x) => x.route)).toEqual(['queued', 'vault']);
     const rows = claimAllReceipt(review(l.legs, { list: l }), copy, { symbol: words.symbol, nft: words.nft }).rows.filter((x) => x.label.startsWith('claimAll.rowToFor'));
     expect(rows.map((x) => x.label)).toEqual([
       'claimAll.rowToFor{"what":"claimAll.loanLender{\\"id\\":\\"7\\"}"}',
@@ -330,7 +331,10 @@ describe('the finish card', () => {
     ]);
     expect(rows[0]!.value).toMatchObject({ kind: 'text' });
     expect(JSON.stringify(rows[0]!.value)).toContain('1 h');
-    expect(rows[1]!.value).toEqual({ kind: 'text', text: 'loanClaim.toWallet' });
+    expect(rows[1]!.value).not.toEqual({ kind: 'text', text: 'loanClaim.toWallet' });
+    expect(claimAllList(inputs({ protection: null, payroll: { rows: [{ streamId: 2n, asset: WETH, withdrawable: 6n }], complete: true } }), copy, 1).legs.at(-1)!.route).toBe(
+      'unknown',
+    );
   });
 
   it('lets a payroll stream’s accrual through the recheck, and reads a lower figure as a change', () => {
@@ -340,6 +344,34 @@ describe('the finish card', () => {
     expect(claimAllChanged(at(pay(6n)), at(pay(9n)), copy)).toBeNull();
     expect(claimAllChanged(at(pay(6n)), at(pay(5n)), copy)).toBe('claimAll.changed');
     expect(payoutLabel(pay(6n).legs[0]!, pay(6n).legs[0]!.payouts[0]!, copy)).toBe('claimAll.payrollAtLeast');
+  });
+
+  it('measures one ERC-1155 token paid by two loans once, each destination with its own quantity', () => {
+    const NFT = '0x00000000000000000000000000000000000000f2' as Hex;
+    const lane = { kind: 'rentalReturn' as const, asset: NFT, assetType: 2, tokenId: 5n };
+    const guard = { enabled: true, locked: false, delaySeconds: 3600, requireCosign: false };
+    const l = claimAllList(
+      inputs({
+        protection: guard,
+        loans: { paused: false, rows: [loanRow(7n, { lanes: [{ ...lane, amount: 5n }] }), loanRow(8n, { lanes: [{ ...lane, amount: 2n }] })], complete: true },
+      }),
+      copy,
+      1,
+    );
+    const PAYOUT = VaultPayoutFacetABI as Abi;
+    const logs = [
+      claimed(7n, 0n),
+      claimed(8n, 0n),
+      log(DIAMOND, PAYOUT, 'PayoutQueued', { account: ME, id: 1n, asset: NFT, kind: 2, tokenId: 5n, amount: 5n, recipient: ME, releaseAt: 99n }),
+      log(DIAMOND, PAYOUT, 'PaymentCreditedToVault', { account: ME, asset: NFT, tokenId: 5n, amount: 2n, received: 2n }),
+    ];
+    const w = { ...words, nft: (p: { amount: bigint }) => `${p.amount} units` };
+    const nft = measureClaimAll(review(l.legs, { list: l }), logs, DIAMOND, ME, w, copy, null)
+      .map((x) => `${x.status}:${x.label}`)
+      .filter((x) => x.includes('units'));
+    expect(nft).toHaveLength(2);
+    expect(nft[0]).toMatch(/^done:payout\.legQueued\{"what":"5 units"/);
+    expect(nft[1]).toBe('done:payout.legVault{"what":"2 units"}');
   });
 
   it('reads a selected standing offer starting to lend again as a changed review', () => {
