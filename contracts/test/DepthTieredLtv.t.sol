@@ -332,6 +332,37 @@ contract DepthTieredLtv is Test {
         assertEq(_status(false), uint256(LibVaipakam.LiquidityStatus.Illiquid));
     }
 
+    /// @dev #3371 — a genuine fast move (the current tick ~50% away from
+    ///      its 30-minute mean) still refuses a new position, but the
+    ///      close-out read of the same pool stays Liquid, so its
+    ///      liquidation or default can run. The sale's oracle floor governs
+    ///      what the moved pool can fill.
+    function test_closeOut_fastMoveDoesNotBlockLiquidation() public {
+        _mockPool(mockUniFactory, mockAsset, 3000, L_TIER3);
+        address pool = _poolAddr(mockUniFactory, mockAsset, mockWeth, 3000);
+        MockV3PoolOracle.steady(pool, int24(5_000), L_TIER3);
+        assertEq(_status(true), uint256(LibVaipakam.LiquidityStatus.Liquid));
+    }
+
+    /// @dev #3371 — a pool whose current price was pushed away from the
+    ///      feed (and from its own mean) in the block before a close-out
+    ///      fails both price guards for admission, but cannot make the
+    ///      close-out read refuse.
+    function test_closeOut_pricePushDoesNotBlockLiquidation() public {
+        _mockPool(mockUniFactory, mockAsset, 3000, L_TIER3);
+        address pool = _poolAddr(mockUniFactory, mockAsset, mockWeth, 3000);
+        // sqrtPrice 1.1 × 2^96 ⇒ price 1.21 against a 1:1 feed; tick ~1906.
+        vm.mockCall(
+            pool,
+            abi.encodeWithSignature("slot0()"),
+            abi.encode(
+                uint160((uint256(11) << 96) / 10), int24(1906), uint16(0), uint16(0), uint16(0), uint8(0), false
+            )
+        );
+        assertEq(_status(false), uint256(LibVaipakam.LiquidityStatus.Illiquid));
+        assertEq(_status(true), uint256(LibVaipakam.LiquidityStatus.Liquid));
+    }
+
     // ─── getEffectiveLiquidityTier = min(onChain, keeperTier) ───────
 
     function test_effectiveTier_defaultKeeperTierIsOne() public {
