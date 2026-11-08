@@ -134,6 +134,7 @@ import { readWatchedConfig } from './watchedConfig.mjs';
 import { readOfferGate, readRiskGateParties } from './riskGateReadiness.mjs';
 import { configChanges } from './observation.mjs';
 import { nonceBaseline, reconcileNonce } from './noWriteSettlement.mjs';
+import { positionHolderReader } from './positionHolder.mjs';
 
 // ---------------------------------------------------------------------
 // Output hygiene FIRST: the RPC URL may carry a provider key, and viem
@@ -304,6 +305,8 @@ const WATCHED_CTX = {
 
 const read = (functionName, args = [], blockNumber) =>
   pub.readContract({ address: DIAMOND, abi: DIAMOND_ABI, functionName, args, ...(blockNumber !== undefined ? { blockNumber } : {}) });
+// #3205 — holders come from the chain's position-NFT contract, not the Diamond ABI.
+const readHolder = positionHolderReader(pub, CHAIN_ID);
 /** THE governance snapshot (watchedConfig.mjs) — the only way this drive
  *  reads config or screens a participant. */
 const readConfig = (blockNumber) => readWatchedConfig(read, WATCHED_CTX, blockNumber);
@@ -905,7 +908,7 @@ try {
   LOAN_ID = oa[0].args.loanId;
   const at = acc.receipt.blockNumber;
   const loan = await read('getLoanDetails', [LOAN_ID], at);
-  const [bHolder, lHolder] = await Promise.all([read('ownerOf', [loan.borrowerTokenId], at), read('ownerOf', [loan.lenderTokenId], at)]);
+  const [bHolder, lHolder] = await Promise.all([readHolder(loan.borrowerTokenId, at), readHolder(loan.lenderTokenId, at)]);
   const due = BigInt(loan.startTime) + BigInt(loan.durationDays) * 86_400n;
   const now = await chainNow();
   const outcome = [

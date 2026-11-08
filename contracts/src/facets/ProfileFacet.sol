@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
@@ -365,11 +366,8 @@ contract ProfileFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors 
         if (keeper == address(0)) revert InvalidAddress();
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
-        IERC721 positionNft = IERC721(address(this));
-        address lenderHolder;
-        try positionNft.ownerOf(loan.lenderTokenId) returns (address h) { lenderHolder = h; } catch {}
-        address borrowerHolder;
-        try positionNft.ownerOf(loan.borrowerTokenId) returns (address h) { borrowerHolder = h; } catch {}
+        address lenderHolder = LibPositionNFT.holderOrZero(loan.lenderTokenId);
+        address borrowerHolder = LibPositionNFT.holderOrZero(loan.borrowerTokenId);
 
         if (
             (lenderHolder == address(0) || msg.sender != lenderHolder) &&

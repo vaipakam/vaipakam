@@ -130,6 +130,18 @@
       "types": "./src/saleHold.ts",
       "default": "./src/saleHold.ts"
     },
+    "./positionNft": {
+      "types": "./src/positionNft.d.mts",
+      "default": "./src/positionNft.mjs"
+    },
+    "./positionNftReads": {
+      "types": "./src/positionNftReads.ts",
+      "default": "./src/positionNftReads.ts"
+    },
+    "./protectedAccountView": {
+      "types": "./src/protectedAccountView.ts",
+      "default": "./src/protectedAccountView.ts"
+    },
     "./protocolKnobs": {
       "types": "./src/protocolKnobs.ts",
       "default": "./src/protocolKnobs.ts"

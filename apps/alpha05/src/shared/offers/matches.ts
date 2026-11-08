@@ -13,6 +13,7 @@ import { gateBlock, notTakeable, offerFit, rankFor, type AcceptRole, type GateBl
 import { readAcceptGate, readCreatorGate, readLifMatcherBps, readLinkedLoanId, readOffer, readOfferState, readPairLtvBps, readPairOfferIds, readPreview, type AcceptPreview, type OfferState } from './reads';
 import { refusalFromError } from '../eligibility/refusal';
 import { readAssetClass } from './assets';
+import type { PositionFlowReader } from './positionFlow';
 
 type Hex = `0x${string}`;
 
@@ -59,7 +60,18 @@ function message(e: unknown): string {
   return refusalFromError(e).reason;
 }
 
-export async function readMatches(client: PublicClient, diamond: Hex, lending: Hex, collateral: Hex, account: Hex | null, role: AcceptRole): Promise<Matches> {
+/** @param flows #3205 — the indexer's moved verdict per offer, when this
+ *  page has one: an offer whose loan position moved since it opened is
+ *  marked moved (it can never complete), never dropped. */
+export async function readMatches(
+  client: PublicClient,
+  diamond: Hex,
+  lending: Hex,
+  collateral: Hex,
+  account: Hex | null,
+  role: AcceptRole,
+  flows?: PositionFlowReader,
+): Promise<Matches> {
   const [{ ids, total }, matcherBps, pairLtv] = await Promise.all([
     readPairOfferIds(client, diamond, lending, collateral, MATCH_PAGE),
     account ? readLifMatcherBps(client, diamond) : Promise.resolve(null),
@@ -92,7 +104,7 @@ export async function readMatches(client: PublicClient, diamond: Hex, lending: H
           skipped['position-sale'] += 1;
           return;
         }
-        const [state, preview, gate, ltv] = await Promise.all([
+        const [state, preview, gate, ltv, flow] = await Promise.all([
           readOfferState(client, diamond, id),
           account ? readPreview(client, diamond, id, account) : Promise.resolve(null),
           // The same risk-access verdict the review reads: the preview leaves
@@ -106,8 +118,12 @@ export async function readMatches(client: PublicClient, diamond: Hex, lending: H
               (bps): Ltv => ({ kind: 'bps', bps }),
               (e): Ltv => ({ kind: 'not-worked-out', reason: message(e) }),
             ),
+          flows ? flows(id) : Promise.resolve('unknown' as const),
         ]);
-        const blocked = account ? notTakeable(state, preview, null, gate) : state === 'open' ? null : { kind: 'state' as const, state };
+        const chainBlocked = account ? notTakeable(state, preview, null, gate) : state === 'open' ? null : { kind: 'state' as const, state };
+        // An ended offer says so first; a moved one is stated before any
+        // other reason, since nothing else can make it complete.
+        const blocked = state === 'open' && flow === 'moved' ? { kind: 'moved' as const } : chainBlocked;
         rows.push({ offer, state, preview, ltv, blocked });
       } catch (e) {
         unread.push({ id, reason: message(e) });

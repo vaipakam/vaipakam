@@ -25,7 +25,7 @@ import {RiskFacet} from "./RiskFacet.sol";
 import {OracleFacet} from "./OracleFacet.sol";
 import {VPFIDiscountFacet} from "./VPFIDiscountFacet.sol";
 import {ConsolidationFacet} from "./ConsolidationFacet.sol";
-import {LibERC721} from "../libraries/LibERC721.sol";
+import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
 import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
 import {LibRefinanceNetting} from "../libraries/LibRefinanceNetting.sol";
 import {LibRefinancePayoff} from "../libraries/LibRefinancePayoff.sol";
@@ -272,7 +272,7 @@ contract RefinanceFacet is DiamondPausable, IVaipakamErrors {
         // T-092 Phase 2a (#505) — the current borrower-NFT holder is the
         // party the refinance pays and draws from, so screen them (Tier-1).
         LibVaipakam._assertNotSanctioned(
-            LibERC721.ownerOf(oldLoan.borrowerTokenId)
+            LibPositionNFT.ownerOf(oldLoan.borrowerTokenId)
         );
         if (
             route == RefinanceRoute.MatchedFill &&
@@ -297,7 +297,7 @@ contract RefinanceFacet is DiamondPausable, IVaipakamErrors {
         // The current borrower-NFT holder — the fund source and collateral
         // recipient on every route (fail-open screened in {_authorizeRefinance}).
         address currentBorrowerNftOwner =
-            LibERC721.ownerOf(oldLoan.borrowerTokenId);
+            LibPositionNFT.ownerOf(oldLoan.borrowerTokenId);
         // #998 S10 (#1006, Codex #1122-rework 186c60ff-round P1) — the fail-open
         // `_assertNotSanctioned` screens in {_authorizeRefinance} would let a
         // PREVIOUSLY-CONFIRMED-flagged borrower holder through during an oracle
@@ -876,7 +876,7 @@ contract RefinanceFacet is DiamondPausable, IVaipakamErrors {
         // holder here would have indexers attribute the VPFI debit to the
         // previous lender — precisely the transferred-position case this fix is
         // about (Codex #1953 r1 P2).
-        address settlingLender = LibERC721.ownerOf(oldLoan.lenderTokenId);
+        address settlingLender = LibPositionNFT.ownerOf(oldLoan.lenderTokenId);
         (uint256 lenderExtra, uint256 newTreasuryFee, uint256 yieldVpfiDeducted) =
             LibVPFIDiscount.resolveLenderYieldFeeFor(
                 oldLoan,

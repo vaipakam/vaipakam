@@ -5,6 +5,7 @@ import {LibVaipakam} from "./LibVaipakam.sol";
 import {LibOfferMatch} from "./LibOfferMatch.sol";
 import {LibAutoRefinanceCheck} from "./LibAutoRefinanceCheck.sol";
 import {LibFacet} from "./LibFacet.sol";
+import {VaipakamNFTFacet} from "../facets/VaipakamNFTFacet.sol";
 import {RefinanceFacet} from "../facets/RefinanceFacet.sol";
 import {LibMetricsHooks} from "./LibMetricsHooks.sol";
 import {OfferAcceptFacet} from "../facets/OfferAcceptFacet.sol";
@@ -675,6 +676,15 @@ library LibOfferMatchExecute {
                 }
             }
         }
+        // #3205 — the slice's loan took fresh position tokens on both sides,
+        // so each offer's own token belongs to the offer alone: retire it for
+        // whichever of the two offers this match made terminal.
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                VaipakamNFTFacet.retireTerminalOfferTokens.selector, lenderOfferId, borrowerOfferId
+            ),
+            NFTBurnFailed.selector
+        );
         // §3.4 — borrower-side post-match snapshot.
         // Pre-#102 (single-fill): `amountFilled` storage stays 0 even
         //   when `accepted == true`; the event reports the EFFECTIVE

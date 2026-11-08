@@ -60,6 +60,7 @@ import {
   claimVerdictGet,
   claimVerdictPut,
 } from './claimVerdictCache';
+import { readPositionHolderOn } from '../contracts/positionNft';
 
 const REFRESH_MS = 30_000;
 
@@ -273,18 +274,12 @@ export async function probeClaim(
   const tokenId = isLender ? loan.lenderTokenId : loan.borrowerTokenId;
 
   // 1. Does the wallet still hold this side's position NFT? A
-  //    sold position isn't ours to claim; a burned one (revert)
-  //    means the loan fully settled — nothing to claim either.
+  //    sold position isn't ours to claim; a burned (legacy) or retired
+  //    (#3205) one means the side was already claimed — nothing either.
   try {
-    const owner = (await publicClient.readContract({
-      address: diamond,
-      abi: DIAMOND_ABI_VIEM,
-      functionName: 'ownerOf',
-      args: [BigInt(tokenId)],
-    })) as string;
-    if (owner.toLowerCase() !== me) return NONE;
-  } catch (e) {
-    if (isRevert(e)) return NONE;
+    const owner = await readPositionHolderOn(publicClient, diamond, BigInt(tokenId));
+    if (owner === 'gone' || owner.toLowerCase() !== me) return NONE;
+  } catch {
     return UNCONFIRMED;
   }
 

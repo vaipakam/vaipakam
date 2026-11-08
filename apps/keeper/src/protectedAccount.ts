@@ -71,6 +71,8 @@ import { d1ScanCursors, type FinalBlock, type ScanCursors } from './scanCursors'
 import { boundedCall, PassReader } from './passReader';
 import { StepSender } from './stepSender';
 import { leadStageCutoffMs, runIndex } from './runWindow';
+import { LEGACY_DIAMOND_NFT_ABI, positionNftForDiamond } from './positionNft';
+import { protectedAccountFromView } from '@vaipakam/lib/protectedAccountView';
 
 /** Only the functions and events this pass names, plus every Diamond error. */
 const PICK: ReadonlySet<string> = new Set([
@@ -103,6 +105,10 @@ const pick = (abi: unknown) => (abi as Abi).filter((x) => x.type === 'error' || 
 export const ABI = dedupe([
   ...pick(VaultPayoutFacetABI),
   ...pick(VaipakamNFTFacetABI),
+  // #3205: the position-NFT queue reads and release exist only on a
+  // legacy-mode Diamond, named in the frozen fragment.
+  // TODO(#3321 positionNft-legacy-removal): drop with the legacy mode.
+  ...pick(LEGACY_DIAMOND_NFT_ABI),
   ...pick(ProtectedAccountFacetABI),
   ...pick(VaultDepositoryFacetABI),
   ...(VaipakamDiamondABI as Abi).filter((x) => x.type === 'error'),
@@ -310,6 +316,8 @@ export interface ProtectedReport {
   cancelled: bigint[];
   /** Position-transfer ids moved this run. */
   transferred: bigint[];
+  /** Why the transfer step did not run on this chain, or null (#3205). */
+  transferSkipped: string | null;
   /** Changes applied this run, as `kind:account[:other]`. */
   finalized: string[];
   /** Rows not sent this run for a reason the chain states, by reason. */
@@ -370,7 +378,9 @@ export function describeReport(r: ProtectedReport): string {
     `[keeper] protectedAccount chain=${r.chainId}`,
     `payouts-released=${r.released.map((x) => `${x.id}(delivered ${x.delivered})`).join(',') || 'none'}`,
     ...(r.cancelled.length > 0 ? [`payouts-cancelled-by-release=${r.cancelled.join(',')} (destination no longer allowed; the asset stays in the vault)`] : []),
-    `transfers-released=${r.transferred.join(',') || 'none'}`,
+    r.transferSkipped
+      ? `transfers=skipped (${r.transferSkipped})`
+      : `transfers-released=${r.transferred.join(',') || 'none'}`,
     `changes-finalized=${r.finalized.join(',') || 'none'}`,
     ...(r.locks === null
       ? []
@@ -411,6 +421,7 @@ export async function protectedOnce(chainId: number, diamond: Address, deps: Pro
     released: [],
     cancelled: [],
     transferred: [],
+    transferSkipped: null,
     finalized: [],
     waiting: new Map(),
     locks: deps.telegram?.lock === true ? [] : null,
@@ -613,7 +624,7 @@ class Step {
   /** Keep a settings answer that came back; an unread one changes nothing,
    *  so a later read this run may still fill it. */
   private learn(a: Address, got: unknown): void {
-    if (got !== undefined && !this.known(a)) this.accounts.set(a, got as ProtectedAccount);
+    if (got !== undefined && !this.known(a)) this.accounts.set(a, protectedAccountFromView(got as object) as unknown as ProtectedAccount);
   }
 
   /** The accounts' settings at the head, for those not read yet this run. */
@@ -748,6 +759,14 @@ class Step {
 
   // 1b. Position transfers.
   async releaseTransfers(): Promise<void> {
+    // #3205: a chain whose position NFTs live in the standalone PositionNFT
+    // has no queued NFT transfer to release; its holder lock's matured
+    // unlocks are not executed by this pass.
+    if (positionNftForDiamond(this.r.diamond).mode === 'standalone') {
+      this.report.transferSkipped =
+        'position NFTs live in the standalone PositionNFT: there is no queued transfer, and matured holder unlocks are not sent by this pass';
+      return;
+    }
     if (this.lockRequested === null) return;
     const page = await readLedgerRotation<bigint>({
       ledger: this.deps.ledger,
@@ -845,7 +864,7 @@ class Step {
     if (changes.length > 0) {
       const now = await this.clock('change');
       if (now === null) return;
-      const st = (await this.readWithAccounts(changeCalls(changes).map((call, i) => ({ ...call, account: changes[i].account })), 'changes')) as (ChangeState | undefined)[];
+      const st = changeStates(changes, await this.readWithAccounts(changeCalls(changes).map((call, i) => ({ ...call, account: changes[i].account })), 'changes'));
       // One `finalizeSettingChanges` per account applies every due setting;
       // what it applied is read from its receipt (`applied`), never assumed
       // from its landing (Codex #3090).
@@ -964,7 +983,7 @@ class Step {
   /** Each change's own pending record at `block`, by position; undefined
    *  where unread. */
   private async readChanges(cs: readonly Change[], block: bigint): Promise<(ChangeState | undefined)[]> {
-    return (await this.r.many(changeCalls(cs), 'changes-final', block)) as (ChangeState | undefined)[];
+    return changeStates(cs, await this.r.many(changeCalls(cs), 'changes-final', block));
   }
 
   private isEvent(log: { topics: readonly string[]; address: string }, name: string, id: bigint): boolean {
@@ -979,6 +998,17 @@ class Step {
     }
     return 0n;
   }
+}
+
+/** Each change's record answer as {@link pendingAt} reads it: a setting
+ *  change's account record goes through the shared view normaliser, so a
+ *  renamed field never reads as undefined (#3318 Codex r2). */
+function changeStates(cs: readonly Change[], got: readonly unknown[]): (ChangeState | undefined)[] {
+  return got.map((s, i) =>
+    s !== undefined && cs[i].t === 'setting'
+      ? (protectedAccountFromView(s as object) as unknown as ChangeState)
+      : (s as ChangeState | undefined),
+  );
 }
 
 /** The read of each change's own pending record. */

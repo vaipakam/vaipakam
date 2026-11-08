@@ -286,9 +286,10 @@ describe('the heal lanes run LAST in the pass (#2382 r2/r6)', () => {
   it('a new row is inserted marked for the pinned healer, its range unread (#2382 r6)', () => {
     const p = fn('async function processOfferLogs(');
     expect(p).toContain('is_stub, collateral_range_stale,');
-    // The seven binds after the two literals: created_at, expires_at,
-    // fill_mode, refinance_target_loan_id (#2528) and the three seen/updated stamps.
-    expect(p).toMatch(/\?, 0, 1, \?, \?, \?, \?, \?, \?, \?\)`/);
+    // The eight binds after the two literals: created_at, expires_at,
+    // fill_mode, refinance_target_loan_id (#2528), first_seen_block, the
+    // OfferCreated log index (#3205) and the seen/updated stamps.
+    expect(p).toMatch(/\?, 0, 1, \?, \?, \?, \?, \?, \?, \?, \?\)`/);
   });
 
   it('has the match handler mark the borrower offer rather than read it', () => {

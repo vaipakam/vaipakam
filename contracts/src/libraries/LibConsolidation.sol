@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibPositionNFT} from "./LibPositionNFT.sol";
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {LibEncumbrance} from "./LibEncumbrance.sol";
 import {LibInteractionRewards} from "./LibInteractionRewards.sol";
@@ -97,7 +98,7 @@ library LibConsolidation {
         uint256 tokenId = isLenderSide
             ? loan.lenderTokenId
             : loan.borrowerTokenId;
-        address current = IERC721(address(this)).ownerOf(tokenId);
+        address current = LibPositionNFT.ownerOf(tokenId);
         address stored = isLenderSide ? loan.lender : loan.borrower;
 
         // 3. Sanctions, driven by `ctx`, evaluated BEFORE the

@@ -45,7 +45,7 @@ async function positionLockOf(tokenId: bigint): Promise<number> {
     await pub.readContract({
       address: DIAMOND,
       abi: DIAMOND_ABI_VIEM,
-      functionName: "positionLock",
+      functionName: "positionRoute", // #3205: the open route (formerly positionLock)
       args: [tokenId],
     }),
   );

@@ -12,8 +12,9 @@ import {
   probeSaleHoldLive,
   saleHoldBlocksSettlement,
 } from './saleHold';
+import { positionNftSurface } from './positionNft.mjs';
 
-const DIAMOND = '0x00000000000000000000000000000000000000d1' as const;
+const DIAMOND = positionNftSurface({ diamond: '0x00000000000000000000000000000000000000d1' });
 
 /** A revert shaped the way viem reports one, built without viem's class so
  *  the probe's structural read is what is exercised. */

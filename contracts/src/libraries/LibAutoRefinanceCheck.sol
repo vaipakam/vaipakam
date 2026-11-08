@@ -3,7 +3,7 @@ pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {LibLoanClock} from "./LibLoanClock.sol";
-import {LibERC721} from "./LibERC721.sol";
+import {LibPositionNFT} from "./LibPositionNFT.sol";
 import {LibPeriodicInterest} from "./LibPeriodicInterest.sol";
 import {OracleFacet} from "../facets/OracleFacet.sol";
 
@@ -201,7 +201,7 @@ library LibAutoRefinanceCheck {
             ) return false;
         }
         // Creator must still be the current borrower-position-NFT holder.
-        address currentOwner = LibERC721.ownerOf(oldLoan.borrowerTokenId);
+        address currentOwner = LibPositionNFT.ownerOf(oldLoan.borrowerTokenId);
         if (offer.creator != currentOwner) return false;
         // AON single-value: amount == amountMax == target outstanding principal.
         uint256 effMax = offer.amountMax == 0 ? offer.amount : offer.amountMax;
@@ -333,7 +333,7 @@ library LibAutoRefinanceCheck {
         // (the original at init). Matches the staleness fence pattern
         // used by AutoLifecycleFacet's per-loan cap getters.
         address currentBorrowerNftOwner =
-            LibERC721.ownerOf(loan.borrowerTokenId);
+            LibPositionNFT.ownerOf(loan.borrowerTokenId);
         if (currentBorrowerNftOwner != offerCreator) {
             revert RefinanceTargetNotBorrower();
         }

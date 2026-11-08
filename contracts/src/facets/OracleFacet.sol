@@ -131,12 +131,6 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
     uint24 private constant V3_TIER_STANDARD  = 3000;
     uint24 private constant V3_TIER_HIGH      = 10000;
 
-    // Per-clone canonical fee tier for Uni-V2-fork pools (Piece B
-    // follow-up b). UniV2 and SushiV2 charge a flat 30bps; PancakeV2
-    // charges 25bps. Single fee per pool — no tier iteration like V3.
-    uint24 private constant V2_FEE_30BPS = 3000;
-    uint24 private constant V2_FEE_25BPS = 2500;
-
     /// @dev `2**96` — the fixed-point base for a Uniswap-V3-style pool's
     ///      `sqrtPriceX96`. Used in {_v3DepthLiquid} to reconstruct the
     ///      pool's virtual reserves from `(liquidity, sqrtPriceX96)`.
@@ -147,6 +141,11 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
      *         active network?" used at transaction-authorization boundaries.
      * @dev Fail-closed: oracle / registry / pool failures default to
      *      Illiquid. WETH is treated as Liquid whenever ETH/USD is fresh.
+     *      #3354: an admission read. A pool's depth is the LOWER of its
+     *      current in-range liquidity and its harmonic mean over the TWAP
+     *      window, so a top-up made around one transaction cannot make an
+     *      asset Liquid, and a pool drained since the window began reads
+     *      at what is left.
      */
     function checkLiquidity(
         address asset
@@ -175,13 +174,22 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
      *         {checkLiquidity} keeps the Illiquid reading for every case: it
      *         gates new positions, where treating a distrusted asset as
      *         illiquid is the conservative answer.
+     *
+     *         #3354 — a close-out read credits a pool with its harmonic-mean
+     *         liquidity over the TWAP window ALONE, not the lower of that and
+     *         the current figure. Liquidity withdrawn in the same block as
+     *         the close-out therefore cannot turn a sale into a refusal; the
+     *         sale's own minimum output and the in-kind fallback decide what
+     *         a genuinely thinner pool can fill. Depth that stays away for
+     *         the window lowers the mean, and the asset then reads Illiquid
+     *         as before.
      */
     function checkLiquidityOnActiveNetwork(
         address asset
     ) external view returns (LibVaipakam.LiquidityStatus status) {
         if (asset == address(0)) revert InvalidAsset();
         address distrusted;
-        (status, distrusted) = _classifyLiquidity(asset);
+        (status, distrusted) = _classifyLiquidity(asset, /*closeOut=*/ true);
         if (distrusted != address(0)) _refuseDistrusted(distrusted);
     }
 
@@ -200,7 +208,7 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
     /// @dev {_classifyLiquidity} without the distrust flag, for every
     ///      caller that reads a distrusted price as Illiquid.
     function _checkLiquidity(address asset) internal view returns (LibVaipakam.LiquidityStatus status) {
-        (status, ) = _classifyLiquidity(asset);
+        (status, ) = _classifyLiquidity(asset, /*closeOut=*/ false);
     }
 
     /// @dev Internal dispatch. Pre-checks the sequencer circuit breaker
@@ -212,7 +220,7 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
     ///      which a route would have cleared the floor but for that price
     ///      ({_distrustedQuoteThatClears}). Every missing price, feed or
     ///      pool reports zero.
-    function _classifyLiquidity(address asset)
+    function _classifyLiquidity(address asset, bool closeOut)
         internal
         view
         returns (LibVaipakam.LiquidityStatus, address distrusted)
@@ -262,8 +270,16 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
         // price feed (the same hybrid chain `getAssetPrice` uses), AND
         // clear a fixed-size swap (default `cfgFloorSizePad` = $5k) at
         // ≤ `cfgLiquiditySlippageBps` (default 2%) on AT LEAST ONE
-        // (asset/quote × V3-or-V2-fork) route discovered on-chain via
+        // (asset/quote × V3-clone) route discovered on-chain via
         // the PAA list.
+        //
+        // #3354 — the depth that route is credited with is TIME-WEIGHTED:
+        // the pool's own oracle must answer for the TWAP window, and the
+        // liquidity read is its harmonic mean over that window (the lower
+        // of that and the current figure, outside a close-out; see
+        // {_accumulatePoolImpacts}). Depth that exists only around one
+        // transaction cannot make an asset Liquid, and depth pulled in
+        // the same block cannot make a liquid loan refuse its close-out.
         //
         // §4.4 step 3 full upgrade (MarketRateWidgetAndDepthTieredLTV.md):
         // replaces the previous `_v3DepthLiquid` depth-at-tick metric
@@ -283,10 +299,10 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
         //
         // A single venue's outage / pool drainage / censorship cannot
         // flip the asset to Illiquid as long as one other route (any
-        // PAA quote × any configured V3 / V2 venue × any fee tier
+        // PAA quote × any configured V3 venue × any fee tier
         // ≤ 0.3%) still clears the floor at the configured slippage.
         // Zero per-asset governance config — pool discovery is
-        // on-chain via `factory.getPool` / `factory.getPair`. The asset's
+        // on-chain via `factory.getPool`. The asset's
         // own price was gated above.
 
         // ETH/USD freshness — kept as a soft pre-flight: the
@@ -298,18 +314,18 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
         (bool ethOk, , ) = _readFreshUsdFeed(ethFeed, false);
         if (!ethOk) return (LibVaipakam.LiquidityStatus.Illiquid, address(0));
 
-        (bool passes, address distrustedQuote) = _passesFloorSlippage(asset, tokenDec, s);
+        (bool passes, address distrustedQuote) = _passesFloorSlippage(asset, tokenDec, s, closeOut);
         return passes
             ? (LibVaipakam.LiquidityStatus.Liquid, address(0))
             : (LibVaipakam.LiquidityStatus.Illiquid, distrustedQuote);
     }
 
     /// @dev Floor-size slippage check used by {_checkLiquidity}. An
-    ///      asset is Liquid iff at least one route (PAA × V3-or-V2
+    ///      asset is Liquid iff at least one route (PAA × V3
     ///      venue × fee ≤ 0.3%) clears `cfgFloorSizePad` at slippage
     ///      ≤ `cfgLiquiditySlippageBps`. Reuses the same route-search
     ///      machinery {_liquidityTier} uses (`_routeOverQuote` →
-    ///      `_accumulatePoolImpacts` / `_v2AccumulatePoolImpacts`),
+    ///      `_accumulatePoolImpacts`),
     ///      constrained to size[0] only by zeroing sizes[1..3] (which
     ///      the accumulator's `sizes[si] == 0` guard skips).
     ///
@@ -324,7 +340,8 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
     function _passesFloorSlippage(
         address asset,
         uint8 tdA,
-        LibVaipakam.Storage storage s
+        LibVaipakam.Storage storage s,
+        bool closeOut
     )
         private
         view
@@ -338,7 +355,8 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
             scaleA: 10 ** (uint256(dA) + uint256(tdA)),
             band: LibVaipakam.cfgTwapConsistencyBps(),
             twapWindow: uint32(LibVaipakam.cfgTwapWindowSec()),
-            quoteUnvalued: false
+            quoteUnvalued: false,
+            closeOut: closeOut
         });
         // Probe only the floor size; the other slots are 0 so
         // `_accumulatePoolImpacts` skips them via its
@@ -1695,77 +1713,76 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
 
 
     /// @dev Read a Uni-V3-clone pool's state for the depth-tier route
-    ///      search. `ok == false` on any malformed/failed read or a
-    ///      degenerate (zero-reserve / un-initialised) pool. `observeOk`
-    ///      is independent: `false` when the pool's TWAP oracle isn't
-    ///      initialised deep enough (`observe` reverts `OLD`) — then
-    ///      {_accumulatePoolImpacts} applies only the value-balance guard,
-    ///      so a manipulator can't dodge the price check via a
-    ///      low-cardinality pool (the value-balance guard still requires
-    ///      the spot to match the Chainlink feed).
+    ///      search. `ok == false` on any malformed or failed read, an
+    ///      un-initialised pool, or a pool whose own oracle cannot answer
+    ///      for the whole `twapWindow` (`observe` reverts `OLD` on a
+    ///      low-cardinality pool).
+    ///
+    ///      #3354: the oracle read is REQUIRED, not best-effort. It yields
+    ///      the two time-weighted figures the route search needs: the
+    ///      window's mean tick (the recent-manipulation guard) and its
+    ///      harmonic-mean in-range liquidity, `window · 2¹²⁸ / Δ(seconds
+    ///      per liquidity)`. The second is what makes depth durable:
+    ///      liquidity that sits in the pool for one block contributes one
+    ///      block's worth of seconds to the window, so it barely moves the
+    ///      mean. Before #3354 a pool with no oracle history was searched
+    ///      on its current state alone, so liquidity added and removed
+    ///      around one transaction could make a token read Liquid.
+    ///      `liquidity` is the current in-range figure and may be zero (a
+    ///      pool just drained); the caller decides which figure it credits.
     function _readV3PoolState(address pool, uint32 twapWindow)
         private
         view
         returns (
             bool ok,
-            uint256 reserve0,
-            uint256 reserve1,
+            uint160 sqrtPriceX96,
+            uint128 liquidity,
             int24 currentTick,
-            bool observeOk,
-            int24 meanTick
+            int24 meanTick,
+            uint256 meanLiquidity
         )
     {
-        if (pool == address(0) || pool.code.length == 0) return (false, 0, 0, 0, false, 0);
+        if (pool == address(0) || pool.code.length == 0 || twapWindow == 0) {
+            return (false, 0, 0, 0, 0, 0);
+        }
         (bool slotOk, bytes memory slotData) = pool.staticcall(abi.encodeWithSignature("slot0()"));
-        if (!slotOk || slotData.length < 224) return (false, 0, 0, 0, false, 0);
-        uint160 sqrtPriceX96;
+        if (!slotOk || slotData.length < 224) return (false, 0, 0, 0, 0, 0);
         (sqrtPriceX96, currentTick, , , , , ) = abi.decode(
             slotData,
             (uint160, int24, uint16, uint16, uint16, uint8, bool)
         );
-        if (sqrtPriceX96 == 0) return (false, 0, 0, 0, false, 0);
+        if (sqrtPriceX96 == 0) return (false, 0, 0, 0, 0, 0);
         (bool liqOk, bytes memory liqData) = pool.staticcall(abi.encodeWithSignature("liquidity()"));
-        if (!liqOk || liqData.length < 32) return (false, 0, 0, 0, false, 0);
-        uint128 liquidity = abi.decode(liqData, (uint128));
-        if (liquidity == 0) return (false, 0, 0, 0, false, 0);
-        (reserve0, reserve1) = LibSlippage.v3VirtualReserves(liquidity, sqrtPriceX96);
-        if (reserve0 == 0 || reserve1 == 0) return (false, 0, 0, 0, false, 0);
-        ok = true;
-        // Best-effort TWAP read — never reverts the route search.
+        if (!liqOk || liqData.length < 32) return (false, 0, 0, 0, 0, 0);
+        liquidity = abi.decode(liqData, (uint128));
         uint32[] memory secondsAgos = new uint32[](2);
         secondsAgos[0] = twapWindow;
         secondsAgos[1] = 0;
         (bool obsOk, bytes memory obsData) = pool.staticcall(
             abi.encodeWithSignature("observe(uint32[])", secondsAgos)
         );
-        // observe returns (int56[] tickCumulatives, uint160[] secondsPerLiquidity…);
-        // a well-formed 2-element pair encodes to exactly 256 bytes
-        // (2 head offsets + 2× [len + 2 words]). We only need [0]. The
-        // length floor keeps the unconditional `abi.decode` from
-        // reverting the (never-reverting) classification view on a short
-        // return — a real V3 pool always answers with the full layout.
-        if (obsOk && obsData.length >= 256) {
-            (int56[] memory tickCumulatives, ) = abi.decode(obsData, (int56[], uint160[]));
-            if (tickCumulatives.length >= 2 && twapWindow > 0) {
-                int56 delta = tickCumulatives[1] - tickCumulatives[0];
-                // REVIEW-SAFECAST: intentional unchecked truncation —
-                // this is the "never reverts the route search" path
-                // (see comment at the function-doc line above). A
-                // buggy V3-clone returning garbage tickCumulatives
-                // could produce a delta-over-twapWindow that exceeds
-                // int24 range; SafeCast.toInt24 would revert the
-                // whole route search instead of letting the
-                // surrounding TWAP-consistency check soft-fail via
-                // observeOk = false. The downstream consumer
-                // (`_passesTwapConsistencyCheck`) compares meanTick
-                // against spotTick within a band — a junk meanTick
-                // from a malformed pool fails that comparison
-                // gracefully. Per Codex P1 PR #267.
-                // forge-lint: disable-next-line(unsafe-typecast)
-                meanTick = int24(delta / int56(int256(uint256(twapWindow))));
-                observeOk = true;
-            }
-        }
+        // observe returns (int56[] tickCumulatives, uint160[]
+        // secondsPerLiquidityCumulativeX128s); a well-formed 2-element pair
+        // encodes to exactly 256 bytes (2 head offsets + 2× [len + 2 words]).
+        // The length floor keeps the `abi.decode` from reverting the
+        // (never-reverting) classification view on a short return.
+        if (!obsOk || obsData.length < 256) return (false, 0, 0, 0, 0, 0);
+        (int56[] memory tickCumulatives, uint160[] memory splCumulatives) =
+            abi.decode(obsData, (int56[], uint160[]));
+        if (tickCumulatives.length < 2 || splCumulatives.length < 2) return (false, 0, 0, 0, 0, 0);
+        // The accumulator only grows; a pool reporting otherwise is not a
+        // V3 pool this search can read.
+        if (splCumulatives[1] <= splCumulatives[0]) return (false, 0, 0, 0, 0, 0);
+        int56 delta = tickCumulatives[1] - tickCumulatives[0];
+        // REVIEW-SAFECAST: intentional unchecked truncation on the
+        // never-reverting route search. A junk meanTick from a malformed
+        // pool fails the band comparison in {_accumulatePoolImpacts}
+        // instead of reverting the view (Codex P1, PR #267).
+        // forge-lint: disable-next-line(unsafe-typecast)
+        meanTick = int24(delta / int56(int256(uint256(twapWindow))));
+        meanLiquidity = (uint256(twapWindow) << 128) /
+            uint256(splCumulatives[1] - splCumulatives[0]);
+        ok = true;
     }
 
     /// @dev Asset-side parameters shared across the whole route search,
@@ -1787,13 +1804,15 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
         uint256 band;
         uint32 twapWindow;
         bool quoteUnvalued;
+        bool closeOut;
     }
 
     /// @dev For one resolved Uni-V3-clone pool, fold its best-route
     ///      contribution into `best[i]` = the lowest price-impact seen at
     ///      `sizes[i]` (PAD × 1e6) across every pool — *after* the two
     ///      manipulation guards (value-balance / spot≈feed, and the
-    ///      best-effort TWAP-consistency tick check). `best` and `sizes`
+    ///      TWAP-consistency tick check), which run for admission reads
+    ///      only (#3371). `best` and `sizes`
     ///      are mutated-in-place memory arrays of length 4
     ///      `{floor, tier1, tier2, tier3}`. `pQ`/`scaleQ` are the quote
     ///      token's Chainlink price and `10**(feedDec + tokenDec)`
@@ -1810,38 +1829,63 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
     ) private view {
         (
             bool stOk,
-            uint256 r0,
-            uint256 r1,
+            uint160 sqrtPriceX96,
+            uint128 curLiquidity,
             int24 curTick,
-            bool obsOk,
-            int24 meanTick
+            int24 meanTick,
+            uint256 meanLiquidity
         ) = _readV3PoolState(pool, ctx.twapWindow);
         if (!stOk) return;
+        // #3354 — the depth credited. Admission (a loan opening, a tier, an
+        // offer bound) credits the LOWER of the current and the
+        // window-mean liquidity, so neither a one-block top-up nor a pool
+        // drained since can make the asset look deeper than it is. A
+        // close-out (the liquidation and default gates) credits the mean
+        // alone, so liquidity pulled in the same block as the close-out
+        // cannot make a loan that opened liquid refuse its sale; the sale's
+        // own floor and the in-kind fallback then govern what a thin pool
+        // can actually fill.
+        uint256 credited = meanLiquidity;
+        if (!ctx.closeOut && curLiquidity < credited) credited = curLiquidity;
+        if (credited == 0) return;
+        if (credited > type(uint128).max) credited = type(uint128).max;
+        // forge-lint: disable-next-line(unsafe-typecast)
+        (uint256 r0, uint256 r1) = LibSlippage.v3VirtualReserves(uint128(credited), sqrtPriceX96);
+        if (r0 == 0 || r1 == 0) return;
         (uint256 reserveAsset, uint256 reserveQ) = assetIsToken0 ? (r0, r1) : (r1, r0);
-        // Guard 1 — the two legs' Chainlink-priced values must be
-        // balanced within `band` bps (⇔ the pool's spot price agrees
-        // with the trusted feed): `legValueRatio = feedMid / poolMid`,
-        // so balanced legs ⇔ poolMid ≈ feedMid. Skipped when the quote's
-        // price is distrusted (`ctx.quoteUnvalued`, #666): there is no
-        // trusted value to balance against.
-        if (!ctx.quoteUnvalued) {
-            uint256 vAsset = Math.mulDiv(reserveAsset, ctx.pA * 1e6, ctx.scaleA); // PAD × 1e6
-            uint256 vQ = Math.mulDiv(reserveQ, pQ * 1e6, scaleQ); // PAD × 1e6
-            if (vAsset == 0 || vQ == 0) return;
-            (uint256 lo, uint256 hi) = vAsset < vQ ? (vAsset, vQ) : (vQ, vAsset);
-            uint256 bp = LibVaipakam.BASIS_POINTS;
-            if (ctx.band < bp && lo * bp < hi * (bp - ctx.band)) return;
-        }
-        // Guard 2 — best-effort: if the pool's TWAP oracle answered, the
-        // `twapWindow`-mean tick must be within `band` ticks of the
-        // current tick (1 tick ≈ 1 bp of price for small `band`), which
-        // catches a *recently*-manipulated pool that guard 1 alone would
-        // miss if the price has since reverted.
-        if (obsOk) {
+        // The two price-agreement guards below run for admission only
+        // (#3371). They refuse a pool whose current price disagrees with the
+        // feed or with its own window mean, which is what keeps a
+        // manipulated pool from admitting a position. At a close-out they
+        // would refuse the same pools in a genuine fast move (the current
+        // tick runs ahead of its 30-minute mean) or after a one-block price
+        // push, so the collateral would read not liquid exactly when its
+        // liquidation or default must run. A close-out does not need them:
+        // the forced sale demands an oracle-derived minimum output, and the
+        // in-kind fallback takes over when no route meets it, so a moved
+        // pool can only fail to fill, never fill at a bad price.
+        if (!ctx.closeOut) {
+            // Guard 1 — the two legs' Chainlink-priced values must be
+            // balanced within `band` bps (⇔ the pool's spot price agrees
+            // with the trusted feed): `legValueRatio = feedMid / poolMid`,
+            // so balanced legs ⇔ poolMid ≈ feedMid. Skipped when the quote's
+            // price is distrusted (`ctx.quoteUnvalued`, #666): there is no
+            // trusted value to balance against.
+            if (!ctx.quoteUnvalued) {
+                uint256 vAsset = Math.mulDiv(reserveAsset, ctx.pA * 1e6, ctx.scaleA); // PAD × 1e6
+                uint256 vQ = Math.mulDiv(reserveQ, pQ * 1e6, scaleQ); // PAD × 1e6
+                if (vAsset == 0 || vQ == 0) return;
+                (uint256 lo, uint256 hi) = vAsset < vQ ? (vAsset, vQ) : (vQ, vAsset);
+                uint256 bp = LibVaipakam.BASIS_POINTS;
+                if (ctx.band < bp && lo * bp < hi * (bp - ctx.band)) return;
+            }
+            // Guard 2 — the `twapWindow`-mean tick must be within `band`
+            // ticks of the current tick (1 tick ≈ 1 bp of price for small
+            // `band`), which catches a *recently*-manipulated pool that
+            // guard 1 alone would miss if the price has since reverted.
             int256 d = int256(curTick) - int256(meanTick);
             if (d < 0) d = -d;
-            // safe: `d` was just made non-negative by `if (d < 0) d = -d;`
-            // above; the cast is therefore identity-preserving.
+            // safe: `d` was just made non-negative above.
             // forge-lint: disable-next-line(unsafe-typecast)
             if (uint256(d) > ctx.band) return;
         }
@@ -1860,7 +1904,7 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
     }
 
     /// @dev Route the `asset/q` pair over every configured Uni-V3-clone
-    ///      and V2-fork venue ({_foldRoutes}), folding each found pool's
+    ///      venue ({_foldRoutes}), folding each found pool's
     ///      contribution into `best`. Skips `q` entirely unless its price
     ///      reads as Priced: an unavailable quote cannot value its leg, and
     ///      a distrusted one (#666) is weighed separately, only when the
@@ -1911,7 +1955,7 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
 
     /// @dev The pool walk {_routeOverQuote} and {_distrustedQuoteThatClears}
     ///      share: every configured Uni-V3-clone factory at every fee tier
-    ///      ≤ 0.3%, then every configured V2 fork. `pQ`/`scaleQ` value the
+    ///      ≤ 0.3% (no V2 fork since #3354). `pQ`/`scaleQ` value the
     ///      quote leg; both are zero, and unread, when `ctx.quoteUnvalued`.
     function _foldRoutes(
         address asset,
@@ -1942,79 +1986,11 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
                 }
             }
         }
-        // V2 leg (Piece B follow-up b): 3 factories with their canonical
-        // single fee tier via `getPair(a, b)` (bidirectional — order-
-        // independent) + `getReserves()` (real reserves, not the V3 in-tick
-        // virtual approximation ⇒ exact CPMM math). A zero factory skips
-        // that leg; on a fresh deploy all three are zero ⇒ V3-only route
-        // search, no behaviour change vs the pre-(b) state.
-        {
-            address[3] memory v2Factories = [
-                s.uniswapV2Factory,
-                s.sushiswapV2Factory,
-                s.pancakeswapV2Factory
-            ];
-            uint24[3] memory v2Fees = [V2_FEE_30BPS, V2_FEE_30BPS, V2_FEE_25BPS];
-            for (uint256 vi; vi < 3; ++vi) {
-                if (v2Factories[vi] == address(0)) continue;
-                _v2AccumulatePoolImpacts(
-                    v2Factories[vi], v2Fees[vi], asset, q, ctx, assetIsToken0, pQ, scaleQ, sizes, best
-                );
-            }
-        }
-    }
-
-    /// @dev V2 sibling of {_accumulatePoolImpacts}. `getPair` is
-    ///      bidirectional in canonical V2 (and every V2 fork tracked by
-    ///      Vaipakam — Sushi/Pancake), so we can pass `(asset, quote)`
-    ///      in either order. `getReserves()` returns the *real* reserves
-    ///      in token0/token1 order (canonical ascending address) — no
-    ///      in-tick virtual-reserve step. No on-chain TWAP guard for V2
-    ///      (no `observe`-style primitive in one shot); the value-balance
-    ///      guard (spot ≈ Chainlink feed) is the only manipulation check,
-    ///      same residual flash-loan-add-liquidity vector as V3 bounded
-    ///      by the LTV cushion.
-    function _v2AccumulatePoolImpacts(
-        address factory,
-        uint24 feePips,
-        address asset,
-        address quote,
-        _TierCtx memory ctx,
-        bool assetIsToken0,
-        uint256 pQ,
-        uint256 scaleQ,
-        uint256[4] memory sizes,
-        uint256[4] memory best
-    ) private view {
-        (bool ok, bytes memory pdata) = factory.staticcall(
-            abi.encodeWithSignature("getPair(address,address)", asset, quote)
-        );
-        if (!ok || pdata.length < 32) return;
-        address pool = abi.decode(pdata, (address));
-        if (pool == address(0) || pool.code.length == 0) return;
-        (bool rok, bytes memory rdata) = pool.staticcall(abi.encodeWithSignature("getReserves()"));
-        // V2 `getReserves` ABI = `(uint112, uint112, uint32)` → 3×32-byte words.
-        if (!rok || rdata.length < 96) return;
-        (uint256 r0, uint256 r1, ) = abi.decode(rdata, (uint256, uint256, uint256));
-        if (r0 == 0 || r1 == 0) return;
-        (uint256 reserveAsset, uint256 reserveQ) = assetIsToken0 ? (r0, r1) : (r1, r0);
-        // Value-balance guard (spot ≈ feed) — identical to the V3 path,
-        // and skipped the same way for a distrusted quote (#666).
-        if (!ctx.quoteUnvalued) {
-            uint256 vAsset = Math.mulDiv(reserveAsset, ctx.pA * 1e6, ctx.scaleA);
-            uint256 vQ = Math.mulDiv(reserveQ, pQ * 1e6, scaleQ);
-            if (vAsset == 0 || vQ == 0) return;
-            (uint256 lo, uint256 hi) = vAsset < vQ ? (vAsset, vQ) : (vQ, vAsset);
-            uint256 bp = LibVaipakam.BASIS_POINTS;
-            if (ctx.band < bp && lo * bp < hi * (bp - ctx.band)) return;
-        }
-        for (uint256 si; si < 4; ++si) {
-            if (best[si] == 0 || sizes[si] == 0) continue;
-            uint256 amountIn = Math.mulDiv(sizes[si], ctx.scaleA, ctx.pA * 1e6);
-            if (amountIn == 0) continue;
-            uint256 imp = LibSlippage.priceImpactBps(amountIn, reserveAsset, uint256(feePips));
-            if (imp < best[si]) best[si] = imp;
-        }
+        // #3354 — no V2-fork leg. A constant-product pair keeps no
+        // time-weighted record of its reserves, so its depth can only be
+        // read as it stands in the current block, which a caller can top
+        // up and withdraw around one transaction. V2-only depth therefore
+        // never makes an asset Liquid or earns it a tier.
     }
 
     /// @dev The on-chain liquidity tier of `asset` (0..3) — see
@@ -2039,7 +2015,8 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
             scaleA: 10 ** (uint256(dA) + uint256(tdA)),
             band: LibVaipakam.cfgTwapConsistencyBps(),
             twapWindow: uint32(LibVaipakam.cfgTwapWindowSec()),
-            quoteUnvalued: false
+            quoteUnvalued: false,
+            closeOut: false
         });
         uint256[4] memory sizes = [
             LibVaipakam.cfgFloorSizePad(),

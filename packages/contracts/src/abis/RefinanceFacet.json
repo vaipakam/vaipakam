@@ -2203,6 +2203,32 @@
   },
   {
     "type": "error",
+    "name": "PositionMovedSinceRouteOpened",
+    "inputs": [
+      {
+        "name": "tokenId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "countAtOpen",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "countNow",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "PositionNFTNotSet",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "RateShortfallTooHigh",
     "inputs": []
   },

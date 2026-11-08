@@ -67,7 +67,7 @@ describe('holdingSubjects', () => {
       [B, ['offer']],
     ]);
     // A deposited collection no position names: named apart, without figures.
-    expect(collections).toEqual([N]);
+    expect(collections).toEqual([{ asset: N, standard: 'erc721' }]);
   });
   it('reads a deposited NFT token a loan names, with the deposit reason', () => {
     const { subjects, collections } = holdingSubjects([{ asset: N, standard: 'erc721' }], {
@@ -78,7 +78,7 @@ describe('holdingSubjects', () => {
     });
     // Still named: the record keeps no token ids, so another deposited token
     // of the collection may be missing.
-    expect(collections).toEqual([N]);
+    expect(collections).toEqual([{ asset: N, standard: 'erc721' }]);
     expect(subjects).toEqual([{ standard: 'erc721', asset: N, tokenId: 7n, sources: ['loan', 'deposit'] }]);
   });
 });

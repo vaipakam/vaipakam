@@ -14,6 +14,7 @@ import {console} from "forge-std/console.sol";
 import {DeployDiamond} from "./DeployDiamond.s.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {IDiamondLoupe} from "@diamond-3/interfaces/IDiamondLoupe.sol";
+import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferBookFacet} from "../src/facets/OfferBookFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
@@ -95,6 +96,8 @@ contract ReplaceStaleFacets is DeployDiamond {
     error PredatesOfferBook(address diamond);
     /// @notice #3204 - the target Diamond predates the VaultBeacon (fresh deploy only).
     error PredatesVaultBeacon(address diamond);
+    /// @notice #3205 - the target Diamond predates the PositionNFT core. Fresh deploy only.
+    error PredatesPositionNFT(address diamond);
 
     function run() external override {
         uint256 deployerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
@@ -151,6 +154,11 @@ contract ReplaceStaleFacets is DeployDiamond {
         if (IDiamondLoupe(diamond).facetAddress(VaultFactoryFacet.getVaultBeacon.selector) == address(0)) {
             revert PredatesVaultBeacon(diamond);
         }
+        // #3205 - and one from before the PositionNFT core.
+        if (
+            IDiamondLoupe(diamond).facetAddress(VaipakamNFTFacet.positionNFT.selector) == address(0)
+                || VaipakamNFTFacet(diamond).positionNFT() == address(0)
+        ) revert PredatesPositionNFT(diamond);
 
         vm.startBroadcast(deployerKey);
 

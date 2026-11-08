@@ -9,7 +9,7 @@ import {SwapToRepayIntentFacet} from "./SwapToRepayIntentFacet.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
 import {LibLenderYieldFeeHost} from "../libraries/LibLenderYieldFeeHost.sol";
-import {LibERC721} from "../libraries/LibERC721.sol";
+import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
 import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
@@ -555,7 +555,7 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
                 (uint256 rentLenderExtra, uint256 rentNewTreasury) =
                     LibLenderYieldFeeHost.resolve(
                         loanId,
-                        LibERC721.ownerOf(loan.lenderTokenId),
+                        LibPositionNFT.ownerOf(loan.lenderTokenId),
                         loan.prepayAmount,
                         treasuryFee
                     );

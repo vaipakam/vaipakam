@@ -6,7 +6,7 @@ import {LibRefinanceRequest} from "../libraries/LibRefinanceRequest.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibLoanClock} from "../libraries/LibLoanClock.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
-import {LibERC721} from "../libraries/LibERC721.sol";
+import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
 import {LibSaleSolvency} from "../libraries/LibSaleSolvency.sol";
 import {LibPausable} from "../libraries/LibPausable.sol";
 import {LibCadenceAdmission} from "../libraries/LibCadenceAdmission.sol";
@@ -432,7 +432,7 @@ contract OfferPreviewFacet {
             // `Active` check moved up there because the solvency block must not
             // measure a position that no longer exists, which left the copy
             // that used to be here unreachable.)
-            if (acceptor == LibERC721.ownerOf(_saleLoan.borrowerTokenId)) {
+            if (acceptor == LibPositionNFT.ownerOf(_saleLoan.borrowerTokenId)) {
                 preview.errorCode = OfferAcceptFacet.AcceptError.SaleSelfBuy;
                 return preview;
             }

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
 import {SetupTest} from "./SetupTest.t.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibMetricsTypes} from "../src/libraries/LibMetricsTypes.sol";
@@ -375,18 +376,22 @@ contract EnumerationTest is SetupTest {
 
     function _burnVia(uint256 tokenId) internal {
         vm.prank(address(diamond));
-        VaipakamNFTFacet(address(diamond)).burnNFT(tokenId);
+        VaipakamNFTFacet(address(diamond)).retirePosition(tokenId);
     }
 
-    function testTotalSupplyTracksMintBurn() public {
-        assertEq(IERC721Enumerable(address(diamond)).totalSupply(), 0);
+    /// @dev #3205 — the core never burns: a retired position stays in the
+    ///      supply and in its holder's wallet as a receipt, marked retired on
+    ///      the Diamond.
+    function testTotalSupplyTracksMintsAndRetireKeepsIt() public {
+        assertEq(LibTestPositionNFT.core(address(diamond)).totalSupply(), 0);
 
         _mintVia(u1, 101, true);
         _mintVia(u2, 102, false);
-        assertEq(IERC721Enumerable(address(diamond)).totalSupply(), 2);
+        assertEq(LibTestPositionNFT.core(address(diamond)).totalSupply(), 2);
 
         _burnVia(101);
-        assertEq(IERC721Enumerable(address(diamond)).totalSupply(), 1);
+        assertEq(LibTestPositionNFT.core(address(diamond)).totalSupply(), 2);
+        assertTrue(VaipakamNFTFacet(address(diamond)).isPositionRetired(101));
     }
 
     function testTokenByIndexAndOwnerByIndexReflectOrder() public {
@@ -395,42 +400,41 @@ contract EnumerationTest is SetupTest {
         _mintVia(u1, 30, true);
 
         // Global index order matches mint order.
-        assertEq(IERC721Enumerable(address(diamond)).tokenByIndex(0), 10);
-        assertEq(IERC721Enumerable(address(diamond)).tokenByIndex(1), 20);
-        assertEq(IERC721Enumerable(address(diamond)).tokenByIndex(2), 30);
+        assertEq(LibTestPositionNFT.core(address(diamond)).tokenByIndex(0), 10);
+        assertEq(LibTestPositionNFT.core(address(diamond)).tokenByIndex(1), 20);
+        assertEq(LibTestPositionNFT.core(address(diamond)).tokenByIndex(2), 30);
 
         // Per-owner index: u1 holds [10, 30] in mint order.
-        assertEq(IERC721Enumerable(address(diamond)).tokenOfOwnerByIndex(u1, 0), 10);
-        assertEq(IERC721Enumerable(address(diamond)).tokenOfOwnerByIndex(u1, 1), 30);
-        assertEq(IERC721Enumerable(address(diamond)).tokenOfOwnerByIndex(u2, 0), 20);
+        assertEq(LibTestPositionNFT.core(address(diamond)).tokenOfOwnerByIndex(u1, 0), 10);
+        assertEq(LibTestPositionNFT.core(address(diamond)).tokenOfOwnerByIndex(u1, 1), 30);
+        assertEq(LibTestPositionNFT.core(address(diamond)).tokenOfOwnerByIndex(u2, 0), 20);
     }
 
-    function testBurnCompactsOwnerIndex() public {
+    /// @dev #3205 — retiring leaves the owner index as it was (no burn).
+    function testRetireKeepsOwnerIndex() public {
         _mintVia(u1, 10, true);
         _mintVia(u1, 20, true);
         _mintVia(u1, 30, true);
 
         _burnVia(20);
 
-        // Swap-and-pop semantics: last token moves into the freed slot.
-        // Order after burning 20 becomes [10, 30] (30 was last, moved to slot 1).
-        assertEq(IERC721Enumerable(address(diamond)).tokenOfOwnerByIndex(u1, 0), 10);
-        assertEq(IERC721Enumerable(address(diamond)).tokenOfOwnerByIndex(u1, 1), 30);
+        assertEq(LibTestPositionNFT.core(address(diamond)).tokenOfOwnerByIndex(u1, 0), 10);
+        assertEq(LibTestPositionNFT.core(address(diamond)).tokenOfOwnerByIndex(u1, 1), 20);
+        assertEq(LibTestPositionNFT.core(address(diamond)).tokenOfOwnerByIndex(u1, 2), 30);
 
-        // Third slot should now be out of bounds.
         vm.expectRevert();
-        IERC721Enumerable(address(diamond)).tokenOfOwnerByIndex(u1, 2);
+        LibTestPositionNFT.core(address(diamond)).tokenOfOwnerByIndex(u1, 3);
     }
 
     function testTokenByIndexRevertsOnOutOfBounds() public {
         _mintVia(u1, 10, true);
         vm.expectRevert();
-        IERC721Enumerable(address(diamond)).tokenByIndex(1);
+        LibTestPositionNFT.core(address(diamond)).tokenByIndex(1);
     }
 
     function testTokenOfOwnerByIndexRevertsOnOutOfBounds() public {
         _mintVia(u1, 10, true);
         vm.expectRevert();
-        IERC721Enumerable(address(diamond)).tokenOfOwnerByIndex(u2, 0);
+        LibTestPositionNFT.core(address(diamond)).tokenOfOwnerByIndex(u2, 0);
     }
 }
