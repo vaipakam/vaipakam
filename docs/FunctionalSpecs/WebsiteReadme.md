@@ -30,6 +30,16 @@ The Vaipakam website should:
 - support both beginner-friendly guidance and advanced-user efficiency
 - include a clear frontend disclaimer that reads: `Vaipakam is a decentralized, non-custodial protocol. No KYC is required. Users are responsible for their own regulatory compliance.`
 
+### Product positioning wording (owner decision 2026-11-08)
+
+The website, the connected app and the whitepaper describe the product as **non-custodial, vault-to-vault lending and borrowing at a fixed rate and term that the lender and borrower agree, with no pool and no middleman**. The rules behind that wording:
+
+- **Vault-to-vault, not peer-to-peer.** Public copy does not call the product a "peer-to-peer (P2P) lending platform", which is a regulated category in several jurisdictions. It says what actually happens, and only that: a lender's offered funds wait in the lender's own vault and are paid from it to the borrower's wallet when the loan opens; the borrower's collateral stays locked in the borrower's own vault; repayment goes into the lender's vault. Copy must not claim that the loan amount lands in the borrower's vault or that every asset stays in a vault throughout. Search keywords may still include "p2p"; headings, titles, taglines and body copy do not.
+- **"Vault" is always non-custodial.** Wherever the word could suggest that Vaipakam holds people's assets, it is paired with "non-custodial", "your own vault" or an equivalent, because custody is a regulated activity and Vaipakam does not perform it.
+- **The rate is fixed, and the copy says who fixes it.** The rate and term are agreed by the lender and borrower when the loan opens and hold for the whole loan; no pool or utilization curve moves them. The copy must not say that every rate change needs both parties' agreement. Two things can change it: an extension near maturity, which both position holders agree to within limits each sets; and a handover to a replacement borrower, which the borrower starts alone and which needs no lender consent, the lender instead being paid any interest the new terms would cost them. A refinance replaces the loan rather than changing its rate.
+- **No promised return.** Copy never says "earn a fixed yield", "start earning" or anything implying that Vaipakam promises or pays a return. Interest is what a borrower agreed to pay a lender; the protocol neither sets it nor lends its own money.
+- The frozen Terms of Service versions are not rewritten to apply this wording; a future Terms version adopts it.
+
 ## Search And AI Discoverability
 
 The marketing site is the surface search engines and AI tools should

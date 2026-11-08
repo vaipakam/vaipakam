@@ -38,7 +38,7 @@
     "privacy": "Confidentialité",
     "cookieSettings": "Paramètres des cookies",
     "license": "Licence BUSL 1.1",
-    "tagline": "Prêts vault-to-vault et locations de NFT décentralisés. Sans tiers de confiance, transparents et sécurisés on-chain.",
+    "tagline": "Prêts vault-to-vault non dépositaires et locations de NFT, à un taux et une durée fixes convenus entre les deux parties. Transparents et on-chain.",
     "comingSoon": "Bientôt disponible",
     "supportedNetworks": "Réseaux pris en charge",
     "viewDiamondOnExplorer": "Voir le Diamond dans l'explorateur…",
@@ -142,11 +142,11 @@
     "titleLine1": "Prêts vault-to-vault",
     "titleLine2": "Sécurisé on-chain",
     "subtitlePrefix": "Vaipakam",
-    "subtitleBody": "vous permet de prêter et emprunter des tokens, de louer des NFTs et de définir vos propres conditions. Chaque position est suivie par un NFT unique — transparente, traçable et sans confiance de l'offre au règlement.",
+    "subtitleBody": "vous permet de prêter et d'emprunter des tokens à un taux et une durée fixes convenus entre prêteur et emprunteur, et de louer des NFTs. Les fonds à prêter et les garanties attendent dans le vault propre et non dépositaire de chaque utilisateur. Chaque position est suivie par un NFT unique — transparente, traçable et sans confiance de l'offre au règlement.",
     "launchApp": "Ouvrir Vaipakam",
     "howItWorks": "Comment ça marche",
-    "statP2pValue": "P2P",
-    "statP2pLabel": "Prêt direct",
+    "statP2pValue": "Fixe",
+    "statP2pLabel": "Taux et durée",
     "statNftValue": "NFT",
     "statNftLabel": "Suivi des positions",
     "statVaultValue": "1:1",
@@ -165,8 +165,8 @@
     "sectionLabel": "Fonctionnalités",
     "title": "Tout le nécessaire pour un prêt sans tiers de confiance",
     "subtitle": "Un protocole de prêt DeFi complet bâti sur le Diamond Standard, prenant en charge les tokens ERC-20 et les NFT louables sur Ethereum, Polygon et Arbitrum.",
-    "p2pTitle": "Prêts P2P",
-    "p2pDesc": "Créer ou accepter des offres sur des tokens ERC-20 avec des conditions personnalisées — taux d'intérêt, type de collatéral et durée du prêt. Aucun pool intermédiaire.",
+    "p2pTitle": "Prêts et emprunts vault-to-vault",
+    "p2pDesc": "Créer ou accepter des offres sur des tokens ERC-20 aux conditions que vous fixez — taux d'intérêt, type de collatéral et durée du prêt. Le taux convenu s'applique pendant toute la durée du prêt. Il ne change que si les deux parties acceptent de prolonger le prêt près de son terme, ou si l'emprunteur cède le prêt à un nouvel emprunteur ; le prêteur reçoit alors tout intérêt qu'il perdrait. Aucun pool intermédiaire.",
     "nftTitle": "Location de NFT (ERC-4907)",
     "nftDesc": "Louer des NFT ERC-721 et ERC-1155 avec une tarification journalière. L'emprunteur obtient les droits d'usage tandis que le NFT reste en sécurité dans le vault.",
     "vaultTitle": "Vault isolé par utilisateur",
@@ -228,7 +228,7 @@
   "cta": {
     "sectionLabel": "Commencer",
     "title": "Prêt à commencer à prêter ?",
-    "subtitle": "Connectez un portefeuille, créez une offre et commencez à percevoir des intérêts. Conditions personnalisables — sans pool, sans intermédiaire.",
+    "subtitle": "Connectez un portefeuille et publiez une offre au taux et à la durée fixes de votre choix. Votre offre attend dans votre propre vault — sans pool, sans intermédiaire.",
     "launchApp": "Ouvrir Vaipakam",
     "readDocs": "Lire la documentation"
   },
@@ -253,7 +253,7 @@
     "entries": {
       "basics-what-is-vaipakam": {
         "q": "Qu'est-ce que Vaipakam, en termes simples ?",
-        "a1": "Vaipakam est une place de marché pair à pair pour le prêt de cryptomonnaies et la location d'objets numériques (NFT). Une personne publie une offre avec les conditions qui lui conviennent — montant, intérêts, durée — et une autre l'accepte. Pas de banque, pas de gestionnaire de fonds, aucun intermédiaire entre les deux contreparties.",
+        "a1": "Vaipakam est une place de marché vault-to-vault pour le prêt de cryptomonnaies et la location d'objets numériques (NFT). Une personne publie une offre avec les conditions qui lui conviennent — montant, intérêts, durée — et une autre l'accepte. Pas de banque, pas de gestionnaire de fonds, aucun intermédiaire entre les deux contreparties. Le taux d'intérêt convenu est fixe pour toute la durée du prêt. Il ne change que si les deux acceptent de prolonger le prêt, ou si l'emprunteur le cède à un nouvel emprunteur, auquel cas le prêteur reçoit tout intérêt qu'il perdrait.",
         "a2": "La probité est garantie par un ensemble de smart contracts sur une blockchain. Ils détiennent les actifs en vault individuel pendant la durée du prêt et les libèrent automatiquement dès que les conditions sont remplies. Chaque utilisateur garde la main sur ses propres fonds ; le protocole se contente d'exécuter l'accord conclu."
       },
       "basics-wallet": {

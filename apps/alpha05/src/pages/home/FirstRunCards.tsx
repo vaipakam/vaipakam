@@ -7,6 +7,7 @@ const STORAGE_KEY = 'alpha05.firstRun.dismissed';
 
 const CARDS: readonly { id: string; title: CopyKey; line: CopyKey }[] = [
   { id: 'vault', title: 'home.firstRunVaultTitle', line: 'home.firstRunVault' },
+  { id: 'rate', title: 'home.firstRunRateTitle', line: 'home.firstRunRate' },
   { id: 'receipt', title: 'home.firstRunReceiptTitle', line: 'home.firstRunReceipt' },
   { id: 'help', title: 'home.firstRunHelpTitle', line: 'home.firstRunHelp' },
 ];
@@ -30,9 +31,9 @@ function writeDismissed(ids: Set<string>): void {
 }
 
 /**
- * RB-CONFIDENCE's first-run introduction: three dismissable cards on first
+ * RB-CONFIDENCE's first-run introduction: four dismissable cards on first
  * connect, never a tour over the live page. Each states something the app
- * does for every action, so none of them promises an outcome.
+ * does or holds for every loan, so none of them promises an outcome.
  */
 export function FirstRunCards() {
   const { text } = useCopy();

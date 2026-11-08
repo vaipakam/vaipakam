@@ -1,8 +1,8 @@
-# Vaipakam DeFi | Decentralized P2P Lending, Borrowing and NFT Rental Platform (Phase 1)
+# Vaipakam DeFi | Decentralized Vault-to-Vault Lending, Borrowing and NFT Rental Platform (Phase 1)
 
 ## Platform Functional Overview
 
-Vaipakam is a decentralized peer-to-peer (P2P) lending and borrowing platform built for separate per-network deployments on Base, Polygon, Arbitrum, Optimism, and Ethereum mainnet. It facilitates lending and borrowing of ERC-20 tokens and rentable ERC-721/1155 NFTs, using any ERC-20 or NFT assets as collateral. The platform mints NFTs to represent offers and loans, ensuring transparency and traceability. This document specifies observable platform behavior and funds flows for Phase 1.
+Vaipakam is a decentralized, non-custodial, vault-to-vault lending and borrowing platform built for separate per-network deployments on Base, Polygon, Arbitrum, Optimism, and Ethereum mainnet. It facilitates lending and borrowing of ERC-20 tokens and rentable ERC-721/1155 NFTs, using any ERC-20 or NFT assets as collateral. The platform mints NFTs to represent offers and loans, ensuring transparency and traceability. There is no shared pool: a lender's offered funds wait in the lender's own vault and are paid from there to the borrower's wallet when the loan opens, the borrower's collateral stays locked in the borrower's own vault for the life of the loan, and repayment is paid into the lender's vault. Every ERC-20 loan carries an interest rate and a term that the lender and borrower agree when it opens, and the rate holds for the whole loan: no pool, utilization curve or oracle sets or moves it. It changes only in two cases: an in-place extension near maturity, which both position holders must agree to within limits each of them set; or an obligation handover, which the borrower side starts alone and which installs the replacement borrower's rate and term without the lender's consent, protected instead by the handover's favorability checks and by the exiting borrower paying the lender any interest the new terms would cost them. A refinance does not change a loan's rate; it repays the loan and opens a new one. NFT rentals carry a fixed daily fee instead of an interest rate. This document specifies observable platform behavior and funds flows for Phase 1.
 
 ## Current Functional Consolidation Through 2026-11-04
 
@@ -207,7 +207,7 @@ platform-wide rules apply across the lifecycle:
 
 ## Table of Contents
 
-- [Vaipakam DeFi | Decentralized P2P Lending, Borrowing and NFT Rental Platform (Phase 1)](#vaipakam-defi--decentralized-p2p-lending-borrowing-and-nft-rental-platform-phase-1)
+- [Vaipakam DeFi | Decentralized Vault-to-Vault Lending, Borrowing and NFT Rental Platform (Phase 1)](#vaipakam-defi--decentralized-vault-to-vault-lending-borrowing-and-nft-rental-platform-phase-1)
   - [Platform Functional Overview](#platform-functional-overview)
   - [Current Functional Consolidation Through 2026-11-04](#current-functional-consolidation-through-2026-11-04)
   - [Table of Contents](#table-of-contents)
