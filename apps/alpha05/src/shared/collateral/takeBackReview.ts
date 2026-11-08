@@ -10,27 +10,22 @@
  *
  * Nothing leaves the wallet and no approval is asked: the protocol sends
  * the collateral from the borrower's vault to the wallet that asks. When
- * that wallet runs protected account mode, the protocol queues its own
- * withdrawal for the account's delay instead (`LibProtectedAccount.gate`),
- * so the review reads the account's mode too.
+ * that wallet runs protected account mode the payment is routed instead
+ * (`payoutRoute`): the borrower's own withdrawal is queued for the
+ * account's delay (`LibProtectedAccount.gate`), and a payment to a later
+ * holder of the position is paid into that holder's vault. So the review
+ * reads the wallet's mode too.
  */
 import type { Abi, PublicClient } from 'viem';
-import {
-  AdminFacetABI,
-  LoanFacetABI,
-  OracleFacetABI,
-  PartialWithdrawalFacetABI,
-  ProtectedAccountFacetABI,
-  RefinanceFacetABI,
-  RiskFacetABI,
-  VaipakamNFTFacetABI,
-} from '@vaipakam/contracts/abis';
+import { AdminFacetABI, LoanFacetABI, OracleFacetABI, PartialWithdrawalFacetABI, RefinanceFacetABI, RiskFacetABI, VaipakamNFTFacetABI } from '@vaipakam/contracts/abis';
 import type { OwnStateClient } from '../../chain/ownRail';
 import type { CopyAccess } from '../copy/useCopy';
 import { refusalFromError } from '../eligibility/refusal';
 import { checkTakeBack, takeBackVerdict, type TakeBackCheck } from '../eligibility/takeBack';
 import type { Refusal, Verdict } from '../eligibility/types';
 import type { LoanDetails } from '../positions/loanView';
+import { payoutRoute, readProtection, type PayoutRoute, type Protection } from '../protection/payout';
+import { routeChanged } from '../protection/payoutCopy';
 import { askThrough } from '../tx/simulate';
 
 type Hex = `0x${string}`;
@@ -41,7 +36,6 @@ const ADMIN = AdminFacetABI as Abi;
 const ORACLE = OracleFacetABI as Abi;
 const RISK = RiskFacetABI as Abi;
 const REFINANCE = RefinanceFacetABI as Abi;
-const PROTECTED = ProtectedAccountFacetABI as Abi;
 export const WITHDRAW = PartialWithdrawalFacetABI as Abi;
 /** `LibVaipakam.LiquidityStatus.Liquid`. */
 const LIQUID = 0;
@@ -59,10 +53,13 @@ export interface TakeBackReview {
   maxWithdrawable: bigint | null;
   healthFactor: bigint | null;
   ltvBps: bigint | null;
-  /** The wallet's protected account mode (`getProtectedAccount`), or null
-   *  when it could not be read. A wallet with the mode on gets the
-   *  collateral queued for `delaySeconds`, not at once. */
-  protection: { enabled: boolean; delaySeconds: number; requireCosign: boolean } | null;
+  /** The wallet's protected account mode, or null when it could not be
+   *  read. */
+  protection: Protection | null;
+  /** Where the collateral lands: the wallet, the account's payout queue
+   *  (the borrower's own withdrawal), or the account's vault (a later
+   *  holder's); `unknown` when the mode could not be read. */
+  route: PayoutRoute;
   amountCheck: TakeBackCheck;
   /** The protocol's dry run of this withdrawal now: null when it passes,
    *  its refusal when it refuses, 'unread' when it could not be run. Asked
@@ -102,7 +99,7 @@ export async function readTakeBackReview(
         read<bigint>(WITHDRAW, 'calculateMaxWithdrawable', [loanId]),
         read<bigint>(RISK, 'calculateHealthFactor', [loanId]),
         read<bigint>(RISK, 'calculateLTV', [loanId]),
-        read<{ enabled: boolean; delaySeconds: number | bigint; requireCosign: boolean }>(PROTECTED, 'getProtectedAccount', [account]),
+        readProtection(c, diamond, account),
       ]);
       return {
         loan,
@@ -114,9 +111,7 @@ export async function readTakeBackReview(
         maxWithdrawable,
         healthFactor,
         ltvBps,
-        protection: protectedAccount
-          ? { enabled: protectedAccount.enabled, delaySeconds: Number(protectedAccount.delaySeconds), requireCosign: protectedAccount.requireCosign }
-          : null,
+        protection: protectedAccount,
       };
     })
     .then((x) => x.value);
@@ -142,12 +137,16 @@ export async function readTakeBackReview(
     const dry = await askThrough(own, (c) => c.simulateContract({ address: diamond, abi: WITHDRAW, functionName: 'partialWithdrawCollateral', args: [loanId, amount], account }));
     dryRun = dry.kind === 'answered' ? null : dry.kind === 'reverted' ? refusalFromError(dry.error) : 'unread';
   }
-  return { identity, loanId, amount, ...facts, amountCheck, dryRun, verdict, readAt };
+  // The collateral leaves the vault of the borrower the loan records.
+  const route = payoutRoute(facts.protection, account, facts.loan.borrower);
+  return { identity, loanId, amount, ...facts, route, amountCheck, dryRun, verdict, readAt };
 }
 
-/** Every loan field the receipt states: a change to any reopens the review. */
+/** Every loan field the receipt states or the route depends on: a change
+ *  to any reopens the review. */
 export const TAKE_BACK_STATED_LOAN_FIELDS = [
   'status',
+  'borrower',
   'assetType',
   'collateralAsset',
   'collateralAmount',
@@ -165,8 +164,7 @@ export function takeBackChanged(a: TakeBackReview, b: TakeBackReview, copy: Pick
   if (TAKE_BACK_STATED_LOAN_FIELDS.some((k) => a.loan[k] !== b.loan[k])) return text('repay.changedLoan');
   if (a.borrowerHolder !== b.borrowerHolder || a.borrowerLock !== b.borrowerLock || a.paused !== b.paused || a.refinanceLive !== b.refinanceLive)
     return text('repay.changedHolders');
-  if (a.protection?.enabled !== b.protection?.enabled || a.protection?.delaySeconds !== b.protection?.delaySeconds || a.protection?.requireCosign !== b.protection?.requireCosign)
-    return text('takeBack.changedProtection');
+  if (routeChanged(a, b)) return text('payout.changed');
   if (a.verdict.state !== b.verdict.state || a.verdict.refusals[0]?.code !== b.verdict.refusals[0]?.code) return text('repay.changedVerdict');
   return null;
 }

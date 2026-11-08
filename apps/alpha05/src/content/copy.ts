@@ -629,21 +629,7 @@ export const copy = {
     rowAmount: B('Collateral you take back'),
     rowTo: B('Sent to'),
     to: B('Your wallet, from your vault'),
-    toQueued: B('Your protected account’s payout queue for {{delay}}, then your wallet'),
-    toQueuedCosign: B('Your payout queue for {{delay}}, then your wallet once a secondary signer approves'),
-    queuedNote: A(
-      'Protected mode is on for your account, so the protocol queues this withdrawal instead of paying it at once. It reaches your wallet once the account’s delay has passed and the payout is released.',
-    ),
-    protectionUnread: A(
-      'Whether protected mode is on for your account could not be read. If it is, the collateral waits in the account’s payout queue for its delay before reaching your wallet.',
-    ),
-    cosignNote: A(
-      'Your account also requires a secondary signer to approve each release. Once the delay passes, the collateral reaches your wallet only after one of your secondary signers approves it; the protocol checks this when the payout is released.',
-    ),
-    changedProtection: B('Your account’s protected mode'),
-    legQueued: B('{{amount}} queued for your wallet, releasable from {{time}}'),
-    legQueuedCosign: B('{{amount}} queued, releasable from {{time}} once a secondary signer approves'),
-    queuedOther: A('{{amount}} was queued for your wallet, not the {{expected}} reviewed.'),
+    routedOther: A('{{amount}} went to your protected account, not the {{expected}} reviewed.'),
     rowMax: B('Most you can take back now'),
     closer: A('Taking back collateral lowers the loan’s health factor and raises its loan-to-value, so it moves closer to liquidation.'),
     limitMoves: A('The protocol checks its limits again when this confirms. If prices move first and the amount no longer fits, it is refused and nothing moves.'),
@@ -661,6 +647,30 @@ export const copy = {
     hfAfterNone: B('The protocol recorded no health factor after the withdrawal.'),
     legReceived: B('{{amount}} arrived in your wallet'),
     receivedOther: A('{{amount}} arrived in your wallet, not the {{expected}} reviewed.'),
+  },
+  payout: {
+    toQueued: B('Your protected account’s payout queue for {{delay}}, then your wallet'),
+    toQueuedCosign: B('Your protected account’s payout queue for {{delay}}, then your wallet once a secondary signer approves'),
+    toHeld: B('Your vault, held while your protected account is locked'),
+    toVault: B('Your vault, because protected mode is on for your account'),
+    queuedNote: A(
+      'Protected mode is on for your account and this comes from your own vault, so the protocol queues it instead of paying it at once. It reaches your wallet once the account’s delay has passed and the payout is released.',
+    ),
+    cosignNote: A(
+      'Your account also requires a secondary signer to approve each release. Once the delay passes, this reaches your wallet only after one of your secondary signers approves it; the protocol checks this when the payout is released.',
+    ),
+    heldNote: A('Your protected account is locked, so the protocol keeps this payout in your vault. It is yours, and you can withdraw it once the account is unlocked.'),
+    vaultNote: A(
+      'Protected mode is on for your account, so the protocol pays this into your vault rather than your wallet. It leaves only through your own withdrawal and its delay.',
+    ),
+    protectionUnread: A(
+      'Whether protected mode is on for your account could not be read. If it is, this is queued or paid into your vault rather than reaching your wallet at once.',
+    ),
+    changed: B('Your account’s protected mode'),
+    legQueued: B('{{what}} queued for your wallet, releasable from {{time}}'),
+    legQueuedCosign: B('{{what}} queued for your wallet, releasable from {{time}} once a secondary signer approves'),
+    legHeld: B('{{what}} kept in your vault while your account is locked'),
+    legVault: B('{{what}} paid into your vault'),
   },
   flow: {
     reading: B('Reading what this would do…'),

@@ -922,25 +922,38 @@ above. Each resolves here, so a route reviewer needs no private file:
   offers no "use the most" shortcut, since an amount at the limit is
   refused once a second of interest accrues. No approval is asked: the
   collateral goes from the borrower's vault to the wallet that asks, in one
-  prompt. A wallet running protected account mode gets it queued for the
-  account's delay instead (the protocol queues an owner's own withdrawal),
-  so the review reads the mode and states the queue and its delay (and,
-  while the account requires it, that a secondary signer must approve the
-  release, which the protocol checks at release), or that the mode could
-  not be read, and the finish card measures the queued payout and when it
-  can be released. The review states the collateral before and after, where it goes,
+  prompt. A wallet running protected account mode has it routed instead,
+  by the one payout rule every flow paying the wallet shares (RB-PAYOUT-ROUTE
+  below): the borrower's own withdrawal is queued for the account's delay
+  (and, while the account requires it, released only once a secondary signer
+  approves, which the protocol checks at release), and a later holder of the
+  position is paid into their vault. The review states that route, or that
+  the mode could not be read, and the finish card measures where the
+  collateral went and, when queued, from when it can be released. The review states the collateral before and after, where it goes,
   the limit, the health factor and loan-to-value now, and every
   consequence: the loan moves closer to liquidation; the protocol checks its
   limits again at confirmation, so a price move first refuses it with
   nothing moved; a pause before then does the same; and the finish card
   states the protocol's own figures after. A re-read reopens the review
   when a stated loan field, the holder or lock, the pause, the refinance
-  request, the protected mode or the verdict moves; the limit, health factor and loan-to-value
+  request, the payout route or the verdict moves; the limit, health factor and loan-to-value
   move with prices and are restated, and a limit that falls below the
   amount blocks the review rather than reopening it. The finish card
   measures, from the transaction's own logs, the collateral the withdrawal
   left, the protocol's health factor and loan-to-value after, and what
-  arrived in the wallet.
+  arrived in the wallet, was queued for it, or was paid into the vault.
+- **RB-PAYOUT-ROUTE** — every flow that pays the wallet (taking back
+  collateral, collecting a claim) states where protected account mode sends
+  the payment with one rule and one set of words, so two flows cannot
+  describe the same queue differently. The route depends on whose vault pays
+  and on the receiving wallet's mode: a wallet without the mode is paid at
+  once; a payment from the account's own vault is queued for its delay, or
+  kept in the vault while the account is locked; a payment from anyone else's
+  vault is paid into the account's vault. A queued payment that needs a
+  secondary signer's approval to be released says so before signing and on
+  the finish card. A mode that could not be read is stated as unknown, never
+  as the wallet route. A change to the route, or to a queued payment's delay
+  or signer requirement, reopens the review.
 
 ## 3. Companion specifications
 

@@ -12,7 +12,7 @@ const review: TakeBackReview = {
   identity: '1:0xaa',
   loanId: 7n,
   amount: 5n,
-  loan: { status: 0, assetType: 0, collateralAsset: A, collateralAmount: 100n, principal: 10n, principalAsset: A, borrowerTokenId: 2n } as unknown as LoanDetails,
+  loan: { status: 0, assetType: 0, borrower: A, collateralAsset: A, collateralAmount: 100n, principal: 10n, principalAsset: A, borrowerTokenId: 2n } as unknown as LoanDetails,
   borrowerHolder: A,
   borrowerLock: 0,
   paused: false,
@@ -21,7 +21,8 @@ const review: TakeBackReview = {
   maxWithdrawable: 20n,
   healthFactor: 2n * 10n ** 18n,
   ltvBps: 4000n,
-  protection: { enabled: false, delaySeconds: 0, requireCosign: false },
+  protection: { enabled: false, locked: false, delaySeconds: 0, requireCosign: false },
+  route: 'wallet',
   amountCheck: { ok: true },
   dryRun: null,
   verdict: OPEN,
@@ -66,26 +67,37 @@ describe('takeBackReceipt', () => {
 
 describe('takeBack protected account mode', () => {
   const lines = (r: TakeBackReview) => takeBackReceipt(r, null, copy).consequences.map(String);
+  const on = { enabled: true, locked: false, delaySeconds: 86_400, requireCosign: false };
+  const queued: TakeBackReview = { ...review, protection: on, route: 'queued' };
   it('sends to the wallet at once when the mode is off', () => {
     expect(destination(review, copy)).toBe('takeBack.to');
-    expect(lines(review)).not.toContain('takeBack.queuedNote');
-    expect(lines(review)).not.toContain('takeBack.protectionUnread');
+    expect(lines(review)).not.toContain('payout.queuedNote');
+    expect(lines(review)).not.toContain('payout.protectionUnread');
   });
-  it('states the payout queue when the mode is on, and the unknown when unread', () => {
-    const on = { ...review, protection: { enabled: true, delaySeconds: 86_400, requireCosign: false } };
-    expect(destination(on, copy)).toBe('takeBack.toQueued');
-    expect(lines(on)).toContain('takeBack.queuedNote');
-    expect(lines(on)).not.toContain('takeBack.cosignNote');
-    expect(lines({ ...review, protection: null })).toContain('takeBack.protectionUnread');
+  it('states the payout queue for the borrower’s own withdrawal, and the unknown when unread', () => {
+    expect(destination(queued, copy)).toBe('payout.toQueued');
+    expect(lines(queued)).toContain('payout.queuedNote');
+    expect(lines(queued)).not.toContain('payout.cosignNote');
+    const unread: TakeBackReview = { ...review, protection: null, route: 'unknown' };
+    expect(destination(unread, copy)).toBeNull();
+    expect(takeBackReceipt(unread, null, copy).rows.find((r) => r.label === 'takeBack.rowTo')?.value.kind).toBe('unknown');
+    expect(lines(unread)).toContain('payout.protectionUnread');
   });
   it('states that a release needs a secondary signer while the account requires it', () => {
-    const cosign = { ...review, protection: { enabled: true, delaySeconds: 86_400, requireCosign: true } };
-    expect(destination(cosign, copy)).toBe('takeBack.toQueuedCosign');
-    expect(lines(cosign)).toContain('takeBack.cosignNote');
+    const cosign: TakeBackReview = { ...queued, protection: { ...on, requireCosign: true } };
+    expect(destination(cosign, copy)).toBe('payout.toQueuedCosign');
+    expect(lines(cosign)).toContain('payout.cosignNote');
   });
-  it('reopens the review when the mode changes', () => {
-    expect(takeBackChanged(review, { ...review, protection: { enabled: true, delaySeconds: 3600, requireCosign: false } }, copy)).toBe('takeBack.changedProtection');
-    const on = { ...review, protection: { enabled: true, delaySeconds: 3600, requireCosign: false } };
-    expect(takeBackChanged(on, { ...on, protection: { ...on.protection, requireCosign: true } }, copy)).toBe('takeBack.changedProtection');
+  it('states the vault for a later holder of the position', () => {
+    const later: TakeBackReview = { ...review, protection: on, route: 'vault' };
+    expect(destination(later, copy)).toBe('payout.toVault');
+    expect(lines(later)).toContain('payout.vaultNote');
+    expect(lines(later)).not.toContain('payout.queuedNote');
+  });
+  it('reopens the review when the route, the delay or the secondary signer changes', () => {
+    expect(takeBackChanged(review, queued, copy)).toBe('payout.changed');
+    expect(takeBackChanged(queued, { ...queued, protection: { ...on, delaySeconds: 3600 } }, copy)).toBe('payout.changed');
+    expect(takeBackChanged(queued, { ...queued, protection: { ...on, requireCosign: true } }, copy)).toBe('payout.changed');
+    expect(takeBackChanged(review, { ...review, protection: { ...review.protection!, delaySeconds: 3600 } }, copy)).toBeNull();
   });
 });

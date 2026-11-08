@@ -11,13 +11,12 @@
  * took effect.
  */
 import { parseEventLogs, type Abi, type Log } from 'viem';
-import { AddCollateralFacetABI, PartialWithdrawalFacetABI, VaultPayoutFacetABI } from '@vaipakam/contracts/abis';
+import { AddCollateralFacetABI, PartialWithdrawalFacetABI } from '@vaipakam/contracts/abis';
 
 type Hex = `0x${string}`;
 
 const ADD = AddCollateralFacetABI as Abi;
 const WITHDRAW = PartialWithdrawalFacetABI as Abi;
-const PAYOUT = VaultPayoutFacetABI as Abi;
 
 type Args = Record<string, bigint | number | string | undefined>;
 
@@ -55,24 +54,4 @@ export function collateralWithdrawn(logs: readonly Log[], diamond: Hex, loanId: 
 /** Whether this transaction returned the loan from fallback to running. */
 export function curedFromFallback(logs: readonly Log[], diamond: Hex, loanId: bigint): boolean {
   return eventsOf(logs, diamond, loanId, 'LoanCuredFromFallback').length > 0;
-}
-
-export interface QueuedPayout {
-  amount: bigint;
-  /** Unix seconds from which the payout can be released to the wallet. */
-  releaseAt: bigint;
-}
-
-/** A payout of `asset` from `account`'s vault that this transaction queued
- *  instead of paying (protected account mode), or null when it queued none.
- *  A protected account's own withdrawal waits out the account's delay. */
-export function payoutQueued(logs: readonly Log[], diamond: Hex, account: Hex, asset: Hex): QueuedPayout | null {
-  const own = logs.filter((l) => l.address.toLowerCase() === diamond.toLowerCase());
-  const events = parseEventLogs({ abi: PAYOUT, logs: [...own], eventName: 'PayoutQueued', strict: false }) as unknown as { args: Args }[];
-  const hit = events
-    .map((e) => e.args)
-    .filter((a) => String(a.account).toLowerCase() === account.toLowerCase() && String(a.asset).toLowerCase() === asset.toLowerCase())
-    .at(-1);
-  if (!hit || hit.amount === undefined) return null;
-  return { amount: BigInt(hit.amount), releaseAt: BigInt(hit.releaseAt ?? 0n) };
 }
