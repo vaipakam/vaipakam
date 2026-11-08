@@ -1322,6 +1322,12 @@ Wenn ein Kredit endet, hält das Protokoll fest, was jeder Seite zusteht, und de
 
 Die Prüfung listet jede Zahlung auf, die die Forderung leistet, was frühere Verkäufer einer Kreditgeberposition zuerst erhalten (verdiente, nicht gezahlte Zinsen) und wohin die Zahlung geht: in Ihre Wallet oder, bei aktivem Schutzmodus, in die Auszahlungswarteschlange Ihres Kontos oder in Ihren Tresor. Eine Genehmigung ist nicht nötig, Ihre Wallet fragt also einmal, nachdem die App die Forderung als Probelauf ausgeführt hat. Eine Pause des Protokolls stoppt jede Forderung. Solange ein Kredit im Fallback ist, wartet die Auszahlung des Kreditnehmers, bis der Kreditgeber abholt, und das beendet den Fallback: Der Kreditnehmer kann ihn nicht mehr heilen. Die Abschlusskarte zeigt, was die Transaktion tatsächlich gezahlt hat.
 
+<a id="payout-queue"></a>
+
+### Auszahlungen in Ihrer Warteschlange
+
+Bei aktivem Schutzmodus wartet alles, was Ihren Tresor in Richtung Ihrer Wallet verlässt, die Verzögerung Ihres Kontos in einer Auszahlungswarteschlange ab. „Claims“ listet auf, was dort wartet, das Früheste zuerst, jeweils mit einem kurzen Anfragecode: Jede Benachrichtigung zu einer Auszahlung zeigt denselben Code, sodass Sie eine Nachricht einer Anfrage zuordnen können. Jede Zeile nennt, was sie zahlt, wohin sie geht und ab wann sie freigegeben werden kann. Sobald eine Auszahlung fällig ist, kann jeder sie freigeben, und sie zahlt immer nur an das gespeicherte Ziel; ist dieses Ziel nicht mehr erlaubt, storniert die Freigabe sie stattdessen. Sie oder einer Ihrer zweiten Unterzeichner können eine Auszahlung jederzeit stornieren, auch während einer Pause, und der Vermögenswert bleibt in Ihrem Tresor. Verlangt Ihr Konto eine Genehmigung, genehmigt ein zweiter Unterzeichner jede Auszahlung zuerst; ein Unterzeichner findet Ihr Konto im Advanced-Modus, indem er dessen Adresse einfügt. Eine Pause hält Freigaben an, bis sie endet oder sich nach einer langen Pause der Notausgang öffnet. Jede Aktion fragt Ihre Wallet einmal, und die Abschlusskarte zeigt, was die Transaktion bewirkt hat.
+
 <a id="risk-access"></a>
 
 ### Risk Access: Ihre Risikostufe

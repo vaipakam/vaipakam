@@ -2259,6 +2259,12 @@ Positions は共通のリーダーを通して Home と同じ保有一覧を読�
 
 確認画面は `getClaimable`(貸し手の行は過去の売り手分を差し引き済みで、`getSellersShareOfLenderClaim` を併記)、`getBorrowerSurplusClaim`、`getLoanCollateralLien` を読み、請求をドライランします。ドライランでは制裁チェックも適用されます。一覧はポジショントークンに従います。`getUserDashboardClaimables` は記録された当事者の請求を列挙するため、列挙された行はウォレットがその側を保有している間だけ残り、他人から受け取った終了済みローンのポジションは請求を直接読みます。完了カードは `LenderFundsClaimed` / `BorrowerFundsClaimed`、`BorrowerSurplusClaimed`、`LoanSettled` と、ウォレットへのトークン送金を読みます。保護アカウントモードの呼び出し元の場合は `PayoutQueued`(アカウント自身のボールト)、`PayoutHeldInVault`(ロック中またはキューが満杯)、`PaymentCreditedToVault`(他の当事者のボールト)を読みます。FallbackPending のローンでは貸し手の請求が請求時の内部マッチを実行して行を書き換えることがあるため、完了カードは送金をプロトコル自身の記録と比較します。
 
+<a id="payout-queue"></a>
+
+### 支払いキュー: 確認される内容
+
+一覧は `getPendingPayoutIds(account)` で、各行に `getPendingPayout(id)` と `requestCode(id)` を読みます。コードは通知と同じ共有レンダラーで6文字の base32 として表示され、行はブラウザの時計ではなく最新ブロックのタイムスタンプに対する `releaseAt` の順に並びます。`releasePayout(id)` は誰でも呼び出せますが、一時停止中は `isEscapeOpen()` になるまで拒否されます。受取人が管理者(アカウント、または引退後はそのコントローラー)でもなく `getAllowlist` にも載っていないキュー中の行は、時刻の確認より前に、支払われる代わりに取り消されます。それ以外の場合、行は期限が来ており、アカウントはロックされておらず(`ProtectedVaultLocked`)、`requireCosign` がオンの間は共同署名済み(`CosignRequired`)である必要があり、受取人は再びスクリーニングされます。`cancelPayout(id)` は管理者または署名者のもので(`NotManagerOrSigner`)、一時停止中も使え、資産を再び引き出せるよう預入台帳に計上します。`cosignPayout(id)` は `getProtectedSigners` の署名者のもので(`NotSigner`)、アプリはアカウントがそれを必要とし、行がまだ共同署名されていない間だけ提示します。各操作は確認画面でドライランとして実行され、送信時にも再度実行されます。完了カードはその id の `PayoutReleased`(金額とプロトコルが測定した `delivered`)、`PayoutCancelled`、`PayoutCosigned` を読みます。keeper の `protectedAccount` パスが期限の来た行を解放するかどうかはケイパビリティサービスの回答で、既定では不明です。ロックはキュー中のすべての行を取り消します。
+
 <a id="risk-access"></a>
 
 ### Risk Access: あなたのリスクレベル

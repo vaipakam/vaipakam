@@ -1300,6 +1300,12 @@ Cuando un préstamo termina, el protocolo registra lo que se debe a cada parte, 
 
 La revisión enumera cada pago que hace la reclamación, lo que cobran primero los vendedores anteriores de una posición de prestamista (intereses ganados y no pagados) y adónde llega el pago: a tu billetera o, con el modo protegido activado, a la cola de pagos de tu cuenta o a tu bóveda. No hace falta ninguna aprobación, así que tu billetera pregunta una vez, después de que la app pruebe la reclamación en simulación. Una pausa del protocolo detiene toda reclamación. Mientras un préstamo está en fallback, el pago del prestatario espera a que el prestamista cobre, y ese cobro termina el fallback: el prestatario ya no puede subsanarlo. La tarjeta final muestra lo que la transacción pagó de verdad.
 
+<a id="payout-queue"></a>
+
+### Pagos en espera en tu cola
+
+Con el modo protegido activado, todo lo que sale de tu bóveda hacia tu billetera espera el retraso de tu cuenta en una cola de pagos. Reclamaciones muestra lo que espera allí, primero lo más próximo, cada uno con un código de solicitud corto: cada alerta sobre un pago muestra el mismo código, así puedes relacionar un mensaje con una solicitud. Cada fila indica qué paga, adónde va y cuándo puede liberarse. Cuando un pago vence, cualquiera puede liberarlo, y solo paga al destino que registró; si ese destino ya no está permitido, liberarlo lo cancela. Tú, o uno de tus firmantes secundarios, puedes cancelar un pago en cualquier momento, incluso durante una pausa, y el activo se queda en tu bóveda. Si tu cuenta exige aprobación, un firmante secundario aprueba antes cada pago; un firmante encuentra tu cuenta en el modo avanzado pegando su dirección. Una pausa retiene las liberaciones hasta que termina o, tras una pausa larga, se abre su vía de escape. Cada acción pide a tu billetera una sola vez, y la tarjeta final muestra lo que hizo la transacción.
+
 <a id="risk-access"></a>
 
 ### Risk Access: tu nivel de riesgo

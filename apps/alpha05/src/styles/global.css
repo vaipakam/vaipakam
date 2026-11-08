@@ -1656,3 +1656,36 @@ a.btn {
     animation: none;
   }
 }
+
+/* LN-54: a protected account's payout queue. Each row leads with its
+   request code, set like a ticket so it reads the same as an alert. */
+.queue-account + .queue-account,
+.queue-lookup {
+  margin-top: 20px;
+}
+.queue-account h3 {
+  margin: 0 0 6px;
+}
+.request-code {
+  display: inline-block;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  letter-spacing: 0.14em;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface-sunken);
+  color: var(--text-strong);
+}
+.queue-row {
+  transition: box-shadow 160ms ease, transform 160ms ease;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .queue-row:hover {
+    transform: translateY(-1px);
+  }
+}
+@media (max-width: 560px) {
+  .queue-row .form-actions .btn {
+    flex: 1 1 100%;
+  }
+}
