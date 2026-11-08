@@ -172,7 +172,11 @@ export interface LowerBound {
 }
 
 export async function readRewardLowerBound(client: PublicClient, diamond: Hex, account: Hex): Promise<LowerBound> {
-  const [amount, fromDay, toDay] = (await client.readContract({ address: diamond, abi: LENS, functionName: 'previewInteractionRewards', args: [account] })) as readonly [bigint, bigint, bigint];
+  const [amount, fromDay, toDay] = (await client.readContract({ address: diamond, abi: LENS, functionName: 'previewInteractionRewards', args: [account] })) as readonly [
+    bigint,
+    bigint,
+    bigint,
+  ];
   return { amount, fromDay, toDay };
 }
 

@@ -5,7 +5,7 @@ import { FeeDiscountConsent } from '../../shared/consent/FeeDiscountConsent';
 import { Faucet } from './Faucet';
 import { FirstRunCards } from './FirstRunCards';
 import { IntentChooser } from './IntentChooser';
-import { RewardsWidget } from './RewardsWidget';
+import { RewardsWidget } from '../../shared/claims/RewardsWidget';
 import { useStatusStrip } from './StatusStrip';
 import { useHomeBook } from './useHomeBook';
 import { YourPositions } from './YourPositions';

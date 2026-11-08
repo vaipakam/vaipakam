@@ -36,7 +36,7 @@ export const PAGES: readonly PageEntry[] = [
   { path: '/lend', name: 'Lend', tier: 'basic', rows: 'OFF (lend side), auto-lend intents', order: 3, built: true, nav: true, currentApp: '/lend' },
   { path: '/positions', name: 'Positions', tier: 'basic', rows: 'LN list, quick actions', order: 4, built: true, nav: true, currentApp: '/positions' },
   { path: '/positions/:id', name: 'Position', tier: 'basic', rows: 'LN, EX (113 rows, action-first)', order: 5, built: true, nav: false, currentApp: '/positions/:id' },
-  { path: '/claims', name: 'Claims', tier: 'basic', rows: 'RW claims, EX settlements, extension reserve', order: 6, built: false, nav: true, currentApp: '/claims' },
+  { path: '/claims', name: 'Claims', tier: 'basic', rows: 'RW claims, EX settlements, extension reserve', order: 6, built: true, nav: true, currentApp: '/claims' },
   { path: '/vault', name: 'Vault', tier: 'basic', rows: 'ACC depository, holdings, untracked assets', order: 7, built: false, nav: true, currentApp: '/vault' },
   { path: '/offers', name: 'Offers', tier: 'basic', rows: 'OFF my offers and the book', order: 8, built: false, nav: true, currentApp: '/offers' },
   { path: '/alerts', name: 'Alerts', tier: 'basic', rows: 'ACC alerts, Telegram, push', order: 9, built: false, nav: false, currentApp: '/settings' },

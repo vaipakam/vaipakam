@@ -20,8 +20,8 @@ import { ActionFlow, reviewIdentity, type Recheck } from '../ui/ActionFlow';
 import { FormField } from '../ui/FormField';
 import { Notice } from '../ui/Notice';
 import { formatBps, formatScaled, shortAddress } from '../ui/format';
-import { payoutOutcome } from '../protection/payout';
-import { routedLeg } from '../protection/payoutCopy';
+import { payoutOutcomes } from '../protection/payout';
+import { payoutLegs } from '../protection/payoutCopy';
 import { collateralWithdrawn } from './collateralLog';
 import { takeBackReceipt } from './takeBackReceipt';
 import { readTakeBackReview, takeBackBlockers, takeBackChanged, WITHDRAW, type TakeBackReview } from './takeBackReview';
@@ -207,26 +207,20 @@ function TakeBackFlow({ loanId, chain, own, meta, amount, onChangeAmount, onClos
           : { status: 'done', label: format('addColl.legHf', { hf: formatScaled(taken.newHf), ltv: formatBps(taken.newLtv) }) },
       );
     }
-    const routed = payoutOutcome(logs, diamond, account, asset);
-    if (routed) {
-      const label = routedLeg(routed, tokenAmount(routed.amount, asset, meta, format), r.protection, copy);
-      legs.push(
-        routed.amount === r.amount
-          ? { status: 'done', label }
-          : { status: 'unknown', label, reason: format('takeBack.routedOther', { amount: exact(asset, routed.amount), expected: exact(asset, r.amount) }) },
-      );
-      return legs;
-    }
-    const received = moved(logs, asset, null, account);
-    const receivedLabel = format('takeBack.legReceived', { amount: tokenAmount(received, asset, meta, format) });
     legs.push(
-      received === r.amount
-        ? { status: 'done', label: receivedLabel }
-        : {
-            status: received === 0n ? 'not-done' : 'unknown',
-            label: receivedLabel,
-            reason: format('takeBack.receivedOther', { amount: exact(asset, received), expected: exact(asset, r.amount) }),
-          },
+      ...payoutLegs(
+        {
+          outcomes: payoutOutcomes(logs, diamond, account, asset),
+          wallet: moved(logs, asset, null, account),
+          expected: r.amount,
+          protection: r.protection,
+          what: (v) => tokenAmount(v, asset, meta, format),
+          exact: (v) => exact(asset, v),
+          walletLeg: (what) => format('takeBack.legReceived', { amount: what }),
+          walletOther: (got, want) => format('takeBack.receivedOther', { amount: got, expected: want }),
+        },
+        copy,
+      ),
     );
     return legs;
   };

@@ -35,11 +35,15 @@ async function session(b, opts, label) {
       .catch(() => {});
     await p.waitForTimeout(3000);
   } else {
-    const why = await p
-      .getByTestId('take-back-refusal')
-      .innerText()
-      .catch(() => '(no take-back action and no refusal shown)');
-    console.log(`take back not offered: ${why}`);
+    // Its own line, or the line said once for it with the action above.
+    const line = async (id) =>
+      p
+        .getByTestId(id)
+        .innerText({ timeout: 2000 })
+        .catch(() => null);
+    const own = await line('take-back-refusal');
+    const shared = (await line('add-collateral-refusal')) ?? (await line('partial-refusal'));
+    console.log(`take back not offered: ${own ?? (shared ? `(said with the action above) ${shared}` : '(no take-back action and no refusal shown)')}`);
   }
   const main = (await p.locator('main').innerText()).replace(/\n+/g, '\n');
   console.log(`===== take back collateral from loan ${ID} ${label}\n${main}\nerrors: ${JSON.stringify(errs)}`);

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { routeChanged, routedDestination, routedLeg, routeNotes } from './payoutCopy';
+import { payoutLegs, routeChanged, routedDestination, routedLeg, routeNotes } from './payoutCopy';
 
 const copy = { text: (k: string) => k, format: (k: string) => k } as never;
 const on = { enabled: true, locked: false, delaySeconds: 3600, requireCosign: false };
@@ -23,5 +23,38 @@ describe('payout copy', () => {
     expect(routeChanged({ route: 'queued', protection: on }, { route: 'queued', protection: { ...on, delaySeconds: 1 } })).toBe(true);
     expect(routeChanged({ route: 'vault', protection: on }, { route: 'vault', protection: { ...on, delaySeconds: 1 } })).toBe(false);
     expect(routeChanged({ route: 'wallet', protection: on }, { route: 'queued', protection: on })).toBe(true);
+  });
+});
+
+describe('payoutLegs', () => {
+  const base = {
+    wallet: 0n,
+    protection: on,
+    what: (v: bigint) => v.toString(),
+    exact: (v: bigint) => v.toString(),
+    walletLeg: (w: string) => `wallet ${w}`,
+    walletOther: (g: string, e: string) => `wallet ${g}/${e}`,
+  };
+  it('states each place a split payment went and counts them together', () => {
+    const legs = payoutLegs(
+      {
+        ...base,
+        outcomes: [
+          { kind: 'queued', amount: 7n, releaseAt: 1n },
+          { kind: 'held', amount: 5n },
+        ],
+        expected: 12n,
+      },
+      copy,
+    );
+    expect(legs).toEqual([
+      { status: 'done', label: 'payout.legQueued' },
+      { status: 'done', label: 'payout.legHeld' },
+    ]);
+  });
+  it('flags a total short of the review on the last leg', () => {
+    const legs = payoutLegs({ ...base, outcomes: [{ kind: 'queued', amount: 7n, releaseAt: 1n }], expected: 12n }, copy);
+    expect(legs.at(-1)).toMatchObject({ status: 'unknown', reason: 'payout.totalOther' });
+    expect(payoutLegs({ ...base, outcomes: [], expected: 3n }, copy)).toEqual([{ status: 'not-done', label: 'wallet 0', reason: 'wallet 0/3' }]);
   });
 });

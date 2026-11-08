@@ -1314,6 +1314,14 @@ Solange ein Kredit läuft, kann wer die Kreditnehmerposition hält auf dessen Se
 
 Die Prüfung zeigt die Sicherheiten jetzt und danach, dass sie aus Ihrem Vault in Ihre Wallet gehen, die aktuelle Grenze sowie Health Factor und Beleihungsauslauf jetzt. Eine Freigabe ist nicht nötig, daher fragt Ihre Wallet einmal, nachdem die App die Entnahme als Probelauf getestet hat. Das Protokoll prüft seine Grenzen erneut, wenn die Entnahme bestätigt wird: Haben sich die Preise bewegt und passt der Betrag nicht mehr, wird sie abgelehnt und nichts bewegt sich. Eine Protokollpause, ein offener Swap-to-Repay-Auftrag, eine bestehende Refinanzierungsanfrage oder ein Verkaufsangebot des Kreditgebers hält sie auf, und das Protokoll lässt Sicherheiten nur für einen Token zurücknehmen, den es bepreist. Ist für Ihr Konto der geschützte Modus aktiv, wartet die Sicherheit in dessen Auszahlungswarteschlange für die Verzögerung des Kontos, bevor sie Ihre Wallet erreicht, und die Überprüfung sagt das.
 
+<a id="collect-a-payout"></a>
+
+### Eine Auszahlung abholen
+
+Wenn ein Kredit endet, hält das Protokoll fest, was jeder Seite zusteht, und der Inhaber jeder Position holt es auf der Seite des Kredits oder unter „Claims“ ab. Es zahlt an den, der die Position jetzt hält; eine gekaufte Position zahlt also an Sie. Die Auszahlung des Kreditgebers ist Kapital und Zinsen oder das, was ein Ausfall oder eine Liquidation erlöst hat, dazu für den Kreditgeber zurückgehaltene Mittel und bei einer Vermietung das vermietete NFT. Die Auszahlung des Kreditnehmers ist die zurückgegebene Sicherheit oder der Rest, dazu ein für den Kreditnehmer gehaltener Überschuss. Das Abholen verbrennt Ihr Positions-Token, und sobald beide Seiten abgeholt haben, ist der Kredit abgewickelt.
+
+Die Prüfung listet jede Zahlung auf, die die Forderung leistet, was frühere Verkäufer einer Kreditgeberposition zuerst erhalten (verdiente, nicht gezahlte Zinsen) und wohin die Zahlung geht: in Ihre Wallet oder, bei aktivem Schutzmodus, in die Auszahlungswarteschlange Ihres Kontos oder in Ihren Tresor. Eine Genehmigung ist nicht nötig, Ihre Wallet fragt also einmal, nachdem die App die Forderung als Probelauf ausgeführt hat. Eine Pause des Protokolls stoppt jede Forderung. Solange ein Kredit im Fallback ist, wartet die Auszahlung des Kreditnehmers, bis der Kreditgeber abholt, und das beendet den Fallback: Der Kreditnehmer kann ihn nicht mehr heilen. Die Abschlusskarte zeigt, was die Transaktion tatsächlich gezahlt hat.
+
 <a id="risk-access"></a>
 
 ### Risk Access: Ihre Risikostufe

@@ -1265,6 +1265,14 @@ While a loan runs, the holder of the borrower position can take back collateral 
 
 The review shows the collateral now and after, that it goes from your vault to your wallet, the limit now, and the loan's health factor and loan-to-value now. No approval is needed, so your wallet asks once, after the app tries the withdrawal as a dry run. The protocol checks its limits again when the withdrawal confirms: if prices moved and the amount no longer fits, it is refused and nothing moves. A protocol pause, a pending swap-to-repay order, a standing refinance request or a lender's sale listing holds it, and the protocol lets collateral be taken back only for a token it prices. If your account has protected mode on, the collateral waits in its payout queue for the account's delay before reaching your wallet, and the review says so.
 
+<a id="collect-a-payout"></a>
+
+### Collecting a Payout
+
+When a loan ends, the protocol records what each side is owed, and the holder of each position collects it from the loan's page or from Claims. It pays whoever holds the position now, so a position you bought pays you. The lender's payout is the principal and interest, or what a default or liquidation recovered, plus any funds held for the lender and, on a rental, the NFT that was rented out. The borrower's payout is the collateral back or what was left over, plus any surplus held for the borrower. Collecting burns your position token, and once both sides have collected, the loan is settled.
+
+The review lists every payout the claim makes, what past sellers of a lender position take first (interest they earned and were not paid), and where the payment lands: your wallet, or, with protected mode on, your account's payout queue or your vault. No approval is needed, so your wallet asks once, after the app tries the claim as a dry run. A protocol pause stops every claim. While a loan is in fallback, the borrower's payout waits until the lender collects, and the lender collecting ends the fallback: the borrower can no longer cure it. The finish card shows what the transaction actually paid.
+
 <a id="risk-access"></a>
 
 ### Risk Access: Your Risk Level
