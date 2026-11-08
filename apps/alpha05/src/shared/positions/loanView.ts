@@ -20,6 +20,7 @@ import {
   MetricsFacetABI,
   NumeraireConfigFacetABI,
   OracleFacetABI,
+  RefinanceFacetABI,
   RepayPeriodicFacetABI,
   RiskFacetABI,
   VaipakamNFTFacetABI,
@@ -38,6 +39,7 @@ const NUMERAIRE = NumeraireConfigFacetABI as Abi;
 const CONFIG = ConfigFacetABI as Abi;
 const ADMIN = AdminFacetABI as Abi;
 const ORACLE = OracleFacetABI as Abi;
+const REFINANCE = RefinanceFacetABI as Abi;
 
 /** `LibVaipakam.LiquidityStatus.Illiquid`. */
 export const ILLIQUID = 1;
@@ -172,6 +174,10 @@ export interface LoanView {
    *  loan: the pause stops settlement and a default alike; null when unread
    *  or not asked. */
   paused: boolean | null;
+  /** Whether a refinance request is live for a running loan
+   *  (`getRefinanceRequest`), which holds a partial repayment; null when
+   *  unread or the loan has ended. */
+  refinanceLive: boolean | null;
 }
 
 /** One interest period, as the protocol previews its settlement. */
@@ -258,6 +264,7 @@ export async function readLoanView(client: PublicClient, diamond: Hex, loanId: b
     saleVehicle,
     matchConfig,
     borrowerLock,
+    refinance,
   ] = await Promise.all([
     maybe(read<Hex>(NFT, 'ownerOf', [loan.lenderTokenId])),
     maybe(read<Hex>(NFT, 'ownerOf', [loan.borrowerTokenId])),
@@ -274,6 +281,7 @@ export async function readLoanView(client: PublicClient, diamond: Hex, loanId: b
     maybe(read<boolean>(METRICS, 'isSaleVehicleLoan', [loanId])),
     live ? maybe(read<readonly [boolean, bigint, bigint]>(CONFIG, 'getInternalMatchConfigBundle')) : null,
     live ? maybe(read<number>(NFT, 'positionLock', [loan.borrowerTokenId]).then(Number)) : null,
+    live ? maybe(read<readonly [bigint, boolean]>(REFINANCE, 'getRefinanceRequest', [loanId])) : null,
   ]);
 
   // A loan with a cadence answers to its checkpoint too: with the checkpoint
@@ -318,6 +326,7 @@ export async function readLoanView(client: PublicClient, diamond: Hex, loanId: b
     scheduleUnread: scheduled && periodic === null,
     periodicOn,
     paused,
+    refinanceLive: refinance ? refinance[1] : null,
   };
   return { view };
 }

@@ -1,7 +1,8 @@
 /**
- * The one rule a repayment route states its approval and its limits by.
- * `repayLoan` takes no maximum amount and no deadline, so the allowance is
- * the only cap on what a confirmation can take:
+ * The one rule both repayment routes (in full, LN-21; in part, LN-22) state
+ * their approval and its limits by. Neither `repayLoan` nor `repayPartial`
+ * takes a maximum amount or a deadline, so the allowance is the only cap on
+ * what a confirmation can take:
  *
  * - it is set to exactly the reviewed maximum whichever way it stands,
  *   lowered as well as raised (`allowanceSteps(prior, cap)`, no shortcut for
@@ -40,4 +41,13 @@ export function lateConfirmationLines(w: { capped: boolean; time: string; totalN
   const lines = [copy.format('repay.loseLate', { time: w.time })];
   if (w.totalBy === w.totalNow) lines.push(copy.text('repay.loseSame'));
   return lines;
+}
+
+/** The prompts that may follow a repayment that took effect, to put back
+ *  what it did not use of the approval: none when no approval was made; up
+ *  to two on a token that needs a step to zero first (only when going back
+ *  to a non-zero allowance); otherwise one. */
+export function putBackPrompts(approvalSteps: number): number {
+  if (approvalSteps === 0) return 0;
+  return approvalSteps === 2 ? 2 : 1;
 }

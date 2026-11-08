@@ -2227,6 +2227,14 @@ Positions は共通のリーダーを通して Home と同じ保有一覧を読�
 
 プレビューの `canSettleNow` はスイッチと一時停止を考慮しないため、カードは `settlePeriodicInterest` 自身の順序でそれらを組み合わせます: オフ（`PeriodicInterestDisabled`）、一時停止（`whenNotPaused`）、次に期間の時刻（`graceEndsAt` より前は `PeriodicSettleNotDue`）。売却を告げるのは、スイッチがオンでプロトコルが停止していないときだけです。読み取れなかったスイッチや一時停止は不明と表示します。不足がゼロなら、精算はチェックポイントを進めるだけです。キーパーの `PERIODIC_SETTLE` の有効化はアプリに報告されないため、カードは精算が誰にでも開かれていること、キーパーの状態は不明であることを表示します。
 
+<a id="partial-repay"></a>
+
+### ローンの一部を返済する: 金額の決まり方
+
+`repayPartial(loanId, amount)` は元本 `amount` と、`interestAccrualStart` 以降に発生した利息(定期クレジット控除後)を受け取ります。利息はまず、売却前の利息がまだ未払いの以前の保有者に支払い(`paySellersFirst`)、次に現在の貸し手ポジション保有者に支払い、トレジャリーの取り分を分け(プロトコルが凍結すべき保有者の場合、その取り分は代わりに貸し手のボールトへロックして預けられます。`freezeOrPayActiveLenderFromPayer`)、`principal` を減らし、利息の時計を再開し、現在の期間に計上します。満期は動きません。猶予期間の終了後、`principal × minPartialBps / 10000`(`getAssetRiskParams`)未満、元本全額以上(`PartialWouldRetireFullPrincipal`)、有効なインテントコミットや借り換えリクエストがあるとき、そして流動性のあるローンでヘルスファクターが悪化するときは拒否します。
+
+呼び出し前に一部返済の利息を返すビューはないため(#3299)、確認画面では今と少し先の時点で読んだ `calculateRepaymentAmount` から `principal` を引いた値を使います。満期までの日割りローンでは正確ですが、`useFullTermInterest` では残り期間の最低利息、満期後は延滞料を含むため「最大」と表示します。承認額は返済額とその上限値の合計ちょうどです。完了カードは、支払い自身の `PartialRepaid` ログの `newPrincipal`（ブロック時点の `principal` ではありません。同じブロックの後続トランザクションで変わりうるためです）、ウォレットからの流出、その後の `previewPeriodicSettle` を測定します。レビューがウォレットを止めるのは、部分額、または部分額と正確な利息に残高が足りないときだけです。上限の数字だけが残高を超える場合は、支払いを送る直前のドライランが判断します。
+
 <a id="risk-access"></a>
 
 ### Risk Access: あなたのリスクレベル

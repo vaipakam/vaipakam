@@ -2604,6 +2604,14 @@ For an Active ERC-20 loan with a cadence, the card reads `previewPeriodicSettle(
 
 The preview's `canSettleNow` ignores the switch and the pause, so the card puts them together in `settlePeriodicInterest`'s own order: switched off (`PeriodicInterestDisabled`), paused (`whenNotPaused`), then the period's time (`PeriodicSettleNotDue` before `graceEndsAt`). A sale is announced only when the switch is on and the protocol is not paused; an unread switch or pause is stated as unknown. With a zero shortfall the settlement only advances the checkpoint. The keeper's `PERIODIC_SETTLE` arming is not reported to the app, so the card says settling is open to anyone and that the keeper's posture is not known.
 
+<a id="partial-repay"></a>
+
+### Paying Part of a Loan: How It Is Sized
+
+`repayPartial(loanId, amount)` takes `amount` of principal plus the interest accrued since `interestAccrualStart` (net of any periodic credit). It pays the interest first to earlier holders still owed interest from before a sale (`paySellersFirst`), then the current lender-position holder, with the treasury's share split off (a holder the protocol must freeze has its share locked into the lender vault instead, `freezeOrPayActiveLenderFromPayer`); it lowers `principal`, restarts the interest clock and credits the current period; maturity never moves. It refuses past the grace end, below `principal × minPartialBps / 10000` (`getAssetRiskParams`), at or above the whole principal (`PartialWouldRetireFullPrincipal`), on a live intent commit or refinance request, and, for a liquid loan, when the health factor would worsen.
+
+No view returns the partial's interest ahead of the call (#3299), so the review uses `calculateRepaymentAmount` less `principal`, read now and at a moment ahead. That is exact for a pro-rata loan at or before maturity; with `useFullTermInterest` it includes the remaining-term floor, and past maturity a late fee, so it is shown as "at most". The approval is exactly the part plus that upper figure. The finish card measures the `newPrincipal` of the payment's own `PartialRepaid` log (not `principal` at the block, which a later transaction there can move), the wallet's outflow and `previewPeriodicSettle` afterwards. The review refuses the wallet only when it is short of the part, or of the part plus an exact interest figure; when only the upper figure exceeds its balance, the dry run just before the payment is sent decides.
+
 <a id="risk-access"></a>
 
 ### Risk Access: Your Risk Level

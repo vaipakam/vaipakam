@@ -1613,3 +1613,36 @@ a.btn {
   font-variant-numeric: tabular-nums;
   color: var(--text-muted);
 }
+/* LN-21 / LN-22: a running loan's actions sit side by side, and stack to
+   full width on a phone so each stays an easy tap. */
+.position-action-row,
+.form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 12px 0;
+}
+/* LN-22: the part-payment amount form, a raised card that eases in. */
+.partial-form {
+  max-width: 520px;
+  padding: 16px 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-card);
+  animation: standing-in 180ms var(--ease-standard);
+}
+.partial-form h3 {
+  margin: 0 0 4px;
+}
+@media (max-width: 599px) {
+  .position-action-row .btn,
+  .form-actions .btn {
+    flex: 1 1 100%;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .partial-form {
+    animation: none;
+  }
+}
