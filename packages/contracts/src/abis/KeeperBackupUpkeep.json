@@ -100,6 +100,19 @@
   },
   {
     "type": "function",
+    "name": "MAX_PENDING",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "MAX_RUNS_PER_PERFORM",
     "inputs": [],
     "outputs": [
@@ -238,9 +251,14 @@
     "name": "firstSeenAt",
     "inputs": [
       {
-        "name": "",
-        "type": "bytes32",
-        "internalType": "bytes32"
+        "name": "step",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "arg",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "outputs": [
@@ -324,6 +342,36 @@
         "name": "",
         "type": "address",
         "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "pendingCandidates",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "tuple[]",
+        "internalType": "struct KeeperBackupUpkeep.Pending[]",
+        "components": [
+          {
+            "name": "step",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "seenAt",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "arg",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
       }
     ],
     "stateMutability": "view"
@@ -555,6 +603,25 @@
         "type": "uint64",
         "indexed": false,
         "internalType": "uint64"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "BackupNoteDropped",
+    "inputs": [
+      {
+        "name": "step",
+        "type": "uint8",
+        "indexed": true,
+        "internalType": "uint8"
+      },
+      {
+        "name": "arg",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
       }
     ],
     "anonymous": false
