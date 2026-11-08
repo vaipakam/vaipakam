@@ -37,25 +37,34 @@ step's due rule, and ships with every step switched off.
 
 - the VaultBeacon's two proposal executes (one candidate each);
 - each day step for the last `dayWindow` closed days (default 7), counting
-  back from yesterday, and for a rotating window of `dayWindow` days over
-  every older day, moving on every 5 minutes (a day's lapse opens only after
-  its finalize and a lapse window, often weeks after the day);
-- each loan step for a rotating window of the active-loan list (default 10
-  loans, moving on every 5 minutes);
-- the stale-sale-listing teardown for the linked loan of each offer in a
-  rotating window of the active-offer list.
+  back from yesterday, and for one page of `dayWindow` days over every older
+  day (a day's lapse opens only after its finalize and a lapse window, often
+  weeks after the day);
+- each loan step for one page of the active-loan list (default 10 loans);
+- the stale-sale-listing teardown for the linked loan of each offer in one
+  page of the active-offer list.
 
 The note queue and these four kinds of candidate (the days split into
-recent and older) are six parts that share the check's gas. The part that
-goes first moves on every block, and the first (step, argument) pair inside
-each part moves once per round of six blocks. So a probe that is costly or
-runs out of its gas (a close whose frontier is far behind, a default with a
-long consolidation scan) cannot starve the rest: each part leads one check in
-six, and each time a part leads, its first pair has moved on by one, so every
-pair leads its part in turn. (Moving both on every block would lock them
-together: a part reached only while it leads would see starts from one
-residue class, and with ten loans and seven loan steps, every odd pair would
-never go first.)
+recent and older) are six parts that share the check's gas. Everything moves
+on one clock, the block number; a round is six blocks, one per part. The
+part that goes first moves on every block, so each part leads one check in
+six. A paged list (the loans, the offers, the older days) is read one page
+per round: round r reads page `r % pages`. The first (step, argument) pair
+inside a part moves on by one each time the part comes back to the same
+arguments: every round for an unpaged part, and every visit to the same page
+for a paged one (round r starts page `r % pages` at `r / pages`). So a probe
+that is costly or runs out of its gas (a close whose frontier is far behind,
+a default with a long consolidation scan) cannot starve the rest: every pair
+of every page leads its part in turn, within pages × pairs rounds.
+
+Two clocks would break this. Moving the start on every block instead of
+every round locks it to the part order: a part reached only while it leads
+would see starts from one residue class, and with ten loans and seven loan
+steps, every odd pair would never go first. Choosing the page by time while
+the start moves by blocks does the same across pages: a page can come back
+only on rounds whose start falls in one residue class (140 loans in 14 pages
+of 10, 70 pairs a page, and the page returning every 350 rounds, revisits
+the same start for ever). So there is no time-based rotation setting.
 
 Whether a candidate is due is the protocol's answer, not ours. The contract
 calls the step from a self-call (`probe`) that always reverts with the
@@ -68,7 +77,7 @@ non-zero amount.
 **Waiting.** A due candidate is first noted, in a cheap transaction: it
 joins a bounded queue (at most 64) with the time it was seen. Every check
 visits the whole queue before it scans, so a noted candidate is revisited
-however far the rotating loan, offer and day windows have moved away from it.
+however far the loan, offer and day pages have moved away from it.
 It runs only if a check still finds it due between `lagSec` (default 1 hour)
 and `lagSec + actWindowSec` (default 1 more hour) after the note. If our
 keeper runs the step in the meantime, the probe fails and the note is
@@ -192,8 +201,9 @@ the probe that changes nothing, note then run only after the lag, a drop
 when the keeper ran first, even during the wait (and a drop refused while
 still due), a costly part that cannot starve the others, costly loans that cannot hide
 the later ones in their page, a disarmed
-note dropped, a noted loan revisited after the window moved on, a stale note restarting the wait, a reverted run
+note dropped, a noted loan revisited after the page moved on, a stale note restarting the wait, a reverted run
 recorded with its selector, the forwarder gate, no run without a ready note,
 the run cap, the no-sale default with a paid bonus swept to the treasury,
-day zero, the recent day window and the rotating history window, the recycle rule, the offer-linked teardown,
-the beacon steps and the rotating loan window.
+day zero, the recent day window and the history pages, the recycle rule, the offer-linked teardown,
+the beacon steps, a loan page that moves with the round and never with time, and every pair of every page
+leading its part within pages × pairs rounds.

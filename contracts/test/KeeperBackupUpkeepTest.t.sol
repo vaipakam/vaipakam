@@ -273,9 +273,9 @@ contract KeeperBackupUpkeepTest is Test {
         vm.expectRevert(abi.encodeWithSelector(KeeperBackupUpkeep.StepsOutOfRange.selector, uint256(1) << 14));
         backup.setEnabledSteps(uint256(1) << 14);
         vm.expectRevert(KeeperBackupUpkeep.SettingOutOfRange.selector);
-        backup.setTiming(5 minutes, 1 hours, 5 minutes);
+        backup.setTiming(5 minutes, 1 hours);
         vm.expectRevert(KeeperBackupUpkeep.SettingOutOfRange.selector);
-        backup.setTiming(1 hours, 2 days, 5 minutes);
+        backup.setTiming(1 hours, 2 days);
         vm.expectRevert(KeeperBackupUpkeep.SettingOutOfRange.selector);
         backup.setScan(51, 7, 1_500_000, 2);
         vm.expectRevert(KeeperBackupUpkeep.SettingOutOfRange.selector);
@@ -393,10 +393,12 @@ contract KeeperBackupUpkeepTest is Test {
         assertEq(a.length, 1);
         uint256 noted = a[0].arg;
         _perform(a);
-        // 61 minutes on, the one-loan window has rotated many times, but the
-        // queue is visited first, so the noted loan runs.
+        // 61 minutes and one round of parts on, the one-loan page has moved
+        // to another loan, but the queue is visited apart from the pages, so
+        // the noted loan runs.
         uint256 t = block.timestamp + 61 minutes;
         vm.warp(t);
+        vm.roll(block.number + 6); // one round of KeeperBackupUpkeep.PARTS
         (, KeeperBackupUpkeep.Action[] memory b) = _check();
         bool run;
         for (uint256 i; i < b.length; i++) {
@@ -633,16 +635,19 @@ contract KeeperBackupUpkeepTest is Test {
         diamond.setDue(diamond.closeDay.selector, 3, false);
 
         // An old day (a lapse opens weeks after its day) is reached by the
-        // rotating history window: from day 40 the older days are 0..32.
+        // history pages: from day 40 the older days are 0..32, five pages of
+        // seven, and the page moves on once per round of six blocks.
         diamond.setDay(40, true);
         diamond.setDue(diamond.closeDay.selector, 2, true);
         bool seen;
-        uint256 t = block.timestamp;
+        // A local block counter: under via-IR `block.number` read in a loop can
+        // stay at its first value after `vm.roll`.
+        uint256 b = block.number;
         for (uint256 i; i < 5; i++) {
             (needed, a) = _check();
             if (needed && a[0].arg == 2) seen = true;
-            t += 5 minutes;
-            vm.warp(t);
+            b += 6; // one round of KeeperBackupUpkeep.PARTS
+            vm.roll(b);
         }
         assertTrue(seen, "day 2 reached by the history window");
 
@@ -691,22 +696,76 @@ contract KeeperBackupUpkeepTest is Test {
         assertEq(beacon.currentRuns(), 1);
     }
 
-    function test_TheLoanWindowRotates() public {
+    function test_TheLoanPageMovesOnEveryRound() public {
         vm.prank(owner);
         backup.setScan(1, 7, 1_500_000, 2);
         _arm(AUTO_DEDUCT);
         diamond.setDue(diamond.autoDeductDaily.selector, 13, true);
-        // One loan per check; the window moves every 5 minutes.
-        bool seen;
-        // A local clock: under via-IR `block.timestamp` read in a loop can stay
-        // at its first value after `vm.warp`.
+        // One loan per page; the page moves once per round of six blocks, and
+        // time alone moves nothing.
+        (bool before,) = _check();
         uint256 t = block.timestamp;
+        for (uint256 i; i < 3; i++) {
+            t += 1 hours;
+            vm.warp(t);
+            (bool needed,) = _check();
+            assertEq(needed, before, "the page does not move with time");
+        }
+        bool seen;
+        // A local block counter: under via-IR `block.number` read in a loop can
+        // stay at its first value after `vm.roll`.
+        uint256 b = block.number;
         for (uint256 i; i < 3; i++) {
             (bool needed, KeeperBackupUpkeep.Action[] memory a) = _check();
             if (needed && a[0].arg == 13) seen = true;
-            t += 5 minutes;
-            vm.warp(t);
+            b += 6; // one round of KeeperBackupUpkeep.PARTS
+            vm.roll(b);
         }
         assertTrue(seen);
+    }
+
+    /// @dev The page and the start inside it run on one clock. Three pages of
+    ///      ten loans, every default burning its gas and every day before the
+    ///      loans burning too, so the loans part is reached only while it
+    ///      leads and then only its first pair. The one due pair is the LAST
+    ///      pair of the LAST page. Each visit to a page moves its start on by
+    ///      one, so it is reached within pages x pairs rounds, whatever the
+    ///      time does meanwhile. (A page chosen by time could return to page
+    ///      three only on rounds whose start falls in one residue class.)
+    function test_EveryPairOfEveryPageLeadsItsPart() public {
+        uint256 parts = 6; // KeeperBackupUpkeep.PARTS
+        uint256 loansPart = 4;
+        uint256 pages = 3;
+        uint256 pairsPerPage = 10 * 7; // ten loans, seven loan steps
+        vm.prank(owner);
+        backup.setScan(10, 7, 3_000_000, 2);
+        uint256[] memory ids = new uint256[](30);
+        for (uint256 i; i < 30; i++) ids[i] = 101 + i;
+        diamond.setLoans(ids);
+        _arm(CLOSE_DAY);
+        _arm(DEFAULT_NO_SALE);
+        _arm(uint8(KeeperBackupUpkeep.Step.PeriodicStampWithoutSale));
+        diamond.setDay(10, true);
+        for (uint256 d; d < 10; d++) diamond.setBurn(diamond.closeDay.selector, d, true);
+        for (uint256 i; i < 30; i++) diamond.setBurn(diamond.triggerDefault.selector, ids[i], true);
+        uint256 target = ids[29];
+        diamond.setDue(diamond.settlePeriodicInterest.selector, target, true);
+        bool found;
+        uint256 t = block.timestamp;
+        for (uint256 m; m < pages * pairsPerPage && !found; m++) {
+            vm.roll(m * parts + loansPart);
+            t += 12 seconds; // a round of six two-second blocks
+            vm.warp(t);
+            vm.prank(address(0xBEEF), SIM);
+            (bool needed, bytes memory data) = backup.checkUpkeep{gas: 5_000_000}("");
+            if (!needed) continue;
+            KeeperBackupUpkeep.Action[] memory a = abi.decode(data, (KeeperBackupUpkeep.Action[]));
+            for (uint256 i; i < a.length; i++) {
+                if (a[i].arg == target && a[i].step == uint8(KeeperBackupUpkeep.Step.PeriodicStampWithoutSale)) {
+                    found = true;
+                }
+            }
+        }
+        assertTrue(found, "the last pair of the last page leads its part within pages x pairs rounds");
     }
 }

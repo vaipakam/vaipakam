@@ -60,16 +60,19 @@ interface IBackupSteps {
  *
  *         FINDING. `checkUpkeep` is simulated by Chainlink's nodes and is never
  *         sent as a transaction (it refuses a real sender). It builds the
- *         candidate calls for every ENABLED step: per active loan in a rotating
- *         window, per active offer's linked loan in a rotating window, per day
- *         for the most recent closed days AND a rotating window over every
- *         older day (a lapse becomes possible only weeks after its day), and
- *         the VaultBeacon's two proposal executes. These parts and the note
- *         queue share the check's gas. The part that goes first moves on
- *         every block, and the first (step, argument) pair inside each part
- *         moves once per round of parts, so whenever a part leads, its start
- *         has moved on by one: a pair whose probe is costly cannot starve the
- *         rest. Whether a candidate is due is decided by the protocol
+ *         candidate calls for every ENABLED step: per active loan in a page
+ *         of the active-loan list, per active offer's linked loan in a page of
+ *         the active-offer list, per day for the most recent closed days AND a
+ *         page of every older day (a lapse becomes possible only weeks after
+ *         its day), and the VaultBeacon's two proposal executes. These parts
+ *         and the note queue share the check's gas. Everything moves on one
+ *         clock, the block number. The part that goes first moves on every
+ *         block; a round is one block per part. A paged part reads page
+ *         `round % pages`, and the first (step, argument) pair inside a part
+ *         moves on by one each time it comes back to the same arguments (each
+ *         round, or each visit to the same page). So every pair of every page
+ *         leads its part in turn: a pair whose probe is costly cannot starve
+ *         the rest. Whether a candidate is due is decided by the protocol
  *         itself: each candidate is PROBED, i.e. called from this contract
  *         inside a self-call that always reverts, so its effects are undone and
  *         only its success is kept. The backup carries no copy of any step's
@@ -79,8 +82,8 @@ interface IBackupSteps {
  *
  *         WAITING. A due candidate is first NOTED: it joins a bounded queue
  *         with its first-seen time, in a cheap transaction. The queue is
- *         visited on its own, apart from the scan windows, so a noted candidate
- *         is revisited however far they have rotated away from it. It is RUN
+ *         visited on its own, apart from the scan pages, so a noted candidate
+ *         is revisited however far they have moved away from it. It is RUN
  *         only when a check still finds it due between `lagSec` and
  *         `lagSec + actWindowSec` after that time. A noted candidate that is no
  *         longer due (our keeper ran it) is DROPPED, during its wait as well,
@@ -196,8 +199,6 @@ contract KeeperBackupUpkeep is IAutomationCompatible, Ownable2Step {
     uint32 public actWindowSec = 1 hours;
     /// @notice Active loans (and active offers) probed per check.
     uint16 public loanWindow = 10;
-    /// @notice How often the loan and offer windows move on, in seconds.
-    uint32 public rotationSec = 5 minutes;
     /// @notice Closed days probed per check, counting back from yesterday.
     uint16 public dayWindow = 7;
     /// @notice Gas each probe may spend.
@@ -223,7 +224,7 @@ contract KeeperBackupUpkeep is IAutomationCompatible, Ownable2Step {
 
     event StepsEnabled(uint256 previousMask, uint256 mask);
     event ForwarderSet(address previous, address forwarder);
-    event TimingSet(uint32 lagSec, uint32 actWindowSec, uint32 rotationSec);
+    event TimingSet(uint32 lagSec, uint32 actWindowSec);
     event ScanSet(uint16 loanWindow, uint16 dayWindow, uint32 probeGas, uint8 runsPerPerform);
     /// @notice A step was seen due and its wait started.
     event BackupDueNoted(uint8 indexed step, uint256 indexed arg, uint64 at);
@@ -270,14 +271,12 @@ contract KeeperBackupUpkeep is IAutomationCompatible, Ownable2Step {
         forwarder = forwarder_;
     }
 
-    function setTiming(uint32 lagSec_, uint32 actWindowSec_, uint32 rotationSec_) external onlyOwner {
+    function setTiming(uint32 lagSec_, uint32 actWindowSec_) external onlyOwner {
         if (lagSec_ < MIN_LAG_SEC || lagSec_ > MAX_LAG_SEC) revert SettingOutOfRange();
         if (actWindowSec_ < MIN_ACT_WINDOW_SEC || actWindowSec_ > MAX_ACT_WINDOW_SEC) revert SettingOutOfRange();
-        if (rotationSec_ == 0 || rotationSec_ > 1 days) revert SettingOutOfRange();
         lagSec = lagSec_;
         actWindowSec = actWindowSec_;
-        rotationSec = rotationSec_;
-        emit TimingSet(lagSec_, actWindowSec_, rotationSec_);
+        emit TimingSet(lagSec_, actWindowSec_);
     }
 
     function setScan(uint16 loanWindow_, uint16 dayWindow_, uint32 probeGas_, uint8 runsPerPerform_) external onlyOwner {
@@ -437,6 +436,8 @@ contract KeeperBackupUpkeep is IAutomationCompatible, Ownable2Step {
         uint256[] memory args;
         uint256 firstStep;
         uint256 lastStep;
+        // A part that is not paged starts its pairs from the round itself.
+        uint256 seed = _cycle();
         if (part == 1) {
             firstStep = uint8(Step.BeaconExecuteCurrentVersion);
             lastStep = uint8(Step.BeaconExecuteRevoke);
@@ -444,27 +445,30 @@ contract KeeperBackupUpkeep is IAutomationCompatible, Ownable2Step {
         } else if (part == 2 || part == 3) {
             firstStep = FIRST_DAY_STEP;
             lastStep = LAST_DAY_STEP;
-            if (_anyIn(mask, firstStep, lastStep)) args = _days(part == 2);
+            if (_anyIn(mask, firstStep, lastStep)) (args, seed) = _days(part == 2);
         } else if (part == 4) {
             firstStep = FIRST_LOAN_STEP;
             lastStep = LAST_LOAN_STEP;
-            if (_anyIn(mask, firstStep, lastStep)) args = _window(true);
+            if (_anyIn(mask, firstStep, lastStep)) (args, seed) = _window(true);
         } else {
             firstStep = uint8(Step.TeardownStaleSaleListing);
             lastStep = firstStep;
-            if (_on(mask, uint8(firstStep))) args = _offerLinkedLoans();
+            if (_on(mask, uint8(firstStep))) (args, seed) = _offerLinkedLoans();
         }
         // Only an offer can yield no candidate (no linked loan): day zero and
         // the beacon's argument are real zeros.
-        return _scanCandidates(args, part == 5, firstStep, lastStep, actions, n, runs, mask);
+        return _scanCandidates(args, seed, part == 5, firstStep, lastStep, actions, n, runs, mask);
     }
 
-    /// @dev Every (step, argument) pair of one part, from a start that moves
-    ///      every round of `PARTS` blocks (`_cycle`), so a costly pair (a
-    ///      probe that spends its whole allowance) cannot keep the pairs after
-    ///      it from being reached.
+    /// @dev Every (step, argument) pair of one part, from `seed % total`.
+    ///      The seed moves on by one each time the part comes back to the same
+    ///      arguments (each round for an unpaged part, each visit to the same
+    ///      page for a paged one, see `_page`), so a costly pair (a probe that
+    ///      spends its whole allowance) cannot keep the pairs after it from
+    ///      being reached.
     function _scanCandidates(
         uint256[] memory args,
+        uint256 seed,
         bool skipZero,
         uint256 firstStep,
         uint256 lastStep,
@@ -476,7 +480,7 @@ contract KeeperBackupUpkeep is IAutomationCompatible, Ownable2Step {
         uint256 steps = lastStep - firstStep + 1;
         uint256 total = args.length * steps;
         if (total == 0) return (n, runs);
-        uint256 start = _cycle() % total;
+        uint256 start = seed % total;
         for (uint256 j; j < total && !_full(n, runs); j++) {
             uint256 idx = (start + j) % total;
             uint256 arg = args[idx / steps];
@@ -518,33 +522,34 @@ contract KeeperBackupUpkeep is IAutomationCompatible, Ownable2Step {
     }
 
     /// @dev Days are zero-based from launch, and none exists before launch.
-    ///      `recent`: the last `dayWindow` closed days. Otherwise a window of
-    ///      `dayWindow` days over all older days, moving on every `rotationSec`,
-    ///      since a day's lapse opens only after its finalize plus a lapse
-    ///      window.
-    function _days(bool recent) internal view returns (uint256[] memory out) {
+    ///      `recent`: the last `dayWindow` closed days. Otherwise a page of
+    ///      `dayWindow` days over all older days (`_page`), since a day's lapse
+    ///      opens only after its finalize plus a lapse window.
+    function _days(bool recent) internal view returns (uint256[] memory out, uint256 seed) {
+        seed = _cycle();
         (uint256 today, bool active) = IBackupDiamondReads(diamond).getInteractionCurrentDay();
-        if (!active) return out;
+        if (!active) return (out, seed);
         uint256 closed = today < dayWindow ? today : dayWindow;
         if (recent) {
             out = new uint256[](closed);
             for (uint256 back = 1; back <= closed; back++) out[back - 1] = today - back;
-            return out;
+            return (out, seed);
         }
         uint256 older = today - closed; // days [0, older)
-        if (older == 0) return out;
-        uint256 pages = (older + dayWindow - 1) / dayWindow;
-        uint256 first = ((block.timestamp / rotationSec) % pages) * dayWindow;
+        if (older == 0) return (out, seed);
+        uint256 page;
+        (page, seed) = _page((older + dayWindow - 1) / dayWindow);
+        uint256 first = page * dayWindow;
         uint256 end = first + dayWindow > older ? older : first + dayWindow;
         out = new uint256[](end - first);
         for (uint256 d = first; d < end; d++) out[d - first] = d;
     }
 
-    /// @dev The linked loan of each offer in a rotating window of the
-    ///      active-offer list (zero for an offer with none): a sale listing
-    ///      that outlived its loan is reached from the offer.
-    function _offerLinkedLoans() internal view returns (uint256[] memory out) {
-        out = _window(false);
+    /// @dev The linked loan of each offer in a page of the active-offer list
+    ///      (zero for an offer with none): a sale listing that outlived its
+    ///      loan is reached from the offer.
+    function _offerLinkedLoans() internal view returns (uint256[] memory out, uint256 seed) {
+        (out, seed) = _window(false);
         for (uint256 i; i < out.length; i++) out[i] = IBackupDiamondReads(diamond).getOfferLinkedLoanId(out[i]);
     }
 
@@ -590,19 +595,33 @@ contract KeeperBackupUpkeep is IAutomationCompatible, Ownable2Step {
         return block.number / PARTS;
     }
 
+    /// @dev Which of `pages` pages a paged part reads this round, and the seed
+    ///      of its start inside that page. Both come from the one clock,
+    ///      `_cycle`: round r reads page `r % pages` with seed `r / pages`, so
+    ///      each visit to a page has moved its start on by one and every pair
+    ///      of every page leads its part in turn. A page chosen by another
+    ///      clock (time, say) can return to a page only on rounds whose start
+    ///      falls in one residue class, and then some pairs of that page
+    ///      never lead.
+    function _page(uint256 pages) internal view returns (uint256 page, uint256 seed) {
+        uint256 r = _cycle();
+        return (r % pages, r / pages);
+    }
+
     function _full(uint256 n, uint256 runs) internal view returns (bool) {
         return n >= MAX_ACTIONS || runs >= runsPerPerform || gasleft() < uint256(probeGas) + CHECK_GAS_RESERVE;
     }
 
-    /// @dev The window of the active-loan (or active-offer) list this check
-    ///      reads. It moves on every `rotationSec`, wrapping at the end.
-    function _window(bool loans) internal view returns (uint256[] memory) {
+    /// @dev The page of the active-loan (or active-offer) list this check
+    ///      reads (`_page`), wrapping at the end, and the seed of its start.
+    function _window(bool loans) internal view returns (uint256[] memory ids, uint256 seed) {
         IBackupDiamondReads d = IBackupDiamondReads(diamond);
         uint256 count = loans ? d.getActiveLoansCount() : d.getActiveOffersCount();
-        if (count == 0) return new uint256[](0);
-        uint256 pages = (count + loanWindow - 1) / loanWindow;
-        uint256 offset = ((block.timestamp / rotationSec) % pages) * loanWindow;
-        return loans ? d.getActiveLoansPaginated(offset, loanWindow) : d.getActiveOffersPaginated(offset, loanWindow);
+        if (count == 0) return (new uint256[](0), _cycle());
+        uint256 page;
+        (page, seed) = _page((count + loanWindow - 1) / loanWindow);
+        uint256 offset = page * loanWindow;
+        ids = loans ? d.getActiveLoansPaginated(offset, loanWindow) : d.getActiveOffersPaginated(offset, loanWindow);
     }
 
     /// @dev The call a (step, argument) makes. The only place a call is built.
