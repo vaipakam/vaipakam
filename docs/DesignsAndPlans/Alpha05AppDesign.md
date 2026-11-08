@@ -1231,15 +1231,19 @@ above. Each resolves here, so a route reviewer needs no private file:
   Ask to unlock (locked, none asked) and Apply due changes (anything due).
   Each receipt states what the mode becomes and every consequence: turning
   on never delays what is owed to others, credits other vaults' payments
-  into the vault and cancels any pending vault-code change (said, not
-  read); a lock cancels every queued payout (counted), drops every
+  into the vault, cancels any pending vault-code change and raises the wait
+  on a future one (said, not read); a lock cancels every queued payout (counted), drops every
   pending setting change (counted) and voids every pending destination,
-  signer and vault-code change (said, not counted), leaves repayment and
+  signer and vault-code change (said, not counted), cancels a replacement
+  this wallet proposed while one its signers proposed survives (said, not
+  read), leaves repayment and
   adding collateral open and works during a pause; an unlock waits the
   delay; applying due changes applies every due change together, a shorter
   delay is always shown as the delay it sets beside the current one, and a
-  switch-off waits for an empty queue and clears destinations, signers and
-  their pending additions. Each action is dry-run at review and again before the wallet
+  switch-off waits for an empty queue and clears destinations, signers,
+  their pending additions and any pending replacement. Every consequence is
+  taken from the facet's own code path for that call, whole, not from one
+  finding at a time. Each action is dry-run at review and again before the wallet
   opens, and the finish card reads the Diamond's own events for this
   account. The account's own payout queue (RB-CLAIM: the Claims component)
   is shown under the card.

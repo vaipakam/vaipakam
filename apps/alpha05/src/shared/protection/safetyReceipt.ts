@@ -58,7 +58,7 @@ export function safetyReceipt(r: SafetyReview, copy: Copy): Receipt {
       text('safety.lockStops'),
       text('safety.lockServicing'),
       text('safety.lockDrops'),
-      text('safety.lockVoidsOthers'),
+      text('safety.lockReplacement'),
       text('safety.lockUnlock'),
       text('safety.lockPause'),
     );

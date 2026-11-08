@@ -160,7 +160,7 @@ describe('safetyReceipt', () => {
     const r = safetyReceipt(review('lock', { mode: { ...ON, pendingDelayAt: NOW, pendingDelay: 3 * DAY }, openRows: 3 }), copy);
     expect(r.rows.find((x) => x.label === 'safety.rowCancels')?.value).toEqual({ kind: 'text', text: 'safety.payoutCount:{"count":"3"}' });
     expect(r.rows.find((x) => x.label === 'safety.rowDrops')?.value).toEqual({ kind: 'text', text: 'safety.changeCount:{"count":"1"}' });
-    expect(r.consequences).toEqual(expect.arrayContaining(['safety.lockServicing', 'safety.lockVoidsOthers']));
+    expect(r.consequences).toEqual(expect.arrayContaining(['safety.lockServicing', 'safety.lockDrops', 'safety.lockReplacement']));
     expect(safetyReceipt(review('lock', { mode: null, openRows: null }), copy).consequences).toEqual(expect.arrayContaining(['safety.modeUnread', 'safety.rowsUnread']));
   });
   it('applying due changes names each change and that all due ones apply together', () => {

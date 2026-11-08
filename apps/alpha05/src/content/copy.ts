@@ -1281,12 +1281,18 @@ export const copy = {
     enableLoosen: A('Turning it on, or making it stricter, is immediate. A shorter delay or switching it off waits out the delay.'),
     enableLock: A('Once it is on, you can lock the account at once from this card if your wallet is at risk.'),
     enableVault: A('If this wallet has no vault yet, the same transaction creates it.'),
-    enableVoidsPin: A('It also cancels any pending change to your vault’s code version, such as a new pin or a shorter pin delay. This page does not read whether one is pending.'),
+    enableVoidsPin: A(
+      'It also cancels any pending change to your vault’s code version, and raises the wait on a future one toward your delay. This page does not read whether one is pending.',
+    ),
     lockCancels: A('It cancels every queued payout and transfer at once. Their assets stay in your vault.'),
     lockStops: A('While locked, no payout leaves your vault and no new offer, accept, sale or handover can be made.'),
     lockServicing: A('Repaying, adding collateral and payments to you keep working; what is paid to you stays in your vault.'),
-    lockDrops: A('It drops every pending change, such as a shorter delay or a new destination; each can be asked again only after an unlock.'),
-    lockVoidsOthers: A('It also cancels every pending destination or signer addition and any pending vault-code change; the count above does not include those.'),
+    lockDrops: A(
+      'It cancels every pending change: settings, destination and signer additions, and any vault-code change. Each can be asked again only after an unlock; the count above covers settings only.',
+    ),
+    lockReplacement: A(
+      'A replacement of this wallet that this wallet proposed is cancelled. One your secondary signers proposed survives, because it is your recovery. This page does not read replacement proposals.',
+    ),
     lockUnlock: A('Unlocking is a request that takes effect only after your account’s delay; no keeper can unlock it.'),
     lockPause: A('A lock works even while the protocol is paused.'),
     unlockWaits: A('The account stays locked until the delay has passed; then anyone can apply the unlock with Apply due changes.'),
@@ -1295,7 +1301,9 @@ export const copy = {
     finalizeAll: A('It applies every change that is due, all together, not only one of them.'),
     finalizeUnlock: A('The account unlocks: payouts and new positions are possible again.'),
     finalizeDisable: A('Protected mode switches off only if no payout is still queued; otherwise it keeps waiting.'),
-    finalizeDisableClears: A('Switching off also removes your destinations and secondary signers, and cancels any of their pending additions and any pending vault-code change.'),
+    finalizeDisableClears: A(
+      'Switching off also removes your destinations and secondary signers, and cancels their pending additions, any pending replacement of this wallet and any pending vault-code change.',
+    ),
     finalizeLoosens: A('Each applied change loosens your protection, as you asked when you requested it.'),
     modeUnread: A('Your account’s protected mode could not be read; the protocol’s own check decides when this confirms.'),
     pauseUnread: A('Whether the protocol is paused could not be read; the protocol’s own check decides when this confirms.'),
