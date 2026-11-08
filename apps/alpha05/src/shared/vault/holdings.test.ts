@@ -60,7 +60,9 @@ describe('holdingSubjects', () => {
       nfts: [{ standard: 'erc721', asset: N, tokenId: 7n, source: 'loan' }],
       complete: true,
     });
-    expect(collections).toEqual([]);
+    // Still named: the record keeps no token ids, so another deposited token
+    // of the collection may be missing.
+    expect(collections).toEqual([N]);
     expect(subjects).toEqual([{ standard: 'erc721', asset: N, tokenId: 7n, sources: ['loan', 'deposit'] }]);
   });
 });
@@ -105,6 +107,10 @@ describe('holdingFigures', () => {
   });
   it('an unread figure leaves the derived ones unread', () => {
     const f = holdingFigures(row({ withdrawable: null, inVault: 5n, tracked: 5n }));
+    expect(f).toMatchObject({ counted: 5n, withdrawable: null, held: null, unread: true, allHeld: false });
+  });
+  it('any unread figure withholds the free and held figures, even when the free one was read', () => {
+    const f = holdingFigures(row({ untracked: null, inVault: 5n, tracked: 5n, withdrawable: 0n }));
     expect(f).toMatchObject({ counted: 5n, withdrawable: null, held: null, unread: true, allHeld: false });
   });
   it('a free figure above the counted one is never turned into a negative held figure', () => {

@@ -71,8 +71,8 @@ export interface VaultHoldings {
   /** The wallet's vault; null when it has none yet. */
   vault: Hex | null;
   rows: HoldingRow[];
-  /** NFT collections the deposit record names with no token this page can
-   *  name (the record keeps no token ids). */
+  /** Every NFT collection the deposit record names: it keeps no token ids,
+   *  so only tokens a position names are read, and the page says so. */
   collections: Hex[];
   /** Whether the deposit record's list was read to its end. */
   listComplete: boolean;
@@ -108,8 +108,8 @@ export async function readDepositoryAssets(
 }
 
 /** Every subject to read, once each: deposit-record ERC-20s, position
- *  ERC-20s and position NFT tokens, with every reason it is read. A
- *  deposit-record NFT collection no position names is returned apart. */
+ *  ERC-20s and position NFT tokens, with every reason it is read. Every
+ *  deposit-record NFT collection is also returned apart, to be named. */
 export function holdingSubjects(deposited: readonly { asset: Hex; standard: Standard }[], positions: PositionAssets): { subjects: HoldingSubject[]; collections: Hex[] } {
   const byKey = new Map<string, HoldingSubject>();
   const add = (standard: Standard, asset: Hex, tokenId: bigint, source: HoldingSource) => {
@@ -125,10 +125,12 @@ export function holdingSubjects(deposited: readonly { asset: Hex; standard: Stan
   for (const d of deposited) if (d.standard === 'erc20') add('erc20', d.asset, 0n, 'deposit');
   for (const p of positions.erc20) add('erc20', p.asset, 0n, p.source);
   for (const n of positions.nfts) add(n.standard, n.asset, n.tokenId, n.source);
-  const named = new Set(positions.nfts.map((n) => n.asset.toLowerCase()));
+  // Every deposited collection is named, also one a position names a token
+  // of: the record keeps no token ids, so knowing one token never shows that
+  // every deposited token was found.
   const collections: Hex[] = [];
   for (const d of deposited) {
-    if (d.standard === 'erc20' || named.has(d.asset.toLowerCase())) continue;
+    if (d.standard === 'erc20') continue;
     if (!collections.some((c) => c.toLowerCase() === d.asset.toLowerCase())) collections.push(d.asset);
   }
   // Deposit-record NFT tokens a position names are read for their figures;
@@ -201,15 +203,19 @@ export interface HoldingFigures {
 
 export function holdingFigures(r: HoldingRow): HoldingFigures {
   const counted = r.inVault !== null && r.tracked !== null ? (r.inVault < r.tracked ? r.inVault : r.tracked) : null;
-  const held = counted !== null && r.withdrawable !== null && counted >= r.withdrawable ? counted - r.withdrawable : null;
+  const unread = r.inVault === null || r.tracked === null || r.withdrawable === null || r.untracked === null;
+  // A row with any figure unread shows none as free or held (RB-VAULT): the
+  // free and held figures are withheld, not shown beside a warning.
+  const withdrawable = unread ? null : r.withdrawable;
+  const held = counted !== null && withdrawable !== null && counted >= withdrawable ? counted - withdrawable : null;
   return {
     counted,
-    withdrawable: r.withdrawable,
+    withdrawable,
     held,
     untracked: r.untracked,
     short: r.inVault !== null && r.tracked !== null && r.inVault < r.tracked,
-    allHeld: counted !== null && counted > 0n && r.withdrawable === 0n,
-    unread: r.inVault === null || r.tracked === null || r.withdrawable === null || r.untracked === null,
+    allHeld: !unread && counted !== null && counted > 0n && withdrawable === 0n,
+    unread,
   };
 }
 

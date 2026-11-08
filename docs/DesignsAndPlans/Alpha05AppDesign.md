@@ -1151,8 +1151,8 @@ above. Each resolves here, so a route reviewer needs no private file:
   it, or the page cap, is said incomplete) and from the wallet's loans and
   open offers; the page says that a plainly transferred asset shows only if
   one of those names it, says when either source was incomplete or failed,
-  and names deposited NFT collections whose tokens it cannot list (the
-  record keeps no token ids). Empty rows and dust (below 1e-11 of a whole
+  names every deposited NFT collection, since only a token a loan or offer
+  names can be listed with figures (the record keeps no token ids). Empty rows and dust (below 1e-11 of a whole
   token, never one with an uncounted part) are hidden behind a switch that
   counts them. VPFI in the vault is named as setting the fee-discount tier,
   not collateral, with a link to Rewards. Deposit and withdraw are the next

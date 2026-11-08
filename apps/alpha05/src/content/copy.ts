@@ -1180,7 +1180,9 @@ export const copy = {
     vpfiLink: B('Manage VPFI on Rewards'),
     showHidden: B('Show {{count}} small or empty'),
     hideHidden: B('Hide small and empty'),
-    collections: A('Your deposit record also names these NFT collections. It keeps no token ids, so their tokens are not listed here: {{list}}.'),
+    collections: A(
+      'Your deposit record also names these NFT collections. It keeps no token ids, so only a token one of your loans or offers names is listed above; others you deposited are not: {{list}}.',
+    ),
     discoveryNote: A(
       'Listed: every asset you deposited or were paid into the vault, and every asset your loans and open offers name. An asset sent to the vault by a plain transfer shows only if one of those names it.',
     ),

@@ -2293,7 +2293,7 @@ Positions は共通のリーダーを通して Home と同じ保有一覧を読�
 
 ### あなたのボールト：何が読まれるか
 
-ボールトは `VaultFactoryFacet.getUserVaultAddress(wallet)` です。`getOrCreateUserVault(wallet)` がこれを作成し（ティア1の制裁チェック、一時停止ゲートなし）、完了カードは `UserVaultCreated` を読みます。資産ごとに同じブロックで読むのは、ボールト自身の残高（ERC-20 は `balanceOf`、ERC-721 は `ownerOf`、ERC-1155 は `balanceOf`）、`getTrackedHolding`、`withdrawableNow`、`untrackedHolding` です。「ボールト内」は残高と追跡保有量の小さい方、「今すぐ引き出し可能」は返された `withdrawableNow` そのもの（入金保有量を `freeHolding`、つまり追跡量からリーエンと保護モードの留保を引いた量で上限としたもの）、「ポジションが保持中」は計上量からそれを引いたものです。資産は `getDepositoryAssets(wallet, offset, limit)` から、返された総数までページごとに読みます（その前の空ページは不完全として扱います）。一覧の各コントラクトの規格は ERC-165 で読み、さらにウォレットの進行中と終了済みのローン、公開中のオファーの各レッグを加えます。記録は NFT のトークンIDを保持しないため、どのローンも指さない入金済みコレクションは数値なしで一覧に出ます。ダストとは、ゼロより大きく、トークン1枚の 1e-11 未満の計上量です。
+ボールトは `VaultFactoryFacet.getUserVaultAddress(wallet)` です。`getOrCreateUserVault(wallet)` がこれを作成し（ティア1の制裁チェック、一時停止ゲートなし）、完了カードは `UserVaultCreated` を読みます。資産ごとに同じブロックで読むのは、ボールト自身の残高（ERC-20 は `balanceOf`、ERC-721 は `ownerOf`、ERC-1155 は `balanceOf`）、`getTrackedHolding`、`withdrawableNow`、`untrackedHolding` です。「ボールト内」は残高と追跡保有量の小さい方、「今すぐ引き出し可能」は返された `withdrawableNow` そのもの（入金保有量を `freeHolding`、つまり追跡量からリーエンと保護モードの留保を引いた量で上限としたもの）、「ポジションが保持中」は計上量からそれを引いたものです。資産は `getDepositoryAssets(wallet, offset, limit)` から、返された総数までページごとに読みます（その前の空ページは不完全として扱います）。一覧の各コントラクトの規格は ERC-165 で読み、さらにウォレットの進行中と終了済みのローン、公開中のオファーの各レッグを加えます。記録は NFT のトークンIDを保持しないため、入金済みの NFT コレクションはすべて注記で名前を示し、数値付きで一覧に出るのはローンかオファーが指すトークンだけです。ダストとは、ゼロより大きく、トークン1枚の 1e-11 未満の計上量です。
 
 <a id="risk-access"></a>
 
