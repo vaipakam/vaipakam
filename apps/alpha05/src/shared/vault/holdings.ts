@@ -24,7 +24,7 @@
  */
 import type { Abi, PublicClient } from 'viem';
 import { erc20Abi } from 'viem';
-import { LoanFacetABI, VaultDepositoryFacetABI, VaultFactoryFacetABI } from '@vaipakam/contracts/abis';
+import { LoanFacetABI, MetricsFacetABI, VaultDepositoryFacetABI, VaultFactoryFacetABI } from '@vaipakam/contracts/abis';
 import { answerOrNull } from '../reads/answer';
 import { NFT_ABI, readStandard, type Standard } from '../nft/nft';
 
@@ -33,6 +33,7 @@ type Hex = `0x${string}`;
 const DEPOSITORY = VaultDepositoryFacetABI as Abi;
 const FACTORY = VaultFactoryFacetABI as Abi;
 const LOAN = LoanFacetABI as Abi;
+const METRICS = MetricsFacetABI as Abi;
 const ZERO = '0x0000000000000000000000000000000000000000';
 
 /** The protocol's `AssetType` positions. */
@@ -82,25 +83,36 @@ export interface VaultHoldings {
   block: bigint;
 }
 
-/** The assets the wallet's positions name, by kind (from the position book
- *  and the open offers the caller already read). */
+/** What the caller already read of the wallet's positions: the assets its
+ *  open offers name, and the loans it holds a position in now (the position
+ *  book). Each loan's legs are read from the loan's own record at the
+ *  holdings block, together with every loan the wallet was ever a party to. */
 export interface PositionAssets {
   erc20: { asset: Hex; source: HoldingSource }[];
   nfts: { standard: 'erc721' | 'erc1155'; asset: Hex; tokenId: bigint; source: HoldingSource }[];
-  /** Loans whose lent asset is an NFT (rentals): their prepaid fee token
-   *  sits in the renter's vault without being in the deposit record, and the
-   *  loan list does not carry it, so it is read from each loan. */
-  rentals: bigint[];
+  loanIds: bigint[];
   complete: boolean;
 }
 
-/** The deposit record's asset list, paged to its stated length. An empty page
- *  before the end, or more pages than the cap, ends the walk incomplete. */
-export async function readDepositoryAssets(
-  read: (offset: bigint, limit: bigint) => Promise<readonly [readonly Hex[], bigint]>,
+/** One loan's record, as far as its legs go. */
+export interface LoanLegs {
+  principalAsset: Hex;
+  assetType: number;
+  tokenId: bigint;
+  collateralAsset: Hex;
+  collateralAssetType: number;
+  collateralTokenId: bigint;
+  prepayAsset: Hex;
+}
+
+/** A list the protocol pages (`(offset, limit) -> (page, total)`), read to its
+ *  stated length. An empty page before the end, or more pages than the cap,
+ *  ends the walk incomplete. */
+export async function readPagedList<T>(
+  read: (offset: bigint, limit: bigint) => Promise<readonly [readonly T[], bigint]>,
   opts: { page: number; maxPages: number } = { page: DEPOSITORY_PAGE, maxPages: DEPOSITORY_MAX_PAGES },
-): Promise<{ assets: Hex[]; complete: boolean }> {
-  const assets: Hex[] = [];
+): Promise<{ assets: T[]; complete: boolean }> {
+  const assets: T[] = [];
   let offset = 0n;
   for (let i = 0; i < opts.maxPages; i++) {
     const [page, total] = await read(offset, BigInt(opts.page));
@@ -153,32 +165,60 @@ export async function readVaultHoldings(c: PublicClient, diamond: Hex, account: 
   const vaultRaw = (await c.readContract({ address: diamond, abi: FACTORY, functionName: 'getUserVaultAddress', args: [account], ...at })) as Hex;
   const vault = vaultRaw.toLowerCase() === ZERO ? null : vaultRaw;
   if (vault === null) return { vault: null, rows: [], collections: [], listComplete: true, positionsComplete: positions.complete, block };
-  const list = await readDepositoryAssets(
+  const list = await readPagedList<Hex>(
     (offset, limit) =>
       c.readContract({ address: diamond, abi: DEPOSITORY, functionName: 'getDepositoryAssets', args: [account, offset, limit], ...at }) as Promise<
         readonly [readonly Hex[], bigint]
       >,
   );
   const deposited = await Promise.all(list.assets.map(async (asset) => ({ asset, standard: await readStandard(c, asset) })));
-  const prepaid = await readRentalPrepay(positions.rentals, (id) =>
-    answerOrNull(c.readContract({ address: diamond, abi: LOAN, functionName: 'getLoanDetails', args: [id], ...at }) as Promise<{ prepayAsset: Hex }>).then(
-      (l) => l?.prepayAsset ?? null,
-    ),
+  // Every loan the wallet was ever a party to (the protocol's append-only
+  // record: a position sold or handed over leaves the assets the loan put in
+  // this vault where they are), and every loan it holds a position in now.
+  const history = await readPagedList<bigint>(
+    (offset, limit) =>
+      c.readContract({ address: diamond, abi: METRICS, functionName: 'getUserLoansPaginated', args: [account, offset, limit], ...at }) as Promise<
+        readonly [readonly bigint[], bigint]
+      >,
   );
-  const withPrepay: PositionAssets = { ...positions, erc20: [...positions.erc20, ...prepaid.assets.map((asset) => ({ asset, source: 'loan' as const }))] };
-  const { subjects, collections } = holdingSubjects(deposited, withPrepay);
+  const ids = [...new Set([...history.assets, ...positions.loanIds].map((id) => id.toString()))].map((id) => BigInt(id));
+  const records = await readLoanLegs(ids, (id) =>
+    answerOrNull(c.readContract({ address: diamond, abi: LOAN, functionName: 'getLoanDetails', args: [id], ...at }) as Promise<LoanLegs>),
+  );
+  const legs = loanAssets(records.loans);
+  const all: PositionAssets = { erc20: [...legs.erc20, ...positions.erc20], nfts: [...legs.nfts, ...positions.nfts], loanIds: ids, complete: positions.complete };
+  const { subjects, collections } = holdingSubjects(deposited, all);
   const rows = await Promise.all(subjects.map((s) => readHoldingRow(c, diamond, account, vault, s, block)));
-  return { vault, rows, collections, listComplete: list.complete, positionsComplete: positions.complete && prepaid.complete, block };
+  return { vault, rows, collections, listComplete: list.complete, positionsComplete: positions.complete && history.complete && records.complete, block };
 }
 
-/** The prepaid fee tokens of the wallet's rentals, read from each loan. A
- *  loan whose read had no answer makes the position sources incomplete, so
- *  the page says an asset may be missing rather than implying none. */
-export async function readRentalPrepay(ids: readonly bigint[], read: (id: bigint) => Promise<Hex | null>): Promise<{ assets: Hex[]; complete: boolean }> {
+/** Each loan's record; a loan whose read had no answer makes the position
+ *  sources incomplete, so the page says an asset may be missing rather than
+ *  implying none. */
+export async function readLoanLegs(ids: readonly bigint[], read: (id: bigint) => Promise<LoanLegs | null>): Promise<{ loans: LoanLegs[]; complete: boolean }> {
   const answers = await Promise.all(ids.map((id) => read(id)));
-  const assets: Hex[] = [];
-  for (const a of answers) if (a !== null && a.toLowerCase() !== ZERO && !assets.some((x) => x.toLowerCase() === a.toLowerCase())) assets.push(a);
-  return { assets, complete: answers.every((a) => a !== null) };
+  return { loans: answers.filter((a): a is LoanLegs => a !== null), complete: answers.every((a) => a !== null) };
+}
+
+/** Every leg the loans name: the lent asset, the collateral, and a rental's
+ *  prepaid fee token (accepting a rental puts it in the renter's vault
+ *  without adding it to the deposit record). A zero row is hidden as empty,
+ *  so a side whose leg is not in this vault costs a read and shows nothing. */
+export function loanAssets(loans: readonly LoanLegs[]): Pick<PositionAssets, 'erc20' | 'nfts'> {
+  const erc20: PositionAssets['erc20'] = [];
+  const nfts: PositionAssets['nfts'] = [];
+  for (const l of loans) {
+    leg(erc20, nfts, l.principalAsset, l.assetType, l.tokenId, 'loan');
+    leg(erc20, nfts, l.collateralAsset, l.collateralAssetType, l.collateralTokenId, 'loan');
+    if (l.prepayAsset.toLowerCase() !== ZERO) leg(erc20, nfts, l.prepayAsset, KIND.erc20, 0n, 'loan');
+  }
+  return { erc20, nfts };
+}
+
+function leg(erc20: PositionAssets['erc20'], nfts: PositionAssets['nfts'], asset: Hex, type: number, tokenId: bigint, source: HoldingSource): void {
+  if (type === KIND.erc20) erc20.push({ asset, source });
+  else if (type === KIND.erc721) nfts.push({ standard: 'erc721', asset, tokenId, source });
+  else if (type === KIND.erc1155) nfts.push({ standard: 'erc1155', asset, tokenId, source });
 }
 
 async function readHoldingRow(c: PublicClient, diamond: Hex, account: Hex, vault: Hex, s: HoldingSubject, block: bigint): Promise<HoldingRow> {
@@ -241,14 +281,15 @@ export function holdingFigures(r: HoldingRow): HoldingFigures {
 }
 
 /** A row is dust when what it counts is above zero and below 1e-11 of a whole
- *  token (ERC-20 with known decimals only). A row with an uncounted part, or
- *  whose vault holds less than the protocol counts, is never dust: what it
- *  states is not small even when the counted figure is. */
+ *  token (ERC-20 with known decimals only). A row with an uncounted part, a
+ *  vault holding less than the protocol counts, or any figure unread is never
+ *  dust: what it states (or cannot state) is not small even when the counted
+ *  figure is. */
 export function isDust(r: HoldingRow, decimals: number | null): boolean {
   if (r.standard !== 'erc20' || decimals === null || decimals < 11) return false;
   const f = holdingFigures(r);
   if (f.counted === null || f.counted === 0n) return false;
-  if ((f.untracked ?? 0n) > 0n || f.short) return false;
+  if (f.unread || (f.untracked ?? 0n) > 0n || f.short) return false;
   return f.counted * 10n ** 11n < 10n ** BigInt(decimals);
 }
 
@@ -268,34 +309,21 @@ export function shownRows(rows: readonly HoldingRow[], decimals: (asset: Hex) =>
   return { rows: keep, hidden: rows.length - rows.filter((r) => !(isEmpty(r) || isDust(r, decimals(r.asset)))).length };
 }
 
-/** The assets the wallet's loans and open offers name. Loans pass every
- *  leg (a zero row is hidden as empty), so a side whose leg is not in this
- *  vault costs a read and shows nothing. A rental's prepaid fee token is a
- *  leg too (accepting a rental puts it in the renter's vault without adding
- *  it to the deposit record); the loan list does not carry it, so a loan
- *  lending an NFT is returned in `rentals` to be read. */
+/** What the caller read of the wallet's positions: the legs of its open
+ *  offers (the lent asset, the collateral, a rental's prepaid fee token), and
+ *  the ids of the loans it holds a position in, whose legs are read from the
+ *  loans' own records. */
 export function positionAssets(
-  loans: readonly { id: bigint; principalAsset: Hex; assetType: number; tokenId: bigint; collateralAsset: Hex; collateralAssetType: number; collateralTokenId: bigint }[],
+  heldLoans: readonly { id: bigint }[],
   offers: readonly { lendingAsset: Hex; assetType: number; tokenId: bigint; prepayAsset: Hex; collateralAsset: Hex; collateralAssetType: number; collateralTokenId: bigint }[],
   complete: boolean,
 ): PositionAssets {
   const erc20: PositionAssets['erc20'] = [];
   const nfts: PositionAssets['nfts'] = [];
-  const rentals: bigint[] = [];
-  const leg = (asset: Hex, type: number, tokenId: bigint, source: HoldingSource) => {
-    if (type === KIND.erc20) erc20.push({ asset, source });
-    else if (type === KIND.erc721) nfts.push({ standard: 'erc721', asset, tokenId, source });
-    else if (type === KIND.erc1155) nfts.push({ standard: 'erc1155', asset, tokenId, source });
-  };
-  for (const l of loans) {
-    leg(l.principalAsset, l.assetType, l.tokenId, 'loan');
-    leg(l.collateralAsset, l.collateralAssetType, l.collateralTokenId, 'loan');
-    if (l.assetType !== KIND.erc20 && !rentals.includes(l.id)) rentals.push(l.id);
-  }
   for (const o of offers) {
-    leg(o.lendingAsset, o.assetType, o.tokenId, 'offer');
-    leg(o.collateralAsset, o.collateralAssetType, o.collateralTokenId, 'offer');
-    if (o.prepayAsset.toLowerCase() !== ZERO) leg(o.prepayAsset, KIND.erc20, 0n, 'offer');
+    leg(erc20, nfts, o.lendingAsset, o.assetType, o.tokenId, 'offer');
+    leg(erc20, nfts, o.collateralAsset, o.collateralAssetType, o.collateralTokenId, 'offer');
+    if (o.prepayAsset.toLowerCase() !== ZERO) leg(erc20, nfts, o.prepayAsset, KIND.erc20, 0n, 'offer');
   }
-  return { erc20, nfts, rentals, complete };
+  return { erc20, nfts, loanIds: heldLoans.map((l) => l.id), complete };
 }

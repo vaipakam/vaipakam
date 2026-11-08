@@ -1148,7 +1148,8 @@ above. Each resolves here, so a route reviewer needs no private file:
   withdrawable until adopted, with the route to adopt or disown it. Assets
   come from the deposit record's list (paged to its stated length; an empty
   page before it, or the page cap, is said incomplete) and from the wallet's
-  loans and open offers (a rental's prepaid fee token included); the page
+  loans and open offers (every loan it was ever a party to or holds a position in, each read from
+  its own record, a rental's prepaid fee token included); the page
   says that a plainly transferred asset shows only if one of those names it,
   says when either source was incomplete or failed, names every deposited
   NFT collection, since only a token a loan or offer names can be listed

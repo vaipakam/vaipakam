@@ -55,7 +55,12 @@ export function VaultPage() {
   const positionsComplete =
     book.loans.data !== null && book.ended.data !== null && offers.data !== null && book.loans.data.complete && book.ended.data.complete && offers.data.complete;
   const sources = positionAssets(loans, offerRows, positionsComplete);
-  const sig = [...sources.erc20.map((e) => `${e.asset}:${e.source}`), ...sources.nfts.map((n) => `${n.asset}:${n.tokenId}:${n.source}`), String(positionsComplete)].join(',');
+  const sig = [
+    ...sources.erc20.map((e) => `${e.asset}:${e.source}`),
+    ...sources.nfts.map((n) => `${n.asset}:${n.tokenId}:${n.source}`),
+    ...sources.loanIds.map((id) => `loan:${id}`),
+    String(positionsComplete),
+  ].join(',');
   const holdings = useOwnRead(['vault', 'holdings', diamond, sig], (c) => readVaultHoldings(c, diamond, account, sources), {
     enabled: chain !== null && bookSettled && offersSettled,
   });

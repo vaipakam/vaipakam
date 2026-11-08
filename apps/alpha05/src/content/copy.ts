@@ -1184,7 +1184,7 @@ export const copy = {
       'Your deposit record also names these NFT collections. It keeps no token ids, so only a token one of your loans or offers names is listed above; others you deposited are not: {{list}}.',
     ),
     discoveryNote: A(
-      'Listed: every asset you deposited or were paid into the vault, and every asset your loans and open offers name. An asset sent to the vault by a plain transfer shows only if one of those names it.',
+      'Listed: every asset you deposited or were paid into the vault, every asset of a loan you were ever party to or hold a position in, and every asset your open offers name. An asset sent to the vault by a plain transfer shows only if one of those names it.',
     ),
     listIncomplete: A('Your deposit record was not read to its end, so an asset you deposited may be missing.'),
     positionsIncomplete: A('Your loans and offers were not all read, so an asset one of them put in your vault may be missing.'),
