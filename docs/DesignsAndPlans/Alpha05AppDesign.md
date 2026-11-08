@@ -1161,8 +1161,27 @@ above. Each resolves here, so a route reviewer needs no private file:
   of the count) are hidden behind a switch that counts them. VPFI in the
   vault is named as setting the fee-discount tier, holding it for that pledging nothing (VPFI
   pledged to a loan or offer shows as held), with a
-  link to Rewards. Deposit and withdraw are the next slices; until then the
-  page links the current app for them.
+  link to Rewards. Withdraw is the next slice; until then the page links the
+  current app for it.
+- **RB-VAULT-DEPOSIT** — a deposit into the wallet's own vault (ACC-22) is
+  one asset, chosen from the suggested tokens and test collections or
+  pasted, its standard the contract's own answer, then the amount, the NFT's
+  token id, or the token id and quantity. An unaccepted Terms version is
+  accepted first. The review is read at one block: the wallet's vault (or
+  that the deposit creates it), the protocol pause, the sanctions screen,
+  whether a replacement retired the wallet, and the wallet's holding and
+  approval; a pause, a flagged wallet, a retired wallet or a shortfall stops
+  it by name, and an unread pause or screen is stated and left to the
+  protocol's dry run. The approval is exactly what the deposit takes (an
+  ERC-20 amount, one ERC-721 token, or an ERC-1155 collection granted for
+  this deposit and taken back after it unless the wallet had granted it),
+  the dry run runs with it in place (so a token that does not arrive in full
+  is refused before the deposit is sent), and an approval the flow made is
+  put back when the deposit does not go through. The receipt states that no
+  token-safety screening runs. The finish card states what the protocol's
+  own deposit record credited and what the token's own logs moved into the
+  vault. While the protocol is paused the panel says so, with what stays
+  open, and offers no deposit.
 - **RB-FROZEN** — money the protocol holds for a wallet the sanctions
   screen flags (LN-53) is stated as "Frozen, awaiting de-listing": locked
   where its loan keeps it, in a vault, not lost, and released once the

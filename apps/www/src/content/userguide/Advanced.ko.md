@@ -2186,6 +2186,12 @@ Positions는 하나의 공유 리더로 Home과 같은 보유 목록을 읽습�
 
 볼트는 `VaultFactoryFacet.getUserVaultAddress(wallet)`입니다. `getOrCreateUserVault(wallet)`이 볼트를 만들며(1단계 제재 검사, 일시 중지 게이트 없음), 완료 카드는 `UserVaultCreated`를 읽습니다. 자산마다 같은 블록에서 읽는 것은 볼트 자체 잔액(ERC-20 `balanceOf`, ERC-721 `ownerOf`, ERC-1155 `balanceOf`), `getTrackedHolding`, `withdrawableNow`, `untrackedHolding`입니다. "볼트 안"은 잔액과 추적 보유량 중 작은 값이고, "지금 출금 가능"은 반환된 `withdrawableNow` 그대로(예치 보유량을 `freeHolding`, 즉 추적량에서 담보권과 보호 모드 예치분을 뺀 값으로 제한한 것)이며, "포지션이 보유 중"은 계산된 수치에서 그 값을 뺀 것입니다. 자산은 `getDepositoryAssets(wallet, offset, limit)`에서 반환된 총수까지 페이지별로 읽고(그 전의 빈 페이지는 불완전으로 봅니다), 목록의 각 컨트랙트 표준은 ERC-165로 읽으며, `getUserLoansPaginated(wallet)`의 모든 대출과 지갑이 포지션을 보유한 모든 대출의 각 레그(대여 자산, 담보, 대여의 선불 수수료 토큰)를 같은 블록에서 `getLoanDetails`로 읽고, 지금까지 만든 모든 오퍼(`getUserOffersPaginated(wallet)`, 각각 `getOffer`로 읽음)의 각 레그를 더합니다. 오퍼의 예치금은 포지션 NFT를 넘긴 뒤에도 만든 사람의 볼트에 남기 때문입니다. `getLenderIntentsByOwner(wallet)`의 모든 상시 오퍼가 빌려주는 자산도 취소된 것을 포함해 더합니다. 상시 오퍼에 자금을 넣으면 예치 기록에 남지 않고 그 자산이 볼트에 들어가기 때문입니다. 기록에는 NFT 토큰 ID가 없으므로, 예치한 모든 NFT 컬렉션은 안내 문구에 이름이 나오고, 수치와 함께 나열되는 것은 대출이나 오퍼가 가리키는 토큰뿐입니다. 더스트는 0보다 크고 토큰 하나의 1e-11보다 작은 계산 수치입니다.
 
+<a id="vault-deposit"></a>
+
+### 볼트에 예치하기
+
+예치는 `VaultDepositoryFacet.depositToVault(kind, asset, tokenId, amount)`입니다. kind 0은 ERC-20, 1은 ERC-721, 2는 ERC-1155이며, ERC-20의 토큰 ID는 0, ERC-721의 수량은 1입니다. `whenNotPaused`이고, 호출자를 심사하며(Tier-1), 교체로 은퇴한 지갑을 거부합니다(`requireManager`). 검토는 한 블록에서 `getUserVaultAddress`, `paused`, 제재 심사 상태, `getProtectedAccount(wallet).retired`, 지갑의 잔액과 승인을 읽습니다. 읽지 못한 일시 중지·심사·은퇴는 그렇다고 밝히고 드라이 런이 결정합니다. 승인은 ERC-20이면 정확한 `approve`(먼저 0으로 되돌려야 하는 토큰은 두 단계), ERC-721이면 `approve(diamond, tokenId)`, ERC-1155이면 `setApprovalForAll(diamond, true)`이며, 이미 부여된 것이 아니면 예치 후 철회합니다. 드라이 런은 승인 뒤에 실행되며, ERC-20은 전액 도착 확인(`LibDelivery.pullExact`)과 함께 가져오므로 전송 수수료가 있는 토큰은 되돌려집니다. 완료 카드는 `VaultDeposited(account, asset, kind, tokenId, amount)`와 볼트로 들어간 토큰 자체의 전송 로그를 읽습니다. 이 예치에는 permit 경로가 없습니다.
+
 <a id="risk-access"></a>
 
 ### Risk Access: 내 위험 등급
