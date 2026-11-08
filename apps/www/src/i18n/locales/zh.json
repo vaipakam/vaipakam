@@ -38,7 +38,7 @@
     "privacy": "隐私",
     "cookieSettings": "Cookie 设置",
     "license": "BUSL 1.1 许可证",
-    "tagline": "去中心化vault-to-vault借贷与 NFT 租赁。无需信任、透明、安全链上。",
+    "tagline": "非托管的vault-to-vault借贷与 NFT 租赁，利率和期限由双方约定并保持固定。透明、链上。",
     "comingSoon": "即将推出",
     "supportedNetworks": "支持的网络",
     "viewDiamondOnExplorer": "在浏览器中查看 Diamond…",
@@ -142,11 +142,11 @@
     "titleLine1": "vault-to-vault借贷",
     "titleLine2": "安全链上",
     "subtitlePrefix": "Vaipakam",
-    "subtitleBody": "让您可以借出和借入代币、租赁 NFT 并设置自己的条款。每个仓位都通过独特的 NFT 进行跟踪 — 从报价到结算都是透明、可追溯和无需信任的。",
+    "subtitleBody": "让您以出借人与借款人约定的固定利率和期限借出和借入代币，并租赁 NFT，您的资产始终保存在您自己的 vault 中。每个仓位都通过独特的 NFT 进行跟踪 — 从报价到结算都是透明、可追溯和无需信任的。",
     "launchApp": "启动 Vaipakam",
     "howItWorks": "运作机制",
-    "statP2pValue": "P2P",
-    "statP2pLabel": "直接借贷",
+    "statP2pValue": "固定",
+    "statP2pLabel": "利率与期限",
     "statNftValue": "NFT",
     "statNftLabel": "头寸追踪",
     "statVaultValue": "1:1",
@@ -165,8 +165,8 @@
     "sectionLabel": "功能",
     "title": "无信任借贷所需的一切",
     "subtitle": "基于 Diamond Standard 构建的完整 DeFi 借贷协议，支持以太坊、Polygon 和 Arbitrum 上的 ERC-20 代币与可租赁 NFT。",
-    "p2pTitle": "P2P 借贷",
-    "p2pDesc": "针对 ERC-20 代币创建或接受具备自定义条款的报价——利率、抵押品类型与贷款期限。无需中间资金池。",
+    "p2pTitle": "vault-to-vault 借贷",
+    "p2pDesc": "针对 ERC-20 代币按您设定的条款创建或接受报价——利率、抵押品类型与贷款期限。约定的利率在整个贷款期间保持不变，除非双方同意更改。无需中间资金池。",
     "nftTitle": "NFT 租赁（ERC-4907）",
     "nftDesc": "按日定价租赁 ERC-721 与 ERC-1155 NFT。NFT 始终安全保管在保管中，借款方获得使用权。",
     "vaultTitle": "按用户隔离的保管",
@@ -228,7 +228,7 @@
   "cta": {
     "sectionLabel": "立即开始",
     "title": "准备好开始出借了吗？",
-    "subtitle": "连接钱包，创建报价，开始获取收益。条款自由设定——无资金池，无中介。",
+    "subtitle": "连接钱包，按您选择的固定利率和期限发布报价。资金在 vault 之间直接转移——无资金池，无中介。",
     "launchApp": "启动 Vaipakam",
     "readDocs": "阅读文档"
   },
@@ -253,7 +253,7 @@
     "entries": {
       "basics-what-is-vaipakam": {
         "q": "用通俗的话说，Vaipakam 是什么？",
-        "a1": "Vaipakam 是一个面向加密货币出借和数字物品（NFT）租赁的vault-to-vault市场。一方按照自己接受的条件——金额、利率、期限——发布一份报价，另一方接受它。没有银行，没有基金经理，也没有任何中介夹在双方之间。",
+        "a1": "Vaipakam 是一个面向加密货币出借和数字物品（NFT）租赁的vault-to-vault市场。一方按照自己接受的条件——金额、利率、期限——发布一份报价，另一方接受它。没有银行，没有基金经理，也没有任何中介夹在双方之间。双方约定的利率在整个贷款期间固定不变，除非双方都同意更改。",
         "a2": "维持各方诚信的，是部署在区块链上的一组智能合约。它们在贷款期间将资产存入个人专属的保管中，并在条件满足时自动释放。每位用户始终掌控自己的资金；协议只是在执行已经达成的协议而已。"
       },
       "basics-wallet": {

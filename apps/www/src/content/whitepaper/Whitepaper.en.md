@@ -8,9 +8,11 @@
 
 ## Abstract
 
-Vaipakam is a non-custodial, peer-to-peer credit protocol in which lenders and
+Vaipakam is a non-custodial, vault-to-vault credit protocol in which lenders and
 borrowers negotiate their own terms — rate, duration, collateral, and interest
-mode — instead of borrowing from a pooled money market. The protocol supports
+mode — instead of borrowing from a pooled money market. The rate and term are
+fixed when a loan opens and hold for its whole life unless both parties agree
+to change them; no utilization curve moves them. The protocol supports
 over-collateralized ERC-20 lending against ERC-20 or NFT collateral, and true
 NFT rental in which the renter receives on-chain usage rights while the asset
 never leaves vault custody. Every user's assets are held in an isolated
@@ -66,7 +68,7 @@ verification, and operational posture that together define the protocol.
 
 ## 1. Introduction and Design Principles
 
-Vaipakam is a decentralized peer-to-peer lending, borrowing, and NFT rental protocol. It facilitates loans of ERC-20 tokens and rentals of ERC-4907-compliant ERC-721/1155 NFTs, collateralized by any ERC-20 token or NFT the counterparties agree on. Unlike pooled money markets, Vaipakam has no shared liquidity pool and no protocol-set interest curve: every loan is formed from two explicit offers — a lender's terms and a borrower's terms — that meet either by direct acceptance or by permissionless matching of overlapping limit orders.
+Vaipakam is a non-custodial, vault-to-vault lending, borrowing, and NFT rental protocol: each user's assets stay in their own vault, and a loan moves funds directly between the lender's and the borrower's vaults. It facilitates loans of ERC-20 tokens and rentals of ERC-4907-compliant ERC-721/1155 NFTs, collateralized by any ERC-20 token or NFT the counterparties agree on. Unlike pooled money markets, Vaipakam has no shared liquidity pool and no protocol-set interest curve: every loan is formed from two explicit offers — a lender's terms and a borrower's terms — that meet either by direct acceptance or by permissionless matching of overlapping limit orders. The interest rate and the term the two offers settle on are fixed for the life of the loan. They change only when both sides agree: an extension near maturity re-terms the loan within limits both position holders set, and a handover to a replacement borrower takes that borrower's rate while the exiting borrower tops up any interest the lender would lose. A refinance does not change a loan's rate; it repays the loan and opens a new one.
 
 Peer-negotiated terms matter for two reasons. First, they permit asset-specific pricing: a lender can demand a rate, duration, and collateral package appropriate to the exact asset pair, including assets no pooled market would list — the protocol supports any ERC-20 and any NFT, pricing what it can through oracles and treating the rest as explicitly consented illiquid risk. Second, they eliminate shared-pool contagion: each loan is a bilateral position with its own collateral, its own liquidation path, and its own claim rights. A bad loan can harm only its own counterparties; there is no pool whose depositors socialize the loss.
 
@@ -311,7 +313,7 @@ Illiquid assets are handled by a deliberately simple, consent-first regime:
 
 ## 5. The Offer Book
 
-Vaipakam's market is a fully on-chain peer-to-peer order book. There is no pooled liquidity and no protocol-set interest curve: lenders and borrowers post offers at the terms they will accept, and the market rate emerges from the book. Every on-chain offer is backed by real escrowed assets in the creator's own isolated vault and represented by a position NFT from the moment it is created. Signed (gasless) offers are the one deliberate exception to that timing: they live off-chain until a filler materializes them, at which point escrow, the position NFT, and the fill all happen in the same transaction — and a wallet-backed signed offer is not pre-escrowed at all until that instant (section 5.3). Whichever path an offer takes — direct counterparty, permissionless matcher, or gasless signed fill — it is governed by the same risk checks at fill time.
+Vaipakam's market is a fully on-chain vault-to-vault order book. There is no pooled liquidity and no protocol-set interest curve: lenders and borrowers post offers at the terms they will accept, and the market rate emerges from the book. Every on-chain offer is backed by real escrowed assets in the creator's own isolated vault and represented by a position NFT from the moment it is created. Signed (gasless) offers are the one deliberate exception to that timing: they live off-chain until a filler materializes them, at which point escrow, the position NFT, and the fill all happen in the same transaction — and a wallet-backed signed offer is not pre-escrowed at all until that instant (section 5.3). Whichever path an offer takes — direct counterparty, permissionless matcher, or gasless signed fill — it is governed by the same risk checks at fill time.
 
 ### 5.1 Offer Creation
 
