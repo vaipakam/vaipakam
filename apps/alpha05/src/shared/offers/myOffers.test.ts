@@ -11,10 +11,11 @@ describe('offerState', () => {
 });
 
 describe('filters', () => {
-  it('counts a sale-consumed offer as filled, and every row under All', () => {
+  it('counts a request sold before any loan under its own chip, never as filled, and every row under All', () => {
     const rows = [row('open'), row('accepted'), row('sale-consumed'), row('expired'), row('cancelled'), row('unknown')];
-    expect(filterCounts(rows)).toEqual({ open: 1, accepted: 2, expired: 1, cancelled: 1, all: 6 });
-    expect(inFilter(row('sale-consumed'), 'accepted')).toBe(true);
+    expect(filterCounts(rows)).toEqual({ open: 1, accepted: 1, 'sale-consumed': 1, expired: 1, cancelled: 1, all: 6 });
+    expect(inFilter(row('sale-consumed'), 'accepted')).toBe(false);
+    expect(inFilter(row('sale-consumed'), 'sale-consumed')).toBe(true);
     expect(inFilter(row('unknown'), 'open')).toBe(false);
   });
 });

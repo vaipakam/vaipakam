@@ -21,6 +21,7 @@ type Hex = `0x${string}`;
 const FILTER_KEY: Record<OfferFilter, CopyKey> = {
   open: 'offers.filterOpen',
   accepted: 'offers.filterAccepted',
+  'sale-consumed': 'offers.filterSaleConsumed',
   expired: 'offers.filterExpired',
   cancelled: 'offers.filterCancelled',
   all: 'offers.filterAll',
@@ -183,7 +184,8 @@ function OfferRow({
       )}
       {t !== null && t.expiresAt > 0n && o.state === 'open' && <p className="tier-b">{format('home.offerExpires', { when: formatUtc(Number(t.expiresAt)) })}</p>}
       {o.state === 'expired' && <p className="tier-a">{text('offers.expiredHolds')}</p>}
-      {(o.state === 'accepted' || o.state === 'sale-consumed') && <p className="tier-b">{text('offers.filledNote')}</p>}
+      {o.state === 'accepted' && <p className="tier-b">{text('offers.filledNote')}</p>}
+      {o.state === 'sale-consumed' && <p className="tier-a">{text('offers.soldNote')}</p>}
       {o.created && !o.held && o.state === 'open' && <p className="tier-a">{text('offers.createdNotHeld')}</p>}
       {o.held && !createdHere && o.state === 'open' && <p className="tier-a">{text('offers.heldNotCreated')}</p>}
       {cancel.held ? (

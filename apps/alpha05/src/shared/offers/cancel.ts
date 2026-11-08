@@ -194,7 +194,8 @@ export function cancelBlockers(r: Pick<CancelReview, 'facts' | 'dryRun'>, viewer
   const { text, format } = copy;
   const f = r.facts;
   if (f.state === 'unknown' || f.chainNow === null) return [text('offerCancel.unread')];
-  if (f.state === 'accepted' || f.state === 'sale-consumed') return [text('offerCancel.filled')];
+  if (f.state === 'accepted') return [text('offerCancel.filled')];
+  if (f.state === 'sale-consumed') return [text('offerCancel.sold')];
   if (f.state === 'cancelled') return [text('offerCancel.cancelled')];
   if (f.offer === null) return [text('offerCancel.unread')];
   if (f.paused === null) return [text('offerCancel.pauseUnread')];

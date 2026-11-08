@@ -137,7 +137,7 @@ describe('cancelBlockers', () => {
   });
   it('refuses a filled, cancelled or unread offer first', () => {
     expect(cancelBlockers(review(offer(), { state: 'accepted' }), ME, copy)).toEqual(['offerCancel.filled']);
-    expect(cancelBlockers(review(offer(), { state: 'sale-consumed' }), ME, copy)).toEqual(['offerCancel.filled']);
+    expect(cancelBlockers(review(offer(), { state: 'sale-consumed' }), ME, copy)).toEqual(['offerCancel.sold']);
     expect(cancelBlockers(review(null, { state: 'cancelled' }), ME, copy)).toEqual(['offerCancel.cancelled']);
     expect(cancelBlockers(review(offer(), { state: 'unknown' }), ME, copy)).toEqual(['offerCancel.unread']);
   });

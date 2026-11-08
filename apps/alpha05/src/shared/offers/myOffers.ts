@@ -106,15 +106,14 @@ export async function readMyOffers(client: PublicClient, diamond: Hex, account: 
 }
 
 /** The filter chips the list offers, in order. */
-export const OFFER_FILTERS = ['open', 'accepted', 'expired', 'cancelled', 'all'] as const;
+export const OFFER_FILTERS = ['open', 'accepted', 'sale-consumed', 'expired', 'cancelled', 'all'] as const;
 export type OfferFilter = (typeof OFFER_FILTERS)[number];
 
-/** Whether a row shows under a chip. A lender-sale offer consumed by its
- *  sale counts as filled. */
+/** Whether a row shows under a chip: each state under its own. A request
+ *  consumed by its parallel sale opened no loan, so it is never counted as
+ *  filled. */
 export function inFilter(o: MyOffer, f: OfferFilter): boolean {
-  if (f === 'all') return true;
-  if (f === 'accepted') return o.state === 'accepted' || o.state === 'sale-consumed';
-  return o.state === f;
+  return f === 'all' || o.state === f;
 }
 
 export function filterCounts(rows: readonly MyOffer[]): Record<OfferFilter, number> {

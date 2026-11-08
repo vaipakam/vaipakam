@@ -1268,9 +1268,10 @@ above. Each resolves here, so a route reviewer needs no private file:
   connected wallet created, from the protocol's own per-creator index
   (which keeps a cancelled id), together with every offer whose position
   token it holds now, read in one bulk call with the protocol's own state
-  for each, newest first. Filters by state (open, filled with a
-  sale-consumed listing counted as filled, expired, cancelled, all) carry
-  each one's count; a list that could not be read to its end says so, and
+  for each, newest first. Filters by state (open, filled, sold, expired,
+  cancelled, all) carry each one's count. A request whose collateral sold
+  through its parallel listing before any accept opened no loan, so it is
+  "sold" with its own note, never counted or described as filled; a list that could not be read to its end says so, and
   nothing missing is reported as none. Each row is matched to the id it was
   asked for, never to the id the view reports: an offer cancelled with
   nothing filled has its record cleared, so the row says the protocol
