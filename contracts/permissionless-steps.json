@@ -107,6 +107,22 @@
       "flag": "REWARD_HORIZON_HEARTBEAT_ENABLED",
       "evidence": "apps/keeper/src/rewardHorizonHeartbeat.ts"
     },
+    "KeeperBackupUpkeep.checkUpkeep(bytes)": {
+      "class": "gated",
+      "gate": "simulation only: it reverts unless tx.origin is the zero address or Chainlink Automation simulation address 0x1111...1111, which no signed transaction can have, so no transaction can run it"
+    },
+    "KeeperBackupUpkeep.isDue(uint8,uint256)": {
+      "class": "user",
+      "why": "a preview: it reads a probe that always reverts with its result, so nothing the probed step writes survives"
+    },
+    "KeeperBackupUpkeep.probe(uint8,uint256)": {
+      "class": "user",
+      "why": "a preview: it always reverts with its result, so nothing it writes survives"
+    },
+    "KeeperBackupUpkeep.sweep(address)": {
+      "class": "user",
+      "why": "returns a token a backed step paid the backup contract to the treasury fixed at its deployment; it can send nowhere else, and a token left there waits harmlessly for the next sweep"
+    },
     "LegalFacet.acceptTerms(uint32,bytes32)": {
       "class": "user",
       "why": "the user accepts the terms for itself"

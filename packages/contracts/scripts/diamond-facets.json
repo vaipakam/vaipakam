@@ -120,6 +120,7 @@
     "AggregatorAdapterImplementation",
     "BackstopVaultImplementation",
     "FlashLoanLiquidator",
+    "KeeperBackupUpkeep",
     "RiskPremiumRateModel",
     "TestnetSanctionsOverlay",
     "SanctionsList",

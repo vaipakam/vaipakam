@@ -219,8 +219,10 @@ contract KeeperBackupUpkeepTest is Test {
     // ── helpers ──
 
     function _arm(uint8 step) internal {
+        // Read first: a prank applies to the next call, and the read is one.
+        uint256 mask = backup.enabledSteps() | (uint256(1) << step);
         vm.prank(owner);
-        backup.setEnabledSteps(backup.enabledSteps() | (uint256(1) << step));
+        backup.setEnabledSteps(mask);
     }
 
     function _check() internal returns (bool needed, KeeperBackupUpkeep.Action[] memory actions) {
