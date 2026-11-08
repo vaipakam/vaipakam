@@ -39,6 +39,7 @@ import {OfferPreviewFacet} from "../../src/facets/OfferPreviewFacet.sol";
 import {OfferBookFacet} from "../../src/facets/OfferBookFacet.sol";
 import {TestOfferFloor} from "../helpers/TestOfferFloor.sol";
 import {ForcedSaleFacet} from "../../src/facets/ForcedSaleFacet.sol";
+import {SaleFloorFacet} from "../../src/facets/SaleFloorFacet.sol";
 import {HelperTest} from "../HelperTest.sol";
 import {defaultAdapterCalls} from "../helpers/AdapterCallHelpers.sol";
 import {LibAcceptTestSigner} from "../helpers/LibAcceptTestSigner.sol";
@@ -151,7 +152,7 @@ contract Scenario2b_ERC1155RentalLending is Test {
         helperTest = new HelperTest();
         vaultImpl = new VaipakamVaultImplementation();
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](25);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](26);
         cuts[0] = IDiamondCut.FacetCut({facetAddress: address(offerCreateFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCreateFacetSelectors()});
         cuts[15] = IDiamondCut.FacetCut({
             facetAddress: address(offerAcceptFacet),
@@ -252,6 +253,13 @@ contract Scenario2b_ERC1155RentalLending is Test {
             facetAddress: ArtifactDeploy.deploy(type(ForcedSaleFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getForcedSaleFacetSelectors()
+        });
+        // #3359 - both forced sellers read their slippage floor through a
+        // self-call into SaleFloorFacet.
+        cuts[25] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(SaleFloorFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getSaleFloorFacetSelectors()
         });
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");

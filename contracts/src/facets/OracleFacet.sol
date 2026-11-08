@@ -1458,7 +1458,23 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
      */
     function getLiquidityTier(address asset) external view returns (uint8 tier) {
         if (asset == address(0)) return 0;
-        return _liquidityTier(asset, LibVaipakam.storageSlot());
+        return _liquidityTier(asset, LibVaipakam.storageSlot(), false);
+    }
+
+    /**
+     * @notice #3359 — the depth tier a forced SALE of `asset` reads: the
+     *         same probes as {getLiquidityTier}, measured as a close-out
+     *         measures them (the window-mean depth, without the checks
+     *         against the pool's current price, #3354 / #3371), so depth
+     *         pulled or a price pushed in the sale's own block cannot change
+     *         the tier. The forced-sale floor reads it; it never gates a sale.
+     * @param asset The collateral being sold.
+     * @return tier `0`..`3` (`0` = shallower than the $50k probe, or not
+     *         liquid at close-out).
+     */
+    function getCloseOutLiquidityTier(address asset) external view returns (uint8 tier) {
+        if (asset == address(0)) return 0;
+        return _liquidityTier(asset, LibVaipakam.storageSlot(), true);
     }
 
     /**
@@ -1477,7 +1493,7 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
      */
     function getEffectiveLiquidityTier(address asset) external view returns (uint8 tier) {
         if (asset == address(0)) return 0;
-        uint8 onChain = _liquidityTier(asset, LibVaipakam.storageSlot());
+        uint8 onChain = _liquidityTier(asset, LibVaipakam.storageSlot(), false);
         if (onChain == 0) return 0;
         uint8 keeper = LibVaipakam.effectiveKeeperTier(asset);
         return onChain < keeper ? onChain : keeper;
@@ -1989,12 +2005,13 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
     ///      clear the `floorSizePad` simulated swap at
     ///      `liquiditySlippageBps` on any valid {effectivePaaAssets} ×
     ///      {Uni/Pancake/Sushi V3} × {fee ≤ 0.3%} route.
-    function _liquidityTier(address asset, LibVaipakam.Storage storage s)
+    function _liquidityTier(address asset, LibVaipakam.Storage storage s, bool closeOut)
         internal
         view
         returns (uint8)
     {
-        if (_checkLiquidity(asset) != LibVaipakam.LiquidityStatus.Liquid) return 0;
+        (LibVaipakam.LiquidityStatus status, ) = _classifyLiquidity(asset, closeOut);
+        if (status != LibVaipakam.LiquidityStatus.Liquid) return 0;
         (bool okA, uint256 pA, uint8 dA) = tryGetAssetPrice(asset);
         if (!okA || pA == 0) return 0;
         (bool okDec, uint8 tdA) = LibNumeraireValue.tryTokenDecimals(asset);
@@ -2005,7 +2022,7 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
             band: LibVaipakam.cfgTwapConsistencyBps(),
             twapWindow: uint32(LibVaipakam.cfgTwapWindowSec()),
             quoteUnvalued: false,
-            closeOut: false
+            closeOut: closeOut
         });
         uint256[4] memory sizes = [
             LibVaipakam.cfgFloorSizePad(),
