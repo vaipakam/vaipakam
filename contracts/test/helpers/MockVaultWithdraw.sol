@@ -86,6 +86,12 @@ contract VaultWithdrawTestHook {
     /// @dev Whether the switches stub an outflow of `kind` / `class_` (true),
     ///      revert it, or let it run (false).
     function _stubbed(VaultOutflowTypes.AssetKind kind, VaultOutflowTypes.OutflowClass class_) private view returns (bool) {
+        // A class selected to fail fails even under a delivers-all stub: the
+        // suite picks one leg to break among legs it otherwise stubs.
+        (bool hasC, bytes memory c) = address(this).staticcall(
+            abi.encodeWithSelector(IVaultWithdrawTestSwitch.vaultOutflowClassFails.selector, uint8(class_))
+        );
+        if (hasC && c.length == 32 && abi.decode(c, (bool))) revert VaultOutflowStubFailure(uint8(kind));
         (bool on, bytes memory r) = address(this).staticcall(
             abi.encodeWithSelector(IVaultWithdrawTestSwitch.vaultWithdrawDeliversAll.selector)
         );
@@ -98,10 +104,6 @@ contract VaultWithdrawTestHook {
             if (mode == 1) return true;
             if (mode == 2) revert VaultOutflowStubFailure(uint8(kind));
         }
-        (bool hasC, bytes memory c) = address(this).staticcall(
-            abi.encodeWithSelector(IVaultWithdrawTestSwitch.vaultOutflowClassFails.selector, uint8(class_))
-        );
-        if (hasC && c.length == 32 && abi.decode(c, (bool))) revert VaultOutflowStubFailure(uint8(kind));
         return false;
     }
 

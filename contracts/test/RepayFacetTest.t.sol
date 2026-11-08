@@ -684,13 +684,16 @@ contract RepayFacetTest is Test {
         vm.warp(block.timestamp + 1 days);
         RepayPeriodicFacet(address(diamond)).autoDeductDaily(2);
 
-        // The daily rental fee follows the CURRENT holder; the departed lender
-        // receives nothing.
+        // The daily rental fee follows the CURRENT holder, into the holder's
+        // vault (#3205 part 2); the departed lender receives nothing.
+        address holderVault = VaultFactoryFacet(address(diamond)).getUserVaultAddress(newHolder);
+        assertTrue(holderVault != address(0), "the holder's vault was created for the payout");
         assertGt(
-            ERC20Mock(mockERC20).balanceOf(newHolder),
-            newHolderBefore,
-            "current holder receives the daily rental fee"
+            ERC20Mock(mockERC20).balanceOf(holderVault),
+            0,
+            "current holder's vault receives the daily rental fee"
         );
+        assertEq(ERC20Mock(mockERC20).balanceOf(newHolder), newHolderBefore, "nothing reaches the holder's wallet directly");
         assertEq(
             ERC20Mock(mockERC20).balanceOf(lender),
             storedLenderBefore,
@@ -1215,7 +1218,7 @@ contract RepayFacetTest is Test {
         // Make treasury vault withdraw fail
         MockVaultWithdraw.fails(address(diamond), VaultOutflowTypes.AssetKind.ERC20);
         vm.prank(borrower);
-        vm.expectRevert(bytes("mock revert"));
+        vm.expectRevert(abi.encodeWithSelector(VaultOutflowStubFailure.selector, uint8(0)));
         RepayFacet(address(diamond)).repayLoan(2);
         vm.clearMockedCalls();
     }
@@ -1438,7 +1441,7 @@ contract RepayFacetTest is Test {
         helperOfferLoan();
         vm.warp(block.timestamp + 1 days);
         MockVaultWithdraw.fails(address(diamond), VaultOutflowTypes.AssetKind.ERC20);
-        vm.expectRevert(bytes("mock revert"));
+        vm.expectRevert(abi.encodeWithSelector(VaultOutflowStubFailure.selector, uint8(0)));
         RepayPeriodicFacet(address(diamond)).autoDeductDaily(2);
         vm.clearMockedCalls();
     }
@@ -1780,31 +1783,13 @@ contract RepayFacetTest is Test {
         helperOfferLoan();
         vm.warp(block.timestamp + 1 days);
 
-        address treasuryAddr = address(diamond); // treasury = diamond
-        // First call: treasury share → borrower vault withdraws to treasury (address(diamond))
-        // Second call: lender share → borrower vault withdraws to address(this)/diamond for vault deposit
-        // Both have to=address(diamond) in the first and to=address(this) in the second.
-        // treasury == address(diamond) == address(this) for the calls...
-        // Let me distinguish by amount. NFT loan: amount=10, duration=30, elapsed=1 day.
-        // elapsedDays=1, interest = principal*elapsedDays = 10*1 = 10
-        // treasuryShare = 10 * 100 / 10000 = 0 (truncated to 0)
-        // lenderShare = 10 - 0 = 10
-        // So treasury call: (borrower, mockERC20, treasury, 0); lender call: (borrower, mockERC20, diamond, 10)
-        // We need treasury(0) to succeed and lender(10) to fail.
-        // Mock treasury call (amount=0) to succeed
-        vm.mockCall(
-            address(diamond),
-            abi.encodePacked(VaultOutflowFacet.vaultOutflow.selector, abi.encode(borrower, VaultOutflowTypes.AssetKind.ERC20, mockERC20, uint256(0), uint256(0), address(0), VaultOutflowTypes.OutflowClass.Treasury)),
-            abi.encode(uint256(0))
-        );
-        // Mock lender share call (amount=10) to fail
-        vm.mockCallRevert(
-            address(diamond),
-            abi.encodePacked(VaultOutflowFacet.vaultOutflow.selector, abi.encode(borrower, VaultOutflowTypes.AssetKind.ERC20, mockERC20, uint256(0), uint256(10), address(0), VaultOutflowTypes.OutflowClass.DiamondTransient)),
-            "lender fail"
-        );
+        // #3205 part 2 — the lender share leaves the borrower's vault as a
+        // Diamond-transient leg (the repay then credits the lender holder's
+        // vault); that leg fails, every other leg is stubbed as delivered.
+        MockVaultWithdraw.deliversAll(address(diamond));
+        MockVaultWithdraw.failsClass(address(diamond), VaultOutflowTypes.OutflowClass.DiamondTransient);
         vm.prank(borrower);
-        vm.expectRevert(bytes("lender fail"));
+        vm.expectRevert(abi.encodeWithSelector(VaultOutflowStubFailure.selector, uint8(0)));
         RepayFacet(address(diamond)).repayLoan(2);
         vm.clearMockedCalls();
     }

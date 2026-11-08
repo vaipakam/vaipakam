@@ -100,7 +100,7 @@ import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {ZeroExProxyMock} from "./mocks/ZeroExProxyMock.sol";
 import {MockZeroExLegacyAdapter} from "./mocks/MockZeroExLegacyAdapter.sol";
 import {MockRentableNFT721} from "./mocks/MockRentableNFT721.sol";
-import {MockVaultWithdraw} from "./helpers/MockVaultWithdraw.sol";
+import {MockVaultWithdraw, VaultOutflowStubFailure} from "./helpers/MockVaultWithdraw.sol";
 import {ArtifactDeploy} from "../script/lib/ArtifactDeploy.sol";
 import {defaultQuote, liquidationQuote, forcedSalePlan} from "./helpers/ForcedSaleQuote.sol";
 import {LibTestForcedSalePreview} from "./helpers/LibTestForcedSalePreview.sol";
@@ -1784,7 +1784,7 @@ contract DefaultedFacetTest is Test {
         // First call (getOrCreateUserVault) succeeds, second (vaultWithdrawERC20) fails.
         MockVaultWithdraw.fails(address(diamond), VaultOutflowTypes.AssetKind.ERC20);
         uint256 sellQuote = defaultQuote(address(diamond), loanId);
-        vm.expectRevert(bytes("mock revert"));
+        vm.expectRevert(abi.encodeWithSelector(VaultOutflowStubFailure.selector, uint8(0)));
         DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
         vm.clearMockedCalls();
     }
@@ -1835,7 +1835,7 @@ contract DefaultedFacetTest is Test {
         // Mock collateral withdrawal to fail (inline swap path)
         MockVaultWithdraw.fails(address(diamond), VaultOutflowTypes.AssetKind.ERC20);
         uint256 sellQuote = defaultQuote(address(diamond), loanId);
-        vm.expectRevert(bytes("mock revert"));
+        vm.expectRevert(abi.encodeWithSelector(VaultOutflowStubFailure.selector, uint8(0)));
         DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
         vm.clearMockedCalls();
     }
@@ -1936,21 +1936,13 @@ contract DefaultedFacetTest is Test {
 
         // Mock vaultSetRentalUser (reset renter) to succeed
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultSetRentalUser.selector), abi.encode(true));
-        // First vaultWithdrawERC20 (buffer=15 ether to treasury) succeeds — match by full args
-        vm.mockCall(
-            address(diamond),
-            abi.encodePacked(VaultOutflowFacet.vaultOutflow.selector, abi.encode(borrower, VaultOutflowTypes.AssetKind.ERC20, mockERC20, uint256(0), uint256(15 ether), address(0), VaultOutflowTypes.OutflowClass.Treasury)),
-            abi.encode(uint256(15 ether)) // #2440 — the withdraw returns what arrived
-        );
-        // Second vaultWithdrawERC20 (full prepayAmount=300 ether to diamond) fails — match by full args
-        vm.mockCallRevert(
-            address(diamond),
-            abi.encodePacked(VaultOutflowFacet.vaultOutflow.selector, abi.encode(borrower, VaultOutflowTypes.AssetKind.ERC20, mockERC20, uint256(0), uint256(300 ether), address(0), VaultOutflowTypes.OutflowClass.DiamondTransient)),
-            "prepay fail"
-        );
+        // #3205 part 2 — the buffer leg (treasury class) is stubbed as
+        // delivered; the prepay leg (Diamond-transient class) fails.
+        MockVaultWithdraw.deliversAll(address(diamond));
+        MockVaultWithdraw.failsClass(address(diamond), VaultOutflowTypes.OutflowClass.DiamondTransient);
 
         uint256 sellQuote = defaultQuote(address(diamond), loanId);
-        vm.expectRevert(bytes("prepay fail"));
+        vm.expectRevert(abi.encodeWithSelector(VaultOutflowStubFailure.selector, uint8(0)));
         DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
         vm.clearMockedCalls();
     }

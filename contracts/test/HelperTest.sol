@@ -1496,24 +1496,7 @@ contract HelperTest {
 
     /// @dev Selectors for `VaultDepositoryFacet` — the depository vault: deposit, withdraw, adopt, disown and the upgrade pin.
     function getVaultDepositoryFacetSelectors() public pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](17);
-        selectors[0] = VaultDepositoryFacet.adoptUntracked.selector;
-        selectors[1] = VaultDepositoryFacet.adoptionAckTextHash.selector;
-        selectors[2] = VaultDepositoryFacet.adoptionDigest.selector;
-        selectors[3] = VaultDepositoryFacet.adoptionDomainSeparator.selector;
-        selectors[4] = VaultDepositoryFacet.adoptionNonce.selector;
-        selectors[5] = VaultDepositoryFacet.depositToVault.selector;
-        selectors[6] = VaultDepositoryFacet.disownUntracked.selector;
-        selectors[7] = VaultDepositoryFacet.freeHolding.selector;
-        selectors[8] = VaultDepositoryFacet.pinVaultVersion.selector;
-        selectors[9] = VaultDepositoryFacet.unpinVaultVersion.selector;
-        selectors[10] = VaultDepositoryFacet.untrackedHolding.selector;
-        selectors[11] = VaultDepositoryFacet.vaultBannedSource.selector;
-        selectors[12] = VaultDepositoryFacet.withdrawFromVault.selector;
-        selectors[13] = VaultDepositoryFacet.withdrawableNow.selector;
-        selectors[14] = VaultDepositoryFacet.getDepositoryHolding.selector;
-        selectors[15] = VaultDepositoryFacet.getDepositoryAssets.selector;
-        selectors[16] = VaultDepositoryFacet.getVaultOwner.selector;
+        return LibTestVaultBeacon.depositorySelectors();
     }
 
     /// @dev Selectors for `VaultOutflowFacet` (#3205 part 2).

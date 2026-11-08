@@ -55,7 +55,7 @@ import {HelperTest} from "./HelperTest.sol";
 import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
-import {MockVaultWithdraw} from "./helpers/MockVaultWithdraw.sol";
+import {MockVaultWithdraw, VaultOutflowStubFailure} from "./helpers/MockVaultWithdraw.sol";
 import {ArtifactDeploy} from "../script/lib/ArtifactDeploy.sol";
 import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol";
 
@@ -1431,7 +1431,7 @@ contract PrecloseFacetTest is Test {
         MockVaultWithdraw.fails(address(diamond), VaultOutflowTypes.AssetKind.ERC20);
 
         vm.prank(borrower);
-        vm.expectRevert(bytes("fail"));
+        vm.expectRevert(abi.encodeWithSelector(VaultOutflowStubFailure.selector, uint8(0)));
         PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, validOffer);
         vm.clearMockedCalls();
     }
@@ -1981,7 +1981,7 @@ contract PrecloseFacetTest is Test {
         // would be the source).
         vm.expectCall(
             address(diamond),
-            abi.encodePacked(VaultOutflowFacet.vaultOutflow.selector, abi.encode(borrower))
+            abi.encodePacked(VaultOutflowFacet.vaultOutflowArgs.selector, abi.encode(borrower))
         );
 
         vm.prank(keeper);
@@ -3082,7 +3082,7 @@ contract PrecloseFacetTest is Test {
         MockVaultWithdraw.fails(address(diamond), VaultOutflowTypes.AssetKind.ERC20);
 
         vm.prank(borrower);
-        vm.expectRevert(bytes("treasury fail"));
+        vm.expectRevert(abi.encodeWithSelector(VaultOutflowStubFailure.selector, uint8(0)));
         PrecloseFacet(address(diamond)).precloseDirect(activeLoanId);
         vm.clearMockedCalls();
     }
