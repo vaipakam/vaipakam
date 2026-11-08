@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { holdingFigures, holdingSubjects, isDust, isEmpty, positionAssets, readDepositoryAssets, shownRows, type HoldingRow } from './holdings';
+import { holdingFigures, holdingSubjects, isDust, isEmpty, positionAssets, readDepositoryAssets, readRentalPrepay, shownRows, type HoldingRow } from './holdings';
 
 type Hex = `0x${string}`;
 const A = '0x00000000000000000000000000000000000000a1' as Hex;
@@ -44,6 +44,7 @@ describe('holdingSubjects', () => {
           { asset: ZERO, source: 'offer' },
         ],
         nfts: [],
+        rentals: [],
         complete: true,
       },
     );
@@ -58,6 +59,7 @@ describe('holdingSubjects', () => {
     const { subjects, collections } = holdingSubjects([{ asset: N, standard: 'erc721' }], {
       erc20: [],
       nfts: [{ standard: 'erc721', asset: N, tokenId: 7n, source: 'loan' }],
+      rentals: [],
       complete: true,
     });
     // Still named: the record keeps no token ids, so another deposited token
@@ -70,7 +72,7 @@ describe('holdingSubjects', () => {
 describe('positionAssets', () => {
   it('names both legs of a loan and every leg of an offer', () => {
     const p = positionAssets(
-      [{ principalAsset: A, assetType: 0, tokenId: 0n, collateralAsset: N, collateralAssetType: 1, collateralTokenId: 3n, prepayAsset: ZERO }],
+      [{ id: 1n, principalAsset: A, assetType: 0, tokenId: 0n, collateralAsset: N, collateralAssetType: 1, collateralTokenId: 3n }],
       [{ lendingAsset: B, assetType: 0, tokenId: 0n, prepayAsset: ZERO, collateralAsset: A, collateralAssetType: 0, collateralTokenId: 0n }],
       false,
     );
@@ -82,13 +84,16 @@ describe('positionAssets', () => {
     expect(p.nfts).toEqual([{ standard: 'erc721', asset: N, tokenId: 3n, source: 'loan' }]);
     expect(p.complete).toBe(false);
   });
-  it('names a rental loan’s prepaid fee asset, which the deposit record does not list', () => {
-    const p = positionAssets([{ principalAsset: N, assetType: 1, tokenId: 5n, collateralAsset: ZERO, collateralAssetType: 0, collateralTokenId: 0n, prepayAsset: B }], [], true);
-    expect(p.erc20).toEqual([
-      { asset: ZERO, source: 'loan' },
-      { asset: B, source: 'loan' },
-    ]);
+  it('returns a loan lending an NFT as a rental, whose prepaid fee token is read from the loan', () => {
+    const p = positionAssets([{ id: 9n, principalAsset: N, assetType: 1, tokenId: 5n, collateralAsset: ZERO, collateralAssetType: 0, collateralTokenId: 0n }], [], true);
+    expect(p.rentals).toEqual([9n]);
     expect(p.nfts).toEqual([{ standard: 'erc721', asset: N, tokenId: 5n, source: 'loan' }]);
+  });
+  it('reads each rental’s prepaid fee token; one unread makes the sources incomplete', async () => {
+    const ok = await readRentalPrepay([1n, 2n, 3n], async (id) => (id === 1n ? B : id === 2n ? B : ZERO));
+    expect(ok).toEqual({ assets: [B], complete: true });
+    const part = await readRentalPrepay([1n, 2n], async (id) => (id === 1n ? B : null));
+    expect(part).toEqual({ assets: [B], complete: false });
   });
   it('names a rental’s fee asset', () => {
     const p = positionAssets([], [{ lendingAsset: N, assetType: 2, tokenId: 4n, prepayAsset: B, collateralAsset: ZERO, collateralAssetType: 0, collateralTokenId: 0n }], true);
