@@ -190,7 +190,7 @@ evidence that the migration has completed.
   operators are told in the ops chat, and told more urgently, without waiting,
   once it cannot pay for even one. The message states the balance, how many
   liquidations it pays for, the assumptions the reserve rests on and what it
-  leaves out (an OP-stack chain's L1 data fee). It repeats every six hours
+  leaves out (an OP-stack chain's L1 data fee and operator fee). It repeats every six hours
   while the shortfall lasts, and one message says when the wallet has
   recovered with a margin above the reserve, so a balance sitting on the line
   does not alternate. A balance or fee that cannot be read changes nothing

@@ -142,7 +142,7 @@ function assumptions(chainId: number, liquidations: Knob<bigint>, gas: Knob<bigi
   const lines = [
     `Reserve assumed: ${liquidations.value} liquidations of ${gas.value} gas each at the current fee of ${formatGwei(r.feePerGasWei)} gwei = ${formatEther(r.reserveWei)} ${sym}.`,
   ];
-  if (txFeeModel(chainId) === 'opStack') lines.push('Not counted: the L1 data fee this OP-stack chain adds to each transaction.');
+  if (txFeeModel(chainId) === 'opStack') lines.push('Not counted: the L1 data fee and the operator fee this OP-stack chain adds to each transaction.');
   for (const k of [liquidations, gas]) if (k.malformed) lines.push(`Setting problem: ${k.malformed}.`);
   return lines.join('\n');
 }
@@ -187,12 +187,16 @@ export type ChainOutcome =
   | { kind: 'holding'; reading: FeeReading }
   | { kind: 'recovered'; reading: FeeReading; outcome: OpsAlertOutcome };
 
-/** The feePerGas viem prepares a send at: maxFeePerGas, else the legacy price. */
-async function viemFeePerGas(client: PublicClient): Promise<bigint> {
-  const fees = (await client.estimateFeesPerGas()) as { maxFeePerGas?: bigint; gasPrice?: bigint };
-  const fee = fees.maxFeePerGas ?? fees.gasPrice;
-  if (fee === undefined) throw new Error('the node reported no fee per gas');
-  return fee;
+/** The fee per gas viem prepares a send at. Like `prepareTransactionRequest`,
+ *  the fee model follows the latest block: a block with a base fee is priced
+ *  EIP-1559 (maxFeePerGas), one without is priced legacy (gasPrice). Asking
+ *  for EIP-1559 fees on a legacy-only chain throws instead of falling back. */
+export async function viemFeePerGas(client: Pick<PublicClient, 'getBlock' | 'estimateFeesPerGas'>): Promise<bigint> {
+  const block = await client.getBlock();
+  if (typeof block.baseFeePerGas === 'bigint') {
+    return (await client.estimateFeesPerGas({ type: 'eip1559', chain: null })).maxFeePerGas;
+  }
+  return (await client.estimateFeesPerGas({ type: 'legacy', chain: null })).gasPrice;
 }
 
 export async function checkChain(env: Env, chain: ChainConfig, wallet: Address, deps: FeeBalanceDeps): Promise<ChainOutcome> {
@@ -206,11 +210,14 @@ export async function checkChain(env: Env, chain: ChainConfig, wallet: Address, 
   }
 
   if (reading.level !== 'ok') {
-    // Leaving critical for low clears the critical record, so a fall back
-    // below one liquidation alerts at once.
-    if (reading.level === 'low') await deps.clear(env, criticalKey(chain.id));
     const key = reading.level === 'critical' ? criticalKey(chain.id) : lowKey(chain.id);
     const outcome = await deps.send(env, key, alertText(chain, wallet, liquidations, gas, reading), ALERT_INTERVAL_SEC);
+    // Leaving critical for low clears the critical record, so a fall back
+    // below one liquidation alerts at once, but only once a low record stands
+    // (just sent, or sent recently enough to be suppressed). Until then the
+    // critical record is the only sign an alert is open, and the recovery
+    // message depends on it.
+    if (reading.level === 'low' && (outcome === 'sent' || outcome === 'suppressed')) await deps.clear(env, criticalKey(chain.id));
     return { kind: 'alerted', reading, outcome };
   }
 

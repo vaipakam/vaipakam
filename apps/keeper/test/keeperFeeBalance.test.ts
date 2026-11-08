@@ -15,6 +15,7 @@ import {
   recoveredKey,
   reserveSettings,
   runKeeperFeeBalance,
+  viemFeePerGas,
   type FeeBalanceDeps,
 } from '../src/keeperFeeBalance';
 import type { OpsAlertOutcome } from '../src/opsAlert';
@@ -104,7 +105,7 @@ describe('checkChain (#3365)', () => {
     expect(sent[0].text).toMatch(/is low on ETH/);
     expect(sent[0].text).toMatch(/enough for 5 liquidation\(s\)/);
     expect(sent[0].text).toMatch(/20 liquidations of 2500000 gas each at the current fee of 1 gwei = 0\.05 ETH/);
-    expect(sent[0].text).toMatch(/L1 data fee this OP-stack chain adds/);
+    expect(sent[0].text).toMatch(/L1 data fee and the operator fee this OP-stack chain adds/);
     expect(sent[0].text).toContain(WALLET);
   });
 
@@ -124,6 +125,31 @@ describe('checkChain (#3365)', () => {
     await checkChain(env(), BASE, WALLET, deps);
     expect(records.has(criticalKey(84532))).toBe(false);
     expect(sent.map((s) => s.key)).toEqual([criticalKey(84532), lowKey(84532)]);
+  });
+
+  it('keeps the critical record when the low post fails, so recovery is still announced', async () => {
+    balance = ONE / 2n;
+    await checkChain(env(), BASE, WALLET, deps);
+    balance = 5n * ONE;
+    outcome = 'failed';
+    await checkChain(env(), BASE, WALLET, deps);
+    expect(records.has(criticalKey(84532))).toBe(true);
+    outcome = 'sent';
+    balance = 30n * ONE;
+    expect((await checkChain(env(), BASE, WALLET, deps)).kind).toBe('recovered');
+    expect(records.size).toBe(0);
+  });
+
+  it('clears the critical record when the low alert is suppressed, since a low record stands', async () => {
+    balance = 5n * ONE;
+    await checkChain(env(), BASE, WALLET, deps);
+    balance = ONE / 2n;
+    await checkChain(env(), BASE, WALLET, deps);
+    balance = 5n * ONE;
+    outcome = 'suppressed';
+    await checkChain(env(), BASE, WALLET, deps);
+    expect(records.has(criticalKey(84532))).toBe(false);
+    expect(records.has(lowKey(84532))).toBe(true);
   });
 
   it('holds an open alert between the reserve and the recovery margin, then recovers once and clears', async () => {
@@ -171,6 +197,22 @@ describe('checkChain (#3365)', () => {
     balance = 5n * ONE;
     await checkChain(env({ KEEPER_FEE_RESERVE_LIQUIDATIONS: 'many' }), BASE, WALLET, deps);
     expect(sent[0].text).toMatch(/Setting problem: KEEPER_FEE_RESERVE_LIQUIDATIONS is not a positive whole number, so the default 20 is used/);
+  });
+});
+
+describe('viemFeePerGas', () => {
+  it('prices a block with a base fee as EIP-1559 and one without as legacy', async () => {
+    const calls: string[] = [];
+    const client = (baseFee: bigint | null) => ({
+      getBlock: async () => ({ baseFeePerGas: baseFee }),
+      estimateFeesPerGas: async ({ type }: { type: string; chain: null }) => {
+        calls.push(type);
+        return type === 'eip1559' ? { maxFeePerGas: 7n, maxPriorityFeePerGas: 1n } : { gasPrice: 3n };
+      },
+    });
+    expect(await viemFeePerGas(client(5n) as never)).toBe(7n);
+    expect(await viemFeePerGas(client(null) as never)).toBe(3n);
+    expect(calls).toEqual(['eip1559', 'legacy']);
   });
 });
 
