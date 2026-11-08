@@ -308,7 +308,7 @@ describe('the finish card', () => {
   });
 
   it('reads a queued payout’s new delay or secondary signer as a changed review', () => {
-    const guard = { enabled: true, locked: false, delaySeconds: 3600, requireCosign: false };
+    const guard = { enabled: true, locked: false, delaySeconds: 3600, requireCosign: false, retired: false, controller: '0x0000000000000000000000000000000000000000' as const };
     const a = claimAllList(inputs({ protection: guard }), copy, 1);
     expect(a.legs[0]!.route).toBe('queued');
     const b = claimAllList(inputs({ protection: { ...guard, delaySeconds: 7200 } }), copy, 1);
@@ -320,7 +320,7 @@ describe('the finish card', () => {
   });
 
   it('states each destination in full when payouts land in different places', () => {
-    const guard = { enabled: true, locked: false, delaySeconds: 3600, requireCosign: false };
+    const guard = { enabled: true, locked: false, delaySeconds: 3600, requireCosign: false, retired: false, controller: '0x0000000000000000000000000000000000000000' as const };
     const l = claimAllList(inputs({ protection: guard, payroll: { rows: [{ streamId: 2n, asset: WETH, withdrawable: 6n }], complete: true } }), copy, 1);
     // A protected payee's payroll is paid into its vault.
     expect(l.legs.map((x) => x.route)).toEqual(['queued', 'vault']);
@@ -349,7 +349,7 @@ describe('the finish card', () => {
   it('measures one ERC-1155 token paid by two loans once, each destination with its own quantity', () => {
     const NFT = '0x00000000000000000000000000000000000000f2' as Hex;
     const lane = { kind: 'rentalReturn' as const, asset: NFT, assetType: 2, tokenId: 5n };
-    const guard = { enabled: true, locked: false, delaySeconds: 3600, requireCosign: false };
+    const guard = { enabled: true, locked: false, delaySeconds: 3600, requireCosign: false, retired: false, controller: '0x0000000000000000000000000000000000000000' as const };
     const l = claimAllList(
       inputs({
         protection: guard,
@@ -384,7 +384,7 @@ describe('the finish card', () => {
   it('puts each NFT of one collection only where its own routing record says', () => {
     const NFT = '0x00000000000000000000000000000000000000f1' as Hex;
     const nftLane = (tokenId: bigint) => ({ kind: 'rentalReturn' as const, asset: NFT, assetType: 1, tokenId, amount: 1n });
-    const guard = { enabled: true, locked: false, delaySeconds: 3600, requireCosign: false };
+    const guard = { enabled: true, locked: false, delaySeconds: 3600, requireCosign: false, retired: false, controller: '0x0000000000000000000000000000000000000000' as const };
     const l = claimAllList(inputs({ protection: guard, loans: { paused: false, rows: [loanRow(7n, { lanes: [nftLane(11n), nftLane(12n)] })], complete: true } }), copy, 1);
     const PAYOUT = VaultPayoutFacetABI as Abi;
     const logs = [

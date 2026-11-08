@@ -6,7 +6,7 @@ import { loanClaimBlockers, loanClaimChanged, type LoanClaimReview } from './loa
 
 const A = '0x00000000000000000000000000000000000000aa' as const;
 const copy = { text: (k: string) => k, format: (k: string) => k } as never;
-const on = { enabled: true, locked: false, delaySeconds: 3600, requireCosign: false };
+const on = { enabled: true, locked: false, delaySeconds: 3600, requireCosign: false, retired: false, controller: '0x0000000000000000000000000000000000000000' as const };
 
 const review: LoanClaimReview = {
   identity: '1:0xaa',

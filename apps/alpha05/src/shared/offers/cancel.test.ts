@@ -10,6 +10,7 @@ import {
   cooldownEnds,
   isExpired,
   measureCancel,
+  refundLeg,
   type CancelFacts,
   type CancelOffer,
   type CancelReview,
@@ -31,8 +32,15 @@ const copy = {
   format: (k: string, v: Record<string, string>) => `${k}:${JSON.stringify(v)}`,
 };
 const words: CancelWords = { amount: (_a, v) => `${v}`, nft: (_a, _t, id, q) => `nft#${id}x${q}` };
-const OPEN = { enabled: false, locked: false, delaySeconds: 0, requireCosign: false };
-const PROTECTED = { enabled: true, locked: false, delaySeconds: 2 * 86_400, requireCosign: false };
+const OPEN = { enabled: false, locked: false, delaySeconds: 0, requireCosign: false, retired: false, controller: '0x0000000000000000000000000000000000000000' as const };
+const PROTECTED = {
+  enabled: true,
+  locked: false,
+  delaySeconds: 2 * 86_400,
+  requireCosign: false,
+  retired: false,
+  controller: '0x0000000000000000000000000000000000000000' as const,
+};
 
 function offer(p: Partial<CancelOffer> = {}): CancelOffer {
   return {
@@ -192,13 +200,26 @@ describe('cancelReceipt', () => {
     expect(r.consequences.some((c) => typeof c === 'string' && c.startsWith('offerCancel.cleanupNotYours:'))).toBe(true);
     // The payee's own queue notes speak to the payee, not to the reader.
     expect(r.consequences).not.toContain('payout.queuedNote');
-    expect(r.consequences).toContain('offerCancel.creatorQueuedNote');
+    expect(r.consequences.some((c) => typeof c === 'string' && c.startsWith('offerCancel.creatorQueuedNote:'))).toBe(true);
   });
   it('states that the creator’s secondary signer must approve a queued return', () => {
     const o = offer({ creator: OTHER, expiresAt: BigInt(NOW - 1) });
     const r = cancelReceipt(review(o, { state: 'expired', protection: { ...PROTECTED, requireCosign: true } }), ME, words, copy);
     expect(rowText(r, 'offerCancel.rowTo')).toMatch(/^offerCancel\.toCreatorQueuedCosign:/);
-    expect(r.consequences).toContain('offerCancel.creatorQueuedCosignNote');
+    expect(r.consequences.some((c) => typeof c === 'string' && c.startsWith('offerCancel.creatorQueuedCosignNote:'))).toBe(true);
+  });
+  it('names the wallet that now manages a retired creator’s account as where a queued return goes', () => {
+    const NEXT = '0x00000000000000000000000000000000000000c9' as Hex;
+    const retired = { ...PROTECTED, retired: true, controller: NEXT };
+    const o = offer({ creator: OTHER, expiresAt: BigInt(NOW - 1) });
+    const theirs = cancelReceipt(review(o, { state: 'expired', protection: retired }), ME, words, copy);
+    expect(rowText(theirs, 'offerCancel.rowTo')).toContain('offerCancel.creatorControllerWallet');
+    expect(rowText(theirs, 'offerCancel.rowTo')).toContain('0x0000…00c9');
+    const note = theirs.consequences.find((c) => typeof c === 'string' && c.startsWith('offerCancel.creatorQueuedNote:'));
+    expect(note).toContain('creatorControllerWallet');
+    const mine = cancelReceipt(review(offer(), { protection: retired }), ME, words, copy);
+    expect(rowText(mine, 'offerCancel.rowTo')).toContain('payout.controllerWallet');
+    expect(mine.consequences.some((c) => typeof c === 'string' && c.startsWith('payout.queuedControllerNote:'))).toBe(true);
   });
   it('states a return it cannot size as unknown, never as a figure', () => {
     const r = cancelReceipt(review(offer(), { linkedLoanId: 3n }), ME, words, copy);
@@ -212,6 +233,12 @@ describe('cancelReceipt', () => {
 });
 
 const TRANSFER = parseAbi(['event Transfer(address indexed from, address indexed to, uint256 value)']);
+const NFT_TRANSFER = parseAbi(['event Transfer(address indexed from, address indexed to, uint256 indexed tokenId)']);
+
+function nftLog(token: Hex, from: Hex, to: Hex, tokenId: bigint): Log {
+  const topics = encodeEventTopics({ abi: NFT_TRANSFER, eventName: 'Transfer', args: { from, to, tokenId } });
+  return { address: token, topics, data: '0x' } as unknown as Log;
+}
 
 function cancelledLog(offerId: bigint, creator: Hex): Log {
   const topics = encodeEventTopics({ abi: OfferCancelFacetABI as Abi, eventName: 'OfferCanceled', args: { offerId, creator } });
@@ -247,5 +274,36 @@ describe('measureCancel', () => {
     const legs = measureCancel(review(offer(), { linkedLoanId: 3n }), [cancelledLog(9n, ME), transferLog(TOKEN, VAULT, ME, 42n)], DIAMOND, ME, words, copy);
     expect(legs.map((l) => l.status)).toEqual(['done', 'done']);
     expect(legs[1]!.label).toBe('offerCancel.legArrived:{"what":"42"}');
+  });
+  it('measures an NFT a linked offer returns, rather than leaving it unmeasured', () => {
+    const o = offer({ assetType: 1, lendingAsset: NFT, tokenId: 4n });
+    const legs = measureCancel(review(o, { linkedLoanId: 3n }), [cancelledLog(9n, ME), nftLog(NFT, VAULT, ME, 4n)], DIAMOND, ME, words, copy);
+    expect(legs.map((l) => l.status)).toEqual(['done', 'done']);
+    expect(legs[1]!.label).toBe('offerCancel.legArrived:{"what":"nft#4x1"}');
+  });
+  it('says a measured return moved nothing when nothing reached the creator', () => {
+    const legs = measureCancel(review(offer(), { linkedLoanId: 3n }), [cancelledLog(9n, ME)], DIAMOND, ME, words, copy);
+    expect(legs[1]).toEqual({ status: 'done', label: 'offerCancel.legNothingMine' });
+    const nft = offer({ assetType: 1, lendingAsset: NFT, tokenId: 4n });
+    expect(measureCancel(review(nft, { linkedLoanId: 3n }), [cancelledLog(9n, ME)], DIAMOND, ME, words, copy)[1]).toEqual({
+      status: 'done',
+      label: 'offerCancel.legNothingMine',
+    });
+  });
+});
+
+describe('refundLeg', () => {
+  it('measures the asset the offer itself can return when the refund was not sized', () => {
+    const measured = { kind: 'measured', why: 'linked' } as const;
+    expect(refundLeg(offer(), measured)).toEqual({ kind: 'erc20', asset: TOKEN });
+    expect(refundLeg(offer({ assetType: 2, lendingAsset: NFT, tokenId: 4n }), measured)).toEqual({ kind: 'nft', asset: NFT, assetType: 2, tokenId: 4n });
+    expect(refundLeg(offer({ offerType: 1 }), measured)).toEqual({ kind: 'erc20', asset: COLL });
+    expect(refundLeg(offer({ offerType: 1, collateralAssetType: 1, collateralAsset: NFT, collateralTokenId: 7n }), measured)).toEqual({
+      kind: 'nft',
+      asset: NFT,
+      assetType: 1,
+      tokenId: 7n,
+    });
+    expect(refundLeg(offer({ offerType: 1, assetType: 1 }), measured)).toEqual({ kind: 'erc20', asset: TOKEN });
   });
 });

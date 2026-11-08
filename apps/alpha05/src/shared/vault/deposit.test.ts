@@ -18,8 +18,15 @@ const copy = {
 };
 const short = (v: bigint) => `short:${v}`;
 
-const OPEN = { enabled: false, locked: false, delaySeconds: 0, requireCosign: false };
-const PROTECTED = { enabled: true, locked: false, delaySeconds: 3 * 86_400, requireCosign: false };
+const OPEN = { enabled: false, locked: false, delaySeconds: 0, requireCosign: false, retired: false, controller: '0x0000000000000000000000000000000000000000' as const };
+const PROTECTED = {
+  enabled: true,
+  locked: false,
+  delaySeconds: 3 * 86_400,
+  requireCosign: false,
+  retired: false,
+  controller: '0x0000000000000000000000000000000000000000' as const,
+};
 
 const erc20Draft: DepositDraft = { standard: 'erc20', asset: TOKEN, tokenId: 0n, amount: 100n };
 const nftDraft: DepositDraft = { standard: 'erc721', asset: NFT, tokenId: 7n, amount: 1n };

@@ -955,9 +955,12 @@ above. Each resolves here, so a route reviewer needs no private file:
   kept in the vault while the account is locked; a payment from anyone else's
   vault is paid into the account's vault. A queued payment that needs a
   secondary signer's approval to be released says so before signing and on
-  the finish card. A mode that could not be read is stated as unknown, never
-  as the wallet route. A change to the route, or to a queued payment's delay
-  or signer requirement, reopens the review.
+  the finish card. A payment queued for an account a replacement retired is
+  released to the wallet that now manages it, so the review and the finish
+  card name that wallet, never the old one. A mode that could not be read is
+  stated as unknown, never as the wallet route. A change to the route, or to
+  a queued payment's delay, signer requirement or release wallet, reopens the
+  review.
 - **RB-POSITION-CLAIM** — collecting a loan payout (LN-48, LN-49, LN-50)
   is one flow under RB-CLAIM, opened from the loan's page and from Claims.
   Each side is decided by its own rule (RB-ELIG), read against that side's
@@ -1300,7 +1303,9 @@ above. Each resolves here, so a route reviewer needs no private file:
   retired, a cancel past the cool-down races an accept and either may win,
   and that no approval is asked. The finish card reads the Diamond's cancel
   event, the routed payout and what the token's own logs moved to the
-  creator.
+  creator. A return it could not size is measured in the asset the offer
+  itself can return, an ERC-20 or an NFT, and one that moved nothing is
+  stated as nothing returned.
 - **RB-FROZEN** — money the protocol holds for a wallet the sanctions
   screen flags (LN-53) is stated as "Frozen, awaiting de-listing": locked
   where its loan keeps it, in a vault, not lost, and released once the

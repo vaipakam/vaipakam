@@ -30,7 +30,7 @@ import type { CopyAccess } from '../copy/useCopy';
 import { refusalFromError } from '../eligibility/refusal';
 import type { Refusal } from '../eligibility/types';
 import { ASSET_TYPE, type Standard } from '../nft/nft';
-import { payoutRoute, type PayoutRoute, type Protection } from '../protection/payout';
+import { payoutRoute, protectionFrom, type PayoutRoute, type ProtectedAccountAnswer, type Protection } from '../protection/payout';
 import { routeChanged } from '../protection/payoutCopy';
 import { answerOrNull } from '../reads/answer';
 import { frozenState, readSanctionsPosture, type FrozenState } from '../sanctions/posture';
@@ -145,11 +145,10 @@ export async function readWithdrawReview(own: OwnStateClient, diamond: Hex, draf
         read<boolean>(ADMIN, 'paused'),
         read<boolean>(PAYOUT, 'isEscapeOpen'),
         readSanctionsPosture(c, diamond, account, block),
-        read<{ retired: boolean; enabled: boolean; locked: boolean; delaySeconds: number | bigint; requireCosign: boolean }>(PROTECTED, 'getProtectedAccount', [account]),
+        read<ProtectedAccountAnswer>(PROTECTED, 'getProtectedAccount', [account]),
         read<bigint>(DEPOSITORY, 'withdrawableNow', [account, ASSET_TYPE[draft.standard], draft.asset, draft.standard === 'erc20' ? 0n : draft.tokenId]),
       ]);
-      const protection: Protection | null =
-        mode === null ? null : { enabled: mode.enabled, locked: mode.locked, delaySeconds: Number(mode.delaySeconds), requireCosign: mode.requireCosign };
+      const protection = protectionFrom(mode);
       return {
         vault: vault.toLowerCase() === ZERO ? null : vault,
         paused,
