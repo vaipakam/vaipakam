@@ -65,9 +65,11 @@ interface IBackupSteps {
  *         for the most recent closed days AND a rotating window over every
  *         older day (a lapse becomes possible only weeks after its day), and
  *         the VaultBeacon's two proposal executes. These parts and the note
- *         queue share the check's gas, and the part that goes first moves on
- *         every block, as does the first (step, argument) pair inside each
- *         part, so a pair whose probe is costly cannot starve the rest. Whether a candidate is due is decided by the protocol
+ *         queue share the check's gas. The part that goes first moves on
+ *         every block, and the first (step, argument) pair inside each part
+ *         moves once per round of parts, so whenever a part leads, its start
+ *         has moved on by one: a pair whose probe is costly cannot starve the
+ *         rest. Whether a candidate is due is decided by the protocol
  *         itself: each candidate is PROBED, i.e. called from this contract
  *         inside a self-call that always reverts, so its effects are undone and
  *         only its success is kept. The backup carries no copy of any step's
@@ -458,8 +460,9 @@ contract KeeperBackupUpkeep is IAutomationCompatible, Ownable2Step {
     }
 
     /// @dev Every (step, argument) pair of one part, from a start that moves
-    ///      on every block, so a costly pair (a probe that spends its whole
-    ///      allowance) cannot keep the pairs after it from being reached.
+    ///      every round of `PARTS` blocks (`_cycle`), so a costly pair (a
+    ///      probe that spends its whole allowance) cannot keep the pairs after
+    ///      it from being reached.
     function _scanCandidates(
         uint256[] memory args,
         bool skipZero,
@@ -473,7 +476,7 @@ contract KeeperBackupUpkeep is IAutomationCompatible, Ownable2Step {
         uint256 steps = lastStep - firstStep + 1;
         uint256 total = args.length * steps;
         if (total == 0) return (n, runs);
-        uint256 start = block.number % total;
+        uint256 start = _cycle() % total;
         for (uint256 j; j < total && !_full(n, runs); j++) {
             uint256 idx = (start + j) % total;
             uint256 arg = args[idx / steps];
@@ -483,17 +486,17 @@ contract KeeperBackupUpkeep is IAutomationCompatible, Ownable2Step {
         return (n, runs);
     }
 
-    /// @dev Every noted candidate, from a start that moves on every block. A
-    ///      note is probed even while it waits, so a step our keeper ran is
-    ///      dropped at once and a later occurrence of a recurring step starts
-    ///      a wait of its own.
+    /// @dev Every noted candidate, from a start that moves every round of
+    ///      `PARTS` blocks (`_cycle`). A note is probed even while it waits, so
+    ///      a step our keeper ran is dropped at once and a later occurrence of
+    ///      a recurring step starts a wait of its own.
     function _scanQueue(Action[] memory actions, uint256 n, uint256 runs, uint256 mask)
         internal
         returns (uint256, uint256)
     {
         uint256 len = _pending.length;
         if (len == 0) return (n, runs);
-        uint256 start = block.number % len;
+        uint256 start = _cycle() % len;
         for (uint256 j; j < len && !_full(n, runs); j++) {
             Pending memory p = _pending[(start + j) % len];
             if (!_on(mask, p.step)) {
@@ -575,6 +578,16 @@ contract KeeperBackupUpkeep is IAutomationCompatible, Ownable2Step {
         }
         _pending.pop();
         delete _pendingSlot[key];
+    }
+
+    /// @dev The start inside a part moves once per round of `PARTS` blocks,
+    ///      not on every block. A part that only gets gas while it leads
+    ///      (block number = its index, modulo `PARTS`) would otherwise see
+    ///      starts from one residue class only: with `PARTS` and the part's
+    ///      pair count sharing a factor, some pairs would never lead. Per
+    ///      round, each part leads once and its start has moved by one.
+    function _cycle() internal view returns (uint256) {
+        return block.number / PARTS;
     }
 
     function _full(uint256 n, uint256 runs) internal view returns (bool) {

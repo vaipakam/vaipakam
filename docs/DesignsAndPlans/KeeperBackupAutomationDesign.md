@@ -47,11 +47,15 @@ step's due rule, and ships with every step switched off.
 
 The note queue and these four kinds of candidate (the days split into
 recent and older) are six parts that share the check's gas. The part that
-goes first moves on every block, and so does the first (step, argument) pair
-inside each part, so a probe that is costly or runs out of its gas (a close
-whose frontier is far behind, a default with a long consolidation scan) cannot
-starve the rest: each part leads one check in six, and each pair leads its
-part in turn.
+goes first moves on every block, and the first (step, argument) pair inside
+each part moves once per round of six blocks. So a probe that is costly or
+runs out of its gas (a close whose frontier is far behind, a default with a
+long consolidation scan) cannot starve the rest: each part leads one check in
+six, and each time a part leads, its first pair has moved on by one, so every
+pair leads its part in turn. (Moving both on every block would lock them
+together: a part reached only while it leads would see starts from one
+residue class, and with ten loans and seven loan steps, every odd pair would
+never go first.)
 
 Whether a candidate is due is the protocol's answer, not ours. The contract
 calls the step from a self-call (`probe`) that always reverts with the

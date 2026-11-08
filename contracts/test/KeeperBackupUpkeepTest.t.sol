@@ -469,7 +469,7 @@ contract KeeperBackupUpkeepTest is Test {
         for (uint256 id = 11; id <= 13; id++) diamond.setBurn(diamond.triggerDefault.selector, id, true);
         diamond.setDue(diamond.settlePeriodicInterest.selector, 13, true);
         bool found;
-        for (uint256 b = 1; b <= 42 && !found; b++) {
+        for (uint256 b = 1; b <= 160 && !found; b++) {
             vm.roll(b);
             vm.prank(address(0xBEEF), SIM);
             (bool needed, bytes memory data) = backup.checkUpkeep{gas: 5_000_000}("");
@@ -480,6 +480,42 @@ contract KeeperBackupUpkeepTest is Test {
             }
         }
         assertTrue(found, "the stamp is found while the defaults before it burn their gas");
+    }
+
+    /// @dev The loans part is reached only while it leads (every day before
+    ///      it burns its gas). With ten loans and seven loan steps it has 70
+    ///      pairs; if its start moved on every block, a start seen while it
+    ///      leads would always be even, and the first loan's periodic stamp
+    ///      (pair 5, after its own burning default) would never go first.
+    function test_APartReachedOnlyWhileLeadingStillRotatesThroughEveryPair() public {
+        uint256 parts = 6; // KeeperBackupUpkeep.PARTS
+        uint256 loansPart = 4;
+        vm.prank(owner);
+        backup.setScan(10, 7, 3_000_000, 2);
+        uint256[] memory ids = new uint256[](10);
+        for (uint256 i; i < 10; i++) ids[i] = 21 + i;
+        diamond.setLoans(ids);
+        _arm(CLOSE_DAY);
+        _arm(DEFAULT_NO_SALE);
+        _arm(uint8(KeeperBackupUpkeep.Step.PeriodicStampWithoutSale));
+        diamond.setDay(10, true);
+        for (uint256 d; d < 10; d++) diamond.setBurn(diamond.closeDay.selector, d, true);
+        for (uint256 i; i < 10; i++) diamond.setBurn(diamond.triggerDefault.selector, ids[i], true);
+        diamond.setDue(diamond.settlePeriodicInterest.selector, ids[0], true);
+        bool found;
+        for (uint256 m; m < 70 && !found; m++) {
+            vm.roll(m * parts + loansPart);
+            vm.prank(address(0xBEEF), SIM);
+            (bool needed, bytes memory data) = backup.checkUpkeep{gas: 5_000_000}("");
+            if (!needed) continue;
+            KeeperBackupUpkeep.Action[] memory a = abi.decode(data, (KeeperBackupUpkeep.Action[]));
+            for (uint256 i; i < a.length; i++) {
+                if (a[i].arg == ids[0] && a[i].step == uint8(KeeperBackupUpkeep.Step.PeriodicStampWithoutSale)) {
+                    found = true;
+                }
+            }
+        }
+        assertTrue(found, "every pair leads its part within one round per pair");
     }
 
     function test_AStaleNoteStartsTheWaitAgain() public {
