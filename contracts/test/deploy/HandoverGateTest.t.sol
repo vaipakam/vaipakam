@@ -403,13 +403,21 @@ contract HandoverGateTest is Test {
     function test_PlanListsRequiredSlotsOnAnEmptyArtifact() public {
         vm.chainId(421614); // a mirror
         HandoverPlan.Target[] memory m = HandoverPlan.read("{}");
-        assertEq(m.length, 9, "mirror: 4 shared + mirror token, reward receiver, return sender + feed registry + vault beacon");
+        assertEq(
+            m.length,
+            10,
+            "mirror: 4 shared + mirror token, reward receiver, return sender + feed registry + vault beacon + protocol registry"
+        );
         for (uint256 i; i < m.length; ++i) {
             assertTrue(m[i].required && m[i].addr == address(0), "every listed slot is a required gap");
         }
         vm.chainId(84532); // canonical
         HandoverPlan.Target[] memory c = HandoverPlan.read("{}");
-        assertEq(c.length, 9, "canonical: 4 shared + buyback receiver, return receiver, feed registry, vault beacon, token");
+        assertEq(
+            c.length,
+            10,
+            "canonical: 4 shared + buyback receiver, return receiver, feed registry, vault beacon, protocol registry, token"
+        );
     }
 
     /// @notice #2880 — the handover rotates the feed registry's veto from the
