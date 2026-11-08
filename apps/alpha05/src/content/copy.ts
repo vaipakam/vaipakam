@@ -1037,6 +1037,7 @@ export const copy = {
     rowToVault: B('Credited to your vault'),
     vpfiOptIn: B('Off unless you turn it on: this VPFI sets your fee-discount tier.'),
     intentOptIn: B('Off unless you turn it on: this standing offer is still lending from this capital.'),
+    tierUnknownOptIn: B('Off unless you turn it on: whether this capital sets your fee-discount tier could not be read.'),
     gapLoanUnread: A('{{what}} could not be read, so it is left out. Collect it from its own row once it reads.'),
     gapFallback: A('{{what}} is collected on its own: the loan is in fallback, and its claim settles the fallback first, which decides what it pays.'),
     gap: {
@@ -1074,7 +1075,7 @@ export const copy = {
     title: B('Collect {{n}} payouts in one transaction'),
     titleOne: B('Collect 1 payout in one transaction'),
     toVaultOnly: B('Your vault'),
-    toMixed: B('Your wallet, or where protected account mode sends each payout (see below)'),
+    rowToFor: B('Sent to, for {{what}}'),
     bestEffort: A(
       'Each payout runs on its own inside this one transaction. One the protocol refuses when the transaction runs is skipped, moves nothing and stays listed; the others still pay.',
     ),
@@ -1082,6 +1083,7 @@ export const copy = {
     rewardsVault: A('Rewards are credited to your vault, ready to use, or to your wallet if the vault cannot take them.'),
     rewardsBounded: A('A rewards claim pays a limited number of days at a time. If more remain afterwards, they are listed again.'),
     vpfiTier: A('Taking VPFI out of your vault lowers the balance your fee-discount tier is worked out from, so your tier can drop.'),
+    tierUnknown: A('The VPFI token could not be read, so whether taking out this standing offer’s capital lowers your fee-discount tier is not known.'),
     intentStops: A('Taking out a running standing offer’s capital leaves it less to lend, and nothing once all of it is out.'),
     leftOut: A('Left out: {{what}}. {{reason}}'),
     remainder: A('{{n}} more payouts you chose wait for a second transaction, because one transaction collects at most {{max}}.'),

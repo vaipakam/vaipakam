@@ -78,8 +78,9 @@ export type LegSubject =
   | { kind: 'rewards'; fromDay: bigint; toDay: bigint }
   | { kind: 'held' }
   /** `tier`: the offer lends VPFI, and its capital counts toward the
-   *  fee-discount tier (`LibVPFIDiscount.tierVpfiBalance`). */
-  | { kind: 'intent'; lendingAsset: Hex; collateralAsset: Hex; active: boolean; tier: boolean }
+   *  fee-discount tier (`LibVPFIDiscount.tierVpfiBalance`); null when the
+   *  VPFI token could not be read, so that is not known. */
+  | { kind: 'intent'; lendingAsset: Hex; collateralAsset: Hex; active: boolean; tier: boolean | null }
   | { kind: 'vpfi' }
   | { kind: 'payroll'; streamId: bigint };
 
@@ -230,13 +231,14 @@ export function claimAllList(i: ClaimAllInputs, copy: Pick<CopyAccess, 'text'>, 
     if (!i.intents.complete) gaps.push({ kind: 'intent', why: 'partial' });
     for (const r of i.intents.rows) {
       if (r.available === 0n) continue;
-      const tier = vpfi !== null && lower(r.lendingAsset) === lower(vpfi);
+      // An unread token leaves the tier effect unknown: kept off and said.
+      const tier = i.vpfiToken === null ? null : vpfi !== null && lower(r.lendingAsset) === lower(vpfi);
       legs.push(
         leg(
           { kind: 'intent', lendingAsset: r.lendingAsset, collateralAsset: r.collateralAsset, active: r.active, tier },
           [erc20(r.lendingAsset, r.available)],
           self(),
-          r.active || tier,
+          r.active || tier !== false,
         ),
       );
     }
@@ -383,7 +385,8 @@ const GAP_KEYS = {
 export function optInText(l: ClaimAllLeg, copy: Copy): string | null {
   if (l.subject.kind === 'vpfi') return copy.text('claimAll.vpfiOptIn');
   if (l.subject.kind === 'intent' && l.subject.active) return copy.text('claimAll.intentOptIn');
-  if (l.subject.kind === 'intent' && l.subject.tier) return copy.text('claimAll.vpfiOptIn');
+  if (l.subject.kind === 'intent' && l.subject.tier === true) return copy.text('claimAll.vpfiOptIn');
+  if (l.subject.kind === 'intent' && l.subject.tier === null) return copy.text('claimAll.tierUnknownOptIn');
   return null;
 }
 
@@ -456,17 +459,30 @@ export function claimAllBlockers(r: ClaimAllReview, copy: Copy): string[] {
   return [];
 }
 
-/** Where the sent legs land, as one receipt value. */
-function destination(r: ClaimAllReview, copy: Copy): ReceiptRow['value'] {
-  const routes = [...new Set(r.send.map((l) => l.route).filter((x): x is PayoutRoute => x !== 'reward-vault'))];
-  if (routes.length === 0) return { kind: 'text', text: copy.text('claimAll.toVaultOnly') };
-  if (routes.includes('unknown')) return { kind: 'unknown', why: copy.text('receipt.unknown') };
-  if (routes.length === 1) {
-    const only = routes[0]!;
-    const to = only === 'wallet' ? copy.text('loanClaim.toWallet') : routedDestination(only, r.list.protection, copy);
-    return to === null ? { kind: 'unknown', why: copy.text('receipt.unknown') } : { kind: 'text', text: to };
+/** Where a group of sent legs lands, as a receipt value: rewards to the
+ *  vault, or the route's own destination (a queued route names its delay). */
+function destinationOf(route: ClaimAllLeg['route'], r: ClaimAllReview, copy: Copy): ReceiptRow['value'] {
+  if (route === 'reward-vault') return { kind: 'text', text: copy.text('claimAll.toVaultOnly') };
+  if (route === 'unknown') return { kind: 'unknown', why: copy.text('receipt.unknown') };
+  const to = route === 'wallet' ? copy.text('loanClaim.toWallet') : routedDestination(route, r.list.protection, copy);
+  return to === null ? { kind: 'unknown', why: copy.text('receipt.unknown') } : { kind: 'text', text: to };
+}
+
+/** Where the sent legs land: one row when they all land in one place, else
+ *  one row per destination naming the payouts that go there, so each
+ *  destination (a queued one's delay included) is stated in full. */
+function destinationRows(r: ClaimAllReview, copy: Copy, symbol: (asset: Hex) => string): ReceiptRow[] {
+  const groups = new Map<ClaimAllLeg['route'], ClaimAllLeg[]>();
+  for (const l of r.send) groups.set(l.route, [...(groups.get(l.route) ?? []), l]);
+  if (groups.size <= 1) {
+    const only = [...groups.keys()][0] ?? 'reward-vault';
+    return [{ label: copy.text('takeBack.rowTo'), value: destinationOf(only, r, copy), binding: true }];
   }
-  return { kind: 'text', text: copy.text('claimAll.toMixed') };
+  return [...groups.entries()].map(([route, legs]) => ({
+    label: copy.format('claimAll.rowToFor', { what: legs.map((l) => legTitle(l, copy, symbol)).join(', ') }),
+    value: destinationOf(route, r, copy),
+    binding: true,
+  }));
 }
 
 export function claimAllReceipt(r: ClaimAllReview, copy: Copy, describe: { symbol: (asset: Hex) => string; nft: (p: LegPayout) => string }): Receipt {
@@ -483,14 +499,15 @@ export function claimAllReceipt(r: ClaimAllReview, copy: Copy, describe: { symbo
       });
     }
   }
-  rows.push({ label: text('takeBack.rowTo'), value: destination(r, copy), binding: true });
+  rows.push(...destinationRows(r, copy, describe.symbol));
 
   const has = (k: LegKind) => r.send.some((l) => l.subject.kind === k);
   const consequences: ReceiptText[] = [text('claimAll.bestEffort')];
   if (has('loan')) consequences.push(text('claimAll.loansClose'));
   if (has('rewards') || has('held')) consequences.push(text('claimAll.rewardsVault'));
   if (has('rewards')) consequences.push(text('claimAll.rewardsBounded'));
-  if (has('vpfi') || r.send.some((l) => l.subject.kind === 'intent' && l.subject.tier)) consequences.push(text('claimAll.vpfiTier'));
+  if (has('vpfi') || r.send.some((l) => l.subject.kind === 'intent' && l.subject.tier === true)) consequences.push(text('claimAll.vpfiTier'));
+  if (r.send.some((l) => l.subject.kind === 'intent' && l.subject.tier === null)) consequences.push(text('claimAll.tierUnknown'));
   if (r.send.some((l) => l.subject.kind === 'intent' && l.subject.active)) consequences.push(text('claimAll.intentStops'));
   for (const x of r.refused) consequences.push(format('claimAll.leftOut', { what: legTitle(x.leg, copy, describe.symbol), reason: x.refusal.reason }));
   if (r.later.length > 0) consequences.push(format('claimAll.remainder', { n: String(r.later.length), max: String(CLAIM_ALL_MAX_CALLS) }));

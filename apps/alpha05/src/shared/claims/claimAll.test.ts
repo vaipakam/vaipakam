@@ -121,6 +121,20 @@ describe('the Claim everything list', () => {
     expect(payoutLabel(rewards, rewards.payouts[0]!, copy)).toBe('rewards.pendingZero{"from":"3","to":"9"}');
   });
 
+  it('keeps a standing offer’s capital off, and says why, when the VPFI token could not be read', () => {
+    const list = claimAllList(
+      inputs({ vpfiToken: null, intents: { rows: [{ lendingAsset: WETH, collateralAsset: TLIQ, available: 9n, active: false }], complete: true } }),
+      copy,
+      1,
+    );
+    const intent = list.legs.find((l) => l.subject.kind === 'intent')!;
+    expect(intent.optIn).toBe(true);
+    expect(optInText(intent, copy)).toBe('claimAll.tierUnknownOptIn');
+    const consequences = claimAllReceipt(review([intent]), copy, { symbol: words.symbol, nft: words.nft }).consequences;
+    expect(consequences).toContain('claimAll.tierUnknown');
+    expect(consequences).not.toContain('claimAll.vpfiTier');
+  });
+
   it('still offers a released held reward when the rewards preview could not be read', () => {
     const list = claimAllList(inputs({ rewards: null, held: { held: 3n, decision: 'deliver' } }), copy, 1);
     expect(keys(list.legs)).toEqual(['loan:lender:7', 'held']);
@@ -287,6 +301,20 @@ describe('the finish card', () => {
     expect(claimAllChanged(at(a), at(a), copy)).toBeNull();
     expect(claimAllChanged(at(a), at(b), copy)).toBe('claimAll.changed');
     expect(claimAllChanged(at(a), at(c), copy)).toBe('claimAll.changed');
+  });
+
+  it('states each destination in full when payouts land in different places', () => {
+    const guard = { enabled: true, locked: false, delaySeconds: 3600, requireCosign: false };
+    const l = claimAllList(inputs({ protection: guard, payroll: { rows: [{ streamId: 2n, asset: WETH, withdrawable: 6n }], complete: true } }), copy, 1);
+    expect(l.legs.map((x) => x.route)).toEqual(['queued', 'wallet']);
+    const rows = claimAllReceipt(review(l.legs, { list: l }), copy, { symbol: words.symbol, nft: words.nft }).rows.filter((x) => x.label.startsWith('claimAll.rowToFor'));
+    expect(rows.map((x) => x.label)).toEqual([
+      'claimAll.rowToFor{"what":"claimAll.loanLender{\\"id\\":\\"7\\"}"}',
+      'claimAll.rowToFor{"what":"claimAll.payroll{\\"id\\":\\"2\\"}"}',
+    ]);
+    expect(rows[0]!.value).toMatchObject({ kind: 'text' });
+    expect(JSON.stringify(rows[0]!.value)).toContain('1 h');
+    expect(rows[1]!.value).toEqual({ kind: 'text', text: 'loanClaim.toWallet' });
   });
 
   it('reads a selected standing offer starting to lend again as a changed review', () => {

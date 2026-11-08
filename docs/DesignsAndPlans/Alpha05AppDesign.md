@@ -1095,7 +1095,9 @@ above. Each resolves here, so a route reviewer needs no private file:
   dropped, and the other sources are still read and offered (the position
   book failing leaves out the loans only). Every payout has a switch; all are on except free vault VPFI
   and the capital of a standing offer that lends VPFI (both count toward the
-  fee-discount tier, which the review says when either is sent) and the
+  fee-discount tier, which the review says when either is sent; an offer's
+  capital is also kept off, and said, while the VPFI token cannot be read)
+  and the
   capital of a standing offer still lending (taking it out leaves the offer
   less to lend), which the reader turns on. A held reward the screen
   releases is offered even when the rewards preview cannot be read. The pause and a flagged wallet stop the whole batch before
@@ -1109,7 +1111,9 @@ above. Each resolves here, so a route reviewer needs no private file:
   required to succeed, so no payout is skipped only for want of gas. One
   transaction carries at most
   the protocol's bound (30 calls); the rest wait for a second one, said in
-  the list and the review. A queued payout's delay or secondary signer
+  the list and the review. The review states where each payout lands, one
+  row per destination when they differ, a queued one with its delay. A
+  queued payout's delay or secondary signer
   changing while the review is open is a changed review. The finish card
   reports each payout collected or
   skipped from its own record in the logs, each NFT where its own routing
