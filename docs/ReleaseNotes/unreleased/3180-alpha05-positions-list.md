@@ -1,4 +1,4 @@
-# The next app lists your loan positions
+## Thread — the next app lists your loan positions (PR #3261)
 
 The next app now has a Positions page. It lists the loans the connected wallet lent or borrowed in on its network, read from the position tokens the wallet holds, so a position that was transferred away leaves the list. Payouts ready to collect come first and point at Claims, then live loans with the most urgent deadline first (side, terms, due date, what happens if it is missed, and the health factor), then ended loans with their status in words: repaid, defaulted, settled or closed by a match.
 

@@ -1,4 +1,4 @@
-# The next app shows one loan on its own page
+## Thread — the next app shows one loan on its own page (PR #3294)
 
 Each loan in the next app now has its own page, opened from Home or Positions. It leads with the loan's status in words, then your role in it: the side your wallet holds now, read from the position tokens, or that you hold neither and are viewing. A deadline that needs you is worded for your side, and once the grace period is over the page says anyone may now start the default, only when the protocol says so.
 
