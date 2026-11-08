@@ -17,7 +17,8 @@ import {ClaimFacet} from "../../src/facets/ClaimFacet.sol";
 import {AddCollateralFacet} from "../../src/facets/AddCollateralFacet.sol";
 import {PrecloseFacet} from "../../src/facets/PrecloseFacet.sol";
 import {ERC20Mock} from "../mocks/ERC20Mock.sol";
-import {defaultQuote} from "../helpers/ForcedSaleQuote.sol";
+import {defaultQuote, liquidationQuote} from "../helpers/ForcedSaleQuote.sol";
+import {RiskFacet} from "../../src/facets/RiskFacet.sol";
 
 /**
  * @title Handler
@@ -56,6 +57,10 @@ contract Handler is Test {
     // on internal storage reads.
     mapping(uint256 => bool) public ghostClaimedLender;
     mapping(uint256 => bool) public ghostClaimedBorrower;
+    /// @dev #3241 — loans an HF liquidation closed. A liquidation may close a
+    ///      loan at any time (its trigger is the health factor, not the
+    ///      clock), so the time-default suite skips these.
+    mapping(uint256 => bool) public ghostLiquidated;
 
     // Call-count telemetry surfaced to invariants for sanity / coverage.
     mapping(bytes32 => uint256) public callCount;
@@ -336,6 +341,35 @@ contract Handler is Test {
 
         uint256 sellQuote = defaultQuote(diamond, loanId);
         try DefaultedFacet(diamond).triggerDefault(loanId, sellQuote, defaultAdapterCalls()) {} catch {}
+    }
+
+    /// @notice #3241 — a Health-Factor liquidation. The loan's health factor
+    ///         reads below 1 for this one call (every other read keeps the
+    ///         rig's healthy 2.0), and the rig's one venue fails, so the
+    ///         liquidation lands in the in-kind fallback. Permissionless: the
+    ///         handler calls it, as a keeper would.
+    function triggerLiquidation(uint256 loanIdx) external {
+        callCount["triggerLiquidation"]++;
+        if (loanIds.length == 0) return;
+        uint256 idx = bound(loanIdx, 0, loanIds.length - 1);
+        uint256 loanId = loanIds[idx];
+
+        LibVaipakam.Loan memory L = _getLoan(loanId);
+        if (L.status != LibVaipakam.LoanStatus.Active) return;
+
+        bytes memory hfCall = abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector, loanId);
+        vm.mockCall(diamond, hfCall, abi.encode(uint256(0.9e18)));
+        try this.quoteLiquidation(loanId) returns (uint256 sellQuote) {
+            try RiskFacet(diamond).triggerLiquidation(loanId, sellQuote, defaultAdapterCalls()) {
+                ghostLiquidated[loanId] = true;
+            } catch {}
+        } catch {}
+        vm.mockCall(diamond, hfCall, abi.encode(uint256(2e18)));
+    }
+
+    /// @dev External so a quote that reverts is caught rather than failing the run.
+    function quoteLiquidation(uint256 loanId) external view returns (uint256) {
+        return liquidationQuote(diamond, loanId);
     }
 
     /// @notice Lender claims on a defaulted / fallback-pending loan.

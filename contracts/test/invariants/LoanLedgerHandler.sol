@@ -109,6 +109,7 @@ contract LoanLedgerHandler is Test {
     uint256 public interestChecks;
     uint256 public bookedActions;
     uint256 public precloseLanded;
+    uint256 public liquidationLanded;
 
     constructor(InvariantBase _base) {
         base = _base;
@@ -208,6 +209,17 @@ contract LoanLedgerHandler is Test {
         Snap memory before = _snap();
         inner.triggerDefault(loanIdx);
         _book(loanId, before, "triggerDefault");
+    }
+
+    /// @notice #3241: a Health-Factor liquidation (in-kind fallback in this rig). Booked like a
+    ///         default; the after-every-call bounds then hold it to what entered the loan.
+    function triggerLiquidation(uint256 loanIdx) external {
+        (bool ok, uint256 loanId) = _pickLoan(loanIdx);
+        if (!ok) return;
+        Snap memory before = _snap();
+        inner.triggerLiquidation(loanIdx);
+        _book(loanId, before, "triggerLiquidation");
+        if (_loan(loanId).status != LibVaipakam.LoanStatus.Active) liquidationLanded++;
     }
 
     function claimAsLender(uint256 loanIdx) external {

@@ -127,6 +127,7 @@ contract LoanSettlementBoundInvariant is Test {
         console.log("accept checks", ledger.acceptChecks());
         console.log("exact-interest checks", ledger.interestChecks());
         console.log("preclosed loans", ledger.precloseLanded());
+        console.log("liquidated loans", ledger.liquidationLanded());
     }
 
     // ── Deterministic proofs that the checks are live ──────────────────
@@ -183,6 +184,25 @@ contract LoanSettlementBoundInvariant is Test {
         ledger.claimAsBorrower(0);
         (int256 dLw2,,,) = ledger.loanDeltas(loanId, WETH);
         assertGt(dLw2, dLw, "lender received no collateral from the default");
+
+        invariant_PerActionChecksHold();
+        invariant_NoLoanPaysOutMoreThanEnteredIt();
+    }
+
+    /// @notice #3241: a Health-Factor liquidation reaches the in-kind fallback (the rig's one
+    ///         venue fails); the collateral bounds and the Diamond bound hold through both claims.
+    function test_LedgerBooksALiquidatedLoan() public {
+        ledger.createBorrowerOffer(1, 1_000 ether, 30, 1_000, 10 ether);
+        ledger.acceptBorrowerOffer(1, 0);
+        ledger.warp(3 days);
+        ledger.triggerLiquidation(0);
+        assertEq(ledger.liquidationLanded(), 1, "liquidation did not land");
+        uint256 loanId = ledger.bookedLoanIds(0);
+        (int256 dLw,,,) = ledger.loanDeltas(loanId, WETH);
+        ledger.claimAsLender(0);
+        ledger.claimAsBorrower(0);
+        (int256 dLw2,,,) = ledger.loanDeltas(loanId, WETH);
+        assertGt(dLw2, dLw, "lender received no collateral from the liquidation");
 
         invariant_PerActionChecksHold();
         invariant_NoLoanPaysOutMoreThanEnteredIt();

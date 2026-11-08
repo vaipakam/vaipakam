@@ -11,8 +11,9 @@ import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
  * @title DefaultTimingInvariant
  * @notice Every loan that ended up in the `Defaulted` state must have been
  *         driven there AFTER its duration + grace-period window elapsed.
- *         DefaultedFacet.triggerDefault is the only path to that status, and
- *         it gates on `startTime + duration*1d + grace <= block.timestamp`.
+ *         DefaultedFacet.triggerDefault is the only TIME-driven path to that
+ *         status (an HF liquidation's fallback, which the handler records
+ *         and this suite skips, is the other), and it gates on `startTime + duration*1d + grace <= block.timestamp`.
  *         If an invariant fuzz sequence ever surfaces a Defaulted loan that
  *         skipped that gate, the gate is broken — a major audit finding
  *         (protocol could seize collateral from borrowers still in grace).
@@ -41,6 +42,10 @@ contract DefaultTimingInvariant is Test {
                 LoanFacet(address(base.diamond())).getLoanDetails(loanId);
 
             if (L.status != LibVaipakam.LoanStatus.Defaulted) continue;
+            // #3241 — an HF liquidation's in-kind fallback also ends in
+            // Defaulted once claimed, and its trigger is the health factor,
+            // not the clock, so the grace gate does not apply to it.
+            if (handler.ghostLiquidated(loanId)) continue;
 
             uint256 grace = LibVaipakam.gracePeriod(L.durationDays);
             uint256 earliest = L.startTime + L.durationDays * 1 days + grace;
