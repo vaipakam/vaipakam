@@ -3,6 +3,7 @@
  * which order, and that the reader builds each verdict from the right party
  * and the right reads, driven with a fake client.
  */
+import { DEPLOYMENTS } from "@vaipakam/contracts/deployments";
 import { describe, expect, it } from "vitest";
 import {
   ContractFunctionExecutionError,
@@ -18,7 +19,7 @@ import {
   type OffsetReview,
 } from "./offsetAcceptReview";
 
-const DIAMOND = "0x00000000000000000000000000000000000000dd" as const;
+const DIAMOND = DEPLOYMENTS[84532]!.diamond as `0x${string}`; // a legacy-mode record (#3205)
 const ASSET = "0x00000000000000000000000000000000000000a1" as const;
 const POSTER = "0x00000000000000000000000000000000000000b0" as const;
 const OTHER = "0x00000000000000000000000000000000000000c0" as const;

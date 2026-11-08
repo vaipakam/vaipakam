@@ -149,6 +149,7 @@ import {
   summariseRpcLedger,
 } from './rpc-verdict.mjs';
 import { READ_PROBE_BINDING, createReadProbe } from './readProbe.mjs';
+import { positionHolderReader, positionRouteReader } from './positionHolder.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -356,6 +357,9 @@ const WRITE_SHAPED = /^(eth_send|eth_sign|personal_sign|wallet_send)/;
 const MALFORMED_RPC = '<malformed json-rpc>';
 
 const pub = livePublicClient({ transport: http(RPC) });
+// #3205 — position-NFT reads go to the chain's position-NFT surface.
+const readHolder = positionHolderReader(pub, CHAIN_ID);
+const readRoute = positionRouteReader(pub, CHAIN_ID);
 
 /**
  * #2355 — the three switches the posture banner is derived from, read the
@@ -1198,13 +1202,7 @@ async function saleLockedOn(lenderTokenId, loanId, blockNumber, account) {
   if (!account) throw new TypeError('saleLockedOn: account is required');
   let locked;
   try {
-    const lock = await pub.readContract({
-      address: DIAMOND,
-      abi: DIAMOND_ABI_VIEM,
-      functionName: 'positionLock',
-      args: [lenderTokenId],
-      ...(blockNumber === undefined ? {} : { blockNumber }),
-    });
+    const lock = await readRoute(lenderTokenId, blockNumber);
     locked = Number(lock) === LOCK_EARLY_WITHDRAWAL_SALE;
   } catch (err) {
     // `answeredWithRevert`, not `isRevert` — see its note. The revert
@@ -1320,12 +1318,7 @@ function revertNameOf(err) {
 
 async function offsetLockedOn(borrowerTokenId) {
   try {
-    const lock = await pub.readContract({
-      address: DIAMOND,
-      abi: DIAMOND_ABI_VIEM,
-      functionName: 'positionLock',
-      args: [borrowerTokenId],
-    });
+    const lock = await readRoute(borrowerTokenId);
     return Number(lock) === LOCK_PRECLOSE_OFFSET;
   } catch (err) {
     if (!isRevert(err)) throw err; // no answer — BLOCKED, not a skip
@@ -1367,15 +1360,7 @@ async function lenderAuthorityOf(loan) {
 /** Shared: a revert means burned/never-minted; anything else is BLOCKED. */
 async function tokenOwnerOf(tokenId, blockNumber) {
   try {
-    return await pub.readContract({
-      address: DIAMOND,
-      abi: DIAMOND_ABI_VIEM,
-      functionName: 'ownerOf',
-      args: [tokenId],
-      // Optional: every existing caller reads `latest`, and only the
-      // forced-close snapshot pins a block (round 4 P2).
-      ...(blockNumber === undefined ? {} : { blockNumber }),
-    });
+    return await readHolder(tokenId, blockNumber);
   } catch (err) {
     if (!isRevert(err)) throw err; // no answer — BLOCKED, not "burned"
     return null;
@@ -3436,12 +3421,7 @@ async function jumpabilitySnapshot(loan) {
  */
 async function positionLockOf(tokenId) {
   return Number(
-    await pub.readContract({
-      address: DIAMOND,
-      abi: DIAMOND_ABI_VIEM,
-      functionName: 'positionLock',
-      args: [tokenId],
-    }),
+    await readRoute(tokenId),
   );
 }
 

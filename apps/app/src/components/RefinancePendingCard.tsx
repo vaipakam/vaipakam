@@ -102,7 +102,10 @@ export function RefinancePendingCard({
       state.expired ||
       !state.loanActive ||
       state.pastGrace ||
-      state.untakeable);
+      state.untakeable ||
+      // #3205 — the protocol no longer counts it as standing.
+      state.notStanding ||
+      state.positionMoved === 'yes');
 
   const walletReady =
     onSupportedChain && Boolean(walletClient) && Boolean(publicClient);
@@ -357,6 +360,13 @@ export function RefinancePendingCard({
                   state.route === 'permit'
                   ? copy.refinance.permit.pendingUntakeable
                   : copy.refinance.pendingUntakeable
+              : state.positionMoved === 'yes' && state.loanActive
+                ? // #3205 — the borrower position moved since it was posted.
+                  copy.refinance.pendingMoved
+              : state.notStanding
+                ? // #3205 — the chain says it no longer stands; the indexer
+                  // did not name why, so both possible causes are stated.
+                  copy.refinance.pendingNotStanding
               : state.expired
                 ? (state.route === 'permit'
                     ? copy.refinance.permit.pendingExpired

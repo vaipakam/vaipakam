@@ -204,6 +204,9 @@ import VpfiReturnSenderABI from './VpfiReturnSender.json';
 // facet): the keeper's return-transport pass reads which Diamond it delivers to.
 import VpfiReturnReceiverABI from './VpfiReturnReceiver.json';
 import VaultBeaconABI from './VaultBeacon.json';
+// #3205 — the PositionNFT (standalone; NOT a diamond facet): the position
+// ownership record.
+import PositionNFTABI from './PositionNFT.json';
 import ProtocolRegistryABI from './ProtocolRegistry.json';
 
 export {
@@ -335,6 +338,7 @@ export {
   VpfiReturnSenderABI,
   VpfiReturnReceiverABI,
   VaultBeaconABI,
+  PositionNFTABI,
   ProtocolRegistryABI,
 };
 

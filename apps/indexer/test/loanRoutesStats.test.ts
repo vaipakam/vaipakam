@@ -55,6 +55,18 @@ CREATE TABLE indexer_cursor (
   PRIMARY KEY (chain_id, kind)
 );`;
 
+/** The columns the #3366 liquidator window reads. */
+const ACTIVITY_DDL = `
+CREATE TABLE activity_events (
+  chain_id     INTEGER NOT NULL,
+  block_number INTEGER NOT NULL,
+  log_index    INTEGER NOT NULL,
+  kind         TEXT    NOT NULL,
+  args_json    TEXT    NOT NULL,
+  block_at     INTEGER NOT NULL,
+  PRIMARY KEY (chain_id, block_number, log_index)
+);`;
+
 const ERC20 = '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 const NFT = '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
 
@@ -94,7 +106,7 @@ function insert(
     );
 }
 
-async function stats(h: SqliteD1): Promise<Record<string, number>> {
+async function stats(h: SqliteD1): Promise<Record<string, any>> { // eslint-disable-line @typescript-eslint/no-explicit-any
   const env = { DB: h.d1, RPC_BASE_SEPOLIA: 'http://127.0.0.1:9' } as unknown as Env;
   const res = await handleLoansStats(
     new Request(`https://x/loans/stats?chainId=${CHAIN_ID}`),
@@ -105,7 +117,7 @@ async function stats(h: SqliteD1): Promise<Record<string, number>> {
 
 function fresh(): SqliteD1 {
   nextLoanId = 1;
-  return createSqliteD1([LOANS_DDL, INDEXER_CURSOR_DDL]);
+  return createSqliteD1([LOANS_DDL, INDEXER_CURSOR_DDL, ACTIVITY_DDL]);
 }
 
 describe('GET /loans/stats — buckets and the asset split', () => {
@@ -199,5 +211,52 @@ describe('GET /loans/stats — buckets and the asset split', () => {
     insert(h, { status: 'active', lendingAsset: ERC20, chainId: 8453 });
     const s = await stats(h);
     expect(s.total).toBe(1);
+  });
+});
+
+describe('GET /loans/stats — distinct liquidators (#3366)', () => {
+  const KEEPER = '0xD9257B636E17D5714DD54F260c9F7EB81349E49B';
+  const A = '0x1111111111111111111111111111111111111111';
+  const B = '0x2222222222222222222222222222222222222222';
+  let idx = 0;
+  function liq(h: SqliteD1, kind: string, args: Record<string, unknown>, ageDays: number): void {
+    const now = Math.floor(Date.now() / 1000);
+    h.db
+      .prepare(
+        `INSERT INTO activity_events (chain_id, block_number, log_index, kind, args_json, block_at)
+         VALUES (?, ?, 0, ?, ?, ?)`,
+      )
+      .run(CHAIN_ID, ++idx, kind, JSON.stringify(args), now - Math.round(ageDays * 86_400));
+  }
+
+  it('counts distinct third parties per window, keeper apart, from the event field', async () => {
+    const h = fresh();
+    liq(h, 'HFLiquidationTriggered', { loanId: '1', liquidator: A }, 1);
+    // Same address in a different case and on another route: still one.
+    liq(h, 'LoanPartiallyLiquidated', { loanId: '2', liquidator: A.toUpperCase().replace('0X', '0x') }, 2);
+    liq(h, 'LiquidationDiscounted', { loanId: '3', liquidator: B }, 20);
+    liq(h, 'HFLiquidationTriggered', { loanId: '4', liquidator: KEEPER }, 3);
+    // Outside both windows.
+    liq(h, 'HFLiquidationTriggered', { loanId: '5', liquidator: '0x3333333333333333333333333333333333333333' }, 40);
+    const { liquidators: l } = await stats(h);
+    expect(l.keeperAddress).toBe(KEEPER.toLowerCase());
+    expect(l.windows['7d'].primary).toMatchObject({ thirdParty: 1, keeper: 1, events: 3 });
+    expect(l.windows['30d'].primary).toMatchObject({ thirdParty: 2, keeper: 1, events: 4 });
+    expect(l.windows['30d'].primary.byRoute.hf).toEqual({ thirdParty: 1, keeper: 1, events: 2 });
+    expect(l.windows['30d'].primary.byRoute.discounted).toEqual({ thirdParty: 1, keeper: 0, events: 1 });
+  });
+
+  it('reports the other routes apart and never infers a caller for LoanLiquidated', async () => {
+    const h = fresh();
+    liq(h, 'InternalMatchExecuted', { loanIdA: '1', matcher: A }, 1);
+    liq(h, 'PeriodicInterestAutoLiquidated', { loanId: '2', settler: KEEPER }, 1);
+    liq(h, 'LoanLiquidated', { loanId: '3', proceeds: '1', treasuryFee: '0' }, 1);
+    liq(h, 'LoanLiquidated', { loanId: '4', proceeds: '1', treasuryFee: '0' }, 10);
+    const { liquidators: l } = await stats(h);
+    expect(l.windows['30d'].primary).toMatchObject({ thirdParty: 0, keeper: 0, events: 0 });
+    expect(l.windows['30d'].otherRoutes).toMatchObject({ thirdParty: 1, keeper: 1, events: 2 });
+    expect(l.windows['7d'].callerNotRecorded.events).toBe(1);
+    expect(l.windows['30d'].callerNotRecorded.events).toBe(2);
+    expect(l.caveats.join(' ')).toMatch(/not independent operators/);
   });
 });

@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
+
 import {SetupTest} from "./SetupTest.t.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol";
@@ -83,11 +85,7 @@ contract RewardTerminalCloseReanchorTest is SetupTest {
 
     /// @dev Mock `ownerOf(tokenId)` → `who` (simulate a transferred position).
     function _mockHolder(uint256 tokenId, address who) internal {
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(IERC721.ownerOf.selector, tokenId),
-            abi.encode(who)
-        );
+        LibTestPositionNFT.mockHolder(address(diamond), tokenId, who);
     }
 
     function _entries(address user)

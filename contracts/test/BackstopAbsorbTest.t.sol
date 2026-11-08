@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
+
 import {SetupTest} from "./SetupTest.t.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
@@ -134,16 +136,8 @@ contract BackstopAbsorbTest is SetupTest {
         l.borrowerTokenId = id * 2;
         l.lenderTokenId = id * 2 + 1;
         TestMutatorFacet(address(diamond)).scaffoldActiveLoan(id, l);
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(IERC721.ownerOf.selector, id * 2),
-            abi.encode(borrower_)
-        );
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(IERC721.ownerOf.selector, id * 2 + 1),
-            abi.encode(lender_)
-        );
+        LibTestPositionNFT.mockHolder(address(diamond), id * 2, borrower_);
+        LibTestPositionNFT.mockHolder(address(diamond), id * 2 + 1, lender_);
 
         address bVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(
             borrower_
@@ -227,11 +221,7 @@ contract BackstopAbsorbTest is SetupTest {
     ///      the void updateNFTStatus / burnNFT cross-facet calls no-op.
     function _mockLenderNft(uint256 id, address owner_) internal {
         uint256 tokenId = LoanFacet(address(diamond)).getLoanDetails(id).lenderTokenId;
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(IERC721.ownerOf.selector, tokenId),
-            abi.encode(owner_)
-        );
+        LibTestPositionNFT.mockHolder(address(diamond), tokenId, owner_);
         vm.mockCall(
             address(diamond),
             abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector),
@@ -239,7 +229,7 @@ contract BackstopAbsorbTest is SetupTest {
         );
         vm.mockCall(
             address(diamond),
-            abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector),
+            abi.encodeWithSelector(VaipakamNFTFacet.retirePosition.selector),
             ""
         );
     }

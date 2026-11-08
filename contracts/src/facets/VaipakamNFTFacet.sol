@@ -4,30 +4,26 @@ pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
-import {LibERC721} from "../libraries/LibERC721.sol";
-import {LibProtectedAccount} from "../libraries/LibProtectedAccount.sol";
-import {LibPausable} from "../libraries/LibPausable.sol";
+import {LibPositionNFT, IPositionNFTCore} from "../libraries/LibPositionNFT.sol";
 import {LibRevert} from "../libraries/LibRevert.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
-import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
-import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
-import {IERC721Metadata} from "@openzeppelin/contracts/token/ERC721/extensions/IERC721Metadata.sol";
-import {IERC721Enumerable} from "@openzeppelin/contracts/token/ERC721/extensions/IERC721Enumerable.sol";
-
 
 /**
  * @title VaipakamNFTFacet
  * @author Vaipakam Developer Team
- * @notice This facet handles minting, updating, and burning of Vaipakam NFTs representing offers and loans.
- * @dev Uses LibERC721 (diamond-safe namespaced storage) instead of inheriting OZ ERC721, which would
- *      cause storage slot collisions in a diamond proxy. All ERC721 state (owners, balances, approvals,
- *      name, symbol) and NFT metadata (statuses, IPFS URIs) live in LibERC721.ERC721Storage at a fixed
- *      storage position. Must be initialized via initializeNFT() during diamond deployment.
- *      The token's public metadata (`tokenURI`, `contractURI` and the image and
- *      `external_url` configuration) is on {VaipakamNFTMetadataFacet} (#2957).
+ * @notice The Diamond's side of the position NFTs (#3205). WHO holds a
+ *         position is recorded by the standalone `PositionNFT` contract, which
+ *         no facet can write; this facet mints new positions there, keeps each
+ *         position's status, offer, loan and side, retires a closed position's
+ *         token, and answers the core's transfer check.
+ * @dev    The Diamond is no longer an ERC-721: it carries no `ownerOf`,
+ *         `transferFrom` or approval entry. Marketplaces, wallets and the app
+ *         read and move positions at the core. The token's metadata
+ *         (`tokenURI`, `contractURI`) is drawn by {VaipakamNFTMetadataFacet}
+ *         and the royalty by {royaltyInfo} here, both as the core's renderer.
  */
-contract VaipakamNFTFacet is IERC721, IERC721Enumerable, DiamondReentrancyGuard, DiamondAccessControl {
+contract VaipakamNFTFacet is DiamondReentrancyGuard, DiamondAccessControl {
 
     /// @notice Emitted when a Vaipakam NFT is minted.
     /// @param tokenId The unique ID of the minted NFT.
@@ -49,77 +45,49 @@ contract VaipakamNFTFacet is IERC721, IERC721Enumerable, DiamondReentrancyGuard,
         LibVaipakam.LoanPositionStatus newStatus
     );
 
-    /// @notice Emitted when an NFT is burned.
-    /// @param tokenId The ID of the burned NFT.
+    /// @notice Emitted when a position's token is retired: the position
+    ///         closed, and the token stays with its holder as a receipt.
+    /// @param tokenId The retired token.
     /// @custom:event-category state-change/nft-mutation
-    event NFTBurned(uint256 indexed tokenId);
+    event PositionRetired(uint256 indexed tokenId);
+
+    /// @notice Emitted once, when the Diamond records its PositionNFT core.
+    /// @custom:event-category informational/governance
+    event PositionNFTSet(address indexed core);
 
     // Custom errors for clarity and gas efficiency.
     error NotAuthorized();
-    error InvalidTokenId();
-    error NFTAlreadyBurned();
+    error PositionNFTNotForThisDiamond(address core, address itsDiamond);
 
     /**
-     * @notice Initializes ERC721 state in diamond storage.
-     * @dev Must be called once during diamond deployment (e.g., in DiamondInit).
-     *      Replaces the constructor which cannot initialize diamond proxy storage.
+     * @notice Record the PositionNFT core and seed the default artwork. Once,
+     *         at deploy.
+     * @dev    The core must name THIS Diamond as its minter, so a core built
+     *         for another Diamond cannot be wired by mistake. The collection's
+     *         name and symbol are the core's constructor constants.
+     *         Image URIs: only the two per-side defaults seed here; granular
+     *         per-(status, isLender) overrides are set afterwards via
+     *         `setImageURIForStatus` (or `ConfigureNFTImageURIs.s.sol`). The
+     *         default IPFS URL is a placeholder operators swap before mainnet.
+     * @param core The PositionNFT contract.
      */
     // forge-lint: disable-next-line(mixed-case-function)
-    function initializeNFT() external onlyRole(LibAccessControl.ADMIN_ROLE) {
-        // Name + symbol are intentionally one-shot at deploy time —
-        // `LibERC721.initialize` reverts on second call. No admin
-        // setter exists by design: NFT collection identity is part of
-        // the contract's surface that marketplaces, wallets, and
-        // indexers cache, and a mutable identity is both an attack
-        // surface (compromised admin → rename to scam) and a UX
-        // hazard (wallets can't tell if it's still the same collection).
-        // Get the values right before the first mainnet deploy; future
-        // changes mean redeploy, not in-place mutation.
-        //
-        // Image URIs: only the two per-side defaults seed at init;
-        // granular per-(status, isLender) overrides are populated
-        // afterwards via `setImageURIForStatus` (or via
-        // `ConfigureNFTImageURIs.s.sol` post-deploy). Default IPFS
-        // URL here is a placeholder — operators MUST swap it via the
-        // setter before mainnet launch.
+    function initializeNFT(address core) external onlyRole(LibAccessControl.ADMIN_ROLE) {
+        address itsDiamond = IPositionNFTCore(core).diamond();
+        if (itsDiamond != address(this)) revert PositionNFTNotForThisDiamond(core, itsDiamond);
+        LibPositionNFT.setCore(core);
+        LibPositionNFT.ERC721Storage storage es = LibPositionNFT._storage();
         string memory defaultIpfs =
             "https://ipfs.io/ipfs/QmahNt61bcS6dySxy2qszmXC3AsRMoUxapttrj4WLHNc7k";
-        LibERC721.initialize("Vaipakam NFT", "VAIPAK", defaultIpfs, defaultIpfs);
-        // The ERC-165 claims (ERC-721 family, EIP-2981 and the rest of the
-        // Diamond's) are recorded by `DiamondInterfacesInit`, the one list
-        // (#2752), not here.
+        es.defaultLenderImage = defaultIpfs;
+        es.defaultBorrowerImage = defaultIpfs;
+        es.initialized = true;
+        emit PositionNFTSet(core);
     }
 
-    // ==================== ERC721 Interface ====================
-
-    /// @dev EIP-2981 `royaltyInfo(uint256,uint256)` selector. Hardcoded because
-    ///      this facet doesn't import the IERC2981 interface type.
-    bytes4 private constant _INTERFACE_ID_ERC2981 = 0x2a55205a;
-
-    function supportsInterface(bytes4 interfaceId) external pure override(IERC165) returns (bool) {
-        return
-            interfaceId == type(IERC721).interfaceId ||
-            interfaceId == type(IERC721Metadata).interfaceId ||
-            interfaceId == type(IERC721Enumerable).interfaceId ||
-            interfaceId == type(IERC165).interfaceId ||
-            interfaceId == _INTERFACE_ID_ERC2981;
-    }
-
-    // ==================== IERC721Enumerable ====================
-
-    /// @inheritdoc IERC721Enumerable
-    function totalSupply() external view override returns (uint256) {
-        return LibERC721.totalSupply();
-    }
-
-    /// @inheritdoc IERC721Enumerable
-    function tokenByIndex(uint256 index) external view override returns (uint256) {
-        return LibERC721.tokenByIndex(index);
-    }
-
-    /// @inheritdoc IERC721Enumerable
-    function tokenOfOwnerByIndex(address owner, uint256 index) external view override returns (uint256) {
-        return LibERC721.tokenOfOwnerByIndex(owner, index);
+    /// @notice The PositionNFT core (0 before {initializeNFT}).
+    function positionNFT() external view returns (address) {
+        return LibPositionNFT._storage().core;
     }
 
     /// @notice #2529 — the highest position-NFT id ever allocated (0 before
@@ -127,73 +95,52 @@ contract VaipakamNFTFacet is IERC721, IERC721Enumerable, DiamondReentrancyGuard,
     /// @dev    Every allocation site (offer creation, loan acceptance, and the
     ///         lender and borrower position handovers in {LibLoan}) mints the
     ///         id it takes in the same transaction or reverts, so every id from
-    ///         1 to this value was minted once. An id in that range whose
-    ///         `ownerOf` reverts was therefore burned; an id above it was never
-    ///         minted.
+    ///         1 to this value was minted once. An id in that range that
+    ///         {isPositionRetired} reports was retired (its position closed);
+    ///         an id above it was never minted.
     function highestTokenId() external view returns (uint256) {
         return LibVaipakam.storageSlot().nextTokenId;
     }
 
-    // ERC-721 metadata (IERC721Metadata): `name` and `symbol` live here;
-    // `tokenURI` is on {VaipakamNFTMetadataFacet} (#2957). The Diamond as a
-    // whole implements the interface, and supportsInterface says so.
-    function name() external view returns (string memory) {
-        return LibERC721.name();
+    /// @notice Whether `tokenId`'s position closed and its token was retired.
+    function isPositionRetired(uint256 tokenId) external view returns (bool) {
+        return LibPositionNFT.isRetired(tokenId);
     }
 
-    function symbol() external view returns (string memory) {
-        return LibERC721.symbol();
+    /// @notice The protocol route open on `tokenId` (an offset, a sale, a
+    ///         collateral listing, a swap-to-repay intent), or None. A route
+    ///         does not stop the token moving; moving it makes the route's
+    ///         completion revert, and the route can then only be cancelled.
+    function positionRoute(uint256 tokenId) external view returns (LibPositionNFT.RouteReason) {
+        return LibPositionNFT.routeOf(tokenId);
     }
 
-    function balanceOf(address owner) external view override returns (uint256) {
-        return LibERC721.balanceOf(owner);
-    }
+    // ==================== The core's transfer check ====================
 
-    function ownerOf(uint256 tokenId) public view override returns (address) {
-        return LibERC721.ownerOf(tokenId);
-    }
-
-    function approve(address to, uint256 tokenId) external override {
-        LibERC721.approve(to, tokenId);
-    }
-
-    function getApproved(uint256 tokenId) external view override returns (address) {
-        return LibERC721.getApproved(tokenId);
-    }
-
-    function setApprovalForAll(address operator, bool approved) external override {
-        LibERC721.setApprovalForAll(operator, approved);
-    }
-
-    function isApprovedForAll(address owner, address operator) external view override returns (bool) {
-        return LibERC721.isApprovedForAll(owner, operator);
-    }
-
-    // Slither's `arbitrary-send-erc20` heuristic flags any `transferFrom`
-    // with non-msg.sender `from`. This IS the ERC-721 `transferFrom`
-    // function from the standard interface — by definition the spender
-    // moves the owner's token via approval (`approve` / `setApprovalFor
-    // All`). `LibERC721.transferFrom` enforces the standard ERC-721
-    // permission check (msg.sender == from || isApprovedForAll[from]
-    // [msg.sender] || getApproved[tokenId] == msg.sender) before any
-    // state write. Not a vuln — standard ERC-721 semantic.
-    // slither-disable-next-line arbitrary-send-erc20
-    function transferFrom(address from, address to, uint256 tokenId) external override nonReentrant {
-        _assertTransferNotSanctioned(from, to);
-        LibERC721.transferFrom(from, to, tokenId);
-        _syncTierExclusion(LibERC721._storage().loanIds[tokenId]);
-    }
-
-    function safeTransferFrom(address from, address to, uint256 tokenId) external override nonReentrant {
-        _assertTransferNotSanctioned(from, to);
-        LibERC721.safeTransferFrom(from, to, tokenId, "");
-        _syncTierExclusion(LibERC721._storage().loanIds[tokenId]);
-    }
-
-    function safeTransferFrom(address from, address to, uint256 tokenId, bytes calldata data) external override nonReentrant {
-        _assertTransferNotSanctioned(from, to);
-        LibERC721.safeTransferFrom(from, to, tokenId, data);
-        _syncTierExclusion(LibERC721._storage().loanIds[tokenId]);
+    /**
+     * @notice The PositionNFT core's transfer check: called by the core on
+     *         every transfer (never on a mint), after it recorded the move. A
+     *         revert refuses the transfer; nothing here can move a token.
+     * @dev    Two rules, the ones the in-Diamond transfer applied before
+     *         #3205:
+     *         - #821 / #1123 FREEZE-AT-SOURCE: no position moves into or out of
+     *           a sanctions-flagged wallet (fail-closed through the
+     *           confirmed-flagged registry, so not `view`).
+     *         - #2342: a terminal loan's fee-tier exclusion is re-derived for
+     *           the new holder. This is the one-way transfer ping the owner
+     *           allowed (2026-11-07) where a time-accrued record must follow
+     *           the holder.
+     *         Guarded: a position transfer made while any Diamond call is in
+     *         progress (a receiver hook re-entering) reverts, as the guarded
+     *         in-Diamond transfer did. The core calls this BEFORE a safe
+     *         transfer's receiver hook, with the new owner already recorded;
+     *         by the time the hook runs this guard is released, so the hook
+     *         may call the Diamond, but the move it reacts to is final.
+     */
+    function checkPositionTransfer(address, address from, address to, uint256 tokenId) external nonReentrant {
+        if (msg.sender != LibPositionNFT._storage().core) revert NotAuthorized();
+        LibVaipakam.assertPositionMoveNotSanctioned(from, to);
+        _syncTierExclusion(LibPositionNFT._storage().loanIds[tokenId]);
     }
 
     /**
@@ -203,7 +150,7 @@ contract VaipakamNFTFacet is IERC721, IERC721Enumerable, DiamondReentrancyGuard,
      *      claim moves the VPFI out of the stored party's tier, selling it
      *      back to the stored party returns it. Run after the move (and after
      *      a safe transfer's receiver hook, which cannot re-enter this
-     *      guarded facet). Also called from {burnNFT}, where the holder
+     *      guarded facet). Also called from {retirePosition}, where the holder
      *      becomes nobody. An Active loan has no exclusion (#2342 scope); a
      *      FallbackPending loan's exclusion (#1566 slice 2: its VPFI fallback
      *      custody row) is charged to the stored `loan.borrower` whoever
@@ -223,38 +170,14 @@ contract VaipakamNFTFacet is IERC721, IERC721Enumerable, DiamondReentrancyGuard,
         LibRevert.bubbleOnFailureTyped(ok, ret, bytes4(0));
     }
 
-    /**
-     * @dev #821 (Codex #832) — FREEZE-AT-SOURCE for sanctioned wallets. A user-
-     *      initiated position-NFT transfer must not move a position into OR out
-     *      of a sanctions-flagged wallet: blocking the SENDER stops a flagged
-     *      party laundering its position to a clean wallet to escape the payout
-     *      freeze (the laundering vector Codex flagged), and blocking the
-     *      RECIPIENT stops a position from being parked on a flagged wallet. This
-     *      is the single source-level guard that lets the close-out paths trust
-     *      `ownerOf` == the economic owner: a flagged wallet's position is frozen
-     *      IN PLACE until the flag clears, while a position transferred BEFORE a
-     *      later flag (a legitimate secondary-market buyer) is unaffected.
-     *
-     *      Scope: ONLY these external user-facing transfer entrypoints. Mint
-     *      (`mintNFT`), burn (`burnNFT`), status updates, and protocol-internal
-     *      position moves use separate authorized functions / `LibERC721`
-     *      directly, so the protocol can still mint to / burn / settle a flagged
-     *      party's position at terminal (the Tier-2 close-out must complete).
-     *      No-op while the sanctions oracle is unset.
-     */
-    /// @dev #1123 — FAIL-CLOSED via the confirmed-flagged registry: a wallet
-    ///      confirmed sanctioned while the oracle was reachable cannot move a
-    ///      position even during an oracle outage. No longer `view` (the gate may
-    ///      self-heal-clear a de-listed party on an authoritative clean read).
-    function _assertTransferNotSanctioned(address from, address to) private {
-        LibVaipakam.assertPositionMoveNotSanctioned(from, to);
-    }
-
     // ==================== Vaipakam NFT Logic ====================
 
     /**
-     * @notice Mints a new Vaipakam NFT for an offer or loan participant.
+     * @notice Mints a new position NFT at the core for an offer or loan
+     *         participant, and records what the position is.
      * @dev Callable only by authorized facets (e.g., OfferFacet via Diamond).
+     *      A token minted to a holder under the core's holder lock (protected
+     *      account mode) is locked from the start.
      */
     // forge-lint: disable-next-line(mixed-case-function)
     function mintNFT(
@@ -266,12 +189,12 @@ contract VaipakamNFTFacet is IERC721, IERC721Enumerable, DiamondReentrancyGuard,
         LibVaipakam.LoanPositionStatus initialStatus
     ) external {
         _enforceAuthorizedCaller();
-        LibERC721._safeMint(to, tokenId);
-        LibERC721.ERC721Storage storage es = LibERC721._storage();
+        LibPositionNFT.ERC721Storage storage es = LibPositionNFT._storage();
         es.nftStatuses[tokenId] = initialStatus;
         es.offerIds[tokenId] = offerId;
         es.loanIds[tokenId] = loanId;
         es.isLenderRoles[tokenId] = isLender;
+        LibPositionNFT.mint(to, tokenId);
 
         emit NFTMinted(tokenId, to, isLender ? "Lender" : "Borrower");
     }
@@ -287,7 +210,7 @@ contract VaipakamNFTFacet is IERC721, IERC721Enumerable, DiamondReentrancyGuard,
         LibVaipakam.LoanPositionStatus newStatus
     ) external {
         _enforceAuthorizedCaller();
-        LibERC721.ERC721Storage storage es = LibERC721._storage();
+        LibPositionNFT.ERC721Storage storage es = LibPositionNFT._storage();
         es.nftStatuses[tokenId] = newStatus;
         es.loanIds[tokenId] = loanId;
 
@@ -295,13 +218,56 @@ contract VaipakamNFTFacet is IERC721, IERC721Enumerable, DiamondReentrancyGuard,
     }
 
     /**
-     * @notice Burns a Vaipakam NFT after loan closure or claims.
-     * @dev Callable only by authorized facets.
+     * @notice Retire a position's token after the position closed (its final
+     *         claim, a cancelled offer, a position handed to a new token).
+     * @dev    Callable only by authorized facets. The core never burns: the
+     *         token stays with its holder as a receipt, and every Diamond
+     *         holder read treats it as gone ({LibPositionNFT.ownerOf} reverts,
+     *         {LibPositionNFT.holderOrZero} reads 0), exactly as a burned token
+     *         read before #3205. Its offer, loan and side are kept so the
+     *         receipt still renders; a status naming a live position becomes
+     *         LoanClosed, and the position summary shows no live figures for
+     *         it. Idempotent.
      */
-    // forge-lint: disable-next-line(mixed-case-function)
-    function burnNFT(uint256 tokenId) external {
+    function retirePosition(uint256 tokenId) external {
         _enforceAuthorizedCaller();
-        LibERC721.ERC721Storage storage es = LibERC721._storage();
+        _retire(tokenId);
+    }
+
+    /**
+     * @notice Retire the own position token of each of the two offers that is
+     *         now terminal (accepted, fully filled or dust-closed), and drop
+     *         its open-offer entry. Callable only by authorized facets: the
+     *         matcher calls it once per match, after its post-match accounting.
+     * @dev    #3205 — one position token per loan side, never shared. A match
+     *         slice never takes an offer's own token (each slice's loan gets
+     *         its own creator-side token, minted in `LoanFacet`), so an
+     *         offer's own token belongs to the offer alone and closes with it.
+     *         An offer still open, or with no token, is left alone. Idempotent.
+     */
+    function retireTerminalOfferTokens(uint256 offerIdA, uint256 offerIdB) external {
+        _enforceAuthorizedCaller();
+        _retireIfTerminal(offerIdA);
+        _retireIfTerminal(offerIdB);
+    }
+
+    function _retireIfTerminal(uint256 offerId) private {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.Offer storage o = s.offers[offerId];
+        uint256 tokenId = o.positionTokenId;
+        if (!o.accepted || tokenId == 0 || LibPositionNFT.isRetired(tokenId)) return;
+        delete s.offerIdByPositionTokenId[tokenId];
+        _retire(tokenId);
+    }
+
+    function _retire(uint256 tokenId) private {
+        LibPositionNFT.ERC721Storage storage es = LibPositionNFT._storage();
+        if (es.retired[tokenId]) return;
+        // Only a minted token is retired: an id retired before its mint would
+        // be born closed.
+        if (LibPositionNFT.core().holderOf(tokenId) == address(0)) {
+            revert LibPositionNFT.ERC721NonexistentToken(tokenId);
+        }
 
         // #569 — LIEN LIFECYCLE = BORROWER-POSITION-NFT LIFECYCLE.
         // The collateral lien is created when the borrower position NFT is
@@ -310,132 +276,48 @@ contract VaipakamNFTFacet is IERC721, IERC721Enumerable, DiamondReentrancyGuard,
         // its borrower NFT — the whole class of "a terminal released the
         // lien early / a return-leg forgot to release" bugs (Codex #572
         // r4–6) cannot survive it. Gated on a TERMINAL loan status so it
-        // fires only on a genuine CLOSE-burn, NOT on an obligation-transfer
-        // re-key (which burns the OLD borrower token while the loan stays
+        // fires only on a genuine CLOSE-retire, NOT on an obligation-transfer
+        // re-key (which retires the OLD borrower token while the loan stays
         // Active and the lien is being re-keyed to the NEW borrower —
         // status gate is order-independent vs the re-key's token swap).
         // Idempotent + ERC20-only: a no-op on already-released liens,
         // lender positions, offer NFTs (loanId 0), Active/FallbackPending
         // loans, and NFT-rental loans (never liened, D-1).
-        uint256 burnedLoanId = es.loanIds[tokenId];
-        if (burnedLoanId != 0 && !es.isLenderRoles[tokenId]) {
+        uint256 retiredLoanId = es.loanIds[tokenId];
+        if (retiredLoanId != 0 && !es.isLenderRoles[tokenId]) {
             LibVaipakam.LoanStatus st = LibVaipakam
                 .storageSlot()
-                .loans[burnedLoanId]
+                .loans[retiredLoanId]
                 .status;
             if (
                 st != LibVaipakam.LoanStatus.Active &&
                 st != LibVaipakam.LoanStatus.FallbackPending
             ) {
-                LibEncumbrance.releaseCollateralLien(burnedLoanId);
+                LibEncumbrance.releaseCollateralLien(retiredLoanId);
             }
         }
 
-        LibERC721._burn(tokenId);
-        delete es.nftStatuses[tokenId];
-        delete es.offerIds[tokenId];
-        delete es.loanIds[tokenId];
-        delete es.isLenderRoles[tokenId];
+        LibPositionNFT.retire(tokenId);
+        // The receipt must not read as a live position on a marketplace: a
+        // status that still names an open offer or loan becomes LoanClosed
+        // (no claim rights). A terminal status (repaid, defaulted, liquidated)
+        // is kept, so the receipt still says how the position ended.
+        LibVaipakam.LoanPositionStatus st = es.nftStatuses[tokenId];
+        if (
+            st == LibVaipakam.LoanPositionStatus.OfferCreated
+                || st == LibVaipakam.LoanPositionStatus.LoanInitiated
+                || st == LibVaipakam.LoanPositionStatus.LoanFallbackPending
+        ) {
+            es.nftStatuses[tokenId] = LibVaipakam.LoanPositionStatus.LoanClosed;
+            emit NFTStatusUpdated(tokenId, LibVaipakam.LoanPositionStatus.LoanClosed);
+        }
 
         // #2342 — the side's holder is now nobody, so nothing on it can stay
         // excluded. Normally a no-op (the claim released the records first);
         // it clears the charge if anything was left.
-        _syncTierExclusion(burnedLoanId);
+        _syncTierExclusion(retiredLoanId);
 
-        emit NFTBurned(tokenId);
-    }
-
-    /**
-     * @notice Returns the native transfer-lock reason for `tokenId`.
-     * @dev Exposed so UIs can detect that a position NFT is locked mid
-     *      strategic flow (Preclose Option 3 offset, EarlyWithdrawal sale)
-     *      and surface the lock to users before they attempt to initiate
-     *      a conflicting action. A return value of `LockReason.None`
-     *      means the token is freely transferable.
-     */
-    function positionLock(uint256 tokenId) external view returns (LibERC721.LockReason) {
-        return LibERC721.lockOf(tokenId);
-    }
-
-    // ==================== Protected account mode: queued transfers ====================
-
-    /// @dev A queued transfer may run while the Diamond is live, or during a
-    ///      long manual pause once the escape route is open.
-    function _requireLiveOrEscape() private view {
-        if (
-            LibPausable.paused()
-                && !LibProtectedAccount.escapeOpen()
-        ) revert LibPausable.EnforcedPause();
-    }
-
-    /**
-     * @notice Queue a transfer of position NFT `tokenId`, held by a protected
-     *         account, to `to`. It completes after the account's delay, by
-     *         anyone's {releasePositionTransfer}, unless cancelled or caught by
-     *         a lock first. With NFT protection on this is the ONLY way such a
-     *         token moves.
-     * @dev    Caller: the account's manager (its wallet, or the controller of a
-     *         retired account, whose transfers may go only to the controller).
-     *         A token held by a stored lock (a sale, an offset, a listing, an
-     *         intent) cannot be queued. Tier-1: screens the caller and `to`.
-     *         A second queue for the same token replaces the first.
-     * @param tokenId The position NFT.
-     * @param to      Where it goes once released.
-     * @return id     The pending row.
-     */
-    function queuePositionTransfer(uint256 tokenId, address to) external nonReentrant returns (uint256 id) {
-        LibPausable.requireNotPaused();
-        address account = LibERC721.ownerOf(tokenId);
-        if (!LibProtectedAccount.isEnabled(account)) revert LibProtectedAccount.ProtectedModeOff(account);
-        address manager = LibProtectedAccount.manager(account);
-        if (msg.sender != manager) revert LibProtectedAccount.NotAccountManager(account, msg.sender);
-        // The payout destination rule: the manager's own wallet or an
-        // allowlisted address (a replaced account: its controller only).
-        if (!LibProtectedAccount.isAllowed(account, to)) {
-            revert LibProtectedAccount.RecipientNotAllowlisted(account, to);
-        }
-        if (to == address(0) || to == account) revert LibERC721.ERC721InvalidReceiver(to);
-        LibERC721.LockReason stored = LibERC721.storedLockOf(tokenId);
-        if (stored != LibERC721.LockReason.None) revert LibERC721.ERC721Locked(tokenId, stored);
-        LibVaipakam._assertNotSanctioned(msg.sender);
-        LibVaipakam._assertNotSanctioned(to);
-        id = LibProtectedAccount.queueTransfer(account, tokenId, to);
-    }
-
-    /**
-     * @notice Cancel queued position transfer `id`. Works during a pause:
-     *         cancelling moves nothing.
-     * @dev    Caller: the account's manager or one of its secondary signers.
-     */
-    function cancelPositionTransfer(uint256 id) external nonReentrant {
-        address account = LibVaipakam.storageSlot().pendingPositionTransfers[id].from;
-        if (msg.sender != LibProtectedAccount.manager(account) && !LibProtectedAccount.isSigner(account, msg.sender)) {
-            revert LibProtectedAccount.NotManagerOrSigner(account, msg.sender);
-        }
-        LibProtectedAccount.cancelTransfer(id, msg.sender);
-    }
-
-    /**
-     * @notice Complete queued position transfer `id` once its delay has
-     *         passed. Permissionless (the keeper backs it).
-     * @dev    Refused while the account is locked, while a stored lock holds
-     *         the token, or if the token is no longer the account's. Runs the
-     *         same sanctions screen and fee-tier sync as an ordinary transfer
-     *         and emits the standard `Transfer`.
-     */
-    function releasePositionTransfer(uint256 id) external nonReentrant {
-        _requireLiveOrEscape();
-        LibVaipakam.PendingPositionTransfer storage t = LibProtectedAccount.beginTransferRelease(id);
-        uint256 tokenId = t.tokenId;
-        address from = t.from;
-        address to = t.to;
-        address owner = LibERC721.ownerOf(tokenId);
-        if (owner != from) revert LibERC721.ERC721IncorrectOwner(from, tokenId, owner);
-        LibERC721.LockReason stored = LibERC721.storedLockOf(tokenId);
-        if (stored != LibERC721.LockReason.None) revert LibERC721.ERC721Locked(tokenId, stored);
-        _assertTransferNotSanctioned(from, to);
-        LibERC721._transfer(from, to, tokenId);
-        _syncTierExclusion(LibERC721._storage().loanIds[tokenId]);
+        emit PositionRetired(tokenId);
     }
 
     // ==================== EIP-2981 Royalties ====================
@@ -460,7 +342,7 @@ contract VaipakamNFTFacet is IERC721, IERC721Enumerable, DiamondReentrancyGuard,
         view
         returns (address receiver, uint256 royaltyAmount)
     {
-        LibERC721.ERC721Storage storage es = LibERC721._storage();
+        LibPositionNFT.ERC721Storage storage es = LibPositionNFT._storage();
         receiver = es.royaltyReceiver;
         royaltyAmount = receiver == address(0)
             ? 0
@@ -477,7 +359,7 @@ contract VaipakamNFTFacet is IERC721, IERC721Enumerable, DiamondReentrancyGuard,
         onlyRole(LibAccessControl.ADMIN_ROLE)
     {
         if (royaltyBps > 1000) revert InvalidRoyalty();
-        LibERC721.ERC721Storage storage es = LibERC721._storage();
+        LibPositionNFT.ERC721Storage storage es = LibPositionNFT._storage();
         es.royaltyReceiver = receiver;
         es.royaltyBps = royaltyBps;
         emit RoyaltyUpdated(receiver, royaltyBps);
@@ -487,7 +369,7 @@ contract VaipakamNFTFacet is IERC721, IERC721Enumerable, DiamondReentrancyGuard,
     function nftStatusOf(
         uint256 tokenId
     ) external view returns (LibVaipakam.LoanPositionStatus) {
-        return LibERC721._storage().nftStatuses[tokenId];
+        return LibPositionNFT._storage().nftStatuses[tokenId];
     }
 
     // Internal helpers
@@ -498,12 +380,4 @@ contract VaipakamNFTFacet is IERC721, IERC721Enumerable, DiamondReentrancyGuard,
             revert NotAuthorized();
         }
     }
-
-    // `_isClosedStatus` (previously here) removed in #148 Phase 5 —
-    // every call site was refactored to compare the status enum
-    // directly. The terminal-state set (Repaid / Defaulted /
-    // Liquidated / Closed; FallbackPending is non-terminal because
-    // the borrower can still cure) is documented inline at each
-    // remaining caller.
-
 }

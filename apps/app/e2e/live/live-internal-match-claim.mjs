@@ -87,6 +87,7 @@ import { readPinned } from './pinnedRead.mjs';
 import { splitBlocked } from './readOnlyFindings.mjs';
 import { decodeTxForComparison, expectedTx } from './refinanceExpected.mjs';
 import { createWritePlan } from './writePlan.mjs';
+import { positionHolderReader } from './positionHolder.mjs';
 
 const SITE_URL = requireSiteUrl();
 const REFERENCE_SITE_URL = process.env.REFERENCE_SITE_URL ?? '';
@@ -318,6 +319,8 @@ console.log(`build: ${siteBundle} on both hosts`);
 // ── 2. Chain state ─────────────────────────────────────────────────────
 const { pub } = clientsFor(CHAIN_ID);
 const read = (functionName, args = []) => pub.readContract({ address: DIAMOND, abi: DIAMOND_ABI, functionName, args });
+// #3205 — holders come from the chain's position-NFT contract, not the Diamond ABI.
+const readHolder = positionHolderReader(pub, CHAIN_ID);
 const ERC20 = parseAbi(['function symbol() view returns (string)', 'function decimals() view returns (uint8)']);
 const ERC20_TRANSFER = parseAbi(['event Transfer(address indexed from, address indexed to, uint256 value)']);
 let loan;
@@ -333,7 +336,7 @@ try {
     pub.readContract({ address: loan.principalAsset, abi: ERC20, functionName: 'symbol' }),
     pub.readContract({ address: loan.principalAsset, abi: ERC20, functionName: 'decimals' }),
   ]);
-  lenderHolder = await read('ownerOf', [loan.lenderTokenId]);
+  lenderHolder = await readHolder(loan.lenderTokenId);
 } catch (err) {
   await blocked('chain reads failed', err);
 }

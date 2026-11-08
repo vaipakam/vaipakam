@@ -1938,7 +1938,7 @@ Positions 通过一个共享读取器读取与 Home 相同的持仓清单：`get
 
 ### Position：贷款如何读取
 
-页面读取 `getLoanDetails(loanId)`，并对出借人和借款人的仓位 NFT 调用 `ownerOf`；角色即钱包现在持有的代币。对进行中的贷款（Active 或 FallbackPending），读取 `getLoanDeadlines`（暂停补偿前当前期限的到期，展期或借款人转接会改写它、暂停补偿、到期、宽限结束），有付息周期时读取 `previewPeriodicSettle` 和 `getPeriodicInterestEnabled`，以及 `isLoanDefaultable` (+ `paused`, `sequencerHealthy`, `defaultKycAdmission`)、`calculateHealthFactor` 和 `calculateLTV`；对每笔贷款读取 `getLoanCollateralLien` 和 `isSaleVehicleLoan`。每次读取相互独立：失败的读取显示为未知，绝不显示为零，也不会用 `startTime` 和 `durationDays` 推算日期。
+页面读取 `getLoanDetails(loanId)` 以及出借人和借款人仓位 NFT 的持有人（在部署记录的 PositionNFT 合约上调用 `ownerOf`，#3205 之前的部署则在 Diamond 本身上调用）；角色即钱包现在持有的代币。对进行中的贷款（Active 或 FallbackPending），读取 `getLoanDeadlines`（暂停补偿前当前期限的到期，展期或借款人转接会改写它、暂停补偿、到期、宽限结束），有付息周期时读取 `previewPeriodicSettle` 和 `getPeriodicInterestEnabled`，以及 `isLoanDefaultable` (+ `paused`, `sequencerHealthy`, `defaultKycAdmission`)、`calculateHealthFactor` 和 `calculateLTV`；对每笔贷款读取 `getLoanCollateralLien` 和 `isSaleVehicleLoan`。每次读取相互独立：失败的读取显示为未知，绝不显示为零，也不会用 `startTime` 和 `durationDays` 推算日期。
 
 对有价格的贷款，它还读取 `getInternalMatchConfigBundle`。内部撮合开启时，贷款价值比处于其阈值到阈值加 `externalLiquidationPriorityWindowBps` 之间的贷款会保留给内部撮合，所有外部清算途径都会拒绝（`InternalMatchOnlyBand`），页面会说明这个区间。`loanInitiationFeeBpsAtInit` 为 0（费率被记录之前开立的贷款）显示为未记录，`treasuryFeeBpsAtInit` 为 0 显示为结算采用的 1% 旧费率。实物交付警告仅适用于 ERC-20 贷款：NFT 租赁没有抵押品，违约时租用方的使用权终止，预付租金扣除金库份额后付给出借人，缓冲金转入金库，页面会改为说明这一点。
 
@@ -1948,7 +1948,7 @@ Positions 通过一个共享读取器读取与 Home 相同的持仓清单：`get
 
 ### 全额还款：金额如何确定
 
-该操作遵循一条规则：对 Active 或 FallbackPending 的 ERC-20 贷款，`repayLoan` 提供给既不是 `loan.lender` 也不是 `ownerOf(lenderTokenId)` 的任何钱包（`LenderCannotRepayOwnLoan`）；Active 贷款过了实际宽限期结束时间后暂停（`RepaymentPastGracePeriod`），`positionLock(borrowerTokenId)` 为 `SwapToRepayIntent` 期间也暂停。出借人的出售挂单、再融资请求和全局暂停都不会暂停它。租赁暂不在此提供。
+该操作遵循一条规则：对 Active 或 FallbackPending 的 ERC-20 贷款，`repayLoan` 提供给既不是 `loan.lender` 也不是 `ownerOf(lenderTokenId)` 的任何钱包（`LenderCannotRepayOwnLoan`）；Active 贷款过了实际宽限期结束时间后暂停（`RepaymentPastGracePeriod`），借款人仓位的开放路径为 `SwapToRepayIntent` 期间也暂停（Diamond 上的 `positionRoute(borrowerTokenId)`，#3205 之前的部署则为 `positionLock(borrowerTokenId)`）。出借人的出售挂单、再融资请求和全局暂停都不会暂停它。租赁暂不在此提供。
 
 确认页在最新区块读取 `calculateRepaymentAmount(loanId)`，再把区块时间覆盖为 `min(now + 30 分钟, 宽限期结束)` 读取一次；同一请求还会读取其实际运行的区块时间，忽略覆盖的连接会被跳过。批准额恰好是第二个数字，打开钱包前会模拟调用；收据之后，从其 `LoanRepaid` 日志读取还款使贷款所处的状态（而非该区块的状态，同一区块中随后的领取可能已将其结清），根据 `Transfer` 日志计量付款，当 allowance 显示为批准额减去付款时，将其恢复为之前的值。高于该数字的 allowance（包括无限额度）同样会降到这个数字，因为 `repayLoan(loanId)` 不设上限也不设期限；之后的恢复会还原原来的较大值。
 
@@ -2021,6 +2021,36 @@ Positions 通过一个共享读取器读取与 Home 相同的持仓清单：`get
 ### 展期储备：检查哪些内容
 
 `fundExtendReserve(loanId, amount)` 将贷款的本金代币从借款人头寸持有人的钱包存入其自己的金库，并为该贷款预留。它带有 `whenNotPaused` 和制裁筛查，除非贷款为 Active、是 ERC-20 贷款且没有定期付息周期，否则会被拒绝。`getExtendFunding(loanId, holder)` 返回代币、`reserved`、持有人的其他可用余额，以及展期现在和窗口结束时将收取的金额；展期只从当前持有人的金库收取，先扣储备。`withdrawExtendReserve(account, loanId, amount)` 带有 `whenNotPaused`，要求调用者是该账户的管理者（其自己的钱包，或替换后的控制者），对调用者进行筛查（故障时放行），超出预留额时以 `ExtendReserveInsufficient` 回退；无论贷款处于何种状态均可调用。应用根据索引中记在该钱包名下的活动 (`ExtendReserveFunded`, `ExtendReserveWithdrawn`, `ExtendChargeDrawn`) 列出贷款；按编号查找只读取链上数据。它会取回审核读取到的全部储备，在审核时和发送时各试运行一次调用，完成卡片读取 `ExtendReserveWithdrawn`（金额以及仍保留的部分），在保护模式将付款排入队列或保留时，还会读取 `PayoutQueued` 或 `PayoutHeldInVault`。
+
+<a id="vault-holdings"></a>
+
+### 你的金库：读取什么
+
+金库是 `VaultFactoryFacet.getUserVaultAddress(wallet)`；`getOrCreateUserVault(wallet)` 创建它（一级制裁筛查，无暂停门槛），完成卡片读取 `UserVaultCreated`。每项资产在同一区块读取：金库自身的余额（ERC-20 用 `balanceOf`，ERC-721 用 `ownerOf`，ERC-1155 用 `balanceOf`）、`getTrackedHolding`、`withdrawableNow` 和 `untrackedHolding`。“在你的金库中”取余额与跟踪持有量中较小者；“现在可自由提取”即原样返回的 `withdrawableNow`（存入持有量，以 `freeHolding` 为上限：跟踪量减去留置再减去保护模式的预留）；“被你的头寸占用”是计入数量减去该值。资产来自 `getDepositoryAssets(wallet, offset, limit)`，按页读取直到返回的总数（在此之前出现空页视为不完整），每个列出合约的标准通过 ERC-165 读取，并加上 `getUserLoansPaginated(wallet)` 中每笔贷款以及钱包持有其头寸的每笔贷款的各条腿（出借资产、抵押品、租赁预付费用代币），每笔都在同一区块通过 `getLoanDetails` 读取，以及其创建过的每个报价（`getUserOffersPaginated(wallet)`，逐个用 `getOffer` 读取）的各条腿：报价的托管资产在其头寸 NFT 转出后仍留在创建者的金库中。还会加上 `getLenderIntentsByOwner(wallet)` 中每个常设报价（包括已取消的）所出借的资产：为常设报价注资会把该资产放入金库，而不在存入记录中留下条目。记录不保存 NFT 代币 ID，因此每个已存入的 NFT 集合都会在一条说明中列名，只有贷款或报价涉及的代币才带数字列出。尘额是大于零且小于一个完整代币 1e-11 的计入数量。
+
+<a id="vault-deposit"></a>
+
+### 存入你的金库
+
+存入调用 `VaultDepositoryFacet.depositToVault(kind, asset, tokenId, amount)`：kind 0 为 ERC-20，1 为 ERC-721，2 为 ERC-1155；ERC-20 的代币 ID 为 0，ERC-721 的数量为 1。它带有 `whenNotPaused`，会筛查调用者（Tier-1），并拒绝已被替换而退役的钱包（`requireManager`）。审阅在同一区块读取 `getUserVaultAddress`、`paused`、制裁筛查状态、`getProtectedAccount(wallet)`，以及钱包的余额和授权；未能读取的暂停、筛查或退役状态会被说明，由试运行决定。授权为 ERC-20 的精确 `approve`（代币须先归零时为两步）、ERC-721 的 `approve(diamond, tokenId)`，或 ERC-1155 的 `setApprovalForAll(diamond, true)`，除非原本已授予，否则在存入后撤回。试运行在授权之后进行；ERC-20 以全额到账检查（`LibDelivery.pullExact`）拉取，因此转账扣费的代币会回滚。完成卡读取 `VaultDeposited(account, asset, kind, tokenId, amount)` 以及代币自身进入金库的转账日志。此存入没有 permit 路径。审阅还从 `getProtectedAccount(wallet)` 保留 `enabled`、`locked`、`delaySeconds` 和 `requireCosign`，回执说明这笔存入之后如何取出：立即、等待延迟期后（需要时经次级签名人批准），或账户锁定期间无法取出，而 `depositToVault` 并不拒绝锁定账户的存入。签名前的最后检查会重新读取 `hasAcceptedCurrentTerms`，并拒绝未接受的版本。
+
+<a id="vault-withdraw"></a>
+
+### 从金库提取
+
+提取调用 `VaultDepositoryFacet.withdrawFromVault(account, kind, asset, tokenId, amount, recipient)`，其中 `account` 和 `recipient` 都是已连接的钱包。上限为 `withdrawableNow(account, kind, asset, tokenId)`（超出则 `AmountExceedsFree`），它检查 `requireManager(account)`，筛查调用方（Tier-1）和收款方；暂停期间被拒绝，除非账户受保护且 `isEscapeOpen` 为真。审阅在同一区块读取 `getUserVaultAddress`、`paused`、`isEscapeOpen`、制裁状态、`getProtectedAccount(wallet)` 和 `withdrawableNow`，然后试运行该调用。未开启保护模式时，金库路由立即付给钱包；开启后，`LibProtectedAccount.queuePayout` 将付款排队 `delaySeconds`，并拒绝 `ProtectedVaultLocked`、`RecipientNotAllowlisted` 和 `TooManyPendingRows`。完成卡读取 `VaultWithdrawRequested(account, asset, kind, tokenId, amount, recipient, queued)`、`PayoutQueued` 以及代币自身从金库到钱包的转账日志。存入记录未记代币 ID 的合集，通过输入代币 ID 提取；表单上限为该代币的 `withdrawableNow`，每个区块重新读取。
+
+<a id="vault-safety"></a>
+
+### 账户安全
+
+卡片在同一区块读取 `getProtectedAccount(wallet)`、`getProtectedDelayBounds()`、`paused`、制裁状态和 `getPendingPayoutIds(wallet)`；`FunctionDoesNotExist` 回退视为不可用。开启是 `enableProtectedMode(delaySeconds, protectNfts)`：立即生效，暂停期间或已开启时被拒绝，延迟须在界限之内（两到五天），若没有金库会一并创建。“立即锁定”是 `lockVault(wallet)`：暂停期间也可用，它取消每一条排队中的记录（`PayoutCancelled`），丢弃每一项待生效的更改，并作废管理者提出的替换。申请解锁是 `requestUnlock(wallet)`，暂停期间或 `cooldownUntil` 之前被拒绝，并把 `pendingUnlockAt` 设为当前时间加 `delaySeconds`。“应用到期更改”是 `finalizeSettingChanges(wallet)`，一次应用所有已到期的更改；关闭保护模式要等到没有未结记录（`PendingRowsExist`）。每个操作在审阅时以及打开钱包之前都会再次试运行，完成卡片从 Diamond 的日志中读取 `ProtectedModeEnabled`、`VaultLocked`、`PayoutCancelled`、`SettingChangeRequested` 和 `SettingChangeApplied`。
+
+<a id="vault-escape"></a>
+
+### 协议暂停时
+
+提示在同一区块读取 `paused`、`VaultPayoutFacet.isEscapeOpen`、`escapeOpensAt`（手动暂停的开始时间加上它开始时的逃生期限；没有生效的暂停或 Diamond 从未启动时为零）和 `getProtectedAccount(wallet)`，并按区块时间倒计时。暂停且通道关闭时，`withdrawFromVault` 以 `EnforcedPause` 回退，审阅页说明暂停阻止了它。一旦 `isEscapeOpen` 为真，受保护账户仍使用 `withdrawFromVault`，继续排队；其他钱包的提取调用 `escapeWithdraw(kind, asset, tokenId, amount)`，它拒绝受保护账户（`EscapeNotForProtected`），拒绝被禁止的收款方，受钱包自身存入余额和可自由提取数字的限制，并付款给调用者。完成卡片读取 `EscapeWithdrawal(account, asset, tokenId, amount)` 以及代币自身从金库到钱包的转账。如果暂停状态、通道或通道开启时的模式无法读取，则不会发送任何提取。
 
 <a id="risk-access"></a>
 

@@ -594,12 +594,10 @@ callable by external liquidators. Full tier breakdown in
   documents for `discountPathEnabled` applies in parallel for
   `depthTieredLtvEnabled`; the audit covers both layers together.
   Differences:
-  - The depth-tier flip additionally requires running
-    [`contracts/script/ConfigureV2Factories.s.sol`](../../contracts/script/ConfigureV2Factories.s.sol)
-    per chain to wire the Uni-V2-fork pools into the route search
-    (canonical addresses are built into the script; per-chain
-    overrides via env). Without this, long-tail / mid-cap assets
-    under-tier.
+  - The depth-tier flip needs no V2 factory step any more: V2-fork
+    pools were removed from the route search in #3354, because they
+    keep no time-weighted record of their depth. A V3 pool counts only
+    once its own price record covers the averaging window.
   - No off-chain receiver contract to deploy — the depth-tier
     init gate is internal to the diamond.
   - Decision flow / governance gating documented in

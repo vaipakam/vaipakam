@@ -33,6 +33,8 @@ export type NotTakeable =
   | { kind: 'state'; state: Exclude<OfferState, 'open'> }
   | { kind: 'refused'; error: Exclude<AcceptErrorName, 'None'> }
   | { kind: 'gate'; block: GateBlock }
+  // #3205 — tied to a loan position that moved since the offer opened.
+  | { kind: 'moved' }
   | { kind: 'unread'; reason: string };
 
 /** A risk-access block on this acceptance: the lender's own (`creator`,

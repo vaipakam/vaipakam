@@ -4,7 +4,7 @@ pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibLoanClock} from "../libraries/LibLoanClock.sol";
-import {LibERC721} from "../libraries/LibERC721.sol";
+import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
 import {LibPrepayOrder} from "../libraries/LibPrepayOrder.sol";
 import {LibPrepayListingWiring} from "../libraries/LibPrepayListingWiring.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
@@ -422,7 +422,7 @@ contract NFTPrepayListingAtomicFacet is DiamondReentrancyGuard, DiamondPausable 
         if (block.timestamp >= graceEnd) {
             revert PrepayGraceWindowClosed(loanId, block.timestamp, graceEnd);
         }
-        address holder = VaipakamNFTFacet(address(this)).ownerOf(loan.borrowerTokenId);
+        address holder = LibPositionNFT.ownerOf(loan.borrowerTokenId);
         if (holder != msg.sender) {
             revert NotPositionHolder(loanId, msg.sender, holder);
         }
@@ -626,7 +626,7 @@ contract NFTPrepayListingAtomicFacet is DiamondReentrancyGuard, DiamondPausable 
         address pinnedExecutor = s.prepayListingExecutor[loanId];
         if (pinnedExecutor == address(0)) revert ExecutorNotSet();
 
-        LibERC721._unlock(loan.borrowerTokenId);
+        LibPositionNFT.closeRouteIfHeldBy(loan.borrowerTokenId, LibPositionNFT.RouteReason.PrepayCollateralListing);
         delete s.prepayListingOrderHash[loanId];
         delete s.prepayListingExecutor[loanId];
         IListingExecutorRecorder(pinnedExecutor).clearOrder(existingHash);
@@ -686,7 +686,7 @@ contract NFTPrepayListingAtomicFacet is DiamondReentrancyGuard, DiamondPausable 
         );
 
         // STEP 3 — Lock the borrower NFT.
-        LibERC721._lock(loan.borrowerTokenId, LibERC721.LockReason.PrepayCollateralListing);
+        // #3205 — the route opens (or rebinds) in LibPrepayListingWiring.wire.
 
         // STEP 4 — Pin + restamp diamond slots. `askPrice = endAskPrice
         // = effectiveAsk` per §17.11 step 4 (Codex round-10 P3 — the
@@ -710,7 +710,7 @@ contract NFTPrepayListingAtomicFacet is DiamondReentrancyGuard, DiamondPausable 
         );
 
         // STEP 5 — Wire the vault.
-        LibPrepayListingWiring.wire(s, loan, vaipakamOrderHash, conduit, executor);
+        LibPrepayListingWiring.wire(s, loan, vaipakamOrderHash, conduit, executor, /* holderAuthenticated */ true);
     }
 
     // (No internal helper needed — external calls to

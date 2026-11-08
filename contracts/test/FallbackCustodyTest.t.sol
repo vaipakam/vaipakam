@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
 import {Vm} from "forge-std/Vm.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -372,7 +373,7 @@ contract FallbackCustodyTest is CustodyInvariantBase {
         address holder = makeAddr("fcBorrowerPositionHolder");
         uint256 tokenId = _fcLoan(id).borrowerTokenId;
         vm.prank(fcBorrower);
-        VaipakamNFTFacet(address(diamond)).transferFrom(fcBorrower, holder, tokenId);
+        LibTestPositionNFT.core(address(diamond)).transferFrom(fcBorrower, holder, tokenId);
 
         vm.prank(fcLender);
         ClaimFacet(address(diamond)).claimAsLender(id);

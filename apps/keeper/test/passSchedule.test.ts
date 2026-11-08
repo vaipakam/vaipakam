@@ -118,6 +118,7 @@ describe('the stagger reduces real dispatched work', () => {
       [
         'autoLifecycle', // bounded drain, no urgency ordering
         'commitmentReport', // resumes a persisted frontier
+        'keeperFeeBalance', // fees spike in the crash that makes liquidations due (#3365)
         'liquidator', // protocol safety
         'liquidityConfidence', // demotes with no window
         'matcher', // user-visible latency

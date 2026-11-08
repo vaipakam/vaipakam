@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
 import {Test} from "forge-std/Test.sol";
 import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
 import {console} from "forge-std/console.sol";
@@ -425,6 +426,7 @@ contract DefaultedFacetTest is Test {
         // Init vault factory with impl
         vm.prank(owner);
         LibTestVaultBeacon.install(address(diamond), address(this));
+        LibTestPositionNFT.install(address(diamond), address(this));
         AdminFacet(address(diamond)).setTreasury(address(diamond));
         AdminFacet(address(diamond)).setZeroExProxy(
             address(mockZeroExProxy)
@@ -919,7 +921,7 @@ contract DefaultedFacetTest is Test {
                 abi.encodeWithSelector(
                     VPFIDiscountFacet.resolveLenderYieldFeeFor.selector,
                     loanId,
-                    VaipakamNFTFacet(address(diamond)).ownerOf(ln.lenderTokenId)
+                    LibTestPositionNFT.core(address(diamond)).ownerOf(ln.lenderTokenId)
                 )
             );
         }
@@ -993,7 +995,7 @@ contract DefaultedFacetTest is Test {
         LibVaipakam.Loan memory l0 = LoanFacet(address(diamond)).getLoanDetails(loanId);
         address dHolder = makeAddr("defaultHolder1955");
         vm.prank(l0.lender);
-        VaipakamNFTFacet(address(diamond)).transferFrom(
+        LibTestPositionNFT.core(address(diamond)).transferFrom(
             l0.lender, dHolder, l0.lenderTokenId
         );
         MockSanctionsList dSanc = new MockSanctionsList();
@@ -1040,7 +1042,7 @@ contract DefaultedFacetTest is Test {
         // that current holder is the intended claimant the marker keys on.
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
         assertEq(
-            IERC721(address(diamond)).ownerOf(loan.lenderTokenId),
+            LibTestPositionNFT.core(address(diamond)).ownerOf(loan.lenderTokenId),
             lender,
             "lender holds the position NFT"
         );
@@ -1390,6 +1392,31 @@ contract DefaultedFacetTest is Test {
             loanId
         );
         assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Defaulted));
+    }
+
+    /// @dev #3318 Codex r6 — the holder lock never blocks a forced close: a
+    ///      default CLOSES the position (it hands nothing to a new party), so
+    ///      it settles with both holders locked.
+    function test_r6_defaultSettlesWithBothHoldersLocked() public {
+        mockOracleLiquidity(mockERC20, LibVaipakam.LiquidityStatus.Illiquid);
+        uint256 loanId = createAndAcceptOffer(
+            mockERC20, mockIlliquidERC20, LibVaipakam.AssetType.ERC20, 1000 ether, 1500 ether, 30, 0, 0
+        );
+        mockOracleLiquidity(mockERC20, LibVaipakam.LiquidityStatus.Liquid);
+        vm.prank(lender);
+        LibTestPositionNFT.core(address(diamond)).lock();
+        vm.prank(borrower);
+        LibTestPositionNFT.core(address(diamond)).lock();
+
+        vm.warp(block.timestamp + 30 days + LibVaipakam.gracePeriod(30) + 1);
+        uint256 sellQuote = defaultQuote(address(diamond), loanId);
+        vm.prank(lender);
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
+        assertEq(
+            uint8(LoanFacet(address(diamond)).getLoanDetails(loanId).status),
+            uint8(LibVaipakam.LoanStatus.Defaulted),
+            "the default settles despite both holder locks"
+        );
     }
 
     function testTriggerDefaultNFTRental() public {

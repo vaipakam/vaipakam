@@ -18,7 +18,7 @@ import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibLenderYieldFeeHost} from "../libraries/LibLenderYieldFeeHost.sol";
 import {LibLoanClock} from "../libraries/LibLoanClock.sol";
 import {LibDefaultRoute} from "../libraries/LibDefaultRoute.sol";
-import {LibERC721} from "../libraries/LibERC721.sol";
+import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
 import {LibPausable} from "../libraries/LibPausable.sol";
 import {LibDiscountedLiquidation} from "../libraries/LibDiscountedLiquidation.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
@@ -651,7 +651,7 @@ contract ForcedSaleFacet is IVaipakamErrors {
         // their wallet; a flagged holder, or a refused payment, has the extra
         // held for the claim at loan end.
         (out.borrowerExtraHeld, out.borrowerExtra) = LibCloseoutFreeze.payOrHoldBorrowerExtra(
-            s, loanId, loan, LibERC721.ownerOf(loan.borrowerTokenId), sp.extra
+            s, loanId, loan, LibPositionNFT.ownerOf(loan.borrowerTokenId), sp.extra
         );
     }
 
@@ -680,7 +680,7 @@ contract ForcedSaleFacet is IVaipakamErrors {
             LibMetricsHooks.onInterestPaid(loan, interestRecovered);
             (treasuryInterest, ) = LibEntitlement.splitTreasury(loan, interestRecovered);
             (, treasuryInterest) = LibLenderYieldFeeHost.resolve(
-                loanId, LibERC721.ownerOf(loan.lenderTokenId), interestRecovered, treasuryInterest
+                loanId, LibPositionNFT.ownerOf(loan.lenderTokenId), interestRecovered, treasuryInterest
             );
             lenderNet = sp.lender - treasuryInterest;
         }
@@ -713,7 +713,7 @@ contract ForcedSaleFacet is IVaipakamErrors {
 
         if (sp.extra > 0) {
             out.borrowerExtra = LibCloseoutFreeze.holdBorrowerExtra(
-                s, loanId, loan, LibERC721.ownerOf(loan.borrowerTokenId), loan.principalAsset, sp.extra
+                s, loanId, loan, LibPositionNFT.ownerOf(loan.borrowerTokenId), loan.principalAsset, sp.extra
             );
             out.borrowerExtraHeld = true;
         }

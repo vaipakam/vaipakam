@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
 import {SetupTest} from "./SetupTest.t.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibSwap} from "../src/libraries/LibSwap.sol";
@@ -337,7 +338,7 @@ contract ForcedSalePeriodicTest is SetupTest {
         address newHolder = makeAddr("new-borrower-holder");
         uint256 tokenId = LoanFacet(address(diamond)).getLoanDetails(LOAN).borrowerTokenId;
         vm.prank(borrower);
-        IERC721(address(diamond)).transferFrom(borrower, newHolder, tokenId);
+        LibTestPositionNFT.core(address(diamond)).transferFrom(borrower, newHolder, tokenId);
         vm.prank(newHolder);
         ConsolidationFacet(address(diamond)).consolidateCollateralToHolder(LOAN);
 

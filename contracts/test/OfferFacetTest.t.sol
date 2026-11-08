@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
 import {Test} from "forge-std/Test.sol";
 import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
 import {console} from "forge-std/console.sol";
@@ -267,6 +268,7 @@ contract OfferFacetTest is Test {
         // Initialize vault implementation
         vm.prank(owner);
         LibTestVaultBeacon.install(address(diamond), address(this));
+        LibTestPositionNFT.install(address(diamond), address(this));
 
         // Mock balances/approvals
         deal(mockERC20, user1, 1e18);
@@ -440,11 +442,23 @@ contract OfferFacetTest is Test {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](3);
+        // #3205 — the facet's whole routed surface, as `HelperTest` cuts it:
+        // `initializeNFT` records the PositionNFT core and the core calls
+        // back `checkPositionTransfer` on every transfer.
+        selectors = new bytes4[](13);
         selectors[0] = VaipakamNFTFacet.mintNFT.selector;
         selectors[1] = VaipakamNFTFacet.updateNFTStatus.selector;
-        selectors[2] = VaipakamNFTFacet.burnNFT.selector;
-        // selectors[4] = VaipakamNFTFacet.supportsInterface.selector; // ERC721
+        selectors[2] = VaipakamNFTFacet.retirePosition.selector;
+        selectors[3] = VaipakamNFTFacet.initializeNFT.selector;
+        selectors[4] = VaipakamNFTFacet.royaltyInfo.selector;
+        selectors[5] = VaipakamNFTFacet.setDefaultRoyalty.selector;
+        selectors[6] = VaipakamNFTFacet.positionRoute.selector;
+        selectors[7] = VaipakamNFTFacet.nftStatusOf.selector;
+        selectors[8] = VaipakamNFTFacet.highestTokenId.selector;
+        selectors[9] = VaipakamNFTFacet.positionNFT.selector;
+        selectors[10] = VaipakamNFTFacet.isPositionRetired.selector;
+        selectors[11] = VaipakamNFTFacet.checkPositionTransfer.selector;
+        selectors[12] = VaipakamNFTFacet.retireTerminalOfferTokens.selector;
         return selectors;
     }
 
@@ -1921,7 +1935,7 @@ contract OfferFacetTest is Test {
 
         // Mock vaultWithdrawERC1155 to succeed
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC1155.selector), abi.encode(true));
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.retirePosition.selector), "");
 
         vm.prank(user1);
         vm.expectEmit(true, true, false, false);
@@ -1983,7 +1997,7 @@ contract OfferFacetTest is Test {
 
         // Mock vaultWithdrawERC721 and burnNFT to succeed
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC721.selector), abi.encode(true));
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.retirePosition.selector), "");
 
         // #664 — the cancel cooldown applies to every fresh offer.
         vm.warp(block.timestamp + LibVaipakam.MIN_OFFER_CANCEL_DELAY);
@@ -2038,7 +2052,7 @@ contract OfferFacetTest is Test {
         );
 
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC1155.selector), abi.encode(true));
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.retirePosition.selector), "");
 
         // #664 — the cancel cooldown applies to every fresh offer.
         vm.warp(block.timestamp + LibVaipakam.MIN_OFFER_CANCEL_DELAY);
@@ -2132,7 +2146,7 @@ contract OfferFacetTest is Test {
         MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCallRevert(
             address(diamond),
-            abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector),
+            abi.encodeWithSelector(VaipakamNFTFacet.retirePosition.selector),
             "burn fail"
         );
 

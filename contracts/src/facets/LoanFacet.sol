@@ -18,7 +18,7 @@ import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessCont
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {LibCompliance} from "../libraries/LibCompliance.sol";
-import {LibERC721} from "../libraries/LibERC721.sol";
+import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
 import {RiskFacet} from "./RiskFacet.sol";
 import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {OracleFacet} from "./OracleFacet.sol";
@@ -236,7 +236,7 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
             // changed hands since origination; the stored `linked.borrower` is
             // stale — Codex #959 round-8 P1). Both the self-buy guard and the
             // compliance recheck key on this live holder.
-            address currentBorrower = LibERC721.ownerOf(linked.borrowerTokenId);
+            address currentBorrower = LibPositionNFT.ownerOf(linked.borrowerTokenId);
             // Reject the linked loan's OWN current borrower buying the lender
             // position of their own debt: that would migrate the lender onto the
             // borrower, leaving an Active loan with `lender == borrower` (a party
@@ -743,42 +743,53 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
     }
 
     /**
-     * @dev Flips the offer creator's position NFT to `LoanInitiated`, mints
-     *      the acceptor's NFT, and records both token IDs on the loan.
+     * @dev Records both position tokens on the loan.
+     *      - Direct accept: the offer's own token becomes the creator's loan
+     *        position (flipped to `LoanInitiated`); the offer is consumed by
+     *        this one loan.
+     *      - Match slice (`matchOverride.active`): the offer may stay open for
+     *        further slices, so its own token stays the offer's and this
+     *        loan's creator side gets its OWN token, minted to whoever holds
+     *        the offer's token now (claim rights follow the offer NFT, as the
+     *        carried-over token did). The matcher retires the offer's token
+     *        when the offer ends (`retireTerminalOfferTokens`).
+     *      #3205 — one position token per loan side, never shared across
+     *      loans: before this, every slice of a ranged borrower request took
+     *      the request's token, so the slices' borrower sides shared one NFT.
+     *      The acceptor's token is always freshly minted.
      */
     function _mintCounterpartyPosition(InitCtx memory ctx) private {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        uint256 creatorTokenId = s.offers[ctx.offerId].positionTokenId;
+        uint256 offerTokenId = s.offers[ctx.offerId].positionTokenId;
         bool creatorIsLender = s.offers[ctx.offerId].offerType ==
             LibVaipakam.OfferType.Lender;
 
-        LibFacet.crossFacetCall(
-            abi.encodeWithSelector(
-                VaipakamNFTFacet.updateNFTStatus.selector,
-                creatorTokenId,
-                ctx.loanId,
-                LibVaipakam.LoanPositionStatus.LoanInitiated
-            ),
-            NFTStatusUpdateFailed.selector
-        );
+        uint256 creatorTokenId;
+        if (s.matchOverride.active) {
+            unchecked {
+                creatorTokenId = ++s.nextTokenId;
+            }
+            _mintPosition(
+                LibPositionNFT.ownerOf(offerTokenId), creatorTokenId, ctx, creatorIsLender
+            );
+        } else {
+            creatorTokenId = offerTokenId;
+            LibFacet.crossFacetCall(
+                abi.encodeWithSelector(
+                    VaipakamNFTFacet.updateNFTStatus.selector,
+                    creatorTokenId,
+                    ctx.loanId,
+                    LibVaipakam.LoanPositionStatus.LoanInitiated
+                ),
+                NFTStatusUpdateFailed.selector
+            );
+        }
 
         uint256 acceptorTokenId;
         unchecked {
             acceptorTokenId = ++s.nextTokenId;
         }
-
-        LibFacet.crossFacetCall(
-            abi.encodeWithSelector(
-                VaipakamNFTFacet.mintNFT.selector,
-                ctx.acceptor,
-                acceptorTokenId,
-                ctx.offerId,
-                ctx.loanId,
-                !creatorIsLender,
-                LibVaipakam.LoanPositionStatus.LoanInitiated
-            ),
-            NFTMintFailed.selector
-        );
+        _mintPosition(ctx.acceptor, acceptorTokenId, ctx, !creatorIsLender);
 
         LibVaipakam.Loan storage loan = s.loans[ctx.loanId];
         if (creatorIsLender) {
@@ -788,6 +799,22 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
             loan.lenderTokenId = acceptorTokenId;
             loan.borrowerTokenId = creatorTokenId;
         }
+    }
+
+    /// @dev Mint one loan-position token at `LoanInitiated` through the NFT facet.
+    function _mintPosition(address to, uint256 tokenId, InitCtx memory ctx, bool isLender) private {
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                VaipakamNFTFacet.mintNFT.selector,
+                to,
+                tokenId,
+                ctx.offerId,
+                ctx.loanId,
+                isLender,
+                LibVaipakam.LoanPositionStatus.LoanInitiated
+            ),
+            NFTMintFailed.selector
+        );
     }
 
     /**

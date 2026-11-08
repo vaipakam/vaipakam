@@ -116,7 +116,7 @@ test("listing form states the minimum, lists bound to it, and the card reports e
   const lock = await pub.readContract({
     address: DIAMOND,
     abi: DIAMOND_ABI_VIEM,
-    functionName: "positionLock",
+    functionName: "positionRoute", // #3205: the open route (formerly positionLock)
     args: [loan.lenderTokenId],
   });
   expect(Number(lock), "the listing should lock the lender position").toBe(2);

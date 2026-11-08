@@ -20,13 +20,7 @@ import { Link, useParams } from 'react-router-dom';
 import { CircleCheck, LoaderCircle, ShieldMinus, ShieldPlus, ShieldQuestion } from 'lucide-react';
 import { usePublicClient, useWalletClient } from 'wagmi';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import {
-  BaseError,
-  ContractFunctionRevertedError,
-  ContractFunctionZeroDataError,
-  formatUnits,
-  type Log,
-} from 'viem';
+import { BaseError, formatUnits, type Log } from 'viem';
 import { copy } from '../content/copy';
 import { useScrollToFragment } from '../lib/useScrollToFragment';
 import { isPositiveDecimal, captureTxError } from '../lib/errors';
@@ -59,6 +53,7 @@ import { pauseInForceAt, proRataInterestSeconds } from '@vaipakam/lib/loanClock'
 import { useActiveChain } from '../chain/useActiveChain';
 import { useMode } from '../app/ModeContext';
 import { DIAMOND_ABI_VIEM, useDiamondWrite } from '../contracts/diamond';
+import { readPositionHolder, readPositionOwner, readPositionRoute } from '../contracts/positionNft';
 import { ensureAllowance, useTokenBalance, useTokenMeta, trackApproval } from '../contracts/erc20';
 import {
   formatBpsAsPercent,
@@ -349,25 +344,14 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       // THROW on transport errors so the query lands in error state.
       // Collapsing burned and unreadable into one null previously let
       // the historical party look actionable on burned positions.
+      // #3205: a standalone-mode token is retired, not burned, when its
+      // position closes; `readPositionHolder` reads both as 'gone'.
       const ownerOf = async (
         tokenId: string,
       ): Promise<string | 'burned'> => {
         if (!/^[1-9]\d*$/.test(tokenId)) return 'burned';
-        try {
-          return (await readClient!.readContract({
-            address: readChain.diamondAddress,
-            abi: DIAMOND_ABI_VIEM,
-            functionName: 'ownerOf',
-            args: [BigInt(tokenId)],
-          })) as string;
-        } catch (err) {
-          const isRevert =
-            err instanceof BaseError &&
-            (err.walk((e) => e instanceof ContractFunctionRevertedError) !== null ||
-              err.walk((e) => e instanceof ContractFunctionZeroDataError) !== null);
-          if (isRevert) return 'burned';
-          throw err;
-        }
+        const holder = await readPositionHolder(readClient!, readChain.positionNft, BigInt(tokenId));
+        return holder === 'gone' ? 'burned' : holder;
       };
       const [lenderOwner, borrowerOwner] = await Promise.all([
         ownerOf(row.lenderTokenId),
@@ -1043,15 +1027,9 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         // must know about it too, not just the lender's exit block.
         // null = unknown (read failed) — the submit-time gate is the
         // authoritative check; this render copy is best-effort.
-        (readClient!
-          .readContract({
-            address: readChain.diamondAddress,
-            abi: DIAMOND_ABI_VIEM,
-            functionName: 'positionLock',
-            args: [BigInt(loan.data!.lenderTokenId)],
-          })
-          .then((v) => Number(v))
-          .catch(() => null)) as Promise<number | null>,
+        (readPositionRoute(readClient!, readChain.positionNft, BigInt(loan.data!.lenderTokenId)).catch(
+          () => null,
+        )) as Promise<number | null>,
       ]);
       return { live, calcDue, chainNow: latestBlock.timestamp, saleLock };
     },
@@ -2603,14 +2581,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         // succeed and shrink the principal the linked offer is pinned
         // to, stranding its escrow until someone cancels. Fail CLOSED:
         // an unreadable lock blocks the partial (this read THROWS).
-        publicClient
-          .readContract({
-            address: walletChain.diamondAddress,
-            abi: DIAMOND_ABI_VIEM,
-            functionName: 'positionLock',
-            args: [BigInt(row.borrowerTokenId)],
-          })
-          .then((v) => Number(v)),
+        readPositionRoute(publicClient, walletChain.positionNft, BigInt(row.borrowerTokenId)),
       ]);
       // The indexer row said Active — but another tab/device may have
       // settled the loan inside its lag window, and repayPartial
@@ -2665,14 +2636,11 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       // and reverts if that wallet is sanctioned — screen the resolved
       // holder before the approval (full repay stays open: it defers
       // the lender's proceeds to a screened claim instead).
-      const lenderHolder = (await publicClient
-        .readContract({
-          address: walletChain.diamondAddress,
-          abi: DIAMOND_ABI_VIEM,
-          functionName: 'ownerOf',
-          args: [BigInt(row.lenderTokenId)],
-        })
-        .catch(() => null)) as string | null;
+      const lenderHolder = (await readPositionOwner(
+        publicClient,
+        walletChain.positionNft,
+        BigInt(row.lenderTokenId),
+      ).catch(() => null)) as string | null;
       if (lenderHolder) {
         const lenderFlagged = await publicClient
           .readContract({

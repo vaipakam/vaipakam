@@ -19,6 +19,7 @@ import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {VaipakamVaultImplementation} from "../src/VaipakamVaultImplementation.sol";
 import {VaultBeacon} from "../src/VaultBeacon.sol";
+import {PositionNFT} from "../src/PositionNFT.sol";
 import {ProtocolRegistry} from "../src/governance/ProtocolRegistry.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferParallelSaleFacet} from "../src/facets/OfferParallelSaleFacet.sol";
@@ -135,6 +136,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
     /// @dev #3204 — the VaultBeacon deployed in step 5c, kept in storage so
     ///      the artifact step reads it without widening `runWith`'s frame.
     address internal vaultBeacon;
+    /// @dev #3205 — the PositionNFT core deployed in step 5d.
+    address internal positionNFT;
     /// @dev #3272 — the ProtocolRegistry deployed in step 5c-ii.
     address internal protocolRegistry;
     /// @dev OpenZeppelin's Initializable namespace (ERC-7201); a template
@@ -1038,9 +1041,20 @@ contract DeployDiamond is Script, ArtifactRootBase {
         );
         console.log("Protocol registry:", protocolRegistry);
 
-        // 5d. Initialize NFT metadata
-        VaipakamNFTFacet(diamond).initializeNFT();
-        console.log("NFT initialized.");
+        // 5d. #3205 — the PositionNFT core: the ownership record of every
+        // position, outside the Diamond. Not upgradeable; the Diamond is its
+        // only minter. Owned by `admin` (the Timelock takes it at handover),
+        // guardian `admin` until the operator sets the Pauser Safe (the
+        // handover's guardian rotation reaches it through `guardian()`). The
+        // Diamond is both its first renderer (tokenURI, contractURI, royalty)
+        // and its first transfer check (the sanctions screen and the #2342
+        // tier sync).
+        positionNFT = ArtifactDeploy.deploy(
+            type(PositionNFT).name,
+            abi.encode(admin, diamond, admin, diamond, diamond)
+        );
+        VaipakamNFTFacet(diamond).initializeNFT(positionNFT);
+        console.log("PositionNFT:", positionNFT);
 
         // 5d-ii. #1566 slice 4 PR A — the delivered reward custody holder.
         //     CONSTRUCTED BY THE DIAMOND ITSELF and bound once, here, while
@@ -1217,6 +1231,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
             Deployments.writeVaultImpl(impl1);
         }
         Deployments.writeVaultBeacon(vaultBeacon);
+        Deployments.writePositionNFT(positionNFT);
         Deployments.writeProtocolRegistry(protocolRegistry);
         Deployments.writeTreasury(treasury);
         Deployments.writeAdmin(admin);
@@ -1485,7 +1500,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     function _getAdminSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](54);
+        s = new bytes4[](48);
         s[0] = AdminFacet.setTreasury.selector;
         s[1] = AdminFacet.getTreasury.selector;
         s[2] = AdminFacet.setZeroExProxy.selector;
@@ -1512,50 +1527,41 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // a `pausedUntil` view for the frontend countdown.
         s[20] = AdminFacet.autoPause.selector;
         s[21] = AdminFacet.pausedUntil.selector;
-        // Depth-tiered LTV (Piece B follow-up b) — Uni-V2-fork family
-        // setters/getters consulted by `OracleFacet.getLiquidityTier`'s
-        // route search alongside the V3 trio. Zero ⇒ that leg skipped.
-        s[22] = AdminFacet.setUniswapV2Factory.selector;
-        s[23] = AdminFacet.getUniswapV2Factory.selector;
-        s[24] = AdminFacet.setSushiswapV2Factory.selector;
-        s[25] = AdminFacet.getSushiswapV2Factory.selector;
-        s[26] = AdminFacet.setPancakeswapV2Factory.selector;
-        s[27] = AdminFacet.getPancakeswapV2Factory.selector;
         // T-092 (#508) — auto-lifecycle admin kill switches.
-        s[28] = AdminFacet.setAutoLendEnabled.selector;
-        s[29] = AdminFacet.setAutoRefinanceEnabled.selector;
-        s[30] = AdminFacet.setAutoExtendEnabled.selector;
+        s[22] = AdminFacet.setAutoLendEnabled.selector;
+        s[23] = AdminFacet.setAutoRefinanceEnabled.selector;
+        s[24] = AdminFacet.setAutoExtendEnabled.selector;
         // Codex round-1 P2 — getters.
-        s[31] = AdminFacet.getAutoLendEnabled.selector;
-        s[32] = AdminFacet.getAutoRefinanceEnabled.selector;
-        s[33] = AdminFacet.getAutoExtendEnabled.selector;
+        s[25] = AdminFacet.getAutoLendEnabled.selector;
+        s[26] = AdminFacet.getAutoRefinanceEnabled.selector;
+        s[27] = AdminFacet.getAutoExtendEnabled.selector;
         // #633 — per-venue swap-adapter pause + feature kill-switches.
-        s[34] = AdminFacet.setSwapAdapterDisabled.selector;
-        s[35] = AdminFacet.isSwapAdapterDisabled.selector;
-        s[36] = AdminFacet.setAggregatorAdaptersPaused.selector;
-        s[37] = AdminFacet.setKeepersPaused.selector;
-        s[38] = AdminFacet.setPeerLtvReadsPaused.selector;
-        s[39] = AdminFacet.keepersPaused.selector;
+        s[28] = AdminFacet.setSwapAdapterDisabled.selector;
+        s[29] = AdminFacet.isSwapAdapterDisabled.selector;
+        s[30] = AdminFacet.setAggregatorAdaptersPaused.selector;
+        s[31] = AdminFacet.setKeepersPaused.selector;
+        s[32] = AdminFacet.setPeerLtvReadsPaused.selector;
+        s[33] = AdminFacet.keepersPaused.selector;
         // #395 — graduated partial-liquidation sizing (Approach A).
-        s[40] = AdminFacet.setPartialLiquidationSizing.selector;
-        s[41] = AdminFacet.getPartialLiquidationSizing.selector;
-        s[42] = AdminFacet.getMaxPartialLiquidationCloseFactorBps.selector;
-        s[43] = AdminFacet.unpauseIfPauseEpoch.selector;
+        s[34] = AdminFacet.setPartialLiquidationSizing.selector;
+        s[35] = AdminFacet.getPartialLiquidationSizing.selector;
+        s[36] = AdminFacet.getMaxPartialLiquidationCloseFactorBps.selector;
+        s[37] = AdminFacet.unpauseIfPauseEpoch.selector;
         // #945 — the gated first unpause (the launch).
-        s[44] = AdminFacet.launch.selector;
+        s[38] = AdminFacet.launch.selector;
         // #668 / #935 — the pause-interval log the loan clock reads.
-        s[45] = AdminFacet.pausedSecondsAt.selector;
-        s[46] = AdminFacet.getPauseIntervals.selector;
+        s[39] = AdminFacet.pausedSecondsAt.selector;
+        s[40] = AdminFacet.getPauseIntervals.selector;
         // #2744 — the cooldown between auto-pause windows.
-        s[47] = AdminFacet.autoPauseCooldownSeconds.selector;
-        s[48] = AdminFacet.autoPauseAvailableAt.selector;
-        s[49] = AdminFacet.setAutoPauseCooldownSeconds.selector;
+        s[41] = AdminFacet.autoPauseCooldownSeconds.selector;
+        s[42] = AdminFacet.autoPauseAvailableAt.selector;
+        s[43] = AdminFacet.setAutoPauseCooldownSeconds.selector;
         // #1637 — reads for the two kill switches.
-        s[50] = AdminFacet.aggregatorAdaptersPaused.selector;
-        s[51] = AdminFacet.peerLtvReadsPaused.selector;
+        s[44] = AdminFacet.aggregatorAdaptersPaused.selector;
+        s[45] = AdminFacet.peerLtvReadsPaused.selector;
         // #3173 — the bounded escape period.
-        s[52] = AdminFacet.setEscapeGraceSeconds.selector;
-        s[53] = AdminFacet.getEscapeGraceSeconds.selector;
+        s[46] = AdminFacet.setEscapeGraceSeconds.selector;
+        s[47] = AdminFacet.getEscapeGraceSeconds.selector;
     }
 
     function _getProfileSelectors() internal pure returns (bytes4[] memory s) {
@@ -1709,44 +1715,26 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     function _getNftSelectors() internal pure returns (bytes4[] memory s) {
-        // supportsInterface is intentionally omitted — DiamondLoupeFacet owns
-        // that selector. _registerNftInterfaces() writes the ERC-721 / metadata
-        // interface IDs into LibDiamond storage so the Loupe's implementation
-        // returns true for them. The token's metadata (tokenURI, contractURI
-        // and their image / external_url configuration) is cut to
-        // VaipakamNFTMetadataFacet (#2957), see {_getNftMetadataSelectors}.
-        s = new bytes4[](26);
+        // #3205 — the Diamond is no longer an ERC-721: owners, approvals and
+        // transfers are the PositionNFT core's. This facet keeps the
+        // Diamond-side seam (mint, status, retire, routes, the core's
+        // transfer check and royalty). The token's metadata (tokenURI,
+        // contractURI and their image / external_url configuration) is cut
+        // to VaipakamNFTMetadataFacet (#2957), see {_getNftMetadataSelectors}.
+        s = new bytes4[](13);
         s[0] = VaipakamNFTFacet.mintNFT.selector;
         s[1] = VaipakamNFTFacet.updateNFTStatus.selector;
-        s[2] = VaipakamNFTFacet.burnNFT.selector;
+        s[2] = VaipakamNFTFacet.retirePosition.selector;
         s[3] = VaipakamNFTFacet.initializeNFT.selector;
-        s[4] = bytes4(keccak256("ownerOf(uint256)"));
-        s[5] = VaipakamNFTFacet.royaltyInfo.selector;
-        s[6] = VaipakamNFTFacet.setDefaultRoyalty.selector;
-        // Native ERC-721 + lock API added in the transfer-lock refactor.
-        s[7] = VaipakamNFTFacet.name.selector;
-        s[8] = VaipakamNFTFacet.symbol.selector;
-        s[9] = VaipakamNFTFacet.balanceOf.selector;
-        s[10] = VaipakamNFTFacet.approve.selector;
-        s[11] = VaipakamNFTFacet.getApproved.selector;
-        s[12] = VaipakamNFTFacet.setApprovalForAll.selector;
-        s[13] = VaipakamNFTFacet.isApprovedForAll.selector;
-        s[14] = VaipakamNFTFacet.transferFrom.selector;
-        // `safeTransferFrom` is overloaded, so we hash the full signatures.
-        s[15] = bytes4(keccak256("safeTransferFrom(address,address,uint256)"));
-        s[16] = bytes4(keccak256("safeTransferFrom(address,address,uint256,bytes)"));
-        s[17] = VaipakamNFTFacet.positionLock.selector;
-        // IERC721Enumerable — enumerable without event scans.
-        s[18] = bytes4(keccak256("totalSupply()"));
-        s[19] = bytes4(keccak256("tokenByIndex(uint256)"));
-        s[20] = bytes4(keccak256("tokenOfOwnerByIndex(address,uint256)"));
-        s[21] = VaipakamNFTFacet.nftStatusOf.selector;
-        s[22] = VaipakamNFTFacet.highestTokenId.selector;
-        // Protected account mode: a protected owner's position moves only
-        // through a delayed transfer.
-        s[23] = VaipakamNFTFacet.queuePositionTransfer.selector;
-        s[24] = VaipakamNFTFacet.cancelPositionTransfer.selector;
-        s[25] = VaipakamNFTFacet.releasePositionTransfer.selector;
+        s[4] = VaipakamNFTFacet.royaltyInfo.selector;
+        s[5] = VaipakamNFTFacet.setDefaultRoyalty.selector;
+        s[6] = VaipakamNFTFacet.positionRoute.selector;
+        s[7] = VaipakamNFTFacet.nftStatusOf.selector;
+        s[8] = VaipakamNFTFacet.highestTokenId.selector;
+        s[9] = VaipakamNFTFacet.positionNFT.selector;
+        s[10] = VaipakamNFTFacet.isPositionRetired.selector;
+        s[11] = VaipakamNFTFacet.checkPositionTransfer.selector;
+        s[12] = VaipakamNFTFacet.retireTerminalOfferTokens.selector;
     }
 
     /// @dev #2957 - the position NFT's public metadata: the token and
@@ -2430,17 +2418,17 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[27] = ProtectedAccountFacet.requestDisableProtectedMode.selector;
         s[28] = ProtectedAccountFacet.requestRemoveSigner.selector;
         s[29] = ProtectedAccountFacet.requestUnlock.selector;
-        s[30] = ProtectedAccountFacet.setProtectNfts.selector;
-        s[31] = ProtectedAccountFacet.setProtectedDelay.selector;
-        s[32] = ProtectedAccountFacet.setRequireCosign.selector;
-        s[33] = ProtectedAccountFacet.getPendingAllowlistAdditions.selector;
-        s[34] = ProtectedAccountFacet.getPendingSignerAdditions.selector;
-        s[35] = ProtectedAccountFacet.isListingLegAllowed.selector;
+        s[30] = ProtectedAccountFacet.setProtectedDelay.selector;
+        s[31] = ProtectedAccountFacet.setRequireCosign.selector;
+        s[32] = ProtectedAccountFacet.getPendingAllowlistAdditions.selector;
+        s[33] = ProtectedAccountFacet.getPendingSignerAdditions.selector;
+        s[34] = ProtectedAccountFacet.isListingLegAllowed.selector;
+        s[35] = ProtectedAccountFacet.lockPositionNfts.selector;
     }
 
     /// @dev Selectors for `VaultPayoutFacet` — the payout queue, the vault credit and the escape route.
     function _getVaultPayoutSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](15);
+        s = new bytes4[](12);
         s[0] = VaultPayoutFacet.applyPayoutGate.selector;
         s[1] = VaultPayoutFacet.cancelPayout.selector;
         s[2] = VaultPayoutFacet.cosignPayout.selector;
@@ -2449,14 +2437,11 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[5] = VaultPayoutFacet.getPayoutEarmark.selector;
         s[6] = VaultPayoutFacet.getPendingPayout.selector;
         s[7] = VaultPayoutFacet.getPendingPayoutIds.selector;
-        s[8] = VaultPayoutFacet.getPendingPositionTransfer.selector;
-        s[9] = VaultPayoutFacet.getPendingTransferIds.selector;
-        s[10] = VaultPayoutFacet.isEscapeOpen.selector;
-        s[11] = VaultPayoutFacet.releasePayout.selector;
-        s[12] = VaultPayoutFacet.requestCode.selector;
-        s[13] = VaultPayoutFacet.cosignPositionTransfer.selector;
+        s[8] = VaultPayoutFacet.isEscapeOpen.selector;
+        s[9] = VaultPayoutFacet.releasePayout.selector;
+        s[10] = VaultPayoutFacet.requestCode.selector;
         // #3173 — when the escape opens under the current pause.
-        s[14] = VaultPayoutFacet.escapeOpensAt.selector;
+        s[11] = VaultPayoutFacet.escapeOpensAt.selector;
     }
 
     /// @dev Selectors for `VaultDepositoryFacet` — the depository vault: deposit, withdraw, adopt, disown and the upgrade pin.

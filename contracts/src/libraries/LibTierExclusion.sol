@@ -4,7 +4,7 @@ pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {LibEncumbrance} from "./LibEncumbrance.sol";
-import {LibERC721} from "./LibERC721.sol";
+import {LibPositionNFT} from "./LibPositionNFT.sol";
 import {LibTierRecord} from "./LibTierRecord.sol";
 
 /**
@@ -188,7 +188,7 @@ library LibTierExclusion {
         address charged;
         uint256 amount;
         if (terminal) {
-            address holder = LibERC721._ownerOfRaw(
+            address holder = LibPositionNFT.holderOrZero(
                 lenderSide ? loan.lenderTokenId : loan.borrowerTokenId
             );
             if (holder != address(0) && holder != stored) {

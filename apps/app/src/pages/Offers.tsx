@@ -133,8 +133,13 @@ function OfferRow({
 
   const notMine =
     !address || offer.creator.toLowerCase() !== address.toLowerCase();
+  // #3205 — a sale listing, offset offer or refinance request whose loan
+  // position moved since it was posted can never complete. The row stays
+  // and says so; no button is offered for it.
+  const positionMoved = offer.positionFlow?.movedSinceOpened === true;
   const acceptable =
     notMine &&
+    !positionMoved &&
     // Partially-filled offers are matcher-only — direct acceptOffer
     // reverts OfferPartiallyFilled, so never offer the button.
     BigInt(offer.amountFilled || '0') === 0n &&
@@ -147,6 +152,8 @@ function OfferRow({
   const notTakeableReason =
     !notMine || acceptable
       ? null
+      : positionMoved
+        ? copy.offers.notTakeableMoved
       : BigInt(offer.amountFilled || '0') !== 0n
         ? copy.offers.notTakeablePartial
         : copy.offers.notTakeableNft;

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
+
 import {SetupTest} from "./SetupTest.t.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
@@ -69,11 +71,7 @@ contract Vpfi592LenderProceedsTest is SetupTest {
     /// @dev Point `ownerOf(lenderTokenId)` at `owner_` and no-op the void NFT
     ///      cross-facet calls for the scaffolded (no real NFT) loan.
     function _mockLenderNft(address owner_) internal {
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(IERC721.ownerOf.selector, LENDER_TOKEN_ID),
-            abi.encode(owner_)
-        );
+        LibTestPositionNFT.mockHolder(address(diamond), LENDER_TOKEN_ID, owner_);
         vm.mockCall(
             address(diamond),
             abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector),
@@ -81,7 +79,7 @@ contract Vpfi592LenderProceedsTest is SetupTest {
         );
         vm.mockCall(
             address(diamond),
-            abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector),
+            abi.encodeWithSelector(VaipakamNFTFacet.retirePosition.selector),
             ""
         );
         // #594 — the terminal close-out paths (repayLoan / triggerDefault) now
@@ -92,11 +90,7 @@ contract Vpfi592LenderProceedsTest is SetupTest {
         // this the hook reverts `ERC721NonexistentToken(8888)`. Every test seeds
         // `l.borrower = borrower` + `l.borrowerTokenId = 8888` and calls this
         // helper, so it covers all of them.
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(IERC721.ownerOf.selector, uint256(8888)),
-            abi.encode(borrower)
-        );
+        LibTestPositionNFT.mockHolder(address(diamond), uint256(8888), borrower);
     }
 
     function _encumbered(address who) internal view returns (uint256) {
@@ -333,7 +327,7 @@ contract Vpfi592LenderProceedsTest is SetupTest {
         TestMutatorFacet(address(diamond)).scaffoldActiveLoan(LOAN, l);
         _mockLenderNft(l.lender); // also mocks ownerOf(8888) == borrower
         // #1383 — the default leg resolves the lender yield-fee discount via
-        // the INTERNAL LibERC721.ownerOf(lenderTokenId), which vm.mockCall
+        // the INTERNAL LibPositionNFT.ownerOf(lenderTokenId), which vm.mockCall
         // cannot intercept: the token must exist in diamond storage.
         TestMutatorFacet(address(diamond)).mintNFTRaw(l.lender, LENDER_TOKEN_ID);
         // #2796 — the sell-to-need host holds the borrower's extra for the

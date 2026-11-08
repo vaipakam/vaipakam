@@ -13,7 +13,7 @@ import {LibMetricsHooks} from "../../src/libraries/LibMetricsHooks.sol";
 import {LibVpfiRecycle} from "../../src/libraries/LibVpfiRecycle.sol";
 import {LibRewardCustody} from "../../src/libraries/LibRewardCustody.sol";
 import {LibConsolidation} from "../../src/libraries/LibConsolidation.sol";
-import {LibERC721} from "../../src/libraries/LibERC721.sol";
+import {LibPositionNFT} from "../../src/libraries/LibPositionNFT.sol";
 import {LibCollateralSettlement} from "../../src/libraries/LibCollateralSettlement.sol";
 import {LibPrepayCleanup} from "../../src/libraries/LibPrepayCleanup.sol";
 
@@ -1673,29 +1673,30 @@ contract TestMutatorFacet {
     /// @dev    Name avoids the `test...` prefix so Foundry's test
     ///         discovery doesn't try to run this as a fuzz case.
     function mintNFTRaw(address to, uint256 tokenId) external {
-        LibERC721._mint(to, tokenId);
+        LibPositionNFT.mint(to, tokenId);
     }
 
     /// @notice Test-only: lock a tokenId with the given reason. Mirrors
     ///         the call PrecloseFacet / EarlyWithdrawalFacet make
     ///         internally.
-    function lockNFTRaw(uint256 tokenId, LibERC721.LockReason reason) external {
-        LibERC721._lock(tokenId, reason);
+    function lockNFTRaw(uint256 tokenId, LibPositionNFT.RouteReason reason) external {
+        LibPositionNFT.openRoute(tokenId, reason, true);
     }
 
     /// @notice Test-only: unlock a tokenId.
     function unlockNFTRaw(uint256 tokenId) external {
-        LibERC721._unlock(tokenId);
+        LibPositionNFT.closeRoute(tokenId);
     }
 
-    /// @notice Test-only: burn a tokenId via the library. Mirrors the
+    /// @notice Test-only: retire a tokenId via the library (#3205: the
+    ///         core never burns; a retired token reads as gone). Mirrors the
     ///         call `LibLoan.migrateLenderPosition` /
     ///         `VaipakamNFTFacet._burnInternal` make internally — used
     ///         by the focused lock-counter test to assert that burning
     ///         a still-locked token doesn't permanently strand the
     ///         owner's counter (the L145 finding closed by this PR).
     function burnNFTRaw(uint256 tokenId) external {
-        LibERC721._burn(tokenId);
+        LibPositionNFT.retire(tokenId);
     }
 
     // ─── LibCollateralSettlement view proxies (T-086 step 3) ────────────
@@ -1727,41 +1728,6 @@ contract TestMutatorFacet {
     ///         supply raw bps.
     function setTreasuryFeeBpsRaw(uint16 bps) external {
         LibVaipakam.storageSlot().protocolCfg.treasuryFeeBps = bps;
-    }
-
-    /// @notice Test-only: write `locks[tokenId]` directly, BYPASSING
-    ///         the counter-increment side-effect of {LibERC721._lock}.
-    ///         Simulates a pre-PR-#282 diamond upgrade state where
-    ///         tokens were locked under the old code path (which had
-    ///         no `lockedTokenCount` mapping) and the owner's counter
-    ///         is therefore 0 even though `locks[tokenId] != None`.
-    ///         Used by the focused regression test to assert that the
-    ///         first post-upgrade `_unlock` / `_burn` on such a legacy
-    ///         lock does NOT underflow + revert.
-    // forge-lint: disable-next-line(mixed-case-function)
-    function forceSetLockWithoutCounter(uint256 tokenId, LibERC721.LockReason reason) external {
-        LibERC721._storage().locks[tokenId] = reason;
-    }
-
-    /// @notice Test-only: read the per-owner locked-token counter.
-    function getLockedTokenCount(address owner) external view returns (uint256) {
-        return LibERC721._storage().lockedTokenCount[owner];
-    }
-
-    /// @notice Test-only: read the per-owner operator-approval epoch
-    ///         (bumped on every fresh `_lock`).
-    function getOperatorApprovalEpoch(address owner) external view returns (uint256) {
-        return LibERC721._storage().operatorApprovalEpoch[owner];
-    }
-
-    /// @notice Test-only: read the epoch stamped when an operator
-    ///         approval was granted.
-    function getOperatorApprovalGrantEpoch(address owner, address operator)
-        external
-        view
-        returns (uint256)
-    {
-        return LibERC721._storage().operatorApprovalGrantEpoch[owner][operator];
     }
 
     // ─── T-086 Round-7 (Issue #355) — auto-list state mutators ──────────

@@ -63,6 +63,7 @@ import { useActiveChain } from '../chain/useActiveChain';
 import { isFunctionDoesNotExistRevert } from '../contracts/preflights';
 import { tipAware } from '../chain/railHealth';
 import { idleAware } from '../lib/idle';
+import { boundOfferMoved, readLoanFlows, type FlowMoved } from './positionFlowMoved';
 
 /** #2391 — the discovery query's key (a prefix without the holder, for
  *  invalidation). Deliberately outside the 'refinancePending' root. */
@@ -121,6 +122,16 @@ export interface RefinancePendingState {
    *  none: this one can never be taken and holds nothing back, so only
    *  cancel-to-unwind remains. False on a deployment without the record. */
   untakeable: boolean;
+  /** #3205 — the protocol records THIS request for the loan but no longer
+   *  counts it as standing (`getRefinanceRequest` reports it not live, the
+   *  loan active and the request unaccepted): since it was posted, the
+   *  borrower position moved or another wallet holds it. Like an expired
+   *  request it can never be taken; only cancel remains. The chain's say. */
+  notStanding: boolean;
+  /** #3205 — the indexer's word on WHY, where it has one: the borrower
+   *  position NFT moved since the request was posted. Only names the reason;
+   *  `notStanding` is what the protocol decides on. */
+  positionMoved: FlowMoved;
   /** Chain time says the cancel cooldown has elapsed. */
   cancelUnlocked: boolean;
   /** How this Diamond pays the payoff (#1558): the request's permit, or
@@ -337,7 +348,7 @@ export function useRefinancePending(
             functionName: 'getRefinanceRequest',
             args: [BigInt(loanId)],
           }) as Promise<readonly [bigint, boolean]>).then(
-            ([id]) => ({ id }),
+            ([id, live]) => ({ id, live }),
             (e: unknown) => {
               if (isFunctionDoesNotExistRevert(e)) return null;
               throw e;
@@ -418,6 +429,21 @@ export function useRefinancePending(
       const expired =
         offer.expiresAt !== 0n && latestBlock.timestamp >= offer.expiresAt;
       const untakeable = isUntakeable(record?.id ?? null, candidateId!);
+      const loanActive = live.status === LOAN_STATUS_ACTIVE;
+      // #3205 — the recorded request the protocol no longer counts as
+      // standing (its position moved, or another wallet holds it).
+      const notStanding =
+        record !== null &&
+        record.id === BigInt(candidateId!) &&
+        !record.live &&
+        loanActive &&
+        !offer.accepted;
+      // The indexer names the reason when it can; best effort.
+      const positionMoved = boundOfferMoved(
+        await readLoanFlows(readChain.chainId, loanId),
+        'refinance',
+        candidateId!,
+      ).moved;
       // Permit route: the permit must be the request creator's, unspent,
       // live until the request's last fillable moment and large enough for
       // the bound, and the wallet's approval of Permit2 must cover it.
@@ -427,15 +453,18 @@ export function useRefinancePending(
           : (permitProblem(quote.permit, offer.creator, latestBlock.timestamp, lastFillable, bound) ??
             (allowance < bound ? 'permit2Short' : null));
       const fundable =
-        fundingKnown && !offer.accepted && !expired && !pastGrace && !untakeable;
+        fundingKnown && !offer.accepted && !expired && !pastGrace && !untakeable &&
+        !notStanding && positionMoved !== 'yes';
       return {
         creator: offer.creator,
-        loanActive: live.status === LOAN_STATUS_ACTIVE,
+        loanActive,
         accepted: offer.accepted,
         expiresAt: offer.expiresAt,
         expired,
         pastGrace,
         untakeable,
+        notStanding,
+        positionMoved,
         cancelUnlocked:
           latestBlock.timestamp >= offer.createdAt + CANCEL_COOLDOWN_SECONDS,
         route,

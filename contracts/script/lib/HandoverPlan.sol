@@ -148,7 +148,7 @@ library HandoverPlan {
     ///      The canonical token does since #937.
     function read(string memory json) internal view returns (Target[] memory targets) {
         bool canonical = isCanonical();
-        Target[] memory all = new Target[](13);
+        Target[] memory all = new Target[](14);
         uint256 n;
         n = _slot(all, n, "ccipMessenger", readOptional(json, "ccipMessenger"), OwnableKind.OpenZeppelin, true, true);
         n = _slot(all, n, "vpfiTokenPool", readOptional(json, "vpfiTokenPool"), OwnableKind.Chainlink, true, false);
@@ -197,6 +197,11 @@ library HandoverPlan {
         // moves to the Timelock; its guardian may cancel a proposal and, while
         // paused, revoke a version (stop-only), so it is the Pauser Safe.
         n = _slot(all, n, "vaultBeacon", readOptional(json, "vaultBeacon"), OwnableKind.OpenZeppelin, true, true);
+        // #3205 — every chain's position ownership record. Its owner replaces
+        // the renderer and the transfer check under the contract's delay, so
+        // it moves to the Timelock; its guardian may cancel a replacement
+        // (stop-only), so it is the Pauser Safe.
+        n = _slot(all, n, "positionNFT", readOptional(json, "positionNFT"), OwnableKind.OpenZeppelin, true, true);
         // #3272 — the protocol registry holds the endpoints the Diamond and
         // the vaults share (the price guard first). Its owner proposes every
         // change under the delay, so it moves to the Timelock; its guardian

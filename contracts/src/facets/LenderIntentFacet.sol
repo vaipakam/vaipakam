@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibProtectedAccount} from "../libraries/LibProtectedAccount.sol";
 import {LibCloseoutFreeze} from "../libraries/LibCloseoutFreeze.sol";
@@ -656,7 +657,7 @@ contract LenderIntentFacet is
         if (loan.lender != io.owner) revert LenderIntentPositionTransferred();
         // Lender-position-sale guard — roll only if the original owner STILL
         // holds the position NFT (else the buyer is owed the proceeds).
-        if (IERC721(address(this)).ownerOf(loan.lenderTokenId) != io.owner) {
+        if (LibPositionNFT.ownerOf(loan.lenderTokenId) != io.owner) {
             revert LenderIntentPositionTransferred();
         }
         // #623 Codex round-1 P1 — a loan carrying preclose / transfer-obligation
@@ -786,7 +787,7 @@ contract LenderIntentFacet is
         );
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
-                VaipakamNFTFacet.burnNFT.selector, loan.lenderTokenId
+                VaipakamNFTFacet.retirePosition.selector, loan.lenderTokenId
             ),
             IVaipakamErrors.NFTBurnFailed.selector
         );

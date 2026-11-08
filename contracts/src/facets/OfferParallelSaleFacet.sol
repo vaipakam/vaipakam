@@ -14,7 +14,7 @@ import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {IListingExecutorRecorder} from "../seaport/IListingExecutorRecorder.sol";
 import {VaipakamVaultImplementation} from "../VaipakamVaultImplementation.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
-import {LibERC721} from "../libraries/LibERC721.sol";
+import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
 import {
     FeeLeg,
     MAX_FEE_LEGS,
@@ -320,14 +320,10 @@ contract OfferParallelSaleFacet is
             if (loanId != 0) {
                 uint256 borrowerTokenId = s.loans[loanId].borrowerTokenId;
                 if (borrowerTokenId != 0) {
-                    try
-                        IERC721(address(this)).ownerOf(borrowerTokenId)
-                    returns (address currentHolder) {
-                        callerAuthorized = (currentHolder == msg.sender);
-                    } catch {
-                        // NFT burned at a prior terminal — fall through
-                        // to the revert below.
-                    }
+                    // A retired token (prior terminal) reads 0: no one is
+                    // authorized, and the revert below applies.
+                    address currentHolder = LibPositionNFT.holderOrZero(borrowerTokenId);
+                    callerAuthorized = currentHolder != address(0) && currentHolder == msg.sender;
                 }
             }
         }
@@ -476,7 +472,7 @@ contract OfferParallelSaleFacet is
         uint256 loanId = s.offerIdToLoanId[uint256(offerId)];
         parties[legs.length] = loanId == 0
             ? s.offers[uint256(offerId)].creator
-            : LibERC721._ownerOfRaw(s.loans[loanId].borrowerTokenId);
+            : LibPositionNFT.holderOrZero(s.loans[loanId].borrowerTokenId);
     }
 
     /// @dev Register `who`'s live sanctions status into the committed registry

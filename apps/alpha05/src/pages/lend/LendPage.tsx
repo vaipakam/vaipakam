@@ -24,6 +24,8 @@ import { PostOffer } from '../../shared/post/PostOffer';
 import { ArmTariff, tariffStoreKeys, type ArmContext } from '../../shared/post/ArmTariff';
 import type { PostAssets } from '../../shared/post/postModel';
 import type { PostDraft } from '../../shared/post/postReview';
+import { indexerPositionFlowReader } from '../../shared/offers/positionFlow';
+import { useWorldRail } from '../../shared/reads/world/WorldRailContext';
 
 type Hex = `0x${string}`;
 
@@ -90,14 +92,17 @@ export function LendPage() {
   const ready = pair.lending !== null && pair.collateral !== null && pair.lending.toLowerCase() !== pair.collateral.toLowerCase();
 
   const diamond = (chain?.diamondAddress ?? '0x') as Hex;
+  const world = useWorldRail();
+  // #3205 — the indexer's moved verdict for offers bound to a loan position.
+  const flows = indexerPositionFlowReader(world.indexer, chain?.chainId ?? world.chainId);
   const lending = pair.lending ?? ('0x' as Hex);
   const collateral = pair.collateral ?? ('0x' as Hex);
-  const ownMatches = useOwnRead(['lend', 'matches', lending.toLowerCase(), collateral.toLowerCase()], (c) => readMatches(c, diamond, lending, collateral, own!.account, 'lender'), {
+  const ownMatches = useOwnRead(['lend', 'matches', lending.toLowerCase(), collateral.toLowerCase()], (c) => readMatches(c, diamond, lending, collateral, own!.account, 'lender', flows), {
     enabled: ready && walletChain !== null,
   });
   const publicMatches = useChainRead(
     ['lend', 'matches', diamond, lending.toLowerCase(), collateral.toLowerCase()],
-    (c) => readMatches(c, diamond, lending, collateral, null, 'lender'),
+    (c) => readMatches(c, diamond, lending, collateral, null, 'lender', flows),
     {
       enabled: ready && !connected,
     },

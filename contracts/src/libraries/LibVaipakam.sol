@@ -4043,22 +4043,13 @@ library LibVaipakam {
         // no-keeper baseline, never raise it above the on-chain ceiling.
         // Written only by `ConfigFacet.setKeeperTier` under `KEEPER_ROLE`.
         mapping(address => uint8) keeperTier;
-        // ── Depth-tiered LTV (Piece B) — Uni-V2-fork families ───────────
-        // Per-chain Uniswap-V2-style factory addresses, each consulted
-        // as an additional leg of `OracleFacet.getLiquidityTier`'s route
-        // search alongside the V3-clone trio. V2 pools use a different
-        // ABI (`factory.getPair(t0, t1)` — bidirectional, no fee tier
-        // arg; `pool.getReserves()` returns *real* reserves, not the
-        // tick-virtual approximation — so the in-pool depth measurement
-        // is exact, no `_v3VirtualReserves` step), and each clone's
-        // canonical fee tier differs (UniV2 / SushiV2 = 30bps = 3000
-        // pips; PancakeV2 = 25bps = 2500 pips) — fed straight into
-        // {LibSlippage.priceImpactBps}'s `feePips` arg. Zero ⇒ skip
-        // that leg (same as the V3 trio); a fresh deploy has all three
-        // unset, so the route search behaves exactly like the V3-only
-        // configuration until governance configures them. Governance
-        // setters live on {AdminFacet} (`setUniswapV2Factory` etc.) —
-        // same shape as the V3-clone setters above.
+        // ── RETIRED (#3354) — Uni-V2-fork factory addresses ─────────────
+        // Once an extra leg of the liquidity route search. A V2 pair keeps
+        // no time-weighted record of its reserves, so its depth could only
+        // be read as it stood in the current block, which a caller can top
+        // up and withdraw around one transaction; the route search no
+        // longer reads these and nothing writes them. The three slots stay
+        // only to keep the layout append-only. Never reuse them.
         address uniswapV2Factory;
         address sushiswapV2Factory;
         address pancakeswapV2Factory;
@@ -4216,7 +4207,7 @@ library LibVaipakam {
         //      orderHash left in `orderContext` would still be
         //      fillable until grace expiry. We need the old hash to
         //      pass to `clearOrder`.
-        //   3. The `LibERC721._lock(LockReason.PrepayCollateralListing)`
+        //   3. The `LibPositionNFT.openRoute(LockReason.PrepayCollateralListing)`
         //      lock is the consent + safety primitive; this mapping
         //      is the orderHash bookkeeping. Keeping them in separate
         //      storage slots avoids overloading the lock semantics.
@@ -8265,15 +8256,19 @@ library LibVaipakam {
         /// @dev Protected account mode — every pending position-NFT transfer
         ///      row by id. Written only by `LibProtectedAccount`. Appended —
         ///      append-only.
-        mapping(uint256 => PendingPositionTransfer) pendingPositionTransfers;
+        /// @dev #3205: retired; the queued position transfer was replaced by
+        ///      the PositionNFT core's holder lock.
+        mapping(uint256 => PendingPositionTransfer) retiredPendingPositionTransfers;
         /// @dev Protected account mode — per owner, the ids of the position
         ///      transfer rows still queued. Written only by
         ///      `LibProtectedAccount`. Appended — append-only.
-        mapping(address => EnumerableSet.UintSet) pendingTransferIds;
+        /// @dev #3205: retired.
+        mapping(address => EnumerableSet.UintSet) retiredPendingTransferIds;
         /// @dev Protected account mode — per position token id, the one open
         ///      transfer row for it; zero means none. Written only by
         ///      `LibProtectedAccount`. Appended — append-only.
-        mapping(uint256 => uint256) pendingTransferByToken;
+        /// @dev #3205: retired.
+        mapping(uint256 => uint256) retiredPendingTransferByToken;
         /// @dev Protected account mode — per owner, the open proposal to
         ///      replace the primary wallet. Written only by
         ///      `LibProtectedAccount`. Appended — append-only.
@@ -8379,6 +8374,15 @@ library LibVaipakam {
         ///      vaults created afterwards; #3205's genuine-vault code-identity
         ///      check bounds that. Appended — append-only.
         address vaultBeacon;
+        /// @dev #3205 (#3318) — the borrower position token's transfer count
+        ///      when `loanId`'s refinance request was recorded
+        ///      (`refinanceRequestOfLoan`). The request stands, and can be
+        ///      taken, only while the count is unchanged: a transfer (even
+        ///      away and back) ends it, the same rule as every other
+        ///      position-bound flow. Kept on the request rather than as a
+        ///      route, so it never contends with the position's one route.
+        ///      Appended — append-only.
+        mapping(uint256 => uint256) refinanceRequestTransferCount;
     }
 
     /// @notice Protected account mode — one owner wallet's settings.
@@ -8391,7 +8395,8 @@ library LibVaipakam {
     struct ProtectedAccount {
         bool enabled;
         bool locked;
-        bool protectNfts;
+        /// @dev #3205: retired; NFT protection is the PositionNFT core's holder lock.
+        bool retiredProtectNfts;
         bool requireCosign;
         bool retired;
         uint32 delaySeconds;
@@ -8399,7 +8404,8 @@ library LibVaipakam {
         uint64 pendingDelayAt;
         uint64 pendingDisableAt;
         uint64 pendingUnlockAt;
-        uint64 pendingNftOffAt;
+        /// @dev #3205: retired with `retiredProtectNfts`.
+        uint64 retiredPendingNftOffAt;
         uint64 pendingCosignOffAt;
         uint64 cooldownUntil;
         uint64 lockedAt;

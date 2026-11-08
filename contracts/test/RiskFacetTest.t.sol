@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
 import {Test} from "forge-std/Test.sol";
 import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
 import {Vm} from "forge-std/Vm.sol";
@@ -522,6 +523,7 @@ contract RiskFacetTest is Test {
 
         // Init vault factory with impl
         LibTestVaultBeacon.install(address(diamond), address(this));
+        LibTestPositionNFT.install(address(diamond), address(this));
         AdminFacet(address(diamond)).setTreasury(address(diamond));
         AdminFacet(address(diamond)).setZeroExProxy(
             address(mockZeroExProxy)
@@ -1128,7 +1130,7 @@ contract RiskFacetTest is Test {
         LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(loanId);
         holder = makeAddr(tag);
         vm.prank(l.lender);
-        VaipakamNFTFacet(address(diamond)).transferFrom(
+        LibTestPositionNFT.core(address(diamond)).transferFrom(
             l.lender, holder, l.lenderTokenId
         );
         vm.mockCall(
@@ -1149,7 +1151,7 @@ contract RiskFacetTest is Test {
     ///      three of these replays passed while pinning nothing.
     function _expectResolverKeyedOnHolder(uint256 loanId) private {
         LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(loanId);
-        address holder = VaipakamNFTFacet(address(diamond)).ownerOf(l.lenderTokenId);
+        address holder = LibTestPositionNFT.core(address(diamond)).ownerOf(l.lenderTokenId);
         assertTrue(
             holder != l.lender,
             "fixture must diverge holder from stored lender or this pins nothing"
@@ -3448,7 +3450,7 @@ contract RiskFacetTest is Test {
         );
         vm.mockCall(
             address(diamond),
-            abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector),
+            abi.encodeWithSelector(VaipakamNFTFacet.retirePosition.selector),
             abi.encode(true)
         );
         vm.mockCall(
@@ -3493,7 +3495,7 @@ contract RiskFacetTest is Test {
         );
         vm.mockCall(
             address(diamond),
-            abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector),
+            abi.encodeWithSelector(VaipakamNFTFacet.retirePosition.selector),
             abi.encode(true)
         );
         vm.mockCall(
@@ -3574,7 +3576,7 @@ contract RiskFacetTest is Test {
         );
         vm.mockCall(
             address(diamond),
-            abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector),
+            abi.encodeWithSelector(VaipakamNFTFacet.retirePosition.selector),
             abi.encode(true)
         );
         deal(mockERC20, address(diamond), 1800 ether);
@@ -5410,7 +5412,7 @@ contract RiskFacetTest is Test {
         address newHolder = makeAddr("holder1383");
 
         vm.prank(storedLender);
-        VaipakamNFTFacet(address(diamond)).transferFrom(
+        LibTestPositionNFT.core(address(diamond)).transferFrom(
             storedLender, newHolder, l0.lenderTokenId
         );
 
@@ -5425,7 +5427,7 @@ contract RiskFacetTest is Test {
 
         // ── fixture is live ────────────────────────────────────────────────
         assertEq(
-            VaipakamNFTFacet(address(diamond)).ownerOf(l0.lenderTokenId),
+            LibTestPositionNFT.core(address(diamond)).ownerOf(l0.lenderTokenId),
             newHolder,
             "holder is the transferee"
         );

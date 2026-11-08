@@ -74,7 +74,6 @@ import {
   LoanFacetABI,
   MetricsFacetABI,
 } from '@vaipakam/contracts/abis';
-import { erc721Abi } from 'viem';
 import type { ChainConfig, Env } from './env';
 import { getChainConfigs } from './env';
 import { listThresholdsForChain, type UserThresholds } from './db';
@@ -86,6 +85,7 @@ import { batchedRead } from './batchRead';
 import { AlertDelivery } from './alertDelivery';
 import { describeFailure, redactedError } from '@vaipakam/lib/errorDescription';
 import { loanMaturity, pauseInForceAt, readPauseLog, type PauseLog } from '@vaipakam/lib/loanClock';
+import { positionHolderCalls, positionHolderFrom, positionNftForDiamond } from './positionNft';
 
 const METRICS_ABI: Abi = MetricsFacetABI as Abi;
 const AUTO_LIFECYCLE_ABI: Abi = AutoLifecycleFacetABI as Abi;
@@ -319,19 +319,28 @@ async function watchChain(env: Env, chain: ChainConfig, alerts: AlertDelivery): 
   });
   if (due.length === 0) return;
 
-  // Resolve borrower-NFT owners. The Diamond IS the ERC721 collection for
-  // position NFTs.
-  const ownerResults = await chunkedRead(
-    publicClient,
-    due,
-    (d) => ({
-      address: diamond,
-      abi: erc721Abi,
-      functionName: 'ownerOf' as const,
-      args: [d.loan.borrowerTokenId] as const,
-    }),
-    `${chain.id} ownerOf`,
-  );
+  // Resolve the LIVE borrower-position holders on the chain's position-NFT
+  // surface (#3205): the owner and, on a standalone chain, whether the token
+  // was retired, both in the same batch. The shared rule
+  // (`positionHolderCalls` + `positionHolderFrom`) decides; a retired token
+  // has no holder (#3318 r2).
+  const surface = positionNftForDiamond(diamond);
+  const holderCalls = due.map((d) => positionHolderCalls(surface, d.loan.borrowerTokenId));
+  const flat = holderCalls.flatMap((c) => (c.retired ? [c.owner, c.retired] : [c.owner]));
+  const flatResults = await chunkedRead(publicClient, flat, (call) => call, `${chain.id} holder`);
+  const ownerResults: { status: 'success' | 'failure'; result?: unknown; error?: unknown }[] = [];
+  for (let i = 0, k = 0; i < holderCalls.length; i += 1) {
+    const owner = flatResults[k++];
+    const retired = holderCalls[i].retired ? flatResults[k++] : undefined;
+    if (!owner || owner.status !== 'success' || (retired && retired.status !== 'success')) {
+      ownerResults.push({ status: 'failure', error: owner?.status !== 'success' ? owner?.error : retired?.error });
+      continue;
+    }
+    const holder = positionHolderFrom(owner.result as Address, retired?.result as boolean | undefined);
+    ownerResults.push(
+      holder === 'gone' ? { status: 'failure', error: 'position retired: no live holder' } : { status: 'success', result: holder },
+    );
+  }
 
   // The dispatch tail stays serial: it writes D1 and sends messages, so it is
   // not a read to batch, and it runs only for loans that survived all three

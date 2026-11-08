@@ -14,11 +14,12 @@
  * now (it also checks the account's manager and the sanctions screen).
  */
 import { parseEventLogs, type Abi, type Log, type PublicClient } from 'viem';
-import { AutoLifecycleFacetABI, LoanFacetABI, VaipakamNFTFacetABI } from '@vaipakam/contracts/abis';
+import { AutoLifecycleFacetABI, LoanFacetABI } from '@vaipakam/contracts/abis';
 import type { CopyAccess } from '../copy/useCopy';
 import { closed, OPEN, unknownVerdict, type Refusal, type Verdict } from '../eligibility/types';
 import type { LoanDetails } from '../positions/loanView';
 import { ASSET_ERC20, LOAN_STATUS_ACTIVE } from '../positions/model';
+import { readLiveHolderOrNull } from '../positions/positionNft';
 import { answerOrNull } from '../reads/answer';
 import { discoverActorLoans } from '../reads/world/actorLoans';
 import type { IndexerClient } from '../reads/world/indexerClient';
@@ -28,7 +29,6 @@ type Hex = `0x${string}`;
 
 export const AUTO = AutoLifecycleFacetABI as Abi;
 const LOAN = LoanFacetABI as Abi;
-const NFT = VaipakamNFTFacetABI as Abi;
 
 /** The three events the indexer files under the reserve's depositor. */
 export const RESERVE_KINDS = ['ExtendReserveFunded', 'ExtendReserveWithdrawn', 'ExtendChargeDrawn'] as const;
@@ -68,7 +68,9 @@ export async function readReserveRow(c: PublicClient, diamond: Hex, loanId: bigi
   const at = { blockNumber: blockNumber ?? (await c.getBlockNumber({ cacheTime: 0 })) };
   const read = <T>(abi: Abi, functionName: string, args: readonly unknown[]) => answerOrNull(c.readContract({ address: diamond, abi, functionName, args, ...at }) as Promise<T>);
   const [loan, funding] = await Promise.all([read<LoanDetails>(LOAN, 'getLoanDetails', [loanId]), read<FundingTuple>(AUTO, 'getExtendFunding', [loanId, wallet])]);
-  const borrowerHolder = loan ? await read<Hex>(NFT, 'ownerOf', [loan.borrowerTokenId]) : null;
+  // #3205: the borrower side's LIVE holder through the position-NFT door; a
+  // retired (or burned) token has none.
+  const borrowerHolder = loan ? await readLiveHolderOrNull(c, diamond, loan.borrowerTokenId, at.blockNumber) : null;
   return {
     loanId,
     loan,

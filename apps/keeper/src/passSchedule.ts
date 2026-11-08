@@ -57,6 +57,7 @@ import { PASS_CADENCE_SEC as POSITION_UPKEEP_CADENCE_SEC, runPositionUpkeep } fr
 import { PASS_CADENCE_SEC as REWARD_STAGING_UPKEEP_CADENCE_SEC, runRewardStagingUpkeep } from './rewardStagingUpkeep';
 import { PASS_CADENCE_SEC as EXPIRED_TEARDOWN_CADENCE_SEC, runExpiredTeardown } from './expiredTeardown';
 import { PASS_CADENCE_SEC as VAULT_BEACON_UPKEEP_CADENCE_SEC, runVaultBeaconUpkeep } from './vaultBeaconUpkeep';
+import { runKeeperFeeBalance } from './keeperFeeBalance';
 
 /** The UTC hour `dailyOracleSnapshot` acts in, and how long it stays
  *  open — mirroring the window that pass already self-checks against.
@@ -119,6 +120,12 @@ export const KEEPER_PASSES: readonly KeeperPass[] = [
     cadenceMinutes: 1,
     why: 'autonomous liquidation — protocol safety, every tick',
     run: runLiquidator,
+  },
+  {
+    name: 'keeperFeeBalance',
+    cadenceMinutes: 1,
+    why: 'warns ops when the keeper wallet cannot pay for its liquidations; fees jump in the same crash that makes liquidations due, so every tick (#3365)',
+    run: runKeeperFeeBalance,
   },
   {
     name: 'matcher',

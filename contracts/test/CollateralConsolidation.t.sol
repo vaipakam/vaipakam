@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
+
 import {SetupTest} from "./SetupTest.t.sol";
 import {ConsolidationFacet} from "../src/facets/ConsolidationFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
@@ -90,11 +92,7 @@ contract CollateralConsolidationTest is SetupTest {
 
     /// @dev Mock `ownerOf(borrowerTokenId)` → `who` (the transferred holder).
     function _mockBorrowerHolder(address who) internal {
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(IERC721.ownerOf.selector, LOAN),
-            abi.encode(who)
-        );
+        LibTestPositionNFT.mockHolder(address(diamond), LOAN, who);
     }
 
     function _getLoan() internal view returns (LibVaipakam.Loan memory) {
@@ -331,11 +329,7 @@ contract CollateralConsolidationTest is SetupTest {
     function test_LenderSide_AnchorOnly_NoReservation() public {
         _seedBorrowerLoan();
         // Transfer the LENDER position NFT (lenderTokenId == LOAN + 1).
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(IERC721.ownerOf.selector, LOAN + 1),
-            abi.encode(holder)
-        );
+        LibTestPositionNFT.mockHolder(address(diamond), LOAN + 1, holder);
 
         vm.prank(holder);
         ConsolidationFacet(address(diamond)).consolidatePrincipalToHolder(LOAN);
@@ -373,11 +367,7 @@ contract CollateralConsolidationTest is SetupTest {
         TestMutatorFacet(address(diamond)).setLoan(LOAN, l);
         TestMutatorFacet(address(diamond)).setHeldForLenderRaw(LOAN, 100e18);
 
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(IERC721.ownerOf.selector, LOAN + 1),
-            abi.encode(holder)
-        );
+        LibTestPositionNFT.mockHolder(address(diamond), LOAN + 1, holder);
         vm.prank(holder);
         vm.expectRevert(IVaipakamErrors.ConsolidationNotAllowed.selector);
         ConsolidationFacet(address(diamond)).consolidatePrincipalToHolder(LOAN);
@@ -397,11 +387,7 @@ contract CollateralConsolidationTest is SetupTest {
             LOAN, vpfi, 40e18
         );
 
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(IERC721.ownerOf.selector, LOAN + 1),
-            abi.encode(holder)
-        );
+        LibTestPositionNFT.mockHolder(address(diamond), LOAN + 1, holder);
         vm.prank(holder);
         vm.expectRevert(IVaipakamErrors.ConsolidationNotAllowed.selector);
         ConsolidationFacet(address(diamond)).consolidatePrincipalToHolder(LOAN);
