@@ -9,6 +9,10 @@
  *
  * What it holds, and why:
  * - the protocol pause: claims stop under it (RB-SWITCH class 2);
+ * - a wallet the sanctions screen flags: every claim screens its caller
+ *   first, so what is held for it stays frozen until it is de-listed
+ *   (RB-FROZEN; the screen's outage alone never blocks a claim, and a side
+ *   frozen for a recorded party is the dry run's to refuse);
  * - a loan state the side cannot claim in: a running loan, a settled one,
  *   and for the borrower a loan in fallback (the lender's claim, or a cure,
  *   resolves it first);
@@ -19,6 +23,7 @@
  */
 import type { CopyAccess } from '../copy/useCopy';
 import { sideClaimableStatus, sideOpen, type ClaimSide, type SideClaim } from '../claims/loanClaim';
+import { frozenRefusal, type FrozenState } from '../sanctions/posture';
 import { closed, OPEN, unknownVerdict, type Refusal, type Verdict } from './types';
 
 type Hex = `0x${string}`;
@@ -38,6 +43,9 @@ export interface ClaimInputs {
   holder: Hex | null;
   /** The side's claim; null when unread. */
   claim: SideClaim | null;
+  /** The caller's standing with the sanctions screen (RB-FROZEN); undefined
+   *  or unknown never blocks: the dry run screens the caller too. */
+  frozen?: FrozenState;
 }
 
 export function claimVerdict(i: ClaimInputs, caller: Hex, copy: Pick<CopyAccess, 'text'>, readAt: number): Verdict {
@@ -46,6 +54,7 @@ export function claimVerdict(i: ClaimInputs, caller: Hex, copy: Pick<CopyAccess,
     closed([{ code, reason, reopensAt: null, remedy: null } satisfies Refusal], switchClass, readAt, 'own');
   if (i.paused === null) return unknownVerdict(text('loanClaim.unread'));
   if (i.paused) return refuse('EnforcedPause', text('loanClaim.paused'), '2');
+  if (i.frozen === 'flagged') return closed([frozenRefusal('flagged', copy)], null, readAt, 'own');
   if (!sideClaimableStatus(i.side, i.status)) {
     if (i.status === STATUS_ACTIVE) return refuse('InvalidLoanStatus', text('loanClaim.running'));
     if (i.status === STATUS_SETTLED) return refuse('InvalidLoanStatus', text('loanClaim.settled'));

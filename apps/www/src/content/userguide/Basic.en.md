@@ -1273,11 +1273,35 @@ When a loan ends, the protocol records what each side is owed, and the holder of
 
 The review lists every payout the claim makes, what past sellers of a lender position take first (interest they earned and were not paid), and where the payment lands: your wallet, or, with protected mode on, your account's payout queue or your vault. No approval is needed, so your wallet asks once, after the app tries the claim as a dry run. A protocol pause stops every claim. While a loan is in fallback, the borrower's payout waits until the lender collects, and the lender collecting ends the fallback: the borrower can no longer cure it. The finish card shows what the transaction actually paid.
 
+<a id="claim-everything"></a>
+
+### Claim Everything
+
+Claims opens with Claim everything: every payout you can collect right now, gathered into one transaction. It lists loan payouts on ended loans whose position you hold, interaction rewards, the un-lent capital of your standing offers, free VPFI in your vault and, if you are a payee, withdrawable payroll. Each payout has a switch, so you can leave any of them out. Free vault VPFI is off unless you turn it on, because it sets your fee-discount tier, and so is the capital of a standing offer that is still lending. Interest owed to you from a position you sold, and a loan in fallback, are collected on their own. Each payout runs on its own inside the transaction: one the protocol refuses is skipped and stays listed, and the rest still pay. One transaction carries at most 30 payouts; the rest wait for a second one. Nothing leaves your wallet, so your wallet asks once, after a dry run, and the finish card shows each payout collected or skipped and where the money landed. A pause stops every claim.
+
 <a id="payout-queue"></a>
 
 ### Payouts Waiting in Your Queue
 
 With protected mode on, everything leaving your vault for your wallet waits out your account's delay in a payout queue. Claims lists what waits there, soonest first, each with a short request code: every alert about a payout prints the same code, so you can match a message to a request. Each row says what it pays, where it goes and when it can be released. Once a payout is due, anyone can release it, and it only ever pays the destination it recorded; if that destination is no longer allowed, releasing it cancels it instead. You, or one of your secondary signers, can cancel a payout at any time, even during a pause, and the asset stays in your vault. If your account requires approval, a secondary signer approves each payout first; a signer finds your account in Advanced mode by pasting its address. A pause holds releases until it ends or, after a long pause, its escape route opens. Each action asks your wallet once, and the finish card shows what the transaction did.
+
+<a id="seller-interest"></a>
+
+### Interest from a Position You Sold
+
+When you sell a lender position, the interest you earned while you held it, and were not yet paid, stays yours as a claim on the loan. Claims lists every loan where you hold such a claim, with what you are owed after the protocol's share of interest and what already waits in your vault. While the loan runs, each interest payment pays the open claims first, oldest first, into each seller's own vault; until some reaches yours there is nothing to withdraw. Once the loan has ended, withdrawing first splits what the lender side recovered: the holder's principal first, then each seller's claim, oldest first. Every open claim closes then, and whatever a claim is not paid stays unpaid. The loans are found in the app's index; if it cannot list them, look a loan up by its number, which reads the chain alone. No approval is needed, so your wallet asks once, after a dry run, and the finish card shows what the transaction paid.
+
+<a id="frozen-proceeds"></a>
+
+### When a Payout Is Frozen
+
+If the sanctions screen flags your wallet, the protocol takes nothing you are owed and never stops a loan from closing: the other party still receives what its side recovers. Your share is parked in a vault, locked, and released once your wallet is de-listed. Claims and the loan's page then say "Frozen, awaiting de-listing" and offer no button to collect. If the screen cannot be read and your wallet was confirmed flagged before, a frozen payout stays locked until the screen answers again, and a payment due to your wallet in that time is parked the same way, since the protocol still treats it as flagged; an outage alone never freezes a wallet never confirmed flagged. On a running loan, the loan's page also shows what the loan already paid that is reserved for the lender position until the lender collects it, and a repaid loan says when it waits for a surplus the borrower has not yet collected.
+
+<a id="extension-reserves"></a>
+
+### Extension Reserves
+
+If you hold a loan's borrower position, you can set aside the loan's token in your own vault for its extensions. An extension, the keeper's or your own, draws on that reserve first. The reserve stays yours. Claims lists every loan where you have some left, and says whether an extension can still draw on it: only while the loan runs and you hold its borrower position. You can take the whole reserve back at any time while the protocol is not paused, whatever the loan's state; if the loan is still running, its next extension then draws on your other balance of the token instead. The loans are found in the app's index; if it cannot list them, look a loan up by its number. No approval is needed, so your wallet asks once, after a dry run, and the finish card shows where the money landed.
 
 <a id="risk-access"></a>
 

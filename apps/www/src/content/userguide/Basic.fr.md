@@ -1318,11 +1318,35 @@ Quand un prêt prend fin, le protocole enregistre ce qui revient à chaque parti
 
 L'examen liste chaque paiement que fait la réclamation, ce que les anciens vendeurs d'une position de prêteur prennent d'abord (des intérêts gagnés et non payés) et où arrive le paiement : votre portefeuille ou, avec le mode protégé actif, la file de versements de votre compte ou votre coffre. Aucune approbation n'est nécessaire, votre portefeuille demande donc une fois, après que l'application a simulé la réclamation. Une pause du protocole arrête toute réclamation. Tant qu'un prêt est en repli, le versement de l'emprunteur attend que le prêteur encaisse, et cet encaissement met fin au repli : l'emprunteur ne peut plus le régulariser. La carte de fin montre ce que la transaction a réellement payé.
 
+<a id="claim-everything"></a>
+
+### Tout réclamer
+
+Claims s'ouvre sur « Tout réclamer » : chaque versement que vous pouvez encaisser maintenant, réuni en une seule transaction. Il liste les versements des prêts terminés dont vous détenez la position, les récompenses d'interaction, le capital non prêté de vos offres permanentes, le VPFI libre de votre coffre et, si vous êtes bénéficiaire, la paie retirable. Chaque versement a un interrupteur, vous pouvez donc en exclure n'importe lequel. Le VPFI libre du coffre est désactivé sauf si vous l'activez, car il fixe votre niveau de remise sur les frais, de même que le capital d'une offre permanente qui prête encore. Les intérêts qui vous sont dus sur une position vendue, et un prêt en fallback, s'encaissent séparément. Chaque versement s'exécute seul dans la transaction : celui que le protocole refuse est ignoré et reste listé, et les autres sont tout de même payés. Une transaction porte au plus 30 versements ; le reste attend une seconde transaction. Rien ne quitte votre portefeuille, votre portefeuille demande donc une fois, après un essai, et la carte finale montre chaque versement encaissé ou ignoré et où l'argent est arrivé. Une pause arrête toute réclamation.
+
 <a id="payout-queue"></a>
 
 ### Versements en attente dans votre file
 
 Avec le mode protégé actif, tout ce qui quitte votre coffre vers votre portefeuille attend le délai de votre compte dans une file de versements. Réclamations liste ce qui y attend, le plus proche d'abord, chacun avec un court code de demande : chaque alerte sur un versement affiche le même code, ce qui vous permet de relier un message à une demande. Chaque ligne indique ce qu'elle paie, où elle va et quand elle peut être libérée. Une fois un versement dû, n'importe qui peut le libérer, et il ne paie que la destination qu'il a enregistrée ; si cette destination n'est plus autorisée, le libérer l'annule. Vous, ou l'un de vos signataires secondaires, pouvez annuler un versement à tout moment, même pendant une pause, et l'actif reste dans votre coffre. Si votre compte exige une approbation, un signataire secondaire approuve d'abord chaque versement ; un signataire trouve votre compte en mode avancé en collant son adresse. Une pause retient les libérations jusqu'à sa fin ou, après une longue pause, jusqu'à l'ouverture de sa voie de sortie. Chaque action sollicite votre portefeuille une fois, et la carte de fin montre ce que la transaction a fait.
+
+<a id="seller-interest"></a>
+
+### Les intérêts d'une position que vous avez vendue
+
+Quand vous vendez une position de prêteur, les intérêts gagnés pendant que vous la déteniez et pas encore payés restent à vous, sous forme de créance sur le prêt. Claims liste chaque prêt sur lequel vous détenez une telle créance, avec ce qui vous est dû après la part d'intérêts du protocole et ce qui attend déjà dans votre coffre. Tant que le prêt court, chaque paiement d'intérêts règle d'abord les créances ouvertes, la plus ancienne d'abord, dans le coffre de chaque vendeur ; tant que rien n'atteint le vôtre, il n'y a rien à retirer. Une fois le prêt terminé, le retrait répartit d'abord ce que le côté prêteur a récupéré : le principal du détenteur d'abord, puis chaque créance de vendeur, la plus ancienne d'abord. Toutes les créances ouvertes se ferment alors, et ce qu'une créance ne reçoit pas reste impayé. Les prêts viennent de l'index de l'app ; s'il ne peut pas les lister, cherchez un prêt par son numéro, lu sur la chaîne seule. Aucune approbation n'est nécessaire : votre portefeuille demande une fois, après une simulation, et la carte finale montre ce que la transaction a payé.
+
+<a id="frozen-proceeds"></a>
+
+### Quand un paiement est gelé
+
+Si le contrôle des sanctions signale votre portefeuille, le protocole ne prend rien de ce qui vous est dû et n'empêche jamais un prêt de se clore : l'autre partie reçoit quand même ce que son côté récupère. Votre part est mise de côté dans un coffre, verrouillée, et libérée dès que votre portefeuille est retiré de la liste. Claims et la page du prêt affichent alors « Gelé, en attente de retrait de la liste » et ne proposent aucun bouton pour encaisser. Si le contrôle ne peut pas être lu et que votre portefeuille a déjà été confirmé comme signalé, un paiement gelé reste verrouillé jusqu'à ce que le contrôle réponde à nouveau, et un paiement dû à votre portefeuille pendant ce temps est mis de côté de la même façon, car le protocole le traite toujours comme signalé ; une panne seule ne gèle jamais un portefeuille qui n'a jamais été confirmé comme signalé. Sur un prêt en cours, sa page indique aussi ce que le prêt a déjà payé et qui est réservé à la position du prêteur jusqu'à ce qu'il l'encaisse, et un prêt remboursé indique s'il attend un excédent que l'emprunteur n'a pas encore encaissé.
+
+<a id="extension-reserves"></a>
+
+### Réserves de prolongation
+
+Si vous détenez la position d'emprunteur d'un prêt, vous pouvez mettre de côté le jeton du prêt dans votre propre coffre pour ses prolongations. Une prolongation, celle du keeper ou la vôtre, puise d'abord dans cette réserve. La réserve reste la vôtre. Claims liste chaque prêt où il vous en reste, et indique si une prolongation peut encore y puiser : seulement tant que le prêt court et que vous détenez sa position d'emprunteur. Vous pouvez reprendre toute la réserve à tout moment tant que le protocole n'est pas en pause, quel que soit l'état du prêt ; si le prêt court encore, sa prochaine prolongation puise alors dans votre autre solde du jeton. Les prêts sont trouvés dans l'index de l'app ; s'il ne peut pas les lister, recherchez un prêt par son numéro. Aucune approbation n'est nécessaire, votre portefeuille demande donc une fois, après un essai, et la carte finale montre où l'argent est arrivé.
 
 <a id="risk-access"></a>
 

@@ -51,6 +51,7 @@ const NAME = '([A-Za-z_$][\\w$]*)';
 const LIT = `['"\`]${NAME}['"\`]`;
 
 const fnNames = (abi) => new Set(abi.filter((e) => e.type === 'function').map((e) => e.name));
+const nonFnNames = (abi) => new Set(abi.filter((e) => e.type === 'event' || e.type === 'error').map((e) => e.name));
 
 /** ABI reference name → the function names it carries. */
 export function generatedAbis(repo = REPO) {
@@ -62,6 +63,24 @@ export function generatedAbis(repo = REPO) {
     if (Array.isArray(abi)) out.set(`${f.slice(0, -5)}ABI`, fnNames(abi));
   }
   const diamond = fnNames(JSON.parse(fs.readFileSync(path.join(repo, 'packages/contracts/src/diamondAbi.json'), 'utf8')));
+  out.set('DIAMOND_ABI', diamond);
+  out.set('DIAMOND_ABI_VIEM', diamond);
+  return out;
+}
+
+/** ABI reference name → the EVENT and ERROR names it carries. A literal passed
+ *  right after an ABI that names one of these (a log builder's
+ *  `log(addr, ABI, 'PayoutQueued', …)`, a `decodeEventLog` helper) is not a
+ *  function call, so it is not a violation. */
+export function generatedAbiNonFunctions(repo = REPO) {
+  const dir = path.join(repo, 'packages/contracts/src/abis');
+  const out = new Map();
+  for (const f of fs.readdirSync(dir)) {
+    if (!f.endsWith('.json') || f.startsWith('_')) continue;
+    const abi = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'));
+    if (Array.isArray(abi)) out.set(`${f.slice(0, -5)}ABI`, nonFnNames(abi));
+  }
+  const diamond = nonFnNames(JSON.parse(fs.readFileSync(path.join(repo, 'packages/contracts/src/diamondAbi.json'), 'utf8')));
   out.set('DIAMOND_ABI', diamond);
   out.set('DIAMOND_ABI_VIEM', diamond);
   return out;
@@ -180,12 +199,16 @@ function* sourceFiles(dir) {
 }
 
 /** Every use of a name its ABI does not carry. */
-export function findViolations(repo = REPO, abis = generatedAbis(repo)) {
+export function findViolations(repo = REPO, abis = generatedAbis(repo), others = generatedAbiNonFunctions(repo)) {
   const bad = [];
   for (const root of ROOTS) {
     for (const file of sourceFiles(path.join(repo, root))) {
       for (const u of namesUsed(fs.readFileSync(file, 'utf8'), abis)) {
-        if (!abis.get(u.abi)?.has(u.name)) bad.push({ file: path.relative(repo, file), ...u });
+        if (abis.get(u.abi)?.has(u.name)) continue;
+        // Only the bare `<ref>, '<name>'` shape can name an event or error;
+        // every other shape is a function call by construction.
+        if (u.shape === 'abi argument' && others.get(u.abi)?.has(u.name)) continue;
+        bad.push({ file: path.relative(repo, file), ...u });
       }
     }
   }

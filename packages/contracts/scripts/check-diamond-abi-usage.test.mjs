@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { findViolations, generatedAbis, namesUsed } from './check-diamond-abi-usage.mjs';
+import { findViolations, generatedAbiNonFunctions, generatedAbis, namesUsed } from './check-diamond-abi-usage.mjs';
 
 test('the tree sends only functions the generated Diamond ABI carries', () => {
   const bad = findViolations();
@@ -41,4 +41,15 @@ test('the guard knows the names the PR removed and kept', () => {
   assert.equal(abis.get('DIAMOND_ABI_VIEM').has('ownerOf'), false);
   assert.equal(abis.get('VaipakamNFTFacetABI').has('positionLock'), false);
   assert.equal(abis.get('VaipakamNFTFacetABI').has('positionRoute'), true);
+});
+
+test('an event name passed after its ABI is not a function use', () => {
+  const others = generatedAbiNonFunctions();
+  assert.equal(others.get('VaultPayoutFacetABI').has('PayoutQueued'), true);
+  assert.equal(generatedAbis().get('VaultPayoutFacetABI').has('PayoutQueued'), false);
+  // `findViolations` over the tree already covers main's claimAll.test.ts log
+  // builder; this pins that the shape is still read (so a function name
+  // passed the same way is still checked).
+  const src = `const PAYOUT = VaultPayoutFacetABI as Abi;\nlog(D, PAYOUT, 'PayoutQueued', {});`;
+  assert.deepEqual(namesUsed(src).map((u) => [u.name, u.shape]), [['PayoutQueued', 'abi argument']]);
 });

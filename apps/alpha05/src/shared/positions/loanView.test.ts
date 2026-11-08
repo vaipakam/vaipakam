@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { defaultVerdict, recordedInitFeeBps, roleOf, treasuryShareBps } from './loanView';
+import { defaultVerdict, holdsASide, recordedInitFeeBps, roleOf, treasuryShareBps } from './loanView';
 
 const me = '0x00000000000000000000000000000000000000aa' as const;
 const other = '0x00000000000000000000000000000000000000bb' as const;
@@ -16,6 +16,20 @@ describe('roleOf', () => {
     expect(roleOf({ lender: me, borrower: null }, me)).toBeNull();
     expect(roleOf({ lender: null, borrower: me }, me)).toBeNull();
     expect(roleOf({ lender: null, borrower: other }, me)).toBeNull();
+  });
+});
+
+describe('holdsASide', () => {
+  it('is true when the reader holds one side read, even with the other side unread (a burned token)', () => {
+    expect(holdsASide({ lender: me, borrower: null }, me)).toBe(true);
+    expect(holdsASide({ lender: null, borrower: me }, me)).toBe(true);
+    expect(holdsASide({ lender: other, borrower: me }, me)).toBe(true);
+  });
+
+  it('is false when no side read is the reader', () => {
+    expect(holdsASide({ lender: other, borrower: null }, me)).toBe(false);
+    expect(holdsASide({ lender: null, borrower: null }, me)).toBe(false);
+    expect(holdsASide({ lender: other, borrower: other }, me)).toBe(false);
   });
 });
 

@@ -91,6 +91,15 @@ describe('claimVerdict', () => {
     expect(code({ holder: B })).toBe('NotNFTOwner');
     expect(code({ claim: empty })).toBe('NothingToClaim');
   });
+  it('refuses a wallet the sanctions screen flags, after the pause, and never on an outage alone', () => {
+    expect(code({ frozen: 'flagged' })).toBe('SanctionedAddress');
+    expect(code({ frozen: 'flagged', paused: true })).toBe('EnforcedPause');
+    expect(code({ frozen: 'flagged', status: 0 })).toBe('SanctionedAddress');
+    // The caller screen is fail-open in an outage: the dry run decides a
+    // party recorded on the loan.
+    expect(code({ frozen: 'outage' })).toBe('open');
+    expect(code({ frozen: 'unknown' })).toBe('open');
+  });
   it('withholds the action while an input is unread', () => {
     expect(claimVerdict({ ...base, paused: null }, ME, copy, 1).state).toBe('unknown');
     expect(claimVerdict({ ...base, claim: null }, ME, copy, 1).state).toBe('unknown');

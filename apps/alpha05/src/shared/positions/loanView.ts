@@ -27,8 +27,9 @@ import {
 } from '@vaipakam/contracts/abis';
 import { sideClaimableStatus, type SideClaim } from '../claims/loanClaim';
 import { readSideClaim } from '../claims/loanClaimReview';
-import { isLiveStatus, type Deadlines, type LoanSummary } from './model';
-import { positionRouteCallFor, readPositionOwnerFor } from './positionNft';
+import { isLiveStatus, LOAN_STATUS_ACTIVE, type Deadlines, type LoanSummary } from './model';
+import { positionRouteCallFor, readLiveHolderOrNull } from './positionNft';
+import { answerOrNull } from '../reads/answer';
 
 type Hex = `0x${string}`;
 
@@ -200,6 +201,13 @@ export interface LoanView {
    *  when nothing can be); it moves with prices. Null when unread or not
    *  asked. */
   maxWithdrawable: bigint | null;
+  /** For a running loan, what the protocol holds for the lender position
+   *  out of payments the loan already made (`getClaimable(loanId, true)`'s
+   *  `heldForLender`): reserved in the stored lender's vault until the
+   *  lender's claim pays it, such as a payment parked while the holder was
+   *  flagged by the sanctions screen (LN-53, RB-FROZEN). Null when unread
+   *  or the loan is not running. */
+  heldForLender: bigint | null;
 }
 
 /** One interest period, as the protocol previews its settlement. */
@@ -240,12 +248,14 @@ export function roleOf(holders: Holders, account: Hex): Role | null {
   return { lender, borrower };
 }
 
-async function maybe<T>(p: Promise<T>): Promise<T | null> {
-  try {
-    return await p;
-  } catch {
-    return null;
-  }
+/** Whether the reader holds at least one side that was read. Unlike
+ *  `roleOf`, one side is enough: after one party collects, its position
+ *  token is burned and reads as unread, while the other side may still hold
+ *  a payout. Anything said about the reader's own standing (the sanctions
+ *  posture) keys on this, never on the combined role. */
+export function holdsASide(holders: Holders, account: Hex): boolean {
+  const a = account.toLowerCase();
+  return holders.lender?.toLowerCase() === a || holders.borrower?.toLowerCase() === a;
 }
 
 /** One loan's read: `view` is `null` when no loan has this id (the stored
@@ -259,15 +269,15 @@ export async function readLoanView(client: PublicClient, diamond: Hex, loanId: b
   // Every read is pinned to one block, the block whose time the page states:
   // the loan's status, the settlement preview and the chain time then
   // describe the same moment, so no answer is placed against another's
-  // state. With the block unread, the reads take the latest state and the
-  // chain time is stated as unknown.
-  const block = await maybe(client.getBlock({ blockTag: 'latest' }));
-  const at = block ? { blockNumber: block.number } : {};
+  // state. A block that cannot be read is a failed source (thrown, so the
+  // own rail tries the next one), never a reason to read unpinned.
+  const block = await client.getBlock({ blockTag: 'latest' });
+  const at = { blockNumber: block.number };
   const read = <T>(abi: Abi, functionName: string, args: readonly unknown[] = []) => client.readContract({ address: diamond, abi, functionName, args, ...at }) as Promise<T>;
   // #3205: position-NFT reads go to the chain's position-NFT surface; a
   // holder read carries the retired rule (a closed position has none).
   const readCall = async <T>(call: () => ReturnType<typeof positionRouteCallFor>) => (await client.readContract({ ...call(), ...at })) as T;
-  const holder = (tokenId: bigint) => readPositionOwnerFor(client, diamond, tokenId, block?.number);
+  const holder = (tokenId: bigint) => readLiveHolderOrNull(client, diamond, tokenId, block.number);
   const loan = await read<LoanDetails>(LOAN, 'getLoanDetails', [loanId]);
   if (loan.id === 0n) return { view: null };
   const live = isLiveStatus(loan.status);
@@ -298,28 +308,30 @@ export async function readLoanView(client: PublicClient, diamond: Hex, loanId: b
     maxWithdrawable,
     lenderClaim,
     borrowerClaim,
+    runningLenderRow,
   ] = await Promise.all([
-    maybe(holder(loan.lenderTokenId)),
-    maybe(holder(loan.borrowerTokenId)),
-    live ? maybe(read<readonly [bigint, bigint, bigint, bigint]>(LOAN, 'getLoanDeadlines', [loanId])) : null,
-    scheduled ? maybe(read<readonly [number, bigint, bigint, bigint, bigint, bigint, boolean]>(PERIODIC, 'previewPeriodicSettle', [loanId])) : null,
-    scheduled ? maybe(read<boolean>(NUMERAIRE, 'getPeriodicInterestEnabled')) : null,
-    live ? maybe(read<boolean>(DEFAULTED, 'isLoanDefaultable', [loanId])) : null,
-    live ? maybe(read<readonly [boolean, Hex]>(DEFAULTED, 'defaultKycAdmission', [loanId])) : null,
-    maybe(read<boolean>(ADMIN, 'paused')),
-    live ? maybe(read<boolean>(ORACLE, 'sequencerHealthy')) : null,
-    live ? maybe(read<bigint>(RISK, 'calculateHealthFactor', [loanId])) : null,
-    live ? maybe(read<bigint>(RISK, 'calculateLTV', [loanId])) : null,
-    maybe(read<CollateralLien>(METRICS, 'getLoanCollateralLien', [loanId])),
-    maybe(read<boolean>(METRICS, 'isSaleVehicleLoan', [loanId])),
-    live ? maybe(read<readonly [boolean, bigint, bigint]>(CONFIG, 'getInternalMatchConfigBundle')) : null,
-    live ? maybe(readCall<number>(() => positionRouteCallFor(diamond, loan.borrowerTokenId)).then(Number)) : null,
-    live ? maybe(read<readonly [bigint, boolean]>(REFINANCE, 'getRefinanceRequest', [loanId])) : null,
-    liveErc20 ? maybe(read<boolean>(ADMIN, 'isAssetPaused', [loan.collateralAsset])) : null,
-    liveErc20 ? maybe(read<number>(ORACLE, 'checkLiquidity', [loan.collateralAsset]).then(Number)) : null,
-    liveErc20 ? maybe(read<bigint>(PARTIAL_WITHDRAWAL, 'calculateMaxWithdrawable', [loanId])) : null,
+    holder(loan.lenderTokenId),
+    holder(loan.borrowerTokenId),
+    live ? answerOrNull(read<readonly [bigint, bigint, bigint, bigint]>(LOAN, 'getLoanDeadlines', [loanId])) : null,
+    scheduled ? answerOrNull(read<readonly [number, bigint, bigint, bigint, bigint, bigint, boolean]>(PERIODIC, 'previewPeriodicSettle', [loanId])) : null,
+    scheduled ? answerOrNull(read<boolean>(NUMERAIRE, 'getPeriodicInterestEnabled')) : null,
+    live ? answerOrNull(read<boolean>(DEFAULTED, 'isLoanDefaultable', [loanId])) : null,
+    live ? answerOrNull(read<readonly [boolean, Hex]>(DEFAULTED, 'defaultKycAdmission', [loanId])) : null,
+    answerOrNull(read<boolean>(ADMIN, 'paused')),
+    live ? answerOrNull(read<boolean>(ORACLE, 'sequencerHealthy')) : null,
+    live ? answerOrNull(read<bigint>(RISK, 'calculateHealthFactor', [loanId])) : null,
+    live ? answerOrNull(read<bigint>(RISK, 'calculateLTV', [loanId])) : null,
+    answerOrNull(read<CollateralLien>(METRICS, 'getLoanCollateralLien', [loanId])),
+    answerOrNull(read<boolean>(METRICS, 'isSaleVehicleLoan', [loanId])),
+    live ? answerOrNull(read<readonly [boolean, bigint, bigint]>(CONFIG, 'getInternalMatchConfigBundle')) : null,
+    live ? answerOrNull(readCall<number>(() => positionRouteCallFor(diamond, loan.borrowerTokenId)).then(Number)) : null,
+    live ? answerOrNull(read<readonly [bigint, boolean]>(REFINANCE, 'getRefinanceRequest', [loanId])) : null,
+    liveErc20 ? answerOrNull(read<boolean>(ADMIN, 'isAssetPaused', [loan.collateralAsset])) : null,
+    liveErc20 ? answerOrNull(read<number>(ORACLE, 'checkLiquidity', [loan.collateralAsset]).then(Number)) : null,
+    liveErc20 ? answerOrNull(read<bigint>(PARTIAL_WITHDRAWAL, 'calculateMaxWithdrawable', [loanId])) : null,
     sideClaimableStatus('lender', Number(loan.status)) ? readSideClaim(client, diamond, loanId, 'lender', at) : null,
     sideClaimableStatus('borrower', Number(loan.status)) ? readSideClaim(client, diamond, loanId, 'borrower', at) : null,
+    loan.status === LOAN_STATUS_ACTIVE ? readSideClaim(client, diamond, loanId, 'lender', at) : null,
   ]);
 
   // A loan with a cadence answers to its checkpoint too: with the checkpoint
@@ -349,7 +361,7 @@ export async function readLoanView(client: PublicClient, diamond: Hex, loanId: b
     saleVehicle,
     matchWindow: matchConfig ? { enabled: matchConfig[0], windowBps: matchConfig[1] } : null,
     borrowerLock,
-    chainNow: live && block ? block.timestamp : null,
+    chainNow: live ? block.timestamp : null,
     schedule: periodic
       ? {
           cadence: Number(periodic[0]),
@@ -369,6 +381,7 @@ export async function readLoanView(client: PublicClient, diamond: Hex, loanId: b
     collateralLiquidNow: collateralLiquidity === null ? null : collateralLiquidity === LIQUID_NOW,
     maxWithdrawable,
     claims: { lender: lenderClaim, borrower: borrowerClaim },
+    heldForLender: runningLenderRow ? runningLenderRow.heldForLender : null,
   };
   return { view };
 }

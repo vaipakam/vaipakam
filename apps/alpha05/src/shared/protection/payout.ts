@@ -12,6 +12,7 @@
  */
 import { parseEventLogs, type Abi, type Log, type PublicClient } from 'viem';
 import { ProtectedAccountFacetABI, VaultPayoutFacetABI } from '@vaipakam/contracts/abis';
+import { answerOrNull } from '../reads/answer';
 
 type Hex = `0x${string}`;
 
@@ -29,19 +30,17 @@ export interface Protection {
   requireCosign: boolean;
 }
 
-/** The wallet's mode, or null when it could not be read. */
-export async function readProtection(c: PublicClient, diamond: Hex, account: Hex): Promise<Protection | null> {
-  try {
-    const a = (await c.readContract({ address: diamond, abi: PROTECTED, functionName: 'getProtectedAccount', args: [account] })) as {
-      enabled: boolean;
-      locked: boolean;
-      delaySeconds: number | bigint;
-      requireCosign: boolean;
-    };
-    return { enabled: a.enabled, locked: a.locked, delaySeconds: Number(a.delaySeconds), requireCosign: a.requireCosign };
-  } catch {
-    return null;
-  }
+/** The wallet's mode, or null when the contract gave no answer (a failed
+ *  source is thrown, so the own rail tries the next one). */
+export async function readProtection(c: PublicClient, diamond: Hex, account: Hex, blockNumber?: bigint): Promise<Protection | null> {
+  const at = blockNumber === undefined ? {} : { blockNumber };
+  const a = (await answerOrNull(c.readContract({ address: diamond, abi: PROTECTED, functionName: 'getProtectedAccount', args: [account], ...at }))) as {
+    enabled: boolean;
+    locked: boolean;
+    delaySeconds: number | bigint;
+    requireCosign: boolean;
+  } | null;
+  return a === null ? null : { enabled: a.enabled, locked: a.locked, delaySeconds: Number(a.delaySeconds), requireCosign: a.requireCosign };
 }
 
 /** Where a payment to `account` from `source`'s vault goes:
@@ -66,15 +65,21 @@ export function payoutRoute(protection: Protection | null, account: Hex, source:
  *  split: with one queue slot left, a claim's first payment is queued and its
  *  second kept in the vault. So every destination the logs show is returned,
  *  each summed; none when nothing was routed (it was paid to the wallet, or
- *  not at all: the transfer itself says which). */
+ *  not at all: the transfer itself says which). `tokenId` narrows it to one
+ *  NFT of the collection. */
 export type PayoutOutcome = { kind: 'queued'; amount: bigint; releaseAt: bigint } | { kind: 'held'; amount: bigint } | { kind: 'vault'; amount: bigint };
 
 type Args = Record<string, bigint | number | string | undefined>;
 
-export function payoutOutcomes(logs: readonly Log[], diamond: Hex, account: Hex, asset: Hex): PayoutOutcome[] {
+export function payoutOutcomes(logs: readonly Log[], diamond: Hex, account: Hex, asset: Hex, tokenId?: bigint): PayoutOutcome[] {
   const own = logs.filter((l) => l.address.toLowerCase() === diamond.toLowerCase());
   const events = parseEventLogs({ abi: PAYOUT, logs: [...own], strict: false }) as unknown as { eventName: string; args: Args }[];
-  const same = (a: Args) => String(a.account).toLowerCase() === account.toLowerCase() && String(a.asset).toLowerCase() === asset.toLowerCase();
+  // An NFT is matched by its token id too: each routing record carries one,
+  // so two NFTs of one collection never share each other's destinations.
+  const same = (a: Args) =>
+    String(a.account).toLowerCase() === account.toLowerCase() &&
+    String(a.asset).toLowerCase() === asset.toLowerCase() &&
+    (tokenId === undefined || BigInt(a.tokenId ?? 0n) === tokenId);
   const sum = (name: string, field: string) => {
     const hits = events.filter((e) => e.eventName === name && same(e.args));
     return hits.length === 0 ? null : { total: hits.reduce((t, e) => t + BigInt(e.args[field] ?? 0n), 0n), last: hits.at(-1)!.args };

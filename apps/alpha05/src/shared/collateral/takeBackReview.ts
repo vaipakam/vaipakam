@@ -17,7 +17,7 @@
  */
 import type { Abi, PublicClient } from 'viem';
 import { AdminFacetABI, LoanFacetABI, OracleFacetABI, PartialWithdrawalFacetABI, RefinanceFacetABI, RiskFacetABI } from '@vaipakam/contracts/abis';
-import { positionRouteCallFor, readPositionOwnerFor } from '../positions/positionNft';
+import { positionRouteCallFor, readLiveHolderOrNull } from '../positions/positionNft';
 import type { OwnStateClient } from '../../chain/ownRail';
 import type { CopyAccess } from '../copy/useCopy';
 import { refusalFromError } from '../eligibility/refusal';
@@ -27,6 +27,7 @@ import type { LoanDetails } from '../positions/loanView';
 import { payoutRoute, readProtection, type PayoutRoute, type Protection } from '../protection/payout';
 import { routeChanged } from '../protection/payoutCopy';
 import { askThrough } from '../tx/simulate';
+import { answerOrNull } from '../reads/answer';
 
 type Hex = `0x${string}`;
 
@@ -67,14 +68,6 @@ export interface TakeBackReview {
   readAt: number;
 }
 
-async function maybe<T>(p: Promise<T>): Promise<T | null> {
-  try {
-    return await p;
-  } catch {
-    return null;
-  }
-}
-
 export async function readTakeBackReview(
   own: OwnStateClient,
   diamond: Hex,
@@ -87,12 +80,12 @@ export async function readTakeBackReview(
   const facts = await own
     .read(async (c: PublicClient) => {
       const loan = (await c.readContract({ address: diamond, abi: LOAN, functionName: 'getLoanDetails', args: [loanId] })) as LoanDetails;
-      const read = <T>(abi: Abi, functionName: string, args: readonly unknown[] = []) => maybe(c.readContract({ address: diamond, abi, functionName, args }) as Promise<T>);
+      const read = <T>(abi: Abi, functionName: string, args: readonly unknown[] = []) => answerOrNull(c.readContract({ address: diamond, abi, functionName, args }) as Promise<T>);
       const [borrowerHolder, borrowerLock, paused, refinance, liquidity, maxWithdrawable, healthFactor, ltvBps, protectedAccount] = await Promise.all([
         // #3205: through the position-NFT door (the standalone PositionNFT or
         // the legacy Diamond); a retired token has no holder.
-        maybe(readPositionOwnerFor(c, diamond, loan.borrowerTokenId)),
-        maybe(c.readContract(positionRouteCallFor(diamond, loan.borrowerTokenId))).then((v) => (v === null ? null : Number(v))),
+        readLiveHolderOrNull(c, diamond, loan.borrowerTokenId),
+        answerOrNull(c.readContract(positionRouteCallFor(diamond, loan.borrowerTokenId))).then((v) => (v === null ? null : Number(v))),
         read<boolean>(ADMIN, 'paused'),
         read<readonly [bigint, boolean]>(REFINANCE, 'getRefinanceRequest', [loanId]),
         read<number>(ORACLE, 'checkLiquidity', [loan.collateralAsset]).then((v) => (v === null ? null : Number(v))),

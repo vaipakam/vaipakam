@@ -1300,11 +1300,35 @@ Cuando un préstamo termina, el protocolo registra lo que se debe a cada parte, 
 
 La revisión enumera cada pago que hace la reclamación, lo que cobran primero los vendedores anteriores de una posición de prestamista (intereses ganados y no pagados) y adónde llega el pago: a tu billetera o, con el modo protegido activado, a la cola de pagos de tu cuenta o a tu bóveda. No hace falta ninguna aprobación, así que tu billetera pregunta una vez, después de que la app pruebe la reclamación en simulación. Una pausa del protocolo detiene toda reclamación. Mientras un préstamo está en fallback, el pago del prestatario espera a que el prestamista cobre, y ese cobro termina el fallback: el prestatario ya no puede subsanarlo. La tarjeta final muestra lo que la transacción pagó de verdad.
 
+<a id="claim-everything"></a>
+
+### Cobrarlo todo
+
+Claims empieza con «Cobrarlo todo»: cada pago que puede cobrar ahora, reunido en una sola transacción. Lista los pagos de préstamos terminados cuya posición usted tiene, las recompensas por interacción, el capital no prestado de sus ofertas permanentes, el VPFI libre de su bóveda y, si es beneficiario, la nómina retirable. Cada pago tiene un interruptor, así que puede dejar fuera cualquiera. El VPFI libre de la bóveda está apagado salvo que lo active, porque fija su nivel de descuento en comisiones, y lo mismo el capital de una oferta permanente que sigue prestando. Los intereses que le deben de una posición que vendió, y un préstamo en fallback, se cobran por separado. Cada pago se ejecuta por su cuenta dentro de la transacción: uno que el protocolo rechaza se omite y sigue en la lista, y los demás se pagan igualmente. Una transacción lleva como máximo 30 pagos; el resto espera a una segunda. Nada sale de su billetera, así que su billetera pide una vez, tras una prueba, y la tarjeta final muestra cada pago cobrado u omitido y adónde llegó el dinero. Una pausa detiene todo cobro.
+
 <a id="payout-queue"></a>
 
 ### Pagos en espera en tu cola
 
 Con el modo protegido activado, todo lo que sale de tu bóveda hacia tu billetera espera el retraso de tu cuenta en una cola de pagos. Reclamaciones muestra lo que espera allí, primero lo más próximo, cada uno con un código de solicitud corto: cada alerta sobre un pago muestra el mismo código, así puedes relacionar un mensaje con una solicitud. Cada fila indica qué paga, adónde va y cuándo puede liberarse. Cuando un pago vence, cualquiera puede liberarlo, y solo paga al destino que registró; si ese destino ya no está permitido, liberarlo lo cancela. Tú, o uno de tus firmantes secundarios, puedes cancelar un pago en cualquier momento, incluso durante una pausa, y el activo se queda en tu bóveda. Si tu cuenta exige aprobación, un firmante secundario aprueba antes cada pago; un firmante encuentra tu cuenta en el modo avanzado pegando su dirección. Una pausa retiene las liberaciones hasta que termina o, tras una pausa larga, se abre su vía de escape. Cada acción pide a tu billetera una sola vez, y la tarjeta final muestra lo que hizo la transacción.
+
+<a id="seller-interest"></a>
+
+### Intereses de una posición que vendiste
+
+Cuando vendes una posición de prestamista, los intereses que ganaste mientras la tenías y aún no cobraste siguen siendo tuyos como un derecho sobre el préstamo. Claims muestra cada préstamo en el que tienes ese derecho, con lo que se te debe tras la parte del protocolo en los intereses y lo que ya espera en tu bóveda. Mientras el préstamo sigue en curso, cada pago de intereses paga primero los derechos abiertos, el más antiguo primero, en la bóveda propia de cada vendedor; hasta que algo llega a la tuya no hay nada que retirar. Cuando el préstamo ha terminado, retirar primero reparte lo que recuperó el lado prestamista: primero el principal del titular, luego cada derecho de vendedor, el más antiguo primero. Entonces se cierran todos los derechos abiertos, y lo que un derecho no cobra queda sin pagar. Los préstamos se encuentran en el índice de la app; si no puede listarlos, busca un préstamo por su número, que se lee solo de la cadena. No hace falta ninguna aprobación, así que tu billetera pide una vez, tras una simulación, y la tarjeta final muestra lo que pagó la transacción.
+
+<a id="frozen-proceeds"></a>
+
+### Cuando un pago está congelado
+
+Si el control de sanciones marca su billetera, el protocolo no toma nada de lo que se le debe y nunca impide que un préstamo se cierre: la otra parte igualmente recibe lo que recupera su lado. Su parte queda aparcada en una bóveda, bloqueada, y se libera cuando su billetera sale de la lista. Claims y la página del préstamo indican entonces «Congelado, a la espera de salir de la lista» y no ofrecen botón para cobrar. Si el control no puede leerse y su billetera fue confirmada como marcada antes, un pago congelado sigue bloqueado hasta que el control responda de nuevo, y un pago debido a su billetera en ese tiempo queda aparcado del mismo modo, porque el protocolo la sigue tratando como marcada; una caída por sí sola nunca congela una billetera que nunca fue confirmada como marcada. En un préstamo en curso, su página muestra además lo que el préstamo ya pagó y está reservado para la posición del prestamista hasta que este lo cobre, y un préstamo reembolsado indica cuándo espera un excedente que el prestatario aún no ha cobrado.
+
+<a id="extension-reserves"></a>
+
+### Reservas de extensión
+
+Si tiene la posición del prestatario de un préstamo, puede apartar el token del préstamo en su propia bóveda para sus extensiones. Una extensión, la del keeper o la suya, toma primero de esa reserva. La reserva sigue siendo suya. Claims lista cada préstamo en el que le queda algo, e indica si una extensión aún puede tomar de ella: solo mientras el préstamo está en curso y usted tiene su posición del prestatario. Puede recuperar toda la reserva en cualquier momento mientras el protocolo no esté en pausa, sea cual sea el estado del préstamo; si el préstamo sigue en curso, su siguiente extensión toma entonces de su otro saldo del token. Los préstamos se encuentran en el índice de la app; si no puede listarlos, busque un préstamo por su número. No hace falta ninguna aprobación, así que su billetera pide una vez, tras una prueba, y la tarjeta final muestra adónde llegó el dinero.
 
 <a id="risk-access"></a>
 

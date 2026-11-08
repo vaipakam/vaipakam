@@ -2259,11 +2259,35 @@ Positions は共通のリーダーを通して Home と同じ保有一覧を読�
 
 確認画面は `getClaimable`(貸し手の行は過去の売り手分を差し引き済みで、`getSellersShareOfLenderClaim` を併記)、`getBorrowerSurplusClaim`、`getLoanCollateralLien` を読み、請求をドライランします。ドライランでは制裁チェックも適用されます。一覧はポジショントークンに従います。`getUserDashboardClaimables` は記録された当事者の請求を列挙するため、列挙された行はウォレットがその側を保有している間だけ残り、他人から受け取った終了済みローンのポジションは請求を直接読みます。完了カードは `LenderFundsClaimed` / `BorrowerFundsClaimed`、`BorrowerSurplusClaimed`、`LoanSettled` と、ウォレットへのトークン送金を読みます。保護アカウントモードの呼び出し元の場合は `PayoutQueued`(アカウント自身のボールト)、`PayoutHeldInVault`(ロック中またはキューが満杯)、`PaymentCreditedToVault`(他の当事者のボールト)を読みます。FallbackPending のローンでは貸し手の請求が請求時の内部マッチを実行して行を書き換えることがあるため、完了カードは送金をプロトコル自身の記録と比較します。
 
+<a id="claim-everything"></a>
+
+### すべてを受け取る：何が確認されるか
+
+一括処理は `multicall(calls)` を通り、各呼び出しをプロトコル自身への `delegatecall` で実行するため、`msg.sender` はあなたのウォレットのままで、各呼び出しが自分のルールを確認します。受け付けるのは最大 30 件で、アプリは各呼び出しを `allowFailure` 付きで送るため、拒否された呼び出しだけが取り消され、一括処理は続きます。呼び出しは `claimAsLender` / `claimAsBorrower(loanId)`、保持中の報酬も解放する `claimInteractionRewardsTo(Vault)`（報酬プレビューが完了できないが `getRewardSanctionsStatus` が Deliver を示す場合は `claimHeldInteractionRewards(Vault)`）、`getLenderIntentsByOwner` の各インテントの `availableCapital` に対する `withdrawLenderIntentCapital(account, lendingAsset, collateralAsset, amount)`、VPFI の `freeHolding` に対する `withdrawVPFIFromVault(amount)`、そして受益者がウォレットである `getPayrollStream` の各ストリームに対し `getWithdrawableSalary` の額で `withdrawSalary(streamId)` です。FallbackPending のローンに対する貸し手の請求は、請求時のマッチングが支払額を決めるため除外されます。レビューは一括処理を試行し、各呼び出しの `success` とリバートデータを読み、拒否された呼び出しはデコードしたエラーとともに除外し、送信時にもう一度試行します。完了カードは各呼び出し自身のイベント (`LenderFundsClaimed` / `BorrowerFundsClaimed`, `InteractionRewardsClaimed` with `RewardDeliveredToVault`, `LenderIntentCapitalWithdrawn`, `VPFIWithdrawnFromVault`, `SalaryWithdrawn`) を読み、イベントのない呼び出しはスキップされたものです。ウォレットへのトークン送金と、保護モードの `PayoutQueued` / `PayoutHeldInVault` / `PaymentCreditedToVault` は、受け取った呼び出し全体でトークンごとに合計されます。一時停止（すべての呼び出しにある `whenNotPaused`）とフラグ付きウォレットは、署名前に一括処理を止めます。
+
 <a id="payout-queue"></a>
 
 ### 支払いキュー: 確認される内容
 
 一覧は `getPendingPayoutIds(account)` で、各行に `getPendingPayout(id)` と `requestCode(id)` を読みます。コードは通知と同じ共有レンダラーで6文字の base32 として表示され、行はブラウザの時計ではなく最新ブロックのタイムスタンプに対する `releaseAt` の順に並びます。`releasePayout(id)` は誰でも呼び出せますが、一時停止中は `isEscapeOpen()` になるまで拒否されます。受取人が管理者(アカウント、または引退後はそのコントローラー)でもなく `getAllowlist` にも載っていないキュー中の行は、時刻の確認より前に、支払われる代わりに取り消されます。それ以外の場合、行は期限が来ており、アカウントはロックされておらず(`ProtectedVaultLocked`)、`requireCosign` がオンの間は共同署名済み(`CosignRequired`)である必要があり、受取人は再びスクリーニングされます。`cancelPayout(id)` は管理者または署名者のもので(`NotManagerOrSigner`)、一時停止中も使え、資産を再び引き出せるよう預入台帳に計上します。`cosignPayout(id)` は `getProtectedSigners` の署名者のもので(`NotSigner`)、アプリはアカウントがそれを必要とし、行がまだ共同署名されていない間だけ提示します。各操作は確認画面でドライランとして実行され、送信時にも再度実行されます。完了カードはその id の `PayoutReleased`(金額とプロトコルが測定した `delivered`)、`PayoutCancelled`、`PayoutCosigned` を読みます。keeper の `protectedAccount` パスが期限の来た行を解放するかどうかはケイパビリティサービスの回答で、既定では不明です。ロックはキュー中のすべての行を取り消します。
+
+<a id="seller-interest"></a>
+
+### 売却したポジションの利息：確認される内容
+
+売却は、売り手が得てまだ支払われていない利息を請求として記録します。`getInterestLedger(loanId)` は未決の請求を古い順に、それぞれの総額とともに一覧します。`claimAsSeller(loanId)` には `whenNotPaused` と制裁チェックがあります。請求が残る Repaid、Defaulted、Settled、InternalMatched のローンでは、まず貸し手の回収額（`getSellersShareOfLenderClaim`）を分配し、各請求に純額（総額からローンの `treasuryFeeBpsAtInit` の取り分を引いて切り捨て。記録がないローンは従来の 1%）まで支払って、すべてを閉じます。FallbackPending のローンは分配しません。その後、元本トークン、および異なる場合は貸し手請求のトークンについて、`getSellerInterestHeld(loanId, seller, asset)` を売り手自身のボールトから売り手のウォレットへ引き出し、ゼロなら `NothingToClaimAsSeller` で拒否します。アプリは、売り手としてウォレットに紐づくインデックスのアクティビティ（`SellerInterestClaimRecorded`、`SellerInterestPaid`、`SellerInterestClaimClosed`、`SellerInterestWithdrawn`）からローンを一覧し、番号での検索はチェーンだけを読みます。元本トークンでは、レビューは分配額からウォレットの取り分を正確に算出します。別のトークンでは分配は価値ベースで、実行時に決まると明記します。引き出しはレビューでドライランし、送信時にも再度実行します。完了カードは `SellerInterestClaimClosed`（支払額、入金額、全額支払い）と `SellerInterestWithdrawn` を読み、保護モードが支払いをキューに入れた、または保持した場合は `PayoutQueued` または `PayoutHeldInVault` も読みます。
+
+<a id="frozen-proceeds"></a>
+
+### 凍結された支払い：何が確認されるか
+
+アプリは `getSanctionsOracle`（ゼロならこのチェーンにスクリーニングなし）、`sanctionsStatus(wallet)`（Clean、Flagged、またはスクリーニングがリバートしたときの Unavailable）、`isSanctionsConfirmedFlagged(wallet)`（`refreshSanctionsFlag` が確定的な読み取りから同期する登録簿）を読み取ります。Flagged、またはウォレットが登録済みの Unavailable は凍結と読みます。未登録の Unavailable はそう読みません。`claimAsLender` と `claimAsBorrower` は `whenNotPaused` の後に呼び出し元をスクリーニングし、障害は通します。プロトコルが記録した当事者のために支払いを凍結した側は fail-closed で解放され、その当事者が Clean と読まれるまで、その時点で誰がポジションを持っていても `SanctionedAddress` または `SanctionsOracleUnavailable` でリバートします。プロトコルはその記録された当事者を参照するビューを持たないため、アプリはそこではドライランに頼り、その拒否を同じ言葉で伝えます。`claimAsSeller` はフラグ付きの売り手を、また障害中は登録済みの売り手を拒否します。ローンの進行中、フラグ付きの保有者のために保留された貸し手の取り分は `getClaimable(loanId, true)` の `heldForLender` に加算され、貸し手のクレームが支払うまで記録上の貸し手のボールトに確保されます。フラグ付きの借り手でも返済はできますが、担保の追加はできません。
+
+<a id="extension-reserves"></a>
+
+### 延長用リザーブ：何が確認されるか
+
+`fundExtendReserve(loanId, amount)` は、借り手ポジション保有者のウォレットからローンの元本トークンを本人のボールトに預け入れ、そのローン用に確保します。`whenNotPaused` と制裁スクリーニングを伴い、ローンが Active で、ERC-20 ローンで、定期的な利払い間隔がない場合を除き拒否されます。`getExtendFunding(loanId, holder)` はトークン、`reserved`、保有者のその他の自由残高、延長が現時点と期間終了時に請求する額を返します。延長は現在の保有者のボールトからのみ、リザーブを先に請求します。`withdrawExtendReserve(account, loanId, amount)` は `whenNotPaused` を伴い、呼び出し元がアカウントの管理者（本人のウォレット、または置き換え後のコントローラー）であることを求め、呼び出し元をスクリーニングし（障害時は通過）、確保額を超えると `ExtendReserveInsufficient` で取り消されます。ローンの状態にかかわらず利用できます。アプリはウォレットに紐づくインデックスのアクティビティ (`ExtendReserveFunded`, `ExtendReserveWithdrawn`, `ExtendChargeDrawn`) からローンを一覧にし、番号での検索はチェーンだけを読みます。レビューが読み取ったリザーブ全額を引き出し、呼び出しをレビュー時と送信時に試行し、完了カードは `ExtendReserveWithdrawn`（金額と、確保されたまま残る額）を読み、保護モードが支払いをキューに入れたり保持したりした場合は `PayoutQueued` または `PayoutHeldInVault` も読みます。
 
 <a id="risk-access"></a>
 

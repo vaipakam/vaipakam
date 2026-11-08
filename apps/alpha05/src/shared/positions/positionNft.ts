@@ -9,7 +9,14 @@
  * deleted at the all-waves fresh deploy.
  */
 import { DEPLOYMENTS } from '@vaipakam/contracts/deployments';
-import { positionNftSurfaceForDiamond, positionRouteCall, readPositionOwner, type PositionNftSurface } from '@vaipakam/lib/positionNft';
+import {
+  PositionRetiredError,
+  positionNftSurfaceForDiamond,
+  positionRouteCall,
+  readPositionOwner,
+  type PositionNftSurface,
+} from '@vaipakam/lib/positionNft';
+import { answerOrNull } from '../reads/answer';
 
 /** The surface of the chain whose Diamond is `diamond`; throws when no
  *  record names it, so a caller never guesses the mode. */
@@ -29,6 +36,24 @@ export function readPositionOwnerFor(
   blockNumber?: bigint,
 ): Promise<`0x${string}`> {
   return readPositionOwner(client, positionNftForDiamond(diamond), tokenId, blockNumber);
+}
+
+/** The LIVE holder of `tokenId` under the one read rule (`answerOrNull`):
+ *  `null` when the contract answers there is none (a revert for a token never
+ *  minted or burned, or a retired token), and a thrown error when the source
+ *  itself failed, so the own rail moves on to its next source. */
+export async function readLiveHolderOrNull(
+  client: { readContract: (args: any) => Promise<unknown> },
+  diamond: string,
+  tokenId: bigint,
+  blockNumber?: bigint,
+): Promise<`0x${string}` | null> {
+  try {
+    return await answerOrNull(readPositionOwnerFor(client, diamond, tokenId, blockNumber));
+  } catch (e) {
+    if (e instanceof PositionRetiredError) return null;
+    throw e;
+  }
 }
 
 /** The open route on `tokenId` (`positionRoute`, or the legacy `positionLock`). */

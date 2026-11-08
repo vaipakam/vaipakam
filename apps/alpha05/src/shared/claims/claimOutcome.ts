@@ -18,7 +18,7 @@
 import type { Log } from 'viem';
 import type { CopyAccess } from '../copy/useCopy';
 import { moved } from '../offers/acceptOutcome';
-import { payoutOutcomes } from '../protection/payout';
+import { payoutOutcomes, type Protection } from '../protection/payout';
 import { payoutLegs, routedLeg } from '../protection/payoutCopy';
 import type { LegOutcome } from '../tx/outcome';
 import { claimRecorded, loanSettled, matchedInTx, nftArrived, surplusPaid } from './claimLog';
@@ -140,19 +140,34 @@ export function measureLoanClaim(r: LoanClaimReview, logs: readonly Log[], diamo
 
   for (const l of lanes) {
     if (l.assetType === ASSET_ERC20) continue;
-    const routed = payoutOutcomes(logs, diamond, account, l.asset);
-    if (routed.length > 0) {
-      for (const o of routed) legs.push({ status: 'done', label: routedLeg(o, t.nft(l), r.protection, t.copy) });
-      continue;
-    }
-    const arrived = nftArrived(logs, l.asset, l.assetType, l.tokenId, account);
-    legs.push(
-      arrived >= l.amount
-        ? { status: 'done', label: format('loanClaim.legNft', { nft: t.nft(l) }) }
-        : { status: 'not-done', label: format('loanClaim.legNft', { nft: t.nft(l) }), reason: text('loanClaim.nftNotArrived') },
-    );
+    legs.push(...nftLegs(logs, diamond, account, l, (n) => t.nft({ ...l, amount: n }), r.protection, t.copy));
   }
 
   if (loanSettled(logs, diamond, r.loanId)) legs.push({ status: 'done', label: text('loanClaim.legSettled') });
   return legs;
+}
+
+/**
+ * One NFT payout's finish-card legs: each place the routing records put THIS
+ * token (matched by collection and token id), and the wallet if it arrived
+ * there, each named with the quantity that went there, done only when they
+ * account for the whole amount promised; else one leg saying it did not
+ * arrive. `label` names the NFT with a quantity.
+ */
+export function nftLegs(
+  logs: readonly Log[],
+  diamond: Hex,
+  account: Hex,
+  p: { asset: Hex; assetType: number; tokenId: bigint; amount: bigint },
+  label: (amount: bigint) => string,
+  protection: Protection | null,
+  copy: Pick<CopyAccess, 'text' | 'format'>,
+): LegOutcome[] {
+  const routed = payoutOutcomes(logs, diamond, account, p.asset, p.tokenId);
+  const arrived = nftArrived(logs, p.asset, p.assetType, p.tokenId, account);
+  const total = routed.reduce((t, o) => t + o.amount, 0n) + arrived;
+  if (total < p.amount) return [{ status: 'not-done', label: copy.format('loanClaim.legNft', { nft: label(p.amount) }), reason: copy.text('loanClaim.nftNotArrived') }];
+  const out: LegOutcome[] = routed.map((o) => ({ status: 'done', label: routedLeg(o, label(o.amount), protection, copy) }));
+  if (arrived > 0n) out.push({ status: 'done', label: copy.format('loanClaim.legNft', { nft: label(arrived) }) });
+  return out;
 }

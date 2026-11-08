@@ -1001,10 +1001,9 @@ above. Each resolves here, so a route reviewer needs no private file:
   token is burnt and the reader leaves and returns, until its finish card is
   closed. Claims lists the payouts of
   the positions the wallet holds now, so a bought position pays its new
-  holder, says "nothing to collect" only when every read completed, and
-  names the payouts it does not yet collect (seller interest, frozen sale
-  proceeds, extension reserves) with a link to the current app until their
-  slices land.
+  holder, and says "nothing to collect" only when every read completed;
+  seller interest is RB-SELLER-CLAIM, an unused extension reserve is
+  RB-RESERVE, and a payout frozen for a flagged wallet is RB-FROZEN.
 - **RB-PAYOUT-QUEUE** — Claims lists a protected account's payout queue
   (LN-54, LN-55, LN-56): the wallet's own account, then an account it
   manages since a replacement retired it, and in Advanced mode any account
@@ -1035,6 +1034,135 @@ above. Each resolves here, so a route reviewer needs no private file:
   account is cleared, and when that account's queue cannot be read. The
   sync stamp covers every queue the section shows, a looked-up one
   included.
+- **RB-SELLER-CLAIM** — the interest a past seller of a lender position
+  earned and was not paid (LN-52) is collected from Claims, in its own
+  section. The loans come from the index (any step of a seller claim filed
+  under the wallet); when the index cannot list them the section says so,
+  never shows an empty list, and offers a lookup by loan number that reads
+  the chain alone. A later poll that fails is said too: the last list stays,
+  named as the last list, and "nothing owed" is withdrawn until the index
+  answers again. Each loan is read from the chain as the withdrawal reads
+  it, and only the chain decides: what the wallet is owed, stated net of the
+  loan's own fee on interest (the legacy share said as such where the loan
+  recorded none), what already waits in the wallet's vault, and on an ended
+  loan the split. The withdrawal has one rule (RB-ELIG) in the order
+  `claimAsSeller` checks it: the pause, then something to pay. On a running
+  loan it pays what reached the vault, and with nothing there it says the
+  claim is paid from later interest, oldest claim first, and offers no
+  button; a loan in fallback waits. On an ended loan the withdrawal first
+  splits what the lender side recovered (the holder's principal, then each
+  claim oldest first, net of the fee), which closes every open seller claim
+  on the loan: in the principal token the review states the wallet's part
+  exactly and what stays unpaid, and in another token it states that the
+  split pays by value when it runs. The protocol's dry run is part of the
+  review and the send runs it again. The payment goes from the wallet's own
+  vault to its wallet, so it follows RB-PAYOUT-ROUTE. The finish card
+  measures, from the transaction's logs, each claim the split closed (paid
+  in full, or short with what stays unpaid, and a figure other than the
+  reviewed one said beside it) and each payment where it landed. A row that
+  could not be read is said so, and a withdrawal in progress stays on screen
+  until its finish card is closed, whatever the latest list or lookup shows.
+- **RB-RESERVE** — an extension reserve (LN-62) is the depositor's own
+  money, set aside in their own vault for a loan's extensions, and Claims
+  lists every loan where this wallet has some left: found from the index's
+  activity filed under the wallet (funded, charged, withdrawn), or looked
+  up by loan number from the chain alone, never shown as empty while the
+  index fails. Each row states the reserve and whether an extension can
+  still draw on it: only on a running ERC-20 loan with no interest cadence,
+  and only while this wallet holds the borrower position, since an
+  extension charges the current holder's vault; with the holder unread on a
+  running loan, it is said unknown, never safe. The whole reserve is taken
+  back in one withdrawal, open whatever the loan's state and whoever holds
+  the position, held by the protocol pause (it is one of the withdrawals a
+  pause stops, as the protocol enforces) and refused for a flagged wallet
+  (RB-FROZEN; an outage is the dry run's). The review says a running
+  extension then loses the reserve, the dry run decides the rest (a wallet
+  that no longer manages the account is told so), and the finish card
+  measures where the money landed (RB-PAYOUT-ROUTE) and what stays
+  reserved if more was set aside meanwhile.
+- **RB-CLAIM-ALL** — Claim everything (LN-51) leads Claims and carries
+  RB-CLAIM's inclusion list, read from the chain: each loan side the
+  wallet holds whose claim the loan's own rule opens and that pays
+  something; interaction rewards when the claim, run as its preview,
+  completes, even paying nothing, since such a claim walks days that paid
+  nothing to reach later paying ones (that claim also pays any held
+  reward), or else a held reward
+  the screen releases; the un-lent capital of each standing offer the wallet
+  owns; free VPFI in its vault; and each payroll stream paying it (paid
+  into a protected payee's vault, as any payment from outside its own
+  vault). A lender
+  claim on a loan in fallback is named as collected on its own, since that
+  claim settles the fallback first and only then decides what it pays; a
+  source or a loan that could not be read is named as left out, never
+  dropped, and the other sources are still read and offered (the position
+  book failing leaves out the loans only). Every payout has a switch; all are on except free vault VPFI
+  and the capital of a standing offer that lends VPFI (both count toward the
+  fee-discount tier, which the review says when either is sent; an offer's
+  capital is also kept off, and said, while the VPFI token cannot be read)
+  and the
+  capital of a standing offer still lending (taking it out leaves the offer
+  less to lend), which the reader turns on. A held reward the screen
+  releases is offered even when the rewards preview cannot be read. The pause and a flagged wallet stop the whole batch before
+  signing, said once; anything else is the protocol's call, payout by
+  payout: the batch entry runs each payout as its own call with the wallet
+  as caller and each allowed to fail, so the review's dry run of the batch
+  answers for each one, a refused payout is left out of the transaction
+  with the protocol's reason, and one refused when the transaction runs is
+  skipped, moves nothing and stays listed. Because a call allowed to fail
+  never reverts the batch, its gas limit is sized on the same calls each
+  required to succeed, so no payout is skipped only for want of gas. One
+  transaction carries at most
+  the protocol's bound (30 calls); the rest wait for a second one, said in
+  the list and the review. The review states where each payout lands, one
+  row per destination when they differ, a queued one with its delay. A
+  queued payout's delay or secondary signer
+  changing while the review is open is a changed review. The finish card
+  reports each payout collected or
+  skipped from its own record in the logs, each NFT (collection and token
+  id, summed across the payouts that paid it) where its routing records or
+  transfer put it, each place with its own quantity, and each token measured where it
+  landed (RB-PAYOUT-ROUTE) against what the collected payouts recorded,
+  summed across them; a rewards claim that leaves more says so, and the
+  rest is listed again, and when that cannot be read after the claim the
+  card says it is not known rather than implying nothing is left. A payroll
+  figure is a floor (the withdrawal pays all accrued when it runs), stated
+  as such; its rise while the review is open is not a change to confirm, a
+  fall is.
+- **RB-FROZEN** — money the protocol holds for a wallet the sanctions
+  screen flags (LN-53) is stated as "Frozen, awaiting de-listing": locked
+  where its loan keeps it, in a vault, not lost, and released once the
+  wallet is de-listed. The wallet's standing is read once, from the
+  protocol's own views (whether a screen is configured, the screen's answer
+  for the wallet, and the registry of wallets confirmed flagged while the
+  screen could be read), and is one of four: flagged; an outage, meaning the
+  screen cannot be read and the wallet was confirmed flagged before, so a
+  payout frozen for it stays locked until the screen answers (release is
+  fail-closed), and a payment due to it during the outage is parked too,
+  since the protocol keeps treating a registered wallet as flagged; unknown, when the standing could not be read, said and never
+  assumed either way; or nothing frozen. An outage alone never freezes
+  anyone, so a wallet never confirmed flagged reads as nothing frozen in an
+  outage. Claims and the loan's page show a notice for the first three, to
+  the wallet itself only. Every claim's rule (RB-ELIG) refuses a flagged
+  wallet right after the pause, in these words, and a seller's withdrawal
+  also refuses in an outage for a wallet confirmed flagged, as
+  `claimAsSeller` checks it; a loan claim's caller check lets an outage
+  through, so its dry run decides. A dry run refused for a sanctions reason
+  is said in the same words: a party the protocol recorded as frozen on that
+  loan side (the app cannot read who, since the protocol keeps no view of
+  it), or a release waiting for the screen. On a running loan the page
+  states what the loan already paid that is reserved for the lender
+  position in the lender vault the loan records, such as a payment made
+  while the holder was flagged, until the lender's claim pays it; when that
+  amount could not be read it says so, and only a zero read shows nothing. A repaid
+  loan whose borrower surplus is still held says that surplus is one of the
+  payouts left to collect before it settles (never that collecting it alone
+  settles the loan, since the lender's side may be open too), so its status
+  reads true. A change to the wallet's
+  standing reopens a claim's review. Repayments and close-outs are never
+  held for a flagged party; only what it is owed waits. The surfaces never
+  promise the other party more than its side recovers: a default or a
+  liquidation can recover less than is owed. A standing whose latest read
+  failed is unknown, even with an earlier answer in hand.
 
 ## 3. Companion specifications
 

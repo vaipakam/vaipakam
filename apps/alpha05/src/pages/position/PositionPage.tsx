@@ -7,7 +7,7 @@ import { CADENCE_NAME, isCadence } from '../../shared/offers/cadence';
 import { ASSET_ERC20, LOAN_STATUS_ACTIVE, LOAN_STATUS_FALLBACK_PENDING, isLiveStatus, loanObligations, loanStatusName } from '../../shared/positions/model';
 import { assetAmount } from '../../shared/positions/assetAmount';
 import { InterestLine, ReadState, StageLine } from '../../shared/positions/PositionSections';
-import { ILLIQUID, readLoanView, recordedInitFeeBps, roleOf, treasuryShareBps, type DefaultRefusal, type LoanView, type Role } from '../../shared/positions/loanView';
+import { ILLIQUID, readLoanView, holdsASide, recordedInitFeeBps, roleOf, treasuryShareBps, type DefaultRefusal, type LoanView, type Role } from '../../shared/positions/loanView';
 import { useOwnRead } from '../../shared/reads/useOwnRead';
 import { tokenAmount, useTokenMeta, type TokenMetaMap } from '../../shared/reads/tokens';
 import { formatBps, formatScaled, formatSpan, formatUtc, shortAddress } from '../../shared/ui/format';
@@ -15,6 +15,7 @@ import { OwnStamp } from '../../shared/ui/OwnStamp';
 import { useNow } from '../../shared/ui/useNow';
 import { WhyLink } from '../../shared/help/WhyLink';
 import { Notice } from '../../shared/ui/Notice';
+import { FrozenNotice, useFrozenState } from '../../shared/sanctions/FrozenNotice';
 import { LoanActions } from './LoanActions';
 import { LoanClaims } from './LoanClaims';
 import { Fact, Facts } from './Facts';
@@ -113,11 +114,29 @@ function LoanBody({ loanId, view: v, own, chain, meta }: { loanId: bigint; view:
   const borrowerSide = role?.borrower === true && role.lender !== true;
   const obligations = live ? loanObligations({ loan: l, borrowerSide, healthFactor: v.healthFactor ?? 0n }, v.deadlines, nowSec) : null;
   const unknown = text('receipt.unknown');
+  // RB-FROZEN — the reader's own standing, said only to a holder of a side.
+  // One held side is enough: once the other party collects, its token is
+  // burned and the combined role reads as unconfirmed, while this side's
+  // payout may still be frozen.
+  const holder = holdsASide(v.holders, account);
+  const frozen = useFrozenState(chain.diamondAddress, holder ? account : null);
+  // What a running loan already paid that waits for the lender's claim, in
+  // the loan's payment token (the principal token, or a rental's prepay
+  // token).
+  const held = l.status === LOAN_STATUS_ACTIVE && v.heldForLender !== null && v.heldForLender > 0n ? v.heldForLender : null;
+  // An unread reserve is said, never shown as none: only a zero read hides it.
+  const heldUnread = l.status === LOAN_STATUS_ACTIVE && v.heldForLender === null;
+  // A surplus still held for the borrower is one payout a repaid loan waits
+  // on before it settles (LN-53): said, so the loan's status reads true. The
+  // lender's side may be open too, so the note never promises that collecting
+  // the surplus alone settles it.
+  const surplusOpen = loanStatusName(l.status) === 'repaid' && v.claims.borrower !== null && v.claims.borrower.surplus !== null;
 
   return (
     <>
       <StatusLine status={l.status} />
       <RoleLine role={role} />
+      {holder && <FrozenNotice state={frozen} />}
       {obligations && (
         <div className="position-now">
           <StageLine stage={obligations.stage} borrowerSide={borrowerSide} rental={!erc20} defaultable={v.defaultable} />
@@ -154,7 +173,24 @@ function LoanBody({ loanId, view: v, own, chain, meta }: { loanId: bigint; view:
       )}
 
       <LoanActions loanId={loanId} view={v} role={role} own={own} chain={chain} meta={meta} />
-      <LoanClaims loanId={loanId} view={v} own={own} chain={chain} meta={meta} />
+      <LoanClaims loanId={loanId} view={v} own={own} chain={chain} meta={meta} frozen={frozen} />
+      {held !== null && (
+        <div data-testid="position-held-for-lender">
+          <Notice tone="info" tier="A">
+            {format('frozen.reservedRunning', { amount: tokenAmount(held, erc20 ? l.principalAsset : l.prepayAsset, meta, format) })}
+          </Notice>
+        </div>
+      )}
+      {heldUnread && (
+        <p className="tier-a" data-testid="position-held-for-lender-unread">
+          {text('frozen.reservedUnread')}
+        </p>
+      )}
+      {surplusOpen && (
+        <p className="tier-a" data-testid="position-surplus-open">
+          {text('frozen.openForSurplus')}
+        </p>
+      )}
 
       {live && (
         <Facts title={text('position.datesTitle')} id="position-dates" lead={v.deadlines === null ? <p className="tier-a">{text('position.datesUnknown')}</p> : null}>

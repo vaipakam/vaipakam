@@ -1322,11 +1322,35 @@ Wenn ein Kredit endet, hält das Protokoll fest, was jeder Seite zusteht, und de
 
 Die Prüfung listet jede Zahlung auf, die die Forderung leistet, was frühere Verkäufer einer Kreditgeberposition zuerst erhalten (verdiente, nicht gezahlte Zinsen) und wohin die Zahlung geht: in Ihre Wallet oder, bei aktivem Schutzmodus, in die Auszahlungswarteschlange Ihres Kontos oder in Ihren Tresor. Eine Genehmigung ist nicht nötig, Ihre Wallet fragt also einmal, nachdem die App die Forderung als Probelauf ausgeführt hat. Eine Pause des Protokolls stoppt jede Forderung. Solange ein Kredit im Fallback ist, wartet die Auszahlung des Kreditnehmers, bis der Kreditgeber abholt, und das beendet den Fallback: Der Kreditnehmer kann ihn nicht mehr heilen. Die Abschlusskarte zeigt, was die Transaktion tatsächlich gezahlt hat.
 
+<a id="claim-everything"></a>
+
+### Alles einfordern
+
+Claims beginnt mit „Alles einfordern“: jede Auszahlung, die Sie jetzt einziehen können, gesammelt in einer Transaktion. Aufgeführt werden Kreditauszahlungen beendeter Kredite, deren Position Sie halten, Interaktionsbelohnungen, das nicht verliehene Kapital Ihrer stehenden Angebote, freies VPFI in Ihrem Tresor und, wenn Sie Zahlungsempfänger sind, abhebbare Gehaltszahlungen. Jede Auszahlung hat einen Schalter, sodass Sie jede davon auslassen können. Freies VPFI im Tresor ist aus, bis Sie es einschalten, weil es Ihre Gebührenrabattstufe bestimmt; ebenso das Kapital eines stehenden Angebots, das noch verleiht. Zinsen aus einer Position, die Sie verkauft haben, und ein Kredit im Fallback werden einzeln eingezogen. Jede Auszahlung läuft innerhalb der Transaktion für sich: eine, die das Protokoll ablehnt, wird übersprungen und bleibt aufgeführt, die übrigen werden trotzdem gezahlt. Eine Transaktion trägt höchstens 30 Auszahlungen; der Rest wartet auf eine zweite. Nichts verlässt Ihre Wallet, daher fragt Ihre Wallet einmal, nach einem Probelauf, und die Abschlusskarte zeigt jede Auszahlung als eingezogen oder übersprungen und wo das Geld angekommen ist. Eine Pause stoppt jede Einforderung.
+
 <a id="payout-queue"></a>
 
 ### Auszahlungen in Ihrer Warteschlange
 
 Bei aktivem Schutzmodus wartet alles, was Ihren Tresor in Richtung Ihrer Wallet verlässt, die Verzögerung Ihres Kontos in einer Auszahlungswarteschlange ab. „Claims“ listet auf, was dort wartet, das Früheste zuerst, jeweils mit einem kurzen Anfragecode: Jede Benachrichtigung zu einer Auszahlung zeigt denselben Code, sodass Sie eine Nachricht einer Anfrage zuordnen können. Jede Zeile nennt, was sie zahlt, wohin sie geht und ab wann sie freigegeben werden kann. Sobald eine Auszahlung fällig ist, kann jeder sie freigeben, und sie zahlt immer nur an das gespeicherte Ziel; ist dieses Ziel nicht mehr erlaubt, storniert die Freigabe sie stattdessen. Sie oder einer Ihrer zweiten Unterzeichner können eine Auszahlung jederzeit stornieren, auch während einer Pause, und der Vermögenswert bleibt in Ihrem Tresor. Verlangt Ihr Konto eine Genehmigung, genehmigt ein zweiter Unterzeichner jede Auszahlung zuerst; ein Unterzeichner findet Ihr Konto im Advanced-Modus, indem er dessen Adresse einfügt. Eine Pause hält Freigaben an, bis sie endet oder sich nach einer langen Pause der Notausgang öffnet. Jede Aktion fragt Ihre Wallet einmal, und die Abschlusskarte zeigt, was die Transaktion bewirkt hat.
+
+<a id="seller-interest"></a>
+
+### Zinsen aus einer verkauften Position
+
+Wenn Sie eine Kreditgeberposition verkaufen, bleiben die Zinsen, die Sie in Ihrer Haltezeit verdient und noch nicht erhalten haben, als Anspruch auf den Kredit Ihre. Claims listet jeden Kredit, auf dem Sie einen solchen Anspruch halten, mit dem, was Ihnen nach dem Zinsanteil des Protokolls zusteht, und dem, was schon in Ihrem Vault wartet. Solange der Kredit läuft, bedient jede Zinszahlung zuerst die offenen Ansprüche, den ältesten zuerst, in den eigenen Vault jedes Verkäufers; bis etwas Ihren erreicht, gibt es nichts abzuheben. Ist der Kredit beendet, teilt die Abhebung zuerst auf, was die Kreditgeberseite zurückerhalten hat: zuerst das Kapital des Inhabers, dann jeden Verkäuferanspruch, den ältesten zuerst. Dabei schließen alle offenen Ansprüche, und was ein Anspruch nicht erhält, bleibt unbezahlt. Die Kredite stammen aus dem Index der App; kann er sie nicht auflisten, suchen Sie einen Kredit über seine Nummer, die allein von der Chain gelesen wird. Es ist keine Freigabe nötig, Ihre Wallet fragt also einmal, nach einem Probelauf, und die Abschlusskarte zeigt, was die Transaktion gezahlt hat.
+
+<a id="frozen-proceeds"></a>
+
+### Wenn eine Auszahlung eingefroren ist
+
+Wenn das Sanktions-Screening Ihre Wallet markiert, nimmt das Protokoll nichts von dem, was Ihnen zusteht, und hält keinen Kredit vom Abschluss ab: Die Gegenseite erhält trotzdem, was ihre Seite erlöst. Ihr Anteil wird gesperrt in einem Tresor verwahrt und freigegeben, sobald Ihre Wallet von der Liste gestrichen ist. Claims und die Seite des Kredits zeigen dann „Eingefroren, wartet auf Streichung von der Liste“ und bieten keine Schaltfläche zum Einziehen an. Kann das Screening nicht gelesen werden und wurde Ihre Wallet zuvor als markiert bestätigt, bleibt eine eingefrorene Auszahlung gesperrt, bis das Screening wieder antwortet, und eine in dieser Zeit fällige Zahlung an Ihre Wallet wird ebenso verwahrt, weil das Protokoll sie weiter als markiert behandelt; ein Ausfall allein friert keine Wallet ein, die nie als markiert bestätigt wurde. Bei einem laufenden Kredit zeigt dessen Seite außerdem, was der Kredit bereits gezahlt hat und für die Kreditgeberposition reserviert ist, bis der Kreditgeber es einzieht, und ein zurückgezahlter Kredit sagt, wenn er auf einen Überschuss wartet, den der Kreditnehmer noch nicht eingezogen hat.
+
+<a id="extension-reserves"></a>
+
+### Verlängerungsreserven
+
+Wenn Sie die Kreditnehmerposition eines Kredits halten, können Sie den Token des Kredits in Ihrem eigenen Tresor für dessen Verlängerungen zurücklegen. Eine Verlängerung, die des Keepers oder Ihre eigene, greift zuerst auf diese Reserve zu. Die Reserve bleibt Ihre. Claims listet jeden Kredit, bei dem Ihnen noch etwas davon bleibt, und sagt, ob eine Verlängerung noch darauf zugreifen kann: nur solange der Kredit läuft und Sie seine Kreditnehmerposition halten. Sie können die ganze Reserve jederzeit zurücknehmen, solange das Protokoll nicht pausiert ist, gleich in welchem Zustand der Kredit ist; läuft der Kredit noch, greift seine nächste Verlängerung dann stattdessen auf Ihr übriges Guthaben des Tokens zu. Die Kredite werden im Index der App gefunden; kann er sie nicht auflisten, suchen Sie einen Kredit über seine Nummer. Eine Freigabe ist nicht nötig, daher fragt Ihre Wallet einmal, nach einem Probelauf, und die Abschlusskarte zeigt, wo das Geld angekommen ist.
 
 <a id="risk-access"></a>
 

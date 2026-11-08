@@ -14,7 +14,14 @@
 //    unavailable, polling" line is exercised rather than mocked;
 //  - the read-only RPC proxy's `POST /rpc/:chainId`, forwarded to Anvil
 //    verbatim (alpha05 refuses a per-chain RPC URL, so this is the ONLY
-//    way the dev server's reads reach the fixture chain).
+//    way the dev server's reads reach the fixture chain);
+//  - the indexer's `GET /activity?actor=…&kind=…`, for the seller-claim and
+//    extension-reserve kinds only: read from the chain's own logs of those
+//    events, filed under the seller or the reserve's depositor as the
+//    indexer files them (topic 2 of each: the loan is topic 1), so Claims
+//    discovers a sold position or a reserve the way it does against the
+//    real Worker. Refused with 503 while the posture is `down`, as the whole
+//    index is.
 //
 // Everything a world read would need beyond health lands with the route
 // that reads it (the Home PR adds the position views, the Offers PR the
@@ -23,6 +30,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { toEventSelector } from 'viem';
 
 const CHAIN_ID = 84532;
 const ANVIL_URL = process.env.ALPHA05_E2E_ANVIL_URL ?? 'http://127.0.0.1:8546';
@@ -34,6 +42,21 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 // The e2e bundle global setup writes after deploying the fixture (never the
 // committed one, whose 84532 entry is the live testnet).
 const DEPLOYMENT = JSON.parse(fs.readFileSync(path.resolve(HERE, '..', '.state', 'deployments.json'), 'utf8'))[String(CHAIN_ID)];
+
+// The activity events the stand-in serves, from the combined Diamond ABI
+// (the seller's recorded event is a library's, so it is in no single
+// facet's file). Each carries the loan as topic 1 and its actor as topic 2.
+const DIAMOND_ABI = JSON.parse(fs.readFileSync(path.resolve(HERE, '..', '..', '..', '..', 'packages', 'contracts', 'src', 'diamondAbi.json'), 'utf8'));
+const SELLER_KINDS = ['SellerInterestClaimRecorded', 'SellerInterestPaid', 'SellerInterestClaimClosed', 'SellerInterestWithdrawn'];
+const RESERVE_KINDS = ['ExtendReserveFunded', 'ExtendReserveWithdrawn', 'ExtendChargeDrawn'];
+const ACTIVITY_KINDS = [...SELLER_KINDS, ...RESERVE_KINDS];
+const ACTIVITY_TOPICS = new Map(
+  ACTIVITY_KINDS.map((name) => {
+    const item = DIAMOND_ABI.find((e) => e.type === 'event' && e.name === name);
+    if (!item) throw new Error(`the Diamond ABI has no ${name} event`);
+    return [toEventSelector(item), name];
+  }),
+);
 
 /** @type {'live' | 'stale' | 'down' | 'other-diamond' | 'schema-pending'} */
 let posture = 'live';
@@ -76,6 +99,29 @@ async function ingestHealth() {
   };
 }
 
+/** `/activity` for the served kinds: every such event filed under `actor`,
+ *  newest first, in one page (a test chain never needs a second). */
+async function actorActivity(url) {
+  const actor = (url.searchParams.get('actor') ?? '').toLowerCase();
+  if (!/^0x[0-9a-f]{40}$/.test(actor)) return { status: 400, body: { error: 'actor must be an address' } };
+  const kinds = (url.searchParams.get('kind') ?? '').split(',').filter(Boolean);
+  if (kinds.length === 0 || kinds.some((k) => !ACTIVITY_KINDS.includes(k))) return { status: 400, body: { error: 'the stand-in serves the seller and reserve kinds only' } };
+  const topics = [...ACTIVITY_TOPICS].filter(([, name]) => kinds.includes(name)).map(([t]) => t);
+  const logs = await anvil('eth_getLogs', [{ address: DEPLOYMENT.diamond, fromBlock: '0x0', toBlock: 'latest', topics: [topics, null, `0x${actor.slice(2).padStart(64, '0')}`] }]);
+  const events = logs
+    .map((l) => ({
+      chainId: CHAIN_ID,
+      kind: ACTIVITY_TOPICS.get(l.topics[0]),
+      actor,
+      loanId: Number(BigInt(l.topics[1])),
+      blockNumber: Number(l.blockNumber),
+      logIndex: Number(l.logIndex),
+      txHash: l.transactionHash,
+    }))
+    .sort((a, b) => b.blockNumber - a.blockNumber || b.logIndex - a.logIndex);
+  return { status: 200, body: { chainId: CHAIN_ID, events, nextBefore: null } };
+}
+
 function readBody(req) {
   return new Promise((resolve, reject) => {
     const chunks = [];
@@ -111,7 +157,10 @@ const server = http.createServer(async (req, res) => {
       return;
     }
     if (url.pathname === '/') {
-      json(res, 200, { service: 'alpha05 e2e stand-in', routes: ['/health/ingest', '/ws/chain/:chainId (503)', '/rpc/:chainId', '/__stub/index-posture'] });
+      json(res, 200, {
+        service: 'alpha05 e2e stand-in',
+        routes: ['/health/ingest', '/activity (seller and reserve kinds)', '/ws/chain/:chainId (503)', '/rpc/:chainId', '/__stub/index-posture'],
+      });
       return;
     }
     if (url.pathname === '/__stub/index-posture' && req.method === 'POST') {
@@ -130,6 +179,15 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       json(res, 200, await ingestHealth());
+      return;
+    }
+    if (url.pathname === '/activity' && req.method === 'GET') {
+      if (posture === 'down') {
+        json(res, 503, { error: 'e2e stand-in: index posture is down' });
+        return;
+      }
+      const out = await actorActivity(url);
+      json(res, out.status, out.body);
       return;
     }
     const rpc = url.pathname.match(/^\/rpc\/(\d+)$/);
@@ -169,10 +227,7 @@ const server = http.createServer(async (req, res) => {
 const PUSH_OFF = JSON.stringify({ error: 'e2e stand-in: push rail is off' });
 server.on('upgrade', (req, socket) => {
   socket.on('error', () => {});
-  socket.end(
-    'HTTP/1.1 503 Service Unavailable\r\nContent-Type: application/json\r\nConnection: close\r\n' +
-      `Content-Length: ${Buffer.byteLength(PUSH_OFF)}\r\n\r\n${PUSH_OFF}`,
-  );
+  socket.end('HTTP/1.1 503 Service Unavailable\r\nContent-Type: application/json\r\nConnection: close\r\n' + `Content-Length: ${Buffer.byteLength(PUSH_OFF)}\r\n\r\n${PUSH_OFF}`);
 });
 
 // A client that drops an ordinary request mid-way is not this process's

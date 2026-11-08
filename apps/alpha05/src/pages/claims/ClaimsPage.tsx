@@ -20,6 +20,11 @@ import { useOwnRead } from '../../shared/reads/useOwnRead';
 import { useTxEntries, useTxStore } from '../../shared/tx/txStore';
 import { reviewIdentity } from '../../shared/ui/ActionFlow';
 import { PayoutQueue } from '../../shared/protection/PayoutQueue';
+import { SellerClaims } from '../../shared/claims/SellerClaims';
+import { Reserves } from '../../shared/claims/Reserves';
+import { ClaimAll } from '../../shared/claims/ClaimAll';
+import { FrozenNotice, useFrozenState } from '../../shared/sanctions/FrozenNotice';
+import type { FrozenState } from '../../shared/sanctions/posture';
 import { OwnStamp } from '../../shared/ui/OwnStamp';
 import { useNow } from '../../shared/ui/useNow';
 
@@ -28,20 +33,24 @@ type Hex = `0x${string}`;
 /**
  * Claims (RB-CLAIM; LN-48, LN-49, LN-50, RW-71): the canonical list of what
  * the connected wallet can collect on its chain, each through the same flow
- * the loan page and Home open. Loan payouts come first, found by the position
+ * the loan page and Home open. Claim everything (LN-51) leads: every payout
+ * ready now, each to include or leave out, collected in one transaction.
+ * Loan payouts follow, found by the position
  * the wallet holds (a bought position pays its new holder), each row read
  * from the chain as its claim reads it, with every payout named and the
  * claim's rule deciding whether it is offered (RB-ELIG). Rewards follow, the
- * same section Home shows. Between them, a protected account's payout queue
- * (LN-54, LN-55, LN-56): what waits, under which request code, and the
- * release, cancel and co-sign actions this wallet may take.
+ * same section Home shows. Between them, the interest a position the wallet
+ * sold still owes it (LN-52), the extension reserves it can take back
+ * (LN-62), and a protected account's payout queue (LN-54, LN-55, LN-56): what
+ * waits, under which request code, and the release, cancel and co-sign
+ * actions this wallet may take.
+ *
+ * When the sanctions screen flags the wallet (LN-53, RB-FROZEN), the page
+ * says so above everything: what is held for it waits, locked, until it is
+ * de-listed, and no claim is offered.
  *
  * "Nothing to collect" is said only when every walk completed and its latest
- * read succeeded; a row whose claim could not be read stays, said so. Seller
- * interest, frozen proceeds, queued payouts, extension reserves and "Claim
- * everything" come in later slices (#3191); until then the page names them
- * and links the current app, so a payout it cannot collect is never implied
- * absent.
+ * read succeeded; a row whose claim could not be read stays, said so.
  */
 export function ClaimsPage() {
   const { text, format } = useCopy();
@@ -64,6 +73,7 @@ export function ClaimsPage() {
   const assets: Hex[] = rows.flatMap((r) => [...r.lanes.map((l) => l.asset), ...(r.loan ? [r.loan.principalAsset, r.loan.collateralAsset] : [])]);
   const meta = useTokenMeta(assets).data;
   const settled = book.read.error === null && claims.error === null && claims.data !== null && claims.data.complete;
+  const frozen = useFrozenState(book.diamond, served && own ? own.account : null);
 
   return (
     <main className="page claims" aria-labelledby="claims-title">
@@ -72,6 +82,8 @@ export function ClaimsPage() {
       {connected && !served && <p className="tier-b">{text('positions.unsupportedChain')}</p>}
       {served && book.chain && own && (
         <>
+          <FrozenNotice state={frozen} />
+          <ClaimAll own={own} chain={book.chain} payouts={payouts} payoutsFailed={book.read.state === 'failed' && payouts === null} frozen={frozen} />
           <section className="home-section" aria-labelledby="claims-loans">
             <h2 id="claims-loans">{text('claims.loansTitle')}</h2>
             <OwnStamp reads={[book.read, claims]} />
@@ -89,7 +101,7 @@ export function ClaimsPage() {
             {rows.length + held.length > 0 && (
               <ul className="rows" data-testid="claims-loan-rows">
                 {rows.map((r) => (
-                  <ClaimCard key={`${r.side}:${r.loanId}`} row={r} paused={claims.data?.paused ?? null} own={own} chain={book.chain!} meta={meta} />
+                  <ClaimCard key={`${r.side}:${r.loanId}`} row={r} paused={claims.data?.paused ?? null} frozen={frozen} own={own} chain={book.chain!} meta={meta} />
                 ))}
                 {held.map((h) => (
                   <HeldClaimCard key={`${h.side}:${h.loanId}`} loanId={h.loanId} side={h.side} own={own} chain={book.chain!} meta={meta} />
@@ -98,13 +110,9 @@ export function ClaimsPage() {
             )}
             {claims.data !== null && !claims.data.complete && <p className="tier-b">{text('claims.incomplete')}</p>}
             <WhyLink summaryKey="claims.howSummary" detailKey="loanClaim.why" />
-            <p className="tier-a" data-testid="claims-not-yet">
-              {text('claims.notYet')}{' '}
-              <a href="https://app.vaipakam.com/claims" target="_blank" rel="noreferrer">
-                {text('claims.notYetLink')}
-              </a>
-            </p>
           </section>
+          <SellerClaims own={own} chain={book.chain} frozen={frozen} />
+          <Reserves own={own} chain={book.chain} frozen={frozen} />
           <PayoutQueue own={own} chain={book.chain} />
           <RewardsWidget />
         </>
@@ -114,13 +122,32 @@ export function ClaimsPage() {
 }
 
 /** One loan payout: what it pays, and its claim, offered by its rule. */
-function ClaimCard({ row: r, paused, own, chain, meta }: { row: LoanClaimRow; paused: boolean | null; own: OwnStateClient; chain: SupportedChain; meta: TokenMetaMap | null }) {
+function ClaimCard({
+  row: r,
+  paused,
+  frozen,
+  own,
+  chain,
+  meta,
+}: {
+  row: LoanClaimRow;
+  paused: boolean | null;
+  frozen: FrozenState | undefined;
+  own: OwnStateClient;
+  chain: SupportedChain;
+  meta: TokenMetaMap | null;
+}) {
   const copy = useCopy();
   const { text, format } = copy;
   const nowMs = useNow();
   const flow = useLoanClaimHeld(r.loanId, r.side);
   const verdict = r.loan
-    ? claimVerdict({ side: r.side, status: Number(r.loan.status), loanAssetType: Number(r.loan.assetType), paused, holder: r.holder, claim: r.claim }, own.account, copy, nowMs)
+    ? claimVerdict(
+        { side: r.side, status: Number(r.loan.status), loanAssetType: Number(r.loan.assetType), paused, holder: r.holder, claim: r.claim, frozen },
+        own.account,
+        copy,
+        nowMs,
+      )
     : null;
   const payouts = r.lanes.map((l) => ({
     label: laneLabel(l.kind, r.side, copy),

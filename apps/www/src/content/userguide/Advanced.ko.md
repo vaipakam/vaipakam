@@ -2150,11 +2150,35 @@ Positions는 하나의 공유 리더로 Home과 같은 보유 목록을 읽습�
 
 검토 화면은 `getClaimable`(대출자 행은 이전 판매자 몫을 이미 뺀 값이며 `getSellersShareOfLenderClaim`을 함께 표시), `getBorrowerSurplusClaim`, `getLoanCollateralLien`을 읽고, 청구를 시뮬레이션합니다. 시뮬레이션은 제재 검사도 적용합니다. 목록은 포지션 토큰을 따릅니다. `getUserDashboardClaimables`는 기록된 당사자의 청구를 나열하므로, 나열된 행은 지갑이 해당 측을 보유하는 동안에만 남고, 다른 사람에게서 받은 종료된 대출 포지션은 청구를 직접 읽습니다. 완료 카드는 `LenderFundsClaimed` / `BorrowerFundsClaimed`, `BorrowerSurplusClaimed`, `LoanSettled`와 지갑으로의 토큰 전송을 읽습니다. 보호 계정 모드의 호출자에 대해서는 `PayoutQueued`(계정 자신의 금고), `PayoutHeldInVault`(잠긴 계정 또는 가득 찬 대기열), `PaymentCreditedToVault`(다른 당사자의 금고)를 읽습니다. FallbackPending 대출에서는 대출자 청구가 청구 시점 내부 매칭을 실행해 행을 다시 쓸 수 있으므로, 완료 카드는 전송을 프로토콜 자체 기록과 비교합니다.
 
+<a id="claim-everything"></a>
+
+### 모두 받기: 확인하는 항목
+
+일괄 처리는 `multicall(calls)`를 거치며, 각 호출을 프로토콜 자신에 대한 `delegatecall`로 실행하므로 `msg.sender`는 당신의 지갑으로 유지되고 각 호출이 자체 규칙을 확인합니다. 최대 30개 호출을 받으며, 앱은 각 호출을 `allowFailure`와 함께 보내므로 거부된 호출만 되돌려지고 일괄 처리는 계속됩니다. 호출은 `claimAsLender` / `claimAsBorrower(loanId)`; 보류된 보상도 해제하는 `claimInteractionRewardsTo(Vault)`, 또는 보상 미리보기가 완료될 수 없지만 `getRewardSanctionsStatus`가 Deliver를 읽을 때는 `claimHeldInteractionRewards(Vault)`; `getLenderIntentsByOwner`의 각 인텐트 `availableCapital`에 대한 `withdrawLenderIntentCapital(account, lendingAsset, collateralAsset, amount)`; VPFI `freeHolding`에 대한 `withdrawVPFIFromVault(amount)`; 그리고 수혜자가 지갑인 `getPayrollStream`의 각 스트림에 대해 `getWithdrawableSalary`만큼의 `withdrawSalary(streamId)`입니다. FallbackPending 대출에 대한 대출자 청구는 청구 시점의 매칭이 지급액을 정하므로 제외됩니다. 검토는 일괄 처리를 시험 실행해 각 호출의 `success`와 되돌림 데이터를 읽고, 거부된 호출은 디코딩된 오류와 함께 제외하며, 전송 시 다시 실행합니다. 완료 카드는 각 호출 자체의 이벤트 (`LenderFundsClaimed` / `BorrowerFundsClaimed`, `InteractionRewardsClaimed` with `RewardDeliveredToVault`, `LenderIntentCapitalWithdrawn`, `VPFIWithdrawnFromVault`, `SalaryWithdrawn`)를 읽고, 이벤트가 없는 호출은 건너뛴 것입니다. 지갑으로의 토큰 전송과 보호 모드의 `PayoutQueued` / `PayoutHeldInVault` / `PaymentCreditedToVault`는 받은 호출 전체에서 토큰별로 합산됩니다. 일시 중지(모든 호출의 `whenNotPaused`)와 표시된 지갑은 서명 전에 일괄 처리를 멈춥니다.
+
 <a id="payout-queue"></a>
 
 ### 지급 대기열: 확인 항목
 
 목록은 `getPendingPayoutIds(account)`이며, 각 행마다 `getPendingPayout(id)`와 `requestCode(id)`를 읽습니다. 코드는 알림이 쓰는 것과 같은 공유 렌더러로 base32 여섯 글자로 표시되며, 행은 브라우저 시계가 아니라 최신 블록의 타임스탬프에 대한 `releaseAt` 순으로 정렬됩니다. `releasePayout(id)`는 누구나 호출할 수 있고 일시 중지 중에는 `isEscapeOpen()`이 될 때까지 거부됩니다. 수령인이 관리자(계정, 또는 은퇴 후에는 그 컨트롤러)도 아니고 `getAllowlist`에도 없는 대기 행은 시간 확인 전에 지급 대신 취소됩니다. 그렇지 않으면 행은 기한이 되어야 하고, 계정은 잠기지 않아야 하며(`ProtectedVaultLocked`), `requireCosign`이 켜져 있는 동안에는 공동 서명되어 있어야 하고(`CosignRequired`), 수령인은 다시 검사됩니다. `cancelPayout(id)`는 관리자 또는 서명자의 것이며(`NotManagerOrSigner`), 일시 중지 중에도 작동하고, 자산을 다시 인출할 수 있도록 예치 장부에 적립합니다. `cosignPayout(id)`는 `getProtectedSigners`의 서명자의 것이며(`NotSigner`), 앱은 계정이 이를 요구하고 행이 아직 공동 서명되지 않은 동안에만 제공합니다. 각 작업은 검토 화면에서 시뮬레이션으로, 전송 시 다시 한 번 실행됩니다. 완료 카드는 해당 id의 `PayoutReleased`(금액과 프로토콜이 측정한 `delivered`), `PayoutCancelled`, `PayoutCosigned`를 읽습니다. keeper의 `protectedAccount` 패스가 기한이 된 행을 해제하는지는 기능 서비스의 답이며, 기본값은 알 수 없음입니다. 잠금은 대기 중인 모든 행을 취소합니다.
+
+<a id="seller-interest"></a>
+
+### 판매한 포지션의 이자: 확인하는 내용
+
+판매는 판매자가 벌었지만 받지 못한 이자를 청구권으로 기록합니다. `getInterestLedger(loanId)`는 열린 청구권을 오래된 순서대로 각각의 총액과 함께 나열합니다. `claimAsSeller(loanId)`에는 `whenNotPaused`와 제재 확인이 있습니다. 청구권이 열려 있는 Repaid, Defaulted, Settled, InternalMatched 대출에서는 먼저 대출자 회수액(`getSellersShareOfLenderClaim`)을 나누어 각 청구권에 순액(총액에서 대출의 `treasuryFeeBpsAtInit` 몫을 빼고 내림, 기록이 없는 대출은 기존 1%)까지 지급하고 모두 닫습니다. FallbackPending 대출은 나누지 않습니다. 그다음 원금 토큰과, 다를 경우 대출자 청구권 토큰에 대해 `getSellerInterestHeld(loanId, seller, asset)`를 판매자 자신의 볼트에서 판매자의 지갑으로 출금하고, 0이면 `NothingToClaimAsSeller`로 거부합니다. 앱은 지갑을 판매자로 기록한 인덱스 활동(`SellerInterestClaimRecorded`, `SellerInterestPaid`, `SellerInterestClaimClosed`, `SellerInterestWithdrawn`)에서 대출을 나열하고, 번호 조회는 체인만 읽습니다. 원금 토큰에서는 검토가 분배액에서 지갑의 몫을 정확히 계산하고, 다른 토큰에서는 가치 기준으로 나누며 실행 시 결정된다고 밝힙니다. 출금은 검토에서 시험 실행하고 전송할 때 다시 실행합니다. 완료 카드는 `SellerInterestClaimClosed`(지급액, 입금액, 전액 지급)와 `SellerInterestWithdrawn`을 읽고, 보호 모드가 지급을 대기열에 넣거나 보관한 경우 `PayoutQueued` 또는 `PayoutHeldInVault`도 읽습니다.
+
+<a id="frozen-proceeds"></a>
+
+### 동결된 지급: 확인하는 항목
+
+앱은 `getSanctionsOracle`(0이면 이 체인에 검사가 없음), `sanctionsStatus(wallet)`(Clean, Flagged, 또는 검사가 되돌려질 때 Unavailable), 그리고 `refreshSanctionsFlag`가 확정적인 조회로 동기화하는 등록부 `isSanctionsConfirmedFlagged(wallet)`를 읽습니다. Flagged, 또는 지갑이 등록된 상태의 Unavailable은 동결로 읽고, 등록되지 않은 Unavailable은 그렇게 읽지 않습니다. `claimAsLender`와 `claimAsBorrower`는 `whenNotPaused` 다음에 호출자를 검사하고 장애는 통과시킵니다. 프로토콜이 기록된 당사자를 위해 지급을 동결한 쪽은 fail-closed로 해제되어, 그 당사자가 Clean으로 읽힐 때까지 그때 누가 포지션을 보유하든 `SanctionedAddress` 또는 `SanctionsOracleUnavailable`로 되돌려집니다. 프로토콜은 그 기록된 당사자에 대한 조회를 제공하지 않으므로, 앱은 그 경우 모의 실행에 의존하고 그 거절을 같은 말로 전합니다. `claimAsSeller`는 표시된 판매자를, 그리고 장애 중에는 등록된 판매자를 거절합니다. 대출이 진행되는 동안 표시된 보유자를 위해 보관된 대출자 몫은 `getClaimable(loanId, true)`의 `heldForLender`에 더해지며, 대출자의 청구가 지급할 때까지 기록된 대출자의 볼트에 예약됩니다. 표시된 차입자도 상환은 할 수 있지만 담보 추가는 할 수 없습니다.
+
+<a id="extension-reserves"></a>
+
+### 연장 예비금: 확인하는 항목
+
+`fundExtendReserve(loanId, amount)`는 차입자 포지션 보유자의 지갑에서 대출의 원금 토큰을 본인 볼트로 입금하고 그 대출용으로 예약합니다. `whenNotPaused`와 제재 검사를 거치며, 대출이 Active이고 ERC-20 대출이며 주기적 이자 주기가 없지 않으면 거부됩니다. `getExtendFunding(loanId, holder)`는 토큰, `reserved`, 보유자의 다른 자유 잔액, 그리고 연장이 지금과 기간 종료 시 부과할 금액을 반환합니다. 연장은 현재 보유자의 볼트에서만, 예비금부터 부과합니다. `withdrawExtendReserve(account, loanId, amount)`는 `whenNotPaused`를 거치고, 호출자가 계정의 관리자(본인 지갑, 또는 교체 후의 컨트롤러)일 것을 요구하며, 호출자를 검사하고(장애 시 통과), 예약된 금액을 넘으면 `ExtendReserveInsufficient`로 되돌립니다. 대출 상태와 관계없이 열려 있습니다. 앱은 지갑 아래 기록된 인덱스 활동 (`ExtendReserveFunded`, `ExtendReserveWithdrawn`, `ExtendChargeDrawn`)에서 대출 목록을 만들며, 번호 조회는 체인만 읽습니다. 검토가 읽은 예비금 전부를 인출하고, 호출을 검토 때와 전송 때 다시 시험 실행하며, 완료 카드는 `ExtendReserveWithdrawn`(금액과 예약된 채 남는 금액)를 읽고, 보호 모드가 지급을 대기열에 넣거나 보관한 경우 `PayoutQueued` 또는 `PayoutHeldInVault`도 읽습니다.
 
 <a id="risk-access"></a>
 

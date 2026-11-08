@@ -1992,11 +1992,35 @@ Positions 通过一个共享读取器读取与 Home 相同的持仓清单：`get
 
 审核页读取 `getClaimable`（出借人记录已扣除前任卖家的部分，旁边附有 `getSellersShareOfLenderClaim`）、`getBorrowerSurplusClaim` 和 `getLoanCollateralLien`，并模拟运行领取，这也会执行制裁检查。列表以头寸代币为准：`getUserDashboardClaimables` 列出登记当事人的领取，因此列出的记录只在钱包持有该方时保留；从他人处得到的、已结束贷款上的持有头寸，则直接读取其领取。完成卡片读取 `LenderFundsClaimed` / `BorrowerFundsClaimed`、`BorrowerSurplusClaimed` 和 `LoanSettled`，以及转入钱包的代币；对处于保护账户模式的调用者，读取 `PayoutQueued`（账户自己的金库）、`PayoutHeldInVault`（账户已锁定或队列已满）或 `PaymentCreditedToVault`（其他当事人的金库）。在 FallbackPending 贷款上，出借人的领取可能在领取时执行内部撮合并改写记录，因此完成卡片会将转账与协议自己的记录进行比较。
 
+<a id="claim-everything"></a>
+
+### 全部领取：检查哪些内容
+
+批量交易经由 `multicall(calls)`，它在协议内部以 `delegatecall` 执行每个调用，因此 `msg.sender` 仍是您的钱包，每个调用各自检查自己的规则。它最多接受 30 个调用，应用为每个调用设置 `allowFailure`，因此被拒绝的调用只回退自身，批量交易继续执行。调用包括 `claimAsLender` / `claimAsBorrower(loanId)`；`claimInteractionRewardsTo(Vault)`（同时释放被保留的奖励），或在奖励预览无法完成但 `getRewardSanctionsStatus` 读取为 Deliver 时使用 `claimHeldInteractionRewards(Vault)`；针对 `getLenderIntentsByOwner` 中每个意向的 `availableCapital` 调用 `withdrawLenderIntentCapital(account, lendingAsset, collateralAsset, amount)`；针对 VPFI 的 `freeHolding` 调用 `withdrawVPFIFromVault(amount)`；以及针对 `getPayrollStream` 中受益人为该钱包的每个薪酬流，按 `getWithdrawableSalary` 调用 `withdrawSalary(streamId)`。FallbackPending 贷款上的出借人领取不纳入，因为领取时的撮合决定其支付金额。审核会试运行批量交易，读取每个调用的 `success` 和回退数据，将被拒绝的调用连同解码后的错误排除，并在发送时再试运行一次。完成卡片读取每个调用自己的事件 (`LenderFundsClaimed` / `BorrowerFundsClaimed`, `InteractionRewardsClaimed` with `RewardDeliveredToVault`, `LenderIntentCapitalWithdrawn`, `VPFIWithdrawnFromVault`, `SalaryWithdrawn`)；没有事件的调用即被跳过。转入钱包的代币，以及保护模式下的 `PayoutQueued` / `PayoutHeldInVault` / `PaymentCreditedToVault`，按代币在已领取的调用间汇总。暂停（每个调用上的 `whenNotPaused`）和被标记的钱包会在签名前阻止批量交易。
+
 <a id="payout-queue"></a>
 
 ### 付款队列：检查什么
 
 列表来自 `getPendingPayoutIds(account)`，每一行读取 `getPendingPayout(id)` 和 `requestCode(id)`；代码由提醒所用的同一个共享渲染器显示为六个 base32 字符，各行按 `releaseAt` 相对于最新区块时间戳排序，而不是浏览器时钟。`releasePayout(id)` 任何人都可调用，暂停期间在 `isEscapeOpen()` 之前会被拒绝。收款人既不是管理者（账户本身，或账户退役后的控制者）也不在 `getAllowlist` 中的排队行，会在时间检查之前被取消而不是支付；否则该行必须已到期、账户未锁定（`ProtectedVaultLocked`），并且在 `requireCosign` 开启期间已获联署（`CosignRequired`），收款人还会被再次筛查。`cancelPayout(id)` 属于管理者或签名人（`NotManagerOrSigner`），暂停期间也可使用，并会记入存管账本，使资产可以再次提取。`cosignPayout(id)` 属于 `getProtectedSigners` 中的签名人（`NotSigner`）；只有在账户要求联署且该行尚未联署时，应用才会提供此操作。每项操作在审核时先模拟运行，发送时再运行一次。完成卡片会读取该 id 的 `PayoutReleased`（金额和协议测得的 `delivered`）、`PayoutCancelled` 和 `PayoutCosigned`。keeper 的 `protectedAccount` 任务是否放行到期行，取决于能力服务的回答，默认为未知。锁定会取消所有排队行。
+
+<a id="seller-interest"></a>
+
+### 已出售头寸的利息：检查内容
+
+出售会将卖方已赚取但未支付的利息记录为一项债权：`getInterestLedger(loanId)` 按从旧到新的顺序列出未结债权，每项附带其总额。`claimAsSeller(loanId)` 带有 `whenNotPaused` 和制裁筛查。对于仍有未结债权的 Repaid、Defaulted、Settled 或 InternalMatched 贷款，它先分配出借人的回收款（`getSellersShareOfLenderClaim`），向每项债权支付至其净额（总额减去该贷款的 `treasuryFeeBpsAtInit` 份额，向下取整；贷款未记录费率时按旧的 1%），并关闭全部债权；FallbackPending 贷款不进行分配。随后，它针对本金代币，以及与之不同的出借人债权代币，将 `getSellerInterestHeld(loanId, seller, asset)` 从卖方自己的金库提取到卖方钱包，金额为零时以 `NothingToClaimAsSeller` 拒绝。应用根据索引中以该钱包为卖方归档的活动（`SellerInterestClaimRecorded`、`SellerInterestPaid`、`SellerInterestClaimClosed`、`SellerInterestWithdrawn`）列出贷款；按编号查询只读取链上数据。对于本金代币，审核会根据分配额精确推算钱包所得部分；对于其他代币，分配按价值进行，并注明在执行时确定。提取会在审核时试运行，发送时再运行一次。完成卡片读取 `SellerInterestClaimClosed`（已付、已入账、是否全额）和 `SellerInterestWithdrawn`，若受保护模式将付款排入队列或保留，还会读取 `PayoutQueued` 或 `PayoutHeldInVault`。
+
+<a id="frozen-proceeds"></a>
+
+### 被冻结的付款：检查哪些内容
+
+应用读取 `getSanctionsOracle`（为零表示此链上没有筛查）、`sanctionsStatus(wallet)`（Clean、Flagged，或在筛查回滚时为 Unavailable）以及 `isSanctionsConfirmedFlagged(wallet)`，即 `refreshSanctionsFlag` 根据确定性读取同步的登记簿。Flagged，或钱包已登记时的 Unavailable，视为冻结；未登记的 Unavailable 则不是。`claimAsLender` 和 `claimAsBorrower` 在 `whenNotPaused` 之后筛查调用方，并放行故障；协议为某个记录在案的一方冻结付款的那一侧以 fail-closed 方式释放：在该方读取为 Clean 之前，无论届时谁持有头寸，都会以 `SanctionedAddress` 或 `SanctionsOracleUnavailable` 回滚。协议没有提供查看该记录方的视图，因此应用在此依赖试运行，并用同样的措辞说明其拒绝。`claimAsSeller` 会拒绝被标记的卖方，以及在故障期间已登记的卖方。贷款进行期间，为被标记持有人暂存的出借人份额会计入 `getClaimable(loanId, true)` 的 `heldForLender`，预留在记录的出借人金库中，直到出借人的领取将其支付。被标记的借款人仍可还款，但不能追加抵押品。
+
+<a id="extension-reserves"></a>
+
+### 展期储备：检查哪些内容
+
+`fundExtendReserve(loanId, amount)` 将贷款的本金代币从借款人头寸持有人的钱包存入其自己的金库，并为该贷款预留。它带有 `whenNotPaused` 和制裁筛查，除非贷款为 Active、是 ERC-20 贷款且没有定期付息周期，否则会被拒绝。`getExtendFunding(loanId, holder)` 返回代币、`reserved`、持有人的其他可用余额，以及展期现在和窗口结束时将收取的金额；展期只从当前持有人的金库收取，先扣储备。`withdrawExtendReserve(account, loanId, amount)` 带有 `whenNotPaused`，要求调用者是该账户的管理者（其自己的钱包，或替换后的控制者），对调用者进行筛查（故障时放行），超出预留额时以 `ExtendReserveInsufficient` 回退；无论贷款处于何种状态均可调用。应用根据索引中记在该钱包名下的活动 (`ExtendReserveFunded`, `ExtendReserveWithdrawn`, `ExtendChargeDrawn`) 列出贷款；按编号查找只读取链上数据。它会取回审核读取到的全部储备，在审核时和发送时各试运行一次调用，完成卡片读取 `ExtendReserveWithdrawn`（金额以及仍保留的部分），在保护模式将付款排入队列或保留时，还会读取 `PayoutQueued` 或 `PayoutHeldInVault`。
 
 <a id="risk-access"></a>
 
