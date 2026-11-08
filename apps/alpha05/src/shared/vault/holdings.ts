@@ -15,8 +15,8 @@
  * Which assets to read: the protocol lists every asset contract ever credited
  * to the wallet's deposit record (`getDepositoryAssets`, paged until its
  * stated length; an empty page before the end is never the end), and the
- * wallet's own loans and open offers name the assets a position put there.
- * An asset that reached the vault by neither route (a plain transfer) cannot
+ * wallet's own loans, open offers and standing offers name the assets a
+ * position put there. An asset that reached the vault by neither route (a plain transfer) cannot
  * be found from the chain alone; the page says so instead of implying the
  * list is everything. The deposit record names an NFT collection but not its
  * token ids, so a collection is named without figures unless a loan names
@@ -24,7 +24,7 @@
  */
 import type { Abi, PublicClient } from 'viem';
 import { erc20Abi } from 'viem';
-import { LoanFacetABI, MetricsFacetABI, VaultDepositoryFacetABI, VaultFactoryFacetABI } from '@vaipakam/contracts/abis';
+import { LenderIntentFacetABI, LoanFacetABI, MetricsFacetABI, VaultDepositoryFacetABI, VaultFactoryFacetABI } from '@vaipakam/contracts/abis';
 import { answerOrNull } from '../reads/answer';
 import { NFT_ABI, readStandard, type Standard } from '../nft/nft';
 
@@ -32,6 +32,7 @@ type Hex = `0x${string}`;
 
 const DEPOSITORY = VaultDepositoryFacetABI as Abi;
 const FACTORY = VaultFactoryFacetABI as Abi;
+const INTENT = LenderIntentFacetABI as Abi;
 const LOAN = LoanFacetABI as Abi;
 const METRICS = MetricsFacetABI as Abi;
 const ZERO = '0x0000000000000000000000000000000000000000';
@@ -45,7 +46,7 @@ export const DEPOSITORY_PAGE = 50;
 export const DEPOSITORY_MAX_PAGES = 20;
 
 /** Why the page reads an asset. */
-export type HoldingSource = 'deposit' | 'loan' | 'offer';
+export type HoldingSource = 'deposit' | 'loan' | 'offer' | 'intent';
 
 /** An asset the page reads: an ERC-20, or one NFT token a loan names. */
 export interface HoldingSubject {
@@ -186,10 +187,24 @@ export async function readVaultHoldings(c: PublicClient, diamond: Hex, account: 
     answerOrNull(c.readContract({ address: diamond, abi: LOAN, functionName: 'getLoanDetails', args: [id], ...at }) as Promise<LoanLegs>),
   );
   const legs = loanAssets(records.loans);
-  const all: PositionAssets = { erc20: [...legs.erc20, ...positions.erc20], nfts: [...legs.nfts, ...positions.nfts], loanIds: ids, complete: positions.complete };
+  // Every standing offer the wallet owns, cancelled ones too: funding one
+  // puts its lent asset in this vault without adding it to the deposit
+  // record, and a cancelled one can still hold capital.
+  const intents = await readPagedList<IntentRow>(
+    (offset, limit) =>
+      c.readContract({ address: diamond, abi: INTENT, functionName: 'getLenderIntentsByOwner', args: [account, offset, limit], ...at }) as Promise<
+        readonly [readonly IntentRow[], bigint]
+      >,
+  );
+  const all: PositionAssets = {
+    erc20: [...legs.erc20, ...intentAssets(intents.assets), ...positions.erc20],
+    nfts: [...legs.nfts, ...positions.nfts],
+    loanIds: ids,
+    complete: positions.complete,
+  };
   const { subjects, collections } = holdingSubjects(deposited, all);
   const rows = await Promise.all(subjects.map((s) => readHoldingRow(c, diamond, account, vault, s, block)));
-  return { vault, rows, collections, listComplete: list.complete, positionsComplete: positions.complete && history.complete && records.complete, block };
+  return { vault, rows, collections, listComplete: list.complete, positionsComplete: positions.complete && history.complete && records.complete && intents.complete, block };
 }
 
 /** Each loan's record; a loan whose read had no answer makes the position
@@ -213,6 +228,19 @@ export function loanAssets(loans: readonly LoanLegs[]): Pick<PositionAssets, 'er
     if (l.prepayAsset.toLowerCase() !== ZERO) leg(erc20, nfts, l.prepayAsset, KIND.erc20, 0n, 'loan');
   }
   return { erc20, nfts };
+}
+
+/** A standing offer as the owner's list returns it, as far as discovery
+ *  goes. */
+export interface IntentRow {
+  intent: { lendingAsset: Hex };
+  active: boolean;
+}
+
+/** The lent asset of every standing offer the wallet owns, active or not:
+ *  its capital sits in this vault under the offer's lien. */
+export function intentAssets(rows: readonly IntentRow[]): PositionAssets['erc20'] {
+  return rows.map((r) => ({ asset: r.intent.lendingAsset, source: 'intent' as const }));
 }
 
 function leg(erc20: PositionAssets['erc20'], nfts: PositionAssets['nfts'], asset: Hex, type: number, tokenId: bigint, source: HoldingSource): void {

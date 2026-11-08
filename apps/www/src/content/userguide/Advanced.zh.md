@@ -2026,7 +2026,7 @@ Positions 通过一个共享读取器读取与 Home 相同的持仓清单：`get
 
 ### 你的金库：读取什么
 
-金库是 `VaultFactoryFacet.getUserVaultAddress(wallet)`；`getOrCreateUserVault(wallet)` 创建它（一级制裁筛查，无暂停门槛），完成卡片读取 `UserVaultCreated`。每项资产在同一区块读取：金库自身的余额（ERC-20 用 `balanceOf`，ERC-721 用 `ownerOf`，ERC-1155 用 `balanceOf`）、`getTrackedHolding`、`withdrawableNow` 和 `untrackedHolding`。“在你的金库中”取余额与跟踪持有量中较小者；“现在可自由提取”即原样返回的 `withdrawableNow`（存入持有量，以 `freeHolding` 为上限：跟踪量减去留置再减去保护模式的预留）；“被你的头寸占用”是计入数量减去该值。资产来自 `getDepositoryAssets(wallet, offset, limit)`，按页读取直到返回的总数（在此之前出现空页视为不完整），每个列出合约的标准通过 ERC-165 读取，并加上 `getUserLoansPaginated(wallet)` 中每笔贷款以及钱包持有其头寸的每笔贷款的各条腿（出借资产、抵押品、租赁预付费用代币），每笔都在同一区块通过 `getLoanDetails` 读取，以及未成交报价的各条腿。记录不保存 NFT 代币 ID，因此每个已存入的 NFT 集合都会在一条说明中列名，只有贷款或报价涉及的代币才带数字列出。尘额是大于零且小于一个完整代币 1e-11 的计入数量。
+金库是 `VaultFactoryFacet.getUserVaultAddress(wallet)`；`getOrCreateUserVault(wallet)` 创建它（一级制裁筛查，无暂停门槛），完成卡片读取 `UserVaultCreated`。每项资产在同一区块读取：金库自身的余额（ERC-20 用 `balanceOf`，ERC-721 用 `ownerOf`，ERC-1155 用 `balanceOf`）、`getTrackedHolding`、`withdrawableNow` 和 `untrackedHolding`。“在你的金库中”取余额与跟踪持有量中较小者；“现在可自由提取”即原样返回的 `withdrawableNow`（存入持有量，以 `freeHolding` 为上限：跟踪量减去留置再减去保护模式的预留）；“被你的头寸占用”是计入数量减去该值。资产来自 `getDepositoryAssets(wallet, offset, limit)`，按页读取直到返回的总数（在此之前出现空页视为不完整），每个列出合约的标准通过 ERC-165 读取，并加上 `getUserLoansPaginated(wallet)` 中每笔贷款以及钱包持有其头寸的每笔贷款的各条腿（出借资产、抵押品、租赁预付费用代币），每笔都在同一区块通过 `getLoanDetails` 读取，以及未成交报价的各条腿。还会加上 `getLenderIntentsByOwner(wallet)` 中每个常设报价（包括已取消的）所出借的资产：为常设报价注资会把该资产放入金库，而不在存入记录中留下条目。记录不保存 NFT 代币 ID，因此每个已存入的 NFT 集合都会在一条说明中列名，只有贷款或报价涉及的代币才带数字列出。尘额是大于零且小于一个完整代币 1e-11 的计入数量。
 
 <a id="risk-access"></a>
 

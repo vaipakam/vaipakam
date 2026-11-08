@@ -1,5 +1,18 @@
 import { describe, expect, it } from 'vitest';
-import { holdingFigures, holdingSubjects, isDust, isEmpty, loanAssets, positionAssets, readLoanLegs, readPagedList, shownRows, type HoldingRow, type LoanLegs } from './holdings';
+import {
+  holdingFigures,
+  holdingSubjects,
+  intentAssets,
+  isDust,
+  isEmpty,
+  loanAssets,
+  positionAssets,
+  readLoanLegs,
+  readPagedList,
+  shownRows,
+  type HoldingRow,
+  type LoanLegs,
+} from './holdings';
 
 type Hex = `0x${string}`;
 const A = '0x00000000000000000000000000000000000000a1' as Hex;
@@ -91,6 +104,22 @@ describe('positionAssets', () => {
       { asset: B, source: 'offer' },
     ]);
     expect(p.nfts).toEqual([{ standard: 'erc1155', asset: N, tokenId: 4n, source: 'offer' }]);
+  });
+});
+
+describe('intentAssets', () => {
+  it('names the lent asset of every standing offer, a cancelled one too, and merges with a deposit', () => {
+    const erc20 = intentAssets([
+      { intent: { lendingAsset: A }, active: true },
+      { intent: { lendingAsset: B }, active: false },
+    ]);
+    expect(erc20).toEqual([
+      { asset: A, source: 'intent' },
+      { asset: B, source: 'intent' },
+    ]);
+    const { subjects } = holdingSubjects([{ asset: A, standard: 'erc20' }], { erc20, nfts: [], loanIds: [], complete: true });
+    expect(subjects.find((x) => x.asset === A)?.sources).toEqual(['deposit', 'intent']);
+    expect(subjects.find((x) => x.asset === B)?.sources).toEqual(['intent']);
   });
 });
 

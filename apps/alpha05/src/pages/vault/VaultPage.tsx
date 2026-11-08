@@ -20,7 +20,7 @@ import { CreateVault, useCreateVaultHeld } from '../../shared/vault/CreateVault'
 
 type Hex = `0x${string}`;
 
-const SOURCE: Record<HoldingSource, CopyKey> = { deposit: 'vault.sourceDeposit', loan: 'vault.sourceLoan', offer: 'vault.sourceOffer' };
+const SOURCE: Record<HoldingSource, CopyKey> = { deposit: 'vault.sourceDeposit', loan: 'vault.sourceLoan', offer: 'vault.sourceOffer', intent: 'vault.sourceIntent' };
 
 /**
  * Vault (ACC-20, ACC-21, ACC-24): the connected wallet's own vault on its
