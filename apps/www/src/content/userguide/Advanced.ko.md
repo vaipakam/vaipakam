@@ -2162,6 +2162,12 @@ Positions는 하나의 공유 리더로 Home과 같은 보유 목록을 읽습�
 
 판매는 판매자가 벌었지만 받지 못한 이자를 청구권으로 기록합니다. `getInterestLedger(loanId)`는 열린 청구권을 오래된 순서대로 각각의 총액과 함께 나열합니다. `claimAsSeller(loanId)`에는 `whenNotPaused`와 제재 확인이 있습니다. 청구권이 열려 있는 Repaid, Defaulted, Settled, InternalMatched 대출에서는 먼저 대출자 회수액(`getSellersShareOfLenderClaim`)을 나누어 각 청구권에 순액(총액에서 대출의 `treasuryFeeBpsAtInit` 몫을 빼고 내림, 기록이 없는 대출은 기존 1%)까지 지급하고 모두 닫습니다. FallbackPending 대출은 나누지 않습니다. 그다음 원금 토큰과, 다를 경우 대출자 청구권 토큰에 대해 `getSellerInterestHeld(loanId, seller, asset)`를 판매자 자신의 볼트에서 판매자의 지갑으로 출금하고, 0이면 `NothingToClaimAsSeller`로 거부합니다. 앱은 지갑을 판매자로 기록한 인덱스 활동(`SellerInterestClaimRecorded`, `SellerInterestPaid`, `SellerInterestClaimClosed`, `SellerInterestWithdrawn`)에서 대출을 나열하고, 번호 조회는 체인만 읽습니다. 원금 토큰에서는 검토가 분배액에서 지갑의 몫을 정확히 계산하고, 다른 토큰에서는 가치 기준으로 나누며 실행 시 결정된다고 밝힙니다. 출금은 검토에서 시험 실행하고 전송할 때 다시 실행합니다. 완료 카드는 `SellerInterestClaimClosed`(지급액, 입금액, 전액 지급)와 `SellerInterestWithdrawn`을 읽고, 보호 모드가 지급을 대기열에 넣거나 보관한 경우 `PayoutQueued` 또는 `PayoutHeldInVault`도 읽습니다.
 
+<a id="frozen-proceeds"></a>
+
+### 동결된 지급: 확인하는 항목
+
+앱은 `getSanctionsOracle`(0이면 이 체인에 검사가 없음), `sanctionsStatus(wallet)`(Clean, Flagged, 또는 검사가 되돌려질 때 Unavailable), 그리고 `refreshSanctionsFlag`가 확정적인 조회로 동기화하는 등록부 `isSanctionsConfirmedFlagged(wallet)`를 읽습니다. Flagged, 또는 지갑이 등록된 상태의 Unavailable은 동결로 읽고, 등록되지 않은 Unavailable은 그렇게 읽지 않습니다. `claimAsLender`와 `claimAsBorrower`는 `whenNotPaused` 다음에 호출자를 검사하고 장애는 통과시킵니다. 프로토콜이 기록된 당사자를 위해 지급을 동결한 쪽은 fail-closed로 해제되어, 그 당사자가 Clean으로 읽힐 때까지 그때 누가 포지션을 보유하든 `SanctionedAddress` 또는 `SanctionsOracleUnavailable`로 되돌려집니다. 프로토콜은 그 기록된 당사자에 대한 조회를 제공하지 않으므로, 앱은 그 경우 모의 실행에 의존하고 그 거절을 같은 말로 전합니다. `claimAsSeller`는 표시된 판매자를, 그리고 장애 중에는 등록된 판매자를 거절합니다. 대출이 진행되는 동안 표시된 보유자를 위해 보관된 대출자 몫은 `getClaimable(loanId, true)`의 `heldForLender`에 더해지며, 대출자의 청구가 지급할 때까지 기록된 대출자의 볼트에 예약됩니다. 표시된 차입자도 상환은 할 수 있지만 담보 추가는 할 수 없습니다.
+
 <a id="risk-access"></a>
 
 ### Risk Access: 내 위험 등급

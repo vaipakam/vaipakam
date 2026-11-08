@@ -15,6 +15,7 @@ import { OwnStamp } from '../../shared/ui/OwnStamp';
 import { useNow } from '../../shared/ui/useNow';
 import { WhyLink } from '../../shared/help/WhyLink';
 import { Notice } from '../../shared/ui/Notice';
+import { FrozenNotice, useFrozenState } from '../../shared/sanctions/FrozenNotice';
 import { LoanActions } from './LoanActions';
 import { LoanClaims } from './LoanClaims';
 import { Fact, Facts } from './Facts';
@@ -113,11 +114,21 @@ function LoanBody({ loanId, view: v, own, chain, meta }: { loanId: bigint; view:
   const borrowerSide = role?.borrower === true && role.lender !== true;
   const obligations = live ? loanObligations({ loan: l, borrowerSide, healthFactor: v.healthFactor ?? 0n }, v.deadlines, nowSec) : null;
   const unknown = text('receipt.unknown');
+  // RB-FROZEN — the reader's own standing, said only to a holder of a side.
+  const frozen = useFrozenState(chain.diamondAddress, role ? account : null);
+  // What a running loan already paid that waits for the lender's claim, in
+  // the loan's payment token (the principal token, or a rental's prepay
+  // token).
+  const held = l.status === LOAN_STATUS_ACTIVE && v.heldForLender !== null && v.heldForLender > 0n ? v.heldForLender : null;
+  // A surplus held for the borrower keeps a repaid loan from settling until
+  // it is collected (LN-53): said, so the loan's status reads true.
+  const surplusOpen = loanStatusName(l.status) === 'repaid' && v.claims.borrower !== null && v.claims.borrower.surplus !== null;
 
   return (
     <>
       <StatusLine status={l.status} />
       <RoleLine role={role} />
+      {role && <FrozenNotice state={frozen} />}
       {obligations && (
         <div className="position-now">
           <StageLine stage={obligations.stage} borrowerSide={borrowerSide} rental={!erc20} defaultable={v.defaultable} />
@@ -154,7 +165,19 @@ function LoanBody({ loanId, view: v, own, chain, meta }: { loanId: bigint; view:
       )}
 
       <LoanActions loanId={loanId} view={v} role={role} own={own} chain={chain} meta={meta} />
-      <LoanClaims loanId={loanId} view={v} own={own} chain={chain} meta={meta} />
+      <LoanClaims loanId={loanId} view={v} own={own} chain={chain} meta={meta} frozen={frozen} />
+      {held !== null && (
+        <div data-testid="position-held-for-lender">
+          <Notice tone="info" tier="A">
+            {format('frozen.reservedRunning', { amount: tokenAmount(held, erc20 ? l.principalAsset : l.prepayAsset, meta, format) })}
+          </Notice>
+        </div>
+      )}
+      {surplusOpen && (
+        <p className="tier-a" data-testid="position-surplus-open">
+          {text('frozen.openForSurplus')}
+        </p>
+      )}
 
       {live && (
         <Facts title={text('position.datesTitle')} id="position-dates" lead={v.deadlines === null ? <p className="tier-a">{text('position.datesUnknown')}</p> : null}>

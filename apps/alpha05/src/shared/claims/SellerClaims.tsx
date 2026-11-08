@@ -16,6 +16,7 @@ import { FormField } from '../ui/FormField';
 import { OwnStamp } from '../ui/OwnStamp';
 import { discoverSoldLoans, mineGross, mineNet, readPaused, readSellerRow, rowFeeBps, sellerRowShown, sellerVerdict, splitFinal, splitPart, type SellerRow } from './sellerClaim';
 import type { SellerClaimReview } from './sellerClaimReview';
+import type { FrozenState } from '../sanctions/posture';
 import { SELLER_CLAIM_KEY_PREFIX, SellerClaim, sellerClaimKey, sellerWords, useSellerClaimHeld } from './SellerClaim';
 
 /** How often the index is asked again for the wallet's sold loans. */
@@ -32,7 +33,7 @@ const DISCOVERY_POLL_MS = 60_000;
  * answer. A withdrawal in progress stays on screen until its finish card is
  * closed, whatever the latest list says.
  */
-export function SellerClaims({ own, chain }: { own: OwnStateClient; chain: SupportedChain }) {
+export function SellerClaims({ own, chain, frozen }: { own: OwnStateClient; chain: SupportedChain; frozen?: FrozenState }) {
   const { text, format } = useCopy();
   const world = useWorldRail();
   const wallet = own.account;
@@ -104,7 +105,7 @@ export function SellerClaims({ own, chain }: { own: OwnStateClient; chain: Suppo
       {shown.length + held.length > 0 && (
         <ul className="rows" data-testid="seller-rows">
           {shown.map((r) => (
-            <SellerRowCard key={r.loanId.toString()} row={r} paused={rows.data?.paused ?? null} readAt={rows.readAt ?? 0} own={own} chain={chain} meta={meta} />
+            <SellerRowCard key={r.loanId.toString()} row={r} paused={rows.data?.paused ?? null} frozen={frozen} readAt={rows.readAt ?? 0} own={own} chain={chain} meta={meta} />
           ))}
           {held.map((h) => (
             <HeldSellerCard key={h.loanId.toString()} loanId={h.loanId} own={own} chain={chain} meta={meta} />
@@ -154,6 +155,7 @@ export function SellerClaims({ own, chain }: { own: OwnStateClient; chain: Suppo
 function SellerRowCard({
   row,
   paused,
+  frozen,
   readAt,
   own,
   chain,
@@ -161,6 +163,7 @@ function SellerRowCard({
 }: {
   row: SellerRow;
   paused: boolean | null;
+  frozen: FrozenState | undefined;
   readAt: number;
   own: OwnStateClient;
   chain: SupportedChain;
@@ -193,7 +196,7 @@ function SellerRowCard({
   const fee = rowFeeBps(row)!;
   const final = splitFinal(Number(loan.status));
   const part = splitPart(row, wallet);
-  const verdict = sellerVerdict(row, wallet, paused, copy, readAt);
+  const verdict = sellerVerdict(row, wallet, paused, copy, readAt, frozen);
   return (
     <li className="card" data-seller-row={id}>
       {head}

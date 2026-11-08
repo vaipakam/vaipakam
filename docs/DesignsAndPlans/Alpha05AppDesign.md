@@ -1002,9 +1002,9 @@ above. Each resolves here, so a route reviewer needs no private file:
   closed. Claims lists the payouts of
   the positions the wallet holds now, so a bought position pays its new
   holder, says "nothing to collect" only when every read completed, and
-  names the payouts it does not yet collect (frozen sale proceeds,
-  extension reserves) with a link to the current app until their slices
-  land; seller interest is RB-SELLER-CLAIM.
+  names the payouts it does not yet collect (extension reserves) with a
+  link to the current app until their slice lands; seller interest is
+  RB-SELLER-CLAIM, and a payout frozen for a flagged wallet is RB-FROZEN.
 - **RB-PAYOUT-QUEUE** — Claims lists a protected account's payout queue
   (LN-54, LN-55, LN-56): the wallet's own account, then an account it
   manages since a replacement retired it, and in Advanced mode any account
@@ -1063,6 +1063,34 @@ above. Each resolves here, so a route reviewer needs no private file:
   reviewed one said beside it) and each payment where it landed. A row that
   could not be read is said so, and a withdrawal in progress stays on screen
   until its finish card is closed, whatever the latest list or lookup shows.
+- **RB-FROZEN** — money the protocol holds for a wallet the sanctions
+  screen flags (LN-53) is stated as "Frozen, awaiting de-listing": locked
+  where its loan keeps it, in a vault, not lost, and released once the
+  wallet is de-listed. The wallet's standing is read once, from the
+  protocol's own views (whether a screen is configured, the screen's answer
+  for the wallet, and the registry of wallets confirmed flagged while the
+  screen could be read), and is one of four: flagged; an outage, meaning the
+  screen cannot be read and the wallet was confirmed flagged before, so a
+  payout frozen for it stays locked until the screen answers (release is
+  fail-closed); unknown, when the standing could not be read, said and never
+  assumed either way; or nothing frozen. An outage alone never freezes
+  anyone, so a wallet never confirmed flagged reads as nothing frozen in an
+  outage. Claims and the loan's page show a notice for the first three, to
+  the wallet itself only. Every claim's rule (RB-ELIG) refuses a flagged
+  wallet right after the pause, in these words, and a seller's withdrawal
+  also refuses in an outage for a wallet confirmed flagged, as
+  `claimAsSeller` checks it; a loan claim's caller check lets an outage
+  through, so its dry run decides. A dry run refused for a sanctions reason
+  is said in the same words: a party the protocol recorded as frozen on that
+  loan side (the app cannot read who, since the protocol keeps no view of
+  it), or a release waiting for the screen. On a running loan the page
+  states what the loan already paid that is reserved for the lender
+  position in the lender vault the loan records, such as a payment made
+  while the holder was flagged, until the lender's claim pays it. A repaid
+  loan whose borrower surplus is still held says that it settles once that
+  surplus is collected, so its status reads true. A change to the wallet's
+  standing reopens a claim's review. Repayments and close-outs are never
+  held for a flagged party; only what it is owed waits.
 
 ## 3. Companion specifications
 

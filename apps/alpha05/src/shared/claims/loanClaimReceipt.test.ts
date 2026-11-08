@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { OPEN } from '../eligibility/types';
 import type { LoanDetails } from '../positions/loanView';
 import { claimDestination, loanClaimReceipt } from './loanClaimReceipt';
-import { loanClaimChanged, type LoanClaimReview } from './loanClaimReview';
+import { loanClaimBlockers, loanClaimChanged, type LoanClaimReview } from './loanClaimReview';
 
 const A = '0x00000000000000000000000000000000000000aa' as const;
 const copy = { text: (k: string) => k, format: (k: string) => k } as never;
@@ -20,6 +20,7 @@ const review: LoanClaimReview = {
   sellersShare: null,
   protection: { ...on, enabled: false },
   route: 'wallet',
+  frozen: null,
   dryRun: null,
   verdict: OPEN,
   readAt: 1,
@@ -73,5 +74,17 @@ describe('loanClaimReceipt seller share', () => {
     expect(sellers({ ...lender, sellersShare: 0n })).toBeUndefined();
     expect(lines({ ...lender, sellersShare: 0n })).not.toContain('loanClaim.sellersUnreadNote');
     expect(sellers(review)).toBeUndefined();
+  });
+});
+
+describe('loanClaimBlockers frozen refusals (RB-FROZEN)', () => {
+  const refused = (code: string) => ({ code, reason: 'raw', reopensAt: null, remedy: null });
+  it('says a dry-run sanctions refusal in the frozen-proceeds words', () => {
+    expect(loanClaimBlockers({ ...review, dryRun: refused('SanctionedAddress') }, copy)).toEqual(['frozen.claimRecorded']);
+    expect(loanClaimBlockers({ ...review, dryRun: refused('SanctionsOracleUnavailable') }, copy)).toEqual(['frozen.claimOutage']);
+    expect(loanClaimBlockers({ ...review, dryRun: refused('EnforcedPause') }, copy)).toEqual(['repay.dryRunRefused']);
+  });
+  it('reopens the review when the wallet’s standing changed', () => {
+    expect(loanClaimChanged(review, { ...review, frozen: 'flagged' }, copy)).toBe('repay.changedVerdict');
   });
 });

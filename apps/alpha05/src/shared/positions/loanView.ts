@@ -28,7 +28,7 @@ import {
 } from '@vaipakam/contracts/abis';
 import { sideClaimableStatus, type SideClaim } from '../claims/loanClaim';
 import { readSideClaim } from '../claims/loanClaimReview';
-import { isLiveStatus, type Deadlines, type LoanSummary } from './model';
+import { isLiveStatus, LOAN_STATUS_ACTIVE, type Deadlines, type LoanSummary } from './model';
 import { answerOrNull } from '../reads/answer';
 
 type Hex = `0x${string}`;
@@ -202,6 +202,13 @@ export interface LoanView {
    *  when nothing can be); it moves with prices. Null when unread or not
    *  asked. */
   maxWithdrawable: bigint | null;
+  /** For a running loan, what the protocol holds for the lender position
+   *  out of payments the loan already made (`getClaimable(loanId, true)`'s
+   *  `heldForLender`): reserved in the stored lender's vault until the
+   *  lender's claim pays it, such as a payment parked while the holder was
+   *  flagged by the sanctions screen (LN-53, RB-FROZEN). Null when unread
+   *  or the loan is not running. */
+  heldForLender: bigint | null;
 }
 
 /** One interest period, as the protocol previews its settlement. */
@@ -288,6 +295,7 @@ export async function readLoanView(client: PublicClient, diamond: Hex, loanId: b
     maxWithdrawable,
     lenderClaim,
     borrowerClaim,
+    runningLenderRow,
   ] = await Promise.all([
     answerOrNull(read<Hex>(NFT, 'ownerOf', [loan.lenderTokenId])),
     answerOrNull(read<Hex>(NFT, 'ownerOf', [loan.borrowerTokenId])),
@@ -310,6 +318,7 @@ export async function readLoanView(client: PublicClient, diamond: Hex, loanId: b
     liveErc20 ? answerOrNull(read<bigint>(PARTIAL_WITHDRAWAL, 'calculateMaxWithdrawable', [loanId])) : null,
     sideClaimableStatus('lender', Number(loan.status)) ? readSideClaim(client, diamond, loanId, 'lender', at) : null,
     sideClaimableStatus('borrower', Number(loan.status)) ? readSideClaim(client, diamond, loanId, 'borrower', at) : null,
+    loan.status === LOAN_STATUS_ACTIVE ? readSideClaim(client, diamond, loanId, 'lender', at) : null,
   ]);
 
   // A loan with a cadence answers to its checkpoint too: with the checkpoint
@@ -359,6 +368,7 @@ export async function readLoanView(client: PublicClient, diamond: Hex, loanId: b
     collateralLiquidNow: collateralLiquidity === null ? null : collateralLiquidity === LIQUID_NOW,
     maxWithdrawable,
     claims: { lender: lenderClaim, borrower: borrowerClaim },
+    heldForLender: runningLenderRow ? runningLenderRow.heldForLender : null,
   };
   return { view };
 }

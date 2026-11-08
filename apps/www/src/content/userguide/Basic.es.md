@@ -1312,6 +1312,12 @@ Con el modo protegido activado, todo lo que sale de tu bóveda hacia tu billeter
 
 Cuando vendes una posición de prestamista, los intereses que ganaste mientras la tenías y aún no cobraste siguen siendo tuyos como un derecho sobre el préstamo. Claims muestra cada préstamo en el que tienes ese derecho, con lo que se te debe tras la parte del protocolo en los intereses y lo que ya espera en tu bóveda. Mientras el préstamo sigue en curso, cada pago de intereses paga primero los derechos abiertos, el más antiguo primero, en la bóveda propia de cada vendedor; hasta que algo llega a la tuya no hay nada que retirar. Cuando el préstamo ha terminado, retirar primero reparte lo que recuperó el lado prestamista: primero el principal del titular, luego cada derecho de vendedor, el más antiguo primero. Entonces se cierran todos los derechos abiertos, y lo que un derecho no cobra queda sin pagar. Los préstamos se encuentran en el índice de la app; si no puede listarlos, busca un préstamo por su número, que se lee solo de la cadena. No hace falta ninguna aprobación, así que tu billetera pide una vez, tras una simulación, y la tarjeta final muestra lo que pagó la transacción.
 
+<a id="frozen-proceeds"></a>
+
+### Cuando un pago está congelado
+
+Si el control de sanciones marca su billetera, el protocolo no toma nada de lo que se le debe y nunca impide que un préstamo se cierre: la otra parte igualmente recibe su pago. Su parte queda aparcada en una bóveda, bloqueada, y se libera cuando su billetera sale de la lista. Claims y la página del préstamo indican entonces «Congelado, a la espera de salir de la lista» y no ofrecen botón para cobrar. Si el control no puede leerse y su billetera fue confirmada como marcada antes, un pago congelado sigue bloqueado hasta que el control responda de nuevo; una caída por sí sola nunca congela a nadie. En un préstamo en curso, su página muestra además lo que el préstamo ya pagó y está reservado para la posición del prestamista hasta que este lo cobre, y un préstamo reembolsado indica cuándo espera un excedente que el prestatario aún no ha cobrado.
+
 <a id="risk-access"></a>
 
 ### Risk Access: tu nivel de riesgo
