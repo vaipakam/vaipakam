@@ -24,8 +24,8 @@ import {IProtocolRegistryReader} from "../interfaces/IProtocolRegistryReader.sol
  * @dev    Rules this contract holds by itself, whatever its owner's own
  *         configuration says:
  *         - It is not upgradeable. A different rule set is a new deploy.
- *         - The pointers passed to the constructor are the only writes that
- *           do not wait, and they exist only at construction.
+ *         - The pointers and set members passed to the constructor are the
+ *           only writes that do not wait, and they exist only at construction.
  *         - Every change that ADDS trust waits: a pointer change, a new set
  *           member and a lowered delay are each a proposal by the owner (the
  *           Timelock) and an execution, by anyone, no sooner than the delay
@@ -139,12 +139,22 @@ contract ProtocolRegistry is Ownable2Step, IProtocolRegistryReader {
     ///                  delay, and it exists only here: once deployed, every
     ///                  pointer change goes through {proposePointer}.
     /// @param values    Their values, one per key, none zero.
+    /// @param memberSets Set names for the members added at construction, one
+    ///                  entry per member, with no wait, for the same reason:
+    ///                  a fresh deploy whose vaults would refuse every fill
+    ///                  and fee with empty sets seeds them here. Like the
+    ///                  pointers, this exists only here; afterwards every add
+    ///                  goes through {proposeAdd}.
+    /// @param setMembers The members, one per entry of `memberSets`, none zero,
+    ///                  none repeated within its set.
     constructor(
         address owner_,
         address guardian_,
         uint256 delay_,
         bytes32[] memory keys,
-        address[] memory values
+        address[] memory values,
+        bytes32[] memory memberSets,
+        address[] memory setMembers
     ) Ownable(owner_) {
         if (guardian_ == address(0)) revert ZeroAddress();
         _checkDelay(delay_);
@@ -158,6 +168,12 @@ contract ProtocolRegistry is Ownable2Step, IProtocolRegistryReader {
             if (_pointers[keys[i]] != address(0)) revert NoChange();
             _pointers[keys[i]] = values[i];
             emit PointerSet(keys[i], address(0), values[i]);
+        }
+        if (memberSets.length != setMembers.length) revert LengthMismatch();
+        for (uint256 i; i < setMembers.length; ++i) {
+            if (setMembers[i] == address(0)) revert ZeroAddress();
+            if (!_members[memberSets[i]].add(setMembers[i])) revert AlreadyMember(memberSets[i], setMembers[i]);
+            emit MemberAdded(memberSets[i], setMembers[i]);
         }
     }
 

@@ -26,6 +26,16 @@
         "name": "values",
         "type": "address[]",
         "internalType": "address[]"
+      },
+      {
+        "name": "memberSets",
+        "type": "bytes32[]",
+        "internalType": "bytes32[]"
+      },
+      {
+        "name": "setMembers",
+        "type": "address[]",
+        "internalType": "address[]"
       }
     ],
     "stateMutability": "nonpayable"

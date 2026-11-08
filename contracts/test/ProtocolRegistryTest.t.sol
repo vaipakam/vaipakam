@@ -33,7 +33,7 @@ contract ProtocolRegistryTest is Test {
         address[] memory values = new address[](1);
         keys[0] = KEY;
         values[0] = GUARD_V1;
-        reg = new ProtocolRegistry(OWNER, GUARDIAN, DELAY, keys, values);
+        reg = new ProtocolRegistry(OWNER, GUARDIAN, DELAY, keys, values, new bytes32[](0), new address[](0));
     }
 
     // ── Construction ──────────────────────────────────────────────────
@@ -48,19 +48,46 @@ contract ProtocolRegistryTest is Test {
         bytes32[] memory keys = new bytes32[](1);
         address[] memory values = new address[](0);
         vm.expectRevert(ProtocolRegistry.LengthMismatch.selector);
-        new ProtocolRegistry(OWNER, GUARDIAN, DELAY, keys, values);
+        new ProtocolRegistry(OWNER, GUARDIAN, DELAY, keys, values, new bytes32[](0), new address[](0));
 
         values = new address[](1);
         vm.expectRevert(ProtocolRegistry.ZeroAddress.selector);
-        new ProtocolRegistry(OWNER, GUARDIAN, DELAY, keys, values);
+        new ProtocolRegistry(OWNER, GUARDIAN, DELAY, keys, values, new bytes32[](0), new address[](0));
 
         vm.expectRevert(
             abi.encodeWithSelector(ProtocolRegistry.DelayOutOfRange.selector, 1 days, 3 days, 30 days)
         );
-        new ProtocolRegistry(OWNER, GUARDIAN, 1 days, new bytes32[](0), new address[](0));
+        new ProtocolRegistry(OWNER, GUARDIAN, 1 days, new bytes32[](0), new address[](0), new bytes32[](0), new address[](0));
 
         vm.expectRevert(ProtocolRegistry.ZeroAddress.selector);
-        new ProtocolRegistry(OWNER, address(0), DELAY, new bytes32[](0), new address[](0));
+        new ProtocolRegistry(OWNER, address(0), DELAY, new bytes32[](0), new address[](0), new bytes32[](0), new address[](0));
+    }
+
+    function test_Constructor_SeedsSetMembersAtOnceAndChecksInputs() public {
+        bytes32[] memory sets = new bytes32[](2);
+        address[] memory mems = new address[](2);
+        sets[0] = SET;
+        sets[1] = SET;
+        mems[0] = ADAPTER;
+        mems[1] = GUARD_V2;
+        vm.expectEmit(true, true, false, false);
+        emit ProtocolRegistry.MemberAdded(SET, ADAPTER);
+        ProtocolRegistry seeded =
+            new ProtocolRegistry(OWNER, GUARDIAN, DELAY, new bytes32[](0), new address[](0), sets, mems);
+        assertEq(seeded.memberCount(SET), 2);
+        assertTrue(seeded.isMember(SET, ADAPTER));
+        assertTrue(seeded.isMember(SET, GUARD_V2));
+
+        mems[1] = ADAPTER;
+        vm.expectRevert(abi.encodeWithSelector(ProtocolRegistry.AlreadyMember.selector, SET, ADAPTER));
+        new ProtocolRegistry(OWNER, GUARDIAN, DELAY, new bytes32[](0), new address[](0), sets, mems);
+
+        mems[1] = address(0);
+        vm.expectRevert(ProtocolRegistry.ZeroAddress.selector);
+        new ProtocolRegistry(OWNER, GUARDIAN, DELAY, new bytes32[](0), new address[](0), sets, mems);
+
+        vm.expectRevert(ProtocolRegistry.LengthMismatch.selector);
+        new ProtocolRegistry(OWNER, GUARDIAN, DELAY, new bytes32[](0), new address[](0), sets, new address[](1));
     }
 
     function test_RequirePointer_RefusesAnUnsetKey() public {

@@ -1038,10 +1038,14 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // `admin` (the Timelock takes it at handover), guardian `admin` until
         // the handover moves it to the Pauser Safe, and the minimum delay.
         // It starts empty: the price guard (#3272) and the vault payout
-        // endpoints (#3205) add their keys when they ship.
+        // endpoints (#3205) add their pointers and set members (seeded here,
+        // without the delay, like the constructor's pointers) when they ship.
         protocolRegistry = ArtifactDeploy.deploy(
             type(ProtocolRegistry).name,
-            abi.encode(admin, admin, uint256(3 days), new bytes32[](0), new address[](0))
+            abi.encode(
+                admin, admin, uint256(3 days),
+                new bytes32[](0), new address[](0), new bytes32[](0), new address[](0)
+            )
         );
         console.log("Protocol registry:", protocolRegistry);
 

@@ -576,7 +576,9 @@ contract HandoverGateTest is Test {
             new ZeroExAggregatorAdapter(t.adapterOnDeployer ? deployer : admin, makeAddr("allowanceHolder"), settlers);
         feedRegistry = new VaipakamFeedRegistry(admin, admin);
         vaultBeacon = new VaultBeacon(admin, address(diamond), admin, address(new VaipakamVaultImplementation()));
-        protocolRegistry = new ProtocolRegistry(admin, admin, 3 days, new bytes32[](0), new address[](0));
+        protocolRegistry = new ProtocolRegistry(
+            admin, admin, 3 days, new bytes32[](0), new address[](0), new bytes32[](0), new address[](0)
+        );
         cctRegistry = new TokenAdminRegistryStub();
         cctRegistry.seed(address(vpfiToken), admin);
         cctRegistry.setPool(address(vpfiToken), address(tokenPool));
