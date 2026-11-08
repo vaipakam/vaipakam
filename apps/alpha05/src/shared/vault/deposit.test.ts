@@ -18,6 +18,9 @@ const copy = {
 };
 const short = (v: bigint) => `short:${v}`;
 
+const OPEN = { enabled: false, locked: false, delaySeconds: 0, requireCosign: false };
+const PROTECTED = { enabled: true, locked: false, delaySeconds: 3 * 86_400, requireCosign: false };
+
 const erc20Draft: DepositDraft = { standard: 'erc20', asset: TOKEN, tokenId: 0n, amount: 100n };
 const nftDraft: DepositDraft = { standard: 'erc721', asset: NFT, tokenId: 7n, amount: 1n };
 const multiDraft: DepositDraft = { standard: 'erc1155', asset: NFT, tokenId: 2n, amount: 5n };
@@ -30,6 +33,7 @@ function erc20(p: Partial<DepositReview> = {}, h: Partial<{ balance: bigint; all
     paused: false,
     frozen: null,
     retired: false,
+    protection: OPEN,
     holding: { kind: 'erc20', balance: 500n, allowance: 0n, approvalSteps: 1, ...h },
     readAt: 0,
     ...p,
@@ -106,6 +110,13 @@ describe('depositChanged', () => {
     expect(depositChanged(nft(ME), nft(OTHER), copy)).toBe('repay.changedFunds');
     expect(depositChanged(multi(5n), multi(4n), copy)).toBe('repay.changedFunds');
   });
+  it('protected mode turning on, a lock, a new delay or a secondary signer is a change', () => {
+    expect(depositChanged(erc20(), erc20({ protection: PROTECTED }), copy)).toBe('payout.changed');
+    expect(depositChanged(erc20({ protection: PROTECTED }), erc20({ protection: { ...PROTECTED, locked: true } }), copy)).toBe('payout.changed');
+    expect(depositChanged(erc20({ protection: PROTECTED }), erc20({ protection: { ...PROTECTED, delaySeconds: 86_400 } }), copy)).toBe('payout.changed');
+    expect(depositChanged(erc20({ protection: PROTECTED }), erc20({ protection: { ...PROTECTED, requireCosign: true } }), copy)).toBe('payout.changed');
+    expect(depositChanged(erc20(), erc20({ protection: null }), copy)).toBe('payout.changed');
+  });
 });
 
 describe('deposited', () => {
@@ -138,5 +149,26 @@ describe('depositReceipt', () => {
     expect(r.consequences).toContain('vaultDeposit.screenUnread');
     expect(r.consequences.some((c) => typeof c === 'string' && c.startsWith('vaultDeposit.approvalOperatorBack'))).toBe(true);
     expect(r.consequences).not.toContain('vaultDeposit.afterExact');
+  });
+  it('states how the deposit can leave again under the account’s protected mode', () => {
+    const later = (p: DepositReview['protection']) => {
+      const r = depositReceipt(erc20({ protection: p }), null, copy);
+      return { row: r.rows.find((x) => x.label === 'vaultDeposit.rowLater')?.value, consequences: r.consequences };
+    };
+    const open = later(OPEN);
+    expect(open.row).toEqual({ kind: 'text', text: 'vaultDeposit.laterWallet' });
+    expect(open.consequences).toContain('vaultDeposit.afterCounted');
+    const queued = later(PROTECTED);
+    expect(queued.row).toEqual({ kind: 'text', text: 'vaultDeposit.laterQueued:{"delay":"3 days"}' });
+    expect(queued.consequences).toContain('vaultDeposit.afterQueued:{"delay":"3 days"}');
+    expect(queued.consequences).not.toContain('vaultDeposit.afterCounted');
+    expect(later({ ...PROTECTED, requireCosign: true }).consequences).toContain('vaultDeposit.afterCosign');
+    const locked = later({ ...PROTECTED, locked: true });
+    expect(locked.row).toEqual({ kind: 'text', text: 'vaultDeposit.laterLocked' });
+    expect(locked.consequences).toContain('vaultDeposit.afterLocked');
+    expect(locked.consequences).not.toContain('vaultDeposit.afterCounted');
+    const unread = later(null);
+    expect(unread.row).toEqual({ kind: 'text', text: 'vaultDeposit.laterUnread' });
+    expect(unread.consequences).toContain('vaultDeposit.afterUnread');
   });
 });

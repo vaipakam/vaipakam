@@ -7,7 +7,10 @@
  * approval for that token alone, and a quantity of a multi-token with the
  * collection approval granted for the deposit and taken back after it. With
  * Terms in force the deposit asks for them first, and a paused protocol
- * closes it and says what stays open. Runs on the desktop and the phone
+ * closes it and says what stays open. With protected mode on the receipt
+ * states the account's delay before anything can leave again, and a Terms
+ * version published while the review is open stops the deposit before any
+ * wallet prompt and sends it back through the Terms gate. Runs on the desktop and the phone
  * project, with wallets that have no history; the chain is reverted after
  * each test, so they reach every test the same.
  */
@@ -83,6 +86,8 @@ test('a wallet with no vault deposits WETH: the vault is created, exactly the am
   await expect(receipt).toContainText('Lets the protocol take exactly 0.02 WETH, for this deposit.');
   await expect(receipt).toContainText('refuses a token that does not arrive in full');
   await expect(receipt).toContainText('No token-safety screening runs on this network');
+  await expect(receipt).toContainText('Taking it out later');
+  await expect(receipt).toContainText('To your wallet, at once');
   await expect(receipt).toContainText('Wallet prompts: 2');
   await fitsWidth(page);
 
@@ -201,5 +206,35 @@ test('with Terms in force the deposit asks for them first; a paused protocol clo
   await expect(page.getByTestId('vault-deposit-paused')).toContainText('Full and partial repayment and adding collateral stay open');
   await expect(page.getByTestId('vault-deposit-open')).toHaveCount(0);
   expect(flags.sentTransactions).toBe(sent);
+  await fitsWidth(page);
+});
+
+test('protected mode is stated in the receipt, and Terms published during the review stop the deposit and reopen the gate', async ({ launchWallet }) => {
+  test.setTimeout(180_000);
+  const sc = scenario({ lender: 'freshLender' });
+  await sc.write('lender', WETH, TOKEN_ABI, 'deposit', [], parseEther('0.05'));
+  await sc.diamondWrite('lender', 'enableProtectedMode', [2 * 24 * 60 * 60, false]);
+
+  const { page, flags } = await launchWallet('freshLender');
+  await openDeposit(page);
+  await page.getByTestId('vault-deposit-asset').selectOption(WETH);
+  await expect(page.getByTestId('vault-deposit-form')).toContainText('Your wallet holds', { timeout: 30_000 });
+  await page.getByTestId('vault-deposit-amount').fill('0.01');
+  await page.getByTestId('vault-deposit-review').click();
+
+  const flow = page.getByTestId('vault-deposit-panel');
+  const receipt = flow.locator('.receipt');
+  await expect(receipt).toContainText('To your wallet after your 2 days delay', { timeout: 60_000 });
+  await expect(receipt).toContainText('Protected mode is on for your account');
+  await expect(receipt).not.toContainText('To your wallet, at once');
+  await fitsWidth(page);
+
+  await sc.diamondWrite('admin', 'setCurrentTos', [1, keccak256(toHex('alpha05 e2e Terms v1'))]);
+  const sent = flags.sentTransactions;
+  await flow.getByRole('button', { name: 'Confirm in wallet' }).click();
+  await expect(page.getByTestId('vault-deposit-terms-due')).toContainText('A Terms version you have not accepted is now in force', { timeout: 60_000 });
+  expect(flags.sentTransactions).toBe(sent);
+  await page.getByTestId('vault-deposit-terms-accept').click();
+  await expect(page.getByRole('dialog', { name: 'Terms of Service' })).toContainText('Depositing into your vault needs the Terms of Service', { timeout: 30_000 });
   await fitsWidth(page);
 });

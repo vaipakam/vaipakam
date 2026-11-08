@@ -2,14 +2,16 @@
  * ACC-22 — the receipt a deposit is confirmed against (RB-CONFIDENCE): what
  * leaves the wallet, into which vault (or that the deposit creates it), the
  * wallet's holding of the asset, what the approval lets the protocol take,
- * and every consequence: the deposit is counted as the wallet's and free to
- * withdraw, the protocol refuses a token that does not arrive in full, no
+ * and every consequence: the deposit is counted as the wallet's, how it can
+ * leave again under the account's protected mode (at once, after the delay,
+ * or not while the account is locked), the protocol refuses a token that does not arrive in full, no
  * token-safety screening runs, and what happens to an approval.
  */
 import type { CopyAccess } from '../copy/useCopy';
 import { figured, textValue, type Receipt, type ReceiptRow, type ReceiptText } from '../receipt/types';
 import { assetName, exactTokenAmount, tokenAmount, type TokenMetaMap } from '../reads/tokens';
-import { depositPromptCount, type DepositReview } from './deposit';
+import { formatSpan } from '../ui/format';
+import { depositPromptCount, withdrawRoute, type DepositReview } from './deposit';
 
 type Copy = Pick<CopyAccess, 'text' | 'format'>;
 
@@ -42,6 +44,19 @@ export function depositReceipt(r: DepositReview, meta: TokenMetaMap | null, copy
   if (h.kind === 'erc20') rows.push({ label: text('repay.rowBalance'), value: { kind: 'amount', asset: d.asset, amount: h.balance }, binding: false });
   if (h.kind === 'erc1155') rows.push({ label: text('vaultDeposit.rowHeld'), value: { kind: 'text', text: h.state.balance.toString() }, binding: false });
 
+  const route = withdrawRoute(r.protection);
+  const p = r.protection;
+  const delay = formatSpan(p?.delaySeconds ?? 0);
+  const later =
+    route === 'wallet'
+      ? text('vaultDeposit.laterWallet')
+      : route === 'queued'
+        ? format(p?.requireCosign ? 'vaultDeposit.laterQueuedCosign' : 'vaultDeposit.laterQueued', { delay })
+        : route === 'held'
+          ? text('vaultDeposit.laterLocked')
+          : text('vaultDeposit.laterUnread');
+  rows.push({ label: text('vaultDeposit.rowLater'), value: { kind: 'text', text: later }, binding: false });
+
   let approval: ReceiptText;
   if (h.kind === 'erc20') approval = figured((x) => format(h.approvalSteps === 0 ? 'vaultDeposit.approvalCovers' : 'vaultDeposit.approvalNeeded', { amount: amountText(x) }));
   else if (h.kind === 'erc721') approval = text(h.approvalSteps === 0 ? 'vaultDeposit.approvalNftCovers' : 'vaultDeposit.approvalNft');
@@ -49,7 +64,10 @@ export function depositReceipt(r: DepositReview, meta: TokenMetaMap | null, copy
   rows.push({ label: text('repay.rowApproval'), value: textValue(approval), binding: false, movesOut: h.approvalSteps > 0 });
 
   const consequences: ReceiptText[] = [
-    text('vaultDeposit.afterCounted'),
+    ...(route === 'wallet' ? [text('vaultDeposit.afterCounted')] : []),
+    ...(route === 'queued' ? [format('vaultDeposit.afterQueued', { delay }), ...(p?.requireCosign ? [text('vaultDeposit.afterCosign')] : [])] : []),
+    ...(route === 'held' ? [text('vaultDeposit.afterLocked')] : []),
+    ...(route === 'unknown' ? [text('vaultDeposit.afterUnread')] : []),
     ...(d.standard === 'erc20' ? [text('vaultDeposit.afterExact')] : []),
     ...(r.vault === null ? [text('vaultDeposit.afterCreate')] : []),
     text('vaultDeposit.noScreening'),

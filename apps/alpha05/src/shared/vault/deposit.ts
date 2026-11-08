@@ -4,13 +4,18 @@
  * block where the chain allows: the wallet's vault (a deposit creates it when
  * there is none), the protocol pause (a deposit is closed under it), the
  * wallet's standing with the sanctions screen, whether the wallet was retired
- * by a replacement (a retired wallet funds nothing), and the wallet's own
- * holding of the asset with the approval it has given the protocol.
+ * by a replacement (a retired wallet funds nothing), the account's protected
+ * mode (which decides how what is deposited can leave again), and the
+ * wallet's own holding of the asset with the approval it has given the
+ * protocol.
  *
  * The protocol pulls exactly the amount and refuses a token that does not
  * arrive in full, so a fee-on-transfer token is refused by the protocol's own
  * dry run, which runs once the approval is in place. Nothing a deposit adds
- * is locked: it is counted as the wallet's and free to withdraw.
+ * is pledged: it is counted as the wallet's. How it leaves again is the
+ * account's protected mode's to say: at once without the mode, after the
+ * account's delay with it, and not at all while the account is locked (the
+ * protocol still takes a deposit then), so the review states which.
  */
 import { erc20Abi, parseEventLogs, type Abi, type Log, type PublicClient } from 'viem';
 import { AdminFacetABI, ProtectedAccountFacetABI, VaultDepositoryFacetABI, VaultFactoryFacetABI } from '@vaipakam/contracts/abis';
@@ -21,6 +26,8 @@ import { tokenAcceptsApproval } from '../offers/reads';
 import { answerOrNull } from '../reads/answer';
 import { frozenState, readSanctionsPosture, type FrozenState } from '../sanctions/posture';
 import { allowanceSteps } from '../tx/approval';
+import { payoutRoute, type PayoutRoute, type Protection } from '../protection/payout';
+import { routeChanged } from '../protection/payoutCopy';
 
 type Hex = `0x${string}`;
 type Copy = Pick<CopyAccess, 'text' | 'format'>;
@@ -55,6 +62,8 @@ export interface DepositReview {
   frozen: FrozenState;
   /** Whether a replacement retired this wallet; null when unread. */
   retired: boolean | null;
+  /** The account's protected mode; null when unread. */
+  protection: Protection | null;
   holding: DepositHolding;
   readAt: number;
 }
@@ -78,7 +87,15 @@ export async function readDepositReview(own: OwnStateClient, diamond: Hex, draft
         c.readContract({ address: diamond, abi: FACTORY, functionName: 'getUserVaultAddress', args: [account], ...at }) as Promise<Hex>,
         answerOrNull(c.readContract({ address: diamond, abi: ADMIN, functionName: 'paused', ...at }) as Promise<boolean>),
         readSanctionsPosture(c, diamond, account, block),
-        answerOrNull(c.readContract({ address: diamond, abi: PROTECTED, functionName: 'getProtectedAccount', args: [account], ...at }) as Promise<{ retired: boolean }>),
+        answerOrNull(
+          c.readContract({ address: diamond, abi: PROTECTED, functionName: 'getProtectedAccount', args: [account], ...at }) as Promise<{
+            retired: boolean;
+            enabled: boolean;
+            locked: boolean;
+            delaySeconds: number | bigint;
+            requireCosign: boolean;
+          }>,
+        ),
       ]);
       let holding: DepositHolding;
       // An ERC-721 token needs one approval for that token unless the
@@ -98,7 +115,16 @@ export async function readDepositReview(own: OwnStateClient, diamond: Hex, draft
         ]);
         holding = { kind: 'erc20', balance, allowance, approvalSteps: 0 };
       }
-      return { vault: vault.toLowerCase() === ZERO ? null : vault, paused, frozen: frozenState(posture), retired: account_ === null ? null : account_.retired, holding };
+      const protection: Protection | null =
+        account_ === null ? null : { enabled: account_.enabled, locked: account_.locked, delaySeconds: Number(account_.delaySeconds), requireCosign: account_.requireCosign };
+      return {
+        vault: vault.toLowerCase() === ZERO ? null : vault,
+        paused,
+        frozen: frozenState(posture),
+        retired: account_ === null ? null : account_.retired,
+        protection,
+        holding,
+      };
     })
     .then((x) => x.value);
   let holding = facts.holding;
@@ -113,7 +139,16 @@ export async function readDepositReview(own: OwnStateClient, diamond: Hex, draft
     );
     holding = { ...h, approvalSteps: steps.length };
   }
-  return { identity, draft, vault: facts.vault, paused: facts.paused, frozen: facts.frozen, retired: facts.retired, holding, readAt: Date.now() };
+  return { identity, draft, vault: facts.vault, paused: facts.paused, frozen: facts.frozen, retired: facts.retired, protection: facts.protection, holding, readAt: Date.now() };
+}
+
+/** How what this deposit adds can leave the vault for the wallet later:
+ *  at once, after the account's delay, not while the account is locked, or
+ *  unknown when the mode was not read. */
+export function withdrawRoute(protection: Protection | null): PayoutRoute {
+  // A withdrawal pays the account from its own vault, so the source is the
+  // account itself and only the mode decides the route.
+  return payoutRoute(protection, ZERO, ZERO);
 }
 
 /** The wallet prompts the deposit takes: the approval's, then the deposit. */
@@ -152,6 +187,8 @@ export function depositChanged(a: DepositReview, b: DepositReview, copy: Pick<Co
   const { text } = copy;
   if ((a.vault ?? '').toLowerCase() !== (b.vault ?? '').toLowerCase()) return text('vaultDeposit.changedVault');
   if (a.paused !== b.paused || a.frozen !== b.frozen || a.retired !== b.retired) return text('repay.changedVerdict');
+  if (routeChanged({ route: withdrawRoute(a.protection), protection: a.protection }, { route: withdrawRoute(b.protection), protection: b.protection }))
+    return text('payout.changed');
   const x = a.holding;
   const y = b.holding;
   if (x.kind !== y.kind || x.approvalSteps !== y.approvalSteps) return text('repay.changedFunds');

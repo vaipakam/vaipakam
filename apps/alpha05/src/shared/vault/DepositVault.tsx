@@ -14,6 +14,7 @@ import { parsePasted, suggestedCollateral } from '../offers/assets';
 import { readVault } from '../offers/reads';
 import { parseAmount } from '../post/postModel';
 import { assetName, exactTokenAmount, tokenAmount, useTokenMeta, type TokenMetaMap } from '../reads/tokens';
+import { useOwnRead } from '../reads/useOwnRead';
 import { allowanceSteps } from '../tx/approval';
 import { allowanceMoved, approvalFlow } from '../tx/approvalFlow';
 import { cleanUpLeg } from '../tx/cleanUp';
@@ -27,6 +28,7 @@ import { useTrackedTx } from '../tx/useTrackedTx';
 import { ActionFlow, reviewIdentity, type Recheck } from '../ui/ActionFlow';
 import { FormField } from '../ui/FormField';
 import { Notice } from '../ui/Notice';
+import { readTerms, type TermsState } from '../terms/terms';
 import { shortAddress } from '../ui/format';
 import { depositBlockers, depositCall, depositChanged, deposited, depositPromptCount, readDepositReview, type DepositDraft, type DepositReview } from './deposit';
 import { depositName, depositReceipt } from './depositReceipt';
@@ -37,17 +39,22 @@ type Hex = `0x${string}`;
 export const DEPOSIT_KEY = 'vault.deposit';
 
 /** Whether the deposit is open (the form, or a draft under review or in
- *  flight), so the page keeps the panel on screen until it is closed. */
-export function useDepositHeld(): { held: boolean; setOpen: (v: boolean | null) => void } {
+ *  flight), so the page keeps the panel on screen until it is closed, and
+ *  whether a transaction is under way (past the review), which the page
+ *  never interrupts. */
+export function useDepositHeld(): { held: boolean; inFlight: boolean; setOpen: (v: boolean | null) => void } {
   const entry = useTxEntry(DEPOSIT_KEY);
   const [open, setOpen] = useStoredValue<boolean>(`${DEPOSIT_KEY}:open`);
-  return { held: open === true || holdsFlow(entry.phase), setOpen };
+  return { held: open === true || holdsFlow(entry.phase), inFlight: holdsFlow(entry.phase), setOpen };
 }
 
 interface DepositProps {
   chain: SupportedChain;
   own: OwnStateClient;
   onClose: () => void;
+  /** Called when the last check before signing finds an unaccepted Terms
+   *  version, so the page reads the Terms again and opens its gate. */
+  onTermsDue?: () => void;
 }
 
 /**
@@ -257,29 +264,20 @@ function DepositForm({ chain, own, onClose, onChosen }: DepositProps & { onChose
   );
 }
 
-/** The wallet's balance of an ERC-20: undefined while reading, null when
- *  unread. */
+/** The wallet's balance of an ERC-20, read again each block while the form
+ *  is open, so a balance that grows (a faucet in another tab) lifts the
+ *  form's refusal by itself: undefined while reading, null when unread. */
 function useErc20Balance(own: OwnStateClient, asset: Hex | null): bigint | null | undefined {
-  const [balance, setBalance] = useState<{ asset: Hex; value: bigint | null } | null>(null);
-  useEffect(() => {
-    if (asset === null) return;
-    let live = true;
-    own
-      .read((c) => c.readContract({ address: asset, abi: erc20Abi, functionName: 'balanceOf', args: [own.account] }))
-      .then(
-        (x) => live && setBalance({ asset, value: x.value }),
-        () => live && setBalance({ asset, value: null }),
-      );
-    return () => {
-      live = false;
-    };
-  }, [own, asset]);
-  if (asset === null || balance === null || balance.asset !== asset) return undefined;
-  return balance.value;
+  const read = useOwnRead(['vault', 'depositBalance', asset], (c) => c.readContract({ address: asset!, abi: erc20Abi, functionName: 'balanceOf', args: [own.account] }), {
+    enabled: asset !== null,
+    perBlock: true,
+  });
+  if (asset === null || read.state === 'reading' || read.state === 'no-identity') return undefined;
+  return read.state === 'failed' ? null : read.data;
 }
 
 /** The review and the transaction, for one draft. */
-function DepositFlow({ chain, own, draft, onChange, onClose }: DepositProps & { draft: DepositDraft; onChange: () => void }) {
+function DepositFlow({ chain, own, draft, onChange, onClose, onTermsDue }: DepositProps & { draft: DepositDraft; onChange: () => void }) {
   const copy = useCopy();
   const { text, format } = copy;
   const config = useConfig();
@@ -529,10 +527,18 @@ function DepositFlow({ chain, own, draft, onChange, onClose }: DepositProps & { 
   const recheck = async (current: () => boolean): Promise<Recheck> => {
     if (!review) return { kind: 'unreadable', reason: text('flow.reading') };
     let next: DepositReview;
+    let nowTerms: TermsState;
     try {
-      next = await readDepositReview(own, diamond, review.draft, review.identity);
+      // ACC-15: the Terms are read again right before signing, so a wallet
+      // switched to while the form was open, or a version published since,
+      // is never signed for without acceptance.
+      [next, nowTerms] = await Promise.all([readDepositReview(own, diamond, review.draft, review.identity), own.read((c) => readTerms(c, diamond, account)).then((x) => x.value)]);
     } catch (e) {
       return { kind: 'unreadable', reason: refusalFromError(e).reason };
+    }
+    if (nowTerms.kind === 'needed') {
+      onTermsDue?.();
+      return { kind: 'refused', refusal: { code: 'TermsNotAccepted', reason: text('vaultDeposit.termsNewer'), reopensAt: null, remedy: null } };
     }
     const what = depositChanged(review, next, copy);
     if (current()) setReview(next);

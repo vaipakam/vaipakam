@@ -1167,10 +1167,19 @@ above. Each resolves here, so a route reviewer needs no private file:
   one asset, chosen from the suggested tokens and test collections or
   pasted, its standard the contract's own answer, then the amount, the NFT's
   token id, or the token id and quantity. An unaccepted Terms version is
-  accepted first. The review is read at one block: the wallet's vault (or
-  that the deposit creates it), the protocol pause, the sanctions screen,
-  whether a replacement retired the wallet, and the wallet's holding and
-  approval; a pause, a flagged wallet, a retired wallet or a shortfall stops
+  accepted first, and the Terms are read again as the last check before
+  signing: a switch to a wallet that has not accepted them, or a version
+  published while the form is open, sends the deposit back through the gate
+  (a transaction already under way is left to finish). The review is read at
+  one block: the wallet's vault (or that the deposit creates it), the
+  protocol pause, the sanctions screen, whether a replacement retired the
+  wallet, the account's protected mode, and the wallet's holding and
+  approval. The receipt states how the deposit can leave again: to the
+  wallet at once without protected mode, after the account's delay (and a
+  secondary signer, where the account requires one) with it, not at all
+  while the account is locked (the protocol still takes the deposit), and
+  that it is unknown when the mode was not read; a change to any of these
+  while the review is open is a change. A pause, a flagged wallet, a retired wallet or a shortfall stops
   it by name, and an unread pause or screen is stated and left to the
   protocol's dry run. The approval is exactly what the deposit takes (an
   ERC-20 amount, one ERC-721 token, or an ERC-1155 collection granted for
@@ -1181,7 +1190,8 @@ above. Each resolves here, so a route reviewer needs no private file:
   token-safety screening runs. The finish card states what the protocol's
   own deposit record credited and what the token's own logs moved into the
   vault. While the protocol is paused the panel says so, with what stays
-  open, and offers no deposit.
+  open, and offers no deposit. The form's balance check is read again each
+  block, so a balance that grows lifts its refusal by itself.
 - **RB-FROZEN** — money the protocol holds for a wallet the sanctions
   screen flags (LN-53) is stated as "Frozen, awaiting de-listing": locked
   where its loan keeps it, in a vault, not lost, and released once the

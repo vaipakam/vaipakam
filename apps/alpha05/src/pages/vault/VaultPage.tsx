@@ -82,6 +82,12 @@ export function VaultPage() {
   const termsOpen = termsGate.session !== null;
   // ACC-15: a deposit puts new value under the protocol, so an unaccepted
   // Terms version is accepted first; the form opens once that is recorded.
+  // The Terms are this wallet's: a switch to a wallet that has not accepted
+  // them, or a version published while the form is open, sends an open form
+  // or review back through the gate (a transaction already under way is
+  // left to finish, and the deposit's last check before signing reads the
+  // Terms again either way).
+  const termsDue = terms.data?.kind === 'needed';
   const openDeposit = () => {
     if (terms.data?.kind === 'needed') {
       termsGate.start(terms.data);
@@ -154,8 +160,22 @@ export function VaultPage() {
                 }}
                 onClose={() => termsGate.end()}
               />
+            ) : deposit.held && termsDue && !deposit.inFlight ? (
+              <div data-testid="vault-deposit-terms-due">
+                <Notice tone="warn" tier="A">
+                  {text('vaultDeposit.termsDue')}
+                </Notice>
+                <div className="form-actions">
+                  <button type="button" className="btn btn-primary" onClick={openDeposit} data-testid="vault-deposit-terms-accept">
+                    {text('vaultDeposit.termsAccept')}
+                  </button>
+                  <button type="button" className="btn" onClick={() => deposit.setOpen(null)}>
+                    {text('flow.cancel')}
+                  </button>
+                </div>
+              </div>
             ) : deposit.held ? (
-              <DepositVault chain={chain} own={own} onClose={() => deposit.setOpen(null)} />
+              <DepositVault chain={chain} own={own} onClose={() => deposit.setOpen(null)} onTermsDue={terms.refetch} />
             ) : paused.data === true ? (
               <p className="tier-a" data-testid="vault-deposit-paused">
                 {text('vaultDeposit.paused')}
