@@ -12,7 +12,7 @@ import { figured, textValue, type Receipt, type ReceiptValue } from '../receipt/
 import { tokenAmount, type TokenMetaMap } from '../reads/tokens';
 import { formatUtc } from '../ui/format';
 import { allowanceFigure, approvalRowText, lateConfirmationLines } from './approvalCap';
-import { partialPromptCount, partialPutBackPromptCount, type PartialReview } from './partialReview';
+import { partialFunds, partialPromptCount, partialPutBackPromptCount, type PartialReview } from './partialReview';
 
 export function partialReceipt(r: PartialReview, meta: TokenMetaMap | null, copy: Pick<CopyAccess, 'text' | 'format'>): Receipt {
   const { text, format } = copy;
@@ -54,10 +54,13 @@ export function partialReceipt(r: PartialReview, meta: TokenMetaMap | null, copy
     ...(loan.useFullTermInterest ? [text('partial.fullTermRestarts')] : []),
     ...(r.period ? [format('partial.periodCounts', { time: formatUtc(Number(r.period.periodEndAt)) })] : r.periodUnread ? [text('partial.periodUnread')] : []),
     ...(r.maturity !== null ? [format('partial.dueStays', { time: formatUtc(Number(r.maturity)) })] : []),
+    text('partial.lenderRouting'),
     ...(r.approvalSteps > 0 ? [format('repay.losePutBack', { amount: allowanceFigure(r.allowance, asset, meta, copy) })] : []),
-    ...(r.balance >= r.amount + r.interestNow && r.balance < r.totalBy
-      ? [figured((x) => format('partial.loseBalance', { amount: tokenAmount(r.balance, asset, meta, format, x) }))]
-      : []),
+    ...(partialFunds(r) === 'unproven'
+      ? [figured((x) => format('partial.balanceUnproven', { amount: tokenAmount(r.balance, asset, meta, format, x) }))]
+      : r.balance >= r.amount + r.interestNow && r.balance < r.totalBy
+        ? [figured((x) => format('partial.loseBalance', { amount: tokenAmount(r.balance, asset, meta, format, x) }))]
+        : []),
   ];
 
   return {

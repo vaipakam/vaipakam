@@ -399,7 +399,9 @@ export const copy = {
     covered: B('This period is paid: settling it only moves the checkpoint forward, and no collateral is sold.'),
     payByPartial: B('The borrower can pay a period by partial repayment, which pays the interest accrued so far.'),
     noPartial: B('This loan does not allow partial repayment: only full repayment or the sale covers a period.'),
-    pausedStretch: A('A pause moved this period’s dates later by the paused time, but the interest it owes stays one period’s worth. Interest kept accruing through the pause, and any interest a repayment pays counts toward the period.'),
+    pausedStretch: A(
+      'A pause moved this period’s dates later by the paused time, but the interest it owes stays one period’s worth. Interest kept accruing through the pause, and any interest a repayment pays counts toward the period.',
+    ),
     keeper: B('Settling is open to anyone. Whether the protocol’s keeper settles periods here is not known.'),
     chainTime: B('Checked against chain time {{time}}.'),
     unread: A('This loan’s interest period could not be read, so it is shown as unknown.'),
@@ -442,7 +444,9 @@ export const copy = {
       'The approval caps the amount, not the time: confirming after {{time}}, it goes through only while the protocol’s figure stays within it, and is otherwise refused with nothing moved.',
     ),
     loseSame: A('This figure did not grow over that window, so a repayment confirming after it can still go through, at the protocol’s figure then.'),
-    loseGraceEnds: A('The grace period ends at {{time}} as things stand, and a protocol pause before then moves it later. After it, the protocol refuses a repayment and nothing moves.'),
+    loseGraceEnds: A(
+      'The grace period ends at {{time}} as things stand, and a protocol pause before then moves it later. After it, the protocol refuses a repayment and nothing moves.',
+    ),
     losePutBack: A('Whatever the repayment does not use of the approval is put back to {{amount}} afterwards.'),
     loseThirdParty: A('Paying gives you no right to the collateral: only the holder of borrower position #{{id}} can collect it.'),
     refinanceStays: A('Refinance request offer #{{id}} on this loan ends with the repayment but stays posted: its creator cancels it to take back what it holds.'),
@@ -499,7 +503,15 @@ export const copy = {
     rowDue: B('Due date'),
     dueSame: B('{{time}}, unchanged'),
     rowLender: B('Paid to'),
-    lenderPaid: B('The holder of the lender position, straight away; the treasury takes its share of the interest'),
+    lenderPaid: B('The holder of the lender position, less the treasury’s share of the interest'),
+    lenderRouting: A(
+      'Who receives the payment is settled when it confirms: earlier holders still owed interest from before a sale of the loan are paid from the interest first, and if the protocol must freeze the current holder, their share is locked in the lender’s vault instead of reaching their wallet.',
+    ),
+    short: A('Your wallet is {{amount}} short of what this payment takes now.'),
+    shortPart: A('Your wallet is {{amount}} short of the principal part alone, before any interest.'),
+    balanceUnproven: A(
+      'Your wallet holds {{amount}}, less than the part plus the most the interest could be. The payment charges only the interest accrued, so it may still fit: a dry run checks it just before the payment is sent, and if it falls short nothing is paid and any approval made for it is put back.',
+    ),
     interestExact: A('The interest is what has accrued since it was last paid; it grows by the second until the payment confirms.'),
     interestBoundFull: A(
       'No protocol view gives a part payment’s interest ahead of time, so it is shown from the payoff figure. On a full-term loan that also counts the rest of the term, which a part payment does not charge, so it is an upper bound: you pay only what has accrued.',
@@ -514,7 +526,7 @@ export const copy = {
     loseBalance: A('Your wallet holds {{amount}}: enough now, but it may fall short if it confirms later.'),
     whySummary: B('What a part payment takes, and why the interest may show as at most'),
     why: C(
-      'A part payment repays the principal part you choose and the interest accrued since the loan’s interest was last paid. Both go straight to the holder of the lender position, less the treasury’s share of the interest, and the loan keeps running with the lower principal and the same due date. No protocol view gives that interest ahead of time, so the review shows it from the protocol’s payoff figure, which is exact on a pro-rata loan before its due date and an upper bound otherwise. The approval covers the upper figure; whatever the payment does not use is put back afterwards.',
+      'A part payment repays the principal part you choose and the interest accrued since the loan’s interest was last paid. Both go to the holder of the lender position, less the treasury’s share of the interest (earlier holders still owed interest from before a sale are paid from it first), and the loan keeps running with the lower principal and the same due date. No protocol view gives that interest ahead of time, so the review shows it from the protocol’s payoff figure, which is exact on a pro-rata loan before its due date and an upper bound otherwise. The approval covers the upper figure; whatever the payment does not use is put back afterwards.',
       'partial-repay',
     ),
     stepApprove: B('approve exactly {{amount}} for the payment.'),
@@ -1881,9 +1893,7 @@ export const copy = {
       unlisted: B('unlisted contract {{address}}'),
     },
     action: {
-      diamondCut: A(
-        "Changes the protocol contract's code on {{target}}: {{add}} functions added, {{replace}} replaced and {{remove}} removed.",
-      ),
+      diamondCut: A("Changes the protocol contract's code on {{target}}: {{add}} functions added, {{replace}} replaced and {{remove}} removed."),
       diamondCutInit: A('Then runs a set-up call at {{address}} as part of the same change.'),
       roleGrant: B('Gives the {{role}} role to {{account}} on {{target}}.'),
       roleRevoke: B('Removes the {{role}} role from {{account}} on {{target}}.'),
@@ -1891,9 +1901,7 @@ export const copy = {
       delay: A('Sets the minimum wait for every later governance change to {{delay}}.'),
       pause: A('Pauses {{target}}.'),
       unpause: A('Unpauses {{target}}.'),
-      ownership: A(
-        'Names {{owner}} as the new owner of {{target}}. Where ownership moves in two steps, it moves only when that address accepts.',
-      ),
+      ownership: A('Names {{owner}} as the new owner of {{target}}. Where ownership moves in two steps, it moves only when that address accepts.'),
       ownershipZero: A('Calls the ownership handover of {{target}} with the zero address. Where ownership moves in two steps, this cancels a pending handover.'),
       upgrade: A('Replaces the code of {{target}} with the code at {{address}}.'),
       call: B('Calls {{fn}} on {{target}}.'),

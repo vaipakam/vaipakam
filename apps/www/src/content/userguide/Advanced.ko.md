@@ -2122,9 +2122,9 @@ Positions는 하나의 공유 리더로 Home과 같은 보유 목록을 읽습�
 
 ### 대출 일부 상환: 금액 산정 방식
 
-`repayPartial(loanId, amount)`는 원금 `amount`와 `interestAccrualStart` 이후 발생한 이자(정기 크레딧 차감 후)를 받습니다. 현재 대출자 포지션 보유자에게 직접 지급하면서 트레저리 몫을 떼어 내고, `principal`을 줄이고, 이자 시계를 다시 시작하며, 현재 기간에 반영합니다. 만기는 절대 바뀌지 않습니다. 유예 기간 종료 후, `principal × minPartialBps / 10000`(`getAssetRiskParams`) 미만, 원금 전액 이상(`PartialWouldRetireFullPrincipal`), 활성 인텐트 커밋이나 재융자 요청이 있을 때, 그리고 유동성 대출에서 건전성 지수가 나빠질 때는 거부합니다.
+`repayPartial(loanId, amount)`는 원금 `amount`와 `interestAccrualStart` 이후 발생한 이자(정기 크레딧 차감 후)를 받습니다. 이자는 먼저 매각 전 이자를 아직 받지 못한 이전 보유자에게 지급하고(`paySellersFirst`), 그다음 현재 대출자 포지션 보유자에게 지급하면서 트레저리 몫을 떼어 내고(프로토콜이 동결해야 하는 보유자라면 그 몫은 대신 대출자 볼트에 잠긴 채 예치됩니다, `freezeOrPayActiveLenderFromPayer`), `principal`을 줄이고, 이자 시계를 다시 시작하며, 현재 기간에 반영합니다. 만기는 절대 바뀌지 않습니다. 유예 기간 종료 후, `principal × minPartialBps / 10000`(`getAssetRiskParams`) 미만, 원금 전액 이상(`PartialWouldRetireFullPrincipal`), 활성 인텐트 커밋이나 재융자 요청이 있을 때, 그리고 유동성 대출에서 건전성 지수가 나빠질 때는 거부합니다.
 
-호출 전에 일부 상환 이자를 돌려주는 뷰가 없으므로(#3299) 검토 화면은 지금과 잠시 뒤 시점에 읽은 `calculateRepaymentAmount`에서 `principal`을 뺀 값을 씁니다. 만기까지의 일할 계산 대출에서는 정확하지만, `useFullTermInterest`이면 남은 기간의 최소 이자를, 만기 후에는 연체료를 포함하므로 "최대"로 표시합니다. 승인 금액은 상환액과 그 상한값의 합과 정확히 같습니다. 완료 카드는 지급 자체의 `PartialRepaid` 로그에 있는 `newPrincipal`(블록 시점의 `principal`이 아닙니다. 같은 블록의 이후 거래로 바뀔 수 있기 때문입니다), 지갑에서 나간 금액, 이후의 `previewPeriodicSettle`을 측정합니다.
+호출 전에 일부 상환 이자를 돌려주는 뷰가 없으므로(#3299) 검토 화면은 지금과 잠시 뒤 시점에 읽은 `calculateRepaymentAmount`에서 `principal`을 뺀 값을 씁니다. 만기까지의 일할 계산 대출에서는 정확하지만, `useFullTermInterest`이면 남은 기간의 최소 이자를, 만기 후에는 연체료를 포함하므로 "최대"로 표시합니다. 승인 금액은 상환액과 그 상한값의 합과 정확히 같습니다. 완료 카드는 지급 자체의 `PartialRepaid` 로그에 있는 `newPrincipal`(블록 시점의 `principal`이 아닙니다. 같은 블록의 이후 거래로 바뀔 수 있기 때문입니다), 지갑에서 나간 금액, 이후의 `previewPeriodicSettle`을 측정합니다. 검토는 지갑 잔액이 부분 금액, 또는 부분 금액과 정확한 이자에 못 미칠 때만 막습니다. 상한 수치만 잔액을 넘으면 결제를 보내기 직전의 드라이런이 판단합니다.
 
 <a id="risk-access"></a>
 

@@ -65,7 +65,8 @@ test('the borrower pays part: the amount checked against the protocol bounds, ex
   await expect(receipt).toContainText('Principal still owed after');
   await expect(receipt).toContainText('0.2 WETH');
   await expect(receipt).toContainText(/, unchanged/);
-  await expect(receipt).toContainText('The holder of the lender position, straight away');
+  await expect(receipt).toContainText('The holder of the lender position, less the treasury’s share of the interest');
+  await expect(receipt).toContainText('earlier holders still owed interest from before a sale of the loan are paid from the interest first');
   await expect(receipt).toContainText(/Approve exactly 0\.1\d* WETH, the most it can take by then/);
   await expect(receipt).toContainText('The interest is what has accrued since it was last paid');
   await expect(receipt).toContainText(/Paying part never moves the due date: the rest is still owed by .* UTC\./);

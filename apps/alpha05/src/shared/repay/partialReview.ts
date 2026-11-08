@@ -224,21 +224,32 @@ export function partialChanged(a: PartialReview, b: PartialReview, copy: Pick<Co
     return text('repay.changedHolders');
   if (a.payoff.by !== b.payoff.by || a.interestBy !== b.interestBy) return text('repay.changedPayoff');
   if (a.period?.periodEndAt !== b.period?.periodEndAt || a.period?.paid !== b.period?.paid || a.period?.expected !== b.period?.expected) return text('partial.changedPeriod');
-  if (a.allowance !== b.allowance || a.approvalSteps !== b.approvalSteps || a.balance < a.amount + a.interestNow !== b.balance < b.amount + b.interestNow)
-    return text('repay.changedFunds');
+  if (a.allowance !== b.allowance || a.approvalSteps !== b.approvalSteps || partialFunds(a) !== partialFunds(b)) return text('repay.changedFunds');
   if (a.verdict.state !== b.verdict.state || a.verdict.refusals[0]?.code !== b.verdict.refusals[0]?.code) return text('repay.changedVerdict');
   return null;
 }
 
+/** Whether the wallet covers the payment now: 'short' only where a
+ *  shortfall is proven (below the part alone, or below the part plus an
+ *  exact interest figure); 'unproven' where only the interest upper bound
+ *  exceeds the balance, since `repayPartial` charges just the accrued
+ *  interest, so the dry run before the wallet opens decides; else 'enough'. */
+export type PartialFunds = 'enough' | 'unproven' | 'short';
+export function partialFunds(r: Pick<PartialReview, 'balance' | 'amount' | 'interestNow' | 'interestExact'>): PartialFunds {
+  if (r.balance >= r.amount + r.interestNow) return 'enough';
+  return r.interestExact || r.balance < r.amount ? 'short' : 'unproven';
+}
+
 /** What stops the review (empty when nothing does): the verdict's refusal,
- *  the amount, or a balance short of what the payment takes now. */
+ *  the amount, or a proven shortfall (partialFunds). */
 export function partialBlockers(r: PartialReview, copy: Pick<CopyAccess, 'text' | 'format'>, amountText: (v: bigint) => string): string[] {
   if (r.verdict.state !== 'open') return [r.verdict.refusals[0]?.reason ?? ''];
   const check = r.amountCheck;
   if (!check.ok) return [amountSentence(check.why, r.loan.principal, r.floor, copy, amountText)];
-  const now = r.amount + r.interestNow;
-  if (r.balance < now) return [copy.format('repay.short', { amount: amountText(now - r.balance) })];
-  return [];
+  if (partialFunds(r) !== 'short') return [];
+  return r.interestExact
+    ? [copy.format('partial.short', { amount: amountText(r.amount + r.interestNow - r.balance) })]
+    : [copy.format('partial.shortPart', { amount: amountText(r.amount - r.balance) })];
 }
 
 /** The sentence for an amount the protocol would refuse, shared by the

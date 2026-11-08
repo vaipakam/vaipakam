@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { OPEN } from '../eligibility/types';
 import type { LoanDetails } from '../positions/loanView';
 import { partialReceipt } from './partialReceipt';
-import { minimumPart, partialChanged, type PartialReview } from './partialReview';
+import { minimumPart, partialBlockers, partialChanged, partialFunds, type PartialReview } from './partialReview';
 
 const copy = { text: (k: string) => k, format: (k: string) => k } as never;
 const A = '0x00000000000000000000000000000000000000aa' as const;
@@ -85,5 +85,24 @@ describe('partialReceipt put-back prompts', () => {
     expect(receipt(review).prompts).toBe(2);
     expect(receipt(review).afterPrompts).toBe(1);
     expect(receipt({ ...review, approvalSteps: 0 }).afterPrompts).toBe(0);
+  });
+});
+
+describe('partialFunds', () => {
+  it('blocks only a proven shortfall: the part alone, or the part plus an exact interest', () => {
+    expect(partialFunds({ ...review, balance: 410n })).toBe('enough');
+    expect(partialFunds({ ...review, balance: 405n })).toBe('short');
+    expect(partialFunds({ ...review, balance: 399n, interestExact: false })).toBe('short');
+    expect(partialFunds({ ...review, balance: 405n, interestExact: false })).toBe('unproven');
+  });
+  it('lets an unproven balance through to the dry run, stating it on the receipt', () => {
+    const r = { ...review, balance: 405n, interestExact: false };
+    expect(partialBlockers(r, copy, String)).toEqual([]);
+    expect(receipt(r).consequences.some((c) => (typeof c === 'string' ? c : JSON.stringify(c)).includes('partial.balanceUnproven'))).toBe(true);
+    expect(partialBlockers({ ...review, balance: 399n, interestExact: false }, copy, String)).toEqual(['partial.shortPart']);
+    expect(partialBlockers({ ...review, balance: 405n }, copy, String)).toEqual(['partial.short']);
+  });
+  it('states that who receives the payment is settled at confirmation', () => {
+    expect(receipt(review).consequences).toContain('partial.lenderRouting');
   });
 });

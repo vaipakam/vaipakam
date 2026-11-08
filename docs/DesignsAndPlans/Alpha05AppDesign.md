@@ -855,8 +855,11 @@ above. Each resolves here, so a route reviewer needs no private file:
   (`repayPartial` takes no maximum or deadline either), never a second
   copy. What the payment does not use is put back. The review also states the
   principal left, that the due date does not move, that the lender
-  position's holder is paid straight away with the treasury taking its
-  share of the interest, that a full-term loan then counts the rest of its
+  position's holder is paid with the treasury taking its share of the
+  interest, and who receives it is settled only at confirmation (earlier
+  holders still owed interest from before a sale are paid from it first,
+  and a holder the protocol must freeze has the share locked in the
+  lender's vault), that a full-term loan then counts the rest of its
   term on the lower principal, and that the interest counts toward the
   current interest period. The reader can go back and change the amount
   from the review. The finish card measures the principal the payment left,
