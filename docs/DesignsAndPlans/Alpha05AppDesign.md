@@ -1128,35 +1128,36 @@ above. Each resolves here, so a route reviewer needs no private file:
   figure is a floor (the withdrawal pays all accrued when it runs), stated
   as such; its rise while the review is open is not a change to confirm, a
   fall is.
-- **RB-VAULT** — the Vault page (ACC-20, ACC-21, ACC-24) shows the
-  wallet's own vault on its chain: its full address with an explorer link,
-  and that it is a contract kept for this wallet alone, nothing pooled,
-  leaving only by the protocol's rules. With no vault yet the page says so
-  and offers to create one (a deposit or a first offer would too); the
-  review says nothing moves and no approval is asked, the protocol's dry
-  run decides (a flagged wallet is refused before it, since the protocol
-  creates no vault for one), and the finish card names the vault the
-  transaction's record gives, or that it names none. Each asset row carries
-  the protocol's figures at one block, never one worked out by the app:
-  what the protocol counts as the wallet's there (the smaller of the
-  vault's balance and the protocol's record, so a plain transfer never
-  raises it), what may be withdrawn now (the protocol's own answer after
-  every position and queued payout), and the rest as held by the wallet's
-  positions; a vault holding less than the protocol counts shows both, a
-  row whose figures could not all be read says so and shows none as free
-  or held, and a fully held row says so. A part that reached the vault
-  outside the protocol is stated as uncounted and not withdrawable until
-  adopted, with the route to adopt or disown it. Assets come from the
-  deposit record's list (paged to its stated length; an empty page before
-  it, or the page cap, is said incomplete) and from the wallet's loans and
-  open offers; the page says that a plainly transferred asset shows only if
-  one of those names it, says when either source was incomplete or failed,
-  names every deposited NFT collection, since only a token a loan or offer
-  names can be listed with figures (the record keeps no token ids). Empty rows and dust (below 1e-11 of a whole
-  token, never one with an uncounted part) are hidden behind a switch that
-  counts them. VPFI in the vault is named as setting the fee-discount tier,
-  not collateral, with a link to Rewards. Deposit and withdraw are the next
-  slices; until then the page links the current app for them.
+- **RB-VAULT** — the Vault page (ACC-20, ACC-21, ACC-24) shows the wallet's
+  own vault on its chain: its full address with an explorer link, and that
+  it is a contract kept for this wallet alone, nothing pooled, leaving only
+  by the protocol's rules. With no vault yet the page says so and offers to
+  create one (a deposit or a first offer would too); the review says nothing
+  moves and no approval is asked, the protocol's dry run decides (a flagged
+  wallet is refused before it, since the protocol creates no vault for one),
+  and the finish card names the vault the transaction's record gives, or
+  that it names none. Each asset row carries the protocol's figures at one
+  block, never one worked out by the app: what the protocol counts as the
+  wallet's there (the smaller of the vault's balance and the protocol's
+  record, so a plain transfer never raises it), what may be withdrawn now
+  (the protocol's own answer after every position and queued payout), and
+  the rest as held by the wallet's positions; a vault holding less than the
+  protocol counts shows both, a row whose figures could not all be read says
+  so and shows none as free or held, and a fully held row says so. A part
+  that reached the vault outside the protocol is stated as uncounted and not
+  withdrawable until adopted, with the route to adopt or disown it. Assets
+  come from the deposit record's list (paged to its stated length; an empty
+  page before it, or the page cap, is said incomplete) and from the wallet's
+  loans and open offers (a rental's prepaid fee token included); the page
+  says that a plainly transferred asset shows only if one of those names it,
+  says when either source was incomplete or failed, names every deposited
+  NFT collection, since only a token a loan or offer names can be listed
+  with figures (the record keeps no token ids). Empty rows and dust (below
+  1e-11 of a whole token, never one with an uncounted part or a vault short
+  of the count) are hidden behind a switch that counts them. VPFI in the
+  vault is named as setting the fee-discount tier, not collateral, with a
+  link to Rewards. Deposit and withdraw are the next slices; until then the
+  page links the current app for them.
 - **RB-FROZEN** — money the protocol holds for a wallet the sanctions
   screen flags (LN-53) is stated as "Frozen, awaiting de-listing": locked
   where its loan keeps it, in a vault, not lost, and released once the

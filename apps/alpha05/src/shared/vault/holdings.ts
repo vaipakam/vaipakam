@@ -220,12 +220,14 @@ export function holdingFigures(r: HoldingRow): HoldingFigures {
 }
 
 /** A row is dust when what it counts is above zero and below 1e-11 of a whole
- *  token (ERC-20 with known decimals only). */
+ *  token (ERC-20 with known decimals only). A row with an uncounted part, or
+ *  whose vault holds less than the protocol counts, is never dust: what it
+ *  states is not small even when the counted figure is. */
 export function isDust(r: HoldingRow, decimals: number | null): boolean {
   if (r.standard !== 'erc20' || decimals === null || decimals < 11) return false;
   const f = holdingFigures(r);
   if (f.counted === null || f.counted === 0n) return false;
-  if ((f.untracked ?? 0n) > 0n) return false;
+  if ((f.untracked ?? 0n) > 0n || f.short) return false;
   return f.counted * 10n ** 11n < 10n ** BigInt(decimals);
 }
 
@@ -247,9 +249,11 @@ export function shownRows(rows: readonly HoldingRow[], decimals: (asset: Hex) =>
 
 /** The assets the wallet's loans and open offers name. Loans pass every
  *  leg (a zero row is hidden as empty), so a side whose leg is not in this
- *  vault costs a read and shows nothing. */
+ *  vault costs a read and shows nothing. A rental's prepaid fee token is a
+ *  leg too: accepting a rental puts it in the renter's vault without adding
+ *  it to the deposit record. */
 export function positionAssets(
-  loans: readonly { principalAsset: Hex; assetType: number; tokenId: bigint; collateralAsset: Hex; collateralAssetType: number; collateralTokenId: bigint }[],
+  loans: readonly { principalAsset: Hex; assetType: number; tokenId: bigint; collateralAsset: Hex; collateralAssetType: number; collateralTokenId: bigint; prepayAsset: Hex }[],
   offers: readonly { lendingAsset: Hex; assetType: number; tokenId: bigint; prepayAsset: Hex; collateralAsset: Hex; collateralAssetType: number; collateralTokenId: bigint }[],
   complete: boolean,
 ): PositionAssets {
@@ -263,6 +267,7 @@ export function positionAssets(
   for (const l of loans) {
     leg(l.principalAsset, l.assetType, l.tokenId, 'loan');
     leg(l.collateralAsset, l.collateralAssetType, l.collateralTokenId, 'loan');
+    if (l.prepayAsset.toLowerCase() !== ZERO) leg(l.prepayAsset, KIND.erc20, 0n, 'loan');
   }
   for (const o of offers) {
     leg(o.lendingAsset, o.assetType, o.tokenId, 'offer');

@@ -70,7 +70,7 @@ describe('holdingSubjects', () => {
 describe('positionAssets', () => {
   it('names both legs of a loan and every leg of an offer', () => {
     const p = positionAssets(
-      [{ principalAsset: A, assetType: 0, tokenId: 0n, collateralAsset: N, collateralAssetType: 1, collateralTokenId: 3n }],
+      [{ principalAsset: A, assetType: 0, tokenId: 0n, collateralAsset: N, collateralAssetType: 1, collateralTokenId: 3n, prepayAsset: ZERO }],
       [{ lendingAsset: B, assetType: 0, tokenId: 0n, prepayAsset: ZERO, collateralAsset: A, collateralAssetType: 0, collateralTokenId: 0n }],
       false,
     );
@@ -81,6 +81,14 @@ describe('positionAssets', () => {
     ]);
     expect(p.nfts).toEqual([{ standard: 'erc721', asset: N, tokenId: 3n, source: 'loan' }]);
     expect(p.complete).toBe(false);
+  });
+  it('names a rental loan’s prepaid fee asset, which the deposit record does not list', () => {
+    const p = positionAssets([{ principalAsset: N, assetType: 1, tokenId: 5n, collateralAsset: ZERO, collateralAssetType: 0, collateralTokenId: 0n, prepayAsset: B }], [], true);
+    expect(p.erc20).toEqual([
+      { asset: ZERO, source: 'loan' },
+      { asset: B, source: 'loan' },
+    ]);
+    expect(p.nfts).toEqual([{ standard: 'erc721', asset: N, tokenId: 5n, source: 'loan' }]);
   });
   it('names a rental’s fee asset', () => {
     const p = positionAssets([], [{ lendingAsset: N, assetType: 2, tokenId: 4n, prepayAsset: B, collateralAsset: ZERO, collateralAssetType: 0, collateralTokenId: 0n }], true);
@@ -128,6 +136,8 @@ describe('dust and empty rows', () => {
     expect(isDust(row({ inVault: 1n, tracked: 1n }), 6)).toBe(false);
     // An uncounted balance is never hidden.
     expect(isDust(row({ inVault: 2n, tracked: 1n, untracked: 1n }), 18)).toBe(false);
+    // Nor is a vault that holds less than the protocol counts.
+    expect(isDust(row({ inVault: 1n, tracked: 10n ** 18n, withdrawable: 1n }), 18)).toBe(false);
   });
   it('a row the record still lists after a full withdrawal is empty; an unread one never is', () => {
     expect(isEmpty(row({}))).toBe(true);
