@@ -11,7 +11,7 @@ import { OwnStamp } from '../ui/OwnStamp';
 import { formatSpan, formatUtc, shortAddress } from '../ui/format';
 import { useNow } from '../ui/useNow';
 import { PayoutQueue } from './PayoutQueue';
-import { CHANGE_WORDS, dueChanges, pendingChanges, readSafetyFacts, safetyClock, type SafetyAction, type SafetyDraft, type SafetyMode } from './safety';
+import { changeText, dueChanges, pendingChanges, readSafetyFacts, safetyClock, type SafetyAction, type SafetyDraft, type SafetyMode } from './safety';
 import { SafetyActionFlow, useSafetyHeld } from './SafetyAction';
 
 const DAY = 86_400;
@@ -154,7 +154,7 @@ function SafetyState({ mode: m, now, openRows, wallet, busy, choosing, onChoose,
         <ul className="rows" data-testid="vault-safety-pending">
           {pending.map((p) => (
             <li key={p.change} data-testid={`vault-safety-pending-${p.change}`}>
-              {format(now !== null && now >= p.at ? 'safety.pendingDue' : 'safety.pendingAt', { change: text(CHANGE_WORDS[p.change]), at: formatUtc(p.at) })}
+              {format(now !== null && now >= p.at ? 'safety.pendingDue' : 'safety.pendingAt', { change: changeText(p.change, m, { text, format }), at: formatUtc(p.at) })}
             </li>
           ))}
         </ul>

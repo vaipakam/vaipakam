@@ -7,7 +7,7 @@
 import type { CopyAccess } from '../copy/useCopy';
 import type { Receipt, ReceiptRow } from '../receipt/types';
 import { formatSpan } from '../ui/format';
-import { CHANGE_WORDS, pendingChanges, type SafetyReview } from './safety';
+import { changeText, pendingChanges, type SafetyReview } from './safety';
 
 type Copy = Pick<CopyAccess, 'text' | 'format'>;
 
@@ -57,6 +57,7 @@ export function safetyReceipt(r: SafetyReview, copy: Copy): Receipt {
       text('safety.lockStops'),
       text('safety.lockServicing'),
       text('safety.lockDrops'),
+      text('safety.lockVoidsOthers'),
       text('safety.lockUnlock'),
       text('safety.lockPause'),
     );
@@ -71,9 +72,16 @@ export function safetyReceipt(r: SafetyReview, copy: Copy): Receipt {
   } else {
     rows.push({
       label: text('safety.rowApplies'),
-      value: r.due.length === 0 ? unknown : { kind: 'text', text: r.due.map((c) => text(CHANGE_WORDS[c])).join(' · ') },
+      value: r.due.length === 0 ? unknown : { kind: 'text', text: r.due.map((c) => changeText(c, m, copy)).join(' · ') },
       binding: true,
     });
+    if (r.due.includes('lowerDelay'))
+      rows.push({
+        label: text('safety.rowDelayAfter'),
+        value:
+          m === null || m.pendingDelay === 0 ? unknown : { kind: 'text', text: format('safety.delayFromTo', { to: formatSpan(m.pendingDelay), from: formatSpan(m.delaySeconds) }) },
+        binding: true,
+      });
     consequences.push(text('safety.finalizeAll'));
     if (r.due.includes('unlock')) consequences.push(text('safety.finalizeUnlock'));
     if (r.due.includes('disable')) consequences.push(text('safety.finalizeDisable'));

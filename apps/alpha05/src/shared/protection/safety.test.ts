@@ -158,12 +158,17 @@ describe('safetyReceipt', () => {
     const r = safetyReceipt(review('lock', { mode: { ...ON, pendingDelayAt: NOW, pendingDelay: 3 * DAY }, openRows: 3 }), copy);
     expect(r.rows.find((x) => x.label === 'safety.rowCancels')?.value).toEqual({ kind: 'text', text: 'safety.payoutCount:{"count":"3"}' });
     expect(r.rows.find((x) => x.label === 'safety.rowDrops')?.value).toEqual({ kind: 'text', text: 'safety.changeCount:{"count":"1"}' });
-    expect(r.consequences).toContain('safety.lockServicing');
+    expect(r.consequences).toEqual(expect.arrayContaining(['safety.lockServicing', 'safety.lockVoidsOthers']));
     expect(safetyReceipt(review('lock', { mode: null, openRows: null }), copy).consequences).toEqual(expect.arrayContaining(['safety.modeUnread', 'safety.rowsUnread']));
   });
   it('applying due changes names each change and that all due ones apply together', () => {
     const r = safetyReceipt(review('finalize', { mode: ON }, { due: ['unlock', 'disable'] }), copy);
     expect(r.rows[0]?.value).toEqual({ kind: 'text', text: 'safety.changeUnlock · safety.changeDisable' });
     expect(r.consequences).toEqual(expect.arrayContaining(['safety.finalizeAll', 'safety.finalizeUnlock', 'safety.finalizeDisable']));
+  });
+  it('a due shorter delay names the delay it sets, beside the current one', () => {
+    const r = safetyReceipt(review('finalize', { mode: { ...ON, delaySeconds: 5 * DAY, pendingDelay: 2 * DAY, pendingDelayAt: NOW - 1 } }, { due: ['lowerDelay'] }), copy);
+    expect(r.rows[0]?.value).toEqual({ kind: 'text', text: 'safety.changeLowerDelayTo:{"delay":"2 days"}' });
+    expect(r.rows.find((x) => x.label === 'safety.rowDelayAfter')?.value).toEqual({ kind: 'text', text: 'safety.delayFromTo:{"to":"2 days","from":"5 days"}' });
   });
 });

@@ -274,6 +274,13 @@ export const CHANGE_WORDS = {
   disable: 'safety.changeDisable',
 } as const satisfies Record<PendingChange, string>;
 
+/** A pending change in words; a shorter delay names the delay it sets, so
+ *  the reader never confirms a reduction without seeing what it becomes. */
+export function changeText(change: PendingChange, m: SafetyMode | null, copy: Copy): string {
+  if (change === 'lowerDelay' && m !== null && m.pendingDelay > 0) return copy.format('safety.changeLowerDelayTo', { delay: formatSpan(m.pendingDelay) });
+  return copy.text(CHANGE_WORDS[change]);
+}
+
 /** The action's outcome, from the Diamond's own logs for this account. */
 export function measureSafety(r: SafetyReview, logs: readonly Log[], diamond: Hex, copy: Copy): LegOutcome[] {
   const { text, format } = copy;
@@ -305,8 +312,9 @@ export function measureSafety(r: SafetyReview, logs: readonly Log[], diamond: He
   }
   const applied = new Set(find('SettingChangeApplied').map((e) => Number(e.args.kind as number | bigint)));
   const disabled = find('ProtectedModeDisabled').length > 0;
+  const mode = r.facts.mode === null || r.facts.mode === 'absent' ? null : r.facts.mode;
   const legs: LegOutcome[] = r.due.map((change) => {
-    const label = text(CHANGE_WORDS[change]);
+    const label = changeText(change, mode, copy);
     const done = change === 'disable' ? disabled : applied.has(CHANGE_KIND[change]);
     return done ? { status: 'done', label } : { status: 'not-done', label, reason: text(change === 'disable' ? 'safety.rowsOpen' : 'safety.notApplied') };
   });

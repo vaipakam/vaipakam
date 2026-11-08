@@ -93,7 +93,10 @@ describe('pauseStops and withdrawVia', () => {
     expect(withdrawVia({ paused: true, escapeOpen: false, protection: OPEN })).toBe('withdraw');
     expect(withdrawVia({ paused: true, escapeOpen: true, protection: OPEN })).toBe('escape');
     expect(withdrawVia({ paused: true, escapeOpen: true, protection: PROTECTED })).toBe('withdraw');
-    expect(withdrawVia({ paused: null, escapeOpen: null, protection: OPEN })).toBe('withdraw');
+    expect(withdrawVia({ paused: null, escapeOpen: false, protection: OPEN })).toBeNull();
+    expect(withdrawVia({ paused: null, escapeOpen: null, protection: PROTECTED })).toBeNull();
+    expect(withdrawVia({ paused: true, escapeOpen: null, protection: PROTECTED })).toBeNull();
+    expect(withdrawBlockers(review({ paused: null }), copy, amountText)).toEqual(['vaultWithdraw.routeUnread']);
     expect(withdrawVia({ paused: true, escapeOpen: true, protection: null })).toBeNull();
     expect(withdrawVia({ paused: true, escapeOpen: null, protection: OPEN })).toBeNull();
   });

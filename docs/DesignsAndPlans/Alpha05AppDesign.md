@@ -1231,10 +1231,12 @@ above. Each resolves here, so a route reviewer needs no private file:
   Each receipt states what the mode becomes and every consequence: turning
   on never delays what is owed to others and credits other vaults' payments
   into the vault; a lock cancels every queued payout (counted), drops every
-  pending change (counted), leaves repayment and adding collateral open and
-  works during a pause; an unlock waits the delay; applying due changes
-  applies every due change together, and a switch-off waits for an empty
-  queue. Each action is dry-run at review and again before the wallet
+  pending setting change (counted) and voids every pending destination,
+  signer and vault-code change (said, not counted), leaves repayment and
+  adding collateral open and works during a pause; an unlock waits the
+  delay; applying due changes applies every due change together, a shorter
+  delay is always shown as the delay it sets beside the current one, and a
+  switch-off waits for an empty queue. Each action is dry-run at review and again before the wallet
   opens, and the finish card reads the Diamond's own events for this
   account. The account's own payout queue (RB-CLAIM: the Claims component)
   is shown under the card.

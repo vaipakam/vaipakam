@@ -100,17 +100,17 @@ export type WithdrawVia = 'withdraw' | 'escape';
 
 /** Which entry point takes the withdrawal: the ordinary one unless the
  *  protocol is paused with its escape route open and the account runs no
- *  protected mode, which then goes through the escape route; null when that
- *  cannot be told. While paused with the escape route closed, the ordinary
- *  one is named (and the pause stops it). */
+ *  protected mode, which then goes through the escape route. While paused
+ *  with the escape route closed, the ordinary one is named (and the pause
+ *  stops it). Null when that cannot be told: the pause unread, or under a
+ *  pause the route unread, or under an open route the mode unread
+ *  (RB-VAULT-ESCAPE: then no entry point is chosen and nothing is sent). */
 export function withdrawVia(r: Pick<WithdrawReview, 'paused' | 'escapeOpen' | 'protection'>): WithdrawVia | null {
-  // A protected account always withdraws through the ordinary entry point,
-  // and with the pause unread the ordinary one is tried: its dry run then
-  // decides, and the receipt says the pause was unread.
-  if (r.paused !== true || r.protection?.enabled === true) return 'withdraw';
-  if (r.escapeOpen === null) return null;
+  if (r.paused === false) return 'withdraw';
+  if (r.paused === null || r.escapeOpen === null) return null;
   if (!r.escapeOpen) return 'withdraw';
-  return r.protection === null ? null : 'escape';
+  if (r.protection === null) return null;
+  return r.protection.enabled ? 'withdraw' : 'escape';
 }
 
 /** The call a draft stands for: from the wallet's own vault, to the wallet,
