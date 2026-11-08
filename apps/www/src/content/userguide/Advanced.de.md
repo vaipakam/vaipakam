@@ -2351,6 +2351,12 @@ Ein Kreditangebot ist `createOffer` mit `offerType` 0, ERC-20 auf beiden Seiten,
 
 Ohne Teile ist ein Kreditangebot ein Einzelwert-Angebot: `amount` = `amountMax`, `interestRateBps` = `interestRateBpsMax`, `collateralAmount` = `collateralAmountMax` (die eine Sicherheit, die ein Kreditnehmer sperren muss), `fillMode` 0, sofern Advanced keinen anderen setzt (nächster Abschnitt), `periodicInterestCadence` 0, sofern Advanced keinen Plan setzt, `allowsPrepayListing` und `allowsParallelSale` false, `refinanceTargetLoanId` 0, `creatorRiskAndTermsConsent` true, und kein Full-Tarif, sofern Advanced ihn nicht wählt. Beträge werden exakt in Basiseinheiten geparst, und der Zinssatz beträgt höchstens 10.000 bps. `durationDays` ist durch das konfigurierte Maximum aus `getProtocolConfigBundle` begrenzt. `expiresAt` ist 0 (offen bis zur Stornierung) oder ein Zeitpunkt, der beim Öffnen der Prüfung vom neuesten Block aus festgelegt wird, höchstens `MAX_OFFER_EXPIRY_HORIZON` (365 Tage) voraus. `useFullTermInterest` ist standardmäßig true und `allowsPartialRepay` false.
 
+<a id="rate-check"></a>
+
+### Ihren Zinssatz mit aktuellen Krediten vergleichen
+
+Beide Formulare lesen `/loans/recent` des Index für dasselbe Verleih-Asset, dasselbe Sicherheiten-Asset und dieselbe Laufzeit, ohne Verkaufsvehikel von Verleihern, und behalten die Kredite, die in den letzten 30 Tagen begonnen haben und einen vereinbarten Zinssatz tragen, den das Ledger des Index belegt (ein Kredit mit unbestätigten Bedingungen bleibt außen vor). Verglichen wird mit dem Median dieser Sätze, bei gerader Anzahl dem kleineren der beiden mittleren, damit kein Satz zwischen zwei vereinbarten erfunden wird. Ein Satz mehr als 5 Prozentpunkte (500 bps) davon entfernt ist eine Warnung mit Richtung: Ein Verleiher weit darunter oder ein Kreditnehmer weit darüber stellt das Angebot ein, das zuerst angenommen wird, wenn sich die Zinsen bewegen; in die andere Richtung bleibt es womöglich liegen. Innerhalb dieser Spanne ist es ein Hinweis mit Median und Anzahl. Ein Lesevorgang umfasst die neuesten 100 Kredite; erreicht er diese Grenze, sagt der Hinweis, dass nur die neuesten gelesen wurden. Eine Index-Antwort, die nicht auf das angefragte Paar und die Laufzeit beschränkt ist, wird abgelehnt statt verglichen, NFT-Sicherheiten werden nicht verglichen, und ein fehlgeschlagener Lesevorgang sagt das. Die Prüfung blockiert nie.
+
 <a id="lend-offer-parts"></a>
 
 ### Lend: Ein Angebot in Teilen

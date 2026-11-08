@@ -2163,6 +2163,12 @@ Lend は、ERC-20 担保に対する ERC-20 の借入リクエスト（`offerTyp
 
 パートがない貸出オファーは単一値です。`amount` = `amountMax`、`interestRateBps` = `interestRateBpsMax`、`collateralAmount` = `collateralAmountMax`（借り手がロックすべき唯一の担保額）、`fillMode` 0（Advanced で別の方式を指定しない場合。次の節を参照）、`periodicInterestCadence` 0（Advanced でスケジュールを指定しない場合）、`allowsPrepayListing` と `allowsParallelSale` は false、`refinanceTargetLoanId` 0、`creatorRiskAndTermsConsent` は true で、Advanced で選ばない限り Full タリフは設定しません。金額は基本単位に正確に解析され、金利は最大 10,000 bps です。`durationDays` は `getProtocolConfigBundle` から読む設定上の最大値で上限が決まります。`expiresAt` は 0（キャンセルまで有効）か、確認画面を開いた時点の最新ブロックから決めた時刻で、最長 `MAX_OFFER_EXPIRY_HORIZON`（365日）先までです。`useFullTermInterest` の既定は true、`allowsPartialRepay` の既定は false です。
 
+<a id="rate-check"></a>
+
+### 金利を最近のローンと比べる
+
+両方の投稿フォームは、同じ貸付資産・担保資産・期間についてインデックスの `/loans/recent` を読み（貸し手の売却用オファーは除外）、直近30日に始まり、インデックスの台帳が裏づける合意金利を持つローンだけを残します（条件が確認されていないローンは除きます）。比較の基準はそれらの金利の中央値で、件数が偶数のときは中央の2つのうち低い方を使い、合意された2つの金利の間に存在しない金利を作りません。そこから5パーセントポイント（500 bps）を超えて離れた金利は、向きを示す警告になります。大きく低い貸し手、または大きく高い借り手は、金利が動いたときに真っ先に取られるオファーを出し、逆の向きではオファーが取られずに残るかもしれません。その幅の内側では、中央値と件数を示す注記になります。1回の読み取りは最新100件までで、上限に達すると最新分だけを読んだと注記します。依頼したペアと期間に絞られていないインデックスの応答は比較せずに拒否し、NFT担保は比較せず、読み取りに失敗したときはそう表示します。レビューを止めることはありません。
+
 <a id="lend-offer-parts"></a>
 
 ### Lend: パートに分けて貸すオファー

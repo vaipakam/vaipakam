@@ -2341,6 +2341,12 @@ Una oferta de préstamo es `createOffer` con `offerType` 0, ERC-20 en ambos lado
 
 Sin partes, una oferta de préstamo es de valor único: `amount` = `amountMax`, `interestRateBps` = `interestRateBpsMax`, `collateralAmount` = `collateralAmountMax` (la única garantía que un prestatario debe bloquear), `fillMode` 0 salvo que Advanced fije otro (sección siguiente), `periodicInterestCadence` 0 salvo que Advanced fije un calendario, `allowsPrepayListing` y `allowsParallelSale` en false, `refinanceTargetLoanId` 0, `creatorRiskAndTermsConsent` en true, y sin tarifa Full salvo que Advanced la elija. Los importes se convierten exactamente a unidades base y la tasa es como máximo 10.000 bps. `durationDays` está limitado por el máximo configurado leído de `getProtocolConfigBundle`. `expiresAt` es 0 (abierta hasta cancelarla) o una hora fijada desde el último bloque al abrirse la revisión, como mucho `MAX_OFFER_EXPIRY_HORIZON` (365 días) después. `useFullTermInterest` es true por defecto y `allowsPartialRepay` false.
 
+<a id="rate-check"></a>
+
+### Comparar tu tasa con préstamos recientes
+
+Los dos formularios leen `/loans/recent` del índice para el mismo activo prestado, el mismo activo de garantía y el mismo plazo, sin los vehículos de venta de prestamistas, y se quedan con los préstamos que empezaron en los últimos 30 días y tienen una tasa acordada que respalda el registro del índice (un préstamo con términos no confirmados queda fuera). La comparación es la mediana de esas tasas, la menor de las dos centrales si el número es par, para no inventar una tasa entre dos acordadas. Una tasa a más de 5 puntos porcentuales (500 bps) es un aviso que indica el sentido: un prestamista muy por debajo, o un prestatario muy por encima, publica la oferta que se toma primero cuando las tasas se mueven; en el otro sentido, la oferta puede quedarse sin tomar. Dentro de ese margen es una nota con la mediana y el número. Una lectura cubre los 100 préstamos más recientes; si llega a ese límite, la nota dice que solo se leyeron los últimos. Una respuesta del índice que no se limite al par y plazo pedidos se rechaza en vez de compararse, la garantía NFT no se compara y una lectura fallida lo dice. Nunca bloquea la revisión.
+
 <a id="lend-offer-parts"></a>
 
 ### Lend: Una oferta en partes

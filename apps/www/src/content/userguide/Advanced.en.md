@@ -2540,6 +2540,12 @@ A lending offer is `createOffer` with `offerType` 0, ERC-20 on both legs, sent f
 
 Without parts a lending offer is single-value: `amount` = `amountMax`, `interestRateBps` = `interestRateBpsMax`, `collateralAmount` = `collateralAmountMax` (the one collateral a borrower must lock), `fillMode` 0 unless Advanced sets another (next section), `periodicInterestCadence` 0 unless Advanced sets a schedule, `allowsPrepayListing` and `allowsParallelSale` false, `refinanceTargetLoanId` 0, `creatorRiskAndTermsConsent` true, and no Full tariff unless Advanced chooses it. Amounts are parsed into base units exactly and the rate is at most 10,000 bps. `durationDays` is capped by the configured maximum read from `getProtocolConfigBundle`. `expiresAt` is 0 (open until cancelled) or a time fixed from the latest block when the review opens, at most `MAX_OFFER_EXPIRY_HORIZON` (365 days) ahead. `useFullTermInterest` defaults to true and `allowsPartialRepay` to false.
 
+<a id="rate-check"></a>
+
+### Checking your rate against recent loans
+
+Both posting forms read the index's `/loans/recent` for the same lending asset, collateral asset and term, with lender-sale vehicles excluded, and keep the loans that started in the last 30 days and carry an agreed rate the index's ledger backs (a loan whose terms are not confirmed is left out). The comparison is the median of those rates, the lower of the two middles for an even count, so no rate is invented between two agreed ones. A rate more than 5 percentage points (500 bps) from it is a warning that names the direction: a lender far under, or a borrower far over, posts the offer taken first when rates move; the other way, the offer may sit untaken. Within that band it is a note with the median and the count. One read covers the newest 100 loans; when it reaches that cap, the note says only the latest were read. An index answer not scoped to the pair and term asked for is refused rather than compared, NFT collateral is not compared, and a read that fails says so. It never blocks the review.
+
 <a id="lend-offer-parts"></a>
 
 ### Lend: An Offer in Parts

@@ -1896,6 +1896,12 @@ Lend 通过出借人发送的 `acceptOffer(offerId, terms, signature)`，直接�
 
 未设部分时，出借报价为单一数值：`amount` = `amountMax`，`interestRateBps` = `interestRateBpsMax`，`collateralAmount` = `collateralAmountMax`（借款人必须锁定的唯一抵押品数量），`fillMode` 0（除非 Advanced 设置了其他方式，见下一节），`periodicInterestCadence` 0（除非 Advanced 设置了付息计划），`allowsPrepayListing` 和 `allowsParallelSale` 为 false，`refinanceTargetLoanId` 0，`creatorRiskAndTermsConsent` 为 true，且不设 Full 方案（除非 Advanced 选择了它）。金额被精确解析为基础单位，利率最多 10,000 bps。`durationDays` 受从 `getProtocolConfigBundle` 读取的配置最大值限制。`expiresAt` 为 0（取消前一直开放），或在审核打开时从最新区块确定的时间，最多提前 `MAX_OFFER_EXPIRY_HORIZON`（365 天）。`useFullTermInterest` 默认为 true，`allowsPartialRepay` 默认为 false。
 
+<a id="rate-check"></a>
+
+### 将你的利率与近期贷款比较
+
+两个发布表单都会针对相同的出借资产、抵押资产和期限读取索引的 `/loans/recent`（排除出借人出售用的报价），并只保留过去 30 天内开始、且带有索引账本可证实的约定利率的贷款（条款未确认的贷款不计入）。比较基准是这些利率的中位数，笔数为偶数时取中间两个中较低的一个，因此不会在两个约定利率之间凭空生成利率。偏离超过 5 个百分点（500 bps）的利率会给出注明方向的提醒：远低于基准的出借人或远高于基准的借款人，发布的是利率变动时最先被接走的报价；反方向时，报价可能无人接受。在该范围内则显示一条注明中位数和笔数的说明。一次读取覆盖最新的 100 笔贷款；达到上限时，说明会指出只读取了最新的部分。未限定在所请求币对和期限的索引应答会被拒绝而不作比较，NFT 抵押品不作比较，读取失败时也会说明。它从不阻止审核。
+
 <a id="lend-offer-parts"></a>
 
 ### Lend：分部分出借的报价

@@ -2361,6 +2361,12 @@ Une offre de prêt est un `createOffer` avec `offerType` 0, ERC-20 des deux côt
 
 Sans parts, une offre de prêt est à valeur unique : `amount` = `amountMax`, `interestRateBps` = `interestRateBpsMax`, `collateralAmount` = `collateralAmountMax` (l'unique garantie qu'un emprunteur doit bloquer), `fillMode` 0 sauf si Advanced en fixe un autre (section suivante), `periodicInterestCadence` 0 sauf si Advanced fixe un échéancier, `allowsPrepayListing` et `allowsParallelSale` à false, `refinanceTargetLoanId` 0, `creatorRiskAndTermsConsent` à true, et aucun tarif Full sauf si Advanced le choisit. Les montants sont convertis exactement en unités de base et le taux est d'au plus 10 000 bps. `durationDays` est plafonné par le maximum configuré lu dans `getProtocolConfigBundle`. `expiresAt` vaut 0 (ouverte jusqu'à l'annulation) ou une heure fixée depuis le dernier bloc à l'ouverture de la vérification, au plus `MAX_OFFER_EXPIRY_HORIZON` (365 jours) plus tard. `useFullTermInterest` vaut true par défaut et `allowsPartialRepay` false.
 
+<a id="rate-check"></a>
+
+### Comparer votre taux aux prêts récents
+
+Les deux formulaires lisent `/loans/recent` de l'index pour le même actif prêté, le même actif de garantie et la même durée, sans les véhicules de vente des prêteurs, et gardent les prêts ouverts au cours des 30 derniers jours portant un taux convenu que le registre de l'index atteste (un prêt aux conditions non confirmées est écarté). La comparaison porte sur la médiane de ces taux, la plus basse des deux valeurs centrales pour un nombre pair, afin de ne jamais inventer un taux entre deux taux convenus. Un taux à plus de 5 points de pourcentage (500 bps) donne un avertissement qui indique le sens : un prêteur très en dessous, ou un emprunteur très au-dessus, publie l'offre prise en premier quand les taux bougent ; dans l'autre sens, l'offre risque de rester sans preneur. Dans cette marge, c'est une note avec la médiane et le nombre. Une lecture couvre les 100 prêts les plus récents ; si elle atteint cette limite, la note dit que seuls les derniers ont été lus. Une réponse de l'index non limitée à la paire et à la durée demandées est refusée au lieu d'être comparée, une garantie NFT n'est pas comparée, et une lecture en échec le signale. Cela ne bloque jamais la revue.
+
 <a id="lend-offer-parts"></a>
 
 ### Lend : Une offre en parts
