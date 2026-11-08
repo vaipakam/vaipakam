@@ -916,7 +916,9 @@ above. Each resolves here, so a route reviewer needs no private file:
   linked sale listing also holds it; no view exposes that link (#3308), so
   the review's dry run of this very withdrawal names it, and the send runs
   the dry run again. The page states a closed reason only where no action
-  above already said it. The amount is more than nothing and at most the
+  above already said it, and a hold said once for two actions (an unpriced
+  token with the top-up, a refinance request with paying part) is said in
+  words that name both. The amount is more than nothing and at most the
   protocol's limit now (`calculateMaxWithdrawable`), checked as it is typed;
   the form says the limit moves with prices and as interest accrues, and
   offers no "use the most" shortcut, since an amount at the limit is

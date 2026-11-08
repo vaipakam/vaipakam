@@ -8,4 +8,6 @@ After the claim the app reads the outcome from the transaction's own record: the
 
 Claims lists the payouts of the positions the wallet holds, followed by the rewards section Home also shows (moved, unchanged). It says "nothing to collect" only when every read completed. Interest owed from a sold position, frozen sale proceeds, the protected-account payout queue and extension reserves are not collected here yet; the page names them and links the current app until they arrive.
 
+On a loan's page, a hold that closes taking back collateral together with an action above it (collateral the protocol does not price, shared with adding collateral; a standing refinance request, shared with paying part) is now said once in words that name both actions, where before the line named only the action above.
+
 Rulebook: `docs/DesignsAndPlans/Alpha05AppDesign.md` RB-POSITION-CLAIM. Epic #3180.

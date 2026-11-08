@@ -146,6 +146,13 @@ export function LoanActions({ loanId, view: v, role, own, chain, meta }: LoanAct
   const borrower = role?.borrower === true;
   const erc20 = l.assetType === 0;
   const addCode = add.refusals[0]?.code;
+  const partialCode = partial.refusals[0]?.code;
+  const takeCode = take.refusals[0]?.code;
+  // A hold both actions share is said once, by the action above, in words
+  // that name both, so the withdrawal's closed reason is never left unsaid.
+  const unpricedBoth = takeCode === 'IlliquidAsset' && addCode === 'IlliquidAsset';
+  const refinanceBoth = takeCode === 'RefinanceRequestOpen' && partialCode === 'RefinanceRequestLive';
+  const takeSaidAbove = unpricedBoth || refinanceBoth;
   const addNote =
     !borrower || !erc20 || add.state === 'open' ? null : add.state === 'unknown' ? (
       <p className="tier-a" data-testid="add-collateral-refusal">
@@ -153,12 +160,9 @@ export function LoanActions({ loanId, view: v, role, own, chain, meta }: LoanAct
       </p>
     ) : addCode !== undefined && ADD_ONLY.has(addCode) ? (
       <p className="tier-b" data-testid="add-collateral-refusal" data-code={addCode}>
-        {add.refusals[0]?.reason}
+        {unpricedBoth ? text('addColl.illiquidBoth') : add.refusals[0]?.reason}
       </p>
     ) : null;
-  const partialCode = partial.refusals[0]?.code;
-  const takeCode = take.refusals[0]?.code;
-  const takeSaidAbove = (takeCode === 'IlliquidAsset' && addCode === 'IlliquidAsset') || (takeCode === 'RefinanceRequestOpen' && partialCode === 'RefinanceRequestLive');
   const takeNote =
     !borrower || !erc20 || take.state === 'open' ? null : take.state === 'unknown' ? (
       <p className="tier-a" data-testid="take-back-refusal">
@@ -176,7 +180,7 @@ export function LoanActions({ loanId, view: v, role, own, chain, meta }: LoanAct
       </p>
     ) : partialCode !== undefined && PARTIAL_ONLY.has(partialCode) ? (
       <p className="tier-b" data-testid="partial-refusal" data-code={partialCode}>
-        {partial.refusals[0]?.reason}
+        {refinanceBoth ? text('partial.refinanceLiveBoth') : partial.refusals[0]?.reason}
       </p>
     ) : null;
 
