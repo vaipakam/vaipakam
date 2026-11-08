@@ -12,8 +12,8 @@
 import type { Address } from 'viem';
 import { DEPLOYMENTS } from '@vaipakam/contracts/deployments';
 import {
-  LEGACY_DIAMOND_NFT_ABI,
   POSITION_ERC721_ABI,
+  POSITION_NFT_INDEXED_EVENTS,
   positionNftSurface,
   positionNftSurfaceForDiamond,
   type PositionNftSurface,
@@ -44,7 +44,7 @@ export const POSITION_TRANSFER_EVENT = POSITION_ERC721_ABI.find(
   (e) => e.type === 'event' && e.name === 'Transfer',
 )!;
 
-/** Every event of the frozen pre-#3205 Diamond fragment (the ERC-721 events
- *  plus the protected-mode NFT queue's), so a legacy-mode chain's logs keep
- *  decoding after the generated ABI dropped them. */
-export const LEGACY_POSITION_EVENTS = LEGACY_DIAMOND_NFT_ABI.filter((e) => e.type === 'event');
+/** Every position-NFT event decoded outside the generated Diamond ABI (the
+ *  legacy fragment's and the PositionNFT's ERC-721 ones): the shared list the
+ *  Activity participant rule also reads (`@vaipakam/lib/positionNft`). */
+export const LEGACY_POSITION_EVENTS = POSITION_NFT_INDEXED_EVENTS;

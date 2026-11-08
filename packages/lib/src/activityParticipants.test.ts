@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Abi, AbiEvent, AbiParameter } from 'viem';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
+import { POSITION_NFT_INDEXED_EVENTS } from './positionNft.mjs';
 import { activityActor, actorAttributedKinds } from './activityActor';
 import {
   EXEMPT_GROUPS,
@@ -22,13 +23,15 @@ const tupleHasAddress = (p: Param): boolean =>
   Array.isArray(p.components) && p.components.some((c) => isAddress(c) || tupleHasAddress(c));
 
 /**
- * Every Diamond event that carries an address, by name. The rule is keyed by
+ * Every event the indexer decodes that carries an address, by name: the
+ * generated Diamond ABI's plus the position-NFT events it decodes outside it
+ * (`POSITION_NFT_INDEXED_EVENTS`, #3318 Codex r3). The rule is keyed by
  * name, so an overloaded name (two definitions) is checked as the union of
  * its definitions' inputs: every address any of them carries is classified.
  */
 const EVENTS: Map<string, readonly Param[]> = (() => {
   const out = new Map<string, Param[]>();
-  for (const item of DIAMOND_ABI_VIEM as Abi) {
+  for (const item of [...(DIAMOND_ABI_VIEM as Abi), ...(POSITION_NFT_INDEXED_EVENTS as Abi)]) {
     if (item.type !== 'event') continue;
     const inputs = (item as AbiEvent).inputs as readonly Param[];
     const merged = out.get(item.name) ?? [];

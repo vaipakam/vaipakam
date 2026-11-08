@@ -1680,7 +1680,7 @@ contract TestMutatorFacet {
     ///         the call PrecloseFacet / EarlyWithdrawalFacet make
     ///         internally.
     function lockNFTRaw(uint256 tokenId, LibPositionNFT.RouteReason reason) external {
-        LibPositionNFT.openRoute(tokenId, reason);
+        LibPositionNFT.openRoute(tokenId, reason, true);
     }
 
     /// @notice Test-only: unlock a tokenId.

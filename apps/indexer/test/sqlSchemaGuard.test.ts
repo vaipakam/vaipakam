@@ -178,7 +178,13 @@ describe('SQL-vs-schema guard (#1149)', () => {
     // one placeholder per loan id, values bound. Covered against the REAL
     // migrated schema by `loanLifecycleGuard.test.ts`, which records loans
     // across several calls and asserts the state each read returned.
-    expect(skipped.length).toBeLessThanOrEqual(22);
+    // Raised 22 → 25 for #3318 Codex r3: the Transfer handler's three owner
+    // updates and its participant SELECT read ONE live-side predicate
+    // (`liveSideSql`), so a retired receipt can neither re-point a holder nor
+    // record a participant. Sharing the predicate is what makes them dynamic;
+    // both shapes execute against the REAL migrated schema in
+    // `test/retiredReceiptTransfer.test.ts`.
+    expect(skipped.length).toBeLessThanOrEqual(25);
   });
 
   it('every static SQL statement prepares against the migrated schema', () => {

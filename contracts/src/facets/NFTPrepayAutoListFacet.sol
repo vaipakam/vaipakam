@@ -7,6 +7,7 @@ import {LibLoanClock} from "../libraries/LibLoanClock.sol";
 import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
 import {LibPrepayOrder} from "../libraries/LibPrepayOrder.sol";
 import {LibPrepayListingWiring} from "../libraries/LibPrepayListingWiring.sol";
+import {LibPrepayCleanup} from "../libraries/LibPrepayCleanup.sol";
 import {LibAutoList} from "../libraries/LibAutoList.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
@@ -94,6 +95,19 @@ contract NFTPrepayAutoListFacet is DiamondPausable, DiamondReentrancyGuard {
         FeeLeg[] feeLegs
     );
 
+    /// @notice The listing facet's cancel event, byte-identical
+    ///         (`NFTPrepayListingFacet.CancelReason` encodes as uint8), emitted
+    ///         here when a moved listing is torn down.
+    /// @custom:event-category state-change/loan-mutation
+    event PrepayListingCanceled(
+        uint256 indexed loanId,
+        address indexed caller,
+        bytes32 indexed orderHash,
+        uint8 reason
+    );
+    /// @dev `NFTPrepayListingFacet.CancelReason.PositionMoved`.
+    uint8 private constant CANCEL_REASON_POSITION_MOVED = 4;
+
     /// @notice T-086 Round-7 follow-up (Codex round-12 P2 #2) — Case B
     ///         emits the EXISTING `PrepayListingUpdated` event
     ///         byte-for-byte. Same indexer-reuse rationale as
@@ -177,14 +191,23 @@ contract NFTPrepayAutoListFacet is DiamondPausable, DiamondReentrancyGuard {
             revert BorrowerSanctioned(loanId, currentHolder);
         }
 
+        // #3205 (#3318 Codex r3) — a listing whose borrower position MOVED
+        // since it was posted is a former holder's: it can never complete,
+        // and this permissionless path must never revive it (its fee legs
+        // and ask are the former holder's). Cancel it whole first, keeping
+        // none of its terms; the call then proceeds exactly as for a loan
+        // with no listing (Case A: a fresh floor listing for the CURRENT
+        // holder, no fee legs).
+        _cancelMovedListing(loan, loanId);
+
         // #656c (#594) — on the Case-A creation path only (no existing
         // listing), consolidate the borrower side to the current holder
         // BEFORE the holder's vault is cached below, so the fresh listing
         // binds the holder's vault (re-anchors `loan.borrower` to the
         // holder). Case B (rotation of a live listing) needs no
-        // consolidation: a live listing locks the borrower NFT, so the
-        // position can't have been transferred since the listing was created
-        // — whichever creation path posted it already consolidated. The
+        // consolidation: the moved-listing teardown above leaves only a
+        // listing whose position has not moved since it was posted, and
+        // whichever creation path posted it already consolidated. The
         // gate condition is an immediately-consumed re-read of the slot
         // (one extra warm SLOAD) so the long-lived `existingOrderHash` local
         // below keeps its original short live-range and the Case-B
@@ -217,6 +240,17 @@ contract NFTPrepayAutoListFacet is DiamondPausable, DiamondReentrancyGuard {
                 gracePeriodEnd
             );
         }
+    }
+
+    /// @dev #3205 — tear down a recorded listing whose borrower position moved
+    ///      since it was posted (`LibPositionNFT.routeIsDead`). A listing whose
+    ///      route was replaced by another flow counts as moved too.
+    function _cancelMovedListing(LibVaipakam.Loan storage loan, uint256 loanId) private {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (s.prepayListingOrderHash[loanId] == bytes32(0)) return;
+        if (!LibPositionNFT.routeIsDead(loan.borrowerTokenId, LibPositionNFT.RouteReason.PrepayCollateralListing)) return;
+        bytes32 orderHash = LibPrepayCleanup.clearLoanListing(loan, loanId);
+        emit PrepayListingCanceled(loanId, msg.sender, orderHash, CANCEL_REASON_POSITION_MOVED);
     }
 
     /// @dev #656c (#594) — consolidate the borrower side to the current
@@ -303,7 +337,7 @@ contract NFTPrepayAutoListFacet is DiamondPausable, DiamondReentrancyGuard {
             PREPAY_MODE_FIXED_PRICE,
             emptyFeeLegs
         );
-        LibPrepayListingWiring.wire(s, loan, orderHash, conduit, address(executor));
+        LibPrepayListingWiring.wire(s, loan, orderHash, conduit, address(executor), /* holderAuthenticated */ false);
 
         emit PrepayListingPosted(
             loanId,
@@ -582,7 +616,7 @@ contract NFTPrepayAutoListFacet is DiamondPausable, DiamondReentrancyGuard {
         );
 
         // Step 9 — wire the new orderHash to the vault.
-        LibPrepayListingWiring.wire(s, loan, newOrderHash, conduit, address(executor));
+        LibPrepayListingWiring.wire(s, loan, newOrderHash, conduit, address(executor), /* holderAuthenticated */ false);
 
         // T-086 Round-7 follow-up (Codex round-12 P2 #2) — emit the
         // EXISTING `PrepayListingUpdated` event byte-for-byte. Indexers

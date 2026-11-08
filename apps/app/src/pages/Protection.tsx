@@ -537,10 +537,6 @@ function AccountView({
         <p className="muted">{p.codeHint}</p>
       </section>
 
-      {!legacyNfts && address?.toLowerCase() === account.toLowerCase() ? (
-        <HolderLockCard lock={snap.holderLock} holder={account} now={now} />
-      ) : null}
-
       {legacyNfts &&
       (record.protectNfts || record.retired || (snap.transfers?.length ?? 0) > 0 || snap.transfers === null) ? (
         <section className="card">
@@ -889,6 +885,17 @@ function AccountView({
  * (standalone mode). Lock, ask to unlock and cancel act on the caller; the
  * unlock, once its delay has passed, can be applied by anyone.
  */
+/** #3205 — the connected wallet's own PositionNFT holder lock, on a standalone
+ *  chain. Rendered at the page root, not inside the protected-account view:
+ *  the lock outlives protected mode (switching protection off cannot unlock
+ *  the holder), so its state and unlock controls must show whether or not
+ *  protected mode is on (#3318 Codex r3). */
+function OwnHolderLock({ snap, holder }: { snap: ProtectedAccountSnapshot; holder: `0x${string}` }) {
+  const nowSec = useNowSec();
+  if (snap.nftMode !== 'standalone') return null;
+  return <HolderLockCard lock={snap.holderLock} holder={holder} now={chainNowOf(snap, nowSec)} />;
+}
+
 function HolderLockCard({
   lock,
   holder,
@@ -1117,6 +1124,7 @@ export function Protection() {
       ) : (
         <div className="stack">
           {data.record.enabled ? <AccountView account={address} snap={data} asSigner={false} /> : <EnableForm snap={data} />}
+          <OwnHolderLock snap={data} holder={address} />
           {retired.data ? <RetiredAccountCard account={retired.data} /> : null}
           {retired.isError ? <UnavailableState body={p.managedAccountUnknown} /> : null}
           <SignerEntryCard />

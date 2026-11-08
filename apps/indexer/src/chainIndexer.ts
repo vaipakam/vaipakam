@@ -1086,6 +1086,18 @@ export const RECONCILE_BUDGET_OWN_INVOCATION: ReconcileOptions = { maxRows: 1, m
  * healthy, and the rotation returns to those rows next tick.
  */
 /**
+ * #3205 — the ONE SQL predicate for "this position side still has a live
+ * holder": a side whose position closed (its token burned, or RETIRED by
+ * `PositionRetired`) carries the zero holder and stays closed. Every
+ * Transfer-driven write reads it, the owner updates and the participation
+ * history alike (#3318 Codex r3), so a retired receipt moving on never
+ * re-points a holder or records a participant.
+ */
+function liveSideSql(column: 'lender_current_owner' | 'borrower_current_owner' | 'creator_current_owner'): string {
+  return `(${column} IS NULL OR ${column} != '0x0000000000000000000000000000000000000000')`;
+}
+
+/**
  * The CURRENT holder of each side of a position, read from the chain.
  *
  * The repair cannot use the index's own `*_current_owner` columns to decide
@@ -6918,17 +6930,17 @@ export async function processLoanLogs(
         env.DB.prepare(
           `UPDATE loans SET lender_current_owner = ?, updated_at = ?
            WHERE chain_id = ? AND lender_token_id = ?
-             AND (lender_current_owner IS NULL OR lender_current_owner != '0x0000000000000000000000000000000000000000')`,
+             AND ${liveSideSql('lender_current_owner')}`,
         ).bind(to, now, chainId, tokenId),
         env.DB.prepare(
           `UPDATE loans SET borrower_current_owner = ?, updated_at = ?
            WHERE chain_id = ? AND borrower_token_id = ?
-             AND (borrower_current_owner IS NULL OR borrower_current_owner != '0x0000000000000000000000000000000000000000')`,
+             AND ${liveSideSql('borrower_current_owner')}`,
         ).bind(to, now, chainId, tokenId),
         env.DB.prepare(
           `UPDATE offers SET creator_current_owner = ?, updated_at = ?
            WHERE chain_id = ? AND position_token_id = ?
-             AND (creator_current_owner IS NULL OR creator_current_owner != '0x0000000000000000000000000000000000000000')`,
+             AND ${liveSideSql('creator_current_owner')}`,
         ).bind(to, now, chainId, tokenId),
       ]);
       // RPC read-diet PR 0 — count only Transfers that re-pointed a TRACKED
@@ -6957,11 +6969,15 @@ export async function processLoanLogs(
       ) {
         const sideMatches = (
           await env.DB.prepare(
+            // #3318 Codex r3 — the same live-side predicate as the owner
+            // updates above: a retired (or burned) side records no
+            // participant, so a receipt bought after its position closed is
+            // never history of that loan.
             `SELECT loan_id, 'lender' AS role FROM loans
-              WHERE chain_id = ?1 AND lender_token_id = ?2
+              WHERE chain_id = ?1 AND lender_token_id = ?2 AND ${liveSideSql('lender_current_owner')}
              UNION ALL
              SELECT loan_id, 'borrower' AS role FROM loans
-              WHERE chain_id = ?1 AND borrower_token_id = ?2`,
+              WHERE chain_id = ?1 AND borrower_token_id = ?2 AND ${liveSideSql('borrower_current_owner')}`,
           )
             .bind(chainId, tokenId)
             .all<{ loan_id: number; role: 'lender' | 'borrower' }>()

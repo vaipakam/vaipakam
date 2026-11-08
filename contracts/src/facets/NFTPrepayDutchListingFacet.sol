@@ -491,7 +491,7 @@ contract NFTPrepayDutchListingFacet is
         // with the library's own `VaultNotDeployed` revert; keeping
         // the upfront check so the buildAndHashDutch call below sees
         // a non-zero offerer.
-        LibPrepayListingWiring.wire(s, loan, orderHash, conduit, address(executor));
+        LibPrepayListingWiring.wire(s, loan, orderHash, conduit, address(executor), /* holderAuthenticated */ true);
     }
 
     function _assertDutchSolvency(

@@ -16,7 +16,8 @@
  * mode too.
  */
 import type { Abi, PublicClient } from 'viem';
-import { AdminFacetABI, LoanFacetABI, OracleFacetABI, PartialWithdrawalFacetABI, RefinanceFacetABI, RiskFacetABI, VaipakamNFTFacetABI } from '@vaipakam/contracts/abis';
+import { AdminFacetABI, LoanFacetABI, OracleFacetABI, PartialWithdrawalFacetABI, RefinanceFacetABI, RiskFacetABI } from '@vaipakam/contracts/abis';
+import { positionRouteCallFor, readPositionOwnerFor } from '../positions/positionNft';
 import type { OwnStateClient } from '../../chain/ownRail';
 import type { CopyAccess } from '../copy/useCopy';
 import { refusalFromError } from '../eligibility/refusal';
@@ -30,7 +31,6 @@ import { askThrough } from '../tx/simulate';
 type Hex = `0x${string}`;
 
 const LOAN = LoanFacetABI as Abi;
-const NFT = VaipakamNFTFacetABI as Abi;
 const ADMIN = AdminFacetABI as Abi;
 const ORACLE = OracleFacetABI as Abi;
 const RISK = RiskFacetABI as Abi;
@@ -89,8 +89,10 @@ export async function readTakeBackReview(
       const loan = (await c.readContract({ address: diamond, abi: LOAN, functionName: 'getLoanDetails', args: [loanId] })) as LoanDetails;
       const read = <T>(abi: Abi, functionName: string, args: readonly unknown[] = []) => maybe(c.readContract({ address: diamond, abi, functionName, args }) as Promise<T>);
       const [borrowerHolder, borrowerLock, paused, refinance, liquidity, maxWithdrawable, healthFactor, ltvBps, protectedAccount] = await Promise.all([
-        read<Hex>(NFT, 'ownerOf', [loan.borrowerTokenId]),
-        read<number>(NFT, 'positionLock', [loan.borrowerTokenId]).then((v) => (v === null ? null : Number(v))),
+        // #3205: through the position-NFT door (the standalone PositionNFT or
+        // the legacy Diamond); a retired token has no holder.
+        maybe(readPositionOwnerFor(c, diamond, loan.borrowerTokenId)),
+        maybe(c.readContract(positionRouteCallFor(diamond, loan.borrowerTokenId))).then((v) => (v === null ? null : Number(v))),
         read<boolean>(ADMIN, 'paused'),
         read<readonly [bigint, boolean]>(REFINANCE, 'getRefinanceRequest', [loanId]),
         read<number>(ORACLE, 'checkLiquidity', [loan.collateralAsset]).then((v) => (v === null ? null : Number(v))),

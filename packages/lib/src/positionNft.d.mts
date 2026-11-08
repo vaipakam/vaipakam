@@ -34,6 +34,8 @@ export const POSITION_ERC721_ABI: Abi;
 /** FROZEN pre-#3205 Diamond fragment; legacy mode only. */
 export const LEGACY_DIAMOND_NFT_ABI: Abi;
 export const POSITION_ROUTE_ABI: Abi;
+/** Position-NFT events decoded outside the generated Diamond ABI (#3205). */
+export const POSITION_NFT_INDEXED_EVENTS: Abi;
 
 export function positionNftSurface(deployment: { diamond: string; positionNFT?: string | undefined }): PositionNftSurface;
 export function positionNftSurfaceForDiamond(

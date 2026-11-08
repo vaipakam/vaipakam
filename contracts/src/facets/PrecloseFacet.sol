@@ -1532,7 +1532,7 @@ contract PrecloseFacet is
         // blocked at the library level for the duration of the offset flow.
         // Lock is cleared in completeOffset (success) or OfferFacet.cancelOffer
         // (cancel). See LibPositionNFT.RouteReason.
-        LibPositionNFT.openRoute(loan.borrowerTokenId, LibPositionNFT.RouteReason.PrecloseOffset);
+        LibPositionNFT.openRoute(loan.borrowerTokenId, LibPositionNFT.RouteReason.PrecloseOffset, true);
         // #1001 (S3, Codex #1070 r6 P3) — emit the ACTUAL offset creator (the
         // borrower-position holder that owns + funds the offer and can cancel it),
         // NOT `msg.sender` — which on the keeper-triggered path is the keeper.

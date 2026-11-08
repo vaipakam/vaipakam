@@ -1949,5 +1949,5 @@ NOT covered live: the banned-adoption outcome (a sanctions-listed source), the u
 
 **Tier.** CI-Anvil for the standalone mode (the fixture deploys the current contracts, so specs 25, 26, 40, 41, 42 and 44 read `positionRoute` and the PositionNFT); unit for the resolver, the frozen fragment and the Terms gate.
 
-**Limit, stated.** The legacy branch runs only against the current testnets, so it is checked live, not on CI. The holder-lock card on the Protection page has no spec yet. The chain exposes no view saying whether a route's token has moved since the route opened, so the copy states the rule and cannot say whether a particular route is already dead. The legacy branch is removed by #3321.
+**Limit, stated.** The legacy branch runs only against the current testnets, so it is checked live, not on CI. The holder-lock card on the Protection page has no spec yet. On a standalone chain it renders for the connected wallet at the page root, whether protected mode is on or off, because the lock outlives protected mode (#3318 Codex r3). The chain exposes no view saying whether a route's token has moved since the route opened (#3323), so the copy states the rule and cannot say whether a particular route is already dead. The legacy branch is removed by #3321.
 

@@ -121,6 +121,26 @@ export const LEGACY_DIAMOND_NFT_ABI = Object.freeze([
 ]);
 
 /** The standalone-mode reads the Diamond keeps (VaipakamNFTFacet). */
+/**
+ * Every position-NFT event the indexer decodes OUTSIDE the generated Diamond
+ * ABI: the frozen legacy fragment's (the Diamond's ERC-721 events and the
+ * protected-mode NFT queue's) plus the PositionNFT's ERC-721 events, once
+ * each by signature. The ONE list both the indexer's decoder and the Activity
+ * participant rule read, so an indexed event can never lose its participant
+ * rule because the generated ABI dropped it (#3318 Codex r3).
+ *
+ * TODO(#3321 positionNft-legacy-removal): the queue events leave with the
+ * legacy mode; the ERC-721 events stay.
+ */
+export const POSITION_NFT_INDEXED_EVENTS = Object.freeze(
+  [...LEGACY_DIAMOND_NFT_ABI, ...POSITION_ERC721_ABI]
+    .filter((e) => e.type === 'event')
+    .filter(
+      (e, i, all) =>
+        all.findIndex((x) => x.name === e.name && JSON.stringify(x.inputs) === JSON.stringify(e.inputs)) === i,
+    ),
+);
+
 export const POSITION_ROUTE_ABI = Object.freeze([
   view('positionRoute', [u256('tokenId')], [{ name: '', type: 'uint8' }]),
   view('isPositionRetired', [u256('tokenId')], [{ name: '', type: 'bool' }]),

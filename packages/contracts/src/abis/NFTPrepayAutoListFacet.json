@@ -14,6 +14,37 @@
   },
   {
     "type": "event",
+    "name": "PrepayListingCanceled",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "caller",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "orderHash",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "reason",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "PrepayListingPosted",
     "inputs": [
       {
@@ -345,6 +376,27 @@
         "name": "caller",
         "type": "address",
         "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "PositionMovedSinceRouteOpened",
+    "inputs": [
+      {
+        "name": "tokenId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "countAtOpen",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "countNow",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ]
   },

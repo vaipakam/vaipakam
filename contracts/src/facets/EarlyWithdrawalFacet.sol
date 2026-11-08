@@ -322,7 +322,7 @@ contract EarlyWithdrawalFacet is
         // first closes that window. Lock is released (and the NFT burned) in
         // completeLoanSale via migrateLenderPosition → LibERC721._burn, or
         // released in OfferFacet.cancelOffer. See LibPositionNFT.RouteReason.
-        LibPositionNFT.openRoute(loan.lenderTokenId, LibPositionNFT.RouteReason.EarlyWithdrawalSale);
+        LibPositionNFT.openRoute(loan.lenderTokenId, LibPositionNFT.RouteReason.EarlyWithdrawalSale, true);
 
         // Create mimicking Borrower Offer via cross-facet call.
         // collateralAmount is set to 0 because this is a lender-position sale,

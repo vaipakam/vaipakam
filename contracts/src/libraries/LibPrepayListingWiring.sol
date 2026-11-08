@@ -73,15 +73,16 @@ library LibPrepayListingWiring {
         LibVaipakam.Loan storage loan,
         bytes32 orderHash,
         address conduit,
-        address executor
+        address executor,
+        bool holderAuthenticated
     ) internal {
-        // #3205 — the ONE place a collateral listing arms its route, on a
-        // post and on every update alike. Every caller has authenticated the
-        // CURRENT borrower-position holder. `openRoute` keeps a live route's
-        // transfer count, rebinds a dead one of this reason to the current
-        // count (a holder who received the position re-arms the listing as
-        // their own), and refuses while another flow's live route holds it.
-        LibPositionNFT.openRoute(loan.borrowerTokenId, LibPositionNFT.RouteReason.PrepayCollateralListing);
+        // #3205 — the ONE place a collateral listing arms its route.
+        // `holderAuthenticated` is explicit at every caller: true only for a
+        // post or update the CURRENT borrower-position holder authenticated
+        // with fresh terms, which may rebind a dead listing route as theirs.
+        // The permissionless auto-list paths pass false: they never revive a
+        // former holder's listing (#3318 Codex r3); `openRoute` refuses that.
+        LibPositionNFT.openRoute(loan.borrowerTokenId, LibPositionNFT.RouteReason.PrepayCollateralListing, holderAuthenticated);
         address vaultAddr = s.userVaipakamVaults[loan.borrower];
         if (vaultAddr == address(0)) revert VaultNotDeployed(loan.borrower);
         VaipakamVaultImplementation vault = VaipakamVaultImplementation(vaultAddr);

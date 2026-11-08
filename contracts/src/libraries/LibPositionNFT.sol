@@ -212,13 +212,25 @@ library LibPositionNFT {
     ///         Each flow's cancel closes only its own reason
     ///         ({closeRouteIfHeldBy}), so a dead flow's later teardown cannot
     ///         clear the route that replaced it.
-    function openRoute(uint256 tokenId, RouteReason reason) internal {
+    /// @param holderAuthenticated True ONLY for a call authenticated as the
+    ///        CURRENT holder (or a keeper that holder approved) that supplies
+    ///        fresh terms: such a call may rebind a dead route of this same
+    ///        reason to the current count, making the flow the current
+    ///        holder's own. Any other caller (a permissionless rotation, a
+    ///        keeper pass acting without the holder) passes false and is
+    ///        refused on a dead same-reason route: a transfer cancels the
+    ///        former holder's flow permanently (#3318 Codex r3, design §3.9).
+    function openRoute(uint256 tokenId, RouteReason reason, bool holderAuthenticated) internal {
         ERC721Storage storage es = _storage();
         RouteReason current = es.routes[tokenId];
         ownerOf(tokenId); // a retired or unminted token opens no route
         uint256 nowCount = core().transferCount(tokenId);
-        bool live = current != RouteReason.None && es.routeTransferCount[tokenId] == nowCount;
+        uint256 atOpen = es.routeTransferCount[tokenId];
+        bool live = current != RouteReason.None && atOpen == nowCount;
         if (live && current != reason) revert RouteConflict(tokenId, current, reason);
+        if (!live && current == reason && !holderAuthenticated) {
+            revert PositionMovedSinceRouteOpened(tokenId, atOpen, nowCount);
+        }
         if (!live) es.routeTransferCount[tokenId] = nowCount;
         es.routes[tokenId] = reason;
     }

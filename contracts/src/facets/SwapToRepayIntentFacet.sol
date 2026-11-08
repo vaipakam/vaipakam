@@ -528,7 +528,7 @@ contract SwapToRepayIntentFacet is
         // already holds the lock, so a commit cannot overwrite it. Every
         // teardown (cancel, expired cancel, both force-cancels) and the fill
         // settlement release it.
-        LibPositionNFT.openRoute(loan.borrowerTokenId, LibPositionNFT.RouteReason.SwapToRepayIntent);
+        LibPositionNFT.openRoute(loan.borrowerTokenId, LibPositionNFT.RouteReason.SwapToRepayIntent, true);
 
         // ── §5.1 step 7: minOutput floor (Codex round-10 P1 #5 +
         //    round-11 P1 #3 — must add late fee on top of getPrepayContext) ─

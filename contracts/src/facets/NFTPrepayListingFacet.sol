@@ -400,7 +400,11 @@ contract NFTPrepayListingFacet is
         // `syncPrepaySaleListing`: a live consideration recipient was found
         // sanctions-flagged and registered, so the listing is torn down so it
         // can't fill.
-        SanctionsSync
+        SanctionsSync,
+        // #3205 (#3318 Codex r3) — torn down by the permissionless auto-list:
+        // the borrower position moved since the listing was posted, so the
+        // listing was a former holder's and is cancelled whole.
+        PositionMoved
     }
 
     // ─── Borrower entry: postPrepayListing ──────────────────────────────
@@ -846,7 +850,7 @@ contract NFTPrepayListingFacet is
         // `LibPrepayListingWiring.wire` so both v1 post + update and
         // the new atomic-match facet stay in lock-step. v1 behavior
         // unchanged.
-        LibPrepayListingWiring.wire(s, loan, newOrderHash, conduit, address(executor));
+        LibPrepayListingWiring.wire(s, loan, newOrderHash, conduit, address(executor), /* holderAuthenticated */ true);
     }
 
     // ─── Borrower entry: cancelPrepayListing ────────────────────────────
@@ -1404,7 +1408,7 @@ contract NFTPrepayListingFacet is
         // grant + ERC-1271 binding logic. v1 behavior preserved
         // byte-for-byte — the library's `wire` does exactly what the
         // private body did before the refactor.
-        LibPrepayListingWiring.wire(s, loan, orderHash, conduit, executor);
+        LibPrepayListingWiring.wire(s, loan, orderHash, conduit, executor, /* holderAuthenticated */ true);
     }
 
     /// @dev Read-only borrower-vault lookup. Reverts via

@@ -149,9 +149,15 @@ const PARTIES: ReadonlyMap<string, readonly string[]> = new Map<string, readonly
   ['PayoutCancelled', ['account']],
   ['PayoutHeldInVault', ['account']],
   ['PaymentCreditedToVault', ['account']],
+  // #3205 — the legacy Diamond's protected-mode NFT queue, still decoded on a
+  // pre-#3205 chain (`POSITION_NFT_INDEXED_EVENTS`).
+  ['PositionTransferQueued', ['account']],
+  ['PositionTransferReleased', ['account']],
+  ['PositionTransferCancelled', ['account']],
   ['EscapeWithdrawal', ['account']],
   // A co-signature names the signer who gave it.
   ['PayoutCosigned', ['account', 'signer']],
+  ['PositionTransferCosigned', ['account', 'signer']],
   // Protected account mode: the account's own settings and its lock.
   ['ProtectedModeEnabled', ['account']],
   ['ProtectedModeDisabled', ['account']],
@@ -183,6 +189,12 @@ const PARTIES: ReadonlyMap<string, readonly string[]> = new Map<string, readonly
   ['ReplacementCancelled', ['account', 'nominee']],
   ['PrimaryReplaced', ['account', 'controller']],
   ['NFTMinted', ['owner']],
+  // Position-NFT ERC-721 events (the legacy Diamond's, or the standalone
+  // PositionNFT's, both decoded through `POSITION_NFT_INDEXED_EVENTS`).
+  ['Approval', ['owner']],
+  ['ApprovalForAll', ['owner']],
+  // The actor is the recipient (`to`); the sender gave the position up.
+  ['Transfer', ['from']],
   // Proceeds owed to `recipient` held instead of paid. Shown only to the
   // recipient, under a label that names no list and no provider.
   ['SanctionedProceedsLocked', ['recipient']],
@@ -236,6 +248,8 @@ const LOCAL_NOT_A_PARTY: ReadonlyMap<string, Readonly<Record<string, string>>> =
 >([
   // The owner's declared source of an adopted asset is a statement about
   // where it came from, not a wallet acting in the row.
+  ['Approval', { approved: 'the address approved for one position NFT' }],
+  ['ApprovalForAll', { operator: 'the operator approved for every position NFT' }],
   ['UntrackedAdopted', { declaredSource: 'the address the owner declared sent the asset' }],
   // Payout and position-transfer destinations are the owner's own wallet or
   // an address on the owner's allowlist: the owner's choice, not a party.
@@ -243,6 +257,9 @@ const LOCAL_NOT_A_PARTY: ReadonlyMap<string, Readonly<Record<string, string>>> =
   ['PayoutQueued', { recipient: "the owner's wallet or an allowlisted address" }],
   ['PayoutReleased', { recipient: "the owner's wallet or an allowlisted address" }],
   ['PayoutCancelled', { by: 'the wallet that cancelled (the owner or one of its signers, acting on the account)' }],
+  ['PositionTransferQueued', { to: "the owner's wallet or an allowlisted address" }],
+  ['PositionTransferReleased', { to: "the owner's wallet or an allowlisted address" }],
+  ['PositionTransferCancelled', { by: 'the wallet that cancelled (the owner or one of its signers, acting on the account)' }],
   ['SettingChangeCancelled', { by: 'the wallet that cancelled (the owner or one of its signers, acting on the account)' }],
   ['AllowlistAddRequested', { destination: 'an address the owner is adding as a payout destination' }],
   ['AllowlistAddCancelled', { destination: 'the payout destination withdrawn', by: 'the wallet that cancelled (the owner or one of its signers, acting on the account)' }],

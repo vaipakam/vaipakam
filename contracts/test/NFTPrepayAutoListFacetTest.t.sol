@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
+
 import {SetupTest} from "./SetupTest.t.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {NFTPrepayListingFacet} from "../src/facets/NFTPrepayListingFacet.sol";
@@ -541,6 +543,56 @@ contract NFTPrepayAutoListFacetTest is SetupTest {
         assertEq(rc.endAskPrice, askAtFloor, "endAskPrice == askPrice on fixed-price rotation");
     }
 
+    /// @notice #3205 (#3318 Codex r3 P1) — a listing whose borrower position
+    ///         MOVED since it was posted belongs to the former holder. The
+    ///         permissionless auto-list must never revive it with that
+    ///         holder's fee legs: it cancels the old listing whole
+    ///         (`PrepayListingCanceled`, reason PositionMoved) and posts a
+    ///         fresh protocol-only floor listing for the CURRENT holder.
+    function test_autoList_movedPosition_cancelsFormerHoldersListing_keepsNoTerms() public {
+        _scaffoldActiveLoan();
+        TestMutatorFacet(address(diamond)).lockNFTRaw(
+            BORROWER_TOKEN_ID, LibPositionNFT.RouteReason.PrepayCollateralListing
+        );
+        // The former holder's listing: an aspirational ask carrying a fee
+        // leg paid to the former holder themself.
+        FeeLeg[] memory legs = new FeeLeg[](1);
+        legs[0] = FeeLeg({recipient: borrowerHolder, startAmount: 5 ether, endAmount: 5 ether});
+        bytes32 staleOrderHash = keccak256("former-holder-listing");
+        mockExecutor.recordOrder(
+            staleOrderHash, LOAN_ID, conduit, conduitKey, 1,
+            uint64(block.timestamp), 1_000 ether, 1_000 ether, 0, PREPAY_MODE_FIXED_PRICE, legs
+        );
+        TestMutatorFacet(address(diamond)).setPrepayListingOrderHash(LOAN_ID, staleOrderHash);
+        TestMutatorFacet(address(diamond)).setPrepayListingExecutor(LOAN_ID, address(mockExecutor));
+
+        // The position is sold on; then the loan enters grace.
+        address transferee = makeAddr("newBorrowerHolder");
+        VaultFactoryFacet(address(diamond)).getOrCreateUserVault(transferee);
+        LibTestPositionNFT.move(address(diamond), BORROWER_TOKEN_ID, transferee);
+        _warpIntoGrace();
+        uint256 clearsBefore = mockExecutor.clearCallCount();
+
+        vm.expectEmit(true, true, true, true, address(diamond));
+        emit NFTPrepayAutoListFacet.PrepayListingCanceled(LOAN_ID, keeperCaller, staleOrderHash, 4);
+        vm.prank(keeperCaller);
+        NFTPrepayAutoListFacet(address(diamond)).autoListAtFloorOnGrace(LOAN_ID);
+
+        assertEq(mockExecutor.clearCallCount(), clearsBefore + 1, "the former listing was cleared");
+        assertEq(mockExecutor.lastClearedOrderHash(), staleOrderHash, "the right listing was cleared");
+        bytes32 newHash = NFTPrepayListingFacet(address(diamond)).getPrepayListingOrderHash(LOAN_ID);
+        assertTrue(newHash != bytes32(0) && newHash != staleOrderHash, "a fresh listing replaced it");
+        MockListingExecutorRecorder.RecordedCall memory rc =
+            mockExecutor.recordedCallAt(mockExecutor.recordCallCount() - 1);
+        assertEq(rc.orderHash, newHash, "the fresh listing is the one recorded");
+        assertEq(rc.feeLegs.length, 0, "no fee leg of the former holder survives");
+        assertEq(
+            LoanFacet(address(diamond)).getLoanDetails(LOAN_ID).borrower,
+            transferee,
+            "the fresh listing is the current holder's (Case A consolidation)"
+        );
+    }
+
     /// @notice §18.12 — B-cond-5 expired Dutch listing. A Dutch order
     ///         whose `auctionEndTime` has passed during the grace
     ///         window must rotate to a fresh fixed-price-at-floor
@@ -741,6 +793,12 @@ contract NFTPrepayAutoListFacetTest is SetupTest {
         _scaffoldActiveLoan();
         _warpIntoGrace();
 
+        // The listing's own route, as its post opened it (#3205: a listing
+        // with no route of its own reads as a former holder's and is torn
+        // down before the executor check).
+        TestMutatorFacet(address(diamond)).lockNFTRaw(
+            BORROWER_TOKEN_ID, LibPositionNFT.RouteReason.PrepayCollateralListing
+        );
         // Pin the OLD executor on the loan slot, then rotate the
         // global singleton to a fresh address.
         bytes32 staleOrderHash = keccak256("listing-on-stale-executor");

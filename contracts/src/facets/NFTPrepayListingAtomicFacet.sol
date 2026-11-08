@@ -710,7 +710,7 @@ contract NFTPrepayListingAtomicFacet is DiamondReentrancyGuard, DiamondPausable 
         );
 
         // STEP 5 — Wire the vault.
-        LibPrepayListingWiring.wire(s, loan, vaipakamOrderHash, conduit, executor);
+        LibPrepayListingWiring.wire(s, loan, vaipakamOrderHash, conduit, executor, /* holderAuthenticated */ true);
     }
 
     // (No internal helper needed — external calls to
