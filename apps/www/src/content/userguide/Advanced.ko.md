@@ -2156,6 +2156,12 @@ Positions는 하나의 공유 리더로 Home과 같은 보유 목록을 읽습�
 
 목록은 `getPendingPayoutIds(account)`이며, 각 행마다 `getPendingPayout(id)`와 `requestCode(id)`를 읽습니다. 코드는 알림이 쓰는 것과 같은 공유 렌더러로 base32 여섯 글자로 표시되며, 행은 브라우저 시계가 아니라 최신 블록의 타임스탬프에 대한 `releaseAt` 순으로 정렬됩니다. `releasePayout(id)`는 누구나 호출할 수 있고 일시 중지 중에는 `isEscapeOpen()`이 될 때까지 거부됩니다. 수령인이 관리자(계정, 또는 은퇴 후에는 그 컨트롤러)도 아니고 `getAllowlist`에도 없는 대기 행은 시간 확인 전에 지급 대신 취소됩니다. 그렇지 않으면 행은 기한이 되어야 하고, 계정은 잠기지 않아야 하며(`ProtectedVaultLocked`), `requireCosign`이 켜져 있는 동안에는 공동 서명되어 있어야 하고(`CosignRequired`), 수령인은 다시 검사됩니다. `cancelPayout(id)`는 관리자 또는 서명자의 것이며(`NotManagerOrSigner`), 일시 중지 중에도 작동하고, 자산을 다시 인출할 수 있도록 예치 장부에 적립합니다. `cosignPayout(id)`는 `getProtectedSigners`의 서명자의 것이며(`NotSigner`), 앱은 계정이 이를 요구하고 행이 아직 공동 서명되지 않은 동안에만 제공합니다. 각 작업은 검토 화면에서 시뮬레이션으로, 전송 시 다시 한 번 실행됩니다. 완료 카드는 해당 id의 `PayoutReleased`(금액과 프로토콜이 측정한 `delivered`), `PayoutCancelled`, `PayoutCosigned`를 읽습니다. keeper의 `protectedAccount` 패스가 기한이 된 행을 해제하는지는 기능 서비스의 답이며, 기본값은 알 수 없음입니다. 잠금은 대기 중인 모든 행을 취소합니다.
 
+<a id="seller-interest"></a>
+
+### 판매한 포지션의 이자: 확인하는 내용
+
+판매는 판매자가 벌었지만 받지 못한 이자를 청구권으로 기록합니다. `getInterestLedger(loanId)`는 열린 청구권을 오래된 순서대로 각각의 총액과 함께 나열합니다. `claimAsSeller(loanId)`에는 `whenNotPaused`와 제재 확인이 있습니다. 청구권이 열려 있는 Repaid, Defaulted, Settled, InternalMatched 대출에서는 먼저 대출자 회수액(`getSellersShareOfLenderClaim`)을 나누어 각 청구권에 순액(총액에서 대출의 `treasuryFeeBpsAtInit` 몫을 빼고 내림, 기록이 없는 대출은 기존 1%)까지 지급하고 모두 닫습니다. FallbackPending 대출은 나누지 않습니다. 그다음 원금 토큰과, 다를 경우 대출자 청구권 토큰에 대해 `getSellerInterestHeld(loanId, seller, asset)`를 판매자 자신의 볼트에서 판매자의 지갑으로 출금하고, 0이면 `NothingToClaimAsSeller`로 거부합니다. 앱은 지갑을 판매자로 기록한 인덱스 활동(`SellerInterestClaimRecorded`, `SellerInterestPaid`, `SellerInterestClaimClosed`, `SellerInterestWithdrawn`)에서 대출을 나열하고, 번호 조회는 체인만 읽습니다. 원금 토큰에서는 검토가 분배액에서 지갑의 몫을 정확히 계산하고, 다른 토큰에서는 가치 기준으로 나누며 실행 시 결정된다고 밝힙니다. 출금은 검토에서 시험 실행하고 전송할 때 다시 실행합니다. 완료 카드는 `SellerInterestClaimClosed`(지급액, 입금액, 전액 지급)와 `SellerInterestWithdrawn`을 읽고, 보호 모드가 지급을 대기열에 넣거나 보관한 경우 `PayoutQueued` 또는 `PayoutHeldInVault`도 읽습니다.
+
 <a id="risk-access"></a>
 
 ### Risk Access: 내 위험 등급

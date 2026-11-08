@@ -17,6 +17,7 @@ import type { LoanDetails } from '../positions/loanView';
 import type { PayoutRow, Payouts } from '../positions/reads';
 import { claimLanes, sideOpen, type ClaimLane, type ClaimSide, type SideClaim } from './loanClaim';
 import { readSideClaim } from './loanClaimReview';
+import { answerOrNull } from '../reads/answer';
 
 type Hex = `0x${string}`;
 
@@ -45,20 +46,14 @@ export interface LoanClaimRows {
   complete: boolean;
 }
 
-async function maybe<T>(p: Promise<T>): Promise<T | null> {
-  try {
-    return await p;
-  } catch {
-    return null;
-  }
-}
-
-async function readRow(c: PublicClient, diamond: Hex, p: PayoutRow, listed: boolean): Promise<LoanClaimRow> {
-  const loan = await maybe(c.readContract({ address: diamond, abi: LOAN, functionName: 'getLoanDetails', args: [p.loanId] }) as Promise<LoanDetails>);
+async function readRow(c: PublicClient, diamond: Hex, p: PayoutRow, listed: boolean, at: { blockNumber: bigint }): Promise<LoanClaimRow> {
+  const loan = await answerOrNull(c.readContract({ address: diamond, abi: LOAN, functionName: 'getLoanDetails', args: [p.loanId], ...at }) as Promise<LoanDetails>);
   if (!loan) return { loanId: p.loanId, side: p.side, listed, loan: null, holder: null, claim: null, lanes: [] };
   const [holder, claim] = await Promise.all([
-    maybe(c.readContract({ address: diamond, abi: NFT, functionName: 'ownerOf', args: [p.side === 'lender' ? loan.lenderTokenId : loan.borrowerTokenId] }) as Promise<Hex>),
-    readSideClaim(c, diamond, p.loanId, p.side),
+    answerOrNull(
+      c.readContract({ address: diamond, abi: NFT, functionName: 'ownerOf', args: [p.side === 'lender' ? loan.lenderTokenId : loan.borrowerTokenId], ...at }) as Promise<Hex>,
+    ),
+    readSideClaim(c, diamond, p.loanId, p.side, at),
   ]);
   const lanes = claim
     ? claimLanes(p.side, claim, {
@@ -73,10 +68,13 @@ async function readRow(c: PublicClient, diamond: Hex, p: PayoutRow, listed: bool
 }
 
 export async function readLoanClaimRows(c: PublicClient, diamond: Hex, payouts: Payouts): Promise<LoanClaimRows> {
+  // Every row at one block, so a loan's status, holder and claim row are
+  // stated as they stood together.
+  const at = { blockNumber: await c.getBlockNumber({ cacheTime: 0 }) };
   const [paused, listed, received] = await Promise.all([
-    maybe(c.readContract({ address: diamond, abi: ADMIN, functionName: 'paused' }) as Promise<boolean>),
-    Promise.all(payouts.rows.map((p) => readRow(c, diamond, p, true))),
-    Promise.all(payouts.unlisted.map((p) => readRow(c, diamond, p, false))),
+    answerOrNull(c.readContract({ address: diamond, abi: ADMIN, functionName: 'paused', ...at }) as Promise<boolean>),
+    Promise.all(payouts.rows.map((p) => readRow(c, diamond, p, true, at))),
+    Promise.all(payouts.unlisted.map((p) => readRow(c, diamond, p, false, at))),
   ]);
   // A received position is listed once its claim is confirmed open; one
   // that could not be read stays, said to be unread.

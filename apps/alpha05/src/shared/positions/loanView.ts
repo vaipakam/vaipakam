@@ -29,6 +29,7 @@ import {
 import { sideClaimableStatus, type SideClaim } from '../claims/loanClaim';
 import { readSideClaim } from '../claims/loanClaimReview';
 import { isLiveStatus, type Deadlines, type LoanSummary } from './model';
+import { answerOrNull } from '../reads/answer';
 
 type Hex = `0x${string}`;
 
@@ -241,14 +242,6 @@ export function roleOf(holders: Holders, account: Hex): Role | null {
   return { lender, borrower };
 }
 
-async function maybe<T>(p: Promise<T>): Promise<T | null> {
-  try {
-    return await p;
-  } catch {
-    return null;
-  }
-}
-
 /** One loan's read: `view` is `null` when no loan has this id (the stored
  *  record is empty), which is an answer, never "still reading". */
 export interface LoanRead {
@@ -260,10 +253,10 @@ export async function readLoanView(client: PublicClient, diamond: Hex, loanId: b
   // Every read is pinned to one block, the block whose time the page states:
   // the loan's status, the settlement preview and the chain time then
   // describe the same moment, so no answer is placed against another's
-  // state. With the block unread, the reads take the latest state and the
-  // chain time is stated as unknown.
-  const block = await maybe(client.getBlock({ blockTag: 'latest' }));
-  const at = block ? { blockNumber: block.number } : {};
+  // state. A block that cannot be read is a failed source (thrown, so the
+  // own rail tries the next one), never a reason to read unpinned.
+  const block = await client.getBlock({ blockTag: 'latest' });
+  const at = { blockNumber: block.number };
   const read = <T>(abi: Abi, functionName: string, args: readonly unknown[] = []) => client.readContract({ address: diamond, abi, functionName, args, ...at }) as Promise<T>;
   const loan = await read<LoanDetails>(LOAN, 'getLoanDetails', [loanId]);
   if (loan.id === 0n) return { view: null };
@@ -296,25 +289,25 @@ export async function readLoanView(client: PublicClient, diamond: Hex, loanId: b
     lenderClaim,
     borrowerClaim,
   ] = await Promise.all([
-    maybe(read<Hex>(NFT, 'ownerOf', [loan.lenderTokenId])),
-    maybe(read<Hex>(NFT, 'ownerOf', [loan.borrowerTokenId])),
-    live ? maybe(read<readonly [bigint, bigint, bigint, bigint]>(LOAN, 'getLoanDeadlines', [loanId])) : null,
-    scheduled ? maybe(read<readonly [number, bigint, bigint, bigint, bigint, bigint, boolean]>(PERIODIC, 'previewPeriodicSettle', [loanId])) : null,
-    scheduled ? maybe(read<boolean>(NUMERAIRE, 'getPeriodicInterestEnabled')) : null,
-    live ? maybe(read<boolean>(DEFAULTED, 'isLoanDefaultable', [loanId])) : null,
-    live ? maybe(read<readonly [boolean, Hex]>(DEFAULTED, 'defaultKycAdmission', [loanId])) : null,
-    maybe(read<boolean>(ADMIN, 'paused')),
-    live ? maybe(read<boolean>(ORACLE, 'sequencerHealthy')) : null,
-    live ? maybe(read<bigint>(RISK, 'calculateHealthFactor', [loanId])) : null,
-    live ? maybe(read<bigint>(RISK, 'calculateLTV', [loanId])) : null,
-    maybe(read<CollateralLien>(METRICS, 'getLoanCollateralLien', [loanId])),
-    maybe(read<boolean>(METRICS, 'isSaleVehicleLoan', [loanId])),
-    live ? maybe(read<readonly [boolean, bigint, bigint]>(CONFIG, 'getInternalMatchConfigBundle')) : null,
-    live ? maybe(read<number>(NFT, 'positionLock', [loan.borrowerTokenId]).then(Number)) : null,
-    live ? maybe(read<readonly [bigint, boolean]>(REFINANCE, 'getRefinanceRequest', [loanId])) : null,
-    liveErc20 ? maybe(read<boolean>(ADMIN, 'isAssetPaused', [loan.collateralAsset])) : null,
-    liveErc20 ? maybe(read<number>(ORACLE, 'checkLiquidity', [loan.collateralAsset]).then(Number)) : null,
-    liveErc20 ? maybe(read<bigint>(PARTIAL_WITHDRAWAL, 'calculateMaxWithdrawable', [loanId])) : null,
+    answerOrNull(read<Hex>(NFT, 'ownerOf', [loan.lenderTokenId])),
+    answerOrNull(read<Hex>(NFT, 'ownerOf', [loan.borrowerTokenId])),
+    live ? answerOrNull(read<readonly [bigint, bigint, bigint, bigint]>(LOAN, 'getLoanDeadlines', [loanId])) : null,
+    scheduled ? answerOrNull(read<readonly [number, bigint, bigint, bigint, bigint, bigint, boolean]>(PERIODIC, 'previewPeriodicSettle', [loanId])) : null,
+    scheduled ? answerOrNull(read<boolean>(NUMERAIRE, 'getPeriodicInterestEnabled')) : null,
+    live ? answerOrNull(read<boolean>(DEFAULTED, 'isLoanDefaultable', [loanId])) : null,
+    live ? answerOrNull(read<readonly [boolean, Hex]>(DEFAULTED, 'defaultKycAdmission', [loanId])) : null,
+    answerOrNull(read<boolean>(ADMIN, 'paused')),
+    live ? answerOrNull(read<boolean>(ORACLE, 'sequencerHealthy')) : null,
+    live ? answerOrNull(read<bigint>(RISK, 'calculateHealthFactor', [loanId])) : null,
+    live ? answerOrNull(read<bigint>(RISK, 'calculateLTV', [loanId])) : null,
+    answerOrNull(read<CollateralLien>(METRICS, 'getLoanCollateralLien', [loanId])),
+    answerOrNull(read<boolean>(METRICS, 'isSaleVehicleLoan', [loanId])),
+    live ? answerOrNull(read<readonly [boolean, bigint, bigint]>(CONFIG, 'getInternalMatchConfigBundle')) : null,
+    live ? answerOrNull(read<number>(NFT, 'positionLock', [loan.borrowerTokenId]).then(Number)) : null,
+    live ? answerOrNull(read<readonly [bigint, boolean]>(REFINANCE, 'getRefinanceRequest', [loanId])) : null,
+    liveErc20 ? answerOrNull(read<boolean>(ADMIN, 'isAssetPaused', [loan.collateralAsset])) : null,
+    liveErc20 ? answerOrNull(read<number>(ORACLE, 'checkLiquidity', [loan.collateralAsset]).then(Number)) : null,
+    liveErc20 ? answerOrNull(read<bigint>(PARTIAL_WITHDRAWAL, 'calculateMaxWithdrawable', [loanId])) : null,
     sideClaimableStatus('lender', Number(loan.status)) ? readSideClaim(client, diamond, loanId, 'lender', at) : null,
     sideClaimableStatus('borrower', Number(loan.status)) ? readSideClaim(client, diamond, loanId, 'borrower', at) : null,
   ]);
@@ -346,7 +339,7 @@ export async function readLoanView(client: PublicClient, diamond: Hex, loanId: b
     saleVehicle,
     matchWindow: matchConfig ? { enabled: matchConfig[0], windowBps: matchConfig[1] } : null,
     borrowerLock,
-    chainNow: live && block ? block.timestamp : null,
+    chainNow: live ? block.timestamp : null,
     schedule: periodic
       ? {
           cadence: Number(periodic[0]),

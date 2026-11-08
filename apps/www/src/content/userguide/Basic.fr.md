@@ -1324,6 +1324,12 @@ L'examen liste chaque paiement que fait la réclamation, ce que les anciens vend
 
 Avec le mode protégé actif, tout ce qui quitte votre coffre vers votre portefeuille attend le délai de votre compte dans une file de versements. Réclamations liste ce qui y attend, le plus proche d'abord, chacun avec un court code de demande : chaque alerte sur un versement affiche le même code, ce qui vous permet de relier un message à une demande. Chaque ligne indique ce qu'elle paie, où elle va et quand elle peut être libérée. Une fois un versement dû, n'importe qui peut le libérer, et il ne paie que la destination qu'il a enregistrée ; si cette destination n'est plus autorisée, le libérer l'annule. Vous, ou l'un de vos signataires secondaires, pouvez annuler un versement à tout moment, même pendant une pause, et l'actif reste dans votre coffre. Si votre compte exige une approbation, un signataire secondaire approuve d'abord chaque versement ; un signataire trouve votre compte en mode avancé en collant son adresse. Une pause retient les libérations jusqu'à sa fin ou, après une longue pause, jusqu'à l'ouverture de sa voie de sortie. Chaque action sollicite votre portefeuille une fois, et la carte de fin montre ce que la transaction a fait.
 
+<a id="seller-interest"></a>
+
+### Les intérêts d'une position que vous avez vendue
+
+Quand vous vendez une position de prêteur, les intérêts gagnés pendant que vous la déteniez et pas encore payés restent à vous, sous forme de créance sur le prêt. Claims liste chaque prêt sur lequel vous détenez une telle créance, avec ce qui vous est dû après la part d'intérêts du protocole et ce qui attend déjà dans votre coffre. Tant que le prêt court, chaque paiement d'intérêts règle d'abord les créances ouvertes, la plus ancienne d'abord, dans le coffre de chaque vendeur ; tant que rien n'atteint le vôtre, il n'y a rien à retirer. Une fois le prêt terminé, le retrait répartit d'abord ce que le côté prêteur a récupéré : le principal du détenteur d'abord, puis chaque créance de vendeur, la plus ancienne d'abord. Toutes les créances ouvertes se ferment alors, et ce qu'une créance ne reçoit pas reste impayé. Les prêts viennent de l'index de l'app ; s'il ne peut pas les lister, cherchez un prêt par son numéro, lu sur la chaîne seule. Aucune approbation n'est nécessaire : votre portefeuille demande une fois, après une simulation, et la carte finale montre ce que la transaction a payé.
+
 <a id="risk-access"></a>
 
 ### Risk Access : votre niveau de risque

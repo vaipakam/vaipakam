@@ -1002,9 +1002,9 @@ above. Each resolves here, so a route reviewer needs no private file:
   closed. Claims lists the payouts of
   the positions the wallet holds now, so a bought position pays its new
   holder, says "nothing to collect" only when every read completed, and
-  names the payouts it does not yet collect (seller interest, frozen sale
-  proceeds, extension reserves) with a link to the current app until their
-  slices land.
+  names the payouts it does not yet collect (frozen sale proceeds,
+  extension reserves) with a link to the current app until their slices
+  land; seller interest is RB-SELLER-CLAIM.
 - **RB-PAYOUT-QUEUE** — Claims lists a protected account's payout queue
   (LN-54, LN-55, LN-56): the wallet's own account, then an account it
   manages since a replacement retired it, and in Advanced mode any account
@@ -1035,6 +1035,34 @@ above. Each resolves here, so a route reviewer needs no private file:
   account is cleared, and when that account's queue cannot be read. The
   sync stamp covers every queue the section shows, a looked-up one
   included.
+- **RB-SELLER-CLAIM** — the interest a past seller of a lender position
+  earned and was not paid (LN-52) is collected from Claims, in its own
+  section. The loans come from the index (any step of a seller claim filed
+  under the wallet); when the index cannot list them the section says so,
+  never shows an empty list, and offers a lookup by loan number that reads
+  the chain alone. A later poll that fails is said too: the last list stays,
+  named as the last list, and "nothing owed" is withdrawn until the index
+  answers again. Each loan is read from the chain as the withdrawal reads
+  it, and only the chain decides: what the wallet is owed, stated net of the
+  loan's own fee on interest (the legacy share said as such where the loan
+  recorded none), what already waits in the wallet's vault, and on an ended
+  loan the split. The withdrawal has one rule (RB-ELIG) in the order
+  `claimAsSeller` checks it: the pause, then something to pay. On a running
+  loan it pays what reached the vault, and with nothing there it says the
+  claim is paid from later interest, oldest claim first, and offers no
+  button; a loan in fallback waits. On an ended loan the withdrawal first
+  splits what the lender side recovered (the holder's principal, then each
+  claim oldest first, net of the fee), which closes every open seller claim
+  on the loan: in the principal token the review states the wallet's part
+  exactly and what stays unpaid, and in another token it states that the
+  split pays by value when it runs. The protocol's dry run is part of the
+  review and the send runs it again. The payment goes from the wallet's own
+  vault to its wallet, so it follows RB-PAYOUT-ROUTE. The finish card
+  measures, from the transaction's logs, each claim the split closed (paid
+  in full, or short with what stays unpaid, and a figure other than the
+  reviewed one said beside it) and each payment where it landed. A row that
+  could not be read is said so, and a withdrawal in progress stays on screen
+  until its finish card is closed, whatever the latest list or lookup shows.
 
 ## 3. Companion specifications
 

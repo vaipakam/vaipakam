@@ -2265,6 +2265,12 @@ Positions は共通のリーダーを通して Home と同じ保有一覧を読�
 
 一覧は `getPendingPayoutIds(account)` で、各行に `getPendingPayout(id)` と `requestCode(id)` を読みます。コードは通知と同じ共有レンダラーで6文字の base32 として表示され、行はブラウザの時計ではなく最新ブロックのタイムスタンプに対する `releaseAt` の順に並びます。`releasePayout(id)` は誰でも呼び出せますが、一時停止中は `isEscapeOpen()` になるまで拒否されます。受取人が管理者(アカウント、または引退後はそのコントローラー)でもなく `getAllowlist` にも載っていないキュー中の行は、時刻の確認より前に、支払われる代わりに取り消されます。それ以外の場合、行は期限が来ており、アカウントはロックされておらず(`ProtectedVaultLocked`)、`requireCosign` がオンの間は共同署名済み(`CosignRequired`)である必要があり、受取人は再びスクリーニングされます。`cancelPayout(id)` は管理者または署名者のもので(`NotManagerOrSigner`)、一時停止中も使え、資産を再び引き出せるよう預入台帳に計上します。`cosignPayout(id)` は `getProtectedSigners` の署名者のもので(`NotSigner`)、アプリはアカウントがそれを必要とし、行がまだ共同署名されていない間だけ提示します。各操作は確認画面でドライランとして実行され、送信時にも再度実行されます。完了カードはその id の `PayoutReleased`(金額とプロトコルが測定した `delivered`)、`PayoutCancelled`、`PayoutCosigned` を読みます。keeper の `protectedAccount` パスが期限の来た行を解放するかどうかはケイパビリティサービスの回答で、既定では不明です。ロックはキュー中のすべての行を取り消します。
 
+<a id="seller-interest"></a>
+
+### 売却したポジションの利息：確認される内容
+
+売却は、売り手が得てまだ支払われていない利息を請求として記録します。`getInterestLedger(loanId)` は未決の請求を古い順に、それぞれの総額とともに一覧します。`claimAsSeller(loanId)` には `whenNotPaused` と制裁チェックがあります。請求が残る Repaid、Defaulted、Settled、InternalMatched のローンでは、まず貸し手の回収額（`getSellersShareOfLenderClaim`）を分配し、各請求に純額（総額からローンの `treasuryFeeBpsAtInit` の取り分を引いて切り捨て。記録がないローンは従来の 1%）まで支払って、すべてを閉じます。FallbackPending のローンは分配しません。その後、元本トークン、および異なる場合は貸し手請求のトークンについて、`getSellerInterestHeld(loanId, seller, asset)` を売り手自身のボールトから売り手のウォレットへ引き出し、ゼロなら `NothingToClaimAsSeller` で拒否します。アプリは、売り手としてウォレットに紐づくインデックスのアクティビティ（`SellerInterestClaimRecorded`、`SellerInterestPaid`、`SellerInterestClaimClosed`、`SellerInterestWithdrawn`）からローンを一覧し、番号での検索はチェーンだけを読みます。元本トークンでは、レビューは分配額からウォレットの取り分を正確に算出します。別のトークンでは分配は価値ベースで、実行時に決まると明記します。引き出しはレビューでドライランし、送信時にも再度実行します。完了カードは `SellerInterestClaimClosed`（支払額、入金額、全額支払い）と `SellerInterestWithdrawn` を読み、保護モードが支払いをキューに入れた、または保持した場合は `PayoutQueued` または `PayoutHeldInVault` も読みます。
+
 <a id="risk-access"></a>
 
 ### Risk Access: あなたのリスクレベル

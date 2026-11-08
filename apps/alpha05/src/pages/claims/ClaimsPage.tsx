@@ -20,6 +20,7 @@ import { useOwnRead } from '../../shared/reads/useOwnRead';
 import { useTxEntries, useTxStore } from '../../shared/tx/txStore';
 import { reviewIdentity } from '../../shared/ui/ActionFlow';
 import { PayoutQueue } from '../../shared/protection/PayoutQueue';
+import { SellerClaims } from '../../shared/claims/SellerClaims';
 import { OwnStamp } from '../../shared/ui/OwnStamp';
 import { useNow } from '../../shared/ui/useNow';
 
@@ -32,16 +33,16 @@ type Hex = `0x${string}`;
  * the wallet holds (a bought position pays its new holder), each row read
  * from the chain as its claim reads it, with every payout named and the
  * claim's rule deciding whether it is offered (RB-ELIG). Rewards follow, the
- * same section Home shows. Between them, a protected account's payout queue
- * (LN-54, LN-55, LN-56): what waits, under which request code, and the
- * release, cancel and co-sign actions this wallet may take.
+ * same section Home shows. Between them, the interest a position the wallet
+ * sold still owes it (LN-52), and a protected account's payout queue (LN-54,
+ * LN-55, LN-56): what waits, under which request code, and the release,
+ * cancel and co-sign actions this wallet may take.
  *
  * "Nothing to collect" is said only when every walk completed and its latest
- * read succeeded; a row whose claim could not be read stays, said so. Seller
- * interest, frozen proceeds, queued payouts, extension reserves and "Claim
- * everything" come in later slices (#3191); until then the page names them
- * and links the current app, so a payout it cannot collect is never implied
- * absent.
+ * read succeeded; a row whose claim could not be read stays, said so. Frozen
+ * proceeds, extension reserves and "Claim everything" come in later slices
+ * (#3191); until then the page names them and links the current app, so a
+ * payout it cannot collect is never implied absent.
  */
 export function ClaimsPage() {
   const { text, format } = useCopy();
@@ -105,6 +106,7 @@ export function ClaimsPage() {
               </a>
             </p>
           </section>
+          <SellerClaims own={own} chain={book.chain} />
           <PayoutQueue own={own} chain={book.chain} />
           <RewardsWidget />
         </>

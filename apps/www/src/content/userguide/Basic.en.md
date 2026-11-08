@@ -1279,6 +1279,12 @@ The review lists every payout the claim makes, what past sellers of a lender pos
 
 With protected mode on, everything leaving your vault for your wallet waits out your account's delay in a payout queue. Claims lists what waits there, soonest first, each with a short request code: every alert about a payout prints the same code, so you can match a message to a request. Each row says what it pays, where it goes and when it can be released. Once a payout is due, anyone can release it, and it only ever pays the destination it recorded; if that destination is no longer allowed, releasing it cancels it instead. You, or one of your secondary signers, can cancel a payout at any time, even during a pause, and the asset stays in your vault. If your account requires approval, a secondary signer approves each payout first; a signer finds your account in Advanced mode by pasting its address. A pause holds releases until it ends or, after a long pause, its escape route opens. Each action asks your wallet once, and the finish card shows what the transaction did.
 
+<a id="seller-interest"></a>
+
+### Interest from a Position You Sold
+
+When you sell a lender position, the interest you earned while you held it, and were not yet paid, stays yours as a claim on the loan. Claims lists every loan where you hold such a claim, with what you are owed after the protocol's share of interest and what already waits in your vault. While the loan runs, each interest payment pays the open claims first, oldest first, into each seller's own vault; until some reaches yours there is nothing to withdraw. Once the loan has ended, withdrawing first splits what the lender side recovered: the holder's principal first, then each seller's claim, oldest first. Every open claim closes then, and whatever a claim is not paid stays unpaid. The loans are found in the app's index; if it cannot list them, look a loan up by its number, which reads the chain alone. No approval is needed, so your wallet asks once, after a dry run, and the finish card shows what the transaction paid.
+
 <a id="risk-access"></a>
 
 ### Risk Access: Your Risk Level

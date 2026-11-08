@@ -1998,6 +1998,12 @@ Positions 通过一个共享读取器读取与 Home 相同的持仓清单：`get
 
 列表来自 `getPendingPayoutIds(account)`，每一行读取 `getPendingPayout(id)` 和 `requestCode(id)`；代码由提醒所用的同一个共享渲染器显示为六个 base32 字符，各行按 `releaseAt` 相对于最新区块时间戳排序，而不是浏览器时钟。`releasePayout(id)` 任何人都可调用，暂停期间在 `isEscapeOpen()` 之前会被拒绝。收款人既不是管理者（账户本身，或账户退役后的控制者）也不在 `getAllowlist` 中的排队行，会在时间检查之前被取消而不是支付；否则该行必须已到期、账户未锁定（`ProtectedVaultLocked`），并且在 `requireCosign` 开启期间已获联署（`CosignRequired`），收款人还会被再次筛查。`cancelPayout(id)` 属于管理者或签名人（`NotManagerOrSigner`），暂停期间也可使用，并会记入存管账本，使资产可以再次提取。`cosignPayout(id)` 属于 `getProtectedSigners` 中的签名人（`NotSigner`）；只有在账户要求联署且该行尚未联署时，应用才会提供此操作。每项操作在审核时先模拟运行，发送时再运行一次。完成卡片会读取该 id 的 `PayoutReleased`（金额和协议测得的 `delivered`）、`PayoutCancelled` 和 `PayoutCosigned`。keeper 的 `protectedAccount` 任务是否放行到期行，取决于能力服务的回答，默认为未知。锁定会取消所有排队行。
 
+<a id="seller-interest"></a>
+
+### 已出售头寸的利息：检查内容
+
+出售会将卖方已赚取但未支付的利息记录为一项债权：`getInterestLedger(loanId)` 按从旧到新的顺序列出未结债权，每项附带其总额。`claimAsSeller(loanId)` 带有 `whenNotPaused` 和制裁筛查。对于仍有未结债权的 Repaid、Defaulted、Settled 或 InternalMatched 贷款，它先分配出借人的回收款（`getSellersShareOfLenderClaim`），向每项债权支付至其净额（总额减去该贷款的 `treasuryFeeBpsAtInit` 份额，向下取整；贷款未记录费率时按旧的 1%），并关闭全部债权；FallbackPending 贷款不进行分配。随后，它针对本金代币，以及与之不同的出借人债权代币，将 `getSellerInterestHeld(loanId, seller, asset)` 从卖方自己的金库提取到卖方钱包，金额为零时以 `NothingToClaimAsSeller` 拒绝。应用根据索引中以该钱包为卖方归档的活动（`SellerInterestClaimRecorded`、`SellerInterestPaid`、`SellerInterestClaimClosed`、`SellerInterestWithdrawn`）列出贷款；按编号查询只读取链上数据。对于本金代币，审核会根据分配额精确推算钱包所得部分；对于其他代币，分配按价值进行，并注明在执行时确定。提取会在审核时试运行，发送时再运行一次。完成卡片读取 `SellerInterestClaimClosed`（已付、已入账、是否全额）和 `SellerInterestWithdrawn`，若受保护模式将付款排入队列或保留，还会读取 `PayoutQueued` 或 `PayoutHeldInVault`。
+
 <a id="risk-access"></a>
 
 ### Risk Access：你的风险等级
