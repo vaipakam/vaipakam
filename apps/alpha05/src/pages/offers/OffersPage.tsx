@@ -6,7 +6,7 @@ import { useOwnStateClient, type OwnStateClient } from '../../chain/ownRail';
 import { PAGES, currentAppHref } from '../../routes/pageMap';
 import { useCopy, type CopyKey } from '../../shared/copy/useCopy';
 import { WhyLink } from '../../shared/help/WhyLink';
-import { CancelOffer, useCancelHeldIds, useCancelOfferHeld } from '../../shared/offers/CancelOffer';
+import { CancelOffer, useCancelOfferHeld, useCancelPins } from '../../shared/offers/CancelOffer';
 import { filterCounts, inFilter, OFFER_FILTERS, readMyOffers, type MyOffer, type OfferFilter } from '../../shared/offers/myOffers';
 import { offerAmount, offerLine } from '../../shared/offers/offerLine';
 import { ASSET_ERC20 } from '../../shared/positions/model';
@@ -65,9 +65,13 @@ export function OffersPage() {
   const [filter, setFilter] = useState<OfferFilter>('open');
   const counts = data ? filterCounts(data.rows) : null;
   // A row whose cancel is open or in flight stays on screen whatever the
-  // filter, so a cancel that moves it out of "Open" keeps its finish card.
-  const held = useCancelHeldIds(data?.rows.map((r) => r.id) ?? []);
-  const rows = data ? data.rows.filter((r) => inFilter(r, filter) || held.has(r.id.toString())) : [];
+  // filter, and even once the refreshed inventory no longer lists it, so its
+  // finish card stays until the reader closes it (the fresh row wins when
+  // the inventory still has it).
+  const cancelPins = useCancelPins();
+  const pinned = new Set(cancelPins.pins.map((p) => p.id.toString()));
+  const listed = new Set(data?.rows.map((r) => r.id.toString()) ?? []);
+  const rows = data ? [...cancelPins.pins.filter((p) => !listed.has(p.id.toString())), ...data.rows.filter((r) => inFilter(r, filter) || pinned.has(r.id.toString()))] : [];
   const offersPage = PAGES.find((p) => p.path === '/offers');
   const currentOffers = offersPage ? currentAppHref(offersPage, {}) : null;
 
@@ -117,7 +121,7 @@ export function OffersPage() {
                   ) : (
                     <ul className="rows offers-list">
                       {rows.map((o) => (
-                        <OfferRow key={o.id.toString()} offer={o} viewer={own.account} meta={meta} chain={chain} own={own} />
+                        <OfferRow key={o.id.toString()} offer={o} viewer={own.account} meta={meta} chain={chain} own={own} pins={cancelPins} />
                       ))}
                     </ul>
                   )}
@@ -140,7 +144,21 @@ export function OffersPage() {
   );
 }
 
-function OfferRow({ offer: o, viewer, meta, chain, own }: { offer: MyOffer; viewer: Hex; meta: TokenMetaMap | null; chain: SupportedChain; own: OwnStateClient }) {
+function OfferRow({
+  offer: o,
+  viewer,
+  meta,
+  chain,
+  own,
+  pins,
+}: {
+  offer: MyOffer;
+  viewer: Hex;
+  meta: TokenMetaMap | null;
+  chain: SupportedChain;
+  own: OwnStateClient;
+  pins: ReturnType<typeof useCancelPins>;
+}) {
   const copy = useCopy();
   const { text, format } = copy;
   const id = o.id.toString();
@@ -169,10 +187,26 @@ function OfferRow({ offer: o, viewer, meta, chain, own }: { offer: MyOffer; view
       {o.created && !o.held && o.state === 'open' && <p className="tier-a">{text('offers.createdNotHeld')}</p>}
       {o.held && !createdHere && o.state === 'open' && <p className="tier-a">{text('offers.heldNotCreated')}</p>}
       {cancel.held ? (
-        <CancelOffer id={o.id} chain={chain} own={own} onClose={() => cancel.setOpen(null)} />
+        <CancelOffer
+          id={o.id}
+          chain={chain}
+          own={own}
+          onClose={() => {
+            cancel.setOpen(null);
+            pins.unpin(o.id);
+          }}
+        />
       ) : (
         action !== null && (
-          <button type="button" className="btn" onClick={() => cancel.setOpen(true)} data-testid={`offer-cancel-${id}`}>
+          <button
+            type="button"
+            className="btn"
+            onClick={() => {
+              pins.pin(o);
+              cancel.setOpen(true);
+            }}
+            data-testid={`offer-cancel-${id}`}
+          >
             {text(action)}
           </button>
         )

@@ -103,6 +103,9 @@ describe('cancelRefund', () => {
     expect(cancelRefund(offer(), 5n)).toEqual({ kind: 'measured', why: 'linked' });
     expect(cancelRefund(offer({ offerType: 1, refinanceCarryOver: true }), 0n)).toEqual({ kind: 'measured', why: 'carryOver' });
   });
+  it('does not take an unread loan link as no link', () => {
+    expect(cancelRefund(offer({ offerType: 1 }), null)).toEqual({ kind: 'measured', why: 'linkUnread' });
+  });
 });
 
 describe('expiry and cool-down', () => {
@@ -189,6 +192,13 @@ describe('cancelReceipt', () => {
     expect(r.consequences.some((c) => typeof c === 'string' && c.startsWith('offerCancel.cleanupNotYours:'))).toBe(true);
     // The payee's own queue notes speak to the payee, not to the reader.
     expect(r.consequences).not.toContain('payout.queuedNote');
+    expect(r.consequences).toContain('offerCancel.creatorQueuedNote');
+  });
+  it('states that the creator’s secondary signer must approve a queued return', () => {
+    const o = offer({ creator: OTHER, expiresAt: BigInt(NOW - 1) });
+    const r = cancelReceipt(review(o, { state: 'expired', protection: { ...PROTECTED, requireCosign: true } }), ME, words, copy);
+    expect(rowText(r, 'offerCancel.rowTo')).toMatch(/^offerCancel\.toCreatorQueuedCosign:/);
+    expect(r.consequences).toContain('offerCancel.creatorQueuedCosignNote');
   });
   it('states a return it cannot size as unknown, never as a figure', () => {
     const r = cancelReceipt(review(offer(), { linkedLoanId: 3n }), ME, words, copy);

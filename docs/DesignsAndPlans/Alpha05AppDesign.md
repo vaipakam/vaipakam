@@ -1284,15 +1284,18 @@ above. Each resolves here, so a route reviewer needs no private file:
   offer, a pause (or an unread one), a non-creator before expiry, the
   protocol's five-minute cool-down on an unfilled offer (with the time it
   ends, lifting by itself as the chain passes it) or the dry run's refusal
-  stops it by name. The receipt states what returns, sized from the offer's
+  stops it by name. A row whose cancel is open or in flight stays on screen
+  whatever the filter, and even after the refreshed inventory drops it,
+  until the finish card is closed. The receipt states what returns, sized from the offer's
   own terms by the facet's own branches (unlent principal, the NFT, unused
   collateral, a rental request's prepay and buffer at its stamped rate), or
   says it cannot be sized (an offer tied to a running loan, a refinance
   request that carries its collateral, a rental request posted before the
   buffer stamp) and leaves the figure to the finish card. It states where
   the return lands: for the creator, its own payout route; for anyone
-  cleaning up someone else's offer, the creator's wallet, queue or vault
-  named as the creator's, never "yours". It also says a filled part stays
+  cleaning up someone else's offer, the creator's wallet, queue (with their
+  secondary signer's approval where required) or vault, named as the
+  creator's, never "yours". It also says a filled part stays
   filled, the return leaves the creator's vault, the position token is
   retired, a cancel past the cool-down races an accept and either may win,
   and that no approval is asked. The finish card reads the Diamond's cancel

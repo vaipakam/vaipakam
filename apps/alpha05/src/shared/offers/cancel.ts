@@ -47,6 +47,13 @@ type Copy = Pick<CopyAccess, 'text' | 'format'>;
 const ADMIN = AdminFacetABI as Abi;
 const DASHBOARD = MetricsDashboardFacetABI as Abi;
 
+const MEASURED_WHY = {
+  linked: 'offerCancel.measuredLinked',
+  linkUnread: 'offerCancel.measuredLinkUnread',
+  carryOver: 'offerCancel.measuredCarryOver',
+  buffer: 'offerCancel.measuredBuffer',
+} as const;
+
 /** `LibVaipakam.MIN_OFFER_CANCEL_DELAY`. */
 export const CANCEL_COOLDOWN_SECONDS = 300;
 const OFFER_LENDER = 0;
@@ -99,7 +106,7 @@ export type Refund =
   | { kind: 'nft'; asset: Hex; assetType: number; tokenId: bigint; quantity: bigint }
   | { kind: 'none' }
   /** Not sized before signing: `why` says why; the finish card measures. */
-  | { kind: 'measured'; why: 'linked' | 'carryOver' | 'buffer' };
+  | { kind: 'measured'; why: 'linked' | 'linkUnread' | 'carryOver' | 'buffer' };
 
 export interface CancelReview {
   identity: string;
@@ -115,7 +122,10 @@ const BPS = 10_000n;
 
 /** What the cancel releases, per `cancelOffer`'s own branches. */
 export function cancelRefund(o: CancelOffer, linkedLoanId: bigint | null): Refund {
-  if (linkedLoanId !== null && linkedLoanId !== 0n) return { kind: 'measured', why: 'linked' };
+  // An unread link is not taken as no link: a sale listing's request returns
+  // nothing the offer's terms say, so the figure waits for the finish card.
+  if (linkedLoanId === null) return { kind: 'measured', why: 'linkUnread' };
+  if (linkedLoanId !== 0n) return { kind: 'measured', why: 'linked' };
   if (o.offerType === OFFER_LENDER) {
     if (o.assetType === ERC20) {
       const left = (o.amountMax === 0n ? o.amount : o.amountMax) - o.amountFilled;
@@ -272,7 +282,7 @@ export function cancelReceipt(r: CancelReview, viewer: Hex, w: CancelWords, copy
       refund === null
         ? unknown(text('receipt.unknown'))
         : refund.kind === 'measured'
-          ? unknown(text(refund.why === 'linked' ? 'offerCancel.measuredLinked' : refund.why === 'carryOver' ? 'offerCancel.measuredCarryOver' : 'offerCancel.measuredBuffer'))
+          ? unknown(text(MEASURED_WHY[refund.why]))
           : { kind: 'text', text: refundText(refund, w, copy) },
     binding: true,
   });
@@ -289,7 +299,7 @@ export function cancelReceipt(r: CancelReview, viewer: Hex, w: CancelWords, copy
   consequences.push(text('offerCancel.fromVault'), text('offerCancel.positionRetired'), text('offerCancel.race'));
   // The payee's own route notes speak to the payee; a clean-up of someone
   // else's offer states only where it goes (the row above).
-  if (refund !== null && refund.kind !== 'none' && (mine || r.route === 'unknown')) consequences.push(...routeNotes(r.route, r.facts.protection, copy));
+  if (refund !== null && refund.kind !== 'none') consequences.push(...(mine || r.route === 'unknown' ? routeNotes(r.route, r.facts.protection, copy) : creatorRouteNotes(r, copy)));
   if (r.dryRun === 'unread') consequences.push(text('offerCancel.dryRunUnread'));
   consequences.push(text('offerCancel.noApproval'));
   return { title: text(mine ? 'offerCancel.title' : 'offerCancel.titleCleanup'), rows, consequences, prompts: 1, readAt: r.readAt };
@@ -301,14 +311,27 @@ function destinationText(r: CancelReview, mine: boolean, creator: Hex, copy: Cop
   const { text, format } = copy;
   if (mine) return routedDestination(r.route, r.facts.protection, copy) ?? text('offerCancel.toYourWallet');
   const address = shortAddress(creator);
-  if (r.route === 'queued') return format('offerCancel.toCreatorQueued', { address, delay: formatSpan(r.facts.protection?.delaySeconds ?? 0) });
+  if (r.route === 'queued')
+    return format(r.facts.protection?.requireCosign ? 'offerCancel.toCreatorQueuedCosign' : 'offerCancel.toCreatorQueued', {
+      address,
+      delay: formatSpan(r.facts.protection?.delaySeconds ?? 0),
+    });
   if (r.route === 'held') return format('offerCancel.toCreatorHeld', { address });
   return format('offerCancel.toCreator', { address });
 }
 
+/** The consequences the creator's route adds when the reader is not the
+ *  creator: the payee's own notes, in the creator's terms. */
+function creatorRouteNotes(r: CancelReview, copy: Copy): string[] {
+  if (r.route === 'queued') return [copy.text(r.facts.protection?.requireCosign ? 'offerCancel.creatorQueuedCosignNote' : 'offerCancel.creatorQueuedNote')];
+  if (r.route === 'held') return [copy.text('offerCancel.creatorHeldNote')];
+  return [];
+}
+
 /** A routed return's finish-card line when the reader is not the creator. */
-function creatorRoutedLeg(o: PayoutOutcome, what: string, copy: Copy): string {
-  if (o.kind === 'queued') return copy.format('offerCancel.legCreatorQueued', { what, time: formatUtc(Number(o.releaseAt)) });
+function creatorRoutedLeg(o: PayoutOutcome, what: string, protection: Protection | null, copy: Copy): string {
+  if (o.kind === 'queued')
+    return copy.format(protection?.requireCosign ? 'offerCancel.legCreatorQueuedCosign' : 'offerCancel.legCreatorQueued', { what, time: formatUtc(Number(o.releaseAt)) });
   return copy.format('offerCancel.legCreatorHeld', { what });
 }
 
@@ -328,7 +351,7 @@ export function measureCancel(r: CancelReview, logs: readonly Log[], diamond: He
   if (o === null || refund === null || refund.kind === 'none') return legs;
   const creator = o.creator;
   const mine = creator.toLowerCase() === viewer.toLowerCase();
-  const routedLabel = (x: PayoutOutcome, what: string) => (mine ? routedLeg(x, what, r.facts.protection, copy) : creatorRoutedLeg(x, what, copy));
+  const routedLabel = (x: PayoutOutcome, what: string) => (mine ? routedLeg(x, what, r.facts.protection, copy) : creatorRoutedLeg(x, what, r.facts.protection, copy));
   const arrivedLabel = (what: string) => format(mine ? 'offerCancel.legArrived' : 'offerCancel.legArrivedCreator', { what });
   if (refund.kind === 'nft') {
     const routed = payoutOutcomes(logs, diamond, creator, refund.asset, refund.tokenId);

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useConfig } from 'wagmi';
 import { writeContract } from 'wagmi/actions';
 import type { OwnStateClient } from '../../chain/ownRail';
@@ -9,13 +9,14 @@ import { WhyLink } from '../help/WhyLink';
 import { assetAmount } from '../positions/assetAmount';
 import { tokenAmount, useTokenMeta } from '../reads/tokens';
 import { askThrough } from '../tx/simulate';
-import { holdsFlow, useStoredValue, useTxEntry, useTxNote, useTxStore } from '../tx/txStore';
+import { holdsFlow, useStoredValue, useTxEntry, useTxNote } from '../tx/txStore';
 import { useMounted, useReviewRefresh } from '../tx/useReviewRefresh';
 import { useTrackedTx } from '../tx/useTrackedTx';
 import { ActionFlow, reviewIdentity, type Recheck } from '../ui/ActionFlow';
 import { Notice } from '../ui/Notice';
 import { shortAddress } from '../ui/format';
 import { cancelBlockers, cancelChanged, cancelReceipt, measureCancel, readCancelReview, type CancelReview, type CancelWords } from './cancel';
+import type { MyOffer } from './myOffers';
 import { OFFER_CANCEL } from './reads';
 
 type Hex = `0x${string}`;
@@ -35,20 +36,22 @@ export function useCancelOfferHeld(id: bigint): { held: boolean; setOpen: (v: bo
   return { held: open === true || holdsFlow(entry.phase), setOpen };
 }
 
-/** Which of these offers have a cancel open or in flight, so a list keeps
- *  their rows (and the finish card in them) on screen whatever filter the
- *  reader picked, until the card is closed. */
-export function useCancelHeldIds(ids: readonly bigint[]): ReadonlySet<string> {
-  const store = useTxStore();
-  const snapshot = () =>
-    ids
-      .filter((id) => {
-        const key = cancelOfferKey(id);
-        return store.value<boolean>(`${key}:open`) === true || holdsFlow(store.get(key).phase);
-      })
-      .join(',');
-  const held = useSyncExternalStore(store.subscribe, snapshot);
-  return useMemo(() => new Set(held === '' ? [] : held.split(',')), [held]);
+/** The rows a list keeps on screen while their cancel is open or in flight,
+ *  whatever filter the reader picked and whether or not the refreshed
+ *  inventory still lists them (a cleaned-up offer the wallet held but did
+ *  not create leaves both indexes), until the finish card is closed. */
+const PINNED_KEY = 'offers.cancel.pinned';
+export function useCancelPins(): { pins: readonly MyOffer[]; pin: (row: MyOffer) => void; unpin: (id: bigint) => void } {
+  const [pins, setPins] = useStoredValue<readonly MyOffer[]>(PINNED_KEY);
+  return {
+    pins: pins ?? [],
+    pin: (row) => setPins((cur) => [row, ...(cur ?? []).filter((r) => r.id !== row.id)]),
+    unpin: (id) =>
+      setPins((cur) => {
+        const next = (cur ?? []).filter((r) => r.id !== id);
+        return next.length > 0 ? next : null;
+      }),
+  };
 }
 
 interface CancelOfferProps {
