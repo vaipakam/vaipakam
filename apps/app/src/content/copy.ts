@@ -2155,7 +2155,15 @@ const copySource = {
       'When a lender accepts your request, when you cancel it, or {{branch}}.',
       ['branch'],
     ),
-    expiresAfterDays: tmpl('when it expires {{days}} days after posting', ['days']),
+    // #3311 — the request is posted with the expiry the review fixed, so
+    // its window counts from the review, not from the later send.
+    expiresAfterDays: tmpl('when it expires {{days}} days after this review', ['days']),
+    // #3311 — a review fixes the request's expiry; past this age (chain
+    // time) the send refuses rather than post a shorter window.
+    reviewStale: tmpl(
+      'This review is more than {{minutes}} minutes old, so the request it describes would no longer run for the window it showed. Nothing was sent — review the request again.',
+      ['minutes'],
+    ),
     durationRange: tmpl('Between 1 and {{max}} days.', ['max']),
     consentLabel: 'I understand the payoff and wallet-balance terms below and agree to them.',
     receiptReceive: 'A new loan at your chosen terms the moment a lender accepts — your collateral moves to it automatically and this loan closes in the same transaction.',

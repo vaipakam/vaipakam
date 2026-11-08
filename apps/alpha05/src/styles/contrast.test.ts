@@ -6,8 +6,9 @@ import { describe, expect, it } from 'vitest';
  * AA, normal text) in BOTH themes. The test reads tokens.css itself, so a
  * retuned colour is checked rather than remembered. Codex on #3179 found an
  * earlier dark filled control at 2.98:1 (white on a light indigo); the
- * `--brand-fill` token exists because of it, and the navy/green retune that
- * followed (owner decision 2026-11-05) passed through this same test.
+ * `--brand-fill` token exists because of it. The navy/green retune that
+ * followed (owner decision 2026-11-05) and the return to indigo (owner
+ * decision 2026-11-08) both passed through this same test.
  */
 /** The app's surface and text tokens, and the shared brand palette the app
  *  imports before them (packages/lib/src/brand/tokens.css). A pair may span

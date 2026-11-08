@@ -402,7 +402,7 @@ const PINNED = new Map([
   ["docs/DesignsAndPlans/Research-404-OssificationRoadmap.md", [1, "RETRACTION — notes the guardian pause also wrapped the since-removed buy contracts (#1728)", "a148254b3965"]],
   ["docs/DesignsAndPlans/Stage3WorkerSplitPlan.md", [5, "HISTORICAL + RETRACTION — the split plan's original file inventory and cron list, with #687-A deletion notes beside them (triaged #1728)", "916df19737b3"]],
   ["docs/DesignsAndPlans/VPFITokenomicsRedesignResearch.md", [4, "RETRACTION — the pre-#687 warning, followed by #1728's update that the sale is gone", "53eb2c789f1e"]],
-  ["docs/FunctionalSpecs/ProjectDetailsREADME.md", [1, "RETRACTION — the \"No Cross-Chain Buy Channel\" rule (triaged #1728)", "473e4a0dcadb"]],
+  ["docs/FunctionalSpecs/ProjectDetailsREADME.md", [1, "RETRACTION — the \"No Cross-Chain Buy Channel\" rule (triaged #1728)", "1de2e1df9b47"]],
   ["docs/FunctionalSpecs/README.md", [1, "RETRACTION — the domain list notes the buy adapter/receiver was removed (#1728)", "d44bae6edf27"]],
   ["docs/FunctionalSpecs/TokenomicsTechSpec.md", [1, "RETRACTION — the §8 supersede banner; the implementation checklist prohibition moved to the internal reference in #2958", "0d8c99f99fb3"]],
   ["docs/GLOSSARY.md", [5, "RETRACTION + HISTORICAL — the \"Buy adapter / receiver — REMOVED\" entry and the LayerZero-era contract list (#1728)", "13f885e282f0"]],

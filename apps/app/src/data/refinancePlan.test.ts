@@ -22,6 +22,9 @@ const reads = vi.hoisted(() => ({
   grace: 0n,
   payoff: 0n,
   bound: 0n,
+  /** When set, the bound as the contract would size it at a request
+   *  expiry — so a test can see the clock move it (#3311). */
+  boundAt: null as null | ((expiresAt: bigint) => bigint),
   route: 'permit' as 'permit' | 'approval',
   quoteArgs: [] as Array<Record<string, unknown>>,
   sanctioned: false,
@@ -42,17 +45,18 @@ vi.mock('../contracts/refinancePayoffPermit', () => ({
   readPayoffRoute: vi.fn(async () => reads.route),
   readPayoffQuote: vi.fn(async (a: Record<string, unknown>) => {
     reads.quoteArgs.push(a);
+    const bound = reads.boundAt ? reads.boundAt(a.expiresAt as bigint) : reads.bound;
     return {
       route: a.route,
       payoff: reads.payoff,
-      bound: reads.bound,
+      bound,
       // #3042 — the wallet's share today: the payoff less the new loan's
       // net principal, by the real rule over the mocked payoff.
       topUp:
         reads.payoff -
         ((a.requestAmount as bigint) -
           ((a.requestAmount as bigint) * BigInt(a.loanInitiationFeeBps as number)) / 10_000n),
-      growth: reads.bound > reads.payoff ? reads.bound - reads.payoff : 0n,
+      growth: bound > reads.payoff ? bound - reads.payoff : 0n,
       lastFillable: (a.expiresAt as bigint) - 1n,
       permit: null,
     };
@@ -87,12 +91,14 @@ vi.mock('../lib/offerSchema', () => ({
 }));
 
 import {
+  REFINANCE_REVIEW_MAX_AGE_SECONDS,
   REQUEST_WINDOW_DAYS,
   checkRefinanceRequest,
   planRefinanceForBatch,
   refinanceCalls,
   refinancePostRefusal,
   refinanceStatements,
+  reviewedBoundMoved,
   type RefinanceBatchPlan,
   type RefinanceCtx,
   type RefinanceLoan,
@@ -139,6 +145,7 @@ beforeEach(() => {
   reads.grace = 3n * DAY;
   reads.payoff = 1_010_000n;
   reads.bound = 1_010_000n;
+  reads.boundAt = null;
   reads.route = 'permit';
   reads.quoteArgs = [];
   reads.sanctioned = false;
@@ -263,6 +270,93 @@ describe('checkRefinanceRequest', () => {
   });
 });
 
+// #3311 — the send is judged at the request the review described. Before
+// it, the send re-derived the expiry from the live block, so a bound sized
+// at the last fillable moment was always a few seconds larger than the
+// reviewed one and every submit refused.
+describe('checkRefinanceRequest at a reviewed request (#3311)', () => {
+  const WINDOW = REQUEST_WINDOW_DAYS * DAY;
+  // In grace-free time the payoff at the last fillable moment still grows
+  // with every second of interest — the clock alone moves this bound.
+  const growingBound = (expiresAt: bigint) => 1_010_000n + (expiresAt - 130n * DAY);
+
+  it('passes a send seconds after the review, posting the reviewed expiry', async () => {
+    reads.boundAt = growingBound;
+    const review = (await checkRefinanceRequest(ctx, LOAN, TERMS, FEES)) as RefinanceRequestReady;
+    reads.now += 30n;
+    // The cause, shown: re-derived at the live block the bound has grown.
+    const rederived = (await checkRefinanceRequest(ctx, LOAN, TERMS, FEES)) as RefinanceRequestReady;
+    expect(rederived.bound).toBeGreaterThan(review.bound);
+    const send = (await checkRefinanceRequest(ctx, LOAN, TERMS, FEES, {
+      requestExpiry: review.requestExpiry,
+    })) as RefinanceRequestReady;
+    expect(send.kind).toBe('ready');
+    expect(send.bound).toBe(review.bound);
+    expect(reviewedBoundMoved(send, review)).toBe(false);
+    // Everything the send writes is the reviewed request's.
+    expect(send.requestExpiry).toBe(review.requestExpiry);
+    expect(send.permitDeadline).toBe(review.permitDeadline);
+    expect(send.payload).toMatchObject({ expiresAt: review.requestExpiry });
+    expect(send.caps).toEqual({
+      rateBps: 900,
+      maxNewExpiry: review.requestExpiry + BigInt(TERMS.durationDays) * DAY,
+    });
+    expect(reads.quoteArgs.at(-1)).toMatchObject({ expiresAt: review.requestExpiry, chainNow: reads.now });
+  });
+
+  it('refuses a bound that grew at the reviewed deadline', async () => {
+    const review = (await checkRefinanceRequest(ctx, LOAN, TERMS, FEES)) as RefinanceRequestReady;
+    reads.now += 30n;
+    reads.bound = review.bound + 1n;
+    const send = (await checkRefinanceRequest(ctx, LOAN, TERMS, FEES, {
+      requestExpiry: review.requestExpiry,
+    })) as RefinanceRequestReady;
+    expect(send.requestExpiry).toBe(review.requestExpiry);
+    expect(reviewedBoundMoved(send, review)).toBe(true);
+    // A bound that shrank is fine.
+    reads.bound = review.bound - 1n;
+    const shrunk = (await checkRefinanceRequest(ctx, LOAN, TERMS, FEES, {
+      requestExpiry: review.requestExpiry,
+    })) as RefinanceRequestReady;
+    expect(reviewedBoundMoved(shrunk, review)).toBe(false);
+  });
+
+  it('refuses a payoff route that changed', async () => {
+    const review = (await checkRefinanceRequest(ctx, LOAN, TERMS, FEES)) as RefinanceRequestReady;
+    reads.route = 'approval';
+    const send = (await checkRefinanceRequest(ctx, LOAN, TERMS, FEES, {
+      requestExpiry: review.requestExpiry,
+    })) as RefinanceRequestReady;
+    expect(send.bound).toBe(review.bound);
+    expect(reviewedBoundMoved(send, review)).toBe(true);
+  });
+
+  it('forces a re-review once the review is older than the stated chain-time age', async () => {
+    expect(REFINANCE_REVIEW_MAX_AGE_SECONDS).toBe(600n);
+    const review = (await checkRefinanceRequest(ctx, LOAN, TERMS, FEES)) as RefinanceRequestReady;
+    const pin = { requestExpiry: review.requestExpiry };
+    reads.now = review.requestExpiry - WINDOW + REFINANCE_REVIEW_MAX_AGE_SECONDS;
+    expect(await checkRefinanceRequest(ctx, LOAN, TERMS, FEES, pin)).toMatchObject({ kind: 'ready' });
+    reads.now += 1n;
+    expect(await checkRefinanceRequest(ctx, LOAN, TERMS, FEES, pin)).toMatchObject({
+      kind: 'refused',
+      reason: copy.refinance.reviewStale(10),
+      feesMoved: false,
+    });
+    expect(reads.payloads).toHaveLength(2);
+  });
+
+  it('does not call a review stale when the send’s node is behind the review’s', async () => {
+    const review = (await checkRefinanceRequest(ctx, LOAN, TERMS, FEES)) as RefinanceRequestReady;
+    reads.now -= 12n;
+    const send = (await checkRefinanceRequest(ctx, LOAN, TERMS, FEES, {
+      requestExpiry: review.requestExpiry,
+    })) as RefinanceRequestReady;
+    expect(send.kind).toBe('ready');
+    expect(send.payload).toMatchObject({ expiresAt: review.requestExpiry });
+  });
+});
+
 describe('refinancePostRefusal', () => {
   it('refuses a request on record, open or expired, and a search that cannot answer', async () => {
     reads.discovery = { kind: 'found', open: true };
@@ -340,6 +434,25 @@ describe('planRefinanceForBatch', () => {
     expect(await planRefinanceForBatch(ctx, LOAN, TERMS, FEES, reviewed)).toMatchObject({
       kind: 'refused',
       reason: copy.batchRefinance.changedSinceReview,
+    });
+  });
+
+  it('re-checks at the reviewed expiry, so the clock alone leaves nothing out (#3311)', async () => {
+    reads.boundAt = (expiresAt) => 1_010_000n + (expiresAt - 130n * DAY);
+    const reviewed = (await planRefinanceForBatch(ctx, LOAN, TERMS, FEES)) as Ready;
+    reads.now += 45n;
+    const late = (await planRefinanceForBatch(ctx, LOAN, TERMS, FEES, reviewed)) as Ready;
+    expect(late.kind).toBe('ready');
+    expect(late.payload).toMatchObject({ expiresAt: reviewed.requestExpiry });
+    expect(late.permitDeadline).toBe(reviewed.permitDeadline);
+  });
+
+  it('leaves out a loan whose review is older than the stated age (#3311)', async () => {
+    const reviewed = (await planRefinanceForBatch(ctx, LOAN, TERMS, FEES)) as Ready;
+    reads.now += REFINANCE_REVIEW_MAX_AGE_SECONDS + 1n;
+    expect(await planRefinanceForBatch(ctx, LOAN, TERMS, FEES, reviewed)).toMatchObject({
+      kind: 'refused',
+      reason: copy.refinance.reviewStale(10),
     });
   });
 

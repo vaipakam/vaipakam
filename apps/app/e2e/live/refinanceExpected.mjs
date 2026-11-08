@@ -53,10 +53,12 @@ export const ACCEPT_DEADLINE_SEC = 30n * 60n;
  * TIME WINDOWS ARE ANCHORED TO CHAIN TIME, NOT THE LOCAL CLOCK (#2422 r4).
  *
  * The app stamps every time-relative field from a CHAIN timestamp it reads
- * inside its own submit flow (`latestBlock.timestamp` in RefinanceFlow, and
- * `chainNow` in useAcceptTerms). The drive reads the chain's latest block
- * timestamp itself the moment it starts that flow (just before the click)
- * and calls that the ANCHOR. The app's own read happens AFTER the anchor,
+ * itself: the borrower's request from its REVIEW's chain time (#3311 — the
+ * request posts with the expiry the review fixed), and the lender's
+ * AcceptTerms from `chainNow` in useAcceptTerms at submit. The drive reads
+ * the chain's latest block timestamp itself before that read — before the
+ * borrower page loads, and just before the lender's submit click — and
+ * calls that the ANCHOR. The app's own read happens AFTER the anchor,
  * so each stamped field must lie in
  *
  *     [anchor + offset − ANCHOR_LAG_SEC,  anchor + offset + ANCHOR_WINDOW_SEC]
