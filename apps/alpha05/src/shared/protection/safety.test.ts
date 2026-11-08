@@ -20,7 +20,8 @@ const copy = {
 const OFF: SafetyMode = {
   enabled: false,
   locked: false,
-  protectNfts: false,
+  nftLock: false,
+  nftUnlockAt: 0,
   requireCosign: false,
   retired: false,
   delaySeconds: 0,

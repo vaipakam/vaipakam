@@ -38,7 +38,7 @@ export const PAGES: readonly PageEntry[] = [
   { path: '/positions/:id', name: 'Position', tier: 'basic', rows: 'LN, EX (113 rows, action-first)', order: 5, built: true, nav: false, currentApp: '/positions/:id' },
   { path: '/claims', name: 'Claims', tier: 'basic', rows: 'RW claims, EX settlements, extension reserve', order: 6, built: true, nav: true, currentApp: '/claims' },
   { path: '/vault', name: 'Vault', tier: 'basic', rows: 'ACC depository, holdings, untracked assets', order: 7, built: true, nav: true, currentApp: '/vault' },
-  { path: '/offers', name: 'Offers', tier: 'basic', rows: 'OFF my offers and the book', order: 8, built: false, nav: true, currentApp: '/offers' },
+  { path: '/offers', name: 'Offers', tier: 'basic', rows: 'OFF my offers and the book', order: 8, built: true, nav: true, currentApp: '/offers' },
   { path: '/alerts', name: 'Alerts', tier: 'basic', rows: 'ACC alerts, Telegram, push', order: 9, built: false, nav: false, currentApp: '/settings' },
   { path: '/settings', name: 'Settings', tier: 'basic', rows: 'ACC settings, consents, data rights', order: 10, built: false, nav: false, currentApp: '/settings' },
   { path: '/rent', name: 'Rent', tier: 'basic', rows: 'NFT rentals', order: 11, built: false, nav: true, currentApp: '/rent' },

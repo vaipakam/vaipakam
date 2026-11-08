@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { escapeState, type EscapeFacts } from './EscapeNotice';
 
-const OPEN = { enabled: false, locked: false, delaySeconds: 0, requireCosign: false };
+const OPEN = { enabled: false, locked: false, delaySeconds: 0, requireCosign: false, retired: false, controller: '0x0000000000000000000000000000000000000000' as const };
 const PROTECTED = { ...OPEN, enabled: true, delaySeconds: 172_800 };
 const f = (p: Partial<EscapeFacts>): EscapeFacts => ({ paused: true, escapeOpen: false, opensAt: 1_000, protection: OPEN, chainNow: 500, readAt: 0, ...p });
 
