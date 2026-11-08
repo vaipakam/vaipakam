@@ -62,7 +62,7 @@ export function repayReceipt(r: RepayReview, account: Hex, meta: TokenMetaMap | 
     ...(r.approvalSteps > 0 ? [format('repay.losePutBack', { amount: allowanceFigure(r.allowance, asset, meta, copy) })] : []),
     ...(borrower ? [] : [format('repay.loseThirdParty', { id: loan.borrowerTokenId.toString() })]),
     ...(loan.status === STATUS_FALLBACK_PENDING ? [text('repay.cure')] : []),
-    ...(r.refinanceOffer === null ? [text('repay.refinanceUnread')] : r.refinanceOffer > 0n ? [format('repay.refinanceStays', { id: r.refinanceOffer.toString() })] : []),
+    ...(r.refinance === null ? [text('repay.refinanceUnread')] : r.refinance.live ? [format('repay.refinanceStays', { id: r.refinance.offerId.toString() })] : []),
     ...(r.balance >= r.payoff.now && r.balance < r.payoff.atBy ? [figured((x) => format('repay.loseBalance', { amount: tokenAmount(r.balance, asset, meta, format, x) }))] : []),
   ];
 

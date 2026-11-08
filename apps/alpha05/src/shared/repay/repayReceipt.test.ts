@@ -29,7 +29,7 @@ const review: RepayReview = {
   borrowerHolder: A,
   graceEnd: 5_000n,
   borrowerLock: 0,
-  refinanceOffer: 0n,
+  refinance: { offerId: 0n, live: false },
   payoff: { now: 101n, chainNow: 1_000n, atBy: 105n, by: 2_800n },
   capped: false,
   balance: 200n,
@@ -45,10 +45,13 @@ describe('repayReceipt refinance request', () => {
     expect(lines(review).some((l) => l.startsWith('repay.refinance'))).toBe(false);
   });
   it('names a recorded request, which the repayment ends but leaves posted', () => {
-    expect(lines({ ...review, refinanceOffer: 9n })).toContain('repay.refinanceStays#9');
+    expect(lines({ ...review, refinance: { offerId: 9n, live: true } })).toContain('repay.refinanceStays#9');
+  });
+  it('says nothing of a recorded request that no longer stands (cancelled, taken or expired)', () => {
+    expect(lines({ ...review, refinance: { offerId: 9n, live: false } }).some((l) => l.startsWith('repay.refinance'))).toBe(false);
   });
   it('states an unread request as unread', () => {
-    expect(lines({ ...review, refinanceOffer: null })).toContain('repay.refinanceUnread');
+    expect(lines({ ...review, refinance: null })).toContain('repay.refinanceUnread');
   });
 });
 

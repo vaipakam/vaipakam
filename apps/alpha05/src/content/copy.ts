@@ -426,7 +426,6 @@ export const copy = {
     stoppedAfterApproval: A('The repayment was not sent. {{reason}}'),
     legRepaid: B('Loan #{{id}} repaid'),
     notRepaid: B('The chain does not show this loan as repaid.'),
-    statusUnread: B('The loan’s status after the transaction could not be read.'),
     legPaid: B('Paid {{amount}}'),
     paidOther: A('The transaction took {{amount}} from your wallet, outside the review’s {{now}} to {{by}}.'),
     legPutBack: B('Unused approval put back to {{amount}}'),

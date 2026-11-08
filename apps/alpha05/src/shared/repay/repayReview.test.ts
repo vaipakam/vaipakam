@@ -14,7 +14,7 @@ const review: RepayReview = {
   borrowerHolder: A,
   graceEnd: 5_000n,
   borrowerLock: 0,
-  refinanceOffer: 0n,
+  refinance: { offerId: 0n, live: false },
   payoff: { now: 101n, chainNow: 1_000n, atBy: 105n, by: 2_800n },
   capped: false,
   balance: 200n,
@@ -39,8 +39,10 @@ describe('changedBetween', () => {
   });
   it('reopens when a holder, the approval steps or the verdict moved', () => {
     expect(changedBetween(review, { ...review, borrowerHolder: null }, copy)).toBe('repay.changedHolders');
-    expect(changedBetween(review, { ...review, refinanceOffer: 9n }, copy)).toBe('repay.changedHolders');
+    expect(changedBetween(review, { ...review, refinance: { offerId: 9n, live: true } }, copy)).toBe('repay.changedHolders');
+    expect(changedBetween(review, { ...review, refinance: { offerId: 0n, live: true } }, copy)).toBe('repay.changedHolders');
     expect(changedBetween(review, { ...review, approvalSteps: 0 }, copy)).toBe('repay.changedFunds');
+    expect(changedBetween(review, { ...review, allowance: review.allowance + 1n }, copy)).toBe('repay.changedFunds');
     expect(changedBetween(review, { ...review, verdict: { ...OPEN, state: 'unknown' } }, copy)).toBe('repay.changedVerdict');
   });
 });

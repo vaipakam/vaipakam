@@ -44,11 +44,15 @@ export interface RepayReview {
    *  or when the loan is in fallback (a repayment then cures it). */
   graceEnd: bigint | null;
   borrowerLock: number | null;
-  /** The refinance request recorded for this loan (its offer id), 0n when
-   *  none was ever recorded, null when unread. It never holds a full
-   *  repayment; the repayment ends it, but its offer stays posted until
-   *  its creator cancels it. */
-  refinanceOffer: bigint | null;
+  /** The refinance request recorded for this loan: its offer id (0n when
+   *  none was ever recorded) and whether it still stands by the protocol's
+   *  own rule (`getRefinanceRequest`'s `live`: not cancelled, taken,
+   *  retargeted or expired, and its creator holds the borrower position);
+   *  null when unread. It never holds a full repayment; the repayment ends
+   *  a standing one, but its offer stays posted until its creator cancels
+   *  it. The record keeps the last id after a cancel, so only a standing
+   *  request is stated as posted. */
+  refinance: { offerId: bigint; live: boolean } | null;
   payoff: Payoff;
   /** Whether `payoff.by` is the end of the grace period rather than the
    *  usual window: a repayment after it is refused anyway. */
@@ -82,7 +86,7 @@ async function readLoanFacts(c: PublicClient, diamond: Hex, loanId: bigint) {
     maybe(c.readContract({ address: diamond, abi: NFT, functionName: 'positionLock', args: [loan.borrowerTokenId] }).then(Number)),
     maybe(c.readContract({ address: diamond, abi: REFINANCE, functionName: 'getRefinanceRequest', args: [loanId] }) as Promise<readonly [bigint, boolean]>),
   ]);
-  return { loan, lenderHolder, borrowerHolder, graceEnd: dates ? dates[3] : null, borrowerLock, refinanceOffer: refinance ? refinance[0] : null };
+  return { loan, lenderHolder, borrowerHolder, graceEnd: dates ? dates[3] : null, borrowerLock, refinance: refinance ? { offerId: refinance[0], live: refinance[1] } : null };
 }
 
 /**
@@ -148,7 +152,7 @@ export async function readRepayReview(
     borrowerHolder: facts.borrowerHolder,
     graceEnd: facts.graceEnd,
     borrowerLock: facts.borrowerLock,
-    refinanceOffer: facts.refinanceOffer,
+    refinance: facts.refinance,
     payoff,
     capped,
     balance,
@@ -193,11 +197,12 @@ export function changedBetween(a: RepayReview, b: RepayReview, copy: Pick<CopyAc
     a.borrowerHolder !== b.borrowerHolder ||
     a.borrowerLock !== b.borrowerLock ||
     a.graceEnd !== b.graceEnd ||
-    a.refinanceOffer !== b.refinanceOffer
+    a.refinance?.offerId !== b.refinance?.offerId ||
+    a.refinance?.live !== b.refinance?.live
   )
     return text('repay.changedHolders');
   if (a.payoff.by !== b.payoff.by || a.payoff.atBy !== b.payoff.atBy) return text('repay.changedPayoff');
-  if (a.approvalSteps !== b.approvalSteps || a.balance < a.payoff.now !== b.balance < b.payoff.now) return text('repay.changedFunds');
+  if (a.allowance !== b.allowance || a.approvalSteps !== b.approvalSteps || a.balance < a.payoff.now !== b.balance < b.payoff.now) return text('repay.changedFunds');
   if (a.verdict.state !== b.verdict.state || a.verdict.refusals[0]?.code !== b.verdict.refusals[0]?.code) return text('repay.changedVerdict');
   return null;
 }

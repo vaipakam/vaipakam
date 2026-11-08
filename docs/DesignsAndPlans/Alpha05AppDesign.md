@@ -737,10 +737,12 @@ above. Each resolves here, so a route reviewer needs no private file:
   a loan in fallback stays repayable past grace, since repaying cures it.
   The hold LN-21 names while an ACCEPTED lender sale completes has no window
   on this protocol: the sale completes inside the transaction that accepts
-  it, so the verdict reads nothing for it. A refinance request recorded for
-  the loan is named on the review: the repayment ends it, but its offer
-  stays posted until its creator cancels it (an unread request is stated
-  unread). The protocol's full repayment takes a plain approval; it has no
+  it, so the verdict reads nothing for it. A refinance request that still
+  stands by the protocol's own rule is named on the review: the repayment
+  ends it, but its offer stays posted until its creator cancels it. A
+  recorded one that no longer stands (cancelled, taken, expired) is not
+  named, since the record keeps the last id after a cancel, and an unread
+  request is stated unread. The protocol's full repayment takes a plain approval; it has no
   Permit2 route, so none is offered.
   The review states two of the protocol's own payoff figures, now and as of
   a moment about thirty minutes ahead (never later than the grace end),
@@ -763,11 +765,14 @@ above. Each resolves here, so a route reviewer needs no private file:
   loan page. A payer who does not hold the borrower position is told it
   gains no right to the collateral. A re-read does not count the payoff
   growing by the second as a change; the figure at the kept moment, the
-  holders, the dates, the approval steps or the verdict moving reopens the
-  review, and the kept moment moves forward once it is closer than ten
-  minutes. The finish card measures the loan's status at the receipt's
-  block, what left the wallet (within the two stated figures), and the
-  approval put back.
+  holders, the dates, the standing allowance (what a stop puts back) or its
+  approval steps, or the verdict moving reopens the review, also when it
+  moves between the review and the send, and the kept moment moves forward
+  once it is closer than ten minutes. The finish card measures, from the
+  transaction's own logs, the status its repayment left the loan in (not
+  the status at the block, which both sides claiming later in that block
+  moves on to settled), what left the wallet (within the two stated
+  figures), and the approval put back.
 
 ## 3. Companion specifications
 

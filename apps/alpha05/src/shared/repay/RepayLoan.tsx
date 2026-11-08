@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { Abi, Log } from 'viem';
 import { useConfig } from 'wagmi';
 import { writeContract } from 'wagmi/actions';
-import { LoanFacetABI, RepayFacetABI } from '@vaipakam/contracts/abis';
+import { RepayFacetABI } from '@vaipakam/contracts/abis';
 import type { OwnStateClient } from '../../chain/ownRail';
 import type { SupportedChain } from '../../chain/chains';
 import { useCopy } from '../copy/useCopy';
@@ -23,13 +23,13 @@ import { ActionFlow, reviewIdentity, type Recheck } from '../ui/ActionFlow';
 import { Notice } from '../ui/Notice';
 import { shortAddress } from '../ui/format';
 import { allowanceFigure } from './approvalCap';
+import { repaidStatus } from './repaidLog';
 import { repayReceipt } from './repayReceipt';
 import { changedBetween, promptCount, readRepayReview, reviewBlockers, type RepayReview } from './repayReview';
 
 type Hex = `0x${string}`;
 
 const REPAY_ABI = RepayFacetABI as Abi;
-const LOAN_ABI = LoanFacetABI as Abi;
 
 /** `LibVaipakam.LoanStatus.Repaid`. */
 const STATUS_REPAID = 1;
@@ -57,8 +57,8 @@ interface RepayLoanProps {
  * repayment takes no maximum of its own; the repayment is sent
  * only after a dry run passes, and what the repayment does not use of the
  * approval is put back afterwards (best effort, stated either way). The
- * outcome is measured from the chain: the loan's status at the receipt's
- * block and what left the wallet in the transaction's own logs.
+ * outcome is measured from the transaction's own logs: the status its
+ * repayment left the loan in, and what left the wallet.
  */
 export function RepayLoan({ loanId, chain, own, meta, onClose }: RepayLoanProps) {
   const copy = useCopy();
@@ -105,6 +105,9 @@ export function RepayLoan({ loanId, chain, own, meta, onClose }: RepayLoanProps)
       // Exactly the reviewed maximum, lowered too: `repayLoan` has no
       // maximum or deadline of its own, so the allowance is the only cap on
       // what a late confirmation can take.
+      // The prior allowance is what a stop puts back and what the review
+      // stated: a change since the review reopens it.
+      if (prior !== r.allowance) throw allowanceMoved(copy);
       const steps = await allowanceSteps(io, prior, amount);
       if (steps.length !== r.approvalSteps) throw allowanceMoved(copy);
       const approved = steps.length > 0;
@@ -153,19 +156,15 @@ export function RepayLoan({ loanId, chain, own, meta, onClose }: RepayLoanProps)
     },
   });
 
-  /** The loan's status at the receipt's block, and what left the wallet. */
+  /** What the repayment left the loan as (its own log), and what left the wallet. */
   const measure = async (r: RepayReview, logs: readonly Log[], at: AnchoredReader): Promise<LegOutcome[]> => {
     const asset = r.loan.principalAsset;
     const legs: LegOutcome[] = [];
     const repaidLabel = format('repay.legRepaid', { id: loanId.toString() });
-    try {
-      const status = await at.read((c, b) =>
-        c.readContract({ address: diamond, abi: LOAN_ABI, functionName: 'getLoanDetails', args: [loanId], ...b }).then((l) => Number((l as { status: number }).status)),
-      );
-      legs.push(status === STATUS_REPAID ? { status: 'done', label: repaidLabel } : { status: 'not-done', label: repaidLabel, reason: text('repay.notRepaid') });
-    } catch {
-      legs.push({ status: 'unknown', label: repaidLabel, reason: text('repay.statusUnread') });
-    }
+    // The repayment's own log, not the status at the block: a claim by both
+    // sides later in the same block settles the loan, after it was repaid.
+    const status = repaidStatus(logs, diamond, loanId);
+    legs.push(status === STATUS_REPAID ? { status: 'done', label: repaidLabel } : { status: 'not-done', label: repaidLabel, reason: text('repay.notRepaid') });
     // What left the wallet: the protocol takes the figure as of this block,
     // which lies between the two figures the review stated.
     const paid = moved(logs, asset, account, null);
