@@ -1,10 +1,11 @@
 import { Link } from 'react-router-dom';
 import { useCopy } from '../../shared/copy/useCopy';
-import { assetName, tokenAmount, type TokenMetaMap } from '../../shared/reads/tokens';
+import { type TokenMetaMap } from '../../shared/reads/tokens';
+import { offerAmount, offerLine } from '../../shared/offers/offerLine';
 import type { OwnRead } from '../../shared/reads/useOwnRead';
-import { formatBps, formatUtc } from '../../shared/ui/format';
+import { formatUtc } from '../../shared/ui/format';
 import { OwnStamp } from '../../shared/ui/OwnStamp';
-import { ASSET_ERC20, OFFER_TYPE_LENDER } from '../../shared/positions/model';
+import { ASSET_ERC20 } from '../../shared/positions/model';
 import { LoansSection, PayoutsSection, ReadState, settledEmpty } from '../../shared/positions/PositionSections';
 import type { OpenOffer, OpenOffers } from '../../shared/positions/reads';
 import type { HomeBook } from './useHomeBook';
@@ -69,26 +70,12 @@ function OffersSection({ read, meta }: { read: OwnRead<OpenOffers>; meta: TokenM
 }
 
 function OfferCard({ offer: o, meta }: { offer: OpenOffer; meta: TokenMetaMap | null }) {
-  const { text, format } = useCopy();
+  const copy = useCopy();
+  const { format } = copy;
   const id = o.id.toString();
-  const lend = o.offerType === OFFER_TYPE_LENDER;
   const erc20 = o.assetType === ASSET_ERC20;
-  const amountOf = (v: bigint) =>
-    erc20 ? tokenAmount(v, o.lendingAsset, meta, format) : format('asset.nft', { id: o.tokenId.toString(), asset: assetName(o.lendingAsset, meta) });
-  const rate =
-    o.interestRateBpsMax > o.interestRateBps ? format('home.rateRange', { min: formatBps(o.interestRateBps), max: formatBps(o.interestRateBpsMax) }) : formatBps(o.interestRateBps);
-  const common = { id, rate, days: o.durationDays.toString() };
-  // A rental carries no APR: `amount` is its daily fee, in the prepay asset.
-  const line = !erc20
-    ? format(lend ? 'home.offerRentOut' : 'home.offerRent', {
-        id,
-        asset: amountOf(o.amount),
-        fee: tokenAmount(o.amount, o.prepayAsset, meta, format),
-        days: o.durationDays.toString(),
-      })
-    : erc20 && o.amountMax > o.amount
-      ? format('home.offerRange', { ...common, side: text(lend ? 'home.offerSideLend' : 'home.offerSideBorrow'), min: amountOf(o.amount), max: amountOf(o.amountMax) })
-      : format(lend ? 'home.offerLend' : 'home.offerBorrow', { ...common, amount: amountOf(o.amountMax > 0n ? o.amountMax : o.amount) });
+  const amountOf = (v: bigint) => offerAmount(o, v, meta, format);
+  const line = offerLine(o, meta, copy);
   return (
     <li className="card" data-offer-id={id}>
       <p className="row-head">{line}</p>

@@ -24,6 +24,7 @@ import {LibDiscountedLiquidation} from "../libraries/LibDiscountedLiquidation.so
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {RiskFacet} from "./RiskFacet.sol";
 import {OracleFacet} from "./OracleFacet.sol";
+import {SaleFloorFacet} from "./SaleFloorFacet.sol";
 import {LibInternalMatchPriority} from "../libraries/LibInternalMatchPriority.sol";
 
 /**
@@ -120,6 +121,12 @@ contract ForcedSaleFacet is IVaipakamErrors {
     /// @param maxSell The largest quote a sale accepts now: `sell` plus
     ///                {QUOTE_MARGIN_BPS} (never above the collateral) when
     ///                covered, `sell` itself when not.
+    /// @param floorBps The most the sale may lose to the market, in bps of
+    ///                the oracle value of what it sells: the per-tier figure
+    ///                when the collateral is deep, the pair calm and the
+    ///                cushion wide, else the full slippage cap (#3359,
+    ///                {SaleFloorFacet.saleFloorBps}). `floor` and every
+    ///                route's minimum output are set from it.
     struct ForcedSalePlan {
         uint256 debt;
         uint256 need;
@@ -127,6 +134,7 @@ contract ForcedSaleFacet is IVaipakamErrors {
         uint256 floor;
         bool covered;
         uint256 maxSell;
+        uint256 floorBps;
     }
 
     /// @notice What one forced sale did, returned to the caller.
@@ -457,8 +465,21 @@ contract ForcedSaleFacet is IVaipakamErrors {
         view
         returns (ForcedSalePlan memory plan, LibFallback.Rate memory rate)
     {
-        uint256 cap = LibVaipakam.cfgMaxLiquidationSlippageBps();
         uint256 pledged = loan.collateralAmount;
+        // #3359 — the one floor rule, read by self-call so it exists once.
+        // Its cushion is measured against the whole loan's debt, never only
+        // what this sale covers: a periodic sale covers one period's
+        // shortfall, which says nothing about how well the loan is cushioned.
+        // A terminal sale's `debt` already is the whole balance plus the late
+        // fee, so the larger of the two serves every kind.
+        uint256 cap = SaleFloorFacet(address(this))
+            .saleFloorBps(
+                loan.collateralAsset,
+                loan.principalAsset,
+                pledged,
+                Math.max(debt, LibEntitlement.currentBorrowBalance(loan))
+            ).bps;
+        plan.floorBps = cap;
         plan.debt = debt;
         plan.need = debt
             + Math.mulDiv(debt, LibVaipakam.cfgLiquidationHandlingFeeBps(), LibVaipakam.BASIS_POINTS, Math.Rounding.Ceil)
@@ -512,7 +533,7 @@ contract ForcedSaleFacet is IVaipakamErrors {
         j.unsold = loan.collateralAmount - quotedSell;
         LibEncumbrance.decrementCollateralLien(loanId, quotedSell);
         received = LibSanctionedLock.pullToDiamond(s, loan.borrower, loan.collateralAsset, quotedSell);
-        j.minOut = LibSaleSizing.floorAtRate(rate, received, LibVaipakam.cfgMaxLiquidationSlippageBps());
+        j.minOut = LibSaleSizing.floorAtRate(rate, received, plan.floorBps);
     }
 
     /// @dev Sell `amount` collateral (on the Diamond) demanding the floor of

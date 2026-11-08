@@ -2215,6 +2215,18 @@ fallback، موعد غير مقروء، يستحق خلال ثلاثة أيام�
 
 يقرأ التنبيه، عند كتلة واحدة، `paused` و`VaultPayoutFacet.isEscapeOpen` و`escapeOpensAt` (بداية الإيقاف اليدوي مضافًا إليها مهلة الخروج التي بدأ بها؛ صفر إن لم يكن هناك إيقاف سارٍ أو لم يُطلق الـ Diamond قط) و`getProtectedAccount(wallet)`، ويعدّ تنازليًا وفق وقت الكتلة. أثناء الإيقاف والمسار مغلق، يُرجِع `withdrawFromVault` الخطأ `EnforcedPause` وتقول المراجعة إن الإيقاف يمنعه. ما إن يصبح `isEscapeOpen` صحيحًا، يواصل الحساب المحمي استخدام `withdrawFromVault` الذي يستمر في وضع الدفعات في الطابور؛ أما سحب أي محفظة أخرى فيستدعي `escapeWithdraw(kind, asset, tokenId, amount)`، الذي يرفض الحساب المحمي (`EscapeNotForProtected`)، ويرفض مستلمًا محظورًا، ويحدّه رصيد إيداع المحفظة نفسها والرقم الحر، ويدفع للمستدعي. تقرأ بطاقة الإنهاء `EscapeWithdrawal(account, asset, tokenId, amount)` وتحويل الرمز نفسه من الخزنة إلى المحفظة. إذا تعذّرت قراءة الإيقاف أو المسار أو، عند فتح المسار، الوضع، فلا يُرسل أي سحب.
 
+<a id="my-offers"></a>
+
+### عروضك
+
+القائمة هي اتحاد `getUserOffersPaginated(wallet)` (فهرس كل منشئ، الذي يحتفظ بمعرّف العرض الملغى) و`getUserPositionOffersPaginated(wallet)` (العروض التي تحمل المحفظة رمز مركزها)، تُقرأ على دفعات من 250 على الأكثر عبر `MetricsDashboardFacet.getOffersWithState` الذي يجيب موضعًا بموضع. تُطابَق كل صفّ مع المعرّف المطلوب: العرض الملغى دون تنفيذ يُحذف سجله، فيُبلغ العرض عن المعرّف 0 مع الحالة المشتقة ملغى، ولا يعرض الصفّ شروطًا بدل شروط مُعاد بناؤها. والعرض الملغى بعد تنفيذ جزئي يحتفظ بسجله مع تعيين `accepted` ويُقرأ منفَّذًا. تُحسب أعداد المرشحات على الصفوف المقروءة؛ وإن تعذّرت قراءة أحد الفهرسين حتى نهايته، تقول الصفحة إن القائمة قد تكون ناقصة.
+
+<a id="offer-cancel"></a>
+
+### إلغاء عرض
+
+تقرأ المراجعة، في كتلة واحدة، `getOffer(id)` و`getOffersWithState([id])` و`getOfferLinkedLoanId(id)` و`paused()` و`getProtectedAccount` الخاص بالمنشئ، ثم تُجري تشغيلًا تجريبيًا لـ`OfferCancelFacet.cancelOffer(id)`. يسمح الوجه لمدير المنشئ بالإلغاء في أي وقت ولأي شخص بعد مرور `expiresAt`؛ ويرفض `OfferAlreadyAccepted` و`OfferAlreadyConsumedBySale` و`CancelCooldownActive` ما دام عرض بقيمة `amountFilled == 0` أحدث من 300 ثانية وغير منتهٍ، وهو `whenNotPaused`. يُقدَّر المُسترَد من فروع الوجه نفسها: عرض إقراض ERC-20 يُعيد `(amountMax أو amount) - amountFilled` من الأصل المُقرَض؛ وعرض إقراض NFT رمزه، أو كمية ERC-1155؛ وطلب الاقتراض ضمانه غير المستخدم `(collateralAmountMax أو collateralAmount) - collateralAmountFilled` أو رمزه، ولا شيء حين يُبقي `refinanceCarryOver` الضمان في القرض؛ وطلب الاستئجار `amount × durationDays` مع الهامش بمعدل `rentalBufferBpsAtCreate`. العرض المرتبط بقرض عبر `getOfferLinkedLoanId`، أو طلب الاستئجار الذي سُجّل هامشه صفرًا (فيستخدم البروتوكول معدله الحالي)، لا يُقدَّر قبل التوقيع. يغادر كل مُسترَد خزنة المنشئ عبر سحب الخزنة، فيضعه الوضع المحمي في الطابور أو يُبقيه في الخزنة ما دام الحساب مقفلًا. يُسحب رمز المركز. تقرأ بطاقة الإنهاء `OfferCanceled(offerId, creator)` وسجل الدفع لدى البروتوكول للمنشئ وتحويل الرمز نفسه إلى المنشئ.
+
 <a id="risk-access"></a>
 
 ### Risk Access: مستوى المخاطرة لديك

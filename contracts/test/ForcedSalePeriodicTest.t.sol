@@ -10,6 +10,7 @@ import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {RepayPeriodicFacet} from "../src/facets/RepayPeriodicFacet.sol";
 import {ForcedSaleFacet} from "../src/facets/ForcedSaleFacet.sol";
+import {SaleFloorFacet} from "../src/facets/SaleFloorFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {NumeraireConfigFacet} from "../src/facets/NumeraireConfigFacet.sol";
@@ -162,6 +163,40 @@ contract ForcedSalePeriodicTest is SetupTest {
         // 6% cap (1:1 oracle rate).
         assertLt(((p.sell - 1) * 9_400) / 10_000, p.need, "least amount sold");
         assertLt(p.sell, 5000 ether, "only a slice is sold");
+    }
+
+    /// @dev #3359 — a periodic sale covers one period's shortfall, but the
+    ///      tighter floor's cushion is measured against the whole loan: a
+    ///      calm, deep pair whose collateral is worth only about 105% of the
+    ///      loan keeps the full cap, however small the period's shortfall.
+    function test_plan_floorCushionIsTheWholeLoan() public {
+        _toPeriodEnd(1);
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(OracleFacet.getCloseOutLiquidityTier.selector, mockCollateralERC20),
+            abi.encode(uint8(3))
+        );
+        address[] memory assets = new address[](2);
+        assets[0] = mockCollateralERC20;
+        assets[1] = mockERC20;
+
+        // Well cushioned (500%): the tight tier-3 floor.
+        SaleFloorFacet(address(diamond)).checkpointHourlyPrices(assets);
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
+        SaleFloorFacet(address(diamond)).checkpointHourlyPrices(assets);
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
+        assertEq(_plan().floorBps, 250, "calm, deep, cushioned");
+
+        // 5,000 units at $210 against ~1,000 units at $1,000: about 105%
+        // of the whole loan, while still many times the period's shortfall.
+        mockOraclePrice(mockCollateralERC20, 210 * 1e8, 8);
+        SaleFloorFacet(address(diamond)).checkpointHourlyPrices(assets);
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
+        SaleFloorFacet(address(diamond)).checkpointHourlyPrices(assets);
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
+        ForcedSaleFacet.ForcedSalePlan memory p = _plan();
+        assertGt(p.debt, 0, "a period is owed");
+        assertEq(p.floorBps, 600, "thin against the whole loan: the cap");
     }
 
     function test_plan_zeroWhenNothingOwed() public view {

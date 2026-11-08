@@ -146,6 +146,11 @@
             "name": "maxSell",
             "type": "uint256",
             "internalType": "uint256"
+          },
+          {
+            "name": "floorBps",
+            "type": "uint256",
+            "internalType": "uint256"
           }
         ]
       }
