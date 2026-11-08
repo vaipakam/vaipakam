@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {MockV3PoolOracle} from "./helpers/MockV3PoolOracle.sol";
 import {Test, stdError} from "forge-std/Test.sol";
 import {VaipakamDiamond} from "../src/VaipakamDiamond.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
@@ -190,6 +191,7 @@ contract OracleFacetTest is Test {
             abi.encode(uint160(uint256(1) << 96), int24(0), uint16(0), uint16(0), uint16(0), uint8(0), false)
         );
         vm.mockCall(pool, abi.encodeWithSignature("liquidity()"), abi.encode(liquidity));
+        MockV3PoolOracle.steady(pool, int24(0), liquidity);
     }
 
     // ─── checkLiquidity ───────────────────────────────────────────────────────
@@ -837,6 +839,7 @@ contract OracleFacetTest is Test {
             abi.encode(uint160(uint256(1) << 96), int24(0), uint16(0), uint16(0), uint16(0), uint8(0), false)
         );
         vm.mockCall(pool, abi.encodeWithSignature("liquidity()"), abi.encode(uint128(1e21)));
+        MockV3PoolOracle.steady(pool, int24(0), uint128(1e21));
 
         LibVaipakam.LiquidityStatus status = OracleFacet(address(diamond)).checkLiquidity(mockAsset);
         assertEq(uint8(status), uint8(LibVaipakam.LiquidityStatus.Liquid));

@@ -183,6 +183,20 @@ evidence that the migration has completed.
   previews described in [the platform spec](ProjectDetailsREADME.md).
   Collateral changes invalidate an old quote. A failed or unanswered venue
   lookup is not proof that no venue will quote.
+- The keeper must be able to pay for the liquidations it may have to send.
+  When the keeper wallet's native balance on a chain falls below the cost of
+  a stated reserve of liquidations at the fee a send is prepared at now
+  (twenty by default, each assumed to need a generous fixed amount of gas),
+  operators are told in the ops chat, and told more urgently, without waiting,
+  once it cannot pay for even one. The message states the balance, how many
+  liquidations it pays for, the assumptions the reserve rests on and what it
+  leaves out (an OP-stack chain's L1 data fee and operator fee). It repeats every six hours
+  while the shortfall lasts, and one message says when the wallet has
+  recovered with a margin above the reserve, so a balance sitting on the line
+  does not alternate. A balance or fee that cannot be read changes nothing
+  and is said in the run log; it is never treated as either low or
+  recovered. The check sends no transaction and is switched on separately,
+  shipping off.
 - Illiquid loans and rentals with no collateral have no price-based health
   factor. That is an expected result, not a zero health factor or an RPC
   outage. It does not remove time-based default handling.
