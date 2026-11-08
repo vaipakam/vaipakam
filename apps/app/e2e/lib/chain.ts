@@ -21,6 +21,7 @@ import {
 } from 'viem';
 import { extractRevertData } from '@vaipakam/lib/decodeContractError';
 import { ANVIL_URL } from './anvil';
+import { failingFrame, type TraceFrame } from './traceFrame';
 import { loadDeployment, loadDiamondAbi } from './artifacts';
 
 export const CHAIN_ID = 84532;
@@ -104,12 +105,21 @@ export async function confirm(
   const receipt = await pub.waitForTransactionReceipt({ hash });
   if (receipt.status !== 'success') {
     const reason = await revertReason(hash, receipt.blockNumber);
+    // Gas used against the limit the sender set: a revert that used (nearly)
+    // all of it ran out of gas, whatever the trace's wording.
+    let gasNote = `gas used ${receipt.gasUsed}`;
+    try {
+      const tx = await pub.getTransaction({ hash });
+      gasNote += ` of a ${tx.gas} limit`;
+    } catch {
+      // Best-effort, like the reason itself.
+    }
     throw new Error(
       `${label} REVERTED (tx ${hash}, block ${receipt.blockNumber}). ` +
         `The transaction was mined, so nothing here timed out — its effect ` +
         `simply did not happen, and every assertion after this point would ` +
         `have been testing a state that was never reached. ` +
-        `Revert reason: ${reason}`,
+        `Revert reason: ${reason}; ${gasNote}.`,
     );
   }
   return receipt;
@@ -142,12 +152,14 @@ async function revertReason(hash: Hex, blockNumber: bigint): Promise<string> {
     const trace = (await pub.request({
       method: 'debug_traceTransaction' as never,
       params: [hash, { tracer: 'callTracer' }] as never,
-    })) as { output?: unknown; error?: unknown };
+    })) as TraceFrame;
+    const origin = failingFrame(trace);
+    const where = origin && origin !== trace ? ` — first failed in ${describeFrame(origin)}` : '';
     if (typeof trace?.output === 'string' && trace.output.startsWith('0x') && trace.output.length > 2) {
-      return decodeRevert(trace.output as Hex);
+      return `${decodeRevert(trace.output as Hex)}${where}`;
     }
     if (typeof trace?.error === 'string') {
-      return `${trace.error} (from a trace of the transaction; it carried no revert data)`;
+      return `${trace.error} (from a trace of the transaction; it carried no revert data)${where}`;
     }
   } catch {
     // No trace on this node — fall through to the labelled replay.
@@ -186,6 +198,18 @@ async function revertReason(hash: Hex, blockNumber: bigint): Promise<string> {
 }
 
 /** Revert bytes as `Name(args)` against the Diamond's merged ABI, or raw. */
+function describeFrame(f: TraceFrame): string {
+  const selector = typeof f.input === 'string' && f.input.length >= 10 ? f.input.slice(0, 10) : '(no selector)';
+  const data =
+    typeof f.output === 'string' && f.output.startsWith('0x') && f.output.length > 2
+      ? decodeRevert(f.output as Hex)
+      : 'no revert data';
+  return (
+    `${f.type ?? 'call'} to ${f.to ?? '?'} selector ${selector}: ${String(f.error)}, ${data}` +
+    ` (gas ${f.gas ? BigInt(f.gas).toString() : '?'}, used ${f.gasUsed ? BigInt(f.gasUsed).toString() : '?'})`
+  );
+}
+
 function decodeRevert(data: Hex): string {
   try {
     const decoded = decodeErrorResult({ abi: DIAMOND_ABI_VIEM, data });
