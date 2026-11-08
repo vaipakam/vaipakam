@@ -2203,6 +2203,18 @@ fallback، موعد غير مقروء، يستحق خلال ثلاثة أيام�
 
 السحب هو `VaultDepositoryFacet.withdrawFromVault(account, kind, asset, tokenId, amount, recipient)`، و`account` و`recipient` كلاهما المحفظة المتصلة. يحدّه `withdrawableNow(account, kind, asset, tokenId)` (وإلا `AmountExceedsFree`)، ويتحقق من `requireManager(account)`، ويفحص المستدعي (Tier-1) والمستلم، ويُرفض أثناء الإيقاف المؤقت إلا إذا كان الحساب محميًا و`isEscapeOpen` صحيحًا. تقرأ المراجعة، عند كتلة واحدة، `getUserVaultAddress` و`paused` و`isEscapeOpen` ووضع فحص العقوبات و`getProtectedAccount(wallet)` و`withdrawableNow`، ثم تجري تشغيلًا تجريبيًا للاستدعاء. من دون الوضع المحمي تدفع مسارات الخزنة إلى المحفظة فورًا؛ ومعه يضع `LibProtectedAccount.queuePayout` الدفعة في الطابور طوال `delaySeconds` ويرفض `ProtectedVaultLocked` و`RecipientNotAllowlisted` و`TooManyPendingRows`. تقرأ بطاقة النهاية `VaultWithdrawRequested(account, asset, kind, tokenId, amount, recipient, queued)` و`PayoutQueued` وسجلات تحويل الرمز نفسه من الخزنة إلى المحفظة. المجموعة التي يذكرها سجل الإيداع دون معرّفات رموز تُسحب بكتابة معرّف الرمز؛ وحدّ النموذج هو `withdrawableNow` لذلك الرمز، ويُقرأ مع كل كتلة.
 
+<a id="vault-safety"></a>
+
+### أمان الحساب
+
+تقرأ البطاقة، عند كتلة واحدة، `getProtectedAccount(wallet)` و`getProtectedDelayBounds()` و`paused` وحالة العقوبات و`getPendingPayoutIds(wallet)`؛ ويُقرأ الإرجاع `FunctionDoesNotExist` على أنه غير متاح. التشغيل هو `enableProtectedMode(delaySeconds, protectNfts)`: فوري، ويُرفض أثناء الإيقاف المؤقت أو إذا كان الوضع مفعّلًا، ويجب أن يقع التأخير ضمن الحدود (من يومين إلى خمسة أيام)، وينشئ الخزنة إن لم تكن موجودة. القفل الآن هو `lockVault(wallet)`: متاح أثناء الإيقاف المؤقت، ويلغي كل صف في الطابور (`PayoutCancelled`)، ويُسقط كل تغيير معلّق، ويُبطل استبدالًا اقترحه المدير. طلب فك القفل هو `requestUnlock(wallet)`، ويُرفض أثناء الإيقاف المؤقت أو قبل `cooldownUntil`، ويضبط `pendingUnlockAt` على الآن مضافًا إليه `delaySeconds`. تطبيق التغييرات المستحقة هو `finalizeSettingChanges(wallet)`، الذي يطبّق كل تغيير مستحق دفعة واحدة؛ وينتظر الإيقاف حتى لا يبقى صف مفتوح (`PendingRowsExist`). يُجرى كل إجراء تجريبيًا عند المراجعة ومرة أخرى قبل فتح المحفظة، وتقرأ بطاقة الإنهاء `ProtectedModeEnabled` و`VaultLocked` و`PayoutCancelled` و`SettingChangeRequested` و`SettingChangeApplied` من سجلات الـ Diamond.
+
+<a id="vault-escape"></a>
+
+### عندما يكون البروتوكول متوقفًا مؤقتًا
+
+يقرأ التنبيه، عند كتلة واحدة، `paused` و`VaultPayoutFacet.isEscapeOpen` و`escapeOpensAt` (بداية الإيقاف اليدوي مضافًا إليها مهلة الخروج التي بدأ بها؛ صفر إن لم يكن هناك إيقاف سارٍ أو لم يُطلق الـ Diamond قط) و`getProtectedAccount(wallet)`، ويعدّ تنازليًا وفق وقت الكتلة. أثناء الإيقاف والمسار مغلق، يُرجِع `withdrawFromVault` الخطأ `EnforcedPause` وتقول المراجعة إن الإيقاف يمنعه. ما إن يصبح `isEscapeOpen` صحيحًا، يواصل الحساب المحمي استخدام `withdrawFromVault` الذي يستمر في وضع الدفعات في الطابور؛ أما سحب أي محفظة أخرى فيستدعي `escapeWithdraw(kind, asset, tokenId, amount)`، الذي يرفض الحساب المحمي (`EscapeNotForProtected`)، ويرفض مستلمًا محظورًا، ويحدّه رصيد إيداع المحفظة نفسها والرقم الحر، ويدفع للمستدعي. تقرأ بطاقة الإنهاء `EscapeWithdrawal(account, asset, tokenId, amount)` وتحويل الرمز نفسه من الخزنة إلى المحفظة. إذا تعذّرت قراءة الإيقاف أو المسار أو، عند فتح المسار، الوضع، فلا يُرسل أي سحب.
+
 <a id="risk-access"></a>
 
 ### Risk Access: مستوى المخاطرة لديك

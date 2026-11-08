@@ -2307,6 +2307,18 @@ Positions は共通のリーダーを通して Home と同じ保有一覧を読�
 
 引き出しは `VaultDepositoryFacet.withdrawFromVault(account, kind, asset, tokenId, amount, recipient)` で、`account` と `recipient` はどちらも接続中のウォレットです。上限は `withdrawableNow(account, kind, asset, tokenId)`（超えると `AmountExceedsFree`）で、`requireManager(account)` を確認し、呼び出し元（Tier-1）と受取人を審査します。一時停止中は、保護アカウントで `isEscapeOpen` が真の場合を除き拒否されます。レビューは1つのブロックで `getUserVaultAddress`、`paused`、`isEscapeOpen`、制裁ステータス、`getProtectedAccount(wallet)`、`withdrawableNow` を読み、その後呼び出しをドライランします。保護モードがオフならボールトのルートがすぐにウォレットへ支払い、オンなら `LibProtectedAccount.queuePayout` が `delaySeconds` のあいだ支払いをキューに入れ、`ProtectedVaultLocked`、`RecipientNotAllowlisted`、`TooManyPendingRows` を拒否します。完了カードは `VaultWithdrawRequested(account, asset, kind, tokenId, amount, recipient, queued)`、`PayoutQueued`、ボールトからウォレットへのトークン自身の転送ログを読みます。入金記録がトークンIDなしで示すコレクションは、トークンIDを入力して引き出し、フォームの上限はそのトークンの `withdrawableNow` で、ブロックごとに読み直します。
 
+<a id="vault-safety"></a>
+
+### アカウントの安全
+
+カードは同じブロックで `getProtectedAccount(wallet)`、`getProtectedDelayBounds()`、`paused`、制裁状況、`getPendingPayoutIds(wallet)` を読みます。`FunctionDoesNotExist` のリバートは利用不可と読みます。オンにするのは `enableProtectedMode(delaySeconds, protectNfts)` で、即時に有効、一時停止中またはすでにオンなら拒否され、遅延は範囲内（2日から5日）でなければならず、ボールトがなければ作成します。「今すぐロック」は `lockVault(wallet)` で、一時停止中も使え、キュー中のすべての行を取り消し（`PayoutCancelled`）、保留中のすべての変更を破棄し、管理者が提案した交代を無効にします。ロック解除の申請は `requestUnlock(wallet)` で、一時停止中や `cooldownUntil` 以前は拒否され、`pendingUnlockAt` を現在時刻に `delaySeconds` を足した時刻に設定します。「期限の来た変更を適用」は `finalizeSettingChanges(wallet)` で、期限の来たすべての変更を一度に適用します。オフへの切り替えは開いた行がなくなるまで待ちます（`PendingRowsExist`）。各操作はレビュー時とウォレットを開く直前にドライランされ、完了カードは Diamond のログから `ProtectedModeEnabled`、`VaultLocked`、`PayoutCancelled`、`SettingChangeRequested`、`SettingChangeApplied` を読みます。
+
+<a id="vault-escape"></a>
+
+### プロトコルが一時停止しているとき
+
+通知は同じブロックで `paused`、`VaultPayoutFacet.isEscapeOpen`、`escapeOpensAt`（手動一時停止の開始時刻に、開始時のエスケープ期間を足したもの。有効な一時停止がない場合や Diamond が一度も開始されていない場合はゼロ）、`getProtectedAccount(wallet)` を読み、ブロック時刻に対してカウントダウンします。ルートが閉じたまま一時停止中は `withdrawFromVault` が `EnforcedPause` でリバートし、レビューは一時停止が止めていると伝えます。`isEscapeOpen` が真になると、保護されたアカウントは引き続き `withdrawFromVault` を使い、キューへの登録が続きます。それ以外のウォレットの引き出しは `escapeWithdraw(kind, asset, tokenId, amount)` を呼びます。これは保護されたアカウントを拒否し（`EscapeNotForProtected`）、禁止された受取人を拒否し、ウォレット自身の入金残高と自由な数値で上限が決まり、呼び出し元に支払います。完了カードは `EscapeWithdrawal(account, asset, tokenId, amount)` と、ボールトからウォレットへのトークン自体の移転を読みます。一時停止、ルート、またはルートが開いている場合のモードが読めなければ、引き出しは送信されません。
+
 <a id="risk-access"></a>
 
 ### Risk Access: あなたのリスクレベル
