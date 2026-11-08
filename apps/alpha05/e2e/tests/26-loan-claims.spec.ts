@@ -35,6 +35,14 @@ test.afterEach(async () => {
   await anvilRpc('evm_mine');
 });
 
+/** Move within the app without reloading it, as a link would. */
+async function softNavigate(page: Page, path: string): Promise<void> {
+  await page.evaluate((to) => {
+    window.history.pushState({}, '', to);
+    window.dispatchEvent(new PopStateEvent('popstate'));
+  }, path);
+}
+
 async function fitsWidth(page: Page): Promise<void> {
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 }
@@ -125,7 +133,14 @@ test('each side collects its payout of a repaid loan: the lender from the loan p
     const balance = await sc.pub.readContract({ address: collateralAsset, abi: erc20Abi, functionName: 'balanceOf', args: [borrowerAddr] });
     expect(balance - before).toBe(1500n * 10n ** 18n);
 
-    await finish.getByRole('button', { name: 'Close' }).click();
+    // Leaving for Home and coming back within the app keeps the finish card,
+    // though the burnt position no longer lists the payout.
+    await softNavigate(page, '/');
+    await expect(page.locator(`[data-claim="borrower:${loanId}"]`)).toHaveCount(0);
+    await softNavigate(page, '/claims');
+    const kept = page.locator(`[data-claim="borrower:${loanId}"] [data-phase="measured"]`);
+    await expect(kept).toContainText('Both sides have collected: the loan is settled', { timeout: 60_000 });
+    await kept.getByRole('button', { name: 'Close' }).click();
     await expect(page.locator(`[data-claim="borrower:${loanId}"]`)).toHaveCount(0, { timeout: 60_000 });
   }
 });

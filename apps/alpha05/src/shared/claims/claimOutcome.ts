@@ -14,8 +14,8 @@
 import type { Log } from 'viem';
 import type { CopyAccess } from '../copy/useCopy';
 import { moved } from '../offers/acceptOutcome';
-import { payoutOutcome, type Protection } from '../protection/payout';
-import { routedLeg } from '../protection/payoutCopy';
+import { payoutOutcomes } from '../protection/payout';
+import { payoutLegs, routedLeg } from '../protection/payoutCopy';
 import type { LegOutcome } from '../tx/outcome';
 import { claimRecorded, loanSettled, nftArrived, surplusPaid } from './claimLog';
 import { ASSET_ERC20, type ClaimLane } from './loanClaim';
@@ -76,13 +76,28 @@ export function measureLoanClaim(r: LoanClaimReview, logs: readonly Log[], diamo
     const k = l.asset.toLowerCase();
     byToken.set(k, { asset: l.asset, amount: (byToken.get(k)?.amount ?? 0n) + l.amount });
   }
-  for (const { asset, amount: expected } of byToken.values()) legs.push(tokenLeg(asset, expected, logs, diamond, account, r.protection, t));
+  for (const { asset, amount: expected } of byToken.values())
+    legs.push(
+      ...payoutLegs(
+        {
+          outcomes: payoutOutcomes(logs, diamond, account, asset),
+          wallet: moved(logs, asset, null, account),
+          expected,
+          protection: r.protection,
+          what: (v) => t.amount(asset, v),
+          exact: (v) => t.exact(asset, v),
+          walletLeg: (what) => format('loanClaim.legArrived', { amount: what }),
+          walletOther: (got, want) => format('loanClaim.arrivedOther', { amount: got, expected: want }),
+        },
+        t.copy,
+      ),
+    );
 
   for (const l of lanes) {
     if (l.assetType === ASSET_ERC20) continue;
-    const routed = payoutOutcome(logs, diamond, account, l.asset);
-    if (routed) {
-      legs.push({ status: 'done', label: routedLeg(routed, t.nft(l), r.protection, t.copy) });
+    const routed = payoutOutcomes(logs, diamond, account, l.asset);
+    if (routed.length > 0) {
+      for (const o of routed) legs.push({ status: 'done', label: routedLeg(o, t.nft(l), r.protection, t.copy) });
       continue;
     }
     const arrived = nftArrived(logs, l.asset, l.assetType, l.tokenId, account);
@@ -95,15 +110,4 @@ export function measureLoanClaim(r: LoanClaimReview, logs: readonly Log[], diamo
 
   if (loanSettled(logs, diamond, r.loanId)) legs.push({ status: 'done', label: text('loanClaim.legSettled') });
   return legs;
-}
-
-/** One token's leg: where it landed, and whether it came to the figure the
- *  review expected. */
-function tokenLeg(asset: Hex, expected: bigint, logs: readonly Log[], diamond: Hex, account: Hex, protection: Protection | null, t: OutcomeText): LegOutcome {
-  const { format } = t.copy;
-  const routed = payoutOutcome(logs, diamond, account, asset);
-  const got = routed ? routed.amount : moved(logs, asset, null, account);
-  const label = routed ? routedLeg(routed, t.amount(asset, got), protection, t.copy) : format('loanClaim.legArrived', { amount: t.amount(asset, got) });
-  if (got === expected) return { status: 'done', label };
-  return { status: got === 0n ? 'not-done' : 'unknown', label, reason: format('loanClaim.arrivedOther', { amount: t.exact(asset, got), expected: t.exact(asset, expected) }) };
 }

@@ -60,15 +60,18 @@ export function payoutRoute(protection: Protection | null, account: Hex, source:
   return protection.locked ? 'held' : 'queued';
 }
 
-/** What the transaction did with a payment of `asset` to `account`, from
- *  the Diamond's own logs: queued (with the time it can be released), kept in
- *  the vault, or paid into the vault; null when it did none of these (it was
- *  paid to the wallet, or not at all: the transfer itself says which). */
+/** Where the transaction put a payment of `asset` to `account` instead of
+ *  the wallet, from the Diamond's own logs: queued (with the time it can be
+ *  released), kept in the vault, or paid into the vault. One payment can
+ *  split: with one queue slot left, a claim's first payment is queued and its
+ *  second kept in the vault. So every destination the logs show is returned,
+ *  each summed; none when nothing was routed (it was paid to the wallet, or
+ *  not at all: the transfer itself says which). */
 export type PayoutOutcome = { kind: 'queued'; amount: bigint; releaseAt: bigint } | { kind: 'held'; amount: bigint } | { kind: 'vault'; amount: bigint };
 
 type Args = Record<string, bigint | number | string | undefined>;
 
-export function payoutOutcome(logs: readonly Log[], diamond: Hex, account: Hex, asset: Hex): PayoutOutcome | null {
+export function payoutOutcomes(logs: readonly Log[], diamond: Hex, account: Hex, asset: Hex): PayoutOutcome[] {
   const own = logs.filter((l) => l.address.toLowerCase() === diamond.toLowerCase());
   const events = parseEventLogs({ abi: PAYOUT, logs: [...own], strict: false }) as unknown as { eventName: string; args: Args }[];
   const same = (a: Args) => String(a.account).toLowerCase() === account.toLowerCase() && String(a.asset).toLowerCase() === asset.toLowerCase();
@@ -76,11 +79,12 @@ export function payoutOutcome(logs: readonly Log[], diamond: Hex, account: Hex, 
     const hits = events.filter((e) => e.eventName === name && same(e.args));
     return hits.length === 0 ? null : { total: hits.reduce((t, e) => t + BigInt(e.args[field] ?? 0n), 0n), last: hits.at(-1)!.args };
   };
+  const out: PayoutOutcome[] = [];
   const queued = sum('PayoutQueued', 'amount');
-  if (queued) return { kind: 'queued', amount: queued.total, releaseAt: BigInt(queued.last.releaseAt ?? 0n) };
+  if (queued) out.push({ kind: 'queued', amount: queued.total, releaseAt: BigInt(queued.last.releaseAt ?? 0n) });
   const held = sum('PayoutHeldInVault', 'amount');
-  if (held) return { kind: 'held', amount: held.total };
+  if (held) out.push({ kind: 'held', amount: held.total });
   const credited = sum('PaymentCreditedToVault', 'received');
-  if (credited) return { kind: 'vault', amount: credited.total };
-  return null;
+  if (credited) out.push({ kind: 'vault', amount: credited.total });
+  return out;
 }

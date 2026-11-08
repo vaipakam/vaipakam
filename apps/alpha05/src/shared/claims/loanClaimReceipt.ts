@@ -56,7 +56,10 @@ export function loanClaimReceipt(r: LoanClaimReview, meta: TokenMetaMap | null, 
   const { text, format } = copy;
   const unknown = { kind: 'unknown' as const, why: text('receipt.unknown') };
   const rows: ReceiptRow[] = r.lanes.map((l): ReceiptRow => ({ label: laneLabel(l.kind, r.side, copy), value: laneValue(l, meta, copy), binding: true }));
-  if (r.lanes.length === 0) rows.push({ label: text('loanClaim.rowReceive'), value: { kind: 'text', text: text('loanClaim.zeroClaim') }, binding: true });
+  // Zero is said only of a claim read open with nothing in it; a claim that
+  // could not be read is unknown, never zero.
+  if (r.claim === null) rows.push({ label: text('loanClaim.rowReceive'), value: unknown, binding: true });
+  else if (r.lanes.length === 0 && !r.claim.claimed) rows.push({ label: text('loanClaim.rowReceive'), value: { kind: 'text', text: text('loanClaim.zeroClaim') }, binding: true });
   if (r.side === 'lender' && r.sellersShare !== null && r.sellersShare > 0n && r.claim)
     rows.push({ label: text('loanClaim.rowSellers'), value: { kind: 'amount', asset: r.claim.asset, amount: r.sellersShare }, binding: false });
   if (r.side === 'lender' && Number(r.loan.status) === DEFAULTED && Number(r.loan.assetType) === ASSET_ERC20)

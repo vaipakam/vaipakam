@@ -49,3 +49,15 @@ describe('loanClaimReceipt payout route', () => {
     expect(loanClaimChanged(queued, queued, copy)).toBeNull();
   });
 });
+
+describe('loanClaimReceipt payout amount', () => {
+  const amountRow = (r: LoanClaimReview) => loanClaimReceipt(r, null, copy).rows.find((x) => x.label === 'loanClaim.rowReceive')?.value;
+  const open = { asset: A, amount: 0n, claimed: false, assetType: 0, tokenId: 0n, quantity: 0n, heldForLender: 0n, hasRentalNftReturn: false, surplus: null, liened: null };
+  it('states an unread claim as unknown, never as zero', () => {
+    expect(amountRow({ ...review, claim: null, lanes: [] })?.kind).toBe('unknown');
+  });
+  it('states zero only for a claim read open with nothing in it', () => {
+    expect(amountRow({ ...review, claim: open, lanes: [] })).toEqual({ kind: 'text', text: 'loanClaim.zeroClaim' });
+    expect(amountRow({ ...review, claim: { ...open, claimed: true }, lanes: [] })).toBeUndefined();
+  });
+});

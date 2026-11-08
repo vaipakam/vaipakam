@@ -631,7 +631,6 @@ export const copy = {
     rowAmount: B('Collateral you take back'),
     rowTo: B('Sent to'),
     to: B('Your wallet, from your vault'),
-    routedOther: A('{{amount}} went to your protected account, not the {{expected}} reviewed.'),
     rowMax: B('Most you can take back now'),
     closer: A('Taking back collateral lowers the loan’s health factor and raises its loan-to-value, so it moves closer to liquidation.'),
     limitMoves: A('The protocol checks its limits again when this confirms. If prices move first and the amount no longer fits, it is refused and nothing moves.'),
@@ -673,6 +672,7 @@ export const copy = {
     legQueuedCosign: B('{{what}} queued for your wallet, releasable from {{time}} once a secondary signer approves'),
     legHeld: B('{{what}} kept in your vault while your account is locked'),
     legVault: B('{{what}} paid into your vault'),
+    totalOther: A('In all, {{amount}} went to your wallet, payout queue or vault, not the {{expected}} reviewed.'),
   },
   flow: {
     reading: B('Reading what this would do…'),

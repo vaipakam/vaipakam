@@ -25,8 +25,9 @@ type Hex = `0x${string}`;
 /** The store key one side's claim keeps its state under: one per loan and
  *  side, so the loan page and the Claims page share it (RB-CLAIM: one flow,
  *  many entry points). */
+export const LOAN_CLAIM_KEY_PREFIX = 'claim.loan.';
 export function loanClaimKey(loanId: bigint, side: ClaimSide): string {
-  return `claim.loan.${side}.${loanId.toString()}`;
+  return `${LOAN_CLAIM_KEY_PREFIX}${side}.${loanId.toString()}`;
 }
 
 /** Whether one side's claim is open or in flight, so a page keeps its panel

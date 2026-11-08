@@ -982,8 +982,13 @@ above. Each resolves here, so a route reviewer needs no private file:
   the review, and the send runs it again. The finish card measures, from
   the transaction's own logs, the claim recorded, what the protocol paid
   from the row against what was reviewed, each payout that arrived, was
-  queued, kept or credited to a vault, an NFT's arrival, and the loan's
-  settlement once both sides have collected. Claims lists the payouts of
+  queued, kept or credited to a vault (each destination stated, since one
+  payment can split between the queue and the vault), an NFT's arrival, and
+  the loan's settlement once both sides have collected. A claim the review
+  could not read is stated as unknown, never as zero. A claim flow in progress
+  stays on Claims, drawn from the app's record of it, after its position
+  token is burnt and the reader leaves and returns, until its finish card is
+  closed. Claims lists the payouts of
   the positions the wallet holds now, so a bought position pays its new
   holder, says "nothing to collect" only when every read completed, and
   names the payouts it does not yet collect (seller interest, frozen sale

@@ -1,9 +1,11 @@
-import { Fragment, useState } from 'react';
+import { Fragment } from 'react';
 import { Link } from 'react-router-dom';
 import { useAccount } from 'wagmi';
 import { useOwnStateClient, type OwnStateClient } from '../../chain/ownRail';
 import { getSupportedChain, type SupportedChain } from '../../chain/chains';
-import { LoanClaim, useLoanClaimHeld } from '../../shared/claims/LoanClaim';
+import { LOAN_CLAIM_KEY_PREFIX, LoanClaim, loanClaimKey, useLoanClaimHeld } from '../../shared/claims/LoanClaim';
+import type { ClaimSide } from '../../shared/claims/loanClaim';
+import type { LoanClaimReview } from '../../shared/claims/loanClaimReview';
 import { readLoanClaimRows, type LoanClaimRow } from '../../shared/claims/loanClaimRows';
 import { laneLabel } from '../../shared/claims/loanClaimReceipt';
 import { RewardsWidget } from '../../shared/claims/RewardsWidget';
@@ -15,6 +17,8 @@ import { assetAmount } from '../../shared/positions/assetAmount';
 import { usePositionBook } from '../../shared/positions/usePositionBook';
 import { useTokenMeta, type TokenMetaMap } from '../../shared/reads/tokens';
 import { useOwnRead } from '../../shared/reads/useOwnRead';
+import { useTxEntries, useTxStore } from '../../shared/tx/txStore';
+import { reviewIdentity } from '../../shared/ui/ActionFlow';
 import { OwnStamp } from '../../shared/ui/OwnStamp';
 import { useNow } from '../../shared/ui/useNow';
 
@@ -48,18 +52,12 @@ export function ClaimsPage() {
   const claims = useOwnRead(['claims', 'loans', book.diamond, ids], (c) => readLoanClaimRows(c, book.diamond, payouts!), { enabled: book.chain !== null && payouts !== null });
   const rows = claims.data?.rows ?? [];
   // A collected payout leaves the list on the next read (its position token
-  // is burnt), but its finish card must stay until the reader closes it, so
-  // every row shown once is remembered and kept while its flow is held.
-  // Remembered per Diamond and wallet, so a switch starts afresh.
-  const scope = `${book.diamond}:${own?.account ?? ''}`;
-  const [seen, setSeen] = useState<{ scope: string; from: unknown; rows: ReadonlyMap<string, LoanClaimRow> }>({ scope, from: null, rows: new Map() });
-  if (claims.data !== seen.from || scope !== seen.scope) {
-    const next = new Map(scope === seen.scope ? seen.rows : []);
-    for (const r of rows) next.set(`${r.side}:${r.loanId}`, r);
-    setSeen({ scope, from: claims.data, rows: next });
-  }
+  // is burnt), but its claim flow must stay reachable until the reader closes
+  // its finish card, also after leaving the page and coming back. So every
+  // claim flow the store holds for this wallet and network that the list no
+  // longer shows is drawn from the store's own record of it.
   const live = new Set(rows.map((r) => `${r.side}:${r.loanId}`));
-  const gone = [...seen.rows.entries()].filter(([k]) => !live.has(k)).map(([, r]) => r);
+  const held = useHeldClaims(own ? reviewIdentity(own) : null).filter((h) => !live.has(`${h.side}:${h.loanId}`));
   const assets: Hex[] = rows.flatMap((r) => [...r.lanes.map((l) => l.asset), ...(r.loan ? [r.loan.principalAsset, r.loan.collateralAsset] : [])]);
   const meta = useTokenMeta(assets).data;
   const settled = book.read.error === null && claims.error === null && claims.data !== null && claims.data.complete;
@@ -80,18 +78,18 @@ export function ClaimsPage() {
                 {format('claims.failed', { reason: claims.error ?? book.read.error ?? '' })}
               </p>
             )}
-            {claims.data !== null && rows.length === 0 && settled && gone.length === 0 && (
+            {claims.data !== null && rows.length === 0 && settled && held.length === 0 && (
               <p className="tier-b home-empty" data-testid="claims-empty">
                 {format('claims.empty', { chain: book.chain.name })}
               </p>
             )}
-            {rows.length + gone.length > 0 && (
+            {rows.length + held.length > 0 && (
               <ul className="rows" data-testid="claims-loan-rows">
                 {rows.map((r) => (
                   <ClaimCard key={`${r.side}:${r.loanId}`} row={r} paused={claims.data?.paused ?? null} own={own} chain={book.chain!} meta={meta} />
                 ))}
-                {gone.map((r) => (
-                  <ClaimCard key={`${r.side}:${r.loanId}`} row={r} paused={claims.data?.paused ?? null} own={own} chain={book.chain!} meta={meta} gone />
+                {held.map((h) => (
+                  <HeldClaimCard key={`${h.side}:${h.loanId}`} loanId={h.loanId} side={h.side} own={own} chain={book.chain!} meta={meta} />
                 ))}
               </ul>
             )}
@@ -111,24 +109,8 @@ export function ClaimsPage() {
   );
 }
 
-/** One loan payout: what it pays, and its claim, offered by its rule. A row
- *  the latest read no longer lists (`gone`) is drawn only while its claim
- *  flow is held, so a finish card outlives the payout it collected. */
-function ClaimCard({
-  row: r,
-  paused,
-  own,
-  chain,
-  meta,
-  gone = false,
-}: {
-  row: LoanClaimRow;
-  paused: boolean | null;
-  own: OwnStateClient;
-  chain: SupportedChain;
-  meta: TokenMetaMap | null;
-  gone?: boolean;
-}) {
+/** One loan payout: what it pays, and its claim, offered by its rule. */
+function ClaimCard({ row: r, paused, own, chain, meta }: { row: LoanClaimRow; paused: boolean | null; own: OwnStateClient; chain: SupportedChain; meta: TokenMetaMap | null }) {
   const copy = useCopy();
   const { text, format } = copy;
   const nowMs = useNow();
@@ -143,7 +125,6 @@ function ClaimCard({
         ? assetAmount({ asset: l.asset, assetType: l.assetType, amount: l.amount, tokenId: 0n, quantity: 0n }, meta, format)
         : assetAmount({ asset: l.asset, assetType: l.assetType, amount: 0n, tokenId: l.tokenId, quantity: l.amount }, meta, format),
   }));
-  if (gone && !flow.held) return null;
   return (
     <li className="card" data-claim={`${r.side}:${r.loanId}`}>
       <p className="row-head">
@@ -176,6 +157,39 @@ function ClaimCard({
           {verdict.state === 'unknown' ? text('loanClaim.unknown') : verdict.refusals[0]?.reason}
         </p>
       ) : null}
+    </li>
+  );
+}
+
+/** The claim flows the store holds for `identity` (a wallet on a network):
+ *  each one's loan and side, from the review it stored. */
+function useHeldClaims(identity: string | null): { loanId: bigint; side: ClaimSide }[] {
+  const store = useTxStore();
+  const entries = useTxEntries();
+  if (identity === null) return [];
+  return entries.flatMap(([key]) => {
+    const review = store.value<LoanClaimReview>(`${key}:review`);
+    if (!key.startsWith(LOAN_CLAIM_KEY_PREFIX) || !review || review.identity !== identity) return [];
+    if (loanClaimKey(review.loanId, review.side) !== key) return [];
+    return [{ loanId: review.loanId, side: review.side }];
+  });
+}
+
+/** A claim the list no longer shows (its position token burnt by the claim
+ *  itself), drawn while its flow is held so the progress and the finish card
+ *  stay reachable until the reader closes them. */
+function HeldClaimCard({ loanId, side, own, chain, meta }: { loanId: bigint; side: ClaimSide; own: OwnStateClient; chain: SupportedChain; meta: TokenMetaMap | null }) {
+  const { text, format } = useCopy();
+  const flow = useLoanClaimHeld(loanId, side);
+  if (!flow.held) return null;
+  return (
+    <li className="card" data-claim={`${side}:${loanId}`}>
+      <p className="row-head">
+        <Link to={`/positions/${loanId.toString()}`}>
+          {format('positions.payoutRow', { id: loanId.toString(), side: text(side === 'lender' ? 'positions.sideLender' : 'positions.sideBorrower') })}
+        </Link>
+      </p>
+      <LoanClaim loanId={loanId} side={side} chain={chain} own={own} meta={meta} onClose={() => flow.setOpen(null)} />
     </li>
   );
 }

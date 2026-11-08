@@ -8,6 +8,7 @@
  */
 import type { CopyAccess } from '../copy/useCopy';
 import { formatSpan, formatUtc } from '../ui/format';
+import type { LegOutcome } from '../tx/outcome';
 import type { PayoutOutcome, PayoutRoute, Protection } from './payout';
 
 type Copy = Pick<CopyAccess, 'text' | 'format'>;
@@ -59,4 +60,33 @@ export function routedLeg(o: PayoutOutcome, what: string, protection: Protection
 export function routeChanged(a: { route: PayoutRoute; protection: Protection | null }, b: { route: PayoutRoute; protection: Protection | null }): boolean {
   if (a.route !== b.route) return true;
   return a.route === 'queued' && (a.protection?.delaySeconds !== b.protection?.delaySeconds || a.protection?.requireCosign !== b.protection?.requireCosign);
+}
+
+/** A payment's finish-card legs, measured from the transaction's logs: one
+ *  per place it went (the queue, kept in the vault, paid into the vault, and
+ *  `wallet`, what reached the wallet itself), and whether they come to
+ *  `expected` in all. `what` names an amount, `walletLeg` the wallet line,
+ *  and `walletOther` a wallet-only payment that is not `expected`. */
+export function payoutLegs(
+  p: {
+    outcomes: readonly PayoutOutcome[];
+    wallet: bigint;
+    expected: bigint;
+    protection: Protection | null;
+    what: (amount: bigint) => string;
+    exact: (amount: bigint) => string;
+    walletLeg: (what: string) => string;
+    walletOther: (got: string, expected: string) => string;
+  },
+  copy: Copy,
+): LegOutcome[] {
+  const legs: LegOutcome[] = p.outcomes.map((o) => ({ status: 'done', label: routedLeg(o, p.what(o.amount), p.protection, copy) }));
+  if (p.wallet > 0n || p.outcomes.length === 0) legs.push({ status: 'done', label: p.walletLeg(p.what(p.wallet)) });
+  const total = p.outcomes.reduce((t, o) => t + o.amount, p.wallet);
+  if (total === p.expected) return legs;
+  const reason =
+    p.outcomes.length === 0 ? p.walletOther(p.exact(total), p.exact(p.expected)) : copy.format('payout.totalOther', { amount: p.exact(total), expected: p.exact(p.expected) });
+  const last = legs.at(-1)!;
+  legs[legs.length - 1] = { status: total === 0n ? 'not-done' : 'unknown', label: last.label, reason };
+  return legs;
 }
