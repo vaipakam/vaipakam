@@ -22,6 +22,7 @@ import type { CopyAccess } from '../copy/useCopy';
 import { closed, OPEN, unknownVerdict, type Refusal, type Verdict } from '../eligibility/types';
 import { treasuryShareBps, type LoanDetails } from '../positions/loanView';
 import type { IndexerClient } from '../reads/world/indexerClient';
+import { answerOrNull } from '../reads/answer';
 
 type Hex = `0x${string}`;
 
@@ -87,20 +88,12 @@ export interface SellerRow {
   share: bigint | null;
 }
 
-async function maybe<T>(p: Promise<T>): Promise<T | null> {
-  try {
-    return await p;
-  } catch {
-    return null;
-  }
-}
-
 type ClaimableTuple = readonly [Hex, bigint, boolean, number, bigint, bigint, bigint, boolean];
 type LedgerTuple = readonly [bigint, bigint, bigint | number, readonly { seller: Hex; grossOwed: bigint }[]];
 
 /** One loan, read as `claimAsSeller` reads it for `seller`. */
 export async function readSellerRow(c: PublicClient, diamond: Hex, loanId: bigint, seller: Hex): Promise<SellerRow> {
-  const read = <T>(abi: Abi, functionName: string, args: readonly unknown[]) => maybe(c.readContract({ address: diamond, abi, functionName, args }) as Promise<T>);
+  const read = <T>(abi: Abi, functionName: string, args: readonly unknown[]) => answerOrNull(c.readContract({ address: diamond, abi, functionName, args }) as Promise<T>);
   const loan = await read<LoanDetails>(LOAN, 'getLoanDetails', [loanId]);
   if (loan === null) return { loanId, loan: null, claims: null, claimAsset: null, held: null, share: null };
   const [ledger, row] = await Promise.all([read<LedgerTuple>(SELLER, 'getInterestLedger', [loanId]), read<ClaimableTuple>(CLAIM, 'getClaimable', [loanId, true])]);
@@ -231,7 +224,7 @@ export function sellerRowKey(row: SellerRow): string {
 
 /** The protocol pause, which stops `claimAsSeller`; null when unread. */
 export async function readPaused(c: PublicClient, diamond: Hex): Promise<boolean | null> {
-  return maybe(c.readContract({ address: diamond, abi: ADMIN, functionName: 'paused' }) as Promise<boolean>);
+  return answerOrNull(c.readContract({ address: diamond, abi: ADMIN, functionName: 'paused' }) as Promise<boolean>);
 }
 
 // ─── The transaction's own record ─────────────────────────────────────────

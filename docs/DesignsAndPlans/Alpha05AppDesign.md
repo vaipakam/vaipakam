@@ -1040,7 +1040,9 @@ above. Each resolves here, so a route reviewer needs no private file:
   section. The loans come from the index (any step of a seller claim filed
   under the wallet); when the index cannot list them the section says so,
   never shows an empty list, and offers a lookup by loan number that reads
-  the chain alone. Each loan is read from the chain as the withdrawal reads
+  the chain alone. A later poll that fails is said too: the last list stays,
+  named as the last list, and "nothing owed" is withdrawn until the index
+  answers again. Each loan is read from the chain as the withdrawal reads
   it, and only the chain decides: what the wallet is owed, stated net of the
   loan's own fee on interest (the legacy share said as such where the loan
   recorded none), what already waits in the wallet's vault, and on an ended

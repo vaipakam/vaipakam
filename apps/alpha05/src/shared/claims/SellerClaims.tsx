@@ -66,7 +66,11 @@ export function SellerClaims({ own, chain }: { own: OwnStateClient; chain: Suppo
   const held = useHeldSellerFlows(reviewIdentity(own)).filter((h) => !drawn.has(h.loanId.toString()));
   const assets = list.flatMap((r) => [...(r.loan ? [r.loan.principalAsset] : []), ...(r.claimAsset ? [r.claimAsset] : [])]);
   const meta = useTokenMeta(assets).data;
-  const discoveryFailed = !configured || (discovery.status === 'error' && discovery.data === undefined);
+  // A failed poll keeps the last list (TanStack holds the data), so a
+  // failure is said whether or not a list is cached, and nothing is said
+  // empty until discovery answers again.
+  const discoveryFailed = !configured || discovery.status === 'error';
+  const discoveryCached = discovery.data !== undefined;
   const failure = discovery.error;
   const discoveryReason = !configured
     ? text('sellerClaim.noIndex')
@@ -82,7 +86,7 @@ export function SellerClaims({ own, chain }: { own: OwnStateClient; chain: Suppo
         )
       : ((failure as Error | null)?.message ?? '');
   const lookupRow = lookup !== null ? (list.find((r) => r.loanId === lookup) ?? null) : null;
-  const settled = discovery.data?.complete === true && (ids.length === 0 || (rows.data !== null && rows.error === null));
+  const settled = discovery.status === 'success' && discovery.data.complete && (ids.length === 0 || (rows.data !== null && rows.error === null));
 
   return (
     <section className="home-section" aria-labelledby="claims-seller">
@@ -91,7 +95,7 @@ export function SellerClaims({ own, chain }: { own: OwnStateClient; chain: Suppo
       {configured && discovery.data === undefined && discovery.status !== 'error' && <p className="tier-b">{text('sellerClaim.reading')}</p>}
       {discoveryFailed && (
         <p className="tier-a" data-testid="seller-failed">
-          {format('sellerClaim.discoveryFailed', { reason: discoveryReason })}
+          {format(configured && discoveryCached ? 'sellerClaim.discoveryStale' : 'sellerClaim.discoveryFailed', { reason: discoveryReason })}
         </p>
       )}
       {discovery.data?.complete === false && <p className="tier-a">{text('sellerClaim.discoveryIncomplete')}</p>}

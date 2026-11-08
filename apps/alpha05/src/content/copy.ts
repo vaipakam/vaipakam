@@ -1002,6 +1002,9 @@ export const copy = {
     indexStatus: B('the index refused the request'),
     indexShape: B('the index answered in a form this app cannot read'),
     discoveryFailed: A('The loans you sold could not be listed ({{reason}}), so none is shown as owing you or as empty. Look one up by its number below.'),
+    discoveryStale: A(
+      'The loans you sold could not be listed again ({{reason}}). Shown below is the last list, so a loan you sold since may be missing, and none is shown as empty. Look one up by its number below.',
+    ),
     discoveryIncomplete: A('Only your most recent seller history was listed, so an older loan you sold may be missing. Look it up by its number below.'),
     rowsFailed: A('The loans you sold could not be read ({{reason}}), so none is shown as owing you or as empty.'),
     empty: B('No interest is owed to you from a position you sold.'),

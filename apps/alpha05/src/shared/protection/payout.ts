@@ -12,6 +12,7 @@
  */
 import { parseEventLogs, type Abi, type Log, type PublicClient } from 'viem';
 import { ProtectedAccountFacetABI, VaultPayoutFacetABI } from '@vaipakam/contracts/abis';
+import { answerOrNull } from '../reads/answer';
 
 type Hex = `0x${string}`;
 
@@ -29,19 +30,16 @@ export interface Protection {
   requireCosign: boolean;
 }
 
-/** The wallet's mode, or null when it could not be read. */
+/** The wallet's mode, or null when the contract gave no answer (a failed
+ *  source is thrown, so the own rail tries the next one). */
 export async function readProtection(c: PublicClient, diamond: Hex, account: Hex): Promise<Protection | null> {
-  try {
-    const a = (await c.readContract({ address: diamond, abi: PROTECTED, functionName: 'getProtectedAccount', args: [account] })) as {
-      enabled: boolean;
-      locked: boolean;
-      delaySeconds: number | bigint;
-      requireCosign: boolean;
-    };
-    return { enabled: a.enabled, locked: a.locked, delaySeconds: Number(a.delaySeconds), requireCosign: a.requireCosign };
-  } catch {
-    return null;
-  }
+  const a = (await answerOrNull(c.readContract({ address: diamond, abi: PROTECTED, functionName: 'getProtectedAccount', args: [account] }))) as {
+    enabled: boolean;
+    locked: boolean;
+    delaySeconds: number | bigint;
+    requireCosign: boolean;
+  } | null;
+  return a === null ? null : { enabled: a.enabled, locked: a.locked, delaySeconds: Number(a.delaySeconds), requireCosign: a.requireCosign };
 }
 
 /** Where a payment to `account` from `source`'s vault goes:

@@ -57,6 +57,8 @@ async function soldLoan(sc: ReturnType<typeof scenario>): Promise<{ loanId: bigi
 }
 
 test('a sold position lists its interest from the index, offers nothing while the loan runs, and withdraws the ended loan’s split', async ({ launchWallet }) => {
+  // The last step waits out one discovery poll (a minute).
+  test.setTimeout(300_000);
   const sc = scenario();
   const { loanId, gross, net } = await soldLoan(sc);
   expect(gross).toBeGreaterThan(0n);
@@ -109,6 +111,12 @@ test('a sold position lists its interest from the index, offers nothing while th
   await finish.getByRole('button', { name: 'Close' }).click();
   await expect(section.locator(`[data-seller-row="${loanId}"]`)).toHaveCount(0, { timeout: 60_000 });
   await expect(section.getByTestId('seller-empty')).toBeVisible({ timeout: 60_000 });
+
+  // The index stops answering: the next poll fails, and the section says so
+  // and withdraws its "nothing owed" rather than keep the last answer.
+  await setIndexPosture('down');
+  await expect(section.getByTestId('seller-failed')).toContainText('could not be listed again (the index refused the request)', { timeout: 150_000 });
+  await expect(section.getByTestId('seller-empty')).toHaveCount(0);
 });
 
 test('when the index fails, a sold loan is looked up by its number and its interest withdrawn while the loan runs', async ({ launchWallet }) => {

@@ -26,6 +26,7 @@ import { askThrough } from '../tx/simulate';
 import { matchIncentives } from './claimLog';
 import type { PaidIncentive } from './claimOutcome';
 import { claimLanes, extraLiened, sideClaimableStatus, type ClaimLane, type ClaimSide, type SideClaim } from './loanClaim';
+import { answerOrNull } from '../reads/answer';
 
 type Hex = `0x${string}`;
 
@@ -64,19 +65,11 @@ export interface LoanClaimReview {
   readAt: number;
 }
 
-async function maybe<T>(p: Promise<T>): Promise<T | null> {
-  try {
-    return await p;
-  } catch {
-    return null;
-  }
-}
-
 type ClaimableTuple = readonly [Hex, bigint, boolean, number, bigint, bigint, bigint, boolean];
 
 /** One side's claim as the protocol records it, or null when a read failed. */
 export async function readSideClaim(c: PublicClient, diamond: Hex, loanId: bigint, side: ClaimSide, at: { blockNumber?: bigint } = {}): Promise<SideClaim | null> {
-  const read = <T>(abi: Abi, functionName: string, args: readonly unknown[]) => maybe(c.readContract({ address: diamond, abi, functionName, args, ...at }) as Promise<T>);
+  const read = <T>(abi: Abi, functionName: string, args: readonly unknown[]) => answerOrNull(c.readContract({ address: diamond, abi, functionName, args, ...at }) as Promise<T>);
   const lender = side === 'lender';
   const [row, surplus, lien] = await Promise.all([
     read<ClaimableTuple>(CLAIM, 'getClaimable', [loanId, lender]),
@@ -111,7 +104,7 @@ export async function readLoanClaimReview(
   const facts = await own
     .read(async (c: PublicClient) => {
       const loan = (await c.readContract({ address: diamond, abi: LOAN, functionName: 'getLoanDetails', args: [loanId] })) as LoanDetails;
-      const read = <T>(abi: Abi, functionName: string, args: readonly unknown[] = []) => maybe(c.readContract({ address: diamond, abi, functionName, args }) as Promise<T>);
+      const read = <T>(abi: Abi, functionName: string, args: readonly unknown[] = []) => answerOrNull(c.readContract({ address: diamond, abi, functionName, args }) as Promise<T>);
       const asked = sideClaimableStatus(side, Number(loan.status));
       const [holder, paused, claim, sellersShare, protection] = await Promise.all([
         read<Hex>(NFT, 'ownerOf', [side === 'lender' ? loan.lenderTokenId : loan.borrowerTokenId]),
@@ -212,10 +205,10 @@ export async function readPaidIncentives(own: OwnStateClient, diamond: Hex, r: P
   const others = [...new Set(paid.filter((p) => p.loanId !== r.loanId).map((p) => p.loanId))];
   const assets = new Map<bigint, Hex | null>([[r.loanId, r.loan.principalAsset]]);
   if (others.length > 0) {
-    const read = await maybe(
+    const read = await answerOrNull(
       own
         .read((c: PublicClient) =>
-          Promise.all(others.map((id) => maybe(c.readContract({ address: diamond, abi: LOAN, functionName: 'getLoanDetails', args: [id] }) as Promise<LoanDetails>))),
+          Promise.all(others.map((id) => answerOrNull(c.readContract({ address: diamond, abi: LOAN, functionName: 'getLoanDetails', args: [id] }) as Promise<LoanDetails>))),
         )
         .then((x) => x.value),
     );

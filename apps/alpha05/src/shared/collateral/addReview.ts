@@ -23,6 +23,7 @@ import type { Verdict } from '../eligibility/types';
 import type { LoanDetails } from '../positions/loanView';
 import { tokenAcceptsApproval } from '../offers/reads';
 import { allowanceSteps } from '../tx/approval';
+import { answerOrNull } from '../reads/answer';
 
 type Hex = `0x${string}`;
 
@@ -60,20 +61,12 @@ export interface AddReview {
   readAt: number;
 }
 
-async function maybe<T>(p: Promise<T>): Promise<T | null> {
-  try {
-    return await p;
-  } catch {
-    return null;
-  }
-}
-
 export async function readAddReview(own: OwnStateClient, diamond: Hex, loanId: bigint, amount: bigint, identity: string, copy: Pick<CopyAccess, 'text'>): Promise<AddReview> {
   const account = own.account;
   const r = <T>(fn: (c: PublicClient) => Promise<T>) => own.read(fn).then((x) => x.value);
   const facts = await r(async (c) => {
     const loan = (await c.readContract({ address: diamond, abi: LOAN, functionName: 'getLoanDetails', args: [loanId] })) as LoanDetails;
-    const read = <T>(abi: Abi, functionName: string, args: readonly unknown[] = []) => maybe(c.readContract({ address: diamond, abi, functionName, args }) as Promise<T>);
+    const read = <T>(abi: Abi, functionName: string, args: readonly unknown[] = []) => answerOrNull(c.readContract({ address: diamond, abi, functionName, args }) as Promise<T>);
     const [borrowerHolder, borrowerLock, assetPaused, liquidity, healthFactor, ltvBps, paused] = await Promise.all([
       read<Hex>(NFT, 'ownerOf', [loan.borrowerTokenId]),
       read<number>(NFT, 'positionLock', [loan.borrowerTokenId]).then((v) => (v === null ? null : Number(v))),
