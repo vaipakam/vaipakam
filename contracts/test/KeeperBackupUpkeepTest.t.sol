@@ -519,9 +519,21 @@ contract KeeperBackupUpkeepTest is Test {
         (, a) = _check();
         assertEq(a.length, 2, "two runs per perform by default");
         _perform(a);
-        assertEq(diamond.runs(diamond.autoDeductDaily.selector, 11), 1);
-        assertEq(diamond.runs(diamond.autoDeductDaily.selector, 12), 1);
-        assertEq(diamond.runs(diamond.autoDeductDaily.selector, 13), 0);
+        // Which two run depends on where the queue walk starts this block.
+        assertEq(_autoDeductRuns(), 2);
+        // The third runs on the next perform.
+        (, a) = _check();
+        assertEq(a.length, 1);
+        _perform(a);
+        assertEq(_autoDeductRuns(), 3);
+    }
+
+    function _autoDeductRuns() internal view returns (uint256 total) {
+        for (uint256 id = 11; id <= 13; id++) {
+            uint256 r = diamond.runs(diamond.autoDeductDaily.selector, id);
+            assertLe(r, 1);
+            total += r;
+        }
     }
 
     // ── step shapes ──
