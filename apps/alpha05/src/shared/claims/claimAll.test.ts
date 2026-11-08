@@ -16,6 +16,7 @@ import {
   legResults,
   measureClaimAll,
   optInText,
+  payoutLabel,
   type ClaimAllInputs,
   type ClaimAllLeg,
   type ClaimAllReview,
@@ -111,6 +112,13 @@ describe('the Claim everything list', () => {
     );
     expect(keys(list.legs)).toEqual(['loan:lender:7', `intent:${WETH}:${TLIQ}`, `intent:${TLIQ}:${WETH}`, 'vpfi', 'payroll:2']);
     expect([...defaultPicked(list.legs)]).toEqual(['loan:lender:7', `intent:${WETH}:${TLIQ}`, 'payroll:2']);
+  });
+
+  it('offers a rewards claim whose preview completes paying nothing, since it walks days to reach later paying ones', () => {
+    const list = claimAllList(inputs({ rewards: { kind: 'exact', amount: 0n, fromDay: 3n, toDay: 9n, atBlock: 10n } }), copy, 1);
+    const rewards = list.legs.find((l) => l.key === 'rewards')!;
+    expect(rewards.payouts[0]!.amount).toBe(0n);
+    expect(payoutLabel(rewards, rewards.payouts[0]!, copy)).toBe('rewards.pendingZero{"from":"3","to":"9"}');
   });
 
   it('still offers a released held reward when the rewards preview could not be read', () => {
@@ -279,6 +287,13 @@ describe('the finish card', () => {
     expect(claimAllChanged(at(a), at(a), copy)).toBeNull();
     expect(claimAllChanged(at(a), at(b), copy)).toBe('claimAll.changed');
     expect(claimAllChanged(at(a), at(c), copy)).toBe('claimAll.changed');
+  });
+
+  it('reads a selected standing offer starting to lend again as a changed review', () => {
+    const row = (active: boolean) => ({ rows: [{ lendingAsset: WETH, collateralAsset: TLIQ, available: 40n, active }], complete: true });
+    const a = claimAllList(inputs({ intents: row(false) }), copy, 1);
+    const b = claimAllList(inputs({ intents: row(true) }), copy, 1);
+    expect(claimAllChanged(review(a.legs, { list: a }), review(b.legs, { list: b }), copy)).toBe('claimAll.changed');
   });
 
   it('puts each NFT of one collection only where its own routing record says', () => {

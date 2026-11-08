@@ -87,13 +87,27 @@ function payoutText(p: LegPayout, w: ClaimAllWords): string {
  * read; the pause and a flagged wallet stop it before signing, said once.
  * The flow stays on screen until its finish card is closed.
  */
-export function ClaimAll({ own, chain, payouts, frozen }: { own: OwnStateClient; chain: SupportedChain; payouts: Payouts | null; frozen?: FrozenState }) {
+export function ClaimAll({
+  own,
+  chain,
+  payouts,
+  payoutsFailed = false,
+  frozen,
+}: {
+  own: OwnStateClient;
+  chain: SupportedChain;
+  payouts: Payouts | null;
+  /** The position book could not be read: the loans are named as left out
+   *  and every other source is still read and offered. */
+  payoutsFailed?: boolean;
+  frozen?: FrozenState;
+}) {
   const copy = useCopy();
   const { text, format } = copy;
   const diamond = chain.diamondAddress;
   const identity = reviewIdentity(own);
-  const ids = payouts ? [...payouts.rows, ...payouts.unlisted].map((p) => `${p.side}:${p.loanId}`).join(',') : 'none';
-  const list = useOwnRead(['claimAll', diamond, ids], (c) => readClaimAllList(c, diamond, own.account, payouts, copy), { enabled: payouts !== null });
+  const ids = payouts ? [...payouts.rows, ...payouts.unlisted].map((p) => `${p.side}:${p.loanId}`).join(',') : 'unread';
+  const list = useOwnRead(['claimAll', diamond, ids], (c) => readClaimAllList(c, diamond, own.account, payouts, copy), { enabled: payouts !== null || payoutsFailed });
   const [choice, setChoice] = useStoredValue<Choice>(`${CLAIM_ALL_KEY}:choice`);
   const [open, setOpen] = useStoredValue<boolean>(`${CLAIM_ALL_KEY}:open`);
   const entry = useTxEntry(CLAIM_ALL_KEY);

@@ -73,7 +73,9 @@ export interface LegPayout {
 /** What a leg is, beyond its kind. */
 export type LegSubject =
   | { kind: 'loan'; loanId: bigint; side: ClaimSide }
-  | { kind: 'rewards' }
+  /** `fromDay`/`toDay`: the days this bounded claim walks (0 when it pays
+   *  from its reward entries only). */
+  | { kind: 'rewards'; fromDay: bigint; toDay: bigint }
   | { kind: 'held' }
   /** `tier`: the offer lends VPFI, and its capital counts toward the
    *  fee-discount tier (`LibVPFIDiscount.tierVpfiBalance`). */
@@ -207,10 +209,11 @@ export function claimAllList(i: ClaimAllInputs, copy: Pick<CopyAccess, 'text'>, 
   // separate held leg is offered only when that preview cannot complete.
   const vpfi = i.vpfiToken !== null && lower(i.vpfiToken) !== ZERO ? i.vpfiToken : null;
   if (i.rewards !== null && i.rewards.kind === 'exact') {
-    if (i.rewards.amount > 0n) {
-      if (vpfi === null) gaps.push({ kind: 'rewards', why: 'unread' });
-      else legs.push(leg({ kind: 'rewards' }, [erc20(vpfi, i.rewards.amount)], 'reward-vault'));
-    }
+    // A preview that completes is a claim the protocol takes, even one that
+    // pays nothing: it walks days that paid nothing so the later paying days
+    // can be reached (the protocol refuses a claim that would do nothing).
+    if (vpfi === null) gaps.push({ kind: 'rewards', why: 'unread' });
+    else legs.push(leg({ kind: 'rewards', fromDay: i.rewards.fromDay, toDay: i.rewards.toDay }, [erc20(vpfi, i.rewards.amount)], 'reward-vault'));
   } else {
     // The preview unread is said; a held reward the screen releases is read
     // on its own and still offered.
@@ -350,6 +353,10 @@ export function legTitle(l: Pick<ClaimAllLeg, 'subject'>, copy: Copy, symbol: (a
 
 /** One payout's label within its leg. */
 export function payoutLabel(l: ClaimAllLeg, p: LegPayout, copy: Copy): string | null {
+  if (l.subject.kind === 'rewards' && p.amount === 0n)
+    return l.subject.toDay === 0n
+      ? copy.text('rewards.pendingZeroEntries')
+      : copy.format('rewards.pendingZero', { from: l.subject.fromDay.toString(), to: l.subject.toDay.toString() });
   return l.subject.kind === 'loan' && p.lane !== null ? laneLabel(p.lane, l.subject.side, copy) : null;
 }
 
@@ -412,7 +419,10 @@ export interface ClaimAllReview {
 }
 
 const payoutKey = (p: LegPayout) => `${lower(p.asset)}:${p.assetType}:${p.tokenId}:${p.amount}`;
-const legSig = (l: ClaimAllLeg) => `${l.key}=${l.route}=${l.payouts.map(payoutKey).join(',')}`;
+// The whole subject (an offer's running state, a rewards claim's days) and
+// the opt-in are part of what the review states, not only the payouts.
+const subjectSig = (s: LegSubject) => JSON.stringify(s, (_k, v: unknown) => (typeof v === 'bigint' ? v.toString() : typeof v === 'string' ? v.toLowerCase() : v));
+const legSig = (l: ClaimAllLeg) => `${l.key}=${subjectSig(l.subject)}=${l.optIn}=${l.route}=${l.payouts.map(payoutKey).join(',')}`;
 
 /** What a re-read found changed, in words, or null when nothing the review
  *  states moved. */

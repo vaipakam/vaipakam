@@ -83,7 +83,7 @@ export function ClaimsPage() {
       {served && book.chain && own && (
         <>
           <FrozenNotice state={frozen} />
-          <ClaimAll own={own} chain={book.chain} payouts={payouts} frozen={frozen} />
+          <ClaimAll own={own} chain={book.chain} payouts={payouts} payoutsFailed={book.read.state === 'failed' && payouts === null} frozen={frozen} />
           <section className="home-section" aria-labelledby="claims-loans">
             <h2 id="claims-loans">{text('claims.loansTitle')}</h2>
             <OwnStamp reads={[book.read, claims]} />

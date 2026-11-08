@@ -1084,13 +1084,16 @@ above. Each resolves here, so a route reviewer needs no private file:
   RB-CLAIM's inclusion list, read from the chain: each loan side the
   wallet holds whose claim the loan's own rule opens and that pays
   something; interaction rewards when the claim, run as its preview,
-  completes (that claim also pays any held reward), or else a held reward
+  completes, even paying nothing, since such a claim walks days that paid
+  nothing to reach later paying ones (that claim also pays any held
+  reward), or else a held reward
   the screen releases; the un-lent capital of each standing offer the wallet
   owns; free VPFI in its vault; and each payroll stream paying it. A lender
   claim on a loan in fallback is named as collected on its own, since that
   claim settles the fallback first and only then decides what it pays; a
   source or a loan that could not be read is named as left out, never
-  dropped. Every payout has a switch; all are on except free vault VPFI
+  dropped, and the other sources are still read and offered (the position
+  book failing leaves out the loans only). Every payout has a switch; all are on except free vault VPFI
   and the capital of a standing offer that lends VPFI (both count toward the
   fee-discount tier, which the review says when either is sent) and the
   capital of a standing offer still lending (taking it out leaves the offer
