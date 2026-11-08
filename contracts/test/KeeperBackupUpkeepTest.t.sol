@@ -351,7 +351,7 @@ contract KeeperBackupUpkeepTest is Test {
 
         _fillTo(ids, 0, 32);
         // The second half is noted while the first still waits.
-        vm.warp(block.timestamp + 40 minutes);
+        vm.warp(vm.getBlockTimestamp() + 40 minutes);
         _fillTo(ids, 32, 64);
         assertEq(backup.pendingCandidates().length, 64, "the queue is full");
 
@@ -361,12 +361,16 @@ contract KeeperBackupUpkeepTest is Test {
     }
 
     /// @dev Mark loans [from, to) due and check every 12-second block until each
-    ///      is noted.
+    ///      is noted. The clock is read through `vm.getBlockNumber()` /
+    ///      `vm.getBlockTimestamp()`: under viaIR, `block.number` and
+    ///      `block.timestamp` in a test frame are not re-read after `vm.roll` /
+    ///      `vm.warp`, so `block.number + 1` would roll to the same block every
+    ///      pass and the scan would never leave its first page.
     function _fillTo(uint256[] memory ids, uint256 from, uint256 to) internal {
         for (uint256 i = from; i < to; i++) diamond.setDue(diamond.autoDeductDaily.selector, ids[i], true);
         for (uint256 b; b < 400 && backup.pendingCandidates().length < to; b++) {
-            vm.roll(block.number + 1);
-            vm.warp(block.timestamp + 12);
+            vm.roll(vm.getBlockNumber() + 1);
+            vm.warp(vm.getBlockTimestamp() + 12);
             (bool needed, KeeperBackupUpkeep.Action[] memory a) = _check();
             if (needed) _perform(a);
         }
@@ -388,8 +392,8 @@ contract KeeperBackupUpkeepTest is Test {
         }
         vm.warp(lastSeen + 1 hours);
         for (uint256 b; b < 200 && _ranCount(ids, from, to) < to - from; b++) {
-            vm.roll(block.number + 1);
-            vm.warp(block.timestamp + 12);
+            vm.roll(vm.getBlockNumber() + 1);
+            vm.warp(vm.getBlockTimestamp() + 12);
             vm.prank(address(0xBEEF), SIM);
             (bool needed, bytes memory data) = backup.checkUpkeep{gas: 5_000_000}("");
             if (!needed) continue;
@@ -399,7 +403,7 @@ contract KeeperBackupUpkeepTest is Test {
             }
             _perform(a);
         }
-        assertLe(block.timestamp, firstClose, "all ran before the earliest window closed");
+        assertLe(vm.getBlockTimestamp(), firstClose, "all ran before the earliest window closed");
         for (uint256 i = from; i < to; i++) {
             assertEq(diamond.runs(diamond.autoDeductDaily.selector, ids[i]), 1, "every note ran");
             assertEq(backup.firstSeenAt(AUTO_DEDUCT, ids[i]), 0);
