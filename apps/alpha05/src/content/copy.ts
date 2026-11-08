@@ -926,6 +926,7 @@ export const copy = {
     reservedRunning: A(
       '{{amount}} the loan already paid is held for the lender position, reserved in the lender vault this loan records until the lender’s claim pays it. A payment made while the holder was flagged by the sanctions screen waits here, as can an amount an early close set aside.',
     ),
+    reservedUnread: A('Whether this loan already holds anything for the lender position, out of payments it made, could not be read. It is not shown as none.'),
     openForSurplus: A('This loan has not settled yet: a surplus from its close is still held for the borrower position, one of the payouts left to collect before it settles.'),
     whySummary: B('Why a payout can be frozen'),
     why: C(

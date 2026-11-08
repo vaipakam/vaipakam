@@ -1086,7 +1086,8 @@ above. Each resolves here, so a route reviewer needs no private file:
   it), or a release waiting for the screen. On a running loan the page
   states what the loan already paid that is reserved for the lender
   position in the lender vault the loan records, such as a payment made
-  while the holder was flagged, until the lender's claim pays it. A repaid
+  while the holder was flagged, until the lender's claim pays it; when that
+  amount could not be read it says so, and only a zero read shows nothing. A repaid
   loan whose borrower surplus is still held says that surplus is one of the
   payouts left to collect before it settles (never that collecting it alone
   settles the loan, since the lender's side may be open too), so its status

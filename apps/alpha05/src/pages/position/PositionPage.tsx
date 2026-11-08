@@ -120,6 +120,8 @@ function LoanBody({ loanId, view: v, own, chain, meta }: { loanId: bigint; view:
   // the loan's payment token (the principal token, or a rental's prepay
   // token).
   const held = l.status === LOAN_STATUS_ACTIVE && v.heldForLender !== null && v.heldForLender > 0n ? v.heldForLender : null;
+  // An unread reserve is said, never shown as none: only a zero read hides it.
+  const heldUnread = l.status === LOAN_STATUS_ACTIVE && v.heldForLender === null;
   // A surplus still held for the borrower is one payout a repaid loan waits
   // on before it settles (LN-53): said, so the loan's status reads true. The
   // lender's side may be open too, so the note never promises that collecting
@@ -174,6 +176,11 @@ function LoanBody({ loanId, view: v, own, chain, meta }: { loanId: bigint; view:
             {format('frozen.reservedRunning', { amount: tokenAmount(held, erc20 ? l.principalAsset : l.prepayAsset, meta, format) })}
           </Notice>
         </div>
+      )}
+      {heldUnread && (
+        <p className="tier-a" data-testid="position-held-for-lender-unread">
+          {text('frozen.reservedUnread')}
+        </p>
       )}
       {surplusOpen && (
         <p className="tier-a" data-testid="position-surplus-open">

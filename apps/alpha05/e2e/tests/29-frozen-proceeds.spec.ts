@@ -81,6 +81,7 @@ test('a flagged lender’s payout waits frozen, through an outage, and collects 
   await expect(notice).toContainText('Nothing held for it is taken');
   const reserved = page.getByTestId('position-held-for-lender');
   await expect(reserved).toContainText(/WETH the loan already paid is held for the lender position/, { timeout: 60_000 });
+  await expect(page.getByTestId('position-held-for-lender-unread')).toHaveCount(0);
   await fitsWidth(page);
 
   // The borrower repays the rest: the loan closes; the lender's payout is
