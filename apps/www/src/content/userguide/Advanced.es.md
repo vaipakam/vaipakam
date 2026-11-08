@@ -2413,6 +2413,14 @@ El `canSettleNow` de la vista previa no tiene en cuenta el interruptor ni la pau
 
 Ninguna vista devuelve el interés del pago parcial antes de la llamada (#3299), así que la revisión usa `calculateRepaymentAmount` menos `principal`, leído ahora y en un momento algo posterior. Es exacto para un préstamo prorrateado hasta su vencimiento; con `useFullTermInterest` incluye el mínimo del plazo restante y, tras el vencimiento, un recargo por mora, por lo que se muestra como «como máximo». La aprobación es exactamente la parte más esa cifra superior. La tarjeta final mide el `newPrincipal` del propio registro `PartialRepaid` del pago (no `principal` en el bloque, que una transacción posterior allí puede cambiar), la salida de la cartera y después `previewPeriodicSettle`. La revisión solo rechaza la cartera cuando le falta la parte, o la parte más un interés exacto; cuando solo la cifra máxima supera su saldo, decide la simulación justo antes de enviar el pago.
 
+<a id="add-collateral"></a>
+
+### Añadir garantía: qué se comprueba
+
+`addCollateral(loanId, amount)` toma exactamente `amount` del propio token de garantía del préstamo desde quien llama hacia la bóveda del prestatario, sube `collateralAmount` y el gravamen de la garantía, y emite `CollateralAdded` con el nuevo factor de salud y LTV. Rechaza un compromiso de swap-to-repay vigente, a quien llame sin ser `ownerOf(borrowerTokenId)`, un préstamo que no esté Active ni FallbackPending, un alquiler, un activo de garantía en pausa (`isAssetPaused`) y una garantía que `checkLiquidity` no reporte como Liquid. No lleva `whenNotPaused`.
+
+La aplicación lee esas entradas, las dos comprobaciones del activo en vivo y no desde la clase de apertura del préstamo, y la simulación es la última palabra del protocolo. Ninguna vista devuelve el factor de salud tras un aporte, así que la revisión muestra `calculateHealthFactor` y `calculateLTV` ahora y la tarjeta final lee las nuevas cifras del registro `CollateralAdded` de la transacción. En un préstamo FallbackPending, el aporte lo cura cuando el nuevo factor de salud alcanza el mínimo del préstamo y el LTV queda dentro de su tope de apertura; la tarjeta final busca `LoanCuredFromFallback`. Una aprobación existente igual o mayor que la cantidad se deja como está, porque se toma exactamente la cantidad; una menor se sube a exactamente la cantidad y se restablece si el aporte no se completa.
+
 <a id="risk-access"></a>
 
 ### Risk Access: tu nivel de riesgo

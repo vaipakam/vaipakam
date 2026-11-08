@@ -1223,7 +1223,7 @@ All, Lent and Borrowed narrow the three lists at once. Positions says you have n
 
 Each loan has its own page. It starts with the loan's status, then your role: the side your wallet holds now, since position tokens can be sold or transferred. If you hold neither side, you are viewing. A deadline that needs you is worded for your side. Once the grace period is over, the page says anyone may now start the default, and only when the protocol confirms it.
 
-Below that come the loan's dates (the due date of its current term before any pause credit, any time added while the protocol was paused, the due date and the end of the grace period), its terms as they stand now (a partial repayment lowers the principal still owed), its health factor, and where its collateral is held. A figure that could not be read is shown as unknown. If the collateral has no price, a default hands the lender the collateral itself, and the page says so. Where the network holds a band just above the liquidation threshold for an internal match with another loan, the page states it: inside that band no outside sale can close the loan. An NFT rental has no collateral: if it defaults, the renter's use ends, the prepaid rent goes to the lender less the protocol's share, and the buffer goes to the treasury. Repaying in full and paying part are its first actions; the others come in later updates.
+Below that come the loan's dates (the due date of its current term before any pause credit, any time added while the protocol was paused, the due date and the end of the grace period), its terms as they stand now (a partial repayment lowers the principal still owed), its health factor, and where its collateral is held. A figure that could not be read is shown as unknown. If the collateral has no price, a default hands the lender the collateral itself, and the page says so. Where the network holds a band just above the liquidation threshold for an internal match with another loan, the page states it: inside that band no outside sale can close the loan. An NFT rental has no collateral: if it defaults, the renter's use ends, the prepaid rent goes to the lender less the protocol's share, and the buffer goes to the treasury. Repaying in full, paying part and adding collateral are its first actions; the others come in later updates.
 
 <a id="repay"></a>
 
@@ -1248,6 +1248,14 @@ Once a period and its grace are over, anyone may settle it. A paid period only m
 The holder of the borrower position can pay part of a running loan's principal from its page, when the loan's terms allow it. Type the principal part: the protocol takes at least its minimum part for the lending token, and less than the whole principal (paying all of it is Repay in full). The interest accrued since the loan's interest was last paid is added on top. The loan keeps running with the lower principal, and its due date does not move.
 
 The review shows the part, the interest, the principal left and what the approval covers. On a pro-rata loan before its due date the interest is exact. On a full-term loan, or past the due date, it reads "at most": the protocol figure the app reads also counts the rest of the term or a late fee, which a part payment does not charge. Paying part is held while a refinance request on the loan or an offset offer on the borrower position is live, and once the grace period has ended.
+
+<a id="add-collateral"></a>
+
+### Adding Collateral
+
+The holder of the borrower position can add collateral to a running loan from its page. Adding collateral raises the loan's health factor and lowers its loan-to-value, which keeps it further from liquidation. You add more of the same token the loan already holds: the protocol takes no other, and it takes a top-up only for collateral it prices now. Type the amount; the form shows what your wallet holds.
+
+The review shows the collateral now and after, where it is held (your vault, locked to the loan until it ends), and the loan's health factor and loan-to-value now. Your wallet approves exactly the amount if your approval does not already cover it, and the app first tries the top-up as a dry run. Afterwards the app shows the protocol's own health factor and loan-to-value after the top-up. Adding collateral stays open even while the protocol is paused. A loan in fallback returns to running if the top-up restores the protocol's opening limits; otherwise the collateral is added and the loan stays in fallback.
 
 <a id="risk-access"></a>
 

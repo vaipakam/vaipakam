@@ -2423,6 +2423,14 @@ Für einen aktiven ERC-20-Kredit mit Kadenz liest die Karte `previewPeriodicSett
 
 Keine View liefert die Zinsen der Teilzahlung vor dem Aufruf (#3299), daher nutzt die Prüfung `calculateRepaymentAmount` abzüglich `principal`, gelesen jetzt und für einen Zeitpunkt kurz danach. Das ist exakt für einen Pro-rata-Kredit bis zur Fälligkeit; mit `useFullTermInterest` enthält es den Mindestzins der Restlaufzeit und nach der Fälligkeit eine Verzugsgebühr, daher wird es als „höchstens“ gezeigt. Die Freigabe ist genau der Teil plus diese Obergrenze. Die Abschlusskarte misst `newPrincipal` aus dem eigenen `PartialRepaid`-Log der Zahlung (nicht `principal` am Block, den eine spätere Transaktion dort verändern kann), den Abfluss aus der Wallet und danach `previewPeriodicSettle`. Die Überprüfung lehnt die Wallet nur ab, wenn ihr der Teilbetrag fehlt oder der Teilbetrag plus ein exakter Zinsbetrag; übersteigt nur der obere Wert ihr Guthaben, entscheidet der Probelauf unmittelbar vor dem Senden der Zahlung.
 
+<a id="add-collateral"></a>
+
+### Sicherheiten hinzufügen: Was geprüft wird
+
+`addCollateral(loanId, amount)` zieht genau `amount` des eigenen Sicherheiten-Tokens des Kredits vom Aufrufer in den Tresor des Kreditnehmers, erhöht `collateralAmount` und das Sicherheitenpfandrecht und emittiert `CollateralAdded` mit neuem Health Factor und LTV. Es lehnt einen laufenden Swap-to-Repay-Commit ab, einen anderen Aufrufer als `ownerOf(borrowerTokenId)`, einen Kredit, der weder Active noch FallbackPending ist, eine Miete, einen pausierten Sicherheiten-Token (`isAssetPaused`) und Sicherheiten, die `checkLiquidity` nicht als Liquid meldet. Es trägt kein `whenNotPaused`.
+
+Die App liest diese Eingaben, beide Asset-Prüfungen live statt aus der Eröffnungsklasse des Kredits, und der Testlauf hat das letzte Wort des Protokolls. Keine View liefert den Health Factor nach einer Aufstockung, daher nennt die Prüfung `calculateHealthFactor` und `calculateLTV` jetzt, und die Abschlusskarte liest die neuen Werte aus dem `CollateralAdded`-Log der Transaktion. Bei einem FallbackPending-Kredit heilt die Aufstockung ihn, wenn der neue Health Factor das Minimum des Kredits erreicht und der LTV innerhalb seiner Eröffnungsgrenze liegt; die Abschlusskarte prüft auf `LoanCuredFromFallback`. Eine bestehende Genehmigung in Höhe des Betrags oder darüber bleibt unverändert, da genau der Betrag gezogen wird; eine kleinere wird auf genau den Betrag erhöht und zurückgesetzt, falls die Aufstockung nicht durchgeht.
+
 <a id="risk-access"></a>
 
 ### Risk Access: Ihre Risikostufe

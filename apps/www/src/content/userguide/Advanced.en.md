@@ -2612,6 +2612,14 @@ The preview's `canSettleNow` ignores the switch and the pause, so the card puts 
 
 No view returns the partial's interest ahead of the call (#3299), so the review uses `calculateRepaymentAmount` less `principal`, read now and at a moment ahead. That is exact for a pro-rata loan at or before maturity; with `useFullTermInterest` it includes the remaining-term floor, and past maturity a late fee, so it is shown as "at most". The approval is exactly the part plus that upper figure. The finish card measures the `newPrincipal` of the payment's own `PartialRepaid` log (not `principal` at the block, which a later transaction there can move), the wallet's outflow and `previewPeriodicSettle` afterwards. The review refuses the wallet only when it is short of the part, or of the part plus an exact interest figure; when only the upper figure exceeds its balance, the dry run just before the payment is sent decides.
 
+<a id="add-collateral"></a>
+
+### Adding Collateral: What Is Checked
+
+`addCollateral(loanId, amount)` pulls exactly `amount` of the loan's own collateral token from the caller into the borrower's vault, raises `collateralAmount` and the collateral lien, and emits `CollateralAdded` with the new health factor and LTV. It refuses a live swap-to-repay commit, a caller other than `ownerOf(borrowerTokenId)`, a loan that is neither Active nor FallbackPending, a rental, a paused collateral asset (`isAssetPaused`) and collateral `checkLiquidity` does not report as Liquid. It carries no `whenNotPaused`.
+
+The app reads those inputs, both asset checks live rather than from the loan's opening class, and the dry run is the protocol's last word. No view returns the health factor after a top-up, so the review states `calculateHealthFactor` and `calculateLTV` now and the finish card reads the new figures from the transaction's `CollateralAdded` log. On a FallbackPending loan the top-up cures it when the new health factor reaches the loan's minimum and the LTV is within its opening cap; the finish card checks for `LoanCuredFromFallback`. A standing approval at or above the amount is left as it is, since the pull is exactly the amount; a smaller one is raised to exactly the amount and put back if the top-up does not go through.
+
 <a id="risk-access"></a>
 
 ### Risk Access: Your Risk Level

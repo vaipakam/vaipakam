@@ -1968,6 +1968,14 @@ Positions 通过一个共享读取器读取与 Home 相同的持仓清单：`get
 
 没有任何视图能在调用前返回部分还款的利息（#3299），因此审核界面使用现在及稍后时刻读取的 `calculateRepaymentAmount` 减去 `principal`。对按比例计息、未过到期日的贷款，这是精确的；使用 `useFullTermInterest` 时它包含剩余期限的最低利息，过了到期日还包含滞纳金，因此显示为"最多"。授权金额恰好是偿还部分加上这个上限。完成卡片会测量该付款自身 `PartialRepaid` 日志中的 `newPrincipal`（而非该区块的 `principal`，同一区块中随后的交易可能改变它）、钱包的流出，以及之后的 `previewPeriodicSettle`。仅当钱包余额不足以支付该部分本金，或该部分本金加确切利息时，审核才会拦下；若只是上限数字超过余额，则由发送付款前一刻的模拟执行来决定。
 
+<a id="add-collateral"></a>
+
+### 追加抵押品：检查哪些内容
+
+`addCollateral(loanId, amount)` 从调用者处把贷款自身抵押代币恰好 `amount` 拉入借款人的金库，提高 `collateralAmount` 和抵押留置，并发出带有新健康因子和 LTV 的 `CollateralAdded`。它会拒绝进行中的 swap-to-repay 承诺、不是 `ownerOf(borrowerTokenId)` 的调用者、既非 Active 也非 FallbackPending 的贷款、租赁、已暂停的抵押资产（`isAssetPaused`），以及 `checkLiquidity` 未报告为 Liquid 的抵押品。它不带 `whenNotPaused`。
+
+应用读取这些输入，两项资产检查都按当前状态而非贷款开仓时的类别进行，试运行是协议的最终判断。没有视图会返回追加后的健康因子，因此审核界面显示当前的 `calculateHealthFactor` 和 `calculateLTV`，完成卡片从交易的 `CollateralAdded` 日志读取新数字。对于 FallbackPending 贷款，当新的健康因子达到贷款的最低值且 LTV 在其开仓上限之内时，追加会使其恢复；完成卡片会检查 `LoanCuredFromFallback`。等于或高于该数量的现有授权保持不变，因为拉取的恰好就是这个数量；较小的授权会提高到恰好这个数量，若追加未成功则恢复原值。
+
 <a id="risk-access"></a>
 
 ### Risk Access：你的风险等级

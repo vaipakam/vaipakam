@@ -2235,6 +2235,14 @@ Positions は共通のリーダーを通して Home と同じ保有一覧を読�
 
 呼び出し前に一部返済の利息を返すビューはないため(#3299)、確認画面では今と少し先の時点で読んだ `calculateRepaymentAmount` から `principal` を引いた値を使います。満期までの日割りローンでは正確ですが、`useFullTermInterest` では残り期間の最低利息、満期後は延滞料を含むため「最大」と表示します。承認額は返済額とその上限値の合計ちょうどです。完了カードは、支払い自身の `PartialRepaid` ログの `newPrincipal`（ブロック時点の `principal` ではありません。同じブロックの後続トランザクションで変わりうるためです）、ウォレットからの流出、その後の `previewPeriodicSettle` を測定します。レビューがウォレットを止めるのは、部分額、または部分額と正確な利息に残高が足りないときだけです。上限の数字だけが残高を超える場合は、支払いを送る直前のドライランが判断します。
 
+<a id="add-collateral"></a>
+
+### 担保の追加：何が確認されるか
+
+`addCollateral(loanId, amount)` は、ローン自身の担保トークンをちょうど `amount` だけ呼び出し元から借り手のボールトへ引き出し、`collateralAmount` と担保リーエンを増やし、新しいヘルスファクターと LTV を含む `CollateralAdded` を発行します。進行中の swap-to-repay コミット、`ownerOf(borrowerTokenId)` 以外の呼び出し元、Active でも FallbackPending でもないローン、レンタル、一時停止中の担保資産（`isAssetPaused`）、`checkLiquidity` が Liquid と報告しない担保を拒否します。`whenNotPaused` は付いていません。
+
+アプリはこれらの入力を読み取り、資産の 2 つの確認はローン開始時の区分ではなく現在の状態で行い、ドライランがプロトコルの最終判断となります。追加後のヘルスファクターを返すビューはないため、確認画面は現在の `calculateHealthFactor` と `calculateLTV` を示し、完了カードは取引の `CollateralAdded` ログから新しい数値を読み取ります。FallbackPending のローンでは、新しいヘルスファクターがローンの最低値に達し、LTV が開始時の上限内に収まると追加によって回復します。完了カードは `LoanCuredFromFallback` を確認します。金額以上の既存の承認はそのまま残します。引き出されるのはちょうどその金額だからです。小さい承認はちょうどその金額まで上げ、追加が成立しなければ元に戻します。
+
 <a id="risk-access"></a>
 
 ### Risk Access: あなたのリスクレベル

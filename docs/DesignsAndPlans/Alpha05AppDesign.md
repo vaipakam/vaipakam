@@ -870,6 +870,36 @@ above. Each resolves here, so a route reviewer needs no private file:
   least the part, at most the stated upper total), where the interest
   period stands afterwards, and the approval put back. The two repayment
   flows never run at once.
+- **RB-POSITION-ADD-COLLATERAL** — adding collateral to a loan (LN-31) is
+  the borrower position holder's alone, so the action is offered to that
+  holder only. Its one rule (RB-ELIG) reads the inputs `addCollateral`
+  checks, in its order: a pending swap-to-repay order on the borrower
+  position, the holder, a loan that is neither running nor in fallback, a
+  rental (no collateral leg), a collateral token governance has paused, and
+  collateral the protocol does not price now. Both token checks are read
+  live, not from the loan's recorded class at opening. It never holds for
+  the protocol pause (a borrower can always lower their risk), a lender's
+  listing, a refinance request or an offset, and the page states only the
+  refusals no repayment shares (the token paused or unpriced). The amount
+  is more of the loan's own collateral token, more than nothing and within
+  the wallet's balance, checked as it is typed. The review states the
+  collateral before and after, that it is held in the borrower's vault
+  locked to the loan, the health factor and loan-to-value now, the
+  approval, and every consequence: no view gives the figures a top-up leads
+  to, so the finish card states the protocol's own; added collateral can be
+  taken back only within the protocol's limits while the loan runs; a loan
+  in fallback returns to running only if the top-up restores its opening
+  limits; and the pause posture, stated in every case (open, paused and
+  still open, or unread). The top-up pulls exactly the amount, so a standing
+  approval that covers it is left as it is and a smaller one is raised to
+  exactly the amount, put back if the top-up does not go through. A re-read
+  reopens the review when a stated loan field, the holder or lock, the
+  pause, the allowance, the balance check or the verdict moves; the health
+  factor and loan-to-value move with prices and are restated without
+  reopening it. The finish card measures, from the transaction's own logs,
+  the collateral the top-up left, the protocol's health factor and
+  loan-to-value after, the cure of a loan in fallback, and what left the
+  wallet.
 
 ## 3. Companion specifications
 
