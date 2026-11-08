@@ -2209,7 +2209,15 @@ Positions は共通のリーダーを通して Home と同じ保有一覧を読�
 
 価格のあるローンでは `getInternalMatchConfigBundle` も読みます。内部マッチングが有効な間、LTVがしきい値からしきい値＋`externalLiquidationPriorityWindowBps` までにあるローンは内部マッチング用に確保され、外部の清算ルートはすべて拒否します（`InternalMatchOnlyBand`）。ページはその範囲を示します。`loanInitiationFeeBpsAtInit` が 0（料率が記録される前に開始したローン）の場合は未記録と表示し、`treasuryFeeBpsAtInit` が 0 の場合は決済が適用する従来の1%として表示します。現物引き渡しの警告はERC-20ローンのみが対象です。NFTレンタルには担保がなく、デフォルトすると借り手の利用が終わり、前払いの賃料はトレジャリーの取り分を差し引いて貸し手へ支払われ、バッファはトレジャリーへ送られます。ページは代わりにそれを示します。
 
-料率はローンのスナップショットです: `treasuryFeeBpsAtInit`、`loanInitiationFeeBpsAtInit`（売却用ローンではなし）、`liquidationLtvBpsAtInit`。片側が Illiquid（`principalLiquidity` または `collateralLiquidity`）のローンには価格に基づく値がありません: プロトコルはそのローンの `calculateHealthFactor` と `calculateLTV` を拒否し、ページは不明ではなくその旨を表示します。`principal` は残りの元本です（一部返済で減ります）。`interestRateBps` と `collateralAmount` も変わり得るため、条件は現在の値で表示します。記録上の元本がない終了済みローンは、内部マッチングでカバーされたかどうかを示し、そうでなければ記録がないことだけを示します。NFT レンタルは 1 日あたりの賃料(`principal`、`prepayAsset` 建て)と、早期返却でも残り日数分すべてが請求されるか(`useFullTermInterest`)を表示します。`getPeriodicInterestEnabled` が false の場合、チェックポイントで担保は売却されないと表示します。進行中のローンで `collateralLiquidity` が Illiquid の場合は現物決済の警告を加えます: デフォルト時は売却せずに担保を貸し手へ移転します。このページはまだトランザクションを送りません。
+料率はローンのスナップショットです: `treasuryFeeBpsAtInit`、`loanInitiationFeeBpsAtInit`（売却用ローンではなし）、`liquidationLtvBpsAtInit`。片側が Illiquid（`principalLiquidity` または `collateralLiquidity`）のローンには価格に基づく値がありません: プロトコルはそのローンの `calculateHealthFactor` と `calculateLTV` を拒否し、ページは不明ではなくその旨を表示します。`principal` は残りの元本です（一部返済で減ります）。`interestRateBps` と `collateralAmount` も変わり得るため、条件は現在の値で表示します。記録上の元本がない終了済みローンは、内部マッチングでカバーされたかどうかを示し、そうでなければ記録がないことだけを示します。NFT レンタルは 1 日あたりの賃料(`principal`、`prepayAsset` 建て)と、早期返却でも残り日数分すべてが請求されるか(`useFullTermInterest`)を表示します。`getPeriodicInterestEnabled` が false の場合、チェックポイントで担保は売却されないと表示します。進行中のローンで `collateralLiquidity` が Illiquid の場合は現物決済の警告を加えます: デフォルト時は売却せずに担保を貸し手へ移転します。最初のトランザクションは全額返済です（下記）。
+
+<a id="repay"></a>
+
+### 全額返済: 金額の決め方
+
+この操作は 1 つのルールに従います: `repayLoan` は、Active または FallbackPending の ERC-20 ローンについて、`loan.lender` でも `ownerOf(lenderTokenId)` でもない任意のウォレットに提示されます（`LenderCannotRepayOwnLoan`）。Active のローンでは実効的な猶予期間の終了後に止まり（`RepaymentPastGracePeriod`）、`positionLock(borrowerTokenId)` が `SwapToRepayIntent` の間も止まります。貸し手の売却出品、借り換えリクエスト、全体の一時停止では止まりません。レンタルはまだここでは提示しません。
+
+確認画面は `calculateRepaymentAmount(loanId)` を最新ブロックで読み、さらにブロック時刻を `min(now + 30 分, 猶予期間の終了)` に上書きして読みます。同じリクエストで実行時のブロック時刻も読み、上書きを無視した接続は使いません。承認額は 2 つ目の数値ちょうどで、ウォレットを開く前に呼び出しをシミュレーションします。受領後は、返済がローンを残した状態をその `LoanRepaid` ログから読み（ブロック時点の状態ではありません。同じブロックの後続の請求で既に清算済みになっている場合があるためです）、支払額を `Transfer` ログから測り、allowance が承認額から支払額を引いた値を示す場合は以前の値に戻します。その数値を超える allowance（無制限を含む）も同じ数値まで下げます。`repayLoan(loanId)` には上限も期限もないためです。戻す処理では、その後に元の大きい値に戻します。
 
 <a id="risk-access"></a>
 

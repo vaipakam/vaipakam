@@ -1,21 +1,23 @@
 import type { ReactNode } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useAccount } from 'wagmi';
-import { getSupportedChain } from '../../chain/chains';
-import { useOwnStateClient } from '../../chain/ownRail';
+import { getSupportedChain, type SupportedChain } from '../../chain/chains';
+import { useOwnStateClient, type OwnStateClient } from '../../chain/ownRail';
 import { useCopy, type CopyKey } from '../../shared/copy/useCopy';
 import { CADENCE_NAME, isCadence } from '../../shared/offers/cadence';
 import { ASSET_ERC20, LOAN_STATUS_FALLBACK_PENDING, isLiveStatus, loanObligations, loanStatusName } from '../../shared/positions/model';
+import { assetAmount } from '../../shared/positions/assetAmount';
 import { InterestLine, ReadState, StageLine } from '../../shared/positions/PositionSections';
 import { ILLIQUID, readLoanView, recordedInitFeeBps, roleOf, treasuryShareBps, type DefaultRefusal, type LoanView, type Role } from '../../shared/positions/loanView';
 import { useOwnRead } from '../../shared/reads/useOwnRead';
-import { assetName, tokenAmount, useTokenMeta, type TokenMetaMap } from '../../shared/reads/tokens';
+import { tokenAmount, useTokenMeta, type TokenMetaMap } from '../../shared/reads/tokens';
 import { formatBps, formatScaled, formatSpan, formatUtc, shortAddress } from '../../shared/ui/format';
 import { Icon } from '../../shared/ui/Icon';
 import { OwnStamp } from '../../shared/ui/OwnStamp';
 import { useNow } from '../../shared/ui/useNow';
 import { WhyLink } from '../../shared/help/WhyLink';
 import { Notice } from '../../shared/ui/Notice';
+import { LoanActions } from './LoanActions';
 
 /** What the page says when the timing allows a default but another gate
  *  of `triggerDefault` refuses it. */
@@ -39,8 +41,8 @@ function parseLoanId(raw: string | undefined): bigint | null {
  * their wallet holds now), any deadline that needs them, its dates with the
  * pause credit, its terms as the loan fixed them, its health, and where its
  * collateral is held. Every figure is read, and one that could not be read is
- * said to be unknown. The page is read-only until the loan's actions land;
- * it says so.
+ * said to be unknown. A running loan's actions follow its status (LN-21:
+ * repaying in full); the actions still to come are said to be coming.
  */
 export function PositionPage() {
   const { text, format } = useCopy();
@@ -79,7 +81,7 @@ export function PositionPage() {
               v === null ? (
                 <p className="tier-a">{format('position.notFound', { id: loanId.toString(), chain: chain.name })}</p>
               ) : (
-                <LoanBody view={v} account={own.account} meta={meta} />
+                <LoanBody loanId={loanId} view={v} own={own} chain={chain} meta={meta} />
               )
             }
           </ReadState>
@@ -89,8 +91,9 @@ export function PositionPage() {
   );
 }
 
-function LoanBody({ view: v, account, meta }: { view: LoanView; account: Hex; meta: TokenMetaMap | null }) {
+function LoanBody({ loanId, view: v, own, chain, meta }: { loanId: bigint; view: LoanView; own: OwnStateClient; chain: SupportedChain; meta: TokenMetaMap | null }) {
   const { text, format } = useCopy();
+  const account = own.account;
   const nowSec = Math.floor(useNow() / 1000);
   const l = v.loan;
   const role = roleOf(v.holders, account);
@@ -103,10 +106,7 @@ function LoanBody({ view: v, account, meta }: { view: LoanView; account: Hex; me
   // not "unknown". On a loan with both legs priced, every successful read is
   // a figure, zero included (a collateral value that rounds to nothing).
   const noRiskMath = l.principalLiquidity === ILLIQUID || l.collateralLiquidity === ILLIQUID;
-  const amountOf = (asset: Hex, assetType: number, amount: bigint, tokenId: bigint, quantity: bigint) =>
-    assetType === ASSET_ERC20
-      ? tokenAmount(amount, asset, meta, format)
-      : format('asset.nft', { id: tokenId.toString(), asset: assetName(asset, meta) }) + (quantity > 1n ? ` × ${quantity.toString()}` : '');
+  const amountOf = (asset: Hex, assetType: number, amount: bigint, tokenId: bigint, quantity: bigint) => assetAmount({ asset, assetType, amount, tokenId, quantity }, meta, format);
   // Deadline wording follows the side the reader holds; a viewer who holds
   // neither reads the lender's (no "you must repay").
   const borrowerSide = role?.borrower === true && role.lender !== true;
@@ -151,6 +151,8 @@ function LoanBody({ view: v, account, meta }: { view: LoanView; account: Hex; me
           </Notice>
         </div>
       )}
+
+      <LoanActions loanId={loanId} view={v} role={role} own={own} chain={chain} meta={meta} />
 
       {live && (
         <Facts title={text('position.datesTitle')} id="position-dates" lead={v.deadlines === null ? <p className="tier-a">{text('position.datesUnknown')}</p> : null}>
@@ -289,9 +291,11 @@ function LoanBody({ view: v, account, meta }: { view: LoanView; account: Hex; me
         )}
       </Facts>
 
-      <p className="tier-b" data-testid="position-actions-later">
-        {text('position.actionsLater')}
-      </p>
+      {!live && (
+        <p className="tier-b" data-testid="position-actions-later">
+          {text('position.actionsLater')}
+        </p>
+      )}
     </>
   );
 }

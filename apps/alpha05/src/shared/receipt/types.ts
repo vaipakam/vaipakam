@@ -65,6 +65,10 @@ export interface Receipt {
   consequences: readonly ReceiptText[];
   /** The wallet prompts this flow needs (RB-CLICKS: one where possible). */
   prompts: number;
+  /** Prompts that may follow once the flow took effect, to put back what it
+   *  did not use of an approval; stated beside `prompts`, never folded into
+   *  it, since the flow is complete without them. */
+  afterPrompts?: number;
   /** When the receipt's inputs were last re-read (RB-REVIEW). */
   readAt: number;
 }

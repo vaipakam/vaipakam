@@ -154,6 +154,11 @@ export interface LoanView {
    *  internal match and every outside liquidation route refuses. Live loans
    *  only; `null` when unread. */
   matchWindow: { enabled: boolean; windowBps: bigint } | null;
+  /** The borrower position's lock (`positionLock`); null when unread. */
+  borrowerLock: number | null;
+  /** The latest block's time, which the actions' rules compare dates with
+   *  (never the device clock); null when unread. */
+  chainNow: bigint | null;
 }
 
 /** The reader's role on this loan: the positions their wallet HOLDS now,
@@ -196,23 +201,41 @@ export async function readLoanView(client: PublicClient, diamond: Hex, loanId: b
   const live = isLiveStatus(loan.status);
   const cadence = loan.periodicInterestCadence;
 
-  const [lender, borrower, dates, periodic, periodicOn, timingDefaultable, admission, paused, sequencerHealthy, healthFactor, ltvBps, lien, saleVehicle, matchConfig] =
-    await Promise.all([
-      maybe(read<Hex>(NFT, 'ownerOf', [loan.lenderTokenId])),
-      maybe(read<Hex>(NFT, 'ownerOf', [loan.borrowerTokenId])),
-      live ? maybe(read<readonly [bigint, bigint, bigint, bigint]>(LOAN, 'getLoanDeadlines', [loanId])) : null,
-      live && cadence !== 0 ? maybe(read<readonly [number, bigint, bigint, bigint, bigint, bigint, boolean]>(PERIODIC, 'previewPeriodicSettle', [loanId])) : null,
-      live && cadence !== 0 ? maybe(read<boolean>(NUMERAIRE, 'getPeriodicInterestEnabled')) : null,
-      live ? maybe(read<boolean>(DEFAULTED, 'isLoanDefaultable', [loanId])) : null,
-      live ? maybe(read<readonly [boolean, Hex]>(DEFAULTED, 'defaultKycAdmission', [loanId])) : null,
-      live ? maybe(read<boolean>(ADMIN, 'paused')) : null,
-      live ? maybe(read<boolean>(ORACLE, 'sequencerHealthy')) : null,
-      live ? maybe(read<bigint>(RISK, 'calculateHealthFactor', [loanId])) : null,
-      live ? maybe(read<bigint>(RISK, 'calculateLTV', [loanId])) : null,
-      maybe(read<CollateralLien>(METRICS, 'getLoanCollateralLien', [loanId])),
-      maybe(read<boolean>(METRICS, 'isSaleVehicleLoan', [loanId])),
-      live ? maybe(read<readonly [boolean, bigint, bigint]>(CONFIG, 'getInternalMatchConfigBundle')) : null,
-    ]);
+  const [
+    lender,
+    borrower,
+    dates,
+    periodic,
+    periodicOn,
+    timingDefaultable,
+    admission,
+    paused,
+    sequencerHealthy,
+    healthFactor,
+    ltvBps,
+    lien,
+    saleVehicle,
+    matchConfig,
+    borrowerLock,
+    block,
+  ] = await Promise.all([
+    maybe(read<Hex>(NFT, 'ownerOf', [loan.lenderTokenId])),
+    maybe(read<Hex>(NFT, 'ownerOf', [loan.borrowerTokenId])),
+    live ? maybe(read<readonly [bigint, bigint, bigint, bigint]>(LOAN, 'getLoanDeadlines', [loanId])) : null,
+    live && cadence !== 0 ? maybe(read<readonly [number, bigint, bigint, bigint, bigint, bigint, boolean]>(PERIODIC, 'previewPeriodicSettle', [loanId])) : null,
+    live && cadence !== 0 ? maybe(read<boolean>(NUMERAIRE, 'getPeriodicInterestEnabled')) : null,
+    live ? maybe(read<boolean>(DEFAULTED, 'isLoanDefaultable', [loanId])) : null,
+    live ? maybe(read<readonly [boolean, Hex]>(DEFAULTED, 'defaultKycAdmission', [loanId])) : null,
+    live ? maybe(read<boolean>(ADMIN, 'paused')) : null,
+    live ? maybe(read<boolean>(ORACLE, 'sequencerHealthy')) : null,
+    live ? maybe(read<bigint>(RISK, 'calculateHealthFactor', [loanId])) : null,
+    live ? maybe(read<bigint>(RISK, 'calculateLTV', [loanId])) : null,
+    maybe(read<CollateralLien>(METRICS, 'getLoanCollateralLien', [loanId])),
+    maybe(read<boolean>(METRICS, 'isSaleVehicleLoan', [loanId])),
+    live ? maybe(read<readonly [boolean, bigint, bigint]>(CONFIG, 'getInternalMatchConfigBundle')) : null,
+    live ? maybe(read<number>(NFT, 'positionLock', [loan.borrowerTokenId]).then(Number)) : null,
+    live ? maybe(client.getBlock({ blockTag: 'latest' })) : null,
+  ]);
 
   // A loan with a cadence answers to its checkpoint too: with the checkpoint
   // or the switch unread, its deadlines are unknown rather than half-known.
@@ -240,6 +263,8 @@ export async function readLoanView(client: PublicClient, diamond: Hex, loanId: b
     lien,
     saleVehicle,
     matchWindow: matchConfig ? { enabled: matchConfig[0], windowBps: matchConfig[1] } : null,
+    borrowerLock,
+    chainNow: block ? block.timestamp : null,
   };
   return { view };
 }

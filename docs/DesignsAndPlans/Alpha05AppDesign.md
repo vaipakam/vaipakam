@@ -740,7 +740,59 @@ above. Each resolves here, so a route reviewer needs no private file:
   collateral has no price, that a default hands the lender the collateral
   itself, while an NFT rental, which has no collateral, states its own
   default instead (the renter's use ends, the prepaid rent goes to the
-  lender less the protocol's share, the buffer to the treasury). Until the loan's actions land, the page says so and offers none.
+  lender less the protocol's share, the buffer to the treasury).
+  The loan's actions follow the "now" lines, each offered from its
+  eligibility rule; the actions still to come are said to be coming.
+- **RB-POSITION-REPAY** — repaying a loan in full (LN-21, LN-16) is offered
+  to anyone but the lender (recorded, or holding the lender position), and
+  is left out for a reader who holds only the lender side. Its one rule
+  (RB-ELIG) holds it on a running loan past its grace end (stated with the
+  time, and that the loan goes to default), while a swap-to-repay order is
+  pending on the borrower position, and for a rental (the app's own limit,
+  said so); it never holds for a lender listing, a refinance request, the
+  protocol pause, the Terms gate or the sanctions screen on the payer, and
+  a loan in fallback stays repayable past grace, since repaying cures it.
+  The hold LN-21 names while an ACCEPTED lender sale completes has no window
+  on this protocol: the sale completes inside the transaction that accepts
+  it, so the verdict reads nothing for it. A refinance request that still
+  stands by the protocol's own rule is named on the review: the repayment
+  ends it, but its offer stays posted until its creator cancels it. A
+  recorded one that no longer stands (cancelled, taken, expired) is not
+  named, since the record keeps the last id after a cancel, and an unread
+  request is stated unread. The protocol's full repayment takes a plain approval; it has no
+  Permit2 route, so none is offered.
+  The review states two of the protocol's own payoff figures, now and as of
+  a moment about thirty minutes ahead (never later than the grace end),
+  the second read by asking the same view with the block time moved, on a
+  connection that is checked to have honoured the move (one that ignored it
+  is passed over, and if none honours it the repayment is not offered). The
+  approval is exactly the later figure, LOWERED to it as well as raised:
+  the protocol's full repayment takes no maximum or deadline of its own, so
+  the allowance is the only cap on what a late confirmation can take, and a
+  larger standing approval (an unlimited one included, named as unlimited)
+  would void the stated maximum. The approval caps the AMOUNT, never the
+  time, and the review says so: a repayment confirming after that moment
+  goes through only while the protocol's figure stays within the approval.
+  Where the two figures are equal (full-term interest before the due date)
+  the review also says a later confirmation can still go through; it never
+  promises a deadline the protocol does not enforce. Where that moment is
+  the grace end, it is stated as the grace end as things stand, which a
+  protocol pause before it moves later (the protocol checks the moving
+  deadline, not the time the review read). It says that what
+  the repayment does not use is put back afterwards, to the allowance as it
+  stood before. The collateral is named by its asset type (an NFT by its
+  token id, an ERC-1155 with its quantity), through the same rule as the
+  loan page. A payer who does not hold the borrower position is told it
+  gains no right to the collateral. A re-read does not count the payoff
+  growing by the second as a change; the figure at the kept moment, the
+  holders, the dates, the standing allowance (what a stop puts back) or its
+  approval steps, or the verdict moving reopens the review, also when it
+  moves between the review and the send, and the kept moment moves forward
+  once it is closer than ten minutes. The finish card measures, from the
+  transaction's own logs, the status its repayment left the loan in (not
+  the status at the block, which both sides claiming later in that block
+  moves on to settled), what left the wallet (within the two stated
+  figures), and the approval put back.
 
 ## 3. Companion specifications
 

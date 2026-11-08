@@ -88,6 +88,9 @@ export interface OfferTerms {
    *  None. A finer cadence needs periodic interest switched on and a
    *  principal above the finer-cadence threshold. */
   cadence?: number;
+  /** Whether interest is charged for the whole term however early the loan
+   *  is repaid (`useFullTermInterest`). Omitted, pro rata. */
+  fullTermInterest?: boolean;
 }
 
 /** The lender posts a lender offer, escrowing the principal it wrapped from
@@ -124,7 +127,7 @@ export async function postLenderOffer(sc: ScenarioChain, t: OfferTerms): Promise
       allowsPrepayListing: false,
       allowsParallelSale: false,
       refinanceTargetLoanId: 0n,
-      useFullTermInterest: false,
+      useFullTermInterest: t.fullTermInterest ?? false,
     },
   ]);
   const offerEv = sc.decodeDiamondLogs(created.logs).find((e) => e.eventName === 'OfferCreated');

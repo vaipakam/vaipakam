@@ -100,7 +100,10 @@ export function Receipt({ receipt, describeAsset, nowMs }: ReceiptProps) {
         </ul>
       )}
       <p className="tier-b">
-        {format('receipt.prompts', { count: String(receipt.prompts) })} {format('receipt.readAt', { age: formatAge((nowMs - receipt.readAt) / 1000) })}
+        {receipt.afterPrompts
+          ? format('receipt.promptsThen', { count: String(receipt.prompts), after: String(receipt.afterPrompts) })
+          : format('receipt.prompts', { count: String(receipt.prompts) })}{' '}
+        {format('receipt.readAt', { age: formatAge((nowMs - receipt.readAt) / 1000) })}
       </p>
     </section>
   );

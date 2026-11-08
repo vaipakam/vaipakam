@@ -2100,7 +2100,15 @@ Positions는 하나의 공유 리더로 Home과 같은 보유 목록을 읽습�
 
 가격이 있는 대출에는 `getInternalMatchConfigBundle`도 읽습니다. 내부 매칭이 켜져 있으면 LTV가 임계값부터 임계값 + `externalLiquidationPriorityWindowBps`까지인 대출은 내부 매칭용으로 보류되고 모든 외부 청산 경로가 거부합니다(`InternalMatchOnlyBand`). 페이지는 그 구간을 알립니다. `loanInitiationFeeBpsAtInit`가 0이면(요율이 기록되기 전에 개설된 대출) 기록 없음으로, `treasuryFeeBpsAtInit`가 0이면 정산이 적용하는 기존 1% 요율로 표시합니다. 현물 인도 경고는 ERC-20 대출에만 해당합니다. NFT 대여에는 담보가 없으며, 채무 불이행 시 임차인의 사용이 끝나고 선지급 대여료는 트레저리 몫을 뺀 뒤 대출자에게 지급되며 버퍼는 트레저리로 갑니다. 페이지는 대신 이를 알립니다.
 
-요율은 대출의 스냅샷입니다: `treasuryFeeBpsAtInit`, `loanInitiationFeeBpsAtInit`(판매용 대출에는 없음), `liquidationLtvBpsAtInit`. 한쪽이 Illiquid(`principalLiquidity` 또는 `collateralLiquidity`)인 대출에는 가격 기반 수치가 없습니다: 프로토콜이 그 대출의 `calculateHealthFactor`와 `calculateLTV`를 거부하며, 페이지는 알 수 없음 대신 그렇게 알립니다. `principal`은 아직 남은 원금이며(부분 상환이 이를 줄임), `interestRateBps`와 `collateralAmount`도 바뀔 수 있으므로 조건은 현재 값으로 표시됩니다. 기록상 원금이 없는 종료된 대출은 내부 매칭이 이를 충당했는지 표시하고, 아니면 기록된 원금이 없다는 것만 표시합니다. NFT 대여는 일일 대여료(`principal`, `prepayAsset` 기준)와 조기 반환 시에도 남은 모든 날이 청구되는지(`useFullTermInterest`)를 표시합니다. `getPeriodicInterestEnabled`가 false이면 페이지는 체크포인트에서 담보가 매각되지 않는다고 알립니다. 진행 중인 대출에서 `collateralLiquidity`가 Illiquid이면 현물 경고가 추가됩니다: 채무 불이행 시 판매 없이 담보가 대출자에게 이전됩니다. 이 페이지는 아직 트랜잭션을 보내지 않습니다.
+요율은 대출의 스냅샷입니다: `treasuryFeeBpsAtInit`, `loanInitiationFeeBpsAtInit`(판매용 대출에는 없음), `liquidationLtvBpsAtInit`. 한쪽이 Illiquid(`principalLiquidity` 또는 `collateralLiquidity`)인 대출에는 가격 기반 수치가 없습니다: 프로토콜이 그 대출의 `calculateHealthFactor`와 `calculateLTV`를 거부하며, 페이지는 알 수 없음 대신 그렇게 알립니다. `principal`은 아직 남은 원금이며(부분 상환이 이를 줄임), `interestRateBps`와 `collateralAmount`도 바뀔 수 있으므로 조건은 현재 값으로 표시됩니다. 기록상 원금이 없는 종료된 대출은 내부 매칭이 이를 충당했는지 표시하고, 아니면 기록된 원금이 없다는 것만 표시합니다. NFT 대여는 일일 대여료(`principal`, `prepayAsset` 기준)와 조기 반환 시에도 남은 모든 날이 청구되는지(`useFullTermInterest`)를 표시합니다. `getPeriodicInterestEnabled`가 false이면 페이지는 체크포인트에서 담보가 매각되지 않는다고 알립니다. 진행 중인 대출에서 `collateralLiquidity`가 Illiquid이면 현물 경고가 추가됩니다: 채무 불이행 시 판매 없이 담보가 대출자에게 이전됩니다. 첫 번째 트랜잭션은 전액 상환입니다(아래 참조).
+
+<a id="repay"></a>
+
+### 전액 상환: 금액이 정해지는 방식
+
+이 작업은 하나의 규칙을 따릅니다: `repayLoan`은 Active 또는 FallbackPending ERC-20 대출에 대해 `loan.lender`도 `ownerOf(lenderTokenId)`도 아닌 모든 지갑에 제공되며(`LenderCannotRepayOwnLoan`), Active 대출에서는 실효 유예 기간 종료 후(`RepaymentPastGracePeriod`), 그리고 `positionLock(borrowerTokenId)`가 `SwapToRepayIntent`인 동안 보류됩니다. 대출자의 판매 등록, 재융자 요청, 전체 일시 중지는 이를 보류하지 않습니다. 대여는 아직 여기서 제공하지 않습니다.
+
+검토 화면은 `calculateRepaymentAmount(loanId)`를 최신 블록에서 읽고, 블록 시간을 `min(now + 30분, 유예 기간 종료)`로 덮어써서 한 번 더 읽습니다. 같은 요청이 실행된 블록 시간도 읽으며, 덮어쓰기를 무시한 연결은 건너뜁니다. 승인액은 정확히 두 번째 수치이고, 지갑을 열기 전에 호출을 시뮬레이션하며, 영수증 이후에는 상환이 대출을 남긴 상태를 그 `LoanRepaid` 로그에서 읽고(블록 시점이 아닙니다. 같은 블록의 이후 청구로 이미 정산되었을 수 있기 때문입니다), `Transfer` 로그로 지급액을 측정하고, allowance가 승인액에서 지급액을 뺀 값이면 이전 값으로 되돌립니다. 그 수치보다 큰 allowance(무제한 포함)도 그 수치로 낮춥니다. `repayLoan(loanId)`에는 상한도 기한도 없기 때문이며, 이후 되돌리기가 원래의 큰 값을 복원합니다.
 
 <a id="risk-access"></a>
 
