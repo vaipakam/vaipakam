@@ -1992,6 +1992,12 @@ Positions 通过一个共享读取器读取与 Home 相同的持仓清单：`get
 
 审核页读取 `getClaimable`（出借人记录已扣除前任卖家的部分，旁边附有 `getSellersShareOfLenderClaim`）、`getBorrowerSurplusClaim` 和 `getLoanCollateralLien`，并模拟运行领取，这也会执行制裁检查。列表以头寸代币为准：`getUserDashboardClaimables` 列出登记当事人的领取，因此列出的记录只在钱包持有该方时保留；从他人处得到的、已结束贷款上的持有头寸，则直接读取其领取。完成卡片读取 `LenderFundsClaimed` / `BorrowerFundsClaimed`、`BorrowerSurplusClaimed` 和 `LoanSettled`，以及转入钱包的代币；对处于保护账户模式的调用者，读取 `PayoutQueued`（账户自己的金库）、`PayoutHeldInVault`（账户已锁定或队列已满）或 `PaymentCreditedToVault`（其他当事人的金库）。在 FallbackPending 贷款上，出借人的领取可能在领取时执行内部撮合并改写记录，因此完成卡片会将转账与协议自己的记录进行比较。
 
+<a id="claim-everything"></a>
+
+### 全部领取：检查哪些内容
+
+批量交易经由 `multicall(calls)`，它在协议内部以 `delegatecall` 执行每个调用，因此 `msg.sender` 仍是您的钱包，每个调用各自检查自己的规则。它最多接受 30 个调用，应用为每个调用设置 `allowFailure`，因此被拒绝的调用只回退自身，批量交易继续执行。调用包括 `claimAsLender` / `claimAsBorrower(loanId)`；`claimInteractionRewardsTo(Vault)`（同时释放被保留的奖励），或在奖励预览无法完成但 `getRewardSanctionsStatus` 读取为 Deliver 时使用 `claimHeldInteractionRewards(Vault)`；针对 `getLenderIntentsByOwner` 中每个意向的 `availableCapital` 调用 `withdrawLenderIntentCapital(account, lendingAsset, collateralAsset, amount)`；针对 VPFI 的 `freeHolding` 调用 `withdrawVPFIFromVault(amount)`；以及针对 `getPayrollStream` 中受益人为该钱包的每个薪酬流，按 `getWithdrawableSalary` 调用 `withdrawSalary(streamId)`。FallbackPending 贷款上的出借人领取不纳入，因为领取时的撮合决定其支付金额。审核会试运行批量交易，读取每个调用的 `success` 和回退数据，将被拒绝的调用连同解码后的错误排除，并在发送时再试运行一次。完成卡片读取每个调用自己的事件 (`LenderFundsClaimed` / `BorrowerFundsClaimed`, `InteractionRewardsClaimed` with `RewardDeliveredToVault`, `LenderIntentCapitalWithdrawn`, `VPFIWithdrawnFromVault`, `SalaryWithdrawn`)；没有事件的调用即被跳过。转入钱包的代币，以及保护模式下的 `PayoutQueued` / `PayoutHeldInVault` / `PaymentCreditedToVault`，按代币在已领取的调用间汇总。暂停（每个调用上的 `whenNotPaused`）和被标记的钱包会在签名前阻止批量交易。
+
 <a id="payout-queue"></a>
 
 ### 付款队列：检查什么

@@ -1273,6 +1273,12 @@ When a loan ends, the protocol records what each side is owed, and the holder of
 
 The review lists every payout the claim makes, what past sellers of a lender position take first (interest they earned and were not paid), and where the payment lands: your wallet, or, with protected mode on, your account's payout queue or your vault. No approval is needed, so your wallet asks once, after the app tries the claim as a dry run. A protocol pause stops every claim. While a loan is in fallback, the borrower's payout waits until the lender collects, and the lender collecting ends the fallback: the borrower can no longer cure it. The finish card shows what the transaction actually paid.
 
+<a id="claim-everything"></a>
+
+### Claim Everything
+
+Claims opens with Claim everything: every payout you can collect right now, gathered into one transaction. It lists loan payouts on ended loans whose position you hold, interaction rewards, the un-lent capital of your standing offers, free VPFI in your vault and, if you are a payee, withdrawable payroll. Each payout has a switch, so you can leave any of them out. Free vault VPFI is off unless you turn it on, because it sets your fee-discount tier, and so is the capital of a standing offer that is still lending. Interest owed to you from a position you sold, and a loan in fallback, are collected on their own. Each payout runs on its own inside the transaction: one the protocol refuses is skipped and stays listed, and the rest still pay. One transaction carries at most 30 payouts; the rest wait for a second one. Nothing leaves your wallet, so your wallet asks once, after a dry run, and the finish card shows each payout collected or skipped and where the money landed. A pause stops every claim.
+
 <a id="payout-queue"></a>
 
 ### Payouts Waiting in Your Queue

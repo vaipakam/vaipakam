@@ -1318,6 +1318,12 @@ Quand un prêt prend fin, le protocole enregistre ce qui revient à chaque parti
 
 L'examen liste chaque paiement que fait la réclamation, ce que les anciens vendeurs d'une position de prêteur prennent d'abord (des intérêts gagnés et non payés) et où arrive le paiement : votre portefeuille ou, avec le mode protégé actif, la file de versements de votre compte ou votre coffre. Aucune approbation n'est nécessaire, votre portefeuille demande donc une fois, après que l'application a simulé la réclamation. Une pause du protocole arrête toute réclamation. Tant qu'un prêt est en repli, le versement de l'emprunteur attend que le prêteur encaisse, et cet encaissement met fin au repli : l'emprunteur ne peut plus le régulariser. La carte de fin montre ce que la transaction a réellement payé.
 
+<a id="claim-everything"></a>
+
+### Tout réclamer
+
+Claims s'ouvre sur « Tout réclamer » : chaque versement que vous pouvez encaisser maintenant, réuni en une seule transaction. Il liste les versements des prêts terminés dont vous détenez la position, les récompenses d'interaction, le capital non prêté de vos offres permanentes, le VPFI libre de votre coffre et, si vous êtes bénéficiaire, la paie retirable. Chaque versement a un interrupteur, vous pouvez donc en exclure n'importe lequel. Le VPFI libre du coffre est désactivé sauf si vous l'activez, car il fixe votre niveau de remise sur les frais, de même que le capital d'une offre permanente qui prête encore. Les intérêts qui vous sont dus sur une position vendue, et un prêt en fallback, s'encaissent séparément. Chaque versement s'exécute seul dans la transaction : celui que le protocole refuse est ignoré et reste listé, et les autres sont tout de même payés. Une transaction porte au plus 30 versements ; le reste attend une seconde transaction. Rien ne quitte votre portefeuille, votre portefeuille demande donc une fois, après un essai, et la carte finale montre chaque versement encaissé ou ignoré et où l'argent est arrivé. Une pause arrête toute réclamation.
+
 <a id="payout-queue"></a>
 
 ### Versements en attente dans votre file
