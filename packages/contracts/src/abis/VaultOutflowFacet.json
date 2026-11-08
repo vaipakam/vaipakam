@@ -1571,6 +1571,33 @@
   },
   {
     "type": "error",
+    "name": "GrantOpen",
+    "inputs": [
+      {
+        "name": "ref",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "GrantRefused",
+    "inputs": [
+      {
+        "name": "class_",
+        "type": "uint8",
+        "internalType": "enum VaultOutflowTypes.GrantClass"
+      },
+      {
+        "name": "spender",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "HealthFactorCalculationFailed",
     "inputs": []
   },
@@ -2221,6 +2248,22 @@
     "inputs": [
       {
         "name": "caller",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "OutflowDestinationRefused",
+    "inputs": [
+      {
+        "name": "class_",
+        "type": "uint8",
+        "internalType": "enum VaultOutflowTypes.OutflowClass"
+      },
+      {
+        "name": "to",
         "type": "address",
         "internalType": "address"
       }
@@ -5049,5 +5092,10 @@
         "internalType": "uint256"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "ZeroOutflow",
+    "inputs": []
   }
 ]
