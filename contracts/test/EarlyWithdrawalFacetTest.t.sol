@@ -2062,6 +2062,39 @@ contract EarlyWithdrawalFacetTest is Test {
         OfferAcceptFacet(address(diamond)).acceptOffer(saleOfferId, t, sig);
     }
 
+    /// @dev #3318 Codex r6 — a lender who takes the PositionNFT holder lock
+    ///      AFTER listing cannot have the listing accepted: the sale moves the
+    ///      position by retire-and-mint, past the core's transfer guard, so the
+    ///      handover primitive applies the lock (`PositionNftsLocked`) at the
+    ///      moment of the move. The whole accept reverts with the buyer's funds.
+    function test_r6_lockAfterListing_acceptIsRefused() public {
+        uint256 saleOfferId = _listSaleOffer();
+        (LibAcceptTerms.AcceptTerms memory t, bytes memory sig, address buyer) =
+            _honestBuyerFor(saleOfferId, "lockedSellerBuyer");
+        ERC20Mock(mockERC20).mint(buyer, 100000 ether);
+        vm.prank(buyer);
+        ERC20(mockERC20).approve(address(diamond), type(uint256).max);
+        address buyerVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(buyer);
+        vm.prank(buyer);
+        ERC20(mockERC20).approve(buyerVault, type(uint256).max);
+
+        vm.prank(lender);
+        LibTestPositionNFT.core(address(diamond)).lock();
+
+        vm.prank(buyer);
+        vm.expectRevert(abi.encodeWithSelector(LibProtectedAccount.PositionNftsLocked.selector, lender));
+        OfferAcceptFacet(address(diamond)).acceptOffer(saleOfferId, t, sig);
+    }
+
+    /// @dev #3318 Codex r6 — the direct sale holds the same lock rule.
+    function test_r6_holderLockedSeller_directSaleIsRefused() public {
+        vm.prank(lender);
+        LibTestPositionNFT.core(address(diamond)).lock();
+        vm.prank(lender);
+        vm.expectRevert(abi.encodeWithSelector(LibProtectedAccount.PositionNftsLocked.selector, lender));
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+    }
+
     /// @dev #1835 (Codex #1891 F3) — a TERMINAL loan's stale listing must still
     ///      report the terminal loan, not the stale terms.
     ///

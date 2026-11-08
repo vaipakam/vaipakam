@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
+import {LibProtectedAccount} from "../src/libraries/LibProtectedAccount.sol";
 import {Test} from "forge-std/Test.sol";
 import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
 import {Vm} from "forge-std/Vm.sol";
@@ -914,6 +915,50 @@ contract PrecloseFacetTest is Test {
         vm.prank(borrower);
         vm.expectRevert(PrecloseFacet.InvalidOfferTerms.selector);
         PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, offerId);
+    }
+
+    /// @dev #3318 Codex r6 — an obligation handover moves the borrower position
+    ///      by retire-and-mint, past the core's transfer guard, so the handover
+    ///      primitive applies the holder lock: a holder-locked borrower's
+    ///      position is not handed to a new borrower.
+    function test_r6_holderLockedBorrower_obligationHandoverIsRefused() public {
+        vm.prank(newBorrower);
+        uint256 validOffer = OfferCreateFacet(address(diamond)).createOffer(
+            LibVaipakam.CreateOfferParams({
+                offerType: LibVaipakam.OfferType.Borrower,
+                lendingAsset: mockERC20,
+                amount: PRINCIPAL,
+                interestRateBps: 500,
+                collateralAsset: mockCollateralERC20,
+                collateralAmount: COLLATERAL,
+                durationDays: 30,
+                assetType: LibVaipakam.AssetType.ERC20,
+                tokenId: 0,
+                quantity: 0,
+                creatorRiskAndTermsConsent: true,
+                prepayAsset: mockERC20,
+                collateralAssetType: LibVaipakam.AssetType.ERC20,
+                collateralTokenId: 0,
+                collateralQuantity: 0,
+                allowsPartialRepay: false,
+                allowsPrepayListing: false,
+                allowsParallelSale: false,
+                amountMax: PRINCIPAL,
+                interestRateBpsMax: 500,
+                collateralAmountMax: COLLATERAL,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0,
+                useFullTermInterest: false
+            })
+        );
+
+        vm.prank(borrower);
+        LibTestPositionNFT.core(address(diamond)).lock();
+        vm.prank(borrower);
+        vm.expectRevert(abi.encodeWithSelector(LibProtectedAccount.PositionNftsLocked.selector, borrower));
+        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, validOffer);
     }
 
     function testTransferObligationSuccess() public {

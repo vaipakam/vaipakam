@@ -1394,6 +1394,31 @@ contract DefaultedFacetTest is Test {
         assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Defaulted));
     }
 
+    /// @dev #3318 Codex r6 — the holder lock never blocks a forced close: a
+    ///      default CLOSES the position (it hands nothing to a new party), so
+    ///      it settles with both holders locked.
+    function test_r6_defaultSettlesWithBothHoldersLocked() public {
+        mockOracleLiquidity(mockERC20, LibVaipakam.LiquidityStatus.Illiquid);
+        uint256 loanId = createAndAcceptOffer(
+            mockERC20, mockIlliquidERC20, LibVaipakam.AssetType.ERC20, 1000 ether, 1500 ether, 30, 0, 0
+        );
+        mockOracleLiquidity(mockERC20, LibVaipakam.LiquidityStatus.Liquid);
+        vm.prank(lender);
+        LibTestPositionNFT.core(address(diamond)).lock();
+        vm.prank(borrower);
+        LibTestPositionNFT.core(address(diamond)).lock();
+
+        vm.warp(block.timestamp + 30 days + LibVaipakam.gracePeriod(30) + 1);
+        uint256 sellQuote = defaultQuote(address(diamond), loanId);
+        vm.prank(lender);
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
+        assertEq(
+            uint8(LoanFacet(address(diamond)).getLoanDetails(loanId).status),
+            uint8(LibVaipakam.LoanStatus.Defaulted),
+            "the default settles despite both holder locks"
+        );
+    }
+
     function testTriggerDefaultNFTRental() public {
         // Create NFT rental loan
         uint256 loanId = createAndAcceptOffer(

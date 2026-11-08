@@ -2331,6 +2331,17 @@
   },
   {
     "type": "error",
+    "name": "PositionNftsLocked",
+    "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "ProtectedVaultLocked",
     "inputs": [
       {

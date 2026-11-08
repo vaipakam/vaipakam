@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibProtectedAccount} from "./LibProtectedAccount.sol";
+import {LibPositionNFT} from "./LibPositionNFT.sol";
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {LibRevert} from "./LibRevert.sol";
 import {LibInterestLedger} from "./LibInterestLedger.sol";
@@ -38,6 +39,7 @@ library LibLoan {
         LibProtectedAccount.requireCanOpen(newLender);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
+        _requirePositionMayLeave(loan.lenderTokenId);
         // Both sale routes have moved the held balance into the buyer's vault
         // by now, so a parked share the seller is paid comes from there.
         LibInterestLedger.recordSale(s, loan, seller, newLender);
@@ -231,6 +233,24 @@ library LibLoan {
         s.userLoanIds[user].push(loanId);
     }
 
+    /// @dev #3205 (#3318 Codex r6) — the ONE check that a position may change
+    ///      hands, made by both handover primitives on the EXITING token: its
+    ///      current holder's positions must not be held against leaving
+    ///      (`LibProtectedAccount.protectsNfts`: the PositionNFT holder lock,
+    ///      or a retired protected account), the same rule and error the sale
+    ///      verdict applies at listing. A sale or handover moves a position by
+    ///      retiring the token and minting a new one, which the core's
+    ///      transfer guard never sees, so the lock is checked here, for every
+    ///      route (listed sale and its auto-linked accept, direct sale,
+    ///      obligation handover), at the moment of the move. No forced or
+    ///      protocol path reaches these primitives: liquidation, default,
+    ///      grace sales, internal matching, refinance and the offset CLOSE
+    ///      positions rather than hand them over, so none needs an exemption.
+    function _requirePositionMayLeave(uint256 tokenId) private view {
+        address holder = LibPositionNFT.ownerOf(tokenId);
+        if (LibProtectedAccount.protectsNfts(holder)) revert LibProtectedAccount.PositionNftsLocked(holder);
+    }
+
     /// @dev Replaces the borrower on an existing loan. Symmetric to
     ///      {migrateLenderPosition}: burns the current borrower NFT,
     ///      mints a fresh LoanInitiated NFT to `newBorrower`, and updates
@@ -245,6 +265,7 @@ library LibLoan {
         LibProtectedAccount.requireCanOpen(newBorrower);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
+        _requirePositionMayLeave(loan.borrowerTokenId);
         address diamond = address(this);
 
         (bool success, bytes memory data) = diamond.call(

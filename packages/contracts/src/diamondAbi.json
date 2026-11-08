@@ -1618,6 +1618,7 @@
 {"type":"error","name":"OffsetAlreadyActive","inputs":[]},
 {"type":"error","name":"OffsetNotLinked","inputs":[]},
 {"type":"error","name":"OffsetOfferNotAccepted","inputs":[]},
+{"type":"error","name":"PositionNftsLocked","inputs":[{"name":"account","type":"address","internalType":"address"}]},
 {"type":"error","name":"SaleListingActiveOnLoan","inputs":[]},
 {"type":"function","name":"checkRefinanceRequest","inputs":[{"name":"loanId","type":"uint256","internalType":"uint256"},{"name":"offerId","type":"uint256","internalType":"uint256"}],"outputs":[],"stateMutability":"view"},
 {"type":"function","name":"getRefinanceRequest","inputs":[{"name":"loanId","type":"uint256","internalType":"uint256"}],"outputs":[{"name":"offerId","type":"uint256","internalType":"uint256"},{"name":"live","type":"bool","internalType":"bool"}],"stateMutability":"view"},
