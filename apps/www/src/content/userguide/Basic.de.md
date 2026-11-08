@@ -1266,6 +1266,30 @@ Positions listet jeden Kredit, den Sie in diesem Netzwerk vergeben oder aufgenom
 
 Alle, Verliehen und Geliehen grenzen alle drei Listen zugleich ein. Positions sagt nur dann, dass Sie nichts haben, wenn alles gelesen wurde; konnte eine Liste nicht vollständig gelesen werden, steht das dort. Jeder Kredit öffnet seine eigene Seite, die zeigt, welche Aktionen Ihnen offenstehen. Die Liste selbst signiert nie etwas.
 
+<a id="position"></a>
+
+### Position: Ein Kredit
+
+Jeder Kredit hat eine eigene Seite. Sie beginnt mit dem Status des Kredits, dann Ihre Rolle: die Seite, die Ihre Wallet jetzt hält, denn Positions-Token können verkauft oder übertragen werden. Halten Sie keine Seite, sehen Sie den Kredit nur an. Eine Frist, die Sie betrifft, ist für Ihre Seite formuliert. Ist die Kulanzfrist vorbei, sagt die Seite, dass jetzt jeder den Ausfall einleiten kann, und nur, wenn das Protokoll es bestätigt.
+
+Darunter folgen die Daten des Kredits (das Fälligkeitsdatum der aktuellen Laufzeit vor einer Pausengutschrift, Zeit, die während einer Protokollpause gutgeschrieben wurde, das Fälligkeitsdatum und das Ende der Kulanzfrist), seine Bedingungen, wie sie jetzt stehen (eine Teilrückzahlung senkt den noch geschuldeten Kapitalbetrag), sein Health Factor und wo seine Sicherheit liegt. Eine Zahl, die nicht gelesen werden konnte, wird als unbekannt angezeigt. Hat die Sicherheit keinen Preis, erhält der Kreditgeber bei einem Ausfall die Sicherheit selbst, und die Seite sagt das. Hält das Netzwerk knapp über der Liquidationsschwelle ein Band für einen internen Abgleich mit einem anderen Kredit zurück, nennt die Seite es: Innerhalb dieses Bands kann kein externer Verkauf den Kredit schließen. Eine NFT-Miete hat keine Sicherheit: Fällt sie aus, endet die Nutzung des Mieters, die vorausbezahlte Miete geht abzüglich des Protokollanteils an den Kreditgeber und der Puffer an die Treasury. Die vollständige Rückzahlung ist ihre erste Aktion; die anderen folgen in späteren Updates.
+
+<a id="repay"></a>
+
+### Vollständig zurückzahlen
+
+Bei einem laufenden Kredit bietet die Seite an, ihn vollständig zurückzuzahlen. Zurückzahlen darf jeder außer dem Kreditgeber. Halten Sie die Kreditnehmerposition nicht, gibt Ihnen die Zahlung kein Recht auf die Sicherheit: Nur deren Inhaber kann sie abholen. Die Rückzahlung ist angehalten, sobald die Kulanzfrist abgelaufen ist (der Kredit geht dann in den Ausfall), und solange ein Swap-to-Repay-Auftrag offen ist.
+
+Der geschuldete Betrag wächst mit jeder Sekunde, und das Protokoll nimmt den Betrag zum Zeitpunkt, an dem Ihre Rückzahlung bestätigt wird. Die Prüfung zeigt zwei Zahlen: was es jetzt kostet und was es etwa dreißig Minuten später kosten würde. Ihre Wallet genehmigt genau die zweite Zahl. Hatten Sie schon mehr genehmigt, auch unbegrenzt, wird die Genehmigung für die Rückzahlung auf diese Zahl gesenkt, denn die Rückzahlung kennt selbst keinen Höchstbetrag. Die Genehmigung begrenzt den Betrag, nicht die Zeit: Eine später bestätigte Rückzahlung geht nur durch, solange der geschuldete Betrag noch hineinpasst, sonst wird sie abgelehnt und nichts bewegt sich. Bei einem Kredit, der die volle Laufzeit berechnet, wächst der Betrag vor dem Fälligkeitsdatum nicht, sodass auch eine spätere Rückzahlung noch durchgehen kann. Was die Rückzahlung von der Genehmigung nicht verbraucht, wird danach zurückgesetzt. Dann holt der Kreditnehmer die Sicherheit und der Kreditgeber Kapital und Zinsen unter Claims ab.
+
+<a id="interest-schedule"></a>
+
+### Zinsplan
+
+Ein Kredit mit Zinsplan schuldet Zinsen in jeder Periode (ein Monat, ein Quartal, sechs Monate oder ein Jahr), nicht erst am Ende. Seine Seite zeigt die laufende Periode: wann sie endet, wann ihre Kulanzfrist endet, welche Zinsen sie schuldet, was darauf gezahlt wurde und was noch offen ist. Die Zinsen einer Periode werden auf Kapitalbetrag und Zinssatz berechnet, wie sie jetzt stehen, daher senkt eine Teilrückzahlung sie.
+
+Sind eine Periode und ihre Kulanzfrist vorbei, darf jeder sie abrechnen. Eine bezahlte Periode rückt nur den Stichtag vor; bei einer noch offenen wird gerade so viel Sicherheit des Kreditnehmers verkauft, wie die offene Summe und die Kosten des Verkaufs decken. Die Seite sagt, ob die Abrechnung jetzt offen ist. Sie nennt den Schalter des Netzwerks für die periodische Abrechnung, wenn er aus ist (dann kann nichts abgerechnet und keine Sicherheit verkauft werden), und die Protokollpause, solange sie dauert (die Abrechnung ruht, und die pausierte Zeit wird den Daten der Periode hinzugefügt). Eine Pause verschiebt die Daten der Periode um die pausierte Zeit nach hinten, doch die Zinsen, die eine Periode schuldet, bleiben die einer Periode; Zinsen laufen während der Pause weiter, und jeder Zins, den eine Rückzahlung zahlt, zählt für die Periode.
+
 <a id="risk-access"></a>
 
 ### Risk Access: Ihre Risikostufe

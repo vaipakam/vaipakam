@@ -32,7 +32,9 @@
  * governance timelock, so the subset also carries `event` entries, copied
  * and checked exactly like the views. An entry is identified by its TYPE and
  * name together, so a view and an event of the same name never shadow each
- * other.
+ * other. The same pass also carries the state-changing functions it DECODES
+ * a queued governance call against (#3237); those are `function` entries too,
+ * checked the same way, and never called.
  *
  * Usage (from ops/mesh-watcher):
  *   node scripts/abi-subset.mjs            # --check: exit 1 on any drift
@@ -100,7 +102,7 @@ export function subsetProblems(subset) {
     const seen = new Set();
     for (const entry of entries) {
       if (!ENTRY_TYPES.has(entry.type)) {
-        problems.push(`${facet}: the subset carries a ${entry.type} entry; it holds views and events only`);
+        problems.push(`${facet}: the subset carries a ${entry.type} entry; it holds functions and events only`);
         continue;
       }
       const id = `${entry.type}:${entry.name}`;

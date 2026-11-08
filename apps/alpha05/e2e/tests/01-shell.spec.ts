@@ -36,10 +36,10 @@ test('Advanced mode adds the advanced primary pages and the mode line follows', 
 
 test('a page not built yet says so and links the current app for the same job', async ({ launchWallet }) => {
   const { page } = await launchWallet('visitor');
-  await page.goto('/positions/7');
-  await expect(page.getByRole('heading', { level: 1 })).toHaveText('Position');
+  await page.goto('/claims');
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('Claims');
   await expect(page.getByText('This page is not built yet in the new app.', { exact: false })).toBeVisible();
-  await expect(page.getByRole('link', { name: 'Open it in the current app' })).toHaveAttribute('href', 'https://app.vaipakam.com/positions/7');
+  await expect(page.getByRole('link', { name: 'Open it in the current app' })).toHaveAttribute('href', 'https://app.vaipakam.com/claims');
   await page.goto('/no-such-page');
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('No page here');
 });

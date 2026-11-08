@@ -1262,6 +1262,30 @@ Positions liste chaque prêt que vous avez accordé ou contracté sur ce réseau
 
 Tous, Prêtés et Empruntés filtrent les trois listes à la fois. Positions n'affirme que vous n'avez rien qu'après avoir tout lu ; si une liste n'a pas pu être lue en entier, il le dit. Chaque prêt ouvre sa propre page, qui montre les actions qui vous sont ouvertes. La liste elle-même ne signe jamais rien.
 
+<a id="position"></a>
+
+### Position : un prêt
+
+Chaque prêt a sa propre page. Elle commence par le statut du prêt, puis votre rôle : le côté que votre wallet détient maintenant, car les jetons de position peuvent être vendus ou transférés. Si vous ne détenez aucun côté, vous consultez le prêt. Une échéance qui vous concerne est formulée pour votre côté. Une fois le délai de grâce écoulé, la page indique que n'importe qui peut lancer le défaut, et seulement quand le protocole le confirme.
+
+Viennent ensuite les dates du prêt (l'échéance de la période en cours avant tout crédit de pause, le temps ajouté pendant une pause du protocole, l'échéance et la fin du délai de grâce), ses conditions telles qu'elles sont maintenant (un remboursement partiel réduit le capital encore dû), son facteur de santé et l'endroit où sa garantie est détenue. Un chiffre qui n'a pas pu être lu est affiché comme inconnu. Si la garantie n'a pas de prix, un défaut remet au prêteur la garantie elle-même, et la page le dit. Si le réseau réserve une bande juste au-dessus du seuil de liquidation à un appariement interne avec un autre prêt, la page l'indique : dans cette bande, aucune vente externe ne peut clore le prêt. Une location de NFT n'a pas de garantie : en cas de défaut, l'usage du locataire prend fin, le loyer prépayé va au prêteur moins la part du protocole et la réserve va à la trésorerie. Le remboursement intégral est sa première action ; les autres arrivent dans de prochaines mises à jour.
+
+<a id="repay"></a>
+
+### Rembourser intégralement
+
+Sur un prêt en cours, la page propose de le rembourser intégralement. Tout le monde peut rembourser, sauf le prêteur. Si vous ne détenez pas la position d'emprunteur, payer ne vous donne aucun droit sur la garantie : seul son détenteur peut la récupérer. Le remboursement est suspendu dès la fin du délai de grâce (le prêt passe alors en défaut) et tant qu'un ordre de swap-to-repay est en attente.
+
+Ce que vous devez augmente à chaque seconde, et le protocole prend le montant au moment où votre remboursement est confirmé. L'examen montre deux chiffres : ce que cela coûte maintenant et ce que cela coûterait environ trente minutes plus tard. Votre portefeuille approuve exactement le second chiffre. Si vous aviez déjà approuvé davantage, même un montant illimité, l'approbation est ramenée à ce chiffre pour le remboursement, car le remboursement ne fixe lui-même aucun maximum. L'approbation limite le montant, pas le temps : un remboursement confirmé plus tard ne passe que tant que ce qui est dû y tient encore, sinon il est refusé et rien ne bouge. Sur un prêt qui facture la durée entière, le montant ne grandit pas avant l'échéance, donc un remboursement plus tardif peut encore passer. Ce que le remboursement n'utilise pas de l'approbation est remis en place ensuite. Puis l'emprunteur récupère la garantie et le prêteur récupère le principal et les intérêts dans Claims.
+
+<a id="interest-schedule"></a>
+
+### Échéancier des intérêts
+
+Un prêt assorti d'un échéancier doit des intérêts à chaque période (un mois, un trimestre, six mois ou un an), pas seulement à la fin. Sa page montre la période en cours : quand elle se termine, quand son délai de grâce se termine, les intérêts qu'elle doit, ce qui a été payé et ce qui reste dû. Les intérêts d'une période sont calculés sur le capital et le taux tels qu'ils sont maintenant, donc un remboursement partiel les réduit.
+
+Une fois une période et son délai de grâce écoulés, n'importe qui peut la régler. Une période payée fait seulement avancer l'échéance ; pour une période encore incomplète, juste assez de garantie de l'emprunteur est vendue pour couvrir ce qui est dû et les frais de la vente. La page indique si le règlement est ouvert maintenant. Elle nomme l'interrupteur de règlement périodique du réseau lorsqu'il est coupé (rien ne peut alors être réglé et aucune garantie n'est vendue) et la pause du protocole tant qu'elle dure (le règlement s'arrête et le temps de pause s'ajoute aux dates de la période). Une pause repousse les dates de la période de la durée de pause, mais les intérêts qu'une période doit restent ceux d'une période ; les intérêts continuent de courir pendant la pause, et tout intérêt payé par un remboursement compte pour la période.
+
 <a id="risk-access"></a>
 
 ### Risk Access : votre niveau de risque

@@ -35,3 +35,21 @@ export async function seedRoleAssets(): Promise<void> {
     await confirm(h2, 'mint (ERC-20 seeding)');
   }
 }
+
+/** Wrap `amountEth` more WETH for one role, for a spec whose wallets the
+ *  serial suite may already have spent from: the one-time seed above is 1
+ *  WETH per role, and earlier specs leave some of it in loans that stay
+ *  open. A spec that needs a known balance tops it up itself rather than
+ *  relying on what earlier specs left. */
+export async function topUpWeth(role: (typeof ROLES)[number], amountEth: string): Promise<void> {
+  const account = accountFor(role);
+  const hash = await walletFor(account).writeContract({
+    address: WETH,
+    abi: ERC20_MIN_ABI,
+    functionName: 'deposit',
+    value: parseEther(amountEth),
+    account,
+    chain: forkChain,
+  });
+  await confirm(hash, 'deposit (WETH top-up)');
+}

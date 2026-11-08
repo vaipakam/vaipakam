@@ -2379,6 +2379,32 @@ Positions lee el mismo inventario que Home mediante un lector compartido: `getUs
 
 La elección de lado filtra los pagos y las filas activas y terminadas por el lado que se guarda. "Nada" se dice solo cuando el recorrido de posiciones y el de pagos se completaron y la última lectura tuvo éxito; un recorrido detenido en su tope se indica como incompleto. Una fila abre `/positions/<id>`, donde el veredicto de elegibilidad decide cada acción; la lista no envía ninguna transacción.
 
+<a id="position"></a>
+
+### Position: cómo se lee un préstamo
+
+La página lee `getLoanDetails(loanId)` y `ownerOf` para los NFT de posición del prestamista y del prestatario; el papel es el token que la wallet guarda ahora. Para un préstamo activo (Active o FallbackPending) lee `getLoanDeadlines` (vencimiento del plazo actual antes del crédito por pausa, que una extensión o un traspaso del prestatario reescribe, crédito por pausa, vencimiento, fin de la gracia), `previewPeriodicSettle` con `getPeriodicInterestEnabled` cuando tiene calendario, `isLoanDefaultable` (+ `paused`, `sequencerHealthy`, `defaultKycAdmission`), `calculateHealthFactor` y `calculateLTV`; para todo préstamo, `getLoanCollateralLien` e `isSaleVehicleLoan`. Cada lectura es independiente: una que falla se muestra como desconocida, nunca como cero, y ninguna fecha se calcula a partir de `startTime` y `durationDays`.
+
+Para un préstamo con precio también lee `getInternalMatchConfigBundle`. Con el emparejamiento interno activo, un préstamo cuya relación préstamo-valor va de su umbral hasta el umbral más `externalLiquidationPriorityWindowBps` queda reservado para un emparejamiento interno y toda ruta de liquidación externa lo rechaza (`InternalMatchOnlyBand`); la página indica esa banda. Un `loanInitiationFeeBpsAtInit` de 0 (un préstamo abierto antes de que se guardara la tasa) se muestra como no registrado, y un `treasuryFeeBpsAtInit` de 0 como la tasa heredada del 1% que aplica la liquidación. El aviso de entrega en especie es solo para un préstamo ERC-20: un alquiler de NFT no tiene garantía, y su impago termina el uso del arrendatario, paga el alquiler prepagado al prestamista menos la parte de la tesorería y envía el colchón a la tesorería, lo que la página indica en su lugar.
+
+Las tasas son instantáneas del préstamo: `treasuryFeeBpsAtInit`, `loanInitiationFeeBpsAtInit` (ninguna en un vehículo de venta) y `liquidationLtvBpsAtInit`. Un préstamo con un lado ilíquido (`principalLiquidity` o `collateralLiquidity`) no tiene lectura basada en precio: el protocolo rechaza `calculateHealthFactor` y `calculateLTV` para él, y la página lo dice en lugar de mostrar desconocido. `principal` es lo que aún se adeuda (un reembolso parcial lo reduce), y `interestRateBps` y `collateralAmount` también pueden cambiar, así que las condiciones se muestran tal como están ahora; un préstamo terminado sin principal en su registro dice si una compensación interna lo cubrió y, si no, solo que no consta ninguno; un alquiler de NFT muestra su renta diaria (`principal`, en `prepayAsset`) y si devolverlo antes sigue cobrando cada día restante (`useFullTermInterest`). Con `getPeriodicInterestEnabled` en false, la página dice que no se vende garantía en un punto de control. `collateralLiquidity` Illiquid en un préstamo activo añade el aviso en especie: un impago transfiere la garantía al prestamista sin venta. Su primera transacción es el pago completo, abajo.
+
+<a id="repay"></a>
+
+### Pagar el préstamo completo: cómo se calcula
+
+La acción sigue una regla: `repayLoan` se ofrece para un préstamo ERC-20 Active o FallbackPending a cualquier billetera que no sea `loan.lender` ni `ownerOf(lenderTokenId)` (`LenderCannotRepayOwnLoan`), se retiene pasado el fin efectivo del período de gracia en un préstamo Active (`RepaymentPastGracePeriod`) y mientras `positionLock(borrowerTokenId)` sea `SwapToRepayIntent`. Una venta listada por el prestamista, una solicitud de refinanciación y la pausa global no lo retienen. Los alquileres aún no se ofrecen aquí.
+
+La revisión lee `calculateRepaymentAmount(loanId)` en el último bloque y otra vez con la hora del bloque sustituida por `min(now + 30 minutos, fin de gracia)`; la misma solicitud lee la hora del bloque con la que se ejecutó, y una conexión que ignoró la sustitución se descarta. La aprobación es exactamente la segunda cifra, la llamada se simula antes de abrir la billetera y, tras el recibo, el estado en que la devolución dejó el préstamo se lee de su registro `LoanRepaid` (no en el bloque, donde un cobro posterior ya puede haberlo liquidado), el pago se mide a partir de los registros `Transfer` y la allowance se restablece a su valor anterior cuando marca la aprobación menos el pago. Una allowance mayor que esa cifra, incluida una ilimitada, también se reduce a ella, porque `repayLoan(loanId)` no fija máximo ni plazo; el restablecimiento devuelve después el valor mayor.
+
+<a id="interest-schedule"></a>
+
+### Calendario de intereses: cómo se lee
+
+Para un préstamo ERC-20 activo con cadencia, la tarjeta lee `previewPeriodicSettle(loanId)` (cadencia, `periodEndAt`, `graceEndsAt`, `expected`, `paidByBorrower`, `shortfall`, `canSettleNow`), `getPeriodicInterestEnabled()` y `paused()`, e indica la hora del bloque leída. `expected` es un período completo con el `principal` y el `interestRateBps` actuales; `periodEndAt` incluye el crédito de pausa del préstamo.
+
+El `canSettleNow` de la vista previa no tiene en cuenta el interruptor ni la pausa, así que la tarjeta los combina en el orden propio de `settlePeriodicInterest`: apagado (`PeriodicInterestDisabled`), en pausa (`whenNotPaused`) y luego el tiempo del período (`PeriodicSettleNotDue` antes de `graceEndsAt`). Solo se anuncia una venta cuando el interruptor está encendido y el protocolo no está en pausa; un interruptor o una pausa sin leer se indican como desconocidos. Con un déficit cero, la liquidación solo adelanta el punto de control. El armado de `PERIODIC_SETTLE` en el keeper no se comunica a la app, así que la tarjeta dice que la liquidación está abierta a cualquiera y que el estado del keeper no se conoce.
+
 <a id="risk-access"></a>
 
 ### Risk Access: tu nivel de riesgo

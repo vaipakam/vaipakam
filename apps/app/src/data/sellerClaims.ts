@@ -22,7 +22,7 @@
  * `null`, a loan that could not be read is listed as unread, and a list cut
  * short by its page cap says so.
  */
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { usePublicClient } from 'wagmi';
 import {
   BaseError,
@@ -230,4 +230,39 @@ export function useMySellerClaims() {
       return { rows, unread, truncated: found.truncated };
     },
   });
+}
+
+// ─── Withdrawal outcomes ───────────────────────────────────────────────
+
+const OUTCOME_ROOT = 'sellerClaimWithdrawn';
+
+/**
+ * The loans this wallet withdrew a seller claim from in this session. Kept
+ * in the query cache under its own root, never fetched and never invalidated
+ * by the seller-claim reads, so the outcome outlives the row that sent it: a
+ * withdrawal that empties a claim on an ended loan removes that row on the
+ * next read, and the user (and a reader of the page) must still see that it
+ * went through. The same shape as the extension-reserve outcomes.
+ */
+export function useSellerWithdrawOutcomes(): readonly number[] {
+  const { readChain, address } = useActiveChain();
+  const q = useQuery({
+    queryKey: [OUTCOME_ROOT, readChain.chainId, address?.toLowerCase()],
+    queryFn: () => [] as number[],
+    enabled: false,
+    staleTime: Infinity,
+    gcTime: Infinity,
+  });
+  return q.data ?? [];
+}
+
+/** Records a withdrawal where {@link useSellerWithdrawOutcomes} reads it. */
+export function useRecordSellerWithdrawOutcome(): (loanId: number) => void {
+  const { readChain, address } = useActiveChain();
+  const queryClient = useQueryClient();
+  return (loanId) =>
+    queryClient.setQueryData<number[]>(
+      [OUTCOME_ROOT, readChain.chainId, address?.toLowerCase()],
+      (prev) => (prev?.includes(loanId) ? prev : [...(prev ?? []), loanId]),
+    );
 }

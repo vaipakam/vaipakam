@@ -2399,6 +2399,32 @@ Positions lit le même inventaire que Home via un lecteur partagé : `getUserPos
 
 Le choix du côté filtre les paiements et les lignes en cours et terminées selon le côté détenu. « Rien » n'est affiché que lorsque le parcours des positions et celui des paiements sont complets et que la dernière lecture a réussi ; un parcours arrêté à son plafond est déclaré incomplet. Une ligne ouvre `/positions/<id>`, où le verdict d'éligibilité décide de chaque action ; la liste n'envoie aucune transaction.
 
+<a id="position"></a>
+
+### Position : comment un prêt est lu
+
+La page lit `getLoanDetails(loanId)` et `ownerOf` pour les NFT de position du prêteur et de l'emprunteur ; le rôle est le jeton que le wallet détient maintenant. Pour un prêt en cours (Active ou FallbackPending), elle lit `getLoanDeadlines` (échéance de la période en cours avant crédit de pause, qu'une prolongation ou une reprise par un autre emprunteur réécrit, crédit de pause, échéance, fin du délai de grâce), `previewPeriodicSettle` avec `getPeriodicInterestEnabled` quand le prêt a un calendrier, `isLoanDefaultable` (+ `paused`, `sequencerHealthy`, `defaultKycAdmission`), `calculateHealthFactor` et `calculateLTV` ; pour tout prêt, `getLoanCollateralLien` et `isSaleVehicleLoan`. Chaque lecture est indépendante : une lecture échouée est affichée comme inconnue, jamais comme zéro, et aucune date n'est calculée à partir de `startTime` et `durationDays`.
+
+Pour un prêt doté d'un prix, elle lit aussi `getInternalMatchConfigBundle`. Quand l'appariement interne est actif, un prêt dont le ratio prêt-valeur va de son seuil jusqu'au seuil plus `externalLiquidationPriorityWindowBps` est réservé à un appariement interne et toute voie de liquidation externe refuse (`InternalMatchOnlyBand`) ; la page indique cette bande. Un `loanInitiationFeeBpsAtInit` de 0 (un prêt ouvert avant que le taux soit conservé) est affiché comme non enregistré, et un `treasuryFeeBpsAtInit` de 0 comme le taux historique de 1 % appliqué au règlement. L'avertissement de remise en nature ne vaut que pour un prêt ERC-20 : une location de NFT n'a pas de garantie, et son défaut met fin à l'usage du locataire, verse le loyer prépayé au prêteur moins la part de la trésorerie et envoie la réserve à la trésorerie, ce que la page indique à la place.
+
+Les taux sont des instantanés du prêt : `treasuryFeeBpsAtInit`, `loanInitiationFeeBpsAtInit` (aucun pour un véhicule de vente) et `liquidationLtvBpsAtInit`. Un prêt dont un côté est illiquide (`principalLiquidity` ou `collateralLiquidity`) n'a pas de lecture fondée sur un prix : le protocole refuse `calculateHealthFactor` et `calculateLTV` pour lui, et la page le dit au lieu d'afficher inconnu. `principal` est ce qui reste dû (un remboursement partiel le réduit), et `interestRateBps` et `collateralAmount` peuvent aussi changer, donc les conditions sont affichées telles qu'elles sont maintenant ; un prêt terminé sans capital à son registre indique si un appariement interne l'a couvert, et sinon seulement qu'aucun n'est enregistré ; une location de NFT affiche son loyer par jour (`principal`, en `prepayAsset`) et si un retour anticipé facture encore chaque jour restant (`useFullTermInterest`). Avec `getPeriodicInterestEnabled` à false, la page indique qu'aucune garantie n'est vendue à une échéance. `collateralLiquidity` Illiquid sur un prêt en cours ajoute l'avertissement en nature : un défaut transfère la garantie au prêteur sans vente. Sa première transaction est le remboursement intégral, ci-dessous.
+
+<a id="repay"></a>
+
+### Rembourser intégralement : comment le montant est fixé
+
+L'action suit une règle : `repayLoan` est proposé pour un prêt ERC-20 Active ou FallbackPending à tout portefeuille qui n'est ni `loan.lender` ni `ownerOf(lenderTokenId)` (`LenderCannotRepayOwnLoan`), suspendu après la fin effective du délai de grâce sur un prêt Active (`RepaymentPastGracePeriod`) et tant que `positionLock(borrowerTokenId)` vaut `SwapToRepayIntent`. Une mise en vente par le prêteur, une demande de refinancement et la pause globale ne le suspendent pas. Les locations ne sont pas encore proposées ici.
+
+L'examen lit `calculateRepaymentAmount(loanId)` au dernier bloc, puis à nouveau avec l'heure du bloc remplacée par `min(now + 30 minutes, fin du délai de grâce)` ; la même requête lit l'heure de bloc sous laquelle elle s'est exécutée, et une connexion qui a ignoré le remplacement est écartée. L'approbation est exactement le second chiffre, l'appel est simulé avant l'ouverture du portefeuille et, après le reçu, le statut dans lequel le remboursement a laissé le prêt est lu dans son journal `LoanRepaid` (pas au bloc, où une réclamation ultérieure peut déjà l'avoir soldé), le paiement est mesuré à partir des journaux `Transfer` et l'allowance est remise à sa valeur antérieure quand elle indique l'approbation moins le paiement. Une allowance supérieure à ce chiffre, illimitée comprise, est elle aussi ramenée à ce chiffre, car `repayLoan(loanId)` ne fixe ni maximum ni échéance ; la remise en état rétablit ensuite la valeur plus élevée.
+
+<a id="interest-schedule"></a>
+
+### Échéancier des intérêts : comment il est lu
+
+Pour un prêt ERC-20 actif avec une cadence, la carte lit `previewPeriodicSettle(loanId)` (cadence, `periodEndAt`, `graceEndsAt`, `expected`, `paidByBorrower`, `shortfall`, `canSettleNow`), `getPeriodicInterestEnabled()` et `paused()`, et indique l'heure du bloc lu. `expected` correspond à une période entière au `principal` et à l'`interestRateBps` actuels ; `periodEndAt` inclut le crédit de pause du prêt.
+
+Le `canSettleNow` de l'aperçu ignore l'interrupteur et la pause, donc la carte les combine dans l'ordre propre à `settlePeriodicInterest` : coupé (`PeriodicInterestDisabled`), en pause (`whenNotPaused`), puis le temps de la période (`PeriodicSettleNotDue` avant `graceEndsAt`). Une vente n'est annoncée que lorsque l'interrupteur est activé et que le protocole n'est pas en pause ; un interrupteur ou une pause non lus sont indiqués comme inconnus. Avec un manque nul, le règlement ne fait qu'avancer l'échéance. L'armement de `PERIODIC_SETTLE` côté keeper n'est pas transmis à l'app, donc la carte indique que le règlement est ouvert à tous et que l'état du keeper n'est pas connu.
+
 <a id="risk-access"></a>
 
 ### Risk Access : votre niveau de risque

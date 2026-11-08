@@ -7,20 +7,14 @@
  */
 import type { CopyAccess, CopyKey } from '../copy/useCopy';
 import type { Posture } from '../capability/types';
-import { INTERVAL_DAYS, periodInterest } from '../offers/cadence';
+import { CADENCE_NAME, INTERVAL_DAYS, periodInterest } from '../offers/cadence';
 import { figured, textValue, type Receipt, type ReceiptText } from '../receipt/types';
 import { tokenAmount, type TokenMetaMap } from '../reads/tokens';
 import { formatSpan } from '../ui/format';
-import { isRanged, type ParsedPost } from './postModel';
+import { isRanged } from './postModel';
 import { TARIFF_KEYS } from './postCopy';
 import type { PostReview } from './postReview';
 
-const CADENCE_NAME: Readonly<Record<Exclude<ParsedPost['cadence'], 0>, CopyKey>> = {
-  1: 'borrow.cadenceMonthly',
-  2: 'borrow.cadenceQuarterly',
-  3: 'borrow.cadenceSemiAnnual',
-  4: 'borrow.cadenceAnnual',
-};
 
 /**
  * OFF-14 — the schedule rows, for either side. Interest at repayment is one

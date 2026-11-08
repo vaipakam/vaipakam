@@ -2097,6 +2097,32 @@ fallback، موعد غير مقروء، يستحق خلال ثلاثة أيام�
 
 يصفّي اختيار الطرف المدفوعات والصفوف الجارية والمنتهية حسب الطرف المحمول. لا تُقال "لا شيء" إلا عند اكتمال المرور على المراكز والمرور على المدفوعات ونجاح آخر قراءة؛ والمرور الذي توقّف عند حدّه يُذكر أنه غير مكتمل. يفتح الصف `/positions/<id>` حيث يقرّر حكم الأهلية كل إجراء؛ ولا ترسل القائمة أي معاملة.
 
+<a id="position"></a>
+
+### Position: كيف يُقرأ القرض
+
+تقرأ الصفحة `getLoanDetails(loanId)` و`ownerOf` لرموز NFT لمركزَي المُقرض والمقترض؛ والدور هو الرمز الذي تحمله المحفظة الآن. وللقرض الجاري (Active أو FallbackPending) تقرأ `getLoanDeadlines` (استحقاق المدة الحالية قبل رصيد الإيقاف، الذي يعيد التمديد أو نقل المقترض كتابته، ورصيد الإيقاف، والاستحقاق، ونهاية السماح)، و`previewPeriodicSettle` مع `getPeriodicInterestEnabled` عندما يكون للقرض جدول، و`isLoanDefaultable` (+ `paused`, `sequencerHealthy`, `defaultKycAdmission`) و`calculateHealthFactor` و`calculateLTV`؛ ولكل قرض `getLoanCollateralLien` و`isSaleVehicleLoan`. كل قراءة مستقلة: ما يفشل منها يُعرض غير معروف، لا صفرًا أبدًا، ولا يُحسب أي تاريخ من `startTime` و`durationDays`.
+
+وللقرض المسعّر تقرأ أيضًا `getInternalMatchConfigBundle`. فما دامت المطابقة الداخلية مفعّلة، يُحجز القرض الذي تقع نسبة قرضه إلى قيمته بين حدّه والحدّ زائد `externalLiquidationPriorityWindowBps` لمطابقة داخلية، وترفض كل طرق التصفية الخارجية (`InternalMatchOnlyBand`)، والصفحة تذكر هذا النطاق. ويُعرض `loanInitiationFeeBpsAtInit` بقيمة 0 (قرض فُتح قبل حفظ المعدل) على أنه غير مسجّل، و`treasuryFeeBpsAtInit` بقيمة 0 على أنه المعدل القديم 1% الذي تطبقه التسوية. وتحذير التسليم العيني لقرض ERC-20 فقط: فليس لتأجير NFT ضمان، وتعثّره يُنهي استخدام المستأجر ويدفع الإيجار المدفوع مقدّمًا إلى المُقرض بعد حصة الخزينة ويرسل الاحتياطي إلى الخزينة، والصفحة تذكر ذلك بدلًا منه.
+
+المعدلات لقطات القرض: `treasuryFeeBpsAtInit` و`loanInitiationFeeBpsAtInit` (لا شيء لقرض بيع) و`liquidationLtvBpsAtInit`. والقرض الذي أحد طرفيه غير سائل (`principalLiquidity` أو `collateralLiquidity`) لا قراءة مبنية على السعر له: يرفض البروتوكول `calculateHealthFactor` و`calculateLTV` له، وتقول الصفحة ذلك بدلًا من «غير معروف». و`principal` هو ما يزال مستحقًا (السداد الجزئي يخفّضه)، ويمكن أن يتغيّر `interestRateBps` و`collateralAmount` أيضًا، لذا تُعرض الشروط كما هي الآن؛ والقرض المنتهي الذي لا أصل في سجله يذكر ما إذا كانت مطابقة داخلية قد غطّته، وإلا فيذكر فقط أنه لا شيء مسجّل؛ ويعرض استئجار NFT إيجاره اليومي (`principal`، بعملة `prepayAsset`) وما إذا كانت الإعادة المبكرة لا تزال تُحتسب عن كل يوم متبقٍ (`useFullTermInterest`). وإذا كان `getPeriodicInterestEnabled` خطأ (false)، تقول الصفحة إنه لا يُباع ضمان عند نقطة استحقاق. وإذا كان `collateralLiquidity` غير سائل (Illiquid) في قرض جارٍ أُضيف تحذير التسوية العينية: التعثّر ينقل الضمان إلى المُقرض دون بيع. وأول معاملة ترسلها هي السداد الكامل، أدناه.
+
+<a id="repay"></a>
+
+### السداد الكامل: كيف يُحدَّد المبلغ
+
+يتبع الإجراء قاعدة واحدة: يُعرض `repayLoan` لقرض ERC-20 في حالة Active أو FallbackPending على أي محفظة ليست `loan.lender` ولا `ownerOf(lenderTokenId)` (`LenderCannotRepayOwnLoan`)، ويُوقَف بعد النهاية الفعلية لفترة السماح في قرض Active (`RepaymentPastGracePeriod`)، وما دام `positionLock(borrowerTokenId)` هو `SwapToRepayIntent`. ولا يوقفه عرض بيع من المُقرض ولا طلب إعادة تمويل ولا الإيقاف العام. ولا تُعرض الإيجارات هنا بعد.
+
+تقرأ المراجعة `calculateRepaymentAmount(loanId)` عند أحدث كتلة، ثم مرة أخرى بعد استبدال وقت الكتلة بـ `min(now + 30 دقيقة, نهاية فترة السماح)`؛ ويقرأ الطلب نفسه وقت الكتلة الذي نُفّذ تحته، وأي اتصال تجاهل الاستبدال يُتخطّى. والموافقة هي الرقم الثاني بالضبط، ويُحاكى الاستدعاء قبل فتح المحفظة، وبعد الإيصال تُقرأ الحالة التي ترك فيها السدادُ القرضَ من سجل `LoanRepaid` الخاص به (لا عند الكتلة، حيث قد تكون مطالبة لاحقة قد سوّته بالفعل)، ويُقاس الدفع من سجلات `Transfer`، وتُعاد الـ allowance إلى قيمتها السابقة إذا كانت تساوي الموافقة ناقص الدفع. وتُخفَّض أي allowance أكبر من هذا الرقم، بما فيها غير المحدودة، إليه كذلك، لأن `repayLoan(loanId)` لا يأخذ حدًا أقصى ولا مهلة؛ ثم تعيد الاستعادة القيمة الأكبر.
+
+<a id="interest-schedule"></a>
+
+### جدول الفائدة: كيف يُقرأ
+
+لقرض ERC-20 نشط (Active) له دورية، تقرأ البطاقة `previewPeriodicSettle(loanId)` (الدورية و`periodEndAt` و`graceEndsAt` و`expected` و`paidByBorrower` و`shortfall` و`canSettleNow`) و`getPeriodicInterestEnabled()` و`paused()`، وتذكر وقت الكتلة الذي قرأته. `expected` هي فترة كاملة بأصل الدين `principal` والمعدل `interestRateBps` الحاليين؛ و`periodEndAt` يتضمن رصيد الإيقاف للقرض.
+
+لا يأخذ `canSettleNow` في المعاينة المفتاحَ ولا الإيقاف في الحسبان، لذا تجمعهما البطاقة بترتيب `settlePeriodicInterest` نفسه: مطفأ (`PeriodicInterestDisabled`)، ثم موقوف (`whenNotPaused`)، ثم وقت الفترة (`PeriodicSettleNotDue` قبل `graceEndsAt`). لا يُعلن عن بيع إلا حين يكون المفتاح مشغّلًا والبروتوكول غير موقوف؛ والمفتاح أو الإيقاف الذي تعذّرت قراءته يُذكر بوصفه غير معروف. ومع نقص قدره صفر، لا تفعل التسوية سوى تقديم نقطة الاستحقاق. ولا يُبلَّغ التطبيق بتفعيل `PERIODIC_SETTLE` لدى الحارس (keeper)، لذا تقول البطاقة إن التسوية مفتوحة لأي أحد وإن حالة الحارس غير معروفة.
+
 <a id="risk-access"></a>
 
 ### Risk Access: مستوى المخاطرة لديك

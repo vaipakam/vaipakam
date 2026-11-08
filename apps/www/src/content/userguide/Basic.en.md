@@ -1217,6 +1217,30 @@ Positions lists every loan you lent or borrowed in on this network, from the pos
 
 All, Lent and Borrowed narrow the three lists at once. Positions says you have nothing only after reading everything; if a list could not be read in full, it says so. Each loan opens its own page, which shows the actions open to you. The list itself never signs anything.
 
+<a id="position"></a>
+
+### Position: One Loan
+
+Each loan has its own page. It starts with the loan's status, then your role: the side your wallet holds now, since position tokens can be sold or transferred. If you hold neither side, you are viewing. A deadline that needs you is worded for your side. Once the grace period is over, the page says anyone may now start the default, and only when the protocol confirms it.
+
+Below that come the loan's dates (the due date of its current term before any pause credit, any time added while the protocol was paused, the due date and the end of the grace period), its terms as they stand now (a partial repayment lowers the principal still owed), its health factor, and where its collateral is held. A figure that could not be read is shown as unknown. If the collateral has no price, a default hands the lender the collateral itself, and the page says so. Where the network holds a band just above the liquidation threshold for an internal match with another loan, the page states it: inside that band no outside sale can close the loan. An NFT rental has no collateral: if it defaults, the renter's use ends, the prepaid rent goes to the lender less the protocol's share, and the buffer goes to the treasury. Repaying in full is the first of its actions; the others come in later updates.
+
+<a id="repay"></a>
+
+### Repay in Full
+
+On a running loan, the page offers to repay it in full. Anyone may repay except the lender. If you do not hold the borrower position, paying gives you no right to the collateral: only its holder can collect it. Repaying is held once the grace period has ended (the loan then goes to default), and while a swap-to-repay order is pending.
+
+What you owe grows by the second, and the protocol takes the amount as of the moment your repayment confirms. The review shows two figures: what it costs now, and what it would cost about thirty minutes ahead. Your wallet approves exactly the second figure. If you had already approved more, even an unlimited amount, it is lowered to that figure for the repayment, since the repayment takes no maximum of its own. The approval limits the amount, not the time: a repayment that confirms later goes through only while what is owed still fits within it, and is otherwise refused with nothing moved. On a loan that charges the full term, the amount does not grow before the due date, so a later repayment can still go through. Whatever it does not use of the approval is put back afterwards. Then the borrower collects the collateral and the lender collects principal and interest on Claims.
+
+<a id="interest-schedule"></a>
+
+### Interest Schedule
+
+A loan with an interest schedule owes interest every period (a month, a quarter, six months or a year), not only at the end. Its page shows the current period: when it ends, when its grace period ends, the interest it owes, what has been paid toward it and what is still owed. The interest for a period is figured on the principal and rate as they stand now, so a partial repayment lowers it.
+
+Once a period and its grace are over, anyone may settle it. A paid period only moves the checkpoint forward; one that is still short sells just enough of the borrower's collateral to cover what is owed and the sale's charges. The page says whether settling is open now. It names the network's periodic-settlement switch when it is off (then nothing can be settled and no collateral is sold), and the protocol pause while it lasts (settlement stops, and the paused time is added to the period's dates). A pause moves the period's dates later by the paused time, but the interest a period owes stays one period's worth; interest keeps accruing through the pause, and any interest a repayment pays counts toward the period.
+
 <a id="risk-access"></a>
 
 ### Risk Access: Your Risk Level

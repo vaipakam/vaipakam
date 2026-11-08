@@ -404,6 +404,23 @@ on the user's own device such as a browser extension. This is a deployment
 acceptance criterion (§3.2): a route does not reach parity on a deployment
 without it.
 
+### RB-GOVERNANCE-QUEUE — queued governance changes are public
+
+Every change governance makes waits out the governance timelock's delay,
+and the wait protects users only if they can see the change. So one public
+page, reached from the footer without a wallet, lists every operation the
+timelock holds on the chain the screen describes, soonest first, with when it
+can run, in words what it will do, and its exact call. The queue is read from
+the timelock's own storage, and every value on the page is read at one block,
+which the page states. What a change will do is shown only when its calls,
+read from the chain's schedule records, hash to the id the timelock stores;
+a change whose records were not found or do not match is still listed, with
+its id, its time and the reason its action is unknown. A call the app cannot
+decode is named as such, never guessed. A chain with no timelock recorded, a
+failed read and a failed re-read are each stated, never shown as an empty
+queue. The page also says that a queued change does not expire: it stays
+runnable until it is run or cancelled.
+
 ### RB-STATUS — every matrix row has a status
 
 `approved` (canonical intended behaviour), `proposed` (a departure or new
@@ -672,6 +689,142 @@ above. Each resolves here, so a route reviewer needs no private file:
   could not be read in full says so. Every row opens its position, where
   the protocol's verdict decides which actions are open (RB-ELIG): the list
   signs nothing and offers no action of its own.
+- **RB-POSITION-VIEW** — a loan's own page states, in this order: its
+  status in words (an adverse one, fallback or default, as a warning; an
+  internal match as closed, with each side collecting on Claims); the
+  reader's role, from the position tokens their wallet holds now (both
+  holders read; "confirming your role" until they are, and a reader who
+  holds neither is told they are viewing); the deadline that needs them,
+  worded for the side they hold, with "can now be defaulted" and "anyone
+  may now start the default" only when the protocol says the loan is
+  defaultable, never "will be", and that verdict is every gate of the
+  default a read can answer (the timing, the global pause, the sequencer
+  and the lender admission), so the gate that refuses is stated as the
+  reason the default cannot start (a grace end passed by the
+  clock alone is
+  stated as passed, with the protocol's verdict unread or not yet given;
+  a list, which does not read the verdict, sends the reader to the loan's
+  page);
+  the dates from the protocol's loan clock alone (the current term's due
+  date before pause credit, labelled as that term's and never as the
+  opening one, since an extension or a borrower handover rewrites the
+  term; the pause credit, the due date and the grace end; an unread date
+  is unknown, never computed from the start and the term), and, for a
+  loan with an interest schedule where periodic settlement is switched
+  off, that no collateral is sold at a checkpoint; the terms as they stand
+  now, said to be so (the protocol keeps no record of the amount first
+  lent, and a partial repayment lowers the principal, collateral moves and
+  a borrower handover can change the rate, so the principal is "still
+  owed" on a live loan and "when it ended" on an ended one; an ended loan
+  with no principal on its record says an internal match covered it when
+  its status says so, and otherwise only that none is recorded, never
+  calling it a write-off it cannot establish; never "you lent"; the
+  protocol's share and the initiation fee rate as the loan's own
+  snapshots, none for a loan that carries a lender sale, and a share
+  recorded as 0 as the fixed legacy rate settlement charges for a loan
+  that opened without one, never as 0%; an NFT rental's
+  rent per day in its prepayment asset and whether returning early still
+  charges every remaining day);
+  its health (a failed reading is unknown; a loan with an unpriced leg,
+  whose health and loan-to-value reads the protocol refuses, is "no
+  price-based reading", never 0 and never unknown, while a successful
+  reading of 0 on a priced loan is shown as 0; the liquidation
+  threshold is the loan's stored
+  snapshot, and the network's internal-match band above it, read from the
+  protocol, in which no outside sale can close the loan, or that matching
+  is off or holds no band; an initiation fee rate recorded as 0 is "not
+  recorded", never 0%); where its collateral is held (the protocol's lien: held in
+  the borrower's vault, on an ended loan until its claim is collected,
+  released (checked before a zero amount, since a release zeroes it), or
+  none, with an ERC-1155 lien's quantity); and, for a loan whose
+  collateral has no price, that a default hands the lender the collateral
+  itself, while an NFT rental, which has no collateral, states its own
+  default instead (the renter's use ends, the prepaid rent goes to the
+  lender less the protocol's share, the buffer to the treasury).
+  The loan's actions follow the "now" lines, each offered from its
+  eligibility rule; the actions still to come are said to be coming.
+- **RB-POSITION-REPAY** — repaying a loan in full (LN-21, LN-16) is offered
+  to anyone but the lender (recorded, or holding the lender position), and
+  is left out for a reader who holds only the lender side. Its one rule
+  (RB-ELIG) holds it on a running loan past its grace end (stated with the
+  time, and that the loan goes to default), while a swap-to-repay order is
+  pending on the borrower position, and for a rental (the app's own limit,
+  said so); it never holds for a lender listing, a refinance request, the
+  protocol pause, the Terms gate or the sanctions screen on the payer, and
+  a loan in fallback stays repayable past grace, since repaying cures it.
+  The hold LN-21 names while an ACCEPTED lender sale completes has no window
+  on this protocol: the sale completes inside the transaction that accepts
+  it, so the verdict reads nothing for it. A refinance request that still
+  stands by the protocol's own rule is named on the review: the repayment
+  ends it, but its offer stays posted until its creator cancels it. A
+  recorded one that no longer stands (cancelled, taken, expired) is not
+  named, since the record keeps the last id after a cancel, and an unread
+  request is stated unread. The protocol's full repayment takes a plain approval; it has no
+  Permit2 route, so none is offered.
+  The review states two of the protocol's own payoff figures, now and as of
+  a moment about thirty minutes ahead (never later than the grace end),
+  the second read by asking the same view with the block time moved, on a
+  connection that is checked to have honoured the move (one that ignored it
+  is passed over, and if none honours it the repayment is not offered). The
+  approval is exactly the later figure, LOWERED to it as well as raised:
+  the protocol's full repayment takes no maximum or deadline of its own, so
+  the allowance is the only cap on what a late confirmation can take, and a
+  larger standing approval (an unlimited one included, named as unlimited)
+  would void the stated maximum. The approval caps the AMOUNT, never the
+  time, and the review says so: a repayment confirming after that moment
+  goes through only while the protocol's figure stays within the approval.
+  Where the two figures are equal (full-term interest before the due date)
+  the review also says a later confirmation can still go through; it never
+  promises a deadline the protocol does not enforce. Where that moment is
+  the grace end, it is stated as the grace end as things stand, which a
+  protocol pause before it moves later (the protocol checks the moving
+  deadline, not the time the review read). It says that what
+  the repayment does not use is put back afterwards, to the allowance as it
+  stood before. The collateral is named by its asset type (an NFT by its
+  token id, an ERC-1155 with its quantity), through the same rule as the
+  loan page. A payer who does not hold the borrower position is told it
+  gains no right to the collateral. A re-read does not count the payoff
+  growing by the second as a change; the figure at the kept moment, the
+  holders, the dates, the standing allowance (what a stop puts back) or its
+  approval steps, or the verdict moving reopens the review, also when it
+  moves between the review and the send, and the kept moment moves forward
+  once it is closer than ten minutes. The finish card measures, from the
+  transaction's own logs, the status its repayment left the loan in (not
+  the status at the block, which both sides claiming later in that block
+  moves on to settled), what left the wallet (within the two stated
+  figures), and the approval put back.
+- **RB-POSITION-SCHEDULE** — a running ERC-20 loan with an interest
+  schedule (LN-24) shows its current period from the protocol's settlement
+  preview alone: the schedule, the period's end and grace end (the loan's
+  pause credit included), the interest for the whole period at the
+  principal and rate as they stand now, what has been paid toward it and
+  what is still owed, and whether the period can be settled now. The
+  preview's "callable now" does not account for the deployment's
+  periodic-settlement switch or the protocol pause, so the page reads both
+  beside it and states the result in the order the settlement itself
+  refuses: switched off (that sentence replaces any warning of a sale:
+  nothing can be settled and no collateral is sold), paused (named; no
+  sale is announced, and the paused time moves the period's dates), then
+  the period's own time. A sale is announced only while the switch is on
+  and the protocol is not paused; an unread switch, pause, period or chain
+  time is stated as unknown, never assumed. A paid period is said to only
+  move the checkpoint forward. The page states how the borrower pays a
+  period (by partial repayment where the loan allows it, otherwise only by
+  full repayment or by the sale), that a pause moves the period's dates
+  later while the interest a period owes stays one period's worth (interest
+  keeps accruing through the pause, and any interest a repayment pays counts
+  toward the period), that settling is open to anyone and the keeper's posture is
+  not known (the capability service does not yet report it), and the chain
+  time the period is placed against. When the period itself cannot be
+  read, the switch and the pause are still stated as read, so a switch that
+  is off is disclosed even with the period's figures unknown. Every read on
+  the loan page is pinned
+  to the one block whose time is stated, so the loan's status, the preview
+  and the chain time describe the same moment; the preview's "callable now"
+  is then the last word, and a period past its grace that it does not call
+  settleable belongs to a loan that is not running, stated as such and never
+  as a sale. The card is read-only; paying a period and settling one come
+  with their own actions.
 
 ## 3. Companion specifications
 

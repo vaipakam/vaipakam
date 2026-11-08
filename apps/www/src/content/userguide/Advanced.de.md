@@ -2389,6 +2389,32 @@ Positions liest denselben Bestand wie Home über einen gemeinsamen Leser: `getUs
 
 Die Seitenauswahl filtert Auszahlungen, laufende und beendete Zeilen nach der gehaltenen Seite. „Nichts“ wird nur gesagt, wenn der Positions- und der Auszahlungsdurchlauf vollständig waren und das letzte Lesen gelang; ein an seiner Obergrenze gestoppter Durchlauf wird als unvollständig angegeben. Eine Zeile öffnet `/positions/<id>`, wo das Eignungsurteil jede Aktion entscheidet; die Liste sendet keine Transaktion.
 
+<a id="position"></a>
+
+### Position: Wie ein Kredit gelesen wird
+
+Die Seite liest `getLoanDetails(loanId)` und `ownerOf` für die Positions-NFTs von Kreditgeber und Kreditnehmer; die Rolle ist das Token, das die Wallet jetzt hält. Für einen laufenden Kredit (Active oder FallbackPending) liest sie `getLoanDeadlines` (Fälligkeit der aktuellen Laufzeit vor Pausengutschrift, die eine Verlängerung oder Schuldnerübergabe neu setzt, Pausengutschrift, Fälligkeit, Ende der Kulanzfrist), bei einem Zahlungsplan `previewPeriodicSettle` mit `getPeriodicInterestEnabled`, `isLoanDefaultable` (+ `paused`, `sequencerHealthy`, `defaultKycAdmission`), `calculateHealthFactor` und `calculateLTV`; für jeden Kredit `getLoanCollateralLien` und `isSaleVehicleLoan`. Jedes Lesen steht für sich: Ein fehlgeschlagenes wird als unbekannt angezeigt, nie als null, und kein Datum wird aus `startTime` und `durationDays` berechnet.
+
+Für einen bepreisten Kredit liest sie auch `getInternalMatchConfigBundle`. Ist der interne Abgleich aktiv, wird ein Kredit, dessen Beleihungsquote von seiner Schwelle bis zur Schwelle plus `externalLiquidationPriorityWindowBps` reicht, für einen internen Abgleich zurückgehalten, und jede externe Liquidationsroute lehnt ab (`InternalMatchOnlyBand`); die Seite nennt dieses Band. Ein `loanInitiationFeeBpsAtInit` von 0 (ein Kredit, eröffnet bevor der Satz gespeichert wurde) wird als nicht erfasst gezeigt, ein `treasuryFeeBpsAtInit` von 0 als der 1-%-Altsatz, den die Abrechnung anwendet. Der Hinweis auf die Übergabe in Sachwerten gilt nur für einen ERC-20-Kredit: Eine NFT-Miete hat keine Sicherheit, und ihr Ausfall beendet die Nutzung des Mieters, zahlt die vorausbezahlte Miete abzüglich des Treasury-Anteils an den Kreditgeber und schickt den Puffer an die Treasury; das sagt die Seite stattdessen.
+
+Sätze sind die Schnappschüsse des Kredits: `treasuryFeeBpsAtInit`, `loanInitiationFeeBpsAtInit` (keiner bei einem Verkaufsvehikel) und `liquidationLtvBpsAtInit`. Ein Kredit mit einer illiquiden Seite (`principalLiquidity` oder `collateralLiquidity`) hat keine preisbasierte Messung: Das Protokoll verweigert dafür `calculateHealthFactor` und `calculateLTV`, und die Seite sagt das statt „unbekannt“. `principal` ist der noch geschuldete Betrag (eine Teilrückzahlung senkt ihn), und `interestRateBps` und `collateralAmount` können sich ebenfalls ändern, daher werden die Bedingungen so gezeigt, wie sie jetzt stehen; ein beendeter Kredit ohne Kapital im Datensatz sagt, ob ein interner Abgleich es gedeckt hat, und sonst nur, dass keines verzeichnet ist; eine NFT-Miete zeigt ihre Miete pro Tag (`principal`, in `prepayAsset`) und ob eine frühe Rückgabe weiterhin jeden verbleibenden Tag berechnet (`useFullTermInterest`). Ist `getPeriodicInterestEnabled` false, sagt die Seite, dass an einem Stichtag keine Sicherheit verkauft wird. `collateralLiquidity` Illiquid bei einem laufenden Kredit fügt die Sachwert-Warnung hinzu: Ein Ausfall überträgt die Sicherheit ohne Verkauf an den Kreditgeber. Ihre erste Transaktion ist die vollständige Rückzahlung, unten.
+
+<a id="repay"></a>
+
+### Vollständig zurückzahlen: Wie der Betrag bemessen wird
+
+Die Aktion folgt einer Regel: `repayLoan` wird für einen Active- oder FallbackPending-ERC-20-Kredit jeder Wallet angeboten, die weder `loan.lender` noch `ownerOf(lenderTokenId)` ist (`LenderCannotRepayOwnLoan`), angehalten nach dem effektiven Ende der Kulanzfrist bei einem Active-Kredit (`RepaymentPastGracePeriod`) und solange `positionLock(borrowerTokenId)` `SwapToRepayIntent` ist. Ein Verkaufsangebot des Kreditgebers, eine Refinanzierungsanfrage und die globale Pause halten sie nicht an. Mieten werden hier noch nicht angeboten.
+
+Die Prüfung liest `calculateRepaymentAmount(loanId)` am neuesten Block und erneut mit der auf `min(now + 30 Minuten, Ende der Kulanzfrist)` überschriebenen Blockzeit; dieselbe Anfrage liest die Blockzeit, unter der sie lief, und eine Verbindung, die die Überschreibung ignorierte, wird übergangen. Die Genehmigung ist genau die zweite Zahl, der Aufruf wird vor dem Öffnen der Wallet simuliert, und nach der Quittung wird der Status, in dem die Rückzahlung den Kredit ließ, aus ihrem `LoanRepaid`-Log gelesen (nicht am Block, an dem eine spätere Forderung ihn schon abgewickelt haben kann), die Zahlung aus den `Transfer`-Logs gemessen und die Allowance auf ihren vorherigen Wert zurückgesetzt, wenn sie die Genehmigung abzüglich der Zahlung liest. Eine höhere Allowance, auch eine unbegrenzte, wird ebenfalls auf diese Zahl gesenkt, da `repayLoan(loanId)` keinen Höchstbetrag und keine Frist kennt; das Zurücksetzen stellt danach den höheren Wert wieder her.
+
+<a id="interest-schedule"></a>
+
+### Zinsplan: Wie er gelesen wird
+
+Für einen aktiven ERC-20-Kredit mit Kadenz liest die Karte `previewPeriodicSettle(loanId)` (Kadenz, `periodEndAt`, `graceEndsAt`, `expected`, `paidByBorrower`, `shortfall`, `canSettleNow`), `getPeriodicInterestEnabled()` und `paused()` und nennt die gelesene Blockzeit. `expected` ist eine volle Periode beim aktuellen `principal` und `interestRateBps`; `periodEndAt` enthält die Pausengutschrift des Kredits.
+
+`canSettleNow` der Vorschau beachtet weder den Schalter noch die Pause, daher setzt die Karte sie in der Reihenfolge von `settlePeriodicInterest` zusammen: ausgeschaltet (`PeriodicInterestDisabled`), pausiert (`whenNotPaused`), dann die Zeit der Periode (`PeriodicSettleNotDue` vor `graceEndsAt`). Ein Verkauf wird nur angekündigt, wenn der Schalter an und das Protokoll nicht pausiert ist; ein ungelesener Schalter oder eine ungelesene Pause wird als unbekannt angegeben. Bei einem Fehlbetrag von null rückt die Abrechnung nur den Stichtag vor. Die Scharfschaltung von `PERIODIC_SETTLE` beim Keeper wird der App nicht gemeldet, daher sagt die Karte, dass die Abrechnung jedem offensteht und der Stand des Keepers nicht bekannt ist.
+
 <a id="risk-access"></a>
 
 ### Risk Access: Ihre Risikostufe

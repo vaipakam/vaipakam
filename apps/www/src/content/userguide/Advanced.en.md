@@ -2578,6 +2578,32 @@ Positions reads the same inventory as Home through one shared reader: `getUserPo
 
 The side choice filters payouts, live and ended rows by the side held. "Nothing" is said only when the position walk and the payout walk completed and the latest read succeeded; a walk stopped at its cap is stated as incomplete. A row opens `/positions/<id>`, where the eligibility verdict decides each action; the list sends no transaction.
 
+<a id="position"></a>
+
+### Position: How a Loan Is Read
+
+The page reads `getLoanDetails(loanId)` and `ownerOf` for the lender and borrower position NFTs; the role is the token the wallet holds now. For a live loan (Active or FallbackPending) it reads `getLoanDeadlines` (the current term's maturity before pause credit, which an extension or a borrower handover rewrites, pause credit, maturity, grace end), `previewPeriodicSettle` with `getPeriodicInterestEnabled` when the loan has a cadence, `isLoanDefaultable` (+ `paused`, `sequencerHealthy`, `defaultKycAdmission`), `calculateHealthFactor` and `calculateLTV`; for every loan, `getLoanCollateralLien` and `isSaleVehicleLoan`. Each read stands alone: one that fails is shown as unknown, never as zero, and no date is computed from `startTime` and `durationDays`.
+
+For a priced loan it also reads `getInternalMatchConfigBundle`. While internal matching is on, a loan whose loan-to-value sits from its threshold up to the threshold plus `externalLiquidationPriorityWindowBps` is held for an internal match and every outside liquidation route refuses (`InternalMatchOnlyBand`), so the page states that band. A `loanInitiationFeeBpsAtInit` of 0 (a loan opened before the rate was kept) is shown as not recorded, and a `treasuryFeeBpsAtInit` of 0 as the 1% legacy rate settlement applies. The in-kind warning is for an ERC-20 loan only: an NFT rental has no collateral, and its default ends the renter's use, pays the prepaid rent to the lender less the treasury share and sends the buffer to the treasury, which the page states instead.
+
+Rates are the loan's snapshots: `treasuryFeeBpsAtInit`, `loanInitiationFeeBpsAtInit` (none on a sale vehicle) and `liquidationLtvBpsAtInit`. A loan with an Illiquid leg (`principalLiquidity` or `collateralLiquidity`) has no price-based reading: the protocol refuses `calculateHealthFactor` and `calculateLTV` for it, and the page says so instead of unknown. `principal` is what is still owed (a partial repayment lowers it), and `interestRateBps` and `collateralAmount` can change too, so the terms are shown as they stand now; an ended loan with no principal on its record says whether an internal match covered it, and otherwise only that none is recorded; an NFT rental shows its rent per day (`principal`, in `prepayAsset`) and whether returning early still charges every remaining day (`useFullTermInterest`). With `getPeriodicInterestEnabled` false, the page says no collateral is sold at a checkpoint. `collateralLiquidity` Illiquid on a live loan adds the in-kind warning: a default transfers the collateral to the lender without a sale. Its first transaction is the full repayment, below.
+
+<a id="repay"></a>
+
+### Repay in Full: How It Is Sized
+
+The action follows one rule: `repayLoan` is offered for an Active or FallbackPending ERC-20 loan to any wallet that is neither `loan.lender` nor `ownerOf(lenderTokenId)` (`LenderCannotRepayOwnLoan`), held past the effective grace end on an Active loan (`RepaymentPastGracePeriod`) and while `positionLock(borrowerTokenId)` is `SwapToRepayIntent`. A lender listing, a refinance request and the global pause do not hold it. Rentals are not offered here yet.
+
+The review reads `calculateRepaymentAmount(loanId)` at the latest block and again with the block time overridden to `min(now + 30 minutes, grace end)`; the same request reads the block time it ran under, and a connection that ignored the override is passed over. The approval is exactly the second figure, the call is simulated before the wallet opens, and after the receipt the status the repayment left the loan in is read from its `LoanRepaid` log (not at the block, where a later claim can already have settled it), the payment is measured from the `Transfer` logs, and the allowance is reset to its prior value when it reads the approval less the payment. An allowance above that figure, unlimited included, is lowered to it as well, since `repayLoan(loanId)` takes no maximum or deadline; the reset then restores the larger value.
+
+<a id="interest-schedule"></a>
+
+### Interest Schedule: How It Is Read
+
+For an Active ERC-20 loan with a cadence, the card reads `previewPeriodicSettle(loanId)` (cadence, `periodEndAt`, `graceEndsAt`, `expected`, `paidByBorrower`, `shortfall`, `canSettleNow`), `getPeriodicInterestEnabled()` and `paused()`, and states the block time it read. `expected` is one full period at the current `principal` and `interestRateBps`; `periodEndAt` carries the loan's pause credit.
+
+The preview's `canSettleNow` ignores the switch and the pause, so the card puts them together in `settlePeriodicInterest`'s own order: switched off (`PeriodicInterestDisabled`), paused (`whenNotPaused`), then the period's time (`PeriodicSettleNotDue` before `graceEndsAt`). A sale is announced only when the switch is on and the protocol is not paused; an unread switch or pause is stated as unknown. With a zero shortfall the settlement only advances the checkpoint. The keeper's `PERIODIC_SETTLE` arming is not reported to the app, so the card says settling is open to anyone and that the keeper's posture is not known.
+
 <a id="risk-access"></a>
 
 ### Risk Access: Your Risk Level

@@ -1244,6 +1244,30 @@ Positions muestra cada préstamo que prestaste o tomaste en esta red, a partir d
 
 Todos, Prestados y Tomados filtran las tres listas a la vez. Positions dice que no tienes nada solo después de leerlo todo; si una lista no se pudo leer entera, lo indica. Cada préstamo abre su propia página, que muestra las acciones disponibles para ti. La lista nunca firma nada.
 
+<a id="position"></a>
+
+### Position: un préstamo
+
+Cada préstamo tiene su propia página. Empieza con el estado del préstamo y luego tu papel: el lado que tu wallet guarda ahora, ya que los tokens de posición pueden venderse o transferirse. Si no guardas ningún lado, solo lo estás viendo. Un plazo que te afecta se redacta para tu lado. Cuando termina el período de gracia, la página dice que cualquiera puede iniciar el impago, y solo cuando el protocolo lo confirma.
+
+Debajo aparecen las fechas del préstamo (la fecha de vencimiento del plazo actual antes de cualquier crédito por pausa, el tiempo añadido mientras el protocolo estuvo en pausa, la fecha de vencimiento y el fin del período de gracia), sus condiciones tal como están ahora (un reembolso parcial reduce el principal aún adeudado), su factor de salud y dónde está su garantía. Una cifra que no se pudo leer aparece como desconocida. Si la garantía no tiene precio, un impago entrega al prestamista la garantía misma, y la página lo dice. Si la red reserva una banda justo por encima del umbral de liquidación para un emparejamiento interno con otro préstamo, la página lo indica: dentro de esa banda ninguna venta externa puede cerrar el préstamo. Un alquiler de NFT no tiene garantía: si entra en impago, termina el uso del arrendatario, el alquiler prepagado va al prestamista menos la parte del protocolo y el colchón va a la tesorería. Pagar el préstamo completo es su primera acción; las demás llegan en próximas actualizaciones.
+
+<a id="repay"></a>
+
+### Pagar el préstamo completo
+
+En un préstamo activo, la página ofrece pagarlo completo. Cualquiera puede pagar excepto el prestamista. Si no tienes la posición de prestatario, pagar no te da ningún derecho sobre la garantía: solo su titular puede cobrarla. El pago queda retenido una vez terminado el período de gracia (el préstamo pasa entonces a impago) y mientras haya una orden de swap-to-repay pendiente.
+
+Lo que debes crece cada segundo, y el protocolo toma el importe del momento en que se confirma tu pago. La revisión muestra dos cifras: lo que cuesta ahora y lo que costaría unos treinta minutos después. Tu billetera aprueba exactamente la segunda cifra. Si ya habías aprobado más, incluso una cantidad ilimitada, se reduce a esa cifra para el pago, porque el pago no fija por sí mismo ningún máximo. La aprobación limita el importe, no el tiempo: un pago que se confirma más tarde solo se ejecuta mientras lo que debes siga cabiendo en ella; si no, se rechaza y nada se mueve. En un préstamo que cobra el plazo completo, el importe no crece antes del vencimiento, así que un pago posterior aún puede ejecutarse. Lo que el pago no use de la aprobación se restablece después. Luego el prestatario cobra la garantía y el prestamista cobra el principal y los intereses en Claims.
+
+<a id="interest-schedule"></a>
+
+### Calendario de intereses
+
+Un préstamo con calendario de intereses debe intereses en cada período (un mes, un trimestre, seis meses o un año), no solo al final. Su página muestra el período actual: cuándo termina, cuándo termina su período de gracia, los intereses que debe, lo pagado a cuenta y lo que aún se debe. Los intereses de un período se calculan sobre el principal y la tasa tal como están ahora, así que un reembolso parcial los reduce.
+
+Cuando terminan un período y su gracia, cualquiera puede liquidarlo. Un período pagado solo adelanta el punto de control; en uno aún incompleto se vende justo la garantía del prestatario necesaria para cubrir lo adeudado y los costes de la venta. La página dice si la liquidación está abierta ahora. Nombra el interruptor de liquidación periódica de la red cuando está apagado (entonces no se puede liquidar nada ni se vende garantía) y la pausa del protocolo mientras dura (la liquidación se detiene y el tiempo en pausa se añade a las fechas del período). Una pausa retrasa las fechas del período por el tiempo en pausa, pero los intereses que debe un período siguen siendo los de un período; los intereses siguen acumulándose durante la pausa, y todo interés que pague un reembolso cuenta para el período.
+
 <a id="risk-access"></a>
 
 ### Risk Access: tu nivel de riesgo

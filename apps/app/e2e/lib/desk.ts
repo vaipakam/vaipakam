@@ -145,6 +145,17 @@ export async function seedDeskOffer(opts: {
   /** Lender side only: the offer's lower bound, which is what an accept
    *  binds as the principal. Default: 10% of `amountWeth`. */
   minAmountWeth?: string;
+  /** Borrow side only: the request's upper bound, making it a RANGE
+   *  `[amountWeth, amountMaxWeth]` that matches can fill in several slices
+   *  (each slice is its own loan carrying this offer's id). Default: a
+   *  single-value request (`amountMax = amountWeth`). */
+  amountMaxWeth?: string;
+  /** Borrow side only: the request's collateral CEILING, in the same whole
+   *  units as `collateralTliq`, which then becomes the floor. A ranged
+   *  collateral leg is what lets several slices each lock their own share
+   *  (`LibOfferMatch` clamps each slice up to the floor and caps the sum at
+   *  the ceiling). Default: single-value collateral. */
+  collateralMaxTliq?: string;
   terms?: DeskOfferTerms;
 }): Promise<bigint> {
   const account = accountFor(opts.role);
@@ -153,11 +164,15 @@ export async function seedDeskOffer(opts: {
   const amount = parseEther(opts.amountWeth);
   const collateral = parseUnits(opts.collateralTliq, opts.collateralDecimals ?? 18);
   const isLend = opts.side === 'lend';
+  const collateralMax =
+    !isLend && opts.collateralMaxTliq !== undefined
+      ? parseUnits(opts.collateralMaxTliq, opts.collateralDecimals ?? 18)
+      : collateral;
   // Escrowed leg per side: lender pre-vaults amountMax of the lending
   // asset; borrower pre-vaults collateralAmountMax of the collateral.
   const [token, locked] = isLend
     ? [WETH, amount]
-    : ([collateralAsset, collateral] as const);
+    : ([collateralAsset, collateralMax] as const);
   const approveHash = await wallet.writeContract({
     address: token,
     abi: ERC20_MIN_ABI,
@@ -190,9 +205,10 @@ export async function seedDeskOffer(opts: {
     collateralTokenId: 0n,
     collateralQuantity: 0n,
     allowsPartialRepay: opts.terms?.allowsPartialRepay ?? true,
-    amountMax: amount,
+    amountMax:
+      !isLend && opts.amountMaxWeth !== undefined ? parseEther(opts.amountMaxWeth) : amount,
     interestRateBpsMax: isLend ? 10_000n : BigInt(opts.rateBps),
-    collateralAmountMax: collateral,
+    collateralAmountMax: collateralMax,
     periodicInterestCadence: opts.terms?.periodicInterestCadence ?? 0,
     expiresAt: 0n, // GTC
     fillMode: 0, // Partial
