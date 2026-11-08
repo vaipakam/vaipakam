@@ -758,7 +758,10 @@ above. Each resolves here, so a route reviewer needs no private file:
   goes through only while the protocol's figure stays within the approval.
   Where the two figures are equal (full-term interest before the due date)
   the review also says a later confirmation can still go through; it never
-  promises a deadline the protocol does not enforce. It says that what
+  promises a deadline the protocol does not enforce. Where that moment is
+  the grace end, it is stated as the grace end as things stand, which a
+  protocol pause before it moves later (the protocol checks the moving
+  deadline, not the time the review read). It says that what
   the repayment does not use is put back afterwards, to the allowance as it
   stood before. The collateral is named by its asset type (an NFT by its
   token id, an ERC-1155 with its quantity), through the same rule as the

@@ -407,7 +407,7 @@ export const copy = {
       'The approval caps the amount, not the time: confirming after {{time}}, it goes through only while the protocol’s figure stays within it, and is otherwise refused with nothing moved.',
     ),
     loseSame: A('This figure did not grow over that window, so a repayment confirming after it can still go through, at the protocol’s figure then.'),
-    loseGraceEnds: A('The grace period ends at {{time}}; after that the protocol refuses a repayment and nothing moves.'),
+    loseGraceEnds: A('The grace period ends at {{time}} as things stand, and a protocol pause before then moves it later. After it, the protocol refuses a repayment and nothing moves.'),
     losePutBack: A('Whatever the repayment does not use of the approval is put back to {{amount}} afterwards.'),
     loseThirdParty: A('Paying gives you no right to the collateral: only the holder of borrower position #{{id}} can collect it.'),
     refinanceStays: A('Refinance request offer #{{id}} on this loan ends with the repayment but stays posted: its creator cancels it to take back what it holds.'),
