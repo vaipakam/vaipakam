@@ -13,8 +13,12 @@
  * The protocol pays a wallet without protected mode at once. With the mode
  * on it queues the payout for the account's delay (`LibProtectedAccount.
  * queuePayout`), refuses it while the account is locked, and refuses it when
- * the account's queue is full; it also stays open during a pause for a
- * protected account once the escape route has opened. The app withdraws to
+ * the account's queue is full. A pause closes the withdrawal until its
+ * escape route opens (ACC-30); then a protected account still withdraws
+ * through `withdrawFromVault`, which keeps queueing, while a wallet without
+ * the mode withdraws through `VaultPayoutFacet.escapeWithdraw`, which pays
+ * what is its own and free to the wallet itself and refuses a protected
+ * account (`EscapeNotForProtected`). The app withdraws to
  * the connected wallet only: the protocol would pay any address it screens
  * for an account without the mode, and the app does not offer one, so the
  * destination is always the wallet that signs.
@@ -77,6 +81,10 @@ export interface WithdrawReview {
   /** Where the withdrawal goes: the wallet at once, the account's payout
    *  queue, kept back while the account is locked (refused), or unknown. */
   route: PayoutRoute;
+  /** Which entry point takes it: the ordinary withdrawal, the pause's escape
+   *  route, or null when that cannot be told (the pause, the escape route or
+   *  the mode unread while paused). */
+  via: WithdrawVia | null;
   /** The protocol's figure for what this wallet may withdraw now; null when
    *  unread. */
   withdrawable: bigint | null;
@@ -87,8 +95,33 @@ export interface WithdrawReview {
   readAt: number;
 }
 
-/** The call a draft stands for: from the wallet's own vault, to the wallet. */
-export function withdrawCall(d: WithdrawDraft, account: Hex) {
+/** The entry point a withdrawal goes through. */
+export type WithdrawVia = 'withdraw' | 'escape';
+
+/** Which entry point takes the withdrawal: the ordinary one unless the
+ *  protocol is paused with its escape route open and the account runs no
+ *  protected mode, which then goes through the escape route. While paused
+ *  with the escape route closed, the ordinary one is named (and the pause
+ *  stops it). Null when that cannot be told: the pause unread, or under a
+ *  pause the route unread, or under an open route the mode unread
+ *  (RB-VAULT-ESCAPE: then no entry point is chosen and nothing is sent). */
+export function withdrawVia(r: Pick<WithdrawReview, 'paused' | 'escapeOpen' | 'protection'>): WithdrawVia | null {
+  if (r.paused === false) return 'withdraw';
+  if (r.paused === null || r.escapeOpen === null) return null;
+  if (!r.escapeOpen) return 'withdraw';
+  if (r.protection === null) return null;
+  return r.protection.enabled ? 'withdraw' : 'escape';
+}
+
+/** The call a draft stands for: from the wallet's own vault, to the wallet,
+ *  through the ordinary withdrawal or the pause's escape route. */
+export function withdrawCall(d: WithdrawDraft, account: Hex, via: WithdrawVia = 'withdraw') {
+  if (via === 'escape')
+    return {
+      abi: PAYOUT,
+      functionName: 'escapeWithdraw' as const,
+      args: [ASSET_TYPE[d.standard], d.asset, d.standard === 'erc20' ? 0n : d.tokenId, d.standard === 'erc721' ? 1n : d.amount] as const,
+    };
   return {
     abi: DEPOSITORY,
     functionName: 'withdrawFromVault' as const,
@@ -128,20 +161,30 @@ export async function readWithdrawReview(own: OwnStateClient, diamond: Hex, draf
       };
     })
     .then((x) => x.value);
-  const base: WithdrawReview = { identity, draft, ...facts, route: payoutRoute(facts.protection, account, account), dryRun: null, readAt: Date.now() };
-  if (withdrawBlockers(base, copy, () => '').length > 0) return base;
-  const call = withdrawCall(draft, account);
+  const base: WithdrawReview = {
+    identity,
+    draft,
+    ...facts,
+    route: payoutRoute(facts.protection, account, account),
+    via: withdrawVia(facts),
+    dryRun: null,
+    readAt: Date.now(),
+  };
+  if (withdrawBlockers(base, copy, () => '').length > 0 || base.via === null) return base;
+  const call = withdrawCall(draft, account, base.via);
   const dry = await askThrough(own, (c) => c.simulateContract({ address: diamond, ...call, account }));
   return { ...base, dryRun: dry.kind === 'answered' ? null : dry.kind === 'reverted' ? refusalFromError(dry.error) : 'unread', readAt: Date.now() };
 }
 
-/** Whether the pause stops this withdrawal: it does unless the account runs
- *  protected mode and the escape route is open; null when that is unread. */
+/** Whether the pause stops this withdrawal: it does until the escape route
+ *  opens (then a protected account withdraws as usual and any other through
+ *  the escape route); null when the pause, the escape route or, under an
+ *  open route, the mode is unread. */
 export function pauseStops(r: Pick<WithdrawReview, 'paused' | 'escapeOpen' | 'protection'>): boolean | null {
   if (r.paused === false) return false;
-  if (r.paused === null) return null;
-  if (r.protection === null || r.escapeOpen === null) return null;
-  return !(r.protection.enabled && r.escapeOpen);
+  if (r.paused === null || r.escapeOpen === null) return null;
+  if (!r.escapeOpen) return true;
+  return r.protection === null ? null : false;
 }
 
 /** What stops the review, in words (empty when nothing does), most
@@ -152,6 +195,7 @@ export function withdrawBlockers(r: WithdrawReview, copy: Copy, amountText: (v: 
   if (r.retired === true) return [text('vaultWithdraw.retired')];
   if (r.frozen === 'flagged') return [text('vaultWithdraw.flagged')];
   if (pauseStops(r) === true) return [text('vaultWithdraw.paused')];
+  if (r.via === null) return [text('vaultWithdraw.routeUnread')];
   if (r.route === 'held') return [text('vaultWithdraw.locked')];
   const want = withdrawAmount(r.draft);
   if (r.withdrawable !== null && want > r.withdrawable)
@@ -165,7 +209,7 @@ export function withdrawBlockers(r: WithdrawReview, copy: Copy, amountText: (v: 
 export function withdrawChanged(a: WithdrawReview, b: WithdrawReview, copy: Pick<CopyAccess, 'text'>): string | null {
   const { text } = copy;
   if ((a.vault ?? '').toLowerCase() !== (b.vault ?? '').toLowerCase()) return text('vaultWithdraw.changedVault');
-  if (a.paused !== b.paused || a.escapeOpen !== b.escapeOpen || a.frozen !== b.frozen || a.retired !== b.retired) return text('repay.changedVerdict');
+  if (a.paused !== b.paused || a.escapeOpen !== b.escapeOpen || a.frozen !== b.frozen || a.retired !== b.retired || a.via !== b.via) return text('repay.changedVerdict');
   if (routeChanged(a, b)) return text('payout.changed');
   const want = withdrawAmount(a.draft);
   const fits = (r: WithdrawReview) => (r.withdrawable === null ? null : r.withdrawable >= want);
@@ -188,6 +232,20 @@ export function withdrawRequested(logs: readonly Log[], diamond: Hex, account: H
     if (d.standard !== 'erc20' && args.tokenId !== d.tokenId) continue;
     if (args.recipient?.toLowerCase() !== account.toLowerCase()) continue;
     if (args.amount !== undefined) return { amount: args.amount, queued: args.queued === true };
+  }
+  return null;
+}
+
+/** What the pause's escape route recorded for `account` and this draft: the
+ *  amount, or null when the transaction records no escape withdrawal. */
+export function escapeRequested(logs: readonly Log[], diamond: Hex, account: Hex, d: WithdrawDraft): bigint | null {
+  const events = parseEventLogs({ abi: PAYOUT, logs: logs as Log[], eventName: 'EscapeWithdrawal', strict: false });
+  for (const e of events) {
+    if (e.address.toLowerCase() !== diamond.toLowerCase()) continue;
+    const args = e.args as { account?: Hex; asset?: Hex; tokenId?: bigint; amount?: bigint };
+    if (args.account?.toLowerCase() !== account.toLowerCase() || args.asset?.toLowerCase() !== d.asset.toLowerCase()) continue;
+    if (d.standard !== 'erc20' && args.tokenId !== d.tokenId) continue;
+    if (args.amount !== undefined) return args.amount;
   }
   return null;
 }

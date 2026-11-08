@@ -2040,6 +2040,18 @@ Positions 通过一个共享读取器读取与 Home 相同的持仓清单：`get
 
 提取调用 `VaultDepositoryFacet.withdrawFromVault(account, kind, asset, tokenId, amount, recipient)`，其中 `account` 和 `recipient` 都是已连接的钱包。上限为 `withdrawableNow(account, kind, asset, tokenId)`（超出则 `AmountExceedsFree`），它检查 `requireManager(account)`，筛查调用方（Tier-1）和收款方；暂停期间被拒绝，除非账户受保护且 `isEscapeOpen` 为真。审阅在同一区块读取 `getUserVaultAddress`、`paused`、`isEscapeOpen`、制裁状态、`getProtectedAccount(wallet)` 和 `withdrawableNow`，然后试运行该调用。未开启保护模式时，金库路由立即付给钱包；开启后，`LibProtectedAccount.queuePayout` 将付款排队 `delaySeconds`，并拒绝 `ProtectedVaultLocked`、`RecipientNotAllowlisted` 和 `TooManyPendingRows`。完成卡读取 `VaultWithdrawRequested(account, asset, kind, tokenId, amount, recipient, queued)`、`PayoutQueued` 以及代币自身从金库到钱包的转账日志。存入记录未记代币 ID 的合集，通过输入代币 ID 提取；表单上限为该代币的 `withdrawableNow`，每个区块重新读取。
 
+<a id="vault-safety"></a>
+
+### 账户安全
+
+卡片在同一区块读取 `getProtectedAccount(wallet)`、`getProtectedDelayBounds()`、`paused`、制裁状态和 `getPendingPayoutIds(wallet)`；`FunctionDoesNotExist` 回退视为不可用。开启是 `enableProtectedMode(delaySeconds, protectNfts)`：立即生效，暂停期间或已开启时被拒绝，延迟须在界限之内（两到五天），若没有金库会一并创建。“立即锁定”是 `lockVault(wallet)`：暂停期间也可用，它取消每一条排队中的记录（`PayoutCancelled`），丢弃每一项待生效的更改，并作废管理者提出的替换。申请解锁是 `requestUnlock(wallet)`，暂停期间或 `cooldownUntil` 之前被拒绝，并把 `pendingUnlockAt` 设为当前时间加 `delaySeconds`。“应用到期更改”是 `finalizeSettingChanges(wallet)`，一次应用所有已到期的更改；关闭保护模式要等到没有未结记录（`PendingRowsExist`）。每个操作在审阅时以及打开钱包之前都会再次试运行，完成卡片从 Diamond 的日志中读取 `ProtectedModeEnabled`、`VaultLocked`、`PayoutCancelled`、`SettingChangeRequested` 和 `SettingChangeApplied`。
+
+<a id="vault-escape"></a>
+
+### 协议暂停时
+
+提示在同一区块读取 `paused`、`VaultPayoutFacet.isEscapeOpen`、`escapeOpensAt`（手动暂停的开始时间加上它开始时的逃生期限；没有生效的暂停或 Diamond 从未启动时为零）和 `getProtectedAccount(wallet)`，并按区块时间倒计时。暂停且通道关闭时，`withdrawFromVault` 以 `EnforcedPause` 回退，审阅页说明暂停阻止了它。一旦 `isEscapeOpen` 为真，受保护账户仍使用 `withdrawFromVault`，继续排队；其他钱包的提取调用 `escapeWithdraw(kind, asset, tokenId, amount)`，它拒绝受保护账户（`EscapeNotForProtected`），拒绝被禁止的收款方，受钱包自身存入余额和可自由提取数字的限制，并付款给调用者。完成卡片读取 `EscapeWithdrawal(account, asset, tokenId, amount)` 以及代币自身从金库到钱包的转账。如果暂停状态、通道或通道开启时的模式无法读取，则不会发送任何提取。
+
 <a id="risk-access"></a>
 
 ### Risk Access：你的风险等级

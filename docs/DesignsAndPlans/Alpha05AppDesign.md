@@ -1216,6 +1216,51 @@ above. Each resolves here, so a route reviewer needs no private file:
   protocol's own withdrawal record (and whether it queued it), the queued
   payout with its release time, and what the token's own logs moved from the
   vault to the wallet.
+- **RB-VAULT-SAFETY** — the Vault page's safety card (ACC-36 Basic face,
+  ACC-37, ACC-43) reads the account's protected mode at one block, with the
+  protocol's delay bounds, the pause, the sanctions screen and the queued
+  payout count, on its own reads: it never waits on holdings discovery, so a
+  failed holdings scan cannot hide Lock now. A Diamond without the feature reads "unavailable", never
+  "off"; an unread mode offers no control and says not to assume it is off;
+  a wallet a replacement retired names the wallet that manages the account
+  and offers nothing. Off, it offers Turn on: in Basic the shortest delay the
+  protocol allows and NFT protection off, both stated; in Advanced the delay
+  in whole days inside the bounds and NFT protection. On, it states the
+  delay, co-sign, NFT protection, queued count, lock (since when, by whom)
+  and every pending change with its time, and offers Lock now (unlocked),
+  Ask to unlock (locked, none asked) and Apply due changes (anything due).
+  Each receipt states what the mode becomes and every consequence: turning
+  on never delays what is owed to others, credits other vaults' payments
+  into the vault, cancels any pending vault-code change and raises the wait
+  on a future one (said, not read); a lock cancels every queued payout (counted), drops every
+  pending setting change (counted) and voids every pending destination,
+  signer and vault-code change (said, not counted), cancels a replacement
+  this wallet proposed while one its signers proposed survives (said, not
+  read), leaves repayment and
+  adding collateral open and works during a pause; an unlock waits the
+  delay; applying due changes applies every due change together, a shorter
+  delay is always shown as the delay it sets beside the current one, and a
+  switch-off waits for an empty queue and clears destinations, signers,
+  their pending additions and any pending replacement. Every consequence is
+  taken from the facet's own code path for that call, whole, not from one
+  finding at a time. Each action is dry-run at review and again before the wallet
+  opens, and the finish card reads the Diamond's own events for this
+  account. The account's own payout queue (RB-CLAIM: the Claims component)
+  is shown under the card.
+- **RB-VAULT-ESCAPE** — while the protocol is paused, the Vault page
+  states it at the top (ACC-30, ACC-31): withdrawals are closed, full and
+  partial repayment and adding collateral stay open, and, under an
+  administrative pause, when its escape route opens, from the protocol's own
+  `escapeOpensAt` against the chain's clock, never a hard-coded period. A
+  pause that schedules no route (automatic, or a protocol not yet launched)
+  is said to schedule none. Once the route is open, the Withdraw button
+  routes a wallet without protected mode through `escapeWithdraw`, and the
+  receipt says the asset goes straight to this wallet through the escape
+  route and that the route never returns what a loan, offer or claim holds;
+  a protected account keeps the ordinary withdrawal, which keeps queueing.
+  If the pause, the route or, under an open route, the mode is unread, no
+  entry point is chosen and nothing is sent. The finish card reads
+  `EscapeWithdrawal` and the token's own transfer to the wallet.
 - **RB-FROZEN** — money the protocol holds for a wallet the sanctions
   screen flags (LN-53) is stated as "Frozen, awaiting de-listing": locked
   where its loan keeps it, in a vault, not lost, and released once the

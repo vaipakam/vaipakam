@@ -32,6 +32,7 @@ import {
   withdrawCall,
   withdrawChanged,
   withdrawRequested,
+  escapeRequested,
   type WithdrawDraft,
   type WithdrawReview,
   type WithdrawSubject,
@@ -239,7 +240,8 @@ function WithdrawFlow({ chain, own, draft, onChange, onClose }: WithdrawProps & 
       };
       // The dry run again, at send: the protocol's own verdict on this
       // withdrawal now, since what is free can move with any position.
-      const call = withdrawCall(review.draft, account);
+      if (review.via === null) return stop(text('vaultWithdraw.routeUnread'));
+      const call = withdrawCall(review.draft, account, review.via);
       const dry = await askThrough(own, (c) => c.simulateContract({ address: diamond, ...call, account }));
       if (dry.kind === 'reverted') return stop(format('vaultWithdraw.dryRunRefused', { reason: refusalFromError(dry.error).reason }));
       if (dry.kind === 'unreadable') return stop(format('flow.unreadable', { reason: dry.reason }));
@@ -256,7 +258,8 @@ function WithdrawFlow({ chain, own, draft, onChange, onClose }: WithdrawProps & 
     const d = r.draft;
     const want = withdrawAmount(d);
     const legs: LegOutcome[] = [];
-    const asked = withdrawRequested(logs, diamond, account, d);
+    const escaped = r.via === 'escape' ? escapeRequested(logs, diamond, account, d) : null;
+    const asked = r.via === 'escape' ? (escaped === null ? null : { amount: escaped, queued: false }) : withdrawRequested(logs, diamond, account, d);
     const leftLabel = format('vaultWithdraw.legLeft', { what: nft ? withdrawName(d, meta, copy) : amountText(asked?.amount ?? want) });
     if (asked === null) legs.push({ status: 'not-done', label: leftLabel, reason: text('vaultWithdraw.notRequested') });
     else if (asked.amount !== want)

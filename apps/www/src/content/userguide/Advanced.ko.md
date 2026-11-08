@@ -2198,6 +2198,18 @@ Positions는 하나의 공유 리더로 Home과 같은 보유 목록을 읽습�
 
 출금은 `VaultDepositoryFacet.withdrawFromVault(account, kind, asset, tokenId, amount, recipient)`이며, `account`와 `recipient`는 모두 연결된 지갑입니다. 한도는 `withdrawableNow(account, kind, asset, tokenId)`이고(넘으면 `AmountExceedsFree`), `requireManager(account)`를 확인하며, 호출자(Tier-1)와 수령인을 심사하고, 일시 중지 중에는 계정이 보호되어 있고 `isEscapeOpen`이 참인 경우가 아니면 거부됩니다. 검토는 한 블록에서 `getUserVaultAddress`, `paused`, `isEscapeOpen`, 제재 상태, `getProtectedAccount(wallet)`, `withdrawableNow`를 읽은 뒤 호출을 모의 실행합니다. 보호 모드가 꺼져 있으면 볼트 경로가 지갑에 바로 지급하고, 켜져 있으면 `LibProtectedAccount.queuePayout`이 `delaySeconds` 동안 지급을 대기열에 넣으며 `ProtectedVaultLocked`, `RecipientNotAllowlisted`, `TooManyPendingRows`를 거부합니다. 완료 카드는 `VaultWithdrawRequested(account, asset, kind, tokenId, amount, recipient, queued)`, `PayoutQueued`, 그리고 볼트에서 지갑으로 간 토큰 자체의 전송 로그를 읽습니다. 예치 기록이 토큰 ID 없이 알려 주는 컬렉션은 토큰 ID를 입력해 출금하며, 양식의 한도는 그 토큰의 `withdrawableNow`로 블록마다 다시 읽습니다.
 
+<a id="vault-safety"></a>
+
+### 계정 안전
+
+카드는 한 블록에서 `getProtectedAccount(wallet)`, `getProtectedDelayBounds()`, `paused`, 제재 상태, `getPendingPayoutIds(wallet)`를 읽습니다. `FunctionDoesNotExist` 리버트는 사용 불가로 읽습니다. 켜기는 `enableProtectedMode(delaySeconds, protectNfts)`이며, 즉시 적용되고, 일시 중지 중이거나 이미 켜져 있으면 거부되며, 지연 기간은 범위(2일에서 5일) 안이어야 하고, 볼트가 없으면 만듭니다. 지금 잠그기는 `lockVault(wallet)`이며, 일시 중지 중에도 열려 있고, 대기 중인 모든 행을 취소하며(`PayoutCancelled`), 보류 중인 모든 변경을 버리고, 관리자가 제안한 교체를 무효로 합니다. 잠금 해제 요청은 `requestUnlock(wallet)`이며, 일시 중지 중이거나 `cooldownUntil` 이전에는 거부되고, `pendingUnlockAt`을 지금에 `delaySeconds`를 더한 시각으로 정합니다. 기한이 된 변경 적용은 `finalizeSettingChanges(wallet)`이며, 기한이 된 모든 변경을 한 번에 적용합니다. 끄기는 열린 행이 없어질 때까지 기다립니다(`PendingRowsExist`). 각 작업은 검토 시점과 지갑이 열리기 직전에 다시 드라이런되며, 완료 카드는 Diamond의 로그에서 `ProtectedModeEnabled`, `VaultLocked`, `PayoutCancelled`, `SettingChangeRequested`, `SettingChangeApplied`를 읽습니다.
+
+<a id="vault-escape"></a>
+
+### 프로토콜이 일시 중지되었을 때
+
+알림은 한 블록에서 `paused`, `VaultPayoutFacet.isEscapeOpen`, `escapeOpensAt`(수동 일시 중지 시작 시각에 시작 당시의 비상 탈출 기간을 더한 값. 유효한 일시 중지가 없거나 Diamond가 출시된 적이 없으면 0), `getProtectedAccount(wallet)`를 읽고 블록 시각을 기준으로 카운트다운합니다. 경로가 닫힌 채 일시 중지 중이면 `withdrawFromVault`가 `EnforcedPause`로 리버트하고, 검토 화면은 일시 중지가 이를 막는다고 알립니다. `isEscapeOpen`이 참이 되면 보호 계정은 계속 `withdrawFromVault`를 쓰며 대기열 등록도 계속됩니다. 다른 모든 지갑의 출금은 `escapeWithdraw(kind, asset, tokenId, amount)`를 호출합니다. 이 함수는 보호 계정을 거부하고(`EscapeNotForProtected`), 금지된 수령인을 거부하며, 지갑 자신의 예치 잔액과 출금 가능 수치로 한도가 정해지고, 호출자에게 지급합니다. 완료 카드는 `EscapeWithdrawal(account, asset, tokenId, amount)`와 볼트에서 지갑으로 가는 토큰 자체의 이전을 읽습니다. 일시 중지, 경로, 또는 경로가 열린 경우의 모드를 읽을 수 없으면 출금을 보내지 않습니다.
+
 <a id="risk-access"></a>
 
 ### Risk Access: 내 위험 등급

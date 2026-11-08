@@ -16,6 +16,8 @@ import { assetName, tokenAmount, useTokenMeta, type TokenMetaMap } from '../../s
 import { useOwnRead } from '../../shared/reads/useOwnRead';
 import { FrozenNotice, useFrozenState } from '../../shared/sanctions/FrozenNotice';
 import { OwnStamp } from '../../shared/ui/OwnStamp';
+import { SafetyCard } from '../../shared/protection/SafetyCard';
+import { EscapeNotice } from '../../shared/vault/EscapeNotice';
 import { holdingFigures, positionAssets, readVaultHoldings, shownRows, type HoldingRow, type HoldingSource } from '../../shared/vault/holdings';
 import { CreateVault, useCreateVaultHeld } from '../../shared/vault/CreateVault';
 import { DEPOSIT_KEY, DepositVault, useDepositHeld } from '../../shared/vault/DepositVault';
@@ -146,6 +148,7 @@ export function VaultPage() {
               )}
             </section>
           )}
+          <EscapeNotice chain={chain} account={own.account} />
           <section className="home-section" aria-labelledby="vault-deposit" data-testid="vault-deposit">
             <h2 id="vault-deposit">{text('vaultDeposit.formTitle')}</h2>
             {terms.state === 'failed' && (
@@ -287,6 +290,9 @@ export function VaultPage() {
               </section>
             </>
           )}
+          {/* Read on its own facts, never behind holdings discovery, so a failed
+              holdings scan can never hide Lock now or a safety send in flight. */}
+          <SafetyCard own={own} chain={chain} />
           {currentVault !== null && (
             <p className="tier-b" data-testid="vault-next">
               {text('vault.nextSlices')}{' '}

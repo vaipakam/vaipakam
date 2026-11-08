@@ -1,7 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import { encodeAbiParameters, encodeEventTopics, type Abi, type Log } from 'viem';
-import { VaultDepositoryFacetABI } from '@vaipakam/contracts/abis';
-import { pauseStops, withdrawAmount, withdrawBlockers, withdrawCall, withdrawChanged, withdrawRequested, type WithdrawDraft, type WithdrawReview } from './withdraw';
+import { VaultDepositoryFacetABI, VaultPayoutFacetABI } from '@vaipakam/contracts/abis';
+import {
+  escapeRequested,
+  pauseStops,
+  withdrawAmount,
+  withdrawBlockers,
+  withdrawCall,
+  withdrawChanged,
+  withdrawRequested,
+  withdrawVia,
+  type WithdrawDraft,
+  type WithdrawReview,
+} from './withdraw';
 import { withdrawReceipt } from './withdrawReceipt';
 
 type Hex = `0x${string}`;
@@ -41,6 +52,7 @@ function review(p: Partial<WithdrawReview> = {}): WithdrawReview {
     ...p,
     protection,
     route,
+    via: p.via === undefined ? withdrawVia({ paused: 'paused' in p ? p.paused! : false, escapeOpen: 'escapeOpen' in p ? p.escapeOpen! : false, protection }) : p.via,
   };
 }
 
@@ -60,16 +72,33 @@ describe('withdrawCall', () => {
     expect(withdrawCall({ standard: 'erc1155', asset: NFT, tokenId: 2n, amount: 3n }, ME).args).toEqual([ME, 2, NFT, 2n, 3n, ME]);
     expect(withdrawAmount({ ...nftDraft, amount: 9n })).toBe(1n);
   });
+  it('through the escape route: the asset, its token and amount, paid to the caller itself', () => {
+    expect(withdrawCall(erc20Draft, ME, 'escape')).toMatchObject({ functionName: 'escapeWithdraw', args: [0, TOKEN, 0n, 100n] });
+    expect(withdrawCall({ ...nftDraft, amount: 9n }, ME, 'escape').args).toEqual([1, NFT, 7n, 1n]);
+  });
 });
 
-describe('pauseStops', () => {
-  it('a pause stops it unless the account is protected and the escape route is open', () => {
+describe('pauseStops and withdrawVia', () => {
+  it('a pause stops it until the escape route opens', () => {
     expect(pauseStops(review())).toBe(false);
     expect(pauseStops(review({ paused: true }))).toBe(true);
-    expect(pauseStops(review({ paused: true, escapeOpen: true }))).toBe(true);
+    expect(pauseStops(review({ paused: true, escapeOpen: true }))).toBe(false);
     expect(pauseStops(review({ paused: true, escapeOpen: true, protection: PROTECTED }))).toBe(false);
     expect(pauseStops(review({ paused: null }))).toBeNull();
     expect(pauseStops(review({ paused: true, escapeOpen: null, protection: PROTECTED }))).toBeNull();
+    expect(pauseStops(review({ paused: true, escapeOpen: true, protection: null }))).toBeNull();
+  });
+  it('under an open escape route a wallet without protected mode goes through it; a protected one withdraws as usual', () => {
+    expect(withdrawVia({ paused: false, escapeOpen: false, protection: OPEN })).toBe('withdraw');
+    expect(withdrawVia({ paused: true, escapeOpen: false, protection: OPEN })).toBe('withdraw');
+    expect(withdrawVia({ paused: true, escapeOpen: true, protection: OPEN })).toBe('escape');
+    expect(withdrawVia({ paused: true, escapeOpen: true, protection: PROTECTED })).toBe('withdraw');
+    expect(withdrawVia({ paused: null, escapeOpen: false, protection: OPEN })).toBeNull();
+    expect(withdrawVia({ paused: null, escapeOpen: null, protection: PROTECTED })).toBeNull();
+    expect(withdrawVia({ paused: true, escapeOpen: null, protection: PROTECTED })).toBeNull();
+    expect(withdrawBlockers(review({ paused: null }), copy, amountText)).toEqual(['vaultWithdraw.routeUnread']);
+    expect(withdrawVia({ paused: true, escapeOpen: true, protection: null })).toBeNull();
+    expect(withdrawVia({ paused: true, escapeOpen: null, protection: OPEN })).toBeNull();
   });
 });
 
@@ -82,6 +111,8 @@ describe('withdrawBlockers', () => {
     expect(withdrawBlockers(review({ retired: true, frozen: 'flagged' }), copy, amountText)).toEqual(['vaultWithdraw.retired']);
     expect(withdrawBlockers(review({ frozen: 'flagged', paused: true }), copy, amountText)).toEqual(['vaultWithdraw.flagged']);
     expect(withdrawBlockers(review({ paused: true }), copy, amountText)).toEqual(['vaultWithdraw.paused']);
+    expect(withdrawBlockers(review({ paused: true, escapeOpen: true }), copy, amountText)).toEqual([]);
+    expect(withdrawBlockers(review({ paused: true, escapeOpen: null }), copy, amountText)).toEqual(['vaultWithdraw.routeUnread']);
     expect(withdrawBlockers(review({ protection: { ...PROTECTED, locked: true } }), copy, amountText)).toEqual(['vaultWithdraw.locked']);
   });
   it('an amount over what is free is refused, with the free figure', () => {
@@ -123,6 +154,17 @@ describe('withdrawRequested', () => {
   });
 });
 
+describe('escapeRequested', () => {
+  it('reads the escape withdrawal the protocol recorded for this wallet and token', () => {
+    const topics = encodeEventTopics({ abi: VaultPayoutFacetABI as Abi, eventName: 'EscapeWithdrawal', args: { account: ME, asset: TOKEN } });
+    const data = encodeAbiParameters([{ type: 'uint256' }, { type: 'uint256' }], [0n, 100n]);
+    const log = { address: DIAMOND, topics, data } as unknown as Log;
+    expect(escapeRequested([log], DIAMOND, ME, erc20Draft)).toBe(100n);
+    expect(escapeRequested([log], DIAMOND, OTHER, erc20Draft)).toBeNull();
+    expect(escapeRequested([{ ...log, address: OTHER } as Log], DIAMOND, ME, erc20Draft)).toBeNull();
+  });
+});
+
 describe('withdrawReceipt', () => {
   it('pays this wallet at once without protected mode, from the stated vault', () => {
     const r = withdrawReceipt(review(), null, copy);
@@ -144,6 +186,9 @@ describe('withdrawReceipt', () => {
   });
   it('states an open escape route, an unread mode, pause, screen, free figure and dry run', () => {
     expect(withdrawReceipt(review({ paused: true, escapeOpen: true, protection: PROTECTED }), null, copy).consequences).toContain('vaultWithdraw.escapeOpen');
+    const escape = withdrawReceipt(review({ paused: true, escapeOpen: true }), null, copy);
+    expect(escape.consequences).toContain('vaultWithdraw.escapeRoute');
+    expect(escape.rows.find((x) => x.label === 'vaultWithdraw.rowTo')?.value).toEqual({ kind: 'text', text: 'vaultWithdraw.toWalletEscape' });
     const r = withdrawReceipt(review({ protection: null, paused: null, frozen: 'unknown', withdrawable: null, dryRun: 'unread' }), null, copy);
     expect(r.rows.find((x) => x.label === 'vaultWithdraw.rowTo')?.value.kind).toBe('unknown');
     expect(r.consequences).toEqual(

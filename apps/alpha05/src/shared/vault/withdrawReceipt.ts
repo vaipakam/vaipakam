@@ -26,8 +26,9 @@ export function withdrawName(d: WithdrawDraft, meta: TokenMetaMap | null, copy: 
 }
 
 /** Where the withdrawal goes, in words; null when the mode was unread. */
-export function withdrawDestination(r: Pick<WithdrawReview, 'route' | 'protection'>, copy: Copy): string | null {
-  return r.route === 'wallet' ? copy.text('vaultWithdraw.toWallet') : routedDestination(r.route, r.protection, copy);
+export function withdrawDestination(r: Pick<WithdrawReview, 'route' | 'protection' | 'via'>, copy: Copy): string | null {
+  if (r.route === 'wallet') return copy.text(r.via === 'escape' ? 'vaultWithdraw.toWalletEscape' : 'vaultWithdraw.toWallet');
+  return routedDestination(r.route, r.protection, copy);
 }
 
 export function withdrawReceipt(r: WithdrawReview, meta: TokenMetaMap | null, copy: Copy): Receipt {
@@ -61,7 +62,7 @@ export function withdrawReceipt(r: WithdrawReview, meta: TokenMetaMap | null, co
     text('vaultWithdraw.onlyThisWallet'),
     ...routeNotes(r.route, r.protection, copy),
     ...(r.route === 'queued' ? [text('vaultWithdraw.queueCancel')] : []),
-    ...(r.paused === true && pauseStops(r) === false ? [text('vaultWithdraw.escapeOpen')] : []),
+    ...(r.paused === true && pauseStops(r) === false ? [text(r.via === 'escape' ? 'vaultWithdraw.escapeRoute' : 'vaultWithdraw.escapeOpen')] : []),
     ...(pauseStops(r) === null ? [text('vaultWithdraw.pauseUnread')] : []),
     ...(r.frozen === 'unknown' || r.frozen === 'outage' ? [text('vaultDeposit.screenUnread')] : []),
     ...(r.withdrawable === null ? [text('vaultWithdraw.freeUnread')] : []),
