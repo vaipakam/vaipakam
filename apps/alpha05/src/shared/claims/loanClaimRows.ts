@@ -11,8 +11,9 @@
  * row whose claim could not be read is kept and said to be unread, never
  * dropped; a received position whose claim is confirmed empty is left out.
  */
+import { readPositionOwnerFor } from '../positions/positionNft';
 import type { Abi, PublicClient } from 'viem';
-import { AdminFacetABI, LoanFacetABI, VaipakamNFTFacetABI } from '@vaipakam/contracts/abis';
+import { AdminFacetABI, LoanFacetABI } from '@vaipakam/contracts/abis';
 import type { LoanDetails } from '../positions/loanView';
 import type { PayoutRow, Payouts } from '../positions/reads';
 import { claimLanes, sideOpen, type ClaimLane, type ClaimSide, type SideClaim } from './loanClaim';
@@ -21,7 +22,6 @@ import { readSideClaim } from './loanClaimReview';
 type Hex = `0x${string}`;
 
 const LOAN = LoanFacetABI as Abi;
-const NFT = VaipakamNFTFacetABI as Abi;
 const ADMIN = AdminFacetABI as Abi;
 
 export interface LoanClaimRow {
@@ -57,7 +57,9 @@ async function readRow(c: PublicClient, diamond: Hex, p: PayoutRow, listed: bool
   const loan = await maybe(c.readContract({ address: diamond, abi: LOAN, functionName: 'getLoanDetails', args: [p.loanId] }) as Promise<LoanDetails>);
   if (!loan) return { loanId: p.loanId, side: p.side, listed, loan: null, holder: null, claim: null, lanes: [] };
   const [holder, claim] = await Promise.all([
-    maybe(c.readContract({ address: diamond, abi: NFT, functionName: 'ownerOf', args: [p.side === 'lender' ? loan.lenderTokenId : loan.borrowerTokenId] }) as Promise<Hex>),
+    // #3205: the side's LIVE holder through the position-NFT door; a retired
+    // (or burned) token has none.
+    maybe(readPositionOwnerFor(c, diamond, p.side === 'lender' ? loan.lenderTokenId : loan.borrowerTokenId)),
     readSideClaim(c, diamond, p.loanId, p.side),
   ]);
   const lanes = claim
