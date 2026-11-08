@@ -1,5 +1,6 @@
 // Watch-only live review of the Vault page (ACC-20, ACC-21, ACC-22, ACC-23,
-// ACC-24, RB-VAULT, RB-VAULT-DEPOSIT, RB-VAULT-WITHDRAW) (live tier, run
+// ACC-24, ACC-36, ACC-37, ACC-43, RB-VAULT, RB-VAULT-DEPOSIT,
+// RB-VAULT-WITHDRAW, RB-VAULT-SAFETY) (live tier, run
 // after each deploy), through
 // the shared watch-only wallet (watch-wallet.cjs): nothing can be sent.
 // Opens Vault as <address> and prints the page: the vault address (or that
@@ -8,7 +9,9 @@
 // how it was found, then the same with small and empty rows shown, then the
 // Withdraw form and review for a small amount of the first asset with
 // something free (left unsigned), then the Deposit form and review for a small amount of the first suggested asset
-// (or the Terms prompt it asks for first), left unsigned. Checks that nothing
+// (or the Terms prompt it asks for first), left unsigned, then the Account
+// safety card and the review of its first action (Turn on or Lock now), left
+// unsigned. Checks that nothing
 // scrolls sideways and saves full-page screenshots per device.
 // Usage: node e2e/live/vault-watch.cjs <address>
 // (screenshots go to $LIVE_OUT or /tmp; $LIVE_URL overrides the origin)
@@ -90,6 +93,26 @@ async function session(b, opts, label) {
       console.log(`----- deposit review (unsigned)\n${(await receipt.count()) ? await text(p.getByTestId('vault-deposit-panel')) : 'no receipt shown'}`);
     }
   } else if (await p.getByTestId('vault-deposit-paused').count()) console.log(`----- deposit closed\n${await text(p.getByTestId('vault-deposit-paused'))}`);
+  // ACC-30/31: the pause notice, shown only while the protocol is paused.
+  const escape = p.getByTestId('vault-escape');
+  console.log(`----- pause notice\n${(await escape.count()) ? await text(escape) : 'none (the protocol is not paused)'}`);
+  // ACC-36/37/43: print the safety card, then open the review of its first
+  // action (Turn on, or Lock now when protection is on), left unsigned.
+  const card = p.getByTestId('vault-safety');
+  await card.getByTestId('vault-safety-state').waitFor({ timeout: 60000 }).catch(() => {});
+  console.log(`----- safety card\n${(await card.count()) ? await text(card) : 'no card shown'}`);
+  const turnOn = card.getByTestId('vault-safety-turn-on');
+  const lock = card.getByTestId('vault-safety-lock');
+  if (await turnOn.count()) {
+    await turnOn.click();
+    await card.getByTestId('vault-safety-review').click();
+  } else if (await lock.count()) await lock.click();
+  const safety = card.getByTestId('vault-safety-panel');
+  if (await safety.count()) {
+    await safety.locator('.receipt').waitFor({ timeout: 60000 }).catch(() => {});
+    await p.waitForTimeout(3000);
+    console.log(`----- safety review (unsigned)\n${await text(safety)}`);
+  }
   console.log('scrollWidth/innerWidth', await p.evaluate(() => [document.documentElement.scrollWidth, window.innerWidth]));
   await p.screenshot({ path: `${OUT}/live-vault-${label}.png`, fullPage: true });
   console.log(`errors: ${JSON.stringify(errs)}`);

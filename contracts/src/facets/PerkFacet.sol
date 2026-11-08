@@ -258,7 +258,7 @@ contract PerkFacet is
         //    Spending VPFI lowers the buyer's hold tier; the withdraw
         //    refreshes their tier record at that moment (#1820).
         uint256 balanceBefore = IERC20(vpfi).balanceOf(address(this));
-        LibVaultOutflow.toDiamond(msg.sender, LibVaultOutflow.ERC20, vpfi, 0, spend, 0, OutflowReason.RECYCLE);
+        LibVaultOutflow.toDiamondERC20(msg.sender, vpfi, spend, 0, OutflowReason.RECYCLE);
 
         // 2. Credit the bucket now the tokens are on the Diamond, through the
         //    perk's own delta-checked operation.

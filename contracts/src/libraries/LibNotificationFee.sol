@@ -209,7 +209,7 @@ library LibNotificationFee {
         //    verifies the balance actually rose by the tariff. The
         //    withdraw refreshes the payer's tier record itself (#1820).
         uint256 balanceBefore = IERC20(vpfi).balanceOf(address(this));
-        LibVaultOutflow.toDiamond(payer, LibVaultOutflow.ERC20, vpfi, 0, vpfiAmount, loanId, OutflowReason.RECYCLE);
+        LibVaultOutflow.toDiamondERC20(payer, vpfi, vpfiAmount, loanId, OutflowReason.RECYCLE);
 
         // 2. Credit the recycle bucket now that the tariff sits on the
         //    Diamond — the first live non-forfeit absorption class

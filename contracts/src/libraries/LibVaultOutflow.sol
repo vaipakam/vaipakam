@@ -14,6 +14,9 @@ interface IVaultOutflowHost {
     function vaultOutflowToOwner(address user, uint8 kind, address asset, uint256 tokenId, uint256 amount, uint8 reason)
         external
         returns (uint256 delivered);
+    function vaultOutflowToDiamondERC20(address user, address asset, uint256 amount, uint256 ref, uint8 reason)
+        external
+        returns (uint256 delivered);
     function vaultOutflowArgs(
         address user,
         uint8 kind,
@@ -200,10 +203,21 @@ library LibVaultOutflow {
         return _go(user, kind, asset, tokenId, amount, address(0), VaultOutflowTypes.OutflowClass.DiamondTransient, ref, 0, reason);
     }
 
+    /// @notice {toDiamond} for an ERC-20, through the policy's compact entry.
+    function toDiamondERC20(address user, address asset, uint256 amount, uint256 ref, uint8 reason)
+        internal
+        returns (uint256)
+    {
+        return abi.decode(
+            _call(abi.encodeCall(IVaultOutflowHost.vaultOutflowToDiamondERC20, (user, asset, amount, ref, reason))),
+            (uint256)
+        );
+    }
+
     /// @notice {toDiamond} for an ERC-20, refused unless all of `amount`
     ///         arrived (a voluntary flow, #2440 outcome 1).
     function toDiamondExact(address user, address asset, uint256 amount, uint256 ref, uint8 reason) internal {
-        LibDelivery.requireFull(asset, amount, toDiamond(user, ERC20, asset, 0, amount, ref, reason));
+        LibDelivery.requireFull(asset, amount, toDiamondERC20(user, asset, amount, ref, reason));
     }
 
     /// @notice {toDiamond} for an ERC-20 that reports failure instead of

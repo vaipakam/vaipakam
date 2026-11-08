@@ -94,6 +94,7 @@ import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {FallbackCustodyFacet} from "../src/facets/FallbackCustodyFacet.sol";
 import {SwapAttemptFacet} from "../src/facets/SwapAttemptFacet.sol";
 import {ForcedSaleFacet} from "../src/facets/ForcedSaleFacet.sol";
+import {SaleFloorFacet} from "../src/facets/SaleFloorFacet.sol";
 import {LibDiscountedLiquidation} from "../src/libraries/LibDiscountedLiquidation.sol";
 import {LibNumeraireValue} from "../src/libraries/LibNumeraireValue.sol";
 import {TreasuryFeeFacet} from "../src/facets/TreasuryFeeFacet.sol";
@@ -279,7 +280,7 @@ contract RiskFacetTest is Test {
         vaultImpl = new VaipakamVaultImplementation(address(0), address(0));
 
         // Cut facets into diamond
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](31);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](32);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -498,6 +499,13 @@ contract RiskFacetTest is Test {
             facetAddress: ArtifactDeploy.deploy(type(ForcedSaleFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getForcedSaleFacetSelectors()
+        });
+        // #3359 - both forced sellers read their slippage floor through a
+        // self-call into SaleFloorFacet.
+        cuts[31] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(SaleFloorFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getSaleFloorFacetSelectors()
         });
 
         // #2739 - terminal reward closes run by a BUBBLING self-call into

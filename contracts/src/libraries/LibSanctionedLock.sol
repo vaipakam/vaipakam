@@ -111,7 +111,7 @@ library LibSanctionedLock {
         uint8 reason
     ) internal returns (uint256 received) {
         s.consolidationMoveFromUser = payer;
-        received = LibVaultOutflow.toDiamond(payer, LibVaultOutflow.ERC20, asset, 0, amount, loanId, reason);
+        received = LibVaultOutflow.toDiamondERC20(payer, asset, amount, loanId, reason);
         s.consolidationMoveFromUser = address(0);
     }
 

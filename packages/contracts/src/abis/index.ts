@@ -77,6 +77,7 @@ import ProtectedAccountFacetABI from './ProtectedAccountFacet.json';
 import VaultPayoutFacetABI from './VaultPayoutFacet.json';
 import VaultDepositoryFacetABI from './VaultDepositoryFacet.json';
 import OfferBookFacetABI from './OfferBookFacet.json';
+import SaleFloorFacetABI from './SaleFloorFacet.json';
 import VaultOutflowFacetABI from './VaultOutflowFacet.json';
 import ClaimFacetABI from './ClaimFacet.json';
 import OracleFacetABI from './OracleFacet.json';
@@ -256,6 +257,7 @@ export {
   VaultPayoutFacetABI,
   VaultDepositoryFacetABI,
   OfferBookFacetABI,
+  SaleFloorFacetABI,
   VaultOutflowFacetABI,
   ClaimFacetABI,
   OracleFacetABI,

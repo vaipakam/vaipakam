@@ -47,7 +47,7 @@ import {ForcedSaleFacet} from "../../src/facets/ForcedSaleFacet.sol";
 library FacetSelectors {
     /// @notice Full external selector surface of {OracleFacet} (20).
     function oracle() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](20);
+        s = new bytes4[](21);
         s[0] = OracleFacet.checkLiquidity.selector;
         s[1] = OracleFacet.getAssetPrice.selector;
         s[2] = OracleFacet.calculateLTV.selector;
@@ -68,6 +68,8 @@ library FacetSelectors {
         s[17] = OracleFacet.countLiveSecondaryOracleFeeds.selector;
         s[18] = OracleFacet.getAssetPriceStatus.selector;
         s[19] = OracleFacet.isLiquidityQuoteUsable.selector;
+        // #3359 — the close-out depth tier the forced-sale floor reads.
+        s[20] = OracleFacet.getCloseOutLiquidityTier.selector;
     }
 
     /// @notice Full external selector surface of {VaultFactoryFacet} (34).

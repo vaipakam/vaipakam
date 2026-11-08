@@ -158,6 +158,26 @@ contract VaultOutflowFacet is IVaipakamErrors {
     }
 
     /**
+     * @notice The Diamond-transient class for an ERC-20, through a compact
+     *         entry: `user`'s vault to this Diamond, within the transaction,
+     *         for loan or offer `ref`. The same policy as {vaultOutflow}; a
+     *         forced sale near EIP-170 encodes five scalars.
+     */
+    function vaultOutflowToDiamondERC20(address user, address asset, uint256 amount, uint256 ref, uint8 reason)
+        external
+        onlyDiamondInternal
+        returns (uint256 delivered)
+    {
+        VaultOutflowTypes.Outflow memory o;
+        o.asset = asset;
+        o.amount = amount;
+        o.class_ = VaultOutflowTypes.OutflowClass.DiamondTransient;
+        o.ref = ref;
+        o.reason = reason;
+        return _outflow(user, o);
+    }
+
+    /**
      * @notice {vaultOutflow} with the intent passed as scalars (no
      *         `counterRef`, which only the matched-counterparty class uses).
      *         The same policy; it exists because building and encoding the

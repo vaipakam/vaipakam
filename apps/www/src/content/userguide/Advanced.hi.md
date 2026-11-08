@@ -2391,6 +2391,18 @@ Positions एक साझा रीडर से वही इन्वें�
 
 निकासी `VaultDepositoryFacet.withdrawFromVault(account, kind, asset, tokenId, amount, recipient)` है, जिसमें `account` और `recipient` दोनों जुड़ा हुआ वॉलेट हैं। इसकी सीमा `withdrawableNow(account, kind, asset, tokenId)` है (अन्यथा `AmountExceedsFree`), यह `requireManager(account)` जाँचती है, कॉल करने वाले (Tier-1) और प्राप्तकर्ता की स्क्रीनिंग करती है, और रुके होने पर अस्वीकार होती है, जब तक खाता सुरक्षित न हो और `isEscapeOpen` सही न हो। समीक्षा एक ब्लॉक पर `getUserVaultAddress`, `paused`, `isEscapeOpen`, प्रतिबंध स्थिति, `getProtectedAccount(wallet)` और `withdrawableNow` पढ़ती है, फिर कॉल का परीक्षण चलाती है। सुरक्षित मोड के बिना वॉल्ट मार्ग तुरंत वॉलेट को भुगतान करते हैं; उसके साथ `LibProtectedAccount.queuePayout` भुगतान को `delaySeconds` तक कतार में रखता है और `ProtectedVaultLocked`, `RecipientNotAllowlisted` तथा `TooManyPendingRows` को अस्वीकार करता है। समापन कार्ड `VaultWithdrawRequested(account, asset, kind, tokenId, amount, recipient, queued)`, `PayoutQueued` और वॉल्ट से वॉलेट तक टोकन के अपने ट्रांसफ़र लॉग पढ़ता है। जिस संग्रह को जमा रिकॉर्ड टोकन आईडी के बिना जानता है, उसे टोकन आईडी लिखकर निकाला जाता है; फ़ॉर्म की सीमा उस टोकन का `withdrawableNow` है, जो हर ब्लॉक पर पढ़ा जाता है।
 
+<a id="vault-safety"></a>
+
+### खाते की सुरक्षा
+
+कार्ड एक ही ब्लॉक पर `getProtectedAccount(wallet)`, `getProtectedDelayBounds()`, `paused`, प्रतिबंध स्थिति और `getPendingPayoutIds(wallet)` पढ़ता है; `FunctionDoesNotExist` revert को उपलब्ध नहीं माना जाता है। चालू करना `enableProtectedMode(delaySeconds, protectNfts)` है: तुरंत लागू, विराम के दौरान या पहले से चालू होने पर अस्वीकार, देरी सीमाओं के भीतर (दो से पाँच दिन), और वॉल्ट न हो तो यह उसे बना देता है। अभी लॉक करें `lockVault(wallet)` है: विराम में भी खुला, यह हर रुकी पंक्ति रद्द करता है (`PayoutCancelled`), हर लंबित बदलाव हटाता है और प्रबंधक के प्रस्तावित प्रतिस्थापन को निरस्त करता है। अनलॉक का अनुरोध `requestUnlock(wallet)` है, विराम में या `cooldownUntil` से पहले अस्वीकार, और `pendingUnlockAt` को अभी जमा `delaySeconds` पर रखता है। देय बदलाव लागू करें `finalizeSettingChanges(wallet)` है, जो हर देय बदलाव एक साथ लागू करता है; बंद करना तब तक रुकता है जब तक कोई पंक्ति खुली न रहे (`PendingRowsExist`)। हर कार्रवाई समीक्षा पर और वॉलेट खुलने से पहले फिर से ड्राई-रन होती है, और अंतिम कार्ड Diamond के लॉग से `ProtectedModeEnabled`, `VaultLocked`, `PayoutCancelled`, `SettingChangeRequested` और `SettingChangeApplied` पढ़ता है।
+
+<a id="vault-escape"></a>
+
+### जब प्रोटोकॉल रुका हो
+
+सूचना एक ही ब्लॉक पर `paused`, `VaultPayoutFacet.isEscapeOpen`, `escapeOpensAt` (मैनुअल विराम की शुरुआत जमा वह आपात निकास अवधि जिसके साथ वह शुरू हुआ; कोई लागू न हो या Diamond कभी लॉन्च न हुआ हो तो शून्य) और `getProtectedAccount(wallet)` पढ़ती है, और ब्लॉक के समय के हिसाब से उलटी गिनती करती है। मार्ग बंद रहते विराम में `withdrawFromVault` `EnforcedPause` के साथ revert होता है और समीक्षा बताती है कि विराम इसे रोकता है। `isEscapeOpen` सही होते ही संरक्षित खाता `withdrawFromVault` ही इस्तेमाल करता है, जो कतार में डालना जारी रखता है; किसी भी दूसरे वॉलेट की निकासी `escapeWithdraw(kind, asset, tokenId, amount)` बुलाती है, जो संरक्षित खाते को अस्वीकार करता है (`EscapeNotForProtected`), प्रतिबंधित प्राप्तकर्ता को अस्वीकार करता है, वॉलेट की अपनी जमा राशि और मुक्त आँकड़े से सीमित है, और बुलाने वाले को भुगतान करता है। अंतिम कार्ड `EscapeWithdrawal(account, asset, tokenId, amount)` और वॉल्ट से वॉलेट तक टोकन का अपना ट्रांसफ़र पढ़ता है। अगर विराम, मार्ग या खुले मार्ग में मोड पढ़ा न जा सके, तो कोई निकासी नहीं भेजी जाती।
+
 <a id="risk-access"></a>
 
 ### Risk Access: आपका जोखिम स्तर

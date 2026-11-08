@@ -547,7 +547,7 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
             // treasury fee first and the lender's share only after (lender
             // first), and is never made up from the Diamond's other balance.
             {
-                uint256 shortfall = loan.prepayAmount - LibVaultOutflow.toDiamond(loan.borrower, LibVaultOutflow.ERC20, loan.prepayAsset, 0, loan.prepayAmount, loanId, OutflowReason.RENTAL);
+                uint256 shortfall = loan.prepayAmount - LibVaultOutflow.toDiamondERC20(loan.borrower, loan.prepayAsset, loan.prepayAmount, loanId, OutflowReason.RENTAL);
                 if (shortfall > treasuryFee) {
                     prepayToLender -= shortfall - treasuryFee;
                     treasuryFee = 0;

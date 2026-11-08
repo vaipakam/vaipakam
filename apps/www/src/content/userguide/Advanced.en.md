@@ -2684,6 +2684,18 @@ The deposit is `VaultDepositoryFacet.depositToVault(kind, asset, tokenId, amount
 
 The withdrawal is `VaultDepositoryFacet.withdrawFromVault(account, kind, asset, tokenId, amount, recipient)` with `account` and `recipient` both the connected wallet. It is bounded by `withdrawableNow(account, kind, asset, tokenId)` (`AmountExceedsFree` otherwise), checks `requireManager(account)`, screens the caller (Tier-1) and the recipient, and is refused while paused unless the account is protected and `isEscapeOpen` is true. The review reads, at one block, `getUserVaultAddress`, `paused`, `isEscapeOpen`, the sanctions posture, `getProtectedAccount(wallet)` and `withdrawableNow`, then dry-runs the call. Without protected mode the vault routes pay the wallet at once; with it, `LibProtectedAccount.queuePayout` queues the payout for `delaySeconds` and refuses `ProtectedVaultLocked`, `RecipientNotAllowlisted` and `TooManyPendingRows`. The finish card reads `VaultWithdrawRequested(account, asset, kind, tokenId, amount, recipient, queued)`, `PayoutQueued` and the token's own transfer logs from the vault to the wallet. A collection the deposit record names without token ids is withdrawn by typing the token id; the form's limit is `withdrawableNow` for that token, read each block.
 
+<a id="vault-safety"></a>
+
+### Account safety
+
+The card reads, at one block, `getProtectedAccount(wallet)`, `getProtectedDelayBounds()`, `paused`, the sanctions posture and `getPendingPayoutIds(wallet)`; a `FunctionDoesNotExist` revert reads as unavailable. Turn on is `enableProtectedMode(delaySeconds, protectNfts)`: immediate, refused while paused or when already on, the delay inside the bounds (two to five days), and it creates the vault if there is none. Lock now is `lockVault(wallet)`: open during a pause, it cancels every queued row (`PayoutCancelled`), drops every pending change and voids a replacement the manager proposed. Ask to unlock is `requestUnlock(wallet)`, refused while paused or before `cooldownUntil`, and sets `pendingUnlockAt` to now plus `delaySeconds`. Apply due changes is `finalizeSettingChanges(wallet)`, which applies every due change at once; the switch-off waits until no row is open (`PendingRowsExist`). Each action is dry-run at review and again before the wallet opens, and the finish card reads `ProtectedModeEnabled`, `VaultLocked`, `PayoutCancelled`, `SettingChangeRequested` and `SettingChangeApplied` from the Diamond's logs.
+
+<a id="vault-escape"></a>
+
+### When the protocol is paused
+
+The notice reads, at one block, `paused`, `VaultPayoutFacet.isEscapeOpen`, `escapeOpensAt` (the manual pause's start plus the escape period it began with; zero when none is in force or the Diamond has never launched) and `getProtectedAccount(wallet)`, and counts down against the block's time. While paused with the route closed, `withdrawFromVault` reverts `EnforcedPause` and the review says the pause stops it. Once `isEscapeOpen` is true, a protected account still uses `withdrawFromVault`, which keeps queueing; any other wallet's Withdraw calls `escapeWithdraw(kind, asset, tokenId, amount)`, which refuses a protected account (`EscapeNotForProtected`), refuses a barred recipient, is bounded by the wallet's own depository holding and the free figure, and pays the caller. The finish card reads `EscapeWithdrawal(account, asset, tokenId, amount)` and the token's own transfer from the vault to the wallet. If the pause, the route or, under an open route, the mode is unread, no withdrawal is sent.
+
 <a id="risk-access"></a>
 
 ### Risk Access: Your Risk Level

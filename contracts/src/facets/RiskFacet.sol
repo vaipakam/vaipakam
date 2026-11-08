@@ -9,6 +9,7 @@ import {LibFallback} from "../libraries/LibFallback.sol";
 import {LibRiskMath} from "../libraries/LibRiskMath.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
+import {SaleFloorFacet} from "./SaleFloorFacet.sol";
 import {LibInterestLedger} from "../libraries/LibInterestLedger.sol";
 import {LibPeriodicInterest} from "../libraries/LibPeriodicInterest.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
@@ -881,6 +882,18 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
             revert InvalidPartialFraction(fractionBps, cap);
         }
 
+        // #3359 — the shared forced-sale floor rule, read on the whole loan
+        // (all its collateral against its debt) before the slice leaves, so a
+        // slice gets the floor its loan's full sale would.
+        uint256 maxSlippageBps = SaleFloorFacet(address(this))
+            .saleFloorBps(
+                loan.collateralAsset,
+                loan.principalAsset,
+                loan.collateralAmount,
+                LibEntitlement.currentBorrowBalance(loan)
+            )
+            .bps;
+
         // #407 PR 4 round-1 Codex P1 #1 (2026-06-12) — decrement the
         // lien by the slice we're moving out. Loan stays Active after
         // the slice swap, so full release would leave the residual
@@ -914,7 +927,6 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
             loan.principalAsset,
             sliceReceived
         );
-        uint256 maxSlippageBps = LibVaipakam.cfgMaxLiquidationSlippageBps();
         uint256 minOutputAmount = (expectedProceeds *
             (LibVaipakam.BASIS_POINTS - maxSlippageBps)) /
             LibVaipakam.BASIS_POINTS;
