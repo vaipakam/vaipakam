@@ -488,10 +488,14 @@ contract KeeperBackupUpkeepTest is Test {
         diamond.setDue(diamond.autoDeductDaily.selector, 13, true);
         // One loan per check; the window moves every 5 minutes.
         bool seen;
+        // A local clock: under via-IR `block.timestamp` read in a loop can stay
+        // at its first value after `vm.warp`.
+        uint256 t = block.timestamp;
         for (uint256 i; i < 3; i++) {
             (bool needed, KeeperBackupUpkeep.Action[] memory a) = _check();
             if (needed && a[0].arg == 13) seen = true;
-            vm.warp(block.timestamp + 5 minutes);
+            t += 5 minutes;
+            vm.warp(t);
         }
         assertTrue(seen);
     }
