@@ -166,5 +166,6 @@
   },
   "serviceCapacityEscrow": "0xF7C098ddb2523A2c049692B3548eBd72DC421eAf",
   "sanctionsList": "0x0A6De512dEaa00d54677d513ea7AdbAf5Ec34DD3",
-  "sanctionsDelistingTimelock": "0xD8827C000cF49b0B40763ab9F2b2851B090aA394"
+  "sanctionsDelistingTimelock": "0xD8827C000cF49b0B40763ab9F2b2851B090aA394",
+  "keeperAddress": "0xD9257B636E17D5714DD54F260c9F7EB81349E49B"
 }

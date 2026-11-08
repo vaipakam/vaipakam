@@ -22,6 +22,13 @@ import {
 import { readLoanClockSnapshot, type LoanClockSnapshotRead } from '@vaipakam/lib/loanClockSnapshot';
 import { redactedError } from '@vaipakam/lib/errorDescription';
 import { chainNotServed, parseChainId, requestedChainId } from './servedChain';
+import { getDeployment } from '@vaipakam/contracts/deployments';
+import {
+  liquidatorWindowBinds,
+  liquidatorWindowSql,
+  summariseLiquidators,
+  type LiquidatorRow,
+} from './liquidatorStats';
 import { EXPECTED_SCAN_CADENCE_SEC } from './chainIngestDO';
 import {
   type RepairObservationRow,
@@ -1051,6 +1058,7 @@ export async function handleClaimCandidates(
  *     erc20ActiveLoans, nftRentalsActive,
  *     volumeByAsset: { [lowercaseAddr]: principalSumDecimal },
  *     averageInterestRateBps: number | null,
+ *     liquidators: LiquidatorStats,  // #3366, see liquidatorStats.ts
  *     indexer: { lastBlock, updatedAt } | null,
  *   }
  *
@@ -1086,7 +1094,8 @@ export async function handleLoansStats(req: Request, env: Env): Promise<Response
     // construction rather than by read order, and keeps the counters
     // consistent with each other too (the asset split cannot outrun
     // `active`).
-    const [counts, assetTypeBreakdown, volumeRows, cursorRows] = await env.DB.batch([
+    const nowSec = Math.floor(Date.now() / 1000);
+    const [counts, assetTypeBreakdown, volumeRows, cursorRows, liquidatorRows] = await env.DB.batch([
       // Counts per status.
       env.DB.prepare(
         // SALE VEHICLES ARE NOT BORROWER POSITIONS (#2069 review round 8).
@@ -1169,6 +1178,9 @@ export async function handleLoansStats(req: Request, env: Env): Promise<Response
          WHERE chain_id = ? AND kind = 'diamond'`,
       )
         .bind(chainId),
+      // #3366 — distinct liquidators per window, in the same snapshot as
+      // the counts so the two cannot describe different ingest states.
+      env.DB.prepare(liquidatorWindowSql()).bind(...liquidatorWindowBinds(chainId, nowSec)),
     ]);
     const cursor = (cursorRows.results?.[0] ?? null) as {
       last_block: number;
@@ -1239,8 +1251,14 @@ export async function handleLoansStats(req: Request, env: Env): Promise<Response
       volumeByAssetSerialized[k] = v.toString();
     }
     const averageInterestRateBps = aprCount > 0 ? aprSum / aprCount : null;
+    const liquidators = summariseLiquidators(
+      (liquidatorRows.results ?? []) as LiquidatorRow[],
+      getDeployment(chainId)?.keeperAddress,
+      nowSec,
+    );
     return jsonResponse({
       chainId,
+      liquidators,
       active: tally.active,
       repaid: tally.repaid,
       defaulted: tally.defaulted,
