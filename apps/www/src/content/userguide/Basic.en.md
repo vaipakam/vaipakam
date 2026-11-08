@@ -1285,6 +1285,12 @@ With protected mode on, everything leaving your vault for your wallet waits out 
 
 When you sell a lender position, the interest you earned while you held it, and were not yet paid, stays yours as a claim on the loan. Claims lists every loan where you hold such a claim, with what you are owed after the protocol's share of interest and what already waits in your vault. While the loan runs, each interest payment pays the open claims first, oldest first, into each seller's own vault; until some reaches yours there is nothing to withdraw. Once the loan has ended, withdrawing first splits what the lender side recovered: the holder's principal first, then each seller's claim, oldest first. Every open claim closes then, and whatever a claim is not paid stays unpaid. The loans are found in the app's index; if it cannot list them, look a loan up by its number, which reads the chain alone. No approval is needed, so your wallet asks once, after a dry run, and the finish card shows what the transaction paid.
 
+<a id="frozen-proceeds"></a>
+
+### When a Payout Is Frozen
+
+If the sanctions screen flags your wallet, the protocol takes nothing you are owed and never stops a loan from closing: the other party still receives what its side recovers. Your share is parked in a vault, locked, and released once your wallet is de-listed. Claims and the loan's page then say "Frozen, awaiting de-listing" and offer no button to collect. If the screen cannot be read and your wallet was confirmed flagged before, a frozen payout stays locked until the screen answers again, and a payment due to your wallet in that time is parked the same way, since the protocol still treats it as flagged; an outage alone never freezes a wallet never confirmed flagged. On a running loan, the loan's page also shows what the loan already paid that is reserved for the lender position until the lender collects it, and a repaid loan says when it waits for a surplus the borrower has not yet collected.
+
 <a id="risk-access"></a>
 
 ### Risk Access: Your Risk Level

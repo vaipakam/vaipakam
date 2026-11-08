@@ -902,8 +902,36 @@ export const copy = {
     rowUnread: A('What this payout comes to could not be read; its claim is not offered until it is.'),
     collect: B('Collect'),
     howSummary: B('How payouts are found and collected'),
-    notYet: A('Not on this page yet: sale proceeds frozen for you, and extension reserves. Collect those in the current app.'),
+    notYet: A('Not on this page yet: extension reserves. Collect those in the current app.'),
     notYetLink: B('Open Claims in the current app'),
+  },
+  frozen: {
+    noticeTitle: B('Frozen, awaiting de-listing.'),
+    noticeFlagged: A(
+      'The sanctions screen flags this wallet. Nothing held for it is taken: each payout stays locked where its loan keeps it, in a vault, and is released once the wallet is de-listed. Repayments and close-outs still run, and the other party still receives what its side recovers. Each payout below shows what is held.',
+    ),
+    noticeOutage: A(
+      'The sanctions screen cannot be read right now, and this wallet was confirmed flagged before. A payout frozen for it stays locked until the screen can show the wallet de-listed, and a payment due to it in this time is parked the same way, since the protocol still treats it as flagged. An outage alone never freezes a wallet never confirmed flagged.',
+    ),
+    noticeUnknown: A('Whether the sanctions screen flags this wallet could not be read, so nothing here is shown as frozen or as free of it. Each claim’s dry run still decides.'),
+    claimFlagged: A(
+      'Frozen, awaiting de-listing: the sanctions screen flags this wallet, so nothing can be collected now. It stays locked, not lost, and is released once the wallet is de-listed.',
+    ),
+    claimOutage: A(
+      'Frozen until the sanctions screen can be read: this payout was frozen for a wallet confirmed flagged, and it is released only once the screen shows that wallet de-listed. It stays locked, not lost.',
+    ),
+    claimRecorded: A(
+      'Frozen, awaiting de-listing: the protocol froze this payout for a wallet the sanctions screen flagged, and releases it only once that wallet is shown de-listed. It stays locked, not lost.',
+    ),
+    reservedRunning: A(
+      '{{amount}} the loan already paid is held for the lender position, reserved in the lender vault this loan records until the lender’s claim pays it. A payment made while the holder was flagged by the sanctions screen waits here, as can an amount an early close set aside.',
+    ),
+    reservedUnread: A('Whether this loan already holds anything for the lender position, out of payments it made, could not be read. It is not shown as none.'),
+    openForSurplus: A('This loan has not settled yet: a surplus from its close is still held for the borrower position, one of the payouts left to collect before it settles.'),
+    whySummary: B('Why a payout can be frozen'),
+    why: C(
+      'When the sanctions screen flags a wallet, the protocol does not take what it is owed and does not stop a loan from closing. A repayment, a default or a liquidation still completes, and the other party receives what its side recovers, which in a default or liquidation can be less than it is owed. The flagged wallet’s share is parked in a vault, locked. It is released once the wallet is de-listed. Release is fail-closed: once the protocol has recorded a wallet as frozen on a loan, the payout moves only when the screen can be read and shows that wallet de-listed, whoever holds the position by then. An outage alone never freezes anyone: for a wallet never confirmed flagged, a payout made while the screen could not be read is not frozen. A wallet already confirmed flagged is still treated as flagged then, so a payment due to it during the outage is parked too. Payments a running loan makes to a flagged lender position wait in the loan’s lender vault, reserved for it, until the loan’s claim.',
+    ),
   },
   queue: {
     title: B('Payouts waiting in your queue'),
@@ -1649,7 +1677,9 @@ export const copy = {
     blockState: A('This offer can no longer be taken: {{state}}'),
     err: {
       OfferAlreadyAccepted: A('Someone has already taken this offer.'),
-      SanctionedAcceptor: A('This wallet is flagged by the sanctions screen, so it cannot open new loans. Repaying, adding collateral and claiming stay open.'),
+      SanctionedAcceptor: A(
+        'This wallet is flagged by the sanctions screen, so it cannot open new loans, add collateral or collect payouts. Repaying stays open, and anything owed to it is held, locked, until it is de-listed.',
+      ),
       SanctionedCreator: A("The lender's wallet is flagged by the sanctions screen, so this offer cannot be taken."),
       AssetPaused: A('The protocol has paused one of these assets for new loans. Other assets stay open.'),
       CountriesNotCompatible: A('The protocol does not allow these two accounts to trade with each other.'),

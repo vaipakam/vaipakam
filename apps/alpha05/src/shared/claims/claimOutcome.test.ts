@@ -63,6 +63,7 @@ const review: LoanClaimReview = {
   sellersShare: 0n,
   protection: { enabled: false, locked: false, delaySeconds: 0, requireCosign: false },
   route: 'wallet',
+  frozen: null,
   dryRun: null,
   verdict: OPEN,
   readAt: 1,

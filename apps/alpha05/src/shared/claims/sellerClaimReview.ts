@@ -17,6 +17,7 @@ import type { Refusal, Verdict } from '../eligibility/types';
 import { moved } from '../offers/acceptOutcome';
 import { payoutOutcomes, payoutRoute, readProtection, type PayoutRoute, type Protection } from '../protection/payout';
 import { payoutLegs, routeChanged, routedDestination, routeNotes } from '../protection/payoutCopy';
+import { frozenRefusal, frozenState, isFrozenRefusal, readSanctionsPosture, type FrozenState } from '../sanctions/posture';
 import { figured, type Receipt, type ReceiptRow, type ReceiptText } from '../receipt/types';
 import { askThrough } from '../tx/simulate';
 import type { LegOutcome } from '../tx/outcome';
@@ -46,6 +47,9 @@ export interface SellerClaimReview {
   paused: boolean | null;
   protection: Protection | null;
   route: PayoutRoute;
+  /** The seller's standing with the sanctions screen at the review's block
+   *  (RB-FROZEN). */
+  frozen: FrozenState;
   /** The seller's part of an ended loan's split (see `splitPart`). */
   part: SplitPart;
   /** The protocol's dry run of this withdrawal now: null when it passes,
@@ -62,16 +66,17 @@ export async function readSellerClaimReview(own: OwnStateClient, diamond: Hex, l
     .read(async (c: PublicClient) => {
       // One block for everything the review states.
       const block = await c.getBlockNumber({ cacheTime: 0 });
-      const [row, paused, protection] = await Promise.all([
+      const [row, paused, protection, posture] = await Promise.all([
         readSellerRow(c, diamond, loanId, seller, block),
         readPaused(c, diamond, block),
         readProtection(c, diamond, seller, block),
+        readSanctionsPosture(c, diamond, seller, block),
       ]);
-      return { row, paused, protection };
+      return { row, paused, protection, frozen: frozenState(posture) };
     })
     .then((x) => x.value);
   const readAt = Date.now();
-  const verdict = sellerVerdict(facts.row, seller, facts.paused, copy, readAt);
+  const verdict = sellerVerdict(facts.row, seller, facts.paused, copy, readAt, facts.frozen);
   let dryRun: SellerClaimReview['dryRun'] = null;
   if (verdict.state === 'open') {
     const dry = await askThrough(own, (c) => c.simulateContract({ address: diamond, abi: SELLER, functionName: 'claimAsSeller', args: [loanId], account: seller }));
@@ -85,6 +90,7 @@ export async function readSellerClaimReview(own: OwnStateClient, diamond: Hex, l
     protection: facts.protection,
     // From the seller's own vault to the seller's wallet.
     route: payoutRoute(facts.protection, seller, seller),
+    frozen: facts.frozen,
     part: splitPart(facts.row, seller),
     dryRun,
     verdict,
@@ -98,6 +104,7 @@ export function sellerClaimChanged(a: SellerClaimReview, b: SellerClaimReview, c
   const { text } = copy;
   if (sellerRowKey(a.row) !== sellerRowKey(b.row)) return text('sellerClaim.changed');
   if (a.paused !== b.paused) return text('repay.changedHolders');
+  if (a.frozen !== b.frozen) return text('repay.changedVerdict');
   if (routeChanged(a, b)) return text('payout.changed');
   if (a.verdict.state !== b.verdict.state || a.verdict.refusals[0]?.code !== b.verdict.refusals[0]?.code) return text('repay.changedVerdict');
   return null;
@@ -107,6 +114,8 @@ export function sellerClaimChanged(a: SellerClaimReview, b: SellerClaimReview, c
 export function sellerClaimBlockers(r: SellerClaimReview, copy: Copy): string[] {
   if (r.verdict.state !== 'open') return [r.verdict.refusals[0]?.reason ?? ''];
   if (r.dryRun === 'unread') return [copy.text('sellerClaim.dryRunUnread')];
+  // A sanctions refusal is said in the frozen-proceeds words (RB-FROZEN).
+  if (r.dryRun !== null && isFrozenRefusal(r.dryRun)) return [frozenRefusal(r.dryRun.code === 'SanctionsOracleUnavailable' ? 'outage' : 'recorded', copy).reason];
   if (r.dryRun !== null) return [copy.format('repay.dryRunRefused', { reason: r.dryRun.reason })];
   return [];
 }

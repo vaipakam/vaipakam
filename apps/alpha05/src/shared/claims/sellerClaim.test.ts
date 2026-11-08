@@ -62,6 +62,10 @@ describe('seller claim rules', () => {
   });
 
   it('stops under the pause and says so when a read failed', () => {
+    expect(code(sellerVerdict(row({ held: [{ asset: WETH, amount: 50n }] }), ME, false, copy, 1, 'flagged'))).toBe('SanctionedAddress');
+    expect(sellerVerdict(row({ held: [{ asset: WETH, amount: 50n }] }), ME, false, copy, 1, 'outage').refusals[0]!.reason).toBe('frozen.claimOutage');
+    expect(code(sellerVerdict(row({ held: [{ asset: WETH, amount: 50n }] }), ME, true, copy, 1, 'flagged'))).toBe('EnforcedPause');
+    expect(code(sellerVerdict(row({ held: [{ asset: WETH, amount: 50n }] }), ME, false, copy, 1, 'unknown'))).toBe('open');
     expect(code(sellerVerdict(row({ held: [{ asset: WETH, amount: 50n }] }), ME, true, copy, 1))).toBe('EnforcedPause');
     expect(code(sellerVerdict(row(), ME, null, copy, 1))).toBe('unknown');
     expect(code(sellerVerdict(row({ held: null }), ME, false, copy, 1))).toBe('unknown');
@@ -147,7 +151,20 @@ const closedEv = (paid: bigint, fullyPaid: boolean) =>
 const transfer = (amount: bigint) => log(ERC20, WETH, 'Transfer', { from: OLDER, to: ME, value: amount });
 
 function review(r: SellerRow, over: Partial<SellerClaimReview> = {}): SellerClaimReview {
-  return { identity: '1:0xaa', loanId: 7n, row: r, paused: false, protection: null, route: 'wallet', part: splitPart(r, ME), dryRun: null, verdict: OPEN, readAt: 1, ...over };
+  return {
+    identity: '1:0xaa',
+    loanId: 7n,
+    row: r,
+    paused: false,
+    protection: null,
+    route: 'wallet',
+    frozen: null,
+    part: splitPart(r, ME),
+    dryRun: null,
+    verdict: OPEN,
+    readAt: 1,
+    ...over,
+  };
 }
 
 describe('seller withdrawal record', () => {

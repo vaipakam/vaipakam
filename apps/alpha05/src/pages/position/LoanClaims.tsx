@@ -7,6 +7,7 @@ import { claimVerdict } from '../../shared/eligibility/claim';
 import type { LoanView } from '../../shared/positions/loanView';
 import type { TokenMetaMap } from '../../shared/reads/tokens';
 import { useNow } from '../../shared/ui/useNow';
+import type { FrozenState } from '../../shared/sanctions/posture';
 
 interface LoanClaimsProps {
   loanId: bigint;
@@ -14,6 +15,8 @@ interface LoanClaimsProps {
   own: OwnStateClient;
   chain: SupportedChain;
   meta: TokenMetaMap | null;
+  /** The reader's standing with the sanctions screen (RB-FROZEN). */
+  frozen?: FrozenState;
 }
 
 /**
@@ -31,7 +34,7 @@ interface LoanClaimsProps {
  * be read says that and is not offered. A claim in flight keeps its panel on
  * screen until the reader closes the finish card.
  */
-export function LoanClaims({ loanId, view: v, own, chain, meta }: LoanClaimsProps) {
+export function LoanClaims({ loanId, view: v, own, chain, meta, frozen }: LoanClaimsProps) {
   const { text } = useCopy();
   const lender = useLoanClaimHeld(loanId, 'lender');
   const borrower = useLoanClaimHeld(loanId, 'borrower');
@@ -50,19 +53,19 @@ export function LoanClaims({ loanId, view: v, own, chain, meta }: LoanClaimsProp
       {active !== null ? (
         <LoanClaim loanId={loanId} side={active} chain={chain} own={own} meta={meta} onClose={() => flows[active].setOpen(null)} />
       ) : (
-        sides.map((s) => <SideRow key={s} side={s} view={v} own={own} onOpen={() => flows[s].setOpen(true)} />)
+        sides.map((s) => <SideRow key={s} side={s} view={v} own={own} frozen={frozen} onOpen={() => flows[s].setOpen(true)} />)
       )}
     </section>
   );
 }
 
 /** One side's action, or the reason it is closed. */
-function SideRow({ side, view: v, own, onOpen }: { side: ClaimSide; view: LoanView; own: OwnStateClient; onOpen: () => void }) {
+function SideRow({ side, view: v, own, frozen, onOpen }: { side: ClaimSide; view: LoanView; own: OwnStateClient; frozen: FrozenState | undefined; onOpen: () => void }) {
   const copy = useCopy();
   const { text } = copy;
   const nowMs = useNow();
   const verdict = claimVerdict(
-    { side, status: Number(v.loan.status), loanAssetType: Number(v.loan.assetType), paused: v.paused, holder: v.holders[side], claim: v.claims[side] },
+    { side, status: Number(v.loan.status), loanAssetType: Number(v.loan.assetType), paused: v.paused, holder: v.holders[side], claim: v.claims[side], frozen },
     own.account,
     copy,
     nowMs,

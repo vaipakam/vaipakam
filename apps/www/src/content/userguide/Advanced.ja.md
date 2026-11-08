@@ -2271,6 +2271,12 @@ Positions は共通のリーダーを通して Home と同じ保有一覧を読�
 
 売却は、売り手が得てまだ支払われていない利息を請求として記録します。`getInterestLedger(loanId)` は未決の請求を古い順に、それぞれの総額とともに一覧します。`claimAsSeller(loanId)` には `whenNotPaused` と制裁チェックがあります。請求が残る Repaid、Defaulted、Settled、InternalMatched のローンでは、まず貸し手の回収額（`getSellersShareOfLenderClaim`）を分配し、各請求に純額（総額からローンの `treasuryFeeBpsAtInit` の取り分を引いて切り捨て。記録がないローンは従来の 1%）まで支払って、すべてを閉じます。FallbackPending のローンは分配しません。その後、元本トークン、および異なる場合は貸し手請求のトークンについて、`getSellerInterestHeld(loanId, seller, asset)` を売り手自身のボールトから売り手のウォレットへ引き出し、ゼロなら `NothingToClaimAsSeller` で拒否します。アプリは、売り手としてウォレットに紐づくインデックスのアクティビティ（`SellerInterestClaimRecorded`、`SellerInterestPaid`、`SellerInterestClaimClosed`、`SellerInterestWithdrawn`）からローンを一覧し、番号での検索はチェーンだけを読みます。元本トークンでは、レビューは分配額からウォレットの取り分を正確に算出します。別のトークンでは分配は価値ベースで、実行時に決まると明記します。引き出しはレビューでドライランし、送信時にも再度実行します。完了カードは `SellerInterestClaimClosed`（支払額、入金額、全額支払い）と `SellerInterestWithdrawn` を読み、保護モードが支払いをキューに入れた、または保持した場合は `PayoutQueued` または `PayoutHeldInVault` も読みます。
 
+<a id="frozen-proceeds"></a>
+
+### 凍結された支払い：何が確認されるか
+
+アプリは `getSanctionsOracle`（ゼロならこのチェーンにスクリーニングなし）、`sanctionsStatus(wallet)`（Clean、Flagged、またはスクリーニングがリバートしたときの Unavailable）、`isSanctionsConfirmedFlagged(wallet)`（`refreshSanctionsFlag` が確定的な読み取りから同期する登録簿）を読み取ります。Flagged、またはウォレットが登録済みの Unavailable は凍結と読みます。未登録の Unavailable はそう読みません。`claimAsLender` と `claimAsBorrower` は `whenNotPaused` の後に呼び出し元をスクリーニングし、障害は通します。プロトコルが記録した当事者のために支払いを凍結した側は fail-closed で解放され、その当事者が Clean と読まれるまで、その時点で誰がポジションを持っていても `SanctionedAddress` または `SanctionsOracleUnavailable` でリバートします。プロトコルはその記録された当事者を参照するビューを持たないため、アプリはそこではドライランに頼り、その拒否を同じ言葉で伝えます。`claimAsSeller` はフラグ付きの売り手を、また障害中は登録済みの売り手を拒否します。ローンの進行中、フラグ付きの保有者のために保留された貸し手の取り分は `getClaimable(loanId, true)` の `heldForLender` に加算され、貸し手のクレームが支払うまで記録上の貸し手のボールトに確保されます。フラグ付きの借り手でも返済はできますが、担保の追加はできません。
+
 <a id="risk-access"></a>
 
 ### Risk Access: あなたのリスクレベル

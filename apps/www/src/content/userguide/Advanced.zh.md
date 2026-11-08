@@ -2004,6 +2004,12 @@ Positions 通过一个共享读取器读取与 Home 相同的持仓清单：`get
 
 出售会将卖方已赚取但未支付的利息记录为一项债权：`getInterestLedger(loanId)` 按从旧到新的顺序列出未结债权，每项附带其总额。`claimAsSeller(loanId)` 带有 `whenNotPaused` 和制裁筛查。对于仍有未结债权的 Repaid、Defaulted、Settled 或 InternalMatched 贷款，它先分配出借人的回收款（`getSellersShareOfLenderClaim`），向每项债权支付至其净额（总额减去该贷款的 `treasuryFeeBpsAtInit` 份额，向下取整；贷款未记录费率时按旧的 1%），并关闭全部债权；FallbackPending 贷款不进行分配。随后，它针对本金代币，以及与之不同的出借人债权代币，将 `getSellerInterestHeld(loanId, seller, asset)` 从卖方自己的金库提取到卖方钱包，金额为零时以 `NothingToClaimAsSeller` 拒绝。应用根据索引中以该钱包为卖方归档的活动（`SellerInterestClaimRecorded`、`SellerInterestPaid`、`SellerInterestClaimClosed`、`SellerInterestWithdrawn`）列出贷款；按编号查询只读取链上数据。对于本金代币，审核会根据分配额精确推算钱包所得部分；对于其他代币，分配按价值进行，并注明在执行时确定。提取会在审核时试运行，发送时再运行一次。完成卡片读取 `SellerInterestClaimClosed`（已付、已入账、是否全额）和 `SellerInterestWithdrawn`，若受保护模式将付款排入队列或保留，还会读取 `PayoutQueued` 或 `PayoutHeldInVault`。
 
+<a id="frozen-proceeds"></a>
+
+### 被冻结的付款：检查哪些内容
+
+应用读取 `getSanctionsOracle`（为零表示此链上没有筛查）、`sanctionsStatus(wallet)`（Clean、Flagged，或在筛查回滚时为 Unavailable）以及 `isSanctionsConfirmedFlagged(wallet)`，即 `refreshSanctionsFlag` 根据确定性读取同步的登记簿。Flagged，或钱包已登记时的 Unavailable，视为冻结；未登记的 Unavailable 则不是。`claimAsLender` 和 `claimAsBorrower` 在 `whenNotPaused` 之后筛查调用方，并放行故障；协议为某个记录在案的一方冻结付款的那一侧以 fail-closed 方式释放：在该方读取为 Clean 之前，无论届时谁持有头寸，都会以 `SanctionedAddress` 或 `SanctionsOracleUnavailable` 回滚。协议没有提供查看该记录方的视图，因此应用在此依赖试运行，并用同样的措辞说明其拒绝。`claimAsSeller` 会拒绝被标记的卖方，以及在故障期间已登记的卖方。贷款进行期间，为被标记持有人暂存的出借人份额会计入 `getClaimable(loanId, true)` 的 `heldForLender`，预留在记录的出借人金库中，直到出借人的领取将其支付。被标记的借款人仍可还款，但不能追加抵押品。
+
 <a id="risk-access"></a>
 
 ### Risk Access：你的风险等级

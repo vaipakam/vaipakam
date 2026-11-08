@@ -22,6 +22,7 @@ import type { Refusal, Verdict } from '../eligibility/types';
 import type { LoanDetails } from '../positions/loanView';
 import { payoutRoute, readProtection, type PayoutRoute, type Protection } from '../protection/payout';
 import { routeChanged } from '../protection/payoutCopy';
+import { frozenRefusal, frozenState, isFrozenRefusal, readSanctionsPosture, type FrozenState } from '../sanctions/posture';
 import { askThrough } from '../tx/simulate';
 import { matchIncentives } from './claimLog';
 import type { PaidIncentive } from './claimOutcome';
@@ -57,6 +58,9 @@ export interface LoanClaimReview {
   protection: Protection | null;
   /** Where the payment lands, from the wallet's mode and the paying vault. */
   route: PayoutRoute;
+  /** The wallet's standing with the sanctions screen at the review's block
+   *  (RB-FROZEN). */
+  frozen: FrozenState;
   /** The protocol's dry run of this claim now: null when it passes, its
    *  refusal when it refuses, 'unread' when it could not be run. Asked only
    *  when the app's own rule is open. */
@@ -110,20 +114,21 @@ export async function readLoanClaimReview(
       const read = <T>(abi: Abi, functionName: string, args: readonly unknown[] = []) =>
         answerOrNull(c.readContract({ address: diamond, abi, functionName, args, ...at }) as Promise<T>);
       const asked = sideClaimableStatus(side, Number(loan.status));
-      const [holder, paused, claim, sellersShare, protection] = await Promise.all([
+      const [holder, paused, claim, sellersShare, protection, posture] = await Promise.all([
         read<Hex>(NFT, 'ownerOf', [side === 'lender' ? loan.lenderTokenId : loan.borrowerTokenId]),
         read<boolean>(ADMIN, 'paused'),
         asked ? readSideClaim(c, diamond, loanId, side, at) : null,
         side === 'lender' && asked ? read<bigint>(SELLER, 'getSellersShareOfLenderClaim', [loanId]) : null,
         readProtection(c, diamond, account, at.blockNumber),
+        readSanctionsPosture(c, diamond, account, at.blockNumber),
       ]);
-      return { loan, holder, paused, claim, sellersShare, protection };
+      return { loan, holder, paused, claim, sellersShare, protection, frozen: frozenState(posture) };
     })
     .then((x) => x.value);
   const readAt = Date.now();
   const { loan } = facts;
   const verdict = claimVerdict(
-    { side, status: Number(loan.status), loanAssetType: Number(loan.assetType), paused: facts.paused, holder: facts.holder, claim: facts.claim },
+    { side, status: Number(loan.status), loanAssetType: Number(loan.assetType), paused: facts.paused, holder: facts.holder, claim: facts.claim, frozen: facts.frozen },
     account,
     copy,
     readAt,
@@ -156,6 +161,7 @@ export async function readLoanClaimReview(
     sellersShare: facts.sellersShare,
     protection: facts.protection,
     route: payoutRoute(facts.protection, account, source),
+    frozen: facts.frozen,
     dryRun,
     verdict,
     readAt,
@@ -184,6 +190,7 @@ export function loanClaimChanged(a: LoanClaimReview, b: LoanClaimReview, copy: P
   const { text } = copy;
   if (CLAIM_STATED_LOAN_FIELDS.some((k) => a.loan[k] !== b.loan[k])) return text('repay.changedLoan');
   if (a.holder !== b.holder || a.paused !== b.paused) return text('repay.changedHolders');
+  if (a.frozen !== b.frozen) return text('repay.changedVerdict');
   if (a.lanes.map(laneKey).join('|') !== b.lanes.map(laneKey).join('|') || a.sellersShare !== b.sellersShare) return text('loanClaim.changedPayout');
   if (routeChanged(a, b)) return text('payout.changed');
   if (a.verdict.state !== b.verdict.state || a.verdict.refusals[0]?.code !== b.verdict.refusals[0]?.code) return text('repay.changedVerdict');
@@ -194,6 +201,11 @@ export function loanClaimChanged(a: LoanClaimReview, b: LoanClaimReview, copy: P
 export function loanClaimBlockers(r: LoanClaimReview, copy: Pick<CopyAccess, 'text' | 'format'>): string[] {
   if (r.verdict.state !== 'open') return [r.verdict.refusals[0]?.reason ?? ''];
   if (r.dryRun === 'unread') return [copy.text('loanClaim.dryRunUnread')];
+  // A sanctions refusal from the dry run is a party the protocol recorded on
+  // this side (the app's own rule already refused a flagged caller), or a
+  // fail-closed release waiting for the screen; said in the frozen-proceeds
+  // words (RB-FROZEN).
+  if (r.dryRun !== null && isFrozenRefusal(r.dryRun)) return [frozenRefusal(r.dryRun.code === 'SanctionsOracleUnavailable' ? 'outage' : 'recorded', copy).reason];
   if (r.dryRun !== null) return [copy.format('repay.dryRunRefused', { reason: r.dryRun.reason })];
   return [];
 }

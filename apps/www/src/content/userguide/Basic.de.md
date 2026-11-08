@@ -1334,6 +1334,12 @@ Bei aktivem Schutzmodus wartet alles, was Ihren Tresor in Richtung Ihrer Wallet 
 
 Wenn Sie eine Kreditgeberposition verkaufen, bleiben die Zinsen, die Sie in Ihrer Haltezeit verdient und noch nicht erhalten haben, als Anspruch auf den Kredit Ihre. Claims listet jeden Kredit, auf dem Sie einen solchen Anspruch halten, mit dem, was Ihnen nach dem Zinsanteil des Protokolls zusteht, und dem, was schon in Ihrem Vault wartet. Solange der Kredit läuft, bedient jede Zinszahlung zuerst die offenen Ansprüche, den ältesten zuerst, in den eigenen Vault jedes Verkäufers; bis etwas Ihren erreicht, gibt es nichts abzuheben. Ist der Kredit beendet, teilt die Abhebung zuerst auf, was die Kreditgeberseite zurückerhalten hat: zuerst das Kapital des Inhabers, dann jeden Verkäuferanspruch, den ältesten zuerst. Dabei schließen alle offenen Ansprüche, und was ein Anspruch nicht erhält, bleibt unbezahlt. Die Kredite stammen aus dem Index der App; kann er sie nicht auflisten, suchen Sie einen Kredit über seine Nummer, die allein von der Chain gelesen wird. Es ist keine Freigabe nötig, Ihre Wallet fragt also einmal, nach einem Probelauf, und die Abschlusskarte zeigt, was die Transaktion gezahlt hat.
 
+<a id="frozen-proceeds"></a>
+
+### Wenn eine Auszahlung eingefroren ist
+
+Wenn das Sanktions-Screening Ihre Wallet markiert, nimmt das Protokoll nichts von dem, was Ihnen zusteht, und hält keinen Kredit vom Abschluss ab: Die Gegenseite erhält trotzdem, was ihre Seite erlöst. Ihr Anteil wird gesperrt in einem Tresor verwahrt und freigegeben, sobald Ihre Wallet von der Liste gestrichen ist. Claims und die Seite des Kredits zeigen dann „Eingefroren, wartet auf Streichung von der Liste“ und bieten keine Schaltfläche zum Einziehen an. Kann das Screening nicht gelesen werden und wurde Ihre Wallet zuvor als markiert bestätigt, bleibt eine eingefrorene Auszahlung gesperrt, bis das Screening wieder antwortet, und eine in dieser Zeit fällige Zahlung an Ihre Wallet wird ebenso verwahrt, weil das Protokoll sie weiter als markiert behandelt; ein Ausfall allein friert keine Wallet ein, die nie als markiert bestätigt wurde. Bei einem laufenden Kredit zeigt dessen Seite außerdem, was der Kredit bereits gezahlt hat und für die Kreditgeberposition reserviert ist, bis der Kreditgeber es einzieht, und ein zurückgezahlter Kredit sagt, wenn er auf einen Überschuss wartet, den der Kreditnehmer noch nicht eingezogen hat.
+
 <a id="risk-access"></a>
 
 ### Risk Access: Ihre Risikostufe

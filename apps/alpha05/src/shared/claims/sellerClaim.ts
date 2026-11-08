@@ -23,6 +23,7 @@ import { closed, OPEN, unknownVerdict, type Refusal, type Verdict } from '../eli
 import { treasuryShareBps, type LoanDetails } from '../positions/loanView';
 import type { IndexerClient } from '../reads/world/indexerClient';
 import { answerOrNull } from '../reads/answer';
+import { frozenRefusal, type FrozenState } from '../sanctions/posture';
 
 type Hex = `0x${string}`;
 
@@ -202,15 +203,18 @@ export function sellerRowShown(row: SellerRow, seller: Hex): boolean {
 
 /**
  * RB-ELIG for `claimAsSeller`, in the order it checks: the protocol pause;
- * then whether anything pays now: money in the vault, or, on an ended loan,
- * the split's part for this seller. The sanctions screen is the dry run's.
+ * the sanctions screen, which for a seller is fail-closed (a flagged wallet,
+ * or one confirmed flagged before while the screen cannot be read, waits:
+ * RB-FROZEN); then whether anything pays now: money in the vault, or, on an
+ * ended loan, the split's part for this seller.
  */
-export function sellerVerdict(row: SellerRow, seller: Hex, paused: boolean | null, copy: Pick<CopyAccess, 'text'>, readAt: number): Verdict {
+export function sellerVerdict(row: SellerRow, seller: Hex, paused: boolean | null, copy: Pick<CopyAccess, 'text'>, readAt: number, frozen?: FrozenState): Verdict {
   const { text } = copy;
   const refuse = (code: string, reason: string, switchClass: '2' | null = null): Verdict =>
     closed([{ code, reason, reopensAt: null, remedy: null } satisfies Refusal], switchClass, readAt, 'own');
   if (paused === null) return unknownVerdict(text('sellerClaim.unread'));
   if (paused) return refuse('EnforcedPause', text('sellerClaim.paused'), '2');
+  if (frozen === 'flagged' || frozen === 'outage') return closed([frozenRefusal(frozen, copy)], null, readAt, 'own');
   if (row.loan === null || row.claims === null || row.held === null) return unknownVerdict(text('sellerClaim.unread'));
   const held = heldTotal(row)!;
   const part = splitPart(row, seller);
