@@ -1282,6 +1282,14 @@ Bei einem laufenden Kredit bietet die Seite an, ihn vollständig zurückzuzahlen
 
 Der geschuldete Betrag wächst mit jeder Sekunde, und das Protokoll nimmt den Betrag zum Zeitpunkt, an dem Ihre Rückzahlung bestätigt wird. Die Prüfung zeigt zwei Zahlen: was es jetzt kostet und was es etwa dreißig Minuten später kosten würde. Ihre Wallet genehmigt genau die zweite Zahl. Hatten Sie schon mehr genehmigt, auch unbegrenzt, wird die Genehmigung für die Rückzahlung auf diese Zahl gesenkt, denn die Rückzahlung kennt selbst keinen Höchstbetrag. Die Genehmigung begrenzt den Betrag, nicht die Zeit: Eine später bestätigte Rückzahlung geht nur durch, solange der geschuldete Betrag noch hineinpasst, sonst wird sie abgelehnt und nichts bewegt sich. Bei einem Kredit, der die volle Laufzeit berechnet, wächst der Betrag vor dem Fälligkeitsdatum nicht, sodass auch eine spätere Rückzahlung noch durchgehen kann. Was die Rückzahlung von der Genehmigung nicht verbraucht, wird danach zurückgesetzt. Dann holt der Kreditnehmer die Sicherheit und der Kreditgeber Kapital und Zinsen unter Claims ab.
 
+<a id="interest-schedule"></a>
+
+### Zinsplan
+
+Ein Kredit mit Zinsplan schuldet Zinsen in jeder Periode (ein Monat, ein Quartal, sechs Monate oder ein Jahr), nicht erst am Ende. Seine Seite zeigt die laufende Periode: wann sie endet, wann ihre Kulanzfrist endet, welche Zinsen sie schuldet, was darauf gezahlt wurde und was noch offen ist. Die Zinsen einer Periode werden auf Kapitalbetrag und Zinssatz berechnet, wie sie jetzt stehen, daher senkt eine Teilrückzahlung sie.
+
+Sind eine Periode und ihre Kulanzfrist vorbei, darf jeder sie abrechnen. Eine bezahlte Periode rückt nur den Stichtag vor; bei einer noch offenen wird gerade so viel Sicherheit des Kreditnehmers verkauft, wie die offene Summe und die Kosten des Verkaufs decken. Die Seite sagt, ob die Abrechnung jetzt offen ist. Sie nennt den Schalter des Netzwerks für die periodische Abrechnung, wenn er aus ist (dann kann nichts abgerechnet und keine Sicherheit verkauft werden), und die Protokollpause, solange sie dauert (die Abrechnung ruht, und die pausierte Zeit wird den Daten der Periode hinzugefügt). Eine Pause verschiebt die Daten der Periode um die pausierte Zeit nach hinten, doch die Zinsen, die eine Periode schuldet, bleiben die einer Periode; Zinsen laufen während der Pause weiter, und jeder Zins, den eine Rückzahlung zahlt, zählt für die Periode.
+
 <a id="risk-access"></a>
 
 ### Risk Access: Ihre Risikostufe

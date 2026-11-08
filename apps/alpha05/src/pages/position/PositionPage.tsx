@@ -1,23 +1,23 @@
-import type { ReactNode } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useAccount } from 'wagmi';
 import { getSupportedChain, type SupportedChain } from '../../chain/chains';
 import { useOwnStateClient, type OwnStateClient } from '../../chain/ownRail';
 import { useCopy, type CopyKey } from '../../shared/copy/useCopy';
 import { CADENCE_NAME, isCadence } from '../../shared/offers/cadence';
-import { ASSET_ERC20, LOAN_STATUS_FALLBACK_PENDING, isLiveStatus, loanObligations, loanStatusName } from '../../shared/positions/model';
+import { ASSET_ERC20, LOAN_STATUS_ACTIVE, LOAN_STATUS_FALLBACK_PENDING, isLiveStatus, loanObligations, loanStatusName } from '../../shared/positions/model';
 import { assetAmount } from '../../shared/positions/assetAmount';
 import { InterestLine, ReadState, StageLine } from '../../shared/positions/PositionSections';
 import { ILLIQUID, readLoanView, recordedInitFeeBps, roleOf, treasuryShareBps, type DefaultRefusal, type LoanView, type Role } from '../../shared/positions/loanView';
 import { useOwnRead } from '../../shared/reads/useOwnRead';
 import { tokenAmount, useTokenMeta, type TokenMetaMap } from '../../shared/reads/tokens';
 import { formatBps, formatScaled, formatSpan, formatUtc, shortAddress } from '../../shared/ui/format';
-import { Icon } from '../../shared/ui/Icon';
 import { OwnStamp } from '../../shared/ui/OwnStamp';
 import { useNow } from '../../shared/ui/useNow';
 import { WhyLink } from '../../shared/help/WhyLink';
 import { Notice } from '../../shared/ui/Notice';
 import { LoanActions } from './LoanActions';
+import { Fact, Facts } from './Facts';
+import { InterestSchedule } from './InterestSchedule';
 
 /** What the page says when the timing allows a default but another gate
  *  of `triggerDefault` refuses it. */
@@ -172,6 +172,8 @@ function LoanBody({ loanId, view: v, own, chain, meta }: { loanId: bigint; view:
           <Fact label={text('position.rowGraceEnd')} value={v.deadlines === null ? null : formatUtc(Number(v.deadlines.graceEnd))} unknown={unknown} binding />
         </Facts>
       )}
+
+      {l.status === LOAN_STATUS_ACTIVE && erc20 && l.periodicInterestCadence !== 0 && <InterestSchedule view={v} meta={meta} />}
 
       <Facts title={text('position.termsTitle')} id="position-terms" lead={<p className="tier-b">{text(erc20 ? 'position.termsNow' : 'position.termsNowRental')}</p>}>
         <Fact
@@ -338,28 +340,5 @@ function RoleLine({ role }: { role: Role | null }) {
     >
       <WhyLink summaryKey={key} detailKey="position.roleWhy" />
     </div>
-  );
-}
-
-function Facts({ title, id, lead, children }: { title: string; id: string; lead?: ReactNode; children: ReactNode }) {
-  return (
-    <section className="home-section position-facts" aria-labelledby={id}>
-      <h2 id={id}>{title}</h2>
-      {lead}
-      <dl className="facts">{children}</dl>
-    </section>
-  );
-}
-
-/** One fact; `null` is an unread figure, stated as unknown, never left blank. */
-function Fact({ label, value, unknown, binding = false }: { label: string; value: string | null; unknown: string; binding?: boolean }) {
-  return (
-    <>
-      <dt className={binding ? 'tier-a' : 'tier-b'}>{label}</dt>
-      <dd className={value === null ? 'value-unknown' : undefined} data-binding={binding ? 'true' : undefined}>
-        {value === null && <Icon meaning="unknown" size={16} />}
-        {value ?? unknown}
-      </dd>
-    </>
   );
 }

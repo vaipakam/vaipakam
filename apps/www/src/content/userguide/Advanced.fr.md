@@ -2417,6 +2417,14 @@ L'action suit une règle : `repayLoan` est proposé pour un prêt ERC-20 Active 
 
 L'examen lit `calculateRepaymentAmount(loanId)` au dernier bloc, puis à nouveau avec l'heure du bloc remplacée par `min(now + 30 minutes, fin du délai de grâce)` ; la même requête lit l'heure de bloc sous laquelle elle s'est exécutée, et une connexion qui a ignoré le remplacement est écartée. L'approbation est exactement le second chiffre, l'appel est simulé avant l'ouverture du portefeuille et, après le reçu, le statut dans lequel le remboursement a laissé le prêt est lu dans son journal `LoanRepaid` (pas au bloc, où une réclamation ultérieure peut déjà l'avoir soldé), le paiement est mesuré à partir des journaux `Transfer` et l'allowance est remise à sa valeur antérieure quand elle indique l'approbation moins le paiement. Une allowance supérieure à ce chiffre, illimitée comprise, est elle aussi ramenée à ce chiffre, car `repayLoan(loanId)` ne fixe ni maximum ni échéance ; la remise en état rétablit ensuite la valeur plus élevée.
 
+<a id="interest-schedule"></a>
+
+### Échéancier des intérêts : comment il est lu
+
+Pour un prêt ERC-20 actif avec une cadence, la carte lit `previewPeriodicSettle(loanId)` (cadence, `periodEndAt`, `graceEndsAt`, `expected`, `paidByBorrower`, `shortfall`, `canSettleNow`), `getPeriodicInterestEnabled()` et `paused()`, et indique l'heure du bloc lu. `expected` correspond à une période entière au `principal` et à l'`interestRateBps` actuels ; `periodEndAt` inclut le crédit de pause du prêt.
+
+Le `canSettleNow` de l'aperçu ignore l'interrupteur et la pause, donc la carte les combine dans l'ordre propre à `settlePeriodicInterest` : coupé (`PeriodicInterestDisabled`), en pause (`whenNotPaused`), puis le temps de la période (`PeriodicSettleNotDue` avant `graceEndsAt`). Une vente n'est annoncée que lorsque l'interrupteur est activé et que le protocole n'est pas en pause ; un interrupteur ou une pause non lus sont indiqués comme inconnus. Avec un manque nul, le règlement ne fait qu'avancer l'échéance. L'armement de `PERIODIC_SETTLE` côté keeper n'est pas transmis à l'app, donc la carte indique que le règlement est ouvert à tous et que l'état du keeper n'est pas connu.
+
 <a id="risk-access"></a>
 
 ### Risk Access : votre niveau de risque

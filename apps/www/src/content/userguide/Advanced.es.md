@@ -2397,6 +2397,14 @@ La acción sigue una regla: `repayLoan` se ofrece para un préstamo ERC-20 Activ
 
 La revisión lee `calculateRepaymentAmount(loanId)` en el último bloque y otra vez con la hora del bloque sustituida por `min(now + 30 minutos, fin de gracia)`; la misma solicitud lee la hora del bloque con la que se ejecutó, y una conexión que ignoró la sustitución se descarta. La aprobación es exactamente la segunda cifra, la llamada se simula antes de abrir la billetera y, tras el recibo, el estado en que la devolución dejó el préstamo se lee de su registro `LoanRepaid` (no en el bloque, donde un cobro posterior ya puede haberlo liquidado), el pago se mide a partir de los registros `Transfer` y la allowance se restablece a su valor anterior cuando marca la aprobación menos el pago. Una allowance mayor que esa cifra, incluida una ilimitada, también se reduce a ella, porque `repayLoan(loanId)` no fija máximo ni plazo; el restablecimiento devuelve después el valor mayor.
 
+<a id="interest-schedule"></a>
+
+### Calendario de intereses: cómo se lee
+
+Para un préstamo ERC-20 activo con cadencia, la tarjeta lee `previewPeriodicSettle(loanId)` (cadencia, `periodEndAt`, `graceEndsAt`, `expected`, `paidByBorrower`, `shortfall`, `canSettleNow`), `getPeriodicInterestEnabled()` y `paused()`, e indica la hora del bloque leída. `expected` es un período completo con el `principal` y el `interestRateBps` actuales; `periodEndAt` incluye el crédito de pausa del préstamo.
+
+El `canSettleNow` de la vista previa no tiene en cuenta el interruptor ni la pausa, así que la tarjeta los combina en el orden propio de `settlePeriodicInterest`: apagado (`PeriodicInterestDisabled`), en pausa (`whenNotPaused`) y luego el tiempo del período (`PeriodicSettleNotDue` antes de `graceEndsAt`). Solo se anuncia una venta cuando el interruptor está encendido y el protocolo no está en pausa; un interruptor o una pausa sin leer se indican como desconocidos. Con un déficit cero, la liquidación solo adelanta el punto de control. El armado de `PERIODIC_SETTLE` en el keeper no se comunica a la app, así que la tarjeta dice que la liquidación está abierta a cualquiera y que el estado del keeper no se conoce.
+
 <a id="risk-access"></a>
 
 ### Risk Access: tu nivel de riesgo

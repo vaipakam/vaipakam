@@ -2219,6 +2219,14 @@ Positions は共通のリーダーを通して Home と同じ保有一覧を読�
 
 確認画面は `calculateRepaymentAmount(loanId)` を最新ブロックで読み、さらにブロック時刻を `min(now + 30 分, 猶予期間の終了)` に上書きして読みます。同じリクエストで実行時のブロック時刻も読み、上書きを無視した接続は使いません。承認額は 2 つ目の数値ちょうどで、ウォレットを開く前に呼び出しをシミュレーションします。受領後は、返済がローンを残した状態をその `LoanRepaid` ログから読み（ブロック時点の状態ではありません。同じブロックの後続の請求で既に清算済みになっている場合があるためです）、支払額を `Transfer` ログから測り、allowance が承認額から支払額を引いた値を示す場合は以前の値に戻します。その数値を超える allowance（無制限を含む）も同じ数値まで下げます。`repayLoan(loanId)` には上限も期限もないためです。戻す処理では、その後に元の大きい値に戻します。
 
+<a id="interest-schedule"></a>
+
+### 利息スケジュール: 読み取り方
+
+ケイデンスのある Active な ERC-20 ローンについて、カードは `previewPeriodicSettle(loanId)`（ケイデンス、`periodEndAt`、`graceEndsAt`、`expected`、`paidByBorrower`、`shortfall`、`canSettleNow`）、`getPeriodicInterestEnabled()`、`paused()` を読み取り、読み取ったブロック時刻を表示します。`expected` は現在の `principal` と `interestRateBps` での1期間分です。`periodEndAt` にはローンの一時停止クレジットが含まれます。
+
+プレビューの `canSettleNow` はスイッチと一時停止を考慮しないため、カードは `settlePeriodicInterest` 自身の順序でそれらを組み合わせます: オフ（`PeriodicInterestDisabled`）、一時停止（`whenNotPaused`）、次に期間の時刻（`graceEndsAt` より前は `PeriodicSettleNotDue`）。売却を告げるのは、スイッチがオンでプロトコルが停止していないときだけです。読み取れなかったスイッチや一時停止は不明と表示します。不足がゼロなら、精算はチェックポイントを進めるだけです。キーパーの `PERIODIC_SETTLE` の有効化はアプリに報告されないため、カードは精算が誰にでも開かれていること、キーパーの状態は不明であることを表示します。
+
 <a id="risk-access"></a>
 
 ### Risk Access: あなたのリスクレベル

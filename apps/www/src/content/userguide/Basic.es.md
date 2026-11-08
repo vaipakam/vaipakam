@@ -1260,6 +1260,14 @@ En un préstamo activo, la página ofrece pagarlo completo. Cualquiera puede pag
 
 Lo que debes crece cada segundo, y el protocolo toma el importe del momento en que se confirma tu pago. La revisión muestra dos cifras: lo que cuesta ahora y lo que costaría unos treinta minutos después. Tu billetera aprueba exactamente la segunda cifra. Si ya habías aprobado más, incluso una cantidad ilimitada, se reduce a esa cifra para el pago, porque el pago no fija por sí mismo ningún máximo. La aprobación limita el importe, no el tiempo: un pago que se confirma más tarde solo se ejecuta mientras lo que debes siga cabiendo en ella; si no, se rechaza y nada se mueve. En un préstamo que cobra el plazo completo, el importe no crece antes del vencimiento, así que un pago posterior aún puede ejecutarse. Lo que el pago no use de la aprobación se restablece después. Luego el prestatario cobra la garantía y el prestamista cobra el principal y los intereses en Claims.
 
+<a id="interest-schedule"></a>
+
+### Calendario de intereses
+
+Un préstamo con calendario de intereses debe intereses en cada período (un mes, un trimestre, seis meses o un año), no solo al final. Su página muestra el período actual: cuándo termina, cuándo termina su período de gracia, los intereses que debe, lo pagado a cuenta y lo que aún se debe. Los intereses de un período se calculan sobre el principal y la tasa tal como están ahora, así que un reembolso parcial los reduce.
+
+Cuando terminan un período y su gracia, cualquiera puede liquidarlo. Un período pagado solo adelanta el punto de control; en uno aún incompleto se vende justo la garantía del prestatario necesaria para cubrir lo adeudado y los costes de la venta. La página dice si la liquidación está abierta ahora. Nombra el interruptor de liquidación periódica de la red cuando está apagado (entonces no se puede liquidar nada ni se vende garantía) y la pausa del protocolo mientras dura (la liquidación se detiene y el tiempo en pausa se añade a las fechas del período). Una pausa retrasa las fechas del período por el tiempo en pausa, pero los intereses que debe un período siguen siendo los de un período; los intereses siguen acumulándose durante la pausa, y todo interés que pague un reembolso cuenta para el período.
+
 <a id="risk-access"></a>
 
 ### Risk Access: tu nivel de riesgo

@@ -2110,6 +2110,14 @@ Positions는 하나의 공유 리더로 Home과 같은 보유 목록을 읽습�
 
 검토 화면은 `calculateRepaymentAmount(loanId)`를 최신 블록에서 읽고, 블록 시간을 `min(now + 30분, 유예 기간 종료)`로 덮어써서 한 번 더 읽습니다. 같은 요청이 실행된 블록 시간도 읽으며, 덮어쓰기를 무시한 연결은 건너뜁니다. 승인액은 정확히 두 번째 수치이고, 지갑을 열기 전에 호출을 시뮬레이션하며, 영수증 이후에는 상환이 대출을 남긴 상태를 그 `LoanRepaid` 로그에서 읽고(블록 시점이 아닙니다. 같은 블록의 이후 청구로 이미 정산되었을 수 있기 때문입니다), `Transfer` 로그로 지급액을 측정하고, allowance가 승인액에서 지급액을 뺀 값이면 이전 값으로 되돌립니다. 그 수치보다 큰 allowance(무제한 포함)도 그 수치로 낮춥니다. `repayLoan(loanId)`에는 상한도 기한도 없기 때문이며, 이후 되돌리기가 원래의 큰 값을 복원합니다.
 
+<a id="interest-schedule"></a>
+
+### 이자 일정: 읽는 방법
+
+주기가 있는 Active ERC-20 대출에 대해 카드는 `previewPeriodicSettle(loanId)`(주기, `periodEndAt`, `graceEndsAt`, `expected`, `paidByBorrower`, `shortfall`, `canSettleNow`), `getPeriodicInterestEnabled()`, `paused()`를 읽고, 읽은 블록 시간을 표시합니다. `expected`는 현재 `principal`과 `interestRateBps`로 계산한 한 기간 전체이며, `periodEndAt`에는 대출의 일시 중지 크레딧이 포함됩니다.
+
+미리보기의 `canSettleNow`는 스위치와 일시 중지를 고려하지 않으므로, 카드는 `settlePeriodicInterest`의 순서대로 이를 결합합니다: 꺼짐(`PeriodicInterestDisabled`), 일시 중지(`whenNotPaused`), 그다음 기간의 시간(`graceEndsAt` 이전에는 `PeriodicSettleNotDue`). 매각은 스위치가 켜져 있고 프로토콜이 중지되지 않았을 때만 알립니다. 읽지 못한 스위치나 일시 중지는 알 수 없음으로 표시합니다. 부족액이 0이면 정산은 체크포인트만 앞으로 옮깁니다. 키퍼의 `PERIODIC_SETTLE` 활성화 여부는 앱에 보고되지 않으므로, 카드는 정산이 누구에게나 열려 있고 키퍼의 상태는 알 수 없다고 표시합니다.
+
 <a id="risk-access"></a>
 
 ### Risk Access: 내 위험 등급

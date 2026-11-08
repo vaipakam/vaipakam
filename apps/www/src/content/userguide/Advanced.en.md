@@ -2596,6 +2596,14 @@ The action follows one rule: `repayLoan` is offered for an Active or FallbackPen
 
 The review reads `calculateRepaymentAmount(loanId)` at the latest block and again with the block time overridden to `min(now + 30 minutes, grace end)`; the same request reads the block time it ran under, and a connection that ignored the override is passed over. The approval is exactly the second figure, the call is simulated before the wallet opens, and after the receipt the status the repayment left the loan in is read from its `LoanRepaid` log (not at the block, where a later claim can already have settled it), the payment is measured from the `Transfer` logs, and the allowance is reset to its prior value when it reads the approval less the payment. An allowance above that figure, unlimited included, is lowered to it as well, since `repayLoan(loanId)` takes no maximum or deadline; the reset then restores the larger value.
 
+<a id="interest-schedule"></a>
+
+### Interest Schedule: How It Is Read
+
+For an Active ERC-20 loan with a cadence, the card reads `previewPeriodicSettle(loanId)` (cadence, `periodEndAt`, `graceEndsAt`, `expected`, `paidByBorrower`, `shortfall`, `canSettleNow`), `getPeriodicInterestEnabled()` and `paused()`, and states the block time it read. `expected` is one full period at the current `principal` and `interestRateBps`; `periodEndAt` carries the loan's pause credit.
+
+The preview's `canSettleNow` ignores the switch and the pause, so the card puts them together in `settlePeriodicInterest`'s own order: switched off (`PeriodicInterestDisabled`), paused (`whenNotPaused`), then the period's time (`PeriodicSettleNotDue` before `graceEndsAt`). A sale is announced only when the switch is on and the protocol is not paused; an unread switch or pause is stated as unknown. With a zero shortfall the settlement only advances the checkpoint. The keeper's `PERIODIC_SETTLE` arming is not reported to the app, so the card says settling is open to anyone and that the keeper's posture is not known.
+
 <a id="risk-access"></a>
 
 ### Risk Access: Your Risk Level

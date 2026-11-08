@@ -159,6 +159,39 @@ export interface LoanView {
   /** The latest block's time, which the actions' rules compare dates with
    *  (never the device clock); null when unread. */
   chainNow: bigint | null;
+  /** The current interest period of a running loan with a schedule
+   *  (`previewPeriodicSettle`); null when it has none, has ended, or the
+   *  read failed (`scheduleUnread` tells the last two apart). */
+  schedule: PeriodSchedule | null;
+  /** Whether the period read was attempted and failed. */
+  scheduleUnread: boolean;
+  /** Whether periodic settlement is switched on here
+   *  (`getPeriodicInterestEnabled`); null when unread or not asked. */
+  periodicOn: boolean | null;
+  /** Whether the protocol is paused (`paused`), asked for every running
+   *  loan: the pause stops settlement and a default alike; null when unread
+   *  or not asked. */
+  paused: boolean | null;
+}
+
+/** One interest period, as the protocol previews its settlement. */
+export interface PeriodSchedule {
+  cadence: number;
+  /** The period's end, pause credit included. */
+  periodEndAt: bigint;
+  /** When the period may be settled: its end plus its grace. */
+  graceEndsAt: bigint;
+  /** The interest for the whole period at the principal and rate as they
+   *  stand now. */
+  expected: bigint;
+  /** Interest the borrower's payments have credited to this period. */
+  paid: bigint;
+  /** `expected - paid`, never below zero. */
+  shortfall: bigint;
+  /** The protocol's own "settlement callable now": the grace is over and
+   *  the loan is Active. It does not account for the switch or the pause,
+   *  which are read beside it. */
+  canSettleNow: boolean;
 }
 
 /** The reader's role on this loan: the positions their wallet HOLDS now,
@@ -195,12 +228,20 @@ export interface LoanRead {
 
 /** Reads one loan. */
 export async function readLoanView(client: PublicClient, diamond: Hex, loanId: bigint): Promise<LoanRead> {
-  const read = <T>(abi: Abi, functionName: string, args: readonly unknown[] = []) => client.readContract({ address: diamond, abi, functionName, args }) as Promise<T>;
+  // Every read is pinned to one block, the block whose time the page states:
+  // the loan's status, the settlement preview and the chain time then
+  // describe the same moment, so no answer is placed against another's
+  // state. With the block unread, the reads take the latest state and the
+  // chain time is stated as unknown.
+  const block = await maybe(client.getBlock({ blockTag: 'latest' }));
+  const at = block ? { blockNumber: block.number } : {};
+  const read = <T>(abi: Abi, functionName: string, args: readonly unknown[] = []) => client.readContract({ address: diamond, abi, functionName, args, ...at }) as Promise<T>;
   const loan = await read<LoanDetails>(LOAN, 'getLoanDetails', [loanId]);
   if (loan.id === 0n) return { view: null };
   const live = isLiveStatus(loan.status);
   const cadence = loan.periodicInterestCadence;
 
+  const scheduled = live && cadence !== 0;
   const [
     lender,
     borrower,
@@ -217,13 +258,12 @@ export async function readLoanView(client: PublicClient, diamond: Hex, loanId: b
     saleVehicle,
     matchConfig,
     borrowerLock,
-    block,
   ] = await Promise.all([
     maybe(read<Hex>(NFT, 'ownerOf', [loan.lenderTokenId])),
     maybe(read<Hex>(NFT, 'ownerOf', [loan.borrowerTokenId])),
     live ? maybe(read<readonly [bigint, bigint, bigint, bigint]>(LOAN, 'getLoanDeadlines', [loanId])) : null,
-    live && cadence !== 0 ? maybe(read<readonly [number, bigint, bigint, bigint, bigint, bigint, boolean]>(PERIODIC, 'previewPeriodicSettle', [loanId])) : null,
-    live && cadence !== 0 ? maybe(read<boolean>(NUMERAIRE, 'getPeriodicInterestEnabled')) : null,
+    scheduled ? maybe(read<readonly [number, bigint, bigint, bigint, bigint, bigint, boolean]>(PERIODIC, 'previewPeriodicSettle', [loanId])) : null,
+    scheduled ? maybe(read<boolean>(NUMERAIRE, 'getPeriodicInterestEnabled')) : null,
     live ? maybe(read<boolean>(DEFAULTED, 'isLoanDefaultable', [loanId])) : null,
     live ? maybe(read<readonly [boolean, Hex]>(DEFAULTED, 'defaultKycAdmission', [loanId])) : null,
     live ? maybe(read<boolean>(ADMIN, 'paused')) : null,
@@ -234,7 +274,6 @@ export async function readLoanView(client: PublicClient, diamond: Hex, loanId: b
     maybe(read<boolean>(METRICS, 'isSaleVehicleLoan', [loanId])),
     live ? maybe(read<readonly [boolean, bigint, bigint]>(CONFIG, 'getInternalMatchConfigBundle')) : null,
     live ? maybe(read<number>(NFT, 'positionLock', [loan.borrowerTokenId]).then(Number)) : null,
-    live ? maybe(client.getBlock({ blockTag: 'latest' })) : null,
   ]);
 
   // A loan with a cadence answers to its checkpoint too: with the checkpoint
@@ -264,7 +303,21 @@ export async function readLoanView(client: PublicClient, diamond: Hex, loanId: b
     saleVehicle,
     matchWindow: matchConfig ? { enabled: matchConfig[0], windowBps: matchConfig[1] } : null,
     borrowerLock,
-    chainNow: block ? block.timestamp : null,
+    chainNow: live && block ? block.timestamp : null,
+    schedule: periodic
+      ? {
+          cadence: Number(periodic[0]),
+          periodEndAt: periodic[1],
+          graceEndsAt: periodic[2],
+          expected: periodic[3],
+          paid: periodic[4],
+          shortfall: periodic[5],
+          canSettleNow: periodic[6],
+        }
+      : null,
+    scheduleUnread: scheduled && periodic === null,
+    periodicOn,
+    paused,
   };
   return { view };
 }
