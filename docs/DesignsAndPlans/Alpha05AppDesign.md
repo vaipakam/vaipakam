@@ -1091,9 +1091,11 @@ above. Each resolves here, so a route reviewer needs no private file:
   claim settles the fallback first and only then decides what it pays; a
   source or a loan that could not be read is named as left out, never
   dropped. Every payout has a switch; all are on except free vault VPFI
-  (it sets the fee-discount tier) and the capital of a standing offer still
-  lending (taking it out leaves the offer less to lend), which the reader
-  turns on. The pause and a flagged wallet stop the whole batch before
+  and the capital of a standing offer that lends VPFI (both count toward the
+  fee-discount tier, which the review says when either is sent) and the
+  capital of a standing offer still lending (taking it out leaves the offer
+  less to lend), which the reader turns on. A held reward the screen
+  releases is offered even when the rewards preview cannot be read. The pause and a flagged wallet stop the whole batch before
   signing, said once; anything else is the protocol's call, payout by
   payout: the batch entry runs each payout as its own call with the wallet
   as caller and each allowed to fail, so the review's dry run of the batch
@@ -1104,8 +1106,11 @@ above. Each resolves here, so a route reviewer needs no private file:
   required to succeed, so no payout is skipped only for want of gas. One
   transaction carries at most
   the protocol's bound (30 calls); the rest wait for a second one, said in
-  the list and the review. The finish card reports each payout collected or
-  skipped from its own record in the logs, and each token measured where it
+  the list and the review. A queued payout's delay or secondary signer
+  changing while the review is open is a changed review. The finish card
+  reports each payout collected or
+  skipped from its own record in the logs, each NFT where its own routing
+  record (by collection and token id) or transfer put it, and each token measured where it
   landed (RB-PAYOUT-ROUTE) against what the collected payouts recorded,
   summed across them; a rewards claim that leaves more says so, and the
   rest is listed again.

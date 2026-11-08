@@ -34,11 +34,12 @@ import { claimVerdict } from '../eligibility/claim';
 import type { Refusal } from '../eligibility/types';
 import { moved } from '../offers/acceptOutcome';
 import { payoutOutcomes, payoutRoute, type PayoutRoute, type Protection } from '../protection/payout';
-import { payoutLegs, routedDestination, routedLeg, routeNotes } from '../protection/payoutCopy';
+import { payoutLegs, routedDestination, routeChanged, routeNotes } from '../protection/payoutCopy';
 import type { Receipt, ReceiptRow, ReceiptText } from '../receipt/types';
 import { frozenRefusal, type FrozenState } from '../sanctions/posture';
 import type { LegOutcome } from '../tx/outcome';
-import { claimRecorded, nftArrived, surplusPaid } from './claimLog';
+import { claimRecorded, surplusPaid } from './claimLog';
+import { nftLegs } from './claimOutcome';
 import { ASSET_ERC20, isFallback, type ClaimLane, type ClaimSide } from './loanClaim';
 import { laneLabel } from './loanClaimReceipt';
 import type { LoanClaimRows } from './loanClaimRows';
@@ -74,7 +75,9 @@ export type LegSubject =
   | { kind: 'loan'; loanId: bigint; side: ClaimSide }
   | { kind: 'rewards' }
   | { kind: 'held' }
-  | { kind: 'intent'; lendingAsset: Hex; collateralAsset: Hex; active: boolean }
+  /** `tier`: the offer lends VPFI, and its capital counts toward the
+   *  fee-discount tier (`LibVPFIDiscount.tierVpfiBalance`). */
+  | { kind: 'intent'; lendingAsset: Hex; collateralAsset: Hex; active: boolean; tier: boolean }
   | { kind: 'vpfi' }
   | { kind: 'payroll'; streamId: bigint };
 
@@ -203,16 +206,20 @@ export function claimAllList(i: ClaimAllInputs, copy: Pick<CopyAccess, 'text'>, 
   // Rewards: the claim run as a preview pays any held reward with it, so a
   // separate held leg is offered only when that preview cannot complete.
   const vpfi = i.vpfiToken !== null && lower(i.vpfiToken) !== ZERO ? i.vpfiToken : null;
-  if (i.rewards === null) gaps.push({ kind: 'rewards', why: 'unread' });
-  else if (i.rewards.kind === 'exact') {
+  if (i.rewards !== null && i.rewards.kind === 'exact') {
     if (i.rewards.amount > 0n) {
       if (vpfi === null) gaps.push({ kind: 'rewards', why: 'unread' });
       else legs.push(leg({ kind: 'rewards' }, [erc20(vpfi, i.rewards.amount)], 'reward-vault'));
     }
-  } else if (i.held === null) gaps.push({ kind: 'held', why: 'unread' });
-  else if (i.held.decision === 'deliver' && i.held.held > 0n) {
-    if (vpfi === null) gaps.push({ kind: 'held', why: 'unread' });
-    else legs.push(leg({ kind: 'held' }, [erc20(vpfi, i.held.held)], 'reward-vault'));
+  } else {
+    // The preview unread is said; a held reward the screen releases is read
+    // on its own and still offered.
+    if (i.rewards === null) gaps.push({ kind: 'rewards', why: 'unread' });
+    if (i.held === null) gaps.push({ kind: 'held', why: 'unread' });
+    else if (i.held.decision === 'deliver' && i.held.held > 0n) {
+      if (vpfi === null) gaps.push({ kind: 'held', why: 'unread' });
+      else legs.push(leg({ kind: 'held' }, [erc20(vpfi, i.held.held)], 'reward-vault'));
+    }
   }
 
   if (i.intents === null) gaps.push({ kind: 'intent', why: 'unread' });
@@ -220,8 +227,14 @@ export function claimAllList(i: ClaimAllInputs, copy: Pick<CopyAccess, 'text'>, 
     if (!i.intents.complete) gaps.push({ kind: 'intent', why: 'partial' });
     for (const r of i.intents.rows) {
       if (r.available === 0n) continue;
+      const tier = vpfi !== null && lower(r.lendingAsset) === lower(vpfi);
       legs.push(
-        leg({ kind: 'intent', lendingAsset: r.lendingAsset, collateralAsset: r.collateralAsset, active: r.active }, [erc20(r.lendingAsset, r.available)], self(), r.active),
+        leg(
+          { kind: 'intent', lendingAsset: r.lendingAsset, collateralAsset: r.collateralAsset, active: r.active, tier },
+          [erc20(r.lendingAsset, r.available)],
+          self(),
+          r.active || tier,
+        ),
       );
     }
   }
@@ -363,6 +376,7 @@ const GAP_KEYS = {
 export function optInText(l: ClaimAllLeg, copy: Copy): string | null {
   if (l.subject.kind === 'vpfi') return copy.text('claimAll.vpfiOptIn');
   if (l.subject.kind === 'intent' && l.subject.active) return copy.text('claimAll.intentOptIn');
+  if (l.subject.kind === 'intent' && l.subject.tier) return copy.text('claimAll.vpfiOptIn');
   return null;
 }
 
@@ -406,6 +420,15 @@ export function claimAllChanged(a: ClaimAllReview, b: ClaimAllReview, copy: Pick
   const { text } = copy;
   if (a.list.paused !== b.list.paused || a.list.frozen !== b.list.frozen) return text('repay.changedVerdict');
   if (a.send.map(legSig).join('|') !== b.send.map(legSig).join('|')) return text('claimAll.changed');
+  // The same route can bind differently: a queued payout's delay and its
+  // secondary signer are stated in the review.
+  if (
+    a.send.some(
+      (l, n) =>
+        l.route !== 'reward-vault' && routeChanged({ route: l.route, protection: a.list.protection }, { route: b.send[n]!.route as PayoutRoute, protection: b.list.protection }),
+    )
+  )
+    return text('claimAll.changed');
   if (a.refused.map((r) => `${r.leg.key}:${r.refusal.code}`).join('|') !== b.refused.map((r) => `${r.leg.key}:${r.refusal.code}`).join('|')) return text('claimAll.changed');
   if (a.later.length !== b.later.length) return text('claimAll.changed');
   if ((a.dryRun === null) !== (b.dryRun === null)) return text('repay.changedVerdict');
@@ -457,7 +480,7 @@ export function claimAllReceipt(r: ClaimAllReview, copy: Copy, describe: { symbo
   if (has('loan')) consequences.push(text('claimAll.loansClose'));
   if (has('rewards') || has('held')) consequences.push(text('claimAll.rewardsVault'));
   if (has('rewards')) consequences.push(text('claimAll.rewardsBounded'));
-  if (has('vpfi')) consequences.push(text('claimAll.vpfiTier'));
+  if (has('vpfi') || r.send.some((l) => l.subject.kind === 'intent' && l.subject.tier)) consequences.push(text('claimAll.vpfiTier'));
   if (r.send.some((l) => l.subject.kind === 'intent' && l.subject.active)) consequences.push(text('claimAll.intentStops'));
   for (const x of r.refused) consequences.push(format('claimAll.leftOut', { what: legTitle(x.leg, copy, describe.symbol), reason: x.refusal.reason }));
   if (r.later.length > 0) consequences.push(format('claimAll.remainder', { n: String(r.later.length), max: String(CLAIM_ALL_MAX_CALLS) }));
@@ -572,17 +595,7 @@ export function measureClaimAll(r: ClaimAllReview, logs: readonly Log[], diamond
       legs.push({ status: 'not-done', label: `${title}: ${laneLabel('surplus', l.subject.side, copy)}`, reason: text('loanClaim.surplusNotPaid') });
     for (const p of l.payouts) {
       if (p.assetType === ASSET_ERC20) continue;
-      const routed = payoutOutcomes(logs, diamond, account, p.asset);
-      if (routed.length > 0) {
-        for (const o of routed) legs.push({ status: 'done', label: routedLeg(o, w.nft(p), r.list.protection, copy) });
-        continue;
-      }
-      const arrived = nftArrived(logs, p.asset, p.assetType, p.tokenId, account);
-      legs.push(
-        arrived >= p.amount
-          ? { status: 'done', label: format('loanClaim.legNft', { nft: w.nft(p) }) }
-          : { status: 'not-done', label: format('loanClaim.legNft', { nft: w.nft(p) }), reason: text('loanClaim.nftNotArrived') },
-      );
+      legs.push(...nftLegs(logs, diamond, account, p, w.nft(p), r.list.protection, copy));
     }
   }
   for (const { asset, amount } of expected.values()) {

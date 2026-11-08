@@ -1,6 +1,6 @@
 import { decodeFunctionData, encodeAbiParameters, encodeErrorResult, encodeEventTopics, erc20Abi, parseAbi, type Abi, type Log } from 'viem';
 import { describe, expect, it } from 'vitest';
-import { ClaimFacetABI, DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
+import { ClaimFacetABI, DIAMOND_ABI_VIEM, VaultPayoutFacetABI } from '@vaipakam/contracts/abis';
 import type { LoanDetails } from '../positions/loanView';
 import {
   batchCalls,
@@ -9,11 +9,13 @@ import {
   batchStop,
   CLAIM_ALL_MAX_CALLS,
   claimAllBlockers,
+  claimAllChanged,
   claimAllList,
   claimAllReceipt,
   defaultPicked,
   legResults,
   measureClaimAll,
+  optInText,
   type ClaimAllInputs,
   type ClaimAllLeg,
   type ClaimAllReview,
@@ -109,6 +111,20 @@ describe('the Claim everything list', () => {
     );
     expect(keys(list.legs)).toEqual(['loan:lender:7', `intent:${WETH}:${TLIQ}`, `intent:${TLIQ}:${WETH}`, 'vpfi', 'payroll:2']);
     expect([...defaultPicked(list.legs)]).toEqual(['loan:lender:7', `intent:${WETH}:${TLIQ}`, 'payroll:2']);
+  });
+
+  it('still offers a released held reward when the rewards preview could not be read', () => {
+    const list = claimAllList(inputs({ rewards: null, held: { held: 3n, decision: 'deliver' } }), copy, 1);
+    expect(keys(list.legs)).toEqual(['loan:lender:7', 'held']);
+    expect(list.gaps.map((g) => `${g.kind}:${g.why}`)).toEqual(['rewards:unread']);
+  });
+
+  it('leaves a VPFI standing offer’s capital off, since it counts toward the fee-discount tier, and says so', () => {
+    const list = claimAllList(inputs({ intents: { rows: [{ lendingAsset: VPFI, collateralAsset: WETH, available: 9n, active: false }], complete: true } }), copy, 1);
+    const intent = list.legs.find((l) => l.subject.kind === 'intent')!;
+    expect(intent.optIn).toBe(true);
+    expect(optInText(intent, copy)).toBe('claimAll.vpfiOptIn');
+    expect(claimAllReceipt(review([intent]), copy, { symbol: words.symbol, nft: words.nft }).consequences).toContain('claimAll.vpfiTier');
   });
 
   it('names every source that could not be read as left out, never empty', () => {
@@ -251,6 +267,38 @@ describe('the finish card', () => {
     expect(receipt.consequences).toContain('claimAll.leftOut{"what":"claimAll.loanLender{\\"id\\":\\"8\\"}","reason":"nothing"}');
     expect(receipt.consequences).toContain('claimAll.remainder{"n":"1","max":"30"}');
     expect(receipt.prompts).toBe(1);
+  });
+
+  it('reads a queued payout’s new delay or secondary signer as a changed review', () => {
+    const guard = { enabled: true, locked: false, delaySeconds: 3600, requireCosign: false };
+    const a = claimAllList(inputs({ protection: guard }), copy, 1);
+    expect(a.legs[0]!.route).toBe('queued');
+    const b = claimAllList(inputs({ protection: { ...guard, delaySeconds: 7200 } }), copy, 1);
+    const c = claimAllList(inputs({ protection: { ...guard, requireCosign: true } }), copy, 1);
+    const at = (l: typeof a) => review(l.legs, { list: l });
+    expect(claimAllChanged(at(a), at(a), copy)).toBeNull();
+    expect(claimAllChanged(at(a), at(b), copy)).toBe('claimAll.changed');
+    expect(claimAllChanged(at(a), at(c), copy)).toBe('claimAll.changed');
+  });
+
+  it('puts each NFT of one collection only where its own routing record says', () => {
+    const NFT = '0x00000000000000000000000000000000000000f1' as Hex;
+    const nftLane = (tokenId: bigint) => ({ kind: 'rentalReturn' as const, asset: NFT, assetType: 1, tokenId, amount: 1n });
+    const guard = { enabled: true, locked: false, delaySeconds: 3600, requireCosign: false };
+    const l = claimAllList(inputs({ protection: guard, loans: { paused: false, rows: [loanRow(7n, { lanes: [nftLane(11n), nftLane(12n)] })], complete: true } }), copy, 1);
+    const PAYOUT = VaultPayoutFacetABI as Abi;
+    const logs = [
+      claimed(7n, 0n),
+      log(DIAMOND, PAYOUT, 'PayoutQueued', { account: ME, id: 1n, asset: NFT, kind: 1, tokenId: 11n, amount: 1n, recipient: ME, releaseAt: 99n }),
+      log(DIAMOND, PAYOUT, 'PaymentCreditedToVault', { account: ME, asset: NFT, tokenId: 12n, amount: 1n, received: 1n }),
+    ];
+    const w = { ...words, nft: (p: { tokenId: bigint }) => `nft${p.tokenId}` };
+    const legs = measureClaimAll(review(l.legs, { list: l }), logs, DIAMOND, ME, w, copy, null)
+      .map((x) => `${x.status}:${x.label}`)
+      .filter((x) => x.includes('nft1'));
+    expect(legs).toHaveLength(2);
+    expect(legs[0]).toMatch(/^done:payout\.legQueued\{"what":"nft11"/);
+    expect(legs[1]).toBe('done:payout.legVault{"what":"nft12"}');
   });
 
   it('refuses to send nothing, and a batch whose dry run could not run', () => {
