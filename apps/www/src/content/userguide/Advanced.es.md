@@ -2421,6 +2421,14 @@ Ninguna vista devuelve el interés del pago parcial antes de la llamada (#3299),
 
 La aplicación lee esas entradas, las dos comprobaciones del activo en vivo y no desde la clase de apertura del préstamo, y la simulación es la última palabra del protocolo. Ninguna vista devuelve el factor de salud tras un aporte, así que la revisión muestra `calculateHealthFactor` y `calculateLTV` ahora y la tarjeta final lee las nuevas cifras del registro `CollateralAdded` de la transacción. En un préstamo FallbackPending, el aporte lo cura cuando el nuevo factor de salud alcanza el mínimo del préstamo y el LTV queda dentro de su tope de apertura; la tarjeta final busca `LoanCuredFromFallback`. Una aprobación existente igual o mayor que la cantidad se deja como está, porque se toma exactamente la cantidad; una menor se sube a exactamente la cantidad y se restablece si el aporte no se completa.
 
+<a id="take-back-collateral"></a>
+
+### Retirar garantía: qué se comprueba
+
+`partialWithdrawCollateral(loanId, amount)` envía `amount` de la garantía desde la bóveda del prestatario a la billetera de quien llama, reduce `collateralAmount` y el gravamen de la garantía, y emite `PartialCollateralWithdrawn` con el nuevo factor de salud y LTV. Lleva `whenNotPaused` y rechaza, en orden: a quien llama si está sancionado, un commit de swap-to-repay vigente, una solicitud de refinanciación vigente (`RefinanceRequestOpen`), una venta listada vinculada (`SaleListingActive`), a quien llama si no es `ownerOf(borrowerTokenId)`, un préstamo que no está Active, un importe mayor que la garantía, una garantía que `checkLiquidity` no reporta como Liquid, y un resultado por debajo del factor de salud mínimo o por encima del tope de LTV de apertura.
+
+El formulario comprueba el importe con `calculateMaxWithdrawable`, que es cero para un préstamo que no está Active o con garantía ilíquida, y que baja a medida que se acumulan intereses. Ninguna vista expone una venta listada vinculada, así que la revisión simula el retiro y nombra ese rechazo; el envío lo simula de nuevo. La tarjeta final lee la garantía restante y las nuevas cifras del log `PartialCollateralWithdrawn` de la transacción, y el importe recibido del `Transfer` del token a la billetera. Para quien llama con el modo de cuenta protegida, la compuerta de pagos de la bóveda pone la retirada en cola (`PayoutQueued`) durante el retraso de la cuenta en lugar de pagarla, así que la revisión lee `getProtectedAccount` y la tarjeta final lee ese log.
+
 <a id="risk-access"></a>
 
 ### Risk Access: tu nivel de riesgo

@@ -20,6 +20,7 @@ import {
   MetricsFacetABI,
   NumeraireConfigFacetABI,
   OracleFacetABI,
+  PartialWithdrawalFacetABI,
   RefinanceFacetABI,
   RepayPeriodicFacetABI,
   RiskFacetABI,
@@ -38,6 +39,7 @@ const NUMERAIRE = NumeraireConfigFacetABI as Abi;
 const CONFIG = ConfigFacetABI as Abi;
 const ADMIN = AdminFacetABI as Abi;
 const ORACLE = OracleFacetABI as Abi;
+const PARTIAL_WITHDRAWAL = PartialWithdrawalFacetABI as Abi;
 const REFINANCE = RefinanceFacetABI as Abi;
 
 /** `LibVaipakam.LiquidityStatus.Illiquid`. */
@@ -186,6 +188,11 @@ export interface LoanView {
    *  opening. */
   collateralPaused: boolean | null;
   collateralLiquidNow: boolean | null;
+  /** For a running ERC-20 loan, the most collateral the protocol lets the
+   *  borrower take back now (`calculateMaxWithdrawable`, rounded down, 0
+   *  when nothing can be); it moves with prices. Null when unread or not
+   *  asked. */
+  maxWithdrawable: bigint | null;
 }
 
 /** One interest period, as the protocol previews its settlement. */
@@ -281,6 +288,7 @@ export async function readLoanView(client: PublicClient, diamond: Hex, loanId: b
     refinance,
     collateralPaused,
     collateralLiquidity,
+    maxWithdrawable,
   ] = await Promise.all([
     maybe(holder(loan.lenderTokenId)),
     maybe(holder(loan.borrowerTokenId)),
@@ -300,6 +308,7 @@ export async function readLoanView(client: PublicClient, diamond: Hex, loanId: b
     live ? maybe(read<readonly [bigint, boolean]>(REFINANCE, 'getRefinanceRequest', [loanId])) : null,
     liveErc20 ? maybe(read<boolean>(ADMIN, 'isAssetPaused', [loan.collateralAsset])) : null,
     liveErc20 ? maybe(read<number>(ORACLE, 'checkLiquidity', [loan.collateralAsset]).then(Number)) : null,
+    liveErc20 ? maybe(read<bigint>(PARTIAL_WITHDRAWAL, 'calculateMaxWithdrawable', [loanId])) : null,
   ]);
 
   // A loan with a cadence answers to its checkpoint too: with the checkpoint
@@ -347,6 +356,7 @@ export async function readLoanView(client: PublicClient, diamond: Hex, loanId: b
     refinanceLive: refinance ? refinance[1] : null,
     collateralPaused,
     collateralLiquidNow: collateralLiquidity === null ? null : collateralLiquidity === LIQUID_NOW,
+    maxWithdrawable,
   };
   return { view };
 }
